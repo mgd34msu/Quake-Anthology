@@ -181,6 +181,15 @@ bool frontend_keys_publication_ready(frontend_keys *owner,frontend_key_profile *
     if (profile && owner->active!=profile && !frontend_key_profile_retain(profile,error)) return false;
     *ticket=(frontend_keys_publication){owner,owner->active,profile,cvars}; owner->publication=ticket; return true;
 }
+bool frontend_keys_publication_current(const frontend_keys *owner,const frontend_keys_publication *ticket)
+{
+    return owner && ticket && !owner->restoring && owner->publication==ticket && ticket->owner==owner &&
+        ticket->previous==owner->active && (!owner->active || !owner->active->busy) &&
+        (!ticket->next?!ticket->cvars:
+            ticket->next->owner==owner && ticket->next->references && ticket->next->state && !ticket->next->busy &&
+            (ticket->next==owner->active || ticket->next->references>1) &&
+            !ticket->next->imported_state && !ticket->next->detached && ticket->cvars && ticket->cvars==ticket->next->cvars);
+}
 void frontend_keys_publication_publish(frontend_keys_publication *ticket)
 {
     frontend_keys *owner=ticket->owner;

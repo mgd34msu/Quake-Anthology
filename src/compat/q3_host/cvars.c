@@ -60,6 +60,21 @@ static bool binding_fields(qa_source_save_io *io,q3_cvar_binding *binding)
         qa_source_save_f32(io,&binding->previous_number) &&
         qa_source_save_i32(io,&binding->previous_integer));
 }
+static bool status_fields(qa_source_save_io *io,q3_cvar_status *status)
+{
+    if (!qa_source_save_bool(io,&status->read)) return false;
+    if (!status->read) return (!status->revision && !status->previous_value) ||
+        q3_fail(io->error,QA_ERROR_FORMAT,0,"Unread status mirror retains an invalid continuation");
+    uint32_t bits; memcpy(&bits,&status->previous_number,sizeof(bits));
+    bool ok=qa_source_save_u32(io,&status->revision) &&
+        binding_text(io,&status->previous_value) &&
+        qa_source_save_u64(io,&status->previous_modification) &&
+        qa_source_save_u32(io,&bits) && qa_source_save_i32(io,&status->previous_integer) &&
+        qa_source_save_bool(io,&status->previous_visible);
+    if (io->direction==QA_SOURCE_SAVE_READ) memcpy(&status->previous_number,&bits,sizeof(bits));
+    return ok && ((status->revision && status->revision<=INT32_MAX) ||
+        q3_fail(io->error,QA_ERROR_FORMAT,0,"Invalid CGAME status mirror revision"));
+}
 static bool binding_namespace(const qa_q3_host *host,const q3_cvar_binding *binding,
     qa_cvars **out,qa_error *error)
 {
@@ -85,7 +100,7 @@ static bool cache_fields(qa_source_save_io *io,q3_cvar_cache *cache)
 bool q3_cvars_bindings_capture(const qa_q3_host *host,qa_buffer *out,qa_error *error)
 {
     qa_source_save_io io={0};
-    uint8_t magic[4]={'Q','3','C','B'}; uint32_t version=2;
+    uint8_t magic[4]={'Q','3','C','B'}; uint32_t version=3;
     size_t count=host->cvar_binding_count;
     bool ok=qa_source_save_writer(&io,NULL,error) && qa_source_save_bytes(&io,magic,sizeof(magic)) &&
         qa_source_save_u32(&io,&version) && qa_source_save_count(&io,&count,1024);
@@ -105,19 +120,23 @@ bool q3_cvars_bindings_capture(const qa_q3_host *host,qa_buffer *out,qa_error *e
             ok=q3_fail(error,QA_ERROR_ARGUMENT,0,"Q3 cache has no original executor owner");
         if (ok) ok=cache_fields(&io,&copy);
     }
-    if (ok) ok=qa_source_save_finish(&io,out);
+    q3_cvar_status status=host->cvar_status;
+    if (ok && status.read && host->options.role!=QA_QVM_CGAME)
+        ok=q3_fail(error,QA_ERROR_ARGUMENT,0,"Status mirror has no actual CGAME owner");
+    if (ok) ok=status_fields(&io,&status) && qa_source_save_finish(&io,out);
     qa_source_save_dispose(&io); return ok;
 }
 bool q3_cvars_bindings_decode(qa_bytes bytes,q3_cvar_binding **out,size_t *out_count,
-    q3_cvar_cache **out_caches,size_t *out_cache_count,qa_error *error)
+    q3_cvar_cache **out_caches,size_t *out_cache_count,q3_cvar_status *out_status,qa_error *error)
 {
     qa_source_save_io io={0}; uint8_t magic[4]; uint32_t version=0; size_t count=0;
     if (!out || *out || !out_count || !out_caches || *out_caches || !out_cache_count ||
+        !out_status || out_status->read || out_status->revision || out_status->previous_value ||
         !qa_source_save_reader(&io,NULL,bytes,error))
         return q3_fail(error,QA_ERROR_ARGUMENT,0,"Q3 cvar decode requires empty actual candidate output");
     bool ok=qa_source_save_bytes(&io,magic,sizeof(magic)) && qa_source_save_u32(&io,&version) &&
         qa_source_save_count(&io,&count,1024);
-    if (ok && (memcmp(magic,"Q3CB",4) || version!=2 || count>bytes.size-io.offset))
+    if (ok && (memcmp(magic,"Q3CB",4) || version!=3 || count>bytes.size-io.offset))
         ok=q3_fail(error,QA_ERROR_FORMAT,0,"Unsupported Q3 cvar binding continuation");
     q3_cvar_binding *bindings=ok && count?calloc(count,sizeof(*bindings)):NULL;
     if (ok && count && !bindings) ok=q3_fail(error,QA_ERROR_MEMORY,0,"Restoring routed Q3 cvar bindings");
@@ -141,13 +160,17 @@ bool q3_cvars_bindings_decode(qa_bytes bytes,q3_cvar_binding **out,size_t *out_c
             if (caches[j].pointer==caches[i].pointer)
                 ok=q3_fail(error,QA_ERROR_FORMAT,0,"Duplicate original Q3 cvar cache pointer");
     }
-    if (ok) ok=qa_source_save_finish(&io,NULL);
+    q3_cvar_status status={0};
+    if (ok) ok=status_fields(&io,&status) && qa_source_save_finish(&io,NULL);
     qa_source_save_dispose(&io);
-    if (!ok) { q3_cvars_bindings_free(bindings,bindings?count:0); free(caches); return false; }
-    *out=bindings; *out_count=count; *out_caches=caches; *out_cache_count=cache_count; return true;
+    if (!ok) { q3_cvars_bindings_free(bindings,bindings?count:0); free(caches); free(status.previous_value); return false; }
+    *out=bindings; *out_count=count; *out_caches=caches; *out_cache_count=cache_count;
+    *out_status=status; return true;
 }
 bool q3_cvars_bindings_restore_ready(qa_q3_host *host,qa_error *error)
 {
+    if (host->cvar_status.read && host->options.role!=QA_QVM_CGAME)
+        return q3_fail(error,QA_ERROR_FORMAT,0,"Restored status mirror has no actual CGAME owner");
     for (size_t i=0;i<host->cvar_binding_count;++i) {
         q3_cvar_binding *binding=host->cvar_bindings+i; qa_cvars *registry=NULL;
         if (!binding_namespace(host,binding,&registry,error)) return false;
@@ -329,6 +352,32 @@ static bool routed_view(q3_call *call,q3_cvar_binding *binding,const qa_cvar_vie
     *modification=binding->revision; return true;
 }
 
+static bool effective_status(q3_call *call,const qa_cvar_view *source,
+    qa_cvar_view *out,qa_error *error)
+{
+    *out=*source;
+    qa_q3_host *host=call->host;
+    if (host->options.role!=QA_QVM_CGAME || !status_name(source->name)) return true;
+    bool visible=true;
+    const qa_q3_host_cvar_status_services *services=&host->options.cvar_status;
+    if (services->visible && !services->visible(services->context,host,&visible,error)) return false;
+    q3_cvar_status *status=&host->cvar_status;
+    if (!status->read || status->previous_modification!=source->modification_count ||
+        status->previous_visible!=visible || strcmp(status->previous_value,source->value) ||
+        status->previous_number!=source->number || status->previous_integer!=source->integer) {
+        if (status->revision==INT32_MAX)
+            return q3_fail(error,QA_ERROR_FORMAT,0,"CGAME status cvar revision is exhausted");
+        char *value=copy_text(source->value,error);
+        if (!value) return false;
+        free(status->previous_value); status->previous_value=value;
+        status->previous_modification=source->modification_count; status->previous_visible=visible;
+        status->previous_number=source->number; status->previous_integer=source->integer;
+        status->read=true; ++status->revision;
+    }
+    out->modification_count=status->revision;
+    if (!visible) { out->value="0"; out->number=0; out->integer=0; }
+    return true;
+}
 static bool update_fields(q3_call *call,uint64_t pointer,const qa_cvar_view **resolved,qa_error *error)
 {
     uint8_t input[272];
@@ -364,6 +413,12 @@ static bool update_fields(q3_call *call,uint64_t pointer,const qa_cvar_view **re
         if (view) modification=(uint32_t)view->modification_count;
     } else return q3_fail(error,QA_ERROR_FORMAT,0,"Cvar_Update: handle out of range");
     *resolved=view;
+    qa_cvar_view effective;
+    bool status=view && call->host->options.role==QA_QVM_CGAME && status_name(view->name);
+    if (status) {
+        if (!effective_status(call,view,&effective,error)) return false;
+        view=&effective; modification=view->modification_count;
+    }
     if (!view || (handle<=-3?
         qa_load_i32le(input+4)>=0 && modification==(uint64_t)qa_load_i32le(input+4):
         modification==qa_load_u32le(input+4))) return true;
@@ -427,6 +482,42 @@ static bool update(q3_call *call,uint64_t pointer,qa_error *error)
 {
     const qa_cvar_view *view=NULL;
     return update_fields(call,pointer,&view,error) && cache_note(call,pointer,view,error);
+}
+static bool refresh(void *context,const qa_command_context *command,qa_error *error)
+{
+    (void)command;
+    qa_q3_host *host=context;
+    bool visible;
+    if (host->options.cvar_status.visible &&
+        !host->options.cvar_status.visible(host->options.cvar_status.context,host,&visible,error)) return false;
+    for (size_t i=0;i<host->cvar_cache_count;) {
+        qa_q3_host_cvar_cache record; bool found=false;
+        if (!qa_q3_host_cvar_cache_read(host,i,&record,&found,error)) return false;
+        if (!found) {
+            memmove(host->cvar_caches+i,host->cvar_caches+i+1,
+                (host->cvar_cache_count-i-1)*sizeof(*host->cvar_caches));
+            --host->cvar_cache_count; continue;
+        }
+        const q3_cvar_cache *cache=host->cvar_caches+i;
+        q3_call call={.host=host,.memory=cache->memory,.vm=cache->vm,.native=cache->native,
+            .native_profile=host->native_profile,.native_host=host->native_host};
+        const qa_cvar_view *view=NULL;
+        if (!update_fields(&call,cache->address,&view,error)) return false;
+        ++i;
+    }
+    return true;
+}
+bool qa_q3_host_cvar_cache_refresh(qa_q3_host *host,qa_error *error)
+{
+    if (!host || host->retired || host->restore_pending || host->calls ||
+        host->options.role!=QA_QVM_CGAME)
+        return q3_fail(error,QA_ERROR_ARGUMENT,0,"Status refresh requires its returned actual CGAME host");
+    ++host->calls;
+    bool ok=host->options.console?qa_console_cvar_enter(host->options.console,
+        &host->options.command_context,NULL,NULL,refresh,host,error):refresh(host,NULL,error);
+    --host->calls;
+    if (!host->calls) qa_arena_reset(&host->scratch);
+    return ok;
 }
 
 static bool register_vm(q3_call *call, qa_error *error)
@@ -558,8 +649,11 @@ static q3_service_result cvars_selected(q3_call *call, int32_t *result, qa_error
                     .name=key,.value=(const char *)value.data,.force=true},error) :
                  apply(call,access,&(qa_cvars_edit_command){.kind=QA_CVARS_EDIT_RESET,.name=key,.force=true},error);
     } else if (trap == (ui ? 5 : game ? 7 : 6)) {
-        if (view) ok = q3_write_string(call, call->arguments[1], view->value, q3_integer(call, 2), error);
-        else {
+        qa_cvar_view effective;
+        if (view && !effective_status(call,view,&effective,error)) ok=false;
+        else if (view) view=&effective;
+        if (ok && view) ok = q3_write_string(call, call->arguments[1], view->value, q3_integer(call, 2), error);
+        else if (ok) {
             const uint8_t zero = 0;
             ok = q3_write(call, call->arguments[1], (qa_bytes){&zero, 1}, error);
         }

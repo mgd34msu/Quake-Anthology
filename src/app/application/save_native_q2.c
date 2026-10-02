@@ -3,6 +3,7 @@
 #include "guest_native_q2_private.h"
 #include "guest_native_q2_baseline.h"
 #include "map_private.h"
+#include "world_bounds.h"
 
 #include <stdlib.h>
 
@@ -75,9 +76,10 @@ bool application_native_q2_scratch_prepare(application_provider *target,
     app->map_resource = candidate->map_resource;
     qa_bsp_view map;
     qa_world *world = NULL;
+    qa_world_hooks hooks = application_world_hooks(app);
     ok = qa_bsp_open(qa_resource_bytes(app->map_resource), &map, error) &&
         qa_collision_create(&map, &app->geometry, error) &&
-        qa_world_create(qa_session_actor_registry(app->session), app->geometry, NULL, &world, error);
+        qa_world_create(qa_session_actor_registry(app->session), app->geometry, &hooks, &world, error);
     if (!ok) return false;
     qa_physics_services physics = application_physics_services(app);
     if (!qa_physics_init(app->physics, world, (qa_actor_id){0}, &physics, error) ||

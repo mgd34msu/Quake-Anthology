@@ -1,4 +1,5 @@
 #include "guest_q3_private.h"
+#include "qa/application_q3_body_entry.h"
 #include "guest_q3_client_console.h"
 #include "guest_q3_console.h"
 #include "guest_q3_factory.h"
@@ -9,6 +10,7 @@
 #include "native_q3_remote_role.h"
 #include "native_q1_console.h"
 #include "native_q2_console.h"
+#include "native_client_roles.h"
 #include "native_q3_wire.h"
 #include "native_q3_wire_state.h"
 #include "qa/application_q3_client.h"
@@ -44,6 +46,16 @@ bool application_guest_console_at(application_provider *provider, size_t index,
                                     qa_command_context *context)
 {
     if (!provider || !provider->constructed || !console) return false;
+    if (provider->client_only_owned || application_native_client_only(provider)) {
+        qa_application_startup_source source;
+        bool found;
+        if (!application_native_client_role_source_at(provider, index, &source, &found, NULL) || !found)
+            return false;
+        *console = source.console;
+        if (cvars) *cvars = source.cvars;
+        if (context) *context = source.command;
+        return true;
+    }
     if (provider->kind == APPLICATION_PROVIDER_Q1)
         return !index && application_native_q1_console_at(provider, console, cvars, context);
     if (provider->kind == APPLICATION_PROVIDER_Q2)
@@ -114,6 +126,8 @@ bool application_guest_console_scope(application_provider *provider,
 {
     if (!provider || !provider->constructed || !console || !out)
         return false;
+    if (provider->client_only_owned || application_native_client_only(provider))
+        return application_native_client_console_scope(provider, console, out);
     qa_application_console_scope scope = {.provider = provider->owner};
     if (provider->kind == APPLICATION_PROVIDER_Q1) {
         qa_console *source = NULL;
@@ -294,6 +308,157 @@ bool qa_application_q3_client_context_current(qa_application *app,
         actual.console == retained->console && actual.cvars == retained->cvars && actual.source_cvars == retained->source_cvars &&
         actual.client_time_cvars == retained->client_time_cvars && actual.client_time_owner == retained->client_time_owner &&
         actual.native_source == retained->native_source;
+}
+
+static bool command_context_equal(const qa_command_context *x, const qa_command_context *y)
+{
+    return x->session == y->session &&
+        x->owner == y->owner && x->client == y->client && x->seat == y->seat &&
+        x->dialect == y->dialect && x->origin == y->origin && x->direct == y->direct &&
+        x->console_text == y->console_text && x->script == y->script &&
+        x->registry == y->registry && x->generation == y->generation && qa_actor_id_equal(x->actor, y->actor);
+}
+
+static bool host_context_equal(const qa_q3_host_client_context *a,
+    const qa_q3_host_client_context *b)
+{
+    return a->session == b->session && a->role == b->role && a->owner == b->owner &&
+        a->service_owner == b->service_owner && a->console == b->console && a->cvars == b->cvars &&
+        a->client_time_cvars == b->client_time_cvars && a->client_time_owner == b->client_time_owner &&
+        a->frontend_lifetime == b->frontend_lifetime &&
+        command_context_equal(&a->command_context, &b->command_context);
+}
+
+static bool source_frame_equal(qa_source_frame a, qa_source_frame b)
+{
+    return a.provider == b.provider && a.kind == b.kind && a.phase == b.phase &&
+        a.number == b.number && a.start_ns == b.start_ns && a.elapsed_ns == b.elapsed_ns && a.time_ns == b.time_ns;
+}
+
+bool qa_application_q3_body_entry_read(qa_application *app, qa_actor_owner receiver,
+    uint32_t seat, qa_application_q3_body_entry *out, qa_error *error)
+{
+    if (!app || !out || !receiver)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Body Draw requires its actual entered receiver");
+    application_provider **providers = app->routing_providers ? app->routing_providers : app->providers;
+    size_t count = app->routing_providers ? app->routing_provider_count : app->provider_count;
+    q3g_role *role = NULL;
+    for (size_t i = 0; i < count; ++i) {
+        application_provider *provider = providers[i];
+        struct application_q3_guest *engine = provider && provider->owner == receiver ? q3g_engine(provider) : NULL;
+        if (!engine) continue;
+        if (role || !engine->calls || !engine->entered_role || engine->restore_pending)
+            return application_fail(error, QA_ERROR_ARGUMENT, "Body Draw has no unique entered role");
+        role = engine->entered_role;
+    }
+    if (!role || role->kind != QA_QVM_CGAME || role->seat != seat || !role->draw_entry ||
+        !role->ready || role->retired || !role->host || role->source_cleared)
+        return application_fail(error, QA_ERROR_NOT_FOUND, "Body Draw left its actual CGAME admission");
+    qa_application_q3_body_entry value = {.host = role->host, .source = role->draw_source,
+        .server_time = role->draw_arguments[0], .stereo_view = role->draw_arguments[1],
+        .demo_playback = role->draw_arguments[2], .local_source = role->local_client};
+    if (!qa_q3_host_client_context_read(role->host, &value.context) || value.context.role != QA_QVM_CGAME ||
+        value.context.owner != receiver || value.context.service_owner != role->service_owner ||
+        value.context.command_context.seat != seat || value.context.session != app->session)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Body Draw changed its physical host namespace");
+    if (value.local_source) {
+        qa_application_q3_client_context actual;
+        if (!client_context_read(app, receiver, seat, true, &actual, error) ||
+            !qa_application_q3_client_context_current(app, &value.source) ||
+            actual.frontend_lifetime != value.context.frontend_lifetime ||
+            actual.service_owner != value.context.service_owner ||
+            actual.source_milliseconds != value.source.source_milliseconds ||
+            !source_frame_equal(actual.source_frame, value.source.source_frame))
+            return application_fail(error, QA_ERROR_ARGUMENT, "Body Draw changed its real GAME publication");
+    }
+    *out = value; return true;
+}
+
+bool qa_application_q3_body_entry_current(qa_application *app,
+    const qa_application_q3_body_entry *held)
+{
+    qa_application_q3_body_entry actual;
+    return held && qa_application_q3_body_entry_read(app, held->context.owner,
+        held->context.command_context.seat, &actual, NULL) && actual.host == held->host &&
+        host_context_equal(&actual.context, &held->context) && actual.server_time == held->server_time &&
+        actual.stereo_view == held->stereo_view && actual.demo_playback == held->demo_playback &&
+        actual.local_source == held->local_source && (!held->local_source ||
+        (qa_application_q3_client_context_current(app, &held->source) &&
+         actual.source.source_milliseconds == held->source.source_milliseconds &&
+         source_frame_equal(actual.source.source_frame, held->source.source_frame)));
+}
+
+bool qa_application_q3_client_host_read(qa_application *app, qa_actor_owner receiver,
+    uint32_t seat, qa_application_q3_client_host *out, bool *present, qa_error *error)
+{
+    if (!app || !out || !present || !receiver || app->destroy_requested)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Local CGAME host requires its live receiver inventory");
+    application_provider **providers = app->routing_providers ? app->routing_providers : app->providers;
+    size_t count = app->routing_providers ? app->routing_provider_count : app->provider_count;
+    application_provider *provider = NULL;
+    for (size_t i = 0; i < count; ++i)
+        if (providers[i] && providers[i]->owner == receiver) {
+            if (provider)
+                return application_fail(error, QA_ERROR_ARGUMENT, "Local CGAME host has ambiguous receiver ownership");
+            provider = providers[i];
+        }
+    struct application_q3_guest *engine = q3g_engine(provider);
+    if (!provider || provider->application != app || !provider->constructed || !provider->attached ||
+        provider->close_pending || !engine || engine->provider != provider || engine->restore_pending ||
+        engine->round.phase != Q3G_ROUND_NONE)
+        return application_fail(error, QA_ERROR_NOT_FOUND, "Local CGAME host has no admitted original receiver");
+    const qa_launch_snapshot *snapshot = app->routing_snapshot ? app->routing_snapshot : qa_application_launch(app);
+    const qa_launch_choices *choices = qa_launch_snapshot_choices(snapshot);
+    bool selected = false;
+    for (size_t i = 0; choices && i < choices->seat_count; ++i)
+        if (choices->seats[i].id == seat && q3g_selected_client_seat(provider, choices, QA_QVM_CGAME, i))
+            selected = true;
+    if (!selected)
+        return application_fail(error, QA_ERROR_NOT_FOUND, "Local CGAME host is not its actual selected launch seat");
+    q3g_role *role = NULL;
+    for (q3g_role *row = engine->roles; row; row = row->next)
+        if (row->kind == QA_QVM_CGAME && row->seat == seat) {
+            if (role)
+                return application_fail(error, QA_ERROR_ARGUMENT, "Local CGAME host has ambiguous physical roles");
+            role = row;
+        }
+    if (engine->constructing_role && engine->constructing_role->kind == QA_QVM_CGAME &&
+        engine->constructing_role->seat == seat)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Local CGAME host is still being constructed");
+    if (!role) {
+        *out = (qa_application_q3_client_host){0}; *present = false;
+        return true;
+    }
+    if (role->engine != engine || !role->ready || role->retired || role->source_cleared ||
+        !role->host || !role->local_client)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Local CGAME host has an incomplete or retired physical role");
+    application_provider *source = role->client_source;
+    if (!source || source->application != app || !source->constructed || !source->attached || source->close_pending ||
+        (!role->native_client && (!role->client_engine || role->client_engine->provider != source ||
+            role->client_engine->restore_pending || role->client_engine->round.phase != Q3G_ROUND_NONE)))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Local CGAME host lost its admitted physical GAME source");
+    qa_application_q3_client_host value = {.host = role->host};
+    if (!client_context_read(app, receiver, seat, false, &value.source, error) ||
+        !qa_q3_host_client_context_read(value.host, &value.context) ||
+        value.context.frontend_lifetime != value.source.frontend_lifetime ||
+        value.context.service_owner != value.source.service_owner || value.context.console != value.source.console ||
+        value.context.cvars != value.source.cvars || value.context.client_time_cvars != value.source.client_time_cvars ||
+        value.context.client_time_owner != value.source.client_time_owner ||
+        !qa_application_q3_client_context_current(app, &value.source))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Local CGAME host changed its actual GAME client or host namespace");
+    *out = value; *present = true;
+    return true;
+}
+
+bool qa_application_q3_client_host_current(qa_application *app,
+    const qa_application_q3_client_host *retained)
+{
+    qa_application_q3_client_host actual; bool present = false;
+    return retained && retained->host && qa_application_q3_client_host_read(app,
+        retained->source.receiver, retained->source.seat, &actual, &present, NULL) && present &&
+        actual.host == retained->host && host_context_equal(&actual.context, &retained->context) &&
+        command_context_equal(&actual.source.command_context, &retained->source.command_context) &&
+        qa_application_q3_client_context_current(app, &retained->source);
 }
 
 bool qa_application_q3_client_retire(qa_application *app,

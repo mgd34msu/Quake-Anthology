@@ -5,10 +5,17 @@
 #include "client_outputs.h"
 #include "guest_q2_control.h"
 #include "native_q3_settings.h"
+#include "native_q1_composition_rogue.h"
+#include "native_q1_composition_birth.h"
+#include "guest_q3_components.h"
+#include "guest_q3_component_input.h"
 #include "qa/game_q3_source.h"
 #include "qa/game_q3_wire.h"
+#include "qa/source_number.h"
 
 #include <limits.h>
+#include <float.h>
+#include <fenv.h>
 #include <math.h>
 #include <string.h>
 #include <stdlib.h>
@@ -290,9 +297,16 @@ static int32_t gravity_integer(float gravity)
     return (int32_t)lrintf(gravity);
 }
 
-static int16_t gravity_short(float gravity)
+static int32_t gravity_truncated(double gravity)
 {
-    int32_t value = gravity_integer(gravity);
+    if (gravity >= INT32_MAX) return INT32_MAX;
+    if (gravity <= INT32_MIN) return INT32_MIN;
+    return (int32_t)trunc(gravity);
+}
+
+static int16_t gravity_short(double gravity)
+{
+    int32_t value = gravity_truncated(gravity);
     return value > INT16_MAX   ? INT16_MAX
            : value < INT16_MIN ? INT16_MIN
                                : (int16_t)value;
@@ -328,8 +342,8 @@ static void state_body(application_control_record *record,
         record->state.data.q2.gravity = gravity_short(
             record->application->physics == NULL
                 ? 800.0f
-                : record->application->physics->gravity *
-                      record->gravity_multiplier);
+                : (double)record->application->physics->gravity *
+                      (double)record->gravity_multiplier);
         if (record->ground.hit == QA_TRACE_HIT_NONE)
             record->state.data.q2.flags &= ~APPLICATION_Q2_ONGROUND;
         else
@@ -339,8 +353,8 @@ static void state_body(application_control_record *record,
         record->state.data.q2r.gravity = gravity_short(
             record->application->physics == NULL
                 ? 800.0f
-                : record->application->physics->gravity *
-                      record->gravity_multiplier);
+                : (double)record->application->physics->gravity *
+                      (double)record->gravity_multiplier);
         if (record->ground.hit == QA_TRACE_HIT_NONE)
             record->state.data.q2r.flags &= ~APPLICATION_Q2_ONGROUND;
         else
@@ -350,9 +364,9 @@ static void state_body(application_control_record *record,
         {
             const application_control_context *source = application_control_frame_current(record->application, record->actor);
             if (!source || !source->source_usercmd)
-                record->state.data.q3.gravity = gravity_integer(
+                record->state.data.q3.gravity = gravity_truncated(
                     record->application->physics == NULL ? 800.0f :
-                    record->application->physics->gravity * record->gravity_multiplier);
+                    (double)record->application->physics->gravity * (double)record->gravity_multiplier);
         }
         if (body->ground.registry != 0)
             record->ground = (qa_movement_ground){.hit = QA_TRACE_HIT_ACTOR,
@@ -454,6 +468,7 @@ static bool refresh_source_call(application_move_call *move, qa_movement_call *c
         !(move->context.source_usercmd && call->state->kind == QA_MOVEMENT_Q3);
     call->environment->mode = move->control->player_mode;
     call->environment->flight = move->control->flight;
+    call->environment->gravity_multiplier = move->control->gravity_multiplier;
     if (move->execution && move->execution->kind == APPLICATION_PROVIDER_QC &&
         !move->execution->state.qc.qualified && !application_qc_control_state(move->execution,
             call->actor, call->state, call->bounds, call->environment, &move->control->view_angles, error)) return false;
@@ -488,6 +503,18 @@ static bool q3_present(application_provider *provider, qa_actor_id actor)
     qa_q3_player_state ignored;
     return provider != NULL && provider->kind == APPLICATION_PROVIDER_Q3 &&
            qa_q3_player_read(provider->state.q3, actor, &ignored);
+}
+
+static void character_fixed_pose(qa_movement_input *input)
+{
+    if (!input->environment.fixed_pose || !input->environment.fixed_crouched) return;
+    qa_bounds bounds = input->environment.pose.bounds;
+    qa_bounds expanded = input->invulnerability_bounds;
+    bool is_expanded = bounds.mins.x == expanded.mins.x && bounds.mins.y == expanded.mins.y &&
+        bounds.mins.z == expanded.mins.z && bounds.maxs.x == expanded.maxs.x &&
+        bounds.maxs.y == expanded.maxs.y && bounds.maxs.z == expanded.maxs.z;
+    input->environment.pose = input->crouched;
+    if (is_expanded) input->environment.pose.bounds = expanded;
 }
 
 static void add_q3(application_move_call *move,
@@ -557,6 +584,7 @@ typedef struct application_q1_source_input_call {
     application_provider *provider;
     qa_actor_id actor;
     qa_q1_input input;
+    bool impulse_consumed;
 } application_q1_source_input_call;
 
 static bool q1_source_prethink(void *opaque, qa_session *session, qa_error *error)
@@ -568,6 +596,14 @@ static bool q1_source_prethink(void *opaque, qa_session *session, qa_error *erro
     qa_q1_game_operation operation = {0};
     if (!qa_q1_game_operation_begin(provider->state.q1, &operation, error)) return false;
     bool okay = qa_q1_player_source_input(provider->state.q1, call->actor, &call->input, error);
+    if (okay && qa_actors_get(qa_session_actors(session), call->actor))
+        okay = application_native_q1_ctf_prethink(provider, call->actor, &call->input, error);
+    if (okay && call->input.impulse && qa_actors_get(qa_session_actors(session), call->actor)) {
+        qa_q1_source_client_view client;
+        okay = qa_q1_source_client_read(provider->state.q1, call->actor, &client);
+        if (!okay) application_fail(error, QA_ERROR_NOT_FOUND, "Q1 prethink lost its actual source input client");
+        else call->impulse_consumed = client.impulse == 0;
+    }
     if (okay && qa_actors_get(qa_session_actors(session), call->actor))
         okay = qa_q1_player_prethink(provider->state.q1, call->actor, error);
     qa_q1_game_operation_end(&operation);
@@ -608,6 +644,8 @@ bool application_control_q1_source_prethink(qa_application *app, qa_actor_id act
         .water_level = (uint8_t)(record->water_level < 0 ? 0 : record->water_level > 3 ? 3 : record->water_level),
         .water_type = record->water_type}};
     if (!qa_session_invoke(app->session, actor, QA_INVOKE_PHYSICS, q1_source_prethink, &call, error)) return false;
+    if (call.impulse_consumed && command && live(app, actor))
+        application_control_frames_consume_impulse(app, actor, command->sequence);
     return !live(app, actor) || application_control_frames_q1_complete(app, actor, map->owner, error);
 }
 
@@ -616,7 +654,322 @@ static int32_t input_angle_word(float degrees)
     return (int32_t)(uint16_t)(int32_t)(fmodf(degrees, 360.0f) * (65536.0f / 360.0f));
 }
 
-static bool qc_input(application_move_call *move, qa_movement_state *state,
+typedef struct application_control_mod_input {
+    struct application_control_mod_input *next;
+    qa_application *application;
+    qa_actor_id actor;
+    application_control_context source;
+    qa_movement_state *state;
+    qa_movement_command *command;
+    qa_vec3 aim;
+    int32_t impulse;
+    uint64_t elapsed_ns;
+    bool borrowed, suspended;
+    size_t count;
+    application_q3_component_input **scopes;
+} application_control_mod_input;
+
+static qa_vec3 component_aim(const qa_movement_state *state, const qa_movement_command *command)
+{
+    if (command->kind == state->kind &&
+        (command->kind == QA_MOVEMENT_Q3 || command->kind == QA_MOVEMENT_Q2_CLASSIC)) {
+        float angles[3];
+        for (unsigned i = 0; i < 3; ++i) {
+            int32_t delta = command->kind == QA_MOVEMENT_Q3 ? state->data.q3.delta_angle_words[i]
+                : state->data.q2.delta_angle_shorts[i];
+            angles[i] = (float)(uint16_t)((uint32_t)command->angle_words[i] + (uint32_t)delta) * (360.0f / 65536.0f);
+        }
+        return qa_v3(angles[0], angles[1], angles[2]);
+    }
+    return command->kind == state->kind && command->kind == QA_MOVEMENT_Q2_RERELEASE
+        ? qa_vec_add(command->angles, state->data.q2r.delta_angles) : command->angles;
+}
+
+static bool component_input_current(const application_control_mod_input *scope, qa_error *error)
+{
+    const application_control_context *current = application_control_frame_current(scope->application, scope->actor);
+    application_control_context active = scope->source;
+    bool admitted = current != NULL;
+    if (!current) {
+        if (active.command_only) admitted = qa_session_active_command(scope->application->session,
+            application_control_provider(&scope->source), &active.command) && qa_actor_id_equal(active.command.actor, scope->actor);
+        else admitted = qa_session_active_frame(scope->application->session,
+            application_control_provider(&scope->source), &active.frame);
+        current = &active;
+    }
+    if (!scope->borrowed || scope->suspended || !live(scope->application, scope->actor) || !admitted ||
+        application_control_provider(current) != application_control_provider(&scope->source) ||
+        application_control_kind(current) != application_control_kind(&scope->source) ||
+        application_control_time(current) != application_control_time(&scope->source) ||
+        (current->command_only && current->command.sequence != scope->source.command.sequence))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Component input lost its actual command borrow");
+    return true;
+}
+
+static double component_move_scale(qa_movement_kind kind)
+{ return kind == QA_MOVEMENT_Q3 ? 127.0 : kind == QA_MOVEMENT_NETQUAKE || kind == QA_MOVEMENT_QUAKEWORLD ? 320.0 : 200.0; }
+
+static bool component_input_values(void *context, application_q3_mod_inputs *out, qa_error *error)
+{
+    application_control_mod_input *scope = context;
+    if (!component_input_current(scope, error)) return false;
+    const qa_movement_command *command = scope->command;
+    double scale = component_move_scale(command->kind);
+    bool rerelease = command->kind == QA_MOVEMENT_Q2_RERELEASE;
+    bool q1 = command->kind == QA_MOVEMENT_NETQUAKE || command->kind == QA_MOVEMENT_QUAKEWORLD;
+    application_q3_mod_inputs values = {0};
+    values.values[Q3_MOD_SELF] = (application_q3_mod_value){.kind=Q3_MOD_VALUE_ACTOR,.as.actor=scope->actor};
+    values.values[Q3_MOD_VIEW_ANGLES] = (application_q3_mod_value){.kind=Q3_MOD_VALUE_VECTOR,.as.vector=scope->aim};
+#define SCALAR(name, value) values.values[name] = (application_q3_mod_value){.kind=Q3_MOD_VALUE_SCALAR,.as.scalar=(value)}
+    SCALAR(Q3_MOD_ATTACK, (command->buttons & 1u) != 0);
+    SCALAR(Q3_MOD_JUMP, q1 ? (command->buttons & 2u) != 0 : rerelease ? (command->buttons & 8u) != 0 : command->up_move > 0);
+    SCALAR(Q3_MOD_IMPULSE, scope->impulse);
+    SCALAR(Q3_MOD_FORWARD, command->forward_move / scale);
+    SCALAR(Q3_MOD_SIDE, command->side_move / scale);
+    SCALAR(Q3_MOD_UP, rerelease ? (command->buttons & 8u) ? 1 : (command->buttons & 16u) ? -1 : 0 : command->up_move / scale);
+    SCALAR(Q3_MOD_TIME, (double)application_control_time(&scope->source) / 1e9);
+    SCALAR(Q3_MOD_ELAPSED, (double)scope->elapsed_ns / 1e9);
+#undef SCALAR
+    *out = values; return true;
+}
+
+static bool component_input_set(application_control_mod_input *scope, application_q3_mod_input input,
+    double value, const qa_vec3 *angles, qa_error *error)
+{
+    qa_movement_command next = *scope->command;
+    if (input == Q3_MOD_VIEW_ANGLES) {
+        if (!angles || !qa_vec_finite(*angles))
+            return application_fail(error, QA_ERROR_ARGUMENT, "Component aim output must be finite");
+        const double difference[] = {(double)angles->x - scope->aim.x,
+            (double)angles->y - scope->aim.y, (double)angles->z - scope->aim.z};
+        if (next.kind == QA_MOVEMENT_NETQUAKE) next.angles = *angles;
+        else if (next.kind == QA_MOVEMENT_QUAKEWORLD || next.kind == QA_MOVEMENT_Q2_RERELEASE) {
+            next.angles = qa_v3(qa_source_fround((double)next.angles.x + difference[0]),
+                qa_source_fround((double)next.angles.y + difference[1]),
+                qa_source_fround((double)next.angles.z + difference[2]));
+            if (!qa_vec_finite(next.angles))
+                return application_fail(error, QA_ERROR_ARGUMENT, "Component aim exceeds its command fields");
+        } else {
+            for (unsigned i = 0; i < 3; ++i) {
+                double word = trunc(difference[i] * 65536.0 / 360.0);
+                uint32_t wrapped = (uint32_t)fmod(fmod(word, 4294967296.0) + 4294967296.0, 4294967296.0);
+                wrapped += (uint32_t)next.angle_words[i];
+                memcpy(&next.angle_words[i], &wrapped, sizeof(wrapped));
+            }
+        }
+        scope->aim = *angles;
+    } else {
+        if (!isfinite(value)) return application_fail(error, QA_ERROR_ARGUMENT, "Component input output must be finite");
+        switch (input) {
+        case Q3_MOD_ATTACK:
+            next.buttons = value != 0 ? next.buttons | 1u : next.buttons & ~1u; break;
+        case Q3_MOD_JUMP:
+            if (next.kind == QA_MOVEMENT_NETQUAKE || next.kind == QA_MOVEMENT_QUAKEWORLD)
+                next.buttons = value != 0 ? next.buttons | 2u : next.buttons & ~2u;
+            else if (next.kind == QA_MOVEMENT_Q2_RERELEASE)
+                next.buttons = value != 0 ? next.buttons | 8u : next.buttons & ~8u;
+            else next.up_move = value == 0 ? fminf(0, next.up_move)
+                : fmaxf(fmaxf(10, next.up_move), (float)component_move_scale(next.kind));
+            break;
+        case Q3_MOD_IMPULSE:
+            if (value < 0 || value > 255 || value != trunc(value))
+                return application_fail(error, QA_ERROR_ARGUMENT, "Component impulse output must fit one byte");
+            scope->impulse = (int32_t)value;
+            if (next.kind != QA_MOVEMENT_Q3 && next.kind != QA_MOVEMENT_Q2_RERELEASE) next.impulse = (uint8_t)value;
+            break;
+        case Q3_MOD_FORWARD: case Q3_MOD_SIDE: case Q3_MOD_UP: {
+            if (input == Q3_MOD_UP && next.kind == QA_MOVEMENT_Q2_RERELEASE) {
+                next.buttons = (next.buttons & ~(8u | 16u)) | (value > 0 ? 8u : value < 0 ? 16u : 0); break;
+            }
+            double scaled = value * component_move_scale(next.kind);
+            if (next.kind == QA_MOVEMENT_Q2_RERELEASE) {
+                if (!isfinite(scaled) || !isfinite(qa_source_fround(scaled)))
+                    return application_fail(error, QA_ERROR_ARGUMENT, "Component movement exceeds its float command fields");
+            } else {
+                double minimum = next.kind == QA_MOVEMENT_Q3 ? -127 : -32768;
+                double maximum = next.kind == QA_MOVEMENT_Q3 ? 127 : 32767;
+                if (!isfinite(scaled) || scaled < minimum || scaled > maximum)
+                    return application_fail(error, QA_ERROR_ARGUMENT, "Component movement exceeds its command fields");
+                scaled = trunc(scaled);
+            }
+            float published = qa_source_fround(scaled);
+            if (input == Q3_MOD_FORWARD) next.forward_move = published;
+            else if (input == Q3_MOD_SIDE) next.side_move = published;
+            else next.up_move = published;
+            break;
+        }
+        default: return application_fail(error, QA_ERROR_ARGUMENT, "Component output does not name a command input");
+        }
+    }
+    *scope->command = next; return true;
+}
+
+static bool component_input_output(void *context, const application_q3_mod_output *output, qa_error *error)
+{
+    application_control_mod_input *scope = context;
+    if (!component_input_current(scope, error)) return false;
+    if (!output->consume) return component_input_set(scope, output->input,
+        output->input == Q3_MOD_VIEW_ANGLES ? 0 : output->value.scalar,
+        output->input == Q3_MOD_VIEW_ANGLES ? &output->value.angles : NULL, error);
+    if (output->value.inputs & ~((1u << Q3_MOD_INPUT_COUNT) - 1u))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Component consume names an unknown input");
+    for (unsigned i = 0; i < Q3_MOD_INPUT_COUNT; ++i) if (output->value.inputs & (1u << i)) {
+        qa_vec3 zero = {0};
+        if (!component_input_set(scope, (application_q3_mod_input)i, 0, i == Q3_MOD_VIEW_ANGLES ? &zero : NULL, error)) return false;
+    }
+    return true;
+}
+
+static void component_input_free(application_control_mod_input *scope)
+{
+    application_control_mod_input *head = application_control_mod_head(scope->application);
+    application_control_mod_input **link = &head;
+    while (*link && *link != scope) link = &(*link)->next;
+    if (*link) *link = scope->next;
+    application_control_mod_head_set(scope->application, head);
+    free(scope->scopes); free(scope);
+}
+
+static bool component_input_close(application_control_mod_input **in, bool completed, qa_error *error)
+{
+    application_control_mod_input *scope = *in;
+    if (!scope) return true;
+    bool ok = true; qa_error first = {0};
+    if (completed) for (size_t i = 0; i < scope->count; ++i) {
+        qa_error current = {0};
+        if (!application_q3_component_input_complete(scope->scopes[i], true, component_input_values, scope, &current)) {
+            if (ok) first = current; ok = false;
+        }
+    }
+    for (size_t i = scope->count; i > 0; --i) {
+        qa_error current = {0};
+        bool closed = application_q3_component_input_abort(scope->scopes + i - 1, &current);
+        if (!closed) { if (ok) first = current; ok = false; }
+        if (scope->scopes[i - 1]) break;
+    }
+    bool retained = false;
+    for (size_t i = 0; i < scope->count; ++i) retained |= scope->scopes[i] != NULL;
+    if (!retained) { component_input_free(scope); *in = NULL; }
+    else scope->borrowed = false;
+    if (!ok && error) *error = first;
+    return ok;
+}
+
+bool application_control_mod_abort_all(qa_application *app, qa_error *error)
+{
+    while (application_control_mod_head(app)) {
+        application_control_mod_input *scope = application_control_mod_head(app);
+        scope->borrowed = false;
+        if (!component_input_close(&scope, false, error)) return false;
+    }
+    return true;
+}
+
+static bool component_input_boundary(application_move_call *move, qa_movement_state *state,
+    qa_movement_command *command, const qa_vec3 *aim, application_source_input_scope *scope,
+    bool before, bool slice, uint64_t elapsed_ns, qa_error *error)
+{
+    if (!before) {
+        application_control_mod_input *input = scope->components;
+        if (!input) return true;
+        input->state = state; input->command = command; input->borrowed = true; input->suspended = false;
+        input->aim = aim ? *aim : component_aim(state, command);
+        return component_input_close(&scope->components, live(move->application, move->control->actor), error);
+    }
+    size_t count = application_q3_components_count(move->application);
+    if (!count) return true;
+    if (scope->components) return application_fail(error, QA_ERROR_ARGUMENT, "Component input scope is already entered");
+    const application_control_context *source = application_control_frame_current(move->application, move->control->actor);
+    if (!source) {
+        if (!move->execution) return application_fail(error, QA_ERROR_ARGUMENT, "Component input requires its actual source owner");
+        if (qa_session_active_command(move->application->session, move->execution->owner, &move->context.command) &&
+            qa_actor_id_equal(move->context.command.actor, move->control->actor)) move->context.command_only = true;
+        else if (!qa_session_active_frame(move->application->session, move->execution->owner, &move->context.frame))
+            return application_fail(error, QA_ERROR_ARGUMENT, "Component input requires its actual source admission");
+        source = &move->context;
+    }
+    application_control_mod_input *input = calloc(1, sizeof(*input));
+    if (!input) return application_fail(error, QA_ERROR_MEMORY, "Retaining canonical component input");
+    input->scopes = calloc(count, sizeof(*input->scopes));
+    if (!input->scopes) { free(input); return application_fail(error, QA_ERROR_MEMORY, "Retaining component input roster"); }
+    input->application = move->application; input->actor = move->control->actor; input->source = *source;
+    input->state = state; input->command = command; input->elapsed_ns = elapsed_ns; input->borrowed = true;
+    input->aim = aim ? *aim : component_aim(state, command);
+    input->next = application_control_mod_head(move->application);
+    input->impulse = command->impulse;
+    if (command->kind == QA_MOVEMENT_Q3 || command->kind == QA_MOVEMENT_Q2_RERELEASE) {
+        if (source->unified_has_impulse) input->impulse = source->unified_impulse;
+        else if (input->next && qa_actor_id_equal(input->next->actor, input->actor)) input->impulse = input->next->impulse;
+    }
+    application_control_mod_head_set(move->application, input); scope->components = input;
+    for (size_t i = 0; i < count && live(move->application, input->actor); ++i) {
+        application_q3_component *component = NULL;
+        if (!application_q3_components_at(move->application, i, &component, error)) return false;
+        input->count = i + 1;
+        if (!application_q3_component_input_begin(component, input->actor, slice, component_input_values,
+            component_input_output, input, input->scopes + i, error)) return false;
+    }
+    return true;
+}
+
+bool application_control_mod_usercmd(void *context, qa_actor_id actor,
+    const application_q3_mod_inputs *inputs, const qa_q3_player *player,
+    qa_q3_usercmd *out, qa_error *error)
+{
+    qa_application *app = context;
+    if (!app || !inputs || !player || !out)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Component usercmd needs its actual working input and source player");
+    application_control_mod_input *scope = application_control_mod_head(app);
+    while (scope && !qa_actor_id_equal(scope->actor, actor)) scope = scope->next;
+    if (!scope || !component_input_current(scope, error))
+        return scope ? false : application_fail(error, QA_ERROR_ARGUMENT, "Component usercmd has no entered canonical input");
+    application_q3_mod_inputs current;
+    if (!component_input_values(scope, &current, error)) return false;
+    for (unsigned i = 0; i < Q3_MOD_INPUT_COUNT; ++i) {
+        const application_q3_mod_value *left = &current.values[i], *right = &inputs->values[i];
+        if (left->kind != right->kind || (left->kind == Q3_MOD_VALUE_SCALAR && left->as.scalar != right->as.scalar) ||
+            (left->kind == Q3_MOD_VALUE_VECTOR && !same_vector(left->as.vector, right->as.vector)))
+            return application_fail(error, QA_ERROR_ARGUMENT, "Component usercmd input is not the current command projection");
+    }
+    const qa_movement_command *command = scope->command;
+    uint64_t milliseconds = application_control_time(&scope->source) / UINT64_C(1000000);
+    if (command->kind != QA_MOVEMENT_Q3 && milliseconds > INT32_MAX)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Component command clock exceeds the actual Q3 ABI");
+    qa_q3_usercmd result = {.serverTime = command->kind == QA_MOVEMENT_Q3 ? command->server_time_ms : (int32_t)milliseconds,
+        .buttons = (int32_t)(command->kind == QA_MOVEMENT_Q3 ? command->buttons : command->buttons & 1u),
+        .weapon = (uint8_t)player->weapon};
+    const double aim[] = {scope->aim.x, scope->aim.y, scope->aim.z};
+    for (unsigned i = 0; i < 3; ++i) {
+        uint32_t word = (uint32_t)(uint16_t)(int32_t)(fmod(aim[i], 360.0) * 65536.0 / 360.0);
+        word -= (uint32_t)player->deltaAngles[i];
+        memcpy(result.angles + i, &word, sizeof(word));
+    }
+    double scale = 127.0 / component_move_scale(command->kind);
+    double forward = trunc(fmax(-127, fmin(127, command->forward_move * scale)));
+    double side = trunc(fmax(-127, fmin(127, command->side_move * scale)));
+    double up = command->kind == QA_MOVEMENT_Q2_RERELEASE ? command->buttons & 8u ? 127 : command->buttons & 16u ? -127 : 0 :
+        (command->kind == QA_MOVEMENT_NETQUAKE || command->kind == QA_MOVEMENT_QUAKEWORLD) && (command->buttons & 2u) ? 127 :
+        trunc(fmax(-127, fmin(127, command->up_move * scale)));
+    if (command->kind == QA_MOVEMENT_Q3) {
+        const float axes[] = {command->forward_move, command->side_move, command->up_move};
+        for (unsigned i = 0; i < 3; ++i) if (!isfinite(axes[i]) || axes[i] < -128 || axes[i] > 127 || axes[i] != truncf(axes[i]))
+            return application_fail(error, QA_ERROR_ARGUMENT, "Component Q3 command does not fit its actual byte axes");
+        forward = axes[0]; side = axes[1]; up = axes[2];
+    }
+    result.forwardmove = (int8_t)forward; result.rightmove = (int8_t)side; result.upmove = (int8_t)up;
+    if (!component_input_current(scope, error)) return false;
+    *out = result; return true;
+}
+
+static void component_input_retarget(application_source_input_scope *scope,
+    qa_movement_state *state, qa_movement_command *command, bool suspended)
+{
+    if (!scope->components) return;
+    scope->components->state = state; scope->components->command = command;
+    scope->components->suspended = suspended;
+}
+
+static bool qc_input_body(application_move_call *move, qa_movement_state *state,
                        qa_movement_command *command, const qa_vec3 *absolute_aim,
                        application_source_input_scope *scope,
                        bool before, bool slice,
@@ -677,7 +1030,7 @@ static bool qc_input(application_move_call *move, qa_movement_state *state,
             return application_control_source_abort(scope, error);
         }
     }
-    if (!before) *scope = (application_source_input_scope){0};
+    if (!before) { scope->count = 0; scope->actor = (qa_actor_id){0}; scope->slice = false; }
     bool changed_aim = !same_vector(original_aim, semantic.angles);
     if (changed_aim && command->kind == state->kind &&
         (state->kind == QA_MOVEMENT_Q3 || state->kind == QA_MOVEMENT_Q2_CLASSIC)) {
@@ -695,6 +1048,19 @@ static bool qc_input(application_move_call *move, qa_movement_state *state,
         ? qa_vec_sub(semantic.angles, state->data.q2r.delta_angles) : semantic.angles : command->angles;
     *command = semantic;
     return true;
+}
+
+static bool qc_input(application_move_call *move, qa_movement_state *state,
+    qa_movement_command *command, const qa_vec3 *aim, application_source_input_scope *scope,
+    bool before, bool slice, uint64_t elapsed_ns, qa_error *error)
+{
+    if (before) {
+        scope->actor = move->control->actor; scope->slice = slice;
+        if (!qc_input_body(move, state, command, aim, scope, true, slice, elapsed_ns, error)) return false;
+        return component_input_boundary(move, state, command, aim, scope, true, slice, elapsed_ns, error);
+    }
+    if (!component_input_boundary(move, state, command, aim, scope, false, slice, elapsed_ns, error)) return false;
+    return qc_input_body(move, state, command, aim, scope, false, slice, elapsed_ns, error);
 }
 
 bool application_control_source_input(qa_application *application, qa_actor_id actor,
@@ -715,6 +1081,9 @@ bool application_control_source_input(qa_application *application, qa_actor_id a
         .character = application_provider_for(application, actor, QA_ROLE_CHARACTER, ""),
         .arsenal = application_provider_for(application, actor, QA_ROLE_ARSENAL, ""),
         .effects = application_provider_for(application, actor, QA_ROLE_EFFECTS, "")};
+    const application_control_context *current = application_control_frame_current(application, actor);
+    if (current) move.context = *current;
+    move.execution = control_execution(application, actor);
     return qc_input(&move, state, command, absolute_aim, scope, before, slice, elapsed_ns, error);
 }
 
@@ -724,6 +1093,11 @@ bool application_control_source_abort(application_source_input_scope *scope, qa_
         return application_fail(error, QA_ERROR_ARGUMENT, "Source input cleanup needs its scope");
     bool ok = true;
     qa_error first = {0};
+    if (scope->components) {
+        scope->components->borrowed = false;
+        if (!component_input_close(&scope->components, false, &first)) ok = false;
+        if (scope->components) { if (error) *error = first; return false; }
+    }
     while (scope->count) {
         application_provider *provider = scope->owners[--scope->count];
         scope->owners[scope->count] = NULL;
@@ -733,12 +1107,12 @@ bool application_control_source_abort(application_source_input_scope *scope, qa_
             ok = false; first = current;
         }
     }
-    *scope = (application_source_input_scope){0};
+    scope->actor = (qa_actor_id){0}; scope->slice = false;
     if (!ok && error) *error = first;
     return ok;
 }
 
-static qa_movement_control move_phase(void *opaque, qa_movement_phase phase,
+static qa_movement_control move_phase_body(void *opaque, qa_movement_phase phase,
                                       qa_movement_call *call,
                                       qa_error *error)
 {
@@ -849,7 +1223,8 @@ static qa_movement_control move_phase(void *opaque, qa_movement_phase phase,
         if (!source_think(move, actor, call, &result, error)) return QA_MOVEMENT_ERROR;
         if (!live(move->application, actor)) return QA_MOVEMENT_REMOVED;
     }
-    if (phase == QA_MOVE_WEAPON &&
+    bool source_weapon_slice = application_guest_input_weapon_slice(move->application, actor);
+    if (phase == QA_MOVE_WEAPON && !source_weapon_slice &&
         !qw_spectator &&
         !move->context.defer_postthink &&
         move->arsenal != NULL &&
@@ -893,6 +1268,8 @@ static qa_movement_control move_phase(void *opaque, qa_movement_phase phase,
     if (source_phase && !refresh_source_call(move, call, error)) return QA_MOVEMENT_ERROR;
 
     for (size_t index = 0; index < move->q3_count; ++index) {
+        if (phase == QA_MOVE_WEAPON && source_weapon_slice && move->q3[index] == move->arsenal)
+            continue;
         move->committed = true;
         qa_movement_control result = qa_q3_movement_phase_selected(
             move->q3[index]->state.q3, phase, call, move->q3[index] == move->arsenal, error);
@@ -900,13 +1277,14 @@ static qa_movement_control move_phase(void *opaque, qa_movement_phase phase,
             return result;
     }
 
-    if (phase == QA_MOVE_WEAPON && move->arsenal != NULL &&
+    if (phase == QA_MOVE_WEAPON && !source_weapon_slice && move->arsenal != NULL &&
         move->arsenal->kind == APPLICATION_PROVIDER_Q3 &&
         call->command->kind != QA_MOVEMENT_Q3 &&
         q3_present(move->arsenal, actor)) {
         qa_q3_controls controls = {
             .attack = (call->command->buttons & 1u) != 0,
-            .use_holdable = move->context.source_usercmd ? move->context.source_holdable :
+            .use_holdable = move->context.unified_intent ? move->context.unified_holdable :
+                move->context.source_usercmd ? move->context.source_holdable :
                 (call->command->buttons & 4u) != 0,
             .requested_weapon = (qa_q3_weapon)call->command->weapon,
             .prediction = call->prediction,
@@ -929,7 +1307,17 @@ static qa_movement_control move_phase(void *opaque, qa_movement_phase phase,
                                           : QA_MOVEMENT_REMOVED;
 }
 
-static qa_movement_control move_touch(void *opaque,
+static qa_movement_control move_phase(void *opaque, qa_movement_phase phase,
+    qa_movement_call *call, qa_error *error)
+{
+    application_move_call *move = opaque;
+    const qa_movement_call *previous = application_control_frames_call_swap(move->application, call);
+    qa_movement_control result = move_phase_body(opaque, phase, call, error);
+    application_control_frames_call_swap(move->application, previous);
+    return result;
+}
+
+static qa_movement_control move_touch_body(void *opaque,
                                       const qa_trace_result *trace,
                                       qa_movement_call *call,
                                       qa_error *error)
@@ -955,7 +1343,17 @@ static qa_game_family control_family(qa_movement_kind kind)
     return kind == QA_MOVEMENT_Q3 ? QA_GAME_Q3 : QA_GAME_Q2;
 }
 
-static qa_movement_control move_effect(void *opaque,
+static qa_movement_control move_touch(void *opaque, const qa_trace_result *trace,
+    qa_movement_call *call, qa_error *error)
+{
+    application_move_call *move = opaque;
+    const qa_movement_call *previous = application_control_frames_call_swap(move->application, call);
+    qa_movement_control result = move_touch_body(opaque, trace, call, error);
+    application_control_frames_call_swap(move->application, previous);
+    return result;
+}
+
+static qa_movement_control move_effect_body(void *opaque,
                                        const qa_movement_effect *effect,
                                        qa_movement_call *call,
                                        qa_error *error)
@@ -1000,6 +1398,16 @@ static qa_movement_control move_effect(void *opaque,
                       .attenuation = 1.0f,
                   },
                   error));
+}
+
+static qa_movement_control move_effect(void *opaque, const qa_movement_effect *effect,
+    qa_movement_call *call, qa_error *error)
+{
+    application_move_call *move = opaque;
+    const qa_movement_call *previous = application_control_frames_call_swap(move->application, call);
+    qa_movement_control result = move_effect_body(opaque, effect, call, error);
+    application_control_frames_call_swap(move->application, previous);
+    return result;
 }
 
 static bool move_firing(void *opaque, const qa_movement_call *call)
@@ -1073,6 +1481,69 @@ static bool movement_provider(qa_application *application, qa_actor_id actor,
     return true;
 }
 
+static bool movement_numeric(qa_application *app, application_provider *provider,
+    qa_movement_kind kind, bool prediction, qa_application_movement_numeric *out, qa_error *error)
+{
+    *out = (qa_application_movement_numeric){0};
+    if (!prediction && provider->kind != APPLICATION_PROVIDER_Q1 && provider->kind != APPLICATION_PROVIDER_Q2 &&
+        provider->kind != APPLICATION_PROVIDER_Q3 && provider->kind != APPLICATION_PROVIDER_QC) return true;
+#if !defined(__GNUC__) && !defined(__clang__)
+    return application_fail(error, QA_ERROR_UNSUPPORTED, "Native movement has no declared C contraction policy");
+#else
+    qa_application_numeric_rounding rounding;
+    switch (fegetround()) {
+    case FE_TONEAREST: rounding = QA_APPLICATION_ROUND_NEAREST; break;
+    case FE_DOWNWARD: rounding = QA_APPLICATION_ROUND_DOWN; break;
+    case FE_UPWARD: rounding = QA_APPLICATION_ROUND_UP; break;
+    case FE_TOWARDZERO: rounding = QA_APPLICATION_ROUND_ZERO; break;
+    default: return application_fail(error, QA_ERROR_UNSUPPORTED, "Native movement has an unknown rounding environment");
+    }
+    qa_string_id id;
+    if (!qa_strings_intern_cstr(qa_session_strings(app->session), "qa:numeric/movement-c", &id, error)) return false;
+    *out = (qa_application_movement_numeric){.id = id, .radix = FLT_RADIX,
+        .scalar_mantissa_bits = FLT_MANT_DIG, .double_mantissa_bits = DBL_MANT_DIG,
+        .evaluation_method = FLT_EVAL_METHOD, .rounding = rounding, .native_c = true,
+        .qw_origin_binary64 = kind == QA_MOVEMENT_QUAKEWORLD};
+    return true;
+#endif
+}
+
+static bool control_numeric_current(qa_application *app, qa_actor_id actor,
+    const qa_application_movement_numeric *numeric, bool prediction, qa_error *error)
+{
+    application_provider *provider;
+    if (!app || !numeric || !live(app, actor) || !movement_provider(app, actor, &provider, error)) return false;
+    bool native = prediction || provider->kind == APPLICATION_PROVIDER_Q1 || provider->kind == APPLICATION_PROVIDER_Q2 ||
+        provider->kind == APPLICATION_PROVIDER_Q3 || provider->kind == APPLICATION_PROVIDER_QC;
+    if (!native) return (!numeric->native_c && !numeric->id && !numeric->radix &&
+        !numeric->scalar_mantissa_bits && !numeric->double_mantissa_bits &&
+        !numeric->evaluation_method && !numeric->rounding && !numeric->qw_origin_binary64) ||
+        application_fail(error, QA_ERROR_FORMAT, "External movement cannot claim native C arithmetic");
+    qa_application_numeric_rounding rounding;
+    switch (fegetround()) {
+    case FE_TONEAREST: rounding = QA_APPLICATION_ROUND_NEAREST; break;
+    case FE_DOWNWARD: rounding = QA_APPLICATION_ROUND_DOWN; break;
+    case FE_UPWARD: rounding = QA_APPLICATION_ROUND_UP; break;
+    case FE_TOWARDZERO: rounding = QA_APPLICATION_ROUND_ZERO; break;
+    default: return application_fail(error, QA_ERROR_UNSUPPORTED, "Native movement lost its rounding environment");
+    }
+    const char *id = qa_strings_cstr(qa_session_strings(app->session), numeric->id);
+    return (numeric->native_c && id && !strcmp(id, "qa:numeric/movement-c") &&
+        numeric->radix == FLT_RADIX && numeric->scalar_mantissa_bits == FLT_MANT_DIG &&
+        numeric->double_mantissa_bits == DBL_MANT_DIG && numeric->evaluation_method == FLT_EVAL_METHOD &&
+        numeric->rounding == rounding && numeric->qw_origin_binary64 ==
+            (provider->component.clock.kind == QA_CLOCK_QUAKEWORLD)) ||
+        application_fail(error, QA_ERROR_UNSUPPORTED, "Native movement numeric recipe differs from its execution environment");
+}
+
+bool application_control_numeric_current(qa_application *app, qa_actor_id actor,
+    const qa_application_movement_numeric *numeric, qa_error *error)
+{ return control_numeric_current(app, actor, numeric, false, error); }
+
+bool application_control_prediction_numeric_current(qa_application *app, qa_actor_id actor,
+    const qa_application_movement_numeric *numeric, qa_error *error)
+{ return control_numeric_current(app, actor, numeric, true, error); }
+
 bool application_control_ensure(qa_application *application, qa_actor_id actor,
                                 qa_vec3 view_angles,
                                 application_control_record **out,
@@ -1105,12 +1576,17 @@ bool application_control_ensure(qa_application *application, qa_actor_id actor,
         return false;
 
     qa_movement_kind kind = movement_kind(provider->component.clock.kind);
+    qa_application_movement_numeric numeric, prediction_numeric;
+    if (!movement_numeric(application, provider, kind, false, &numeric, error) ||
+        !movement_numeric(application, provider, kind, true, &prediction_numeric, error)) return false;
     qa_movement_input defaults = qa_movement_input_default(kind, actor);
     *record = (application_control_record){
         .application = application,
         .actor = actor,
         .state = qa_movement_state_default(kind, body.origin),
         .profile = selected_profile(application, provider),
+        .numeric = numeric,
+        .prediction_numeric = prediction_numeric,
         .standing_bounds = defaults.standing.bounds,
         .bounds = body.bounds,
         .view_angles = view_angles,
@@ -1168,6 +1644,146 @@ bool qa_application_control_admit(qa_application *application,
     application_control_record *ignored;
     return application_control_ensure(application, actor, view_angles, &ignored,
                                       error);
+}
+
+bool application_control_guest_equipment(qa_application *app, application_provider *primary,
+    qa_actor_id actor, application_q3_weapons *weapons, qa_q3_equipment_motion *out, qa_error *error)
+{
+    if (!app || !primary || primary->application != app || primary->kind != APPLICATION_PROVIDER_QVM ||
+        !primary->constructed || !primary->attached || primary->close_pending || !out ||
+        !live(app, actor) || actor.slot >= app->control_capacity ||
+        !app->controls[actor.slot].active || app->controls[actor.slot].retired ||
+        !qa_actor_id_equal(app->controls[actor.slot].actor, actor) ||
+        application_world_provider(app, QA_ROLE_ENTITIES, "") != primary)
+        return application_fail(error, QA_ERROR_ARGUMENT,
+            "Original equipment motion requires its admitted source player");
+    qa_q3_equipment_motion motion = {.speed_multiplier = 1};
+    application_provider *arsenal = application_provider_for(app, actor, QA_ROLE_ARSENAL, "");
+    if (!arsenal || !arsenal->constructed || !arsenal->attached || arsenal->close_pending)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Original equipment motion lost its selected arsenal");
+    /* Original QVM primary equipment is independently owned by the selected
+     * native Q3 source. The primary built-in missionpack exception cannot
+     * occur for this admitted original GAME owner. */
+    if (arsenal->kind != APPLICATION_PROVIDER_Q3) { *out = motion; return true; }
+    qa_q3_player_state player;
+    if (!qa_q3_player_read(arsenal->state.q3, actor, &player) || !(player.selections & QA_Q3_ARSENAL))
+        return application_fail(error, QA_ERROR_NOT_FOUND, "Selected equipment motion lost its actual arsenal player");
+    bool available;
+    if (!weapons)
+        return application_fail(error, QA_ERROR_UNSUPPORTED,
+            "Selected equipment motion needs its original weapon availability profile");
+    if (!application_q3_weapons_available(weapons, actor, false, &available, error)) return false;
+    if (!available) { *out = motion; return true; }
+    application_provider *character = application_provider_for(app, actor, QA_ROLE_CHARACTER, "");
+    if (!character || !character->constructed || !character->attached || character->close_pending)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Original equipment pose lost its selected character");
+    qa_movement_input postures = qa_movement_input_default(
+        character->component.clock.kind == QA_CLOCK_Q3 ? QA_MOVEMENT_Q3 : QA_MOVEMENT_NETQUAKE, actor);
+    if (!qa_q3_selected_equipment_motion(arsenal->state.q3, actor, &postures.crouched, &motion, error)) return false;
+    if (!live(app, actor) || application_provider_for(app, actor, QA_ROLE_ARSENAL, "") != arsenal ||
+        application_provider_for(app, actor, QA_ROLE_CHARACTER, "") != character ||
+        application_world_provider(app, QA_ROLE_ENTITIES, "") != primary)
+        return application_fail(error, QA_ERROR_NOT_FOUND, "Original equipment motion source changed during pose admission");
+    int32_t haste;
+    if (!application_q3_weapons_powerup_until(weapons, actor, APPLICATION_Q3_HASTE, &haste, error)) return false;
+    motion.speed_multiplier /= haste == 0 ? 1.0 : 1.3;
+    *out = motion;
+    return true;
+}
+
+typedef struct guest_weapon_delay {
+    qa_application *app;
+    application_provider *primary, *arsenal;
+    application_q3_weapons *weapons;
+} guest_weapon_delay;
+
+static bool guest_weapon_delay_current(const guest_weapon_delay *delay, qa_actor_id actor,
+    qa_error *error)
+{
+    return (live(delay->app, actor) && delay->primary->constructed && delay->primary->attached &&
+        !delay->primary->close_pending && delay->arsenal->constructed && delay->arsenal->attached &&
+        !delay->arsenal->close_pending &&
+        application_world_provider(delay->app, QA_ROLE_ENTITIES, "") == delay->primary &&
+        application_provider_for(delay->app, actor, QA_ROLE_ARSENAL, "") == delay->arsenal &&
+        application_guest_input_weapon_slice(delay->app, actor)) ||
+        application_fail(error, QA_ERROR_NOT_FOUND, "Original weapon slice lost its source or selected arsenal");
+}
+
+static bool guest_weapon_firing_delay(void *context, qa_actor_id actor, int32_t input,
+    int32_t *out, qa_error *error)
+{
+    guest_weapon_delay *delay = context;
+    return guest_weapon_delay_current(delay, actor, error) &&
+        application_q3_weapons_delay(delay->weapons, actor, input, out, error) &&
+        guest_weapon_delay_current(delay, actor, error);
+}
+
+bool application_control_guest_weapon_step(qa_application *app, qa_actor_id actor,
+    const qa_movement_command *command, const qa_q3_player *player, bool reached, qa_error *error)
+{
+    application_provider *primary = app ? application_world_provider(app, QA_ROLE_ENTITIES, "") : NULL;
+    struct application_q3_guest *engine = primary ? q3g_engine(primary) : NULL;
+    application_provider *arsenal = app ? application_provider_for(app, actor, QA_ROLE_ARSENAL, "") : NULL;
+    if (!app || !command || !player || command->kind != QA_MOVEMENT_Q3 ||
+        !primary || primary->kind != APPLICATION_PROVIDER_QVM || !engine || !engine->game ||
+        !engine->game->weapons || !arsenal || arsenal == primary || !live(app, actor) ||
+        actor.slot >= app->control_capacity || !app->controls[actor.slot].active ||
+        app->controls[actor.slot].retired || !qa_actor_id_equal(app->controls[actor.slot].actor, actor))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Selected weapons need their actual completed original slice");
+    guest_weapon_delay delay = {app, primary, arsenal, engine->game->weapons};
+    if (!guest_weapon_delay_current(&delay, actor, error)) return false;
+    qa_movement_command applied = *command;
+    qa_equipment_state equipment;
+    bool selected = !qa_equipment_read(app->equipment, actor, &equipment) ||
+        (!equipment.slot_active && !equipment.slot_holstering && !equipment.slot_lowering);
+    if (!selected || !reached) applied.buttons &= ~1u;
+    qa_vec3 aim = qa_v3(player->viewangles[0], player->viewangles[1], player->viewangles[2]);
+    qa_application_control_view control;
+    if (!qa_vec_finite(aim) || !qa_application_control_read(app, actor, &control))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Original weapon slice lost its current source view");
+    int32_t source_water;
+    if (!application_q3_weapons_water_level(delay.weapons, actor, &source_water, error) ||
+        !guest_weapon_delay_current(&delay, actor, error)) return false;
+    bool okay;
+    if (arsenal->kind == APPLICATION_PROVIDER_Q3) {
+        qa_q3_arsenal_source source = {.view_angles = aim, .view_height = (float)player->viewheight,
+            .health = (float)player->stats[0], .legs_animation = player->legsAnim,
+            .torso_animation = player->torsoAnim, .legs_timer_ms = player->legsTimer,
+            .torso_timer_ms = player->torsoTimer, .context = &delay, .firing_delay = guest_weapon_firing_delay};
+        qa_q3_controls controls = {.attack = (applied.buttons & 1u) != 0,
+            .use_holdable = (applied.buttons & 4u) != 0, .requested_weapon = (qa_q3_weapon)applied.weapon};
+        okay = qa_q3_arsenal_source_step(arsenal->state.q3, actor, &controls,
+            (float)applied.milliseconds, &source, error);
+    } else if (arsenal->kind == APPLICATION_PROVIDER_Q1) {
+        qa_q1_player_view admitted;
+        uint64_t time; double elapsed;
+        if (!qa_q1_player_read(arsenal->state.q1, actor, &admitted) ||
+            !qa_q1_game_clock_read(arsenal->state.q1, &time, &elapsed))
+            return application_fail(error, QA_ERROR_NOT_FOUND, "Original slice has no admitted selected Q1 arsenal");
+        qa_q1_game_operation operation = {0};
+        if (!qa_q1_game_command_begin(arsenal->state.q1, time,
+            (uint64_t)applied.milliseconds * UINT64_C(1000000), &operation, error)) return false;
+        qa_q1_input controls = {.view_angles = aim,
+            .attack = player->stats[0] > 0 && (applied.buttons & 1u) && !(applied.buttons & 2u),
+            .water_level = (uint8_t)(source_water < 0 ? 0 : source_water > 3 ? 3 : source_water),
+            .water_type = control.water_type};
+        okay = qa_q1_player_input(arsenal->state.q1, actor, &controls, error) &&
+            (!live(app, actor) || qa_q1_player_postthink(arsenal->state.q1, actor, error));
+        if (okay && !qa_q1_game_operation_live(&operation))
+            okay = application_fail(error, QA_ERROR_NOT_FOUND, "Selected Q1 weapon slice retired its actual owner");
+        qa_q1_game_operation_end(&operation);
+    } else if (arsenal->kind == APPLICATION_PROVIDER_Q2) {
+        qa_q2_weapon_input controls;
+        okay = application_q2_weapon_input(arsenal, actor, &controls, error);
+        if (okay && live(app, actor)) {
+            controls.angles = aim; controls.view_height = (float)player->viewheight;
+            controls.attack = player->stats[0] > 0 && (applied.buttons & 1u);
+            controls.quad_until_ns = 0; controls.haste = false;
+            okay = qa_q2_weapon_early_turn(arsenal->state.q2, actor, &controls, error);
+        }
+    } else return application_fail(error, QA_ERROR_UNSUPPORTED,
+        "Original slice needs a genuine selected arsenal step capability");
+    return okay && (!live(app, actor) || guest_weapon_delay_current(&delay, actor, error));
 }
 
 static bool prepare_input(application_move_call *move,
@@ -1250,8 +1866,10 @@ static bool prepare_input(application_move_call *move,
             record->actor, &input->state, &input->shape.bounds, &input->environment, &record->view_angles, error)) return false;
     for (size_t index = 0; index < move->q3_count; ++index) {
         move->committed = true;
-        if (!qa_q3_prepare_movement(move->q3[index]->state.q3,
-                                    record->actor, input, error))
+        bool prepare_weapon = move->q3[index] != move->arsenal ||
+            !application_guest_input_weapon_slice(application, record->actor);
+        if (!qa_q3_prepare_movement_selected(move->q3[index]->state.q3,
+                                    record->actor, input, prepare_weapon, error))
             return false;
         if (move->context.source_usercmd && input->state.kind == QA_MOVEMENT_Q3 &&
             move->q3[index]->owner == move->context.command.provider)
@@ -1259,6 +1877,7 @@ static bool prepare_input(application_move_call *move,
         if (!live(application, record->actor))
             return true;
     }
+    character_fixed_pose(input);
     if (move->context.source_usercmd && input->state.kind == QA_MOVEMENT_Q3) {
         application_provider *source = move->world;
         qa_q3_native_client client;
@@ -1420,12 +2039,23 @@ static bool finish_native_players(application_move_call *move,
             application_world_provider(move->application, QA_ROLE_ENTITIES, "") != map)
             return application_fail(error, QA_ERROR_ARGUMENT,
                                     "Authored earthquake retired its selected world source");
+        qa_q1_game_operation rogue_operation = {0};
+        if (!application_control_q1_world_begin(map, &rogue_operation, error)) return false;
+        bool rogue_ok = application_native_q1_rogue_after_physics(map, actor, error);
+        qa_q1_game_operation_end(&rogue_operation);
+        if (!rogue_ok) return false;
+        if (!live(move->application, actor)) return true;
+        if (map->close_pending || !map->constructed || !map->attached ||
+            application_world_provider(move->application, QA_ROLE_ENTITIES, "") != map)
+            return application_fail(error, QA_ERROR_ARGUMENT, "Rogue physics retired its actual world source");
         if (!qa_q1_game_map_after_physics(map->state.q1, actor, error))
             return false;
     }
     if (!live(move->application, actor))
         return true;
-    if (character != NULL && character->kind == APPLICATION_PROVIDER_Q2) {
+    const application_control_context *context = application_control_frame_current(move->application, actor);
+    if (character != NULL && character->kind == APPLICATION_PROVIDER_Q2 &&
+        !(context && context->source_q2cmd && character == source)) {
         qa_q2_player_info info;
         if (qa_q2_player_read(character->state.q2, actor, &info)) {
             move->committed = true;
@@ -1550,6 +2180,47 @@ static bool external_stage_complete(const application_control_external_stage *st
     return guest_complete(stage->application, stage->actor, command, player, stage, error);
 }
 
+static bool unified_arsenal_input(qa_application *app, qa_actor_id actor,
+    const application_control_context *context, qa_movement_command *command, qa_error *error)
+{
+    if (!context->unified_command) return true;
+    application_provider *arsenal = application_provider_for(app, actor, QA_ROLE_ARSENAL, "");
+    if (context->unified_intent && (!arsenal || arsenal->owner != context->arsenal))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Unified arsenal command changed its selected owner");
+    application_provider *source = application_world_provider(app, QA_ROLE_ENTITIES, "");
+    if (context->unified_intent && context->unified_has_impulse &&
+        !(source && source->kind == APPLICATION_PROVIDER_Q1)) command->impulse = context->unified_impulse;
+    if (context->weapon && arsenal &&
+        (arsenal->kind == APPLICATION_PROVIDER_Q1 || arsenal->kind == APPLICATION_PROVIDER_Q2 ||
+         arsenal->kind == APPLICATION_PROVIDER_Q3)) {
+        qa_actor_owner item_owner;
+        if (!qa_inventory_item_owner(app->inventory, actor, context->weapon, &item_owner, NULL) ||
+            item_owner != arsenal->owner) return false;
+        qa_item_id current = 0;
+        if (arsenal->kind == APPLICATION_PROVIDER_Q1 &&
+            !qa_application_weapon_read(app, actor, &current, error)) return false;
+        if (current != context->weapon) {
+            qa_q1_game_operation operation = {0};
+            if (arsenal->kind == APPLICATION_PROVIDER_Q1 &&
+                !application_control_q1_world_begin(arsenal, &operation, error)) return false;
+            bool selected = qa_inventory_item_action(app->inventory, actor, context->weapon, QA_ITEM_USE, error);
+            qa_q1_game_operation_end(&operation);
+            if (!selected) return false;
+        }
+        if (!live(app, actor)) return true;
+        if (application_provider_for(app, actor, QA_ROLE_ARSENAL, "") != arsenal)
+            return application_fail(error, QA_ERROR_ARGUMENT, "Unified weapon action retired its selected owner");
+    }
+    if (arsenal && arsenal->kind == APPLICATION_PROVIDER_Q3) {
+        qa_q3_player_state player;
+        if (!qa_q3_player_read(arsenal->state.q3, actor, &player))
+            return application_fail(error, QA_ERROR_NOT_FOUND, "Unified Q3 arsenal player is absent");
+        if (context->unified_intent || command->kind != QA_MOVEMENT_Q3)
+            command->weapon = (uint8_t)player.requested_weapon;
+    }
+    return true;
+}
+
 static bool control_move(qa_application *application,
                                  qa_actor_id actor,
                                  const qa_movement_command *command,
@@ -1573,6 +2244,7 @@ static bool control_move(qa_application *application,
     if (!record->active || !qa_actor_id_equal(record->actor, actor))
         return application_fail(error, QA_ERROR_NOT_FOUND,
                                 "movement actor is not admitted");
+    if (!application_control_numeric_current(application, actor, &record->numeric, error)) return false;
     if (record->moving)
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "movement cannot reenter the same actor");
@@ -1596,13 +2268,16 @@ static bool control_move(qa_application *application,
         if (applied) { *applied = *command; applied->buttons = 0; }
         record->previous_buttons = record->buttons;
         record->buttons = 0;
-        if (!context->source_usercmd && !context->source_guestcmd && !context->source_qwcmd && !context->source_nqcmd) {
+        if (!context->source_usercmd && !context->source_guestcmd && !context->source_qwcmd && !context->source_nqcmd && !context->source_q2cmd) {
             record->command_sequence = command->sequence;
             record->command_seen = true;
         }
         return true;
     }
     qa_movement_command effective_command = *command;
+    if (context->stage != APPLICATION_CONTROL_PHYSICS &&
+        !unified_arsenal_input(application, actor, context, &effective_command, error)) return false;
+    if (!live(application, actor)) return true;
     command = &effective_command;
     application_provider *movement;
     if (!movement_provider(application, actor, &movement, error))
@@ -1637,7 +2312,7 @@ static bool control_move(qa_application *application,
     qa_movement_profile profile = selected_profile(application, movement);
     application_provider *execution = control_execution(application, actor);
     application_provider *source = application_world_provider(application, QA_ROLE_ENTITIES, "");
-    if (context->source_qwcmd || context->source_nqcmd || context->source_usercmd || context->source_guestcmd) {
+    if (context->source_qwcmd || context->source_nqcmd || context->source_q2cmd || context->source_usercmd || context->source_guestcmd) {
         if (!source || source->owner != application_control_provider(context))
             return application_fail(error, QA_ERROR_ARGUMENT, "Raw source command lost its physical source owner");
         execution = source;
@@ -1686,6 +2361,8 @@ static bool control_move(qa_application *application,
         move.input = &input; move.control = record; move.context = *context;
         input.time_ns = application_control_time(context); input.elapsed_ns = application_control_elapsed(context);
         effective_command = input.command; command = &effective_command;
+        component_input_retarget(&move.qc_command, &input.state, &input.command, false);
+        component_input_retarget(&move.qc_slice, &input.state, &input.command, false);
         *turn = NULL;
     }
     add_q3(&move, move.movement);
@@ -1698,7 +2375,7 @@ static bool control_move(qa_application *application,
     record->moving = true;
     bool ok = begin_q1_operations(&move, error);
     if (ok && physics) ok = application_control_turn_resume(prepared, error);
-    if (ok && !physics && context->weapon) {
+    if (ok && !physics && context->weapon && !context->unified_command) {
         move.committed = true;
         ok = application_bot_weapon_apply(application, actor, context->arsenal, context->weapon, error);
     }
@@ -1872,20 +2549,20 @@ static bool control_move(qa_application *application,
         record->command_angles = command->angles;
         bool received; uint64_t sequence;
         (void)application_control_frames_sequence(application, actor, &received, &sequence);
-        if (!context->source_usercmd && !context->source_guestcmd && !context->source_qwcmd && !context->source_nqcmd &&
+        if (!context->source_usercmd && !context->source_guestcmd && !context->source_qwcmd && !context->source_nqcmd && !context->source_q2cmd &&
             (!context->retained || received)) {
             record->command_sequence = command->sequence;
             record->command_seen = true;
         }
     }
-    if (ok && !preparing && live(application, actor) && move.arsenal != NULL &&
+    if (ok && !preparing && !application_guest_input_weapon_slice(application, actor) &&
+        live(application, actor) && move.arsenal != NULL &&
         move.arsenal->kind == APPLICATION_PROVIDER_Q2) {
         qa_q2_weapon_input controls;
         ok = application_q2_weapon_input(move.arsenal, actor, &controls, error);
         if (ok && live(application, actor)) {
-            controls.latched_attack = controls.attack && (record->previous_buttons & 1u) == 0;
             move.committed = true;
-            ok = qa_q2_weapon_controls(move.arsenal->state.q2, actor, &controls, error);
+            ok = qa_q2_weapon_early_turn(move.arsenal->state.q2, actor, &controls, error);
         }
     }
     if (ok && !preparing && live(application, actor))
@@ -1935,6 +2612,8 @@ static bool control_move(qa_application *application,
     if (retain) {
         prepared->move = move; prepared->input = input;
         prepared->move.input = &prepared->input;
+        component_input_retarget(&prepared->move.qc_command, &prepared->input.state, &prepared->input.command, true);
+        component_input_retarget(&prepared->move.qc_slice, &prepared->input.state, &prepared->input.command, true);
         application_source_input_scope *scopes[] = {&prepared->move.qc_command, &prepared->move.qc_slice};
         for (size_t s = 0; ok && s < 2; ++s) for (size_t i = 0; ok && i < scopes[s]->count; ++i) {
             application_provider *provider = scopes[s]->owners[i];
@@ -2262,21 +2941,21 @@ static bool guest_complete(qa_application *application, qa_actor_id actor,
         record->result.impact_delta = 0;
         input.state = record->state;
         if (stage) return external_stage_current(stage);
-        if (move.arsenal && move.arsenal->kind == APPLICATION_PROVIDER_Q2) {
+        bool source_weapons = application_guest_input_source_weapons(application, actor);
+        if (!source_weapons && move.arsenal && move.arsenal->kind == APPLICATION_PROVIDER_Q2) {
             qa_q2_weapon_input controls;
             ok = application_q2_weapon_input(move.arsenal, actor, &controls, error);
             if (ok && live(application, actor)) {
-                controls.latched_attack = controls.attack && (record->previous_buttons & 1u) == 0;
-                ok = qa_q2_weapon_controls(move.arsenal->state.q2, actor, &controls, error);
+                ok = qa_q2_weapon_early_turn(move.arsenal->state.q2, actor, &controls, error);
             }
-        } else if (command->milliseconds && move.arsenal && move.arsenal->kind == APPLICATION_PROVIDER_Q1) {
+        } else if (!source_weapons && command->milliseconds && move.arsenal && move.arsenal->kind == APPLICATION_PROVIDER_Q1) {
             qa_q1_input controls = {.view_angles = record->view_angles,
                 .attack = (command->buttons & 1u) != 0, .jump = command_jump(command),
                 .use = (command->buttons & 4u) != 0, .impulse = command->impulse,
                 .water_level = (uint8_t)record->water_level, .water_type = record->water_type};
             ok = qa_q1_player_input(move.arsenal->state.q1, actor, &controls, error) &&
                 (!live(application, actor) || qa_q1_player_postthink(move.arsenal->state.q1, actor, error));
-        } else if (command->milliseconds && move.arsenal && move.arsenal->kind == APPLICATION_PROVIDER_Q3) {
+        } else if (!source_weapons && command->milliseconds && move.arsenal && move.arsenal->kind == APPLICATION_PROVIDER_Q3) {
             qa_movement_call call = {.actor = actor, .state = &record->state,
                 .command = &input.command, .bounds = &record->bounds,
                 .view_height = &record->view_height, .water_level = &record->water_level,
@@ -2324,6 +3003,26 @@ bool application_control_velocity(qa_application *application, qa_actor_id actor
         return false;
     if (qa_actor_id_equal(record->result.actor, actor))
         return qa_movement_set_velocity(&record->result.state, velocity, error);
+    return true;
+}
+
+bool application_control_water_read(const qa_application *app, qa_actor_id actor,
+    int32_t *water_type, int32_t *water_level, qa_error *error)
+{
+    if (!app || !water_type || !water_level || !live(app, actor) || actor.slot >= app->control_capacity)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Source water needs its live full actor");
+    const application_control_record *record = &app->controls[actor.slot];
+    if (!record->active || record->retired || !qa_actor_id_equal(record->actor, actor))
+        return application_fail(error, QA_ERROR_NOT_FOUND, "Source water lost its admitted movement owner");
+    const qa_movement_call *call = application_control_frames_call_current(app, actor);
+    int32_t type = record->water_type, level = record->water_level;
+    if (call) {
+        if (!call->state || !call->water_type || !call->water_level || call->state->kind != record->state.kind)
+            return application_fail(error, QA_ERROR_ARGUMENT, "Source water has no genuine current movement fields");
+        type = *call->water_type; level = *call->water_level;
+    } else if (record->moving || application_control_frames_state_current(app, actor))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Source water requires its actual active movement call");
+    *water_type = type; *water_level = level;
     return true;
 }
 
@@ -2387,12 +3086,15 @@ bool qa_application_control_prediction_read(qa_application *application,
         movement_kind(movement->component.clock.kind) != record->state.kind)
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "Prediction configuration lost an admitted selected role");
+    if (!application_control_numeric_current(application, actor, &record->numeric, error) ||
+        !application_control_prediction_numeric_current(application, actor, &record->prediction_numeric, error)) return false;
     qa_body_state body;
     qa_combat_state combat;
     if (!qa_world_body_read(application->world, actor, &body, error) ||
         !qa_combat_read_traits(application->combat, actor, &combat, error)) return false;
     qa_application_control_prediction_configuration result = {
         .movement = movement->owner, .character = character->owner, .arsenal = arsenal->owner,
+        .profile_id = movement->owner, .numeric = record->numeric, .prediction_numeric = record->prediction_numeric,
         .input = qa_movement_input_default(record->state.kind, actor),
         .q2r_pml_origin = record->q2r_pml_origin,
         .view_angles = record->view_angles, .command_angles = record->command_angles,
@@ -2404,6 +3106,9 @@ bool qa_application_control_prediction_read(qa_application *application,
         .native_q3_arsenal = arsenal->kind == APPLICATION_PROVIDER_Q3,
         .requested_weapon = -1,
     };
+    uint64_t registration_order;
+    if (!qa_session_component_recipe(application->session, movement->owner, &result.clock, &registration_order))
+        return application_fail(error, QA_ERROR_NOT_FOUND, "Prediction lost its admitted movement clock recipe");
     if (result.native_q3_arsenal) {
         qa_q3_player_state player;
         if (!qa_q3_player_read(arsenal->state.q3, actor, &player) ||
@@ -2416,6 +3121,25 @@ bool qa_application_control_prediction_read(qa_application *application,
     }
     result.input.state = record->state;
     result.input.profile = record->profile;
+    application_provider *physical = application_world_provider(application, QA_ROLE_ENTITIES, "");
+    if (record->state.kind == QA_MOVEMENT_Q3 && physical && physical->kind == APPLICATION_PROVIDER_Q3) {
+        uint32_t source_slot;
+        if (qa_q3_native_client_slot(physical->state.q3, actor, &source_slot, NULL)) {
+            qa_q3_native_client source_client;
+            qa_q3_client_session source_session;
+            int32_t fixed, step, dmflags;
+            if (!qa_q3_client_read(physical->state.q3, actor, &source_client, error) ||
+                !qa_q3_client_session_read(physical->state.q3, actor, &source_session, error) ||
+                !application_native_q3_settings_integer(physical, "pmove_fixed", &fixed, error) ||
+                !application_native_q3_settings_integer(physical, "pmove_msec", &step, error) ||
+                !application_native_q3_settings_integer(physical, "dmflags", &dmflags, error)) return false;
+            bool spectator = source_session.team == 3;
+            if (!spectator && (fixed || source_client.pmove_fixed) && step <= 0)
+                return application_fail(error, QA_ERROR_ARGUMENT, "Prediction fixed Pmove lost its genuine cached interval");
+            result.input.profile.data.q3.fixed_ms = !spectator && (fixed || source_client.pmove_fixed) ? (uint32_t)step : 0;
+            result.input.profile.data.q3.no_footsteps = !spectator && ((uint32_t)dmflags & 32u);
+        }
+    }
     result.input.shape.bounds = result.input.current_bounds = body.bounds;
     result.input.has_current_bounds = true;
     result.input.view_offset = record->view_offset;
@@ -2425,6 +3149,23 @@ bool qa_application_control_prediction_read(qa_application *application,
     result.input.environment.has_mode = record->player_mode_set;
     result.input.environment.mode = record->player_mode;
     result.input.prediction = true;
+    application_provider *effects = application_provider_for(application, actor, QA_ROLE_EFFECTS, "");
+    application_provider *q3[] = {movement, character, arsenal, effects};
+    for (size_t i = 0; i < sizeof(q3) / sizeof(q3[0]); ++i) {
+        if (!q3_present(q3[i], actor)) continue;
+        bool duplicate = false;
+        for (size_t j = 0; j < i; ++j) duplicate |= q3[j] == q3[i];
+        if (!duplicate && !qa_q3_movement_environment(q3[i]->state.q3, actor, &result.input.environment, error)) return false;
+    }
+    application_client_outputs outputs;
+    if (!application_control_outputs(application, actor, &outputs, error)) return false;
+    result.input.environment.has_body_bounds = outputs.has_body_bounds;
+    if (outputs.has_body_bounds) result.input.environment.body_bounds = outputs.body_bounds;
+    if (outputs.has_mode) { result.input.environment.has_mode = true; result.input.environment.mode = outputs.mode; }
+    result.input.environment.has_stance = outputs.has_stance;
+    result.input.environment.crouched = outputs.crouched;
+    result.has_client_view_offset = outputs.has_view_offset;
+    if (outputs.has_view_offset) result.client_view_offset = outputs.view_offset;
     /* The selected character owns standing dimensions and view height. The
      * actual current body bounds remain a separate snapshot field. */
     qa_movement_input postures = qa_movement_input_default(
@@ -2433,6 +3174,7 @@ bool qa_application_control_prediction_read(qa_application *application,
     result.input.crouched = postures.crouched;
     result.input.dead = postures.dead;
     result.input.invulnerability_bounds = postures.invulnerability_bounds;
+    character_fixed_pose(&result.input);
     if (record->state.kind == QA_MOVEMENT_Q3)
         result.input.shape.bounds = result.input.standing.bounds;
     if (record->state.kind == QA_MOVEMENT_NETQUAKE)
@@ -2478,6 +3220,7 @@ bool qa_application_control_camera(const qa_application *application,
             !application_q2_control_crouched(source->state.native.q2_engine, actor, &crouched, NULL)) return false;
         if (!outputs.has_stance || outputs.crouched || !crouched) {
             out->view_offset = outputs.view_offset; out->view_height = outputs.view_offset.z;
+            out->has_client_view_offset = true;
         }
     }
     return true;
@@ -2756,6 +3499,57 @@ bool application_control_motion_changed(
         if (!change->preserve_command_angles)
             record->command_angles = change->view_angles;
     }
+    return true;
+}
+
+bool application_control_gravity(qa_application *application, qa_actor_id actor,
+                                 float scale, qa_error *error)
+{
+    if (!live(application, actor) || !isfinite(scale) || scale < 0 ||
+        actor.slot >= application->control_capacity || !application->physics ||
+        !isfinite(application->physics->gravity) || application->destroy_requested ||
+        application->finalizing)
+        return application_fail(error, QA_ERROR_ARGUMENT,
+                                "Source gravity needs its admitted live control and physics owner");
+    application_control_record *record = &application->controls[actor.slot];
+    application_provider *movement = NULL;
+    if (!record->active || record->retired || record->application != application ||
+        !qa_actor_id_equal(record->actor, actor) ||
+        !movement_provider(application, actor, &movement, error))
+        return application_fail(error, QA_ERROR_ARGUMENT,
+                                "Source gravity lost its actual selected control owner");
+    if (movement->close_pending ||
+        movement_kind(movement->component.clock.kind) != record->state.kind)
+        return application_fail(error, QA_ERROR_ARGUMENT,
+                                "Source gravity differs from its admitted movement family");
+    qa_movement_state *active = application_control_frames_state_current(application, actor);
+    qa_movement_state state = active ? *active : record->state;
+    if ((record->moving && !active) || state.kind != record->state.kind)
+        return application_fail(error, QA_ERROR_ARGUMENT,
+                                "Source gravity lost its active movement continuation");
+    double gravity = trunc((double)application->physics->gravity * (double)scale);
+    switch (state.kind) {
+    case QA_MOVEMENT_Q2_CLASSIC:
+    case QA_MOVEMENT_Q2_RERELEASE:
+        if (!isfinite(gravity) || gravity < INT16_MIN || gravity > INT16_MAX)
+            return application_fail(error, QA_ERROR_UNSUPPORTED,
+                                    "Source gravity exceeds the genuine Q2 movement field");
+        if (state.kind == QA_MOVEMENT_Q2_CLASSIC) state.data.q2.gravity = (int16_t)gravity;
+        else state.data.q2r.gravity = (int16_t)gravity;
+        break;
+    case QA_MOVEMENT_Q3:
+        if (!isfinite(gravity) || gravity < INT32_MIN || gravity > INT32_MAX)
+            return application_fail(error, QA_ERROR_UNSUPPORTED,
+                                    "Source gravity exceeds the genuine Q3 movement field");
+        state.data.q3.gravity = (int32_t)gravity;
+        break;
+    case QA_MOVEMENT_NETQUAKE:
+    case QA_MOVEMENT_QUAKEWORLD:
+        break;
+    }
+    record->gravity_multiplier = scale;
+    record->state = state;
+    if (active) *active = state;
     return true;
 }
 

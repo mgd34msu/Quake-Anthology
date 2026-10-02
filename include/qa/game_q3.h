@@ -134,6 +134,8 @@ typedef struct qa_q3_player_state {
     int32_t legs_animation, torso_animation, legs_timer_ms, torso_timer_ms;
     int32_t delta_yaw_word, ground_entity_number;
     int32_t delta_pitch_word, delta_roll_word, teleport_lock_ms;
+    uint32_t selected_pm_flags;
+    int32_t selected_pm_time_ms;
     uint64_t teleport_revision;
     int32_t damage_event, damage_count, damage_pitch, damage_yaw, last_command_ms;
     int32_t command_time_ms, client_number;
@@ -193,8 +195,21 @@ typedef struct qa_q3_obelisk_continuation {
 typedef struct qa_q3_obelisk_settings {
     int32_t health, regen_period_seconds, regen_amount, respawn_delay_seconds;
 } qa_q3_obelisk_settings;
+typedef struct qa_q3_selected_client_effects {
+    uint32_t teleport_bit, pm_flags;
+    qa_vec3 view_angles;
+    int32_t delta_angle_words[3], pm_time_ms, invulnerability_time_ms, max_health;
+} qa_q3_selected_client_effects;
+bool qa_q3_selected_client_effects_read(const qa_q3_game *, qa_actor_id,
+    qa_q3_selected_client_effects *, qa_error *);
+bool qa_q3_selected_client_effects_publish(qa_q3_game *, qa_actor_id,
+    const qa_q3_selected_client_effects *before, qa_error *);
 typedef struct qa_q3_hooks {
     void *context;
+    /* Shared map participants publish the donor's immediate, zero-initialized
+     * entity event when they have no physical GAME entityState row. */
+    bool (*source_participant_event)(void *, qa_actor_id, int32_t event,
+        int32_t parameter, qa_vec3 origin, int32_t time_ms, qa_error *);
     bool (*source_settings_update)(void *, const qa_source_frame *, qa_error *);
     bool (*source_world_init)(void *, qa_error *);
     bool (*source_team_items)(void *, qa_error *);
@@ -211,6 +226,10 @@ typedef struct qa_q3_hooks {
     bool (*respawn)(void *, qa_actor_id, qa_error *);
     bool (*teleport_destination)(void *, qa_actor_id, qa_vec3 *, qa_vec3 *, qa_error *);
     bool (*primary_attack_allowed)(void *, qa_actor_id);
+    bool (*selected_damage_factor)(void *, qa_actor_id, float *, bool *handled, qa_error *);
+    bool (*selected_weapon_fired)(void *, qa_actor_id, qa_q3_weapon, qa_error *);
+    bool (*selected_client_effects)(void *, qa_actor_id, const qa_q3_selected_client_effects *before,
+        const qa_q3_selected_client_effects *after, qa_error *);
     /* A selected equipment slot may consume a real source weapon request.
      * Unhandled requests continue through this GAME's inventory action. */
     bool (*inventory_weapon_request)(void *, qa_actor_id, qa_item_id, bool *handled, qa_error *);
@@ -237,6 +256,8 @@ typedef struct qa_q3_hooks {
     bool (*foreign_mover_read)(void *, qa_actor_id, qa_q3_mover_state *);
     bool (*foreign_mover_write)(void *, qa_actor_id, const qa_q3_mover_state *, qa_error *);
     qa_actor_owner (*combat_provider)(void *, qa_actor_id target, qa_actor_owner fallback);
+    bool (*attack_providers)(void *, qa_actor_id attacker, qa_item_id weapon,
+        qa_actor_owner *inventory, qa_actor_owner *movement, qa_error *);
     bool (*mover_action)(void *, qa_q3_mover_action, qa_actor_id, qa_actor_id, int32_t, qa_error *);
     /* Queue reports and copy borrowed strings. These callbacks may inspect,
      * but must not mutate or destroy the provider. A missing sink skips reports. */
@@ -281,6 +302,7 @@ bool qa_q3_destroy_ready(const qa_q3_game *);
 bool qa_q3_pickups_rebind(qa_q3_game *, qa_error *);
 bool qa_q3_inventory_admit(qa_q3_game *, qa_actor_id, qa_error *);
 bool qa_q3_inventory_equipment_current(const qa_q3_game *, qa_actor_id, qa_actor_owner);
+bool qa_q3_selected_holdable_give(qa_q3_game *, qa_actor_id, const char *, bool *handled, qa_error *);
 bool qa_q3_inventory_rebind(qa_q3_game *, qa_error *);
 bool qa_q3_rules_read(const qa_q3_game *, qa_q3_rules *, qa_error *);
 bool qa_q3_source_clock(const qa_q3_game *, int32_t *source_time_ms, qa_error *);
@@ -356,6 +378,17 @@ typedef struct qa_q3_controls {
  * state machine but does not create server missiles, damage, or holdables. */
 bool qa_q3_arsenal_step(qa_q3_game *, qa_actor_id, const qa_q3_controls *, float elapsed_ms,
                         qa_error *);
+typedef struct qa_q3_arsenal_source {
+    qa_vec3 view_angles;
+    float view_height, health;
+    int32_t legs_animation, torso_animation, legs_timer_ms, torso_timer_ms;
+    void *context;
+    bool (*firing_delay)(void *, qa_actor_id, int32_t, int32_t *, qa_error *);
+} qa_q3_arsenal_source;
+/* A completed original movement slice supplies its actual source pose and
+ * health. Only the selected arsenal changes; no source or body motion is replayed. */
+bool qa_q3_arsenal_source_step(qa_q3_game *, qa_actor_id, const qa_q3_controls *,
+    float elapsed_ms, const qa_q3_arsenal_source *, qa_error *);
 bool qa_q3_player_command(qa_q3_game *, qa_actor_id, const qa_movement_command *, float elapsed_ms,
                           qa_error *);
 bool qa_q3_player_timers(qa_q3_game *, qa_actor_id, int32_t elapsed_ms, qa_error *);
@@ -391,7 +424,18 @@ bool qa_q3_release_grapple(qa_q3_game *, qa_actor_id, qa_error *);
 bool qa_q3_activate_holdable(qa_q3_game *, qa_actor_id, qa_q3_holdable expected, bool prediction,
                              qa_error *);
 bool qa_q3_movement_environment(qa_q3_game *, qa_actor_id, qa_movement_environment *, qa_error *);
+typedef struct qa_q3_equipment_motion {
+    double speed_multiplier;
+    qa_movement_posture pose;
+    bool fixed_pose, owns_holdable_input;
+} qa_q3_equipment_motion;
+/* The selected arsenal's source equipment changes the original movement
+ * decision. It does not run movement, weapon timers or ordinary gameplay. */
+bool qa_q3_selected_equipment_motion(qa_q3_game *, qa_actor_id,
+    const qa_movement_posture *character_crouched, qa_q3_equipment_motion *, qa_error *);
 bool qa_q3_prepare_movement(qa_q3_game *, qa_actor_id, qa_movement_input *, qa_error *);
+bool qa_q3_prepare_movement_selected(qa_q3_game *, qa_actor_id, qa_movement_input *,
+                                     bool prepare_weapon, qa_error *);
 qa_movement_control qa_q3_movement_phase(void *, qa_movement_phase, qa_movement_call *, qa_error *);
 /* Shared hosts choose the current arsenal owner independently of character,
  * movement and effect projections. The standalone phase keeps source defaults. */

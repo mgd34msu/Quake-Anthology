@@ -66,7 +66,7 @@ static uint32_t capabilities(const qa_console_options *o)
         (o->source_command ? 256u : 0u) | (o->client_game ? 512u : 0u) | (o->server_game ? 1024u : 0u) |
         (o->ui ? 2048u : 0u) | (o->forward ? 4096u : 0u) |
         (o->capture_context ? 8192u : 0u) | (o->context_active ? 16384u : 0u) |
-        (o->cvar_edit ? 32768u : 0u);
+        (o->cvar_edit ? 32768u : 0u) | (o->post_dispatch ? 65536u : 0u);
 }
 
 static bool retired_fields(qa_source_save_io *io, retired_id **head,

@@ -25,10 +25,6 @@ static bool targets_equal(qa_native_target left, qa_native_target right) {
            left.pointer_bytes == right.pointer_bytes;
 }
 
-bool qa_native_terminal(const qa_native_instance *instance) {
-    return instance && instance->backend == QA_NATIVE_BACKEND_RUNNER &&
-           instance->runner && instance->runner->poisoned;
-}
 bool qa_native_terminal_retired(const qa_native_instance *instance, const qa_actor_registry *actors) {
     if (!qa_native_terminal(instance) || !qa_native_can_destroy(instance))
         return false;
@@ -1543,11 +1539,11 @@ bool native_runner_read(qa_native_instance *instance, qa_native_address source, 
                                   (qa_bytes){request.data, request.size}, &response, error);
     if (received) {
         native_wire_reader reader = {.bytes = {response.data, response.size}};
-        qa_bytes received;
-        ok = native_wire_get_bytes(&reader, &received, error) && native_wire_end(&reader, error) &&
-             received.size == bytes;
+        qa_bytes payload;
+        ok = native_wire_get_bytes(&reader, &payload, error) && native_wire_end(&reader, error) &&
+             payload.size == bytes;
         if (ok && bytes)
-            memcpy(out, received.data, bytes);
+            memcpy(out, payload.data, bytes);
         if (!ok && error && !error->message[0])
             native_fail(error, QA_ERROR_FORMAT, response.size,
                         "native runner read returned the wrong byte count");

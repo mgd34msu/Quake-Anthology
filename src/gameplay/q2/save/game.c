@@ -1,7 +1,7 @@
 #include "internal.h"
 
 #define Q2_SAVE_MAGIC UINT32_C(0x32514151)
-#define Q2_SAVE_VERSION UINT32_C(14)
+#define Q2_SAVE_VERSION UINT32_C(21)
 
 typedef struct actor_save {
     qa_q2_saved_reference id;
@@ -12,7 +12,7 @@ typedef struct actor_save {
     qa_q2_monster_checkpoint monster;
     qa_inventory_entry hand_ammo;
     uint64_t definitions_serial, observation_serial;
-    bool has_monster, has_targets;
+    bool has_monster, has_targets, wire_bound;
 } actor_save;
 
 static void actor_free(actor_save *s) {
@@ -27,7 +27,7 @@ static bool actor_fields(q2_save_io *io, actor_save *s) {
         !q2_save_entity(io, &s->entity) || !q2_save_player(io, &s->player) ||
         !q2_save_bool(io, &s->has_monster)) return false;
     if (s->has_monster && !q2_save_monster(io, &s->monster)) return false;
-    Q2T(definitions_serial); Q2T(observation_serial); Q2B(has_targets);
+    Q2T(definitions_serial); Q2T(observation_serial); Q2B(has_targets); Q2B(wire_bound);
     if (s->actor.hand_grenade_bound) {
         Q2N(hand_ammo.item); Q2S(f64, hand_ammo.count); Q2S(f64, hand_ammo.capacity);
         Q2U(hand_ammo.policy);
@@ -36,6 +36,7 @@ static bool actor_fields(q2_save_io *io, actor_save *s) {
 }
 static bool actor_capture(qa_q2_game *g, q2_actor *a, actor_save *s, qa_error *e) {
     s->has_monster = a->monster != NULL;
+    s->wire_bound = a->wire_bound;
     if (a->powers && qa_inventory_lease_current(g->services.inventory, a->powers->definitions))
         s->definitions_serial = a->powers->definitions.serial;
     if (a->item && qa_pickups_observation_current(g->services.pickups, a->item->observation))
@@ -87,7 +88,8 @@ bool qa_q2_game_capture(qa_q2_game *g, qa_buffer *out, qa_error *e) {
          q2_save_u32(&io, &items.version) && q2_save_u32(&io, &items.cubes) &&
          qa_q2_players_capture(g, &players, e) && q2_save_players(&io, &players) &&
          qa_q2_entities_capture(g, &entities, e) && q2_save_entities(&io, &entities) &&
-         qa_q2_monsters_capture(g, &monsters, e) && q2_save_monsters(&io, &monsters);
+         qa_q2_monsters_capture(g, &monsters, e) && q2_save_monsters(&io, &monsters) &&
+         q2_save_wire(&io);
     qa_q2_players_checkpoint_free(&players);
     qa_q2_entities_checkpoint_free(&entities);
     qa_q2_monsters_checkpoint_free(&monsters);
@@ -122,6 +124,7 @@ static bool actor_restore(q2_save_io *io, actor_save *s, uint64_t limit, uint64_
           !qa_q2_actor_restore(g, record->id, &s->actor, io->error))))
         return false;
     q2_actor *a = q2_actor_get(g, record->id, false, NULL);
+    a->wire_bound = s->wire_bound;
     a->restore_hand_ammo = s->hand_ammo;
     a->restore_targets = s->has_targets;
     if (a->powers) a->powers->definitions = (qa_inventory_lease){record->id, s->definitions_serial};
@@ -162,7 +165,8 @@ bool qa_q2_game_restore(qa_q2_game *g, qa_bytes data, qa_error *e) {
          qa_q2_items_restore(g, &items, e) &&
          q2_save_players(&io, &players) && qa_q2_players_restore(g, &players, e) &&
          q2_save_entities(&io, &entities) && qa_q2_entities_restore(g, &entities, e) &&
-         q2_save_monsters(&io, &monsters) && qa_q2_monsters_restore(g, &monsters, e);
+         q2_save_monsters(&io, &monsters) && qa_q2_monsters_restore(g, &monsters, e) &&
+         q2_save_wire(&io);
     if (ok && io.offset != data.size) ok = q2_save_fail(&io, "Trailing Q2 continuation data");
     if (ok) ok = qa_q2_entities_validate_links(g, e);
     if (ok) g->actor_sequence = runtime.actor_sequence;

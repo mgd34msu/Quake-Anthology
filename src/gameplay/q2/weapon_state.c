@@ -442,9 +442,23 @@ static bool run(q2_weapon_call *c, qa_error *e) {
     return true;
 }
 bool q2_weapon_powerups(q2_weapon_call *c, qa_error *e) {
-    if (c->game->options.services.powerups != NULL) {
+    if (!c->equipment && c->game->hooks.source_weapon_powerups != NULL) {
         qa_builtin_powerups powers;
-        if (!c->game->options.services.powerups(c->game->options.services.context,
+        bool handled = false;
+        qa_actor_id actor = c->actor->id;
+        if (!c->game->hooks.source_weapon_powerups(c->game->hooks.context, actor,
+                                                   &powers, &handled, e)) return false;
+        if (q2_actor_get(c->game, actor, false, e) != c->actor) return false;
+        if (handled) {
+            c->input.quad_until_ns = powers.quad_until_ns;
+            c->input.double_until_ns = powers.double_until_ns;
+            c->input.quad_fire_until_ns = powers.quad_fire_until_ns;
+            return true;
+        }
+    }
+    if (c->game->services.powerups != NULL) {
+        qa_builtin_powerups powers;
+        if (!c->game->services.powerups(c->game->services.context,
                 c->game->options.owner, c->actor->id, &powers, e))
             return false;
         c->input.quad_until_ns = powers.quad_until_ns;
@@ -550,8 +564,9 @@ static bool weapon_tick(qa_q2_game *g, qa_actor_id id, const qa_q2_weapon_input 
                     return true;
             }
             if (c.rerelease && frame > 33 * Q2_MS && c.definition != NULL) {
-                uint64_t interval = q2_animation_time(&c);
-                if (interval < frame) {
+                uint64_t interval;
+                if (!q2_animation_time(&c, &interval, e)) return false;
+                if (interval && interval < frame) {
                     uint64_t end = q2_deadline(now, frame);
                     uint64_t remaining = end > a->weapon.think_ns ? end - a->weapon.think_ns : 0;
                     while (remaining > 0) {
@@ -586,4 +601,159 @@ bool qa_q2_weapon_tick(qa_q2_game *g, qa_actor_id id, const qa_q2_weapon_input *
                        uint64_t frame, qa_error *e) {
     weapon_tick_call call = {.game = g, .input = in, .now_ns = now, .frame_ns = frame};
     return qa_q2_run_actor(g, id, run_weapon_tick, &call, e);
+}
+
+typedef struct weapon_turn_call {
+    qa_q2_game *game;
+    qa_q2_weapon_input input;
+    uint64_t now_ns, frame_ns;
+    bool early;
+} weapon_turn_call;
+static void reconcile_firing_credit(q2_actor *a) {
+    if (a->weapon_turn.firing_weapon != a->weapon.weapon) {
+        a->weapon_turn.firing_weapon = QA_Q2_WEAPON_NONE;
+        a->weapon_turn.firing_credit = 0;
+    }
+}
+static bool prepare_firing_credit(qa_q2_game *g, q2_actor *a,
+    const qa_q2_weapon_input *input, qa_error *e) {
+    reconcile_firing_credit(a);
+    if (g->options.edition != QA_Q2_CLASSIC || input->spectator ||
+        a->weapon.phase != QA_Q2_FIRING || a->weapon.weapon == QA_Q2_WEAPON_NONE) return true;
+    qa_combat_state combat;
+    if (!qa_combat_read(g->services.combat, a->id, &combat, e)) return false;
+    if (combat.health <= 0) return true;
+    qa_actor_id actor = a->id;
+    qa_q2_weapon weapon = a->weapon.weapon;
+    q2_weapon_call c;
+    context(g, a, input, g->now_ns, g->frame_ns, &c);
+    uint64_t interval;
+    if (!q2_interval(&c, g->frame_ns, &interval, e)) return false;
+    if (q2_actor_get(g, actor, false, e) != a || !a->weapon_bound || a->weapon.weapon != weapon) {
+        qa_error_set(e, QA_ERROR_NOT_FOUND, 0, "Selected Q2 cadence replaced its actual firing owner");
+        return false;
+    }
+    if (interval != g->frame_ns) {
+        double credit = a->weapon_turn.firing_credit + (double)g->frame_ns / (double)interval - 1;
+        if (!isfinite(credit)) {
+            qa_error_set(e, QA_ERROR_FORMAT, 0, "Selected Q2 cadence produced nonfinite firing credit");
+            return false;
+        }
+        a->weapon_turn.firing_weapon = weapon;
+        a->weapon_turn.firing_credit = credit;
+    }
+    return true;
+}
+static bool finish_firing_credit(qa_q2_game *g, q2_actor *a, qa_actor_id actor, qa_error *e) {
+    qa_q2_weapon_turn_state *turn = &a->weapon_turn;
+    qa_q2_weapon weapon = turn->firing_weapon;
+    while (weapon != QA_Q2_WEAPON_NONE && turn->firing_credit >= 1 &&
+        q2_actor_live(g, actor) && g->actors[actor.slot] == a && a->weapon_bound &&
+        a->weapon.weapon == weapon && a->weapon.phase == QA_Q2_FIRING) {
+        qa_combat_state combat;
+        if (!qa_combat_read(g->services.combat, actor, &combat, e)) return false;
+        if (combat.health <= 0) break;
+        turn->firing_credit -= 1;
+        qa_q2_weapon_input input = a->input;
+        if (g->hooks.selected_weapon_input &&
+            !g->hooks.selected_weapon_input(g->hooks.context, actor, &input, e)) return false;
+        if (!q2_actor_live(g, actor) || g->actors[actor.slot] != a) return true;
+        input.latched_attack = input.weapon_thunk = false;
+        if (input.spectator) break;
+        if (!weapon_tick(g, actor, &input, g->now_ns, g->frame_ns, e)) return false;
+    }
+    if (q2_actor_live(g, actor) && g->actors[actor.slot] == a) {
+        reconcile_firing_credit(a);
+        if (turn->firing_weapon != QA_Q2_WEAPON_NONE) turn->firing_credit = fmod(turn->firing_credit, 1);
+    }
+    return true;
+}
+bool qa_q2_weapon_turn_read(qa_q2_game *g, qa_actor_id actor,
+    qa_q2_weapon_turn_state *out, qa_error *e) {
+    q2_actor *a = out ? weapon_actor(g, actor, e) : NULL;
+    if (!a) return false;
+    *out = a->weapon_turn;
+    if (a->client) {
+        out->attack = (a->client->buttons & 1u) != 0;
+        out->latched_attack = (a->client->latched_buttons & 1u) != 0;
+        out->weapon_thunk = a->client->weapon_thunk;
+    }
+    if (out->firing_weapon != a->weapon.weapon) {
+        out->firing_weapon = QA_Q2_WEAPON_NONE;
+        out->firing_credit = 0;
+    }
+    return true;
+}
+static bool run_weapon_turn(void *context, qa_actor_id id, qa_error *e) {
+    weapon_turn_call *call = context;
+    qa_q2_game *g = call->game;
+    qa_q2_weapon_input input = call->input;
+    input.latched_attack = false;
+    input.weapon_thunk = false;
+    if (!qa_q2_weapon_controls(g, id, &input, e))
+        return false;
+    q2_actor *a = weapon_actor(g, id, e);
+    bool controlled = qa_q2_player_controlled(g, id);
+    if (!q2_actor_live(g, id))
+        return true;
+    if (controlled)
+        return qa_q2_clear_input(g, id, e);
+    if (!call->early) {
+        g->now_ns = call->now_ns;
+        g->frame_ns = call->frame_ns;
+    }
+    if (!call->early && !prepare_firing_credit(g, a, &input, e)) return false;
+    if (a->client) {
+        bool ok = call->early ? q2_client_early_weapon_turn(g, a, &input, e)
+                             : q2_client_weapon_frame(g, a, &input, e);
+        if (!ok || !q2_actor_live(g, id) || g->actors[id.slot] != a) return ok;
+        if (call->early) { reconcile_firing_credit(a); return true; }
+        return finish_firing_credit(g, a, id, e);
+    }
+    qa_q2_weapon_turn_state *turn = &a->weapon_turn;
+    if (call->early) {
+        turn->latched_attack |= input.attack && !turn->attack;
+        turn->attack = input.attack;
+        if (input.spectator || !turn->latched_attack || turn->weapon_thunk)
+            return true;
+        turn->weapon_thunk = true;
+        input.latched_attack = input.weapon_thunk = true;
+        bool ok = weapon_tick(g, id, &input, g->now_ns, g->frame_ns, e);
+        if (ok && q2_actor_live(g, id) && g->actors[id.slot] == a) reconcile_firing_credit(a);
+        return ok;
+    }
+    if (!input.spectator && !turn->weapon_thunk) {
+        input.latched_attack = turn->latched_attack;
+        if (!weapon_tick(g, id, &input, g->now_ns, g->frame_ns, e))
+            return false;
+    } else
+        turn->weapon_thunk = false;
+    if (!q2_actor_live(g, id) || g->actors[id.slot] != a)
+        return true;
+    if (!finish_firing_credit(g, a, id, e)) return false;
+    if (!q2_actor_live(g, id) || g->actors[id.slot] != a) return true;
+    qa_combat_state combat;
+    if (!qa_combat_read(g->services.combat, id, &combat, e))
+        return false;
+    if (q2_actor_live(g, id) && combat.health > 0)
+        turn->latched_attack = false;
+    return true;
+}
+bool qa_q2_weapon_early_turn(qa_q2_game *g, qa_actor_id id,
+                             const qa_q2_weapon_input *input, qa_error *e) {
+    if (!g || !input || !g->frame_ns) {
+        qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Q2 early weapon turn requires actual source timing");
+        return false;
+    }
+    weapon_turn_call call = {.game = g, .input = *input, .early = true};
+    return qa_q2_run_actor(g, id, run_weapon_turn, &call, e);
+}
+bool qa_q2_weapon_frame(qa_q2_game *g, qa_actor_id id, const qa_q2_weapon_input *input,
+                         uint64_t now_ns, uint64_t frame_ns, qa_error *e) {
+    if (!g || !input || !frame_ns) {
+        qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Q2 weapon frame requires actual source timing");
+        return false;
+    }
+    weapon_turn_call call = {.game = g, .input = *input, .now_ns = now_ns, .frame_ns = frame_ns};
+    return qa_q2_run_actor(g, id, run_weapon_turn, &call, e);
 }

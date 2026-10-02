@@ -75,7 +75,17 @@ typedef struct execution {
     bool failed;
     qa_error failure;
     struct counter_evaluation *counter;
+    qa_qvm_word_projection *projections;
+    uint32_t scratch_floor;
+    size_t scratch_depth;
 } execution;
+struct qa_qvm_word_projection {
+    qa_qvm_word_projection *previous;
+    qa_qvm *vm;
+    qa_qvm_source_word *saved;
+    size_t count;
+    bool closing, observed;
+};
 typedef struct return_address { uint32_t stack; int32_t pc; } return_address;
 typedef struct counter_evaluation {
     uint32_t address, floor, top;
@@ -304,7 +314,8 @@ bool qa_qvm_execution_checkpoint_ready(const qa_qvm *vm, const uint64_t values[3
                                          bool candidate, qa_error *error)
 {
     const execution *exec = state(vm);
-    if (exec->active || exec->host || exec->counter || exec->program_stack != vm->data_size)
+    if (exec->active || exec->host || exec->counter || exec->projections || exec->scratch_depth ||
+        exec->program_stack != vm->data_size)
         return error_at(error, 0, "QVM checkpoint requires an idle original execution stack");
     if (candidate && (exec->instructions || exec->breaks || exec->failed ||
         values[0] < exec->next_binding))
@@ -380,7 +391,11 @@ void qa_qvm_execution_destroy(qa_qvm *vm)
     while (current != NULL) { binding *next = current->next; free(current); current = next; }
     free(exec->entries); free(exec); vm->execution = NULL;
 }
-bool qa_qvm_execution_active(const qa_qvm *vm) { return state(vm) != NULL && state(vm)->active != NULL; }
+bool qa_qvm_execution_active(const qa_qvm *vm)
+{
+    const execution *exec = state(vm);
+    return exec && (exec->active || exec->projections || exec->scratch_depth);
+}
 bool qa_qvm_execution_reentry(const qa_qvm *vm, qa_error *error)
 {
     if (!qa_qvm_mutable(vm, error)) return false;
@@ -1272,6 +1287,7 @@ bool qa_qvm_invoke(qa_qvm *vm, uint32_t instruction, const int32_t *words, size_
 {
     execution *exec = state(vm);
     uint32_t floor = exec == NULL ? 0 : exec->counter != NULL ? exec->counter->floor : exec->active == NULL ? 0 : exec->active->floor;
+    if (exec && exec->scratch_floor > floor) floor = exec->scratch_floor;
     return invoke(vm, instruction, words, count, NULL, NULL, floor, out, NULL, error);
 }
 bool qa_qvm_invoke_started(qa_qvm *vm, uint32_t instruction, const int32_t *words,
@@ -1281,6 +1297,7 @@ bool qa_qvm_invoke_started(qa_qvm *vm, uint32_t instruction, const int32_t *word
     *started = false;
     execution *exec = state(vm);
     uint32_t floor = exec == NULL ? 0 : exec->counter != NULL ? exec->counter->floor : exec->active == NULL ? 0 : exec->active->floor;
+    if (exec && exec->scratch_floor > floor) floor = exec->scratch_floor;
     return invoke(vm, instruction, words, count, NULL, NULL, floor, out, started, error);
 }
 
@@ -1418,6 +1435,146 @@ bool qa_qvm_execution_source_word(const qa_qvm_call *call, const qa_qvm_image *i
 }
 uint32_t qa_qvm_break_count(const qa_qvm *vm) { return state(vm) == NULL ? 0 : (uint32_t)state(vm)->breaks; }
 
+bool qa_qvm_execution_words_end(qa_qvm_word_projection **receipt, bool restore, qa_error *error)
+{
+    if (!receipt || !*receipt) return true;
+    qa_qvm_word_projection *lease = *receipt;
+    qa_qvm *vm = lease->vm;
+    execution *exec = state(vm);
+    if (!qa_qvm_mutable(vm, error) || !exec || exec->projections != lease || lease->closing)
+        return error_at(error, 0, "QVM projected words require their last actual open lease");
+    lease->closing = true;
+    bool ok = !restore || qa_qvm_memory_restore_words(vm, lease->saved, lease->count, lease->observed, error);
+    if (exec->projections != lease) {
+        lease->closing = false;
+        return error_at(error, 0, "QVM write delivery retained a nested projected-word owner");
+    }
+    exec->projections = lease->previous;
+    free(lease->saved); free(lease); *receipt = NULL;
+    return ok;
+}
+
+static bool words_begin(qa_qvm *vm, const qa_qvm_image *image,
+    const qa_qvm_source_word *words, size_t count, bool project, bool observed,
+    qa_qvm_word_projection **out, qa_error *error)
+{
+    qa_error local = {0};
+    if (!error) error = &local;
+    if (!qa_qvm_execution_reentry(vm, error)) return false;
+    execution *exec = state(vm);
+    if (!image || image != vm->image || !out || *out || !words || !count || exec->counter ||
+        count > SIZE_MAX / sizeof(*words))
+        return error_at(error, 0, "QVM dynamic words require their exact source image and new owner");
+    if (exec->active && !healthy(vm, error)) return false;
+    qa_qvm_word_projection *lease = calloc(1, sizeof(*lease));
+    if (!lease) return qa_qvm_error(error, QA_ERROR_MEMORY, 0, "Retaining actual QVM projected-word owner");
+    lease->saved = malloc(count * sizeof(*lease->saved));
+    qa_qvm_source_word *copied = malloc(count * sizeof(*copied));
+    if (!lease->saved || !copied) {
+        free(copied); free(lease->saved); free(lease);
+        return qa_qvm_error(error, QA_ERROR_MEMORY, 0, "Retaining QVM projection bytes before effects");
+    }
+    memcpy(copied, words, count * sizeof(*copied));
+    for (size_t i = 0; i < count; ++i) {
+        if ((copied[i].offset & 3) || !qa_qvm_raw_range(vm, copied[i].offset, 4, error)) {
+            free(copied); free(lease->saved); free(lease);
+            return error_at(error, words[i].offset, "QVM projected word leaves actual source allocation");
+        }
+        lease->saved[i] = (qa_qvm_source_word){copied[i].offset, qa_load_i32le(vm->data + copied[i].offset)};
+    }
+    lease->vm = vm; lease->count = count; lease->previous = exec->projections; lease->observed = observed;
+    exec->projections = lease; *out = lease;
+    bool ok = true;
+    for (size_t i = 0; project && ok && i < count; ++i) {
+        if (!observed) qa_store_u32le(vm->data + copied[i].offset, (uint32_t)copied[i].value);
+        else {
+            uint8_t bytes[4]; qa_store_u32le(bytes, (uint32_t)copied[i].value);
+            ok = qa_qvm_write(vm, copied[i].offset, (qa_bytes){bytes, sizeof(bytes)}, error);
+        }
+    }
+    free(copied);
+    return ok;
+}
+
+bool qa_qvm_execution_words_is_last(const qa_qvm_word_projection *lease)
+{
+    execution *exec = lease && lease->vm ? state(lease->vm) : NULL;
+    return exec && exec->projections == lease && !lease->closing;
+}
+bool qa_qvm_execution_source_returned(const qa_qvm *vm)
+{
+    const execution *exec = state(vm);
+    return vm && !vm->retired && exec && !exec->active && !exec->host && !exec->counter &&
+        !exec->scratch_depth && !vm->publication_depth && !vm->write_delivery_depth && !vm->lifecycle_depth;
+}
+
+bool qa_qvm_execution_words_begin(qa_qvm *vm, const qa_qvm_image *image,
+    const qa_qvm_source_word *words, size_t count, qa_qvm_word_projection **out, qa_error *error)
+{ return words_begin(vm, image, words, count, true, false, out, error); }
+bool qa_qvm_execution_words_begin_observed(qa_qvm *vm, const qa_qvm_image *image,
+    const qa_qvm_source_word *words, size_t count, qa_qvm_word_projection **out, qa_error *error)
+{ return words_begin(vm, image, words, count, true, true, out, error); }
+static bool words_capture(qa_qvm *vm, const qa_qvm_image *image,
+    const uint32_t *addresses, size_t count, bool observed, qa_qvm_word_projection **out, qa_error *error)
+{
+    if (!addresses || !count || count > SIZE_MAX / sizeof(qa_qvm_source_word))
+        return error_at(error, 0, "QVM captured words require their actual source addresses");
+    qa_qvm_source_word *words = calloc(count, sizeof(*words));
+    if (!words) return qa_qvm_error(error, QA_ERROR_MEMORY, 0, "Retaining actual source result addresses");
+    for (size_t i = 0; i < count; ++i) words[i].offset = addresses[i];
+    bool ok = words_begin(vm, image, words, count, false, observed, out, error);
+    free(words); return ok;
+}
+bool qa_qvm_execution_words_capture(qa_qvm *vm, const qa_qvm_image *image,
+    const uint32_t *addresses, size_t count, qa_qvm_word_projection **out, qa_error *error)
+{ return words_capture(vm, image, addresses, count, false, out, error); }
+bool qa_qvm_execution_words_capture_observed(qa_qvm *vm, const qa_qvm_image *image,
+    const uint32_t *addresses, size_t count, qa_qvm_word_projection **out, qa_error *error)
+{ return words_capture(vm, image, addresses, count, true, out, error); }
+bool qa_qvm_execution_source_bytes_write(qa_qvm *vm, const qa_qvm_image *image,
+    uint32_t offset, qa_bytes bytes, qa_error *error)
+{
+    qa_error local = {0};
+    if (!error) error = &local;
+    if (!qa_qvm_execution_reentry(vm, error)) return false;
+    execution *exec = state(vm);
+    if (!image || image != vm->image || exec->counter || (bytes.size && !bytes.data))
+        return error_at(error, offset, "QVM record refresh requires its actual Source image and counted bytes");
+    if ((exec->active && !healthy(vm, error)) ||
+        !qa_qvm_raw_range(vm, offset, bytes.size, error)) return false;
+    if (bytes.size) memmove(vm->data + offset, bytes.data, bytes.size);
+    return true;
+}
+
+bool qa_qvm_execution_scratch_run(qa_qvm *vm, const qa_qvm_image *image, size_t length,
+    qa_qvm_source_scratch_run_fn run, void *context, qa_error *error)
+{
+    qa_error local = {0};
+    if (!error) error = &local;
+    if (!qa_qvm_execution_reentry(vm, error)) return false;
+    execution *exec = state(vm);
+    uint32_t offset;
+    if (!image || image != vm->image || !run || exec->counter ||
+        !qa_qvm_source_scratch_qualify(image, length, &offset, error)) return false;
+    if (exec->active && !healthy(vm, error)) return false;
+    uint64_t end = ((uint64_t)offset + length + 3) & ~UINT64_C(3);
+    if (end > exec->program_stack || exec->scratch_depth == SIZE_MAX)
+        return error_at(error, offset, "QVM scratch owner overlaps its actual paused source stack");
+    uint8_t *saved = malloc(length);
+    if (!saved) return qa_qvm_error(error, QA_ERROR_MEMORY, offset, "Retaining actual host-initiated source scratch");
+    memcpy(saved, vm->data + offset, length);
+    uint32_t previous_floor = exec->scratch_floor;
+    if (end > exec->scratch_floor) exec->scratch_floor = (uint32_t)end;
+    ++exec->scratch_depth;
+    bool ok = run(context, vm, offset, error);
+    qa_error first = *error, cleanup = {0};
+    bool restored = qa_qvm_memory_restore_scratch(vm, offset, (qa_bytes){saved, length}, &cleanup);
+    --exec->scratch_depth; exec->scratch_floor = previous_floor; free(saved);
+    if (!ok) { *error = first; return false; }
+    if (!restored) { *error = cleanup; return false; }
+    return true;
+}
+
 static bool evaluation_stack(qa_qvm *vm, const qa_qvm_evaluation_stack *requested,
                               uint32_t *floor, uint32_t *top, qa_error *error)
 {
@@ -1427,6 +1584,7 @@ static bool evaluation_stack(qa_qvm *vm, const qa_qvm_evaluation_stack *requeste
     uint32_t current = state(vm)->program_stack;
     uint64_t start = requested == NULL ? (data_end + 3) & ~UINT64_C(3) : requested->floor;
     uint32_t inherited = state(vm)->active == NULL ? 0 : state(vm)->active->floor;
+    if (state(vm)->scratch_floor > inherited) inherited = state(vm)->scratch_floor;
     if (requested == NULL && start < inherited) start = inherited;
     uint64_t end = requested == NULL ? current : requested->top;
     if (start < initialized || start < inherited || start >= end || end > vm->data_size ||

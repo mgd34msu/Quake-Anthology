@@ -272,6 +272,21 @@ bool qa_downloads_view(const qa_downloads *owner, qa_download_id id, qa_download
         if (owner->jobs[i].view.id == id) { *out = owner->jobs[i].view; return true; }
     return false;
 }
+size_t qa_downloads_count(const qa_downloads *owner) {
+    size_t count = 0;
+    if (owner) for (uint32_t i = 0; i < owner->options.jobs; ++i)
+        if (owner->jobs[i].view.id) ++count;
+    return count;
+}
+bool qa_downloads_at(const qa_downloads *owner, size_t ordinal, qa_download_view *out) {
+    if (!owner || !out) return false;
+    for (uint32_t i = 0; i < owner->options.jobs; ++i) {
+        if (!owner->jobs[i].view.id) continue;
+        if (!ordinal) { *out = owner->jobs[i].view; return true; }
+        --ordinal;
+    }
+    return false;
+}
 
 static bool download_http_valid(const download_job *job, qa_error *error)
 {

@@ -173,7 +173,8 @@ bool q2_item_grant(qa_q2_game *g, q2_actor *a, qa_actor_id recipient, bool *acce
                            ? 1000
                        : item->spawn.count ? item->spawn.count
                                            : d->quantity;
-        qa_supply *supply = q2_item_supply(g, recipient);
+        qa_supply *supply;
+        if (!q2_item_supply(g, recipient, &supply, e)) return false;
         if (!q2_actor_live(g, recipient) || !q2_actor_live(g, a->id))
             return true;
         if (supply && qa_supply_maps(supply, d->item, false)) {
@@ -193,7 +194,8 @@ bool q2_item_grant(qa_q2_game *g, q2_actor *a, qa_actor_id recipient, bool *acce
         break;
     }
     case QA_Q2_ITEM_WEAPON: {
-        qa_supply *supply = q2_item_supply(g, recipient);
+        qa_supply *supply;
+        if (!q2_item_supply(g, recipient, &supply, e)) return false;
         if (!q2_actor_live(g, recipient) || !q2_actor_live(g, a->id))
             return true;
         bool mapped = supply && qa_supply_maps(supply, d->item, true);

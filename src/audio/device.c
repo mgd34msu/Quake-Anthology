@@ -675,11 +675,15 @@ failed:
     return false;
 }
 
+static bool selection_is_current(const qa_audio_device_selection *selection) {
+    return selection && selection->device && selection->device->selection == selection &&
+        selection->device->id == selection->previous &&
+        selection->device->conversion == selection->previous_conversion &&
+        !selection->device->pumping && !selection->device->capturing;
+}
+
 static bool selection_current(const qa_audio_device_selection *selection, qa_error *error) {
-    if (!selection || !selection->device || selection->device->selection != selection ||
-        selection->device->id != selection->previous ||
-        selection->device->conversion != selection->previous_conversion ||
-        selection->device->pumping || selection->device->capturing)
+    if (!selection_is_current(selection))
         return device_error(error, QA_ERROR_ARGUMENT, "Audio selection lost its idle live device owner");
     return true;
 }
@@ -745,7 +749,9 @@ bool qa_audio_device_selection_prepare(qa_audio_device *device,
     selection->unchanged = unchanged;
     selection->selected = selected;
     selection->requested_maximum_queued_frames = options->maximum_queued_frames;
-    if (!unchanged) {
+    if (unchanged) {
+        selection->selected.name = device->name;
+    } else {
         bool unavailable = false;
         if (!copy_name(selected.name, &selection->name, error)) goto failed;
         selection->selected.name = selection->name;
@@ -826,6 +832,35 @@ failed:
     else qa_error_set(error, QA_ERROR_IO, 0, "Audio preparation failed: %.92s; resuming retained output failed: %.92s",
                       selection_error.message, resume_error.message);
     return false;
+}
+
+bool qa_audio_device_selection_ready_is(const qa_audio_device_selection *selection,
+                                       const qa_audio_device *device) {
+    if (!device || !selection_is_current(selection) || selection->device != device ||
+        !selection->ready || selection->invalidated || !device->frequency ||
+        !device->conversion || qa_audio_raw_rate(device->conversion) != device->options.format.sample_rate)
+        return false;
+    if (selection->unchanged)
+        return device->id && !selection->replacement && !selection->stopped &&
+            selection->selected.name == device->name &&
+            selection->selected.format.sample_rate == device->options.format.sample_rate &&
+            selection->selected.format.channels == device->options.format.channels &&
+            selection->selected.format.sample_bits == device->options.format.sample_bits &&
+            selection->selected.buffer_frames == device->options.buffer_frames &&
+            selection->selected.maximum_queued_frames == device->options.maximum_queued_frames;
+    if (!selection->replacement || selection->replacement == selection->previous ||
+        !selection->stopped || device->playing || selection->selected.name != selection->name ||
+        !selection->encoded ||
+        selection->encoded_capacity < DEVICE_MIX_FRAMES * frame_bytes(selection->selected.format))
+        return false;
+    bool changed_rate = selection->selected.format.sample_rate != device->options.format.sample_rate;
+    if (changed_rate != (selection->conversion != NULL) ||
+        (changed_rate && qa_audio_raw_rate(selection->conversion) != selection->selected.format.sample_rate))
+        return false;
+    const device_pcm *pending = changed_rate ? &selection->converted : &device->pcm;
+    return pending->count <= selection->selected.maximum_queued_frames &&
+        pending->count <= pending->capacity &&
+        (!pending->count || (pending->samples && pending->head < pending->capacity));
 }
 
 static uint64_t selection_scale_frames(uint64_t frames, uint32_t old_rate, uint32_t new_rate,

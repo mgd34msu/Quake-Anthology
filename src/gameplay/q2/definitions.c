@@ -245,6 +245,18 @@ const qa_q2_weapon_definition *qa_q2_weapon_definition_at(const qa_q2_game *g,
                ? &g->definitions[weapon]
                : NULL;
 }
+const qa_q2_weapon_definition *qa_q2_base_weapon_view_model(const char *model) {
+    if (model)
+        for (size_t i = 0; i < sizeof(base) / sizeof(*base); ++i)
+            if (!strcmp(base[i].view_model, model)) return base + i;
+    return NULL;
+}
+bool qa_q2_weapon_definition_ordinal(const qa_q2_game *game, qa_q2_weapon weapon, size_t *out) {
+    if (game && out)
+        for (size_t i = 0; i < game->definition_count; ++i)
+            if (game->definition_order[i] == weapon) { *out = i; return true; }
+    return false;
+}
 qa_q2_weapon qa_q2_weapon_from_classname(const qa_q2_game *g, const char *classname) {
     if (g != NULL && classname != NULL)
         for (size_t i = 1; i < QA_Q2_WEAPON_COUNT; ++i)

@@ -63,6 +63,7 @@ typedef struct qa_ui_menu {
     bool fullscreen, scrollable;
     qa_scene_rect_f scroll_rect;
     float content_height;
+    bool source_title;
 } qa_ui_menu;
 /* A factory returns borrowed spans valid until its next invocation. Factories
  * and open/close hooks do not mutate the controller. Actions may open/close

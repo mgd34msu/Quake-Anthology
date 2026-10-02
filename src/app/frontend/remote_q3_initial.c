@@ -1,18 +1,58 @@
+#include "q3_color_policy.h"
 #include "remote_q3_initial.h"
 #include "remote_config.h"
+#include "shared_resource_policy.h"
+#include "visual_access.h"
+#include "q3_render_policy.h"
+#include "material_movie_bindings.h"
+#include "network_restore.h"
+#include "network_restore_attempt.h"
+#include "source_restore.h"
+#include "capture.h"
 #include "qa/q3_assets_save.h"
 #include "qa/scene_resource_save.h"
 #include "qa/material_library_save.h"
 #include "qa/font_save.h"
 
 struct frontend_remote_q3_initial {
+    frontend_remote_q3_initial *next;
     qa_frontend *frontend;
     qa_application *application;
     qa_launch_instance_lease *descriptor;
+    qa_native_q3_remote_client_transport *transport;
+    frontend_material_movies *shader_movies;
     frontend_remote_q3_initial_view view;
-    size_t users,children;
-    bool constructing,ready;
+    size_t users,children,transport_callbacks;
+    bool constructing,ready,retiring,transport_released,importing;
 };
+size_t frontend_remote_q3_initial_count(const qa_frontend *f)
+{
+    size_t count=0;
+    for (const frontend_remote_q3_initial *row=f?f->initial_resources:NULL;row;row=row->next) ++count;
+    return count;
+}
+frontend_remote_q3_initial *frontend_remote_q3_initial_at(const qa_frontend *f,size_t index)
+{
+    frontend_remote_q3_initial *row=f?f->initial_resources:NULL;
+    while (row && index--) row=row->next;
+    return row;
+}
+bool frontend_remote_q3_initial_idle_all(const qa_frontend *f)
+{
+    for (const frontend_remote_q3_initial *row=f?f->initial_resources:NULL;row;row=row->next)
+        if (row->frontend!=f || !frontend_remote_q3_initial_idle(row)) return false;
+    return true;
+}
+bool frontend_remote_q3_initial_destroy_all(qa_frontend *f,qa_error *error)
+{
+    while (f && f->initial_resources) {
+        frontend_remote_q3_initial *row=f->initial_resources;
+        if (!frontend_remote_q3_initial_destroy(&row,error)) return false;
+    }
+    return true;
+}
+qa_frontend *frontend_remote_q3_initial_frontend(const frontend_remote_q3_initial *owner)
+{ return owner?owner->frontend:NULL; }
 static bool same_attempt(const frontend_network_client_attempt *a,
     const frontend_network_client_attempt *b)
 {
@@ -28,15 +68,62 @@ static bool same_attempt(const frontend_network_client_attempt *a,
         x->service_owner==y->service_owner && x->frontend_lifetime==y->frontend_lifetime &&
         x->console==y->console && x->cvars==y->cvars && x->native_source==y->native_source;
 }
+bool frontend_remote_q3_initial_capture_current(const frontend_remote_q3_initial *owner)
+{
+    frontend_remote_q3_initial_view view;
+    const frontend_capture *capture=owner && owner->frontend?owner->frontend->capture:NULL;
+    if (!capture || owner->constructing || owner->retiring || owner->importing || owner->users ||
+        owner->transport_callbacks || !frontend_remote_q3_initial_read(owner,&view,NULL) ||
+        (owner->transport && !qa_native_q3_remote_client_transport_idle(owner->transport))) return false;
+    for (size_t i=0;;++i) {
+        const qa_q3_presentation_assets *actual=frontend_capture_assets_at(capture,i);
+        if (!actual) return false;
+        if (actual==view.assets) return frontend_remote_q3_initial_current(&view);
+    }
+}
 bool frontend_remote_q3_initial_idle(const frontend_remote_q3_initial *owner)
 {
     if(!owner) return true;
     const frontend_remote_q3_initial_view *v=&owner->view;
-    return !owner->users && !owner->constructing &&
+    return !owner->users && !owner->constructing && !owner->transport_callbacks &&
+        (!owner->transport || qa_native_q3_remote_client_transport_idle(owner->transport)) &&
         (!v->assets || qa_q3_assets_idle(v->assets)) &&
         (!v->images || qa_scene_resources_idle(v->images)) &&
         (!v->materials || qa_material_library_idle(v->materials)) &&
         (!v->fonts || qa_font_library_idle(v->fonts));
+}
+static bool model_initialize(void *context,const qa_q3_model_opening *opening,
+    const qa_model *native,qa_scene_model *root,qa_error *error)
+{
+    frontend_remote_q3_initial *owner=context;
+    frontend_remote_q3_initial_view view;
+    if (!frontend_remote_q3_initial_read(owner,&view,error)) return false;
+    return frontend_visual_registered_model_initialize(owner->frontend,opening,native,root,error) &&
+        frontend_remote_q3_initial_current(&view);
+}
+static bool shader_movies_current(void *context,const frontend_material_movie_source *view)
+{
+    frontend_remote_q3_initial *owner=context;
+    const frontend_remote_q3_initial_view *v=owner?&owner->view:NULL;
+    return owner && !owner->retiring && owner->descriptor && owner->application==owner->frontend->application &&
+        view && view->context==owner && view->frontend==owner->frontend && view->files==v->mounts &&
+        view->images==v->images && view->materials==v->materials && view->media==v->movies;
+}
+bool frontend_remote_q3_initial_movie_source_read(frontend_remote_q3_initial *owner,frontend_material_movie_source *out,qa_error *error)
+{
+    frontend_material_movie_source view={.frontend=owner?owner->frontend:NULL,.files=owner?owner->view.mounts:NULL,
+        .images=owner?owner->view.images:NULL,.materials=owner?owner->view.materials:NULL,
+        .media=owner?owner->view.movies:NULL,.context=owner,.current=shader_movies_current};
+    if (!out || !shader_movies_current(owner,&view))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Movie binding lacks its retained Initial provider");
+    *out=view; return true;
+}
+bool frontend_remote_q3_initial_movies_restore(frontend_remote_q3_initial *owner,const frontend_material_movies_refs *refs,qa_bytes bytes,qa_error *error)
+{
+    frontend_material_movie_source view;
+    return owner && owner->importing && frontend_remote_q3_initial_movie_source_read(owner,&view,error) ?
+        frontend_material_movies_restore(&view,refs,bytes,&owner->shader_movies,error) :
+        frontend_fail(error,QA_ERROR_ARGUMENT,"Movie import requires its actual Initial candidate");
 }
 static bool build(frontend_remote_q3_initial *owner,qa_error *error)
 {
@@ -52,13 +139,23 @@ static bool build(frontend_remote_q3_initial *owner,qa_error *error)
     if(frontend_client_registry_cvars(v->registry)!=attempt->source.receiver.cvars)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Connecting UI acquired a different physical CLIENT heap");
     v->mounts=qa_vfs_clone(v->descriptor->content,error);
+    if (!frontend_q3_source_color_ensure(f,error)) return false;
     v->images=v->mounts?qa_scene_resources_create(v->mounts,error):NULL;
+    if(v->images && !frontend_image_policy_initialize(f,v->images,error))return false;
     v->materials=v->images?qa_material_library_create(v->images,f->order,error):NULL;
     v->fonts=v->images?qa_font_library_create(v->mounts,v->images,error):NULL;
     v->movies=v->images?qa_media_library_create(v->images,error):NULL;
+    if (v->materials) {
+        frontend_material_movie_source movie;
+        if (!frontend_remote_q3_initial_movie_source_read(owner,&movie,error) ||
+            !frontend_q3_material_profile_initialize(f,v->materials,error) ||
+            !qa_material_library_set_source_upload(v->materials,frontend_q3_source_upload_read,f,error) ||
+            !frontend_material_movies_create(&movie,&owner->shader_movies,error)) return false;
+    }
     qa_scene_image_options images={.family=QA_SCENE_Q3,.wrap=QA_SCENE_REPEAT,
         .filter=QA_SCENE_LINEAR_MIPMAP_LINEAR,.mipmap=true,.transparent_index=-1};
-    qa_q3_presentation_asset_options assets={.provider={v->mounts,v->images,v->materials,QA_SCENE_Q3}};
+    qa_q3_presentation_asset_options assets={.provider={v->mounts,v->images,v->materials,QA_SCENE_Q3},
+        .context=owner,.model_initialize=model_initialize};
     if(!v->mounts || !v->images || !v->materials || !v->fonts || !v->movies ||
         !qa_material_library_load_scripts(v->materials,v->mounts,&images,error) ||
         !frontend_material_remaps(f,v->materials,error) ||
@@ -74,7 +171,7 @@ bool frontend_remote_q3_initial_create(qa_frontend *f,const frontend_network_cli
     frontend_remote_q3_initial **out,qa_error *error)
 {
     if(!f || !out || *out || !attempt || !f->application || !f->seats ||
-        f->capture || f->source_restoring || f->round || f->shutdown ||
+        f->capture || f->resource_inventory || f->source_restoring || f->round || f->shutdown ||
         !frontend_network_client_attempt_current(f,attempt))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Connecting UI resources require their actual completed CLIENT attempt");
     uint32_t ordinal;
@@ -88,6 +185,7 @@ bool frontend_remote_q3_initial_create(qa_frontend *f,const frontend_network_cli
     frontend_remote_q3_initial *owner=calloc(1,sizeof(*owner));
     if(!owner) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining initial remote UI media owner");
     owner->frontend=f; owner->application=f->application;
+    owner->next=f->initial_resources; f->initial_resources=owner;
     owner->view=(frontend_remote_q3_initial_view){.owner=owner,.attempt=*attempt,
         .physical_seat=ordinal,.input=f->seats[ordinal].input};
     *out=owner; owner->constructing=true;
@@ -97,12 +195,27 @@ bool frontend_remote_q3_initial_create(qa_frontend *f,const frontend_network_cli
     owner->constructing=false; owner->ready=ok;
     return ok;
 }
+static bool public_attempt_read(const frontend_remote_q3_initial *owner,
+    frontend_network_client_attempt *attempt,bool *present,qa_error *error)
+{
+    if (owner->frontend->source_restoring &&
+        frontend_network_client_restore_attempt_read(owner->frontend,attempt,present,error) && *present &&
+        frontend_network_client_restore_initial_completed_current(owner->frontend,owner,attempt)) return true;
+    return frontend_network_client_attempt_read(owner->frontend,attempt,present,error);
+}
+static bool public_attempt_current(const frontend_remote_q3_initial *owner,
+    const frontend_network_client_attempt *attempt)
+{
+    return frontend_network_client_restore_initial_completed_current(owner->frontend,owner,attempt) ||
+        frontend_network_client_attempt_current(owner->frontend,attempt);
+}
 bool frontend_remote_q3_initial_read(const frontend_remote_q3_initial *owner,
     frontend_remote_q3_initial_view *out,qa_error *error)
 {
+    if(owner && owner->importing) return frontend_remote_q3_initial_import_read(owner,out,error);
     frontend_network_client_attempt attempt; bool present;
-    if(!owner || !out || !owner->ready || owner->application!=owner->frontend->application ||
-        !frontend_network_client_attempt_read(owner->frontend,&attempt,&present,error)) return false;
+    if(!owner || !out || !owner->ready || owner->retiring || owner->application!=owner->frontend->application ||
+        !public_attempt_read(owner,&attempt,&present,error)) return false;
     const frontend_remote_q3_initial_view *v=&owner->view;
     if(!present || !same_attempt(&v->attempt,&attempt) ||
         v->physical_seat>=owner->frontend->options.seats || !owner->frontend->seats ||
@@ -111,12 +224,13 @@ bool frontend_remote_q3_initial_read(const frontend_remote_q3_initial *owner,
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Connecting UI media leaves its retained attempt namespace");
     *out=*v; out->attempt=attempt; return true;
 }
-bool frontend_remote_q3_initial_current(const frontend_remote_q3_initial_view *v)
+static bool initial_fields_current(const frontend_remote_q3_initial_view *v)
 {
     const frontend_remote_q3_initial *owner=v?v->owner:NULL;
     const frontend_remote_q3_initial_view *actual=owner?&owner->view:NULL;
-    return owner && owner->ready && owner->application==owner->frontend->application &&
-        frontend_network_client_attempt_current(owner->frontend,&v->attempt) &&
+    return owner && owner->ready && !owner->constructing && !owner->retiring &&
+        owner->application==owner->frontend->application &&
+        actual->attempt.source.descriptor && v->attempt.source.descriptor &&
         same_attempt(&actual->attempt,&v->attempt) && v->identity==actual->identity &&
         v->physical_seat==actual->physical_seat && v->product==actual->product &&
         v->descriptor==actual->descriptor && v->mounts==actual->mounts && v->images==actual->images &&
@@ -126,17 +240,137 @@ bool frontend_remote_q3_initial_current(const frontend_remote_q3_initial_view *v
         v->physical_seat<owner->frontend->options.seats &&
         v->input==owner->frontend->seats[v->physical_seat].input;
 }
+bool frontend_remote_q3_initial_current(const frontend_remote_q3_initial_view *v)
+{
+    if(v && v->owner && v->owner->importing) return frontend_remote_q3_initial_import_current(v);
+    return v && v->owner && public_attempt_current(v->owner,&v->attempt) &&
+        initial_fields_current(v);
+}
+bool frontend_remote_q3_initial_prepare_restored(qa_frontend *f,const frontend_network_client_attempt *attempt,
+    uint64_t identity,uint32_t physical_seat,qa_vfs **mounts,frontend_remote_q3_initial **out,qa_error *error)
+{
+    if(!f || !f->application || !f->source_restoring || f->capture || f->resource_inventory ||
+        f->stepping || f->round || !f->seats || !attempt || !mounts || !*mounts || !out || *out ||
+        identity<=QA_FRONTEND_COMMAND_OWNER || identity-QA_FRONTEND_COMMAND_OWNER>f->next_source_id ||
+        frontend_source_identity_used(f,identity) || !frontend_network_client_restore_attempt_current(f,attempt) ||
+        qa_vfs_resources(*mounts)!=qa_vfs_resources(attempt->source.descriptor->content))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Initial UI import requires its genuine absent-gamestate graph recipe");
+    uint32_t ordinal;
+    if(!qa_application_constructor_seat_ordinal(f->application,attempt->source.receiver.receiver,
+        attempt->source.receiver.seat,&ordinal,error)) return false;
+    if(ordinal!=physical_seat || ordinal>=f->options.seats || attempt->configuration.physical_seat!=ordinal ||
+        !f->seats[ordinal].input || f->seats[ordinal].frontend!=f || f->seats[ordinal].id!=ordinal)
+        return frontend_fail(error,QA_ERROR_FORMAT,"Restored initial UI changed its real physical input recipient");
+    for(size_t i=0;i<frontend_remote_q3_count(f);++i) {
+        frontend_remote_q3_resources existing;
+        if(!frontend_remote_q3_resources_read(frontend_remote_q3_at(f,i),&existing,error)) return false;
+        if(existing.identity==identity)
+            return frontend_fail(error,QA_ERROR_FORMAT,"Restored initial UI identity is already retained");
+    }
+    frontend_remote_q3_initial *owner=calloc(1,sizeof(*owner));
+    if(!owner) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining restored initial UI resource parent");
+    owner->frontend=f; owner->application=f->application;
+    owner->next=f->initial_resources; f->initial_resources=owner; owner->constructing=true; owner->importing=true;
+    owner->view=(frontend_remote_q3_initial_view){.owner=owner,.attempt=*attempt,.identity=identity,
+        .physical_seat=ordinal,.input=f->seats[ordinal].input};
+    *out=owner;
+    frontend_remote_q3_initial_view *v=&owner->view; v->mounts=*mounts; *mounts=NULL;
+    bool ok=qa_launch_instance_retain_metadata(attempt->source.descriptor,&owner->descriptor,error);
+    if(ok) {
+        v->descriptor=qa_launch_instance_lease_view(owner->descriptor); v->attempt.source.descriptor=v->descriptor;
+        ok=qa_native_q3_remote_client_product_read(owner->application,&v->attempt.source,&v->product,error) &&
+            frontend_client_registry_acquire(f,v->descriptor,attempt->source.receiver.seat,&v->registry,error) &&
+            frontend_client_registry_cvars(v->registry)==attempt->source.receiver.cvars;
+    }
+    if(ok) {
+        v->images=qa_scene_resources_create_detached(v->mounts,error);
+        v->materials=v->images?qa_material_library_create_detached(v->images,error):NULL;
+        v->fonts=v->images?qa_font_library_create(v->mounts,v->images,error):NULL;
+        v->movies=v->images?qa_media_library_create(v->images,error):NULL;
+        ok=v->images && v->materials && v->fonts && v->movies && qa_audio_bank_create(v->mounts,&v->sounds,error);
+    }
+    qa_q3_presentation_asset_options assets={.provider={v->mounts,v->images,v->materials,QA_SCENE_Q3},
+        .sounds=v->sounds,.movies=v->movies,.context=owner,.model_initialize=model_initialize};
+    if(ok) ok=qa_q3_presentation_assets_create(&assets,&v->assets,error) &&
+        frontend_network_client_restore_attempt_current(f,attempt);
+    owner->constructing=false; owner->ready=ok;
+    if(!ok && (!error || error->code==QA_OK))
+        return frontend_fail(error,QA_ERROR_FORMAT,"Restored initial UI graph changed its retained namespace");
+    return ok;
+}
+bool frontend_remote_q3_initial_import_current(const frontend_remote_q3_initial_view *view)
+{
+    const frontend_remote_q3_initial *owner=view?view->owner:NULL;
+    return owner && owner->importing && owner->frontend->source_restoring && !owner->frontend->resource_inventory &&
+        initial_fields_current(view) && frontend_client_registry_cvars(view->registry)==view->attempt.source.receiver.cvars &&
+        frontend_network_client_restore_attempt_current(owner->frontend,&view->attempt);
+}
+bool frontend_remote_q3_initial_import_read(const frontend_remote_q3_initial *owner,
+    frontend_remote_q3_initial_view *out,qa_error *error)
+{
+    frontend_network_client_attempt attempt; bool present=false;
+    if(!owner || !out || !owner->importing || !owner->ready ||
+        !frontend_network_client_restore_attempt_read(owner->frontend,&attempt,&present,error) || !present)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Initial UI resources lack their actual staged attempt");
+    frontend_remote_q3_initial_view view=owner->view; view.attempt=attempt;
+    if(!frontend_remote_q3_initial_import_current(&view))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Initial UI graph changed its staged physical namespace");
+    *out=view; return true;
+}
+bool frontend_remote_q3_initial_finish_import(frontend_remote_q3_initial *owner,qa_error *error)
+{
+    frontend_network_client_attempt attempt; bool present=false;
+    if(!owner || !owner->importing || owner->frontend->capture || owner->frontend->resource_inventory ||
+        !frontend_remote_q3_initial_idle(owner) ||
+        !public_attempt_read(owner,&attempt,&present,error) || !present)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Initial UI graph promotion requires its actual returned public attempt");
+    frontend_remote_q3_initial_view view=owner->view; view.attempt=attempt;
+    if(!initial_fields_current(&view) || !public_attempt_current(owner,&attempt))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Restored initial UI changed before public admission");
+    owner->view.attempt=attempt; owner->importing=false; return true;
+}
+bool frontend_remote_q3_initial_metadata_read(const frontend_remote_q3_initial *owner,
+    frontend_remote_q3_initial_view *out,qa_error *error)
+{
+    frontend_network_client_attempt attempt;
+    frontend_remote_q3_initial *actual=NULL;
+    frontend_remote_q3_modules *modules=NULL; bool present=false;
+    if (!owner || !out || !owner->ready || owner->constructing || owner->retiring || owner->importing ||
+        owner->application!=owner->frontend->application || !owner->frontend->resource_inventory ||
+        !frontend_network_initial_metadata_read(owner->frontend,&attempt,&actual,&modules,&present,error) ||
+        !present || actual!=owner)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"InitialUI metadata lacks its installed complete resource parent");
+    frontend_remote_q3_initial_view view=owner->view; view.attempt=attempt;
+    if (!initial_fields_current(&view) ||
+        frontend_client_registry_cvars(view.registry)!=attempt.source.receiver.cvars ||
+        !frontend_network_initial_metadata_current(owner->frontend,&attempt,owner,modules))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"InitialUI metadata changed its physical resource namespace");
+    *out=view; return true;
+}
+bool frontend_remote_q3_initial_metadata_current(const frontend_remote_q3_initial_view *view)
+{
+    const frontend_remote_q3_initial *owner=view?view->owner:NULL;
+    frontend_network_client_attempt actual;
+    frontend_remote_q3_initial *parent=NULL;
+    frontend_remote_q3_modules *modules=NULL; bool present=false;
+    return owner && !owner->importing && owner->frontend->resource_inventory && initial_fields_current(view) &&
+        frontend_client_registry_cvars(view->registry)==view->attempt.source.receiver.cvars &&
+        frontend_network_initial_metadata_read(owner->frontend,&actual,&parent,&modules,&present,NULL) &&
+        present && parent==owner &&
+        frontend_network_initial_metadata_current(owner->frontend,&view->attempt,owner,modules);
+}
 bool frontend_remote_q3_initial_borrow(frontend_remote_q3_initial *owner,
     frontend_remote_q3_initial_view *out,qa_error *error)
 {
-    if(!owner || owner->users==SIZE_MAX || !frontend_remote_q3_initial_read(owner,out,error)) return false;
+    if(!owner || owner->frontend->resource_inventory || owner->users==SIZE_MAX ||
+        !frontend_remote_q3_initial_read(owner,out,error)) return false;
     ++owner->users; return true;
 }
 bool frontend_remote_q3_initial_child_retain(frontend_remote_q3_initial *owner,
     frontend_remote_q3_initial **out,qa_error *error)
 {
     frontend_remote_q3_initial_view view;
-    if(!owner || !out || *out || owner->children==SIZE_MAX ||
+    if(!owner || !out || *out || owner->frontend->resource_inventory || owner->children==SIZE_MAX ||
         !frontend_remote_q3_initial_read(owner,&view,error)) return false;
     ++owner->children; *out=owner; return true;
 }
@@ -144,23 +378,86 @@ bool frontend_remote_q3_initial_child_release(frontend_remote_q3_initial **out,q
 {
     if(!out || !*out) return true;
     frontend_remote_q3_initial *owner=*out;
-    if(!owner->children || !frontend_remote_q3_initial_idle(owner))
+    if(owner->frontend->resource_inventory || !owner->children || !frontend_remote_q3_initial_idle(owner))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Connecting UI child still retains entered media callbacks");
     --owner->children; *out=NULL; return true;
 }
 void frontend_remote_q3_initial_release(frontend_remote_q3_initial *owner)
 { if(owner && owner->users) --owner->users; }
+static bool transport_current(void *context,const qa_application_q3_remote_source *source)
+{
+    frontend_remote_q3_initial *owner=context;
+    frontend_remote_q3_initial_view view;
+    if(!owner || !source || owner->transport_released || !frontend_remote_q3_initial_read(owner,&view,NULL)) return false;
+    view.attempt.source=*source;
+    return frontend_remote_q3_initial_current(&view);
+}
+static bool transport_idle(void *context)
+{ const frontend_remote_q3_initial *owner=context; return owner && !owner->transport_callbacks; }
+static uint32_t transport_milliseconds(void *context)
+{
+    const frontend_remote_q3_initial *owner=context;
+    return (uint32_t)(owner->frontend->wall_time_ns/UINT64_C(1000000));
+}
+static bool transport_forward(void *context,const qa_command_invocation *call,qa_error *error)
+{
+    frontend_remote_q3_initial *owner=context;
+    frontend_remote_q3_initial_view view;
+    if(!owner || owner->transport_callbacks || owner->transport_released ||
+        !frontend_remote_q3_initial_read(owner,&view,error))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Connecting CLIENT forwarding has no current retained attempt");
+    ++owner->transport_callbacks;
+    bool ok=frontend_network_client_forward(owner->frontend,call,error);
+    --owner->transport_callbacks; return ok;
+}
+static bool transport_release(void *context,qa_error *error)
+{
+    frontend_remote_q3_initial *owner=context;
+    if(!transport_idle(owner))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Connecting CLIENT transport still retains an invocation");
+    owner->transport_released=true; return true;
+}
+bool frontend_remote_q3_initial_transport_create(frontend_remote_q3_initial *owner,qa_error *error)
+{
+    frontend_remote_q3_initial_view view;
+    if(!owner || owner->frontend->resource_inventory || owner->transport || owner->transport_released ||
+        !frontend_remote_q3_initial_idle(owner) || !frontend_remote_q3_initial_read(owner,&view,error))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Connecting CLIENT transport requires its actual unentered parent");
+    qa_native_q3_remote_transport_services services={.source=view.attempt.source,.context=owner,
+        .current=transport_current,.idle=transport_idle,.milliseconds=transport_milliseconds,
+        .forward=transport_forward,.release=transport_release};
+    return qa_native_q3_remote_client_transport_create(owner->application,&services,&owner->transport,error);
+}
+qa_native_q3_remote_client_transport *frontend_remote_q3_initial_transport_read(
+    const frontend_remote_q3_initial *owner)
+{ return owner?owner->transport:NULL; }
 bool frontend_remote_q3_initial_destroy(frontend_remote_q3_initial **out,qa_error *error)
 {
     if(!out || !*out) return true;
     frontend_remote_q3_initial *owner=*out;
-    if(owner->frontend->capture || owner->children || !frontend_remote_q3_initial_idle(owner))
+    if(owner->frontend->capture || owner->frontend->resource_inventory ||
+        owner->children || !frontend_remote_q3_initial_idle(owner))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Connecting UI media retains an actual entered borrower");
+    frontend_remote_q3_initial **link=&owner->frontend->initial_resources;
+    while (*link && *link!=owner) link=&(*link)->next;
+    if (*link!=owner) return frontend_fail(error,QA_ERROR_ARGUMENT,"Initial resource retirement lost its parent custody");
+    owner->retiring=true;
+    if(!qa_native_q3_remote_client_transport_destroy(&owner->transport,error)) return false;
     frontend_remote_q3_initial_view *v=&owner->view;
     if(!frontend_client_registry_release(&v->registry,error)) return false;
+    if (!frontend_material_movies_destroy(&owner->shader_movies,error)) return false;
     qa_q3_presentation_assets_destroy(v->assets); qa_media_library_destroy(v->movies);
     qa_font_library_destroy(v->fonts); qa_audio_bank_destroy(v->sounds);
     qa_material_library_destroy(v->materials); qa_scene_resources_destroy(v->images); qa_vfs_destroy(v->mounts);
     qa_launch_instance_lease_release(owner->descriptor);
-    free(owner); *out=NULL; return true;
+    *link=owner->next; free(owner); *out=NULL; return true;
+}
+
+bool frontend_remote_q3_initial_material_bindings_restore(qa_frontend *f,qa_error *error)
+{
+    if (!f || !f->source_restoring || f->capture || f->resource_inventory)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Source material rebinding requires its genuine imported physical banks");
+    for (frontend_remote_q3_initial *owner=f->initial_resources;owner;owner=owner->next)
+        if (owner->view.materials && !frontend_q3_material_source_bind(f,owner->view.materials,error)) return false;
+    return true;
 }

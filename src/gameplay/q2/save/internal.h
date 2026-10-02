@@ -42,6 +42,7 @@ bool q2_save_entity(q2_save_io *, qa_q2_entity_checkpoint *);
 bool q2_save_entities(q2_save_io *, qa_q2_entities_checkpoint *);
 bool q2_save_monster(q2_save_io *, qa_q2_monster_checkpoint *);
 bool q2_save_monsters(q2_save_io *, qa_q2_monsters_checkpoint *);
+bool q2_save_wire(q2_save_io *);
 
 #define Q2S(TYPE, MEMBER) do { if (!q2_save_##TYPE(io, &s->MEMBER)) return false; } while (0)
 #define Q2U(MEMBER) do { uint32_t value = (uint32_t)s->MEMBER; \

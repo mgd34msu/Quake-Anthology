@@ -50,8 +50,8 @@ bool qa_bots_level_reset(qa_bots *b, qa_error *e) {
         if (!s || !s->inuse || s->retired) continue;
         ok = bot_ai_reset(b, s, e);
         if (ok) {
-            s->setup_count=4;
-            ok=bot_ai_storage_i32(b,s,QA_BOT_SOURCE_SETUP_COUNT,&s->setup_count,true,e);
+            int32_t setup_count=4;
+            ok=bot_ai_storage_i32(b,s,QA_BOT_SOURCE_SETUP_COUNT,&setup_count,true,e);
         }
     }
     b->busy = false;

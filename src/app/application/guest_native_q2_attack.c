@@ -416,6 +416,29 @@ bool application_native_q2_attack_weapon_read(struct application_native_q2 *engi
     *out = selected->item;
     return true;
 }
+bool application_native_q2_attack_item_read(struct application_native_q2 *engine, uint32_t slot,
+    qa_actor_id actor, qa_native_address descriptor, qa_item_id *out, qa_error *error)
+{
+    qa_item_id equipped;
+    if (!out || !application_native_q2_attack_weapon_read(engine, slot, actor, &equipped, error)) return false;
+    if (!descriptor) { *out = 0; return true; }
+    const struct application_native_q2_attack *p = engine->source_attack;
+    const attack_item *selected = NULL;
+    for (size_t i = 0; i < p->count; ++i) if (p->items[i].descriptor == descriptor) {
+        if (selected) return application_fail(error, QA_ERROR_FORMAT,
+            "Native pending weapon repeats its original descriptor");
+        selected = p->items + i;
+    }
+    if (!selected || !selected->item) return application_fail(error, QA_ERROR_FORMAT,
+        "Native pending weapon is outside its actual prepared item roster");
+    *out = selected->item;
+    return true;
+}
+const qa_json_document *application_native_q2_attack_declaration_read(const struct application_native_q2 *engine)
+{
+    const struct application_native_q2_attack *p = engine ? engine->source_attack : NULL;
+    return p && p->engine == engine && p->items_ready ? p->document : NULL;
+}
 void application_native_q2_attack_released(struct application_native_q2 *engine, qa_actor_id actor)
 {
     struct application_native_q2_attack *p = engine->source_attack;

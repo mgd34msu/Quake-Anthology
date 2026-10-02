@@ -219,6 +219,8 @@ typedef struct qa_q2_player_state {
     int character_skin;
     bool character_configured;
     qa_actor_id noise[2], sphere_camera;
+    /* Source FL_INVEHICLE is set by the actual hunter camera and survives its expiry. */
+    bool sphere_vehicle;
     qa_q2_fog fog, wanted_fog;
     float fog_transition;
     size_t flood_count;
@@ -278,6 +280,7 @@ bool qa_q2_player_admit(qa_q2_game *, qa_actor_id, const qa_q2_player_admission 
 bool qa_q2_character_configure(qa_q2_game *, qa_actor_id, qa_string_id model, int skin, qa_error *);
 bool qa_q2_character_respawned(qa_q2_game *, qa_actor_id, qa_error *);
 bool qa_q2_player_userinfo(qa_q2_game *, qa_actor_id, const char *, qa_error *);
+bool qa_q2_player_userinfo_read(qa_q2_game *, qa_actor_id, const char **, qa_error *);
 bool qa_q2_player_read(qa_q2_game *, qa_actor_id, qa_q2_player_info *);
 bool qa_q2_player_notarget(qa_q2_game *, qa_actor_id, bool *enabled, qa_error *);
 bool qa_q2_player_controlled(const qa_q2_game *, qa_actor_id);
@@ -297,6 +300,14 @@ bool qa_q2_player_chase(qa_q2_game *, qa_actor_id, int direction, bool toggle, q
 bool qa_q2_player_weapon_fired(qa_q2_game *, qa_actor_id, qa_error *);
 bool qa_q2_player_animation(qa_q2_game *, qa_actor_id, int priority, int first, int last,
                             qa_error *);
+typedef struct qa_q2_player_animation_view {
+    int32_t frame, end_frame, priority;
+    bool duck, run;
+} qa_q2_player_animation_view;
+/* Copies the actual client's retained source animation. No frame advance,
+ * visual publication, source callback or checkpoint operation runs. */
+bool qa_q2_player_animation_read(const qa_q2_game *, qa_actor_id,
+    qa_q2_player_animation_view *, qa_error *);
 bool qa_q2_player_carry_capture(qa_q2_game *, qa_actor_id, qa_q2_player_carry *, qa_error *);
 bool qa_q2_player_carry_restore(qa_q2_game *, qa_actor_id, const qa_q2_player_carry *, qa_error *);
 void qa_q2_player_carry_free(qa_q2_player_carry *);

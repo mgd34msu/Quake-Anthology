@@ -1,6 +1,7 @@
 #include "map_travel_private.h"
 #include "qa/source_save.h"
 #include "rankings.h"
+#include "qa/application_startup_prepare.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -28,6 +29,7 @@ static struct application_map_state *map_state(qa_application *application,
 static bool map_safe(const qa_application *application)
 {
     return application != NULL && application->operation == APPLICATION_IDLE &&
+           !qa_application_startup_pending(application) && !application->failed_publications &&
            !application->q3_round_active && !application->q3_world_restart &&
            !application->frame_preparing &&
            application_rankings_idle(application) &&
@@ -146,21 +148,15 @@ bool qa_application_load_map(qa_application *application,
     }
     if (ok) {
         bool previous_force = application->map_force_reload;
-        uint64_t previous_travel = state->revision;
+        state->load_revision = state->revision;
         state->loading = true;
         state->load_carry = request->carry_players;
         state->load_new_unit = request->new_unit;
         application->map_force_reload = true;
         ok = qa_application_apply(application, draft, error);
         application->map_force_reload = previous_force;
-        state->loading = false;
-        if (ok && !state->busy && state->revision == previous_travel) {
-            qa_travel_route_free(&state->route);
-            state->pending = false;
-            state->cursor = 0;
-            state->has_landmark = false;
-            state->nextserver = QA_STRING_NONE;
-        }
+        if (!ok || !qa_application_startup_pending(application))
+            application_map_load_finish(application, ok);
     }
     qa_launch_draft_destroy(draft);
     free(start);
@@ -182,7 +178,7 @@ static bool queue_travel(qa_application *application,
     struct application_map_state *state = map_state(application, error);
     if (state == NULL)
         return false;
-    if (state->busy)
+    if (state->busy || state->loading || state->publication_complete)
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "travel cannot reenter its publication");
     if (state->revision == UINT64_MAX)
@@ -303,7 +299,7 @@ bool qa_application_travel_read(const qa_application *application,
                                  qa_application_travel_view *out)
 {
     if (application == NULL || out == NULL || application->map_state == NULL ||
-        !application->map_state->pending)
+        (!application->map_state->pending && !application->map_state->publication_complete))
         return false;
     const struct application_map_state *state = application->map_state;
     *out = (qa_application_travel_view){
@@ -355,6 +351,7 @@ bool qa_application_commit_travel(qa_application *application,
     if (!nextserver_prepare(application, state, &nextserver, error))
         return false;
     state->busy = true;
+    state->load_nextserver = nextserver;
     bool ok = qa_application_load_map(
         application,
         &(qa_application_map_request){.geometry = state->geometry,
@@ -362,13 +359,58 @@ bool qa_application_commit_travel(qa_application *application,
                                       .spawn_point = target->spawn_point,
                                       .new_unit = target->new_unit,
                                       .carry_players = state->carry_players}, error);
-    state->busy = false;
-    if (ok) {
-        state->nextserver = nextserver;
+    if (!ok && !state->loading) state->busy = false;
+    return ok;
+}
+
+void application_map_load_finish(qa_application *application, bool published)
+{
+    struct application_map_state *state = application ? application->map_state : NULL;
+    if (!state || !state->loading) return;
+    state->loading = false;
+    if (published && state->revision == state->load_revision) {
+        if (state->busy) {
+            state->nextserver = state->load_nextserver;
+            state->publication_complete = true;
+            state->match_finished = false;
+        } else {
+            qa_travel_route_free(&state->route);
+            state->cursor = 0;
+            state->nextserver = QA_STRING_NONE;
+        }
         state->pending = false;
         state->has_landmark = false;
     }
-    return ok;
+    state->busy = false;
+    state->load_revision = 0;
+    state->load_nextserver = QA_STRING_NONE;
+}
+
+bool qa_application_travel_publication_read(const qa_application *application,
+                                            uint64_t *revision)
+{
+    const struct application_map_state *state = application ? application->map_state : NULL;
+    if (!state || !revision || !state->publication_complete || state->loading || state->busy)
+        return false;
+    *revision = state->revision;
+    return true;
+}
+
+bool qa_application_finish_travel_publication(qa_application *application,
+                                              uint64_t revision, qa_error *error)
+{
+    uint64_t current;
+    if (!map_safe(application) || !qa_application_travel_publication_read(application, &current) || current != revision)
+        return application_fail(error, QA_ERROR_ARGUMENT, "travel completion requires its published world and revision");
+    struct application_map_state *state = application->map_state;
+    if (!state->match_finished) {
+        if (!qa_application_finish_match_travel(application, revision, error)) return false;
+        state->match_finished = true;
+    }
+    if (!qa_application_rankings_start(application, error)) return false;
+    state->publication_complete = false;
+    state->match_finished = false;
+    return true;
 }
 
 bool qa_application_complete_travel(qa_application *application,
@@ -498,6 +540,7 @@ static bool map_checkpoint_fields(qa_source_save_io *io, struct application_map_
         !qa_source_save_string(io, &state->provider) || !qa_source_save_actor(io, &state->cause) ||
         !qa_source_save_text(io, &product) || !qa_source_save_string(io, &state->nextserver) ||
         !qa_source_save_bool(io, &state->pending) || !qa_source_save_bool(io, &state->has_landmark) ||
+        !qa_source_save_bool(io, &state->publication_complete) || !qa_source_save_bool(io, &state->match_finished) ||
         !qa_source_save_bool(io, &state->carry_players) || !qa_source_save_bool(io, &state->complete_campaign) ||
         !qa_source_save_bool(io, &state->load_carry) || !qa_source_save_bool(io, &state->load_new_unit) ||
         !qa_source_save_string(io, &state->landmark.name) ||
@@ -531,7 +574,10 @@ static bool map_checkpoint_fields(qa_source_save_io *io, struct application_map_
         }
         if (reading) target->kind = (qa_travel_kind)kind;
     }
-    if ((state->pending && (!state->revision || state->cursor >= state->route.count)) ||
+    if (((state->pending || state->publication_complete) && (!state->revision || state->cursor >= state->route.count)) ||
+        (state->publication_complete && (state->pending || state->has_landmark ||
+            state->route.targets[state->cursor].kind != QA_TRAVEL_MAP)) ||
+        (state->match_finished && !state->publication_complete) ||
         !qa_vec_finite(state->landmark.relative_origin) ||
         !qa_vec_finite(state->landmark.relative_velocity) || !qa_vec_finite(state->landmark.relative_view_angles)) {
         qa_error_set(io->error, QA_ERROR_FORMAT, io->offset, "map continuation cursor or landmark disagrees");
@@ -550,7 +596,7 @@ bool application_map_checkpoint_capture(qa_application *application, qa_buffer *
     qa_source_save_io io;
     if (!qa_source_save_writer(&io, application->session, error)) return false;
     uint8_t signature[] = {'Q','A','M','T'};
-    uint32_t version = 1;
+    uint32_t version = 2;
     bool present = application->map_state != NULL;
     bool ok = qa_source_save_bytes(&io, signature, sizeof(signature)) &&
         qa_source_save_u32(&io, &version) && qa_source_save_bool(&io, &present);
@@ -605,7 +651,7 @@ bool application_map_checkpoint_restore(qa_application *candidate, qa_bytes byte
     if (!qa_source_save_reader(&io, candidate->session, bytes, error)) return false;
     uint8_t signature[4]; uint32_t version = 0; bool present = false;
     bool ok = qa_source_save_bytes(&io, signature, sizeof(signature)) && !memcmp(signature, "QAMT", 4) &&
-        qa_source_save_u32(&io, &version) && version == 1 && qa_source_save_bool(&io, &present);
+        qa_source_save_u32(&io, &version) && version == 2 && qa_source_save_bool(&io, &present);
     struct application_map_state *state = NULL;
     if (ok && present) {
         state = calloc(1, sizeof(*state));

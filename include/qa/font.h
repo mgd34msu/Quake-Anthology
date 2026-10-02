@@ -9,6 +9,7 @@
 typedef struct qa_font_library qa_font_library;
 typedef struct qa_font qa_font;
 typedef struct qa_font_world_store qa_font_world_store;
+typedef struct qa_font_resource_policy qa_font_resource_policy;
 
 typedef enum qa_font_kind {
     QA_FONT_CLASSIC,
@@ -79,6 +80,21 @@ qa_font_library *qa_font_library_create(qa_vfs *, qa_scene_resources *, qa_error
 void qa_font_library_destroy(qa_font_library *);
 /* The exact borrowed view supplied to this library's constructor. */
 const qa_vfs *qa_font_library_content(const qa_font_library *);
+/* Prepare real glyph/image/metric bindings in the resource bank's private
+ * destination. Existing published font objects retain their identity. New
+ * fonts may be loaded into destination before ready seals its roster. Keep
+ * the resource bank held through font finish/abort; publish bank then font
+ * state before publishing selections mapped to stable font pointers. */
+bool qa_font_resource_policy_prepare(qa_font_library *,qa_scene_resource_policy *,
+    qa_font_resource_policy **,qa_error *);
+qa_font_library *qa_font_resource_policy_source(const qa_font_resource_policy *);
+qa_font_library *qa_font_resource_policy_destination(const qa_font_resource_policy *);
+bool qa_font_resource_policy_font(const qa_font_resource_policy *,const qa_font *,const qa_font **);
+bool qa_font_resource_policy_ready(qa_font_resource_policy *,qa_error *);
+bool qa_font_resource_policy_ready_is(const qa_font_resource_policy *);
+void qa_font_resource_policy_publish(qa_font_resource_policy *);
+bool qa_font_resource_policy_finish(qa_font_resource_policy **,qa_error *);
+bool qa_font_resource_policy_abort(qa_font_resource_policy **,qa_error *);
 bool qa_font_classic_create(qa_font_library *, const char *name, const qa_scene_image *,
                             qa_font_color_policy, const qa_font **out, qa_error *);
 /* Explicit authored atlas metrics; the library retains the actual image and

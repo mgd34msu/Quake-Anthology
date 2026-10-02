@@ -3,6 +3,11 @@
 #include "native_q1_wire.h"
 #include "equipment_events.h"
 #include "equipment_runtime.h"
+#include "native_q2_delivery.h"
+#include "native_q1_composition.h"
+#include "unified_q1_events.h"
+#include "unified_q2_events.h"
+#include "guest_q3_weapons_services.h"
 
 #include <inttypes.h>
 #include <math.h>
@@ -16,13 +21,53 @@ static bool valid_string(const qa_application *application, qa_string_id id)
            qa_strings_text(qa_session_strings(application->session), id).data != NULL;
 }
 
-static bool valid_event(const qa_application *application,
+static bool valid_q1_source_event(qa_application *app,
+    const qa_builtin_event *event, qa_error *error)
+{
+    if (event->family != QA_GAME_Q1 || !event->provider || event->argument_count ||
+        !qa_actor_id_equal(event->other, (qa_actor_id){0}) || event->resource)
+        return application_fail(error, QA_ERROR_ARGUMENT,
+            "Q1 source event has invalid source payload");
+    if (!application_native_q1_composition_current(app, event->provider,
+            QA_MODE_THREEWAVE, error)) return false;
+    application_provider *source = application_world_provider(app, QA_ROLE_ENTITIES, "");
+    uint64_t time_ns;
+    double seconds;
+    if (!qa_q1_game_clock_read(source->state.q1, &time_ns, &seconds) ||
+        event->time_ns != time_ns)
+        return application_fail(error, QA_ERROR_ARGUMENT,
+            "Q1 source event differs from its genuine source clock");
+    if (event->kind == QA_BUILTIN_SOURCE_LOG) {
+        bool observer;
+        if (!event->text)
+            return application_fail(error, QA_ERROR_ARGUMENT,
+                "Q1 source log has no source action");
+        return application_native_q1_composition_player_current(app, event->provider,
+            QA_MODE_THREEWAVE, event->actor, &observer, error);
+    }
+    if (event->kind == QA_BUILTIN_SOURCE_PROMPT || event->kind == QA_BUILTIN_CLEAR_PROMPT) {
+        bool observer;
+        if ((event->kind == QA_BUILTIN_SOURCE_PROMPT && !event->text) ||
+            (event->kind == QA_BUILTIN_CLEAR_PROMPT && (event->text || event->prompt_choice_count)))
+            return application_fail(error, QA_ERROR_ARGUMENT, "Q1 source prompt has invalid title or choices");
+        return application_native_q1_composition_player_current(app, event->provider,
+            QA_MODE_THREEWAVE, event->actor, &observer, error);
+    }
+    return (qa_actor_id_equal(event->actor, (qa_actor_id){0}) && !event->text &&
+            isfinite(event->ctf_capture.total)) ||
+        application_fail(error, QA_ERROR_ARGUMENT,
+            "CTF capture requires its genuine team total without an addressed actor");
+}
+
+static bool valid_event(qa_application *application,
                         const qa_builtin_event *event, qa_error *error)
 {
-    if (event == NULL || (unsigned)event->kind > QA_BUILTIN_LOG ||
+    if (event == NULL || (unsigned)event->kind > QA_BUILTIN_CLEAR_PROMPT ||
         (unsigned)event->family > QA_GAME_Q3 ||
         (event->argument_count != 0 && event->arguments == NULL) ||
         event->argument_count > SIZE_MAX / sizeof(*event->arguments) ||
+        (event->prompt_choice_count && !event->prompt_choices) ||
+        event->prompt_choice_count > SIZE_MAX / sizeof(*event->prompt_choices) ||
         !valid_string(application, event->resource) ||
         !valid_string(application, event->text) ||
         !qa_vec_finite(event->origin) || !qa_vec_finite(event->end) ||
@@ -37,6 +82,27 @@ static bool valid_event(const qa_application *application,
          !qa_actor_id_equal(event->other, (qa_actor_id){0})))
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "Q3 source log requires provider-owned text");
+    if (event->kind == QA_BUILTIN_CTF_STATUS &&
+        (event->family != QA_GAME_Q1 || !event->provider ||
+         !qa_actors_get(qa_session_actors(application->session), event->actor) ||
+         event->argument_count || !isfinite(event->ctf_status.red) ||
+         !isfinite(event->ctf_status.blue) || !isfinite(event->ctf_status.flags) ||
+         !isfinite(event->ctf_status.rune_items)))
+        return application_fail(error, QA_ERROR_ARGUMENT,
+                                "CTF status requires its actual source and addressed actor");
+    if ((event->kind == QA_BUILTIN_SOURCE_LOG || event->kind == QA_BUILTIN_CTF_CAPTURE ||
+         event->kind == QA_BUILTIN_SOURCE_PROMPT || event->kind == QA_BUILTIN_CLEAR_PROMPT) &&
+        !valid_q1_source_event(application, event, error)) return false;
+    if (event->kind != QA_BUILTIN_SOURCE_PROMPT && event->prompt_choice_count)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Non-prompt event has prompt choices");
+    for (size_t i = 0; i < event->prompt_choice_count; ++i)
+        if (!event->prompt_choices[i].label || !valid_string(application, event->prompt_choices[i].label))
+            return application_fail(error, QA_ERROR_ARGUMENT, "Source prompt has an invalid label alias");
+    if (event->kind == QA_BUILTIN_Q1_POWERUP &&
+        (event->family != QA_GAME_Q1 || !event->provider || !event->actor.registry ||
+         event->other.registry || event->text || event->resource || event->argument_count ||
+         event->q1_powerup.power >= QA_Q1_POWER_COUNT || !isfinite(event->q1_powerup.expires)))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q1 powerup requires its actual typed source expiry");
     for (size_t index = 0; index < event->argument_count; ++index) {
         const qa_builtin_message_arg *argument = &event->arguments[index];
         if ((argument->kind == QA_BUILTIN_MESSAGE_STRING &&
@@ -102,7 +168,7 @@ static bool reserve_q2_map_event(qa_application *application,
     size_t capacity = application->q2_map_event_capacity == 0
                           ? 32
                           : application->q2_map_event_capacity * 2;
-    qa_application_q2_map_event *events =
+    application_q2_map_event_record *events =
         realloc(application->q2_map_events, capacity * sizeof(*events));
     if (events == NULL)
         return application_fail(error, QA_ERROR_MEMORY,
@@ -184,9 +250,24 @@ bool application_emit_q2_map(application_provider *provider,
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "gameplay emitted an invalid Q2 map event");
     if (!valid_arguments(application, event->arguments,
-                         event->argument_count, error) ||
-        !reserve_q2_map_event(application, error))
+                         event->argument_count, error))
         return false;
+    if (event->kind == QA_Q2_MAP_WORLD_TEXT &&
+        !application_unified_world_text_emit(application, provider->owner, event, error)) return false;
+    qa_application_q2_audience audience={0},retained={0};
+    if (event->kind==QA_Q2_MAP_STEAM || event->kind==QA_Q2_MAP_FORCE_WALL) {
+        qa_vec3 multicast_origin=event->origin;
+        if (event->kind==QA_Q2_MAP_FORCE_WALL &&
+            (provider->kind!=APPLICATION_PROVIDER_Q2 ||
+             !qa_q2_force_wall_multicast_origin(provider->state.q2,event->actor,&multicast_origin)))
+            return application_fail(error,QA_ERROR_ARGUMENT,"Forcewall delivery lost its genuine spawn midpoint");
+        if (!application_native_q2_delivery_capture(provider,multicast_origin,&audience,error)) return false;
+    }
+    bool ready=reserve_q2_map_event(application,error) &&
+        application_event_journal_reserve(application,error) &&
+        application_native_q2_delivery_retain(application,&audience,&retained,error);
+    application_native_q2_delivery_dispose(&audience);
+    if (!ready) return false;
     qa_builtin_message_arg *arguments = NULL;
     if (event->argument_count != 0) {
         size_t bytes = event->argument_count * sizeof(*event->arguments);
@@ -196,14 +277,16 @@ bool application_emit_q2_map(application_provider *provider,
             return false;
         memcpy(arguments, event->arguments, bytes);
     }
-    qa_application_q2_map_event *record =
-        &application->q2_map_events[application->q2_map_event_count++];
-    *record = (qa_application_q2_map_event){
+    application_q2_map_event_record *record =
+        &application->q2_map_events[application->q2_map_event_count];
+    *record = (application_q2_map_event_record){.audience=retained,.source={
         .provider = provider->owner,
         .time_ns = qa_session_elapsed(application->session),
         .event = *event,
-    };
-    record->event.arguments = arguments;
+    }};
+    record->source.event.arguments = arguments;
+    application_event_journal_append(application, APPLICATION_EVENT_Q2_MAP,
+        application->q2_map_event_count++, provider->owner);
     return true;
 }
 
@@ -222,14 +305,17 @@ bool application_emit_q3_map(application_provider *provider,
         !qa_vec_finite(event->destination) || !isfinite(event->value))
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "gameplay emitted an invalid Q3 map event");
-    if (!reserve_q3_map_event(application, error))
+    if (!reserve_q3_map_event(application, error) ||
+        !application_event_journal_reserve(application, error))
         return false;
-    application->q3_map_events[application->q3_map_event_count++] =
+    application->q3_map_events[application->q3_map_event_count] =
         (qa_application_q3_map_event){
             .provider = provider->owner,
             .time_ns = qa_session_elapsed(application->session),
             .event = *event,
         };
+    application_event_journal_append(application, APPLICATION_EVENT_Q3_MAP,
+        application->q3_map_event_count++, provider->owner);
     return true;
 }
 
@@ -338,17 +424,19 @@ bool application_record_level(application_provider *provider,
                            QA_PROGRESS_LEVEL_COMPLETED, map, error);
 }
 
-bool application_emit(void *opaque, const qa_builtin_event *event,
-                      qa_error *error)
+static bool emit_event(qa_application *application, const qa_builtin_event *event,
+    const qa_application_q2_audience *audience, qa_error *error)
 {
-    qa_application *application = opaque;
     if (application == NULL || application->destroy_requested ||
         application->session == NULL)
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "gameplay event has no live application owner");
     if (!valid_event(application, event, error) ||
+        !application_q3_weapons_services_q2_muzzle(application, event, error) ||
         !application_native_q1_wire_emit(application, event, error) ||
-        !reserve_event(application, error))
+        !application_unified_q1_event(application, event, error) ||
+        !reserve_event(application, error) ||
+        !application_event_journal_reserve(application, error))
         return false;
 
     qa_builtin_message_arg *arguments = NULL;
@@ -361,11 +449,40 @@ bool application_emit(void *opaque, const qa_builtin_event *event,
         memcpy(arguments, event->arguments, bytes);
     }
 
+    qa_builtin_prompt_choice *choices = NULL;
+    if (event->prompt_choice_count) {
+        size_t bytes = event->prompt_choice_count * sizeof(*choices);
+        choices = qa_arena_alloc(&application->event_arena, bytes, _Alignof(qa_builtin_prompt_choice), error);
+        if (!choices) return false;
+        memcpy(choices, event->prompt_choices, bytes);
+    }
     application_event_record *record =
-        &application->events[application->event_count++];
+        &application->events[application->event_count];
+    if (!application_native_q2_delivery_retain(application,audience,&record->q2_audience,error)) return false;
     record->event = *event;
     record->event.arguments = arguments;
+    record->event.prompt_choices = choices;
+    application_event_journal_append(application, APPLICATION_EVENT_BUILTIN,
+        application->event_count++, event->provider);
     return true;
+}
+
+bool application_emit(void *opaque, const qa_builtin_event *event, qa_error *error)
+{
+    return emit_event(opaque,event,&(qa_application_q2_audience){0},error);
+}
+
+bool application_emit_q2_particles(application_provider *provider,
+    const qa_builtin_event *event, qa_vec3 origin, qa_error *error)
+{
+    if (!provider || !event || event->kind!=QA_BUILTIN_PARTICLES ||
+        event->family!=QA_GAME_Q2 || event->provider!=provider->owner)
+        return application_fail(error,QA_ERROR_ARGUMENT,"Q2 particle delivery has no genuine source event");
+    qa_application_q2_audience audience={0};
+    if (!application_native_q2_delivery_capture(provider,origin,&audience,error)) return false;
+    bool ok=emit_event(provider->application,event,&audience,error);
+    application_native_q2_delivery_dispose(&audience);
+    return ok;
 }
 
 static void *event_storage(void *storage, size_t count, size_t *capacity,
@@ -427,6 +544,7 @@ bool application_emit_q2_player(application_provider *provider,
         sizeof(*storage), error);
     if (!storage) return false;
     application->q2_player_events = storage;
+    if (!application_event_journal_reserve(application,error)) return false;
     qa_q2_player_event copied = *event;
     if (!event_text(application, event->text, &copied.text, error) ||
         !event_text(application, event->skin, &copied.skin, error))
@@ -450,14 +568,17 @@ bool application_emit_q2_player(application_provider *provider,
         memcpy(inventory, event->inventory, event->count * sizeof(*inventory));
         copied.inventory = inventory;
     }
-    storage[application->q2_player_event_count++] = (qa_application_q2_player_event){
+    storage[application->q2_player_event_count] = (qa_application_q2_player_event){
         .provider = provider->owner, .time_ns = qa_session_elapsed(application->session),
         .event = copied};
+    application_event_journal_append(application, APPLICATION_EVENT_Q2_PLAYER,
+        application->q2_player_event_count++, provider->owner);
     return true;
 }
 
-bool application_emit_protocol(application_provider *provider,
-                                const qa_application_protocol_event *event, qa_error *error)
+static bool emit_protocol(application_provider *provider,
+    const qa_application_protocol_event *event,
+    const qa_application_q2_protocol_delivery *delivery, qa_error *error)
 {
     qa_application *application = provider ? provider->application : NULL;
     if (!application || !application->session || application->destroy_requested || !event ||
@@ -468,11 +589,12 @@ bool application_emit_protocol(application_provider *provider,
     for (size_t i = 0; i < event->reference_count; ++i)
         if (event->payload.size < 2 || event->references[i].offset > event->payload.size - 2)
             return application_fail(error, QA_ERROR_ARGUMENT, "source protocol reference exceeds payload");
-    qa_application_protocol_event *storage = event_storage(application->protocol_events,
+    application_protocol_record *storage = event_storage(application->protocol_events,
         application->protocol_event_count, &application->protocol_event_capacity,
         sizeof(*storage), error);
     if (!storage) return false;
     application->protocol_events = storage;
+    if (!application_event_journal_reserve(application,error)) return false;
     uint8_t *payload = event->payload.size ? qa_arena_alloc(&application->event_arena,
         event->payload.size, 1, error) : NULL;
     if (event->payload.size && !payload) return false;
@@ -486,15 +608,45 @@ bool application_emit_protocol(application_provider *provider,
     qa_application_protocol_event copied = *event;
     copied.provider = provider->owner;
     copied.dialect = provider->launch->selection.clock.kind;
-    if (provider->kind != APPLICATION_PROVIDER_Q1)
-        copied.time_ns = qa_session_elapsed(application->session);
+    if (provider->kind != APPLICATION_PROVIDER_Q1) {
+        qa_clock_state clock;
+        if (!qa_session_clock(application->session, provider->owner, &clock))
+            return application_fail(error, QA_ERROR_ARGUMENT, "Source protocol lost its genuine emission clock");
+        copied.time_ns = clock.frame.time_ns;
+    }
     copied.payload = (qa_bytes){payload, event->payload.size};
     copied.references = references;
     if (copied.signon &&
         !application_q1_signon_retain(provider, &copied, error))
         return false;
-    storage[application->protocol_event_count++] = copied;
+    application_protocol_record record = {.event = copied};
+    if (delivery) {
+        record.q2 = *delivery;
+        if (!application_native_q2_delivery_retain(application, &delivery->audience,
+                &record.q2.audience, error)) return false;
+        if (delivery->audience.captured) record.event.time_ns = delivery->audience.source_time_ns;
+    }
+    if (!application_unified_q2_protocol_event(provider, &record.event,
+            delivery ? &record.q2 : NULL, error)) return false;
+    storage[application->protocol_event_count] = record;
+    application_event_journal_append(application, APPLICATION_EVENT_PROTOCOL,
+        application->protocol_event_count++, provider->owner);
     return true;
+}
+
+bool application_emit_protocol(application_provider *provider,
+    const qa_application_protocol_event *event, qa_error *error)
+{ return emit_protocol(provider, event, NULL, error); }
+
+bool application_emit_q2_protocol(application_provider *provider,
+    const qa_application_protocol_event *event,
+    const qa_application_q2_protocol_delivery *delivery, qa_error *error)
+{
+    if (!provider || !delivery || !delivery->original ||
+        (delivery->profile != QA_NATIVE_Q2_GAME_API3 && delivery->profile != QA_NATIVE_Q2_GAME_API2023) ||
+        (delivery->audience.captured && delivery->audience.source != provider->owner))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Original Q2 protocol lost its actual source receipt");
+    return emit_protocol(provider, event, delivery, error);
 }
 
 size_t qa_application_q2_player_event_count(const qa_application *application)
@@ -524,7 +676,15 @@ bool qa_application_protocol_event_at(const qa_application *application, size_t 
                                       qa_application_protocol_event *out)
 {
     if (!application || !out || index >= application->protocol_event_count) return false;
-    *out = application->protocol_events[index];
+    *out = application->protocol_events[index].event;
+    return true;
+}
+
+bool qa_application_protocol_q2_delivery_at(const qa_application *application,
+    size_t index, qa_application_q2_protocol_delivery *out)
+{
+    if (!application || !out || index >= application->protocol_event_count) return false;
+    *out = application->protocol_events[index].q2;
     return true;
 }
 
@@ -555,7 +715,23 @@ bool qa_application_q2_map_event_at(const qa_application *application,
     if (application == NULL || out == NULL ||
         index >= application->q2_map_event_count)
         return false;
-    *out = application->q2_map_events[index];
+    *out = application->q2_map_events[index].source;
+    return true;
+}
+
+bool qa_application_event_q2_audience_at(const qa_application *app,size_t index,
+    qa_application_q2_audience *out)
+{
+    if (!app || !out || index>=app->event_count) return false;
+    *out=app->events[index].q2_audience;
+    return true;
+}
+
+bool qa_application_q2_map_event_audience_at(const qa_application *app,size_t index,
+    qa_application_q2_audience *out)
+{
+    if (!app || !out || index>=app->q2_map_event_count) return false;
+    *out=app->q2_map_events[index].audience;
     return true;
 }
 
@@ -597,6 +773,8 @@ bool qa_application_clear_events(qa_application *application, qa_error *error)
     application->q3_map_event_count = 0;
     application->q2_player_event_count = 0;
     application->protocol_event_count = 0;
+    application->event_journal_count = 0;
+    application->unified_event_count = 0;
     qa_arena_reset(&application->event_arena);
     application_equipment_events_clear(gear);
     return true;

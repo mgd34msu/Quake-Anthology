@@ -262,8 +262,8 @@ static qa_string_id weapon_model(const qa_q1_game *g, const q1_player *player) {
         return g->blood_super_shotgun_model;
     return g->weapon_models[player->weapon];
 }
-bool q1_weapon_event(qa_q1_game *g, q1_player *player, float punch, int32_t attack,
-                     qa_error *error) {
+static bool weapon_event(qa_q1_game *g, q1_player *player, float punch, int32_t attack,
+    bool attacking, qa_error *error) {
     if (g->destroy_pending)
         return true;
     qa_builtin_event event = {.kind = QA_BUILTIN_ANIMATION,
@@ -275,8 +275,13 @@ bool q1_weapon_event(qa_q1_game *g, q1_player *player, float punch, int32_t atta
                               .frame = player->weapon_frame,
                               .value = punch,
                               .code = attack,
-                              .flags = (uint32_t)player->weapon};
+                              .flags = (uint32_t)player->weapon |
+                                  (attacking ? UINT32_C(0x80000000) : 0)};
     return qa_builtin_emit(&g->services, &event, error);
+}
+bool q1_weapon_event(qa_q1_game *g, q1_player *player, float punch, int32_t attack,
+    qa_error *error) {
+    return weapon_event(g, player, punch, attack, false, error);
 }
 static bool inventory_current(qa_q1_game_operation *operation, qa_actor_id actor,
     q1_player *player, qa_error *error) {
@@ -417,6 +422,8 @@ bool qa_q1_player_source_input(qa_q1_game *g, qa_actor_id actor, const qa_q1_inp
         return false;
     }
     player->input = *input;
+    if (input->impulse) player->source_impulse = input->impulse;
+    player->source_use = input->use;
     if (player->character) {
         player->character_state.input.attack = input->attack;
         player->character_state.input.jump = input->jump;
@@ -490,32 +497,17 @@ bool qa_q1_player_read(const qa_q1_game *g, qa_actor_id actor, qa_q1_player_view
                                .weapon_frame = player->weapon_frame,
                                .punch_angles = player->punch,
                                .max_health = player->max_health,
-                               .holstered = player->input.holstered};
+                               .holstered = player->input.holstered,
+                               .attack_finished = player->attack_finished,
+                               .source_weapon = player->weapon == QA_Q1_AXE ? 4096u :
+                                   player->weapon > QA_Q1_AXE && player->weapon <= QA_Q1_LIGHTNING ?
+                                       UINT32_C(1) << ((unsigned)player->weapon - 1) : 0};
     memcpy(out->power_expires, player->power_expires, sizeof(out->power_expires));
     return true;
 }
 bool qa_q1_player_power(qa_q1_game *g, qa_actor_id actor, qa_q1_power power, double expires,
                         qa_error *error) {
-    q1_player *player = q1_player_allocate(g, actor, error);
-    if (!player || power < QA_Q1_QUAD || power >= QA_Q1_POWER_COUNT || !isfinite(expires)) {
-        qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot, "invalid Q1 timed power");
-        return false;
-    }
-    if (power == QA_Q1_ANTIGRAV && (expires > g->time || player->power_expires[power] != 0)) {
-        if (!g->host.set_gravity) {
-            qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot,
-                         "Q1 anti-gravity requires selected gravity owner");
-            return false;
-        }
-        if (!g->host.set_gravity(g->host.context, actor, expires > g->time ? 0.25f : 1, error))
-            return false;
-        if (!q1_alive(g, actor))
-            return true;
-    }
-    player->power_expires[power] = expires;
-    player->power_warned &= (uint16_t)~(1u << power);
-    return q1_effect(g, QA_BUILTIN_ITEM, actor, qa_v3(0, 0, 0), (float)expires, (int32_t)power,
-                     error);
+    return q1_power_assign(g, actor, power, expires, expires != 0, error);
 }
 bool qa_q1_player_travel_reset(qa_q1_game *g, qa_actor_id actor, float max_health,
                                qa_error *error) {
@@ -525,13 +517,7 @@ bool qa_q1_player_travel_reset(qa_q1_game *g, qa_actor_id actor, float max_healt
         return false;
     }
     player->max_health = max_health;
-    for (unsigned i = 0; i < QA_Q1_POWER_COUNT; ++i) {
-        if (player->power_expires[i] != 0 &&
-            !qa_q1_player_power(g, actor, (qa_q1_power)i, 0, error))
-            return false;
-        if (!q1_alive(g, actor))
-            return true;
-    }
+    if (!qa_q1_player_powers_clear(g, actor, error)) return false;
     player->mega_rot_at = -1;
     return true;
 }
@@ -608,6 +594,8 @@ bool qa_q1_player_weapon_frame(qa_q1_game *g, qa_actor_id actor, qa_error *error
     return ok;
 }
 static bool player_prethink(qa_q1_game *g, qa_actor_id actor, qa_error *error) {
+    double seconds = g->time;
+    uint64_t frame_ns = g->time_ns;
     q1_player *player = q1_player_get(g, actor);
     if (!player)
         return true;
@@ -642,7 +630,7 @@ static bool player_prethink(qa_q1_game *g, qa_actor_id actor, qa_error *error) {
         return false;
     if (!q1_alive(g, actor))
         return true;
-    if (!q1_power_frame(g, player, error))
+    if (!q1_power_frame(g, player, seconds, frame_ns, error))
         return false;
     if (!q1_alive(g, actor))
         return true;
@@ -668,13 +656,7 @@ static bool player_prethink(qa_q1_game *g, qa_actor_id actor, qa_error *error) {
         } else
             player->mega_rot_at = -1;
     }
-    for (size_t i = 0; i < QA_Q1_POWER_COUNT; ++i) {
-        if (player->power_expires[i] > 0 && player->power_expires[i] <= g->time &&
-            !qa_q1_player_power(g, actor, (qa_q1_power)i, 0, error))
-            return false;
-        if (!q1_alive(g, actor))
-            return true;
-    }
+    if (!q1_powers_expire(g, actor, seconds, error)) return false;
     float magnitude = qa_vec_length(player->punch);
     if (magnitude > 0)
         player->punch =
@@ -1218,7 +1200,8 @@ bool qa_q1_bot_weapon_read(qa_q1_game *g,qa_actor_id actor,qa_q1_weapon weapon,
     qa_q1_game_operation_end(&operation);return true;
 }
 
-static bool fire_weapon(qa_q1_game *g, q1_player *player, qa_error *error) {
+static bool fire_weapon(qa_q1_game *g, q1_player *player, bool *fired, qa_error *error) {
+    *fired = false;
     if (player->input.holstered || q1_health(g, player->id) <= 0 ||
         g->time < (player->continuous ? player->next_weapon_frame : player->attack_finished))
         return true;
@@ -1226,8 +1209,13 @@ static bool fire_weapon(qa_q1_game *g, q1_player *player, qa_error *error) {
     int ammo = q1_weapon_ammo(weapon);
     if (ammo >= 0 && q1_ammo_count(g, player->id, (qa_q1_ammo)ammo) < 1)
         return qa_q1_player_select(g, player->id, q1_best_weapon(g, player), error);
-    if (weapon > QA_Q1_LIGHTNING)
-        return before_fire(g, player, error) && q1_expansion_fire(g, player, error);
+    if (weapon > QA_Q1_LIGHTNING) {
+        bool held_hook = (weapon == QA_Q1_ROGUE_GRAPPLE || weapon == QA_Q1_CTF_GRAPPLE) &&
+            q1_entity(g, player->hook);
+        bool okay = before_fire(g, player, error) && q1_expansion_fire(g, player, error);
+        if (okay && !held_hook) *fired = true;
+        return okay;
+    }
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, player->id, &body, error))
         return false;
@@ -1350,14 +1338,21 @@ static bool fire_weapon(qa_q1_game *g, q1_player *player, qa_error *error) {
                                : player->animation_base;
     if (punch != 0)
         player->punch.x = punch;
-    return q1_weapon_event(g, player, punch, attack, error) &&
-           q1_effect(g, QA_BUILTIN_MUZZLE, player->id, body.origin, 0, 0, error);
+    bool okay = weapon_event(g, player, punch, attack, true, error) &&
+        q1_effect(g, QA_BUILTIN_MUZZLE, player->id, body.origin, 0, 0, error);
+    if (okay) *fired = true;
+    return okay;
 }
 bool q1_fire(qa_q1_game *g, q1_player *player, qa_error *error) {
     qa_q1_game_operation operation = {0};
     if (!qa_q1_game_operation_begin(g, &operation, error))
         return false;
-    bool ok = fire_weapon(g, player, error);
+    qa_actor_id actor = player->id;
+    qa_item_id weapon = qa_q1_weapon_item(g, player->weapon);
+    bool fired;
+    bool ok = fire_weapon(g, player, &fired, error);
+    if (ok && fired && g->host.fired && q1_alive(g, actor))
+        ok = g->host.fired(g->host.context, actor, weapon, error);
     if (ok && !qa_q1_game_operation_live(&operation)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q1 source retired during weapon firing");
         ok = false;

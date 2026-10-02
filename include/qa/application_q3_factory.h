@@ -86,6 +86,10 @@ bool qa_application_q3_client_configuration_entered(const qa_application *,
  * the original GAME or CLIENT physical configuration. */
 bool qa_application_q3_configuration_host_entered(const qa_application *,
     const qa_application_startup_source *, const qa_q3_host *);
+/* Reads the real late GAME declaration only during that exact host's source
+ * entry. Early configuration preparation may precede role construction. */
+bool qa_application_q3_game_configuration_entered_read(const qa_application *,
+    const qa_q3_host *, qa_application_startup_source *, qa_error *);
 /* Consume source Shutdown once at the idle decoder boundary. Actual hosts,
  * registry and metadata remain retained, ready for content replacement. */
 bool qa_application_q3_remote_clear(qa_application *,

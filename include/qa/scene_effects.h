@@ -6,6 +6,11 @@
 /* Colors in the effect API are normalized, including caller-resolved palettes.
  * Functions append draws in caller order; they never sort translucent effects. */
 bool qa_scene_portal_surface_visible(const qa_scene_mesh *, const qa_scene_view *, float range, bool mirror);
+/* Emits the original 16-sector additive fans. Q1 inside-light blending updates
+ * the caller's current view blend; Q2 always emits its colored fan. */
+bool qa_scene_legacy_dlights(qa_scene_frame *, const qa_scene_view *, qa_scene_family,
+                             bool quakeworld, const qa_scene_light *, size_t,
+                             qa_scene_vec4 *view_blend, qa_error *);
 bool qa_scene_indexed_particle(qa_scene_frame *, const qa_scene_view *, qa_scene_family,
                                qa_vec3 origin, float size, qa_scene_vec4,
                                const qa_scene_image *, qa_error *);
@@ -94,6 +99,10 @@ typedef struct qa_scene_q2_particle_state {
 /* The caller retires alpha_velocity == -10000 after one successful sample. */
 bool qa_scene_q2_particle_sample(const qa_scene_q2_particle_state *, int64_t milliseconds,
                                  qa_vec3 *origin, float *alpha);
+/* Foreign world snapshots may retain fractional milliseconds. The supplied
+ * sample remains signed; it is not a client clock or a new particle birth. */
+bool qa_scene_q2_particle_sample_at(const qa_scene_q2_particle_state *, double milliseconds,
+                                   qa_vec3 *origin, float *alpha);
 bool qa_scene_particle_image(qa_scene_resources *, qa_scene_family, qa_scene_image **, qa_error *);
 
 /* The caller selects r_shadows == 2, clears scene stencil, and invokes finish
@@ -101,6 +110,9 @@ bool qa_scene_particle_image(qa_scene_resources *, qa_scene_family, qa_scene_ima
 bool qa_scene_stencil_shadow(qa_scene_frame *, const qa_scene_view *, const qa_scene_mesh *,
                              qa_scene_matrix model, qa_vec3 local_light,
                              const qa_scene_image *white, qa_error *);
+bool qa_scene_source_stencil_shadow(qa_scene_frame *, const qa_scene_view *, const qa_scene_mesh *,
+                                    qa_scene_matrix model, qa_vec3 local_light,
+                                    const qa_scene_image *white, qa_error *);
 bool qa_scene_stencil_finish(qa_scene_frame *, const qa_scene_view *,
                              const qa_scene_image *white, qa_error *);
 

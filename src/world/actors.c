@@ -249,6 +249,24 @@ const qa_actor_record *qa_actors_at_source(const qa_actor_registry *registry,
     return entry == NULL ? NULL : &slot_at(registry, entry->host_slot)->record;
 }
 
+bool qa_actors_set_metadata(qa_actor_registry *registry, qa_actor_id actor,
+                            qa_actor_owner owner, qa_actor_definition definition, qa_error *error)
+{
+    const qa_actor_record *record = qa_actors_get(registry, actor);
+    if (!record || registry->callback_depth || registry->clearing)
+        return fail(error, QA_ERROR_ARGUMENT, "Actor metadata requires its returned live identity");
+    if (record->has_source && record->owner != owner)
+        return fail(error, QA_ERROR_ARGUMENT, "Actor metadata cannot change its indexed Source owner");
+    if (record->owner == owner && record->definition == definition) return true;
+    if (registry->revision == UINT64_MAX)
+        return fail(error, QA_ERROR_MEMORY, "Actor metadata revision exhausted");
+    actor_slot *slot = slot_at(registry, actor.slot);
+    slot->record.owner = owner;
+    slot->record.definition = definition;
+    ++registry->revision;
+    return true;
+}
+
 bool qa_actors_release(qa_actor_registry *registry, qa_actor_id actor, qa_error *error)
 {
     if (qa_actors_get(registry, actor) == NULL)

@@ -257,7 +257,9 @@ static bool lifecycle(qa_bots *b, bot_ai_state *s, bool *handled, qa_error *e) {
     }
     if(s->view.decision==QA_BOT_RESPAWNING) {
         if(s->respawn_wait) {
-            if(!s->player.dead) enter(b,s,QA_BOT_SEEK_LONG_TERM);
+            int32_t move_type;
+            DECISION_CALL(bot_ai_source_player_word(b,s,BOT_PS_MOVE_TYPE,&move_type,e));
+            if(move_type!=3) enter(b,s,QA_BOT_SEEK_LONG_TERM);
             else {DECISION_CALL(qa_bot_actions_add(qa_bot_runtime_actions(b->runtime),s->view.client,QA_BOT_RESPAWN,e));}
         } else if(s->respawn_time<b->time) {
             s->respawn_wait=true;
@@ -275,8 +277,12 @@ static bool lifecycle(qa_bots *b, bot_ai_state *s, bool *handled, qa_error *e) {
     }
     bool observer,intermission=false;DECISION_CALL(bot_ai_source_observer(b,s,&observer,e));
     if(!observer) {DECISION_CALL(bot_ai_source_intermission(b,s,&intermission,e));}
+    int32_t move_type=0;
+    if(!observer && !intermission) {
+        DECISION_CALL(bot_ai_source_player_word(b,s,BOT_PS_MOVE_TYPE,&move_type,e));
+    }
     qa_bot_decision next=observer?QA_BOT_OBSERVER:
-        intermission?QA_BOT_INTERMISSION:s->player.dead?QA_BOT_RESPAWNING:QA_BOT_SEEK_LONG_TERM;
+        intermission?QA_BOT_INTERMISSION:move_type==3?QA_BOT_RESPAWNING:QA_BOT_SEEK_LONG_TERM;
     if(next!=QA_BOT_SEEK_LONG_TERM) {
         if(next==QA_BOT_RESPAWNING) {
             DECISION_CALL(qa_bot_moves_reset(moves(b),s->movement,e));

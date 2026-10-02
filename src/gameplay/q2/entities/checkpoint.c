@@ -38,7 +38,7 @@ bool qa_q2_entity_capture(qa_q2_game *g, qa_actor_id id, qa_q2_entity_checkpoint
     }
     if (!q2_checkpoint_idle(g, e))
         return false;
-    qa_q2_entity_checkpoint saved = {.version = 1};
+    qa_q2_entity_checkpoint saved = {.version = 2};
     q2_actor *a = q2_ent(g, id);
     if (!a) {
         *out = saved;
@@ -110,7 +110,8 @@ static bool valid_state(qa_q2_game *g, const q2_entity_state *s, qa_error *e) {
         (unsigned)s->collision.shape > QA_SHAPE_CAPSULE ||
         (s->collision.family && s->collision.family != QA_COLLISION_Q2) || !s->classname ||
         !q2_saved_visual(g, &s->visual) || !qa_vec_finite(s->direction) ||
-        !qa_vec_finite(s->beam_end) || (s->field_count && !s->fields) ||
+        !qa_vec_finite(s->beam_end) || !qa_vec_finite(s->multicast_origin) ||
+        (s->field_count && !s->fields) ||
         s->field_count > SIZE_MAX / sizeof(q2_field))
         return false;
     const qa_string_id resources[] = {s->classname, s->targetname, s->target, s->killtarget,
@@ -167,7 +168,7 @@ static bool valid_state(qa_q2_game *g, const q2_entity_state *s, qa_error *e) {
 }
 bool qa_q2_entity_restore(qa_q2_game *g, qa_actor_id id, const qa_q2_entity_checkpoint *saved,
                           qa_error *e) {
-    if (!g || !saved || saved->version != 1 || !q2_actor_live(g, id) ||
+    if (!g || !saved || saved->version != 2 || !q2_actor_live(g, id) ||
         (saved->present && !valid_state(g, &saved->value, e))) {
         qa_error_set(e, QA_ERROR_FORMAT, 0, "Invalid Q2 entity checkpoint");
         return false;

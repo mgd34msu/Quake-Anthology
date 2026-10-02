@@ -9,4 +9,9 @@
 bool qa_q1_source_select_base_weapon(qa_q1_game *, qa_actor_id, qa_q1_weapon,
     bool *selected, qa_error *);
 
+/* The composition supplies its genuine shared-grapple factory policy.
+ * The physical source owns map identity, stock grants, armor and selection. */
+bool qa_q1_source_ctf_spawn_arsenal(qa_q1_game *, qa_actor_id,
+    bool native_grapple_enabled, bool grapple_disabled, qa_error *);
+
 #endif

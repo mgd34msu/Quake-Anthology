@@ -96,6 +96,13 @@ static qa_cvars *visible_cvars(void *context, const qa_command_context *command,
     return index == 0 ? owner->cvars : index == 1 ? application_engine_shutdown_cvars(owner->provider) : NULL;
 }
 
+static bool cvar_edit(void *context, const qa_command_context *command,
+    qa_cvars *registry, qa_cvars_edit **out, qa_error *error)
+{
+    struct application_native_q3_console *owner = context;
+    return application_startup_cvar_edit(owner->provider, owner->console, command, registry, out, error);
+}
+
 static bool cheats_allowed(void *context)
 {
     struct application_native_q3_console *owner = context;
@@ -289,7 +296,7 @@ bool application_native_q3_console_create(application_provider *provider,
     owner->cvars = qa_cvars_create(&cvars, error);
     qa_console_options options = {.context = {.owner = provider->owner, .dialect = QA_CONSOLE_Q3,
         .origin = QA_COMMAND_SERVER}, .cvars = owner->cvars, .user = owner, .print = print,
-        .cvar_owner = cvar_owner, .visible_cvars = visible_cvars,
+        .cvar_owner = cvar_owner, .visible_cvars = visible_cvars, .cvar_edit = cvar_edit,
         .capture_context = capture, .context_active = active, .read_script = read_script,
         .release_script = release_script, .script_complete = script_complete,
         .allow_command = allow_command, .source_command = command};

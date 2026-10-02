@@ -6,6 +6,7 @@
 #include "qa/game_q3_clients.h"
 #include "qa/game_q3_configstrings.h"
 #include "guest_q3_restart.h"
+#include "qa/application_q3_client.h"
 #include "qa/text.h"
 
 static application_provider *selected(qa_application *app, uint32_t seat, qa_launch_role role)
@@ -126,9 +127,16 @@ bool application_q3_publish_local_snapshots(qa_application *app, qa_error *error
             break;
         }
         bool local[64] = {0};
-        for (q3g_role *role = engine->roles; role; role = role->next)
-            if (role->kind == QA_QVM_CGAME && role->ready && !role->retired &&
-                role->local_client && role->client < 64) local[role->client] = true;
+        for (application_provider *receiver = app->live_providers; receiver; receiver = receiver->next_live) {
+            struct application_q3_guest *owner = q3g_engine(receiver);
+            if (!receiver->attached || !receiver->constructed || receiver->close_pending || !owner) continue;
+            for (q3g_role *role = owner->roles; role; role = role->next)
+                if (role->engine == owner && role->kind == QA_QVM_CGAME && role->host && role->ready &&
+                    !role->retired && !role->source_cleared && role->local_client && !role->native_client &&
+                    role->client_engine == engine && role->client_source == provider &&
+                    role->source_owner == provider->owner && role->client < 64 &&
+                    engine->seats[role->client] == role->seat) local[role->client] = true;
+        }
         for (uint32_t slot = 0; ok && slot < 64; ++slot) {
             q3g_client *client = &engine->clients[slot];
             if (!local[slot] || !client->connected || !client->begun ||
@@ -260,11 +268,13 @@ static bool source_time(q3g_role *role, uint32_t milliseconds, int32_t *out, qa_
     }
     if (role->native_client)
         return application_native_q3_wire_client_time(role->native_client, out, error);
-    qa_clock_state clock;
-    if (qa_session_clock(role->engine->provider->application->session,
-                           role->engine->provider->owner, &clock))
-        *out = (int32_t)(uint32_t)(clock.frame.time_ns / UINT64_C(1000000));
-    else *out = role->engine->milliseconds;
+    qa_application_q3_client_context client;
+    if (!qa_application_q3_client_context_read(role->engine->provider->application,
+        role->engine->provider->owner, role->seat, &client, error)) return false;
+    if (client.source_owner != role->source_owner || client.source_client != role->client ||
+        client.service_owner != role->service_owner || client.native_source)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q3 draw time lost its retained original GAME client");
+    *out = client.source_milliseconds;
     return true;
 }
 
@@ -298,6 +308,8 @@ bool qa_application_present(qa_application *app, uint32_t seat,
 
 static bool key(q3g_role *role, int32_t code, bool down, qa_error *error)
 {
+    if (role->kind == QA_QVM_CGAME && role->abi == QA_QVM_Q3_116N)
+        return application_fail(error, QA_ERROR_UNSUPPORTED, "Legacy Q3 cgame has no input event exports");
     int32_t args[] = {code, down ? 1 : 0}, result;
     if (!q3g_call(role, role->kind == QA_QVM_UI ? 3 : 6, args, 2, &result, error)) return false;
     if (code >= 0 && code < 256) role->input_keys[code] = down;
@@ -370,7 +382,8 @@ bool qa_application_guest_input(qa_application *app, uint32_t seat,
             struct application_q3_guest *engine = q3g_engine(provider);
             if (!engine) continue;
             for (q3g_role *role = engine->roles; role; role = role->next) {
-                if (role->kind == QA_QVM_GAME || role->seat != seat || !role->initialized ||
+                if (role->kind == QA_QVM_GAME || (role->kind == QA_QVM_CGAME && role->abi == QA_QVM_Q3_116N) ||
+                    role->seat != seat || !role->initialized ||
                     role->retired || !role->input_keys[released] || !client_ready(role)) continue;
                 app->operation = APPLICATION_ADVANCING;
                 bool ok = key(role, released, false, error);
@@ -385,7 +398,7 @@ bool qa_application_guest_input(qa_application *app, uint32_t seat,
         q3g_role *role = roles[i];
         qa_input_seat *source;
         uint64_t owner;
-        if (!role || !client_ready(role) ||
+        if (!role || (role->kind == QA_QVM_CGAME && role->abi == QA_QVM_Q3_116N) || !client_ready(role) ||
             !qa_q3_host_source_input(role->host, &source, &owner)) continue;
         qa_input_focus focus = qa_input_seat_focus(source);
         uint32_t composed = qa_input_seat_catcher(source, 0);

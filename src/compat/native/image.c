@@ -39,6 +39,35 @@ static bool target_for(qa_native_os os, uint16_t machine, qa_native_target *out,
     return true;
 }
 
+static bool elf_program_table(qa_bytes bytes, bool elf32, size_t *offset, size_t *stride,
+                              size_t *count, qa_error *error) {
+    size_t header = elf32 ? 52u : 64u;
+    if (!span(bytes, 0, header) || bytes.data[4] != (elf32 ? 1 : 2) ||
+        bytes.data[5] != 1 || bytes.data[6] != 1 || qa_load_u32le(bytes.data + 20) != 1 ||
+        qa_load_u16le(bytes.data + (elf32 ? 40 : 52)) != header)
+        return native_fail(error, QA_ERROR_FORMAT, 0, "invalid original ELF header class/version/size");
+    uint64_t phoff = elf32 ? qa_load_u32le(bytes.data + 28) : qa_load_u64le(bytes.data + 32);
+    *stride = qa_load_u16le(bytes.data + (elf32 ? 42 : 54));
+    *count = qa_load_u16le(bytes.data + (elf32 ? 44 : 56));
+    if (*count == 0xffff) {
+        uint64_t shoff = elf32 ? qa_load_u32le(bytes.data + 32) : qa_load_u64le(bytes.data + 40);
+        size_t shstride = qa_load_u16le(bytes.data + (elf32 ? 46 : 58));
+        if (!shoff || shstride < (elf32 ? 40u : 64u) || !native_u64_fits_size(shoff) ||
+            !span(bytes, (size_t)shoff, shstride) || qa_load_u32le(bytes.data + (size_t)shoff + 4))
+            return native_fail(error, QA_ERROR_FORMAT, 0, "ELF PN_XNUM lacks its actual null section header");
+        *count = qa_load_u32le(bytes.data + (size_t)shoff + (elf32 ? 28 : 44));
+        if (*count < 0xffff)
+            return native_fail(error, QA_ERROR_FORMAT, (size_t)shoff, "ELF PN_XNUM has an invalid actual extended count");
+    }
+    size_t table_bytes;
+    if (*stride < (elf32 ? 32u : 56u) || !native_u64_fits_size(phoff) ||
+        !native_size_multiply(*stride, *count, &table_bytes) ||
+        !span(bytes, (size_t)phoff, table_bytes))
+        return native_fail(error, QA_ERROR_FORMAT, 0, "truncated original ELF program table");
+    *offset = (size_t)phoff;
+    return true;
+}
+
 bool qa_native_module_mutable_range(const qa_native_module *module, uint64_t rva,
                                     uint64_t length, qa_error *error) {
     if (!module || !length || rva > module->info.image.image_bytes || length > module->info.image.image_bytes - rva)
@@ -63,10 +92,10 @@ bool qa_native_module_mutable_range(const qa_native_module *module, uint64_t rva
         }
     } else {
         bool elf32 = module->info.image.format == QA_NATIVE_IMAGE_ELF32;
-        uint64_t offset = elf32 ? qa_load_u32le(bytes + 28) : qa_load_u64le(bytes + 32);
-        uint16_t stride = qa_load_u16le(bytes + (elf32 ? 42 : 54)), count = qa_load_u16le(bytes + (elf32 ? 44 : 56));
-        for (uint16_t i = 0; i < count; ++i) {
-            const uint8_t *program = bytes + (size_t)offset + (size_t)i * stride;
+        size_t offset, stride, count;
+        if (!elf_program_table((qa_bytes){bytes, module->size}, elf32, &offset, &stride, &count, error)) return false;
+        for (size_t i = 0; i < count; ++i) {
+            const uint8_t *program = bytes + offset + i * stride;
             uint32_t type = qa_load_u32le(program), flags = qa_load_u32le(program + (elf32 ? 24 : 4));
             uint64_t start = elf32 ? qa_load_u32le(program + 8) : qa_load_u64le(program + 16);
             uint64_t size = elf32 ? qa_load_u32le(program + 20) : qa_load_u64le(program + 40);
@@ -176,23 +205,13 @@ static bool inspect_elf(qa_bytes bytes, bool executable, qa_native_image_info *o
         return false;
     if ((class_id == 1) != (target.pointer_bytes == 4))
         return native_fail(error, QA_ERROR_FORMAT, 4, "ELF class does not match its machine");
-    uint64_t program_offset =
-        class_id == 1 ? qa_load_u32le(bytes.data + 28) : qa_load_u64le(bytes.data + 32);
-    uint16_t program_size = qa_load_u16le(bytes.data + (class_id == 1 ? 42 : 54));
-    uint16_t program_count = qa_load_u16le(bytes.data + (class_id == 1 ? 44 : 56));
-    size_t expected_size = class_id == 1 ? 32u : 56u;
-    uint64_t table_bytes;
-    if (program_size < expected_size ||
-        !add_u64(0, (uint64_t)program_size * program_count, &table_bytes) ||
-        !native_u64_fits_size(program_offset) || !native_u64_fits_size(table_bytes) ||
-        !span(bytes, (size_t)program_offset, (size_t)table_bytes))
-        return native_fail(error, QA_ERROR_FORMAT, (size_t)program_offset,
-                           "truncated ELF program table");
+    size_t program_offset, program_size, program_count;
+    if (!elf_program_table(bytes, class_id == 1, &program_offset, &program_size, &program_count, error)) return false;
     uint64_t first = UINT64_MAX, end = 0;
     bool loadable = false, executable_entry = false;
     uint64_t entry = class_id == 1 ? qa_load_u32le(bytes.data + 24) : qa_load_u64le(bytes.data + 24);
-    for (uint16_t index = 0; index < program_count; ++index) {
-        const uint8_t *program = bytes.data + (size_t)program_offset + (size_t)index * program_size;
+    for (size_t index = 0; index < program_count; ++index) {
+        const uint8_t *program = bytes.data + program_offset + index * program_size;
         if (qa_load_u32le(program) != 1)
             continue;
         uint64_t file_offset, virtual_address, file_size, memory_size;
@@ -212,7 +231,7 @@ static bool inspect_elf(qa_bytes bytes, bool executable, qa_native_image_info *o
             file_end > bytes.size || !add_u64(virtual_address, memory_size, &virtual_end)) {
             qa_error_set(error, QA_ERROR_FORMAT,
                          (size_t)program_offset + (size_t)index * program_size,
-                         "invalid ELF load segment %u", index);
+                         "invalid ELF load segment %zu", index);
             return false;
         }
         if (virtual_address < first)
@@ -274,12 +293,11 @@ bool native_image_soname(qa_bytes image, qa_bytes *out, qa_error *error) {
     if (info.format != QA_NATIVE_IMAGE_ELF32 && info.format != QA_NATIVE_IMAGE_ELF64) return true;
     bool elf32 = info.format == QA_NATIVE_IMAGE_ELF32;
     const uint8_t *bytes = image.data;
-    size_t program_offset = (size_t)(elf32 ? qa_load_u32le(bytes + 28) : qa_load_u64le(bytes + 32));
-    uint16_t stride = qa_load_u16le(bytes + (elf32 ? 42 : 54));
-    uint16_t count = qa_load_u16le(bytes + (elf32 ? 44 : 56));
+    size_t program_offset, stride, count;
+    if (!elf_program_table(image, elf32, &program_offset, &stride, &count, error)) return false;
     uint64_t strings = 0, string_bytes = 0, soname = 0;
     bool has_soname = false;
-    for (uint16_t i = 0; i < count; ++i) {
+    for (size_t i = 0; i < count; ++i) {
         const uint8_t *program = bytes + program_offset + (size_t)i * stride;
         if (qa_load_u32le(program) != 2) continue;
         uint64_t offset = elf32 ? qa_load_u32le(program + 4) : qa_load_u64le(program + 8);
@@ -305,7 +323,7 @@ bool native_image_soname(qa_bytes image, qa_bytes *out, qa_error *error) {
     if (!has_soname) return true;
     if (!strings || !string_bytes || soname >= string_bytes || !native_u64_fits_size(string_bytes))
         return native_fail(error, QA_ERROR_FORMAT, 0, "invalid original dependency SONAME strings");
-    for (uint16_t i = 0; i < count; ++i) {
+    for (size_t i = 0; i < count; ++i) {
         const uint8_t *program = bytes + program_offset + (size_t)i * stride;
         if (qa_load_u32le(program) != 1) continue;
         uint64_t offset = elf32 ? qa_load_u32le(program + 4) : qa_load_u64le(program + 8);

@@ -8,6 +8,7 @@
 #include "native_q1_wire.h"
 #include "native_q2_console.h"
 #include "native_q3_remote_role.h"
+#include "native_client_roles.h"
 #include "supplies.h"
 #include "startup_flow.h"
 #include "native_q3_ipfilters.h"
@@ -21,6 +22,8 @@
 #include "rankings.h"
 #include "q3_product.h"
 #include "equipment_runtime.h"
+#include "guest_q3_mod_operations.h"
+#include "guest_q3_components.h"
 #include "qa/console_cvar_observer.h"
 
 #include <stdlib.h>
@@ -32,6 +35,8 @@ static bool guests_idle(const qa_application *application,
         return false;
     if (!application_control_frames_idle(application) || !application_rankings_idle(application) ||
         !application_supplies_idle(application->supplies) ||
+        !application_q3_mod_operations_idle(application->mod_operations) ||
+        !application_q3_components_idle(application->components) ||
         !application_equipment_runtime_idle(application->equipment_runtime) ||
         (application->equipment && !qa_equipment_idle(application->equipment))) return false;
     for (const application_provider *provider = application->live_providers;
@@ -42,6 +47,7 @@ static bool guests_idle(const qa_application *application,
             !application_native_q2_console_idle(provider) ||
             !application_native_q3_console_idle(provider) ||
             !application_native_q3_remote_roles_idle(provider) ||
+            !application_native_client_roles_idle(provider) ||
             !application_native_q3_ipfilters_idle(provider) ||
             !application_native_q3_settings_idle(provider) ||
             !application_native_q3_team_status_idle(provider) ||
@@ -225,14 +231,17 @@ bool application_finalize(qa_application *application, qa_error *error)
         application->q3_round_active || application->frame_preparing ||
         application->configuration != NULL || application->provider_states != 0 ||
         application->pending_close != NULL || application->live_providers != NULL ||
+        !application_acoustics_idle(application) ||
         application->equipment_runtime != NULL)
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "application services still have retained owners");
     if (!qa_session_destroy_ready(application->session) ||
+        !application_acoustics_idle(application) ||
         !qa_console_destroy_ready(application->console) ||
         (application->cvars && !qa_cvars_observer_idle(application->cvars)) ||
         (application->pickups && !qa_pickups_idle(application->pickups)) ||
         (application->combat && !qa_combat_idle(application->combat)) ||
+        !application_q3_mod_operations_idle(application->mod_operations) ||
         !qa_inventory_idle(application->inventory) ||
         !qa_rankings_close_ready(application->rankings) ||
         (application->world != NULL && !qa_world_idle(application->world)))
@@ -285,6 +294,10 @@ bool application_finalize(qa_application *application, qa_error *error)
         if (error) *error = first;
         return false;
     }
+    if (!application_q3_mod_operations_destroy(&application->mod_operations, error)) {
+        application->finalizing = false;
+        return false;
+    }
     current = (qa_error){0};
     destroyed = qa_combat_destroy(application->combat, &current);
     remember(destroyed, &current, "combat destruction failed", &ok, &first);
@@ -308,6 +321,7 @@ bool application_finalize(qa_application *application, qa_error *error)
     }
 
     if (!qa_session_destroy_ready(application->session) ||
+        !application_acoustics_idle(application) ||
         (application->world != NULL && !qa_world_idle(application->world))) {
         application->finalizing = false;
         return application_fail(error, QA_ERROR_ARGUMENT,
@@ -339,6 +353,10 @@ bool application_finalize(qa_application *application, qa_error *error)
     free(application->q3_map_events);
     free(application->q2_player_events);
     free(application->protocol_events);
+    free(application->event_journal);
+    free(application->unified_events);
+    application_unified_events_resources_dispose(application);
+    free(application->unified_world_text);
     free(application->mode_ids);
     free(application->motion);
     if (application->controls != NULL)
@@ -357,6 +375,8 @@ bool application_finalize(qa_application *application, qa_error *error)
     application_save_content_destroy(application->content_graph);
     free(application->content_root);
     free(application->user_root);
+    free(application->native_bootstrap);
+    qa_native_runtime_release(application->native_runtime);
     application_q1_original_dispose(application);
     application_startup_dispose(application);
     free(application);

@@ -80,6 +80,12 @@ bool qa_hud_clear_notify(qa_hud *, qa_error *);
 bool qa_hud_clear_center(qa_hud *, qa_error *);
 bool qa_hud_pickup(qa_hud *, const char *, const qa_scene_image *, uint64_t until_ns, qa_error *);
 void qa_hud_hit_marker(qa_hud *, float damage, uint64_t until_ns);
+/* Retains the typed source status for the event's full actor and provider.
+ * The actual physical-seat dispatcher qualifies the recipient before calling. */
+bool qa_hud_ctf_status(qa_hud *, const qa_builtin_event *, qa_error *);
+/* Source-wide capture event; recipient is separately proved by the actual
+ * physical-seat dispatcher. The three-second deadline uses Q1 GAME time. */
+bool qa_hud_ctf_capture(qa_hud *, const qa_builtin_event *, qa_actor_id recipient, qa_error *);
 bool qa_hud_draw(qa_hud *, const qa_hud_frame *, qa_scene_frame *, qa_error *);
 /* Literal already-localized captions use the actual seat UI fonts/preferences.
  * Area is a caller-owned display-pixel region; scale is its viewport fit.

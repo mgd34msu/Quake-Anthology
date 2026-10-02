@@ -74,6 +74,8 @@ typedef struct qa_native_host_command_view {
     size_t count;
     const char *const *arguments;
     const char *tail;
+    /* Reached CG parser view; console entry snapshots leave this false. */
+    bool canonical_configstrings;
 } qa_native_host_command_view;
 
 typedef struct qa_native_host_q2_hud_view {
@@ -94,6 +96,7 @@ typedef struct qa_native_host_engine_services {
     bool (*sound)(void *, const qa_native_host_sound *, qa_error *);
     bool (*link_metadata)(void *, qa_actor_id, qa_native_host_link_metadata *, qa_error *);
     uint32_t (*server_frame)(void *);
+    uint64_t (*source_frame)(void *);
     bool (*extension)(void *, qa_native_profile, const char *, qa_native_address *, qa_error *);
     bool (*checkpoint)(void *, qa_buffer *, qa_error *);
     bool (*restore)(void *, qa_bytes, qa_error *);
@@ -113,6 +116,7 @@ typedef struct qa_native_host_instance_options {
     const qa_native_dependency *dependencies;
     size_t dependency_count;
     const qa_native_runner_config *runner;
+    const struct qa_native_process_options *process;
     uint32_t tick_rate;
     float frame_seconds;
     uint32_t frame_milliseconds;
@@ -309,9 +313,13 @@ bool qa_native_host_client_choose_slot(qa_native_host *, const char *userinfo,
                                        bool spectator, uint32_t *slot, qa_error *);
 bool qa_native_host_client_connect(qa_native_host *, const qa_native_host_client_request *,
                                    bool *accepted, qa_error *);
+bool qa_native_host_client_connect_userinfo(qa_native_host *, const qa_native_host_client_request *,
+    bool *accepted, qa_buffer *returned_userinfo, qa_error *);
 bool qa_native_host_client_begin(qa_native_host *, uint32_t slot, qa_error *);
 bool qa_native_host_client_userinfo(qa_native_host *, uint32_t slot, const char *userinfo,
                                     qa_error *);
+bool qa_native_host_client_userinfo_result(qa_native_host *, uint32_t slot,
+    const char *userinfo, qa_buffer *returned_userinfo, qa_error *);
 bool qa_native_host_client_disconnect(qa_native_host *, uint32_t slot, qa_error *);
 bool qa_native_host_client_command(qa_native_host *, uint32_t slot, qa_error *);
 bool qa_native_host_client_think(qa_native_host *, uint32_t slot, qa_bytes source_usercmd,

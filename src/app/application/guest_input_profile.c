@@ -44,8 +44,6 @@ static bool region(const qa_qvm_image *image, const qa_qvm_instruction *code, si
 void application_guest_input_profile_free(application_guest_input_profile *profile)
 {
     if (!profile) return;
-    free(profile->weapon_branches);
-    free(profile->weapon_indirections);
     free(profile->intermission_modes);
     *profile = (application_guest_input_profile){0};
 }
@@ -77,28 +75,6 @@ static bool qualify(q3g_role *role, application_guest_input_profile *p, qa_error
         p->movement_trace_callback > memory - 4 || p->movement_trace_mask > memory - 4 ||
         p->movement_mins > memory - 12 || p->movement_maxs > memory - 12))
         return application_fail(error, QA_ERROR_FORMAT, "Guest body trace leaves its admitted movement record layout");
-    if (p->has_weapons) {
-        if (!entry(code, count, p->weapon_dispatcher, error)) return false;
-        if (p->weapon_pointer_offset % 4 ||
-            (p->weapon_pointer_global && (p->weapon_pointer_base % 4 || p->weapon_pointer_base > memory - 4)))
-            return application_fail(error, QA_ERROR_FORMAT, "Guest weapon actor pointer leaves source memory");
-        for (size_t i = 0; i < p->weapon_indirection_count; ++i)
-            if (p->weapon_indirections[i] % 4)
-                return application_fail(error, QA_ERROR_FORMAT, "Guest weapon actor pointer is unaligned");
-        for (size_t i = 0; i < p->weapon_branch_count; ++i) {
-            uint32_t at = p->weapon_branches[i].instruction;
-            if (at <= p->weapon_dispatcher || at >= count || code[at].opcode < QA_QVM_EQ ||
-                code[at].opcode > QA_QVM_GEF)
-                return application_fail(error, QA_ERROR_FORMAT, "Guest weapon predicate is not a source decision");
-            uint32_t owner = at;
-            while (owner && code[owner].opcode != QA_QVM_ENTER) --owner;
-            if (owner != p->weapon_dispatcher)
-                return application_fail(error, QA_ERROR_FORMAT, "Guest weapon predicate leaves its dispatcher");
-            for (size_t j = 0; j < i; ++j)
-                if (p->weapon_branches[j].instruction == at)
-                    return application_fail(error, QA_ERROR_FORMAT, "Guest weapon predicate is duplicated");
-        }
-    }
     return true;
 }
 
@@ -126,17 +102,7 @@ bool application_guest_input_profile_read(q3g_role *role, qa_bytes primary,
                 .locomotion_entry = 35397, .locomotion_join = 35503, .movement_global = 1091860,
                 .movement_mins = 180, .movement_maxs = 192, .movement_water = 208,
                 .has_duck = true, .duck = 32561, .has_body_trace = true,
-                .movement_trace_callback = 224, .movement_trace_mask = 28,
-                .has_weapons = true, .weapon_dispatcher = 33648, .weapon_branch_count = 1,
-                .weapon_pointer_global = true, .weapon_pointer_base = 1091860,
-                .weapon_indirection_count = 1};
-            p.weapon_branches = malloc(sizeof(*p.weapon_branches));
-            p.weapon_indirections = calloc(1, sizeof(*p.weapon_indirections));
-            if (!p.weapon_branches || !p.weapon_indirections) {
-                application_guest_input_profile_free(&p);
-                return application_fail(error, QA_ERROR_MEMORY, "Allocating guest weapon source pointer");
-            }
-            p.weapon_branches[0] = (application_guest_branch){34044, false};
+                .movement_trace_callback = 224, .movement_trace_mask = 28};
         }
         if (p.input_present && !qualify(role, &p, error)) {
             application_guest_input_profile_free(&p); return false;
@@ -210,50 +176,6 @@ bool application_guest_input_profile_read(q3g_role *role, qa_bytes primary,
         ok = word(doc, body_trace, "callback", &p.movement_trace_callback, error) &&
              word(doc, body_trace, "mask", &p.movement_trace_mask, error);
         p.has_body_trace = ok;
-    }
-    qa_json_id stage = qa_json_get(doc, weapons, "stage");
-    qa_json_id branches = qa_json_get(doc, stage, "predicates");
-    if (ok) {
-        qa_json_id dispatcher = qa_json_get(doc, stage, "dispatcher");
-        qa_json_id actor = qa_json_get(doc, dispatcher, "actor");
-        qa_json_id pointer = qa_json_get(doc, actor, "pointer");
-        ok = word(doc, dispatcher, "entry", &p.weapon_dispatcher, error);
-        if (ok && !qa_json_string_equal(doc, qa_json_get(doc, actor, "record"), "client"))
-            ok = application_fail(error, QA_ERROR_FORMAT, "Guest weapon actor is not a source client record");
-        if (ok) {
-            p.weapon_pointer_global = qa_json_string_equal(doc, qa_json_get(doc, pointer, "kind"), "global");
-            if (!p.weapon_pointer_global && !qa_json_string_equal(doc, qa_json_get(doc, pointer, "kind"), "argument"))
-                ok = application_fail(error, QA_ERROR_FORMAT, "Guest weapon pointer has no source addressing mode");
-        }
-        if (ok) ok = word(doc, pointer, p.weapon_pointer_global ? "address" : "index", &p.weapon_pointer_base, error) &&
-                     word(doc, pointer, "offset", &p.weapon_pointer_offset, error);
-        qa_json_id indirections = qa_json_get(doc, pointer, "indirections");
-        if (ok && qa_json_type(doc, indirections) != QA_JSON_ARRAY)
-            ok = application_fail(error, QA_ERROR_FORMAT, "Guest weapon pointer path is missing");
-        p.weapon_indirection_count = qa_json_size(doc, indirections);
-        if (ok && p.weapon_indirection_count) {
-            p.weapon_indirections = calloc(p.weapon_indirection_count, sizeof(*p.weapon_indirections));
-            if (!p.weapon_indirections) ok = application_fail(error, QA_ERROR_MEMORY, "Allocating guest weapon pointer path");
-        }
-        for (size_t i = 0; ok && i < p.weapon_indirection_count; ++i) {
-            uint64_t value;
-            ok = qa_json_u64(doc, qa_json_at(doc, indirections, i), &value, error);
-            if (ok && value > UINT32_MAX) ok = application_fail(error, QA_ERROR_FORMAT, "Guest pointer path exceeds its source word");
-            if (ok) p.weapon_indirections[i] = (uint32_t)value;
-        }
-        if (ok && qa_json_type(doc, branches) != QA_JSON_ARRAY)
-            ok = application_fail(error, QA_ERROR_FORMAT, "Guest weapon predicates require a source list");
-        p.weapon_branch_count = qa_json_size(doc, branches);
-        if (ok && p.weapon_branch_count) {
-            p.weapon_branches = calloc(p.weapon_branch_count, sizeof(*p.weapon_branches));
-            if (!p.weapon_branches) ok = application_fail(error, QA_ERROR_MEMORY, "Allocating guest weapon predicates");
-        }
-        for (size_t i = 0; ok && i < p.weapon_branch_count; ++i) {
-            qa_json_id b = qa_json_at(doc, branches, i);
-            ok = word(doc, b, "instruction", &p.weapon_branches[i].instruction, error) &&
-                 qa_json_bool(doc, qa_json_get(doc, b, "unselected"), &p.weapon_branches[i].unselected, error);
-        }
-        p.has_weapons = ok;
     }
     qa_json_destroy(doc);
     p.input_present = ok;

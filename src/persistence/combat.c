@@ -19,7 +19,7 @@ bool qa_persistence_combat_admission(const qa_combat *combat, qa_actor_id actor,
 static bool armor(qa_source_save_io *io, qa_armor *value)
 {
     uint32_t regular = value->regular.kind, powered = value->powered.kind,
-        edition = value->powered.source_edition;
+        edition = value->powered.source_edition, source_kind = value->powered.source_kind;
     if (!qa_source_save_u32(io, &regular) || regular > QA_ARMOR_SOURCE ||
         !qa_source_save_f32(io, &value->regular.points) ||
         !qa_source_save_string(io, &value->regular.item)) return false;
@@ -40,9 +40,10 @@ static bool armor(qa_source_save_io *io, qa_armor *value)
     if (!qa_source_save_u32(io, &powered) || powered > QA_POWER_SHIELD ||
         !qa_source_save_f32(io, &value->powered.cells) ||
         !qa_source_save_string(io, &value->powered.source_owner) ||
-        !qa_source_save_u32(io, &edition)) return false;
+        !qa_source_save_u32(io, &edition) || !qa_source_save_u32(io, &source_kind)) return false;
     value->powered.kind = (qa_power_kind)powered;
     value->powered.source_edition = (qa_q2_power_armor_edition)edition;
+    value->powered.source_kind = (qa_power_armor_source)source_kind;
     return qa_armor_validate(value, io->error);
 }
 
@@ -54,11 +55,90 @@ static bool state(qa_source_save_io *io, qa_combat_state *value)
         qa_source_save_bool(io, &value->no_knockback) && qa_source_save_string(io, &value->team);
 }
 
+static bool attack(qa_source_save_io *io, qa_attack *value)
+{
+    uint32_t kind = value->cause.kind;
+    if (!qa_source_save_u64(io, &value->sequence) || !qa_source_save_u64(io, &value->time_ns) ||
+        !qa_source_save_actor(io, &value->attacker) || !qa_source_save_actor(io, &value->inflictor) ||
+        !qa_source_save_actor(io, &value->projectile) || !qa_source_save_string(io, &value->weapon) ||
+        !qa_source_save_string(io, &value->weapon_provider) ||
+        !qa_source_save_string(io, &value->combat_provider) ||
+        !qa_source_save_string(io, &value->inventory_provider) ||
+        !qa_source_save_string(io, &value->movement_provider) ||
+        !qa_source_save_bool(io, &value->powerup_applied) ||
+        !qa_source_save_string(io, &value->powerup_owner) || !qa_source_save_u32(io, &kind)) return false;
+    if (kind > QA_CAUSE_ENVIRONMENT) return fail(io->error, "Invalid saved last-attack cause");
+    value->cause.kind = (qa_cause_kind)kind;
+    switch (value->cause.kind) {
+    case QA_CAUSE_Q1: {
+        uint32_t policy = value->cause.source.q1.armor;
+        if (!qa_source_save_string(io, &value->cause.source.q1.death_type) ||
+            !qa_source_save_u32(io, &policy)) return false;
+        if (policy > QA_Q1_ARMOR_HALF) return fail(io->error, "Invalid saved last-attack Q1 armor policy");
+        value->cause.source.q1.armor = (qa_q1_armor_effect)policy;
+        return true;
+    }
+    case QA_CAUSE_Q2: {
+        uint32_t edition = value->cause.source.q2.native;
+        if (!qa_source_save_i32(io, &value->cause.source.q2.means_of_death) ||
+            !qa_source_save_u32(io, &value->cause.source.q2.flags) ||
+            !qa_source_save_u32(io, &edition) ||
+            !qa_source_save_i32(io, &value->cause.source.q2.native_value) ||
+            !qa_source_save_u32(io, &value->cause.source.q2.classic_product) ||
+            !qa_source_save_bool(io, &value->cause.source.q2.friendly_fire) ||
+            !qa_source_save_bool(io, &value->cause.source.q2.no_point_loss)) return false;
+        if (edition > QA_Q2_CAUSE_RERELEASE) return fail(io->error, "Invalid saved last-attack Q2 edition");
+        value->cause.source.q2.native = (qa_q2_native_edition)edition;
+        return true;
+    }
+    case QA_CAUSE_Q3:
+        return qa_source_save_i32(io, &value->cause.source.q3.means_of_death) &&
+            qa_source_save_u32(io, &value->cause.source.q3.flags);
+    case QA_CAUSE_ENVIRONMENT: {
+        uint32_t hazard = value->cause.source.hazard;
+        if (!qa_source_save_u32(io, &hazard)) return false;
+        if (hazard > QA_HAZARD_TRIGGER) return fail(io->error, "Invalid saved last-attack hazard");
+        value->cause.source.hazard = (qa_hazard)hazard;
+        return true;
+    }
+    }
+    return fail(io->error, "Invalid saved last-attack cause");
+}
+
 static bool same_state(const qa_combat_state *a, const qa_combat_state *b)
 {
     return a->health == b->health && a->mass == b->mass && qa_armor_equal(a->armor, b->armor) &&
         a->can_take_damage == b->can_take_damage && a->invulnerable == b->invulnerable &&
         a->no_knockback == b->no_knockback && a->team == b->team;
+}
+
+static bool same_attack(const qa_attack *a, const qa_attack *b)
+{
+    if (a->sequence != b->sequence || a->time_ns != b->time_ns ||
+        !qa_actor_id_equal(a->attacker, b->attacker) || !qa_actor_id_equal(a->inflictor, b->inflictor) ||
+        !qa_actor_id_equal(a->projectile, b->projectile) || a->weapon != b->weapon ||
+        a->weapon_provider != b->weapon_provider || a->combat_provider != b->combat_provider ||
+        a->inventory_provider != b->inventory_provider || a->movement_provider != b->movement_provider ||
+        a->powerup_applied != b->powerup_applied || a->powerup_owner != b->powerup_owner ||
+        a->cause.kind != b->cause.kind) return false;
+    switch (a->cause.kind) {
+    case QA_CAUSE_Q1:
+        return a->cause.source.q1.death_type == b->cause.source.q1.death_type &&
+            a->cause.source.q1.armor == b->cause.source.q1.armor;
+    case QA_CAUSE_Q2:
+        return a->cause.source.q2.means_of_death == b->cause.source.q2.means_of_death &&
+            a->cause.source.q2.flags == b->cause.source.q2.flags &&
+            a->cause.source.q2.native == b->cause.source.q2.native &&
+            a->cause.source.q2.native_value == b->cause.source.q2.native_value &&
+            a->cause.source.q2.classic_product == b->cause.source.q2.classic_product &&
+            a->cause.source.q2.friendly_fire == b->cause.source.q2.friendly_fire &&
+            a->cause.source.q2.no_point_loss == b->cause.source.q2.no_point_loss;
+    case QA_CAUSE_Q3:
+        return a->cause.source.q3.means_of_death == b->cause.source.q3.means_of_death &&
+            a->cause.source.q3.flags == b->cause.source.q3.flags;
+    case QA_CAUSE_ENVIRONMENT: return a->cause.source.hazard == b->cause.source.hazard;
+    }
+    return false;
 }
 
 static uint32_t binding_mask(const qa_combat_binding *b)
@@ -92,9 +172,9 @@ static bool signature(qa_source_save_io *io)
 {
     unsigned char actual[8] = {'Q','A','C','O','M','B','A','T'};
     static const unsigned char expected[8] = {'Q','A','C','O','M','B','A','T'};
-    uint32_t version = 2;
+    uint32_t version = 4;
     return qa_source_save_bytes(io, actual, sizeof(actual)) && !memcmp(actual, expected, sizeof(actual)) &&
-        qa_source_save_u32(io, &version) && version == 2;
+        qa_source_save_u32(io, &version) && version == 4;
 }
 
 static bool policies(qa_source_save_io *io, qa_combat *combat)
@@ -124,6 +204,8 @@ static bool record(qa_source_save_io *io, qa_combat *combat, qa_inventory *inven
     if (!qa_source_save_actor(io, &entry->actor) || !qa_source_save_u64(io, &entry->serial) ||
         !entry->serial || !qa_actors_get(combat->actors, entry->actor) ||
         !qa_source_save_bool(io, &entry->external) || !state(io, &primary) ||
+        !qa_source_save_bool(io, &entry->has_last_attack) ||
+        (entry->has_last_attack && !attack(io, &entry->last_attack)) ||
         !qa_source_save_bool(io, &admission) || !qa_source_save_bool(io, &fuel) ||
         !qa_source_save_string(io, &entry->power_item)) return false;
     if ((!fuel && entry->power_item) || (fuel && (!entry->power_item || (!reading && entry->power_inventory != inventory))) ||
@@ -168,6 +250,9 @@ static bool record(qa_source_save_io *io, qa_combat *combat, qa_inventory *inven
         slot->claim.admission = (qa_protection_admission)mode;
         if (!slot->bound) continue;
         if (!qa_source_save_u32(io, &callbacks) || !armor(io, &reservoir)) return false;
+        if (channel == QA_PROTECTION_POWERED && reservoir.powered.kind != QA_POWER_NONE &&
+            reservoir.powered.source_kind == QA_POWER_SOURCE_GENERIC && reservoir.powered.source_owner != slot->claim.owner)
+            return fail(io->error, "Generic powered reservoir differs from its actual absorption owner");
         if (reading) {
             qa_armor observed = primary.armor;
             if (!resolve || !resolve->protection ||
@@ -211,6 +296,8 @@ bool qa_persistence_combat_capture(qa_session *session, qa_combat *combat, qa_in
         if (ok && (!current->active || !qa_actor_id_equal(copy.actor, current->actor) ||
             copy.serial != current->serial || copy.external != current->external ||
             copy.power_inventory != current->power_inventory || copy.power_item != current->power_item ||
+            copy.has_last_attack != current->has_last_attack ||
+            (copy.has_last_attack && !same_attack(&copy.last_attack, &current->last_attack)) ||
             !same_state(&copy.state, &current->state))) ok = fail(error, "Combat storage changed during capture");
         for (size_t channel = 0; ok && channel < 2; ++channel)
             if (copy.protection[channel].serial != current->protection[channel].serial ||

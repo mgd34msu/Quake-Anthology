@@ -12,7 +12,7 @@ static bool current(guest_projection_actor *context, qa_q3_host_game_data *data,
         slot != context->slot)
         return application_fail(error, QA_ERROR_ARGUMENT, "Guest projection actor generation retired");
     if (!qa_q3_host_game_data_read(role->host, data) ||
-        data->entity_stride != p->entity_stride || data->client_stride != p->client_stride ||
+        (!p->located_inventory && (data->entity_stride != p->entity_stride || data->client_stride != p->client_stride)) ||
         context->slot >= data->entity_count || context->slot >= data->client_count)
         return application_fail(error, QA_ERROR_FORMAT, "Guest projection source records changed");
     return true;
@@ -31,6 +31,59 @@ static bool write_word(q3g_role *role, uint32_t address, uint32_t word, qa_error
     return qa_qvm_write(role->vm, address, (qa_bytes){bytes, sizeof(bytes)}, error);
 }
 
+static bool inventory_refresh(application_guest_projection *p, qa_error *error)
+{
+    if (!p->inventory_public) return true;
+    const guest_inventory_weapon *weapons = NULL; size_t count = 0;
+    if (!p->inventory_catalog.read || !p->inventory_catalog.context)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Original public inventory has no retained source catalog");
+    if (!p->inventory_catalog.read(p->inventory_catalog.context, p->role, &weapons, &count, error)) return false;
+    if (count > 15 || (count && !weapons))
+        return application_fail(error, QA_ERROR_FORMAT, "Original catalog exceeds distinct public weapon slots");
+    guest_inventory_field fields[30] = {0}; size_t used = 0;
+    uint32_t slots = 0;
+    for (size_t i = 0; i < count; ++i) {
+        guest_inventory_weapon weapon = weapons[i];
+        if (weapon.weapon < 1 || weapon.weapon > 15 || !weapon.item || (slots & (UINT32_C(1) << weapon.weapon)))
+            return application_fail(error, QA_ERROR_FORMAT, "Original catalog weapon lacks a distinct actual public slot");
+        slots |= UINT32_C(1) << weapon.weapon;
+        qa_item_id items[2] = {weapon.item, weapon.ammo};
+        for (size_t j = 0; j < 2; ++j) {
+            if (!items[j]) continue;
+            for (size_t k = 0; k < used; ++k)
+                if (fields[k].item == items[j])
+                    return application_fail(error, QA_ERROR_FORMAT, "Original catalog item aliases another public inventory field");
+            fields[used++] = (guest_inventory_field){.item = items[j],
+                .field = {GUEST_CLIENT_RECORD, j ? p->public_inventory.ammo_offset + weapon.weapon * 4 : p->public_inventory.weapons_offset},
+                .mask = j ? 0 : UINT32_C(1) << weapon.weapon, .allowed_mask = UINT32_MAX,
+                .capacity = {.kind = GUEST_CAPACITY_CONSTANT, .value.constant = j ? 0 : 1},
+                .public_weapon = weapon.weapon};
+        }
+    }
+    bool changed = used != p->inventory_count;
+    for (size_t i = 0; !changed && i < used; ++i)
+        changed = fields[i].item != p->inventory[i].item || fields[i].mask != p->inventory[i].mask ||
+            fields[i].field.offset != p->inventory[i].field.offset || fields[i].public_weapon != p->inventory[i].public_weapon;
+    if (!changed) return true;
+    guest_inventory_field *owned = used ? malloc(used * sizeof(*owned)) : NULL;
+    if (used && !owned) return application_fail(error, QA_ERROR_MEMORY, "Retaining actual public inventory catalog fields");
+    if (used) memcpy(owned, fields, used * sizeof(*owned));
+    free(p->inventory); p->inventory = owned; p->inventory_count = used;
+    return true;
+}
+
+bool application_guest_inventory_catalog_bind(q3g_role *role,
+    const guest_inventory_catalog_services *services, qa_error *error)
+{
+    application_guest_projection *p = role ? role->projection : NULL;
+    if (!p || !p->inventory_public || !services || !services->context || !services->read || p->inventory_catalog.read)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Original public inventory catalog requires one genuine constructor owner");
+    for (guest_projection_actor *actor = p->actors; actor; actor = actor->next)
+        if (actor->inventory_bound)
+            return application_fail(error, QA_ERROR_ARGUMENT, "Original inventory catalog cannot change after binding source actors");
+    p->inventory_catalog = *services; return true;
+}
+
 static bool address(guest_projection_actor *context, guest_field field, uint32_t *out,
                     qa_error *error)
 {
@@ -39,6 +92,12 @@ static bool address(guest_projection_actor *context, guest_field field, uint32_t
     application_guest_projection *p = context->projection;
     uint64_t entity = data.entities_address + (uint64_t)context->slot * data.entity_stride;
     uint64_t client = data.clients_address + (uint64_t)context->slot * data.client_stride;
+    if (p->located_inventory) {
+        uint64_t base = field.record == GUEST_CLIENT_RECORD ? client : entity;
+        if (!data.entities_address || !data.clients_address || base > INT32_MAX || base > UINT32_MAX - field.offset)
+            return application_fail(error, QA_ERROR_FORMAT, "Original public inventory lost its located source record");
+        *out = (uint32_t)base + field.offset; return true;
+    }
     if (entity > UINT32_MAX - p->client_pointer || client > INT32_MAX)
         return application_fail(error, QA_ERROR_FORMAT, "Guest source client pointer exceeds QVM memory");
     uint32_t pointer;
@@ -56,6 +115,19 @@ static bool capacity_read(guest_projection_actor *context, const guest_inventory
 {
     const guest_capacity *capacity = &field->capacity;
     q3g_role *role = context->projection->role;
+    if (context->projection->inventory_public && !field->mask) {
+        uint32_t client, entity;
+        if (!address(context, (guest_field){GUEST_CLIENT_RECORD, 0}, &client, error) ||
+            !address(context, (guest_field){GUEST_ENTITY_RECORD, 0}, &entity, error)) return false;
+        guest_inventory_source source = {client, entity, context->slot, field->public_weapon};
+        if (!application_guest_public_inventory_capacity(&context->projection->public_inventory,
+            role->vm, &source, out, error)) return false;
+        uint32_t after_client, after_entity;
+        return address(context, (guest_field){GUEST_CLIENT_RECORD, 0}, &after_client, error) &&
+            address(context, (guest_field){GUEST_ENTITY_RECORD, 0}, &after_entity, error) &&
+            ((client == after_client && entity == after_entity) ||
+             application_fail(error, QA_ERROR_ARGUMENT, "Original inventory query changed its actual source records"));
+    }
     if (capacity->kind == GUEST_CAPACITY_CONSTANT) *out = capacity->value.constant;
     else if (capacity->kind == GUEST_CAPACITY_FIELD) {
         uint32_t at, word;
@@ -79,13 +151,28 @@ static size_t inventory_count(void *context)
     return ((guest_projection_actor *)context)->projection->inventory_count;
 }
 
+static bool inventory_checked_count(void *opaque, size_t *out, qa_error *error)
+{
+    guest_projection_actor *context = opaque;
+    q3g_role *role = context->projection->role;
+    ++role->engine->calls;
+    qa_q3_host_game_data data;
+    bool ok = current(context, &data, error) && inventory_refresh(context->projection, error) &&
+        current(context, &data, error);
+    if (ok) *out = context->projection->inventory_count;
+    --role->engine->calls;
+    return ok;
+}
+
 static bool inventory_at_inner(void *opaque, size_t index, qa_inventory_entry *out, qa_error *error)
 {
     guest_projection_actor *context = opaque;
     application_guest_projection *p = context->projection;
+    if (!inventory_refresh(p, error)) return false;
     if (index >= p->inventory_count)
         return application_fail(error, QA_ERROR_ARGUMENT, "Guest inventory index exceeds its declaration");
-    const guest_inventory_field *field = &p->inventory[index];
+    guest_inventory_field copied = p->inventory[index];
+    const guest_inventory_field *field = &copied;
     uint32_t at, word; int32_t capacity;
     if (!address(context, field->field, &at, error) || !read_word(p->role, at, &word, error) ||
         !capacity_read(context, field, &capacity, error)) return false;
@@ -101,9 +188,11 @@ static bool inventory_write_inner(void *opaque, const qa_inventory_entry *entry,
 {
     guest_projection_actor *context = opaque;
     application_guest_projection *p = context->projection;
+    if (!inventory_refresh(p, error)) return false;
     const guest_inventory_field *field = NULL;
+    guest_inventory_field copied;
     for (size_t i = 0; i < p->inventory_count; ++i)
-        if (p->inventory[i].item == entry->item) { field = &p->inventory[i]; break; }
+        if (p->inventory[i].item == entry->item) { copied = p->inventory[i]; field = &copied; break; }
     if (!field) return application_fail(error, QA_ERROR_ARGUMENT, "Guest inventory item has no source storage");
     if (!isfinite(entry->count) || floor(entry->count) != entry->count ||
         entry->count < INT32_MIN || entry->count > INT32_MAX ||
@@ -138,17 +227,23 @@ static bool inventory_write_inner(void *opaque, const qa_inventory_entry *entry,
 
 static bool inventory_at(void *opaque, size_t index, qa_inventory_entry *out, qa_error *error)
 {
-    q3g_role *role = ((guest_projection_actor *)opaque)->projection->role;
+    guest_projection_actor *context = opaque;
+    q3g_role *role = context->projection->role;
     ++role->engine->calls;
-    bool ok = inventory_at_inner(opaque, index, out, error);
+    qa_inventory_entry entry;
+    qa_q3_host_game_data data;
+    bool ok = inventory_at_inner(opaque, index, &entry, error) && current(context, &data, error);
+    if (ok) *out = entry;
     --role->engine->calls; return ok;
 }
 
 static bool inventory_write(void *opaque, const qa_inventory_entry *entry, qa_error *error)
 {
-    q3g_role *role = ((guest_projection_actor *)opaque)->projection->role;
+    guest_projection_actor *context = opaque;
+    q3g_role *role = context->projection->role;
     ++role->engine->calls;
-    bool ok = inventory_write_inner(opaque, entry, error);
+    qa_q3_host_game_data data;
+    bool ok = inventory_write_inner(opaque, entry, error) && current(context, &data, error);
     --role->engine->calls; return ok;
 }
 
@@ -158,6 +253,56 @@ static bool mutable_capacity(void *opaque, qa_item_id item)
     for (size_t i = 0; i < p->inventory_count; ++i)
         if (p->inventory[i].item == item) return p->inventory[i].capacity.kind == GUEST_CAPACITY_FIELD;
     return false;
+}
+
+bool application_guest_inventory_project(q3g_role *role, qa_actor_id actor,
+    qa_item_id item, int32_t count, guest_inventory_projection_word out[2], size_t *out_count,
+    qa_error *error)
+{
+    application_guest_projection *p = role ? role->projection : NULL;
+    if (!p || !p->has_inventory || !out || !out_count)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Original inventory projection lacks its actual source owner");
+    uint32_t slot;
+    if (!qa_q3_host_actor_slot(role->host, actor, &slot, error)) return false;
+    guest_projection_actor context = {.projection = p, .actor = actor, .slot = slot};
+    ++role->engine->calls;
+    guest_inventory_projection_word words[2]; size_t written = 0;
+    qa_actor_id source_actor;
+    bool ok = qa_q3_host_actor(role->host, slot, false, &source_actor, error) &&
+        (qa_actor_id_equal(source_actor, actor) ||
+         application_fail(error, QA_ERROR_ARGUMENT, "Projected original inventory client is no longer admitted")) &&
+        inventory_refresh(p, error), found = false;
+    guest_inventory_field field = {0};
+    for (size_t i = 0; i < p->inventory_count; ++i)
+        if (p->inventory[i].item == item) { field = p->inventory[i]; found = true; break; }
+    if (ok && !found) ok = application_fail(error, QA_ERROR_ARGUMENT, "Projected original item has no actual inventory storage");
+    uint32_t at = 0, before = 0; int32_t capacity;
+    if (ok) ok = address(&context, field.field, &at, error) && read_word(role, at, &before, error);
+    if (ok && !p->inventory_public) ok = capacity_read(&context, &field, &capacity, error);
+    if (ok && field.mask) {
+        if (count != 0 && count != 1)
+            ok = application_fail(error, QA_ERROR_ARGUMENT, "Projected original ownership requires zero or one");
+        else if (before & ~field.allowed_mask)
+            ok = application_fail(error, QA_ERROR_FORMAT, "Projected original ownership contains undeclared bits");
+        else {
+            uint32_t after = count ? before | field.mask : before & ~field.mask;
+            if (p->inventory_public || after != before)
+                words[written++] = (guest_inventory_projection_word){at, (int32_t)after};
+        }
+    } else if (ok && (p->inventory_public || (int32_t)before != count))
+        words[written++] = (guest_inventory_projection_word){at, count};
+    if (ok && !p->inventory_public && field.capacity.kind == GUEST_CAPACITY_FIELD) {
+        uint32_t capacity_at, capacity_before;
+        ok = address(&context, field.capacity.value.field, &capacity_at, error) &&
+            read_word(role, capacity_at, &capacity_before, error);
+        if (ok && (int32_t)capacity_before != capacity)
+            words[written++] = (guest_inventory_projection_word){capacity_at, capacity};
+    }
+    qa_q3_host_game_data data;
+    if (ok) ok = current(&context, &data, error);
+    if (ok) { memcpy(out, words, written * sizeof(*out)); *out_count = written; }
+    --role->engine->calls;
+    return ok;
 }
 
 bool application_guest_projection_prepare(q3g_role *role, qa_bytes primary, qa_error *error)
@@ -254,6 +399,7 @@ bool application_guest_projection_admit(q3g_role *role, qa_actor_id actor, qa_er
         return true;
     if (!p || !p->has_inventory)
         return application_fail(error, QA_ERROR_UNSUPPORTED, "Guest inventory requires a qualified original storage interface");
+    if (!inventory_refresh(p, error)) return false;
     guest_projection_actor *context;
     for (context = p->actors; context; context = context->next)
         if (qa_actor_id_equal(context->actor, actor)) break;
@@ -264,7 +410,8 @@ bool application_guest_projection_admit(q3g_role *role, qa_actor_id actor, qa_er
         p->actors = context;
     }
     if (!context->inventory_bound) {
-        qa_inventory_binding binding = {context, inventory_count, inventory_at, inventory_write, mutable_capacity};
+        qa_inventory_binding binding = {context, inventory_count, inventory_at, inventory_write,
+            mutable_capacity, inventory_checked_count};
         if (!qa_inventory_adopt_primary(app->inventory, actor, &binding, &context->inventory_lease, error)) return false;
         context->inventory_bound = true;
         context->inventory_prepared = false;
@@ -296,6 +443,7 @@ bool application_guest_projection_inventory_binding(q3g_role *role,
     if (!projection || !projection->has_inventory || !out || !serial)
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "Restored guest primary inventory requires its actual source declaration");
+    if (!inventory_refresh(projection, error)) return false;
     uint32_t slot;
     if (!qa_q3_host_actor_slot(role->host, actor, &slot, error))
         return false;
@@ -324,7 +472,7 @@ bool application_guest_projection_inventory_binding(q3g_role *role,
         context->inventory_prepared = true;
     context->inventory_bound = true;
     *out = (qa_inventory_binding){context, inventory_count, inventory_at,
-                                  inventory_write, mutable_capacity};
+                                  inventory_write, mutable_capacity, inventory_checked_count};
     return true;
 }
 

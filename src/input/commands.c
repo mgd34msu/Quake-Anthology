@@ -51,12 +51,23 @@ bool qa_input_command_angles(qa_input_command_builder *builder, qa_vec3 angles, 
 void qa_input_command_center(qa_input_command_builder *builder, float delta_pitch) {
     builder->angles.x = -delta_pitch;
 }
+bool qa_input_command_impulse(qa_input_command_builder *builder, int32_t impulse, qa_error *error) {
+    if (!builder || (builder->kind != QA_MOVEMENT_NETQUAKE &&
+        builder->kind != QA_MOVEMENT_QUAKEWORLD) || impulse < 1 || impulse > UINT8_MAX) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Impulse requires an NQ/QW builder and value 1..255");
+        return false;
+    }
+    builder->pending_impulse = (uint8_t)impulse;
+    return true;
+}
 
 static bool valid(const qa_input_command_builder *builder, const qa_input_command_tuning *t,
                   const qa_seat_input_sample *s, const qa_input_command_frame *f,
                   double source_ms) {
     if (!builder || !t || !s || !f || f->kind != builder->kind || f->kind < QA_MOVEMENT_NETQUAKE ||
         f->kind > QA_MOVEMENT_Q3 || !qa_vec_finite(builder->angles) ||
+        (builder->pending_impulse && builder->kind != QA_MOVEMENT_NETQUAKE &&
+         builder->kind != QA_MOVEMENT_QUAKEWORLD) ||
         !qa_mouse_tuning_valid(&t->mouse) || !isfinite(source_ms) || source_ms < 0 ||
         !isfinite(s->frame_ms) || s->frame_ms <= 0 || !isfinite(s->gamepad.move.x) ||
         !isfinite(s->gamepad.move.y) || !isfinite(s->gamepad.look_degrees.x) ||
@@ -240,7 +251,8 @@ bool qa_input_command_build(qa_input_command_builder *builder, const qa_input_co
         command.server_frame = f->server_frame;
         up = 0;
     } else {
-        command.impulse = s->impulse;
+        command.impulse = q1 && next.pending_impulse ? next.pending_impulse : s->impulse;
+        if (q1) next.pending_impulse = 0;
         if (f->kind == QA_MOVEMENT_Q2_CLASSIC)
             command.light_level = f->light_level;
         if (f->kind == QA_MOVEMENT_NETQUAKE)

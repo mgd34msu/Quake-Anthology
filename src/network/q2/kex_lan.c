@@ -1,46 +1,7 @@
-#include "qa/network_q2_kex.h"
+#include "kex_lan_internal.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
-struct attributes {
-    qa_kex_attribute *data;
-    size_t count;
-};
-struct player {
-    uint64_t id;
-    struct attributes attributes;
-};
-struct peer {
-    struct qa_kex_lan*owner;
-    qa_net_address address;
-    qa_kex_channel*channel;
-    uint64_t players[8];
-    size_t count;
-};
-struct queued {
-    struct queued*next;
-    qa_net_address address;
-    uint64_t received;
-    size_t size;
-    qa_net_poll_kind kind;
-    uint8_t bytes[];
-};
-struct qa_kex_lan {
-    qa_net_transport*transport;
-    qa_kex_lan_options options;
-    char name[1025];
-    struct peer*peers[256];
-    size_t peer_count;
-    struct player players[255];
-    size_t player_count;
-    struct attributes attributes;
-    uint64_t next_id,clock,retry_at;
-    bool joined,retried;
-    struct queued*head,*tail,*borrowed;
-    size_t queued_count;
-    bool dropped;
-    qa_net_address dropped_from;
-};
 static void attrs_free(struct attributes*a) {
     free(a->data);
     a->data=NULL;
@@ -52,7 +13,9 @@ static const char*attrs_get(const struct attributes*a,const char*key) {
 }
 static bool attrs_set(struct attributes*a,const char*key,const char*value,bool preserve_name,qa_error*e) {
     size_t kn=strlen(key),vn=strlen(value);
-    if(!kn||kn>=sizeof(a->data[0].key)||vn>=sizeof(a->data[0].value)||strchr(key,'\\')) {
+    if(!kn||kn>=sizeof(a->data[0].key)||vn>=sizeof(a->data[0].value)||strchr(key,'\\')||
+        !qa_kex_text_valid((qa_bytes){(const uint8_t*)key,kn})||
+        !qa_kex_text_valid((qa_bytes){(const uint8_t*)value,vn})) {
         qa_error_set(e,QA_ERROR_FORMAT,0,"Invalid KEX lobby attribute");
         return false;
     }
@@ -87,6 +50,10 @@ static bool attrs_set(struct attributes*a,const char*key,const char*value,bool p
     return true;
 }
 static bool text_attribute(struct attributes*a,qa_bytes b,bool player,qa_error*e) {
+    if(!player&&b.size>=3&&b.data&&!memcmp(b.data,"\xef\xbb\xbf",3)) {
+        b.data+=3;
+        b.size-=3;
+    }
     if(!b.data||b.size==0||b.size>=(player?128u:5120u)||memchr(b.data,0,b.size)||!qa_kex_text_valid(b)) {
         qa_error_set(e,QA_ERROR_FORMAT,0,"Invalid KEX attribute text");
         return false;
@@ -113,7 +80,7 @@ static bool text_attribute(struct attributes*a,qa_bytes b,bool player,qa_error*e
     value[valuesize]=0;
     return attrs_set(a,key,value,player,e);
 }
-static bool emit(void*user,qa_bytes b,qa_error*e) {
+bool qa_kex_lan_emit(void*user,qa_bytes b,qa_error*e) {
     struct peer*p=user;
     return qa_net_transport_send(p->owner->transport,&p->address,b,e);
 }
@@ -135,7 +102,7 @@ static struct peer*add_peer(qa_kex_lan*l,const qa_net_address*a,qa_error*e) {
     }
     p->owner=l;
     p->address=*a;
-    if(!qa_kex_channel_create(emit,p,&p->channel,e)) {
+    if(!qa_kex_channel_create(qa_kex_lan_emit,p,&p->channel,e)) {
         free(p);
         return NULL;
     }
@@ -184,7 +151,8 @@ static bool remove_peer(qa_kex_lan*l,struct peer*p,qa_error*e) {
 }
 bool qa_kex_lan_open(qa_net_transport*t,const qa_kex_lan_options*o,qa_kex_lan**out,qa_error*e) {
     const qa_net_address*a=t?qa_net_transport_address(t):NULL;
-    if(!t||!o||!out||!a||a->kind==QA_NET_IPX||o->local_players>8||(!o->host&&!o->local_players)||(o->host&&o->max_players<o->local_players)||(o->name&&strlen(o->name)>1024)) {
+    if(!t||!o||!out||!a||a->kind==QA_NET_IPX||o->local_players>8||(!o->host&&!o->local_players)||(o->host&&o->max_players<o->local_players)||
+        (o->name&&(strlen(o->name)>1024||!qa_kex_text_valid((qa_bytes){(const uint8_t*)o->name,strlen(o->name)})))) {
         qa_error_set(e,QA_ERROR_ARGUMENT,0,"Invalid KEX LAN options");
         return false;
     }
@@ -194,12 +162,17 @@ bool qa_kex_lan_open(qa_net_transport*t,const qa_kex_lan_options*o,qa_kex_lan**o
         return false;
     }
     l->transport=t;
+    l->local_address=*a;
     l->options=*o;
     l->next_id=1;
     if(o->name)strcpy(l->name,o->name);
     l->options.name=l->name;
     if(o->host) {
-        for(unsigned i=0;i<o->local_players;i++)l->players[l->player_count++].id=l->next_id++;
+        for(unsigned i=0;i<o->local_players;i++) {
+            uint64_t id=l->next_id++;
+            l->players[l->player_count++].id=id;
+            l->local_ids[i]=id;
+        }
         if(!attrs_set(&l->attributes,"ingame","1",false,e)) {
             free(l);
             return false;
@@ -213,7 +186,9 @@ bool qa_kex_lan_open(qa_net_transport*t,const qa_kex_lan_options*o,qa_kex_lan**o
     return true;
 }
 void qa_kex_lan_close(qa_kex_lan*l) {
-    if(!l)return;
+    if(!l||l->entered)return;
+    if(!l->transport) { qa_kex_lan_destroy_detached(l); return; }
+    l->entered=true;
     uint8_t data[32];
     qa_error ignored= {
         0
@@ -248,7 +223,7 @@ bool qa_kex_lan_admitted(const qa_kex_lan*l,const qa_net_address*a) {
 bool qa_kex_lan_ready(const qa_kex_lan*l) {
     return l&&qa_net_transport_ready(l->transport)&&l->joined&&!strcmp(attrs_get(&l->attributes,"ingame"),"1");
 }
-bool qa_kex_lan_send(qa_kex_lan*l,const qa_net_address*to,qa_bytes b,qa_error*e) {
+static bool send_body(qa_kex_lan*l,const qa_net_address*to,qa_bytes b,qa_error*e) {
     if(!l||!to||(b.size&&!b.data)||b.size>65535) {
         qa_error_set(e,QA_ERROR_ARGUMENT,0,"Invalid KEX LAN send");
         return false;
@@ -290,7 +265,7 @@ static bool queue(qa_kex_lan*l,const qa_net_address*a,qa_bytes b,qa_error*e) {
     l->queued_count++;
     return true;
 }
-bool qa_kex_lan_receive(qa_kex_lan*l,qa_net_datagram*out,qa_error*e) {
+static bool receive_body(qa_kex_lan*l,qa_net_datagram*out,qa_error*e) {
     if(!l||!out) {
         qa_error_set(e,QA_ERROR_ARGUMENT,0,"Invalid KEX receive queue arguments");
         return false;
@@ -331,7 +306,7 @@ static bool send_attribute(struct peer*p,const char*key,const char*value,qa_erro
         (const uint8_t*)text,(size_t)n
     },QA_KEX_RELIABLE,e);
 }
-bool qa_kex_lan_set_attribute(qa_kex_lan*l,const char*key,const char*value,qa_error*e) {
+static bool attribute_body(qa_kex_lan*l,const char*key,const char*value,qa_error*e) {
     if(!l||!l->options.host||!key||!value||strchr(key,'\\')||strchr(value,'\\')) {
         qa_error_set(e,QA_ERROR_ARGUMENT,0,"Invalid KEX host attribute");
         return false;
@@ -354,6 +329,10 @@ static bool join(qa_kex_lan*l,struct peer*p,qa_bytes bytes,qa_error*e) {
         if(!qa_net_reader_finish(&r))return false;
         if(count<1||count>8||(!p->count&&l->player_count+count>l->options.max_players))return true;
         if(!p->count) {
+            if(!l->next_id||((uint64_t)count-1)>UINT64_MAX-l->next_id) {
+                qa_error_set(e,QA_ERROR_FORMAT,0,"KEX lobby player identity space exhausted");
+                return false;
+            }
             uint8_t data[96];
             qa_net_writer w;
             qa_net_writer_init(&w,data,sizeof(data),e);
@@ -390,8 +369,7 @@ static bool join(qa_kex_lan*l,struct peer*p,qa_bytes bytes,qa_error*e) {
     if(r.failed||first>255||first+l->options.local_players>255)return qa_net_reader_fail(&r,"Invalid KEX local player index");
     size_t minimum=(size_t)first+l->options.local_players,count=0;
     uint64_t ids[255];
-    while(qa_net_reader_remaining(&r)) {
-        if(count==255)return qa_net_reader_fail(&r,"KEX roster exceeds capacity");
+    while(count<minimum) {
         ids[count]=qa_kex_read_varint(&r);
         if(r.failed)return false;
         if(!ids[count])return qa_net_reader_fail(&r,"Invalid KEX player identity");
@@ -405,6 +383,8 @@ static bool join(qa_kex_lan*l,struct peer*p,qa_bytes bytes,qa_error*e) {
         .id=ids[i]
     };
     l->player_count=count;
+    l->local_first=(uint8_t)first;
+    for(unsigned i=0;i<l->options.local_players;i++)l->local_ids[i]=ids[(size_t)first+i];
     l->joined=true;
     return true;
 }
@@ -516,7 +496,7 @@ static bool message(qa_kex_lan*l,struct peer*p,const qa_kex_message*m,qa_error*e
     if(m->kind==253)return player_message(l,p,m->payload,e);
     return true;
 }
-bool qa_kex_lan_tick(qa_kex_lan*l,uint64_t now,qa_error*e) {
+static bool tick_body(qa_kex_lan*l,uint64_t now,qa_error*e) {
     if(!l) {
         qa_error_set(e,QA_ERROR_ARGUMENT,0,"Missing KEX LAN owner");
         return false;
@@ -591,6 +571,43 @@ bool qa_kex_lan_tick(qa_kex_lan*l,uint64_t now,qa_error*e) {
     }
     return true;
 }
+static bool enter(qa_kex_lan *l, qa_error *e)
+{
+    if (!l || l->entered || !l->transport) {
+        qa_error_set(e, QA_ERROR_ARGUMENT, 0, "KEX LAN operation requires a bound idle owner");
+        return false;
+    }
+    l->entered = true;
+    return true;
+}
+bool qa_kex_lan_send(qa_kex_lan *l, const qa_net_address *to, qa_bytes bytes, qa_error *e)
+{
+    if (!enter(l, e)) return false;
+    bool ok = send_body(l, to, bytes, e);
+    l->entered = false;
+    return ok;
+}
+bool qa_kex_lan_receive(qa_kex_lan *l, qa_net_datagram *out, qa_error *e)
+{
+    if (!enter(l, e)) return false;
+    bool ok = receive_body(l, out, e);
+    l->entered = false;
+    return ok;
+}
+bool qa_kex_lan_set_attribute(qa_kex_lan *l, const char *key, const char *value, qa_error *e)
+{
+    if (!enter(l, e)) return false;
+    bool ok = attribute_body(l, key, value, e);
+    l->entered = false;
+    return ok;
+}
+bool qa_kex_lan_tick(qa_kex_lan *l, uint64_t now, qa_error *e)
+{
+    if (!enter(l, e)) return false;
+    bool ok = tick_body(l, now, e);
+    l->entered = false;
+    return ok;
+}
 size_t qa_kex_lan_player_count(const qa_kex_lan*l) {
     return l?l->player_count:0;
 }
@@ -599,6 +616,31 @@ bool qa_kex_lan_player(const qa_kex_lan*l,size_t index,uint64_t*id,const qa_kex_
     *id=l->players[index].id;
     *attributes=l->players[index].attributes.data;
     *count=l->players[index].attributes.count;
+    return true;
+}
+bool qa_kex_lan_peer_players(const qa_kex_lan *l, const qa_net_address *address,
+                             const uint64_t **ids, size_t *count)
+{
+    if (!l || !address || !ids || !count) return false;
+    struct peer *p = find_peer(l, address);
+    if (!p || !l->options.host || !p->count) return false;
+    *ids = p->players;
+    *count = p->count;
+    return true;
+}
+bool qa_kex_lan_local_player(const qa_kex_lan *l, uint8_t seat, uint64_t *id)
+{
+    if (!l || !id || !l->joined || seat >= l->options.local_players) return false;
+    for (size_t i=0;i<l->player_count;i++)if(l->players[i].id==l->local_ids[seat]) {
+        *id=l->local_ids[seat];
+        return true;
+    }
+    return false;
+}
+bool qa_kex_lan_idle(const qa_kex_lan *l)
+{
+    if(!l||l->entered)return false;
+    for(size_t i=0;i<l->peer_count;i++)if(!qa_kex_channel_idle(l->peers[i]->channel))return false;
     return true;
 }
 static bool transport_send(void*owner,const qa_net_address*to,qa_bytes b,qa_error*e) {

@@ -275,7 +275,7 @@ bool qawl_light_update(qa_scene_world *world, qaw_surface *surface, const qa_mat
     if (!light->lightmapped) return true;
     bool q1 = world->bsp.family == QA_BSP_Q1;
     qa_material_context baked = *context;
-    if (!q1 && input->shadow_lights != NULL) baked.light_count = 0;
+    if (input->legacy_flashblend || (!q1 && input->shadow_lights != NULL)) baked.light_count = 0;
     context = &baked;
     float modulate = q1 ? 1 : world->options.q2_light_modulate;
     if (!isfinite(modulate)) return light_error(error, QA_ERROR_ARGUMENT, surface->source_index, "nonfinite light modulation");
@@ -395,8 +395,9 @@ void qawl_light_destroy(qaw_legacy *light)
     light->lightmapped = light->light_cache_valid = light->light_cache_dynamic = false;
 }
 
-static qa_vec3 snapshot_style(const qa_scene_world *world, uint16_t index)
+static qa_vec3 snapshot_style(const qa_scene_world *world,const qa_scene_world_input *input, uint16_t index)
 {
+    if (input) return face_style(world,input,index);
     const qawl_world *data = world->legacy_data;
     if (world->bsp.family == QA_BSP_Q1) {
         float value = index < data->style_count ? data->q1_styles[index] : 256;
@@ -406,7 +407,7 @@ static qa_vec3 snapshot_style(const qa_scene_world *world, uint16_t index)
 }
 
 static bool sample_surface(const qa_scene_world *world, const qaw_surface *surface,
-                           qa_vec3 point, qa_vec3 *color)
+                           const qa_scene_world_input *input,qa_vec3 point, qa_vec3 *color)
 {
     const qaw_legacy *light = surface->legacy;
     if (light == NULL || surface->sky || light->warp) return false;
@@ -435,7 +436,7 @@ static bool sample_surface(const qa_scene_world *world, const qaw_surface *surfa
     for (size_t i = 0; i < light->style_count; ++i) {
         uint8_t sample[3];
         if (!face_sample(world, light, i * pixels + pixel, sample, NULL)) return false;
-        qa_vec3 style = snapshot_style(world, light->styles[i]);
+        qa_vec3 style = snapshot_style(world,input, light->styles[i]);
         sum[0] += sample[0] * (double)style.x;
         sum[1] += sample[1] * (double)style.y;
         sum[2] += sample[2] * (double)style.z;
@@ -457,8 +458,10 @@ typedef struct light_trace_frame {
     qa_vec3 middle, end;
 } light_trace_frame;
 
-static bool trace_floor(const qa_scene_world *world, qa_vec3 point, qa_vec3 *color)
+static bool trace_floor(const qa_scene_world *world,const qa_scene_world_input *input, qa_vec3 point, qa_vec3 *color,
+                         qa_vec3 *hit, bool *found)
 {
+    if (found) *found = false;
     *color = qa_v3(0, 0, 0);
     if (world->model_count == 0 || world->node_count == 0) return true;
     light_trace_frame local[64], *stack = local;
@@ -500,7 +503,9 @@ static bool trace_floor(const qa_scene_world *world, qa_vec3 point, qa_vec3 *col
             break;
         }
         for (size_t i = 0; i < node->faces.count; ++i) {
-            if (sample_surface(world, &world->surfaces[node->faces.first + i], frame.middle, color)) {
+            if (sample_surface(world, &world->surfaces[node->faces.first + i],input, frame.middle, color)) {
+                if (hit) *hit = frame.middle;
+                if (found) *found = true;
                 done = true;
                 break;
             }
@@ -518,7 +523,7 @@ static qa_vec3 grid_interpolate(qa_vec3 a, qa_vec3 b, float fraction)
     return qa_vec_add(qa_vec_scale(a, 1 - fraction), qa_vec_scale(b, fraction));
 }
 
-static bool sample_grid(const qa_scene_world *world, qa_vec3 position, qa_vec3 *color)
+static bool sample_grid(const qa_scene_world *world,const qa_scene_world_input *input, qa_vec3 position, qa_vec3 *color)
 {
     const qa_bsp_lightgrid *grid = &world->lightgrid;
     if (grid->leaf_count == 0) return false;
@@ -540,7 +545,7 @@ static bool sample_grid(const qa_scene_world *world, qa_vec3 position, qa_vec3 *
             const qa_bsp_lightgrid_sample *sample = &samples[style];
             if (sample->style == UINT8_MAX) break;
             /* q2repro grid styles use monochrome intensity, not Q2's RGB sum. */
-            float intensity = snapshot_style(world, sample->style).x;
+            float intensity = snapshot_style(world,input, sample->style).x;
             corners[i] = qa_vec_add(corners[i], qa_vec_scale(qa_v3(sample->rgb[0], sample->rgb[1], sample->rgb[2]), intensity));
             valid[i] = true;
         }
@@ -566,6 +571,34 @@ bool qaw_sample_legacy_light(const qa_scene_world *world, qa_vec3 point,
         *ambient = qa_v3(1, 1, 1);
         return true;
     }
-    if (world->bsp.family == QA_BSP_Q2 && sample_grid(world, point, ambient)) return true;
-    return trace_floor(world, point, ambient);
+    if (world->bsp.family == QA_BSP_Q2 && sample_grid(world,NULL, point, ambient)) return true;
+    return trace_floor(world,NULL, point, ambient, NULL, NULL);
+}
+
+bool qa_scene_world_sample_light_input(const qa_scene_world *world,const qa_scene_world_input *input,
+    qa_vec3 point,qa_vec3 *ambient,qa_vec3 *directed,qa_vec3 *direction,qa_error *error)
+{
+    if (!world || !input || !ambient || !directed || !direction || !qa_vec_finite(point))
+        return light_error(error,QA_ERROR_ARGUMENT,0,"Point lighting requires its actual world, lightstyles and finite position");
+    if (world->bsp.family==QA_BSP_Q3)
+        return qa_scene_world_sample_light(world,point,ambient,directed,direction);
+    for (size_t i=0;i<input->style_count;++i)
+        if (world->bsp.family==QA_BSP_Q1?
+            (input->q1_styles && !isfinite(input->q1_styles[i])):
+            (input->q2_styles && !qa_vec_finite(input->q2_styles[i])))
+            return light_error(error,QA_ERROR_ARGUMENT,i,"Point lighting received a nonfinite entered lightstyle");
+    *directed=qa_v3(0,0,0); *direction=qa_v3(0,0,1);
+    if (!world->lighting.sample_count) { *ambient=qa_v3(1,1,1); return true; }
+    if (world->bsp.family==QA_BSP_Q2 && sample_grid(world,input,point,ambient)) return true;
+    return trace_floor(world,input,point,ambient,NULL,NULL);
+}
+
+bool qa_scene_world_sample_floor(const qa_scene_world *world, qa_vec3 origin,
+                                  qa_vec3 *point, bool *found)
+{
+    if (!world || !point || !found || !qa_vec_finite(origin)) return false;
+    *found = false;
+    if (world->bsp.family == QA_BSP_Q3 || world->lighting.sample_count == 0) return true;
+    qa_vec3 color;
+    return trace_floor(world,NULL, origin, &color, point, found);
 }

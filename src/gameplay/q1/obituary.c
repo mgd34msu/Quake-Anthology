@@ -188,7 +188,8 @@ static bool base_obituary(qa_q1_game *g, const qa_q1_obituary_input *input, floa
                 key = victim->weapon == QA_Q1_GRENADE ? "$qc_suicide_pin"
                       : roll != 0                     ? "$qc_suicide_bored"
                                                       : "$qc_suicide_loaded";
-        } else if (input->teamplay == 2 && victim->team && victim->team == attacker->team) {
+        } else if (input->teamplay == 2 && victim->team == attacker->team &&
+                   (g->options.edition == QA_Q1_RERELEASE ? attacker->team != 0 : victim->team > 0)) {
             key = roll < .25f   ? "$qc_ff_teammate"
                   : roll < .5f  ? "$qc_ff_glasses"
                   : roll < .75f ? "$qc_ff_otherteam"
@@ -314,7 +315,7 @@ static bool pack_obituary(qa_q1_game *g, const qa_q1_obituary_input *input, floa
             else
                 key = classic ? "$qc_suicide_bored" : "$qc_suicide_loaded";
         } else {
-            if (input->teamplay == 2 && victim->team && victim->team == attacker->team)
+            if (input->teamplay == 2 && victim->team > 0 && victim->team == attacker->team)
                 return base_obituary(g, input, roll, out, error);
             credit = attacker;
             delta = 1;

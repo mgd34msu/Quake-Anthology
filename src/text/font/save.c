@@ -262,7 +262,7 @@ static bool refs_ready(const qa_font_checkpoint_refs *refs)
 { return refs && refs->image_encode && refs->image_decode && refs->resource_encode && refs->resource_decode; }
 bool qa_font_library_checkpoint(const qa_font_library *library, const qa_font_checkpoint_refs *refs, qa_buffer *out, qa_error *error)
 {
-    if (!library || library->codec_active || library->callbacks || !out || !refs_ready(refs))
+    if (!library || library->policy || library->codec_active || library->callbacks || !out || !refs_ready(refs))
         return qa_font_fail(error,QA_ERROR_ARGUMENT,0,"Font capture requires a quiet real owner and resolvers");
     qa_source_save_io io; uint8_t magic[4]={'Q','F','N','T'}; uint32_t schema=3;
     size_t count=library->font_count, capacity=library->font_capacity;

@@ -155,6 +155,9 @@ void qa_audio_music_update(qa_audio_music *music);
 bool qa_audio_music_mix(qa_audio_music *music, float *stereo, size_t frames, qa_error *error);
 bool qa_audio_music_playing(const qa_audio_music *music);
 uint32_t qa_audio_music_rate(const qa_audio_music *music);
+/* Pure format qualification; the serialized caller retains the music holder. */
+bool qa_audio_music_profile_is(const qa_audio_music *, uint32_t rate,
+                              qa_audio_family family, bool source_volume);
 bool qa_audio_music_checkpoint(const qa_audio_music *, qa_buffer *, qa_error *);
 bool qa_audio_music_restore(qa_bytes, qa_audio_music **, qa_error *);
 uint64_t qa_audio_music_completions(const qa_audio_music *music);
@@ -228,6 +231,10 @@ typedef int (*qa_audio_setting_fn)(void *user, const char *name);
 typedef void (*qa_audio_log_fn)(void *user, const char *message);
 typedef float (*qa_audio_transmission_fn)(void *user, const qa_audio_listener *listener,
                                           qa_vec3 source);
+/* Checked scene queries preserve the real source failure. A successful
+ * callback writes a finite transmission in [0,1] and must not mutate audio. */
+typedef bool (*qa_audio_transmission_checked_fn)(void *user,
+    const qa_audio_listener *listener, qa_vec3 source, float *out, qa_error *error);
 typedef struct qa_audio_mixer qa_audio_mixer;
 typedef struct qa_audio_mixer_options {
     uint32_t sample_rate;
@@ -257,6 +264,8 @@ bool qa_audio_mixer_position(qa_audio_mixer *mixer, uint64_t actor, qa_vec3 orig
 bool qa_audio_mixer_position_owner(qa_audio_mixer *mixer, uint64_t actor, uint64_t owner,
                                    qa_vec3 origin, qa_error *error);
 void qa_audio_mixer_geometry(qa_audio_mixer *mixer, qa_audio_transmission_fn fn, void *user);
+bool qa_audio_mixer_geometry_checked(qa_audio_mixer *, qa_audio_transmission_checked_fn,
+    void *user, qa_error *);
 void qa_audio_mixer_effects_gain(qa_audio_mixer *mixer, float gain);
 void qa_audio_mixer_doppler(qa_audio_mixer *mixer, bool enabled);
 /* Accepted=false is normal source-policy suppression, not an API error. */
@@ -275,7 +284,16 @@ void qa_audio_mixer_stop_owner(qa_audio_mixer *mixer, uint64_t owner);
 void qa_audio_mixer_stop_all(qa_audio_mixer *mixer);
 bool qa_audio_mixer_static(qa_audio_mixer *mixer, uint64_t key, qa_audio_sample *sample,
                            qa_vec3 origin, float volume, float attenuation, qa_error *error);
+bool qa_audio_mixer_static_asset(qa_audio_mixer *, uint64_t key, qa_audio_asset *,
+    qa_vec3 origin, float volume, float attenuation, qa_error *);
 void qa_audio_mixer_remove_static(qa_audio_mixer *mixer, uint64_t key);
+typedef struct qa_audio_static_view {
+    const qa_audio_sample *sample;
+    qa_vec3 origin;
+    double volume, attenuation;
+} qa_audio_static_view;
+/* Borrows the actual installed static voice; no clock or callback advances. */
+bool qa_audio_mixer_static_read(const qa_audio_mixer *, uint64_t key, qa_audio_static_view *);
 bool qa_audio_mixer_ambient(qa_audio_mixer *mixer, qa_audio_sample *sounds[2],
                             const uint8_t levels[2], float elapsed_seconds, float level, float fade,
                             qa_error *error);
@@ -409,18 +427,24 @@ void qa_audio_engine_gain(qa_audio_engine *engine, float gain);
  * phase. Newly attached players inherit this target. Raw PCM buses retain
  * their route gain. Serialized callers must retain the engine and its buses. */
 bool qa_audio_engine_music_gain(qa_audio_engine *, float gain, qa_error *);
+/* Pure observation of the retained engine's published gain targets. Pending
+ * gains admissions do not replace these values until publication. */
+bool qa_audio_engine_gains_read(const qa_audio_engine *, float *effects, float *music);
 typedef struct qa_audio_engine_gains qa_audio_engine_gains;
 /* Final returned-boundary admission leases the actual idle engine and mixers.
  * Prepare after unrelated owner-idle checks. Ordinary engine work, save/reset
- * and destruction are excluded until publication/cancellation. No music
- * decoder, observer, source clock or native device operation is performed. */
+ * and destruction are excluded until publication/cancellation. Each actual
+ * attached player is retained, including its genuine prepared selection child.
+ * Unrelated player/control mutation invalidates and refuses the held operation.
+ * No music decoder, observer, source clock or native device operation is performed. */
 bool qa_audio_engine_gains_prepare(qa_audio_engine *, float effects, float music,
                                    qa_audio_engine_gains **out, qa_error *);
 /* Requalify immediately before publication. No borrowed bus/player mutation
  * may intervene between this check and publish. Refusal retains the ticket. */
 bool qa_audio_engine_gains_ready(const qa_audio_engine_gains *, qa_error *);
-/* Requires successful ready; publishes real scalar targets without callbacks
- * or allocation and consumes the ticket. Cancellation also consumes it. */
+/* Requires successful ready and all captured music/acoustics children returned;
+ * publishes real scalar targets without callbacks or allocation and consumes
+ * the ticket. Cancellation also consumes it. */
 void qa_audio_engine_gains_publish(qa_audio_engine_gains *);
 void qa_audio_engine_gains_abort(qa_audio_engine_gains *);
 void qa_audio_engine_doppler(qa_audio_engine *engine, bool enabled);
@@ -461,8 +485,8 @@ bool qa_audio_engine_music(qa_audio_engine *engine, uint64_t id, uint32_t audien
 void qa_audio_engine_remove_bus(qa_audio_engine *engine, uint64_t id);
 void qa_audio_engine_remove_stream(qa_audio_engine *engine, uint64_t id);
 void qa_audio_engine_remove_music(qa_audio_engine *engine, uint64_t id);
-/* Clears round-specific listeners, source positions, voices and buses;
- * preserves clock. */
+/* Clears round-specific listeners, source positions, voices and WORLD buses;
+ * preserves clock and explicitly declared MENU player routes. */
 /* Read-only qualification; never dispatches observers or advances playback. */
 bool qa_audio_mixer_callbacks_idle(const qa_audio_mixer *);
 bool qa_audio_engine_round_ready(const qa_audio_engine *, qa_error *);
@@ -525,6 +549,10 @@ bool qa_audio_device_selection_prepare(qa_audio_device *, const qa_audio_device_
  * output. Success excludes queue/pump until immediate publish or abort.
  * No source mix, voice notification or source clock advancement occurs. */
 bool qa_audio_device_selection_ready(qa_audio_device_selection *, qa_error *);
+/* Pure retained readiness witness for this exact device and ticket. Requires
+ * serialized ownership; performs no native queries, allocation or callbacks.
+ * It preserves the successful ready cut rather than repeating its SDL checks. */
+bool qa_audio_device_selection_ready_is(const qa_audio_device_selection *, const qa_audio_device *);
 /* Requires successful ready with no intervening owner mutation. Consumes the
  * ticket and publishes without allocation or source/mixer callbacks. */
 void qa_audio_device_selection_publish(qa_audio_device_selection *);

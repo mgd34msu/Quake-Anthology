@@ -55,7 +55,8 @@ static void observe_voice(void *user, const qa_audio_voice_event *event) {
         qa_audio_engine_destroy(engine);
 }
 static bool enter(qa_audio_engine *engine, bool structural, qa_error *error) {
-    if (!engine || engine->destroying || engine->destroy_pending || engine->round_resetting)
+    if (!engine || engine->destroying || engine->destroy_pending || engine->round_resetting ||
+        engine->acoustics_readers)
         return fail(error, QA_ERROR_ARGUMENT, "Audio engine is unavailable");
     if (structural && (engine->callback_depth || engine->operation_depth))
         return fail(error, QA_ERROR_ARGUMENT,
@@ -105,6 +106,9 @@ static bool seat_create(qa_audio_engine *engine, const qa_audio_listener *listen
         !qa_audio_reverb_create(engine->options.sample_rate, &seat->reverb, error))
         goto failed;
     qa_audio_mixer_geometry(seat->mixer, engine->geometry, engine->geometry_user);
+    if (engine->acoustics_enabled &&
+        !qa_audio_mixer_geometry_checked(seat->mixer, qa_audio_engine_acoustics_transmit,
+            engine, error)) goto failed;
     qa_audio_mixer_effects_gain(seat->mixer, engine->effects_gain);
     qa_audio_mixer_doppler(seat->mixer, engine->doppler);
     if (engine->clock > INT64_MAX ||
@@ -158,7 +162,7 @@ void qa_audio_engine_destroy(qa_audio_engine *engine) {
         engine->round_destroy_requested = true;
         return;
     }
-    if (engine->operation_depth || engine->callback_depth) {
+    if (engine->operation_depth || engine->callback_depth || engine->acoustics_readers) {
         engine->destroy_pending = true;
         return;
     }
@@ -171,6 +175,7 @@ void qa_audio_engine_destroy(qa_audio_engine *engine) {
         qa_audio_raw_destroy(engine->buses[i].raw);
         qa_audio_music_destroy(engine->buses[i].music);
     }
+    if (engine->acoustics.context) engine->acoustics.release(engine->acoustics.context);
     free(engine->seats);
     free(engine->round_mixers);
     free(engine->positions);
@@ -299,7 +304,8 @@ static bool position_impl(qa_audio_engine *engine, uint64_t actor, qa_vec3 posit
     return true;
 }
 void qa_audio_engine_geometry(qa_audio_engine *engine, qa_audio_transmission_fn fn, void *user) {
-    if (!engine || engine->destroying || engine->destroy_pending || engine->round_resetting)
+    if (!engine || engine->destroying || engine->destroy_pending || engine->round_resetting ||
+        engine->acoustics_readers || engine->acoustics.context || engine->acoustics_enabled)
         return;
     engine->geometry = fn;
     engine->geometry_user = user;
@@ -309,21 +315,36 @@ void qa_audio_engine_geometry(qa_audio_engine *engine, qa_audio_transmission_fn 
         qa_audio_mixer_geometry(engine->round_mixers[i].mixer, fn, user);
 }
 void qa_audio_engine_pause(qa_audio_engine *engine, bool paused) {
-    if (engine && !engine->destroying && !engine->destroy_pending && !engine->round_resetting)
+    if (engine && !engine->destroying && !engine->destroy_pending && !engine->round_resetting &&
+        !engine->acoustics_readers)
         engine->paused = paused;
 }
 void qa_audio_engine_gain(qa_audio_engine *engine, float gain) {
-    if (!engine || engine->destroying || engine->destroy_pending || engine->round_resetting || !isfinite(gain) || gain < 0 ||
+    if (!engine || engine->destroying || engine->destroy_pending || engine->round_resetting ||
+        engine->acoustics_readers || !isfinite(gain) || gain < 0 ||
         (double)(gain * 255.0f) > INT32_MAX)
         return;
     engine->effects_gain = gain;
     for (size_t i = 0; i < engine->seat_count; i++)
         qa_audio_mixer_effects_gain(engine->seats[i]->mixer, gain);
 }
+bool qa_audio_engine_gains_read(const qa_audio_engine *engine, float *effects, float *music) {
+    if (!engine || engine->destroying || engine->destroy_pending || !effects || !music)
+        return false;
+    *effects = engine->effects_gain;
+    *music = engine->music_gain;
+    return true;
+}
 bool qa_audio_engine_music_gain(qa_audio_engine *engine, float gain, qa_error *error) {
     if (!isfinite(gain) || gain < 0)
         return fail(error, QA_ERROR_ARGUMENT, "Invalid shared music target");
     if (!enter(engine, true, error)) return false;
+    bool ready = true;
+    for (size_t i = 0; i < engine->bus_count; ++i)
+        if (engine->buses[i].music &&
+            !qa_audio_music_target_mutation_ready(engine->buses[i].music, error))
+            ready = false;
+    if (!ready) { leave(engine); return false; }
     engine->music_gain = gain;
     for (size_t i = 0; i < engine->bus_count; ++i)
         if (engine->buses[i].music)
@@ -332,7 +353,8 @@ bool qa_audio_engine_music_gain(qa_audio_engine *engine, float gain, qa_error *e
     return true;
 }
 void qa_audio_engine_doppler(qa_audio_engine *engine, bool enabled) {
-    if (!engine || engine->destroying || engine->destroy_pending || engine->round_resetting)
+    if (!engine || engine->destroying || engine->destroy_pending || engine->round_resetting ||
+        engine->acoustics_readers)
         return;
     engine->doppler = enabled;
     for (size_t i = 0; i < engine->seat_count; i++)
@@ -371,7 +393,8 @@ static bool loop_impl(qa_audio_engine *engine, const qa_audio_loop *loop, qa_err
     return true;
 }
 void qa_audio_engine_clear_loops(qa_audio_engine *engine, bool all) {
-    if (engine && !engine->destroying && !engine->destroy_pending && !engine->round_resetting)
+    if (engine && !engine->destroying && !engine->destroy_pending && !engine->round_resetting &&
+        !engine->acoustics_readers)
         for (size_t i = 0; i < engine->seat_count; i++)
             qa_audio_mixer_clear_loops(engine->seats[i]->mixer, all);
 }
@@ -424,7 +447,7 @@ static bool stop_owner_impl(qa_audio_engine *engine, uint64_t owner, uint32_t au
         }
     return true;
 }
-static void stop_all_impl(qa_audio_engine *engine) {
+static void stop_all_impl(qa_audio_engine *engine, bool retain_menu) {
     if (!engine)
         return;
     for (size_t i = 0; i < engine->seat_count; i++) {
@@ -434,16 +457,26 @@ static void stop_all_impl(qa_audio_engine *engine) {
         qa_audio_reverb_reset(seat->reverb);
         seat->underwater = (qa_audio_underwater){0};
     }
+    size_t retained = 0;
     for (size_t i = 0; i < engine->bus_count; i++) {
-        qa_audio_raw_destroy(engine->buses[i].raw);
-        qa_audio_music_destroy(engine->buses[i].music);
+        audio_bus bus = engine->buses[i];
+        if (retain_menu && bus.music && bus.lifetime == QA_AUDIO_MUSIC_MENU) {
+            engine->buses[retained++] = bus;
+            continue;
+        }
+        qa_audio_raw_destroy(bus.raw);
+        qa_audio_music_destroy(bus.music);
     }
-    engine->bus_count = 0;
+    engine->bus_count = retained;
 }
 static bool attach_bus(qa_audio_engine *engine, uint64_t id, uint32_t audience, float gain,
-                       qa_audio_raw_stream *raw, qa_audio_music *music, qa_error *error) {
-    if (!engine || engine->destroying || engine->destroy_pending || engine->round_resetting || (!raw && !music) ||
-        !isfinite(gain) || gain < 0)
+                       qa_audio_raw_stream *raw, qa_audio_music *music,
+                       qa_audio_music_lifetime lifetime, bool active, qa_error *error) {
+    if (!engine || engine->destroying || engine->destroy_pending || engine->round_resetting ||
+        engine->acoustics_readers || (!raw && !music) ||
+        !isfinite(gain) || gain < 0 ||
+        (lifetime != QA_AUDIO_MUSIC_WORLD && lifetime != QA_AUDIO_MUSIC_MENU) ||
+        (raw && (lifetime != QA_AUDIO_MUSIC_WORLD || !active)))
         return fail(error, QA_ERROR_ARGUMENT, "Invalid audio bus");
     if ((raw && qa_audio_raw_rate(raw) != engine->options.sample_rate) ||
         (music && qa_audio_music_rate(music) != engine->options.sample_rate))
@@ -470,21 +503,87 @@ static bool attach_bus(qa_audio_engine *engine, uint64_t id, uint32_t audience, 
         if (engine->buses[index].music != music)
             qa_audio_music_destroy(engine->buses[index].music);
     }
-    engine->buses[index] = (audio_bus){id, audience, gain, raw, music};
+    engine->buses[index] = (audio_bus){.id=id, .audience=audience, .gain=gain,
+        .raw=raw, .music=music, .lifetime=lifetime, .active=active};
     if (index == engine->bus_count)
         engine->bus_count++;
     return true;
 }
 bool qa_audio_engine_stream(qa_audio_engine *engine, uint64_t id, uint32_t audience, float gain,
                             qa_audio_raw_stream *stream, qa_error *error) {
-    return attach_bus(engine, id, audience, gain, stream, NULL, error);
+    return attach_bus(engine, id, audience, gain, stream, NULL, QA_AUDIO_MUSIC_WORLD, true, error);
 }
 bool qa_audio_engine_music(qa_audio_engine *engine, uint64_t id, uint32_t audience, float gain,
                            qa_audio_music *music, qa_error *error) {
-    return attach_bus(engine, id, audience, gain, NULL, music, error);
+    return attach_bus(engine, id, audience, gain, NULL, music, QA_AUDIO_MUSIC_WORLD, true, error);
+}
+bool qa_audio_engine_music_source(qa_audio_engine *engine, uint64_t id, uint32_t audience,
+    float gain, qa_audio_music *music, qa_audio_music_lifetime lifetime, bool active, qa_error *error) {
+    if (!engine || engine->operation_depth || engine->callback_depth)
+        return fail(error, QA_ERROR_ARGUMENT, "Music source attachment requires returned engine operations");
+    return attach_bus(engine, id, audience, gain, NULL, music, lifetime, active, error);
+}
+bool qa_audio_engine_music_output(qa_audio_engine *engine, uint64_t id,
+    const qa_audio_music *music, bool active, qa_error *error) {
+    if (!music) return fail(error, QA_ERROR_ARGUMENT, "Music output requires its actual player");
+    if (!enter(engine, true, error)) return false;
+    audio_bus *found = NULL;
+    for (size_t i = 0; i < engine->bus_count; ++i)
+        if (engine->buses[i].id == id && engine->buses[i].music == music) found = &engine->buses[i];
+    if (found) found->active = active;
+    bool changed = found != NULL;
+    leave(engine);
+    return changed || fail(error, QA_ERROR_NOT_FOUND, "Music output lost its actual bus player");
+}
+bool qa_audio_engine_music_source_is(const qa_audio_engine *engine, uint64_t id,
+    const qa_audio_music *music, qa_audio_music_lifetime lifetime, bool active) {
+    if (!engine || !music || engine->destroy_pending || engine->destroying ||
+        engine->operation_depth || engine->callback_depth || engine->bus_count > engine->bus_capacity ||
+        (engine->bus_count && !engine->buses)) return false;
+    const audio_bus *found = NULL;
+    for (size_t i = 0; i < engine->bus_count; ++i) {
+        const audio_bus *row = &engine->buses[i];
+        if (row->id != id || !row->music) continue;
+        if (found || row->raw || row->music != music) return false;
+        found = row;
+    }
+    return found && found->lifetime == lifetime && found->active == active;
+}
+bool qa_audio_engine_music_controls_restore_bind(qa_audio_engine *engine,
+    qa_audio_music_controls *controls, qa_error *error) {
+    if (!controls || !enter(engine, true, error))
+        return fail(error, QA_ERROR_ARGUMENT, "Cold music controls require their returned engine owner");
+    bool ready = !engine->gains && engine->bus_count <= engine->bus_capacity &&
+        (!engine->bus_count || engine->buses);
+    size_t pending = 0;
+    for (size_t i = 0; ready && i < engine->bus_count; ++i) {
+        qa_audio_music *music = engine->buses[i].music;
+        if (!music) continue;
+        if (engine->buses[i].raw) { ready = false; break; }
+        for (size_t j = 0; j < i; ++j)
+            if (engine->buses[j].music == music) ready = false;
+        if (!qa_audio_music_controls_is(music, controls)) {
+            if (!qa_audio_music_controls_restore_pending(music)) ready = false;
+            else ++pending;
+        }
+    }
+    ready = ready && qa_audio_music_controls_restore_ready(controls, pending);
+    if (!ready) {
+        leave(engine);
+        return fail(error, QA_ERROR_ARGUMENT, "Cold music roster differs from its imported control owner");
+    }
+    bool okay = true;
+    for (size_t i = 0; okay && i < engine->bus_count; ++i) {
+        qa_audio_music *music = engine->buses[i].music;
+        if (music && !qa_audio_music_controls_is(music, controls))
+            okay = qa_audio_music_controls_bind(music, controls, error);
+    }
+    leave(engine);
+    return okay;
 }
 static void remove_bus(qa_audio_engine *engine, uint64_t id, bool raw, bool music) {
-    if (!engine || engine->destroying || engine->destroy_pending || engine->round_resetting)
+    if (!engine || engine->destroying || engine->destroy_pending || engine->round_resetting ||
+        engine->acoustics_readers)
         return;
     for (size_t i = 0; i < engine->bus_count;)
         if (engine->buses[i].id == id &&
@@ -535,7 +634,7 @@ static void update_impl(qa_audio_engine *engine, double milliseconds) {
     }
     if (!engine->paused)
         for (size_t i = 0; i < engine->bus_count; i++)
-            if (engine->buses[i].music)
+            if (engine->buses[i].music && engine->buses[i].active)
                 qa_audio_music_update(engine->buses[i].music);
 }
 static float audience_gain(qa_audio_engine *engine, uint32_t audience) {
@@ -579,6 +678,7 @@ static bool mix_impl(qa_audio_engine *engine, int16_t *stereo, size_t frames, qa
         }
         for (size_t i = 0; i < engine->bus_count; i++) {
             audio_bus *bus = &engine->buses[i];
+            if (!bus->active) continue;
             float gain = bus->gain * audience_gain(engine, bus->audience);
             if (bus->raw)
                 qa_audio_raw_mix(bus->raw, engine->sum, count, gain);
@@ -710,7 +810,7 @@ bool qa_audio_engine_stop_owner(qa_audio_engine *engine, uint64_t owner, uint32_
 void qa_audio_engine_stop_all(qa_audio_engine *engine) {
     if (!enter(engine, false, NULL))
         return;
-    stop_all_impl(engine);
+    stop_all_impl(engine, false);
     leave(engine);
 }
 bool qa_audio_engine_mix(qa_audio_engine *engine, int16_t *stereo, size_t frames, qa_error *error) {
@@ -720,8 +820,8 @@ bool qa_audio_engine_mix(qa_audio_engine *engine, int16_t *stereo, size_t frames
     leave(engine);
     return result;
 }
-bool qa_audio_engine_round_ready(const qa_audio_engine *engine, qa_error *error) {
-    if (!engine || engine->operation_depth || engine->callback_depth ||
+static bool engine_owners_ready(const qa_audio_engine *engine, bool selections, qa_error *error) {
+    if (!engine || engine->operation_depth || engine->callback_depth || engine->acoustics_readers ||
         engine->destroy_pending || engine->destroying || engine->round_resetting)
         return fail(error, QA_ERROR_ARGUMENT, "Audio round requires completed operations and callbacks");
     for (size_t i = 0; i < engine->seat_count; ++i) {
@@ -741,7 +841,25 @@ bool qa_audio_engine_round_ready(const qa_audio_engine *engine, qa_error *error)
             if (engine->round_mixers[j].seat == engine->round_mixers[i].seat)
                 return fail(error, QA_ERROR_ARGUMENT, "Audio round has duplicate retained mixer ownership");
     }
+    if (engine->bus_count > engine->bus_capacity || (engine->bus_count && !engine->buses))
+        return fail(error, QA_ERROR_ARGUMENT, "Audio round bus ownership is invalid");
+    for (size_t i = 0; i < engine->bus_count; ++i) {
+        const audio_bus *bus = &engine->buses[i];
+        if ((bus->raw != NULL) == (bus->music != NULL) ||
+            (bus->lifetime != QA_AUDIO_MUSIC_WORLD && bus->lifetime != QA_AUDIO_MUSIC_MENU) ||
+            (bus->raw && (bus->lifetime != QA_AUDIO_MUSIC_WORLD || !bus->active)))
+            return fail(error, QA_ERROR_ARGUMENT, "Audio round lost its actual source bus route");
+        if (bus->music) {
+            const qa_audio_music_selection *selection = qa_audio_music_selection_read(bus->music);
+            if (selection ? !selections || !qa_audio_music_selection_current(selection, bus->music) :
+                !qa_audio_music_idle(bus->music))
+                return fail(error, QA_ERROR_ARGUMENT, "Audio round retains a music player operation");
+        }
+    }
     return true;
+}
+bool qa_audio_engine_round_ready(const qa_audio_engine *engine, qa_error *error) {
+    return engine_owners_ready(engine, false, error);
 }
 struct qa_audio_stream_cut {
     qa_audio_engine *destination, *source;
@@ -773,7 +891,7 @@ static bool cut_lock(qa_audio_engine *engine, qa_error *error) {
 }
 static bool cut_engine_current(qa_audio_engine *engine) {
     if (!engine->round_resetting || engine->round_destroy_requested || engine->destroy_pending ||
-        engine->destroying || engine->operation_depth || engine->callback_depth)
+        engine->destroying || engine->operation_depth || engine->callback_depth || engine->acoustics_readers)
         return false;
     for (size_t i = 0; i < engine->seat_count + engine->round_mixer_count; ++i) {
         qa_audio_mixer *mixer = cut_mixer(engine, i);
@@ -782,32 +900,77 @@ static bool cut_engine_current(qa_audio_engine *engine) {
     }
     return true;
 }
+typedef struct audio_gain_player {
+    qa_audio_music *music;
+    qa_audio_music_hold *hold;
+    uint64_t id;
+    size_t index;
+} audio_gain_player;
 struct qa_audio_engine_gains {
     qa_audio_engine *engine;
     float effects, music;
+    qa_audio_engine_acoustics *acoustics;
+    audio_gain_player *players;
+    size_t player_count;
 };
+static void gains_release_players(qa_audio_engine_gains *ticket) {
+    for (size_t i = 0; i < ticket->player_count; ++i)
+        qa_audio_music_hold_release(&ticket->players[i].hold);
+    free(ticket->players);
+}
 bool qa_audio_engine_gains_prepare(qa_audio_engine *engine, float effects, float music,
     qa_audio_engine_gains **out, qa_error *error) {
     if (!out || *out || !isfinite(effects) || effects < 0 ||
         (double)(effects * 255.0f) > INT32_MAX || !isfinite(music) || music < 0 ||
-        !qa_audio_engine_round_ready(engine, error))
+        !engine_owners_ready(engine, true, error))
         return fail(error, QA_ERROR_ARGUMENT, "Audio gains require actual idle owners and finite targets");
     if (engine->seat_count > SIZE_MAX - engine->round_mixer_count ||
         engine->bus_count > engine->bus_capacity || (engine->bus_count && !engine->buses))
         return fail(error, QA_ERROR_ARGUMENT, "Audio gain ownership inventory is invalid");
-    qa_audio_engine_gains *ticket = malloc(sizeof(*ticket));
+    qa_audio_engine_gains *ticket = calloc(1, sizeof(*ticket));
     if (!ticket) return fail(error, QA_ERROR_MEMORY, "Retaining prepared audio gains");
-    if (!cut_lock(engine, error)) { free(ticket); return false; }
-    *ticket = (qa_audio_engine_gains){engine, effects, music};
+    size_t count = 0;
+    for (size_t i = 0; i < engine->bus_count; ++i) if (engine->buses[i].music) ++count;
+    if (count > SIZE_MAX / sizeof(*ticket->players)) {
+        free(ticket); return fail(error, QA_ERROR_MEMORY, "Prepared music ownership overflows");
+    }
+    ticket->players = count ? calloc(count, sizeof(*ticket->players)) : NULL;
+    if (count && !ticket->players) {
+        free(ticket); return fail(error, QA_ERROR_MEMORY, "Retaining prepared music owners");
+    }
+    if (!cut_lock(engine, error)) { free(ticket->players); free(ticket); return false; }
+    ticket->engine = engine; ticket->effects = effects; ticket->music = music;
+    for (size_t i = 0; i < engine->bus_count; ++i) {
+        const audio_bus *bus = &engine->buses[i];
+        if (!bus->music) continue;
+        audio_gain_player *player = &ticket->players[ticket->player_count];
+        *player = (audio_gain_player){.music=bus->music, .id=bus->id, .index=i};
+        if (!qa_audio_music_hold_prepare(player->music, &player->hold, error)) {
+            gains_release_players(ticket); cut_unlock(engine); free(ticket); return false;
+        }
+        ++ticket->player_count;
+    }
+    engine->gains = ticket;
     *out = ticket;
     return true;
 }
 bool qa_audio_engine_gains_ready(const qa_audio_engine_gains *ticket, qa_error *error) {
-    if (!ticket || !cut_engine_current(ticket->engine))
+    if (!ticket || ticket->engine->gains != ticket || !cut_engine_current(ticket->engine))
         return fail(error, QA_ERROR_ARGUMENT, "Prepared audio gain owners have changed");
+    for (size_t i = 0; i < ticket->player_count; ++i) {
+        const audio_gain_player *player = &ticket->players[i];
+        if (player->index >= ticket->engine->bus_count ||
+            ticket->engine->buses[player->index].id != player->id ||
+            ticket->engine->buses[player->index].music != player->music ||
+            !qa_audio_music_hold_current(player->hold, player->music))
+            return fail(error, QA_ERROR_ARGUMENT, "Prepared audio lost its retained music player");
+    }
     return true;
 }
 void qa_audio_engine_gains_publish(qa_audio_engine_gains *ticket) {
+    if (!ticket || ticket->acoustics || !qa_audio_engine_gains_ready(ticket, NULL)) return;
+    for (size_t i = 0; i < ticket->player_count; ++i)
+        if (!qa_audio_music_hold_consumed(ticket->players[i].hold, ticket->players[i].music)) return;
     qa_audio_engine *engine = ticket->engine;
     engine->effects_gain = ticket->effects;
     engine->music_gain = ticket->music;
@@ -816,13 +979,150 @@ void qa_audio_engine_gains_publish(qa_audio_engine_gains *ticket) {
     for (size_t i = 0; i < engine->bus_count; ++i)
         if (engine->buses[i].music)
             qa_audio_music_target_publish(engine->buses[i].music, ticket->music);
+    engine->gains = NULL;
+    gains_release_players(ticket);
     cut_unlock(engine);
     free(ticket);
 }
 void qa_audio_engine_gains_abort(qa_audio_engine_gains *ticket) {
-    if (!ticket) return;
+    if (!ticket || ticket->acoustics || ticket->engine->gains != ticket) return;
+    ticket->engine->gains = NULL;
+    gains_release_players(ticket);
     cut_unlock(ticket->engine);
     free(ticket);
+}
+
+struct qa_audio_engine_acoustics {
+    qa_audio_engine_gains *parent;
+    qa_audio_acoustics_source source;
+    bool enabled;
+};
+static bool acoustics_source_current(const qa_audio_acoustics_source *source) {
+    return source && source->context && source->current && source->trace && source->release &&
+        source->current(source->context);
+}
+static bool acoustics_hit(const qa_audio_trace_hit *hit, qa_error *error) {
+    return (isfinite(hit->fraction) && hit->fraction >= 0 && hit->fraction <= 1) ||
+        fail(error, QA_ERROR_ARGUMENT, "Acoustic scene returned an invalid trace fraction");
+}
+bool qa_audio_engine_acoustics_transmit(void *context, const qa_audio_listener *listener,
+    qa_vec3 end, float *out, qa_error *error) {
+    qa_audio_engine *engine = context;
+    if (!engine || !listener || !out || !engine->acoustics_enabled ||
+        engine->destroying || engine->destroy_pending || engine->acoustics_readers ||
+        !acoustics_source_current(&engine->acoustics))
+        return fail(error, QA_ERROR_ARGUMENT, "Acoustics requires its retained current listener scene");
+    qa_vec3 start = listener->origin;
+    double dx = (double)end.x - start.x, dy = (double)end.y - start.y, dz = (double)end.z - start.z;
+    double distance = hypot(hypot(dx, dy), dz);
+    if (!isfinite(distance)) return fail(error, QA_ERROR_ARGUMENT, "Invalid acoustic trace endpoints");
+    if (distance == 0) { *out = 1; return true; }
+    engine->acoustics_readers++;
+    qa_audio_trace_hit forward = {0}, reverse = {0};
+    bool ok = engine->acoustics.trace(engine->acoustics.context, listener, start, end, &forward, error);
+    if (ok) ok = acoustics_hit(&forward, error);
+    if (ok) ok = !engine->destroy_pending && acoustics_source_current(&engine->acoustics);
+    bool clear = ok && forward.fraction == 1 && !forward.start_solid && !forward.all_solid;
+    if (ok && !clear) {
+        ok = engine->acoustics.trace(engine->acoustics.context, listener, end, start, &reverse, error);
+        if (ok) ok = acoustics_hit(&reverse, error);
+        if (ok) ok = !engine->destroy_pending && acoustics_source_current(&engine->acoustics);
+    }
+    engine->acoustics_readers--;
+    if (!ok) {
+        if (!error || error->code == QA_OK)
+            fail(error, QA_ERROR_ARGUMENT, "Acoustic scene changed during its actual trace");
+        return false;
+    }
+    double thickness = forward.all_solid || reverse.all_solid ? distance :
+        fmax(0, distance * (1 - (forward.start_solid ? 0 : forward.fraction) -
+            (reverse.start_solid ? 0 : reverse.fraction)));
+    *out = clear ? 1 : (float)pow(0.5, 1 + thickness / 64);
+    return true;
+}
+void qa_audio_engine_acoustics_rebind(qa_audio_engine *engine) {
+    for (size_t i=0; i<engine->seat_count + engine->round_mixer_count; ++i) {
+        qa_audio_mixer *mixer = cut_mixer(engine, i);
+        mixer->transmission = engine->acoustics_enabled ? NULL : engine->geometry;
+        mixer->transmission_checked = engine->acoustics_enabled ? qa_audio_engine_acoustics_transmit : NULL;
+        mixer->transmission_user = engine->acoustics_enabled ? engine : engine->geometry_user;
+        mixer->transmission_count = 0;
+    }
+}
+bool qa_audio_engine_acoustics_prepare(qa_audio_engine_gains *parent, bool enabled,
+    const qa_audio_acoustics_source *source, qa_audio_engine_acoustics **out, qa_error *error) {
+    if (!out || *out || !parent || parent->acoustics ||
+        !qa_audio_engine_gains_ready(parent, error) ||
+        (source ? !acoustics_source_current(source) : enabled))
+        return fail(error, QA_ERROR_ARGUMENT, "Acoustics preparation requires its real gains and scene owners");
+    qa_audio_engine_acoustics *ticket = calloc(1, sizeof(*ticket));
+    if (!ticket) return fail(error, QA_ERROR_MEMORY, "Retaining prepared scene acoustics");
+    ticket->parent = parent; ticket->enabled = enabled;
+    if (source) ticket->source = *source;
+    parent->acoustics = ticket; *out = ticket;
+    return true;
+}
+bool qa_audio_engine_acoustics_ready_is(const qa_audio_engine_acoustics *ticket,
+    const qa_audio_engine_gains *parent) {
+    return ticket && parent && ticket->parent == parent && parent->acoustics == ticket &&
+        qa_audio_engine_gains_ready(parent, NULL) &&
+        (ticket->source.context ? acoustics_source_current(&ticket->source) : !ticket->enabled);
+}
+bool qa_audio_engine_acoustics_ready(const qa_audio_engine_acoustics *ticket, qa_error *error) {
+    return qa_audio_engine_acoustics_ready_is(ticket, ticket ? ticket->parent : NULL) ||
+        fail(error, QA_ERROR_ARGUMENT, "Prepared acoustics lost its exact gains or scene owner");
+}
+void qa_audio_engine_acoustics_publish(qa_audio_engine_acoustics *ticket) {
+    if (!qa_audio_engine_acoustics_ready(ticket, NULL)) return;
+    qa_audio_engine *engine = ticket->parent->engine;
+    qa_audio_acoustics_source old = engine->acoustics;
+    engine->acoustics = ticket->source; engine->acoustics_enabled = ticket->enabled;
+    engine->geometry = NULL; engine->geometry_user = NULL;
+    qa_audio_engine_acoustics_rebind(engine);
+    ticket->parent->acoustics = NULL;
+    free(ticket);
+    if (old.context) old.release(old.context);
+}
+bool qa_audio_engine_acoustics_abort(qa_audio_engine_acoustics *ticket, qa_error *error) {
+    if (!ticket) return true;
+    if (!ticket->parent || ticket->parent->acoustics != ticket ||
+        ticket->parent->engine->gains != ticket->parent ||
+        !ticket->parent->engine->round_resetting ||
+        ticket->parent->engine->operation_depth || ticket->parent->engine->callback_depth ||
+        ticket->parent->engine->acoustics_readers || ticket->parent->engine->destroying)
+        return fail(error, QA_ERROR_ARGUMENT, "Acoustic cancellation lost its actual owner boundary");
+    qa_audio_engine *engine=ticket->parent->engine;
+    for (size_t i=0;i<engine->seat_count+engine->round_mixer_count;++i) {
+        const qa_audio_mixer *mixer=cut_mixer(engine,i);
+        if (!mixer || !mixer->round_locked || mixer->callback_active || mixer->dispatching ||
+            mixer->destroying)
+            return fail(error,QA_ERROR_ARGUMENT,"Acoustic cancellation requires its exact returned mixer leases");
+    }
+    ticket->parent->acoustics = NULL;
+    if (ticket->source.context) ticket->source.release(ticket->source.context);
+    free(ticket); return true;
+}
+bool qa_audio_engine_acoustics_release(qa_audio_engine *engine, qa_error *error) {
+    if (!qa_audio_engine_round_ready(engine, error)) return false;
+    qa_audio_acoustics_source source = engine->acoustics;
+    engine->acoustics = (qa_audio_acoustics_source){0};
+    qa_audio_engine_acoustics_rebind(engine);
+    if (source.context) source.release(source.context);
+    return true;
+}
+bool qa_audio_engine_acoustics_enabled(const qa_audio_engine *engine) {
+    return engine && engine->acoustics_enabled;
+}
+bool qa_audio_engine_acoustics_bind(qa_audio_engine *engine, bool enabled,
+    const qa_audio_acoustics_source *source, qa_error *error) {
+    if (!qa_audio_engine_round_ready(engine, error) || !acoustics_source_current(source))
+        return fail(error, QA_ERROR_ARGUMENT, "Acoustic binding requires its admitted idle scene owners");
+    qa_audio_acoustics_source old = engine->acoustics;
+    engine->acoustics = *source; engine->acoustics_enabled = enabled;
+    engine->geometry = NULL; engine->geometry_user = NULL;
+    qa_audio_engine_acoustics_rebind(engine);
+    if (old.context) old.release(old.context);
+    return true;
 }
 bool qa_audio_engine_stream_cut_prepare(qa_audio_engine *destination, qa_audio_engine *source,
     uint64_t id, uint32_t audience, float gain, qa_audio_stream_cut **out, qa_error *error) {
@@ -858,8 +1158,9 @@ bool qa_audio_engine_stream_cut_prepare(qa_audio_engine *destination, qa_audio_e
     if (!cut) return fail(error, QA_ERROR_MEMORY, "Allocating audio stream cut");
     cut->prepared = malloc(sizeof(*cut->prepared));
     if (!cut->prepared) { free(cut); return fail(error, QA_ERROR_MEMORY, "Reserving audio stream publication"); }
-    *cut->prepared = (audio_bus){id, audience, gain,
-        index == SIZE_MAX ? NULL : source->buses[index].raw, NULL};
+    *cut->prepared = (audio_bus){.id=id, .audience=audience, .gain=gain,
+        .raw=index == SIZE_MAX ? NULL : source->buses[index].raw,
+        .lifetime=QA_AUDIO_MUSIC_WORLD, .active=true};
     if (!cut_lock(destination, error)) { free(cut->prepared); free(cut); return false; }
     if (!cut_lock(source, error)) {
         cut_unlock(destination); free(cut->prepared); free(cut); return false;
@@ -887,7 +1188,7 @@ void qa_audio_engine_stream_cut_publish(qa_audio_stream_cut *cut) {
     if (!qa_audio_engine_stream_cut_current(cut)) return;
     cut->publishing = true;
     qa_audio_engine *destination = cut->destination, *source = cut->source;
-    stop_all_impl(destination);
+    stop_all_impl(destination, false);
     if (cut->source_index != SIZE_MAX) {
         memmove(source->buses + cut->source_index, source->buses + cut->source_index + 1,
             (source->bus_count - cut->source_index - 1) * sizeof(*source->buses));
@@ -927,7 +1228,7 @@ bool qa_audio_engine_reset_round(qa_audio_engine *engine, qa_error *error) {
         engine->round_resetting = false;
         leave(engine); return false;
     }
-    stop_all_impl(engine);
+    stop_all_impl(engine, true);
     engine->position_count = 0;
     for (size_t i = 0; i < engine->seat_count; ++i) {
         audio_seat *seat = engine->seats[i]; size_t at = engine->round_mixer_count++;

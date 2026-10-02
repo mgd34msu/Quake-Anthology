@@ -234,7 +234,8 @@ void cpu_write_fragment(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
       state->depth_test == QA_DEPTH_ALWAYS ||
       (state->depth_test == QA_DEPTH_LEQUAL && fragment->depth <= old_depth) ||
       (state->depth_test == QA_DEPTH_EQUAL && fragment->depth == old_depth) ||
-      (state->depth_test == QA_DEPTH_LESS && fragment->depth < old_depth);
+      (state->depth_test == QA_DEPTH_LESS && fragment->depth < old_depth) ||
+      (state->depth_test == QA_DEPTH_GEQUAL && fragment->depth >= old_depth);
   bool stencil =
       (state->stencil_enabled || renderer->overdraw) && buffer->stencil;
   if (!passed && !stencil)

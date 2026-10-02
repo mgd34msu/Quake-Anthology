@@ -1,6 +1,37 @@
 #include "map/internal.h"
 #include "qa/game_q3_clients.h"
 
+static bool player_timers(qa_q3_game *, qa_actor_id, int32_t, bool, qa_error *);
+
+bool qa_q3_selected_client_effects_read(const qa_q3_game *game, qa_actor_id actor,
+    qa_q3_selected_client_effects *out, qa_error *error) {
+    const q3_actor *entry = q3_actor_const(game, actor);
+    if (!game || game->source_restored || !out || !entry || entry->kind != Q3_ACTOR_PLAYER ||
+        !(entry->state.player.selections & (QA_Q3_ARSENAL | QA_Q3_EQUIPMENT)))
+        return q3_fail(error, "Selected client effects need their actual arsenal or equipment player");
+    const qa_q3_player_state *player = &entry->state.player;
+    *out = (qa_q3_selected_client_effects){.teleport_bit = player->flags & 4u,
+        .pm_flags = player->selected_pm_flags, .pm_time_ms = player->selected_pm_time_ms,
+        .view_angles = player->view_angles,
+        .delta_angle_words = {player->delta_pitch_word, player->delta_yaw_word, player->delta_roll_word},
+        .invulnerability_time_ms = player->invulnerability_until, .max_health = player->max_health};
+    return true;
+}
+
+bool qa_q3_selected_client_effects_publish(qa_q3_game *game, qa_actor_id actor,
+    const qa_q3_selected_client_effects *before, qa_error *error) {
+    qa_q3_selected_client_effects after;
+    if (!before || !qa_q3_selected_client_effects_read(game, actor, &after, error)) return false;
+    bool changed = before->teleport_bit != after.teleport_bit || before->pm_flags != after.pm_flags ||
+        before->pm_time_ms != after.pm_time_ms || before->invulnerability_time_ms != after.invulnerability_time_ms ||
+        before->max_health != after.max_health || before->view_angles.x != after.view_angles.x ||
+        before->view_angles.y != after.view_angles.y || before->view_angles.z != after.view_angles.z;
+    for (unsigned i = 0; i < 3; ++i)
+        changed |= before->delta_angle_words[i] != after.delta_angle_words[i];
+    return !changed || !game->options.hooks.selected_client_effects ||
+        game->options.hooks.selected_client_effects(game->options.hooks.context, actor, before, &after, error);
+}
+
 static bool source_command_active(const qa_q3_game *game, qa_actor_id actor) {
     qa_source_command command;
     uint32_t slot;
@@ -186,7 +217,7 @@ bool qa_q3_grapple_read(const qa_q3_game *game, qa_actor_id actor, qa_q3_grapple
     const qa_q3_player_state *player = &entry->state.player;
     *out = (qa_q3_grapple_state){.hook = player->hook,
                                  .point = player->grapple_point,
-                                 .active = player->grapple_pull &&
+                                 .active = (player->selected_pm_flags & 0x800u) != 0 &&
                                            q3_actor_const(game, player->hook) != NULL,
                                  .fire_held = player->fire_held};
     return true;
@@ -197,6 +228,7 @@ static bool release_grapple(qa_q3_game *game, qa_actor_id actor, qa_error *error
         return true;
     qa_actor_id hook = entry->state.player.hook;
     entry->state.player.fire_held = entry->state.player.grapple_pull = false;
+    entry->state.player.selected_pm_flags &= ~0x800u;
     entry->state.player.hook = (qa_actor_id){0};
     return !q3_actor_get(game, hook) ||
            qa_session_release(game->options.services.session, hook, error);
@@ -368,6 +400,8 @@ void q3_force_view(qa_q3_player_state *player, qa_vec3 angles, int32_t lock_ms) 
         q3_sub_time(q3_angle_word(angles.z), player->last_command_angles[2]);
     ++player->teleport_revision;
     player->teleport_lock_ms = lock_ms;
+    player->selected_pm_time_ms = lock_ms;
+    if (lock_ms) player->selected_pm_flags |= 0x40u;
 }
 static bool player_state_valid(const qa_q3_player_state *state, bool source_client) {
     if (!state || state->weapon < 0 || state->weapon >= QA_Q3_WEAPON_COUNT ||
@@ -634,6 +668,8 @@ static bool spawn_player(qa_q3_game *game, qa_actor_id actor, const qa_body_stat
     }
     player->invulnerability_until = 0;
     player->invulnerability_expanded = false;
+    player->selected_pm_flags = 0;
+    player->selected_pm_time_ms = 0;
     player->last_command_ms = game->now_ms;
     player->command_time_ms = q3_sub_time(game->now_ms, 100);
     player->damage_blood = player->damage_armor = player->damage_knockback = 0;
@@ -733,8 +769,8 @@ bool qa_q3_spawn_player(qa_q3_game *game, qa_actor_id actor, const qa_body_state
     --game->observation_depth;
     return result;
 }
-static void torso(qa_q3_player_state *player, int32_t animation) {
-    if (!player->dead)
+static void torso(qa_q3_player_state *player, int32_t animation, bool dead) {
+    if (!dead)
         player->torso_animation = ((player->torso_animation & 128) ^ 128) | animation;
 }
 static bool map_ammo_regeneration(qa_q3_game *game, qa_actor_id actor, qa_q3_weapon weapon,
@@ -786,7 +822,8 @@ bool qa_q3_set_weapon_slot(qa_q3_game *game, qa_actor_id actor, bool holster, qa
     }
     return true;
 }
-static bool drop_weapon(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
+static bool drop_weapon(qa_q3_game *game, qa_actor_id actor, const qa_q3_arsenal_source *source,
+                        qa_error *error) {
     if (!q3_player_event(game, actor, 22, 0, error))
         return false;
     q3_actor *entry = q3_actor_get(game, actor);
@@ -794,10 +831,11 @@ static bool drop_weapon(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
         return true;
     entry->state.player.weapon_phase = QA_Q3_DROPPING;
     entry->state.player.weapon_time_ms = q3_add_time(entry->state.player.weapon_time_ms, 200);
-    torso(&entry->state.player, 9);
+    torso(&entry->state.player, 9, source ? source->health <= 0 : entry->state.player.dead);
     return true;
 }
-static bool raise_weapon(qa_q3_game *game, qa_actor_id actor, qa_q3_player_state *player) {
+static bool raise_weapon(qa_q3_game *game, qa_actor_id actor, qa_q3_player_state *player,
+                         const qa_q3_arsenal_source *source) {
     qa_q3_weapon requested = player->requested_weapon;
     bool owned = q3_owns_weapon(game, actor, requested);
     q3_actor *entry = q3_actor_get(game, actor);
@@ -807,11 +845,26 @@ static bool raise_weapon(qa_q3_game *game, qa_actor_id actor, qa_q3_player_state
     player->weapon = owned ? requested : QA_Q3_W_NONE;
     player->weapon_phase = QA_Q3_RAISING;
     player->weapon_time_ms = q3_add_time(player->weapon_time_ms, 250);
-    torso(player, 10);
+    torso(player, 10, source ? source->health <= 0 : player->dead);
     return true;
 }
+static bool selected_drop_timers(qa_q3_game *game, qa_actor_id actor,
+    qa_q3_player_state *player, int32_t milliseconds, bool *advanced, qa_error *error) {
+    if (!advanced || *advanced) return true;
+    qa_q3_selected_client_effects before;
+    if (!qa_q3_selected_client_effects_read(game, actor, &before, error)) return false;
+    *advanced = true;
+    if (player->selected_pm_time_ms) {
+        if (milliseconds >= player->selected_pm_time_ms) {
+            player->selected_pm_flags &= ~0x160u;
+            player->selected_pm_time_ms = 0;
+        } else player->selected_pm_time_ms -= milliseconds;
+    }
+    return qa_q3_selected_client_effects_publish(game, actor, &before, error);
+}
 static bool arsenal_step(qa_q3_game *game, qa_actor_id actor, const qa_q3_controls *command,
-                         float elapsed_ms, qa_error *error) {
+                         float elapsed_ms, const qa_q3_arsenal_source *source,
+                         int32_t source_milliseconds, bool *advanced, qa_error *error) {
     q3_actor *entry = q3_actor_get(game, actor);
     if (!entry || entry->kind != Q3_ACTOR_PLAYER || !command || !isfinite(elapsed_ms) ||
         elapsed_ms < 0 || elapsed_ms > INT_MAX - 1024.0f)
@@ -823,6 +876,7 @@ static bool arsenal_step(qa_q3_game *game, qa_actor_id actor, const qa_q3_contro
     qa_combat_state combat;
     if (!qa_combat_read(game->options.services.combat, actor, &combat, error))
         return false;
+    if (source) combat.health = source->health;
     entry = q3_actor_get(game, actor);
     if (!entry || entry->kind != Q3_ACTOR_PLAYER)
         return true;
@@ -858,6 +912,10 @@ static bool arsenal_step(qa_q3_game *game, qa_actor_id actor, const qa_q3_contro
     if (player->respawned)
         return true;
     if (use && !player->use_item_held) {
+        if (!selected_drop_timers(game, actor, player, source_milliseconds, advanced, error)) return false;
+        entry = q3_actor_get(game, actor);
+        if (!entry || entry->kind != Q3_ACTOR_PLAYER) return true;
+        player = &entry->state.player;
         return qa_q3_activate_holdable(game, actor, player->holdable, command->prediction, error);
     }
     if (!use)
@@ -880,7 +938,7 @@ static bool arsenal_step(qa_q3_game *game, qa_actor_id actor, const qa_q3_contro
     }
     if (player->external_slot == QA_Q3_SLOT_RESUME_REQUESTED) {
         if (player->weapon_time_ms <= 0) {
-            if (!raise_weapon(game, actor, player))
+            if (!raise_weapon(game, actor, player, source))
                 return true;
             player->external_slot = QA_Q3_SLOT_ACTIVE;
         }
@@ -895,7 +953,7 @@ static bool arsenal_step(qa_q3_game *game, qa_actor_id actor, const qa_q3_contro
     if (player->external_slot == QA_Q3_SLOT_HOLSTER_REQUESTED && player->weapon_time_ms <= 0 &&
         (player->weapon_phase == QA_Q3_READY || player->weapon_phase == QA_Q3_FIRING) &&
         !switch_weapon) {
-        if (!drop_weapon(game, actor, error))
+        if (!drop_weapon(game, actor, source, error))
             return false;
         entry = q3_actor_get(game, actor);
         if (entry)
@@ -904,7 +962,7 @@ static bool arsenal_step(qa_q3_game *game, qa_actor_id actor, const qa_q3_contro
     }
     if ((player->weapon_time_ms <= 0 || player->weapon_phase != QA_Q3_FIRING) && switch_weapon &&
         player->weapon_phase != QA_Q3_DROPPING)
-        if (!drop_weapon(game, actor, error))
+        if (!drop_weapon(game, actor, source, error))
             return false;
     entry = q3_actor_get(game, actor);
     if (!entry)
@@ -913,12 +971,13 @@ static bool arsenal_step(qa_q3_game *game, qa_actor_id actor, const qa_q3_contro
     if (player->weapon_time_ms > 0)
         return true;
     if (player->weapon_phase == QA_Q3_DROPPING) {
-        (void)raise_weapon(game, actor, player);
+        (void)raise_weapon(game, actor, player, source);
         return true;
     }
     if (player->weapon_phase == QA_Q3_RAISING) {
         player->weapon_phase = QA_Q3_READY;
-        torso(player, player->weapon == QA_Q3_W_GAUNTLET ? 12 : 11);
+        torso(player, player->weapon == QA_Q3_W_GAUNTLET ? 12 : 11,
+            source ? source->health <= 0 : player->dead);
         return true;
     }
     bool gauntlet_hit = true;
@@ -939,7 +998,8 @@ static bool arsenal_step(qa_q3_game *game, qa_actor_id actor, const qa_q3_contro
         player->weapon_phase = QA_Q3_READY;
         return true;
     }
-    torso(player, player->weapon == QA_Q3_W_GAUNTLET ? 8 : 7);
+    torso(player, player->weapon == QA_Q3_W_GAUNTLET ? 8 : 7,
+        source ? source->health <= 0 : player->dead);
     player->weapon_phase = QA_Q3_FIRING;
     int32_t ammo;
     if (!q3_ammo_read(game, actor, player->weapon, &ammo, error))
@@ -950,6 +1010,8 @@ static bool arsenal_step(qa_q3_game *game, qa_actor_id actor, const qa_q3_contro
     player = &entry->state.player;
     if (!ammo) {
         player->weapon_time_ms = q3_add_time(player->weapon_time_ms, 500);
+        if (!selected_drop_timers(game, actor, player, source_milliseconds, advanced, error)) return false;
+        if (!q3_actor_get(game, actor)) return true;
         return q3_player_event(game, actor, 21, 0, error);
     }
     qa_q3_weapon weapon = player->weapon;
@@ -962,6 +1024,9 @@ static bool arsenal_step(qa_q3_game *game, qa_actor_id actor, const qa_q3_contro
     entry = q3_actor_get(game, actor);
     if (!entry || entry->kind != Q3_ACTOR_PLAYER)
         return true;
+    if (!selected_drop_timers(game, actor, &entry->state.player,
+        source_milliseconds, advanced, error)) return false;
+    if (!q3_actor_get(game, actor)) return true;
     if (!q3_player_event(game, actor, 23, 0, error))
         return false;
     entry = q3_actor_get(game, actor);
@@ -979,8 +1044,13 @@ static bool arsenal_step(qa_q3_game *game, qa_actor_id actor, const qa_q3_contro
     int32_t add = delay[weapon];
     if (player->persistent == QA_Q3_P_SCOUT)
         add = (int32_t)((float)add / 1.5f);
-    else if (player->persistent == QA_Q3_P_AMMOREGEN || player->powerups[QA_Q3_P_HASTE])
+    else if (player->persistent == QA_Q3_P_AMMOREGEN || (!source && player->powerups[QA_Q3_P_HASTE]))
         add = (int32_t)((float)add / 1.3f);
+    else if (source && !source->firing_delay(source->context, actor, add, &add, error))
+        return false;
+    entry = q3_actor_get(game, actor);
+    if (!entry || entry->kind != Q3_ACTOR_PLAYER) return true;
+    player = &entry->state.player;
     player->weapon_time_ms = q3_add_time(player->weapon_time_ms, add);
     return true;
 }
@@ -989,7 +1059,55 @@ bool qa_q3_arsenal_step(qa_q3_game *game, qa_actor_id actor, const qa_q3_control
     if (!game || game->source_restored || game->observation_depth == SIZE_MAX)
         return q3_fail(error, "invalid Q3 arsenal action boundary");
     ++game->observation_depth;
-    bool okay = arsenal_step(game, actor, command, elapsed_ms, error);
+    bool okay = arsenal_step(game, actor, command, elapsed_ms, NULL, 0, NULL, error);
+    --game->observation_depth;
+    return okay;
+}
+bool qa_q3_arsenal_source_step(qa_q3_game *game, qa_actor_id actor, const qa_q3_controls *command,
+    float elapsed_ms, const qa_q3_arsenal_source *source, qa_error *error) {
+    q3_actor *entry = q3_actor_get(game, actor);
+    if (!game || game->source_restored || game->observation_depth == SIZE_MAX ||
+        !entry || entry->kind != Q3_ACTOR_PLAYER || !(entry->state.player.selections & QA_Q3_ARSENAL) ||
+        !command || !source || !source->firing_delay || !qa_vec_finite(source->view_angles) ||
+        !isfinite(source->view_height) || !isfinite(source->health) ||
+        !isfinite(elapsed_ms) || elapsed_ms < 0 || elapsed_ms > INT_MAX - 1024.0f)
+        return q3_fail(error, "Selected Q3 source slice requires its actual arsenal and source pose");
+    qa_q3_arsenal_source captured = *source;
+    ++game->observation_depth;
+    qa_q3_player_state *player = &entry->state.player;
+    player->view_angles = captured.view_angles;
+    player->view_height = captured.view_height;
+    player->legs_animation = captured.legs_animation;
+    player->torso_animation = captured.torso_animation;
+    player->legs_timer_ms = captured.legs_timer_ms;
+    player->torso_timer_ms = captured.torso_timer_ms;
+    qa_q3_controls controls = *command;
+    if (player->requested_weapon != player->weapon)
+        controls.requested_weapon = player->requested_weapon;
+    int32_t milliseconds = (int32_t)(elapsed_ms + player->fractional_weapon_ms);
+    controls.gauntlet_contact_known = true;
+    controls.gauntlet_contact = false;
+    bool okay = true;
+    bool advanced = false;
+    if (controls.attack && captured.health > 0 && player->weapon == QA_Q3_W_GAUNTLET)
+        okay = q3_gauntlet(game, actor, &controls.gauntlet_contact, error);
+    entry = q3_actor_get(game, actor);
+    if (okay && entry && entry->kind == Q3_ACTOR_PLAYER &&
+        (entry->state.player.selections & QA_Q3_ARSENAL))
+        okay = arsenal_step(game, actor, &controls, elapsed_ms, &captured,
+            milliseconds, &advanced, error);
+    entry = okay ? q3_actor_get(game, actor) : NULL;
+    if (entry && entry->kind == Q3_ACTOR_PLAYER &&
+        (entry->state.player.selections & QA_Q3_ARSENAL)) {
+        okay = selected_drop_timers(game, actor, &entry->state.player, milliseconds, &advanced, error);
+        qa_combat_state combat;
+        if (okay && q3_actor_get(game, actor))
+            okay = qa_combat_read(game->options.services.combat, actor, &combat, error);
+        else if (okay) goto source_done;
+        if (okay && combat.health > 0 && q3_actor_get(game, actor))
+            okay = player_timers(game, actor, milliseconds, true, error);
+    }
+source_done:
     --game->observation_depth;
     return okay;
 }
@@ -1283,7 +1401,8 @@ bool qa_q3_damage_reaction(qa_q3_game *game, const qa_damage_outcome *outcome, q
         return q3_schedule_kamikaze(game, actor, body.origin, error);
     return true;
 }
-bool qa_q3_player_timers(qa_q3_game *game, qa_actor_id actor, int32_t elapsed, qa_error *error) {
+static bool player_timers(qa_q3_game *game, qa_actor_id actor, int32_t elapsed,
+                          bool selected_equipment, qa_error *error) {
     q3_actor *entry = q3_actor_get(game, actor);
     if (!entry || entry->kind != Q3_ACTOR_PLAYER || elapsed < 0)
         return q3_fail(error, "invalid Q3 player effects");
@@ -1292,8 +1411,8 @@ bool qa_q3_player_timers(qa_q3_game *game, qa_actor_id actor, int32_t elapsed, q
     bool native = source_command_active(game, actor) &&
         qa_q3_native_client_slot(game, actor, &source_client, NULL) &&
         game->source_entities[source_client].body_attached;
-    bool decay = native || (player->selections & QA_Q3_CHARACTER);
-    if (!native && !(player->selections & (QA_Q3_EFFECTS | QA_Q3_CHARACTER)))
+    bool decay = !selected_equipment && (native || (player->selections & QA_Q3_CHARACTER));
+    if (!selected_equipment && !native && !(player->selections & (QA_Q3_EFFECTS | QA_Q3_CHARACTER)))
         return true;
     qa_combat_state combat;
     if (!qa_combat_read(game->options.services.combat, actor, &combat, error))
@@ -1388,6 +1507,9 @@ bool qa_q3_player_timers(qa_q3_game *game, qa_actor_id actor, int32_t elapsed, q
         }
     }
     return true;
+}
+bool qa_q3_player_timers(qa_q3_game *game, qa_actor_id actor, int32_t elapsed, qa_error *error) {
+    return player_timers(game, actor, elapsed, false, error);
 }
 static bool player_world_effects(qa_q3_game *game, qa_actor_id actor, int32_t water_level,
                                  int32_t water_type, bool noclip, bool native, qa_error *error) {
@@ -1506,7 +1628,7 @@ bool qa_q3_movement_environment(qa_q3_game *game, qa_actor_id actor, qa_movement
     return true;
 }
 static bool prepare_movement(qa_q3_game *game, qa_actor_id actor, qa_movement_input *input,
-                             qa_error *error) {
+                             bool prepare_weapon, qa_error *error) {
     q3_actor *entry = q3_actor_get(game, actor);
     if (!entry || entry->kind != Q3_ACTOR_PLAYER || !input ||
         !qa_actor_id_equal(input->actor, actor))
@@ -1514,7 +1636,7 @@ static bool prepare_movement(qa_q3_game *game, qa_actor_id actor, qa_movement_in
     qa_q3_player_state *player = &entry->state.player;
     bool native_command = !input->prediction && source_command_active(game, actor);
     if (!native_command) player->gauntlet_contact = false;
-    if (!native_command && !player->cutscene.active && !input->prediction &&
+    if (prepare_weapon && !native_command && !player->cutscene.active && !input->prediction &&
         input->command.kind == QA_MOVEMENT_Q3 &&
         player->weapon == QA_Q3_W_GAUNTLET && !(input->command.buttons & 2u) &&
         (input->command.buttons & 1u) && player->weapon_time_ms <= 0) {
@@ -1550,10 +1672,14 @@ static bool prepare_movement(qa_q3_game *game, qa_actor_id actor, qa_movement_in
 }
 bool qa_q3_prepare_movement(qa_q3_game *game, qa_actor_id actor, qa_movement_input *input,
                             qa_error *error) {
+    return qa_q3_prepare_movement_selected(game, actor, input, true, error);
+}
+bool qa_q3_prepare_movement_selected(qa_q3_game *game, qa_actor_id actor,
+    qa_movement_input *input, bool prepare_weapon, qa_error *error) {
     if (!game || game->source_restored || game->observation_depth == SIZE_MAX)
         return q3_fail(error, "invalid Q3 movement preparation boundary");
     ++game->observation_depth;
-    bool okay = prepare_movement(game, actor, input, error);
+    bool okay = prepare_movement(game, actor, input, prepare_weapon, error);
     --game->observation_depth;
     return okay;
 }
@@ -1822,6 +1948,59 @@ static bool expand_invulnerability(qa_q3_game *game, qa_actor_id actor,
         entry->state.player.invulnerability_until > game->now_ms)
         entry->state.player.invulnerability_expanded = true;
     return true;
+}
+bool qa_q3_selected_equipment_motion(qa_q3_game *game, qa_actor_id actor,
+    const qa_movement_posture *crouched, qa_q3_equipment_motion *out, qa_error *error) {
+    q3_actor *entry = game ? q3_actor_get(game, actor) : NULL;
+    if (!entry || entry->kind != Q3_ACTOR_PLAYER ||
+        !(entry->state.player.selections & QA_Q3_ARSENAL) || !crouched || !out ||
+        game->source_restored || game->observation_depth == SIZE_MAX ||
+        !qa_vec_finite(crouched->bounds.mins) || !qa_vec_finite(crouched->bounds.maxs) ||
+        !isfinite(crouched->view_height))
+        return q3_fail(error, "Selected equipment motion needs its actual arsenal player and character posture");
+    qa_q3_selected_client_effects before;
+    if (!qa_q3_selected_client_effects_read(game, actor, &before, error)) return false;
+    ++game->observation_depth;
+    bool okay = true;
+    qa_q3_player_state *player = &entry->state.player;
+    qa_q3_equipment_motion motion = {0};
+    if (player->invulnerability_until <= game->now_ms) {
+        player->invulnerability_expanded = false;
+        player->selected_pm_flags &= ~0x4000u;
+    } else {
+        for (unsigned i = 0; i < QA_Q3_POWERUP_COUNT; ++i)
+            if (player->powerups[i] < game->now_ms) player->powerups[i] = 0;
+        if (game->options.product == QA_Q3_TEAM_ARENA) {
+            if (player->persistent >= QA_Q3_P_SCOUT && player->persistent <= QA_Q3_P_AMMOREGEN)
+                player->powerups[player->persistent] = game->now_ms;
+            player->powerups[QA_Q3_P_INVULNERABILITY] = game->now_ms;
+        }
+        okay = expand_invulnerability(game, actor, error);
+        entry = okay ? q3_actor_get(game, actor) : NULL;
+        if (!entry || entry->kind != Q3_ACTOR_PLAYER ||
+            !(entry->state.player.selections & QA_Q3_ARSENAL)) {
+            if (okay) q3_fail(error, "Selected equipment pose lost its actual arsenal player");
+            okay = false;
+        }
+        if (okay) {
+            player = &entry->state.player;
+            motion.fixed_pose = true;
+            if (player->invulnerability_expanded) player->selected_pm_flags |= 0x4000u;
+            motion.pose = *crouched;
+            if (player->invulnerability_expanded)
+                motion.pose.bounds = (qa_bounds){qa_v3(-42, -42, -42), qa_v3(42, 42, 42)};
+        }
+    }
+    if (okay) {
+        motion.speed_multiplier = game->options.product == QA_Q3_TEAM_ARENA &&
+            player->persistent == QA_Q3_P_SCOUT ? 1.5 :
+            player->powerups[QA_Q3_P_HASTE] != 0 ? 1.3 : 1.0;
+        motion.owns_holdable_input = player->use_item_held || player->holdable != QA_Q3_H_NONE;
+        okay = qa_q3_selected_client_effects_publish(game, actor, &before, error);
+        if (okay) *out = motion;
+    }
+    --game->observation_depth;
+    return okay;
 }
 bool qa_q3_client_think_prepare(qa_q3_game *game, qa_actor_id actor,
                                 const qa_q3_usercmd *input, uint32_t *old_sequence,

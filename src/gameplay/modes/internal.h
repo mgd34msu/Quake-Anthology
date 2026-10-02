@@ -185,5 +185,7 @@ bool mode_update_ghosts(qa_modes *, mode_instance *, qa_error *);
 void mode_stat_add(mode_instance *, int32_t *, int32_t);
 bool mode_checkpoint_restore_source(qa_modes *, const qa_modes_checkpoint *, qa_error *);
 bool mode_items_reconnect(qa_modes *, qa_actor_id, qa_error *);
+bool mode_q1_source_current(qa_modes *, mode_instance *, qa_actor_id,
+    bool *observer, qa_error *);
 
 #endif

@@ -7,6 +7,11 @@
 #include "selected_character.h"
 #include "selected_effects.h"
 #include "source_restore.h"
+#include "remote_q3_client.h"
+#include "remote_q3_initial.h"
+#include "network_initial_graph.h"
+#include "remote_q1_restore.h"
+#include "remote_q2_restore.h"
 #include "save_private.h"
 #include "qa/material_library_save.h"
 #include "qa/scene_resource_save.h"
@@ -69,6 +74,28 @@ static bool heap_read(const qa_frontend *f, root_heap heap, const qa_vfs **files
         frontend_native_q3_view owner; qa_error error={0};
         if (heap.ordinal>SIZE_MAX || !frontend_native_q3_read(f,(size_t)heap.ordinal,&owner,&error)) return false;
         *files=owner.mounts; *images=owner.images; *materials=owner.materials;
+    } else if(heap.kind==4) {
+        frontend_remote_q3_resources owner; qa_error error={0};
+        if(heap.ordinal>SIZE_MAX || !frontend_remote_q3_resources_read(
+            frontend_remote_q3_at(f,(size_t)heap.ordinal),&owner,&error)) return false;
+        *files=owner.mounts; *images=owner.images; *materials=owner.materials;
+    } else if(heap.kind==5) {
+        frontend_network_initial_graph_view initial; frontend_remote_q3_initial_view owner; qa_error error={0};
+        if(heap.ordinal || !frontend_network_initial_graph_read(f,&initial,&error) || !initial.present ||
+            !initial.parent || !frontend_remote_q3_initial_read(initial.parent,&owner,&error)) return false;
+        *files=owner.mounts; *images=owner.images; *materials=owner.materials;
+    } else if(heap.kind==6) {
+        frontend_remote_q1_view owner; qa_error error={0};
+        if(heap.ordinal>SIZE_MAX || !(f->source_restoring?
+            frontend_remote_q1_import_read(frontend_remote_q1_at(f,(size_t)heap.ordinal),&owner,&error):
+            frontend_remote_q1_metadata_read(frontend_remote_q1_at(f,(size_t)heap.ordinal),&owner,&error))) return false;
+        *files=owner.content.mounts; *images=owner.images; *materials=owner.materials;
+    } else if(heap.kind==7) {
+        frontend_remote_q2_view owner; qa_error error={0};
+        if(heap.ordinal>SIZE_MAX || !(f->source_restoring?
+            frontend_remote_q2_import_read(frontend_remote_q2_at(f,(size_t)heap.ordinal),&owner,&error):
+            frontend_remote_q2_metadata_read(frontend_remote_q2_at(f,(size_t)heap.ordinal),&owner,&error))) return false;
+        *files=owner.content.mounts; *images=owner.images; *materials=owner.materials;
     } else return false;
     return *files && *images && *materials && qa_scene_resources_files(*images)==*files &&
         qa_material_library_resource_owner(*materials)==*images;
@@ -77,9 +104,11 @@ static bool heap_find(frontend_world_inventory *inventory,const qa_vfs *files,
     qa_scene_resources *images,qa_material_library *materials,root_heap *out,qa_error *error)
 {
     qa_frontend *f=inventory->frontend;
-    for (uint32_t kind=0;kind<4;++kind) {
+    for (uint32_t kind=0;kind<8;++kind) {
         size_t count=kind==0?1:kind==1?frontend_source_group_count(f):
-            kind==2?frontend_visual_owner_count(f):frontend_native_q3_count(f);
+            kind==2?frontend_visual_owner_count(f):kind==3?frontend_native_q3_count(f):
+            kind==4?frontend_remote_q3_count(f):kind==5?1:
+            kind==6?frontend_remote_q1_count(f):frontend_remote_q2_count(f);
         for (size_t i=0;i<count;++i) {
             root_heap heap={kind,i,0}; const qa_vfs *actual_files=NULL;
             qa_scene_resources *actual_images=NULL; qa_material_library *actual_materials=NULL;
@@ -122,11 +151,16 @@ static bool owner_shape(frontend_scene_owner owner,bool world)
 {
     if (owner.kind==FRONTEND_SCENE_OWNER_FRONTEND) return world && !owner.owner && !owner.row;
     if (owner.kind==FRONTEND_SCENE_OWNER_SOURCE) return world && owner.owner && owner.row==1;
+    if (owner.kind==FRONTEND_SCENE_OWNER_REMOTE_MAP || owner.kind==FRONTEND_SCENE_OWNER_REMOTE_Q2_MAP)
+        return world && owner.owner && owner.row==1;
+    if(owner.kind==FRONTEND_SCENE_OWNER_REMOTE_Q1_MAP) return world && owner.owner && owner.row;
     return owner.owner && owner.row && (owner.kind==FRONTEND_SCENE_OWNER_Q3 ||
         owner.kind==FRONTEND_SCENE_OWNER_NATIVE_Q3 || owner.kind==FRONTEND_SCENE_OWNER_SELECTED_Q3 ||
         owner.kind==FRONTEND_SCENE_OWNER_CHARACTER || owner.kind==FRONTEND_SCENE_OWNER_EFFECTS ||
-        owner.kind==FRONTEND_SCENE_OWNER_GEAR || (!world &&
-        (owner.kind==FRONTEND_SCENE_OWNER_VISUAL ||
+        owner.kind==FRONTEND_SCENE_OWNER_GEAR || owner.kind==FRONTEND_SCENE_OWNER_REMOTE ||
+        owner.kind==FRONTEND_SCENE_OWNER_INITIAL || (!world &&
+        (owner.kind==FRONTEND_SCENE_OWNER_VISUAL || owner.kind==FRONTEND_SCENE_OWNER_REMOTE_Q2 ||
+         owner.kind==FRONTEND_SCENE_OWNER_REMOTE_Q1 ||
          (owner.kind==FRONTEND_SCENE_OWNER_EQUIPMENT && owner.row==1))));
 }
 static bool world_claim(frontend_world_inventory *inventory,const qa_scene_world *world,
@@ -155,6 +189,25 @@ static bool model_claim(frontend_world_inventory *inventory,const qa_scene_model
         return true;
     }
     return frontend_fail(error,QA_ERROR_FORMAT,"Scene destructor references a root outside its capture lease");
+}
+static bool registry_roots_claim(frontend_world_inventory *inventory,qa_q3_presentation_assets *assets,
+    frontend_scene_owner_kind kind,uint64_t ordinal,qa_error *error)
+{
+    size_t count=0;
+    if(!assets || !qa_q3_assets_model_count(assets,&count,error)) return false;
+    for(size_t i=0;i<count;++i) {
+        qa_q3_asset_model_holder model;
+        if(!qa_q3_assets_model_holder(assets,i,&model,error)) return false;
+        if(!model.present) continue;
+        frontend_scene_owner owner={kind,ordinal,i+1};
+        if(model.owns_world && (!model.world || !world_claim(inventory,model.world,owner,error))) return false;
+        for(unsigned j=0;j<3;++j) if(model.scenes[j]) {
+            bool alias=false;
+            for(unsigned k=0;k<j;++k) if(model.scenes[k]==model.scenes[j]) alias=true;
+            if(!alias && !model_claim(inventory,model.scenes[j],owner,NULL,error)) return false;
+        }
+    }
+    return true;
 }
 static bool owners_capture(frontend_world_inventory *inventory,qa_error *error)
 {
@@ -281,6 +334,43 @@ static bool owners_capture(frontend_world_inventory *inventory,qa_error *error)
                 for (unsigned p=0;p<k;++p) if (model.scenes[p]==model.scenes[k]) alias=true;
                 if (!alias && !model_claim(inventory,model.scenes[k],owner,NULL,error)) return false;
             }
+        }
+    }
+    for(size_t i=0;i<frontend_remote_q3_count(f);++i) {
+        frontend_remote_q3_resources owner;
+        if(!frontend_remote_q3_resources_read(frontend_remote_q3_at(f,i),&owner,error) || !owner.world ||
+            !world_claim(inventory,owner.world,(frontend_scene_owner){FRONTEND_SCENE_OWNER_REMOTE_MAP,i+1,1},error) ||
+            !registry_roots_claim(inventory,owner.assets,FRONTEND_SCENE_OWNER_REMOTE,i+1,error)) return false;
+    }
+    frontend_network_initial_graph_view initial;
+    if(!frontend_network_initial_graph_read(f,&initial,error)) return false;
+    if(initial.present) {
+        frontend_remote_q3_initial_view owner;
+        if(!initial.parent || !frontend_remote_q3_initial_read(initial.parent,&owner,error) ||
+            !registry_roots_claim(inventory,owner.assets,FRONTEND_SCENE_OWNER_INITIAL,1,error)) return false;
+    }
+    for(size_t i=0;i<frontend_remote_q1_count(f);++i) {
+        frontend_remote_q1 *owner=frontend_remote_q1_at(f,i); frontend_remote_q1_media media;
+        if(!frontend_remote_q1_media_read(owner,&media,error) || (media.world &&
+            !world_claim(inventory,media.world,(frontend_scene_owner){FRONTEND_SCENE_OWNER_REMOTE_Q1_MAP,i+1,1},error))) return false;
+        for(size_t j=0;j<frontend_remote_q1_model_count(owner);++j) {
+            frontend_remote_q1_model_view model;
+            if(!frontend_remote_q1_model_at(owner,j,&model,error) ||
+                (model.world? !world_claim(inventory,model.world,
+                    (frontend_scene_owner){FRONTEND_SCENE_OWNER_REMOTE_Q1_MAP,i+1,j+2},error):
+                    !model_claim(inventory,model.scene,
+                        (frontend_scene_owner){FRONTEND_SCENE_OWNER_REMOTE_Q1,i+1,j+1},model.path,error))) return false;
+        }
+    }
+    for(size_t i=0;i<frontend_remote_q2_count(f);++i) {
+        frontend_remote_q2 *owner=frontend_remote_q2_at(f,i); frontend_remote_q2_view media;
+        if(!frontend_remote_q2_metadata_read(owner,&media,error) || (media.world &&
+            !world_claim(inventory,media.world,(frontend_scene_owner){FRONTEND_SCENE_OWNER_REMOTE_Q2_MAP,i+1,1},error))) return false;
+        for(size_t j=0;j<frontend_remote_q2_model_count(owner);++j) {
+            frontend_remote_q2_model_view model;
+            if(!frontend_remote_q2_model_at(owner,j,&model,error) ||
+                !model_claim(inventory,model.scene,
+                    (frontend_scene_owner){FRONTEND_SCENE_OWNER_REMOTE_Q2,i+1,j+1},model.path,error)) return false;
         }
     }
     for (size_t i=0;i<frontend_equipment_media_count(f);++i) {
@@ -427,7 +517,7 @@ bool frontend_world_inventory_capture(qa_frontend *f,const frontend_scene_invent
 static bool owner_fields(qa_source_save_io *io,frontend_scene_owner *owner,bool world)
 {
     uint32_t kind=owner->kind;
-    if (!qa_source_save_u32(io,&kind) || kind>FRONTEND_SCENE_OWNER_GEAR ||
+    if (!qa_source_save_u32(io,&kind) || kind>FRONTEND_SCENE_OWNER_REMOTE_Q1_MAP ||
         !qa_source_save_u64(io,&owner->owner) || !qa_source_save_u64(io,&owner->row)) return false;
     owner->kind=(frontend_scene_owner_kind)kind; return owner_shape(*owner,world);
 }
@@ -496,7 +586,9 @@ static bool rows_fields(qa_source_save_io *io,frontend_world_inventory *inventor
         if (!owner_fields(io,&row->view.owner,false) || !heap_fields(io,inventory,&row->heap,&row->pool,&row->resource,
             &row->view.source.files,&images,&materials,&row->view.source.resource) || !qa_source_save_u64(io,&row->model) ||
             !frontend_save_text(io,&row->path) ||
-            (row->view.owner.kind==FRONTEND_SCENE_OWNER_VISUAL ? !row->path : row->path!=NULL) || !blob(io,&row->state)) return false;
+            ((row->view.owner.kind==FRONTEND_SCENE_OWNER_VISUAL ||
+              row->view.owner.kind==FRONTEND_SCENE_OWNER_REMOTE_Q1 ||
+              row->view.owner.kind==FRONTEND_SCENE_OWNER_REMOTE_Q2) ? !row->path : row->path!=NULL) || !blob(io,&row->state)) return false;
         row->view.visual_path=row->path;
         if (io->direction==QA_SOURCE_SAVE_READ && !frontend_model_decode(inventory->models,row->model,
             qa_resource_bytes(row->view.source.resource),&row->view.source.model,io->error)) return false;
@@ -509,9 +601,9 @@ static bool rows_fields(qa_source_save_io *io,frontend_world_inventory *inventor
 }
 static bool header(qa_source_save_io *io,size_t *worlds,size_t *models)
 {
-    uint8_t magic[4]={'Q','F','W','R'}; uint32_t version=7;
+    uint8_t magic[4]={'Q','F','W','R'}; uint32_t version=9;
     size_t maximum=io->direction==QA_SOURCE_SAVE_READ?io->input.size-io->offset:SIZE_MAX;
-    return qa_source_save_bytes(io,magic,4) && !memcmp(magic,"QFWR",4) && qa_source_save_u32(io,&version) && version==7 &&
+    return qa_source_save_bytes(io,magic,4) && !memcmp(magic,"QFWR",4) && qa_source_save_u32(io,&version) && version==9 &&
         qa_source_save_count(io,worlds,maximum) && qa_source_save_count(io,models,maximum);
 }
 bool frontend_world_inventory_checkpoint(const frontend_world_inventory *inventory,qa_buffer *out,qa_error *error)
@@ -679,6 +771,44 @@ bool frontend_source_roots_attach_restored(qa_frontend *f,frontend_world_invento
         world_row *row=inventory->worlds+i;
         if (row->owner.kind!=FRONTEND_SCENE_OWNER_SOURCE) continue;
         frontend_source_world_adopt(f,(size_t)row->owner.owner-1,(qa_scene_world *)row->source.world);
+        frontend_world_adopt(inventory,i+1);
+    }
+    return true;
+}
+bool frontend_remote_roots_attach_restored(qa_frontend *f,frontend_world_inventory *inventory,qa_error *error)
+{
+    if(!f || !f->application || f->stepping || f->capture || !f->source_restoring ||
+        !inventory || !inventory->restoring || inventory->frontend!=f)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Remote map adoption requires its actual candidate root inventory");
+    size_t count=frontend_remote_q3_count(f);
+    for(size_t i=0;i<inventory->world_count;++i) {
+        const world_row *row=inventory->worlds+i;
+        if(row->owner.kind==FRONTEND_SCENE_OWNER_REMOTE_MAP &&
+            (!row->owner.owner || row->owner.owner>count || row->owner.row!=1))
+            return frontend_fail(error,QA_ERROR_FORMAT,"Remote map root leaves its physical resource parent");
+    }
+    for(size_t i=0;i<count;++i) {
+        frontend_remote_q3 *parent=frontend_remote_q3_at(f,i);
+        frontend_remote_q3_resources owner; size_t key=0;
+        if(!frontend_remote_q3_resources_import_read(parent,&owner,error) || owner.world || !owner.map || !owner.geometry)
+            return frontend_fail(error,QA_ERROR_FORMAT,"Remote map parent lacks its genuine prepared collision owner");
+        for(size_t j=0;j<inventory->world_count;++j) {
+            world_row *row=inventory->worlds+j;
+            if(row->owner.kind!=FRONTEND_SCENE_OWNER_REMOTE_MAP || row->owner.owner!=i+1) continue;
+            if(key || row->source.resource!=owner.map || row->source.files!=owner.mounts ||
+                row->source.images!=owner.images || row->source.materials!=owner.materials ||
+                !frontend_world_owner_ready(inventory,j+1,FRONTEND_SCENE_OWNER_REMOTE_MAP,i+1,error) ||
+                !frontend_remote_q3_resources_world_adopt_ready(parent,(qa_scene_world *)row->source.world,error))
+                return frontend_fail(error,QA_ERROR_FORMAT,"Remote map root differs from its actual resource and paired heaps");
+            key=j+1;
+        }
+        if(!key) return frontend_fail(error,QA_ERROR_FORMAT,"Remote map has no actual saved destructor root");
+    }
+    for(size_t i=0;i<inventory->world_count;++i) {
+        world_row *row=inventory->worlds+i;
+        if(row->owner.kind!=FRONTEND_SCENE_OWNER_REMOTE_MAP) continue;
+        frontend_remote_q3_resources_world_adopt(frontend_remote_q3_at(f,(size_t)row->owner.owner-1),
+            (qa_scene_world *)row->source.world);
         frontend_world_adopt(inventory,i+1);
     }
     return true;

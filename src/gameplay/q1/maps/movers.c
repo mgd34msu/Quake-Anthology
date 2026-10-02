@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "qa/game_q1_wire.h"
 #include <stdio.h>
 
 bool q1_map_is_mover(q1_map_kind kind) {
@@ -483,7 +484,7 @@ bool qa_q1_game_maps_finish(qa_q1_game *g, qa_error *error) {
         ok = helper_trigger(g, master, Q1_MAP_DOOR_TRIGGER, bounds, error);
     }
     snapshot->borrowed = false;
-    return ok;
+    return ok && qa_q1_wire_freeze(g, error);
 }
 bool q1_map_mover_use(qa_q1_game *g, q1_actor *entity, qa_actor_id activator, qa_error *error) {
     switch (entity->map->kind) {

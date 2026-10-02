@@ -14,7 +14,14 @@ typedef enum frontend_scene_owner_kind {
     FRONTEND_SCENE_OWNER_SOURCE,
     FRONTEND_SCENE_OWNER_CHARACTER,
     FRONTEND_SCENE_OWNER_EFFECTS,
-    FRONTEND_SCENE_OWNER_GEAR
+    FRONTEND_SCENE_OWNER_GEAR,
+    FRONTEND_SCENE_OWNER_REMOTE,
+    FRONTEND_SCENE_OWNER_INITIAL,
+    FRONTEND_SCENE_OWNER_REMOTE_MAP,
+    FRONTEND_SCENE_OWNER_REMOTE_Q2,
+    FRONTEND_SCENE_OWNER_REMOTE_Q2_MAP,
+    FRONTEND_SCENE_OWNER_REMOTE_Q1,
+    FRONTEND_SCENE_OWNER_REMOTE_Q1_MAP
 } frontend_scene_owner_kind;
 typedef struct frontend_scene_owner {
     frontend_scene_owner_kind kind;
@@ -27,6 +34,12 @@ typedef struct frontend_scene_owner {
      * Character uses its actual selected-character registry ordinal plus one.
      * Effects uses its actual selected-effects registry ordinal plus one.
      * Gear uses its actual private gear registry ordinal plus one.
+     * Remote and Initial use their actual parent registry ordinal plus one.
+     * Remote map uses its resource parent ordinal plus one and row one.
+     * Remote Q2 models use their physical parent ordinal plus one and real
+     * model row ordinal plus one; its map uses that parent and row one.
+     * Remote Q1 parsed models use the same physical parent/model ordinals;
+     * its map uses row one and external BSP caches use model ordinal plus two.
      * The frontend map owner has owner and row zero. */
     uint64_t owner, row;
 } frontend_scene_owner;
@@ -79,5 +92,6 @@ bool frontend_world_inventory_ready(const frontend_world_inventory *, qa_error *
 /* Adopts source-owned private map roots after all real groups construct and
  * before their presentation backends import the saved world borrow. */
 bool frontend_source_roots_attach_restored(qa_frontend *,frontend_world_inventory *,qa_error *);
+bool frontend_remote_roots_attach_restored(qa_frontend *,frontend_world_inventory *,qa_error *);
 
 #endif

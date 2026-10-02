@@ -14,7 +14,7 @@ struct qaw_patch {
 
 bool qaw_patch_build(qaw_surface *, const qa_bsp_surface *, float subdivisions, qa_error *);
 bool qaw_patch_prepare(qa_scene_world *, qa_error *);
-bool qaw_patch_lod(const qaw_surface *, const qa_material_context *, float curve_error,
+bool qaw_patch_lod(const qaw_surface *, qa_material_context *, float curve_error,
                    qa_scene_frame *, qa_scene_mesh *, qa_error *);
 
 #endif

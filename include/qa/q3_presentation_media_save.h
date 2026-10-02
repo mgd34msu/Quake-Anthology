@@ -11,10 +11,16 @@ typedef struct qa_q3_movie_checkpoint_refs {
     bool (*asset_decode)(void *, uint64_t, const char *path, qa_cinematic_asset **, qa_error *);
     qa_media_checkpoint_refs playback;
     qa_cinematic_image_checkpoint_refs publication;
+    /* The external fullscreen owner encodes its actual retained source lease
+     * and decoder. Decode returns one owned cold handle; it remains unpublished
+     * until the enclosing frontend candidate is admitted. Discard releases only
+     * an unadopted handle, without commands or candidate audio queue mutation. */
+    bool (*system_encode)(void *, const qa_q3_system_movie *, uint32_t flags, qa_buffer *, qa_error *);
+    bool (*system_decode)(void *, qa_bytes, uint32_t flags, qa_q3_system_movie *, qa_error *);
+    void (*system_discard)(void *, qa_q3_system_movie *);
 } qa_q3_movie_checkpoint_refs;
-/* Actual local movie slots and prepared source cache. Installed delegated
- * system movies require their external lifetime owner and are rejected by
- * this local owner. Restore keeps the installed heap presentation unchanged
+/* Actual movie slots and prepared source cache. Delegated system slots require
+ * their external lifetime owner's qualified codec. Restore keeps the installed heap presentation unchanged
  * until the complete stream, all slots and source aliases qualify. Failure
  * frees unadopted local owners without changing the restored engine queue;
  * success transfers normal movie/stream retirement to the presentation. */

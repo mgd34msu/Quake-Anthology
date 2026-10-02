@@ -29,6 +29,8 @@ typedef struct qa_q1_map_fields {
     int32_t initial_state, frame, skin;
     float counter_value, goal_state;
     int32_t particle_color;
+    /* Raw authored source words retain the entity's textual number domain. */
+    const char *kill_string, *death_type, *team;
 } qa_q1_map_fields;
 
 typedef struct qa_q1_static_model {

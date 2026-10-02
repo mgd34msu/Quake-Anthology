@@ -1,6 +1,7 @@
 #ifndef QA_AUDIO_SAVE_H
 #define QA_AUDIO_SAVE_H
 #include "qa/audio.h"
+#include "qa/audio_acoustics_prepare.h"
 
 typedef enum qa_audio_reference_kind {
     QA_AUDIO_REFERENCE_ACTOR, QA_AUDIO_REFERENCE_OWNER, QA_AUDIO_REFERENCE_RESOURCE,
@@ -19,6 +20,11 @@ typedef struct qa_audio_checkpoint_refs {
     bool (*asset_decode)(void *, qa_bytes, qa_audio_asset **, qa_error *);
     qa_audio_transmission_fn geometry;
     void *geometry_context;
+    qa_audio_transmission_checked_fn geometry_checked;
+    /* Exact retained scene topology. Decode creates one owned candidate
+     * source reference, output unchanged on failure. No trace/native query. */
+    bool (*acoustics_encode)(void *, const qa_audio_acoustics_source *, qa_buffer *, qa_error *);
+    bool (*acoustics_decode)(void *, qa_bytes, qa_audio_acoustics_source *, qa_error *);
     bool (*environment)(void *, uint32_t seat, qa_audio_trace_fn *, void **, qa_error *);
 } qa_audio_checkpoint_refs;
 

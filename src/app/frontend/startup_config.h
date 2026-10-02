@@ -21,6 +21,13 @@ typedef struct frontend_startup_config_options {
 } frontend_startup_config_options;
 
 frontend_startup_config *frontend_startup_config_create(const frontend_startup_config_options *, qa_error *);
+/* Own a copy of the genuine image-settings script before source configuration.
+ * Its separate console keeps aliases private and preserves native wait frames.
+ * No source defaults, archives, launch options or variables run here. */
+frontend_startup_config *frontend_startup_images_create(const qa_command_context *,qa_bytes,qa_error *);
+bool frontend_startup_images_command_current(const frontend_startup_config *,const qa_console *,
+    const qa_command_context *);
+bool frontend_startup_images_completed(const frontend_startup_config *,const qa_console *);
 bool frontend_startup_config_destroy(frontend_startup_config *, qa_error *);
 /* These hooks belong to the actual source console. Its enclosing owner still
  * qualifies candidate/publication identity before calling them. */

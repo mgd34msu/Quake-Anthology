@@ -3,6 +3,7 @@
 #include "qa/bot_runtime.h"
 #include "qa/bots_allocator.h"
 #include "source_weapon_state.h"
+#include "../library/source_weapon_resource.h"
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
@@ -28,6 +29,9 @@ struct qa_bot_runtime {
     bot_weapon_pointers weapon_pointers;
     qa_bot_weight_workspace *weapon_workspace;
     qa_bot_weapons *weapon_config;
+    uint64_t weapon_generation,weapon_setup_revision;
+    bot_weapon_diagnostic *weapon_diagnostics;
+    size_t weapon_diagnostic_count,weapon_diagnostic_capacity;
     qa_bot_entity_info *entities;
     qa_bot_goal_entity *goal_entities;
     size_t entity_capacity, observation_leases, owner_leases;
@@ -46,6 +50,7 @@ bool bot_runtime_owners_idle(qa_bot_runtime *, qa_error *);
 bool bot_runtime_variable(qa_bot_runtime *, const char *, const char *, const qa_bot_variable **, qa_error *);
 bool bot_runtime_integer(qa_bot_runtime *, const char *, const char *, int32_t *, qa_error *);
 void bot_runtime_handles_close(qa_bot_runtime *);
+bool bot_runtime_chat_shutdown(qa_bot_runtime *,qa_error *);
 bool bot_runtime_weapons_shutdown(qa_bot_runtime *,qa_error *);
 bool bot_runtime_observations_resize(qa_bot_runtime *, size_t, qa_error *);
 bool bot_runtime_owners_create(qa_bot_runtime *, qa_error *);

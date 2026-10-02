@@ -1,5 +1,6 @@
 #include "legacy/internal.h"
 #include "qa/scene_effects.h"
+#include "q1_sky.h"
 
 #include <ctype.h>
 #include <stdio.h>
@@ -101,6 +102,12 @@ bool qaw_build_legacy(qa_scene_world *world, qa_error *error)
         free(shader_name);
         surface->base_material = surface->material;
         surface->sort = surface->material ? surface->material->sort : surface->sky ? 2 : legacy->alpha < 1 ? 9 : 3;
+    }
+    if (q1) for (size_t i = 0; i < world->leaf_count; ++i) {
+        const qa_bsp_leaf *leaf = &world->leaves[i];
+        if (leaf->contents == -1) continue;
+        for (size_t j = leaf->faces.first; j < (size_t)leaf->faces.first + leaf->faces.count; ++j)
+            world->surfaces[world->leaf_surfaces[j]].legacy->underwater = true;
     }
     return true;
 }
@@ -293,6 +300,8 @@ static bool sky_submit(qa_scene_world *world, const qaw_surface *surface,
 {
     qawl_world *data = world->legacy_data;
     const qawl_texture *texture = &data->textures[surface->legacy->texture];
+    if (world->bsp.family == QA_BSP_Q1 && input->q1_sky)
+        return qaw_q1_sky_collect(input->q1_sky, &surface->mesh, context, frame, error);
     if (world->bsp.family == QA_BSP_Q2 || input->override_sky || world->options.q2_sky) {
         qa_scene_mesh mesh;
         qa_scene_vertex *vertices;
@@ -349,7 +358,7 @@ static bool sky_submit(qa_scene_world *world, const qaw_surface *surface,
 static bool fragment_lights(qa_scene_world *world, const qa_scene_world_input *input,
                              qa_scene_frame *frame, qa_scene_draw *draw, qa_error *error)
 {
-    if (!input->shadow_lights) return true;
+    if (input->legacy_flashblend || !input->shadow_lights) return true;
     qa_scene_shadow_light *lights = NULL;
     if (input->shadow_light_count) {
         if (input->shadow_light_count > SIZE_MAX / sizeof(*lights)) {
@@ -382,7 +391,8 @@ bool qaw_submit_legacy(qa_scene_world *world, qaw_surface *surface, const qa_mat
     qaw_legacy *legacy = surface->legacy;
     if (!surface->material) {
         if (surface->skip) return true;
-        if (qa_vec_dot(context->local_view_origin, surface->plane.normal) - surface->plane.distance < -0.01f) return true;
+        if (!legacy->underwater &&
+            qa_vec_dot(context->local_view_origin, surface->plane.normal) - surface->plane.distance < -0.01f) return true;
         if (surface->sky) return sky_submit(world, surface, context, input, frame, error);
     }
     qa_material_context baked = *context;
@@ -391,13 +401,14 @@ bool qaw_submit_legacy(qa_scene_world *world, qaw_surface *surface, const qa_mat
     if (!qawl_light_update(world, surface, &baked, input, error)) return false;
     if (surface->material) {
         qa_material_context selected = *context;
-        selected.lightmap = surface->lightmap;
-        const qa_material *effective = surface->material;
-        size_t hops = 0;
-        while (effective->remapped) {
-            if (++hops > 16384) { qa_error_set(error, QA_ERROR_FORMAT, 0, "World material remap cycle"); return false; }
-            effective = effective->remapped;
+        if (input->legacy_flashblend) {
+            selected.light_count = 0;
+            selected.fragment_lighting = false;
+            selected.fragment_light_count = 0;
         }
+        selected.lightmap = surface->lightmap;
+        const qa_material *effective = surface->material->remapped ?
+            surface->material->remapped : surface->material;
         if ((effective->surface_flags & 128u) != 0) return true;
         if (effective->sky)
             return qaw_submit_material_sky(world, surface->material, effective, &surface->mesh, &selected, input, frame, error);

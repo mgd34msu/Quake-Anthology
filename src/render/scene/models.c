@@ -165,30 +165,18 @@ static bool replacement_skin_path(const qa_model_replacement *replacement, uint3
     memcpy(path + length, ".lmp", 5); *out = path; return true;
 }
 
-static bool prepare_replacement(qa_scene_model *model, const qa_model_replacement *replacement,
-                                 qa_error *error) {
-    if (!replacement->source || !replacement->mesh || !replacement->animation ||
+static bool replacement_build(const qa_model *source, qa_scene_resources *resources,
+    qa_material_library *materials, const qa_scene_image_options *options,
+    const qa_model_replacement *replacement, qa_scene_model **out, qa_error *error) {
+    if (!replacement || !replacement->source || !replacement->mesh || !replacement->animation ||
         (replacement->source->format != QA_MODEL_MDL && replacement->source->format != QA_MODEL_MD2) ||
-        (replacement->source != model->source && replacement->mesh != model->source) ||
+        (replacement->source != source && replacement->mesh != source) ||
         replacement->mesh->format != QA_MODEL_MD5 ||
         replacement->mesh->bone_count != replacement->animation->joint_count || !replacement->animation->frame_count) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "replacement does not belong to this retained model"); return false;
     }
-    qa_scene_model **link = &model->replacement;
-    while (*link) {
-        qa_scene_model *retained = *link;
-        const qa_model_replacement *description = retained->replacement_source;
-        if (description->mesh == replacement->mesh && description->animation == replacement->animation &&
-            description->flags == replacement->flags && description->elapsed_animation == replacement->elapsed_animation) {
-            *link = retained->replacement_next;
-            retained->replacement_next = model->replacement;
-            model->replacement = retained;
-            return true;
-        }
-        link = &retained->replacement_next;
-    }
     qa_scene_model *next = NULL;
-    if (!qa_scene_model_create(replacement->mesh, model->resources, model->materials, &model->options, &next, error)) return false;
+    if (!qa_scene_model_create(replacement->mesh, resources, materials, options, &next, error)) return false;
     next->replacement_description = *replacement;
     next->replacement_source = &next->replacement_description;
     next->replacement_skin_count = replacement->source->skin_count;
@@ -213,12 +201,413 @@ static bool prepare_replacement(qa_scene_model *model, const qa_model_replacemen
             }
         }
     }
+    *out = next; return true;
+fail:
+    qa_scene_model_destroy(next); return false;
+}
+static bool prepare_replacement(qa_scene_model *model, const qa_model_replacement *replacement,
+                                 qa_error *error) {
+    if (!replacement || (replacement->source != model->source && replacement->mesh != model->source)) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Replacement differs from the actual retained source"); return false;
+    }
+    qa_scene_model **link = &model->replacement;
+    while (*link) {
+        qa_scene_model *retained = *link;
+        const qa_model_replacement *description = retained->replacement_source;
+        if (description->mesh == replacement->mesh && description->animation == replacement->animation &&
+            description->flags == replacement->flags && description->elapsed_animation == replacement->elapsed_animation) {
+            *link = retained->replacement_next;
+            retained->replacement_next = model->replacement;
+            model->replacement = retained;
+            return true;
+        }
+        link = &retained->replacement_next;
+    }
+    qa_scene_model *next = NULL;
+    if (!replacement_build(model->source, model->resources, model->materials, &model->options,
+        replacement, &next, error)) return false;
     next->replacement_next = model->replacement;
     next->replacement_parent = model;
     model->replacement = next;
     return true;
-fail:
-    qa_scene_model_destroy(next); return false;
+}
+static bool content_leases_valid(const qa_scene_model_content_lease *mesh,
+    const qa_scene_model_content_lease *source, const qa_scene_model_content_lease *animation)
+{
+    return mesh && mesh->context && mesh->release && source && source->context && source->release &&
+        animation && animation->context && animation->release && mesh != source && mesh != animation && source != animation;
+}
+static void replacement_leases(qa_scene_model *model, qa_scene_model_content_lease *mesh,
+    qa_scene_model_content_lease *source, qa_scene_model_content_lease *animation)
+{
+    model->source_lease = *mesh; *mesh = (qa_scene_model_content_lease){0};
+    model->replacement_source_lease = *source; *source = (qa_scene_model_content_lease){0};
+    model->animation_lease = *animation; *animation = (qa_scene_model_content_lease){0};
+}
+static bool replacement_matches(const qa_scene_model *child, const qa_model_replacement *description)
+{
+    const qa_model_replacement *actual = child ? child->replacement_source : NULL;
+    return actual && description && actual->source == description->source &&
+        actual->mesh == description->mesh && actual->animation == description->animation &&
+        actual->flags == description->flags && actual->elapsed_animation == description->elapsed_animation;
+}
+static bool replacement_select(qa_scene_model *model, qa_scene_model *prepared,
+    const qa_model_replacement *description, qa_scene_model **out, qa_error *error)
+{
+    *out = NULL;
+    if (model->source->format != QA_MODEL_MDL && model->source->format != QA_MODEL_MD2) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Replacement policy requires its actual native alias source"); return false;
+    }
+    if (!description) return true;
+    if (replacement_matches(prepared, description)) { *out = prepared; return true; }
+    for (qa_scene_model *child = model->replacement; child; child = child->replacement_next)
+        if (replacement_matches(child, description)) { *out = child; return true; }
+    qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Replacement policy lacks its genuine prepared child"); return false;
+}
+bool qa_scene_model_replacement_policy_bind(qa_scene_model *model, bool enabled, double distance,
+    const qa_model_replacement *description, qa_error *error)
+{
+    if (!model || !qa_scene_model_idle(model) || model->replacement_parent || model->replacement_next) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Replacement policy requires its actual idle root"); return false;
+    }
+    qa_scene_model *selected = NULL;
+    if (!replacement_select(model, NULL, description, &selected, error)) return false;
+    model->replacement_policy_set = true; model->replacement_policy_enabled = enabled;
+    model->replacement_distance = distance; model->selected_replacement = selected; return true;
+}
+bool qa_scene_model_replacement_policy_read(const qa_scene_model *model, bool *configured,
+    bool *enabled, double *distance, const qa_scene_model **selected)
+{
+    if (!model || !configured || !enabled || !distance || !selected || model->replacement_parent ||
+        model->replacement_next || !qa_scene_model_observation_ready(model)) return false;
+    *configured = model->replacement_policy_set; *enabled = model->replacement_policy_enabled;
+    *distance = model->replacement_distance; *selected = model->selected_replacement; return true;
+}
+bool qa_scene_model_source_bind(qa_scene_model *model, qa_scene_model_content_lease *lease, qa_error *error)
+{
+    if (!model || !qa_scene_model_idle(model) || model->source_lease.context || model->source_lease.release ||
+        !lease || !lease->context || !lease->release) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Source binding requires its actual idle model and owning lease"); return false;
+    }
+    model->source_lease = *lease; *lease = (qa_scene_model_content_lease){0}; return true;
+}
+bool qa_scene_model_replacement_prepare(qa_scene_model *model, const qa_model_replacement *description,
+    qa_scene_model_content_lease *mesh, qa_scene_model_content_lease *source,
+    qa_scene_model_content_lease *animation, qa_error *error)
+{
+    if (!model || !qa_scene_model_idle(model) || model->replacement_parent ||
+        !content_leases_valid(mesh, source, animation)) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Replacement admission requires its actual idle root and content leases"); return false;
+    }
+    qa_scene_model *next = NULL;
+    if (!replacement_build(model->source, model->resources, model->materials, &model->options,
+        description, &next, error)) return false;
+    replacement_leases(next, mesh, source, animation);
+    next->replacement_parent = model; next->replacement_next = model->replacement; model->replacement = next;
+    return true;
+}
+bool qa_scene_model_replacement_prepare_parent(qa_scene_model *model, const qa_model_replacement *description,
+    qa_scene_model_content_lease *mesh, qa_scene_model_content_lease *animation, qa_error *error)
+{
+    if (!model || !qa_scene_model_idle(model) || model->replacement_parent || model->replacement_next ||
+        !description || description->source != model->source || !mesh || !animation || mesh == animation ||
+        !mesh->context || !mesh->release || !animation->context || !animation->release) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Replacement admission requires its genuine registered parent and mesh/animation owners");
+        return false;
+    }
+    qa_scene_model *next = NULL;
+    if (!replacement_build(model->source, model->resources, model->materials, &model->options,
+        description, &next, error)) return false;
+    next->source_lease = *mesh; *mesh = (qa_scene_model_content_lease){0};
+    next->animation_lease = *animation; *animation = (qa_scene_model_content_lease){0};
+    next->replacement_parent = model; next->replacement_next = model->replacement; model->replacement = next;
+    return true;
+}
+
+typedef struct model_policy_image {
+    const scene_model_image *current;
+    scene_model_image *destination;
+} model_policy_image;
+typedef struct model_policy_node {
+    qa_scene_model *owner;
+    qa_scene_model images;
+    model_policy_image *bindings;
+    size_t count;
+    scene_model_image ***shaders;
+    bool prepared;
+} model_policy_node;
+struct qa_scene_model_image_policy {
+    qa_scene_model *owner;
+    qa_scene_resource_policy *resources;
+    qa_scene_material_image_policy *materials;
+    qa_scene_model_capture *capture;
+    model_policy_node *nodes;
+    size_t count;
+    qa_scene_model *replacement;
+    qa_scene_model *selected;
+    bool selection_changed, selection_enabled;
+    double distance;
+    bool sealed, published;
+};
+static bool model_policy_current(const qa_scene_model_image_policy *ticket)
+{
+    if (!ticket || ticket->owner->image_policy != ticket || ticket->owner->capture != ticket->capture || ticket->owner->replacement_parent ||
+        ticket->owner->replacement_next ||
+        ticket->owner->resources != qa_scene_resource_policy_source(ticket->resources)) return false;
+    for (size_t i = 0; i < ticket->count; ++i) {
+        const model_policy_node *node = &ticket->nodes[i];
+        if (node->owner->active_submissions || node->owner->checkpoint_active ||
+            node->owner->source != node->images.source || node->owner->resources != ticket->owner->resources ||
+            node->owner->materials != ticket->owner->materials) return false;
+    }
+    return true;
+}
+static void model_policy_skin_arrays(qa_scene_model *model)
+{
+    if (!model->replacement_skins) return;
+    for (size_t i = 0; i < model->source->mesh_count; ++i) free(model->replacement_skins[i]);
+    free(model->replacement_skins); model->replacement_skins = NULL;
+}
+static void model_policy_dispose(qa_scene_model_image_policy *ticket)
+{
+    qa_scene_model_destroy(ticket->replacement);
+    for (size_t i = 0; i < ticket->count; ++i) {
+        model_policy_node *node = &ticket->nodes[i];
+        scene_model_images_destroy(&node->images);
+        model_policy_skin_arrays(&node->images);
+        if (node->shaders) {
+            for (size_t j = 0; j < node->owner->source->mesh_count; ++j) free(node->shaders[j]);
+            free(node->shaders);
+        }
+        free(node->bindings);
+    }
+    ticket->owner->image_policy = NULL;
+    qa_scene_model_capture_end(ticket->capture);
+    free(ticket->nodes); free(ticket);
+}
+static scene_model_image *model_policy_binding(const model_policy_node *node, const scene_model_image *image)
+{
+    if (!image) return NULL;
+    for (size_t i = 0; i < node->count; ++i)
+        if (node->bindings[i].current == image) return node->bindings[i].destination;
+    return NULL;
+}
+static bool model_policy_node_prepare(model_policy_node *node, qa_scene_resources *resources, qa_error *error)
+{
+    qa_scene_model *owner = node->owner;
+    node->images.source = owner->source;
+    node->images.options = owner->options;
+    memcpy(node->images.palette, owner->palette, sizeof(owner->palette));
+    memcpy(node->images.translation, owner->translation, sizeof(owner->translation));
+    node->images.resources = resources; node->images.materials = owner->materials;
+    node->images.identity = owner->identity;
+    if (owner->options.family == QA_SCENE_Q3) return true;
+    for (const scene_model_image *image = owner->images; image; image = image->next) {
+        if (node->count == SIZE_MAX / sizeof(*node->bindings)) {
+            qa_error_set(error, QA_ERROR_MEMORY, 0, "Model image binding inventory overflows"); return false;
+        }
+        ++node->count;
+    }
+    node->bindings = node->count ? calloc(node->count, sizeof(*node->bindings)) : NULL;
+    if (node->count && !node->bindings) goto memory;
+    size_t at = 0;
+    for (const scene_model_image *image = owner->images; image; image = image->next, ++at) {
+        scene_model_image *prepared = NULL; bool indexed = false;
+        if (owner->source->format == QA_MODEL_MDL) {
+            for (uint32_t i = 0; !indexed && i < owner->source->skin_count; ++i) {
+                if (owner->skins[i] != image) continue;
+                indexed = true;
+                if (!scene_model_indexed(&node->images, image->name, owner->source->skins[i].pixels,
+                    owner->source->skin_width, owner->source->skin_height, false, &prepared, error)) return false;
+            }
+        } else if (owner->source->format == QA_MODEL_SPR) {
+            for (uint32_t i = 0; !indexed && i < owner->source->sprite_count; ++i) {
+                if (owner->sprites[i] != image) continue;
+                const qa_model_sprite *sprite = &owner->source->sprites[i]; indexed = true;
+                if (!scene_model_indexed(&node->images, image->name, sprite->pixels,
+                    sprite->width, sprite->height, true, &prepared, error)) return false;
+            }
+        }
+        if (!indexed && !scene_model_external(&node->images, image->name, &prepared, error)) return false;
+        node->bindings[at] = (model_policy_image){image, prepared};
+    }
+    node->images.skins = owner->source->skin_count ? calloc(owner->source->skin_count, sizeof(*owner->skins)) : NULL;
+    node->images.sprites = owner->source->sprite_count ? calloc(owner->source->sprite_count, sizeof(*owner->sprites)) : NULL;
+    node->shaders = owner->source->mesh_count ? calloc(owner->source->mesh_count, sizeof(*node->shaders)) : NULL;
+    if ((owner->source->skin_count && !node->images.skins) ||
+        (owner->source->sprite_count && !node->images.sprites) || (owner->source->mesh_count && !node->shaders)) goto memory;
+    for (uint32_t i = 0; i < owner->source->skin_count; ++i)
+        node->images.skins[i] = model_policy_binding(node, owner->skins[i]);
+    for (uint32_t i = 0; i < owner->source->sprite_count; ++i)
+        node->images.sprites[i] = model_policy_binding(node, owner->sprites[i]);
+    for (uint32_t i = 0; i < owner->source->mesh_count; ++i) {
+        size_t count = owner->source->meshes[i].shader_count;
+        if (!owner->meshes[i].shaders) continue;
+        node->shaders[i] = count ? calloc(count, sizeof(*node->shaders[i])) : NULL;
+        if (count && !node->shaders[i]) goto memory;
+        for (size_t j = 0; j < count; ++j)
+            node->shaders[i][j] = model_policy_binding(node, owner->meshes[i].shaders[j]);
+    }
+    if (owner->replacement_skins) {
+        node->images.replacement_skins = owner->source->mesh_count
+            ? calloc(owner->source->mesh_count, sizeof(*owner->replacement_skins)) : NULL;
+        if (owner->source->mesh_count && !node->images.replacement_skins) goto memory;
+        for (size_t i = 0; i < owner->source->mesh_count; ++i) {
+            if (!owner->replacement_skins[i]) continue;
+            size_t count = owner->replacement_skin_count;
+            if (count > SIZE_MAX / sizeof(*node->images.replacement_skins[i])) goto memory;
+            node->images.replacement_skins[i] = count ? calloc(count, sizeof(*node->images.replacement_skins[i])) : NULL;
+            if (count && !node->images.replacement_skins[i]) goto memory;
+            for (size_t j = 0; j < count; ++j)
+                node->images.replacement_skins[i][j] = model_policy_binding(node, owner->replacement_skins[i][j]);
+        }
+    }
+    node->prepared = true; return true;
+memory:
+    qa_error_set(error, QA_ERROR_MEMORY, 0, "Preparing retained model image bindings"); return false;
+}
+bool qa_scene_model_image_policy_prepare(qa_scene_model *model, qa_scene_resource_policy *resources,
+    qa_scene_model_image_policy **out, qa_error *error)
+{
+    qa_scene_resources *destination = qa_scene_resource_policy_destination(resources);
+    if (!out || *out || !model || !destination || model->replacement_parent || model->replacement_next ||
+        !qa_scene_model_idle(model) || model->resources != qa_scene_resource_policy_source(resources)) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Model image preparation requires its actual retained resource bank"); return false;
+    }
+    qa_scene_model_image_policy *ticket = calloc(1, sizeof(*ticket));
+    if (!ticket) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining model image preparation"); return false; }
+    ticket->owner = model; ticket->resources = resources;
+    if (!qa_scene_model_capture_begin(model, &ticket->capture, error)) { free(ticket); return false; }
+    model->image_policy = ticket;
+    qa_scene_model *node = model;
+    for (;;) {
+        if (ticket->count == SIZE_MAX / sizeof(*ticket->nodes)) {
+            model_policy_dispose(ticket);
+            qa_error_set(error, QA_ERROR_MEMORY, 0, "Model replacement image inventory overflows"); return false;
+        }
+        model_policy_node *nodes = realloc(ticket->nodes, (ticket->count + 1) * sizeof(*nodes));
+        if (!nodes) {
+            model_policy_dispose(ticket);
+            qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining actual model replacement image owners"); return false;
+        }
+        ticket->nodes = nodes; nodes[ticket->count++] = (model_policy_node){.owner = node};
+        if (!model_policy_node_prepare(&nodes[ticket->count - 1], destination, error)) {
+            model_policy_dispose(ticket); return false;
+        }
+        if (node->replacement) { node = node->replacement; continue; }
+        while (node != model && !node->replacement_next) node = node->replacement_parent;
+        if (node == model) break;
+        node = node->replacement_next;
+    }
+    *out = ticket; return true;
+}
+bool qa_scene_model_image_policy_ready(qa_scene_model_image_policy *ticket, qa_error *error)
+{
+    if (!model_policy_current(ticket) || ticket->published) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Prepared model images lost their actual source owners"); return false;
+    }
+    ticket->sealed = true; return true;
+}
+bool qa_scene_model_image_policy_materials(qa_scene_model_image_policy *ticket,
+    qa_scene_material_image_policy *materials, qa_error *error)
+{
+    if (!model_policy_current(ticket) || ticket->sealed || ticket->published || ticket->replacement ||
+        qa_scene_material_image_policy_source(materials) != ticket->owner->materials ||
+        !qa_scene_material_image_policy_destination(materials)) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Model material preparation requires its genuine destination library"); return false;
+    }
+    ticket->materials = materials; return true;
+}
+bool qa_scene_model_image_policy_replacement(qa_scene_model_image_policy *ticket,
+    const qa_model_replacement *description, qa_scene_model_content_lease *mesh,
+    qa_scene_model_content_lease *source, qa_scene_model_content_lease *animation, qa_error *error)
+{
+    if (!model_policy_current(ticket) || ticket->sealed || ticket->published || ticket->replacement ||
+        !content_leases_valid(mesh, source, animation)) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Replacement preparation requires its actual open model/image ticket"); return false;
+    }
+    qa_scene_model *next = NULL;
+    if (!replacement_build(ticket->owner->source, qa_scene_resource_policy_destination(ticket->resources),
+        ticket->materials ? qa_scene_material_image_policy_destination(ticket->materials) : ticket->owner->materials,
+        &ticket->owner->options, description, &next, error)) return false;
+    replacement_leases(next, mesh, source, animation); ticket->replacement = next; return true;
+}
+bool qa_scene_model_image_policy_replacement_parent(qa_scene_model_image_policy *ticket,
+    const qa_model_replacement *description, qa_scene_model_content_lease *mesh,
+    qa_scene_model_content_lease *animation, qa_error *error)
+{
+    if (!model_policy_current(ticket) || ticket->sealed || ticket->published || ticket->replacement ||
+        !description || description->source != ticket->owner->source || !mesh || !animation || mesh == animation ||
+        !mesh->context || !mesh->release || !animation->context || !animation->release) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Replacement requires its genuine captured parent and owning mesh/animation"); return false;
+    }
+    qa_scene_model *next = NULL;
+    if (!replacement_build(ticket->owner->source, qa_scene_resource_policy_destination(ticket->resources),
+        ticket->materials ? qa_scene_material_image_policy_destination(ticket->materials) : ticket->owner->materials,
+        &ticket->owner->options, description, &next, error)) return false;
+    next->source_lease = *mesh; *mesh = (qa_scene_model_content_lease){0};
+    next->animation_lease = *animation; *animation = (qa_scene_model_content_lease){0};
+    ticket->replacement = next; return true;
+}
+bool qa_scene_model_image_policy_ready_is(const qa_scene_model_image_policy *ticket)
+{ return model_policy_current(ticket) && ticket->sealed && !ticket->published &&
+    qa_scene_resource_policy_ready_is(ticket->resources); }
+bool qa_scene_model_image_policy_select(qa_scene_model_image_policy *ticket, bool enabled, double distance,
+    const qa_model_replacement *description, qa_error *error)
+{
+    if (!model_policy_current(ticket) || ticket->sealed || ticket->published) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Replacement selection requires its actual open model preparation"); return false;
+    }
+    qa_scene_model *selected = NULL;
+    if (!replacement_select(ticket->owner, ticket->replacement, description, &selected, error)) return false;
+    ticket->selected = selected; ticket->selection_enabled = enabled;
+    ticket->distance = distance; ticket->selection_changed = true; return true;
+}
+void qa_scene_model_image_policy_publish(qa_scene_model_image_policy *ticket)
+{
+    if (!model_policy_current(ticket) || !ticket->sealed || ticket->published) return;
+    for (size_t i = 0; i < ticket->count; ++i) {
+        model_policy_node *node = &ticket->nodes[i]; qa_scene_model *owner = node->owner;
+        if (!node->prepared) continue;
+        scene_model_image *images = owner->images; owner->images = node->images.images; node->images.images = images;
+        scene_model_image **skins = owner->skins; owner->skins = node->images.skins; node->images.skins = skins;
+        scene_model_image **sprites = owner->sprites; owner->sprites = node->images.sprites; node->images.sprites = sprites;
+        for (size_t j = 0; j < owner->source->mesh_count; ++j) {
+            scene_model_image **shaders = owner->meshes[j].shaders;
+            owner->meshes[j].shaders = node->shaders[j]; node->shaders[j] = shaders;
+        }
+        scene_model_image ***replacement = owner->replacement_skins;
+        owner->replacement_skins = node->images.replacement_skins; node->images.replacement_skins = replacement;
+    }
+    if (ticket->replacement) {
+        qa_scene_model *next = ticket->replacement;
+        next->resources = ticket->owner->resources;
+        next->materials = ticket->owner->materials;
+        next->replacement_parent = ticket->owner;
+        next->replacement_next = ticket->owner->replacement;
+        ticket->owner->replacement = next; ticket->replacement = NULL;
+    }
+    if (ticket->selection_changed) {
+        ticket->owner->replacement_policy_set = true;
+        ticket->owner->replacement_policy_enabled = ticket->selection_enabled;
+        ticket->owner->replacement_distance = ticket->distance;
+        ticket->owner->selected_replacement = ticket->selected;
+    }
+    ticket->published = true;
+}
+bool qa_scene_model_image_policy_finish(qa_scene_model_image_policy **owner, qa_error *error)
+{
+    if (!owner || !model_policy_current(*owner) || !(*owner)->published) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Model image retirement requires its published preparation"); return false;
+    }
+    model_policy_dispose(*owner); *owner = NULL; return true;
+}
+bool qa_scene_model_image_policy_abort(qa_scene_model_image_policy **owner, qa_error *error)
+{
+    if (!owner || !model_policy_current(*owner) || (*owner)->published) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Model image abort requires its unpublished preparation"); return false;
+    }
+    model_policy_dispose(*owner); *owner = NULL; return true;
 }
 
 static void repair_frames(const qa_scene_model *model, qa_scene_model_input *input) {
@@ -536,7 +925,7 @@ static bool model_submit_body(qa_scene_model *model, const qa_scene_model_input 
                           qa_scene_frame *frame, unsigned depth, qa_error *error) {
     if (depth >= 64) { qa_error_set(error, QA_ERROR_ARGUMENT, depth, "model attachment graph is cyclic or too deep"); return false; }
     qa_scene_model_input input = *original;
-    if (!isfinite(input.back_lerp) || input.back_lerp < 0 || input.back_lerp > 1 ||
+    if (!isfinite(input.back_lerp) ||
         !isfinite(input.seconds) || !isfinite(input.sync_base) || !isfinite(input.color.w) ||
         (input.attachment_count && !input.attachments) || (input.pose_count && !input.pose) ||
         (input.render_text_count && !input.render_texts) ||
@@ -570,7 +959,19 @@ static bool model_submit_body(qa_scene_model *model, const qa_scene_model_input 
         return qa_scene_beam(frame, &input.view, model_origin(&input), input.previous_origin,
                               (float)input.frame, tint, qa_scene_white(model->resources), error);
     }
-    if (input.replacement) {
+    if (model->replacement_policy_set) {
+        input.replacement = NULL;
+        qa_scene_model *selected = model->selected_replacement;
+        double dx = (double)input.transform.origin[0] - input.view.origin.x;
+        double dy = (double)input.transform.origin[1] - input.view.origin.y;
+        double dz = (double)input.transform.origin[2] - input.view.origin.z;
+        double distance = sqrt(dx * dx + dy * dy + dz * dz);
+        if (selected && model->replacement_policy_enabled &&
+            (input.shadow_only || model->replacement_distance <= 0 || !(distance > model->replacement_distance))) {
+            input.replacement = selected->replacement_source;
+            model = selected; input.animation = input.replacement->animation;
+        }
+    } else if (input.replacement) {
         if (!prepare_replacement(model, input.replacement, error)) return false;
         model = model->replacement; input.animation = input.replacement->animation;
     }

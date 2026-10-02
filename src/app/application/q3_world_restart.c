@@ -10,6 +10,8 @@
 #include "native_q3_settings.h"
 #include "rankings.h"
 #include "bots_round.h"
+#include "startup_flow.h"
+#include "startup_program.h"
 #include "qa/game_q3_round.h"
 #include "qa/game_q3_source.h"
 #include "qa/cvars_save.h"
@@ -49,6 +51,7 @@ struct application_q3_world_restart {
     uint32_t retained_capacity;
     uint64_t configuration_generation, map_revision, actor_revision, outer_frame;
     bool native, prepared, mutated, admitted, published, guest_handed_off, native_handed_off;
+    bool configuration_finished;
 };
 
 static char *copy_text(const char *text, qa_error *error)
@@ -229,6 +232,17 @@ static void dispose(application_q3_world_restart_state *state)
     qa_buffer_free(&state->native_cvars);
     for (size_t i = 0; i < state->client_count; ++i) free(state->clients[i].userinfo);
     qa_launch_snapshot_release(state->launch);
+    qa_launch_snapshot_release(state->candidate);
+}
+
+void application_q3_world_restart_configuration_finish(qa_application *app,
+    const qa_launch_snapshot *candidate, bool published)
+{
+    application_q3_world_restart_state *state = app ? app->q3_world_restart : NULL;
+    if (!state || !candidate || state->candidate != candidate || state->configuration_finished)
+        return;
+    state->configuration_finished = true;
+    application_startup_publication_finish(app, candidate, published);
 }
 
 bool application_q3_world_restart_guest_handoff(qa_application *app,
@@ -867,8 +881,18 @@ bool application_q3_world_restart(qa_application *app, application_provider *pro
     if (okay) {
         app->q3_world_restart = &state;
         app->operation = APPLICATION_CONFIGURING;
-        okay = qa_configuration_prepare_replacing(app->configuration, draft, &transaction, error) &&
-            qa_configuration_validate(transaction, error);
+        okay = qa_configuration_prepare_replacing(app->configuration, draft, &transaction, error);
+        if (okay) {
+            state.candidate = qa_configuration_candidate(transaction);
+            qa_launch_snapshot_retain(state.candidate);
+            okay = qa_configuration_validate(transaction, error);
+        }
+        if (okay)
+            okay = application_startup_publication_prepare(app, state.publication, error);
+        if (okay)
+            okay = application_startup_program_publication_prepare(app, state.publication,
+                &state.publication->programs, error) &&
+                application_startup_program_publication_seal(state.publication->programs, error);
         if (okay) okay = qa_configuration_commit(transaction, error);
         if (okay) transaction = NULL;
         if (transaction) {
@@ -884,6 +908,7 @@ bool application_q3_world_restart(qa_application *app, application_provider *pro
         }
         if (okay && (!state.mutated || !state.published))
             okay = application_fail(error, QA_ERROR_ARGUMENT, "Q3 replacement omitted its actual publication phase");
+        application_q3_world_restart_configuration_finish(app, state.candidate, okay);
         app->q3_world_restart = NULL;
         app->operation = APPLICATION_IDLE;
     }

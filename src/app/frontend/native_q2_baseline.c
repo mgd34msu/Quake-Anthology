@@ -70,7 +70,8 @@ bool frontend_native_q2_baseline_create(void *context, const qa_application_opti
     baseline->tail=&baseline->prints;
     qa_frontend *frontend=&baseline->frontend;
     frontend->options=active->options; frontend->options.application=*supplied;
-    frontend->time_ns=active->time_ns; frontend->frame_number=active->frame_number;
+    frontend->time_ns=active->time_ns; frontend->wall_time_ns=active->wall_time_ns;
+    frontend->frame_number=active->frame_number;
     frontend->width=active->width; frontend->height=active->height;
     frontend->native_output_context=baseline; frontend->native_print=retain_print; frontend->native_clipboard=retain_clipboard;
     qa_scene_frame_init(&frontend->frame,QA_FRONTEND_COMMAND_OWNER);

@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "../checkpoint_internal.h"
+#include "source_weapon_setup.h"
 
 bool bot_runtime_fail(qa_error *e, const char *message) {
     qa_error_set(e, QA_ERROR_ARGUMENT, 0, "%s", message);
@@ -89,7 +90,7 @@ bool qa_bot_runtime_create(const qa_bot_runtime_options *options,
     r->services = *services;
     r->characters = calloc(maximum, sizeof(*r->characters));
     r->weapons = calloc(maximum, sizeof(*r->weapons));
-    r->chats = calloc(maximum, sizeof(*r->chats));
+    r->chats = calloc(64, sizeof(*r->chats));
     if (!r->characters || !r->weapons || !r->chats) {
         qa_error_set(e, QA_ERROR_MEMORY, maximum, "allocating bot runtime handle tables");
         (void)qa_bot_runtime_destroy(r, NULL);
@@ -126,13 +127,19 @@ bool qa_bot_runtime_create(const qa_bot_runtime_options *options,
 static bool close(qa_bot_runtime *r,bool source,qa_error *error) {
     if(source) {
         r->busy=true;
+        bool ok=bot_runtime_chat_shutdown(r,error);
+        r->busy=false;
+        if(!ok) return false;
+    }
+    qa_bot_moves_destroy(r->moves); r->moves = NULL;
+    qa_bot_goals_destroy(r->goals); r->goals = NULL;
+    if(source) {
+        r->busy=true;
         bool ok=bot_runtime_weapons_shutdown(r,error);
         r->busy=false;
         if(!ok) return false;
     }
     bot_runtime_handles_close(r);
-    qa_bot_moves_destroy(r->moves); r->moves = NULL;
-    qa_bot_goals_destroy(r->goals); r->goals = NULL;
     qa_bot_chat_system_destroy(r->chat_system); r->chat_system = NULL;
     qa_bot_weapons_release(r->weapon_config); r->weapon_config = NULL;
     qa_bot_actions_shutdown(r->actions);
@@ -166,6 +173,7 @@ bool qa_bot_runtime_destroy(qa_bot_runtime *r, qa_error *e) {
     free(r->map_name);
     free(r->characters); free(r->weapons); free(r->chats);
     qa_bot_weight_workspace_destroy(r->weapon_workspace);
+    bot_runtime_weapon_diagnostics_clear(r);
     qa_script_defines_release(r->globals);
     (void)qa_bot_memory_release(r->memory,NULL);
     free(r);

@@ -15,6 +15,7 @@
 #include "qa/bots_allocator_save.h"
 #include "source_weapon_save.h"
 #include "../library/source_fuzzy_store.h"
+#include "source_weapon_setup.h"
 
 enum { VARIABLES, ASSETS, ACTIONS, BSP, GOALS, CHAT, MOVES, OBSERVATIONS, HANDLES, GLOBALS, LOG, MEMORY, PART_COUNT };
 typedef struct runtime_state {
@@ -22,19 +23,20 @@ typedef struct runtime_state {
     bool debug, initialized, library_initialized, loaded, bsp_loaded, closed;
     bool library, actions, bsp, goals, chat, moves, reload;
     float time;
+    uint64_t weapon_generation,weapon_setup_revision;
     qa_bot_runtime_saved_map map;
 } runtime_state;
 static const uint8_t magic[8] = {'Q', 'A', 'B', 'R', 'U', 'N', 'T', 0};
-static const uint8_t handle_magic[8] = {'Q', 'A', 'B', 'H', 'N', 'D', 'L', 0};
+static const uint8_t handle_magic[8] = {'Q', 'A', 'B', 'H', 'N', 'D', 'L', 1};
 
 static bool fail(qa_error *error, const char *message)
 { qa_error_set(error, QA_ERROR_FORMAT, 0, "%s", message); return false; }
 
 static bool signature(qa_source_save_io *io)
 {
-    uint8_t bytes[8]; memcpy(bytes, magic, sizeof(bytes)); uint32_t version = 5;
+    uint8_t bytes[8]; memcpy(bytes, magic, sizeof(bytes)); uint32_t version = 6;
     return qa_source_save_bytes(io, bytes, sizeof(bytes)) && !memcmp(bytes, magic, sizeof(bytes)) &&
-        qa_source_save_u32(io, &version) && version == 5 ? true :
+        qa_source_save_u32(io, &version) && version == 6 ? true :
         bot_save_fail(io, QA_ERROR_FORMAT, "Unsupported bot runtime continuation schema");
 }
 
@@ -79,6 +81,8 @@ static bool state_fields(qa_source_save_io *io, runtime_state *state)
         qa_source_save_bool(io, &state->initialized) && qa_source_save_bool(io, &state->library_initialized) &&
         qa_source_save_bool(io, &state->loaded) && qa_source_save_bool(io, &state->bsp_loaded) &&
         qa_source_save_bool(io, &state->closed) && qa_source_save_f32(io, &state->time) && isfinite(state->time) &&
+        qa_source_save_u64(io,&state->weapon_generation) && state->weapon_generation<=UINT64_C(9007199254740991) &&
+        qa_source_save_u64(io,&state->weapon_setup_revision) && state->weapon_setup_revision<=UINT64_C(9007199254740991) &&
         qa_source_save_bool(io, &state->library) && qa_source_save_bool(io, &state->actions) &&
         qa_source_save_bool(io, &state->bsp) && qa_source_save_bool(io, &state->goals) &&
         qa_source_save_bool(io, &state->chat) && qa_source_save_bool(io, &state->moves) &&
@@ -179,6 +183,7 @@ static bool handles_fields(qa_source_save_io *io, qa_bot_runtime *runtime, const
     if (reading && ok) { runtime->weapon_config = object; qa_bot_weapons_retain(object); }
     bot_weapon_weight_refs refs={.context=(void *)assets,.reference=weapon_reference,.resolve=weapon_resolve};
     if(ok) ok=bot_weapon_pointer_fields(io,runtime->memory,&runtime->weapon_pointers,&refs);
+    if(ok) ok=bot_runtime_weapon_diagnostics_fields(io,runtime);
     size_t count = runtime->options.maximum_states;
     if (ok) ok = qa_source_save_count(io, &count, runtime->options.maximum_states) && count == runtime->options.maximum_states;
     if (ok && reading && count > (io->input.size - io->offset) / 5)
@@ -198,6 +203,8 @@ static bool handles_fields(qa_source_save_io *io, qa_bot_runtime *runtime, const
             if(ok) ok=bot_weapon_config_get(&runtime->weapon_pointers,&weapon->record,&weights,io->error) &&
                 bot_weapon_record_read(&weapon->record,BOT_WEAPON_INDEX_POINTER,&index_pointer,io->error);
         }
+    }
+    for(size_t i=0;ok && i<64;++i) {
         bool chat = !reading && runtime->chats[i] != NULL; size_t index = 0;
         if (ok) ok = qa_source_save_bool(io, &chat);
         if (ok && chat) {
@@ -250,6 +257,7 @@ bool qa_bot_runtime_save_capture(qa_session *session, const qa_bot_runtime *runt
         .profile = runtime->options.observations, .debug = runtime->options.debug, .initialized = runtime->initialized,
         .library_initialized = runtime->library_initialized, .loaded = runtime->loaded, .bsp_loaded = runtime->bsp_loaded,
         .closed = runtime->closed, .time = runtime->time, .library = runtime->library != NULL,
+        .weapon_generation=runtime->weapon_generation,.weapon_setup_revision=runtime->weapon_setup_revision,
         .actions = runtime->actions != NULL, .bsp = runtime->bsp != NULL, .goals = runtime->goals != NULL,
         .chat = runtime->chat_system != NULL, .moves = runtime->moves != NULL,
         .reload = runtime->library && runtime->library->options.reload_characters,
@@ -301,8 +309,10 @@ bool qa_bot_runtime_save_restore(qa_session *session, qa_bot_runtime *runtime, q
         runtime->library->options.preprocessor.globals!=runtime->globals)
         return fail(error, "Bot runtime import requires its actual empty detached constructor");
     for (size_t i = 0; i < runtime->options.maximum_states; ++i)
-        if (runtime->characters[i] || runtime->chats[i] || runtime->weapons[i].used)
+        if (runtime->characters[i] || runtime->weapons[i].used)
             return fail(error, "Detached bot runtime already owns handle continuations");
+    for(size_t i=0;i<64;++i) if(runtime->chats[i])
+        return fail(error,"Detached bot runtime already owns source chat states");
     runtime_state state = {0}; qa_bytes parts[PART_COUNT] = {0}; qa_source_save_io io = {0};
     bool ok = qa_source_save_reader(&io, NULL, bytes, error) && signature(&io) &&
         state_fields(&io, &state) && read_parts(&io, &state, parts) &&
@@ -314,6 +324,8 @@ bool qa_bot_runtime_save_restore(qa_session *session, qa_bot_runtime *runtime, q
     if (ok) ok = qa_script_defines_save_restore_into(runtime->globals,parts[GLOBALS],error);
     if (ok) {
         runtime->restore_pending = true;
+        runtime->weapon_generation=state.weapon_generation;
+        runtime->weapon_setup_revision=state.weapon_setup_revision;
         runtime->map_name = (char *)state.map.name; state.map.name = NULL;
         runtime->map = map ? *map : (qa_bot_runtime_map){0}; runtime->map.name = runtime->map_name;
         if (state.library) {

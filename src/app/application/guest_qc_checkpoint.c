@@ -1,11 +1,12 @@
 #include "guest_qc_profile.h"
 #include "qa/vfs_view_save.h"
+#include "qa/source_save.h"
 #include "guest_qc_rerelease.h"
 #include "control_frame.h"
 #include "startup_flow.h"
 
 #define QC_ENGINE_LIMIT (64u * 1024u * 1024u)
-#define QC_ENGINE_VERSION 11u
+#define QC_ENGINE_VERSION 12u
 static bool add_size(size_t *total, size_t amount, qa_error *error)
 {
     if (amount > QC_ENGINE_LIMIT - *total)
@@ -93,7 +94,44 @@ static bool resource_ready(struct application_qc_state *engine,const application
           b.maxs.x==actual.maxs.x && b.maxs.y==actual.maxs.y && b.maxs.z==actual.maxs.z) ||
          application_fail(error,QA_ERROR_FORMAT,"Saved source bounds differ from their retained physical model"));
 }
-static bool write_resource(qa_net_writer *writer,const application_qc_resource *entry)
+static void openings_free(qa_buffer *openings,size_t count)
+{
+    for (size_t i=0;openings && i<count;++i) qa_buffer_free(openings+i);
+    free(openings);
+}
+static bool opening_capture(struct application_qc_state *engine,
+    const application_qc_resource *entry,qa_buffer *out,qa_error *error)
+{
+    if (!entry->source) return true;
+    qa_vfs_acquisition receipt=entry->acquisition;
+    qa_source_save_io io={0};
+    bool ok=qa_source_save_writer(&io,engine->services.session,error) &&
+        qa_vfs_acquisition_opening_codec(&io,engine->provider->launch->content,&receipt) &&
+        receipt.opening_present && qa_source_save_finish(&io,out);
+    qa_source_save_dispose(&io);
+    if (!ok && (!error || error->code==QA_OK))
+        application_fail(error,QA_ERROR_FORMAT,"Source precache lacks its retained acquisition opening");
+    return ok;
+}
+static bool opening_restore(qa_net_reader *reader,struct application_qc_state *engine,
+    application_qc_resource *entry,qa_error *error)
+{
+    uint32_t size=qa_net_read_u32(reader);
+    if (reader->failed || reader->bit%8 || size>qa_net_reader_remaining(reader) ||
+        (entry->source ? !size : size!=0))
+        return qa_net_reader_fail(reader,"Source acquisition opening exceeds its resource envelope");
+    if (!size) return true;
+    qa_bytes bytes={reader->bytes.data+reader->bit/8,size};
+    qa_source_save_io io={0};
+    bool ok=qa_source_save_reader(&io,engine->services.session,bytes,error) &&
+        qa_vfs_acquisition_opening_codec(&io,engine->provider->launch->content,&entry->acquisition) &&
+        entry->acquisition.opening_present && qa_source_save_finish(&io,NULL);
+    qa_source_save_dispose(&io);
+    if (ok) reader->bit+=(size_t)size*8;
+    return ok;
+}
+static bool write_resource(qa_net_writer *writer,const application_qc_resource *entry,
+    const qa_buffer *opening)
 {
     const qa_sha256_digest *digest=qa_resource_digest(entry->source); uint8_t empty[32]={0};
     const qa_vfs_acquisition *a=&entry->acquisition;
@@ -106,7 +144,8 @@ static bool write_resource(qa_net_writer *writer,const application_qc_resource *
         qa_net_write_u8(writer,a->link_target!=NULL) && write_text(writer,a->link_target) &&
         qa_net_write_data(writer,digest?digest->bytes:empty,sizeof(empty)) &&
         qa_net_write_f32(writer,b.mins.x) && qa_net_write_f32(writer,b.mins.y) && qa_net_write_f32(writer,b.mins.z) &&
-        qa_net_write_f32(writer,b.maxs.x) && qa_net_write_f32(writer,b.maxs.y) && qa_net_write_f32(writer,b.maxs.z);
+        qa_net_write_f32(writer,b.maxs.x) && qa_net_write_f32(writer,b.maxs.y) && qa_net_write_f32(writer,b.maxs.z) &&
+        qa_net_write_u32(writer,(uint32_t)opening->size) && qa_net_write_data(writer,opening->data,opening->size);
 }
 static bool read_resource(qa_net_reader *reader,struct application_qc_state *engine,
     application_qc_resource *entry,size_t ordinal,qa_error *error)
@@ -139,6 +178,7 @@ static bool read_resource(qa_net_reader *reader,struct application_qc_state *eng
     }
     const qa_sha256_digest *actual=qa_resource_digest(entry->source);
     return ok && !reader->failed && !memcmp(digest,actual?actual->bytes:empty,sizeof(digest)) &&
+        opening_restore(reader,engine,entry,error) &&
         resource_ready(engine,entry,ordinal,error);
 }
 static bool write_actor(qa_net_writer *writer, const qa_actor_registry *actors, qa_actor_id actor)
@@ -255,12 +295,22 @@ bool application_qc_capture_engine(void *opaque, qa_buffer *out, qa_error *error
     if (rerelease.size>UINT32_MAX || !add_size(&capacity,rerelease.size+4,error)) {
         qa_buffer_free(&rerelease); return false;
     }
+    qa_buffer *openings=engine->resource_count?calloc(engine->resource_count,sizeof(*openings)):NULL;
+    if (engine->resource_count && !openings) {
+        qa_buffer_free(&rerelease);
+        return application_fail(error,QA_ERROR_MEMORY,"Retaining Source acquisition opening capsules");
+    }
+    for (size_t i=0;i<engine->resource_count;++i)
+        if (!opening_capture(engine,engine->resources+i,openings+i,error) ||
+            openings[i].size>UINT32_MAX || !add_size(&capacity,openings[i].size+4,error)) {
+            openings_free(openings,engine->resource_count); qa_buffer_free(&rerelease); return false;
+        }
     qa_cvar_registry_state registry;
     qa_cvar_record_state *metadata = cvar_count ? calloc(cvar_count, sizeof(*metadata)) : NULL;
-    if (cvar_count && metadata == NULL) { qa_buffer_free(&rerelease); return application_fail(error, QA_ERROR_MEMORY, "Allocating QuakeC cvar metadata"); }
-    if (!qa_cvars_capture_metadata(engine->cvars, &registry, metadata, cvar_count, error)) { qa_buffer_free(&rerelease); free(metadata); return false; }
+    if (cvar_count && metadata == NULL) { openings_free(openings,engine->resource_count); qa_buffer_free(&rerelease); return application_fail(error, QA_ERROR_MEMORY, "Allocating QuakeC cvar metadata"); }
+    if (!qa_cvars_capture_metadata(engine->cvars, &registry, metadata, cvar_count, error)) { openings_free(openings,engine->resource_count); qa_buffer_free(&rerelease); free(metadata); return false; }
     uint8_t *data = malloc(capacity);
-    if (data == NULL) { qa_buffer_free(&rerelease); free(metadata); return application_fail(error, QA_ERROR_MEMORY, "Allocating QuakeC engine checkpoint"); }
+    if (data == NULL) { openings_free(openings,engine->resource_count); qa_buffer_free(&rerelease); free(metadata); return application_fail(error, QA_ERROR_MEMORY, "Allocating QuakeC engine checkpoint"); }
     qa_net_writer writer; qa_net_writer_init(&writer, data, capacity, error);
     const qa_actor_registry *actors = qa_session_actors(engine->services.session);
     const qa_sha256_digest *declaration = qa_resource_digest(engine->provider->launch->declaration);
@@ -292,7 +342,7 @@ bool application_qc_capture_engine(void *opaque, qa_buffer *out, qa_error *error
         for (unsigned p = 0; ok && p < 16; ++p) ok = qa_net_write_f32(&writer, client->parms[p]);
     }
     if (ok) ok = qa_net_write_u32(&writer, (uint32_t)engine->resource_count);
-    for (size_t i = 0; ok && i < engine->resource_count; ++i) ok=write_resource(&writer,engine->resources+i);
+    for (size_t i = 0; ok && i < engine->resource_count; ++i) ok=write_resource(&writer,engine->resources+i,openings+i);
     if (ok) ok = qa_net_write_u64(&writer, registry.next_handle) && qa_net_write_u32(&writer, registry.modified_flags) &&
         qa_net_write_u8(&writer, registry.userinfo_modified) && qa_net_write_u8(&writer, registry.server_active) &&
         qa_net_write_u8(&writer, registry.high_characters) && qa_net_write_u8(&writer, registry.cheats) &&
@@ -323,7 +373,7 @@ bool application_qc_capture_engine(void *opaque, qa_buffer *out, qa_error *error
                 write_actor(&writer, actors, reference->actor) && qa_net_write_u8(&writer, reference->packed_sound);
         }
     }
-    free(metadata); qa_buffer_free(&rerelease);
+    free(metadata); qa_buffer_free(&rerelease); openings_free(openings,engine->resource_count);
     if (!ok) { free(data); return false; }
     *out = (qa_buffer){data, qa_net_writer_size(&writer)}; return true;
 }

@@ -12,6 +12,15 @@ static bool current(q3n_view *o,const q3n_frame *f,qa_error *e)
         q3ne_current(f,e)?true:
         q3ne_fail(e,QA_ERROR_ARGUMENT,"Native Q3 view requires its exact completed source and seat");
 }
+static bool test_current(q3n_view *o,const q3n_frame *f,qa_error *e)
+{
+    if(!f || !f->remote)return current(o,f,e);
+    return o && !o->busy && o->options.application==f->application &&
+        o->options.assets==f->assets && o->options.seat==f->seat &&
+        o->product==q3n_frame_product(f) && o->options.remote_client==f->remote->client &&
+        f->remote->snapshots.stage==Q3N_REMOTE_CONSOLE && q3n_frame_current(f) && q3ne_current(f,e)?true:
+        q3ne_fail(e,QA_ERROR_ARGUMENT,"Test model requires its actual entered CLIENT console and retained camera");
+}
 bool q3n_view_create(const q3n_view_options *options,q3n_view **out,qa_error *e)
 {
     if(!options || !out || *out || !options->assets || !options->source || !options->application ||
@@ -45,7 +54,7 @@ bool q3n_view_create_remote(const q3n_view_options *options,q3n_view **out,qa_er
         return q3ne_fail(e,QA_ERROR_ARGUMENT,"Remote Q3 view requires its actual retained CLIENT basis");
     q3n_view *o=calloc(1,sizeof(*o));
     if(!o)return q3ne_fail(e,QA_ERROR_MEMORY,"Allocating remote native Q3 view");
-    o->options=*options; o->product=basis.product; o->state.zoom_sensitivity=1; *out=o; return true;
+    o->options=*options; o->product=basis.product; *out=o; return true;
 }
 void q3n_view_destroy(q3n_view *o) { if(o && !o->busy)free(o); }
 bool q3n_view_idle(const q3n_view *o) { return o && !o->busy; }
@@ -215,19 +224,20 @@ void q3n_view_test_clear(q3n_view *o)
 { if(o && !o->busy) { memset(o->test_model_name,0,sizeof(o->test_model_name)); memset(&o->test_model,0,sizeof(o->test_model)); o->state.test_gun=false; } }
 bool q3n_view_test_model(q3n_view *o,const q3n_frame *f,const char *name,const float *back_lerp,bool gun,qa_error *e)
 {
-    if(!current(o,f,e))return false;
-    q3n_view_test_clear(o); o->busy=true; bool ok=true;
+    if(!test_current(o,f,e))return false;
+    memset(&o->test_model,0,sizeof(o->test_model)); o->busy=true; bool ok=true;
     if(name) {
         snprintf(o->test_model_name,sizeof(o->test_model_name),"%s",name);
         ok=qa_q3_register_model(f->assets,o->test_model_name,&o->test_model.model,e) && q3ne_current(f,e);
-        if(back_lerp) { o->test_model.back_lerp=*back_lerp; o->test_model.frame=1; }
+        if(ok && back_lerp) { o->test_model.back_lerp=*back_lerp; o->test_model.frame=1; }
         if(ok && !o->test_model.model)o->options.print(o->options.context,"Can't register model\n");
         else if(ok) {
             o->test_model.origin=q3ne_sum(f->refdef.origin,q3ne_scale(f->refdef.axis[0],100));
             q3nh_axis(qa_v3(0,q3ne_add(180,f->view_angles.y),0),o->test_model.axis);
+            o->state.test_gun=false;
         }
     }
-    if(gun) { o->state.test_gun=true; o->test_model.flags=1|8|4; }
+    if(ok && gun) { o->state.test_gun=true; o->test_model.flags=1|8|4; }
     o->busy=false; return ok;
 }
 void q3n_view_test_step(q3n_view *o,bool skin,int32_t delta)

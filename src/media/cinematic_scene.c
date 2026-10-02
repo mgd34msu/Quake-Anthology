@@ -1,31 +1,73 @@
 #include "cinematic_internal.h"
+#include "material_image.h"
 
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-bool qa_cinematic_image(qa_cinematic *movie, qa_scene_resources *resources, qa_scene_frame *frame,
-                        const qa_scene_image **out, qa_error *error) {
+bool qa_cinematic_publication_read(const qa_cinematic *movie, qa_cinematic_publication *out)
+{
+    if (!movie || !out) return false;
+    *out = (qa_cinematic_publication){movie->image, movie->image_frame,
+        movie->image_revision, movie->image_sequence}; return true;
+}
+bool qa_cinematic_material_owner_is(const qa_cinematic *movie, const qa_cinematic_asset *asset,
+    const char *path, uint64_t target, qa_media_clock clock)
+{
+    return movie && asset && path && target && !movie->busy && !movie->faulted &&
+        movie->asset == asset && movie->name && !strcmp(movie->name, path) &&
+        movie->format == qa_cinematic_asset_source(asset).format &&
+        movie->options.target.kind == QA_CINEMATIC_MATERIAL && movie->options.target.id.material == target &&
+        movie->options.clock.context == clock.context && movie->options.clock.sample == clock.sample &&
+        movie->options.loop && !movie->options.hold && movie->options.silent &&
+        !movie->options.audio && !movie->options.audio_bus && movie->options.gain == 1 &&
+        movie->options.audio_audience.kind == QA_CINEMATIC_AUDIO_TARGET &&
+        !movie->options.audio_audience.seat && !movie->options.context &&
+        !movie->options.complete && !movie->options.diagnostic;
+}
+
+static bool publish_image(qa_cinematic *movie, qa_scene_resources *resources, qa_scene_frame *frame,
+                          bool initial, const qa_scene_image **out, qa_error *error) {
     if (!movie || !resources || !frame || !out || movie->busy || movie->faulted || movie->restore_pending)
         return cinematic_fail(error, "Cinematic image publication is unavailable");
+    if (initial && (movie->options.target.kind != QA_CINEMATIC_MATERIAL || movie->image ||
+        movie->image_frame || movie->image_revision != UINT64_MAX || movie->revision == UINT64_MAX))
+        return cinematic_fail(error, "Shader initial publication requires its unuploaded material owner");
     if (!movie->image || movie->image_revision != movie->revision) {
         static const uint8_t black[4] = {0, 0, 0, 255};
+        uint8_t *transparent = NULL;
+        uint32_t width = 1, height = 1;
+        size_t bytes = sizeof(black);
+        bool picture = movie->has_picture && !initial;
+        if (!picture && movie->options.target.kind == QA_CINEMATIC_MATERIAL) {
+            if (!cinematic_initial_dimensions(movie, &width, &height, &bytes, error)) return false;
+            transparent = calloc(1, bytes);
+            if (!transparent) {
+                qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating initial shader movie pixels");
+                return false;
+            }
+        }
         qa_scene_image_level level =
-            movie->has_picture
+            picture
                 ? (qa_scene_image_level){movie->picture.width, movie->picture.height,
                                          movie->picture.rgba.data, movie->picture.rgba.size}
-                : (qa_scene_image_level){1, 1, black, sizeof(black)};
+                : (qa_scene_image_level){width, height, transparent ? transparent : black, bytes};
         qa_scene_image *next = NULL;
         bool same_dimensions = movie->image && movie->image->levels[0].width == level.width &&
                                movie->image->levels[0].height == level.height;
         if (same_dimensions) {
-            if (!qa_scene_image_replace(resources, movie->image, 0, &level, &next, error))
+            if (!qa_scene_image_replace(resources, movie->image, 0, &level, &next, error)) {
+                free(transparent);
                 return false;
+            }
         } else if (!qa_scene_image_create(resources, movie->name, QA_SCENE_RGBA8, &level, 1,
                                           QA_SCENE_CLAMP, QA_SCENE_LINEAR,
-                                          (qa_scene_vec4){0, 0, 0, 1}, &next, error))
+                                          (qa_scene_vec4){0, 0, 0, 1}, &next, error)) {
+            free(transparent);
             return false;
+        }
+        free(transparent);
         /* Do not advance publication until the command and its retained image
          * reference have both been admitted to the frame. */
         if (!qa_scene_frame_image(frame, next, error)) {
@@ -34,7 +76,9 @@ bool qa_cinematic_image(qa_cinematic *movie, qa_scene_resources *resources, qa_s
         }
         qa_scene_image_release(movie->image);
         movie->image = next;
-        movie->image_revision = movie->revision;
+        /* A shader's initial surface has not uploaded any decoded picture.
+         * Retain that distinction even when CIN/OGV already decoded revision 0. */
+        movie->image_revision = initial ? UINT64_MAX : movie->revision;
         movie->image_frame = frame;
         movie->image_sequence = frame->sequence;
     } else if (movie->image_frame != frame || movie->image_sequence != frame->sequence) {
@@ -46,6 +90,12 @@ bool qa_cinematic_image(qa_cinematic *movie, qa_scene_resources *resources, qa_s
     *out = movie->image;
     return true;
 }
+bool cinematic_material_initial(qa_cinematic *movie, qa_scene_resources *resources,
+    qa_scene_frame *frame, const qa_scene_image **out, qa_error *error)
+{ return publish_image(movie, resources, frame, true, out, error); }
+bool qa_cinematic_image(qa_cinematic *movie, qa_scene_resources *resources, qa_scene_frame *frame,
+    const qa_scene_image **out, qa_error *error)
+{ return publish_image(movie, resources, frame, false, out, error); }
 bool qa_cinematic_fullscreen(qa_cinematic *movie, qa_cinematic_focus focus, qa_scene_rect viewport,
                              qa_scene_resources *resources, qa_scene_frame *frame, bool *blank,
                              qa_error *error) {

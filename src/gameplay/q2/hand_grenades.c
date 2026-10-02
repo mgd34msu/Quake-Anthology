@@ -219,18 +219,24 @@ static uint64_t round_ms(uint64_t value) {
         ++whole;
     return whole > UINT64_MAX / Q2_MS ? UINT64_MAX : whole * Q2_MS;
 }
-static uint64_t interval(hand_step *step, bool frame) {
+static bool interval(hand_step *step, bool frame, uint64_t *out, qa_error *e) {
     q2_weapon_call *c = &step->call;
     unsigned divisor = c->rerelease ? (c->input.haste ? 2u : 1u) *
                                           (c->input.quad_fire_until_ns > c->now_ns ? 2u : 1u)
                                     : 1;
     uint64_t native = frame ? (100 / divisor) * Q2_MS : Q2_NS / divisor;
-    return c->game->hooks.firing_interval == NULL
-               ? native
-               : c->game->hooks.firing_interval(c->game->hooks.context, c->actor->id, native);
+    bool handled = false;
+    if (step->input->interval && !step->input->interval(step->input->interval_context,
+        c->actor->id, native, out, &handled, e)) return false;
+    if (!handled) *out = c->game->hooks.firing_interval == NULL ? native :
+        c->game->hooks.firing_interval(c->game->hooks.context, c->actor->id, native);
+    return true;
 }
-static uint64_t frame_deadline(hand_step *step, uint64_t from) {
-    return q2_deadline(round_ms(from), round_ms(interval(step, true)));
+static bool frame_deadline(hand_step *step, uint64_t from, uint64_t *out, qa_error *e) {
+    uint64_t duration;
+    if (!interval(step, true, &duration, e)) return false;
+    *out = q2_deadline(round_ms(from), round_ms(duration));
+    return true;
 }
 static bool emit(hand_step *step, uint64_t expires, bool held, qa_error *e) {
     effect(step, HAND_COOK_STOP);
@@ -243,7 +249,8 @@ static bool emit(hand_step *step, uint64_t expires, bool held, qa_error *e) {
             step->lifecycle == QA_Q2_HAND_ALIVE || step->lifecycle == QA_Q2_HAND_REMOVING, held,
             step->input->project, step->input->project_context, &pending->projectile, e))
         return false;
-    uint64_t duration = interval(step, false), now = step->call.now_ns;
+    uint64_t duration, now = step->call.now_ns;
+    if (!interval(step, false, &duration, e)) return false;
     if (step->call.rerelease) {
         duration = round_ms(duration);
         now = round_ms(now);
@@ -257,7 +264,8 @@ static bool emit(hand_step *step, uint64_t expires, bool held, qa_error *e) {
 static bool release(hand_step *step, uint64_t expires, uint64_t released_at, qa_error *e) {
     if (step->call.rerelease)
         return emit(step, expires, false, e);
-    uint64_t when = frame_deadline(step, released_at);
+    uint64_t when;
+    if (!frame_deadline(step, released_at, &when, e)) return false;
     if (step->call.now_ns >= when)
         return emit(step, expires, false, e);
     step->next.action = (qa_q2_hand_action){
@@ -318,12 +326,15 @@ static bool advance(hand_step *step, qa_error *e) {
             if (consumed)
                 effect(step, HAND_AMMO);
         }
-        if (consumed)
+        if (consumed) {
+            uint64_t next;
+            if (!frame_deadline(step, c->now_ns, &next, e)) return false;
             step->next.action = (qa_q2_hand_action){
                 .kind = QA_Q2_HAND_PREPARING,
                 .state.preparing = {.frame = c->rerelease ? 2 : 1,
-                                    .next_ns = frame_deadline(step, c->now_ns),
+                                    .next_ns = next,
                                     .release_queued = input->released || !input->held}};
+        }
         return true;
     }
     case QA_Q2_HAND_PREPARING: {
@@ -333,7 +344,7 @@ static bool advance(hand_step *step, qa_error *e) {
             if (frame == 5)
                 effect(step, HAND_COCK);
             ++frame;
-            next = frame_deadline(step, next);
+            if (!frame_deadline(step, next, &next, e)) return false;
         }
         if (c->now_ns < next) {
             step->next.action.state.preparing.frame = frame;
@@ -375,7 +386,9 @@ static bool dispatch(hand_step *step, uint64_t revision, qa_error *e) {
                 !g->hooks.ammo_changed(g->hooks.context, c->actor->id, g->ammo[QA_Q2_GRENADES], e))
                 return false;
         } else if (pending->kind == HAND_EMIT) {
-            float damage = 125 * q2_multiplier(c);
+            float multiplier;
+            if (!q2_multiplier(c, &multiplier, e)) return false;
+            float damage = 125 * multiplier;
             if (!q2_actor_live(g, c->actor->id) || c->actor->hand_revision != revision)
                 break;
             const q2_hand_spec *p = &pending->projectile;

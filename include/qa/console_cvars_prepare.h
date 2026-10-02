@@ -36,6 +36,16 @@ const qa_cvar_view *qa_cvars_edit_find(const qa_cvars_edit *, const char *);
 const qa_cvar_view *qa_cvars_edit_at(const qa_cvars_edit *, size_t);
 size_t qa_cvars_edit_count(const qa_cvars_edit *);
 size_t qa_cvars_edit_handle_count(const qa_cvars_edit *);
+/* Uses the same native archive selection and config text formatting as the
+ * live registry, with the actual prepared records in their retained order. */
+bool qa_cvars_edit_config_filtered(const qa_cvars_edit *,qa_cvar_config_filter,
+    void *,qa_buffer *,qa_error *);
+/* Archive eligibility of a genuine canonical edit_at record, with the same
+ * native latched-value policy as published archive values. */
+const char *qa_cvars_edit_archive_value(const qa_cvars_edit *,const qa_cvar_view *);
+/* Resolve a name to its actual physical canonical prepared record without
+ * projecting converted aliases or mutating their cached views. */
+const qa_cvar_view *qa_cvars_edit_canonical_record(const qa_cvars_edit *,const char *);
 bool qa_cvars_edit_apply(qa_cvars_edit *, const qa_cvars_edit_command *, qa_error *);
 /* Preparation leases the registry against live mutations and capture until
  * publish or abort; routed candidate commands use the ticket explicitly.
@@ -46,6 +56,15 @@ bool qa_cvars_edit_apply(qa_cvars_edit *, const qa_cvars_edit_command *, qa_erro
  * insertion order, then the prepared
  * effects and observers, after all other owners are published. */
 bool qa_cvars_edit_ready(qa_cvars_edit *, qa_error *);
+/* Pure returned callback proof for this exact retained registry lease, before
+ * or after sealing. This does not validate or admit scalar publication. */
+bool qa_cvars_edit_returned_is(const qa_cvars_edit *, const qa_cvars *);
+/* Cancellation-only retained lease proof, including a faulted preparation.
+ * It admits disposal after callbacks return, never scalar publication. */
+bool qa_cvars_edit_abort_is(const qa_cvars_edit *, const qa_cvars *);
+/* Pure proof of the same successfully sealed ticket and retained bindings.
+ * Does not rerun validators or publish values. */
+bool qa_cvars_edit_ready_is(const qa_cvars_edit *);
 void qa_cvars_edit_publish(qa_cvars_edit *);
 bool qa_cvars_edit_finish(qa_cvars *, qa_error *);
 void qa_cvars_edit_abort(qa_cvars_edit *);

@@ -36,6 +36,13 @@ static bool options(q1_save_io *io, qa_q1_options *o) {
 bool q1_save_runtime(q1_save_io *io, qa_q1_game *g) {
     if (!options(io, &g->options))
         return false;
+    for (size_t i = 0; i < 2; ++i) {
+        Q1_SAVE(io, double, g->source_captures[i]);
+        double total = g->source_captures[i];
+        if (total < 0 || total > 9007199254740991.0 || floor(total) != total ||
+            (g->options.program != QA_Q1_CTF && total != 0))
+            return q1_save_fail(io, "Invalid Q1 source-client capture total");
+    }
     Q1_SAVE(io, u32, g->total_monsters);
     Q1_SAVE(io, u32, g->killed_monsters);
     Q1_SAVE(io, u32, g->hellknight_melee);

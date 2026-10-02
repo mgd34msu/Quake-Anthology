@@ -1,15 +1,6 @@
-#include "qa/network_q2.h"
+#include "channel_internal.h"
 #include <stdlib.h>
 #include <string.h>
-struct qa_q2_channel {
-    qa_q2_channel_options options;
-    uint32_t incoming,outgoing,incoming_ack,last_reliable,receive_sequence;
-    bool incoming_reliable,incoming_reliable_ack,reliable_bit,ack_pending;
-    size_t capacity,payload_bytes,packet_bytes,queued_size,reliable_size,sending_size,sending_offset,receive_size;
-    uint8_t *queued,*reliable,*sending,*receiving,*packet;
-    bool sending_reliable,id_recording;
-    uint64_t sent_ns,received_ns;
-};
 static bool kex(const qa_q2_channel*c) {
     return c->options.protocol.kind==QA_NET_Q2KEX_2023;
 }

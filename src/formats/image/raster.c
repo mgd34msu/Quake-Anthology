@@ -168,6 +168,8 @@ bool qa_image_decode_bmp(qa_bytes b, qa_image_policy policy, qa_image *out, qa_e
     size_t palette_count = depth == 8 ? (q3 || !colors ? 256 : colors) : 0;
     if (palette_count > 256 || !qa_img_range(b, 54, palette_count * 4))
         return qa_img_fail(e, QA_ERROR_FORMAT, 54, "Invalid BMP palette");
+    if (q3 && depth < 8)
+        return qa_img_fail(e, QA_ERROR_UNSUPPORTED, 28, "Q3 BMP requires at least 8-bit pixels");
     if (q3 && (!w || !h)) {
         *out = (qa_image){.width = w, .height = h, .srgb_intent = -1};
         return true;

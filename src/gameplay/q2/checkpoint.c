@@ -111,7 +111,7 @@ bool qa_q2_actor_capture(qa_q2_game *g, qa_actor_id id, qa_q2_actor_checkpoint *
     if (a == NULL)
         return false;
     const q2_projectile *p = &a->projectile;
-    qa_q2_actor_checkpoint snapshot = {.version = 5,
+    qa_q2_actor_checkpoint snapshot = {.version = 7,
                                        .source_order = a->source_order,
                                        .extra_effects = a->extra_effects,
                                        .combat_surprise_ns = a->combat_surprise_ns,
@@ -129,6 +129,7 @@ bool qa_q2_actor_capture(qa_q2_game *g, qa_actor_id id, qa_q2_actor_checkpoint *
                                        .physics_bound = a->physics_bound,
                                        .weapon = a->weapon,
                                        .input = a->input,
+                                       .weapon_turn = a->weapon_turn,
                                        .silencer = a->silencer,
                                        .physics = a->physics,
                                        .projectile = {.kind = (uint32_t)p->kind,
@@ -188,6 +189,16 @@ bool qa_q2_actor_capture(qa_q2_game *g, qa_actor_id id, qa_q2_actor_checkpoint *
     snapshot.hand_grenade_bound = a->hand_grenade_bound;
     snapshot.hand_grenade = a->hand_grenade;
     snapshot.lmctf_plasma_bounce = a->lmctf_plasma_bounce;
+    if (snapshot.weapon_turn.firing_weapon != snapshot.weapon.weapon) {
+        snapshot.weapon_turn.firing_weapon = QA_Q2_WEAPON_NONE;
+        snapshot.weapon_turn.firing_credit = 0;
+    }
+    if (!isfinite(snapshot.weapon_turn.firing_credit) || snapshot.weapon_turn.firing_credit < 0 ||
+        snapshot.weapon_turn.firing_credit >= 1 ||
+        (snapshot.weapon_turn.firing_weapon == QA_Q2_WEAPON_NONE && snapshot.weapon_turn.firing_credit != 0)) {
+        qa_error_set(e, QA_ERROR_FORMAT, 0, "Selected Q2 turn has invalid returned firing credit");
+        return false;
+    }
     *out = snapshot;
     return true;
 }
@@ -196,7 +207,13 @@ static bool valid_resource(qa_q2_game *g, qa_string_id id) {
 }
 bool qa_q2_actor_restore(qa_q2_game *g, qa_actor_id id, const qa_q2_actor_checkpoint *s,
                          qa_error *e) {
-    if (g == NULL || s == NULL || s->version != 5 || s->source_order == 0 || s->silencer < 0 ||
+    if (g == NULL || s == NULL || s->version != 7 || s->source_order == 0 || s->silencer < 0 ||
+        (!s->weapon_bound && (s->weapon_turn.attack || s->weapon_turn.latched_attack ||
+                             s->weapon_turn.weapon_thunk || s->weapon_turn.firing_weapon != QA_Q2_WEAPON_NONE)) ||
+        !isfinite(s->weapon_turn.firing_credit) || s->weapon_turn.firing_credit < 0 ||
+        s->weapon_turn.firing_credit >= 1 ||
+        (s->weapon_turn.firing_weapon == QA_Q2_WEAPON_NONE ? s->weapon_turn.firing_credit != 0 :
+            (g->options.edition != QA_Q2_CLASSIC || s->weapon_turn.firing_weapon != s->weapon.weapon)) ||
         ((s->character_immortal || s->character_no_damage_effects) &&
          g->options.edition != QA_Q2_RERELEASE) ||
         (s->combat_life_present ? !s->combat_life_owner :
@@ -329,6 +346,7 @@ bool qa_q2_actor_restore(qa_q2_game *g, qa_actor_id id, const qa_q2_actor_checkp
     a->weapon_bound = s->weapon_bound;
     a->weapon = s->weapon;
     a->input = s->input;
+    a->weapon_turn = s->weapon_turn;
     a->silencer = s->silencer;
     a->physics_bound = s->physics_bound;
     a->physics = physics;

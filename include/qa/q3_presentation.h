@@ -5,9 +5,11 @@
 #include "qa/material.h"
 #include "qa/world.h"
 #include "qa/source_save.h"
+#include "qa/scene_effects.h"
 
 typedef struct qa_q3_presentation qa_q3_presentation;
 typedef struct qa_q3_presentation_assets qa_q3_presentation_assets;
+struct qa_q3_model_opening;
 /* Pure parent-lifetime admission, including actual retained child captures. */
 bool qa_q3_presentation_idle(const qa_q3_presentation *);
 typedef struct qa_q3_presentation_provider {
@@ -27,6 +29,11 @@ typedef struct qa_q3_presentation_asset_options {
      * arsenal content. Returned providers outlive this resource registry. */
     bool (*select)(void *, const char *, qa_q3_asset_kind,
                    qa_q3_presentation_provider *, qa_error *);
+    /* Fresh admission only: the actual decoded registry parent and its first
+     * opening are retained before the numeric handle is published. Imports
+     * restore existing children without replaying this callback. */
+    bool (*model_initialize)(void *, const struct qa_q3_model_opening *,
+        const qa_model *, qa_scene_model *, qa_error *);
     void (*print)(void *, const char *);
 } qa_q3_presentation_asset_options;
 bool qa_q3_presentation_assets_create(const qa_q3_presentation_asset_options *,
@@ -98,17 +105,28 @@ typedef struct qa_q3_system_movie {
     void (*release)(void *);
 } qa_q3_system_movie;
 typedef struct qa_q3_movie_request { const char *path; bool loop, hold, silent; } qa_q3_movie_request;
+/* An actual entered UI/CGAME host supplies its own lifetime-qualified opener;
+ * the shared presentation context cannot identify a requesting role. The
+ * successful opener transfers one complete system handle to the numeric slot.
+ * On failure it retains responsibility for any partially prepared owner. */
+bool qa_q3_presentation_movie_play_system(qa_q3_presentation *,const char *path,uint32_t flags,
+    bool (*open)(void *,const qa_q3_movie_request *,qa_q3_system_movie *,qa_error *),
+    void *context,int32_t *out,qa_error *);
 typedef struct qa_q3_scene_options {
     qa_scene_world_input world;
     qa_scene_family world_family;
     qa_scene_state state;
-    uint32_t first_entity;
+    uint32_t first_entity, shadow_mode;
+    float lod_scale, lod_bias, ambient_scale, directed_scale, near_clip;
+    qa_scene_rail_options rail;
     qa_vec3 weapon_offset;
     bool split_screen, supplemental_weapon;
+    bool no_entities, no_portals, portal_only, no_refresh;
 } qa_q3_scene_options;
 typedef struct qa_q3_presentation_options {
     qa_q3_presentation_assets *assets;
     qa_audio_engine *audio;
+    qa_material_source_scratch *source_scratch;
     qa_media_clock clock;
     uint32_t seat;
     uint64_t owner;
@@ -204,6 +222,11 @@ bool qa_q3_presentation_selected_registered_pass(qa_q3_presentation *,
 bool qa_q3_presentation_selected_body_pass(qa_q3_presentation *,
     const qa_q3_presentation_assets *, const qa_q3_ref_entity *,
     const qa_q3_presentation_assets *source_assets, const qa_q3_ref_entity *source_pass,
+    const qa_q3_scene_options *, uint32_t order, qa_scene_frame *, qa_error *);
+/* Primary Source geometry stays in its entered registry; a completed component
+ * body pass uses its own retained material namespace and reached shader clock. */
+bool qa_q3_presentation_source_body_pass(qa_q3_presentation *, const qa_q3_ref_entity *,
+    const qa_q3_presentation_assets *, const qa_q3_ref_entity *, int32_t source_time_ms,
     const qa_q3_scene_options *, uint32_t order, qa_scene_frame *, qa_error *);
 bool qa_q3_presentation_body_material_equal(qa_q3_presentation *,
     const qa_q3_presentation_assets *source_assets, const qa_q3_ref_entity *,

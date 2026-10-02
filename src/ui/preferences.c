@@ -87,15 +87,32 @@ bool qa_ui_preference_set(qa_cvars *cvars, uint32_t seat, qa_ui_preference prefe
         validate((void *)qa_ui_preference_describe(preference), value, error) &&
         qa_cvars_set_console(cvars, name, value, error);
 }
+static const qa_cvar_view *canonical(const qa_cvars_edit *edit,const char *name)
+{
+    bool folded=qa_cvars_dialect(qa_cvars_edit_registry(edit))==QA_CONSOLE_Q3;
+    for (size_t i=0;i<qa_cvars_edit_count(edit);++i) {
+        const qa_cvar_view *row=qa_cvars_edit_at(edit,i);
+        if (!row) continue;
+        const unsigned char *a=(const unsigned char *)row->name,*b=(const unsigned char *)name;
+        while (*a && *b) {
+            unsigned char left=*a++,right=*b++;
+            if (folded && left>='A' && left<='Z') left+='a'-'A';
+            if (folded && right>='A' && right<='Z') right+='a'-'A';
+            if (left!=right) break;
+            if (!*a && !*b) return row;
+        }
+    }
+    return NULL;
+}
 static bool preferences_read(const qa_cvars *cvars, const qa_cvars_edit *edit,
-    uint32_t seat, qa_ui_preferences *out, qa_error *error)
+    uint32_t seat, qa_ui_preferences *out, bool canonical_only,qa_error *error)
 {
     if (!cvars || !out || seat >= QA_INPUT_LOCAL_SEATS) return fail(error, "UI preferences require their actual physical seat");
     const qa_cvar_view *values[QA_UI_PREF_COUNT];
     for (unsigned key = 0; key < QA_UI_PREF_COUNT; ++key) {
         char name[64];
         if (!qa_ui_preference_name(seat, (qa_ui_preference)key, name, error)) return false;
-        values[key] = edit ? qa_cvars_edit_find(edit, name) : qa_cvars_find(cvars, name);
+        values[key] = edit ? canonical_only?canonical(edit,name):qa_cvars_edit_find(edit, name) : qa_cvars_find(cvars, name);
         if (!values[key]) return fail(error, "UI preference is not registered on this candidate");
     }
     *out = (qa_ui_preferences){.hud_scale = values[QA_UI_PREF_HUD_SCALE]->number,
@@ -111,7 +128,20 @@ static bool preferences_read(const qa_cvars *cvars, const qa_cvars_edit *edit,
     return true;
 }
 bool qa_ui_preferences_read(const qa_cvars *cvars, uint32_t seat, qa_ui_preferences *out, qa_error *error)
-{ return preferences_read(cvars, NULL, seat, out, error); }
+{ return preferences_read(cvars, NULL, seat, out, false,error); }
 bool qa_ui_preferences_edit_read(const qa_cvars_edit *edit, uint32_t seat,
     qa_ui_preferences *out, qa_error *error)
-{ return preferences_read(qa_cvars_edit_registry(edit), edit, seat, out, error); }
+{ return preferences_read(qa_cvars_edit_registry(edit), edit, seat, out, false,error); }
+bool qa_ui_preferences_edit_ready_is(const qa_cvars_edit *edit,uint32_t seat,
+    const qa_ui_preferences *expected)
+{
+    qa_ui_preferences actual;
+    return expected && expected->language && qa_cvars_edit_ready_is(edit) &&
+        preferences_read(qa_cvars_edit_registry(edit),edit,seat,&actual,true,NULL) &&
+        actual.hud_scale==expected->hud_scale && actual.text_scale==expected->text_scale &&
+        actual.menu_scale==expected->menu_scale && actual.crosshair_size==expected->crosshair_size &&
+        actual.high_contrast==expected->high_contrast && actual.reduced_flashes==expected->reduced_flashes &&
+        actual.captions==expected->captions && actual.crosshair==expected->crosshair &&
+        actual.typeface==expected->typeface && actual.color_mode==expected->color_mode &&
+        !strcmp(actual.language,expected->language);
+}

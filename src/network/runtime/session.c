@@ -62,6 +62,12 @@ void qa_network_destroy(qa_network_runtime *runtime) {
 const qa_net_connections *qa_network_connections(const qa_network_runtime *runtime) {
     return runtime ? runtime->connections : NULL;
 }
+bool qa_network_udp_policy_read(const qa_network_runtime *runtime, qa_net_udp_policy *out,
+    bool *present, qa_error *error)
+{
+    if (!runtime) return qa_network_fail(error, "Missing native socket policy owner");
+    return qa_net_udp_policy_read(runtime->transport, out, present, error);
+}
 bool qa_network_callbacks_idle(const qa_network_runtime *runtime) {
     return !runtime || (!runtime->callback && !runtime->pumping);
 }
@@ -75,13 +81,21 @@ bool qa_network_attach(qa_network_runtime *runtime, const qa_net_connect *reques
                         qa_net_client_id *out, qa_error *error) {
     if (!runtime || runtime->callback || runtime->pumping || !request || !ops || !out ||
         !ops->receive || !ops->flush || !ops->command || !ops->restart || !ops->rebind ||
-        !ops->close || !request->seat_count || request->seat_count > QA_NETWORK_MAX_SEATS)
+        !ops->close || !request->seat_count ||
+        request->seat_count > qa_network_protocol_seat_capacity(request->protocol))
         return qa_network_fail(error, "Invalid network peer attachment");
+    bool unified=request->protocol.kind==QA_NET_UNIFIED_1;
+    if(unified && !qa_unified_session_attachment(runtime,ops,state,request))
+        return qa_network_fail(error,"Unified attachment lacks its actual token channel and Source owner");
     qa_network_seat *seats = calloc(request->seat_count, sizeof(*seats));
     for (uint32_t i = 0; i < runtime->options.clients; ++i) {
         const qa_net_client *client = runtime->peers[i].occupied ?
             qa_net_connections_get(runtime->connections, runtime->peers[i].id) : NULL;
-        if (client && qa_net_address_equal(&client->endpoint, &request->endpoint, true)) {
+        if(client && unified && qa_unified_session_token_conflict(state,&runtime->peers[i])) {
+            free(seats); return qa_network_fail(error,"Unified token already belongs to an actual peer");
+        }
+        if (client && qa_net_address_equal(&client->endpoint, &request->endpoint, true) &&
+            !(unified && qa_unified_session_peer(&runtime->peers[i]))) {
             free(seats); return qa_network_fail(error, "Transport endpoint already belongs to a connection");
         }
     }
@@ -137,7 +151,9 @@ bool qa_network_pump(qa_network_runtime *runtime, uint64_t now, qa_error *error)
         for (uint32_t i = 0; !connectionless && i < runtime->options.clients; ++i) {
             qa_network_peer *peer = &runtime->peers[i];
             const qa_net_client *client = peer->occupied ? qa_net_connections_get(runtime->connections, peer->id) : NULL;
-            if (client && (qa_network_qw_peer(peer) ? qa_network_qw_peer_matches(peer, &packet) :
+            if (client && (client->protocol.kind==QA_NET_UNIFIED_1 ? qa_unified_session_peer_matches(peer,&packet) :
+                qa_network_qw_peer(peer) ? qa_network_qw_peer_matches(peer, &packet) :
+                qa_network_q2_peer(peer) ? qa_network_q2_peer_matches(peer,&packet) :
                 qa_net_address_equal(&client->endpoint, &packet.from, true))) { target = peer; break; }
         }
         runtime->callback = true;
@@ -155,7 +171,8 @@ bool qa_network_pump(qa_network_runtime *runtime, uint64_t now, qa_error *error)
         qa_network_peer *peer = &runtime->peers[i];
         const qa_net_client *client = peer->occupied ? qa_net_connections_get(runtime->connections, peer->id) : NULL;
         if (!client) continue;
-        if (runtime->options.timeout_ns && qa_net_client_expired(client, now, runtime->options.timeout_ns)) {
+        if (!qa_unified_session_peer(peer) && runtime->options.timeout_ns &&
+            qa_net_client_expired(client, now, runtime->options.timeout_ns)) {
             retire(runtime, peer, "connection timed out"); continue;
         }
         runtime->callback = true;

@@ -1,5 +1,6 @@
 #include "guest_q3_private.h"
 #include "native_q3_wire_state.h"
+#include "qa/application_q3_client.h"
 
 bool q3g_client_effect(q3g_role *role, qa_application_q3_client_effect effect,
                         const char *text, qa_error *error)
@@ -15,9 +16,21 @@ bool q3g_client_effect(q3g_role *role, qa_application_q3_client_effect effect,
     struct application_q3_guest *engine = role->engine;
     application_provider *provider = engine->provider;
     qa_application *application = provider->application;
-    q3g_client *client = &engine->clients[role->client];
+    struct application_q3_guest *source = role->client_engine;
+    application_provider *source_provider = role->client_source;
+    qa_application_q3_client_context admission;
+    if (!source || !source_provider || source->provider != source_provider || q3g_engine(source_provider) != source ||
+        source_provider->application != application || !source_provider->constructed || !source_provider->attached ||
+        source_provider->close_pending || source->world != engine->world || role->source_owner != source_provider->owner ||
+        source->seats[role->client] != role->seat || engine->calls == UINT_MAX || source->calls == UINT_MAX ||
+        !qa_application_q3_client_context_read(application, provider->owner, role->seat, &admission, error))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q3 client effect lost its retained original GAME source");
+    q3g_client *client = &source->clients[role->client];
     if (!role->host || !role->ready || role->retired || !client->allocated ||
         !client->begun || client->pending_retirement || !client->actor.registry ||
+        admission.source_owner != role->source_owner || admission.source_client != role->client ||
+        admission.service_owner != role->service_owner || admission.native_source ||
+        !qa_actor_id_equal(admission.source_actor, client->actor) ||
         !qa_actors_get(qa_session_actors(application->session), client->actor))
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 client effect lost its actual original source binding");
     if (!application->q3_client_effect)
@@ -53,14 +66,19 @@ bool q3g_client_effect(q3g_role *role, qa_application_q3_client_effect effect,
         return application_fail(error, QA_ERROR_ARGUMENT, "unknown Q3 client effect");
     }
     ++engine->calls;
+    if (source != engine) ++source->calls;
     bool ok = application->q3_client_effect(application->guest_context, application,
         provider->owner, role->seat, effect, text, error);
     if (ok && (q3g_engine(provider) != engine || !provider->constructed || !provider->attached ||
         provider->close_pending || role->host != host || role->retired ||
+        role->client_engine != source || role->client_source != source_provider ||
+        q3g_engine(source_provider) != source || !source_provider->constructed || !source_provider->attached ||
+        source_provider->close_pending || !qa_application_q3_client_context_current(application, &admission) ||
         !client->allocated || !client->begun || client->pending_retirement ||
         !qa_actor_id_equal(client->actor, actor) ||
         !qa_actors_get(qa_session_actors(application->session), actor)))
         ok = application_fail(error, QA_ERROR_ARGUMENT, "Q3 client effect replaced or retired its original source admission");
+    if (source != engine) --source->calls;
     --engine->calls;
     free(retained);
     return ok;

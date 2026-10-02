@@ -85,7 +85,7 @@ bool qa_network_prediction_checkpoint(const qa_network_runtime *runtime, const q
     qa_buffer bytes = {malloc(size), 0};
     if (!bytes.data) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating prediction continuation"); return false; }
     qa_net_writer w; qa_net_writer_init(&w, bytes.data, size, error);
-    bool ok = qa_net_write_u32(&w, UINT32_C(0x504e4151)) && qa_net_write_u32(&w, 1) && qa_net_write_u32(&w, count);
+    bool ok = qa_net_write_u32(&w, UINT32_C(0x504e4151)) && qa_net_write_u32(&w, 2) && qa_net_write_u32(&w, count);
     for (uint32_t i = 0; ok && i < runtime->options.clients; ++i) {
         const qa_network_peer *peer = &runtime->peers[i]; if (!peer->occupied) continue;
         ok = qa_net_write_u32(&w, i) && qa_net_write_u64(&w, peer->id.generation) &&
@@ -106,6 +106,7 @@ bool qa_network_prediction_checkpoint(const qa_network_runtime *runtime, const q
                 if (ok && c->has_arsenal)
                     ok = qa_net_write_u64(&w, c->arsenal.provider.size) && qa_net_write_u64(&w, c->arsenal.weapon.size) &&
                         qa_net_write_u8(&w, c->arsenal.use_holdable) &&
+                        qa_net_write_u8(&w, c->arsenal.has_impulse) && qa_net_write_u8(&w,c->arsenal.impulse) &&
                         qa_net_write_data(&w, entry->arsenal.data, entry->arsenal.size);
             }
         }
@@ -121,7 +122,7 @@ bool qa_network_prediction_restore(qa_network_runtime *runtime, const qa_network
         return qa_network_fail(error, "Prediction restore requires an isolated idle connection owner");
     qa_net_reader r; qa_net_reader_init(&r, bytes, error);
     uint32_t tag = qa_net_read_u32(&r), version = qa_net_read_u32(&r), count = qa_net_read_u32(&r);
-    if (tag != UINT32_C(0x504e4151) || version != 1 || count > runtime->options.clients)
+    if (tag != UINT32_C(0x504e4151) || version != 2 || count > runtime->options.clients)
         return qa_net_reader_fail(&r, "Invalid prediction continuation header");
     qa_network_seat **scratch = calloc(runtime->options.clients, sizeof(*scratch));
     if (!scratch) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating prediction owner inventory"); return false; }
@@ -158,6 +159,8 @@ bool qa_network_prediction_restore(qa_network_runtime *runtime, const qa_network
                 if (c->has_arsenal) {
                     uint64_t provider = qa_net_read_u64(&r), weapon = qa_net_read_u64(&r);
                     c->arsenal.use_holdable = q3_save_bool(&r);
+                    c->arsenal.has_impulse = q3_save_bool(&r);
+                    c->arsenal.impulse = qa_net_read_u8(&r);
                     if (r.failed || !provider || provider > SIZE_MAX || weapon > SIZE_MAX - (size_t)provider ||
                         provider + weapon > qa_net_reader_remaining(&r)) {
                         ok = qa_net_reader_fail(&r, "Invalid prediction arsenal storage extent"); break;

@@ -43,7 +43,7 @@ bool qa_native_q3_remote_client_clear(qa_application *app, const qa_native_q3_re
     /* The callback may refresh initialized while consuming its service. The
      * retained descriptor, epoch and physical configuration must survive. */
     qa_application_q3_remote_source actual;
-    if (row->modules || row->service || row->initialized || row->calls || row->module_calls ||
+    if (row->modules || row->service || row->transport || row->initialized || row->calls || row->module_calls ||
         !qa_console_idle(row->console) || !qa_cvars_observer_idle(row->cvars) ||
         !application_native_q3_remote_role_source_read(row->provider, row->seat,
             request->previous.connection_epoch, &actual, error) ||
@@ -66,7 +66,7 @@ bool qa_native_q3_remote_client_rebind(qa_application *app, const qa_application
         request->new_epoch <= request->previous.connection_epoch)
         return application_fail(error, QA_ERROR_ARGUMENT, "Native CLIENT rebind requires its true fresh transport admission");
     struct application_native_q3_remote_role *row = source_row(app, &request->previous, error);
-    if (!row || row->lifecycle != NATIVE_Q3_REMOTE_CLEARED || row->modules || row->service ||
+    if (!row || row->lifecycle != NATIVE_Q3_REMOTE_CLEARED || row->modules || row->service || row->transport ||
         row->initialized || row->modules_restore.size || row->connection_epoch != request->previous.connection_epoch ||
         !request->current(request->connection, request->previous.connection_epoch, request->new_epoch, error))
         return application_fail(error, QA_ERROR_ARGUMENT, "Native CLIENT rebind has no completed retirement or current transport proof");

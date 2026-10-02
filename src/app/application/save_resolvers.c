@@ -9,6 +9,8 @@
 #include "qa/game_q2_checkpoint.h"
 #include "qa/game_q3_save.h"
 #include "qa/modes_save.h"
+#include "guest_q3_combat.h"
+#include "supplies.h"
 
 static application_provider *source_owner(qa_application *app, qa_actor_owner owner)
 {
@@ -27,9 +29,16 @@ static bool combat_binding(void *opaque, qa_actor_id actor, uint64_t serial,
     qa_application *app = opaque;
     const qa_actor_record *record = qa_actors_get(qa_session_actors(app->session), actor);
     application_provider *provider = record ? source_owner(app, record->owner) : NULL;
+    application_provider *character = application_provider_for(app, actor, QA_ROLE_CHARACTER, "");
+    struct application_q3_guest *source = character ? q3g_engine(character) : NULL;
+    if (source && source->game && source->game->combat)
+        return application_q3_combat_binding(source->game->combat, actor, serial, out, error);
     if (provider && provider->kind == APPLICATION_PROVIDER_NATIVE &&
         provider->state.native.q2_engine)
         return application_native_q2_combat_binding(provider, actor, serial, out, error);
+    struct application_q3_guest *guest = provider ? q3g_engine(provider) : NULL;
+    if (guest && guest->game && guest->game->combat)
+        return application_q3_combat_binding(guest->game->combat, actor, serial, out, error);
     return application_fail(error, QA_ERROR_UNSUPPORTED,
                             "Saved combat primary has no restored source callback owner");
 }
@@ -102,6 +111,13 @@ static bool pickup_observer(void *opaque, qa_actor_id actor, qa_actor_owner owne
                             "Saved pickup observation has no restored source callback owner");
 }
 
+static bool pickup_rule(void *opaque,qa_actor_id actor,qa_actor_owner owner,
+    uint64_t serial,uint32_t id,qa_pickup_rule *out,qa_error *error)
+{
+    qa_application *app = opaque;
+    return application_supplies_pickup_rule(app->supplies,actor,owner,serial,id,out,error);
+}
+
 static bool target(void *opaque, qa_actor_id actor, qa_clock_kind clock,
                      qa_target_binding *out, qa_error *error)
 {
@@ -133,7 +149,7 @@ bool application_save_resolvers(qa_application *app,
                                 "Restored gameplay callbacks require retained application owners");
     *out = (qa_persistence_gameplay_resolvers){.context = app,
         .combat = combat_binding, .admission = admission, .inventory_primary = primary,
-        .inventory_group = inventory_group, .pickup_observer = pickup_observer,
+        .inventory_group = inventory_group, .pickup_observer = pickup_observer, .pickup_rule = pickup_rule,
         .target = target};
     return true;
 }

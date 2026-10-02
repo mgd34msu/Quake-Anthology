@@ -219,6 +219,8 @@ void frontend_authored_bindings_finish(frontend_authored_bindings *owner)
 { if (owner) owner->collecting=false; }
 bool frontend_authored_bindings_ready(const frontend_authored_bindings *owner)
 { return owner && owner->initialized; }
+bool frontend_authored_bindings_completed(const frontend_authored_bindings *owner)
+{ return owner && owner->initialized && !owner->collecting; }
 bool frontend_authored_bindings_observe(frontend_authored_bindings *owner,
     const qa_command_invocation *command,qa_error *error)
 {

@@ -68,9 +68,11 @@ static bool blob(qa_source_save_io *io,qa_buffer *b)
 }
 static bool fields(qa_source_save_io *io,q3n_mission_hud *o)
 {
-    uint8_t magic[4]={'Q','3','M','H'}; uint32_t version=2,seat=o->options.seat;
-    if(!qa_source_save_bytes(io,magic,4)||memcmp(magic,"Q3MH",4)||!qa_source_save_u32(io,&version)||version!=2||
-        !qa_source_save_u32(io,&seat)||seat!=o->options.seat)return false;
+    const char *signature=o->options.remote_client?"Q3HU":"Q3MH";
+    uint8_t magic[4]; memcpy(magic,signature,4); uint32_t version=2,seat=o->options.seat;
+    if(!qa_source_save_bytes(io,magic,4)||memcmp(magic,signature,4)||!qa_source_save_u32(io,&version)||version!=2||
+        !qa_source_save_u32(io,&seat)||seat!=o->options.seat||
+        !q3nh_remote_basis_fields(io,o->options.remote_client))return false;
     qa_buffer menus={0}; bool ok=true;
     if(io->direction==QA_SOURCE_SAVE_WRITE)ok=q3menu_checkpoint(o->menus,&menus,io->error);
     if(ok)ok=blob(io,&menus);

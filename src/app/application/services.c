@@ -1,13 +1,19 @@
 #include "internal.h"
+#include "guest_q3_components.h"
 #include "control_frame.h"
 #include "native_q2_combat_policy.h"
 #include "native_q1_wire.h"
+#include "native_q1_composition_flags.h"
+#include "native_q1_composition_death.h"
+#include "native_q1_composition_rogue.h"
+#include "qa/game_q1_bots.h"
 #include "supplies.h"
 #include "equipment_runtime.h"
 #include "qa/application_players.h"
 #include "qa/game_q3_clients.h"
 #include "qa/game_q3_source.h"
 #include "qa/game_q3_wire.h"
+#include "guest_q3_mod_operations.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -283,6 +289,9 @@ bool application_actor_released(void *opaque, qa_session *session,
     remember_failure(application_equipment_runtime_actor_released(application->equipment_runtime,
                          released, &current), &current,
                      "gear source actor retirement failed", &ok, &first);
+    current = (qa_error){0};
+    remember_failure(application_q3_components_actor_released(application->components,released,&current),
+                     &current,"component source actor retirement failed",&ok,&first);
     qa_combat_actor_released(application->combat, released);
     qa_inventory_actor_released(application->inventory, released);
     qa_pickups_actor_released(application->pickups, released);
@@ -390,6 +399,8 @@ static bool before_reaction(void *opaque, const qa_damage_outcome *outcome,
 {
     qa_application *application = opaque;
     if (!application_native_q1_wire_damage(application, outcome, error))
+        return false;
+    if (!application_native_q1_source_before_reaction(application, outcome, error))
         return false;
     if (!application_native_q2_combat_before_reaction(application, outcome, error))
         return false;
@@ -523,18 +534,19 @@ static bool confirmed_damage(void *opaque, const qa_damage_outcome *outcome,
 {
     qa_application *application = opaque;
     if (outcome->stale)
-        return true;
+        return application_unified_damage_emit(application, outcome, error);
     /* Preserve ordinary cleanup before after-damage, then score a death. The
      * deferred original source path confirms only the later death boundary. */
     if (!death_cleanup(application, outcome, error))
         return false;
     if (application->modes == NULL || !application->primary_mode_ready)
-        return true;
+        return application_unified_damage_emit(application, outcome, error);
     return qa_modes_after_damage(application->modes, application->primary_mode,
                                   outcome, error) &&
            (outcome->result.reaction != QA_REACTION_DEATH ||
             qa_modes_player_death(application->modes,
-                                  application->primary_mode, outcome, error));
+                                  application->primary_mode, outcome, error)) &&
+           application_unified_damage_emit(application, outcome, error);
 }
 
 static bool provider_invulnerable(application_provider *provider,
@@ -542,8 +554,6 @@ static bool provider_invulnerable(application_provider *provider,
 {
     if (provider == NULL || !provider->constructed)
         return false;
-    if (provider->kind == APPLICATION_PROVIDER_Q1)
-        return qa_q1_game_invulnerable(provider->state.q1, actor);
     if (provider->kind == APPLICATION_PROVIDER_Q2)
         return qa_q2_timed_invulnerability(provider->state.q2, actor);
     if (provider->kind == APPLICATION_PROVIDER_Q3)
@@ -701,6 +711,40 @@ static bool combat_effect(void *opaque, qa_combat *combat,
             return false;
         if (qa_actors_get(qa_session_actors(application->session), request->target) == NULL)
             return true;
+    }
+    application_provider *physical_ctf = NULL;
+    application_provider *physical_rogue = NULL;
+    application_provider *physical = selected[2];
+    qa_game_family family;
+    if (!qa_combat_policy_family(combat, request->attack.combat_provider, &family))
+        return application_fail(error, QA_ERROR_ARGUMENT,
+                                "Source damage effect lost its selected combat policy");
+    if (family == QA_GAME_Q1 && physical && physical->kind == APPLICATION_PROVIDER_Q1) {
+        qa_q1_options options;
+        double time;
+        if (!qa_q1_source_respawn_options_read(physical->state.q1, &options, &time, error)) return false;
+        if (options.program == QA_Q1_CTF) {
+            physical_ctf = physical;
+            if (!application_native_q1_ctf_damage_effect(physical, stage, request, effect, error))
+                return false;
+            if (qa_actors_get(qa_session_actors(application->session), request->target) == NULL)
+                return true;
+        } else if (options.program == QA_Q1_ROGUE) {
+            physical_rogue = physical;
+            if (!application_native_q1_rogue_damage_effect(physical, stage, request, effect, error))
+                return false;
+            if (!qa_actors_get(qa_session_actors(application->session), request->target)) return true;
+        }
+    }
+    if (physical_ctf && application->modes && application->primary_mode_ready) {
+        qa_mode_view mode;
+        if (!qa_modes_read(application->modes, application->primary_mode, &mode, error)) return false;
+        if (mode.rules.source == QA_MODE_THREEWAVE) return true;
+    }
+    if (physical_rogue && application->modes && application->primary_mode_ready) {
+        qa_mode_view mode;
+        if (!qa_modes_read(application->modes, application->primary_mode, &mode, error)) return false;
+        if (mode.rules.source == QA_MODE_ROGUE) return true;
     }
     return application->modes == NULL || !application->primary_mode_ready ||
            qa_modes_damage_effect(application->modes,
@@ -982,18 +1026,28 @@ static bool physics_write(void *opaque, qa_actor_id actor,
                             "actor has no selected physics owner");
 }
 
-static bool physics_touch(void *opaque, const qa_touch_contact *contact,
-                          qa_error *error)
+typedef struct application_touch_call {
+    qa_application *application;
+    qa_touch_contact contact;
+} application_touch_call;
+
+static bool physics_touch_body(void *opaque, const application_q3_mod_actor_request *request,
+                               bool *result, qa_error *error)
 {
-    qa_application *application = opaque;
+    application_touch_call *call = opaque;
+    qa_application *application = call->application;
+    const qa_touch_contact *contact = &call->contact;
+    (void)request;
     bool accepted = false;
     if (application->modes != NULL) {
         bool handled = false;
         if (!qa_modes_horde_loot_touch(application->modes, contact->self,
                 contact->other, &handled, &accepted, error))
             return false;
-        if (handled)
+        if (handled) {
+            *result = accepted;
             return true;
+        }
     }
     if (application->modes != NULL &&
         !qa_modes_touch(application->modes, contact->self, contact->other,
@@ -1001,17 +1055,38 @@ static bool physics_touch(void *opaque, const qa_touch_contact *contact,
         return false;
     application_provider *provider = application_provider_for(
         application, contact->self, QA_ROLE_ENTITIES, "");
-    if (provider == NULL)
+    if (provider == NULL) {
+        *result = accepted;
         return true;
+    }
+    bool okay;
     if (provider->kind == APPLICATION_PROVIDER_Q1)
-        return qa_q1_game_touch(provider->state.q1, contact, error);
-    if (provider->kind == APPLICATION_PROVIDER_Q2)
-        return qa_q2_touch(provider->state.q2, contact, error);
-    if (provider->kind == APPLICATION_PROVIDER_Q3)
-        return qa_q3_touch(provider->state.q3, contact, error);
-    if (provider->kind == APPLICATION_PROVIDER_QC)
-        return application_qc_touch(provider, contact, error);
+        return qa_q1_game_touch_source(provider->state.q1, contact, result, error);
+    else if (provider->kind == APPLICATION_PROVIDER_Q2)
+        okay = qa_q2_touch(provider->state.q2, contact, error);
+    else if (provider->kind == APPLICATION_PROVIDER_Q3)
+        okay = qa_q3_touch(provider->state.q3, contact, error);
+    else if (provider->kind == APPLICATION_PROVIDER_QC)
+        okay = application_qc_touch(provider, contact, error);
+    else {
+        *result = accepted;
+        return true;
+    }
+    if (!okay) return false;
+    *result = true;
     return true;
+}
+
+static bool physics_touch(void *opaque, const qa_touch_contact *contact,
+                          qa_error *error)
+{
+    qa_application *application = opaque;
+    application_touch_call call = {application, *contact};
+    application_q3_mod_actor_request request = {.self = contact->self,
+        .source.touch = {.other = contact->other}};
+    bool result;
+    return application_q3_mod_actor_dispatch(application->mod_operations, Q3_MOD_TOUCH,
+        &request, physics_touch_body, &call, &result, error);
 }
 
 static bool physics_blocked(void *opaque, qa_actor_id actor,
@@ -1380,6 +1455,64 @@ static bool builtin_powerups(void *opaque, qa_actor_owner observer,
     return true;
 }
 
+typedef struct builtin_actor_body {
+    const qa_builtin_actor_callback_request *request;
+    qa_builtin_actor_callback_body call;
+    void *context;
+} builtin_actor_body;
+static bool builtin_actor_invoke(void *opaque,
+    const application_q3_mod_actor_request *request, bool *result, qa_error *error)
+{
+    builtin_actor_body *body = opaque;
+    if (!qa_actor_id_equal(request->self, body->request->self))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Native callback changed its source actor");
+    return body->call(body->context, body->request, result, error);
+}
+static bool builtin_actor_callback(void *opaque, qa_builtin_actor_callback_kind kind,
+    const qa_builtin_actor_callback_request *request, qa_builtin_actor_callback_body call,
+    void *context, bool *result, qa_error *error)
+{
+    qa_application *app = opaque;
+    if (!app || !app->mod_operations || !request || !call || !result ||
+        !qa_actors_get(qa_session_actors(app->session), request->self))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Native callback lost its canonical operation owner");
+    application_provider *provider = app->live_providers;
+    while (provider && provider->owner != request->provider) provider = provider->next_live;
+    if (!provider || !provider->constructed || provider->close_pending ||
+        provider_family(provider) != request->family || app->destroy_requested)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Native callback lost its actual source provider");
+    application_q3_mod_actor_request source = {.self = request->self};
+    application_q3_mod_operation channel;
+    switch (kind) {
+    case QA_BUILTIN_ACTOR_USE:
+        channel = Q3_MOD_USE;
+        source.source.use.other = request->source.use.other;
+        source.source.use.activator = request->source.use.activator;
+        break;
+    case QA_BUILTIN_ACTOR_PAIN:
+        channel = Q3_MOD_PAIN;
+        source.source.pain.attacker = request->source.pain.attacker;
+        source.source.pain.damage = request->source.pain.damage;
+        source.source.pain.kick = request->source.pain.kick;
+        break;
+    case QA_BUILTIN_ACTOR_DIE:
+        channel = Q3_MOD_DIE;
+        source.source.die.attacker = request->source.die.attacker;
+        source.source.die.inflictor = request->source.die.inflictor;
+        source.source.die.damage = request->source.die.damage;
+        source.source.die.kick = request->source.die.kick;
+        source.source.die.point = request->source.die.point;
+        break;
+    default:
+        return application_fail(error, QA_ERROR_ARGUMENT, "Native callback has no actor operation channel");
+    }
+    builtin_actor_body body = {request, call, context};
+    if (!application_q3_mod_actor_dispatch(app->mod_operations, channel, &source,
+        builtin_actor_invoke, &body, result, error)) return false;
+    return (!provider->close_pending && !app->destroy_requested) ||
+        application_fail(error, QA_ERROR_ARGUMENT, "Native callback retired its source during observers");
+}
+
 qa_builtin_services application_builtin_services(qa_application *application,
                                                   qa_world *world,
                                                   qa_physics *physics)
@@ -1397,5 +1530,6 @@ qa_builtin_services application_builtin_services(qa_application *application,
                                  .players = builtin_players,
                                  .player_info = builtin_player_info,
                                  .powerups = builtin_powerups,
-                                 .motion_changed = builtin_motion_changed};
+                                 .motion_changed = builtin_motion_changed,
+                                 .actor_callback = builtin_actor_callback};
 }

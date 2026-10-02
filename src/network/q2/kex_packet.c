@@ -95,10 +95,17 @@ bool qa_kex_write_varint(qa_net_writer*w,uint64_t v) {
 bool qa_kex_read_string(qa_net_reader*r,char*out,size_t cap) {
     uint64_t n=qa_kex_read_varint(r);
     if(r->failed)return false;
-    if(!out||!cap||n>=cap||n>qa_net_reader_remaining(r))return qa_net_reader_fail(r,"KEX string exceeds capacity");
-    if(!qa_net_read_data(r,out,(size_t)n))return false;
-    if(memchr(out,0,(size_t)n)||!utf8((const unsigned char*)out,(size_t)n))return qa_net_reader_fail(r,"Invalid KEX string UTF-8");
-    out[n]=0;
+    if(!out||!cap||n>qa_net_reader_remaining(r))return qa_net_reader_fail(r,"KEX string exceeds capacity");
+    qa_bytes text;
+    if(!qa_net_read_bytes(r,(size_t)n,&text))return false;
+    if(!utf8(text.data,text.size))return qa_net_reader_fail(r,"Invalid KEX string UTF-8");
+    if(text.size>=3&&!memcmp(text.data,"\xef\xbb\xbf",3)) {
+        text.data+=3;
+        text.size-=3;
+    }
+    if(text.size>=cap||memchr(text.data,0,text.size))return qa_net_reader_fail(r,"KEX string exceeds its native text capacity");
+    if(text.size)memcpy(out,text.data,text.size);
+    out[text.size]=0;
     return true;
 }
 bool qa_kex_write_string(qa_net_writer*w,const char*s) {

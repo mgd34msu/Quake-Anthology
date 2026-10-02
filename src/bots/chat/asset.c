@@ -48,6 +48,11 @@ void qa_bot_chat_asset_release(qa_bot_chat_asset *a) {
     free(a->keys);
     free(a->replies);
     free(a->cooldowns);
+    free(a->initial_types);
+    free(a->initial_messages);
+    bot_chat_initial_resource_destroy(a->initial_source);
+    bot_chat_packed_destroy(a->packed_source);
+    qa_arena_destroy(&a->projection_arena);
     qa_arena_destroy(&a->arena);
     free(a);
 }
@@ -60,6 +65,8 @@ void bot_chat_assets_close(qa_bot_library *library) {
     library->chat_assets = NULL;
 }
 const qa_bot_chat_asset_view *qa_bot_chat_asset_read(const qa_bot_chat_asset *a) {
+    if(a && a->initial_source && !chat_initial_asset_refresh((qa_bot_chat_asset *)a,NULL)) return NULL;
+    if(a && a->packed_source && !bot_chat_packed_refresh((qa_bot_chat_asset *)a,NULL)) return NULL;
     return a == NULL ? NULL : &a->view;
 }
 bool chat_asset_finish(qa_bot_chat_asset *a, qa_error *e) {
@@ -81,6 +88,10 @@ bool chat_asset_finish(qa_bot_chat_asset *a, qa_error *e) {
     return true;
 }
 bool chat_asset_parse(qa_bot_library *library, qa_bot_chat_asset *a, qa_error *e) {
+    if(a->view.kind==QA_BOT_CHAT_INITIAL || a->view.kind==QA_BOT_CHAT_SYNONYMS || a->view.kind==QA_BOT_CHAT_RANDOMS) {
+        qa_error_set(e,QA_ERROR_ARGUMENT,0,"Initial chat parsing requires its retained two-pass source owner");
+        return false;
+    }
     qa_script *s;
     if (!qa_script_open(a->view.path, &library->options.scripts, &library->options.preprocessor, &s,
                         e))
@@ -99,9 +110,7 @@ bool chat_asset_parse(qa_bot_library *library, qa_bot_chat_asset *a, qa_error *e
     case QA_BOT_CHAT_REPLIES:
         ok = chat_parse_replies(library, a, s, e);
         break;
-    case QA_BOT_CHAT_INITIAL:
-        ok = chat_parse_initial(a, s, e);
-        break;
+    case QA_BOT_CHAT_INITIAL: break;
     }
     qa_script_close(s);
     return ok && chat_asset_finish(a, e);
@@ -121,6 +130,18 @@ bool chat_asset_load(qa_bot_library *library, qa_bot_chat_asset_kind kind, const
     if (name == NULL)
         name = "";
     *cached = false;
+    if(kind==QA_BOT_CHAT_SYNONYMS || kind==QA_BOT_CHAT_RANDOMS) {
+        bool source_failure;
+        bool ok=chat_asset_setup_load(library,kind,path,NULL,0,out,&source_failure,e);
+        if(!ok) {qa_bot_chat_asset_release(*out);*out=NULL;}
+        return ok;
+    }
+    if(kind==QA_BOT_CHAT_INITIAL) {
+        bool source_failure;
+        bool ok=chat_initial_asset_load(library,path,name,NULL,0,out,&source_failure,e);
+        if(!ok) {qa_bot_chat_asset_release(*out);*out=NULL;}
+        return ok;
+    }
     if (!bot_reload_characters(library))
         for (qa_bot_chat_asset *a = library->chat_assets; a != NULL; a = a->next)
             if (a->view.kind == kind && strcmp(a->view.path, path) == 0 &&
@@ -145,7 +166,36 @@ bool chat_asset_load(qa_bot_library *library, qa_bot_chat_asset_kind kind, const
     *out = a;
     return true;
 }
+bool chat_asset_setup_load(qa_bot_library *library,qa_bot_chat_asset_kind kind,const char *path,
+    qa_bot_chat_system *system,uint64_t revision,qa_bot_chat_asset **out,bool *source_failure,
+    qa_error *error) {
+    if(!library || !path || !out || !source_failure ||
+       (kind!=QA_BOT_CHAT_SYNONYMS && kind!=QA_BOT_CHAT_RANDOMS)) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"Packed chat setup requires its actual source/library/output");return false;
+    }
+    *out=NULL;*source_failure=false;qa_bot_chat_asset *asset=NULL;
+    if(!chat_asset_allocate(kind,path,"",&asset,error)) return false;
+    if(!bot_chat_packed_owner(asset,library,library->memory,error)) {qa_bot_chat_asset_release(asset);return false;}
+    asset->next=library->chat_assets;library->chat_assets=asset;
+    qa_bot_chat_asset_retain(asset);*out=asset;
+    return bot_chat_packed_load(asset,system,revision,source_failure,error);
+}
 const float *qa_bot_chat_cooldowns(const qa_bot_chat_asset *a, size_t *count) {
+    if(a && a->initial_source && a->source_loaded) {
+        qa_bot_chat_asset *mutable=(qa_bot_chat_asset *)a;
+        size_t size=a->view.message_count;
+        if(size>SIZE_MAX/sizeof(float)) {if(count) *count=0;return NULL;}
+        float *times=size?realloc(mutable->cooldowns,size*sizeof(*times)):mutable->cooldowns;
+        if(size && !times) {if(count) *count=0;return NULL;}
+        mutable->cooldowns=times;
+        for(uint32_t index=0;index<size;++index)
+            if(!chat_asset_message_time(mutable,index,&times[index],false,NULL)) {
+                if(count) *count=0;
+                return NULL;
+            }
+        if(count) *count=size;
+        return times;
+    }
     if (count != NULL)
         *count = a == NULL || a->cooldowns == NULL ? 0 : a->view.message_count;
     return a == NULL ? NULL : a->cooldowns;
@@ -159,8 +209,12 @@ bool qa_bot_chat_cooldowns_restore(qa_bot_chat_asset *a, const float *times, siz
     for (size_t i = 0; i < count; ++i)
         if (!isfinite(times[i]))
             goto invalid;
-    if (count != 0)
-        memcpy(a->cooldowns, times, count * sizeof(*times));
+    if(a->initial_source) {
+        for(uint32_t index=0;index<count;++index) {
+            float time=times[index];
+            if(!chat_asset_message_time(a,index,&time,true,e)) return false;
+        }
+    } else if (count != 0) memcpy(a->cooldowns, times, count * sizeof(*times));
     return true;
 invalid:
     qa_error_set(e, QA_ERROR_FORMAT, 0, "Invalid shared bot chat cooldown checkpoint");

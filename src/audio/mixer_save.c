@@ -155,9 +155,9 @@ bool qa_audio_mixer_checkpoint(const qa_audio_mixer *m, const qa_audio_checkpoin
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Mixer checkpoint requires drained callbacks and notifications"); return false;
     }
     qa_ac_writer w = {.error = error};
-    qa_ac_write(&w, "QAMX", 4); qa_ac_u32(&w, 2); qa_ac_u32(&w, m->options.sample_rate);
+    qa_ac_write(&w, "QAMX", 4); qa_ac_u32(&w, 3); qa_ac_u32(&w, m->options.sample_rate);
     qa_ac_u32(&w, m->options.output_channels); qa_ac_u32(&w, m->options.observer != NULL);
-    qa_ac_u32(&w, m->transmission != NULL);
+    qa_ac_u32(&w, m->transmission_checked ? 2 : m->transmission ? 1 : 0);
     put_listener(&w, refs, &m->listener);
     qa_ac_u64(&w, m->next_voice); qa_ac_u64(&w, m->schedule_order);
     qa_ac_u64(&w, (uint64_t)m->paint_time); qa_ac_u64(&w, (uint64_t)m->sound_time); qa_ac_u64(&w, (uint64_t)m->raw_end);
@@ -276,9 +276,9 @@ bool qa_audio_mixer_restore(qa_bytes bytes, const qa_audio_mixer_options *option
         qa_error_set(error, QA_ERROR_FORMAT, 0, "Invalid mixer checkpoint arguments or header"); return false;
     }
     qa_ac_reader r = {.bytes = bytes, .offset = 4, .error = error};
-    if (qa_ac_get32(&r) != 2 || qa_ac_get32(&r) != options->sample_rate ||
+    if (qa_ac_get32(&r) != 3 || qa_ac_get32(&r) != options->sample_rate ||
         qa_ac_get32(&r) != options->output_channels || qa_ac_bool(&r) != (options->observer != NULL) ||
-        qa_ac_bool(&r) != (refs && refs->geometry != NULL))
+        qa_ac_get32(&r) != (refs && refs->geometry_checked ? 2u : refs && refs->geometry ? 1u : 0u))
         return qa_ac_bad(&r, "Saved mixer format or observer admission differs");
     qa_audio_mixer *m = NULL; qa_audio_mixer_options isolated = *options; isolated.initial_voices = 0;
     if (!qa_audio_mixer_create(&isolated, &m, error)) return false;
@@ -361,5 +361,6 @@ bool qa_audio_mixer_restore(qa_bytes bytes, const qa_audio_mixer_options *option
     if (r.failed) { discard_mixer(m); return false; }
     m->options = *options;
     m->transmission = refs ? refs->geometry : NULL; m->transmission_user = refs ? refs->geometry_context : NULL;
+    m->transmission_checked = refs ? refs->geometry_checked : NULL;
     *out = m; return true;
 }

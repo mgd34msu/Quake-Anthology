@@ -45,9 +45,13 @@ void frontend_models_destroy(frontend_model_inventory *);
  * and resource versions while their retired ordinal remains a stable hole. */
 bool frontend_model_retain(frontend_model_inventory *, const qa_model *,
     frontend_model_lease **, qa_error *);
+/* Clone a live owning token, including after enclosing inventory retirement.
+ * The existing token keeps its exact parsed row and source buffers alive. */
+bool frontend_model_lease_clone(const frontend_model_lease *, frontend_model_lease **, qa_error *);
 void frontend_model_release(frontend_model_lease *);
 bool frontend_animation_retain(frontend_model_inventory *, const qa_model_animation *,
     frontend_animation_lease **, qa_error *);
+bool frontend_animation_lease_clone(const frontend_animation_lease *, frontend_animation_lease **, qa_error *);
 void frontend_animation_release(frontend_animation_lease *);
 /* Borrow actual retained source provenance for a fresh capture. Tokens keep
  * this row alive even after frontend inventory ownership is released. These

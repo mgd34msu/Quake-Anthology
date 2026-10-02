@@ -62,6 +62,10 @@ bool application_native_q1_wire_language_idle(const application_provider *,
     const qa_application_language_ticket *const *, size_t);
 void application_native_q1_wire_actor_released(qa_application *, qa_actor_id);
 bool application_native_q1_wire_resources_prepare(application_provider *, qa_error *);
+/* A successfully registered declaration returns an owned resource reference.
+ * Missing registration is found=false; no resource is opened by this read. */
+bool application_native_q1_wire_sound_resource(qa_application *, qa_actor_owner,
+    qa_string_id path, qa_resource **, const qa_product **, bool *found, qa_error *);
 bool application_native_q1_wire_reconnect(qa_application *, qa_error *);
 typedef struct application_native_q1_wire_language_ticket application_native_q1_wire_language_ticket;
 /* Prepare retains every actual source catalog without publishing a language.

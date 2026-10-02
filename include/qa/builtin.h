@@ -26,7 +26,13 @@ typedef enum qa_builtin_event_kind {
     QA_BUILTIN_ACHIEVEMENT,
     QA_BUILTIN_PARTICLES,
     QA_BUILTIN_EFFECT,
-    QA_BUILTIN_LOG
+    QA_BUILTIN_LOG,
+    QA_BUILTIN_CTF_STATUS,
+    QA_BUILTIN_SOURCE_LOG,
+    QA_BUILTIN_CTF_CAPTURE,
+    QA_BUILTIN_Q1_POWERUP,
+    QA_BUILTIN_SOURCE_PROMPT,
+    QA_BUILTIN_CLEAR_PROMPT
 } qa_builtin_event_kind;
 
 typedef enum qa_builtin_message_arg_kind {
@@ -41,12 +47,38 @@ typedef struct qa_builtin_message_arg {
     } value;
 } qa_builtin_message_arg;
 
+typedef struct qa_builtin_ctf_status {
+    double red, blue, flags, rune_items;
+} qa_builtin_ctf_status;
+typedef struct qa_builtin_ctf_capture {
+    double total;
+    bool blue;
+} qa_builtin_ctf_capture;
+typedef struct qa_builtin_prompt_choice {
+    qa_string_id label;
+    int32_t impulse;
+} qa_builtin_prompt_choice;
+
+typedef struct qa_builtin_q1_powerup {
+    /* The actual qa_q1_power ordinal; the Q1 owner admits this declaration. */
+    uint32_t power;
+    double expires;
+} qa_builtin_q1_powerup;
+
 /* Resource and text IDs use the session string table. Events and arguments are
  * synchronous borrows; a queue copies arguments and resolves or retains string
  * storage before returning. PARTICLES uses origin, direction, code (palette
  * color) and count. EFFECT uses family, resource and code for authored effects
  * without a more specific shared event kind. LOG retains source-wide text,
- * provider and source time; it has no actor, message arguments or HUD effect. */
+ * provider and source time; it has no actor, message arguments or HUD effect.
+ * CTF_STATUS retains the source's four finite numbers for the addressed actor;
+ * flags and rune_items undergo bit conversion only at the HUD consumer.
+ * SOURCE_LOG retains the Q1 source player's full actor and action in text.
+ * CTF_CAPTURE retains the Q1 source team's finite total; it has no actor or
+ * message arguments. Source clocks and providers qualify both records.
+ * SOURCE_PROMPT addresses a full source actor, uses text for its title and
+ * borrows ordered prompt_choices until the queue copies them. CLEAR_PROMPT
+ * addresses that actor without title or choices. */
 typedef struct qa_builtin_event {
     qa_builtin_event_kind kind;
     qa_game_family family;
@@ -60,6 +92,11 @@ typedef struct qa_builtin_event {
     uint32_t flags;
     const qa_builtin_message_arg *arguments;
     size_t argument_count;
+    qa_builtin_ctf_status ctf_status;
+    qa_builtin_ctf_capture ctf_capture;
+    qa_builtin_q1_powerup q1_powerup;
+    const qa_builtin_prompt_choice *prompt_choices;
+    size_t prompt_choice_count;
 } qa_builtin_event;
 
 typedef struct qa_builtin_actor_traits {
@@ -128,6 +165,22 @@ typedef struct qa_builtin_trajectory_update {
     qa_vec3 origin, velocity, angles;
 } qa_builtin_trajectory_update;
 
+typedef enum qa_builtin_actor_callback_kind {
+    QA_BUILTIN_ACTOR_USE, QA_BUILTIN_ACTOR_PAIN, QA_BUILTIN_ACTOR_DIE
+} qa_builtin_actor_callback_kind;
+typedef struct qa_builtin_actor_callback_request {
+    qa_game_family family;
+    qa_actor_owner provider;
+    qa_actor_id self;
+    union {
+        struct { qa_actor_id other, activator; } use;
+        struct { qa_actor_id attacker; float damage, kick; } pain;
+        struct { qa_actor_id attacker, inflictor; float damage, kick; qa_vec3 point; } die;
+    } source;
+} qa_builtin_actor_callback_request;
+typedef bool (*qa_builtin_actor_callback_body)(void *,
+    const qa_builtin_actor_callback_request *, bool *, qa_error *);
+
 /* Borrowed capabilities, never an alternate world or outer game loop. The
  * application owns these services and forwards actor retirement to all of them.
  * A provider keeps its own typed extension state indexed by full actor IDs. */
@@ -163,6 +216,9 @@ typedef struct qa_builtin_services {
     bool (*weapon_trajectory)(void *, qa_actor_id projectile, const qa_body_state *,
                               uint64_t time_ns, qa_builtin_trajectory_update *, bool *changed,
                               qa_error *);
+    bool (*actor_callback)(void *, qa_builtin_actor_callback_kind,
+        const qa_builtin_actor_callback_request *, qa_builtin_actor_callback_body,
+        void *body_context, bool *result, qa_error *);
 } qa_builtin_services;
 
 typedef struct qa_builtin_spawn {

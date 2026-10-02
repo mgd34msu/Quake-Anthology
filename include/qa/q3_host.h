@@ -4,6 +4,9 @@
 #include "qa/native_host.h"
 #include "qa/q3_abi.h"
 #include "qa/network_q3.h"
+#include "qa/q3_host_browser.h"
+#include "qa/q3_host_files.h"
+#include "qa/q3_ui_client_state.h"
 
 typedef struct qa_q3_host qa_q3_host;
 typedef struct qa_scene_resources qa_scene_resources;
@@ -21,6 +24,8 @@ typedef struct qa_font_library qa_font_library;
 typedef struct qa_scene_image qa_scene_image;
 typedef struct qa_q3_ref_entity qa_q3_ref_entity;
 typedef struct qa_q3_refdef qa_q3_refdef;
+typedef struct qa_q3_movie_request qa_q3_movie_request;
+typedef struct qa_q3_system_movie qa_q3_system_movie;
 
 typedef struct qa_q3_host_calendar {
     int32_t second, minute, hour, day, month, year, weekday, year_day, is_dst;
@@ -76,6 +81,9 @@ typedef struct qa_q3_host_client_services {
     /* A bound initial UI can observe empty configstrings before gamestate.
      * The actual physical CLIENT/module lease must qualify that absence. */
     bool (*configstring_absent)(void *, qa_error *);
+    /* The physical module lease qualifies this UI's connection observation. */
+    void *ui_state_context;
+    bool (*ui_state)(void *, const qa_q3_host *, qa_q3_ui_client_state *, qa_error *);
 } qa_q3_host_client_services;
 
 typedef struct qa_q3_host_collision_services {
@@ -91,6 +99,10 @@ typedef struct qa_q3_host_presentation_services {
     /* The display owner supplies the fixed-width source glconfig record. */
     bool (*configuration)(void *, uint8_t out[11332], qa_error *);
     bool (*update_screen)(void *, qa_error *);
+    /* The actual source call opens its fullscreen decoder through this lease. */
+    void *system_movie_context;
+    bool (*system_movie)(void *, const qa_q3_host *, const qa_qvm_call *,
+        const qa_q3_movie_request *, qa_q3_system_movie *, qa_error *);
 } qa_q3_host_presentation_services;
 
 typedef enum qa_q3_host_cvar_namespace {
@@ -125,6 +137,13 @@ typedef struct qa_q3_host_cvar_entry_services {
         const qa_command_context *,qa_error *);
 } qa_q3_host_cvar_entry_services;
 
+/* CGAME reads the actual frame owner's effective HUD permission. The pure
+ * callback qualifies this exact physical host; it does not edit any cvar. */
+typedef struct qa_q3_host_cvar_status_services {
+    void *context;
+    bool (*visible)(void *,const qa_q3_host *,bool *,qa_error *);
+} qa_q3_host_cvar_status_services;
+
 /* Binding traps follow the actual retained configuration dictionary through
  * preparation and publication. Physical keys, focus and catcher ownership
  * stay on options.seat. The returned dictionary borrows the same physical
@@ -148,6 +167,9 @@ typedef struct qa_q3_host_render_services {
 /* Pure identity proof available only inside this host's actual RenderScene
  * enter/backend/leave bracket. A NULL source call denotes a native syscall. */
 bool qa_q3_host_render_scope_current(const qa_q3_host *, const qa_qvm_call *,
+    const void *frontend_lifetime, uint64_t service_owner, qa_qvm_role,
+    const qa_q3_presentation *);
+bool qa_q3_host_system_movie_scope_current(const qa_q3_host *, const qa_qvm_call *,
     const void *frontend_lifetime, uint64_t service_owner, qa_qvm_role,
     const qa_q3_presentation *);
 
@@ -180,6 +202,7 @@ typedef struct qa_q3_host_options {
     qa_command_context command_context;
     qa_vfs *mounts;
     qa_mount_id writable_mount;
+    qa_q3_host_write_view write_view;
     qa_scene_resources *scene_resources;
     qa_scene_world *scene_world;
     qa_scene_frame *scene_frame;
@@ -197,6 +220,9 @@ typedef struct qa_q3_host_options {
     bool remapped_bot_namespace;
     bool shared_bot_lifetime;
     qa_script_defines *script_globals;
+    /* CLIENT tables have a shared physical source namespace. The parent
+     * captures that table once; each CG/UI host retains this owner reference. */
+    uint64_t script_globals_owner;
     const char *script_date, *script_time;
     qa_q3_host_common_services common;
     qa_q3_host_server_services server;
@@ -205,8 +231,11 @@ typedef struct qa_q3_host_options {
     qa_q3_host_presentation_services presentation;
     qa_q3_host_cvar_services cvar_namespaces;
     qa_q3_host_cvar_entry_services cvar_entry;
+    qa_q3_host_cvar_status_services cvar_status;
     qa_q3_host_input_services input;
     qa_q3_host_render_services render;
+    /* The real UI browser continuation belongs to the retained source lease. */
+    qa_q3_host_browser_services browser;
     /* Original CGAME QVM submissions retain their current syscall token and
      * unmasked signed pointer. The source role owns this callback/context. */
     qa_q3_host_source_entity_fn source_entity;
@@ -268,6 +297,9 @@ typedef struct qa_q3_host_game_data {
     uint64_t entities_address, clients_address;
 } qa_q3_host_game_data;
 bool qa_q3_host_game_data_read(const qa_q3_host *, qa_q3_host_game_data *);
+/* Generic component declarations qualify original tables before any source
+ * call. This constructor uses real QVM offsets, without a synthetic trap. */
+bool qa_q3_host_game_data_bind(qa_q3_host *,qa_qvm *,const qa_q3_host_game_data *,qa_error *);
 bool qa_q3_host_entity(qa_q3_host *, uint32_t, qa_q3_entity *, qa_qvm_entity_shared *, qa_error *);
 bool qa_q3_host_player(qa_q3_host *, uint32_t, qa_q3_player *, qa_error *);
 /* Qualified guest adapters read original enum/flag words. Presentation
@@ -311,6 +343,10 @@ typedef struct qa_q3_host_cvar_cache {
  * real guest cache; a changed handle reports absent, never inferred status. */
 size_t qa_q3_host_cvar_cache_count(const qa_q3_host *);
 bool qa_q3_host_cvar_cache_read(const qa_q3_host *,size_t,qa_q3_host_cvar_cache *,bool *found,qa_error *);
+/* After restoring the real frame permission, refresh only the retained
+ * original records through the same cvar Update path. Changed guest handles
+ * remove their records. A failure preserves the remaining inventory. */
+bool qa_q3_host_cvar_cache_refresh(qa_q3_host *,qa_error *);
 typedef struct qa_q3_host_client_context {
     qa_session *session;
     qa_qvm_role role;

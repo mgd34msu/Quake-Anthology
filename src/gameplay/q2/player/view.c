@@ -428,6 +428,8 @@ bool q2_player_build_view(qa_q2_game *g, q2_actor *a, const qa_q2_player_movemen
     if (players->fade_ns)
         view.blend = (qa_q2_blend){
             0, 0, 0, q2_clamp(1 - (q2_seconds_left(players->fade_ns, g->now_ns) - .3f), 0, 1)};
+    a->wire_view = (qa_q2_wire_view){.view = view, .frame = g->wire_frame,
+        .time_ns = g->now_ns, .present = true};
     if (!q2_player_emit(
             g, &(qa_q2_player_event){.kind = QA_Q2_PLAYER_VIEW, .actor = a->id, .view = view}, e))
         return false;
@@ -439,6 +441,8 @@ bool q2_player_build_view(qa_q2_game *g, q2_actor *a, const qa_q2_player_movemen
         s->event = 2;
     if (s->event) {
         uint32_t event = s->event;
+        a->wire_event = event;
+        a->wire_event_frame = g->wire_frame;
         s->event = 0;
         if (!qa_builtin_emit(&g->services,
                              &(qa_builtin_event){.kind = QA_BUILTIN_ANIMATION,

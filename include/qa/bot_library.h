@@ -200,6 +200,9 @@ bool qa_bot_weapons_load(qa_bot_library *, const char *, size_t weapon_capacity,
                          size_t projectile_capacity, qa_bot_weapons **, qa_error *);
 void qa_bot_weapons_retain(qa_bot_weapons *);
 void qa_bot_weapons_release(qa_bot_weapons *);
+/* Metadata is projected from the retained raw source allocation on each
+ * read. Its array/path spans last until the next read or release. Native
+ * source algorithms and ABI copies use the actual byte getters. */
 const qa_bot_weapons_view *qa_bot_weapons_read(const qa_bot_weapons *);
 bool qa_bot_weapons_restore(const qa_bot_weapons_view *, qa_bot_weapons **, qa_error *);
 typedef struct qa_bot_weapon_selector qa_bot_weapon_selector;

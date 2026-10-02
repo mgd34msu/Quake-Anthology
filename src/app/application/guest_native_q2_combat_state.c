@@ -388,6 +388,7 @@ bool application_q2_combat_armor_read(application_q2_combat_actor *a, qa_armor *
         if (out->powered.kind != QA_POWER_NONE && !count(p, client, p->cells, &out->powered.cells, error)) return false;
     }
     if (out->powered.kind != QA_POWER_NONE) {
+        out->powered.source_kind = QA_POWER_SOURCE_Q2;
         out->powered.source_owner = p->engine->provider->owner;
         out->powered.source_edition = p->kex ? QA_Q2_POWER_ARMOR_RERELEASE : QA_Q2_POWER_ARMOR_CLASSIC;
     }
@@ -399,6 +400,7 @@ bool application_q2_combat_armor_validate(void *opaque, const qa_armor *armor, q
     if (!armor || !qa_armor_validate(armor, error) || !application_q2_combat_armor_read(a, &actual, error)) return false;
     if ((armor->regular.kind != QA_ARMOR_NONE && armor->regular.kind != QA_ARMOR_Q2) ||
         armor->powered.kind != actual.powered.kind ||
+        armor->powered.source_kind != actual.powered.source_kind ||
         armor->powered.source_owner != actual.powered.source_owner ||
         armor->powered.source_edition != actual.powered.source_edition)
         return application_fail(error, QA_ERROR_UNSUPPORTED, "Native armor requires its original tier and equipment activation");

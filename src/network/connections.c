@@ -27,6 +27,12 @@ static bool fail(qa_error *error, const char *message)
     return false;
 }
 
+uint32_t qa_network_protocol_seat_capacity(qa_net_protocol_id protocol)
+{
+    if (!qa_net_protocol_valid(protocol, NULL)) return 0;
+    return protocol.kind == QA_NET_Q2KEX_2023 ? 8u : 4u;
+}
+
 bool qa_net_client_id_equal(qa_net_client_id a, qa_net_client_id b)
 {
     return a.owner == b.owner && a.generation == b.generation && a.slot == b.slot;
@@ -103,6 +109,7 @@ bool qa_net_connections_add(qa_net_connections *table, const qa_net_connect *req
                              uint64_t now_ns, qa_net_client_id *out, qa_error *error)
 {
     if (table == NULL || table->admitting || request == NULL || out == NULL ||
+        request->seat_count > qa_network_protocol_seat_capacity(request->protocol) ||
         request->seat_count > SIZE_MAX / sizeof(qa_net_seat_binding) ||
         (request->seat_count != 0 && request->seats == NULL))
         return fail(error, "Invalid connection request");
@@ -240,7 +247,7 @@ bool qa_net_connections_checkpoint(const qa_net_connections *table, qa_net_write
         if (!qa_net_write_u64(w, slot->generation) || !qa_net_write_u8(w, slot->occupied) ||
             !qa_net_write_u8(w, slot->retired)) return false;
         if (!slot->occupied) continue;
-        if (c->seat_count > QA_NETWORK_MAX_SEATS)
+        if (c->seat_count > qa_network_protocol_seat_capacity(c->protocol))
             return qa_net_writer_fail(w, "Connection checkpoint seat extent exceeds its runtime owner");
         if (!qa_net_write_u32(w, c->attachment) || !q3_save_address(w, &c->endpoint) ||
             !qa_net_write_u32(w, c->protocol.kind) || !qa_net_write_u32(w, c->protocol.revision) ||
@@ -282,7 +289,7 @@ bool qa_net_connections_restore(qa_net_reader *r, uint64_t owner, uint32_t capac
         if (!qa_net_read_data(r, c->composition.bytes, 32)) goto failure;
         c->seat_count = qa_net_read_u32(r);
         char endpoint[256];
-        if (r->failed || c->seat_count > QA_NETWORK_MAX_SEATS || (unsigned)c->phase > QA_NET_ACTIVE ||
+        if (r->failed || c->seat_count > qa_network_protocol_seat_capacity(c->protocol) || (unsigned)c->phase > QA_NET_ACTIVE ||
             c->received_ns < c->connected_ns ||
             (c->attachment != QA_NET_LOCAL_SEAT && c->attachment != QA_NET_REMOTE && c->attachment != QA_NET_HEADLESS) ||
             (c->attachment == QA_NET_LOCAL_SEAT && c->seat_count != 1) ||
@@ -311,7 +318,8 @@ bool qa_net_connections_restore(qa_net_reader *r, uint64_t owner, uint32_t capac
                 }
         }
         for (uint32_t k = 0; k < i; ++k)
-            if (table->slots[k].occupied && qa_net_address_equal(&table->slots[k].client.endpoint, &c->endpoint, true)) {
+            if (table->slots[k].occupied && qa_net_address_equal(&table->slots[k].client.endpoint, &c->endpoint, true) &&
+                !(c->protocol.kind==QA_NET_UNIFIED_1 && table->slots[k].client.protocol.kind==QA_NET_UNIFIED_1)) {
                 qa_net_reader_fail(r, "Restored endpoint belongs to multiple clients"); goto failure;
             }
         qa_net_connect request = {.attachment = c->attachment, .endpoint = c->endpoint, .protocol = c->protocol,

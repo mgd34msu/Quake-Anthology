@@ -2,6 +2,7 @@
 #include "map_players_private.h"
 #include "native_q1_console.h"
 #include "native_q1_wire.h"
+#include "native_q1_composition.h"
 #include "native_maps.h"
 #include "map_travel_private.h"
 #include "qa/game_q1_bots.h"
@@ -67,23 +68,11 @@ static bool ctf_mode(source_call *call, qa_mode_id *out, qa_error *error)
 {
     if (!current(call, error)) return false;
     qa_application *app = call->application;
-    bool found = false, ambiguous = false;
-    for (size_t i = 0; app->modes && i < app->mode_count; ++i) {
-        qa_mode_id id = app->mode_ids[i];
-        qa_mode_view view;
-        if (!qa_modes_read(app->modes, id, &view, error)) return false;
-        if (!view.rules.enabled || view.rules.source != QA_MODE_THREEWAVE ||
-            application_mode_provider(app, id) != call->provider) continue;
-        if (app->primary_mode_ready && id.slot == app->primary_mode.slot &&
-            id.generation == app->primary_mode.generation) { *out = id; return true; }
-        ambiguous |= found;
-        found = true;
-        *out = id;
-    }
-    if (ambiguous)
-        return application_fail(error, QA_ERROR_ARGUMENT, "Q1 travel has ambiguous ThreeWave owners");
-    return found || application_fail(error, QA_ERROR_NOT_FOUND,
-        "Q1 travel has no actual ThreeWave source controller");
+    qa_mode_view view;
+    if (!application_native_q1_composition_mode(app, call->provider, out, error) ||
+        !qa_modes_read(app->modes, *out, &view, error) || !current(call, error)) return false;
+    return view.rules.source == QA_MODE_THREEWAVE ||
+        application_fail(error, QA_ERROR_ARGUMENT, "Q1 travel has no genuine ThreeWave source controller");
 }
 
 static bool ctf_read(void *opaque, qa_actor_id actor, qa_q1_travel_ctf *out, qa_error *error)
@@ -94,37 +83,15 @@ static bool ctf_read(void *opaque, qa_actor_id actor, qa_q1_travel_ctf *out, qa_
     if (!qa_actor_id_equal(actor, call->actor) || !ctf_mode(call, &mode, error) ||
         !qa_modes_ctf_read(call->application->modes, mode, actor, &view, error) ||
         !current(call, error)) return false;
-    qa_equipment_state equipment;
-    bool enabled = false;
-    if (qa_equipment_read(call->application->equipment, actor, &equipment)) {
-        enabled = equipment.selection.grapple == QA_GRAPPLE_THREEWAVE;
-        if (enabled && !equipment.sources.grapple)
-            return application_fail(error, QA_ERROR_ARGUMENT,
-                "Q1 CTF travel has an ownerless selected grapple");
-    } else {
-        const qa_launch_snapshot *snapshot = call->application->routing_snapshot;
-        if (!snapshot) snapshot = qa_application_launch(call->application);
-        const qa_launch_choices *choices = qa_launch_snapshot_choices(snapshot);
-        const application_player_record *record = NULL;
-        for (size_t i = 0; i < call->application->players->count; ++i)
-            if (qa_actor_id_equal(call->application->players->records[i].actor, actor)) {
-                record = call->application->players->records + i; break;
-            }
-        qa_equipment_selection selection;
-        qa_equipment_source_selection sources;
-        if (!record || !application_player_equipment_selection(call->application, choices,
-            actor, record->seat, &selection, &sources, error)) return false;
-        enabled = selection.grapple == QA_GRAPPLE_THREEWAVE;
-    }
     *out = (qa_q1_travel_ctf){.last_team = view.last_team, .status = view.status,
         .access = view.access, .start_map = view.start_map, .pregame_over = view.pregame_over,
-        .observer = view.observer, .grapple_enabled = enabled,
+        .observer = view.observer, .grapple_enabled = false,
         .grapple_disabled = view.grapple_disabled};
     return true;
 }
 
-static bool ctf_restore(void *opaque, qa_actor_id actor, int32_t last_team,
-    float status, float access, qa_error *error)
+static bool ctf_restore(void *opaque, qa_actor_id actor, double last_team,
+    double status, double access, qa_error *error)
 {
     source_call *call = opaque;
     qa_mode_id mode;

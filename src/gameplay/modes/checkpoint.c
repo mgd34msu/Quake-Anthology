@@ -1,6 +1,35 @@
 #include "internal.h"
 
 static bool source_objects_current(qa_modes *m, qa_error *e) {
+    bool expected = false;
+    qa_actor_owner source = 0;
+    qa_mode_source kind = QA_MODE_Q1;
+    size_t found = 0;
+    if (m->options.hooks.q1_composition_expected && !MODE_CALLBACK(m,
+        m->options.hooks.q1_composition_expected(m->options.hooks.context, m,
+            &expected, &source, &kind, e))) return false;
+    for (uint32_t index = 0; index < m->mode_capacity; ++index) {
+        const mode_instance *v = &m->instances[index];
+        if (!v->active || v->value.origin != QA_MODE_NATIVE_Q1_COMPOSITION) continue;
+        if (!expected || v->value.source_owner != source || v->value.rules.source != kind || found++)
+            return mode_fail(e, "saved Q1 composition differs from the actual physical GAME");
+        if (!m->options.hooks.q1_composition_current || !MODE_CALLBACK(m,
+            m->options.hooks.q1_composition_current(m->options.hooks.context,
+                v->value.source_owner, v->value.rules.source, e))) return false;
+        for (uint32_t j = 0; j < m->actor_capacity; ++j) {
+            const mode_member *p = &v->members[j];
+            if (!p->joined) continue;
+            bool observer;
+            if (!mode_q1_source_current(m, &m->instances[index], p->actor, &observer, e))
+                return false;
+            if (p->q1.rogue_state.registry &&
+                (!m->options.hooks.q1_rogue_state_current || !MODE_CALLBACK(m,
+                    m->options.hooks.q1_rogue_state_current(m->options.hooks.context,
+                        v->value.source_owner, p->actor, p->q1.rogue_state, e)))) return false;
+        }
+    }
+    if (expected && !found)
+        return mode_fail(e, "actual physical Q1 GAME has no source composition continuation");
     for (uint32_t index = 0; index < m->actor_capacity; ++index) {
         const mode_object *object = &m->objects[index];
         if (!object->active || !object->q3_source_owned) continue;
@@ -89,7 +118,7 @@ static bool checkpoint_capture(qa_modes *m, qa_modes_checkpoint *out, qa_error *
     for (uint32_t i = 0; i < m->mode_capacity; ++i)
         if (m->instances[i].active && !mode_relic_source_current(m, &m->instances[i], e)) return false;
     qa_modes_checkpoint saved = {
-        .version = 14, .random = m->random, .attack_sequence = m->attack_sequence};
+        .version = 16, .random = m->random, .attack_sequence = m->attack_sequence};
     saved.players = calloc(m->actor_capacity, sizeof(*saved.players));
     saved.modes = calloc(m->mode_capacity, sizeof(*saved.modes));
     saved.objects = calloc(m->actor_capacity, sizeof(*saved.objects));
@@ -227,11 +256,37 @@ static bool validate_instance(qa_modes *m, const qa_mode_checkpoint *v, qa_error
         (v->spawn_count && !v->spawns) || v->spawn_count > SIZE_MAX / sizeof(*v->spawns) ||
         (v->item_count && !v->items) || v->item_count > SIZE_MAX / sizeof(*v->items))
         return mode_fail(e, "invalid saved mode instance");
+    if (v->value.origin < QA_MODE_CHOSEN_RULE ||
+        v->value.origin > QA_MODE_NATIVE_Q1_COMPOSITION ||
+        (v->value.origin == QA_MODE_CHOSEN_RULE && v->value.source_owner) ||
+        (v->value.origin == QA_MODE_NATIVE_Q1_COMPOSITION &&
+            (!v->value.source_owner || !m->options.hooks.q1_composition_current ||
+             !m->options.hooks.q1_composition_expected ||
+             !m->options.hooks.q1_composition_player_current ||
+             (v->value.rules.source == QA_MODE_ROGUE &&
+                (!m->options.hooks.q1_rogue_state || !m->options.hooks.q1_rogue_state_current ||
+                 !m->options.hooks.q1_rogue_number_read || !m->options.hooks.q1_rogue_number_write)) ||
+             (v->value.rules.source != QA_MODE_THREEWAVE &&
+              v->value.rules.source != QA_MODE_ROGUE) ||
+             !qa_strings_text(qa_session_strings(m->options.services.session),
+                 v->value.source_owner).size)))
+        return mode_fail(e, "invalid saved physical Q1 composition identity");
     if (!reference(m, v->rogue_spawn_spot) ||
         (v->rogue_spawn_spot.registry && v->value.rules.source != QA_MODE_ROGUE))
         return mode_fail(e, "invalid saved Rogue rune spawn cursor");
     for (size_t i = 0; i < v->member_count; ++i) {
         const mode_member *p = &v->members[i];
+        bool physical = v->value.origin == QA_MODE_NATIVE_Q1_COMPOSITION;
+        bool rogue = physical && v->value.rules.source == QA_MODE_ROGUE;
+        if (!reference(m, p->q1.rogue_state) || (p->q1.rogue_state.registry && !rogue))
+            return mode_fail(e, "saved Rogue team state has no physical source owner");
+        for (size_t j = 0; j < QA_Q1_SOURCE_NUMBERS; ++j) {
+            double number = p->q1.numbers[j];
+            bool source_field = physical && !rogue && j < QA_Q1_ROGUE_STEAM;
+            if (!source_field &&
+                (number != 0 || signbit(number)))
+                return mode_fail(e, "invalid saved physical Q1 player number");
+        }
         if (!p->joined || !mode_live(m, p->actor) || !reference(m, p->flag) ||
             !reference(m, p->relic) || p->spawn_state < 0 || p->spawn_state > 2 ||
             p->introduction_frames < 0 || p->suicide_count < 0 ||
@@ -407,7 +462,7 @@ static bool restore_instance(qa_modes *m, const qa_mode_checkpoint *saved, qa_er
 }
 static bool checkpoint_restore(qa_modes *m, const qa_modes_checkpoint *saved,
                                 bool reconnect, qa_error *e) {
-    if (!m || m->callback_depth || !saved || saved->version != 14 ||
+    if (!m || m->callback_depth || !saved || saved->version != 16 ||
         saved->player_count > m->actor_capacity || saved->mode_count > m->mode_capacity ||
         saved->object_count > m->actor_capacity ||
         saved->external_objective_count > m->objective_capacity ||
@@ -456,6 +511,10 @@ static bool checkpoint_restore(qa_modes *m, const qa_modes_checkpoint *saved,
         for (size_t j = 0; j < i; ++j) {
             if (saved->modes[i].id.slot == saved->modes[j].id.slot)
                 return mode_fail(e, "duplicate saved mode slot");
+            if (saved->modes[i].value.origin == QA_MODE_NATIVE_Q1_COMPOSITION &&
+                saved->modes[j].value.origin == QA_MODE_NATIVE_Q1_COMPOSITION &&
+                saved->modes[i].value.source_owner == saved->modes[j].value.source_owner)
+                return mode_fail(e, "duplicate saved physical Q1 composition");
             for (size_t a = 0; a < saved->modes[i].item_count; ++a)
                 for (size_t b = 0; b < saved->modes[j].item_count; ++b)
                     if (saved->modes[i].items[a].inventory == saved->modes[j].items[b].inventory)
@@ -602,7 +661,8 @@ static bool checkpoint_restore(qa_modes *m, const qa_modes_checkpoint *saved,
         !qa_builtin_observations(&m->options.services, &m->observations, e))
         return false;
     for (size_t i = 0; i < saved->mode_count; ++i)
-        if (!qa_modes_rank(m, saved->modes[i].id, e))
+        if (saved->modes[i].value.origin != QA_MODE_NATIVE_Q1_COMPOSITION &&
+            !qa_modes_rank(m, saved->modes[i].id, e))
             return false;
     for (size_t i = 0; i < saved->player_count; ++i)
         if (!qa_modes_publish_items(m, saved->players[i].value.actor, e))
@@ -646,7 +706,8 @@ bool qa_modes_reconnect(qa_modes *m, qa_error *e) {
     if (!qa_builtin_players(&m->options.services, &m->players_order, e) ||
         !qa_builtin_observations(&m->options.services, &m->observations, e)) return false;
     for (uint32_t i = 0; i < m->mode_capacity; ++i)
-        if (m->instances[i].active) {
+        if (m->instances[i].active &&
+            m->instances[i].value.origin != QA_MODE_NATIVE_Q1_COMPOSITION) {
             mode_instance *v = &m->instances[i];
             if (!qa_modes_rank(m, v->id, e)) return false;
         }

@@ -9,6 +9,8 @@ typedef struct guest_pe_memory_view {
     uint64_t base;
     size_t bytes;
     bool flat;
+    /* Initial installation anchors. Range protection can add real fragments;
+     * enumerate the borrowed lower guest for its complete current inventory. */
     const uint64_t *mappings;
     size_t mapping_count;
 } guest_pe_memory_view;
@@ -22,7 +24,20 @@ typedef struct guest_pe_memory_view {
  * that owner exposes no guest and must be passed to close again. */
 bool guest_pe_memory_open(const guest_pe *, const qa_native_guest_options *,
     guest_pe_memory **, qa_error *);
+/* Additional libraries share the actual process guest. This attachment owns
+ * its image pages only. A terminal failure retains an incomplete attachment;
+ * destroy the whole lower guest before abandoning that attachment. */
+bool guest_pe_memory_attach(const guest_pe *, qa_native_guest *, guest_pe_memory **, qa_error *);
 bool guest_pe_memory_close(guest_pe_memory **, qa_error *);
+/* Capture/adopt the actual complete image attachment. Cold adoption allocates
+ * host records only and validates its retained backing fragments; it never
+ * maps RAM, applies relocations, binds imports or invokes source code. The
+ * primary flag transfers lower destruction responsibility to this owner. */
+bool guest_pe_memory_checkpoint(const guest_pe_memory *, qa_buffer *, qa_error *);
+bool guest_pe_memory_adopt(const guest_pe *, qa_native_guest *, qa_bytes, bool,
+    guest_pe_memory **, qa_error *);
+/* Borrowed attachments only, after successful whole lower destruction. */
+void guest_pe_memory_abandon(guest_pe_memory **);
 /* Borrowed: destruction remains with this owner. Mapping queries read the
  * current lower records, including later real protection changes. */
 qa_native_guest *guest_pe_memory_guest(guest_pe_memory *);

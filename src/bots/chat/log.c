@@ -99,29 +99,38 @@ static bool reply_keys(chat_log_output *output, const qa_bot_chat_asset_view *vi
     return write_text(output, "{\n", error);
 }
 
-static bool dump(chat_log_output *output, const qa_bot_chat_asset_view *view, qa_error *error) {
+static bool dump(chat_log_output *output,qa_bot_chat_asset *asset,qa_error *error) {
+    const qa_bot_chat_asset_view *view=&asset->view;
     if (view->kind == QA_BOT_CHAT_SYNONYMS) {
         for (size_t index = 0; index < view->group_count; ++index) {
-            const qa_bot_chat_synonyms *group = view->groups + index;
+            qa_bot_chat_synonyms group;
+            if(!bot_chat_packed_group(asset,(uint32_t)index,&group,error)) return false;
             int32_t context;
-            memcpy(&context, &group->context, sizeof(context));
+            memcpy(&context, &group.context, sizeof(context));
             if (!write_format(output, error, "%d : [", context)) return false;
-            for (uint32_t entry = 0; entry < group->entries.count; ++entry) {
-                const qa_bot_chat_synonym *synonym = view->synonyms + group->entries.first + entry;
+            for (uint32_t entry = 0; entry < group.entries.count; ++entry) {
+                qa_bot_chat_synonym synonym;
+                if(!bot_chat_packed_entry(asset,group.entries.first+entry,&synonym,error)) return false;
                 char weight[64];
-                if (!qa_format_fixed(synonym->weight, 2, weight, sizeof(weight), error) ||
-                    !write_format(output, error, "(\"%s\", %s)", synonym->text, weight)) return false;
-                if (entry + 1 < group->entries.count && !write_text(output, ", ", error)) return false;
+                if (!qa_format_fixed(synonym.weight, 2, weight, sizeof(weight), error) ||
+                    !write_format(output, error, "(\"%s\", %s)", synonym.text, weight)) return false;
+                if (entry + 1 < group.entries.count && !write_text(output, ", ", error)) return false;
             }
             if (!write_text(output, "]\n", error)) return false;
         }
     } else if (view->kind == QA_BOT_CHAT_RANDOMS) {
         for (size_t index = 0; index < view->list_count; ++index) {
-            const qa_bot_chat_list *list = view->lists + index;
-            if (!write_format(output, error, "%s = {", list->name)) return false;
-            for (uint32_t message = 0; message < list->messages.count; ++message) {
-                if (!write_format(output, error, "\"%s\"", view->messages[list->messages.first + message]) ||
-                    !write_text(output, message + 1 < list->messages.count ? ", " : "}\n", error)) return false;
+            qa_bot_chat_list list=view->lists[index];const char *name;int32_t count;
+            if(!bot_chat_packed_list(asset,(uint32_t)index,&name,&count,error) ||
+               !write_format(output, error, "%s = {",name)) return false;
+            for (uint32_t message = 0; message < list.messages.count; ++message) {
+                const char *text;
+                if(asset->packed_source) {
+                    const bot_chat_packed_member *group=&asset->packed_source->groups[index];
+                    if(!bot_chat_packed_message(asset,group->first+group->count-1-message,&text,error)) return false;
+                } else text=view->messages[list.messages.first+message];
+                if (!write_format(output, error, "\"%s\"",text) ||
+                    !write_text(output, message + 1 < list.messages.count ? ", " : "}\n", error)) return false;
             }
         }
     } else if (view->kind == QA_BOT_CHAT_MATCHES) {
@@ -152,7 +161,7 @@ bool qa_bot_chat_dump_asset(qa_bot_log *log, qa_bot_chat_asset *asset, qa_error 
     if (!file) return true;
     qa_bot_chat_asset_retain(asset);
     chat_log_output output = {.log = log, .file = file, .raw = true};
-    bool okay = dump(&output, qa_bot_chat_asset_read(asset), error);
+    bool okay = dump(&output,asset,error);
     qa_bot_chat_asset_release(asset);
     return okay;
 }
@@ -163,6 +172,7 @@ bool qa_bot_chat_log_initial(qa_bot_log *log, qa_bot_chat_asset *asset, qa_error
         return false;
     }
     if (!log) return true;
+    if(asset->initial_source && !chat_initial_asset_refresh(asset,error)) return false;
     qa_bot_chat_asset_retain(asset);
     const qa_bot_chat_asset_view *view = qa_bot_chat_asset_read(asset);
     chat_log_output output = {.log = log};
@@ -172,8 +182,11 @@ bool qa_bot_chat_log_initial(qa_bot_log *log, qa_bot_chat_asset *asset, qa_error
         okay = write_format(&output, error, " type \"%s\"", list->name) &&
             write_text(&output, " {", error) &&
             write_format(&output, error, "  numchatmessages = %u", list->messages.count);
-        for (uint32_t message = 0; okay && message < list->messages.count; ++message)
-            okay = write_format(&output, error, "  \"%s\"", view->messages[list->messages.first + message]);
+        for (uint32_t message = 0; okay && message < list->messages.count; ++message) {
+            const char *text;
+            okay=chat_asset_message_text(asset,list->messages.first+message,&text,error) &&
+                write_format(&output, error, "  \"%s\"",text);
+        }
         if (okay) okay = write_text(&output, " }", error);
     }
     if (okay) okay = write_text(&output, "}", error);

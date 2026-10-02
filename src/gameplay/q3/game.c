@@ -503,7 +503,8 @@ bool q3_player_event(qa_q3_game *game, qa_actor_id actor, int32_t code, int32_t 
 bool q3_add_event(qa_q3_game *game, qa_actor_id actor, int32_t code, int32_t parameter,
                    qa_error *error) {
     uint32_t slot;
-    if (qa_q3_source_actor_slot(game, actor, &slot, NULL)) {
+    bool physical = qa_q3_source_actor_slot(game, actor, &slot, NULL);
+    if (physical) {
         if (!q3_wire_add_event(game, actor, code, parameter, error)) return false;
     } else {
         q3_actor *entry = q3_actor_get(game, actor);
@@ -517,6 +518,9 @@ bool q3_add_event(qa_q3_game *game, qa_actor_id actor, int32_t code, int32_t par
     if (!qa_actors_get(qa_session_actors(game->options.services.session), actor)) return true;
     qa_body_state body;
     if (!q3_source_body_read(game, actor, &body, error)) return false;
+    if (!physical && game->options.hooks.source_participant_event &&
+        !game->options.hooks.source_participant_event(game->options.hooks.context,
+            actor, code, parameter, body.origin, game->now_ms, error)) return false;
     return !q3_actor_get(game, actor) ||
            q3_event(game, actor, (qa_actor_id){0}, QA_BUILTIN_ANIMATION, code, parameter,
                     body.origin, qa_v3(0, 0, 0), qa_v3(0, 0, 0), error);
@@ -669,9 +673,15 @@ bool q3_damage(qa_q3_game *game, qa_actor_id target, qa_actor_id attacker, qa_ac
                    .weapon = qa_q3_weapon_item(game, weapon, false),
                    .weapon_provider = game->options.owner,
                    .combat_provider = policy,
+                   .inventory_provider = game->options.owner,
+                   .movement_provider = game->options.owner,
                    .powerup_owner = game->options.owner,
                    .powerup_applied = true,
                    .cause = {.kind = QA_CAUSE_Q3, .source.q3 = {method, flags}}}};
+    if (game->options.hooks.attack_providers &&
+        !game->options.hooks.attack_providers(game->options.hooks.context, attacker,
+            request.attack.weapon, &request.attack.inventory_provider,
+            &request.attack.movement_provider, error)) return false;
     if (!qa_attack_next(&game->attack_sequence, &request.attack, error))
         return false;
     qa_damage_outcome local = {0};
@@ -794,6 +804,7 @@ void qa_q3_actor_released(qa_q3_game *game, qa_actor_record record) {
                 qa_actor_id_equal(owner->state.player.hook, record.id)) {
                 owner->state.player.hook = (qa_actor_id){0};
                 owner->state.player.grapple_pull = false;
+                owner->state.player.selected_pm_flags &= ~0x800u;
             }
             q3_actor *attached = q3_actor_get(game, missile.attached);
             if (attached && attached->kind == Q3_ACTOR_PLAYER &&

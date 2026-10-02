@@ -40,6 +40,8 @@ typedef struct mount {
     package *archive;
     qa_fs_file *archive_file;
     qa_fs_root *root;
+    qa_fs_object_reference *root_references;
+    size_t root_reference_count;
     qa_fs_identity identity;
     bool writable;
     bool user_overlay;
@@ -57,6 +59,17 @@ typedef struct prefix_order {
     char *prefix;
     qa_mount_id *order;
 } prefix_order;
+typedef struct resource_origin {
+    struct resource_origin *next;
+    qa_mount_id mount;
+    uint64_t resource;
+    qa_vfs_resource_origin receipt;
+} resource_origin;
+typedef struct retained_read {
+    struct retained_read *next;
+    uint64_t resource;
+    qa_vfs_read_reference recipe;
+} retained_read;
 struct qa_vfs {
     qa_resource_pool *pool;
     mount **mounts;
@@ -72,6 +85,8 @@ struct qa_vfs {
     size_t *read_slots;
     size_t read_slot_count;
     uint64_t read_generation;
+    resource_origin *origins;
+    retained_read *history;
     bool q3_demo;
 };
 struct qa_vfs_file {
@@ -82,7 +97,10 @@ struct qa_vfs_file {
 };
 void vfs_package_release(package *);
 void vfs_mount_free(mount *);
-bool vfs_read_record(qa_vfs *, mount *, qa_resource *, const char *, const char *, const char *, const char *, qa_error *);
+bool vfs_root_reference_add(mount *, const qa_fs_object_reference *, qa_error *);
+bool vfs_read_record(qa_vfs *, mount *, qa_resource *, const char *, const char *, const char *, const char *, bool, const qa_vfs_read_opening *, qa_error *);
+bool vfs_origin_record(qa_vfs *, const mount *, const qa_resource *, qa_error *);
+bool vfs_history_record(qa_vfs *, const qa_vfs_read_reference *, qa_error *);
 bool vfs_read_valid(const qa_vfs *, const qa_vfs_read_reference *, qa_error *);
 bool vfs_demo_package_allowed(const package *, qa_error *);
 #endif

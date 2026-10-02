@@ -1,6 +1,7 @@
 #include "internal.h"
 #include "native_q3_console.h"
 #include "engine_shutdown.h"
+#include "unified_q3_events.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -45,7 +46,8 @@ bool application_native_q3_console_print(void *opaque, const char *text,
         free(retained);
         return false;
     }
-    application_console_print(application, &context, retained);
+    bool emitted = application_unified_q3_text(source, APPLICATION_Q3_SOURCE_PRINT, 0, retained, error);
+    if (emitted) application_console_print(application, &context, retained);
     bool current = source->kind == APPLICATION_PROVIDER_Q3 &&
         source->application == application && source->state.q3 == game &&
         source->native_q3_console == console && source->owner == owner &&
@@ -53,8 +55,8 @@ bool application_native_q3_console_print(void *opaque, const char *text,
         qa_application_command_context_active(application, &context);
     application_native_q3_console_release(source);
     free(retained);
-    return current || application_fail(error, QA_ERROR_ARGUMENT,
-        "Q3 print callback retired or replaced its source publication");
+    return emitted && (current || application_fail(error, QA_ERROR_ARGUMENT,
+        "Q3 print callback retired or replaced its source publication"));
 }
 
 bool application_native_console_motion(void *opaque, qa_actor_id actor,
@@ -194,7 +196,8 @@ bool application_native_horde_spawn_loot(void *opaque, qa_mode_id mode,
         return application_fail(error, QA_ERROR_UNSUPPORTED,
                                 "selected Horde source has no native loot adapter");
     qa_q1_spawn native = {.classname = name, .origin = spawn->body.origin,
-                          .angles = spawn->body.angles, .spawnflags = spawn->spawnflags};
+                          .angles = spawn->body.angles, .spawnflags = spawn->spawnflags,
+                          .source_movement_flags = UINT32_C(256)};
     qa_q1_game_operation operation = {0};
     if (!qa_q1_game_operation_begin(provider->state.q1, &operation, error)) return false;
     bool okay = qa_q1_pickup_spawn_external(provider->state.q1, &native, &spawn->body,

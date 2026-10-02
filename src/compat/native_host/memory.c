@@ -185,9 +185,9 @@ void native_host_temporary_free(qa_native_host *host, qa_native_address address)
         qa_native_free(host->instance, address, &ignored);
 }
 
-static native_host_cvar *find_cvar(qa_native_host *host, const char *name)
+static native_host_cvar_record *find_cvar(qa_native_host *host, const char *name)
 {
-    for (native_host_cvar *record = host->cvar_shadows; record; record = record->next)
+    for (native_host_cvar_record *record = host->cvar_shadows; record; record = record->next)
         if (!strcmp(record->name, name))
             return record;
     return NULL;
@@ -207,8 +207,8 @@ bool native_host_store_pointer(const qa_native_host *host, uint8_t *bytes,
     return true;
 }
 
-static bool write_cvar(qa_native_host *host, native_host_cvar *record,
-                       const qa_cvar_view *view, native_host_cvar *next, qa_error *error)
+static bool write_cvar(qa_native_host *host, native_host_cvar_record *record,
+                       const qa_cvar_view *view, native_host_cvar_record *next, qa_error *error)
 {
     qa_native_address name, value, latched = 0;
     if (!native_host_string_address(host, view->name, &name, error) ||
@@ -243,9 +243,9 @@ static bool write_cvar(qa_native_host *host, native_host_cvar *record,
 }
 
 static bool ensure_cvar_shadow(qa_native_host *host, const qa_cvar_view *view,
-                               native_host_cvar **out, qa_error *error)
+                               native_host_cvar_record **out, qa_error *error)
 {
-    native_host_cvar *record = find_cvar(host, view->name);
+    native_host_cvar_record *record = find_cvar(host, view->name);
     if (record) {
         *out = record;
         return true;
@@ -273,11 +273,11 @@ bool native_host_refresh_cvars(qa_native_host *host, qa_error *error)
     if (!host->cvars)
         return native_host_fail(error, QA_ERROR_UNSUPPORTED, 0,
                                 "native host has no cvar registry");
-    native_host_cvar *previous = NULL;
+    native_host_cvar_record *previous = NULL;
     size_t count = qa_cvars_count(host->cvars);
     for (size_t index = count; index > 0; --index) {
         const qa_cvar_view *view = qa_cvars_at(host->cvars, index - 1u);
-        native_host_cvar *record;
+        native_host_cvar_record *record;
         if (!view || !ensure_cvar_shadow(host, view, &record, error) ||
             !write_cvar(host, record, view, previous, error))
             return false;
@@ -303,7 +303,7 @@ bool native_host_cvar(qa_native_host *host, const char *name, const char *value,
     if (!native_host_refresh_cvars(host, error))
         return false;
     view = qa_cvars_find(host->cvars, name);
-    native_host_cvar *record = view ? find_cvar(host, view->name) : NULL;
+    native_host_cvar_record *record = view ? find_cvar(host, view->name) : NULL;
     if (!record)
         return native_host_fail(error, QA_ERROR_NOT_FOUND, 0,
                                 "native cvar registration did not publish a record");

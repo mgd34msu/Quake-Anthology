@@ -9,7 +9,9 @@ struct frontend_startup_config {
     startup_script scripts[5];
     size_t count, index, depth, capacity;
     char **stack;
-    bool active, completed, defaults, archive, running;
+    char *image_text;
+    qa_console *image_console;
+    bool active, completed, defaults, archive, running, images;
     qa_error failure;
 };
 static bool fail(qa_error *error, qa_status code, const char *text)
@@ -50,12 +52,37 @@ frontend_startup_config *frontend_startup_config_create(const frontend_startup_c
     }
     return owner;
 }
+frontend_startup_config *frontend_startup_images_create(const qa_command_context *command,qa_bytes bytes,qa_error *error)
+{
+    if (!command || command->script || command->origin==QA_COMMAND_REMOTE || command->dialect>QA_CONSOLE_Q3 ||
+        bytes.size==SIZE_MAX || (bytes.size && (!bytes.data || memchr(bytes.data,0,bytes.size))))
+        return fail(error,QA_ERROR_ARGUMENT,"Image configuration requires its actual local source programme"),NULL;
+    frontend_startup_config *owner=calloc(1,sizeof(*owner));
+    if (!owner) return fail(error,QA_ERROR_MEMORY,"Allocating image configuration programme"),NULL;
+    owner->image_text=malloc(bytes.size+1);
+    if (!owner->image_text) { free(owner); return fail(error,QA_ERROR_MEMORY,"Retaining image configuration bytes"),NULL; }
+    if (bytes.size) memcpy(owner->image_text,bytes.data,bytes.size);
+    owner->image_text[bytes.size]=0;
+    owner->options.command=*command; owner->images=true; return owner;
+}
+bool frontend_startup_images_command_current(const frontend_startup_config *owner,
+    const qa_console *console,const qa_command_context *command)
+{
+    return owner && owner->images && owner->running && owner->image_console==console &&
+        console && !qa_console_idle(console) && same_owner(command,&owner->options.command) &&
+        command->console_text==owner->options.command.console_text;
+}
+bool frontend_startup_images_completed(const frontend_startup_config *owner,const qa_console *console)
+{
+    return owner && owner->images && owner->completed && !owner->running &&
+        owner->image_console==console && console && qa_console_idle(console) && !qa_console_pending(console);
+}
 bool frontend_startup_config_destroy(frontend_startup_config *owner, qa_error *error)
 {
     if (!owner) return true;
     if (owner->running) return fail(error,QA_ERROR_ARGUMENT,"Startup configuration is executing");
     for (size_t i=0;owner->stack && i<owner->depth;++i) free(owner->stack[i]);
-    free(owner->stack); free(owner); return true;
+    free(owner->stack); free(owner->image_text); free(owner); return true;
 }
 static bool push(frontend_startup_config *owner,const char *name,qa_error *error)
 {
@@ -76,6 +103,7 @@ bool frontend_startup_config_read(frontend_startup_config *owner,const qa_comman
 {
     if (!owner || !name || !out || !lease || !same_owner(source,&owner->options.command))
         return fail(error,QA_ERROR_ARGUMENT,"Script read leaves its prepared source lifetime");
+    if (owner->images) return false;
     frontend_script_scope scope=owner->options.seat_scope?FRONTEND_SCRIPT_SEAT:FRONTEND_SCRIPT_USER;
     if (owner->active) {
         const startup_script *active=owner->scripts+owner->index-1;
@@ -105,7 +133,7 @@ void frontend_startup_config_script_complete(frontend_startup_config *owner,
     const qa_command_context *source,const char *name,bool success)
 {
     (void)success;
-    if (!owner || !owner->active || !same_owner(source,&owner->options.command)) return;
+    if (!owner || owner->images || !owner->active || !same_owner(source,&owner->options.command)) return;
     if (!owner->depth || !name || strcmp(name,owner->stack[owner->depth-1])) return;
     bool direct=owner->depth==1;
     bool q1_child=owner->depth==2 && !strcmp(owner->scripts[owner->index-1].name,"quake.rc");
@@ -127,7 +155,7 @@ void frontend_startup_config_script_complete(frontend_startup_config *owner,
 }
 bool frontend_startup_config_restrict_shared(const frontend_startup_config *owner)
 {
-    if (!owner || !owner->options.seat_scope || !owner->active) return false;
+    if (!owner || owner->images || !owner->options.seat_scope || !owner->active) return false;
     const char *name=owner->scripts[owner->index-1].name;
     return !strcmp(name,"config.cfg") || !strcmp(name,"q3config.cfg");
 }
@@ -137,7 +165,27 @@ bool frontend_startup_config_advance(frontend_startup_config *owner,qa_console *
         return fail(error,QA_ERROR_ARGUMENT,"Startup frame requires its idle exclusive source console");
     *complete=false;
     if (owner->failure.code!=QA_OK) { if (error) *error=owner->failure; return false; }
+    if (owner->images && ((owner->image_console && owner->image_console!=console) ||
+        (!owner->index && qa_console_pending(console))))
+        return fail(error,QA_ERROR_ARGUMENT,"Image programme requires its actual initially empty console");
     if (owner->completed) { *complete=true; return true; }
+    if (owner->images) {
+        owner->image_console=console; owner->running=true;
+        bool ok=true;
+        if (!owner->index) {
+            ok=qa_console_append(console,&owner->options.command,owner->image_text,error);
+            if (ok) owner->index=1;
+        }
+        if (ok) ok=qa_console_drain(console,0,NULL,error);
+        owner->running=false;
+        if (!ok) {
+            if (error && error->code!=QA_OK) owner->failure=*error;
+            else qa_error_set(&owner->failure,QA_ERROR_ARGUMENT,0,"Image configuration programme failed");
+            return false;
+        }
+        owner->completed=!qa_console_drain_yielded(console) && !qa_console_pending(console);
+        *complete=owner->completed; return true;
+    }
     owner->running=true; bool ok=true;
     if (!owner->options.seat_scope && owner->options.command.dialect==QA_CONSOLE_QW &&
         owner->options.command.origin==QA_COMMAND_SERVER && !owner->archive) {
@@ -218,7 +266,7 @@ static bool fields(qa_source_save_io *io,frontend_startup_config *owner)
 }
 bool frontend_startup_config_checkpoint(const frontend_startup_config *owner,qa_buffer *out,qa_error *error)
 {
-    if (!owner || owner->running || !out || out->data || out->size)
+    if (!owner || owner->images || owner->running || !out || out->data || out->size)
         return fail(error,QA_ERROR_ARGUMENT,"Startup capture requires its returned phase owner");
     frontend_startup_config state=*owner; qa_source_save_io io={0};
     bool ok=qa_source_save_writer(&io,NULL,error) && fields(&io,&state) && qa_source_save_finish(&io,out);
@@ -226,7 +274,7 @@ bool frontend_startup_config_checkpoint(const frontend_startup_config *owner,qa_
 }
 bool frontend_startup_config_restore(frontend_startup_config *owner,qa_bytes bytes,qa_error *error)
 {
-    if (!owner || owner->running || owner->index || owner->active || owner->completed || owner->depth)
+    if (!owner || owner->images || owner->running || owner->index || owner->active || owner->completed || owner->depth)
         return fail(error,QA_ERROR_ARGUMENT,"Startup import requires its empty detached phase owner");
     frontend_startup_config *state=frontend_startup_config_create(&owner->options,error);
     if (!state) return false;

@@ -31,6 +31,21 @@ bool qa_application_q3_client_context_read(qa_application *, qa_actor_owner rece
 bool qa_application_q3_client_context_current(qa_application *,
     const qa_application_q3_client_context *);
 
+typedef struct qa_application_q3_client_host {
+    qa_q3_host *host;
+    qa_q3_host_client_context context;
+    qa_application_q3_client_context source;
+} qa_application_q3_client_host;
+/* Pure local original CGAME inventory and its actual GAME client binding.
+ * A completed uninitialized host is present. Only a genuinely absent role
+ * clears the outputs; incomplete or retired roles fail. No clocks, source
+ * program entry, or cache refresh occur here. The host retains its lease. */
+bool qa_application_q3_client_host_read(qa_application *, qa_actor_owner receiver,
+    uint32_t seat, qa_application_q3_client_host *, bool *present, qa_error *);
+/* First CGAME Init may change initialized without changing this namespace. */
+bool qa_application_q3_client_host_current(qa_application *,
+    const qa_application_q3_client_host *);
+
 /* After synchronous effects unwind, retire this exact initialized local CGAME
  * role at an idle boundary. GAME and its physical client remain admitted.
  * Failed physical cleanup retains the retired role for enclosing owner cleanup. */

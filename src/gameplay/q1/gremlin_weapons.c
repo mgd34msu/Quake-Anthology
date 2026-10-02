@@ -425,6 +425,7 @@ bool q1_gremlin_backpack(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     pack->physics.solid = QA_PHYSICS_TRIGGER;
     pack->physics.motion = QA_PHYSICS_TOSS;
     pack->physics.flags = QA_PHYSICS_KILL_VELOCITY;
+    pack->source_movement_flags = 256u;
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, source, &body, error))
         goto failed;

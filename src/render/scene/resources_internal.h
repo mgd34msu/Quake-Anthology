@@ -12,6 +12,8 @@ struct owned_image {
     scene_names *names;
     qa_scene_image_level *levels;
     image_lineage *lineage;
+    const qa_scene_image *sampling_source;
+    bool sampling_mipmap;
     owned_image *next, *previous;
     bool listed;
 };
@@ -21,6 +23,7 @@ typedef struct image_cache {
     qa_mount_id source_mount, logical_mount;
     qa_string_id name;
     qa_scene_image_options options;
+    bool exact_file;
     uint8_t palette[768], translation[256];
     qa_scene_image *image;
 } image_cache;
@@ -28,6 +31,9 @@ struct qa_scene_resources {
     qa_vfs *vfs;
     scene_names *names;
     qa_scene_image *white, *missing;
+    qa_scene_image *source_white, *source_missing, *source_identity;
+    qa_q3_image_upload_options source_builtins_upload;
+    bool source_builtins;
     image_cache *cache;
     size_t cache_count, cache_capacity;
     qa_buffer palettes[3];
@@ -35,6 +41,7 @@ struct qa_scene_resources {
     bool has_policy[3], registrations_started;
     unsigned fullbright_first;
     qa_scene_resources_capture *capture;
+    qa_scene_resource_policy *policy_pending;
     bool continuation_active, detached;
 };
 #endif

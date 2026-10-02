@@ -3,6 +3,7 @@
 
 #include "qa/q3_presentation.h"
 #include "qa/q3_assets_save.h"
+#include "qa/q3_model_opening.h"
 #include "qa/common_parse.h"
 #include "qa/scene_effects.h"
 #include "qa/text.h"
@@ -21,9 +22,19 @@ typedef struct q3p_name {
     bool option, generated;
     char name[];
 } q3p_name;
+typedef struct q3p_opening_order {
+    qa_mount_id *mounts;
+    size_t count;
+    char *prefix;
+    bool user_overlay;
+} q3p_opening_order;
 typedef struct q3p_model {
     qa_resource *resource;
     qa_resource *lod_resources[3];
+    char *first_requested_path;
+    qa_vfs_acquisition opening, lod_openings[3];
+    int64_t opening_rank, lod_opening_ranks[3];
+    q3p_opening_order opening_order, lod_opening_orders[3];
     const qa_model *sources[3];
     qa_q3_asset_model_lease source_leases[3];
     qa_q3_presentation_provider provider;

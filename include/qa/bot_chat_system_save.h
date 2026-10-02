@@ -2,6 +2,8 @@
 #define QA_BOT_CHAT_SYSTEM_SAVE_H
 
 #include "qa/bot_chat.h"
+/* Runtime callers import the actual library MEMORY and asset pointer map
+ * before this component resolves the source cache's 132-byte heap aliases. */
 
 typedef struct qa_bot_chat_asset_save_refs {
     void *context;

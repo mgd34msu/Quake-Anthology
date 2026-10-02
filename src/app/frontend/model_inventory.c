@@ -448,6 +448,20 @@ bool frontend_model_retain(frontend_model_inventory *inventory, const qa_model *
     }
     return fail(error, QA_ERROR_FORMAT, "Model claim does not identify a live decoded holder");
 }
+bool frontend_model_lease_clone(const frontend_model_lease *held,frontend_model_lease **out,qa_error *error)
+{
+    frontend_model_source source;
+    frontend_model_inventory *inventory=held?held->inventory:NULL;
+    if(!out || *out || !inventory || !inventory->owns_holders || !inventory->references ||
+        !frontend_model_lease_source(held,&source))
+        return fail(error,QA_ERROR_ARGUMENT,"Model clone requires its actual live owning token and empty output");
+    model_holder *row=&inventory->models[held->index];
+    if(inventory->references==SIZE_MAX || row->references==SIZE_MAX)
+        return fail(error,QA_ERROR_MEMORY,"Cloned immutable model claims overflow their actual counters");
+    frontend_model_lease *lease=malloc(sizeof(*lease));
+    if(!lease) return fail(error,QA_ERROR_MEMORY,"Cloning actual immutable model consumer");
+    *lease=*held; ++inventory->references; ++row->references; *out=lease; return true;
+}
 void frontend_model_release(frontend_model_lease *lease)
 {
     if (!lease) return;
@@ -472,6 +486,20 @@ bool frontend_animation_retain(frontend_model_inventory *inventory, const qa_mod
         *out = lease; return true;
     }
     return fail(error, QA_ERROR_FORMAT, "Animation claim does not identify a live decoded holder");
+}
+bool frontend_animation_lease_clone(const frontend_animation_lease *held,frontend_animation_lease **out,qa_error *error)
+{
+    frontend_animation_source source;
+    frontend_model_inventory *inventory=held?held->inventory:NULL;
+    if(!out || *out || !inventory || !inventory->owns_holders || !inventory->references ||
+        !frontend_animation_lease_source(held,&source))
+        return fail(error,QA_ERROR_ARGUMENT,"Animation clone requires its actual live owning token and empty output");
+    animation_holder *row=&inventory->animations[held->index];
+    if(inventory->references==SIZE_MAX || row->references==SIZE_MAX)
+        return fail(error,QA_ERROR_MEMORY,"Cloned immutable animation claims overflow their actual counters");
+    frontend_animation_lease *lease=malloc(sizeof(*lease));
+    if(!lease) return fail(error,QA_ERROR_MEMORY,"Cloning actual immutable animation consumer");
+    *lease=*held; ++inventory->references; ++row->references; *out=lease; return true;
 }
 void frontend_animation_release(frontend_animation_lease *lease)
 {

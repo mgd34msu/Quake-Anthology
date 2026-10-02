@@ -4,6 +4,7 @@
 #include "map_private.h"
 #include "qa/application_players.h"
 #include "qa/modes_map.h"
+#include "qa/game_q1_travel.h"
 
 typedef struct application_guest_carry {
     qa_actor_owner owner;
@@ -16,6 +17,7 @@ typedef struct application_player_carry {
     size_t count;
     qa_q1_player_view q1;
     qa_q1_mg3_progress mg3;
+    qa_q1_travel_state *q1_source;
     qa_q2_player_carry q2;
     qa_q2_weapon weapon2;
     qa_q3_weapon weapon3;
@@ -48,6 +50,7 @@ typedef struct application_player_record {
     int32_t bot_delay_ms;
     application_player_guest_binding *guests;
     size_t guest_count;
+    qa_q1_travel_state *q1_entry;
     bool deferred, spectator, bot, remote, dynamic, retiring, source_begin_pending;
 } application_player_record;
 typedef struct application_player_point {
@@ -98,5 +101,12 @@ bool application_players_native_q3_retire(qa_application *, application_provider
 bool application_players_bot_detach(qa_application *,qa_actor_id,qa_error *);
 bool application_players_bot_allocate(qa_application *,const qa_launch_seat *,int32_t *,qa_error *);
 bool application_players_bot_begin(qa_application *,uint32_t,qa_error *);
+bool application_player_equipment_selection(qa_application *, const qa_launch_choices *,
+    qa_actor_id, uint32_t seat, qa_equipment_selection *, qa_equipment_source_selection *, qa_error *);
+bool application_players_native_q1_respawn(qa_application *, application_provider *,
+    qa_actor_id, qa_q1_travel_state *, bool force, qa_error *);
+bool application_players_native_q1_spawn_pose(qa_application *, application_provider *,
+    qa_actor_id, qa_body_state *, bool *found, qa_error *);
+bool application_players_selected_character_respawn(void *, qa_actor_id, qa_error *);
 
 #endif

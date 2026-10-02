@@ -84,7 +84,9 @@ bool qa_q1_character_read(const qa_q1_game *g, qa_actor_id actor, qa_q1_characte
                                   .motion = alive  ? QA_PHYSICS_STEP
                                             : head ? QA_PHYSICS_BOUNCE
                                                    : QA_PHYSICS_TOSS,
-                                  .weapon_visible = alive && !c->weapon_hidden};
+                                  .weapon_visible = alive && !c->weapon_hidden,
+                                  .next_frame_seconds = c->next_animation,
+                                  .animation_frame = c->frame};
     return true;
 }
 bool qa_q1_character_cutscene(qa_q1_game *g, qa_actor_id actor, qa_vec3 view_offset,
@@ -285,9 +287,7 @@ static bool die(qa_q1_game *g, q1_player *player, const qa_damage_outcome *outco
     combat.can_take_damage = false;
     if (!qa_combat_set_traits(g->services.combat, actor, &combat, error))
         return false;
-    for (unsigned i = 0; i < QA_Q1_POWER_COUNT; ++i)
-        if (player->power_expires[i] && !qa_q1_player_power(g, actor, (qa_q1_power)i, 0, error))
-            return false;
+    if (!qa_q1_player_powers_clear(g, actor, error)) return false;
     if (!q1_alive(g, actor))
         return true;
     if (g->options.deathmatch || g->options.coop) {

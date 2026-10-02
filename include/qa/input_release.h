@@ -45,6 +45,26 @@ bool qa_input_release_prepare_sibling(qa_input_seat *,const qa_input_release_sco
  * returned wait; NULL uses this owner's captured programme when present. */
 bool qa_input_release_extend_all(qa_input_release *,double time_ms,
     const qa_console_release *same_console_parent,qa_error *);
+/* Capture uncovered held histories before scoped dispatch. They remain dormant:
+ * normal advancement and successful abort leave those physical rows held. */
+bool qa_input_release_reserve_all(qa_input_release *,const qa_console_release *,qa_error *);
+bool qa_input_release_all_reserved_is(const qa_input_release *,const qa_input_seat *);
+bool qa_input_release_failed_is(const qa_input_release *,const qa_input_seat *);
+bool qa_input_release_waiting_is(const qa_input_release *,const qa_input_seat *);
+/* Exact returned unentered capture with no selected or dormant held rows.
+ * The enclosing final resource preparation must not dispatch source commands. */
+bool qa_input_release_unentered_empty_is(const qa_input_release *,const qa_input_seat *);
+/* Activate the captured dormant programmes for ordinary live ALL release.
+ * Requires the actual fault-clear source context. Existing completed rows and
+ * cursor are retained; advancement dispatches only the uncovered programmes.
+ * Captured command timestamps stay in their original physical wall domain. */
+bool qa_input_release_reserved_activate(qa_input_release *,qa_error *);
+/* Qualify all active and dormant histories under real retirement authority.
+ * After every physical seat passes, publish activates ALL metadata without
+ * acquiring or dispatching any source programme. */
+bool qa_input_release_reserved_retirement_ready(const qa_input_release *,
+    qa_console_release_disposition,qa_console_release_retirement_fn,void *,qa_error *);
+void qa_input_release_reserved_retirement_publish(qa_input_release *,double retirement_time_ms);
 /* Enters the requested logical holder/gamepad clear once, then executes the
  * retained source release program through the actual console.
  * A wait retains the ticket. An entered failure is an observable outcome;
@@ -55,6 +75,14 @@ bool qa_input_release_advance(qa_input_release *, qa_input_release_outcome *, qa
  * lease, and coverage of the requested physical inputs. */
 bool qa_input_release_ready(const qa_input_release *, const qa_input_seat *,
     const qa_input_release_scope *, qa_error *);
+/* Pure actual completed records, returned programme leases and physical scope.
+ * This does not call the source context qualifier or establish its currentness. */
+bool qa_input_release_completed_is(const qa_input_release *,const qa_input_seat *,
+    const qa_input_release_scope *);
+/* Actual completed physical metadata with no authored or dormant programme.
+ * Cancellation requires no source-current claim when there is no history. */
+bool qa_input_release_completed_empty_is(const qa_input_release *,const qa_input_seat *,
+    const qa_input_release_scope *);
 /* Pure retained-owner association for enclosing shutdown admission. Checks
  * the exact physical lease, held snapshot and scope coverage at a returned
  * console boundary. It proves neither completion nor retirement authority. */

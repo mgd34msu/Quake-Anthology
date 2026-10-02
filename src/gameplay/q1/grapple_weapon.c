@@ -59,6 +59,8 @@ bool qa_q1_grapple_weapon_tick(qa_q1_game *g, qa_actor_id actor, const qa_q1_inp
             player->grapple_weapon.frame = 2;
             if (!q1_schedule(g, timer, 0.1, Q1_THINK_HOOK_LAUNCH, error))
                 return false;
+            if (g->host.grapple_weapon_frame &&
+                !g->host.grapple_weapon_frame(g->host.context, actor, 2, error)) return false;
         }
     }
     return true;

@@ -69,6 +69,32 @@ static bool timer(q1_save_io *io, q1_actor *a) {
 static bool continuation(q1_save_io *io, const q1_actor *a, q1_think_kind think) {
     bool valid = true;
     switch (think) {
+    case Q1_THINK_SOURCE_ROGUE_RUNE_SPAWN:
+        valid = a->kind == Q1_SOURCE_ROGUE_RUNE_TIMER;
+        break;
+    case Q1_THINK_SOURCE_ROGUE_RUNE_RESPAWN:
+        valid = a->kind == Q1_SOURCE_ROGUE_RUNE;
+        break;
+    case Q1_THINK_SOURCE_ROGUE_FLAG_PLACE:
+    case Q1_THINK_SOURCE_ROGUE_FLAG:
+        valid = a->kind == Q1_SOURCE_ROGUE_FLAG;
+        break;
+    case Q1_THINK_SOURCE_ROGUE_TAG_PLACE:
+    case Q1_THINK_SOURCE_ROGUE_TAG:
+    case Q1_THINK_SOURCE_ROGUE_TAG_FALL:
+    case Q1_THINK_SOURCE_ROGUE_TAG_RESPAWN:
+        valid = a->kind == Q1_SOURCE_ROGUE_TAG;
+        break;
+    case Q1_THINK_SOURCE_CTF_RUNE_SPAWN:
+        valid = a->kind == Q1_SOURCE_CTF_RUNE_TIMER;
+        break;
+    case Q1_THINK_SOURCE_CTF_RUNE_RESPAWN:
+        valid = a->kind == Q1_SOURCE_CTF_RUNE;
+        break;
+    case Q1_THINK_SOURCE_CTF_FLAG_PLACE:
+    case Q1_THINK_SOURCE_CTF_FLAG:
+        valid = a->kind == Q1_SOURCE_CTF_FLAG;
+        break;
     case Q1_THINK_MONSTER_START:
     case Q1_THINK_MONSTER_FRAME:
     case Q1_THINK_MONSTER_FOUND:
@@ -147,13 +173,25 @@ bool q1_save_entity(q1_save_io *io, q1_actor *a) {
     Q1_SAVE(io, string, a->targetname);
     Q1_SAVE(io, string, a->killtarget);
     Q1_SAVE(io, string, a->message);
+    Q1_SAVE(io, string, a->source_netname);
+    Q1_SAVE(io, string, a->source_kill_string);
+    Q1_SAVE(io, string, a->source_death_type);
+    Q1_SAVE(io, string, a->source_team);
+    Q1_SAVE(io, string, a->rogue_next_update);
+    Q1_SAVE(io, actor, a->rogue_tag_owner);
+    Q1_SAVE(io, string, a->rogue_runes_spawned);
+    Q1_SAVE(io, actor, a->rogue_rune_spawn);
+    Q1_SAVE(io, string, a->ctf_last_capture);
+    Q1_SAVE(io, string, a->ctf_last_capture_team);
+    Q1_SAVE(io, string, a->ctf_runes_spawned);
+    Q1_SAVE(io, actor, a->ctf_rune_spawn);
     Q1_SAVE(io, vector, a->initial_angles);
     if (!q1_save_physics(io, &a->physics))
         return false;
-    Q1_SAVE_ENUM(io, a->kind, Q1_BOSS_CHILD);
-    Q1_SAVE_ENUM(io, a->think, Q1_THINK_SPAWN_TEMPLATE);
+    Q1_SAVE_ENUM(io, a->kind, Q1_SOURCE_ROGUE_RUNE_TIMER);
+    Q1_SAVE_ENUM(io, a->think, Q1_THINK_SOURCE_ROGUE_RUNE_RESPAWN);
     Q1_SAVE(io, double, a->next_think);
-    Q1_SAVE_ENUM(io, a->frozen.think, Q1_THINK_SPAWN_TEMPLATE);
+    Q1_SAVE_ENUM(io, a->frozen.think, Q1_THINK_SOURCE_ROGUE_RUNE_RESPAWN);
     Q1_SAVE(io, double, a->frozen.next_think);
     Q1_SAVE(io, bool, a->frozen.active);
     Q1_SAVE(io, bool, a->frozen.damageable);
@@ -169,6 +207,7 @@ bool q1_save_entity(q1_save_io *io, q1_actor *a) {
     Q1_SAVE(io, float, a->scale);
     Q1_SAVE(io, u32, a->spawnflags);
     Q1_SAVE(io, u32, a->effects);
+    Q1_SAVE(io, u32, a->source_movement_flags);
     Q1_SAVE(io, i32, a->frame);
     Q1_SAVE(io, i32, a->skin);
     Q1_SAVE(io, bool, a->native);
@@ -186,6 +225,39 @@ bool q1_save_entity(q1_save_io *io, q1_actor *a) {
     if (io->reading && observation)
         a->pickup_observation = (qa_pickup_lease){.actor = a->id, .serial = observation};
     switch (a->kind) {
+    case Q1_SOURCE_ROGUE_RUNE:
+        Q1_SAVE(io, string, a->state.rogue_rune);
+        break;
+    case Q1_SOURCE_ROGUE_RUNE_TIMER:
+        break;
+    case Q1_SOURCE_ROGUE_FLAG:
+    case Q1_SOURCE_ROGUE_FLAG_BASE:
+        for (size_t i = 0; i < 3; ++i) Q1_SAVE(io, string, a->state.rogue_flag.words[i]);
+        Q1_SAVE(io, vector, a->state.rogue_flag.origin);
+        Q1_SAVE(io, vector, a->state.rogue_flag.angles);
+        Q1_SAVE(io, bool, a->state.rogue_flag.placed);
+        break;
+    case Q1_SOURCE_ROGUE_TAG:
+        Q1_SAVE(io, string, a->state.source_tag.frags);
+        Q1_SAVE(io, string, a->state.source_tag.message_time);
+        break;
+    case Q1_SOURCE_CTF_RUNE:
+        Q1_SAVE(io, string, a->state.source_rune.rune);
+        Q1_SAVE(io, u32, a->state.source_rune.movement_flags);
+        break;
+    case Q1_SOURCE_CTF_RUNE_TIMER:
+        break;
+    case Q1_SOURCE_CTF_FLAG:
+        Q1_SAVE(io, vector, a->state.source_flag.base);
+        Q1_SAVE(io, vector, a->state.source_flag.angles);
+        Q1_SAVE(io, string, a->state.source_flag.return_word);
+        Q1_SAVE(io, u32, a->state.source_flag.movement_flags);
+        Q1_SAVE(io, bool, a->state.source_flag.placed);
+        break;
+    case Q1_ROGUE_TEAM_STATE:
+        for (size_t i = 0; i < QA_Q1_ROGUE_FIELDS; ++i)
+            Q1_SAVE(io, string, a->state.rogue_fields[i]);
+        break;
     case Q1_MONSTER:
         if (!q1_save_monster(io, &a->state.monster))
             return false;
@@ -219,6 +291,77 @@ bool q1_save_entity(q1_save_io *io, q1_actor *a) {
     if (!continuation(io, a, a->think) ||
         (a->frozen.active && !continuation(io, a, a->frozen.think)))
         return false;
+    qa_bytes classname = qa_strings_text(qa_session_strings(io->game->services.session),
+        a->classname);
+    if (a->kind == Q1_SOURCE_ROGUE_RUNE || a->kind == Q1_SOURCE_ROGUE_RUNE_TIMER) {
+        const char *name = a->kind == Q1_SOURCE_ROGUE_RUNE ? "rogue_rune" : "rogue_rune_spawner";
+        if (io->game->options.program != QA_Q1_ROGUE || !a->native || a->map ||
+            classname.size != strlen(name) || memcmp(classname.data, name, classname.size))
+            return q1_save_fail(io, "Invalid native Rogue rune source actor");
+        if (a->kind == Q1_SOURCE_ROGUE_RUNE) {
+            qa_bytes rune = qa_strings_text(qa_session_strings(io->game->services.session), a->state.rogue_rune);
+            if (rune.size != 1 || (rune.data[0] != '1' && rune.data[0] != '2' && rune.data[0] != '4' && rune.data[0] != '8'))
+                return q1_save_fail(io, "Invalid native Rogue rune number");
+        }
+    }
+    if (a->kind == Q1_SOURCE_ROGUE_FLAG || a->kind == Q1_SOURCE_ROGUE_FLAG_BASE) {
+        bool valid_name = false;
+        static const char *const flags[] = {"item_flag_team1", "item_flag_team2", "item_flag"};
+        static const char *const bases[] = {"item_flagbase_team1", "item_flagbase_team2", "item_flagbase"};
+        const char *const *names = a->kind == Q1_SOURCE_ROGUE_FLAG ? flags : bases;
+        for (size_t i = 0; i < 3; ++i)
+            if (classname.size == strlen(names[i]) && !memcmp(classname.data, names[i], classname.size))
+                valid_name = true;
+        if (!valid_name || io->game->options.program != QA_Q1_ROGUE || !a->native || a->map)
+            return q1_save_fail(io, "Invalid native Rogue flag source actor");
+    }
+    if (a->kind == Q1_SOURCE_ROGUE_TAG &&
+        (io->game->options.program != QA_Q1_ROGUE || !a->native || a->map ||
+         classname.size != sizeof("dmatch_tag_token") - 1 ||
+         memcmp(classname.data, "dmatch_tag_token", classname.size)))
+        return q1_save_fail(io, "Invalid native Rogue token source actor");
+    if (a->kind == Q1_SOURCE_CTF_RUNE || a->kind == Q1_SOURCE_CTF_RUNE_TIMER) {
+        if (io->game->options.program != QA_Q1_CTF || !a->native || a->map)
+            return q1_save_fail(io, "Invalid native ThreeWave rune source actor");
+        if (a->kind == Q1_SOURCE_CTF_RUNE_TIMER) {
+            if (classname.size != sizeof("ctf_rune_spawn") - 1 ||
+                memcmp(classname.data, "ctf_rune_spawn", classname.size))
+                return q1_save_fail(io, "Invalid native ThreeWave rune source timer");
+        } else {
+            static const char *const names[] = {"resistance", "strength", "haste", "regeneration"};
+            bool valid = false;
+            for (size_t i = 0; i < QA_Q1_RUNE_COUNT; ++i) {
+                size_t size = strlen(names[i]);
+                if (classname.size == sizeof("item_rune_") - 1 + size &&
+                    !memcmp(classname.data, "item_rune_", sizeof("item_rune_") - 1) &&
+                    !memcmp(classname.data + sizeof("item_rune_") - 1, names[i], size)) valid = true;
+            }
+            if (!valid) return q1_save_fail(io, "Invalid native ThreeWave rune source class");
+        }
+    }
+    if (a->kind == Q1_SOURCE_CTF_FLAG &&
+        (io->game->options.program != QA_Q1_CTF || !a->native || a->map ||
+         classname.size != sizeof("item_flag_team1") - 1 ||
+         (memcmp(classname.data, "item_flag_team1", classname.size) &&
+          memcmp(classname.data, "item_flag_team2", classname.size))))
+        return q1_save_fail(io, "Invalid native ThreeWave flag source actor");
+    if (a->kind == Q1_ROGUE_TEAM_STATE &&
+        (io->game->options.program != QA_Q1_ROGUE || !a->native || !a->owner.registry ||
+         classname.size != sizeof("rogue_team_state") - 1 ||
+         memcmp(classname.data, "rogue_team_state", classname.size) ||
+         a->think != Q1_THINK_NONE || a->frozen.active || a->map))
+        return q1_save_fail(io, "Invalid Rogue team-state source actor");
+    if ((a->rogue_next_update || a->rogue_tag_owner.registry || a->rogue_runes_spawned || a->rogue_rune_spawn.registry) &&
+        (io->game->options.program != QA_Q1_ROGUE || !a->native ||
+         classname.size != sizeof("worldspawn") - 1 ||
+         memcmp(classname.data, "worldspawn", classname.size)))
+        return q1_save_fail(io, "Rogue update word has no actual source world");
+    if ((a->ctf_last_capture || a->ctf_last_capture_team || a->ctf_runes_spawned ||
+         a->ctf_rune_spawn.registry) &&
+        (io->game->options.program != QA_Q1_CTF || !a->native ||
+         classname.size != sizeof("worldspawn") - 1 ||
+         memcmp(classname.data, "worldspawn", classname.size)))
+        return q1_save_fail(io, "CTF capture words have no actual source world");
     if (io->reading)
         a->active = true;
     return true;

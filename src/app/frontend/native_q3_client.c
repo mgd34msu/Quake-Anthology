@@ -1,8 +1,22 @@
+#include "qa/material_source_scratch.h"
+#include "q3_color_policy.h"
 #include "native_q3_client_internal.h"
 #include "config_store.h"
+#include "view_bindings.h"
+#include "shared_resource_policy.h"
+#include "shared_register.h"
+#include "shared_render_controls.h"
+#include "q3_render_policy.h"
+#include "music_sources.h"
+#include "material_movies.h"
+#include "material_movie_bindings.h"
+#include "qa/audio_music_prepare.h"
 #include "capture.h"
 #include "save_private.h"
 #include "source_restore.h"
+#include "visual_access.h"
+#include "selected_effects.h"
+#include "qa/application_q3_asset_selection.h"
 #include "qa/q3_presentation_save.h"
 #include "qa/q3_assets_save.h"
 #include "qa/scene_marks.h"
@@ -27,6 +41,7 @@
 #endif
 static int32_t memory_remaining(void *);
 static bool row_idle(const frontend_native_q3 *);
+static frontend_native_q3 *row_at(const qa_frontend *,size_t);
 static bool has_renderer_name(const char *name,const char *match)
 {
     for(;*name;++name) {
@@ -68,6 +83,20 @@ bool frontend_native_q3_current(const frontend_native_q3 *row)
         frontend_client_registry_matches(row->view.registry,row->view.source_launch,row->view.launch_seat) &&
         row->view.cvars==frontend_client_registry_cvars(row->view.registry);
 }
+bool frontend_native_q3_field_of_view(qa_frontend *f,double value,qa_error *error)
+{
+    if (!f || !f->application) return frontend_fail(error,QA_ERROR_ARGUMENT,"Native FOV needs its actual application");
+    char text[64]; snprintf(text,sizeof(text),"%.17g",value);
+    for (frontend_native_q3 *row=f->native_q3;row;row=row->next) {
+        if (!row->constructed || row->restoring || !row->view.cvars || !qa_cvars_find(row->view.cvars,"cg_fov")) continue;
+        if (!frontend_native_q3_current(row) || row->callbacks==SIZE_MAX) return frontend_fail(error,QA_ERROR_ARGUMENT,"Native FOV lost its actual CLIENT");
+        ++row->callbacks;
+        bool ok=qa_cvars_set(row->view.cvars,"cg_fov",text,true,error);
+        bool retained=frontend_native_q3_current(row); --row->callbacks;
+        if (!ok || !retained) return ok?frontend_fail(error,QA_ERROR_ARGUMENT,"Native FOV retired during publication"):false;
+    }
+    return true;
+}
 bool frontend_native_q3_cut(frontend_native_q3 *row,const q3n_frame *f,qa_error *e)
 {
     return f && frontend_native_q3_current(row) && f->application==row->frontend->application &&
@@ -88,9 +117,9 @@ static void print_client(void *context,const char *text)
     if(services)print_row(services->context,text);
 }
 static int32_t milliseconds(void *context)
-{ return (int32_t)(uint32_t)(((frontend_native_q3 *)context)->frontend->time_ns/UINT64_C(1000000)); }
+{ return (int32_t)(uint32_t)(((frontend_native_q3 *)context)->frontend->wall_time_ns/UINT64_C(1000000)); }
 static double clock_time(void *context)
-{ return (double)((frontend_native_q3 *)context)->frontend->time_ns/1e6; }
+{ return (double)((frontend_native_q3 *)context)->frontend->wall_time_ns/1e6; }
 static int32_t frame_number(void *context)
 { return (int32_t)(uint32_t)((frontend_native_q3 *)context)->frontend->frame_number; }
 static uint64_t audio_bus(void *context)
@@ -184,31 +213,99 @@ static bool listener(void *context,const qa_audio_listener *value,qa_error *e)
     row->view.listener=*value; row->view.listener.gain=1.0f/(float)row->frontend->options.seats;
     row->view.has_listener=true; return true;
 }
+static bool music_origin_current(void *context,const frontend_music_origin *origin)
+{
+    frontend_native_q3 *row=context;
+    const frontend_native_q3_view *v=row?&row->view:NULL;
+    return linked(row) && row->owns_media && v->source_launch && origin &&
+        origin->kind==FRONTEND_MUSIC_NATIVE && origin->context==row && origin->bus==v->identity &&
+        origin->physical_seat==v->seat && origin->receiver==v->receiver && origin->music==v->music &&
+        origin->descriptor && origin->descriptor->storage==v->source_launch->storage &&
+        origin->catalog==qa_launch_instance_catalog(v->source_launch) &&
+        origin->product==v->source_launch->selection.product && origin->files==v->source_files &&
+        (!qa_audio_engine_bus_music(row->frontend->audio,v->identity) ||
+         qa_audio_engine_bus_music(row->frontend->audio,v->identity)==v->music);
+}
+static bool music_origin_stop(void *context,qa_error *e)
+{
+    frontend_native_q3 *row=context;
+    if (!linked(row) || !row->owns_media || !row->view.music)
+        return frontend_fail(e,QA_ERROR_ARGUMENT,"Music stop lost its actual native player");
+    qa_audio_engine_remove_music(row->frontend->audio,row->view.identity);
+    if (qa_audio_engine_bus_music(row->frontend->audio,row->view.identity))
+        return frontend_fail(e,QA_ERROR_ARGUMENT,"Native music stop retained its engine bus");
+    qa_audio_music_stop(row->view.music); row->view.music_attached=false;
+    free(row->music_intro); free(row->music_loop);
+    row->music_intro=row->music_loop=NULL; row->music_looping=false;
+    return true;
+}
+static frontend_music_origin music_origin(frontend_native_q3 *row)
+{
+    return (frontend_music_origin){.kind=FRONTEND_MUSIC_NATIVE,.bus=row->view.identity,
+        .physical_seat=row->view.seat,.receiver=row->view.receiver,.descriptor=row->view.source_launch,
+        .catalog=qa_launch_instance_catalog(row->view.source_launch),.product=row->view.source_launch->selection.product,
+        .files=row->view.source_files,.music=row->view.music,.context=row,
+        .current=music_origin_current,.stop=music_origin_stop};
+}
+bool frontend_native_q3_music_restore_bind(frontend_native_q3 *row,qa_error *error)
+{
+    if (!row || !linked(row)) return frontend_fail(error,QA_ERROR_ARGUMENT,"Native music alias lacks its installed owner");
+    if (!row->view.music) return true;
+    qa_audio_music_controls *controls=frontend_music_sources_controls(row->frontend->music_sources);
+    if (!controls || !qa_audio_music_controls_bind(row->view.music,controls,error)) return false;
+    frontend_music_origin origin=music_origin(row);
+    return !frontend_music_sources_restore_origin_matches(row->frontend->music_sources,&origin) ||
+        frontend_music_sources_restore_origin(row->frontend->music_sources,&origin,error);
+}
 static bool music(void *context,const char *intro,const char *loop,qa_error *e)
 {
     frontend_native_q3 *row=context; qa_frontend *f=row->frontend;
     if(!frontend_native_q3_current(row) || !f->audio)return frontend_fail(e,QA_ERROR_UNSUPPORTED,"Native music requires its actual audio owner");
-    if(row->view.music_attached)row->view.music=qa_audio_engine_bus_music(f->audio,row->view.identity);
-    if(!row->view.music && !qa_audio_music_create(qa_audio_engine_rate(f->audio),QA_AUDIO_Q3,false,&row->view.music,e))return false;
+    qa_audio_music *attached=qa_audio_engine_bus_music(f->audio,row->view.identity);
+    if (attached && attached!=row->view.music)
+        return frontend_fail(e,QA_ERROR_ARGUMENT,"Native bus contains another retained music player");
+    row->view.music_attached=attached!=NULL;
+    if(!row->view.music && !qa_audio_music_create(qa_audio_engine_rate(f->audio),QA_AUDIO_Q3,true,&row->view.music,e))return false;
+    frontend_music_origin origin=music_origin(row);
+    if (!frontend_music_sources_explicit_selected(f->music_sources,&origin)) {
+        if (attached || !qa_audio_music_idle(row->view.music))
+            return frontend_fail(e,QA_ERROR_ARGUMENT,"Native music selection retains its previous playback");
+        qa_audio_music *fresh=NULL;
+        if (!qa_audio_music_create(qa_audio_engine_rate(f->audio),QA_AUDIO_Q3,true,&fresh,e)) return false;
+        qa_audio_music_release(row->view.music); row->view.music=fresh;
+        free(row->music_intro); free(row->music_loop); row->music_intro=row->music_loop=NULL;
+        row->music_looping=false; origin=music_origin(row);
+    }
+    if (!frontend_music_sources_explicit_begin(f->music_sources,&origin,e)) return false;
+    bool enabled=false;
+    if (!qa_audio_music_controls_enabled(frontend_music_sources_controls(f->music_sources),&enabled)) return false;
+    if (intro && *intro && !enabled) return true;
     const char *tail=loop?loop:"";
     if(intro && row->music_intro && row->music_loop && row->music_looping &&
         !strcmp(intro,row->music_intro) && !strcmp(tail,row->music_loop) && qa_audio_music_playing(row->view.music))return true;
     qa_audio_music_stop(row->view.music); free(row->music_intro); free(row->music_loop);
     row->music_intro=row->music_loop=NULL; row->music_looping=false;
-    if(!intro || !*intro)return true;
+    if(!intro || !*intro)return frontend_music_sources_explicit(f->music_sources,&origin,"","",false,e);
     row->music_intro=malloc(strlen(intro)+1); row->music_loop=malloc(strlen(tail)+1);
     if(!row->music_intro || !row->music_loop)return frontend_fail(e,QA_ERROR_MEMORY,"Retaining native source music names");
     strcpy(row->music_intro,intro); strcpy(row->music_loop,tail);
     qa_audio_stream *first=NULL,*last=NULL;
     if(!qa_audio_bank_music_cue(row->view.sounds,intro,QA_AUDIO_Q3,NULL,NULL,&first,e))return false;
-    if(!first)return true;
+    if(!first)return frontend_music_sources_explicit(f->music_sources,&origin,row->music_intro,row->music_loop,false,e);
     last=first;
     if(*tail && strcmp(intro,tail) && !qa_audio_bank_music_cue(row->view.sounds,tail,QA_AUDIO_Q3,NULL,NULL,&last,e)) {
         qa_audio_stream_close(first); return false;
     }
     row->music_looping=last!=NULL; qa_audio_music_start(row->view.music,first,last);
+    bool retained=!row->view.music_attached;
+    if (retained && !qa_audio_music_retain(row->view.music,e)) return false;
     bool ok=qa_audio_engine_music(f->audio,row->view.identity,row->view.seat,1,row->view.music,e);
-    if(ok)row->view.music_attached=true; return ok;
+    if (!ok && retained) qa_audio_music_release(row->view.music);
+    if(ok) {
+        row->view.music_attached=true;
+        ok=frontend_music_sources_explicit(f->music_sources,&origin,row->music_intro,row->music_loop,row->music_looping,e);
+    }
+    return ok;
 }
 static bool prepare_view(void *context,const qa_q3_refdef *definition,qa_q3_scene_options *options,qa_error *e)
 {
@@ -216,7 +313,9 @@ static bool prepare_view(void *context,const qa_q3_refdef *definition,qa_q3_scen
     if(!frontend_native_q3_current(row))return false;
     return frontend_source_prepare_scene(f,f->application,row->view.seat,definition,options,e) &&
         (!row->composition.prepare_view || row->composition.prepare_view(row->composition.context,definition,options,e)) &&
-        frontend_native_q3_current(row);
+        frontend_native_q3_current(row) &&
+        frontend_q3_scene_policy_read(f,options,e) &&
+        frontend_q3_shadow_mode_read(row->view.cvars,&options->shadow_mode,e) && frontend_native_q3_current(row);
 }
 static bool submit_view(void *context,const qa_q3_scene_options *options,qa_scene_frame *frame,qa_error *e)
 {
@@ -231,7 +330,18 @@ static void scene_cleared(void *context)
     if(row->composition.scene_cleared)row->composition.scene_cleared(row->composition.context);
 }
 static bool remap(void *context,const char *from,const char *to,float time,qa_error *e)
-{ frontend_native_q3 *row=context; return frontend_native_q3_current(row) && frontend_shader_remap(row->frontend,from,to,time,e); }
+{
+    frontend_native_q3 *row=context; qa_material_source_remap_status status;
+    if(!frontend_native_q3_current(row) || !qa_material_remap_source(row->view.materials,from,to,time,&status,e))return false;
+    if(status!=QA_MATERIAL_SOURCE_REMAP_APPLIED) {
+        char warning[1200];
+        snprintf(warning,sizeof(warning),status==QA_MATERIAL_SOURCE_REMAP_ORIGINAL_DEFAULT?
+            "WARNING: R_RemapShader: shader %s not found\n":"WARNING: R_RemapShader: new shader %s not found\n",
+            status==QA_MATERIAL_SOURCE_REMAP_ORIGINAL_DEFAULT?from:to);
+        print_row(row,warning);
+    }
+    return frontend_native_q3_current(row);
+}
 bool frontend_native_q3_remap(qa_frontend *f,const char *from,const char *to,float time,qa_error *e)
 {
     if(!f)return false;
@@ -239,12 +349,51 @@ bool frontend_native_q3_remap(qa_frontend *f,const char *from,const char *to,flo
         if(row->view.materials && !qa_material_remap(row->view.materials,from,to,time,e))return false;
     return true;
 }
+static bool select_asset(void *context,const char *name,qa_q3_asset_kind kind,
+    qa_q3_presentation_provider *out,qa_error *e)
+{
+    frontend_native_q3 *row=context;
+    if(!name || !out || !frontend_native_q3_current(row))
+        return frontend_fail(e,QA_ERROR_ARGUMENT,"Native asset selection lost its actual source recipient");
+    *out=(qa_q3_presentation_provider){row->view.mounts,row->view.images,row->view.materials,QA_SCENE_Q3};
+    if(kind==QA_Q3_ASSET_SHADER)return true;
+    qa_launch_role role;
+    if(!strncmp(name,"models/players/",15))role=QA_ROLE_SKIN;
+    else if(!strncmp(name,"models/weapons2/",16) || !strncmp(name,"models/weaphits/",15) ||
+        !strncmp(name,"models/ammo/",12))role=QA_ROLE_ARSENAL;
+    else return true;
+    qa_application_q3_asset_selection selected; bool found;
+    if(!qa_application_q3_asset_selection_read(row->frontend->application,row->view.actor,role,&selected,&found,e))return false;
+    if(!found || selected.family!=QA_GAME_Q3)return true;
+    frontend_visual_owner_view media;
+    if(!frontend_visual_media_acquire(row->frontend,selected.provider,QA_GAME_Q3,&media,e) ||
+        !qa_application_q3_asset_selection_current(row->frontend->application,&selected) ||
+        !frontend_native_q3_current(row))return false;
+    *out=(qa_q3_presentation_provider){media.mounts,media.images,media.materials,QA_SCENE_Q3};
+    return true;
+}
+static bool model_initialize(void *context,const qa_q3_model_opening *opening,
+    const qa_model *native,qa_scene_model *root,qa_error *error)
+{
+    frontend_native_q3 *row=context;
+    if (!frontend_native_q3_current(row))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Model admission lost its actual native CLIENT");
+    return frontend_visual_registered_model_initialize(row->frontend,opening,native,root,error) &&
+        frontend_native_q3_current(row);
+}
 bool frontend_native_q3_asset_options(frontend_native_q3 *row,qa_q3_presentation_asset_options *out,qa_error *e)
 {
     if(!row || !out || !linked(row) || !row->view.mounts || !row->view.images || !row->view.materials || !row->view.sounds || !row->view.movies)
         return frontend_fail(e,QA_ERROR_ARGUMENT,"Native assets require their real retained media owners");
     *out=(qa_q3_presentation_asset_options){.provider={row->view.mounts,row->view.images,row->view.materials,QA_SCENE_Q3},
-        .sounds=row->view.sounds,.movies=row->view.movies,.context=row,.print=print_row}; return true;
+        .sounds=row->view.sounds,.movies=row->view.movies,.context=row,.select=select_asset,.print=print_row,.model_initialize=model_initialize}; return true;
+}
+static bool prepare_picture(void *context,qa_material_context *material,qa_error *error)
+{
+    frontend_native_q3 *row=context;
+    return frontend_native_q3_current(row) &&
+        frontend_q3_material_diagnostics_read(row->frontend,&material->source_diagnostics,error) &&
+        frontend_native_q3_current(row);
 }
 bool frontend_native_q3_backend_options(frontend_native_q3 *row,qa_q3_presentation_options *out,qa_error *e)
 {
@@ -254,8 +403,19 @@ bool frontend_native_q3_backend_options(frontend_native_q3 *row,qa_q3_presentati
         .seat=row->view.seat,.owner=row->view.identity,.viewport=frontend_viewport(f,row->view.seat),
         .near_clip=4,.far_clip=16384,.identity_light=1,.lod_scale=5,.rail_core_width=6,.rail_ring_width=16,.rail_segment_length=32,
         .context=row,.audio_actor=audio_actor,.listener=listener,.music=music,.frame_number=frame_number,
+        .video_frame=frontend_material_movies_frontend_resolve,.video_context=row->frontend,
         .milliseconds=milliseconds,.audio_bus=audio_bus,.prepare_view=prepare_view,.submit_view=submit_view,
-        .scene_cleared=scene_cleared,.remap=remap,.print=print_row}; return true;
+        .scene_cleared=scene_cleared,.prepare_picture=prepare_picture,.remap=remap,.print=print_row};
+    if (!row->restoring && !frontend_q3_renderer_options_read(f,out,e)) return false;
+    if(row->restoring && !row->view.cvars)return true;
+    if(row->view.cvars && !qa_cvars_find(row->view.cvars,"cg_shadows")) {
+        qa_application_q3_client_context client;
+        if(!row->view.client || !qa_native_q3_client_context_read(row->view.client,&client,e) ||
+            client.cvars!=row->view.cvars || client.initialized)
+            return frontend_fail(e,QA_ERROR_ARGUMENT,"Native shadow constructor lost its actual pre-Init CLIENT");
+        return true;
+    }
+    return frontend_q3_shadow_mode_read(row->view.cvars,&out->shadow_mode,e);
 }
 static int32_t memory_remaining(void *context)
 {
@@ -350,8 +510,6 @@ static bool message(void *context,const q3n_command_message *message,qa_error *e
 {
     frontend_native_q3 *row=context;
     if(!message || !recipient_current(row,message->frame,message->recipient))return false;
-    if(row->view.mission && message->kind!=Q3N_COMMAND_PRINT &&
-        !q3n_mission_hud_message(row->view.mission,message->frame,(int32_t)message->kind,message->text,e))return false;
     print_row(row,message->text); return frontend_native_q3_cut(row,message->frame,e);
 }
 static bool trace_policy(frontend_native_q3 *row,qa_trace_policy *policy,qa_error *e)
@@ -486,8 +644,15 @@ static bool update_loading(void *context,q3n_loading *loading,const q3n_frame *f
     if(loading!=row->view.loading || !frontend_native_q3_cut(row,frame,e) ||
         row->restoring || f->capture)return false;
     qa_scene_frame_reset(&f->frame,f->frame_number);
+    if (!frontend_q3_source_output(f,row->view.materials,frontend_viewport(f,row->view.seat),e)) return false;
     if(!qa_q3_presentation_frame(row->view.presentation,&f->frame,frontend_viewport(f,row->view.seat),e) ||
         !q3n_loading_draw_information(loading,frame,e))return false;
+    if(!frontend_render_controls_live(f,e))return false;
+    if (f->frame.source_backend && f->frame.source_skip_backend) {
+        if (f->frame.source_pending &&
+            !qa_material_source_frame_end(f->frame.source_pending,&f->frame,false,e)) return false;
+        return frontend_native_q3_cut(row,frame,e);
+    }
     bool ok=f->cpu?(qa_cpu_execute(f->cpu,&f->frame,e) && qa_cpu_present_frame(f->cpu,e)):
         (f->gl && qa_gl_execute(f->gl,&f->frame,e) && qa_gl_finish(f->gl,e) && qa_display_swap(f->display,e));
     return ok && frontend_native_q3_cut(row,frame,e);
@@ -537,10 +702,17 @@ static bool begin_frame(void *context,const q3n_frame *f,qa_error *e)
 }
 static void end_frame(void *context)
 { frontend_native_q3 *row=context; row->composition.end_frame(row->composition.context); }
+static bool before_render(void *context,const q3n_frame *f,qa_error *e)
+{
+    frontend_native_q3 *row=context;
+    return frontend_native_q3_cut(row,f,e) &&
+        row->composition.before_render(row->composition.context,f,e) && frontend_native_q3_cut(row,f,e);
+}
 static bool composition_ready(const frontend_native_q3_composition *o,qa_error *e)
 {
     bool owned=o->idle || o->destroy || o->rebind_ready || o->rebind || o->checkpoint || o->restore;
     return (o->begin_frame==NULL)==(o->end_frame==NULL) &&
+        (!o->before_render || o->begin_frame) &&
         (!owned || (o->context && o->idle && o->destroy && o->rebind_ready && o->rebind && o->checkpoint && o->restore)) ? true :
         frontend_fail(e,QA_ERROR_ARGUMENT,"Native composition requires paired frame callbacks and a complete actual owner lifetime/codec");
 }
@@ -575,6 +747,7 @@ bool frontend_native_q3_core_options(frontend_native_q3 *row,q3n_native_options 
     if(row->composition.begin_frame) {
         if(!row->composition.end_frame)return frontend_fail(e,QA_ERROR_ARGUMENT,"Native composition lacks its actual frame unwind");
         out->frame_context=row; out->begin_frame=begin_frame; out->end_frame=end_frame;
+        if(row->composition.before_render)out->before_render=before_render;
     } else if(row->composition.end_frame)return frontend_fail(e,QA_ERROR_ARGUMENT,"Native composition unwind lacks its actual frame entry");
     return true;
 }
@@ -661,13 +834,46 @@ static bool row_identity(frontend_native_q3 *row,bool restoring,qa_error *e)
      * saved witness here; handlers require a constructed late-admitted row. */
     return restoring || qa_application_capture_command_context(f->application,&row->command,&row->command,e);
 }
+static bool shader_movies_current(void *context,const frontend_material_movie_source *view)
+{
+    frontend_native_q3 *row=context;
+    const frontend_native_q3_view *v=row?&row->view:NULL;
+    return linked(row) && row->owns_media && v->source_launch && v->source_files==v->source_launch->content &&
+        view && view->frontend==row->frontend && view->context==row && view->files==v->mounts &&
+        view->images==v->images && view->materials==v->materials && view->media==v->movies;
+}
+bool frontend_native_q3_movie_source_read(qa_frontend *f,size_t index,frontend_material_movie_source *out,qa_error *e)
+{
+    frontend_native_q3 *row=row_at(f,index);
+    frontend_material_movie_source view={.frontend=f,.files=row?row->view.mounts:NULL,.images=row?row->view.images:NULL,
+        .materials=row?row->view.materials:NULL,.media=row?row->view.movies:NULL,.context=row,.current=shader_movies_current};
+    if (!out || !shader_movies_current(row,&view))
+        return frontend_fail(e,QA_ERROR_ARGUMENT,"Movie binding lacks its retained native provider");
+    *out=view; return true;
+}
+bool frontend_native_q3_movies_restore(qa_frontend *f,size_t index,const frontend_material_movies_refs *refs,qa_bytes bytes,qa_error *e)
+{
+    frontend_native_q3 *row=row_at(f,index); frontend_material_movie_source view;
+    return row && f->source_restoring && frontend_native_q3_movie_source_read(f,index,&view,e) ?
+        frontend_material_movies_restore(&view,refs,bytes,&row->shader_movies,e) :
+        frontend_fail(e,QA_ERROR_ARGUMENT,"Movie import requires its actual native candidate");
+}
 static bool make_media(frontend_native_q3 *row,qa_error *e)
 {
     qa_frontend *f=row->frontend; frontend_native_q3_view *v=&row->view;
+    if (!frontend_q3_source_color_ensure(f,e)) return false;
     v->mounts=qa_vfs_clone(v->source_files,e); v->images=v->mounts?qa_scene_resources_create(v->mounts,e):NULL;
+    if(v->images && !frontend_image_policy_initialize(f,v->images,e))return false;
     v->materials=v->images?qa_material_library_create(v->images,f->order,e):NULL;
     v->fonts=v->images?qa_font_library_create(v->mounts,v->images,e):NULL;
     v->movies=v->images?qa_media_library_create(v->images,e):NULL;
+    if (v->materials) {
+        frontend_material_movie_source movie={.frontend=f,.files=v->mounts,.images=v->images,
+            .materials=v->materials,.media=v->movies,.context=row,.current=shader_movies_current};
+        if (!frontend_q3_material_profile_initialize(f,v->materials,e) ||
+            !qa_material_library_set_source_upload(v->materials,frontend_q3_source_upload_read,f,e) ||
+            !frontend_material_movies_create(&movie,&row->shader_movies,e)) return false;
+    }
     qa_scene_image_options images={.family=QA_SCENE_Q3,.wrap=QA_SCENE_REPEAT,.filter=QA_SCENE_LINEAR_MIPMAP_LINEAR,
         .mipmap=true,.transparent_index=-1};
     bool ok=v->mounts && v->images && v->materials && v->fonts && v->movies &&
@@ -716,8 +922,12 @@ bool frontend_native_q3_make_children(frontend_native_q3 *row,const qa_applicati
 static bool row_destroy(frontend_native_q3 *row,qa_error *e)
 {
     if(!row_idle(row) || (row->view.core && !q3n_native_retire_ready(row->view.core,e)) ||
+        (row->view.presentation && !frontend_selected_effects_idle(row->frontend)) ||
         (row->owns_media && row->frontend->audio && !qa_audio_engine_round_ready(row->frontend->audio,e)))
         return frontend_fail(e,QA_ERROR_ARGUMENT,"Native row teardown requires inactive actual reader, children and media owners");
+    if (row->frontend->music_sources &&
+        !frontend_music_sources_explicit_retire(row->frontend->music_sources,row,e)) return false;
+    if(row->view.presentation && !frontend_selected_effects_retire_parent(row->frontend,row->view.presentation,e))return false;
     if(!frontend_native_q3_commands_destroy(row->commands,e))return false; row->commands=NULL;
     if(row->composition.destroy && !row->composition.destroy(row->composition.context,e))return false;
     row->composition=(frontend_native_q3_composition){0};
@@ -730,12 +940,14 @@ static bool row_destroy(frontend_native_q3 *row,qa_error *e)
         row->view.presentation=NULL;
         if(row->frontend->audio) {
             qa_audio_engine_remove_music(row->frontend->audio,row->view.identity);
-            if(row->view.music_attached) { row->view.music=NULL; row->view.music_attached=false; }
+            row->view.music_attached=false;
             if(!qa_audio_engine_stop_owner(row->frontend->audio,row->view.identity,row->view.seat,e))return false;
         }
-        qa_q3_presentation_assets_destroy(row->view.assets); qa_media_library_destroy(row->view.movies);
+        if (!frontend_material_movies_destroy(&row->shader_movies,e)) return false;
+        qa_q3_presentation_assets_destroy(row->view.assets); row->view.assets=NULL;
+        qa_media_library_destroy(row->view.movies);
         qa_font_library_destroy(row->view.fonts); qa_audio_bank_destroy(row->view.sounds);
-        if(!row->view.music_attached)qa_audio_music_destroy(row->view.music);
+        qa_audio_music_destroy(row->view.music);
         qa_material_library_destroy(row->view.materials); qa_scene_resources_destroy(row->view.images); qa_vfs_destroy(row->view.mounts);
         row->view.assets=NULL; row->view.movies=NULL; row->view.fonts=NULL; row->view.sounds=NULL;
         row->view.music=NULL; row->view.materials=NULL; row->view.images=NULL; row->view.mounts=NULL;
@@ -801,7 +1013,10 @@ bool frontend_native_q3_create(qa_frontend *f,const qa_application_native_q3_pre
     qa_native_q3_wire_publication publication;
     if(ok)ok=qa_native_q3_wire_reader_publication(row->view.reader,&publication,e) &&
         q3n_native_initialize(row->view.core,publication.initial_command_sequence,e);
-    if(ok) { row->constructed=true; *out=row; return true; }
+    if(ok) {
+        row->constructed=true; *out=row;
+        return frontend_view_bindings_apply_restored(f,e);
+    }
     if(character.release)character.release(character.lifetime);
     if(!e || e->code==QA_OK)frontend_fail(e,QA_ERROR_ARGUMENT,"Native constructor lacks its actual retained CHARACTER declaration");
     qa_error cleanup={0}; row_destroy(row,&cleanup); return false;
@@ -899,6 +1114,25 @@ static bool row_idle(const frontend_native_q3 *row)
         (!row->view.materials || qa_material_library_idle(row->view.materials)) &&
         (!row->view.images || qa_scene_resources_idle(row->view.images));
 }
+bool frontend_native_q3_actor_admitted(const qa_frontend *f, uint32_t physical_seat, qa_actor_id actor)
+{
+    for (const frontend_native_q3 *row = f ? f->native_q3 : NULL; row; row = row->next)
+        if (row->view.seat == physical_seat && row->composition.actor_admitted &&
+            frontend_native_q3_current(row) &&
+            row->composition.actor_admitted(row->composition.context, actor)) return true;
+    return false;
+}
+bool frontend_native_q3_weapon_snapshot(const qa_frontend *f, uint32_t physical_seat,
+    qa_application_equipment_view *out, bool *requested, qa_error *error)
+{
+    if (!f || physical_seat >= f->options.seats || !out || !requested)
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Native weapon snapshot requires its actual physical seat");
+    *requested = false;
+    for (const frontend_native_q3 *row = f->native_q3; row; row = row->next)
+        if (row->view.seat == physical_seat && row->composition.weapon_snapshot && frontend_native_q3_current(row))
+            return row->composition.weapon_snapshot(row->composition.context, out, requested, error);
+    return true;
+}
 bool frontend_native_q3_idle(const qa_frontend *f)
 {
     if(!f)return false;
@@ -908,6 +1142,7 @@ bool frontend_native_q3_idle(const qa_frontend *f)
 bool frontend_native_q3_retire_ready(const qa_frontend *f,qa_error *e)
 {
     if(!f || f->capture || !frontend_native_q3_idle(f) ||
+        !frontend_selected_effects_idle(f) ||
         (f->audio && !qa_audio_engine_round_ready(f->audio,e)))
         return frontend_fail(e,QA_ERROR_ARGUMENT,"Native retirement requires inactive actual children and audio");
     for(const frontend_native_q3 *row=f->native_q3;row;row=row->next)
@@ -939,7 +1174,7 @@ bool frontend_native_q3_publish_world(qa_frontend *f,qa_error *e)
 bool frontend_native_q3_retire_source(qa_frontend *f,qa_actor_owner source,const qa_launch_instance *retiring,qa_error *e)
 {
     if(!f || !source || !retiring || !retiring->storage || f->capture || f->source_restoring ||
-        !frontend_seat_callbacks_idle(f) ||
+        !frontend_seat_callbacks_idle(f) || !frontend_selected_effects_idle(f) ||
         (f->audio && !qa_audio_engine_round_ready(f->audio,e)))
         return frontend_fail(e,QA_ERROR_ARGUMENT,"Native source retirement requires returned actual frontend callbacks");
     for(frontend_native_q3 *row=f->native_q3;row;row=row->next)
@@ -973,6 +1208,7 @@ bool frontend_native_q3_frame(qa_frontend *f,uint32_t seat,qa_scene_rect viewpor
     if(!row_idle(selected) || !frontend_native_q3_current(selected) ||
         !qa_native_q3_wire_reader_publication(selected->view.reader,&publication,e) ||
         !qa_q3_presentation_frame(selected->view.presentation,&f->frame,viewport,e))return false;
+    if (!frontend_q3_source_output(f,selected->view.materials,viewport,e)) return false;
     selected->frame_active=true;
     selected->view.has_listener=false;
     bool ok=q3n_native_draw(selected->view.core,publication.latest_command_sequence,rendered,e);
@@ -1047,16 +1283,16 @@ bool frontend_native_q3_q3_ready(const qa_frontend *f,size_t index,const qa_q3_p
         !frontend_native_q3_backend_options(row,&expected,e) || !frontend_native_q3_asset_options(row,&assets,e) ||
         p->assets!=expected.assets || p->audio!=expected.audio || p->clock.context!=expected.clock.context ||
         p->clock.sample!=expected.clock.sample || p->seat!=expected.seat || p->owner!=expected.owner || p->context!=row ||
-        p->near_clip!=expected.near_clip || p->far_clip!=expected.far_clip || p->identity_light!=1 || p->lod_scale!=5 ||
-        p->lod_bias || p->shadow_mode || p->rail_core_width!=6 || p->rail_ring_width!=16 || p->rail_segment_length!=32 ||
+        p->far_clip!=expected.far_clip || p->lod_scale!=5 ||
+        p->lod_bias || p->rail_core_width!=6 || p->rail_ring_width!=16 || p->rail_segment_length!=32 ||
         p->audio_actor!=audio_actor || p->listener!=listener || p->music!=music || p->frame_number!=frame_number ||
         p->milliseconds!=milliseconds || p->audio_bus!=audio_bus || p->prepare_view!=prepare_view ||
         p->submit_view!=submit_view || p->remap!=remap || p->print!=print_row || p->system_movie ||
         p->scene_cleared!=scene_cleared ||
-        p->prepare_picture || p->video_frame || p->video_context ||
+        p->prepare_picture!=prepare_picture || p->video_frame!=frontend_material_movies_frontend_resolve || p->video_context!=f ||
         a->provider.mounts!=assets.provider.mounts || a->provider.images!=assets.provider.images ||
         a->provider.materials!=assets.provider.materials || a->provider.family!=QA_SCENE_Q3 ||
-        a->sounds!=assets.sounds || a->movies!=assets.movies || a->zero_sound || a->context!=row || a->select || a->print!=print_row)
+        a->sounds!=assets.sounds || a->movies!=assets.movies || a->zero_sound || a->context!=row || a->select!=select_asset || a->print!=print_row || a->model_initialize!=model_initialize)
         return frontend_fail(e,QA_ERROR_FORMAT,"Native Q3 dictionary policy differs from its actual installed row");
     return true;
 }
@@ -1218,7 +1454,7 @@ void frontend_native_q3_rebind(qa_frontend *owned,qa_frontend *destination)
 {
     for(frontend_native_q3 *row=owned->native_q3;row;row=row->next) {
         qa_q3_presentation_frontend_rebind(row->view.presentation,&owned->frame,&destination->frame,owned->audio,row->view.identity);
-        if(row->view.music_attached)row->view.music=qa_audio_engine_bus_music(owned->audio,row->view.identity);
+
         if(row->composition.rebind)row->composition.rebind(row->composition.context,destination);
         frontend_native_q3_commands_rebind(row->commands,destination); row->frontend=destination;
     }
@@ -1228,4 +1464,14 @@ bool frontend_native_q3_prepare_commands(frontend_native_q3 *row,qa_bytes bytes,
     return linked(row) && row->restoring && !row->view.core &&
         (row->commands || frontend_native_q3_commands_create(row,true,&row->commands,e)) &&
         frontend_native_q3_commands_restore(row->commands,bytes,e);
+}
+
+bool frontend_native_q3_material_bindings_restore(qa_frontend *f,qa_error *error)
+{
+    if (!f || !f->source_restoring || f->capture || f->resource_inventory)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Source material rebinding requires its genuine imported physical banks");
+    for (frontend_native_q3 *row=f->native_q3;row;row=row->next)
+        if (row->owns_media && row->view.materials &&
+            !frontend_q3_material_source_bind(f,row->view.materials,error)) return false;
+    return true;
 }

@@ -23,14 +23,15 @@ static bool mutation_end(qa_material_library *library, bool ok)
 
 bool qa_material_library_idle(const qa_material_library *library)
 {
-    return library && !library->capture_depth && !library->mutating &&
+    return library && !library->capture_depth && !library->mutating && !library->image_policy && !library->policy_sealed &&
         (!library->order || qa_material_order_idle(library->order));
 }
 
 bool qa_material_library_capture_begin(const qa_material_library *borrowed, qa_error *error)
 {
     qa_material_library *library = (qa_material_library *)borrowed;
-    if (!library || !library->resources || !library->catalog_ready || library->mutating || library->capture_depth == SIZE_MAX) {
+    if (!library || !library->resources || !library->catalog_ready || library->mutating || library->image_policy ||
+        library->policy_source || library->capture_depth == SIZE_MAX) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Material capture requires an idle retained owner");
         return false;
     }
@@ -60,6 +61,7 @@ qa_material_library *qa_material_library_create_detached(qa_scene_resources *res
         return NULL;
     }
     library->resources = resources;
+    library->references = 1;
     return library;
 }
 
@@ -365,6 +367,7 @@ static bool same_options(const qa_scene_image_options *a, const qa_scene_image_o
         a->usage == b->usage &&
         a->mipmap == b->mipmap && a->transparent == b->transparent &&
         a->fullbright_only == b->fullbright_only && a->transparent_index == b->transparent_index &&
+        a->source_q3 == b->source_q3 &&
         same_bytes(a->palette_rgb, b->palette_rgb) && same_bytes(a->translation, b->translation);
 }
 
@@ -390,10 +393,19 @@ memory:
     return false;
 }
 
+void qa_material_videos_clear(qa_material_record *record)
+{
+    while (record->videos) {
+        qa_material_video_receipt *video = record->videos;
+        record->videos = video->next;
+        qa_scene_image_release(video->image); free(video->source); free(video);
+    }
+}
 static void record_free(qa_material_record *record)
 {
     qa_material_order_remove(record->material.order_entry);
     qa_material_clear(&record->material);
+    qa_material_videos_clear(record);
     free(record->base_name);
     qa_scene_image_release(record->base_image);
     free(record->palette);
@@ -469,7 +481,11 @@ static bool implicit(qa_material_library *library, qa_material_record *record,
         if (!qa_material_sample_image(library, generated->image, false, QA_SCENE_CLAMP, &image, error)) return false;
         kind = QA_MATERIAL_PICTURE;
     } else if (internal) {
-        image = (qa_scene_image *)qa_scene_missing(library->resources);
+        image = (qa_scene_image *)(library->source_profile ? qa_scene_source_q3_missing(library->resources) :
+            qa_scene_missing(library->resources));
+        if (!image) {
+            qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Source internal shader has no admitted renderer image"); return false;
+        }
         qa_scene_image_retain(image);
     } else {
         qa_error load_error = {0};
@@ -479,7 +495,11 @@ static bool implicit(qa_material_library *library, qa_material_record *record,
                 return false;
             }
             material->default_shader = true;
-            image = (qa_scene_image *)qa_scene_missing(library->resources);
+            image = (qa_scene_image *)(options.source_q3 ? qa_scene_source_q3_missing(library->resources) :
+                qa_scene_missing(library->resources));
+            if (!image) {
+                qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Source default shader has no admitted renderer image"); return false;
+            }
             qa_scene_image_retain(image);
             kind = QA_MATERIAL_DEFAULT;
         }
@@ -521,7 +541,7 @@ static bool implicit(qa_material_library *library, qa_material_record *record,
         first->tcgen = first->lightmap ? QA_TC_LIGHTMAP : QA_TC_TEXTURE;
         first->rgb = first->lightmap ? QA_COLOR_IDENTITY : QA_COLOR_IDENTITY_LIGHTING;
         if (!bind_borrowed(first, first->lightmap ? "$lightmap" : "$whiteimage",
-                           qa_scene_white(library->resources), error)) return false;
+                           options.source_q3 ? qa_scene_source_q3_white(library->resources) : qa_scene_white(library->resources), error)) return false;
         base->rgb = QA_COLOR_IDENTITY;
         base->state.blend_source = QA_BLEND_DST_COLOR;
         base->state.blend_destination = QA_BLEND_ZERO;
@@ -535,12 +555,374 @@ static bool implicit(qa_material_library *library, qa_material_record *record,
     return true;
 }
 
+typedef struct material_policy_record {
+    qa_material_record *record;
+    qa_material material;
+    const qa_scene_image *base;
+} material_policy_record;
+struct qa_scene_material_image_policy {
+    qa_material_library *owner;
+    qa_scene_resource_policy *resources;
+    material_policy_record *records;
+    qa_material_generated *generated;
+    size_t count;
+    qa_material_library *destination;
+    qa_material_order_image_policy *order;
+    qa_material_record **ordered;
+    size_t capacity, added;
+    qa_material_profile source_profile, profile;
+    qa_material_source_upload_fn source_upload;
+    void *source_upload_context;
+    qa_material_source_ui_fullscreen_fn source_ui_fullscreen;
+    void *source_ui_context;
+    bool replace_profile, source_profile_bound;
+    bool sealed, published;
+};
+static bool profile_equal(const qa_material_profile *a, const qa_material_profile *b)
+{
+    return a->detail_textures == b->detail_textures && a->vertex_lighting == b->vertex_lighting &&
+        a->ui_fullscreen == b->ui_fullscreen && a->permedia2 == b->permedia2 &&
+        a->multitexture == b->multitexture && a->texture_env_add == b->texture_env_add &&
+        a->ignore_fast_path == b->ignore_fast_path;
+}
+static bool material_policy_current(const qa_scene_material_image_policy *ticket)
+{
+    return ticket && ticket->owner->image_policy == ticket && !ticket->owner->mutating &&
+        !ticket->owner->capture_depth && ticket->owner->count == ticket->count + (ticket->published ? ticket->added : 0) &&
+        profile_equal(&ticket->owner->profile, ticket->published ? &ticket->profile : &ticket->source_profile) &&
+        ticket->owner->source_profile == ticket->source_profile_bound &&
+        ticket->owner->source_upload == ticket->source_upload &&
+        ticket->owner->source_upload_context == ticket->source_upload_context &&
+        ticket->owner->source_ui_fullscreen == ticket->source_ui_fullscreen &&
+        ticket->owner->source_ui_context == ticket->source_ui_context &&
+        ticket->owner->resources == qa_scene_resource_policy_source(ticket->resources) &&
+        (!ticket->sealed || (ticket->destination && ticket->destination->policy_sealed &&
+            ticket->destination->count == (ticket->published ? 0 : ticket->added))) &&
+        (!ticket->owner->order || qa_material_order_idle(ticket->owner->order) ||
+            qa_material_order_image_policy_associated(ticket->owner->order));
+}
+static void material_policy_dispose(qa_scene_material_image_policy *ticket)
+{
+    if (ticket->destination) {
+        /* Catalog, profile and generated names are borrowed from the held
+         * source. Only newly registered records and their order are owned. */
+        memset(ticket->destination->scripts, 0, sizeof(ticket->destination->scripts));
+        ticket->destination->remaps = NULL; ticket->destination->generated = NULL;
+        ticket->destination->fog_image = NULL; ticket->destination->dlight_image = NULL;
+        ticket->destination->policy_sealed = false;
+        qa_material_library_destroy(ticket->destination);
+    }
+    for (size_t i = 0; i < ticket->count; ++i) {
+        qa_material_clear(&ticket->records[i].material);
+        qa_scene_image_release(ticket->records[i].base);
+    }
+    qa_material_generated *generated = ticket->generated;
+    while (generated) {
+        qa_material_generated *next = generated->next;
+        qa_scene_image_release(generated->image); free(generated); generated = next;
+    }
+    free(ticket->ordered); free(ticket->records); ticket->owner->image_policy = NULL; free(ticket);
+}
+bool qa_scene_material_image_policy_prepare_profile(qa_material_library *library, qa_scene_resource_policy *resources,
+    qa_scene_world_image_policy *const *worlds, size_t world_count,
+    qa_material_order_image_policy *order, const qa_material_profile *profile,
+    qa_scene_material_image_policy **out, qa_error *error)
+{
+    qa_scene_resources *destination = qa_scene_resource_policy_destination(resources);
+    if (!out || *out || !library || library->capture_depth || library->mutating || library->image_policy || !destination ||
+        qa_material_order_image_policy_source(order) != library->order ||
+        library->resources != qa_scene_resource_policy_source(resources) || (world_count && !worlds) ||
+        library->count > SIZE_MAX / sizeof(material_policy_record)) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Material image preparation requires its actual resource bank"); return false;
+    }
+    qa_scene_material_image_policy *ticket = calloc(1, sizeof(*ticket));
+    if (!ticket) goto memory;
+    ticket->records = library->count ? calloc(library->count, sizeof(*ticket->records)) : NULL;
+    if (library->count && !ticket->records) { free(ticket); goto memory; }
+    ticket->owner = library; ticket->resources = resources; ticket->count = library->count;
+    ticket->source_profile = library->profile;
+    ticket->source_profile_bound = library->source_profile;
+    ticket->source_upload = library->source_upload; ticket->source_upload_context = library->source_upload_context;
+    ticket->source_ui_fullscreen = library->source_ui_fullscreen; ticket->source_ui_context = library->source_ui_context;
+    ticket->profile = profile ? *profile : library->profile;
+    ticket->replace_profile = profile != NULL;
+    ticket->order = order;
+    library->image_policy = ticket;
+    qa_material_generated **tail = &ticket->generated;
+    for (const qa_material_generated *current = library->generated; current; current = current->next) {
+        qa_material_generated *generated = calloc(1, sizeof(*generated));
+        if (!generated) { material_policy_dispose(ticket); goto memory; }
+        generated->name = current->name; generated->picture = current->picture;
+        *tail = generated; tail = &generated->next;
+        qa_scene_image *image = NULL;
+        if (!qa_scene_resource_policy_image(resources, current->image, &image, error)) {
+            material_policy_dispose(ticket); return false;
+        }
+        generated->image = image;
+    }
+    qa_material_library staging = *library;
+    staging.resources = destination; staging.generated = ticket->generated;
+    staging.profile = ticket->profile;
+    for (size_t i = 0; i < ticket->count; ++i) {
+        qa_material_record *current = library->ordered[i]; material_policy_record *prepared = &ticket->records[i];
+        prepared->record = current;
+        if (current->material.revision == UINT64_MAX) {
+            material_policy_dispose(ticket);
+            qa_error_set(error, QA_ERROR_MEMORY, i, "Material image revisions exhausted"); return false;
+        }
+        if (current->base_image) {
+            const qa_scene_image *base = NULL;
+            for (size_t w = 0; !base && w < world_count; ++w)
+                (void)qa_scene_world_image_policy_base(worlds[w], current->world_identity,
+                    current->base_name, current->base_image, &base);
+            if (base) { prepared->base = base; qa_scene_image_retain(base); }
+            else {
+                qa_scene_image *image = NULL;
+                if (!qa_scene_resource_policy_image(resources, current->base_image, &image, error)) {
+                    material_policy_dispose(ticket); return false;
+                }
+                prepared->base = image;
+            }
+        }
+        qa_material_record pending = {.options = current->options, .kind = current->kind,
+            .world_identity = current->world_identity, .lightmap_index = current->lightmap_index,
+            .base_name = current->base_name, .base_image = prepared->base};
+        pending.material.name = qa_material_string(current->material.name, error);
+        pending.material.family = current->material.family; pending.material.cull = QA_CULL_FRONT;
+        pending.material.profile = ticket->replace_profile ? ticket->profile : current->material.profile;
+        if (library->source_profile) pending.material.profile.ui_fullscreen = current->material.profile.ui_fullscreen;
+        if (!pending.material.name) { material_policy_dispose(ticket); return false; }
+        staging.refresh_record = current; staging.registration_record = NULL;
+        qa_material_script *script = library->scripts[qa_material_hash(current->material.name)];
+        while (script && strcmp(script->name, current->material.name)) script = script->next;
+        const qa_material_generated *generated = ticket->generated;
+        while (generated && strcmp(generated->name, current->material.name)) generated = generated->next;
+        const char *request = current->material.name;
+        if (current->material.stage_count) {
+            const qa_material_stage *stage = &current->material.stages[current->material.stage_count - 1];
+            if (stage->image_count && stage->image_names && stage->image_names[0]) request = stage->image_names[0];
+        }
+        bool ok = script && !generated && current->kind != QA_MATERIAL_DEFAULT &&
+            current->kind != QA_MATERIAL_STENCIL_SHADOW
+            ? qa_material_script_register(&staging, &pending.material, (qa_bytes){script->text, script->size},
+                &current->options, current->lightmap_index, current->base_name, prepared->base, error)
+            : implicit(&staging, &pending, request, error);
+        if (!ok) { qa_material_clear(&pending.material); material_policy_dispose(ticket); return false; }
+        pending.material.identity = current->material.identity;
+        pending.material.revision = current->material.revision + 1;
+        pending.material.registration = current->material.registration;
+        pending.material.sorted_index = current->material.sorted_index;
+        pending.material.order_entry = current->material.order_entry;
+        pending.material.fog_image = library->fog_image; pending.material.dlight_image = library->dlight_image;
+        pending.material.remapped = current->material.remapped;
+        pending.material.remap_time_offset = current->material.remap_time_offset;
+        pending.material.source_time_offset = current->material.source_time_offset;
+        pending.material.source_remap = current->material.source_remap;
+        prepared->material = pending.material;
+    }
+    for (size_t i = 0; i < ticket->count; ++i) {
+        material_policy_record *prepared = &ticket->records[i];
+        if (prepared->material.source_remap) continue;
+        for (const qa_material_remap_record *remap = library->remaps; remap; remap = remap->next) {
+            if (strcmp(remap->original, prepared->material.name)) continue;
+            prepared->material.remapped = NULL;
+            for (size_t j = 0; j < ticket->count; ++j) {
+                const material_policy_record *target = &ticket->records[j];
+                if (target->record->kind == prepared->record->kind &&
+                    target->record->world_identity == prepared->record->world_identity &&
+                    target->record->lightmap_index == prepared->record->lightmap_index &&
+                    !strcmp(target->material.name, remap->replacement) &&
+                    target->record->base_image == prepared->record->base_image &&
+                    same_options(&target->record->options, &prepared->record->options) && !target->material.default_shader) {
+                    prepared->material.remapped = &target->record->material;
+                    prepared->material.remap_time_offset = remap->time_offset; break;
+                }
+            }
+            break;
+        }
+    }
+    ticket->destination = qa_material_library_create_detached(destination, error);
+    if (!ticket->destination) { material_policy_dispose(ticket); return false; }
+    qa_material_library *prepared_library = ticket->destination;
+    prepared_library->order = qa_material_order_create(error);
+    if (!prepared_library->order) { material_policy_dispose(ticket); return false; }
+    memcpy(prepared_library->scripts, library->scripts, sizeof(library->scripts));
+    prepared_library->generated = ticket->generated; prepared_library->remaps = library->remaps;
+    prepared_library->profile = ticket->profile; prepared_library->sun_light = library->sun_light;
+    prepared_library->source_profile = library->source_profile;
+    prepared_library->source_upload = library->source_upload;
+    prepared_library->source_upload_context = library->source_upload_context;
+    prepared_library->source_ui_fullscreen = library->source_ui_fullscreen;
+    prepared_library->source_ui_context = library->source_ui_context;
+    prepared_library->sun_direction = library->sun_direction; prepared_library->has_sun = library->has_sun;
+    prepared_library->sky_height = library->sky_height; prepared_library->catalog_ready = true;
+    prepared_library->fog_image = library->fog_image; prepared_library->dlight_image = library->dlight_image;
+    prepared_library->policy_source = library;
+    *out = ticket; return true;
+memory:
+    qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining material image preparation"); return false;
+}
+bool qa_scene_material_image_policy_prepare(qa_material_library *library, qa_scene_resource_policy *resources,
+    qa_scene_world_image_policy *const *worlds, size_t world_count, qa_material_order_image_policy *order,
+    qa_scene_material_image_policy **out, qa_error *error)
+{
+    return qa_scene_material_image_policy_prepare_profile(library, resources, worlds, world_count,
+        order, NULL, out, error);
+}
+qa_material_library *qa_scene_material_image_policy_source(const qa_scene_material_image_policy *ticket)
+{ return material_policy_current(ticket) ? ticket->owner : NULL; }
+qa_material_library *qa_scene_material_image_policy_destination(const qa_scene_material_image_policy *ticket)
+{ return material_policy_current(ticket) && !ticket->sealed && !ticket->published ? ticket->destination : NULL; }
+bool qa_scene_material_image_policy_video_start(qa_scene_material_image_policy *ticket,
+    const qa_scene_image *(*start)(void *, const char *, qa_error *), void *context, qa_error *error)
+{
+    if (!material_policy_current(ticket) || ticket->sealed || ticket->published || !start ||
+        !ticket->owner->video_start || !ticket->owner->video_required || ticket->destination->policy_video) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Prepared shader movies require their genuine live and destination owners");
+        return false;
+    }
+    ticket->destination->video_start = start;
+    ticket->destination->video_context = context;
+    ticket->destination->video_required = true;
+    ticket->destination->policy_video = true;
+    return true;
+}
+bool qa_scene_material_image_policy_read(const qa_scene_material_image_policy *ticket,
+    const qa_material *current, const qa_material **destination)
+{
+    if (!destination || !current || !material_policy_current(ticket) || ticket->published) return false;
+    for (size_t i = 0; i < ticket->count; ++i)
+        if (&ticket->records[i].record->material == current) {
+            *destination = &ticket->records[i].material; return true;
+        }
+    return false;
+}
+bool qa_scene_material_image_policy_ready(qa_scene_material_image_policy *ticket, qa_error *error)
+{
+    if (!material_policy_current(ticket) || ticket->published) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Prepared materials lost their actual resource or order owner"); return false;
+    }
+    for (size_t i = 0; i < ticket->count; ++i)
+        if (!isfinite(ticket->records[i].material.sort)) {
+            qa_error_set(error, QA_ERROR_FORMAT, i, "Prepared material sort is not finite"); return false;
+        }
+    if (ticket->sealed) return true;
+    ticket->added = ticket->destination->count;
+    if (ticket->added > QA_MATERIAL_MAX_REGISTERED - ticket->count) {
+        qa_error_set(error, QA_ERROR_FORMAT, 0, "Prepared materials exceed the actual registration limit"); return false;
+    }
+    ticket->capacity = ticket->owner->capacity;
+    size_t count = ticket->count + ticket->added;
+    if (!ticket->capacity && count) ticket->capacity = 64;
+    while (ticket->capacity < count) ticket->capacity *= 2;
+    ticket->ordered = ticket->capacity ? malloc(ticket->capacity * sizeof(*ticket->ordered)) : NULL;
+    if (ticket->capacity && !ticket->ordered) {
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "Preparing the complete material registration roster"); return false;
+    }
+    for (size_t i = 0; i < ticket->count; ++i) ticket->ordered[i] = ticket->owner->ordered[i];
+    for (size_t i = 0; i < ticket->added; ++i) ticket->ordered[ticket->count + i] = ticket->destination->ordered[i];
+    if (!qa_material_order_image_policy_add(ticket->order, ticket->destination->order, error)) {
+        free(ticket->ordered); ticket->ordered = NULL; return false;
+    }
+    ticket->destination->policy_sealed = true;
+    ticket->sealed = true; return true;
+}
+bool qa_scene_material_image_policy_world(const qa_scene_material_image_policy *ticket, uint64_t world,
+    int32_t lightmap, bool has_lightmap, const char *name, const qa_scene_image_options *input,
+    const qa_material **current, const qa_material **destination, qa_error *error)
+{
+    if (!current || !destination || !name || !input || !world || !material_policy_current(ticket) || ticket->published) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "World material receipt requires the actual prepared library"); return false;
+    }
+    qa_scene_image_options options = *input; options.usage = QA_IMAGE_USAGE_WALL;
+    if (ticket->owner->source_profile) options.source_q3 = true;
+    qa_material_registration_kind kind = has_lightmap ? QA_MATERIAL_LIGHTMAP :
+        lightmap == -3 ? QA_MATERIAL_VERTEX : lightmap == -2 ? QA_MATERIAL_WHITE :
+        lightmap == -4 ? QA_MATERIAL_PICTURE : QA_MATERIAL_DYNAMIC;
+    char *key = qa_material_name(name, error);
+    if (!key) return false;
+    for (size_t i = 0; i < ticket->count; ++i) {
+        const material_policy_record *prepared = ticket->records + i;
+        const qa_material_record *record = prepared->record;
+        if (record->kind == kind && record->world_identity == world && record->lightmap_index == lightmap &&
+            !record->base_image && !strcmp(record->material.name, key) && same_options(&record->options, &options)) {
+            *current = &record->material; *destination = &prepared->material;
+            free(key); return true;
+        }
+    }
+    free(key);
+    qa_error_set(error, QA_ERROR_ARGUMENT, 0, "World shader lost its genuine registered material receipt"); return false;
+}
+bool qa_scene_material_image_policy_ready_is(const qa_scene_material_image_policy *ticket)
+{ return material_policy_current(ticket) && ticket->sealed && !ticket->published &&
+    qa_scene_resource_policy_ready_is(ticket->resources); }
+void qa_scene_material_image_policy_publish(qa_scene_material_image_policy *ticket)
+{
+    if (!material_policy_current(ticket) || !ticket->sealed || ticket->published) return;
+    qa_material_library *library = ticket->owner;
+    for (size_t i = 0; i < ticket->count; ++i) {
+        material_policy_record *prepared = &ticket->records[i];
+        qa_material material = prepared->record->material;
+        prepared->record->material = prepared->material; prepared->material = material;
+        const qa_scene_image *base = prepared->record->base_image;
+        prepared->record->base_image = prepared->base; prepared->base = base;
+        qa_material_order_changed(prepared->record->material.order_entry);
+    }
+    qa_material_generated *prepared = ticket->generated;
+    for (qa_material_generated *current = library->generated; current; current = current->next, prepared = prepared->next) {
+        const qa_scene_image *image = current->image; current->image = prepared->image; prepared->image = image;
+    }
+    qa_material_record **old_ordered = library->ordered;
+    library->ordered = ticket->ordered; ticket->ordered = old_ordered;
+    library->capacity = ticket->capacity;
+    for (size_t bucket = 0; bucket < QA_MATERIAL_BUCKETS; ++bucket) {
+        qa_material_record *record = ticket->destination->records[bucket];
+        while (record) {
+            qa_material_record *next = record->next;
+            record->material.registration += (uint32_t)ticket->count;
+            record->next = library->records[bucket]; library->records[bucket] = record;
+            record = next;
+        }
+        ticket->destination->records[bucket] = NULL;
+    }
+    library->count += ticket->added; ticket->destination->count = 0;
+    library->profile = ticket->profile;
+    library->sun_light = ticket->destination->sun_light; library->sun_direction = ticket->destination->sun_direction;
+    library->has_sun = ticket->destination->has_sun; library->sky_height = ticket->destination->sky_height;
+    for (size_t i = 1; i < library->count; ++i) {
+        qa_material_record *record = library->ordered[i]; size_t j = i;
+        while (j && (library->ordered[j - 1]->material.sort > record->material.sort ||
+            (library->ordered[j - 1]->material.sort == record->material.sort &&
+             library->ordered[j - 1]->material.registration > record->material.registration))) {
+            library->ordered[j] = library->ordered[j - 1]; --j;
+        }
+        library->ordered[j] = record;
+    }
+    for (size_t i = 0; i < library->count; ++i) library->ordered[i]->material.sorted_index = (uint32_t)i;
+    ticket->published = true;
+}
+bool qa_scene_material_image_policy_finish(qa_scene_material_image_policy **owner, qa_error *error)
+{
+    if (!owner || !material_policy_current(*owner) || !(*owner)->published) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Material retirement requires its published image preparation"); return false;
+    }
+    material_policy_dispose(*owner); *owner = NULL; return true;
+}
+bool qa_scene_material_image_policy_abort(qa_scene_material_image_policy **owner, qa_error *error)
+{
+    if (!owner || !material_policy_current(*owner) || (*owner)->published) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Material abort requires its unpublished image preparation"); return false;
+    }
+    material_policy_dispose(*owner); *owner = NULL; return true;
+}
+
 static qa_material_remap_record *remap_find(const qa_material_library *library, const char *name)
 {
     for (qa_material_remap_record *remap = library->remaps; remap; remap = remap->next)
         if (!strcmp(name, remap->original)) return remap;
     return NULL;
 }
+static void registration_rollback(qa_material_library *, size_t);
 
 static bool register_material(qa_material_library *library, const char *name,
                                 const qa_scene_image_options *input,
@@ -562,6 +944,23 @@ static bool register_material(qa_material_library *library, const char *name,
         return false;
     }
     options.usage = kind == QA_MATERIAL_PICTURE ? QA_IMAGE_USAGE_PICTURE : QA_IMAGE_USAGE_WALL;
+    if (library->source_profile && kind != QA_MATERIAL_DEFAULT && kind != QA_MATERIAL_STENCIL_SHADOW &&
+        !options.source_q3) {
+        if (!library->source_upload) {
+            qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Source registration has no actual renderer upload producer"); return false;
+        }
+        qa_material_source_upload_fn producer = library->source_upload;
+        void *context = library->source_upload_context;
+        if (!producer(context, options.mipmap, options.mipmap, &options.source_upload, error)) return false;
+        if (library->source_upload != producer || library->source_upload_context != context ||
+            !library->source_profile || !qa_q3_image_upload_options_valid(&options.source_upload, error) ||
+            options.source_upload.mipmap != options.mipmap || options.family != QA_SCENE_Q3) {
+            if (!error || error->code == QA_OK)
+                qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Source upload producer lost its actual registration binding");
+            return false;
+        }
+        options.source_q3 = true;
+    }
     char *key = qa_material_name(name, error);
     if (!key) return false;
     unsigned bucket = qa_material_hash(key);
@@ -574,6 +973,31 @@ static bool register_material(qa_material_library *library, const char *name,
             free(key);
             return true;
         }
+    }
+    if (library->policy_source) {
+        for (qa_material_record *record = library->policy_source->records[bucket]; record; record = record->next)
+            if (record->kind == kind && record->world_identity == world_identity &&
+                record->lightmap_index == lightmap_index && !strcmp(record->material.name, key) &&
+                record->base_image == base_image && same_options(&record->options, &options)) {
+                *out = &record->material; free(key); return true;
+            }
+    }
+    /* A remap target can name a fully compiled parent which has not yet
+     * published. Each binding selects that one record, without unfolding its
+     * own remap. Public mutation reentry remains rejected by mutation_begin. */
+    size_t admitting = 0;
+    for (qa_material_record *pending = library->registration_record; pending; pending = pending->admission_parent) {
+        if (pending->kind == kind && pending->world_identity == world_identity &&
+            pending->lightmap_index == lightmap_index && !strcmp(pending->material.name, key) &&
+            pending->base_image == base_image && same_options(&pending->options, &options)) {
+            *out = &pending->material; free(key); return true;
+        }
+        ++admitting;
+    }
+    if (admitting >= QA_MATERIAL_MAX_REGISTERED - library->count) {
+        free(key);
+        qa_error_set(error, QA_ERROR_FORMAT, library->count, "Source material registration limit reached");
+        return false;
     }
     qa_material_record *record = calloc(1, sizeof(*record));
     if (!record) {
@@ -588,6 +1012,19 @@ static bool register_material(qa_material_library *library, const char *name,
     record->material.family = options.family;
     record->material.cull = QA_CULL_FRONT;
     record->material.profile = library->profile;
+    if (library->source_profile && kind != QA_MATERIAL_DEFAULT && kind != QA_MATERIAL_STENCIL_SHADOW) {
+        qa_material_source_ui_fullscreen_fn producer = library->source_ui_fullscreen;
+        void *context = library->source_ui_context;
+        if (!producer) {
+            qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Source registration has no actual live UI flag producer");
+            record_free(record); return false;
+        }
+        if (!producer(context, &record->material.profile.ui_fullscreen, error)) { record_free(record); return false; }
+        if (library->source_ui_fullscreen != producer || library->source_ui_context != context || !library->source_profile) {
+            qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Source registration lost its actual UI flag binding");
+            record_free(record); return false;
+        }
+    }
     if (!qa_material_order_reserve(library->order, &record->material,
                                       &record->material.order_entry, error)) {
         record_free(record); return false;
@@ -602,17 +1039,23 @@ static bool register_material(qa_material_library *library, const char *name,
     while (script && strcmp(script->name, key)) script = script->next;
     const qa_material_generated *generated = library->generated;
     while (generated != NULL && strcmp(generated->name, key) != 0) generated = generated->next;
+    qa_material_record *previous_record = library->registration_record;
+    record->admission_parent = previous_record;
+    library->registration_record = record;
     bool compiled = script && generated == NULL && kind != QA_MATERIAL_DEFAULT && kind != QA_MATERIAL_STENCIL_SHADOW
         ? qa_material_script_register(library, &record->material,
               (qa_bytes){script->text, script->size}, &options, lightmap_index,
               record->base_name, record->base_image, error)
         : implicit(library, record, name, error);
-    if (!compiled) { record_free(record); return false; }
+    if (!compiled) { library->registration_record = previous_record; record_free(record); return false; }
+    size_t registered_before = library->count;
     qa_material_remap_record *remap = remap_find(library, key);
     if (remap) {
         const qa_material *target;
         if (!register_material(library, remap->replacement, &options, kind, world_identity, lightmap_index,
                                record->base_name, record->base_image, &target, error)) {
+            library->registration_record = previous_record;
+            registration_rollback(library, registered_before);
             record_free(record);
             return false;
         }
@@ -621,7 +1064,12 @@ static bool register_material(qa_material_library *library, const char *name,
             record->material.remap_time_offset = remap->time_offset;
         }
     }
-    if (!publish(library, record, error)) { record_free(record); return false; }
+    library->registration_record = previous_record;
+    record->admission_parent = NULL;
+    if (!publish(library, record, error)) {
+        registration_rollback(library, registered_before);
+        record_free(record); return false;
+    }
     *out = &record->material;
     return true;
 }
@@ -815,10 +1263,22 @@ bool qa_material_library_sun(const qa_material_library *library, qa_vec3 *light,
 void qa_material_library_set_video_start(qa_material_library *library,
                                           qa_material_video_start_fn start, void *context)
 {
-    if (!qa_material_library_idle(library)) return;
+    if (!qa_material_library_idle(library) || library->policy_source) return;
     library->video_start = start;
     library->video_context = context;
     library->video_required = start != NULL;
+}
+bool qa_material_library_video_start_is(const qa_material_library *library,
+    const qa_scene_image *(*start)(void *, const char *, qa_error *), const void *context)
+{
+    return library && start && library->video_required && library->video_start == start &&
+        library->video_context == context;
+}
+bool qa_material_library_video_start_read(const qa_material_library *library,
+    const qa_scene_image *(**start)(void *, const char *, qa_error *), void **context)
+{
+    if (!library || !start || !context) return false;
+    *start = library->video_start; *context = library->video_context; return true;
 }
 
 static bool set_profile(qa_material_library *library, const qa_material_profile *profile,
@@ -849,6 +1309,76 @@ bool qa_material_library_set_profile(qa_material_library *library, const qa_mate
 {
     if (!mutation_begin(library, error)) return false;
     return mutation_end(library, set_profile(library, profile, error));
+}
+bool qa_material_library_set_source_profile(qa_material_library *library,
+    const qa_material_profile *profile, qa_error *error)
+{
+    if (!mutation_begin(library, error)) return false;
+    if (library->count > 2 && !library->source_profile) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Source profile must bind before content registration");
+        return mutation_end(library, false);
+    }
+    bool ok = set_profile(library, profile, error);
+    if (ok) library->source_profile = true;
+    return mutation_end(library, ok);
+}
+bool qa_material_library_has_source_profile(const qa_material_library *library)
+{ return library && library->source_profile; }
+bool qa_material_library_set_source_upload(qa_material_library *library,
+    qa_material_source_upload_fn producer, void *context, qa_error *error)
+{
+    if (!producer) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Source upload requires its actual producer");
+        return false;
+    }
+    if (!mutation_begin(library, error)) return false;
+    bool ok = library->source_profile && (!library->source_upload ||
+        (library->source_upload == producer && library->source_upload_context == context));
+    if (ok && !qa_scene_source_q3_missing(library->resources)) {
+        qa_q3_image_upload_options profile;
+        ok = library->count <= 2 && producer(context, false, false, &profile, error) &&
+            qa_scene_resources_source_q3_initialize(library->resources, &profile, error);
+        if (!ok && (!error || error->code == QA_OK))
+            qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Source builtin initialization requires its genuine fresh renderer");
+        if (ok) for (size_t i = 0; i < library->count; ++i) {
+            qa_material *material = &library->ordered[i]->material;
+            for (size_t stage = 0; stage < material->stage_count; ++stage) {
+                qa_material_stage *s = &material->stages[stage];
+                for (size_t image = 0; image < s->image_count; ++image)
+                    if (s->images[image] == qa_scene_missing(library->resources)) {
+                        qa_scene_image *next = (qa_scene_image *)qa_scene_source_q3_missing(library->resources);
+                        qa_scene_image_retain(next); qa_scene_image_release(s->images[image]); s->images[image] = next;
+                    }
+            }
+        }
+    }
+    if (ok) { library->source_upload = producer; library->source_upload_context = context; }
+    else if (!error || error->code == QA_OK)
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Source upload binding requires its actual constructor or restored owner");
+    return mutation_end(library, ok);
+}
+bool qa_material_library_source_upload_is(const qa_material_library *library,
+    qa_material_source_upload_fn producer, const void *context)
+{
+    return library && library->source_profile && producer && library->source_upload == producer &&
+        library->source_upload_context == context;
+}
+bool qa_material_library_set_source_ui_fullscreen(qa_material_library *library,
+    qa_material_source_ui_fullscreen_fn producer, void *context, qa_error *error)
+{
+    if (!producer) { qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Source UI flags require their actual producer"); return false; }
+    if (!mutation_begin(library, error)) return false;
+    bool ok = library->source_profile && (!library->source_ui_fullscreen ||
+        (library->source_ui_fullscreen == producer && library->source_ui_context == context));
+    if (ok) { library->source_ui_fullscreen = producer; library->source_ui_context = context; }
+    else qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Source UI binding differs from its actual constructor or restored owner");
+    return mutation_end(library, ok);
+}
+bool qa_material_library_source_ui_fullscreen_is(const qa_material_library *library,
+    qa_material_source_ui_fullscreen_fn producer, const void *context)
+{
+    return library && library->source_profile && producer && library->source_ui_fullscreen == producer &&
+        library->source_ui_context == context;
 }
 
 bool qa_material_library_parse(qa_material_library *library, qa_bytes source,
@@ -959,25 +1489,15 @@ static bool remap_material(qa_material_library *library, const char *original,
         if (old) { *link = old->next; free(old->original); free(old->replacement); free(old); }
         for (size_t i = 0; i < library->count; ++i) {
             qa_material *material = &library->ordered[i]->material;
-            if (!strcmp(material->name, from) && material->remapped) {
+            if (!strcmp(material->name, from) && (material->remapped || material->source_remap)) {
                 material->remapped = NULL;
                 material->remap_time_offset = 0;
+                material->source_remap = false;
                 ++material->revision;
             }
         }
         free(from); free(to);
         return true;
-    }
-    const char *cursor = to;
-    for (size_t depth = 0; ; ++depth) {
-        if (!strcmp(cursor, from) || depth > QA_MATERIAL_MAX_REGISTERED) {
-            free(from); free(to);
-            qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Material remap would form a cycle");
-            return false;
-        }
-        const qa_material_remap_record *next = remap_find(library, cursor);
-        if (!next) break;
-        cursor = next->replacement;
     }
     size_t count = 0;
     for (qa_material_record *record = library->records[qa_material_hash(from)]; record; record = record->next)
@@ -1032,6 +1552,7 @@ static bool remap_material(qa_material_library *library, const char *original,
     for (size_t i = 0; i < count; ++i) {
         sources[i]->material.remapped = targets[i];
         sources[i]->material.remap_time_offset = offset;
+        sources[i]->material.source_remap = false;
         ++sources[i]->material.revision;
     }
     free(sources); free(targets);
@@ -1043,6 +1564,60 @@ bool qa_material_remap(qa_material_library *library, const char *original,
 {
     if (!mutation_begin(library, error)) return false;
     return mutation_end(library, remap_material(library, original, replacement, offset, error));
+}
+
+static qa_material *source_shader(qa_material_library *library, const char *key)
+{
+    for (qa_material_record *record = library->records[qa_material_hash(key)]; record; record = record->next)
+        if (!strcmp(record->material.name, key)) return &record->material;
+    return NULL;
+}
+static bool source_shader_admit(qa_material_library *library, const char *request, const char *key,
+    qa_material **out, qa_error *error)
+{
+    *out = source_shader(library, key);
+    if (*out && !(*out)->default_shader) return true;
+    const qa_material *registered = NULL;
+    if (!register_material(library, request, NULL, QA_MATERIAL_LIGHTMAP, 0, 0, NULL, NULL,
+        &registered, error)) return false;
+    *out = (qa_material *)registered; return true;
+}
+bool qa_material_remap_source(qa_material_library *library, const char *original,
+    const char *replacement, float offset, qa_material_source_remap_status *status, qa_error *error)
+{
+    if (!original || !replacement || !status || !isfinite(offset)) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid Source shader remap arguments"); return false;
+    }
+    if (!mutation_begin(library, error)) return false;
+    char *from = qa_material_name(original, error), *to = qa_material_name(replacement, error);
+    qa_material *source = NULL, *target = NULL;
+    bool ok = from && to && source_shader_admit(library, original, from, &source, error);
+    if (ok && source->default_shader) *status = QA_MATERIAL_SOURCE_REMAP_ORIGINAL_DEFAULT;
+    else if (ok) {
+        ok = source_shader_admit(library, replacement, to, &target, error);
+        if (ok && target->default_shader) *status = QA_MATERIAL_SOURCE_REMAP_TARGET_DEFAULT;
+        else if (ok) {
+            /* Admission may grow the bucket. Qualify all revisions before
+             * changing any live binding or the selected target timestamp. */
+            for (qa_material_record *record = library->records[qa_material_hash(from)]; record; record = record->next)
+                if (!strcmp(record->material.name, from) && record->material.revision == UINT64_MAX) ok = false;
+            if (target->revision == UINT64_MAX) ok = false;
+            if (!ok) qa_error_set(error, QA_ERROR_MEMORY, 0, "Source shader revisions exhausted");
+            else {
+                for (qa_material_record *record = library->records[qa_material_hash(from)]; record; record = record->next) {
+                    qa_material *material = &record->material;
+                    if (strcmp(material->name, from)) continue;
+                    material->remapped = material != target ? target : NULL;
+                    material->source_remap = true;
+                    ++material->revision;
+                }
+                target->source_time_offset = offset;
+                if (strcmp(target->name, from)) ++target->revision;
+                *status = QA_MATERIAL_SOURCE_REMAP_APPLIED;
+            }
+        }
+    }
+    free(from); free(to); return mutation_end(library, ok);
 }
 
 qa_material_library *qa_material_library_create(qa_scene_resources *resources,
@@ -1088,8 +1663,26 @@ qa_material_library *qa_material_library_create(qa_scene_resources *resources,
     return library;
 }
 
+bool qa_material_retain(const qa_material *material, qa_error *error)
+{
+    qa_material_library *library = material ? material->library : NULL;
+    bool found = false;
+    if (library) for (size_t i = 0; i < library->count; ++i)
+        if (&library->ordered[i]->material == material) { found = true; break; }
+    if (!found || !library->references || library->references == SIZE_MAX) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Material retention requires its actual registered library row");
+        return false;
+    }
+    ++library->references;
+    return true;
+}
+void qa_material_release(const qa_material *material)
+{
+    if (material) qa_material_library_destroy(material->library);
+}
 void qa_material_library_destroy(qa_material_library *library)
 {
+    if (library && library->references > 1) { --library->references; return; }
     if (!qa_material_library_idle(library)) return;
     for (size_t i = 0; i < QA_MATERIAL_BUCKETS; ++i) {
         qa_material_script *script = library->scripts[i];

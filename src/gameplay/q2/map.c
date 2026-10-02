@@ -49,6 +49,7 @@ bool qa_q2_begin_map(qa_q2_game *game, qa_string_id map_name, qa_string_id spawn
     game->first_actor = game->last_actor = game->retired_actors = NULL;
     game->spare_actors = game->all_actors;
     game->actor_sequence = 0;
+    q2_wire_reset(game);
     game->widow_damage_multiplier = 1;
     game->widow_shot_phase = 0;
     game->now_ns = clock.frame.time_ns;

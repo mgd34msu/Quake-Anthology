@@ -10,9 +10,10 @@ static bool writer_storage(size_t size, qa_buffer *bytes, qa_net_writer *w, qa_e
     qa_net_writer_init(w, bytes->data, size, error); return true;
 }
 
-bool qa_network_connections_checkpoint(const qa_network_runtime *runtime, qa_buffer *out, qa_error *error)
+bool qa_network_connections_checkpoint(const qa_network_runtime *runtime, const qa_network_checkpoint_refs *refs,
+    qa_buffer *out, qa_error *error)
 {
-    if (!runtime || !out || !qa_network_callbacks_idle(runtime) ||
+    if (!runtime || !refs || !out || !qa_network_callbacks_idle(runtime) ||
         runtime->options.clients > (SIZE_MAX - 16) / 512)
         return qa_network_fail(error, "Network continuation requires an idle runtime owner");
     qa_buffer table = {0}; qa_net_writer tw;
@@ -33,12 +34,22 @@ bool qa_network_connections_checkpoint(const qa_network_runtime *runtime, qa_buf
         if (!client || !peer->epoch || peer->seat_count != client->seat_count) {
             ok = qa_network_fail(error, "Network peer and connection inventory differ"); break;
         }
-        if (qa_network_nq_peer(peer)) {
+        if(qa_network_q1_client_peer(peer)) {
+            kinds[i]=QA_NETWORK_SOURCE_Q1_CLIENT;
+            ok=qa_network_q1_client_checkpoint_peer(peer,&sources[i],error);
+        } else if (qa_network_nq_peer(peer)) {
             kinds[i] = QA_NETWORK_SOURCE_NQ_SERVER;
             ok = qa_network_nq_checkpoint_peer(peer, &sources[i], error);
         } else if (qa_network_qw_peer(peer)) {
             kinds[i] = QA_NETWORK_SOURCE_QW_SERVER;
             ok = qa_network_qw_checkpoint_peer(peer, &sources[i], error);
+        } else if (qa_network_q2_peer(peer)) {
+            bool server;
+            ok=qa_network_q2_checkpoint_peer(peer,&refs->q2,&server,&sources[i],error);
+            if(ok) kinds[i]=server?QA_NETWORK_SOURCE_Q2_SERVER:QA_NETWORK_SOURCE_Q2_CLIENT;
+        } else if (qa_unified_session_peer(peer)) {
+            kinds[i]=QA_NETWORK_SOURCE_UNIFIED;
+            ok=qa_unified_session_peer_checkpoint(peer,&sources[i],error);
         } else ok = qa_network_q3_checkpoint_peer(peer, &kinds[i], &sources[i], error);
         if (ok && (sources[i].size > SIZE_MAX - 24 || size > SIZE_MAX - 24 - sources[i].size))
             ok = qa_network_fail(error, "Network source continuation extent overflow");
@@ -74,7 +85,9 @@ bool qa_network_connections_restore(qa_bytes bytes, qa_net_transport *transport,
     qa_network_runtime **out, qa_error *error)
 {
     if (!options || !out || !transport || !refs ||
-        (!refs->source && !refs->source_nq && !refs->source_qw) || !bytes.data)
+        (!refs->source && !refs->source_nq && !refs->source_qw &&
+         !refs->q2.source_server && !refs->q2.source_client && !refs->source_unified &&
+         !refs->source_q1_client) || !bytes.data)
         return qa_network_fail(error, "Network restore requires qualified candidate consumers");
     qa_net_reader r; qa_net_reader_init(&r, bytes, error);
     uint32_t tag = qa_net_read_u32(&r), version = qa_net_read_u32(&r);
@@ -105,10 +118,24 @@ bool qa_network_connections_restore(qa_bytes bytes, qa_net_transport *transport,
             qa_net_reader_fail(&r, "Saved source peer has no admitted connection"); goto failure;
         }
         qa_network_peer *peer = &runtime->peers[slot];
-        bool restored = kind == QA_NETWORK_SOURCE_NQ_SERVER
+        bool restored;
+        if(kind==QA_NETWORK_SOURCE_Q1_CLIENT) {
+            qa_network_q1_client_policy policy={0}; qa_network_q1_client_hooks hooks={0};
+            restored=refs->source_q1_client && refs->source_q1_client(refs->context,client,&policy,&hooks,error) &&
+                qa_network_q1_client_restore_peer(runtime,client,source,&policy,&hooks,peer,error);
+            if(!refs->source_q1_client) qa_network_fail(error,"Q1 CLIENT restore lacks its actual candidate Source callbacks");
+        } else if(kind==QA_NETWORK_SOURCE_UNIFIED) {
+            qa_unified_session_hooks hooks={0}; qa_unified_session *session=NULL; qa_network_peer_ops ops;
+            restored=refs->source_unified && refs->source_unified(refs->context,client,&hooks,error) &&
+                qa_unified_session_restore(source,runtime,client,&hooks,&session,&ops,error);
+            if(restored) *peer=(qa_network_peer){.id=client->id,.ops=ops,.state=session};
+            else if(!refs->source_unified) qa_network_fail(error,"Unified restore lacks its actual candidate Source callbacks");
+        } else restored = kind == QA_NETWORK_SOURCE_NQ_SERVER
             ? qa_network_nq_restore_peer(runtime, client, source, refs, peer, error)
             : kind == QA_NETWORK_SOURCE_QW_SERVER
             ? qa_network_qw_restore_peer(runtime, client, source, refs, peer, error)
+            : kind == QA_NETWORK_SOURCE_Q2_SERVER || kind == QA_NETWORK_SOURCE_Q2_CLIENT
+            ? qa_network_q2_restore_peer(runtime,client,kind==QA_NETWORK_SOURCE_Q2_SERVER,source,&refs->q2,peer,error)
             : qa_network_q3_restore_peer(runtime, client, kind, source, refs, peer, error);
         if (!restored) goto failure;
         peer->seats = calloc(client->seat_count, sizeof(*peer->seats));
@@ -118,6 +145,16 @@ bool qa_network_connections_restore(qa_bytes bytes, qa_net_transport *transport,
         }
         peer->id = client->id; peer->epoch = epoch; peer->seat_count = client->seat_count; peer->occupied = true;
         for (size_t j = 0; j < peer->seat_count; ++j) peer->seats[j].id = client->seats[j].seat;
+        if(client->protocol.kind==QA_NET_UNIFIED_1) {
+            if(!qa_unified_session_peer(peer)) {
+                qa_net_reader_fail(&r,"Saved Unified connection lacks its actual token channel"); goto failure;
+            }
+            for(uint32_t earlier=0;earlier<slot;++earlier)
+                if(runtime->peers[earlier].occupied &&
+                    qa_unified_session_peer_tokens_equal(peer,&runtime->peers[earlier])) {
+                    qa_net_reader_fail(&r,"Saved Unified peers share an actual channel token"); goto failure;
+                }
+        }
     }
     uint32_t cursor = 0; const qa_net_client *client;
     while (qa_net_connections_next(connections, &cursor, &client))
@@ -131,19 +168,32 @@ failure:
     qa_network_destroy(runtime); return false;
 }
 
+bool qa_network_source_publication_ready(const qa_network_runtime *runtime,qa_error *error)
+{
+    if(!runtime || !qa_network_callbacks_idle(runtime))
+        return qa_network_fail(error,"Source publication requires its actual returned runtime");
+    for(uint32_t i=0;i<runtime->options.clients;++i)
+        if(runtime->peers[i].occupied && qa_unified_session_peer(&runtime->peers[i]) &&
+            !qa_unified_session_peer_source_ready(&runtime->peers[i],error)) return false;
+    return true;
+}
 void qa_network_transport_exchange(qa_network_runtime *active, qa_network_runtime *candidate)
 {
     qa_net_transport *transport = active->transport;
     active->transport = candidate->transport; candidate->transport = transport;
     for (uint32_t i = 0; i < active->options.clients; ++i)
         if (active->peers[i].occupied) {
+            qa_unified_session_peer_source_retire(&active->peers[i]);
             qa_network_nq_transport_rebind(&active->peers[i], active->transport);
             qa_network_qw_transport_rebind(&active->peers[i], active->transport);
+            qa_network_q1_client_transport_rebind(&active->peers[i],active->transport);
         }
     for (uint32_t i = 0; i < candidate->options.clients; ++i)
         if (candidate->peers[i].occupied) {
+            qa_unified_session_peer_source_publish(&candidate->peers[i]);
             qa_network_nq_transport_rebind(&candidate->peers[i], candidate->transport);
             qa_network_qw_transport_rebind(&candidate->peers[i], candidate->transport);
+            qa_network_q1_client_transport_rebind(&candidate->peers[i],candidate->transport);
         }
 }
 const qa_net_address *qa_network_local_address(const qa_network_runtime *runtime)

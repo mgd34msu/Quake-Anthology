@@ -1,4 +1,6 @@
+#include "source_prompt.h"
 #include "internal.h"
+#include "qa/application_q1_composition.h"
 
 static bool scores(frontend_seat *seat, const qa_q2_player_event *event, qa_error *error)
 {
@@ -86,6 +88,32 @@ void frontend_player_retire(frontend_seat *seat)
 }
 bool frontend_player_events(qa_frontend *frontend, qa_error *error)
 {
+    for (size_t i=0;i<qa_application_event_count(frontend->application);++i) {
+        qa_builtin_event event;
+        if (!qa_application_event_at(frontend->application,i,&event))
+            return frontend_fail(error,QA_ERROR_ARGUMENT,"Player event queue changed during presentation");
+        if (event.kind==QA_BUILTIN_SOURCE_PROMPT || event.kind==QA_BUILTIN_CLEAR_PROMPT) {
+            for (unsigned seat=0;seat<frontend->options.seats && !frontend->options.dedicated;++seat)
+                if (!frontend_source_prompt_receive(frontend->seats[seat].source_prompt,&event,error)) return false;
+            continue;
+        }
+        if ((event.kind!=QA_BUILTIN_CTF_STATUS && event.kind!=QA_BUILTIN_CTF_CAPTURE) ||
+            !qa_application_provider_instance(frontend->application,event.provider)) continue;
+        for (unsigned seat=0;seat<frontend->options.seats && !frontend->options.dedicated;++seat) {
+            qa_actor_id actor; uint32_t launch_seat;
+            if (!frontend_seat_launch_id_read(frontend,seat,&launch_seat) ||
+                !qa_application_player_actor(frontend->application,launch_seat,&actor)) continue;
+            if (event.kind==QA_BUILTIN_CTF_STATUS) {
+                if (qa_actor_id_equal(actor,event.actor) &&
+                    !qa_hud_ctf_status(frontend->seats[seat].hud,&event,error)) return false;
+            } else {
+                uint64_t source_time; bool found=false;
+                if (!qa_application_q1_ctf_recipient_read(frontend->application,event.provider,
+                    actor,&source_time,&found,error)) return false;
+                if (found && !qa_hud_ctf_capture(frontend->seats[seat].hud,&event,actor,error)) return false;
+            }
+        }
+    }
     for (size_t i = 0; i < qa_application_q2_player_event_count(frontend->application); ++i) {
         qa_application_q2_player_event observed;
         if (!qa_application_q2_player_event_at(frontend->application, i, &observed))

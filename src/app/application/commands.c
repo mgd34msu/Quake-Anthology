@@ -83,7 +83,14 @@ bool qa_application_command_context_active(const qa_application *application,
     if (context->owner != 0 && command_owner(application, context->owner) == NULL &&
         application_startup_flow_provider(application, context->owner) == NULL)
         return false;
-    if (context->origin == QA_COMMAND_SEAT ||
+    application_provider *physical = context->owner ? command_owner(application, context->owner) : NULL;
+    if (!physical && context->owner)
+        physical = application_startup_flow_provider(application, context->owner);
+    if (physical && physical->client_only_owned) {
+        /* A standalone decoded CLIENT has its own observer namespace. Its
+         * pending seat origin must never acquire the old local GAME actor. */
+        if (context->actor.registry) return false;
+    } else if (context->origin == QA_COMMAND_SEAT ||
         (context->origin == QA_COMMAND_LOCAL && context->actor.registry != 0)) {
         qa_actor_id controlled = {0};
         bool present = qa_application_player_actor(application, context->seat, &controlled);
@@ -107,7 +114,10 @@ bool qa_application_capture_command_context(qa_application *application,
         return application_fail(error, QA_ERROR_ARGUMENT, "command belongs to a retired publication");
     next.registry = qa_actors_identity(qa_session_actors(application->session));
     next.generation = application->command_generation;
-    if (next.actor.registry == 0 &&
+    application_provider *physical = next.owner ? command_owner(application, next.owner) : NULL;
+    if (!physical && next.owner)
+        physical = application_startup_flow_provider(application, next.owner);
+    if (!(physical && physical->client_only_owned) && next.actor.registry == 0 &&
         (next.origin == QA_COMMAND_LOCAL || next.origin == QA_COMMAND_SEAT))
         (void)qa_application_player_actor(application, next.seat, &next.actor);
     if (!qa_application_command_context_active(application, &next))

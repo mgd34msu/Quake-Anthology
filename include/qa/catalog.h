@@ -97,9 +97,22 @@ bool qa_catalog_discover(const qa_catalog_options *, qa_catalog **, qa_error *);
 bool qa_catalog_discover_remote_q3(const qa_catalog *, qa_product_id base,
     const char *directory, uint64_t generation, qa_catalog **out,
     qa_product_id *selected, qa_error *);
+/* Q2 serverdata uses the actual configured classic/rerelease base. Empty
+ * gamedir selects that base; an unknown safe name creates a real overlay.
+ * Native downloads use product_write_root for selected and base directories. */
+bool qa_catalog_discover_remote_q2(const qa_catalog *, qa_product_id base,
+    const char *directory, uint64_t generation, qa_catalog **out,
+    qa_product_id *selected, qa_error *);
+/* Actual configured Q2 family capability for HTTP game-relative destinations.
+ * Only classic/rerelease editions are admitted; retain before catalog release. */
+qa_fs_root *qa_catalog_q2_download_root(const qa_catalog *, qa_product_edition);
 /* Borrows the real configured Q3 family download capability. Retain the root
  * independently when it must outlive the catalog. NULL means no write owner. */
 qa_fs_root *qa_catalog_q3_download_root(const qa_catalog *);
+/* Original $modlist pairs from the retained Q3 home/base directories. Raw PK3
+ * presence admits undiscovered and invalid packages; descriptions keep the
+ * source's first 48 bytes. The caller owns the returned alternating strings. */
+bool qa_catalog_q3_mod_list(const qa_catalog *, qa_vfs_listing *, qa_error *);
 void qa_catalog_retain(qa_catalog *);
 void qa_catalog_release(qa_catalog *);
 uint64_t qa_catalog_generation(const qa_catalog *);

@@ -15,7 +15,7 @@ static qa_bot_chat *state(q3_call *call, qa_bot_runtime *runtime)
     qa_bot_chat *chat = handle > 0 ? qa_bot_runtime_chat(runtime, (uint32_t)handle) : NULL;
     if (!chat) {
         char text[96];
-        snprintf(text, sizeof(text), handle < 1 ? "chat state handle %d out of range" :
+        snprintf(text, sizeof(text), handle < 1 || handle>64 ? "chat state handle %d out of range" :
                      "invalid chat state %d", handle);
         report(call, text);
     }
@@ -25,6 +25,33 @@ static qa_bot_chat *state(q3_call *call, qa_bot_runtime *runtime)
 static bool nullable(q3_call *call, size_t index, qa_buffer *buffer, qa_error *error)
 {
     return !call->arguments[index] || q3_string(call, call->arguments[index], buffer, error);
+}
+typedef struct chat_argument {
+    q3_call *call;
+    uint64_t address;
+    qa_buffer bytes;
+} chat_argument;
+static bool argument_read(void *context,size_t maximum,qa_bytes *out,qa_error *error)
+{
+    chat_argument *argument=context;qa_buffer_free(&argument->bytes);
+    if(!argument->address) return q3_fail(error,QA_ERROR_ARGUMENT,0,"Q3 chat source argument is NULL");
+    if(maximum==SIZE_MAX) {
+        if(!q3_string(argument->call,argument->address,&argument->bytes,error)) return false;
+        *out=(qa_bytes){argument->bytes.data,argument->bytes.size};return true;
+    }
+    size_t limit=argument->call->host->options.maximum_string_bytes;
+    if(maximum>limit) return q3_fail(error,QA_ERROR_ARGUMENT,0,"Q3 chat source prefix exceeds the admitted string extent");
+    uint8_t *bytes=maximum?malloc(maximum):NULL;
+    if(maximum && !bytes) return q3_fail(error,QA_ERROR_MEMORY,0,"Retaining Q3 chat source prefix");
+    argument->bytes.data=bytes;
+    for(size_t index=0;index<maximum;++index) {
+        uint8_t byte;
+        if(index>UINT64_MAX-argument->address ||
+           !q3_read(argument->call,argument->address+index,&byte,1,error)) return false;
+        if(!byte) break;
+        bytes[argument->bytes.size++]=byte;
+    }
+    *out=(qa_bytes){argument->bytes.data,argument->bytes.size};return true;
 }
 
 typedef struct chat_memory {
@@ -176,42 +203,37 @@ static bool match_variable(q3_call *call, qa_error *error)
 
 static bool console_first(q3_call *call, qa_bot_chat *chat, int32_t *result, qa_error *error)
 {
-    qa_bot_console_message message;
-    if (!qa_bot_chat_console_first(chat, &message)) return true;
+    qa_bot_console_message message;bool found;
+    if(!qa_bot_chat_console_first_source(chat,&message,&found,error)) return false;
+    if(!found) return true;
     q3_record record; uint64_t address = call->arguments[1];
     if (!q3_record_open(call, address, 276, &record, error) ||
         !q3_write_word(call, address, message.handle, error) ||
         !q3_write_float(call, address + 4, message.time, error) ||
         !q3_write_word(call, address + 8, (uint32_t)message.type, error) ||
-        !q3_write_string(call, address + 12, message.text, 256, error) ||
+        !q3_write(call,address+12,(qa_bytes){(const uint8_t *)message.text,256},error) ||
         !q3_write_word(call, address + 268, 0, error) || !q3_write_word(call, address + 272, 0, error)) return false;
     *result = (int32_t)message.handle; return true;
 }
 
 static bool construct(q3_call *call, qa_bot_runtime *runtime, int32_t *result, qa_error *error)
 {
-    qa_buffer text = {0}, values[8] = {0};
-    const char *variables[8] = {0};
-    bool reply = call->service == 514;
-    bool ok = reply ? q3_string(call, call->arguments[1], &text, error) : nullable(call, 1, &text, error);
-    size_t first = reply ? 4 : 3;
-    for (size_t i = 0; ok && i < 8; ++i) {
-        ok = nullable(call, first + i, values + i, error);
-        variables[i] = (const char *)values[i].data;
+    bool reply=call->service==514;
+    qa_bot_chat *chat=state(call,runtime);if(!chat) return true;
+    chat_argument name={.call=call,.address=call->arguments[1]},values[8]={0};
+    qa_bot_chat_text_source name_source={&name,argument_read},sources[8]={0};
+    for(size_t index=0;index<8;++index) {
+        values[index]=(chat_argument){.call=call,.address=call->arguments[(reply?4u:3u)+index]};
+        if(values[index].address) sources[index]=(qa_bot_chat_text_source){&values[index],argument_read};
     }
-    qa_bot_chat *chat = ok ? state(call, runtime) : NULL;
-    if (chat) {
-        bool found;
-        float time = qa_bot_runtime_time(runtime);
-        if (reply) {
-            ok = qa_bot_chat_reply_message(chat, (const char *)text.data, (uint32_t)q3_integer(call, 2),
-                    (uint32_t)q3_integer(call, 3), variables, time, &found, error);
-            if (ok) *result = found;
-        } else ok = qa_bot_chat_initial(chat, (const char *)text.data, (uint32_t)q3_integer(call, 2),
-                                          variables, time, &found, error);
-    }
-    for (size_t i = 0; i < 8; ++i) qa_buffer_free(values + i);
-    qa_buffer_free(&text); return ok;
+    bool found;
+    bool ok=reply?qa_bot_chat_reply_message_from(chat,&name_source,(uint32_t)q3_integer(call,2),
+        (uint32_t)q3_integer(call,3),sources,qa_bot_runtime_time(runtime),&found,error):
+        qa_bot_chat_initial_from(chat,name.address?&name_source:NULL,
+            (uint32_t)q3_integer(call,2),sources,qa_bot_runtime_time(runtime),&found,error);
+    if(ok && reply) *result=found;
+    for(size_t index=0;index<8;++index) qa_buffer_free(&values[index].bytes);
+    qa_buffer_free(&name.bytes);return ok;
 }
 
 q3_service_result q3_bot_chat(q3_call *call, int32_t *result, qa_error *error)
@@ -243,27 +265,25 @@ q3_service_result q3_bot_chat(q3_call *call, int32_t *result, qa_error *error)
     if (call->service == 513 || call->service == 514)
         return construct(call, runtime, result, error) ? Q3_COMPLETED : Q3_FAILED;
     if (call->service == 522) {
-        qa_buffer path = {0}, name = {0};
-        bool ok = q3_string(call, call->arguments[1], &path, error) && q3_string(call, call->arguments[2], &name, error);
-        qa_bot_chat *chat = ok ? state(call, runtime) : NULL;
-        if (ok && !chat) *result = 8;
-        if (chat) ok = qa_bot_runtime_chat_load(runtime, (uint32_t)q3_integer(call, 0), (const char *)path.data,
-                                                (const char *)name.data, result, error);
-        qa_buffer_free(&name); qa_buffer_free(&path); return ok ? Q3_COMPLETED : Q3_FAILED;
+        qa_bot_chat *chat=state(call,runtime);bool ok=true;*result=8;
+        chat_argument path={.call=call,.address=call->arguments[1]},name={.call=call,.address=call->arguments[2]};
+        qa_bot_chat_text_source path_source={&path,argument_read},name_source={&name,argument_read};
+        if(chat) ok=qa_bot_runtime_chat_load_from(runtime,(uint32_t)q3_integer(call,0),&path_source,&name_source,result,error);
+        qa_buffer_free(&name.bytes);qa_buffer_free(&path.bytes);return ok?Q3_COMPLETED:Q3_FAILED;
     }
-    qa_buffer text = {0};
-    bool ok = call->service == 509 ? q3_string(call, call->arguments[2], &text, error) :
-              call->service == 524 ? q3_string(call, call->arguments[1], &text, error) :
-              call->service != 569 || nullable(call, 1, &text, error);
-    qa_bot_chat *chat = ok ? state(call, runtime) : NULL;
+    bool ok = true;
+    qa_bot_chat *chat = state(call, runtime);
     if (chat) switch (call->service) {
     case 508: ok = qa_bot_runtime_chat_free(runtime, (uint32_t)q3_integer(call, 0), error); break;
-    case 509: ok = qa_bot_chat_console_queue(chat, q3_integer(call, 1), (const char *)text.data,
-                                               qa_bot_runtime_time(runtime), NULL, error); break;
-    case 510: (void)qa_bot_chat_console_remove(chat, (uint32_t)q3_integer(call, 1)); break;
+    case 509: {
+        chat_argument input={.call=call,.address=call->arguments[2]};qa_bot_chat_text_source source={&input,argument_read};
+        ok=qa_bot_chat_console_queue_from(chat,q3_integer(call,1),&source,qa_bot_runtime_time(runtime),NULL,error);
+        qa_buffer_free(&input.bytes);break;
+    }
+    case 510: {bool removed;ok=qa_bot_chat_console_remove_source(chat,(uint32_t)q3_integer(call,1),&removed,error);break;}
     case 511: ok = console_first(call, chat, result, error); break;
-    case 512: *result = (int32_t)qa_bot_chat_console_count(chat); break;
-    case 515: *result = (int32_t)strlen(qa_bot_chat_message(chat)); break;
+    case 512: ok=qa_bot_chat_console_count_source(chat,result,error);break;
+    case 515: {const char *message;ok=qa_bot_chat_message_source(chat,&message,error);if(ok) *result=(int32_t)strlen(message);break;}
     case 516: {
         int32_t recipient = q3_integer(call, 1), destination = q3_integer(call, 2);
         bool legacy = call->host->options.abi == QA_QVM_Q3_116N;
@@ -277,12 +297,16 @@ q3_service_result q3_bot_chat(q3_call *call, int32_t *result, qa_error *error)
     case 524: {
         int32_t client = q3_integer(call, 2);
         if(call->host->options.abi!=QA_QVM_Q3_116N && !q3_bot_client_number(call,client,&client,error)) {ok=false;break;}
-        qa_bot_chat_set_identity(chat, (const char *)text.data,
-                                   call->host->options.abi == QA_QVM_Q3_116N ? NULL : &client); break;
+        chat_argument input={.call=call,.address=call->arguments[1]};qa_bot_chat_text_source source={&input,argument_read};
+        ok=qa_bot_chat_set_identity_from(chat,&source,call->host->options.abi==QA_QVM_Q3_116N?NULL:&client,error);
+        qa_buffer_free(&input.bytes);break;
     }
-    case 569: *result = (int32_t)qa_bot_chat_initial_count(chat, (const char *)text.data); break;
+    case 569: {
+        chat_argument name={.call=call,.address=call->arguments[1]};qa_bot_chat_text_source source={&name,argument_read};
+        ok=qa_bot_chat_initial_count_from(chat,name.address?&source:NULL,result,error);
+        qa_buffer_free(&name.bytes);break;
+    }
     case 570: ok = qa_bot_chat_write_message(chat, call, write_message, error); break;
     }
-    qa_buffer_free(&text);
     return ok ? Q3_COMPLETED : Q3_FAILED;
 }

@@ -3,16 +3,19 @@
 bool q3p_movie_close(qa_q3_presentation *p, uint32_t index, qa_cinematic_end reason, qa_error *error)
 {
     q3p_movie movie = p->movies[index];
-    p->movies[index] = (q3p_movie){0};
-    bool ok = true;
-    if (movie.kind == Q3P_MOVIE_SYSTEM) {
-        ok = movie.system.end(movie.system.context, reason, error);
+    if (movie.kind == Q3P_MOVIE_SYSTEM || (movie.kind==Q3P_MOVIE_PENDING &&
+        (movie.system.context || movie.system.status || movie.system.end || movie.system.release))) {
+        if (!movie.system.end || !movie.system.release)
+            return q3p_fail(error,QA_ERROR_ARGUMENT,"Incomplete system cinematic still retains its native owner");
+        if (!movie.system.end(movie.system.context, reason, error)) return false;
+        p->movies[index] = (q3p_movie){0};
         movie.system.release(movie.system.context);
     } else if (movie.kind == Q3P_MOVIE_LOCAL) {
+        p->movies[index] = (q3p_movie){0};
         qa_cinematic_destroy(movie.local);
         qa_cinematic_asset_release(movie.asset);
-    }
-    free(movie.path); return ok;
+    } else p->movies[index] = (q3p_movie){0};
+    free(movie.path); return true;
 }
 
 char *q3p_movie_path(const char *path, qa_error *error)
@@ -69,31 +72,41 @@ static bool prepare(qa_q3_presentation *p, const char *request,
 }
 
 static bool play_system(qa_q3_presentation *p, const char *path, uint32_t flags,
-                          int32_t *out, qa_error *error)
+    bool (*open)(void *,const qa_q3_movie_request *,qa_q3_system_movie *,qa_error *),
+    void *context,int32_t *out, qa_error *error)
 {
-    if (!p->options.system_movie)
+    if (!open)
         return q3p_fail(error, QA_ERROR_UNSUPPORTED, "system cinematic transition owner is unavailable");
     uint32_t slot = free_slot(p);
     if (slot == 16) return q3p_fail(error, QA_ERROR_FORMAT, "CIN_HandleForVideo: none free");
     p->movies[slot].kind = Q3P_MOVIE_PENDING;
     qa_q3_system_movie movie = {0};
     qa_q3_movie_request request = {path, (flags & 2u) != 0, (flags & 4u) != 0, (flags & 8u) != 0};
-    bool ok = p->options.system_movie(p->options.context, &request, &movie, error);
+    bool ok = open(context, &request, &movie, error);
     if (ok && (!movie.status || !movie.end || !movie.release)) {
-        if (movie.end) movie.end(movie.context, QA_CINEMATIC_STOPPED, NULL);
-        if (movie.release) movie.release(movie.context);
-        ok = q3p_fail(error, QA_ERROR_ARGUMENT, "system cinematic returned incomplete lifetime services");
+        p->movies[slot]=(q3p_movie){.kind=Q3P_MOVIE_PENDING,.system=movie,.flags=flags};
+        if (!q3p_movie_close(p,slot,QA_CINEMATIC_STOPPED,error)) return false;
+        return q3p_fail(error, QA_ERROR_ARGUMENT, "system cinematic returned incomplete lifetime services");
     }
     p->movies[slot] = ok ? (q3p_movie){.kind = Q3P_MOVIE_SYSTEM, .system = movie, .flags = flags} : (q3p_movie){0};
     if (ok) *out = (int32_t)slot;
     return ok;
 }
 
+bool qa_q3_presentation_movie_play_system(qa_q3_presentation *p,const char *path,uint32_t flags,
+    bool (*open)(void *,const qa_q3_movie_request *,qa_q3_system_movie *,qa_error *),
+    void *context,int32_t *out,qa_error *error)
+{
+    if (!path || !out || !(flags&1u) || !open || !q3p_begin(p,error)) return false;
+    return q3p_end(p,play_system(p,path,flags,open,context,out,error));
+}
+
 bool qa_q3_presentation_movie_play(qa_q3_presentation *p, const char *path, qa_scene_rect_f rect,
                                    uint32_t flags, int32_t *out, qa_error *error)
 {
     if (!path || !out || !q3p_begin(p, error)) return false;
-    if (flags & 1u) return q3p_end(p, play_system(p, path, flags, out, error));
+    if (flags & 1u) return q3p_end(p, play_system(p, path, flags,
+        p->options.system_movie,p->options.context,out,error));
     qa_q3_presentation_assets *assets = p->options.assets;
     if (!assets->options.movies)
         return q3p_end(p, q3p_fail(error, QA_ERROR_UNSUPPORTED, "shared cinematic asset owner is unavailable"));

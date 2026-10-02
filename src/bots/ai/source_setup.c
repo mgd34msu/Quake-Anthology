@@ -47,8 +47,9 @@ bool bot_ai_source_setup_published(qa_bots *b,bot_ai_state *s,bool restart,bool 
     if(!qa_bot_moves_allocate(qa_bot_runtime_moves(b->runtime),&s->movement,e)) return false;
     if(!bot_ai_storage_u32(b,s,QA_BOT_SOURCE_MOVEMENT,&s->movement,true,e)) return false;
     bot_ai_source_setup_stage(&s->source_setup,BOT_SOURCE_SETUP_MOVE_STATE);
-    if(!bot_ai_character_float(b,s,BOT_C_WALKER,0,1,&s->walker,e)) return false;
-    if(!bot_ai_storage_f32(b,s,QA_BOT_SOURCE_WALKER,&s->walker,true,e)) return false;
+    float walker;
+    if(!bot_ai_character_float(b,s,BOT_C_WALKER,0,1,&walker,e)) return false;
+    if(!bot_ai_storage_f32(b,s,QA_BOT_SOURCE_WALKER,&walker,true,e)) return false;
     bot_ai_source_setup_stage(&s->source_setup,BOT_SOURCE_SETUP_WALKER);
     ++b->count;
     s->counted=true;
@@ -108,11 +109,12 @@ static bool set_sex(qa_bots *b,char text[1024],const char *value,qa_error *e) {
 }
 bool bot_ai_source_setup_frame(qa_bots *b,bot_ai_state *s,bool *ready,qa_error *e) {
     *ready=true;
-    if(!bot_ai_storage_i32(b,s,QA_BOT_SOURCE_SETUP_COUNT,&s->setup_count,false,e)) return false;
-    if(s->setup_count<=0) return true;
-    --s->setup_count;
-    if(!bot_ai_storage_i32(b,s,QA_BOT_SOURCE_SETUP_COUNT,&s->setup_count,true,e)) return false;
-    if(s->setup_count) {*ready=false;return true;}
+    int32_t setup_count;
+    if(!bot_ai_storage_i32(b,s,QA_BOT_SOURCE_SETUP_COUNT,&setup_count,false,e)) return false;
+    if(setup_count<=0) return true;
+    --setup_count;
+    if(!bot_ai_storage_i32(b,s,QA_BOT_SOURCE_SETUP_COUNT,&setup_count,true,e)) return false;
+    if(setup_count) {*ready=false;return true;}
     char text[144],userinfo[1024];
     if(!gender(b,s,text,e)) return false;
     if(!b->services.get_userinfo || !b->services.set_userinfo)
@@ -148,9 +150,9 @@ bool bot_ai_source_setup_frame(qa_bots *b,bot_ai_state *s,bool *ready,qa_error *
     qa_bot_chat_set_name(chat,name,source_client);
     s->source_chat.last_frame_health=bot_ai_inventory_value(s,QA_BOT_INV_HEALTH);
     if(!bot_ai_source_player_slot(b,s,BOT_PS_PERSISTENT,1,&s->source_chat.last_hit_count,e)) return false;
-    s->setup_count=0;
+    setup_count=0;
     if(!bot_ai_storage_i32(b,s,QA_BOT_SOURCE_LAST_FRAME_HEALTH,&s->source_chat.last_frame_health,true,e) ||
        !bot_ai_storage_i32(b,s,QA_BOT_SOURCE_LAST_HIT_COUNT,&s->source_chat.last_hit_count,true,e) ||
-       !bot_ai_storage_i32(b,s,QA_BOT_SOURCE_SETUP_COUNT,&s->setup_count,true,e)) return false;
+       !bot_ai_storage_i32(b,s,QA_BOT_SOURCE_SETUP_COUNT,&setup_count,true,e)) return false;
     return bot_ai_source_routes_setup(b,b->services.team_arena,e);
 }

@@ -30,6 +30,7 @@ bool q2_client_sphere_camera(qa_q2_game *g, qa_actor_id id, qa_actor_id sphere, 
                 return true;
             s->visual.models[0] = s->visual.models[1] = 0;
             s->info.view_height = 8;
+            s->sphere_vehicle = true;
             body.bounds = (qa_bounds){qa_v3(-5, -5, -5), qa_v3(5, 5, 5)};
         } else {
             s->info.view_height = origin.z - body.origin.z;

@@ -10,6 +10,23 @@ const qa_material *qa_material_library_record_at(const qa_material_library *libr
 { return library && index < library->count ? &library->ordered[index]->material : NULL; }
 size_t qa_material_library_record_count(const qa_material_library *library)
 { return library ? library->count : 0; }
+size_t qa_material_library_video_receipt_count(const qa_material_library *library, size_t record)
+{
+    if (!library || record >= library->count) return 0;
+    size_t count = 0;
+    for (const qa_material_video_receipt *receipt = library->ordered[record]->videos;
+        receipt; receipt = receipt->next) ++count;
+    return count;
+}
+bool qa_material_library_video_receipt_read(const qa_material_library *library,
+    size_t record, size_t index, const char **source, const qa_scene_image **image)
+{
+    if (!library || record >= library->count || !source || !image) return false;
+    const qa_material_video_receipt *receipt = library->ordered[record]->videos;
+    while (receipt && index) { receipt = receipt->next; --index; }
+    if (!receipt) return false;
+    *source = receipt->source; *image = receipt->image; return true;
+}
 bool qa_material_library_record_read(const qa_material_library *library, size_t index, qa_material_library_record_view *out)
 {
     if (!library || !out || index >= library->count) return false;
@@ -156,6 +173,7 @@ static void record_free(qa_material_record *record)
 {
     if (!record) return;
     qa_material_clear(&record->material); free(record->base_name); qa_scene_image_release(record->base_image);
+    qa_material_videos_clear(record);
     free(record->palette); free(record->translation); free(record);
 }
 static bool canonical(const char *name, qa_error *error)
@@ -164,10 +182,10 @@ static bool canonical(const char *name, qa_error *error)
     bool ok = normalized && !strcmp(normalized, name);
     free(normalized); return ok;
 }
-static bool same_profile(const qa_material_profile *a, const qa_material_profile *b)
+static bool same_profile(const qa_material_profile *a, const qa_material_profile *b, bool source)
 {
     return a->detail_textures == b->detail_textures && a->vertex_lighting == b->vertex_lighting &&
-        a->ui_fullscreen == b->ui_fullscreen && a->permedia2 == b->permedia2 && a->multitexture == b->multitexture &&
+        (source || a->ui_fullscreen == b->ui_fullscreen) && a->permedia2 == b->permedia2 && a->multitexture == b->multitexture &&
         a->texture_env_add == b->texture_env_add && a->ignore_fast_path == b->ignore_fast_path;
 }
 static bool registration_capacity(size_t count, size_t capacity)
@@ -175,10 +193,10 @@ static bool registration_capacity(size_t count, size_t capacity)
     return count >= 2 && count <= capacity && capacity >= 64 && capacity <= QA_MATERIAL_MAX_REGISTERED &&
         !(capacity & (capacity - 1)) && capacity <= SIZE_MAX / sizeof(qa_material_record *);
 }
-typedef struct remap_node { const qa_material_remap_record *record; size_t edge; uint8_t mark; } remap_node;
+typedef struct remap_node { const qa_material_remap_record *record; } remap_node;
 static int remap_compare(const void *a, const void *b)
 { return strcmp(((const remap_node *)a)->record->original, ((const remap_node *)b)->record->original); }
-static bool remap_graph(const qa_material_library *library, qa_error *error)
+static bool remap_records_valid(const qa_material_library *library, qa_error *error)
 {
     size_t count = 0;
     for (const qa_material_remap_record *r = library->remaps; r; r = r->next) ++count;
@@ -193,20 +211,6 @@ static bool remap_graph(const qa_material_library *library, qa_error *error)
     if (ok && count > 1) qsort(nodes, count, sizeof(*nodes), remap_compare);
     for (i = 0; ok && i < count; ++i) {
         if (i && !strcmp(nodes[i - 1].record->original, nodes[i].record->original)) { ok = false; break; }
-        size_t low = 0, high = count;
-        const char *target = nodes[i].record->replacement;
-        while (low < high) {
-            size_t middle = low + (high - low) / 2;
-            if (strcmp(nodes[middle].record->original, target) < 0) low = middle + 1; else high = middle;
-        }
-        nodes[i].edge = low < count && !strcmp(nodes[low].record->original, target) ? low : SIZE_MAX;
-    }
-    for (i = 0; ok && i < count; ++i) {
-        size_t at = i;
-        while (at != SIZE_MAX && !nodes[at].mark) { nodes[at].mark = 1; at = nodes[at].edge; }
-        if (at != SIZE_MAX && nodes[at].mark == 1) { ok = false; break; }
-        at = i;
-        while (at != SIZE_MAX && nodes[at].mark == 1) { nodes[at].mark = 2; at = nodes[at].edge; }
     }
     free(nodes); return ok;
 }
@@ -214,16 +218,14 @@ static bool library_valid(const qa_material_library *library, qa_error *error)
 {
     size_t count = library->count;
     if (!registration_capacity(count, library->capacity) || !library->ordered) return false;
-    uint8_t *marks = count ? calloc(count, 1) : NULL;
     bool *registrations = count ? calloc(count, sizeof(*registrations)) : NULL;
-    size_t *edges = count ? malloc(count * sizeof(*edges)) : NULL;
-    if (count && (!marks || !edges || !registrations)) { free(marks); free(edges); free(registrations); return fail(error, QA_ERROR_MEMORY, "qualifying material remap graph"); }
+    if (count && !registrations) return fail(error, QA_ERROR_MEMORY, "qualifying material registrations");
     bool ok = true;
     for (size_t i = 0; ok && i < count; ++i) {
         const qa_material *material = &library->ordered[i]->material; uint64_t edge = UINT64_MAX;
         ok = material->sorted_index == i && material->registration < count &&
-            canonical(material->name, error) && same_profile(&material->profile, &library->profile) &&
-            material_index(library, material->remapped, &edge);
+            canonical(material->name, error) && same_profile(&material->profile, &library->profile, library->source_profile) &&
+            material_index(library, material->remapped, &edge) && edge != i;
         if (ok) {
             ok = !registrations[material->registration]; registrations[material->registration] = true;
             if (material->registration == 0)
@@ -232,17 +234,9 @@ static bool library_valid(const qa_material_library *library, qa_error *error)
                 ok = ok && library->ordered[i]->kind == QA_MATERIAL_STENCIL_SHADOW && !strcmp(material->name, "<stencil shadow>");
         }
         if (ok && i && library->ordered[i - 1]->material.sort > material->sort) ok = false;
-        edges[i] = edge == UINT64_MAX ? SIZE_MAX : (size_t)edge;
     }
-    for (size_t i = 0; ok && i < count; ++i) {
-        size_t at = i;
-        while (at != SIZE_MAX && !marks[at]) { marks[at] = 1; at = edges[at]; }
-        if (at != SIZE_MAX && marks[at] == 1) { ok = false; break; }
-        at = i;
-        while (at != SIZE_MAX && marks[at] == 1) { marks[at] = 2; at = edges[at]; }
-    }
-    free(marks); free(edges); free(registrations);
-    if (ok) ok = remap_graph(library, error);
+    free(registrations);
+    if (ok) ok = remap_records_valid(library, error);
     for (const qa_material_generated *g = library->generated; ok && g; g = g->next) {
         uint64_t index;
         ok = canonical(g->name, error) && g->image && material_index(library, g->picture, &index) &&
@@ -383,14 +377,18 @@ bool qa_material_library_catalog_restore(qa_scene_resources *resources, qa_bytes
     return ok;
 }
 static bool library_header(qa_source_save_io *io, qa_material_library *library, const qa_material_library *qualified,
-    const qa_material_library_checkpoint_refs *refs)
+    const qa_material_library_checkpoint_refs *refs, uint32_t *schema)
 {
-    uint8_t magic[4] = {'Q', 'A', 'M', 'L'}; uint32_t version = 3;
+    uint8_t magic[4] = {'Q', 'A', 'M', 'L'}; uint32_t version = 7;
     bool reading = io->direction == QA_SOURCE_SAVE_READ, video = library->video_required;
     if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "QAML", 4) ||
-        !qa_source_save_u32(io, &version) || version != 3 || !qa_source_save_bool(io, &video) ||
+        !qa_source_save_u32(io, &version) || (version < 3 || version > 7) || !qa_source_save_bool(io, &video) ||
         (reading && video != qualified->video_required)) return false;
+    *schema = version;
     if (reading) library->video_required = video;
+    if (version >= 6) {
+        if (!qa_source_save_bool(io, &library->source_profile)) return false;
+    } else if (reading) library->source_profile = false;
     qa_material_profile *p = &library->profile;
     if (!qa_source_save_bool(io, &p->detail_textures) || !qa_source_save_bool(io, &p->vertex_lighting) ||
         !qa_source_save_bool(io, &p->ui_fullscreen) || !qa_source_save_bool(io, &p->permedia2) ||
@@ -401,6 +399,55 @@ static bool library_header(qa_source_save_io *io, qa_material_library *library, 
         !qa_source_save_f32(io, &library->sky_height) || !isfinite(library->sky_height) ||
         !qa_source_save_bool(io, &library->has_sun)) return false;
     return builtin_fields(io, library, qualified, refs) && script_catalog(io, library, qualified);
+}
+static bool videos(qa_source_save_io *io, const qa_material_library *library, qa_material_record *record,
+    const qa_material_library_checkpoint_refs *refs)
+{
+    bool reading = io->direction == QA_SOURCE_SAVE_READ; size_t count = 0;
+    if (!reading) for (const qa_material_video_receipt *video = record->videos; video; video = video->next) ++count;
+    if (!qa_source_save_count(io, &count, reading ? io->input.size / 35 : SIZE_MAX)) return false;
+    const qa_material_script *script = library->scripts[qa_material_hash(record->material.name)];
+    while (script && strcmp(script->name, record->material.name)) script = script->next;
+    if (count && !script) return false;
+    qa_material_video_receipt *video = record->videos, **tail = &record->videos;
+    size_t previous = 0;
+    for (size_t i = 0; i < count; ++i) {
+        if (reading) {
+            video = calloc(1, sizeof(*video));
+            if (!video) return fail(io->error, QA_ERROR_MEMORY, "importing shader video callback receipt");
+            *tail = video; tail = &video->next;
+        }
+        if (!qa_source_save_count(io, &video->command, script->size) ||
+            !qa_source_save_count(io, &video->command_end, script->size) ||
+            !qa_source_save_count(io, &video->offset, script->size) ||
+            !qa_source_save_count(io, &video->end, script->size) ||
+            !qa_material_saved_text(io, &video->source) || !video->source ||
+            !qa_material_saved_image(io, refs, &video->image) ||
+            video->command_end <= video->command || video->offset < video->command_end ||
+            video->end <= video->offset ||
+            (i && video->offset <= previous)) return false;
+        size_t keyword_begin = video->command, keyword_end = video->command_end;
+        if (script->text[keyword_begin] == '"') {
+            if (keyword_end - keyword_begin < 2 || script->text[keyword_end - 1] != '"') return false;
+            ++keyword_begin; --keyword_end;
+        }
+        if (keyword_end - keyword_begin != 8) return false;
+        static const char keyword[] = "videomap";
+        for (size_t j = 0; j < 8; ++j) {
+            unsigned char c = script->text[keyword_begin + j];
+            if (c >= 'A' && c <= 'Z') c += 'a' - 'A';
+            if (c != (unsigned char)keyword[j]) return false;
+        }
+        size_t begin = video->offset, end = video->end;
+        if (script->text[begin] == '"') {
+            if (end - begin < 2 || script->text[end - 1] != '"') return false;
+            ++begin; --end;
+        }
+        if (strlen(video->source) != end - begin || memcmp(video->source, script->text + begin, end - begin)) return false;
+        previous = video->offset;
+        if (!reading) video = video->next;
+    }
+    return true;
 }
 static bool record_order(qa_source_save_io *io, qa_material_library *library)
 {
@@ -497,8 +544,9 @@ bool qa_material_library_checkpoint(const qa_material_library *source, const qa_
         return error && error->code != QA_OK ? false : fail(error, QA_ERROR_FORMAT, "invalid material library ownership graph");
     }
     qa_source_save_io io = {0}; qa_material_library library = *source;
+    uint32_t schema = 0;
     size_t count = source->count, capacity = source->capacity;
-    bool ok = qa_source_save_writer(&io, NULL, error) && library_header(&io, &library, source, refs) &&
+    bool ok = qa_source_save_writer(&io, NULL, error) && library_header(&io, &library, source, refs, &schema) &&
         qa_source_save_count(&io, &count, QA_MATERIAL_MAX_REGISTERED) &&
         qa_source_save_count(&io, &capacity, QA_MATERIAL_MAX_REGISTERED);
     for (size_t i = 0; ok && i < count; ++i) {
@@ -506,7 +554,8 @@ bool qa_material_library_checkpoint(const qa_material_library *source, const qa_
         ok = copy.material.sorted_index == i && copy.material.registration < count &&
             copy.material.fog_image == source->fog_image && copy.material.dlight_image == source->dlight_image &&
             qa_material_order_has_record(source->order, &source->ordered[i]->material) &&
-            qa_material_saved_record(&io, refs, &copy) && material_index(source, copy.material.remapped, &remapped) &&
+            qa_material_saved_record(&io, refs, schema, &copy) && videos(&io, source, &copy, refs) &&
+            material_index(source, copy.material.remapped, &remapped) &&
             qa_source_save_u64(&io, &remapped);
     }
     if (ok) ok = record_order(&io, &library) && remaps(&io, &library) && generated(&io, &library, refs) && qa_source_save_finish(&io, out);
@@ -523,9 +572,9 @@ bool qa_material_library_restore(const qa_material_library *qualified, qa_bytes 
     if (!qa_material_library_capture_begin(qualified, error)) return false;
     qa_material_library *library = qa_material_library_create_detached(qualified->resources, error);
     if (!library) { qa_material_library_capture_end(qualified); return false; }
-    qa_source_save_io io = {0}; size_t count = 0, capacity = 0;
+    qa_source_save_io io = {0}; size_t count = 0, capacity = 0; uint32_t schema = 0;
     bool ok = catalog_copy_sources(library, qualified, error) &&
-        qa_source_save_reader(&io, NULL, bytes, error) && library_header(&io, library, qualified, refs) &&
+        qa_source_save_reader(&io, NULL, bytes, error) && library_header(&io, library, qualified, refs, &schema) &&
         qa_source_save_count(&io, &count, QA_MATERIAL_MAX_REGISTERED) &&
         qa_source_save_count(&io, &capacity, QA_MATERIAL_MAX_REGISTERED) &&
         registration_capacity(count, capacity) && count <= bytes.size / 100;
@@ -537,7 +586,9 @@ bool qa_material_library_restore(const qa_material_library *qualified, qa_bytes 
     for (size_t i = 0; ok && i < count; ++i) {
         qa_material_record *record = calloc(1, sizeof(*record));
         if (!record) { ok = fail(error, QA_ERROR_MEMORY, "allocating restored material record"); break; }
-        ok = qa_material_saved_record(&io, refs, record) && record->material.registration < count && record->material.sorted_index == i &&
+        ok = qa_material_saved_record(&io, refs, schema, record) &&
+            (schema < 4 || videos(&io, library, record, refs)) &&
+            record->material.registration < count && record->material.sorted_index == i &&
             qa_source_save_u64(&io, &remapped[i]) && (remapped[i] == UINT64_MAX || remapped[i] < count);
         if (ok && i && library->ordered[i - 1]->material.sort > record->material.sort) ok = false;
         if (ok) {

@@ -14,6 +14,8 @@ typedef struct bot_weapon_resource_host {
     void *context;
     bool (*current)(void *,qa_error *);
     bool (*report)(void *,bot_weapon_diagnostic_origin,const qa_script_diagnostic *,qa_error *);
+    uint64_t generation,revision;
+    bool (*qualify)(void *,uint64_t,uint64_t,qa_error *);
 } bot_weapon_resource_host;
 typedef struct bot_weapon_acquired_source {
     qa_script_resource value;
@@ -33,7 +35,7 @@ typedef struct bot_weapon_resource {
     uint32_t weapon_count,projectile_count,defined_count;
     bot_weapon_diagnostic *diagnostics;
     size_t diagnostic_count,diagnostic_capacity;
-    bool active,attempted,bound,missing_root,report_failed;
+    bool active,attempted,bound,missing_root,invalid_root_path,own_failure,report_failed;
     qa_error report_error;
 } bot_weapon_resource;
 /* Services and host callback contexts belong to the enclosing actual source

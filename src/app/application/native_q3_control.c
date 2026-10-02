@@ -3,6 +3,7 @@
 #include "native_q3_console.h"
 #include "native_q3_settings.h"
 #include "native_q3_wire_state.h"
+#include "unified_q3_events.h"
 #include "bots_private.h"
 #include "control_frame.h"
 #include "qa/game_q3_source.h"
@@ -310,7 +311,8 @@ static bool movement_command(native_q3_think_call *call, bool spectator, qa_erro
             .origin = QA_COMMAND_SERVER};
         if (!application_native_q3_console_at(provider, &console, NULL, NULL))
             return application_fail(error, QA_ERROR_NOT_FOUND, "Native Q3 intermission has no source console");
-        if (!qa_console_append(console, &context, "centerview\n", error)) return false;
+        if (!application_unified_q3_console(provider, false, "centerview\n", error) ||
+            !qa_console_append(console, &context, "centerview\n", error)) return false;
     }
     qa_q3_wire_policy policy = {.pm_type = 6};
     return qa_q3_wire_player_policy_update(provider->state.q3, call->actor,

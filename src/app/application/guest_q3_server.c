@@ -1,6 +1,7 @@
 #include "guest_q3_private.h"
 #include "guest_projection_private.h"
 #include "native_q3_wire_state.h"
+#include "guest_q3_combat.h"
 
 char *q3g_copy_text(const char *text, qa_error *error)
 {
@@ -13,13 +14,16 @@ char *q3g_copy_text(const char *text, qa_error *error)
 bool q3g_arguments(void *context, qa_native_host_command_view *out, qa_error *error)
 {
     q3g_role *role = context;
-    if (role->native_client && !role->arguments_scoped)
-        return application_native_q3_wire_client_arguments(role->native_client, out, error);
-    if (role->kind != QA_QVM_GAME && !role->local_client && !role->arguments_scoped && role->common.arguments)
-        return role->common.arguments(role->common.context, out, error);
-    qa_command_tokens *args = role->kind == QA_QVM_GAME ? &role->engine->arguments : &role->arguments;
-    *out = (qa_native_host_command_view){args->count, (const char *const *)args->values,
-        args->args_text ? args->args_text : ""};
+    if (role->native_client && !role->arguments_scoped) {
+        if (!application_native_q3_wire_client_arguments(role->native_client, out, error)) return false;
+    } else if (role->kind != QA_QVM_GAME && !role->local_client && !role->arguments_scoped && role->common.arguments) {
+        if (!role->common.arguments(role->common.context, out, error)) return false;
+    } else {
+        qa_command_tokens *args = role->kind == QA_QVM_GAME ? &role->engine->arguments : &role->arguments;
+        *out = (qa_native_host_command_view){args->count, (const char *const *)args->values,
+            args->args_text ? args->args_text : ""};
+    }
+    out->canonical_configstrings = role->kind == QA_QVM_CGAME && !role->arguments_scoped;
     return true;
 }
 
@@ -248,8 +252,9 @@ static bool bot_user_command(void *context, int32_t client, const qa_q3_usercmd 
 static bool admit_actor(void *context, qa_actor_id actor, qa_error *error)
 {
     q3g_role *role = context;
-    return role->server.admit_actor ? role->server.admit_actor(role->server.context, actor, error) :
+    bool admitted = role->server.admit_actor ? role->server.admit_actor(role->server.context, actor, error) :
         application_guest_actor_admit(role->engine->provider, actor, error);
+    return admitted && (!role->combat || application_q3_combat_admit(role->combat, actor, error));
 }
 static bool player_velocity(void *context, qa_actor_id actor, qa_vec3 velocity, qa_error *error)
 {

@@ -64,6 +64,7 @@ static bool configure_instance(qa_native_host *host, qa_native_module *module,
         .frame_seconds = options->frame_seconds,
         .frame_milliseconds = options->frame_milliseconds,
         .observe = options->observe,
+        .process = options->process,
         .isolate = true};
     return qa_native_create(module, &native, runner, &host->instance, error);
 }
@@ -224,7 +225,7 @@ static void free_records(qa_native_host *host)
         host->strings = next;
     }
     while (host->cvar_shadows) {
-        native_host_cvar *next = host->cvar_shadows->next;
+        native_host_cvar_record *next = host->cvar_shadows->next;
         free(host->cvar_shadows->name);
         free(host->cvar_shadows);
         host->cvar_shadows = next;
@@ -241,6 +242,7 @@ static void free_records(qa_native_host *host)
     }
     free(host->message);
     free(host->retained_clients);
+    free(host->q2_lifetimes);
 }
 
 bool qa_native_host_destroy_ready(const qa_native_host *host)
@@ -508,18 +510,35 @@ bool qa_native_host_client_choose_slot(qa_native_host *host, const char *userinf
     return ok;
 }
 
-bool qa_native_host_client_connect(qa_native_host *host,
+static bool q2_userinfo_string(qa_native_host *host, const char *text,
+    qa_native_address *out, qa_error *error)
+{
+    size_t capacity = host->profile == QA_NATIVE_Q2_GAME_API2023 ? 2048u : 512u;
+    size_t length = strlen(text);
+    if (length >= capacity)
+        return native_host_fail(error, QA_ERROR_ARGUMENT, length,
+            "Q2 userinfo exceeds its actual Source dictionary extent");
+    uint8_t bytes[2048] = {0};
+    memcpy(bytes, text, length);
+    if (!qa_native_allocate(host->instance, capacity, INT32_MIN + 2, out, error)) return false;
+    if (native_host_write(host, *out, bytes, capacity, error)) return true;
+    native_host_temporary_free(host, *out); *out = 0;
+    return false;
+}
+
+bool qa_native_host_client_connect_userinfo(qa_native_host *host,
                                    const qa_native_host_client_request *request,
-                                   bool *accepted, qa_error *error)
+                                   bool *accepted, qa_buffer *returned, qa_error *error)
 {
     if (!host || host->kind != NATIVE_HOST_Q2_GAME || !request || !request->userinfo ||
-        !accepted || request->slot == 0)
+        !accepted || !returned || returned->data || returned->size || request->slot == 0)
         return native_host_fail(error, QA_ERROR_ARGUMENT, 0,
                                 "invalid Q2 native client-connect request");
+    *accepted = false;
     qa_native_address entity, userinfo = 0, social = 0;
     if (!qa_native_entity_address(host->instance, request->slot, &entity, error) ||
         !retain_client(host, request->slot, true, error) ||
-        !native_host_temporary_string(host, request->userinfo, &userinfo, error))
+        !q2_userinfo_string(host, request->userinfo, &userinfo, error))
         return false;
     qa_native_value arguments[4] = {
         {.type = QA_NATIVE_ADDRESS, .as.address = entity},
@@ -542,11 +561,22 @@ bool qa_native_host_client_connect(qa_native_host *host,
     if (ok)
         *accepted = host->profile == QA_NATIVE_Q2_GAME_API3 ? result.as.i32 != 0
                                                             : result.as.u8 != 0;
+    if (ok) ok = qa_native_read_string(host->instance, userinfo,
+        host->profile == QA_NATIVE_Q2_GAME_API2023 ? 2048u : 512u, returned, error);
     if (!ok || !*accepted)
         retain_client(host, request->slot, false, NULL);
     native_host_temporary_free(host, social);
     native_host_temporary_free(host, userinfo);
     return ok && native_host_reconcile(host, error);
+}
+
+bool qa_native_host_client_connect(qa_native_host *host,
+    const qa_native_host_client_request *request, bool *accepted, qa_error *error)
+{
+    qa_buffer returned = {0};
+    bool ok = qa_native_host_client_connect_userinfo(host, request, accepted, &returned, error);
+    qa_buffer_free(&returned);
+    return ok;
 }
 
 static bool q3_game_host(qa_native_host *host, qa_error *error)
@@ -679,20 +709,33 @@ bool qa_native_host_client_begin(qa_native_host *host, uint32_t slot, qa_error *
     return client_entity_call(host, "ClientBegin", slot, error);
 }
 
-bool qa_native_host_client_userinfo(qa_native_host *host, uint32_t slot,
-                                    const char *userinfo, qa_error *error)
+bool qa_native_host_client_userinfo_result(qa_native_host *host, uint32_t slot,
+    const char *userinfo, qa_buffer *returned, qa_error *error)
 {
     qa_native_address entity, text = 0;
-    if (!host || !userinfo || !qa_native_entity_address(host->instance, slot, &entity, error) ||
-        !native_host_temporary_string(host, userinfo, &text, error))
+    if (!host || host->kind != NATIVE_HOST_Q2_GAME || !userinfo || !returned ||
+        returned->data || returned->size || !slot ||
+        !qa_native_entity_address(host->instance, slot, &entity, error) ||
+        !q2_userinfo_string(host, userinfo, &text, error))
         return false;
     qa_native_value arguments[] = {
         {.type = QA_NATIVE_ADDRESS, .as.address = entity},
         {.type = QA_NATIVE_ADDRESS, .as.address = text}};
     bool ok = qa_native_call(host->instance, "ClientUserinfoChanged", arguments, 2, NULL,
                              error);
+    if (ok) ok = qa_native_read_string(host->instance, text,
+        host->profile == QA_NATIVE_Q2_GAME_API2023 ? 2048u : 512u, returned, error);
     native_host_temporary_free(host, text);
     return ok && native_host_reconcile(host, error);
+}
+
+bool qa_native_host_client_userinfo(qa_native_host *host, uint32_t slot,
+    const char *userinfo, qa_error *error)
+{
+    qa_buffer returned = {0};
+    bool ok = qa_native_host_client_userinfo_result(host, slot, userinfo, &returned, error);
+    qa_buffer_free(&returned);
+    return ok;
 }
 
 bool qa_native_host_client_disconnect(qa_native_host *host, uint32_t slot, qa_error *error)

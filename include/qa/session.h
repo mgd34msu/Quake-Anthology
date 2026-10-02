@@ -90,6 +90,9 @@ typedef struct qa_session_options {
     qa_session_frames_fn run_commands;
     qa_session_frames_fn end_commands;
     qa_session_control_fn controlled_actor;
+    /* Wraps the actual scheduled callback inside its checked THINK invocation.
+     * Receives the original callback, context and source scope once. */
+    qa_think_dispatch_fn think_dispatch;
     void *release_context;
 } qa_session_options;
 
@@ -116,6 +119,11 @@ void qa_component_admission_abort(qa_component_admission *);
 bool qa_session_remove(qa_session *session, qa_actor_owner owner, qa_error *error);
 bool qa_session_pause(qa_session *session, qa_actor_owner owner, bool paused, qa_error *error);
 bool qa_session_clock(const qa_session *session, qa_actor_owner owner, qa_clock_state *out);
+/* Pure actual composition policy and registered source recipe. These do not
+ * capture simulation state or alter clock debt, source order or callbacks. */
+bool qa_session_mixed_order(const qa_session *);
+bool qa_session_component_recipe(const qa_session *, qa_actor_owner,
+    qa_clock_config *, uint64_t *registration_order);
 /* Current admission only; a completed clock is never an active frame. */
 bool qa_session_active_frame(const qa_session *, qa_actor_owner, qa_source_frame *);
 bool qa_session_frame_host_time(const qa_session *, uint64_t *);
@@ -133,6 +141,14 @@ bool qa_session_restore_clock(qa_session *session, qa_actor_owner owner,
 /* Elapsed time is explicit. The engine never reads wall time here. A callback
  * failure faults the session after already committed mutations; it is not retried. */
 bool qa_session_advance(qa_session *session, uint64_t elapsed_ns, qa_error *error);
+/* Pure qualification of components whose fixed turns follow this physical
+ * source's admitted map end, rather than the independent host clock. */
+typedef bool (*qa_session_source_dependency_fn)(void *, qa_actor_owner);
+bool qa_session_advance_source(qa_session *, qa_actor_owner,
+    qa_session_source_dependency_fn, void *, uint64_t elapsed_ns, qa_error *);
+/* Run the real prepare/run/end command boundary at the current host time.
+ * Source frames, clock debt and elapsed time remain unconsumed. */
+bool qa_session_command_turn(qa_session *session, qa_error *error);
 bool qa_session_safe(const qa_session *session);
 /* Pure owner/allocation-domain qualification, including release notifications. */
 bool qa_session_actor_allocation_ready(const qa_session *, qa_actor_owner);

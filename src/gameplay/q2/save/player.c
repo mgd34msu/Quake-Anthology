@@ -13,6 +13,7 @@ static bool carry(q2_save_io *io, qa_q2_player_carry *s) {
     }
     Q2U(armor.powered.kind); Q2F(armor.powered.cells);
     Q2N(armor.powered.source_owner); Q2U(armor.powered.source_edition);
+    Q2U(armor.powered.source_kind);
     if (!qa_armor_validate(&s->armor, io->error)) return false;
     if (!q2_save_inventory(io, &s->inventory, &s->count)) return false;
     Q2U(weapon); Q2N(selected_item); Q2I(score); Q2U(flags); Q2U(power_cubes); return true;
@@ -62,6 +63,7 @@ static bool state(q2_save_io *io, qa_q2_player_state *s) {
     Q2B(auto_shield_enabled); Q2B(awaiting_respawn); Q2B(spawned); Q2B(player_collision);
     Q2B(has_coop); Q2B(has_pending_landmark); Q2B(squad_spawn); Q2B(corpse);
     Q2B(pending_start_items);
+    Q2B(sphere_vehicle);
     if (!q2_save_landmark(io, &s->pending_landmark)) return false;
     Q2V(squad_origin); Q2V(squad_angles); return true;
 }

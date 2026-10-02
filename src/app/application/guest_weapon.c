@@ -1,5 +1,7 @@
 #include "guest_q3_private.h"
 #include "guest_qc_profile.h"
+#include "guest_q3_weapons.h"
+#include "guest_q3_catalog.h"
 
 static bool canonical(application_provider *provider, qa_actor_id actor,
                          const char *name, qa_item_id *out, qa_error *error)
@@ -54,9 +56,21 @@ bool application_guest_weapon_read(application_provider *provider, qa_actor_id a
     uint32_t slot;
     if (!engine || !engine->game || !application_q3_guest_actor_client(provider, actor, &slot))
         return application_fail(error, QA_ERROR_NOT_FOUND, "Q3 selected weapon has no begun source client");
+    if (provider->kind == APPLICATION_PROVIDER_QVM && engine->game->weapons)
+        return application_q3_weapons_active(engine->game->weapons, actor, out, error);
     qa_q3_player player;
     if (!qa_q3_host_source_player(engine->game->host, slot, &player, error)) return false;
     if (player.weapon == 0) { *out = 0; return true; }
+    if (provider->kind == APPLICATION_PROVIDER_QVM) {
+        const application_q3_catalog_weapon *weapons; size_t count;
+        if (!engine->game->catalog ||
+            !application_q3_catalog_weapons(engine->game->catalog, &weapons, &count, error))
+            return false;
+        for (size_t i = 0; i < count; ++i)
+            if (weapons[i].weapon == player.weapon) { *out = weapons[i].item; return true; }
+        return application_fail(error, QA_ERROR_FORMAT,
+            "Original GAME selected a weapon outside its retained catalog");
+    }
     const char *name = qa_q3_weapon_identity_name((qa_q3_weapon)player.weapon);
     if (!name) return application_fail(error, QA_ERROR_FORMAT, "Q3 selected weapon exceeds the admitted source namespace");
     char identity[64];

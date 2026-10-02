@@ -1,4 +1,5 @@
 #include "internal.h"
+#include <stdio.h>
 
 q3_service_result q3_common(q3_call *call, int32_t *result, qa_error *error)
 {
@@ -41,6 +42,14 @@ q3_service_result q3_common(q3_call *call, int32_t *result, qa_error *error)
             q3_fail(error, QA_ERROR_FORMAT, 0, "invalid Q3 command argument view");
             return Q3_FAILED;
         }
+        char mapped_index[16]; const char *index_text = NULL;
+        if (!ui && !game && args.canonical_configstrings && host->options.abi != QA_QVM_Q3_MODERN &&
+            args.count && !strcmp(args.arguments[0], "cs")) {
+            int32_t index = 0; bool mapped = false;
+            if (!qa_qvm_client_configstring_argument(host->options.abi,
+                args.count > 1 ? args.arguments[1] : NULL, &index, &mapped, error)) return Q3_FAILED;
+            if (mapped) { snprintf(mapped_index, sizeof(mapped_index), "%d", index); index_text = mapped_index; }
+        }
         if (trap == (ui ? 10 : game ? 8 : 7)) {
             *result = (int32_t)args.count;
             return Q3_COMPLETED;
@@ -48,20 +57,22 @@ q3_service_result q3_common(q3_call *call, int32_t *result, qa_error *error)
         if (!ui && !game && trap == 9) {
             char text[1024]; size_t used = 0;
             for (size_t i = 1; i < args.count; ++i) {
-                size_t size = strlen(args.arguments[i]);
+                const char *value = i == 1 && index_text ? index_text : args.arguments[i];
+                size_t size = strlen(value);
                 if (size >= sizeof(text) - used - (i > 1 ? 1u : 0u)) {
                     q3_fail(error, QA_ERROR_FORMAT, used, "Cmd_Args exceeds its source buffer");
                     return Q3_FAILED;
                 }
                 if (i > 1) text[used++] = ' ';
-                memcpy(text + used, args.arguments[i], size); used += size;
+                memcpy(text + used, value, size); used += size;
             }
             text[used] = 0;
             return q3_write_string(call, call->arguments[0], text, q3_integer(call, 1), error)
                        ? Q3_COMPLETED : Q3_FAILED;
         }
         int32_t index = q3_integer(call, 0);
-        const char *text = index >= 0 && (size_t)index < args.count ? args.arguments[index] : "";
+        const char *text = index == 1 && index_text ? index_text :
+            index >= 0 && (size_t)index < args.count ? args.arguments[index] : "";
         return q3_write_string(call, call->arguments[1], text, q3_integer(call, 2), error)
                    ? Q3_COMPLETED : Q3_FAILED;
     }

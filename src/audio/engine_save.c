@@ -47,6 +47,7 @@ void qa_audio_engine_discard(qa_audio_engine *engine)
         mixer->options.observer = NULL; mixer->options.setting = NULL; mixer->options.log = NULL;
         mixer->options.random = NULL; mixer->options.milliseconds = NULL;
         mixer->options.allocate_voice_id = NULL; mixer->transmission = NULL;
+        mixer->transmission_checked = NULL;
     }
     qa_audio_engine_destroy(engine);
 }
@@ -125,10 +126,24 @@ bool qa_audio_engine_checkpoint(const qa_audio_engine *engine, const qa_audio_ch
         else qa_buffer_free(&bytes);
         selection[i] = j;
     }
-    qa_ac_write(&w, "QAEN", 4); qa_ac_u32(&w, 3); qa_ac_u32(&w, engine->options.sample_rate);
+    qa_ac_write(&w, "QAEN", 4); qa_ac_u32(&w, 5); qa_ac_u32(&w, engine->options.sample_rate);
     qa_ac_u32(&w, engine->options.output_channels); qa_ac_u64(&w, engine->options.mix_frames);
     qa_ac_u64(&w, engine->options.initial_voices); qa_ac_u32(&w, callback_mask(&engine->options));
-    qa_ac_u32(&w, engine->geometry != NULL); qa_ac_u64(&w, engine->clock); qa_ac_u64(&w, engine->next_voice);
+    qa_ac_u32(&w, engine->geometry != NULL);
+    qa_ac_u32(&w, engine->acoustics_enabled); qa_ac_u32(&w, engine->acoustics.context != NULL);
+    if (!w.failed && engine->acoustics.context) {
+        qa_buffer descriptor={0};
+        if (!engine->acoustics.current(engine->acoustics.context) || !refs || !refs->acoustics_encode ||
+            !refs->acoustics_encode(refs->context,&engine->acoustics,&descriptor,error) ||
+            (descriptor.size && !descriptor.data)) {
+            if (!error || error->code==QA_OK)
+                qa_error_set(error,QA_ERROR_ARGUMENT,0,"Audio checkpoint requires its current structural scene encoder");
+            w.failed=true;
+        }
+        if (!w.failed) qa_ac_blob(&w,(qa_bytes){descriptor.data,descriptor.size});
+        qa_buffer_free(&descriptor);
+    }
+    qa_ac_u64(&w, engine->clock); qa_ac_u64(&w, engine->next_voice);
     qa_ac_double(&w, engine->milliseconds); qa_ac_float(&w, engine->effects_gain);
     qa_ac_float(&w, engine->music_gain);
     qa_ac_u32(&w, engine->paused); qa_ac_u32(&w, engine->doppler);
@@ -154,6 +169,7 @@ bool qa_audio_engine_checkpoint(const qa_audio_engine *engine, const qa_audio_ch
         const audio_bus *bus = &engine->buses[i]; qa_buffer bytes = {0};
         qa_ac_ref(&w, refs, QA_AUDIO_REFERENCE_BUS, bus->id); qa_ac_u32(&w, bus->audience); qa_ac_float(&w, bus->gain);
         qa_ac_u32(&w, bus->raw != NULL);
+        qa_ac_u32(&w, bus->lifetime); qa_ac_u32(&w, bus->active);
         if (!w.failed) nested(&w, bus->raw ? qa_audio_raw_checkpoint(bus->raw, &bytes, error) :
                              qa_audio_music_checkpoint(bus->music, &bytes, error), &bytes);
     }
@@ -186,7 +202,7 @@ bool qa_audio_engine_restore(qa_bytes bytes, const qa_audio_engine_options *opti
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid isolated audio engine destination"); return false;
     }
     qa_ac_reader r = {.bytes = bytes, .error = error}; qa_bytes magic;
-    if (!qa_ac_read(&r, 4, &magic) || memcmp(magic.data, "QAEN", 4) || qa_ac_get32(&r) != 3 ||
+    if (!qa_ac_read(&r, 4, &magic) || memcmp(magic.data, "QAEN", 4) || qa_ac_get32(&r) != 5 ||
         qa_ac_get32(&r) != options->sample_rate || qa_ac_get32(&r) != options->output_channels ||
         qa_ac_get64(&r) != (options->mix_frames ? options->mix_frames : 4096) ||
         qa_ac_get64(&r) != (options->initial_voices ? options->initial_voices : 96) ||
@@ -195,6 +211,27 @@ bool qa_audio_engine_restore(qa_bytes bytes, const qa_audio_engine_options *opti
     qa_audio_engine *engine = NULL;
     if (r.failed || !qa_audio_engine_create(options, &engine, error)) return false;
     engine->geometry = refs ? refs->geometry : NULL; engine->geometry_user = refs ? refs->geometry_context : NULL;
+    engine->acoustics_enabled=qa_ac_bool(&r);
+    bool acoustic_source=qa_ac_bool(&r);
+    if (acoustic_source && !r.failed) {
+        qa_bytes descriptor;
+        if (qa_ac_getblob(&r,&descriptor)) {
+            if (!refs || !refs->acoustics_decode ||
+                !refs->acoustics_decode(refs->context,descriptor,&engine->acoustics,error)) {
+                if (!error || error->code==QA_OK)
+                    qa_error_set(error,QA_ERROR_ARGUMENT,r.offset,"Candidate acoustic scene decoder is absent");
+                r.failed=true;
+            } else if (!engine->acoustics.context || !engine->acoustics.current ||
+                !engine->acoustics.trace || !engine->acoustics.release ||
+                !engine->acoustics.current(engine->acoustics.context))
+                qa_ac_bad(&r,"Decoded acoustic source has no current candidate structural owner");
+        }
+    }
+    if ((engine->acoustics_enabled || acoustic_source) && engine->geometry)
+        qa_ac_bad(&r,"Saved engine mixes legacy and owned acoustic source admission");
+    qa_audio_checkpoint_refs mixer_refs=refs?*refs:(qa_audio_checkpoint_refs){0};
+    mixer_refs.geometry_checked=engine->acoustics_enabled?qa_audio_engine_acoustics_transmit:NULL;
+    mixer_refs.geometry_context=engine->acoustics_enabled?engine:engine->geometry_user;
     engine->clock = qa_ac_get64(&r); engine->next_voice = qa_ac_get64(&r); engine->milliseconds = qa_ac_getdouble(&r);
     engine->effects_gain = qa_ac_getfloat(&r); engine->music_gain = qa_ac_getfloat(&r);
     engine->paused = qa_ac_bool(&r); engine->doppler = qa_ac_bool(&r);
@@ -227,7 +264,7 @@ bool qa_audio_engine_restore(qa_bytes bytes, const qa_audio_engine_options *opti
         for (size_t j = 0; j < i; ++j)
             if (engine->seats[j]->listener.seat == seat->listener.seat) qa_ac_bad(&r, "Duplicate restored listener seat");
         qa_bytes data;
-        if (qa_ac_getblob(&r, &data) && !qa_audio_mixer_restore(data, &mixer_options, refs, &seat->mixer, error)) r.failed = true;
+        if (qa_ac_getblob(&r, &data) && !qa_audio_mixer_restore(data, &mixer_options, &mixer_refs, &seat->mixer, error)) r.failed = true;
         if (!r.failed && !same_listener(&seat->listener, &seat->mixer->listener))
             qa_ac_bad(&r, "Saved seat and mixer listeners differ");
         for (size_t j = 0; !r.failed && j < seat->mixer->voice_count; ++j) {
@@ -271,6 +308,10 @@ bool qa_audio_engine_restore(qa_bytes bytes, const qa_audio_engine_options *opti
         audio_bus *bus = &engine->buses[engine->bus_count++];
         bus->id = qa_ac_getref(&r, refs, QA_AUDIO_REFERENCE_BUS); bus->audience = qa_ac_get32(&r); bus->gain = qa_ac_getfloat(&r);
         bool raw = qa_ac_bool(&r); qa_bytes data;
+        bus->lifetime = (qa_audio_music_lifetime)qa_ac_get32(&r); bus->active = qa_ac_bool(&r);
+        if ((bus->lifetime != QA_AUDIO_MUSIC_WORLD && bus->lifetime != QA_AUDIO_MUSIC_MENU) ||
+            (raw && (bus->lifetime != QA_AUDIO_MUSIC_WORLD || !bus->active)))
+            qa_ac_bad(&r, "Saved bus has no authentic music route");
         if (bus->gain < 0) qa_ac_bad(&r, "Invalid saved bus gain");
         if (qa_ac_getblob(&r, &data)) {
             bool restored = raw ? qa_audio_raw_restore(data, options->sample_rate, &bus->raw, error) :
@@ -292,7 +333,7 @@ bool qa_audio_engine_restore(qa_bytes bytes, const qa_audio_engine_options *opti
         for (size_t j = 0; !r.failed && j < i; ++j)
             if (engine->round_mixers[j].seat == held->seat) qa_ac_bad(&r, "Duplicate retained round mixer seat");
         if (!r.failed && qa_ac_getblob(&r, &data) &&
-            !qa_audio_mixer_restore(data, &mixer_options, refs, &held->mixer, error)) r.failed = true;
+            !qa_audio_mixer_restore(data, &mixer_options, &mixer_refs, &held->mixer, error)) r.failed = true;
         if (!r.failed && (held->mixer->listener.seat != held->seat || held->mixer->loop_count ||
             held->mixer->loop_mix_count || held->mixer->position_count || held->mixer->transmission_count ||
             held->mixer->event_head != SIZE_MAX || held->mixer->source_begin_offset != 0 ||
@@ -311,7 +352,8 @@ bool qa_audio_engine_restore(qa_bytes bytes, const qa_audio_engine_options *opti
 bool qa_audio_engine_restore_into(qa_audio_engine *engine, qa_bytes bytes,
     const qa_audio_checkpoint_refs *refs, qa_error *error)
 {
-    if (!engine || engine->round_resetting || engine->operation_depth || engine->callback_depth || engine->destroy_pending ||
+    if (!engine || engine->round_resetting || engine->operation_depth || engine->callback_depth ||
+        engine->acoustics_readers || engine->destroy_pending ||
         engine->destroying || engine->seat_count || engine->round_mixer_count || engine->position_count || engine->bus_count ||
         engine->clock || engine->next_voice) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Audio import requires an empty idle candidate engine");
@@ -325,6 +367,8 @@ bool qa_audio_engine_restore_into(qa_audio_engine *engine, qa_bytes bytes,
         qa_audio_mixer *mixer = (qa_audio_mixer *)owned_mixer(engine, i);
         mixer->options.voice_id_user = engine;
         if (engine->options.observer) mixer->options.observer_user = engine;
+        if (mixer->transmission_checked==qa_audio_engine_acoustics_transmit)
+            mixer->transmission_user=engine;
     }
     qa_audio_engine_discard(decoded);
     return true;

@@ -2,6 +2,7 @@
 #include "qa/q3_presentation.h"
 #include "qa/font.h"
 #include "qa/text.h"
+#include "qa/q3_ui_client_state.h"
 
 #include <math.h>
 
@@ -84,6 +85,37 @@ bool qa_q3_host_render_scope_current(const qa_q3_host *host, const qa_qvm_call *
         lifetime && host->options.frontend_lifetime == lifetime &&
         service_owner && host->options.service_owner == service_owner &&
         presentation && host->options.presentation.seat == presentation;
+}
+
+bool qa_q3_host_system_movie_scope_current(const qa_q3_host *host, const qa_qvm_call *call,
+    const void *lifetime, uint64_t service_owner, qa_qvm_role role,
+    const qa_q3_presentation *presentation)
+{
+    const q3_call *entered = host ? host->system_movie_call : NULL;
+    return host && entered && entered->host == host && host->calls &&
+        !host->retired && !host->restore_pending &&
+        entered->source_call == call && (call ? entered->vm && entered->vm == host->vm :
+            entered->native && entered->native == host->native && entered->native_host == host->native_host) &&
+        role != QA_QVM_GAME && host->options.role == role &&
+        entered->service == (role == QA_QVM_UI ? 75 : 74) && (entered->arguments[5] & 1u) &&
+        lifetime && host->options.frontend_lifetime == lifetime &&
+        service_owner && host->options.service_owner == service_owner &&
+        presentation && host->options.presentation.seat == presentation;
+}
+
+static bool system_movie_open(void *context, const qa_q3_movie_request *request,
+    qa_q3_system_movie *out, qa_error *error)
+{
+    const q3_call *call = context;
+    qa_q3_host *host = call->host;
+    const qa_q3_host_presentation_services *services = &host->options.presentation;
+    if (!services->system_movie_context || !services->system_movie || host->system_movie_call)
+        return q3_fail(error, QA_ERROR_UNSUPPORTED, 0, "Q3 system cinematic owner is unbound or entered");
+    host->system_movie_call = call;
+    bool ok = services->system_movie(services->system_movie_context, host, call->source_call,
+        request, out, error);
+    host->system_movie_call = NULL;
+    return ok;
 }
 
 static bool render(q3_call *call, qa_q3_presentation *presentation,
@@ -243,6 +275,31 @@ static qa_scene_rect_f movie_rect(const q3_call *call)
                               (float)q3_integer(call, 3), (float)q3_integer(call, 4)};
 }
 
+static bool ui_client_state(q3_call *call, qa_error *error)
+{
+    const qa_q3_host_client_services *services = &call->host->options.client;
+    if (!services->ui_state_context || !services->ui_state)
+        return q3_fail(error, QA_ERROR_UNSUPPORTED, 0, "Q3 UI client-state owner is unbound");
+    q3_record destination;
+    if (!q3_record_open(call, call->arguments[0], QA_Q3_UI_CLIENT_STATE_BYTES,
+                         &destination, error)) return false;
+    qa_q3_ui_client_state state = {0};
+    if (!services->ui_state(services->ui_state_context, call->host, &state, error)) return false;
+    const char *server_end = memchr(state.server_name, 0, sizeof(state.server_name));
+    const char *update_end = memchr(state.update_info, 0, sizeof(state.update_info));
+    const char *message_end = memchr(state.message, 0, sizeof(state.message));
+    if (state.phase < 0 || state.phase > 9 || !server_end || !update_end || !message_end)
+        return q3_fail(error, QA_ERROR_FORMAT, 0, "Q3 UI client-state receipt is invalid");
+    uint8_t record[QA_Q3_UI_CLIENT_STATE_BYTES] = {0};
+    qa_store_u32le(record, (uint32_t)state.phase);
+    qa_store_u32le(record + 4, (uint32_t)state.connect_packet_count);
+    qa_store_u32le(record + 8, (uint32_t)state.client_number);
+    memcpy(record + 12, state.server_name, (size_t)(server_end - state.server_name));
+    memcpy(record + 1036, state.update_info, (size_t)(update_end - state.update_info));
+    memcpy(record + 2060, state.message, (size_t)(message_end - state.message));
+    return q3_write(call, call->arguments[0], (qa_bytes){record, sizeof(record)}, error);
+}
+
 q3_service_result q3_presentation(q3_call *call, int32_t *result, qa_error *error)
 {
     qa_qvm_role role = call->host->options.role;
@@ -252,7 +309,7 @@ q3_service_result q3_presentation(q3_call *call, int32_t *result, qa_error *erro
     int32_t service = call->service;
     int32_t first_movie = ui ? 75 : 74;
     bool owned = ui ? ((service >= 18 && service <= 29) || service == 31 || service == 32 ||
-                       service == 44 || service == 55 || service == 56 || service == 62 ||
+                       service == 43 || service == 44 || service == 55 || service == 56 || service == 62 ||
                        service == 63 || (service >= 75 && service <= 80))
                    : ((service >= 28 && service <= 49) || service == 57 || service == 58 ||
                        service == 69 || service == 73 || (service >= 74 && service <= 81) ||
@@ -266,16 +323,24 @@ q3_service_result q3_presentation(q3_call *call, int32_t *result, qa_error *erro
             return q3_fail(error, QA_ERROR_UNSUPPORTED, 0, "Q3 screen owner is unbound"), Q3_FAILED;
         return services->update_screen(services->context, error) ? Q3_COMPLETED : Q3_FAILED;
     }
-    if (service == (ui ? 44 : 49)) {
+    if (ui && service == 44)
+        return ui_client_state(call, error) ? Q3_COMPLETED : Q3_FAILED;
+    if (service == (ui ? 43 : 49)) {
         if (!services->configuration)
             return q3_fail(error, QA_ERROR_UNSUPPORTED, 0, "Q3 display configuration is unbound"), Q3_FAILED;
         q3_record destination;
+        bool legacy = call->host->options.abi == QA_QVM_Q3_116N;
+        size_t size = legacy ? 4164 : 11332;
         uint8_t *configuration = qa_arena_alloc(&call->host->scratch, 11332, 1, error);
-        if (!configuration || !q3_record_open(call, call->arguments[0], 11332,
+        if (!configuration || !q3_record_open(call, call->arguments[0], size,
                                                &destination, error))
             return Q3_FAILED;
-        return services->configuration(services->context, configuration, error) &&
-            q3_write(call, call->arguments[0], (qa_bytes){configuration, 11332}, error)
+        if (!services->configuration(services->context, configuration, error)) return Q3_FAILED;
+        if (legacy) {
+            configuration[4095] = 0;
+            memmove(configuration + 4096, configuration + 11264, 68);
+        }
+        return q3_write(call, call->arguments[0], (qa_bytes){configuration, size}, error)
             ? Q3_COMPLETED : Q3_FAILED;
     }
     if (!seat)
@@ -369,11 +434,15 @@ q3_service_result q3_presentation(q3_call *call, int32_t *result, qa_error *erro
         if (service == first_movie) {
             qa_buffer path = {0};
             if (!q3_string(call, call->arguments[0], &path, error)) return Q3_FAILED;
-            ok = qa_q3_presentation_movie_play(seat, (const char *)path.data,
-                movie_rect(call), (uint32_t)q3_integer(call, 5), result, error);
+            uint32_t flags = (uint32_t)q3_integer(call, 5);
+            ok = flags & 1u ? qa_q3_presentation_movie_play_system(seat, (const char *)path.data,
+                flags, system_movie_open, call, result, error) :
+                qa_q3_presentation_movie_play(seat, (const char *)path.data,
+                    movie_rect(call), flags, result, error);
             qa_buffer_free(&path);
         } else if (service == first_movie + 1) {
-            ok = qa_q3_presentation_movie_stop(seat, q3_integer(call, 0), false, error);
+            ok = qa_q3_presentation_movie_stop(seat, q3_integer(call, 0), true, error);
+            if (ok) *result = 2;
         } else if (service == first_movie + 2) {
             ok = qa_q3_presentation_movie_run(seat, q3_integer(call, 0), result, error);
         } else if (service == first_movie + 3) {

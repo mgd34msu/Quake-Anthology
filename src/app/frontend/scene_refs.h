@@ -20,4 +20,7 @@ bool frontend_scene_q3_model_retain(void *, const qa_model *, qa_q3_asset_model_
 bool frontend_scene_model_source_read(const qa_scene_model *, qa_scene_model_content_kind,
     frontend_model_source *);
 bool frontend_scene_animation_source_read(const qa_scene_model *, frontend_animation_source *);
+/* Copies the real root's owning content token without reopening its source. */
+bool frontend_scene_model_content_clone(const qa_scene_model *, qa_scene_model_content_kind,
+    qa_scene_model_content_lease *, qa_error *);
 #endif

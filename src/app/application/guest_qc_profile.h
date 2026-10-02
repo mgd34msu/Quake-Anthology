@@ -53,7 +53,14 @@ typedef struct application_qc_input_binding {
     size_t output_count;
 } application_qc_input_binding;
 typedef struct application_qc_cvar { char *name, *value; } application_qc_cvar;
-typedef struct application_qc_weapon_value { float value; qa_item_id item; } application_qc_weapon_value;
+typedef struct application_qc_weapon_value {
+    float value;
+    qa_item_id item;
+    char *label;
+    uint32_t bit;
+    int32_t impulse;
+    bool ui_declared;
+} application_qc_weapon_value;
 typedef struct application_qc_client_output_value {
     double value;
     union { qa_movement_mode mode; bool crouched; } output;

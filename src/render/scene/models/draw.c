@@ -8,7 +8,12 @@ static qa_scene_cull model_cull(const qa_scene_model *model, const qa_scene_mode
         (format == QA_MODEL_MD5 && input->replacement) ? QA_CULL_FRONT : QA_CULL_BACK;
 }
 
-static void depth_and_mirror(qa_scene_draw *draw, const qa_scene_model_input *input) {
+static void depth_and_mirror(qa_scene_draw *draw, const qa_scene_model_input *input,
+                             bool material_mirror) {
+    if (!material_mirror && input->view.mirror && input->family != QA_SCENE_Q3) {
+        if (draw->state.cull == QA_CULL_FRONT) draw->state.cull = QA_CULL_BACK;
+        else if (draw->state.cull == QA_CULL_BACK) draw->state.cull = QA_CULL_FRONT;
+    }
     bool hack = input->family == QA_SCENE_Q1 ? input->view_model :
         (input->flags & (input->family == QA_SCENE_Q2 ? 16u : 8u)) != 0;
     if (hack) { draw->state.depth_near = 0; draw->state.depth_far = 0.3f; }
@@ -22,6 +27,9 @@ static void depth_and_mirror(qa_scene_draw *draw, const qa_scene_model_input *in
 static qa_material_context material_context(const qa_scene_model_input *input, bool world) {
     qa_material_context context = {0};
     context.view = input->view;
+    context.source_primitives = input->source_order;
+    context.source_scratch = input->source_scratch;
+    context.source_depth_hack = input->family == QA_SCENE_Q3 && (input->flags & 8u) != 0;
     if (world) qa_scene_matrix_identity(&context.model);
     else context.model = qa_scene_model_matrix(&input->transform);
     context.entity_color = input->color;
@@ -35,7 +43,11 @@ static qa_material_context material_context(const qa_scene_model_input *input, b
     context.milliseconds = input->has_milliseconds ? input->milliseconds :
         milliseconds <= (double)INT64_MIN ? INT64_MIN :
         milliseconds >= (double)INT64_MAX ? INT64_MAX : (int64_t)milliseconds;
+    if (context.source_primitives) context.seconds = (float)context.milliseconds * .001f;
     context.time_offset = input->shader_time;
+    context.source_diagnostics = input->source_diagnostics;
+    context.source_diagnostics_read = input->source_diagnostics_read;
+    context.source_diagnostics_context = input->source_diagnostics_context;
     context.entity_texcoord = input->shader_texcoord;
     context.texts = input->render_texts; context.text_count = input->render_text_count;
     context.video_frame = input->video_frame; context.video_context = input->video_context;
@@ -67,21 +79,17 @@ static qa_material_context material_context(const qa_scene_model_input *input, b
 static bool q3_model_shadow(qa_scene_model *model, const qa_scene_model_input *input,
                              const qa_scene_mesh *mesh, const qa_material *material,
                              qa_material_context *context, qa_scene_frame *frame, qa_error *error) {
-    if (input->family != QA_SCENE_Q3 || input->shadow_only || input->view_model ||
-        (input->flags & (4u | 8u | 64u)) || input->color.w < 1 || input->fog.kind != QA_FOG_NONE ||
+    if (input->family != QA_SCENE_Q3 || input->shadow_only || input->fog_index != 0 ||
         (input->shadow_mode != 2 && input->shadow_mode != 3)) return true;
-    const qa_material *effective = material;
-    for (size_t hop = 0; effective->remapped; ++hop) {
-        if (hop >= 16384) { qa_error_set(error, QA_ERROR_FORMAT, 0, "model shadow material remap is cyclic"); return false; }
-        effective = effective->remapped;
-    }
-    if (effective->sort != 3) return true;
+    if (material->sort != 3) return true;
     size_t first = frame->command_count;
     const qa_material *shadow = NULL;
     qa_material_library *materials = input->material_library ? input->material_library : model->materials;
     if (input->shadow_mode == 2) {
+        if (((input->flags & 2u) && !input->view.clip_enabled) || (input->flags & (8u | 64u))) return true;
         shadow = qa_material_find(materials, "<stencil shadow>");
         if (!shadow) { qa_error_set(error, QA_ERROR_ARGUMENT, 0, "model library has no canonical stencil shadow material"); return false; }
+        if (context->source_scratch) return qa_material_submit(shadow, mesh, context, frame, error);
         if (!qa_scene_stencil_shadow(frame, &input->view, mesh, context->model,
                                       input->light_direction, qa_scene_white(model->resources), error)) return false;
     } else {
@@ -154,8 +162,13 @@ static bool apply_shadow_lights(qa_scene_draw *draw, const qa_scene_model_input 
 
 static bool planar_shadow(qa_scene_model *model, const qa_scene_model_input *input,
                            const qa_scene_mesh *mesh, qa_scene_frame *frame, qa_error *error) {
-    if (!input->planar_shadow || input->view_model || input->family != QA_SCENE_Q1 ||
-        (model->source->format != QA_MODEL_MDL && model->source->format != QA_MODEL_MD5)) return true;
+    if (!input->planar_shadow || input->view_model ||
+        (input->family != QA_SCENE_Q1 && input->family != QA_SCENE_Q2) ||
+        (input->family == QA_SCENE_Q2 && (input->flags & (4u | 32u))) ||
+        (input->family == QA_SCENE_Q1 && model->source->format != QA_MODEL_MDL &&
+         model->source->format != QA_MODEL_MD5) ||
+        (input->family == QA_SCENE_Q2 && model->source->format != QA_MODEL_MD2 &&
+         model->source->format != QA_MODEL_MD5)) return true;
     qa_scene_vertex *vertices = qa_arena_alloc(&frame->storage,
         mesh->vertex_count * sizeof(*vertices), _Alignof(qa_scene_vertex), error);
     if (!vertices) return false;
@@ -188,14 +201,28 @@ static bool planar_shadow(qa_scene_model *model, const qa_scene_model_input *inp
     draw.state.blend_destination = QA_BLEND_ONE_MINUS_SRC_ALPHA;
     draw.entity = input->entity;
     draw.shade_scale = 1;
-    depth_and_mirror(&draw, input);
+    depth_and_mirror(&draw, input, false);
     return qa_scene_frame_draw(frame, &draw, error);
 }
 
 bool scene_model_emit(qa_scene_model *model, const qa_scene_model_input *input,
                        const qa_scene_mesh *mesh, const scene_model_image *image,
                        bool unlit, bool world, qa_scene_frame *frame, qa_error *error) {
+    const qa_scene_model_input *original = input;
+    qa_scene_model_input eyes;
     qa_model_format format = model->source->format;
+    if (format == QA_MODEL_MDL && input->family == QA_SCENE_Q1 && input->q1_double_eyes &&
+        input->source_path && !strcmp(input->source_path, "progs/eyes.mdl")) {
+        eyes = *input;
+        for (unsigned axis = 0; axis < 3; ++axis) {
+            float shift = -model->source->translation[axis] - (axis == 2 ? 30 : 0);
+            for (unsigned component = 0; component < 3; ++component)
+                eyes.transform.origin[component] += input->transform.axes[axis][component] *
+                    input->transform.scale[axis] * shift;
+            eyes.transform.scale[axis] *= 2;
+        }
+        input = &eyes;
+    }
     bool shell_image = scene_model_has_shell(input) && (format == QA_MODEL_MD2 || format == QA_MODEL_MD5);
     bool custom_allowed = format != QA_MODEL_MDL && format != QA_MODEL_SPR && format != QA_MODEL_SP2;
     const qa_material *material = custom_allowed && input->custom_material ? input->custom_material : image ? image->material : NULL;
@@ -207,6 +234,9 @@ bool scene_model_emit(qa_scene_model *model, const qa_scene_model_input *input,
     }
     if (material) {
         qa_material_context context = material_context(input, world);
+        context.source_white = qa_scene_white(model->resources);
+        if (model->source->format == QA_MODEL_MD3 || model->source->format == QA_MODEL_MD4)
+            context.source_writer = QA_SOURCE_WRITE_MODEL;
         if (input->shadow_only) {
             qa_scene_mesh shadow_mesh;
             if (!qa_material_shadow_mesh(material, mesh, &context, frame, &shadow_mesh, error)) return false;
@@ -226,9 +256,10 @@ bool scene_model_emit(qa_scene_model *model, const qa_scene_model_input *input,
         if (!qa_material_submit(material, mesh, &context, frame, error)) return false;
         for (size_t i = begin; i < frame->command_count; ++i) if (frame->commands[i].kind == QA_SCENE_COMMAND_DRAW) {
             qa_scene_draw *draw = &frame->commands[i].data.draw;
-            depth_and_mirror(draw, input);
+            depth_and_mirror(draw, input, true);
             if (!unlit && !input->shadow_only && !apply_shadow_lights(draw, input, frame, error)) return false;
         }
+        if (!unlit && !input->shadow_only && !planar_shadow(model, original, mesh, frame, error)) return false;
         return qa_scene_frame_group(frame, begin,
             input->source_order ? QA_SCENE_GROUP_SOURCE : QA_SCENE_GROUP_COMPILED,
             material, material->sort, input->entity, input->fog_index, 0, error);
@@ -260,7 +291,7 @@ bool scene_model_emit(qa_scene_model *model, const qa_scene_model_input *input,
     draw.entity = input->entity;
     draw.sort_key = ((uint64_t)(transparent ? 9u : 3u) << 48) | ((uint64_t)input->entity << 16);
     draw.shade_scale = 1;
-    depth_and_mirror(&draw, input);
+    depth_and_mirror(&draw, input, false);
     if (!unlit && !input->shadow_only && !apply_shadow_lights(&draw, input, frame, error)) return false;
     if (!qa_scene_frame_draw(frame, &draw, error)) return false;
     if (!unlit && !input->shadow_only && image && image->fullbright) {
@@ -281,7 +312,7 @@ bool scene_model_emit(qa_scene_model *model, const qa_scene_model_input *input,
         if (!qa_scene_frame_draw(frame, &draw, error)) return false;
     }
     if (input->shadow_only) return true;
-    if (!planar_shadow(model, input, mesh, frame, error)) return false;
+    if (!planar_shadow(model, original, mesh, frame, error)) return false;
     return qa_scene_frame_group(frame, begin, QA_SCENE_GROUP_SEQUENCE, NULL,
         transparent ? 9 : 3, input->entity, input->fog_index, 0, error);
 }

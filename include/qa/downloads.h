@@ -60,6 +60,10 @@ void qa_downloads_cancel(qa_downloads *, qa_download_id);
  * Persist request identity/path and view.stage_nonce before releasing the job. */
 void qa_downloads_suspend(qa_downloads *, qa_download_id);
 bool qa_downloads_view(const qa_downloads *, qa_download_id, qa_download_view *);
+/* Occupied retained job slots, in physical storage order. Paths remain
+ * borrowed until that actual job is released or the owner is destroyed. */
+size_t qa_downloads_count(const qa_downloads *);
+bool qa_downloads_at(const qa_downloads *, size_t ordinal, qa_download_view *);
 void qa_downloads_release(qa_downloads *, qa_download_id);
 /* Shared bounded reliable block sender. The admitted content bytes are borrowed
  * until close; source dialect adapters choose block width/opcodes/EOF encoding. */

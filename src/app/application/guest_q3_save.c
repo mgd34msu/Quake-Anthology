@@ -15,8 +15,11 @@
 #include "qa/cvars_save.h"
 #include "startup_flow.h"
 #include "guest_q3_functions.h"
+#include "guest_q3_weapons_services.h"
+#include "guest_q3_body_save.h"
 #include "qa/persistence_content.h"
 #include "qa/launch_save.h"
+#include "qa/script_defines_save.h"
 
 static bool state_fail(qa_source_save_io *io, qa_status status, const char *message)
 {
@@ -384,6 +387,14 @@ typedef struct saved_artifact {
     size_t descriptor;
     uint64_t pool, resource;
     qa_vfs_acquisition acquisition;
+    uint64_t items_pool, items_resource;
+    qa_sha256_digest items_digest;
+    qa_vfs_acquisition items_acquisition;
+    uint64_t body_pool, body_resource;
+    qa_sha256_digest body_digest;
+    qa_vfs_acquisition body_acquisition;
+    qa_buffer body_storage;
+    qa_bytes body_profile;
     q3g_artifact *actual;
 } saved_artifact;
 typedef struct saved_interface {
@@ -416,6 +427,12 @@ typedef struct saved_registry {
     qa_buffer storage;
     qa_cvars *actual;
 } saved_registry;
+typedef struct saved_client_globals {
+    uint32_t kind, seat;
+    qa_string_id owner;
+    qa_bytes definitions;
+    qa_buffer storage;
+} saved_client_globals;
 typedef struct saved_role {
     size_t artifact, registry;
     uint32_t seat, client, flags;
@@ -441,6 +458,8 @@ typedef struct q3g_restore {
     saved_descriptor *descriptors;
     size_t registry_count;
     saved_registry *registries;
+    size_t globals_count;
+    saved_client_globals *globals;
     uint32_t seats[64];
     saved_artifact *artifacts;
     saved_role *roles;
@@ -450,11 +469,15 @@ typedef struct q3g_restore {
 static void saved_free(q3g_restore *saved)
 {
     if (!saved) return;
-    for (size_t i = 0; saved->artifacts && i < saved->artifact_count; ++i)
+    for (size_t i = 0; saved->artifacts && i < saved->artifact_count; ++i) {
+        qa_buffer_free(&saved->artifacts[i].body_storage);
         if (saved->owns_text) {
             free(saved->artifacts[i].path);
             qa_vfs_acquisition_dispose(&saved->artifacts[i].acquisition);
+            qa_vfs_acquisition_dispose(&saved->artifacts[i].items_acquisition);
+            qa_vfs_acquisition_dispose(&saved->artifacts[i].body_acquisition);
         }
+    }
     for (size_t i = 0; saved->descriptors && i < saved->descriptor_count; ++i) {
         saved_descriptor *descriptor = saved->descriptors + i;
         if (saved->owns_text) {
@@ -472,6 +495,9 @@ static void saved_free(q3g_restore *saved)
         qa_buffer_free(&saved->registries[i].storage);
     }
     free(saved->registries);
+    for (size_t i = 0; saved->globals && i < saved->globals_count; ++i)
+        qa_buffer_free(&saved->globals[i].storage);
+    free(saved->globals);
     for (size_t i = 0; saved->roles && i < saved->role_count; ++i) {
         saved_role *role = &saved->roles[i];
         if (saved->owns_text) qa_command_tokens_free(&role->arguments);
@@ -615,6 +641,28 @@ static uint32_t role_flags(const q3g_role *role)
     return flags;
 }
 
+static bool client_globals_fields(qa_source_save_io *io, q3g_restore *saved)
+{
+    if (!qa_source_save_count(io, &saved->globals_count, 64)) return false;
+    if (io->direction == QA_SOURCE_SAVE_READ && saved->globals_count) {
+        if (saved->globals_count > (io->input.size - io->offset) / 40)
+            return state_fail(io, QA_ERROR_FORMAT, "Truncated physical CLIENT parser globals inventory");
+        saved->globals = calloc(saved->globals_count, sizeof(*saved->globals));
+        if (!saved->globals) return state_fail(io, QA_ERROR_MEMORY, "Restoring physical CLIENT parser globals");
+    }
+    for (size_t i = 0; i < saved->globals_count; ++i) {
+        saved_client_globals *row = saved->globals + i;
+        if (!qa_source_save_u32(io, &row->kind) || row->kind < QA_QVM_CGAME || row->kind > QA_QVM_UI ||
+            !qa_source_save_u32(io, &row->seat) || row->seat == UINT32_MAX ||
+            !qa_source_save_u32(io, &row->owner) || !row->owner || !blob(io, &row->definitions, 20))
+            return state_fail(io, QA_ERROR_FORMAT, "Invalid physical CLIENT parser globals namespace");
+        for (size_t j = 0; j < i; ++j)
+            if (saved->globals[j].seat == row->seat || saved->globals[j].owner == row->owner)
+                return state_fail(io, QA_ERROR_FORMAT, "Duplicate physical CLIENT parser globals owner");
+    }
+    return true;
+}
+
 static bool client_topology(const q3g_role *role, qa_error *error)
 {
     if (!role->native_client) {
@@ -648,16 +696,16 @@ static bool saved_fields(qa_source_save_io *io, q3g_restore *saved)
 {
     uint8_t magic[8] = {'Q','A','G','3','P','V',0,0};
     const uint8_t expected[8] = {'Q','A','G','3','P','V',0,0};
-    uint32_t version = 8;
+    uint32_t version = 11;
     if (!qa_source_save_bytes(io, magic, sizeof(magic)) || !qa_source_save_u32(io, &version) ||
-        memcmp(magic, expected, sizeof(magic)) || version != 8 ||
+        memcmp(magic, expected, sizeof(magic)) || version != 11 ||
         !qa_source_save_u32(io, &saved->product) || saved->product > QA_Q3_TEAM_ARENA ||
         !qa_source_save_u64(io, &saved->sequence) || !owned_text(io, &saved->entity_text) ||
         !blob(io, &saved->state, 12))
         return state_fail(io, QA_ERROR_FORMAT, "Invalid coupled Q3 provider envelope");
     bool console = saved->cvars.size != 0;
     if (!qa_source_save_bool(io, &console) || (console && !blob(io, &saved->cvars, 12)) ||
-        !descriptor_fields(io, saved) || !registry_fields(io, saved) ||
+        !descriptor_fields(io, saved) || !registry_fields(io, saved) || !client_globals_fields(io, saved) ||
         !qa_source_save_count(io, &saved->artifact_count, SIZE_MAX / sizeof(*saved->artifacts)))
         return state_fail(io, QA_ERROR_FORMAT, "Invalid original GAME console continuation");
     if (io->direction == QA_SOURCE_SAVE_READ) {
@@ -680,6 +728,27 @@ static bool saved_fields(qa_source_save_io *io, q3g_restore *saved)
             !acquisition(io, &artifact->acquisition) ||
             artifact->resource != artifact->acquisition.resource_id)
             return state_fail(io, QA_ERROR_FORMAT, "Invalid Q3 source artifact declaration");
+        bool items = artifact->items_resource != 0;
+        if (!qa_source_save_bool(io, &items) || (items &&
+            (artifact->kind != QA_QVM_GAME ||
+             !qa_source_save_u64(io, &artifact->items_pool) || !artifact->items_pool ||
+             !qa_source_save_u64(io, &artifact->items_resource) || !artifact->items_resource ||
+             !qa_source_save_bytes(io, artifact->items_digest.bytes, 32) ||
+             !acquisition(io, &artifact->items_acquisition) ||
+             artifact->items_resource != artifact->items_acquisition.resource_id ||
+             strcmp(artifact->items_acquisition.path, "qvm-items.json"))))
+            return state_fail(io, QA_ERROR_FORMAT, "Invalid retained Q3 item catalog declaration");
+        bool body = artifact->body_resource != 0;
+        if (!qa_source_save_bool(io, &body) || (body &&
+            (artifact->kind != QA_QVM_CGAME ||
+             !qa_source_save_u64(io, &artifact->body_pool) || !artifact->body_pool ||
+             !qa_source_save_u64(io, &artifact->body_resource) || !artifact->body_resource ||
+             !qa_source_save_bytes(io, artifact->body_digest.bytes, 32) ||
+             !acquisition(io, &artifact->body_acquisition) ||
+             artifact->body_resource != artifact->body_acquisition.resource_id ||
+             strcmp(artifact->body_acquisition.path, "cgame-presentation.json"))))
+            return state_fail(io, QA_ERROR_FORMAT, "Invalid retained CGAME body declaration");
+        if (artifact->kind == QA_QVM_CGAME && !blob(io, &artifact->body_profile, 12)) return false;
         for (size_t j = 0; j < i; ++j)
             if (artifact->descriptor == saved->artifacts[j].descriptor &&
                 artifact->kind == saved->artifacts[j].kind && !strcmp(artifact->path, saved->artifacts[j].path))
@@ -709,6 +778,12 @@ static bool saved_fields(qa_source_save_io *io, q3g_restore *saved)
              (!(role->flags & ROLE_COMMITTED) || (role->flags & ROLE_RETIRED))))
             return state_fail(io, QA_ERROR_FORMAT, "Invalid Q3 source role identity or lifecycle");
         const saved_artifact *artifact = &saved->artifacts[role->artifact];
+        if (artifact->kind != QA_QVM_GAME) {
+            bool found = false;
+            for (size_t j = 0; j < saved->globals_count; ++j)
+                if (saved->globals[j].seat == role->seat) found = true;
+            if (!found) return state_fail(io, QA_ERROR_FORMAT, "CLIENT role has no physical shared parser globals");
+        }
         primaries += (role->flags & ROLE_PRIMARY) != 0;
         games += artifact->kind == QA_QVM_GAME;
         if ((artifact->kind == QA_QVM_GAME) != (saved->game == i + 1) ||
@@ -820,6 +895,26 @@ static bool saved_collect(application_provider *provider, q3g_restore **out, qa_
     saved->entity_text = engine->entity_text;
     qa_application_content_graph *graph = qa_application_content_graph_read(provider->application);
     if (!graph) { saved_free(saved); return application_fail(error, QA_ERROR_FORMAT, "Q3 source capture lacks actual content inventory"); }
+    qa_application_startup_source client_source;
+    while (application_guest_q3_client_console_source(engine, saved->globals_count, &client_source))
+        ++saved->globals_count;
+    if (saved->globals_count > 64) {
+        saved_free(saved); return application_fail(error, QA_ERROR_FORMAT, "CLIENT globals exceed actual authored seat capacity");
+    }
+    saved->globals = saved->globals_count ? calloc(saved->globals_count, sizeof(*saved->globals)) : NULL;
+    if (saved->globals_count && !saved->globals) {
+        saved_free(saved); return application_fail(error, QA_ERROR_MEMORY, "Capturing physical CLIENT parser globals");
+    }
+    for (size_t i = 0; i < saved->globals_count; ++i) {
+        saved_client_globals *row = saved->globals + i;
+        qa_script_defines *globals = NULL;
+        if (!application_guest_q3_client_console_source(engine, i, &client_source) ||
+            !application_guest_q3_client_console_globals(engine, client_source.scope.seat, &globals, &row->owner, error) ||
+            !qa_script_defines_save_capture(globals, &row->storage, error)) { saved_free(saved); return false; }
+        row->kind = client_source.scope.kind == QA_APPLICATION_CONSOLE_Q3_CGAME ? QA_QVM_CGAME : QA_QVM_UI;
+        row->seat = client_source.scope.seat;
+        row->definitions = (qa_bytes){row->storage.data, row->storage.size};
+    }
     for (q3g_artifact *a = engine->artifacts; a; a = a->next) ++saved->artifact_count;
     for (q3g_role *r = engine->roles; r; r = r->next) ++saved->role_count;
     if (!saved->artifact_count || !saved->role_count || saved->role_count > 129 ||
@@ -877,6 +972,39 @@ static bool saved_collect(application_provider *provider, q3g_restore **out, qa_
         qa_sha256((qa_bytes){a->primary.data, a->primary.size}, &saved->artifacts[i].primary_digest);
         qa_sha256((qa_bytes){a->equipment_presentation.data, a->equipment_presentation.size},
             &saved->artifacts[i].equipment_digest);
+        if (a->items_resource) {
+            saved_artifact *row = saved->artifacts + i;
+            row->items_acquisition = a->items_acquisition;
+            row->items_digest = *qa_resource_digest(a->items_resource);
+            if (a->kind != QA_QVM_GAME || a->primary.size ||
+                strcmp(a->items_acquisition.path, "qvm-items.json") ||
+                qa_resource_id(a->items_resource) != a->items_acquisition.resource_id ||
+                !qa_vfs_acquisition_retained(a->view, &a->items_acquisition, error) ||
+                !qa_application_content_resource_id(graph, a->items_resource,
+                    &row->items_pool, &row->items_resource) ||
+                qa_application_content_pool(graph, row->items_pool) != qa_vfs_resources(a->view)) {
+                saved_free(saved); return application_fail(error, QA_ERROR_FORMAT,
+                    "Q3 item catalog leaves its actual retained opening");
+            }
+        }
+        if (a->kind == QA_QVM_CGAME) {
+            saved_artifact *row = saved->artifacts + i;
+            if (!application_q3_body_profile_checkpoint(a->image, a->abi, a->path,
+                &a->body_profile, &row->body_storage, error)) { saved_free(saved); return false; }
+            row->body_profile = (qa_bytes){row->body_storage.data, row->body_storage.size};
+            if (a->body_resource) {
+                row->body_acquisition = a->body_acquisition;
+                row->body_digest = *qa_resource_digest(a->body_resource);
+                if (strcmp(a->body_acquisition.path, "cgame-presentation.json") ||
+                    qa_resource_id(a->body_resource) != a->body_acquisition.resource_id ||
+                    !qa_vfs_acquisition_retained(a->view, &a->body_acquisition, error) ||
+                    !qa_application_content_resource_id(graph, a->body_resource, &row->body_pool, &row->body_resource) ||
+                    qa_application_content_pool(graph, row->body_pool) != qa_vfs_resources(a->view)) {
+                    saved_free(saved); return application_fail(error, QA_ERROR_FORMAT,
+                        "CGAME body declaration leaves its actual retained opening");
+                }
+            }
+        }
     }
     i = 0;
     for (q3g_role *r = engine->roles; r; r = r->next, ++i) {
@@ -1074,6 +1202,21 @@ static bool qualify_content(application_provider *provider, q3g_restore *saved, 
             !qa_sha256_equal(qa_resource_digest(resource), &a->digest) ||
             strcmp(a->path, a->acquisition.path) || !qa_vfs_acquisition_retained(view, &a->acquisition, error))
             return application_fail(error, QA_ERROR_FORMAT, "Q3 artifact changes its true opening recipe");
+        if (a->items_resource) {
+            const qa_resource *items = qa_application_content_resource(graph, a->items_pool, a->items_resource);
+            if (!items || qa_application_content_pool(graph, a->items_pool) != qa_vfs_resources(view) ||
+                !qa_sha256_equal(qa_resource_digest(items), &a->items_digest) ||
+                !qa_vfs_acquisition_retained(view, &a->items_acquisition, error))
+                return application_fail(error, QA_ERROR_FORMAT,
+                    "Q3 item catalog changes its retained source view or bytes");
+        }
+        if (a->body_resource) {
+            const qa_resource *body = qa_application_content_resource(graph, a->body_pool, a->body_resource);
+            if (!body || qa_application_content_pool(graph, a->body_pool) != qa_vfs_resources(view) ||
+                !qa_sha256_equal(qa_resource_digest(body), &a->body_digest) ||
+                !qa_vfs_acquisition_retained(view, &a->body_acquisition, error))
+                return application_fail(error, QA_ERROR_FORMAT, "CGAME body declaration changes its actual source bytes");
+        }
     }
     return true;
 }
@@ -1128,6 +1271,20 @@ static bool prepare_artifact(application_provider *provider, struct application_
         qa_application_content_graph_read(provider->application), saved->pool, saved->resource);
     qa_resource_retain(artifact->resource);
     if (!artifact->resource || !q3g_acquisition_copy(&saved->acquisition, &artifact->acquisition, error)) return false;
+    if (saved->items_resource) {
+        artifact->items_resource = (qa_resource *)qa_application_content_resource(
+            qa_application_content_graph_read(provider->application), saved->items_pool, saved->items_resource);
+        qa_resource_retain(artifact->items_resource);
+        if (!artifact->items_resource ||
+            !q3g_acquisition_copy(&saved->items_acquisition, &artifact->items_acquisition, error)) return false;
+    }
+    if (saved->body_resource) {
+        artifact->body_resource = (qa_resource *)qa_application_content_resource(
+            qa_application_content_graph_read(provider->application), saved->body_pool, saved->body_resource);
+        qa_resource_retain(artifact->body_resource);
+        if (!artifact->body_resource ||
+            !q3g_acquisition_copy(&saved->body_acquisition, &artifact->body_acquisition, error)) return false;
+    }
     if (primary && source == provider->launch) {
         artifact->image = provider->state.qvm.image;
         qa_qvm_image_retain(artifact->image);
@@ -1156,9 +1313,16 @@ static bool prepare_artifact(application_provider *provider, struct application_
         ok = artifact->kind != QA_QVM_CGAME || application_q3_equipment_profile_read(artifact->image, artifact->kind,
             artifact->abi, (qa_bytes){artifact->equipment_presentation.data,
                 artifact->equipment_presentation.size}, &artifact->equipment_profile, error);
+        if (ok && artifact->kind == QA_QVM_CGAME)
+            ok = application_q3_body_profile_restore(artifact->image, artifact->abi,
+                artifact->path, saved->body_profile, &artifact->body_profile, error);
         if (ok && artifact->kind == QA_QVM_GAME)
             ok = application_q3_grapple_profile_create(artifact->image, artifact->kind,
                 artifact->abi, artifact->path, &artifact->grapple_profile, error);
+        if (ok && artifact->kind == QA_QVM_GAME)
+            ok = application_q3_combat_profile_create(artifact->image, artifact->kind,
+                artifact->abi, artifact->path, (qa_bytes){artifact->primary.data, artifact->primary.size},
+                qa_session_strings(provider->application->session), &artifact->combat_profile, error);
     }
     qa_qvm_compatibility_free(&compatibility);
     return ok;
@@ -1290,7 +1454,34 @@ bool application_guest_q3_save_prepare(application_provider *provider, qa_world 
         if (!application_startup_source_restore(provider,
             application_guest_q3_console_owner(provider), cvars, &command, error)) return false;
     }
+    /* Retargeting preserves each physical console's birth scope and order. */
+    for (size_t i = 0; i < saved->globals_count; ++i) {
+        const saved_client_globals *row = saved->globals + i;
+        bool selected = false;
+        for (size_t j = 0; j < choices->seat_count; ++j)
+            if (choices->seats[j].id == row->seat &&
+                (q3g_selected_client_seat(provider, choices, QA_QVM_CGAME, j) ||
+                 q3g_selected_client_seat(provider, choices, QA_QVM_UI, j))) selected = true;
+        if (!selected || !application_guest_q3_client_console_prepare(engine,
+            (qa_qvm_role)row->kind, row->seat, error))
+            return application_fail(error, QA_ERROR_FORMAT, "Restored physical CLIENT globals seat is not selected");
+    }
     if (!application_guest_q3_client_consoles_prepare(engine, choices, error)) return false;
+    size_t globals_count = 0;
+    qa_application_startup_source globals_source;
+    while (application_guest_q3_client_console_source(engine, globals_count, &globals_source)) ++globals_count;
+    if (globals_count != saved->globals_count)
+        return application_fail(error, QA_ERROR_FORMAT, "Restored physical CLIENT globals inventory differs");
+    for (size_t i = 0; i < globals_count; ++i) {
+        if (!application_guest_q3_client_console_source(engine, i, &globals_source))
+            return application_fail(error, QA_ERROR_FORMAT, "Restored physical CLIENT globals source is absent");
+        const saved_client_globals *row = saved->globals + i;
+        if (row->seat != globals_source.scope.seat || row->kind != (uint32_t)
+            (globals_source.scope.kind == QA_APPLICATION_CONSOLE_Q3_CGAME ? QA_QVM_CGAME : QA_QVM_UI) ||
+            !application_guest_q3_client_console_globals_restore(engine, row->seat, (qa_qvm_role)row->kind,
+                row->owner, row->definitions, error))
+            return application_fail(error, QA_ERROR_FORMAT, "Restored CLIENT globals changed their actual slot ownership");
+    }
     for (size_t index = 0;; ++index) {
         qa_application_startup_source source;
         if (!application_guest_q3_client_console_source(engine, index, &source)) break;
@@ -1344,6 +1535,7 @@ bool application_guest_q3_save_prepare(application_provider *provider, qa_world 
             (role->native_client != NULL) != ((next->flags & ROLE_NATIVE_CLIENT) != 0))
             return application_fail(error, QA_ERROR_FORMAT, "Q3 role changes its actual admitted local or remote client services");
         if (!client_topology(role, error)) return false;
+        if (role->weapon_services && !application_q3_weapons_services_validate(role->weapon_services, error)) return false;
         if (artifact->kind == QA_QVM_GAME) {
             engine->game = role; q3g_game_aliases(engine, role);
             if ((next->flags & ROLE_COMMITTED) && application_bots_guest_runtime(provider->application, provider) &&
@@ -1370,7 +1562,8 @@ bool application_guest_q3_save_restore(application_provider *provider, qa_bytes 
         if (!client_topology(role, error)) return false;
         if (!portable_executor(row->executor, error) ||
             !application_guest_q3_functions_restore(role, row->input, row->executor, error) ||
-            !qa_qvm_restore_candidate(role->vm, row->executor, error)) return false;
+            !qa_qvm_restore_candidate(role->vm, row->executor, error) ||
+            !q3g_role_catalog_refresh(role, error)) return false;
         qa_command_tokens_free(&role->arguments);
         role->arguments = row->arguments; row->arguments = (qa_command_tokens){0};
         memcpy(role->input_keys, row->keys, sizeof(role->input_keys));

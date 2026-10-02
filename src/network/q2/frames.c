@@ -1,12 +1,7 @@
-#include "qa/network_q2_messages.h"
+#include "frames_internal.h"
 #include <stdlib.h>
 #include <string.h>
 
-struct qa_q2_frame_history {
-    qa_q2_wire_frame *frames;
-    bool *present;
-    size_t capacity, next;
-};
 
 static bool ordered(qa_q2_entity_span entities) {
     if (entities.count > UINT16_MAX || (entities.count && !entities.data)) return false;
@@ -123,7 +118,7 @@ const qa_q2_wire_frame *qa_q2_frame_history_latest(const qa_q2_frame_history *h)
     return last;
 }
 
-static const qa_q2_wire_frame *history_store(qa_q2_frame_history *h, qa_q2_wire_frame *frame) {
+const qa_q2_wire_frame *qa_q2_frame_history_store_owned(qa_q2_frame_history *h, qa_q2_wire_frame *frame) {
     size_t slot = h->capacity;
     for (size_t i = 0; i < h->capacity; ++i)
         if (h->present[i] && h->frames[i].server_frame == frame->server_frame) { slot = i; break; }
@@ -139,7 +134,7 @@ bool qa_q2_frame_history_accept(qa_q2_frame_history *h, const qa_q2_wire_frame *
     if (!h) { qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Missing Q2 history"); return false; }
     qa_q2_wire_frame copy;
     if (!qa_q2_frame_clone(frame, &copy, error)) return false;
-    history_store(h, &copy);
+    qa_q2_frame_history_store_owned(h, &copy);
     return true;
 }
 
@@ -218,7 +213,7 @@ bool qa_q2_frame_history_read(qa_q2_frame_history *history, qa_q2_codec *c, qa_n
         const qa_q2_entity *entity = &old->entities[cursor++];
         if (!append_entity(&frame, &capacity, c, r, entity, entity->number, 0)) goto failed;
     }
-    *out = history_store(history, &frame);
+    *out = qa_q2_frame_history_store_owned(history, &frame);
     return true;
 failed:
     qa_q2_frame_free(&frame);

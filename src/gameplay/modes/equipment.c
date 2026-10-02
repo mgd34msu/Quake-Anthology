@@ -491,6 +491,25 @@ static qa_q2_weapon_input q2_input(const qa_equipment_state *s) {
                                 .no_stack_double = c->no_stack_double,
                                 .animate_player = s->slot_active};
 }
+typedef struct grenade_interval_scope {
+    qa_equipment *equipment;
+    qa_q2_game *game;
+    qa_actor_owner owner;
+} grenade_interval_scope;
+static bool grenade_interval(void *context, qa_actor_id actor, uint64_t native,
+    uint64_t *out, bool *handled, qa_error *e) {
+    grenade_interval_scope *scope = context;
+    qa_equipment *g = scope->equipment;
+    equipment_actor *p = equipment_get(g, actor);
+    if (!p || p->grenades.q2 != scope->game || p->state.sources.grenades != scope->owner)
+        return mode_fail(e, "grenade cadence lost its actual equipment source");
+    *handled = false;
+    if (g->options.grenade_interval && !g->options.grenade_interval(g->options.context,
+        actor, scope->owner, native, out, handled, e)) return false;
+    p = equipment_get(g, actor);
+    return (p && p->grenades.q2 == scope->game && p->state.sources.grenades == scope->owner) ||
+        mode_fail(e, "grenade cadence replaced its equipment action owner");
+}
 static bool equipment_step(qa_equipment *g, qa_actor_id actor, uint64_t now, uint64_t elapsed,
                        qa_q2_hand_lifecycle lifecycle, qa_error *e) {
     equipment_actor *p = equipment_get(g, actor);
@@ -508,13 +527,16 @@ static bool equipment_step(qa_equipment *g, qa_actor_id actor, uint64_t now, uin
     if (!p) return true;
     s = &p->state; c = &s->controls;
     if (p->grenades.q2) {
+        grenade_interval_scope cadence = {g, p->grenades.q2, s->sources.grenades};
         qa_q2_hand_grenade_input grenade = {.weapon = q2_input(s),
                                             .pressed = grenade_pressed,
                                             .held = c->grenade_held,
                                             .released = grenade_released,
                                             .lifecycle = lifecycle,
                                             .project_context = g->options.context,
-                                            .project = g->options.grenade_projection};
+                                            .project = g->options.grenade_projection,
+                                            .interval_context = &cadence,
+                                            .interval = grenade_interval};
         if (!qa_q2_hand_grenade_step(p->grenades.q2, actor, &grenade, now, elapsed, e))
             return false;
         p = equipment_get(g, actor);
@@ -764,6 +786,50 @@ bool qa_equipment_read(qa_equipment *g, qa_actor_id actor, qa_equipment_state *o
         return false;
     *out = p->state;
     return true;
+}
+bool qa_equipment_weapon_view_read(qa_equipment *g, qa_actor_id actor,
+    qa_equipment_weapon_view *out, bool *found, qa_error *e) {
+    if (!g || !out || !found || g->operation_depth ||
+        !qa_actors_get(qa_session_actors(g->options.services.session), actor))
+        return mode_fail(e, "equipment weapon view requires its returned full actor");
+    equipment_actor *p = equipment_get(g, actor);
+    if (p && p->configuring) return mode_fail(e, "equipment weapon view retains an admission");
+    if (!p || p->state.selection.grapple == QA_GRAPPLE_DISABLED ||
+        p->state.selection.binding != QA_EQUIPMENT_WEAPON_SLOT) {
+        *found = false; return true;
+    }
+    qa_equipment_weapon_view value = {.actor = actor, .source = p->grapple,
+        .mechanic = p->state.selection.grapple, .item = p->grapple.weapon_item,
+        .label = p->state.selection.grapple == QA_GRAPPLE_LMCTF ? "Hook" : "Grapple",
+        .active = p->state.slot_active};
+    switch (value.mechanic) {
+    case QA_GRAPPLE_THREEWAVE: case QA_GRAPPLE_ROGUE:
+        value.item = qa_q1_weapon_item(p->grapple.q1, value.mechanic == QA_GRAPPLE_THREEWAVE ?
+            QA_Q1_CTF_GRAPPLE : QA_Q1_ROGUE_GRAPPLE);
+        break;
+    case QA_GRAPPLE_Q2_CTF: case QA_GRAPPLE_LMCTF: {
+        const qa_q2_weapon_definition *definition = qa_q2_weapon_definition_at(p->grapple.q2,
+            value.mechanic == QA_GRAPPLE_Q2_CTF ? QA_Q2_GRAPPLE : QA_Q2_LMCTF_HOOK);
+        if (!definition) return mode_fail(e, "equipment weapon view lost its source definition");
+        value.item = qa_strings_find(qa_session_strings(g->options.services.session),
+            (qa_bytes){(const uint8_t *)definition->item, strlen(definition->item)});
+        break;
+    }
+    case QA_GRAPPLE_Q3:
+        if (p->grapple.q3) value.item = qa_q3_weapon_item(p->grapple.q3, QA_Q3_W_GRAPPLE, false);
+        break;
+    case QA_GRAPPLE_DISABLED: break;
+    }
+    if (!value.item) return mode_fail(e, "equipment weapon view lost its admitted canonical item");
+    *out = value; *found = true; return true;
+}
+bool qa_equipment_weapon_view_current(qa_equipment *g, const qa_equipment_weapon_view *view) {
+    qa_equipment_weapon_view actual; bool found;
+    return view && qa_equipment_weapon_view_read(g, view->actor, &actual, &found, NULL) && found &&
+        actual.item == view->item && actual.mechanic == view->mechanic && actual.active == view->active &&
+        actual.source.owner == view->source.owner && actual.source.q1 == view->source.q1 &&
+        actual.source.q2 == view->source.q2 && actual.source.q3 == view->source.q3 &&
+        actual.source.context == view->source.context && actual.source.current == view->source.current;
 }
 static bool state_valid(qa_equipment *g, const qa_equipment_state *state, qa_error *e) {
     qa_equipment_source grapple, grenades, items;

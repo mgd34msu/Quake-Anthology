@@ -1,5 +1,6 @@
 #include "boss_internal.h"
 #include "qa/game_q1_checkpoint.h"
+#include "qa/game_q1_maps.h"
 #include "wire_internal.h"
 #include <float.h>
 
@@ -384,7 +385,6 @@ static bool combat_context(void *context, const qa_damage_request *request,
                            const qa_combat_state *target, const qa_combat_state *attacker,
                            qa_combat_context *out, qa_error *error) {
     (void)attacker;
-    (void)error;
     qa_q1_game *g = context;
     q1_player *player = q1_player_get(g, request->attack.attacker);
     qa_q1_target traits = {0};
@@ -419,7 +419,13 @@ static bool combat_context(void *context, const qa_damage_request *request,
                     .momentum_direction = has_momentum
                                               ? qa_vec_normalize(qa_vec_sub(body.origin, origin))
                                               : qa_v3(0, 0, 0),
-                    .teamplay = g->options.teamplay}};
+                    .teamplay = g->options.teamplay,
+                    .skip_base_team_health = g->options.program == QA_Q1_ROGUE}};
+    if (g->host.base_team_health) {
+        bool enabled;
+        if (!g->host.base_team_health(g->host.context, &enabled, error)) return false;
+        out->game.q1.skip_base_team_health = !enabled;
+    }
     return true;
 }
 static bool operation_finish(qa_q1_game_operation *operation, bool ok, qa_error *error) {
@@ -660,6 +666,7 @@ void qa_q1_game_destroy(qa_q1_game *g) {
     q1_map_destroy(g);
     q1_wire_destroy(g);
     qa_supply_destroy(g->source_supply);
+    q1_source_rogue_runes_free(g);
     while (g->allocated_actors) {
         q1_actor *next = g->allocated_actors->allocation_next;
         free(g->allocated_actors);
@@ -715,6 +722,7 @@ void qa_q1_game_actor_released(qa_q1_game *g, qa_actor_record actor) {
     if (!g || actor.id.slot >= g->capacity)
         return;
     q1_wire_actor_released(g, actor.id);
+    q1_source_rogue_runes_release(g, actor.id);
     q1_grapple_released(g, actor.id);
     q1_map_rotation_released(g, actor.id);
     q1_map_addon_released(g, actor.id);
@@ -897,7 +905,7 @@ bool qa_q1_game_think_binding(qa_q1_game *g, qa_actor_id actor, uint32_t callbac
                                qa_think_fn *callback, void **context, qa_error *error) {
     q1_actor *entity = q1_entity(g, actor);
     if (!entity || !callback || !context || callback_id == Q1_THINK_NONE ||
-        callback_id > Q1_THINK_SPAWN_TEMPLATE || entity->think != (q1_think_kind)callback_id ||
+        callback_id > Q1_THINK_SOURCE_ROGUE_RUNE_RESPAWN || entity->think != (q1_think_kind)callback_id ||
         entity->physics.motion == QA_PHYSICS_PUSH) {
         qa_error_set(error, QA_ERROR_FORMAT, actor.slot, "Invalid restored Q1 think binding");
         return false;
@@ -950,6 +958,23 @@ bool q1_think(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         return q1_map_think(g, entity, error);
     case Q1_THINK_SPAWN_TEMPLATE:
         return q1_map_spawn_template_wait(g, entity, error);
+    case Q1_THINK_SOURCE_CTF_FLAG_PLACE:
+    case Q1_THINK_SOURCE_CTF_FLAG:
+        return q1_source_flag_think(g, entity, kind, error);
+    case Q1_THINK_SOURCE_CTF_RUNE_SPAWN:
+    case Q1_THINK_SOURCE_CTF_RUNE_RESPAWN:
+        return q1_source_rune_think(g, entity, kind, error);
+    case Q1_THINK_SOURCE_ROGUE_TAG_PLACE:
+    case Q1_THINK_SOURCE_ROGUE_TAG:
+    case Q1_THINK_SOURCE_ROGUE_TAG_FALL:
+    case Q1_THINK_SOURCE_ROGUE_TAG_RESPAWN:
+        return q1_source_rogue_tag_think(g, entity, kind, error);
+    case Q1_THINK_SOURCE_ROGUE_FLAG_PLACE:
+    case Q1_THINK_SOURCE_ROGUE_FLAG:
+        return q1_source_rogue_flag_think(g, entity, kind, error);
+    case Q1_THINK_SOURCE_ROGUE_RUNE_SPAWN:
+    case Q1_THINK_SOURCE_ROGUE_RUNE_RESPAWN:
+        return q1_source_rogue_rune_think(g, entity, kind, error);
     case Q1_THINK_MG3_HAMMER:
         return q1_mg3_hammer_strike(g, entity, error);
     case Q1_THINK_REMOVE:
@@ -1216,6 +1241,7 @@ static bool spawn_actor(qa_q1_game *g, const qa_q1_spawn *spawn, const qa_body_s
     entity->initial_angles = spawn->angles;
     entity->physics = qa_physics_properties_default(QA_COLLISION_Q1);
     entity->spawnflags = spawn->spawnflags;
+    entity->source_movement_flags = spawn->source_movement_flags;
     entity->max_health = spawn->health;
     entity->speed = spawn->speed;
     entity->wait = spawn->wait;
@@ -1233,8 +1259,33 @@ static bool spawn_actor(qa_q1_game *g, const qa_q1_spawn *spawn, const qa_body_s
         !qa_builtin_resource(&g->services, spawn->message ? spawn->message : "", &entity->message,
                              error))
         goto fail;
+    if (spawn->map_fields) {
+        const qa_q1_map_fields *words = spawn->map_fields;
+        const char *input[] = {words->netname, words->kill_string, words->death_type, words->team};
+        qa_string_id *output[] = {&entity->source_netname, &entity->source_kill_string,
+            &entity->source_death_type, &entity->source_team};
+        for (size_t i = 0; i < sizeof(input) / sizeof(*input); ++i)
+            if (input[i] && !qa_strings_intern_cstr(qa_session_strings(g->services.session),
+                input[i], output[i], error)) goto fail;
+    }
     if (!q1_map_bind_target(g, entity, error))
         goto fail;
+    bool flag_handled;
+    if (!q1_source_rogue_flag_spawn(g, entity, &flag_handled, error)) goto fail;
+    if (flag_handled) {
+        *out = q1_alive(g, actor) ? actor : (qa_actor_id){0};
+        return true;
+    }
+    if (!q1_source_rogue_tag_spawn(g, entity, &flag_handled, error)) goto fail;
+    if (flag_handled) {
+        *out = q1_alive(g, actor) ? actor : (qa_actor_id){0};
+        return true;
+    }
+    if (!q1_source_flag_spawn(g, entity, &flag_handled, error)) goto fail;
+    if (flag_handled) {
+        *out = q1_alive(g, actor) ? actor : (qa_actor_id){0};
+        return true;
+    }
     bool map_handled;
     if (!q1_map_spawn(g, entity, spawn, &map_handled, error))
         goto fail;
@@ -1318,6 +1369,16 @@ static bool touch_inner(qa_q1_game *g, const qa_touch_contact *contact, qa_error
         return true;
     if (entity->kind == Q1_MAP)
         return q1_map_touch(g, entity, contact, error);
+    if (entity->kind == Q1_SOURCE_CTF_FLAG)
+        return q1_source_flag_touch(g, entity, contact->other, error);
+    if (entity->kind == Q1_SOURCE_CTF_RUNE)
+        return q1_source_rune_touch(g, entity, contact->other, error);
+    if (entity->kind == Q1_SOURCE_ROGUE_TAG)
+        return q1_source_rogue_tag_touch(g, entity, contact->other, error);
+    if (entity->kind == Q1_SOURCE_ROGUE_FLAG || entity->kind == Q1_SOURCE_ROGUE_FLAG_BASE)
+        return q1_source_rogue_flag_touch(g, entity, contact->other, error);
+    if (entity->kind == Q1_SOURCE_ROGUE_RUNE)
+        return q1_source_rogue_rune_touch(g, entity, contact->other, error);
     if (q1_classnamed(g, entity->id, "dragon_corner"))
         return q1_dragon_corner_touch(g, entity, contact->other, error);
     if (entity->kind == Q1_PROJECTILE)
@@ -1335,12 +1396,24 @@ static bool touch_inner(qa_q1_game *g, const qa_touch_contact *contact, qa_error
         return q1_teledeath_touch(g, entity, contact->other, error);
     return true;
 }
-bool qa_q1_game_touch(qa_q1_game *g, const qa_touch_contact *contact, qa_error *error) {
+bool qa_q1_game_touch_source(qa_q1_game *g, const qa_touch_contact *contact,
+                             bool *reached, qa_error *error) {
+    if (!contact || !reached) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q1 touch requires its actual contact and callback result");
+        return false;
+    }
     qa_q1_game_operation operation = {0};
     if (!qa_q1_game_operation_begin(g, &operation, error))
         return false;
+    bool bound = q1_entity_const(g, contact->self) != NULL;
     bool ok = touch_inner(g, contact, error);
-    return operation_finish(&operation, ok, error);
+    if (!operation_finish(&operation, ok, error)) return false;
+    *reached = bound;
+    return true;
+}
+bool qa_q1_game_touch(qa_q1_game *g, const qa_touch_contact *contact, qa_error *error) {
+    bool reached;
+    return qa_q1_game_touch_source(g, contact, &reached, error);
 }
 bool qa_q1_game_use(qa_q1_game *g, qa_actor_id actor, qa_actor_id activator, qa_error *error) {
     return qa_q1_game_use_from(g, actor, activator, activator, error);
@@ -1379,12 +1452,46 @@ static bool use_inner(qa_q1_game *g, qa_actor_id actor, qa_actor_id other, qa_ac
     }
     return !entity || entity->kind != Q1_MONSTER || q1_monster_use(g, entity, activator, error);
 }
+typedef struct q1_actor_callback_context {
+    qa_q1_game_operation *operation;
+    q1_actor *entity;
+    const qa_damage_outcome *outcome;
+} q1_actor_callback_context;
+static bool callback_current(const q1_actor_callback_context *call, qa_actor_id actor,
+                             qa_error *error) {
+    qa_q1_game *g = call->operation->game;
+    if (!qa_q1_game_operation_live(call->operation) || !q1_alive(g, actor) ||
+        q1_entity(g, actor) != call->entity) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q1 callback lost its actual source actor");
+        return false;
+    }
+    return true;
+}
+static bool use_body(void *opaque, const qa_builtin_actor_callback_request *request,
+                     bool *result, qa_error *error) {
+    q1_actor_callback_context *call = opaque;
+    if (!callback_current(call, request->self, error)) return false;
+    *result = use_inner(call->operation->game, request->self,
+        request->source.use.other, request->source.use.activator, error);
+    return *result;
+}
 bool qa_q1_game_use_from(qa_q1_game *g, qa_actor_id actor, qa_actor_id other,
                          qa_actor_id activator, qa_error *error) {
     qa_q1_game_operation operation = {0};
     if (!qa_q1_game_operation_begin(g, &operation, error))
         return false;
-    bool ok = use_inner(g, actor, other, activator, error);
+    bool ok;
+    q1_actor *entity = q1_entity(g, actor);
+    if (g->services.actor_callback && entity && q1_alive(g, actor)) {
+        qa_builtin_actor_callback_request request = {.family = QA_GAME_Q1,
+            .provider = g->options.provider, .self = actor,
+            .source.use = {other, activator}};
+        q1_actor_callback_context context = {&operation, entity, NULL};
+        bool result = false;
+        ok = g->services.actor_callback(g->services.context, QA_BUILTIN_ACTOR_USE,
+            &request, use_body, &context, &result, error);
+        if (ok && q1_alive(g, actor)) ok = callback_current(&context, actor, error);
+    } else ok = use_inner(g, actor, other, activator, error);
     return operation_finish(&operation, ok, error);
 }
 static bool blocked_inner(qa_q1_game *g, qa_actor_id actor, qa_actor_id obstacle, qa_error *error) {
@@ -1429,11 +1536,44 @@ static bool reaction_inner(qa_q1_game *g, const qa_damage_outcome *outcome, qa_e
                                outcome->result.applied_damage, error);
     return true;
 }
+static bool reaction_body(void *opaque, const qa_builtin_actor_callback_request *request,
+                          bool *result, qa_error *error) {
+    q1_actor_callback_context *call = opaque;
+    if (!callback_current(call, request->self, error)) return false;
+    *result = reaction_inner(call->operation->game, call->outcome, error);
+    return *result;
+}
 bool qa_q1_game_reaction(qa_q1_game *g, const qa_damage_outcome *outcome, qa_error *error) {
     qa_q1_game_operation operation = {0};
     if (!qa_q1_game_operation_begin(g, &operation, error))
         return false;
-    bool ok = reaction_inner(g, outcome, error);
+    qa_actor_id actor = outcome->request.target;
+    q1_actor *entity = q1_entity(g, actor);
+    bool ok;
+    if (g->services.actor_callback && entity && q1_alive(g, actor) &&
+        (outcome->result.reaction == QA_REACTION_PAIN ||
+         outcome->result.reaction == QA_REACTION_DEATH)) {
+        bool death = outcome->result.reaction == QA_REACTION_DEATH;
+        qa_builtin_actor_callback_request request = {.family = QA_GAME_Q1,
+            .provider = g->options.provider, .self = actor};
+        if (death) {
+            request.source.die.attacker = outcome->request.attack.attacker;
+            request.source.die.inflictor = outcome->request.attack.inflictor;
+            request.source.die.damage = outcome->result.applied_damage;
+            request.source.die.kick = outcome->result.knockback;
+            request.source.die.point = outcome->request.point;
+        } else {
+            request.source.pain.attacker = outcome->request.attack.attacker;
+            request.source.pain.damage = outcome->result.applied_damage;
+            request.source.pain.kick = outcome->result.knockback;
+        }
+        q1_actor_callback_context context = {&operation, entity, outcome};
+        bool result = false;
+        ok = g->services.actor_callback(g->services.context,
+            death ? QA_BUILTIN_ACTOR_DIE : QA_BUILTIN_ACTOR_PAIN,
+            &request, reaction_body, &context, &result, error);
+        if (ok && q1_alive(g, actor)) ok = callback_current(&context, actor, error);
+    } else ok = reaction_inner(g, outcome, error);
     return operation_finish(&operation, ok, error);
 }
 bool qa_q1_game_presentation(const qa_q1_game *g, qa_actor_id actor, qa_q1_presentation *out) {

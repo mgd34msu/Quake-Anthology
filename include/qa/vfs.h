@@ -50,8 +50,24 @@ typedef struct qa_vfs_mount_info {
     bool q3_demo;
 } qa_vfs_mount_info;
 size_t qa_vfs_mount_count(const qa_vfs *vfs);
+/* Pure allocation-lineage proof, including genuinely retired mount IDs.
+ * Clones and restored views preserve the real contiguous issuance counter. */
+bool qa_vfs_mount_id_was_issued(const qa_vfs *, qa_mount_id);
 /* Info follows default search order. Its digest is borrowed until unmount. */
 bool qa_vfs_mount_at(const qa_vfs *vfs, size_t index, qa_vfs_mount_info *out);
+typedef struct qa_vfs_resource_origin {
+    const char *mount_path;
+    qa_fs_identity mount_identity;
+    qa_fs_object_reference root_reference;
+    qa_sha256_digest archive_digest;
+    qa_archive_kind format;
+    qa_archive_comparison comparison;
+    bool archive;
+} qa_vfs_resource_origin;
+/* Actual successful acquisition lineage, including retired mounts. This
+ * receipt conveys no native handle or authority to reopen a retired mount. */
+bool qa_vfs_resource_origin_read(const qa_vfs *, qa_mount_id, const qa_resource *,
+    qa_vfs_resource_origin *);
 /* Diagnostic borrows remain valid until their mount/rule is removed or changed.
  * Pool resource borrows remain valid until trim or pool teardown; retain a
  * resource before keeping it across mutations. Includes cached resources with
@@ -61,9 +77,19 @@ const char *qa_vfs_mount_path(const qa_vfs *, qa_mount_id);
  * and absent mount IDs return NULL. The view retains it until unmount/destroy;
  * consumers that outlive that association must retain the root themselves. */
 qa_fs_root *qa_vfs_mount_root(const qa_vfs *, qa_mount_id);
+/* Genuine native roots admitted for this same loose mount across physical
+ * restore mappings. Pure borrowed inventory, preserved by retained mounts and
+ * clones; valid until unmount/import/destruction. Archives return false. */
+bool qa_vfs_mount_root_references(const qa_vfs *, qa_mount_id,
+    const qa_fs_object_reference **, size_t *);
 size_t qa_vfs_prefix_count(const qa_vfs *);
 bool qa_vfs_prefix_at(const qa_vfs *, size_t index, const char **prefix,
                        const qa_mount_id **order, size_t *count);
+/* Pure current link policy, in the actual first-match order. Strings borrow
+ * until link replacement/removal or view destruction. */
+size_t qa_vfs_link_count(const qa_vfs *);
+bool qa_vfs_link_at(const qa_vfs *, size_t, const char **source_prefix,
+    qa_mount_id *target_mount, const char **target_prefix);
 size_t qa_vfs_resource_count(const qa_vfs *);
 const qa_resource *qa_vfs_resource_at(const qa_vfs *, size_t index, size_t *readers);
 void qa_vfs_clear_references(qa_vfs *vfs);
@@ -71,12 +97,20 @@ void qa_vfs_clear_references(qa_vfs *vfs);
  * mount inventory/order; flags follow qa_vfs_mount_at search order. No file is
  * opened or marked through a synthetic acquisition. */
 bool qa_vfs_restore_references(qa_vfs *,const bool *,size_t count,qa_error *);
+typedef struct qa_vfs_read_opening {
+    int64_t rank;
+    const qa_mount_id *order;
+    size_t order_count;
+    const char *prefix;
+    bool user_overlay;
+} qa_vfs_read_opening;
 typedef struct qa_vfs_read_reference {
     qa_mount_id mount;
     const qa_resource *resource;
     const char *path;
     const char *lookup_path;
     const char *link_source, *link_target;
+    qa_vfs_read_opening opening;
 } qa_vfs_read_reference;
 /* Successful reads in this exact view retain their genuine resource and mount
  * provenance once per pair and complete opening recipe. Distinct genuine
@@ -86,6 +120,13 @@ typedef struct qa_vfs_read_reference {
 uint64_t qa_vfs_read_generation(const qa_vfs *);
 size_t qa_vfs_read_count(const qa_vfs *);
 bool qa_vfs_read_at(const qa_vfs *, size_t, qa_vfs_read_reference *);
+/* First successful opening of this journal row, independent of later order,
+ * overlay and link changes. Borrowed until that row is removed. */
+bool qa_vfs_read_opening_at(const qa_vfs *, size_t, qa_vfs_read_opening *);
+/* First successful complete recipes for still-retained immutable resources.
+ * These historical rows survive reference clears and mount retirement. */
+size_t qa_vfs_retained_read_count(const qa_vfs *);
+bool qa_vfs_retained_read_at(const qa_vfs *, size_t, qa_vfs_read_reference *);
 
 /* New mounts append at lowest priority. Paths are native filesystem paths.
  * Repeated archive mounts share storage when file identity and format agree.
@@ -97,8 +138,9 @@ bool qa_vfs_mount_archive(qa_vfs *vfs, const char *path, qa_archive_kind kind,
 bool qa_vfs_mount_directory(qa_vfs *vfs, const char *path,
                             qa_archive_comparison comparison, bool writable,
                             qa_mount_id *out, qa_error *error);
-/* Build a normal new scoped mount from retained native authority in the same
- * pool. Archive bytes must still match their complete immutable snapshot.
+/* Build a normal new scoped mount from retained native authority. Archives
+ * require the same pool and must match their complete immutable snapshot;
+ * loose directories retain their actual root across resource pools.
  * Logical path labels remain unchanged; no source path is reopened. */
 bool qa_vfs_mount_retained(qa_vfs *, const qa_vfs *, qa_mount_id,
     qa_archive_comparison, bool writable, qa_mount_id *, qa_error *);
@@ -179,10 +221,18 @@ typedef struct qa_vfs_acquisition {
     qa_mount_id mount;
     uint64_t resource_id;
     char *path, *lookup_path, *link_source, *link_target;
+    /* This acquisition's actual lookup order, owned independently of the
+     * first-read journal. Restored legacy receipts may omit this snapshot. */
+    qa_vfs_read_opening opening;
+    bool opening_present;
 } qa_vfs_acquisition;
 bool qa_vfs_acquire_receipt(qa_vfs *, const char *, qa_resource **,
     qa_vfs_acquisition *empty_receipt, qa_error *);
 void qa_vfs_acquisition_dispose(qa_vfs_acquisition *);
+struct qa_source_save_io;
+/* Preserve a held acquisition's actual order snapshot after its recipe fields
+ * have been decoded. Historical issued IDs remain valid after unmount. */
+bool qa_vfs_acquisition_opening_codec(struct qa_source_save_io *, const qa_vfs *, qa_vfs_acquisition *);
 /* Match the complete actual opening recipe to its genuine journal resource and
  * mounted native identity. No admission, byte read or journal mutation. */
 bool qa_vfs_acquisition_valid(const qa_vfs *, const qa_vfs_acquisition *, qa_error *);

@@ -168,7 +168,7 @@ static bool commit_monster(qa_physics *p, qa_actor_id actor, qa_vec3 origin,
     if (!ph_write(p, actor, &body, error)) return false;
     if (change_ground && props.family != QA_COLLISION_Q1 && !ph_ground(p, actor, ground, error)) return false;
     if (clear_partial && ph_live(p, actor) && p->services.read(p->services.context, actor, &props)) {
-        props.flags &= ~QA_PHYSICS_PARTIAL_GROUND;
+        props.flags &= ~(uint32_t)QA_PHYSICS_PARTIAL_GROUND;
         if (!ph_properties(p, actor, &props, error)) return false;
     }
     return !relink || ph_link(p, actor, true, error);

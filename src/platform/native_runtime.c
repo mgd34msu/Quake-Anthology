@@ -1,6 +1,7 @@
 #include "qa/native_runtime.h"
 #include "qa/filesystem.h"
 #include "qa/source_save.h"
+#include "../compat/native/guest/profile/guard.h"
 
 #include <stddef.h>
 #include <stdio.h>
@@ -10,7 +11,8 @@
 #include <unistd.h>
 #endif
 
-enum { RUNTIME_FILES = 14, WINE_FILE = 12, SAME_HOST_FILE = 13 };
+enum { RUNTIME_FILES = 15, WINE_FILE = 12, SAME_HOST_FILE = 13,
+       PROFILE_FILE = 14, PROFILE_LAUNCHER = 9 };
 typedef struct runtime_file {
     char *path;
     qa_fs_file *file;
@@ -24,6 +26,7 @@ struct qa_native_runtime {
     runtime_file files[RUNTIME_FILES];
     char *wine_drive;
     qa_native_runner_validate_fn prior_validate;
+    qa_native_profile_validate_fn prior_profile_validate;
     void *prior_context;
 };
 
@@ -49,7 +52,8 @@ static const runtime_slot slots[RUNTIME_FILES] = {
     SLOT(linux_i386_client, "linux-i386/qa-native-hooks.so", QA_NATIVE_OS_LINUX, QA_NATIVE_ARCH_I386, false),
     SLOT(linux_x86_64_client, "linux-x86_64/qa-native-hooks.so", QA_NATIVE_OS_LINUX, QA_NATIVE_ARCH_X86_64, false),
     SLOT(wine, "wine/bin/wine", QA_NATIVE_OS_LINUX, QA_NATIVE_ARCH_X86_64, true),
-    SLOT(same_host_runner, NULL, QA_NATIVE_OS_LINUX, QA_NATIVE_ARCH_X86_64, true)
+    SLOT(same_host_runner, NULL, QA_NATIVE_OS_LINUX, QA_NATIVE_ARCH_X86_64, true),
+    SLOT(linux_x86_64_profile, "linux-x86_64/qa-native-profile.so", QA_NATIVE_OS_LINUX, QA_NATIVE_ARCH_X86_64, false)
 };
 #undef SLOT
 
@@ -223,6 +227,22 @@ static bool validate_target(void *context, qa_native_target target, bool instrum
     return !runtime->prior_validate || runtime->prior_validate(runtime->prior_context, target, instrumented, error);
 }
 
+static bool validate_profile(void *context, qa_error *error)
+{
+    qa_native_runtime *runtime = context;
+    qa_native_target host = qa_native_host_target();
+    if (!runtime || host.os != QA_NATIVE_OS_LINUX || host.arch != QA_NATIVE_ARCH_X86_64 ||
+        host.pointer_bytes != 8)
+        return fail(error, QA_ERROR_UNSUPPORTED, "Source hardware monitor requires the actual Linux x64 host");
+    if (!runtime->files[PROFILE_LAUNCHER].file || !runtime->files[PROFILE_FILE].file)
+        return fail(error, QA_ERROR_UNSUPPORTED, "Source hardware monitor launcher or client is not installed");
+    if (!unchanged(&runtime->files[PROFILE_LAUNCHER], error) ||
+        !unchanged(&runtime->files[PROFILE_FILE], error) ||
+        !executable_path(&runtime->files[PROFILE_LAUNCHER], error)) return false;
+    return !runtime->prior_profile_validate ||
+        runtime->prior_profile_validate(runtime->prior_context, error);
+}
+
 bool qa_native_runtime_create(const qa_native_runtime_options *options, qa_native_runtime **out, qa_error *error)
 {
     if (!options || !out || *out || (!options->root && !options->executable_directory))
@@ -255,9 +275,11 @@ bool qa_native_runtime_create(const qa_native_runtime_options *options, qa_nativ
         runtime->config.wine_drive = runtime->wine_drive;
         runtime->config.maximum_frame_bytes = options->overrides ? options->overrides->maximum_frame_bytes : 0;
         runtime->prior_validate = options->overrides ? options->overrides->validate : NULL;
+        runtime->prior_profile_validate = options->overrides ? options->overrides->validate_profile : NULL;
         runtime->prior_context = options->overrides ? options->overrides->validation_context : NULL;
         runtime->config.validate = validate_target;
         runtime->config.validation_context = runtime;
+        runtime->config.validate_profile = validate_profile;
         *out = runtime;
     } else qa_native_runtime_release(runtime);
     return okay;
@@ -283,6 +305,16 @@ const qa_native_runner_config *qa_native_runtime_config(const qa_native_runtime 
     return runtime ? &runtime->config : NULL;
 }
 
+bool qa_native_runtime_profile_launch(const qa_native_runtime *runtime,
+    guest_profile_guard_launch *out, qa_error *error)
+{
+    if (!out) return fail(error, QA_ERROR_ARGUMENT, "Source monitor launch requires its output");
+    if (!validate_profile((void *)runtime, error)) return false;
+    *out = (guest_profile_guard_launch){runtime->config.linux_x86_64_drrun,
+        runtime->config.linux_x86_64_profile};
+    return true;
+}
+
 static bool text(qa_source_save_io *io, const char *actual)
 {
     size_t length = strlen(actual), saved = length;
@@ -297,10 +329,10 @@ static bool text(qa_source_save_io *io, const char *actual)
 static bool fields(qa_source_save_io *io, const qa_native_runtime *runtime)
 {
     uint8_t magic[4] = {'Q','N','R','T'};
-    uint32_t version = 2, count = RUNTIME_FILES;
+    uint32_t version = 3, count = RUNTIME_FILES;
     uint64_t maximum = runtime->config.maximum_frame_bytes;
     if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "QNRT", 4) ||
-        !qa_source_save_u32(io, &version) || version != 2 ||
+        !qa_source_save_u32(io, &version) || version != 3 ||
         !qa_source_save_u32(io, &count) || count != RUNTIME_FILES ||
         !qa_source_save_u64(io, &maximum) || maximum != runtime->config.maximum_frame_bytes ||
         !text(io, runtime->wine_drive)) return false;

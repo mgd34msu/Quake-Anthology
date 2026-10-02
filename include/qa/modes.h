@@ -45,6 +45,10 @@ typedef enum qa_mode_phase {
     QA_MODE_INTERMISSION,
     QA_MODE_FINISHED
 } qa_mode_phase;
+typedef enum qa_mode_origin {
+    QA_MODE_CHOSEN_RULE,
+    QA_MODE_NATIVE_Q1_COMPOSITION
+} qa_mode_origin;
 typedef enum qa_mode_event_kind {
     QA_MODE_SCORE,
     QA_MODE_TEAM_SCORE,
@@ -182,6 +186,8 @@ typedef struct qa_mode_statistics {
 } qa_mode_statistics;
 typedef struct qa_mode_view {
     qa_mode_rules rules;
+    qa_mode_origin origin;
+    qa_actor_owner source_owner;
     qa_mode_phase phase;
     uint64_t time_ns, started_ns, deadline_ns;
     int32_t team_scores[3], team_captures[3];
@@ -286,6 +292,18 @@ typedef struct qa_mode_loot_spawn {
 } qa_mode_loot_spawn;
 typedef struct qa_modes_hooks {
     void *context;
+    /* Physical Q1 composition exists independently of chosen match rules. */
+    bool (*q1_composition_expected)(void *, qa_modes *, bool *present, qa_actor_owner *,
+        qa_mode_source *, qa_error *);
+    bool (*q1_composition_current)(void *, qa_actor_owner, qa_mode_source, qa_error *);
+    bool (*q1_composition_player_current)(void *, qa_actor_owner, qa_mode_source,
+        qa_actor_id, bool *observer, qa_error *);
+    bool (*q1_rogue_state)(void *, qa_actor_owner, qa_actor_id, qa_actor_id *, qa_error *);
+    bool (*q1_rogue_state_current)(void *, qa_actor_owner, qa_actor_id, qa_actor_id, qa_error *);
+    bool (*q1_rogue_number_read)(void *, qa_actor_owner, qa_actor_id, qa_actor_id,
+        uint32_t field, double *, qa_error *);
+    bool (*q1_rogue_number_write)(void *, qa_actor_owner, qa_actor_id, qa_actor_id,
+        uint32_t field, double, qa_error *);
     bool (*event)(void *, const qa_mode_event *, qa_error *);
     bool (*intent)(void *, const qa_match_intent *, qa_error *);
     bool (*respawn)(void *, qa_mode_id, qa_actor_id, bool teleport, qa_error *);
@@ -294,6 +312,8 @@ typedef struct qa_modes_hooks {
     bool (*q1_source_score)(void *, qa_mode_id, qa_actor_id, bool *bound, int32_t *, qa_error *);
     bool (*q1_source_set_score)(void *, qa_mode_id, qa_actor_id, int32_t, bool *bound, qa_error *);
     bool (*q1_source_add_score)(void *, qa_mode_id, qa_actor_id, int32_t, bool *bound, qa_error *);
+    bool (*q1_source_death_bound)(void *, qa_mode_id, qa_actor_id,
+        bool *bound, bool *ctf, qa_error *);
     bool (*q1_ctf_suicide_notice)(void *, qa_mode_id, qa_actor_id, bool limited, qa_error *);
     bool (*release_grapple)(void *, qa_actor_id, qa_error *);
     bool (*intermission)(void *, qa_mode_id, qa_actor_id, qa_error *);
@@ -390,6 +410,10 @@ bool qa_modes_create(const qa_modes_options *, qa_modes **, qa_error *);
 void qa_modes_destroy(qa_modes *);
 bool qa_modes_idle(const qa_modes *);
 bool qa_modes_add(qa_modes *, const qa_mode_rules *, qa_mode_id *, qa_error *);
+/* The source factory supplies actual native GAME rules and identity. These
+ * controllers never become an authored chosen-rule row or primary score mode. */
+bool qa_modes_add_q1_composition(qa_modes *, const qa_mode_rules *, qa_actor_owner,
+    qa_mode_id *, qa_error *);
 bool qa_modes_remove(qa_modes *, qa_mode_id, qa_error *);
 bool qa_modes_configure(qa_modes *, qa_mode_id, const qa_mode_rules *, qa_error *);
 bool qa_modes_read(qa_modes *, qa_mode_id, qa_mode_view *, qa_error *);
@@ -407,15 +431,14 @@ bool qa_modes_at(qa_modes *, size_t index, qa_mode_id *, qa_mode_view *, qa_erro
 bool qa_modes_player(qa_modes *, const qa_match_player *, qa_error *);
 bool qa_modes_player_read(qa_modes *, qa_mode_id, qa_actor_id, qa_mode_player_view *, qa_error *);
 typedef struct qa_mode_ctf_view {
-    int32_t last_team;
-    float status, access;
+    double last_team, status, access;
     bool start_map, pregame_over, observer, grapple_disabled;
 } qa_mode_ctf_view;
 /* Only the admitted ThreeWave instance supplies this source continuation.
  * Grapple mechanic and slot ownership are read separately from equipment. */
 bool qa_modes_ctf_read(qa_modes *, qa_mode_id, qa_actor_id, qa_mode_ctf_view *, qa_error *);
 bool qa_modes_ctf_restore_player(qa_modes *, qa_mode_id, qa_actor_id,
-                                  int32_t last_team, float status, float access, qa_error *);
+                                  double last_team, double status, double access, qa_error *);
 bool qa_modes_ctf_pregame_end(qa_modes *, qa_mode_id, qa_error *);
 /* Physical Q1 source expansion selection. False selected means Rogue
  * delegates to its real base selector; coop/nondeathmatch policy is owned by
@@ -450,6 +473,10 @@ bool qa_modes_source_award(qa_modes *, qa_mode_id, qa_actor_id, int32_t source_a
 bool qa_modes_bind_player(qa_modes *, qa_mode_id, qa_actor_id, const qa_match_binding *, qa_match_lease *,
                           qa_error *);
 bool qa_modes_unbind_player(qa_modes *, qa_match_lease, qa_error *);
+/* Reads the genuine lease retained by this exact full actor and callback
+ * context, including a binding awaiting actor-retirement cleanup. */
+bool qa_modes_player_lease(const qa_modes *, qa_mode_id, qa_actor_id, qa_actor_owner,
+    const void *context, qa_match_lease *, bool *present, qa_error *);
 bool qa_modes_score(qa_modes *, qa_mode_id, qa_actor_id, int32_t *, qa_error *);
 bool qa_modes_set_score(qa_modes *, qa_mode_id, qa_actor_id, int32_t, qa_error *);
 bool qa_modes_add_score(qa_modes *, qa_mode_id, qa_actor_id, int32_t, qa_error *);
@@ -570,6 +597,10 @@ bool qa_modes_physics_write(qa_modes *, qa_actor_id, const qa_physics_properties
 bool qa_modes_spawnpoints(qa_modes *, qa_mode_id, const qa_mode_spawnpoint *, size_t, qa_error *);
 bool qa_modes_spawnpoint(qa_modes *, qa_mode_id, qa_actor_id, bool farthest, qa_mode_spawnpoint *,
                          qa_error *);
+/* Native Q3 personal teleporter: deathmatch selection from the actor's current
+ * origin, independent of team respawn and without changing spawn admission. */
+bool qa_modes_q3_deathmatch_spawnpoint(qa_modes *, qa_mode_id, qa_actor_id,
+                                      qa_mode_spawnpoint *, qa_error *);
 
 /* Source damage stages are intentionally distinct: outgoing multipliers,
  * resistance after powered armor, and vampire after actual health damage. */

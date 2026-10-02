@@ -8,7 +8,7 @@ static bool configuration_safe(void *opaque)
 {
     qa_application *application = opaque;
     return application != NULL && !application->publication_started &&
-           application_guests_idle(application) &&
+           application_startup_flow_configuration_idle(application) &&
            application_bots_can_destroy(application) &&
            application->session != NULL &&
            qa_session_safe(application->session) &&
@@ -108,9 +108,11 @@ bool application_composition_create(qa_application *application,
 bool application_composition_destroy(qa_application *application,
                                      qa_error *error)
 {
-    if (application == NULL || application->configuration == NULL)
+    if (application == NULL)
         return true;
     if (!qa_application_startup_abort(application, error)) return false;
+    if (!application_publication_retry_cleanup(application, error)) return false;
+    if (application->configuration == NULL) return true;
     qa_configuration *configuration = application->configuration;
     if (!qa_configuration_destroy(configuration, error))
         return false;

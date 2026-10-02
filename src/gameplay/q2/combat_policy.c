@@ -127,6 +127,7 @@ bool qa_q2_combat_power_armor_source(const qa_q2_game *game, qa_powered_armor *a
     if (!game || !armor || armor->kind < QA_POWER_NONE || armor->kind > QA_POWER_SHIELD)
         return false;
     armor->source_owner = armor->kind == QA_POWER_NONE ? 0 : game->options.owner;
+    armor->source_kind = QA_POWER_SOURCE_Q2;
     armor->source_edition = armor->kind == QA_POWER_NONE ? QA_Q2_POWER_ARMOR_NONE :
         game->options.edition == QA_Q2_RERELEASE ? QA_Q2_POWER_ARMOR_RERELEASE : QA_Q2_POWER_ARMOR_CLASSIC;
     return true;

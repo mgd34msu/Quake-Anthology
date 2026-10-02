@@ -33,7 +33,22 @@ static bool attack_geometry(qa_q3_game *game, qa_actor_id actor, q3_attack_geome
     q3_source_angle_vectors(player->view_angles, &out->forward, &out->right, &out->up);
     out->muzzle = qa_vec_add(body.origin, qa_v3(0, 0, player->view_height));
     out->muzzle = qa_physics_q3_snap(qa_vec_add(out->muzzle, qa_vec_scale(out->forward, 14)));
-    out->factor = q3_damage_factor(game, player);
+    bool handled = false;
+    float factor = 0;
+    if (game->options.hooks.selected_damage_factor &&
+        !game->options.hooks.selected_damage_factor(game->options.hooks.context,
+            actor, &factor, &handled, error)) return false;
+    entry = q3_actor_get(game, actor);
+    if (!entry || entry->kind != Q3_ACTOR_PLAYER)
+        return q3_fail(error, "Q3 weapon player changed during its Source damage factor");
+    player = &entry->state.player;
+    if (handled) {
+        if (!isfinite(factor) || factor < 0) return q3_fail(error, "Source weapon damage factor is invalid");
+        if (game->options.product == QA_Q3_TEAM_ARENA &&
+            (player->selections & QA_Q3_EQUIPMENT) && player->persistent == QA_Q3_P_DOUBLER)
+            factor *= 2;
+        out->factor = factor;
+    } else out->factor = q3_damage_factor(game, player);
     out->firing_weapon = firing_weapon;
     return true;
 }
@@ -540,6 +555,10 @@ bool qa_q3_fire_weapon(qa_q3_game *game, qa_actor_id shooter, qa_q3_weapon weapo
         return q3_fail(error, "invalid Q3 weapon action boundary");
     ++game->observation_depth;
     bool okay = fire_weapon(game, shooter, weapon, error);
+    const q3_actor *player = q3_actor_const(game, shooter);
+    if (okay && weapon != QA_Q3_W_NONE && player && player->kind == Q3_ACTOR_PLAYER &&
+        (player->state.player.selections & QA_Q3_ARSENAL) && game->options.hooks.selected_weapon_fired)
+        okay = game->options.hooks.selected_weapon_fired(game->options.hooks.context, shooter, weapon, error);
     --game->observation_depth;
     return okay;
 }

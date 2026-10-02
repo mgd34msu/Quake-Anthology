@@ -97,7 +97,8 @@ static bool file_key(qa_q3_key *key, qa_fs_root *root, qa_fs_root *fallback,uint
     if (!qa_fs_root_resolve(root,"q3key",file_name_equal,NULL,false,&path,&local)) {
         if (local.code==QA_ERROR_NOT_FOUND && fallback) return file_key(key,fallback,NULL,value,present,error);
         if (local.code==QA_ERROR_NOT_FOUND) { *present=false; return true; }
-        if (error) *error=local; return false;
+        if (error) *error=local;
+        return false;
     }
     bool opened=qa_fs_root_file_open(root,path,&file,&identity,&local); free(path);
     if (!opened) {

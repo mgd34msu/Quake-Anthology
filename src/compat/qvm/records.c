@@ -4,6 +4,8 @@
 #include "qa/collision.h"
 
 #include <stddef.h>
+#include <math.h>
+#include <stdlib.h>
 #include <string.h>
 
 typedef struct record_field { uint16_t source, count; size_t native; } record_field;
@@ -148,6 +150,29 @@ bool qa_qvm_configstring_tag(qa_qvm_abi abi, int32_t value, int32_t *out, qa_err
     *out = abi != QA_QVM_Q3_MODERN && value >= 12 && value <= 15 ? value + 8 : value;
     return true;
 }
+bool qa_qvm_client_configstring_argument(qa_qvm_abi abi, const char *text,
+    int32_t *out, bool *mapped, qa_error *error)
+{
+    if ((unsigned)abi > QA_QVM_Q3_116N || !text || !out || !mapped)
+        return qa_qvm_error(error, QA_ERROR_ARGUMENT, 0, "invalid reached configstring argument");
+    *mapped = false; *out = 0;
+    if (abi == QA_QVM_Q3_MODERN) return true;
+    while (*text == ' ' || (*text >= '\t' && *text <= '\r')) ++text;
+    char *end = NULL;
+    double value = *text ? strtod(text, &end) : 0;
+    if (!*text) end = (char *)text;
+    if (end == text && *text)
+        return qa_qvm_error(error, QA_ERROR_FORMAT, 0, "invalid reached configstring command index");
+    while (*end == ' ' || (*end >= '\t' && *end <= '\r')) ++end;
+    if (*end || !isfinite(value) || trunc(value) != value)
+        return qa_qvm_error(error, QA_ERROR_FORMAT, 0, "invalid reached configstring command index");
+    if (value >= 20 && value <= 23) { *out = (int32_t)value - 8; *mapped = true; }
+    else if (value >= 12 && value <= 26)
+        return qa_qvm_error(error, QA_ERROR_UNSUPPORTED, (size_t)value,
+            "canonical configstring has no legacy client mapping");
+    return true;
+}
+
 static bool powerups(qa_qvm_abi abi, const int32_t values[16], qa_error *error)
 {
     if (abi != QA_QVM_Q3_MODERN)

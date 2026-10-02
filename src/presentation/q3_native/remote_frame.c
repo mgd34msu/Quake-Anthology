@@ -287,7 +287,9 @@ static bool frame_shape(const q3n_remote_frame *f)
     if (!f || !f->source.owner || !f->client || !f->context || !f->current || !f->entity ||
         !f->entity_event || !f->entity_trajectory || !f->entity_weapon || !f->trace_number ||
         (f->snapshots.stage != Q3N_REMOTE_INITIALIZATION && f->snapshots.stage != Q3N_REMOTE_SNAPSHOT_CALLBACK &&
-            f->snapshots.stage != Q3N_REMOTE_PREDICTION_CALLBACK && f->snapshots.stage != Q3N_REMOTE_COMPLETED_FRAME) ||
+            f->snapshots.stage != Q3N_REMOTE_PREDICTION_CALLBACK && f->snapshots.stage != Q3N_REMOTE_COMPLETED_FRAME &&
+            f->snapshots.stage != Q3N_REMOTE_CONSOLE && f->snapshots.stage != Q3N_REMOTE_AWAITING_SNAPSHOT &&
+            f->snapshots.stage != Q3N_REMOTE_LOADING_INFORMATION) ||
         (f->snapshots.stage == Q3N_REMOTE_SNAPSHOT_CALLBACK && !f->snapshots.callback_scope) ||
         (f->snapshots.stage != Q3N_REMOTE_SNAPSHOT_CALLBACK && f->snapshots.callback_scope) ||
         f->source.owner->options.client != f->client ||
@@ -309,6 +311,23 @@ static bool frame_shape(const q3n_remote_frame *f)
         return false;
     if (f->snapshots.stage == Q3N_REMOTE_PREDICTION_CALLBACK ?
         !f->transition_scope || !f->transition_player : f->transition_scope != 0) return false;
+    if (f->snapshots.stage == Q3N_REMOTE_CONSOLE ? !f->console_scope : f->console_scope != 0) return false;
+    if (f->snapshots.stage == Q3N_REMOTE_AWAITING_SNAPSHOT ?
+        !f->awaiting_snapshot_scope : f->awaiting_snapshot_scope != 0) return false;
+    if (f->snapshots.stage == Q3N_REMOTE_LOADING_INFORMATION ?
+        !f->loading_information_scope || !f->loading_information_text || !*f->loading_information_text ||
+            !f->loading_information_current :
+        f->loading_information_scope != 0 || f->loading_information_text || f->loading_information_current) return false;
+    if (f->snapshots.stage == Q3N_REMOTE_CONSOLE || f->snapshots.stage == Q3N_REMOTE_AWAITING_SNAPSHOT ||
+        f->snapshots.stage == Q3N_REMOTE_LOADING_INFORMATION) {
+        qa_native_q3_remote_client_basis actual;
+        if (!f->source.basis.client.initialized || !f->predicted_player || f->transition_player ||
+            f->prediction.owner || f->prediction.player ||
+            !qa_native_q3_remote_client_basis_read(f->client, &actual, NULL) || !actual.client.initialized)
+            return false;
+        if (f->snapshots.stage == Q3N_REMOTE_AWAITING_SNAPSHOT && f->snapshots.snapshot &&
+            !(f->snapshots.snapshot->flags & 2)) return false;
+    }
     if (f->snapshots.snapshot && (!f->snapshots.snapshot->valid ||
         f->snapshots.snapshot->player.product != f->source.basis.product ||
         f->snapshots.snapshot->message_number > f->snapshots.processed_message ||
@@ -317,7 +336,7 @@ static bool frame_shape(const q3n_remote_frame *f)
         f->snapshots.next_snapshot->player.product != f->source.basis.product ||
         f->snapshots.next_snapshot->message_number > f->snapshots.processed_message ||
         f->snapshots.next_snapshot->message_number <= f->snapshots.snapshot->message_number)) return false;
-    if (f->snapshots.stage != Q3N_REMOTE_INITIALIZATION && f->snapshots.stage != Q3N_REMOTE_SNAPSHOT_CALLBACK &&
+    if ((f->snapshots.stage == Q3N_REMOTE_PREDICTION_CALLBACK || f->snapshots.stage == Q3N_REMOTE_COMPLETED_FRAME) &&
         (!f->snapshots.snapshot || !f->prediction.owner || !f->prediction.player ||
             !f->predicted_state || !f->predicted_entity || !f->predicted_player)) return false;
     if (f->snapshots.stage == Q3N_REMOTE_COMPLETED_FRAME && f->transition_player) return false;
@@ -335,7 +354,11 @@ static bool frame_shape(const q3n_remote_frame *f)
     return true;
 }
 bool q3n_remote_frame_current(const q3n_remote_frame *f)
-{ return frame_shape(f) && q3n_remote_source_current(&f->source) && f->current(f->context, f); }
+{
+    return frame_shape(f) && q3n_remote_source_current(&f->source) && f->current(f->context, f) &&
+        (f->snapshots.stage != Q3N_REMOTE_LOADING_INFORMATION ||
+            f->loading_information_current(f->context, &f->source, f->loading_information_text));
+}
 bool q3n_remote_frame_read(const q3n_remote_frame_options *o, q3n_remote_frame *out, qa_error *e)
 {
     if (!o || !out || !o->source.owner) return fail(e, QA_ERROR_ARGUMENT, "Missing actual remote frame receipt");
@@ -345,7 +368,11 @@ bool q3n_remote_frame_read(const q3n_remote_frame_options *o, q3n_remote_frame *
         .predicted_entity = o->predicted_entity, .predicted_player = o->predicted_player,
         .transition_player = o->transition_player,
         .previous_player = o->previous_player, .initialization_scope = o->initialization_scope,
-        .transition_scope = o->transition_scope,
+        .transition_scope = o->transition_scope, .console_scope = o->console_scope,
+        .awaiting_snapshot_scope = o->awaiting_snapshot_scope,
+        .loading_information_scope = o->loading_information_scope,
+        .loading_information_text = o->loading_information_text,
+        .loading_information_current = o->loading_information_current,
         .context = o->context, .current = o->current, .entity = o->entity, .entity_event = o->entity_event,
         .entity_trajectory = o->entity_trajectory, .entity_weapon = o->entity_weapon,
         .prediction_error_clear = o->prediction_error_clear, .trace_number = o->trace_number};

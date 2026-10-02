@@ -14,6 +14,10 @@ typedef struct frontend_restart_options {
     size_t latched_count[3];
     void *context;
     bool (*current)(void *,const qa_command_context *,qa_error *);
+    /* The actual pending source or advancing captured release may stage this
+     * invocation in its retained canonical ticket before native side effects.
+     * A successful false receipt leaves the ordinary request path admitted. */
+    bool (*stage_input)(void *,const qa_command_invocation *,bool *staged,qa_error *);
     bool (*save_context)(void *,qa_source_save_io *,qa_command_context *);
     bool (*prepare_video)(void *,void **ticket,qa_error *);
     bool (*validate_video)(void *,void *ticket,qa_error *);

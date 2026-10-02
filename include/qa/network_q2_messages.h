@@ -85,15 +85,15 @@ typedef struct qa_q2_temp_entity {
 bool qa_q2_temp_entity_read(qa_q2_codec *, qa_net_reader *, bool extended_types, qa_q2_temp_entity *);
 bool qa_q2_temp_entity_write(qa_q2_codec *, qa_net_writer *, bool extended_types, const qa_q2_temp_entity *);
 
-typedef struct qa_q2_fog {
+typedef struct qa_q2_wire_fog {
     uint16_t bits;
     float density, height_falloff, height_density;
     uint8_t sky_factor, color[3], height_start_color[3], height_end_color[3];
     uint16_t time;
     int32_t height_start_distance, height_end_distance;
-} qa_q2_fog;
-bool qa_q2_fog_read(qa_net_reader *, qa_q2_fog *);
-bool qa_q2_fog_write(qa_net_writer *, const qa_q2_fog *);
+} qa_q2_wire_fog;
+bool qa_q2_fog_read(qa_net_reader *, qa_q2_wire_fog *);
+bool qa_q2_fog_write(qa_net_writer *, const qa_q2_wire_fog *);
 
 typedef enum qa_q2_server_event_kind {
     QA_Q2_SVC_NOP, QA_Q2_SVC_DISCONNECT, QA_Q2_SVC_RECONNECT, QA_Q2_SVC_LEVEL_RESTART,
@@ -121,7 +121,7 @@ typedef struct qa_q2_server_event {
         uint8_t seat;
         struct { qa_q2_kex_damage indicators[4]; size_t count; } damage;
         qa_q2_kex_locprint localized;
-        qa_q2_fog fog;
+        qa_q2_wire_fog fog;
         qa_q2_kex_poi poi;
         qa_q2_kex_help_path help_path;
         struct { const char *name; qa_bytes payload; } private_message;

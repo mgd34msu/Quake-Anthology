@@ -29,7 +29,7 @@ bool q3n_hud_create_remote(const q3n_hud_options *options,q3n_hud **out,qa_error
 {
     qa_native_q3_remote_client_basis basis;
     if(!options || !out || *out || !options->assets || options->source || options->client || !options->ui ||
-       !options->milliseconds || !options->load_deferred || !options->client_command || !options->remote_client ||
+       !options->milliseconds || !options->load_deferred || !options->client_command || !options->oldest_command || !options->remote_client ||
        !qa_native_q3_remote_client_basis_read(options->remote_client,&basis,e) ||
        basis.application!=options->application || basis.client.seat!=options->seat ||
        (basis.product==QA_Q3_TEAM_ARENA && (!options->mission_paint || !options->mission_order || !options->mission_timed ||
@@ -52,9 +52,20 @@ bool q3n_hud_weapon_read(q3n_hud *o,const q3n_frame *f,q3n_weapon_hud *out,qa_er
         return q3ne_fail(e,QA_ERROR_FORMAT,"Shared arsenal warning is outside its actual domain");
     *out=result; return true;
 }
+static bool center_current(q3n_hud *o,const q3n_frame *f,qa_error *e)
+{
+    if(!f || !f->remote)return q3nh_current(o,f,e);
+    qa_native_q3_remote_client_basis actual;
+    return o && o->options.application==f->application && o->options.assets==f->assets &&
+        o->options.seat==f->seat && o->product==q3n_frame_product(f) &&
+        o->options.remote_client==f->remote->client && f->remote->source.basis.client.initialized &&
+        qa_native_q3_remote_client_basis_read(f->remote->client,&actual,e) && actual.client.initialized &&
+        q3n_frame_current(f) && q3ne_current(f,e)?true:
+        q3ne_fail(e,QA_ERROR_ARGUMENT,"Center print requires its actual initialized CLIENT and entered frame");
+}
 bool q3n_hud_center_print(q3n_hud *o,const q3n_frame *f,const char *text,int32_t y,int32_t width,qa_error *e)
 {
-    if(!text || !o || o->busy || !q3nh_current(o,f,e))return false;
+    if(!text || !o || o->busy || !center_current(o,f,e))return false;
     q3n_hud_state *s=&o->state; snprintf(s->center_print,sizeof(s->center_print),"%s",text);
     s->center_print_time=f->time; s->center_print_y=y; s->center_print_char_width=width; s->center_print_lines=1;
     for(const char *p=s->center_print;*p;++p)if(*p=='\n')++s->center_print_lines;
@@ -62,6 +73,18 @@ bool q3n_hud_center_print(q3n_hud *o,const q3n_frame *f,const char *text,int32_t
 }
 void q3n_hud_scores(q3n_hud *o,bool show,int32_t time)
 { if(o && !o->busy) { if(o->state.show_scores && !show)o->state.score_fade_time=time; o->state.show_scores=show; } }
+bool q3n_hud_scores_request(q3n_hud *o,const q3n_frame *f,bool *due,qa_error *e)
+{
+    if(!o || o->busy || !f || !due || o->options.application!=f->application ||
+       o->options.assets!=f->assets || o->options.seat!=f->seat || o->product!=q3n_frame_product(f) ||
+       (f->remote?o->options.remote_client!=f->remote->client:
+        o->options.remote_client || o->source_game!=f->source.source_game || f->time!=f->source.source_time_ms) ||
+       !q3n_frame_current(f) || !q3ne_current(f,e))
+        return q3ne_fail(e,QA_ERROR_ARGUMENT,"Score request requires its idle HUD and actual entered CLIENT clock");
+    *due=q3ne_plus(o->scores_request_time,2000)<f->time;
+    if(*due)o->scores_request_time=f->time;
+    return true;
+}
 void q3n_hud_frame_sample(q3n_hud *o,int32_t offset)
 { if(o && !o->busy) { o->frame_samples[(uint32_t)o->frame_count&127u]=offset; o->frame_count=q3ne_plus(o->frame_count,1); } }
 void q3n_hud_snapshot_sample(q3n_hud *o,bool dropped,int32_t ping,int32_t flags)
@@ -296,7 +319,15 @@ static bool warmup(q3n_hud_draw *d)
 static bool disconnect(q3n_hud_draw *d)
 {
     q3n_hud *o=d->owner;
-    if(!o->has_oldest_command || o->oldest_command_time<=q3n_frame_snapshot_player(d->frame)->commandTime || o->oldest_command_time>d->frame->time)return true;
+    int32_t time=o->oldest_command_time;
+    if(d->frame->remote) {
+        qa_q3_usercmd command;
+        if(!o->options.oldest_command || !q3nh_current(o,d->frame,d->error) ||
+           !o->options.oldest_command(o->options.context,d->frame,&command,d->error) ||
+           !q3nh_current(o,d->frame,d->error))return false;
+        time=command.serverTime;
+    } else if(!o->has_oldest_command)return true;
+    if(time<=q3n_frame_snapshot_player(d->frame)->commandTime || time>d->frame->time)return true;
     q3nh_anchor(d,320,0);
     if(!q3nh_center(d,100,"Connection Interrupted",1))return false;
     q3nh_anchor(d,640,480);

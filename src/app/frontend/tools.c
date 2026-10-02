@@ -79,7 +79,10 @@ static bool context_active(void *context, const qa_command_context *source) {
         source = &current;
     }
     if (!qa_application_command_context_active(f->application, source)) return false;
-    if (source->origin == QA_COMMAND_SEAT) return !f->options.dedicated && source->seat < f->options.seats && f->seats[source->seat].console;
+    if (source->origin == QA_COMMAND_SEAT) {
+        uint32_t ordinal;
+        return frontend_command_seat_read(f,source,&ordinal) && f->seats[ordinal].console;
+    }
     return source->origin == QA_COMMAND_LOCAL || source->origin == QA_COMMAND_SERVER || source->origin == QA_COMMAND_REMOTE;
 }
 static bool capture_context(void *context, const qa_command_context *source, qa_command_context *out, qa_error *error) {
@@ -92,8 +95,10 @@ static void source_print(void *context, const qa_command_context *source, const 
     qa_frontend *f = context;
     if (!context_active(context, source)) return;
     if (source->origin == QA_COMMAND_SEAT) {
+        uint32_t ordinal;
+        if (!frontend_command_seat_read(f,source,&ordinal)) return;
         qa_error error = {0};
-        if (!qa_seat_console_print(f->seats[source->seat].console, text, &error)) fprintf(stderr, "console output: %s\n", error.message);
+        if (!qa_seat_console_print(f->seats[ordinal].console, text, &error)) fprintf(stderr, "console output: %s\n", error.message);
     } else fputs(text, stdout);
 }
 static const char *map_name(void *context) {
@@ -399,8 +404,9 @@ bool frontend_tools_create(qa_frontend *f, qa_error *error) {
     if (!services) return frontend_fail(error, QA_ERROR_MEMORY, "allocating frontend tools services");
     services->frontend = f; f->tools = services;
     services->debug_width = 2;
-    if (!qa_cvars_register(qa_application_cvars(f->application), "gl_debug_linewidth", "2", 0,
-                           QA_FRONTEND_COMMAND_OWNER, "Width in pixels for shared debug shapes.", error)) return false;
+    const qa_cvar_view *debug_width=qa_cvars_find(qa_application_cvars(f->application),"gl_debug_linewidth");
+    if (!debug_width || debug_width->owner!=QA_FRONTEND_COMMAND_OWNER)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Tools require their actual declared ENGINE debug width");
     char *base = SDL_GetBasePath();
     if (!base) return frontend_fail(error, QA_ERROR_IO, "could not locate executable private settings directory");
     services->private_resources = qa_resource_pool_create(error);
@@ -502,20 +508,20 @@ qa_http *frontend_tools_http(qa_frontend *f) { return f && f->tools ? f->tools->
 qa_llm *frontend_tools_llm(qa_frontend *f) { return f && f->tools ? f->tools->llm : NULL; }
 qa_tools *frontend_tools_owner(qa_frontend *f) { return f && f->tools ? f->tools->owner : NULL; }
 
-bool frontend_tools_capture_clock(qa_frontend *f, uint64_t elapsed_ns, uint64_t *out, qa_error *error)
+bool frontend_tools_capture_clock(qa_frontend *f,const qa_cvars *registry,uint64_t elapsed_ns,uint64_t *out,qa_error *error)
 {
     if (!f || !out) return frontend_fail(error, QA_ERROR_ARGUMENT, "invalid frontend capture clock");
-    if (!f->tools || f->options.dedicated || !f->options.seats) { *out = elapsed_ns; return true; }
+    if (!f->tools || f->options.dedicated || !f->options.seats || !registry) { *out = elapsed_ns; return true; }
     qa_command_context source = qa_input_seat_context(f->seats[0].input);
-    qa_console *console = qa_application_console(f->application);
-    qa_cvars *registry = qa_console_cvar_owner(console, &source, "cl_avidemo");
     const qa_cvar_view *fps = qa_cvars_find(registry, "cl_avidemo");
     if (!fps || fps->number <= 0 || elapsed_ns == 0) { *out = elapsed_ns; return true; }
-    const qa_cvar_view *force = qa_cvars_find(qa_console_cvar_owner(console, &source, "cl_forceavidemo"), "cl_forceavidemo");
-    const qa_cvar_view *scale = qa_cvars_find(qa_console_cvar_owner(console, &source, "timescale"), "timescale");
+    const qa_cvar_view *force = qa_cvars_find(registry,"cl_forceavidemo");
+    const qa_cvar_view *scale = qa_cvars_find(registry,"timescale");
     qa_capture_clock clock;
     if (!qa_capture_frame_time((double)elapsed_ns / 1000000.0, fps->number, scale ? scale->number : 1,
-        qa_application_get_state(f->application) == QA_APPLICATION_RUNNING, force && force->number != 0, &clock, error)) return false;
+        frontend_network_remote(f)?frontend_network_client_ready(f):
+            qa_application_get_state(f->application)==QA_APPLICATION_RUNNING,
+        force && force->number != 0, &clock, error)) return false;
     double duration = clock.milliseconds * 1000000;
     if (!isfinite(duration) || duration < 0 || duration >= 18446744073709551616.0) return frontend_fail(error, QA_ERROR_ARGUMENT, "capture frame duration exceeds native range");
     if (clock.capture) {

@@ -176,7 +176,8 @@ bool q2_lmctf_plasma_fire(q2_weapon_call *c, qa_error *e) {
             !q2_player_damage_view(g, c->actor->id, -2, q2_crandom(g) * 2,
                                    q2_deadline(c->now_ns, 500 * Q2_MS), e))
             return false;
-        if (!q2_noise(c, start, e))
+        if (!q2_noise(c, start, e) ||
+            !q2_weapon_fired(g, c->actor->id, c->definition->weapon, e))
             return false;
     }
     if (q2_actor_live(g, c->actor->id))

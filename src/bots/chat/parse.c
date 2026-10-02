@@ -26,12 +26,12 @@ bool chat_string(qa_bot_chat_asset *a, qa_script *s, const char **out, qa_error 
     return *out != NULL;
 }
 bool chat_message_parse(qa_bot_chat_asset *a, qa_script *s, const char **out, qa_error *e) {
-    char text[256];
-    size_t length = 0;
+    char *text=NULL;
+    size_t length=0,capacity=0;bool ok=false;
     for (;;) {
         qa_script_token t;
         if (!bot_token(s, &t, e))
-            return false;
+            goto finish;
         qa_bytes part;
         char integer[32];
         char marker = 0;
@@ -41,18 +41,29 @@ bool chat_message_parse(qa_bot_chat_asset *a, qa_script *s, const char **out, qa
             if (end != NULL)
                 part.size = (const uint8_t *)end - part.data;
         } else if (t.kind == QA_SCRIPT_NUMBER && (t.subtype & QA_SCRIPT_INTEGER) != 0) {
-            if (!qa_format_number(t.integer, integer, e))
-                return false;
+            if (!qa_format_ecmascript_number(t.integer, integer, e))
+                goto finish;
             part = (qa_bytes){(const uint8_t *)integer, strlen(integer)};
             marker = 'v';
         } else if (t.kind == QA_SCRIPT_NAME) {
             part = t.text;
             marker = 'r';
-        } else
-            return bot_fail(s, "Unknown bot chat message component", e);
+        } else {
+            (void)bot_fail(s, "Unknown bot chat message component", e);goto finish;
+        }
         size_t extra = marker != 0 ? 3 : 0;
-        if (part.size >= sizeof(text) - length || extra >= sizeof(text) - length - part.size)
-            return bot_fail(s, "Bot chat message exceeds 255 bytes", e);
+        if(marker && length>249) {
+            (void)bot_fail(s,"chat message too long\n",e);goto finish;
+        }
+        if(part.size>SIZE_MAX-length || extra>SIZE_MAX-length-part.size) {
+            qa_error_set(e,QA_ERROR_MEMORY,0,"Chat expression exceeds native address range");goto finish;
+        }
+        if(length+part.size+extra>=256) {
+            if(!marker) (void)bot_fail(s,"chat message too long\n",e);
+            else qa_error_set(e,QA_ERROR_ARGUMENT,0,"Encoded chat message exceeds the source 256-byte buffer");
+            goto finish;
+        }
+        if(!bot_grow((void **)&text,&capacity,length+part.size+extra,1,e)) goto finish;
         if (marker != 0) {
             text[length++] = 1;
             text[length++] = marker;
@@ -64,14 +75,16 @@ bool chat_message_parse(qa_bot_chat_asset *a, qa_script *s, const char **out, qa
             text[length++] = 1;
         bool end;
         if (!qa_script_check(s, ";", &end, e))
-            return false;
+            goto finish;
         if (end)
             break;
         if (!qa_script_expect(s, ",", e))
-            return false;
+            goto finish;
     }
     *out = bot_string(&a->arena, (qa_bytes){(const uint8_t *)text, length}, e);
-    return *out != NULL;
+    ok=*out!=NULL;
+finish:
+    free(text);return ok;
 }
 bool chat_messages_parse(qa_bot_chat_asset *a, qa_script *s, qa_bot_chat_range *range,
                          qa_error *e) {
@@ -256,58 +269,4 @@ bool chat_parse_synonyms(qa_bot_chat_asset *a, qa_script *s, qa_error *e) {
             return bot_fail(s, "Unexpected bot synonym punctuation", e);
     }
     return depth == 0 || bot_fail(s, "Unclosed bot synonym context", e);
-}
-bool chat_parse_initial(qa_bot_chat_asset *a, qa_script *s, qa_error *e) {
-    bool selected = false;
-    for (;;) {
-        qa_script_token t;
-        bool found;
-        if (!qa_script_next(s, &t, &found, e))
-            return false;
-        if (!found)
-            break;
-        if (!qa_script_token_is(&t, "chat"))
-            return bot_fail(s, "Unknown initial bot chat definition", e);
-        const char *name;
-        if (!chat_string(a, s, &name, e) || !qa_script_expect(s, "{", e))
-            return false;
-        if (!chat_equal(name, a->view.name)) {
-            size_t depth = 1;
-            while (depth != 0) {
-                if (!bot_token(s, &t, e))
-                    return false;
-                if (qa_script_token_is(&t, "{"))
-                    ++depth;
-                else if (qa_script_token_is(&t, "}"))
-                    --depth;
-            }
-            continue;
-        }
-        selected = true;
-        for (;;) {
-            if (!bot_token(s, &t, e))
-                return false;
-            if (qa_script_token_is(&t, "}"))
-                break;
-            if (!qa_script_token_is(&t, "type"))
-                return bot_fail(s, "Expected initial bot chat type", e);
-            qa_bot_chat_list list = {0};
-            if (!chat_string(a, s, &list.name, e) || !qa_script_expect(s, "{", e) ||
-                !chat_messages_parse(a, s, &list.messages, e))
-                return false;
-            if (!chat_append((void **)&a->lists, &a->list_capacity, &a->view.list_count,
-                             sizeof(list), &list, e))
-                return false;
-        }
-    }
-    if (!selected) {
-        qa_error_set(e, QA_ERROR_NOT_FOUND, 0, "Initial bot chat name was not found");
-        return false;
-    }
-    for (size_t i = 0; i < a->view.list_count / 2; ++i) {
-        qa_bot_chat_list swap = a->lists[i];
-        a->lists[i] = a->lists[a->view.list_count - 1 - i];
-        a->lists[a->view.list_count - 1 - i] = swap;
-    }
-    return true;
 }

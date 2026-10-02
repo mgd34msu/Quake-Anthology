@@ -122,6 +122,10 @@ bool qa_net_transport_create(const qa_net_address *, qa_net_limits,
                               qa_net_transport **, qa_error *);
 /* create transfers state ownership only on success. */
 bool qa_net_udp_open(const qa_net_udp_options *, qa_net_transport **, qa_error *);
+typedef struct qa_net_udp_policy { qa_net_address bound; bool ipv6_only; } qa_net_udp_policy;
+/* Observes the owned native socket, including its actual IPV6_V6ONLY value.
+ * Other transport kinds report present=false without claiming socket policy. */
+bool qa_net_udp_policy_read(const qa_net_transport *, qa_net_udp_policy *, bool *present, qa_error *);
 bool qa_net_loopback_create(qa_net_limits, qa_net_loopback **, qa_error *);
 bool qa_net_loopback_bind(qa_net_loopback *, const char *, qa_net_transport **, qa_error *);
 /* Closing a hub closes its endpoints; external transport handles remain valid

@@ -1,4 +1,5 @@
 #include "cinematic_internal.h"
+#include "material_image.h"
 #include "qa/cinematic_presentation_save.h"
 #include <string.h>
 
@@ -19,7 +20,9 @@ static bool fields(qa_source_save_io *io, const qa_cinematic *movie, const qa_sc
     if (!present && (key || *bound || *revision!=UINT64_MAX || *sequence))
         return cinematic_fail(io->error,"Absent cinematic publication image contains retained state");
     if (*bound && !frame) return cinematic_fail(io->error,"Cinematic publication frame owner is unavailable");
-    if (present && (!*bound || *revision>movie->revision))
+    bool initial=present && *revision==UINT64_MAX &&
+        movie->options.target.kind==QA_CINEMATIC_MATERIAL && movie->revision!=UINT64_MAX;
+    if (present && (!*bound || (!initial && *revision>movie->revision)))
         return cinematic_fail(io->error,"Cinematic publication revision/frame is inconsistent");
     if (io->direction==QA_SOURCE_SAVE_READ && present) {
         if (!refs || !refs->decode || !refs->decode(refs->context,key,out,io->error) || !*out)
@@ -30,14 +33,21 @@ static bool fields(qa_source_save_io *io, const qa_cinematic *movie, const qa_sc
         if (!image->name || strcmp(image->name,movie->name) || image->kind!=QA_SCENE_RGBA8 || image->level_count!=1 || !image->levels ||
             image->wrap!=QA_SCENE_CLAMP || image->filter!=QA_SCENE_LINEAR)
             return cinematic_fail(io->error,"Cinematic publication image has incompatible metadata");
-        if (*revision==movie->revision) {
+        if (initial || *revision==movie->revision) {
             static const uint8_t black[4]={0,0,0,255};
             uint32_t width=movie->has_picture?movie->picture.width:1, height=movie->has_picture?movie->picture.height:1;
             const void *pixels=movie->has_picture?movie->picture.rgba.data:black;
             size_t bytes=movie->has_picture?movie->picture.rgba.size:sizeof(black);
+            bool transparent=initial || (!movie->has_picture && movie->options.target.kind==QA_CINEMATIC_MATERIAL);
+            if (transparent && !cinematic_initial_dimensions(movie,&width,&height,&bytes,io->error)) return false;
             if (image->levels[0].width!=width || image->levels[0].height!=height || image->levels[0].bytes!=bytes ||
-                (bytes && (!pixels || !image->levels[0].pixels || memcmp(image->levels[0].pixels,pixels,bytes))))
+                (bytes && (!image->levels[0].pixels || (!transparent && (!pixels || memcmp(image->levels[0].pixels,pixels,bytes))))))
                 return cinematic_fail(io->error,"Cinematic current publication differs from retained decoded frame");
+            if (transparent) {
+                const uint8_t *actual=image->levels[0].pixels;
+                for (size_t i=0;i<bytes;++i) if (actual[i])
+                    return cinematic_fail(io->error,"Initial shader movie pixels differ from the retained transparent surface");
+            }
         }
     }
     return true;

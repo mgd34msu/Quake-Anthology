@@ -5,6 +5,7 @@
 #include "native_q3_clients.h"
 #include "native_q3_console.h"
 #include "native_q3_log.h"
+#include "unified_q3_events.h"
 #include "native_q3_postgame.h"
 #include "native_q3_session.h"
 #include "native_q3_settings.h"
@@ -235,7 +236,8 @@ static bool append(const match_scope *scope, const char *text, qa_error *error)
                                   .origin = QA_COMMAND_SERVER};
     if (!live(scope, error) ||
         !application_native_q3_console_at(scope->provider, &console, NULL, NULL)) return false;
-    return qa_console_append(console, &context, text, error) && live(scope, error);
+    return application_unified_q3_console(scope->provider, false, text, error) &&
+        qa_console_append(console, &context, text, error) && live(scope, error);
 }
 
 static bool log_text(const match_scope *scope, const char *text, qa_error *error)

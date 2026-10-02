@@ -34,10 +34,15 @@ void qa_qvm_image_retain(qa_qvm_image *image);
 void qa_qvm_image_release(qa_qvm_image *image);
 const qa_sha256_digest *qa_qvm_image_digest(const qa_qvm_image *image);
 const qa_qvm_instruction *qa_qvm_image_instructions(const qa_qvm_image *image, size_t *count);
+/* Borrowed original data/literal bytes; excludes BSS and allocation padding. */
+qa_bytes qa_qvm_image_initialized_data(const qa_qvm_image *image);
 size_t qa_qvm_image_memory_size(const qa_qvm_image *image);
 /* A source global word must fit data/literal/BSS, excluding allocation padding
  * and the source stack. This only qualifies immutable artifact ownership. */
 bool qa_qvm_qualify_global_word(const qa_qvm_image *, uint32_t offset, qa_error *);
+/* Byte ranges retain the original data/literal/BSS extent, including a final
+ * partial word, without admitting allocation padding. */
+bool qa_qvm_qualify_source_span(const qa_qvm_image *, uint32_t offset, size_t length, qa_error *);
 
 typedef struct qa_qvm_compatibility {
     qa_qvm_abi abi;
@@ -148,6 +153,45 @@ typedef bool (*qa_qvm_source_word_fn)(void *, const qa_qvm_call *, qa_error *);
 bool qa_qvm_source_global_word(const qa_qvm_call *, const qa_qvm_image *,
     uint32_t offset, int32_t value, qa_qvm_source_word_fn, void *, qa_error *);
 
+typedef struct qa_qvm_source_word { uint32_t offset; int32_t value; } qa_qvm_source_word;
+typedef struct qa_qvm_word_projection qa_qvm_word_projection;
+/* The actual record owner qualifies each dynamic address before borrowing it.
+ * Begin copies every original word before the ordered temporary RAM writes.
+ * These substitutions and their restoration do not publish committed source
+ * writes. The source instructions executed within the scope retain their
+ * normal observers. End consumes the real lease, including source failures.
+ * restore=false is for an owner
+ * whose actor/record was retired or replaced while the source call ran. */
+bool qa_qvm_source_words_begin(qa_qvm *, const qa_qvm_image *,
+    const qa_qvm_source_word *, size_t, qa_qvm_word_projection **, qa_error *);
+/* Capture-only lease, for source-owned results produced by the ensuing call.
+ * No projected write or observer delivery occurs at capture. */
+bool qa_qvm_source_words_capture(qa_qvm *, const qa_qvm_image *,
+    const uint32_t *, size_t, qa_qvm_word_projection **, qa_error *);
+/* Observer-aware Source DataView writes use these variants. The lease retains
+ * that policy for ordered restoration, including failed Source calls. */
+bool qa_qvm_source_words_begin_observed(qa_qvm *, const qa_qvm_image *,
+    const qa_qvm_source_word *, size_t, qa_qvm_word_projection **, qa_error *);
+bool qa_qvm_source_words_capture_observed(qa_qvm *, const qa_qvm_image *,
+    const uint32_t *, size_t, qa_qvm_word_projection **, qa_error *);
+bool qa_qvm_source_words_end(qa_qvm_word_projection **, bool restore, qa_error *);
+/* The retained lease is the executor's actual last open word projection.
+ * Returned owners use this relation to unwind nested cleanup in source order. */
+bool qa_qvm_source_words_is_last(const qa_qvm_word_projection *);
+/* No Source execution, host callback, scratch, write delivery or lifecycle
+ * callback is entered. Retained word projections may still require cleanup. */
+bool qa_qvm_source_returned(const qa_qvm *);
+/* An actual raw Source record owner qualifies its full actor and byte range
+ * before copying private RAM. This counted copy bypasses committed
+ * observers; Source instructions and qa_qvm_write retain normal publication. */
+bool qa_qvm_source_bytes_write(qa_qvm *, const qa_qvm_image *, uint32_t,
+    qa_bytes, qa_error *);
+typedef bool (*qa_qvm_source_scratch_run_fn)(void *, qa_qvm *, uint32_t, qa_error *);
+/* A real source scratch lease also supports host-initiated source actions.
+ * Nested calls inherit its stack floor and exact bytes restore on all exits. */
+bool qa_qvm_source_scratch_run(qa_qvm *, const qa_qvm_image *, size_t,
+    qa_qvm_source_scratch_run_fn, void *, qa_error *);
+
 /* Raw offsets are checked without masking. Host pointer APIs mask only the
  * base word and treat zero as NULL. Mutable host writes use these operations. */
 bool qa_qvm_read(const qa_qvm *, uint32_t offset, void *out, size_t length, qa_error *);
@@ -194,6 +238,9 @@ typedef struct qa_qvm_region_evaluation {
     bool read_only;
 } qa_qvm_region_evaluation;
 typedef struct qa_qvm_evaluation_stack { uint32_t floor, top; } qa_qvm_evaluation_stack;
+/* Immutable declaration qualification; the actual evaluator additionally
+ * admits this reservation against its live caller stack and inherited floor. */
+bool qa_qvm_qualify_evaluation_stack(const qa_qvm_image *, const qa_qvm_evaluation_stack *, qa_error *);
 bool qa_qvm_bind_branches(const qa_qvm_call *, const qa_qvm_branch_binding *, size_t, qa_error *);
 bool qa_qvm_bind_regions(const qa_qvm_call *, const qa_qvm_region_binding *, size_t, qa_error *);
 bool qa_qvm_qualify_region(const qa_qvm_image *, uint32_t owner, const qa_qvm_region_evaluation *, qa_error *);
@@ -247,6 +294,9 @@ size_t qa_qvm_snapshot_bytes(qa_qvm_abi);
 bool qa_qvm_event_tag(qa_qvm_abi, int32_t, bool to_source, int32_t *, qa_error *);
 bool qa_qvm_entity_tag(qa_qvm_abi, int32_t, bool to_source, int32_t *, qa_error *);
 bool qa_qvm_configstring_tag(qa_qvm_abi, int32_t, int32_t *, qa_error *);
+/* Receiver exposure for canonical reached commands; lexical console argv
+ * keeps its original indices. */
+bool qa_qvm_client_configstring_argument(qa_qvm_abi, const char *, int32_t *, bool *mapped, qa_error *);
 bool qa_qvm_read_entity(qa_qvm *, int32_t pointer, bool source_tags, qa_q3_entity *, qa_error *);
 bool qa_qvm_write_entity(qa_qvm *, int32_t pointer, bool source_tags, const qa_q3_entity *, qa_error *);
 /* The guest ABI does not encode product identity; read_player initializes the

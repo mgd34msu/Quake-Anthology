@@ -1,9 +1,9 @@
 #include "qa/network_q2_messages.h"
 #include <math.h>
 
-bool qa_q2_fog_read(qa_net_reader *r, qa_q2_fog *out) {
+bool qa_q2_fog_read(qa_net_reader *r, qa_q2_wire_fog *out) {
     if (!out) return qa_net_reader_fail(r, "Missing Q2 fog output");
-    qa_q2_fog f = {0};
+    qa_q2_wire_fog f = {0};
     f.bits = qa_net_read_u8(r);
     if (f.bits & 128u) f.bits |= (uint16_t)((uint16_t)qa_net_read_u8(r) << 8);
     if (f.bits & 1u) { f.density = qa_net_read_f32(r); f.sky_factor = qa_net_read_u8(r); }
@@ -25,7 +25,7 @@ bool qa_q2_fog_read(qa_net_reader *r, qa_q2_fog *out) {
     return true;
 }
 
-bool qa_q2_fog_write(qa_net_writer *w, const qa_q2_fog *f) {
+bool qa_q2_fog_write(qa_net_writer *w, const qa_q2_wire_fog *f) {
     if (!f || ((f->bits & 1u) && !isfinite(f->density)) ||
         ((f->bits & 32u) && !isfinite(f->height_falloff)) ||
         ((f->bits & 64u) && !isfinite(f->height_density)))

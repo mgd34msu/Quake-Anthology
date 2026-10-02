@@ -3,6 +3,7 @@
 
 #include "qa/display.h"
 #include "qa/scene.h"
+#include "qa/render_controls.h"
 
 typedef struct qa_gl_renderer qa_gl_renderer;
 typedef struct qa_gl_surface_ticket qa_gl_surface_ticket;
@@ -15,7 +16,7 @@ typedef struct qa_gl_options {
 typedef struct qa_gl_capabilities {
     unsigned color_bits, alpha_bits, depth_bits, stencil_bits;
     uint32_t maximum_texture_size, texture_units, vertex_attributes;
-    bool stereo, floating_depth;
+    bool stereo, floating_depth, compiled_vertex_arrays;
     char vendor[128], renderer[128], version[128], shading_language[128];
 } qa_gl_capabilities;
 
@@ -36,6 +37,12 @@ bool qa_gl_execute(qa_gl_renderer *renderer, const qa_scene_frame *frame,
                    qa_error *error);
 bool qa_gl_finish(qa_gl_renderer *renderer, qa_error *error);
 bool qa_gl_set_gamma(qa_gl_renderer *renderer, float gamma, qa_error *error);
+/* Read the actual renderer-owned scalar without entering the native context. */
+bool qa_gl_gamma_read(const qa_gl_renderer *, float *, qa_error *);
+/* Retain the existing window/context and prepare its real gamma targets and
+ * native presentation. Ready/publish/abort/retire use the surface ticket API;
+ * failure retains any entered ticket for checked restoration and disposal. */
+bool qa_gl_gamma_prepare(qa_gl_renderer *, qa_display *, float, qa_gl_surface_ticket **, qa_error *);
 /* Captures tightly packed RGBA8 rows from top to bottom after output gamma. */
 bool qa_gl_capture(qa_gl_renderer *renderer, qa_buffer *out,
                    uint32_t *width, uint32_t *height, qa_error *error);
@@ -69,7 +76,11 @@ bool qa_gl_restart(qa_gl_renderer **renderer, qa_display **display,
 bool qa_gl_surface_begin(qa_gl_renderer *, qa_gl_surface_ticket **, qa_error *);
 /* Candidate must already be current on the SAME actual captured context. */
 bool qa_gl_surface_prepare(qa_gl_surface_ticket *, qa_display *, float gamma, qa_error *);
-bool qa_gl_surface_ready(const qa_gl_surface_ticket *, qa_error *);
+/* Checked native readiness seals the actual endpoint and target receipt.
+ * A later failure invalidates that receipt before returning. */
+bool qa_gl_surface_ready(qa_gl_surface_ticket *, qa_error *);
+/* Pure retained identity proof after checked native readiness. */
+bool qa_gl_surface_ready_is(const qa_gl_surface_ticket *);
 /* Only private ownership transfers; retire afterward at a checked boundary. */
 void qa_gl_surface_publish(qa_gl_surface_ticket *);
 /* Abort follows display native rollback, before releasing either display. */

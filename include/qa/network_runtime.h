@@ -6,9 +6,14 @@
 #include "qa/network_q1.h"
 
 #define QA_NETWORK_COMMAND_BACKUP 128u
-#define QA_NETWORK_MAX_SEATS 4u
+#define QA_NETWORK_MAX_SEATS 8u
+/* Storage covers the native KEX remote roster. Other wire dialects retain
+ * their four-seat limit; local connection admission remains one seat. */
+uint32_t qa_network_protocol_seat_capacity(qa_net_protocol_id protocol);
 
 typedef struct qa_network_runtime qa_network_runtime;
+bool qa_network_udp_policy_read(const qa_network_runtime *, qa_net_udp_policy *, bool *present, qa_error *);
+typedef struct qa_unified_input qa_unified_input;
 typedef struct qa_network_command {
     qa_net_client_id client;
     qa_net_seat_id seat;
@@ -77,6 +82,8 @@ typedef struct qa_network_hooks {
     bool (*commands)(void *, const qa_network_command_group *, qa_error *);
     bool (*q3_source_command)(void *, const qa_network_q3_source_command *, qa_error *);
     bool (*nq_source_command)(void *, const qa_network_nq_source_command *, qa_error *);
+    bool (*unified_input)(void *,qa_net_client_id,qa_net_seat_id,qa_actor_id,uint64_t epoch,
+        const qa_unified_input *,qa_error *);
 } qa_network_hooks;
 /* One adapter per connection. Source adapters own dialect histories, not
  * seats/world/clocks. receive must authenticate packets before invoking runtime
@@ -131,6 +138,10 @@ bool qa_network_accept_q3_source_command(qa_network_runtime *,
     const qa_network_q3_source_command *, qa_error *);
 bool qa_network_accept_nq_source_command(qa_network_runtime *,
     const qa_network_nq_source_command *, qa_error *);
+/* The genuine Anthology payload keeps binary64 movement and arsenal bytes.
+ * Sequence zero is a valid first input; success alone advances its receipt. */
+bool qa_network_accept_unified_input(qa_network_runtime *,qa_net_client_id,qa_net_seat_id,
+    qa_actor_id,uint64_t epoch,const qa_unified_input *,qa_error *);
 bool qa_network_snapshot_apply(qa_network_runtime *, qa_net_client_id,
                                 const qa_network_snapshot *, qa_error *);
 bool qa_network_restart(qa_network_runtime *, qa_net_client_id,

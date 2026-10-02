@@ -1436,12 +1436,42 @@ bool qa_cvars_edit_apply(qa_cvars_edit *edit,const qa_cvars_edit_command *comman
     }
     return ok;
 }
+static bool edit_current(const qa_cvars_edit *edit)
+{
+    const qa_cvars *registry=edit?edit->registry:NULL;
+    return registry && registry->ready_edit==edit && edit->fault.code==QA_OK &&
+        registry->mutation_revision==edit->revision && edit->revision!=UINT64_MAX &&
+        !registry->notifying && !registry->mutation_depth && !registry->draining &&
+        !registry->post_first && !registry->edit_first && !registry->edit_bindings_pending;
+}
+bool qa_cvars_edit_returned_is(const qa_cvars_edit *edit,const qa_cvars *registry)
+{ return registry && edit && edit->registry==registry && edit_current(edit); }
+bool qa_cvars_edit_abort_is(const qa_cvars_edit *edit,const qa_cvars *registry)
+{
+    return registry && edit && edit->registry==registry && registry->ready_edit==edit &&
+        registry->mutation_revision==edit->revision && edit->revision!=UINT64_MAX &&
+        !registry->notifying && !registry->mutation_depth && !registry->draining &&
+        !registry->post_first && !registry->edit_first && !registry->edit_bindings_pending;
+}
+bool qa_cvars_edit_ready_is(const qa_cvars_edit *edit)
+{
+    if (!edit_current(edit) || !edit->ready) return false;
+    for (size_t i=0;i<edit->binding_count;++i) {
+        const cvar *actual=edit->bindings[i].actual;
+        const cvar *prepared=edit->bindings[i].prepared;
+        if (!actual || !prepared ||
+            find_variable(edit->registry,actual->view.name)!=actual ||
+            find_values(edit->registry,&edit->values,actual->view.name)!=prepared ||
+            !actual->bound || !prepared->bound || prepared->view.handle!=actual->view.handle ||
+            prepared->binding.owner!=actual->binding.owner || prepared->binding.user!=actual->binding.user ||
+            prepared->binding.validate!=actual->binding.validate || prepared->binding.changed!=actual->binding.changed ||
+            prepared->binding_order!=actual->binding_order) return false;
+    }
+    return true;
+}
 bool qa_cvars_edit_ready(qa_cvars_edit *edit,qa_error *error)
 {
-    if (!edit || edit->registry->ready_edit!=edit || edit->fault.code!=QA_OK ||
-        edit->registry->mutation_revision!=edit->revision || edit->revision==UINT64_MAX ||
-        edit->registry->notifying || edit->registry->mutation_depth || edit->registry->draining ||
-        edit->registry->post_first || edit->registry->edit_first || edit->registry->edit_bindings_pending)
+    if (!edit_current(edit))
         return qac_fail(error,QA_ERROR_ARGUMENT,"prepared cvar publication is unavailable or stale");
     for (size_t i=0;i<edit->binding_count;++i) {
         const cvar *actual=edit->bindings[i].actual;
@@ -1634,9 +1664,10 @@ bool qa_cvars_info(const qa_cvars *registry, uint32_t flags, size_t maximum_leng
     return true;
 }
 
-const char *qa_cvars_archive_value(const qa_cvars *registry, const qa_cvar_view *variable)
+static const char *archive_value(const qa_cvars *registry,const cvar_values *values,
+    const qa_cvar_view *variable)
 {
-    if (find_alias(registry,registry?&registry->values:NULL,variable?variable->name:NULL)) return NULL;
+    if (find_alias(registry,values,variable?variable->name:NULL)) return NULL;
     qa_console_dialect dialect = registry->options.dialect;
     if ((variable->flags & QA_CVAR_ARCHIVE) == 0 ||
         (qac_q2(dialect) && (variable->flags & q2_no_archive) != 0) ||
@@ -1645,16 +1676,34 @@ const char *qa_cvars_archive_value(const qa_cvars *registry, const qa_cvar_view 
         ? variable->latched_value : variable->value;
 }
 
-bool qa_cvars_config_filtered(const qa_cvars *registry, qa_cvar_config_filter filter,
-                               void *context, qa_buffer *out, qa_error *error)
+const char *qa_cvars_archive_value(const qa_cvars *registry,const qa_cvar_view *variable)
+{ return archive_value(registry,registry?&registry->values:NULL,variable); }
+
+const char *qa_cvars_edit_archive_value(const qa_cvars_edit *edit,const qa_cvar_view *variable)
+{
+    if (!edit_current(edit) || !variable) return NULL;
+    const cvar *row=find_values(edit->registry,&edit->values,variable->name);
+    return row && &row->view==variable?archive_value(edit->registry,&edit->values,variable):NULL;
+}
+
+const qa_cvar_view *qa_cvars_edit_canonical_record(const qa_cvars_edit *edit,const char *name)
+{
+    if (!edit_current(edit) || !name) return NULL;
+    const cvar *row=find_values(edit->registry,&edit->values,
+        canonical_name(edit->registry,&edit->values,name));
+    return row?&row->view:NULL;
+}
+
+static bool config_filtered(const qa_cvars *registry,const cvar_values *values,
+    qa_cvar_config_filter filter,void *context,qa_buffer *out,qa_error *error)
 {
     if (registry == NULL || out == NULL)
         return qac_fail(error, QA_ERROR_ARGUMENT, "invalid cvar config arguments");
     qac_text result = {0};
     qa_console_dialect dialect = registry->options.dialect;
-    for (const cvar *entry = registry->values.first; entry != NULL; entry = entry->next) {
+    for (const cvar *entry = values->first; entry != NULL; entry = entry->next) {
         const qa_cvar_view *variable = &entry->view;
-        const char *value = qa_cvars_archive_value(registry, variable);
+        const char *value = archive_value(registry,values,variable);
         if (!value || (filter && !filter(context, registry, variable))) continue;
         if (strpbrk(value, "\"\r\n") != NULL) {
             free(result.data);
@@ -1671,6 +1720,18 @@ bool qa_cvars_config_filtered(const qa_cvars *registry, qa_cvar_config_filter fi
     }
     if (!qac_text_finish(&result, out, error)) { free(result.data); return false; }
     return true;
+}
+
+bool qa_cvars_config_filtered(const qa_cvars *registry,qa_cvar_config_filter filter,
+    void *context,qa_buffer *out,qa_error *error)
+{ return config_filtered(registry,registry?&registry->values:NULL,filter,context,out,error); }
+
+bool qa_cvars_edit_config_filtered(const qa_cvars_edit *edit,qa_cvar_config_filter filter,
+    void *context,qa_buffer *out,qa_error *error)
+{
+    if (!edit_current(edit))
+        return qac_fail(error,QA_ERROR_ARGUMENT,"prepared config requires its returned current scalar ticket");
+    return config_filtered(edit->registry,&edit->values,filter,context,out,error);
 }
 
 bool qa_cvars_config(const qa_cvars *registry, qa_buffer *out, qa_error *error)

@@ -282,13 +282,15 @@ static bool behaviors(qa_source_save_io *io, qa_catalog *catalog)
 }
 static bool fields(qa_source_save_io *io, qa_catalog *catalog, qa_buffer *files)
 {
-    uint8_t magic[4] = {'Q','C','A','T'}; uint32_t schema = 5;
+    uint8_t magic[4] = {'Q','C','A','T'}; uint32_t schema = 6;
     if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "QCAT", 4) ||
-        !qa_source_save_u32(io, &schema) || (schema != 2 && schema != 3 && schema != 4 && schema != 5)) return false;
+        !qa_source_save_u32(io, &schema) || (schema < 2 || schema > 6)) return false;
     FIELD(u64, catalog, generation);
     FIELD(bool, catalog, q3_demo_restricted);
     if (schema >= 3) { FIELD(u64, catalog, q3_download_mount); }
     if (schema >= 5) { FIELD(u64, catalog, corpus_mount); }
+    if (schema >= 6) for (size_t i = 0; i < 2; ++i)
+        if (!qa_source_save_u64(io, &catalog->q2_download_mount[i])) return false;
     qa_buffer dictionary = {0};
     bool ok = io->direction == QA_SOURCE_SAVE_READ || qa_save_strings_encode(catalog->strings, &dictionary, io->error);
     if (ok) ok = blob(io, &dictionary);
@@ -311,6 +313,17 @@ static bool fields(qa_source_save_io *io, qa_catalog *catalog, qa_buffer *files)
         for (size_t i = 0; i < catalog->product_count; ++i)
             for (size_t j = 0; j < catalog->products[i].mount_count; ++j)
                 if (catalog->products[i].mounts[j] == catalog->q3_download_mount) return false;
+    }
+    for (size_t edition = 0; edition < 2; ++edition) {
+        qa_mount_id id = catalog->q2_download_mount[edition];
+        if (!id) continue;
+        if (id == catalog->corpus_mount || id == catalog->q3_download_mount ||
+            (edition && id == catalog->q2_download_mount[0])) return false;
+        const catalog_physical *root = catalog_package(catalog, id);
+        if (!catalog->user || !*catalog->user || !root || root->view.format != QA_ARCHIVE_AUTO || !root->view.writable) return false;
+        for (size_t i = 0; i < catalog->product_count; ++i)
+            for (size_t j = 0; j < catalog->products[i].mount_count; ++j)
+                if (catalog->products[i].mounts[j] == id) return false;
     }
     return true;
 }
@@ -357,6 +370,9 @@ bool qa_catalog_restore(qa_resource_pool *resources, const qa_catalog_checkpoint
             qa_vfs_mount_root(catalog->mounts, catalog->corpus_mount);
     }
     if (ok && catalog->q3_download_mount && !qa_catalog_q3_download_root(catalog)) ok = false;
+    for (size_t i = 0; ok && i < 2; ++i)
+        if (catalog->q2_download_mount[i] && !qa_catalog_q2_download_root(catalog,
+            i ? QA_EDITION_RERELEASE : QA_EDITION_CLASSIC)) ok = false;
     for (size_t i = 0; ok && i < catalog->product_count; ++i) {
         if (catalog->products[i].write_mount && !qa_catalog_product_write_root(catalog, (qa_product_id)i + 1)) ok = false;
         if (catalog->products[i].loose_mount && !qa_catalog_product_loose_root(catalog, (qa_product_id)i + 1)) ok = false;

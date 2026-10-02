@@ -456,7 +456,6 @@ static bool chainfist_run(q2_weapon_call *c, qa_builtin_actor_snapshot *snapshot
     qa_body_state own;
     if (!qa_world_body_read(c->game->services.world, c->actor->id, &own, e))
         return false;
-    float multiplier = q2_multiplier(c);
     if (!c->rerelease) {
         qa_vec3 f, u;
         qa_builtin_angle_vectors(c->input.angles, &f, NULL, &u);
@@ -478,7 +477,9 @@ static bool chainfist_run(q2_weapon_call *c, qa_builtin_actor_snapshot *snapshot
                 return false;
             qa_attack attack = q2_attack(c, 40, 72);
             qa_body_state target;
-            if (!qa_world_body_read(c->game->services.world, trace.actor, &target, e) ||
+            float multiplier;
+            if (!q2_multiplier(c, &multiplier, e) ||
+                !qa_world_body_read(c->game->services.world, trace.actor, &target, e) ||
                 !q2_damage(c->game, &attack, trace.actor,
                            (c->game->options.deathmatch ? 30 : 15) * multiplier, 50, qa_v3(0, 0, 0),
                            target.origin, qa_v3(0, 0, 0), false, e))
@@ -487,7 +488,8 @@ static bool chainfist_run(q2_weapon_call *c, qa_builtin_actor_snapshot *snapshot
                    !q2_event(c, QA_BUILTIN_IMPACT, 4, trace.end, trace.contact_plane.normal, e))
             return false;
         ++s->frame;
-        return q2_noise(c, start, e);
+        return q2_noise(c, start, e) &&
+               q2_weapon_fired(c->game, c->actor->id, c->definition->weapon, e);
     }
     qa_bounds own_bounds = qa_bounds_translate(own.bounds, own.origin), search = own_bounds;
     search.mins = qa_vec_sub(search.mins, qa_v3(23, 23, 23));
@@ -545,7 +547,8 @@ static bool chainfist_run(q2_weapon_call *c, qa_builtin_actor_snapshot *snapshot
             q2_monster_pain_advance(c->game, target, advance);
         }
         qa_attack attack = q2_attack(c, 40, 72);
-        if (!q2_damage(c->game, &attack, target,
+        float multiplier;
+        if (!q2_multiplier(c, &multiplier, e) || !q2_damage(c->game, &attack, target,
                        (c->game->options.deathmatch ? 15 : 7) * multiplier, 50, dir, point,
                        qa_vec_scale(dir, -1), false, e))
             return false;
@@ -567,7 +570,8 @@ static bool chainfist_run(q2_weapon_call *c, qa_builtin_actor_snapshot *snapshot
         else if (s->frame >= 32)
             s->frame = 7;
     }
-    return q2_attack_animation(c, 1, e);
+    return q2_attack_animation(c, 1, e) &&
+           q2_weapon_fired(c->game, c->actor->id, c->definition->weapon, e);
 }
 bool q2_fire_chainfist(q2_weapon_call *c, qa_error *e) {
     if (!c->rerelease)

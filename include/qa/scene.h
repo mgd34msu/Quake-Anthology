@@ -4,16 +4,27 @@
 #include "qa/arena.h"
 #include "qa/bsp.h"
 #include "qa/image.h"
+#include "qa/q3_color.h"
 #include "qa/model.h"
 #include "qa/vfs.h"
 
 typedef struct qa_material qa_material;
+typedef struct qa_material_context qa_material_context;
+struct qa_material_profile;
 typedef struct qa_material_library qa_material_library;
 typedef struct qa_material_order qa_material_order;
 typedef struct qa_scene_resources qa_scene_resources;
 typedef struct qa_scene_world qa_scene_world;
+typedef struct qa_scene_source_world_view qa_scene_source_world_view;
 typedef struct qa_scene_model qa_scene_model;
 typedef struct qa_scene_geometry qa_scene_geometry;
+typedef struct qa_material_source_scratch qa_material_source_scratch;
+typedef struct qa_scene_source_diagnostics {
+    int32_t debug_sort, stencil_bits, fast_sky;
+    bool show_triangles, show_normals, show_sky, no_bind;
+    float polygon_offset_factor, polygon_offset_units;
+} qa_scene_source_diagnostics;
+typedef bool (*qa_scene_source_diagnostics_read_fn)(void *, qa_scene_source_diagnostics *, qa_error *);
 
 typedef struct qa_scene_vec2 { float x, y; } qa_scene_vec2;
 typedef struct qa_scene_vec4 { float x, y, z, w; } qa_scene_vec4;
@@ -59,6 +70,9 @@ typedef struct qa_scene_image_options {
     bool mipmap, transparent, fullbright_only;
     int transparent_index;
     qa_bytes palette_rgb, translation;
+    /* Set only by the actual Source renderer's admitted upload producer. */
+    bool source_q3;
+    qa_q3_image_upload_options source_upload;
 } qa_scene_image_options;
 typedef enum qa_scene_image_format { QA_SCENE_IMAGE_PNG, QA_SCENE_IMAGE_JPG,
     QA_SCENE_IMAGE_TGA, QA_SCENE_IMAGE_JPEG, QA_SCENE_IMAGE_BMP, QA_SCENE_IMAGE_GIF } qa_scene_image_format;
@@ -85,6 +99,120 @@ bool qa_scene_resources_set_image_policy(qa_scene_resources *, qa_scene_family,
                                          const qa_scene_image_policy *, qa_error *);
 bool qa_scene_resources_set_fullbright_first(qa_scene_resources *, unsigned, qa_error *);
 unsigned qa_scene_resources_fullbright_first(const qa_scene_resources *);
+typedef struct qa_scene_resource_policy qa_scene_resource_policy;
+/* Prepare a private loader against the actual retained lookup authority. All
+ * dependent image owners prepare their bindings before ready seals this bank.
+ * Publication keeps the resource service and existing image names alive. */
+bool qa_scene_resource_policy_prepare(qa_scene_resources *,
+    const qa_scene_image_policy policies[3], qa_scene_resource_policy **, qa_error *);
+qa_scene_resources *qa_scene_resource_policy_destination(const qa_scene_resource_policy *);
+qa_scene_resources *qa_scene_resource_policy_source(const qa_scene_resource_policy *);
+bool qa_scene_resource_policy_dependencies(qa_scene_resource_policy *,
+    qa_scene_resource_policy *const *, size_t, qa_error *);
+/* A cache-backed image is reacquired with its exact original request/options.
+ * Procedural images retain their genuine original producer. NOT_FOUND is
+ * reported to the binding owner, which owns its authored fallback policy. */
+bool qa_scene_resource_policy_image(qa_scene_resource_policy *, const qa_scene_image *,
+    qa_scene_image **, qa_error *);
+bool qa_scene_resource_policy_ready(qa_scene_resource_policy *, qa_error *);
+bool qa_scene_resource_policy_ready_is(const qa_scene_resource_policy *);
+void qa_scene_resource_policy_publish(qa_scene_resource_policy *);
+bool qa_scene_resource_policy_finish(qa_scene_resource_policy **, qa_error *);
+bool qa_scene_resource_policy_abort(qa_scene_resource_policy **, qa_error *);
+typedef struct qa_scene_world_image_policy qa_scene_world_image_policy;
+typedef struct qa_scene_material_image_policy qa_scene_material_image_policy;
+typedef struct qa_material_order_image_policy qa_material_order_image_policy;
+bool qa_material_order_image_policy_prepare(qa_material_order *, qa_material_order_image_policy **, qa_error *);
+qa_material_order *qa_material_order_image_policy_source(const qa_material_order_image_policy *);
+bool qa_material_order_image_policy_ready(qa_material_order_image_policy *, qa_error *);
+bool qa_material_order_image_policy_ready_is(const qa_material_order_image_policy *);
+void qa_material_order_image_policy_publish(qa_material_order_image_policy *);
+bool qa_material_order_image_policy_finish(qa_material_order_image_policy **, qa_error *);
+bool qa_material_order_image_policy_abort(qa_material_order_image_policy **, qa_error *);
+bool qa_scene_world_image_policy_prepare(qa_scene_world *, qa_scene_resource_policy *,
+    qa_scene_world_image_policy **, qa_error *);
+bool qa_scene_world_image_policy_base(const qa_scene_world_image_policy *, uint64_t world,
+    const char *name, const qa_scene_image *current, const qa_scene_image **destination);
+bool qa_scene_world_image_policy_ready(qa_scene_world_image_policy *,
+    const qa_scene_material_image_policy *, qa_error *);
+bool qa_scene_world_image_policy_ready_is(const qa_scene_world_image_policy *);
+void qa_scene_world_image_policy_publish(qa_scene_world_image_policy *);
+bool qa_scene_world_image_policy_finish(qa_scene_world_image_policy **, qa_error *);
+bool qa_scene_world_image_policy_abort(qa_scene_world_image_policy **, qa_error *);
+bool qa_scene_material_image_policy_prepare(qa_material_library *, qa_scene_resource_policy *,
+    qa_scene_world_image_policy *const *, size_t, qa_material_order_image_policy *,
+    qa_scene_material_image_policy **, qa_error *);
+/* Recompile the held records against an actual candidate Source profile.
+ * The source profile stays installed until the prepared records publish. */
+bool qa_scene_material_image_policy_prepare_profile(qa_material_library *, qa_scene_resource_policy *,
+    qa_scene_world_image_policy *const *, size_t, qa_material_order_image_policy *,
+    const struct qa_material_profile *, qa_scene_material_image_policy **, qa_error *);
+qa_material_library *qa_scene_material_image_policy_source(const qa_scene_material_image_policy *);
+qa_material_library *qa_scene_material_image_policy_destination(const qa_scene_material_image_policy *);
+/* Prepared media admission targets only the held destination library. The
+ * source retains its genuine live playback callback through publication. */
+bool qa_scene_material_image_policy_video_start(qa_scene_material_image_policy *,
+    const qa_scene_image *(*)(void *, const char *, qa_error *), void *, qa_error *);
+bool qa_material_library_video_start_is(const qa_material_library *,
+    const qa_scene_image *(*)(void *, const char *, qa_error *), const void *);
+/* Borrow the exact installed producer without invoking it. The caller proves
+ * the returned function's identity before interpreting its context. */
+bool qa_material_library_video_start_read(const qa_material_library *,
+    const qa_scene_image *(**)(void *, const char *, qa_error *), void **);
+/* Every reached video callback stays recorded even if a later stage map
+ * replaces its image. Source strings and initial images borrow the library. */
+size_t qa_material_library_video_receipt_count(const qa_material_library *, size_t record);
+bool qa_material_library_video_receipt_read(const qa_material_library *, size_t record,
+    size_t receipt, const char **source, const qa_scene_image **initial_image);
+bool qa_scene_material_image_policy_read(const qa_scene_material_image_policy *,
+    const qa_material *current, const qa_material **destination);
+bool qa_scene_material_image_policy_world(const qa_scene_material_image_policy *, uint64_t world,
+    int32_t lightmap_index, bool has_lightmap, const char *name, const qa_scene_image_options *,
+    const qa_material **current, const qa_material **destination, qa_error *);
+bool qa_scene_material_image_policy_ready(qa_scene_material_image_policy *, qa_error *);
+bool qa_scene_material_image_policy_ready_is(const qa_scene_material_image_policy *);
+void qa_scene_material_image_policy_publish(qa_scene_material_image_policy *);
+bool qa_scene_material_image_policy_finish(qa_scene_material_image_policy **, qa_error *);
+bool qa_scene_material_image_policy_abort(qa_scene_material_image_policy **, qa_error *);
+typedef struct qa_scene_model_image_policy qa_scene_model_image_policy;
+struct qa_scene_model_content_lease;
+bool qa_scene_model_image_policy_prepare(qa_scene_model *, qa_scene_resource_policy *,
+    qa_scene_model_image_policy **, qa_error *);
+bool qa_scene_model_image_policy_materials(qa_scene_model_image_policy *,
+    qa_scene_material_image_policy *, qa_error *);
+/* Prepare a genuine replacement child against the private image bank. On
+ * success the child takes these owning content leases; failure leaves them
+ * with the caller. Publication attaches the prepared child without loading. */
+bool qa_scene_model_image_policy_replacement(qa_scene_model_image_policy *,
+    const qa_model_replacement *, struct qa_scene_model_content_lease *mesh,
+    struct qa_scene_model_content_lease *source, struct qa_scene_model_content_lease *animation,
+    qa_error *);
+/* The native source is the actual captured parent itself. Its replacement
+ * child cannot outlive that parent; only the independently acquired MD5 mesh
+ * and animation need transferred owning leases. */
+bool qa_scene_model_image_policy_replacement_parent(qa_scene_model_image_policy *,
+    const qa_model_replacement *, struct qa_scene_model_content_lease *mesh,
+    struct qa_scene_model_content_lease *animation, qa_error *);
+bool qa_scene_model_replacement_prepare(qa_scene_model *, const qa_model_replacement *,
+    struct qa_scene_model_content_lease *mesh, struct qa_scene_model_content_lease *source,
+    struct qa_scene_model_content_lease *animation, qa_error *);
+/* A registered parent owns its native parsed source through destruction of
+ * every child. Only the actual new mesh and animation leases transfer. */
+bool qa_scene_model_replacement_prepare_parent(qa_scene_model *, const qa_model_replacement *,
+    struct qa_scene_model_content_lease *mesh, struct qa_scene_model_content_lease *animation,
+    qa_error *);
+bool qa_scene_model_replacement_policy_bind(qa_scene_model *, bool enabled, double distance,
+    const qa_model_replacement *, qa_error *);
+bool qa_scene_model_replacement_policy_read(const qa_scene_model *, bool *configured,
+    bool *enabled, double *distance, const qa_scene_model **selected);
+bool qa_scene_model_image_policy_select(qa_scene_model_image_policy *, bool enabled, double distance,
+    const qa_model_replacement *, qa_error *);
+bool qa_scene_model_source_bind(qa_scene_model *, struct qa_scene_model_content_lease *, qa_error *);
+bool qa_scene_model_image_policy_ready(qa_scene_model_image_policy *, qa_error *);
+bool qa_scene_model_image_policy_ready_is(const qa_scene_model_image_policy *);
+void qa_scene_model_image_policy_publish(qa_scene_model_image_policy *);
+bool qa_scene_model_image_policy_finish(qa_scene_model_image_policy **, qa_error *);
+bool qa_scene_model_image_policy_abort(qa_scene_model_image_policy **, qa_error *);
 uint64_t qa_scene_identity(void);
 /* Returned palette borrows the resource service and is RGB, 256 entries. */
 bool qa_scene_resources_palette(qa_scene_resources *, qa_scene_family, qa_bytes *, qa_error *);
@@ -96,6 +224,22 @@ bool qa_scene_image_create(qa_scene_resources *, const char *, qa_scene_image_ki
                           qa_scene_filter, qa_scene_vec4, qa_scene_image **, qa_error *);
 bool qa_scene_image_load(qa_scene_resources *, const char *, const qa_scene_image_options *,
                         qa_scene_image **, qa_error *);
+/* Decode this explicit file only. No extension or override search; the real
+ * cache retains this admission rule through policy preparation and restore. */
+bool qa_scene_image_load_exact(qa_scene_resources *, const char *, const qa_scene_image_options *,
+                              qa_scene_image **, qa_error *);
+bool qa_scene_resources_source_q3_initialize(qa_scene_resources *, const qa_q3_image_upload_options *, qa_error *);
+const qa_scene_image *qa_scene_source_q3_white(const qa_scene_resources *);
+const qa_scene_image *qa_scene_source_q3_missing(const qa_scene_resources *);
+typedef struct qa_scene_image_request {
+    const char *name;
+    qa_scene_image_options options;
+    const qa_resource *source;
+    qa_mount_id source_mount;
+    bool exact_file;
+} qa_scene_image_request;
+/* Borrow the retained successful file admission for this exact image. */
+bool qa_scene_image_request_read(const qa_scene_resources *, const qa_scene_image *, qa_scene_image_request *);
 bool qa_scene_image_replace(qa_scene_resources *, const qa_scene_image *, size_t level,
                            const qa_scene_image_level *, qa_scene_image **, qa_error *);
 bool qa_scene_image_sample(qa_scene_resources *, const qa_scene_image *, bool mipmap,
@@ -153,7 +297,8 @@ typedef enum qa_scene_blend {
     QA_BLEND_ONE_MINUS_DST_ALPHA, QA_BLEND_DST_COLOR, QA_BLEND_ONE_MINUS_DST_COLOR,
     QA_BLEND_SRC_ALPHA_SATURATE
 } qa_scene_blend;
-typedef enum qa_scene_depth { QA_DEPTH_ALWAYS, QA_DEPTH_LEQUAL, QA_DEPTH_EQUAL, QA_DEPTH_LESS } qa_scene_depth;
+typedef enum qa_scene_depth { QA_DEPTH_ALWAYS, QA_DEPTH_LEQUAL, QA_DEPTH_EQUAL, QA_DEPTH_LESS,
+    QA_DEPTH_GEQUAL } qa_scene_depth;
 typedef enum qa_scene_alpha { QA_ALPHA_NONE, QA_ALPHA_GT0, QA_ALPHA_LT128, QA_ALPHA_GE128 } qa_scene_alpha;
 typedef enum qa_scene_cull { QA_CULL_NONE, QA_CULL_FRONT, QA_CULL_BACK } qa_scene_cull;
 typedef enum qa_scene_stencil_op { QA_STENCIL_KEEP, QA_STENCIL_ZERO, QA_STENCIL_REPLACE, QA_STENCIL_INCREMENT, QA_STENCIL_DECREMENT, QA_STENCIL_INVERT } qa_scene_stencil_op;
@@ -218,6 +363,8 @@ typedef struct qa_scene_draw {
     float shadow_near, shade_scale;
     bool model_shade_scale;
     bool luminance_alpha;
+    /* Reached Q3 Source stage submission, independent of queue grouping. */
+    bool source_primitives;
     /* Packed Q3 shader/entity/fog/light order or caller's ordered sequence. */
     uint64_t sort_key;
     uint32_t entity, fog_index, light_mask;
@@ -238,7 +385,7 @@ typedef enum qa_scene_command_kind {
     QA_SCENE_COMMAND_VIEW, QA_SCENE_COMMAND_DRAW, QA_SCENE_COMMAND_TARGET,
     QA_SCENE_COMMAND_OPACITY_BEGIN, QA_SCENE_COMMAND_OPACITY_END,
     QA_SCENE_COMMAND_FOG, QA_SCENE_COMMAND_DRAW_BUFFER, QA_SCENE_COMMAND_SWAP,
-    QA_SCENE_COMMAND_IMAGE
+    QA_SCENE_COMMAND_IMAGE, QA_SCENE_COMMAND_OUTPUT_DOMAIN
 } qa_scene_command_kind;
 typedef struct qa_scene_command {
     qa_scene_command_kind kind;
@@ -252,6 +399,9 @@ typedef struct qa_scene_command {
         /* Publish a new immutable version, including any retained binding with
          * the same identity. This preserves source update-image behavior. */
         const qa_scene_image *image;
+        /* An actual renderer recipient chooses this region's upload/output
+         * domain. Source RGB already owns software gamma in its image upload. */
+        struct { qa_scene_rect rect; bool source; } output_domain;
     } data;
 } qa_scene_command;
 typedef enum qa_scene_group_kind { QA_SCENE_GROUP_COMPILED, QA_SCENE_GROUP_SOURCE,
@@ -267,7 +417,9 @@ typedef struct qa_scene_group {
  * backend has completed it. Commands are contiguous; transient geometry lives
  * in storage. Frame geometry pins survive command rollback until reset. */
 typedef struct qa_scene_frame {
+    qa_material_source_scratch *source_pending;
     uint64_t sequence, owner;
+    bool source_backend, source_skip_backend, source_clear_draw_buffer;
     /* Borrowed renderer registration owner. Libraries and their material
      * records outlive preparation of every pending source group. */
     qa_material_order *material_order;
@@ -290,6 +442,7 @@ bool qa_scene_frame_material_order(qa_scene_frame *, qa_material_order *, qa_err
 void qa_scene_frame_reset(qa_scene_frame *, uint64_t sequence);
 void qa_scene_frame_destroy(qa_scene_frame *);
 bool qa_scene_frame_emit(qa_scene_frame *, const qa_scene_command *, qa_error *);
+bool qa_scene_frame_output_domain(qa_scene_frame *, qa_scene_rect, bool source, qa_error *);
 bool qa_scene_frame_draw(qa_scene_frame *, const qa_scene_draw *, qa_error *);
 /* Pin borrowed retained geometry, including intermediate shadow-caster data,
  * until reset. No command is emitted. NULL geometry needs no reference. */
@@ -341,11 +494,32 @@ typedef struct qa_scene_world_entity {
     float shader_time, shadow_plane;
     bool non_normalized_axis, projection_shadow;
 } qa_scene_world_entity;
+typedef struct qa_scene_q1_mirror qa_scene_q1_mirror;
+typedef struct qa_scene_q1_sky qa_scene_q1_sky;
+typedef struct qa_scene_q1_sky_environment {
+    bool boxed, fast;
+    float quality, alpha, fog, far_clip;
+    const qa_scene_image *images[6];
+} qa_scene_q1_sky_environment;
+typedef enum qa_scene_legacy_world_phase {
+    QA_LEGACY_WORLD_ALL, QA_LEGACY_WORLD_OPAQUE, QA_LEGACY_WORLD_WATER
+} qa_scene_legacy_world_phase;
 typedef struct qa_scene_world_input {
     qa_scene_view view;
     double seconds;
     int64_t milliseconds;
     bool no_world, no_vis, no_cull, alternate_animation;
+    bool skip_world, no_curves, disable_face_plane_cull, lock_pvs;
+    bool source_hyperspace;
+    int32_t fast_sky;
+    bool source_show_cluster, source_show_cluster_modified;
+    bool (*source_cluster_modified)(void *, bool *, qa_error *);
+    bool (*source_cluster_clear)(void *, qa_error *);
+    void *source_cluster_context;
+    void (*source_cluster_print)(void *, const char *);
+    void *source_cluster_print_context;
+    const qa_scene_source_world_view *source_visibility;
+    float source_far_clip;
     qa_vec3 pvs_origin;
     bool use_pvs_origin;
     int32_t secondary_cluster;
@@ -358,6 +532,11 @@ typedef struct qa_scene_world_input {
     const qa_scene_light *lights;
     size_t light_count;
     bool use_projected_lights, source_order;
+    qa_material_source_scratch *source_scratch;
+    const qa_scene_image *source_white;
+    qa_scene_source_diagnostics source_diagnostics;
+    qa_scene_source_diagnostics_read_fn source_diagnostics_read;
+    void *source_diagnostics_context;
     const qa_scene_light *projected_lights;
     size_t projected_light_count;
     qa_scene_fog fog;
@@ -382,19 +561,56 @@ typedef struct qa_scene_world_input {
     void *flare_context;
     /* Optional inline-model material context, borrowed for one submission. */
     const qa_scene_world_entity *entity_material;
+    /* Reached legacy controls, independent of Q3 Source policies. */
+    bool legacy_flashblend;
+    bool legacy_texture_sort;
+    qa_scene_legacy_world_phase legacy_phase;
+    const qa_scene_q1_mirror *q1_mirror;
+    const qa_scene_q1_sky_environment *q1_sky_environment;
+    qa_scene_q1_sky *q1_sky;
 } qa_scene_world_input;
+/* One actual world/brush traversal retains the visible sky footprint. Finish
+ * places the flat and slow sky commands before that same view's solid draws. */
+bool qa_scene_world_q1_sky_begin(qa_scene_world *, const qa_scene_world_input *,
+    qa_scene_frame *, qa_scene_q1_sky **, qa_error *);
+bool qa_scene_world_q1_sky_finish(qa_scene_q1_sky *, qa_scene_frame *, qa_error *);
 /* World retains a private immutable BSP byte copy and owns render resources;
  * material library and resource service must outlive it. */
 bool qa_scene_world_create(const qa_bsp_view *, qa_scene_resources *, qa_material_library *,
                            const qa_scene_world_options *, qa_scene_world **, qa_error *);
 void qa_scene_world_destroy(qa_scene_world *);
 int32_t qa_scene_world_leaf(const qa_scene_world *, qa_vec3);
+/* Original Q3 compares its area mask once for the parent scene. Portal views
+ * share that result while each view can replace the retained PVS marks. */
+bool qa_scene_world_source_begin_scene(qa_scene_world *, const qa_scene_world_input *, qa_error *);
+/* Parent geometry retains this frame-owned visibility receipt while a portal
+ * replaces the live Source PVS. Preparation selects the actual view zFar. */
+bool qa_scene_world_source_prepare_view(qa_scene_world *, qa_scene_world_input *, qa_scene_frame *, qa_error *);
+/* Borrowed actual world/surface mask. The owner outlives queued Source work;
+ * the read does not change admission, PVS or the retained mask. */
+bool qa_scene_world_source_light_mask_read(const qa_scene_world *, uint32_t, uint32_t *, qa_error *);
+bool qa_scene_world_source_sky_context(const qa_scene_world *, qa_material_library *,
+    const qa_scene_world_input *, qa_scene_frame *, qa_material_context *, qa_error *);
 bool qa_scene_world_submit(qa_scene_world *, const qa_scene_world_input *, qa_scene_frame *, qa_error *);
 bool qa_scene_world_submit_model(qa_scene_world *, uint32_t model, const qa_model_transform *,
                                  const qa_scene_world_input *, uint32_t entity,
                                  qa_scene_vec4 color, qa_scene_frame *, qa_error *);
 bool qa_scene_world_sample_light(const qa_scene_world *, qa_vec3 point, qa_vec3 *ambient,
                                  qa_vec3 *directed, qa_vec3 *direction);
+/* Samples the same static point light with the caller's entered lightstyles.
+ * Dynamic entity lighting remains part of its actual model lighting policy. */
+bool qa_scene_world_sample_light_input(const qa_scene_world *, const qa_scene_world_input *,
+    qa_vec3 point, qa_vec3 *ambient, qa_vec3 *directed, qa_vec3 *direction, qa_error *);
+/* The actual downward light-sampling BSP hit, including unlit surfaces. */
+bool qa_scene_world_sample_floor(const qa_scene_world *, qa_vec3, qa_vec3 *point, bool *found);
+/* A frame-owned visible NetQuake window02_1 chain. It remains valid until the
+ * frame resets; reflected traversal never replaces the captured parent chain. */
+bool qa_scene_world_q1_mirror(qa_scene_world *, const qa_scene_world_input *, qa_scene_frame *,
+                              const qa_scene_q1_mirror **, qa_scene_view *, bool *, qa_error *);
+bool qa_scene_world_q1_mirror_scope(const qa_scene_world *, const qa_scene_world_input *,
+                                    const qa_scene_frame *);
+bool qa_scene_world_q1_mirror_overlay(qa_scene_world *, const qa_scene_world_input *,
+                                      float alpha, qa_scene_frame *, qa_error *);
 qa_bounds qa_scene_world_bounds(const qa_scene_world *);
 bool qa_scene_world_sky_drawn(const qa_scene_world *);
 bool qa_scene_world_remap(qa_scene_world *, const char *original, const char *replacement,
@@ -450,8 +666,13 @@ struct qa_scene_model_input {
     const qa_scene_model_attachment *attachments;
     size_t attachment_count;
     bool view_model, player, infrared, monochrome, no_cull, planar_shadow, shadow_only;
+    bool q1_double_eyes;
     bool non_normalized_axis;
     bool source_order, fog_has_surface;
+    qa_material_source_scratch *source_scratch;
+    qa_scene_source_diagnostics source_diagnostics;
+    qa_scene_source_diagnostics_read_fn source_diagnostics_read;
+    void *source_diagnostics_context;
     uint32_t fog_index;
     float fog_tc_scale;
     qa_scene_plane fog_surface;

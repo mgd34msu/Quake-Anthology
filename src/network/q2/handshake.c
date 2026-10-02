@@ -1,4 +1,4 @@
-#include "qa/network_q2.h"
+#include "handshake_internal.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -374,17 +374,6 @@ bool qa_q2_kex_client_userinfo(const char*text,char*out,size_t cap,qa_error*e) {
     free(p);
     return ok;
 }
-struct challenge_entry {
-    qa_net_address address;
-    int32_t value;
-    uint64_t time;
-};
-struct qa_q2_challenges {
-    struct challenge_entry*entries;
-    size_t count,capacity;
-    qa_q2_random_fn random;
-    void*user;
-};
 bool qa_q2_challenges_create(size_t capacity,qa_q2_random_fn random,void*user,qa_q2_challenges**out,qa_error*e) {
     if(!capacity||capacity>65536||!random||!out) {
         qa_error_set(e,QA_ERROR_ARGUMENT,0,"Invalid Q2 challenge table");

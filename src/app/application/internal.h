@@ -3,6 +3,7 @@
 
 #include "qa/arena.h"
 #include "qa/application.h"
+#include "qa/application_native_q2_delivery.h"
 #include "qa/campaign_q1.h"
 #include "qa/campaign_q1_sources.h"
 #include "qa/equipment.h"
@@ -22,6 +23,7 @@
 #include "qa/qc_host.h"
 #include "qa/qvm.h"
 #include "qa/persistence_content.h"
+#include "unified_events.h"
 
 typedef enum application_operation {
     APPLICATION_IDLE,
@@ -34,6 +36,9 @@ typedef enum application_operation {
 
 typedef struct qa_combat_policy_admission qa_combat_policy_admission;
 typedef struct qa_world_geometry_admission qa_world_geometry_admission;
+struct application_native_client_role;
+struct application_q3_mod_operations;
+struct application_q3_components;
 
 typedef enum application_provider_kind {
     APPLICATION_PROVIDER_Q1,
@@ -45,9 +50,13 @@ typedef enum application_provider_kind {
 } application_provider_kind;
 
 typedef struct application_provider {
+    struct application_unified_q3_events *unified_q3_events;
+    struct application_native_client_role *native_client_roles;
     struct application_native_q1_console *native_q1_console;
+    struct application_native_q1_wire *native_q1_wire;
     struct application_native_q2_console *native_q2_console;
     struct application_native_q3_console *native_q3_console;
+    struct application_native_q3_remote_role *native_q3_remote_roles;
     struct application_native_q3_settings *native_q3_settings;
     struct application_native_q3_ipfilters *native_q3_ipfilters;
     struct application_native_q3_wire *native_q3_wire;
@@ -64,6 +73,7 @@ typedef struct application_provider {
     qa_combat_policy policy;
     qa_q1_game_operation q1_lifetime;
     bool constructed;
+    bool client_only_owned;
     bool attached;
     bool component_attached;
     bool policy_attached;
@@ -111,7 +121,18 @@ typedef struct application_provider_admission {
 
 typedef struct application_event_record {
     qa_builtin_event event;
+    qa_application_q2_audience q2_audience;
 } application_event_record;
+
+typedef struct application_q2_map_event_record {
+    qa_application_q2_map_event source;
+    qa_application_q2_audience audience;
+} application_q2_map_event_record;
+
+typedef struct application_protocol_record {
+    qa_application_protocol_event event;
+    qa_application_q2_protocol_delivery q2;
+} application_protocol_record;
 
 typedef struct application_motion_record {
     qa_actor_id actor;
@@ -128,6 +149,8 @@ typedef struct application_control_record {
     qa_actor_id actor;
     qa_movement_state state;
     qa_movement_profile profile;
+    qa_application_movement_numeric numeric;
+    qa_application_movement_numeric prediction_numeric;
     qa_movement_result result;
     qa_bounds standing_bounds, bounds;
     qa_movement_ground ground;
@@ -176,6 +199,9 @@ typedef struct application_publication {
     qa_entities entities;
     qa_modes *modes;
     qa_equipment *equipment;
+    struct application_equipment_runtime *equipment_runtime;
+    qa_bytes equipment_runtime_saved;
+    struct application_q3_components *components;
     qa_mode_id *mode_ids;
     size_t mode_count;
     qa_mode_id primary_mode;
@@ -186,6 +212,7 @@ typedef struct application_publication {
     bool physics_initialized;
     bool entities_parsed;
     bool published;
+    struct application_supplies *supplies;
     struct application_startup_program_roster *programs;
 } application_publication;
 
@@ -205,9 +232,13 @@ struct qa_application {
     qa_cvars *cvars;
     qa_console *console;
     const qa_native_runner_config *native_runner;
+    qa_native_runtime *native_runtime;
+    char *native_bootstrap;
+    qa_native_process_resource_policy native_process_policy;
     void *guest_context;
     qa_application_q3_services_fn q3_services;
     qa_application_q3_client_prepare_fn q3_client_prepare;
+    qa_application_q3_component_scene_prepare_fn q3_component_scene_prepare;
     qa_application_q3_client_registry_reference_fn q3_client_registry_reference;
     qa_application_q3_client_effect_fn q3_client_effect;
     qa_application_q3_campaign_command_fn q3_campaign_command;
@@ -241,17 +272,23 @@ struct qa_application {
     qa_catalog *catalog;
     qa_application_content_graph *content_graph;
     qa_application_content_graph *capture_content_graph;
+    const struct qa_application_native_resource_refs *native_restore_resources;
+    const struct qa_save_image *native_restore_image;
     qa_session *session;
     qa_configuration *configuration;
     qa_world *world;
+    struct qa_application_acoustics *acoustics;
     qa_combat *combat;
     qa_inventory *inventory;
+    struct application_q3_mod_operations *mod_operations;
     qa_pickups *pickups;
     qa_targets *targets;
     qa_modes *modes;
     qa_mode_id *mode_ids;
     size_t mode_count;
     qa_equipment *equipment;
+    struct application_equipment_runtime *equipment_runtime;
+    struct application_q3_components *components;
     qa_physics *physics;
     qa_resource *map_resource;
     qa_collision_geometry *geometry;
@@ -262,15 +299,31 @@ struct qa_application {
     size_t provider_states;
     application_event_record *events;
     size_t event_count, event_capacity;
-    qa_application_q2_map_event *q2_map_events;
+    application_q2_map_event_record *q2_map_events;
     size_t q2_map_event_count, q2_map_event_capacity;
     qa_application_q3_map_event *q3_map_events;
     size_t q3_map_event_count, q3_map_event_capacity;
     qa_application_q2_player_event *q2_player_events;
     size_t q2_player_event_count, q2_player_event_capacity;
-    qa_application_protocol_event *protocol_events;
+    application_protocol_record *protocol_events;
     size_t protocol_event_count, protocol_event_capacity;
     uint64_t protocol_events_generation;
+    application_event_journal_record *event_journal;
+    size_t event_journal_count, event_journal_capacity;
+    uint64_t event_sequence;
+    uint64_t simulation_event_sequence;
+    application_unified_event_record *unified_events;
+    size_t unified_event_count, unified_event_capacity;
+    uint64_t presentation_event_sequence;
+    uint64_t unified_event_sequence;
+    application_unified_event_resource *unified_event_resources;
+    size_t unified_event_resource_count, unified_event_resource_capacity;
+    application_unified_event_registration *unified_event_registrations;
+    size_t unified_event_registration_count, unified_event_registration_capacity;
+    uint64_t unified_event_registration_revision;
+    application_unified_world_text *unified_world_text;
+    size_t unified_world_text_count, unified_world_text_capacity;
+    uint64_t unified_world_text_revision, unified_world_text_map;
     qa_arena event_arena;
     application_motion_record *motion;
     uint32_t motion_capacity;
@@ -305,6 +358,7 @@ struct qa_application {
     bool destroy_requested;
     bool finalizing;
     qa_error publication_error;
+    struct application_supplies *supplies;
 };
 
 bool application_actor_released(void *, qa_session *, qa_actor_record,
@@ -456,6 +510,11 @@ bool application_q3_guest_client_think(application_provider *, uint32_t,
                                       const qa_q3_usercmd *, qa_error *);
 bool application_q3_guest_client_command(application_provider *, uint32_t,
                                          const char *, qa_error *);
+bool application_q3_guest_client_command_vector(application_provider *, qa_actor_id,
+    const char *const *, size_t, qa_error *);
+bool application_q3_guest_selected_respawn(application_provider *, qa_actor_id, qa_error *);
+bool application_q3_native_deathmatch_destination(application_provider *, qa_actor_id,
+    qa_vec3 *, qa_vec3 *, qa_error *);
 bool application_q3_guest_publish_snapshot(application_provider *, uint32_t,
                                            const qa_q3_snapshot *, int32_t, qa_error *);
 bool application_q3_guest_role_loading(const application_provider *, qa_qvm_role, uint32_t);
@@ -517,6 +576,7 @@ bool application_provider_close(qa_application *, application_provider *, qa_err
 void application_provider_release(qa_application *, application_provider *);
 bool application_drain_provider_closes(qa_application *, qa_error *);
 bool application_finalize(qa_application *, qa_error *);
+bool application_acoustics_idle(const qa_application *);
 bool application_control_ensure(qa_application *, qa_actor_id, qa_vec3,
                                 application_control_record **, qa_error *);
 bool application_control_cutscene(qa_application *, qa_actor_id, qa_vec3,
@@ -526,6 +586,13 @@ bool application_control_motion_changed(qa_application *, qa_actor_id,
                                         qa_error *);
 bool application_control_source_spawn(qa_application *, qa_actor_id,
                                       qa_vec3 view_angles, qa_error *);
+bool application_control_gravity(qa_application *, qa_actor_id, float scale, qa_error *);
+bool application_control_water_read(const qa_application *, qa_actor_id,
+    int32_t *water_type, int32_t *water_level, qa_error *);
+bool application_control_numeric_current(qa_application *, qa_actor_id,
+    const qa_application_movement_numeric *, qa_error *);
+bool application_control_prediction_numeric_current(qa_application *, qa_actor_id,
+    const qa_application_movement_numeric *, qa_error *);
 bool application_controlled(const qa_application *, qa_actor_id);
 bool application_control_player_mode(qa_application *, qa_actor_id,
                                       qa_movement_mode, bool spectator, qa_error *);

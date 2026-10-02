@@ -4,6 +4,7 @@
 #include "qa/native.h"
 
 typedef struct qa_native_guest qa_native_guest;
+typedef struct guest_profile_guard_launch guest_profile_guard_launch;
 
 enum { QA_NATIVE_GUEST_PAGE = 4096, QA_NATIVE_GUEST_READ = 1,
        QA_NATIVE_GUEST_WRITE = 2, QA_NATIVE_GUEST_EXECUTE = 4 };
@@ -31,10 +32,20 @@ typedef struct qa_native_guest_cpu {
     uint64_t xmm[16][2];
 } qa_native_guest_cpu;
 
+typedef enum qa_native_guest_backend {
+    QA_NATIVE_GUEST_EMULATED, QA_NATIVE_GUEST_HOST_X86_64
+} qa_native_guest_backend;
 typedef struct qa_native_guest_options {
     qa_native_image_info image;
     uint64_t allocation_base;
     size_t maximum_backing_bytes;
+    qa_native_guest_backend backend;
+    /* Actual executable containing the child bootstrap, borrowed through
+     * create/restore only. It is never an artifact or saved runtime identity. */
+    const char *host_executable;
+    /* Actual configured instruction monitor, borrowed through create/restore.
+     * Installation is proved by the physical child, not by these paths. */
+    const guest_profile_guard_launch *profile_guard;
 } qa_native_guest_options;
 
 typedef struct qa_native_guest_mapping {
@@ -42,9 +53,27 @@ typedef struct qa_native_guest_mapping {
     uint32_t permissions;
 } qa_native_guest_mapping;
 
-/* Callback addresses identify caller-installed executable trap slots. A
+/* A private file view owns its snapshot. The final partial file page is
+ * accessible and zero padded; whole pages beyond EOF always fault, including
+ * through aliases and after protection changes. No host file is reopened. */
+typedef struct qa_native_guest_file {
+    qa_sha256_digest digest;
+    uint64_t bytes, offset, accessible_bytes;
+} qa_native_guest_file;
+typedef enum qa_native_guest_fault_kind {
+    QA_NATIVE_GUEST_FAULT_UNMAPPED, QA_NATIVE_GUEST_FAULT_PROTECTION,
+    QA_NATIVE_GUEST_FAULT_FILE_EOF
+} qa_native_guest_fault_kind;
+typedef struct qa_native_guest_fault {
+    qa_native_guest_fault_kind kind;
+    uint32_t access;
+    uint64_t address, backing, backing_offset;
+} qa_native_guest_fault;
+
+/* Callback addresses identify caller-owned executable entries. A
  * callback decodes its genuine ABI and updates the real CPU continuation.
  * The engine is stopped before dispatch, so nested guest execution is legal.
+ * Binding preserves original entry bytes; shared imports own their trap slots.
  * Returning at the same instruction is an error, never a fabricated result. */
 typedef bool (*qa_native_guest_callback_fn)(void *, qa_native_guest *, uint64_t, qa_error *);
 typedef struct qa_native_guest_callback {
@@ -54,10 +83,17 @@ typedef struct qa_native_guest_callback {
 } qa_native_guest_callback;
 typedef bool (*qa_native_guest_callback_resolve_fn)(void *, uint64_t, uint64_t,
     qa_native_guest_callback *, qa_error *);
+/* Synchronous stopped instruction boundary, after entry callback dispatch and
+ * before the original instruction. A changed real IP redirects execution;
+ * an unchanged IP executes the original instruction exactly once. */
+typedef bool (*qa_native_guest_instruction_fn)(void *, qa_native_guest *, uint64_t, qa_error *);
+bool qa_native_guest_instructions(qa_native_guest *, qa_native_guest_instruction_fn, void *, qa_error *);
 
 typedef struct qa_native_guest_commit {
     uint64_t address, backing, backing_offset;
     size_t bytes;
+    uint64_t instruction;
+    bool instruction_last;
 } qa_native_guest_commit;
 /* Reports committed RAM stores, including faulted instruction prefixes and
  * same-value stores. Aliases
@@ -67,27 +103,49 @@ typedef struct qa_native_guest_commit {
 typedef bool (*qa_native_guest_commit_fn)(void *, qa_native_guest *,
     const qa_native_guest_commit *, qa_error *);
 
-/* This lower owner executes x86 through pinned Unicorn 2.1.4 with the explicit
- * cached-segment state and committed-store extensions. It does not load a module or
- * claim a native ABI/runtime profile. Native invocation additionally requires
- * owned stack/TLS, imports, OS resources and a qualified native entry bridge.
+/* Emulated x86 uses pinned Unicorn 2.1.4 with explicit cached-segment state
+ * and committed-store extensions. Qualified Linux x64 hardware execution uses
+ * an isolated child with owned fixed mappings, imports and full user CPU state.
+ * Backend selection is explicit and never changes after construction. The
+ * enclosing artifact/runtime profile supplies actual stack/TLS/OS ownership
+ * and qualifies syscall/instruction semantics before source initialization.
  * All operations stay on the owner's thread. Failed create/restore can return
  * a retained failed owner only when its actual CPU close was rejected. */
 bool qa_native_guest_create(const qa_native_guest_options *, qa_native_guest **, qa_error *);
 bool qa_native_guest_destroy(qa_native_guest **, qa_error *);
 bool qa_native_guest_idle(const qa_native_guest *);
+bool qa_native_guest_terminal(const qa_native_guest *);
+qa_native_guest_backend qa_native_guest_execution(const qa_native_guest *);
 bool qa_native_guest_map(qa_native_guest *, uint64_t, size_t, uint32_t, qa_bytes,
     qa_native_guest_mapping *, qa_error *);
+bool qa_native_guest_map_file(qa_native_guest *, uint64_t, size_t, uint32_t,
+    qa_bytes, uint64_t, qa_native_guest_mapping *, qa_error *);
+bool qa_native_guest_file_backing(const qa_native_guest *, uint64_t,
+    qa_native_guest_file *, qa_error *);
+/* Read the real CPU access fault even on a terminal owner. False means this
+ * owner has not recorded a CPU memory fault; no signal handler is fabricated. */
+bool qa_native_guest_last_fault(const qa_native_guest *, qa_native_guest_fault *);
 bool qa_native_guest_alias(qa_native_guest *, uint64_t, size_t, uint32_t,
     uint64_t, size_t, qa_native_guest_mapping *, qa_error *);
 bool qa_native_guest_unmap(qa_native_guest *, uint64_t, qa_error *);
 bool qa_native_guest_protect(qa_native_guest *, uint64_t, uint32_t, qa_error *);
+/* Page-aligned ranges split real mappings while retaining backing aliases.
+ * The first surviving fragment retains its ID; further fragments get fresh
+ * IDs. Enumerate current mappings after a change instead of caching extents.
+ * Removing owned allocator storage requires free. A dependency failure during
+ * replacement makes the owner terminal and requires whole-owner destruction. */
+bool qa_native_guest_protect_range(qa_native_guest *, uint64_t, size_t, uint32_t, qa_error *);
+bool qa_native_guest_unmap_range(qa_native_guest *, uint64_t, size_t, qa_error *);
 size_t qa_native_guest_mapping_count(const qa_native_guest *);
 bool qa_native_guest_mapping_at(const qa_native_guest *, size_t,
     qa_native_guest_mapping *, qa_error *);
 bool qa_native_guest_read(const qa_native_guest *, uint64_t, void *, size_t, qa_error *);
 bool qa_native_guest_write(qa_native_guest *, uint64_t, qa_bytes, qa_error *);
 bool qa_native_guest_allocate(qa_native_guest *, size_t, int32_t, uint64_t *, qa_error *);
+/* Alignment is the actual requested power of two. Only the requested page
+ * extent is backed; alignment gaps consume addresses, not backing storage. */
+bool qa_native_guest_allocate_aligned(qa_native_guest *, size_t, size_t, uint32_t,
+    int32_t, uint64_t *, qa_error *);
 bool qa_native_guest_free(qa_native_guest *, uint64_t, qa_error *);
 bool qa_native_guest_allocation(const qa_native_guest *, uint64_t,
     qa_native_allocation_info *, qa_error *);
@@ -100,6 +158,32 @@ bool qa_native_guest_observe(qa_native_guest *, qa_native_guest_commit_fn, void 
  * A CPU or callback fault makes this owner terminal; it cannot be checkpointed.
  * A caller prepares the actual ABI stack/registers before this raw operation. */
 bool qa_native_guest_run(qa_native_guest *, uint64_t, uint64_t, size_t, qa_error *);
+/* Invoke the original instruction at a genuinely bound entry exactly once.
+ * Recursion reaches the binding again. This requires the emulated backend. */
+bool qa_native_guest_run_original(qa_native_guest *, uint64_t, uint64_t, uint64_t,
+    size_t, qa_error *);
+/* Explicit hardware invocation without instruction budgets or CPU store
+ * observers. The installed monitor observes genuine bound entries without
+ * rewriting source bytes and dispatches their actual IDs and stopped ABI state. */
+bool qa_native_guest_run_native(qa_native_guest *, uint64_t, uint64_t, qa_error *);
+
+typedef struct qa_native_guest_syscall {
+    uint64_t instruction, next_instruction, number, arguments[6];
+} qa_native_guest_syscall;
+typedef struct qa_native_guest_syscall_result {
+    int64_t value;
+    bool stop;
+} qa_native_guest_syscall_result;
+typedef bool (*qa_native_guest_syscall_fn)(void *, qa_native_guest *,
+    const qa_native_guest_syscall *, qa_native_guest_syscall_result *, qa_error *);
+/* Linux x64 PROGRAM execution with an actual kernel-service owner. A genuine
+ * syscall stops before any host syscall. A successful returning service commits
+ * RAX/RCX/R11 and its two-byte source continuation; stop retains the stopped
+ * source CPU for the kernel owner's exit receipt. EMULATED requires a positive
+ * shared budget; HOST requires zero. No syscall authority leaks into nested
+ * ordinary library invocations. */
+bool qa_native_guest_run_program(qa_native_guest *, uint64_t, uint64_t, size_t,
+    qa_native_guest_syscall_fn, void *, bool *, qa_error *);
 
 /* Captures this lower owner's actual CPU, mappings/backing aliases, allocation
  * records/cursor and stable callback IDs. Runtime, image-loader, TLS allocator,

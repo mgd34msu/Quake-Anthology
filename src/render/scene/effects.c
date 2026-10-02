@@ -66,6 +66,65 @@ void qa_effect_draw(qa_scene_draw *draw, const qa_scene_view *view,
     draw->state.cull = QA_CULL_NONE;
 }
 
+bool qa_scene_legacy_dlights(qa_scene_frame *frame, const qa_scene_view *view,
+                              qa_scene_family family, bool quakeworld,
+                              const qa_scene_light *lights, size_t count,
+                              qa_scene_vec4 *blend, qa_error *error)
+{
+    if (!frame || !view || !blend || (count && !lights) ||
+        (family != QA_SCENE_Q1 && family != QA_SCENE_Q2)) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Legacy light fans require their actual view and lights");
+        return false;
+    }
+    for (size_t at = 0; at < count; ++at) {
+        const qa_scene_light *light = &lights[at];
+        if (!qa_vec_finite(light->origin) || !qa_vec_finite(light->color) || !isfinite(light->radius)) {
+            qa_error_set(error, QA_ERROR_ARGUMENT, at, "Legacy light fan is nonfinite");
+            return false;
+        }
+        if (!light->radius) continue;
+        float radius = light->radius * .35f;
+        if (family == QA_SCENE_Q1 && qa_vec_length(qa_vec_sub(light->origin, view->origin)) < radius) {
+            float addition = light->radius * .0003f;
+            blend->w = blend->w + addition * (1 - blend->w);
+            float fraction = addition / blend->w;
+            /* Preserve the source's red-channel read from the old green cell. */
+            blend->x = blend->y * (1 - fraction) + fraction;
+            blend->y = blend->y * (1 - fraction) + .5f * fraction;
+            blend->z = blend->z * (1 - fraction);
+            continue;
+        }
+        qa_scene_mesh mesh;
+        qa_scene_vertex *vertices;
+        uint32_t *indices;
+        if (!qa_effect_mesh(frame, 18, 48, &mesh, &vertices, &indices, error)) return false;
+        vertices[0].position = qa_vec_sub(light->origin, qa_vec_scale(view->axis[0], radius));
+        qa_vec3 center = family == QA_SCENE_Q2 ? qa_vec_scale(light->color, .2f) :
+            quakeworld ? light->color : qa_v3(.2f, .1f, 0);
+        vertices[0].color = (qa_scene_vec4){center.x, center.y, center.z, 1};
+        for (unsigned i = 0; i <= 16; ++i) {
+            double angle = (double)(16 - i) / 16 * QA_EFFECT_PI * 2;
+            float sine = (float)sin(angle), cosine = (float)cos(angle);
+            qa_vec3 right = qa_vec_scale(view->axis[1], -cosine * radius);
+            vertices[i + 1].position = qa_vec_add(light->origin,
+                qa_vec_add(right, qa_vec_scale(view->axis[2], sine * radius)));
+            vertices[i + 1].color = (qa_scene_vec4){0, 0, 0, 1};
+            if (i < 16) {
+                indices[i * 3] = 0;
+                indices[i * 3 + 1] = i + 1;
+                indices[i * 3 + 2] = i + 2;
+            }
+        }
+        qa_effect_bounds(&mesh);
+        qa_scene_draw draw;
+        qa_effect_draw(&draw, view, &mesh, NULL, true);
+        draw.state.blend_source = QA_BLEND_ONE;
+        draw.state.blend_destination = QA_BLEND_ONE;
+        if (!qa_scene_frame_draw(frame, &draw, error)) return false;
+    }
+    return true;
+}
+
 static qa_vec3 portal_transform(qa_vec3 vector, const qa_vec3 surface[3], const qa_vec3 camera[3])
 {
     qa_vec3 result = qa_v3(0, 0, 0);

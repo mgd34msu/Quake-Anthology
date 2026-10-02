@@ -1,5 +1,6 @@
 #include "../entities/internal.h"
 #include "internal.h"
+#include "qa/game_q2_source.h"
 
 bool q2_items_init(qa_q2_game *g, qa_error *e) {
     g->item_runtime = calloc(1, sizeof(*g->item_runtime));
@@ -106,7 +107,8 @@ bool q2_item_hide(qa_q2_game *g, q2_actor *a, q2_item_think think, uint64_t due,
     return q2_item_change_collision(g, a, QA_PHYSICS_NOT_SOLID, e) &&
            (!q2_actor_live(g, a->id) || q2_item_visual(g, a, e));
 }
-static bool suppressed(qa_q2_game *g, const qa_q2_item_definition *d) {
+static bool suppressed(qa_q2_game *g, const qa_q2_item_definition *d, bool *out, qa_error *e) {
+    *out = true;
     uint32_t flags = g->options.deathmatch_flags;
     if (g->options.deathmatch) {
         if ((flags & 1) && (d->kind == QA_Q2_ITEM_HEALTH || d->kind == QA_Q2_ITEM_MAX_HEALTH ||
@@ -121,12 +123,47 @@ static bool suppressed(qa_q2_game *g, const qa_q2_item_definition *d) {
         if ((flags & 8192) && ((d->kind == QA_Q2_ITEM_AMMO && d->weapon == QA_Q2_WEAPON_NONE) ||
                                d->weapon == QA_Q2_BFG))
             return true;
-        if ((g->options.product == QA_Q2_ROGUE || g->options.edition == QA_Q2_RERELEASE) &&
+        if (g->options.edition == QA_Q2_CLASSIC && g->options.product == QA_Q2_ROGUE &&
             (((flags & 0x20000) &&
               (!strcmp(d->classname, "ammo_prox") || !strcmp(d->classname, "ammo_tesla"))) ||
              ((flags & 0x80000) && d->kind == QA_Q2_ITEM_NUKE) ||
              ((flags & 0x100000) && d->kind == QA_Q2_ITEM_SPHERE)))
             return true;
+        if (g->options.edition == QA_Q2_RERELEASE) {
+            const qa_q2_item_options *options = &g->item_runtime->options;
+            if ((options->no_mines &&
+                 (d->weapon == QA_Q2_PROXLAUNCHER || !strcmp(d->classname, "ammo_prox") ||
+                  !strcmp(d->classname, "ammo_tesla") || !strcmp(d->classname, "ammo_trap"))) ||
+                (options->no_nukes && d->kind == QA_Q2_ITEM_NUKE) ||
+                (options->no_spheres && d->kind == QA_Q2_ITEM_SPHERE))
+                return true;
+        }
+        if (g->options.edition == QA_Q2_CLASSIC &&
+            g->arsenal_rules == QA_Q2_WEAPON_RULES_LMCTF) {
+            float source_flags, disabled;
+            if (!qa_q2_source_value(g, "ctfflags", 0, &source_flags, e) ||
+                !qa_q2_source_value(g, "disabled_weps", 0, &disabled, e))
+                return false;
+            if (!isfinite(source_flags) || !isfinite(disabled) ||
+                (double)source_flags < INT32_MIN || (double)source_flags > INT32_MAX ||
+                (double)disabled < INT32_MIN || (double)disabled > INT32_MAX) {
+                qa_error_set(e, QA_ERROR_FORMAT, 0, "LMCTF item flags exceed their source integer domain");
+                return false;
+            }
+            if (((uint32_t)(int32_t)source_flags & 2u) == 0 &&
+                d->kind == QA_Q2_ITEM_POWER && d->powerup == QA_Q2_POWER_INVULNERABILITY)
+                return true;
+            static const struct { const char *classname; uint32_t mask; } weapons[] = {
+                {"weapon_bfg", 1}, {"weapon_hyperblaster", 2}, {"weapon_railgun", 4},
+                {"weapon_rocketlauncher", 8}, {"weapon_grenadelauncher", 16},
+                {"weapon_chaingun", 32}, {"weapon_machinegun", 64},
+                {"weapon_supershotgun", 128}, {"weapon_shotgun", 256}, {"weapon_plasma", 512},
+            };
+            uint32_t mask = (uint32_t)(int32_t)disabled;
+            for (size_t i = 0; i < sizeof(weapons) / sizeof(*weapons); ++i)
+                if ((mask & weapons[i].mask) != 0 && !strcmp(d->classname, weapons[i].classname))
+                    return true;
+        }
     }
     if (g->options.edition == QA_Q2_CLASSIC && g->options.product == QA_Q2_ROGUE) {
         if (d->weapon == QA_Q2_DISINTEGRATOR || !strcmp(d->classname, "ammo_disruptor"))
@@ -136,7 +173,8 @@ static bool suppressed(qa_q2_game *g, const qa_q2_item_definition *d) {
                                        !strcmp(d->classname, "item_sphere_vengeance")))
             return true;
     }
-    return false;
+    *out = false;
+    return true;
 }
 bool qa_q2_item_spawn_actor(qa_q2_game *g, qa_actor_id id, const qa_q2_item_spawn *spawn,
                             bool *handled, qa_error *e) {
@@ -175,7 +213,12 @@ bool qa_q2_item_spawn_actor(qa_q2_game *g, qa_actor_id id, const qa_q2_item_spaw
     *handled = d != NULL;
     if (!d)
         return true;
-    if (suppressed(g, d))
+    bool suppress;
+    if (!suppressed(g, d, &suppress, e))
+        return false;
+    if (!q2_actor_live(g, id))
+        return true;
+    if (suppress)
         return qa_session_release(g->services.session, id, e);
     q2_actor *a = q2_actor_get(g, id, true, e);
     if (!a)

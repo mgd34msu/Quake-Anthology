@@ -491,6 +491,9 @@ bool qa_q3_client_peer_command(qa_q3_client_peer *, const char *, qa_error *);
 bool qa_q3_client_peer_usercmd(qa_q3_client_peer *, const qa_q3_usercmd *, qa_error *);
 uint64_t qa_q3_client_peer_usercmd_number(const qa_q3_client_peer *);
 const qa_q3_usercmd *qa_q3_client_peer_usercmd_at(const qa_q3_client_peer *, uint64_t);
+/* The source ABI observes signed ordinals. Its genuine cold ring includes
+ * negative indices in the current-63 window, backed by the actual reset rows. */
+const qa_q3_usercmd *qa_q3_client_peer_usercmd_signed_at(const qa_q3_client_peer *, int32_t);
 int32_t qa_q3_client_peer_server_command_sequence(const qa_q3_client_peer *);
 bool qa_q3_client_peer_receive(qa_q3_client_peer *, qa_bytes, int32_t real_time, qa_q3_receive_kind *, qa_error *);
 /* Demo records supply plaintext protocol messages without a netchannel. */

@@ -17,6 +17,40 @@ struct frontend_shared_video {
 };
 static bool fail(qa_error *error,const char *text)
 { return frontend_fail(error,QA_ERROR_ARGUMENT,text); }
+bool frontend_shared_video_settings(qa_frontend *f,const qa_cvars_edit *edit,
+    qa_display_settings *out,bool *changed,qa_error *error)
+{
+    if (!f || !out || !changed || !f->application || !f->display ||
+        !qa_cvars_edit_returned_is(edit,qa_application_cvars(f->application)) ||
+        f->stepping || f->capture || f->source_restoring || !frontend_seat_callbacks_returned(f))
+        return fail(error,"Display projection requires its returned actual canonical owner");
+    static const char *const names[]={"r_customwidth","r_customheight","r_fullscreen","r_swapInterval"};
+    const qa_cvar_view *rows[4];
+    for (size_t i=0;i<4;++i) {
+        rows[i]=qa_cvars_edit_find(edit,names[i]);
+        if (!rows[i]) return fail(error,"Display projection lost a canonical declaration");
+    }
+    qa_display_info info;
+    if (!qa_display_info_get(f->display,&info,error)) return false;
+    double width=rows[0]->number?rows[0]->number:info.logical_width;
+    double height=rows[1]->number?rows[1]->number:info.logical_height;
+    double fullscreen=rows[2]->number,swap=rows[3]->number;
+    if (!isfinite(width) || !isfinite(height) || floor(width)!=width || floor(height)!=height ||
+        width<64 || width>16384 || height<64 || height>16384 ||
+        (fullscreen!=0 && fullscreen!=1) || (f->gl && swap!=0 && swap!=1))
+        return fail(error,"Display settings require valid native size, fullscreen and swap interval");
+    int actual_swap=0;
+    if (f->gl && !qa_display_swap_interval(f->display,&actual_swap,error)) return false;
+    /* The source only resizes a currently windowed endpoint. Fullscreen
+     * dimensions come from the actual current native window. */
+    *out=(qa_display_settings){.width=info.fullscreen==QA_DISPLAY_WINDOWED?(uint32_t)width:info.logical_width,
+        .height=info.fullscreen==QA_DISPLAY_WINDOWED?(uint32_t)height:info.logical_height,
+        .fullscreen=fullscreen==1?QA_DISPLAY_DESKTOP:QA_DISPLAY_WINDOWED,
+        .swap_interval=f->gl?(int)swap:0};
+    *changed=out->width!=info.logical_width || out->height!=info.logical_height ||
+        out->fullscreen!=info.fullscreen || (f->gl && out->swap_interval!=actual_swap);
+    return true;
+}
 static bool current(const frontend_shared_video *owner,qa_error *error)
 {
     qa_frontend *f=owner?owner->frontend:NULL;
@@ -66,6 +100,23 @@ bool frontend_shared_video_ready(const frontend_shared_video *owner,qa_error *er
         return fail(error,"Prepared video has no current complete physical handoff");
     return qa_display_surface_ready(owner->surface,error) &&
         (owner->gl?qa_gl_surface_ready(owner->gl_surface,error):qa_cpu_surface_ready(owner->cpu_surface,error));
+}
+bool frontend_shared_video_ready_is(const frontend_shared_video *owner)
+{
+    return current(owner,NULL) && owner->prepared && !owner->published && !owner->rolling_back &&
+        owner->frontend->input_settings==owner->input && frontend_input_settings_ready_is(owner->input) &&
+        qa_display_surface_ready_is(owner->surface,owner->original,owner->candidate) &&
+        (owner->gl?qa_gl_surface_ready_is(owner->gl_surface):qa_cpu_surface_ready_is(owner->cpu_surface));
+}
+qa_display *frontend_shared_video_candidate(const frontend_shared_video *owner)
+{
+    return frontend_shared_video_ready_is(owner)?owner->candidate:NULL;
+}
+bool frontend_shared_video_refresh(frontend_shared_video *owner,qa_error *error)
+{
+    if (!current(owner,error) || !owner->prepared || owner->published || owner->rolling_back)
+        return fail(error,"Video refresh requires its actual unpublished prepared surface");
+    return !owner->cpu || qa_cpu_surface_refresh(owner->cpu_surface,error);
 }
 bool frontend_shared_video_configuration(const frontend_shared_video *owner,
     qa_display_info *out,qa_error *error)

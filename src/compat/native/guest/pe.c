@@ -341,7 +341,7 @@ static bool forwarder_valid(const char *value)
         if (*at < '0' || *at > '9' || ordinal > (65535u - (uint32_t)(*at - '0')) / 10) return false;
         ordinal = ordinal * 10 + (uint32_t)(*at - '0');
     }
-    return ordinal != 0;
+    return true;
 }
 
 static bool read_exports(guest_pe *pe, qa_error *error)
@@ -353,8 +353,9 @@ static bool read_exports(guest_pe *pe, qa_error *error)
     uint32_t ordinal = qa_load_u32le(header + 16), count = qa_load_u32le(header + 20);
     uint32_t names_count = qa_load_u32le(header + 24), addresses = qa_load_u32le(header + 28);
     uint32_t names = qa_load_u32le(header + 32), ordinals = qa_load_u32le(header + 36);
-    if ((uint64_t)ordinal + count > UINT64_C(0x100000000) || count > SIZE_MAX / 4 ||
-        names_count > SIZE_MAX / 4 || !range(pe, addresses, (size_t)count * 4, error) ||
+    if ((uint64_t)ordinal + count > UINT64_C(0x100000000) ||
+        (count && (SIZE_MAX / count < 4 || SIZE_MAX / count < sizeof(size_t))) ||
+        (names_count && SIZE_MAX / names_count < 4) || !range(pe, addresses, (size_t)count * 4, error) ||
         !range(pe, names, (size_t)names_count * 4, error) || !range(pe, ordinals, (size_t)names_count * 2, error))
         return guest_fail(error, QA_ERROR_FORMAT, directory.rva, "PE export tables exceed owned storage");
     size_t *targets = count ? malloc((size_t)count * sizeof(*targets)) : NULL;

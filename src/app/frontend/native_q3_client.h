@@ -6,6 +6,7 @@
 #include "../../presentation/q3_native/mission_hud.h"
 #include "../../presentation/q3_native/loading.h"
 #include "qa/persistence_content.h"
+#include "qa/application_equipment.h"
 #include "client_registry.h"
 
 typedef struct frontend_native_q3_view {
@@ -49,6 +50,9 @@ typedef struct frontend_native_q3_composition {
     bool (*restore)(void *,const qa_application_q3_client_context *,qa_bytes,qa_error *);
     bool (*begin_frame)(void *,const q3n_frame *,qa_error *);
     void (*end_frame)(void *);
+    bool (*before_render)(void *,const q3n_frame *,qa_error *);
+    bool (*actor_admitted)(const void *, qa_actor_id);
+    bool (*weapon_snapshot)(const void *, qa_application_equipment_view *, bool *requested, qa_error *);
     bool (*event)(void *, const q3n_frame *, q3n_entity *, const qa_q3_entity *,
         qa_vec3, bool *suppressed, qa_error *);
     bool (*body_hidden)(void *, const q3n_frame *, const qa_application_native_q3_entity *, bool *, qa_error *);
@@ -76,6 +80,9 @@ bool frontend_native_q3_sync(qa_frontend *,const frontend_native_q3_factory *,qa
 bool frontend_native_q3_frame(qa_frontend *, uint32_t physical_seat, qa_scene_rect,
     bool *rendered, qa_error *);
 bool frontend_native_q3_listener(const qa_frontend *,uint32_t physical_seat,qa_audio_listener *);
+bool frontend_native_q3_actor_admitted(const qa_frontend *, uint32_t physical_seat, qa_actor_id);
+bool frontend_native_q3_weapon_snapshot(const qa_frontend *, uint32_t physical_seat,
+    qa_application_equipment_view *, bool *requested, qa_error *);
 bool frontend_native_q3_audio_view(const qa_frontend *,const qa_audio_asset *,qa_vfs **);
 bool frontend_native_q3_effect(qa_frontend *, qa_application *, qa_actor_owner receiver,
     uint32_t launch_seat, qa_application_q3_client_effect, const char *, bool *handled, qa_error *);

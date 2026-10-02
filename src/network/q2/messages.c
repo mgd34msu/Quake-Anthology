@@ -1,21 +1,8 @@
-#include "qa/network_q2_messages.h"
+#include "messages_internal.h"
 #include "q2pro_internal.h"
 #include <stdlib.h>
 #include <zlib.h>
 
-struct qa_q2_messages {
-    qa_q2_codec codec;
-    qa_q2_message_options options;
-    char **configs;
-    qa_q2_entity *baselines;
-    size_t baseline_count, baseline_capacity;
-    qa_q2_frame_history *histories[QA_Q2_MAX_SEATS];
-    uint8_t seat;
-    enum { STREAM_NONE, STREAM_CONFIG, STREAM_BASELINE, STREAM_GAMESTATE } stream;
-    z_stream download;
-    bool download_open, reading;
-    size_t inflated_this_read;
-};
 
 static bool is_kex(const qa_q2_codec *c) {
     return c->protocol.kind == QA_NET_Q2KEX_2023 || c->protocol.kind == QA_NET_Q2KEX_DEMO_2022;
@@ -46,6 +33,12 @@ static void download_reset(qa_q2_messages *m) {
     if (m->download_open) inflateEnd(&m->download);
     memset(&m->download, 0, sizeof(m->download));
     m->download_open = false;
+    while (m->download_first) {
+        qa_q2_inflate_segment *next = m->download_first->next;
+        qa_buffer_free(&m->download_first->compressed); free(m->download_first);
+        m->download_first = next;
+    }
+    m->download_last = NULL;
 }
 
 void qa_q2_messages_reset(qa_q2_messages *m) {
@@ -151,7 +144,8 @@ static qa_q2_frame_history *history(qa_q2_messages *m, uint8_t seat, qa_error *e
 }
 
 bool qa_q2_messages_accept(qa_q2_messages *m, const qa_q2_server_record *record, qa_error *error) {
-    if (!m || !record || record->seat >= QA_Q2_MAX_SEATS || m->reading) {
+    if (!m || !record || record->seat > QA_Q2_MAX_SEATS ||
+        (record->seat == QA_Q2_MAX_SEATS && !is_kex(&m->codec)) || m->reading) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid decoded Q2 record"); return false;
     }
     const qa_q2_server_event *e = &record->event;
@@ -160,7 +154,7 @@ bool qa_q2_messages_accept(qa_q2_messages *m, const qa_q2_server_record *record,
     if (e->kind == QA_Q2_SVC_CONFIGSTRING) return set_config(m, e->data.config.index, e->data.config.value, error);
     if (e->kind == QA_Q2_SVC_BASELINE) return set_baseline(m, &e->data.baseline, error);
     if (e->kind == QA_Q2_SVC_FRAME) {
-        qa_q2_frame_history *h = history(m, record->seat, error);
+        qa_q2_frame_history *h = history(m, is_kex(&m->codec) ? 0 : record->seat, error);
         return h && qa_q2_frame_history_accept(h, e->data.frame, error);
     }
     return true;
@@ -261,8 +255,35 @@ static bool inflate_download(qa_q2_messages *m, qa_net_reader *r, qa_bytes bytes
     z->next_in = NULL; z->avail_in = 0; z->next_out = NULL; z->avail_out = 0;
     if (!stream) inflateEnd(z);
     if (!ok) { free(data); if (stream) download_reset(m); return qa_net_reader_fail(r, "Invalid or oversized Q2 compressed download"); }
+    if (stream && !finish) {
+        qa_q2_inflate_segment *segment = calloc(1, sizeof(*segment));
+        if (segment && bytes.size) segment->compressed.data = malloc(bytes.size);
+        if (!segment || (bytes.size && !segment->compressed.data)) {
+            if (segment) free(segment); free(data); download_reset(m);
+            return qa_net_reader_fail(r, "Cannot retain Q2 deflate continuation receipt");
+        }
+        if (bytes.size) memcpy(segment->compressed.data, bytes.data, bytes.size);
+        segment->compressed.size = bytes.size; segment->output_size = used;
+        if (m->download_last) m->download_last->next = segment; else m->download_first = segment;
+        m->download_last = segment;
+    }
     if (stream && finish) download_reset(m);
     *out = (qa_buffer){data, used};
+    return true;
+}
+
+bool qa_q2_messages_restore_download_segment(qa_q2_messages *m, qa_bytes bytes,
+    size_t output_size, qa_error *error) {
+    if (!m || m->reading || (bytes.size && !bytes.data) || bytes.size > UINT_MAX ||
+        output_size > m->options.max_inflated_bytes) {
+        qa_error_set(error, QA_ERROR_FORMAT, 0, "Invalid retained Q2 deflate receipt"); return false;
+    }
+    qa_net_reader reader; qa_net_reader_init(&reader, bytes, error);
+    qa_buffer discarded = {0};
+    if (!inflate_download(m, &reader, bytes, true, false, 0, &discarded)) return false;
+    bool ok = discarded.size == output_size;
+    qa_buffer_free(&discarded);
+    if (!ok) { download_reset(m); return qa_net_reader_fail(&reader, "Q2 deflate receipt changes its accepted output extent"); }
     return true;
 }
 
@@ -397,7 +418,7 @@ static bool parse_server(qa_q2_messages *m, qa_net_reader *r, qa_q2_server_emit_
             event.kind = QA_Q2_SVC_SEAT;
             if (!kex) { ok = false; break; }
             ok = qa_q2_kex_read_splitclient(r, &event.data.seat);
-            if (event.data.seat >= QA_Q2_MAX_SEATS) { ok = false; break; }
+            if (event.data.seat > QA_Q2_MAX_SEATS) { ok = false; break; }
             m->seat = event.data.seat;
             break;
         case 22:

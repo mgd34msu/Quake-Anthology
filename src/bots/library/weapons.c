@@ -1,4 +1,6 @@
 #include "internal.h"
+#include "source_weapon_library.h"
+#include "source_weapon_standalone.h"
 
 #define FIELD(type, field, text, kind)                                                             \
     {text, offsetof(type, field), sizeof(((type *)0)->field), kind}
@@ -41,41 +43,13 @@ static const bot_field weapon_fields[] = {
     FIELD(qa_bot_weapon_info, spin_up, "spinup", BOT_FIELD_FLOAT),
     FIELD(qa_bot_weapon_info, spin_down, "spindown", BOT_FIELD_FLOAT)};
 #undef FIELD
-static bool create(const char *path, size_t weapons, size_t projectiles, qa_bot_weapons **out,
-                   qa_error *e) {
-    if (weapons > INT32_MAX || projectiles > INT32_MAX ||
-        weapons > SIZE_MAX / sizeof(qa_bot_weapon_info) ||
-        projectiles > SIZE_MAX / sizeof(qa_bot_projectile_info)) {
-        qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Bot weapon configuration capacity overflow");
-        return false;
-    }
-    qa_bot_weapons *c = calloc(1, sizeof(*c));
-    if (c == NULL)
-        goto memory;
-    atomic_init(&c->references, 1);
-    c->view.path = bot_string(&c->arena, (qa_bytes){(const uint8_t *)path, strlen(path)}, e);
-    c->weapons = calloc(weapons == 0 ? 1 : weapons, sizeof(*c->weapons));
-    c->projectiles = calloc(projectiles == 0 ? 1 : projectiles, sizeof(*c->projectiles));
-    if (c->view.path == NULL || c->weapons == NULL || c->projectiles == NULL) {
-        qa_bot_weapons_release(c);
-        goto memory;
-    }
-    c->view.weapons = c->weapons;
-    c->view.projectiles = c->projectiles;
-    c->view.weapon_capacity = weapons;
-    c->view.projectile_capacity = projectiles;
-    *out = c;
-    return true;
-memory:
-    qa_error_set(e, QA_ERROR_MEMORY, 0, "Allocating bot weapon/projectile configuration");
-    return false;
-}
 void qa_bot_weapons_retain(qa_bot_weapons *c) {
     if (c != NULL)
         atomic_fetch_add_explicit(&c->references, 1, memory_order_relaxed);
 }
 void qa_bot_weapons_release(qa_bot_weapons *c) {
     if (c != NULL && atomic_fetch_sub_explicit(&c->references, 1, memory_order_acq_rel) == 1) {
+        bot_weapon_resource_destroy(c->source);
         free(c->weapons);
         free(c->projectiles);
         qa_arena_destroy(&c->arena);
@@ -83,95 +57,12 @@ void qa_bot_weapons_release(qa_bot_weapons *c) {
     }
 }
 const qa_bot_weapons_view *qa_bot_weapons_read(const qa_bot_weapons *c) {
-    return c == NULL ? NULL : &c->view;
-}
-static bool bind(qa_bot_weapons *c, qa_error *e) {
-    c->view.weapon_count = 0;
-    for (size_t i = 0; i < c->view.weapon_capacity; ++i) {
-        qa_bot_weapon_info *w = c->weapons + i;
-        if (!w->valid)
-            continue;
-        if (w->name[0] == 0 || w->projectile[0] == 0) {
-            qa_error_set(e, QA_ERROR_FORMAT, i, "Bot weapon needs a name and projectile");
-            return false;
-        }
-        size_t p = 0;
-        while (p < c->view.projectile_count && strcmp(c->projectiles[p].name, w->projectile) != 0)
-            ++p;
-        if (p == c->view.projectile_count) {
-            qa_error_set(e, QA_ERROR_FORMAT, i, "Bot weapon names an undefined projectile");
-            return false;
-        }
-        w->projectile_index = (uint32_t)p;
-        ++c->view.weapon_count;
-    }
-    return true;
+    return c == NULL ? NULL : bot_weapons_source_view((qa_bot_weapons *)c,NULL);
 }
 bool qa_bot_weapons_load(qa_bot_library *library, const char *path, size_t weapon_capacity,
                          size_t projectile_capacity, qa_bot_weapons **out, qa_error *e) {
-    if (library == NULL || path == NULL || out == NULL) {
-        qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Invalid bot weapon resource path/output");
-        return false;
-    }
-    for (qa_bot_weapons *c = library->weapon_configs; c != NULL; c = c->next)
-        if (c->view.weapon_capacity == weapon_capacity &&
-            c->view.projectile_capacity == projectile_capacity && strcmp(c->view.path, path) == 0) {
-            qa_bot_weapons_retain(c);
-            *out = c;
-            return true;
-        }
-    qa_script *s;
-    if (!qa_script_open(path, &library->options.scripts, &library->options.preprocessor, &s, e))
-        return false;
-    qa_bot_weapons *c;
-    if (!create(path, weapon_capacity, projectile_capacity, &c, e)) {
-        qa_script_close(s);
-        return false;
-    }
-    for (;;) {
-        qa_script_token token;
-        bool found;
-        if (!qa_script_next(s, &token, &found, e))
-            goto fail;
-        if (!found)
-            break;
-        if (qa_script_token_is(&token, "weaponinfo")) {
-            qa_bot_weapon_info weapon = {0};
-            if (!bot_structure(s, &weapon, weapon_fields,
-                               sizeof(weapon_fields) / sizeof(*weapon_fields), e))
-                goto fail;
-            if (weapon.number < 0 || (size_t)weapon.number >= weapon_capacity) {
-                bot_fail(s, "Bot weapon number exceeds configured capacity", e);
-                goto fail;
-            }
-            weapon.valid = true;
-            c->weapons[weapon.number] = weapon;
-        } else if (qa_script_token_is(&token, "projectileinfo")) {
-            if (c->view.projectile_count == projectile_capacity) {
-                bot_fail(s, "Too many bot projectile definitions", e);
-                goto fail;
-            }
-            if (!bot_structure(s, c->projectiles + c->view.projectile_count, projectile_fields,
-                               sizeof(projectile_fields) / sizeof(*projectile_fields), e))
-                goto fail;
-            ++c->view.projectile_count;
-        } else {
-            bot_fail(s, "Unknown bot weapon configuration definition", e);
-            goto fail;
-        }
-    }
-    if (!bind(c, e))
-        goto fail;
-    qa_script_close(s);
-    c->next = library->weapon_configs;
-    library->weapon_configs = c;
-    qa_bot_weapons_retain(c);
-    *out = c;
-    return true;
-fail:
-    qa_script_close(s);
-    qa_bot_weapons_release(c);
-    return false;
+    bool source_failure;
+    return bot_weapons_load_source(library,path,weapon_capacity,projectile_capacity,NULL,out,&source_failure,e);
 }
 static bool fields_valid(const void *data, const bot_field *fields, size_t count) {
     for (size_t i = 0; i < count; ++i) {
@@ -213,18 +104,10 @@ bool qa_bot_weapons_restore(const qa_bot_weapons_view *view, qa_bot_weapons **ou
         if (!fields_valid(view->projectiles + i, projectile_fields,
                           sizeof(projectile_fields) / sizeof(*projectile_fields)))
             goto invalid;
-    qa_bot_weapons *c;
-    if (!create(view->path, view->weapon_capacity, view->projectile_capacity, &c, e))
-        return false;
-    if (view->weapon_capacity != 0)
-        memcpy(c->weapons, view->weapons, view->weapon_capacity * sizeof(*c->weapons));
-    if (view->projectile_count != 0)
-        memcpy(c->projectiles, view->projectiles, view->projectile_count * sizeof(*c->projectiles));
-    c->view.projectile_count = view->projectile_count;
-    if (!bind(c, e)) {
-        qa_bot_weapons_release(c);
-        return false;
-    }
+    qa_bot_weapons *c=calloc(1,sizeof(*c));
+    if(!c) {qa_error_set(e,QA_ERROR_MEMORY,0,"Restoring actual weapon resource binding");return false;}
+    atomic_init(&c->references,1);
+    if(!bot_weapon_standalone_restore(view,&c->source,e)) {qa_bot_weapons_release(c);return false;}
     *out = c;
     return true;
 invalid:
@@ -246,8 +129,16 @@ bool qa_bot_weapon_selector_create(qa_bot_weapons *config, qa_bot_weights *weigh
     s->weights = weights;
     qa_bot_weapons_retain(config);
     qa_bot_weights_retain(weights);
-    s->indices = malloc((config->view.weapon_capacity == 0 ? 1 : config->view.weapon_capacity) *
-                        sizeof(*s->indices));
+    int32_t capacity=0;
+    if(!bot_weapons_source_capacity(config,&capacity,e) || capacity<0 ||
+       (uint64_t)(uint32_t)capacity*sizeof(*s->indices)>SIZE_MAX) {
+        qa_bot_weapon_selector_destroy(s);
+        if(capacity<0 || (uint64_t)(uint32_t)capacity*sizeof(*s->indices)>SIZE_MAX)
+            qa_error_set(e,QA_ERROR_ARGUMENT,0,"Weapon mapping exceeds its source capacity domain");
+        return false;
+    }
+    s->index_count=(uint32_t)capacity;
+    s->indices = malloc((s->index_count?s->index_count:1)*sizeof(*s->indices));
     if (s->indices == NULL) {
         qa_bot_weapon_selector_destroy(s);
         qa_error_set(e, QA_ERROR_MEMORY, 0, "Allocating bot weapon weight mapping");
@@ -257,9 +148,10 @@ bool qa_bot_weapon_selector_create(qa_bot_weapons *config, qa_bot_weights *weigh
         qa_bot_weapon_selector_destroy(s);
         return false;
     }
-    for (size_t i = 0; i < config->view.weapon_capacity; ++i) {
-        const char *name=config->weapons[i].valid?config->weapons[i].name:"";
-        if(!qa_bot_weights_find_value(weights,name,&s->indices[i],e)) {
+    for (uint32_t i = 0; i < s->index_count; ++i) {
+        char name[81];
+        if(!bot_weapons_source_name(config,i,name,e) ||
+           !qa_bot_weights_find_value(weights,name,&s->indices[i],e)) {
             qa_bot_weapon_selector_destroy(s);return false;
         }
     }
@@ -283,10 +175,13 @@ bool qa_bot_weapon_weight(qa_bot_weapon_selector *s, uint32_t weapon, const int3
 bool qa_bot_weapon_weight_view(qa_bot_weapon_selector *s, uint32_t weapon,
                                const qa_bot_inventory_view *inventory, float *out, bool *found,
                                qa_error *e) {
-    if (s == NULL || out == NULL || found == NULL || weapon >= s->config->view.weapon_capacity) {
+    if (s == NULL || out == NULL || found == NULL) {
         qa_error_set(e, QA_ERROR_ARGUMENT, weapon, "Invalid bot weapon evaluation request");
         return false;
     }
+    bool member;
+    if(!bot_weapons_source_valid(s->config,weapon,&member,e)) return false;
+    if(!member || weapon>=s->index_count) {*found=false;return true;}
     *found = s->indices[weapon] >= 0;
     if (!*found)
         return true;
@@ -306,8 +201,12 @@ bool qa_bot_weapon_choose_view(qa_bot_weapon_selector *s, const qa_bot_inventory
     }
     float best = 0;
     uint32_t choice = 0;
-    for (uint32_t i = 0; i < s->config->view.weapon_capacity; ++i) {
-        if (!s->config->weapons[i].valid || s->indices[i] < 0)
+    for (uint32_t i = 0;; ++i) {
+        int32_t capacity;bool member;
+        if(!bot_weapons_source_capacity(s->config,&capacity,e)) return false;
+        if(capacity<=0 || i>=(uint32_t)capacity) break;
+        if(!bot_weapons_source_valid(s->config,i,&member,e)) return false;
+        if (!member || i>=s->index_count || s->indices[i] < 0)
             continue;
         float value;
         if (!qa_bot_weights_evaluate_view(s->weights, (uint32_t)s->indices[i], inventory, NULL,

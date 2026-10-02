@@ -163,7 +163,7 @@ static bool draw(qa_ui *ui, qa_scene_frame *frame, qa_scene_rect viewport, float
     if (ui->color_mode == QA_UI_COLOR_MONOCHROME) accent = (qa_scene_vec4){.25f, .25f, .25f, 1};
     else if (ui->color_mode == QA_UI_COLOR_BLUE_YELLOW) accent = (qa_scene_vec4){.06f, .2f, .42f, 1};
     if (!ui_fill(ui, frame, viewport, (qa_scene_rect_f){0, 0, 640, 480}, background, error) ||
-        !ui_draw_text(ui, frame, viewport, 320, 42, menu.title, white, 2,
+        !(menu.source_title ? ui_draw_source_text : ui_draw_text)(ui, frame, viewport, 320, 42, menu.title, white, 2,
                        QA_FONT_ALIGN_CENTER, error)) return false;
     qa_ui_id focused = ui->stack[ui->depth - 1].control;
     for (size_t i = 0; i < menu.count; ++i) {

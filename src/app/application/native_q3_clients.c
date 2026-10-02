@@ -16,6 +16,8 @@
 #include "control_frame.h"
 #include "rankings.h"
 #include "bots_round.h"
+#include "bots_catalog.h"
+#include "supplies.h"
 #include "qa/game_q3_configstrings.h"
 #include "qa/game_q3_wire.h"
 #include "qa/modes_q3_clients.h"
@@ -603,6 +605,7 @@ static bool client_spawn(application_provider *provider, qa_actor_id actor,
     if (!qa_q3_player_begin_command(provider->state.q3, actor, &accepted, error) ||
         !qa_q3_client_spectator(provider->state.q3, actor, spectator, error) ||
         !qa_q3_spawn_player(provider->state.q3, actor, &body, member.state.team, error) ||
+        !application_supplies_spawn(app->supplies, provider, actor, error) ||
         !qa_q3_client_ready(provider->state.q3, actor, false, error) ||
         !source(provider, actor, &slot, error)) return false;
     application_control_body_reset(app, actor);
@@ -679,6 +682,9 @@ bool application_native_q3_client_begin(application_provider *provider, qa_actor
 bool application_native_q3_client_respawn(void *opaque, qa_actor_id actor, qa_error *error)
 {
     application_provider *provider = opaque;
+    if (provider && provider->application &&
+        application_world_provider(provider->application, QA_ROLE_ENTITIES, "") != provider)
+        return application_players_selected_character_respawn(provider, actor, error);
     uint32_t slot;
     if (!source(provider, actor, &slot, error) ||
         !application_native_q3_console_borrow(provider, error)) return false;
@@ -741,7 +747,9 @@ static bool client_disconnect(application_provider *provider,
     qa_application *app = provider ? provider->application : NULL;
     if (!source(provider, actor, &slot, error) ||
         !application_native_q3_console_borrow(provider, error)) return false;
-    bool ok = application_rankings_disconnect(app, actor, error) &&
+    bool ok = application_bots_catalog_remove_begin(app, slot, error) &&
+        source(provider, actor, &slot, error) &&
+        application_rankings_disconnect(app, actor, error) &&
         source(provider, actor, &slot, error) &&
         application_bots_client_shutdown(app, actor, false, error) &&
         source(provider, actor, &slot, error) &&

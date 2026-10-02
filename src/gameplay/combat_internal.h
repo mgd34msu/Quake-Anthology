@@ -14,6 +14,8 @@ typedef struct qa_combat_record {
     uint64_t serial;
     bool active, external, power_admitting;
     qa_combat_state state;
+    qa_attack last_attack;
+    bool has_last_attack;
     qa_combat_binding binding;
     qa_combat_admission admission;
     size_t active_admissions;

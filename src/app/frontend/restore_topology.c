@@ -5,6 +5,7 @@
 #include "qa/material_library_save.h"
 #include "qa/scene_resource_save.h"
 #include "ui_features.h"
+#include "root_resources.h"
 
 struct frontend_restore_topology {
     uint32_t seats, width, height;
@@ -12,6 +13,7 @@ struct frontend_restore_topology {
     bool mods[QA_INPUT_LOCAL_SEATS];
     uint64_t time_ns, wall_time_ns, frame_number, configuration, map_revision, next_source_id, next_audio_id;
     uint64_t silent_audio_remainder, ui_view, world_view;
+    qa_audio_output_format output;
     frontend_source_group_plan *groups;
     qa_buffer *group_portals;
     size_t group_count;
@@ -41,7 +43,11 @@ static bool flags(qa_source_save_io *io, struct frontend_restore_topology *p)
         qa_source_save_u64(io, &p->frame_number) &&
         qa_source_save_u64(io, &p->configuration) && qa_source_save_u64(io, &p->map_revision) &&
         qa_source_save_u64(io, &p->next_source_id) && qa_source_save_u64(io, &p->next_audio_id) &&
-        qa_source_save_u64(io, &p->silent_audio_remainder) && qa_source_save_u64(io, &p->ui_view) &&
+        qa_source_save_u64(io, &p->silent_audio_remainder) &&
+        qa_source_save_u32(io,&p->output.sample_rate) && p->output.sample_rate>=8000 && p->output.sample_rate<=192000 &&
+        qa_source_save_u32(io,&p->output.channels) && (p->output.channels==1 || p->output.channels==2) &&
+        qa_source_save_u32(io,&p->output.sample_bits) && (p->output.sample_bits==8 || p->output.sample_bits==16) &&
+        qa_source_save_u64(io, &p->ui_view) &&
         qa_source_save_u64(io, &p->world_view) &&
         p->next_source_id < UINT64_MAX - QA_FRONTEND_COMMAND_OWNER && p->silent_audio_remainder < UINT64_C(1000000000) &&
         (!p->ui_images || p->ui_view) && (!p->fonts || p->ui_images) &&
@@ -69,9 +75,9 @@ static bool portals_fields(qa_source_save_io *io,frontend_source_group_plan *gro
 static bool fields(qa_source_save_io *io, qa_application *app, struct frontend_restore_topology *p)
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
-    uint8_t magic[4] = {'Q','F','T','P'}; uint32_t version = 4;
+    uint8_t magic[4] = {'Q','F','T','P'}; uint32_t version = 5;
     if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "QFTP", 4) ||
-        !qa_source_save_u32(io, &version) || version != 4 || !flags(io, p)) return false;
+        !qa_source_save_u32(io, &version) || version != 5 || !flags(io, p)) return false;
     for (size_t i = 0; i < p->seats; ++i)
         if (!qa_source_save_bool(io, &p->mods[i]) || (p->dedicated && p->mods[i])) return false;
     if (!qa_source_save_count(io, &p->group_count, reading ? io->input.size / 48 : SIZE_MAX / sizeof(*p->groups))) return false;
@@ -139,6 +145,7 @@ bool frontend_topology_checkpoint(const qa_frontend *f, qa_buffer *out, qa_error
         .frame_number = f->frame_number, .configuration = f->configuration, .map_revision = f->map_revision,
         .next_source_id = f->next_source_id, .next_audio_id = f->next_audio_id,
         .silent_audio_remainder = f->silent_audio_remainder,
+        .output=f->audio_output_format,
         .ui_view = qa_application_content_view_id(graph, f->ui_mounts),
         .world_view = qa_application_content_view_id(graph, f->mounts), .group_count = frontend_source_group_count(f)};
     bool ok = (!f->ui_mounts || p->ui_view) && (!f->mounts || p->world_view);
@@ -202,6 +209,7 @@ bool frontend_topology_prepare(qa_frontend *f, const frontend_restore_topology *
     f->wall_time_ns = p->wall_time_ns; f->frame_number = p->frame_number;
     f->configuration = p->configuration; f->map_revision = p->map_revision; f->next_source_id = p->next_source_id;
     f->next_audio_id = p->next_audio_id; f->silent_audio_remainder = p->silent_audio_remainder;
+    f->audio_output_format=p->output;
     if ((p->ui_view && !qa_application_content_claim_view(graph, p->ui_view, &f->ui_mounts, error)) ||
         (p->world_view && !qa_application_content_claim_view(graph, p->world_view, &f->mounts, error))) return false;
     if (!frontend_ui_features_prepare(f,error)) return false;
@@ -210,6 +218,7 @@ bool frontend_topology_prepare(qa_frontend *f, const frontend_restore_topology *
     if (p->order && !(f->order = qa_material_order_create(error))) return false;
     if (p->images && !(f->images = qa_scene_resources_create_detached(f->mounts, error))) return false;
     if (p->materials && !(f->materials = qa_material_library_create_detached(f->images, error))) return false;
+    if (p->materials && !frontend_root_resources_prepare_restored(f,error)) return false;
     if (p->sounds && !qa_audio_bank_create(f->mounts, &f->sounds, error)) return false;
     if (p->audio) {
         qa_audio_engine_options audio;

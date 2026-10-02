@@ -30,6 +30,7 @@ bool frontend_authored_bindings_restore_previous(frontend_authored_bindings *,
 void frontend_authored_bindings_profile(frontend_authored_bindings *);
 void frontend_authored_bindings_finish(frontend_authored_bindings *);
 bool frontend_authored_bindings_ready(const frontend_authored_bindings *);
+bool frontend_authored_bindings_completed(const frontend_authored_bindings *);
 /* Called at the real admitted command boundary, before binding dispatch. */
 bool frontend_authored_bindings_observe(frontend_authored_bindings *,
     const qa_command_invocation *,qa_error *);

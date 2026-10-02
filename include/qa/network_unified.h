@@ -89,6 +89,8 @@ typedef struct qa_unified_movement {
 typedef struct qa_unified_arsenal {
     qa_bytes provider, weapon; /* UTF-8; weapon.size == 0 means no selection. */
     bool use_holdable;
+    bool has_impulse;
+    uint8_t impulse;
 } qa_unified_arsenal;
 typedef enum qa_unified_source_kind {
     QA_UNIFIED_SOURCE_LOCAL, QA_UNIFIED_SOURCE_REMOTE, QA_UNIFIED_SOURCE_BOT
@@ -134,6 +136,7 @@ bool qa_unified_composition_create(qa_bytes json, qa_unified_composition *, qa_e
 void qa_unified_composition_free(qa_unified_composition *);
 bool qa_unified_composition_offer(const qa_unified_composition *, qa_buffer *, qa_error *);
 bool qa_unified_composition_admit(const qa_unified_composition *, qa_bytes offer, qa_error *);
+bool qa_unified_value_canonical(qa_bytes json, qa_buffer *, qa_error *);
 
 /* Checkpoint envelopes retain every schema field, including tagged bytes,
  * bigint, non-finite numbers and negative zero. Documents own their source and

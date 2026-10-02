@@ -4,6 +4,7 @@
 #include "qa/native.h"
 
 typedef struct qa_native_runtime qa_native_runtime;
+struct guest_profile_guard_launch;
 typedef struct qa_native_runtime_options {
     /* Actual executable directory; the build defines its install-relative
      * runtime directory. Explicit roots and Wine paths override that package. */
@@ -20,6 +21,11 @@ bool qa_native_runtime_create(const qa_native_runtime_options *, qa_native_runti
 void qa_native_runtime_retain(qa_native_runtime *);
 void qa_native_runtime_release(qa_native_runtime *);
 const qa_native_runner_config *qa_native_runtime_config(const qa_native_runtime *);
+/* Borrows the retained Linux x64 source monitor launcher/client after checking
+ * their actual file identities. Installation and CPU admission remain the
+ * physical child's responsibility. The runtime owner must outlive the borrow. */
+bool qa_native_runtime_profile_launch(const qa_native_runtime *,
+    struct guest_profile_guard_launch *, qa_error *);
 /* Frontend restore retains the actual owner before constructing providers.
  * The capability continuation must validate before their private import;
  * it never discovers replacement paths or reconstructs a native singleton. */

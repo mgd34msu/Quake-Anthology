@@ -38,7 +38,15 @@ bool frontend_input_settings_shutdown_prepare(frontend_input_settings *,double n
  * the native settings publication admissible. This is not a restart request
  * or a shutdown disposition. Partial captures remain owned for retry. */
 bool frontend_input_settings_release_all_prepare(frontend_input_settings *,double now_ms,qa_error *);
+/* Retain complete teardown coverage before scoped authored commands can fail.
+ * Uncovered rows are captured but remain dormant during normal release. */
+bool frontend_input_settings_reserve_all(frontend_input_settings *,qa_error *);
+/* Pure actual failed entered history plus complete physical coverage receipt. */
+bool frontend_input_settings_failed_coverage_is(const frontend_input_settings *,const qa_frontend *);
 bool frontend_input_settings_release_all_ready(const frontend_input_settings *,qa_error *);
+/* Checked native association plus empty, unentered physical histories before
+ * final fallible resource admission. Native queries remain preparation work. */
+bool frontend_input_settings_unentered_empty(const frontend_input_settings *,qa_error *);
 /* Associates the actual candidate surface after every physical ALL release
  * completes. Both native windows remain retained through checked cleanup. */
 bool frontend_input_settings_window_stage(frontend_input_settings *,qa_display_surface_ticket *,qa_error *);
@@ -58,10 +66,16 @@ bool frontend_input_settings_enter(frontend_input_settings *,qa_error *);
  * before choosing publication. */
 bool frontend_input_settings_advance(frontend_input_settings *,bool *complete,qa_error *);
 bool frontend_input_settings_ready(const frontend_input_settings *,qa_error *);
+/* Pure proof of this installed owner's actual successful native receipt and
+ * the same retained completed physical release identities. */
+bool frontend_input_settings_ready_is(const frontend_input_settings *);
 void frontend_input_settings_publish(frontend_input_settings *);
 /* Checked abort never claims reversal of an entered source/native effect.
  * A refusal retains the owner and all remaining physical parents. */
 bool frontend_input_settings_abort(frontend_input_settings *,qa_error *);
+/* Final resource cleanup after a fault may retire an actual entered native
+ * endpoint only with completed, empty physical release histories. */
+bool frontend_input_settings_abort_empty(frontend_input_settings *,qa_error *);
 /* Disposes an entered native replacement using retained completed source
  * proofs. RETIRED preserves the actual irreversible endpoint history. */
 bool frontend_input_settings_retire_entered(frontend_input_settings *,qa_error *);

@@ -18,7 +18,11 @@
 #include "native_q3_checkpoint.h"
 #include "supplies.h"
 #include "equipment_runtime.h"
+#include "world_bounds.h"
+#include "qa/game_q1_source_entities.h"
+#include "qa/game_q2_wire.h"
 
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -455,6 +459,137 @@ static bool construct_and_reserve(qa_application *application,
     return okay;
 }
 
+static bool body_source_actor(application_provider *provider,
+    const qa_actor_record *record, bool *present, uint32_t *flags,
+    bool *flags_found, qa_error *error)
+{
+    *present = false;
+    if (!provider || provider->owner != record->owner) return true;
+    if (provider->kind == APPLICATION_PROVIDER_Q1 && provider->state.q1) {
+        if (!qa_q1_source_movement_flags_read(provider->state.q1, record->id,
+            flags, flags_found, error)) return false;
+        *present = *flags_found;
+    } else if (provider->kind == APPLICATION_PROVIDER_QC && provider->state.qc.instance &&
+        record->has_source) {
+        qa_qc_slot_binding row;
+        if (!qa_qc_slot(provider->state.qc.instance, record->source_slot, &row) ||
+            (row.kind != QA_QC_SLOT_OWNED && row.kind != QA_QC_SLOT_BORROWED) ||
+            !qa_actor_id_equal(row.actor, record->id) || row.owner != record->owner ||
+            (row.kind == QA_QC_SLOT_OWNED && row.source_slot != record->source_slot)) return true;
+        if (!qa_qc_actor_movement_flags_read(provider->state.qc.instance, record->id,
+            flags, flags_found, error)) return false;
+        *present = true;
+    } else if (provider->kind == APPLICATION_PROVIDER_NATIVE && provider->state.native.host &&
+        record->has_source) {
+        qa_native_slot_binding row;
+        if (!qa_native_slot(qa_native_host_instance(provider->state.native.host),
+            record->source_slot, &row, NULL) || row.kind != QA_NATIVE_SLOT_OWNED ||
+            !qa_actor_id_equal(row.actor, record->id) || row.owner != record->owner ||
+            row.source_slot != record->source_slot) return true;
+        *present = true;
+    }
+    return true;
+}
+
+static bool body_source(qa_application *application, const qa_actor_record *record,
+    application_provider **out, uint32_t *flags, bool *flags_found, qa_error *error)
+{
+    /* Old source callbacks keep their published roster during replacement.
+     * Unpublished constructors are eligible only through their actual actor row. */
+    for (size_t i = 0; i < application->provider_count; ++i) {
+        bool present;
+        if (!body_source_actor(application->providers[i], record, &present,
+            flags, flags_found, error)) return false;
+        if (present) { *out = application->providers[i]; return true; }
+    }
+    for (application_provider *provider = application->live_providers;
+         provider; provider = provider->next_live) {
+        bool present;
+        if (!body_source_actor(provider, record, &present, flags, flags_found, error)) return false;
+        if (present) { *out = provider; return true; }
+    }
+    *out = NULL;
+    return true;
+}
+
+static bool absolute_body_bounds(void *opaque, qa_actor_id actor,
+    const qa_body_state *state, qa_bounds *out, qa_error *error)
+{
+    qa_application *application = opaque;
+    qa_world *world = application->physics ? application->physics->world : NULL;
+    qa_actor_registry *actors = qa_session_actors(application->session);
+    const qa_actor_record *record = qa_actors_get(actors, actor);
+    uint64_t serial = world ? qa_world_body_storage_serial(world, actor) : 0;
+    if (!world || (application->world && application->world != world) ||
+        qa_world_actors(world) != actors || !record || !serial)
+        return application_fail(error, QA_ERROR_NOT_FOUND,
+            "Link bounds lost their actual world or actor body");
+    qa_actor_owner owner = record->owner;
+    qa_actor_collision collision = {0};
+    qa_error collision_error = {0};
+    bool has_collision = qa_world_get_collision(world, actor, &collision, &collision_error);
+    if (!has_collision && collision_error.code != QA_OK) {
+        if (error) *error = collision_error;
+        return false;
+    }
+    record = qa_actors_get(actors, actor);
+    if (!application->physics || application->physics->world != world || !record ||
+        record->owner != owner || qa_world_body_storage_serial(world, actor) != serial)
+        return application_fail(error, QA_ERROR_NOT_FOUND,
+            "Link bounds source changed during collision observation");
+    application_provider *source = NULL;
+    uint32_t flags = 0;
+    bool found = false;
+    if (!body_source(application, record, &source, &flags, &found, error)) return false;
+    qa_bounds bounds = qa_bounds_translate(state->bounds, state->origin);
+    if (has_collision && collision.inline_model && collision.role != QA_COLLISION_TRIGGER &&
+        (state->angles.x != 0 || state->angles.y != 0 || state->angles.z != 0)) {
+        qa_vec3 extent = {fmaxf(fabsf(state->bounds.mins.x), fabsf(state->bounds.maxs.x)),
+            fmaxf(fabsf(state->bounds.mins.y), fabsf(state->bounds.maxs.y)),
+            fmaxf(fabsf(state->bounds.mins.z), fabsf(state->bounds.maxs.z))};
+        bool original_q2 = false;
+        if (source && source->kind == APPLICATION_PROVIDER_NATIVE && source->state.native.host) {
+            qa_native_profile profile = qa_native_host_profile(source->state.native.host);
+            original_q2 = profile == QA_NATIVE_Q2_GAME_API3 || profile == QA_NATIVE_Q2_GAME_API2023;
+        }
+        float radius = original_q2 ? fmaxf(extent.x, fmaxf(extent.y, extent.z)) : qa_vec_length(extent);
+        qa_vec3 offset = {radius, radius, radius};
+        bounds = (qa_bounds){qa_vec_sub(state->origin, offset), qa_vec_add(state->origin, offset)};
+    }
+    qa_vec3 pad = found && (flags & UINT32_C(256)) ? (qa_vec3){15, 15, 0} : (qa_vec3){1, 1, 1};
+    bounds.mins = qa_vec_sub(bounds.mins, pad);
+    bounds.maxs = qa_vec_add(bounds.maxs, pad);
+    if (!qa_collision_bounds_valid(bounds))
+        return application_fail(error, QA_ERROR_FORMAT, "Source link bounds overflowed");
+    *out = bounds;
+    return true;
+}
+
+static void source_body_linked(void *opaque, const qa_linked_body *linked)
+{
+    qa_application *application = opaque;
+    if (application->operation == APPLICATION_PERSISTING) return;
+    application_provider *source = application_world_provider(application, QA_ROLE_ENTITIES, "");
+    if (!source || source->kind != APPLICATION_PROVIDER_Q2 || !source->state.q2) return;
+    qa_world *world = application->physics ? application->physics->world : NULL;
+    qa_error error = {0};
+    qa_linked_body current;
+    if (!world || (application->world && application->world != world) ||
+        qa_world_actors(world) != qa_session_actors(application->session) ||
+        !qa_world_linked(world, linked->actor, &current) || current.link_count != linked->link_count ||
+        !qa_q2_wire_linked(source->state.q2, linked, &error)) {
+        if (error.code == QA_OK)
+            application_fail(&error, QA_ERROR_ARGUMENT, "Q2 Source link lost its canonical World");
+        application_fault(application, &error);
+    }
+}
+
+qa_world_hooks application_world_hooks(qa_application *application)
+{
+    return (qa_world_hooks){.context = application, .absolute_bounds = absolute_body_bounds,
+        .linked = source_body_linked};
+}
+
 static bool prepare_world(qa_application *application,
                           application_publication *publication,
                           qa_error *error)
@@ -472,8 +607,9 @@ static bool prepare_world(qa_application *application,
         return false;
 
     if (application->world == NULL) {
+        qa_world_hooks hooks = application_world_hooks(application);
         if (!qa_world_create(qa_session_actor_registry(application->session),
-                             publication->geometry, NULL,
+                             publication->geometry, &hooks,
                              &publication->initial_world, error))
             return false;
         qa_physics_services services = application_physics_services(application);
@@ -606,6 +742,7 @@ static bool publication_dispose_checked(qa_application *application,
 {
     if (publication == NULL)
         return true;
+    if (!application_startup_flow_cleanup_publication(application, publication, error)) return false;
     if (!publication->published) {
         application_startup_flow_discard_candidate(application, publication->candidate);
         application_q3_world_restart_configuration_finish(application, publication->candidate, false);
@@ -935,6 +1072,9 @@ static bool retire_map_services(qa_application *application, bool carry,
     if (application->before_world_change != NULL &&
         !application->before_world_change(application->guest_context, application, error))
         return false;
+    if (!application_acoustics_idle(application))
+        return application_fail(error, QA_ERROR_ARGUMENT,
+            "Map retirement retains an actual acoustic world receipt");
     for (size_t index = 0; index < application->provider_count; ++index) {
         application_provider *provider = application->providers[index];
         if (!provider->constructed ||
@@ -951,6 +1091,9 @@ static bool retire_map_services(qa_application *application, bool carry,
             return false;
     }
     if (terminal_world) {
+        if (!application_acoustics_idle(application))
+            return application_fail(error, QA_ERROR_ARGUMENT,
+                "Terminal world retirement acquired an acoustic receipt during source callbacks");
         /* Healthy source callbacks run with live actors. Terminal Q2 primary
          * claims can disappear only through actual canonical retirement. */
         if (application->world != NULL &&
@@ -1005,6 +1148,9 @@ static bool publish_travel(qa_application *application,
     application->routing_provider_count = routing_count;
     if (!retired_services)
         return false;
+    if (!application_acoustics_idle(application))
+        return application_fail(error, QA_ERROR_ARGUMENT,
+            "World publication retained an acoustic receipt after source shutdown");
     application_q1_signon_reset(application);
     application->map_view_ready = false;
     publication->published = true;
@@ -1059,6 +1205,9 @@ static bool publish_travel(qa_application *application,
         remember_failure(consumed, &current, "source executor and bot service retirement failed", &ok, &first);
     }
     if (publication->geometry_admission != NULL) {
+        if (!application_acoustics_idle(application))
+            return application_fail(error, QA_ERROR_ARGUMENT,
+                "Geometry publication retains an actual acoustic world receipt");
         current = (qa_error){0};
         bool committed = qa_world_geometry_admission_commit(
             publication->geometry_admission, &current);
@@ -1096,6 +1245,9 @@ static bool publish_travel(qa_application *application,
     free(old_mode_ids);
 
     if (geometry_published) {
+        if (!application_acoustics_idle(application))
+            return application_fail(error, QA_ERROR_ARGUMENT,
+                "Geometry release retains an actual acoustic world receipt");
         qa_collision_geometry *old_geometry = application->geometry;
         qa_resource *old_resource = application->map_resource;
         application->geometry = publication->geometry;
@@ -1155,6 +1307,9 @@ bool application_publication_retire(qa_application *application,
             terminal_world = true;
     if (!retire_map_services(application, false, terminal_world, error))
         return false;
+    if (!application_acoustics_idle(application))
+        return application_fail(error, QA_ERROR_ARGUMENT,
+            "World retirement retained an acoustic receipt after its actual callback");
     application->map_view_ready = false;
     if (!terminal_world && application->world != NULL &&
         !qa_session_retire_world(application->session, error))
@@ -1192,9 +1347,9 @@ void application_publication_publish(qa_application *application,
 {
     (void)previous;
     application->publication_started = true;
-    if (application->command_generation != UINT64_MAX)
-        ++application->command_generation;
     if (candidate == NULL) {
+        if (application->command_generation != UINT64_MAX)
+            ++application->command_generation;
         application->publication_started = false;
         return;
     }
@@ -1205,10 +1360,14 @@ void application_publication_publish(qa_application *application,
     if (!ok)
         qa_error_set(&error, QA_ERROR_ARGUMENT, 0,
                      "configuration committed without its publication ticket");
-    else if (!publication->travel) {
+    else
+        ok = application_startup_flow_consume_publication(application, publication, candidate, &error);
+    if (ok && application->command_generation != UINT64_MAX)
+        ++application->command_generation;
+    if (ok && !publication->travel) {
         publish_roster(application, publication);
         ++application->publication_generation;
-    } else {
+    } else if (ok) {
         ok = publish_travel(application, publication, &error);
     }
     if (publication != NULL) {

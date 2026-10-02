@@ -70,6 +70,10 @@ bool qa_actors_allocate_source(qa_actor_registry *registry, qa_actor_owner owner
                                qa_actor_id *out, qa_error *error);
 bool qa_actors_release(qa_actor_registry *registry, qa_actor_id actor,
                        qa_error *error);
+/* Changes only descriptive metadata on the same live identity. Source-bound
+ * records retain their indexed owner. No release callback may be active. */
+bool qa_actors_set_metadata(qa_actor_registry *, qa_actor_id,
+                           qa_actor_owner, qa_actor_definition, qa_error *);
 
 /* Record addresses remain fixed until destruction. Contents belong to the
  * current occupant and change on release/reuse; retain IDs for authority. */

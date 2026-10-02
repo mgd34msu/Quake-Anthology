@@ -1,12 +1,235 @@
-#include "internal.h"
+#include "files.h"
 
-void q3_file_close(q3_file *file)
+struct qa_q3_host_write_file {
+    qa_fs_stream *stream;
+    char *path;
+    qa_fs_stream_mode mode;
+    uint64_t position;
+    qa_fs_stream_reference reference;
+};
+
+bool q3_write_view_root(const qa_q3_host_options *options, qa_fs_root **out,
+                         qa_error *error)
+{
+    if (!options || !out)
+        return q3_fail(error, QA_ERROR_ARGUMENT, 0, "Q3 write view requires host options and output");
+    qa_fs_root *legacy = NULL;
+    if (options->writable_mount) {
+        bool found = false;
+        for (size_t i = 0; i < qa_vfs_mount_count(options->mounts); ++i) {
+            qa_vfs_mount_info info;
+            if (!qa_vfs_mount_at(options->mounts, i, &info) || info.id != options->writable_mount) continue;
+            if (info.is_archive || !info.writable)
+                return q3_fail(error, QA_ERROR_ARGUMENT, 0, "Q3 writable mount is not a writable directory");
+            legacy = qa_vfs_mount_root(options->mounts, info.id);
+            found = legacy != NULL;
+            break;
+        }
+        if (!found)
+            return q3_fail(error, QA_ERROR_ARGUMENT, 0, "Q3 writable mount lacks its retained native root");
+    }
+    qa_fs_root *root = options->write_view.root;
+    const qa_fs_stream_resolver *resolver = &options->write_view.resolver;
+    if ((resolver->context != NULL) != (resolver->root != NULL) ||
+        ((resolver->context || resolver->root) && !root))
+        return q3_fail(error, QA_ERROR_ARGUMENT, 0, "Q3 write view has an incomplete native resolver");
+    if (root && legacy && !qa_fs_root_same_object(root, legacy))
+        return q3_fail(error, QA_ERROR_ARGUMENT, 0, "Q3 write view and legacy writable mount differ");
+    *out = root ? root : legacy;
+    return true;
+}
+
+static bool open_write_file(qa_fs_root *root, const char *path, qa_fs_stream_mode mode,
+                             qa_q3_host_write_file **out,
+                             qa_fs_stream_open_stage *stage, qa_error *error)
+{
+    if (stage) *stage = QA_FS_STREAM_OPEN_PREPARE;
+    if (out) *out = NULL;
+    if (!root || !out || mode < QA_FS_STREAM_WRITE || mode > QA_FS_STREAM_APPEND_SYNC ||
+        !path)
+        return q3_fail(error, QA_ERROR_ARGUMENT, 0, "Invalid Q3 writable stream owner or mode");
+    char *normalized = qa_vfs_normalize_path(path, error);
+    if (!normalized) return false;
+    qa_q3_host_write_file *file = calloc(1, sizeof(*file));
+    if (!file) {
+        free(normalized);
+        return q3_fail(error, QA_ERROR_MEMORY, 0, "Allocating Q3 writable stream");
+    }
+    file->path = normalized;
+    file->mode = mode;
+    /* Native writes are unbuffered, including the source append-sync mode. */
+    qa_fs_stream_mode native_mode = mode == QA_FS_STREAM_APPEND_SYNC ? QA_FS_STREAM_APPEND : mode;
+    uint64_t size = 0;
+    if (!qa_fs_root_stream_open_result(root, normalized, native_mode, false,
+                                        &file->stream, &size, stage, error)) {
+        q3_write_file_close(file);
+        return false;
+    }
+    file->position = mode == QA_FS_STREAM_WRITE ? 0 : size;
+    if (!qa_fs_stream_reference_read(file->stream, &file->reference)) {
+        q3_write_file_close(file);
+        return q3_fail(error, QA_ERROR_FORMAT, 0, "Q3 writable stream lacks its actual native reference");
+    }
+    file->reference.path = file->path;
+    *out = file;
+    return true;
+}
+
+bool q3_write_file_open(qa_fs_root *root, const char *path, qa_fs_stream_mode mode,
+                         qa_q3_host_write_file **out,
+                         qa_fs_stream_open_stage *stage, qa_error *error)
+{
+    return open_write_file(root, path, mode, out, stage, error);
+}
+
+bool q3_write_file_resume(const qa_q3_host_write_view *view, const q3_write_file_state *state,
+                           qa_q3_host_write_file **out, qa_error *error)
+{
+    if (out) *out = NULL;
+    if (!view || !view->root || !state || !out || !state->path || state->position > INT64_MAX ||
+        state->mode < QA_FS_STREAM_WRITE || state->mode > QA_FS_STREAM_APPEND_SYNC ||
+        ((view->resolver.context != NULL) != (view->resolver.root != NULL)))
+        return q3_fail(error, QA_ERROR_FORMAT, 0, "Q3 writable continuation lacks its real view, reference or cursor");
+    if (!qa_fs_stream_reference_valid(&state->reference, error)) return false;
+    qa_fs_stream_mode native_mode = state->mode == QA_FS_STREAM_APPEND_SYNC ? QA_FS_STREAM_APPEND : state->mode;
+    if (state->reference.mode != native_mode || strcmp(state->path, state->reference.path))
+        return q3_fail(error, QA_ERROR_FORMAT, 0, "Q3 writable continuation reference differs from its source state");
+    char *normalized = qa_vfs_normalize_path(state->path, error);
+    if (!normalized) return false;
+    if (strcmp(normalized, state->path)) {
+        free(normalized);
+        return q3_fail(error, QA_ERROR_FORMAT, 0, "Q3 writable continuation path is not normalized");
+    }
+    qa_q3_host_write_file *file = calloc(1, sizeof(*file));
+    if (!file) {
+        free(normalized);
+        return q3_fail(error, QA_ERROR_MEMORY, 0, "Allocating resumed Q3 writable stream");
+    }
+    file->path = normalized; file->mode = state->mode; file->position = state->position;
+    file->reference = state->reference; file->reference.path = file->path;
+    uint64_t size;
+    bool mapped = view->resolver.context && view->resolver.root;
+    bool ok = mapped ? qa_fs_stream_resume_mapped(view->root, &file->reference,
+        &view->resolver, &file->stream, &size, error) :
+        qa_fs_stream_resume(view->root, &file->reference, &file->stream, &size, error);
+    if (!ok) {
+        q3_write_file_close(file);
+        return false;
+    }
+    *out = file;
+    return true;
+}
+
+bool q3_write_file_write(qa_q3_host_write_file *file, qa_bytes bytes,
+                          q3_write_result *result, qa_error *error)
+{
+    if (result) *result = (q3_write_result){0};
+    if (!file || !result || (!bytes.data && bytes.size) || bytes.size > (size_t)PTRDIFF_MAX ||
+        (file->mode == QA_FS_STREAM_WRITE &&
+         (file->position > INT64_MAX || bytes.size > (uint64_t)INT64_MAX - file->position)))
+        return q3_fail(error, QA_ERROR_ARGUMENT, 0, "Invalid Q3 writable transfer or position");
+    if (!bytes.size) return true;
+    size_t total = 0;
+    bool retried = false;
+    while (total < bytes.size) {
+        size_t amount = 0;
+        qa_error local = {0};
+        bool ok = qa_fs_stream_write_some(file->stream, (qa_bytes){bytes.data + total, bytes.size - total},
+                                            file->position, &amount, &local);
+        if (!ok && local.code != QA_ERROR_IO && local.code != QA_ERROR_NOT_FOUND) {
+            if (error) *error = local;
+            return false;
+        }
+        if (!amount) {
+            if (retried) {
+                result->written = 0;
+                result->zero_retry_exhausted = true;
+                return true;
+            }
+            retried = true;
+            continue;
+        }
+        total += amount;
+        result->written = total;
+        if (file->mode == QA_FS_STREAM_WRITE) file->position += amount;
+        else if (!qa_fs_stream_size(file->stream, &file->position, error)) return false;
+    }
+    return true;
+}
+
+bool q3_write_file_seek(qa_q3_host_write_file *file, int64_t offset,
+                         qa_vfs_seek_origin origin, qa_error *error)
+{
+    if (!file || origin < QA_VFS_SEEK_SET || origin > QA_VFS_SEEK_END)
+        return q3_fail(error, QA_ERROR_ARGUMENT, 0, "Invalid Q3 writable seek");
+    uint64_t length;
+    if (!qa_fs_stream_size(file->stream, &length, error)) return false;
+    uint64_t base = origin == QA_VFS_SEEK_CURRENT ? file->position :
+        origin == QA_VFS_SEEK_END ? length : 0;
+    uint64_t magnitude = offset < 0 ? (uint64_t)(-(offset + 1)) + 1 : (uint64_t)offset;
+    if ((offset < 0 && magnitude > base) ||
+        (offset >= 0 && (base > INT64_MAX || magnitude > (uint64_t)INT64_MAX - base)))
+        return q3_fail(error, QA_ERROR_ARGUMENT, 0, "Q3 writable seek is outside the supported range");
+    file->position = offset < 0 ? base - magnitude : base + magnitude;
+    return true;
+}
+
+q3_write_file_state q3_write_file_capture(const qa_q3_host_write_file *file)
+{
+    return file ? (q3_write_file_state){file->path, file->mode, file->position, file->reference} :
+        (q3_write_file_state){0};
+}
+
+bool q3_write_file_portable_ready(const qa_q3_host_write_view *view,
+    const qa_q3_host_write_file *file, qa_error *error)
+{
+    if (!view || !view->root || !view->resolver.context || !view->resolver.root ||
+        !file || !file->stream || !file->path || file->position > INT64_MAX ||
+        file->mode < QA_FS_STREAM_WRITE || file->mode > QA_FS_STREAM_APPEND_SYNC ||
+        !qa_fs_root_same_object(view->root, qa_fs_stream_root(file->stream)))
+        return q3_fail(error, QA_ERROR_ARGUMENT, 0, "Portable writable file lost its retained mapped root or stream");
+    qa_fs_stream_reference current;
+    if (!qa_fs_stream_reference_valid(&file->reference, error)) return false;
+    if (!qa_fs_stream_reference_read(file->stream, &current))
+        return q3_fail(error, QA_ERROR_FORMAT, 0, "Portable writable file lacks its current native receipt");
+    if (!qa_fs_stream_reference_valid(&current, error)) return false;
+    qa_fs_stream_mode native_mode = file->mode == QA_FS_STREAM_APPEND_SYNC ?
+        QA_FS_STREAM_APPEND : file->mode;
+    if (current.mode != native_mode || file->reference.mode != native_mode ||
+        strcmp(current.path, file->path) || strcmp(file->reference.path, file->path))
+        return q3_fail(error, QA_ERROR_FORMAT, 0, "Portable writable file differs from its source path or mode");
+    /* Resume already admitted the saved origin through the installed mapper.
+     * Its historic root/object may differ from the current external file. */
+    return true;
+}
+
+bool q3_write_file_close_checked(qa_q3_host_write_file *file, qa_error *error)
+{
+    if (!file) return true;
+    bool ok = qa_fs_stream_close_checked(file->stream, error);
+    free(file->path);
+    free(file);
+    return ok;
+}
+
+void q3_write_file_close(qa_q3_host_write_file *file)
+{
+    (void)q3_write_file_close_checked(file, NULL);
+}
+
+bool q3_file_close_checked(q3_file *file, qa_error *error)
 {
     qa_resource_release(file->resource);
-    qa_vfs_file_close(file->writable);
+    bool ok = q3_write_file_close_checked(file->writable, error);
     qa_buffer_free(&file->restored_bytes);
     free(file->restored_path);
     *file = (q3_file){0};
+    return ok;
+}
+
+void q3_file_close(q3_file *file)
+{
+    (void)q3_file_close_checked(file, NULL);
 }
 
 static qa_bytes file_bytes(const q3_file *file)
@@ -64,7 +287,7 @@ static bool open_file(q3_call *call, int32_t *result, qa_error *error)
     int32_t mode = q3_integer(call, 2);
     if (mode < 0 || mode > 3)
         return q3_fail(error, QA_ERROR_ARGUMENT, 0, "FSH_FOpenFile: bad mode");
-    if (!destination && mode)
+    if (host->options.role == QA_QVM_GAME && !destination && mode)
         return q3_fail(error, QA_ERROR_ARGUMENT, 0, "writable Q3 file open needs a handle output");
     uint8_t check[4];
     if (host->options.role == QA_QVM_GAME && destination &&
@@ -75,6 +298,10 @@ static bool open_file(q3_call *call, int32_t *result, qa_error *error)
         !q3_read(call, destination, check, sizeof(check), error)) return false;
     qa_buffer name = {0};
     if (!q3_string(call, call->arguments[0], &name, error)) return false;
+    if (!destination && mode) {
+        qa_buffer_free(&name);
+        return q3_fail(error, QA_ERROR_ARGUMENT, 0, "writable Q3 file open needs a handle output");
+    }
     const char *path = (const char *)name.data;
     q3_file file = {0};
     bool ok = true;
@@ -115,16 +342,18 @@ static bool open_file(q3_call *call, int32_t *result, qa_error *error)
                 }
             }
         }
-    } else if (!host->options.writable_mount) {
+    } else if (!host->options.write_view.root) {
         ok = q3_fail(error, QA_ERROR_UNSUPPORTED, 0, "Q3 filesystem has no writable owner");
     } else {
         if (!free_slot(host, error)) ok = false;
         if (ok) {
-            qa_vfs_write_mode write_mode = mode == 1 ? QA_VFS_WRITE : mode == 2 ? QA_VFS_APPEND : QA_VFS_APPEND_SYNC;
+            qa_fs_stream_mode write_mode = mode == 1 ? QA_FS_STREAM_WRITE :
+                mode == 2 ? QA_FS_STREAM_APPEND : QA_FS_STREAM_APPEND_SYNC;
             qa_error local = {0};
-            ok = qa_vfs_file_open(host->options.mounts, host->options.writable_mount, path,
-                                   write_mode, &file.writable, &local);
-            if (!ok && local.code == QA_ERROR_IO) {
+            qa_fs_stream_open_stage stage;
+            ok = q3_write_file_open(host->options.write_view.root, path,
+                                     write_mode, &file.writable, &stage, &local);
+            if (!ok && stage == QA_FS_STREAM_OPEN_NATIVE) {
                 *result = -1;
                 ok = q3_write_word(call, destination, 0, error);
             } else if (!ok) {
@@ -195,10 +424,15 @@ static bool write_file(q3_call *call, int32_t *result, qa_error *error)
             call->host->options.common.print(call->host->options.common.context,
                                               "FS_Write: 0 bytes written\n");
     } else if (ok) {
-        size_t written;
-        ok = qa_vfs_file_write(file->writable, bytes, &written, error);
+        q3_write_result transfer;
+        ok = q3_write_file_write(file->writable, bytes, &transfer, error);
+        if (ok && transfer.zero_retry_exhausted) {
+            if (call->host->options.common.print)
+                call->host->options.common.print(call->host->options.common.context,
+                                                  "FS_Write: 0 bytes written\n");
+        }
         if (ok && call->native && call->native_profile == QA_NATIVE_QUAKE_LIVE_GAME_API10)
-            *result = (int32_t)written;
+            *result = (int32_t)transfer.written;
     }
     qa_buffer_free(&owned);
     return ok;
@@ -215,8 +449,11 @@ static bool seek_file(q3_call *call, int32_t *result, qa_error *error)
         qa_vfs_seek_origin translated = origin == 0 ? QA_VFS_SEEK_CURRENT :
                                             origin == 1 ? QA_VFS_SEEK_END : QA_VFS_SEEK_SET;
         qa_error local = {0};
-        bool ok = qa_vfs_file_seek(file->writable, displacement, translated, &local);
-        if (!ok && local.code == QA_ERROR_IO) { *result = -1; return true; }
+        bool ok = q3_write_file_seek(file->writable, displacement, translated, &local);
+        if (!ok && (local.code == QA_ERROR_IO || local.code == QA_ERROR_NOT_FOUND || local.code == QA_ERROR_ARGUMENT)) {
+            *result = -1;
+            return true;
+        }
         if (!ok && error) *error = local;
         return ok;
     }
@@ -328,7 +565,7 @@ q3_service_result q3_files(q3_call *call, int32_t *result, qa_error *error)
         int32_t slot = q3_integer(call, 0);
         if (slot < 0 || slot >= 64)
             ok = q3_fail(error, QA_ERROR_ARGUMENT, (size_t)(uint32_t)slot, "FS_FileForHandle: out of range");
-        else { if (slot) q3_file_close(&call->host->files[slot]); ok = true; }
+        else ok = !slot || q3_file_close_checked(&call->host->files[slot], error);
     }
     return ok ? Q3_COMPLETED : Q3_FAILED;
 }

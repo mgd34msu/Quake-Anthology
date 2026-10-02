@@ -6,7 +6,7 @@
 
 bool qa_q3_presentation_idle(const qa_q3_presentation *p)
 {
-    return p && !p->busy && qa_q3_assets_idle(p->options.assets);
+    return p && !p->busy && (!p->frame || !p->frame->source_pending) && qa_q3_assets_idle(p->options.assets);
 }
 static bool binding_observable(const qa_q3_presentation *p)
 {
@@ -150,6 +150,8 @@ bool qa_q3_presentation_create(const qa_q3_presentation_options *options,
 bool qa_q3_presentation_destroy(qa_q3_presentation *p, qa_error *error)
 {
     if (!p) return true;
+    if (p->frame && p->frame->source_pending)
+        return q3p_fail(error, QA_ERROR_ARGUMENT, "Q3 presentation retains unfinished Source draw work");
     if (!q3p_begin(p, error)) return false;
     bool ok = true;
     for (uint32_t i = 0; i < 16; ++i) {

@@ -91,6 +91,10 @@ void qa_media_library_destroy(qa_media_library *);
 void qa_media_library_trim(qa_media_library *);
 bool qa_media_library_load(qa_media_library *, qa_vfs *, const char *path, qa_cinematic_asset **out,
                            qa_error *);
+/* Shader registration opens its authored provider path before qualifying the
+ * RoQ/CIN/OGV format, matching material directive evaluation order. */
+bool qa_media_library_load_shader(qa_media_library *, qa_vfs *, const char *path,
+    qa_cinematic_asset **out, qa_error *);
 void qa_cinematic_asset_retain(qa_cinematic_asset *);
 void qa_cinematic_asset_release(qa_cinematic_asset *);
 qa_cinematic_source qa_cinematic_asset_source(const qa_cinematic_asset *);
@@ -118,6 +122,16 @@ bool qa_cinematic_audio_rebind_ready(qa_cinematic *, qa_audio_engine *, uint64_t
 void qa_cinematic_audio_rebind(qa_cinematic *, qa_audio_engine *, uint64_t bus);
 bool qa_cinematic_frame_rebind_ready(const qa_cinematic *, const qa_scene_frame *current, qa_error *);
 void qa_cinematic_frame_rebind(qa_cinematic *, const qa_scene_frame *current, const qa_scene_frame *destination);
+typedef struct qa_cinematic_publication {
+    const qa_scene_image *image;
+    const qa_scene_frame *frame;
+    uint64_t revision, sequence;
+} qa_cinematic_publication;
+/* Pure retained owner metadata, available on a qualified cold candidate.
+ * UINT64_MAX marks an image that has not uploaded a decoded picture. */
+bool qa_cinematic_publication_read(const qa_cinematic *, qa_cinematic_publication *);
+bool qa_cinematic_material_owner_is(const qa_cinematic *, const qa_cinematic_asset *,
+    const char *path, uint64_t target, qa_media_clock);
 
 /* Publication appends an immutable image revision barrier. The scene owns a
  * reference until reset, allowing decoding to continue after submission. */
@@ -136,15 +150,16 @@ bool qa_cinematic_pixel_rect(qa_scene_rect_f, qa_scene_rect viewport, qa_scene_r
 typedef struct qa_material_movies qa_material_movies;
 qa_material_movies *qa_material_movies_create(qa_scene_resources *, qa_error *);
 void qa_material_movies_destroy(qa_material_movies *);
-/* Takes ownership of a material-target movie on success. The initial image
- * identity remains the lookup key even if later video dimensions change. */
+/* Takes ownership of a material-target movie on success. Its initial image is
+ * transparent until reached publication, even if the decoder has a picture.
+ * That identity remains the lookup key if later video dimensions change. */
 bool qa_material_movies_add(qa_material_movies *, qa_cinematic *, qa_scene_frame *,
                             const qa_scene_image **initial_image, qa_error *);
 bool qa_material_movies_remove(qa_material_movies *, uint64_t initial_image_identity, qa_error *);
 bool qa_material_movies_enable(qa_material_movies *, uint64_t initial_image_identity, bool,
                                qa_error *);
-/* Advance and publish once at global frame start. Resolution in world/model
- * submission then only looks up retained images and performs no decoding. */
+/* Bind the actual submitted frame without advancing unseen movies.
+ * Each reached video stage advances and publishes its own playback. */
 bool qa_material_movies_prepare(qa_material_movies *, qa_scene_frame *, qa_error *);
 const qa_scene_image *qa_material_movies_resolve(void *, uint64_t initial_image_identity,
                                                  double seconds, qa_error *);

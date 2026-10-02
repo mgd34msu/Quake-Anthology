@@ -1,4 +1,5 @@
 #include "native_q3_client_internal.h"
+#include "qa/audio_music_prepare.h"
 #include "save_private.h"
 #include "qa/q3_assets_save.h"
 #include "qa/q3_presentation_save.h"
@@ -63,7 +64,10 @@ bool frontend_native_q3_checkpoint(frontend_native_q3 *row,const q3n_client_refs
         !row->frontend->capture || !frontend_native_q3_current(row))return false;
     qa_buffer children[9]={0}; frontend_native_q3_import state={0};
     frontend_native_q3 copy=*row; qa_source_save_io private={0},io={0};
-    qa_audio_music *music=row->view.music_attached?qa_audio_engine_bus_music(row->frontend->audio,row->view.identity):row->view.music;
+    qa_audio_music *attached=qa_audio_engine_bus_music(row->frontend->audio,row->view.identity);
+    if (attached && attached!=row->view.music) return false;
+    copy.view.music_attached=attached!=NULL;
+    qa_audio_music *music=row->view.music;
     bool ok=qa_native_q3_wire_reader_checkpoint(row->view.reader,children+6,e) &&
         qa_native_q3_client_checkpoint(row->view.client,children,e) &&
         q3n_native_checkpoint(row->view.core,refs,children+1,e) &&
@@ -102,7 +106,7 @@ bool frontend_native_q3_restore(qa_frontend *f,frontend_native_q3_import *state,
     qa_source_save_dispose(&io);
     qa_native_q3_client_services services={0}; qa_native_q3_client_basis basis;
     q3n_native_options options;
-    qa_audio_music *music=NULL;
+    qa_audio_music *music=NULL; bool music_owned=false;
     if(ok && candidate.view.music_attached) {
         qa_buffer bus={0};
         music=qa_audio_engine_bus_music(f->audio,row->view.identity);
@@ -110,6 +114,8 @@ bool frontend_native_q3_restore(qa_frontend *f,frontend_native_q3_import *state,
             bus.size==state->music.size && !memcmp(bus.data,state->music.data,bus.size);
         qa_buffer_free(&bus);
     } else if(ok && state->music.size)ok=qa_audio_music_restore(state->music,&music,e);
+    if (ok && candidate.view.music_attached) ok=qa_audio_music_retain(music,e);
+    music_owned=ok && music!=NULL;
     if(ok)ok=qa_native_q3_wire_reader_restore(row->view.reader,state->reader,e) &&
         frontend_native_q3_service_options(row,&services,e) &&
         qa_native_q3_client_source_basis_read(f->application,&services,&basis,e) &&
@@ -129,13 +135,14 @@ bool frontend_native_q3_restore(qa_frontend *f,frontend_native_q3_import *state,
     if(ok) {
         row->view.listener=candidate.view.listener; row->view.has_listener=candidate.view.has_listener;
         row->view.music_attached=candidate.view.music_attached;
-        if(!row->view.music_attached)qa_audio_music_destroy(row->view.music);
+        qa_audio_music_release(row->view.music);
         row->view.music=music;
         free(row->music_intro); free(row->music_loop); free(row->disconnect);
         row->music_intro=candidate.music_intro; row->music_loop=candidate.music_loop; row->disconnect=candidate.disconnect;
         row->music_looping=candidate.music_looping; row->constructed=true; row->restoring=false;
+        ok=frontend_native_q3_music_restore_bind(row,e);
     } else {
-        if(!candidate.view.music_attached)qa_audio_music_destroy(music);
+        if (music_owned) qa_audio_music_release(music);
         free(candidate.music_intro); free(candidate.music_loop); free(candidate.disconnect);
     }
     return ok;

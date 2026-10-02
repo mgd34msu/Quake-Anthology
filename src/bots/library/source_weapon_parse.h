@@ -11,7 +11,8 @@ typedef struct bot_weapon_parser_host {
 } bot_weapon_parser_host;
 /* The owner has opened PC and allocated the true hunk before entering. It
  * retains reached PC/allocation state when a service or byte operation fails.
- * Only a successful grammar-error report sets source_failure. */
+ * Only a successful grammar-error report sets source_failure. The separate
+ * own_failure marks reached pure byte/conversion failures, never callbacks. */
 bool bot_weapon_parse(qa_script *,const char *,uint32_t,uint32_t,
-    const bot_weapon_config_record *,const bot_weapon_parser_host *,bool *,qa_error *);
+    const bot_weapon_config_record *,const bot_weapon_parser_host *,bool *,bool *,qa_error *);
 #endif

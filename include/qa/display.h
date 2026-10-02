@@ -4,6 +4,17 @@
 #include "qa/common.h"
 
 typedef struct qa_display qa_display;
+typedef struct qa_display_gamma qa_display_gamma;
+typedef struct qa_display_gamma_ticket qa_display_gamma_ticket;
+typedef enum qa_display_gamma_kind {
+    QA_DISPLAY_GAMMA_ACCEPTED, QA_DISPLAY_GAMMA_UNSUPPORTED,
+    QA_DISPLAY_GAMMA_UNAVAILABLE, QA_DISPLAY_GAMMA_RETIRED
+} qa_display_gamma_kind;
+typedef struct qa_display_gamma_capability {
+    qa_display_gamma_kind kind;
+    int32_t display_index;
+    char display_name[256], reason[256];
+} qa_display_gamma_capability;
 
 typedef enum qa_display_backend {
     QA_DISPLAY_CPU,
@@ -74,5 +85,27 @@ bool qa_display_present_cpu(void *display, qa_bytes rgba, uint32_t width,
                             uint32_t height, qa_error *error);
 bool qa_display_capture_cpu(qa_display *display, qa_buffer *out,
                             uint32_t *width, uint32_t *height, qa_error *error);
+
+/* One actual native gamma window in the single-display/focused profile.
+ * Acceptance is Get+Set success, not a claim of physical hardware readback.
+ * Failed checked release retains the lease and its display for retry. */
+bool qa_display_gamma_begin(qa_display *, bool ignore_hardware, qa_display_gamma **, qa_error *);
+bool qa_display_gamma_read(qa_display_gamma *, qa_display_gamma_capability *, qa_error *);
+bool qa_display_gamma_capability_read(const qa_display_gamma *, qa_display_gamma_capability *);
+bool qa_display_gamma_apply(qa_display_gamma *, float gamma, qa_error *);
+bool qa_display_gamma_release(qa_display_gamma **, qa_error *);
+/* Actual native-window aliases used by a detached display continuation. The
+ * installed native owner keeps the lease alive through checked handoff. */
+qa_display_gamma *qa_display_gamma_borrow(const qa_display *);
+bool qa_display_gamma_parent_is(const qa_display_gamma *, const qa_display *);
+/* Pure proof of an actually applied native ramp on this exact window lease. */
+bool qa_display_gamma_applied_is(const qa_display *);
+bool qa_display_gamma_prepare(qa_display_gamma *, qa_display *target, float gamma,
+    qa_display_gamma_ticket **, qa_error *);
+bool qa_display_gamma_ready(qa_display_gamma_ticket *, qa_error *);
+bool qa_display_gamma_ready_is(const qa_display_gamma_ticket *);
+void qa_display_gamma_publish(qa_display_gamma_ticket *);
+bool qa_display_gamma_abort(qa_display_gamma_ticket **, qa_error *);
+bool qa_display_gamma_finish(qa_display_gamma_ticket **, qa_error *);
 
 #endif

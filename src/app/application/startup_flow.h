@@ -10,6 +10,12 @@ application_provider *application_startup_flow_provider(const qa_application *, 
 application_publication *application_startup_flow_take_publication(qa_application *,
     const qa_launch_snapshot *, const qa_launch_snapshot *);
 void application_startup_flow_discard_candidate(qa_application *, const qa_launch_snapshot *);
+bool application_startup_flow_configuration_idle(const qa_application *);
+bool application_startup_flow_retirement_ready(const qa_application *, const qa_launch_snapshot *,
+    const qa_cvars_edit *, qa_error *);
+bool application_startup_flow_consume_publication(qa_application *, application_publication *,
+    const qa_launch_snapshot *, qa_error *);
+bool application_startup_flow_cleanup_publication(qa_application *, application_publication *, qa_error *);
 bool application_startup_flow_release_provider(application_provider *, qa_error *);
 bool application_startup_script_read(application_provider *, const qa_command_context *,
     const char *, qa_bytes *, void **, qa_error *);
@@ -49,6 +55,10 @@ bool application_provider_startup_source_at(application_provider *, size_t,
     qa_application_startup_source *, bool *found, qa_error *);
 qa_cvars *application_startup_cvar_owner(application_provider *, qa_console *,
     const qa_command_context *, const char *);
+bool application_startup_console_cvar_edit(qa_application *, qa_console *,
+    const qa_command_context *, qa_cvars *, qa_cvars_edit **, qa_error *);
+bool application_startup_cvar_edit(application_provider *, qa_console *,
+    const qa_command_context *, qa_cvars *, qa_cvars_edit **, qa_error *);
 bool application_startup_visible_cvars(application_provider *, qa_console *,
     const qa_command_context *, size_t, qa_cvars **);
 bool application_startup_source_scripts(const application_provider *);

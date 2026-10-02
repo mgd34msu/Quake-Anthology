@@ -112,6 +112,10 @@ typedef struct qa_bot_chat_services {
     void *context;
     bool (*command)(void *, int32_t client, const char *, qa_error *);
     void (*diagnostic)(void *, qa_script_severity, const char *);
+    bool (*report)(void *,qa_script_severity,const char *,qa_error *);
+    bool (*time)(void *,float *,qa_error *);
+    bool (*developer)(void *);
+    bool (*reload_characters)(void *);
     bool (*test_initial)(void *);
     bool (*test_reply)(void *);
     qa_bot_random_source random;
@@ -128,6 +132,13 @@ typedef struct qa_bot_chat_options {
  * capacity selects the native unbounded pool; source runtime supplies >=2. */
 typedef struct qa_bot_chat_system qa_bot_chat_system;
 typedef struct qa_bot_chat qa_bot_chat;
+/* Each read occurs at the actual source stage. maximum_bytes == SIZE_MAX
+ * requests the complete C-string value. Other reads may stop at the first
+ * different byte. The returned span is borrowed until the next callback. */
+typedef struct qa_bot_chat_text_source {
+    void *context;
+    bool (*read)(void *,size_t maximum_bytes,qa_bytes *,qa_error *);
+} qa_bot_chat_text_source;
 bool qa_bot_chat_system_create(const qa_bot_chat_services *, const qa_bot_chat_options *,
                                qa_bot_chat_system **, qa_error *);
 void qa_bot_chat_system_destroy(qa_bot_chat_system *);
@@ -135,19 +146,33 @@ bool qa_bot_chat_system_active(const qa_bot_chat_system *);
 bool qa_bot_chat_system_configure(qa_bot_chat_system *, const qa_bot_chat_options *, qa_error *);
 bool qa_bot_chat_create(qa_bot_chat_system *, int32_t client, qa_bot_chat **, qa_error *);
 void qa_bot_chat_destroy(qa_bot_chat *);
+/* Source FreeChatState performs reload-dependent initial freeing, console
+ * unlinking and the actual 316-byte heap free. destroy only disposes the
+ * native borrowed view and is used by pure owner teardown. */
+bool qa_bot_chat_free(qa_bot_chat *,qa_error *);
 bool qa_bot_chat_set_initial(qa_bot_chat *, qa_bot_chat_asset *, qa_error *);
 bool qa_bot_chat_load_initial(qa_bot_chat *, qa_bot_library *, const char *path, const char *name,
                               bool developer, int32_t *source_result, qa_error *);
+bool qa_bot_chat_load_initial_from(qa_bot_chat *,qa_bot_library *,
+    const qa_bot_chat_text_source *path,const qa_bot_chat_text_source *name,
+    bool developer,int32_t *,qa_error *);
 bool qa_bot_chat_check_integrity(qa_bot_chat_system *, qa_bot_chat_asset *, qa_error *);
 void qa_bot_chat_set_name(qa_bot_chat *, const char *, int32_t client);
 void qa_bot_chat_set_identity(qa_bot_chat *, const char *, const int32_t *client);
+bool qa_bot_chat_set_identity_from(qa_bot_chat *,const qa_bot_chat_text_source *,const int32_t *,qa_error *);
 void qa_bot_chat_set_gender(qa_bot_chat *, uint32_t);
 size_t qa_bot_chat_initial_count(const qa_bot_chat *, const char *);
+bool qa_bot_chat_initial_count_source(const qa_bot_chat *,const char *,int32_t *,qa_error *);
+bool qa_bot_chat_initial_count_from(const qa_bot_chat *,const qa_bot_chat_text_source *,int32_t *,qa_error *);
 bool qa_bot_chat_initial(qa_bot_chat *, const char *, uint32_t context,
                          const char *const variables[8], float time, bool *found, qa_error *);
+bool qa_bot_chat_initial_from(qa_bot_chat *,const qa_bot_chat_text_source *,uint32_t,
+    const qa_bot_chat_text_source variables[8],float,bool *,qa_error *);
 bool qa_bot_chat_reply_message(qa_bot_chat *, const char *, uint32_t message_context,
                                uint32_t variable_context, const char *const variables[8],
                                float time, bool *found, qa_error *);
+bool qa_bot_chat_reply_message_from(qa_bot_chat *,const qa_bot_chat_text_source *,uint32_t,uint32_t,
+    const qa_bot_chat_text_source variables[8],float,bool *,qa_error *);
 bool qa_bot_chat_find_match(const qa_bot_chat_system *, const char *, uint32_t, qa_bot_chat_match *,
                             bool *, qa_error *);
 bool qa_bot_chat_match_variable(const qa_bot_chat_match *, uint32_t, char *, size_t, qa_error *);
@@ -182,6 +207,7 @@ bool qa_bot_chat_unify_whitespace_into(const qa_bot_chat_text_io *, qa_error *);
 bool qa_bot_chat_replace_synonyms_into(qa_bot_chat_system *, const qa_bot_chat_text_io *,
                                        uint32_t context, qa_error *);
 const char *qa_bot_chat_message(const qa_bot_chat *);
+bool qa_bot_chat_message_source(const qa_bot_chat *,const char **,qa_error *);
 bool qa_bot_chat_take_message(qa_bot_chat *, char *, size_t, qa_error *);
 bool qa_bot_chat_write_message(qa_bot_chat *, void *context,
                                bool (*write)(void *, const char *, qa_error *), qa_error *);
@@ -192,12 +218,18 @@ typedef struct qa_bot_console_message {
     uint32_t handle;
     float time;
     int32_t type;
-    char text[256];
+    /* Native C-string projection of the exact 256 source bytes. The extra
+     * terminator is not part of the source console record. */
+    char text[257];
 } qa_bot_console_message;
 bool qa_bot_chat_console_queue(qa_bot_chat *, int32_t, const char *, float, uint32_t *, qa_error *);
+bool qa_bot_chat_console_queue_from(qa_bot_chat *,int32_t,const qa_bot_chat_text_source *,float,uint32_t *,qa_error *);
 bool qa_bot_chat_console_first(const qa_bot_chat *, qa_bot_console_message *);
+bool qa_bot_chat_console_first_source(const qa_bot_chat *,qa_bot_console_message *,bool *,qa_error *);
 bool qa_bot_chat_console_remove(qa_bot_chat *, uint32_t);
+bool qa_bot_chat_console_remove_source(qa_bot_chat *,uint32_t,bool *,qa_error *);
 size_t qa_bot_chat_console_count(const qa_bot_chat *);
+bool qa_bot_chat_console_count_source(const qa_bot_chat *,int32_t *,qa_error *);
 typedef struct qa_bot_chat_state {
     int32_t client;
     uint32_t gender, last_handle;

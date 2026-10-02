@@ -1,4 +1,5 @@
 #include "shared_register.h"
+#include "shared_settings.h"
 #include "qa/cvars_alias.h"
 #include "qa/ui_preferences.h"
 #include "qa/text.h"
@@ -12,9 +13,78 @@ typedef struct shared_declaration {
 } shared_declaration;
 static const shared_declaration declarations[]={
     {"fov","90","Field of view",QA_CVAR_ARCHIVE,ANY},
+    {"viewsize","100","Quake view size, 30 through 120",QA_CVAR_ARCHIVE,FINITE},
+    {"cl_sbar","0","QuakeWorld status display placement",QA_CVAR_ARCHIVE,FINITE},
+    {"chase_active","0","Enable the NetQuake chase camera",0,FINITE},
+    {"chase_back","100","NetQuake chase distance",0,FINITE},
+    {"chase_up","16","NetQuake chase height",0,FINITE},
+    {"chase_right","0","NetQuake chase lateral offset",0,FINITE},
     {"con_scale","0","Console text size",QA_CVAR_ARCHIVE,ANY},
     {"r_gamma","1","Display brightness, 0.5 through 3",QA_CVAR_ARCHIVE,GAMMA},
     {"r_shadows","0","Shared model shadows; zero disables",QA_CVAR_ARCHIVE,FINITE},
+    {"r_primitives","0","Renderer primitive submission mode",QA_CVAR_ARCHIVE,ANY},
+    {"r_allowExtensions","1","Enable renderer extensions at initialization",QA_CVAR_ARCHIVE|QA_CVAR_LATCH,ANY},
+    {"r_ext_compiled_vertex_array","1","Enable compiled vertex arrays at initialization",QA_CVAR_ARCHIVE|QA_CVAR_LATCH,ANY},
+    {"r_detailtextures","1","Detail textures",QA_CVAR_ARCHIVE|QA_CVAR_LATCH,ANY},
+    {"r_vertexLight","0","Vertex lighting",QA_CVAR_ARCHIVE|QA_CVAR_LATCH,ANY},
+    {"r_uifullscreen","0","Fullscreen source UI",0,ANY},
+    {"r_ignoreFastPath","1","Disable the source fast rendering path",QA_CVAR_ARCHIVE|QA_CVAR_LATCH,ANY},
+    {"r_ext_multitexture","1","Enable multitexture at initialization",QA_CVAR_ARCHIVE|QA_CVAR_LATCH,ANY},
+#ifdef __linux__
+    {"r_ext_texture_env_add","0","Texture environment addition",QA_CVAR_ARCHIVE|QA_CVAR_LATCH,ANY},
+#else
+    {"r_ext_texture_env_add","1","Texture environment addition",QA_CVAR_ARCHIVE|QA_CVAR_LATCH,ANY},
+#endif
+    {"r_lodCurveError","250","Curve level of detail error",QA_CVAR_ARCHIVE|QA_CVAR_CHEAT,ANY},
+    {"r_lodbias","0","Model level of detail bias",QA_CVAR_ARCHIVE,ANY},
+    {"r_lodscale","5","Model level of detail scale",QA_CVAR_CHEAT,ANY},
+    {"r_railWidth","16","Rail trail width",QA_CVAR_ARCHIVE,ANY},
+    {"r_railCoreWidth","6","Rail core width",QA_CVAR_ARCHIVE,ANY},
+    {"r_railSegmentLength","32","Rail ring spacing",QA_CVAR_ARCHIVE,ANY},
+    {"r_drawworld","1","Draw the source world",QA_CVAR_CHEAT,ANY},
+    {"r_drawentities","1","Draw source entities",QA_CVAR_CHEAT,ANY},
+    {"r_nocull","0","Disable source frustum culling",QA_CVAR_CHEAT,ANY},
+    {"r_novis","0","Disable source visibility culling",QA_CVAR_CHEAT,ANY},
+    {"r_nocurves","0","Disable source curves",QA_CVAR_CHEAT,ANY},
+    {"r_lockpvs","0","Retain the source visibility set",QA_CVAR_CHEAT,ANY},
+    {"r_noportals","0","Disable source portals",QA_CVAR_CHEAT,ANY},
+    {"r_portalOnly","0","Draw only source portals",QA_CVAR_CHEAT,ANY},
+    {"r_fastsky","0","Use the source fast sky path",QA_CVAR_ARCHIVE,ANY},
+    {"r_facePlaneCull","1","Cull source face planes",QA_CVAR_ARCHIVE,ANY},
+    {"r_dynamiclight","1","Source dynamic lighting",QA_CVAR_ARCHIVE,ANY},
+    {"r_dlightBacks","1","Light back facing source surfaces",QA_CVAR_ARCHIVE,ANY},
+    {"r_ambientScale","0.6","Source ambient light scale",QA_CVAR_CHEAT,ANY},
+    {"r_directedScale","1","Source directed light scale",QA_CVAR_CHEAT,ANY},
+    {"r_znear","4","Source near clip distance",QA_CVAR_CHEAT,ANY},
+    {"r_subdivisions","4","Source curve subdivision size",QA_CVAR_ARCHIVE|QA_CVAR_LATCH,ANY},
+    {"r_mapOverBrightBits","2","Source map overbright bits",QA_CVAR_LATCH,ANY},
+    {"r_overBrightBits","1","Source display overbright bits",QA_CVAR_ARCHIVE|QA_CVAR_LATCH,ANY},
+    {"r_intensity","1","Source texture intensity",QA_CVAR_LATCH,ANY},
+    {"r_ignorehwgamma","0","Disable source hardware gamma",QA_CVAR_ARCHIVE|QA_CVAR_LATCH,ANY},
+    {"r_roundImagesDown","1","Round source image dimensions down",QA_CVAR_ARCHIVE|QA_CVAR_LATCH,ANY},
+    {"r_simpleMipMaps","1","Source simple mipmap sampling",QA_CVAR_ARCHIVE|QA_CVAR_LATCH,ANY},
+    {"r_colorMipLevels","0","Source mipmap color diagnostics",QA_CVAR_LATCH,ANY},
+    {"r_picmip","1","Source texture mip level",QA_CVAR_ARCHIVE|QA_CVAR_LATCH,ANY},
+    {"r_norefresh","0","Disable source scene refresh",QA_CVAR_CHEAT,ANY},
+    {"r_showcluster","0","Source visibility cluster diagnostic",QA_CVAR_CHEAT,ANY},
+    {"r_skipBackEnd","0","Skip source backend drawing",QA_CVAR_CHEAT,ANY},
+    {"r_debugSort","0","Limit source surface sort",QA_CVAR_CHEAT,ANY},
+    {"r_showtris","0","Source wireframe diagnostics",QA_CVAR_CHEAT,ANY},
+    {"r_shownormals","0","Source normal diagnostics",QA_CVAR_CHEAT,ANY},
+    {"r_showsky","0","Source sky diagnostics",QA_CVAR_CHEAT,ANY},
+    {"r_clear","0","Clear the source color buffer",QA_CVAR_CHEAT,ANY},
+    {"r_nobind","0","Source texture binding diagnostic",QA_CVAR_CHEAT,ANY},
+    {"r_offsetfactor","-1","Source wireframe depth factor",QA_CVAR_CHEAT,ANY},
+    {"r_offsetunits","-2","Source wireframe depth units",QA_CVAR_CHEAT,ANY},
+    {"r_sky_quality","12","Quake sky subdivision quality",0,ANY},
+    {"r_skyalpha","1","Quake sky layer opacity",0,ANY},
+    {"r_skyfog","0.5","Quake sky fog factor",0,ANY},
+    {"gl_flashblend","0","Legacy source dynamic light blending",0,ANY},
+    {"gl_doubleeys","1","Quake eye model scale",0,ANY},
+    {"gl_shadows","0","Quake II source model shadows",0,ANY},
+    {"r_mirroralpha","1","Quake mirror opacity",0,ANY},
+    {"gl_texsort","1","Quake texture sorted world drawing",0,ANY},
+    {"gl_farclip","65536","Quake sky and world far clip distance",QA_CVAR_ARCHIVE,ANY},
     {"r_saveFontData","0","Export generated Q3 font atlases and DAT records",0,ANY},
     {"volume","0.7","Effects gain; output clamps to zero through one",QA_CVAR_ARCHIVE,FINITE},
     {"bgmvolume","1","Music gain; output clamps to zero through one",QA_CVAR_ARCHIVE,FINITE},
@@ -40,8 +110,9 @@ static const shared_declaration declarations[]={
     {"gl_md5_distance","2048","Quake II replacement distance",QA_CVAR_ARCHIVE,ANY},
     {"r_model_distance","source","Shared replacement model distance",QA_CVAR_ARCHIVE,ANY}
 };
-static bool menu_track(const char *value)
+bool frontend_shared_menu_track_valid(const char *value)
 {
+    if (!value) return false;
     if (!strcmp(value,"auto") || !strcmp(value,"0")) return true;
     bool digits=*value!=0;
     for (const unsigned char *p=(const unsigned char *)value;*p;++p) digits&=*p>='0' && *p<='9';
@@ -80,7 +151,7 @@ static bool validate(void *user,const char *value,qa_error *error)
     if (row->validation==TOGGLE)
         return !strcmp(value,"0") || !strcmp(value,"1") || frontend_fail(error,QA_ERROR_ARGUMENT,"Use 0 or 1");
     if (row->validation==MENU_TRACK)
-        return menu_track(value) || frontend_fail(error,QA_ERROR_ARGUMENT,"Use auto, 0, track 1..255 or a mounted OGG/WAV path");
+        return frontend_shared_menu_track_valid(value) || frontend_fail(error,QA_ERROR_ARGUMENT,"Use auto, 0, track 1..255 or a mounted OGG/WAV path");
     double number;
     qa_bytes input={(const uint8_t *)value,strlen(value)};
     size_t cursor=0; uint32_t scalar; bool present=false;
@@ -95,18 +166,110 @@ static bool validate(void *user,const char *value,qa_error *error)
         (row->validation==CHANNELS && (number==1 || number==2));
     return valid || frontend_fail(error,QA_ERROR_ARGUMENT,row->description);
 }
-bool frontend_shared_register(qa_cvars *cvars,qa_console_dialect source,
+bool frontend_shared_q3_renderer_initialize(qa_frontend *f,qa_error *error)
+{
+    if (!f || !f->application || f->capture || f->source_restoring)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Source renderer initialization requires its actual fresh ENGINE owner");
+    frontend_shared_settings *shared=frontend_config_store_shared(f->config_store,f->application,
+        qa_application_startup_candidate(f->application));
+    if (shared) return frontend_shared_values_q3_renderer_initialize(frontend_shared_settings_values(shared),error);
+    if (frontend_config_store_shared_pending(f->config_store))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Source renderer initialization cannot replace unavailable candidate values");
+    qa_cvars *registry=qa_application_cvars(f->application);
+    if (!qa_cvars_observer_idle(registry))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Source renderer registration requires its returned canonical owner");
+    const char *const latched[]={"r_allowExtensions","r_ext_compiled_vertex_array","r_detailtextures",
+        "r_vertexLight","r_ignoreFastPath","r_ext_multitexture","r_ext_texture_env_add","r_subdivisions"};
+    for (size_t i=0;i<sizeof(latched)/sizeof(latched[0]);++i) {
+        const qa_cvar_view *setting=qa_cvars_find(registry,latched[i]);
+        if (!setting || setting->console_created)
+            return frontend_fail(error,QA_ERROR_ARGUMENT,"Source renderer lost its physical initialization declaration");
+        if (!qa_cvars_apply_latched(registry,latched[i],error)) return false;
+    }
+    const qa_cvar_view *row=qa_cvars_find(registry,"r_znear");
+    if (!qa_cvars_observer_idle(registry) || !row || !isfinite(row->number))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Source near clip requires its returned finite canonical row");
+    if ((double)row->number>=INT32_MIN && (double)row->number<=INT32_MAX &&
+        (int32_t)row->number!=row->integer) {
+        char text[32]; snprintf(text,sizeof(text),"%d",row->integer);
+        if (!qa_cvars_set(registry,"r_znear",text,true,error)) return false;
+        row=qa_cvars_find(registry,"r_znear");
+    }
+    const char *bounded=row->number<0.001f?"0.001000":row->number>200?"200.000000":NULL;
+    return !bounded || qa_cvars_set(registry,"r_znear",bounded,true,error);
+}
+bool frontend_source_color_register(qa_frontend *f,const qa_cvars_edit *edit,qa_error *error)
+{
+    if (!f || !f->application || f->capture || f->source_restoring)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Source color registration requires its physical initialization owner");
+    frontend_shared_settings *shared=frontend_config_store_shared(f->config_store,f->application,
+        qa_application_startup_candidate(f->application));
+    if (shared) {
+        frontend_shared_values *values=frontend_shared_settings_values(shared);
+        return edit && edit==frontend_shared_values_prepared(values)?
+            frontend_shared_values_source_color_register(values,error):
+            frontend_fail(error,QA_ERROR_ARGUMENT,"Source color registration selected another canonical edit");
+    }
+    qa_cvars *registry=qa_application_cvars(f->application);
+    if (edit || frontend_config_store_shared_pending(f->config_store) || !qa_cvars_observer_idle(registry))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Source color registration cannot replace a pending canonical owner");
+    const char *const names[]={"r_intensity","r_ignorehwgamma","r_roundImagesDown",
+        "r_simpleMipMaps","r_colorMipLevels","r_picmip","r_overBrightBits","r_mapOverBrightBits"};
+    for (size_t i=0;i<sizeof(names)/sizeof(names[0]);++i) {
+        const qa_cvar_view *row=qa_cvars_find(registry,names[i]);
+        if (!row || row->console_created)
+            return frontend_fail(error,QA_ERROR_ARGUMENT,"Source color registration lost its physical declaration");
+        if (!qa_cvars_apply_latched(registry,names[i],error)) return false;
+    }
+    return true;
+}
+bool frontend_source_color_clamp(qa_frontend *f,const qa_cvars_edit *edit,qa_error *error)
+{
+    if (!f || !f->application || f->capture || f->source_restoring)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Source color initialization requires its fresh physical ENGINE owner");
+    frontend_shared_settings *shared=frontend_config_store_shared(f->config_store,f->application,
+        qa_application_startup_candidate(f->application));
+    if (shared) {
+        frontend_shared_values *values=frontend_shared_settings_values(shared);
+        return (edit && edit==frontend_shared_values_prepared(values))?
+            frontend_shared_values_source_color_initialize(values,error):
+            frontend_fail(error,QA_ERROR_ARGUMENT,"Source color initialization selected another actual canonical edit");
+    }
+    qa_cvars *registry=qa_application_cvars(f->application);
+    if (edit || frontend_config_store_shared_pending(f->config_store) || !qa_cvars_observer_idle(registry))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Source color initialization cannot replace a pending canonical owner");
+    const char *const names[]={"r_intensity","r_gamma","r_picmip"};
+    for (unsigned i=0;i<3;++i) {
+        const qa_cvar_view *row=qa_cvars_find(registry,names[i]);
+        if (!row) return frontend_fail(error,QA_ERROR_ARGUMENT,"Source color requires a canonical initialization row");
+        float number=(float)row->number;
+        if (!isfinite(number)) return frontend_fail(error,QA_ERROR_ARGUMENT,"Source color requires a finite binary32 initialization value");
+        char integer[32]; const char *value=NULL;
+        if (!i) value=number<=1?"1":NULL;
+        else if (i==1) value=number<.5f?"0.500000":number>3?"3.000000":NULL;
+        else if (number<0) value="0.000000";
+        else if (number>16) value="16.000000";
+        else if ((int32_t)number!=row->integer) {
+            snprintf(integer,sizeof(integer),"%d",row->integer); value=integer;
+        }
+        if (value && !qa_cvars_set(registry,names[i],value,true,error)) return false;
+    }
+    return true;
+}
+bool frontend_shared_register(qa_cvars *cvars,const qa_console_dialect *source,
     qa_audio_output_format output,float gamma,qa_error *error)
 {
-    if (!cvars || (unsigned)source>QA_CONSOLE_Q3 || !isfinite(gamma) || gamma<.5f || gamma>3 ||
+    if (!cvars || (source && (unsigned)*source>QA_CONSOLE_Q3) || !isfinite(gamma) || gamma<.5f || gamma>3 ||
         output.sample_rate<8000 || output.sample_rate>192000 ||
         (output.channels!=1 && output.channels!=2) || (output.sample_bits!=8 && output.sample_bits!=16))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Shared settings require actual factory defaults");
     for (size_t i=0;i<sizeof(declarations)/sizeof(*declarations);++i) {
         const shared_declaration *row=declarations+i; const char *initial=row->initial; char text[32];
         if (!strcmp(row->name,"r_gamma")) { if (!qa_format_ecmascript_number(gamma,text,error)) return false; initial=text; }
-        else if (!strcmp(row->name,"volume") && source==QA_CONSOLE_Q3) initial="0.8";
-        else if (!strcmp(row->name,"bgmvolume") && source==QA_CONSOLE_Q3) initial="0.25";
+        else if (!strcmp(row->name,"volume") && source && *source==QA_CONSOLE_Q3) initial="0.8";
+        else if (!strcmp(row->name,"bgmvolume") && source && *source==QA_CONSOLE_Q3) initial="0.25";
+        else if (!strcmp(row->name,"gl_flashblend") && source &&
+            (*source==QA_CONSOLE_Q1 || *source==QA_CONSOLE_QW)) initial="1";
         else if (!strcmp(row->name,"s_outputRate")) { snprintf(text,sizeof(text),"%u",output.sample_rate); initial=text; }
         else if (!strcmp(row->name,"s_outputBits")) { snprintf(text,sizeof(text),"%u",output.sample_bits); initial=text; }
         else if (!strcmp(row->name,"s_outputChannels")) { snprintf(text,sizeof(text),"%u",output.channels); initial=text; }
@@ -127,6 +290,7 @@ bool frontend_shared_register(qa_cvars *cvars,qa_console_dialect source,
     for (size_t i=0;i<sizeof(aliases)/sizeof(*aliases);++i)
         if (!qa_cvars_alias_register(cvars,aliases[i].name,aliases[i].target,aliases[i].conversion,
             aliases[i].summary,&(qa_console_documentation){.summary=aliases[i].summary,.usage=aliases[i].usage},error)) return false;
-    return qa_input_device_settings_register(cvars,error) &&
+    return qa_input_settings_register(cvars,QA_MOVEMENT_NETQUAKE,error) &&
+        qa_input_device_settings_register(cvars,error) &&
         qa_ui_preferences_register(cvars,QA_FRONTEND_COMMAND_OWNER,error);
 }

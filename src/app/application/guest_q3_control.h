@@ -20,6 +20,7 @@ bool application_guest_q3_control_attach(q3g_role *, const application_guest_inp
     application_guest_q3_control **, qa_error *);
 bool application_guest_q3_control_detach(application_guest_q3_control **, qa_error *);
 bool application_guest_q3_control_supports_body(const application_guest_q3_control *);
+bool application_guest_q3_control_supports_pose(const application_guest_q3_control *);
 qa_qvm_binding application_guest_q3_control_binding(const application_guest_q3_control *);
 bool application_guest_q3_control_descriptor(const application_guest_q3_control *,
     qa_qvm_saved_function *, qa_error *);

@@ -20,6 +20,43 @@ static bool weapon_turn(qa_q2_game *g, q2_actor *a, bool latched, qa_error *e) {
     input.weapon_thunk = a->client->weapon_thunk;
     return qa_q2_weapon_tick(g, a->id, &input, g->now_ns, g->frame_ns, e);
 }
+bool q2_client_early_weapon_turn(qa_q2_game *g, q2_actor *a,
+                                 const qa_q2_weapon_input *input, qa_error *e) {
+    q2_client_state *s = a->client;
+    if (s->corpse || !s->info.connected)
+        return true;
+    s->latched_buttons |= input->attack && !(s->buttons & 1) ? 1u : 0u;
+    s->buttons = (s->buttons & ~1u) | (input->attack ? 1u : 0u);
+    if (g->player_runtime->intermission || input->spectator || s->info.spectator)
+        return true;
+    bool selected = weapon_selected(g, a);
+    if (!q2_actor_live(g, a->id) || !selected || !(s->latched_buttons & 1) || s->weapon_thunk)
+        return true;
+    s->weapon_thunk = true;
+    qa_q2_weapon_input early = *input;
+    early.latched_attack = early.weapon_thunk = true;
+    return qa_q2_weapon_tick(g, a->id, &early, g->now_ns, g->frame_ns, e);
+}
+bool q2_client_weapon_frame(qa_q2_game *g, q2_actor *a,
+                             const qa_q2_weapon_input *input, qa_error *e) {
+    q2_client_state *s = a->client;
+    if (s->corpse || !s->info.connected || g->player_runtime->intermission)
+        return true;
+    bool selected = weapon_selected(g, a);
+    if (!q2_actor_live(g, a->id))
+        return true;
+    if (selected && !input->spectator && !s->info.spectator && !s->weapon_thunk) {
+        qa_q2_weapon_input turn = *input;
+        turn.latched_attack = (s->latched_buttons & 1) != 0;
+        turn.weapon_thunk = false;
+        if (!qa_q2_weapon_tick(g, a->id, &turn, g->now_ns, g->frame_ns, e))
+            return false;
+    } else
+        s->weapon_thunk = false;
+    if (q2_actor_live(g, a->id) && !s->info.dead)
+        s->latched_buttons &= ~1u;
+    return true;
+}
 bool q2_client_tick(qa_q2_game *g, q2_actor *a, qa_error *e) {
     if (a->projectile.kind != Q2_PROJECTILE_NONE || !a->client || a->client->corpse ||
         !a->client->info.connected || g->player_runtime->intermission)

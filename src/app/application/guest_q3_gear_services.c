@@ -186,6 +186,7 @@ bool q3gear_services(application_q3_gear *gear, bool restoring, qa_error *error)
         .set_userinfo = set_userinfo, .user_command = user_command, .drop_client = drop_client, .send_command = send_command};
     host.entity_text = (qa_bytes){gear->entities.data, gear->entities.size};
     host.writable_mount = 0;
+    host.write_view = (qa_q3_host_write_view){0};
     return qa_q3_host_create(&host, &gear->host, error);
 }
 

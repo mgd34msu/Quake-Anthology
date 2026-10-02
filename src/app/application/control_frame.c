@@ -5,6 +5,8 @@
 #include "native_q3_clients.h"
 #include "native_q3_wire_state.h"
 #include "qa/game_q3_source.h"
+#include "qa/game_q2_wire.h"
+#include "qa/network_unified_session.h"
 #include <float.h>
 #include <math.h>
 #include <stdlib.h>
@@ -14,13 +16,25 @@ typedef enum control_command_domain {
     CONTROL_COMMAND_SELECTED,
     CONTROL_COMMAND_QW_SOURCE,
     CONTROL_COMMAND_Q3_SOURCE,
-    CONTROL_COMMAND_NQ_SOURCE
+    CONTROL_COMMAND_NQ_SOURCE,
+    CONTROL_COMMAND_Q2_SOURCE,
+    CONTROL_COMMAND_UNIFIED
 } control_command_domain;
+
+typedef struct control_unified {
+    qa_unified_movement movement;
+    uint64_t sequence;
+    qa_actor_owner arsenal;
+    qa_item_id weapon;
+    bool has_arsenal, use_holdable, has_impulse;
+    uint8_t impulse;
+} control_unified;
 
 typedef struct control_input {
     qa_actor_id actor;
     qa_actor_owner provider;
     qa_movement_command latest;
+    control_unified unified;
     uint64_t sequence;
     control_command_domain domain;
     uint64_t source_time_ns;
@@ -54,6 +68,7 @@ typedef struct control_group {
     bool bot;
     control_command_domain domain;
     uint64_t source_time_ns;
+    control_unified unified;
     qa_movement_command commands[];
 } control_group;
 struct application_control_frames {
@@ -64,7 +79,9 @@ struct application_control_frames {
     const application_control_context *current;
     qa_movement_state *state;
     qa_actor_id state_actor;
+    const qa_movement_call *call;
     const control_group *q3_group;
+    struct application_control_mod_input *mod_inputs;
     qa_actor_id *touched;
     size_t touched_count, touched_capacity;
     bool draining;
@@ -75,6 +92,176 @@ static bool command_valid(const qa_movement_command *command)
     return (unsigned)command->kind <= QA_MOVEMENT_Q3 && qa_vec_finite(command->angles) &&
         isfinite(command->forward_move) && isfinite(command->side_move) &&
         isfinite(command->up_move) && isfinite(command->acknowledged_server_seconds);
+}
+
+static size_t unified_numbers(qa_unified_movement *movement, double **fields)
+{
+    size_t count = 0;
+#define NUMBER(field) fields[count++] = &(field)
+#define VECTOR(field) NUMBER((field).x); NUMBER((field).y); NUMBER((field).z)
+    switch (movement->kind) {
+    case QA_MOVEMENT_NETQUAKE:
+        NUMBER(movement->data.nq.acknowledged_seconds); VECTOR(movement->data.nq.angles);
+        NUMBER(movement->data.nq.forward); NUMBER(movement->data.nq.side); NUMBER(movement->data.nq.up);
+        NUMBER(movement->data.nq.buttons); NUMBER(movement->data.nq.impulse); break;
+    case QA_MOVEMENT_QUAKEWORLD:
+        NUMBER(movement->data.qw.milliseconds); VECTOR(movement->data.qw.angles);
+        NUMBER(movement->data.qw.forward); NUMBER(movement->data.qw.side); NUMBER(movement->data.qw.up);
+        NUMBER(movement->data.qw.buttons); NUMBER(movement->data.qw.impulse); break;
+    case QA_MOVEMENT_Q2_CLASSIC:
+        NUMBER(movement->data.q2.milliseconds);
+        for (unsigned i = 0; i < 3; ++i) NUMBER(movement->data.q2.angle_shorts[i]);
+        NUMBER(movement->data.q2.forward); NUMBER(movement->data.q2.side); NUMBER(movement->data.q2.up);
+        NUMBER(movement->data.q2.buttons); NUMBER(movement->data.q2.impulse); NUMBER(movement->data.q2.light_level); break;
+    case QA_MOVEMENT_Q2_RERELEASE:
+        NUMBER(movement->data.q2r.milliseconds); VECTOR(movement->data.q2r.angles);
+        NUMBER(movement->data.q2r.forward); NUMBER(movement->data.q2r.side);
+        NUMBER(movement->data.q2r.buttons); NUMBER(movement->data.q2r.server_frame); break;
+    case QA_MOVEMENT_Q3:
+        NUMBER(movement->data.q3.server_time_ms);
+        for (unsigned i = 0; i < 3; ++i) NUMBER(movement->data.q3.angle_words[i]);
+        NUMBER(movement->data.q3.buttons); NUMBER(movement->data.q3.weapon);
+        NUMBER(movement->data.q3.forward); NUMBER(movement->data.q3.right); NUMBER(movement->data.q3.up); break;
+    }
+#undef VECTOR
+#undef NUMBER
+    return count;
+}
+
+static bool unified_valid(const control_unified *receipt)
+{
+    if ((unsigned)receipt->movement.kind > QA_MOVEMENT_Q3 || receipt->sequence > QA_UNIFIED_SAFE_INTEGER ||
+        (!receipt->has_arsenal && (receipt->arsenal || receipt->weapon || receipt->use_holdable ||
+            receipt->has_impulse || receipt->impulse)) ||
+        (receipt->has_arsenal && !receipt->arsenal) || (!receipt->has_impulse && receipt->impulse)) return false;
+    qa_unified_movement copy = receipt->movement;
+    double *fields[10]; size_t count = unified_numbers(&copy, fields);
+    for (size_t i = 0; i < count; ++i) if (!isfinite(*fields[i])) return false;
+    return true;
+}
+
+static uint32_t unified_word(double number)
+{
+    if (!isfinite(number) || number == 0) return 0;
+    double reduced = fmod(trunc(number), 4294967296.0);
+    if (reduced < 0) reduced += 4294967296.0;
+    return (uint32_t)reduced;
+}
+
+static bool unified_equal(const control_unified *a, const control_unified *b)
+{
+    if (a->movement.kind != b->movement.kind || a->sequence != b->sequence ||
+        a->arsenal != b->arsenal || a->weapon != b->weapon || a->has_arsenal != b->has_arsenal ||
+        a->use_holdable != b->use_holdable || a->has_impulse != b->has_impulse || a->impulse != b->impulse) return false;
+    qa_unified_movement left = a->movement, right = b->movement;
+    double *lf[10], *rf[10]; size_t count = unified_numbers(&left, lf);
+    if (unified_numbers(&right, rf) != count) return false;
+    for (size_t i = 0; i < count; ++i) if (memcmp(lf[i], rf[i], sizeof(double))) return false;
+    return true;
+}
+
+static int32_t unified_signed(double number)
+{
+    uint32_t word = unified_word(number);
+    return word <= INT32_MAX ? (int32_t)word : (int32_t)((int64_t)word - INT64_C(4294967296));
+}
+
+bool qa_application_control_project_unified(const qa_unified_movement *raw,
+    const qa_movement_state *state, uint64_t sequence, qa_movement_command *out, qa_error *error)
+{
+    if (!raw || !state || !out || (unsigned)raw->kind > QA_MOVEMENT_Q3 || raw->kind != state->kind ||
+        sequence > UINT64_C(9007199254740991))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Unified receipt lost its actual selected movement");
+    qa_unified_movement checked = *raw; double *fields[10];
+    size_t count = unified_numbers(&checked, fields);
+    for (size_t i = 0; i < count; ++i)
+        if (!isfinite(*fields[i])) return application_fail(error, QA_ERROR_ARGUMENT, "Unified movement contains a nonfinite source field");
+    qa_movement_command command = {.kind = raw->kind, .sequence = sequence};
+    double forward = 0, side = 0, up = 0, buttons = 0, impulse = 0, milliseconds = 0;
+    qa_unified_vec3 angles = {0};
+    switch (raw->kind) {
+    case QA_MOVEMENT_NETQUAKE:
+        command.acknowledged_server_seconds = raw->data.nq.acknowledged_seconds;
+        angles = raw->data.nq.angles; forward = raw->data.nq.forward; side = raw->data.nq.side;
+        up = raw->data.nq.up; buttons = raw->data.nq.buttons; impulse = raw->data.nq.impulse; break;
+    case QA_MOVEMENT_QUAKEWORLD:
+        milliseconds = raw->data.qw.milliseconds; angles = raw->data.qw.angles;
+        forward = raw->data.qw.forward; side = raw->data.qw.side; up = raw->data.qw.up;
+        buttons = raw->data.qw.buttons; impulse = raw->data.qw.impulse; break;
+    case QA_MOVEMENT_Q2_CLASSIC:
+        milliseconds = raw->data.q2.milliseconds;
+        for (unsigned i = 0; i < 3; ++i)
+            command.angle_words[i] = unified_signed(raw->data.q2.angle_shorts[i] - state->data.q2.delta_angle_shorts[i]);
+        forward = raw->data.q2.forward; side = raw->data.q2.side; up = raw->data.q2.up;
+        buttons = raw->data.q2.buttons; impulse = raw->data.q2.impulse;
+        command.light_level = (uint8_t)unified_word(raw->data.q2.light_level); break;
+    case QA_MOVEMENT_Q2_RERELEASE:
+        milliseconds = raw->data.q2r.milliseconds;
+        angles = (qa_unified_vec3){raw->data.q2r.angles.x - state->data.q2r.delta_angles.x,
+            raw->data.q2r.angles.y - state->data.q2r.delta_angles.y,
+            raw->data.q2r.angles.z - state->data.q2r.delta_angles.z};
+        forward = raw->data.q2r.forward; side = raw->data.q2r.side; buttons = raw->data.q2r.buttons;
+        command.server_frame = unified_signed(raw->data.q2r.server_frame); break;
+    case QA_MOVEMENT_Q3:
+        command.server_time_ms = unified_signed(raw->data.q3.server_time_ms);
+        {
+            int64_t elapsed = (int64_t)command.server_time_ms - state->data.q3.command_time_ms;
+            milliseconds = elapsed <= 0 ? 0 : elapsed > 200 ? 200 : elapsed;
+        }
+        for (unsigned i = 0; i < 3; ++i)
+            command.angle_words[i] = unified_signed(raw->data.q3.angle_words[i] - state->data.q3.delta_angle_words[i]);
+        command.weapon = (uint8_t)unified_word(raw->data.q3.weapon);
+        forward = raw->data.q3.forward; side = raw->data.q3.right; up = raw->data.q3.up;
+        buttons = raw->data.q3.buttons; break;
+    }
+    if (milliseconds < 0 || milliseconds > UINT32_MAX ||
+        fabs(forward) > FLT_MAX || fabs(side) > FLT_MAX || fabs(up) > FLT_MAX ||
+        fabs(angles.x) > FLT_MAX || fabs(angles.y) > FLT_MAX || fabs(angles.z) > FLT_MAX)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Unified command exceeds its selected native field domain");
+    command.milliseconds = (uint32_t)trunc(milliseconds);
+    command.angles = qa_v3((float)angles.x, (float)angles.y, (float)angles.z);
+    command.forward_move = (float)forward; command.side_move = (float)side; command.up_move = (float)up;
+    command.buttons = unified_word(buttons); command.impulse = (uint8_t)unified_word(impulse);
+    *out = command;
+    return true;
+}
+
+static bool unified_command(qa_application *app, qa_actor_id actor, const control_unified *receipt,
+    qa_movement_command *out, qa_error *error)
+{
+    if (!app || !unified_valid(receipt) || actor.slot >= app->control_capacity)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Unified receipt lost its actual selected movement");
+    return qa_application_control_project_unified(&receipt->movement, &app->controls[actor.slot].state,
+        receipt->sequence, out, error);
+}
+
+static void unified_context(application_control_context *context, const control_unified *receipt)
+{
+    context->unified_command = true;
+    context->unified_intent = receipt->has_arsenal;
+    context->arsenal = receipt->arsenal; context->weapon = receipt->weapon;
+    context->unified_holdable = receipt->use_holdable;
+    context->unified_has_impulse = receipt->has_impulse;
+    context->unified_impulse = receipt->impulse;
+}
+
+static bool q2_raw_valid(const qa_movement_command *command)
+{
+    if (!command_valid(command) || command->milliseconds > UINT8_MAX ||
+        command->buttons > UINT8_MAX || command->weapon || command->server_time_ms ||
+        command->acknowledged_server_seconds != 0) return false;
+    if (command->kind == QA_MOVEMENT_Q2_RERELEASE)
+        return command->up_move == 0;
+    if (command->kind != QA_MOVEMENT_Q2_CLASSIC || command->server_frame ||
+        command->forward_move < INT16_MIN || command->forward_move > INT16_MAX ||
+        command->side_move < INT16_MIN || command->side_move > INT16_MAX ||
+        command->up_move < INT16_MIN || command->up_move > INT16_MAX ||
+        truncf(command->forward_move) != command->forward_move ||
+        truncf(command->side_move) != command->side_move ||
+        truncf(command->up_move) != command->up_move) return false;
+    for (unsigned i = 0; i < 3; ++i)
+        if (command->angle_words[i] < INT16_MIN || command->angle_words[i] > INT16_MAX) return false;
+    return true;
 }
 
 static int8_t q3_axis(float value)
@@ -115,6 +302,71 @@ static bool q3_raw_valid(const qa_movement_command *command)
         command->up_move >= -128 && command->up_move <= 127 &&
         truncf(command->forward_move) == command->forward_move &&
         truncf(command->side_move) == command->side_move && truncf(command->up_move) == command->up_move;
+}
+
+static bool unified_q3_source(qa_application *app, qa_actor_id actor, application_provider *provider,
+    const control_unified *receipt, qa_q3_usercmd *out, qa_error *error)
+{
+    uint32_t slot; qa_q3_player player; qa_clock_state clock;
+    if (!unified_valid(receipt) || !qa_q3_native_client_slot(provider->state.q3, actor, &slot, error) ||
+        !qa_q3_wire_player_read(provider->state.q3, slot, &player, error) ||
+        !qa_session_clock(app->session, provider->owner, &clock)) return false;
+    qa_unified_movement raw = receipt->movement;
+    double forward, side, up, buttons, angles[3];
+    double scale = raw.kind == QA_MOVEMENT_NETQUAKE || raw.kind == QA_MOVEMENT_QUAKEWORLD ? 320 : 200;
+    qa_q3_usercmd command = {.serverTime = unified_signed((double)clock.frame.time_ns / 1e6),
+        .weapon = (uint8_t)player.weapon};
+    if (raw.kind == QA_MOVEMENT_Q3) {
+        command.serverTime = unified_signed(raw.data.q3.server_time_ms);
+        for (unsigned i = 0; i < 3; ++i) angles[i] = raw.data.q3.angle_words[i];
+        forward = raw.data.q3.forward; side = raw.data.q3.right; up = raw.data.q3.up;
+        buttons = raw.data.q3.buttons; scale = 127;
+    } else if (raw.kind == QA_MOVEMENT_Q2_CLASSIC) {
+        for (unsigned i = 0; i < 3; ++i) angles[i] = raw.data.q2.angle_shorts[i];
+        forward = raw.data.q2.forward; side = raw.data.q2.side; up = raw.data.q2.up;
+        buttons = raw.data.q2.buttons;
+    } else {
+        qa_unified_vec3 aim;
+        if (raw.kind == QA_MOVEMENT_NETQUAKE) {
+            aim = raw.data.nq.angles; forward = raw.data.nq.forward; side = raw.data.nq.side;
+            up = raw.data.nq.up; buttons = raw.data.nq.buttons;
+        } else if (raw.kind == QA_MOVEMENT_QUAKEWORLD) {
+            aim = raw.data.qw.angles; forward = raw.data.qw.forward; side = raw.data.qw.side;
+            up = raw.data.qw.up; buttons = raw.data.qw.buttons;
+        } else {
+            aim = raw.data.q2r.angles; forward = raw.data.q2r.forward; side = raw.data.q2r.side;
+            buttons = raw.data.q2r.buttons;
+            up = unified_word(buttons) & 8u ? 200 : unified_word(buttons) & 16u ? -200 : 0;
+        }
+        angles[0] = trunc(aim.x * (65536.0 / 360));
+        angles[1] = trunc(aim.y * (65536.0 / 360));
+        angles[2] = trunc(aim.z * (65536.0 / 360));
+    }
+    uint32_t word = unified_word(buttons);
+    bool holdable = receipt->has_arsenal ? receipt->use_holdable : raw.kind == QA_MOVEMENT_Q3 && (word & 4u);
+    command.buttons = unified_signed((double)((raw.kind == QA_MOVEMENT_Q3 ? word & ~4u : word & 1u) | (holdable ? 4u : 0u)));
+    for (unsigned i = 0; i < 3; ++i) command.angles[i] = unified_signed(angles[i] - player.deltaAngles[i]);
+    command.forwardmove = (int8_t)trunc(fmax(-127, fmin(127, forward * 127 / scale)));
+    command.rightmove = (int8_t)trunc(fmax(-127, fmin(127, side * 127 / scale)));
+    command.upmove = (int8_t)trunc(fmax(-127, fmin(127, up * 127 / scale)));
+    if ((raw.kind == QA_MOVEMENT_NETQUAKE || raw.kind == QA_MOVEMENT_QUAKEWORLD) && (word & 2u)) command.upmove = 127;
+    application_provider *arsenal = application_provider_for(app, actor, QA_ROLE_ARSENAL, "");
+    if (arsenal && arsenal->kind == APPLICATION_PROVIDER_Q3) {
+        qa_q3_player_state selected;
+        if (!qa_q3_player_read(arsenal->state.q3, actor, &selected))
+            return application_fail(error, QA_ERROR_NOT_FOUND, "Unified Source command lost its selected Q3 arsenal");
+        command.weapon = receipt->has_arsenal || raw.kind != QA_MOVEMENT_Q3
+            ? (uint8_t)selected.weapon : (uint8_t)unified_word(raw.data.q3.weapon);
+        if (receipt->weapon) {
+            bool found = false;
+            for (unsigned i = 1; i < QA_Q3_WEAPON_COUNT; ++i)
+                if (qa_q3_weapon_item(arsenal->state.q3, (qa_q3_weapon)i, false) == receipt->weapon) {
+                    command.weapon = (uint8_t)i; found = true; break;
+                }
+            if (!found) return application_fail(error, QA_ERROR_ARGUMENT, "Unified item is not a selected Q3 weapon");
+        }
+    }
+    *out = command; return true;
 }
 
 static bool nq_raw_valid(const qa_movement_command *command)
@@ -175,6 +427,10 @@ static bool saved_source_client(application_provider *map, qa_actor_id actor, qa
             member = qa_q1_native_client_slot_prepared(map->state.q1, actor, &slot, NULL);
         else if (map->kind == APPLICATION_PROVIDER_Q3)
             member = qa_q3_native_client_slot(map->state.q3, actor, &slot, NULL);
+        else if (map->kind == APPLICATION_PROVIDER_Q2) {
+            member = map->component.command_actor &&
+                map->component.command_actor(map->component.state, map->application->session, actor);
+        }
         else if (map->kind == APPLICATION_PROVIDER_QVM ||
             (map->kind == APPLICATION_PROVIDER_NATIVE && map->component.clock.kind == QA_CLOCK_Q3))
             member = application_q3_guest_actor_client(map, actor, &slot);
@@ -324,7 +580,7 @@ bool application_control_frames_idle(const qa_application *app)
 {
     const struct application_control_frames *frames = app ? app->control_frames : NULL;
     if (!frames) return true;
-    if (frames->current || frames->draining || frames->state || frames->q3_group) return false;
+    if (frames->current || frames->draining || frames->state || frames->q3_group || frames->mod_inputs) return false;
     for (uint32_t i = 0; i < frames->capacity; ++i)
         if (frames->inputs[i].turn || frames->inputs[i].source_turn_actor.registry) return false;
     return true;
@@ -346,9 +602,16 @@ bool application_control_frames_abort(qa_application *app, qa_error *error)
         if (!application_control_turn_abort(turn, &current)) { if (ok) first = current; ok = false; }
     }
     owner->touched_count = 0;
+    qa_error components = {0};
+    if (!application_control_mod_abort_all(app, &components)) { if (ok) first = components; ok = false; }
     if (!ok && error) *error = first;
     return ok;
 }
+
+struct application_control_mod_input *application_control_mod_head(const qa_application *app)
+{ return app && app->control_frames ? app->control_frames->mod_inputs : NULL; }
+void application_control_mod_head_set(qa_application *app, struct application_control_mod_input *head)
+{ app->control_frames->mod_inputs = head; }
 
 bool application_control_group_touch_once(qa_application *app, qa_actor_id actor, qa_actor_id touched,
                                            bool *first, qa_error *error)
@@ -440,6 +703,39 @@ bool application_control_frames_q1_complete(qa_application *app, qa_actor_id act
     input->q1_source_frame_number = actual.number;
     input->q1_source_deferred = false; input->q1_source_sequence = 0;
     return true;
+}
+
+static void consume_unified_impulse(control_unified *receipt)
+{
+    receipt->impulse = 0;
+    switch (receipt->movement.kind) {
+    case QA_MOVEMENT_NETQUAKE: receipt->movement.data.nq.impulse = 0; break;
+    case QA_MOVEMENT_QUAKEWORLD: receipt->movement.data.qw.impulse = 0; break;
+    case QA_MOVEMENT_Q2_CLASSIC: receipt->movement.data.q2.impulse = 0; break;
+    case QA_MOVEMENT_Q2_RERELEASE: receipt->movement.data.q2r.impulse = 0; break;
+    case QA_MOVEMENT_Q3: break;
+    }
+}
+
+void application_control_frames_consume_impulse(qa_application *app, qa_actor_id actor,
+    uint64_t sequence)
+{
+    struct application_control_frames *owner = app ? app->control_frames : NULL;
+    if (!owner || actor.slot >= owner->capacity) return;
+    control_input *input = &owner->inputs[actor.slot];
+    if (qa_actor_id_equal(input->actor, actor) && input->seen && input->sequence == sequence) {
+        input->latest.impulse = input->impulse = 0;
+        if (input->domain == CONTROL_COMMAND_UNIFIED) consume_unified_impulse(&input->unified);
+    }
+    for (control_group *group = owner->head; group; group = group->next) {
+        if (!qa_actor_id_equal(group->actor, actor)) continue;
+        for (size_t i = 0; i < group->count; ++i)
+            if (group->commands[i].sequence == sequence) group->commands[i].impulse = 0;
+        if (group->domain == CONTROL_COMMAND_UNIFIED && group->unified.sequence == sequence)
+            consume_unified_impulse(&group->unified);
+    }
+    const qa_movement_call *call = application_control_frames_call_current(app, actor);
+    if (call && call->command && call->command->sequence == sequence) call->command->impulse = 0;
 }
 
 static bool qc_receipt(qa_application *app, qa_actor_id actor, uint64_t ordinal,
@@ -540,6 +836,53 @@ bool qa_application_control_q3_command(qa_application *app, qa_actor_id actor,
     uint64_t sequence, const qa_q3_usercmd *raw, qa_error *error)
 {
     return receive_q3_command(app, actor, sequence, 0, raw, error);
+}
+
+bool qa_application_control_q2_command(qa_application *app, qa_actor_id actor,
+    uint64_t sequence, const qa_movement_command *raw, qa_error *error)
+{
+    if (!app || !raw || !app->control_frames || app->state != QA_APPLICATION_RUNNING ||
+        (app->operation != APPLICATION_IDLE && app->operation != APPLICATION_ADVANCING) ||
+        actor.slot >= app->control_capacity || !qa_actors_get(qa_session_actors(app->session), actor))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Raw Q2 input needs an admitted source client");
+    struct application_control_frames *frames = app->control_frames;
+    application_control_record *record = &app->controls[actor.slot];
+    application_provider *provider = source_provider(app, actor);
+    qa_clock_state clock;
+    qa_q2_wire_movement source;
+    if (!record->active || record->retired || record->moving || !qa_actor_id_equal(record->actor, actor) ||
+        !provider || provider->kind != APPLICATION_PROVIDER_Q2 || !provider->constructed ||
+        !provider->attached || provider->close_pending || frames->draining || frames->current ||
+        provider != application_world_provider(app, QA_ROLE_ENTITIES, "") ||
+        !provider->component.command_actor ||
+        !provider->component.command_actor(provider->component.state, app->session, actor) ||
+        !qa_session_clock(app->session, provider->owner, &clock) ||
+        !qa_q2_wire_movement_read(provider->state.q2, actor, &source, error) ||
+        raw->kind != source.state.kind || !q2_raw_valid(raw))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Raw Q2 input lacks its physical source and literal dialect");
+    bool seen; uint64_t previous;
+    (void)application_control_frames_sequence(app, actor, &seen, &previous);
+    control_input *input = &frames->inputs[actor.slot];
+    if ((seen && sequence <= previous) || input->turn)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Raw Q2 input sequence or retained turn is invalid");
+    control_group *group = malloc(sizeof(*group) + sizeof(qa_movement_command));
+    if (!group) return application_fail(error, QA_ERROR_MEMORY, "Allocating physical Q2 input");
+    qa_movement_command command = *raw; command.sequence = sequence;
+    if (!qc_receipt(app, actor, 0, &command, error)) {
+        free(group); application_fault(app, error); return false;
+    }
+    *group = (control_group){.actor = actor, .provider = provider->owner, .count = 1,
+        .before_source = before_source(provider), .domain = CONTROL_COMMAND_Q2_SOURCE,
+        .source_time_ns = clock.frame.time_ns};
+    group->commands[0] = command;
+    if (!qa_actor_id_equal(input->actor, actor)) *input = (control_input){.actor = actor};
+    input->provider = provider->owner; input->sequence = sequence; input->seen = true;
+    input->retained = false; input->domain = CONTROL_COMMAND_Q2_SOURCE;
+    input->source_time_ns = clock.frame.time_ns; input->qw_receipt_time_ns = 0;
+    input->latest = command; input->arsenal = 0; input->weapon = 0; input->impulse = 0;
+    if (frames->tail) frames->tail->next = group; else frames->head = group;
+    frames->tail = group;
+    return true;
 }
 
 bool qa_application_control_nq_command(qa_application *app, qa_actor_id actor,
@@ -661,6 +1004,68 @@ bool application_control_last_qw_command(const qa_application *app, qa_actor_id 
         input->latest.kind != QA_MOVEMENT_QUAKEWORLD)
         return true;
     *out = input->latest; *time_ns = input->qw_receipt_time_ns; *present = true;
+    return true;
+}
+
+bool qa_application_control_unified_command(qa_application *app, qa_actor_id actor,
+    const qa_unified_input *raw, qa_error *error)
+{
+    if (!app || !raw || !app->control_frames || app->state != QA_APPLICATION_RUNNING ||
+        (app->operation != APPLICATION_IDLE && app->operation != APPLICATION_ADVANCING) ||
+        actor.slot >= app->control_capacity || !qa_actors_get(qa_session_actors(app->session), actor))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Unified input needs its admitted live control");
+    struct application_control_frames *frames = app->control_frames;
+    application_control_record *record = &app->controls[actor.slot];
+    application_provider *source = source_provider(app, actor);
+    control_unified receipt = {.movement = raw->command, .sequence = raw->sequence,
+        .has_arsenal = raw->has_arsenal};
+    if (raw->has_arsenal) {
+        application_provider *arsenal = application_provider_for(app, actor, QA_ROLE_ARSENAL, "");
+        receipt.arsenal = qa_strings_find(qa_session_strings(app->session), raw->arsenal.provider);
+        receipt.weapon = raw->arsenal.weapon.size
+            ? qa_strings_find(qa_session_strings(app->session), raw->arsenal.weapon) : 0;
+        receipt.use_holdable = raw->arsenal.use_holdable;
+        receipt.has_impulse = raw->arsenal.has_impulse; receipt.impulse = raw->arsenal.impulse;
+        if (!arsenal || receipt.arsenal != arsenal->owner ||
+            (raw->arsenal.weapon.size && !receipt.weapon))
+            return application_fail(error, QA_ERROR_ARGUMENT, "Unified arsenal intent is not declared by its selected owner");
+        if (receipt.weapon) {
+            qa_actor_owner owner;
+            if (!qa_inventory_item_owner(app->inventory, actor, receipt.weapon, &owner, NULL) || owner != arsenal->owner)
+                return application_fail(error, QA_ERROR_ARGUMENT, "Unified weapon is absent from its selected inventory owner");
+        }
+    }
+    bool seen = false; uint64_t previous = 0;
+    (void)application_control_frames_sequence(app, actor, &seen, &previous);
+    if (!record->active || record->retired || record->moving || !qa_actor_id_equal(record->actor, actor) ||
+        !source || !source->constructed || !source->attached || source->close_pending ||
+        frames->current || frames->draining || !unified_valid(&receipt) ||
+        receipt.movement.kind != record->state.kind || (seen && receipt.sequence <= previous))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Unified input lost its selected actor, dialect or sequence");
+    control_input *input = &frames->inputs[actor.slot];
+    if (input->turn)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Unified input cannot interrupt a prepared Source turn");
+    if (app->q1_paused) return true;
+    bool retained = source_client(source) && source->component.clock.kind == QA_CLOCK_NETQUAKE &&
+        receipt.movement.kind == QA_MOVEMENT_NETQUAKE;
+    control_group *group = retained ? NULL : calloc(1, sizeof(*group) + sizeof(*group->commands));
+    if (!retained && !group) return application_fail(error, QA_ERROR_MEMORY, "Allocating unified command receipt");
+    qa_movement_command marker = {.kind = receipt.movement.kind, .sequence = receipt.sequence};
+    if (group) {
+        *group = (control_group){.actor = actor, .provider = source->owner, .count = 1,
+            .before_source = before_source(source), .domain = CONTROL_COMMAND_UNIFIED, .unified = receipt};
+        group->commands[0] = marker;
+    }
+    if (!qa_actor_id_equal(input->actor, actor)) *input = (control_input){.actor = actor};
+    input->provider = source->owner; input->sequence = receipt.sequence; input->seen = true;
+    input->retained = retained; input->domain = CONTROL_COMMAND_UNIFIED;
+    input->source_time_ns = 0; input->qw_receipt_time_ns = 0;
+    input->latest = marker; input->unified = receipt;
+    input->arsenal = 0; input->weapon = 0; input->impulse = 0;
+    if (group) {
+        if (frames->tail) frames->tail->next = group; else frames->head = group;
+        frames->tail = group;
+    }
     return true;
 }
 
@@ -833,7 +1238,7 @@ const application_control_context *application_control_frame_current(const qa_ap
             actual.completed_frame_number != current->command.completed_frame_number ||
             actual.time_ns != current->command.time_ns || actual.elapsed_ns != current->command.elapsed_ns ||
             actual.host_elapsed_ns != current->command.host_elapsed_ns) return NULL;
-        if (current->source_usercmd || current->source_guestcmd) {
+        if (current->source_usercmd || current->source_guestcmd || current->source_q2cmd) {
             application_provider *source = NULL;
             for (size_t i = 0; i < app->provider_count; ++i)
                 if (app->providers[i]->owner == owner) { source = app->providers[i]; break; }
@@ -842,6 +1247,10 @@ const application_control_context *application_control_frame_current(const qa_ap
                 (current->source_usercmd && (source->kind != APPLICATION_PROVIDER_Q3 ||
                  !qa_q3_native_client_slot(source->state.q3, actor, &slot, NULL))) ||
                 (current->source_guestcmd && (!original_q3(source) || !source->component.command_actor ||
+                 !source->component.command_actor(source->component.state, app->session, actor))) ||
+                (current->source_q2cmd && (source->kind != APPLICATION_PROVIDER_Q2 ||
+                 source != application_world_provider((qa_application *)app, QA_ROLE_ENTITIES, "") ||
+                 !source->component.command_actor ||
                  !source->component.command_actor(source->component.state, app->session, actor)))) return NULL;
         }
     } else {
@@ -857,11 +1266,12 @@ const application_control_context *application_control_frame_current(const qa_ap
             actual.start_ns != current->frame.start_ns || actual.elapsed_ns != current->frame.elapsed_ns) return NULL;
     }
     if (current->path == APPLICATION_CONTROL_MIXED) {
-        uint64_t interval = current->source_usercmd ? current->command.elapsed_ns :
+        uint64_t interval = current->source_usercmd || current->source_q2cmd || current->unified_command ? current->command.elapsed_ns :
             current->command_only ? current->command.host_elapsed_ns : current->frame.elapsed_ns;
         if (current->source_guestcmd && current->source_input_applied) {
             if (!application_guest_input_interval(app, actor, &interval)) return NULL;
-        } else if (!current->source_usercmd) (void)qa_session_advance_interval(app->session, &interval);
+        } else if (!current->source_usercmd && !current->source_q2cmd && !current->unified_command)
+            (void)qa_session_advance_interval(app->session, &interval);
         if (actor.slot >= app->control_capacity || source_interval(app->controls[actor.slot].state.kind, interval)
             != current->source_elapsed_ns) return NULL;
     }
@@ -886,7 +1296,18 @@ bool application_control_frames_q3_move(qa_application *app, const qa_source_com
     }
     const application_control_context *previous = owner->current;
     owner->current = &current;
-    bool ok = application_control_move_applied(app, admission->actor, command, NULL, error);
+    qa_movement_command unified_selected;
+    bool ok = true;
+    if (owner->q3_group && owner->q3_group->domain == CONTROL_COMMAND_UNIFIED) {
+        unified_context(&current, &owner->q3_group->unified);
+        ok = unified_command(app, admission->actor, &owner->q3_group->unified, &unified_selected, error);
+        if (ok) {
+            unified_selected.milliseconds = command->milliseconds;
+            if (unified_selected.kind == QA_MOVEMENT_Q3) unified_selected.server_time_ms = command->server_time_ms;
+            command = &unified_selected;
+        }
+    }
+    if (ok) ok = application_control_move_applied(app, admission->actor, command, NULL, error);
     owner->current = previous;
     if (ok && qa_actor_id_equal(input->actor, admission->actor) &&
         (!owner->q3_group || input->sequence == owner->q3_group->commands[0].sequence)) {
@@ -914,6 +1335,23 @@ qa_movement_state *application_control_frames_state_current(const qa_application
     const struct application_control_frames *owner = app ? app->control_frames : NULL;
     return owner && owner->state && qa_actor_id_equal(owner->state_actor, actor) &&
         application_control_frame_current(app, actor) ? owner->state : NULL;
+}
+
+const qa_movement_call *application_control_frames_call_swap(qa_application *app,
+    const qa_movement_call *call)
+{
+    struct application_control_frames *owner = app ? app->control_frames : NULL;
+    if (!owner) return NULL;
+    const qa_movement_call *previous = owner->call;
+    owner->call = call;
+    return previous;
+}
+
+const qa_movement_call *application_control_frames_call_current(const qa_application *app, qa_actor_id actor)
+{
+    const struct application_control_frames *owner = app ? app->control_frames : NULL;
+    return owner && owner->call && qa_actor_id_equal(owner->call->actor, actor) &&
+        application_control_frame_current(app, actor) ? owner->call : NULL;
 }
 
 bool application_control_frames_owns(const qa_application *app, qa_actor_id actor)
@@ -981,6 +1419,13 @@ static bool apply(qa_application *app, qa_actor_id actor, const qa_movement_comm
         input->frame_owned = true; input->owned_frame_number = frame->number;
     }
     qa_movement_command selected;
+    if (input->domain == CONTROL_COMMAND_UNIFIED) {
+        if (!unified_command(app, actor, &input->unified, &selected, error)) {
+            owner->current = previous; return false;
+        }
+        unified_context(&current, &input->unified);
+        command = &selected;
+    }
     if (input->domain == CONTROL_COMMAND_NQ_SOURCE) {
         if (!nq_selected_sources_ready(app, actor)) {
             owner->current = previous;
@@ -1076,7 +1521,8 @@ static bool q1_selected_command(qa_application *app, qa_actor_id actor,
         (uint32_t)record->state.data.q3.command_time_ms : (uint32_t)(source_start_ns / UINT64_C(1000000));
     time += raw->milliseconds; memcpy(&out->server_time_ms, &time, sizeof(time));
     out->acknowledged_server_seconds = (double)out->server_time_ms / 1000.0;
-    double speed = out->kind == QA_MOVEMENT_NETQUAKE ? 320.0 : out->kind == QA_MOVEMENT_Q3 ? 127.0 : 200.0;
+    double speed = out->kind == QA_MOVEMENT_NETQUAKE || out->kind == QA_MOVEMENT_QUAKEWORLD
+        ? 320.0 : out->kind == QA_MOVEMENT_Q3 ? 127.0 : 200.0;
     out->forward_move = (float)((double)forward * speed / 127.0);
     out->side_move = (float)((double)side * speed / 127.0);
     out->up_move = (float)((double)up * speed / 127.0);
@@ -1086,7 +1532,8 @@ static bool q1_selected_command(qa_application *app, qa_actor_id actor,
         if (up > 0) out->buttons |= 8u;
         if (up < 0) out->buttons |= 16u;
         out->up_move = 0; out->angles = qa_vec_sub(out->angles, record->state.data.q2r.delta_angles);
-    } else for (size_t i = 0; i < 3; ++i) {
+    } else if (out->kind == QA_MOVEMENT_Q2_CLASSIC || out->kind == QA_MOVEMENT_Q3)
+    for (size_t i = 0; i < 3; ++i) {
         int32_t delta = out->kind == QA_MOVEMENT_Q3 ? record->state.data.q3.delta_angle_words[i] :
             record->state.data.q2.delta_angle_shorts[i];
         uint32_t bits = (uint32_t)words[i] - (uint32_t)delta;
@@ -1122,6 +1569,133 @@ static bool nq_selected_command(qa_application *app, qa_actor_id actor,
     if (!q1_selected_command(app, actor, &timed, context->frame.start_ns, out, error)) return false;
     out->impulse = raw->impulse;
     return true;
+}
+
+static bool q2_selected_command(qa_application *app, qa_actor_id actor,
+    application_provider *source, const qa_q2_wire_movement *physical, const qa_movement_command *raw,
+    const qa_source_command *admission, qa_movement_command *out, qa_error *error)
+{
+    if (physical->state.kind != raw->kind) return false;
+    application_control_record *record = &app->controls[actor.slot];
+    application_provider *movement = application_provider_for(app, actor, QA_ROLE_MOVEMENT, "");
+    if (movement == source && record->state.kind == raw->kind) {
+        *out = *raw;
+        return true;
+    }
+    qa_vec3 aim;
+    if (raw->kind == QA_MOVEMENT_Q2_CLASSIC) {
+        const int16_t *delta = physical->state.data.q2.delta_angle_shorts;
+        aim = qa_v3((float)((double)(uint16_t)((uint32_t)raw->angle_words[0] + (uint32_t)delta[0]) * 360 / 65536),
+            (float)((double)(uint16_t)((uint32_t)raw->angle_words[1] + (uint32_t)delta[1]) * 360 / 65536),
+            (float)((double)(uint16_t)((uint32_t)raw->angle_words[2] + (uint32_t)delta[2]) * 360 / 65536));
+    } else aim = qa_vec_add(raw->angles, physical->state.data.q2r.delta_angles);
+    /* The shared command projection crosses each provider's command units
+     * once. Source words and the physical PM continuation remain untouched. */
+    float forward = (float)trunc(fmax(-127, fmin(127, (double)raw->forward_move * 127 / 200)));
+    float side = (float)trunc(fmax(-127, fmin(127, (double)raw->side_move * 127 / 200)));
+    float up = raw->kind == QA_MOVEMENT_Q2_RERELEASE
+        ? raw->buttons & 8u ? 127 : raw->buttons & 16u ? -127 : 0
+        : (float)trunc(fmax(-127, fmin(127, (double)raw->up_move * 127 / 200)));
+    int32_t words[] = {qw_angle_word(aim.x), qw_angle_word(aim.y), qw_angle_word(aim.z)};
+    *out = (qa_movement_command){.kind = record->state.kind, .sequence = raw->sequence,
+        .milliseconds = raw->milliseconds, .buttons = raw->buttons & 1u,
+        .impulse = raw->impulse, .light_level = raw->light_level,
+        .angles = {(float)((double)words[0] * 360 / 65536),
+            (float)((double)words[1] * 360 / 65536), (float)((double)words[2] * 360 / 65536)}};
+    uint32_t time = out->kind == QA_MOVEMENT_Q3 ? (uint32_t)record->state.data.q3.command_time_ms
+        : (uint32_t)(admission->time_ns / UINT64_C(1000000));
+    time += raw->milliseconds; memcpy(&out->server_time_ms, &time, sizeof(time));
+    out->acknowledged_server_seconds = (double)out->server_time_ms / 1000;
+    double speed = out->kind == QA_MOVEMENT_NETQUAKE || out->kind == QA_MOVEMENT_QUAKEWORLD ? 320
+        : out->kind == QA_MOVEMENT_Q3 ? 127 : 200;
+    out->forward_move = (float)((double)forward * speed / 127);
+    out->side_move = (float)((double)side * speed / 127);
+    out->up_move = (float)((double)up * speed / 127);
+    if (out->kind == QA_MOVEMENT_NETQUAKE) {
+        if (up > 0) out->buttons |= 2u;
+    } else if (out->kind == QA_MOVEMENT_Q2_RERELEASE) {
+        if (up > 0) out->buttons |= 8u;
+        if (up < 0) out->buttons |= 16u;
+        out->up_move = 0; out->angles = qa_vec_sub(out->angles, record->state.data.q2r.delta_angles);
+    } else if (out->kind == QA_MOVEMENT_Q2_CLASSIC || out->kind == QA_MOVEMENT_Q3) {
+        for (unsigned i = 0; i < 3; ++i) {
+            int32_t delta = out->kind == QA_MOVEMENT_Q3 ? record->state.data.q3.delta_angle_words[i]
+                : record->state.data.q2.delta_angle_shorts[i];
+            uint32_t bits = (uint32_t)words[i] - (uint32_t)delta;
+            memcpy(&out->angle_words[i], &bits, sizeof(bits));
+        }
+    }
+    application_provider *arsenal = application_provider_for(app, actor, QA_ROLE_ARSENAL, "");
+    if (arsenal && arsenal->kind == APPLICATION_PROVIDER_Q3) {
+        qa_q3_player_state player;
+        if (!qa_q3_player_read(arsenal->state.q3, actor, &player))
+            return application_fail(error, QA_ERROR_ARGUMENT, "Q2 Source projection lost its actual selected arsenal");
+        out->weapon = (uint8_t)player.requested_weapon;
+    }
+    return true;
+}
+
+static bool unified_q2_source(const control_unified *receipt, qa_movement_kind source_kind,
+    const qa_movement_command *selected, uint64_t elapsed_ns, qa_movement_command *out, qa_error *error)
+{
+    const qa_unified_movement *movement = &receipt->movement;
+    double forward, side, up, buttons, degrees[3];
+    double scale = movement->kind == QA_MOVEMENT_NETQUAKE || movement->kind == QA_MOVEMENT_QUAKEWORLD ? 320 :
+        movement->kind == QA_MOVEMENT_Q3 ? 127 : 200;
+    if (movement->kind == QA_MOVEMENT_Q2_CLASSIC || movement->kind == QA_MOVEMENT_Q3) {
+        const double *words = movement->kind == QA_MOVEMENT_Q3 ? movement->data.q3.angle_words : movement->data.q2.angle_shorts;
+        for (unsigned i = 0; i < 3; ++i) degrees[i] = words[i] * (360.0 / 65536);
+        if (movement->kind == QA_MOVEMENT_Q3) {
+            forward = movement->data.q3.forward; side = movement->data.q3.right; up = movement->data.q3.up;
+            buttons = movement->data.q3.buttons;
+        } else {
+            forward = movement->data.q2.forward; side = movement->data.q2.side; up = movement->data.q2.up;
+            buttons = movement->data.q2.buttons;
+        }
+    } else {
+        qa_unified_vec3 aim;
+        if (movement->kind == QA_MOVEMENT_NETQUAKE) {
+            aim = movement->data.nq.angles; forward = movement->data.nq.forward;
+            side = movement->data.nq.side; up = movement->data.nq.up; buttons = movement->data.nq.buttons;
+        } else if (movement->kind == QA_MOVEMENT_QUAKEWORLD) {
+            aim = movement->data.qw.angles; forward = movement->data.qw.forward;
+            side = movement->data.qw.side; up = movement->data.qw.up; buttons = movement->data.qw.buttons;
+        } else {
+            aim = movement->data.q2r.angles; forward = movement->data.q2r.forward;
+            side = movement->data.q2r.side; buttons = movement->data.q2r.buttons;
+            up = unified_word(buttons) & 8u ? 200 : unified_word(buttons) & 16u ? -200 : 0;
+        }
+        degrees[0] = aim.x; degrees[1] = aim.y; degrees[2] = aim.z;
+    }
+    uint32_t button_word = unified_word(buttons);
+    if ((movement->kind == QA_MOVEMENT_NETQUAKE || movement->kind == QA_MOVEMENT_QUAKEWORLD) && (button_word & 2u)) up = scale;
+    uint64_t duration = movement->kind == QA_MOVEMENT_NETQUAKE ? elapsed_ns / UINT64_C(1000000) : selected->milliseconds;
+    qa_movement_command command = {.kind = source_kind, .sequence = receipt->sequence,
+        .milliseconds = (uint8_t)duration, .buttons = button_word & 1u, .impulse = selected->impulse};
+    if (receipt->has_arsenal && receipt->has_impulse) command.impulse = receipt->impulse;
+    double values[] = {forward * 200 / scale, side * 200 / scale, up * 200 / scale};
+    if (source_kind == QA_MOVEMENT_Q2_CLASSIC) {
+        for (unsigned i = 0; i < 3; ++i) {
+            double angle = movement->kind == QA_MOVEMENT_Q2_CLASSIC ? movement->data.q2.angle_shorts[i] :
+                movement->kind == QA_MOVEMENT_Q3 ? movement->data.q3.angle_words[i] : degrees[i] * (65536.0 / 360);
+            uint16_t word = (uint16_t)unified_word(angle);
+            command.angle_words[i] = word <= INT16_MAX ? word : (int32_t)word - 65536;
+            uint16_t axis = (uint16_t)unified_word(values[i]);
+            values[i] = axis <= INT16_MAX ? axis : (int32_t)axis - 65536;
+        }
+        command.light_level = selected->light_level;
+    } else {
+        for (unsigned i = 0; i < 3; ++i)
+            if (!isfinite(degrees[i]) || fabs(degrees[i]) > FLT_MAX || !isfinite(values[i]) || fabs(values[i]) > FLT_MAX)
+                return application_fail(error, QA_ERROR_ARGUMENT, "Unified Source Q2 command exceeds its real float fields");
+        command.angles = qa_v3((float)degrees[0], (float)degrees[1], (float)degrees[2]);
+        if (up > 0) command.buttons |= 8u;
+        if (up < 0) command.buttons |= 16u;
+        values[2] = 0;
+        if (movement->kind == QA_MOVEMENT_Q2_RERELEASE) command.server_frame = unified_signed(movement->data.q2r.server_frame);
+    }
+    command.forward_move = (float)values[0]; command.side_move = (float)values[1]; command.up_move = (float)values[2];
+    *out = command; return true;
 }
 
 static bool qw_foreign_slice(command_group_call *call, application_control_context *current,
@@ -1207,7 +1781,84 @@ static bool apply_command_group(void *opaque, qa_session *session, const qa_sour
         current.source_elapsed_ns = (uint64_t)current.source_command.milliseconds * UINT64_C(1000000);
     }
     bool ok = true;
-    if (group->domain == CONTROL_COMMAND_Q3_SOURCE) {
+    if (group->domain == CONTROL_COMMAND_UNIFIED) {
+        qa_movement_command selected;
+        owner->current = &current;
+        unified_context(&current, &group->unified);
+        ok = unified_command(app, group->actor, &group->unified, &selected, error);
+        if (ok) {
+            current.source_elapsed_ns = source_interval(selected.kind, command->host_elapsed_ns);
+            if (selected.kind != QA_MOVEMENT_NETQUAKE)
+                current.source_elapsed_ns = (uint64_t)selected.milliseconds * UINT64_C(1000000);
+            application_provider *source = source_provider(app, group->actor);
+            bool physical_q2 = source && source->kind == APPLICATION_PROVIDER_Q2 &&
+                source == application_world_provider(app, QA_ROLE_ENTITIES, "") && source->component.command_actor &&
+                source->component.command_actor(source->component.state, app->session, group->actor);
+            qa_q2_wire_movement physical;
+            bool run_pmove = true, source_movement = false;
+            if (physical_q2) {
+                ok = qa_q2_wire_movement_read(source->state.q2, group->actor, &physical, error) &&
+                    unified_q2_source(&group->unified, physical.state.kind, &selected,
+                        current.source_elapsed_ns, &current.source_command, error) &&
+                    qa_q2_wire_movement_prepare(source->state.q2, group->actor,
+                        &current.source_command, &physical, &run_pmove, error);
+                current.source_q2cmd = true;
+                source_movement = application_provider_for(app, group->actor, QA_ROLE_MOVEMENT, "") == source;
+                if (ok && source_movement && run_pmove) {
+                    app->controls[group->actor.slot].state = physical.state;
+                    ok = unified_command(app, group->actor, &group->unified, &selected, error);
+                }
+            }
+            bool cutscene = app->controls[group->actor.slot].cutscene;
+            if (ok && run_pmove && (!physical_q2 || !cutscene))
+                ok = application_control_stage_move(app, group->actor, &selected, NULL, error);
+            if (ok && physical_q2 && run_pmove && qa_actors_get(qa_session_actors(session), group->actor)) {
+                application_control_record *record = &app->controls[group->actor.slot];
+                if (source_provider(app, group->actor) != source || !record->active || record->moving ||
+                    record->retired || !qa_actor_id_equal(record->actor, group->actor) ||
+                    (!cutscene && (!qa_actor_id_equal(record->result.actor, group->actor) ||
+                        record->result.command_sequence != group->unified.sequence)))
+                    ok = application_fail(error, QA_ERROR_ARGUMENT, "Unified Q2 Source completion lost its selected turn");
+                else ok = qa_q2_wire_movement_complete(source->state.q2, group->actor,
+                    cutscene ? NULL : &record->result, &current.source_command, !cutscene && source_movement, error);
+                if (ok && !cutscene) ok = qa_q2_player_after_movement(source->state.q2, group->actor, error);
+            }
+        }
+    } else if (group->domain == CONTROL_COMMAND_Q2_SOURCE) {
+        application_provider *source = source_provider(app, group->actor);
+        current.source_q2cmd = true; current.source_command = group->commands[call->index];
+        current.source_elapsed_ns = source_interval(app->controls[group->actor.slot].state.kind,
+            (uint64_t)current.source_command.milliseconds * UINT64_C(1000000));
+        current.retained = true;
+        owner->current = &current;
+        qa_movement_command selected;
+        qa_q2_wire_movement physical;
+        bool run_pmove = false;
+        bool source_movement = application_provider_for(app, group->actor, QA_ROLE_MOVEMENT, "") == source;
+        ok = source && source->kind == APPLICATION_PROVIDER_Q2 &&
+            qa_q2_wire_movement_prepare(source->state.q2, group->actor,
+                &current.source_command, &physical, &run_pmove, error);
+        bool cutscene = ok && app->controls[group->actor.slot].cutscene;
+        if (ok && run_pmove && !cutscene && qa_actors_get(qa_session_actors(session), group->actor)) {
+            if (source_movement) app->controls[group->actor.slot].state = physical.state;
+            ok = q2_selected_command(app, group->actor, source, &physical,
+                &current.source_command, command, &selected, error) &&
+                application_control_stage_move(app, group->actor, &selected, NULL, error);
+        }
+        if (ok && run_pmove && qa_actors_get(qa_session_actors(session), group->actor)) {
+            application_control_record *record = &app->controls[group->actor.slot];
+            if (source_provider(app, group->actor) != source || !record->active || record->moving ||
+                record->retired || !qa_actor_id_equal(record->actor, group->actor) ||
+                (!cutscene && (!qa_actor_id_equal(record->result.actor, group->actor) ||
+                    record->result.command_sequence != selected.sequence)))
+                ok = application_fail(error, QA_ERROR_ARGUMENT, "Q2 Source completion lost its selected phase");
+            else ok = qa_q2_wire_movement_complete(source->state.q2, group->actor,
+                cutscene ? NULL : &record->result, &current.source_command,
+                !cutscene && source_movement, error);
+            if (ok && !cutscene)
+                ok = qa_q2_player_after_movement(source->state.q2, group->actor, error);
+        }
+    } else if (group->domain == CONTROL_COMMAND_Q3_SOURCE) {
         current.source_guestcmd = true; current.retained = true;
         current.source_elapsed_ns = source_interval(app->controls[group->actor.slot].state.kind,
             command->host_elapsed_ns);
@@ -1286,6 +1937,21 @@ static bool drain(qa_application *app, const qa_source_frame *frames, size_t cou
         uint64_t host_elapsed = frame ? frame->elapsed_ns : 0;
         (void)qa_session_advance_interval(app->session, &host_elapsed);
         for (size_t i = 0; ok && live && i < group->count; ++i) {
+            if (group->domain == CONTROL_COMMAND_UNIFIED && provider->kind == APPLICATION_PROVIDER_Q3) {
+                qa_q3_usercmd raw;
+                ok = unified_q3_source(app, group->actor, provider, &group->unified, &raw, error);
+                if (ok) {
+                    owner->q3_group = group;
+                    ok = application_control_q3_client_think(provider, group->actor, &raw, error);
+                    owner->q3_group = NULL;
+                }
+                live = qa_actors_get(qa_session_actors(app->session), group->actor) != NULL;
+                if (ok && live) {
+                    app->controls[group->actor.slot].command_sequence = group->unified.sequence;
+                    app->controls[group->actor.slot].command_seen = true;
+                }
+                continue;
+            }
             if (group->domain == CONTROL_COMMAND_Q3_SOURCE && provider->kind == APPLICATION_PROVIDER_Q3) {
                 qa_q3_usercmd raw = q3_source_command(&group->commands[i], true);
                 owner->q3_group = group;
@@ -1298,14 +1964,18 @@ static bool drain(qa_application *app, const qa_source_frame *frames, size_t cou
                 }
                 continue;
             }
-            uint64_t elapsed = group->commands[i].kind == QA_MOVEMENT_NETQUAKE
+            qa_movement_command timing = group->commands[i];
+            if (group->domain == CONTROL_COMMAND_UNIFIED &&
+                !unified_command(app, group->actor, &group->unified, &timing, error)) { ok = false; break; }
+            uint64_t elapsed = timing.kind == QA_MOVEMENT_NETQUAKE
                 ? source_interval(group->commands[i].kind, host_elapsed)
-                : (uint64_t)group->commands[i].milliseconds * UINT64_C(1000000);
+                : (uint64_t)timing.milliseconds * UINT64_C(1000000);
             command_group_call call = {app, group, i, false};
             ok = qa_session_command_call(app->session, group->provider, group->actor, elapsed,
                 apply_command_group, &call, error);
             live = qa_actors_get(qa_session_actors(app->session), group->actor) != NULL;
-            if (ok && live && group->domain == CONTROL_COMMAND_Q3_SOURCE) {
+            if (ok && live && (group->domain == CONTROL_COMMAND_Q3_SOURCE || group->domain == CONTROL_COMMAND_Q2_SOURCE ||
+                group->domain == CONTROL_COMMAND_UNIFIED)) {
                 application_control_record *record = &app->controls[group->actor.slot];
                 record->command_sequence = group->commands[i].sequence; record->command_seen = true;
             }
@@ -1358,6 +2028,11 @@ bool application_control_frames_commands(void *opaque, qa_session *session, cons
             if (!group->bot && qa_actor_id_equal(group->actor, record->actor))
                 received = &group->commands[group->count - 1];
         control_input *input = &app->control_frames->inputs[i];
+        qa_movement_command unified_received;
+        if (received && input->domain == CONTROL_COMMAND_UNIFIED) {
+            if (!unified_command(app, record->actor, &input->unified, &unified_received, error)) return false;
+            received = &unified_received;
+        }
         if (received && (!qa_actor_id_equal(input->actor, record->actor) || !input->seen))
             return application_fail(error, QA_ERROR_ARGUMENT, "Q1 source preparation lost its received command");
         if (received && applications_active) {
@@ -1431,6 +2106,10 @@ bool application_control_frames_actor(void *opaque, qa_session *session, qa_acto
         APPLICATION_CONTROL_PHYSICS, true, false, &input->turn, 0, 0, error);
     if (ok) {
         input->impulse = 0;
+        if (input->domain == CONTROL_COMMAND_UNIFIED) {
+            input->unified.movement.data.nq.impulse = 0;
+            input->unified.impulse = 0;
+        }
         if (input->domain == CONTROL_COMMAND_NQ_SOURCE && input->seen &&
             qa_actors_get(qa_session_actors(session), actor)) {
             app->controls[actor.slot].command_sequence = input->sequence;
@@ -1490,7 +2169,7 @@ static bool command_fields(qa_source_save_io *io, qa_movement_command *command)
 static bool domain_fields(qa_source_save_io *io, control_command_domain *domain, uint64_t *time_ns)
 {
     uint8_t value = (uint8_t)*domain;
-    if (!qa_source_save_u8(io, &value) || value > CONTROL_COMMAND_NQ_SOURCE ||
+    if (!qa_source_save_u8(io, &value) || value > CONTROL_COMMAND_UNIFIED ||
         !qa_source_save_u64(io, time_ns)) return false;
     *domain = (control_command_domain)value;
     return true;
@@ -1500,7 +2179,7 @@ static bool domain_owner(qa_application *app, application_provider *source, qa_a
     control_command_domain domain, uint64_t time_ns, bool reading)
 {
     if (!source) return false;
-    if (domain == CONTROL_COMMAND_SELECTED) return time_ns == 0;
+    if (domain == CONTROL_COMMAND_SELECTED || domain == CONTROL_COMMAND_UNIFIED) return time_ns == 0;
     if (source != application_world_provider(app, QA_ROLE_ENTITIES, "") ||
         !saved_source_client(source, actor, NULL)) return false;
     qa_clock_state clock;
@@ -1508,6 +2187,9 @@ static bool domain_owner(qa_application *app, application_provider *source, qa_a
     if (domain == CONTROL_COMMAND_Q3_SOURCE)
         return source->component.clock.kind == QA_CLOCK_Q3 &&
             (source->kind == APPLICATION_PROVIDER_Q3 || original_q3(source));
+    if (domain == CONTROL_COMMAND_Q2_SOURCE)
+        return source->kind == APPLICATION_PROVIDER_Q2 &&
+            (source->component.clock.kind == QA_CLOCK_Q2_CLASSIC || source->component.clock.kind == QA_CLOCK_Q2_RERELEASE);
     if (domain == CONTROL_COMMAND_NQ_SOURCE)
         return source_client(source) && source->component.clock.kind == QA_CLOCK_NETQUAKE &&
             nq_selected_sources_ready(app, actor);
@@ -1518,11 +2200,41 @@ static bool domain_command(control_command_domain domain, const qa_movement_comm
     const application_control_record *control)
 {
     if (domain == CONTROL_COMMAND_Q3_SOURCE) return q3_raw_valid(command);
+    if (domain == CONTROL_COMMAND_Q2_SOURCE) return q2_raw_valid(command);
     if (domain == CONTROL_COMMAND_NQ_SOURCE) return nq_raw_valid(command);
     if (domain == CONTROL_COMMAND_QW_SOURCE)
         return command_valid(command) && command->kind == QA_MOVEMENT_QUAKEWORLD && command->milliseconds <= 255;
     return command->kind == control->state.kind &&
         (command->kind != QA_MOVEMENT_QUAKEWORLD || command->milliseconds <= 255);
+}
+
+static bool unified_fields(qa_source_save_io *io, control_unified *receipt)
+{
+    uint32_t kind = receipt->movement.kind;
+    if (!qa_source_save_u32(io, &kind) || kind > QA_MOVEMENT_Q3 ||
+        !qa_source_save_u64(io, &receipt->sequence) ||
+        !qa_source_save_bool(io, &receipt->has_arsenal) ||
+        !qa_source_save_string(io, &receipt->arsenal) || !qa_source_save_string(io, &receipt->weapon) ||
+        !qa_source_save_bool(io, &receipt->use_holdable) || !qa_source_save_bool(io, &receipt->has_impulse) ||
+        !qa_source_save_u8(io, &receipt->impulse)) return false;
+    receipt->movement.kind = (qa_movement_kind)kind;
+    double *fields[10]; size_t count = unified_numbers(&receipt->movement, fields);
+    for (size_t i = 0; i < count; ++i) if (!qa_source_save_f64(io, fields[i])) return false;
+    return unified_valid(receipt) || application_fail(io->error, QA_ERROR_FORMAT, "Saved unified receipt is invalid");
+}
+
+static bool unified_owner(qa_application *app, qa_actor_id actor, const control_unified *receipt,
+    const qa_movement_command *marker, const application_control_record *control)
+{
+    qa_movement_command expected = {.kind = receipt->movement.kind, .sequence = receipt->sequence};
+    if (!unified_valid(receipt) || receipt->movement.kind != control->state.kind ||
+        !command_equal(marker, &expected) ||
+        marker->sequence != receipt->sequence || marker->kind != receipt->movement.kind) return false;
+    if (!receipt->has_arsenal) return true;
+    application_provider *arsenal = application_provider_for(app, actor, QA_ROLE_ARSENAL, "");
+    qa_actor_owner owner;
+    return arsenal && arsenal->owner == receipt->arsenal && (!receipt->weapon ||
+        (qa_inventory_item_owner(app->inventory, actor, receipt->weapon, &owner, NULL) && owner == receipt->arsenal));
 }
 
 bool application_control_frames_fields(qa_source_save_io *io, qa_application *app,
@@ -1560,6 +2272,7 @@ bool application_control_frames_fields(qa_source_save_io *io, qa_application *ap
         if (ok && value.has_body_base) ok = qa_source_save_vec3(io, &value.body_base.mins) &&
             qa_source_save_vec3(io, &value.body_base.maxs);
         if (ok && value.seen) ok = command_fields(io, &value.latest);
+        if (ok && value.domain == CONTROL_COMMAND_UNIFIED) ok = unified_fields(io, &value.unified);
         if (!ok) break;
         application_provider *source = saved_source_provider(app, value.actor, error);
         if (value.actor.slot >= app->control_capacity || !controls[value.actor.slot].active ||
@@ -1580,7 +2293,11 @@ bool application_control_frames_fields(qa_source_save_io *io, qa_application *ap
                 (!application_player_bot(app, value.actor) || !application_bots_actor(app, value.actor))) ||
             !weapon_owner(app, value.actor, value.arsenal, value.weapon) ||
             (value.seen && (!domain_command(value.domain, &value.latest, &controls[value.actor.slot]) ||
-                value.latest.sequence != value.sequence)) ||
+                (value.domain == CONTROL_COMMAND_UNIFIED && !unified_owner(app, value.actor, &value.unified,
+                    &value.latest, &controls[value.actor.slot])) ||
+                value.latest.sequence != value.sequence ||
+                (value.domain == CONTROL_COMMAND_Q2_SOURCE && value.latest.kind !=
+                    (source->component.clock.kind == QA_CLOCK_Q2_RERELEASE ? QA_MOVEMENT_Q2_RERELEASE : QA_MOVEMENT_Q2_CLASSIC)))) ||
             (!value.seen && value.domain != CONTROL_COMMAND_SELECTED) ||
             (value.retained && value.seen && value.latest.impulse != 0)) {
             ok = application_fail(error, QA_ERROR_FORMAT, "Saved retained input has no exact control owner"); break;
@@ -1604,6 +2321,7 @@ bool application_control_frames_fields(qa_source_save_io *io, qa_application *ap
             qa_source_save_bool(io, &value.bot) &&
             domain_fields(io, &value.domain, &value.source_time_ns) &&
             qa_source_save_count(io, &value.count, (SIZE_MAX - sizeof(control_group)) / sizeof(qa_movement_command)) && value.count != 0;
+        if (ok && value.domain == CONTROL_COMMAND_UNIFIED) ok = unified_fields(io, &value.unified);
         control_group *group = reading && ok ? calloc(1, sizeof(*group) + value.count * sizeof(*group->commands)) : source;
         if (ok && !group) ok = application_fail(error, QA_ERROR_MEMORY, "Allocating saved input group");
         if (reading && ok) { *group = value; if (owner->tail) owner->tail->next = group; else owner->head = group; owner->tail = group; }
@@ -1617,11 +2335,13 @@ bool application_control_frames_fields(qa_source_save_io *io, qa_application *ap
             owner->inputs[value.actor.slot].retained || (!value.bot && (value.arsenal || value.weapon)) ||
             !weapon_owner(app, value.actor, value.arsenal, value.weapon)))
             ok = application_fail(error, QA_ERROR_FORMAT, "Saved input group has no exact control owner");
-        bool qw = actor_source && source_client(actor_source) && actor_source->component.clock.kind == QA_CLOCK_QUAKEWORLD &&
+        bool qw = value.domain != CONTROL_COMMAND_UNIFIED && actor_source && source_client(actor_source) && actor_source->component.clock.kind == QA_CLOCK_QUAKEWORLD &&
             (value.domain == CONTROL_COMMAND_QW_SOURCE || controls[value.actor.slot].state.kind == QA_MOVEMENT_QUAKEWORLD);
         if (ok && (qw != value.quakeworld || before_source(actor_source) != value.before_source ||
             (qw && value.count > 20) || (value.domain == CONTROL_COMMAND_Q3_SOURCE &&
                 (value.count != 1 || actor_source->kind != APPLICATION_PROVIDER_Q3)) ||
+            (value.domain == CONTROL_COMMAND_Q2_SOURCE && (value.count != 1 || actor_source->kind != APPLICATION_PROVIDER_Q2)) ||
+            (value.domain == CONTROL_COMMAND_UNIFIED && (value.count != 1 || value.bot || value.quakeworld)) ||
             (value.bot && (value.count != 1 ||
                 !application_player_bot(app, value.actor) || !application_bots_actor(app, value.actor)))))
             ok = application_fail(error, QA_ERROR_FORMAT, "Saved command group differs from source ownership");
@@ -1635,6 +2355,10 @@ bool application_control_frames_fields(qa_source_save_io *io, qa_application *ap
         for (size_t j = 0; ok && j < value.count; ++j) {
             qa_movement_command command = reading ? (qa_movement_command){0} : group->commands[j];
             ok = command_fields(io, &command) && domain_command(value.domain, &command, &controls[value.actor.slot]) &&
+                (value.domain != CONTROL_COMMAND_UNIFIED || unified_owner(app, value.actor, &value.unified,
+                    &command, &controls[value.actor.slot])) &&
+                (value.domain != CONTROL_COMMAND_Q2_SOURCE || command.kind ==
+                    (actor_source->component.clock.kind == QA_CLOCK_Q2_RERELEASE ? QA_MOVEMENT_Q2_RERELEASE : QA_MOVEMENT_Q2_CLASSIC)) &&
                 (j && value.quakeworld ? command.sequence == last : !seen || command.sequence > last) &&
                 command.sequence <= owner->inputs[value.actor.slot].sequence;
             if (ok) { seen = true; last = command.sequence; if (reading) group->commands[j] = command; }
@@ -1649,7 +2373,8 @@ bool application_control_frames_fields(qa_source_save_io *io, qa_application *ap
             if (qa_actor_id_equal(group->actor, input->actor)) tail = group;
         if (tail && (tail->commands[tail->count - 1].sequence != input->sequence ||
             tail->domain != input->domain || tail->source_time_ns != input->source_time_ns ||
-            !command_equal(&tail->commands[tail->count - 1], &input->latest)))
+            !command_equal(&tail->commands[tail->count - 1], &input->latest) ||
+            (input->domain == CONTROL_COMMAND_UNIFIED && !unified_equal(&tail->unified, &input->unified))))
             ok = application_fail(error, QA_ERROR_FORMAT, "Saved input queue omits its actual latest received command");
     }
     if (!ok && reading) application_control_frames_free(owner);

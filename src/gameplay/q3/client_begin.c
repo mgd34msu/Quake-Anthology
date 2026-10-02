@@ -378,6 +378,8 @@ bool qa_q3_client_begin_state(qa_q3_game *game, qa_actor_id actor, qa_error *err
     player->weapon = player->requested_weapon = QA_Q3_W_NONE;
     player->weapon_phase = QA_Q3_READY;
     player->weapon_time_ms = 0;
+    player->selected_pm_flags = 0;
+    player->selected_pm_time_ms = 0;
     player->legs_animation = player->torso_animation = 0;
     player->legs_timer_ms = player->torso_timer_ms = 0;
     player->delta_pitch_word = player->delta_yaw_word = player->delta_roll_word = 0;

@@ -1,5 +1,7 @@
 #include "internal.h"
 #include "source_fuzzy_store.h"
+#include "source_weapon_resource.h"
+#include "../chat/internal.h"
 
 bool bot_grow(void **data, size_t *capacity, size_t need, size_t stride, qa_error *e) {
     if (need <= *capacity)
@@ -145,8 +147,14 @@ qa_bot_memory *qa_bot_library_memory(const qa_bot_library *library) {
     return library?library->memory:NULL;
 }
 bool qa_bot_library_idle(const qa_bot_library *library) {
-    return !library || (qa_bot_memory_idle(library->memory) &&
-        (!library->fuzzy_store || !library->fuzzy_store->active));
+    if(!library) return true;
+    if(!qa_bot_memory_idle(library->memory) || (library->fuzzy_store && library->fuzzy_store->active)) return false;
+    for(qa_bot_weapons *config=library->weapon_configs;config;config=config->next)
+        if(config->source && config->source->active) return false;
+    for(qa_bot_chat_asset *asset=library->chat_assets;asset;asset=asset->next)
+        if((asset->initial_source && asset->initial_source->active) ||
+           (asset->packed_source && asset->packed_source->active)) return false;
+    return true;
 }
 bool qa_bot_library_weights_shutdown(qa_bot_library *library,qa_error *error) {
     return library && library->fuzzy_store?bot_fuzzy_store_shutdown(library->fuzzy_store,error):true;

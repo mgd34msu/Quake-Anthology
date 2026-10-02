@@ -14,7 +14,7 @@ typedef struct qa_application_q3_campaign {
     qa_q3_product product;
     qa_console *console;
     qa_cvars *cvars;
-    qa_vfs *content;
+    qa_vfs *content, *configuration;
     qa_mount_id write_mount;
     qa_fs_root *config_root, *profile_root;
     qa_player_progress *profile;
@@ -30,9 +30,11 @@ typedef struct qa_application_q3_setting {
 } qa_application_q3_setting;
 
 /* Construct fresh selected source owners with these actual GAME startup
- * values before capacity admission and GAME Init. Values are borrowed only
- * for this synchronous preparation/publication; source cvar owners retain
- * their own copies. The caller supplies a current physical GAME cut. */
+ * values before capacity admission and GAME Init. Settings and source metadata
+ * are retained independently of the caller. With startup hooks, success may
+ * leave genuine preparation pending; advance it at each driver boundary until
+ * qa_application_startup_pending returns false before using the new source.
+ * The caller supplies a current physical GAME cut. */
 bool qa_application_q3_campaign_launch(qa_application *,
     const qa_application_q3_campaign *, const qa_launch_draft *,
     const qa_application_q3_setting *, size_t, qa_error *);
@@ -43,7 +45,8 @@ bool qa_application_q3_campaign_start(qa_application *, const qa_launch_draft *,
     const qa_application_q3_setting *, size_t, qa_error *);
 
 /* Borrows the actual published physical Q3 GAME without a player or
- * chosen-mode inference. Config root is the source's first writable mount;
+ * chosen-mode inference. Config root belongs to the source's actual retained
+ * configuration store, whose VFS may differ from its restricted media view;
  * profile root/store are the independent application player-profile owner.
  * Either writable owner may be absent. Native GAME supplies its real source
  * level; an original GAME requires its genuine admitted context and published

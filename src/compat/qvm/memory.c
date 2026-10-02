@@ -269,6 +269,28 @@ bool qa_qvm_memory_restore_scratch(qa_qvm *vm, uint32_t offset, qa_bytes bytes, 
     if (!captured) return false;
     return publish_writes(vm, deliveries, error);
 }
+bool qa_qvm_memory_restore_words(qa_qvm *vm, const qa_qvm_source_word *words,
+    size_t count, bool observed, qa_error *error)
+{
+    if (!qa_qvm_mutable(vm, error) || (count && !words)) return false;
+    for (size_t i = 0; i < count; ++i)
+        if (!qa_qvm_raw_range(vm, words[i].offset, 4, error)) return false;
+    bool ok = true; qa_error first = {0};
+    for (size_t i = 0; i < count; ++i) {
+        if (!observed) qa_store_u32le(vm->data + words[i].offset, (uint32_t)words[i].value);
+        else {
+            uint8_t bytes[4]; qa_store_u32le(bytes, (uint32_t)words[i].value);
+            qa_error publication = {0};
+            if (!qa_qvm_memory_restore_scratch(vm, words[i].offset,
+                    (qa_bytes){bytes, sizeof(bytes)}, &publication)) {
+                if (ok) first = publication;
+                ok = false;
+            }
+        }
+    }
+    if (!ok && error) *error = first;
+    return ok;
+}
 bool qa_qvm_fill(qa_qvm *vm, uint32_t offset, size_t length, uint8_t value, qa_error *error)
 {
     return mutate(vm,offset,length,MEMORY_FILL,NULL,value,error);

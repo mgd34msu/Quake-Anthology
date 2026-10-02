@@ -825,6 +825,38 @@ bool qa_qc_slot_reference(const qa_qc_instance *instance, uint32_t slot,
     return true;
 }
 
+bool qa_qc_actor_movement_flags_read(const qa_qc_instance *instance, qa_actor_id actor,
+    uint32_t *out, bool *found, qa_error *error)
+{
+    if (!instance || instance->destroying || !out || !found)
+        return qc_fail(error, QA_ERROR_ARGUMENT, actor.slot,
+            "QuakeC flags require their retained instance and outputs");
+    const qa_actor_record *record;
+    if (!actor_live(instance, actor, &record))
+        return qc_fail(error, QA_ERROR_NOT_FOUND, actor.slot,
+            "QuakeC flags actor is not live");
+    for (uint32_t slot = 1; slot < instance->entity_count; ++slot) {
+        qc_slot binding = instance->slots[slot];
+        if ((binding.kind != QA_QC_SLOT_OWNED && binding.kind != QA_QC_SLOT_BORROWED) ||
+            !qa_actor_id_equal(binding.actor, actor)) continue;
+        if (binding.owner != record->owner || (binding.kind == QA_QC_SLOT_OWNED &&
+            (record->owner != instance->options.host.owner || !record->has_source ||
+             record->source_slot != slot || binding.source_slot != slot)))
+            return qc_fail(error, QA_ERROR_FORMAT, slot,
+                "QuakeC flags row lost its actual source owner");
+        const qa_qc_definition *field = qa_qc_program_find_field(instance->program, "flags");
+        if (!field) break;
+        uint32_t flags;
+        if (!body_ground_flags(instance, slot, &flags, error)) return false;
+        *out = flags;
+        *found = true;
+        return true;
+    }
+    *out = 0;
+    *found = false;
+    return true;
+}
+
 bool qa_qc_actor_reference(qa_qc_instance *instance, qa_actor_id actor,
                            bool project, int32_t *out, qa_error *error)
 {

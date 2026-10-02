@@ -4,6 +4,10 @@
 #include "remote_q3_client.h"
 
 typedef struct frontend_remote_q3_initial frontend_remote_q3_initial;
+size_t frontend_remote_q3_initial_count(const qa_frontend *);
+frontend_remote_q3_initial *frontend_remote_q3_initial_at(const qa_frontend *,size_t);
+bool frontend_remote_q3_initial_idle_all(const qa_frontend *);
+bool frontend_remote_q3_initial_destroy_all(qa_frontend *,qa_error *);
 /* Connecting UI media has no decoded map, gamestate or CGAME Init counters. */
 typedef struct frontend_remote_q3_initial_view {
     const frontend_remote_q3_initial *owner;
@@ -27,9 +31,25 @@ typedef struct frontend_remote_q3_initial_view {
  * leaves that exact owner reachable for checked disposal. */
 bool frontend_remote_q3_initial_create(qa_frontend *,const frontend_network_client_attempt *,
     frontend_remote_q3_initial **,qa_error *);
+bool frontend_remote_q3_initial_prepare_restored(qa_frontend *,const frontend_network_client_attempt *,
+    uint64_t identity,uint32_t physical_seat,qa_vfs **claimed_mounts,frontend_remote_q3_initial **,qa_error *);
+bool frontend_remote_q3_initial_import_read(const frontend_remote_q3_initial *,frontend_remote_q3_initial_view *,qa_error *);
+bool frontend_remote_q3_initial_import_current(const frontend_remote_q3_initial_view *);
+bool frontend_remote_q3_initial_finish_import(frontend_remote_q3_initial *,qa_error *);
 bool frontend_remote_q3_initial_read(const frontend_remote_q3_initial *,
     frontend_remote_q3_initial_view *,qa_error *);
 bool frontend_remote_q3_initial_current(const frontend_remote_q3_initial_view *);
+/* Exact installed InitialUI resources under the metadata inventory fence.
+ * Prepared banks need no ordinary attempt callback or child-idle admission. */
+bool frontend_remote_q3_initial_metadata_read(const frontend_remote_q3_initial *,
+    frontend_remote_q3_initial_view *,qa_error *);
+bool frontend_remote_q3_initial_metadata_current(const frontend_remote_q3_initial_view *);
+qa_frontend *frontend_remote_q3_initial_frontend(const frontend_remote_q3_initial *);
+/* The initial parent owns its physical transport until checked disposal.
+ * Destroy the source UI children before retiring this attachment. */
+bool frontend_remote_q3_initial_transport_create(frontend_remote_q3_initial *,qa_error *);
+qa_native_q3_remote_client_transport *frontend_remote_q3_initial_transport_read(
+    const frontend_remote_q3_initial *);
 /* A host media child retains a structural reference without holding an
  * entered-callback borrow. Parent disposal waits for every such reference. */
 bool frontend_remote_q3_initial_child_retain(frontend_remote_q3_initial *,
@@ -38,6 +58,7 @@ bool frontend_remote_q3_initial_child_release(frontend_remote_q3_initial **,qa_e
 bool frontend_remote_q3_initial_borrow(frontend_remote_q3_initial *,
     frontend_remote_q3_initial_view *,qa_error *);
 void frontend_remote_q3_initial_release(frontend_remote_q3_initial *);
+bool frontend_remote_q3_initial_capture_current(const frontend_remote_q3_initial *);
 bool frontend_remote_q3_initial_idle(const frontend_remote_q3_initial *);
 bool frontend_remote_q3_initial_destroy(frontend_remote_q3_initial **,qa_error *);
 

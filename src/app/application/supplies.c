@@ -5,6 +5,7 @@
 #include "guest_qc_internal.h"
 #include "guest_native_q2_private.h"
 #include "guest_q3_private.h"
+#include "guest_q3_pickups.h"
 #include "map_players_private.h"
 #include "qa/application_supplies_save.h"
 #include "qa/source_save.h"
@@ -305,6 +306,8 @@ typedef struct supply_pair {
     qa_string_id profile_id;
     qa_supply_profile profile;
     qa_supply *supply;
+    qa_pickup_rule *pickup_rules;
+    size_t pickup_rule_count;
     bool native;
 } supply_pair;
 typedef struct supply_timer {
@@ -319,6 +322,8 @@ typedef struct supply_actor {
     supply_timer *timers;
     size_t timer_count;
     bool timers_ready;
+    qa_pickup_lease pickups;
+    bool pickup_imported;
 } supply_actor;
 struct application_supplies {
     qa_application *application;
@@ -773,6 +778,104 @@ static bool supply_current(void *opaque, qa_actor_id actor, qa_error *error) {
     return pair_current(pair, actor, error) && (actor_find(pair->owner, pair, actor) != NULL ||
         application_fail(error, QA_ERROR_ARGUMENT, "Selected supply actor was not admitted"));
 }
+static application_q3_pickups *original_q3_pickups(const supply_pair *pair) {
+    struct application_q3_guest *engine = q3g_engine(pair->source);
+    return !pair->native && engine && engine->provider == pair->source && engine->game &&
+        engine->game->primary && engine->game->kind == QA_QVM_GAME && engine->game->vm
+        ? engine->game->pickups : NULL;
+}
+static bool original_q3_take(void *opaque, const qa_pickup_offer *offer,
+    qa_pickup_execution *execution, qa_pickup_outcome *out, qa_error *error) {
+    supply_pair *pair = opaque;
+    *out = QA_PICKUP_REFUSED;
+    if (!qa_pickup_current(execution)) return true;
+    application_supplies *owner = pair->owner;
+    if (owner->calls == SIZE_MAX || offer->source != pair->source->owner)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Original pickup lost its actual selected supply owner");
+    ++owner->calls;
+    application_q3_pickups *source = original_q3_pickups(pair);
+    qa_supply_offer supplied = {0};
+    qa_supply_options options = {0};
+    bool accepted = false;
+    bool ok = supply_current(pair, offer->recipient, error) &&
+        application_q3_pickups_supply(source, offer, &supplied, &options, error);
+    if (ok && supplied.kind != QA_SUPPLY_AMMO && supplied.kind != QA_SUPPLY_WEAPON)
+        ok = application_fail(error, QA_ERROR_ARGUMENT, "Original QVM pickup has no static supply grant");
+    if (ok) ok = qa_supply_apply(pair->supply, offer->recipient, &supplied, &options,
+        &accepted, error) && supply_current(pair, offer->recipient, error);
+    if (ok) *out = qa_pickup_current(execution)
+        ? (accepted ? QA_PICKUP_ACCEPTED : QA_PICKUP_REFUSED) : QA_PICKUP_STALE;
+    --owner->calls;
+    return ok;
+}
+static void pickup_rules_free(supply_pair *pair) {
+    for (size_t i = 0; i < pair->pickup_rule_count; ++i) {
+        free((void *)pair->pickup_rules[i].offered);
+        free((void *)pair->pickup_rules[i].writes);
+    }
+    free(pair->pickup_rules); pair->pickup_rules = NULL; pair->pickup_rule_count = 0;
+}
+static bool pickup_write_add(qa_pickup_write **writes, size_t *count,
+    qa_item_id item, qa_error *error) {
+    for (size_t i = 0; i < *count; ++i) if ((*writes)[i].resource.item == item) return true;
+    if (!item || *count == SIZE_MAX / sizeof(**writes))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Original pickup write set exceeds its destination extent");
+    qa_pickup_write *grown = realloc(*writes, (*count + 1) * sizeof(*grown));
+    if (!grown) return application_fail(error, QA_ERROR_MEMORY, "Retaining selected original pickup destinations");
+    *writes = grown; grown[(*count)++] = (qa_pickup_write){
+        .resource = {.kind = QA_PICKUP_INVENTORY, .item = item}, .fields = QA_PICKUP_COUNT};
+    return true;
+}
+static bool pickup_rules_build(supply_pair *pair, qa_error *error) {
+    if (!original_q3_pickups(pair)) return true;
+    const qa_supply_profile *profile = &pair->profile;
+    if (profile->ammo_count > SIZE_MAX - profile->weapon_count)
+        return application_fail(error, QA_ERROR_MEMORY, "Original pickup rule inventory overflows");
+    size_t count = profile->ammo_count + profile->weapon_count;
+    if (!count || count > SIZE_MAX / sizeof(*pair->pickup_rules))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Selected original pickups need their actual supply mappings");
+    pair->pickup_rules = calloc(count, sizeof(*pair->pickup_rules));
+    if (!pair->pickup_rules) return application_fail(error, QA_ERROR_MEMORY, "Owning selected original pickup rules");
+    pair->pickup_rule_count = count;
+    for (size_t i = 0; i < count; ++i) {
+        bool ammo = i < profile->ammo_count;
+        const qa_supply_mapping *mapping = ammo ? profile->ammo + i : profile->weapons + i - profile->ammo_count;
+        qa_pickup_rule *rule = pair->pickup_rules + i;
+        qa_item_id *offered = malloc(sizeof(*offered));
+        if (!offered) return application_fail(error, QA_ERROR_MEMORY, "Retaining original pickup item identity");
+        *offered = mapping->source; rule->offered = offered; rule->offered_count = 1;
+        qa_bytes item = qa_strings_text(qa_session_strings(pair->owner->application->session), mapping->source);
+        if (!item.data || item.size > SIZE_MAX - 10)
+            return application_fail(error, QA_ERROR_ARGUMENT, "Original pickup mapping has no retained item name");
+        char *name = malloc(item.size + 10);
+        if (!name) return application_fail(error, QA_ERROR_MEMORY, "Naming selected original pickup rule");
+        memcpy(name, "selected:", 9); memcpy(name + 9, item.data, item.size); name[item.size + 9] = 0;
+        bool named = intern(pair->owner, name, &rule->id, error); free(name);
+        if (!named) return false;
+        qa_pickup_write *writes = NULL;
+        bool ok = true;
+        for (size_t j = 0; ok && j < mapping->count; ++j)
+            ok = pickup_write_add(&writes, &rule->write_count, mapping->destinations[j], error);
+        for (size_t j = 0; ok && !ammo && j < profile->ammo_count; ++j)
+            for (size_t k = 0; ok && k < profile->ammo[j].count; ++k)
+                ok = pickup_write_add(&writes, &rule->write_count, profile->ammo[j].destinations[k], error);
+        rule->writes = writes;
+        if (!ok) return false;
+        if (!rule->write_count)
+            return application_fail(error, QA_ERROR_ARGUMENT, "Selected original pickup has no destination");
+        rule->context = pair; rule->take = original_q3_take;
+    }
+    return true;
+}
+static bool pickup_actor_bind(supply_actor *entry, qa_error *error) {
+    supply_pair *pair = entry->pair;
+    if (!pair->pickup_rule_count || entry->pickups.serial) return true;
+    if (!qa_pickups_idle(pair->owner->application->pickups))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Selected pickup admission retains an entered grant");
+    return qa_pickups_bind(pair->owner->application->pickups, entry->actor, pair->arsenal->owner,
+        pair->pickup_rules, pair->pickup_rule_count, &entry->pickups, error) &&
+        pair_current(pair, entry->actor, error);
+}
 static bool ammo_granted(void *, qa_actor_id, const qa_pickup_receipt *, size_t, bool, qa_error *);
 static bool weapon_granted(void *, qa_actor_id, const qa_item_id *, size_t,
     qa_pickup_selection_mode, qa_error *);
@@ -820,12 +923,14 @@ bool application_supplies_destroy(application_supplies *owner, qa_error *error) 
         return application_fail(error, QA_ERROR_ARGUMENT, "Application supplies are held by a source operation");
     if (!owner) return true;
     while (owner->actors) {
-        supply_actor *entry = owner->actors; owner->actors = entry->next;
+        supply_actor *entry = owner->actors;
+        if (entry->pickups.serial && !qa_pickups_close(owner->application->pickups, entry->pickups, error)) return false;
+        owner->actors = entry->next;
         free(entry->timers); free(entry);
     }
     while (owner->pairs) {
         supply_pair *pair = owner->pairs; owner->pairs = pair->next;
-        qa_supply_destroy(pair->supply); profile_free(&pair->profile); free(pair);
+        qa_supply_destroy(pair->supply); pickup_rules_free(pair); profile_free(&pair->profile); free(pair);
     }
     free(owner); return true;
 }
@@ -850,10 +955,11 @@ bool application_supplies_prepare(application_supplies *owner, application_provi
         qa_supply_hooks hooks = {.context = pair, .ammo_granted = ammo_granted,
             .weapon_granted = weapon_granted, .current = supply_current};
         ok = profile_build(pair, error) && timer_profile_valid(pair, error) &&
-            qa_supply_create(owner->inventory, &pair->profile, &hooks, &pair->supply, error);
+            qa_supply_create(owner->inventory, &pair->profile, &hooks, &pair->supply, error) &&
+            pickup_rules_build(pair, error);
     }
     --owner->calls;
-    if (!ok) { profile_free(&pair->profile); free(pair); return false; }
+    if (!ok) { qa_supply_destroy(pair->supply); pickup_rules_free(pair); profile_free(&pair->profile); free(pair); return false; }
     pair->next = owner->pairs; owner->pairs = pair; return true;
 }
 static bool destination_metadata(supply_pair *pair, qa_item_id item,
@@ -925,7 +1031,16 @@ bool application_supplies_admit(application_supplies *owner, application_provide
     supply_pair *pair = pair_find(owner, source, arsenal);
     if (!pair || !pair_current(pair, actor, error))
         return pair ? false : application_fail(error, QA_ERROR_ARGUMENT, "Selected supply pair was not prepared");
-    if (actor_find(owner, pair, actor)) return true;
+    supply_actor *existing = actor_find(owner, pair, actor);
+    if (existing) {
+        if (existing->pickups.serial) {
+            if (!qa_pickups_idle(owner->application->pickups) ||
+                !qa_pickups_close(owner->application->pickups, existing->pickups, error))
+                return application_fail(error, QA_ERROR_ARGUMENT, "Selected pickup rebind requires its returned grant owner");
+            existing->pickups = (qa_pickup_lease){0}; existing->pickup_imported = false;
+        }
+        return pickup_actor_bind(existing, error);
+    }
     supply_actor *entry = calloc(1, sizeof(*entry));
     if (!entry) return application_fail(error, QA_ERROR_MEMORY, "Allocating supply actor admission");
     entry->pair = pair; entry->actor = actor;
@@ -940,10 +1055,38 @@ bool application_supplies_admit(application_supplies *owner, application_provide
         pair_current(pair, actor, error) && qa_inventory_admission_commit(admission, error));
     if (ok) admission = NULL;
     qa_inventory_admission_abort(admission); free(entries);
-    if (ok) { entry->next = owner->actors; owner->actors = entry; }
+    if (ok) { entry->next = owner->actors; owner->actors = entry;
+        ok = pickup_actor_bind(entry, error); }
     else free(entry);
     owner->admitting = false;
     --owner->calls; return ok;
+}
+bool application_supplies_pickup_rule(application_supplies *owner,qa_actor_id actor,
+    qa_actor_owner provider,uint64_t serial,uint32_t id,qa_pickup_rule *out,qa_error *error) {
+    if (!owner || !out || !serial || !id || owner->application->operation != APPLICATION_PERSISTING ||
+        !application_supplies_idle(owner))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Saved selected pickup needs its returned candidate supply owner");
+    application_provider *source = application_world_provider(owner->application, QA_ROLE_ENTITIES, "");
+    application_provider *arsenal = application_provider_for(owner->application, actor, QA_ROLE_ARSENAL, "");
+    supply_pair *pair = pair_find(owner, source, arsenal);
+    if (!pair || !arsenal || arsenal->owner != provider || !original_q3_pickups(pair) ||
+        !pair_current(pair, actor, error))
+        return application_fail(error, QA_ERROR_FORMAT, "Saved pickup rule differs from its actual Source and arsenal actor");
+    const qa_pickup_rule *rule = NULL;
+    for (size_t i = 0; i < pair->pickup_rule_count; ++i)
+        if (pair->pickup_rules[i].id == id) { rule = pair->pickup_rules + i; break; }
+    if (!rule) return application_fail(error, QA_ERROR_FORMAT, "Saved selected pickup has no authored mapping rule");
+    supply_actor *entry = actor_find(owner, pair, actor);
+    if (!entry) {
+        entry = calloc(1, sizeof(*entry));
+        if (!entry) return application_fail(error, QA_ERROR_MEMORY, "Retaining restored selected pickup recipient");
+        entry->pair = pair; entry->actor = actor; entry->next = owner->actors; owner->actors = entry;
+    }
+    if (entry->pickup_imported && entry->pickups.serial != serial)
+        return application_fail(error, QA_ERROR_FORMAT, "Saved selected pickup changed its actual registration identity");
+    entry->pickups = (qa_pickup_lease){actor, serial}; entry->pickup_imported = true;
+    *out = *rule;
+    return true;
 }
 void application_supplies_actor_released(application_supplies *owner, qa_actor_record actor) {
     if (!owner) return;
@@ -965,6 +1108,21 @@ bool application_supplies_for(application_supplies *owner, application_provider 
     if (!pair) return application_fail(error, QA_ERROR_ARGUMENT, "Actual source supply pair is absent");
     if (!supply_current(pair, actor, error)) return false;
     *out = pair->supply; return true;
+}
+bool application_supplies_weapon_sources(application_supplies *owner, application_provider *source,
+    qa_actor_id actor, const qa_supply_weapon *selected, size_t selected_count,
+    const qa_supply_weapon *original, size_t original_count, qa_item_id *out, qa_error *error) {
+    if (!owner || !source || owner->calls == SIZE_MAX || (selected_count && (!selected || !out)) ||
+        (original_count && !original))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Weapon source mapping needs its actual supply owner and rosters");
+    application_provider *arsenal = application_provider_for(owner->application, actor, QA_ROLE_ARSENAL, "");
+    supply_pair *pair = pair_find(owner, source, arsenal);
+    if (!pair) return application_fail(error, QA_ERROR_NOT_FOUND, "Weapon source mapping lost its prepared supply pair");
+    ++owner->calls;
+    bool ok = supply_current(pair, actor, error) &&
+        qa_supply_weapon_sources(&pair->profile, selected, selected_count,
+            original, original_count, out, error) && supply_current(pair, actor, error);
+    --owner->calls; return ok;
 }
 bool application_supplies_source_for(void *opaque, qa_actor_id actor, qa_supply **out,
     qa_error *error) {
@@ -1172,7 +1330,8 @@ bool application_supplies_spawn(application_supplies *owner, application_provide
             ok = application_fail(error, QA_ERROR_ARGUMENT, "Selected Q2 starter weapon is not owned");
         if (ok) ok = qa_q2_weapon_restore(arsenal->state.q2, actor,
             &(qa_q2_weapon_state){.weapon = active, .phase = QA_Q2_ACTIVATING,
-                .gun_rate = 10, .kick_seconds = 0.2f}, error) && supply_current(pair, actor, error);
+                .gun_rate = 10, .kick_seconds = 0.2f}, error) && supply_current(pair, actor, error) &&
+            qa_q2_clear_input(arsenal->state.q2, actor, error) && supply_current(pair, actor, error);
     } else if (ok && arsenal->kind == APPLICATION_PROVIDER_Q3) {
         qa_q3_weapon active = family == QA_GAME_Q1 ? QA_Q3_W_SHOTGUN : QA_Q3_W_MACHINEGUN;
         ok = starter_count(pair, actor, qa_q3_weapon_item(arsenal->state.q3, QA_Q3_W_GAUNTLET, false),
@@ -1826,6 +1985,10 @@ bool qa_application_supplies_restore(qa_application *app, qa_bytes bytes, qa_err
     }
     if (ok) ok = roster_matches(owner, decoded, error);
     if (ok) {
+        for (supply_actor *row = decoded; row; row = row->next) {
+            supply_actor *actual = actor_find(owner, row->pair, row->actor);
+            row->pickups = actual->pickups; row->pickup_imported = actual->pickup_imported;
+        }
         actor_list_free(owner->actors);
         owner->actors = decoded; decoded = NULL;
     }

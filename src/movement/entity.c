@@ -134,7 +134,7 @@ bool ph_ground(qa_physics *p, qa_actor_id actor, qa_actor_id ground, qa_error *e
     if (!ph_write(p, actor, &body, error)) return false;
     if (!ph_live(p, actor) || !p->services.read(p->services.context, actor, &props)) return true;
     if (ground.registry) props.flags |= QA_PHYSICS_ONGROUND;
-    else props.flags &= ~QA_PHYSICS_ONGROUND;
+    else props.flags &= ~(uint32_t)QA_PHYSICS_ONGROUND;
     return ph_properties(p, actor, &props, error);
 }
 
@@ -377,7 +377,7 @@ static bool ph_q2r_fly(qa_physics *p, qa_actor_id actor, qa_body_state body,
         read = ph_read(p, actor, &body, &props, error);
         if (read <= 0) { result->status = QA_PHYSICS_REMOVED; return read == 0; }
         if (props.flags & QA_PHYSICS_KILL_VELOCITY) {
-            props.flags &= ~QA_PHYSICS_KILL_VELOCITY;
+            props.flags &= ~(uint32_t)QA_PHYSICS_KILL_VELOCITY;
             if (!ph_properties(p, actor, &props, error) || !ph_stop_velocity(p, actor, error)) return false;
         }
     }

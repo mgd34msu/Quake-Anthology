@@ -1,3 +1,6 @@
+#include "source_prompt.h"
+#include "root_resources.h"
+#include "qa/material_source_scratch.h"
 #include "internal.h"
 #include "accessibility.h"
 #include "ui_features.h"
@@ -5,72 +8,19 @@
 #include "qc_rerelease_events.h"
 #include "native_q3_client.h"
 #include "native_composition.h"
+#include "network_session.h"
+#include "remote_q2_client.h"
+#include "remote_q1_client.h"
+#include "view_settings.h"
+#include "q1_sky.h"
+#include "shared_resource_policy.h"
+#include "shared_render_controls.h"
+#include "legacy_render_policy.h"
+#include "particle_delivery.h"
 #include <stdio.h>
 
-static qa_scene_family scene_family(qa_game_family family)
-{
-    return family == QA_GAME_Q3 ? QA_SCENE_Q3 : family == QA_GAME_Q2 ? QA_SCENE_Q2 : QA_SCENE_Q1;
-}
-bool frontend_scene_sync(qa_frontend *frontend, qa_error *error)
-{
-    qa_application_map_view map;
-    if (!qa_application_map_read(frontend->application, &map)) return true;
-    uint64_t configuration = qa_application_configuration_generation(frontend->application);
-    if (frontend->configuration == configuration && frontend->map_revision == map.revision) return true;
-    const qa_launch_snapshot *snapshot = qa_application_launch(frontend->application);
-    qa_vfs *mounts = qa_vfs_clone(qa_launch_snapshot_mounts(snapshot), error);
-    if (!mounts) return false;
-    qa_scene_resources *images = qa_scene_resources_create(mounts, error);
-    qa_material_library *materials = images ? qa_material_library_create(images, frontend->order, error) : NULL;
-    qa_scene_world *world = NULL;
-    qa_audio_bank *sounds = NULL;
-    qa_bsp_view bsp;
-    const qa_product *product = qa_catalog_product(qa_launch_snapshot_catalog(snapshot), map.geometry);
-    qa_scene_family family = product ? scene_family(product->family) : QA_SCENE_Q1;
-    qa_scene_world_options options = {.images = {.family = family, .wrap = QA_SCENE_REPEAT,
-        .filter = QA_SCENE_LINEAR_MIPMAP_LINEAR, .mipmap = true, .transparent_index = 255},
-        .subdivisions = 64, .q1_water_alpha = 1, .q2_light_modulate = 1, .q3_overbright = 1};
-    bool ok = images && materials && qa_bsp_open(qa_resource_bytes(map.resource), &bsp, error) &&
-        qa_material_library_load_scripts(materials, mounts, &options.images, error) &&
-        qa_scene_world_create(&bsp, images, materials, &options, &world, error) &&
-        (!frontend->audio || qa_audio_bank_create(mounts, &sounds, error));
-    if (!ok) {
-        qa_scene_world_destroy(world); qa_audio_bank_destroy(sounds);
-        qa_material_library_destroy(materials); qa_scene_resources_destroy(images); qa_vfs_destroy(mounts);
-        return false;
-    }
-    size_t length = strlen(map.name);
-    char *name = malloc(length + 1);
-    if (!name) {
-        qa_scene_world_destroy(world); qa_audio_bank_destroy(sounds);
-        qa_material_library_destroy(materials); qa_scene_resources_destroy(images); qa_vfs_destroy(mounts);
-        return frontend_fail(error, QA_ERROR_MEMORY, "retaining render map identity");
-    }
-    memcpy(name, map.name, length + 1);
-    qa_resource *resource = map.resource;
-    qa_resource_retain(resource);
-    if (!frontend_native_q3_retire_ready(frontend, error) ||
-        !frontend_source_retire_world(frontend, error) ||
-        !frontend_native_q3_retire_world(frontend, error)) {
-        qa_resource_release(resource); free(name);
-        qa_scene_world_destroy(world); qa_audio_bank_destroy(sounds);
-        qa_material_library_destroy(materials); qa_scene_resources_destroy(images); qa_vfs_destroy(mounts);
-        return false;
-    }
-    /* Rendering has finished with the previous publication before this swap. */
-    qa_scene_frame_reset(&frontend->frame, frontend->frame_number);
-    qa_scene_world_destroy(frontend->scene_world); qa_audio_bank_destroy(frontend->sounds);
-    qa_resource_release(frontend->map_resource);
-    qa_material_library_destroy(frontend->materials); qa_scene_resources_destroy(frontend->images); qa_vfs_destroy(frontend->mounts);
-    free(frontend->map_name);
-    frontend->map_name = name; frontend->mounts = mounts; frontend->images = images;
-    frontend->materials = materials; frontend->scene_world = world; frontend->sounds = sounds;
-    frontend->map_resource = resource;
-    frontend->configuration = configuration; frontend->map_revision = map.revision;
-    return frontend_material_remaps(frontend, frontend->materials, error) &&
-        frontend_source_publish_world(frontend, error) &&
-        frontend_native_q3_publish_world(frontend, error);
-}
+bool frontend_scene_sync(qa_frontend *frontend,qa_error *error)
+{ return frontend_root_resources_sync(frontend,error); }
 qa_scene_rect frontend_viewport(const qa_frontend *frontend, unsigned seat)
 {
     unsigned columns = frontend->options.seats > 2 ? 2 : 1;
@@ -89,6 +39,47 @@ void frontend_camera_axes(qa_vec3 angles, qa_vec3 axis[3])
     axis[0] = qa_v3(cp * cy, cp * sy, -sp);
     axis[1] = qa_v3(sr * sp * cy - cr * sy, sr * sp * sy + cr * cy, sr * cp);
     axis[2] = qa_v3(cr * sp * cy + sr * sy, cr * sp * sy - sr * cy, cr * cp);
+}
+static bool remote_q1_present(qa_frontend *f,unsigned seat,const qa_scene_view *fallback,
+    qa_audio_listener *listener,bool *rendered,const qa_ui_preferences *preferences,bool visible,qa_error *error)
+{
+    *rendered=false;
+    frontend_remote_q1 *selected=NULL;
+    frontend_remote_q1_view source={0};
+    for (size_t i=0;i<frontend_remote_q1_count(f);++i) {
+        frontend_remote_q1 *row=frontend_remote_q1_at(f,i);
+        frontend_remote_q1_view actual;
+        if (!frontend_remote_q1_metadata_read(row,&actual,error)) return false;
+        if (actual.domain.physical_seat!=seat || actual.retired) continue;
+        if (selected) return frontend_fail(error,QA_ERROR_ARGUMENT,"Two Q1 CLIENT receivers own one physical output");
+        selected=row; source=actual;
+    }
+    if (!selected) return true;
+    *rendered=true;
+    *listener=(qa_audio_listener){.seat=seat,.actor=QA_AUDIO_NO_ACTOR};
+    if (!source.bound) return true;
+    frontend_remote_q1_player_view player; bool present=false;
+    if (!frontend_remote_q1_player_read(selected,&player,&present,error)) return false;
+    if (!present) return true;
+    double fov; bool explicit_override;
+    if (!frontend_view_settings_read(f->view_settings,&fov,&explicit_override))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Q1 CLIENT camera lost its actual published view preference");
+    (void)explicit_override;
+    qa_scene_view view=*fallback;
+    view.origin=player.origin; view.origin.z+=player.view_height;
+    frontend_camera_axes(qa_vec_add(player.angles,player.kick_angles),view.axis);
+    const qa_cvar_view *far_clip=qa_cvars_find(qa_application_cvars(f->application),"gl_farclip");
+    if (!far_clip || !isfinite(far_clip->number) || far_clip->number<=4)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Q1 CLIENT camera lost its actual far clip declaration");
+    float horizontal=(float)fov;
+    float vertical=2*atanf(tanf(horizontal*.008726646259971648f)*
+        (float)view.viewport.height/(float)view.viewport.width)*57.29577951308232f;
+    view.projection=qa_scene_projection(horizontal,vertical,4,far_clip->number);
+    if (!frontend_remote_q1_draw(selected,&view,listener,rendered,error)) return false;
+    frontend_seat *physical=&f->seats[seat];
+    return qa_hud_draw(physical->hud,&(qa_hud_frame){.seat=seat,.actor=player.actor,
+        .time_ns=f->time_ns,.viewport=view.viewport,.safe_area=view.viewport,
+        .scale=preferences->hud_scale,.show_scores=physical->scores,.visible=visible},&f->frame,error);
 }
 bool frontend_present(qa_frontend *frontend, qa_error *error)
 {
@@ -114,8 +105,9 @@ bool frontend_present(qa_frontend *frontend, qa_error *error)
         qa_ui_preferences preferences;
         if (!qa_ui_preferences_read(qa_application_cvars(frontend->application), i, &preferences, error)) return false;
         qa_scene_rect rect = frontend_viewport(frontend, i);
+        if (!qa_scene_frame_output_domain(&frontend->frame,rect,false,error)) return false;
         qa_ui_state ui;
-        if (!qa_ui_tick(seat->ui, (double)frontend->time_ns / 1000000, error) || !qa_ui_state_read(seat->ui, &ui, error)) return false;
+        if (!frontend_source_prompt_prepare(seat->source_prompt,error) || !qa_ui_tick(seat->ui, (double)frontend->time_ns / 1000000, error) || !qa_ui_state_read(seat->ui, &ui, error)) return false;
         qa_actor_id actor = {0}; qa_application_camera_view camera;
         uint32_t launch_seat;
         bool published=frontend_seat_launch_id_read(frontend,i,&launch_seat);
@@ -148,27 +140,38 @@ bool frontend_present(qa_frontend *frontend, qa_error *error)
         if (!qa_scene_frame_emit(&frontend->frame, &begin, error)) return false;
         if (!frontend_source_frame(frontend, i, rect, error) ||
             !frontend_native_q2_frame(frontend, i, rect, error)) return false;
-        bool native_rendered = false;
-        if (native_ready && !frontend_native_q3_frame(frontend, i, rect, &native_rendered, error)) return false;
+        bool remote_rendered=false,remote_listener_present=false,native_rendered=false;
+        qa_audio_listener remote_listener;
+        if (!frontend_network_client_draw(frontend,i,0,&remote_rendered,&remote_listener,
+            &remote_listener_present,error)) return false;
+        if (!remote_rendered) {
+            if (!frontend_remote_q2_draw(frontend,i,0,&remote_listener,&remote_rendered,error)) return false;
+            remote_listener_present=remote_rendered && remote_listener.actor!=QA_AUDIO_NO_ACTOR;
+        }
+        if (!remote_rendered) {
+            if (!remote_q1_present(frontend,i,&view,&remote_listener,&remote_rendered,&preferences,!ui.fullscreen,error)) return false;
+            remote_listener_present=remote_rendered && remote_listener.actor!=QA_AUDIO_NO_ACTOR;
+        }
+        if (remote_rendered) native_rendered=true;
+        else if (native_ready && !frontend_native_q3_frame(frontend,i,rect,&native_rendered,error)) return false;
         if (live && !ui.fullscreen && !source.source_world && !native_rendered && frontend->scene_world) {
             qa_scene_world_input world = {.view = view, .seconds = (double)frontend->time_ns / 1e9,
-                .milliseconds = (int64_t)(frontend->time_ns / 1000000), .identity_light = 1, .curve_error = 4};
+                .milliseconds = (int64_t)(frontend->time_ns / 1000000), .identity_light = 1, .curve_error = 4,
+                .video_frame=frontend_material_movies_frontend_resolve,.video_context=frontend};
             if (!frontend_event_world(frontend, i, &world, error) ||
-                !qa_scene_world_submit(frontend->scene_world, &world, &frontend->frame, error) ||
-                !frontend_visuals_submit(frontend, i, 0, &world, &frontend->frame, error) ||
-                !frontend_particle_draw(frontend, &view, error)) return false;
-            world.fog.sky_drawn = qa_scene_world_sky_drawn(frontend->scene_world);
-            if (!qa_scene_frame_finish(&frontend->frame, &view, &world.fog, error)) return false;
+                !frontend_legacy_scene_submit(frontend,i,0,&world,&frontend->frame,error)) return false;
         }
         if (!source.source_world && !native_rendered && (!frontend_event_debug(frontend, &view, error) ||
             !frontend_tools_debug(frontend, &view, error))) return false;
         uint32_t real_milliseconds = (uint32_t)((frontend->time_ns / 1000000) & UINT32_MAX);
-        if (published && !qa_application_present(frontend->application, launch_seat, real_milliseconds,
+        if (published && !frontend_source_present(frontend, i, launch_seat, real_milliseconds,
                 frontend_network_remote(frontend) ? frontend_network_client_time(frontend) :
                     real_milliseconds, error)) return false;
         if (!frontend_native_q2_world_text(frontend, i, &view, error) ||
             !frontend_qc_rerelease_draw(frontend, i, &view, error)) return false;
-        if ((live || native_rendered) && frontend->audio) {
+        if (remote_rendered && frontend->audio) {
+            if (remote_listener_present) listeners[listener_count++]=remote_listener;
+        } else if ((live || native_rendered) && frontend->audio) {
             qa_audio_listener *listener = &listeners[listener_count++];
             if (native_rendered) {
                 if (!frontend_native_q3_listener(frontend, i, listener))
@@ -209,6 +212,12 @@ bool frontend_present(qa_frontend *frontend, qa_error *error)
         }
     }
     if (frontend->audio && !qa_audio_engine_listeners(frontend->audio, listeners, listener_count, error)) return false;
+    if (!frontend_render_controls_live(frontend,error)) return false;
+    if (frontend->frame.source_backend && frontend->frame.source_skip_backend) {
+        if (frontend->frame.source_pending &&
+            !qa_material_source_frame_end(frontend->frame.source_pending,&frontend->frame,false,error)) return false;
+        return true;
+    }
     const qa_cvar_view *gamma = qa_cvars_find(qa_application_cvars(frontend->application), "r_gamma");
     float brightness = gamma ? fmaxf(.5f, fminf(3, gamma->number)) : frontend->options.gamma;
     if (frontend->cpu) return qa_cpu_set_gamma(frontend->cpu, brightness, error) &&

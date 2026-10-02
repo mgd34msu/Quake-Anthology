@@ -1,46 +1,7 @@
-#include "qa/network_unified.h"
+#include "channel_internal.h"
 
 #include <stdlib.h>
 #include <string.h>
-
-typedef struct sent_fragment {
-    uint64_t at;
-    uint32_t attempts;
-    bool acknowledged;
-} sent_fragment;
-
-typedef struct outgoing {
-    struct outgoing *next;
-    qa_buffer payload;
-    sent_fragment *sent;
-    uint32_t sequence, required;
-    uint32_t next_fragment, acknowledged;
-    uint16_t fragments;
-} outgoing;
-
-typedef struct assembly {
-    qa_buffer payload;
-    uint8_t *received, *pending_ack;
-    uint64_t started;
-    uint32_t sequence, required, fragment_bytes, received_count;
-    uint16_t fragments;
-} assembly;
-
-struct qa_unified_channel {
-    qa_unified_token token;
-    qa_unified_limits limits;
-    uint64_t next_reliable, next_frame;
-    uint32_t reliable_received, reliable_acknowledged, frame_received, newest_frame;
-    outgoing *reliable, *tail, *frame, *pending_frame;
-    uint32_t reliable_count, reliable_cursor;
-    size_t queued_bytes, received_bytes;
-    assembly *assemblies[64], *frame_assembly, *waiting_frame;
-    uint32_t cumulative_sequence;
-    uint16_t cumulative_fragment;
-    uint8_t *packet;
-    unsigned lane;
-    bool cumulative_pending, closed, busy;
-};
 
 static bool error_message(qa_error *error, qa_status code, const char *message) {
     qa_error_set(error,code,0,"%s",message);
@@ -106,7 +67,7 @@ bool qa_unified_channel_create(qa_unified_token token, const qa_unified_limits *
         return error_message(error,QA_ERROR_ARGUMENT,"invalid unified channel capacity");
     qa_unified_channel *c=calloc(1,sizeof(*c));
     if (!c) return error_message(error,QA_ERROR_MEMORY,"allocating unified channel");
-    c->packet=malloc(l.datagram_bytes);
+    c->packet=calloc(l.datagram_bytes,1);
     if (!c->packet) { free(c); return error_message(error,QA_ERROR_MEMORY,"allocating unified datagram buffer"); }
     c->limits=l; c->token=token; c->next_reliable=1; c->next_frame=1;
     *out=c; return true;
@@ -162,6 +123,38 @@ bool qa_unified_channel_reliable(qa_unified_channel *c, qa_bytes payload,
     return true;
 }
 
+bool qa_unified_channel_reliable_batch(qa_unified_channel *c, const qa_bytes *payloads,
+                                       size_t count, uint32_t *first, uint32_t *last,
+                                       qa_error *error) {
+    if (!open_channel(c,error) || !first || !last || (count && !payloads))
+        return error_message(error,QA_ERROR_ARGUMENT,"invalid unified reliable batch owner");
+    if (count>c->limits.queued_reliable_messages-c->reliable_count ||
+        count>(uint64_t)UINT32_MAX+1-c->next_reliable)
+        return error_message(error,QA_ERROR_ARGUMENT,"unified reliable batch exceeds queue or sequence capacity");
+    size_t bytes=0;
+    for (size_t i=0;i<count;++i) {
+        if (payloads[i].size>c->limits.queued_reliable_bytes-c->queued_bytes-bytes)
+            return error_message(error,QA_ERROR_ARGUMENT,"unified reliable batch exceeds byte capacity");
+        bytes+=payloads[i].size;
+    }
+    outgoing *head=NULL,*tail=NULL;
+    for (size_t i=0;i<count;++i) {
+        outgoing *m=outgoing_create(c,payloads[i],c->next_reliable+i,0,true,error);
+        if (!m) {
+            while (head) { outgoing *next=head->next; outgoing_free(head); head=next; }
+            return false;
+        }
+        if (tail) tail->next=m; else head=m;
+        tail=m;
+    }
+    *first=head?head->sequence:0; *last=tail?tail->sequence:0;
+    if (!head) return true;
+    if (c->tail) c->tail->next=head; else c->reliable=head;
+    c->tail=tail; c->reliable_count+=(uint32_t)count; c->queued_bytes+=bytes;
+    c->next_reliable+=count;
+    return true;
+}
+
 bool qa_unified_channel_frame(qa_unified_channel *c, qa_bytes payload,
                                uint32_t required_reliable, qa_error *error) {
     if (!writable_channel(c,error)) return false;
@@ -198,7 +191,7 @@ static assembly **assembly_slot(qa_unified_channel *c, uint32_t sequence) {
 static assembly *assembly_create(const qa_unified_packet *p, uint64_t now, qa_error *error) {
     assembly *a=calloc(1,sizeof(*a));
     if (!a) { error_message(error,QA_ERROR_MEMORY,"allocating unified assembly"); return NULL; }
-    a->payload.data=malloc(p->total_bytes?p->total_bytes:1);
+    a->payload.data=calloc(p->total_bytes?p->total_bytes:1,1);
     a->received=calloc(p->fragments,1);
     if (p->kind==QA_UNIFIED_RELIABLE) a->pending_ack=calloc(p->fragments,1);
     if (!a->payload.data || !a->received || (p->kind==QA_UNIFIED_RELIABLE && !a->pending_ack)) {

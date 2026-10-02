@@ -1,5 +1,6 @@
 #include "scene_refs.h"
 #include "internal.h"
+#include "visual_access.h"
 
 static bool model_encode(void *context, const qa_model *model, uint64_t *out, qa_error *error)
 {
@@ -28,8 +29,9 @@ bool frontend_scene_model_source_read(const qa_scene_model *model, qa_scene_mode
 {
     if (!out || (kind!=QA_SCENE_MODEL_CONTENT_SOURCE && kind!=QA_SCENE_MODEL_CONTENT_REPLACEMENT_SOURCE)) return false;
     qa_scene_model_content_lease lease={0}; frontend_model_source source;
-    if (!qa_scene_model_content_read(model,kind,&lease) || !lease.context || lease.release!=model_release ||
-        !frontend_model_lease_source(lease.context,&source)) return false;
+    if (!qa_scene_model_content_read(model,kind,&lease) || !lease.context) return false;
+    if (lease.release!=model_release) return frontend_visual_scene_model_source_read(model,kind,out);
+    if (!frontend_model_lease_source(lease.context,&source)) return false;
     const qa_model_replacement *replacement=qa_scene_model_replacement_description(model);
     const qa_model *actual=kind==QA_SCENE_MODEL_CONTENT_SOURCE?qa_scene_model_source(model):replacement?replacement->source:NULL;
     if (source.model!=actual) return false;
@@ -40,10 +42,32 @@ bool frontend_scene_animation_source_read(const qa_scene_model *model, frontend_
     if (!out) return false;
     qa_scene_model_content_lease lease={0}; frontend_animation_source source;
     const qa_model_replacement *replacement=qa_scene_model_replacement_description(model);
-    if (!replacement || !qa_scene_model_content_read(model,QA_SCENE_MODEL_CONTENT_ANIMATION,&lease) ||
-        !lease.context || lease.release!=animation_release || !frontend_animation_lease_source(lease.context,&source) ||
+    if (!replacement || !qa_scene_model_content_read(model,QA_SCENE_MODEL_CONTENT_ANIMATION,&lease) || !lease.context) return false;
+    if (lease.release!=animation_release) return frontend_visual_scene_animation_source_read(model,out);
+    if (!frontend_animation_lease_source(lease.context,&source) ||
         source.animation!=replacement->animation) return false;
     *out=source; return true;
+}
+bool frontend_scene_model_content_clone(const qa_scene_model *model,qa_scene_model_content_kind kind,
+    qa_scene_model_content_lease *out,qa_error *error)
+{
+    qa_scene_model_content_lease held={0};
+    if(!out || out->context || out->release || !qa_scene_model_content_read(model,kind,&held) || !held.context)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Scene content clone requires its actual owning token and empty output");
+    if((kind==QA_SCENE_MODEL_CONTENT_SOURCE || kind==QA_SCENE_MODEL_CONTENT_REPLACEMENT_SOURCE) &&
+        held.release==model_release) {
+        frontend_model_source source; frontend_model_lease *lease=NULL;
+        if(!frontend_scene_model_source_read(model,kind,&source) ||
+            !frontend_model_lease_clone(held.context,&lease,error)) return false;
+        *out=(qa_scene_model_content_lease){lease,model_release}; return true;
+    }
+    if(kind==QA_SCENE_MODEL_CONTENT_ANIMATION && held.release==animation_release) {
+        frontend_animation_source source; frontend_animation_lease *lease=NULL;
+        if(!frontend_scene_animation_source_read(model,&source) ||
+            !frontend_animation_lease_clone(held.context,&lease,error)) return false;
+        *out=(qa_scene_model_content_lease){lease,animation_release}; return true;
+    }
+    return frontend_visual_scene_model_content_clone(model,kind,out,error);
 }
 static bool model_retain(void *context, const qa_model *source, qa_scene_model_content_lease *out, qa_error *error)
 {

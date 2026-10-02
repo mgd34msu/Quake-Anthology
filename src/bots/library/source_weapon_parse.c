@@ -38,10 +38,20 @@ typedef struct weapon_parser {
     const char *path;
     const bot_weapon_parser_host *host;
     qa_script_location location;
-    bool language_failure;
+    bool language_failure,own_failure;
 } weapon_parser;
 static bool argument(qa_error *error,const char *message) {
     qa_error_set(error,QA_ERROR_ARGUMENT,0,"%s",message);return false;
+}
+static bool own_argument(weapon_parser *parser,qa_error *error,const char *message) {
+    parser->own_failure=true;return argument(error,message);
+}
+static bool bytes_result(weapon_parser *parser,bool ok,qa_error *error) {
+    if(ok) return true;
+    qa_error current={0};
+    if(parser->host->current(parser->host->context,&current)) parser->own_failure=true;
+    else if(error) *error=current;
+    return false;
 }
 static bool fail(weapon_parser *parser,qa_error *error,const char *format,...) {
     va_list args,copy;va_start(args,format);va_copy(copy,args);
@@ -66,7 +76,8 @@ static bool next(weapon_parser *parser,qa_script_token *token,bool *found,qa_err
     if(qa_script_source_failure(parser->source)) {
         *found=false;parser->location=(qa_script_location){.path=parser->path,.line=1,.column=1};return true;
     }
-    if(error) *error=local;return false;
+    if(error) *error=local;
+    return false;
 }
 static bool any(weapon_parser *parser,qa_script_token *token,const char *message,qa_error *error) {
     bool found;return next(parser,token,&found,error) && (found || fail(parser,error,"%s",message));
@@ -95,12 +106,12 @@ static bool number(weapon_parser *parser,bool floating,double *out,qa_error *err
     bool is_float=(token.subtype&QA_SCRIPT_FLOAT)!=0;
     if(is_float && !floating) return fail(parser,error,"unexpected float");
     if(!is_float && negative && token.integer==INT32_MIN)
-        return argument(error,"Structure negation exceeds the source signed-long range");
+        return own_argument(parser,error,"structure negation exceeds the source signed-long range");
     double value=is_float?token.number:token.integer;if(negative) value=-value;
     if(!floating && (value<-32768 || value>32767))
         return fail(parser,error,"value %.0f out of range [-32768, 32767]",value);
     if(floating && isfinite(value) && !isfinite((float)value))
-        return argument(error,"Structure value exceeds the source float conversion range");
+        return own_argument(parser,error,"structure value exceeds the source float conversion range");
     *out=value;return true;
 }
 static bool text(weapon_parser *parser,char out[80],qa_error *error) {
@@ -140,33 +151,35 @@ static bool structure(weapon_parser *parser,const weapon_field *fields,size_t co
         if(field->kind==WEAPON_TEXT) {
             char value[80]={0};if(!text(parser,value,error)) return false;
             if(weapon) memcpy(destination,value,80);
-            else if(!bot_weapon_config_set_text(projectile,field->source,
-                (qa_bytes){.data=(const uint8_t *)value,.size=strlen(value)},error)) return false;
+            else if(!bytes_result(parser,bot_weapon_config_set_text(projectile,field->source,
+                (qa_bytes){.data=(const uint8_t *)value,.size=strlen(value)},error),error)) return false;
         } else if(field->kind==WEAPON_VECTOR) {
             qa_vec3 value;memcpy(&value,destination,sizeof(value));
-            if(!vector(parser,&value,error)) return false;memcpy(destination,&value,sizeof(value));
+            if(!vector(parser,&value,error)) return false;
+            memcpy(destination,&value,sizeof(value));
         } else {
             double value;if(!number(parser,field->kind==WEAPON_FLOAT,&value,error)) return false;
             if(field->kind==WEAPON_INT) {
                 int32_t integer=(int32_t)value;
                 if(weapon) memcpy(destination,&integer,4);
-                else if(!bot_weapon_config_set_int(projectile,field->source,integer,error)) return false;
+                else if(!bytes_result(parser,bot_weapon_config_set_int(projectile,field->source,integer,error),error)) return false;
             } else {
                 float number_value=(float)value;
                 if(weapon) memcpy(destination,&number_value,4);
-                else if(!bot_weapon_config_set_float(projectile,field->source,number_value,error)) return false;
+                else if(!bytes_result(parser,bot_weapon_config_set_float(projectile,field->source,number_value,error),error)) return false;
             }
         }
     }
 }
 bool bot_weapon_parse(qa_script *source,const char *path,uint32_t weapons,uint32_t projectiles,
-    const bot_weapon_config_record *record,const bot_weapon_parser_host *host,bool *source_failure,qa_error *error) {
-    if(!source || !path || !path[0] || !record || !host || !host->current || !host->report || !host->complete || !source_failure)
+    const bot_weapon_config_record *record,const bot_weapon_parser_host *host,bool *source_failure,bool *own_failure,qa_error *error) {
+    if(!source || !path || !path[0] || !record || !host || !host->current || !host->report || !host->complete || !source_failure || !own_failure)
         return argument(error,"Weapon parse requires its true opened PC, allocated hunk and callbacks");
-    *source_failure=false;
+    *source_failure=false;*own_failure=false;
     weapon_parser parser={.source=source,.path=path,.host=host,.location={.path=path,.line=1,.column=1}};
     bot_weapon_config_cell header;qa_bot_memory_span bytes;
-    bool ok=bot_weapon_config_header(record,&header,error) && qa_bot_memory_bytes(record->memory,record->allocation,&bytes,error);
+    bool ok=bytes_result(&parser,bot_weapon_config_header(record,&header,error) &&
+        qa_bot_memory_bytes(record->memory,record->allocation,&bytes,error),error);
     uint64_t available=ok?((uint64_t)bytes.size-BOT_WEAPON_CONFIG_BYTES+BOT_WEAPON_INFO_BYTES-4)/BOT_WEAPON_INFO_BYTES:0;
     uint32_t limit=available<weapons?(uint32_t)available:weapons;
     uint8_t *defined=limit?calloc(limit,1):NULL;
@@ -183,16 +196,16 @@ bool bot_weapon_parse(qa_script *source,const char *path,uint32_t weapons,uint32
                 parser.location=token.location;
                 ok=fail(&parser,error,"weapon info number %d out of range in %s",weapon.number,path);
             }
-            if(ok) ok=bot_weapon_config_store_weapon(record,(uint32_t)weapon.number,&weapon,error);
+            if(ok) ok=bytes_result(&parser,bot_weapon_config_store_weapon(record,(uint32_t)weapon.number,&weapon,error),error);
             if(ok) defined[(uint32_t)weapon.number]=1;
         } else if(qa_script_token_is(&token,"projectileinfo")) {
             int32_t count;bot_weapon_config_cell projectile;
-            ok=bot_weapon_config_int(&header,4,&count,error);
+            ok=bytes_result(&parser,bot_weapon_config_int(&header,4,&count,error),error);
             if(ok && count>=0 && (uint32_t)count>=projectiles)
                 ok=fail(&parser,error,"more than %u projectiles defined in %s",projectiles,path);
-            if(ok) ok=bot_weapon_config_projectile_signed(record,weapons,count,&projectile,error) &&
-                bot_weapon_config_clear(&projectile,error) &&
-                structure(&parser,projectile_fields,sizeof(projectile_fields)/sizeof(*projectile_fields),NULL,&projectile,error);
+            if(ok) ok=bytes_result(&parser,bot_weapon_config_projectile_signed(record,weapons,count,&projectile,error) &&
+                bot_weapon_config_clear(&projectile,error),error);
+            if(ok) ok=structure(&parser,projectile_fields,sizeof(projectile_fields)/sizeof(*projectile_fields),NULL,&projectile,error);
             if(ok && projectile_count==projectile_capacity) {
                 size_t capacity=projectile_capacity?projectile_capacity*2:16;
                 if(capacity<projectile_capacity || capacity>SIZE_MAX/sizeof(*parsed_projectiles))
@@ -203,7 +216,7 @@ bool bot_weapon_parse(qa_script *source,const char *path,uint32_t weapons,uint32
                     else {parsed_projectiles=next;projectile_capacity=capacity;}
                 }
             }
-            if(ok) {parsed_projectiles[projectile_count++]=projectile;ok=bot_weapon_config_set_int(&header,4,count+1,error);}
+            if(ok) {parsed_projectiles[projectile_count++]=projectile;ok=bytes_result(&parser,bot_weapon_config_set_int(&header,4,count+1,error),error);}
         } else {
             if(token.text.size>INT_MAX) ok=argument(error,"Weapon definition token exceeds native extent");
             else ok=fail(&parser,error,"unknown definition %.*s in %s",(int)token.text.size,(const char *)token.text.data,path);
@@ -215,28 +228,29 @@ bool bot_weapon_parse(qa_script *source,const char *path,uint32_t weapons,uint32
         for(uint32_t i=0;ok && i<limit;++i) {
             if(!defined[i]) continue;
             bot_weapon_config_cell weapon;char name[81],projectile_name[81];
-            ok=bot_weapon_config_weapon(record,i,&weapon,error) && bot_weapon_config_text(&weapon,8,name,error) &&
-                bot_weapon_config_text(&weapon,180,projectile_name,error);
+            ok=bytes_result(&parser,bot_weapon_config_weapon(record,i,&weapon,error) &&
+                bot_weapon_config_text(&weapon,8,name,error) && bot_weapon_config_text(&weapon,180,projectile_name,error),error);
             if(ok && !name[0]) ok=fail(&parser,error,"weapon %u has no name in %s",i,path);
             if(ok && !projectile_name[0]) ok=fail(&parser,error,"weapon %s has no projectile in %s",name,path);
             bool matched=false;
             for(size_t j=0;ok && j<projectile_count;++j) {
-                char candidate[81];ok=bot_weapon_config_text(&parsed_projectiles[j],0,candidate,error);
+                char candidate[81];ok=bytes_result(&parser,bot_weapon_config_text(&parsed_projectiles[j],0,candidate,error),error);
                 if(ok && !strcmp(candidate,projectile_name)) {
                     bot_weapon_config_cell projectile;matched=true;
                     if(j>UINT32_MAX) ok=argument(error,"Projectile fixup exceeds its source ordinal domain");
-                    else ok=bot_weapon_config_projectile_at(record,weapons,(uint32_t)j,&projectile,error) &&
-                        bot_weapon_config_embed_projectile(&weapon,&projectile,error);
+                    else ok=bytes_result(&parser,bot_weapon_config_projectile_at(record,weapons,(uint32_t)j,&projectile,error) &&
+                        bot_weapon_config_embed_projectile(&weapon,&projectile,error),error);
                     break;
                 }
             }
             if(ok && !matched) ok=fail(&parser,error,"weapon %s uses undefined projectile in %s",name,path);
         }
-        if(ok && available<weapons) ok=argument(error,"Weapon validation exceeds the source configuration allocation");
+        if(ok && available<weapons) ok=own_argument(&parser,error,"weapon validation exceeds the source configuration allocation");
         if(ok && !weapons) {
             qa_script_diagnostic warning={.severity=QA_SCRIPT_WARNING,.location=parser.location,.message="no weapon info loaded"};
             ok=host->report(host->context,&warning,error) && host->current(host->context,error);
         }
     }
-    free(defined);free(parsed_projectiles);*source_failure=!ok && parser.language_failure;return ok;
+    free(defined);free(parsed_projectiles);*source_failure=!ok && parser.language_failure;
+    *own_failure=!ok && parser.own_failure;return ok;
 }

@@ -1,8 +1,15 @@
-#include "internal.h"
+#include "protocol.h"
 
 #include <math.h>
 
 _Thread_local qa_native_instance *native_active_instance;
+bool qa_native_terminal(const qa_native_instance *instance)
+{
+    if (!instance) return false;
+    if (instance->backend == QA_NATIVE_BACKEND_OWNED_PROCESS)
+        return instance->failed || qa_native_guest_terminal(instance->guest);
+    return instance->backend == QA_NATIVE_BACKEND_RUNNER && instance->runner && instance->runner->poisoned;
+}
 static void free_allocations(qa_native_instance *);
 
 static bool exact_target(qa_native_target left, qa_native_target right) {
@@ -190,12 +197,57 @@ fail: {
 }
 }
 
+static bool create_process(qa_native_module *module, const qa_native_options *options,
+    qa_native_instance **out, qa_error *error)
+{
+    if (!module || !options || !options->process || !out || *out)
+        return native_fail(error, QA_ERROR_ARGUMENT, 0, "native process creation needs its actual graph and empty owner");
+    if ((module->info.profile == QA_NATIVE_Q2_GAME_API2023 ||
+         module->info.profile == QA_NATIVE_Q2_CGAME_API2023) &&
+        (!options->tick_rate || !isfinite(options->frame_seconds) || options->frame_seconds <= 0 ||
+         !options->frame_milliseconds))
+        return native_fail(error, QA_ERROR_ARGUMENT, 0, "Q2 API 2023 requires its actual positive tick interval");
+    qa_native_instance *instance = calloc(1, sizeof(*instance));
+    if (!instance) return native_fail(error, QA_ERROR_MEMORY, 0, "owning native source process");
+    instance->module = module; instance->options = *options;
+    instance->backend = QA_NATIVE_BACKEND_OWNED_PROCESS; instance->lifecycle = QA_NATIVE_LOADED;
+    if (!native_instance_setup_identity(instance, options, error)) { free(instance); return false; }
+    qa_native_module_retain(module);
+    qa_native_instance *previous = native_active_instance;
+    native_active_instance = instance; instance->active_depth = 1;
+    bool okay = options->process->continuation.size ?
+        native_process_restore(instance, options->process, error) :
+        native_process_open(instance, options->process, error) && native_profile_bind(instance, error);
+    instance->active_depth = 0; native_active_instance = previous;
+    instance->options.process = NULL;
+    instance->options.declaration = NULL; instance->options.declaration_digest = NULL;
+    instance->options.dependencies = NULL; instance->options.dependency_count = 0;
+    if (okay && options->process->continuation.size) {
+        /* The actual host constructor owns this output slot. Publish the
+         * provisional address solely to its synchronous HOST decoder so its
+         * genuine actor/resource bindings can qualify the saved source state. */
+        *out = instance;
+        okay = instance->options.restore(instance->options.context,
+            (qa_bytes){instance->process_host.data, instance->process_host.size}, error) &&
+            native_process_publish(instance, options->process->previous, error);
+    }
+    qa_buffer_free(&instance->process_host);
+    if (okay && report_latched(instance, error)) { *out = instance; return true; }
+    instance->lifecycle = QA_NATIVE_SHUT_DOWN;
+    qa_error cleanup = {0};
+    if (!native_process_close(instance, &cleanup)) { *out = instance; return false; }
+    native_profile_unbind(instance); free_allocations(instance);
+    native_regions_destroy(instance); native_original_dependencies_destroy(instance);
+    qa_native_module_release(module); free(instance->slots); free(instance); *out = NULL; return false;
+}
+
 bool qa_native_create(qa_native_module *module, const qa_native_options *options,
                       const qa_native_runner_config *runner, qa_native_instance **out,
                       qa_error *error) {
     if (!module)
         return native_fail(error, QA_ERROR_ARGUMENT, 0,
                            "native module is required for backend selection");
+    if (options && options->process) return create_process(module, options, out, error);
     bool instrumented = options && (options->observe ||
                         (options->declaration && options->declaration->region_count));
     bool isolated = options && options->isolate;
@@ -212,7 +264,7 @@ static void free_allocations(qa_native_instance *instance) {
     native_allocation *allocation = instance->allocations;
     while (allocation) {
         native_allocation *next = allocation->next;
-        free(allocation->bytes);
+        if (!allocation->guest_address) free(allocation->bytes);
         free(allocation);
         allocation = next;
     }
@@ -254,6 +306,9 @@ bool qa_native_restart_ready(const qa_native_instance *instance, qa_error *error
 
 bool qa_native_restart_original(qa_native_instance *instance, qa_error *error) {
     if (!qa_native_restart_ready(instance, error)) return false;
+    if (instance->backend == QA_NATIVE_BACKEND_OWNED_PROCESS)
+        return native_fail(error, QA_ERROR_UNSUPPORTED, 0,
+            "owned module reload requires retaining the live process OS/runtime while replacing its source image");
     if (instance->lifecycle != QA_NATIVE_RESTART_READY || instance->restart_original_ready)
         return native_fail(error, QA_ERROR_ARGUMENT, 0, "native original reload requires consumed restart shutdown");
     for (uint32_t i = 0; i < instance->slot_capacity; ++i)
@@ -343,6 +398,14 @@ bool qa_native_destroy_owned(qa_native_instance **owner, qa_error *error) {
         native_direct_close(instance);
         if (!report_latched(instance, &current) && completed) { completed = false; first = current; }
         native_profile_unbind(instance);
+    } else if (instance->backend == QA_NATIVE_BACKEND_OWNED_PROCESS) {
+        if (!native_process_close(instance, &current)) {
+            instance->destroying = false;
+            if (error) *error = completed ? current : first;
+            return false;
+        }
+        if (!report_latched(instance, &current) && completed) { completed = false; first = current; }
+        native_profile_unbind(instance);
     } else {
         qa_native_instance *previous = native_active_instance;
         instance->unloading = true; instance->active_depth = 1;
@@ -363,6 +426,7 @@ bool qa_native_destroy_owned(qa_native_instance **owner, qa_error *error) {
     native_regions_destroy(instance);
     native_original_dependencies_destroy(instance);
     native_observers_destroy(instance);
+    qa_buffer_free(&instance->process_host);
     memset(instance, 0, sizeof(*instance));
     free(instance);
     *owner = NULL;
@@ -522,7 +586,7 @@ bool qa_native_call(qa_native_instance *instance, const char *entry,
     bool restart_shutdown = instance->pending_restart;
     bool previous_shutdown_entry = instance->shutdown_entry;
     bool called;
-    if (instance->backend == QA_NATIVE_BACKEND_DIRECT) {
+    if (instance->backend != QA_NATIVE_BACKEND_RUNNER) {
         called = native_call_binding(instance, binding, arguments, argument_count, result, error);
     } else {
         qa_native_instance *previous = native_active_instance;
@@ -627,6 +691,8 @@ bool qa_native_export(const qa_native_instance *instance, const char *name, qa_n
     if (!instance || instance->destroying)
         return native_fail(error, QA_ERROR_ARGUMENT, 0,
                            "native instance is required for export lookup");
+    if (instance->backend == QA_NATIVE_BACKEND_OWNED_PROCESS)
+        return native_process_export(instance, name, out, error);
     return instance->backend == QA_NATIVE_BACKEND_DIRECT
                ? native_direct_export(instance, name, out, error)
                : native_runner_export((qa_native_instance *)instance, name, out, error);
@@ -689,7 +755,8 @@ bool qa_native_invoke(qa_native_instance *instance, qa_native_address entry,
     }
     native_entry_binding binding = {
         .spec = {.name = "declared-source-entry", .signature = *signature}, .address = entry};
-    if (!native_ffi_prepare(&binding.ffi, signature, error))
+    if (instance->backend != QA_NATIVE_BACKEND_OWNED_PROCESS &&
+        !native_ffi_prepare(&binding.ffi, signature, error))
         return false;
     bool ok = native_call_binding(instance, &binding, arguments, argument_count, result, error);
     native_ffi_destroy(&binding.ffi);

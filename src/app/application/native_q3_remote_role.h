@@ -6,6 +6,7 @@
 #include "qa/application_q3_factory.h"
 
 typedef struct qa_native_q3_remote_client_service qa_native_q3_remote_client_service;
+typedef struct qa_native_q3_remote_client_transport qa_native_q3_remote_client_transport;
 typedef struct application_native_q3_client_modules application_native_q3_client_modules;
 
 bool application_native_q3_remote_roles_prepare(application_provider *, const qa_launch_choices *, qa_error *);
@@ -25,6 +26,14 @@ bool application_native_q3_remote_role_attach(application_provider *, uint32_t,
     qa_native_q3_remote_client_service *, qa_error *);
 bool application_native_q3_remote_role_service_read(application_provider *, uint32_t,
     qa_native_q3_remote_client_service **, qa_error *);
+bool application_native_q3_remote_role_transport_attach(application_provider *,
+    const qa_application_q3_remote_source *, qa_native_q3_remote_client_transport *, qa_error *);
+bool application_native_q3_remote_role_transport_current(application_provider *, uint32_t,
+    const qa_native_q3_remote_client_transport *);
+bool application_native_q3_remote_role_transport_detach_ready(application_provider *, uint32_t,
+    const qa_native_q3_remote_client_transport *, qa_error *);
+bool application_native_q3_remote_role_transport_detach(application_provider *, uint32_t,
+    const qa_native_q3_remote_client_transport *, qa_error *);
 bool application_native_q3_remote_role_initialized(application_provider *, uint32_t,
     qa_native_q3_remote_client_service *, qa_error *);
 bool application_native_q3_remote_role_detach(application_provider *, uint32_t,

@@ -2,6 +2,7 @@
 #define QA_SETTINGS_H
 
 #include "qa/input_platform.h"
+#include "qa/vfs.h"
 
 typedef struct qa_seat_settings {
     qa_input_binding *bindings;

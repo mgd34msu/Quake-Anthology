@@ -190,6 +190,7 @@ typedef struct qa_input_command_builder {
     qa_mouse_input mouse;
     qa_pitch_drift drift;
     bool previous_mouse_look;
+    uint8_t pending_impulse;
 } qa_input_command_builder;
 typedef struct qa_input_command_tuning {
     qa_view_input_tuning view;
@@ -199,6 +200,8 @@ typedef struct qa_input_command_tuning {
 qa_input_command_tuning qa_input_command_defaults(qa_movement_kind);
 void qa_input_command_clear(qa_input_command_builder *);
 bool qa_input_command_angles(qa_input_command_builder *, qa_vec3, qa_error *);
+/* Replaces the pending NQ/QW impulse. Only a successful command build consumes it. */
+bool qa_input_command_impulse(qa_input_command_builder *, int32_t, qa_error *);
 void qa_input_command_center(qa_input_command_builder *, float delta_pitch);
 /* Settings are sampled once by the seat owner, including its cvar bindings.
  * A failed build leaves both builder and output unchanged. */
@@ -385,7 +388,11 @@ bool qa_input_seat_replace_bindings(qa_input_seat *, const qa_input_binding *, s
  * The candidate owns the displaced configuration. Destroy it before capture
  * so held binding references belong entirely to the stable physical seat. */
 bool qa_input_seat_configuration_ready(const qa_input_seat *active,
-                                        const qa_input_seat *candidate, qa_error *);
+    const qa_input_seat *candidate, qa_error *);
+/* Pure returned physical configuration state. Context currentness is checked
+ * separately by configuration_ready before admission. No qualifier runs. */
+bool qa_input_seat_configuration_owned_is(const qa_input_seat *active,
+    const qa_input_seat *candidate);
 void qa_input_seat_configuration_publish(qa_input_seat *active, qa_input_seat *candidate);
 bool qa_input_seat_unbind(qa_input_seat *, qa_physical_input);
 void qa_input_seat_unbind_all(qa_input_seat *);

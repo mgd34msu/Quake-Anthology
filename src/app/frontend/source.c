@@ -1,8 +1,14 @@
+#include "qa/application_q3_body_entry.h"
+#include "qa/application_q3_components.h"
+#include "remote_q1_effects.h"
+#include "q1_sky.h"
 #include "internal.h"
 #include "qa/binary.h"
 #include "qa/q3_key.h"
 #include "qa/audio_save.h"
 #include "source_restore.h"
+#include "view_bindings.h"
+#include "view_settings.h"
 #include "capture.h"
 #include "round.h"
 #include "campaign.h"
@@ -14,6 +20,8 @@
 #include "qa/font_save.h"
 #include "qa/persistence_content.h"
 #include "qa/application_q3_client.h"
+#include "qa/application_network_q3_status.h"
+#include "network_presentation.h"
 #include "qa/application_character_selection.h"
 #include "qa/console_cvar_observer.h"
 #include "save_private.h"
@@ -25,7 +33,20 @@
 #include "selected_character.h"
 #include "selected_effects.h"
 #include "source_effects.h"
+#include "particle_delivery.h"
 #include "config_store.h"
+#include "shared_resource_policy.h"
+#include "shared_register.h"
+#include "shared_render_controls.h"
+#include "q3_render_policy.h"
+#include "material_movies.h"
+#include "material_movie_bindings.h"
+#include "qa/material_source_scratch.h"
+#include "q3_color_policy.h"
+#include "qa/render_controls.h"
+#include "visual_access.h"
+#include "music_sources.h"
+#include "qa/audio_music_prepare.h"
 #include "remote_config.h"
 #include "client_registry.h"
 #include "native_q3_client.h"
@@ -38,6 +59,7 @@
 
 typedef struct frontend_source_lease frontend_source_lease;
 typedef struct source_render_scope source_render_scope;
+typedef struct source_body_draw source_body_draw;
 struct frontend_source {
     frontend_source *next;
     qa_frontend *frontend;
@@ -55,14 +77,18 @@ struct frontend_source {
     bool constructed, construction_started;
     qa_vfs *mounts;
     const qa_vfs *source_files;
+    qa_launch_instance_lease *music_metadata;
+    qa_catalog *music_catalog;
+    qa_product_id music_product;
     qa_scene_resources *images;
     qa_material_library *materials;
     qa_font_library *fonts;
     qa_audio_bank *sounds;
     qa_audio_music *music;
     char *music_intro, *music_loop;
-    bool music_looping;
+    bool music_looping, music_pending;
     qa_media_library *movies;
+    frontend_material_movies *shader_movies;
     qa_q3_key *keys;
     frontend_key_profile *key_profile;
     const frontend_key_profile *retiring_client_profile;
@@ -89,12 +115,15 @@ struct frontend_source_lease {
     frontend_config_host_cvars namespaces;
     qa_command_context command;
     frontend_equipment_source *equipment;
+    source_body_draw *body_draw;
     qa_application_q3_client_context time_context;
     const char *time_names[6];
     qa_cvar_observer_token time_owner_tokens[6], time_mirror_tokens[6];
     size_t time_count, time_busy;
     char *system_info;
     char *disconnect_reason;
+    const qa_q3_host *status_host;
+    bool status_visible;
     bool disconnect_pending;
     bool time_bound, released;
 };
@@ -108,9 +137,30 @@ struct source_render_scope {
 static bool render_enter(void *,const qa_q3_host *,const qa_qvm_call *,
     const qa_q3_refdef *,void **,qa_error *);
 static void render_leave(void *,void *,bool);
+static bool body_scene_prepare(frontend_source_lease *,qa_q3_scene_options *,qa_error *);
+static bool body_scene_submit(frontend_source_lease *,const qa_q3_scene_options *,qa_scene_frame *,qa_error *);
 static void source_retry_retirement(frontend_source *);
 static bool source_publish_backend(frontend_source *,qa_error *);
 static bool source_geometry_restore(frontend_source *,qa_bytes,qa_error *);
+static bool status_visible(void *context,const qa_q3_host *host,bool *out,qa_error *error)
+{
+    const frontend_source_lease *lease=context;
+    qa_q3_host_client_context actual;
+    if (!lease || !out || lease->released || lease->role!=QA_QVM_CGAME ||
+        !qa_q3_host_client_context_read(host,&actual) || actual.frontend_lifetime!=lease ||
+        actual.role!=lease->role || actual.owner!=lease->source->owner ||
+        actual.service_owner!=lease->service_owner || actual.console!=lease->console ||
+        actual.cvars!=lease->cvars || actual.session!=qa_application_session(lease->source->application) ||
+        lease->source->application!=lease->source->frontend->application)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Status permission lost its actual CGAME host namespace");
+    bool linked=false;
+    for (const frontend_source_lease *row=lease->source->lease_list;row;row=row->next)
+        if (row==lease) { linked=true; break; }
+    if (!linked || (lease->status_host ? lease->status_host!=host || !lease->source->role_operations :
+        !qa_application_q3_configuration_host_entered(lease->source->application,&lease->namespaces.source,host)))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Status permission lacks its retained Draw or entered source scope");
+    *out=lease->status_visible; return true;
+}
 static bool lease_dispose(frontend_source_lease *lease)
 {
     if (lease->time_busy || !frontend_equipment_source_idle(lease->equipment)) return false;
@@ -313,6 +363,32 @@ bool frontend_source_system_info(qa_frontend *f,const qa_application_q3_client_c
     }
     free(retained); time_leave(lease); return ok;
 }
+bool frontend_source_field_of_view(qa_frontend *f,double value,qa_error *error)
+{
+    if (!f || !f->application) return frontend_fail(error,QA_ERROR_ARGUMENT,"Client FOV needs its actual application");
+    char text[64]; snprintf(text,sizeof(text),"%.17g",value);
+    for (frontend_source *source=f->sources;source;source=source->next) {
+        const qa_launch_instance *held=qa_launch_instance_lease_view(source->music_metadata);
+        for (frontend_source_lease *lease=source->lease_list;lease;lease=lease->next) {
+            if (lease->released || lease->role!=QA_QVM_CGAME || !lease->time_bound) continue;
+            if (source->application!=f->application || source->frontend!=f || !held ||
+                lease->source!=source || !lease->registry ||
+                !frontend_client_registry_matches(lease->registry,held,source->launch_seat) ||
+                lease->cvars!=frontend_client_registry_cvars(lease->registry) ||
+                lease->time_busy==SIZE_MAX || source->role_operations==SIZE_MAX)
+                return frontend_fail(error,QA_ERROR_ARGUMENT,"Client FOV left its retained CGAME namespace");
+            if (!qa_cvars_find(lease->cvars,"cg_fov")) continue;
+            ++lease->time_busy; ++source->role_operations;
+            bool ok=qa_cvars_set(lease->cvars,"cg_fov",text,true,error);
+            bool retained=!lease->released && lease->source==source && source->application==f->application &&
+                lease->cvars==frontend_client_registry_cvars(lease->registry) &&
+                frontend_client_registry_matches(lease->registry,held,source->launch_seat);
+            time_leave(lease);
+            if (!ok || !retained) return ok?frontend_fail(error,QA_ERROR_ARGUMENT,"Client FOV retired during publication"):false;
+        }
+    }
+    return true;
+}
 bool frontend_source_times_sync(qa_frontend *f,bool restoring,qa_error *error)
 {
     if (!f || !f->application || (restoring && !f->source_restoring))
@@ -326,7 +402,15 @@ bool frontend_source_times_sync(qa_frontend *f,bool restoring,qa_error *error)
             if (view.frontend_lifetime!=lease) return frontend_fail(error,QA_ERROR_FORMAT,"Frame time context has another physical frontend role");
             lease->time_context=view;
             if (!time_enter(lease,error)) return false;
-            bool ok=time_subscribe(lease,restoring,error); time_leave(lease);
+            bool ok=time_subscribe(lease,restoring,error);
+            double preference; bool explicit_override;
+            if (ok && !restoring && f->view_settings &&
+                frontend_view_settings_read(f->view_settings,&preference,&explicit_override) && explicit_override &&
+                qa_cvars_find(lease->cvars,"cg_fov")) {
+                char text[64]; snprintf(text,sizeof(text),"%.17g",preference);
+                ok=time_write(lease,lease->cvars,"cg_fov",text,error);
+            }
+            time_leave(lease);
             if (!ok) return false;
         }
     }
@@ -428,9 +512,31 @@ static void print_source(void *context, const char *text)
     qa_command_context command = {.origin = QA_COMMAND_SEAT, .seat = source->launch_seat, .owner = source->owner};
     frontend_console_print(source->frontend, &command, text);
 }
+static bool model_initialize(void *context,const qa_q3_model_opening *opening,
+    const qa_model *native,qa_scene_model *root,qa_error *error)
+{
+    frontend_source *source=context;
+    if (!source || !source->constructed || !source->leases ||
+        source->application!=source->frontend->application)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Model admission lost its actual Source group");
+    if (!frontend_visual_registered_model_initialize(source->frontend,opening,native,root,error)) return false;
+    return source->constructed && source->leases && source->application==source->frontend->application;
+}
 static bool source_remap(void *context, const char *original, const char *replacement, float offset, qa_error *error)
 {
-    return frontend_shader_remap(((frontend_source *)context)->frontend, original, replacement, offset, error);
+    frontend_source *source=context;
+    if (!source || !source->constructed || !source->leases || source->application!=source->frontend->application)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Shader remap lost its actual Source material owner");
+    qa_material_source_remap_status status;
+    if (!qa_material_remap_source(source->materials,original,replacement,offset,&status,error)) return false;
+    if (status!=QA_MATERIAL_SOURCE_REMAP_APPLIED) {
+        char warning[1200];
+        snprintf(warning,sizeof(warning),status==QA_MATERIAL_SOURCE_REMAP_ORIGINAL_DEFAULT?
+            "WARNING: R_RemapShader: shader %s not found\n":"WARNING: R_RemapShader: new shader %s not found\n",
+            status==QA_MATERIAL_SOURCE_REMAP_ORIGINAL_DEFAULT?original:replacement);
+        print_source(source,warning);
+    }
+    return source->leases && source->application==source->frontend->application;
 }
 static bool source_actor(void *context, int32_t number, uint64_t *out, qa_error *error)
 {
@@ -457,15 +563,89 @@ static bool listener(void *context, const qa_audio_listener *value, qa_error *er
     source->has_listener = true;
     return true;
 }
+static qa_audio_family music_family(const frontend_source *source)
+{
+    const qa_product *product=qa_catalog_product(source->music_catalog,source->music_product);
+    return product && product->family==QA_GAME_Q1?QA_AUDIO_Q1:
+        product && product->family==QA_GAME_Q2?QA_AUDIO_Q2:QA_AUDIO_Q3;
+}
+static bool music_published(const frontend_source *source)
+{
+    const qa_launch_instance *held=source?qa_launch_instance_lease_view(source->music_metadata):NULL;
+    const qa_launch_snapshot *publication=source?qa_application_launch(source->application):NULL;
+    const qa_launch_snapshot *previous=source?qa_application_startup_publication_previous(source->application,publication):NULL;
+    if (previous) publication=previous;
+    const qa_launch_instance *actual=held && publication?
+        qa_launch_snapshot_find(publication,held->selection.instance):NULL;
+    const char *instance=source?qa_application_provider_instance(source->application,source->owner):NULL;
+    return actual && held && actual->storage==held->storage && instance &&
+        !strcmp(instance,held->selection.instance);
+}
+static bool music_origin_current(void *context,const frontend_music_origin *origin)
+{
+    frontend_source *source=context;
+    const qa_launch_instance *descriptor=source?qa_launch_instance_lease_view(source->music_metadata):NULL;
+    bool linked=false;
+    for (const frontend_source *row=source && source->frontend?source->frontend->sources:NULL;row;row=row->next)
+        if (row==source) { linked=true; break; }
+    return linked && source->constructed && music_published(source) && source->application==source->frontend->application && descriptor &&
+        origin && origin->kind==FRONTEND_MUSIC_SOURCE && origin->context==source &&
+        origin->bus==source->identity && origin->physical_seat==source->seat && origin->receiver==source->owner &&
+        origin->descriptor && origin->descriptor->storage==descriptor->storage &&
+        origin->catalog==source->music_catalog && origin->product==source->music_product &&
+        origin->files==source->source_files && origin->music==source->music &&
+        (!qa_audio_engine_bus_music(source->frontend->audio,source->identity) ||
+         qa_audio_engine_bus_music(source->frontend->audio,source->identity)==source->music);
+}
+static bool music_origin_stop(void *context,qa_error *error)
+{
+    frontend_source *source=context;
+    if (!source || !source->frontend || !source->music)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Music stop lost its retained Source player");
+    qa_audio_engine_remove_music(source->frontend->audio,source->identity);
+    if (qa_audio_engine_bus_music(source->frontend->audio,source->identity))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Music stop retained its actual engine bus");
+    qa_audio_music_stop(source->music); source->music_attached=false;
+    free(source->music_intro); free(source->music_loop);
+    source->music_intro=source->music_loop=NULL; source->music_looping=false;
+    return true;
+}
+static frontend_music_origin music_origin(frontend_source *source)
+{
+    return (frontend_music_origin){.kind=FRONTEND_MUSIC_SOURCE,.bus=source->identity,
+        .physical_seat=source->seat,.receiver=source->owner,
+        .descriptor=qa_launch_instance_lease_view(source->music_metadata),.catalog=source->music_catalog,
+        .product=source->music_product,.files=source->source_files,.music=source->music,.context=source,
+        .current=music_origin_current,.stop=music_origin_stop};
+}
 static bool music(void *context, const char *intro_name, const char *loop_name, qa_error *error)
 {
     frontend_source *source = context;
     if (!source->frontend->audio) return frontend_fail(error, QA_ERROR_UNSUPPORTED, "source music output is disabled");
-    if (source->music_attached) {
-        source->music = qa_audio_engine_bus_music(source->frontend->audio, source->identity);
-        source->music_attached = source->music != NULL;
+    qa_audio_music *attached=qa_audio_engine_bus_music(source->frontend->audio,source->identity);
+    if (attached && attached!=source->music)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Source music bus contains another retained player");
+    source->music_attached=attached!=NULL;
+    if (!source->music && !qa_audio_music_create(qa_audio_engine_rate(source->frontend->audio), music_family(source), true, &source->music, error)) return false;
+    frontend_music_origin origin=music_origin(source);
+    bool published=music_published(source);
+    if (published && !frontend_music_sources_explicit_selected(source->frontend->music_sources,&origin)) {
+        if (attached || !qa_audio_music_idle(source->music))
+            return frontend_fail(error,QA_ERROR_ARGUMENT,"Source music selection retains its previous playback");
+        qa_audio_music *fresh=NULL;
+        if (!qa_audio_music_create(qa_audio_engine_rate(source->frontend->audio),music_family(source),true,&fresh,error)) return false;
+        qa_audio_music_release(source->music); source->music=fresh;
+        free(source->music_intro); free(source->music_loop); source->music_intro=source->music_loop=NULL;
+        source->music_looping=false; origin=music_origin(source);
     }
-    if (!source->music && !qa_audio_music_create(qa_audio_engine_rate(source->frontend->audio), QA_AUDIO_Q3, true, &source->music, error)) return false;
+    qa_audio_music_controls *controls=frontend_music_sources_controls(source->frontend->music_sources);
+    if (!controls || (!qa_audio_music_controls_is(source->music,controls) &&
+        !qa_audio_music_controls_bind(source->music,controls,error))) return false;
+    if (published && !frontend_music_sources_explicit_begin(source->frontend->music_sources,&origin,error)) return false;
+    bool enabled=false;
+    if (!qa_audio_music_controls_enabled(controls,&enabled)) return false;
+    if (intro_name && *intro_name && !enabled) return true;
+    source->music_pending=!published;
     const char *requested_loop=loop_name?loop_name:"";
     if (intro_name && source->music_intro && source->music_loop && source->music_looping &&
         !strcmp(source->music_intro,intro_name) && !strcmp(source->music_loop,requested_loop) &&
@@ -473,7 +653,8 @@ static bool music(void *context, const char *intro_name, const char *loop_name, 
     qa_audio_music_stop(source->music);
     free(source->music_intro); free(source->music_loop);
     source->music_intro=source->music_loop=NULL; source->music_looping=false;
-    if (!intro_name || !*intro_name) return true;
+    if (!intro_name || !*intro_name)
+        return !published || frontend_music_sources_explicit(source->frontend->music_sources,&origin,"","",false,error);
     size_t intro_length=strlen(intro_name),loop_length=strlen(requested_loop);
     source->music_intro=intro_length<SIZE_MAX?malloc(intro_length+1):NULL;
     source->music_loop=loop_length<SIZE_MAX?malloc(loop_length+1):NULL;
@@ -484,20 +665,51 @@ static bool music(void *context, const char *intro_name, const char *loop_name, 
     memcpy(source->music_intro,intro_name,intro_length+1); memcpy(source->music_loop,requested_loop,loop_length+1);
     source->music_looping=true;
     qa_audio_stream *intro = NULL, *loop = NULL;
-    if (!qa_audio_bank_music_cue(source->sounds, intro_name, QA_AUDIO_Q3, NULL, NULL, &intro, error)) return false;
-    if (!intro) return true;
+    if (!qa_audio_bank_music_cue(source->sounds, intro_name, music_family(source), NULL, NULL, &intro, error)) return false;
+    if (!intro) return !published || frontend_music_sources_explicit(source->frontend->music_sources,&origin,
+        source->music_intro,source->music_loop,false,error);
     loop=intro;
     if (loop_name && *loop_name) {
         if (!strcmp(intro_name, loop_name)) loop = intro;
-        else if (!qa_audio_bank_music_cue(source->sounds, loop_name, QA_AUDIO_Q3, NULL, NULL, &loop, error)) {
+        else if (!qa_audio_bank_music_cue(source->sounds, loop_name, music_family(source), NULL, NULL, &loop, error)) {
             qa_audio_stream_close(intro); return false;
         }
     }
     source->music_looping=loop!=NULL;
     qa_audio_music_start(source->music, intro, loop);
+    if (!published) return true;
+    bool retained=!source->music_attached;
+    if (retained && !qa_audio_music_retain(source->music,error)) return false;
     bool ok = qa_audio_engine_music(source->frontend->audio, source->identity, source->seat, 1, source->music, error);
-    if (ok) source->music_attached = true;
+    if (!ok && retained) qa_audio_music_release(source->music);
+    if (ok) {
+        source->music_attached=true;
+        ok=frontend_music_sources_explicit(source->frontend->music_sources,&origin,
+            source->music_intro,source->music_loop,source->music_looping,error);
+    }
     return ok;
+}
+bool frontend_source_publish_music(qa_frontend *frontend,qa_error *error)
+{
+    for (frontend_source *source=frontend->sources;source;source=source->next) {
+        if (!source->music_pending) continue;
+        if (!music_published(source))
+            return frontend_fail(error,QA_ERROR_ARGUMENT,"Pending Source cue has no genuine published receiver");
+        frontend_music_origin origin=music_origin(source);
+        if (!frontend_music_sources_explicit_begin(frontend->music_sources,&origin,error)) return false;
+        bool attach=qa_audio_music_playing(source->music) &&
+            !qa_audio_engine_bus_music(frontend->audio,source->identity);
+        if (attach && !qa_audio_music_retain(source->music,error)) return false;
+        if (attach && !qa_audio_engine_music(frontend->audio,source->identity,source->seat,1,source->music,error)) {
+            qa_audio_music_release(source->music); return false;
+        }
+        source->music_attached=qa_audio_engine_bus_music(frontend->audio,source->identity)==source->music;
+        if (!frontend_music_sources_explicit(frontend->music_sources,&origin,
+            source->music_intro?source->music_intro:"",source->music_loop?source->music_loop:"",
+            source->music_looping,error)) return false;
+        source->music_pending=false;
+    }
+    return true;
 }
 bool frontend_source_prepare_scene(qa_frontend *frontend,qa_application *application,uint32_t seat,
     const qa_q3_refdef *definition,qa_q3_scene_options *options,qa_error *error)
@@ -513,8 +725,20 @@ bool frontend_source_prepare_scene(qa_frontend *frontend,qa_application *applica
             product && product->family == QA_GAME_Q3 ? QA_SCENE_Q3 : QA_SCENE_Q1;
     }
     options->split_screen = frontend->options.seats > 1;
-    return frontend_tools_camera(frontend,seat,options->world.view.clip_enabled,&options->world.view,error) &&
-        (options->world.no_world || frontend_event_world(frontend,seat,&options->world,error));
+    if (!frontend_tools_camera(frontend,seat,options->world.view.clip_enabled,&options->world.view,error) ||
+        (!options->world.no_world && !frontend_event_world(frontend,seat,&options->world,error))) return false;
+    if (!options->world.no_world && options->world_family==QA_SCENE_Q3 && frontend->q1_sky) {
+        qa_actor_id recipient;
+        if (frontend_seat_actor_read(frontend,seat,&recipient)) {
+            frontend_q1_sky_view sky;
+            if (!frontend_q1_sky_view_read(frontend->q1_sky,recipient,&sky,error)) return false;
+            if (sky.boxed) {
+                options->world.override_sky=true;
+                for (unsigned face=0;face<6;++face) options->world.sky_images[face]=sky.images[face];
+            }
+        }
+    }
+    return true;
 }
 bool frontend_source_submit_scene(qa_frontend *frontend,uint32_t seat,qa_actor_owner owner,
     const qa_q3_scene_options *options,qa_scene_frame *frame,qa_error *error)
@@ -523,9 +747,35 @@ bool frontend_source_submit_scene(qa_frontend *frontend,uint32_t seat,qa_actor_o
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Source scene submission requires its actual owner, frame and physical seat");
     if (options->world.no_world) return true;
     return frontend_visuals_submit(frontend,seat,owner,&options->world,frame,error) &&
-        frontend_particle_draw(frontend,&options->world.view,error) &&
+        frontend_particle_draw(frontend,seat,&options->world.view,error) &&
         frontend_event_debug(frontend,&options->world.view,error) &&
         frontend_tools_debug(frontend,&options->world.view,error);
+}
+static qa_material_source_scratch *source_scratch(frontend_source *source,qa_error *error)
+{
+    qa_frontend *f=source->frontend;
+    qa_render_controls *controls=f->cpu?qa_cpu_render_controls(f->cpu):f->gl?qa_gl_render_controls(f->gl):NULL;
+    if (!controls) { frontend_fail(error,QA_ERROR_ARGUMENT,"Source draw lacks its actual physical renderer"); return NULL; }
+    return qa_render_controls_source_scratch(controls,error);
+}
+static bool diagnostics_read(void *context,qa_scene_source_diagnostics *out,qa_error *error)
+{
+    frontend_source *source=context;
+    if (!source || !source->constructed || !source->leases || source->application!=source->frontend->application)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Source issue diagnostics lost their retained renderer namespace");
+    bool linked=false;
+    for (frontend_source *row=source->frontend->sources;row;row=row->next)
+        if (row==source) { linked=true; break; }
+    return linked && frontend_q3_material_diagnostics_read(source->frontend,out,error);
+}
+static bool prepare_picture(void *context,qa_material_context *material,qa_error *error)
+{
+    frontend_source *source=context;
+    if (!source || !source->constructed || !source->leases || source->application!=source->frontend->application)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Picture scratch lost its actual Source presentation");
+    material->source_scratch=source_scratch(source,error);
+    material->source_diagnostics_read=diagnostics_read; material->source_diagnostics_context=source;
+    return material->source_scratch && frontend_q3_material_diagnostics_read(source->frontend,&material->source_diagnostics,error);
 }
 static bool render_current(const frontend_source *source,const source_render_scope *scope)
 {
@@ -548,8 +798,17 @@ static bool prepare_view(void *context,const qa_q3_refdef *definition,qa_q3_scen
     if (scope->effects && !frontend_source_effects_prepare(scope->effects,definition,options,error)) return false;
     if (scope->lease->equipment &&
         !frontend_equipment_source_prepare_view(scope->lease->equipment,definition,options,error)) return false;
+    if (!render_current(source,scope))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Source role retired during scene preparation");
+    if (!frontend_q3_scene_policy_read(source->frontend,options,error)) return false;
+    options->world.source_scratch=source_scratch(source,error);
+    options->world.source_diagnostics_read=diagnostics_read; options->world.source_diagnostics_context=source;
+    if (!body_scene_prepare(scope->lease,options,error)) return false;
+    if (!options->world.source_scratch) return false;
+    if (scope->lease->role==QA_QVM_CGAME &&
+        !frontend_q3_shadow_mode_read(scope->lease->cvars,&options->shadow_mode,error)) return false;
     return render_current(source,scope) ||
-        frontend_fail(error,QA_ERROR_ARGUMENT,"Source role retired during scene preparation");
+        frontend_fail(error,QA_ERROR_ARGUMENT,"Source role retired during renderer settings observation");
 }
 static bool submit_view(void *context,const qa_q3_scene_options *options,qa_scene_frame *frame,qa_error *error)
 {
@@ -558,6 +817,7 @@ static bool submit_view(void *context,const qa_q3_scene_options *options,qa_scen
     if (!render_current(source,scope))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Source scene submission lost its entered renderer lease");
     if (!frontend_source_submit_scene(source->frontend,source->seat,source->owner,options,frame,error)) return false;
+    if (!body_scene_submit(scope->lease,options,frame,error)) return false;
     if (scope->lease->equipment &&
         !frontend_equipment_source_submit(scope->lease->equipment,options,frame,error)) return false;
     if (scope->effects && !frontend_source_effects_submit(scope->effects,options,frame,error)) return false;
@@ -574,24 +834,26 @@ static void float_word(uint8_t *out, float value)
 {
     uint32_t bits; memcpy(&bits, &value, sizeof(bits)); qa_store_u32le(out, bits);
 }
-static bool configuration(void *context, uint8_t out[11332], qa_error *error)
+bool frontend_q3_configuration(qa_frontend *frontend,uint8_t out[11332],qa_error *error)
 {
-    frontend_source *source = context;
-    qa_frontend *frontend = source->frontend;
     qa_display_info display;
     if (!qa_display_info_get(frontend->display, &display, error)) return false;
     memset(out, 0, 11332);
     const qa_gl_capabilities *caps = qa_gl_capabilities_get(frontend->gl);
+    qa_cpu_capabilities cpu={0}; qa_q3_color_device color;
+    if ((!caps && !qa_cpu_capabilities_read(frontend->cpu,&cpu,error)) ||
+        !frontend_q3_source_color_device_read(frontend,&color,error)) return false;
     snprintf((char *)out, 1024, "%s", caps ? caps->renderer : "Quake Anthology CPU renderer");
     snprintf((char *)out + 1024, 1024, "%s", caps ? caps->vendor : "Quake Anthology");
     snprintf((char *)out + 2048, 1024, "%s", caps ? caps->version : "retained scene renderer");
-    /* CPU textures use unsigned dimensions; the source ABI advertises the
-     * signed representable limit. Its color output is RGBA8 and depth float. */
-    qa_store_u32le(out + 11264, caps ? caps->maximum_texture_size : INT32_MAX);
+    /* CPU has no native texture-size limit declaration; the ABI converts
+     * that absent value to zero. Buffer bit counts come from the real surface. */
+    qa_store_u32le(out + 11264, caps ? caps->maximum_texture_size : 0);
     qa_store_u32le(out + 11268, caps ? caps->texture_units : 1);
-    qa_store_u32le(out + 11272, caps ? caps->color_bits : 32);
-    qa_store_u32le(out + 11276, caps ? caps->depth_bits : 64);
-    qa_store_u32le(out + 11280, caps ? caps->stencil_bits : 8);
+    qa_store_u32le(out + 11272, caps ? caps->color_bits : cpu.color_bits);
+    qa_store_u32le(out + 11276, caps ? caps->depth_bits : cpu.depth_bits);
+    qa_store_u32le(out + 11280, caps ? caps->stencil_bits : cpu.stencil_bits);
+    qa_store_u32le(out + 11292, color.hardware_gamma);
     qa_store_u32le(out + 11304, display.drawable_width);
     qa_store_u32le(out + 11308, display.drawable_height);
     float_word(out + 11312, display.drawable_height ? (float)display.drawable_width / (float)display.drawable_height : 1);
@@ -600,13 +862,27 @@ static bool configuration(void *context, uint8_t out[11332], qa_error *error)
     qa_store_u32le(out + 11324, caps && caps->stereo);
     return true;
 }
+static bool configuration(void *context,uint8_t out[11332],qa_error *error)
+{
+    frontend_source *source=context;
+    return frontend_q3_configuration(source->frontend,out,error);
+}
+
 static bool update_screen(void *context, qa_error *error)
 {
     frontend_source *source=context;
     qa_frontend *frontend=source->frontend;
+    if (!frontend_q3_source_output(frontend,source->materials,frontend_viewport(frontend,source->seat),error)) return false;
     bool drawn=false;
     if (!qa_application_q3_source_loading_screen(source->application,source->owner,
         source->launch_seat,&drawn,error)) return false;
+    frontend->frame.source_backend=true;
+    if (!frontend_render_controls_live(frontend,error)) return false;
+    if (frontend->frame.source_backend && frontend->frame.source_skip_backend) {
+        if (frontend->frame.source_pending &&
+            !qa_material_source_frame_end(frontend->frame.source_pending,&frontend->frame,false,error)) return false;
+        return true;
+    }
     if (frontend->cpu) return qa_cpu_execute(frontend->cpu, &frontend->frame, error) && qa_cpu_present_frame(frontend->cpu, error);
     return qa_gl_execute(frontend->gl, &frontend->frame, error) && qa_gl_finish(frontend->gl, error) && qa_display_swap(frontend->display, error);
 }
@@ -686,9 +962,10 @@ static bool source_free(frontend_source *source)
 {
     if (!source) return true;
     qa_frontend *frontend = source->frontend;
-    if (frontend->capture || source->retired_leases || !source_idle(source) ||
+    if (frontend->capture || frontend->resource_inventory || source->retired_leases || !source_idle(source) ||
         !frontend_selected_effects_idle(frontend)) return false;
     qa_error error = {0};
+    if (frontend->music_sources && !frontend_music_sources_explicit_retire(frontend->music_sources,source,&error)) return false;
     if (source->presentation &&
         !frontend_selected_effects_retire_parent(frontend,source->presentation,&error)) return false;
     if (source->key_profile) {
@@ -705,19 +982,21 @@ static bool source_free(frontend_source *source)
         if (!qa_audio_engine_stop_owner(frontend->audio, source->identity, source->seat, &error))
             fprintf(stderr, "source audio retirement: %s\n", error.message);
     }
-    qa_q3_presentation_assets_destroy(source->assets);
+    if (!frontend_material_movies_destroy(&source->shader_movies,&error)) return false;
+    qa_q3_presentation_assets_destroy(source->assets); source->assets=NULL;
     qa_scene_world_destroy(source->world);
     qa_collision_destroy(source->geometry);
     qa_resource_release(source->map_resource);
     qa_q3_key_destroy(source->keys);
     source->keys=NULL;
-    if (!source->music_attached) qa_audio_music_destroy(source->music);
+    qa_audio_music_destroy(source->music);
     qa_media_library_destroy(source->movies);
     qa_font_library_destroy(source->fonts);
     qa_audio_bank_destroy(source->sounds);
     qa_material_library_destroy(source->materials);
     qa_scene_resources_destroy(source->images);
     qa_vfs_destroy(source->mounts); free(source->music_intro); free(source->music_loop);
+    qa_launch_instance_lease_release(source->music_metadata);
     free(source->restore_roles); free(source); return true;
 }
 static void release_source(void *context)
@@ -764,7 +1043,7 @@ bool frontend_source_retire_client_configuration(qa_frontend *f,qa_application *
     const qa_application_startup_source *held,const frontend_key_profile *profile,qa_error *error)
 {
     if(!f || !app || app!=f->application || !held || !profile || !frontend_key_profile_state(profile) ||
-        frontend_keys_profile(f->keys,frontend_key_profile_id(profile))!=profile || f->capture || f->source_restoring ||
+        frontend_keys_profile(f->keys,frontend_key_profile_id(profile))!=profile || f->capture || f->resource_inventory || f->source_restoring ||
         !frontend_seat_callbacks_returned(f) || !qa_application_q3_client_configuration_retiring(app,held))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Old CLIENT drain requires its entered exact physical configuration loan");
     /* Preflight every matching group before disposing any retained child. */
@@ -811,6 +1090,36 @@ bool frontend_source_retire_client_configuration(qa_frontend *f,qa_application *
     }
     return true;
 }
+static bool shader_movies_current(void *context,const frontend_material_movie_source *view)
+{
+    frontend_source *source=context;
+    bool linked=false;
+    for (const frontend_source *row=source && source->frontend?source->frontend->sources:NULL;row;row=row->next)
+        if (row==source) { linked=true; break; }
+    return linked && source->construction_started && source->application==source->frontend->application &&
+        view && view->frontend==source->frontend && view->context==source && view->files==source->mounts &&
+        view->images==source->images && view->materials==source->materials && view->media==source->movies;
+}
+bool frontend_source_movie_source_read(qa_frontend *f,size_t index,frontend_material_movie_source *out,qa_error *error)
+{
+    frontend_source *source=f?f->sources:NULL;
+    while (source && index--) source=source->next;
+    frontend_material_movie_source view={.frontend=f,.files=source?source->mounts:NULL,.images=source?source->images:NULL,
+        .materials=source?source->materials:NULL,.media=source?source->movies:NULL,.context=source,.current=shader_movies_current};
+    if (!out || !shader_movies_current(source,&view))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Movie binding lacks its retained Source provider");
+    *out=view; return true;
+}
+bool frontend_source_movies_restore(qa_frontend *f,size_t index,const frontend_material_movies_refs *refs,qa_bytes bytes,qa_error *error)
+{
+    size_t ordinal=index;
+    frontend_source *source=f?f->sources:NULL;
+    while (source && index--) source=source->next;
+    frontend_material_movie_source view;
+    return source && f->source_restoring && frontend_source_movie_source_read(f,ordinal,&view,error) ?
+        frontend_material_movies_restore(&view,refs,bytes,&source->shader_movies,error) :
+        frontend_fail(error,QA_ERROR_ARGUMENT,"Movie import requires its actual Source candidate");
+}
 static bool construct_source(frontend_source *source, const qa_q3_host_options *host,
     frontend_key_profile *profile,bool restoring, qa_error *error)
 {
@@ -827,23 +1136,32 @@ static bool construct_source(frontend_source *source, const qa_q3_host_options *
         source->source_files = host->mounts;
         source->mounts = qa_vfs_clone(host->mounts, error);
     }
+    if (!restoring && !frontend_q3_source_color_ensure(frontend,error)) return false;
     source->images = source->mounts ? restoring ?
         qa_scene_resources_create_detached(source->mounts, error) : qa_scene_resources_create(source->mounts, error) : NULL;
+    if (source->images && !restoring && !frontend_image_policy_initialize(frontend,source->images,error)) return false;
     source->materials = source->images ? restoring ?
         qa_material_library_create_detached(source->images, error) :
         qa_material_library_create(source->images, frontend->order, error) : NULL;
     source->fonts = source->images ? qa_font_library_create(source->mounts, source->images, error) : NULL;
     source->movies = source->images ? qa_media_library_create(source->images, error) : NULL;
+    if (!restoring && source->materials) {
+        frontend_material_movie_source movie={.frontend=frontend,.files=source->mounts,.images=source->images,
+            .materials=source->materials,.media=source->movies,.context=source,.current=shader_movies_current};
+        if (!frontend_q3_material_profile_initialize(frontend,source->materials,error) ||
+            !qa_material_library_set_source_upload(source->materials,frontend_q3_source_upload_read,frontend,error) ||
+            !frontend_material_movies_create(&movie,&source->shader_movies,error)) return false;
+    }
     qa_scene_image_options images = {.family = QA_SCENE_Q3, .wrap = QA_SCENE_REPEAT,
         .filter = QA_SCENE_LINEAR_MIPMAP_LINEAR, .mipmap = true, .transparent_index = -1};
     bool ok = source->mounts && source->images && source->materials && source->fonts && source->movies &&
         (restoring || qa_material_library_load_scripts(source->materials, source->mounts, &images, error)) &&
         qa_audio_bank_create(source->mounts, &source->sounds, error) &&
         (profile || qa_q3_key_create(host->cvars, false, &source->keys, error));
-    if (ok && frontend->audio) ok = qa_audio_music_create(qa_audio_engine_rate(frontend->audio), QA_AUDIO_Q3, true, &source->music, error);
+    if (ok && frontend->audio) ok = qa_audio_music_create(qa_audio_engine_rate(frontend->audio), music_family(source), true, &source->music, error);
     if (ok && !restoring) ok = frontend_material_remaps(frontend, source->materials, error);
     qa_q3_presentation_asset_options assets = {.provider = {source->mounts, source->images, source->materials, QA_SCENE_Q3},
-        .sounds = source->sounds, .movies = source->movies, .context = source, .print = print_source};
+        .sounds = source->sounds, .movies = source->movies, .context = source, .print = print_source, .model_initialize = model_initialize};
     if (ok) ok = qa_q3_presentation_assets_create(&assets, &source->assets, error);
     qa_q3_presentation_options presentation = {.assets = source->assets, .audio = frontend->audio,
         .clock = {source, milliseconds}, .seat = source->seat, .owner = source->identity,
@@ -852,7 +1170,11 @@ static bool construct_source(frontend_source *source, const qa_q3_host_options *
         .context = source, .audio_actor = source_actor, .listener = listener, .music = music,
         .frame_number = frame_number, .milliseconds = source_milliseconds, .audio_bus = audio_bus,
         .prepare_view = prepare_view, .submit_view = submit_view, .scene_cleared=scene_cleared,
+        .prepare_picture=prepare_picture,.video_frame=frontend_material_movies_frontend_resolve,.video_context=frontend,
         .remap = source_remap, .print = print_source};
+    if (ok && !restoring) ok=frontend_q3_renderer_options_read(frontend,&presentation,error);
+    if (ok && qa_cvars_find(host->cvars,"cg_shadows"))
+        ok=frontend_q3_shadow_mode_read(host->cvars,&presentation.shadow_mode,error);
     if (ok) ok = qa_q3_presentation_create(&presentation, &source->presentation, error);
     source->constructed = ok;
     return ok;
@@ -864,9 +1186,27 @@ bool frontend_source_identity_allocate(qa_frontend *frontend,uint64_t *out,qa_er
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Source frontend identity requires its genuine constructor namespace");
     *out=QA_FRONTEND_COMMAND_OWNER+(++frontend->next_source_id); return true;
 }
+static bool music_metadata_prepare(frontend_source *source,
+    const qa_application_q3_client_preparation *preparation,qa_error *error)
+{
+    const qa_launch_instance *descriptor=preparation?preparation->receiver_descriptor:NULL;
+    if (!descriptor || !preparation->services || !preparation->receiver_catalog || !preparation->receiver_product ||
+        preparation->receiver!=source->owner || preparation->seat!=source->launch_seat ||
+        descriptor->content!=preparation->services->mounts ||
+        qa_launch_instance_catalog(descriptor)!=preparation->receiver_catalog ||
+        descriptor->selection.product!=preparation->receiver_product->id)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Source soundtrack lacks its actual first role declaration");
+    const qa_launch_instance *held=qa_launch_instance_lease_view(source->music_metadata);
+    if (held) return held->storage==descriptor->storage && source->music_catalog==preparation->receiver_catalog &&
+        source->music_product==preparation->receiver_product->id ? true :
+        frontend_fail(error,QA_ERROR_ARGUMENT,"Source roles have different soundtrack declarations");
+    if (!qa_launch_instance_retain_metadata(descriptor,&source->music_metadata,error)) return false;
+    source->music_catalog=preparation->receiver_catalog; source->music_product=preparation->receiver_product->id;
+    return true;
+}
 static bool create_source(qa_frontend *frontend, qa_application *application, qa_actor_owner owner,
     uint32_t seat,uint32_t launch_seat, const qa_q3_host_options *host,frontend_key_profile *profile,
-    frontend_source **out, qa_error *error)
+    const qa_application_q3_client_preparation *preparation,frontend_source **out, qa_error *error)
 {
     frontend_source *source = calloc(1, sizeof(*source));
     if (!source) return frontend_fail(error, QA_ERROR_MEMORY, "allocating source presentation owner");
@@ -874,7 +1214,7 @@ static bool create_source(qa_frontend *frontend, qa_application *application, qa
     source->launch_seat=launch_seat;
     if (!frontend_source_identity_allocate(frontend,&source->identity,error)) { free(source); return false; }
     source->next=frontend->sources; frontend->sources=source;
-    if (!construct_source(source,host,profile,false,error)) {
+    if (!music_metadata_prepare(source,preparation,error) || !construct_source(source,host,profile,false,error)) {
         frontend_source *next=source->next;
         if (source_free(source)) frontend->sources=next;
         return false;
@@ -899,6 +1239,7 @@ static bool source_map_prepare(frontend_source *source,const qa_resource *map,bo
     qa_scene_world_options options={.images={.family=QA_SCENE_Q3,.wrap=QA_SCENE_REPEAT,
         .filter=QA_SCENE_LINEAR_MIPMAP_LINEAR,.mipmap=true,.transparent_index=255},
         .subdivisions=64,.q1_water_alpha=1,.q2_light_modulate=1,.q3_overbright=1};
+    if (!frontend_q3_world_policy_initialize(source->frontend,&options,error)) return false;
     return qa_scene_world_create(&bsp,source->images,source->materials,&options,&source->world,error) &&
         frontend_material_remaps(source->frontend,source->materials,error);
 }
@@ -939,6 +1280,8 @@ bool frontend_source_services(void *context, qa_application *application, qa_act
         if(!configured || frontend_config_source_cvars(configured)!=host->cvars || preparation.source_cvars!=host->cvars ||
             !frontend_config_source_host_cvars(configured,&host->cvar_namespaces,error))
             return frontend_fail(error,QA_ERROR_ARGUMENT,"GAME host namespaces require their actual retained configuration source");
+        host->cvar_entry=(qa_q3_host_cvar_entry_services){host->cvar_namespaces.context,
+            frontend_config_source_cvar_entered};
         return frontend_network_source_services(frontend,host,error);
     }
     uint32_t ordinal;
@@ -993,12 +1336,14 @@ bool frontend_source_services(void *context, qa_application *application, qa_act
         if (frontend->application != application || (source->application && source->application != application))
             return frontend_fail(error, QA_ERROR_ARGUMENT, "restored source factory changed its application owner");
         source->application = application;
-        if (!source->constructed && !construct_source(source, host,profile,true,error)) return false;
+        if (!music_metadata_prepare(source,&preparation,error) ||
+            (!source->constructed && !construct_source(source, host,profile,true,error))) return false;
     } else {
         while (source && (source->owner != owner || source->seat != ordinal || source->launch_seat!=seat || source->source_files != host->mounts)) source = source->next;
     }
     bool created = source == NULL;
-    if (created && !create_source(frontend, application, owner, ordinal,seat, host,profile,&source,error)) return false;
+    if (created && !create_source(frontend, application, owner, ordinal,seat, host,profile,&preparation,&source,error)) return false;
+    if (!music_metadata_prepare(source,&preparation,error)) return false;
     if (!frontend->source_restoring) {
         bool private_map=frontend_network_remote(frontend);
         if (!created && source->private_map!=private_map)
@@ -1031,7 +1376,7 @@ bool frontend_source_services(void *context, qa_application *application, qa_act
         return frontend_fail(error, QA_ERROR_MEMORY, "retaining source frontend lease");
     }
     *lease = (frontend_source_lease){.source = source,.role=role,.service_owner=host->service_owner,.common = host->common,
-        .console = host->console,.cvars=host->cvars, .command = host->command_context};
+        .console = host->console,.cvars=host->cvars, .command = host->command_context,.status_visible=true};
     frontend_source_lease **link = &source->lease_list;
     if (frontend->source_restoring) {
         size_t rank = 0;
@@ -1065,6 +1410,10 @@ bool frontend_source_services(void *context, qa_application *application, qa_act
         return frontend_fail(error,QA_ERROR_ARGUMENT,"CLIENT host namespaces require the adopted physical tuple and actual GAME parent");
     host->input=(qa_q3_host_input_services){.context=&lease->namespaces,
         .bindings=frontend_config_host_bindings};
+    host->cvar_entry=(qa_q3_host_cvar_entry_services){&lease->namespaces,
+        frontend_config_host_cvar_entered};
+    if (role==QA_QVM_CGAME)
+        host->cvar_status=(qa_q3_host_cvar_status_services){lease,status_visible};
     if (role==QA_QVM_CGAME && !frontend_network_remote(frontend) && !host->client.gamestate)
         host->client_time_from_game=true;
     host->seat = frontend->seats[ordinal].input;
@@ -1084,6 +1433,164 @@ bool frontend_source_services(void *context, qa_application *application, qa_act
     return source_publish_backend(source, error) &&
         qa_q3_presentation_frame(source->presentation, &frontend->frame,
             (qa_scene_rect){0, 0, frontend->width, frontend->height}, error);
+}
+typedef struct source_body_component {
+    qa_application_q3_component_draw draw;
+    qa_application_q3_component_body_lease *lease;
+    qa_application_q3_component_bodies bodies;
+} source_body_component;
+typedef struct source_body_ref {
+    qa_actor_id actor;
+    qa_application_q3_body_part part;
+    uint32_t helper;
+    qa_q3_ref_entity ref;
+    bool base;
+} source_body_ref;
+struct source_body_draw {
+    frontend_source_lease *lease;
+    qa_application_q3_body_entry entry;
+    source_body_component *components;
+    size_t count;
+    source_body_ref *refs;
+    size_t ref_count;
+    uint32_t first_order;
+};
+static bool body_current(void *context,const qa_application_q3_body_draw *view)
+{
+    frontend_source_lease *lease=context;
+    source_body_draw *draw=view?view->token:NULL;
+    if (!lease || !draw || draw!=lease->body_draw || draw->lease!=lease || lease->released ||
+        !lease->time_busy || !lease->source->role_operations ||
+        !qa_application_q3_body_entry_current(lease->source->application,&draw->entry)) return false;
+    for (size_t i=0;i<draw->count;++i)
+        if (!qa_application_q3_component_draw_current(lease->source->application,&draw->components[i].draw) ||
+            !qa_application_q3_component_bodies_current(&draw->components[i].bodies)) return false;
+    return true;
+}
+static bool body_prepare(void *context,qa_actor_owner receiver,uint32_t seat,
+    qa_application_q3_body_draw *out,qa_error *error)
+{
+    frontend_source_lease *lease=context; frontend_source *source=lease?lease->source:NULL;
+    if (!source || !out || out->token || lease->body_draw || lease->released || lease->role!=QA_QVM_CGAME ||
+        receiver!=source->owner || seat!=source->launch_seat || source->frontend->capture || source->frontend->resource_inventory ||
+        lease->time_busy==SIZE_MAX || source->role_operations==SIZE_MAX)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Body Draw requires its actual retained CGAME role");
+    source_body_draw *draw=calloc(1,sizeof(*draw));
+    if (!draw) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining actual Source body Draw");
+    draw->lease=lease; lease->body_draw=draw; out->token=draw;
+    ++lease->time_busy; ++source->role_operations;
+    if (!qa_application_q3_body_entry_read(source->application,receiver,seat,&draw->entry,error) ||
+        draw->entry.context.frontend_lifetime!=lease || draw->entry.context.service_owner!=lease->service_owner)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Body Draw entry differs from its actual Source host");
+    size_t count=qa_application_q3_component_scene_count(source->application);
+    if (count && !draw->entry.local_source)
+        return frontend_fail(error,QA_ERROR_UNSUPPORTED,"Remote Source component Draw needs its genuine received publication");
+    if (count) {
+        qa_application_camera_view camera;
+        if (!qa_application_control_camera(source->application,draw->entry.source.source_actor,&camera) ||
+            draw->entry.source.source_frame.elapsed_ns/UINT64_C(1000000)>INT32_MAX ||
+            count>SIZE_MAX/sizeof(*draw->components))
+            return frontend_fail(error,QA_ERROR_ARGUMENT,"Component Draw lacks its actual source viewer camera and clock");
+        draw->components=calloc(count,sizeof(*draw->components));
+        if (!draw->components) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining actual component Draw roster");
+        qa_vec3 origin=qa_vec_add(camera.origin,camera.view_offset),axis[3];
+        frontend_camera_axes(camera.angles,axis);
+        for (size_t i=0;i<count;++i) {
+            source_body_component *child=draw->components+i;
+            if (!qa_application_q3_component_draw_prepare(source->application,i,source->seat,camera.actor,&origin,axis,
+                draw->entry.source.source_milliseconds,(int32_t)(draw->entry.source.source_frame.elapsed_ns/UINT64_C(1000000)),
+                draw->entry.source.source_frame.number,&child->draw,error)) return false;
+            ++draw->count;
+            if (!qa_application_q3_component_bodies_borrow(child->draw.bodies,&child->lease,&child->bodies,error)) return false;
+            if (child->bodies.assets!=child->draw.assets)
+                return frontend_fail(error,QA_ERROR_ARGUMENT,"Component body Draw changed its private numeric namespace");
+            if (child->bodies.count) out->capture_active=true;
+        }
+    }
+    return body_current(lease,out) || frontend_fail(error,QA_ERROR_ARGUMENT,"Source body Draw changed during preparation");
+}
+static bool body_actor(void *context,const qa_application_q3_body_draw *view,qa_actor_id actor,
+    bool *hidden,bool *selected,qa_error *error)
+{
+    if (!hidden || !selected || !body_current(context,view))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Body selection left its genuine whole Draw receipt");
+    *hidden=false; *selected=false; source_body_draw *draw=view->token;
+    for (size_t i=0;i<draw->count;++i) for (size_t j=0;j<draw->components[i].bodies.count;++j) {
+        qa_application_q3_component_actor body;
+        if (!qa_application_q3_component_body_at(&draw->components[i].bodies,j,&body))
+            return frontend_fail(error,QA_ERROR_ARGUMENT,"Component body roster changed inside Source Draw");
+        if (qa_actor_id_equal(body.actor,actor)) *selected=true;
+    }
+    return true;
+}
+static bool body_submit(void *context,const qa_application_q3_body_draw *view,qa_actor_id actor,
+    qa_application_q3_body_part part,uint32_t helper,const qa_q3_ref_entity *ref,bool base,bool *handled,qa_error *error)
+{
+    bool hidden,selected;
+    if (!ref || !handled || !body_actor(context,view,actor,&hidden,&selected,error)) return false;
+    *handled=false;
+    if (!selected) return true;
+    source_body_draw *draw=view->token; bool matched=false;
+    for (size_t i=0;i<draw->count;++i) for (size_t j=0;j<draw->components[i].bodies.count;++j) {
+        qa_application_q3_component_actor body;
+        if (!qa_application_q3_component_body_at(&draw->components[i].bodies,j,&body)) return false;
+        if (!qa_actor_id_equal(body.actor,actor)) continue;
+        for (size_t k=0;k<body.count;++k) if (body.parts[k].part==part) matched=true;
+    }
+    if (!matched) return true;
+    if (draw->ref_count==SIZE_MAX/sizeof(*draw->refs))
+        return frontend_fail(error,QA_ERROR_MEMORY,"Source body capture extent overflow");
+    source_body_ref *refs=realloc(draw->refs,(draw->ref_count+1)*sizeof(*refs));
+    if (!refs) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining actual primary body pose");
+    draw->refs=refs; refs[draw->ref_count++]=(source_body_ref){actor,part,helper,*ref,base};
+    *handled=true; return body_current(context,view);
+}
+static void body_release(void *context,qa_application_q3_body_draw *view)
+{
+    frontend_source_lease *lease=context; source_body_draw *draw=view?view->token:NULL;
+    if (!draw) return;
+    for (size_t i=draw->count;i;--i) qa_application_q3_component_bodies_return(&draw->components[i-1].lease);
+    if (lease->body_draw==draw) lease->body_draw=NULL;
+    free(draw->components); free(draw->refs); free(draw); view->token=NULL;
+    time_leave(lease);
+}
+static bool body_scene_prepare(frontend_source_lease *lease,qa_q3_scene_options *options,qa_error *error)
+{
+    source_body_draw *draw=lease->body_draw;
+    if (!draw) return true;
+    qa_application_q3_body_draw view={.token=draw};
+    if (!body_current(lease,&view) || options->first_entity>=1022 || draw->ref_count>1022-options->first_entity)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Body scene order left its actual Draw inventory");
+    draw->first_order=options->first_entity; options->first_entity+=(uint32_t)draw->ref_count;
+    return true;
+}
+static bool body_scene_submit(frontend_source_lease *lease,const qa_q3_scene_options *options,qa_scene_frame *frame,qa_error *error)
+{
+    source_body_draw *draw=lease->body_draw;
+    if (!draw) return true;
+    qa_application_q3_body_draw view={.token=draw};
+    if (!body_current(lease,&view)) return frontend_fail(error,QA_ERROR_ARGUMENT,"Body scene lost its retained component receipts");
+    for (size_t i=0;i<draw->ref_count;++i) {
+        const source_body_ref *primary=draw->refs+i;
+        for (size_t j=0;j<draw->count;++j) for (size_t k=0;k<draw->components[j].bodies.count;++k) {
+            qa_application_q3_component_actor body;
+            if (!qa_application_q3_component_body_at(&draw->components[j].bodies,k,&body)) return false;
+            if (!qa_actor_id_equal(primary->actor,body.actor)) continue;
+            for (size_t m=0;m<body.count;++m) {
+                const qa_application_q3_component_part *part=body.parts+m;
+                if (part->part!=primary->part) continue;
+                uint32_t order=draw->first_order+(uint32_t)i;
+                if (part->base && primary->base && !qa_q3_presentation_source_body_pass(lease->source->presentation,
+                    &primary->ref,lease->source->assets,&primary->ref,draw->entry.source.source_milliseconds,
+                    options,order,frame,error)) return false;
+                for (size_t n=0;n<part->count;++n)
+                    if (!qa_q3_presentation_source_body_pass(lease->source->presentation,&primary->ref,
+                        draw->components[j].bodies.assets,part->passes+n,draw->components[j].bodies.time_ms,
+                        options,order,frame,error)) return false;
+            }
+        }
+    }
+    return body_current(lease,&view);
 }
 static bool equipment_current(void *context,const qa_application_q3_client_context *view)
 {
@@ -1190,6 +1697,8 @@ bool frontend_source_client_prepare(void *context,qa_application *application,
             preparation->seat,lease->registry,NULL,error)) return false;
     }
     if (preparation->role!=QA_QVM_CGAME) return true;
+    if (!preparation->body_services) return frontend_fail(error,QA_ERROR_ARGUMENT,"CGAME preparation omitted real Body services output");
+    *preparation->body_services=(qa_application_q3_body_services){lease,body_prepare,body_current,body_actor,body_submit,body_release};
     if (!preparation->equipment_services || lease->equipment)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Equipment preparation requires its fresh actual CGAME output");
     frontend_equipment_source_options options={.frontend=f,.receiver=preparation->receiver,
@@ -1233,7 +1742,8 @@ const qa_scene_resources *frontend_source_images_at(qa_frontend *frontend, size_
 }
 bool frontend_source_rebind_ready(const qa_frontend *owned, const qa_frontend *destination, qa_error *error)
 {
-    if (!owned || !destination || owned->stepping || destination->stepping || !owned->application || owned->source_restoring)
+    if (!owned || !destination || owned->stepping || destination->stepping || owned->resource_inventory ||
+        destination->resource_inventory || !owned->application || owned->source_restoring)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "source lease publication requires idle frontend owners");
     if (!qa_application_guest_context_rebind_ready(owned->application, &owned->frame, error)) return false;
     for (const frontend_source *source = owned->sources; source; source = source->next) {
@@ -1262,8 +1772,6 @@ void frontend_source_rebind(qa_frontend *owned, qa_frontend *destination)
     for (frontend_source *source = owned->sources; source; source = source->next) {
         qa_q3_presentation_frontend_rebind(source->presentation, &owned->frame, &destination->frame,
             owned->audio, source->identity);
-        if (source->music_attached)
-            source->music = qa_audio_engine_bus_music(owned->audio, source->identity);
         source->frontend = destination;
         for (frontend_source_lease *lease=source->lease_list;lease;lease=lease->next)
             frontend_equipment_source_rebind(lease->equipment,destination);
@@ -1277,7 +1785,7 @@ static qa_application_q3_scene_role source_scene_role(const frontend_source_leas
 static bool source_worlds_ready(qa_frontend *frontend,qa_scene_world *destination,
     bool restored,qa_error *error)
 {
-    if (!frontend || !frontend->application || frontend->capture)
+    if (!frontend || !frontend->application || frontend->capture || frontend->resource_inventory)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Source world exchange requires idle installed frontend owners");
     for (frontend_source *source=frontend->sources;source;source=source->next) {
         qa_q3_presentation_binding binding;
@@ -1338,7 +1846,7 @@ bool frontend_source_retire_world(qa_frontend *frontend, qa_error *error)
         if (!qa_q3_presentation_retire_world(source->presentation, error)) return false;
         if (source->music_attached) {
             qa_audio_engine_remove_music(frontend->audio, source->identity);
-            source->music = NULL; source->music_attached = false;
+            source->music_attached = false;
         } else if (source->music) qa_audio_music_stop(source->music);
         free(source->music_intro); free(source->music_loop);
         source->music_intro=source->music_loop=NULL; source->music_looping=false;
@@ -1349,7 +1857,7 @@ bool frontend_source_retire_world(qa_frontend *frontend, qa_error *error)
 void frontend_source_audio_stopped(qa_frontend *frontend)
 {
     for (frontend_source *source=frontend->sources;source;source=source->next) {
-        if (source->music_attached) { source->music=NULL; source->music_attached=false; }
+        if (source->music_attached) { source->music_attached=false; }
         else if (source->music) qa_audio_music_stop(source->music);
         free(source->music_intro); free(source->music_loop);
         source->music_intro=source->music_loop=NULL; source->music_looping=false;
@@ -1392,7 +1900,7 @@ bool frontend_source_reset_round(qa_frontend *frontend, qa_actor_owner owner, qa
         if (!qa_q3_presentation_clear(source->presentation, error)) return false;
         source->has_listener = false;
         if (source->music_attached) {
-            source->music = NULL; source->music_attached = false;
+            source->music_attached = false;
         } else if (source->music) qa_audio_music_stop(source->music);
         free(source->music_intro); free(source->music_loop);
         source->music_intro=source->music_loop=NULL; source->music_looping=false;
@@ -1431,6 +1939,77 @@ bool frontend_source_frame(qa_frontend *frontend, uint32_t seat, qa_scene_rect r
         }
     return true;
 }
+static bool present_without_cgame_lease(qa_frontend *f,uint32_t seat,uint32_t real_time,uint32_t client_time,qa_error *error)
+{
+    qa_error draw={0},flush={0};
+    bool drawn=qa_application_present(f->application,seat,real_time,client_time,&draw);
+    qa_render_controls *controls=f->cpu?qa_cpu_render_controls(f->cpu):f->gl?qa_gl_render_controls(f->gl):NULL;
+    qa_material_source_scratch *scratch=controls?qa_render_controls_source_scratch(controls,&flush):NULL;
+    bool flushed=scratch && qa_material_source_frame_end(scratch,&f->frame,drawn,&flush);
+    if (!drawn || !flushed) { if (error) *error=drawn?flush:draw; return false; }
+    return true;
+}
+bool frontend_source_present(qa_frontend *f,uint32_t physical,uint32_t seat,
+    uint32_t real_time,uint32_t client_time,qa_error *error)
+{
+    qa_application_presentation_view selected;
+    if (!f || physical>=f->options.seats || f->capture || !frontend_sources_idle(f) ||
+        !qa_application_presentation_read(f->application,seat,&selected))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Source Draw requires its returned physical presentation seat");
+    frontend_source_lease *lease=NULL;
+    for (frontend_source *source=f->sources;source;source=source->next)
+        if (source->owner==selected.hud && source->seat==physical && source->launch_seat==seat)
+            for (frontend_source_lease *row=source->lease_list;row;row=row->next)
+                if (row->role==QA_QVM_CGAME && !row->released) {
+                    if (lease) return frontend_fail(error,QA_ERROR_ARGUMENT,"Source Draw has ambiguous CGAME leases");
+                    lease=row;
+                }
+    if (!lease) return present_without_cgame_lease(f,seat,real_time,client_time,error);
+    bool loading=false;
+    if (!qa_application_q3_role_loading(f->application,lease->source->owner,QA_QVM_CGAME,seat,&loading,error)) return false;
+    if (loading) return present_without_cgame_lease(f,seat,real_time,client_time,error);
+    qa_application_q3_client_host local={0};
+    qa_application_network_q3_cgame_host remote={0};
+    qa_q3_host *host=NULL; qa_q3_host_client_context context; bool present=false;
+    bool network=frontend_network_remote(f);
+    if (network) {
+        frontend_network_client_domain domain;
+        if (!frontend_network_client_domain_read(f,&domain,error) ||
+            !qa_application_network_q3_cgame_host_read(f->application,&domain.source,&remote,&present,error)) return false;
+        host=remote.host; context=remote.context;
+    } else {
+        if (!qa_application_q3_client_host_read(f->application,lease->source->owner,seat,&local,&present,error)) return false;
+        host=local.host; context=local.context;
+    }
+    if (!present || !host || context.frontend_lifetime!=lease || context.service_owner!=lease->service_owner ||
+        context.console!=lease->console || context.cvars!=lease->cvars || context.owner!=lease->source->owner ||
+        context.role!=QA_QVM_CGAME || lease->status_host || lease->time_busy==SIZE_MAX ||
+        lease->source->role_operations==SIZE_MAX)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Source Draw differs from its retained actual CGAME host");
+    if (!frontend_q3_source_output(f,lease->source->materials,frontend_viewport(f,physical),error)) return false;
+    bool previous=lease->status_visible;
+    lease->status_visible=selected.hud==lease->source->owner; lease->status_host=host;
+    ++lease->time_busy; ++lease->source->role_operations;
+    qa_error draw_error={0},refresh_error={0};
+    bool drawn=qa_application_present(f->application,seat,real_time,client_time,&draw_error);
+    qa_error flush_error={0};
+    qa_material_source_scratch *scratch=source_scratch(lease->source,&flush_error);
+    bool flushed=scratch && qa_material_source_frame_end(scratch,&f->frame,drawn,&flush_error);
+    if (!flushed && drawn) { drawn=false; draw_error=flush_error; }
+    lease->status_visible=previous;
+    bool retained=network?qa_application_network_q3_cgame_host_current(f->application,&remote):
+        qa_application_q3_client_host_current(f->application,&local);
+    bool refreshed=retained && qa_q3_host_cvar_cache_refresh(host,&refresh_error);
+    if (!retained) frontend_fail(&refresh_error,QA_ERROR_ARGUMENT,"Status restoration lost its actual CGAME host receipt");
+    lease->status_host=NULL; time_leave(lease);
+    if (!drawn && !refreshed) {
+        qa_error_set(error,draw_error.code?draw_error.code:QA_ERROR_ARGUMENT,draw_error.offset,
+            "CGAME Draw: %.100s; status restoration: %.100s",draw_error.message,refresh_error.message);
+        return false;
+    }
+    if (!drawn || !refreshed) { if (error) *error=drawn?refresh_error:draw_error; return false; }
+    return true;
+}
 bool frontend_source_listener(qa_frontend *frontend, uint32_t seat, qa_audio_listener *out)
 {
     for (frontend_source *source = frontend->sources; source; source = source->next)
@@ -1442,6 +2021,7 @@ bool frontend_before_world_change(void *context, qa_application *application, qa
     qa_frontend *frontend = context; (void)application;
     if (!frontend_owners_idle(frontend))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"World retirement requires idle frontend child owners");
+    if (frontend->music_sources && !frontend_music_sources_world_retire(frontend->music_sources,error)) return false;
     return frontend_campaign_ready(frontend) && frontend_tools_before_world_change(frontend, error) &&
         frontend_campaign_destroy(frontend,error);
 }
@@ -1476,9 +2056,14 @@ bool frontend_world_retired(void *context, qa_application *application, qa_error
     if (!frontend_source_retire_world(frontend, error)) return false;
     frontend_particle_retire(frontend);
     frontend_qc_rerelease_retire_world(frontend);
-    frontend_event_retire(frontend);
+    if (!frontend_event_retire_checked(frontend,error)) return false;
     frontend_audio_retire_round_aliases(frontend);
     frontend->silent_audio_remainder = 0;
+    if (frontend->music_sources && !frontend_music_sources_output(frontend->music_sources,FRONTEND_MUSIC_MENU,error)) return false;
+    for (size_t i=0;i<frontend_remote_q1_count(frontend);++i) {
+        frontend_remote_q1 *row=frontend_remote_q1_at(frontend,i);
+        if (!row || !remote_q1_effects_audio_detach(row,error)) return false;
+    }
     return !frontend->audio || qa_audio_engine_reset_round(frontend->audio, error);
 }
 
@@ -1547,17 +2132,18 @@ bool frontend_source_group_q3_ready(const qa_frontend *f,size_t index,
         source->frontend!=f || source->application!=f->application || !source->leases || !p || !a ||
         p->assets!=source->assets || p->audio!=f->audio || p->clock.context!=source || p->clock.sample!=milliseconds ||
         p->seat!=source->seat || p->owner!=source->identity || p->context!=source ||
-        p->near_clip!=4 || p->far_clip!=16384 || p->identity_light!=1 || p->lod_scale!=5 || p->lod_bias || p->shadow_mode ||
+        p->far_clip!=16384 || p->lod_scale!=5 || p->lod_bias ||
         p->rail_core_width!=6 || p->rail_ring_width!=16 || p->rail_segment_length!=32 ||
         p->audio_actor!=source_actor || p->listener!=listener || p->music!=music ||
         p->frame_number!=frame_number || p->milliseconds!=source_milliseconds || p->audio_bus!=audio_bus ||
-        p->system_movie || p->prepare_picture || p->video_frame || p->video_context ||
+        p->system_movie || p->prepare_picture!=prepare_picture ||
+        p->video_frame!=frontend_material_movies_frontend_resolve || p->video_context!=f ||
         p->prepare_view!=prepare_view || p->submit_view!=submit_view || p->scene_cleared!=scene_cleared ||
         p->remap!=source_remap || p->print!=print_source ||
         a->provider.mounts!=source->mounts || a->provider.images!=source->images ||
         a->provider.materials!=source->materials || a->provider.family!=QA_SCENE_Q3 ||
         a->sounds!=source->sounds || a->movies!=source->movies || a->zero_sound ||
-        a->context!=source || a->select || a->print!=print_source)
+        a->context!=source || a->select || a->print!=print_source || a->model_initialize!=model_initialize)
         return frontend_fail(error,QA_ERROR_FORMAT,"Q3 source policy differs from its genuine installed frontend group");
     return true;
 }
@@ -1862,7 +2448,7 @@ typedef struct source_group_saved {
     char *music_intro, *music_loop;
     source_role_saved *roles;
     size_t role_count;
-    bool has_listener, has_music, music_attached, music_looping;
+    bool has_listener, has_music, music_attached, music_looping, music_pending;
 } source_group_saved;
 static void source_saved_free(source_group_saved *groups,size_t count)
 {
@@ -1955,7 +2541,8 @@ static bool source_saved_fields(qa_source_save_io *io,qa_frontend *f,source_grou
             !qa_source_save_bool(io,&group->music_attached) || (group->music_attached && !group->has_music) ||
             (group->has_music && (!source_blob(io,&group->music) || !group->music.size)) ||
             !frontend_save_text(io,&group->music_intro) || !frontend_save_text(io,&group->music_loop) ||
-            !qa_source_save_bool(io,&group->music_looping) ||
+            !qa_source_save_bool(io,&group->music_looping) || !qa_source_save_bool(io,&group->music_pending) ||
+            (group->music_pending && !group->has_music) ||
             ((group->music_intro!=NULL)!=(group->music_loop!=NULL)) ||
             (group->music_intro && (!*group->music_intro || !group->has_music)) ||
             (group->music_looping && !group->music_intro)) return false;
@@ -1977,9 +2564,9 @@ static bool source_saved_fields(qa_source_save_io *io,qa_frontend *f,source_grou
 }
 static bool source_header(qa_source_save_io *io,size_t *count)
 {
-    uint8_t magic[4]={'Q','F','S','O'}; uint32_t version=5;
+    uint8_t magic[4]={'Q','F','S','O'}; uint32_t version=6;
     return qa_source_save_bytes(io,magic,sizeof(magic)) && !memcmp(magic,"QFSO",4) &&
-        qa_source_save_u32(io,&version) && version==5 &&
+        qa_source_save_u32(io,&version) && version==6 &&
         qa_source_save_count(io,count,SIZE_MAX/sizeof(source_group_saved));
 }
 bool frontend_source_checkpoint(qa_frontend *f,qa_buffer *out,qa_error *error)
@@ -1997,11 +2584,13 @@ bool frontend_source_checkpoint(qa_frontend *f,qa_buffer *out,qa_error *error)
         group->source=source; group->listener=source->listener; group->has_listener=source->has_listener;
         group->key_profile=frontend_key_profile_id(source->key_profile);
         if (!group->key_profile) qa_q3_key_capture(source->keys,group->keys);
-        qa_audio_music *actual=source->music_attached?qa_audio_engine_bus_music(f->audio,source->identity):source->music;
-        group->has_music=actual!=NULL; group->music_attached=source->music_attached;
+        qa_audio_music *attached=qa_audio_engine_bus_music(f->audio,source->identity);
+        if (attached && attached!=source->music) { ok=false; break; }
+        qa_audio_music *actual=source->music;
+        group->has_music=actual!=NULL; group->music_attached=attached!=NULL;
         group->music_intro=source->music_intro; group->music_loop=source->music_loop;
-        group->music_looping=source->music_looping;
-        if (source->music_attached && !qa_audio_engine_music_ready(f->audio,source->identity,source->seat,1)) {
+        group->music_looping=source->music_looping; group->music_pending=source->music_pending;
+        if (group->music_attached && !qa_audio_engine_music_ready(f->audio,source->identity,source->seat,1)) {
             ok=frontend_fail(error,QA_ERROR_FORMAT,"Source music no longer owns its actual seat route"); break;
         }
         if (group->has_music) {
@@ -2088,12 +2677,20 @@ bool frontend_source_restore(qa_frontend *f,qa_bytes bytes,qa_error *error)
             ok=qa_audio_music_checkpoint(music_owner,&bus,error) && bus.size==group->music.size &&
                 !memcmp(bus.data,group->music.data,bus.size); qa_buffer_free(&bus);
         }
+        if (ok && group->music_attached) ok=qa_audio_music_retain(music_owner,error);
         if (!ok) break;
         if (!group->key_profile && !qa_q3_key_restore(source->keys,(qa_bytes){group->keys,sizeof(group->keys)},error)) {
-            if (!group->music_attached) qa_audio_music_destroy(music_owner); ok=false; break;
+            qa_audio_music_release(music_owner); ok=false; break;
         }
-        if (!source->music_attached) qa_audio_music_destroy(source->music);
-        source->music=music_owner; source->music_attached=group->music_attached;
+        qa_audio_music_release(source->music);
+        source->music=music_owner; source->music_attached=group->music_attached; source->music_pending=group->music_pending;
+        if (music_owner) {
+            qa_audio_music_controls *controls=frontend_music_sources_controls(f->music_sources);
+            if (!controls || !qa_audio_music_controls_bind(music_owner,controls,error)) { ok=false; break; }
+            frontend_music_origin origin=music_origin(source);
+            if (frontend_music_sources_restore_origin_matches(f->music_sources,&origin) &&
+                !frontend_music_sources_restore_origin(f->music_sources,&origin,error)) { ok=false; break; }
+        }
         free(source->music_intro); free(source->music_loop);
         source->music_intro=group->music_intro; source->music_loop=group->music_loop;
         group->music_intro=group->music_loop=NULL; source->music_looping=group->music_looping;
@@ -2112,4 +2709,13 @@ bool frontend_source_restore(qa_frontend *f,qa_bytes bytes,qa_error *error)
     qa_source_save_dispose(&io); source_saved_free(groups,groups?count:0);
     if (!ok && (!error || error->code==QA_OK)) frontend_fail(error,QA_ERROR_FORMAT,"Source continuation differs from its actual candidate owners");
     return ok;
+}
+
+bool frontend_source_material_bindings_restore(qa_frontend *f,qa_error *error)
+{
+    if (!f || !f->source_restoring || f->capture || f->resource_inventory)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Source material rebinding requires its genuine imported physical banks");
+    for (frontend_source *source=f->sources;source;source=source->next)
+        if (source->materials && !frontend_q3_material_source_bind(f,source->materials,error)) return false;
+    return true;
 }

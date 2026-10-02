@@ -25,6 +25,8 @@ struct qaw_legacy {
     size_t texture;
     size_t *frames, frame_count;
     bool warp, flowing, fence, lightmapped, decoupled;
+    /* Derived from the retained Q1 leaf contents and marksurfaces. */
+    bool underwater;
     float alpha;
     uint32_t width, height;
     float projection[2][4], light_step[2];

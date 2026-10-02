@@ -153,7 +153,7 @@ bool qa_q3_checkpoint_capture(const qa_q3_game *game, qa_q3_checkpoint *out, qa_
         game->memory.allocated_bytes % 32 ||
         !qa_combat_idle(game->options.services.combat))
         return q3_fail(error, "Q3 checkpoint requires a session safe point");
-    qa_q3_checkpoint saved = {.version = 12,
+    qa_q3_checkpoint saved = {.version = 13,
                               .memory = game->memory,
                               .max_clients = game->options.max_clients,
                               .source_count = game->source_count,
@@ -259,7 +259,7 @@ static bool checkpoint_restore(qa_q3_game *game, const qa_q3_checkpoint *saved,
     if (!game || !saved || game->observation_depth || !q3_source_origins_idle(game) ||
         !qa_session_safe(game->options.services.session) ||
         !qa_world_idle(game->options.services.world) ||
-        !qa_combat_idle(game->options.services.combat) || saved->version != 12 ||
+        !qa_combat_idle(game->options.services.combat) || saved->version != 13 ||
         saved->memory.allocated_bytes > QA_Q3_SOURCE_MEMORY_BYTES ||
         saved->memory.allocated_bytes % 32 ||
         saved->fry_sound_index < 0 || saved->fry_sound_index > 255 ||

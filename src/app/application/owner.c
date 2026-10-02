@@ -10,6 +10,7 @@
 #include "native_q1_wire.h"
 #include "q3_product.h"
 #include "startup_flow.h"
+#include "guest_q3_mod_operations.h"
 #include "qa/rankings_save.h"
 #include "qa/player_progress_save.h"
 #include "qa/catalog_save.h"
@@ -35,6 +36,33 @@ void application_fault(qa_application *application, const qa_error *error)
     else
         qa_error_set(&application->publication_error, QA_ERROR_ARGUMENT, 0,
                      "application publication failed");
+}
+
+typedef struct application_think_call {
+    qa_think_fn callback;
+    void *context;
+    qa_think_scope scope;
+} application_think_call;
+
+static bool think_body(void *opaque, const application_q3_mod_actor_request *request,
+                       bool *result, qa_error *error)
+{
+    application_think_call *call = opaque;
+    if (!call->callback(call->context, request->self, &call->scope, error)) return false;
+    *result = true;
+    return true;
+}
+
+static bool dispatch_think(void *opaque, qa_think_fn callback, void *callback_context,
+                           qa_actor_id actor, const qa_think_scope *scope, qa_error *error)
+{
+    qa_application *application = opaque;
+    application_think_call call = {callback, callback_context, *scope};
+    application_q3_mod_actor_request request = {.self = actor,
+        .source.think = {.time_ns = scope->time_ns, .elapsed_ns = scope->interval_elapsed_ns}};
+    bool result;
+    return application_q3_mod_actor_dispatch(application->mod_operations, Q3_MOD_THINK,
+        &request, think_body, &call, &result, error);
 }
 
 static char *copy_text(const char *text, qa_error *error)
@@ -67,6 +95,19 @@ void qa_application_options_default(qa_application_options *options)
         .component_capacity = 256,
         .discover_mods = true,
         .mixed_source_order = true,
+        .native_process_policy = {
+#if defined(__linux__) && defined(__x86_64__)
+            .backend = QA_NATIVE_GUEST_HOST_X86_64,
+            .instruction_budget = 0,
+#else
+            .backend = QA_NATIVE_GUEST_EMULATED,
+            .instruction_budget = 50000000u,
+#endif
+            .maximum_image_bytes = 256u * 1024u * 1024u,
+            .maximum_backing_bytes = 1024u * 1024u * 1024u,
+            .stack_bytes = 8u * 1024u * 1024u,
+            .runtime_trap_bytes = 1024u * 1024u,
+        },
     };
 }
 
@@ -108,10 +149,16 @@ static bool create_application(const qa_application_options *options,
     application->state = QA_APPLICATION_READY;
     application->command_generation = 1;
     application->native_runner = options->native_runner;
+    application->native_runtime = options->native_runtime;
+    qa_native_runtime_retain(application->native_runtime);
+    application->native_process_policy = options->native_process_policy;
+    application->native_bootstrap = copy_text(options->native_bootstrap, error);
+    if (options->native_bootstrap && !application->native_bootstrap) goto fail;
     application->guest_context = options->guest_context;
     application->startup_hooks = options->startup_hooks;
     application->q3_services = options->q3_services;
     application->q3_client_prepare = options->q3_client_prepare;
+    application->q3_component_scene_prepare = options->q3_component_scene_prepare;
     application->q3_client_registry_reference = options->q3_client_registry_reference;
     application->q3_client_effect = options->q3_client_effect;
     application->q3_campaign_command = options->q3_campaign_command;
@@ -210,6 +257,7 @@ static bool create_application(const qa_application_options *options,
         .component_capacity = options->component_capacity,
         .mixed_order = options->mixed_source_order,
         .actor_released = application_actor_released,
+        .think_dispatch = dispatch_think,
         .source_actor = application_arsenal_source_actor,
         .prepare_commands = application_control_frames_prepare,
         .run_commands = application_control_frames_commands,
@@ -241,6 +289,10 @@ static bool create_application(const qa_application_options *options,
     qa_combat_hooks combat_hooks = application_combat_hooks(application);
     if (!qa_combat_create(qa_session_actor_registry(application->session), &combat_hooks,
                           &application->combat, error))
+        goto fail;
+    if (!application_q3_mod_operations_create(application->session, application->combat,
+                                               application->inventory,
+                                               &application->mod_operations, error))
         goto fail;
     if (!qa_pickups_create(qa_session_actor_registry(application->session),
                            application->combat, application->inventory,
@@ -709,6 +761,30 @@ bool application_q1_pause_set(qa_application *application, application_provider 
     return true;
 }
 
+static bool q2_source_dependency(void *context, qa_actor_owner owner)
+{
+    qa_application *app = context;
+    const qa_launch_snapshot *snapshot = qa_configuration_current(app->configuration);
+    const qa_launch_choices *choices = qa_launch_snapshot_choices(snapshot);
+    if (!choices) return false;
+    for (size_t i = 0; i < app->provider_count; ++i) {
+        const application_provider *provider = app->providers[i];
+        if (provider->owner != owner || provider->kind != APPLICATION_PROVIDER_Q2 ||
+            !provider->constructed || !provider->attached || provider->close_pending) continue;
+        const char *instance = provider->launch->selection.instance;
+        for (size_t j = 0; j < choices->binding_count; ++j) {
+            const qa_launch_binding *binding = &choices->bindings[j];
+            if ((binding->role == QA_ROLE_ARSENAL || binding->role == QA_ROLE_MONSTERS) &&
+                !strcmp(binding->instance, instance)) return true;
+        }
+        for (size_t j = 0; j < choices->monster_count; ++j)
+            if (!choices->monsters[j].map_defined &&
+                !strcmp(choices->monsters[j].instance, instance)) return true;
+        return false;
+    }
+    return false;
+}
+
 bool qa_application_advance(qa_application *application, uint64_t elapsed_ns,
                             qa_error *error)
 {
@@ -722,8 +798,18 @@ bool qa_application_advance(qa_application *application, uint64_t elapsed_ns,
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "frame advance requires an idle running application");
     if (application->q1_paused) return true;
+    application_provider *source = application_world_provider(application, QA_ROLE_ENTITIES, "");
+    bool compiled_source = source && (source->kind == APPLICATION_PROVIDER_Q1 ||
+        source->kind == APPLICATION_PROVIDER_Q2 || source->kind == APPLICATION_PROVIDER_Q3);
+    bool command_only = elapsed_ns == 0 && source &&
+        source->kind == APPLICATION_PROVIDER_Q2;
     application->operation = APPLICATION_ADVANCING;
-    bool ok = qa_session_advance(application->session, elapsed_ns, error);
+    bool ok = command_only
+        ? qa_session_command_turn(application->session, error)
+        : compiled_source && elapsed_ns != 0
+            ? qa_session_advance_source(application->session, source->owner,
+                q2_source_dependency, application, elapsed_ns, error)
+            : qa_session_advance(application->session, elapsed_ns, error);
     if (!ok) {
         qa_error cleanup = {0};
         (void)application_control_frames_abort(application, &cleanup);
@@ -778,10 +864,25 @@ static bool shutdown_admitted_bots(qa_application *application, qa_error *error)
     return true;
 }
 
+static bool retire_control_inputs(qa_application *application, qa_error *error)
+{
+    if (application_control_frames_idle(application)) return true;
+    if (application->operation != APPLICATION_IDLE || application->q3_round_active ||
+        application->frame_preparing ||
+        (application->session && !qa_session_safe(application->session)))
+        return application_fail(error, QA_ERROR_ARGUMENT,
+                                "input retirement requires returned source invocations");
+    application->operation = APPLICATION_DESTROYING;
+    bool okay = application_control_frames_abort(application, error);
+    application->operation = APPLICATION_IDLE;
+    return okay;
+}
+
 bool qa_application_retire_sources(qa_application *application, qa_error *error)
 {
     if (application == NULL)
         return true;
+    if (!retire_control_inputs(application, error)) return false;
     if (application->operation != APPLICATION_IDLE || application->q3_round_active || application->frame_preparing || application->destroy_requested ||
         !qa_console_idle(application->console) ||
         (application->cvars && !qa_cvars_observer_idle(application->cvars)) ||
@@ -818,6 +919,7 @@ bool qa_application_destroy(qa_application *application, qa_error *error)
         return true;
     if (application->engine_shutdown)
         return application_fail(error, QA_ERROR_ARGUMENT, "ENGINE shutdown still retains its application parents");
+    if (!retire_control_inputs(application, error)) return false;
     if (application->operation != APPLICATION_IDLE || application->q3_round_active || application->frame_preparing ||
         !qa_console_destroy_ready(application->console) ||
         (application->cvars && !qa_cvars_observer_idle(application->cvars)) ||

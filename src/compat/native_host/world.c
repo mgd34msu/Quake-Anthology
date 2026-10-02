@@ -50,6 +50,8 @@ static bool release_binding(qa_native_host *host, qa_native_slot_binding binding
     qa_native_slot_binding cleared = {.kind = QA_NATIVE_SLOT_FREE, .slot = binding.slot};
     if (!qa_native_bind_slot(host->instance, &cleared, error))
         return false;
+    if (binding.slot < host->q2_lifetime_capacity)
+        host->q2_lifetimes[binding.slot] = (native_host_q2_lifetime){0};
     if (binding.slot < host->retained_capacity)
         host->retained_clients[binding.slot] = false;
     if (binding.kind == QA_NATIVE_SLOT_OWNED && actor_live(host, binding.actor)) {
@@ -90,6 +92,7 @@ bool qa_native_host_actor_released(qa_native_host *host, qa_actor_record release
             !qa_actor_id_equal(binding.actor, released.id)) continue;
         qa_native_slot_binding cleared = {.kind = QA_NATIVE_SLOT_FREE, .slot = slot};
         if (!qa_native_bind_slot(host->instance, &cleared, error)) { ok = false; break; }
+        if (slot < host->q2_lifetime_capacity) host->q2_lifetimes[slot] = (native_host_q2_lifetime){0};
         if (slot < host->retained_capacity) host->retained_clients[slot] = false;
         if (binding.kind == QA_NATIVE_SLOT_OWNED && host->world.release_actor) {
             host->world.release_actor(host->world.binding_context, host, slot, released.id);
@@ -128,6 +131,7 @@ bool qa_native_host_detach_actor(qa_native_host *host, uint32_t slot,
         return native_host_fail(error, QA_ERROR_ARGUMENT, slot, "Native actor detach differs from its borrowed full generation");
     qa_native_slot_binding cleared = {.kind = QA_NATIVE_SLOT_FREE, .slot = slot};
     if (!qa_native_bind_slot(host->instance, &cleared, error)) return false;
+    if (slot < host->q2_lifetime_capacity) host->q2_lifetimes[slot] = (native_host_q2_lifetime){0};
     if (slot < host->retained_capacity) host->retained_clients[slot] = false;
     return true;
 }
@@ -350,6 +354,28 @@ static uint32_t pack_classic_solid(qa_bounds bounds)
     return (uint32_t)(x | (zd << 5) | (zu << 10));
 }
 
+static uint32_t solid_byte(float value, uint32_t minimum)
+{
+    if (value <= (float)minimum)
+        return minimum;
+    if (value >= 255.0f)
+        return 255u;
+    return (uint32_t)value;
+}
+
+static uint32_t pack_rerelease_solid(qa_bounds bounds)
+{
+    if (bounds.mins.x == bounds.maxs.x && bounds.mins.y == bounds.maxs.y &&
+        bounds.mins.z == bounds.maxs.z)
+        return 0;
+    uint32_t x = solid_byte(bounds.maxs.x, 1);
+    uint32_t y = solid_byte(bounds.maxs.y, 1);
+    uint32_t zd = solid_byte(-bounds.mins.z, 0);
+    uint32_t zu = solid_byte(bounds.maxs.z + 32.0f, 0);
+    uint32_t packed = x | (y << 8) | (zd << 16) | (zu << 24);
+    return packed == 31u ? 0u : packed;
+}
+
 static qa_bounds source_absolute_bounds(qa_vec3 origin, qa_vec3 angles, qa_bounds bounds,
                                         bool brush)
 {
@@ -383,21 +409,16 @@ static bool source_link_metadata(qa_native_host *host, qa_bounds bounds,
                                  sizeof(leaves) / sizeof(leaves[0]), &list, error))
         return false;
     metadata->headnode = list.topnode;
-    metadata->cluster_count = list.overflow ? -1 : 0;
-    bool first_area = false, second_area = false;
+    metadata->cluster_count = list.overflow || list.count >= 128 ? -1 : 0;
     for (size_t index = 0; index < list.count; ++index) {
         qa_collision_leaf leaf;
         if (!qa_collision_leaf_at(geometry, leaves[index], &leaf, error))
             return false;
-        if (!first_area) {
-            metadata->area = (int32_t)leaf.area;
-            first_area = true;
-        } else if (leaf.area != metadata->area &&
-                   (!second_area || leaf.area != metadata->secondary_area)) {
-            if (!second_area) {
+        if (leaf.area != 0) {
+            if (metadata->area != 0 && leaf.area != metadata->area)
                 metadata->secondary_area = (int32_t)leaf.area;
-                second_area = true;
-            }
+            else
+                metadata->area = (int32_t)leaf.area;
         }
         if (metadata->cluster_count < 0 || leaf.cluster < 0)
             continue;
@@ -417,6 +438,21 @@ static bool source_link_metadata(qa_native_host *host, qa_bounds bounds,
     return true;
 }
 
+static bool lifetime_capacity(qa_native_host *host, uint32_t slot, qa_error *error)
+{
+    if (slot < host->q2_lifetime_capacity) return true;
+    qa_native_entity_table table;
+    if (!qa_native_entity_table_get(host->instance, &table, error)) return false;
+    if (slot >= table.capacity || table.capacity > SIZE_MAX / sizeof(*host->q2_lifetimes))
+        return native_host_fail(error, QA_ERROR_FORMAT, slot, "Native Q2 link leaves its real Source table");
+    native_host_q2_lifetime *values = calloc(table.capacity, sizeof(*values));
+    if (!values) return native_host_fail(error, QA_ERROR_MEMORY, slot, "Retaining native Q2 Source creation metadata");
+    if (host->q2_lifetime_capacity)
+        memcpy(values, host->q2_lifetimes, host->q2_lifetime_capacity * sizeof(*values));
+    free(host->q2_lifetimes); host->q2_lifetimes = values; host->q2_lifetime_capacity = table.capacity;
+    return true;
+}
+
 bool native_host_link(qa_native_host *host, qa_native_address address, qa_error *error)
 {
     if (host && host->filter_depth)
@@ -431,8 +467,7 @@ bool native_host_link(qa_native_host *host, qa_native_address address, qa_error 
     qa_native_slot_binding binding;
     if (!qa_native_slot(host->instance, slot, &binding, error))
         return false;
-    if (binding.kind == QA_NATIVE_SLOT_BORROWED)
-        return true;
+    bool borrowed = binding.kind == QA_NATIVE_SLOT_BORROWED;
     const native_host_edict_layout *layout = host->edict;
     qa_vec3 origin, angles, minimum, maximum;
     if (!native_host_read_vec3(host, address + 4, &origin, error) ||
@@ -440,12 +475,16 @@ bool native_host_link(qa_native_host *host, qa_native_address address, qa_error 
         !native_host_read_vec3(host, address + layout->mins, &minimum, error) ||
         !native_host_read_vec3(host, address + layout->maxs, &maximum, error))
         return false;
+    if (!qa_vec_finite(origin) || !qa_vec_finite(angles) ||
+        !qa_collision_bounds_valid((qa_bounds){minimum, maximum}))
+        return native_host_fail(error, QA_ERROR_FORMAT, slot, "Native Q2 link has invalid Source origin or bounds");
     uint32_t flags, clipmask;
     int32_t link_count;
     if (!native_host_read_u32(host, address + layout->flags, &flags, error) ||
         !native_host_read_u32(host, address + layout->clipmask, &clipmask, error) ||
         !native_host_read_i32(host, address + layout->linkcount, &link_count, error))
         return false;
+    if (!lifetime_capacity(host, slot, error)) return false;
     uint32_t solid;
     if (host->profile == QA_NATIVE_Q2_GAME_API3) {
         int32_t source_solid;
@@ -467,12 +506,12 @@ bool native_host_link(qa_native_host *host, qa_native_address address, qa_error 
     qa_body_state body = {.origin = origin, .angles = angles, .bounds = {minimum, maximum}};
     qa_error body_error = {0};
     qa_body_state existing;
-    if (qa_world_body_read(host->world.world, actor, &existing, &body_error)) {
+    if (!borrowed && qa_world_body_read(host->world.world, actor, &existing, &body_error)) {
         body.velocity = existing.velocity;
         body.ground = existing.ground;
         if (!qa_world_body_write(host->world.world, actor, &body, error))
             return false;
-    } else if (!qa_world_body_create(host->world.world, actor, &body, error)) {
+    } else if (!borrowed && !qa_world_body_create(host->world.world, actor, &body, error)) {
         return false;
     }
     qa_native_address owner_pointer = 0;
@@ -501,26 +540,29 @@ bool native_host_link(qa_native_host *host, qa_native_address address, qa_error 
         .shape = QA_SHAPE_BOX,
         .inline_model = solid == 3,
         .model = inline_model,
-        .contents = solid == 3 ? 1 : solid == 1 ? 0
-                                                   : (flags & 2u) ? 0x04000000
-                                                                  : 0x02000000,
+        .contents = solid == 3 ? 1 : solid == 0 ||
+            (solid == 1 && host->profile == QA_NATIVE_Q2_GAME_API3) ? 0
+            : (flags & 2u) ? 0x04000000
+            : host->profile == QA_NATIVE_Q2_GAME_API2023 && (flags & 8u) ? 0x40000000
+            : host->profile == QA_NATIVE_Q2_GAME_API2023 && (flags & 128u) ? INT32_MIN
+            : 0x02000000,
         .owner = owner_actor,
         .role = solid == 1 ? QA_COLLISION_TRIGGER : QA_COLLISION_SOLID,
         .monster = (flags & 4u) != 0,
         .dead_monster = (flags & 2u) != 0};
-    if (!qa_world_set_collision(host->world.world, actor, solid ? &collision : NULL, error))
+    if (!borrowed && !qa_world_set_collision(host->world.world, actor, solid ? &collision : NULL, error))
         return false;
-    if (solid && !qa_world_link(host->world.world, actor, NULL, error))
+    if (!borrowed && solid && !qa_world_link(host->world.world, actor, NULL, error))
         return false;
-    if (!solid && !qa_world_unlink(host->world.world, actor, error))
+    if (!borrowed && !solid && !qa_world_unlink(host->world.world, actor, error))
         return false;
     qa_linked_body linked;
-    if (solid && !qa_world_linked(host->world.world, actor, &linked))
+    if (!borrowed && solid && !qa_world_linked(host->world.world, actor, &linked))
         return native_host_fail(error, QA_ERROR_NOT_FOUND, slot,
                                 "shared world did not retain a native link");
-    qa_bounds absolute = solid ? linked.absolute_bounds
+    qa_bounds absolute = !borrowed && solid ? linked.absolute_bounds
                                : source_absolute_bounds(origin, angles,
-                                                        (qa_bounds){minimum, maximum}, false);
+                                                        (qa_bounds){minimum, maximum}, solid == 3);
     qa_vec3 dimensions = {maximum.x - minimum.x, maximum.y - minimum.y,
                           maximum.z - minimum.z};
     qa_native_host_link_metadata metadata = {0};
@@ -528,7 +570,9 @@ bool native_host_link(qa_native_host *host, qa_native_address address, qa_error 
         return false;
     metadata.network_solid = solid == 3 ? 31u
                                         : solid == 2 && !(flags & 2u)
-                                              ? pack_classic_solid(body.bounds)
+                                              ? host->profile == QA_NATIVE_Q2_GAME_API3
+                                                    ? pack_classic_solid(body.bounds)
+                                                    : pack_rerelease_solid(body.bounds)
                                               : 0u;
     if (host->engine.link_metadata &&
         !host->engine.link_metadata(host->engine.context, actor, &metadata, error))
@@ -536,12 +580,15 @@ bool native_host_link(qa_native_host *host, qa_native_address address, qa_error 
     if (metadata.cluster_count < -1 || metadata.cluster_count > 16)
         return native_host_fail(error, QA_ERROR_FORMAT, slot,
                                 "native link metadata has an invalid cluster count");
+    uint32_t next_bits = (uint32_t)link_count + 1;
+    int32_t next_link_count;
+    memcpy(&next_link_count, &next_bits, sizeof(next_link_count));
     if (!native_host_write_vec3(host, address + layout->absmin, absolute.mins, error) ||
         !native_host_write_vec3(host, address + layout->absmax, absolute.maxs, error) ||
         !native_host_write_vec3(host, address + layout->size, dimensions, error) ||
         !native_host_write_i32(host, address + layout->area, metadata.area, error) ||
         !native_host_write_i32(host, address + layout->area2, metadata.secondary_area, error) ||
-        !native_host_write_i32(host, address + layout->linkcount, link_count + 1, error) ||
+        !native_host_write_i32(host, address + layout->linkcount, next_link_count, error) ||
         !native_host_write_u32(host, address +
                                         (host->profile == QA_NATIVE_Q2_GAME_API3 ? 72u : 76u),
                                metadata.network_solid, error))
@@ -557,9 +604,13 @@ bool native_host_link(qa_native_host *host, qa_native_address address, qa_error 
             return false;
     }
     if (host->profile == QA_NATIVE_Q2_GAME_API2023 &&
-        !native_host_write_u8(host, address + NATIVE_Q2_RR_LINKED, solid ? 1u : 0u, error))
+        !native_host_write_u8(host, address + NATIVE_Q2_RR_LINKED, 1u, error))
         return false;
     if (link_count == 0) {
+        host->q2_lifetimes[slot] = (native_host_q2_lifetime){0};
+        if (host->engine.source_frame)
+            host->q2_lifetimes[slot] = (native_host_q2_lifetime){.actor = actor,
+                .creation_origin = origin, .creation_frame = host->engine.source_frame(host->engine.context), .present = true};
         bool copy_origin = host->profile == QA_NATIVE_Q2_GAME_API3;
         if (!copy_origin) {
             uint32_t render_effects;
@@ -569,6 +620,16 @@ bool native_host_link(qa_native_host *host, qa_native_address address, qa_error 
         }
         if (copy_origin && !native_host_write_vec3(host, address + 28, origin, error))
             return false;
+    }
+    if (host->engine.source_frame) {
+        native_host_q2_lifetime *lifetime = &host->q2_lifetimes[slot];
+        if (!lifetime->present || !qa_actor_id_equal(lifetime->actor, actor))
+            return native_host_fail(error, QA_ERROR_FORMAT, slot, "Native Q2 link lost its physical Source creation owner");
+        uint64_t frame = host->engine.source_frame(host->engine.context);
+        if (frame < lifetime->creation_frame)
+            return native_host_fail(error, QA_ERROR_FORMAT, slot, "Native Q2 link moved before its Source creation frame");
+        lifetime->origins[frame & 7u] = (qa_native_host_q2_origin){
+            .source_frame = frame, .origin = origin, .present = true};
     }
     return true;
 }
@@ -585,9 +646,8 @@ bool native_host_unlink(qa_native_host *host, qa_native_address address, qa_erro
     qa_native_slot_binding binding;
     if (!qa_native_slot(host->instance, slot, &binding, error))
         return false;
-    if (binding.kind == QA_NATIVE_SLOT_BORROWED)
-        return true;
-    if (actor.registry && slot != 0 && !qa_world_unlink(host->world.world, actor, error))
+    if (binding.kind != QA_NATIVE_SLOT_BORROWED && actor.registry && slot != 0 &&
+        !qa_world_unlink(host->world.world, actor, error))
         return false;
     if (host->profile == QA_NATIVE_Q2_GAME_API2023 && slot != 0)
         return native_host_write_u8(host, address + NATIVE_Q2_RR_LINKED, 0, error);

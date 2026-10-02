@@ -39,8 +39,9 @@ static bool source_valid(const frontend_remote_input_source *source)
     return source->connection.owner && source->connection.generation && source->epoch &&
         receiver->session && receiver->receiver && receiver->service_owner && receiver->frontend_lifetime &&
         receiver->console && receiver->cvars && source->input_settings && source->movement_settings &&
-        receiver->initialized && receiver->source_client < 64 &&
-        !receiver->source_owner && !receiver->source_actor.registry && !receiver->native_source &&
+        (receiver->native_source ? source->media_owner != NULL : receiver->initialized) &&
+        receiver->source_client < 64 &&
+        !receiver->source_owner && !receiver->source_actor.registry &&
         receiver->command_context.owner == receiver->receiver &&
         receiver->command_context.seat == receiver->seat && receiver->command_context.dialect == QA_CONSOLE_Q3 &&
         source->frame.kind == QA_MOVEMENT_Q3;

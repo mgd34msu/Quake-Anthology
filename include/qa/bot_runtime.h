@@ -149,7 +149,10 @@ bool qa_bot_runtime_chat_allocate(qa_bot_runtime *, uint32_t *, qa_error *);
 bool qa_bot_runtime_chat_free(qa_bot_runtime *, uint32_t, qa_error *);
 qa_bot_chat *qa_bot_runtime_chat(qa_bot_runtime *, uint32_t);
 bool qa_bot_runtime_chat_load(qa_bot_runtime *, uint32_t, const char *path, const char *name,
-                               int32_t *source_result, qa_error *);
+                             int32_t *source_result, qa_error *);
+bool qa_bot_runtime_chat_load_from(qa_bot_runtime *,uint32_t,
+    const qa_bot_chat_text_source *path,const qa_bot_chat_text_source *name,
+    int32_t *source_result,qa_error *);
 bool qa_bot_runtime_goal_weights(qa_bot_runtime *, uint32_t, const char *path,
                                   int32_t *source_result, qa_error *);
 bool qa_bot_runtime_init_level_items(qa_bot_runtime *, qa_error *);

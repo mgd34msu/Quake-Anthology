@@ -249,16 +249,18 @@ static bool fields(qa_source_save_io *io, const qa_scene_world *world, qa_scene_
     q3_data *q3, const qa_scene_world_checkpoint_refs *refs, qa_bytes *lighting)
 {
     bool reading=io->direction==QA_SOURCE_SAVE_READ, is_q3=world->bsp.family==QA_BSP_Q3;
-    uint8_t magic[4]={'Q','W','S','T'}; uint32_t schema=2;
+    uint8_t magic[4]={'Q','W','S','T'}; uint32_t schema=3;
     if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QWST",4) ||
-        !qa_source_save_u32(io,&schema) || schema!=2 || !qualify(io,world)) return false;
+        !qa_source_save_u32(io,&schema) || (schema!=2 && schema!=3) || !qualify(io,world)) return false;
     if (reading) {
         if (!allocate(io,(void **)&saved->surfaces,world->surface_count,sizeof(*saved->surfaces)) ||
             !allocate(io,(void **)&saved->surface_marks,world->surface_count,sizeof(*saved->surface_marks)) ||
             !allocate(io,(void **)&saved->surface_lights,world->surface_count,sizeof(*saved->surface_lights)) ||
             !allocate(io,(void **)&saved->admitted_surfaces,world->surface_count,sizeof(*saved->admitted_surfaces)) ||
             !allocate(io,(void **)&saved->visible_surfaces,world->surface_count,sizeof(*saved->visible_surfaces)) ||
-            !allocate(io,(void **)&saved->pvs,world->pvs_capacity,1) || !allocate(io,(void **)&saved->secondary_pvs,world->pvs_capacity,1)) return false;
+            !allocate(io,(void **)&saved->pvs,world->pvs_capacity,1) || !allocate(io,(void **)&saved->secondary_pvs,world->pvs_capacity,1) ||
+            (is_q3 && (!allocate(io,(void **)&saved->source_leaf_marks,world->leaf_count,sizeof(*saved->source_leaf_marks)) ||
+                !allocate(io,(void **)&saved->source_dlight_masks,world->surface_count,sizeof(*saved->source_dlight_masks))))) return false;
         for (size_t i=0;i<world->surface_count;++i) {
             saved->surfaces[i]=world->surfaces[i]; if (is_q3) saved->surfaces[i].lightmap=NULL;
         }
@@ -268,6 +270,22 @@ static bool fields(qa_source_save_io *io, const qa_scene_world *world, qa_scene_
     if (saved->admission_frame && !saved->admission_generation) return false;
     FIELD(u32,saved,visibility_generation); FIELD(bool,saved,sky_drawn); FIELD(bool,saved,pvs_cached); FIELD(bool,saved,pvs_all);
     FIELD(i32,saved,pvs_selector); FIELD(i32,saved,pvs_secondary);
+    if (is_q3 && schema>=3) {
+        FIELD(u32,saved,source_vis_generation); FIELD(i32,saved,source_view_cluster);
+        FIELD(bool,saved,source_area_mask_modified);
+        if ((saved->source_view_cluster < -1 || (saved->source_view_cluster > 0 &&
+            (uint32_t)saved->source_view_cluster >= world->cluster_count)) ||
+            !qa_source_save_bytes(io,saved->source_area_mask,sizeof(saved->source_area_mask))) return false;
+        for (size_t i=0;i<world->leaf_count;++i)
+            if (!qa_source_save_u32(io,&saved->source_leaf_marks[i]) ||
+                saved->source_leaf_marks[i]>saved->source_vis_generation) return false;
+        for (size_t i=0;i<world->surface_count;++i)
+            if (!qa_source_save_u32(io,&saved->source_dlight_masks[i])) return false;
+    } else if (reading) {
+        saved->source_vis_generation=0; saved->source_view_cluster=0;
+        saved->source_area_mask_modified=false;
+        memset(saved->source_area_mask,0,sizeof(saved->source_area_mask));
+    }
     if (!qa_source_save_count(io,&saved->pvs_size,world->pvs_capacity) || !qa_source_save_count(io,&saved->visible_count,world->surface_count) ||
         !qa_source_save_bytes(io,saved->pvs,world->pvs_capacity) || !qa_source_save_bytes(io,saved->secondary_pvs,world->pvs_capacity)) return false;
     if (saved->admission_frame && saved->admission_sequence==saved->admission_frame->sequence) {
@@ -320,6 +338,8 @@ static void discard(const qa_scene_world *world, qa_scene_world *saved, q3_data 
     }
     free(saved->surfaces); free(saved->surface_marks); free(saved->surface_lights); free(saved->admitted_surfaces);
     free(saved->visible_surfaces); free(saved->pvs); free(saved->secondary_pvs);
+    free(saved->source_leaf_marks);
+    free(saved->source_dlight_masks);
 }
 static void publish(qa_scene_world *world, qa_scene_world *saved, q3_data *q3)
 {
@@ -328,6 +348,13 @@ static void publish(qa_scene_world *world, qa_scene_world *saved, q3_data *q3)
     world->visibility_generation=saved->visibility_generation; world->visible_count=saved->visible_count; world->sky_drawn=saved->sky_drawn;
     world->pvs_size=saved->pvs_size; world->pvs_selector=saved->pvs_selector; world->pvs_secondary=saved->pvs_secondary;
     world->pvs_cached=saved->pvs_cached; world->pvs_all=saved->pvs_all;
+    world->source_vis_generation=saved->source_vis_generation; world->source_view_cluster=saved->source_view_cluster;
+    world->source_area_mask_modified=saved->source_area_mask_modified;
+    memcpy(world->source_area_mask,saved->source_area_mask,sizeof(world->source_area_mask));
+    if (world->bsp.family==QA_BSP_Q3 && world->leaf_count)
+        memcpy(world->source_leaf_marks,saved->source_leaf_marks,world->leaf_count*sizeof(*world->source_leaf_marks));
+    if (world->bsp.family==QA_BSP_Q3 && world->surface_count)
+        memcpy(world->source_dlight_masks,saved->source_dlight_masks,world->surface_count*sizeof(*world->source_dlight_masks));
     size_t count=world->surface_count, capacity=world->pvs_capacity;
     if (count) {
         memcpy(world->surface_marks,saved->surface_marks,count*sizeof(*world->surface_marks));
@@ -382,6 +409,8 @@ bool qa_scene_world_restore(qa_scene_world *world, qa_bytes bytes, const qa_scen
     qa_scene_world saved=*world; q3_data q3={0}; qa_bytes lighting={0};
     saved.surfaces=NULL; saved.surface_marks=saved.surface_lights=saved.visible_surfaces=NULL;
     saved.admitted_surfaces=NULL; saved.pvs=saved.secondary_pvs=NULL;
+    saved.source_leaf_marks=NULL;
+    saved.source_dlight_masks=NULL;
     qa_source_save_io io;
     if (!qa_source_save_reader(&io,NULL,bytes,error)) return false;
     world->checkpoint_active=true;

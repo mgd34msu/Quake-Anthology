@@ -6,9 +6,9 @@
 static const uint8_t magic[8] = {'Q', 'A', 'B', 'P', 'O', 'P', 'U', 0};
 static bool signature(qa_source_save_io *io)
 {
-    uint8_t actual[8];memcpy(actual,magic,sizeof(actual));uint32_t version=15;
+    uint8_t actual[8];memcpy(actual,magic,sizeof(actual));uint32_t version=16;
     return qa_source_save_bytes(io,actual,sizeof(actual)) && qa_source_save_u32(io,&version) &&
-        (!memcmp(actual,magic,sizeof(actual)) && version==15?true:
+        (!memcmp(actual,magic,sizeof(actual)) && version==16?true:
             bot_save_fail(io,QA_ERROR_FORMAT,"Unsupported native bot population continuation schema"));
 }
 #define FIELD(kind, value) do { if (!qa_source_save_##kind(io, &(value))) return false; } while (0)
@@ -119,8 +119,8 @@ static bool state_fields(qa_source_save_io *io, bot_ai_state *state)
     }
     if (!view_fields(io, &state->view) || !player_fields(io, &state->player)) return false;
     U(state->character); U(state->goals); U(state->weapons); U(state->chat); U(state->movement);
-    U(state->area); U(state->travel_flags); I(state->setup_count); I(state->residual_ms); I(state->last_health);
-    F(state->local_time); F(state->walker); F(state->admitted_skill); F(state->long_term_until); F(state->nearby_until);
+    U(state->area); U(state->travel_flags);
+    F(state->admitted_skill); F(state->long_term_until); F(state->nearby_until);
     const char *character=state->admitted_character,*name=state->admitted_name;
     if (!bot_save_text(io,&character)) return false;
     if (io->direction==QA_SOURCE_SAVE_READ) state->admitted_character=(char *)character;

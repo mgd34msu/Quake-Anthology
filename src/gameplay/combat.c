@@ -85,7 +85,12 @@ static bool read_state(qa_combat *combat, qa_combat_record *entry, qa_combat_sta
         if (record(combat, actor) != entry || entry->serial != serial || !slot->bound || slot->serial != owner_serial)
             return qa_combat_argument(error, "protection owner changed during state read");
         if (channel == QA_PROTECTION_REGULAR) out->armor.regular = armor.regular;
-        else out->armor.powered = armor.powered;
+        else {
+            if (armor.powered.kind != QA_POWER_NONE && armor.powered.source_kind == QA_POWER_SOURCE_GENERIC &&
+                armor.powered.source_owner != slot->claim.owner)
+                return qa_combat_argument(error, "generic powered storage left its absorption owner");
+            out->armor.powered = armor.powered;
+        }
     }
     if (combat->hooks.team) {
         ++combat->active_calls;
@@ -112,6 +117,17 @@ bool qa_combat_read(qa_combat *combat, qa_actor_id actor, qa_combat_state *out, 
     qa_combat_record *entry; qa_combat_state state;
     if (!out || !require_record(combat, actor, &entry, error) || !read_state(combat, entry, &state, error)) return false;
     *out = state; return true;
+}
+bool qa_combat_last_attack_read(const qa_combat *combat, qa_actor_id actor,
+                                 qa_attack *out, bool *present, qa_error *error) {
+    if (!combat || !out || !present || !qa_actors_get(combat->actors, actor))
+        return qa_combat_argument(error, "last attack requires a current full actor and outputs");
+    const qa_combat_record *entry = combat->records + actor.slot;
+    if (!entry->active || !qa_actor_id_equal(entry->actor, actor))
+        return qa_combat_argument(error, "last attack target has no current combat storage");
+    *out = entry->has_last_attack ? entry->last_attack : (qa_attack){0};
+    *present = entry->has_last_attack;
+    return true;
 }
 bool qa_combat_primary_read(qa_combat *combat, qa_actor_id actor, qa_combat_state *out, bool *local, qa_error *error) {
     qa_combat_record *entry; qa_combat_state state;
@@ -294,8 +310,11 @@ bool qa_combat_bind(qa_combat *combat, qa_actor_id actor, const qa_combat_bindin
     uint64_t serial; if (!next_serial(combat, &serial, error)) return false;
     qa_inventory *power_inventory = previous_active ? entry->power_inventory : NULL;
     qa_item_id power_item = previous_active ? entry->power_item : 0;
+    bool has_last_attack = previous_active && qa_actor_id_equal(entry->actor, actor) && entry->has_last_attack;
+    qa_attack last_attack = has_last_attack ? entry->last_attack : (qa_attack){0};
     *entry = (qa_combat_record){.actor = actor, .serial = serial, .active = true, .external = true,
-        .binding = *binding, .power_inventory = power_inventory, .power_item = power_item};
+        .binding = *binding, .power_inventory = power_inventory, .power_item = power_item,
+        .last_attack = last_attack, .has_last_attack = has_last_attack};
     return true;
 }
 bool qa_combat_primary_current(const qa_combat *combat, qa_actor_id actor,
@@ -456,6 +475,9 @@ bool qa_combat_set_armor(qa_combat *combat, qa_actor_id actor, const qa_armor *a
     if (owners[0]) original.regular = primary.armor.regular;
     if (owners[1]) original.powered = primary.armor.powered;
     if (!entry->external && original.regular.kind == QA_ARMOR_SOURCE) return qa_combat_argument(error, "local armor cannot store a source formula");
+    if (!owners[QA_PROTECTION_POWERED] && selected.powered.kind != QA_POWER_NONE &&
+        selected.powered.source_kind == QA_POWER_SOURCE_GENERIC)
+        return qa_combat_argument(error, "generic powered armor has no source absorption lease");
     ++combat->active_calls;
     bool ok = !entry->external || !entry->binding.validate_armor || entry->binding.validate_armor(entry->binding.context, &original, error);
     --combat->active_calls;
@@ -619,6 +641,9 @@ bool qa_combat_bind_protection(qa_combat *combat, qa_protection_lease lease, con
     ++combat->active_calls; bool ok = binding->read(binding->context, &armor, error); --combat->active_calls;
     if (!ok || !qa_armor_validate(&armor, error)) return false;
     if (!qa_combat_protection_current(combat, lease)) return qa_combat_argument(error, "protection retired during admission");
+    if (lease.channel == QA_PROTECTION_POWERED && armor.powered.kind != QA_POWER_NONE &&
+        armor.powered.source_kind == QA_POWER_SOURCE_GENERIC && armor.powered.source_owner != slot->claim.owner)
+        return qa_combat_argument(error, "generic powered storage does not belong to its absorption lease");
     slot->binding = *binding; slot->bound = true; return true;
 }
 bool qa_combat_close_protection(qa_combat *combat, qa_protection_lease lease, qa_error *error) {
@@ -692,7 +717,12 @@ static bool before_reaction(qa_combat *combat, qa_combat_cursor *cursor, const q
     if (!cursor->active || cursor->reaction_seen) return qa_combat_argument(error, "source reaction boundary already consumed");
     if (!result_valid(result, error) || !cursor_reconciled(combat, cursor, error)) return false;
     cursor->reaction_seen = true; cursor->reaction = *result; cursor->outcome->result = *result;
-    if (!qa_combat_live(combat, cursor->outcome->request.target) || !combat->hooks.before_reaction) return true;
+    if (!qa_combat_live(combat, cursor->outcome->request.target)) return true;
+    qa_combat_record *entry = record(combat, cursor->outcome->request.target);
+    if (!entry) return qa_combat_argument(error, "reaction target lost its canonical combat storage");
+    entry->last_attack = cursor->outcome->request.attack;
+    entry->has_last_attack = true;
+    if (!combat->hooks.before_reaction) return true;
     ++combat->active_calls;
     bool ok = combat->hooks.before_reaction(combat->hooks.context, cursor->outcome, error);
     --combat->active_calls;
@@ -854,11 +884,11 @@ static bool damage_canonical(void *context, const void *input, void *output, qa_
     *outcome = (qa_damage_outcome){.request = *input_request};
     qa_damage_request *request = &outcome->request;
     qa_combat_record *entry = record(combat, request->target);
-    if (!qa_combat_live(combat, request->target)) { outcome->stale = true; return true; }
+    if (!qa_combat_live(combat, request->target)) { outcome->stale = true; goto confirm; }
     if (!entry) return qa_combat_argument(error, "damage target has no combat authority");
     uint64_t serial = entry->serial;
     if (!capture_inflictor_center(combat, outcome, error)) return false;
-    if (!qa_combat_live(combat, request->target)) { outcome->stale = true; return true; }
+    if (!qa_combat_live(combat, request->target)) { outcome->stale = true; goto confirm; }
     if (record(combat, request->target) != entry || entry->serial != serial)
         return qa_combat_argument(error, "inflictor observation changed the damage owner");
     qa_source_damage_fn source = dispatch->source ? dispatch->source : entry->external ? entry->binding.source_damage : NULL;
@@ -884,7 +914,7 @@ static bool damage_canonical(void *context, const void *input, void *output, qa_
             if (!ok) return false;
             if (handled) goto confirm;
         }
-        if (!qa_combat_live(combat, request->target)) { outcome->stale = true; return true; }
+        if (!qa_combat_live(combat, request->target)) { outcome->stale = true; goto confirm; }
         if (record(combat, request->target) != entry || entry->serial != serial) return qa_combat_argument(error, "damage admission changed its owner");
         if (entry->external && entry->binding.adjust) {
             qa_combat_binding binding = entry->binding;
@@ -900,7 +930,7 @@ static bool damage_canonical(void *context, const void *input, void *output, qa_
         bool ok = policy.prepare(policy.context, request, &allowed, error);
         --combat->active_calls;
         if (!ok || !qa_damage_request_validate(request, error)) return false;
-        if (!qa_combat_live(combat, request->target)) { outcome->stale = true; return true; }
+        if (!qa_combat_live(combat, request->target)) { outcome->stale = true; goto confirm; }
         if (record(combat, request->target) != entry || entry->serial != serial ||
             request->attack.combat_provider != policy.provider)
             return qa_combat_argument(error, "damage preparation changed its selected authority");
@@ -909,11 +939,11 @@ static bool damage_canonical(void *context, const void *input, void *output, qa_
         ++combat->active_calls; bool permitted = combat->hooks.damage_allowed(combat->hooks.context, request); --combat->active_calls;
         allowed = allowed && permitted;
     }
-    if (!qa_combat_live(combat, request->target)) { outcome->stale = true; return true; }
+    if (!qa_combat_live(combat, request->target)) { outcome->stale = true; goto confirm; }
     if (record(combat, request->target) != entry || entry->serial != serial) return qa_combat_argument(error, "damage source changed its owner");
     if (!qa_actor_id_equal(outcome->inflictor_center.inflictor, request->attack.inflictor)) {
         if (!capture_inflictor_center(combat, outcome, error)) return false;
-        if (!qa_combat_live(combat, request->target)) { outcome->stale = true; return true; }
+        if (!qa_combat_live(combat, request->target)) { outcome->stale = true; goto confirm; }
         if (record(combat, request->target) != entry || entry->serial != serial)
             return qa_combat_argument(error, "inflictor observation changed the damage owner");
     }
@@ -981,7 +1011,12 @@ bool qa_combat_source_reaction(qa_combat *combat, const qa_damage_request *reque
     if (!combat || !qa_damage_request_validate(request, error) || !result_valid(result, error)) return false;
     if (result->reaction != QA_REACTION_PAIN && result->reaction != QA_REACTION_DEATH)
         return qa_combat_argument(error, "deferred source reaction requires pain or death");
-    if (!qa_combat_live(combat, request->target) || !combat->hooks.before_reaction) return true;
+    if (!qa_combat_live(combat, request->target)) return true;
+    qa_combat_record *entry;
+    if (!require_record(combat, request->target, &entry, error)) return false;
+    entry->last_attack = request->attack;
+    entry->has_last_attack = true;
+    if (!combat->hooks.before_reaction) return true;
     qa_damage_outcome outcome = {.request = *request, .result = *result};
     ++combat->active_calls;
     bool ok = combat->hooks.before_reaction(combat->hooks.context, &outcome, error);

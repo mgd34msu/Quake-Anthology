@@ -17,6 +17,7 @@ struct qa_fs_root {
     size_t references;
     HANDLE handle;
     DWORD volume, file_index_high, file_index_low;
+    uint64_t creation;
 };
 
 struct qa_fs_file {
@@ -29,6 +30,8 @@ struct qa_fs_stream {
     HANDLE handle;
     qa_fs_stream_mode mode;
     char *path;
+    qa_fs_root *root;
+    qa_fs_object_reference object;
 };
 
 static bool missing_error(DWORD code)
@@ -371,6 +374,7 @@ bool qa_fs_root_open(const char *path, qa_fs_root **out, qa_error *error)
     root->volume = legacy.dwVolumeSerialNumber;
     root->file_index_high = legacy.nFileIndexHigh;
     root->file_index_low = legacy.nFileIndexLow;
+    root->creation = ((uint64_t)legacy.ftCreationTime.dwHighDateTime << 32) | legacy.ftCreationTime.dwLowDateTime;
     *out = root;
     return true;
 }
@@ -387,6 +391,14 @@ bool qa_fs_root_same_object(const qa_fs_root *left, const qa_fs_root *right)
         && left->volume == right->volume
         && left->file_index_high == right->file_index_high
         && left->file_index_low == right->file_index_low;
+}
+
+bool qa_fs_root_reference_read(const qa_fs_root *root, qa_fs_object_reference *out)
+{
+    if (!root || !out) return false;
+    *out = (qa_fs_object_reference){2, {root->volume,
+        ((uint64_t)root->file_index_high << 32) | root->file_index_low, root->creation}};
+    return true;
 }
 
 void qa_fs_root_close(qa_fs_root *root)
@@ -785,6 +797,41 @@ bool qa_fs_file_path_unchanged(qa_fs_file *file,
         && qa_fs_identity_equal(expected, &opened)
         && qa_fs_identity_equal(expected, &current);
     return true;
+}
+
+bool qa_fs_file_read_prefix(qa_fs_file *file, const qa_fs_identity *expected,
+    void *bytes, size_t capacity, size_t *received, qa_error *error)
+{
+    if (received) *received = 0;
+    if (!file || !expected || !received || (capacity && !bytes) || capacity > PTRDIFF_MAX) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Prefix read needs a retained file, identity and bounded output");
+        return false;
+    }
+    qa_fs_identity before;
+    if (!qa_fs_file_identity(file, &before, error)) return false;
+    if (!qa_fs_identity_equal(expected, &before)) {
+        qa_error_set(error, QA_ERROR_IO, 0, "File changed before prefix read"); return false;
+    }
+    LARGE_INTEGER zero = {.QuadPart = 0};
+    if (!SetFilePointerEx(file->handle, zero, NULL, FILE_BEGIN))
+        return fail_windows(error, "cannot seek file prefix", file->path, GetLastError());
+    size_t limit = before.words[2] < (uint64_t)capacity ? (size_t)before.words[2] : capacity;
+    size_t offset = 0;
+    while (offset < limit) {
+        size_t remaining = limit - offset;
+        DWORD request = remaining > UINT32_C(0x7ffff000) ? UINT32_C(0x7ffff000) : (DWORD)remaining;
+        DWORD count = 0;
+        if (!ReadFile(file->handle, (uint8_t *)bytes + offset, request, &count, NULL))
+            return fail_windows(error, "cannot read file prefix", file->path, GetLastError());
+        if (!count) return fail_windows(error, "cannot read file prefix", file->path, ERROR_HANDLE_EOF);
+        offset += count;
+    }
+    qa_fs_identity after;
+    if (!qa_fs_file_identity(file, &after, error)) return false;
+    if (!qa_fs_identity_equal(expected, &after)) {
+        qa_error_set(error, QA_ERROR_IO, 0, "File changed during prefix read"); return false;
+    }
+    *received = offset; return true;
 }
 
 bool qa_fs_file_read_snapshot(qa_fs_file *file,
@@ -1454,6 +1501,15 @@ bool qa_fs_root_stream_open(qa_fs_root *root, const char *relative,
                             qa_fs_stream **out, uint64_t *initial_size,
                             qa_error *error)
 {
+    return qa_fs_root_stream_open_result(root, relative, mode, resume, out,
+                                          initial_size, NULL, error);
+}
+
+bool qa_fs_root_stream_open_result(qa_fs_root *root, const char *relative,
+    qa_fs_stream_mode mode, bool resume, qa_fs_stream **out,
+    uint64_t *initial_size, qa_fs_stream_open_stage *stage, qa_error *error)
+{
+    if (stage) *stage = QA_FS_STREAM_OPEN_PREPARE;
     if (out != NULL)
         *out = NULL;
     if (initial_size != NULL)
@@ -1510,6 +1566,7 @@ bool qa_fs_root_stream_open(qa_fs_root *root, const char *relative,
     DWORD access = append ? FILE_APPEND_DATA | FILE_READ_ATTRIBUTES
                           : GENERIC_WRITE | FILE_READ_ATTRIBUTES;
     DWORD disposition = !resume || append ? OPEN_ALWAYS : OPEN_EXISTING;
+    if (stage) *stage = QA_FS_STREAM_OPEN_NATIVE;
     HANDLE handle = CreateFileW(target, access,
                                 FILE_SHARE_READ | FILE_SHARE_WRITE
                                 | FILE_SHARE_DELETE,
@@ -1526,6 +1583,7 @@ bool qa_fs_root_stream_open(qa_fs_root *root, const char *relative,
     }
     bool created = disposition == OPEN_ALWAYS && code != ERROR_ALREADY_EXISTS;
     stream->handle = handle;
+    if (stage) *stage = QA_FS_STREAM_OPEN_VALIDATE;
     wchar_t *opened = handle_path(handle, error);
     if (opened == NULL || !path_within(locked.root_path, opened)) {
         free(opened);
@@ -1554,6 +1612,7 @@ bool qa_fs_root_stream_open(qa_fs_root *root, const char *relative,
         return false;
     }
     if (!resume && mode == QA_FS_STREAM_WRITE) {
+        if (stage) *stage = QA_FS_STREAM_OPEN_TRUNCATE;
         LARGE_INTEGER zero = {.QuadPart = 0};
         if (!SetFilePointerEx(handle, zero, NULL, FILE_BEGIN)
             || !SetEndOfFile(handle)) {
@@ -1565,10 +1624,102 @@ bool qa_fs_root_stream_open(qa_fs_root *root, const char *relative,
         }
     }
     stream->mode = mode;
+    stream->object = (qa_fs_object_reference){2, {legacy.dwVolumeSerialNumber,
+        ((uint64_t)legacy.nFileIndexHigh << 32) | legacy.nFileIndexLow,
+        ((uint64_t)legacy.ftCreationTime.dwHighDateTime << 32) | legacy.ftCreationTime.dwLowDateTime}};
+    stream->root = root;
+    qa_fs_root_retain(root);
     *initial_size = !resume && mode == QA_FS_STREAM_WRITE
         ? 0 : (((uint64_t)legacy.nFileSizeHigh << 32) | legacy.nFileSizeLow);
     *out = stream;
     writable_path_close(&locked);
+    if (stage) *stage = QA_FS_STREAM_OPEN_READY;
+    return true;
+}
+
+qa_fs_root *qa_fs_stream_root(const qa_fs_stream *stream)
+{
+    return stream ? stream->root : NULL;
+}
+
+bool qa_fs_stream_reference_read(const qa_fs_stream *stream, qa_fs_stream_reference *out)
+{
+    if (!stream || !out || !stream->root) return false;
+    qa_fs_stream_reference value = {.object = stream->object, .mode = stream->mode, .path = stream->path};
+    if (!qa_fs_root_reference_read(stream->root, &value.root)) return false;
+    *out = value;
+    return true;
+}
+
+bool qa_fs_stream_reference_valid(const qa_fs_stream_reference *reference, qa_error *error)
+{
+    if (!reference || reference->root.platform < 1 || reference->root.platform > 2 ||
+        reference->object.platform != reference->root.platform ||
+        (reference->root.platform == 1 && (reference->root.words[2] || reference->object.words[2])) ||
+        reference->mode < QA_FS_STREAM_WRITE || reference->mode > QA_FS_STREAM_APPEND_SYNC) {
+        qa_error_set(error, QA_ERROR_FORMAT, 0, "Invalid writable stream reference");
+        return false;
+    }
+    return qa_fs_relative_valid(reference->path, false, error);
+}
+
+bool qa_fs_stream_resume(qa_fs_root *root, const qa_fs_stream_reference *reference,
+    qa_fs_stream **out, uint64_t *size, qa_error *error)
+{
+    if (out) *out = NULL;
+    if (size) *size = 0;
+    if (!qa_fs_stream_reference_valid(reference, error)) return false;
+    qa_fs_object_reference actual;
+    if (!qa_fs_root_reference_read(root, &actual) || actual.platform != reference->root.platform ||
+        memcmp(actual.words, reference->root.words, sizeof(actual.words))) {
+        qa_error_set(error, QA_ERROR_FORMAT, 0, "Writable continuation has a different retained root");
+        return false;
+    }
+    return qa_fs_root_stream_open(root, reference->path, reference->mode, true, out, size, error);
+}
+
+bool qa_fs_stream_resume_mapped(qa_fs_root *destination, const qa_fs_stream_reference *reference,
+    const qa_fs_stream_resolver *resolver, qa_fs_stream **out, uint64_t *size, qa_error *error)
+{
+    if (out) *out = NULL;
+    if (size) *size = 0;
+    if (!destination || !out || !size || !resolver || !resolver->context || !resolver->root) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Writable continuation needs its actual root resolver");
+        return false;
+    }
+    if (!qa_fs_stream_reference_valid(reference, error)) return false;
+    qa_fs_root *mapped = NULL;
+    bool ok = resolver->root(resolver->context, reference, &mapped, error);
+    if (ok && !qa_fs_root_same_object(destination, mapped)) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Writable root resolver differs from the actual destination owner");
+        ok = false;
+    }
+    if (ok) ok = qa_fs_root_stream_open(mapped, reference->path, reference->mode, true, out, size, error);
+    qa_fs_root_close(mapped);
+    return ok;
+}
+
+bool qa_fs_stream_write_some(qa_fs_stream *stream, qa_bytes bytes, uint64_t position,
+    size_t *written, qa_error *error)
+{
+    if (written) *written = 0;
+    if (!stream || !written || (!bytes.data && bytes.size) || bytes.size > PTRDIFF_MAX ||
+        (stream->mode == QA_FS_STREAM_WRITE &&
+         (position > INT64_MAX || (uint64_t)bytes.size > (uint64_t)INT64_MAX - position))) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid writable stream operation");
+        return false;
+    }
+    if (!bytes.size) return true;
+    if (stream->mode == QA_FS_STREAM_WRITE) {
+        LARGE_INTEGER offset = {.QuadPart = (LONGLONG)position};
+        if (!SetFilePointerEx(stream->handle, offset, NULL, FILE_BEGIN))
+            return fail_windows(error, "cannot seek writable file", stream->path, GetLastError());
+    }
+    DWORD request = bytes.size > UINT32_C(0x7ffff000) ? UINT32_C(0x7ffff000) : (DWORD)bytes.size;
+    DWORD amount = 0;
+    if (!WriteFile(stream->handle, bytes.data, request, &amount, NULL))
+        return fail_windows(error, "cannot write", stream->path, GetLastError());
+    *written = amount;
     return true;
 }
 
@@ -1641,6 +1792,7 @@ bool qa_fs_stream_close_checked(qa_fs_stream *stream, qa_error *error)
     bool ok = true;
     if (stream->handle != INVALID_HANDLE_VALUE && !CloseHandle(stream->handle))
         ok = fail_windows(error, "cannot close", stream->path, GetLastError());
+    qa_fs_root_close(stream->root);
     free(stream->path);
     free(stream);
     return ok;
@@ -1866,3 +2018,5 @@ bool qa_fs_stream_sync(qa_fs_stream *stream, qa_error *error) {
     if (!stream) { qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Missing writable stream"); return false; }
     return FlushFileBuffers(stream->handle) != 0 || fail_windows(error, "cannot sync writable stream", stream->path, GetLastError());
 }
+
+#include "filesystem_opened_windows.inc"

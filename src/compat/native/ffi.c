@@ -319,6 +319,8 @@ bool native_ffi_call(qa_native_instance *instance, qa_native_address address,
                      const qa_native_signature *signature, native_ffi_signature *prepared,
                      const qa_native_value *arguments, size_t argument_count,
                      qa_native_value *result, qa_error *error) {
+    if (instance->backend == QA_NATIVE_BACKEND_OWNED_PROCESS)
+        return native_process_invoke(instance, address, signature, arguments, argument_count, result, error);
     if (!address || !signature || !prepared || argument_count != signature->parameter_count ||
         (argument_count && !arguments))
         return native_fail(error, QA_ERROR_ARGUMENT, 0,
@@ -610,6 +612,8 @@ void native_import_dispatch(ffi_cif *cif, void *result, void **arguments, void *
 
 bool native_import_bind(native_import_binding *binding, qa_native_instance *instance,
                         const native_signature_spec *spec, qa_error *error) {
+    if (instance->backend == QA_NATIVE_BACKEND_OWNED_PROCESS)
+        return native_process_import_bind(binding, instance, spec, error);
     memset(binding, 0, sizeof(*binding));
     binding->instance = instance;
     binding->spec = *spec;
@@ -641,6 +645,7 @@ void native_import_unbind(native_import_binding *binding) {
     if (binding->closure)
         ffi_closure_free(binding->closure);
     native_ffi_destroy(&binding->ffi);
+    guest_abi_plan_destroy(binding->guest_plan);
     memset(binding, 0, sizeof(*binding));
 }
 

@@ -10,8 +10,15 @@
 #include "network_config.h"
 #include "native_q3_client.h"
 #include "selected_effects.h"
+#include "shared_settings.h"
+#include "shared_publication.h"
+#include "shared_storage.h"
+#include "view_settings.h"
+#include "music_sources.h"
+#include "global_settings_storage.h"
 #include "save_private.h"
 #include "qa/cvars_save.h"
+#include "qa/text.h"
 #include <inttypes.h>
 #include <stdio.h>
 
@@ -53,7 +60,7 @@ struct frontend_config_source {
     qa_console_dialect movement_dialect;
     bool primary,published,configured,released,running,write_registered,dump_registered,has_mod;
     bool imported;
-    bool profile_carried,variables_carried;
+    bool profile_carried,variables_carried,initial_variables;
     qa_error observation_failure;
 };
 typedef struct config_variable_carry {
@@ -72,13 +79,37 @@ struct frontend_config_store {
     config_variable_carry *variable_carries;
     frontend_config_source *prepared_primary;
     const qa_launch_snapshot *prepared;
+    qa_application *prepared_application;
     frontend_keys_publication key_publication;
     frontend_keys_cvar_refs restore_refs;
+    frontend_shared_settings *shared;
+    frontend_shared_publication *publication;
+    qa_application *shared_application;
+    const qa_launch_snapshot *shared_candidate;
+    frontend_shared_storage *storage;
+    qa_buffer restored_storage;
+    qa_application_content_graph *storage_graph;
+    qa_console *images_console;
+    qa_console *root_console;
+    qa_cvars *root_cvars;
+    qa_command_context root_command;
+    frontend_startup_config *images_program;
+    qa_application_startup_source images_source;
+    qa_cvar_archive shared_archive;
+    bool storage_seeded,shared_seeded,shared_archived,images_audio_seeded;
+    bool image_fov_touched,images_fov_touched,sticky_seed_pending;
     bool restoring;
     bool running;
 };
 static bool fail(qa_error *error,qa_status code,const char *text)
 { qa_error_set(error,code,0,"%s",text); return false; }
+static bool refresh_source(void *,qa_application *,const qa_launch_snapshot *,
+    const qa_application_startup_source *,qa_error *);
+static bool startup_source(void *,qa_application *,const qa_launch_snapshot *,
+    const qa_application_startup_source *,bool *,qa_error *);
+static bool shared_program_destroy(frontend_config_store *,qa_error *);
+static bool images_prepare(frontend_config_store *,const qa_application_startup_source *,qa_error *);
+static bool shared_storage_prepare(frontend_config_store *,qa_error *);
 static bool equal(const char *left,const char *right)
 {
     for (;;++left,++right) {
@@ -116,9 +147,9 @@ static void print(void *context,const char *text)
 static bool cheats_allowed(void *context)
 {
     frontend_config_source *source=context;
-    qa_cvars *authority=source->command.dialect==QA_CONSOLE_Q3?
-        qa_application_cvars(source->application):source->cvars;
-    const qa_cvar_view *value=authority?qa_cvars_find(authority,"sv_cheats"):NULL;
+    const qa_cvar_view *value=source->command.dialect==QA_CONSOLE_Q3?
+        frontend_config_store_engine_value(source->manager,source->application,source->console,"sv_cheats"):
+        qa_cvars_find(source->cvars,"sv_cheats");
     return value && value->number==1;
 }
 static qa_cvar_options registry_options(frontend_config_source *source,qa_console_dialect dialect)
@@ -197,6 +228,469 @@ bool frontend_config_store_source_pending(const frontend_config_store *owner,qa_
     return source && authority->descriptor && held && !source->published && !source->imported &&
         source->application==application && source->candidate==candidate && source->cvars==authority->cvars &&
         same_scope(source->scope,authority->scope) && held->storage==authority->descriptor->storage;
+}
+bool frontend_config_store_shared_begin(frontend_config_store *manager,qa_application *application,
+    const qa_launch_snapshot *candidate,const qa_application_startup_source *source,qa_error *error)
+{
+    if (!manager || manager->restoring || (!manager->shared && manager->images_source.descriptor) || (manager->shared &&
+        (manager->shared_application!=application || manager->shared_candidate!=candidate)))
+        return fail(error,QA_ERROR_ARGUMENT,"Shared settings already retain another actual candidate");
+    bool ok=frontend_shared_settings_begin(manager->frontend,manager,application,candidate,source,&manager->shared,error);
+    if (manager->shared) { manager->shared_application=application; manager->shared_candidate=candidate; }
+    return ok && images_prepare(manager,source,error);
+}
+bool frontend_config_store_shared_pending(const frontend_config_store *manager)
+{
+    return manager && manager->shared && manager->shared_application==manager->frontend->application &&
+        frontend_config_store_shared(manager,manager->shared_application,manager->shared_candidate);
+}
+frontend_shared_settings *frontend_config_store_shared(const frontend_config_store *manager,
+    const qa_application *application,const qa_launch_snapshot *candidate)
+{
+    return manager && manager->shared_application==application && manager->shared_candidate==candidate &&
+        frontend_shared_settings_current(manager->shared,manager->frontend,application,candidate)?manager->shared:NULL;
+}
+static bool shared_consumed(const frontend_config_store *manager,qa_application *application)
+{
+    return manager && manager->shared_application==application &&
+        frontend_shared_settings_consumed_is(manager->shared,manager->frontend,application,manager->shared_candidate);
+}
+static bool root_current(const frontend_config_store *manager)
+{
+    qa_console *console=NULL; qa_cvars *registry=NULL; qa_command_context command;
+    return manager && manager->root_console && manager->shared_application &&
+        qa_application_startup_root_read(manager->shared_application,manager->shared_candidate,
+            &console,&registry,&command,NULL) && console==manager->root_console && registry==manager->root_cvars &&
+        command.owner==manager->root_command.owner && command.session==manager->root_command.session &&
+        command.client==manager->root_command.client && command.seat==manager->root_command.seat &&
+        command.origin==manager->root_command.origin && command.dialect==manager->root_command.dialect &&
+        command.registry==manager->root_command.registry && command.generation==manager->root_command.generation &&
+        command.console_text==manager->root_command.console_text && command.script==manager->root_command.script &&
+        command.direct==manager->root_command.direct &&
+        qa_actor_id_equal(command.actor,manager->root_command.actor);
+}
+static bool images_phase(const frontend_config_store *manager)
+{
+    return manager->root_console?root_current(manager) &&
+        qa_application_startup_root_phase(manager->shared_application,manager->shared_candidate):
+        qa_application_startup_images_phase(manager->shared_application,manager->shared_candidate,&manager->images_source);
+}
+static const qa_command_context *images_basis(const frontend_config_store *manager)
+{ return manager->root_console?&manager->root_command:&manager->images_source.command; }
+bool frontend_config_store_images_command_current(const frontend_config_store *manager,
+    const qa_application *application,const qa_launch_snapshot *candidate,
+    const qa_console *console,const qa_command_context *command)
+{
+    return manager && console && console==manager->images_console && command &&
+        application==manager->shared_application && candidate==manager->shared_candidate &&
+        frontend_config_store_shared(manager,application,candidate) &&
+        (manager->root_console?root_current(manager):frontend_config_store_source_pending(manager,manager->shared_application,
+            manager->shared_candidate,&manager->images_source)) && images_phase(manager) &&
+        qa_application_command_context_active(manager->shared_application,command) &&
+        frontend_startup_images_command_current(manager->images_program,console,command);
+}
+bool frontend_config_store_images_pending(const frontend_config_store *manager)
+{
+    frontend_shared_settings *owner=manager?frontend_config_store_shared(manager,
+        manager->shared_application,manager->shared_candidate):NULL;
+    frontend_shared_values *values=frontend_shared_settings_values(owner);
+    return manager && !manager->shared_seeded && manager->images_console && manager->images_program &&
+        owner && qa_cvars_edit_returned_is(frontend_shared_values_prepared(values),frontend_shared_values_registry(values)) &&
+        images_phase(manager) &&
+        qa_console_idle(manager->images_console) &&
+        !frontend_startup_images_completed(manager->images_program,manager->images_console);
+}
+const frontend_shared_storage *frontend_config_store_shared_storage(const frontend_config_store *manager)
+{ return manager?manager->storage:NULL; }
+static bool shared_storage_current(const frontend_config_store *manager)
+{
+    if (!manager || !manager->storage) return false;
+    const qa_frontend *f=manager->frontend;
+    return frontend_global_settings_storage_idle(f->global_settings_storage) &&
+        frontend_shared_storage_current(manager->storage,
+            frontend_global_settings_storage_user_store(f->global_settings_storage),
+            frontend_global_settings_storage_device_store(f->global_settings_storage),
+            frontend_config_store_input_store(manager),!f->options.dedicated);
+}
+static bool shared_storage_prepare(frontend_config_store *manager,qa_error *error)
+{
+    qa_frontend *f=manager->frontend;
+    if (!frontend_global_settings_storage_idle(f->global_settings_storage))
+        return fail(error,QA_ERROR_ARGUMENT,"Shared persistence lost its actual global directory owner");
+    qa_settings_store user=frontend_global_settings_storage_user_store(f->global_settings_storage);
+    qa_settings_store devices=frontend_global_settings_storage_device_store(f->global_settings_storage);
+    qa_settings_store input=frontend_config_store_input_store(manager);
+    bool graphical=!manager->frontend->options.dedicated;
+    if (!manager->storage && !frontend_shared_storage_open(user,devices,input,graphical,&manager->storage,error)) return false;
+    qa_settings_store previous={0};
+    if (!frontend_shared_storage_input(manager->storage,&previous))
+        return fail(error,QA_ERROR_ARGUMENT,"Shared persistence lost its admitted sticky store receipt");
+    if (input.vfs) {
+        if (!frontend_shared_storage_adopt_input(manager->storage,input,error)) return false;
+        if (!previous.vfs && manager->storage_seeded) manager->sticky_seed_pending=true;
+    }
+    if (!frontend_shared_storage_current(manager->storage,user,devices,input,graphical))
+        return fail(error,QA_ERROR_ARGUMENT,"Shared persistence changed its actual retained user or input root");
+    return true;
+}
+static bool images_prepare(frontend_config_store *manager,const qa_application_startup_source *source,qa_error *error)
+{
+    if (!shared_storage_prepare(manager,error)) return false;
+    if (!manager->root_console && !manager->images_source.descriptor) manager->images_source=*source;
+    return true;
+}
+static bool images_context(void *context,const qa_command_context *command)
+{
+    frontend_config_store *manager=context;
+    const qa_command_context *basis=images_basis(manager);
+    return command && frontend_config_store_shared(manager,manager->shared_application,manager->shared_candidate) &&
+        images_phase(manager) &&
+        command->session==basis->session && command->owner==basis->owner && command->client==basis->client &&
+        command->seat==basis->seat && command->origin==basis->origin && command->dialect==basis->dialect &&
+        command->registry==basis->registry && command->generation==basis->generation &&
+        command->console_text==basis->console_text && qa_actor_id_equal(command->actor,basis->actor) &&
+        qa_application_command_context_active(manager->shared_application,command);
+}
+static bool images_access(frontend_config_store *manager,const qa_command_context *command,
+    qa_cvars **registry,qa_cvars_edit **edit,qa_error *error)
+{
+    return manager->shared && frontend_shared_values_programme_access(
+        frontend_shared_settings_values(manager->shared),manager->images_console,command,registry,edit,error);
+}
+static qa_cvars *images_owner(void *context,const qa_command_context *command,const char *name)
+{
+    (void)name;
+    qa_cvars *registry=NULL; qa_cvars_edit *edit=NULL; qa_error error={0};
+    return images_access(context,command,&registry,&edit,&error)?registry:NULL;
+}
+static qa_cvars *images_visible(void *context,const qa_command_context *command,size_t index)
+{ return index?NULL:images_owner(context,command,NULL); }
+static bool images_edit(void *context,const qa_command_context *command,qa_cvars *registry,
+    qa_cvars_edit **out,qa_error *error)
+{
+    qa_cvars *actual=NULL;
+    if (!images_access(context,command,&actual,out,error)) return false;
+    return actual==registry || fail(error,QA_ERROR_ARGUMENT,"Image command lost its canonical prepared registry");
+}
+static void images_print(void *context,const qa_command_context *command,const char *text)
+{ frontend_console_print(((frontend_config_store *)context)->frontend,command,text); }
+static bool archive_remember(qa_cvar_archive *archive,const char *name,const char *value,qa_error *error)
+{
+    size_t index=0;
+    while (index<archive->count && strcmp(archive->entries[index].name,name)) ++index;
+    size_t length=strlen(value);
+    char *copy=malloc(length+1);
+    if (!copy) return fail(error,QA_ERROR_MEMORY,"Retaining canonical shared archive value");
+    memcpy(copy,value,length+1);
+    if (index==archive->count) {
+        if (archive->count>=SIZE_MAX/sizeof(*archive->entries)) {
+            free(copy); return fail(error,QA_ERROR_MEMORY,"Canonical shared archive exceeds storage");
+        }
+        char *key=malloc(strlen(name)+1);
+        if (!key) { free(copy); return fail(error,QA_ERROR_MEMORY,"Retaining canonical shared archive name"); }
+        strcpy(key,name);
+        qa_cvar_archive_entry *entries=realloc(archive->entries,(archive->count+1)*sizeof(*entries));
+        if (!entries) { free(key); free(copy); return fail(error,QA_ERROR_MEMORY,"Growing canonical shared archive"); }
+        archive->entries=entries; archive->entries[archive->count++]=(qa_cvar_archive_entry){key,copy};
+    } else { free(archive->entries[index].value); archive->entries[index].value=copy; }
+    return true;
+}
+static bool images_observe(void *context,const qa_command_invocation *command,bool success,qa_error *error)
+{
+    (void)success;
+    frontend_config_store *manager=context;
+    if (!command || command->console!=manager->images_console ||
+        !qa_console_invocation_current(command->console,command))
+        return fail(error,QA_ERROR_ARGUMENT,"Image archive observer lost its actual tokenized invocation");
+    qa_cvars *registry=NULL; qa_cvars_edit *edit=NULL;
+    if (!images_access(manager,&command->context,&registry,&edit,error)) return false;
+    if (!command->argc) return true;
+    const char *name=(!strcmp(command->argv[0],"set") || !strcmp(command->argv[0],"seta"))?
+        command->argc>1?command->argv[1]:NULL:command->argv[0];
+    const qa_cvar_view *row=name?qa_cvars_edit_canonical_record(edit,name):NULL;
+    const char *value=row && (row->flags&QA_CVAR_ARCHIVE)?row->value:NULL;
+    if (value && row==qa_cvars_edit_canonical_record(edit,"fov")) manager->images_fov_touched=true;
+    return !value || archive_remember(&manager->shared_archive,row->name,value,error);
+}
+static bool images_output(frontend_config_store *manager,frontend_shared_values *values,qa_error *error)
+{
+    const frontend_shared_audio_preferences *audio=frontend_shared_storage_audio(manager->storage);
+    const qa_cvar_archive *archive=frontend_shared_storage_archive(manager->storage);
+    for (size_t i=0;audio && audio->present && archive && i<archive->count;++i) {
+        const qa_cvar_archive_entry *row=archive->entries+i;
+        if (strcmp(row->name,"s_outputRate") && strcmp(row->name,"s_outputBits") && strcmp(row->name,"s_outputChannels")) continue;
+        qa_cvar_archive one={.entries=(qa_cvar_archive_entry *)row,.count=1};
+        if (!frontend_shared_values_archive(values,&one,error)) return false;
+    }
+    return true;
+}
+static bool images_view(frontend_config_store *manager,frontend_shared_values *values,bool preserve_touched,qa_error *error)
+{
+    const frontend_shared_view_preferences *view=frontend_shared_storage_view(manager->storage);
+    if (manager->frontend->options.dedicated || !view || !view->present) return true;
+    char value[64];
+    if (!qa_format_ecmascript_number(view->field_of_view,value,error)) return false;
+    qa_cvar_archive_entry row={(char *)"fov",value};
+    qa_cvar_archive loaded={.entries=&row,.count=1};
+    if (!frontend_shared_values_archive(values,&loaded,error)) return false;
+    const qa_cvar_view *canonical=qa_cvars_edit_canonical_record(frontend_shared_values_prepared(values),"fov");
+    if (!canonical) return fail(error,QA_ERROR_ARGUMENT,"Loaded view lost its actual canonical prepared fov");
+    return preserve_touched || archive_remember(&manager->shared_archive,canonical->name,value,error);
+}
+static bool advance_images(void *context,qa_application *application,const qa_launch_snapshot *candidate,
+    bool *complete,qa_error *error)
+{
+    frontend_config_store *manager=context;
+    if (!manager || !complete) return fail(error,QA_ERROR_ARGUMENT,"Images frame requires its actual manager");
+    *complete=false;
+    if (!manager->shared) { *complete=true; return true; }
+    frontend_shared_settings *owner=frontend_config_store_shared(manager,application,candidate);
+    if (!owner || !manager->storage || !images_phase(manager))
+        return fail(error,QA_ERROR_ARGUMENT,"Images frame lost its actual candidate and linked source");
+    if (manager->shared_seeded) { *complete=true; return true; }
+    frontend_shared_values *values=frontend_shared_settings_values(owner);
+    const qa_cvars_edit *edit=frontend_shared_values_prepared(values);
+    qa_cvars *registry=frontend_shared_values_registry(values);
+    if (!qa_cvars_edit_returned_is(edit,registry))
+        return fail(error,QA_ERROR_ARGUMENT,"Images snapshot requires its returned canonical edit");
+    if (!manager->storage_seeded && !manager->frontend->options.dedicated) {
+        if (!manager->images_audio_seeded) {
+            if (!images_output(manager,values,error)) return false;
+            manager->images_audio_seeded=true;
+        }
+        if (!manager->images_console) {
+            qa_console_options options={.context=*images_basis(manager),.cvars=registry,.user=manager,
+                .print=images_print,.cvar_owner=images_owner,.visible_cvars=images_visible,.cvar_edit=images_edit,
+                .context_active=images_context,.post_dispatch=images_observe};
+            manager->images_console=qa_console_create(&options,error);
+            if (!manager->images_console) return false;
+        }
+        if (!manager->images_program) {
+            manager->images_program=frontend_startup_images_create(images_basis(manager),
+                frontend_shared_storage_images(manager->storage),error);
+            if (!manager->images_program) return false;
+        }
+        bool done=false;
+        if (!frontend_startup_config_advance(manager->images_program,manager->images_console,&done,error)) return false;
+        if (!done) return true;
+        if (!frontend_startup_images_completed(manager->images_program,manager->images_console))
+            return fail(error,QA_ERROR_ARGUMENT,"Image archive precedes its actual completed programme");
+        if (!images_output(manager,values,error)) return false;
+    } else if (manager->storage_seeded) {
+        for (size_t i=0;i<qa_cvars_edit_count(edit);++i) {
+            const qa_cvar_view *row=qa_cvars_edit_at(edit,i);
+            const char *value=qa_cvars_edit_archive_value(edit,row);
+            if (value && !archive_remember(&manager->shared_archive,row->name,value,error)) return false;
+        }
+    }
+    if (!manager->storage_seeded) {
+        const qa_cvar_archive *archive=frontend_shared_storage_archive(manager->storage);
+        for (size_t i=0;archive && i<archive->count;++i)
+            if (!archive_remember(&manager->shared_archive,archive->entries[i].name,archive->entries[i].value,error)) return false;
+        if (!images_view(manager,values,manager->images_fov_touched,error)) return false;
+    } else if (frontend_remote_configs_fresh_input(manager->clients,application,candidate)) {
+        qa_cvar_archive devices={0};
+        if (!frontend_shared_storage_load_devices(manager->storage,&devices,error)) return false;
+        bool ok=true;
+        for (size_t i=0;ok && i<devices.count;++i)
+            ok=archive_remember(&manager->shared_archive,devices.entries[i].name,devices.entries[i].value,error);
+        qa_cvar_archive_free(&devices);
+        if (!ok) return false;
+    }
+    if (manager->storage_seeded && manager->sticky_seed_pending && !manager->frontend->options.dedicated) {
+        if (!images_output(manager,values,error)) return false;
+        const qa_cvar_archive *archive=frontend_shared_storage_archive(manager->storage);
+        for (size_t i=0;archive && i<archive->count;++i) {
+            const qa_cvar_archive_entry *row=archive->entries+i;
+            if (strcmp(row->name,"s_outputRate") && strcmp(row->name,"s_outputBits") &&
+                strcmp(row->name,"s_outputChannels") && strcmp(row->name,"volume") &&
+                strcmp(row->name,"bgmvolume") && strcmp(row->name,"music_shuffle") &&
+                strcmp(row->name,"music_menu_track")) continue;
+            if (!archive_remember(&manager->shared_archive,row->name,row->value,error)) return false;
+        }
+        if (!images_view(manager,values,manager->image_fov_touched,error)) return false;
+    }
+    if (!candidate && manager->root_console) {
+        if (!root_current(manager) || qa_application_launch(application) ||
+            !frontend_shared_values_archive(values,&manager->shared_archive,error)) return false;
+        manager->shared_archived=true;
+    }
+    manager->shared_seeded=true; *complete=true; return true;
+}
+static bool shared_program_destroy(frontend_config_store *manager,qa_error *error)
+{
+    if (!qa_console_destroy_ready(manager->images_console))
+        return fail(error,QA_ERROR_ARGUMENT,"Image programme still retains an entered command or console lease");
+    if (!frontend_startup_config_destroy(manager->images_program,error)) return false;
+    manager->images_program=NULL;
+    qa_console_destroy(manager->images_console); manager->images_console=NULL;
+    manager->images_source=(qa_application_startup_source){0};
+    manager->root_console=NULL; manager->root_cvars=NULL; manager->root_command=(qa_command_context){0};
+    qa_cvar_archive_free(&manager->shared_archive);
+    manager->shared_seeded=manager->shared_archived=manager->images_audio_seeded=manager->images_fov_touched=false;
+    return true;
+}
+bool frontend_config_store_images_release(frontend_config_store *manager,qa_application *application,
+    const qa_launch_snapshot *candidate,qa_error *error)
+{
+    if (!manager || !manager->shared_seeded || !frontend_config_store_shared(manager,application,candidate) ||
+        !qa_application_startup_resource_phase(application,candidate))
+        return fail(error,QA_ERROR_ARGUMENT,"Image programme release requires its actual completed candidate phase");
+    if (!!manager->images_program!=!!manager->images_console ||
+        (manager->images_program && !frontend_startup_images_completed(manager->images_program,manager->images_console)) ||
+        !qa_console_destroy_ready(manager->images_console))
+        return fail(error,QA_ERROR_ARGUMENT,"Image programme has not returned its complete physical owner");
+    if (!frontend_startup_config_destroy(manager->images_program,error)) return false;
+    manager->images_program=NULL;
+    qa_console_destroy(manager->images_console); manager->images_console=NULL;
+    return true;
+}
+bool frontend_config_store_shared_cancel_advance(frontend_config_store *manager,qa_application *application,
+    const qa_launch_snapshot *candidate,bool *complete,qa_error *error)
+{
+    if (complete) *complete=false;
+    if (!manager || !complete || !application || manager->frontend->application!=application)
+        return fail(error,QA_ERROR_ARGUMENT,"Shared cancellation requires its actual frontend application");
+    if (!manager->shared) {
+        if (manager->shared_application || manager->shared_candidate)
+            return fail(error,QA_ERROR_ARGUMENT,"Shared cancellation retains a stale candidate association");
+        *complete=true; return true;
+    }
+    frontend_shared_settings *owner=frontend_config_store_shared(manager,application,candidate);
+    return owner?frontend_shared_settings_cancel_advance(owner,complete,error):
+        fail(error,QA_ERROR_ARGUMENT,"Shared cancellation names another retained candidate preparation");
+}
+bool frontend_config_store_shared_engine_shutdown(frontend_config_store *manager,
+    const qa_application_engine_shutdown *loan,bool *complete,qa_error *error)
+{
+    if (complete) *complete=false;
+    if (!manager || !complete || !manager->shared || !loan ||
+        qa_application_engine_shutdown_owner(loan)!=manager->shared_application ||
+        qa_application_engine_shutdown_candidate(loan)!=manager->shared_candidate)
+        return fail(error,QA_ERROR_ARGUMENT,"Shared shutdown requires its exact retained candidate ENGINE loan");
+    if (!shared_program_destroy(manager,error)) return false;
+    bool ok=frontend_shared_settings_engine_shutdown(&manager->shared,loan,complete,error);
+    if (!manager->shared) { manager->shared_application=NULL; manager->shared_candidate=NULL; }
+    return ok;
+}
+static bool pending_tuple(const frontend_config_store *manager,qa_application *application,
+    const qa_console *console,qa_application_startup_source *out)
+{
+    if (!manager || !out || !console || application!=manager->shared_application || !manager->shared_candidate) return false;
+    frontend_remote_config *client=frontend_config_store_client(manager,console);
+    if (client) return frontend_remote_config_tuple(client,out) &&
+        frontend_config_store_source_pending(manager,application,manager->shared_candidate,out);
+    frontend_config_source *source=frontend_config_store_source(manager,console);
+    if (!source || !instance(source)) return false;
+    *out=(qa_application_startup_source){instance(source),source->scope,source->console,source->cvars,
+        source->command,source->declaration_owner};
+    return frontend_config_store_source_pending(manager,application,manager->shared_candidate,out);
+}
+const qa_cvar_view *frontend_config_store_engine_value(const frontend_config_store *manager,
+    qa_application *application,const qa_console *console,const char *name)
+{
+    if (!manager || !application || application!=manager->frontend->application || !console || !name) return NULL;
+    frontend_config_source *game=frontend_config_store_source(manager,console);
+    frontend_remote_config *client=frontend_config_store_client(manager,console);
+    if (!game && !client) return NULL;
+    qa_cvars *engine=qa_application_cvars(application);
+    qa_application_startup_source source;
+    if (!engine) {
+        bool held=game?frontend_config_source_tuple(game,&source):frontend_remote_config_tuple(client,&source);
+        if (!held || !qa_application_startup_source_engine_cvars(application,&source,&engine,NULL)) return NULL;
+    }
+    if (manager->shared && !shared_consumed(manager,application) && pending_tuple(manager,application,console,&source)) {
+        frontend_shared_values *values=frontend_shared_settings_values(manager->shared);
+        const qa_cvars_edit *edit=frontend_shared_values_prepared(values);
+        return engine && frontend_shared_values_registry(values)==engine && qa_cvars_edit_registry(edit)==engine?
+            qa_cvars_edit_find(edit,name):NULL;
+    }
+    return engine?qa_cvars_find(engine,name):NULL;
+}
+bool frontend_config_store_cvar_edit(frontend_config_store *manager,qa_application *application,
+    const qa_console *console,const qa_command_context *command,qa_cvars *registry,qa_cvars_edit **out,qa_error *error)
+{
+    if (!manager || !application || !console || !command || !registry || !out)
+        return fail(error,QA_ERROR_ARGUMENT,"Prepared cvar access requires its actual physical console");
+    *out=NULL;
+    if (!manager->shared) return true;
+    if (shared_consumed(manager,application)) {
+        frontend_remote_config *client=frontend_config_store_client(manager,console);
+        frontend_config_source *game=frontend_config_store_source(manager,console);
+        bool admitted=console==qa_application_console(application)?
+            qa_application_command_context_active(application,command):
+            client?frontend_remote_config_cvar_active(client,command):source_cvar_context(game,command);
+        return admitted || fail(error,QA_ERROR_ARGUMENT,"Published values require their actual physical command context");
+    }
+    frontend_shared_values *values=frontend_shared_settings_values(manager->shared);
+    qa_application_startup_source source;
+    if (pending_tuple(manager,application,console,&source))
+        return frontend_shared_values_edit(values,&source,command,registry,out,error);
+    if (registry!=frontend_shared_values_registry(values)) return true;
+    qa_cvars *actual=NULL;
+    return application==manager->shared_application &&
+        frontend_shared_values_release_access(values,manager->frontend->input_settings,console,command,&actual,out,error) &&
+        actual==registry;
+}
+bool frontend_config_store_config_filtered(frontend_config_store *manager,qa_application *application,
+    const qa_console *console,const qa_command_context *command,qa_cvars *registry,
+    qa_cvar_config_filter filter,void *context,qa_buffer *out,qa_error *error)
+{
+    qa_cvars_edit *edit=NULL;
+    if (!frontend_config_store_cvar_edit(manager,application,console,command,registry,&edit,error)) return false;
+    return edit?qa_cvars_edit_config_filtered(edit,filter,context,out,error):
+        qa_cvars_config_filtered(registry,filter,context,out,error);
+}
+bool frontend_config_store_stage_input(frontend_config_store *manager,const qa_console *console,
+    const qa_command_invocation *command,bool *staged,qa_error *error)
+{
+    if (!manager || !console || !command || !staged)
+        return fail(error,QA_ERROR_ARGUMENT,"Input restart staging requires its actual invocation");
+    *staged=false;
+    if (!manager->shared) return true;
+    if (shared_consumed(manager,manager->shared_application)) return true;
+    frontend_shared_values *values=frontend_shared_settings_values(manager->shared);
+    qa_application_startup_source source;
+    bool ok=pending_tuple(manager,manager->shared_application,console,&source)?
+        frontend_shared_values_input_restart(values,&source,&command->context,error):
+        frontend_shared_values_release_input_restart(values,manager->frontend->input_settings,console,&command->context,error);
+    if (ok) *staged=true;
+    return ok;
+}
+bool frontend_config_store_apply_archive(frontend_config_store *manager,qa_application *application,
+    const qa_launch_snapshot *candidate,const qa_application_startup_source *source,qa_cvars *registry,
+    const qa_cvar_archive *archive,bool shared,qa_error *error)
+{
+    if (!manager || !registry || !archive || (archive->count && !archive->entries) ||
+        !frontend_config_store_source_pending(manager,application,candidate,source) ||
+        manager->shared_application!=application || manager->shared_candidate!=candidate || !manager->shared)
+        return fail(error,QA_ERROR_ARGUMENT,"Archive application lost its exact pending shared and private owners");
+    frontend_shared_values *values=frontend_shared_settings_values(manager->shared);
+    const qa_cvars_edit *edit=frontend_shared_values_prepared(values);
+    if (!edit) return fail(error,QA_ERROR_ARGUMENT,"Archive application lost its actual canonical edit");
+    for (size_t i=0;i<archive->count;++i) {
+        const qa_cvar_archive_entry *entry=archive->entries+i;
+        if (!entry->name || !entry->value)
+            return fail(error,QA_ERROR_FORMAT,"Archive entry lacks its retained scalar bytes");
+        qa_cvar_archive one={.entries=(qa_cvar_archive_entry *)entry,.count=1};
+        if (qa_cvars_edit_find(edit,entry->name)) {
+            if (shared && !frontend_shared_values_archive(values,&one,error)) return false;
+        } else if (!qa_cvar_archive_apply(registry,&one,error)) return false;
+    }
+    return true;
+}
+bool frontend_config_store_apply_shared_archive(frontend_config_store *manager,qa_application *application,
+    const qa_launch_snapshot *candidate,const qa_application_startup_source *source,qa_error *error)
+{
+    bool primary=false;
+    if (!manager || !manager->shared_seeded ||
+        !frontend_config_store_shared(manager,application,candidate) ||
+        !frontend_config_store_source_pending(manager,application,candidate,source) ||
+        !startup_source(manager,application,candidate,source,&primary,error))
+        return fail(error,QA_ERROR_ARGUMENT,"Shared archive requires its completed snapshot and pending source");
+    if (!primary || manager->shared_archived) return true;
+    if (!frontend_shared_values_archive(frontend_shared_settings_values(manager->shared),&manager->shared_archive,error)) return false;
+    manager->shared_archived=true; return true;
 }
 frontend_config_source *frontend_config_store_named_source(const frontend_config_store *owner,const char *name)
 {
@@ -382,6 +876,92 @@ qa_input_seat *frontend_config_store_prepared_input(const frontend_config_store 
     qa_input_seat *input=frontend_config_store_candidate_input(manager,application,candidate,ordinal);
     return input?input:manager?frontend_remote_configs_candidate_input(manager->clients,application,candidate,ordinal):NULL;
 }
+bool frontend_config_store_input_configuration(const frontend_config_store *manager,qa_application *application,
+    const qa_launch_snapshot *candidate,unsigned ordinal,qa_input_seat **out,qa_error *error)
+{
+    if (out) *out=NULL;
+    const qa_frontend *f=manager?manager->frontend:NULL;
+    const qa_launch_choices *choices=qa_launch_snapshot_choices(candidate);
+    if (!candidate && f && out && application && f->application==application &&
+        manager->shared_candidate==NULL && root_current(manager) && !qa_application_launch(application) &&
+        (qa_application_startup_root_phase(application,NULL) || qa_application_startup_resource_phase(application,NULL)) &&
+        f->seats && ordinal<f->options.seats) {
+        const frontend_seat *physical=f->seats+ordinal;
+        qa_command_context command=physical->console?qa_seat_console_context_read(physical->console):(qa_command_context){0};
+        if (physical->frontend!=f || physical->id!=ordinal || !physical->input || !physical->console ||
+            qa_input_seat_ordinal(physical->input)!=ordinal || command.owner || command.actor.registry ||
+            !frontend_seat_context_ready((void *)physical,ordinal,&command,error))
+            return fail(error,QA_ERROR_ARGUMENT,"Bootstrap input lost its actual source-free physical ENGINE seat");
+        *out=physical->input; return true;
+    }
+    if (!f || !out || !application || f->application!=application || !candidate ||
+        qa_application_startup_candidate(application)!=candidate || !f->seats ||
+        ordinal>=f->options.seats || !choices || ordinal>=choices->seat_count ||
+        !choices->seats[ordinal].local || choices->seats[ordinal].bot)
+        return fail(error,QA_ERROR_ARGUMENT,"Input configuration lost its actual candidate physical seat");
+    const frontend_seat *physical=f->seats+ordinal;
+    if (physical->frontend!=f || physical->id!=ordinal || !physical->input || !physical->console ||
+        qa_input_seat_ordinal(physical->input)!=ordinal)
+        return fail(error,QA_ERROR_ARGUMENT,"Input configuration lost its installed physical input root");
+    qa_input_seat *input=frontend_config_store_prepared_input(manager,application,candidate,ordinal);
+    if (input) {
+        if (qa_input_seat_ordinal(input)!=ordinal)
+            return fail(error,QA_ERROR_ARGUMENT,"Prepared dictionary belongs to another physical seat");
+        *out=input; return true;
+    }
+    const qa_launch_snapshot *published=qa_application_launch(application);
+    const qa_launch_choices *old=qa_launch_snapshot_choices(published);
+    uint32_t logical=choices->seats[ordinal].id;
+    if (old && (ordinal>=old->seat_count || old->seats[ordinal].id!=logical ||
+        !old->seats[ordinal].local || old->seats[ordinal].bot))
+        return fail(error,QA_ERROR_ARGUMENT,"Unchanged input changed its published authored seat");
+    bool unchanged=false;
+    if (frontend_network_remote(f)) {
+        frontend_remote_config_view view; bool present=false;
+        if (!frontend_network_client_previous_configuration_read(f,logical,&view,&present,error)) return false;
+        const qa_launch_instance *selected=present && view.receiver?
+            qa_launch_snapshot_find(candidate,view.receiver->selection.instance):NULL;
+        qa_console_dialect movement;
+        unchanged=present && view.ready && view.published && view.physical_seat==ordinal &&
+            view.scope.seat==logical && selected && selected->state==view.receiver->state &&
+            selected->storage==view.receiver->storage && seat_movement(candidate,logical,&movement,error) &&
+            movement==(qa_console_dialect)view.movement;
+    } else {
+        const qa_launch_binding *binding=qa_launch_binding_for(choices,
+            (qa_launch_scope){.kind=QA_SCOPE_WORLD},QA_ROLE_ENTITIES,"");
+        const qa_launch_instance *selected=binding?qa_launch_snapshot_find(candidate,binding->instance):NULL;
+        frontend_config_source *source=published_primary(manager,application);
+        const qa_launch_instance *held=source?instance(source):NULL;
+        qa_console_dialect movement;
+        unchanged=source && held && selected && held->storage==selected->storage &&
+            held->state==selected->state && source->configured && source->released &&
+            !source->imported && !source->running && ordinal<source->seat_count &&
+            source->seats[ordinal].logical==logical && seat_movement(candidate,logical,&movement,error) &&
+            movement==source->seats[ordinal].movement_dialect;
+        if (!binding && !qa_launch_binding_for(old,(qa_launch_scope){.kind=QA_SCOPE_WORLD},QA_ROLE_ENTITIES,"")) {
+            qa_command_context command=qa_seat_console_context_read(physical->console);
+            unchanged=command.origin==QA_COMMAND_SEAT && !command.owner && command.seat==logical &&
+                (!command.actor.registry || (old && qa_application_command_context_active(application,&command)));
+        }
+    }
+    if (!unchanged)
+        return fail(error,QA_ERROR_ARGUMENT,"Changed input source has no actual prepared dictionary");
+    *out=physical->input; return true;
+}
+bool frontend_config_store_view_transition(const frontend_config_store *manager,qa_application *application,
+    const qa_launch_snapshot *candidate,frontend_view_transition *out,qa_error *error)
+{
+    const qa_frontend *f=manager?manager->frontend:NULL;
+    bool published=false;
+    if (!out || !f || f->application!=application || (!candidate && !root_current(manager)) ||
+        !frontend_config_store_shared(manager,application,candidate) ||
+        !qa_application_startup_resource_phase(application,candidate) ||
+        !frontend_view_settings_parent_is(f->view_settings,f,qa_application_cvars(application)) ||
+        !frontend_view_settings_has_published(f->view_settings,&published))
+        return fail(error,QA_ERROR_ARGUMENT,"View transition lost its actual candidate and published preference owner");
+    *out=published?FRONTEND_VIEW_REPLACEMENT:FRONTEND_VIEW_INITIAL;
+    return true;
+}
 static qa_input_seat *binding_seat(void *context,const qa_command_context *command)
 {
     frontend_config_source *source=context;
@@ -399,6 +979,16 @@ qa_cvars *frontend_config_store_cvar_owner(const frontend_config_store *manager,
 {
     frontend_config_source *source=frontend_config_store_source(manager,console);
     frontend_remote_config *client=frontend_config_store_client(manager,console);
+    if (client?!frontend_remote_config_cvar_active(client,command):!source_cvar_context(source,command)) return NULL;
+    qa_application *application=manager->frontend->application;
+    qa_cvars *engine=qa_application_cvars(application);
+    qa_application_startup_source tuple;
+    if (name && manager->shared && !shared_consumed(manager,application) && pending_tuple(manager,application,console,&tuple)) {
+        qa_cvars *owner=NULL;
+        if (!frontend_shared_values_resolve(frontend_shared_settings_values(manager->shared),
+            &tuple,command,name,&owner,NULL)) return NULL;
+        if (owner) return owner;
+    } else if (name && engine && qa_cvars_find(engine,name)) return engine;
     if (client) return frontend_remote_config_cvar_owner(client,command,name);
     if (!source_cvar_context(source,command) || !name) return NULL;
     if (command->dialect==QA_CONSOLE_Q3 && equal(name,"sv_cheats")) return NULL;
@@ -419,6 +1009,19 @@ qa_cvars *frontend_config_store_visible_cvars(const frontend_config_store *manag
 {
     frontend_config_source *source=frontend_config_store_source(manager,console);
     frontend_remote_config *client=frontend_config_store_client(manager,console);
+    if (client?!frontend_remote_config_cvar_active(client,command):!source_cvar_context(source,command)) return NULL;
+    qa_application *application=manager->frontend->application;
+    qa_cvars *engine=qa_application_cvars(application);
+    if (engine) {
+        qa_application_startup_source tuple;
+        if (manager->shared && !shared_consumed(manager,application) && pending_tuple(manager,application,console,&tuple)) {
+            qa_cvars_edit *edit=NULL;
+            if (!frontend_shared_values_edit(frontend_shared_settings_values(manager->shared),
+                &tuple,command,engine,&edit,NULL) || !edit) return NULL;
+        }
+        if (!ordinal) return engine;
+        --ordinal;
+    }
     if (client) return frontend_remote_config_visible(client,command,ordinal);
     if (!source_cvar_context(source,command)) return NULL;
     qa_cvars *rows[5]={0}; size_t count=0;
@@ -615,12 +1218,16 @@ static bool game_registry_reference(void *context,const qa_cvars *registry,qa_q3
 bool frontend_config_source_cvar_entered(void *context,const qa_q3_host *host,const qa_console *console,
     const qa_command_context *command,qa_error *error)
 {
-    frontend_config_source *source=context; qa_application_startup_source tuple;
+    frontend_config_source *source=context; qa_application_startup_source tuple,entered;
     if (!frontend_config_source_tuple(source,&tuple) || !host_constructor(&tuple,host,console,command))
         return fail(error,QA_ERROR_ARGUMENT,"Named GAME cvar entry lost its actual host constructor");
-    tuple.command=*command;
-    return qa_application_q3_configuration_host_entered(source->application,&tuple,host) ||
-        fail(error,QA_ERROR_ARGUMENT,"Named GAME cvar entry lost its actual entered host");
+    if (!qa_application_q3_game_configuration_entered_read(source->application,host,&entered,error)) return false;
+    return (entered.descriptor && entered.descriptor->storage==tuple.descriptor->storage &&
+        entered.descriptor->content==tuple.descriptor->content && entered.descriptor->roles==tuple.descriptor->roles &&
+        qa_sha256_equal(&entered.descriptor->identity,&tuple.descriptor->identity) &&
+        same_scope(entered.scope,tuple.scope) && entered.console==tuple.console && entered.cvars==tuple.cvars &&
+        same_command(command,&entered.command)) ||
+        fail(error,QA_ERROR_ARGUMENT,"Named GAME cvar entry differs from its retained physical configuration");
 }
 static bool game_registry_resolve(void *context,qa_q3_host_cvar_namespace reference,qa_cvars **out,qa_error *error)
 {
@@ -665,14 +1272,23 @@ static bool selected_defaults(frontend_config_source *source,config_seat *seat,b
 static bool archive(void *context,qa_error *error)
 {
     frontend_config_source *source=context;
+    qa_application_startup_source tuple={instance(source),source->scope,source->console,source->cvars,
+        source->command,source->declaration_owner};
     if (!source->seat_index &&
-        (!qa_cvar_archive_apply(source->cvars,&source->source_archive,error) ||
-         !qa_cvar_archive_apply(source->movement,&source->movement_archive,error) ||
-         !qa_cvar_archive_apply(source->fallback,&source->fallback_archive,error))) return false;
+        (!frontend_config_store_apply_archive(source->manager,source->application,source->candidate,&tuple,
+            source->cvars,&source->source_archive,true,error) ||
+         !frontend_config_store_apply_archive(source->manager,source->application,source->candidate,&tuple,
+            source->movement,&source->movement_archive,true,error) ||
+         !frontend_config_store_apply_archive(source->manager,source->application,source->candidate,&tuple,
+            source->fallback,&source->fallback_archive,true,error))) return false;
+    if (!source->seat_index && !frontend_config_store_apply_shared_archive(source->manager,
+        source->application,source->candidate,&tuple,error)) return false;
     if (!source->seat_count) return true;
     config_seat *seat=source->seats+source->seat_index;
-    if (!qa_cvar_archive_apply(seat->cvars,&seat->client_archive,error) ||
-        !qa_cvar_archive_apply(seat->mouse,&seat->mouse_archive,error)) return false;
+    if (!frontend_config_store_apply_archive(source->manager,source->application,source->candidate,&tuple,
+        seat->cvars,&seat->client_archive,!source->seat_index,error) ||
+        !frontend_config_store_apply_archive(source->manager,source->application,source->candidate,&tuple,
+        seat->mouse,&seat->mouse_archive,!source->seat_index,error)) return false;
     if (seat->found) {
         if (!qa_input_seat_replace_bindings(seat->input,seat->settings.bindings,seat->settings.binding_count,error) ||
             !qa_input_mouse_settings_write(seat->mouse,&seat->settings.mouse,error)) return false;
@@ -748,7 +1364,8 @@ static bool config_text(frontend_config_source *source,const qa_command_context 
         qa_cvars *registry=frontend_config_store_visible_cvars(source->manager,source->console,command,i);
         if (!registry) break;
         qa_buffer rows={0};
-        if (!qa_cvars_config_filtered(registry,routed_archive,&filter,&rows,error)) return false;
+        if (!frontend_config_store_config_filtered(source->manager,source->application,source->console,
+            command,registry,routed_archive,&filter,&rows,error)) return false;
         if (rows.size>SIZE_MAX-out->size-1) { qa_buffer_free(&rows); return fail(error,QA_ERROR_MEMORY,"Source configuration exceeds text storage"); }
         uint8_t *text=realloc(out->data,out->size+rows.size+1);
         if (!text) { qa_buffer_free(&rows); return fail(error,QA_ERROR_MEMORY,"Retaining actual routed source configuration"); }
@@ -1200,7 +1817,8 @@ static bool prepare(void *context,qa_application *application,const qa_launch_sn
     if (previous_source(manager,application,candidate,selected)) {
         frontend_config_source *carried=NULL;
         if (!carry(manager,application,candidate,authority,&carried,error)) return false;
-        *phase=carried; return true;
+        *phase=carried;
+        return frontend_config_store_shared_begin(manager,application,candidate,authority,error);
     }
     frontend_config_source *source=calloc(1,sizeof(*source));
     if (!source) return fail(error,QA_ERROR_MEMORY,"Retaining source configuration");
@@ -1217,8 +1835,9 @@ static bool prepare(void *context,qa_application *application,const qa_launch_sn
     source->has_mod=product && base && strcmp(product->directory,base->directory)!=0;
     bool ok=product && qa_source_frame_time_register(cvars,authority->declaration_owner,error) &&
         qa_launch_instance_retain_metadata(selected,&source->metadata,error);
-    if (ok) source->files=frontend_config_files_create(catalog,product->id,f->options.application.user_root,
-        f->options.application.content_root,error);
+    if (ok) source->files=frontend_config_files_create(catalog,product->id,
+        frontend_global_settings_storage_user_store(f->global_settings_storage),
+        frontend_global_settings_storage_device_store(f->global_settings_storage),error);
     ok=ok && source->files;
     if (ok && source->primary) ok=frontend_input_profile_bind_store(f,catalog,product->id,
         frontend_config_files_store(source->files,false),error);
@@ -1287,13 +1906,8 @@ static bool prepare(void *context,qa_application *application,const qa_launch_sn
     if (ok && source->primary) ok=phase_create(source,error);
     if (!ok) { qa_error cleanup={0}; if (!source_destroy(source,&cleanup) && error) *error=cleanup; return false; }
     source->next=manager->sources; manager->sources=source;
-    if (source->primary && !replay(source,error)) {
-        qa_error cleanup={0};
-        manager->sources=source->next;
-        if (!source_destroy(source,&cleanup) && error) *error=cleanup;
-        return false;
-    }
-    *phase=source; return true;
+    *phase=source;
+    return frontend_config_store_shared_begin(manager,application,candidate,authority,error);
 }
 static bool advance(void *context,void *phase,qa_console *console,bool *complete,qa_error *error)
 {
@@ -1310,6 +1924,10 @@ static bool advance(void *context,void *phase,qa_console *console,bool *complete
         *complete=true; return true;
     }
     if (!source->primary) { source->configured=true; *complete=true; return true; }
+    if (!source->initial_variables) {
+        if (!manager->shared_seeded || !replay(source,error)) return false;
+        source->initial_variables=true;
+    }
     source->running=true; bool done=false;
     bool ok=frontend_startup_config_advance(source->phase,console,&done,error);
     source->running=false;
@@ -1399,8 +2017,30 @@ static bool phase_destroy(void *context,void *phase,qa_error *error)
 static bool prepare_candidate(void *context,qa_application *application,const qa_launch_snapshot *candidate,qa_error *error)
 {
     frontend_config_store *manager=context; qa_frontend *f=manager->frontend;
-    if (manager->prepared || manager->running || !candidate)
+    if (!candidate) {
+        if (manager->running || manager->prepared || manager->prepared_application || manager->key_publication.owner ||
+            !root_current(manager) || qa_application_launch(application) || !frontend_config_store_shared(manager,application,NULL))
+            return fail(error,QA_ERROR_ARGUMENT,"Bootstrap preflight lost its actual source-free ENGINE root");
+        return true;
+    }
+    if (manager->running || !application || !candidate ||
+        (manager->prepared && (manager->prepared!=candidate || manager->prepared_application!=application)))
         return fail(error,QA_ERROR_ARGUMENT,"Configuration publication already has another actual candidate");
+    if (manager->prepared) {
+        if ((f->keys && !frontend_keys_publication_current(f->keys,&manager->key_publication)) ||
+            (!f->keys && manager->key_publication.owner))
+            return fail(error,QA_ERROR_ARGUMENT,"Repeated configuration preflight lost its unconsumed key ticket");
+        frontend_keys_publication_discard(&manager->key_publication);
+        manager->prepared=NULL; manager->prepared_primary=NULL; manager->prepared_application=NULL;
+    } else if (manager->key_publication.owner || manager->prepared_application || manager->prepared_primary)
+        return fail(error,QA_ERROR_ARGUMENT,"Configuration preflight retains a stale publication owner");
+    for (frontend_config_source *source=manager->sources;source;source=source->next) {
+        if (source->application!=application || source->published || source->candidate!=candidate) continue;
+        for (size_t i=0;i<source->seat_count;++i) {
+            source->seats[i].publication_input=NULL; source->seats[i].publication_console=NULL;
+            source->seats[i].publication_command=(qa_command_context){0};
+        }
+    }
     if (!frontend_remote_configs_ready(manager->clients,application,candidate,error)) return false;
     for (frontend_config_source *source=manager->sources;source;source=source->next) {
         if (source->application!=application || source->published || source->candidate!=candidate) continue;
@@ -1413,7 +2053,7 @@ static bool prepare_candidate(void *context,qa_application *application,const qa
     const qa_launch_instance *selected=entities?qa_launch_snapshot_find(candidate,entities->instance):NULL;
     if (!entities) {
         if (f->keys && !frontend_keys_publication_ready(f->keys,NULL,NULL,&manager->key_publication,error)) return false;
-        manager->prepared=candidate; manager->prepared_primary=NULL;
+        manager->prepared=candidate; manager->prepared_primary=NULL; manager->prepared_application=application;
         return true;
     }
     qa_console *primary_console=NULL; qa_cvars *primary_cvars=NULL; qa_command_context primary_command;
@@ -1443,14 +2083,15 @@ static bool prepare_candidate(void *context,qa_application *application,const qa
     }
     if (f->keys && !frontend_keys_publication_ready(f->keys,primary->keys,
         primary->keys?primary->cvars:NULL,&manager->key_publication,error)) return false;
-    manager->prepared=candidate; manager->prepared_primary=primary; return true;
+    manager->prepared=candidate; manager->prepared_primary=primary; manager->prepared_application=application; return true;
 }
 static bool preinit(void *context,qa_application *application,const qa_launch_snapshot *candidate,
     const qa_application_startup_source *authority,qa_error *error)
 {
     frontend_config_store *manager=context;
     if (authority && client_scope(authority->scope))
-        return frontend_remote_config_preinit(manager->clients,application,candidate,authority,error);
+        return frontend_remote_config_preinit(manager->clients,application,candidate,authority,error) &&
+            refresh_source(manager,application,candidate,authority,error);
     const qa_launch_instance *selected=authority?authority->descriptor:NULL;
     qa_console *console=authority?authority->console:NULL; qa_cvars *cvars=authority?authority->cvars:NULL;
     const qa_command_context *command=authority?&authority->command:NULL;
@@ -1467,14 +2108,17 @@ static bool preinit(void *context,qa_application *application,const qa_launch_sn
         !source_context(source,command))
         return fail(error,QA_ERROR_ARGUMENT,"Source Init requires its completed genuine configuration phase");
     source->declaration_owner=authority->declaration_owner;
-    return true;
+    return refresh_source(manager,application,candidate,authority,error);
 }
 static bool retire(void *context,qa_application *application,
     const qa_application_startup_source *authority,qa_error *error)
 {
     frontend_config_store *manager=context;
-    if (authority && client_scope(authority->scope))
+    if (authority && client_scope(authority->scope)) {
+        if (manager->shared && frontend_config_store_source_pending(manager,application,manager->shared_candidate,authority))
+            return fail(error,QA_ERROR_ARGUMENT,"CLIENT retirement still retains its candidate shared settings owner");
         return frontend_remote_config_retire(manager->clients,application,authority,error);
+    }
     const qa_launch_instance *selected=authority?authority->descriptor:NULL;
     qa_console *console=authority?authority->console:NULL; qa_cvars *cvars=authority?authority->cvars:NULL;
     frontend_config_source *source=frontend_config_store_source(context,console);
@@ -1502,6 +2146,8 @@ static bool begin_retire(void *context,qa_application *application,
     if (source && (source->application!=application || source->cvars!=cvars || !retained ||
         retained->storage!=selected->storage || source->command.owner!=owner || !same_scope(source->scope,authority->scope)))
         return fail(error,QA_ERROR_ARGUMENT,"Client lease retirement names another physical configuration source");
+    if (manager->frontend->input_settings &&
+        !frontend_input_settings_retire_source(manager->frontend->input_settings,application,console,error)) return false;
     /* A failed constructor can have no manager row. The native owner still
      * qualifies the exact metadata storage and never retires a same-name
      * published source's reader merely because its interned owner matches. */
@@ -1521,12 +2167,15 @@ static qa_cvars *cvar_owner(void *context,qa_application *application,qa_console
     return source && source->application==application?
         frontend_config_store_cvar_owner(context,console,command,name):NULL;
 }
+static bool cvar_edit(void *context,qa_application *application,qa_console *console,
+    const qa_command_context *command,qa_cvars *registry,qa_cvars_edit **out,qa_error *error)
+{ return frontend_config_store_cvar_edit(context,application,console,command,registry,out,error); }
 static bool visible_cvars(void *context,qa_application *application,qa_console *console,
     const qa_command_context *command,size_t index,qa_cvars **out)
 {
     frontend_config_store *manager=context;
     frontend_remote_config *client=frontend_config_store_client(manager,console);
-    if (client && out) { *out=frontend_remote_config_visible(client,command,index); return true; }
+    if (client && out) { *out=frontend_config_store_visible_cvars(manager,console,command,index); return true; }
     frontend_config_source *source=frontend_config_store_source(context,console);
     if (!out || !source || source->application!=application || !source_cvar_context(source,command)) return false;
     *out=frontend_config_store_visible_cvars(context,console,command,index); return true;
@@ -1572,6 +2221,17 @@ static void finish(void *context,qa_application *application,const qa_launch_sna
         for (frontend_config_source *source=manager->sources;source;source=source->next)
             if (source->application==application && source->published) source->primary=source==manager->prepared_primary;
         if (manager->key_publication.owner) frontend_keys_publication_publish(&manager->key_publication);
+        if (manager->storage && manager->shared_seeded) {
+            manager->storage_seeded=true;
+            manager->image_fov_touched|=manager->images_fov_touched;
+            manager->sticky_seed_pending=false;
+        }
+        if (!manager->shared && !manager->images_program && !manager->images_console) {
+            qa_cvar_archive_free(&manager->shared_archive);
+            manager->images_source=(qa_application_startup_source){0};
+            manager->root_console=NULL; manager->root_cvars=NULL; manager->root_command=(qa_command_context){0};
+            manager->shared_seeded=manager->shared_archived=manager->images_audio_seeded=manager->images_fov_touched=false;
+        }
     } else {
         frontend_keys_publication_discard(&manager->key_publication);
         /* The checked physical source retirement follows while its console is
@@ -1583,7 +2243,7 @@ static void finish(void *context,qa_application *application,const qa_launch_sna
                     source->seats[i].publication_input=NULL; source->seats[i].publication_console=NULL;
                 }
     }
-    manager->prepared=NULL; manager->prepared_primary=NULL;
+    manager->prepared=NULL; manager->prepared_primary=NULL; manager->prepared_application=NULL;
 }
 static bool restore_source(void *,qa_application *,const qa_launch_snapshot *,
     const qa_application_startup_source *,qa_error *);
@@ -1639,6 +2299,177 @@ static void publish_hosted(void *context,qa_application *application,const qa_ap
     frontend_config_store *manager=context;
     frontend_remote_config_publish_hosted(manager->clients,application,source);
 }
+static bool prepare_publication(void *context,qa_application *application,const qa_launch_snapshot *candidate,
+    void **out,qa_error *error)
+{
+    frontend_config_store *manager=context;
+    frontend_shared_settings *owner=frontend_config_store_shared(manager,application,candidate);
+    if (!owner || !out || *out || manager->publication)
+        return fail(error,QA_ERROR_ARGUMENT,"Resource preparation requires its actual unconsumed shared owner");
+    if (!frontend_config_store_images_release(manager,application,candidate,error)) return false;
+    bool ok=frontend_shared_publication_prepare(owner,&manager->publication,error);
+    *out=manager->publication; return ok;
+}
+static bool ready_publication(void *context,qa_application *application,const qa_launch_snapshot *candidate,
+    void *publication,qa_error *error)
+{
+    frontend_config_store *manager=context;
+    if (!manager || !publication || manager->publication!=publication ||
+        !frontend_config_store_shared(manager,application,candidate))
+        return fail(error,QA_ERROR_ARGUMENT,"Resource readiness lost its actual publication parent");
+    return frontend_shared_publication_ready(manager->publication,error);
+}
+static bool owned_publication_ready(void *context,const qa_application *application,
+    const qa_launch_snapshot *candidate,const void *publication)
+{
+    const frontend_config_store *manager=context;
+    return manager && publication && manager->publication==publication &&
+        manager->shared_application==application && manager->shared_candidate==candidate &&
+        frontend_shared_publication_ready_is(manager->publication,manager->shared,
+            manager->frontend,application,candidate);
+}
+static void consume_publication(void *context,qa_application *application,const qa_launch_snapshot *candidate,
+    void *publication)
+{
+    frontend_config_store *manager=context;
+    if (owned_publication_ready(manager,application,candidate,publication))
+        frontend_shared_publication_consume(manager->publication);
+}
+static bool finish_publication(void *context,qa_application *application,const qa_launch_snapshot *candidate,
+    void **publication,bool *complete,qa_error *error)
+{
+    frontend_config_store *manager=context;
+    if (complete) *complete=false;
+    if (!manager || !publication || !*publication || *publication!=manager->publication || !complete ||
+        manager->shared_application!=application || manager->shared_candidate!=candidate)
+        return fail(error,QA_ERROR_ARGUMENT,"Resource cleanup lost its actual retained owner slots");
+    bool ok=frontend_shared_publication_finish(&manager->shared,&manager->publication,complete,error);
+    *publication=manager->publication;
+    if (!manager->shared) { manager->shared_application=NULL; manager->shared_candidate=NULL; }
+    return ok;
+}
+static bool abort_publication(void *context,qa_application *application,const qa_launch_snapshot *candidate,
+    void **publication,qa_error *error)
+{
+    frontend_config_store *manager=context;
+    if (!manager || !publication || *publication!=manager->publication ||
+        manager->shared_application!=application || manager->shared_candidate!=candidate)
+        return fail(error,QA_ERROR_ARGUMENT,"Resource abort names another retained publication");
+    bool ok=frontend_shared_publication_abort(&manager->publication,error);
+    *publication=manager->publication; return ok;
+}
+static bool candidate_languages(void *context,qa_application *application,const qa_launch_snapshot *candidate,
+    const qa_application_language_ticket *const **out,size_t *count,qa_error *error)
+{
+    frontend_config_store *manager=context;
+    if (!manager || !out || !count)
+        return fail(error,QA_ERROR_ARGUMENT,"Language readiness requires its actual shared owner");
+    *out=NULL; *count=0;
+    if (!manager->shared) return true;
+    frontend_shared_settings *owner=frontend_config_store_shared(manager,application,candidate);
+    return owner && frontend_shared_publication_languages(owner,out,count) ||
+        fail(error,QA_ERROR_ARGUMENT,"Language readiness names another retained publication");
+}
+static bool candidate_values(void *context,const qa_application *application,const qa_launch_snapshot *candidate,
+    const qa_cvars_edit **out,qa_error *error)
+{
+    frontend_config_store *manager=context;
+    if (!manager || !out || !application)
+        return fail(error,QA_ERROR_ARGUMENT,"Candidate values require their retained actual parent");
+    *out=NULL;
+    if (!manager->shared) return true;
+    frontend_shared_settings *owner=frontend_config_store_shared(manager,application,candidate);
+    if (!owner) return fail(error,QA_ERROR_ARGUMENT,"Candidate values retain another or unavailable shared owner");
+    *out=frontend_shared_values_prepared(frontend_shared_settings_values(owner));
+    return *out || fail(error,QA_ERROR_ARGUMENT,"Candidate values lost their actual canonical edit");
+}
+static bool prepare_root(void *context,qa_application *application,const qa_launch_snapshot *candidate,
+    qa_console *console,qa_cvars *registry,const qa_command_context *command,qa_error *error)
+{
+    frontend_config_store *manager=context;
+    qa_console *actual=NULL; qa_cvars *values=NULL; qa_command_context captured;
+    if (!manager || manager->restoring || !console || !registry || !command || manager->shared ||
+        manager->root_console || manager->images_console || manager->images_program ||
+        manager->frontend->application!=application ||
+        !qa_application_startup_root_phase(application,candidate) ||
+        !qa_application_startup_root_read(application,candidate,&actual,&values,&captured,error) ||
+        actual!=console || values!=registry || command->owner || command->session!=captured.session ||
+        command->client!=captured.client || command->seat!=captured.seat || command->origin!=captured.origin ||
+        command->dialect!=captured.dialect || command->registry!=captured.registry ||
+        command->generation!=captured.generation || command->console_text!=captured.console_text ||
+        command->script!=captured.script || command->direct!=captured.direct ||
+        !qa_actor_id_equal(command->actor,captured.actor))
+        return fail(error,QA_ERROR_ARGUMENT,"Shared root preparation lost its actual retained ENGINE authority");
+    bool ok=frontend_shared_settings_begin_root(manager->frontend,manager,application,candidate,&manager->shared,error);
+    if (manager->shared) {
+        manager->shared_application=application; manager->shared_candidate=candidate;
+        manager->root_console=console; manager->root_cvars=registry; manager->root_command=*command;
+    }
+    return ok && shared_storage_prepare(manager,error);
+}
+static bool advance_settings(frontend_config_store *manager,qa_application *application,
+    const qa_launch_snapshot *candidate,bool validated,bool *complete,qa_error *error)
+{
+    if (!manager || !complete) return fail(error,QA_ERROR_ARGUMENT,"Candidate settings advancement lacks its owner");
+    *complete=false;
+    if (!manager->shared) { *complete=true; return true; }
+    frontend_shared_settings *owner=frontend_config_store_shared(manager,application,candidate);
+    return owner?frontend_shared_settings_advance(owner,validated,complete,error):
+        fail(error,QA_ERROR_ARGUMENT,"Candidate settings advancement names another shared preparation");
+}
+static bool candidate_retirement_ready(void *context,const qa_application *application,
+    const qa_launch_snapshot *candidate,const qa_cvars_edit *edit,qa_error *error)
+{
+    frontend_config_store *manager=context;
+    return manager && manager->shared && manager->shared_application==application &&
+        manager->shared_candidate==candidate &&
+        frontend_shared_settings_retirement_ready(manager->shared,manager->frontend,application,candidate,edit) ||
+        fail(error,QA_ERROR_ARGUMENT,"Candidate retirement lacks its actual failed edit and complete physical history");
+}
+static bool advance_candidate(void *context,qa_application *application,const qa_launch_snapshot *candidate,
+    bool *complete,qa_error *error)
+{ return advance_settings(context,application,candidate,false,complete,error); }
+static bool advance_validated_candidate(void *context,qa_application *application,const qa_launch_snapshot *candidate,
+    bool *complete,qa_error *error)
+{ return advance_settings(context,application,candidate,true,complete,error); }
+static bool refresh_source(void *context,qa_application *application,const qa_launch_snapshot *candidate,
+    const qa_application_startup_source *authority,qa_error *error)
+{
+    frontend_config_store *manager=context;
+    if (!manager || !authority || !authority->declaration_owner)
+        return fail(error,QA_ERROR_ARGUMENT,"Shared refresh lacks its actual physical declaration owner");
+    if (!manager->shared) return true;
+    frontend_shared_settings *owner=frontend_config_store_shared(manager,application,candidate);
+    if (!owner)
+        return fail(error,QA_ERROR_ARGUMENT,"Shared refresh changed its retained candidate physical source");
+    frontend_config_source *source=frontend_config_store_source(manager,authority->console);
+    if (!frontend_config_store_source_pending(manager,application,candidate,authority)) {
+        qa_application_startup_source held;
+        frontend_remote_config *client=frontend_config_store_client(manager,authority->console);
+        frontend_remote_config_view view;
+        bool published=source?source->application==application && source->published && frontend_config_source_tuple(source,&held):
+            frontend_remote_config_read(client,&view) && view.published && frontend_remote_config_tuple(client,&held);
+        return published && authority->descriptor && held.descriptor->storage==authority->descriptor->storage &&
+            held.console==authority->console && held.cvars==authority->cvars && same_scope(held.scope,authority->scope) ||
+            fail(error,QA_ERROR_ARGUMENT,"Shared refresh names neither its pending source nor a genuine retained publication");
+    }
+    if (source) source->declaration_owner=authority->declaration_owner;
+    else if (!frontend_remote_config_refresh(frontend_config_store_client(manager,authority->console),
+        application,candidate,authority,error)) return false;
+    return frontend_shared_settings_refresh(owner,authority,error);
+}
+static bool abort_candidate(void *context,qa_application *application,const qa_launch_snapshot *candidate,qa_error *error)
+{
+    frontend_config_store *manager=context;
+    if (!manager) return fail(error,QA_ERROR_ARGUMENT,"Shared cancellation lacks its actual manager");
+    if (manager->publication)
+        return fail(error,QA_ERROR_ARGUMENT,"Candidate abort still retains actual resource children");
+    if (!manager->shared) return true;
+    if (manager->shared_application!=application || manager->shared_candidate!=candidate)
+        return fail(error,QA_ERROR_ARGUMENT,"Shared cancellation names another actual candidate");
+    if (!shared_program_destroy(manager,error) || !frontend_shared_settings_abort(&manager->shared,error)) return false;
+    manager->shared_application=NULL; manager->shared_candidate=NULL; return true;
+}
 frontend_config_store *frontend_config_store_create(qa_frontend *frontend,qa_error *error)
 {
     if (!frontend) return fail(error,QA_ERROR_ARGUMENT,"Configuration manager needs its actual frontend owner"),NULL;
@@ -1654,22 +2485,30 @@ frontend_config_store *frontend_config_store_create(qa_frontend *frontend,qa_err
         .read_source_script=source_read,.release_source_script=source_release,.begin_retire_source=begin_retire,
         .carry_source_variables=carry_variables,.configuration_store=configuration_store,.program_source=program_source,
         .startup_source=startup_source,.retire_hosted_configuration=retire_hosted,
-        .bind_hosted_configuration=bind_hosted,.publish_hosted_configuration=publish_hosted};
+        .bind_hosted_configuration=bind_hosted,.publish_hosted_configuration=publish_hosted,
+        .candidate_values=candidate_values,.prepare_root=prepare_root,.advance_images=advance_images,.advance_candidate=advance_candidate,
+        .advance_validated_candidate=advance_validated_candidate,.refresh_source=refresh_source,
+        .abort_candidate=abort_candidate,.cvar_edit=cvar_edit,.candidate_retirement_ready=candidate_retirement_ready,
+        .candidate_languages=candidate_languages,.prepare_publication=prepare_publication,
+        .ready_publication=ready_publication,.owned_publication_ready=owned_publication_ready,
+        .consume_publication=consume_publication,.finish_publication=finish_publication,
+        .abort_publication=abort_publication};
     return manager;
 }
 const qa_application_startup_hooks *frontend_config_store_hooks(frontend_config_store *manager)
 { return manager?&manager->hooks:NULL; }
 bool frontend_config_store_retired_ready(const frontend_config_store *manager,qa_error *error)
 {
-    return manager && !manager->running && !manager->prepared && !manager->key_publication.owner &&
+    return manager && !manager->running && !manager->prepared && !manager->shared && !manager->publication && !manager->key_publication.owner &&
         !manager->sources && !manager->variable_carries && frontend_remote_configs_empty(manager->clients) ||
         fail(error,QA_ERROR_ARGUMENT,"Application callback context still retains actual configuration source owners");
 }
 bool frontend_config_store_destroy(frontend_config_store *manager,qa_error *error)
 {
     if (!manager) return true;
-    if (manager->running || manager->prepared || manager->key_publication.owner)
+    if (manager->running || manager->prepared || manager->shared || manager->publication || manager->key_publication.owner)
         return fail(error,QA_ERROR_ARGUMENT,"Configuration manager retains an executing or prepared candidate");
+    if (!shared_program_destroy(manager,error)) return false;
     if (!frontend_remote_configs_destroy(manager->clients,error)) return false;
     manager->clients=NULL;
     while (manager->sources) {
@@ -1678,6 +2517,8 @@ bool frontend_config_store_destroy(frontend_config_store *manager,qa_error *erro
         manager->sources=next;
     }
     variable_carries_discard(manager,NULL,NULL,NULL);
+    frontend_shared_storage_destroy(manager->storage);
+    qa_buffer_free(&manager->restored_storage);
     free(manager); return true;
 }
 bool frontend_config_store_read(frontend_config_store *manager,const qa_console *console,const qa_command_context *command,
@@ -1693,7 +2534,8 @@ void frontend_config_store_release(frontend_config_store *manager,const qa_conso
 }
 bool frontend_config_store_save(frontend_config_store *manager,qa_error *error)
 {
-    if (!manager || manager->running) return fail(error,QA_ERROR_ARGUMENT,"Configuration archive requires its returned source owners");
+    if (!manager || manager->running || manager->shared)
+        return fail(error,QA_ERROR_ARGUMENT,"Configuration archive requires its returned published source owners");
     for (frontend_config_source *source=manager->sources;source;source=source->next) if (source->published && source->primary) {
         qa_command_context command;
         if (!current_command(source,&command,error)) return false;
@@ -1750,7 +2592,38 @@ bool frontend_config_store_save(frontend_config_store *manager,qa_error *error)
             free(lines); free(bindings); if (!ok) return false;
         }
     }
-    return frontend_remote_configs_save(manager->clients,manager->frontend->application,error);
+    if (!frontend_remote_configs_save(manager->clients,manager->frontend->application,error)) return false;
+    if (manager->storage) {
+        qa_cvars *engine=qa_application_cvars(manager->frontend->application);
+        if (!manager->storage_seeded || !shared_storage_current(manager) || !qa_cvars_observer_idle(engine))
+            return fail(error,QA_ERROR_ARGUMENT,"Shared archive lost its published ENGINE and retained store authorities");
+        if ((!manager->frontend->options.dedicated && !frontend_shared_storage_save_images(manager->storage,engine,error)) ||
+            !frontend_shared_storage_save_input(manager->storage,engine,error)) return false;
+        qa_settings_store sticky={0};
+        if (!frontend_shared_storage_input(manager->storage,&sticky))
+            return fail(error,QA_ERROR_ARGUMENT,"Shared save lost its admitted optional sticky preference store");
+        if (!manager->frontend->options.dedicated && sticky.vfs && !manager->sticky_seed_pending) {
+            qa_frontend *f=manager->frontend;
+            float effects=0,music=0;
+            bool shuffle=false; const char *menu=NULL;
+            if (!qa_audio_engine_gains_read(f->audio,&effects,&music) ||
+                !frontend_music_sources_parent_is(f->music_sources,f,f->audio) ||
+                !frontend_music_sources_preferences_read(f->music_sources,&shuffle,&menu))
+                return fail(error,QA_ERROR_ARGUMENT,"Audio save lost its actual published gains and music preferences");
+            qa_audio_device_options output=f->device?qa_audio_device_requested_configuration(f->device):
+                (qa_audio_device_options){.format=f->audio_output_format};
+            frontend_shared_audio_preferences audio={.format=output.format,.device=output.name,
+                .effects=effects,.music=music,.present=true,.has_shuffle=true,.shuffle=shuffle,
+                .has_menu_track=true,.menu_track=menu};
+            if (!frontend_shared_storage_save_audio(manager->storage,&audio,error)) return false;
+            frontend_shared_view_preferences view;
+            if (!frontend_view_settings_parent_is(manager->frontend->view_settings,manager->frontend,engine) ||
+                !frontend_view_settings_preferences(manager->frontend->view_settings,&view))
+                return fail(error,QA_ERROR_ARGUMENT,"View save lost its installed canonical preference owner");
+            if (!frontend_shared_storage_save_view(manager->storage,&view,error)) return false;
+        }
+    }
+    return true;
 }
 bool frontend_config_store_retire(frontend_config_store *manager,const qa_console *console,qa_error *error)
 {
@@ -1759,12 +2632,14 @@ bool frontend_config_store_retire(frontend_config_store *manager,const qa_consol
     while (*at && (*at)->console!=console) at=&(*at)->next;
     if (!*at) { variable_carries_discard(manager,NULL,NULL,console); return true; }
     frontend_config_source *source=*at,*next=source->next;
+    if (manager->shared && source->application==manager->shared_application && source->candidate==manager->shared_candidate)
+        return fail(error,QA_ERROR_ARGUMENT,"Source retirement still retains its candidate shared settings owner");
     if (!source_destroy(source,error)) return false;
     variable_carries_discard(manager,NULL,NULL,console);
     *at=next; return true;
 }
 void frontend_config_store_rebind(frontend_config_store *manager,qa_frontend *frontend)
-{ if (manager && !manager->running) { manager->frontend=frontend; frontend_remote_configs_rebind(manager->clients,frontend,manager); } }
+{ if (manager && !manager->running && !manager->shared) { manager->frontend=frontend; frontend_remote_configs_rebind(manager->clients,frontend,manager); } }
 
 static bool config_blob(qa_source_save_io *io,qa_bytes *bytes)
 {
@@ -1799,7 +2674,7 @@ static bool registry_bytes(frontend_config_source *source,qa_source_save_io *io,
 bool frontend_config_store_visit(const frontend_config_store *manager,
     const qa_application_content_visitor *visitor,qa_error *error)
 {
-    if (!manager || manager->restoring || manager->running || manager->prepared || manager->variable_carries || !visitor ||
+    if (!manager || manager->restoring || manager->running || manager->prepared || manager->shared || manager->variable_carries || !visitor ||
         !visitor->pool || !visitor->catalog || !visitor->view)
         return fail(error,QA_ERROR_ARGUMENT,"Configuration inventory requires returned published owners");
     for (const frontend_config_source *source=manager->sources;source;source=source->next) {
@@ -1813,13 +2688,15 @@ bool frontend_config_store_visit(const frontend_config_store *manager,
             !selected->content || !visitor->pool(visitor->context,qa_vfs_resources(selected->content),error) ||
             !visitor->view(visitor->context,selected->content,error)) return false;
     }
-    return frontend_remote_configs_visit(manager->clients,visitor,error);
+    return frontend_remote_configs_visit(manager->clients,visitor,error) &&
+        (!manager->storage || (manager->storage_seeded && shared_storage_current(manager) &&
+            frontend_shared_storage_visit(manager->storage,visitor,error)));
 }
 static bool config_header(qa_source_save_io *io,size_t *count)
 {
-    uint8_t magic[4]={'Q','F','C','S'}; uint32_t version=8;
+    uint8_t magic[4]={'Q','F','C','S'}; uint32_t version=10;
     return qa_source_save_bytes(io,magic,4) && !memcmp(magic,"QFCS",4) &&
-        qa_source_save_u32(io,&version) && version==8 && qa_source_save_count(io,count,
+        qa_source_save_u32(io,&version) && version==10 && qa_source_save_count(io,count,
             io->direction==QA_SOURCE_SAVE_READ?io->input.size-io->offset:SIZE_MAX);
 }
 static bool config_row(frontend_config_source *source,qa_source_save_io *io,
@@ -1914,7 +2791,8 @@ static bool config_row(frontend_config_source *source,qa_source_save_io *io,
 bool frontend_config_store_checkpoint(const frontend_config_store *manager,
     const qa_application_content_graph *graph,const frontend_keys_cvar_refs *refs,qa_buffer *out,qa_error *error)
 {
-    if (!manager || manager->restoring || manager->running || manager->prepared || manager->variable_carries || !graph ||
+    if (!manager || manager->restoring || manager->running || manager->prepared || manager->shared || manager->variable_carries ||
+        manager->images_console || manager->images_program || manager->restored_storage.data || !graph ||
         !out || out->data || out->size) return fail(error,QA_ERROR_ARGUMENT,"Configuration capture requires returned actual owners");
     size_t count=0;
     for (const frontend_config_source *source=manager->sources;source;source=source->next) {
@@ -1932,6 +2810,20 @@ bool frontend_config_store_checkpoint(const frontend_config_store *manager,
         bytes=(qa_bytes){clients.data,clients.size}; }
     if (ok) ok=config_blob(&io,&bytes);
     qa_buffer_free(&clients);
+    bool shared=manager->storage!=NULL;
+    if (ok) ok=(shared || (!count && frontend_remote_configs_empty(manager->clients))) &&
+        (!shared || (manager->storage_seeded && shared_storage_current(manager))) && qa_source_save_bool(&io,&shared);
+    qa_buffer storage={0};
+    if (ok && shared) {
+        ok=frontend_shared_storage_checkpoint(manager->storage,graph,&storage,error);
+        bytes=(qa_bytes){storage.data,storage.size};
+        if (ok) ok=config_blob(&io,&bytes);
+    }
+    qa_buffer_free(&storage);
+    bool touched=manager->image_fov_touched,sticky=manager->sticky_seed_pending;
+    if (ok) ok=(!touched || shared) && (!sticky || (shared && !count &&
+        frontend_remote_configs_empty(manager->clients))) && qa_source_save_bool(&io,&touched) &&
+        qa_source_save_bool(&io,&sticky);
     if (ok) ok=qa_source_save_finish(&io,out);
     qa_source_save_dispose(&io); return ok;
 }
@@ -1962,6 +2854,24 @@ bool frontend_config_store_restore(qa_frontend *frontend,qa_application *applica
     qa_bytes clients={0};
     if (ok) ok=config_blob(&io,&clients) && clients.size &&
         frontend_remote_configs_restore(manager->clients,application,graph,keys,clients,error);
+    bool shared=false;
+    if (ok) ok=qa_source_save_bool(&io,&shared) &&
+        (shared || (!count && frontend_remote_configs_empty(manager->clients)));
+    qa_bytes storage={0};
+    if (ok && shared) {
+        ok=config_blob(&io,&storage) && storage.size;
+        if (ok) {
+            manager->restored_storage.data=malloc(storage.size);
+            ok=manager->restored_storage.data!=NULL;
+            if (ok) { memcpy(manager->restored_storage.data,storage.data,storage.size);
+                manager->restored_storage.size=storage.size; manager->storage_graph=graph; }
+            else fail(error,QA_ERROR_MEMORY,"Retaining pure shared storage prefix before input-store binding");
+        }
+    }
+    if (ok) ok=qa_source_save_bool(&io,&manager->image_fov_touched) &&
+        qa_source_save_bool(&io,&manager->sticky_seed_pending) &&
+        (!manager->image_fov_touched || shared) &&
+        (!manager->sticky_seed_pending || (shared && !count && frontend_remote_configs_empty(manager->clients)));
     if (ok) ok=qa_source_save_finish(&io,NULL);
     qa_source_save_dispose(&io);
     if (!ok) { frontend_config_store_destroy(manager,NULL); return false; }
@@ -1972,11 +2882,16 @@ bool frontend_config_store_restore_into(frontend_config_store *manager,qa_applic
     qa_bytes bytes,qa_error *error)
 {
     if (!manager || manager->sources || !frontend_remote_configs_empty(manager->clients) ||
-        manager->variable_carries || manager->restoring || manager->running || manager->prepared)
+        manager->variable_carries || manager->restoring || manager->running || manager->prepared || manager->shared ||
+        manager->storage || manager->restored_storage.data || manager->storage_graph)
         return fail(error,QA_ERROR_ARGUMENT,"Pure import needs the constructor's empty stable configuration manager");
     frontend_config_store *decoded=NULL;
     if (!frontend_config_store_restore(manager->frontend,application,graph,keys,refs,bytes,&decoded,error)) return false;
     manager->sources=decoded->sources; manager->restoring=true; manager->restore_refs=*refs;
+    manager->restored_storage=decoded->restored_storage; decoded->restored_storage=(qa_buffer){0};
+    manager->storage_graph=decoded->storage_graph;
+    manager->image_fov_touched=decoded->image_fov_touched;
+    manager->sticky_seed_pending=decoded->sticky_seed_pending;
     frontend_remote_configs_destroy(manager->clients,NULL);
     manager->clients=decoded->clients; decoded->clients=NULL;
     frontend_remote_configs_rebind(manager->clients,manager->frontend,manager);
@@ -2106,14 +3021,33 @@ bool frontend_config_source_restore_seat_registry(frontend_config_source *source
 bool frontend_config_store_finish_restore(frontend_config_store *manager,qa_error *error)
 {
     if (!manager || !manager->restoring) return fail(error,QA_ERROR_ARGUMENT,"Configuration roster has no pending pure admission");
+    qa_frontend *frontend=manager->frontend;
+    if (!frontend_global_settings_storage_idle(frontend->global_settings_storage))
+        return fail(error,QA_ERROR_FORMAT,"Restored configuration lacks its actual global directory owner");
+    qa_settings_store global_user=frontend_global_settings_storage_user_store(frontend->global_settings_storage);
+    qa_settings_store global_devices=frontend_global_settings_storage_device_store(frontend->global_settings_storage);
     for (frontend_config_source *source=manager->sources;source;source=source->next) {
         if (source->imported || !source->metadata || !source->console || !source->cvars)
             return fail(error,QA_ERROR_FORMAT,"Decoded configuration source lacks its physical registry binding");
+        if (!frontend_config_files_global_current(source->files,global_user,global_devices))
+            return fail(error,QA_ERROR_FORMAT,"Decoded source configuration differs from its retained global directories");
         for (size_t i=0;i<source->seat_count;++i) if (!source->seats[i].cvars ||
             (source->seats[i].cvars_transferred && !source->seats[i].registry_bound))
             return fail(error,QA_ERROR_FORMAT,"Decoded configuration client lacks its canonical registry binding");
     }
+    if (manager->restored_storage.data && !manager->storage) {
+        if (!frontend_shared_storage_restore(manager->storage_graph,
+            (qa_bytes){manager->restored_storage.data,manager->restored_storage.size},global_user,global_devices,
+            frontend_config_store_input_store(manager),!manager->frontend->options.dedicated,&manager->storage,error)) return false;
+    }
+    if (manager->storage && !shared_storage_current(manager))
+        return fail(error,QA_ERROR_FORMAT,"Restored shared storage differs from its actual source and sticky input authorities");
+    qa_settings_store sticky={0};
+    if (manager->sticky_seed_pending && (!frontend_shared_storage_input(manager->storage,&sticky) || !sticky.vfs))
+        return fail(error,QA_ERROR_FORMAT,"Saved sticky preference seed lacks its genuine admitted product store");
     if (!frontend_remote_configs_finish_restore(manager->clients,error)) return false;
+    qa_buffer_free(&manager->restored_storage); manager->storage_graph=NULL;
+    manager->storage_seeded=manager->storage!=NULL;
     manager->restoring=false; return true;
 }
 bool frontend_config_store_restore_client(frontend_config_store *manager,qa_application *application,

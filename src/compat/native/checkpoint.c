@@ -1,12 +1,15 @@
 #include "internal.h"
 
-#define CHECKPOINT_HEADER_BYTES 152u
+#define CHECKPOINT_HEADER_BYTES 160u
+#define CHECKPOINT_LEGACY_HEADER_BYTES 152u
 
 static bool checkpoint_kind_matches_profile(const qa_native_checkpoint *checkpoint) {
     if ((unsigned)checkpoint->q3_role > QA_QVM_UI ||
         (checkpoint->profile != QA_NATIVE_Q3_VMMAIN && checkpoint->q3_role != QA_QVM_GAME))
         return false;
-    return (checkpoint->kind == QA_NATIVE_CHECKPOINT_Q2_CLASSIC &&
+    return (checkpoint->kind == QA_NATIVE_CHECKPOINT_OWNED_PROCESS &&
+            checkpoint->profile == QA_NATIVE_Q2_CGAME_API2023) ||
+           (checkpoint->kind == QA_NATIVE_CHECKPOINT_Q2_CLASSIC &&
             checkpoint->profile == QA_NATIVE_Q2_GAME_API3) ||
            (checkpoint->kind == QA_NATIVE_CHECKPOINT_Q2_RERELEASE &&
             checkpoint->profile == QA_NATIVE_Q2_GAME_API2023) ||
@@ -42,6 +45,88 @@ static bool empty_file(const char *directory, const char *name, char **out, qa_e
     return native_temp_file(directory, name, (qa_bytes){0}, out, error);
 }
 
+static bool source_string(qa_native_instance *instance, const char *text,
+    qa_native_address *out, qa_error *error)
+{
+    if (instance->backend != QA_NATIVE_BACKEND_OWNED_PROCESS) {
+        *out = (qa_native_address)(uintptr_t)text; return true;
+    }
+    size_t bytes = strlen(text) + 1;
+    return qa_native_allocate(instance, bytes, INT32_C(0x4e534156), out, error) &&
+        qa_native_write(instance, *out, (qa_bytes){(const uint8_t *)text, bytes}, error);
+}
+
+static bool release_source_string(qa_native_instance *instance, qa_native_address address,
+    bool okay, qa_error *error)
+{
+    if (instance->backend != QA_NATIVE_BACKEND_OWNED_PROCESS || !address) return okay;
+    qa_error cleanup = {0};
+    bool released = qa_native_free(instance, address, &cleanup);
+    if (okay && !released && error) *error = cleanup;
+    return okay && released;
+}
+
+typedef struct source_file {
+    uint64_t root, handle;
+    qa_native_sysv_file capability;
+    bool opened, registered;
+} source_file;
+
+static bool source_file_admit(qa_native_instance *instance, const char *directory,
+    const char *path, bool write, source_file *file, qa_error *error)
+{
+    if (instance->backend != QA_NATIVE_BACKEND_OWNED_PROCESS) return true;
+    if (!instance->process_resources)
+        return native_fail(error, QA_ERROR_ARGUMENT, 0, "native save file requires its retained resource graph");
+    native_process_temporary *retained = calloc(1, sizeof(*retained));
+    if (retained) retained->directory = native_strdup(directory, error);
+    if (!retained || !retained->directory) {
+        free(retained);
+        return native_fail(error, QA_ERROR_MEMORY, 0, "holding actual native save directory lifetime");
+    }
+    retained->next = instance->process_temporaries; instance->process_temporaries = retained;
+    size_t length = strlen(directory);
+    if (length > SIZE_MAX - 2) return native_fail(error, QA_ERROR_MEMORY, 0, "native save directory prefix overflows");
+    char *prefix = malloc(length + 2);
+    if (!prefix) return native_fail(error, QA_ERROR_MEMORY, 0, "holding native save directory prefix");
+    memcpy(prefix, directory, length); prefix[length] = '/'; prefix[length + 1] = 0;
+    qa_fs_root *root = NULL;
+    bool okay = qa_fs_root_open(directory, &root, error);
+    uint32_t mode = QA_FS_OPENED_READ | (write ? QA_FS_OPENED_WRITE : 0u);
+    qa_native_process_resource_root authority = {prefix, root, mode};
+    if (okay) okay = qa_native_process_resources_root_add(instance->process_resources, &authority, &file->root, error);
+    qa_fs_root_close(root); free(prefix);
+    if (!okay) return false;
+    if (instance->process_kind != QA_NATIVE_PROCESS_SYSV)
+        return native_fail(error, QA_ERROR_UNSUPPORTED, 0, "Windows source FILE adapter is unavailable");
+    okay = qa_native_process_resources_open_sysv_file(instance->process_resources, path, mode,
+        QA_FS_OPEN_EXISTING, &file->capability, &file->opened, error);
+    if (file->opened) file->handle = file->capability.handle;
+    if (okay && !file->opened)
+        okay = native_fail(error, QA_ERROR_NOT_FOUND, 0,
+            "actual native save file is absent from its temporary directory");
+    if (okay) {
+        okay = qa_native_sysv_process_file_add(instance->sysv_process, &file->capability, error);
+        file->registered = okay;
+    }
+    return okay;
+}
+
+static bool source_file_release(qa_native_instance *instance, source_file *file,
+    bool okay, qa_error *error)
+{
+    if (instance->backend != QA_NATIVE_BACKEND_OWNED_PROCESS) return okay;
+    qa_error cleanup = {0}; bool closed = true;
+    if (file->registered) {
+        closed = qa_native_sysv_process_file_close(instance->sysv_process, file->handle, &cleanup);
+        if (closed) closed = qa_native_sysv_process_file_remove(instance->sysv_process, file->handle, &cleanup);
+    } else if (file->opened) closed = file->capability.close(file->capability.context, &cleanup);
+    if (closed && file->root)
+        closed = qa_native_process_resources_root_remove(instance->process_resources, file->root, &cleanup);
+    if (okay && !closed && error) *error = cleanup;
+    return okay && closed;
+}
+
 static bool capture_classic(qa_native_instance *instance, qa_native_checkpoint_request request,
                             qa_native_checkpoint *checkpoint, qa_error *error) {
     char *directory = NULL, *game_path = NULL, *level_path = NULL;
@@ -51,27 +136,39 @@ static bool capture_classic(qa_native_instance *instance, qa_native_checkpoint_r
     if (request.game) {
         ok = empty_file(directory, "game.ssv", &game_path, error);
         if (ok) {
+            source_file file = {0};
+            qa_native_address source = 0;
+            ok = source_file_admit(instance, directory, game_path, true, &file, error) &&
+                source_string(instance, game_path, &source, error);
             qa_native_value arguments[] = {
-                {.type = QA_NATIVE_ADDRESS, .as.address = (qa_native_address)(uintptr_t)game_path},
+                {.type = QA_NATIVE_ADDRESS, .as.address = source},
                 {.type = QA_NATIVE_I32, .as.i32 = request.autosave ? 1 : 0}};
-            ok = call_entry(instance, "WriteGame", arguments, 2, NULL, error) &&
+            ok = ok && call_entry(instance, "WriteGame", arguments, 2, NULL, error) &&
                  native_read_file(game_path, &checkpoint->game, error);
+            ok = release_source_string(instance, source, ok, error);
+            ok = source_file_release(instance, &file, ok, error);
         }
         checkpoint->has_game = ok;
     }
     if (ok && request.level) {
         ok = empty_file(directory, "level.sav", &level_path, error);
         if (ok) {
+            source_file file = {0};
+            qa_native_address source = 0;
+            ok = source_file_admit(instance, directory, level_path, true, &file, error) &&
+                source_string(instance, level_path, &source, error);
             qa_native_value argument = {.type = QA_NATIVE_ADDRESS,
-                                        .as.address = (qa_native_address)(uintptr_t)level_path};
-            ok = call_entry(instance, "WriteLevel", &argument, 1, NULL, error) &&
+                                        .as.address = source};
+            ok = ok && call_entry(instance, "WriteLevel", &argument, 1, NULL, error) &&
                  native_read_file(level_path, &checkpoint->level, error);
+            ok = release_source_string(instance, source, ok, error);
+            ok = source_file_release(instance, &file, ok, error);
         }
         checkpoint->has_level = ok;
     }
     free(game_path);
     free(level_path);
-    native_remove_tree(directory);
+    if (ok || instance->backend != QA_NATIVE_BACKEND_OWNED_PROCESS) native_remove_tree(directory);
     free(directory);
     return ok;
 }
@@ -79,11 +176,17 @@ static bool capture_classic(qa_native_instance *instance, qa_native_checkpoint_r
 static bool capture_json_entry(qa_native_instance *instance, const char *entry_name, bool flag,
                                qa_buffer *out, qa_error *error) {
     uint64_t length = 0;
+    qa_native_address source_length = (qa_native_address)(uintptr_t)&length;
+    bool owned = instance->backend == QA_NATIVE_BACKEND_OWNED_PROCESS;
+    if (owned && !qa_native_allocate(instance, sizeof(length), INT32_C(0x4e534156), &source_length, error)) return false;
     qa_native_value arguments[] = {
         {.type = QA_NATIVE_U8, .as.u8 = flag ? 1u : 0u},
-        {.type = QA_NATIVE_ADDRESS, .as.address = (qa_native_address)(uintptr_t)&length}};
+        {.type = QA_NATIVE_ADDRESS, .as.address = source_length}};
     qa_native_value result = {0};
-    if (!call_entry(instance, entry_name, arguments, 2, &result, error))
+    bool called = call_entry(instance, entry_name, arguments, 2, &result, error);
+    if (called && owned) called = qa_native_read(instance, source_length, &length, sizeof(length), error);
+    called = release_source_string(instance, source_length, called, error);
+    if (!called)
         return false;
 #if SIZE_MAX < UINT64_MAX
     if (length > (uint64_t)SIZE_MAX)
@@ -150,7 +253,7 @@ bool qa_native_checkpoint_capture(qa_native_instance *instance,
         return ok;
     }
     qa_native_profile profile = instance->module->info.profile;
-    if (profile == QA_NATIVE_Q2_CGAME_API2023)
+    if (profile == QA_NATIVE_Q2_CGAME_API2023 && instance->backend != QA_NATIVE_BACKEND_OWNED_PROCESS)
         return native_fail(error, QA_ERROR_UNSUPPORTED, 0,
                            "Q2 rerelease cgame has no source save API");
     if ((profile == QA_NATIVE_Q3_VMMAIN || profile == QA_NATIVE_QUAKE_LIVE_GAME_API10) &&
@@ -161,6 +264,7 @@ bool qa_native_checkpoint_capture(qa_native_instance *instance,
     qa_native_checkpoint checkpoint = {
         .kind = profile == QA_NATIVE_Q2_GAME_API3      ? QA_NATIVE_CHECKPOINT_Q2_CLASSIC
                 : profile == QA_NATIVE_Q2_GAME_API2023 ? QA_NATIVE_CHECKPOINT_Q2_RERELEASE
+                : profile == QA_NATIVE_Q2_CGAME_API2023 ? QA_NATIVE_CHECKPOINT_OWNED_PROCESS
                                                        : QA_NATIVE_CHECKPOINT_HOST_ONLY,
         .profile = profile,
         .q3_role = instance->options.q3_role,
@@ -180,6 +284,12 @@ bool qa_native_checkpoint_capture(qa_native_instance *instance,
     if (ok && instance->options.checkpoint) {
         ok = instance->options.checkpoint(instance->options.context, &checkpoint.host, error);
         checkpoint.has_host = ok;
+    }
+    if (ok && instance->backend == QA_NATIVE_BACKEND_OWNED_PROCESS) {
+        ok = checkpoint.has_host && instance->options.restore &&
+            native_process_checkpoint_host(instance, (qa_bytes){checkpoint.host.data, checkpoint.host.size},
+                &checkpoint.process, error);
+        checkpoint.has_process = ok;
     }
     instance->checkpointing = false;
     if (!ok) {
@@ -217,12 +327,18 @@ static bool restore_classic(qa_native_instance *instance, qa_bytes bytes, const 
         return false;
     bool ok = native_temp_file(directory, file_name, bytes, &path, error);
     if (ok) {
+        source_file file = {0};
+        qa_native_address source = 0;
+        ok = source_file_admit(instance, directory, path, false, &file, error) &&
+            source_string(instance, path, &source, error);
         qa_native_value argument = {.type = QA_NATIVE_ADDRESS,
-                                    .as.address = (qa_native_address)(uintptr_t)path};
-        ok = call_entry(instance, entry_name, &argument, 1, NULL, error);
+                                    .as.address = source};
+        ok = ok && call_entry(instance, entry_name, &argument, 1, NULL, error);
+        ok = release_source_string(instance, source, ok, error);
+        ok = source_file_release(instance, &file, ok, error);
     }
     free(path);
-    native_remove_tree(directory);
+    if (ok || instance->backend != QA_NATIVE_BACKEND_OWNED_PROCESS) native_remove_tree(directory);
     free(directory);
     return ok;
 }
@@ -237,7 +353,7 @@ static bool restore_json(qa_native_instance *instance, qa_bytes bytes, const cha
     bool ok = qa_native_write(instance, address, bytes, error);
     uint8_t terminator = 0;
     if (ok)
-        ok = native_direct_write(address + bytes.size, &terminator, 1, error);
+        ok = qa_native_write(instance, address + bytes.size, (qa_bytes){&terminator, 1}, error);
     if (ok) {
         qa_native_value argument = {.type = QA_NATIVE_ADDRESS, .as.address = address};
         ok = call_entry(instance, entry_name, &argument, 1, NULL, error);
@@ -313,6 +429,7 @@ void qa_native_checkpoint_free(qa_native_checkpoint *checkpoint) {
     qa_buffer_free(&checkpoint->game);
     qa_buffer_free(&checkpoint->level);
     qa_buffer_free(&checkpoint->host);
+    qa_buffer_free(&checkpoint->process);
     memset(checkpoint, 0, sizeof(*checkpoint));
 }
 
@@ -333,12 +450,16 @@ bool qa_native_checkpoint_encode(const qa_native_checkpoint *checkpoint, qa_buff
                            "native checkpoint and encoded output are required");
     if ((checkpoint->game.size && !checkpoint->game.data) ||
         (checkpoint->level.size && !checkpoint->level.data) ||
-        (checkpoint->host.size && !checkpoint->host.data))
+        (checkpoint->host.size && !checkpoint->host.data) ||
+        (checkpoint->process.size && !checkpoint->process.data))
         return native_fail(error, QA_ERROR_ARGUMENT, 0,
                            "native checkpoint part has no owned bytes");
     if ((!checkpoint->has_game && checkpoint->game.size) ||
         (!checkpoint->has_level && checkpoint->level.size) ||
-        (!checkpoint->has_host && checkpoint->host.size))
+        (!checkpoint->has_host && checkpoint->host.size) ||
+        (!checkpoint->has_process && checkpoint->process.size) ||
+        (checkpoint->has_process && (!checkpoint->process.size || !checkpoint->has_host)) ||
+        (checkpoint->kind == QA_NATIVE_CHECKPOINT_OWNED_PROCESS && !checkpoint->has_process))
         return native_fail(error, QA_ERROR_ARGUMENT, 0,
                            "native checkpoint has bytes for an absent part");
     if (!checkpoint_kind_matches_profile(checkpoint) ||
@@ -352,7 +473,8 @@ bool qa_native_checkpoint_encode(const qa_native_checkpoint *checkpoint, qa_buff
     size_t size = CHECKPOINT_HEADER_BYTES;
     if (!native_size_add(size, checkpoint->game.size, &size) ||
         !native_size_add(size, checkpoint->level.size, &size) ||
-        !native_size_add(size, checkpoint->host.size, &size))
+        !native_size_add(size, checkpoint->host.size, &size) ||
+        !native_size_add(size, checkpoint->process.size, &size))
         return native_fail(error, QA_ERROR_MEMORY, 0, "native checkpoint encoding size overflow");
     uint8_t *data = malloc(size);
     if (!data)
@@ -377,11 +499,13 @@ bool qa_native_checkpoint_encode(const qa_native_checkpoint *checkpoint, qa_buff
     cursor += 32;
     uint32_t flags = (checkpoint->has_declaration ? 1u : 0u) | (checkpoint->autosave ? 2u : 0u) |
                      (checkpoint->transition ? 4u : 0u) | (checkpoint->has_game ? 8u : 0u) |
-                     (checkpoint->has_level ? 16u : 0u) | (checkpoint->has_host ? 32u : 0u);
+                     (checkpoint->has_level ? 16u : 0u) | (checkpoint->has_host ? 32u : 0u) |
+                     (checkpoint->has_process ? 64u : 0u);
     store_u32(&cursor, flags);
     store_u64(&cursor, checkpoint->game.size);
     store_u64(&cursor, checkpoint->level.size);
     store_u64(&cursor, checkpoint->host.size);
+    store_u64(&cursor, checkpoint->process.size);
     if (checkpoint->game.size) {
         memcpy(cursor, checkpoint->game.data, checkpoint->game.size);
         cursor += checkpoint->game.size;
@@ -390,8 +514,11 @@ bool qa_native_checkpoint_encode(const qa_native_checkpoint *checkpoint, qa_buff
         memcpy(cursor, checkpoint->level.data, checkpoint->level.size);
         cursor += checkpoint->level.size;
     }
-    if (checkpoint->host.size)
+    if (checkpoint->host.size) {
         memcpy(cursor, checkpoint->host.data, checkpoint->host.size);
+        cursor += checkpoint->host.size;
+    }
+    if (checkpoint->process.size) memcpy(cursor, checkpoint->process.data, checkpoint->process.size);
     *out = (qa_buffer){data, size};
     return true;
 }
@@ -421,16 +548,18 @@ static bool decode_buffer(const uint8_t **cursor, size_t size, qa_buffer *out, q
 }
 
 bool qa_native_checkpoint_decode(qa_bytes encoded, qa_native_checkpoint *out, qa_error *error) {
-    if (!out || (!encoded.data && encoded.size) || encoded.size < CHECKPOINT_HEADER_BYTES)
+    if (!out || (!encoded.data && encoded.size) || encoded.size < CHECKPOINT_LEGACY_HEADER_BYTES)
         return native_fail(error, QA_ERROR_FORMAT, encoded.size,
                            "native checkpoint header is truncated");
     if (memcmp(encoded.data, "QANCP\0\0\0", 8))
         return native_fail(error, QA_ERROR_FORMAT, 0, "native checkpoint magic is invalid");
     const uint8_t *cursor = encoded.data + 8;
     uint32_t version = load_u32(&cursor);
-    if (version != NATIVE_CHECKPOINT_VERSION)
+    if (version != 2 && version != NATIVE_CHECKPOINT_VERSION)
         return native_fail(error, QA_ERROR_UNSUPPORTED, 8,
                            "native checkpoint version is unsupported");
+    size_t header = version == 2 ? CHECKPOINT_LEGACY_HEADER_BYTES : CHECKPOINT_HEADER_BYTES;
+    if (encoded.size < header) return native_fail(error, QA_ERROR_FORMAT, encoded.size, "native checkpoint header is truncated");
     qa_native_checkpoint checkpoint = {0};
     checkpoint.kind = (qa_native_checkpoint_kind)load_u32(&cursor);
     checkpoint.profile = (qa_native_profile)load_u32(&cursor);
@@ -454,6 +583,7 @@ bool qa_native_checkpoint_decode(qa_bytes encoded, qa_native_checkpoint *out, qa
     uint64_t game_size = load_u64(&cursor);
     uint64_t level_size = load_u64(&cursor);
     uint64_t host_size = load_u64(&cursor);
+    uint64_t process_size = version == 2 ? 0 : load_u64(&cursor);
     uint64_t payload = game_size;
     if (UINT64_MAX - payload < level_size) {
         return native_fail(error, QA_ERROR_FORMAT, CHECKPOINT_HEADER_BYTES,
@@ -464,20 +594,23 @@ bool qa_native_checkpoint_decode(qa_bytes encoded, qa_native_checkpoint *out, qa
         return native_fail(error, QA_ERROR_FORMAT, CHECKPOINT_HEADER_BYTES,
                            "native checkpoint payload length overflows");
     payload += host_size;
+    if (UINT64_MAX - payload < process_size)
+        return native_fail(error, QA_ERROR_FORMAT, header, "native process continuation length overflows");
+    payload += process_size;
 #if SIZE_MAX < UINT64_MAX
     if (payload > (uint64_t)SIZE_MAX)
         return native_fail(error, QA_ERROR_FORMAT, CHECKPOINT_HEADER_BYTES,
                            "native checkpoint payload exceeds the host");
 #endif
-    if ((size_t)payload != encoded.size - CHECKPOINT_HEADER_BYTES)
+    if ((size_t)payload != encoded.size - header)
         return native_fail(error, QA_ERROR_FORMAT, CHECKPOINT_HEADER_BYTES,
                            "native checkpoint payload length is invalid");
-    if (checkpoint.kind > QA_NATIVE_CHECKPOINT_HOST_ONLY ||
+    if (checkpoint.kind > QA_NATIVE_CHECKPOINT_OWNED_PROCESS ||
         checkpoint.profile > QA_NATIVE_QUAKE_LIVE_GAME_API10 ||
         checkpoint.image.format > QA_NATIVE_IMAGE_ELF64 ||
         checkpoint.image.target.os > QA_NATIVE_OS_MACOS ||
         checkpoint.image.target.arch > QA_NATIVE_ARCH_AARCH64 ||
-        checkpoint.image.target.abi > QA_NATIVE_ABI_AAPCS64 || (flags & ~63u))
+        checkpoint.image.target.abi > QA_NATIVE_ABI_AAPCS64 || (flags & ~(version == 2 ? 63u : 127u)))
         return native_fail(error, QA_ERROR_FORMAT, 12, "native checkpoint metadata is invalid");
     if (!checkpoint_kind_matches_profile(&checkpoint))
         return native_fail(error, QA_ERROR_FORMAT, 12,
@@ -488,13 +621,17 @@ bool qa_native_checkpoint_decode(qa_bytes encoded, qa_native_checkpoint *out, qa
     checkpoint.has_game = (flags & 8u) != 0;
     checkpoint.has_level = (flags & 16u) != 0;
     checkpoint.has_host = (flags & 32u) != 0;
+    checkpoint.has_process = (flags & 64u) != 0;
     if ((!checkpoint.has_game && game_size) || (!checkpoint.has_level && level_size) ||
-        (!checkpoint.has_host && host_size))
+        (!checkpoint.has_host && host_size) || (!checkpoint.has_process && process_size) ||
+        (checkpoint.has_process && (!process_size || !checkpoint.has_host)) ||
+        (checkpoint.kind == QA_NATIVE_CHECKPOINT_OWNED_PROCESS && !checkpoint.has_process))
         return native_fail(error, QA_ERROR_FORMAT, 124,
                            "native checkpoint contains an undeclared part");
     if (!decode_buffer(&cursor, (size_t)game_size, &checkpoint.game, error) ||
         !decode_buffer(&cursor, (size_t)level_size, &checkpoint.level, error) ||
-        !decode_buffer(&cursor, (size_t)host_size, &checkpoint.host, error)) {
+        !decode_buffer(&cursor, (size_t)host_size, &checkpoint.host, error) ||
+        !decode_buffer(&cursor, (size_t)process_size, &checkpoint.process, error)) {
         qa_native_checkpoint_free(&checkpoint);
         return false;
     }

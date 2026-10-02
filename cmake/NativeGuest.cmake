@@ -132,11 +132,55 @@ function(qa_native_guest_dependency)
         "${qa_unicorn_SOURCE_DIR}/qemu/accel/tcg")
     target_sources(qa_native PRIVATE
         "${guest_root}/memory.c"
+        "${guest_root}/file_memory.c"
+        "${guest_root}/vm.c"
         "${guest_root}/cpu.c"
         "${guest_root}/abi.c"
+        "${guest_root}/host_memory.c"
+        "${guest_root}/host_x86_64.c"
+        "${guest_root}/host_child.c"
+        "${guest_root}/native_cpu_codec.c"
+        "${guest_root}/native_backend.c"
+        "${guest_root}/runtime_import.c"
+        "${guest_root}/runtime_resource.c"
         "${guest_root}/checkpoint.c"
         "${guest_root}/pe.c"
+        "${guest_root}/pe_bind.c"
+        "${guest_root}/elf.c"
+        "${guest_root}/elf_memory.c"
+        "${guest_root}/elf_program.c"
+        "${guest_root}/elf_loader.c"
+        "${guest_root}/elf_unwind.c"
+        "${guest_root}/elf_unwind_save.c"
+        "${guest_root}/elf_bind.c"
+        "${guest_root}/elf_publish.c"
+        "${guest_root}/sysv_runtime.c"
+        "${guest_root}/sysv_libc.c"
+        "${guest_root}/sysv_libc_descriptors.c"
+        "${guest_root}/sysv_libc_format.c"
+        "${guest_root}/sysv_libc_format_float.c"
+        "${guest_root}/sysv_stdio.c"
+        "${guest_root}/sysv_cxx.c"
+        "${guest_root}/sysv_cxx_data.c"
+        "${guest_root}/sysv_cxx_locale.c"
+        "${guest_root}/sysv_iostream.c"
+        "${guest_root}/sysv_process.c"
+        "${guest_root}/sysv_process_save.c"
+        "${guest_root}/windows_runtime.c"
+        "${guest_root}/windows_process.c"
+        "${guest_root}/windows_process_save.c"
+        "${guest_root}/windows_kernel.c"
+        "${guest_root}/windows_crt.c"
+        "${guest_root}/windows_msvc.c"
         "${guest_root}/pe_memory.c")
+    target_sources(qa_native PRIVATE
+        "${guest_root}/profile/artifact.c"
+        "${guest_root}/profile/instruction.c"
+        "${guest_root}/profile/guard.c"
+        "${guest_root}/profile/cpu.c")
+    if(QA_NATIVE_PLATFORM STREQUAL "linux" AND QA_NATIVE_ARCH STREQUAL "x86_64")
+        target_sources(qa_native PRIVATE "${guest_root}/host_x86_64.S")
+    endif()
     target_link_libraries(qa_native PRIVATE unicorn)
     install(FILES
         "${qa_unicorn_SOURCE_DIR}/COPYING"

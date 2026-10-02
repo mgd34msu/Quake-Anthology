@@ -1,3 +1,4 @@
+#include "qc_messages.h"
 #include "original_frontend.h"
 #include "internal.h"
 #include "persistence.h"
@@ -9,6 +10,11 @@
 #include "config_store.h"
 #include "keys.h"
 #include "equipment_events.h"
+#include "shared_register.h"
+#include "view_bindings.h"
+#include "q1_sky.h"
+#include "music_sources.h"
+#include "global_settings_storage.h"
 #include "qa/application_q1_save.h"
 #include <SDL.h>
 
@@ -85,11 +91,25 @@ static bool original_create(qa_frontend *active,const qa_q1_save_data *save,cons
     qa_scene_frame_init(&f->frame,QA_FRONTEND_COMMAND_OWNER);
     f->keys=frontend_keys_create(error);
     if (!f->keys) return false;
+    if (!frontend_global_settings_storage_create(f->options.application.user_root,&f->global_settings_storage,error)) return false;
     f->config_store=frontend_config_store_create(f,error);
     if (!f->config_store) return false;
     qa_application_options options=f->options.application;
     frontend_application_options(f,&options);
-    if (!qa_application_create(&options,&f->application,error) ||
+    if (!qa_application_create(&options,&f->application,error)) return false;
+    const qa_product *selected=frontend_product_selection(qa_application_catalog(f->application),product);
+    if (!selected || selected->availability!=QA_CONTENT_INSTALLED || selected->family!=QA_GAME_Q1)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Original ENGINE settings lack their selected Quake source product");
+    qa_console_dialect dialect=selected->edition==QA_EDITION_QUAKEWORLD?QA_CONSOLE_QW:QA_CONSOLE_Q1;
+    qa_audio_output_format output=active->device?qa_audio_device_requested_configuration(active->device).format:
+        active->audio_output_format;
+    f->audio_output_format=output;
+    if ((active->cpu && !qa_cpu_gamma_read(active->cpu,&f->options.gamma,error)) ||
+        (active->gl && !qa_gl_gamma_read(active->gl,&f->options.gamma,error)) ||
+        !frontend_shared_register(qa_application_cvars(f->application),&dialect,output,f->options.gamma,error) ||
+        (!f->options.dedicated && !frontend_q1_sky_create(f,&f->q1_sky,error)) ||
+        !frontend_qc_messages_create(f,&f->qc_messages,error) ||
+        !frontend_view_bindings_create(f,error) ||
         !frontend_equipment_events_create(f,&f->gear_events,error) || !frontend_commands(f,error)) return false;
     if (f->options.dedicated) {
         f->terminal=qa_dedicated_console_create(error);
@@ -102,6 +122,10 @@ static bool original_create(qa_frontend *active,const qa_q1_save_data *save,cons
         f->options.game=NULL;
         if (!ready) return false;
     }
+    f->options.game=product;
+    bool music_ready=frontend_music_sources_create(f,&f->music_sources,error);
+    f->options.game=NULL;
+    if (!music_ready) return false;
     if (!frontend_tools_create(f,error) || !frontend_save_commands_create(f,error) ||
         !frontend_network_create(f,error)) return false;
     if (!f->options.dedicated) {

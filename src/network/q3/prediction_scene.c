@@ -272,6 +272,18 @@ bool qa_q3_prediction_scene_consume_teleport(qa_q3_prediction_scene *s, qa_error
     if (!s || !changed(s, error)) return false;
     s->this_teleport = false; return true;
 }
+bool qa_q3_prediction_scene_mark_teleport(qa_q3_prediction_scene *s,
+    const qa_q3_prediction_scene_view *view, qa_error *error)
+{
+    if (!qa_q3_prediction_scene_current(s, view))
+        return fail(error, QA_ERROR_ARGUMENT, "Q3 teleport feedback lost its actual prediction scene");
+    if (s->this_teleport && !s->physics_next) return true;
+    if (!changed(s, error)) return false;
+    s->this_teleport = true;
+    s->physics_next = false;
+    s->physics_time = s->snap.value.server_time;
+    return true;
+}
 static bool entity_at(const qa_q3_prediction_scene *s, const qa_q3_prediction_scene_view *v,
     const uint16_t *list, size_t count, size_t ordinal, qa_q3_prediction_scene_entity_view *out,
     bool *present, qa_error *error)
@@ -358,8 +370,9 @@ static void adapt_trace(qa_trace_result *result, qa_collision_family family)
     result->secondary_surface.flags = qa_collision_convert_surface_flags(result->secondary_surface.flags, QA_COLLISION_Q3, family);
     result->family = family;
 }
-bool qa_q3_prediction_scene_trace(const qa_q3_prediction_scene *s, const qa_q3_prediction_scene_view *v,
-    const qa_q3_prediction_scene_collision *c, const qa_trace_query *query, qa_trace_result *out, qa_error *error)
+static bool scene_trace(const qa_q3_prediction_scene *s, const qa_q3_prediction_scene_view *v,
+    const qa_q3_prediction_scene_collision *c, const qa_trace_query *query, qa_trace_result *out,
+    int32_t *number, qa_error *error)
 {
     if (!query || !out || !collision_valid(s, v, c, error)) return false;
     qa_trace_query q = *query; q.target = (qa_collision_target){0};
@@ -369,6 +382,7 @@ bool qa_q3_prediction_scene_trace(const qa_q3_prediction_scene *s, const qa_q3_p
     if (!pass_number(c, q.pass_actor, &skip, &has_skip, error) ||
         !qa_collision_trace_q3_model(c->geometry, &q, 0, false, out, error)) return false;
     out->hit = out->fraction != 1 ? QA_TRACE_HIT_WORLD : QA_TRACE_HIT_NONE;
+    *number = out->hit == QA_TRACE_HIT_WORLD ? QA_Q3_ENTITY_WORLD : QA_Q3_ENTITY_NONE;
     out->actor = (qa_actor_id){0};
     for (size_t i = 0; i < s->solid_count; ++i) {
         const prediction_entity *e = &s->entities[s->solids[i]];
@@ -392,6 +406,7 @@ bool qa_q3_prediction_scene_trace(const qa_q3_prediction_scene *s, const qa_q3_p
                 if (!present) return fail(error, QA_ERROR_ARGUMENT, "Q3 collision hit lost its actual projected actor");
             }
             *out = result; out->hit = row->number == QA_Q3_ENTITY_WORLD ? QA_TRACE_HIT_WORLD : QA_TRACE_HIT_ACTOR;
+            *number = row->number;
             out->actor = actor;
             out->model = row->solid == 0xffffff ? (uint32_t)row->modelindex : 0;
         } else if (result.start_solid) out->start_solid = true;
@@ -399,6 +414,19 @@ bool qa_q3_prediction_scene_trace(const qa_q3_prediction_scene *s, const qa_q3_p
     }
     adapt_trace(out, query->policy.family);
     return qa_q3_prediction_scene_current(s, v) || fail(error, QA_ERROR_ARGUMENT, "Q3 scene changed during trace");
+}
+bool qa_q3_prediction_scene_trace(const qa_q3_prediction_scene *s, const qa_q3_prediction_scene_view *v,
+    const qa_q3_prediction_scene_collision *c, const qa_trace_query *query, qa_trace_result *out, qa_error *error)
+{
+    int32_t number;
+    return scene_trace(s, v, c, query, out, &number, error);
+}
+bool qa_q3_prediction_scene_trace_with_number(const qa_q3_prediction_scene *s, const qa_q3_prediction_scene_view *v,
+    const qa_q3_prediction_scene_collision *c, const qa_trace_query *query, qa_trace_result *out,
+    int32_t *number, qa_error *error)
+{
+    if (!number) return fail(error, QA_ERROR_ARGUMENT, "Q3 trace requires its actual source-number output");
+    return scene_trace(s, v, c, query, out, number, error);
 }
 bool qa_q3_prediction_scene_point_contents(const qa_q3_prediction_scene *s, const qa_q3_prediction_scene_view *v,
     const qa_q3_prediction_scene_collision *c, const qa_point_query *query, qa_point_contents *out, qa_error *error)

@@ -11,7 +11,7 @@ struct frontend_restart {
     char *script;
     qa_display_backend backend;
     uint64_t generation;
-    bool video_requested,running,registered;
+    bool video_requested,running,registered,input_registered;
 };
 static bool fail(qa_error *error,qa_status code,const char *text)
 { qa_error_set(error,code,0,"%s",text); return false; }
@@ -74,7 +74,7 @@ static bool video(void *context,qa_error *error)
         owner->options.current(owner->options.context,&command,error) && owner->options.validate_video(owner->options.context,ticket,error);
     qa_display *previous=f->display; qa_gl_renderer *previous_gl=f->gl; qa_cpu_renderer *previous_cpu=f->cpu;
     bool input_attempted=false,published=false;
-    double now=(double)f->time_ns/1000000.0;
+    double now=(double)f->wall_time_ns/1000000.0;
     if (ok && f->input) { input_attempted=true; ok=qa_input_platform_window(f->input,candidate,now,error); }
     if (ok) ok=qa_display_set_visible(candidate,!f->options.display.hidden,error);
     if (ok && gl) ok=qa_display_make_current(candidate,error);
@@ -101,7 +101,7 @@ static bool input(void *context,qa_error *error)
 {
     frontend_restart *owner=context; qa_frontend *f=owner->options.frontend;
     if (!f->input) return fail(error,QA_ERROR_UNSUPPORTED,"Input restart has no actual local input device owner");
-    double now=(double)f->time_ns/1000000.0;
+    double now=(double)f->wall_time_ns/1000000.0;
     for (unsigned i=0;i<f->options.seats;++i)
         if (!qa_input_seat_release(f->seats[i].input,now,error)) return false;
     return qa_input_platform_restart(f->input,now,error);
@@ -126,7 +126,9 @@ static bool audio(void *context,qa_error *error)
      * snd_restart closes its actual native output while retaining queued PCM,
      * then opens the selected format again. */
     qa_audio_device_detach(f->device);
-    return qa_audio_device_select(f->device,&options,error);
+    if (!qa_audio_device_select(f->device,&options,error)) return false;
+    f->audio_output_format=qa_audio_device_requested_configuration(f->device).format;
+    return true;
 }
 frontend_restart *frontend_restart_create(const frontend_restart_options *options,qa_error *error)
 {
@@ -148,6 +150,7 @@ bool frontend_restart_destroy(frontend_restart *owner,qa_error *error)
     if (!owner) return true;
     if (owner->running || !qa_restart_destroy(owner->controls,error)) return false;
     if (owner->registered) qa_console_unregister(owner->console,"vid_restart",0);
+    if (owner->input_registered) qa_console_unregister(owner->console,"in_restart",0);
     free(owner->script); free(owner); return true;
 }
 static bool video_command(void *context,const qa_command_invocation *command,qa_error *error)
@@ -170,6 +173,19 @@ static bool video_command(void *context,const qa_command_invocation *command,qa_
     owner->backend=command->argc==1?info.backend:!strcmp(command->argv[1],"cpu")?QA_DISPLAY_CPU:QA_DISPLAY_OPENGL;
     owner->video_requested=true; return true;
 }
+static bool input_command(void *context,const qa_command_invocation *command,qa_error *error)
+{
+    frontend_restart *owner=context;
+    if (command->context.origin==QA_COMMAND_REMOTE) {
+        frontend_console_print(owner->options.frontend,&command->context,"Device restart is a local client command.\n");
+        return true;
+    }
+    bool staged=false;
+    if (owner->options.stage_input &&
+        !owner->options.stage_input(owner->options.context,command,&staged,error)) return false;
+    return staged || (owner->options.current(owner->options.context,&command->context,error) &&
+        qa_restart_request(owner->controls,QA_RESTART_INPUT,error));
+}
 bool frontend_restart_register(frontend_restart *owner,qa_console *console,qa_error *error)
 {
     if (!owner || !console || owner->console || owner->running)
@@ -177,7 +193,13 @@ bool frontend_restart_register(frontend_restart *owner,qa_console *console,qa_er
     if (!qa_console_register_owned(console,"vid_restart","Restart the client renderer while retaining the current game",0,
         QA_FRONTEND_COMMAND_OWNER,true,video_command,owner,error)) return false;
     owner->console=console; owner->registered=true;
+    if (!qa_console_register_owned(console,"in_restart","Restart the actual local input device owner",0,
+        QA_FRONTEND_COMMAND_OWNER,true,input_command,owner,error)) {
+        qa_console_unregister(console,"vid_restart",0); owner->registered=false; owner->console=NULL; return false;
+    }
+    owner->input_registered=true;
     if (!qa_restart_register(owner->controls,console,QA_FRONTEND_COMMAND_OWNER,error)) {
+        qa_console_unregister(console,"in_restart",0); owner->input_registered=false;
         qa_console_unregister(console,"vid_restart",0); owner->registered=false; owner->console=NULL; return false;
     }
     return true;
@@ -198,8 +220,10 @@ bool frontend_restart_drain(frontend_restart *owner,qa_error *error)
 }
 static bool fields(qa_source_save_io *io,frontend_restart *owner)
 {
-    uint8_t magic[4]={'Q','F','R','S'}; uint32_t version=1,backend=owner->backend;
-    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QFRS",4) || !qa_source_save_u32(io,&version) || version!=1 ||
+    uint8_t magic[4]={'Q','F','R','S'}; uint32_t version=2,backend=owner->backend;
+    bool stage=owner->options.stage_input!=NULL;
+    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QFRS",4) || !qa_source_save_u32(io,&version) || version!=2 ||
+        !qa_source_save_bool(io,&stage) || stage!=(owner->options.stage_input!=NULL) ||
         !qa_source_save_u64(io,&owner->generation) || !qa_source_save_bool(io,&owner->video_requested)) return false;
     if (owner->video_requested) {
         if (!qa_source_save_u32(io,&backend) || backend>QA_DISPLAY_OPENGL ||

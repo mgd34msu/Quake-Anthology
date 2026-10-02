@@ -1,6 +1,9 @@
 #include "internal.h"
 #include "../goals/internal.h"
 #include "qa/bots_log_consumers.h"
+#include "source_weapon_setup.h"
+#include "../chat/internal.h"
+#include <stdio.h>
 
 static bool command(void *context, int32_t client, const char *text, qa_error *e) {
     qa_bot_runtime *r = context;
@@ -25,6 +28,26 @@ static bool test_reply(void *context) {
     qa_bot_runtime *r=context;
     const qa_bot_variable *v=qa_bot_library_variable(r->library,"bot_testrchat");
     return v && v->value!=0;
+}
+static bool chat_print_source(void *context,qa_script_severity severity,const char *text,qa_error *error) {
+    qa_bot_runtime *runtime=context;
+    bool previous=runtime->busy;runtime->busy=true;
+    bool ok=qa_bot_log_print(runtime->log,severity,text,error);
+    runtime->busy=previous;return ok;
+}
+static bool chat_time_source(void *context,float *out,qa_error *error) {
+    qa_bot_runtime *runtime=context;
+    if(runtime->closed || qa_bot_memory_disposed(runtime->memory))
+        return bot_runtime_fail(error,"Chat source clock has no current runtime owner");
+    *out=runtime->time;return true;
+}
+static bool chat_developer_source(void *context) {
+    qa_bot_runtime *runtime=context;
+    const qa_bot_variable *variable=qa_bot_library_variable(runtime->library,"bot_developer");
+    return variable && variable->value!=0;
+}
+static bool chat_reload_source(void *context) {
+    return bot_reload_characters(((qa_bot_runtime *)context)->library);
 }
 static qa_bot_navigation *navigation(void *context, int32_t client) {
     return qa_bot_runtime_navigation(context, client);
@@ -158,8 +181,11 @@ bool bot_runtime_owners_create(qa_bot_runtime *r, qa_error *e) {
     if (!qa_bot_actions_create(0, &actions, &r->actions, e)) return false;
     qa_bot_chat_options options = {.debug = r->options.debug, .console_unavailable = true};
     qa_bot_chat_services chat = {.context = r, .command = command, .diagnostic = diagnostic,
+        .report=chat_print_source,.time=chat_time_source,.developer=chat_developer_source,
+        .reload_characters=chat_reload_source,
         .test_initial = test_initial, .test_reply = test_reply, .random = r->services.random};
     if (!qa_bot_chat_system_create(&chat, &options, &r->chat_system, e)) return false;
+    if(!bot_chat_system_library_bind(r->chat_system,r->library,e)) return false;
     if (!qa_bot_chat_system_log_bind(r->chat_system, r->log, e)) return false;
     qa_bot_items_view empty = {.path = ""};
     qa_bot_items *items;
@@ -179,28 +205,6 @@ bool bot_runtime_owners_create(qa_bot_runtime *r, qa_error *e) {
 static bool source_failure(qa_bot_runtime *r, const qa_error *e) {
     if (e->code != QA_ERROR_FORMAT && e->code != QA_ERROR_NOT_FOUND) return false;
     diagnostic(r, QA_SCRIPT_ERROR, e->message);
-    return true;
-}
-static bool capacity(qa_bot_runtime *r, const char *name, int32_t *out, qa_error *e) {
-    if (!bot_runtime_integer(r, name, "32", out, e)) return false;
-    if (*out > 0) return true;
-    *out = 32;
-    return qa_bot_library_variable_set(r->library, name, "32", e);
-}
-static bool setup_weapons(qa_bot_runtime *r, int32_t *result, qa_error *e) {
-    int32_t weapons, projectiles;
-    const qa_bot_variable *path;
-    if (!capacity(r, "max_weaponinfo", &weapons, e) || !capacity(r, "max_projectileinfo", &projectiles, e) ||
-        !bot_runtime_variable(r, "weaponconfig", "weapons.c", &path, e)) return false;
-    qa_bot_weapons *config;
-    qa_error local = {0};
-    if (!qa_bot_weapons_load(r->library, path->string, (size_t)weapons, (size_t)projectiles, &config, &local)) {
-        if (source_failure(r, &local)) { *result = 12; return true; }
-        if (e) *e = local;
-        return false;
-    }
-    qa_bot_weapons_release(r->weapon_config);
-    r->weapon_config=config;
     return true;
 }
 static bool setup_goals(qa_bot_runtime *r, int32_t *result, qa_error *e) {
@@ -242,39 +246,71 @@ static bool setup_goals(qa_bot_runtime *r, int32_t *result, qa_error *e) {
 static bool setup_chat(qa_bot_runtime *r, qa_error *e) {
     static const char *const names[] = {"synfile", "rndfile", "matchfile", "rchatfile"};
     static const char *const defaults[] = {"syn.c", "rnd.c", "match.c", "rchat.c"};
-    qa_bot_chat_asset *assets[4] = {0};
-    const qa_bot_variable *nochat;
-    int32_t maximum;
-    if (!bot_runtime_integer(r, "max_messages", "1024", &maximum, e) ||
-        !bot_runtime_variable(r, "nochat", "0", &nochat, e)) return false;
-    if (maximum < 2) return bot_runtime_fail(e, "max_messages must be at least two");
+    if(!r->chat_system || !bot_chat_system_library_bind(r->chat_system,r->library,e)) return false;
+    if(r->chat_system->revision==UINT64_MAX) return bot_runtime_fail(e,"Chat setup revision exceeds its source owner");
+    ++r->chat_system->revision;
+    uint64_t revision=r->chat_system->revision;
     bool ok = true;
     for (size_t i = 0; ok && i < 4; ++i) {
-        if (i == 3 && nochat->value != 0) continue;
+        if(i==3) {
+            const qa_bot_variable *nochat;
+            if(!bot_runtime_variable(r,"nochat","0",&nochat,e)) {ok=false;break;}
+            if(nochat->value!=0) continue;
+        }
         const qa_bot_variable *path;
         ok = bot_runtime_variable(r, names[i], defaults[i], &path, e);
         if (!ok) break;
-        qa_error local = {0};
-        if (!qa_bot_chat_asset_load(r->library, (qa_bot_chat_asset_kind)i, path->string, NULL, &assets[i], &local)) {
+        qa_error local = {0};qa_bot_chat_asset *asset=NULL;
+        if(i<2) {
+            bool language_failure=false;
+            ok=chat_asset_setup_load(r->library,(qa_bot_chat_asset_kind)i,path->string,
+                r->chat_system,revision,&asset,&language_failure,&local);
+            if(!ok && language_failure) {
+                if(asset->packed_source->missing_root) {
+                    size_t size=strlen(path->string);
+                    char *message=malloc(size+32);
+                    if(!message) {qa_error_set(e,QA_ERROR_MEMORY,0,"Retaining chat missing-root diagnostic");ok=false;}
+                    else {
+                        (void)snprintf(message,size+32,"counldn't load %s",path->string);
+                        ok=chat_print(r->chat_system,QA_SCRIPT_ERROR,message,e);free(message);
+                    }
+                } else ok=true;
+                if(ok) {qa_bot_chat_asset_release(asset);asset=NULL;}
+            } else if(!ok && e) *e=local;
+            if(ok && asset) {
+                size_t size=strlen(path->string);char *message=malloc(size+16);
+                if(!message) {qa_error_set(e,QA_ERROR_MEMORY,0,"Retaining chat loaded diagnostic");ok=false;}
+                else {
+                    (void)snprintf(message,size+16,"loaded %s",path->string);
+                    ok=chat_print(r->chat_system,QA_SCRIPT_INFO,message,e);free(message);
+                }
+            }
+        } else if (!qa_bot_chat_asset_load(r->library, (qa_bot_chat_asset_kind)i, path->string, NULL, &asset, &local)) {
             ok = source_failure(r, &local);
             if (!ok && e) *e = local;
         }
+        if(ok && (r->chat_system->retired || r->chat_system->revision!=revision))
+            ok=bot_runtime_fail(e,"Chat setup retired during its source load");
+        if(ok && i==3) {
+            const qa_bot_variable *developer=qa_bot_library_variable(r->library,"bot_developer");
+            if(asset && developer && developer->value!=0) ok=qa_bot_chat_check_integrity(r->chat_system,asset,e);
+            if(ok && !asset) ok=chat_print(r->chat_system,QA_SCRIPT_INFO,"no rchats",e);
+        }
+        if(ok) {
+            qa_bot_chat_asset **target=i==0?&r->chat_system->options.synonyms:
+                i==1?&r->chat_system->options.randoms:i==2?&r->chat_system->options.matches:&r->chat_system->options.replies;
+            qa_bot_chat_asset *previous=*target;*target=asset;asset=NULL;qa_bot_chat_asset_release(previous);
+        }
+        qa_bot_chat_asset_release(asset);
     }
     if (ok) {
-        qa_bot_chat_options options = {.synonyms = assets[0], .randoms = assets[1],
-            .matches = assets[2], .replies = assets[3], .console_capacity = (size_t)maximum,
-            .debug = r->options.debug};
-        qa_bot_chat_services services = {.context = r, .command = command,
-            .test_initial=test_initial,.test_reply=test_reply,
-            .diagnostic = diagnostic, .random = r->services.random};
-        ok = r->chat_system ? qa_bot_chat_system_configure(r->chat_system, &options, e) :
-            qa_bot_chat_system_create(&services, &options, &r->chat_system, e);
-        if (ok) ok = qa_bot_chat_system_log_bind(r->chat_system, r->log, e);
-        const qa_bot_variable *developer=qa_bot_library_variable(r->library,"bot_developer");
-        if (ok && assets[3] && developer && developer->value!=0)
-            ok=qa_bot_chat_check_integrity(r->chat_system,assets[3],e);
+        if(r->chat_system->console_heap.owner) ok=qa_bot_memory_free(r->memory,r->chat_system->console_heap,e);
+        int32_t maximum;
+        if(ok) ok=bot_runtime_integer(r,"max_messages","1024",&maximum,e);
+        if(ok && maximum<2) ok=bot_runtime_fail(e,"max_messages must be at least two");
+        if(ok) ok=chat_console_heap(r->chat_system,(uint32_t)maximum,true,e);
+        if(ok) {r->chat_system->options.console_capacity=(size_t)maximum;r->chat_system->options.console_unavailable=false;}
     }
-    for (size_t i = 0; i < 4; ++i) qa_bot_chat_asset_release(assets[i]);
     return ok;
 }
 static bool setup(qa_bot_runtime *r, int32_t *result, qa_error *e) {
@@ -300,7 +336,7 @@ static bool setup(qa_bot_runtime *r, int32_t *result, qa_error *e) {
         !qa_bot_actions_create((uint32_t)clients, &actions, &r->actions, e)) return false;
     if (r->options.observations == QA_BOT_OBSERVATION_NATIVE &&
         !bot_runtime_observations_resize(r, (size_t)entities, e)) return false;
-    if (!setup_weapons(r, result, e)) return false;
+    if (!bot_runtime_weapon_setup(r, result, e)) return false;
     if (*result) return true;
     if (!setup_goals(r,result,e)) return false;
     if (*result) return true;

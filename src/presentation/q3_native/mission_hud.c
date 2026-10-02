@@ -9,8 +9,26 @@ void q3nm_result(bool result)
     if(!result || (o->frame&&!q3nm_current(o,o->frame,context->error)))context->failed=true; }
 bool q3nm_current(q3n_mission_hud *o, const q3n_frame *f, qa_error *e)
 {
+    if(o&&o->options.remote_client) {
+        const qa_application_q3_client_context *expected=&o->options.recipient;
+        const qa_application_q3_client_context *actual=f&&f->remote?&f->remote->source.basis.client:NULL;
+        if(!f||!f->remote||!actual||f->application!=o->options.application||
+           f->remote->client!=o->options.remote_client||f->remote->source.owner!=o->options.remote_source||
+           f->remote->source.basis.product!=QA_Q3_TEAM_ARENA||f->remote->source.basis.content!=o->options.content||
+           f->assets!=o->options.assets||f->presentation!=o->options.presentation||f->seat!=o->options.seat||
+           actual->session!=expected->session||actual->receiver!=expected->receiver||
+           actual->source_owner!=expected->source_owner||actual->service_owner!=expected->service_owner||
+           actual->frontend_lifetime!=expected->frontend_lifetime||actual->console!=expected->console||
+           actual->cvars!=expected->cvars||actual->source_cvars!=expected->source_cvars||
+           actual->seat!=expected->seat||actual->source_client!=expected->source_client||
+           !qa_actor_id_equal(actual->source_actor,expected->source_actor)||
+           f->viewing_client!=expected->source_client||!qa_actor_id_equal(f->viewing_actor,expected->source_actor)||
+           !q3n_frame_current(f))
+            return q3ne_fail(e,QA_ERROR_ARGUMENT,"Mission HUD left its actual remote CLIENT or reached source");
+        return true;
+    }
     qa_application_q3_client_context context;
-    if (!o || !f || f->application != o->options.application || f->source.source_game != o->source_game ||
+    if (!o || !f || f->remote || f->application != o->options.application || f->source.source_game != o->source_game ||
         f->source.product != QA_Q3_TEAM_ARENA || f->source.publication_generation != o->publication_generation ||
         f->source.map_revision != o->map_revision || f->assets != o->options.assets || f->presentation != o->options.presentation || f->seat != o->options.seat ||
         f->viewing_client != o->options.recipient.source_client ||
@@ -27,10 +45,24 @@ bool q3nm_current(q3n_mission_hud *o, const q3n_frame *f, qa_error *e)
         return q3ne_fail(e, QA_ERROR_ARGUMENT, "Mission HUD left its private CGAME recipient or native source");
     return true;
 }
+bool q3nm_cvar(q3n_mission_hud *o,const char *name,qa_native_q3_client_cvar *out,qa_error *e)
+{ return o->options.remote_client?qa_native_q3_remote_client_cvar_read(o->options.remote_client,name,out,e):
+    qa_native_q3_client_cvar_read(o->options.client,name,out,e); }
+bool q3nm_integer_set(q3n_mission_hud *o,const char *name,int32_t value,qa_error *e)
+{ return o->options.remote_client?qa_native_q3_remote_client_cvar_integer(o->options.remote_client,name,value,e):
+    qa_native_q3_client_cvar_integer(o->options.client,name,value,e); }
+bool q3nm_console(q3n_mission_hud *o,const char *text,qa_error *e)
+{ return o->options.remote_client?qa_native_q3_remote_client_console(o->options.remote_client,text,e):
+    qa_native_q3_client_console(o->options.client,text,e); }
+const qa_q3_player *q3nm_player(const q3n_mission_hud *o)
+{ return q3n_frame_snapshot_player(o->frame); }
+const qa_q3_player *q3nm_require_player(q3n_mission_hud *o)
+{ const qa_q3_player *p=q3nm_player(o); if(!p)q3nm_result(q3ne_fail(o->menus->error,QA_ERROR_ARGUMENT,
+    "Mission HUD player operation requires its actual reached snapshot")); return p; }
 int32_t q3nm_integer(q3n_mission_hud *o, const char *symbol)
-{ qa_native_q3_client_cvar v = {0}; q3nm_result(qa_native_q3_client_cvar_read(o->options.client, symbol, &v, o->menus->error)); return v.integer; }
+{ qa_native_q3_client_cvar v = {0}; q3nm_result(q3nm_cvar(o,symbol,&v,o->menus->error)); return v.integer; }
 float q3nm_number(q3n_mission_hud *o, const char *symbol)
-{ qa_native_q3_client_cvar v = {0}; q3nm_result(qa_native_q3_client_cvar_read(o->options.client, symbol, &v, o->menus->error)); return v.number; }
+{ qa_native_q3_client_cvar v = {0}; q3nm_result(q3nm_cvar(o,symbol,&v,o->menus->error)); return v.number; }
 bool q3nm_set(q3n_mission_hud *o, const char *name, const char *value)
 { return !o->menus->failed && q3nm_current(o,o->frame,o->menus->error) &&
     qa_cvars_set(o->options.recipient.cvars, name, value, true, o->menus->error) && q3nm_current(o, o->frame, o->menus->error); }
@@ -90,7 +122,8 @@ static void clear_scene(void) { q3n_mission_hud *o=q3nm_active(); if(!o->menus->
 static void entity(const refEntity_t *source)
 {
     q3n_mission_hud *o=q3nm_active(); if(o->menus->failed)return; qa_q3_ref_entity r={.kind=QA_Q3_REF_MODEL,.model=source->hModel,.flags=source->renderfx,
-        .origin=q3ne_array(source->origin),.old_origin=q3ne_array(source->oldorigin),.lighting_origin=q3ne_array(source->lightingOrigin),.color={255,255,255,255}};
+        .origin=q3ne_array(source->origin),.old_origin=q3ne_array(source->oldorigin),.lighting_origin=q3ne_array(source->lightingOrigin)};
+    memcpy(r.color,source->shaderRGBA,sizeof(r.color));
     for(unsigned i=0;i<3;++i)r.axis[i]=q3ne_array(source->axis[i]);
     q3nm_result(qa_q3_presentation_entity(o->frame->presentation,&r,o->menus->error));
 }
@@ -138,7 +171,8 @@ static void get_cvar(const char *name,char *out,int capacity)
 static float cvar(const char *name) { char text[128]; double n=0; get_cvar(name,text,sizeof(text)); q3nm_result(qa_parse_atof(text,&n,q3menu_active()->error)); return (float)n; }
 static void set_cvar(const char *name,const char *value) { q3nm_result(q3nm_set(q3nm_active(),name,value)); }
 static void script(char **text) { (void)text; }
-static void team_color(float (*out)[4]) { int team=q3nm_active()->frame->local_player.persistant[3]; (*out)[0]=team==1?1:0; (*out)[1]=team==1||team==2?0:0.17f; (*out)[2]=team==2?1:0; (*out)[3]=0.25f; }
+static void team_color(float (*out)[4]) { const qa_q3_player *p=q3nm_require_player(q3nm_active()); if(!p)return;
+    int team=p->persistant[3]; (*out)[0]=team==1?1:0; (*out)[1]=team==1||team==2?0:0.17f; (*out)[2]=team==2?1:0; (*out)[3]=0.25f; }
 static void cursor_text(float x,float y,float scale,float c[4],const char *text,int position,char cursor,int limit,int style)
 { (void)position; (void)cursor; q3nm_text(x,y,scale,c,text,0,limit,style); }
 static void local_sound(int h,int channel) { q3n_mission_hud *o=q3nm_active(); if(!o->menus->failed)q3nm_result(qa_q3_presentation_sound(o->frame->presentation,h,NULL,(int)o->frame->viewing_client,channel,true,o->menus->error)); }
@@ -169,7 +203,8 @@ static const char *feeder_text(float feeder,int index,int column,int *image)
         if(pw>=0) { size_t count; const qa_q3_item *items=qa_q3_items(QA_Q3_TEAM_ARENA,&count); for(size_t i=0;i<count;++i)if(items[i].kind==QA_Q3_ITEM_TEAM&&items[i].tag==pw) { *image=m->items[i].icon; break; } }
         else if(ci->bot_skill>0&&ci->bot_skill<=5)*image=m->bot_skill_shaders[ci->bot_skill-1]; else if(ci->handicap<100)return q3menu_format("%d",ci->handicap); break; }
     case 1: if(team!=-1)*image=q3nm_status(o,ci->team_task); break;
-    case 2: if((uint32_t)o->frame->local_player.stats[6]&(1u<<((unsigned)s->client&31u)))return "Ready"; if(team==-1) { if(o->commands->game_type==1)return q3menu_format("%d/%d",ci->wins,ci->losses); if(ci->team==3)return "Spectator"; } else if(ci->team_leader)return "Leader"; break;
+    case 2: { const qa_q3_player *p=q3nm_require_player(o); if(!p)return "";
+        if((uint32_t)p->stats[6]&(1u<<((unsigned)s->client&31u)))return "Ready"; if(team==-1) { if(o->commands->game_type==1)return q3menu_format("%d/%d",ci->wins,ci->losses); if(ci->team==3)return "Spectator"; } else if(ci->team_leader)return "Leader"; break; }
     case 3:return ci->name; case 4:return q3menu_format("%d",ci->dynamic.score); case 5:return q3menu_format("%4d",s->time); case 6:return s->ping==-1?"connecting":q3menu_format("%4d",s->ping); }
     return "";
 }
@@ -200,11 +235,12 @@ static void source_diagnostic(void *context,const qa_script_diagnostic *diagnost
     o->options.print(o->options.context,text); q3nm_result(q3nm_current(o,o->frame,o->menus->error)); }
 static void source_release(void *context,qa_script_resource *resource) { (void)context; qa_resource_release(resource->lease); memset(resource,0,sizeof(*resource)); }
 static int32_t random_integer(void *context) { q3n_mission_hud *o=context; return q3n_events_rand(o->frame->events); }
+static bool allocate(const q3n_mission_hud_options *,const qa_native_q3_client_basis *,q3n_mission_hud **,qa_error *);
 static bool create(const q3n_mission_hud_options *options,const qa_native_q3_client_basis *basis,q3n_mission_hud **out,qa_error *e)
 {
     const qa_native_q3_client_services *services=options?qa_native_q3_client_services_read(options->client):NULL;
     qa_native_q3_wire_basis wire={0};
-    if(!options||!out||*out||!basis||basis->product!=QA_Q3_TEAM_ARENA||basis->application!=options->application||
+    if(!options||options->remote_client||options->remote_source||!out||*out||!basis||basis->product!=QA_Q3_TEAM_ARENA||basis->application!=options->application||
         basis->seat!=options->seat||basis->receiver!=options->recipient.receiver||basis->source_owner!=options->recipient.source_owner||
         basis->physical_client!=options->recipient.source_client||!qa_actor_id_equal(basis->viewing_actor,options->recipient.source_actor)||!options->client||
         options->content!=basis->content||!options->assets||!options->presentation||!options->fonts||!options->milliseconds||!options->print||!options->key_catcher||
@@ -219,9 +255,14 @@ static bool create(const q3n_mission_hud_options *options,const qa_native_q3_cli
         wire.seat!=basis->seat||wire.physical_client!=basis->physical_client||!qa_actor_id_equal(wire.actor,basis->viewing_actor)||
         wire.publication_generation!=basis->publication_generation||wire.map_revision!=basis->map_revision)
         return q3ne_fail(e,QA_ERROR_ARGUMENT,"Mission HUD requires actual selected CGAME content and private seat services");
+    return allocate(options,basis,out,e);
+}
+static bool allocate(const q3n_mission_hud_options *options,const qa_native_q3_client_basis *basis,q3n_mission_hud **out,qa_error *e)
+{
     q3n_mission_hud *o=calloc(1,sizeof(*o)); if(!o)return q3ne_fail(e,QA_ERROR_MEMORY,"Allocating native mission HUD");
-    o->options=*options; o->options.source=NULL; o->source_game=basis->source_game;
-    o->publication_generation=basis->publication_generation; o->map_revision=basis->map_revision;
+    o->options=*options; o->options.source=NULL;
+    if(basis) { o->source_game=basis->source_game;
+        o->publication_generation=basis->publication_generation; o->map_revision=basis->map_revision; }
     o->scoreboard_menu=o->captured_menu=-1; o->spectator_width=-1; o->spectator_paint_x2=-1;
     o->display=(displayContextDef_t){.registerShaderNoMip=shader,.setColor=color,.drawHandlePic=picture,.drawStretchPic=stretch,
         .drawText=q3nm_text,.textWidth=q3nm_width,.textHeight=q3nm_height,.registerModel=model,.modelBounds=model_bounds,
@@ -250,9 +291,32 @@ bool q3n_mission_hud_create(const q3n_mission_hud_options *options,q3n_mission_h
 bool q3n_mission_hud_create_restored(const q3n_mission_hud_options *options,q3n_mission_hud **out,qa_error *e)
 { qa_native_q3_client_basis basis; if(!options||!qa_native_q3_client_basis_read(options->client,&basis,e))return false;
     return create(options,&basis,out,e); }
+bool q3n_mission_hud_create_remote(const q3n_mission_hud_options *options,q3n_mission_hud **out,qa_error *e)
+{
+    q3n_remote_source_view view;
+    if(!options||!out||*out||options->source||options->client||options->reader||!options->remote_client||!options->remote_source||
+       !q3n_remote_source_read(options->remote_source,&view,e)||!q3n_remote_source_current(&view)||
+       q3n_remote_source_client(options->remote_source)!=options->remote_client||view.basis.product!=QA_Q3_TEAM_ARENA||
+       view.basis.application!=options->application||view.basis.content!=options->content||
+       view.basis.client.seat!=options->seat||view.basis.client.session!=options->recipient.session||
+       view.basis.client.receiver!=options->recipient.receiver||view.basis.client.source_owner!=options->recipient.source_owner||
+       view.basis.client.service_owner!=options->recipient.service_owner||
+       view.basis.client.frontend_lifetime!=options->recipient.frontend_lifetime||
+       view.basis.client.console!=options->recipient.console||view.basis.client.cvars!=options->recipient.cvars||
+       view.basis.client.source_cvars!=options->recipient.source_cvars||
+       view.basis.physical_client!=options->recipient.source_client||
+       !qa_actor_id_equal(view.basis.client.source_actor,options->recipient.source_actor)||
+       !options->assets||!options->presentation||!options->fonts||!options->milliseconds||!options->print||!options->key_catcher||
+       options->presentation->options.assets!=options->assets||
+       qa_font_library_content(options->fonts)!=options->assets->options.provider.mounts||
+       qa_font_library_resource_owner(options->fonts)!=options->assets->options.provider.images)
+        return q3ne_fail(e,QA_ERROR_ARGUMENT,"Remote Mission HUD requires its actual private CLIENT/menu/font resource tuple");
+    return allocate(options,NULL,out,e);
+}
 bool q3n_mission_hud_bind(q3n_mission_hud *o,q3n_hud *hud,qa_error *e)
 { if(!o||o->busy||!hud||hud->options.application!=o->options.application||hud->options.assets!=o->options.assets||
-    hud->options.client!=o->options.client||hud->options.seat!=o->options.seat||hud->source_game!=o->source_game||hud->product!=QA_Q3_TEAM_ARENA)
+    hud->options.client!=o->options.client||hud->options.remote_client!=o->options.remote_client||
+    hud->options.seat!=o->options.seat||hud->source_game!=o->source_game||hud->product!=QA_Q3_TEAM_ARENA)
     return q3ne_fail(e,QA_ERROR_ARGUMENT,"Mission HUD binding requires its actual native HUD owner"); o->hud=hud; return true; }
 void q3n_mission_hud_destroy(q3n_mission_hud *o) { if(o&&!o->busy) { q3menu_destroy(o->menus); free(o); } }
 bool q3n_mission_hud_idle(const q3n_mission_hud *o) { return o&&!o->busy; }

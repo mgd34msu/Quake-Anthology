@@ -1,5 +1,11 @@
 #include "scene_identity.h"
 #include "image_inventory.h"
+#include "native_q3_client.h"
+#include "remote_q3_client.h"
+#include "remote_q3_initial.h"
+#include "network_initial_graph.h"
+#include "remote_q1_client.h"
+#include "remote_q2_client.h"
 #include "qa/material_library_save.h"
 #include "qa/scene_geometry_save.h"
 #include "qa/source_save.h"
@@ -137,6 +143,33 @@ bool frontend_scene_namespace_capture_images(frontend_scene_namespace *space, qa
             kind == 1 ? frontend_visual_images_at(f, i) : frontend_native_q2_images_at(f, i);
         if (!images) break;
         ok = images_owner(space, f, images, &scratch, error);
+    }
+    for (size_t i=0;ok && i<frontend_native_q3_count(f);++i) {
+        frontend_native_q3_view owner;
+        ok=frontend_native_q3_read(f,i,&owner,error) && owner.images &&
+            images_owner(space,f,owner.images,&scratch,error);
+    }
+    for(size_t i=0;ok && i<frontend_remote_q3_count(f);++i) {
+        frontend_remote_q3_resources owner;
+        ok=frontend_remote_q3_resources_read(frontend_remote_q3_at(f,i),&owner,error) && owner.images &&
+            images_owner(space,f,owner.images,&scratch,error);
+    }
+    frontend_network_initial_graph_view initial;
+    if(ok) ok=frontend_network_initial_graph_read(f,&initial,error);
+    if(ok && initial.present) {
+        frontend_remote_q3_initial_view owner;
+        ok=initial.parent && frontend_remote_q3_initial_read(initial.parent,&owner,error) && owner.images &&
+            images_owner(space,f,owner.images,&scratch,error);
+    }
+    for(size_t i=0;ok && i<frontend_remote_q1_count(f);++i) {
+        frontend_remote_q1_media owner;
+        ok=frontend_remote_q1_media_read(frontend_remote_q1_at(f,i),&owner,error) &&
+            images_owner(space,f,owner.images,&scratch,error);
+    }
+    for(size_t i=0;ok && i<frontend_remote_q2_count(f);++i) {
+        frontend_remote_q2_view owner;
+        ok=frontend_remote_q2_metadata_read(frontend_remote_q2_at(f,i),&owner,error) &&
+            images_owner(space,f,owner.images,&scratch,error);
     }
     qa_arena_destroy(&scratch);
     if (ok) space->images_captured = true;

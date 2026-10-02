@@ -20,8 +20,15 @@ bool application_supplies_spawn(application_supplies *, application_provider *so
 void application_supplies_actor_released(application_supplies *, qa_actor_record);
 bool application_supplies_for(application_supplies *, application_provider *source,
                                qa_actor_id, qa_supply **, qa_error *);
+bool application_supplies_weapon_sources(application_supplies *, application_provider *source,
+    qa_actor_id, const qa_supply_weapon *selected, size_t selected_count,
+    const qa_supply_weapon *original, size_t original_count, qa_item_id *, qa_error *);
 bool application_supplies_source_for(void *actual_provider, qa_actor_id, qa_supply **, qa_error *);
 bool application_supplies_source_spawned(void *actual_provider, qa_actor_id, qa_error *);
+/* Resolve the actual retained selected rule during isolated gameplay import.
+ * The pickup codec owns its lease serial and full declarations. */
+bool application_supplies_pickup_rule(application_supplies *,qa_actor_id,qa_actor_owner,
+    uint64_t serial,uint32_t id,qa_pickup_rule *,qa_error *);
 
 /* Both paths resolve the exact same authored offer against the selected
  * destination inventory. Source completion owns LOG/events/targets/respawn. */

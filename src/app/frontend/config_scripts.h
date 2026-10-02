@@ -6,11 +6,13 @@
 #include "qa/console_buffer.h"
 
 typedef struct frontend_config_files frontend_config_files;
-/* Normal source preparation only. Product roots retain actual catalogue
- * authorities independently of restricted media. Configured user_root owns
- * console/shared files and supplies an absent product write-root fallback. */
+/* Product roots retain actual catalogue authorities independently of media.
+ * Global stores borrow admitted user/console capabilities, including mapped
+ * roots after restore, and supply an absent product write-root fallback. */
 frontend_config_files *frontend_config_files_create(qa_catalog *, qa_product_id,
-                                                   const char *user_root, const char *content_root, qa_error *);
+                                                   qa_settings_store user, qa_settings_store devices, qa_error *);
+bool frontend_config_files_global_current(const frontend_config_files *,qa_settings_store user,
+                                          qa_settings_store devices);
 bool frontend_config_files_destroy(frontend_config_files *, qa_error *);
 /* Carry actual retained root authorities; never reopen paths or read scripts. */
 bool frontend_config_files_clone(const frontend_config_files *,frontend_config_files **,qa_error *);
@@ -18,6 +20,10 @@ bool frontend_config_files_idle(const frontend_config_files *);
 qa_product_id frontend_config_files_product(const frontend_config_files *);
 qa_catalog *frontend_config_files_catalog(const frontend_config_files *);
 qa_settings_store frontend_config_files_store(const frontend_config_files *, bool base);
+/* Borrow the retained configured user-root authority, independent of product roots. */
+qa_settings_store frontend_config_files_shared_store(const frontend_config_files *);
+qa_settings_store frontend_config_files_device_store(const frontend_config_files *);
+qa_fs_root *frontend_config_files_shared_root(const frontend_config_files *);
 qa_fs_root *frontend_config_files_root(const frontend_config_files *, bool base);
 qa_fs_root *frontend_config_files_loose_root(const frontend_config_files *, bool base);
 const char *frontend_config_files_game_directory(const frontend_config_files *);

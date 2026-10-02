@@ -103,6 +103,29 @@ bool qa_q3_host_game_data_read(const qa_q3_host *host, qa_q3_host_game_data *out
         entities, clients}; return true;
 }
 
+bool qa_q3_host_game_data_bind(qa_q3_host *host,qa_qvm *vm,const qa_q3_host_game_data *data,qa_error *error)
+{
+    if(!host||!vm||host->vm!=vm||host->native||host->retired||host->calls||!host->game||!data||
+        data->entity_count>1024||!data->entity_count||data->entity_stride<qa_qvm_shared_entity_bytes(host->options.abi)||
+        (data->entity_stride&3)||data->entities_address>UINT32_MAX||(data->entities_address&3)||
+        data->client_count>64||data->client_count>host->options.server.maximum_clients||
+        (data->client_count&&(data->client_stride<qa_qvm_player_bytes(host->options.abi)||(data->client_stride&3)||
+            data->clients_address>UINT32_MAX||(data->clients_address&3))))
+        return q3_fail(error,QA_ERROR_ARGUMENT,0,"Declared component game-data layout is not its retained QVM tables");
+    uint64_t entities=(uint64_t)data->entity_count*data->entity_stride,clients=(uint64_t)data->client_count*data->client_stride;
+    qa_bytes span;
+    if(entities>SIZE_MAX||clients>SIZE_MAX||data->entities_address>qa_qvm_memory_size(vm)||entities>qa_qvm_memory_size(vm)-data->entities_address||
+        (data->client_count&&(data->clients_address>qa_qvm_memory_size(vm)||clients>qa_qvm_memory_size(vm)-data->clients_address))||
+        !qa_qvm_span(vm,(int32_t)(uint32_t)data->entities_address,0,(size_t)entities,&span,error)||
+        (data->client_count&&!qa_qvm_span(vm,(int32_t)(uint32_t)data->clients_address,0,(size_t)clients,&span,error))) return false;
+    uint64_t tag=qa_qvm_memory_size(vm);
+    host->game->entities=tag+data->entities_address;
+    host->game->clients=data->client_count?tag+data->clients_address:0;
+    host->game->entity_count=data->entity_count; host->game->entity_stride=data->entity_stride;
+    host->game->client_stride=data->client_stride;
+    return true;
+}
+
 bool qa_q3_host_entity(qa_q3_host *host, uint32_t number, qa_q3_entity *entity,
                          qa_qvm_entity_shared *shared, qa_error *error)
 {

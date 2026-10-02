@@ -96,8 +96,9 @@ bool q3n_mission_hud_initialize(q3n_mission_hud *o,const q3n_frame *f,q3n_comman
 static void score_selection(q3n_mission_hud *o,menuDef_t *menu)
 {
     if(!o->commands)return; int red=0,blue=0;
+    const qa_q3_player *p=q3nm_require_player(o); if(!p)return;
     for(int i=0;i<o->commands->num_scores;++i) { const q3n_command_score *s=&o->commands->scores[i];
-        if(s->team==1)++red; else if(s->team==2)++blue; if(s->client==o->frame->local_player.clientNum)o->selected_score=i; }
+        if(s->team==1)++red; else if(s->team==2)++blue; if(s->client==p->clientNum)o->selected_score=i; }
     if(!menu||o->selected_score<0||o->selected_score>=64)return;
     if(o->commands->game_type>=3) { bool b=o->commands->scores[o->selected_score].team==2; Menu_SetFeederSelection(menu,b?6:5,b?blue:red,NULL); }
     else Menu_SetFeederSelection(menu,11,o->selected_score,NULL);
@@ -107,6 +108,7 @@ bool q3n_mission_hud_score_selection(q3n_mission_hud *o,const q3n_frame *f,const
 bool q3n_mission_hud_paint(q3n_mission_hud *o,const q3n_frame *f,bool scoreboard,bool first,qa_error *e)
 {
     q3menu_context *p; if(!q3nm_begin(o,f,e,&p))return false;
+    if(!q3nm_require_player(o))return q3nm_end(o,p,false);
     if(!q3nm_preferences(o)||!q3n_hud_weapon_read(o->hud,f,&o->draw.weapon_hud,e))return q3nm_end(o,p,false);
     if(scoreboard) {
         if(o->scoreboard_menu>=0)o->menus->menus[o->scoreboard_menu].window.flags&=~WINDOW_FORCED;
@@ -164,7 +166,8 @@ bool q3n_mission_hud_menu_buffer(q3n_mission_hud *o,const q3n_frame *f,const cha
 bool q3n_mission_hud_mouse(q3n_mission_hud *o,const q3n_frame *f,int32_t dx,int32_t dy,qa_error *e)
 {
     q3menu_context *p; if(!q3nm_begin(o,f,e,&p))return false; o->display.cursorx=(float)o->cursor_x; o->display.cursory=(float)o->cursor_y;
-    int type=f->local_player.pmType; bool ok=true;
+    const qa_q3_player *player=q3n_frame_predicted_player(f); if(!player)return q3nm_end(o,p,q3ne_fail(e,QA_ERROR_ARGUMENT,"Mission mouse input requires its actual predicted player"));
+    int type=player->pmType; bool ok=true;
     if((type==0||type==2)&&!o->hud->state.show_scores)ok=o->options.key_catcher(o->options.context,0,e);
     else { o->cursor_x=q3ne_plus(o->cursor_x,dx); o->cursor_y=q3ne_plus(o->cursor_y,dy);
         if(o->cursor_x<0)o->cursor_x=0; if(o->cursor_x>640)o->cursor_x=640; if(o->cursor_y<0)o->cursor_y=0; if(o->cursor_y>480)o->cursor_y=480;
@@ -177,7 +180,8 @@ bool q3n_mission_hud_mouse(q3n_mission_hud *o,const q3n_frame *f,int32_t dx,int3
 bool q3n_mission_hud_key(q3n_mission_hud *o,const q3n_frame *f,int32_t key,bool down,qa_error *e)
 {
     q3menu_context *p; if(!q3nm_begin(o,f,e,&p))return false; bool ok=true;
-    if(down) { int type=f->local_player.pmType;
+    if(down) { const qa_q3_player *player=q3n_frame_predicted_player(f); if(!player)return q3nm_end(o,p,q3ne_fail(e,QA_ERROR_ARGUMENT,"Mission key input requires its actual predicted player"));
+        int type=player->pmType;
         if(type==0||(type==2&&!o->hud->state.show_scores)) { event(o,0); ok=o->options.key_catcher(o->options.context,0,e); }
         else { Display_HandleKey(key,qtrue,o->cursor_x,o->cursor_y);
             if(o->captured_menu>=0)o->captured_menu=-1; else if(key==K_MOUSE2) { menuDef_t *m=Display_CaptureItem(o->cursor_x,o->cursor_y);

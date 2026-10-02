@@ -6,5 +6,5 @@
 bool qa_material_saved_image(qa_source_save_io *, const qa_material_library_checkpoint_refs *, const qa_scene_image **);
 bool qa_material_saved_identity(qa_source_save_io *, const qa_material_library_checkpoint_refs *, uint64_t *, bool world);
 bool qa_material_saved_text(qa_source_save_io *, char **);
-bool qa_material_saved_record(qa_source_save_io *, const qa_material_library_checkpoint_refs *, qa_material_record *);
+bool qa_material_saved_record(qa_source_save_io *, const qa_material_library_checkpoint_refs *, uint32_t, qa_material_record *);
 #endif

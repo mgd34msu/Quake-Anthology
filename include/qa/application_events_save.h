@@ -8,9 +8,11 @@ typedef struct qa_application_saved_event_counts {
     uint64_t protocol_generation;
 } qa_application_saved_event_counts;
 
-/* These records contain the five pending application queues, not gameplay
- * state or already delivered presentation. Capture leases a committed idle
- * application. The output must be empty and is unchanged on failure. */
+/* The record contains the five genuine pending queues and Source journal,
+ * stream counters, registered immutable event-resource references, and retained
+ * world text lifetimes. Resource-bearing records require the actual CONTENT
+ * graph capture/import lease; they never reopen paths. Output is unchanged on
+ * failure. Capture leases a committed idle application. */
 bool qa_application_events_checkpoint(qa_application *, qa_buffer *, qa_error *);
 /* Import into an isolated restored application with empty pending queues.
  * Its restored actor history and string table must already be installed.

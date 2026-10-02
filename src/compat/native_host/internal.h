@@ -3,6 +3,7 @@
 
 #include "qa/binary.h"
 #include "qa/native_host.h"
+#include "qa/native_host_q2_wire.h"
 #include "qa/network.h"
 
 #include <limits.h>
@@ -22,12 +23,12 @@ typedef struct native_host_string {
     struct native_host_string *next;
 } native_host_string;
 
-typedef struct native_host_cvar {
+typedef struct native_host_cvar_record {
     char *name;
     qa_native_address address;
     uint64_t modification;
-    struct native_host_cvar *next;
-} native_host_cvar;
+    struct native_host_cvar_record *next;
+} native_host_cvar_record;
 
 typedef struct native_host_surface {
     qa_collision_surface surface;
@@ -40,6 +41,14 @@ typedef struct native_host_model {
     uint32_t inline_model;
     struct native_host_model *next;
 } native_host_model;
+
+typedef struct native_host_q2_lifetime {
+    qa_actor_id actor;
+    qa_vec3 creation_origin;
+    uint64_t creation_frame;
+    qa_native_host_q2_origin origins[8];
+    bool present;
+} native_host_q2_lifetime;
 
 typedef struct native_host_edict_layout {
     size_t bytes, inuse, linkcount, area, area2, flags;
@@ -83,9 +92,11 @@ struct qa_native_host {
     qa_console *console;
     qa_command_context command_context;
     native_host_string *strings;
-    native_host_cvar *cvar_shadows;
+    native_host_cvar_record *cvar_shadows;
     native_host_surface *surfaces;
     native_host_model *models;
+    native_host_q2_lifetime *q2_lifetimes;
+    size_t q2_lifetime_capacity;
     uint8_t *message;
     size_t message_size, message_capacity;
     bool message_failed;

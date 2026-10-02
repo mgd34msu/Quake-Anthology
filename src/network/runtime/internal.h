@@ -45,6 +45,25 @@ bool qa_network_nq_restore_peer(qa_network_runtime *, const qa_net_client *, qa_
 void qa_network_nq_transport_rebind(qa_network_peer *, qa_net_transport *);
 bool qa_network_qw_peer(const qa_network_peer *);
 bool qa_network_qw_peer_matches(const qa_network_peer *, const qa_net_datagram *);
+struct qa_network_q1_client_policy;
+struct qa_network_q1_client_hooks;
+bool qa_network_q1_client_peer(const qa_network_peer *);
+bool qa_network_q1_client_checkpoint_peer(const qa_network_peer *,qa_buffer *,qa_error *);
+bool qa_network_q1_client_restore_peer(qa_network_runtime *,const qa_net_client *,qa_bytes,
+    const struct qa_network_q1_client_policy *,const struct qa_network_q1_client_hooks *,
+    qa_network_peer *,qa_error *);
+void qa_network_q1_client_transport_rebind(qa_network_peer *,qa_net_transport *);
+bool qa_network_q2_peer(const qa_network_peer *);
+bool qa_network_q2_peer_matches(const qa_network_peer *, const qa_net_datagram *);
+bool qa_unified_session_peer(const qa_network_peer *);
+bool qa_unified_session_peer_matches(const qa_network_peer *, const qa_net_datagram *);
+bool qa_unified_session_peer_checkpoint(const qa_network_peer *, qa_buffer *, qa_error *);
+bool qa_unified_session_attachment(const qa_network_runtime *, const qa_network_peer_ops *, const void *, const qa_net_connect *);
+bool qa_unified_session_token_conflict(const void *, const qa_network_peer *);
+bool qa_unified_session_peer_tokens_equal(const qa_network_peer *, const qa_network_peer *);
+bool qa_unified_session_peer_source_ready(const qa_network_peer *,qa_error *);
+void qa_unified_session_peer_source_publish(qa_network_peer *);
+void qa_unified_session_peer_source_retire(qa_network_peer *);
 bool qa_network_qw_checkpoint_peer(const qa_network_peer *, qa_buffer *, qa_error *);
 bool qa_network_qw_restore_peer(qa_network_runtime *, const qa_net_client *, qa_bytes,
     const struct qa_network_checkpoint_refs *, qa_network_peer *, qa_error *);

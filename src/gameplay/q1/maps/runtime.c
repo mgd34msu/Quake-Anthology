@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "qa/game_q1_checkpoint.h"
+#include "../wire_internal.h"
 #include <errno.h>
 #include <limits.h>
 
@@ -81,6 +82,7 @@ bool qa_q1_game_begin_map(qa_q1_game *g, const qa_q1_map_options *options, qa_er
         if (g->actors[slot] || g->players[slot])
             return q1_map_fail(error, "Q1 map reset requires completed actor release callbacks");
 
+    q1_wire_map_reset(g);
     qa_q1_map_options replacement = *options;
     q1_map_state *states = g->maps->allocated;
     q1_rotate_target *rotated = g->maps->rotated_targets;
@@ -117,6 +119,7 @@ bool qa_q1_game_begin_map(qa_q1_game *g, const qa_q1_map_options *options, qa_er
         snapshot->count = snapshot->shared.count = 0;
     g->total_monsters = g->killed_monsters = g->hellknight_melee = 0;
     g->authored_gremlins = g->spawned_gremlins = 0;
+    g->source_captures[0] = g->source_captures[1] = 0;
     g->sight_actor = g->horn_charmer = (qa_actor_id){0};
     g->rogue_runes_world = (qa_actor_id){0};
     g->rogue_runes_started = false;
@@ -164,6 +167,88 @@ static bool target_field(void *context, qa_actor_id actor, const char *key, qa_t
     q1_actor *entity = q1_entity(g, actor);
     if (!entity)
         return false;
+    if (entity->kind == Q1_ROGUE_TEAM_STATE) {
+        static const char *const names[QA_Q1_ROGUE_FIELDS] = {
+            "steam", "ctf_flags", "ctf_killed", "suicide_count", "ctf_lasthurtcarrier",
+            "ctf_lastfraggedcarrier", "ctf_lastreturnedflag", "ctf_flagsince", "fly_sound"};
+        for (size_t i = 0; i < QA_Q1_ROGUE_FIELDS; ++i)
+            if (!strcmp(key, names[i])) {
+                *out = (qa_target_field){.kind = QA_TARGET_FIELD_TEXT,
+                    .value.text = entity->state.rogue_fields[i]};
+                return true;
+            }
+    }
+    if (g->maps && qa_actor_id_equal(actor, g->maps->world_actor) &&
+        !strcmp(key, "rogue:nextteamupdtime")) {
+        *out = (qa_target_field){.kind = QA_TARGET_FIELD_TEXT,
+            .value.text = entity->rogue_next_update};
+        return true;
+    }
+    if (g->maps && g->options.program == QA_Q1_CTF &&
+        qa_actor_id_equal(actor, g->maps->world_actor) &&
+        (!strcmp(key, "ctf.lastCapture") || !strcmp(key, "ctf.lastCaptureTeam"))) {
+        *out = (qa_target_field){.kind = QA_TARGET_FIELD_TEXT,
+            .value.text = !strcmp(key, "ctf.lastCapture") ?
+                entity->ctf_last_capture : entity->ctf_last_capture_team};
+        return true;
+    }
+    if (entity->kind == Q1_SOURCE_CTF_FLAG) {
+        if (!strcmp(key, "ctf.return")) {
+            *out = (qa_target_field){.kind = QA_TARGET_FIELD_TEXT,
+                .value.text = entity->state.source_flag.return_word};
+            return true;
+        }
+        if (!strcmp(key, "ctf.base")) {
+            *out = (qa_target_field){.kind = QA_TARGET_FIELD_VECTOR,
+                .value.vector = entity->state.source_flag.base};
+            return true;
+        }
+        if (!strcmp(key, "mangle")) {
+            *out = (qa_target_field){.kind = QA_TARGET_FIELD_VECTOR,
+                .value.vector = entity->state.source_flag.angles};
+            return true;
+        }
+    }
+    if (entity->kind == Q1_SOURCE_ROGUE_TAG &&
+        (!strcmp(key, "tag_frags") || !strcmp(key, "tag_message_time"))) {
+        *out = (qa_target_field){.kind = QA_TARGET_FIELD_TEXT,
+            .value.text = !strcmp(key, "tag_frags") ? entity->state.source_tag.frags :
+                entity->state.source_tag.message_time};
+        return true;
+    }
+    if (entity->kind == Q1_SOURCE_ROGUE_RUNE && !strcmp(key, "rune")) {
+        *out = (qa_target_field){.kind = QA_TARGET_FIELD_TEXT, .value.text = entity->state.rogue_rune};
+        return true;
+    }
+    if (g->maps && qa_actor_id_equal(actor, g->maps->world_actor) && !strcmp(key, "rogue:runes_spawned")) {
+        *out = (qa_target_field){.kind = QA_TARGET_FIELD_TEXT, .value.text = entity->rogue_runes_spawned};
+        return true;
+    }
+    if (entity->kind == Q1_SOURCE_ROGUE_FLAG || entity->kind == Q1_SOURCE_ROGUE_FLAG_BASE) {
+        const char *const names[] = {"team", "cnt", "super_time"};
+        for (size_t i = 0; i < 3; ++i) if (!strcmp(key, names[i])) {
+            *out = (qa_target_field){.kind = QA_TARGET_FIELD_TEXT,
+                .value.text = entity->state.rogue_flag.words[i]};
+            return true;
+        }
+        if (!strcmp(key, "oldorigin") || !strcmp(key, "mangle")) {
+            *out = (qa_target_field){.kind = QA_TARGET_FIELD_VECTOR,
+                .value.vector = !strcmp(key, "oldorigin") ? entity->state.rogue_flag.origin :
+                    entity->state.rogue_flag.angles};
+            return true;
+        }
+    }
+    if (entity->kind == Q1_SOURCE_CTF_RUNE && !strcmp(key, "ctf.rune")) {
+        *out = (qa_target_field){.kind = QA_TARGET_FIELD_TEXT,
+            .value.text = entity->state.source_rune.rune};
+        return true;
+    }
+    if (g->maps && g->options.program == QA_Q1_CTF &&
+        qa_actor_id_equal(actor, g->maps->world_actor) && !strcmp(key, "ctf.runesSpawned")) {
+        *out = (qa_target_field){.kind = QA_TARGET_FIELD_TEXT,
+            .value.text = entity->ctf_runes_spawned};
+        return true;
+    }
     if (entity->map && q1_map_is_fog(entity->map->kind)) {
         if (!strcmp(key, "fog_density")) {
             *out = (qa_target_field){.kind = QA_TARGET_FIELD_NUMBER,
@@ -445,6 +530,8 @@ q1_map_state *q1_map_allocate(qa_q1_game *g, q1_actor *entity, qa_error *error) 
         g->maps->allocated = state;
     }
     entity->map = state;
+    state->netname = entity->source_netname;
+    entity->source_netname = 0;
     return state;
 }
 void q1_map_actor_released(qa_q1_game *g, q1_actor *entity) {
@@ -886,6 +973,30 @@ static q1_map_kind classify(const char *name) {
 bool q1_map_spawn(qa_q1_game *g, q1_actor *entity, const qa_q1_spawn *spawn, bool *handled,
                   qa_error *error) {
     q1_map_kind kind = classify(spawn->classname);
+    if (g->options.program == QA_Q1_ROGUE) {
+        bool wall = !strcmp(spawn->classname, "func_ctf_wall");
+        bool teleport = !strcmp(spawn->classname, "trigger_teleport") && (spawn->spawnflags & 4u);
+        if (!strcmp(spawn->classname, "info_player_team1") ||
+            !strcmp(spawn->classname, "info_player_team2")) kind = Q1_MAP_POINT;
+        if (wall || teleport) {
+            qa_actor_id actor = entity->id;
+            qa_string_id name;
+            float mode;
+            if (!g->services.cvar || !qa_builtin_resource(&g->services, "teamplay", &name, error) ||
+                !g->services.cvar(q1_cvar_context(g), name, &mode, error)) {
+                if (!error || error->code == QA_OK)
+                    q1_map_fail(error, "Rogue authored constructor lost its actual source teamplay");
+                return false;
+            }
+            if (!q1_alive(g, actor) || q1_entity(g, actor) != entity)
+                return q1_map_fail(error, "Rogue authored constructor retired during its source policy read");
+            if (mode != 4 && mode != 5 && mode != 6) {
+                *handled = true;
+                return q1_remove(g, entity, error);
+            }
+            if (wall) kind = Q1_MAP_WALL;
+        }
+    }
     if (g->options.program == QA_Q1_CTF) {
         static const char *removed[] = {
             "monster_army", "monster_dog", "monster_ogre", "monster_ogre_marksman",
@@ -1073,6 +1184,8 @@ bool q1_map_spawn(qa_q1_game *g, q1_actor *entity, const qa_q1_spawn *spawn, boo
         state->use_enabled = !q1_classnamed(g, entity->id, "func_ctf_wall");
         break;
     case Q1_MAP_POINT:
+        if (q1_classnamed(g, entity->id, "info_player_deathmatch") &&
+            !q1_source_runes_start(g, error)) return false;
         break;
     case Q1_MAP_DESTINATION:
         if (!q1_map_text(g, entity->targetname))

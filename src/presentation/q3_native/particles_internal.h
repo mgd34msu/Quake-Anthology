@@ -16,6 +16,7 @@ typedef struct q3n_particle {
 struct q3n_particles {
     qa_q3_presentation_assets *assets;
     qa_q3_product product;
+    q3n_remote_source *remote_source;
     q3n_particle slots[Q3N_PARTICLE_CAPACITY];
     int32_t shaders[Q3N_PARTICLE_FRAMES];
     int32_t active, free;

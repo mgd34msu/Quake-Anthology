@@ -294,6 +294,24 @@ bool q2_map_event(qa_q2_game *g, const qa_q2_map_event *event, qa_error *e) {
         qa_error_set(e, QA_ERROR_UNSUPPORTED, 0, "Q2 map event service is not installed");
         return false;
     }
+    if (event->kind == QA_Q2_MAP_LIGHTSTYLE) {
+        uint32_t maximum = 256;
+        if (event->style < 0 || (uint32_t)event->style >= maximum ||
+            !qa_strings_cstr(qa_session_strings(g->services.session), event->text)) {
+            qa_error_set(e, QA_ERROR_FORMAT, 0, "Q2 lightstyle emission leaves its actual Source table");
+            return false;
+        }
+        g->wire_lightstyles[event->style] = event->text;
+    } else if (event->kind == QA_Q2_MAP_MUSIC) {
+        qa_string_id music = event->resource ? event->resource : event->text;
+        if (music && !qa_strings_cstr(qa_session_strings(g->services.session), music)) {
+            qa_error_set(e, QA_ERROR_FORMAT, 0, "Q2 music emission lost its actual Source string");
+            return false;
+        }
+        g->wire_music = music; g->wire_music_present = true;
+    } else if (event->kind == QA_Q2_MAP_DYNAMIC_LIGHT && !q2_wire_shadow_event(g, event, e)) {
+        return false;
+    }
     return s->event(s->context, event, e);
 }
 bool q2_entity_show(qa_q2_game *g, q2_actor *a, qa_error *e) {

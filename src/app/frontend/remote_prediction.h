@@ -18,6 +18,9 @@ typedef struct frontend_remote_prediction_source {
     const qa_collision_geometry *geometry;
     qa_q3_prediction_scene_view scene;
     frontend_remote_prediction_settings settings;
+    /* The actual CG cache service owns this prediction-field projection.
+     * source_current qualifies these values independently of other Draw writes. */
+    const void *settings_owner;
     int32_t previous_presentation_time;
     uint64_t receipt_time_ns;
     bool has_acknowledged_sequence, history_unavailable;
@@ -26,6 +29,15 @@ typedef struct frontend_remote_prediction_source {
      * independent of launch configuration and physical connection epochs. */
     uint64_t restart_generation;
 } frontend_remote_prediction_source;
+typedef struct frontend_remote_prediction_cgame_seed {
+    const void *owner;
+    void *context;
+    uint64_t scope;
+    const qa_q3_snapshot *snapshot, *next_snapshot;
+    bool this_frame_teleport, next_frame_teleport;
+    bool (*current)(void *, const frontend_remote_prediction_source *,
+        const struct frontend_remote_prediction_cgame_seed *);
+} frontend_remote_prediction_cgame_seed;
 typedef struct frontend_remote_prediction_options {
     qa_session *session;
     qa_application_control_prediction_configuration initial_configuration;
@@ -88,6 +100,7 @@ typedef struct frontend_remote_prediction_view {
 bool frontend_remote_prediction_create(const frontend_remote_prediction_options *,
     frontend_remote_prediction **, qa_error *);
 void frontend_remote_prediction_destroy(frontend_remote_prediction *);
+bool frontend_remote_prediction_initialized(const frontend_remote_prediction *);
 /* Only actual network clear-active/map_restart producers reset this owner. */
 void frontend_remote_prediction_clear(frontend_remote_prediction *);
 /* The real initial zero usercmd is appended before any physical receipt.
@@ -103,6 +116,13 @@ bool frontend_remote_prediction_submit(frontend_remote_prediction *,
  * collision queries. No source program, body write or GAME frame is invoked. */
 bool frontend_remote_prediction_replay(frontend_remote_prediction *,
     frontend_remote_prediction_view *, bool *present, qa_error *);
+/* The entered CGAME owner supplies its actual retail snapshots after their BG
+ * conversion. The loan and source receipt must remain current through replay. */
+bool frontend_remote_prediction_replay_seed(frontend_remote_prediction *,
+    const frontend_remote_prediction_cgame_seed *, frontend_remote_prediction_view *,
+    bool *present, qa_error *);
+bool frontend_remote_prediction_source_read(const frontend_remote_prediction *,
+    frontend_remote_prediction_source *, bool *present, qa_error *);
 bool frontend_remote_prediction_read(const frontend_remote_prediction *, const frontend_remote_prediction_source *,
     frontend_remote_prediction_view *);
 /* Feedback from the real CGAME presentation owner requires the same completed

@@ -4,6 +4,8 @@
 #include "model_inventory.h"
 #include "world_inventory.h"
 #include "qa/audio_bank_graph_save.h"
+#include "remote_q3_modules.h"
+#include "qa/q3_presentation_media_save.h"
 
 typedef struct frontend_q3_inventory frontend_q3_inventory;
 typedef struct frontend_q3_refs {
@@ -20,6 +22,13 @@ typedef struct frontend_q3_refs {
  * The actual physical aliases and frontend/content/root
  * capture leases remain held through this call and all resolver callbacks. */
 bool frontend_q3_checkpoint(qa_frontend *, const frontend_q3_refs *, qa_buffer *, qa_error *);
+/* Retain the actual captured owner/cache roster for role-owned private codecs.
+ * This borrows the same frontend/content/dictionary leases as checkpoint. */
+bool frontend_q3_inventory_capture(qa_frontend *,const frontend_q3_refs *,frontend_q3_inventory **,qa_error *);
+/* Call before entering a role codec. The returned cache resolver context is
+ * inventory-owned; SystemCIN resolves the actual wrapper's retained role lease. */
+bool frontend_q3_module_movie_refs(frontend_q3_inventory *,const frontend_remote_q3_module_topology *,
+    qa_q3_movie_checkpoint_refs *,qa_error *);
 /* Validate the entire envelope before importing source media-cache prefixes.
  * Stable empty source heaps, restored images and the shared content namespace
  * precede preparation. Input bytes and every referenced owner remain borrowed

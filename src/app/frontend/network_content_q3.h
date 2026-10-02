@@ -53,6 +53,15 @@ typedef struct frontend_q3_content_view {
     bool pure;
 } frontend_q3_content_view;
 
+/* Borrowed owner metadata for resource inventory. The caller supplies the
+ * inventory fence and qualifies the actual application/source/transport cut.
+ * This view proves no currentness, successful Init or media readiness. */
+typedef struct frontend_q3_content_metadata {
+    frontend_q3_content_view content;
+    qa_application *application;
+    qa_application_q3_remote_source source;
+} frontend_q3_content_metadata;
+
 /* Publication is produced by the actual application private client factory.
  * It replaces the receiver descriptor and service lifetime without replacing
  * the channel, connection epoch, foreign providers or shared world. Its real
@@ -100,6 +109,10 @@ bool frontend_q3_content_create(const frontend_q3_content_request *,
 void frontend_q3_content_destroy(frontend_q3_content *);
 frontend_q3_content_phase frontend_q3_content_state(const frontend_q3_content *);
 bool frontend_q3_content_read(const frontend_q3_content *, frontend_q3_content_view *, qa_error *);
+/* No callbacks, allocation or I/O. Borrows live owner cells until that owner
+ * changes or is destroyed; pending staged imports remain private. */
+bool frontend_q3_content_metadata_read(const frontend_q3_content *,
+    frontend_q3_content_metadata *, qa_error *);
 /* Downloads precede this operation. A new gamestate gets a fresh owner even
  * when map, fs_game and checksum feed compare equal to the previous state. */
 bool frontend_q3_content_prepare(frontend_q3_content *, qa_error *);

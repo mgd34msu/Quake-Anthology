@@ -6,6 +6,28 @@
 #include "qa/q3_host.h"
 
 typedef struct qa_native_q3_remote_client_service qa_native_q3_remote_client_service;
+typedef struct qa_native_q3_remote_client_transport qa_native_q3_remote_client_transport;
+/* A real physical CLIENT transport can forward before decoded gamestate and
+ * CGAME services exist. Its owner survives checked release independently of
+ * connection liveness. */
+typedef struct qa_native_q3_remote_transport_services {
+    qa_application_q3_remote_source source;
+    void *context;
+    bool (*current)(void *, const qa_application_q3_remote_source *);
+    bool (*idle)(void *);
+    uint32_t (*milliseconds)(void *);
+    bool (*forward)(void *, const qa_command_invocation *, qa_error *);
+    bool (*release)(void *, qa_error *);
+} qa_native_q3_remote_transport_services;
+bool qa_native_q3_remote_client_transport_create(qa_application *, qa_native_q3_remote_transport_services *,
+    qa_native_q3_remote_client_transport **, qa_error *);
+bool qa_native_q3_remote_client_transport_current(const qa_native_q3_remote_client_transport *);
+bool qa_native_q3_remote_client_transport_idle(const qa_native_q3_remote_client_transport *);
+bool qa_native_q3_remote_client_transport_forward(qa_native_q3_remote_client_transport *,
+    const qa_command_invocation *, qa_error *);
+bool qa_native_q3_remote_client_transport_milliseconds(qa_native_q3_remote_client_transport *,
+    const qa_command_invocation *, int32_t *, qa_error *);
+bool qa_native_q3_remote_client_transport_destroy(qa_native_q3_remote_client_transport **, qa_error *);
 /* This basis is the received CLIENT domain. It contains no local GAME or
  * GAME wire reader. The frontend retains its private content/map and Network
  * qualifies the actual connection generation and decoded gamestate. */
@@ -34,8 +56,11 @@ typedef struct qa_native_q3_remote_client_services {
     void *context;
     bool (*current)(void *, const qa_native_q3_remote_client_basis *);
     bool (*idle)(void *);
+    uint32_t (*milliseconds)(void *);
     bool (*reliable)(void *, const qa_command_context *, const char *, qa_error *);
     bool (*console)(void *, const qa_command_context *, const char *, qa_error *);
+    qa_command_result (*console_command)(void *, const qa_command_invocation *, qa_error *);
+    bool (*forward)(void *, const qa_command_invocation *, qa_error *);
     bool (*reload_client_info)(void *, uint32_t, const char *, qa_error *);
     bool (*status_visible)(void *);
     /* Failure retains the actual owner and permits checked cleanup retry. */
@@ -93,6 +118,14 @@ bool qa_native_q3_remote_client_local_server_read(const qa_native_q3_remote_clie
     int32_t *, qa_error *);
 bool qa_native_q3_remote_client_reliable(qa_native_q3_remote_client_service *, const char *, qa_error *);
 bool qa_native_q3_remote_client_console(qa_native_q3_remote_client_service *, const char *, qa_error *);
+/* Executed physical console invocations keep their captured source origin.
+ * Forwarding policy belongs to the actual Network connection owner. */
+qa_command_result qa_native_q3_remote_client_command(qa_native_q3_remote_client_service *,
+    const qa_command_invocation *, qa_error *);
+bool qa_native_q3_remote_client_forward(qa_native_q3_remote_client_service *,
+    const qa_command_invocation *, qa_error *);
+bool qa_native_q3_remote_client_milliseconds(qa_native_q3_remote_client_service *,
+    const qa_command_invocation *, int32_t *, qa_error *);
 bool qa_native_q3_remote_client_command_values(qa_native_q3_remote_client_service *, int32_t, float, qa_error *);
 bool qa_native_q3_remote_client_set_timescale(qa_native_q3_remote_client_service *, float, qa_error *);
 bool qa_native_q3_remote_client_set_view_size(qa_native_q3_remote_client_service *, int32_t, qa_error *);

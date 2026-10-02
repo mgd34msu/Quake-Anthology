@@ -25,6 +25,9 @@ bool qa_console_release_parent_ready(const qa_console_release *,const qa_console
  * commands keep the normal consumed-command outcome and are never replayed. */
 bool qa_console_release_advance(qa_console_release *, qa_console_release_outcome *, qa_error *);
 bool qa_console_release_ready(const qa_console_release *, const qa_console *, qa_error *);
+/* Pure completed programme/physical lease proof. Source-context currentness
+ * remains a separate admission performed by ready; no callback runs here. */
+bool qa_console_release_completed_is(const qa_console_release *,const qa_console *);
 /* True only inside the actual retained program's command callback. */
 bool qa_console_release_active(const qa_console_release *);
 /* Exact synchronous dispatch capability, including pre-tokenization macro

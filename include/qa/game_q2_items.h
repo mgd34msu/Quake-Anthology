@@ -68,7 +68,7 @@ typedef struct qa_q2_item_options {
     bool instanced_coop, random_items, no_mines, no_nukes, no_spheres, hunter_camera;
     float weapon_respawn_seconds;
     void *context;
-    qa_supply *(*supply_for)(void *, qa_actor_id);
+    bool (*supply_for)(void *, qa_actor_id, qa_supply **, qa_error *);
     bool (*player_slot)(void *, qa_actor_id, uint32_t *slot);
     bool (*visibility)(void *, qa_actor_id player, qa_actor_id pickup, bool visible, qa_error *);
     bool (*intermission)(void *);

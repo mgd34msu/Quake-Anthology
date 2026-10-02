@@ -1,6 +1,8 @@
 #ifndef QA_CPU_INTERNAL_H
 #define QA_CPU_INTERNAL_H
 #include "qa/render_cpu.h"
+#include "../controls_private.h"
+#include "../output_domain.h"
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -22,16 +24,20 @@ typedef struct cpu_vertex {
 } cpu_vertex;
 struct qa_cpu_renderer {
   qa_cpu_options options;
+  qa_render_controls controls;
+  qa_output_domains output_domains;
   cpu_framebuffer display, opacity;
   cpu_framebuffer *current, *opacity_parent;
   cpu_target *targets;
   qa_scene_view view;
+  bool depth_write, color_write;
+  float clear_depth;
   qa_scene_rect opacity_viewport;
   bool opacity_active, opacity_skip, gamma_enabled, overdraw;
   bool executing, presenting, capturing;
   qa_cpu_surface_ticket *surface_ticket;
   bool destroy_pending;
-  float opacity_value;
+  float opacity_value, gamma_value;
   uint32_t stencil_maximum;
   uint8_t gamma[256], *output;
   struct cpu_vertex *vertices;

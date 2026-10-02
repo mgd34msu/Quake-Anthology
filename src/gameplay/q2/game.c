@@ -69,8 +69,14 @@ q2_actor *q2_actor_get(qa_q2_game *g, qa_actor_id id, bool create, qa_error *e) 
                 return NULL;
             }
         }
+        if (!q2_wire_admit(g, a, id, e)) {
+            if (new_storage) free(a);
+            else { a->free_next = g->spare_actors; g->spare_actors = a; }
+            return NULL;
+        }
         q2_actor_publish_prepared(g, a, id, new_storage);
     }
+    if (create && !q2_wire_admit(g, a, id, e)) return NULL;
     return a;
 }
 void q2_actor_order(qa_q2_game *g, q2_actor *a, uint64_t order) {
@@ -122,6 +128,7 @@ bool qa_q2_actor_released(qa_q2_game *g, qa_actor_record record, qa_error *e) {
     if (g != NULL && record.id.slot < g->capacity && g->actors[record.id.slot] != NULL &&
         qa_actor_id_equal(g->actors[record.id.slot]->id, record.id)) {
         q2_actor *a = g->actors[record.id.slot];
+        q2_wire_release(g, a);
         q2_entity_unbind(g, a);
         g->actors[record.id.slot] = NULL;
         if (a->live_previous != NULL)
@@ -165,6 +172,17 @@ static void released(void *context, qa_session *session, qa_actor_record record)
         g->release_error = error;
     }
 }
+static bool prepare_frame(void *context, qa_session *session, const qa_source_frame *frame,
+                          qa_error *e) {
+    qa_q2_game *g = context;
+    if (session != g->services.session || g->current_actor.registry ||
+        frame->kind != qa_q2_component(g).clock.kind) {
+        qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Q2 command preparation lost its real Source clock");
+        return false;
+    }
+    g->now_ns = frame->time_ns; g->wire_frame = frame->number; g->frame_ns = frame->elapsed_ns;
+    return true;
+}
 static bool begin_frame(void *context, qa_session *session, const qa_source_frame *frame,
                         qa_error *e) {
     (void)session;
@@ -188,6 +206,7 @@ static bool begin_frame(void *context, qa_session *session, const qa_source_fram
         g->spare_actors = a;
     }
     g->now_ns = frame->time_ns;
+    g->wire_frame = frame->number;
     g->frame_ns = frame->elapsed_ns;
     q2_player_feedback_begin(g);
     return q2_player_frame_begin(g, e);
@@ -270,6 +289,8 @@ static void close_game(void *context) {
     q2_players_close(g);
     q2_items_close(g);
     free(g->actors);
+    free(g->wire_actors);
+    free(g->wire_freed_ns);
     free(g);
 }
 bool qa_q2_create(const qa_builtin_services *services, const qa_q2_options *options,
@@ -313,15 +334,31 @@ bool qa_q2_create(const qa_builtin_services *services, const qa_q2_options *opti
         close_game(g);
         return false;
     }
+    if (!qa_q2_wire_configure(g, 1024, 1, e)) {
+        close_game(g);
+        return false;
+    }
     *out = g;
     return true;
+}
+static bool command_actor(void *context, qa_session *session, qa_actor_id id) {
+    qa_q2_game *g = context;
+    const q2_actor *a = g && id.slot < g->capacity ? g->actors[id.slot] : NULL;
+    return g && session == g->services.session &&
+        qa_actors_get(qa_session_actors(session), id) && a && qa_actor_id_equal(a->id, id) &&
+        a->client && a->client->info.connected && a->wire_bound &&
+        a->wire_slot && a->wire_slot <= g->wire_clients && a->wire_slot < g->wire_extent &&
+        a->wire_slot == a->client->info.slot + 1 &&
+        qa_actor_id_equal(g->wire_actors[a->wire_slot], id);
 }
 qa_component qa_q2_component(qa_q2_game *g) {
     qa_component component = {.owner = g->options.owner,
                               .state = g,
+                              .prepare_frame = prepare_frame,
                               .begin_frame = begin_frame,
                               .end_frame = end_frame,
                               .actor_frame = actor_frame,
+                              .command_actor = command_actor,
                               .actor_released = released};
     component.clock = qa_clock_defaults(g->options.edition == QA_Q2_CLASSIC
                                             ? QA_CLOCK_Q2_CLASSIC

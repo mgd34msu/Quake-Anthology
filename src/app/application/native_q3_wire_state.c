@@ -2,12 +2,15 @@
 #include "native_q3_console.h"
 #include "native_q3_clients.h"
 #include "native_q3_wire.h"
+#include "map_players_private.h"
 #include "qa/game_q3_source.h"
 #include "qa/game_q3_clients.h"
 #include "qa/game_q3_configstrings.h"
 #include "qa/q3_abi.h"
 #include "qa/source_save.h"
 #include "qa/application_native_q3_wire.h"
+#include "qa/application_startup_prepare.h"
+#include "unified_q3_events.h"
 
 #include <limits.h>
 #include <math.h>
@@ -495,6 +498,9 @@ bool application_native_q3_wire_drop(application_provider *provider, uint32_t sl
     if (client->drop_pending) return true;
     char *copy = copy_text(reason, error);
     if (!copy) return false;
+    if (!application_unified_q3_text(provider, APPLICATION_Q3_SOURCE_DROP, (int32_t)slot, copy, error)) {
+        free(copy); return false;
+    }
     client->drop_reason = copy;
     client->drop_pending = true;
     return true;
@@ -888,7 +894,7 @@ bool application_native_q3_wire_map_finish(application_provider *provider, qa_er
     return application_native_q3_wire_carry_finish(provider, error);
 }
 
-bool application_native_q3_send_command(application_provider *provider, int32_t slot,
+static bool send_command_transport(application_provider *provider, int32_t slot,
     const char *text, qa_error *error)
 {
     struct application_native_q3_wire *wire = wire_owner(provider, error);
@@ -975,6 +981,15 @@ bool application_native_q3_send_command(application_provider *provider, int32_t 
     return ok;
 }
 
+bool application_native_q3_send_command(application_provider *provider, int32_t slot,
+    const char *text, qa_error *error)
+{
+    if (!text || slot < -1 || slot >= (int32_t)QA_Q3_SOURCE_CLIENTS || strlen(text) >= QA_Q3_COMMAND_CHARS)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q3 Source command has no authored client or text");
+    return application_unified_q3_text(provider, APPLICATION_Q3_SOURCE_COMMAND, slot, text, error) &&
+        send_command_transport(provider, slot, text, error);
+}
+
 bool application_native_q3_server_command(void *context, int32_t slot,
     const char *text, qa_error *error)
 {
@@ -1009,8 +1024,9 @@ bool application_native_q3_configstring_changed(void *context, uint32_t index,
     if (!retained) return false;
     size_t length = strlen(retained), chunk = QA_Q3_COMMAND_CHARS - 25;
     char command[QA_Q3_COMMAND_CHARS];
-    bool ok = true;
+    bool ok = application_unified_q3_configstring(provider, index, retained, error);
     size_t offset = 0;
+    if (!ok) { free(retained); return false; }
     do {
         const char *current;
         uint64_t actual;
@@ -1033,7 +1049,7 @@ bool application_native_q3_configstring_changed(void *context, uint32_t index,
         const char *name = length <= chunk ? "cs" : !offset ? "bcs0" :
             offset + bytes == length ? "bcs2" : "bcs1";
         snprintf(command, sizeof(command), "%s %u \"%.*s\"", name, index, (int)bytes, retained + offset);
-        ok = application_native_q3_send_command(provider, -1, command, error);
+        ok = send_command_transport(provider, -1, command, error);
         if (!ok) break;
         if (wire_owner(provider, error) != wire || provider->state.q3 != game ||
             !qa_q3_configstring_revision(game, index, &actual, error) ||
@@ -1080,6 +1096,20 @@ bool application_native_q3_bot_console(application_provider *provider, qa_actor_
     return true;
 }
 
+static bool installed_builtin_source(application_provider *provider)
+{
+    qa_application *app = provider->application;
+    const qa_launch_snapshot *candidate = qa_application_launch(app);
+    if (app->operation != APPLICATION_CONFIGURING ||
+        !qa_application_startup_publication_cleanup(app, candidate))
+        return provider == application_world_provider(app, QA_ROLE_ENTITIES, "");
+    const qa_launch_snapshot *previous = qa_application_startup_publication_previous(app, candidate);
+    const qa_launch_binding *binding = qa_launch_binding_for(qa_launch_snapshot_choices(previous),
+        (qa_launch_scope){.kind = QA_SCOPE_WORLD}, QA_ROLE_ENTITIES, "");
+    return app->players && app->players->map_provider == provider && binding &&
+        provider->launch && !strcmp(binding->instance, provider->launch->selection.instance);
+}
+
 static native_q3_wire_client *leased_client(application_native_q3_wire_client_lease *lease,
     qa_error *error)
 {
@@ -1102,7 +1132,7 @@ static native_q3_wire_client *leased_client(application_native_q3_wire_client_le
         qa_q3_source_binding binding;
         qa_q3_native_client source;
         if (!provider->constructed || !provider->attached || !provider->map_bound ||
-            provider != application_world_provider(app, QA_ROLE_ENTITIES, "") ||
+            !installed_builtin_source(provider) ||
             provider->state.q3 != lease->game ||
             application_native_q3_console_registry(provider) != lease->registry ||
             app->publication_generation != lease->publication_generation ||

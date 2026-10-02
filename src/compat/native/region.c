@@ -67,7 +67,9 @@ bool qa_native_bind_region(qa_native_instance *instance, uint32_t region_id,
     if (!instance || !callback || !out || region_id >= instance->region_count)
         return native_fail(error, QA_ERROR_ARGUMENT, region_id,
                            "native region, callback and output are required");
-    if (instance->backend != QA_NATIVE_BACKEND_RUNNER)
+    if (instance->backend != QA_NATIVE_BACKEND_RUNNER &&
+        !(instance->backend == QA_NATIVE_BACKEND_OWNED_PROCESS && instance->guest &&
+          qa_native_guest_execution(instance->guest) == QA_NATIVE_GUEST_EMULATED))
         return native_fail(error, QA_ERROR_UNSUPPORTED, region_id,
                            "inline native regions require the instrumented runner backend");
     if (instance->active_depth || instance->callback_depth || instance->checkpointing ||
@@ -89,6 +91,47 @@ bool qa_native_bind_region(qa_native_instance *instance, uint32_t region_id,
         region->first = binding;
     region->last = binding;
     *out = binding;
+    return true;
+}
+
+bool native_process_region_instruction(void *context, qa_native_guest *guest,
+    uint64_t instruction, qa_error *error)
+{
+    qa_native_instance *instance = context;
+    if (!instance || guest != instance->guest)
+        return native_fail(error, QA_ERROR_ARGUMENT, instruction, "native region instruction lost its actual owner");
+    if (instruction < instance->image_base) return true;
+    uint64_t rva = instruction - instance->image_base;
+    for (size_t i = 0; i < instance->region_count; ++i) {
+        native_region_slot *slot = instance->regions + i;
+        if (!slot->first || (rva != slot->definition.entry_rva && rva != slot->definition.join_rva)) continue;
+        qa_native_guest_cpu actual;
+        if (!qa_native_guest_cpu_read(guest, &actual, error)) return false;
+        qa_native_region_event event = {.region = slot->definition,
+            .phase = rva == slot->definition.entry_rva ? QA_NATIVE_REGION_ENTER : QA_NATIVE_REGION_JOIN};
+        memcpy(event.state.registers, actual.registers, sizeof(event.state.registers));
+        memcpy(event.state.simd, actual.xmm, sizeof(event.state.simd));
+        event.state.flags = actual.flags; event.state.instruction = instruction;
+        qa_native_region_decision decision;
+        ++instance->region_depth;
+        bool okay = native_runner_region_event(instance, &event, &decision, error);
+        --instance->region_depth;
+        if (!okay) return false;
+        if (decision.action == QA_NATIVE_REGION_FAIL_INSTANCE)
+            return native_fail(error, QA_ERROR_ARGUMENT, instruction, "native region callback rejected the source continuation");
+        if (decision.replace_state) {
+            memcpy(actual.registers, decision.state.registers, sizeof(actual.registers));
+            memcpy(actual.xmm, decision.state.simd, sizeof(actual.xmm));
+            actual.flags = decision.state.flags;
+        }
+        if (decision.action == QA_NATIVE_REGION_SKIP_TO_JOIN)
+            actual.instruction = instance->image_base + slot->definition.join_rva;
+        else if (decision.action == QA_NATIVE_REGION_RETURN_TO_FRAME_EXIT)
+            actual.instruction = instance->image_base + slot->definition.frame_exit_rva;
+        if ((decision.replace_state || actual.instruction != instruction) &&
+            !qa_native_guest_cpu_write(guest, &actual, error)) return false;
+        if (actual.instruction != instruction) return true;
+    }
     return true;
 }
 

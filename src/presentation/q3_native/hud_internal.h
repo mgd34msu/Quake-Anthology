@@ -11,6 +11,8 @@ struct q3n_hud {
     q3n_hud_state state;
     int32_t previous_times[4], previous_milliseconds, fps_index, scores_request_time;
     int32_t frame_samples[128], frame_count, snapshot_samples[128], snapshot_flags[128], snapshot_count;
+    /* Explicit local GAME receipt. Remote draw reads its real Network ring
+     * through options.oldest_command without retaining a second sample. */
     int32_t oldest_command_time;
     bool has_oldest_command, busy;
 };

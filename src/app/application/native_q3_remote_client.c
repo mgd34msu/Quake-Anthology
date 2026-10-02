@@ -14,6 +14,120 @@ static application_provider *receiver(qa_application *app, qa_actor_owner owner)
         }
     return found;
 }
+struct qa_native_q3_remote_client_transport {
+    qa_application *application;
+    application_provider *provider;
+    qa_native_q3_remote_transport_services services;
+    qa_launch_instance_lease *descriptor;
+    size_t actions;
+    bool attached, retiring, released;
+};
+static bool transport_source(const qa_native_q3_remote_client_transport *transport,
+    qa_application_q3_remote_source *out)
+{
+    if (!transport || transport->retiring || !transport->attached || !out) return false;
+    const qa_application_q3_remote_source *held = &transport->services.source;
+    qa_application_q3_remote_source actual;
+    if (!application_native_q3_remote_role_transport_current(transport->provider, held->receiver.seat, transport) ||
+        !application_native_q3_remote_role_source_read(transport->provider, held->receiver.seat,
+            held->connection_epoch, &actual, NULL) || !qa_application_q3_remote_source_current(transport->application, &actual)) return false;
+    const qa_application_q3_client_context *a = &actual.receiver, *b = &held->receiver;
+    if (actual.descriptor->storage != held->descriptor->storage || actual.descriptor->content != held->descriptor->content ||
+        !qa_sha256_equal(&actual.descriptor->identity, &held->descriptor->identity) ||
+        actual.configuration_generation != held->configuration_generation || a->session != b->session ||
+        a->receiver != b->receiver || a->seat != b->seat || a->service_owner != b->service_owner ||
+        a->frontend_lifetime != b->frontend_lifetime || a->console != b->console || a->cvars != b->cvars ||
+        a->client_time_cvars != b->client_time_cvars || a->client_time_owner != b->client_time_owner ||
+        !transport->services.current(transport->services.context, &actual)) return false;
+    *out = actual; return true;
+}
+bool qa_native_q3_remote_client_transport_current(const qa_native_q3_remote_client_transport *transport)
+{ qa_application_q3_remote_source source; return transport_source(transport, &source); }
+bool qa_native_q3_remote_client_transport_idle(const qa_native_q3_remote_client_transport *transport)
+{
+    return transport && !transport->actions && (transport->released ||
+        transport->services.idle(transport->services.context));
+}
+bool qa_native_q3_remote_client_transport_create(qa_application *app, qa_native_q3_remote_transport_services *services,
+    qa_native_q3_remote_client_transport **out, qa_error *error)
+{
+    application_provider *provider = services ? receiver(app, services->source.receiver.receiver) : NULL;
+    if (!app || !services || !out || *out || !provider || !services->context || !services->current ||
+        !services->idle || !services->milliseconds || !services->forward || !services->release || !services->source.receiver.native_source ||
+        !qa_application_q3_remote_source_current(app, &services->source) ||
+        !services->current(services->context, &services->source))
+        return native_client_fail(error, QA_ERROR_ARGUMENT, "Remote forwarding requires its actual retained CLIENT transport");
+    qa_native_q3_remote_client_transport *transport = calloc(1, sizeof(*transport));
+    if (!transport) return native_client_fail(error, QA_ERROR_MEMORY, "Retaining remote CLIENT transport forwarding");
+    transport->application = app; transport->provider = provider; transport->services = *services;
+    if (!qa_launch_instance_retain_metadata(services->source.descriptor, &transport->descriptor, error)) {
+        free(transport); return false;
+    }
+    transport->services.source.descriptor = qa_launch_instance_lease_view(transport->descriptor);
+    if (!application_native_q3_remote_role_transport_attach(provider, &transport->services.source, transport, error)) {
+        qa_launch_instance_lease_release(transport->descriptor); free(transport); return false;
+    }
+    transport->attached = true; *services = (qa_native_q3_remote_transport_services){0}; *out = transport; return true;
+}
+static bool transport_invocation(qa_native_q3_remote_client_transport *transport,
+    const qa_command_invocation *call, qa_error *error)
+{
+    qa_application_q3_remote_source source; qa_command_context expected;
+    if (!call || !call->argc || !call->argv || !call->raw || !call->args_text ||
+        !transport_source(transport, &source) || call->console != source.receiver.console ||
+        !qa_application_capture_command_context(transport->application, &source.receiver.command_context, &expected, error))
+        return native_client_fail(error, QA_ERROR_ARGUMENT, "Remote forwarding lost its captured physical CLIENT invocation");
+    const qa_command_context *actual = &call->context;
+    return (actual->session == expected.session && actual->owner == expected.owner && actual->seat == expected.seat &&
+        actual->client == expected.client && actual->dialect == expected.dialect && actual->origin == expected.origin &&
+        actual->registry == expected.registry && actual->generation == expected.generation &&
+        qa_actor_id_equal(actual->actor, expected.actor) &&
+        qa_application_command_context_active(transport->application, actual)) ||
+        native_client_fail(error, QA_ERROR_ARGUMENT, "Remote forwarding changed its original CLIENT origin");
+}
+bool qa_native_q3_remote_client_transport_forward(qa_native_q3_remote_client_transport *transport,
+    const qa_command_invocation *call, qa_error *error)
+{
+    if (!transport_invocation(transport, call, error)) return false;
+    if (transport->actions == SIZE_MAX)
+        return native_client_fail(error, QA_ERROR_MEMORY, "Remote transport invocation borrow exceeds capacity");
+    ++transport->actions;
+    bool ok = transport->services.forward(transport->services.context, call, error);
+    --transport->actions; return ok && transport_invocation(transport, call, error);
+}
+bool qa_native_q3_remote_client_transport_milliseconds(qa_native_q3_remote_client_transport *transport,
+    const qa_command_invocation *call, int32_t *out, qa_error *error)
+{
+    if (!out) return native_client_fail(error, QA_ERROR_ARGUMENT, "Remote transport clock requires an output word");
+    if (!transport_invocation(transport, call, error)) return false;
+    if (transport->actions == SIZE_MAX)
+        return native_client_fail(error, QA_ERROR_MEMORY, "Remote transport clock borrow exceeds capacity");
+    ++transport->actions;
+    uint32_t word = transport->services.milliseconds(transport->services.context);
+    --transport->actions;
+    if (!transport_invocation(transport, call, error)) return false;
+    memcpy(out, &word, sizeof(word)); return true;
+}
+bool qa_native_q3_remote_client_transport_destroy(qa_native_q3_remote_client_transport **owned, qa_error *error)
+{
+    if (!owned || !*owned) return true;
+    qa_native_q3_remote_client_transport *transport = *owned;
+    if (!qa_native_q3_remote_client_transport_idle(transport) || (transport->attached &&
+        !application_native_q3_remote_role_transport_detach_ready(transport->provider,
+            transport->services.source.receiver.seat, transport, error)))
+        return native_client_fail(error, QA_ERROR_ARGUMENT, "Remote transport retirement retains a CLIENT invocation");
+    transport->retiring = true;
+    if (!transport->released) {
+        if (!transport->services.release(transport->services.context, error)) return false;
+        transport->released = true;
+    }
+    if (transport->attached) {
+        if (!application_native_q3_remote_role_transport_detach(transport->provider,
+            transport->services.source.receiver.seat, transport, error)) return false;
+        transport->attached = false;
+    }
+    qa_launch_instance_lease_release(transport->descriptor); free(transport); *owned = NULL; return true;
+}
 bool qa_native_q3_remote_client_publication_read(qa_application *app,
     const qa_application_q3_remote_source *source, uint64_t *out, qa_error *error)
 {
@@ -78,6 +192,7 @@ bool native_remote_client_allocate(qa_native_q3_remote_client_services *services
 {
     if (!services || !character || !out || *out || !services->input || !services->context ||
         !services->current || !services->idle || !services->release || !services->reliable || !services->console ||
+        !services->milliseconds || !services->console_command || !services->forward ||
         !services->reload_client_info || !services->network.gamestate || !services->network.current_snapshot ||
         !services->network.snapshot || !services->network.server_command || !services->network.current_command ||
         !services->network.user_command || !services->network.command_values || !services->network.source_actor ||
@@ -252,6 +367,61 @@ bool qa_native_q3_remote_client_reliable(qa_native_q3_remote_client_service *ser
 { return command(service, text, true, error); }
 bool qa_native_q3_remote_client_console(qa_native_q3_remote_client_service *service, const char *text, qa_error *error)
 { return command(service, text, false, error); }
+static bool invocation_current(qa_native_q3_remote_client_service *service,
+    const qa_command_invocation *call, qa_error *error)
+{
+    qa_command_context expected;
+    if (!call || !call->argc || !call->argv || !call->raw || !call->args_text ||
+        !qa_native_q3_remote_client_current(service) ||
+        call->console != service->services.basis.client.console ||
+        !qa_application_capture_command_context(service->services.basis.application,
+            &service->services.basis.client.command_context, &expected, error))
+        return native_client_fail(error, QA_ERROR_ARGUMENT, "Remote console lost its actual CLIENT invocation");
+    const qa_command_context *actual = &call->context;
+    if (actual->session != expected.session || actual->owner != expected.owner || actual->seat != expected.seat ||
+        actual->client != expected.client || actual->dialect != expected.dialect || actual->origin != expected.origin ||
+        actual->registry != expected.registry || actual->generation != expected.generation ||
+        !qa_actor_id_equal(actual->actor, expected.actor) ||
+        !qa_application_command_context_active(service->services.basis.application, actual))
+        return native_client_fail(error, QA_ERROR_ARGUMENT, "Remote console changed its captured CLIENT origin");
+    return true;
+}
+qa_command_result qa_native_q3_remote_client_command(qa_native_q3_remote_client_service *service,
+    const qa_command_invocation *call, qa_error *error)
+{
+    if (!invocation_current(service, call, error)) return QA_COMMAND_FAILED;
+    if (service->actions == SIZE_MAX) {
+        native_client_fail(error, QA_ERROR_MEMORY, "Remote CLIENT command borrow exceeds capacity");
+        return QA_COMMAND_FAILED;
+    }
+    ++service->actions;
+    qa_command_result result = service->services.console_command(service->services.context, call, error);
+    --service->actions;
+    return invocation_current(service, call, error) ? result : QA_COMMAND_FAILED;
+}
+bool qa_native_q3_remote_client_forward(qa_native_q3_remote_client_service *service,
+    const qa_command_invocation *call, qa_error *error)
+{
+    if (!invocation_current(service, call, error)) return false;
+    if (service->actions == SIZE_MAX)
+        return native_client_fail(error, QA_ERROR_MEMORY, "Remote CLIENT forwarding borrow exceeds capacity");
+    ++service->actions;
+    bool okay = service->services.forward(service->services.context, call, error);
+    --service->actions; return okay && invocation_current(service, call, error);
+}
+bool qa_native_q3_remote_client_milliseconds(qa_native_q3_remote_client_service *service,
+    const qa_command_invocation *call, int32_t *out, qa_error *error)
+{
+    if (!out) return native_client_fail(error, QA_ERROR_ARGUMENT, "Remote CLIENT clock requires an output word");
+    if (!invocation_current(service, call, error)) return false;
+    if (service->actions == SIZE_MAX)
+        return native_client_fail(error, QA_ERROR_MEMORY, "Remote CLIENT clock borrow exceeds capacity");
+    ++service->actions;
+    uint32_t word = service->services.milliseconds(service->services.context);
+    --service->actions;
+    if (!invocation_current(service, call, error)) return false;
+    memcpy(out, &word, sizeof(word)); return true;
+}
 bool qa_native_q3_remote_client_set_timescale(qa_native_q3_remote_client_service *service, float value, qa_error *error)
 {
     if (!qa_native_q3_remote_client_current(service) || service->updating)

@@ -1,6 +1,7 @@
 #include "guest_qc_profile.h"
 #include "qa/json.h"
 #include <float.h>
+#include <limits.h>
 
 static char *string(const qa_json_document *doc, qa_json_id node, qa_error *error)
 {
@@ -99,7 +100,10 @@ void application_qc_release_qualification(application_provider *provider)
     free(profile->input);
     for (size_t i = 0; i < profile->client_output_count; ++i) free(profile->client_outputs[i].values);
     for (size_t i = 0; profile->cvars && i < profile->cvar_count; ++i) { free(profile->cvars[i].name); free(profile->cvars[i].value); }
-    free(profile->cvars); free(profile->weapon_values); free(profile); provider->state.qc.qualified = NULL;
+    free(profile->cvars);
+    for (size_t i = 0; profile->weapon_values && i < profile->weapon_count; ++i)
+        free(profile->weapon_values[i].label);
+    free(profile->weapon_values); free(profile); provider->state.qc.qualified = NULL;
 }
 static bool call(const qa_json_document *doc, qa_json_id node, const qa_qc_program *program,
                    uint64_t available, application_qc_call *out, qa_error *error)
@@ -299,6 +303,23 @@ static bool selected_weapon(const qa_json_document *doc, qa_json_id node,
             qa_strings_intern_cstr(qa_session_strings(provider->application->session), item, &value->item, error);
         free(item);
         if (!ok) return application_fail(error, QA_ERROR_FORMAT, "QC selected weapon item requires a canonical namespace");
+        qa_json_id label = qa_json_get(doc, row, "label"), bit = qa_json_get(doc, row, "bit"),
+            impulse = qa_json_get(doc, row, "impulse");
+        if (label != QA_JSON_NONE || bit != QA_JSON_NONE || impulse != QA_JSON_NONE) {
+            uint64_t declared_bit = 0; double declared_impulse = 0;
+            value->label = string(doc, label, error);
+            if (!value->label || !*value->label || !qa_json_u64(doc, bit, &declared_bit, error) ||
+                !declared_bit || declared_bit > UINT32_MAX ||
+                !qa_json_number(doc, impulse, &declared_impulse, error) ||
+                !isfinite(declared_impulse) || trunc(declared_impulse) != declared_impulse ||
+                declared_impulse < INT32_MIN || declared_impulse > INT32_MAX)
+                return application_fail(error, QA_ERROR_FORMAT, "QC weapon UI requires its authored label, bit and integer impulse");
+            value->bit = (uint32_t)declared_bit; value->impulse = (int32_t)declared_impulse;
+            value->ui_declared = true;
+            for (size_t j = 0; j < i; ++j)
+                if (profile->weapon_values[j].ui_declared && profile->weapon_values[j].bit == value->bit)
+                    return application_fail(error, QA_ERROR_FORMAT, "QC weapon UI repeats a declared source bit");
+        }
         for (size_t j = 0; j < i; ++j)
             if (profile->weapon_values[j].value == value->value)
                 return application_fail(error, QA_ERROR_FORMAT, "QC selected weapon repeats a source value");

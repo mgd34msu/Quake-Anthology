@@ -20,4 +20,6 @@ const char *frontend_ui_localize(void *, const char *);
  * scratch. Compiled catalogs enter the actual feature pool and its codec. */
 bool frontend_ui_source_message(qa_frontend *, uint32_t, const qa_builtin_event *,
     char output[1024], const char **, qa_error *);
+bool frontend_ui_source_prompt_text(qa_frontend *, uint32_t, const qa_builtin_event *,
+    qa_string_id field, char output[1024], const char **, qa_error *);
 #endif

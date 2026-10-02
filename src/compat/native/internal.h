@@ -5,6 +5,9 @@
 #include "qa/json.h"
 #include "qa/native.h"
 #include "qa/native_observe.h"
+#include "qa/native_process.h"
+#include "qa/native_process_resources.h"
+#include "guest/abi.h"
 #include "hook_control.h"
 
 #include <ffi.h>
@@ -15,7 +18,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define NATIVE_CHECKPOINT_VERSION 2u
+#define NATIVE_CHECKPOINT_VERSION 3u
 #define NATIVE_MAX_ARGUMENTS 32u
 #define NATIVE_MAX_STRING (1024u * 1024u)
 #define NATIVE_DEFAULT_MAX_FRAME (256u * 1024u * 1024u)
@@ -68,6 +71,8 @@ typedef struct native_import_binding {
     native_ffi_signature ffi;
     ffi_closure *closure;
     void *code;
+    guest_abi_plan *guest_plan;
+    uint64_t guest_id, guest_address;
 } native_import_binding;
 
 typedef struct native_entry_binding {
@@ -79,6 +84,7 @@ typedef struct native_entry_binding {
 typedef struct native_allocation {
     struct native_allocation *next;
     void *bytes;
+    qa_native_address guest_address;
     size_t size;
     int32_t tag;
 } native_allocation;
@@ -89,6 +95,10 @@ typedef struct native_slot {
     qa_actor_owner owner;
     uint32_t source_slot;
 } native_slot;
+typedef struct native_process_temporary {
+    struct native_process_temporary *next;
+    char *directory;
+} native_process_temporary;
 
 struct qa_native_module {
     size_t references;
@@ -125,6 +135,15 @@ struct qa_native_instance {
     native_slot *slots;
     uint32_t slot_capacity;
     native_runner_connection *runner;
+    qa_native_sysv_process *sysv_process;
+    qa_native_process_resources *process_resources;
+    native_process_temporary *process_temporaries;
+    qa_native_windows_process *windows_process;
+    qa_native_guest *guest;
+    qa_native_process_kind process_kind;
+    uint64_t source_id, first_callback, callback_base, import_table_address;
+    char *source_library;
+    qa_buffer process_host;
     native_region_slot *regions;
     size_t region_count;
     qa_native_entry_observer *entry_observers;
@@ -132,7 +151,7 @@ struct qa_native_instance {
     uint64_t next_observer_id;
     uint32_t active_depth, callback_depth, region_depth, region_service_depth, write_depth;
     bool checkpointing, destroying, unloading, pending_shutdown, pending_restart,
-        pending_initialize, restart_original_ready, shutdown_entry, instrumented_child, failed;
+        pending_initialize, restart_original_ready, shutdown_entry, instrumented_child, failed, process_observing;
     qa_error failure;
 };
 
@@ -148,6 +167,8 @@ struct qa_native_entry_observer {
     native_ffi_signature ffi;
     ffi_closure *closure;
     void *code;
+    guest_abi_plan *guest_plan;
+    uint64_t guest_id;
 };
 
 struct qa_native_write_observer {
@@ -159,6 +180,7 @@ struct qa_native_write_observer {
     qa_native_write_observer_fn callback;
     void *context;
     uint32_t active_calls;
+    qa_buffer snapshot;
 };
 
 struct qa_native_region_binding {
@@ -253,6 +275,17 @@ void native_import_dispatch(ffi_cif *cif, void *result, void **arguments, void *
 void native_observer_dispatch(ffi_cif *cif, void *result, void **arguments, void *context);
 
 bool native_direct_open(qa_native_instance *instance, qa_error *error);
+bool native_process_open(qa_native_instance *, const qa_native_process_options *, qa_error *);
+bool native_process_close(qa_native_instance *, qa_error *);
+bool native_process_export(const qa_native_instance *, const char *, qa_native_address *, qa_error *);
+bool native_process_invoke(qa_native_instance *, qa_native_address,
+    const qa_native_signature *, const qa_native_value *, size_t, qa_native_value *, qa_error *);
+bool native_process_import_bind(native_import_binding *, qa_native_instance *,
+    const native_signature_spec *, qa_error *);
+bool native_process_q3_bind(qa_native_instance *, qa_native_address *, qa_error *);
+bool native_process_restore(qa_native_instance *, const qa_native_process_options *, qa_error *);
+bool native_process_publish(qa_native_instance *, qa_native_instance *, qa_error *);
+bool native_process_checkpoint_host(qa_native_instance *, qa_bytes, qa_buffer *, qa_error *);
 bool native_direct_unload(qa_native_instance *instance, qa_error *error);
 void native_direct_close(qa_native_instance *instance);
 bool native_direct_export(const qa_native_instance *instance, const char *name,
@@ -304,6 +337,7 @@ bool native_runner_observer_original(qa_native_entry_observer *binding,
 bool native_runner_observer_control(qa_native_instance *instance, native_hook_control control,
                                     qa_error *error);
 void native_observers_destroy(qa_native_instance *instance);
+bool native_process_write_commit(void *, qa_native_guest *, const qa_native_guest_commit *, qa_error *);
 
 bool native_entity_table_store(qa_native_instance *instance, qa_native_entity_table table,
                                qa_error *error);
@@ -312,6 +346,7 @@ bool native_regions_copy(qa_native_instance *instance, const qa_native_declarati
                          qa_error *error);
 void native_regions_destroy(qa_native_instance *instance);
 bool native_regions_descriptor(const qa_native_instance *instance, qa_buffer *out, qa_error *error);
+bool native_process_region_instruction(void *, qa_native_guest *, uint64_t, qa_error *);
 bool native_instance_setup_identity(qa_native_instance *instance, const qa_native_options *options,
                                     qa_error *error);
 void native_original_dependencies_destroy(qa_native_instance *);

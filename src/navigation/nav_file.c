@@ -43,7 +43,7 @@ bool nav_kex_read(qa_bytes bytes, qa_nav_asset **out, qa_error *e) {
         return false;
     int32_t entity_count = qa_load_i32le(bytes.data + at);
     size_t tail_count = nav3 ? 0 : version <= 12 ? 0 : version <= 14 ? 2 : 1;
-    size_t entity_stride = 26 + (nav3 && version >= 2 ? 4 : 0) + tail_count * 4;
+    size_t entity_stride = 26u + (nav3 && version >= 2 ? 4u : 0u) + tail_count * 4;
     if (entity_count < 0 ||
         !take(&offset, (size_t)entity_count, entity_stride, bytes.size, &entities, e)) {
         if (entity_count < 0)
@@ -108,7 +108,7 @@ bool nav_kex_read(qa_bytes bytes, qa_nav_asset **out, qa_error *e) {
                                        .type = p[2],
                                        .stored_flags = p[3],
                                        .flags = nav3 && version < 3   ? 3
-                                                : nav3 && version < 6 ? p[3] & ~12u
+                                                : nav3 && version < 6 ? (uint8_t)(p[3] & 0xf3u)
                                                                       : p[3],
                                        .traversal = qa_load_u16le(p + 4)};
         if (link[i].target >= (uint32_t)nodes ||

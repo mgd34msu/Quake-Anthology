@@ -62,8 +62,15 @@ void qa_scene_q1_particle_advance(qa_scene_q1_particle_state *particle, double s
 bool qa_scene_q2_particle_sample(const qa_scene_q2_particle_state *particle,
                                  int64_t milliseconds, qa_vec3 *origin, float *alpha)
 {
+    return qa_scene_q2_particle_sample_at(particle, (double)milliseconds, origin, alpha);
+}
+
+bool qa_scene_q2_particle_sample_at(const qa_scene_q2_particle_state *particle,
+                                    double milliseconds, qa_vec3 *origin, float *alpha)
+{
+    if (!particle || !origin || !alpha || !isfinite(milliseconds)) return false;
     double seconds = particle->alpha_velocity == -10000 ? 0 :
-        ((double)milliseconds - (double)particle->spawn_milliseconds) * 0.001;
+        (milliseconds - (double)particle->spawn_milliseconds) * 0.001;
     double amount = particle->alpha + seconds * particle->alpha_velocity;
     if (amount <= 0) return false;
     double square = seconds * seconds;

@@ -64,7 +64,7 @@ bool qa_image_decode_pcx(qa_bytes b, qa_image_policy policy, qa_image *out, qa_e
                     goto truncated;
                 value = b.data[at++];
             }
-            if (!run) {
+            if (!run && policy != QA_IMAGE_Q3) {
                 qa_img_fail(e, QA_ERROR_FORMAT, at, "Zero-length PCX packet");
                 goto fail;
             }

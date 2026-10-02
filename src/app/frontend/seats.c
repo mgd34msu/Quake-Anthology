@@ -1,4 +1,9 @@
+#include "source_prompt.h"
+#include "remote_q1_client.h"
+#include "remote_q1_hud.h"
+#include "startup_rotation.h"
 #include "internal.h"
+#include "startup_server_browser.h"
 #include "qa/ui_menu_save.h"
 #include "qa/ui_save.h"
 #include "qa/binary.h"
@@ -56,6 +61,8 @@ static bool source_input(void *context, qa_input_seat *input, const qa_input_eve
     frontend_seat *seat = context;
     if (!frontend_cinematic_input(seat->frontend,seat->id,qa_input_seat_focus(input),event,consumed,error)) return false;
     if (*consumed) return true;
+    if (!frontend_source_prompt_input(seat->source_prompt,event,consumed,error)) return false;
+    if (*consumed) return true;
     uint32_t launch_seat;
     return !frontend_seat_launch_id_read(seat->frontend,seat->id,&launch_seat) ||
         qa_application_guest_input(seat->frontend->application, launch_seat, event, consumed, error);
@@ -85,6 +92,13 @@ bool frontend_game_menu(frontend_seat *seat, qa_error *error)
 static bool hud_data(void *context, const qa_hud_frame *frame, qa_hud_data *out, qa_error *error)
 {
     frontend_seat *seat = context;
+    for (size_t i=0;i<frontend_remote_q1_count(seat->frontend);++i) {
+        frontend_remote_q1 *row=frontend_remote_q1_at(seat->frontend,i);
+        frontend_remote_q1_view received;
+        if (!frontend_remote_q1_metadata_read(row,&received,error)) return false;
+        if (!received.retired && received.bound && received.domain.physical_seat==seat->id)
+            return frontend_remote_q1_hud_read(row,frame,out,error);
+    }
     qa_application_presentation_view source = {0};
     qa_ui_preferences preferences;
     uint32_t launch_seat;
@@ -166,6 +180,8 @@ static bool menu_action(void *context, uint32_t id, qa_ui_id control, const qa_u
     case 9: return frontend_menu_open(seat, FRONTEND_ACCESSIBILITY, error);
     case 10: return frontend_menu_open(seat, FRONTEND_SAVES, error);
     case 11: return frontend_menu_open(seat, FRONTEND_ARENA_PROGRESS, error);
+    case 12: return frontend_startup_server_browser_open(seat->server_browser,error);
+    case 13: return frontend_startup_rotation_open(seat->rotation_menu,error);
     default: return true;
     }
 }
@@ -178,15 +194,15 @@ static qa_ui_control button(frontend_seat *seat, qa_ui_id id, const char *label,
 static bool home(void *context, uint32_t id, qa_ui_menu *out, qa_error *error)
 {
     frontend_seat *seat = context; (void)id; (void)error;
-    const char *labels[] = {"Play a game", "Mods", "Settings", "Ranking account", "Resume", "Quit", "Assistance", "Controls", "Accessibility", "Save / load", "Arena progress"};
-    for (size_t i = 0; i < 11; ++i) seat->controls[i] = button(seat, i + 1, labels[i], 70 + (float)i * 36);
+    const char *labels[] = {"Play a game", "Mods", "Settings", "Ranking account", "Resume", "Quit", "Assistance", "Controls", "Accessibility", "Save / load", "Arena progress", "Servers", "Map rotation"};
+    for (size_t i = 0; i < 13; ++i) seat->controls[i] = button(seat, i + 1, labels[i], 64 + (float)i * 34);
     bool live = qa_application_launch(seat->frontend->application) != NULL;
     seat->controls[1].enabled = live; seat->controls[4].enabled = live;
     bool campaign=false;
     if (!frontend_campaign_menu_available(seat,&campaign,error)) return false;
     seat->controls[10].enabled=campaign;
     *out = (qa_ui_menu){.id = FRONTEND_HOME, .title = "Quake Anthology", .controls = seat->controls,
-        .count = 11, .fullscreen = !live};
+        .count = 13, .fullscreen = !live};
     return true;
 }
 static bool settings_open(void *context, uint32_t id, qa_error *error)
@@ -295,6 +311,10 @@ static bool seats_create(qa_frontend *frontend, const bool *mods, bool restoring
             &(qa_ui_menu_registration){.id = FRONTEND_HOME, .context = seat, .factory = home}, error) ||
             !qa_ui_register(seat->ui, &(qa_ui_menu_registration){.id = FRONTEND_SETTINGS,
                 .context = seat, .factory = settings, .open = settings_open}, error)) return false;
+        frontend_startup_server_browser_menus browser={200,201,202};
+        if (!frontend_startup_server_browser_create(seat,&browser,&seat->server_browser,error) ||
+            !frontend_startup_rotation_create(seat,205,&seat->rotation_menu,error) ||
+            !frontend_source_prompt_create(seat,206,&seat->source_prompt,error)) return false;
         if (!frontend_bindings_create(seat, error) || !frontend_accessibility_create(seat, error) ||
             !frontend_save_menu_create(seat, error) || !frontend_campaign_menu_create(seat,error)) return false;
         bool library = restoring ? qa_ui_library_create_restored(seat->ui, frontend->application,
@@ -320,6 +340,9 @@ bool frontend_seats_destroy(qa_frontend *frontend, qa_error *error)
 {
     for (unsigned i = 0; i < frontend->options.seats; ++i) {
         frontend_seat *seat = &frontend->seats[i];
+        if (!frontend_source_prompt_destroy(&seat->source_prompt,error) ||
+            !frontend_startup_rotation_destroy(&seat->rotation_menu,error) ||
+            !frontend_startup_server_browser_destroy(&seat->server_browser,error)) return false;
         if (!qa_hud_wheel_destroy(seat->wheel, error)) return false;
         seat->wheel = NULL;
         if (!qa_hud_destroy(seat->hud, error)) return false;

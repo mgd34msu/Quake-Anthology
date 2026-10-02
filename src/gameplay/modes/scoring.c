@@ -56,6 +56,13 @@ bool qa_modes_player_death_component(qa_modes *m, qa_mode_id id, const qa_damage
         m->options.hooks.q3_native_source &&
         m->options.hooks.q3_native_source(m->options.hooks.context, id, &native_owner);
     qa_actor_id victim = outcome->request.target, attacker = outcome->request.attack.attacker;
+    bool native_q1_score = false, native_q1_ctf = false;
+    if (primary_score && m->options.hooks.q1_source_death_bound &&
+        !MODE_CALLBACK(m, m->options.hooks.q1_source_death_bound(m->options.hooks.context,
+            id, victim, &native_q1_score, &native_q1_ctf, e))) return false;
+    if (mode_get(m, id) != v)
+        return mode_fail(e, "mode changed during source death qualification");
+    if (native_q1_score) primary_score = false;
     if (primary_score && m->options.hooks.q3_source_score_bound &&
         m->options.hooks.q3_source_score_bound(m->options.hooks.context, id, victim, &native_owner))
         primary_score = false;
@@ -104,11 +111,12 @@ bool qa_modes_player_death_component(qa_modes *m, qa_mode_id id, const qa_damage
             if (mode_team_index(v, team) >= 0 && !qa_modes_team_score(m, id, team, change, e))
                 return false;
         }
-        if (!native_team && (change > 0 || v->value.rules.source == QA_MODE_ROGUE) &&
+        if (!native_team && !(native_q1_ctf && v->value.rules.source == QA_MODE_THREEWAVE) &&
+            (change > 0 || v->value.rules.source == QA_MODE_ROGUE) &&
             v->value.rules.kind >= QA_MODE_CTF && v->value.rules.kind <= QA_MODE_HARVESTER &&
             !mode_flag_bonus(m, v, attacker, victim, e))
             return false;
-        if (v->value.rules.source == QA_MODE_THREEWAVE && friendly &&
+        if (!native_q1_ctf && v->value.rules.source == QA_MODE_THREEWAVE && friendly &&
             v->value.rules.teamplay >= 0 && (v->value.rules.teamplay & 16)) {
             qa_string_id type;
             if (!qa_builtin_resource(&m->options.services, "ctf:teamkill", &type, e))
@@ -165,7 +173,8 @@ bool qa_modes_player_death_component(qa_modes *m, qa_mode_id id, const qa_damage
             }
     }
     dead->spawn_state = 1;
-    return qa_modes_drop(m, id, victim, true, e) && mode_update_ghosts(m, v, e) &&
+    return ((native_q1_ctf && v->value.rules.source == QA_MODE_THREEWAVE) ||
+            qa_modes_drop(m, id, victim, true, e)) && mode_update_ghosts(m, v, e) &&
            qa_modes_rank(m, id, e);
 }
 bool qa_modes_player_death(qa_modes *m, qa_mode_id id, const qa_damage_outcome *outcome,

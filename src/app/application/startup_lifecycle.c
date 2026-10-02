@@ -402,6 +402,51 @@ qa_cvars *application_startup_cvar_owner(application_provider *provider, qa_cons
         ? hooks->cvar_owner(hooks->context, provider->application, console, command, name) : NULL;
 }
 
+bool application_startup_console_cvar_edit(qa_application *app, qa_console *console,
+    const qa_command_context *command, qa_cvars *registry, qa_cvars_edit **out, qa_error *error)
+{
+    if (!app || !console || !registry || !out)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Prepared cvar access requires its physical application console");
+    *out = NULL;
+    const qa_application_startup_hooks *hooks = app->startup_hooks;
+    if (!hooks || !hooks->cvar_edit) return true;
+    bool captured = command && qa_application_command_context_active(app, command);
+    bool entered = !captured && qa_console_cvar_entered(console, command);
+    if (!captured && !entered)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Prepared cvar access lost its actual command or entered lexical operation");
+    bool physical = console == app->console;
+    for (application_provider *provider = app->live_providers; !physical && provider;
+         provider = provider->next_live) {
+        if (provider->application != app || provider->owner != command->owner) continue;
+        for (size_t index = 0;; ++index) {
+            qa_application_startup_source source;
+            bool found;
+            if (!application_provider_startup_source_at(provider, index, &source, &found, error)) return false;
+            if (!found) break;
+            if (source.console == console && source.command.dialect == command->dialect &&
+                (!entered || (source.descriptor && provider->launch &&
+                    source.descriptor->storage == provider->launch->storage &&
+                    source.command.owner == command->owner && source.command.session == command->session &&
+                    ((source.scope.kind != QA_APPLICATION_CONSOLE_Q3_CGAME &&
+                      source.scope.kind != QA_APPLICATION_CONSOLE_Q3_UI) || source.scope.seat == command->seat)))) {
+                physical = true;
+                break;
+            }
+        }
+    }
+    if (!physical)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Prepared cvar access selected another physical console");
+    return hooks->cvar_edit(hooks->context, app, console, command, registry, out, error);
+}
+
+bool application_startup_cvar_edit(application_provider *provider, qa_console *console,
+    const qa_command_context *command, qa_cvars *registry, qa_cvars_edit **out, qa_error *error)
+{
+    if (!provider || !provider->application || !command || command->owner != provider->owner)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Prepared source cvar access lost its actual provider");
+    return application_startup_console_cvar_edit(provider->application, console, command, registry, out, error);
+}
+
 bool application_startup_visible_cvars(application_provider *provider, qa_console *console,
     const qa_command_context *command, size_t index, qa_cvars **out)
 {

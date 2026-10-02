@@ -221,21 +221,7 @@ bool q2_supplemental_find(qa_q2_game *g, const char *name, bool names_only,
     }
     return false;
 }
-bool q2_item_catalog(qa_q2_game *g, qa_error *e) {
-    q2_items *r = g->item_runtime;
-    r->definitions = calloc(N(base) + N(xatrix) + N(rogue) + N(rerelease) + QA_Q2_WEAPON_COUNT,
-                            sizeof(*r->definitions));
-    if (!r->definitions) {
-        qa_error_set(e, QA_ERROR_MEMORY, 0, "Allocating Q2 item catalog");
-        return false;
-    }
-    install(r, base, N(base));
-    if (g->options.product == QA_Q2_XATRIX || g->options.edition == QA_Q2_RERELEASE)
-        install(r, xatrix, N(xatrix));
-    if (g->options.product == QA_Q2_ROGUE || g->options.edition == QA_Q2_RERELEASE)
-        install(r, rogue, N(rogue));
-    if (g->options.edition == QA_Q2_RERELEASE)
-        install(r, rerelease, N(rerelease));
+const char *qa_q2_weapon_display_name(qa_q2_weapon weapon) {
     static const char *const names[QA_Q2_WEAPON_COUNT] = {NULL,
                                                           "Blaster",
                                                           "Shotgun",
@@ -260,6 +246,23 @@ bool q2_item_catalog(qa_q2_game *g, qa_error *e) {
                                                           "Grapple",
                                                           "Grappling Hook",
                                                           "Plasma Rifle"};
+    return weapon > QA_Q2_WEAPON_NONE && weapon < QA_Q2_WEAPON_COUNT ? names[weapon] : NULL;
+}
+bool q2_item_catalog(qa_q2_game *g, qa_error *e) {
+    q2_items *r = g->item_runtime;
+    r->definitions = calloc(N(base) + N(xatrix) + N(rogue) + N(rerelease) + QA_Q2_WEAPON_COUNT,
+                            sizeof(*r->definitions));
+    if (!r->definitions) {
+        qa_error_set(e, QA_ERROR_MEMORY, 0, "Allocating Q2 item catalog");
+        return false;
+    }
+    install(r, base, N(base));
+    if (g->options.product == QA_Q2_XATRIX || g->options.edition == QA_Q2_RERELEASE)
+        install(r, xatrix, N(xatrix));
+    if (g->options.product == QA_Q2_ROGUE || g->options.edition == QA_Q2_RERELEASE)
+        install(r, rogue, N(rogue));
+    if (g->options.edition == QA_Q2_RERELEASE)
+        install(r, rerelease, N(rerelease));
     static const char *const icons[QA_Q2_WEAPON_COUNT] = {
         NULL,         "w_blaster",    "w_shotgun",   "w_sshotgun",      "w_machinegun",
         "w_chaingun", "a_grenades",   "w_glauncher", "w_rlauncher",     "w_hyperblaster",
@@ -272,7 +275,7 @@ bool q2_item_catalog(qa_q2_game *g, qa_error *e) {
             continue;
         r->definitions[r->count++] = (qa_q2_item_definition){
             .classname = w->classname,
-            .name = names[i],
+            .name = qa_q2_weapon_display_name((qa_q2_weapon)i),
             .icon = icons[i],
             .model = w->world_model,
             .sound = "misc/w_pkup.wav",

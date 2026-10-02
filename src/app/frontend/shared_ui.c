@@ -114,6 +114,21 @@ bool frontend_shared_ui_ready(const frontend_shared_ui *owner,qa_error *e)
     }
     return true;
 }
+bool frontend_shared_ui_ready_is(const frontend_shared_ui *owner)
+{
+    if (!current(owner,NULL) || !owner->prepared || owner->published ||
+        qa_cvars_edit_registry(owner->edit)!=qa_application_cvars(owner->application) ||
+        !qa_cvars_edit_ready_is(owner->edit) || !qa_vfs_lookup_equal(owner->original_view,owner->view)) return false;
+    for (unsigned i=0;i<owner->count;++i) {
+        const prepared_seat *seat=owner->seat+i;
+        const frontend_ui_seat_features *state=owner->features->seats+i;
+        if (!qa_ui_preferences_edit_ready_is(owner->edit,i,&seat->preferences) ||
+            state->language!=seat->previous_language || state->localization!=seat->previous_catalog ||
+            !qa_ui_presentation_ready(seat->presentation,NULL) || !qa_sound_caption_language_ready(seat->sound,NULL) ||
+            (seat->cinematic && !frontend_ui_cinematic_language_ready_is(seat->cinematic))) return false;
+    }
+    return true;
+}
 static void publish(frontend_shared_ui *owner,bool consume)
 {
     for (unsigned i=0;i<owner->count;++i) {

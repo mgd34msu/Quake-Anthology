@@ -62,6 +62,7 @@ bool q3n_loading_create_remote(const q3n_loading_options *options,q3n_loading **
         q3nl_fail(e,QA_ERROR_ARGUMENT,"Remote loading requires its actual remote CLIENT services");
 }
 bool q3n_loading_idle(const q3n_loading *o) { return o && !o->busy && !o->painting; }
+const char *q3n_loading_text(const q3n_loading *o) { return o ? o->state.text : NULL; }
 void q3n_loading_destroy(q3n_loading *o) { if(q3n_loading_idle(o))free(o); }
 static bool current(q3n_loading *o,const q3n_frame *f,qa_error *e)
 {

@@ -4,6 +4,12 @@
 #include "native_q2_save.h"
 #include "native_q3_client.h"
 #include "selected_effects.h"
+#include "remote_q3_client.h"
+#include "remote_q3_initial.h"
+#include "network_initial_graph.h"
+#include "music_sources.h"
+#include "remote_q1_restore.h"
+#include "remote_q2_restore.h"
 #include "qa/persistence_content.h"
 #include "qa/binary.h"
 
@@ -73,6 +79,35 @@ static bool collect(qa_frontend *f, bank_inventory *inventory, qa_error *error)
             add(inventory,graph,owner.sounds,(bank_owner){.kind=5,.ordinal=i,
                 .identity=owner.identity,.owner=owner.provider},error);
     }
+    for(size_t i=0;ok && i<frontend_remote_q3_count(f);++i) {
+        frontend_remote_q3_resources owner;
+        ok=frontend_remote_q3_resources_read(frontend_remote_q3_at(f,i),&owner,error) && owner.sounds &&
+            add(inventory,graph,owner.sounds,(bank_owner){.kind=6,.ordinal=i,
+                .identity=owner.identity,.owner=owner.domain.source.receiver.receiver},error);
+    }
+    frontend_network_initial_graph_view initial;
+    if(ok) ok=frontend_network_initial_graph_read(f,&initial,error);
+    if(ok && initial.present) {
+        frontend_remote_q3_initial_view owner;
+        ok=initial.parent && frontend_remote_q3_initial_read(initial.parent,&owner,error) && owner.sounds &&
+            add(inventory,graph,owner.sounds,(bank_owner){.kind=7,
+                .identity=owner.identity,.owner=owner.attempt.source.receiver.receiver},error);
+    }
+    for(size_t i=0;ok && i<frontend_music_sources_bank_count(f->music_sources);++i) {
+        qa_audio_bank *bank=frontend_music_sources_bank_at(f->music_sources,i);
+        ok=bank && add(inventory,graph,bank,(bank_owner){.kind=8,.ordinal=i},error);
+    }
+    for(size_t i=0;ok && i<frontend_remote_q1_count(f);++i) {
+        frontend_remote_q1_view owner; frontend_remote_q1_media media; frontend_remote_q1 *row=frontend_remote_q1_at(f,i);
+        ok=(f->source_restoring?frontend_remote_q1_import_read(row,&owner,error):frontend_remote_q1_metadata_read(row,&owner,error)) &&
+            frontend_remote_q1_media_read(row,&media,error) && add(inventory,graph,media.sounds,
+                (bank_owner){.kind=9,.ordinal=i,.identity=owner.map_generation,.owner=owner.domain.actor_owner},error);
+    }
+    for(size_t i=0;ok && i<frontend_remote_q2_count(f);++i) {
+        frontend_remote_q2_view owner; frontend_remote_q2 *row=frontend_remote_q2_at(f,i);
+        ok=(f->source_restoring?frontend_remote_q2_import_read(row,&owner,error):frontend_remote_q2_metadata_read(row,&owner,error)) &&
+            add(inventory,graph,owner.sounds,(bank_owner){.kind=10,.ordinal=i,.identity=owner.identity},error);
+    }
     return ok;
 }
 static bool append(qa_audio_asset ***all, size_t *count, qa_audio_asset **part, size_t size, qa_error *error)
@@ -110,6 +145,20 @@ static bool holders(qa_frontend *f, qa_audio_asset ***out, size_t *count, qa_err
             append(out,count,part,size,error);
         free(part); part=NULL; size=0;
     }
+    for(size_t i=0;ok && i<frontend_remote_q3_count(f);++i) {
+        frontend_remote_q3_resources owner;
+        ok=frontend_remote_q3_resources_read(frontend_remote_q3_at(f,i),&owner,error) && owner.assets &&
+            qa_q3_presentation_audio_assets_read(owner.assets,&part,&size,error) && append(out,count,part,size,error);
+        free(part); part=NULL; size=0;
+    }
+    frontend_network_initial_graph_view initial;
+    if(ok) ok=frontend_network_initial_graph_read(f,&initial,error);
+    if(ok && initial.present) {
+        frontend_remote_q3_initial_view owner;
+        ok=initial.parent && frontend_remote_q3_initial_read(initial.parent,&owner,error) && owner.assets &&
+            qa_q3_presentation_audio_assets_read(owner.assets,&part,&size,error) && append(out,count,part,size,error);
+        free(part); part=NULL; size=0;
+    }
     ok = ok && frontend_event_audio_assets_read(f, &part, &size, error) && append(out, count, part, size, error);
     free(part); part=NULL; size=0;
     ok=ok && frontend_ui_features_assets_read(f,&part,&size,error) && append(out,count,part,size,error);
@@ -117,9 +166,9 @@ static bool holders(qa_frontend *f, qa_audio_asset ***out, size_t *count, qa_err
 }
 static bool header(qa_source_save_io *io, const bank_inventory *inventory)
 {
-    uint8_t magic[4] = {'Q','F','A','G'}; uint32_t version = 3; size_t count = inventory->count;
+    uint8_t magic[4] = {'Q','F','A','G'}; uint32_t version = 6; size_t count = inventory->count;
     if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "QFAG", 4) ||
-        !qa_source_save_u32(io, &version) || version != 3 ||
+        !qa_source_save_u32(io, &version) || version != 6 ||
         !qa_source_save_count(io, &count, SIZE_MAX / sizeof(bank_owner)) || count != inventory->count) return false;
     for (size_t i = 0; i < count; ++i) {
         bank_owner row = inventory->rows[i];

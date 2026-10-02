@@ -14,9 +14,9 @@ static bool silhouette(const shadow_edge *edges, const size_t *offsets,
     return true;
 }
 
-bool qa_scene_stencil_shadow(qa_scene_frame *frame, const qa_scene_view *view,
+static bool stencil_shadow(qa_scene_frame *frame, const qa_scene_view *view,
                              const qa_scene_mesh *source, qa_scene_matrix model,
-                             qa_vec3 local_light, const qa_scene_image *white, qa_error *error)
+                             qa_vec3 local_light, const qa_scene_image *white, bool source_edges, qa_error *error)
 {
     if (!frame || !view || !source || !qa_vec_finite(local_light) || source->primitive != QA_SCENE_TRIANGLES ||
         source->index_count % 3 || (!source->vertices && source->vertex_count) ||
@@ -41,7 +41,7 @@ bool qa_scene_stencil_shadow(qa_scene_frame *frame, const qa_scene_view *view,
             qa_error_set(error, QA_ERROR_FORMAT, i, "Stencil shadow index outside mesh");
             return false;
         }
-        ++offsets[(size_t)index + 1];
+        if (!source_edges || offsets[(size_t)index + 1] < 32) ++offsets[(size_t)index + 1];
     }
     for (size_t i = 1; i <= source->vertex_count; ++i) offsets[i] += offsets[i - 1];
     memcpy(cursors, offsets, source->vertex_count * sizeof(*cursors));
@@ -50,9 +50,9 @@ bool qa_scene_stencil_shadow(qa_scene_frame *frame, const qa_scene_view *view,
         qa_vec3 first = qa_vec_sub(source->vertices[b].position, source->vertices[a].position);
         qa_vec3 second = qa_vec_sub(source->vertices[c].position, source->vertices[a].position);
         bool facing = qa_vec_dot(qa_vec_cross(first, second), local_light) > 0;
-        edges[cursors[a]++] = (shadow_edge){b, facing};
-        edges[cursors[b]++] = (shadow_edge){c, facing};
-        edges[cursors[c]++] = (shadow_edge){a, facing};
+        if (cursors[a] < offsets[(size_t)a + 1]) edges[cursors[a]++] = (shadow_edge){b, facing};
+        if (cursors[b] < offsets[(size_t)b + 1]) edges[cursors[b]++] = (shadow_edge){c, facing};
+        if (cursors[c] < offsets[(size_t)c + 1]) edges[cursors[c]++] = (shadow_edge){a, facing};
     }
     size_t edge_count = 0;
     for (size_t start = 0; start < source->vertex_count; ++start)
@@ -107,6 +107,19 @@ bool qa_scene_stencil_shadow(qa_scene_frame *frame, const qa_scene_view *view,
     frame->image_count = images_before;
     frame->command_count = count_before;
     return false;
+}
+
+bool qa_scene_stencil_shadow(qa_scene_frame *frame, const qa_scene_view *view,
+    const qa_scene_mesh *mesh, qa_scene_matrix model, qa_vec3 light,
+    const qa_scene_image *white, qa_error *error)
+{
+    return stencil_shadow(frame, view, mesh, model, light, white, false, error);
+}
+bool qa_scene_source_stencil_shadow(qa_scene_frame *frame, const qa_scene_view *view,
+    const qa_scene_mesh *mesh, qa_scene_matrix model, qa_vec3 light,
+    const qa_scene_image *white, qa_error *error)
+{
+    return stencil_shadow(frame, view, mesh, model, light, white, true, error);
 }
 
 bool qa_scene_stencil_finish(qa_scene_frame *frame, const qa_scene_view *view,

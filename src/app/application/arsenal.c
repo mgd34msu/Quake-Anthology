@@ -1,6 +1,7 @@
 #include "internal.h"
 #include "control_frame.h"
 #include "native_q2_console.h"
+#include "guest_q3_weapons_services.h"
 #include "qa/game_q2_bots.h"
 #include "qa/game_q3_source.h"
 #include <string.h>
@@ -103,7 +104,7 @@ bool application_q2_weapon_input(void *context, qa_actor_id actor,
     out->spectator = traits.spectator;
     out->notarget = traits.no_target;
     out->animate_player = application_provider_for(application, actor, QA_ROLE_CHARACTER, "") == provider;
-    return true;
+    return application_q3_weapons_services_q2_input(provider, actor, out, error);
 }
 
 bool application_arsenal_source_actor(void *context, qa_session *session, qa_actor_id actor,
@@ -154,7 +155,7 @@ bool application_arsenal_source_actor(void *context, qa_session *session, qa_act
         return false;
     if (!qa_actors_get(qa_session_actors(session), actor))
         return true;
-    return qa_q2_weapon_tick(arsenal->state.q2, actor, &input, frame->time_ns,
+    return qa_q2_weapon_frame(arsenal->state.q2, actor, &input, frame->time_ns,
                               frame->elapsed_ns, error);
 }
 

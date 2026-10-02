@@ -2,6 +2,40 @@
 #define QA_FRONTEND_CAPTURE_H
 #include "internal.h"
 
+typedef struct frontend_resource_inventory frontend_resource_inventory;
+/* Owns metadata and the frontend's structural roster fence, not child capture
+ * tokens. Collect before preparing any bank/font/material/model destination.
+ * A nonnull candidate must be the actual application's resource-phase ticket;
+ * NULL names an ordinary scalar edit or the actual source-free ENGINE resource
+ * phase, whose canonical console and cvar heap remain retained. The caller keeps frontend/application and
+ * every observed owner alive through checked release, including retired roots.
+ * This grants no source dispatch, capture, publication or destruction authority. */
+bool frontend_resource_inventory_collect(qa_frontend *, qa_application *, const qa_launch_snapshot *,
+    frontend_resource_inventory **, qa_error *);
+/* Requalifies the installed parent tuple and the complete physical roster.
+ * Actual child preparation/capture holds do not invalidate this observation. */
+bool frontend_resource_inventory_current(const frontend_resource_inventory *);
+/* Seal while the full resource-phase admission is still available. Final
+ * readiness replays only retained physical observations and exact callback-free
+ * phase association; it allocates nothing and grants no publication authority. */
+bool frontend_resource_inventory_seal(frontend_resource_inventory *, qa_error *);
+bool frontend_resource_inventory_ready_is(const frontend_resource_inventory *);
+/* Only the genuine synchronous resource consume callback admits the installed
+ * candidate and one configuration generation advance; source-free ENGINE
+ * consumption preserves its launch and generation. The retained physical
+ * roster, world, frame and seat identities still require the same pure proof. */
+bool frontend_resource_inventory_consume_ready_is(const frontend_resource_inventory *);
+/* End all child preparation/capture holds first. A rejected release retains
+ * metadata and the enclosing roster fence for checked cleanup retry. */
+bool frontend_resource_inventory_release(frontend_resource_inventory **, qa_error *);
+const qa_scene_resources *frontend_resource_inventory_images_at(const frontend_resource_inventory *, size_t);
+const qa_material_library *frontend_resource_inventory_library_at(const frontend_resource_inventory *, size_t);
+const qa_font_library *frontend_resource_inventory_fonts_at(const frontend_resource_inventory *, size_t);
+const qa_material_order *frontend_resource_inventory_order_at(const frontend_resource_inventory *, size_t);
+qa_q3_presentation_assets *frontend_resource_inventory_assets_at(const frontend_resource_inventory *, size_t);
+const qa_scene_world *frontend_resource_inventory_world_at(const frontend_resource_inventory *, size_t);
+const qa_scene_model *frontend_resource_inventory_model_at(const frontend_resource_inventory *, size_t);
+
 /* Pure admission for the source, scene and immutable-content child owners.
  * The persistent local UI can remain in its map-selection action during travel. */
 bool frontend_owners_idle(const qa_frontend *);

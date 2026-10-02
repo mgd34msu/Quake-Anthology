@@ -5,6 +5,7 @@
 #include "qa/player_progress.h"
 #include "qa/q3_product_policy.h"
 #include "qa/audio_save.h"
+#include "qa/application_startup_prepare.h"
 #include "save_private.h"
 #include "qa/binary.h"
 #include <SDL.h>
@@ -149,6 +150,7 @@ static bool campaign_has_q3(const qa_frontend *f)
 bool frontend_campaign_sync(qa_frontend *f,qa_error *error)
 {
     if (!f || !f->application || f->capture) return frontend_fail(error,QA_ERROR_ARGUMENT,"Campaign setup requires its actual frontend source owner");
+    if (qa_application_startup_pending(f->application)) return true;
     if (!campaign_has_q3(f)) return frontend_campaign_destroy(f,error);
     qa_application_q3_campaign view;
     if (!qa_application_q3_campaign_read(f->application,0,&view,error)) return false;
@@ -233,11 +235,11 @@ bool frontend_campaign_source_command(void *context,qa_application *application,
 static bool campaign_archive(qa_frontend *f,const qa_application_q3_campaign *view,qa_error *error)
 {
     const qa_product *product=qa_catalog_product(qa_launch_snapshot_catalog(view->publication),view->content_product);
-    if (!product || !product->key || !view->launch->selection.implementation || !view->write_mount ||
+    if (!product || !product->key || !view->launch->selection.implementation || !view->configuration || !view->write_mount ||
         !qa_application_q3_campaign_current(f->application,view))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Source campaign archive lost its actual product/provider writable mount");
     const char *owner[3]={"source",product->key,view->launch->selection.implementation};
-    return qa_settings_save_cvars((qa_settings_store){view->content,view->write_mount},owner,3,view->cvars,error) &&
+    return qa_settings_save_cvars((qa_settings_store){view->configuration,view->write_mount},owner,3,view->cvars,error) &&
         qa_application_q3_campaign_current(f->application,view);
 }
 static void campaign_restore_values(qa_frontend *f,const qa_application_q3_campaign *view,char *const before[8])
@@ -253,7 +255,7 @@ static bool campaign_music(qa_frontend *f,const qa_application_q3_campaign *view
     qa_audio_music *music=qa_audio_engine_bus_music(f->audio,QA_FRONTEND_COMMAND_OWNER);
     if (!owner->music_attached) {
         if (music) return frontend_fail(error,QA_ERROR_ARGUMENT,"Campaign music would replace another actual frontend music owner");
-        if (!qa_audio_music_create(qa_audio_engine_rate(f->audio),QA_AUDIO_Q3,false,&music,error)) return false;
+        if (!qa_audio_music_create(qa_audio_engine_rate(f->audio),QA_AUDIO_Q3,true,&music,error)) return false;
         if (!qa_audio_engine_music(f->audio,QA_FRONTEND_COMMAND_OWNER,QA_AUDIO_WORLD,1,music,error)) {
             qa_audio_music_destroy(music); return false;
         }
@@ -390,6 +392,7 @@ static bool campaign_team_complete(qa_frontend *f,const qa_application_q3_campai
 bool frontend_campaign_drain(qa_frontend *f,qa_error *error)
 {
     if (!f || !f->application || f->capture) return frontend_fail(error,QA_ERROR_ARGUMENT,"Campaign drain requires its installed frontend owner");
+    if (qa_application_startup_pending(f->application)) return true;
     frontend_campaign *owner=f->campaign;
     if (!owner) return frontend_campaign_sync(f,error);
     if (owner->restore_pending) return frontend_fail(error,QA_ERROR_ARGUMENT,"Candidate campaign has not reached its genuine publication boundary");
@@ -623,6 +626,7 @@ bool frontend_campaign_ui_read(qa_frontend *f,uint32_t seat,frontend_campaign_ui
     if (!f || !out || seat>=f->options.seats || f->capture || f->source_restoring)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Campaign menu requires its installed physical seat");
     *out=(frontend_campaign_ui_view){0};
+    if (qa_application_startup_pending(f->application)) return true;
     frontend_campaign *owner=f->campaign;
     if (!owner || owner->restore_pending || owner->draining || frontend_network_remote(f)) return true;
     qa_actor_owner receiver=0;
@@ -698,6 +702,7 @@ bool frontend_campaign_ui_drain(qa_frontend *f,qa_error *error)
 {
     if (!f || f->stepping || f->capture || f->preparing || !frontend_owners_idle(f))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Campaign action must follow the completed frontend callback boundary");
+    if (qa_application_startup_pending(f->application)) return true;
     frontend_campaign *owner=f->campaign;
     if (!owner || !owner->ui_pending) return true;
     if (owner->draining || owner->requests || owner->restore_pending)
@@ -734,5 +739,5 @@ bool frontend_campaign_ui_drain(qa_frontend *f,qa_error *error)
     bool ok=qa_launch_set_world(draft,&world,error) &&
         qa_application_q3_campaign_launch(f->application,&source,draft,rows,action==FRONTEND_CAMPAIGN_PLAY?5:4,error);
     qa_launch_draft_destroy(draft);
-    return ok && frontend_campaign_sync(f,error);
+    return ok && (qa_application_startup_pending(f->application) || frontend_campaign_sync(f,error));
 }

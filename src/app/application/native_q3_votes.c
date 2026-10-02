@@ -8,6 +8,7 @@
 #include "native_q3_console.h"
 #include "native_q3_settings.h"
 #include "native_q3_wire_state.h"
+#include "unified_q3_events.h"
 #include "qa/game_q3_configstrings.h"
 #include "qa/source_save.h"
 
@@ -181,7 +182,8 @@ static bool append(const vote_scope *scope, const char *text, qa_error *error)
     snprintf(line, sizeof(line), "%s\n", text);
     if (!application_native_q3_console_at(scope->owner->provider, &console, NULL, NULL))
         return application_fail(error, QA_ERROR_NOT_FOUND, "native Q3 vote has no source console");
-    return qa_console_append(console, &command, line, error) && scope_live(scope, error);
+    return application_unified_q3_console(scope->owner->provider, false, line, error) &&
+        qa_console_append(console, &command, line, error) && scope_live(scope, error);
 }
 
 static bool config(const vote_scope *scope, uint32_t index, const char *text, qa_error *error)

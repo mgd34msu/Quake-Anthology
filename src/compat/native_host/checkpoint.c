@@ -1,13 +1,18 @@
 #include "internal.h"
+#include <math.h>
 
-#define HOST_CHECKPOINT_VERSION 2u
+#define HOST_CHECKPOINT_VERSION 4u
 #define HOST_CHECKPOINT_HEADER 64u
-#define HOST_CHECKPOINT_SLOT 32u
+#define HOST_CHECKPOINT_SLOT 248u
 
 typedef struct saved_slot {
     qa_native_slot_kind kind;
     uint32_t slot, owner, source_slot;
     qa_saved_actor_id actor;
+    qa_vec3 creation_origin;
+    uint64_t creation_frame;
+    qa_native_host_q2_origin origins[8];
+    bool creation_present;
 } saved_slot;
 
 typedef struct saved_cvar {
@@ -177,6 +182,38 @@ static bool capture_checkpoint(qa_native_host *host, qa_buffer *out, qa_error *e
         put_u32(&cursor, saved.slot);
         put_u32(&cursor, 0);
         put_u64(&cursor, saved.generation);
+        const native_host_q2_lifetime *lifetime = slot < host->q2_lifetime_capacity ?
+            &host->q2_lifetimes[slot] : NULL;
+        bool present = lifetime && lifetime->present;
+        if (present && (!qa_actor_id_equal(lifetime->actor, binding.actor) ||
+            !qa_vec_finite(lifetime->creation_origin) || (host->engine.source_frame &&
+                lifetime->creation_frame > host->engine.source_frame(host->engine.context)))) {
+            free(data); qa_buffer_free(&engine); qa_buffer_free(&bridge);
+            return native_host_fail(error, QA_ERROR_FORMAT, slot, "Native Q2 creation continuation lost its Source actor");
+        }
+        put_u32(&cursor, present ? 1u : 0u);
+        put_u64(&cursor, present ? lifetime->creation_frame : 0u);
+        const float components[3] = {present ? lifetime->creation_origin.x : 0,
+            present ? lifetime->creation_origin.y : 0, present ? lifetime->creation_origin.z : 0};
+        for (size_t axis = 0; axis < 3; ++axis) {
+            uint32_t bits; memcpy(&bits, &components[axis], sizeof(bits)); put_u32(&cursor, bits);
+        }
+        for (size_t i = 0; i < 8; ++i) {
+            qa_native_host_q2_origin origin = lifetime ? lifetime->origins[i] : (qa_native_host_q2_origin){0};
+            if (!qa_vec_finite(origin.origin) || (origin.present ? (!present ||
+                origin.source_frame < lifetime->creation_frame || (origin.source_frame & 7u) != i ||
+                (host->engine.source_frame && origin.source_frame > host->engine.source_frame(host->engine.context))) :
+                (origin.source_frame || origin.origin.x || origin.origin.y || origin.origin.z))) {
+                free(data); qa_buffer_free(&engine); qa_buffer_free(&bridge);
+                return native_host_fail(error, QA_ERROR_FORMAT, slot, "Native Q2 origin history lost its real Source link frame");
+            }
+            put_u32(&cursor, origin.present ? 1u : 0u);
+            put_u64(&cursor, origin.source_frame);
+            const float coordinates[3] = {origin.origin.x, origin.origin.y, origin.origin.z};
+            for (size_t axis = 0; axis < 3; ++axis) {
+                uint32_t bits; memcpy(&bits, &coordinates[axis], sizeof(bits)); put_u32(&cursor, bits);
+            }
+        }
     }
     for (uint32_t slot = 0; slot < table.capacity && slot < host->retained_capacity; ++slot)
         if (host->retained_clients[slot])
@@ -286,8 +323,30 @@ static bool restore_checkpoint(qa_native_host *host, qa_bytes state, bool cvars_
         slots[index].actor.slot = take_u32(&cursor);
         take_u32(&cursor);
         slots[index].actor.generation = take_u64(&cursor);
+        uint32_t creation = take_u32(&cursor);
+        slots[index].creation_present = creation != 0;
+        slots[index].creation_frame = take_u64(&cursor);
+        slots[index].creation_origin = (qa_vec3){qa_load_f32le(cursor), qa_load_f32le(cursor + 4), qa_load_f32le(cursor + 8)};
+        cursor += 12;
+        bool history_valid = true;
+        for (size_t i = 0; i < 8; ++i) {
+            qa_native_host_q2_origin *origin = &slots[index].origins[i];
+            uint32_t present = take_u32(&cursor);
+            origin->present = present != 0;
+            origin->source_frame = take_u64(&cursor);
+            origin->origin = (qa_vec3){qa_load_f32le(cursor), qa_load_f32le(cursor + 4), qa_load_f32le(cursor + 8)};
+            cursor += 12;
+            if (present > 1 || !qa_vec_finite(origin->origin) || (present ? (!creation ||
+                origin->source_frame < slots[index].creation_frame || (origin->source_frame & 7u) != i) :
+                (origin->source_frame || origin->origin.x || origin->origin.y || origin->origin.z))) history_valid = false;
+        }
         if (slots[index].kind == QA_NATIVE_SLOT_FREE ||
             slots[index].kind > QA_NATIVE_SLOT_BORROWED ||
+            creation > 1 || !history_valid || !qa_vec_finite(slots[index].creation_origin) ||
+            (!creation && (slots[index].creation_frame || slots[index].creation_origin.x ||
+                slots[index].creation_origin.y || slots[index].creation_origin.z)) ||
+            (creation && (host->kind != NATIVE_HOST_Q2_GAME || !slots[index].slot)) ||
+            (index && slots[index].slot <= slots[index - 1].slot) ||
             (!cvars_only && slots[index].slot >= table.capacity)) {
             free(slots);
             return native_host_fail(error, QA_ERROR_FORMAT, index,
@@ -411,6 +470,25 @@ static bool restore_checkpoint(qa_native_host *host, qa_bytes state, bool cvars_
             host->retained_capacity = table.capacity;
         }
     }
+    if (ok && host->kind == NATIVE_HOST_Q2_GAME && table.capacity) {
+        native_host_q2_lifetime *values = calloc(table.capacity, sizeof(*values));
+        if (!values) ok = native_host_fail(error, QA_ERROR_MEMORY, 0, "Restoring native Q2 Source creation metadata");
+        for (uint32_t index = 0; ok && index < slot_count; ++index) {
+            const saved_slot *saved = &slots[index];
+            if (!saved->creation_present) continue;
+            const qa_actor_record *record = qa_actors_resolve_saved(actors, saved->actor);
+            if (!record || values[saved->slot].present) {
+                ok = native_host_fail(error, QA_ERROR_FORMAT, saved->slot, "Native Q2 creation continuation aliases its Source slot");
+                break;
+            }
+            values[saved->slot] = (native_host_q2_lifetime){.actor = record->id,
+                .creation_origin = saved->creation_origin, .creation_frame = saved->creation_frame, .present = true};
+            memcpy(values[saved->slot].origins, saved->origins, sizeof(saved->origins));
+        }
+        if (ok) {
+            free(host->q2_lifetimes); host->q2_lifetimes = values; host->q2_lifetime_capacity = table.capacity;
+        } else free(values);
+    }
     if (ok) ok = apply_saved_cvars(host, cvars, cvar_count, error);
     if (ok) {
         memcpy(host->message, message.data, message.size);
@@ -423,6 +501,17 @@ static bool restore_checkpoint(qa_native_host *host, qa_bytes state, bool cvars_
                                   "native engine checkpoint restore is unbound");
         else
             ok = host->engine.restore(host->engine.context, engine, error);
+    }
+    if (ok && host->engine.source_frame) {
+        uint64_t frame = host->engine.source_frame(host->engine.context);
+        for (size_t slot = 1; ok && slot < host->q2_lifetime_capacity; ++slot) {
+            const native_host_q2_lifetime *lifetime = &host->q2_lifetimes[slot];
+            if (lifetime->present && lifetime->creation_frame > frame)
+                ok = native_host_fail(error, QA_ERROR_FORMAT, slot, "Native Q2 creation exceeds its restored Source clock");
+            for (size_t i = 0; ok && i < 8; ++i)
+                if (lifetime->origins[i].present && lifetime->origins[i].source_frame > frame)
+                    ok = native_host_fail(error, QA_ERROR_FORMAT, slot, "Native Q2 link history exceeds its restored Source clock");
+        }
     }
     if (ok && bridge.size) {
         if (!host->q3.restore)

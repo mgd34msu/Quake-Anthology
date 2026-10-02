@@ -1,17 +1,26 @@
 #ifndef QA_APPLICATION_GUEST_NATIVE_Q2_PRIVATE_H
 #define QA_APPLICATION_GUEST_NATIVE_Q2_PRIVATE_H
 #include "internal.h"
+#include "native_process_owner.h"
 #include "qa/binary.h"
+#include "qa/network_q2_messages.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+
+struct qa_application_network_q2_recipient_view;
+struct qa_network_runtime;
 
 typedef struct application_native_q2_client {
     qa_actor_id actor;
     uint32_t seat;
     bool reserved, connected, begun, bot, disconnect_started;
+    bool userinfo_present;
+    char userinfo[2048];
     char layout[1024];
     int16_t inventory[256];
+    qa_q2_wire_fog protocol_fog;
+    qa_actor_id protocol_fog_actor;
     struct application_native_q2 *inventory_engine;
     uint32_t inventory_slot;
     qa_inventory_lease inventory_lease;
@@ -25,6 +34,7 @@ struct application_native_q2 {
     qa_world *world;
     qa_native_profile profile;
     qa_native_declaration *declaration;
+    application_native_process_owner process;
     struct application_native_q2_inventory *primary_inventory;
     struct application_native_q2_attack *source_attack;
     struct application_native_q2_combat *source_combat;
@@ -48,6 +58,11 @@ struct application_native_q2 {
     uint32_t current_client;
     uint64_t current_command_sequence;
     uint64_t config_revision, hud_config_revision;
+    struct qa_network_runtime *network_recipient_runtime;
+    void *network_recipient_context;
+    bool (*network_recipient)(void *, qa_actor_id,
+        struct qa_application_network_q2_recipient_view *, bool *, qa_error *);
+    size_t network_recipient_users;
     qa_actor_owner hud_source_owner;
     bool prepared, initialized, map_ready, shutting_down, activation_failed;
     qa_error activation_error;
@@ -72,6 +87,8 @@ bool application_native_q2_client_disconnect(application_provider *, uint32_t, q
 bool application_native_q2_client_think(application_provider *, uint32_t, qa_bytes, qa_error *);
 bool application_native_q2_console_command(application_provider *, qa_actor_id, const char *,
                                             bool *, qa_error *);
+bool application_native_q2_client_command(application_provider *, qa_actor_id,
+    const qa_command_invocation *, bool *, qa_error *);
 qa_native_host_engine_services application_native_q2_services(struct application_native_q2 *);
 qa_native_host_movement_services application_native_q2_movement_services(struct application_native_q2 *);
 bool application_native_q2_move(application_provider *, qa_actor_id,
@@ -100,4 +117,18 @@ bool application_native_q2_inventory_finish(application_provider *, qa_error *);
 bool application_native_q2_prepare_restore(application_provider *, qa_error *);
 bool application_native_q2_restore_finish(application_provider *, qa_error *);
 bool application_native_q2_inventory_close(struct application_native_q2 *, qa_error *);
+typedef struct application_native_q2_ui_item {
+    qa_item_id item;
+    char *label;
+    int32_t count;
+    uint32_t source_index;
+} application_native_q2_ui_item;
+typedef struct application_native_q2_ui_inventory {
+    application_native_q2_ui_item *items;
+    size_t count;
+    qa_item_id selected;
+} application_native_q2_ui_inventory;
+bool application_native_q2_inventory_ui_read(application_provider *, qa_actor_id,
+    application_native_q2_ui_inventory *, qa_error *);
+void application_native_q2_inventory_ui_free(application_native_q2_ui_inventory *);
 #endif

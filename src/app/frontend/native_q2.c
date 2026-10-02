@@ -1,6 +1,8 @@
 #include "internal.h"
 #include "native_q2_save.h"
 #include "capture.h"
+#include "resource_bindings.h"
+#include "shared_resource_policy.h"
 #include "save_private.h"
 #include "source_restore.h"
 #include "qa/persistence_content.h"
@@ -43,6 +45,7 @@ struct frontend_native_q2 {
     qa_localization_pool *catalogs;
     qa_font_world_store *world_text;
     native_q2_picture *pictures;
+    frontend_native_q2_image_policy *image_policy;
     native_q2_string strings[8];
     size_t next_string;
     uint64_t frame_time_ns, previous_frame_time_ns;
@@ -57,7 +60,14 @@ static bool source_files(frontend_native_q2 *source, qa_error *error)
 {
     if (source->images && source->sounds) return true;
     if (!source->mounts) return frontend_fail(error, QA_ERROR_ARGUMENT, "native Q2 frontend lease lacks its source content view");
-    if (!source->images) source->images = qa_scene_resources_create(source->mounts, error);
+    if (!source->images) {
+        qa_scene_resources *images = qa_scene_resources_create(source->mounts, error);
+        if (!images) return false;
+        if (!frontend_image_policy_initialize(source->frontend, images, error)) {
+            qa_scene_resources_destroy(images); return false;
+        }
+        source->images = images;
+    }
     return source->images && (source->sounds || qa_audio_bank_create(source->mounts, &source->sounds, error));
 }
 static bool text_argument(const qa_native_host_q2_application_call *call, size_t index,
@@ -268,8 +278,8 @@ static bool application_import_body(void *context, const qa_native_host_q2_appli
     const qa_native_value *args = import->arguments;
     if (import->profile != source->profile) return frontend_fail(error, QA_ERROR_FORMAT, "native Q2 platform profile mismatch");
     if (source->profile == QA_NATIVE_Q2_CGAME_API2023) {
-        source->seat_bound = call->seat_bound; source->seat = call->seat;
-        if (source->seat_bound && source->seat >= source->frontend->options.seats)
+        source->seat_bound = call->seat_bound;
+        if (source->seat_bound && !frontend_seat_ordinal_read(source->frontend,call->seat,&source->seat))
             return frontend_fail(error, QA_ERROR_ARGUMENT, "native Q2 entry seat is unavailable");
         if (source->seat_bound) source->viewport = frontend_viewport(source->frontend, source->seat);
         if (!strcmp(import->name, "CL_ClientRealTime")) {
@@ -330,7 +340,7 @@ static bool application_import_body(void *context, const qa_native_host_q2_appli
     }
     if (import->slot == 33) {
         if (!seat_ready(source, error)) return false;
-        if (args[0].as.i32 < 0 || (uint32_t)args[0].as.i32 != source->seat)
+        if (args[0].as.i32 < 0 || (uint32_t)args[0].as.i32 != call->seat)
             return frontend_fail(error, QA_ERROR_ARGUMENT, "native Q2 binding draw seat differs from active entry");
         qa_buffer command = {0}, purpose = {0}; qa_localization *catalog = NULL;
         bool ok = text_argument(call, 1, &command, error) && text_argument(call, 2, &purpose, error) && catalog_for(source, &catalog, error);
@@ -421,7 +431,7 @@ static void platform_print_body(void *context, const qa_native_host_print *print
     for (uint32_t seat = 0; seat < frontend->options.seats; ++seat) {
         qa_actor_id actor;
         if (print->kind != QA_NATIVE_HOST_PRINT_BROADCAST &&
-            (!qa_application_player_actor(source->application, seat, &actor) ||
+            (!frontend_seat_actor_read(frontend,seat,&actor) ||
                 !qa_actor_id_equal(actor, print->client))) continue;
         qa_error error = {0};
         bool ok;
@@ -444,7 +454,7 @@ static bool platform_sound_body(void *context, const qa_native_host_sound *event
     if (event->client.registry) {
         for (audience = 0; audience < frontend->options.seats; ++audience) {
             qa_actor_id actor;
-            if (qa_application_player_actor(source->application, audience, &actor) && qa_actor_id_equal(actor, event->client)) break;
+            if (frontend_seat_actor_read(frontend,audience,&actor) && qa_actor_id_equal(actor,event->client)) break;
         }
         if (audience == frontend->options.seats) return true;
     }
@@ -463,11 +473,12 @@ static bool platform_sound_body(void *context, const qa_native_host_sound *event
     bool ok = qa_audio_engine_play(frontend->audio, &sound, (int32_t)((frontend->time_ns / 1000000) & INT32_MAX), error);
     qa_audio_asset_release(asset); return ok;
 }
-static bool platform_hud_view_body(void *context, uint32_t seat,
+static bool platform_hud_view_body(void *context, uint32_t launch_seat,
     qa_native_host_q2_hud_view *out, qa_error *error)
 {
     frontend_native_q2 *source = context;
-    if (!out || source->frontend->options.dedicated || seat >= source->frontend->options.seats)
+    uint32_t seat;
+    if (!out || source->frontend->options.dedicated || !frontend_seat_ordinal_read(source->frontend,launch_seat,&seat))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "native Q2 HUD requires an available local seat");
     qa_scene_rect rect = frontend_viewport(source->frontend, seat);
     if (rect.width > INT32_MAX || rect.height > INT32_MAX)
@@ -482,6 +493,8 @@ static bool application_import(void *context, const qa_native_host_q2_applicatio
     qa_native_value *result, qa_error *error)
 {
     frontend_native_q2 *source = context;
+    if (source->image_policy)
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Native Q2 import overlaps its actual prepared image bindings");
     ++source->active_imports;
     bool ok = application_import_body(context, call, result, error);
     --source->active_imports;
@@ -651,7 +664,7 @@ bool frontend_native_q2_children_idle(const qa_frontend *frontend)
 {
     if (!frontend) return false;
     for (const frontend_native_q2 *source = frontend->native_q2; source; source = source->next)
-        if (source->frontend != frontend || source->active_imports ||
+        if (source->frontend != frontend || source->active_imports || source->image_policy ||
             (source->images && !qa_scene_resources_idle(source->images)) ||
             (source->fonts && !qa_font_library_idle(source->fonts))) return false;
     return true;
@@ -782,7 +795,7 @@ bool frontend_native_q2_audio_view(const qa_frontend *frontend,const qa_audio_as
 }
 bool frontend_native_q2_topology_checkpoint(const qa_frontend *frontend, qa_buffer *out, qa_error *error)
 {
-    if (!frontend || !frontend->application || frontend->stepping || frontend->source_restoring ||
+    if (!frontend || !frontend->application || frontend->stepping || frontend->source_restoring || frontend->resource_inventory ||
         !out || out->data || out->size)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "native Q2 topology requires idle owners and empty output");
     qa_application_content_graph *graph = qa_application_content_graph_read(frontend->application);
@@ -946,7 +959,7 @@ static bool native_q2_private_header(qa_source_save_io *io, size_t *count)
 }
 bool frontend_native_q2_private_checkpoint(const qa_frontend *frontend, qa_buffer *out, qa_error *error)
 {
-    if (!frontend || !frontend->application || frontend->stepping || frontend->source_restoring ||
+    if (!frontend || !frontend->application || frontend->stepping || frontend->source_restoring || frontend->resource_inventory ||
         !out || out->data || out->size)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "native Q2 private capture requires idle real owners and empty output");
     qa_application_content_graph *graph = qa_application_content_graph_read(frontend->application);
@@ -1024,3 +1037,140 @@ bool frontend_native_q2_private_restore(qa_frontend *frontend, qa_bytes bytes, q
     if (!ok && (!error || error->code == QA_OK)) frontend_fail(error, QA_ERROR_FORMAT, "saved native Q2 private frontend state differs from actual owners");
     return ok;
 }
+
+typedef struct native_q2_policy_source {
+    frontend_native_q2 *source;
+    native_q2_picture *pictures;
+    qa_scene_resources *images;
+    void *owner_context;
+    bool (*owner_idle)(void *);
+    qa_scene_resource_policy *bank;
+} native_q2_policy_source;
+typedef struct native_q2_policy_picture {
+    native_q2_picture *picture;
+    const qa_scene_image *original, *prepared;
+} native_q2_policy_picture;
+struct frontend_native_q2_image_policy {
+    qa_frontend *frontend;
+    qa_application *application;
+    frontend_native_q2 *head;
+    native_q2_policy_source *sources;
+    native_q2_policy_picture *pictures;
+    size_t source_count, picture_count;
+    bool sealed, published;
+};
+static bool q2_policy_current(const frontend_native_q2_image_policy *ticket)
+{
+    if (!ticket || ticket->frontend->application != ticket->application ||
+        ticket->frontend->native_q2 != ticket->head || ticket->frontend->stepping) return false;
+    size_t row = 0, picture = 0;
+    for (frontend_native_q2 *source = ticket->head; source; source = source->next, ++row) {
+        if (row == ticket->source_count) return false;
+        const native_q2_policy_source *saved = ticket->sources + row;
+        if (source != saved->source || source->frontend != ticket->frontend ||
+            source->application != ticket->application || source->active_imports ||
+            source->image_policy != ticket || source->images != saved->images ||
+            source->pictures != saved->pictures || source->owner_context != saved->owner_context ||
+            source->owner_idle != saved->owner_idle || source->prepared || source->restored) return false;
+        for (native_q2_picture *item = source->pictures; item; item = item->next, ++picture)
+            if (picture == ticket->picture_count || ticket->pictures[picture].picture != item ||
+                item->image != (ticket->published ? ticket->pictures[picture].prepared :
+                    ticket->pictures[picture].original)) return false;
+    }
+    return row == ticket->source_count && picture == ticket->picture_count;
+}
+static void q2_policy_dispose(frontend_native_q2_image_policy *ticket)
+{
+    for (size_t i = 0; i < ticket->picture_count; ++i)
+        qa_scene_image_release(ticket->published ? ticket->pictures[i].original : ticket->pictures[i].prepared);
+    for (size_t i = 0; i < ticket->source_count; ++i)
+        if (ticket->sources[i].source->image_policy == ticket) ticket->sources[i].source->image_policy = NULL;
+    free(ticket->pictures); free(ticket->sources); free(ticket);
+}
+bool frontend_native_q2_image_policy_prepare(qa_frontend *f, qa_scene_resource_policy *const *banks,
+    size_t count, frontend_native_q2_image_policy **out, qa_error *error)
+{
+    if (!f || !f->application || !f->resource_inventory || !out || *out || (count && !banks) ||
+        !frontend_native_q2_callbacks_idle(f))
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Q2 image bindings require their actual retained frontend roster");
+    frontend_native_q2_image_policy *ticket = calloc(1, sizeof(*ticket));
+    if (!ticket) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining Q2 image bindings");
+    ticket->frontend = f; ticket->application = f->application; ticket->head = f->native_q2;
+    for (frontend_native_q2 *source = ticket->head; source; source = source->next) {
+        if (source->prepared || source->restored || source->image_policy || !source->owner_idle ||
+            !source->owner_idle(source->owner_context) || ticket->source_count == SIZE_MAX / sizeof(*ticket->sources)) goto invalid;
+        ++ticket->source_count;
+        for (native_q2_picture *picture = source->pictures; picture; picture = picture->next) {
+            if (ticket->picture_count == SIZE_MAX / sizeof(*ticket->pictures)) goto invalid;
+            ++ticket->picture_count;
+        }
+    }
+    ticket->sources = ticket->source_count ? calloc(ticket->source_count, sizeof(*ticket->sources)) : NULL;
+    ticket->pictures = ticket->picture_count ? calloc(ticket->picture_count, sizeof(*ticket->pictures)) : NULL;
+    if ((ticket->source_count && !ticket->sources) || (ticket->picture_count && !ticket->pictures)) {
+        free(ticket->pictures); free(ticket->sources); free(ticket);
+        return frontend_fail(error, QA_ERROR_MEMORY, "Retaining actual Q2 picture binding rows");
+    }
+    size_t row = 0, picture = 0;
+    for (frontend_native_q2 *source = ticket->head; source; source = source->next, ++row) {
+        native_q2_policy_source *saved = ticket->sources + row;
+        *saved = (native_q2_policy_source){source, source->pictures, source->images,
+            source->owner_context, source->owner_idle, NULL};
+        for (size_t i = 0; i < count; ++i)
+            if (qa_scene_resource_policy_source(banks[i]) == source->images) saved->bank = banks[i];
+        if (source->images && !saved->bank) goto failed;
+        source->image_policy = ticket;
+        for (native_q2_picture *item = source->pictures; item; item = item->next, ++picture) {
+            native_q2_policy_picture *saved_picture = ticket->pictures + picture;
+            *saved_picture = (native_q2_policy_picture){.picture = item, .original = item->image};
+            qa_scene_image *image = NULL;
+            if (!saved->bank || !qa_scene_resource_policy_image(saved->bank, item->image, &image, error)) goto failed;
+            saved_picture->prepared = image;
+        }
+    }
+    if (!q2_policy_current(ticket)) goto failed;
+    *out = ticket; return true;
+invalid:
+    free(ticket->pictures); free(ticket->sources); free(ticket);
+    return frontend_fail(error, QA_ERROR_ARGUMENT, "Q2 image preparation lacks a returned real owner or addressable roster");
+failed:
+    /* Unvisited rows have no owner hold or image reference. */
+    for (size_t i = 0; i < ticket->picture_count; ++i) qa_scene_image_release(ticket->pictures[i].prepared);
+    for (size_t i = 0; i < ticket->source_count; ++i)
+        if (ticket->sources[i].source && ticket->sources[i].source->image_policy == ticket)
+            ticket->sources[i].source->image_policy = NULL;
+    free(ticket->pictures); free(ticket->sources); free(ticket);
+    if (error && error->code == QA_OK) frontend_fail(error, QA_ERROR_ARGUMENT, "Q2 image bindings lost their actual prepared bank");
+    return false;
+}
+bool frontend_native_q2_image_policy_ready(frontend_native_q2_image_policy *ticket, qa_error *error)
+{
+    if (!q2_policy_current(ticket) || ticket->published)
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Q2 image bindings lost their actual source owners");
+    ticket->sealed = true; return true;
+}
+bool frontend_native_q2_image_policy_ready_is(const frontend_native_q2_image_policy *ticket)
+{
+    if (!q2_policy_current(ticket) || !ticket->sealed || ticket->published) return false;
+    for (size_t i = 0; i < ticket->source_count; ++i)
+        if (ticket->sources[i].bank && !qa_scene_resource_policy_ready_is(ticket->sources[i].bank)) return false;
+    return true;
+}
+void frontend_native_q2_image_policy_publish(frontend_native_q2_image_policy *ticket)
+{
+    if (!q2_policy_current(ticket) || !ticket->sealed || ticket->published) return;
+    for (size_t i = 0; i < ticket->picture_count; ++i)
+        ticket->pictures[i].picture->image = ticket->pictures[i].prepared;
+    ticket->published = true;
+}
+static bool q2_policy_end(frontend_native_q2_image_policy **owner, bool published, qa_error *error)
+{
+    if (!owner || !*owner) return true;
+    if (!q2_policy_current(*owner) || (*owner)->published != published)
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Q2 image cleanup retains its nonterminal actual owner");
+    q2_policy_dispose(*owner); *owner = NULL; return true;
+}
+bool frontend_native_q2_image_policy_finish(frontend_native_q2_image_policy **owner, qa_error *error)
+{ return q2_policy_end(owner, true, error); }
+bool frontend_native_q2_image_policy_abort(frontend_native_q2_image_policy **owner, qa_error *error)
+{ return q2_policy_end(owner, false, error); }

@@ -27,4 +27,9 @@ typedef struct qa_application_q3_equipment_services {
     void (*held_release)(void *, void *token);
 } qa_application_q3_equipment_services;
 
+/* Pure requests from the current actual CGAME owner, during RenderScene or
+ * after Draw. No selection or media preparation is repeated here. */
+bool qa_application_q3_equipment_requests(qa_application *, qa_actor_owner,
+    uint32_t seat, bool *hud, bool *view, qa_error *);
+
 #endif

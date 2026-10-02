@@ -45,9 +45,13 @@ struct qa_scene_model {
     struct qa_scene_model *replacement;
     struct qa_scene_model *replacement_next;
     struct qa_scene_model *replacement_parent;
+    struct qa_scene_model *selected_replacement;
+    bool replacement_policy_set, replacement_policy_enabled;
+    double replacement_distance;
     unsigned active_submissions;
     bool checkpoint_active;
     qa_scene_model_capture *capture;
+    qa_scene_model_image_policy *image_policy;
     qa_model_replacement replacement_description;
     const qa_model_replacement *replacement_source;
     scene_model_image ***replacement_skins;

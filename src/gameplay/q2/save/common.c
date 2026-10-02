@@ -109,6 +109,12 @@ bool q2_save_actor(q2_save_io *io, qa_q2_actor_checkpoint *s) {
     Q2B(combat_alive_knockback_only);
     Q2B(weapon_bound); Q2B(physics_bound);
     if (!weapon(io, &s->weapon) || !input(io, &s->input)) return false;
+    Q2B(weapon_turn.attack); Q2B(weapon_turn.latched_attack); Q2B(weapon_turn.weapon_thunk);
+    Q2U(weapon_turn.firing_weapon); Q2S(f64, weapon_turn.firing_credit);
+    if (s->weapon_turn.firing_weapon >= QA_Q2_WEAPON_COUNT || s->weapon_turn.firing_credit < 0 ||
+        s->weapon_turn.firing_credit >= 1 ||
+        (s->weapon_turn.firing_weapon == QA_Q2_WEAPON_NONE && s->weapon_turn.firing_credit != 0))
+        return q2_save_fail(io, "Q2 firing credit leaves its actual weapon turn");
     Q2I(silencer);
     if (!physics(io, &s->physics)) return false;
     Q2R(physics_enemy); Q2R(physics_goal);

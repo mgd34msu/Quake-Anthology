@@ -8,6 +8,8 @@ typedef struct q3n_mission_hud_options {
     const qa_application_native_q3_presentation *source;
     qa_native_q3_client_service *client;
     qa_native_q3_wire_reader *reader;
+    qa_native_q3_remote_client_service *remote_client;
+    q3n_remote_source *remote_source;
     qa_application_q3_client_context recipient;
     qa_vfs *content;
     qa_q3_presentation_assets *assets;
@@ -21,6 +23,8 @@ typedef struct q3n_mission_hud_options {
 } q3n_mission_hud_options;
 bool q3n_mission_hud_create(const q3n_mission_hud_options *, q3n_mission_hud **, qa_error *);
 bool q3n_mission_hud_create_restored(const q3n_mission_hud_options *, q3n_mission_hud **, qa_error *);
+/* Empty received-CLIENT continuation; genuine Team CG_Init stages follow. */
+bool q3n_mission_hud_create_remote(const q3n_mission_hud_options *, q3n_mission_hud **, qa_error *);
 void q3n_mission_hud_destroy(q3n_mission_hud *);
 bool q3n_mission_hud_idle(const q3n_mission_hud *);
 bool q3n_mission_hud_bind(q3n_mission_hud *, q3n_hud *, qa_error *);

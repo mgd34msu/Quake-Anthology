@@ -124,10 +124,29 @@ static bool pickup(void *opaque,int32_t client,qa_actor_id actor,qa_bot_pickup_g
     *found=qa_actors_get(qa_session_actors(application->session),actor)!=NULL;return true;
 }
 static bool owns_item(void *opaque,int32_t client,int32_t entity,bool *out,qa_error *error) {
-    (void)opaque;(void)client;(void)entity;(void)error;
-    /* Actual source observers own native pickup utility, including Q3 items.
-     * Authoring metadata remains available for roam/camp/location goals. */
-    *out=true;return true;
+    application_bots *bots=opaque;(void)client;*out=false;
+    application_provider *source=bot_source(bots);
+    if(bots->shared_world || !source || source->kind!=APPLICATION_PROVIDER_Q3) return true;
+    if(!source->constructed || !source->attached || !source->map_bound || source->close_pending)
+        return application_fail(error,QA_ERROR_ARGUMENT,"Bot item ownership has no actual live Q3 GAME source");
+    if(entity<0 || entity>=QA_Q3_SOURCE_ENTITIES)
+        return application_fail(error,QA_ERROR_ARGUMENT,"Bot item ownership exceeds the genuine source pool");
+    qa_q3_source_binding binding;
+    if(!qa_q3_source_binding_read(source->state.q3,(uint32_t)entity,&binding,error)) return false;
+    if(!binding.in_use || !binding.actor.registry) return true;
+    qa_q3_item_spawn spawn;bool finished;qa_error local={0};
+    if(!qa_q3_source_item_spawn_read(source->state.q3,binding.actor,&spawn,&finished,&local)) {
+        if(local.code==QA_ERROR_NOT_FOUND) return true;
+        if(error) *error=local;return false;
+    }
+    qa_q3_product product;int32_t game_type;
+    if(!qa_q3_source_match_context_read(source->state.q3,&product,&game_type,error)) return false;
+    size_t count;const qa_q3_item *items=qa_q3_items(product,&count);
+    if(spawn.item_index>=count)
+        return application_fail(error,QA_ERROR_FORMAT,"Bot item source lost its actual item declaration");
+    *out=items[spawn.item_index].kind==QA_Q3_ITEM_WEAPON ||
+        items[spawn.item_index].kind==QA_Q3_ITEM_AMMO;
+    return true;
 }
 static int32_t entity_number(void *opaque,qa_actor_id actor) {
     int32_t number;qa_error error={0};
@@ -865,6 +884,10 @@ bool application_bots_runtime_create(application_bots *bots,const qa_bot_runtime
     if(options.observations==QA_BOT_OBSERVATION_MODULE) {
         services.movement.travel_weapon=NULL;
         services.movement.grapple_state=NULL;
+        services.goals.pickups=NULL;
+        services.goals.pickups_end=NULL;
+        services.goals.pickup=NULL;
+        services.goals.owns_item=NULL;
     }
     return qa_bot_runtime_create(&options,&services,out,error);
 }

@@ -109,6 +109,7 @@ bool qa_bot_chat_asset_restore(const qa_bot_chat_asset_view *v, qa_bot_chat_asse
         qa_error_set(e, QA_ERROR_FORMAT, 0, "Invalid bot chat asset checkpoint");
         return false;
     }
+    if(v->kind==QA_BOT_CHAT_INITIAL) return chat_initial_asset_from_view(v,out,e);
     qa_bot_chat_asset *a;
     if (!chat_asset_allocate(v->kind, v->path, v->name, &a, e))
         return false;
@@ -159,27 +160,39 @@ bool qa_bot_chat_capture_state(const qa_bot_chat *s, qa_bot_chat_state *out, qa_
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Missing bot chat checkpoint input/output");
         return false;
     }
-    qa_bot_chat_state state = {.client = s->client,
-                               .gender = s->gender,
-                               .last_handle = s->last_handle,
-                               .console_count = s->console_count};
-    memcpy(state.name, s->name, sizeof(state.name));
-    memcpy(state.message, s->message, sizeof(state.message));
+    qa_bot_memory_span span;
+    if(!chat_state_span(s,&span,e)) return false;
+    uint32_t client=chat_raw_word(span.data+CHAT_CLIENT);
+    qa_bot_chat_state state = {.gender=chat_raw_word(span.data+CHAT_GENDER),
+        .last_handle=chat_raw_word(span.data+CHAT_HANDLE),.console_count=chat_raw_word(span.data+CHAT_COUNT)};
+    memcpy(&state.client,&client,4);
+    memcpy(state.name,span.data+CHAT_NAME,sizeof(state.name));
+    memcpy(state.message,span.data+CHAT_MESSAGE,sizeof(state.message));
     if (state.console_count != 0) {
         if (state.console_count > SIZE_MAX / sizeof(*state.console))
             goto memory;
         state.console = malloc(state.console_count * sizeof(*state.console));
         if (state.console == NULL)
             goto memory;
-        size_t n = 0;
-        for (uint32_t i = s->first_console; i != QA_BOT_NO_INDEX; i = s->system->console[i].next)
-            state.console[n++] = s->system->console[i].message;
-    }
+        size_t n=0;uint32_t pointer=chat_raw_word(span.data+CHAT_FIRST);
+        while(pointer) {
+            qa_bot_memory_span cell;
+            if(n>=state.console_count || !chat_console_span(s->system,pointer,&cell,e)) goto invalid;
+            qa_bot_console_message *message=&state.console[n++];uint32_t bits;
+            message->handle=chat_raw_word(cell.data);bits=chat_raw_word(cell.data+4);memcpy(&message->time,&bits,4);
+            bits=chat_raw_word(cell.data+8);memcpy(&message->type,&bits,4);
+            memcpy(message->text,cell.data+12,256);message->text[256]=0;
+            pointer=chat_raw_word(cell.data+272);
+        }
+        if(n!=state.console_count) goto invalid;
+    } else if(chat_raw_word(span.data+CHAT_FIRST)) goto invalid;
     *out = state;
     return true;
 memory:
     qa_error_set(e, QA_ERROR_MEMORY, 0, "Capturing bot console messages");
     return false;
+invalid:
+    free(state.console);qa_error_set(e,QA_ERROR_ARGUMENT,0,"Chat source console links disagree with their raw count");return false;
 }
 static bool valid_state(const qa_bot_chat_state *state, qa_error *e) {
     if (state == NULL || state->gender > 2 || state->last_handle > 8192 ||
@@ -189,8 +202,7 @@ static bool valid_state(const qa_bot_chat_state *state, qa_error *e) {
         goto invalid;
     for (size_t i = 0; i < state->console_count; ++i)
         if (state->console[i].handle == 0 || state->console[i].handle > 8192 ||
-            !isfinite(state->console[i].time) ||
-            memchr(state->console[i].text, 0, sizeof(state->console[i].text)) == NULL)
+            !isfinite(state->console[i].time))
             goto invalid;
     return true;
 invalid:
@@ -199,77 +211,48 @@ invalid:
 }
 static void clear_console(qa_bot_chat *s) {
     qa_bot_chat_system *system=s->system;
-    uint32_t index=s->first_console;
-    while (index!=QA_BOT_NO_INDEX) {
-        chat_console_cell *cell=&system->console[index];
-        uint32_t next=cell->next;
-        cell->next=system->free_console;cell->previous=QA_BOT_NO_INDEX;
-        system->free_console=index;
-        index=next;
+    uint32_t pointer=0,count=0;(void)chat_state_get(s,CHAT_FIRST,&pointer,NULL);
+    (void)chat_state_get(s,CHAT_COUNT,&count,NULL);
+    for(size_t visited=0;pointer && visited<system->console_capacity;++visited) {
+        uint32_t next;
+        if(!chat_console_get(system,pointer,272,&next,NULL)) break;
+        (void)chat_console_set(system,pointer,272,system->free_console,NULL);
+        (void)chat_console_set(system,pointer,268,0,NULL);
+        if(system->free_console) (void)chat_console_set(system,system->free_console,268,pointer,NULL);
+        system->free_console=pointer;pointer=next;
     }
-    system->console_count-=s->console_count;
-    s->console_count=0;s->first_console=s->last_console=QA_BOT_NO_INDEX;
+    if(count<=system->console_count) system->console_count-=count;
+    (void)chat_state_set(s,CHAT_COUNT,0,NULL);(void)chat_state_set(s,CHAT_FIRST,0,NULL);(void)chat_state_set(s,CHAT_LAST,0,NULL);
 }
 static void commit_state(qa_bot_chat *s, const qa_bot_chat_state *state) {
-    s->client=state->client;s->gender=state->gender;s->last_handle=state->last_handle;
-    memcpy(s->name,state->name,sizeof(s->name));memcpy(s->message,state->message,sizeof(s->message));
+    qa_bot_memory_span span;if(!chat_state_span(s,&span,NULL)) return;
+    chat_raw_store(span.data+CHAT_CLIENT,(uint32_t)state->client);chat_raw_store(span.data+CHAT_GENDER,state->gender);
+    chat_raw_store(span.data+CHAT_HANDLE,state->last_handle);
+    memcpy(span.data+CHAT_NAME,state->name,sizeof(state->name));memcpy(span.data+CHAT_MESSAGE,state->message,sizeof(state->message));
     qa_bot_chat_system *system=s->system;
+    uint32_t last=0;
     for (size_t i=0;i<state->console_count;++i) {
         uint32_t index=system->free_console;
-        chat_console_cell *cell=&system->console[index];
-        system->free_console=cell->next;
-        *cell=(chat_console_cell){.message=state->console[i],.previous=s->last_console,.next=QA_BOT_NO_INDEX};
-        if (s->last_console!=QA_BOT_NO_INDEX) system->console[s->last_console].next=index;
-        else s->first_console=index;
-        s->last_console=index;++s->console_count;++system->console_count;
+        uint32_t next=0,bits;qa_bot_memory_span cell;
+        if(!chat_console_get(system,index,272,&next,NULL) || !chat_console_span(system,index,&cell,NULL)) return;
+        system->free_console=next;if(next) (void)chat_console_set(system,next,268,0,NULL);
+        chat_raw_store(cell.data,state->console[i].handle);memcpy(&bits,&state->console[i].time,4);chat_raw_store(cell.data+4,bits);
+        chat_raw_store(cell.data+8,(uint32_t)state->console[i].type);memcpy(cell.data+12,state->console[i].text,256);
+        chat_raw_store(cell.data+268,last);chat_raw_store(cell.data+272,0);
+        if(last) (void)chat_console_set(system,last,272,index,NULL);
+        else (void)chat_state_set(s,CHAT_FIRST,index,NULL);
+        last=index;++system->console_count;
     }
+    (void)chat_state_set(s,CHAT_LAST,last,NULL);(void)chat_state_set(s,CHAT_COUNT,(uint32_t)state->console_count,NULL);
 }
 bool qa_bot_chat_restore_state(qa_bot_chat *s, const qa_bot_chat_state *state, qa_error *e) {
     if (!s || s->retired || s->system->restoring || !valid_state(state,e)) return false;
-    size_t other = s->system->console_count - s->console_count;
+    size_t other = s->system->console_count - qa_bot_chat_console_count(s);
     if (state->console_count > SIZE_MAX - other ||
         !chat_reserve_console(s->system, other + state->console_count, e))
         return false;
     clear_console(s);commit_state(s,state);
     return true;
-}
-struct bot_chat_restore {
-    const bot_chat_restore_entry *entries;
-    size_t count;
-    qa_bot_chat_system *system;
-};
-bool bot_chat_restore_prepare(const bot_chat_restore_entry *entries, size_t count,
-                              bot_chat_restore **out, qa_error *e) {
-    *out=NULL;
-    if (!count) return true;
-    qa_bot_chat_system *system=entries[0].chat?entries[0].chat->system:NULL;
-    if (!system || system->retired || system->restoring) goto invalid;
-    size_t removed=0,added=0;
-    for (size_t i=0;i<count;++i) {
-        qa_bot_chat *s=entries[i].chat;
-        if (!s || s->retired || s->system!=system || !valid_state(entries[i].state,e)) goto invalid;
-        for (size_t j=0;j<i;++j) if (entries[j].chat==s) goto invalid;
-        if (s->console_count>SIZE_MAX-removed || entries[i].state->console_count>SIZE_MAX-added) goto invalid;
-        removed+=s->console_count;added+=entries[i].state->console_count;
-    }
-    if (removed>system->console_count || added>SIZE_MAX-(system->console_count-removed)) goto invalid;
-    bot_chat_restore *prepared=malloc(sizeof(*prepared));
-    if (!prepared) { qa_error_set(e,QA_ERROR_MEMORY,0,"preparing shared bot chat checkpoint");return false; }
-    if (!chat_reserve_console(system,system->console_count-removed+added,e)) {free(prepared);return false;}
-    *prepared=(bot_chat_restore){.entries=entries,.count=count,.system=system};
-    system->restoring=true;
-    *out=prepared;return true;
-invalid:
-    qa_error_set(e,QA_ERROR_FORMAT,0,"invalid shared bot chat checkpoint bindings");return false;
-}
-void bot_chat_restore_finish(bot_chat_restore *prepared, bool commit) {
-    if (!prepared) return;
-    if (commit) {
-        for (size_t i=0;i<prepared->count;++i) clear_console(prepared->entries[i].chat);
-        for (size_t i=0;i<prepared->count;++i) commit_state(prepared->entries[i].chat,prepared->entries[i].state);
-    }
-    prepared->system->restoring=false;
-    free(prepared);
 }
 void qa_bot_chat_state_free(qa_bot_chat_state *state) {
     if (state != NULL) {

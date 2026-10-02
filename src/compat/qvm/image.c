@@ -145,10 +145,31 @@ const qa_qvm_instruction *qa_qvm_image_instructions(const qa_qvm_image *image, s
     return image == NULL ? NULL : image->instructions;
 }
 size_t qa_qvm_image_memory_size(const qa_qvm_image *image) { return image == NULL ? 0 : image->memory_size; }
+qa_bytes qa_qvm_image_initialized_data(const qa_qvm_image *image)
+{
+    return image ? (qa_bytes){image->initialized.data, image->initialized.size} : (qa_bytes){0};
+}
 
 bool qa_qvm_qualify_global_word(const qa_qvm_image *image, uint32_t offset, qa_error *error)
 {
     uint64_t end = image ? (uint64_t)image->data_length + image->literal_length + image->bss_length : 0;
     return (image && !(offset & 3) && (uint64_t)offset + 4 <= end) ||
         qa_qvm_error(error, QA_ERROR_ARGUMENT, offset, "QVM source global word leaves immutable data/literal/BSS extent");
+}
+
+bool qa_qvm_qualify_source_span(const qa_qvm_image *image, uint32_t offset,
+    size_t length, qa_error *error)
+{
+    uint64_t end = image ? (uint64_t)image->data_length + image->literal_length + image->bss_length : 0;
+    return (image && offset <= end && length <= end - offset) ||
+        qa_qvm_error(error, QA_ERROR_ARGUMENT, offset, "QVM source byte span leaves immutable data/literal/BSS extent");
+}
+
+bool qa_qvm_qualify_evaluation_stack(const qa_qvm_image *image,
+    const qa_qvm_evaluation_stack *stack, qa_error *error)
+{
+    uint64_t initialized = image ? (uint64_t)image->data_length + image->literal_length : 0;
+    return (image && stack && !((stack->floor | stack->top) & 3) &&
+        stack->floor >= initialized && stack->floor < stack->top && stack->top <= image->memory_size) ||
+        qa_qvm_error(error, QA_ERROR_ARGUMENT, 0, "QVM declared evaluation stack leaves aligned original allocation");
 }

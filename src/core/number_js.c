@@ -169,8 +169,9 @@ bool qa_format_ecmascript_number(double value,char out[32],qa_error *error)
 
 static unsigned radix_digit(unsigned char c)
 {
-    return c>='0'&&c<='9'?c-'0':c>='a'&&c<='f'?c-'a'+10:
-        c>='A'&&c<='F'?c-'A'+10:UINT_MAX;
+    return c>='0'&&c<='9'?(unsigned)(c-'0'):
+        c>='a'&&c<='f'?(unsigned)(c-'a')+10u:
+        c>='A'&&c<='F'?(unsigned)(c-'A')+10u:UINT_MAX;
 }
 static bool radix_number(qa_bytes input,unsigned radix,double *out)
 {

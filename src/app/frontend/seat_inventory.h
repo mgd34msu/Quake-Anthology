@@ -12,4 +12,5 @@ bool frontend_seats_checkpoint(qa_frontend *, frontend_scene_namespace *,
     qa_buffer *input, qa_buffer *presentation, qa_error *);
 bool frontend_seats_restore(qa_frontend *, frontend_scene_namespace *,
     qa_bytes input, qa_bytes presentation, qa_error *);
+bool frontend_seats_restore_finish(qa_frontend *, qa_error *);
 #endif

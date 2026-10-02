@@ -1,6 +1,8 @@
 #include "internal.h"
 #include "qa/launch_save.h"
 #include "qa/vfs_view_save.h"
+#include "qa/launch_q2_client.h"
+#include "qa/launch_client.h"
 
 typedef struct qa_launch_instance_storage {
     size_t references, leases;
@@ -643,6 +645,147 @@ bool qa_launch_instance_restore_builtin_client_metadata(const qa_launch_instance
     owner_release(owner); return ok;
 }
 
+static bool q2_client_selection(const qa_launch_q2_client_metadata *request,
+    qa_launch_provider *selection, qa_error *error)
+{
+    const qa_product *profile = request ? qa_catalog_product(request->catalog, request->profile) : NULL;
+    const qa_product *selected = request ? qa_catalog_product(request->catalog, request->selected) : NULL;
+    const qa_product *program = profile ? qa_catalog_product(request->catalog, profile->program_product) : NULL;
+    if (!program) program = profile;
+    if (!request || !request->instance || !*request->instance || !profile || !selected || !program ||
+        profile->family != QA_GAME_Q2 || selected->family != QA_GAME_Q2 || program->family != QA_GAME_Q2 ||
+        !profile->builtin || !program->builtin || profile->program_kind != QA_PROGRAM_BUILTIN ||
+        program->program_kind != QA_PROGRAM_BUILTIN || (profile->program && *profile->program) ||
+        (profile->edition != QA_EDITION_CLASSIC && profile->edition != QA_EDITION_RERELEASE) ||
+        profile->edition != selected->edition || profile->edition != program->edition ||
+        !request->prepared || !qa_catalog_product_view_current(request->catalog, request->selected, request->prepared))
+        return error_message(error, "Q2 CLIENT metadata requires its real compiled profile and prepared selected view");
+    *selection = (qa_launch_provider){.instance = request->instance, .product = selected->id,
+        .runtime = QA_PROGRAM_BUILTIN, .implementation = program->key, .artifact = "", .component = "",
+        .clock = qa_clock_defaults(profile->edition == QA_EDITION_RERELEASE ? QA_CLOCK_Q2_RERELEASE : QA_CLOCK_Q2_CLASSIC)};
+    selection->clock.initial_lead_ns = 0;
+    return true;
+}
+static bool q2_client_identity(instance_owner *owner, const qa_launch_q2_client_metadata *request,
+    const qa_launch_provider *selection, qa_error *error)
+{
+    qa_launch_seat seat = {.id = request->seat, .name = "", .team = "", .local = true};
+    qa_launch_binding binding = {.scope = {.kind = QA_SCOPE_SEAT, .seat = request->seat},
+        .role = QA_ROLE_HUD, .instance = selection->instance, .selector = "", .definition = ""};
+    owner->view.roles = QA_ROLE_BIT(QA_ROLE_HUD) | QA_ROLE_BIT(QA_ROLE_AUDIO) | QA_ROLE_BIT(QA_ROLE_MENU);
+    bool ok = launch_empty(request->catalog, &owner->identity, error) &&
+        qa_launch_set_provider(owner->identity, selection, error) && qa_launch_set_seat(owner->identity, &seat, error) &&
+        qa_launch_bind(owner->identity, &binding, error);
+    if (ok) owner->view.selection = owner->identity->choices.providers[0];
+    return ok;
+}
+bool qa_launch_instance_prepare_q2_client_metadata(const qa_launch_q2_client_metadata *request,
+    qa_launch_instance_lease **out, qa_error *error)
+{
+    qa_launch_provider selection = {0};
+    if (!out || *out || !q2_client_selection(request, &selection, error)) return false;
+    instance_owner *owner = calloc(1, sizeof(*owner));
+    if (!owner) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining Q2 CLIENT metadata"); return false; }
+    owner->references = 1; owner->view.storage = owner;
+    bool ok = q2_client_identity(owner, request, &selection, error);
+    if (ok) { owner->view.content = qa_vfs_clone(request->prepared, error); ok = owner->view.content != NULL; }
+    if (ok) ok = instance_identity(owner, &owner->identity->choices, error) &&
+        qa_launch_instance_retain_metadata(&owner->view, out, error);
+    owner_release(owner); return ok;
+}
+bool qa_launch_instance_restore_q2_client_metadata(const qa_launch_q2_client_metadata *request,
+    const qa_launch_restored_instance *saved, qa_launch_instance_lease **out, qa_error *error)
+{
+    if (!request || !saved || !saved->catalog || !saved->content || !out || *out) return false;
+    instance_owner *owner = calloc(1, sizeof(*owner));
+    if (!owner) { qa_vfs_destroy(saved->content); qa_error_set(error, QA_ERROR_MEMORY, 0, "Restoring Q2 CLIENT metadata"); return false; }
+    owner->references = 1; owner->view.storage = owner; owner->view.content = saved->content;
+    qa_launch_q2_client_metadata actual = *request; actual.prepared = saved->content;
+    qa_launch_provider expected = {0};
+    bool ok = saved->catalog == request->catalog && q2_client_selection(&actual, &expected, error) &&
+        restored_selection_matches(&expected, request->catalog, saved) &&
+        !saved->artifact && !saved->artifact_acquisition && !saved->declaration &&
+        !saved->interface_count && !saved->behavior_count && q2_client_identity(owner, request, &expected, error);
+    if (ok) ok = instance_identity(owner, &owner->identity->choices, error) &&
+        qa_sha256_equal(&owner->view.identity, &saved->identity) &&
+        qa_launch_instance_retain_metadata(&owner->view, out, error);
+    if (!ok && error && error->code == QA_OK) error_message(error, "Saved Q2 CLIENT descriptor leaves its genuine source recipe");
+    owner_release(owner); return ok;
+}
+
+static bool client_profile_selection(const qa_launch_client_metadata *request,
+    qa_launch_provider *selection, qa_error *error)
+{
+    const qa_product *profile = request ? qa_catalog_product(request->catalog, request->profile) : NULL;
+    const qa_product *selected = request ? qa_catalog_product(request->catalog, request->selected) : NULL;
+    const qa_product *program = profile && profile->program_product ?
+        qa_catalog_product(request->catalog, profile->program_product) : profile;
+    bool clock = profile && ((profile->family == QA_GAME_Q1 &&
+            (request->clock == QA_CLOCK_NETQUAKE || request->clock == QA_CLOCK_QUAKEWORLD)) ||
+        (profile->family == QA_GAME_Q2 && request->clock ==
+            (profile->edition == QA_EDITION_RERELEASE ? QA_CLOCK_Q2_RERELEASE : QA_CLOCK_Q2_CLASSIC)) ||
+        (profile->family == QA_GAME_Q3 && request->clock == QA_CLOCK_Q3));
+    if (!request || !request->instance || !*request->instance || !profile || !selected || !program || !clock ||
+        !profile->builtin || !program->builtin || profile->program_kind != QA_PROGRAM_BUILTIN ||
+        program->program_kind != QA_PROGRAM_BUILTIN || (profile->program && *profile->program) ||
+        selected->family != profile->family || program->family != profile->family ||
+        (profile->family == QA_GAME_Q2 && (selected->edition != profile->edition || program->edition != profile->edition)) ||
+        !request->prepared || !qa_catalog_product_view_current(request->catalog, request->selected, request->prepared))
+        return error_message(error, "CLIENT metadata requires its actual compiled profile, dialect and prepared selected content");
+    *selection = (qa_launch_provider){.instance = request->instance, .product = selected->id,
+        .runtime = QA_PROGRAM_BUILTIN, .implementation = program->key, .artifact = "", .component = "",
+        .clock = qa_clock_defaults(request->clock)};
+    selection->clock.initial_lead_ns = 0;
+    return true;
+}
+static bool client_profile_identity(instance_owner *owner, const qa_launch_client_metadata *request,
+    const qa_launch_provider *selection, qa_error *error)
+{
+    qa_launch_seat seat = {.id = request->seat, .local = true};
+    qa_launch_binding binding = {.scope = {.kind = QA_SCOPE_SEAT, .seat = request->seat},
+        .role = QA_ROLE_HUD, .instance = selection->instance, .selector = "", .definition = ""};
+    owner->view.roles = QA_ROLE_BIT(QA_ROLE_HUD) | QA_ROLE_BIT(QA_ROLE_AUDIO) | QA_ROLE_BIT(QA_ROLE_MENU);
+    bool ok = launch_empty(request->catalog, &owner->identity, error) &&
+        qa_launch_set_provider(owner->identity, selection, error) && qa_launch_set_seat(owner->identity, &seat, error) &&
+        qa_launch_bind(owner->identity, &binding, error);
+    if (ok) owner->view.selection = owner->identity->choices.providers[0];
+    return ok;
+}
+bool qa_launch_instance_prepare_client_profile(const qa_launch_client_metadata *request,
+    qa_launch_instance_lease **out, qa_error *error)
+{
+    qa_launch_provider selection;
+    if (!out || *out || !client_profile_selection(request, &selection, error)) return false;
+    instance_owner *owner = calloc(1, sizeof(*owner));
+    if (!owner) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining compiled CLIENT metadata"); return false; }
+    owner->references = 1; owner->view.storage = owner;
+    bool ok = client_profile_identity(owner, request, &selection, error);
+    if (ok) { owner->view.content = qa_vfs_clone(request->prepared, error); ok = owner->view.content != NULL; }
+    if (ok) ok = instance_identity(owner, &owner->identity->choices, error) &&
+        qa_launch_instance_retain_metadata(&owner->view, out, error);
+    owner_release(owner); return ok;
+}
+bool qa_launch_instance_restore_client_profile(const qa_launch_client_metadata *request,
+    const qa_launch_restored_instance *saved, qa_launch_instance_lease **out, qa_error *error)
+{
+    if (!request || !saved || !saved->catalog || !saved->content || !out || *out)
+        return error_message(error, "Saved CLIENT metadata requires its actual claimed content view");
+    instance_owner *owner = calloc(1, sizeof(*owner));
+    if (!owner) { qa_vfs_destroy(saved->content); qa_error_set(error, QA_ERROR_MEMORY, 0, "Restoring CLIENT metadata"); return false; }
+    owner->references = 1; owner->view.storage = owner; owner->view.content = saved->content;
+    qa_launch_client_metadata actual = *request; actual.prepared = saved->content;
+    qa_launch_provider expected;
+    bool ok = request->catalog == saved->catalog && client_profile_selection(&actual, &expected, error) &&
+        restored_selection_matches(&expected, request->catalog, saved) &&
+        !saved->artifact && !saved->artifact_acquisition && !saved->declaration &&
+        !saved->interface_count && !saved->behavior_count && client_profile_identity(owner, request, &expected, error);
+    if (ok) ok = instance_identity(owner, &owner->identity->choices, error) &&
+        qa_sha256_equal(&owner->view.identity, &saved->identity) &&
+        qa_launch_instance_retain_metadata(&owner->view, out, error);
+    if (!ok && error && error->code == QA_OK) error_message(error, "Saved CLIENT metadata differs from its actual selected profile");
+    owner_release(owner); return ok;
+}
+
 static bool resource_add(qa_launch_snapshot *s, qa_product_id product, const char *path, qa_error *error)
 {
     for (size_t i = 0; i < s->resource_count; ++i)
@@ -757,6 +900,27 @@ static void discard_transaction(qa_configuration_transaction *t)
     --t->manager->transactions; free(t);
 }
 
+static bool source_clock_policy(qa_launch_draft *draft, qa_error *error)
+{
+    const qa_launch_binding *entities = qa_launch_binding_for(&draft->choices,
+        (qa_launch_scope){.kind = QA_SCOPE_WORLD}, QA_ROLE_ENTITIES, "");
+    for (size_t i = 0; i < draft->choices.provider_count; ++i) {
+        qa_launch_provider *selection = (qa_launch_provider *)draft->choices.providers + i;
+        const qa_product *product = qa_catalog_product(draft->catalog, selection->product);
+        if (selection->runtime != QA_PROGRAM_BUILTIN || product->family != QA_GAME_Q2)
+            continue;
+        qa_clock_kind kind = product->edition == QA_EDITION_RERELEASE
+            ? QA_CLOCK_Q2_RERELEASE : QA_CLOCK_Q2_CLASSIC;
+        if (selection->clock.kind != kind || !selection->clock.interval_ns)
+            return error_message(error, "Compiled Q2 source needs its actual edition clock");
+        selection->clock.initial_lead_ns = entities &&
+            !strcmp(entities->instance, selection->instance) ? selection->clock.interval_ns : 0;
+        if (selection->clock.initial_time_ns > UINT64_MAX - selection->clock.initial_lead_ns)
+            return error_message(error, "Compiled Q2 source lead exhausts its actual clock");
+    }
+    return true;
+}
+
 static bool configuration_prepare(qa_configuration *manager, const qa_launch_draft *draft,
     const qa_launch_restore_content *content, bool replacing,
     qa_configuration_transaction **out, qa_error *error)
@@ -772,6 +936,7 @@ static bool configuration_prepare(qa_configuration *manager, const qa_launch_dra
     t->previous = manager->current; qa_launch_snapshot_retain(t->previous); ++manager->transactions;
     manager->busy = true;
     if (!qa_launch_draft_copy(draft, &s->draft, error)) goto fail;
+    if (!source_clock_policy(s->draft, error)) goto fail;
     const qa_launch_choices *v = &s->draft->choices;
     size_t count = v->provider_count;
     for (size_t i = 0; i < v->mod_count; ++i) count += v->mods[i].enabled;

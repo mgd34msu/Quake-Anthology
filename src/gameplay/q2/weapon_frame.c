@@ -1,14 +1,19 @@
 #include "internal.h"
 #include "qa/game_q2_source.h"
 
-uint64_t q2_interval(q2_weapon_call *c, uint64_t native) {
-    uint64_t interval =
-        c->game->hooks.firing_interval == NULL
-            ? native
-            : c->game->hooks.firing_interval(c->game->hooks.context, c->actor->id, native);
-    return interval == 0 ? Q2_MS : interval;
+bool q2_interval(q2_weapon_call *c, uint64_t native, uint64_t *out, qa_error *e) {
+    bool handled = false;
+    if (!c->equipment && c->game->hooks.selected_firing_interval &&
+        !c->game->hooks.selected_firing_interval(c->game->hooks.context, c->actor->id,
+            native, out, &handled, e)) return false;
+    if (!handled) {
+        uint64_t interval = c->game->hooks.firing_interval == NULL ? native :
+            c->game->hooks.firing_interval(c->game->hooks.context, c->actor->id, native);
+        *out = interval == 0 ? Q2_MS : interval;
+    }
+    return true;
 }
-uint64_t q2_animation_time(q2_weapon_call *c) {
+bool q2_animation_time(q2_weapon_call *c, uint64_t *out, qa_error *e) {
     qa_q2_weapon_state *s = c->state;
     unsigned rate = c->input.quick_switch && c->frame_ns <= 50 * Q2_MS &&
                             (s->phase == QA_Q2_ACTIVATING || s->phase == QA_Q2_DROPPING)
@@ -21,9 +26,19 @@ uint64_t q2_animation_time(q2_weapon_call *c) {
             rate *= 2;
     }
     uint64_t native = (1000 / rate) * Q2_MS;
-    uint64_t interval = s->phase == QA_Q2_FIRING ? q2_interval(c, native) : native;
-    s->gun_rate = interval == native ? (float)rate : (float)((double)Q2_NS / (double)interval);
-    return interval;
+    uint64_t interval = native;
+    if (!c->equipment && s->phase == QA_Q2_FIRING && !q2_interval(c, native, &interval, e)) return false;
+    s->gun_rate = interval == native ? (float)rate : interval ?
+        (float)((double)Q2_NS / (double)interval) : 0;
+    *out = interval;
+    return true;
+}
+bool q2_animation_deadline(q2_weapon_call *c, uint64_t from, uint64_t extra,
+    uint64_t *out, qa_error *e) {
+    uint64_t duration;
+    if (!q2_animation_time(c, &duration, e)) return false;
+    *out = q2_deadline(from, q2_deadline(duration, extra));
+    return true;
 }
 static bool classic(q2_weapon_call *c, qa_error *e) {
     qa_q2_weapon_state *s = c->state;
@@ -136,18 +151,19 @@ static bool rerelease(q2_weapon_call *c, qa_error *e) {
             if (d->deactivate_last - s->frame == 4 && !q2_reverse_animation(c, e))
                 return false;
             ++s->frame;
-            s->think_ns = q2_deadline(now, q2_animation_time(c));
+            if (!q2_animation_deadline(c, now, 0, &s->think_ns, e)) return false;
         }
         return true;
     }
     if (s->phase == QA_Q2_ACTIVATING && (s->think_ns <= now || c->input.instant_switch)) {
-        s->think_ns = q2_deadline(now, q2_animation_time(c));
+        if (!q2_animation_deadline(c, now, 0, &s->think_ns, e)) return false;
         if (s->frame == d->activate_last || c->input.instant_switch) {
             s->phase = QA_Q2_READY;
             s->frame = idle;
             s->fire_buffered = false;
-            s->fire_finished_ns =
-                c->input.instant_switch ? 0 : q2_deadline(now, q2_animation_time(c));
+            s->fire_finished_ns = 0;
+            if (!c->input.instant_switch &&
+                !q2_animation_deadline(c, now, 0, &s->fire_finished_ns, e)) return false;
         } else
             ++s->frame;
         return true;
@@ -163,7 +179,7 @@ static bool rerelease(q2_weapon_call *c, qa_error *e) {
             s->frame = last + 1;
             if (d->deactivate_last - s->frame < 4 && !q2_reverse_animation(c, e))
                 return false;
-            s->think_ns = q2_deadline(now, q2_animation_time(c));
+            if (!q2_animation_deadline(c, now, 0, &s->think_ns, e)) return false;
         }
         return true;
     }
@@ -182,16 +198,15 @@ static bool rerelease(q2_weapon_call *c, qa_error *e) {
             if (!d->repeating) {
                 s->frame = d->activate_last + 1;
                 s->fire_buffered = false;
-                s->think_ns = q2_deadline(s->think_ns, (c->input.weapon_thunk ? c->frame_ns : 0) +
-                                                           q2_animation_time(c));
-                s->fire_finished_ns = q2_deadline(now, q2_animation_time(c));
+                if (!q2_animation_deadline(c, s->think_ns, c->input.weapon_thunk ? c->frame_ns : 0,
+                    &s->think_ns, e) || !q2_animation_deadline(c, now, 0, &s->fire_finished_ns, e)) return false;
                 if (q2_frame_bit(d->fires, s->frame) &&
                     (!q2_power_sound(c, e) || !q2_fire(c, false, e)))
                     return false;
                 return q2_attack_animation(c, 1, e);
             }
         } else if (s->think_ns <= now) {
-            s->think_ns = q2_deadline(now, q2_animation_time(c));
+            if (!q2_animation_deadline(c, now, 0, &s->think_ns, e)) return false;
             if (s->frame == last) {
                 s->frame = idle;
                 return true;
@@ -205,7 +220,7 @@ static bool rerelease(q2_weapon_call *c, qa_error *e) {
         s->last_firing_ns = q2_deadline(now, 2500 * Q2_MS);
         if (!d->repeating)
             ++s->frame;
-        s->fire_finished_ns = q2_deadline(now, q2_animation_time(c));
+        if (!q2_animation_deadline(c, now, 0, &s->fire_finished_ns, e)) return false;
         bool buffered = s->fire_buffered;
         s->fire_buffered = false;
         if (d->repeating) {
@@ -219,8 +234,8 @@ static bool rerelease(q2_weapon_call *c, qa_error *e) {
             s->phase = QA_Q2_READY;
             s->fire_buffered = false;
         }
-        s->think_ns = q2_deadline(
-            now, q2_animation_time(c) + (d->repeating && c->input.weapon_thunk ? c->frame_ns : 0));
+        if (!q2_animation_deadline(c, now, d->repeating && c->input.weapon_thunk ? c->frame_ns : 0,
+            &s->think_ns, e)) return false;
     }
     return true;
 }

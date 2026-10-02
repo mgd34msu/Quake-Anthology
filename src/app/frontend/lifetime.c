@@ -1,5 +1,18 @@
+#include "source_prompt.h"
+#include "component_scene.h"
+#include "client_source.h"
+#include "root_resources.h"
+#include "qc_messages.h"
+#include "remote_q1_client.h"
+#include "q3_color_policy.h"
+#include "network_declarations.h"
 #include "internal.h"
 #include "source_restore.h"
+#include "view_bindings.h"
+#include "view_settings.h"
+#include "q1_sky.h"
+#include "music_sources.h"
+#include "global_settings_storage.h"
 #include "native_q2_save.h"
 #include "round.h"
 #include "rankings.h"
@@ -16,12 +29,17 @@
 #include "client_registry.h"
 #include "native_q3_client.h"
 #include "remote_q3_client.h"
+#include "remote_q3_initial.h"
+#include "remote_q2_client.h"
 #include "equipment_media.h"
 #include "equipment_q3.h"
 #include "equipment_gear.h"
 #include "selected_character.h"
 #include "selected_effects.h"
 #include "equipment_events.h"
+#include "shared_register.h"
+#include "shared_settings.h"
+#include "constructor.h"
 #include "qc_rerelease_events.h"
 #include "qa/application_startup_prepare.h"
 #include <signal.h>
@@ -29,6 +47,7 @@
 
 static volatile sig_atomic_t interrupted;
 typedef enum frontend_shutdown_phase {
+    SHUTDOWN_CANDIDATE, SHUTDOWN_RETIRE_CANDIDATE, SHUTDOWN_ABORT_CANDIDATE,
     SHUTDOWN_PREPARE, SHUTDOWN_FAILED_PREPARE, SHUTDOWN_RELEASE,
     SHUTDOWN_DETACH, SHUTDOWN_RETIRE_INPUT, SHUTDOWN_READY
 } frontend_shutdown_phase;
@@ -58,13 +77,64 @@ static bool shutdown_inputs(qa_frontend *f,qa_error *error)
 {
     if(!f->application) return !f->input_settings && !f->input_shutdown && !f->engine_shutdown;
     if(!f->shutdown) {
-        if(qa_application_startup_pending(f->application) && !qa_application_startup_abort(f->application,error)) return false;
         frontend_shutdown *owner=calloc(1,sizeof(*owner));
         if(!owner) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining final frontend input shutdown");
         owner->application=f->application; f->shutdown=owner;
     }
     frontend_shutdown *owner=f->shutdown;
     double now=(double)f->wall_time_ns/1000000;
+    if(owner->phase==SHUTDOWN_CANDIDATE) {
+        if(qa_application_startup_pending(f->application)) {
+            const qa_launch_snapshot *candidate=qa_application_startup_candidate(f->application);
+            bool complete=false; qa_error release={0};
+            bool okay=frontend_config_store_shared_cancel_advance(f->config_store,f->application,
+                candidate,&complete,&release);
+            if(okay && !complete) {
+                owner->waiting=true;
+                return frontend_fail(error,QA_ERROR_ARGUMENT,"Candidate shutdown awaits its retained source programme");
+            }
+            if(!okay) shutdown_failure(owner,&release);
+        }
+        qa_error fault={0};
+        if(!qa_application_startup_pending(f->application) || qa_application_startup_abort(f->application,&fault))
+            owner->phase=SHUTDOWN_PREPARE;
+        else {
+            const qa_launch_snapshot *candidate=qa_application_startup_candidate(f->application);
+            frontend_shared_settings *shared=frontend_config_store_shared(f->config_store,f->application,candidate);
+            const qa_cvars_edit *values=shared?
+                frontend_shared_values_prepared(frontend_shared_settings_values(shared)):NULL;
+            qa_error detached={0};
+            if(!values || !qa_application_engine_shutdown_begin_candidate(f->application,candidate,values,
+                &f->engine_shutdown,&detached)) {
+                if(error) {
+                    *error=fault;
+                    if(detached.code!=QA_OK) qa_error_set(error,fault.code,fault.offset,
+                        "%s; candidate ENGINE detach: %s",fault.message,detached.message);
+                }
+                return false;
+            }
+            shutdown_failure(owner,&fault);
+            owner->phase=SHUTDOWN_RETIRE_CANDIDATE;
+        }
+    }
+    if(owner->phase==SHUTDOWN_RETIRE_CANDIDATE) {
+        bool complete=false; qa_error fault={0};
+        bool okay=frontend_config_store_shared_engine_shutdown(f->config_store,f->engine_shutdown,&complete,&fault);
+        if(!okay) shutdown_failure(owner,&fault);
+        if(!complete) {
+            if(error) *error=fault;
+            return fault.code!=QA_OK?false:frontend_fail(error,QA_ERROR_ARGUMENT,"Candidate shutdown retains its actual shared child");
+        }
+        owner->phase=SHUTDOWN_ABORT_CANDIDATE;
+    }
+    if(owner->phase==SHUTDOWN_ABORT_CANDIDATE) {
+        if(qa_application_startup_pending(f->application) && !qa_application_startup_abort(f->application,error)) return false;
+        if(qa_application_engine_shutdown_owner(f->engine_shutdown)!=f->application ||
+            qa_application_engine_shutdown_candidate(f->engine_shutdown) || f->input_settings || f->input_shutdown ||
+            !frontend_seat_callbacks_idle(f) || (f->input && !qa_input_platform_settings_idle(f->input)))
+            return frontend_fail(error,QA_ERROR_ARGUMENT,"Candidate shutdown still retains physical input or startup parents");
+        owner->phase=SHUTDOWN_READY;
+    }
     if(owner->phase==SHUTDOWN_FAILED_PREPARE) {
         if(!frontend_input_shutdown_abort(f->input_shutdown,error) ||
             !frontend_input_shutdown_destroy(&f->input_shutdown,error)) return false;
@@ -147,8 +217,20 @@ bool frontend_audio_engine_options_ready(const qa_frontend *frontend)
     return frontend && qa_audio_engine_observer_is(frontend->audio,frontend_ui_audio_event,frontend) &&
         qa_audio_engine_milliseconds_is(frontend->audio,audio_milliseconds,frontend);
 }
+static bool source_prompt_supported(void *context,qa_actor_id actor,bool *out,qa_error *error)
+{
+    qa_frontend *f=context;
+    if (!f || !out || !f->application)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Prompt capability needs its actual frontend recipient");
+    *out=false;
+    for (unsigned i=0;i<f->options.seats && !f->options.dedicated;++i)
+        if (f->seats && frontend_source_prompt_supported(f->seats[i].source_prompt,actor)) { *out=true; break; }
+    return true;
+}
 void frontend_application_options(qa_frontend *frontend, qa_application_options *application)
 {
+    application->native_runtime=frontend->native_runtime;
+    application->native_bootstrap=frontend->options.native_bootstrap;
     if (frontend->native_runtime) application->native_runner=qa_native_runtime_config(frontend->native_runtime);
     application->startup_commands=frontend->options.startup;
     application->startup_command_count=frontend->options.startup_count;
@@ -156,7 +238,9 @@ void frontend_application_options(qa_frontend *frontend, qa_application_options 
     application->startup_hooks=frontend_config_store_hooks(frontend->config_store);
     application->guest_context = frontend;
     application->console_print = frontend_console_print;
+    application->prompt_context=frontend; application->prompt_supported=source_prompt_supported;
     application->q3_services = frontend_source_services;
+    application->q3_component_scene_prepare=frontend_component_scene_prepare;
     application->q3_client_prepare=frontend_source_client_prepare;
     application->q3_client_registry_reference=frontend_source_client_registry_reference;
     application->q3_client_effect = frontend_source_effect;
@@ -270,6 +354,117 @@ void frontend_console_print(void *context, const qa_command_context *source, con
             fprintf(stderr, "console output: %s\n", error.message);
     }
 }
+struct frontend_constructor { qa_error failure; bool outputs_entered; };
+static bool outputs_create(qa_frontend *frontend,frontend_shared_settings *prepared,qa_error *error)
+{
+    qa_frontend_options *options=&frontend->options;
+    qa_audio_device_options device={.format=frontend->audio_output_format,.buffer_frames=1024};
+    qa_input_platform_settings input_settings={0};
+    const qa_cvars_edit *edit=NULL;
+    int swap_interval=0; float effects=.7f,music=.5f;
+    if (prepared) {
+        if (!frontend_shared_settings_constructor_settings(prepared,&options->display,&swap_interval,
+            &options->gamma,&device.format,&effects,&music,&input_settings,error)) return false;
+        edit=frontend_shared_values_prepared(frontend_shared_settings_values(prepared));
+        if (!edit) return frontend_fail(error,QA_ERROR_ARGUMENT,"First native outputs lost their actual prepared ENGINE edit");
+        frontend->audio_output_format=device.format;
+    }
+    if (options->dedicated) {
+        if (!frontend_ui_features_prepare(frontend,error)) return false;
+        frontend->terminal = qa_dedicated_console_create(error);
+        if (!frontend->terminal) return false;
+    } else {
+        frontend->display = qa_display_create(&options->display, error);
+        if (!frontend->display) return false;
+        qa_display_info info;
+        if (!qa_display_info_get(frontend->display, &info, error)) return false;
+        frontend->width = info.drawable_width; frontend->height = info.drawable_height;
+        if (options->display.backend == QA_DISPLAY_CPU) {
+            qa_cpu_options renderer;
+            qa_cpu_options_default(&renderer);
+            renderer.width = frontend->width; renderer.height = frontend->height;
+            renderer.owner = QA_FRONTEND_COMMAND_OWNER;
+            renderer.present = qa_display_present_cpu; renderer.present_context = frontend->display;
+            frontend->cpu = qa_cpu_create(&renderer, error);
+            if (!frontend->cpu || !qa_cpu_set_gamma(frontend->cpu, options->gamma, error)) return false;
+        } else {
+            qa_gl_options renderer;
+            qa_gl_options_default(&renderer); renderer.display = frontend->display; renderer.owner = QA_FRONTEND_COMMAND_OWNER;
+            frontend->gl = qa_gl_create(&renderer, error);
+            if (!frontend->gl || !qa_gl_set_gamma(frontend->gl,options->gamma,error) ||
+                (prepared && !qa_display_set_swap_interval(frontend->display,swap_interval,error))) return false;
+        }
+        if (!frontend_resources(frontend, error) || !frontend_seats_create(frontend, error)) return false;
+        qa_input_platform_options input = {.cvars = qa_application_cvars(frontend->application),
+            .user = frontend, .print = frontend_print};
+        frontend->input = prepared?qa_input_platform_create_prepared(&input,edit,&input_settings,error):
+            qa_input_platform_create(&input,error);
+        if (!frontend->input) return false;
+        qa_input_seat *seats[4] = {0};
+        qa_controller_selection controllers[4] = {0};
+        for (unsigned i = 0; i < options->seats; ++i) seats[i] = frontend->seats[i].input;
+        double now=(double)frontend->wall_time_ns/1000000;
+        bool routed=prepared?qa_input_platform_routes_prepared(frontend->input,seats,controllers,0,now,edit,&input_settings,error):
+            qa_input_platform_routes(frontend->input,seats,controllers,0,now,error);
+        bool window=routed && (prepared?qa_input_platform_window_prepared(frontend->input,frontend->display,now,edit,&input_settings,error):
+            qa_input_platform_window(frontend->input,frontend->display,now,error));
+        if (!window) return false;
+        {
+            qa_audio_engine_options audio;
+            frontend_audio_engine_options(frontend,&audio);
+            if (!qa_audio_engine_create(&audio, &frontend->audio, error)) return false;
+            if (prepared) {
+                qa_audio_engine_gain(frontend->audio,effects);
+                if (!qa_audio_engine_music_gain(frontend->audio,music,error)) return false;
+            }
+            if (options->audio) {
+                if (!qa_audio_device_open(&device, &frontend->device, error)) return false;
+                qa_audio_device_pause(frontend->device, false);
+            }
+        }
+    }
+    if (!frontend_music_sources_create(frontend,&frontend->music_sources,error) ||
+        !frontend_tools_create(frontend, error) || !frontend_save_commands_create(frontend,error) ||
+        (!qa_application_startup_pending(frontend->application) && !frontend_launch(frontend,error)) ||
+        !frontend_input_profile_bind(frontend,error) ||
+        !frontend_tools_sync(frontend, error) || !frontend_network_create(frontend, error)) return false;
+    if (!options->dedicated) for (unsigned i = 0; i < options->seats; ++i)
+        if (!qa_ui_llm_create(frontend->seats[i].ui, frontend_tools_llm(frontend),
+            FRONTEND_ASSISTANCE, &frontend->seats[i].assistance, error)) return false;
+    if (!qa_application_startup_pending(frontend->application) &&
+        !qa_application_rankings_start(frontend->application, error)) return false;
+    if (!options->dedicated && (options->menu ||
+        (!qa_application_launch(frontend->application) && !qa_application_startup_pending(frontend->application))))
+        if (!frontend_game_menu(&frontend->seats[0], error)) return false;
+    frontend->archive_enabled=true;
+    return true;
+}
+bool frontend_constructor_pending(const qa_frontend *f)
+{ return f && f->constructor; }
+bool frontend_constructor_advance(qa_frontend *f,uint64_t elapsed_ns,bool *complete,qa_error *error)
+{
+    if (!f || !f->constructor || !complete || f->stepping || f->preparing ||
+        elapsed_ns>UINT64_MAX-f->wall_time_ns)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"First native output construction lost its retained frontend owner");
+    *complete=false;
+    struct frontend_constructor *owner=f->constructor;
+    if (owner->failure.code!=QA_OK) { if (error) *error=owner->failure; return false; }
+    if (owner->outputs_entered) return frontend_fail(error,QA_ERROR_ARGUMENT,"First native output construction cannot replay an entered factory");
+    f->wall_time_ns+=elapsed_ns;
+    f->preparing=true;
+    bool images=false;
+    bool ok=qa_application_startup_bootstrap_images_advance(f->application,&images,error);
+    f->preparing=false;
+    if (!ok) { if (error) owner->failure=*error; return false; }
+    if (!images) return true;
+    frontend_shared_settings *settings=frontend_config_store_shared(f->config_store,f->application,NULL);
+    if (!settings || !qa_application_startup_bootstrap_images_ready(f->application))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"First native outputs lack their real completed bootstrap images receipt");
+    owner->outputs_entered=true;
+    if (!outputs_create(f,settings,error)) { if (error) owner->failure=*error; return false; }
+    f->constructor=NULL; free(owner); *complete=true; return true;
+}
+
 bool qa_frontend_create(const qa_frontend_options *options, qa_frontend **out, qa_error *error)
 {
     if (!options || !out || !options->seats || options->seats > 4)
@@ -299,12 +494,36 @@ bool qa_frontend_create(const qa_frontend_options *options, qa_frontend **out, q
     }
     frontend->keys=frontend_keys_create(error);
     if (!frontend->keys) goto fail;
+    if (!frontend_global_settings_storage_create(frontend->options.application.user_root,
+        &frontend->global_settings_storage,error)) goto fail;
     frontend->config_store=frontend_config_store_create(frontend,error);
     if (!frontend->config_store) goto fail;
     qa_application_options application = frontend->options.application;
+    qa_audio_device_options device = {.format = {48000, 2, 16}, .buffer_frames = 1024};
+    frontend->audio_output_format=device.format;
     frontend_application_options(frontend, &application);
     if (!qa_application_create(&application, &frontend->application, error)) goto fail;
-    if (!frontend_equipment_events_create(frontend,&frontend->gear_events,error)) goto fail;
+    {
+        const qa_console_dialect *source=NULL; qa_console_dialect dialect;
+        if(options->game) {
+            const qa_product *product=frontend_product_selection(qa_application_catalog(frontend->application),options->game);
+            if(!product || product->availability!=QA_CONTENT_INSTALLED) {
+                frontend_fail(error,QA_ERROR_ARGUMENT,"Initial ENGINE settings lack their selected source product"); goto fail;
+            }
+            /* The initial preset binds ENGINE_BEHAVIOR to this selected product. */
+            dialect=product->family==QA_GAME_Q3?QA_CONSOLE_Q3:product->family==QA_GAME_Q2?
+                (product->edition==QA_EDITION_RERELEASE?QA_CONSOLE_Q2_RERELEASE:QA_CONSOLE_Q2):
+                product->edition==QA_EDITION_QUAKEWORLD?QA_CONSOLE_QW:QA_CONSOLE_Q1;
+            source=&dialect;
+        }
+        if(!frontend_shared_register(qa_application_cvars(frontend->application),source,
+            device.format,options->gamma,error)) goto fail;
+    }
+    if (!frontend_network_declarations(qa_application_cvars(frontend->application),error)) goto fail;
+    if ((!options->dedicated && !frontend_q1_sky_create(frontend,&frontend->q1_sky,error)) ||
+        !frontend_qc_messages_create(frontend,&frontend->qc_messages,error) ||
+        !frontend_view_bindings_create(frontend,error) ||
+        !frontend_equipment_events_create(frontend,&frontend->gear_events,error)) goto fail;
     frontend->sdl_subsystems = SDL_INIT_TIMER | SDL_INIT_EVENTS;
     if (!options->dedicated) frontend->sdl_subsystems |= SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER | SDL_INIT_HAPTIC;
     if (!options->dedicated && options->audio) frontend->sdl_subsystems |= SDL_INIT_AUDIO;
@@ -313,63 +532,26 @@ bool qa_frontend_create(const qa_frontend_options *options, qa_frontend **out, q
         qa_error_set(error, QA_ERROR_IO, 0, "SDL initialization: %s", SDL_GetError()); goto fail;
     }
     if (!frontend_commands(frontend, error)) goto fail;
-    if (options->dedicated) {
-        if (!frontend_ui_features_prepare(frontend,error)) goto fail;
-        frontend->terminal = qa_dedicated_console_create(error);
-        if (!frontend->terminal) goto fail;
-    } else {
-        frontend->display = qa_display_create(&options->display, error);
-        if (!frontend->display) goto fail;
-        qa_display_info info;
-        if (!qa_display_info_get(frontend->display, &info, error)) goto fail;
-        frontend->width = info.drawable_width; frontend->height = info.drawable_height;
-        if (options->display.backend == QA_DISPLAY_CPU) {
-            qa_cpu_options renderer;
-            qa_cpu_options_default(&renderer);
-            renderer.width = frontend->width; renderer.height = frontend->height;
-            renderer.owner = QA_FRONTEND_COMMAND_OWNER;
-            renderer.present = qa_display_present_cpu; renderer.present_context = frontend->display;
-            frontend->cpu = qa_cpu_create(&renderer, error);
-            if (!frontend->cpu || !qa_cpu_set_gamma(frontend->cpu, options->gamma, error)) goto fail;
-        } else {
-            qa_gl_options renderer;
-            qa_gl_options_default(&renderer); renderer.display = frontend->display; renderer.owner = QA_FRONTEND_COMMAND_OWNER;
-            frontend->gl = qa_gl_create(&renderer, error);
-            if (!frontend->gl || !qa_gl_set_gamma(frontend->gl, options->gamma, error)) goto fail;
+    if (options->game) {
+        qa_catalog *catalog=qa_application_catalog(frontend->application);
+        const qa_product *product=frontend_product_selection(catalog,options->game);
+        if (!product || product->availability!=QA_CONTENT_INSTALLED) {
+            frontend_fail(error,QA_ERROR_ARGUMENT,"Initial settings require the actual selected installed product"); goto fail;
         }
-        if (!frontend_resources(frontend, error) || !frontend_seats_create(frontend, error)) goto fail;
-        qa_input_platform_options input = {.cvars = qa_application_cvars(frontend->application),
-            .user = frontend, .print = frontend_print};
-        frontend->input = qa_input_platform_create(&input, error);
-        if (!frontend->input) goto fail;
-        qa_input_seat *seats[4] = {0};
-        qa_controller_selection controllers[4] = {0};
-        for (unsigned i = 0; i < options->seats; ++i) seats[i] = frontend->seats[i].input;
-        if (!qa_input_platform_routes(frontend->input, seats, controllers, 0, 0, error) ||
-            !qa_input_platform_window(frontend->input, frontend->display, 0, error)) goto fail;
-        {
-            qa_audio_engine_options audio;
-            frontend_audio_engine_options(frontend,&audio);
-            qa_audio_device_options device = {.format = {48000, 2, 16}, .buffer_frames = 1024};
-            if (!qa_audio_engine_create(&audio, &frontend->audio, error)) goto fail;
-            if (options->audio) {
-                if (!qa_audio_device_open(&device, &frontend->device, error)) goto fail;
-                qa_audio_device_pause(frontend->device, false);
-            }
-        }
+        frontend_config_files *files=frontend_config_files_create(catalog,product->id,
+            frontend_global_settings_storage_user_store(frontend->global_settings_storage),
+            frontend_global_settings_storage_device_store(frontend->global_settings_storage),error);
+        if (!files) goto fail;
+        bool bound=frontend_input_profile_bind_store(frontend,catalog,product->id,
+            frontend_config_files_store(files,false),error);
+        bool released=frontend_config_files_destroy(files,bound?error:NULL);
+        if (!bound || !released) goto fail;
     }
-    if (!frontend_tools_create(frontend, error) || !frontend_save_commands_create(frontend,error) || !frontend_launch(frontend, error) ||
-        !frontend_input_profile_bind(frontend,error) ||
-        !frontend_tools_sync(frontend, error) || !frontend_network_create(frontend, error)) goto fail;
-    if (!options->dedicated) for (unsigned i = 0; i < options->seats; ++i)
-        if (!qa_ui_llm_create(frontend->seats[i].ui, frontend_tools_llm(frontend),
-            FRONTEND_ASSISTANCE, &frontend->seats[i].assistance, error)) goto fail;
-    if (!qa_application_startup_pending(frontend->application) &&
-        !qa_application_rankings_start(frontend->application, error)) goto fail;
-    if (!options->dedicated && (options->menu ||
-        (!qa_application_launch(frontend->application) && !qa_application_startup_pending(frontend->application))))
-        if (!frontend_game_menu(&frontend->seats[0], error)) goto fail;
-    frontend->archive_enabled=true;
+    frontend->constructor=calloc(1,sizeof(*frontend->constructor));
+    if (!frontend->constructor) { frontend_fail(error,QA_ERROR_MEMORY,"Retaining first native output construction"); goto fail; }
+    if (!qa_application_startup_bootstrap(frontend->application,error)) goto fail;
+    bool complete=false;
+    if (!frontend_constructor_advance(frontend,0,&complete,error)) goto fail;
     *out = frontend;
     return true;
 fail: {
@@ -398,8 +580,11 @@ bool qa_frontend_destroy(qa_frontend *frontend, qa_error *error)
     if (!frontend_network_close_client(frontend,error) || !frontend_cinematic_destroy(frontend,error) || !frontend_save_commands_destroy(frontend,error) ||
         !frontend_campaign_destroy(frontend,error)) return false;
     if (!frontend_selected_effects_retire(frontend,error)) return false;
-    if (!frontend_remote_q3_destroy(frontend,error)) return false;
-    if (!frontend_native_q3_destroy(frontend,error)) return false;
+    if (!frontend_remote_q3_destroy(frontend,error) ||
+        !frontend_remote_q3_initial_destroy_all(frontend,error)) return false;
+    if (!frontend_remote_q1_destroy_all(frontend,error) ||
+        !frontend_remote_q2_destroy_all(frontend,error) ||
+        !frontend_native_q3_destroy(frontend,error)) return false;
     if (!frontend_equipment_gear_retire(frontend,error)) return false;
     frontend_equipment_gear_destroy(frontend);
     if (!frontend_equipment_events_destroy(frontend->gear_events,error)) return false;
@@ -412,19 +597,27 @@ bool qa_frontend_destroy(qa_frontend *frontend, qa_error *error)
         if (!qa_ui_llm_destroy(frontend->seats[i].assistance, (double)frontend->time_ns / 1000000, error)) return false;
         frontend->seats[i].assistance = NULL;
     }
+    if (!frontend_qc_messages_destroy(&frontend->qc_messages,error) ||
+        !frontend_q1_sky_destroy(&frontend->q1_sky,error) ||
+        !frontend_music_sources_destroy(&frontend->music_sources,error)) return false;
     if (frontend->application &&
         (!frontend_tools_before_world_change(frontend, error) ||
          !qa_application_retire_sources(frontend->application, error))) return false;
-    if (!frontend_network_destroy(frontend, error) || !frontend_tools_destroy(frontend, error)) return false;
+    if (!frontend_client_sources_destroy(frontend,error) ||
+        !frontend_network_destroy(frontend, error) || !frontend_tools_destroy(frontend, error)) return false;
     frontend_qc_rerelease_destroy(frontend);
     if (frontend->config_store && !frontend_config_store_retired_ready(frontend->config_store,error)) return false;
     if (!frontend_ui_features_destroy(frontend,error) || !frontend_seats_destroy(frontend,error)) return false;
+    if (frontend->view_settings && !(frontend->engine_shutdown?
+        frontend_view_settings_shutdown(&frontend->view_settings,frontend->engine_shutdown,error):
+        frontend_view_settings_destroy(&frontend->view_settings,error))) return false;
     if (frontend->engine_shutdown &&
         !qa_application_engine_shutdown_finish(frontend->application,&frontend->engine_shutdown,error)) return false;
     if (frontend->application && !qa_application_destroy(frontend->application, error)) return false;
     frontend->application = NULL;
     if (frontend->shutdown) frontend->shutdown->application=NULL;
     if (!frontend_config_store_destroy(frontend->config_store,error)) return false;
+    if (!frontend_global_settings_storage_destroy(&frontend->global_settings_storage,error)) return false;
     frontend->config_store=NULL;
     frontend_input_profile_destroy(frontend);
     if (!frontend_native_q2_discard_unbound(frontend, error)) return false;
@@ -445,8 +638,9 @@ bool qa_frontend_destroy(qa_frontend *frontend, qa_error *error)
     if (!frontend_selected_character_retire(frontend,error)) return false;
     frontend_visuals_destroy(frontend);
     frontend_particle_retire(frontend);
-    frontend_event_retire(frontend);
+    if (!frontend_event_retire_checked(frontend,error)) return false;
     frontend_shader_destroy(frontend);
+    if (!frontend_root_resources_destroy(frontend,error)) return false;
     qa_scene_world_destroy(frontend->scene_world);
     qa_resource_release(frontend->map_resource);
     qa_audio_bank_destroy(frontend->sounds);
@@ -458,9 +652,10 @@ bool qa_frontend_destroy(qa_frontend *frontend, qa_error *error)
     qa_scene_resources_destroy(frontend->ui_images);
     qa_vfs_destroy(frontend->ui_mounts);
     qa_material_order_destroy(frontend->order);
+    if (!frontend_q3_source_color_retire(frontend,error)) return false;
     qa_cpu_destroy(frontend->cpu); qa_gl_destroy(frontend->gl); qa_display_destroy(frontend->display);
     if (frontend->sdl_subsystems) SDL_QuitSubSystem(frontend->sdl_subsystems);
-    free(frontend->map_name); free(frontend->audio_ids); free(frontend->seats); free(frontend->shutdown); free(frontend);
+    free(frontend->constructor); free(frontend->map_name); free(frontend->audio_ids); free(frontend->seats); free(frontend->shutdown); free(frontend);
     return true;
 }
 bool qa_frontend_shutdown(qa_frontend **slot,qa_error *error)

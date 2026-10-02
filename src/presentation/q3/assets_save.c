@@ -76,9 +76,9 @@ static bool resource_owned(const qa_q3_presentation_provider *provider, const qa
 static bool reading(const qa_source_save_io *io) { return io->direction == QA_SOURCE_SAVE_READ; }
 static bool signature(qa_source_save_io *io)
 {
-    uint8_t magic[4] = {'Q','3','A','S'}; uint32_t version = 2;
+    uint8_t magic[4] = {'Q','3','A','S'}; uint32_t version = 3;
     return qa_source_save_bytes(io, magic, 4) && !memcmp(magic, "Q3AS", 4) &&
-        qa_source_save_u32(io, &version) && version == 2;
+        qa_source_save_u32(io, &version) && version == 3;
 }
 static bool refs_ready(const qa_q3_asset_owner_refs *r)
 {
@@ -206,6 +206,57 @@ static bool private_text(qa_source_save_io *io, char **text)
     copy[length] = 0; *text = copy;
     return true;
 }
+static bool opening_empty(const qa_vfs_acquisition *opening, int64_t rank,
+    const q3p_opening_order *order)
+{
+    return !opening->mount && !opening->resource_id && !opening->path && !opening->lookup_path &&
+        !opening->link_source && !opening->link_target && !rank && !order->mounts && !order->count &&
+        !order->prefix && !order->user_overlay;
+}
+static bool opening_fields(qa_source_save_io *io, qa_vfs_acquisition *opening,
+    int64_t *rank, q3p_opening_order *order, const qa_resource *resource,
+    const qa_q3_presentation_provider *provider, const char *path)
+{
+    if (!resource) return opening_empty(opening, *rank, order);
+    if (!qa_source_save_u64(io, &opening->mount) || !qa_source_save_u64(io, &opening->resource_id) ||
+        !private_text(io, &opening->path) || !opening->path ||
+        !private_text(io, &opening->lookup_path) || !opening->lookup_path ||
+        !private_text(io, &opening->link_source) || !opening->link_source ||
+        !private_text(io, &opening->link_target) || !opening->link_target ||
+        !qa_source_save_i64(io, rank) || !qa_source_save_bool(io, &order->user_overlay) ||
+        !private_text(io, &order->prefix) ||
+        !qa_source_save_count(io, &order->count, reading(io) ? (io->input.size - io->offset) / 8 : SIZE_MAX / sizeof(*order->mounts))) return false;
+    if (reading(io) && order->count) {
+        order->mounts = calloc(order->count, sizeof(*order->mounts));
+        if (!order->mounts) return q3p_fail(io->error, QA_ERROR_MEMORY, "Restoring Q3 model opening order");
+    }
+    if ((order->count != 0) != (order->mounts != NULL)) return false;
+    for (size_t i = 0; i < order->count; ++i) {
+        if (!qa_source_save_u64(io, &order->mounts[i]) ||
+            !qa_vfs_mount_id_was_issued(provider->mounts, order->mounts[i])) return false;
+        for (size_t j = 0; j < i; ++j) if (order->mounts[i] == order->mounts[j]) return false;
+    }
+    if (opening->link_source[0]) {
+        if (*rank != -1 || order->count || order->prefix || order->user_overlay) return false;
+    } else {
+        if (*rank < 0 || (uint64_t)*rank >= order->count || order->mounts[*rank] != opening->mount ||
+            (order->prefix && order->user_overlay)) return false;
+        if (order->prefix) {
+            size_t length = strlen(order->prefix);
+            if (!length || strlen(opening->path) <= length || opening->path[length] != '/') return false;
+            for (size_t i = 0; i < length; ++i) {
+                unsigned char a = (unsigned char)opening->path[i], b = (unsigned char)order->prefix[i];
+                if (a >= 'A' && a <= 'Z') a += 'a' - 'A';
+                if (b >= 'A' && b <= 'Z') b += 'a' - 'A';
+                if (a != b) return false;
+            }
+        }
+    }
+    char *normalized = path ? qa_vfs_normalize_path(path, io->error) : NULL;
+    bool matches = normalized && !strcmp(normalized, opening->path); free(normalized);
+    return matches && opening->resource_id == qa_resource_id(resource) && resource_owned(provider, resource) &&
+        qa_vfs_acquisition_retained(provider->mounts, opening, io->error);
+}
 static bool lod_fields(qa_source_save_io *io, q3p_model *m, const qa_q3_asset_owner_refs *r)
 {
     if (!qa_source_save_u32(io, &m->lods.load_count) || m->lods.load_count > 3 ||
@@ -219,7 +270,17 @@ static bool lod_fields(qa_source_save_io *io, q3p_model *m, const qa_q3_asset_ow
             !qa_source_save_u32(io, &m->lods.load_order[i]) || m->lods.load_order[i] >= 3 ||
             !private_text(io, &m->lods.paths[i]) || !m->lods.paths[i] ||
             !resource_fields(io, &m->lod_resources[i], r) ||
-            !resource_owned(&m->provider, m->lod_resources[i])) return false;
+            !resource_owned(&m->provider, m->lod_resources[i]) ||
+            !opening_fields(io, &m->lod_openings[i], &m->lod_opening_ranks[i],
+                &m->lod_opening_orders[i], m->lod_resources[i], &m->provider, m->lods.paths[i])) return false;
+        const char *base = m->opening.path, *dot = strrchr(base, '.');
+        size_t stem = dot ? (size_t)(dot - base) : strlen(base);
+        if (!i) { if (strcmp(m->lods.paths[i], base)) return false; }
+        else {
+            const char *suffix = i == 1 ? "_1.md3" : "_2.md3";
+            if (stem > SIZE_MAX - 6 || strlen(m->lods.paths[i]) != stem + 6 ||
+                memcmp(m->lods.paths[i], base, stem) || strcmp(m->lods.paths[i] + stem, suffix)) return false;
+        }
         if (reading(io)) m->lods.states[i] = (qa_model_lod_state)state;
         if (i < m->lods.load_count) {
             uint32_t slot = m->lods.load_order[i];
@@ -264,10 +325,17 @@ static bool model_fields(qa_source_save_io *io, q3p_model *m,
 {
     if (!provider_fields(io, &m->provider, r) || !resource_fields(io, &m->resource, r) ||
         !resource_owned(&m->provider, m->resource) ||
+        !private_text(io, &m->first_requested_path) || !m->first_requested_path || !*m->first_requested_path ||
+        !opening_fields(io, &m->opening, &m->opening_rank, &m->opening_order,
+            m->resource, &m->provider, m->first_requested_path) ||
         !qa_source_save_bool(io, &m->has_lods) || !qa_source_save_bool(io, &m->owns_world) ||
         !qa_source_save_u32(io, &m->inline_model) ||
         !qa_source_save_vec3(io, &m->bounds.mins) || !qa_source_save_vec3(io, &m->bounds.maxs) ||
         !world_fields(io, &m->world, &m->world_ordinal, r)) return false;
+    if (!m->has_lods) for (unsigned i = 0; i < 3; ++i)
+        if (m->lod_resources[i] || !opening_empty(&m->lod_openings[i],
+            m->lod_opening_ranks[i], &m->lod_opening_orders[i])) return false;
+    if ((m->first_requested_path[0] == '*') != (!m->resource && m->world && !m->owns_world)) return false;
     if (m->world) {
         if (m->has_lods || (m->owns_world != (m->resource != NULL)) ||
             qa_scene_world_resource_owner(m->world) != m->provider.images ||
@@ -436,6 +504,10 @@ static bool names(qa_source_save_io *io, qa_q3_presentation_assets *a)
                 for (const q3p_name *entry = a->names[bucket]; entry; entry = entry->next)
                     if (entry->kind == kind && entry->handle == (int32_t)i + 1) { found = true; break; }
             if (!found) return false;
+            if (kind == Q3P_MODEL) {
+                const q3p_name *first = q3p_find_name(a, Q3P_MODEL, a->models[i]->first_requested_path);
+                if (!first || first->handle != (int32_t)i + 1) return false;
+            }
         }
     }
     return true;

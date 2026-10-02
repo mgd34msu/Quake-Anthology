@@ -14,6 +14,9 @@ struct qa_cinematic_asset {
 struct qa_media_library {
     qa_scene_resources *resources;
     qa_cinematic_asset *assets;
+    struct qa_media_library_stage *pending;
+    const struct qa_media_library *parent;
+    bool stage_sealed;
 };
 bool qa_media_asset_format(const char *, qa_cinematic_format *, qa_error *);
 bool qa_media_asset_load(qa_media_library *, qa_resource *, qa_cinematic_asset *, qa_error *);

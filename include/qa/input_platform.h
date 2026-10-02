@@ -4,6 +4,7 @@
 #include "qa/display_settings.h"
 #include "qa/input.h"
 #include "qa/input_release.h"
+#include "qa/console_cvars_prepare.h"
 #include <SDL2/SDL.h>
 
 #define QA_INPUT_LOCAL_SEATS 4
@@ -68,6 +69,19 @@ typedef struct qa_input_platform_settings {
     int joystick_seat, midi_seat, midi_device, midi_channel;
     float joystick_threshold, joystick_ball_scale;
 } qa_input_platform_settings;
+/* The enclosing bootstrap proves its actual completed images phase. This
+ * constructor verifies the exact returned edit/registry and projected rows,
+ * creates native devices from them, and returns without retaining the edit.
+ * Joystick/profile latch application belongs to that mutable preparation. */
+qa_input_platform *qa_input_platform_create_prepared(const qa_input_platform_options *,
+    const qa_cvars_edit *,const qa_input_platform_settings *,qa_error *);
+/* First physical routes/window use the same genuine preparation. These
+ * reject existing routes/held input or an already attached display. */
+bool qa_input_platform_routes_prepared(qa_input_platform *,qa_input_seat *const [4],
+    const qa_controller_selection [4],int,double,const qa_cvars_edit *,
+    const qa_input_platform_settings *,qa_error *);
+bool qa_input_platform_window_prepared(qa_input_platform *,const qa_display *,double,
+    const qa_cvars_edit *,const qa_input_platform_settings *,qa_error *);
 typedef struct qa_input_platform_settings_ticket qa_input_platform_settings_ticket;
 typedef enum qa_input_platform_settings_outcome {
     QA_INPUT_PLATFORM_SETTINGS_UNENTERED,
@@ -123,8 +137,16 @@ const char *qa_input_platform_settings_diagnostic(const qa_input_platform_settin
 bool qa_input_platform_settings_enter(qa_input_platform_settings_ticket *,
     const qa_input_release *const release[4], qa_input_platform_settings_outcome *, qa_error *);
 qa_input_platform_settings_outcome qa_input_platform_settings_result(const qa_input_platform_settings_ticket *);
-bool qa_input_platform_settings_ready(const qa_input_platform_settings_ticket *,
+bool qa_input_platform_settings_ready(qa_input_platform_settings_ticket *,
     const qa_input_release *const release[4], qa_error *);
+/* Pure retained-owner witness after successful settings_ready. Requires the
+ * same platform and completed physical releases, with unchanged ticket state,
+ * routes, configurations and native resource identities. Entry, window staging,
+ * cleanup and publication invalidate it. Keep native/display/source parents
+ * alive and hold their dispatch boundary; hardware and source currentness are
+ * checked by settings_ready, never polled by this witness. */
+bool qa_input_platform_settings_ready_is(const qa_input_platform_settings_ticket *,
+    const qa_input_platform *, const qa_input_release *const release[4]);
 /* Borrow the actual staged surface while both native windows remain alive.
  * Every occupied physical seat must retain a completed ALL release before
  * candidate capture is entered. A failed stage may retain native changes;
@@ -145,6 +167,11 @@ bool qa_input_platform_settings_abort(qa_input_platform_settings_ticket *, qa_er
  * entry/publication. A terminal close error returns false with RETIRED, and
  * the ticket is destroyable. This disposition never claims source rollback. */
 bool qa_input_platform_settings_retire_entered(qa_input_platform_settings_ticket *,
+    const qa_input_release *const release[4], qa_error *);
+/* Checked native disposal when every actual retained release is completed
+ * and contains no authored/dormant source record. Physical configuration and
+ * scope proofs remain mandatory; no active source is asserted or called. */
+bool qa_input_platform_settings_retire_entered_empty(qa_input_platform_settings_ticket *,
     const qa_input_release *const release[4], qa_error *);
 /* The same native cleanup under actual actor/source retirement authority.
  * Exact retained physical scope and every captured source history qualify

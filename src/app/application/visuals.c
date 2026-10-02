@@ -1,5 +1,8 @@
 #include "internal.h"
 #include "guest_qc_visual.h"
+#include "qa/game_q2_wire.h"
+#include <math.h>
+#include <string.h>
 
 static const char *resource_text(qa_application *application, qa_string_id id) {
     return id ? qa_strings_cstr(qa_session_strings(application->session), id) : NULL;
@@ -47,6 +50,26 @@ static bool native_visual(application_provider *provider, qa_actor_id actor,
         out->alpha = source.alpha;
         out->scale = source.scale;
         out->visible = source.visible;
+        if (source.render_flags & 0x200000) {
+            qa_q2_wire_binding binding;
+            qa_q2_wire_source_entity entity;
+            if (!qa_q2_wire_actor(provider->state.q2, actor, &binding, error) ||
+                !qa_q2_wire_entity_read(provider->state.q2, binding.source_slot, &entity, error))
+                return false;
+            if (!entity.flare || !isfinite(entity.flare_start) || !isfinite(entity.flare_end) ||
+                !isfinite(source.scale))
+                return application_fail(error, QA_ERROR_FORMAT, "Q2 flare lost its authored Source fields");
+            uint32_t skin = (uint32_t)source.skin, shell = source.render_flags & 0x1c00;
+            const char *image = (source.render_flags & 256) ? resource_text(application, entity.flare_image) : NULL;
+            out->q2_flare = (qa_application_q2_flare_view){
+                .image = image && *image ? image : "misc/flare.tga",
+                .fade_start = truncf(entity.flare_start), .fade_end = truncf(entity.flare_end),
+                .color = skin ? qa_v3((float)(skin >> 24) / 255,
+                    (float)((skin >> 16) & 255) / 255, (float)((skin >> 8) & 255) / 255) : qa_v3(1, 1, 1),
+                .rim_color = qa_v3((shell & 0x400) ? 1.f : 0.f, (shell & 0x800) ? 1.f : 0.f, (shell & 0x1000) ? 1.f : 0.f),
+                .present = true, .has_rim_color = shell != 0, .lock_angle = (source.render_flags & 1) != 0};
+            memset(out->models, 0, sizeof(out->models));
+        }
         return true;
     }
     case APPLICATION_PROVIDER_Q3: {

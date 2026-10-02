@@ -1,4 +1,6 @@
 #include "internal.h"
+#include <float.h>
+#include "qa/source_number.h"
 
 bool mode_fail(qa_error *error, const char *text) {
     qa_error_set(error, QA_ERROR_ARGUMENT, 0, "%s", text);
@@ -378,6 +380,142 @@ bool qa_modes_remove(qa_modes *m, qa_mode_id id, qa_error *e) {
             return false;
     return true;
 }
+bool qa_modes_add_q1_composition(qa_modes *m, const qa_mode_rules *rules,
+    qa_actor_owner source, qa_mode_id *out, qa_error *e) {
+    if (!m || !source || !rules || !out ||
+        (rules->source != QA_MODE_THREEWAVE && rules->source != QA_MODE_ROGUE) ||
+        !m->options.hooks.q1_composition_expected ||
+        !m->options.hooks.q1_composition_current ||
+        !m->options.hooks.q1_composition_player_current ||
+        (rules->source == QA_MODE_ROGUE &&
+            (!m->options.hooks.q1_rogue_state || !m->options.hooks.q1_rogue_state_current ||
+             !m->options.hooks.q1_rogue_number_read || !m->options.hooks.q1_rogue_number_write)) ||
+        !qa_strings_text(qa_session_strings(m->options.services.session), source).size)
+        return mode_fail(e, "Q1 composition requires its actual native source identity");
+    for (uint32_t i = 0; i < m->mode_capacity; ++i)
+        if (m->instances[i].active &&
+            m->instances[i].value.origin == QA_MODE_NATIVE_Q1_COMPOSITION &&
+            m->instances[i].value.source_owner == source)
+            return mode_fail(e, "native Q1 composition already exists");
+    qa_mode_id id;
+    if (!qa_modes_add(m, rules, &id, e)) return false;
+    mode_instance *v = mode_get(m, id);
+    v->value.origin = QA_MODE_NATIVE_Q1_COMPOSITION;
+    v->value.source_owner = source;
+    *out = id;
+    return true;
+}
+bool mode_q1_source_current(qa_modes *m, mode_instance *v, qa_actor_id actor,
+    bool *observer, qa_error *e) {
+    if (!v || v->value.origin != QA_MODE_NATIVE_Q1_COMPOSITION ||
+        !mode_player_get(m, actor) || !observer ||
+        !m->options.hooks.q1_composition_player_current)
+        return mode_fail(e, "Q1 composition player has no genuine source binding");
+    qa_mode_id id = v->id;
+    qa_actor_owner source = v->value.source_owner;
+    qa_mode_source kind = v->value.rules.source;
+    if (!MODE_CALLBACK(m, m->options.hooks.q1_composition_player_current(
+        m->options.hooks.context, source, kind, actor, observer, e))) return false;
+    return (mode_get(m, id) == v && v->value.source_owner == source &&
+        v->value.rules.source == kind && mode_player_get(m, actor)) ||
+        mode_fail(e, "Q1 composition player changed during source qualification");
+}
+bool qa_modes_q1_source_admit(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_error *e) {
+    if (!m || m->source_restored)
+        return mode_fail(e, "Q1 source admission requires completed shared restoration");
+    mode_instance *v = mode_get(m, id);
+    bool observer;
+    if (!mode_q1_source_current(m, v, actor, &observer, e)) return false;
+    mode_member *p = &v->members[actor.slot];
+    if (p->joined)
+        return qa_actor_id_equal(p->actor, actor) ||
+            mode_fail(e, "Q1 composition slot retains a different source player");
+    *p = (mode_member){.actor = actor, .joined = true};
+    return true;
+}
+static mode_member *q1_number_member(qa_modes *m, qa_mode_id id, qa_actor_id actor,
+    qa_mode_q1_number number, qa_error *e) {
+    mode_instance *v = mode_get(m, id);
+    bool observer;
+    if (number < QA_Q1_CTF_LAST_TEAM || number >= QA_Q1_SOURCE_NUMBERS || !v ||
+        (v->value.rules.source == QA_MODE_THREEWAVE ? number >= QA_Q1_ROGUE_STEAM
+            : v->value.rules.source != QA_MODE_ROGUE || number < QA_Q1_ROGUE_STEAM)) {
+        mode_fail(e, "Q1 source number does not belong to the actual source program");
+        return NULL;
+    }
+    if (!mode_q1_source_current(m, v, actor, &observer, e)) return NULL;
+    mode_member *p = mode_member_get(m, v, actor);
+    if (!p) mode_fail(e, "Q1 source number has no admitted source continuation");
+    return p;
+}
+static bool rogue_current(qa_modes *m, qa_mode_id id, qa_actor_id actor,
+    mode_member *member, qa_error *e) {
+    mode_instance *v = mode_get(m, id);
+    bool observer;
+    if (!v || !member || !member->q1.rogue_state.registry ||
+        !m->options.hooks.q1_rogue_state_current)
+        return mode_fail(e, "Rogue source has no actual retained team-state actor");
+    if (!mode_q1_source_current(m, v, actor, &observer, e) ||
+        mode_member_get(m, v, actor) != member || !MODE_CALLBACK(m,
+            m->options.hooks.q1_rogue_state_current(m->options.hooks.context,
+                v->value.source_owner, actor, member->q1.rogue_state, e))) return false;
+    return (mode_get(m, id) == v && mode_member_get(m, v, actor) == member) ||
+        mode_fail(e, "Rogue source player changed during state qualification");
+}
+bool qa_modes_q1_source_read(qa_modes *m, qa_mode_id id, qa_actor_id actor,
+    qa_mode_q1_number number, double *out, qa_error *e) {
+    if (!out) return mode_fail(e, "Q1 source number requires an output");
+    mode_member *p = q1_number_member(m, id, actor, number, e);
+    if (!p) return false;
+    if (number >= QA_Q1_ROGUE_STEAM) {
+        mode_instance *v = mode_get(m, id);
+        double value;
+        if (!rogue_current(m, id, actor, p, e) || !m->options.hooks.q1_rogue_number_read ||
+            !MODE_CALLBACK(m, m->options.hooks.q1_rogue_number_read(m->options.hooks.context,
+                v->value.source_owner, actor, p->q1.rogue_state,
+                (uint32_t)(number - QA_Q1_ROGUE_STEAM), &value, e)) ||
+            !rogue_current(m, id, actor, p, e)) return false;
+        *out = value;
+        return true;
+    }
+    *out = p->q1.numbers[number];
+    return true;
+}
+bool qa_modes_q1_source_write(qa_modes *m, qa_mode_id id, qa_actor_id actor,
+    qa_mode_q1_number number, double value, qa_error *e) {
+    if (!m || m->source_restored)
+        return mode_fail(e, "Q1 source mutation requires completed restoration");
+    mode_member *p = q1_number_member(m, id, actor, number, e);
+    if (!p) return false;
+    if (number >= QA_Q1_ROGUE_STEAM) {
+        mode_instance *v = mode_get(m, id);
+        return rogue_current(m, id, actor, p, e) && m->options.hooks.q1_rogue_number_write &&
+            MODE_CALLBACK(m, m->options.hooks.q1_rogue_number_write(m->options.hooks.context,
+                v->value.source_owner, actor, p->q1.rogue_state,
+                (uint32_t)(number - QA_Q1_ROGUE_STEAM), value, e)) &&
+            rogue_current(m, id, actor, p, e);
+    }
+    p->q1.numbers[number] = qa_source_fround(value);
+    return true;
+}
+bool qa_modes_q1_rogue_initialize(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_error *e) {
+    if (!m || m->source_restored)
+        return mode_fail(e, "Rogue source initialization requires completed shared restoration");
+    mode_member *p = q1_number_member(m, id, actor, QA_Q1_ROGUE_STEAM, e);
+    if (!p) return false;
+    if (!p->q1.rogue_state.registry) {
+        mode_instance *v = mode_get(m, id);
+        qa_actor_id state;
+        bool observer;
+        if (!m->options.hooks.q1_rogue_state || !MODE_CALLBACK(m,
+            m->options.hooks.q1_rogue_state(m->options.hooks.context,
+                v->value.source_owner, actor, &state, e)) ||
+            !mode_q1_source_current(m, v, actor, &observer, e) ||
+            mode_member_get(m, v, actor) != p) return false;
+        p->q1.rogue_state = state;
+    }
+    return rogue_current(m, id, actor, p, e);
+}
 bool qa_modes_idle(const qa_modes *m) {
     if (!m || m->callback_depth || m->source_restored)
         return false;
@@ -477,6 +615,20 @@ bool qa_modes_ctf_read(qa_modes *m, qa_mode_id id, qa_actor_id actor,
     if (!v || !p || !out || v->value.rules.source != QA_MODE_THREEWAVE ||
         !v->value.rules.enabled)
         return mode_fail(e, "unknown ThreeWave continuation");
+    if (v->value.origin == QA_MODE_NATIVE_Q1_COMPOSITION) {
+        bool observer;
+        if (!mode_q1_source_current(m, v, actor, &observer, e)) return false;
+        p = mode_member_get(m, v, actor);
+        if (!p) return mode_fail(e, "ThreeWave source continuation retired during read");
+        double last = p->q1.numbers[QA_Q1_CTF_LAST_TEAM];
+        double status = p->q1.numbers[QA_Q1_CTF_STATUS];
+        double access = p->q1.numbers[QA_Q1_CTF_ACCESS];
+        *out = (qa_mode_ctf_view){.last_team = last,
+            .status = status, .access = access,
+            .start_map = v->value.rules.start_map, .pregame_over = v->value.ctf_pregame_over,
+            .observer = observer, .grapple_disabled = (v->value.rules.teamplay & 2048) != 0};
+        return true;
+    }
     *out = (qa_mode_ctf_view){.last_team = p->player.ctf_last_team,
         .status = p->player.ctf_status, .access = p->player.ctf_access,
         .start_map = v->value.rules.start_map,
@@ -486,12 +638,25 @@ bool qa_modes_ctf_read(qa_modes *m, qa_mode_id id, qa_actor_id actor,
     return true;
 }
 bool qa_modes_ctf_restore_player(qa_modes *m, qa_mode_id id, qa_actor_id actor,
-                                  int32_t last_team, float status, float access, qa_error *e) {
+                                  double last_team, double status, double access, qa_error *e) {
     mode_instance *v = mode_get(m, id);
     mode_member *p = mode_member_get(m, v, actor);
-    if (!v || !p || v->value.rules.source != QA_MODE_THREEWAVE ||
-        !isfinite(status) || !isfinite(access))
+    if (!v || !p || v->value.rules.source != QA_MODE_THREEWAVE)
         return mode_fail(e, "invalid ThreeWave player continuation");
+    if (v->value.origin == QA_MODE_NATIVE_Q1_COMPOSITION) {
+        bool observer;
+        if (!mode_q1_source_current(m, v, actor, &observer, e)) return false;
+        p = mode_member_get(m, v, actor);
+        if (!p) return mode_fail(e, "ThreeWave source continuation retired during restore");
+        p->q1.numbers[QA_Q1_CTF_LAST_TEAM] = v->value.rules.start_map ? 1 : qa_source_fround(last_team);
+        p->q1.numbers[QA_Q1_CTF_STATUS] = qa_source_fround(status);
+        p->q1.numbers[QA_Q1_CTF_ACCESS] = qa_source_fround(access);
+        return true;
+    }
+    if (!isfinite(last_team) || last_team < INT32_MIN || last_team > INT32_MAX ||
+        trunc(last_team) != last_team || !isfinite(status) || !isfinite(access) ||
+        fabs(status) > FLT_MAX || fabs(access) > FLT_MAX)
+        return mode_fail(e, "selected ThreeWave continuation exceeds its field representation");
     if (!v->value.rules.start_map && (last_team == 5 || last_team == 14)) {
         qa_team_id team = v->value.rules.teams[last_team == 5 ? 0 : 1];
         if (!qa_modes_set_team(m, id, actor, team, e))
@@ -501,9 +666,9 @@ bool qa_modes_ctf_restore_player(qa_modes *m, qa_mode_id id, qa_actor_id actor,
             return true;
         p->last_team = team;
     }
-    p->player.ctf_last_team = v->value.rules.start_map ? 1 : last_team;
-    p->player.ctf_status = status;
-    p->player.ctf_access = access;
+    p->player.ctf_last_team = v->value.rules.start_map ? 1 : (int32_t)last_team;
+    p->player.ctf_status = (float)status;
+    p->player.ctf_access = (float)access;
     return true;
 }
 bool qa_modes_ctf_pregame_end(qa_modes *m, qa_mode_id id, qa_error *e) {
@@ -549,6 +714,26 @@ bool qa_modes_unbind_player(qa_modes *m, qa_match_lease lease, qa_error *e) {
     p->external_owner = 0;
     *owner = (mode_match_owner){0};
     return true;
+}
+bool qa_modes_player_lease(const qa_modes *m, qa_mode_id id, qa_actor_id actor,
+    qa_actor_owner source, const void *context, qa_match_lease *out, bool *present, qa_error *e) {
+    if (!m || !source || !context || !out || !present || !actor.registry ||
+        actor.slot >= m->actor_capacity || id.slot >= m->mode_capacity)
+        return mode_fail(e, "match lease lookup needs its actual full actor and callback owner");
+    *present = false;
+    const mode_instance *v = &m->instances[id.slot];
+    if (!v->active || v->id.generation != id.generation) return true;
+    const mode_player *player = &m->players[actor.slot];
+    const mode_member *member = &v->members[actor.slot];
+    if (!player->active || !qa_actor_id_equal(player->value.actor, actor) ||
+        !member->joined || !qa_actor_id_equal(member->actor, actor)) return true;
+    const mode_match_owner *owner = &v->bindings[actor.slot];
+    if (!owner->serial) return true;
+    if (owner->binding.owner != source || member->external_owner != source ||
+        owner->binding.context != context)
+        return mode_fail(e, "match lease belongs to another actual Source callback owner");
+    *out = (qa_match_lease){.mode = id, .actor = actor, .serial = owner->serial};
+    *present = true; return true;
 }
 bool qa_modes_score(qa_modes *m, qa_mode_id id, qa_actor_id actor, int32_t *out, qa_error *e) {
     mode_instance *v = mode_get(m, id);
@@ -733,7 +918,7 @@ bool qa_modes_team_score(qa_modes *m, qa_mode_id id, qa_team_id team, int32_t am
 bool mode_join(qa_modes *m, mode_instance *v, qa_actor_id actor, qa_team_id team, bool observer,
                bool ghost_rejoin, qa_error *e) {
     mode_player *p = mode_player_get(m, actor);
-    if (!v || !p ||
+    if (!v || !p || v->value.origin == QA_MODE_NATIVE_Q1_COMPOSITION ||
         (team && v->value.rules.kind > QA_MODE_TEAM_DEATHMATCH && mode_team_index(v, team) < 0))
         return mode_fail(e, "invalid mode join");
     qa_mode_id id = v->id;

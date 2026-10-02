@@ -18,6 +18,7 @@ typedef struct qa_frontend_options {
     const char *font_directory, *font_file;
     const char *network_host, *network_connect;
     const char *native_runtime_root, *native_wine;
+    char *native_bootstrap;
     qa_net_protocol_id network_protocol;
     uint16_t network_port;
     const char **mods;

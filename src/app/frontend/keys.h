@@ -62,6 +62,8 @@ bool frontend_key_profile_scope(frontend_key_profile *,qa_application_console_sc
  * owners alive through publication; discard it before abort retirement. */
 bool frontend_keys_publication_ready(frontend_keys *,frontend_key_profile *,qa_cvars *,
                                       frontend_keys_publication *,qa_error *);
+/* Pure proof that this retained owner still holds the unconsumed ticket. */
+bool frontend_keys_publication_current(const frontend_keys *,const frontend_keys_publication *);
 void frontend_keys_publication_publish(frontend_keys_publication *);
 void frontend_keys_publication_discard(frontend_keys_publication *);
 bool frontend_keys_publish(frontend_keys *,frontend_key_profile *,qa_cvars *,qa_error *);

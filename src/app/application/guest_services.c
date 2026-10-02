@@ -4,6 +4,7 @@
 #include "guest_q3_console.h"
 #include "guest_q3_private.h"
 #include "guest_q3_client_console.h"
+#include "startup_flow.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -77,6 +78,14 @@ static qa_cvars *visible_cvars(void *context, const qa_command_context *command,
         ? application->cvars : NULL;
 }
 
+static bool cvar_edit(void *context, const qa_command_context *command,
+    qa_cvars *registry, qa_cvars_edit **out, qa_error *error)
+{
+    qa_application *application = context;
+    return application_startup_console_cvar_edit(application, application->console,
+        command, registry, out, error);
+}
+
 bool application_console_create(qa_application *application, qa_error *error)
 {
     qa_cvar_options cvars = {.dialect = QA_CONSOLE_Q3,
@@ -87,7 +96,7 @@ bool application_console_create(qa_application *application, qa_error *error)
     qa_console_options console = {.context = {.dialect = QA_CONSOLE_Q3,
         .origin = QA_COMMAND_LOCAL}, .cvars = application->cvars,
         .user = application, .print = application_console_print,
-        .cvar_owner = cvar_owner, .visible_cvars = visible_cvars,
+        .cvar_owner = cvar_owner, .visible_cvars = visible_cvars, .cvar_edit = cvar_edit,
         .read_script = read_script, .release_script = release_script,
         .capture_context = application_command_capture,
         .context_active = application_command_active,
@@ -188,6 +197,8 @@ bool application_q3_guest_services_descriptor(qa_application *application,
         descriptor->selection.product) : NULL;
     if (!descriptor || !product)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 services lack their real retained descriptor");
+    qa_fs_root *write_root = qa_catalog_product_write_root(qa_launch_instance_catalog(descriptor),
+        descriptor->selection.product);
     const char *directory = product == NULL ? "" : product->directory;
     if (directory != NULL) {
         const char *last = strrchr(directory, '/');
@@ -198,6 +209,7 @@ bool application_q3_guest_services_descriptor(qa_application *application,
         .session = application->session, .world = engine ? engine->world : application->world,
         .owner = provider->owner, .cvars = application->cvars,
         .console = application->console, .mounts = descriptor->content,
+        .write_view = {.root = write_root},
         .game_directory = directory,
         .command_context = {.owner = provider->owner, .seat = role == QA_QVM_GAME ? 0 : seat,
             .dialect = QA_CONSOLE_Q3,
@@ -219,7 +231,8 @@ bool application_q3_guest_services_descriptor(qa_application *application,
     }
     for (size_t i = 0; i < qa_vfs_mount_count(services.mounts); ++i) {
         qa_vfs_mount_info mount;
-        if (qa_vfs_mount_at(services.mounts, i, &mount) && mount.writable) {
+        if (qa_vfs_mount_at(services.mounts, i, &mount) && mount.writable && !mount.is_archive &&
+            qa_fs_root_same_object(write_root, qa_vfs_mount_root(services.mounts, mount.id))) {
             services.writable_mount = mount.id;
             break;
         }
@@ -242,11 +255,22 @@ bool application_q3_guest_services_descriptor(qa_application *application,
         services.service_owner != service_owner ||
         services.role != role || services.cvars == NULL || services.console == NULL ||
         services.mounts != descriptor->content ||
+        (services.write_view.root != write_root &&
+            !qa_fs_root_same_object(services.write_view.root, write_root)) ||
         (role == QA_QVM_GAME &&
             (services.cvars != application_guest_q3_console_registry(provider) ||
              services.console != application_guest_q3_console_owner(provider) ||
              services.engine_cvars != application->cvars)))
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 services changed core ownership");
+    bool writable_owner = services.writable_mount == 0;
+    for (size_t i = 0; !writable_owner && i < qa_vfs_mount_count(services.mounts); ++i) {
+        qa_vfs_mount_info mount;
+        writable_owner = qa_vfs_mount_at(services.mounts, i, &mount) &&
+            mount.id == services.writable_mount && mount.writable && !mount.is_archive &&
+            qa_fs_root_same_object(write_root, qa_vfs_mount_root(services.mounts, mount.id));
+    }
+    if (!writable_owner)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q3 services changed their selected write-root authority");
     *out = services;
     return true;
 }

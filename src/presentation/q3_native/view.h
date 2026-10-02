@@ -46,6 +46,10 @@ void q3n_view_zoom(q3n_view *, bool down, int32_t source_time);
 void q3n_view_kick(q3n_view *, qa_vec3 angles, qa_vec3 origin);
 void q3n_view_error(q3n_view *, qa_vec3 error, int32_t source_time);
 void q3n_view_hyperspace(q3n_view *, bool);
+/* Remote model commands borrow the actual lexical console and retained
+ * camera, including before the first snapshot. Drawing still requires PPS.
+ * Requests reset only the entity; null retains its name, and null/default
+ * models retain gun mode until successful placement or explicit clear. */
 bool q3n_view_test_model(q3n_view *, const q3n_frame *, const char *,
     const float *back_lerp, bool gun, qa_error *);
 void q3n_view_test_clear(q3n_view *);

@@ -259,6 +259,11 @@ typedef struct qa_console_options {
     bool disable_builtins;
     bool (*capture_context)(void *user, const qa_command_context *, qa_command_context *, qa_error *);
     bool (*context_active)(void *user, const qa_command_context *);
+    /* Observe each admitted dispatched invocation after its actual handler,
+     * while its normalized tokens and innermost frame are still retained.
+     * Inspect or copy state only; do not mutate the console or its registries.
+     * Rejection fails the command; a prior dispatch failure stays first. */
+    bool (*post_dispatch)(void *user,const qa_command_invocation *,bool success,qa_error *);
 } qa_console_options;
 
 typedef struct qa_console_entry {
@@ -363,12 +368,18 @@ bool qa_console_insert(qa_console *console, const qa_command_context *context,
                          const char *text, qa_error *error);
 bool qa_console_execute_now(qa_console *console, const qa_command_context *context,
                               const char *text, qa_error *error);
+/* Expand through the actual Source console/cvar context without dispatching a
+ * command. Owned output includes NUL; a lexical discard leaves it empty. */
+bool qa_console_expand_command(qa_console *, const qa_command_context *,
+    const char *, qa_buffer *empty_output, qa_error *);
 /* Output redirection covers this synchronous invocation and nested commands.
  * Deferred commands retain their ordinary console output owner. */
 bool qa_console_execute_capture(qa_console *, const qa_command_context *, const char *,
     void (*print)(void *, const qa_command_context *, const char *), void *, qa_error *);
 void qa_console_emit(qa_console *, const qa_command_context *, const char *);
 bool qa_console_idle(const qa_console *);
+/* Pure exact innermost invocation identity, including post-dispatch receipt. */
+bool qa_console_invocation_current(const qa_console *,const qa_command_invocation *);
 bool qa_console_output_redirected(const qa_console *);
 /* One frame of queued work, respecting wait. Zero budget is unlimited. */
 bool qa_console_drain(qa_console *console, size_t budget, size_t *executed, qa_error *error);

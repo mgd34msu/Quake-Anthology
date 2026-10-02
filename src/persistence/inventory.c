@@ -25,7 +25,15 @@ static bool entry_equal(qa_inventory_entry a, qa_inventory_entry b)
 static uint32_t mask(const qa_inventory_binding *binding)
 {
     return (binding->count ? 1u : 0u) | (binding->at ? 2u : 0u) |
-        (binding->write ? 4u : 0u) | (binding->mutable_capacity ? 8u : 0u);
+        (binding->write ? 4u : 0u) | (binding->mutable_capacity ? 8u : 0u) |
+        (binding->checked_count ? 16u : 0u);
+}
+
+static bool binding_count(const qa_inventory_binding *binding, size_t *out, qa_error *error)
+{
+    if (binding->checked_count) return binding->checked_count(binding->context, out, error);
+    if (!binding->count) return fail(error, "Source inventory has no count reader");
+    *out = binding->count(binding->context); return true;
 }
 
 static bool binding_fields(qa_source_save_io *io, qa_inventory_binding *binding)
@@ -35,13 +43,16 @@ static bool binding_fields(qa_source_save_io *io, qa_inventory_binding *binding)
     size_t count = 0;
     if (!reading) {
         if ((callbacks & 7u) != 7u) return fail(io->error, "Incomplete source inventory binding");
-        count = binding->count(binding->context);
+        if (!binding_count(binding, &count, io->error)) return false;
     }
     if (!qa_source_save_u32(io, &callbacks) || mask(binding) != callbacks || (callbacks & 7u) != 7u ||
         !qa_source_save_count(io, &count, SIZE_MAX / sizeof(qa_inventory_entry)))
         return fail(io->error, "Restored source inventory callbacks differ");
-    if (reading && binding->count(binding->context) != count)
-        return fail(io->error, "Restored source inventory extent differs");
+    if (reading) {
+        size_t actual;
+        if (!binding_count(binding, &actual, io->error)) return false;
+        if (actual != count) return fail(io->error, "Restored source inventory extent differs");
+    }
     qa_inventory_entry *seen = count ? calloc(count, sizeof(*seen)) : NULL;
     if (count && !seen) { qa_error_set(io->error, QA_ERROR_MEMORY, 0, "Allocating inventory validation entries"); return false; }
     bool ok = true;
@@ -160,7 +171,8 @@ static bool store_fields(qa_source_save_io *io, qa_inventory *table, inventory_s
         if (reading && (!resolve || !resolve->inventory_primary ||
             !resolve->inventory_primary(resolve->context, store->actor, store->serial, &store->primary, io->error))) return false;
         if (!binding_fields(io, &store->primary)) return false;
-        size_t source_count = store->primary.count(store->primary.context);
+        size_t source_count;
+        if (!binding_count(&store->primary, &source_count, io->error)) return false;
         for (size_t i = 0; i < source_count; ++i) {
             qa_inventory_entry entry;
             if (!store->primary.at(store->primary.context, i, &entry, io->error)) return false;
@@ -202,9 +214,9 @@ static bool signature(qa_source_save_io *io)
 {
     unsigned char actual[8] = {'Q','A','I','N','V','E','N','T'};
     static const unsigned char expected[8] = {'Q','A','I','N','V','E','N','T'};
-    uint32_t version = 1;
+    uint32_t version = 2;
     return qa_source_save_bytes(io, actual, sizeof(actual)) && !memcmp(actual, expected, sizeof(actual)) &&
-        qa_source_save_u32(io, &version) && version == 1;
+        qa_source_save_u32(io, &version) && version == 2;
 }
 
 bool qa_persistence_inventory_capture(qa_session *session, qa_inventory *table, qa_buffer *out, qa_error *error)

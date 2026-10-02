@@ -5,6 +5,7 @@
 #include "native_q3_console.h"
 #include "native_q3_rank.h"
 #include "native_q3_settings.h"
+#include "unified_q3_events.h"
 #include "qa/game_q3_clients.h"
 #include "qa/game_q3_source.h"
 #include "qa/game_q3_wire.h"
@@ -203,7 +204,8 @@ static bool tournament_info(postgame_scope *scope, qa_error *error)
         return application_fail(error, QA_ERROR_NOT_FOUND, "postgame has no real source console");
     qa_command_context command = {.owner = scope->owner, .dialect = QA_CONSOLE_Q3,
                                   .origin = QA_COMMAND_SERVER};
-    return qa_console_append(console, &command, message, error) && live(scope, error);
+    return application_unified_q3_console(scope->provider, false, message, error) &&
+        qa_console_append(console, &command, message, error) && live(scope, error);
 }
 
 bool application_native_q3_match_begin_product(application_provider *provider, qa_error *error)

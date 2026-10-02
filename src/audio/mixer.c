@@ -282,9 +282,13 @@ static qa_vec3 sound_position(const qa_audio_mixer *mixer, const qa_audio_play *
     return qa_v3(0, 0, 0);
 }
 
-static qa_mixer_gain transmit(qa_audio_mixer *mixer, qa_vec3 origin, qa_mixer_gain gain) {
-    if (!mixer->transmission || (gain.left == 0 && gain.right == 0))
-        return gain;
+static bool transmit(qa_audio_mixer *mixer, qa_vec3 origin, qa_mixer_gain gain,
+    qa_mixer_gain *out, qa_error *error) {
+    if ((!mixer->transmission && !mixer->transmission_checked) ||
+        (gain.left == 0 && gain.right == 0)) {
+        *out = gain;
+        return true;
+    }
     float transmission = 1;
     size_t i;
     for (i = 0; i < mixer->transmission_count; i++) {
@@ -297,8 +301,23 @@ static qa_mixer_gain transmit(qa_audio_mixer *mixer, qa_vec3 origin, qa_mixer_ga
     }
     if (i == mixer->transmission_count) {
         mixer->callback_active = true;
-        transmission = mixer->transmission(mixer->transmission_user, &mixer->listener, origin);
+        bool ok = true;
+        if (mixer->transmission_checked)
+            ok = mixer->transmission_checked(mixer->transmission_user, &mixer->listener,
+                origin, &transmission, error);
+        else
+            transmission = mixer->transmission(mixer->transmission_user, &mixer->listener, origin);
         mixer->callback_active = false;
+        if (!ok) {
+            if (!error || error->code==QA_OK)
+                mixer_error(error,QA_ERROR_ARGUMENT,"Actual scene transmission failed");
+            return false;
+        }
+        if (mixer->destroy_requested || mixer->destroying)
+            return mixer_error(error, QA_ERROR_ARGUMENT, "Audio owner retired during scene transmission");
+        if (mixer->transmission_checked &&
+            (!isfinite(transmission) || transmission < 0 || transmission > 1))
+            return mixer_error(error, QA_ERROR_ARGUMENT, "Scene transmission returned an invalid gain");
         if (!isfinite(transmission))
             transmission = 1;
         transmission = fmaxf(0, fminf(1, transmission));
@@ -310,10 +329,12 @@ static qa_mixer_gain transmit(qa_audio_mixer *mixer, qa_vec3 origin, qa_mixer_ga
         gain.left = trunc(gain.left * transmission);
         gain.right = trunc(gain.right * transmission);
     }
-    return gain;
+    *out = gain;
+    return true;
 }
 
-static qa_mixer_gain spatialize_q3(qa_audio_mixer *mixer, qa_vec3 origin, double volume) {
+static bool spatialize_q3(qa_audio_mixer *mixer, qa_vec3 origin, double volume,
+    qa_mixer_gain *out, qa_error *error) {
     qa_vec3 delta = qa_vec_sub(origin, mixer->listener.origin);
     float distance = qa_vec_length(delta);
     qa_vec3 direction = qa_vec_normalize(delta);
@@ -325,15 +346,19 @@ static qa_mixer_gain spatialize_q3(qa_audio_mixer *mixer, qa_vec3 origin, double
         mixer->options.output_channels == 1 ? 1 : fmaxf(0, (float)(0.5 * (1 + (double)pan)));
     qa_mixer_gain gain = {fmax(0, truncf((float)(volume * (float)((1 - (double)loss) * left)))),
                           fmax(0, truncf((float)(volume * (float)((1 - (double)loss) * right))))};
-    return transmit(mixer, origin, gain);
+    return transmit(mixer, origin, gain, out, error);
 }
 
-static qa_mixer_gain spatialize_policy(qa_audio_mixer *mixer, const qa_audio_play *sound,
+static bool spatialize_policy(qa_audio_mixer *mixer, const qa_audio_play *sound,
                                        double volume, double attenuation, double offset,
-                                       double scale, bool unattenuated_mono, bool personal) {
+                                       double scale, bool unattenuated_mono, bool personal,
+                                       qa_mixer_gain *out, qa_error *error) {
     if (personal && (sound->origin_kind == QA_AUDIO_LOCAL ||
                      (sound->actor != QA_AUDIO_NO_ACTOR && sound->actor == mixer->listener.actor)))
-        return (qa_mixer_gain){volume, volume};
+    {
+        *out = (qa_mixer_gain){volume, volume};
+        return true;
+    }
     qa_vec3 position = sound_position(mixer, sound);
     qa_vec3 delta = qa_vec_sub(position, mixer->listener.origin);
     double distance = qa_vec_length(delta);
@@ -342,26 +367,35 @@ static qa_mixer_gain spatialize_policy(qa_audio_mixer *mixer, const qa_audio_pla
     bool mono = mixer->options.output_channels == 1 || (unattenuated_mono && attenuation == 0);
     qa_mixer_gain result = {fmax(0, trunc(gain * (mono ? 1 : scale * (1 - pan)))),
                             fmax(0, trunc(gain * (mono ? 1 : scale * (1 + pan))))};
-    return attenuation == 0 ? result : transmit(mixer, position, result);
+    if (attenuation != 0) return transmit(mixer, position, result, out, error);
+    *out = result;
+    return true;
 }
 
-static qa_mixer_gain spatialize_voice(qa_audio_mixer *mixer, const qa_mixer_voice *voice) {
-    if (voice->role == QA_MIXER_AMBIENT)
-        return voice->gain;
+static bool spatialize_voice(qa_audio_mixer *mixer, const qa_mixer_voice *voice,
+    qa_mixer_gain *out, qa_error *error) {
+    if (voice->role == QA_MIXER_AMBIENT) {
+        *out = voice->gain;
+        return true;
+    }
     if (voice->prepared->layout.q3) {
         if (voice->sound.origin_kind == QA_AUDIO_LOCAL ||
             (voice->sound.actor != QA_AUDIO_NO_ACTOR &&
              voice->sound.actor == mixer->listener.actor))
-            return (qa_mixer_gain){voice->volume, voice->volume};
-        return spatialize_q3(mixer, sound_position(mixer, &voice->sound), voice->volume);
+        {
+            *out = (qa_mixer_gain){voice->volume, voice->volume};
+            return true;
+        }
+        return spatialize_q3(mixer, sound_position(mixer, &voice->sound), voice->volume, out, error);
     }
     return spatialize_policy(mixer, &voice->sound, voice->volume, voice->attenuation,
                              voice->distance_offset, voice->stereo_scale, voice->unattenuated_mono,
-                             true);
+                             true, out, error);
 }
 
 static bool reserve_transmission(qa_audio_mixer *mixer, size_t needed, qa_error *error) {
-    if (!mixer->transmission || needed <= mixer->transmission_capacity)
+    if ((!mixer->transmission && !mixer->transmission_checked) ||
+        needed <= mixer->transmission_capacity)
         return true;
     qa_mixer_transmission *items =
         reserve(mixer->transmissions, &mixer->transmission_capacity, needed, sizeof(*items), error);
@@ -682,8 +716,19 @@ void qa_audio_mixer_geometry(qa_audio_mixer *mixer, qa_audio_transmission_fn fn,
     if (!mixer || mixer->callback_active || mixer->round_locked)
         return;
     mixer->transmission = fn;
+    mixer->transmission_checked = NULL;
     mixer->transmission_user = user;
     mixer->transmission_count = 0;
+}
+
+bool qa_audio_mixer_geometry_checked(qa_audio_mixer *mixer,
+    qa_audio_transmission_checked_fn fn, void *user, qa_error *error) {
+    if (!allow_mutation(mixer, error)) return false;
+    mixer->transmission = NULL;
+    mixer->transmission_checked = fn;
+    mixer->transmission_user = user;
+    mixer->transmission_count = 0;
+    return true;
 }
 
 void qa_audio_mixer_effects_gain(qa_audio_mixer *mixer, float gain) {
@@ -832,7 +877,10 @@ bool qa_audio_mixer_play(qa_audio_mixer *mixer, const qa_audio_play *sound, int3
             }
         }
         voice.allocated_at = allocation_time(mixer, milliseconds);
-        voice.gain = spatialize_voice(mixer, &voice);
+        if (!spatialize_voice(mixer, &voice, &voice.gain, error)) {
+            prepared_release(mixer, prepared);
+            return false;
+        }
         if (voice.gain.left == 0 && voice.gain.right == 0) {
             prepared_release(mixer, prepared);
             return true;
@@ -982,7 +1030,7 @@ bool qa_audio_mixer_loop(qa_audio_mixer *mixer, const qa_audio_loop *request, qa
     return true;
 }
 
-static void collect_loop_mixes(qa_audio_mixer *mixer) {
+static bool collect_loop_mixes(qa_audio_mixer *mixer, qa_error *error) {
     clear_loop_mixes(mixer);
     for (size_t i = 0; i < mixer->loop_count; i++) {
         qa_mixer_loop *loop = &mixer->loops[i];
@@ -992,15 +1040,15 @@ static void collect_loop_mixes(qa_audio_mixer *mixer) {
         const qa_audio_play *sound = &loop->request.sound;
         if (sound->family == QA_AUDIO_Q3) {
             double volume = trunc((double)sound->volume * (loop->request.persistent ? 90 : 127));
-            loop->gain = spatialize_q3(mixer,
+            if (!spatialize_q3(mixer,
                                        actor_position(mixer, sound->actor, sound->owner,
                                                       sound->owner != QA_AUDIO_NO_OWNER),
-                                       volume);
+                                       volume, &loop->gain, error)) return false;
         } else {
             bool q1 = sound->family == QA_AUDIO_Q1;
-            loop->gain = spatialize_policy(mixer, sound, trunc((double)sound->volume * 255),
+            if (!spatialize_policy(mixer, sound, trunc((double)sound->volume * 255),
                                            sound->attenuation * (q1 ? 0.001 : 0.003), q1 ? 0 : 80,
-                                           q1 ? 1 : 0.5, !q1, true);
+                                           q1 ? 1 : 0.5, !q1, true, &loop->gain, error)) return false;
         }
     }
     for (size_t i = 0; i < mixer->loop_count; i++) {
@@ -1033,6 +1081,7 @@ static void collect_loop_mixes(qa_audio_mixer *mixer) {
                                 .doppler_scale = loop->doppler_scale,
                                 .old_doppler_scale = loop->old_doppler_scale};
     }
+    return true;
 }
 
 bool qa_audio_mixer_listener(qa_audio_mixer *mixer, const qa_audio_listener *listener,
@@ -1061,11 +1110,10 @@ bool qa_audio_mixer_listener(qa_audio_mixer *mixer, const qa_audio_listener *lis
     mixer->transmission_count = 0;
     for (size_t i = 0; i < mixer->voice_count; i++) {
         qa_mixer_voice *voice = &mixer->voices[i];
-        if (voice->state != QA_MIXER_FREE && voice->state != QA_MIXER_SCHEDULED)
-            voice->gain = spatialize_voice(mixer, voice);
+        if (voice->state != QA_MIXER_FREE && voice->state != QA_MIXER_SCHEDULED &&
+            !spatialize_voice(mixer, voice, &voice->gain, error)) return false;
     }
-    collect_loop_mixes(mixer);
-    return true;
+    return collect_loop_mixes(mixer, error);
 }
 
 bool qa_audio_mixer_end_loop_frame(qa_audio_mixer *mixer, qa_error *error) {
@@ -1194,8 +1242,8 @@ void qa_audio_mixer_round_stop(qa_audio_mixer *mixer) {
     flush_notifications(mixer);
 }
 
-bool qa_audio_mixer_static(qa_audio_mixer *mixer, uint64_t key, qa_audio_sample *sample,
-                           qa_vec3 origin, float volume, float attenuation, qa_error *error) {
+static bool mixer_static(qa_audio_mixer *mixer, uint64_t key, qa_audio_sample *sample,
+                           qa_audio_asset *asset, qa_vec3 origin, float volume, float attenuation, qa_error *error) {
     if (!allow_mutation(mixer, error))
         return false;
     if (!mixer->enabled)
@@ -1204,7 +1252,7 @@ bool qa_audio_mixer_static(qa_audio_mixer *mixer, uint64_t key, qa_audio_sample 
         !isfinite(volume) || volume < 0 || !isfinite(attenuation) || attenuation < 0)
         return mixer_error(error, QA_ERROR_ARGUMENT,
                            "Static sound requires looped PCM and valid gain");
-    qa_mixer_prepared *prepared = prepare(mixer, sample, NULL, false, error);
+    qa_mixer_prepared *prepared = prepare(mixer, sample, asset, false, error);
     if (!prepared)
         return false;
     if (!reserve_voice(mixer, error) ||
@@ -1228,9 +1276,22 @@ bool qa_audio_mixer_static(qa_audio_mixer *mixer, uint64_t key, qa_audio_sample 
                             .volume = trunc((double)volume / 255 * 255),
                             .attenuation = (double)attenuation / 64000,
                             .stereo_scale = 1};
-    voice.gain = spatialize_voice(mixer, &voice);
+    if (!spatialize_voice(mixer, &voice, &voice.gain, error)) {
+        prepared_release(mixer, prepared);
+        return false;
+    }
     insert_voice(mixer, voice);
     return true;
+}
+
+bool qa_audio_mixer_static(qa_audio_mixer *mixer, uint64_t key, qa_audio_sample *sample,
+                           qa_vec3 origin, float volume, float attenuation, qa_error *error) {
+    return mixer_static(mixer, key, sample, NULL, origin, volume, attenuation, error);
+}
+bool qa_audio_mixer_static_asset(qa_audio_mixer *mixer, uint64_t key, qa_audio_asset *asset,
+    qa_vec3 origin, float volume, float attenuation, qa_error *error) {
+    if (!asset) return mixer_error(error, QA_ERROR_ARGUMENT, "Static sound lost its actual bank asset");
+    return mixer_static(mixer, key, qa_audio_asset_sample(asset), asset, origin, volume, attenuation, error);
 }
 
 void qa_audio_mixer_remove_static(qa_audio_mixer *mixer, uint64_t key) {
@@ -1240,6 +1301,22 @@ void qa_audio_mixer_remove_static(qa_audio_mixer *mixer, uint64_t key) {
         if (mixer->voices[i].state != QA_MIXER_FREE && mixer->voices[i].role == QA_MIXER_STATIC &&
             mixer->voices[i].key == key)
             free_voice(mixer, i, QA_AUDIO_STOPPED);
+}
+
+bool qa_audio_mixer_static_read(const qa_audio_mixer *mixer, uint64_t key,
+                                qa_audio_static_view *out) {
+    if (!mixer || !key || !out || mixer->callback_active || mixer->dispatching ||
+        mixer->destroy_requested || mixer->destroying)
+        return false;
+    for (size_t i = 0; i < mixer->voice_count; ++i) {
+        const qa_mixer_voice *voice = mixer->voices + i;
+        if (voice->state != QA_MIXER_FREE && voice->role == QA_MIXER_STATIC && voice->key == key) {
+            *out = (qa_audio_static_view){voice->prepared->sample, voice->sound.origin,
+                voice->volume, voice->attenuation};
+            return true;
+        }
+    }
+    return false;
 }
 
 bool qa_audio_mixer_ambient(qa_audio_mixer *mixer, qa_audio_sample *sounds[2],
@@ -1455,7 +1532,7 @@ bool qa_audio_mixer_scan_starts(qa_audio_mixer *mixer) {
     return started;
 }
 
-static void issue_scheduled(qa_audio_mixer *mixer) {
+static bool issue_scheduled(qa_audio_mixer *mixer, qa_error *error) {
     for (;;) {
         size_t next = SIZE_MAX;
         for (size_t i = 0; i < mixer->voice_count; i++) {
@@ -1468,13 +1545,15 @@ static void issue_scheduled(qa_audio_mixer *mixer) {
                 next = i;
         }
         if (next == SIZE_MAX)
-            return;
+            return true;
         qa_mixer_voice *voice = &mixer->voices[next];
         replace_channel(mixer, voice->sound.actor, voice->sound.owner, voice->channel, false, false,
                         QA_AUDIO_REPLACED);
+        qa_mixer_gain gain;
+        if (!spatialize_voice(mixer, voice, &gain, error)) return false;
         voice->state = QA_MIXER_STARTED;
         voice->start = mixer->paint_time;
-        voice->gain = spatialize_voice(mixer, voice);
+        voice->gain = gain;
         notify_voice(mixer, voice, true, QA_AUDIO_ENDED, mixer->paint_time);
     }
 }
@@ -1510,9 +1589,9 @@ static void paint_wide_doppler(qa_audio_mixer *mixer, const qa_mixer_loop_mix *l
     const qa_mixer_prepared *prepared = loop->prepared;
     size_t period = prepared->doppler_period;
     const double *sums = prepared->doppler_sums;
-    double cycles = floor((double)loop->doppler_scale / period);
+    double cycles = floor((double)loop->doppler_scale / (double)period);
     double remainder = fmod(loop->doppler_scale, (double)period);
-    double cycle_samples = cycles * period;
+    double cycle_samples = cycles * (double)period;
     double cycle_total = cycles * sums[period];
     double offset = (double)(source % period);
     for (size_t frame = 0; frame < count; frame++) {
@@ -1520,7 +1599,7 @@ static void paint_wide_doppler(qa_audio_mixer *mixer, const qa_mixer_loop_mix *l
         size_t first = (size_t)offset, last = (size_t)end;
         double tail = sums[last < period ? last : period] - sums[first] +
                       (last > period ? sums[last - period] : 0);
-        double average = (cycle_total + tail) / (cycle_samples + last - first);
+        double average = (cycle_total + tail) / (cycle_samples + (double)last - (double)first);
         mixer->paint[(output + frame) * 2] += trunc(average * loop->gain.left * effects / 256);
         mixer->paint[(output + frame) * 2 + 1] += trunc(average * loop->gain.right * effects / 256);
         offset = fmod(end, (double)period);
@@ -1616,7 +1695,12 @@ static bool paint_range(qa_audio_mixer *mixer, int64_t start, int16_t *stereo, s
     double effects = truncf(mixer->effects_gain * 255.0f);
     size_t output = 0;
     while (output < frames) {
-        issue_scheduled(mixer);
+        if (!issue_scheduled(mixer, error)) {
+            qa_error diagnostic = error ? *error : (qa_error){0};
+            flush_notifications(mixer);
+            if (error) *error = diagnostic;
+            return false;
+        }
         size_t count = frames - output;
         if (count > QA_MIXER_PAINT_FRAMES)
             count = QA_MIXER_PAINT_FRAMES;

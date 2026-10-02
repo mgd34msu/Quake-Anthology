@@ -1,6 +1,8 @@
 #ifndef QA_AUDIO_ENGINE_INTERNAL_H
 #define QA_AUDIO_ENGINE_INTERNAL_H
 #include "qa/audio.h"
+#include "qa/audio_acoustics_prepare.h"
+#include "qa/audio_music_engine.h"
 typedef struct audio_seat {
     qa_audio_listener listener;
     qa_audio_mixer *mixer;
@@ -16,6 +18,8 @@ typedef struct audio_bus {
     float gain;
     qa_audio_raw_stream *raw;
     qa_audio_music *music;
+    qa_audio_music_lifetime lifetime;
+    bool active;
 } audio_bus;
 struct qa_audio_engine {
     qa_audio_engine_options options;
@@ -35,9 +39,16 @@ struct qa_audio_engine {
     bool paused, doppler, destroy_pending, destroying;
     bool round_resetting, round_destroy_requested;
     unsigned operation_depth, callback_depth;
+    unsigned acoustics_readers;
+    qa_audio_acoustics_source acoustics;
+    bool acoustics_enabled;
+    qa_audio_engine_gains *gains;
     qa_audio_transmission_fn geometry;
     void *geometry_user;
 };
 qa_audio_mixer_options qa_audio_engine_mixer_options(qa_audio_engine *engine);
 void qa_audio_engine_discard(qa_audio_engine *engine);
+bool qa_audio_engine_acoustics_transmit(void *, const qa_audio_listener *, qa_vec3,
+    float *, qa_error *);
+void qa_audio_engine_acoustics_rebind(qa_audio_engine *);
 #endif

@@ -15,14 +15,14 @@ bool frontend_ranking_effect(void *context, qa_application *application, qa_acto
     uint32_t source_slot;
     if (!qa_application_rankings_client_slot(application, actor, &source_slot) || source_slot > INT32_MAX)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "ranking output lacks its installed GAME client binding");
-    uint32_t index;
-    if (frontend->options.dedicated || !qa_application_player_seat(application, actor, &index)) return true;
+    uint32_t launch_seat,index;
+    if (frontend->options.dedicated || !qa_application_player_seat(application,actor,&launch_seat)) return true;
     const qa_launch_choices *choices = qa_launch_snapshot_choices(qa_application_launch(application));
     bool local = false;
     if (choices) for (size_t i = 0; i < choices->seat_count; ++i)
-        if (choices->seats[i].id == index && choices->seats[i].local && !choices->seats[i].bot) local = true;
+        if (choices->seats[i].id == launch_seat && choices->seats[i].local && !choices->seats[i].bot) local = true;
     if (!local) return true;
-    if (!frontend->seats || index >= frontend->options.seats || !frontend->seats[index].ui ||
+    if (!frontend_seat_ordinal_read(frontend,launch_seat,&index) || !frontend->seats || !frontend->seats[index].ui ||
         !frontend->seats[index].rankings)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "ranking output precedes its actual local menu owner");
     if (effect == QA_APPLICATION_RANKING_STATUS) return true;

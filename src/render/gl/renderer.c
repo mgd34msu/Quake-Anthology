@@ -1,6 +1,7 @@
 #include "internal.h"
 #include "../save_fields.h"
 #include "qa/render_gl_save.h"
+#include "qa/display_settings.h"
 
 #include <SDL_video.h>
 #include <SDL_loadso.h>
@@ -9,21 +10,52 @@
 
 struct qa_gl_surface_ticket {
     qa_gl_renderer *renderer;
-    qa_gl_renderer targets;
+    qa_gl_renderer targets,original;
     qa_display *original_display,*candidate_display;
     gl_presentation_snapshot *native;
     SDL_GLContext context;
     GLuint reader;
     uint32_t original_width,original_height,width,height,window_id;
-    float gamma;
-    bool captured,attempted,replace_output,replace_opacity,prepared,published,native_restored;
+    float gamma,original_gamma;
+    uint64_t original_owner,original_sequence;
+    gl_output_target original_output,ready_output;
+    gl_opacity_target ready_opacity;
+    qa_output_domains retired_domains;
+    qa_display_endpoint ready_original_endpoint,ready_candidate_endpoint;
+    GLuint ready_reader;
+    bool captured,attempted,replace_output,replace_opacity,prepared,published,native_restored,native_ready;
 };
 
 static bool gl_surface_idle(const qa_gl_renderer *renderer,qa_error *error)
 {
-    if (renderer && !renderer->surface_ticket) return true;
-    qa_error_set(error,QA_ERROR_ARGUMENT,0,"OpenGL renderer is absent or retains a surface settings ticket");
+    if (renderer && !renderer->surface_ticket && !renderer->controls.ticket && !renderer->controls.source.entered) return true;
+    qa_error_set(error,QA_ERROR_ARGUMENT,0,"OpenGL renderer is absent or retains a settings ticket");
     return false;
+}
+
+qa_render_controls *qa_gl_render_controls(qa_gl_renderer *renderer)
+{ return renderer ? &renderer->controls : NULL; }
+bool qa_gl_render_controls_current(const qa_render_controls *controls)
+{
+    const qa_gl_renderer *renderer = controls ? controls->owner.gl : NULL;
+    return renderer && controls->backend == QA_RENDER_CONTROLS_GL &&
+        &renderer->controls == controls && !renderer->closed && !renderer->detached &&
+        !renderer->destroy_pending && !renderer->executing && !renderer->capturing &&
+        (!renderer->preparing || renderer->surface_ticket) && !renderer->opacity.active;
+}
+void qa_gl_render_controls_close(qa_render_controls *controls)
+{
+    qa_gl_renderer *renderer = controls->owner.gl;
+    if (renderer->destroy_pending) qa_gl_destroy(renderer);
+}
+bool qa_gl_source_scratch_current(const qa_render_controls *controls)
+{
+    const qa_gl_renderer *renderer = controls ? controls->owner.gl : NULL;
+    return renderer && controls->backend == QA_RENDER_CONTROLS_GL &&
+        &renderer->controls == controls && !renderer->closed && !renderer->detached &&
+        !renderer->destroy_pending && !renderer->executing && !renderer->capturing &&
+        !renderer->surface_ticket && !renderer->preparing && (!renderer->opacity.active ||
+        (controls->source.entered && controls->source.issuing));
 }
 
 static bool finite3(qa_vec3 value)
@@ -189,6 +221,8 @@ static bool capabilities(qa_gl_renderer *renderer, qa_error *error)
     caps->vertex_attributes = (uint32_t)attributes;
     caps->stereo = stereo != 0;
     caps->floating_depth = floating_depth;
+    caps->compiled_vertex_arrays = gl->LockArraysEXT && gl->UnlockArraysEXT &&
+        gl_extension((const char *)gl->GetString(GL_EXTENSIONS), "GL_EXT_compiled_vertex_array");
     return gl_check(renderer, "OpenGL capability query", error);
 }
 
@@ -215,6 +249,7 @@ qa_gl_renderer *qa_gl_create(const qa_gl_options *input, qa_error *error)
         return NULL;
     }
     renderer->options = *options;
+    qa_render_controls_init_gl(&renderer->controls, renderer);
     renderer->draw_buffer = QA_DRAW_BACK;
     renderer->gamma = 1;
     renderer->view.viewport = (qa_scene_rect){0, 0, info.drawable_width,
@@ -256,8 +291,10 @@ qa_gl_renderer *qa_gl_create(const qa_gl_options *input, qa_error *error)
 void qa_gl_destroy(qa_gl_renderer *renderer)
 {
     if (renderer == NULL || renderer->closed) return;
-    if (renderer->surface_ticket) { renderer->destroy_pending=true; return; }
+    if (renderer->surface_ticket || renderer->controls.ticket || renderer->controls.source.entered) { renderer->destroy_pending=true; return; }
+    material_source_release(&renderer->controls.source);
     renderer->closed = true;
+    qa_output_domains_destroy(&renderer->output_domains);
     qa_error ignored = {0};
     if (!renderer->gl.DeleteTextures || !qa_display_make_current(renderer->options.display, &ignored)) {
         /* The context is unavailable, so native objects retire with it. */
@@ -312,7 +349,7 @@ static bool view_dimensions(qa_gl_renderer *renderer, uint32_t *width,
     return true;
 }
 
-static bool begin_view(qa_gl_renderer *renderer, const qa_scene_view *view,
+static bool begin_view(qa_gl_renderer *renderer, const qa_scene_view *view, bool source_backend,
                        qa_error *error)
 {
     if (view->viewport.width == 0 || view->viewport.height == 0 ||
@@ -358,7 +395,7 @@ static bool begin_view(qa_gl_renderer *renderer, const qa_scene_view *view,
         clear |= GL_DEPTH_BUFFER_BIT;
     }
     if (view->clear_stencil) {
-        if (renderer->target != NULL || renderer->capabilities.stencil_bits == 0) {
+        if (renderer->target != NULL || (!source_backend && renderer->capabilities.stencil_bits == 0)) {
             qa_error_set(error, QA_ERROR_UNSUPPORTED, 0,
                          "OpenGL view requested unavailable stencil storage");
             return false;
@@ -396,7 +433,8 @@ static void draw_state(qa_gl_renderer *renderer, const qa_scene_state *state,
     gl->Enable(GL_DEPTH_TEST);
     gl->DepthFunc(state->depth_test == QA_DEPTH_ALWAYS ? GL_ALWAYS :
                   state->depth_test == QA_DEPTH_LEQUAL ? GL_LEQUAL :
-                  state->depth_test == QA_DEPTH_EQUAL ? GL_EQUAL : GL_LESS);
+                  state->depth_test == QA_DEPTH_EQUAL ? GL_EQUAL :
+                  state->depth_test == QA_DEPTH_GEQUAL ? GL_GEQUAL : GL_LESS);
     gl->DepthMask(state->depth_write ? GL_TRUE : GL_FALSE);
     gl->ColorMask(state->color_write ? GL_TRUE : GL_FALSE,
                   state->color_write ? GL_TRUE : GL_FALSE,
@@ -473,7 +511,7 @@ static bool draw_valid(const qa_gl_renderer *renderer,
         (unsigned)state->blend_source > QA_BLEND_SRC_ALPHA_SATURATE ||
         (unsigned)state->blend_destination > QA_BLEND_SRC_ALPHA_SATURATE ||
         state->blend_destination == QA_BLEND_SRC_ALPHA_SATURATE ||
-        (unsigned)state->depth_test > QA_DEPTH_LESS ||
+        (unsigned)state->depth_test > QA_DEPTH_GEQUAL ||
         (unsigned)state->alpha_test > QA_ALPHA_GE128 ||
         (unsigned)state->cull > QA_CULL_BACK ||
         (unsigned)state->stencil_test > QA_STENCIL_NOTEQUAL ||
@@ -577,6 +615,35 @@ static void retain_binding(qa_gl_renderer *renderer, size_t unit,
     renderer->bound[unit] = image;
 }
 
+static GLfloat source_color(float value)
+{
+    return floorf(fminf(1, fmaxf(0, value)) * 255 + .5f) / 255;
+}
+static void draw_source_strips(qa_gl_renderer *renderer, const qa_scene_draw *draw,
+    bool discrete)
+{
+    gl_api *gl = &renderer->gl;
+    if (discrete) gl_mesh_unbind(renderer);
+    size_t cursor = 0; qa_render_strip strip;
+    while (qa_render_strip_next(draw->mesh.indices, draw->mesh.index_count, &cursor, &strip)) {
+        gl->Begin(GL_TRIANGLE_STRIP);
+        for (size_t ordinal = 0; ordinal < strip.triangles + 2; ++ordinal) {
+            uint32_t index = qa_render_strip_vertex(&strip, ordinal);
+            if (!discrete) gl->ArrayElement((GLint)index);
+            else {
+                const qa_scene_vertex *v = draw->mesh.vertices + index;
+                gl->VertexAttrib4f(1, v->normal.x, v->normal.y, v->normal.z, 1);
+                gl->VertexAttrib4f(2, v->texcoord.x, v->texcoord.y, 0, 1);
+                gl->VertexAttrib4f(3, v->lightmap.x, v->lightmap.y, 0, 1);
+                gl->VertexAttrib4f(4, source_color(v->color.x), source_color(v->color.y),
+                    source_color(v->color.z), source_color(v->color.w));
+                gl->VertexAttrib4f(0, v->position.x, v->position.y, v->position.z, 1);
+            }
+        }
+        gl->End();
+    }
+}
+
 static bool draw_scene(qa_gl_renderer *renderer, const qa_scene_draw *source,
                        qa_error *error)
 {
@@ -616,11 +683,35 @@ static bool draw_scene(qa_gl_renderer *renderer, const qa_scene_draw *source,
     renderer->gl.ActiveTexture(GL_TEXTURE0);
     draw_state(renderer, &draw.state, draw.mesh.primitive);
     if (!gl_mesh_bind(renderer, &draw.mesh, error)) return false;
-    if (draw.mesh.index_count != 0)
+    bool compiled_arrays = renderer->capabilities.compiled_vertex_arrays &&
+        renderer->controls.values.compiled_vertex_arrays;
+    qa_render_primitive_mode mode = draw.source_primitives && draw.mesh.primitive == QA_SCENE_TRIANGLES
+        ? qa_render_primitives_mode(renderer->controls.values.primitives, compiled_arrays)
+        : QA_RENDER_PRIMITIVES_INDEXED;
+    bool locked = draw.source_primitives && mode != QA_RENDER_PRIMITIVES_DISCRETE_STRIPS &&
+        compiled_arrays && draw.mesh.vertex_count <= INT_MAX;
+    if (mode == QA_RENDER_PRIMITIVES_DISCRETE_STRIPS && draw.texture_count > 1) {
+        gl_mesh_unbind(renderer);
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0,
+            "Q3 Source discrete multitexture targets 0 and 1 are invalid");
+        return false;
+    }
+    if (mode == QA_RENDER_PRIMITIVES_ARRAY_STRIPS)
+        for (size_t i = 0; i < draw.mesh.index_count; ++i)
+            if (draw.mesh.indices[i] > INT_MAX) {
+                gl_mesh_unbind(renderer);
+                qa_error_set(error, QA_ERROR_ARGUMENT, i, "Source array-element index exceeds native GLint");
+                return false;
+            }
+    if (locked) renderer->gl.LockArraysEXT(0, (GLsizei)draw.mesh.vertex_count);
+    if (mode == QA_RENDER_PRIMITIVES_INDEXED && draw.mesh.index_count != 0)
         renderer->gl.DrawElements(draw.mesh.primitive == QA_SCENE_LINES
                                       ? GL_LINES : GL_TRIANGLES,
                                   (GLsizei)draw.mesh.index_count,
                                   GL_UNSIGNED_INT, NULL);
+    else if (mode == QA_RENDER_PRIMITIVES_ARRAY_STRIPS || mode == QA_RENDER_PRIMITIVES_DISCRETE_STRIPS)
+        draw_source_strips(renderer, &draw, mode == QA_RENDER_PRIMITIVES_DISCRETE_STRIPS);
+    if (locked) renderer->gl.UnlockArraysEXT();
     gl_mesh_unbind(renderer);
     return gl_check(renderer, "OpenGL scene draw", error);
 }
@@ -649,29 +740,41 @@ static bool select_draw_buffer(qa_gl_renderer *renderer,
     return gl_check(renderer, "OpenGL draw-buffer selection", error);
 }
 
-static bool gl_execute(qa_gl_renderer *renderer, const qa_scene_frame *frame,
-                   qa_error *error)
+static bool gl_execute_range(qa_gl_renderer *renderer, const qa_scene_frame *frame,
+                   size_t first, bool begin, bool finish, qa_error *error)
 {
     if (renderer == NULL || renderer->closed || frame == NULL ||
         frame->owner != renderer->options.owner ||
         (frame->command_count != 0 && frame->commands == NULL) ||
-        renderer->opacity.active ||
-        !qa_display_make_current(renderer->options.display, error)) {
+        first > frame->command_count || (begin && renderer->opacity.active)) {
         if (renderer == NULL || renderer->closed || frame == NULL ||
             (renderer != NULL && frame != NULL &&
              frame->owner != renderer->options.owner) ||
             (frame != NULL && frame->command_count != 0 &&
              frame->commands == NULL) ||
-            (renderer != NULL && renderer->opacity.active))
+            (frame != NULL && first > frame->command_count) ||
+            (renderer != NULL && begin && renderer->opacity.active))
             qa_error_set(error, QA_ERROR_ARGUMENT, 0,
                          "Invalid OpenGL frame or renderer owner");
         return false;
     }
-    renderer->presented = false;
-    gl_textures_prune(renderer);
-    gl_meshes_prune(renderer);
-    renderer->sequence = frame->sequence;
-    for (size_t i = 0; i < frame->command_count; ++i) {
+    if (frame->source_backend && frame->source_skip_backend) return true;
+    if (!qa_display_make_current(renderer->options.display, error)) return false;
+    if (begin && frame->source_backend && frame->source_clear_draw_buffer) {
+        if (!select_draw_buffer(renderer, renderer->draw_buffer, false, error)) return false;
+        renderer->gl.ClearColor(1, 0, 0.5f, 1);
+        renderer->gl.Clear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        if (!gl_check(renderer, "Source draw-buffer clear", error)) return false;
+        if (renderer->controls.source.issuing && renderer->controls.source.frame == frame)
+            renderer->controls.source.frame->source_clear_draw_buffer = false;
+    }
+    if (begin) {
+        renderer->presented = false;
+        gl_textures_prune(renderer);
+        gl_meshes_prune(renderer);
+        renderer->sequence = frame->sequence;
+    }
+    for (size_t i = first; i < frame->command_count; ++i) {
         const qa_scene_command *command = &frame->commands[i];
         if (renderer->opacity.skip &&
             command->kind != QA_SCENE_COMMAND_OPACITY_BEGIN &&
@@ -679,7 +782,7 @@ static bool gl_execute(qa_gl_renderer *renderer, const qa_scene_frame *frame,
         bool ok;
         switch (command->kind) {
         case QA_SCENE_COMMAND_VIEW:
-            ok = begin_view(renderer, &command->data.view, error);
+            ok = begin_view(renderer, &command->data.view, frame->source_backend, error);
             break;
         case QA_SCENE_COMMAND_DRAW:
             ok = renderer->opacity.skip ||
@@ -709,7 +812,10 @@ static bool gl_execute(qa_gl_renderer *renderer, const qa_scene_frame *frame,
                  gl_output_resolve(renderer, error) &&
                  gl_dimensions(renderer, &renderer->presented_width, &renderer->presented_height, error) &&
                  qa_display_swap(renderer->options.display, error);
-            if (ok) renderer->presented = true;
+            if (ok) {
+                renderer->presented = true;
+                renderer->controls.source.projection_2d = false;
+            }
             if (!ok && renderer->opacity.active &&
                 renderer->opacity.value != 1)
                 qa_error_set(error, QA_ERROR_ARGUMENT, 0,
@@ -721,6 +827,15 @@ static bool gl_execute(qa_gl_renderer *renderer, const qa_scene_frame *frame,
         case QA_SCENE_COMMAND_IMAGE:
             ok = gl_image_update(renderer, command->data.image, error);
             break;
+        case QA_SCENE_COMMAND_OUTPUT_DOMAIN: {
+            uint32_t width=0,height=0;
+            ok=renderer->target==NULL && !renderer->opacity.active;
+            if (!ok) qa_error_set(error,QA_ERROR_ARGUMENT,i,"Output color domain requires the actual GL display target");
+            else ok=gl_dimensions(renderer,&width,&height,error) &&
+                qa_output_domains_assign(&renderer->output_domains,command->data.output_domain.rect,
+                    renderer->draw_buffer,command->data.output_domain.source,width,height,error);
+            break;
+        }
         default:
             qa_error_set(error, QA_ERROR_ARGUMENT, i,
                          "Unknown OpenGL scene command");
@@ -733,7 +848,7 @@ static bool gl_execute(qa_gl_renderer *renderer, const qa_scene_frame *frame,
             return false;
         }
     }
-    if (renderer->opacity.active) {
+    if (finish && renderer->opacity.active) {
         gl_opacity_abort(renderer);
         qa_error_set(error, QA_ERROR_ARGUMENT, frame->command_count,
                      "OpenGL frame ended inside an opacity scope");
@@ -741,13 +856,29 @@ static bool gl_execute(qa_gl_renderer *renderer, const qa_scene_frame *frame,
     }
     return true;
 }
+bool qa_gl_source_execute_prefix(qa_render_controls *controls, const qa_scene_frame *frame,
+    size_t first, bool begin, bool finish, qa_error *error)
+{
+    if (!qa_gl_source_scratch_current(controls) || controls->ticket ||
+        !controls->source.entered || !controls->source.issuing || controls->source.frame != frame) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, first, "OpenGL Source issue lost its actual renderer/frame owner");
+        return false;
+    }
+    qa_gl_renderer *renderer = controls->owner.gl;
+    renderer->executing = true;
+    bool ok = gl_execute_range(renderer, frame, first, begin, finish, error);
+    renderer->executing = false;
+    return ok;
+}
 bool qa_gl_execute(qa_gl_renderer *renderer,const qa_scene_frame *frame,qa_error *error)
 {
+    if (renderer && renderer->controls.source.entered)
+        return qa_material_source_frame_end(&renderer->controls.source, (qa_scene_frame *)frame, true, error);
     if (!gl_surface_idle(renderer,error)) return false;
     if (!renderer || renderer->detached || renderer->executing || renderer->capturing || renderer->preparing) {
         qa_error_set(error,QA_ERROR_ARGUMENT,0,"OpenGL renderer is absent or executing"); return false;
     }
-    renderer->executing=true; bool ok=gl_execute(renderer,frame,error);
+    renderer->executing=true; bool ok=gl_execute_range(renderer,frame,0,true,true,error);
     renderer->executing=false; return ok;
 }
 bool qa_gl_checkpoint_resources(const qa_gl_renderer *renderer,qa_render_resource_visit_fn visit,void *context,qa_error *error)
@@ -810,6 +941,15 @@ bool qa_gl_set_gamma(qa_gl_renderer *renderer, float gamma, qa_error *error)
     }
     if (gamma == renderer->gamma) return true;
     return gl_output_set_gamma(renderer, gamma, error);
+}
+
+bool qa_gl_gamma_read(const qa_gl_renderer *renderer,float *out,qa_error *error)
+{
+    if (!renderer || !out || renderer->closed || renderer->destroy_pending ||
+        !isfinite(renderer->gamma) || renderer->gamma<.5f || renderer->gamma>3) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"OpenGL brightness observation requires its actual live renderer"); return false;
+    }
+    *out=renderer->gamma; return true;
 }
 
 static bool pack_state(qa_gl_renderer *renderer, GLint alignment,
@@ -1060,6 +1200,7 @@ bool qa_gl_restart(qa_gl_renderer **renderer, qa_display **display,
         replacement_renderer->bound[unit] = image;
     }
     replacement_renderer->sequence = (*renderer)->sequence;
+    replacement_renderer->controls.values = (*renderer)->controls.values;
     qa_gl_renderer *old_renderer = *renderer;
     qa_display *old_display = *display;
     *renderer = replacement_renderer;
@@ -1073,15 +1214,23 @@ bool qa_gl_restart(qa_gl_renderer **renderer, qa_display **display,
 
 bool qa_gl_surface_begin(qa_gl_renderer *renderer,qa_gl_surface_ticket **out,qa_error *error)
 {
-    if (!out || *out || !gl_surface_idle(renderer,error) || renderer->closed || renderer->detached ||
+    if (!out || *out) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"Surface capture requires empty retained ticket output"); return false;
+    }
+    if (!gl_surface_idle(renderer,error)) return false;
+    if (renderer->closed || renderer->detached ||
         renderer->destroy_pending || renderer->executing || renderer->capturing || renderer->preparing ||
-        renderer->opacity.active || renderer->target || !qa_display_make_current(renderer->options.display,error)) {
+        renderer->opacity.active || renderer->target) {
         qa_error_set(error,QA_ERROR_ARGUMENT,0,"Surface capture requires its actual completed OpenGL display renderer");
         return false;
     }
+    if (!qa_display_make_current(renderer->options.display,error)) return false;
     qa_display_info info={0};
-    if (!qa_display_info_get(renderer->options.display,&info,error) || info.backend!=QA_DISPLAY_OPENGL ||
-        !info.drawable_width || !info.drawable_height || !SDL_GL_GetCurrentContext()) return false;
+    if (!qa_display_info_get(renderer->options.display,&info,error)) return false;
+    if (info.backend!=QA_DISPLAY_OPENGL ||
+        !info.drawable_width || !info.drawable_height || !SDL_GL_GetCurrentContext()) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"Surface capture requires its actual OpenGL drawable and context"); return false;
+    }
     if (info.drawable_width>renderer->capabilities.maximum_texture_size ||
         info.drawable_height>renderer->capabilities.maximum_texture_size) {
         qa_error_set(error,QA_ERROR_UNSUPPORTED,0,"Actual drawable exceeds retained native texture limits"); return false;
@@ -1089,27 +1238,34 @@ bool qa_gl_surface_begin(qa_gl_renderer *renderer,qa_gl_surface_ticket **out,qa_
     qa_gl_surface_ticket *ticket=calloc(1,sizeof(*ticket));
     if (!ticket) { qa_error_set(error,QA_ERROR_MEMORY,0,"Retaining OpenGL surface settings ticket"); return false; }
     ticket->renderer=renderer; ticket->original_display=renderer->options.display;
+    ticket->original=*renderer;
     ticket->context=SDL_GL_GetCurrentContext(); ticket->original_width=info.drawable_width;
     ticket->original_height=info.drawable_height; ticket->targets.gl=renderer->gl;
+    ticket->original_gamma=renderer->gamma; ticket->original_output=renderer->output;
+    ticket->original_owner=renderer->options.owner; ticket->original_sequence=renderer->sequence;
     renderer->surface_ticket=ticket; *out=ticket;
     ticket->captured=gl_presentation_capture(renderer,&ticket->native,error);
     renderer->preparing=true;
     return ticket->captured;
 }
 
-bool qa_gl_surface_prepare(qa_gl_surface_ticket *ticket,qa_display *display,float gamma,qa_error *error)
+static bool gl_surface_prepare(qa_gl_surface_ticket *ticket,qa_display *display,float gamma,
+    bool same_endpoint,qa_error *error)
 {
     qa_gl_renderer *renderer=ticket?ticket->renderer:NULL;
     if (!renderer || renderer->surface_ticket!=ticket || renderer->destroy_pending || !renderer->preparing ||
-        !ticket->captured || ticket->attempted || ticket->published || !display || display==ticket->original_display ||
+        !ticket->captured || ticket->attempted || ticket->published || !display ||
+        (same_endpoint?(display!=ticket->original_display):(display==ticket->original_display)) ||
         renderer->options.display!=ticket->original_display || !isfinite(gamma) || gamma<0.5f || gamma>3 ||
         SDL_GL_GetCurrentContext()!=ticket->context) {
         qa_error_set(error,QA_ERROR_ARGUMENT,0,"OpenGL surface preparation requires its entered compatible native candidate"); return false;
     }
     qa_display_info info={0}; SDL_Window *window=SDL_GL_GetCurrentWindow();
-    if (!qa_display_info_get(display,&info,error) || info.backend!=QA_DISPLAY_OPENGL || !window ||
+    if (!qa_display_info_get(display,&info,error)) return false;
+    if (info.backend!=QA_DISPLAY_OPENGL || !window ||
         SDL_GetWindowID(window)!=info.window_id || !info.drawable_width || !info.drawable_height ||
-        info.drawable_width>INT_MAX || info.drawable_height>INT_MAX) {
+        info.drawable_width>INT_MAX || info.drawable_height>INT_MAX ||
+        (same_endpoint && (info.drawable_width!=ticket->original_width || info.drawable_height!=ticket->original_height))) {
         qa_error_set(error,QA_ERROR_ARGUMENT,0,"OpenGL candidate is not the current native drawable"); return false;
     }
     ticket->attempted=true; ticket->candidate_display=display; ticket->window_id=info.window_id;
@@ -1142,22 +1298,94 @@ bool qa_gl_surface_prepare(qa_gl_surface_ticket *ticket,qa_display *display,floa
     return qa_gl_surface_ready(ticket,error);
 }
 
-bool qa_gl_surface_ready(const qa_gl_surface_ticket *ticket,qa_error *error)
+bool qa_gl_surface_prepare(qa_gl_surface_ticket *ticket,qa_display *display,float gamma,qa_error *error)
+{ return gl_surface_prepare(ticket,display,gamma,false,error); }
+
+bool qa_gl_gamma_prepare(qa_gl_renderer *renderer,qa_display *display,float gamma,qa_gl_surface_ticket **out,qa_error *error)
+{
+    if (!renderer || !display || renderer->options.display!=display || !isfinite(gamma) || gamma<.5f || gamma>3) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"OpenGL gamma preparation requires its actual display and brightness within 0.5..3"); return false;
+    }
+    return qa_gl_surface_begin(renderer,out,error) &&
+        gl_surface_prepare(*out,renderer->options.display,gamma,true,error);
+}
+
+static bool gl_surface_output_same(const gl_output_target *a,const gl_output_target *b)
+{
+    if (a->framebuffer!=b->framebuffer || a->depth_stencil!=b->depth_stencil || a->table!=b->table ||
+        a->width!=b->width || a->height!=b->height || a->enabled!=b->enabled) return false;
+    for (size_t i=0;i<GL_DRAW_BUFFER_COUNT_QA;++i)
+        if (a->color[i]!=b->color[i] || a->color_ready[i]!=b->color_ready[i] || a->dirty[i]!=b->dirty[i]) return false;
+    return true;
+}
+
+static bool gl_surface_opacity_same(const gl_opacity_target *a,const gl_opacity_target *b)
+{
+    if (a->depth_stencil!=b->depth_stencil || a->width!=b->width || a->height!=b->height ||
+        a->parent_draw_framebuffer!=b->parent_draw_framebuffer || a->parent_read_framebuffer!=b->parent_read_framebuffer ||
+        a->parent_draw_buffer!=b->parent_draw_buffer || a->parent_read_buffer!=b->parent_read_buffer ||
+        a->value!=b->value || a->parent_scissor_enabled!=b->parent_scissor_enabled ||
+        a->allocated!=b->allocated || a->active!=b->active || a->skip!=b->skip) return false;
+    for (size_t i=0;i<2;++i) if (a->framebuffer[i]!=b->framebuffer[i] || a->color[i]!=b->color[i]) return false;
+    for (size_t i=0;i<4;++i) if (a->parent_viewport[i]!=b->parent_viewport[i] || a->parent_scissor[i]!=b->parent_scissor[i]) return false;
+    return true;
+}
+static bool gl_surface_current(const qa_gl_surface_ticket *ticket)
 {
     const qa_gl_renderer *renderer=ticket?ticket->renderer:NULL;
-    qa_display_info info={0}; SDL_Window *window=SDL_GL_GetCurrentWindow();
     if (!renderer || renderer->surface_ticket!=ticket || renderer->closed || renderer->destroy_pending ||
-        !renderer->preparing || renderer->executing || renderer->capturing || renderer->opacity.active || renderer->target ||
-        !ticket->prepared || ticket->published || renderer->options.display!=ticket->original_display ||
-        SDL_GL_GetCurrentContext()!=ticket->context || !window || SDL_GetWindowID(window)!=ticket->window_id ||
-        !qa_display_info_get(ticket->candidate_display,&info,error) ||
-        info.drawable_width!=ticket->width || info.drawable_height!=ticket->height ||
+        renderer->detached || !renderer->preparing || renderer->executing || renderer->capturing || renderer->opacity.active || renderer->target ||
+        !ticket->captured || !ticket->native || !ticket->prepared || ticket->published || renderer->options.display!=ticket->original_display ||
+        renderer->gamma!=ticket->original_gamma || renderer->options.owner!=ticket->original_owner ||
+        renderer->sequence!=ticket->original_sequence || !gl_surface_output_same(&renderer->output,&ticket->original_output) ||
+        !gl_surface_opacity_same(&renderer->opacity,&ticket->original.opacity) ||
+        renderer->textures!=ticket->original.textures || renderer->meshes!=ticket->original.meshes ||
+        renderer->bound[0]!=ticket->original.bound[0] || renderer->bound[1]!=ticket->original.bound[1] ||
+        renderer->target_framebuffer!=ticket->original.target_framebuffer || renderer->fog_depth!=ticket->original.fog_depth ||
+        renderer->white_texture!=ticket->original.white_texture || renderer->restore!=ticket->original.restore ||
+        renderer->draw_buffer!=ticket->original.draw_buffer || renderer->overdraw!=ticket->original.overdraw ||
+        renderer->stream.vertex_buffer!=ticket->original.stream.vertex_buffer ||
+        renderer->stream.index_buffer!=ticket->original.stream.index_buffer ||
+        renderer->stream.vertex_bytes!=ticket->original.stream.vertex_bytes ||
+        renderer->stream.index_bytes!=ticket->original.stream.index_bytes ||
+        renderer->programs.stage!=ticket->original.programs.stage || renderer->programs.gamma!=ticket->original.programs.gamma ||
+        renderer->programs.opacity!=ticket->original.programs.opacity ||
+        ticket->targets.options.display!=ticket->candidate_display || ticket->targets.gamma!=ticket->gamma ||
         (ticket->targets.output.enabled && (!ticket->targets.output.table || !ticket->targets.output.framebuffer ||
             !ticket->targets.output.color_ready[gl_draw_buffer_index(renderer->draw_buffer)])) ||
-        (ticket->replace_opacity && !ticket->targets.opacity.allocated)) {
+        (ticket->replace_opacity && !ticket->targets.opacity.allocated)) return false;
+    for (size_t i=0;i<3;++i) if (renderer->programs.fog[i]!=ticket->original.programs.fog[i]) return false;
+    return true;
+}
+bool qa_gl_surface_ready(qa_gl_surface_ticket *ticket,qa_error *error)
+{
+    if (ticket) ticket->native_ready=false;
+    qa_display_info info={0}; SDL_Window *window=SDL_GL_GetCurrentWindow();
+    if (!gl_surface_current(ticket) || SDL_GL_GetCurrentContext()!=ticket->context ||
+        !window || SDL_GetWindowID(window)!=ticket->window_id) {
         qa_error_set(error,QA_ERROR_ARGUMENT,0,"OpenGL surface ticket is not prepared at the current actual drawable"); return false;
     }
+    if (!qa_display_info_get(ticket->candidate_display,&info,error)) return false;
+    if (info.drawable_width!=ticket->width || info.drawable_height!=ticket->height) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"OpenGL surface ticket drawable or target storage changed"); return false;
+    }
+    if (!qa_display_endpoint_read(ticket->original_display,&ticket->ready_original_endpoint) ||
+        !qa_display_endpoint_read(ticket->candidate_display,&ticket->ready_candidate_endpoint) ||
+        ticket->ready_original_endpoint.context!=ticket->context ||
+        ticket->ready_candidate_endpoint.context!=ticket->context || ticket->ready_candidate_endpoint.window!=window) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"OpenGL readiness lost its actual retained display endpoint"); return false;
+    }
+    ticket->ready_output=ticket->targets.output; ticket->ready_opacity=ticket->targets.opacity;
+    ticket->ready_reader=ticket->reader; ticket->native_ready=true;
     return true;
+}
+bool qa_gl_surface_ready_is(const qa_gl_surface_ticket *ticket)
+{
+    return gl_surface_current(ticket) && ticket->native_ready && !ticket->native_restored &&
+        qa_display_endpoint_is(ticket->original_display,&ticket->ready_original_endpoint) &&
+        qa_display_endpoint_is(ticket->candidate_display,&ticket->ready_candidate_endpoint) &&
+        ticket->reader==ticket->ready_reader && gl_surface_output_same(&ticket->targets.output,&ticket->ready_output) &&
+        gl_surface_opacity_same(&ticket->targets.opacity,&ticket->ready_opacity);
 }
 
 void qa_gl_surface_publish(qa_gl_surface_ticket *ticket)
@@ -1171,6 +1399,9 @@ void qa_gl_surface_publish(qa_gl_surface_ticket *ticket)
         gl_opacity_target retired=renderer->opacity; renderer->opacity=ticket->targets.opacity; ticket->targets.opacity=retired;
     }
     renderer->options.display=ticket->candidate_display; renderer->gamma=ticket->gamma;
+    if (ticket->width!=ticket->original_width || ticket->height!=ticket->original_height) {
+        ticket->retired_domains=renderer->output_domains; renderer->output_domains=(qa_output_domains){0};
+    }
     if (ticket->width!=ticket->original_width || ticket->height!=ticket->original_height || ticket->replace_output)
         renderer->presented=false;
     ticket->published=true;
@@ -1192,6 +1423,7 @@ static bool gl_surface_objects_release(qa_gl_surface_ticket *ticket,qa_error *er
 static void gl_surface_release(qa_gl_surface_ticket **out)
 {
     qa_gl_surface_ticket *ticket=*out; qa_gl_renderer *renderer=ticket->renderer;
+    qa_output_domains_destroy(&ticket->retired_domains);
     renderer->surface_ticket=NULL; renderer->preparing=false; free(ticket); *out=NULL;
     if (renderer->destroy_pending) qa_gl_destroy(renderer);
 }
@@ -1201,12 +1433,18 @@ bool qa_gl_surface_abort(qa_gl_surface_ticket **out,qa_error *error)
     if (!out) { qa_error_set(error,QA_ERROR_ARGUMENT,0,"Invalid retained OpenGL surface abort"); return false; }
     qa_gl_surface_ticket *ticket=*out;
     if (!ticket) return true;
+    ticket->native_ready=false;
     qa_gl_renderer *renderer=ticket->renderer; qa_display_info info={0};
-    if (renderer->surface_ticket!=ticket || ticket->published || renderer->options.display!=ticket->original_display ||
-        !qa_display_make_current(ticket->original_display,error) || SDL_GL_GetCurrentContext()!=ticket->context ||
-        !qa_display_info_get(ticket->original_display,&info,error) || info.drawable_width!=ticket->original_width ||
-        info.drawable_height!=ticket->original_height) {
+    if (renderer->surface_ticket!=ticket || ticket->published || renderer->options.display!=ticket->original_display) {
         qa_error_set(error,QA_ERROR_ARGUMENT,0,"OpenGL surface abort requires its restored original native endpoint"); return false;
+    }
+    if (!qa_display_make_current(ticket->original_display,error)) return false;
+    if (SDL_GL_GetCurrentContext()!=ticket->context) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"OpenGL surface abort lost its retained native context"); return false;
+    }
+    if (!qa_display_info_get(ticket->original_display,&info,error)) return false;
+    if (info.drawable_width!=ticket->original_width || info.drawable_height!=ticket->original_height) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"OpenGL surface abort requires its original native dimensions"); return false;
     }
     if (!ticket->native_restored) {
         if ((ticket->captured && !gl_presentation_copy(renderer,ticket->native,ticket->original_width,ticket->original_height,error)) ||
@@ -1222,12 +1460,18 @@ bool qa_gl_surface_retire(qa_gl_surface_ticket **out,qa_error *error)
     if (!out) { qa_error_set(error,QA_ERROR_ARGUMENT,0,"Invalid retained OpenGL surface retirement"); return false; }
     qa_gl_surface_ticket *ticket=*out;
     if (!ticket) return true;
+    ticket->native_ready=false;
     qa_gl_renderer *renderer=ticket->renderer; qa_display_info info={0};
-    if (renderer->surface_ticket!=ticket || !ticket->published || renderer->options.display!=ticket->candidate_display ||
-        !qa_display_make_current(ticket->candidate_display,error) || SDL_GL_GetCurrentContext()!=ticket->context ||
-        !qa_display_info_get(ticket->candidate_display,&info,error) || info.drawable_width!=ticket->width ||
-        info.drawable_height!=ticket->height) {
+    if (renderer->surface_ticket!=ticket || !ticket->published || renderer->options.display!=ticket->candidate_display) {
         qa_error_set(error,QA_ERROR_ARGUMENT,0,"OpenGL surface retirement requires its published actual native endpoint"); return false;
+    }
+    if (!qa_display_make_current(ticket->candidate_display,error)) return false;
+    if (SDL_GL_GetCurrentContext()!=ticket->context) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"OpenGL surface retirement lost its retained native context"); return false;
+    }
+    if (!qa_display_info_get(ticket->candidate_display,&info,error)) return false;
+    if (info.drawable_width!=ticket->width || info.drawable_height!=ticket->height) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"OpenGL surface retirement requires its published native dimensions"); return false;
     }
     if (!gl_surface_objects_release(ticket,error)) return false;
     gl_surface_release(out); return true;

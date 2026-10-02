@@ -1,11 +1,83 @@
 #include "internal.h"
+#include "music_sources.h"
+#include "view_bindings.h"
 #include "qa/application_character_selection.h"
+#include "qa/application_startup_prepare.h"
 bool frontend_seat_launch_id_read(const qa_frontend *f,uint32_t ordinal,uint32_t *out)
 {
     if (!f || !f->application || !out || ordinal>=f->options.seats) return false;
     const qa_launch_choices *choices=qa_launch_snapshot_choices(qa_application_launch(f->application));
     if (!choices || ordinal>=choices->seat_count) return false;
     *out=choices->seats[ordinal].id; return true;
+}
+bool frontend_seat_ordinal_read(const qa_frontend *f,uint32_t launch_seat,uint32_t *out)
+{
+    if (!f || !f->application || !out) return false;
+    uint32_t found=0; bool present=false;
+    for (uint32_t i=0;i<f->options.seats;++i) {
+        uint32_t actual;
+        if (!frontend_seat_launch_id_read(f,i,&actual) || actual!=launch_seat) continue;
+        if (present) return false;
+        found=i; present=true;
+    }
+    if (present) *out=found;
+    return present;
+}
+bool frontend_seat_actor_read(const qa_frontend *f,uint32_t ordinal,qa_actor_id *out)
+{
+    uint32_t launch_seat;
+    return out && frontend_seat_launch_id_read(f,ordinal,&launch_seat) &&
+        qa_application_player_actor(f->application,launch_seat,out);
+}
+bool frontend_command_seat_read(const qa_frontend *f,const qa_command_context *command,uint32_t *out)
+{
+    if (!f || !f->application || !command || !out || f->options.dedicated ||
+        ((command->registry || command->generation) &&
+         !qa_application_command_context_active(f->application,command))) return false;
+    const qa_launch_choices *choices=qa_launch_snapshot_choices(qa_application_launch(f->application));
+    if (!choices) {
+        if (command->actor.registry || command->seat>=f->options.seats) return false;
+        *out=command->seat; return true;
+    }
+    bool scoped=command->origin==QA_COMMAND_SEAT || command->actor.registry!=0;
+    for (size_t i=0;i<choices->seat_count && i<f->options.seats;++i) {
+        if (!choices->seats[i].local || (scoped && choices->seats[i].id!=command->seat)) continue;
+        if (command->actor.registry) {
+            qa_actor_id actor;
+            if (!qa_application_player_actor(f->application,choices->seats[i].id,&actor) ||
+                !qa_actor_id_equal(actor,command->actor)) return false;
+        }
+        *out=(uint32_t)i; return true;
+    }
+    return false;
+}
+static bool context_seat(const qa_launch_snapshot *snapshot,uint32_t ordinal,uint32_t logical)
+{
+    const qa_launch_choices *choices=qa_launch_snapshot_choices(snapshot);
+    return choices && ordinal<choices->seat_count && choices->seats[ordinal].id==logical &&
+        choices->seats[ordinal].local && !choices->seats[ordinal].bot;
+}
+bool frontend_seat_context_ready(void *context,uint32_t ordinal,const qa_command_context *command,qa_error *error)
+{
+    const frontend_seat *seat=context;
+    const qa_frontend *f=seat?seat->frontend:NULL;
+    if (!f || !f->application || !f->seats || ordinal>=f->options.seats || seat!=f->seats+ordinal ||
+        seat->id!=ordinal || !command || command->origin!=QA_COMMAND_SEAT || command->owner ||
+        command->session || command->client || command->script || command->console_text || !command->direct ||
+        command->dialect<QA_CONSOLE_Q1 || command->dialect>QA_CONSOLE_Q3 ||
+        (!command->actor.registry && (command->actor.generation || command->actor.slot)))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Input context requires its actual physical ENGINE seat");
+    const qa_launch_snapshot *publication=qa_application_launch(f->application);
+    if (command->registry || command->generation || command->actor.registry) {
+        if (!qa_application_command_context_active(f->application,command) ||
+            !context_seat(publication,ordinal,command->seat))
+            return frontend_fail(error,QA_ERROR_ARGUMENT,"Input context belongs to a retired or different launch seat");
+        return true;
+    }
+    const qa_launch_snapshot *candidate=qa_application_startup_candidate(f->application);
+    if (context_seat(candidate,ordinal,command->seat) || context_seat(publication,ordinal,command->seat) ||
+        (!candidate && !publication && command->seat==ordinal)) return true;
+    return frontend_fail(error,QA_ERROR_ARGUMENT,"Input template has no actual candidate or published launch seat");
 }
 #include <stdio.h>
 
@@ -53,7 +125,7 @@ static bool overlay(qa_launch_draft *draft, const char *name, uint64_t roles, co
 }
 bool frontend_launch(qa_frontend *frontend, qa_error *error)
 {
-    if (!frontend->options.game) return true;
+    if (!frontend->options.game) return qa_application_startup_bootstrap(frontend->application,error);
     qa_catalog *catalog = qa_application_catalog(frontend->application);
     const qa_product *product = frontend_product_selection(catalog, frontend->options.game);
     if (!product || product->availability != QA_CONTENT_INSTALLED)
@@ -111,6 +183,12 @@ bool frontend_launch(qa_frontend *frontend, qa_error *error)
             .character_head_model=declaration.head_model,.character_head_skin=declaration.head_skin}, error);
     }
     if (ok) ok = qa_application_apply(frontend->application, draft, error);
+    if (ok && !qa_application_startup_pending(frontend->application))
+        ok=frontend_view_bindings_apply_restored(frontend,error);
+    if (ok && !qa_application_startup_pending(frontend->application) && frontend->music_sources)
+        ok=frontend_music_sources_world(frontend->music_sources,error) &&
+            frontend_source_publish_music(frontend,error) &&
+            frontend_music_sources_output(frontend->music_sources,FRONTEND_MUSIC_WORLD,error);
     qa_launch_draft_destroy(draft);
     return ok;
 }

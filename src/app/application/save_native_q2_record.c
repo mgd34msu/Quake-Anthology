@@ -8,7 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-enum { NATIVE_RECORD_HEADER = 80, NATIVE_RECORD_PARTS = 5 };
+enum { NATIVE_RECORD_HEADER = 88, NATIVE_RECORD_PARTS = 6 };
 
 static bool complete(const qa_native_checkpoint *state, qa_error *error)
 {
@@ -24,8 +24,37 @@ static const char *source_text(application_provider *provider, qa_string_id id)
     return id ? qa_strings_cstr(qa_session_strings(provider->application->session), id) : "";
 }
 
+bool application_native_q2_save_resource_recipe(const qa_save_record *record,
+    qa_bytes *out, qa_error *error)
+{
+    if (!record || !out || record->owner.kind != QA_SAVE_PROVIDER ||
+        !record->payload.data || record->payload.size < 32 ||
+        memcmp(record->payload.data, "QAPV", 4) ||
+        qa_load_u32le(record->payload.data + 4) != 1 ||
+        qa_load_u32le(record->payload.data + 8) != APPLICATION_PROVIDER_NATIVE ||
+        qa_load_u64le(record->payload.data + 24) != record->payload.size - 32)
+        return application_fail(error, QA_ERROR_FORMAT, "Native Q2 resource recipe lacks its actual provider envelope");
+    qa_bytes bytes = {record->payload.data + 32, record->payload.size - 32};
+    if (bytes.size < NATIVE_RECORD_HEADER || memcmp(bytes.data, "QAN2", 4) ||
+        qa_load_u32le(bytes.data + 4) != 2)
+        return application_fail(error, QA_ERROR_FORMAT, "Native Q2 resource recipe lacks its actual source envelope");
+    size_t offset = NATIVE_RECORD_HEADER;
+    qa_bytes recipe = {0};
+    for (size_t i = 0; i < NATIVE_RECORD_PARTS; ++i) {
+        uint64_t bytes_count = qa_load_u64le(bytes.data + 40 + i * 8);
+        if ((!bytes_count && i != 5) || bytes_count > bytes.size - offset)
+            return application_fail(error, QA_ERROR_FORMAT, "Native Q2 resource recipe part is truncated");
+        if (i == 5) recipe = (qa_bytes){bytes.data + offset, (size_t)bytes_count};
+        offset += (size_t)bytes_count;
+    }
+    if (offset != bytes.size || !recipe.size)
+        return application_fail(error, QA_ERROR_FORMAT, "Native Q2 resource recipe is absent or has trailing bytes");
+    *out = recipe;
+    return true;
+}
+
 bool application_native_q2_save_capture(application_provider *provider, qa_save_purpose purpose,
-    qa_buffer *out, qa_error *error)
+    const qa_application_native_resource_refs *resources, qa_buffer *out, qa_error *error)
 {
     struct application_native_q2 *engine = provider && provider->kind == APPLICATION_PROVIDER_NATIVE
         ? provider->state.native.q2_engine : NULL;
@@ -46,14 +75,23 @@ bool application_native_q2_save_capture(application_provider *provider, qa_save_
         request, &snapshot, error) && complete(&snapshot, error) &&
         application_native_q2_continuation_capture(provider, &snapshot, parts + 1, error) &&
         qa_native_checkpoint_encode(&snapshot, parts, error);
+    if (ok && engine->process.resources) {
+        if (!resources || !resources->capture || !resources->resolve)
+            ok = application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 capture requires its historical external capability graph");
+        else
+            ok = resources->capture(resources->context, provider->launch->selection.instance,
+                engine->process.process.source_id, engine->process.resources, parts + 5, error);
+        if (ok && !parts[5].size)
+            ok = application_fail(error, QA_ERROR_FORMAT, "Native Q2 external capability capture has no actual recipe");
+    }
     qa_native_checkpoint_free(&snapshot);
     size_t size = NATIVE_RECORD_HEADER;
     for (size_t i = 0; ok && i < NATIVE_RECORD_PARTS; ++i) {
-        if (i >= 2) {
+        if (i >= 2 && i <= 4) {
             parts[i].data = (uint8_t *)texts[i - 2];
             parts[i].size = strlen(texts[i - 2]) + 1;
         }
-        if (!parts[i].size || parts[i].size > SIZE_MAX - size)
+        if ((!parts[i].size && i != 5) || parts[i].size > SIZE_MAX - size)
             ok = application_fail(error, QA_ERROR_MEMORY, "native Q2 owned record extent is exhausted");
         else size += parts[i].size;
     }
@@ -64,18 +102,19 @@ bool application_native_q2_save_capture(application_provider *provider, qa_save_
     }
     if (ok) {
         memcpy(bytes.data, "QAN2", 4);
-        qa_store_u32le(bytes.data + 4, 1);
+        qa_store_u32le(bytes.data + 4, 2);
         memcpy(bytes.data + 8, qa_resource_digest(provider->application->map_resource)->bytes, 32);
         size_t offset = NATIVE_RECORD_HEADER;
         for (size_t i = 0; i < NATIVE_RECORD_PARTS; ++i) {
             qa_store_u64le(bytes.data + 40 + i * 8, parts[i].size);
-            memcpy(bytes.data + offset, parts[i].data, parts[i].size);
+            if (parts[i].size) memcpy(bytes.data + offset, parts[i].data, parts[i].size);
             offset += parts[i].size;
         }
         *out = bytes;
     }
     qa_buffer_free(parts);
     qa_buffer_free(parts + 1);
+    qa_buffer_free(parts + 5);
     return ok;
 }
 
@@ -83,17 +122,17 @@ static bool record_parts(application_provider *provider, qa_bytes bytes,
     qa_bytes out[NATIVE_RECORD_PARTS], qa_error *error)
 {
     if (!bytes.data || bytes.size < NATIVE_RECORD_HEADER || memcmp(bytes.data, "QAN2", 4) ||
-        qa_load_u32le(bytes.data + 4) != 1 || !provider->application->map_resource ||
+        qa_load_u32le(bytes.data + 4) != 2 || !provider->application->map_resource ||
         memcmp(bytes.data + 8, qa_resource_digest(provider->application->map_resource)->bytes, 32))
         return application_fail(error, QA_ERROR_FORMAT, "native Q2 continuation map identity differs");
     size_t offset = NATIVE_RECORD_HEADER;
     for (size_t i = 0; i < NATIVE_RECORD_PARTS; ++i) {
         uint64_t length = qa_load_u64le(bytes.data + 40 + i * 8);
-        if (!length || length > bytes.size - offset)
+        if ((!length && i != 5) || length > bytes.size - offset)
             return application_fail(error, QA_ERROR_FORMAT, "native Q2 continuation part extent is invalid");
         out[i] = (qa_bytes){bytes.data + offset, (size_t)length};
         offset += (size_t)length;
-        if (i >= 2 && (out[i].data[length - 1] || memchr(out[i].data, 0, (size_t)length - 1)))
+        if (i >= 2 && i <= 4 && (out[i].data[length - 1] || memchr(out[i].data, 0, (size_t)length - 1)))
             return application_fail(error, QA_ERROR_FORMAT, "native Q2 source map text has an invalid terminator");
     }
     if (offset != bytes.size)

@@ -15,7 +15,7 @@ struct qa_q1_travel_state {
     travel_extension extension;
     union {
         qa_q1_mg3_progress mg3;
-        struct { int32_t last_team; float status, access; } ctf;
+        struct { double last_team, status, access; } ctf;
     } source;
 };
 typedef struct travel_call {
@@ -56,9 +56,7 @@ static bool ctf_read(travel_call *call, const qa_q1_travel_services *services,
     if (!services || !services->ctf_read)
         return fail(error, "Q1 CTF travel has no actual source controller");
     return services->ctf_read(services->context, call->actor, out, error) &&
-        current(call, error) &&
-        ((isfinite(out->status) && isfinite(out->access)) ||
-         fail(error, "Q1 CTF travel has invalid source words"));
+        current(call, error);
 }
 static bool item(travel_call *call, const char *name, qa_item_id *out, qa_error *error) {
     return qa_builtin_resource(&call->operation.game->services, name, out, error) &&
@@ -284,9 +282,7 @@ static bool valid(qa_session *session, const qa_q1_travel_state *state, qa_error
         const qa_q1_mg3_progress *p = &state->source.mg3;
         if ((p->health | p->shells | p->nails | p->rockets | p->cells | p->bloody) > 8388607u)
             return fail(error, "Q1 MG3 travel exceeds its source flag words");
-    } else if (state->extension == TRAVEL_CTF &&
-        (!isfinite(state->source.ctf.status) || !isfinite(state->source.ctf.access)))
-        return fail(error, "Invalid Q1 CTF travel words");
+    }
     return true;
 }
 bool qa_q1_travel_source_valid(const qa_q1_game *game,
@@ -449,9 +445,7 @@ bool qa_q1_travel_admit(qa_q1_game *game, qa_actor_id actor, qa_q1_travel_state 
     for (size_t i = 0; ok && i < decoded->count; ++i) ok = configure(&call, &decoded->inventory[i], error);
     if (ok) {
         call.player->max_health = decoded->max_health;
-        for (unsigned i = 0; ok && i < QA_Q1_POWER_COUNT; ++i)
-            if (call.player->power_expires[i] != 0)
-                ok = qa_q1_player_power(game, actor, (qa_q1_power)i, 0, error) && current(&call, error);
+        ok = qa_q1_player_powers_clear(game, actor, error) && current(&call, error);
         if (ok) call.player->mega_rot_at = -1;
     }
     qa_q1_weapon weapon = decoded->weapon;
@@ -474,7 +468,7 @@ bool qa_q1_travel_admit(qa_q1_game *game, qa_actor_id actor, qa_q1_travel_state 
 }
 static bool armor_fields(qa_source_save_io *io, qa_armor *value) {
     uint32_t regular = value->regular.kind, powered = value->powered.kind,
-        edition = value->powered.source_edition;
+        edition = value->powered.source_edition, source_kind = value->powered.source_kind;
     if (!qa_source_save_u32(io, &regular) || regular > QA_ARMOR_SOURCE ||
         !qa_source_save_f32(io, &value->regular.points) ||
         !qa_source_save_string(io, &value->regular.item)) return false;
@@ -495,13 +489,15 @@ static bool armor_fields(qa_source_save_io *io, qa_armor *value) {
     if (!qa_source_save_u32(io, &powered) || powered > QA_POWER_SHIELD ||
         !qa_source_save_f32(io, &value->powered.cells) ||
         !qa_source_save_string(io, &value->powered.source_owner) ||
-        !qa_source_save_u32(io, &edition) || edition > QA_Q2_POWER_ARMOR_RERELEASE) return false;
+        !qa_source_save_u32(io, &edition) || edition > QA_Q2_POWER_ARMOR_RERELEASE ||
+        !qa_source_save_u32(io, &source_kind) || source_kind > QA_POWER_SOURCE_GENERIC) return false;
     value->powered.kind = (qa_power_kind)powered;
     value->powered.source_edition = (qa_q2_power_armor_edition)edition;
+    value->powered.source_kind = (qa_power_armor_source)source_kind;
     return true;
 }
 static bool state_fields(qa_source_save_io *io, qa_q1_travel_state *state) {
-    const uint8_t expected[] = {'Q','1','T','R',1};
+    const uint8_t expected[] = {'Q','1','T','R',3};
     uint8_t magic[sizeof(expected)];
     memcpy(magic, expected, sizeof(magic));
     uint32_t weapon = state->weapon, extension = state->extension;
@@ -535,9 +531,9 @@ static bool state_fields(qa_source_save_io *io, qa_q1_travel_state *state) {
             qa_source_save_u32(io, &p->cells) && qa_source_save_u32(io, &p->bloody);
     }
     return state->extension != TRAVEL_CTF ||
-        (qa_source_save_i32(io, &state->source.ctf.last_team) &&
-         qa_source_save_f32(io, &state->source.ctf.status) &&
-         qa_source_save_f32(io, &state->source.ctf.access));
+        (qa_source_save_f64(io, &state->source.ctf.last_team) &&
+         qa_source_save_f64(io, &state->source.ctf.status) &&
+         qa_source_save_f64(io, &state->source.ctf.access));
 }
 bool qa_q1_travel_encode(qa_session *session, const qa_q1_travel_state *state,
     qa_buffer *out, qa_error *error) {

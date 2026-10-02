@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "qa/game_q3_save.h"
+#include <ctype.h>
 
 static bool invoke_source(void *opaque, qa_item_id item, qa_item_action action, qa_error *error) {
     q3_inventory_owner *owner = opaque;
@@ -230,6 +231,45 @@ bool qa_q3_inventory_equipment_current(const qa_q3_game *game, qa_actor_id actor
     return owner->game == game && qa_actor_id_equal(owner->actor, actor) &&
         (owner->selections & QA_Q3_EQUIPMENT) &&
         qa_inventory_lease_current(game->options.services.inventory, owner->holdables);
+}
+static bool holdable_name(const char *actual, const char *requested) {
+    if (!actual) return false;
+    while (*actual && *requested) {
+        if (tolower((unsigned char)*actual) != tolower((unsigned char)*requested)) return false;
+        ++actual; ++requested;
+    }
+    return !*actual && !*requested;
+}
+bool qa_q3_selected_holdable_give(qa_q3_game *game, qa_actor_id actor,
+    const char *name, bool *handled, qa_error *error) {
+    if (!game || !name || !handled || game->source_restored || game->observation_depth == SIZE_MAX)
+        return q3_fail(error, "invalid selected Q3 holdable grant boundary");
+    *handled = false;
+    q3_actor *entry = q3_actor_get(game, actor);
+    if (!entry || entry->kind != Q3_ACTOR_PLAYER)
+        return q3_fail(error, "selected holdable grant lost its actual Q3 player");
+    if (!(entry->state.player.selections & QA_Q3_EQUIPMENT)) return true;
+    if (!qa_q3_inventory_equipment_current(game, actor, game->options.owner))
+        return q3_fail(error, "selected holdable grant lost its actual equipment admission");
+    size_t count;
+    const qa_q3_item *items = qa_q3_items(game->options.product, &count);
+    for (size_t i = 1; i < count; ++i) {
+        const qa_q3_item *item = items + i;
+        if (item->kind != QA_Q3_ITEM_HOLDABLE ||
+            (!holdable_name(item->classname, name) && !holdable_name(item->name, name))) continue;
+        /* Pickup_Holdable replaces the retained item; its direct give path
+         * bypasses Touch_Item's already-held gate and pickup side effects. */
+        qa_q3_holdable before = entry->state.player.holdable;
+        qa_q3_holdable after = (qa_q3_holdable)item->tag;
+        ++game->observation_depth;
+        entry->state.player.holdable = after;
+        if (after == QA_Q3_H_KAMIKAZE) entry->state.player.flags |= 0x200u;
+        bool ok = q3_inventory_holdable_changed(game, actor, before, after, error);
+        --game->observation_depth;
+        if (ok) *handled = true;
+        return ok;
+    }
+    return true;
 }
 bool qa_q3_inventory_rebind(qa_q3_game *game, qa_error *error) {
     if (!game || game->source_restored || game->observation_depth || !qa_session_safe(game->options.services.session))

@@ -30,11 +30,13 @@ static bool native_owner(qa_input_platform *p, qa_error *error) {
 }
 static bool initialize_native(qa_input_platform *, double, qa_error *);
 static float variable(qa_input_platform *p, const char *name, float fallback) {
-    const qa_cvar_view *v = qa_cvars_find(p->options.cvars, name);
+    const qa_cvar_view *v = p->constructor_edit?qa_cvars_edit_find(p->constructor_edit,name):
+        qa_cvars_find(p->options.cvars, name);
     return v ? v->number : fallback;
 }
 static int integer(qa_input_platform *p, const char *name, int fallback) {
-    const qa_cvar_view *v = qa_cvars_find(p->options.cvars, name);
+    const qa_cvar_view *v = p->constructor_edit?qa_cvars_edit_find(p->constructor_edit,name):
+        qa_cvars_find(p->options.cvars, name);
     return v ? v->integer : fallback;
 }
 static struct device *device(qa_input_platform *p, int32_t instance) {
@@ -390,6 +392,55 @@ qa_input_platform *qa_input_platform_create(const qa_input_platform_options *o, 
     }
     return p;
 }
+static bool constructor_settings_is(const qa_input_platform_options *options,
+    const qa_cvars_edit *edit,const qa_input_platform_settings *desired,qa_error *error) {
+    if (!options || !desired || !qa_cvars_edit_returned_is(edit,options->cvars)) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"Prepared input constructor lost its returned canonical edit");
+        return false;
+    }
+    const char *const names[]={"in_mouse","in_nograb","in_joystick","in_joystickProfile",
+        "in_midi","in_joystickSeat","in_midiseat","in_mididevice","in_midichannel",
+        "joy_threshold","in_joyBallScale"};
+    const qa_cvar_view *row[11];
+    for (unsigned i=0;i<11;++i) {
+        row[i]=qa_cvars_edit_canonical_record(edit,names[i]);
+        if (!row[i] || row[i]->console_created || !row[i]->value) {
+            qa_error_set(error,QA_ERROR_ARGUMENT,0,"Prepared input constructor lacks its actual declared setting");
+            return false;
+        }
+    }
+    if ((strcmp(row[3]->value,"linux") && strcmp(row[3]->value,"windows")) ||
+        row[2]->latched_value || row[3]->latched_value ||
+        !isfinite(row[9]->number) || !isfinite(row[10]->number) ||
+        desired->mouse_available!=(row[0]->integer!=0) || desired->no_grab!=(row[1]->integer!=0) ||
+        desired->joystick_enabled!=(row[2]->integer!=0) ||
+        desired->windows_joystick!=(!strcmp(row[3]->value,"windows")) ||
+        desired->midi_enabled!=(row[4]->integer!=0) || desired->joystick_seat!=row[5]->integer ||
+        desired->midi_seat!=row[6]->integer || desired->midi_device!=row[7]->integer ||
+        desired->midi_channel!=row[8]->integer || desired->joystick_threshold!=row[9]->number ||
+        desired->joystick_ball_scale!=row[10]->number) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"Prepared input constructor differs from its actual canonical rows");
+        return false;
+    }
+    return true;
+}
+qa_input_platform *qa_input_platform_create_prepared(const qa_input_platform_options *options,
+    const qa_cvars_edit *edit,const qa_input_platform_settings *desired,qa_error *error) {
+    if (!constructor_settings_is(options,edit,desired,error)) return NULL;
+    qa_input_platform *p=allocate_owner(options,error);
+    if (!p) return NULL;
+    p->constructor_edit=edit; p->constructor_settings=desired;
+    p->native_owned=true;
+    p->old_controller_events=SDL_GameControllerEventState(SDL_QUERY);
+    p->old_joystick_events=SDL_JoystickEventState(SDL_QUERY);
+    SDL_GameControllerEventState(SDL_ENABLE); SDL_JoystickEventState(SDL_ENABLE);
+    bool ok=(p->haptics=qa_haptic_cache_create(error)) && discover(p,-1,error) &&
+        constructor_settings_is(options,edit,desired,error) &&
+        qa_input_platform_restart(p,0,error) && constructor_settings_is(options,edit,desired,error);
+    p->constructor_edit=NULL; p->constructor_settings=NULL;
+    if (!ok) { qa_input_platform_destroy(p); return NULL; }
+    return p;
+}
 static bool release_all(qa_input_platform *p, double time, qa_error *error) {
     bool ok = true;
     for (unsigned i = 0; i < 4; ++i) {
@@ -513,6 +564,9 @@ bool input_platform_fresh_routes(qa_input_platform *p, qa_input_seat *const seat
     p->midi_slot = midi >= 1 && midi <= 4 && seats[midi - 1] ? midi - 1 : -1;
     p->windows_joystick = !strcmp(profile->value, "windows");
     p->mouse_available = variable(p, "in_mouse", 1) != 0;
+    p->joystick_enabled=integer(p,"in_joystick",0)!=0;
+    p->midi_enabled=variable(p,"in_midi",0)!=0;
+    p->requested_midi_device=integer(p,"in_mididevice",0);
     p->midi_channel = integer(p, "in_midichannel", 1);
     p->now = time;
     p->native_startup = INPUT_NATIVE_PENDING;
@@ -622,6 +676,42 @@ bool qa_input_platform_window(qa_input_platform *p, const qa_display *display, d
             }
     }
     return capture(p, error) && ok;
+}
+bool qa_input_platform_routes_prepared(qa_input_platform *p,qa_input_seat *const seats[4],
+    const qa_controller_selection selections[4],int keyboard,double time,
+    const qa_cvars_edit *edit,const qa_input_platform_settings *desired,qa_error *error) {
+    if (!p || p->constructor_edit || p->window || p->keyboard!=-1) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"Prepared input routes require their unattached fresh native owner");
+        return false;
+    }
+    if (!constructor_settings_is(&p->options,edit,desired,error)) return false;
+    for (unsigned i=0;i<4;++i) if (p->seats[i].seat ||
+        (seats && seats[i] && qa_input_seat_has_held(seats[i]))) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"Prepared initial input routes already have physical history");
+        return false;
+    }
+    p->constructor_edit=edit; p->constructor_settings=desired;
+    bool ok=qa_input_platform_routes(p,seats,selections,keyboard,time,error) &&
+        constructor_settings_is(&p->options,edit,desired,error);
+    p->constructor_edit=NULL; p->constructor_settings=NULL;
+    return ok;
+}
+bool qa_input_platform_window_prepared(qa_input_platform *p,const qa_display *display,double time,
+    const qa_cvars_edit *edit,const qa_input_platform_settings *desired,qa_error *error) {
+    if (!p || !display || p->constructor_edit || p->window) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"Prepared input window requires its unattached fresh native owner");
+        return false;
+    }
+    if (!constructor_settings_is(&p->options,edit,desired,error)) return false;
+    for (unsigned i=0;i<4;++i) if (p->seats[i].seat && qa_input_seat_has_held(p->seats[i].seat)) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"Prepared initial input window already has held physical input");
+        return false;
+    }
+    p->constructor_edit=edit; p->constructor_settings=desired;
+    bool ok=qa_input_platform_window(p,display,time,error) &&
+        constructor_settings_is(&p->options,edit,desired,error);
+    p->constructor_edit=NULL; p->constructor_settings=NULL;
+    return ok;
 }
 static bool finish_calibration(qa_input_platform *p, qa_error *error) {
     bool ok = true;
@@ -1045,7 +1135,7 @@ static bool open_midi(qa_input_platform *p, qa_error *error) {
     free(p->midi_devices);
     p->midi_devices = NULL;
     p->midi_count = 0;
-    if (variable(p, "in_midi", 0) == 0)
+    if (p->constructor_settings?!p->constructor_settings->midi_enabled:variable(p, "in_midi", 0) == 0)
         return true;
     if (!qa_input_midi_devices(&p->midi_devices, &p->midi_count, error))
         return false;
@@ -1075,6 +1165,8 @@ static bool open_midi(qa_input_platform *p, qa_error *error) {
 }
 typedef struct input_output_transition {
     struct device *device;
+    SDL_GameController *ready_handle;
+    int32_t ready_instance;
     input_motor_output rumble, triggers;
     bool motor_attempted[2];
     bool retire_motors;
@@ -1084,6 +1176,8 @@ struct qa_input_platform_settings_ticket {
     qa_input_platform *platform;
     qa_input_platform_settings desired;
     qa_input_platform_settings_requirements requirements;
+    bool previous_joystick_enabled,previous_midi_enabled;
+    int previous_midi_device;
     unsigned haptic_routes, calibration_routes;
     struct seat_route routes[4];
     qa_input_seat *configuration[4];
@@ -1115,8 +1209,24 @@ struct qa_input_platform_settings_ticket {
     bool previous_relative, previous_grab, previous_text, relative, text;
     bool capture_attempted, prepared, aborting, retiring, terminal, published;
     bool midi_deferred, enter_complete, endpoint_entered;
+    uint64_t revision, ready_revision;
+    const qa_input_release *ready_release[4];
+    qa_input_platform_options ready_options;
+    struct device *ready_devices;
+    size_t ready_device_count;
+    qa_midi_device *ready_midi_devices;
+    size_t ready_midi_count;
+    uint64_t ready_midi_generation;
+    qa_gamepad_tuning ready_tuning[4], ready_configuration_tuning[4];
+    qa_command_context ready_context[4], ready_configuration_context[4];
+    bool ready_focused[4];
+    qa_input_focus ready_focus[4];
     char diagnostic[320];
 };
+static void settings_changed(qa_input_platform_settings_ticket *t) {
+    t->ready_revision = 0;
+    if (!++t->revision) ++t->revision;
+}
 static uint32_t motor_remaining(const input_motor_output *v) {
     uint64_t now = SDL_GetTicks64();
     uint64_t elapsed = now >= v->ticks ? now - v->ticks : 0;
@@ -1314,6 +1424,8 @@ static bool settings_current(const qa_input_platform_settings_ticket *t, qa_erro
     if (!p || t->terminal || p->settings_ticket != t || !p->native_owned ||
         p->native_initializing || p->native_startup != INPUT_NATIVE_READY ||
         p->joystick != t->previous_joystick || p->midi_fd != t->previous_midi_fd ||
+        p->joystick_enabled!=t->previous_joystick_enabled ||
+        p->midi_enabled!=t->previous_midi_enabled || p->requested_midi_device!=t->previous_midi_device ||
         p->window != t->window_id || p->keyboard != t->keyboard ||
         (t->window_id && SDL_GetWindowFromID(t->window_id) != t->window)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Input settings ticket lost its actual native owner");
@@ -1441,7 +1553,11 @@ static bool settings_prepare(qa_input_platform *p, const qa_input_platform_setti
     qa_input_platform_settings_ticket *t = calloc(1, sizeof(*t));
     if (!t) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining input settings preparation"); return false; }
     t->platform = p; t->desired = *desired; t->now = now; t->keyboard = p->keyboard;
+    t->revision = 1;
     t->previous_joystick = t->joystick = p->joystick;
+    t->previous_joystick_enabled=p->joystick_enabled;
+    t->previous_midi_enabled=p->midi_enabled;
+    t->previous_midi_device=p->requested_midi_device;
     t->joystick_instance = p->joystick_instance;
     t->previous_midi_fd = t->midi_fd = p->midi_fd;
     t->midi_pending = p->midi_pending; t->midi_byte = p->midi_byte;
@@ -1470,7 +1586,7 @@ static bool settings_prepare(qa_input_platform *p, const qa_input_platform_setti
     int source = desired->joystick_seat, midi = desired->midi_seat;
     source = source >= 1 && source <= 4 && p->seats[source - 1].seat ? source - 1 : -1;
     midi = midi >= 1 && midi <= 4 && p->seats[midi - 1].seat ? midi - 1 : -1;
-    bool enabled = integer(p, "in_joystick", 0) != 0;
+    bool enabled = p->joystick_enabled;
     bool acquire_source = desired->joystick_enabled &&
         (retry_source || desired->restart_requested || !enabled || desired->windows_joystick != p->windows_joystick);
     if (acquire_source) {
@@ -1489,9 +1605,9 @@ static bool settings_prepare(qa_input_platform *p, const qa_input_platform_setti
     } else if (!desired->joystick_enabled) {
         t->joystick = NULL; t->joystick_instance = -1;
     }
-    bool midi_enabled = variable(p, "in_midi", 0) != 0;
+    bool midi_enabled = p->midi_enabled;
     bool acquire_midi = desired->midi_enabled &&
-        (retry_midi || desired->restart_requested || !midi_enabled || desired->midi_device != integer(p, "in_mididevice", 0));
+        (retry_midi || desired->restart_requested || !midi_enabled || desired->midi_device != p->requested_midi_device);
     if (acquire_midi) {
         t->midi_devices = NULL; t->midi_count = 0;
         qa_error warning = {0};
@@ -1563,7 +1679,7 @@ bool qa_input_platform_settings_requirements_read(const qa_input_platform_settin
     *out = t->requirements; return true;
 }
 bool qa_input_platform_settings_idle(const qa_input_platform *p) {
-    return p && !p->settings_ticket;
+    return p && !p->settings_ticket && !p->constructor_edit;
 }
 bool qa_input_platform_settings_retained(const qa_input_platform *p,
     const qa_input_platform_settings_ticket *t, qa_error *error) {
@@ -1589,27 +1705,31 @@ const qa_input_platform *qa_input_platform_settings_owner(const qa_input_platfor
 qa_input_seat *qa_input_platform_settings_seat(const qa_input_platform_settings_ticket *t, unsigned slot) {
     return t && t->prepared && !t->terminal && slot < 4 ? t->routes[slot].seat : NULL;
 }
-bool qa_input_platform_settings_keys(const qa_input_platform_settings_ticket *t, bool midi,
-    int *keys, size_t capacity, size_t *count, qa_error *error) {
-    if (!count || (!keys && capacity) || !t || !t->prepared || !settings_current(t, error)) return false;
-    int held[272]; size_t length = 0;
+static size_t settings_held_keys(const qa_input_platform *p, bool midi, int held[272]) {
+    size_t length = 0;
     if (midi) {
         for (int key = 0; key < 256; ++key)
-            if (t->platform->midi_held[key]) held[length++] = key;
+            if (p->midi_held[key]) held[length++] = key;
     } else {
         static const int axes[16] = {QA_KEY_LEFT, QA_KEY_RIGHT, QA_KEY_UP, QA_KEY_DOWN,
             QA_KEY_JOY1 + 15, QA_KEY_JOY1 + 16, QA_KEY_JOY1 + 17, QA_KEY_JOY1 + 18,
             QA_KEY_JOY1 + 19, QA_KEY_JOY1 + 20, QA_KEY_JOY1 + 21, QA_KEY_JOY1 + 22,
             QA_KEY_JOY1 + 23, QA_KEY_JOY1 + 24, QA_KEY_JOY1 + 25, QA_KEY_JOY1 + 26};
         for (unsigned key = 0; key < 256; ++key)
-            if (t->platform->source.buttons[key]) held[length++] = QA_KEY_JOY1 + (int)key;
+            if (p->source.buttons[key]) held[length++] = QA_KEY_JOY1 + (int)key;
         for (unsigned axis = 0; axis < 16; ++axis) {
-            if (!(t->platform->source.old_axes & (1u << axis))) continue;
+            if (!(p->source.old_axes & (1u << axis))) continue;
             bool duplicate = false;
             for (size_t i = 0; i < length; ++i) if (held[i] == axes[axis]) duplicate = true;
             if (!duplicate) held[length++] = axes[axis];
         }
     }
+    return length;
+}
+bool qa_input_platform_settings_keys(const qa_input_platform_settings_ticket *t, bool midi,
+    int *keys, size_t capacity, size_t *count, qa_error *error) {
+    if (!count || (!keys && capacity) || !t || !t->prepared || !settings_current(t, error)) return false;
+    int held[272]; size_t length = settings_held_keys(t->platform, midi, held);
     *count = length;
     if (capacity < length) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Input settings pressed-key output is too small");
@@ -1621,32 +1741,37 @@ bool qa_input_platform_settings_keys(const qa_input_platform_settings_ticket *t,
 const char *qa_input_platform_settings_diagnostic(const qa_input_platform_settings_ticket *t) {
     return t && t->prepared && t->published && t->diagnostic[0] ? t->diagnostic : NULL;
 }
-bool qa_input_platform_settings_release_scope(const qa_input_platform_settings_ticket *t, unsigned slot,
-    qa_input_release_scope *out, int *keys, size_t capacity, qa_error *error) {
-    if (!out || slot >= 4 || (!keys && capacity) || !t || !t->prepared || !settings_current(t, error)) return false;
-    int held[528], partial[272]; size_t length = 0, count = 0;
+static qa_input_release_scope settings_scope(const qa_input_platform_settings_ticket *t,
+    unsigned slot, int held[528]) {
+    int partial[272]; size_t length = 0, count = 0;
     if (t->routes[slot].seat && t->requirements.source_changed && t->requirements.source_slot == (int)slot) {
-        if (!qa_input_platform_settings_keys(t, false, held, 528, &length, error)) return false;
+        length = settings_held_keys(t->platform, false, held);
     }
     if (t->routes[slot].seat && t->requirements.midi_changed && t->requirements.midi_slot == (int)slot) {
-        if (!qa_input_platform_settings_keys(t, true, partial, 272, &count, error)) return false;
+        count = settings_held_keys(t->platform, true, partial);
         for (size_t i = 0; i < count; ++i) {
             bool duplicate = false;
             for (size_t j = 0; j < length; ++j) if (held[j] == partial[i]) duplicate = true;
             if (!duplicate) held[length++] = partial[i];
         }
     }
-    if (capacity < length) {
-        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Input release scope pressed-key output is too small");
-        return false;
-    }
-    if (length) memcpy(keys, held, length * sizeof(*keys));
-    *out = (qa_input_release_scope){
+    return (qa_input_release_scope){
         .all = (t->desired.restart_requested || t->surface) && t->routes[slot].seat,
         .clear_gamepad = t->routes[slot].seat && ((t->requirements.controller_routes & (1u << slot)) != 0 ||
             (t->requirements.source_changed && t->requirements.source_slot == (int)slot)),
         .controller = (t->requirements.controller_routes & (1u << slot)) ? t->routes[slot].instance : -1,
-        .keys = keys, .key_count = length};
+        .keys = held, .key_count = length};
+}
+bool qa_input_platform_settings_release_scope(const qa_input_platform_settings_ticket *t, unsigned slot,
+    qa_input_release_scope *out, int *keys, size_t capacity, qa_error *error) {
+    if (!out || slot >= 4 || (!keys && capacity) || !t || !t->prepared || !settings_current(t, error)) return false;
+    int held[528]; qa_input_release_scope scope = settings_scope(t, slot, held);
+    if (capacity < scope.key_count) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Input release scope pressed-key output is too small");
+        return false;
+    }
+    if (scope.key_count) memcpy(keys, held, scope.key_count * sizeof(*keys));
+    scope.keys = keys; *out = scope;
     return true;
 }
 static bool settings_releases_qualified(const qa_input_platform_settings_ticket *t,
@@ -1689,6 +1814,7 @@ qa_input_platform_settings_outcome qa_input_platform_settings_result(const qa_in
 static bool settings_endpoints_ready(const qa_input_platform_settings_ticket *, qa_error *);
 bool qa_input_platform_settings_enter(qa_input_platform_settings_ticket *t,
     const qa_input_release *const release[4], qa_input_platform_settings_outcome *outcome, qa_error *error) {
+    if (t) settings_changed(t);
     if (outcome) *outcome = qa_input_platform_settings_result(t);
     if (t && t->retiring) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Input endpoint retirement excludes replacement entry");
@@ -1782,6 +1908,7 @@ static bool settings_endpoints_ready(const qa_input_platform_settings_ticket *t,
 }
 bool qa_input_platform_settings_window_stage(qa_input_platform_settings_ticket *t,
     const qa_display_surface_ticket *surface, const qa_input_release *const release[4], qa_error *error) {
+    if (t) settings_changed(t);
     if (!surface || !t || t->aborting || t->retiring) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Input window preparation requires its retained settings and surface tickets");
         return false;
@@ -1837,8 +1964,10 @@ bool qa_input_platform_settings_window_stage(qa_input_platform_settings_ticket *
     t->window_prepared = true;
     return settings_current(t, error) && settings_endpoints_ready(t, error);
 }
-bool qa_input_platform_settings_ready(const qa_input_platform_settings_ticket *t,
+bool qa_input_platform_settings_ready(qa_input_platform_settings_ticket *t,
     const qa_input_release *const release[4], qa_error *error) {
+    if (t) t->ready_revision = 0;
+    uint64_t revision = t ? t->revision : 0;
     if (t && t->retiring) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Input endpoint retirement excludes replacement publication");
         return false;
@@ -1848,9 +1977,115 @@ bool qa_input_platform_settings_ready(const qa_input_platform_settings_ticket *t
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Input settings have not completed their endpoint entry");
         return false;
     }
-    return settings_endpoints_ready(t, error);
+    if (!settings_endpoints_ready(t, error)) return false;
+    if (t->revision != revision) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Input settings changed during readiness qualification");
+        return false;
+    }
+    qa_input_platform *p = t->platform;
+    t->ready_options = p->options;
+    t->ready_devices = p->devices; t->ready_device_count = p->device_count;
+    t->ready_midi_devices = p->midi_devices; t->ready_midi_count = p->midi_count;
+    t->ready_midi_generation = p->midi_generation;
+    for (unsigned slot = 0; slot < 4; ++slot) {
+        t->ready_release[slot] = release ? release[slot] : NULL;
+        if (!t->routes[slot].seat) continue;
+        qa_input_seat *active = t->routes[slot].seat, *candidate = t->configuration[slot];
+        memcpy(&t->ready_tuning[slot], qa_input_seat_gamepad_tuning(active), sizeof(t->ready_tuning[slot]));
+        memcpy(&t->ready_configuration_tuning[slot], qa_input_seat_gamepad_tuning(candidate),
+            sizeof(t->ready_configuration_tuning[slot]));
+        t->ready_context[slot] = qa_input_seat_context(active);
+        t->ready_configuration_context[slot] = qa_input_seat_context(candidate);
+        t->ready_focused[slot] = qa_input_seat_focused(active);
+        t->ready_focus[slot] = qa_input_seat_focus(active);
+    }
+    for (size_t i = 0; i < t->output_count; ++i) {
+        t->outputs[i].ready_handle = t->outputs[i].device->handle;
+        t->outputs[i].ready_instance = t->outputs[i].device->info.instance;
+    }
+    t->ready_revision = t->revision;
+    if (qa_input_platform_settings_ready_is(t, p, release)) return true;
+    t->ready_revision = 0;
+    qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Input settings lost their completed retained readiness");
+    return false;
+}
+static bool settings_context_is(qa_command_context a, qa_command_context b) {
+    return a.session == b.session && a.owner == b.owner && a.client == b.client &&
+        a.seat == b.seat && a.dialect == b.dialect && a.origin == b.origin &&
+        a.direct == b.direct && a.console_text == b.console_text && a.script == b.script &&
+        a.registry == b.registry && a.generation == b.generation &&
+        a.actor.registry == b.actor.registry && a.actor.generation == b.actor.generation &&
+        a.actor.slot == b.actor.slot;
+}
+bool qa_input_platform_settings_ready_is(const qa_input_platform_settings_ticket *t,
+    const qa_input_platform *p, const qa_input_release *const release[4]) {
+    if (!t || !p || t->platform != p || p->settings_ticket != t || !p->native_owned ||
+        p->native_initializing || p->native_startup != INPUT_NATIVE_READY ||
+        !t->ready_revision || t->ready_revision != t->revision || !t->prepared ||
+        t->aborting || t->retiring || t->terminal || t->published || !t->enter_complete ||
+        t->midi_deferred || (t->surface && !t->window_prepared) ||
+        p->joystick != t->previous_joystick || p->midi_fd != t->previous_midi_fd ||
+        p->joystick_instance != t->requirements.joystick_instance ||
+        p->joystick_enabled!=t->previous_joystick_enabled ||
+        p->midi_enabled!=t->previous_midi_enabled || p->requested_midi_device!=t->previous_midi_device ||
+        p->source_slot != t->requirements.source_slot || p->midi_slot != t->requirements.midi_slot ||
+        p->window != t->window_id || p->keyboard != t->keyboard ||
+        p->devices != t->ready_devices || p->device_count != t->ready_device_count ||
+        p->midi_devices != t->ready_midi_devices || p->midi_count != t->ready_midi_count ||
+        p->midi_generation != t->ready_midi_generation ||
+        p->options.cvars != t->ready_options.cvars || p->options.user != t->ready_options.user ||
+        p->options.print != t->ready_options.print ||
+        p->options.device_changed != t->ready_options.device_changed ||
+        p->options.assignment_changed != t->ready_options.assignment_changed) return false;
+    for (unsigned slot = 0; slot < 4; ++slot) {
+        const struct seat_route *a = &p->seats[slot], *b = &t->routes[slot];
+        if ((release ? release[slot] : NULL) != t->ready_release[slot] ||
+            a->platform != b->platform || a->slot != b->slot || a->seat != b->seat ||
+            a->instance != b->instance || a->selection.kind != b->selection.kind ||
+            a->selection.ordinal != b->selection.ordinal ||
+            memcmp(a->selection.guid, b->selection.guid, sizeof(a->selection.guid)) ||
+            a->selection.serial != b->selection.serial || a->haptic_instance != b->haptic_instance ||
+            a->calibration_instance != b->calibration_instance || a->calibration_sensor != b->calibration_sensor ||
+            memcmp(&a->haptic, &b->haptic, sizeof(a->haptic))) return false;
+        if (!a->seat) {
+            if (t->configuration[slot]) return false;
+            continue;
+        }
+        qa_input_seat *candidate = t->configuration[slot];
+        if (!candidate || (candidate != a->seat && !qa_input_seat_configuration_owned_is(a->seat, candidate)) ||
+            memcmp(qa_input_seat_gamepad_tuning(a->seat), &t->ready_tuning[slot], sizeof(t->ready_tuning[slot])) ||
+            memcmp(qa_input_seat_gamepad_tuning(candidate), &t->ready_configuration_tuning[slot],
+                sizeof(t->ready_configuration_tuning[slot])) ||
+            !settings_context_is(qa_input_seat_context(a->seat), t->ready_context[slot]) ||
+            !settings_context_is(qa_input_seat_context(candidate), t->ready_configuration_context[slot]) ||
+            qa_input_seat_focused(a->seat) != t->ready_focused[slot] ||
+            qa_input_seat_focus(a->seat) != t->ready_focus[slot]) return false;
+        int keys[528]; qa_input_release_scope scope = settings_scope(t, slot, keys);
+        bool source_seat = (t->requirements.source_changed && t->requirements.source_slot == (int)slot) ||
+            (t->requirements.midi_changed && t->requirements.midi_slot == (int)slot);
+        if ((scope.all || scope.clear_gamepad || scope.controller >= 0 || scope.key_count || source_seat) &&
+            !qa_input_release_completed_is(t->ready_release[slot], a->seat, &scope)) return false;
+    }
+    for (size_t i = 0; i < t->output_count; ++i) {
+        const input_output_transition *v = &t->outputs[i];
+        bool retained = false;
+        for (size_t row = 0; row < p->device_count; ++row)
+            if (v->device == &p->devices[row]) retained = true;
+        if (!retained || !v->ready_handle || v->device->handle != v->ready_handle ||
+            v->device->info.instance != v->ready_instance) return false;
+        const input_motor_output *motors[2] = {&v->device->rumble, &v->device->triggers};
+        for (unsigned motor = 0; motor < 2; ++motor) if (v->motor_attempted[motor] &&
+            (!motors[motor]->requested || !motors[motor]->applied || motors[motor]->low ||
+                motors[motor]->high || motors[motor]->duration)) return false;
+        for (unsigned sensor = 0; sensor < 6; ++sensor) if (v->sensor_attempted[sensor] &&
+            (!v->device->sensor_output[sensor].requested || !v->device->sensor_output[sensor].applied ||
+                v->device->sensor_output[sensor].enabled != v->sensor_desired[sensor])) return false;
+    }
+    return !t->source_motor_attempted || (p->joystick_rumble.requested && p->joystick_rumble.applied &&
+        !p->joystick_rumble.low && !p->joystick_rumble.high && !p->joystick_rumble.duration);
 }
 static bool settings_dispose(qa_input_platform_settings_ticket *t, qa_error *error) {
+    settings_changed(t);
     t->aborting = true;
     if (t->capture_attempted) {
         if (t->surface) SDL_SetWindowGrab(t->candidate_window, t->candidate_grab ? SDL_TRUE : SDL_FALSE);
@@ -1905,6 +2140,40 @@ bool qa_input_platform_settings_retire_entered(qa_input_platform_settings_ticket
     t->retiring = true;
     return settings_dispose(t, error);
 }
+bool qa_input_platform_settings_retire_entered_empty(qa_input_platform_settings_ticket *t,
+    const qa_input_release *const release[4], qa_error *error) {
+    if (!t || !t->prepared || !t->endpoint_entered ||
+        !settings_current(t, error)) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Empty input retirement requires its actual entered native owner");
+        return false;
+    }
+    for (unsigned slot = 0; slot < 4; ++slot) {
+        qa_input_seat *seat = t->routes[slot].seat;
+        if (!seat) {
+            if ((release && release[slot]) || t->configuration[slot]) {
+                qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Empty input retirement has an unrelated physical seat proof");
+                return false;
+            }
+            continue;
+        }
+        if (!t->configuration[slot] || (t->configuration[slot] != seat &&
+            !qa_input_seat_configuration_owned_is(seat, t->configuration[slot]))) {
+            qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Empty input retirement lost its actual configuration owner");
+            return false;
+        }
+        int keys[528]; qa_input_release_scope scope = settings_scope(t, slot, keys);
+        bool required = scope.all || scope.clear_gamepad || scope.controller >= 0 || scope.key_count ||
+            (t->requirements.source_changed && t->requirements.source_slot == (int)slot) ||
+            (t->requirements.midi_changed && t->requirements.midi_slot == (int)slot);
+        const qa_input_release *proof = release ? release[slot] : NULL;
+        if ((required || proof) && !qa_input_release_completed_empty_is(proof, seat, &scope)) {
+            qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Empty input retirement cannot discard an authored source history");
+            return false;
+        }
+    }
+    t->retiring = true;
+    return settings_dispose(t, error);
+}
 bool qa_input_platform_settings_retire_entered_disposition(qa_input_platform_settings_ticket *t,
     const qa_input_release *const release[4], qa_console_release_disposition disposition,
     qa_console_release_retirement_fn qualify, void *context, qa_error *error) {
@@ -1918,6 +2187,7 @@ bool qa_input_platform_settings_retire_entered_disposition(qa_input_platform_set
     return settings_dispose(t, error);
 }
 void qa_input_platform_settings_publish(qa_input_platform_settings_ticket *t) {
+    settings_changed(t);
     qa_input_platform *p = t->platform;
     SDL_Joystick *previous_joystick = p->joystick;
     bool retire_joystick = previous_joystick && (t->owns_joystick || previous_joystick != t->joystick);
@@ -1937,6 +2207,9 @@ void qa_input_platform_settings_publish(qa_input_platform_settings_ticket *t) {
         t->midi_devices = previous_devices;
     }
     p->mouse_available = t->desired.mouse_available;
+    p->joystick_enabled=t->desired.joystick_enabled;
+    p->midi_enabled=t->desired.midi_enabled;
+    p->requested_midi_device=t->desired.midi_device;
     p->windows_joystick = t->desired.windows_joystick;
     p->source_slot = t->requirements.next_source_slot; p->midi_slot = t->requirements.next_midi_slot;
     p->midi_channel = t->desired.midi_channel; p->now = t->now;
@@ -1983,18 +2256,23 @@ bool qa_input_platform_settings_ticket_destroy(qa_input_platform_settings_ticket
 }
 static bool restart_devices(qa_input_platform *p, double time, qa_error *error) {
     p->now = time;
-    if (!qa_input_device_settings_register(p->options.cvars, error) ||
+    if (!p->constructor_edit && (!qa_input_device_settings_register(p->options.cvars, error) ||
         !qa_cvars_apply_latched(p->options.cvars, "in_joystick", error) ||
-        !qa_cvars_apply_latched(p->options.cvars, "in_joystickProfile", error))
+        !qa_cvars_apply_latched(p->options.cvars, "in_joystickProfile", error)))
         return false;
-    const qa_cvar_view *profile = qa_cvars_find(p->options.cvars, "in_joystickProfile");
+    const qa_cvar_view *profile = p->constructor_edit?qa_cvars_edit_find(p->constructor_edit,"in_joystickProfile"):
+        qa_cvars_find(p->options.cvars, "in_joystickProfile");
     if (!profile ||
         (strcmp(profile->value, "linux") != 0 && strcmp(profile->value, "windows") != 0)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "in_joystickProfile must be linux or windows");
         return false;
     }
     p->windows_joystick = strcmp(profile->value, "windows") == 0;
-    p->mouse_available = variable(p, "in_mouse", 1) != 0;
+    p->mouse_available = p->constructor_settings?p->constructor_settings->mouse_available:
+        variable(p, "in_mouse", 1) != 0;
+    p->joystick_enabled=integer(p,"in_joystick",0)!=0;
+    p->midi_enabled=p->constructor_settings?p->constructor_settings->midi_enabled:variable(p,"in_midi",0)!=0;
+    p->requested_midi_device=integer(p,"in_mididevice",0);
     for (unsigned i = 0; i < 4; ++i)
         if (!qa_haptic_stop(&p->seats[i].haptic, error))
             return false;

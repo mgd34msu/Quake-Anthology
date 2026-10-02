@@ -321,6 +321,13 @@ bool q2_brush_finished(qa_q2_game *g, q2_actor *a, q2_move_done done, qa_error *
         return false;
     }
 }
+bool qa_q2_force_wall_multicast_origin(qa_q2_game *g, qa_actor_id id, qa_vec3 *out) {
+    q2_actor *a = g ? q2_ent(g, id) : NULL;
+    if (!out || !a || a->entity->kind != Q2E_FORCEWALL)
+        return false;
+    *out = a->entity->multicast_origin;
+    return true;
+}
 static bool force_think(qa_q2_game *g, q2_actor *a, qa_error *e) {
     q2_entity_state *s = a->entity;
     if (!s->wait && !q2_map_event(g,
@@ -408,6 +415,7 @@ bool q2_brush_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
     qa_vec3 lo = qa_vec_add(b.origin, b.bounds.mins), hi = qa_vec_add(b.origin, b.bounds.maxs),
             mid = qa_vec_scale(qa_vec_add(lo, hi), .5f);
     bool x = hi.x - lo.x > hi.y - lo.y;
+    s->multicast_origin = mid;
     s->direction = x ? qa_v3(lo.x, mid.y, hi.z) : qa_v3(mid.x, lo.y, hi.z);
     s->beam_end = x ? qa_v3(hi.x, mid.y, hi.z) : qa_v3(mid.x, hi.y, hi.z);
     if (!s->style)

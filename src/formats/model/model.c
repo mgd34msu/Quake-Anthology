@@ -231,12 +231,15 @@ uint32_t qa_model_group_sample(const qa_model_group *g, double seconds, double s
 }
 bool qa_model_sample_mesh(const qa_model *m, uint32_t mesh, uint32_t frame, uint32_t old_frame,
                           float back, qa_model_vertex *out, size_t count, qa_error *error) {
-    if (!m || mesh >= m->mesh_count || !isfinite(back) || back < 0 || back > 1)
+    if (!m || mesh >= m->mesh_count || !isfinite(back) ||
+        (m->format == QA_MODEL_MDL && (back < 0 || back > 1)))
         goto invalid;
     const qa_model_mesh *s = &m->meshes[mesh];
     if (frame >= s->frame_count || old_frame >= s->frame_count || count < s->vertex_count ||
         (!out && s->vertex_count))
         goto invalid;
+    if (frame == old_frame && (m->format == QA_MODEL_MD3 || m->format == QA_MODEL_MD4))
+        back = 0;
     if (m->format == QA_MODEL_MD5)
         return qa_model_skin_md5(m, mesh, m->bind_pose, m->bone_count, out, count, error);
     if (m->format == QA_MODEL_MD4) {
@@ -292,7 +295,7 @@ bool qa_model_sample_alias(const qa_model *model, uint32_t frame, uint32_t old_f
     }
     if (model->format == QA_MODEL_MD2) {
         if (!model->mesh_count || frame >= model->frame_count || old_frame >= model->frame_count ||
-            !isfinite(back) || back < 0 || back > 1 || count < model->meshes[0].vertex_count ||
+            !isfinite(back) || count < model->meshes[0].vertex_count ||
             (!vertices && model->meshes[0].vertex_count)) {
             qa_error_set(error, QA_ERROR_ARGUMENT, 0, "invalid MD2 alias pose or output span");
             return false;

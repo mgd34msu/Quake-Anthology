@@ -66,11 +66,17 @@ typedef enum qa_power_kind { QA_POWER_NONE, QA_POWER_SCREEN, QA_POWER_SHIELD } q
 typedef enum qa_q2_power_armor_edition {
     QA_Q2_POWER_ARMOR_NONE, QA_Q2_POWER_ARMOR_CLASSIC, QA_Q2_POWER_ARMOR_RERELEASE
 } qa_q2_power_armor_edition;
+typedef enum qa_power_armor_source {
+    QA_POWER_SOURCE_Q2, QA_POWER_SOURCE_GENERIC
+} qa_power_armor_source;
 typedef struct qa_powered_armor {
     qa_power_kind kind;
     float cells;
     qa_actor_owner source_owner;
     qa_q2_power_armor_edition source_edition;
+    /* Generic storage requires an actual owner-bound absorption lease.
+     * Q2 storage retains its separate original edition qualification. */
+    qa_power_armor_source source_kind;
 } qa_powered_armor;
 typedef struct qa_armor { qa_regular_armor regular; qa_powered_armor powered; } qa_armor;
 typedef enum qa_protection_channel { QA_PROTECTION_REGULAR, QA_PROTECTION_POWERED } qa_protection_channel;
@@ -318,6 +324,10 @@ bool qa_combat_bind_power_inventory(qa_combat *, qa_actor_id, qa_inventory *, qa
 /* Read-only checkpoint/composition query; false means no reservoir. */
 bool qa_combat_power_inventory(qa_combat *, qa_actor_id, qa_inventory **, qa_item_id *);
 bool qa_combat_read(qa_combat *, qa_actor_id, qa_combat_state *, qa_error *);
+/* The actual before-reaction attack, retained for this full actor's lifetime.
+ * Actor references keep their original generations even after retirement.
+ * This query calls no source callbacks and does not require an attacker body. */
+bool qa_combat_last_attack_read(const qa_combat *, qa_actor_id, qa_attack *, bool *present, qa_error *);
 /* Uncomposed primary state for editing traits. Unlike effective read, this
  * cannot copy another provider's temporary protection into primary godmode. */
 bool qa_combat_read_traits(qa_combat *, qa_actor_id, qa_combat_state *, qa_error *);

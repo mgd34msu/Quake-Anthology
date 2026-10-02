@@ -2,6 +2,9 @@
 #include "match_intents.h"
 #include "rankings.h"
 #include "qa/source_save.h"
+#include "unified_output.h"
+#include "save_content.h"
+#include "qa/json.h"
 
 #include <limits.h>
 #include <math.h>
@@ -10,21 +13,37 @@
 
 typedef struct event_store {
     application_event_record *builtin;
-    qa_application_q2_map_event *q2_map;
+    application_q2_map_event_record *q2_map;
     qa_application_q3_map_event *q3_map;
     qa_application_q2_player_event *q2_player;
-    qa_application_protocol_event *protocol;
+    application_protocol_record *protocol;
     size_t counts[5], capacities[5];
     size_t arena_block_size;
     uint64_t protocol_generation;
+    application_event_journal_record *journal;
+    size_t journal_count, journal_capacity;
+    uint64_t sequence;
+    uint64_t simulation_sequence;
+    application_unified_event_record *unified;
+    size_t unified_count, unified_capacity;
+    uint64_t unified_sequence, presentation_sequence;
+    application_unified_event_resource *resources;
+    size_t resource_count, resource_capacity;
+    application_unified_event_registration *registrations;
+    size_t registration_count, registration_capacity;
+    uint64_t registration_revision;
+    application_unified_world_text *world_text;
+    size_t world_text_count, world_text_capacity;
+    uint64_t world_text_revision, world_text_map;
+    qa_application *application;
     qa_arena arena;
 } event_store;
 
 static const uint8_t event_magic[8] = {'Q','A','E','V','T','S',0,0};
 static const size_t event_widths[5] = {
-    sizeof(application_event_record), sizeof(qa_application_q2_map_event),
+    sizeof(application_event_record), sizeof(application_q2_map_event_record),
     sizeof(qa_application_q3_map_event), sizeof(qa_application_q2_player_event),
-    sizeof(qa_application_protocol_event)
+    sizeof(application_protocol_record)
 };
 /* Every record has at least an enum/clock, one provider value and timestamp.
  * These lower bounds reject truncated row counts before allocating storage. */
@@ -41,10 +60,10 @@ static bool signature(qa_source_save_io *io)
 {
     uint8_t magic[sizeof(event_magic)];
     memcpy(magic, event_magic, sizeof(magic));
-    uint32_t version = 3;
+    uint32_t version = 9;
     return qa_source_save_bytes(io, magic, sizeof(magic)) &&
         qa_source_save_u32(io, &version) &&
-        ((!memcmp(magic, event_magic, sizeof(magic)) && version == 3) ||
+        ((!memcmp(magic, event_magic, sizeof(magic)) && version == 9) ||
          event_fail(io, QA_ERROR_FORMAT, "Unsupported application event schema"));
 }
 
@@ -57,6 +76,35 @@ static bool prefix(qa_source_save_io *io, event_store *store)
         if (!qa_source_save_count(io, &store->capacities[i], SIZE_MAX / event_widths[i]) ||
             !qa_source_save_count(io, &store->counts[i], store->capacities[i])) return false;
     }
+    if (!qa_source_save_u64(io, &store->sequence) ||
+        store->sequence > QA_UNIFIED_SAFE_INTEGER ||
+        !qa_source_save_u64(io, &store->simulation_sequence) ||
+        store->simulation_sequence > QA_UNIFIED_SAFE_INTEGER ||
+        !qa_source_save_count(io, &store->journal_capacity, SIZE_MAX / sizeof(*store->journal)) ||
+        !qa_source_save_count(io, &store->journal_count, store->journal_capacity))
+        return event_fail(io, QA_ERROR_FORMAT, "Invalid Source event journal extent");
+    if (!qa_source_save_u64(io, &store->unified_sequence) || store->unified_sequence > QA_UNIFIED_SAFE_INTEGER ||
+        !qa_source_save_u64(io, &store->presentation_sequence) || store->presentation_sequence > QA_UNIFIED_SAFE_INTEGER ||
+        !qa_source_save_count(io, &store->unified_capacity, SIZE_MAX / sizeof(*store->unified)) ||
+        !qa_source_save_count(io, &store->unified_count, store->unified_capacity) ||
+        store->unified_count > store->unified_sequence ||
+        !qa_source_save_count(io, &store->resource_capacity, SIZE_MAX / sizeof(*store->resources)) ||
+        !qa_source_save_count(io, &store->resource_count, store->resource_capacity) ||
+        !qa_source_save_count(io, &store->registration_capacity, SIZE_MAX / sizeof(*store->registrations)) ||
+        !qa_source_save_count(io, &store->registration_count, store->registration_capacity) ||
+        !qa_source_save_u64(io, &store->registration_revision) ||
+        !qa_source_save_count(io, &store->world_text_capacity, SIZE_MAX / sizeof(*store->world_text)) ||
+        !qa_source_save_count(io, &store->world_text_count, store->world_text_capacity) ||
+        !qa_source_save_u64(io, &store->world_text_revision) || !qa_source_save_u64(io, &store->world_text_map))
+        return event_fail(io, QA_ERROR_FORMAT, "Invalid normalized Source continuation extent");
+    size_t total = 0;
+    for (size_t i = 0; i < 5; ++i) {
+        if (store->counts[i] > SIZE_MAX - total)
+            return event_fail(io, QA_ERROR_FORMAT, "Source event count overflows");
+        total += store->counts[i];
+    }
+    if (total != store->journal_count || store->journal_count > store->sequence)
+        return event_fail(io, QA_ERROR_FORMAT, "Source event journal differs from its payload owners");
     if (io->direction == QA_SOURCE_SAVE_READ) {
         size_t remaining = io->input.size - io->offset;
         for (size_t i = 0; i < 5; ++i) {
@@ -64,6 +112,20 @@ static bool prefix(qa_source_save_io *io, event_store *store)
                 return event_fail(io, QA_ERROR_FORMAT, "Truncated application event rows");
             remaining -= store->counts[i] * event_minimums[i];
         }
+        if (store->journal_count > remaining / 21)
+            return event_fail(io, QA_ERROR_FORMAT, "Truncated Source event journal");
+        remaining -= store->journal_count * 21;
+        if (store->unified_count > remaining / 100)
+            return event_fail(io, QA_ERROR_FORMAT, "Truncated normalized Source events");
+        remaining -= store->unified_count * 100;
+        if (store->resource_count > remaining / 100)
+            return event_fail(io, QA_ERROR_FORMAT, "Truncated Source resource dictionary");
+        remaining -= store->resource_count * 100;
+        if (store->registration_count > remaining / 13)
+            return event_fail(io, QA_ERROR_FORMAT, "Truncated Source registration owner");
+        remaining -= store->registration_count * 13;
+        if (store->world_text_count > remaining / 60)
+            return event_fail(io, QA_ERROR_FORMAT, "Truncated retained world text");
     }
     return true;
 }
@@ -182,10 +244,101 @@ static bool arguments_field(qa_source_save_io *io, event_store *store,
     return true;
 }
 
-static bool builtin_field(qa_source_save_io *io, event_store *store, qa_builtin_event *event)
+static bool audience_field(qa_source_save_io *io,event_store *store,
+    qa_application_q2_audience *audience)
 {
+    if (!qa_source_save_bool(io,&audience->captured)) return false;
+    if (!audience->captured) {
+        if (io->direction==QA_SOURCE_SAVE_READ) *audience=(qa_application_q2_audience){0};
+        else if (audience->count || audience->recipients || audience->source || audience->world_source)
+            return event_fail(io,QA_ERROR_FORMAT,"Absent Q2 audience has retained provenance");
+        return true;
+    }
+    uint32_t kind=audience->source_frame.kind,phase=audience->source_frame.phase;
+    uint32_t delivery=audience->kind;
+    if (!provider_field(io,&audience->source,true) || !provider_field(io,&audience->world_source,true) ||
+        !provider_field(io,&audience->source_frame.provider,true) ||
+        !enum_field(io,&kind,QA_CLOCK_Q3) || !enum_field(io,&phase,QA_FRAME_EXIT) ||
+        !qa_source_save_u64(io,&audience->source_frame.number) ||
+        !qa_source_save_u64(io,&audience->source_frame.start_ns) ||
+        !qa_source_save_u64(io,&audience->source_frame.elapsed_ns) ||
+        !qa_source_save_u64(io,&audience->source_frame.time_ns) ||
+        !qa_source_save_u64(io,&audience->source_time_ns) ||
+        !qa_source_save_u64(io,&audience->map_identity) ||
+        !enum_field(io,&delivery,QA_APPLICATION_Q2_UNICAST) ||
+        !qa_source_save_bool(io,&audience->positioned) ||
+        !vector_field(io,&audience->multicast_origin) ||
+        !qa_source_save_i32(io,&audience->area) || !qa_source_save_i32(io,&audience->cluster) ||
+        !qa_source_save_count(io,&audience->count,SIZE_MAX/sizeof(*audience->recipients))) return false;
+    if (audience->source!=audience->source_frame.provider ||
+        (kind!=QA_CLOCK_Q2_CLASSIC && kind!=QA_CLOCK_Q2_RERELEASE) ||
+        audience->source_frame.elapsed_ns>UINT64_MAX-audience->source_frame.start_ns ||
+        audience->source_frame.time_ns<audience->source_frame.start_ns ||
+        audience->source_frame.time_ns>audience->source_frame.start_ns+audience->source_frame.elapsed_ns ||
+        audience->source_time_ns!=audience->source_frame.time_ns ||
+        audience->cluster< -1 || audience->area< -1 ||
+        ((delivery==QA_APPLICATION_Q2_PVS || delivery==QA_APPLICATION_Q2_PHS) &&
+            (!audience->positioned || audience->area<0)) ||
+        (!audience->positioned && (audience->area!=-1 || audience->cluster!=-1)) ||
+        (delivery==QA_APPLICATION_Q2_UNICAST && audience->count>1))
+        return event_fail(io,QA_ERROR_FORMAT,"Q2 audience lost its actual emission source");
+    audience->source_frame.kind=(qa_clock_kind)kind;
+    audience->source_frame.phase=(qa_frame_phase)phase;
+    audience->kind=(qa_application_q2_delivery_kind)delivery;
+    qa_application_q2_recipient *decoded=NULL;
+    if (io->direction==QA_SOURCE_SAVE_READ) {
+        if (audience->count>(io->input.size-io->offset)/21)
+            return event_fail(io,QA_ERROR_FORMAT,"Truncated Q2 recipient receipts");
+        decoded=arena_array(io,store,audience->count,sizeof(*decoded),_Alignof(qa_application_q2_recipient));
+        if (audience->count && !decoded) return false;
+        audience->recipients=decoded;
+    } else if (audience->count && !audience->recipients)
+        return event_fail(io,QA_ERROR_FORMAT,"Q2 audience has no recipient storage");
+    for (size_t i=0;i<audience->count;++i) {
+        qa_application_q2_recipient value=decoded?(qa_application_q2_recipient){0}:audience->recipients[i];
+        if (!actor_field(io,&value.actor) ||
+            !vector_field(io,&value.origin) || !qa_source_save_i32(io,&value.area) ||
+            !qa_source_save_i32(io,&value.cluster)) return false;
+        if (!value.actor.registry || value.area<0 || value.cluster< -1)
+            return event_fail(io,QA_ERROR_FORMAT,"Q2 recipient has invalid source leaf provenance");
+        for (size_t j=0;j<i;++j)
+            if (qa_actor_id_equal(audience->recipients[j].actor,value.actor))
+                return event_fail(io,QA_ERROR_FORMAT,"Q2 audience repeats a full client identity");
+        if (decoded) decoded[i]=value;
+    }
+    return true;
+}
+
+static bool prompt_field(qa_source_save_io *io, event_store *store, qa_builtin_event *event)
+{
+    if (!qa_source_save_count(io, &event->prompt_choice_count,
+            SIZE_MAX / sizeof(*event->prompt_choices))) return false;
+    qa_builtin_prompt_choice *decoded = NULL;
+    if (io->direction == QA_SOURCE_SAVE_READ) {
+        if (event->prompt_choice_count > (io->input.size - io->offset) / 5)
+            return event_fail(io, QA_ERROR_FORMAT, "Truncated source prompt choices");
+        decoded = arena_array(io, store, event->prompt_choice_count, sizeof(*decoded),
+            _Alignof(qa_builtin_prompt_choice));
+        if (event->prompt_choice_count && !decoded) return false;
+        event->prompt_choices = decoded;
+    } else if (event->prompt_choice_count && !event->prompt_choices)
+        return event_fail(io, QA_ERROR_FORMAT, "Source prompt choices have no retained storage");
+    for (size_t i = 0; i < event->prompt_choice_count; ++i) {
+        qa_builtin_prompt_choice choice = io->direction == QA_SOURCE_SAVE_WRITE ?
+            event->prompt_choices[i] : (qa_builtin_prompt_choice){0};
+        if (!qa_source_save_string(io, &choice.label) || !choice.label ||
+            !qa_source_save_i32(io, &choice.impulse))
+            return event_fail(io, QA_ERROR_FORMAT, "Source prompt choice lost its label or impulse");
+        if (decoded) decoded[i] = choice;
+    }
+    return true;
+}
+
+static bool builtin_field(qa_source_save_io *io, event_store *store, application_event_record *record)
+{
+    qa_builtin_event *event=&record->event;
     uint32_t kind = event->kind, family = event->family;
-    if (!enum_field(io, &kind, QA_BUILTIN_LOG) || !enum_field(io, &family, QA_GAME_Q3) ||
+    if (!enum_field(io, &kind, QA_BUILTIN_CLEAR_PROMPT) || !enum_field(io, &family, QA_GAME_Q3) ||
         !provider_field(io, &event->provider, false) ||
         !actor_field(io, &event->actor) || !actor_field(io, &event->other) ||
         !qa_source_save_u64(io, &event->time_ns) ||
@@ -203,6 +356,56 @@ static bool builtin_field(qa_source_save_io *io, event_store *store, qa_builtin_
         (family != QA_GAME_Q3 || !event->provider || !event->text || event->argument_count ||
          event->actor.registry || event->other.registry))
         return event_fail(io, QA_ERROR_FORMAT, "Invalid provider-owned Q3 log event");
+    if (kind == QA_BUILTIN_CTF_STATUS) {
+        qa_builtin_ctf_status *status = &event->ctf_status;
+        if (!qa_source_save_f64(io, &status->red) || !qa_source_save_f64(io, &status->blue) ||
+            !qa_source_save_f64(io, &status->flags) || !qa_source_save_f64(io, &status->rune_items))
+            return false;
+        if (family != QA_GAME_Q1 || !event->provider || !event->actor.registry ||
+            event->argument_count || !isfinite(status->red) || !isfinite(status->blue) ||
+            !isfinite(status->flags) || !isfinite(status->rune_items))
+            return event_fail(io, QA_ERROR_FORMAT, "Invalid source-addressed CTF status event");
+    } else if (io->direction == QA_SOURCE_SAVE_READ) event->ctf_status = (qa_builtin_ctf_status){0};
+    if (kind == QA_BUILTIN_SOURCE_LOG &&
+        (family != QA_GAME_Q1 || !event->provider || !event->actor.registry ||
+         event->other.registry || !event->text || event->resource || event->argument_count))
+        return event_fail(io, QA_ERROR_FORMAT, "Invalid source-player action log");
+    if (kind == QA_BUILTIN_CTF_CAPTURE) {
+        qa_builtin_ctf_capture *capture = &event->ctf_capture;
+        if (!qa_source_save_bool(io, &capture->blue) ||
+            !qa_source_save_f64(io, &capture->total)) return false;
+        if (family != QA_GAME_Q1 || !event->provider || event->actor.registry ||
+            event->other.registry || event->text || event->resource || event->argument_count ||
+            !isfinite(capture->total))
+            return event_fail(io, QA_ERROR_FORMAT, "Invalid source-wide CTF capture total");
+    } else if (io->direction == QA_SOURCE_SAVE_READ) event->ctf_capture = (qa_builtin_ctf_capture){0};
+    if (kind == QA_BUILTIN_Q1_POWERUP) {
+        if (!qa_source_save_u32(io, &event->q1_powerup.power) ||
+            !qa_source_save_f64(io, &event->q1_powerup.expires) ||
+            family != QA_GAME_Q1 || !event->provider || !event->actor.registry ||
+            event->other.registry || event->text || event->resource || event->argument_count ||
+            event->q1_powerup.power >= QA_Q1_POWER_COUNT || !isfinite(event->q1_powerup.expires))
+            return event_fail(io, QA_ERROR_FORMAT, "Invalid typed Q1 powerup continuation");
+    } else if (io->direction == QA_SOURCE_SAVE_READ) event->q1_powerup = (qa_builtin_q1_powerup){0};
+    if (kind == QA_BUILTIN_SOURCE_PROMPT || kind == QA_BUILTIN_CLEAR_PROMPT) {
+        if (family != QA_GAME_Q1 || !event->provider || !event->actor.registry ||
+            event->other.registry || event->resource || event->argument_count ||
+            (kind == QA_BUILTIN_SOURCE_PROMPT ? !event->text : event->text != 0))
+            return event_fail(io, QA_ERROR_FORMAT, "Invalid source-player prompt continuation");
+        if (kind == QA_BUILTIN_SOURCE_PROMPT && !prompt_field(io, store, event)) return false;
+    }
+    if (kind != QA_BUILTIN_SOURCE_PROMPT) {
+        if (io->direction == QA_SOURCE_SAVE_WRITE && event->prompt_choice_count)
+            return event_fail(io, QA_ERROR_FORMAT, "Non-prompt continuation has source prompt choices");
+        if (io->direction == QA_SOURCE_SAVE_READ) {
+            event->prompt_choices = NULL; event->prompt_choice_count = 0;
+        }
+    }
+    if (!audience_field(io,store,&record->q2_audience)) return false;
+    if (record->q2_audience.captured &&
+        (kind!=QA_BUILTIN_PARTICLES || family!=QA_GAME_Q2 || event->provider!=record->q2_audience.source ||
+         record->q2_audience.kind!=QA_APPLICATION_Q2_PVS || !record->q2_audience.positioned))
+        return event_fail(io,QA_ERROR_FORMAT,"Q2 particle audience differs from its source event");
     return true;
 }
 
@@ -216,8 +419,9 @@ static bool fog_field(qa_source_save_io *io, qa_q2_fog *fog)
 }
 
 static bool q2_map_field(qa_source_save_io *io, event_store *store,
-                         qa_application_q2_map_event *record)
+                         application_q2_map_event_record *retained)
 {
+    qa_application_q2_map_event *record=&retained->source;
     qa_q2_map_event *event = &record->event;
     uint32_t kind = event->kind;
     if (!provider_field(io, &record->provider, true) || !qa_source_save_u64(io, &record->time_ns) ||
@@ -235,6 +439,12 @@ static bool q2_map_field(qa_source_save_io *io, event_store *store,
         !qa_source_save_u32(io, &event->resolution) || !qa_source_save_bool(io, &event->visible) ||
         !arguments_field(io, store, &event->arguments, &event->argument_count)) return false;
     event->kind = (qa_q2_map_event_kind)kind;
+    if (!audience_field(io,store,&retained->audience)) return false;
+    if (retained->audience.captured &&
+        ((kind!=QA_Q2_MAP_STEAM && kind!=QA_Q2_MAP_FORCE_WALL) ||
+         record->provider!=retained->audience.source ||
+         retained->audience.kind!=QA_APPLICATION_Q2_PVS || !retained->audience.positioned))
+        return event_fail(io,QA_ERROR_FORMAT,"Q2 map audience differs from its source effect");
     return true;
 }
 
@@ -353,8 +563,9 @@ static bool q2_player_field(qa_source_save_io *io, event_store *store,
 }
 
 static bool protocol_field(qa_source_save_io *io, event_store *store,
-                            qa_application_protocol_event *event)
+                            application_protocol_record *record)
 {
+    qa_application_protocol_event *event=&record->event;
     uint32_t dialect = event->dialect;
     if (!provider_field(io, &event->provider, true) || !enum_field(io, &dialect, QA_CLOCK_Q3) ||
         !qa_source_save_u64(io, &event->time_ns) || !actor_field(io, &event->recipient) ||
@@ -396,6 +607,31 @@ static bool protocol_field(qa_source_save_io *io, event_store *store,
     if (!qa_source_save_i32(io, &event->destination) || !qa_source_save_bool(io, &event->reliable) ||
         !qa_source_save_bool(io, &event->multicast) || !qa_source_save_bool(io, &event->signon)) return false;
     event->dialect = (qa_clock_kind)dialect;
+    if (!qa_source_save_bool(io,&record->q2.original)) return false;
+    if (record->q2.original) {
+        uint32_t profile=record->q2.profile;
+        if (!enum_field(io,&profile,QA_NATIVE_Q2_GAME_API2023) ||
+            !qa_source_save_u32(io,&record->q2.dupe_key) ||
+            !audience_field(io,store,&record->q2.audience)) return false;
+        record->q2.profile=(qa_native_profile)profile;
+        if (dialect!=(profile==QA_NATIVE_Q2_GAME_API3?QA_CLOCK_Q2_CLASSIC:QA_CLOCK_Q2_RERELEASE) ||
+            event->signon || (record->q2.dupe_key &&
+                (profile!=QA_NATIVE_Q2_GAME_API2023 || event->multicast)) ||
+            (event->multicast && (event->destination<0 || event->destination>2)) ||
+            (record->q2.audience.captured &&
+                (record->q2.audience.source!=event->provider ||
+                 record->q2.audience.source_time_ns!=event->time_ns ||
+                 record->q2.audience.source_frame.kind!=event->dialect ||
+                 (event->multicast && record->q2.audience.kind==QA_APPLICATION_Q2_UNICAST) ||
+                 (event->multicast && record->q2.audience.kind!=(event->destination==0 ?
+                    QA_APPLICATION_Q2_ALL:event->destination==1?QA_APPLICATION_Q2_PHS:QA_APPLICATION_Q2_PVS)) ||
+                 (!event->multicast && record->q2.audience.kind!=QA_APPLICATION_Q2_UNICAST) ||
+                 (!event->multicast && record->q2.audience.count &&
+                    !qa_actor_id_equal(record->q2.audience.recipients[0].actor,event->recipient)))))
+            return event_fail(io,QA_ERROR_FORMAT,"Original Q2 protocol differs from its retained delivery");
+    } else if (io->direction==QA_SOURCE_SAVE_READ) record->q2=(qa_application_q2_protocol_delivery){0};
+    else if (record->q2.audience.captured)
+        return event_fail(io,QA_ERROR_FORMAT,"Unqualified protocol has an original Q2 audience");
     return true;
 }
 
@@ -404,6 +640,22 @@ static event_store borrow_store(qa_application *app)
     return (event_store){
         .builtin = app->events, .q2_map = app->q2_map_events, .q3_map = app->q3_map_events,
         .protocol_generation = app->protocol_events_generation,
+        .journal = app->event_journal, .journal_count = app->event_journal_count,
+        .journal_capacity = app->event_journal_capacity, .sequence = app->event_sequence,
+        .simulation_sequence = app->simulation_event_sequence,
+        .unified = app->unified_events, .unified_count = app->unified_event_count,
+        .unified_capacity = app->unified_event_capacity, .unified_sequence = app->unified_event_sequence,
+        .presentation_sequence = app->presentation_event_sequence,
+        .resources = app->unified_event_resources, .resource_count = app->unified_event_resource_count,
+        .resource_capacity = app->unified_event_resource_capacity,
+        .registrations = app->unified_event_registrations,
+        .registration_count = app->unified_event_registration_count,
+        .registration_capacity = app->unified_event_registration_capacity,
+        .registration_revision = app->unified_event_registration_revision,
+        .world_text = app->unified_world_text, .world_text_count = app->unified_world_text_count,
+        .world_text_capacity = app->unified_world_text_capacity,
+        .world_text_revision = app->unified_world_text_revision, .world_text_map = app->unified_world_text_map,
+        .application = app,
         .q2_player = app->q2_player_events, .protocol = app->protocol_events,
         .counts = {app->event_count, app->q2_map_event_count, app->q3_map_event_count,
                    app->q2_player_event_count, app->protocol_event_count},
@@ -420,6 +672,16 @@ static void dispose_store(event_store *store)
     free(store->q3_map);
     free(store->q2_player);
     free(store->protocol);
+    free(store->journal);
+    free(store->unified);
+    for (size_t i = 0; store->resources && i < store->resource_count; ++i) {
+        qa_buffer_free(&store->resources[i].key);
+        qa_resource_release(store->resources[i].resource);
+        qa_resource_pool_destroy(store->resources[i].pool);
+    }
+    free(store->resources);
+    free(store->registrations);
+    free(store->world_text);
     qa_arena_destroy(&store->arena);
     *store = (event_store){0};
 }
@@ -440,6 +702,229 @@ static bool allocate_store(qa_source_save_io *io, event_store *store)
     store->q3_map = arrays[2];
     store->q2_player = arrays[3];
     store->protocol = arrays[4];
+    if (store->journal_capacity) {
+        store->journal = calloc(store->journal_capacity, sizeof(*store->journal));
+        if (!store->journal)
+            return event_fail(io, QA_ERROR_MEMORY, "Allocating restored Source event journal");
+    }
+    if (store->unified_capacity) store->unified = calloc(store->unified_capacity, sizeof(*store->unified));
+    if (store->resource_capacity) store->resources = calloc(store->resource_capacity, sizeof(*store->resources));
+    if (store->registration_capacity) store->registrations = calloc(store->registration_capacity, sizeof(*store->registrations));
+    if (store->world_text_capacity) store->world_text = calloc(store->world_text_capacity, sizeof(*store->world_text));
+    if ((store->unified_capacity && !store->unified) || (store->resource_capacity && !store->resources) ||
+        (store->registration_capacity && !store->registrations) ||
+        (store->world_text_capacity && !store->world_text))
+        return event_fail(io, QA_ERROR_MEMORY, "Allocating genuine Source continuation owners");
+    return true;
+}
+
+static bool journal_rows(qa_source_save_io *io, event_store *store)
+{
+    if ((store->journal_capacity != 0) != (store->journal != NULL))
+        return event_fail(io, QA_ERROR_FORMAT, "Source event journal allocation differs");
+    size_t next[5] = {0};
+    for (size_t i = 0; i < store->journal_count; ++i) {
+        application_event_journal_record row = io->direction == QA_SOURCE_SAVE_WRITE ?
+            store->journal[i] : (application_event_journal_record){0};
+        uint32_t queue = row.queue;
+        if (!qa_source_save_u64(io, &row.sequence) ||
+            !enum_field(io, &queue, APPLICATION_EVENT_PROTOCOL) ||
+            !qa_source_save_count(io, &row.index, SIZE_MAX) ||
+            !qa_source_save_bool(io, &row.has_frame)) return false;
+        if (row.sequence != store->sequence - store->journal_count + i ||
+            row.index != next[queue] || row.index >= store->counts[queue])
+            return event_fail(io, QA_ERROR_FORMAT, "Source event journal has invalid append order");
+        ++next[queue];
+        row.queue = (application_event_queue)queue;
+        if (row.has_frame) {
+            uint32_t kind = row.frame.kind, phase = row.frame.phase;
+            if (!provider_field(io, &row.frame.provider, true) ||
+                !enum_field(io, &kind, QA_CLOCK_Q3) || !enum_field(io, &phase, QA_FRAME_EXIT) ||
+                !qa_source_save_u64(io, &row.frame.number) ||
+                !qa_source_save_u64(io, &row.frame.start_ns) ||
+                !qa_source_save_u64(io, &row.frame.elapsed_ns) ||
+                !qa_source_save_u64(io, &row.frame.time_ns)) return false;
+            row.frame.kind = (qa_clock_kind)kind;
+            row.frame.phase = (qa_frame_phase)phase;
+            if (row.frame.elapsed_ns > UINT64_MAX - row.frame.start_ns ||
+                row.frame.time_ns < row.frame.start_ns ||
+                row.frame.time_ns > row.frame.start_ns + row.frame.elapsed_ns)
+                return event_fail(io, QA_ERROR_FORMAT, "Source event clock exceeds its admitted frame");
+        } else if (io->direction == QA_SOURCE_SAVE_WRITE &&
+            (row.frame.provider || row.frame.number || row.frame.start_ns ||
+             row.frame.elapsed_ns || row.frame.time_ns))
+            return event_fail(io, QA_ERROR_FORMAT, "Absent Source event clock has provenance");
+        if (io->direction == QA_SOURCE_SAVE_READ) store->journal[i] = row;
+    }
+    for (size_t i = 0; i < 5; ++i)
+        if (next[i] != store->counts[i])
+            return event_fail(io, QA_ERROR_FORMAT, "Source event journal omitted a payload");
+    return true;
+}
+
+static bool payload_field(qa_source_save_io *io, event_store *store, qa_bytes *bytes)
+{
+    size_t size = bytes->size;
+    if (!qa_source_save_count(io, &size, 16u * 1024u * 1024u)) return false;
+    if (io->direction == QA_SOURCE_SAVE_READ) {
+        if (size > io->input.size - io->offset)
+            return event_fail(io, QA_ERROR_FORMAT, "Truncated Source payload");
+        uint8_t *data = arena_array(io, store, size, 1, 1);
+        if (size && !data) return false;
+        *bytes = (qa_bytes){data, size};
+    }
+    return qa_source_save_bytes(io, (void *)bytes->data, size);
+}
+
+static bool normalized_rows(qa_source_save_io *io, event_store *store)
+{
+    uint64_t presentation_count = 0, simulation_count = 0;
+    for (size_t i = 0; i < store->unified_count; ++i) {
+        application_unified_event_record row = store->unified[i];
+        uint32_t clock = row.clock, presentation_clock = row.presentation_clock;
+        if (!qa_source_save_u64(io, &row.order) ||
+            !qa_source_save_u64(io, &row.presentation_sequence) || !qa_source_save_u64(io, &row.simulation_sequence) ||
+            !qa_source_save_u64(io, &row.time_ns) || !qa_source_save_u64(io, &row.simulation_time_ns) ||
+            !enum_field(io, &clock, QA_CLOCK_Q3) || !enum_field(io, &presentation_clock, QA_CLOCK_Q3) ||
+            !actor_field(io, &row.recipient) ||
+            !actor_field(io, &row.simulation_recipient) || !provider_field(io, &row.provider, true) ||
+            !qa_source_save_string(io, &row.content) || !qa_source_save_i32(io, &row.source_entity) ||
+            !qa_source_save_bool(io, &row.has_source_entity) || !qa_source_save_bool(io, &row.link_presentation) ||
+            !qa_source_save_u64(io, &row.client.owner) || !qa_source_save_u32(io, &row.client.slot) ||
+            !qa_source_save_u64(io, &row.client.generation) ||
+            !payload_field(io, store, &row.presentation) || !payload_field(io, store, &row.simulation)) return false;
+        row.clock = clock;
+        row.presentation_clock = presentation_clock;
+        if (row.order != store->unified_sequence - store->unified_count + i || !row.content ||
+            (!row.presentation.size && !row.simulation.size) ||
+            (row.link_presentation && (!row.presentation.size || !row.simulation.size)) ||
+            (!row.presentation.size && row.presentation_sequence) ||
+            (!row.simulation.size && row.simulation_sequence) ||
+            (!row.has_source_entity && row.source_entity) ||
+            (row.presentation.size && row.presentation_sequence >= store->presentation_sequence) ||
+            (row.simulation.size && row.simulation_sequence >= store->simulation_sequence) ||
+            !application_unified_event_payload_valid(row.presentation, true, false, io->error) ||
+            !application_unified_event_payload_valid(row.simulation, false, row.link_presentation, io->error))
+            return event_fail(io, QA_ERROR_FORMAT, "Source event continuation lost its actual payload or sequence");
+        if (row.presentation.size) {
+            if (presentation_count && row.presentation_sequence != presentation_count)
+                return event_fail(io, QA_ERROR_FORMAT, "Source presentation sequence is not contiguous");
+            presentation_count = row.presentation_sequence + 1;
+        }
+        if (row.simulation.size) {
+            if (simulation_count && row.simulation_sequence != simulation_count)
+                return event_fail(io, QA_ERROR_FORMAT, "Source simulation sequence is not contiguous");
+            simulation_count = row.simulation_sequence + 1;
+        }
+        if (io->direction == QA_SOURCE_SAVE_READ) store->unified[i] = row;
+    }
+    if ((presentation_count && presentation_count != store->presentation_sequence) ||
+        (simulation_count && simulation_count != store->simulation_sequence))
+        return event_fail(io, QA_ERROR_FORMAT, "Source continuation omits its latest emitted sequence");
+    const qa_application_content_graph *graph = store->application ?
+        qa_application_content_graph_read(store->application) : NULL;
+    for (size_t i = 0; i < store->resource_count; ++i) {
+        application_unified_event_resource *row = store->resources + i;
+        uint64_t pool = row->saved_pool, resource = row->saved_resource;
+        if (io->direction == QA_SOURCE_SAVE_WRITE &&
+            !qa_application_content_resource_id(graph, row->resource, &pool, &resource))
+            return event_fail(io, QA_ERROR_FORMAT, "Source dictionary resource is outside its captured CONTENT graph");
+        if (!provider_field(io, &row->provider, true) || !qa_source_save_string(io, &row->content) ||
+            !qa_source_save_string(io, &row->path) || !qa_source_save_u64(io, &pool) ||
+            !qa_source_save_u64(io, &resource) || !pool || !resource || !row->content || !row->path ||
+            !qa_source_save_bytes(io, row->id, sizeof(row->id)) || row->id[80] ||
+            strncmp(row->id, "resource:unified:", 16))
+            return event_fail(io, QA_ERROR_FORMAT, "Source resource dictionary has invalid ownership");
+        size_t size = row->key.size;
+        if (!qa_source_save_count(io, &size, 16u * 1024u * 1024u) || !size) return false;
+        if (io->direction == QA_SOURCE_SAVE_READ) {
+            if (size > io->input.size - io->offset)
+                return event_fail(io, QA_ERROR_FORMAT, "Truncated Source resource key");
+            row->key.data = malloc(size); row->key.size = size;
+            if (!row->key.data) return event_fail(io, QA_ERROR_MEMORY, "Retaining restored Source dictionary key");
+            row->saved_pool = pool; row->saved_resource = resource;
+        }
+        if (!qa_source_save_bytes(io, row->key.data, size)) return false;
+        qa_unified_document *key = NULL;
+        bool valid = qa_unified_document_create(QA_UNIFIED_CHECKPOINT,
+            (qa_bytes){row->key.data, row->key.size}, &key, io->error);
+        qa_unified_document_destroy(key);
+        if (!valid) return event_fail(io, QA_ERROR_FORMAT, "Source resource key is malformed");
+        for (size_t j = 0; j < i; ++j)
+            if (!strcmp(row->id, store->resources[j].id))
+                return event_fail(io, QA_ERROR_FORMAT, "Source resource dictionary identity is duplicated");
+    }
+    for (size_t i = 0; i < store->world_text_count; ++i) {
+        application_unified_world_text *row = store->world_text + i;
+        if (!provider_field(io, &row->provider, true) || !qa_source_save_string(io, &row->content) ||
+            !qa_source_save_string(io, &row->text) || !vector_field(io, &row->origin) ||
+            !vector_field(io, &row->angles) || !vector_field(io, &row->color) ||
+            !finite_field(io, &row->alpha) || !finite_field(io, &row->cell_size) || row->cell_size <= 0 ||
+            !qa_source_save_f64(io, &row->expires) || !isfinite(row->expires) ||
+            !qa_source_save_u64(io, &row->first_frame) || !qa_source_save_bool(io, &row->timed) ||
+            !qa_source_save_bool(io, &row->observed) || !qa_source_save_bool(io, &row->billboard) ||
+            !qa_source_save_bool(io, &row->depth_test) || !row->content || !row->text ||
+            (row->timed && row->observed) || (!row->observed && row->first_frame))
+            return event_fail(io, QA_ERROR_FORMAT, "World text continuation lost its Source geometry or lifetime");
+    }
+    for (size_t i = 0; i < store->registration_count; ++i) {
+        application_unified_event_registration *row = store->registrations + i;
+        if (!provider_field(io, &row->provider, true) || !qa_source_save_string(io, &row->path) ||
+            !row->path || !store->resource_count ||
+            !qa_source_save_count(io, &row->resource, store->resource_count - 1))
+            return event_fail(io, QA_ERROR_FORMAT, "Source registration lost its actual retained resource");
+        for (size_t j = 0; j < i; ++j)
+            if (row->provider == store->registrations[j].provider && row->path == store->registrations[j].path)
+                return event_fail(io, QA_ERROR_FORMAT, "Source registration repeats a current path");
+    }
+    return true;
+}
+
+static bool resource_bindings(event_store *store, qa_application *app, qa_error *error)
+{
+    for (size_t i = 0; i < store->resource_count; ++i) {
+        application_unified_event_resource *row = store->resources + i;
+        const qa_resource *actual = qa_application_content_resource(app->content_graph,
+            row->saved_pool, row->saved_resource);
+        const char *content = qa_strings_cstr(qa_session_strings(app->session), row->content);
+        const char *path = qa_strings_cstr(qa_session_strings(app->session), row->path);
+        qa_bytes content_bytes = qa_strings_text(qa_session_strings(app->session), row->content);
+        qa_bytes path_bytes = qa_strings_text(qa_session_strings(app->session), row->path);
+        if (!actual || !content || !path || strlen(content) != content_bytes.size || strlen(path) != path_bytes.size)
+            return application_fail(error, QA_ERROR_FORMAT, "Source dictionary cannot bind its decoded immutable CONTENT resource");
+        qa_product product = {.identity = content};
+        qa_unified_document *key = NULL;
+        char id[81];
+        if (!application_unified_resource_key(&product, path, actual, &key, id, error)) return false;
+        qa_bytes bytes = qa_json_source(qa_unified_document_json(key), qa_unified_document_root(key));
+        bool same = !strcmp(id, row->id) && bytes.size == row->key.size && !memcmp(bytes.data, row->key.data, bytes.size);
+        qa_unified_document_destroy(key);
+        if (!same) return application_fail(error, QA_ERROR_FORMAT, "Source dictionary key differs from its actual saved resource bytes");
+    }
+    for (size_t i = 0; i < store->registration_count; ++i) {
+        const application_unified_event_registration *row = store->registrations + i;
+        const application_unified_event_resource *resource = store->resources + row->resource;
+        application_provider *source = app->live_providers;
+        while (source && source->owner != row->provider) source = source->next_live;
+        const char *path = qa_strings_cstr(qa_session_strings(app->session), row->path);
+        const char *registered = qa_strings_cstr(qa_session_strings(app->session), resource->path);
+        const char *content = qa_strings_cstr(qa_session_strings(app->session), resource->content);
+        qa_bytes path_bytes = qa_strings_text(qa_session_strings(app->session), row->path);
+        if (!source || source->close_pending || !source->product || !path || !registered || !content ||
+            strlen(path) != path_bytes.size || strcmp(source->product->identity, content) ||
+            (strcmp(registered, path) &&
+             (strncmp(registered, "sound/", 6) || strcmp(registered + 6, path)) &&
+             (path[0] != '#' || strcmp(registered, path + 1))))
+            return application_fail(error, QA_ERROR_FORMAT, "Source registration differs from its actual restored source and resource path");
+    }
+    /* Validate the entire dictionary before transferring any graph owner. */
+    for (size_t i = 0; i < store->resource_count; ++i) {
+        application_unified_event_resource *row = store->resources + i;
+        if (!application_save_content_event_pool(app->content_graph, row->saved_pool, &row->pool, error)) return false;
+        row->resource = (qa_resource *)qa_application_content_resource(app->content_graph,
+            row->saved_pool, row->saved_resource);
+        qa_resource_retain(row->resource);
+    }
     return true;
 }
 
@@ -452,12 +937,12 @@ static bool rows(qa_source_save_io *io, event_store *store)
                 return event_fail(io, QA_ERROR_FORMAT, "Application event queue allocation differs");
     }
     for (size_t i = 0; i < store->counts[0]; ++i) {
-        qa_builtin_event event = store->builtin[i].event;
+        application_event_record event = store->builtin[i];
         if (!builtin_field(io, store, &event)) return false;
-        if (io->direction == QA_SOURCE_SAVE_READ) store->builtin[i].event = event;
+        if (io->direction == QA_SOURCE_SAVE_READ) store->builtin[i] = event;
     }
     for (size_t i = 0; i < store->counts[1]; ++i) {
-        qa_application_q2_map_event event = store->q2_map[i];
+        application_q2_map_event_record event = store->q2_map[i];
         if (!q2_map_field(io, store, &event)) return false;
         if (io->direction == QA_SOURCE_SAVE_READ) store->q2_map[i] = event;
     }
@@ -472,11 +957,11 @@ static bool rows(qa_source_save_io *io, event_store *store)
         if (io->direction == QA_SOURCE_SAVE_READ) store->q2_player[i] = event;
     }
     for (size_t i = 0; i < store->counts[4]; ++i) {
-        qa_application_protocol_event event = store->protocol[i];
+        application_protocol_record event = store->protocol[i];
         if (!protocol_field(io, store, &event)) return false;
         if (io->direction == QA_SOURCE_SAVE_READ) store->protocol[i] = event;
     }
-    return true;
+    return journal_rows(io, store) && normalized_rows(io, store);
 }
 
 static bool leased(qa_application *app, qa_error *error)
@@ -503,7 +988,7 @@ bool application_events_save_capture(qa_application *app, qa_buffer *out, qa_err
 static bool queues_empty(const qa_application *app)
 {
     return !app->event_count && !app->q2_map_event_count && !app->q3_map_event_count &&
-        !app->q2_player_event_count && !app->protocol_event_count;
+        !app->q2_player_event_count && !app->protocol_event_count && !app->event_journal_count && !app->unified_event_count;
 }
 
 static void install_store(qa_application *app, event_store *store)
@@ -513,6 +998,10 @@ static void install_store(qa_application *app, event_store *store)
     free(app->q3_map_events);
     free(app->q2_player_events);
     free(app->protocol_events);
+    free(app->event_journal);
+    free(app->unified_events);
+    application_unified_events_resources_dispose(app);
+    free(app->unified_world_text);
     qa_arena_destroy(&app->event_arena);
     app->events = store->builtin;
     app->q2_map_events = store->q2_map;
@@ -525,6 +1014,23 @@ static void install_store(qa_application *app, event_store *store)
     app->q2_player_event_count = store->counts[3];
     app->protocol_event_count = store->counts[4];
     app->protocol_events_generation = store->protocol_generation;
+    app->event_journal = store->journal;
+    app->event_journal_count = store->journal_count;
+    app->event_journal_capacity = store->journal_capacity;
+    app->event_sequence = store->sequence;
+    app->simulation_event_sequence = store->simulation_sequence;
+    app->unified_events = store->unified; app->unified_event_count = store->unified_count;
+    app->unified_event_capacity = store->unified_capacity; app->unified_event_sequence = store->unified_sequence;
+    app->presentation_event_sequence = store->presentation_sequence;
+    app->unified_event_resources = store->resources; app->unified_event_resource_count = store->resource_count;
+    app->unified_event_resource_capacity = store->resource_capacity;
+    app->unified_event_registrations = store->registrations;
+    app->unified_event_registration_count = store->registration_count;
+    app->unified_event_registration_capacity = store->registration_capacity;
+    app->unified_event_registration_revision = store->registration_revision;
+    app->unified_world_text = store->world_text; app->unified_world_text_count = store->world_text_count;
+    app->unified_world_text_capacity = store->world_text_capacity;
+    app->unified_world_text_revision = store->world_text_revision; app->unified_world_text_map = store->world_text_map;
     app->event_capacity = store->capacities[0];
     app->q2_map_event_capacity = store->capacities[1];
     app->q3_map_event_capacity = store->capacities[2];
@@ -544,6 +1050,7 @@ bool application_events_save_restore(qa_application *app, qa_bytes bytes, qa_err
     bool ok = qa_source_save_reader(&io, app->session, bytes, error) && prefix(&io, &store) &&
         allocate_store(&io, &store) && rows(&io, &store) && qa_source_save_finish(&io, NULL);
     qa_source_save_dispose(&io);
+    if (ok) ok = resource_bindings(&store, app, error);
     if (ok) install_store(app, &store);
     dispose_store(&store);
     return ok;

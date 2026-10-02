@@ -10,6 +10,11 @@
 bool qa_server_browser_checkpoint(const qa_server_browser *, qa_buffer *, qa_error *);
 bool qa_server_browser_restore_checkpoint(qa_bytes, qa_http *, uint32_t,
     const qa_browser_hooks *, qa_server_browser **, qa_error *);
+/* Decode rows before the actual HTTP continuation imports; finish reconnects
+ * its retained request only after that separate owner exists. */
+bool qa_server_browser_restore_checkpoint_staged(qa_bytes, qa_http *, uint32_t,
+    const qa_browser_hooks *, qa_server_browser **, qa_error *);
+bool qa_server_browser_restore_checkpoint_finish(qa_server_browser *, qa_error *);
 bool qa_server_browser_http_handoff_ready(const qa_server_browser *active,
     const qa_server_browser *candidate, qa_error *);
 bool qa_server_admin_checkpoint(const qa_server_admin *, qa_buffer *, qa_error *);

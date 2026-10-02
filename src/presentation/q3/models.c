@@ -14,8 +14,76 @@ void q3p_model_free(q3p_model *model)
     if (!model->borrowed_models) {
         qa_model_lods_free(&model->lods); qa_model_free(&model->model);
     } else for (unsigned i = 0; i < 3; ++i) free(model->lods.paths[i]);
-    for (unsigned i = 0; i < 3; ++i) qa_resource_release(model->lod_resources[i]);
+    for (unsigned i = 0; i < 3; ++i) {
+        qa_vfs_acquisition_dispose(&model->lod_openings[i]);
+        free(model->lod_opening_orders[i].mounts); free(model->lod_opening_orders[i].prefix);
+        qa_resource_release(model->lod_resources[i]);
+    }
+    qa_vfs_acquisition_dispose(&model->opening); free(model->first_requested_path);
+    free(model->opening_order.mounts); free(model->opening_order.prefix);
     qa_resource_release(model->resource); free(model);
+}
+
+static bool model_opening(const q3p_model *m, uint32_t slot,
+    qa_q3_model_opening *out, qa_error *error)
+{
+    *out = (qa_q3_model_opening){0};
+    if (!m) return true;
+    const qa_resource *resource = m->resource;
+    const qa_vfs_acquisition *opening = resource ? &m->opening : NULL;
+    int64_t rank = m->opening_rank;
+    const q3p_opening_order *order = &m->opening_order;
+    if (slot != QA_Q3_MODEL_PRIMARY_OPENING) {
+        if (!m->has_lods) { if (slot || m->world) return true; }
+        else {
+            unsigned target = slot;
+            for (unsigned depth = 0; depth < 3 && m->lods.states[target] == QA_MODEL_LOD_ALIAS; ++depth) {
+                if (m->lods.aliases[target] >= 3)
+                    return q3p_fail(error, QA_ERROR_FORMAT, "Q3 model opening has an invalid LOD alias");
+                target = m->lods.aliases[target];
+            }
+            if (m->lods.states[target] != QA_MODEL_LOD_LOADED) return true;
+            resource = m->lod_resources[target]; opening = &m->lod_openings[target];
+            rank = m->lod_opening_ranks[target];
+            order = &m->lod_opening_orders[target];
+        }
+    }
+    *out = (qa_q3_model_opening){.present = true, .first_requested_path = m->first_requested_path,
+        .provider = m->provider, .resource = resource, .receipt = opening, .rank = rank,
+        .order = order->mounts, .order_count = order->count, .prefix = order->prefix,
+        .user_overlay = order->user_overlay};
+    return true;
+}
+
+bool qa_q3_assets_model_opening(const qa_q3_presentation_assets *a, size_t ordinal,
+    uint32_t slot, qa_q3_model_opening *out, qa_error *error)
+{
+    if (!a || !out || (a->busy && (!a->capturing || a->codec_busy)) ||
+        ordinal >= a->model_count || (slot != QA_Q3_MODEL_PRIMARY_OPENING && slot >= 3))
+        return q3p_fail(error, QA_ERROR_ARGUMENT, "Q3 model opening requires an idle or captured holder");
+    return model_opening(a->models[ordinal], slot, out, error);
+}
+
+static bool opening_rank(const qa_vfs *files, const qa_vfs_acquisition *opening,
+    int64_t *out, q3p_opening_order *snapshot, qa_error *error)
+{
+    if (!files || !opening->opening_present)
+        return q3p_fail(error, QA_ERROR_FORMAT, "Q3 model acquisition lacks its actual opening snapshot");
+    const qa_vfs_read_opening *admitted = &opening->opening;
+    size_t count = admitted->order_count;
+    if (count > SIZE_MAX / sizeof(*snapshot->mounts) || (count && !admitted->order))
+        return q3p_fail(error, QA_ERROR_FORMAT, "Q3 model opening order is incomplete");
+    snapshot->mounts = count ? malloc(count * sizeof(*snapshot->mounts)) : NULL;
+    if (count && !snapshot->mounts) return q3p_fail(error, QA_ERROR_MEMORY, "Retaining Q3 model opening order");
+    snapshot->count = count; snapshot->user_overlay = admitted->user_overlay;
+    if (count) memcpy(snapshot->mounts, admitted->order, count * sizeof(*snapshot->mounts));
+    if (admitted->prefix) {
+        size_t length = strlen(admitted->prefix);
+        snapshot->prefix = length < SIZE_MAX ? malloc(length + 1) : NULL;
+        if (!snapshot->prefix) return q3p_fail(error, QA_ERROR_MEMORY, "Retaining Q3 model opening prefix");
+        memcpy(snapshot->prefix, admitted->prefix, length + 1);
+    }
+    *out = admitted->rank; return true;
 }
 
 const qa_model *q3p_model_source(const q3p_model *model, uint32_t slot)
@@ -48,7 +116,12 @@ static bool read_lod(void *context, const char *path, qa_buffer *out, qa_error *
         return q3p_fail(error, QA_ERROR_FORMAT, "Q3 model loader repeated its physical LOD read");
     unsigned slot = 2 - reader->next_slot++;
     qa_resource *resource = NULL;
-    if (!qa_vfs_acquire(reader->model->provider.mounts, path, &resource, NULL, error)) return false;
+    if (!qa_vfs_acquire_receipt(reader->model->provider.mounts, path, &resource,
+        &reader->model->lod_openings[slot], error)) return false;
+    if (!opening_rank(reader->model->provider.mounts, &reader->model->lod_openings[slot],
+        &reader->model->lod_opening_ranks[slot], &reader->model->lod_opening_orders[slot], error)) {
+        qa_resource_release(resource); return false;
+    }
     qa_bytes source = qa_resource_bytes(resource);
     uint8_t *copy = source.size ? malloc(source.size) : NULL;
     if (source.size && !copy) {
@@ -157,7 +230,9 @@ bool qa_q3_register_model(qa_q3_presentation_assets *a, const char *path,
     } else if (ok) {
         qa_error local = {0};
         ok = q3p_select(a, normalized, QA_Q3_ASSET_MODEL, &model->provider, &local) &&
-             qa_vfs_acquire(model->provider.mounts, normalized, &model->resource, NULL, &local);
+             qa_vfs_acquire_receipt(model->provider.mounts, normalized, &model->resource, &model->opening, &local);
+        if (ok) ok = opening_rank(model->provider.mounts, &model->opening, &model->opening_rank,
+            &model->opening_order, &local);
         if (!ok && local.code == QA_ERROR_NOT_FOUND) { ok = true; q3p_model_free(model); model = NULL; }
         else if (!ok && error) *error = local;
         if (ok && model) {
@@ -168,6 +243,27 @@ bool qa_q3_register_model(qa_q3_presentation_assets *a, const char *path,
                     existing->provider.materials == model->provider.materials) { handle = (int32_t)i + 1; break; }
             }
             if (!handle) ok = decode(model, normalized, error);
+        }
+    }
+    if (ok && model && !handle) {
+        size_t length = strlen(path);
+        model->first_requested_path = length < SIZE_MAX ? malloc(length + 1) : NULL;
+        if (!model->first_requested_path) ok = q3p_fail(error, QA_ERROR_MEMORY, "Retaining first Q3 model request");
+        else memcpy(model->first_requested_path, path, length + 1);
+    }
+    if (ok && model && !handle && a->options.model_initialize) {
+        for (uint32_t slot = 0; ok && slot < 3; ++slot) {
+            if (!model->scene[slot]) continue;
+            bool shared = false;
+            for (uint32_t previous = 0; previous < slot; ++previous)
+                if (model->scene[previous] == model->scene[slot]) shared = true;
+            if (shared) continue;
+            qa_q3_model_opening opening;
+            ok = model_opening(model, slot, &opening, error);
+            if (ok && !opening.present)
+                ok = q3p_fail(error, QA_ERROR_FORMAT, "Q3 scene model lacks its actual first opening");
+            if (ok) ok = a->options.model_initialize(a->options.context, &opening,
+                q3p_model_source(model, slot), model->scene[slot], error);
         }
     }
     if (ok && model && !handle) {

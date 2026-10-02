@@ -9,6 +9,7 @@
 #include "qa/application_equipment.h"
 #include "qa/application_language.h"
 #include "qa/ui_language.h"
+#include "qa/caption_save.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
@@ -40,6 +41,10 @@ typedef struct native_q1_wire_language_pending {
 struct application_native_q1_wire_language_ticket {
     native_q1_wire_language_pending *pending;
     char *language;
+    qa_application *application;
+    application_provider *primary;
+    qa_actor_id actor;
+    uint32_t slot;
 };
 struct qa_application_language_ticket {
     application_native_q1_wire_language_ticket *native;
@@ -137,6 +142,11 @@ bool application_native_q1_wire_resources_prepare(application_provider *p, qa_er
         if (!full) { okay = application_fail(error, QA_ERROR_MEMORY, "Admitting Q1 source sound path"); break; }
         memcpy(full, "sound/", 6); memcpy(full + 6, path, length + 1);
         okay = qa_vfs_acquire(source->content, full, &sounds[i], NULL, error); free(full);
+        if (okay) {
+            char id[81];
+            okay = application_unified_event_resource_register(p->application, p->owner,
+                path, sounds[i], id, error);
+        }
     }
     if (okay && (p->close_pending || p->native_q1_wire != owner ||
         !qa_q1_wire_receipt_current(&receipt)))
@@ -151,6 +161,48 @@ bool application_native_q1_wire_resources_prepare(application_provider *p, qa_er
     qa_q1_wire_read_end(&receipt);
     return okay;
 }
+bool application_native_q1_wire_sound_resource(qa_application *app, qa_actor_owner source,
+    qa_string_id path, qa_resource **out, const qa_product **product, bool *found,
+    qa_error *error)
+{
+    if (!out || !product || !found || !app || !app->session || !source || !path)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q1 sound registration read has no actual source");
+    *out = NULL; *product = NULL; *found = false;
+    application_provider *p = NULL;
+    for (application_provider *actual = app->live_providers; actual; actual = actual->next_live)
+        if (actual->owner == source) { p = actual; break; }
+    if (!p || p->close_pending || !p->product || p->product->family != QA_GAME_Q1)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q1 sound source retired before its registration read");
+    if (p->kind != APPLICATION_PROVIDER_Q1 || !p->state.q1) return true;
+    application_native_q1_wire *owner = p->native_q1_wire;
+    if (!owner || !owner->sound_count || !qa_q1_wire_enabled(p->state.q1)) return true;
+    uint64_t generation;
+    bool loading;
+    if (!qa_q1_wire_registration_state(p->state.q1, &generation, &loading) ||
+        loading || owner->generation != generation) return true;
+    qa_q1_wire_receipt receipt = {0};
+    if (!qa_q1_wire_read_begin(p->state.q1, &receipt, error)) return false;
+    uint32_t index;
+    bool okay = owner->generation == receipt.generation &&
+        owner->sound_count == receipt.sound_count && p->native_q1_wire == owner &&
+        receipt.owner == p->owner;
+    if (!okay) application_fail(error, QA_ERROR_ARGUMENT, "Q1 sound registration differs from its current declaration generation");
+    else if (qa_q1_wire_index(&receipt, false, path, &index) && index &&
+        index < owner->sound_count && owner->sounds[index]) {
+        const qa_launch_instance *descriptor = qa_launch_instance_lease_view(owner->source);
+        const qa_product *held = descriptor ? qa_catalog_product(
+            qa_launch_instance_catalog(descriptor), descriptor->selection.product) : NULL;
+        if (!held || held != p->product || !qa_q1_wire_receipt_current(&receipt))
+            okay = application_fail(error, QA_ERROR_ARGUMENT, "Q1 sound registration lost its held content product");
+        else {
+            *out = owner->sounds[index]; qa_resource_retain(*out);
+            *product = held; *found = true;
+        }
+    }
+    qa_q1_wire_read_end(&receipt);
+    return okay;
+}
+
 static bool language_prepare(application_provider *p, qa_actor_id actor,
     const char *language, application_native_q1_wire_language_ticket *ticket, qa_error *error) {
     application_native_q1_wire *owner = p->native_q1_wire;
@@ -203,6 +255,7 @@ bool application_native_q1_wire_language_prepare(qa_application *app, qa_actor_i
     ticket->language = malloc(language_size);
     if (!ticket->language) { free(ticket); return application_fail(error, QA_ERROR_MEMORY, "Retaining actual Q1 language declaration"); }
     memcpy(ticket->language, language, language_size);
+    ticket->application=app; ticket->primary=primary; ticket->actor=actor; ticket->slot=slot;
     for (size_t i = 0; i < app->provider_count; ++i) {
         application_provider *p = app->providers[i];
         if (p->kind == APPLICATION_PROVIDER_Q1 && p->constructed && p->attached && !p->close_pending &&
@@ -283,6 +336,48 @@ bool qa_application_language_prepare(qa_application *app, qa_actor_id actor,
 void qa_application_language_commit(qa_application_language_ticket *ticket) {
     if (!ticket) return;
     application_native_q1_wire_language_commit(ticket->native); free(ticket);
+}
+bool qa_application_language_ready_is(const qa_application_language_ticket *held,
+    const qa_application *app,qa_actor_id actor,const char *language)
+{
+    const application_native_q1_wire_language_ticket *ticket=held?held->native:NULL;
+    if (!ticket || !app || ticket->application!=app || app->destroy_requested || !app->session ||
+        !language || !ticket->language || strcmp(ticket->language,language) ||
+        !qa_actor_id_equal(ticket->actor,actor) || !qa_actors_get(qa_session_actors(app->session),actor) ||
+        !ticket->pending || application_world_provider(ticket->application,QA_ROLE_ENTITIES,"")!=ticket->primary)
+        return false;
+    uint32_t slot;
+    if (!ticket->primary || ticket->primary->kind!=APPLICATION_PROVIDER_Q1 ||
+        !qa_q1_native_client_slot(ticket->primary->state.q1,actor,&slot,NULL) || slot!=ticket->slot)
+        return false;
+    size_t expected=0,actual=0;
+    for (size_t i=0;i<app->provider_count;++i) {
+        const application_provider *p=app->providers[i];
+        if (p->kind!=APPLICATION_PROVIDER_Q1 || !p->constructed || !p->attached || p->close_pending) continue;
+        ++expected;
+        size_t matches=0;
+        for (const native_q1_wire_language_pending *row=ticket->pending;row;row=row->next)
+            if (row->provider==p) ++matches;
+        if (matches!=1) return false;
+    }
+    for (const native_q1_wire_language_pending *row=ticket->pending;row;row=row->next) {
+        const application_provider *p=row->provider;
+        bool present=false;
+        for (size_t i=0;i<app->provider_count;++i) present=present || app->providers[i]==p;
+        uint64_t catalog_key=0;
+        const qa_launch_instance *source=row->owner?qa_launch_instance_lease_view(row->owner->source):NULL;
+        if (!present || !p || p->application!=app || p->kind!=APPLICATION_PROVIDER_Q1 ||
+            !p->constructed || !p->attached || p->close_pending || p->native_q1_wire!=row->owner ||
+            !row->owner || row->owner->readers || !row->owner->language_admissions ||
+            !source || !source->content || !row->row || !row->row->catalog || !row->row->language ||
+            !qa_actor_id_equal(row->row->actor,actor) || strcmp(row->row->language,language) ||
+            row->operation.game!=p->state.q1 || row->operation.retained_owner ||
+            !qa_q1_game_operation_live(&row->operation) ||
+            !qa_localization_pool_catalog_key(row->owner->catalogs,row->row->catalog,&catalog_key) || !catalog_key)
+            return false;
+        ++actual;
+    }
+    return actual==expected;
 }
 void qa_application_language_abort(qa_application_language_ticket *ticket) {
     if (!ticket) return;

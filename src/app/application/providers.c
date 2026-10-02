@@ -5,17 +5,27 @@
 #include "q1_weapon_rules.h"
 #include "native_q3_console.h"
 #include "native_q3_remote_role.h"
+#include "native_client_roles.h"
 #include "native_q1_console.h"
+#include "native_q1_wire.h"
+#include "native_q1_respawn.h"
+#include "native_q1_powers.h"
+#include "native_q1_composition_flags.h"
+#include "native_q1_composition_death.h"
+#include "native_q1_composition_rogue.h"
 #include "native_q2_console.h"
 #include "native_q2_arsenal.h"
 #include "native_q2_combat_policy.h"
 #include "bots_q1_rules.h"
 #include "startup_flow.h"
 #include "engine_shutdown.h"
+#include "supplies.h"
 #include "equipment_actions.h"
 #include "guest_q3_save.h"
 #include "guest_q3_factory.h"
+#include "guest_q3_weapons_services.h"
 #include "guest_qc_factory.h"
+#include "guest_qc_internal.h"
 #include "native_q3_wire_state.h"
 #include "native_q3_settings.h"
 #include "native_q3_session.h"
@@ -27,6 +37,7 @@
 #include "native_q3_ipfilters.h"
 #include "native_q3_log.h"
 #include "native_q3_postgame.h"
+#include "unified_q3_events.h"
 #include "native_q3_team_combat.h"
 #include "qa/game_q3_clients.h"
 #include "qa/game_q3_source.h"
@@ -429,6 +440,25 @@ static bool native_console_preinit(application_provider *provider, qa_error *err
         : application_fail(error, QA_ERROR_ARGUMENT, "Native source lost its actual preinitialization console");
 }
 
+static bool q1_selected_fired(void *context, qa_actor_id actor, qa_item_id weapon, qa_error *error)
+{
+    return application_q3_weapons_services_selected_fired(context, actor, weapon, error) &&
+        application_native_q1_source_fired(context, actor, weapon, error);
+}
+static bool q1_selected_attack_delay(void *context, qa_actor_id actor, qa_q1_weapon weapon,
+    float *seconds, qa_error *error)
+{
+    if (!application_q1_attack_delay(context, actor, weapon, seconds, error)) return false;
+    float milliseconds = truncf(*seconds * 1000.0f);
+    if (!isfinite(*seconds) || *seconds < 0 || !isfinite(milliseconds) ||
+        (double)milliseconds > (double)(UINT64_MAX / UINT64_C(1000000)))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Selected Q1 delay is outside its native interval");
+    uint64_t delay; bool handled;
+    if (!application_q3_weapons_services_selected_delay(context, actor,
+        (uint64_t)milliseconds * UINT64_C(1000000), &delay, &handled, error)) return false;
+    if (handled) *seconds = (float)((double)delay / 1e9);
+    return true;
+}
 static bool construct_q1(qa_application *application,
                          application_provider *provider, qa_world *world,
                          const qa_product *product,
@@ -451,15 +481,24 @@ static bool construct_q1(qa_application *application,
                  !qa_cvars_register(cvars, "horde", "0", 0, provider->owner, NULL, error)) ||
                 !qa_cvars_set(cvars, "horde", "1", true, error)) return false;
         }
+    if (!application_native_q1_wire_create(provider, error)) return false;
     qa_q1_host host = {.context = provider,
                        .client_attack = application_native_q1_client_attack,
                        .find_target = q1_find_target,
                        .find_targets = q1_find_targets,
                        .combat_provider = q1_combat_provider,
+                       .supply = application_supplies_source_for,
+                       .request_respawn = application_native_q1_request_respawn,
+                       .console_suicide = application_native_q1_suicide,
+                       .powerup = application_native_q1_powerup,
+                       .set_gravity = application_native_q1_set_gravity,
+                       .fired = q1_selected_fired,
+                       .base_team_health = application_native_q1_base_team_health,
+                       .grapple_weapon_frame = application_q3_weapons_services_grapple_frame,
                        .weapon_parameters = application_q1_weapon_parameters,
                        .weapon_observation = application_q1_weapon_observation,
                        .before_fire = application_q1_before_fire,
-                       .attack_delay = application_q1_attack_delay,
+                       .attack_delay = q1_selected_attack_delay,
                        .bot_nail_speed = application_bot_q1_nail_speed,
                        .nail_fire = application_q1_nail_fire};
     qa_builtin_services services = application_builtin_services(
@@ -469,6 +508,12 @@ static bool construct_q1(qa_application *application,
     if (!qa_q1_game_create(&services, &options, &host,
                            &provider->state.q1, error) ||
         !qa_q1_game_retain(provider->state.q1, &provider->q1_lifetime, error) ||
+        !application_native_q1_ctf_flags_configure(provider, error) ||
+        !application_native_q1_rogue_world_configure(provider, error) ||
+        !qa_q1_source_clients_configure(provider->state.q1,
+            &(qa_q1_source_client_services){.context = provider,
+                .publish = application_native_q1_wire_client_publish,
+                .observer = application_native_q1_wire_client_observer}, error) ||
         !qa_q1_game_component(provider->state.q1, &provider->component,
                               error) ||
         !qa_q1_game_combat_policy(provider->state.q1, &provider->policy,
@@ -552,6 +597,90 @@ static bool q2_arsenal_options(application_provider *provider,
     return q2_selected_options(instance, provider->product, choices, options, error);
 }
 
+static bool startup_arsenal(qa_application *app, const qa_launch_snapshot *snapshot,
+    qa_launch_scope scope, application_provider_kind kind, qa_game_family family,
+    const qa_launch_instance **instance, const qa_product **physical, qa_error *error)
+{
+    *instance = NULL; *physical = NULL;
+    if (!app || !snapshot ||
+        (snapshot != qa_configuration_current(app->configuration) && snapshot != app->routing_snapshot &&
+         snapshot != qa_application_startup_candidate(app)) ||
+        (scope.kind != QA_SCOPE_DEFAULT_PLAYER && scope.kind != QA_SCOPE_SEAT))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Boot arsenal requires its retained default or authored seat scope");
+    const qa_launch_choices *choices = qa_launch_snapshot_choices(snapshot);
+    if (scope.kind == QA_SCOPE_SEAT) {
+        bool authored = false;
+        for (size_t i = 0; choices && i < choices->seat_count; ++i)
+            if (choices->seats[i].id == scope.seat) { authored = true; break; }
+        if (!authored)
+            return application_fail(error, QA_ERROR_ARGUMENT, "Boot arsenal has no actual authored seat");
+    }
+    const qa_launch_binding *binding = qa_launch_binding_for(choices, scope, QA_ROLE_ARSENAL, "");
+    const qa_launch_instance *selected = binding ? qa_launch_snapshot_find(snapshot, binding->instance) : NULL;
+    application_provider *provider = selected ? selected->state : NULL;
+    if (!provider || provider->kind != kind) return true;
+    if (provider->application != app || provider->owner == 0 || !provider->launch ||
+        provider->launch->storage != selected->storage)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Boot arsenal lost its actual native provider descriptor");
+    qa_catalog *catalog = qa_launch_instance_catalog(selected);
+    if (!catalog) catalog = qa_launch_snapshot_catalog(snapshot);
+    const qa_product *product = qa_catalog_product(catalog, selected->selection.product);
+    if (!product || product->family != family)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Boot arsenal lost its physical native product");
+    *instance = selected; *physical = product; return true;
+}
+
+bool qa_application_startup_q2_arsenal_options(qa_application *app, const qa_launch_snapshot *snapshot,
+    qa_launch_scope scope, qa_q2_options *out, bool *found, qa_error *error)
+{
+    if (!out || !found) return application_fail(error, QA_ERROR_ARGUMENT, "Boot Q2 arsenal needs output storage");
+    *out = (qa_q2_options){0}; *found = false;
+    const qa_launch_instance *selected;
+    const qa_product *product;
+    if (!startup_arsenal(app, snapshot, scope, APPLICATION_PROVIDER_Q2, QA_GAME_Q2,
+        &selected, &product, error)) return false;
+    if (!selected) return true;
+    application_provider *provider = selected->state;
+    *out = (qa_q2_options){.owner = provider->owner,
+        .edition = product->edition == QA_EDITION_RERELEASE ? QA_Q2_RERELEASE : QA_Q2_CLASSIC,
+        .product = q2_product(product->campaign)};
+    if (!q2_selected_options(selected, product, qa_launch_snapshot_choices(snapshot), out, error)) return false;
+    *found = true; return true;
+}
+
+bool qa_application_startup_q1_arsenal_program(qa_application *app, const qa_launch_snapshot *snapshot,
+    qa_launch_scope scope, qa_q1_program *out, qa_actor_owner *owner, bool *found, qa_error *error)
+{
+    if (!out || !owner || !found) return application_fail(error, QA_ERROR_ARGUMENT, "Boot Q1 arsenal needs output storage");
+    *out = QA_Q1_ID1; *owner = 0; *found = false;
+    const qa_launch_instance *selected;
+    const qa_product *product;
+    if (!startup_arsenal(app, snapshot, scope, APPLICATION_PROVIDER_Q1, QA_GAME_Q1,
+        &selected, &product, error)) return false;
+    if (selected) {
+        *out = application_q1_program(product->campaign);
+        *owner = ((application_provider *)selected->state)->owner; *found = true;
+    }
+    return true;
+}
+
+bool qa_application_startup_q3_arsenal_product(qa_application *app, const qa_launch_snapshot *snapshot,
+    qa_launch_scope scope, qa_q3_product *out, qa_actor_owner *owner, bool *found, qa_error *error)
+{
+    if (!out || !owner || !found) return application_fail(error, QA_ERROR_ARGUMENT, "Boot Q3 arsenal needs output storage");
+    *out = QA_Q3_ARENA; *owner = 0; *found = false;
+    const qa_launch_instance *selected;
+    const qa_product *product;
+    if (!startup_arsenal(app, snapshot, scope, APPLICATION_PROVIDER_Q3, QA_GAME_Q3,
+        &selected, &product, error)) return false;
+    if (selected) {
+        *out = !strcmp(product->campaign, "missionpack") ? QA_Q3_TEAM_ARENA : QA_Q3_ARENA;
+        *owner = ((application_provider *)selected->state)->owner;
+        *found = true;
+    }
+    return true;
+}
+
 bool application_native_q2_arsenal_prepare(application_provider *provider,
     const qa_launch_choices *choices, qa_error *error)
 {
@@ -563,6 +692,12 @@ bool application_native_q2_arsenal_prepare(application_provider *provider,
             options.equipment_hook_edition, error);
 }
 
+static bool q2_equipment_animation(void *context, qa_actor_id actor, bool reverse,
+    bool *handled, qa_error *error)
+{
+    return application_q3_weapons_services_equipment_animation(context, actor, reverse, false,
+        handled, error);
+}
 static bool construct_q2(qa_application *application,
                          application_provider *provider, qa_world *world,
                          const qa_product *product,
@@ -595,11 +730,21 @@ static bool construct_q2(qa_application *application,
     services.cvar = application_native_q2_cvar;
     if (!q2_arsenal_options(provider, choices, &options, error)) return false;
     qa_q2_hooks hooks = {.context = provider,
+        .equipment_animation = q2_equipment_animation,
+        .selected_firing_interval = application_q3_weapons_services_selected_delay,
+        .source_damage_factor = application_q3_weapons_services_q2_damage,
+        .source_weapon_powerups = application_q3_weapons_services_q2_powerups,
+        .selected_weapon_input = application_q2_weapon_input,
         .prepare_damage = application_native_q2_damage_prepare,
-        .inventory_provider = application_native_q2_attack_inventory};
+        .inventory_provider = application_native_q2_attack_inventory,
+        .rotation_changed = application_native_q2_rotation_changed,
+        .fired = application_native_q1_source_fired};
     if (!qa_q2_create(&services, &options, &hooks, &provider->state.q2,
                       error))
         return false;
+    qa_q2_item_options items = {.context = provider, .supply_for = application_supplies_source_for,
+        .instanced_coop = options.edition == QA_Q2_RERELEASE, .weapon_respawn_seconds = 30};
+    if (!qa_q2_items_configure(provider->state.q2, &items, error)) return false;
     if (!application_native_q2_arsenal_prepare(provider, choices, error)) return false;
     if (application->operation != APPLICATION_PERSISTING &&
         !application_native_q2_console_refresh(provider, error)) return false;
@@ -642,6 +787,12 @@ static bool q3_console_prepare(application_provider *provider,
     for (size_t i = 0; i < 7; ++i) present[i] = qa_cvars_find(cvars, names[i]) != NULL;
     qa_q3_product product = !strcmp(provider->product->campaign, "missionpack") ? QA_Q3_TEAM_ARENA : QA_Q3_ARENA;
     if (!application_native_q3_settings_prepare_definitions(provider, product, error)) return false;
+    qa_application_startup_source source = {.descriptor = provider->launch,
+        .scope = {.provider = provider->owner, .kind = QA_APPLICATION_CONSOLE_Q3_GAME},
+        .cvars = cvars, .declaration_owner = provider->owner};
+    bool carried;
+    if (!application_native_q3_console_at(provider, &source.console, NULL, &source.command) ||
+        !application_startup_source_carry(provider, &source, &carried, error)) return false;
     qa_mode_rules mode = {0};
     bool found = selected_mode(choices, &mode);
     char values[7][64];
@@ -653,7 +804,7 @@ static bool q3_console_prepare(application_provider *provider,
     snprintf(values[5], sizeof(values[5]), "%d", found && mode.warmup_seconds ? mode.warmup_seconds : 20);
     snprintf(values[6], sizeof(values[6]), "%d", found && mode.warmup_seconds != 0);
     for (size_t i = 0; i < 7; ++i)
-        if (!present[i] && !qa_cvars_set(cvars, names[i], values[i], true, error)) return false;
+        if (!carried && !present[i] && !qa_cvars_set(cvars, names[i], values[i], true, error)) return false;
     return true;
 }
 
@@ -671,6 +822,8 @@ bool application_provider_console_prepare(qa_application *application,
     qa_catalog_release(provider->product_catalog);
     provider->product_catalog = catalog;
     provider->product = product;
+    if (provider->client_only_owned || application_native_client_only(provider))
+        return true;
     application_native_profile profile;
     if (!native_profile(provider->launch, choices, &profile, error)) return false;
     switch (provider->kind) {
@@ -687,9 +840,17 @@ bool application_provider_console_prepare(qa_application *application,
         return application_native_q2_console_prepare(provider, &options, choices, error) &&
             application_native_q2_console_at(provider, console, cvars, command);
     }
-    case APPLICATION_PROVIDER_Q3:
-        return q3_console_prepare(provider, choices, profile, error) &&
-            application_native_q3_console_at(provider, console, cvars, command);
+    case APPLICATION_PROVIDER_Q3: {
+        bool client_only = application_native_q3_remote_client_only(provider);
+        if ((!client_only && !q3_console_prepare(provider, choices, profile, error)) ||
+            !application_native_q3_remote_roles_prepare(provider, choices, error)) return false;
+        if (!client_only) return application_native_q3_console_at(provider, console, cvars, command);
+        qa_application_startup_source source;
+        bool found;
+        if (!application_native_q3_remote_role_source_at(provider, 0, &source, &found, error)) return false;
+        if (found) { *console = source.console; *cvars = source.cvars; *command = source.command; }
+        return true;
+    }
     case APPLICATION_PROVIDER_QC:
         return application_qc_console_prepare(application, provider, world, product,
             choices, console, cvars, command, error);
@@ -705,6 +866,63 @@ bool application_provider_console_prepare(qa_application *application,
                     "Selected original GAME requires its retained private console preparation");
     }
     return application_fail(error, QA_ERROR_ARGUMENT, "Unknown startup source kind");
+}
+
+bool application_provider_startup_source_at(application_provider *provider, size_t index,
+    qa_application_startup_source *out, bool *found, qa_error *error)
+{
+    if (!provider || !provider->launch || !out || !found)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Startup enumeration requires its physical source owner");
+    *found = false;
+    if (provider->client_only_owned || application_native_client_only(provider))
+        return application_native_client_role_source_at(provider, index, out, found, error);
+    if ((provider->kind == APPLICATION_PROVIDER_QVM || provider->kind == APPLICATION_PROVIDER_NATIVE) &&
+        provider->product && provider->product->family == QA_GAME_Q3) {
+        if (provider->kind == APPLICATION_PROVIDER_QVM ? !provider->state.qvm.engine : !provider->state.native.engine)
+            return true;
+        return application_guest_q3_startup_source_at(provider, index, out, found, error);
+    }
+    if (provider->kind == APPLICATION_PROVIDER_Q3) {
+        qa_application_startup_source game = {.descriptor = provider->launch,
+            .scope = {.provider = provider->owner, .kind = QA_APPLICATION_CONSOLE_Q3_GAME},
+            .declaration_owner = provider->owner};
+        bool has_game = application_native_q3_console_at(provider, &game.console, &game.cvars, &game.command);
+        if (has_game && !index) { *out = game; *found = true; return true; }
+        return application_native_q3_remote_role_source_at(provider, index - (has_game ? 1 : 0), out, found, error);
+    }
+    if (index) return true;
+    qa_application_startup_source source = {.descriptor = provider->launch,
+        .scope = {.provider = provider->owner}, .declaration_owner = provider->owner};
+    switch (provider->kind) {
+    case APPLICATION_PROVIDER_Q1:
+        source.scope.kind = QA_APPLICATION_CONSOLE_Q1_GAME;
+        *found = application_native_q1_console_at(provider, &source.console, &source.cvars, &source.command);
+        break;
+    case APPLICATION_PROVIDER_Q2:
+        source.scope.kind = QA_APPLICATION_CONSOLE_Q2_GAME;
+        *found = application_native_q2_console_at(provider, &source.console, &source.cvars, &source.command);
+        break;
+    case APPLICATION_PROVIDER_Q3: break;
+    case APPLICATION_PROVIDER_QC:
+        source.scope.kind = QA_APPLICATION_CONSOLE_QC;
+        if (provider->state.qc.engine) {
+            struct application_qc_state *engine = provider->state.qc.engine;
+            source.console = engine->console; source.cvars = engine->cvars; source.command = engine->command_context;
+            *found = source.console != NULL;
+        }
+        break;
+    case APPLICATION_PROVIDER_NATIVE:
+        source.scope.kind = QA_APPLICATION_CONSOLE_NATIVE_Q2;
+        if (provider->state.native.q2_engine) {
+            struct application_native_q2 *engine = provider->state.native.q2_engine;
+            source.console = engine->console; source.cvars = engine->cvars; source.command = engine->command_context;
+            *found = source.console != NULL;
+        }
+        break;
+    case APPLICATION_PROVIDER_QVM: break;
+    }
+    if (*found) *out = source;
+    return true;
 }
 
 static qa_actor_owner q3_combat_provider(void *opaque, qa_actor_id target,
@@ -809,11 +1027,44 @@ static bool q3_native_client_mover_write(void *opaque, qa_actor_id actor,
     return qa_q3_wire_borrowed_client_motion_write(provider->state.q3, actor, &motion, error);
 }
 
+static bool q3_selected_objective_drop(void *context, qa_actor_id actor, qa_error *error)
+{
+    bool handled;
+    if (!application_q3_weapons_services_selected_drop(context, actor, &handled, error)) return false;
+    return handled || application_native_q3_objective_drop(context, actor, error);
+}
+static bool q3_selected_teleport_destination(void *context, qa_actor_id actor,
+    qa_vec3 *origin, qa_vec3 *angles, qa_error *error)
+{
+    bool handled;
+    if (!application_q3_weapons_services_selected_spawn(context, actor, origin, angles, &handled, error))
+        return false;
+    return handled || application_q3_native_deathmatch_destination(context, actor, origin, angles, error);
+}
+static bool q3_selected_client_effects(void *context, qa_actor_id actor,
+    const qa_q3_selected_client_effects *before, const qa_q3_selected_client_effects *after,
+    qa_error *error)
+{
+    bool handled;
+    return application_q3_weapons_services_selected_client_effects(context, actor, before, after,
+        &handled, error);
+}
+static bool q3_selected_fired(void *context, qa_actor_id actor, qa_q3_weapon weapon, qa_error *error)
+{
+    application_provider *provider = context;
+    if (!provider || !provider->state.q3)
+        return application_fail(error, QA_ERROR_NOT_FOUND, "Selected Q3 shot lost its native weapon owner");
+    return application_q3_weapons_services_selected_fired(provider, actor,
+        qa_q3_weapon_item(provider->state.q3, weapon, false), error);
+}
 static bool construct_q3(qa_application *application,
                          application_provider *provider, qa_world *world,
                          const qa_product *product,
                          const qa_launch_choices *choices, qa_error *error)
 {
+    if (!application_native_q3_remote_roles_prepare(provider, choices, error) ||
+        !application_native_q3_remote_roles_preinit(provider, error)) return false;
+    if (application_native_q3_remote_client_only(provider)) return true;
     application_native_profile profile;
     if (!native_profile(provider->launch, choices, &profile, error))
         return false;
@@ -821,7 +1072,9 @@ static bool construct_q3(qa_application *application,
     rules.game_type = q3_game_type(profile.mode_kind);
     rules.friendly_fire = profile.friendly_fire;
     if (!provider->native_q3_console &&
-        !application_native_q3_console_create(provider, choices->world.map, error))
+        !(application->operation == APPLICATION_PERSISTING
+            ? application_native_q3_console_create(provider, choices->world.map, error)
+            : q3_console_prepare(provider, choices, profile, error)))
         return false;
     if (!native_console_preinit(provider, error)) return false;
     qa_cvars *cvars = application_native_q3_console_registry(provider);
@@ -872,6 +1125,8 @@ static bool construct_q3(qa_application *application,
         .rules = rules,
         .max_clients = max_clients,
         .hooks = {.context = provider,
+                  .source_participant_event = application_unified_q3_participant,
+                  .attack_providers = application_unified_q3_attack_providers,
                   .source_settings_update = application_native_q3_settings_source_frame,
                   .source_world_init = application_native_q3_source_world_initialize,
                   .source_team_items = application_native_q3_source_team_items,
@@ -882,8 +1137,14 @@ static bool construct_q3(qa_application *application,
                   .source_client_death = application_native_q3_client_death_items,
                   .source_client_run = application_native_q3_source_client_run,
                   .source_client_end = application_native_q3_source_client_end,
+                  .source_supply_take = application_supplies_q3_take,
+                  .source_ammo_regeneration = application_supplies_q3_ammo_regeneration,
+                  .source_ammo_timer_stored = application_supplies_q3_ammo_stored,
                   .source_movement_state = q3_source_movement_state,
                   .primary_attack_allowed = q3_primary_attack_allowed,
+                  .selected_damage_factor = application_q3_weapons_services_selected_damage,
+                  .selected_client_effects = q3_selected_client_effects,
+                  .selected_weapon_fired = q3_selected_fired,
                   .inventory_weapon_request = application_equipment_q3_weapon_request,
                   .postgame_cvar_integer = application_native_q3_postgame_cvar_integer,
                   .memory_debug_integer = q3_memory_debug_integer,
@@ -892,7 +1153,8 @@ static bool construct_q3(qa_application *application,
                   .source_end_frame = application_native_q3_source_end_frame,
                   .objective_pickup = application_native_q3_objective_pickup,
                   .objective_admitted = application_native_q3_objective_admitted,
-                  .objective_drop = application_native_q3_objective_drop,
+                  .objective_drop = q3_selected_objective_drop,
+                  .teleport_destination = q3_selected_teleport_destination,
                   .objective_dropped = application_native_q3_objective_dropped,
                   .objective_expired = application_native_q3_objective_expired,
                   .objective_nodrop = application_native_q3_objective_nodrop,
@@ -959,6 +1221,8 @@ bool application_provider_construct(qa_application *application,
     qa_catalog_release(provider->product_catalog);
     provider->product_catalog = catalog;
     provider->product = product;
+    if (provider->client_only_owned || application_native_client_only(provider))
+        return true;
     bool ok;
     switch (provider->kind) {
     case APPLICATION_PROVIDER_Q1:
@@ -1034,13 +1298,26 @@ static bool deconstruct_provider(application_provider *provider, qa_error *error
         provider->policy_attached)
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "cannot destroy an attached provider instance");
+    if (!application_startup_source_deconstruct(provider, error)) return false;
+    if (provider->client_only_owned || application_native_client_only(provider)) {
+        if (!application_native_client_roles_destroy(provider, error)) return false;
+        provider->constructed = false;
+        provider->map_bound = false;
+        provider->component = (qa_component){0};
+        provider->policy = (qa_combat_policy){0};
+        return true;
+    }
     if (!provider->constructed) {
-        if (provider->kind == APPLICATION_PROVIDER_Q1)
+        if (provider->kind == APPLICATION_PROVIDER_Q1) {
+            application_native_q1_wire_destroy(provider);
             return application_native_q1_console_destroy(provider, error);
+        }
         if (provider->kind == APPLICATION_PROVIDER_Q2)
             return application_native_q2_console_destroy(provider, error);
         if (provider->kind == APPLICATION_PROVIDER_Q3)
-            return application_native_q3_settings_destroy(provider, error) &&
+            return application_native_q3_remote_roles_destroy(provider, error) &&
+                application_unified_q3_events_destroy(provider, error) &&
+                application_native_q3_settings_destroy(provider, error) &&
                 application_native_q3_console_destroy(provider, error);
         if (provider->kind == APPLICATION_PROVIDER_QC)
             return application_qc_console_destroy(provider, error);
@@ -1055,11 +1332,12 @@ static bool deconstruct_provider(application_provider *provider, qa_error *error
     switch (provider->kind) {
     case APPLICATION_PROVIDER_Q1:
         if (provider->state.q1 == NULL) {
+            application_native_q1_wire_destroy(provider);
             ok = application_native_q1_console_destroy(provider, error);
             break;
         }
-        if (!application_native_q1_console_idle(provider))
-            return application_fail(error, QA_ERROR_ARGUMENT, "native Q1 source console is borrowed");
+        if (!application_native_q1_console_idle(provider) || !application_native_q1_wire_idle(provider))
+            return application_fail(error, QA_ERROR_ARGUMENT, "native Q1 source console or catalog is borrowed");
         qa_q1_game_destroy(provider->state.q1);
         qa_q1_game_operation_end(&provider->q1_lifetime);
         provider->state.q1 = NULL;
@@ -1067,6 +1345,7 @@ static bool deconstruct_provider(application_provider *provider, qa_error *error
         provider->q1_level = NULL;
         qa_q1_campaign_source_destroy(provider->q1_campaign);
         provider->q1_campaign = NULL;
+        application_native_q1_wire_destroy(provider);
         ok = application_native_q1_console_destroy(provider, error);
         break;
     case APPLICATION_PROVIDER_Q2:
@@ -1083,8 +1362,12 @@ static bool deconstruct_provider(application_provider *provider, qa_error *error
         }
         break;
     case APPLICATION_PROVIDER_Q3:
+        if (!application_native_q3_remote_roles_destroy(provider, error)) return false;
+        if (!application_unified_q3_events_idle(provider))
+            return application_fail(error, QA_ERROR_ARGUMENT, "native Q3 Source event publication is entered");
         if (provider->state.q3 == NULL) {
-            ok = application_native_q3_console_destroy(provider, error);
+            ok = application_unified_q3_events_destroy(provider, error) &&
+                application_native_q3_console_destroy(provider, error);
             break;
         }
         if (!application_native_q3_console_idle(provider) ||
@@ -1106,7 +1389,8 @@ static bool deconstruct_provider(application_provider *provider, qa_error *error
              qa_q3_destroy(provider->state.q3, error);
         if (ok) {
             provider->state.q3 = NULL;
-            ok = application_native_q3_console_destroy(provider, error);
+            ok = application_unified_q3_events_destroy(provider, error) &&
+                application_native_q3_console_destroy(provider, error);
         }
         break;
     case APPLICATION_PROVIDER_QC:

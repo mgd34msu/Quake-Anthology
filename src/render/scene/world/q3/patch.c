@@ -338,7 +338,7 @@ bool qaw_patch_prepare(qa_scene_world *world, qa_error *error) {
     free(stack); return true;
 }
 
-bool qaw_patch_lod(const qaw_surface *surface, const qa_material_context *context, float curve_error,
+bool qaw_patch_lod(const qaw_surface *surface, qa_material_context *context, float curve_error,
                    qa_scene_frame *frame, qa_scene_mesh *mesh, qa_error *error) {
     const qaw_patch *p = surface->patch;
     qa_scene_vec4 transformed = qa_scene_matrix_point(context->model, p->lod_origin);
@@ -350,6 +350,7 @@ bool qaw_patch_lod(const qaw_surface *surface, const qa_material_context *contex
     for (unsigned x = 1; x + 1 < p->width; ++x) if (p->width_error[x] <= threshold) columns[column_count++] = x;
     for (unsigned y = 1; y + 1 < p->height; ++y) if (p->height_error[y] <= threshold) rows[row_count++] = y;
     columns[column_count++] = p->width - 1; rows[row_count++] = p->height - 1;
+    context->source_grid_columns = column_count; context->source_grid_rows = row_count;
     *mesh = surface->mesh;
     if (column_count == p->width && row_count == p->height) return true;
     size_t count = (size_t)(column_count - 1) * (row_count - 1) * 6;

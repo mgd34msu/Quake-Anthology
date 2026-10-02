@@ -87,7 +87,9 @@ bool q2_throw(q2_weapon_call *c, bool held, qa_error *e) {
                                      : trap ? qa_v3(8, 0, -8)
                                             : qa_v3(0, 0, -22))
                                   : qa_v3(8, 8, -8);
+    float multiplier;
     if (hand) {
+        if (!q2_multiplier(c, &multiplier, e)) return false;
         q2_hand_spec spec;
         if (!q2_hand_calculate(c, s->grenade_ns, combat.health > 0, held, NULL, NULL, &spec, e))
             return false;
@@ -111,13 +113,19 @@ bool q2_throw(q2_weapon_call *c, bool held, qa_error *e) {
     }
     if (hand)
         s->hand_reservation = QA_Q2_HAND_UNRESERVED;
-    s->grenade_ns = c->rerelease ? 0 : q2_deadline(c->now_ns, q2_interval(c, Q2_NS));
-    float damage = 125 * q2_multiplier(c);
+    if (c->rerelease) s->grenade_ns = 0;
+    if (hand && !c->rerelease) {
+        uint64_t recovery;
+        if (!q2_interval(c, Q2_NS, &recovery, e)) return false;
+        s->grenade_ns = q2_deadline(c->now_ns, recovery);
+    }
+    if (!hand && !q2_multiplier(c, &multiplier, e)) return false;
+    float damage = 125 * multiplier, projectile_damage = hand || trap ? damage : 3 * multiplier;
     if (!q2_projectile_spawn(c,
                              hand   ? Q2_GRENADE
                              : trap ? Q2_TRAP
                                     : Q2_TESLA,
-                             start, dir, hand || trap ? damage : 3 * q2_multiplier(c), 0, speed,
+                             start, dir, projectile_damage, 0, speed,
                              hand || trap ? 165 : 128, hand || trap ? damage : 0,
                              hand   ? (float)fuse
                              : trap ? (c->rerelease ? 1 : (float)fuse)
@@ -132,10 +140,16 @@ bool q2_throw(q2_weapon_call *c, bool held, qa_error *e) {
         return false;
     if (!hand && !q2_consume(c, 1, !c->rerelease && !trap, e))
         return false;
-    if (!c->rerelease && combat.health > 0 && (hand || !trap))
-        return q2_animation(c, c->input.ducked ? 0 : 2, c->input.ducked ? 159 : 119,
-                            c->input.ducked ? 162 : 112, e);
-    return true;
+    if (!hand && !c->rerelease) {
+        uint64_t recovery;
+        if (!q2_interval(c, Q2_NS, &recovery, e)) return false;
+        s->grenade_ns = q2_deadline(c->now_ns, recovery);
+    }
+    if (!c->rerelease && combat.health > 0 && (hand || !trap) &&
+        !q2_animation(c, c->input.ducked ? 0 : 2, c->input.ducked ? 159 : 119,
+                       c->input.ducked ? 162 : 112, e))
+        return false;
+    return q2_weapon_fired(c->game, c->actor->id, c->definition->weapon, e);
 }
 bool q2_throw_frame(q2_weapon_call *c, qa_error *e) {
     qa_q2_weapon_state *s = c->state;
@@ -156,8 +170,7 @@ bool q2_throw_frame(q2_weapon_call *c, qa_error *e) {
         if (!c->rerelease || s->think_ns <= now) {
             if (!q2_change_weapon(c, e))
                 return false;
-            if (c->rerelease)
-                s->think_ns = q2_deadline(now, q2_animation_time(c));
+            if (c->rerelease && !q2_animation_deadline(c, now, 0, &s->think_ns, e)) return false;
         }
         return true;
     }
@@ -165,8 +178,10 @@ bool q2_throw_frame(q2_weapon_call *c, qa_error *e) {
         if (!c->rerelease || s->think_ns <= now) {
             s->phase = QA_Q2_READY;
             s->frame = ready;
-            if (c->rerelease)
-                s->think_ns = s->fire_finished_ns = q2_deadline(now, q2_animation_time(c));
+            if (c->rerelease) {
+                if (!q2_animation_deadline(c, now, 0, &s->think_ns, e)) return false;
+                s->fire_finished_ns = s->think_ns;
+            }
         }
         return true;
     }
@@ -182,14 +197,13 @@ bool q2_throw_frame(q2_weapon_call *c, qa_error *e) {
             s->frame = c->rerelease && hand ? 2 : 1;
             s->phase = QA_Q2_FIRING;
             s->grenade_ns = 0;
-            if (c->rerelease)
-                s->think_ns = q2_deadline(now, q2_animation_time(c));
+            if (c->rerelease && !q2_animation_deadline(c, now, 0, &s->think_ns, e)) return false;
             return true;
         }
         if (c->rerelease) {
             if (s->think_ns > now)
                 return true;
-            s->think_ns = q2_deadline(now, q2_animation_time(c));
+            if (!q2_animation_deadline(c, now, 0, &s->think_ns, e)) return false;
             if (s->frame >= d->idle_last) {
                 s->frame = idle;
                 return true;
@@ -213,9 +227,9 @@ bool q2_throw_frame(q2_weapon_call *c, qa_error *e) {
     }
     if (s->frame == sound_frame && !q2_sound(c, cock, 1, 1, e))
         return false;
-    uint64_t wait =
-        q2_interval(c, Q2_NS / (c->rerelease && c->input.haste ? 2u : 1u) /
-                           (c->rerelease && c->input.quad_fire_until_ns > now ? 2u : 1u));
+    uint64_t wait;
+    if (!q2_interval(c, Q2_NS / (c->rerelease && c->input.haste ? 2u : 1u) /
+        (c->rerelease && c->input.quad_fire_until_ns > now ? 2u : 1u), &wait, e)) return false;
     if (s->frame == hold_frame) {
         if (s->grenade_ns == 0 && (!c->rerelease || s->grenade_finished_ns == 0))
             s->grenade_ns = q2_deadline(now, 3200 * Q2_MS);
@@ -239,8 +253,7 @@ bool q2_throw_frame(q2_weapon_call *c, qa_error *e) {
                 return true;
             s->frame = d->fire_last;
             s->grenade_blew_up = false;
-            if (c->rerelease)
-                s->think_ns = q2_deadline(now, q2_animation_time(c));
+            if (c->rerelease && !q2_animation_deadline(c, now, 0, &s->think_ns, e)) return false;
         } else if (c->rerelease) {
             ++s->frame;
             if (!q2_power_sound(c, e) || !q2_loop(c, "", e) || !q2_throw(c, false, e))
@@ -254,8 +267,7 @@ bool q2_throw_frame(q2_weapon_call *c, qa_error *e) {
     if (!c->rerelease && s->frame == fire_frame)
         if (!q2_loop(c, "", e) || !q2_throw(c, !hand && !trap, e))
             return false;
-    if (c->rerelease)
-        s->think_ns = q2_deadline(now, q2_animation_time(c));
+    if (c->rerelease && !q2_animation_deadline(c, now, 0, &s->think_ns, e)) return false;
     if (s->frame == d->fire_last && now < (c->rerelease ? s->grenade_finished_ns : s->grenade_ns))
         return true;
     if (++s->frame == idle) {
@@ -263,7 +275,7 @@ bool q2_throw_frame(q2_weapon_call *c, qa_error *e) {
         if (c->rerelease) {
             s->grenade_finished_ns = 0;
             s->fire_buffered = false;
-            s->fire_finished_ns = q2_deadline(now, q2_animation_time(c));
+            if (!q2_animation_deadline(c, now, 0, &s->fire_finished_ns, e)) return false;
             s->frame = ready;
             int ammo;
             if (!q2_ammo(c, &ammo, e))

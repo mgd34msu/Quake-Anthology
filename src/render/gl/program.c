@@ -194,9 +194,9 @@ static const char opacity_fragment[] =
     "gl_FragColor=b+opacity*(texture2D(result,tc)-b);}\n";
 static const char gamma_fragment[] =
     "#version 120\n"
-    "uniform sampler2D rawColor;uniform sampler2D gammaTable;varying vec2 tc;\n"
+    "uniform sampler2D rawColor;uniform sampler2D gammaTable;uniform int applyGamma;varying vec2 tc;\n"
     "float corrected(float v){return texture2D(gammaTable,vec2((floor(clamp(v,0.0,1.0)*255.0+0.5)+0.5)/256.0,0.5)).r;}\n"
-    "void main(){vec4 c=texture2D(rawColor,tc);gl_FragColor=vec4(corrected(c.r),corrected(c.g),corrected(c.b),c.a);}\n";
+    "void main(){vec4 c=texture2D(rawColor,tc);gl_FragColor=applyGamma==0?c:vec4(corrected(c.r),corrected(c.g),corrected(c.b),c.a);}\n";
 
 static const char fog_vertex[] =
     "#version 120\n"
@@ -419,6 +419,8 @@ bool gl_programs_create(qa_gl_renderer *renderer, qa_error *error)
         !uniform(renderer, p->gamma, "rawColor", &p->gamma_uniform.raw,
                  error) ||
         !uniform(renderer, p->gamma, "gammaTable", &p->gamma_uniform.table,
+                 error) ||
+        !uniform(renderer, p->gamma, "applyGamma", &p->gamma_uniform.apply,
                  error)) return false;
     const char *fog_fragments[3] = {fog_global_fragment, fog_height_fragment,
                                     fog_sky_fragment};

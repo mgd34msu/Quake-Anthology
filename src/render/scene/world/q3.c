@@ -336,12 +336,42 @@ static qa_vec3 matrix_vector(qa_scene_matrix matrix, qa_vec3 p) {
                  matrix.m[2] * p.x + matrix.m[6] * p.y + matrix.m[10] * p.z);
 }
 
-bool qaw_submit_material_sky(const qa_scene_world *world, const qa_material *original,
+typedef struct qaw_source_sky {
+    const qa_scene_world *world;
+    qa_material_library *materials;
+    qa_scene_world_input input;
+} qaw_source_sky;
+static bool submit_material_sky(const qa_scene_world *, qa_material_library *, const qa_material *,
+    const qa_material *, const qa_scene_mesh *, const qa_material_context *,
+    const qa_scene_world_input *, qa_scene_frame *, qa_error *);
+static bool source_sky_end(void *context, const qa_material *original, const qa_material *material,
+    const qa_scene_mesh *mesh, const qa_material_context *input, qa_scene_frame *frame, qa_error *error)
+{
+    const qaw_source_sky *sky = context;
+    qa_material_context local = *input; local.source_surface = NULL; local.source_surface_context = NULL;
+    qa_scene_world_input world_input = sky->input;
+    world_input.fast_sky = input->source_diagnostics.fast_sky;
+    return submit_material_sky(sky->world, sky->materials, original, material, mesh, &local, &world_input, frame, error);
+}
+bool qa_scene_world_source_sky_context(const qa_scene_world *world, qa_material_library *materials,
+    const qa_scene_world_input *input, qa_scene_frame *frame, qa_material_context *context, qa_error *error)
+{
+    if (!input || !frame || !context || !materials || (world && !qa_scene_world_idle(world))) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Source sky requires its retained world/material and actual frame"); return false;
+    }
+    qaw_source_sky *sky = qa_arena_alloc(&frame->storage, sizeof(*sky), _Alignof(qaw_source_sky), error);
+    if (!sky) return false;
+    *sky = (qaw_source_sky){world, materials, *input};
+    context->source_surface = source_sky_end; context->source_surface_context = sky; return true;
+}
+
+static bool submit_material_sky(const qa_scene_world *world, qa_material_library *materials, const qa_material *original,
                              const qa_material *material, const qa_scene_mesh *mesh,
                              const qa_material_context *context, const qa_scene_world_input *input,
                              qa_scene_frame *frame, qa_error *error) {
+    if (context->source_primitives && input->fast_sky) return true;
     qa_scene_mesh transformed = *mesh;
-    if (mesh->vertex_count) {
+    if (mesh->vertex_count && !context->source_scratch) {
         qa_scene_vertex *vertices = qa_arena_alloc(&frame->storage, mesh->vertex_count * sizeof(*vertices),
                                                   _Alignof(qa_scene_vertex), error);
         if (!vertices) return false;
@@ -360,18 +390,24 @@ bool qaw_submit_material_sky(const qa_scene_world *world, const qa_material *ori
                                input->sky_rotation != 0, (qa_scene_vec4){1,1,1,1}, error);
     }
     float far_clip = 2048;
-    for (unsigned i = 0; i < 8; ++i) {
+    for (unsigned i = 0; world && i < 8; ++i) {
         qa_vec3 point = qa_v3(i & 1 ? world->bounds.maxs.x : world->bounds.mins.x,
                               i & 2 ? world->bounds.maxs.y : world->bounds.mins.y,
                               i & 4 ? world->bounds.maxs.z : world->bounds.mins.z);
         far_clip = fmaxf(far_clip, qa_vec_length(qa_vec_sub(point, context->view.origin)));
     }
+    if (context->source_scratch) far_clip = input->source_far_clip;
     qa_scene_sky_geometry geometry;
     if (!qa_scene_q3_sky_geometry(frame, context->view.origin, far_clip,
-        qa_material_library_cloud_height(world->materials), bounds, &geometry, error)) return false;
+        qa_material_library_cloud_height(materials), bounds, &geometry, error)) return false;
     qa_material_context sky_context = *context;
-    qa_scene_matrix_identity(&sky_context.model);
-    sky_context.local_view_origin = context->view.origin;
+    sky_context.source_writer = QA_SOURCE_WRITE_CLOUD;
+    sky_context.source_grid_columns = sky_context.source_grid_rows = 0;
+    sky_context.source_sky_depth = true;
+    if (!context->source_scratch) {
+        qa_scene_matrix_identity(&sky_context.model);
+        sky_context.local_view_origin = context->view.origin;
+    }
     sky_context.light_mask = 0;
     static const unsigned sky_image_order[6] = {0, 2, 1, 3, 4, 5};
     for (unsigned i = 0; i < 6; ++i) {
@@ -379,14 +415,17 @@ bool qaw_submit_material_sky(const qa_scene_world *world, const qa_material *ori
         if (!geometry.visible[i] || !image) continue;
         qa_scene_draw draw = {0};
         draw.mesh = geometry.faces[i]; draw.model = sky_context.model;
-        draw.mvp = qa_scene_matrix_multiply(context->view.projection, qa_scene_view_matrix(&context->view));
+        draw.mvp = qa_scene_matrix_multiply(context->view.projection,
+            qa_scene_matrix_multiply(qa_scene_view_matrix(&context->view), sky_context.model));
         draw.textures[0] = image; draw.texture_count = 1;
         draw.entity = context->entity; draw.fog_index = context->fog_index;
         draw.sort_key = ((uint64_t)original->sorted_index << 17) | ((uint64_t)context->entity << 7) |
-                        ((uint64_t)context->fog_index << 2) | (context->light_mask != 0 ? 1u : 0u);
+                        ((uint64_t)context->fog_index << 2) |
+                        ((context->source_scratch ? context->source_dlighted : context->light_mask != 0) ? 1u : 0u);
         draw.environment = QA_TEXTURE_MODULATE;
         qa_scene_state_default(&draw.state);
-        draw.state.cull = QA_CULL_NONE; draw.state.depth_near = draw.state.depth_far = 1;
+        draw.state.cull = QA_CULL_NONE;
+        draw.state.depth_near = draw.state.depth_far = context->source_scratch && context->source_diagnostics.show_sky ? 0 : 1;
         qa_scene_vertex *vertices = qa_arena_alloc(&frame->storage, draw.mesh.vertex_count * sizeof(*vertices),
                                                   _Alignof(qa_scene_vertex), error);
         if (!vertices) return false;
@@ -396,19 +435,29 @@ bool qaw_submit_material_sky(const qa_scene_world *world, const qa_material *ori
         draw.mesh.vertices = vertices;
         if (!qa_scene_frame_draw(frame, &draw, error)) return false;
     }
-    if (geometry.clouds.index_count) {
+    if (geometry.clouds.index_count || context->source_scratch) {
         size_t first = frame->command_count;
-        if (!qa_material_submit(original, &geometry.clouds, &sky_context, frame, error)) return false;
+        qa_scene_mesh clouds = geometry.clouds;
+        if (context->source_scratch && !material->sky_height) clouds = (qa_scene_mesh){.primitive = QA_SCENE_TRIANGLES};
+        if (!qa_material_submit(original, &clouds, &sky_context, frame, error)) return false;
         for (size_t i = first; i < frame->command_count; ++i) if (frame->commands[i].kind == QA_SCENE_COMMAND_DRAW)
-            frame->commands[i].data.draw.state.depth_near = frame->commands[i].data.draw.state.depth_far = 1;
+            frame->commands[i].data.draw.state.depth_near = frame->commands[i].data.draw.state.depth_far =
+                context->source_scratch && context->source_diagnostics.show_sky ? 0 : 1;
     }
     return true;
+}
+bool qaw_submit_material_sky(const qa_scene_world *world, const qa_material *original,
+    const qa_material *material, const qa_scene_mesh *mesh, const qa_material_context *context,
+    const qa_scene_world_input *input, qa_scene_frame *frame, qa_error *error)
+{
+    return submit_material_sky(world, world->materials, original, material, mesh, context, input, frame, error);
 }
 
 bool qaw_submit_q3(qa_scene_world *world, qaw_surface *surface, const qa_material_context *context,
                    const qa_scene_world_input *input, qa_scene_frame *frame, qa_error *error) {
-    if (surface->skip) return true;
-    if (surface->flare) {
+    bool empty_source = context->source_scratch && (surface->skip || surface->flare);
+    if (surface->skip && !empty_source) return true;
+    if (surface->flare && !empty_source) {
         if (!input->flare) return true;
         qa_bsp_surface source;
         if (!qa_bsp_read_surface(&world->bsp, surface->source_index, &source, error)) return false;
@@ -418,6 +467,7 @@ bool qaw_submit_q3(qa_scene_world *world, qaw_surface *surface, const qa_materia
                             source.lightmap_vectors[0], normal, &context->view, frame, error);
     }
     qa_material_context local = *context;
+    local.source_dlight_before_overflow = surface->type == QA_BSP_SURFACE_TRIANGLES;
     local.lightmap = surface->lightmap;
     const q3_data *data = world->q3_data;
     if (surface->fog_index && surface->fog_index - 1 < data->fog_count && data->fogs[surface->fog_index - 1].active) {
@@ -426,17 +476,25 @@ bool qaw_submit_q3(qa_scene_world *world, qaw_surface *surface, const qa_materia
         local.fog_has_surface = fog->has_surface; local.fog_surface = fog->surface;
     }
     qa_scene_mesh mesh = surface->mesh;
-    if (surface->patch && !qaw_patch_lod(surface, &local, input->curve_error, frame, &mesh, error)) return false;
+    if (empty_source) mesh = (qa_scene_mesh){.primitive = QA_SCENE_TRIANGLES};
+    if (surface->patch && !empty_source && !qaw_patch_lod(surface, &local, input->curve_error, frame, &mesh, error)) return false;
     const qa_material *material = surface->material;
-    for (size_t hop = 0; material->remapped; ++hop) {
-        if (hop >= 16384) {
-            qa_error_set(error, QA_ERROR_FORMAT, surface->source_index, "Q3 material remap chain contains a cycle");
-            return false;
-        }
-        material = material->remapped;
+    if (material->remapped) material = material->remapped;
+    if (local.source_scratch) {
+        local.source_writer = QA_SOURCE_WRITE_BSP_NORMAL;
+        local.source_default_material = qa_material_find(world->materials, "*default");
     }
-    if (material->surface_flags & 0x80u) return true;
-    if (material->sky) return qaw_submit_material_sky(world, surface->material, material, &mesh, &local, input, frame, error);
+    if ((material->surface_flags & 0x80u) && !local.source_scratch) return true;
+    if (material->sky) {
+        if (local.source_scratch) {
+            qaw_source_sky *sky = qa_arena_alloc(&frame->storage, sizeof(*sky), _Alignof(qaw_source_sky), error);
+            if (!sky) return false;
+            *sky = (qaw_source_sky){world, world->materials, *input};
+            local.source_surface = source_sky_end; local.source_surface_context = sky;
+            return qa_material_submit(surface->material, &mesh, &local, frame, error);
+        }
+        return qaw_submit_material_sky(world, surface->material, material, &mesh, &local, input, frame, error);
+    }
     return qa_material_submit(surface->material, &mesh, &local, frame, error);
 }
 

@@ -388,6 +388,45 @@ static void udp_close(void *context)
     free(state);
 }
 
+bool qa_net_udp_policy_read(const qa_net_transport *transport, qa_net_udp_policy *out,
+                            bool *present, qa_error *error)
+{
+    if (!transport || !out || !present)
+        return fail(error, QA_ERROR_ARGUMENT, "Missing native UDP policy observation");
+    *out = (qa_net_udp_policy){0};
+    *present = false;
+    if (transport->ops.send != udp_send || transport->ops.receive != udp_receive ||
+        transport->ops.close != udp_close) return true;
+    const udp_state *state = transport->state;
+    if (!state || state->fd < 0)
+        return fail(error, QA_ERROR_ARGUMENT, "Native UDP socket is not retained");
+    struct sockaddr_storage address;
+    socklen_t size = sizeof(address);
+    if (getsockname(state->fd, (struct sockaddr *)&address, &size) < 0) {
+        qa_error_set(error, QA_ERROR_IO, 0, "Reading UDP bound address: %s", strerror(errno));
+        return false;
+    }
+    qa_net_udp_policy actual = {0};
+    if (!from_sockaddr((const struct sockaddr *)&address, size, &actual.bound) ||
+        !qa_net_address_equal(&actual.bound, &transport->address, true) ||
+        address.ss_family != (state->ipv6 ? AF_INET6 : AF_INET))
+        return fail(error, QA_ERROR_ARGUMENT, "Native UDP bound address changed");
+    if (state->ipv6) {
+        int enabled = 0;
+        size = sizeof(enabled);
+        if (getsockopt(state->fd, IPPROTO_IPV6, IPV6_V6ONLY, &enabled, &size) < 0) {
+            qa_error_set(error, QA_ERROR_IO, 0, "Reading UDP IPv6 policy: %s", strerror(errno));
+            return false;
+        }
+        if (size != sizeof(enabled) || (enabled != 0 && enabled != 1))
+            return fail(error, QA_ERROR_FORMAT, "Native UDP IPv6 policy is invalid");
+        actual.ipv6_only = enabled != 0;
+    }
+    *out = actual;
+    *present = true;
+    return true;
+}
+
 bool qa_net_udp_open(const qa_net_udp_options *options, qa_net_transport **out, qa_error *error)
 {
     if (options == NULL || out == NULL || !valid_address(&options->bind) ||

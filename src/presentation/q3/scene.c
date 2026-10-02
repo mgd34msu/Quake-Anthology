@@ -10,6 +10,7 @@ bool qa_q3_presentation_clear(qa_q3_presentation *p, qa_error *error)
 {
     if (!q3p_begin(p, error)) return false;
     p->entity_count = p->polygon_count = p->vertex_count = p->light_count = 0;
+    if (p->options.scene_cleared) p->options.scene_cleared(p->options.context);
     return q3p_end(p, true);
 }
 

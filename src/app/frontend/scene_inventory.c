@@ -1,6 +1,9 @@
 #include "scene_inventory.h"
 #include "visual_restore.h"
 #include "equipment_media.h"
+#include "remote_q3_client.h"
+#include "remote_q1_client.h"
+#include "remote_q2_client.h"
 #include "qa/q3_assets_save.h"
 #include "qa/scene_resource_save.h"
 #include "qa/material_library_save.h"
@@ -86,6 +89,33 @@ static bool producers(frontend_scene_inventory *inventory,sources *rows,qa_error
         if (!frontend_source_group_read(f,i,&group) ||
             (!group.map_resource!=!group.geometry) || (!group.map_resource!=!group.world) ||
             (group.world && !world_bind(inventory,group.world,group.map_resource,group.mounts,error))) return false;
+    }
+    for(size_t i=0;i<frontend_remote_q3_count(f);++i) {
+        frontend_remote_q3_resources owner;
+        if(!frontend_remote_q3_resources_read(frontend_remote_q3_at(f,i),&owner,error) ||
+            !owner.map || !owner.geometry || !owner.world ||
+            !world_bind(inventory,owner.world,owner.map,owner.mounts,error)) return false;
+    }
+    for(size_t i=0;i<frontend_remote_q1_count(f);++i) {
+        frontend_remote_q1 *owner=frontend_remote_q1_at(f,i); frontend_remote_q1_media media;
+        if(!frontend_remote_q1_media_read(owner,&media,error) ||
+            !world_bind(inventory,media.world,media.map,media.mounts,error)) return false;
+        for(size_t j=0;j<frontend_remote_q1_model_count(owner);++j) {
+            frontend_remote_q1_model_view model;
+            if(!frontend_remote_q1_model_at(owner,j,&model,error) ||
+                (model.world?!world_bind(inventory,model.world,model.resource,media.mounts,error):
+                    !model_add(rows,(frontend_model_source){model.model,model.resource,media.mounts},error))) return false;
+        }
+    }
+    for(size_t i=0;i<frontend_remote_q2_count(f);++i) {
+        frontend_remote_q2 *owner=frontend_remote_q2_at(f,i); frontend_remote_q2_view media;
+        if(!frontend_remote_q2_metadata_read(owner,&media,error) ||
+            !world_bind(inventory,media.world,media.map,media.content.mounts,error)) return false;
+        for(size_t j=0;j<frontend_remote_q2_model_count(owner);++j) {
+            frontend_remote_q2_model_view model;
+            if(!frontend_remote_q2_model_at(owner,j,&model,error) ||
+                !model_add(rows,(frontend_model_source){model.model,model.resource,media.content.mounts},error)) return false;
+        }
     }
     for (size_t i=0;i<frontend_visual_owner_count(f);++i) {
         frontend_visual_owner_view owner;

@@ -9,6 +9,7 @@ typedef struct frontend_shared_ui frontend_shared_ui;
 bool frontend_shared_ui_prepare(qa_frontend *,const qa_cvars_edit *,
     frontend_shared_ui **,qa_error *);
 bool frontend_shared_ui_ready(const frontend_shared_ui *,qa_error *);
+bool frontend_shared_ui_ready_is(const frontend_shared_ui *);
 void frontend_shared_ui_publish(frontend_shared_ui *);
 /* After final successful ready, publish and consume every UI/caption lease
  * before source retirement or Init. The held boundary must not change between

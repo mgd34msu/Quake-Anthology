@@ -38,6 +38,7 @@ struct qa_bot_character {
 };
 struct qa_bot_weapons {
     atomic_uint references;
+    struct bot_weapon_resource *source;
     qa_arena arena;
     qa_bot_weapons_view view;
     qa_bot_weapon_info *weapons;
@@ -55,6 +56,7 @@ struct qa_bot_weapon_selector {
     qa_bot_weapons *config;
     qa_bot_weights *weights;
     int32_t *indices;
+    uint32_t index_count;
     qa_bot_weight_workspace *workspace;
 };
 struct qa_bot_library {

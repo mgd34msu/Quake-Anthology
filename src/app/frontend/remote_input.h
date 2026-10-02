@@ -16,6 +16,9 @@ typedef struct frontend_remote_input_source {
     /* Actual Q3-view speed registry. Foreign selected movement may have a
      * distinct view owner while both builders share this same mouse owner. */
     const qa_cvars *movement_settings;
+    /* Actual completed native CLIENT content/media owner. Acquired modules
+     * complete their own Init while the physical native receiver stays cold. */
+    const void *media_owner;
     qa_input_command_frame frame;
     qa_vec3 initial_angles;
     bool has_initial_angles;
@@ -27,7 +30,10 @@ typedef struct frontend_remote_input_options {
      * initial angles come from actual snapshot viewangles minus deltaAngles. */
     bool (*source_read)(void *, frontend_remote_input_source *, bool *present, qa_error *);
     /* Qualify the retained connection/epoch, complete receiver lifetime,
-     * private input registry and command clock before adopting a command. */
+     * private input registry and command clock before adopting a command.
+     * Native raw input also requires the exact media owner and its completed
+     * media-current proof at this idle build boundary. Entered presentation
+     * prediction qualifies its own frame receipt separately. */
     bool (*source_current)(void *, const frontend_remote_input_source *);
 } frontend_remote_input_options;
 

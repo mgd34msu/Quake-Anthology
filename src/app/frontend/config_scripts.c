@@ -61,11 +61,22 @@ static bool product_loose_mount(frontend_config_files *owner,const qa_product *p
     return qa_vfs_mount_root(owner->console,*out)==root ||
         fail(error,QA_ERROR_FORMAT,"Configuration mount lost its actual product loose capability");
 }
-static bool actual_roots(frontend_config_files *owner,const char *user_root,
+static bool writable_store(qa_settings_store store)
+{
+    if (!store.vfs || !store.mount || !qa_vfs_mount_root(store.vfs,store.mount)) return false;
+    for (size_t i=0;i<qa_vfs_mount_count(store.vfs);++i) {
+        qa_vfs_mount_info mount;
+        if (!qa_vfs_mount_at(store.vfs,i,&mount)) return false;
+        if (mount.id==store.mount) return mount.writable && !mount.is_archive &&
+            mount.comparison==QA_ARCHIVE_CASE_INSENSITIVE;
+    }
+    return false;
+}
+static bool actual_roots(frontend_config_files *owner,qa_settings_store user_store,qa_settings_store devices,
     const qa_product *selected,const qa_product *base,qa_error *error)
 {
-    if (!qa_fs_path_create_directory(user_root,error) ||
-        !qa_vfs_mount_directory(owner->console,user_root,QA_ARCHIVE_CASE_INSENSITIVE,true,&owner->shared,error)) return false;
+    if (!qa_vfs_mount_retained(owner->console,user_store.vfs,user_store.mount,
+        QA_ARCHIVE_CASE_INSENSITIVE,true,&owner->shared,error)) return false;
     qa_fs_root *user=qa_vfs_mount_root(owner->console,owner->shared);
     if (!product_user_mount(owner,user,selected,&owner->writable,error)) return false;
     if (selected==base) owner->base_writable=owner->writable;
@@ -76,8 +87,8 @@ static bool actual_roots(frontend_config_files *owner,const char *user_root,
     if (script_base==selected) owner->script_base_user=owner->writable;
     else if (script_base==base) owner->script_base_user=owner->base_writable;
     else if (!product_user_mount(owner,user,script_base,&owner->script_base_user,error)) return false;
-    if (!qa_fs_root_create_directory(user,"console",error) ||
-        !child_mount(owner,user,"console",true,&owner->console_writable,error)) return false;
+    if (!qa_vfs_mount_retained(owner->console,devices.vfs,devices.mount,
+        QA_ARCHIVE_CASE_INSENSITIVE,true,&owner->console_writable,error)) return false;
     bool ok=product_loose_mount(owner,selected,&owner->loose,error);
     if (selected==base) owner->base_loose=owner->loose;
     else if (ok) ok=product_loose_mount(owner,base,&owner->base_loose,error);
@@ -87,11 +98,12 @@ static bool actual_roots(frontend_config_files *owner,const char *user_root,
     return ok;
 }
 frontend_config_files *frontend_config_files_create(qa_catalog *catalog,qa_product_id product,
-    const char *user_root,const char *content_root,qa_error *error)
+    qa_settings_store user,qa_settings_store devices,qa_error *error)
 {
     const qa_product *selected=qa_catalog_product(catalog,product);
-    if (!selected || !user_root || !*user_root || !content_root || !*content_root)
-        return fail(error,QA_ERROR_ARGUMENT,"Configuration requires its actual selected product and configured roots"),NULL;
+    if (!selected || !writable_store(user) || !writable_store(devices) ||
+        qa_fs_root_same_object(qa_vfs_mount_root(user.vfs,user.mount),qa_vfs_mount_root(devices.vfs,devices.mount)))
+        return fail(error,QA_ERROR_ARGUMENT,"Configuration requires its actual selected product and retained global stores"),NULL;
     const qa_product *base=selected; size_t depth=0;
     qa_product_id ancestor;
     while ((ancestor=qa_catalog_configuration_base(catalog,base->id))!=QA_PRODUCT_NONE) {
@@ -105,7 +117,7 @@ frontend_config_files *frontend_config_files_create(qa_catalog *catalog,qa_produ
     if (ok && base->id==product) owner->base_files=owner->selected;
     else if (ok) ok=qa_catalog_open(catalog,base->id,&owner->base_files,error);
     if (ok) owner->console=qa_vfs_create(qa_catalog_resources(catalog),error);
-    if (ok) ok=owner->console && actual_roots(owner,user_root,selected,base,error);
+    if (ok) ok=owner->console && actual_roots(owner,user,devices,selected,base,error);
     if (!ok) { frontend_config_files_destroy(owner,NULL); return NULL; }
     return owner;
 }
@@ -138,6 +150,23 @@ qa_product_id frontend_config_files_product(const frontend_config_files *owner) 
 qa_catalog *frontend_config_files_catalog(const frontend_config_files *owner) { return owner?owner->catalog:NULL; }
 qa_settings_store frontend_config_files_store(const frontend_config_files *owner,bool base)
 { return owner?(qa_settings_store){owner->console,base?owner->base_writable:owner->writable}:(qa_settings_store){0}; }
+qa_settings_store frontend_config_files_shared_store(const frontend_config_files *owner)
+{ return owner?(qa_settings_store){owner->console,owner->shared}:(qa_settings_store){0}; }
+qa_settings_store frontend_config_files_device_store(const frontend_config_files *owner)
+{ return owner?(qa_settings_store){owner->console,owner->console_writable}:(qa_settings_store){0}; }
+bool frontend_config_files_global_current(const frontend_config_files *owner,qa_settings_store user,qa_settings_store devices)
+{
+    return owner && writable_store(user) && writable_store(devices) &&
+        writable_store(frontend_config_files_shared_store(owner)) &&
+        writable_store(frontend_config_files_device_store(owner)) &&
+        qa_fs_root_same_object(qa_vfs_mount_root(owner->console,owner->shared),qa_vfs_mount_root(user.vfs,user.mount)) &&
+        qa_fs_root_same_object(qa_vfs_mount_root(owner->console,owner->console_writable),qa_vfs_mount_root(devices.vfs,devices.mount));
+}
+qa_fs_root *frontend_config_files_shared_root(const frontend_config_files *owner)
+{
+    qa_settings_store store=frontend_config_files_shared_store(owner);
+    return store.vfs?qa_vfs_mount_root(store.vfs,store.mount):NULL;
+}
 qa_fs_root *frontend_config_files_root(const frontend_config_files *owner,bool base)
 {
     qa_settings_store store=frontend_config_files_store(owner,base);

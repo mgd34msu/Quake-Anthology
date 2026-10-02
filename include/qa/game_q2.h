@@ -109,6 +109,14 @@ typedef struct qa_q2_weapon_state {
     qa_string_id loop_sound, view_model;
 } qa_q2_weapon_state;
 
+/* Weapon-only selected actors retain their own ClientThink/BeginServerFrame
+ * continuation. Admitted Q2 clients use the corresponding player fields. */
+typedef struct qa_q2_weapon_turn_state {
+    bool attack, latched_attack, weapon_thunk;
+    qa_q2_weapon firing_weapon;
+    double firing_credit;
+} qa_q2_weapon_turn_state;
+
 typedef struct qa_q2_weapon_presentation {
     qa_actor_id actor;
     qa_q2_weapon weapon;
@@ -196,6 +204,9 @@ typedef struct qa_q2_hand_grenade_input {
     qa_q2_hand_lifecycle lifecycle;
     void *project_context;
     qa_q2_hand_projection_fn project;
+    void *interval_context;
+    bool (*interval)(void *, qa_actor_id, uint64_t native_ns, uint64_t *, bool *handled,
+                     qa_error *);
 } qa_q2_hand_grenade_input;
 
 typedef struct qa_q2_options {
@@ -246,12 +257,23 @@ typedef struct qa_q2_hooks {
     bool (*prepare_damage)(void *, qa_damage_request *, bool *allowed, qa_error *);
     /* Capture the actual selected inventory before a projectile retains its attack. */
     qa_actor_owner (*inventory_provider)(void *, qa_actor_id, qa_item_id);
+    /* Rerelease EndDMLevel publishes its actual shuffled Source map list.
+     * The installed source owner also refreshes the GAME rotation cache. */
+    bool (*rotation_changed)(void *, const qa_string_id *, size_t, qa_error *);
     bool (*weapon_view)(void *, const qa_q2_weapon_presentation *, qa_error *);
     bool (*noise)(void *, qa_actor_id, qa_vec3, bool secondary, qa_error *);
     bool (*ammo_changed)(void *, qa_actor_id, qa_item_id, qa_error *);
+    bool (*equipment_animation)(void *, qa_actor_id, bool reverse, bool *handled, qa_error *);
+    /* One completed source shot or throw, with its registered weapon item. */
+    bool (*fired)(void *, qa_actor_id, qa_item_id, qa_error *);
     float (*quad_multiplier)(void *, qa_actor_id);
     float (*damage_multiplier)(void *, qa_actor_id);
+    bool (*source_damage_factor)(void *, qa_actor_id, float *, bool *handled, qa_error *);
+    bool (*source_weapon_powerups)(void *, qa_actor_id, qa_builtin_powerups *, bool *handled, qa_error *);
+    bool (*selected_weapon_input)(void *, qa_actor_id, qa_q2_weapon_input *, qa_error *);
     uint64_t (*firing_interval)(void *, qa_actor_id, uint64_t);
+    bool (*selected_firing_interval)(void *, qa_actor_id, uint64_t native_ns, uint64_t *,
+                                     bool *handled, qa_error *);
     bool (*can_target)(void *, qa_actor_id, qa_actor_id);
     bool (*tracker_pain)(void *, qa_actor_id, uint64_t until_ns, qa_error *);
     bool (*invisibility_reveal)(void *, qa_actor_id, uint64_t until_ns, qa_error *);
@@ -289,6 +311,11 @@ bool qa_q2_begin_map(qa_q2_game *, qa_string_id map_name, qa_string_id spawn_poi
 bool qa_q2_timed_invulnerability(qa_q2_game *, qa_actor_id);
 bool qa_q2_powerups_present(qa_q2_game *, qa_actor_id);
 const qa_q2_weapon_definition *qa_q2_weapon_definition_at(const qa_q2_game *, qa_q2_weapon);
+/* The original public CLIENT UI matches its gun model against the immutable
+ * base source catalog, independently of a selected compiled GAME. */
+const qa_q2_weapon_definition *qa_q2_base_weapon_view_model(const char *);
+const char *qa_q2_weapon_display_name(qa_q2_weapon);
+bool qa_q2_weapon_definition_ordinal(const qa_q2_game *, qa_q2_weapon, size_t *);
 qa_q2_weapon qa_q2_weapon_from_classname(const qa_q2_game *, const char *);
 bool qa_q2_weapon_bind(qa_q2_game *, qa_actor_id, qa_q2_weapon, qa_error *);
 bool qa_q2_weapon_read(qa_q2_game *, qa_actor_id, qa_q2_weapon_state *, qa_error *);
@@ -304,6 +331,14 @@ bool qa_q2_weapon_can_drop(qa_q2_game *, qa_actor_id, qa_q2_weapon, bool *, qa_e
  * existing weapon checkpoint owns both the controls and the pending edge. */
 bool qa_q2_weapon_controls(qa_q2_game *, qa_actor_id, const qa_q2_weapon_input *, qa_error *);
 bool qa_q2_weapon_controls_read(qa_q2_game *, qa_actor_id, qa_q2_weapon_input *, qa_error *);
+/* Source command slices latch their own attack edge and may execute one early
+ * turn using the selected GAME's current source time and frame duration. */
+bool qa_q2_weapon_early_turn(qa_q2_game *, qa_actor_id, const qa_q2_weapon_input *, qa_error *);
+bool qa_q2_weapon_turn_read(qa_q2_game *, qa_actor_id, qa_q2_weapon_turn_state *, qa_error *);
+/* The actual selected source frame consumes an early turn or executes its
+ * ordinary turn; it does not suppress subsequent command slices by frame ID. */
+bool qa_q2_weapon_frame(qa_q2_game *, qa_actor_id, const qa_q2_weapon_input *, uint64_t now_ns,
+                         uint64_t frame_ns, qa_error *);
 /* Called in the owning actor's source turn, regardless of its character family.
  * Exact integer source times avoid per-frame conversion and drifting deadlines. */
 bool qa_q2_weapon_tick(qa_q2_game *, qa_actor_id, const qa_q2_weapon_input *, uint64_t now_ns,
@@ -389,6 +424,7 @@ typedef struct qa_q2_actor_checkpoint {
     bool weapon_bound, physics_bound;
     qa_q2_weapon_state weapon;
     qa_q2_weapon_input input;
+    qa_q2_weapon_turn_state weapon_turn;
     int silencer;
     qa_physics_properties physics;
     qa_q2_saved_reference physics_enemy, physics_goal;

@@ -1,4 +1,5 @@
 #include "network_q1_source.h"
+#include "native_q1_wire.h"
 #include "qa/application_network.h"
 
 struct application_qc_state *application_network_q1_qc_source(qa_application *app,
@@ -96,6 +97,9 @@ bool qa_application_network_q1_host_source(qa_application *app,
     qa_application_network_q1_host *out, qa_error *error)
 {
     if (!out) return application_fail(error, QA_ERROR_ARGUMENT, "Missing Q1 primary source observation");
+    application_provider *primary = app ? application_world_provider(app, QA_ROLE_ENTITIES, "") : NULL;
+    if (primary && primary->kind == APPLICATION_PROVIDER_Q1)
+        return application_native_q1_wire_host(app, out, error);
     struct application_qc_state *engine = application_network_q1_qc_source(app, 0, error);
     if (!engine) return false;
     *out = (qa_application_network_q1_host){.owner = engine->provider->owner,

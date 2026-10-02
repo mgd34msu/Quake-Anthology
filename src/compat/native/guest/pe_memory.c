@@ -1,4 +1,5 @@
 #include "pe_memory.h"
+#include "internal.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -6,8 +7,29 @@ struct guest_pe_memory {
     guest_pe_memory_view view;
     qa_native_guest *guest;
     uint64_t *mappings;
-    bool complete;
+    size_t attached_bytes;
+    bool complete, borrowed;
 };
+
+static bool attachment(const guest_pe_memory *owner, uint64_t id, uint64_t base,
+    uint64_t backing_id, uint64_t bytes, qa_error *error)
+{
+    qa_native_guest *guest = owner->guest;
+    guest_backing *backing = guest_backing_at(guest, backing_id);
+    qa_native_guest_mapping *anchor = guest_mapping(guest, base);
+    if (!bytes || bytes > UINT64_MAX - base || bytes % QA_NATIVE_GUEST_PAGE || !backing || backing->file || backing->bytes != bytes ||
+        !anchor || anchor->id != id || anchor->base != base || anchor->backing != backing_id || anchor->backing_offset)
+        return guest_fail(error, QA_ERROR_FORMAT, base, "PE attachment has no actual original backing anchor");
+    size_t offset = 0;
+    while (offset < bytes) {
+        qa_native_guest_mapping *mapping = guest_mapping(guest, base + offset);
+        if (!mapping || mapping->base != base + offset || mapping->backing != backing_id ||
+            mapping->backing_offset != offset || mapping->bytes > bytes - offset)
+            return guest_fail(error, QA_ERROR_FORMAT, base + offset, "PE attachment fragments differ from their actual retained backing");
+        offset += (size_t)mapping->bytes;
+    }
+    return true;
+}
 
 static bool fail(qa_error *error, qa_status code, uint64_t address, const char *message)
 {
@@ -107,24 +129,45 @@ bool guest_pe_memory_close(guest_pe_memory **owner, qa_error *error)
     if (!owner) return fail(error, QA_ERROR_ARGUMENT, 0, "PE memory owner is required");
     if (!*owner) return true;
     guest_pe_memory *memory = *owner;
-    if (!qa_native_guest_destroy(&memory->guest, error)) return false;
+    if (memory->borrowed) {
+        if (memory->attached_bytes && !qa_native_guest_unmap_range(memory->guest,
+            memory->view.base, memory->attached_bytes, error)) return false;
+    } else if (!qa_native_guest_destroy(&memory->guest, error)) return false;
     free(memory->mappings); free(memory); *owner = NULL;
     return true;
 }
 
-bool guest_pe_memory_open(const guest_pe *pe, const qa_native_guest_options *options,
-    guest_pe_memory **out, qa_error *error)
+static bool install(const guest_pe *pe, const qa_native_guest_options *options,
+    qa_native_guest *borrowed, guest_pe_memory **out, qa_error *error)
 {
     const guest_pe_view *image = guest_pe_describe(pe);
-    if (!image || !options || !out || *out || !image_equal(&image->image, &options->image))
+    bool compatible = image && options && (borrowed ?
+        image->image.target.os == options->image.target.os &&
+        image->image.target.arch == options->image.target.arch &&
+        image->image.target.abi == options->image.target.abi &&
+        image->image.target.pointer_bytes == options->image.target.pointer_bytes :
+        image_equal(&image->image, &options->image));
+    if (!compatible || !out || *out)
         return fail(error, QA_ERROR_ARGUMENT, 0, "PE memory requires its actual image identity and empty output");
+    if (borrowed && !guest_mutable(borrowed, error)) return false;
     guest_pe_memory *owner = calloc(1, sizeof(*owner));
     if (!owner) return fail(error, QA_ERROR_MEMORY, 0, "allocating PE memory owner");
+    owner->borrowed = borrowed != NULL; owner->guest = borrowed;
     uint8_t *pages = NULL; qa_buffer initial = {0};
     bool okay = prepare(image, owner, &pages, &initial, error);
     size_t page_count = owner->view.bytes / QA_NATIVE_GUEST_PAGE, runs = 0;
     if (okay && owner->view.bytes > options->maximum_backing_bytes)
         okay = fail(error, QA_ERROR_ARGUMENT, image->base, "PE page backing exceeds admitted guest storage");
+    if (okay && borrowed) {
+        if (owner->view.bytes > options->maximum_backing_bytes - borrowed->backing_bytes)
+            okay = fail(error, QA_ERROR_MEMORY, image->base, "additional PE pages exceed actual remaining process backing");
+        for (size_t i = 0; okay && i < borrowed->mapping_count; ++i) {
+            const qa_native_guest_mapping *mapping = &borrowed->mappings[i];
+            if (image->base < mapping->base + mapping->bytes &&
+                mapping->base < image->base + owner->view.bytes)
+                okay = fail(error, QA_ERROR_ARGUMENT, image->base, "additional PE image overlaps actual process storage");
+        }
+    }
     if (okay) {
         for (size_t at = 0; at < page_count; ++at)
             if (!at || pages[at] != pages[at - 1]) ++runs;
@@ -136,7 +179,7 @@ bool guest_pe_memory_open(const guest_pe *pe, const qa_native_guest_options *opt
             owner->view.mappings = owner->mappings;
         }
     }
-    if (okay) okay = qa_native_guest_create(options, &owner->guest, error);
+    if (okay && !borrowed) okay = qa_native_guest_create(options, &owner->guest, error);
     for (size_t at = 0; okay && at < page_count; ) {
         size_t end = at + 1;
         while (end < page_count && pages[end] == pages[at]) ++end;
@@ -147,23 +190,140 @@ bool guest_pe_memory_open(const guest_pe *pe, const qa_native_guest_options *opt
         qa_native_guest_mapping mapping;
         okay = qa_native_guest_map(owner->guest, image->base + offset, length, pages[at],
             source, &mapping, error);
-        if (okay) owner->mappings[owner->view.mapping_count++] = mapping.id;
+        if (okay) {
+            owner->mappings[owner->view.mapping_count++] = mapping.id;
+            owner->attached_bytes += length;
+        }
         at = end;
     }
     free(pages);
     qa_buffer_free(&initial);
     if (!okay) {
-        /* No partial detach: the fresh candidate owns every installed run.
-         * Retain its CPU and backing on a real close failure for cleanup retry. */
+        /* A primary owns the whole candidate. A borrowed attachment may undo
+         * only its actual installed prefix before initialization. Dependency
+         * faults retain the guest and backing for real whole-process close. */
         qa_error cleanup = {0};
-        if (!guest_pe_memory_close(&owner, &cleanup)) {
-            if (error) *error = cleanup;
+        bool closed = true;
+        if (borrowed) {
+            if (borrowed->failed) closed = false;
+            else if (owner->attached_bytes) closed = qa_native_guest_unmap_range(borrowed,
+                image->base, owner->attached_bytes, &cleanup);
+            if (closed) { free(owner->mappings); free(owner); owner = NULL; }
+        } else closed = guest_pe_memory_close(&owner, &cleanup);
+        if (!closed) {
+            if (error && cleanup.code != QA_OK) *error = cleanup;
             *out = owner;
         }
         return false;
     }
     owner->complete = true; *out = owner;
     return true;
+}
+
+bool guest_pe_memory_open(const guest_pe *pe, const qa_native_guest_options *options,
+    guest_pe_memory **out, qa_error *error)
+{ return install(pe, options, NULL, out, error); }
+
+bool guest_pe_memory_attach(const guest_pe *pe, qa_native_guest *guest,
+    guest_pe_memory **out, qa_error *error)
+{
+    if (!guest) return fail(error, QA_ERROR_ARGUMENT, 0, "additional PE image needs its actual process guest");
+    return install(pe, &guest->options, guest, out, error);
+}
+
+void guest_pe_memory_abandon(guest_pe_memory **owner)
+{
+    if (!owner || !*owner || !(*owner)->borrowed) return;
+    free((*owner)->mappings); free(*owner); *owner = NULL;
+}
+
+bool guest_pe_memory_checkpoint(const guest_pe_memory *memory, qa_buffer *out, qa_error *error)
+{
+    if (!memory || !memory->complete || !qa_native_guest_idle(memory->guest) || !out || out->data || out->size ||
+        memory->view.mapping_count > (SIZE_MAX - 112) / 32)
+        return fail(error, QA_ERROR_ARGUMENT, 0, "PE attachment checkpoint requires complete idle ownership and empty output");
+    size_t bytes = 112 + memory->view.mapping_count * 32;
+    uint8_t *data = calloc(1, bytes);
+    if (!data) return fail(error, QA_ERROR_MEMORY, 0, "owning PE attachment checkpoint");
+    const qa_native_image_info *image = &memory->view.image;
+    memcpy(data, "QAPM", 4); qa_store_u32le(data + 4, 1);
+    qa_store_u32le(data + 8, image->format); qa_store_u32le(data + 12, image->target.os);
+    qa_store_u32le(data + 16, image->target.arch); qa_store_u32le(data + 20, image->target.abi);
+    data[24] = image->target.pointer_bytes; data[25] = memory->view.flat; data[26] = memory->borrowed;
+    qa_store_u64le(data + 32, image->preferred_base); qa_store_u64le(data + 40, image->image_bytes);
+    memcpy(data + 48, image->digest.bytes, sizeof(image->digest.bytes));
+    qa_store_u64le(data + 80, memory->view.base); qa_store_u64le(data + 88, memory->view.bytes);
+    qa_store_u64le(data + 96, memory->attached_bytes); qa_store_u64le(data + 104, memory->view.mapping_count);
+    uint64_t base = memory->view.base; bool okay = true;
+    for (size_t i = 0; okay && i < memory->view.mapping_count; ++i) {
+        qa_native_guest_mapping *mapping = guest_mapping(memory->guest, base);
+        guest_backing *backing = mapping ? guest_backing_at(memory->guest, mapping->backing) : NULL;
+        if (!mapping || !backing || backing->bytes > memory->view.bytes - (base - memory->view.base)) {
+            okay = fail(error, QA_ERROR_FORMAT, base, "PE attachment initial backing exceeds its actual owned span"); break;
+        }
+        uint64_t id = memory->mappings[i], length = backing->bytes;
+        okay = attachment(memory, id, base, mapping->backing, length, error);
+        uint8_t *record = data + 112 + i * 32;
+        qa_store_u64le(record, id); qa_store_u64le(record + 8, base);
+        qa_store_u64le(record + 16, mapping->backing); qa_store_u64le(record + 24, length);
+        base += length;
+    }
+    if (okay && (base - memory->view.base != memory->view.bytes || memory->attached_bytes != memory->view.bytes))
+        okay = fail(error, QA_ERROR_FORMAT, base, "PE attachment initial backings do not cover the complete image");
+    if (!okay) { free(data); return false; }
+    *out = (qa_buffer){data, bytes}; return true;
+}
+
+bool guest_pe_memory_adopt(const guest_pe *pe, qa_native_guest *guest, qa_bytes encoded,
+    bool primary, guest_pe_memory **out, qa_error *error)
+{
+    const guest_pe_view *image = guest_pe_describe(pe);
+    if (!image || !guest || !qa_native_guest_idle(guest) || !out || *out ||
+        !encoded.data || encoded.size < 112 || memcmp(encoded.data, "QAPM", 4) || qa_load_u32le(encoded.data + 4) != 1)
+        return fail(error, QA_ERROR_ARGUMENT, 0, "PE cold attachment requires its actual image, idle lower guest and typed record");
+    const uint8_t *data = encoded.data; qa_native_image_info saved = {0};
+    saved.format = (qa_native_image_format)qa_load_u32le(data + 8);
+    saved.target.os = (qa_native_os)qa_load_u32le(data + 12);
+    saved.target.arch = (qa_native_arch)qa_load_u32le(data + 16);
+    saved.target.abi = (qa_native_abi)qa_load_u32le(data + 20); saved.target.pointer_bytes = data[24];
+    saved.preferred_base = qa_load_u64le(data + 32); saved.image_bytes = qa_load_u64le(data + 40);
+    memcpy(saved.digest.bytes, data + 48, sizeof(saved.digest.bytes));
+    uint64_t base = qa_load_u64le(data + 80), bytes = qa_load_u64le(data + 88);
+    uint64_t attached = qa_load_u64le(data + 96), count = qa_load_u64le(data + 104);
+    size_t actual_bytes = 0;
+    if (!image_equal(&saved, &image->image) || base != image->base ||
+        !page_bytes(image->bytes.size, &actual_bytes, error) || bytes != actual_bytes || attached != bytes ||
+        data[25] != (image->section_alignment < QA_NATIVE_GUEST_PAGE) || data[26] != !primary ||
+        memcmp(data + 27, "\0\0\0\0\0", 5) ||
+        image->image.target.os != guest->options.image.target.os || image->image.target.arch != guest->options.image.target.arch ||
+        image->image.target.abi != guest->options.image.target.abi || image->image.target.pointer_bytes != guest->options.image.target.pointer_bytes ||
+        (primary && !image_equal(&image->image, &guest->options.image)) ||
+        !count || count > SIZE_MAX / sizeof(uint64_t) || count > (encoded.size - 112) / 32 ||
+        encoded.size - 112 != count * 32)
+        return fail(error, QA_ERROR_FORMAT, base, "PE cold attachment differs from its actual source identity or ownership");
+    guest_pe_memory *owner = calloc(1, sizeof(*owner));
+    if (!owner) return fail(error, QA_ERROR_MEMORY, base, "owning PE cold attachment");
+    owner->mappings = malloc((size_t)count * sizeof(*owner->mappings));
+    if (!owner->mappings) { free(owner); return fail(error, QA_ERROR_MEMORY, base, "owning PE cold attachment anchors"); }
+    owner->guest = guest; owner->borrowed = !primary; owner->attached_bytes = actual_bytes;
+    owner->view = (guest_pe_memory_view){saved, base, actual_bytes, data[25] != 0, owner->mappings, (size_t)count};
+    uint64_t address = base; bool okay = true;
+    for (size_t i = 0; okay && i < (size_t)count; ++i) {
+        const uint8_t *record = data + 112 + i * 32;
+        uint64_t id = qa_load_u64le(record), start = qa_load_u64le(record + 8);
+        uint64_t backing = qa_load_u64le(record + 16), length = qa_load_u64le(record + 24);
+        for (size_t j = 0; okay && j < i; ++j)
+            if (owner->mappings[j] == id || qa_load_u64le(data + 112 + j * 32 + 16) == backing)
+                okay = fail(error, QA_ERROR_FORMAT, start, "PE cold attachment repeats an original mapping or backing owner");
+        if (!okay) break;
+        if (start != address || length > bytes - (address - base))
+            okay = fail(error, QA_ERROR_FORMAT, start, "PE cold attachment backings have an invalid ordered extent");
+        else okay = attachment(owner, id, start, backing, length, error);
+        if (okay) { owner->mappings[i] = id; address += length; }
+    }
+    if (okay && address - base != bytes) okay = fail(error, QA_ERROR_FORMAT, address, "PE cold attachment omits image storage");
+    if (!okay) { free(owner->mappings); free(owner); return false; }
+    owner->complete = true; *out = owner; return true;
 }
 
 qa_native_guest *guest_pe_memory_guest(guest_pe_memory *owner)

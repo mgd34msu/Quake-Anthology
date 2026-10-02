@@ -122,7 +122,15 @@ static bool notify_motion(qa_q1_game *g, qa_actor_id actor, const qa_body_state 
     qa_builtin_motion_change change = {.reason = QA_BUILTIN_MOTION_LAUNCH, .body = *body};
     return g->services.motion_changed(g->services.context, actor, &change, error);
 }
-bool q1_power_frame(qa_q1_game *g, q1_player *player, qa_error *error) {
+static bool timer_current(qa_q1_game *game, qa_actor_id actor, q1_player *player,
+    qa_error *error) {
+    if (!game->destroy_pending && !game->continuation_pending &&
+        q1_player_get(game, actor) == player) return true;
+    qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot, "Q1 mission timer lost its actual player");
+    return false;
+}
+bool q1_power_frame(qa_q1_game *g, q1_player *player, double seconds,
+    uint64_t frame_ns, qa_error *error) {
     static const struct {
         qa_q1_power power;
         const char *warning, *lost, *sound;
@@ -131,34 +139,52 @@ bool q1_power_frame(qa_q1_game *g, q1_player *player, qa_error *error) {
                   {QA_Q1_SHIELD, "$qc_shield_failing", "$qc_shield_lost", "shield/fadeout.wav"},
                   {QA_Q1_ANTIGRAV, "$qc_antigrav_failing", "$qc_antigrav_lost", "belt/fadeout.wav"},
                   {QA_Q1_LAVA_SUIT, "$mg3_qc_lavasuit_wearing_out", "", "items/suit2.wav"}};
+    qa_actor_id actor = player->id;
     if (!q1_enable_combos(g, player, error))
         return false;
     if (!q1_alive(g, player->id))
         return true;
+    if (!timer_current(g, actor, player, error)) return false;
     for (size_t i = 0; i < sizeof(timers) / sizeof(*timers); ++i) {
         qa_q1_power power = timers[i].power;
         double expires = player->power_expires[power];
-        if (expires == 0)
+        if (!player->power_order[power])
             continue;
-        if (expires < g->time + 3 && !(player->power_warned & (1u << power))) {
+        if (expires < seconds + 3 && !(player->power_warned & (1u << power))) {
+            if (!q1_message(g, actor, timers[i].warning, error) ||
+                !timer_current(g, actor, player, error) ||
+                !q1_sound(g, actor, timers[i].sound, 0, 1, error) ||
+                !timer_current(g, actor, player, error))
+                return false;
             player->power_warned |= (uint16_t)(1u << power);
-            if (!q1_message(g, player->id, timers[i].warning, error) ||
-                (q1_alive(g, player->id) && !q1_sound(g, player->id, timers[i].sound, 0, 1, error)))
-                return false;
         }
         if (!q1_alive(g, player->id))
             return true;
-        if (expires < g->time + 3 && player->power_flash[power] < g->time) {
+        if (expires < seconds + 3 && player->power_flash[power] < seconds) {
             qa_body_state body;
-            player->power_flash[power] = g->time + 1;
-            if (!qa_world_body_read(g->services.world, player->id, &body, error) ||
-                !q1_effect(g, QA_BUILTIN_ITEM, player->id, body.origin, 0, 0, error))
+            if (!qa_world_body_read(g->services.world, actor, &body, error) ||
+                !timer_current(g, actor, player, error) ||
+                !q1_effect(g, QA_BUILTIN_ITEM, actor, body.origin, 0, 0, error) ||
+                !timer_current(g, actor, player, error))
                 return false;
+            player->power_flash[power] = seconds + 1;
         }
         if (!q1_alive(g, player->id))
             return true;
-        if (expires <= g->time && !q1_message(g, player->id, timers[i].lost, error))
-            return false;
+        if (expires <= seconds && !(player->power_lost & (1u << power))) {
+            if (!q1_message(g, actor, timers[i].lost, error) ||
+                !timer_current(g, actor, player, error)) return false;
+            player->power_lost |= (uint16_t)(1u << power);
+            if (power == QA_Q1_ANTIGRAV) {
+                if (!g->host.set_gravity) {
+                    qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot,
+                        "Q1 anti-gravity expiry requires selected gravity owner");
+                    return false;
+                }
+                if (!g->host.set_gravity(g->host.context, actor, 1, error) ||
+                    !timer_current(g, actor, player, error)) return false;
+            }
+        }
     }
     if (!q1_alive(g, player->id))
         return true;
@@ -173,17 +199,17 @@ bool q1_power_frame(qa_q1_game *g, q1_player *player, qa_error *error) {
     }
     if (!q1_alive(g, player->id))
         return true;
-    if (player->power_expires[QA_Q1_WETSUIT] > g->time) {
-        player->air_finished = player->character_state.air_until = g->time + 12;
+    if (player->power_expires[QA_Q1_WETSUIT] > seconds) {
+        player->air_finished = player->character_state.air_until = seconds + 12;
         if (water >= 2) {
-            if (player->scuba_at < g->time) {
-                player->scuba_at = g->time + 7;
+            if (player->scuba_at < seconds) {
+                player->scuba_at = seconds + 7;
                 if (!q1_sound(g, player->id, "misc/wetsuit.wav", 4, 1, error))
                     return false;
                 if (!q1_alive(g, player->id))
                     return true;
             }
-            if (!player->wetsuit_scaled_level || player->wetsuit_scaled_frame != g->time_ns) {
+            if (!player->wetsuit_scaled_level || player->wetsuit_scaled_frame != frame_ns) {
                 qa_actor_id actor = player->id;
                 qa_body_state body;
                 if (!qa_world_body_read(g->services.world, actor, &body, error))
@@ -192,7 +218,7 @@ bool q1_power_frame(qa_q1_game *g, q1_player *player, qa_error *error) {
                 if (!player)
                     return true;
                 body.velocity = qa_vec_scale(body.velocity, water == 2 ? 1.25f : 1.5f);
-                uint64_t scaled_frame = g->time_ns;
+                uint64_t scaled_frame = frame_ns;
                 if (!qa_world_body_write(g->services.world, actor, &body, error))
                     return false;
                 player = q1_player_get(g, actor);
@@ -210,7 +236,7 @@ bool q1_power_frame(qa_q1_game *g, q1_player *player, qa_error *error) {
     }
     q1_actor *entity = q1_entity(g, player->id);
     if (entity)
-        entity->effects = player->power_expires[QA_Q1_EMPATHY] > g->time ? entity->effects | 8
+        entity->effects = player->power_expires[QA_Q1_EMPATHY] > seconds ? entity->effects | 8
                                                                          : entity->effects & ~8u;
     return true;
 }

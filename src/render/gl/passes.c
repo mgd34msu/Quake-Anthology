@@ -102,6 +102,7 @@ static bool output_resize(qa_gl_renderer *renderer, uint32_t width,
     if (!gl_check(renderer, "OpenGL output target resize", error)) return false;
     output->width = width;
     output->height = height;
+    qa_output_domains_extent(&renderer->output_domains,width,height);
     return true;
 }
 
@@ -123,7 +124,7 @@ static bool output_bind_slot(qa_gl_renderer *renderer, unsigned slot,
             return false;
         }
         GLint color = renderer->capabilities.alpha_bits != 0 ? GL_RGBA8 :
-                      renderer->capabilities.color_bits <= 16 ? GL_RGB5 : GL_RGB8;
+                      renderer->capabilities.color_bits <= 16 ? GL_RGB565 : GL_RGB8;
         texture_storage(renderer, output->color[slot], color, width, height,
                         GL_RGBA, GL_UNSIGNED_BYTE);
         gl->BindFramebuffer(GL_FRAMEBUFFER, output->framebuffer);
@@ -398,6 +399,8 @@ bool gl_output_resolve(qa_gl_renderer *renderer, qa_error *error)
     gl->UseProgram(renderer->programs.gamma);
     gl->Uniform1i(renderer->programs.gamma_uniform.raw, 0);
     gl->Uniform1i(renderer->programs.gamma_uniform.table, 1);
+    bool native_gamma = qa_display_gamma_applied_is(renderer->options.display);
+    gl->Uniform1i(renderer->programs.gamma_uniform.apply, native_gamma ? 0 : 1);
     gl->ActiveTexture(GL_TEXTURE1);
     gl->BindTexture(GL_TEXTURE_2D, output->table);
     unsigned resolved = 0;
@@ -411,6 +414,19 @@ bool gl_output_resolve(qa_gl_renderer *renderer, qa_error *error)
         gl->ActiveTexture(GL_TEXTURE0);
         gl->BindTexture(GL_TEXTURE_2D, output->color[slot]);
         gl_draw_quad(renderer);
+        if (!native_gamma) {
+            gl->Enable(GL_SCISSOR_TEST);
+            for (size_t i=0;i<renderer->output_domains.count;++i) {
+                const qa_output_domain_region *domain=renderer->output_domains.regions+i;
+                if (domain->buffer!=buffer) continue;
+                gl->Scissor(domain->rect.x,(GLint)(output->height-(uint32_t)domain->rect.y-domain->rect.height),
+                    (GLsizei)domain->rect.width,(GLsizei)domain->rect.height);
+                gl->Uniform1i(renderer->programs.gamma_uniform.apply,domain->source?0:1);
+                gl_draw_quad(renderer);
+            }
+            gl->Disable(GL_SCISSOR_TEST);
+            gl->Uniform1i(renderer->programs.gamma_uniform.apply,1);
+        }
         resolved |= 1u << slot;
     }
     gl->UseProgram(0);
@@ -466,7 +482,7 @@ static bool opacity_allocate(qa_gl_renderer *renderer, uint32_t width,
     }
     if (opacity->width == width && opacity->height == height) return true;
     GLint color = renderer->capabilities.alpha_bits != 0 ? GL_RGBA8 :
-                  renderer->capabilities.color_bits <= 16 ? GL_RGB5 : GL_RGB8;
+                  renderer->capabilities.color_bits <= 16 ? GL_RGB565 : GL_RGB8;
     for (size_t i = 0; i < 2; ++i)
         texture_storage(renderer, opacity->color[i], color, width, height,
                         GL_RGBA, GL_UNSIGNED_BYTE);
@@ -784,7 +800,7 @@ static bool surface_color(qa_gl_renderer *renderer,unsigned slot,uint32_t width,
     gl_api *gl=&renderer->gl;
     if (!output->color_ready[slot]) {
         if (!surface_name(renderer,output->color+slot,1,error)) return false;
-        GLint color=renderer->capabilities.alpha_bits?GL_RGBA8:renderer->capabilities.color_bits<=16?GL_RGB5:GL_RGB8;
+        GLint color=renderer->capabilities.alpha_bits?GL_RGBA8:renderer->capabilities.color_bits<=16?GL_RGB565:GL_RGB8;
         texture_storage(renderer,output->color[slot],color,width,height,GL_RGBA,GL_UNSIGNED_BYTE);
         if (!gl_check(renderer,"Allocating candidate output color samples",error)) return false;
     }

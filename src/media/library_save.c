@@ -1,4 +1,5 @@
 #include "library_internal.h"
+#include "qa/media_library_prepare.h"
 #include "qa/media_library_save.h"
 #include "qa/scene_save.h"
 #include "qa/source_save.h"
@@ -105,7 +106,7 @@ static bool same_identity(const qa_cinematic_asset *a, const qa_cinematic_asset 
 bool qa_media_library_checkpoint(const qa_media_library *library, const qa_media_library_checkpoint_refs *refs,
                                  qa_buffer *out, qa_error *error)
 {
-    if (!library || !out || !refs_ready(refs)) return cinematic_fail(error,"Media capture requires an owner and resolvers");
+    if (!qa_media_library_idle(library) || !out || !refs_ready(refs)) return cinematic_fail(error,"Media capture requires an idle owner and resolvers");
     qa_source_save_io io; uint8_t magic[4]={'Q','M','L','B'}; uint32_t schema=1;
     size_t count=qa_media_library_record_count(library);
     if (!qa_source_save_writer(&io,NULL,error)) return false;
@@ -127,7 +128,7 @@ bool qa_media_library_checkpoint(const qa_media_library *library, const qa_media
 bool qa_media_library_restore(qa_media_library *library, qa_bytes bytes, const qa_media_library_checkpoint_refs *refs,
                               qa_error *error)
 {
-    if (!library || !refs_ready(refs)) return cinematic_fail(error,"Media restore requires a candidate owner and resolvers");
+    if (!qa_media_library_idle(library) || !refs_ready(refs)) return cinematic_fail(error,"Media restore requires an idle candidate owner and resolvers");
     qa_source_save_io io; uint8_t magic[4]; uint32_t schema=0; size_t count=0;
     qa_cinematic_asset **saved=NULL, **installed=NULL;
     if (!qa_source_save_reader(&io,NULL,bytes,error)) return false;

@@ -41,5 +41,8 @@ bool qa_ui_preferences_read(const qa_cvars *, uint32_t seat, qa_ui_preferences *
  * publication ticket. Language borrows that ticket until publish or abort. */
 bool qa_ui_preferences_edit_read(const struct qa_cvars_edit *, uint32_t seat,
     qa_ui_preferences *, qa_error *);
+/* Pure sealed canonical-row proof; performs no alias projection or parsing. */
+bool qa_ui_preferences_edit_ready_is(const struct qa_cvars_edit *,uint32_t seat,
+    const qa_ui_preferences *);
 bool qa_ui_preference_set(qa_cvars *, uint32_t seat, qa_ui_preference, const char *, qa_error *);
 #endif

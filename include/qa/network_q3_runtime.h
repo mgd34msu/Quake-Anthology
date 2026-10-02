@@ -38,6 +38,11 @@ bool qa_network_q3_client_init_current(qa_network_runtime *, qa_net_client_id,
 bool qa_network_q3_client_acknowledged_usercmd(qa_network_runtime *, qa_net_client_id,
     const qa_q3_snapshot *, bool *has_sequence, uint64_t *sequence,
     bool *history_unavailable, qa_error *);
+/* A retained presentation owner qualifies its own copied snapshot clock.
+ * This observer matches that literal clock against the same native ring. */
+bool qa_network_q3_client_acknowledged_command_time(qa_network_runtime *, qa_net_client_id,
+    int32_t command_time, bool *has_sequence, uint64_t *sequence,
+    bool *history_unavailable, qa_error *);
 bool qa_network_q3_client_command(qa_network_runtime *, qa_net_client_id, const char *, qa_error *);
 bool qa_network_q3_client_usercmd(qa_network_runtime *, qa_net_client_id, const qa_q3_usercmd *, qa_error *);
 bool qa_network_q3_client_execute(qa_network_runtime *, qa_net_client_id, int32_t, qa_error *);

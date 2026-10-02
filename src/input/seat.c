@@ -304,12 +304,16 @@ bool qa_input_seat_replace_bindings(qa_input_seat *s, const qa_input_binding *bi
     }
     replace_bindings(s, &candidate); return true;
 }
+bool qa_input_seat_configuration_owned_is(const qa_input_seat *active,
+                                         const qa_input_seat *candidate) {
+    return active && candidate && active!=candidate &&
+        active->options.seat==candidate->options.seat &&
+        qa_console_idle(active->options.console) && qa_console_idle(candidate->options.console) &&
+        qa_gamepad_tuning_valid(&candidate->options.gamepad);
+}
 bool qa_input_seat_configuration_ready(const qa_input_seat *active,
                                         const qa_input_seat *candidate, qa_error *error) {
-    if (!active || !candidate || active == candidate ||
-        active->options.seat != candidate->options.seat ||
-        !qa_console_idle(active->options.console) || !qa_console_idle(candidate->options.console) ||
-        !qa_gamepad_tuning_valid(&candidate->options.gamepad)) {
+    if (!qa_input_seat_configuration_owned_is(active,candidate)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0,
                      "Input configuration requires distinct returned owners of the same seat");
         return false;

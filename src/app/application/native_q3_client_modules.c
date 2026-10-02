@@ -1,6 +1,7 @@
 #include "native_q3_client_modules_private.h"
 #include "qa/network_q3.h"
 #include "qa/q3_host_save.h"
+#include "qa/script.h"
 
 static bool consume(native_client_module *, qa_error *);
 
@@ -59,6 +60,23 @@ bool native_client_modules_physical(const application_native_q3_client_modules *
     *out = actual; return true;
 }
 
+static bool process_current(void *context, const qa_launch_instance *descriptor,
+    qa_actor_owner receiver_owner, uint64_t service_owner, qa_error *error)
+{
+    native_client_module *role = context;
+    application_native_q3_client_modules *owner = role ? role->owner : NULL;
+    qa_application_q3_remote_source actual;
+    if (!owner || !descriptor || !owner->source.descriptor || !role->module ||
+        !role->artifact.resource || receiver_owner != owner->source.receiver.receiver ||
+        service_owner != role->service_owner ||
+        !qa_sha256_equal(&descriptor->identity, &owner->source.descriptor->identity))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Native CLIENT process lost its actual acquired identity");
+    if (owner->retiring)
+        return application_native_q3_remote_role_modules_retained(owner->provider, &owner->source, owner) ||
+            application_fail(error, QA_ERROR_ARGUMENT, "Native CLIENT retirement lost its retained parent");
+    return native_client_modules_physical(owner, &actual, error);
+}
+
 bool qa_application_native_q3_client_modules_current(const application_native_q3_client_modules *owner,
     const qa_application_q3_remote_source *source)
 {
@@ -69,14 +87,15 @@ bool qa_application_native_q3_client_modules_current(const application_native_q3
 
 bool qa_application_native_q3_client_modules_idle(const application_native_q3_client_modules *owner)
 {
-    if (!owner || owner->calls || owner->initializing || owner->entered) return false;
+    if (!owner || owner->calls || owner->initializing || owner->entered || owner->command_arguments) return false;
     const native_client_module *roles[] = {&owner->ui, &owner->cgame};
     for (size_t i = 0; i < 2; ++i) {
         const native_client_module *role = roles[i];
         if ((role->vm && !qa_qvm_can_destroy(role->vm)) ||
             (role->native && !qa_native_host_destroy_ready(role->native)) ||
             (role->host && !qa_q3_host_destroy_ready(role->host)) ||
-            !application_q3_equipment_idle(role->equipment)) return false;
+            role->draw_entry || !application_q3_equipment_idle(role->equipment) ||
+            !application_q3_body_idle(role->body)) return false;
     }
     return true;
 }
@@ -125,6 +144,7 @@ bool native_client_modules_allocate(qa_application *app,
     owner->ui.owner = owner; owner->ui.kind = QA_QVM_UI;
     owner->cgame.owner = owner; owner->cgame.kind = QA_QVM_CGAME;
     *out = owner;
+    if (!restoring && !qa_script_defines_create(&owner->script_globals, error)) return false;
     if (!qa_launch_instance_retain_metadata(options->source.descriptor, &owner->metadata, error)) return false;
     owner->source.descriptor = qa_launch_instance_lease_view(owner->metadata);
     if (!application_native_q3_remote_role_modules_attach(provider, &options->source, owner, error)) return false;
@@ -257,7 +277,8 @@ static bool artifact_open(native_client_module *role, bool native_ui, qa_error *
     path = role->kind == QA_QVM_UI ? "vm/ui.qvm" : "vm/cgame.qvm";
     return opening(role, path, &role->artifact, error) &&
         qa_qvm_image_load(qa_resource_bytes(role->artifact.resource), &role->image, error) &&
-        declaration_open(role, true, error) && native_client_module_qualify(role, error);
+        declaration_open(role, true, error) && native_client_module_qualify(role, error) &&
+        (role->kind != QA_QVM_CGAME || native_client_module_body_open(role, error));
 }
 
 static bool source_entity(void *context, const qa_qvm_call *call, int32_t pointer,
@@ -266,7 +287,9 @@ static bool source_entity(void *context, const qa_qvm_call *call, int32_t pointe
     native_client_module *role = context;
     if (!role->equipment)
         return application_fail(error, QA_ERROR_ARGUMENT, "Acquired CGAME submission lost its equipment owner");
-    return application_q3_equipment_source_entity(role->equipment, call, pointer, entity, suppress, error);
+    if (!application_q3_equipment_source_entity(role->equipment, call, pointer, entity, suppress, error)) return false;
+    return *suppress || !role->body ||
+        application_q3_body_source_entity(role->body, call, pointer, entity, suppress, error);
 }
 
 bool native_client_module_namespace(native_client_module *role, bool restoring, qa_error *error)
@@ -302,15 +325,17 @@ bool native_client_module_construct(native_client_module *role, bool restoring, 
         .owner = actual.receiver.receiver, .service_owner = role->service_owner, .cvars = actual.receiver.cvars,
         .console = actual.receiver.console, .command_context = actual.receiver.command_context,
         .mounts = actual.descriptor->content, .client_time_cvars = actual.receiver.client_time_cvars,
-        .client_time_owner = actual.receiver.client_time_owner, .input_owner = actual.receiver.service_owner};
+        .client_time_owner = actual.receiver.client_time_owner, .input_owner = actual.receiver.service_owner,
+        .script_globals = owner->script_globals, .script_globals_owner = actual.receiver.service_owner};
     if (role->image && role->kind == QA_QVM_CGAME) {
         options.source_entity = source_entity; options.source_entity_context = role;
     }
     qa_application_q3_equipment_services equipment = {0};
+    qa_application_q3_body_services body = {0};
     qa_application_native_q3_module_preparation preparation = {.source = &actual, .role = role->kind,
         .abi = role->abi, .service_owner = role->service_owner, .path = role->artifact.path,
         .artifact = role->artifact.resource, .acquisition = &role->artifact.acquisition,
-        .services = &options, .equipment_services = &equipment, .restoring = restoring};
+        .services = &options, .equipment_services = &equipment, .body_services = &body, .restoring = restoring};
     if (!application_native_q3_remote_role_modules_borrow(owner->provider, &actual, owner, error)) return false;
     ++owner->calls;
     bool okay = owner->options.prepare(owner->options.context, &preparation, error);
@@ -329,6 +354,8 @@ bool native_client_module_construct(native_client_module *role, bool restoring, 
         options.command_context.client != actual.receiver.command_context.client ||
         !qa_actor_id_equal(options.command_context.actor, actual.receiver.command_context.actor) ||
         options.input_owner != actual.receiver.service_owner ||
+        options.script_globals != owner->script_globals || !options.script_globals ||
+        options.script_globals_owner != actual.receiver.service_owner ||
         options.client_time_cvars != actual.receiver.client_time_cvars ||
         options.client_time_owner != actual.receiver.client_time_owner ||
         options.engine_cvars || options.client_time_from_game || !options.client.gamestate ||
@@ -343,6 +370,7 @@ bool native_client_module_construct(native_client_module *role, bool restoring, 
         return false;
     }
     role->client = options.client;
+    role->body_services = body;
     if (role->image) {
         qa_qvm_options vm = qa_q3_host_qvm_options(role->host, QA_QVM_COMPILED_SEMANTICS);
         if (!qa_qvm_create(role->image, &vm, &role->vm, error) ||
@@ -352,6 +380,12 @@ bool native_client_module_construct(native_client_module *role, bool restoring, 
                 .image = role->image, .profile = &role->profile, .receiver = actual.receiver.receiver,
                 .seat = actual.receiver.seat, .client = options.client};
             if (!application_q3_equipment_create_module(&module, &equipment, &role->equipment, error)) return false;
+            if (body.prepare) {
+                application_q3_body_module body_module = {.session = owner->app->session,
+                    .vm = role->vm, .image = role->image, .profile = &role->body_profile,
+                    .receiver = actual.receiver.receiver, .seat = actual.receiver.seat, .client = options.client};
+                if (!application_q3_body_create_module(&body_module, &body, NULL, &role->body, error)) return false;
+            }
         }
     } else {
         if (restoring) return application_fail(error, QA_ERROR_UNSUPPORTED,
@@ -365,6 +399,17 @@ bool native_client_module_construct(native_client_module *role, bool restoring, 
             native.instance.declaration = role->native_declaration;
             native.instance.declaration_digest = qa_native_declaration_digest(role->native_declaration);
         }
+        qa_native_module_info module = qa_native_module_describe(role->module);
+        qa_native_process_resource_artifact artifact = {.resource = role->artifact.resource,
+            .acquisition = &role->artifact.acquisition, .path = role->artifact.path};
+        if (!application_native_process_prepare(owner->app, actual.descriptor,
+            actual.receiver.receiver, role->service_owner, &artifact, 1, 0, &module.image,
+            native.instance.observe || qa_native_declaration_region_count(role->native_declaration) != 0,
+            process_current, role, &role->process, error)) {
+            role->native_load_failed = true;
+            return false;
+        }
+        native.instance.process = &role->process.process;
         if (!native_client_modules_physical(owner, &actual, error) ||
             !application_native_q3_remote_role_modules_borrow(owner->provider, &actual, owner, error)) return false;
         ++owner->calls;
@@ -408,8 +453,10 @@ bool qa_application_native_q3_client_modules_create(qa_application *app,
     if (owner->pure && (!artifact_open(&owner->cgame, false, error) ||
         !native_client_module_construct(&owner->cgame, false, error))) return false;
     qa_application_q3_remote_source actual;
-    return native_client_modules_physical(owner, &actual, error) &&
+    bool okay = native_client_modules_physical(owner, &actual, error) &&
         options->current(options->context, &actual, options->gamestate, error);
+    if (okay) owner->prepared = true;
+    return okay;
 }
 
 static native_client_module *module_role(application_native_q3_client_modules *owner, qa_qvm_role kind)
@@ -422,7 +469,11 @@ static bool invoke(native_client_module *role, int32_t command, const int32_t *a
 {
     application_native_q3_client_modules *owner = role->owner;
     qa_application_q3_remote_source actual;
+    if (role->kind == QA_QVM_CGAME && role->abi == QA_QVM_Q3_116N && command > 5)
+        return application_fail(error, QA_ERROR_UNSUPPORTED, "Legacy CGAME has no requested export");
+    bool drawing = role->kind == QA_QVM_CGAME && command == 3;
     if (!role->ready || !result || count > 9 || (count && !arguments) || owner->retiring || owner->restore_pending ||
+        (drawing && (count != 3 || role->draw_entry || role->draw_revision == UINT64_MAX)) ||
         owner->app->operation == APPLICATION_PERSISTING || owner->app->destroy_requested ||
         (!initializing && !role->init_succeeded) || !native_client_modules_physical(owner, &actual, error) ||
         !qa_application_native_q3_client_modules_current(owner, &actual))
@@ -431,8 +482,12 @@ static bool invoke(native_client_module *role, int32_t command, const int32_t *a
     ++owner->calls;
     native_client_module *previous = owner->entered;
     owner->entered = role;
-    bool drawing = role->kind == QA_QVM_CGAME && command == 3 && role->equipment;
-    bool okay = !drawing || application_q3_equipment_draw_begin(role->equipment, error);
+    if (drawing) {
+        memcpy(role->draw_arguments, arguments, sizeof(role->draw_arguments));
+        ++role->draw_revision; role->draw_entry = true;
+    }
+    bool okay = !drawing || ((!role->equipment || application_q3_equipment_draw_begin(role->equipment, error)) &&
+        (!role->body || application_q3_body_draw_begin(role->body, error)));
     if (okay) {
         if (role->native) {
             okay = qa_native_host_q3_vm_call(role->native, command, arguments, count, result, error);
@@ -447,7 +502,12 @@ static bool invoke(native_client_module *role, int32_t command, const int32_t *a
                 result, &role->initialized, error) : qa_qvm_invoke(role->vm, 0, words, count + 1, result, error);
         }
     }
-    if (drawing) application_q3_equipment_draw_end(role->equipment);
+    if (drawing) {
+        if (role->body) application_q3_body_draw_end(role->body);
+        if (role->equipment) application_q3_equipment_draw_end(role->equipment);
+        role->draw_entry = false;
+        memset(role->draw_arguments, 0, sizeof(role->draw_arguments));
+    }
     owner->entered = previous;
     --owner->calls;
     qa_error returned = {0};
@@ -458,13 +518,81 @@ static bool invoke(native_client_module *role, int32_t command, const int32_t *a
     return okay;
 }
 
+static bool command_snapshot(const qa_command_invocation *source, qa_command_tokens *out,
+    qa_error *error)
+{
+    size_t bytes = 0;
+    for (size_t i = 0; i < source->argc; ++i) {
+        if (!source->argv[i]) return application_fail(error, QA_ERROR_ARGUMENT, "Acquired console argument is absent");
+        size_t length = strlen(source->argv[i]);
+        if (length == SIZE_MAX || bytes > SIZE_MAX - length - 1)
+            return application_fail(error, QA_ERROR_MEMORY, "Acquired console argv exceeds capacity");
+        bytes += length + 1;
+    }
+    size_t tail = strlen(source->args_text ? source->args_text : "");
+    if (tail == SIZE_MAX) return application_fail(error, QA_ERROR_MEMORY, "Acquired console arguments exceed capacity");
+    out->count = source->argc;
+    out->values = calloc(source->argc ? source->argc : 1, sizeof(*out->values));
+    out->storage = malloc(bytes ? bytes : 1); out->args_text = malloc(tail + 1);
+    if (!out->values || !out->storage || !out->args_text) {
+        qa_command_tokens_free(out);
+        return application_fail(error, QA_ERROR_MEMORY, "Retaining acquired console entry arguments");
+    }
+    size_t cursor = 0;
+    for (size_t i = 0; i < source->argc; ++i) {
+        size_t length = strlen(source->argv[i]) + 1;
+        out->values[i] = out->storage + cursor;
+        memcpy(out->storage + cursor, source->argv[i], length); cursor += length;
+    }
+    memcpy(out->args_text, source->args_text ? source->args_text : "", tail + 1);
+    return true;
+}
+
 bool qa_application_native_q3_client_modules_call(application_native_q3_client_modules *owner,
     qa_qvm_role kind, int32_t command, const int32_t *arguments, size_t count, int32_t *result, qa_error *error)
 {
     native_client_module *role = owner ? module_role(owner, kind) : NULL;
-    if (!role || owner->calls || command == (kind == QA_QVM_UI ? 1 : 0) || command == (kind == QA_QVM_UI ? 2 : 1))
-        return application_fail(error, QA_ERROR_ARGUMENT, "Acquired CLIENT entry cannot replay lifecycle callbacks");
+    if (!role || owner->calls || command == (kind == QA_QVM_UI ? 1 : 0) || command == (kind == QA_QVM_UI ? 2 : 1) ||
+        command == (kind == QA_QVM_UI ? NATIVE_Q3_UI_CONSOLE_COMMAND : NATIVE_Q3_CG_CONSOLE_COMMAND))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Acquired CLIENT entry requires its lifecycle or console adapter");
     return invoke(role, command, arguments, count, result, false, error);
+}
+
+static bool console_current(application_native_q3_client_modules *owner,
+    const qa_command_invocation *call, qa_error *error)
+{
+    qa_application_q3_remote_source source;
+    qa_command_context expected;
+    if (!call || !call->argc || !call->argv || !call->raw || !call->args_text ||
+        !native_client_modules_physical(owner, &source, error) || call->console != source.receiver.console ||
+        !application_command_capture(owner->app, &source.receiver.command_context, &expected, error))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Acquired console entry lost its physical invocation");
+    const qa_command_context *actual = &call->context;
+    return (actual->session == expected.session && actual->owner == expected.owner && actual->seat == expected.seat &&
+        actual->client == expected.client && actual->dialect == expected.dialect && actual->origin == expected.origin &&
+        actual->registry == expected.registry && actual->generation == expected.generation &&
+        qa_actor_id_equal(actual->actor, expected.actor) && application_command_active(owner->app, actual)) ||
+        application_fail(error, QA_ERROR_ARGUMENT, "Acquired console entry changed its captured CLIENT origin");
+}
+
+bool qa_application_native_q3_client_modules_console_command(application_native_q3_client_modules *owner,
+    qa_qvm_role kind, const qa_command_invocation *call, int32_t milliseconds, int32_t *result, qa_error *error)
+{
+    native_client_module *role = owner ? module_role(owner, kind) : NULL;
+    const qa_command_tokens *reached = NULL;
+    qa_command_tokens snapshot = {0}; uint64_t revision = 0;
+    if (!role || owner->calls || owner->command_arguments)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Acquired console entry retains another source call");
+    if (!console_current(owner, call, error) ||
+        !application_native_q3_remote_role_arguments(owner->provider, owner->source.receiver.seat,
+            &reached, &revision, error) || !command_snapshot(call, &snapshot, error)) return false;
+    owner->command_role = role; owner->command_arguments = &snapshot; owner->command_revision = revision;
+    bool okay = invoke(role, kind == QA_QVM_UI ? NATIVE_Q3_UI_CONSOLE_COMMAND : NATIVE_Q3_CG_CONSOLE_COMMAND,
+        kind == QA_QVM_UI ? &milliseconds : NULL, kind == QA_QVM_UI ? 1 : 0, result, false, error);
+    owner->command_role = NULL; owner->command_arguments = NULL; owner->command_revision = 0;
+    qa_command_tokens_free(&snapshot);
+    if (okay) okay = console_current(owner, call, error);
+    return okay;
 }
 
 static bool init_current(application_native_q3_client_modules *owner,
@@ -561,7 +689,7 @@ bool qa_application_native_q3_client_modules_loading_screen(application_native_q
     if (!owner->calls || !owner->ui.init_succeeded || !owner->ui.initialized)
         return application_fail(error, QA_ERROR_ARGUMENT, "Acquired CGAME loading lost its initialized source UI");
     int32_t overlay = 1, result;
-    if (!invoke(&owner->ui, 10, &overlay, 1, &result, false, error)) return false;
+    if (!invoke(&owner->ui, NATIVE_Q3_UI_DRAW_CONNECT_SCREEN, &overlay, 1, &result, false, error)) return false;
     *drawn = true; return true;
 }
 
@@ -593,6 +721,10 @@ static bool shutdown(native_client_module *role, qa_error *error)
 static bool consume(native_client_module *role, qa_error *error)
 {
     if (!shutdown(role, error)) return false;
+    if (role->body) {
+        if (!application_q3_body_destroy(role->body, error)) return false;
+        role->body = NULL;
+    }
     if (role->equipment) {
         if (!application_q3_equipment_destroy(role->equipment, error)) return false;
         role->equipment = NULL;
@@ -607,6 +739,7 @@ static bool consume(native_client_module *role, qa_error *error)
         if (!role->native) qa_q3_host_native_consumed(role->host);
         if (!okay) return false;
     }
+    if (!application_native_process_release(&role->process, error)) return false;
     if (role->vm) {
         if (!qa_qvm_destroy(role->vm, error)) return false;
         role->vm = NULL; qa_q3_host_qvm_consumed(role->host);
@@ -619,8 +752,11 @@ static bool consume(native_client_module *role, qa_error *error)
     qa_native_module_release(role->module); role->module = NULL;
     qa_native_declaration_destroy(role->native_declaration); role->native_declaration = NULL;
     application_q3_equipment_profile_free(&role->profile);
+    application_q3_body_profile_free(&role->body_profile);
+    role->body_services = (qa_application_q3_body_services){0};
     native_client_opening_dispose(&role->artifact);
     native_client_opening_dispose(&role->declaration);
+    native_client_opening_dispose(&role->body_declaration);
     qa_buffer_free(&role->saved_services);
     role->ready = false; return true;
 }
@@ -641,6 +777,7 @@ bool qa_application_native_q3_client_modules_destroy(application_native_q3_clien
         owner->attached = false;
     }
     qa_launch_instance_lease_release(owner->metadata);
+    qa_script_defines_release(owner->script_globals);
     qa_buffer_free(&owner->saved);
     free(owner); *pointer = NULL; return true;
 }
@@ -674,6 +811,29 @@ bool qa_application_native_q3_client_modules_receipt_read(const application_nati
     *out = artifact.source; return true;
 }
 
+bool qa_application_native_q3_client_modules_optional_receipt_read(const application_native_q3_client_modules *owner,
+    qa_qvm_role kind, qa_application_q3_role_receipt *out, bool *present, qa_error *error)
+{
+    const native_client_module *role = owner ? module_role((application_native_q3_client_modules *)owner, kind) : NULL;
+    qa_application_q3_remote_source source;
+    qa_application_q3_role_artifact artifact;
+    qa_q3_host *host = NULL;
+    qa_q3_host_client_context context;
+    if (!role || !out || !present || !owner->prepared || !role->ready ||
+        !native_client_modules_physical(owner, &source, error) ||
+        !qa_application_native_q3_client_modules_current(owner, &source))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Optional CLIENT receipt requires its completed current role");
+    if (!qa_application_native_q3_client_modules_host_read(owner, kind, &host, &context, error) ||
+        !qa_application_native_q3_client_modules_artifact_read(owner, kind, &artifact, error)) return false;
+    if (!role->initialized && !role->init_succeeded) {
+        *out = (qa_application_q3_role_receipt){0}; *present = false; return true;
+    }
+    if (!role->initialized || !role->init_succeeded)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Optional CLIENT receipt retains failed source Init");
+    if (!qa_application_native_q3_client_modules_receipt_read(owner, kind, out, error)) return false;
+    *present = true; return true;
+}
+
 bool qa_application_native_q3_client_modules_host_read(const application_native_q3_client_modules *owner,
     qa_qvm_role kind, qa_q3_host **host, qa_q3_host_client_context *context, qa_error *error)
 {
@@ -688,6 +848,49 @@ bool qa_application_native_q3_client_modules_host_read(const application_native_
         retained.console != actual.receiver.console || retained.cvars != actual.receiver.cvars)
         return application_fail(error, QA_ERROR_ARGUMENT, "Acquired CLIENT host identity lost its real physical parent");
     *host = role->host; *context = retained; return true;
+}
+
+bool qa_application_native_q3_client_modules_retained_source_read(const application_native_q3_client_modules *owner,
+    qa_application_q3_remote_source *out, qa_error *error)
+{
+    if (!owner || !out || !owner->attached ||
+        !application_native_q3_remote_role_modules_retained(owner->provider, &owner->source, owner))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Retained CLIENT module lost its attached physical owner");
+    *out = owner->source; return true;
+}
+
+bool qa_application_native_q3_client_modules_initialization_read(const application_native_q3_client_modules *owner,
+    qa_qvm_role kind, bool *initialized, bool *succeeded, qa_error *error)
+{
+    const native_client_module *role = owner ? module_role((application_native_q3_client_modules *)owner, kind) : NULL;
+    qa_q3_host *host = NULL; qa_q3_host_client_context context;
+    if (!initialized || !succeeded || !role ||
+        !qa_application_native_q3_client_modules_host_read(owner, kind, &host, &context, error)) return false;
+    *initialized = role->initialized; *succeeded = role->init_succeeded;
+    return true;
+}
+
+bool qa_application_native_q3_client_modules_optional_host_read(const application_native_q3_client_modules *owner,
+    qa_qvm_role kind, qa_q3_host **host, qa_q3_host_client_context *context, bool *present, qa_error *error)
+{
+    const native_client_module *role = owner ? module_role((application_native_q3_client_modules *)owner, kind) : NULL;
+    qa_application_q3_remote_source source;
+    if (!role || !host || !context || !present || !owner->prepared ||
+        !native_client_modules_physical(owner, &source, error) ||
+        !qa_application_native_q3_client_modules_current(owner, &source))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Optional CLIENT host inventory requires its completed current owner");
+    if (!role->ready) {
+        if (kind != QA_QVM_CGAME || role->host || role->vm || role->native || role->image || role->module ||
+            role->artifact.path || role->artifact.resource || role->declaration.path || role->declaration.resource ||
+            role->body_declaration.path || role->body_declaration.resource || role->body_profile.artifact_path ||
+            role->native_declaration || role->equipment || role->body || role->body_services.prepare ||
+            role->draw_entry || role->sequence || role->service_owner ||
+            role->initialized || role->init_succeeded || role->saved_services.size)
+            return application_fail(error, QA_ERROR_ARGUMENT, "Optional CLIENT host inventory retains an incomplete role");
+        *host = NULL; *context = (qa_q3_host_client_context){0}; *present = false; return true;
+    }
+    if (!qa_application_native_q3_client_modules_host_read(owner, kind, host, context, error)) return false;
+    *present = true; return true;
 }
 
 bool qa_application_native_q3_client_modules_host_entered(const application_native_q3_client_modules *owner,
@@ -722,6 +925,41 @@ bool qa_application_native_q3_client_modules_entered_host_read(const application
     *host = role->host; *context = actual; return true;
 }
 
+bool qa_application_native_q3_client_modules_draw_entry_read(const application_native_q3_client_modules *owner,
+    qa_application_native_q3_client_draw_entry *out, qa_error *error)
+{
+    const native_client_module *role = owner ? &owner->cgame : NULL;
+    qa_application_native_q3_client_draw_entry value = {0};
+    if (!role || !out || !role->draw_entry || !role->draw_revision || !role->ready ||
+        owner->retiring || owner->restore_pending || owner->entered != role || !owner->calls ||
+        !native_client_modules_physical(owner, &value.source, error) ||
+        !qa_application_native_q3_client_modules_entered_host_read(owner, QA_QVM_CGAME,
+            role->service_owner, &value.host, &value.context, error))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Acquired CGAME body requires its actual entered Draw tuple");
+    value.revision = role->draw_revision;
+    value.server_time = role->draw_arguments[0];
+    value.stereo_view = role->draw_arguments[1];
+    value.demo_playback = role->draw_arguments[2];
+    *out = value;
+    return true;
+}
+
+bool qa_application_native_q3_client_modules_draw_entry_current(const application_native_q3_client_modules *owner,
+    const qa_application_native_q3_client_draw_entry *held)
+{
+    qa_application_native_q3_client_draw_entry actual;
+    return held && qa_application_native_q3_client_modules_draw_entry_read(owner, &actual, NULL) &&
+        actual.revision == held->revision && actual.host == held->host &&
+        actual.context.frontend_lifetime == held->context.frontend_lifetime &&
+        actual.context.session == held->context.session && actual.context.owner == held->context.owner &&
+        actual.context.service_owner == held->context.service_owner &&
+        actual.context.console == held->context.console && actual.context.cvars == held->context.cvars &&
+        same_source(&actual.source, &held->source) &&
+        qa_application_q3_remote_source_current(owner->app, &held->source) &&
+        actual.server_time == held->server_time && actual.stereo_view == held->stereo_view &&
+        actual.demo_playback == held->demo_playback;
+}
+
 bool qa_application_native_q3_client_modules_entered_arguments_read(const application_native_q3_client_modules *owner,
     qa_qvm_role kind, uint64_t service_owner, qa_native_host_command_view *out,
     uint64_t *revision, qa_error *error)
@@ -731,13 +969,17 @@ bool qa_application_native_q3_client_modules_entered_arguments_read(const applic
     const qa_command_tokens *arguments = NULL;
     uint64_t actual_revision;
     if (!out || !revision || !qa_application_native_q3_client_modules_entered_host_read(owner, kind,
-            service_owner, &host, &context, error) ||
-        !application_native_q3_remote_role_arguments(owner->provider, owner->source.receiver.seat,
-            &arguments, &actual_revision, error) || !arguments ||
-        !qa_application_native_q3_client_modules_host_entered(owner, kind, host, service_owner))
+            service_owner, &host, &context, error))
         return application_fail(error, QA_ERROR_ARGUMENT, "Acquired CLIENT arguments lost their actual entered parser owner");
+    bool lexical = owner->command_arguments && owner->command_role == owner->entered;
+    if (lexical) { arguments = owner->command_arguments; actual_revision = owner->command_revision; }
+    else if (!application_native_q3_remote_role_arguments(owner->provider, owner->source.receiver.seat,
+        &arguments, &actual_revision, error)) return false;
+    if (!arguments || !qa_application_native_q3_client_modules_host_entered(owner, kind, host, service_owner))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Acquired CLIENT arguments changed their entered owner");
     *out = (qa_native_host_command_view){.count = arguments->count,
-        .arguments = (const char *const *)arguments->values, .tail = arguments->args_text ? arguments->args_text : ""};
+        .arguments = (const char *const *)arguments->values, .tail = arguments->args_text ? arguments->args_text : "",
+        .canonical_configstrings = kind == QA_QVM_CGAME && !lexical};
     *revision = actual_revision; return true;
 }
 

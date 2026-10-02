@@ -8,6 +8,7 @@
 typedef struct qa_fs_root qa_fs_root;
 typedef struct qa_fs_file qa_fs_file;
 typedef struct qa_fs_stream qa_fs_stream;
+typedef struct qa_fs_opened_file qa_fs_opened_file;
 
 typedef struct qa_fs_identity {
     uint64_t words[QA_FS_IDENTITY_WORDS];
@@ -108,6 +109,10 @@ bool qa_fs_file_path_unchanged(qa_fs_file *file,
 bool qa_fs_file_read_snapshot(qa_fs_file *file,
                               const qa_fs_identity *expected,
                               qa_buffer *out, qa_error *error);
+/* Reads at most capacity bytes from offset zero of the retained file. Checks
+ * the admitted handle identity before/after; never reopens the native path. */
+bool qa_fs_file_read_prefix(qa_fs_file *, const qa_fs_identity *, void *,
+                            size_t capacity, size_t *received, qa_error *);
 
 bool qa_fs_root_replace(qa_fs_root *root, const char *relative,
                         qa_bytes bytes, uint64_t nonce, qa_error *error);
@@ -126,12 +131,99 @@ typedef enum qa_fs_stream_mode {
     QA_FS_STREAM_APPEND_SYNC
 } qa_fs_stream_mode;
 
+typedef enum qa_fs_stream_open_stage {
+    QA_FS_STREAM_OPEN_PREPARE,
+    QA_FS_STREAM_OPEN_NATIVE,
+    QA_FS_STREAM_OPEN_VALIDATE,
+    QA_FS_STREAM_OPEN_TRUNCATE,
+    QA_FS_STREAM_OPEN_READY
+} qa_fs_stream_open_stage;
+
+/* Stable native object provenance, without mutable size or timestamps.
+ * Platform 1 is POSIX device/inode; 2 is Windows volume/file/creation identity.
+ * These values are references, never native descriptors or handles. */
+typedef struct qa_fs_object_reference {
+    uint32_t platform;
+    uint64_t words[3];
+} qa_fs_object_reference;
+
+enum { QA_FS_OPENED_READ = 1, QA_FS_OPENED_WRITE = 2 };
+typedef enum qa_fs_opened_creation {
+    QA_FS_CREATE_NEW = 1, QA_FS_CREATE_ALWAYS = 2, QA_FS_OPEN_EXISTING = 3,
+    QA_FS_OPEN_ALWAYS = 4, QA_FS_TRUNCATE_EXISTING = 5
+} qa_fs_opened_creation;
+typedef struct qa_fs_opened_reference {
+    qa_fs_object_reference root, object;
+    uint32_t mode, creation;
+    const char *path;
+} qa_fs_opened_reference;
+/* Holds the actual contained native object. Zero mode admits metadata only.
+ * Creating/writable traversal never follows child links; no parent directory
+ * is synthesized. The owner is allocated before opening. opened=true and a
+ * nonempty out retain cleanup responsibility even after validation/truncation
+ * fails; only close is then admitted. No failed native open publishes an owner. */
+bool qa_fs_root_opened_file(qa_fs_root *, const char *, uint32_t,
+    qa_fs_opened_creation, qa_fs_opened_file **, bool *opened, qa_error *);
+bool qa_fs_opened_file_reference_read(const qa_fs_opened_file *, qa_fs_opened_reference *);
+bool qa_fs_opened_file_current(const qa_fs_opened_file *, qa_error *);
+void qa_fs_opened_file_retain(qa_fs_opened_file *);
+bool qa_fs_opened_file_read(qa_fs_opened_file *, uint64_t, void *, size_t,
+    size_t *completed, qa_error *);
+bool qa_fs_opened_file_write(qa_fs_opened_file *, uint64_t, qa_bytes,
+    size_t *completed, qa_error *);
+bool qa_fs_opened_file_size(qa_fs_opened_file *, uint64_t *, qa_error *);
+bool qa_fs_opened_file_truncate(qa_fs_opened_file *, uint64_t, qa_error *);
+bool qa_fs_opened_file_flush(qa_fs_opened_file *, qa_error *);
+/* Linux close consumes its descriptor even on a reported error. Windows close
+ * refusal retains the actual owner. *owner always identifies the real result;
+ * a retry never reuses a consumed numeric descriptor or reopens the path. */
+bool qa_fs_opened_file_close(qa_fs_opened_file **, qa_error *);
+
+typedef struct qa_fs_stream_reference {
+    qa_fs_object_reference root, object;
+    qa_fs_stream_mode mode;
+    const char *path;
+} qa_fs_stream_reference;
+
+typedef struct qa_fs_stream_resolver {
+    void *context;
+    /* Qualifies the complete source reference against the real destination
+     * owner and returns an owned mapped root, including on partial failure.
+     * Mutable user-file contents and replacement are permitted. */
+    bool (*root)(void *, const qa_fs_stream_reference *, qa_fs_root **, qa_error *);
+} qa_fs_stream_resolver;
+
+/* Pure observations of admitted native objects. The stream retains its root;
+ * the returned root/path are borrowed until that stream is closed. */
+bool qa_fs_root_reference_read(const qa_fs_root *, qa_fs_object_reference *);
+qa_fs_root *qa_fs_stream_root(const qa_fs_stream *);
+bool qa_fs_stream_reference_read(const qa_fs_stream *, qa_fs_stream_reference *);
+bool qa_fs_stream_reference_valid(const qa_fs_stream_reference *, qa_error *);
+
 /* Fresh WRITE truncates; resumed WRITE requires the existing file. Append
  * modes create missing files. initial_size returns the opened file length. */
 bool qa_fs_root_stream_open(qa_fs_root *root, const char *relative,
                             qa_fs_stream_mode mode, bool resume,
                             qa_fs_stream **out, uint64_t *initial_size,
                             qa_error *error);
+/* stage identifies the actual failed operation. Only NATIVE denotes failure
+ * of the final open syscall; preparation/validation/truncation remain distinct. */
+bool qa_fs_root_stream_open_result(qa_fs_root *, const char *, qa_fs_stream_mode,
+    bool resume, qa_fs_stream **, uint64_t *initial_size,
+    qa_fs_stream_open_stage *, qa_error *);
+/* Ordinary cold resume requires the same retained root object. Mapped resume
+ * requires the explicit real resolver above and verifies its returned root
+ * against destination before opening. Neither checks old file size,
+ * timestamps or object identity: WRITE preserves existing external contents;
+ * append may create a missing destination. No truncate or file-byte replay. */
+bool qa_fs_stream_resume(qa_fs_root *, const qa_fs_stream_reference *,
+    qa_fs_stream **, uint64_t *initial_size, qa_error *);
+bool qa_fs_stream_resume_mapped(qa_fs_root *destination, const qa_fs_stream_reference *,
+    const qa_fs_stream_resolver *, qa_fs_stream **, uint64_t *initial_size, qa_error *);
+/* One completed native write (interrupted calls may retry), without a size
+ * query or durability sync. Zero and partial progress are literal results. */
+bool qa_fs_stream_write_some(qa_fs_stream *, qa_bytes, uint64_t position,
+    size_t *written, qa_error *);
 /* Positional mode writes at position. Append modes ignore it and publish the
  * resulting file size. Partial progress is returned through written. */
 bool qa_fs_stream_write(qa_fs_stream *stream, qa_bytes bytes,

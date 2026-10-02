@@ -3,8 +3,8 @@
 #include "internal.h"
 #include "scene_identity.h"
 
-/* Library order is the actual frontend library, physical source groups, then
- * physical native Q2 lease owners with installed libraries. References qualify
+/* Library order is frontend, source groups, native Q2, native Q3, decoded
+ * remote resources, then the genuine InitialUI parent. References qualify
  * real registration rows without loading or rasterizing content. The aggregate
  * holds all libraries through these calls. */
 bool frontend_fonts_checkpoint(qa_frontend *, frontend_scene_namespace *, qa_buffer *, qa_error *);

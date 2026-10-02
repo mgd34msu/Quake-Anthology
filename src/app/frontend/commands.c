@@ -1,19 +1,23 @@
 #include "internal.h"
 #include "save_commands.h"
 #include "campaign_cinematic.h"
-#include "qa/ui_preferences.h"
+#include "system_cinematic.h"
+#include "music_sources.h"
+#include "q1_sky.h"
 #include <stdio.h>
 
 static qa_input_seat *input_seat(void *context, const qa_command_context *command)
 {
     qa_frontend *frontend = context;
-    return command->seat < frontend->options.seats ? frontend->seats[command->seat].input : NULL;
+    uint32_t ordinal;
+    return frontend_command_seat_read(frontend,command,&ordinal)?frontend->seats[ordinal].input:NULL;
 }
 static bool scores(void *context, const qa_command_invocation *command)
 {
     qa_frontend *frontend = context;
-    if (command->context.seat >= frontend->options.seats) return false;
-    frontend->seats[command->context.seat].scores = command->argv[0][0] == '+';
+    uint32_t ordinal;
+    if (!frontend_command_seat_read(frontend,&command->context,&ordinal)) return false;
+    frontend->seats[ordinal].scores = command->argv[0][0] == '+';
     return true;
 }
 static void center(void *context, qa_input_seat *input)
@@ -26,13 +30,25 @@ static bool command(void *context, const qa_command_invocation *invocation, qa_e
 {
     qa_frontend *frontend = context;
     const char *name = invocation->argv[0];
-    if (!strcmp(name,"cinematic") || !strcmp(name,"cinematicpause") || !strcmp(name,"stopcinematic"))
-        return frontend_cinematic_command(frontend,invocation,error);
+    if (!strcmp(name,"cinematic") || !strcmp(name,"cinematicpause") || !strcmp(name,"stopcinematic")) {
+        bool handled;
+        if (!frontend_system_cinematic_command(frontend,invocation,&handled,error)) return false;
+        return handled || frontend_cinematic_command(frontend,invocation,error);
+    }
     if (!strcmp(name,"save") || !strcmp(name,"load"))
         return frontend_save_commands_queue(frontend,invocation,error);
+    if (!strcmp(name,"cd") || !strcmp(name,"music"))
+        return frontend_music_sources_command(frontend->music_sources,invocation,error);
+    if (!strcmp(name,"sky")) {
+        if (invocation->argc>2) { frontend_print(frontend,"usage: sky <skyname>\n"); return true; }
+        if (invocation->argc==2) return frontend_q1_sky_command(frontend->q1_sky,invocation->argv[1],error);
+        const char *selected;
+        if (!frontend_q1_sky_name(frontend->q1_sky,invocation->context.actor,&selected,error)) return false;
+        char text[1200]; snprintf(text,sizeof(text),"\"sky\" is \"%s\"\n",selected); frontend_print(frontend,text); return true;
+    }
     if (!strcmp(name, "quit")) { qa_application_request_stop(frontend->application); return true; }
-    unsigned slot = invocation->context.seat;
-    if (slot >= frontend->options.seats || frontend->options.dedicated)
+    uint32_t slot;
+    if (!frontend_command_seat_read(frontend,&invocation->context,&slot))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "command requires a local player");
     frontend_seat *seat = &frontend->seats[slot];
     if (!strcmp(name, "toggleconsole")) return qa_seat_console_toggle(seat->console, false, false, error);
@@ -51,16 +67,10 @@ bool frontend_commands(qa_frontend *frontend, qa_error *error)
     qa_console *console = qa_application_console(frontend->application);
     const char *names[] = {"quit", "toggleconsole", "menu", "messagemode", "messagemode2", "weapnext", "weapprev",
         "menu_anthology", "library", "mods", "settings", "rankings", "assistance", "controls", "save", "load",
-        "cinematic", "cinematicpause", "stopcinematic"};
+        "cinematic", "cinematicpause", "stopcinematic", "cd", "music", "sky"};
     for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); ++i)
         if (!qa_console_register_owned(console, names[i], "Native frontend command", 0,
             QA_FRONTEND_COMMAND_OWNER, true, command, frontend, error)) return false;
-    qa_cvars *cvars = qa_application_cvars(frontend->application);
-    if (!qa_ui_preferences_register(cvars, QA_FRONTEND_COMMAND_OWNER, error)) return false;
-    if (!frontend->source_restoring && (!qa_cvars_register(cvars, "r_gamma", "1", QA_CVAR_ARCHIVE, QA_FRONTEND_COMMAND_OWNER,
-        "Output brightness, 0.5 through 3", error) ||
-        !qa_cvars_set_number(cvars, "r_gamma", frontend->options.gamma, error) ||
-        !qa_cvars_register(cvars, "s_volume", "0.7", QA_CVAR_ARCHIVE, QA_FRONTEND_COMMAND_OWNER, "Master audio gain", error))) return false;
     if (frontend->options.dedicated) return true;
     qa_input_console_options input = {.console = console, .owner = QA_FRONTEND_COMMAND_OWNER,
         .user = frontend, .seat = input_seat, .print = frontend_print, .scores = scores, .center = center, .wheel = frontend_wheel_command};

@@ -271,9 +271,22 @@ bool application_startup_program_refresh(application_startup_program *owner,
     if (!owner || !target || !target->descriptor ||
         target->descriptor->storage != owner->target.descriptor->storage ||
         target->console != owner->target.console || !same_scope(target->scope, owner->target.scope) ||
-        !target->cvars || target->declaration_owner != owner->target.declaration_owner)
+        !target->cvars || !target->declaration_owner)
         return application_fail(error, QA_ERROR_ARGUMENT, "Command preparation changed its actual physical target");
-    owner->target.cvars = target->cvars; return true;
+    qa_application_startup_source actual;
+    bool found = false;
+    for (size_t index = 0;; ++index) {
+        if (!application_provider_startup_source_at(owner->target_provider, index, &actual, &found, error)) return false;
+        if (!found) return application_fail(error, QA_ERROR_ARGUMENT, "Command preparation lost its actual target declarations");
+        if (actual.console == target->console) break;
+    }
+    if (!actual.descriptor || actual.descriptor->storage != target->descriptor->storage ||
+        actual.cvars != target->cvars || !same_scope(actual.scope, target->scope) ||
+        actual.declaration_owner != target->declaration_owner)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Command preparation selected another declaration owner");
+    owner->target.cvars = target->cvars;
+    owner->target.declaration_owner = target->declaration_owner;
+    return true;
 }
 
 void application_startup_program_bound_client(qa_application *app, application_provider *provider,

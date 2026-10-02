@@ -1,5 +1,31 @@
 #include "internal.h"
 #include "q1_weapon_rules.h"
+#include "native_q1_composition.h"
+#include "native_q1_composition_flags.h"
+#include "native_q1_composition_rogue.h"
+#include "qa/game_q1_bots.h"
+
+static bool physical_composition(qa_application *app, application_provider **out,
+    application_provider **rogue, qa_error *error) {
+    application_provider *source = application_world_provider(app, QA_ROLE_ENTITIES, "");
+    *out = NULL;
+    *rogue = NULL;
+    if (!source || !source->constructed || !source->attached || source->close_pending)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q1 weapon rules lost their actual GAME");
+    if (source->kind != APPLICATION_PROVIDER_Q1) return true;
+    qa_q1_options options;
+    double seconds;
+    if (!qa_q1_source_respawn_options_read(source->state.q1, &options, &seconds, error)) return false;
+    if (options.program == QA_Q1_ROGUE) {
+        if (!application_native_q1_composition_current(app, source->owner, QA_MODE_ROGUE, error)) return false;
+        *rogue = source;
+        return true;
+    }
+    if (options.program != QA_Q1_CTF) return true;
+    if (!application_native_q1_composition_current(app, source->owner, QA_MODE_THREEWAVE, error)) return false;
+    *out = source;
+    return true;
+}
 
 static bool source_live(application_provider *source, qa_actor_id actor) {
     qa_application *app = source->application;
@@ -27,13 +53,14 @@ static bool finish(application_provider *source, qa_actor_id actor,
 }
 
 static bool rule_read(qa_application *app, size_t index, qa_mode_id *id,
-                      qa_mode_source *source, bool *selected, qa_error *error) {
+                      qa_mode_source *source, bool native_ctf, bool native_rogue,
+                      bool *selected, qa_error *error) {
     *id = app->mode_ids[index];
     qa_mode_view view;
     if (!qa_modes_read(app->modes, *id, &view, error)) return false;
     *source = view.rules.source;
     *selected = view.rules.enabled &&
-                (*source == QA_MODE_ROGUE || *source == QA_MODE_THREEWAVE);
+                ((*source == QA_MODE_ROGUE && !native_rogue) || (*source == QA_MODE_THREEWAVE && !native_ctf));
     return true;
 }
 
@@ -78,16 +105,18 @@ bool application_q1_weapon_parameters(void *opaque, qa_actor_id actor, qa_q1_wea
     if (!begin(source, actor, weapon, &operation, error)) return false;
     qa_application *app = source->application;
     qa_item_id item = qa_q1_weapon_item(source->state.q1, weapon);
-    bool okay = true;
+    application_provider *ctf, *rogue;
+    bool okay = physical_composition(app, &ctf, &rogue, error);
     for (size_t i = 0; okay && app->modes && i < app->mode_count; ++i) {
         qa_mode_id id;
         qa_mode_source mode;
         bool selected;
-        okay = rule_read(app, i, &id, &mode, &selected, error);
+        okay = rule_read(app, i, &id, &mode, ctf != NULL, rogue != NULL, &selected, error);
         if (okay && selected && mode == QA_MODE_THREEWAVE)
             okay = qa_modes_haste_weapon(app->modes, id, actor, item, parameters->interval,
                                          &parameters->interval, &parameters->nail_speed, error);
     }
+    if (okay && ctf) okay = application_native_q1_ctf_weapon_parameters(ctf, actor, weapon, parameters, error);
     return finish(source, actor, &operation, okay, error);
 }
 
@@ -101,16 +130,20 @@ bool application_q1_weapon_observation(void *opaque, qa_actor_id actor, qa_q1_we
     qa_application *app = source->application;
     qa_item_id item = qa_q1_weapon_item(source->state.q1, weapon);
     float nail_speed = parameters->nail_speed;
-    bool okay = true;
+    application_provider *ctf, *rogue;
+    bool okay = physical_composition(app, &ctf, &rogue, error);
     for (size_t i = 0; okay && app->modes && i < app->mode_count; ++i) {
         qa_mode_id id;
         qa_mode_source mode;
         bool selected;
-        okay = rule_read(app, i, &id, &mode, &selected, error);
+        okay = rule_read(app, i, &id, &mode, ctf != NULL, rogue != NULL, &selected, error);
         if (okay && selected)
             okay = qa_modes_haste_weapon(app->modes, id, actor, item, parameters->interval,
                                          &parameters->interval, &nail_speed, error);
     }
+    if (okay && ctf) okay = application_native_q1_ctf_weapon_parameters(ctf, actor, weapon, parameters, error);
+    if (okay && rogue) okay = application_native_q1_rogue_attack_delay(rogue, actor,
+        weapon, &parameters->interval, true, error);
     return finish(source, actor, &operation, okay, error);
 }
 
@@ -120,12 +153,13 @@ bool application_q1_before_fire(void *opaque, qa_actor_id actor, qa_q1_weapon we
     qa_q1_game_operation operation = {0};
     if (!begin(source, actor, weapon, &operation, error)) return false;
     qa_application *app = source->application;
-    bool okay = true;
+    application_provider *ctf, *rogue;
+    bool okay = physical_composition(app, &ctf, &rogue, error);
     for (size_t i = 0; okay && app->modes && i < app->mode_count; ++i) {
         qa_mode_id id;
         qa_mode_source mode;
         bool selected;
-        okay = rule_read(app, i, &id, &mode, &selected, error);
+        okay = rule_read(app, i, &id, &mode, ctf != NULL, rogue != NULL, &selected, error);
         if (!okay || !selected ||
             !qa_modes_has_relic(app->modes, id, actor, QA_RELIC_STRENGTH)) continue;
         bool quad = false, handled;
@@ -137,6 +171,8 @@ bool application_q1_before_fire(void *opaque, qa_actor_id actor, qa_q1_weapon we
             okay = application_fail(error, QA_ERROR_ARGUMENT,
                                      "Q1 strength rule retired its source or player");
     }
+    if (okay && ctf) okay = application_native_q1_ctf_before_fire(ctf, actor, error);
+    if (okay && rogue) okay = application_native_q1_rogue_before_fire(rogue, actor, error);
     return finish(source, actor, &operation, okay, error);
 }
 
@@ -149,18 +185,21 @@ bool application_q1_attack_delay(void *opaque, qa_actor_id actor, qa_q1_weapon w
     if (!begin(source, actor, weapon, &operation, error)) return false;
     qa_application *app = source->application;
     qa_item_id item = qa_q1_weapon_item(source->state.q1, weapon);
-    bool okay = true;
+    application_provider *ctf, *rogue;
+    bool okay = physical_composition(app, &ctf, &rogue, error);
     for (size_t i = 0; okay && app->modes && i < app->mode_count; ++i) {
         qa_mode_id id;
         qa_mode_source mode;
         bool selected;
-        okay = rule_read(app, i, &id, &mode, &selected, error);
+        okay = rule_read(app, i, &id, &mode, ctf != NULL, rogue != NULL, &selected, error);
         if (okay && selected)
             okay = qa_modes_weapon_attack_delay(app->modes, id, actor, item, delay, error);
         if (okay && (!qa_q1_game_operation_live(&operation) || !source_live(source, actor)))
             okay = application_fail(error, QA_ERROR_ARGUMENT,
                                      "Q1 haste rule retired its source or player");
     }
+    if (okay && ctf) okay = application_native_q1_ctf_attack_delay(ctf, actor, weapon, delay, error);
+    if (okay && rogue) okay = application_native_q1_rogue_attack_delay(rogue, actor, weapon, delay, false, error);
     return finish(source, actor, &operation, okay, error);
 }
 
@@ -172,12 +211,13 @@ bool application_q1_nail_fire(void *opaque, qa_actor_id actor, qa_q1_weapon weap
         return application_fail(error, QA_ERROR_ARGUMENT, "Q1 nail rule requires a nail weapon");
     if (!begin(source, actor, weapon, &operation, error)) return false;
     qa_application *app = source->application;
-    bool okay = true;
+    application_provider *ctf, *rogue;
+    bool okay = physical_composition(app, &ctf, &rogue, error);
     for (size_t i = 0; okay && app->modes && i < app->mode_count; ++i) {
         qa_mode_id id;
         qa_mode_source mode;
         bool selected, handled;
-        okay = rule_read(app, i, &id, &mode, &selected, error);
+        okay = rule_read(app, i, &id, &mode, ctf != NULL, rogue != NULL, &selected, error);
         if (okay && selected && mode == QA_MODE_THREEWAVE)
             okay = qa_modes_tech_sound(app->modes, id, actor, QA_RELIC_HASTE,
                                        false, false, &handled, error);
@@ -185,5 +225,6 @@ bool application_q1_nail_fire(void *opaque, qa_actor_id actor, qa_q1_weapon weap
             okay = application_fail(error, QA_ERROR_ARGUMENT,
                                      "Q1 nail haste rule retired its source or player");
     }
+    if (okay && ctf) okay = application_native_q1_ctf_nail_fire(ctf, actor, error);
     return finish(source, actor, &operation, okay, error);
 }

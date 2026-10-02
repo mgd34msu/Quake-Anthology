@@ -1,0 +1,408 @@
+#include "unified_presentations.h"
+#include "unified_output_json.h"
+#include "unified_native_q2_models.h"
+#include "map_players_private.h"
+#include "equipment_gear_presentation.h"
+#include "qa/application_equipment.h"
+#include "qa/application_native_q3_presentation.h"
+#include "qa/application_native_q2_presentation.h"
+#include "qa/application_selected_q3_character.h"
+#include "qa/game_q3_configstrings.h"
+#include "qa/game_q3_source.h"
+#include "qa/game_q1_bots.h"
+
+#include <math.h>
+#include <stdio.h>
+#include <string.h>
+
+static bool text(application_unified_json *j, const char *s, qa_error *e)
+{ return application_unified_json_text(j, s, e); }
+static bool string(application_unified_json *j, const char *s, qa_error *e)
+{ return application_unified_json_string(j, s, e); }
+static bool number(application_unified_json *j, double n, qa_error *e)
+{ return application_unified_json_number(j, n, e); }
+static bool vector(application_unified_json *j, qa_vec3 v, qa_error *e)
+{ return application_unified_json_vector(j, v, e); }
+
+static const application_player_record *player_record(const qa_application *app, qa_actor_id actor)
+{
+    for (size_t i = 0; i < app->players->count; ++i)
+        if (qa_actor_id_equal(app->players->records[i].actor, actor)) return app->players->records + i;
+    return NULL;
+}
+
+static bool stable(qa_application *app, const application_unified_source *source,
+    uint64_t actors, qa_error *error)
+{
+    return (application_unified_source_current(app, source) &&
+        qa_actors_revision(qa_session_actors(source->session)) == actors) ||
+        application_fail(error, QA_ERROR_ARGUMENT, "Unified presentations changed their Source or full actor roster");
+}
+
+static bool model(application_unified_json *j, bool *first,
+    const qa_application_visual_view *v, const char *path, const char *content,
+    bool source_client, bool view_weapon, qa_error *error)
+{
+    static const char *const families[] = {"q1", "q2", "q3"};
+    if (!path || !content || (unsigned)v->family >= 3)
+        return application_fail(error, QA_ERROR_FORMAT, "Unified model lost its actual content, family or path");
+    bool ok = (*first || text(j, ",", error)) && text(j, "{\"actor\":", error) &&
+        application_unified_json_actor(j, v->actor, error) && text(j, ",\"content\":", error) &&
+        string(j, content, error) && text(j, ",\"family\":", error) && string(j, families[v->family], error) &&
+        text(j, ",\"path\":", error) && string(j, path, error) && text(j, ",\"frame\":", error) &&
+        number(j, v->frame, error) && text(j, ",\"oldFrame\":", error) &&
+        number(j, v->old_frame < 0 ? v->frame : v->old_frame, error) &&
+        text(j, ",\"skin\":", error) && number(j, v->skin, error) &&
+        text(j, ",\"effects\":", error) && application_unified_json_natural(j, v->effects, error) &&
+        text(j, ",\"renderFlags\":", error) && number(j, v->render_flags, error) &&
+        text(j, ",\"origin\":", error) && vector(j, v->body.origin, error) &&
+        text(j, ",\"angles\":", error) && vector(j, v->body.angles, error) &&
+        text(j, ",\"scale\":", error) && number(j, v->scale, error) &&
+        text(j, v->visible ? ",\"visible\":true" : ",\"visible\":false", error) &&
+        text(j, view_weapon ? ",\"viewWeapon\":true" : ",\"viewWeapon\":false", error);
+    if (ok && source_client) ok = text(j, ",\"renderOwner\":\"source-client\"", error);
+    if (ok && v->family != QA_GAME_Q3 && !view_weapon)
+        ok = text(j, ",\"alpha\":", error) && number(j, v->alpha, error);
+    if (ok && v->skin_path) ok = text(j, ",\"skinPath\":", error) && string(j, v->skin_path, error);
+    if (ok && v->has_player_colors)
+        ok = text(j, ",\"playerColors\":{\"top\":", error) && number(j, v->player_colors >> 4, error) &&
+            text(j, ",\"bottom\":", error) && number(j, v->player_colors & 15u, error) && text(j, "}", error);
+    if (ok && v->q2_flare.present) {
+        const qa_application_q2_flare_view *f = &v->q2_flare;
+        ok = text(j, ",\"flare\":{\"image\":", error) && string(j, f->image, error) &&
+            text(j, ",\"fadeStart\":", error) && number(j, f->fade_start, error) &&
+            text(j, ",\"fadeEnd\":", error) && number(j, f->fade_end, error) &&
+            text(j, ",\"scale\":", error) && number(j, v->scale, error) &&
+            text(j, ",\"color\":", error) && vector(j, f->color, error) &&
+            text(j, ",\"rimColor\":", error) &&
+            (f->has_rim_color ? vector(j, f->rim_color, error) : text(j, "null", error)) &&
+            text(j, f->lock_angle ? ",\"lockAngle\":true}" : ",\"lockAngle\":false}", error);
+    }
+    if (ok) ok = text(j, "}", error);
+    if (ok) *first = false;
+    return ok;
+}
+
+static qa_trajectory trajectory(const qa_q3_trajectory *t)
+{
+    return (qa_trajectory){.type = (qa_trajectory_type)t->type, .time_ms = t->time,
+        .duration_ms = t->duration, .base = qa_v3(t->base[0], t->base[1], t->base[2]),
+        .delta = qa_v3(t->delta[0], t->delta[1], t->delta[2])};
+}
+
+static const char *missile(int32_t weapon)
+{
+    switch (weapon) {
+    case QA_Q3_W_GRAPPLE: case QA_Q3_W_ROCKET: return "models/ammo/rocket/rocket.md3";
+    case QA_Q3_W_GRENADE: return "models/ammo/grenade1.md3";
+    case QA_Q3_W_PROX: return "models/weaphits/proxmine.md3";
+    case QA_Q3_W_NAIL: return "models/weaphits/nail.md3";
+    case QA_Q3_W_BFG: return "models/weaphits/bfg.md3";
+    default: return NULL;
+    }
+}
+
+static bool q3_provider_models(qa_application *app, const application_unified_source *source,
+    application_provider *provider, uint64_t actors, application_unified_json *j,
+    bool *first, qa_error *error)
+{
+    qa_q3_game *game = provider->state.q3;
+    const qa_product *product = provider->product;
+    const qa_launch_instance *launch = provider->launch;
+    if (!game || !launch || !product || !product->identity ||
+        !provider->constructed || !provider->attached || provider->close_pending ||
+        !qa_q3_destroy_ready(game))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Unified Q3 models lost their real published GAME owner");
+    qa_q3_product edition; int32_t time, start; uint32_t count;
+    if (!qa_q3_source_match_context_read(game, &edition, &start, error) ||
+        !qa_q3_source_clock(game, &time, error) ||
+        !qa_q3_source_entity_count(game, &count, error)) return false;
+    size_t item_count;
+    const qa_q3_item *items = qa_q3_items(edition, &item_count);
+    for (uint32_t slot = 0; slot < count; ++slot) {
+        struct { qa_q3_source_binding binding; qa_q3_entity state; qa_q3_wire_visibility visibility; } row;
+        if (!qa_q3_source_binding_read(game, slot, &row.binding, error)) return false;
+        if (!row.binding.in_use) continue;
+        if (!qa_q3_wire_entity_read(game, slot, &row.state, &row.visibility, error)) return false;
+        if (!row.visibility.present || row.binding.client_slot >= 0 ||
+            !row.visibility.linked || (row.visibility.server_flags & 1u) || ((uint32_t)row.state.eFlags & 128u)) continue;
+        const char *paths[2] = {0};
+        char inline_path[32];
+        if (row.state.eType == 2) {
+            if (row.state.modelindex < 0 || (size_t)row.state.modelindex >= item_count)
+                return application_fail(error, QA_ERROR_FORMAT, "Unified native item has an invalid real source index");
+            paths[0] = items[row.state.modelindex].model;
+            paths[1] = items[row.state.modelindex].secondary_model;
+        } else if (row.state.eType == 3) paths[0] = missile(row.state.weapon);
+        else {
+            qa_actor_collision collision;
+            qa_error observed = {0};
+            bool colliding = qa_world_get_collision(source->world, row.binding.actor, &collision, &observed);
+            if (!colliding && observed.code != QA_OK) { if (error) *error = observed; return false; }
+            if (colliding && collision.inline_model) {
+                int written = snprintf(inline_path, sizeof(inline_path), "*%u", collision.model);
+                if (written < 0 || (size_t)written >= sizeof(inline_path))
+                    return application_fail(error, QA_ERROR_FORMAT, "Unified native inline model exceeds its authored path");
+                paths[0] = inline_path;
+            } else if (row.state.modelindex > 0) {
+                if ((uint32_t)row.state.modelindex >= 256)
+                    return application_fail(error, QA_ERROR_FORMAT, "Unified native model exceeds the source model configstrings");
+                if (!qa_q3_configstring_read(game, 32u + (uint32_t)row.state.modelindex,
+                        &paths[0], error)) return false;
+            }
+        }
+        qa_application_visual_view v = {.actor = row.binding.actor, .family = QA_GAME_Q3,
+            .frame = row.state.frame, .old_frame = row.state.frame, .effects = (uint32_t)row.state.eFlags,
+            .scale = 1, .alpha = 1, .visible = true};
+        qa_trajectory position = trajectory(&row.state.pos), angular = trajectory(&row.state.apos);
+        if (!qa_trajectory_position(&position, time, 800, &v.body.origin, error) ||
+            !qa_trajectory_position(&angular, time, 800, &v.body.angles, error) ||
+            !stable(app, source, actors, error)) return false;
+        for (unsigned i = 0; i < 2; ++i)
+            if (paths[i] && paths[i][0] && !model(j, first, &v, paths[i], product->identity, true, false, error)) return false;
+    }
+    int32_t after; uint32_t extent;
+    return (stable(app, source, actors, error) && provider->constructed && provider->attached &&
+        !provider->close_pending && provider->state.q3 == game && provider->launch == launch &&
+        provider->product == product && qa_q3_source_clock(game, &after, error) && after == time &&
+        qa_q3_source_entity_count(game, &extent, error) && extent == count) ||
+        application_fail(error, QA_ERROR_ARGUMENT, "Unified native model source changed during observation");
+}
+
+static bool q3_models(qa_application *app, const application_unified_source *source,
+    uint64_t actors, application_unified_json *j, bool *first, qa_error *error)
+{
+    for (size_t i = 0; i < app->provider_count; ++i) {
+        application_provider *p = app->providers[i];
+        if (p->kind == APPLICATION_PROVIDER_Q3 && p->constructed && p->attached && !p->close_pending &&
+            !q3_provider_models(app, source, p, actors, j, first, error)) return false;
+    }
+    return true;
+}
+
+static bool character(application_unified_json *j, bool *first,
+    const qa_application_selected_q3_character *v, const qa_q3_player_state *p, qa_error *error)
+{
+    bool ok = (*first || text(j, ",", error)) && text(j, "{\"actor\":", error) &&
+        application_unified_json_actor(j, v->actor, error) && text(j, ",\"origin\":", error) && vector(j, v->body.origin, error) &&
+        text(j, ",\"angles\":", error) && vector(j, v->view_angles, error) &&
+        text(j, ",\"velocity\":", error) && vector(j, v->body.velocity, error) &&
+        text(j, ",\"movementDirection\":", error) && number(j, v->movement_direction, error) &&
+        text(j, ",\"animation\":{\"kind\":\"q3\",\"legs\":", error) && number(j, v->legs_animation, error) &&
+        text(j, ",\"torso\":", error) && number(j, v->torso_animation, error) &&
+        text(j, ",\"legsTimerMilliseconds\":", error) && number(j, p->legs_timer_ms, error) &&
+        text(j, ",\"torsoTimerMilliseconds\":", error) && number(j, p->torso_timer_ms, error) &&
+        text(j, "},\"sourceFlags\":", error) && number(j, v->source_flags, error) &&
+        text(j, ",\"powerups\":0,\"team\":null,\"color\":{\"x\":1,\"y\":1,\"z\":1,\"w\":1},\"scale\":", error) &&
+        number(j, v->scale, error) && text(j, ",\"opacity\":", error) && number(j, v->opacity, error) && text(j, "}", error);
+    if (ok) *first = false;
+    return ok;
+}
+
+static bool equipment(qa_application *app, const application_unified_source *source, qa_actor_id actor,
+    qa_actor_id recipient, application_unified_json *j, bool *first, qa_error *error)
+{
+    qa_application_equipment_view e;
+    if (!qa_application_equipment_read(app, actor, &e, error)) return false;
+    if (!e.view_model || !e.view_model[0]) return true;
+    application_provider *provider = NULL;
+    for (size_t i = 0; i < app->provider_count; ++i)
+        if (app->providers[i]->owner == e.provider) provider = app->providers[i];
+    application_equipment_gear_presentation gear = {0}; bool gear_selected = false;
+    const qa_product *product = provider ? provider->product : NULL;
+    if (e.equipment_slot) {
+        if (!application_equipment_gear_presentation_read(app, actor, &gear, &gear_selected, error)) return false;
+        if (gear_selected)
+            product = qa_catalog_product(qa_launch_snapshot_catalog(source->launch), gear.source.descriptor->selection.product);
+    }
+    if (!product || !product->identity || (!provider && !gear_selected))
+        return application_fail(error, QA_ERROR_NOT_FOUND, "Unified view weapon lost its true selected content owner");
+    qa_application_camera_view camera;
+    if (!qa_application_control_camera(app, actor, &camera))
+        return application_fail(error, QA_ERROR_NOT_FOUND, "Unified view weapon lost its actual player camera");
+    application_provider *primary = application_world_provider(app, QA_ROLE_ENTITIES, "");
+    if (!primary) return application_fail(error, QA_ERROR_NOT_FOUND, "Unified view weapon lost its actual Source");
+    bool intermission = false;
+    if (primary->kind == APPLICATION_PROVIDER_Q1) {
+        double time, exit_after;
+        if (!qa_q1_bot_clock_read(primary->state.q1, &time, &intermission, &exit_after, error)) return false;
+    } else if (primary->kind == APPLICATION_PROVIDER_Q2)
+        intermission = qa_q2_players_in_intermission(primary->state.q2);
+    else if (primary->kind == APPLICATION_PROVIDER_Q3) {
+        qa_q3_source_match_state match;
+        if (!qa_q3_source_match_state_read(primary->state.q3, &match, error)) return false;
+        intermission = match.intermission_time_ms != 0;
+    } else if (primary->kind == APPLICATION_PROVIDER_QC) {
+        const qa_qc_definition *definition = qa_qc_program_find_global(primary->state.qc.program, "intermission_running");
+        if (definition) {
+            float value;
+            if (definition->type != QA_QC_FLOAT)
+                return application_fail(error, QA_ERROR_FORMAT, "Unified weapon intermission lost its Source float global");
+            if (!qa_qc_global_float(primary->state.qc.instance, definition->offset, &value, error)) return false;
+            intermission = value != 0;
+        }
+    }
+    if (camera.cutscene || intermission) return true;
+    bool local = qa_actor_id_equal(actor, recipient);
+    qa_application_visual_view v = {.actor = actor, .family = e.family,
+        .frame = local && e.has_frame ? e.frame : 0, .old_frame = local && e.has_frame ? e.frame : 0,
+        .skin = local && e.has_skin ? e.skin : 0, .scale = 1, .alpha = 1,
+        .render_flags = local && e.family == QA_GAME_Q2 && provider && provider->kind != APPLICATION_PROVIDER_NATIVE ? 21u : 0u,
+        .visible = local && e.visible};
+    if (local) {
+        v.body.origin = qa_vec_add(camera.origin, camera.view_offset);
+        v.body.origin = qa_vec_add(v.body.origin, e.has_source_gun_pose ? e.gun_origin : e.kick_origin);
+        v.body.angles = qa_vec_add(camera.angles, e.has_source_gun_pose ? e.gun_angles : e.kick_angles);
+    }
+    if (!application_unified_source_current(app, source) || !qa_application_equipment_current(app, &e))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Unified view weapon changed its actual Source or selected owner");
+    /* Q3's public weapon continuation belongs to the actual selected owner. */
+    if (e.family == QA_GAME_Q3) {
+        qa_application_control_view control;
+        qa_combat_state combat;
+        qa_body_state body;
+        if (!qa_application_control_read(app, actor, &control) ||
+            !qa_combat_read_traits(app->combat, actor, &combat, error) ||
+            !qa_world_body_read(source->world, actor, &body, error))
+            return application_fail(error, QA_ERROR_NOT_FOUND, "Unified Q3 weapon lost its actual command or motion owner");
+        bool firing = (control.buttons & 1u) != 0 && combat.health > 0;
+        application_unified_json row = {0}; bool one = true;
+        bool ok = model(&row, &one, &v, e.view_model, product->identity, false, true, error);
+        if (ok && row.bytes.size) --row.bytes.size;
+        if (ok) ok = text(&row, ",\"q3Weapon\":{\"timeMilliseconds\":", error) && number(&row, e.q3_time_ms, error) &&
+            text(&row, ",\"torsoAnimation\":", error) && number(&row, local && e.has_q3_source ? e.q3_source.torsoAnim : 0, error) &&
+            text(&row, ",\"lastFireMilliseconds\":", error) &&
+            (e.q3_fire.present ? number(&row, e.q3_fire.time_ms, error) : text(&row, "null", error)) &&
+            text(&row, firing ? ",\"firing\":true" : ",\"firing\":false", error) &&
+            text(&row, ",\"horizontalSpeed\":", error) &&
+            number(&row, local ? hypot(body.velocity.x, body.velocity.y) : 0, error) &&
+            text(&row, ",\"bobCycle\":", error) && number(&row, local && e.has_q3_source ? e.q3_source.bobCycle : 0, error) &&
+            text(&row, ",\"weapon\":", error) && number(&row, e.q3_weapon, error) && text(&row, "}", error);
+        if (ok && e.item) ok = text(&row, ",\"weaponItem\":", error) &&
+            string(&row, qa_strings_cstr(qa_session_strings(source->session), e.item), error);
+        if (ok && local && gear_selected) {
+            const application_q3_grapple_definition *d = gear.source.definition;
+            if (d->presentation.anchor_path && d->presentation.anchor_path[0])
+                ok = text(&row, ",\"modelAnchor\":{\"path\":", error) && string(&row, d->presentation.anchor_path, error) &&
+                    text(&row, ",\"tag\":", error) && string(&row, d->presentation.anchor_tag, error) &&
+                    text(&row, ",\"offset\":", error) && vector(&row, d->presentation.anchor_offset, error) &&
+                    text(&row, ",\"fovOffset\":{\"above\":", error) && number(&row, d->presentation.fov_above, error) &&
+                    text(&row, ",\"scale\":", error) && number(&row, d->presentation.fov_scale, error) && text(&row, "}}", error);
+            if (ok && d->presentation.attachment_count) {
+                ok = text(&row, ",\"modelAttachments\":[", error);
+                for (size_t i = 0; ok && i < d->presentation.attachment_count; ++i)
+                    ok = (!i || text(&row, ",", error)) && text(&row, "{\"path\":", error) &&
+                        string(&row, d->presentation.attachments[i].path, error) && text(&row, ",\"tag\":", error) &&
+                        string(&row, d->presentation.attachments[i].tag, error) && text(&row, "}", error);
+                if (ok) ok = text(&row, "]", error);
+            }
+            if (ok && !application_equipment_gear_presentation_current(app, &gear))
+                ok = application_fail(error, QA_ERROR_ARGUMENT, "Unified authored gear model changed its retained declaration");
+        }
+        if (ok) ok = text(&row, "}", error) && (*first || text(j, ",", error)) &&
+            application_unified_json_append(j, (qa_bytes){row.bytes.data, row.bytes.size}, error);
+        application_unified_json_dispose(&row);
+        if (ok) *first = false;
+        return ok;
+    }
+    return model(j, first, &v, e.view_model, product->identity, false, true, error);
+}
+
+bool application_unified_presentations_build(qa_application *app, const application_unified_source *source,
+    qa_net_client_id recipient, const qa_unified_session_player *player,
+    application_unified_presentations *out, qa_error *error)
+{
+    if (!out || out->models || out->characters || !source || !player ||
+        !application_unified_source_current(app, source) || !application_unified_player_current(app, recipient, player))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Unified presentations require their actual Source recipient");
+    application_unified_presentations candidate = {.source = *source,
+        .actors_revision = qa_actors_revision(qa_session_actors(source->session))};
+    application_unified_json models = {0}, characters = {0};
+    qa_unified_document *native_models = NULL;
+    qa_application_native_q2_presentation q2;
+    bool q2_found = false;
+    bool first_model = true, first_character = true;
+    bool ok = qa_application_native_q2_presentation_selected(app, &q2, &q2_found, error) &&
+        application_unified_native_q2_models(app, source, &native_models, error) &&
+        text(&models, "[", error) && text(&characters, "[", error) &&
+        q3_models(app, source, candidate.actors_revision, &models, &first_model, error);
+    if (ok) {
+        const qa_json_document *json = qa_unified_document_json(native_models);
+        qa_json_id root = qa_unified_document_root(native_models);
+        if (qa_json_type(json, root) != QA_JSON_ARRAY)
+            ok = application_fail(error, QA_ERROR_FORMAT, "Unified native models lost their actual array");
+        else if (qa_json_size(json, root)) {
+            qa_bytes bytes = qa_json_source(json, root);
+            ok = (first_model || text(&models, ",", error)) &&
+                application_unified_json_append(&models, (qa_bytes){bytes.data + 1, bytes.size - 2}, error);
+            if (ok) first_model = false;
+        }
+    }
+    uint32_t cursor = 0; const qa_actor_record *record;
+    while (ok && qa_actors_next(qa_session_actors(source->session), &cursor, &record)) {
+        qa_actor_id id = record->id;
+        const application_player_record *admitted = player_record(app, id);
+        if (admitted && (admitted->retiring || admitted->deferred || admitted->source_begin_pending)) continue;
+        qa_application_selected_q3_character c; bool found;
+        if (!qa_application_selected_q3_character_read(app, id, &c, &found, error)) { ok = false; break; }
+        if (found && c.present) {
+            qa_q3_player_state p;
+            if (!qa_q3_player_read(c.game, id, &p)) {
+                ok = application_fail(error, QA_ERROR_ARGUMENT, "Unified character lost its actual selected player"); break;
+            }
+            if (!character(&characters, &first_character, &c, &p, error)) { ok = false; break; }
+            if (!qa_application_selected_q3_character_current(app, &c)) {
+                ok = application_fail(error, QA_ERROR_ARGUMENT, "Unified character changed its actual selected continuation"); break;
+            }
+        }
+        application_provider *body = application_provider_for(app, id, QA_ROLE_BODY, "");
+        qa_mode_object_view object;
+        uint32_t physical_slot;
+        bool q3_physical = body && body->kind == APPLICATION_PROVIDER_Q3 && body->state.q3 &&
+            qa_q3_source_actor_slot(body->state.q3, id, &physical_slot, NULL);
+        bool mode_model = app->modes && qa_modes_object_read(app->modes, id, &object) &&
+            !q3_physical;
+        bool physical_q2 = q2_found && q2.kind == QA_APPLICATION_NATIVE_Q2_ORIGINAL &&
+            body && body->owner == source->owner;
+        if (body && !physical_q2 && (body->kind != APPLICATION_PROVIDER_Q3 || mode_model) && !(found && c.present) &&
+            qa_world_body_storage_serial(source->world, id)) {
+            qa_application_visual_view v; qa_error observed = {0};
+            bool visible = qa_application_visual_read(app, id, &v, &observed);
+            if (!visible && observed.code != QA_OK && observed.code != QA_ERROR_NOT_FOUND) {
+                if (error) *error = observed;
+                ok = false; break;
+            }
+            if (visible) {
+                const qa_product *content = qa_catalog_product(qa_launch_snapshot_catalog(source->launch), v.content);
+                if (!content) { ok = application_fail(error, QA_ERROR_NOT_FOUND, "Unified model lost its actual content product"); break; }
+                qa_application_map_view map;
+                if (!qa_application_map_read(app, &map)) { ok = false; break; }
+                for (unsigned i = 0; ok && i < 4; ++i)
+                    if (v.models[i] && v.models[i][0] && strcmp(v.models[i], qa_resource_path(map.resource)))
+                        ok = model(&models, &first_model, &v, v.models[i], content->identity, false, false, error);
+                if (ok && v.q2_flare.present)
+                    ok = model(&models, &first_model, &v, "", content->identity, false, false, error);
+            }
+        }
+        if (ok && admitted) ok = equipment(app, source, id, player->actor, &models, &first_model, error);
+        if (ok) ok = stable(app, source, candidate.actors_revision, error);
+    }
+    if (ok) ok = text(&models, "]", error) && text(&characters, "]", error) &&
+        qa_unified_document_create(QA_UNIFIED_CHECKPOINT, (qa_bytes){models.bytes.data, models.bytes.size}, &candidate.models, error) &&
+        qa_unified_document_create(QA_UNIFIED_CHECKPOINT, (qa_bytes){characters.bytes.data, characters.bytes.size}, &candidate.characters, error) &&
+        application_unified_player_current(app, recipient, player) && stable(app, source, candidate.actors_revision, error);
+    application_unified_json_dispose(&models); application_unified_json_dispose(&characters);
+    qa_unified_document_destroy(native_models);
+    if (!ok) { application_unified_presentations_dispose(&candidate); return false; }
+    *out = candidate; return true;
+}
+
+bool application_unified_presentations_current(qa_application *app, const application_unified_presentations *v)
+{ return v && v->models && v->characters && stable(app, &v->source, v->actors_revision, NULL); }
+
+void application_unified_presentations_dispose(application_unified_presentations *v)
+{
+    if (!v) return;
+    qa_unified_document_destroy(v->models); qa_unified_document_destroy(v->characters);
+    *v = (application_unified_presentations){0};
+}

@@ -86,6 +86,14 @@ const qa_q3_usercmd *qa_q3_client_peer_usercmd_at(const qa_q3_client_peer *p, ui
     if (number > p->command_number || p->command_number - number >= 64) return NULL;
     return &p->commands[number & 63];
 }
+const qa_q3_usercmd *qa_q3_client_peer_usercmd_signed_at(const qa_q3_client_peer *p, int32_t number) {
+    if (!p) return NULL;
+    uint32_t head_word = (uint32_t)p->command_number, floor_word = head_word - 64;
+    int32_t head, floor;
+    memcpy(&head, &head_word, sizeof(head)); memcpy(&floor, &floor_word, sizeof(floor));
+    if (number > head || number <= floor) return NULL;
+    return &p->commands[(uint32_t)number & 63];
+}
 int32_t qa_q3_client_peer_server_command_sequence(const qa_q3_client_peer *p) { return p->server_command_sequence; }
 static bool consume(void *user, const qa_q3_server_event *event, qa_error *e) {
     qa_q3_client_peer *p = user;

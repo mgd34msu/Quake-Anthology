@@ -163,17 +163,35 @@ bool application_native_q2_client_admit(application_provider *provider, uint32_t
     client->actor = actor; client->bot = bot; client->disconnect_started = false;
     memset(client->layout, 0, sizeof(client->layout));
     memset(client->inventory, 0, sizeof(client->inventory));
+    client->protocol_fog = (qa_q2_wire_fog){0};
+    client->protocol_fog_actor = actor;
+    client->userinfo_present = false; client->userinfo[0] = 0;
     qa_native_host_client_request request = {.slot = slot, .userinfo = userinfo,
         .social_id = social_id ? social_id : "", .bot = bot};
     ++engine->calls;
-    bool ok = qa_native_host_client_connect(provider->state.native.host, &request, accepted, error);
+    qa_buffer returned = {0};
+    bool ok = qa_native_host_client_connect_userinfo(provider->state.native.host,
+        &request, accepted, &returned, error);
     --engine->calls;
+    if (returned.data && qa_actor_id_equal(client->actor, actor)) {
+        memcpy(client->userinfo, returned.data, returned.size + 1);
+        client->userinfo_present = true;
+    }
+    qa_buffer_free(&returned);
+    if (ok && (!qa_actor_id_equal(client->actor, actor) ||
+        !qa_actors_get(qa_session_actors(provider->application->session), actor)))
+        ok = application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 connect replaced its actual client generation");
     if (ok && *accepted) client->connected = true;
     else {
         qa_error cleanup = {0};
         bool detached = qa_native_host_detach_actor(provider->state.native.host, slot, actor, &cleanup);
         if (!detached && ok) { ok = false; if (error) *error = cleanup; }
-        if (detached) client->actor = (qa_actor_id){0};
+        if (detached) {
+            client->actor = (qa_actor_id){0};
+            client->protocol_fog = (qa_q2_wire_fog){0};
+            client->protocol_fog_actor = (qa_actor_id){0};
+            client->userinfo_present = false; client->userinfo[0] = 0;
+        }
     }
     return ok;
 }
@@ -197,11 +215,29 @@ bool application_native_q2_client_begin(application_provider *provider, uint32_t
 bool application_native_q2_client_userinfo(application_provider *provider, uint32_t slot,
     const char *userinfo, qa_error *error)
 {
-    struct application_native_q2 *engine = client_owner(provider, slot, true, error);
-    if (!engine || !userinfo) return false;
+    struct application_native_q2 *engine = provider ? provider->state.native.q2_engine : NULL;
+    if (!engine || !engine->initialized || engine->profile == QA_NATIVE_Q2_CGAME_API2023 ||
+        !slot || slot >= 257 || engine->calls || !engine->clients[slot].connected ||
+        !userinfo || !qa_world_idle(engine->world) ||
+        !qa_native_host_destroy_ready(provider->state.native.host))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 userinfo requires its returned physical client call");
+    qa_actor_id actor = engine->clients[slot].actor;
+    qa_buffer returned = {0};
     ++engine->calls;
-    bool ok = qa_native_host_client_userinfo(provider->state.native.host, slot, userinfo, error);
+    bool ok = qa_native_host_client_userinfo_result(provider->state.native.host,
+        slot, userinfo, &returned, error);
     --engine->calls;
+    if (!qa_actor_id_equal(engine->clients[slot].actor, actor) ||
+        !engine->clients[slot].connected ||
+        !qa_actors_get(qa_session_actors(provider->application->session), actor)) {
+        qa_buffer_free(&returned);
+        return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 userinfo replaced its actual client generation");
+    }
+    if (returned.data) {
+        memcpy(engine->clients[slot].userinfo, returned.data, returned.size + 1);
+        engine->clients[slot].userinfo_present = true;
+    }
+    qa_buffer_free(&returned);
     return ok;
 }
 
@@ -229,6 +265,9 @@ bool application_native_q2_client_disconnect(application_provider *provider, uin
         return false;
     }
     client->actor = (qa_actor_id){0}; client->bot = false;
+    client->protocol_fog = (qa_q2_wire_fog){0};
+    client->protocol_fog_actor = (qa_actor_id){0};
+    client->userinfo_present = false; client->userinfo[0] = 0;
     if (!ok && error) *error = first;
     return ok;
 }
@@ -246,6 +285,64 @@ bool application_native_q2_client_think(application_provider *provider, uint32_t
     ++engine->calls;
     bool ok = qa_native_host_client_think(provider->state.native.host, slot, command, error);
     --engine->calls; engine->current_client = 0;
+    return ok;
+}
+
+bool application_native_q2_client_command(application_provider *provider, qa_actor_id actor,
+    const qa_command_invocation *command, bool *handled, qa_error *error)
+{
+    struct application_native_q2 *engine = provider ? provider->state.native.q2_engine : NULL;
+    if (!handled || !command || !engine || !engine->initialized || engine->calls ||
+        !qa_world_idle(engine->world) || !qa_native_host_destroy_ready(provider->state.native.host) ||
+        engine->profile == QA_NATIVE_Q2_CGAME_API2023 ||
+        !command->argc || command->argc > INT32_MAX || !command->argv || !command->args_text ||
+        !qa_actors_get(qa_session_actors(provider->application->session), actor))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 ClientCommand requires its actual invocation and live client");
+    *handled = false;
+    uint32_t slot = 0;
+    for (uint32_t i = 1; i < 257; ++i)
+        if (engine->clients[i].connected && engine->clients[i].begun &&
+            qa_actor_id_equal(engine->clients[i].actor, actor)) {
+            if (slot) return application_fail(error, QA_ERROR_FORMAT, "Native Q2 ClientCommand aliases two physical client slots");
+            slot = i;
+        }
+    if (!slot) return true;
+    size_t extent = 0;
+    for (size_t i = 0; i < command->argc; ++i) {
+        if (!command->argv[i])
+            return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 ClientCommand has an absent argument");
+        size_t length = strlen(command->argv[i]);
+        if (length == SIZE_MAX || length + 1 > SIZE_MAX - extent)
+            return application_fail(error, QA_ERROR_MEMORY, "Native Q2 ClientCommand argument extent overflows");
+        extent += length + 1;
+    }
+    if (command->argc > SIZE_MAX / sizeof(char *))
+        return application_fail(error, QA_ERROR_MEMORY, "Native Q2 ClientCommand argument table overflows");
+    qa_command_tokens tokens = {.count = command->argc};
+    tokens.values = calloc(command->argc, sizeof(*tokens.values));
+    tokens.storage = malloc(extent);
+    size_t args_size = strlen(command->args_text);
+    if (args_size != SIZE_MAX) tokens.args_text = malloc(args_size + 1);
+    if (!tokens.values || !tokens.storage || !tokens.args_text) {
+        qa_command_tokens_free(&tokens);
+        return application_fail(error, QA_ERROR_MEMORY, "Retaining exact native Q2 ClientCommand arguments");
+    }
+    size_t offset = 0;
+    for (size_t i = 0; i < command->argc; ++i) {
+        size_t size = strlen(command->argv[i]) + 1;
+        tokens.values[i] = tokens.storage + offset;
+        memcpy(tokens.values[i], command->argv[i], size); offset += size;
+    }
+    memcpy(tokens.args_text, command->args_text, args_size + 1);
+    qa_command_tokens prior = engine->arguments;
+    uint32_t prior_client = engine->current_client;
+    engine->arguments = tokens; engine->current_client = slot;
+    ++engine->calls;
+    bool ok = qa_native_host_client_command(provider->state.native.host, slot, error);
+    --engine->calls;
+    engine->current_client = prior_client;
+    qa_command_tokens_free(&engine->arguments); engine->arguments = prior;
+    if (ok) *handled = true;
     return ok;
 }
 

@@ -4,7 +4,6 @@
 #include "qa/cvars_save.h"
 #include "qa/launch_save.h"
 #include "qa/source_save.h"
-#include "qa/binary.h"
 #include "qa/application_native_q3_client_modules.h"
 #include "qa/application_native_q3_remote_client.h"
 #include "qa/application_native_q3_remote_modules_save.h"
@@ -164,15 +163,15 @@ static bool fields(qa_source_save_io *io, saved_roles *saved)
         }
         if (!qa_source_save_count(io, &row->modules.size, SIZE_MAX)) return false;
         if (row->modules.size) {
-            if (row->lifecycle != NATIVE_Q3_REMOTE_ATTACHED || !row->epoch || !row->module_sequence || row->modules.size < 12) return false;
+            if (row->lifecycle != NATIVE_Q3_REMOTE_ATTACHED || !row->epoch || !row->module_sequence) return false;
             if (saved->reading) {
                 if (row->modules.size > io->input.size - io->offset) return false;
                 row->modules.data = malloc(row->modules.size);
                 if (!row->modules.data) return application_fail(io->error, QA_ERROR_MEMORY, "Retaining staged CLIENT module continuation");
             }
-            static const uint8_t signature[8] = {'Q','A','N','C','M',0,0,0};
             if (!qa_source_save_bytes(io, row->modules.data, row->modules.size) ||
-                memcmp(row->modules.data, signature, sizeof(signature)) || qa_load_u32le(row->modules.data + 8) != 1) return false;
+                !qa_application_native_q3_client_modules_checkpoint_format(
+                    (qa_bytes){row->modules.data, row->modules.size}, io->error)) return false;
         }
         for (size_t j = 0; j < i; ++j) if (row->seat == saved->roles[j].seat ||
             row->service_owner == saved->roles[j].service_owner) return false;

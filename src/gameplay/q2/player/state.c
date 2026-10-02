@@ -76,7 +76,8 @@ void q2_client_release_state(q2_actor *a) {
 }
 bool qa_q2_players_configure(qa_q2_game *g, const qa_q2_player_rules *r,
                              const qa_q2_player_services *s, qa_error *e) {
-    if (!g || !r || !s || !s->movement || !s->set_movement || !s->emit ||
+    if (!g || !r || !s || !r->max_clients || r->max_clients > 256 ||
+        !s->movement || !s->set_movement || !s->emit ||
         (s->shared_score_owned ? (!s->score_read || s->score)
                               : (!!s->score != !!s->score_read)) || r->coop_num_lives < 0 ||
         !isfinite(r->roll_speed) || r->roll_speed <= 0 || !isfinite(r->force_respawn_seconds) ||
@@ -113,6 +114,12 @@ bool qa_q2_players_configure(qa_q2_game *g, const qa_q2_player_rules *r,
             return false;
         }
     q2_players *p = g->player_runtime;
+    if (g->wire_actors && g->wire_clients != r->max_clients &&
+        !qa_q2_wire_configure(g, g->wire_capacity, r->max_clients, e)) {
+        for (size_t i = 0; i < 5; ++i) free(copies[i]);
+        free(rotation);
+        return false;
+    }
     free(p->rotation_maps);p->rotation_maps=rotation;
     for (size_t i = 0; i < 5; i++) {
         free(p->rule_strings[i]);
@@ -149,6 +156,7 @@ bool qa_q2_clear_input(qa_q2_game *g, qa_actor_id id, qa_error *e) {
     a->input.attack = a->input.latched_attack = false;
     a->input.holster = a->input.latched_holster = false;
     a->weapon.latched_attack = a->weapon.fire_buffered = false;
+    a->weapon_turn = (qa_q2_weapon_turn_state){0};
     if (a->client) {
         a->client->buttons = a->client->latched_buttons = 0;
         a->client->weapon_thunk = false;
@@ -220,7 +228,8 @@ bool q2_player_move(qa_q2_game *g, q2_actor *a, const qa_q2_player_motion *chang
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Q2 movement control service is not configured");
         return false;
     }
-    return s->set_movement(s->context, a->id, change, e);
+    return q2_wire_player_motion(g, a, change, e) &&
+        s->set_movement(s->context, a->id, change, e);
 }
 bool q2_player_inventory_copy(qa_q2_game *g, qa_actor_id id, qa_inventory_entry **out,
                               size_t *count, qa_error *e) {

@@ -42,7 +42,7 @@ struct qa_catalog {
     qa_vfs *mounts;
     qa_resource_pool *resources;
     const char *root, *user;
-    qa_mount_id q3_download_mount, corpus_mount;
+    qa_mount_id q3_download_mount, corpus_mount, q2_download_mount[2];
     catalog_product *products;
     size_t product_count, product_capacity;
     catalog_physical *physical;

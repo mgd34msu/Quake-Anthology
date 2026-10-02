@@ -86,6 +86,13 @@ bool gl_api_load(qa_gl_renderer *renderer, qa_error *error)
     LOAD(DisableVertexAttribArray);
     LOAD(VertexAttribPointer);
     LOAD(DrawElements);
+    LOAD(ArrayElement);
+    LOAD(VertexAttrib4f);
+    qa_error optional = {0};
+    (void)load_proc(renderer, &renderer->gl.LockArraysEXT,
+        sizeof(renderer->gl.LockArraysEXT), "glLockArraysEXT", NULL, &optional);
+    (void)load_proc(renderer, &renderer->gl.UnlockArraysEXT,
+        sizeof(renderer->gl.UnlockArraysEXT), "glUnlockArraysEXT", NULL, &optional);
     LOAD(CreateShader);
     LOAD(ShaderSource);
     LOAD(CompileShader);

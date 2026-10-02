@@ -1,26 +1,7 @@
-#include "qa/network_q2_kex.h"
+#include "kex_channel_internal.h"
 #include <stdlib.h>
 #include <string.h>
 #include <zlib.h>
-struct pending {
-    struct pending*next;
-    uint16_t reliable;
-    bool sent;
-    size_t size;
-    uint8_t bytes[QA_KEX_DATAGRAM_BYTES];
-};
-struct qa_kex_channel {
-    qa_kex_emit_fn emit;
-    void*user;
-    uint16_t sequence,reliable,incoming_sequence,incoming_reliable,fragment_sequence;
-    uint8_t fragment_kind,ack;
-    bool fragmented;
-    struct pending*head,*tail;
-    size_t pending_bytes,pending_count,fragment_size,fragment_capacity,expanded_capacity;
-    unsigned retries;
-    uint64_t retry_at,received_at;
-    uint8_t*fragments,*expanded;
-};
 static void free_pending(struct pending *p) {
     while(p) {
         struct pending *next=p->next;
@@ -44,7 +25,7 @@ bool qa_kex_channel_create(qa_kex_emit_fn emit,void*user,qa_kex_channel**out,qa_
     return true;
 }
 void qa_kex_channel_destroy(qa_kex_channel*c) {
-    if(c) {
+    if(c&&!c->entered) {
         while(c->head) {
             struct pending*p=c->head;
             c->head=p->next;
@@ -55,7 +36,7 @@ void qa_kex_channel_destroy(qa_kex_channel*c) {
         free(c);
     }
 }
-bool qa_kex_channel_send(qa_kex_channel*c,uint8_t kind,qa_bytes payload,qa_kex_mode mode,uint64_t now,qa_error*e) {
+static bool send_body(qa_kex_channel*c,uint8_t kind,qa_bytes payload,qa_kex_mode mode,uint64_t now,qa_error*e) {
     if(!c||(payload.size&&!payload.data)||payload.size>QA_KEX_MESSAGE_BYTES||(mode!=QA_KEX_UNSEQUENCED&&mode!=QA_KEX_SEQUENCED&&mode!=QA_KEX_RELIABLE)) {
         qa_error_set(e,QA_ERROR_ARGUMENT,0,"Invalid KEX send");
         return false;
@@ -190,6 +171,7 @@ static bool reserve(uint8_t**data,size_t*capacity,size_t required,qa_error*e) {
         qa_error_set(e,QA_ERROR_MEMORY,0,"KEX receive allocation failed");
         return false;
     }
+    memset(p + *capacity, 0, next - *capacity);
     *data=p;
     *capacity=next;
     return true;
@@ -198,6 +180,7 @@ static bool expand(qa_kex_channel*c,uint8_t kind,qa_bytes b,qa_kex_message*out,q
     if(kind!=127) {
         if(!reserve(&c->expanded,&c->expanded_capacity,b.size,e))return false;
         if(b.size)memcpy(c->expanded,b.data,b.size);
+        c->expanded_size=b.size;
         *out=(qa_kex_message) {
             kind, {
                 c->expanded,b.size
@@ -230,6 +213,7 @@ static bool expand(qa_kex_channel*c,uint8_t kind,qa_bytes b,qa_kex_message*out,q
         qa_error_set(e,QA_ERROR_FORMAT,0,"Malformed compressed KEX message");
         return false;
     }
+    c->expanded_size=size;
     *out=(qa_kex_message) {
         b.data[0], {
             c->expanded,size
@@ -237,7 +221,7 @@ static bool expand(qa_kex_channel*c,uint8_t kind,qa_bytes b,qa_kex_message*out,q
     };
     return true;
 }
-bool qa_kex_channel_receive(qa_kex_channel*c,qa_bytes bytes,uint64_t now,qa_kex_message*out,bool*present,qa_error*e) {
+static bool receive_body(qa_kex_channel*c,qa_bytes bytes,uint64_t now,qa_kex_message*out,bool*present,qa_error*e) {
     if(!c||!out||!present) {
         qa_error_set(e,QA_ERROR_ARGUMENT,0,"Invalid KEX receive");
         return false;
@@ -252,14 +236,8 @@ bool qa_kex_channel_receive(qa_kex_channel*c,qa_bytes bytes,uint64_t now,qa_kex_
             return false;
         }
         uint16_t ack=(uint16_t)(((uint16_t)p.payload.data[1]<<8)|p.payload.data[2]);
-        /* The outstanding window stays below half the serial space. Old or
-         * future acknowledgements cannot retire a packet outside that window. */
-        size_t acknowledged=c->head?(uint16_t)(ack-c->head->reliable):0;
-        size_t count=c->head&&acknowledged<c->pending_count?acknowledged+1u:0;
-        struct pending *candidate=c->head;
-        for(size_t i=0;i<count;i++,candidate=candidate->next)
-            if(!candidate->sent) { count=0; break; }
-        while(count--) {
+        /* Retail uses the ordinary unsigned comparison, including at wrap. */
+        while(c->head&&c->head->reliable<=ack) {
             struct pending*remove=c->head;
             c->head=remove->next;
             c->pending_bytes-=remove->size;
@@ -333,7 +311,7 @@ bool qa_kex_channel_receive(qa_kex_channel*c,qa_bytes bytes,uint64_t now,qa_kex_
     *present=true;
     return true;
 }
-bool qa_kex_channel_tick(qa_kex_channel*c,uint64_t now,qa_error*e) {
+static bool tick_body(qa_kex_channel*c,uint64_t now,qa_error*e) {
     if(!c) {
         qa_error_set(e,QA_ERROR_ARGUMENT,0,"Missing KEX channel");
         return false;
@@ -366,10 +344,51 @@ bool qa_kex_channel_tick(qa_kex_channel*c,uint64_t now,qa_error*e) {
         c->head->sent=true;
     }
     if(!c->head&&now>=c->received_at&&now-c->received_at>=UINT64_C(5000000000)) {
-        if(!qa_kex_channel_send(c,129,(qa_bytes) {
+        if(!send_body(c,129,(qa_bytes) {
             0
         },QA_KEX_RELIABLE,now,e))return false;
         c->received_at=now;
     }
     return true;
+}
+
+static bool enter(qa_kex_channel *c, qa_error *e)
+{
+    if (!c || c->entered) {
+        qa_error_set(e, QA_ERROR_ARGUMENT, 0, "KEX channel operation requires idle ownership");
+        return false;
+    }
+    c->entered = true;
+    return true;
+}
+
+bool qa_kex_channel_send(qa_kex_channel *c, uint8_t kind, qa_bytes bytes,
+                         qa_kex_mode mode, uint64_t now, qa_error *e)
+{
+    if (!enter(c, e)) return false;
+    bool ok = send_body(c, kind, bytes, mode, now, e);
+    c->entered = false;
+    return ok;
+}
+
+bool qa_kex_channel_receive(qa_kex_channel *c, qa_bytes bytes, uint64_t now,
+                            qa_kex_message *out, bool *present, qa_error *e)
+{
+    if (!enter(c, e)) return false;
+    bool ok = receive_body(c, bytes, now, out, present, e);
+    c->entered = false;
+    return ok;
+}
+
+bool qa_kex_channel_tick(qa_kex_channel *c, uint64_t now, qa_error *e)
+{
+    if (!enter(c, e)) return false;
+    bool ok = tick_body(c, now, e);
+    c->entered = false;
+    return ok;
+}
+
+bool qa_kex_channel_idle(const qa_kex_channel *c)
+{
+    return c && !c->entered;
 }

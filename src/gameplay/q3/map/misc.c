@@ -78,14 +78,14 @@ bool q3_map_spawn_misc(qa_q3_game *game, qa_q3_map_actor_state *state,
             return q3_rollback_spawn(game, actor, error);
         if (q3_map_text(game, stored->target))
             q3_map_schedule(game, stored, 100, QA_Q3_MAP_THINK_PORTAL);
-        else if (!portal_event(game, QA_Q3_MAP_PORTAL_SURFACE, stored,
+        else if (!portal_event(game, QA_Q3_MAP_EVENT_PORTAL_SURFACE, stored,
                                (qa_actor_id){0}, qa_v3(0, 0, 0), stored->origin, error))
             return q3_rollback_spawn(game, actor, error);
     } else if (stored->kind == QA_Q3_MAP_PORTAL_CAMERA) {
         wire->client = stored->count;
         if (!q3_wire_entity_ready(game, actor, error))
             return q3_rollback_spawn(game, actor, error);
-        if (!portal_event(game, QA_Q3_MAP_PORTAL_CAMERA, stored,
+        if (!portal_event(game, QA_Q3_MAP_EVENT_PORTAL_CAMERA, stored,
                           (qa_actor_id){0}, q3_map_direction(stored->angles), stored->origin,
                           error))
             return q3_rollback_spawn(game, actor, error);
@@ -279,7 +279,7 @@ static bool locate_portal(qa_q3_game *game, qa_q3_map_actor_state *state,
     presentation.spawnflags = camera_flags;
     presentation.count = camera_roll;
     presentation.roll = roll;
-    return portal_event(game, QA_Q3_MAP_PORTAL_SURFACE, &presentation, camera, direction,
+    return portal_event(game, QA_Q3_MAP_EVENT_PORTAL_SURFACE, &presentation, camera, direction,
                         camera_origin, error);
 }
 

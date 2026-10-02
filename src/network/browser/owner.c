@@ -10,13 +10,13 @@ bool qa_browser_fail(qa_error *error, const char *message) {
 static bool protocol_equal(qa_net_protocol_id a, qa_net_protocol_id b) {
     return a.kind == b.kind && a.revision == b.revision && a.flags == b.flags;
 }
-static browser_record *find(qa_server_browser *browser, const qa_net_address *address, qa_net_protocol_id protocol) {
+browser_record *qa_browser_find(qa_server_browser *browser, const qa_net_address *address, qa_net_protocol_id protocol) {
     for (uint32_t i = 0; i < browser->capacity; ++i)
         if (browser->records[i].occupied && protocol_equal(browser->records[i].entry.protocol, protocol) &&
             qa_net_address_equal(&browser->records[i].entry.address, address, true)) return &browser->records[i];
     return NULL;
 }
-static void changed(qa_server_browser *browser, const qa_server_entry *entry) {
+void qa_browser_changed(qa_server_browser *browser, const qa_server_entry *entry) {
     if (browser->hooks.changed) {
         bool previous = browser->callback; browser->callback = true;
         browser->hooks.changed(browser->hooks.context, entry); browser->callback = previous;
@@ -24,12 +24,16 @@ static void changed(qa_server_browser *browser, const qa_server_entry *entry) {
 }
 bool qa_server_browser_create(qa_http *http, uint32_t capacity, const qa_browser_hooks *hooks,
                                qa_server_browser **out, qa_error *error) {
-    if (!http || !capacity || capacity > 8192 || !hooks || !hooks->send || !out)
+    if (!http || !capacity || capacity > 16384 || !hooks || !hooks->send || !out)
         return qa_browser_fail(error, "Invalid browser owner options");
     qa_server_browser *browser = calloc(1, sizeof(*browser));
     if (!browser) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating browser"); return false; }
     browser->records = calloc(capacity, sizeof(*browser->records));
     if (!browser->records) { free(browser); qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating browser entries"); return false; }
+    browser->q3 = calloc(1, sizeof(*browser->q3));
+    if (!browser->q3) { free(browser->records); free(browser); qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating Q3 browser continuation"); return false; }
+    browser->q3->master_source = -1;
+    browser->q3->next_entry_order = 1;
     browser->http = http; browser->capacity = capacity; browser->hooks = *hooks; browser->next_query = 1;
     *out = browser; return true;
 }
@@ -41,28 +45,47 @@ void qa_server_browser_cancel_master(qa_server_browser *browser) {
 }
 void qa_server_browser_destroy(qa_server_browser *browser) {
     if (!browser || browser->callback) return;
-    qa_server_browser_cancel_master(browser); free(browser->records); free(browser);
+    qa_server_browser_cancel_master(browser);
+    for (uint32_t i = 0; i < browser->capacity; ++i) {
+        qa_buffer_free(&browser->records[i].q3_response);
+        qa_buffer_free(&browser->records[i].status_response);
+    }
+    free(browser->q3->broadcasts); free(browser->q3->status_queue); free(browser->q3); free(browser->records); free(browser);
 }
 bool qa_server_browser_add(qa_server_browser *browser, const qa_net_address *address,
                             qa_net_protocol_id protocol, uint32_t sources, qa_error *error) {
-    if (!browser || browser->callback || !address || !sources || (sources & ~15u) ||
+    if (!browser || browser->callback || !address || !sources || (sources & ~31u) ||
         !qa_net_protocol_valid(protocol, error)) return qa_browser_fail(error, "Invalid browser entry");
-    browser_record *record = find(browser, address, protocol);
+    browser_record *record = qa_browser_find(browser, address, protocol);
+    bool fresh = !record;
     if (!record) {
         for (uint32_t i = 0; i < browser->capacity; ++i) if (!browser->records[i].occupied) { record = &browser->records[i]; break; }
         if (!record) return qa_browser_fail(error, "Server browser capacity exhausted");
+        if (protocol.kind == QA_NET_Q3_68 && !browser->q3->next_entry_order)
+            return qa_browser_fail(error, "Q3 entry insertion order exhausted");
         *record = (browser_record){.occupied = true, .entry = {.address = *address, .protocol = protocol}};
+        if (protocol.kind == QA_NET_Q3_68) record->q3_order = browser->q3->next_entry_order++;
     }
-    record->entry.sources |= sources; changed(browser, &record->entry); return true;
+    if (protocol.kind == QA_NET_Q3_68 && !qa_browser_q3_membership(browser, address,
+        record->entry.sources, record->entry.sources | sources, error)) {
+        if (fresh) memset(record, 0, sizeof(*record));
+        return false;
+    }
+    record->entry.sources |= sources; qa_browser_changed(browser, &record->entry); return true;
 }
 bool qa_server_browser_remove_source(qa_server_browser *browser, const qa_net_address *address,
                                       qa_net_protocol_id protocol, uint32_t source, qa_error *error) {
     if (!browser || browser->callback || !address) return qa_browser_fail(error, "Invalid source removal");
-    browser_record *record = find(browser, address, protocol); if (!record) return true;
+    browser_record *record = qa_browser_find(browser, address, protocol); if (!record) return true;
+    if (protocol.kind == QA_NET_Q3_68 && !qa_browser_q3_membership(browser, address,
+        record->entry.sources, record->entry.sources & ~source, error)) return false;
     record->entry.sources &= ~source;
     qa_server_entry previous = record->entry;
-    if (!record->entry.sources) memset(record, 0, sizeof(*record));
-    changed(browser, &previous); return true;
+    if (!record->entry.sources) {
+        qa_buffer_free(&record->q3_response); qa_buffer_free(&record->status_response);
+        memset(record, 0, sizeof(*record));
+    }
+    qa_browser_changed(browser, &previous); return true;
 }
 bool qa_server_browser_query(qa_server_browser *browser, const qa_net_address *address,
                               qa_net_protocol_id protocol, bool broadcast, uint64_t now, uint64_t timeout, qa_error *error) {
@@ -70,14 +93,18 @@ bool qa_server_browser_query(qa_server_browser *browser, const qa_net_address *a
         (broadcast && !browser->hooks.local) ||
         !qa_net_protocol_valid(protocol, error)) return qa_browser_fail(error, "Invalid browser query");
     /* Challenge-less native dialects have one pending query per endpoint. */
-    if (!broadcast) for (uint32_t i = 0; i < browser->capacity; ++i)
+    if (!broadcast) for (uint32_t i = 0; i < browser->capacity; ++i) {
         if (browser->records[i].occupied && browser->records[i].entry.pending &&
             qa_net_address_equal(&browser->records[i].entry.address, address, true))
-            return qa_browser_fail(error, "Endpoint already has a pending discovery query");
+            if (protocol.kind == QA_NET_Q3_68 && browser->records[i].entry.protocol.kind == QA_NET_Q3_68)
+                browser->records[i].entry.pending = false;
+            else return qa_browser_fail(error, "Endpoint already has a pending discovery query");
+    }
     uint64_t query = browser->next_query++;
     uint8_t bytes[256]; qa_net_writer writer; qa_net_writer_init(&writer, bytes, sizeof(bytes), error);
     if (!qa_browser_query_encode(protocol, query, &writer)) return false;
-    if (!broadcast && !qa_server_browser_add(browser, address, protocol, QA_SERVER_DIRECT, error)) return false;
+    if (!broadcast && !(protocol.kind == QA_NET_Q3_68 && qa_browser_find(browser, address, protocol)) &&
+        !qa_server_browser_add(browser, address, protocol, QA_SERVER_DIRECT, error)) return false;
     browser->callback = true;
     bool ok = browser->hooks.send(browser->hooks.context, address, (qa_bytes){bytes, qa_net_writer_size(&writer)}, error);
     browser->callback = false; if (!ok) return false;
@@ -86,7 +113,7 @@ bool qa_server_browser_query(qa_server_browser *browser, const qa_net_address *a
         browser->broadcast_sent = now; browser->broadcast_timeout = timeout;
         browser->broadcast_query = query; browser->broadcasting = true;
     } else {
-        browser_record *record = find(browser, address, protocol);
+        browser_record *record = qa_browser_find(browser, address, protocol);
         record->entry.pending = true; record->entry.timed_out = false;
         record->query = query; record->sent_ns = now; record->timeout_ns = timeout;
     }
@@ -98,13 +125,14 @@ void qa_server_browser_expire(qa_server_browser *browser, uint64_t now) {
         browser_record *record = &browser->records[i];
         if (record->occupied && record->entry.pending && now >= record->sent_ns &&
             now - record->sent_ns >= record->timeout_ns) {
-            record->entry.pending = false; record->entry.timed_out = true; changed(browser, &record->entry);
+            record->entry.pending = false; record->entry.timed_out = true; qa_browser_changed(browser, &record->entry);
         }
     }
     if (browser->broadcasting && now >= browser->broadcast_sent && now - browser->broadcast_sent >= browser->broadcast_timeout)
         browser->broadcasting = false;
     if (browser->master_pending && now >= browser->master_sent && now - browser->master_sent >= browser->master_timeout)
         browser->master_pending = false;
+    qa_browser_q3_expire(browser, now);
 }
 bool qa_server_browser_receive(qa_server_browser *browser, const qa_net_datagram *packet,
                                 bool *recognized, qa_error *error) {
@@ -113,12 +141,29 @@ bool qa_server_browser_receive(qa_server_browser *browser, const qa_net_datagram
     if (browser->master_pending && qa_net_address_equal(&browser->master, &packet->from, true)) {
         qa_net_address addresses[256]; size_t count; bool complete; qa_error ignored = {0};
         if (qa_browser_master_decode(packet->payload, browser->master_protocol, addresses, 256, &count, &complete, &ignored)) {
-            for (size_t i = 0; i < count; ++i)
-                if (!qa_server_browser_add(browser, &addresses[i], browser->master_protocol, QA_SERVER_MASTER, error)) return false;
-            if (complete) browser->master_pending = false;
+            uint32_t source = browser->master_protocol.kind == QA_NET_Q3_68 && browser->q3->master_source >= 0 ?
+                qa_browser_q3_source_bit(browser->q3->master_source) : QA_SERVER_MASTER;
+            bool malformed = false;
+            for (size_t i = 0; i < count; ++i) {
+                if (!addresses[i].port) {
+                    if (browser->master_protocol.kind == QA_NET_Q3_68 && browser->q3->master_source >= 0) { malformed = true; break; }
+                    continue;
+                }
+                if (browser->master_protocol.kind == QA_NET_Q3_68 && browser->q3->master_source >= 0 &&
+                    browser->q3->sources[browser->q3->master_source].count >=
+                    (browser->q3->master_source == 2 ? 8192u : 128u)) break;
+                if (!qa_server_browser_add(browser, &addresses[i], browser->master_protocol, source, error)) return false;
+                if (!qa_browser_status_enqueue(browser, &addresses[i], browser->master_protocol, error)) return false;
+            }
+            if (!malformed) {
+                browser->q3->master_received = true;
+                if (complete) browser->master_pending = false;
+            }
             *recognized = true; return true;
         }
     }
+    if (!qa_browser_q3_receive(browser, packet, recognized, error)) return false;
+    if (*recognized) return true;
     browser_record *target = NULL;
     for (uint32_t i = 0; i < browser->capacity; ++i)
         if (browser->records[i].occupied && browser->records[i].entry.pending &&
@@ -140,12 +185,14 @@ bool qa_server_browser_receive(qa_server_browser *browser, const qa_net_datagram
         browser->callback = false;
         if (!local) return true;
         if (!qa_server_browser_add(browser, &packet->from, protocol, QA_SERVER_LAN, error)) return false;
-        target = find(browser, &packet->from, protocol);
+        target = qa_browser_find(browser, &packet->from, protocol);
     }
     decoded.address = target->entry.address; decoded.sources = target->entry.sources;
     decoded.updated_ns = packet->received_ns; decoded.ping_ns = packet->received_ns - sent;
-    decoded.available = true; target->entry = decoded;
-    changed(browser, &target->entry); *recognized = true; return true;
+    if (protocol.kind == QA_NET_Q3_68 && !qa_browser_q3_store_response(target, packet->payload, error)) return false;
+    if (protocol.kind != QA_NET_Q3_68 && !qa_browser_status_store_response(target, packet->payload, error)) return false;
+    decoded.available = true; decoded.has_ping = true; target->entry = decoded;
+    qa_browser_changed(browser, &target->entry); *recognized = true; return true;
 }
 bool qa_server_browser_master_udp(qa_server_browser *browser, const qa_net_address *address,
                                    qa_net_protocol_id protocol, uint64_t now, uint64_t timeout, qa_error *error) {
@@ -161,6 +208,7 @@ bool qa_server_browser_master_udp(qa_server_browser *browser, const qa_net_addre
     bool ok = browser->hooks.send(browser->hooks.context, address, (qa_bytes){bytes, qa_net_writer_size(&writer)}, error);
     browser->callback = false; if (!ok) return false;
     browser->master = *address; browser->master_protocol = protocol;
+    browser->q3->master_source = -1; browser->q3->master_received = false;
     browser->master_sent = now; browser->master_timeout = timeout; browser->master_pending = true; return true;
 }
 static bool http_headers(void *context, qa_http_request_id id, const qa_http_response *response, qa_error *error) {
@@ -198,9 +246,11 @@ static void http_complete(void *context, qa_http_request_id id, const qa_http_re
             if (start < stop && *start != '#') {
                 qa_net_address address;
                 uint16_t port = browser->master_protocol.kind == QA_NET_Q3_68 ? 27960 :
+                    browser->master_protocol.kind <= QA_NET_RMQ999 ? 26000 :
                     browser->master_protocol.kind <= QA_NET_QW29 ? 27500 : 27910;
                 if ((size_t)(stop - start) > 255 || !qa_net_address_resolve(start, port, 0, &address, &error) ||
-                    !qa_server_browser_add(browser, &address, browser->master_protocol, QA_SERVER_MASTER, &error)) break;
+                    !qa_server_browser_add(browser, &address, browser->master_protocol, QA_SERVER_MASTER, &error) ||
+                    !qa_browser_status_enqueue(browser, &address, browser->master_protocol, &error)) break;
             }
         }
     }
@@ -241,6 +291,7 @@ bool qa_server_browser_master_http(qa_server_browser *browser, const char *url,
     if (!browser->master_url) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining HTTP master address"); return false; }
     strcpy(browser->master_url, url);
     browser->master_protocol = protocol; browser->master_sent = now;
+    browser->q3->master_source = -1; browser->q3->master_received = false;
     qa_http_request request = {.url = url, .method = "GET", .maximum_response_bytes = 1048576,
         .timeout_ms = 15000, .connect_timeout_ms = 5000, .maximum_redirects = 5,
         .callbacks = {browser, http_headers, http_body, http_complete}};

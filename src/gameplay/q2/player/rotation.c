@@ -29,8 +29,15 @@ bool qa_q2_players_end_deathmatch_level(qa_q2_game *game,qa_error *error) {
                 if(!strcmp(qa_strings_cstr(strings,shuffled[0]),current)) {
                     qa_string_id swap=shuffled[0];shuffled[0]=shuffled[count-1];shuffled[count-1]=swap;
                 }
-                free(players->rotation_maps);players->rotation_maps=shuffled;players->rules.map_list=shuffled;
-                next=qa_strings_cstr(strings,shuffled[0]);
+                qa_string_id first=shuffled[0];
+                if(game->hooks.rotation_changed) {
+                    bool published=game->hooks.rotation_changed(game->hooks.context,shuffled,count,error);
+                    free(shuffled);
+                    if(!published) return false;
+                } else {
+                    free(players->rotation_maps);players->rotation_maps=shuffled;players->rules.map_list=shuffled;
+                }
+                next=qa_strings_cstr(strings,first);
             } else if(game->options.edition!=QA_Q2_RERELEASE || count!=1)
                 next=qa_strings_cstr(strings,players->rotation_maps[(index+1)%count]);
         } else {

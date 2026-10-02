@@ -54,6 +54,22 @@ bool qa_qvm_execution_source_word(const qa_qvm_call *, const qa_qvm_image *,
 /* Cleanup of a qualified active source scratch lease. RAM restoration commits
  * before fallible publication and still commits when delivery cannot allocate. */
 bool qa_qvm_memory_restore_scratch(qa_qvm *, uint32_t, qa_bytes, qa_error *);
+bool qa_qvm_memory_restore_words(qa_qvm *, const qa_qvm_source_word *, size_t, bool, qa_error *);
+bool qa_qvm_execution_words_begin(qa_qvm *, const qa_qvm_image *,
+    const qa_qvm_source_word *, size_t, qa_qvm_word_projection **, qa_error *);
+bool qa_qvm_execution_words_capture(qa_qvm *, const qa_qvm_image *,
+    const uint32_t *, size_t, qa_qvm_word_projection **, qa_error *);
+bool qa_qvm_execution_words_begin_observed(qa_qvm *, const qa_qvm_image *,
+    const qa_qvm_source_word *, size_t, qa_qvm_word_projection **, qa_error *);
+bool qa_qvm_execution_words_capture_observed(qa_qvm *, const qa_qvm_image *,
+    const uint32_t *, size_t, qa_qvm_word_projection **, qa_error *);
+bool qa_qvm_execution_words_end(qa_qvm_word_projection **, bool, qa_error *);
+bool qa_qvm_execution_words_is_last(const qa_qvm_word_projection *);
+bool qa_qvm_execution_source_returned(const qa_qvm *);
+bool qa_qvm_execution_source_bytes_write(qa_qvm *, const qa_qvm_image *,
+    uint32_t, qa_bytes, qa_error *);
+bool qa_qvm_execution_scratch_run(qa_qvm *, const qa_qvm_image *, size_t,
+    qa_qvm_source_scratch_run_fn, void *, qa_error *);
 typedef bool (*qa_qvm_effect_fn)(void *, qa_error *);
 bool qa_qvm_execution_effect(qa_qvm *, qa_qvm_effect_fn, void *, qa_error *);
 void qa_qvm_memory_close(qa_qvm *);

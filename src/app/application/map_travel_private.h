@@ -13,7 +13,11 @@ struct application_map_state {
     qa_string_id nextserver;
     bool pending, busy, has_landmark, carry_players, complete_campaign;
     bool loading, load_carry, load_new_unit;
+    bool publication_complete, match_finished;
+    uint64_t load_revision;
+    qa_string_id load_nextserver;
 };
+void application_map_load_finish(qa_application *, bool published);
 bool application_map_checkpoint_capture(qa_application *, qa_buffer *, qa_error *);
 bool application_map_checkpoint_restore(qa_application *candidate, qa_bytes, qa_error *);
 bool application_source_queue_map_travel(qa_application *,

@@ -273,6 +273,12 @@ static bool player_admit(void *context, qa_actor_id id, qa_error *e) {
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Q2 actor already has player state");
         return false;
     }
+    if (admission->slot >= g->wire_clients ||
+        !q2_wire_bind(g, a, admission->slot + 1, e)) {
+        if (e && e->code == QA_OK)
+            qa_error_set(e, QA_ERROR_ARGUMENT, admission->slot, "Q2 player exceeds its genuine source client table");
+        return false;
+    }
     for (size_t i = 0; i < g->capacity; i++) {
         q2_actor *other = g->actors[i];
         if (other && other->client && other->client->info.connected &&
@@ -287,6 +293,9 @@ static bool player_admit(void *context, qa_actor_id id, qa_error *e) {
         return false;
     }
     a->client = s;
+    a->wire_movement = (qa_q2_wire_movement){.present = true,
+        .state.kind = g->options.edition == QA_Q2_RERELEASE ? QA_MOVEMENT_Q2_RERELEASE : QA_MOVEMENT_Q2_CLASSIC,
+        .frame = g->wire_frame, .time_ns = g->now_ns};
     s->info = (qa_q2_player_info){
         .slot = admission->slot, .seat = admission->seat, .connected = true, .view_height = 22};
     s->use_weapons = admission->use_q2_weapons;

@@ -1,6 +1,7 @@
 #include "native_q1_console.h"
 #include "startup_flow.h"
 #include "qa/cvars_save.h"
+#include "qa/source_number.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -79,6 +80,13 @@ static qa_cvars *visible_cvars(void *opaque, const qa_command_context *command, 
     return index == 0 ? owner->cvars : NULL;
 }
 
+static bool cvar_edit(void *opaque, const qa_command_context *command,
+    qa_cvars *registry, qa_cvars_edit **out, qa_error *error)
+{
+    struct application_native_q1_console *owner = opaque;
+    return application_startup_cvar_edit(owner->provider, owner->console, command, registry, out, error);
+}
+
 static qa_command_result command(void *opaque, const qa_command_invocation *invocation, qa_error *error)
 {
     struct application_native_q1_console *owner = opaque;
@@ -96,6 +104,9 @@ static bool read_script(void *opaque, const qa_command_context *command,
         return application_fail(error, QA_ERROR_ARGUMENT, "native Q1 script publication has retired");
     if (application_startup_source_active(owner->provider))
         return application_startup_script_read(owner->provider, command, path, out, lease, error);
+    if (application_startup_source_scripts(owner->provider))
+        return application_startup_source_script_read(owner->provider, owner->console,
+            command, path, out, lease, error);
     qa_resource *resource = NULL;
     if (!qa_vfs_acquire(owner->provider->launch->content, path, &resource, NULL, error)) return false;
     *out = qa_resource_bytes(resource);
@@ -108,6 +119,8 @@ static void release_script(void *opaque, void *lease)
     struct application_native_q1_console *owner = opaque;
     if (application_startup_source_active(owner->provider))
         application_startup_script_release(owner->provider, lease);
+    else if (application_startup_source_scripts(owner->provider))
+        application_startup_source_script_release(owner->provider, owner->console, lease);
     else qa_resource_release(lease);
 }
 
@@ -138,7 +151,7 @@ bool application_native_q1_console_create_restored(application_provider *provide
     owner->cvars = qa_cvars_create(&cvars, error);
     qa_console_options options = {.context = {.owner = provider->owner, .dialect = dialect(provider),
         .origin = QA_COMMAND_SERVER}, .cvars = owner->cvars, .user = owner, .print = print,
-        .cvar_owner = cvar_owner, .visible_cvars = visible_cvars,
+        .cvar_owner = cvar_owner, .visible_cvars = visible_cvars, .cvar_edit = cvar_edit,
         .capture_context = capture, .context_active = active, .read_script = read_script,
         .release_script = release_script, .script_complete = script_complete,
         .allow_command = allow_command, .source_command = command};
@@ -157,6 +170,14 @@ static bool clone_source(application_provider *provider, qa_cvars *destination,
                          bool *cloned, qa_error *error)
 {
     *cloned = false;
+    if (provider->application->startup_hooks) {
+        qa_application_startup_source source = {.descriptor = provider->launch,
+            .scope = {.provider = provider->owner, .kind = QA_APPLICATION_CONSOLE_Q1_GAME},
+            .cvars = destination, .declaration_owner = provider->owner};
+        if (!application_native_q1_console_at(provider, &source.console, NULL, &source.command))
+            return application_fail(error, QA_ERROR_ARGUMENT, "Q1 carry lost its fresh physical console");
+        return application_startup_source_carry(provider, &source, cloned, error);
+    }
     for (application_provider *previous = provider->application->live_providers; previous;
          previous = previous->next_live) {
         if (previous == provider || previous->kind != APPLICATION_PROVIDER_Q1 ||
@@ -283,7 +304,7 @@ bool application_native_q1_cvar(void *opaque, qa_string_id name, float *out, qa_
     const qa_cvar_view *value = qa_cvars_find(cvars, text);
     if (value && value->owner && value->owner != provider->owner)
         return application_fail(error, QA_ERROR_ARGUMENT, "native Q1 cvar belongs to another source");
-    *out = value ? value->number : 0;
+    *out = value ? (float)qa_source_fround(value->number) : 0;
     return true;
 }
 

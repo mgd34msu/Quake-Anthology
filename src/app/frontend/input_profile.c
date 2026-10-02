@@ -2,6 +2,7 @@
 #include "qa/application_profile.h"
 #include "save_private.h"
 #include "config_scripts.h"
+#include "global_settings_storage.h"
 #include <SDL.h>
 
 bool frontend_input_profile_default_options(qa_frontend *f,qa_error *error)
@@ -39,7 +40,8 @@ bool frontend_input_profile_bind(qa_frontend *f,qa_error *error)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Input profile has no genuine selected preset product");
     qa_catalog *catalog=qa_launch_snapshot_catalog(publication);
     frontend_config_files *files=frontend_config_files_create(catalog,choices->world.preset,
-        f->options.application.user_root,f->options.application.content_root,error);
+        frontend_global_settings_storage_user_store(f->global_settings_storage),
+        frontend_global_settings_storage_device_store(f->global_settings_storage),error);
     if (!files) return false;
     bool ok=frontend_input_profile_bind_store(f,catalog,choices->world.preset,
         frontend_config_files_store(files,false),error);

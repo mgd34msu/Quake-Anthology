@@ -1,7 +1,10 @@
 #include "internal.h"
+#include "source_scratch_private.h"
+#include "qa/scene_effects.h"
 #include <math.h>
 #include <stdalign.h>
 #include <string.h>
+static bool source_issue(qa_material_source_scratch *, qa_scene_frame *, bool, qa_error *);
 
 static bool blend_enabled(const qa_material_stage *stage)
 {
@@ -101,6 +104,8 @@ static bool collapse_stages(const qa_material_stage *a, const qa_material_stage 
 static qa_scene_cull material_cull(const qa_material *material, const qa_material_context *context)
 {
     if (material->cull == QA_CULL_NONE) return QA_CULL_NONE;
+    if (context->source_scratch)
+        return context->mirror ? (material->cull == QA_CULL_FRONT ? QA_CULL_BACK : QA_CULL_FRONT) : material->cull;
     qa_vec3 x = qa_v3(context->model.m[0], context->model.m[1], context->model.m[2]);
     qa_vec3 y = qa_v3(context->model.m[4], context->model.m[5], context->model.m[6]);
     qa_vec3 z = qa_v3(context->model.m[8], context->model.m[9], context->model.m[10]);
@@ -116,29 +121,111 @@ static qa_scene_draw initial_draw(const qa_material *material, const qa_material
     draw.model = context->model;
     qa_scene_matrix view_projection = qa_scene_matrix_multiply(context->view.projection, qa_scene_view_matrix(&context->view));
     draw.mvp = qa_scene_matrix_multiply(view_projection, context->model);
+    if (context->source_picture) draw.mvp = context->source_picture_projection;
     draw.environment = QA_TEXTURE_MODULATE;
     draw.lighting = QA_LIGHT_VERTEX;
     draw.shade_scale = 1.0f;
     draw.entity = context->entity;
     draw.fog_index = context->fog_index;
     draw.light_mask = context->light_mask;
+    draw.source_primitives = context->source_primitives;
     draw.sort_key = ((uint64_t)original->sorted_index << 17) | ((uint64_t)context->entity << 7) |
-                    ((uint64_t)context->fog_index << 2) | (context->light_mask != 0 ? 1u : 0u);
+                    ((uint64_t)context->fog_index << 2) |
+                    ((context->source_scratch ? context->source_dlighted : context->light_mask != 0) ? 1u : 0u);
     qa_scene_state_default(&draw.state);
     draw.state.cull = material_cull(material, context);
     draw.state.polygon_offset = material->polygon_offset;
     draw.state.offset_factor = -1.0f;
     draw.state.offset_units = -2.0f;
+    if (context->source_scratch) {
+        draw.state.offset_factor = context->source_diagnostics.polygon_offset_factor;
+        draw.state.offset_units = context->source_diagnostics.polygon_offset_units;
+    }
+    if (context->source_depth_hack) { draw.state.depth_near = 0; draw.state.depth_far = .3f; }
+    if (context->source_sky_depth) draw.state.depth_near = draw.state.depth_far = context->source_diagnostics.show_sky ? 0 : 1;
     return draw;
+}
+static bool source_wave(qa_material_wave wave, bool noise, qa_error *error)
+{
+    if (wave.kind == QA_WAVE_NONE || (!noise && wave.kind == QA_WAVE_NOISE)) {
+        qa_error_set(error, QA_ERROR_FORMAT, 0, "Source waveform has no evaluation table"); return false;
+    }
+    return true;
+}
+static bool source_colors(const qa_material_stage *stage, const qa_scene_mesh *geometry,
+    const qa_material_context *context, float time, bool vertex_lit, qa_error *error)
+{
+    qa_material_source_scratch *source = context->source_scratch;
+    qa_material_stage rgb = *stage;
+    rgb.alpha = stage->rgb == QA_COLOR_CONSTANT && stage->alpha == QA_COLOR_CONSTANT ? QA_COLOR_CONSTANT : QA_COLOR_SKIP;
+    if (rgb.rgb == QA_COLOR_WAVE && !source_wave(rgb.rgb_wave, true, error)) return false;
+    for (size_t i = 0; i < geometry->vertex_count; ++i) {
+        qa_scene_vec4 color;
+        if (!qa_material_stage_color(&rgb, geometry->vertices + i, context, time, source->colors[i], &color, error)) return false;
+        source->colors[i] = color;
+    }
+    if (!vertex_lit && stage->alpha != QA_COLOR_SKIP) {
+        if (stage->alpha == QA_COLOR_WAVE && !source_wave(stage->alpha_wave, false, error)) return false;
+        qa_material_stage alpha = *stage; alpha.rgb = QA_COLOR_SKIP;
+        /* Identity's optimization tests the original RGB generator. */
+        if ((stage->alpha == QA_COLOR_IDENTITY || stage->alpha == QA_COLOR_IDENTITY_LIGHTING) &&
+            (stage->rgb == QA_COLOR_IDENTITY || (stage->rgb == QA_COLOR_VERTEX && context->identity_light == 1)))
+            alpha.alpha = QA_COLOR_SKIP;
+        for (size_t i = 0; i < geometry->vertex_count; ++i) {
+            qa_scene_vec4 color;
+            if (!qa_material_stage_color(&alpha, geometry->vertices + i, context, time, source->colors[i], &color, error)) return false;
+            source->colors[i] = color;
+        }
+    }
+    if (!vertex_lit && context->fog_tc_scale > 0)
+        for (size_t i = 0; i < geometry->vertex_count; ++i)
+            source->colors[i] = attenuate_fog(source->colors[i], stage->fog_adjustment,
+                qa_material_fog_coordinates(context, geometry->vertices[i].position));
+    return true;
+}
+static bool source_coordinates(const qa_material_stage *stage, const qa_scene_mesh *geometry,
+    const qa_material_context *context, float time, unsigned bundle, qa_error *error)
+{
+    qa_material_source_scratch *source = context->source_scratch;
+    qa_material_stage generator = *stage; generator.tcmod_count = 0;
+    for (size_t i = 0; i < geometry->vertex_count; ++i) {
+        qa_scene_vec2 uv;
+        if (!qa_material_stage_texcoord(&generator, geometry->vertices + i, context, time, &uv, error)) return false;
+        source->coordinates[bundle][i] = uv;
+    }
+    for (size_t mod = 0; mod < stage->tcmod_count; ++mod) {
+        if (stage->tcmods[mod].kind == QA_TCMOD_NONE) break;
+        if (stage->tcmods[mod].kind == QA_TCMOD_STRETCH &&
+            !source_wave(stage->tcmods[mod].wave, false, error)) return false;
+        qa_material_stage modifier = *stage;
+        modifier.tcgen = QA_TC_TEXTURE; modifier.tcmods = stage->tcmods + mod; modifier.tcmod_count = 1;
+        for (size_t i = 0; i < geometry->vertex_count; ++i) {
+            qa_scene_vertex vertex = geometry->vertices[i];
+            vertex.texcoord = source->coordinates[bundle][i];
+            qa_scene_vec2 uv;
+            if (!qa_material_stage_texcoord(&modifier, &vertex, context, time, &uv, error)) return false;
+            source->coordinates[bundle][i] = uv;
+        }
+    }
+    return true;
 }
 static bool emit_stage(const qa_material *material, const qa_material *original,
                         const qa_material_stage *stage, const qa_material_stage *second,
                         qa_scene_texture_environment environment, qa_scene_state state,
                         const qa_scene_mesh *geometry, const qa_material_context *context,
-                        float time, qa_scene_vec4 *previous_colors,
+                        float time, qa_scene_vec4 *previous_colors, qa_material_iterator iterator,
                         qa_scene_frame *frame, qa_error *error)
 {
-    if (stage->invalid_blend || (second != NULL && second->invalid_blend)) {
+    qa_material_source_scratch *source = context->source_scratch;
+    if (source) {
+        bool lightmapped = iterator == QA_MATERIAL_LIGHTMAPPED, vertex_lit = iterator == QA_MATERIAL_VERTEX_LIT;
+        if (!lightmapped && !source_colors(stage, geometry, context, time, vertex_lit, error)) return false;
+        if (!lightmapped && !vertex_lit && stage->tcgen != QA_TC_BAD) {
+            if (!source_coordinates(stage, geometry, context, time, 0, error)) return false;
+            if (second && second->tcgen != QA_TC_BAD && !source_coordinates(second, geometry, context, time, 1, error)) return false;
+        }
+    }
+    if ((!source || second) && (stage->invalid_blend || (second != NULL && second->invalid_blend))) {
         qa_error_set(error, QA_ERROR_FORMAT, 0, "Material blend function has an uninitialized source factor");
         return false;
     }
@@ -153,6 +240,12 @@ static bool emit_stage(const qa_material *material, const qa_material *original,
     draw.state.polygon_offset = material->polygon_offset;
     draw.state.offset_factor = -1.0f;
     draw.state.offset_units = -2.0f;
+    if (context->source_scratch) {
+        draw.state.offset_factor = context->source_diagnostics.polygon_offset_factor;
+        draw.state.offset_units = context->source_diagnostics.polygon_offset_units;
+    }
+    if (context->source_depth_hack) { draw.state.depth_near = 0; draw.state.depth_far = .3f; }
+    if (context->source_sky_depth) draw.state.depth_near = draw.state.depth_far = context->source_diagnostics.show_sky ? 0 : 1;
     if (!texture(first_binding, context, time, &draw.textures[0], error)) return false;
     draw.retain_texture[0] = first_binding->retain_texture;
     draw.texture_count = 1;
@@ -160,6 +253,16 @@ static bool emit_stage(const qa_material *material, const qa_material *original,
         if (!texture(second_binding, context, time, &draw.textures[1], error)) return false;
         draw.retain_texture[1] = second_binding->retain_texture;
         draw.texture_count = 2;
+    }
+    if (source && (!material_source_current(source, error) || stage->invalid_blend ||
+        (second && second->invalid_blend))) {
+        if (!error || error->code == QA_OK)
+            qa_error_set(error, QA_ERROR_FORMAT, 0, "Material blend function has an uninitialized source factor");
+        return false;
+    }
+    if (source && context->source_diagnostics.no_bind) {
+        for (size_t i = 0; i < draw.texture_count; ++i)
+            if (!draw.retain_texture[i]) draw.textures[i] = material->dlight_image;
     }
     qa_scene_fog_effect adjustment = stage->fog_adjustment;
     if (context->fragment_lighting && (stage->is_lightmap || stage->rgb == QA_COLOR_LIGHTING_DIFFUSE)) {
@@ -178,6 +281,15 @@ static bool emit_stage(const qa_material *material, const qa_material *original,
     if (vertices == NULL) return false;
     for (size_t i = 0; i < geometry->vertex_count; ++i) {
         vertices[i] = geometry->vertices[i];
+        if (source) {
+            bool lightmapped = iterator == QA_MATERIAL_LIGHTMAPPED, vertex_lit = iterator == QA_MATERIAL_VERTEX_LIT;
+            vertices[i].color = lightmapped ? (qa_scene_vec4){1, 1, 1, 1} : source->colors[i];
+            vertices[i].texcoord = lightmapped || vertex_lit ? geometry->vertices[i].texcoord :
+                source->coordinates[first_binding == stage ? 0 : 1][i];
+            if (second_binding) vertices[i].lightmap = lightmapped ? geometry->vertices[i].lightmap :
+                source->coordinates[second_binding == stage ? 0 : 1][i];
+            continue;
+        }
         if (!qa_material_stage_color(stage, &geometry->vertices[i], context, time, previous_colors[i], &vertices[i].color, error) ||
             !qa_material_stage_texcoord(first_binding, &geometry->vertices[i], context, time, &vertices[i].texcoord, error)) return false;
         if (second_binding != NULL &&
@@ -283,7 +395,8 @@ static bool emit_fog_pass(const qa_material *material, const qa_material *origin
             return false;
         }
         draw.texture_count = 1;
-        draw.textures[0] = material->fog_image;
+    draw.textures[0] = material->fog_image;
+    if (context->source_scratch && context->source_diagnostics.no_bind) draw.textures[0] = material->dlight_image;
         if (context->fog.kind != QA_FOG_NONE) {
             draw.fog = context->fog;
             draw.fog.effect = QA_FOG_NO_EFFECT;
@@ -297,6 +410,10 @@ static bool emit_fog_pass(const qa_material *material, const qa_material *origin
         vertices[i].texcoord = volume ? qa_material_fog_coordinates(context, vertices[i].position) : (qa_scene_vec2){0, 0};
         vertices[i].color = volume ? (qa_scene_vec4){context->fog_volume_color.x, context->fog_volume_color.y, context->fog_volume_color.z, 1} :
             (qa_scene_vec4){1, 1, 1, 1};
+        if (volume && context->source_scratch) {
+            context->source_scratch->colors[i] = vertices[i].color;
+            context->source_scratch->coordinates[0][i] = vertices[i].texcoord;
+        }
     }
     draw.mesh.vertices = vertices;
     return qa_scene_frame_draw(frame, &draw, error);
@@ -345,25 +462,706 @@ static bool execute_material(const qa_material *material, const qa_material *ori
                               const qa_scene_mesh *geometry, const qa_material_context *context,
                               float time, qa_scene_frame *frame, qa_error *error)
 {
-    qa_scene_vec4 *previous = frame_array(frame, geometry->vertex_count, sizeof(*previous), alignof(qa_scene_vec4), error);
+    qa_scene_vec4 *previous = context->source_scratch ? context->source_scratch->colors :
+        frame_array(frame, geometry->vertex_count, sizeof(*previous), alignof(qa_scene_vec4), error);
     if (previous == NULL) return false;
-    memset(previous, 0, geometry->vertex_count * sizeof(*previous));
+    if (!context->source_scratch) memset(previous, 0, geometry->vertex_count * sizeof(*previous));
     qa_scene_state collapsed_state = {0}; qa_scene_texture_environment collapsed_environment = QA_TEXTURE_MODULATE;
     size_t passes; qa_material_iterator iterator;
     bool collapsed = material_plan(material, context->fragment_lighting, &collapsed_environment, &collapsed_state, &passes, &iterator);
     bool fast_iterator = iterator == QA_MATERIAL_VERTEX_LIT || iterator == QA_MATERIAL_LIGHTMAPPED;
     for (size_t i = 0; i < material->stage_count; ++i) {
         const qa_material_stage *stage = &material->stages[i];
-        if (!active_stage(stage)) continue;
+        if (!active_stage(stage)) { if (context->source_scratch) break; continue; }
         const qa_material_stage *second = i == 0 && collapsed ? &material->stages[1] : NULL;
         if (!emit_stage(material, original, stage, second,
                          second == NULL ? QA_TEXTURE_MODULATE : collapsed_environment,
                          second == NULL ? stage->state : collapsed_state,
-                         geometry, context, time, previous, frame, error)) return false;
+                         geometry, context, time, previous, iterator, frame, error)) return false;
         if (second != NULL) ++i;
     }
     return emit_dlights(material, original, geometry, context, fast_iterator, frame, error) &&
            emit_fog(material, original, geometry, context, frame, error);
+}
+static double shader_seconds(const qa_material *original, const qa_material *material,
+                              const qa_material_context *context)
+{
+    if (context->source_primitives) {
+        float entity_time = (float)context->seconds - context->time_offset;
+        float shader_time = entity_time - material->source_time_offset;
+        return shader_time;
+    }
+    float offset = context->time_offset;
+    if (original->remapped != NULL) offset += original->remap_time_offset;
+    return context->seconds - offset;
+}
+static void source_entity_read(qa_material_source_scratch *source, const qa_material_context *context)
+{
+    source->entity = (material_source_entity){.color = context->entity_color,
+        .texcoord = context->entity_texcoord, .ambient = context->ambient, .directed = context->directed,
+        .light_direction = context->light_direction, .ambient_alpha = context->ambient_alpha,
+        .time_offset = context->time_offset, .shadow_plane = context->shadow_plane,
+        .number = context->entity, .non_normalized_axis = context->non_normalized_axis,
+        .projection_shadow = context->projection_shadow};
+    source->local_view_origin = context->local_view_origin;
+}
+static void source_entity_apply(const qa_material_source_scratch *source, qa_material_context *context)
+{
+    context->entity_color = source->entity.color; context->entity_texcoord = source->entity.texcoord;
+    context->ambient = source->entity.ambient; context->directed = source->entity.directed;
+    context->light_direction = source->entity.light_direction; context->ambient_alpha = source->entity.ambient_alpha;
+    context->time_offset = source->entity.time_offset; context->shadow_plane = source->entity.shadow_plane;
+    context->entity = source->entity.number; context->non_normalized_axis = source->entity.non_normalized_axis;
+    context->projection_shadow = source->entity.projection_shadow;
+    context->local_view_origin = source->local_view_origin;
+    context->fog_index = source->fog_index; context->fog = source->fog;
+    context->fog_tc_scale = source->fog_tc_scale; context->fog_has_surface = source->fog_has_surface;
+    context->fog_surface = source->fog_surface; context->fog_volume_color = source->fog_volume_color;
+}
+static bool source_begin_surface(qa_material_source_scratch *source,
+    const material_source_submission *row, qa_error *error)
+{
+    const qa_material *material = row->original->remapped ? row->original->remapped : row->original;
+    if (!qa_material_retain(material, error)) return false;
+    const qa_material *previous = source->material;
+    source->material = material; qa_material_release(previous);
+    source->vertex_count = source->index_count = 0;
+    source->fog_index = row->context.fog_index; source->fog = row->context.fog;
+    source->fog_tc_scale = row->context.fog_tc_scale; source->fog_has_surface = row->context.fog_has_surface;
+    source->fog_surface = row->context.fog_surface; source->fog_volume_color = row->context.fog_volume_color;
+    double seconds = source->pictures ? (float)row->context.seconds - material->source_time_offset :
+        shader_seconds(row->original, material, &row->context);
+    if (material->clamp_time && seconds >= material->clamp_time) seconds = material->clamp_time;
+    source->shader_time = (float)seconds;
+    return true;
+}
+static bool source_debug(const qa_material *material, const qa_material *original,
+    const qa_scene_mesh *mesh, const qa_material_context *context, qa_scene_frame *frame, qa_error *error)
+{
+    if (!context->source_diagnostics.show_triangles && !context->source_diagnostics.show_normals) return true;
+    if (!context->source_white) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Source diagnostics lost their actual white image"); return false;
+    }
+    if (context->source_diagnostics.show_triangles) {
+        qa_scene_draw draw = initial_draw(material, original, *mesh, context);
+        qa_scene_vertex *vertices = frame_array(frame, mesh->vertex_count, sizeof(*vertices), alignof(qa_scene_vertex), error);
+        if (!vertices) return false;
+        for (size_t i = 0; i < mesh->vertex_count; ++i) {
+            vertices[i] = mesh->vertices[i]; vertices[i].color = (qa_scene_vec4){1, 1, 1, 1}; vertices[i].texcoord = (qa_scene_vec2){0};
+        }
+        draw.mesh.vertices = vertices; draw.textures[0] = context->source_diagnostics.no_bind ? material->dlight_image : context->source_white; draw.texture_count = 1;
+        qa_scene_state_default(&draw.state); draw.state.depth_near = draw.state.depth_far = 0; draw.state.wireframe = true;
+        if (!qa_scene_frame_draw(frame, &draw, error)) return false;
+    }
+    if (context->source_diagnostics.show_normals) {
+        qa_scene_draw draw = initial_draw(material, original, *mesh, context);
+        qa_scene_vertex *vertices = frame_array(frame, mesh->vertex_count * 2, sizeof(*vertices), alignof(qa_scene_vertex), error);
+        uint32_t *indices = frame_array(frame, mesh->vertex_count * 2, sizeof(*indices), alignof(uint32_t), error);
+        if (!vertices || !indices) return false;
+        for (size_t i = 0; i < mesh->vertex_count; ++i) {
+            vertices[i * 2] = (qa_scene_vertex){.position = mesh->vertices[i].position, .color = {1, 1, 1, 1}};
+            vertices[i * 2 + 1] = vertices[i * 2];
+            vertices[i * 2 + 1].position = qa_vec_add(mesh->vertices[i].position, qa_vec_scale(mesh->vertices[i].normal, 2));
+            indices[i * 2] = (uint32_t)i * 2; indices[i * 2 + 1] = (uint32_t)i * 2 + 1;
+        }
+        draw.mesh.vertices = vertices; draw.mesh.indices = indices; draw.mesh.primitive = QA_SCENE_LINES;
+        draw.mesh.vertex_count = draw.mesh.index_count = mesh->vertex_count * 2;
+        draw.textures[0] = context->source_diagnostics.no_bind ? material->dlight_image : context->source_white; draw.texture_count = 1;
+        qa_scene_state_default(&draw.state); draw.state.depth_near = draw.state.depth_far = 0;
+        if (!qa_scene_frame_draw(frame, &draw, error)) return false;
+    }
+    return true;
+}
+static bool submit_source(const qa_material *original, const qa_material *material,
+    const qa_scene_mesh *mesh, const qa_material_context *context, float time,
+    qa_scene_frame *frame, qa_error *error)
+{
+    if (frame->source_skip_backend) return true;
+    qa_material_source_scratch *source = context->source_scratch;
+    if (!context->source_primitives || !material_source_enter(source, error)) return false;
+    /* BeginSurface resets generation counts, never the allocated cells. */
+    if (!source->dispatching || context->source_writer == QA_SOURCE_WRITE_CLOUD)
+        source->vertex_count = source->index_count = 0;
+    bool cloud = context->source_writer == QA_SOURCE_WRITE_CLOUD;
+    bool grid = source->dispatching || context->source_grid_columns != 0;
+    bool ok = cloud || (grid ? mesh->vertex_count <= QA_SOURCE_TESS_VERTICES && mesh->index_count <= QA_SOURCE_TESS_INDEXES :
+        mesh->vertex_count < QA_SOURCE_TESS_VERTICES && mesh->index_count < QA_SOURCE_TESS_INDEXES);
+    if (!ok) qa_error_set(error, QA_ERROR_FORMAT, 0, "Source surface exceeds tess sentinel limits");
+    qa_scene_mesh geometry = {0};
+    bool skipped = false;
+    if (ok) {
+        if (cloud) {
+            for (size_t stage = 0; ok && stage < material->stage_count; ++stage) {
+                if (!active_stage(material->stages + stage)) break;
+                for (size_t i = 0; i < mesh->vertex_count; ++i) {
+                    qa_scene_vertex *vertex = source->vertices + source->vertex_count;
+                    vertex->position = mesh->vertices[i].position; vertex->texcoord = mesh->vertices[i].texcoord;
+                    if (++source->vertex_count >= QA_SOURCE_TESS_VERTICES) {
+                        qa_error_set(error, QA_ERROR_FORMAT, 0, "SHADER_MAX_VERTEXES hit in FillCloudySkySide"); ok = false; break;
+                    }
+                }
+                if (ok && stage == 0) {
+                    if (mesh->index_count > QA_SOURCE_TESS_INDEXES) {
+                        qa_error_set(error, QA_ERROR_FORMAT, 0, "Cloud indexes exceed tess allocation"); ok = false;
+                    } else {
+                        memcpy(source->indices, mesh->indices, mesh->index_count * sizeof(*mesh->indices));
+                        source->index_count = mesh->index_count;
+                    }
+                }
+            }
+        } else for (size_t i = 0; i < mesh->vertex_count; ++i) {
+            qa_scene_vertex previous = source->vertices[i], vertex = mesh->vertices[i];
+            switch (context->source_writer) {
+            case QA_SOURCE_WRITE_MODEL: vertex.color = previous.color; vertex.lightmap = previous.lightmap; break;
+            case QA_SOURCE_WRITE_PICTURE: /* fall through */
+            case QA_SOURCE_WRITE_POLY: vertex.normal = previous.normal; vertex.lightmap = previous.lightmap; break;
+            case QA_SOURCE_WRITE_RAIL:
+                vertex.normal = previous.normal; vertex.lightmap = previous.lightmap; vertex.color.w = previous.color.w; break;
+            case QA_SOURCE_WRITE_BSP: vertex.normal = previous.normal; break;
+            case QA_SOURCE_WRITE_BSP_NORMAL:
+                if (material == context->source_default_material || material->kind == QA_MATERIAL_STENCIL_SHADOW)
+                    vertex.normal = previous.normal;
+                break;
+            case QA_SOURCE_WRITE_CLOUD:
+                vertex.normal = previous.normal; vertex.lightmap = previous.lightmap; vertex.color = previous.color; break;
+            case QA_SOURCE_WRITE_FULL: break;
+            }
+            source->vertices[i] = vertex;
+        }
+        if (!cloud && source->indices != mesh->indices)
+            memcpy(source->indices, mesh->indices, mesh->index_count * sizeof(*mesh->indices));
+        if (!cloud) { source->vertex_count = mesh->vertex_count; source->index_count = mesh->index_count; }
+        geometry = *mesh; geometry.vertices = source->vertices; geometry.indices = source->indices;
+        geometry.vertex_count = source->vertex_count; geometry.index_count = source->index_count;
+        if (ok && source->index_count && (source->indices[QA_SOURCE_TESS_INDEXES - 1] != 0 ||
+            source->vertices[QA_SOURCE_TESS_VERTICES - 1].position.x != 0)) {
+            qa_error_set(error, QA_ERROR_FORMAT, 0, "Source tess sentinel was overwritten"); ok = false;
+        }
+        skipped = ok && context->source_diagnostics.debug_sort != 0 &&
+            context->source_diagnostics.debug_sort < material->sort;
+        qa_scene_mesh deformed;
+        if (ok && !skipped) ok = qa_material_deform_mesh(material, &geometry, context, time, frame, &deformed, error);
+        if (ok && !skipped && (grid ? deformed.vertex_count > QA_SOURCE_TESS_VERTICES || deformed.index_count > QA_SOURCE_TESS_INDEXES :
+            deformed.vertex_count >= QA_SOURCE_TESS_VERTICES || deformed.index_count >= QA_SOURCE_TESS_INDEXES)) {
+            qa_error_set(error, QA_ERROR_FORMAT, 0, "Deformed Source surface exceeds tess sentinel limits"); ok = false;
+        }
+        if (ok && !skipped) {
+            if (deformed.vertices != source->vertices)
+                memcpy(source->vertices, deformed.vertices, deformed.vertex_count * sizeof(*deformed.vertices));
+            if (deformed.indices != source->indices)
+                memcpy(source->indices, deformed.indices, deformed.index_count * sizeof(*deformed.indices));
+            geometry = deformed; geometry.vertices = source->vertices; geometry.indices = source->indices;
+            source->vertex_count = geometry.vertex_count; source->index_count = geometry.index_count;
+        }
+    }
+    if (ok && !skipped && geometry.index_count) {
+        uint32_t *indices = frame_array(frame, geometry.index_count, sizeof(*indices), alignof(uint32_t), error);
+        ok = indices != NULL;
+        if (ok) { memcpy(indices, geometry.indices, geometry.index_count * sizeof(*indices)); geometry.indices = indices; }
+    }
+    if (ok && !skipped && geometry.vertex_count && geometry.index_count)
+        ok = execute_material(material, original, &geometry, context, time, frame, error) &&
+            (cloud || source_debug(material, original, &geometry, context, frame, error)) &&
+            material_source_current(source, error);
+    if (ok && !skipped && !cloud) source->index_count = 0; /* ordinary EndSurface */
+    material_source_leave(source);
+    return ok;
+}
+bool qa_material_source_scene_begin(qa_material_source_scratch *source, qa_scene_frame *frame, qa_error *error)
+{
+    if (source && source->collecting && source->pictures &&
+        !qa_material_source_scene_end(source, source->frame, true, error)) return false;
+    if (!source || !frame) return false;
+    if (source->entered) {
+        if (source->collecting || source->dispatching || source->submitting || source->frame != frame ||
+            frame->source_pending != source || !material_source_current(source, error)) return false;
+    } else {
+        if (!material_source_enter(source, error)) return false;
+        if (frame->source_pending) { material_source_leave(source); qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Frame already owns pending Source work"); return false; }
+    }
+    source->submitting = false; source->collecting = true; source->frame = frame;
+    source->pictures = false; frame->source_pending = source;
+    source->head = source->tail = NULL; source->submission_count = 0;
+    source->sky = (qa_material_context){0};
+    source->view = (material_source_view){.command_offset = frame->command_count};
+    return true;
+}
+bool qa_material_source_scene_view(qa_material_source_scratch *source, const qa_scene_world_input *input, qa_error *error)
+{
+    if (!source || !input || !source->collecting || source->pictures ||
+        !material_source_current(source, error)) return false;
+    source->view.valid = true;
+    source->view.view = input->view;
+    source->view.no_world = input->no_world; source->view.hyperspace = input->source_hyperspace;
+    source->view.milliseconds = input->milliseconds;
+    source->view.diagnostics = input->source_diagnostics;
+    source->view.read = input->source_diagnostics_read;
+    source->view.context = input->source_diagnostics_context;
+    return true;
+}
+bool qa_material_source_scene_sky(qa_material_source_scratch *source, const qa_material_context *context, qa_error *error)
+{
+    if (!source || !context || !context->source_surface || !source->collecting || source->pictures ||
+        !material_source_current(source, error)) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Source sky requires its actual entered scene and iterator"); return false;
+    }
+    source->sky = *context; return true;
+}
+bool qa_material_source_picture_begin(qa_material_source_scratch *source, qa_scene_frame *frame,
+    const qa_scene_view *view, bool *first, qa_error *error)
+{
+    if (!view || !first) { qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Source picture requires its actual viewport"); return false; }
+    *first = false;
+    if (source && source->collecting && source->pictures && source->frame == frame) {
+        const qa_scene_view *previous = source->tail ? &source->tail->context.view : view;
+        if (previous->seat == view->seat && previous->viewport.x == view->viewport.x && previous->viewport.y == view->viewport.y &&
+            previous->viewport.width == view->viewport.width && previous->viewport.height == view->viewport.height)
+            return material_source_current(source, error);
+    }
+    if (!qa_material_source_scene_begin(source, frame, error)) return false;
+    source->pictures = true; *first = true; return true;
+}
+bool qa_material_source_picture_end(qa_material_source_scratch *source, qa_scene_frame *frame, qa_error *error)
+{
+    if (!source || !source->collecting || !source->pictures || !source->submission_count) return true;
+    return qa_material_source_scene_end(source, frame, true, error);
+}
+bool qa_material_source_frame_end(qa_material_source_scratch *source, qa_scene_frame *frame, bool submit, qa_error *error)
+{
+    if (!source || !source->entered) return true;
+    if (source->frame != frame || frame->source_pending != source || source->dispatching || source->issuing) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Source command issue lost its actual frame owner"); return false;
+    }
+    if (source->collecting && !qa_material_source_scene_end(source, frame, submit, error)) {
+        qa_error cleanup = {0};
+        (void)source_issue(source, frame, false, &cleanup);
+        return false;
+    }
+    if (!source->entered) return true;
+    return source_issue(source, frame, submit, error);
+}
+static bool source_collect(const qa_material *original, const qa_scene_mesh *mesh,
+    const qa_material_context *context, qa_scene_frame *frame, qa_error *error)
+{
+    qa_material_source_scratch *source = context->source_scratch;
+    if (!context->source_primitives || source->frame != frame || !material_source_current(source, error) ||
+        source->submission_count == SIZE_MAX) return false;
+    material_source_submission *row = frame_array(frame, 1, sizeof(*row), alignof(material_source_submission), error);
+    if (!row) return false;
+    *row = (material_source_submission){.original = original, .mesh = *mesh, .context = *context};
+    if (!row->context.source_surface) {
+        row->context.source_surface = source->sky.source_surface;
+        row->context.source_surface_context = source->sky.source_surface_context;
+    }
+    /* Shadow and effect producers may replace their frame slices after submit. */
+    qa_scene_vertex *vertices = frame_array(frame, mesh->vertex_count, sizeof(*vertices), alignof(qa_scene_vertex), error);
+    uint32_t *indices = frame_array(frame, mesh->index_count, sizeof(*indices), alignof(uint32_t), error);
+    if ((mesh->vertex_count && !vertices) || (mesh->index_count && !indices)) return false;
+    if (mesh->vertex_count) memcpy(vertices, mesh->vertices, mesh->vertex_count * sizeof(*vertices));
+    if (mesh->index_count) memcpy(indices, mesh->indices, mesh->index_count * sizeof(*indices));
+    row->mesh.vertices = vertices; row->mesh.indices = indices;
+    if (context->light_count) {
+        qa_scene_light *lights = frame_array(frame, context->light_count, sizeof(*lights), alignof(qa_scene_light), error);
+        if (!lights) return false;
+        memcpy(lights, context->lights, context->light_count * sizeof(*lights)); row->context.lights = lights;
+    }
+    if (context->fragment_light_count) {
+        qa_scene_shadow_light *lights = frame_array(frame, context->fragment_light_count, sizeof(*lights), alignof(qa_scene_shadow_light), error);
+        if (!lights) return false;
+        memcpy(lights, context->fragment_lights, context->fragment_light_count * sizeof(*lights)); row->context.fragment_lights = lights;
+    }
+    if (context->text_count) {
+        const char **texts = frame_array(frame, context->text_count, sizeof(*texts), alignof(char *), error);
+        if (!texts) return false;
+        for (size_t i = 0; i < context->text_count; ++i) {
+            texts[i] = NULL;
+            if (context->texts && context->texts[i]) {
+                size_t length = strlen(context->texts[i]);
+                if (length == SIZE_MAX) return false;
+                char *text = frame_array(frame, length + 1, 1, 1, error);
+                if (!text) return false;
+                memcpy(text, context->texts[i], length + 1); texts[i] = text;
+            }
+        }
+        row->context.texts = texts;
+    }
+    if (source->tail) source->tail->next = row; else source->head = row;
+    source->tail = row; ++source->submission_count; return true;
+}
+static void source_append(qa_material_source_scratch *source, const material_source_submission *row)
+{
+    size_t base = source->vertex_count;
+    const qa_material *material = row->original->remapped ? row->original->remapped : row->original;
+    for (size_t i = 0; i < row->mesh.vertex_count; ++i) {
+        qa_scene_vertex previous = source->vertices[base + i], vertex = row->mesh.vertices[i];
+        switch (row->context.source_writer) {
+        case QA_SOURCE_WRITE_MODEL: vertex.color = previous.color; vertex.lightmap = previous.lightmap; break;
+        case QA_SOURCE_WRITE_PICTURE: /* fall through */
+        case QA_SOURCE_WRITE_POLY: vertex.normal = previous.normal; vertex.lightmap = previous.lightmap; break;
+        case QA_SOURCE_WRITE_RAIL:
+            vertex.normal = previous.normal; vertex.lightmap = previous.lightmap; vertex.color.w = previous.color.w; break;
+        case QA_SOURCE_WRITE_BSP: vertex.normal = previous.normal; break;
+        case QA_SOURCE_WRITE_BSP_NORMAL:
+            if (material == row->context.source_default_material || material->kind == QA_MATERIAL_STENCIL_SHADOW)
+                vertex.normal = previous.normal;
+            break;
+        case QA_SOURCE_WRITE_CLOUD:
+            vertex.normal = previous.normal; vertex.lightmap = previous.lightmap; vertex.color = previous.color; break;
+        case QA_SOURCE_WRITE_FULL: break;
+        }
+        source->vertices[base + i] = vertex;
+    }
+    for (size_t i = 0; i < row->mesh.index_count; ++i)
+        source->indices[source->index_count + i] = (uint32_t)base + row->mesh.indices[i];
+    source->vertex_count += row->mesh.vertex_count; source->index_count += row->mesh.index_count;
+}
+bool qa_material_source_commands(const qa_material *material, const qa_material_context *context,
+    qa_scene_frame *frame, size_t first, qa_error *error)
+{
+    qa_material_source_scratch *source = context ? context->source_scratch : NULL;
+    if (!material || !source || !source->collecting || source->pictures || source->frame != frame ||
+        first > frame->command_count || !material_source_current(source, error)) return false;
+    if (source->submission_count == SIZE_MAX) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Source submission count is exhausted"); return false;
+    }
+    material_source_submission *row = frame_array(frame, 1, sizeof(*row), alignof(material_source_submission), error);
+    if (!row) return false;
+    *row = (material_source_submission){.original = material, .context = *context,
+        .command_count = frame->command_count - first};
+    if (row->command_count) {
+        row->commands = frame_array(frame, row->command_count, sizeof(*row->commands), alignof(qa_scene_command), error);
+        if (!row->commands) return false;
+        memcpy(row->commands, frame->commands + first, row->command_count * sizeof(*row->commands));
+    }
+    frame->command_count = first;
+    if (source->tail) source->tail->next = row; else source->head = row;
+    source->tail = row; ++source->submission_count; return true;
+}
+static bool source_flush(qa_material_source_scratch *source, const material_source_submission *row,
+    uint32_t light_mask, qa_scene_frame *frame, qa_error *error)
+{
+    if (!row || !source->index_count) return true;
+    const qa_material *material = source->material;
+    if (!material) { qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Source EndSurface has no retained shader"); return false; }
+    qa_material_context context = row->context; context.source_writer = QA_SOURCE_WRITE_FULL;
+    context.light_mask = light_mask;
+    source_entity_apply(source, &context);
+    float time = source->shader_time;
+    if (!isfinite(time)) { qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Source shader time is nonfinite"); return false; }
+    qa_scene_mesh mesh = row->mesh;
+    mesh.vertices = source->vertices; mesh.indices = source->indices;
+    mesh.vertex_count = source->vertex_count; mesh.index_count = source->index_count;
+    mesh.identity = mesh.revision = 0; mesh.geometry = NULL;
+    size_t first = frame->command_count;
+    if (material->kind == QA_MATERIAL_STENCIL_SHADOW) {
+        if (source->indices[QA_SOURCE_TESS_INDEXES - 1] != 0 || source->vertices[QA_SOURCE_TESS_VERTICES - 1].position.x != 0) {
+            qa_error_set(error, QA_ERROR_FORMAT, 0, "Source tess sentinel was overwritten"); return false;
+        }
+        if (source->vertex_count >= QA_SOURCE_TESS_VERTICES / 2 || context.source_diagnostics.stencil_bits < 4) return true;
+        for (size_t i = 0; i < source->vertex_count; ++i)
+            source->vertices[i + source->vertex_count].position =
+                qa_vec_add(source->vertices[i].position, qa_vec_scale(context.light_direction, -512));
+        if (!qa_scene_source_stencil_shadow(frame, &context.view, &mesh, context.model,
+            context.light_direction, context.source_diagnostics.no_bind ? material->dlight_image : context.source_white,
+            error) || !material_source_current(source, error)) return false;
+        return source->issuing || qa_scene_frame_group(frame, first, QA_SCENE_GROUP_SEQUENCE, row->original,
+            row->original->sort, context.entity, context.fog_index, 0, error);
+    }
+    if (material->sky && context.source_surface) {
+        if (source->indices[QA_SOURCE_TESS_INDEXES - 1] != 0 || source->vertices[QA_SOURCE_TESS_VERTICES - 1].position.x != 0) {
+            qa_error_set(error, QA_ERROR_FORMAT, 0, "Source tess sentinel was overwritten"); return false;
+        }
+        if (context.source_diagnostics.debug_sort != 0 && context.source_diagnostics.debug_sort < material->sort) return true;
+        bool ok = context.source_surface(context.source_surface_context, row->original, material,
+            &mesh, &context, frame, error) && material_source_current(source, error);
+        if (!ok) return false;
+        mesh.vertex_count = source->vertex_count; mesh.index_count = source->index_count;
+        if (mesh.vertex_count && mesh.index_count &&
+            !source_debug(material, row->original, &mesh, &context, frame, error)) return false;
+        source->index_count = 0;
+        return source->issuing || qa_scene_frame_group(frame, first, QA_SCENE_GROUP_SEQUENCE, row->original,
+            row->original->sort, context.entity, context.fog_index, context.source_dlighted ? 1 : 0, error);
+    }
+    if (!submit_source(row->original, material, &mesh, &context, time, frame, error)) return false;
+    if (source->pictures || source->issuing) return true;
+    return qa_scene_frame_group(frame, first, QA_SCENE_GROUP_SEQUENCE, row->original,
+        row->original->sort, context.entity, context.fog_index, context.source_dlighted ? 1 : 0, error);
+}
+static bool source_dispatch_scene(qa_material_source_scratch *source, qa_scene_frame *frame,
+    bool submit, qa_error *error)
+{
+    if (!source || !source->entered || !source->collecting || source->frame != frame) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Source scene lost its entered tess owner"); return false;
+    }
+    submit = submit && !frame->source_skip_backend;
+    bool ok = !submit || material_source_current(source, error);
+    size_t count = source->submission_count;
+    material_source_submission **rows = NULL;
+    qa_scene_group *groups = NULL, **ordered = NULL;
+    if (ok && submit && count) {
+        rows = frame_array(frame, count, sizeof(*rows), alignof(material_source_submission *), error);
+        groups = frame_array(frame, count, sizeof(*groups), alignof(qa_scene_group), error);
+        ordered = frame_array(frame, count, sizeof(*ordered), alignof(qa_scene_group *), error);
+        ok = rows && groups && ordered && qa_material_order_prepare(frame->material_order, error);
+        material_source_submission *row = source->head;
+        for (size_t i = 0; ok && i < count; ++i, row = row->next) {
+            uint32_t rank;
+            ok = qa_material_order_rank(frame->material_order, row->original, &rank, error);
+            if (ok && (rank >= 16384 || row->context.entity > 1022 || row->context.fog_index > 31)) {
+                qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Source batch sort fields exceed their actual widths"); ok = false;
+            }
+            if (ok) {
+                rows[i] = row; ordered[i] = groups + i;
+                groups[i] = (qa_scene_group){.ordinal = i, .source_sort = (rank << 17) |
+                    (row->context.entity << 7) | (row->context.fog_index << 2) | (row->context.source_dlighted ? 1 : 0)};
+            }
+        }
+        if (ok && !source->pictures) ok = material_source_sort(ordered, count, error);
+    }
+    source->collecting = false; source->dispatching = true;
+    const material_source_submission *batch = NULL;
+    uint32_t key = 0, light_mask = 0;
+    for (size_t i = 0; ok && submit && i < count; ++i) {
+        material_source_submission *row = rows[ordered[i]->ordinal];
+        uint32_t next_key = ordered[i]->source_sort;
+        bool same_entity = !batch || row->context.entity == batch->context.entity;
+        bool transition = source->pictures ? row->original != source->material :
+            ((key & ~UINT32_C(0x1ff80)) != (next_key & ~UINT32_C(0x1ff80)) ||
+            (batch && row->original != batch->original) || (!same_entity && !row->original->entity_mergable));
+        if (batch && transition) {
+            ok = source_flush(source, batch, light_mask, frame, error); batch = NULL;
+        }
+        if (!ok) break;
+        if (!batch) {
+            if (!source->pictures || row->original != source->material) {
+                ok = source_begin_surface(source, row, error);
+                if (!ok) break;
+                if (source->pictures) source->entity = (material_source_entity){0};
+            }
+            light_mask = 0;
+        }
+        if (!source->pictures) {
+            source_entity_read(source, &row->context);
+            source->shader_time = (float)shader_seconds(row->original, source->material, &row->context);
+        } else source_entity_apply(source, &row->context);
+        if (row->context.source_light_world && !qa_scene_world_source_light_mask_read(
+            row->context.source_light_world, row->context.source_light_surface, &row->context.light_mask, error)) {
+            ok = false; break;
+        }
+        if (row->commands) {
+            size_t first = frame->command_count;
+            for (size_t j = 0; ok && j < row->command_count; ++j) {
+                qa_scene_command command = row->commands[j];
+                if (command.kind == QA_SCENE_COMMAND_DRAW && row->context.source_diagnostics.no_bind)
+                    for (size_t texture = 0; texture < command.data.draw.texture_count; ++texture)
+                        if (!command.data.draw.retain_texture[texture]) command.data.draw.textures[texture] = row->original->dlight_image;
+                ok = qa_scene_frame_emit(frame, &command, error);
+            }
+            if (ok && !source->issuing) ok = qa_scene_frame_group(frame, first, QA_SCENE_GROUP_SEQUENCE, row->original,
+                row->original->sort, row->context.entity, row->context.fog_index, 0, error);
+            batch = row; key = next_key;
+            continue;
+        }
+        bool rail = row->context.source_writer == QA_SOURCE_WRITE_RAIL;
+        size_t columns = row->context.source_grid_columns, height = row->context.source_grid_rows;
+        if (columns) {
+            if (columns < 2 || height < 2 || columns > 65 || height > 65 ||
+                row->mesh.vertex_count != columns * height || row->mesh.index_count != (columns - 1) * (height - 1) * 6) {
+                qa_error_set(error, QA_ERROR_FORMAT, 0, "Source grid lost its selected row/column topology"); ok = false; break;
+            }
+            light_mask |= row->context.light_mask;
+            size_t used = 0;
+            bool first_slab = true;
+            while (ok && used < height - 1) {
+                if (!batch && !first_slab) {
+                    ok = source_begin_surface(source, row, error); light_mask = 0;
+                    if (!ok) break;
+                }
+                first_slab = false;
+                size_t vrows = (QA_SOURCE_TESS_VERTICES - source->vertex_count) / columns;
+                size_t irows = (QA_SOURCE_TESS_INDEXES - source->index_count) / (columns * 6);
+                if (vrows < 2 || irows < 1) {
+                    ok = source_flush(source, batch, light_mask, frame, error); batch = NULL; continue;
+                }
+                size_t slab = vrows < irows + 1 ? vrows - 1 : irows;
+                if (slab > height - used) slab = height - used;
+                material_source_submission part = *row;
+                part.mesh.vertices = row->mesh.vertices + used * columns; part.mesh.vertex_count = slab * columns;
+                part.mesh.index_count = (slab - 1) * (columns - 1) * 6;
+                uint32_t *indices = part.mesh.index_count ? frame_array(frame, part.mesh.index_count,
+                    sizeof(*indices), alignof(uint32_t), error) : NULL;
+                if (part.mesh.index_count && !indices) { ok = false; break; }
+                for (size_t j = 0; j < part.mesh.index_count; ++j)
+                    indices[j] = row->mesh.indices[used * (columns - 1) * 6 + j] - (uint32_t)(used * columns);
+                part.mesh.indices = indices;
+                source_append(source, &part); batch = row; key = next_key;
+                used += slab - 1;
+            }
+            continue;
+        }
+        if (!rail && (row->mesh.vertex_count >= QA_SOURCE_TESS_VERTICES || row->mesh.index_count >= QA_SOURCE_TESS_INDEXES)) {
+            if (row->context.source_dlight_before_overflow) light_mask |= row->context.light_mask;
+            if (batch) { ok = source_flush(source, batch, light_mask, frame, error); batch = NULL; }
+            if (!ok) break;
+            qa_error_set(error, QA_ERROR_FORMAT, 0, "Source surface exceeds tess sentinel limits"); ok = false; break;
+        }
+        size_t pieces = rail ? row->mesh.vertex_count / 4 : 1;
+        if (rail && (row->mesh.vertex_count % 4 || row->mesh.index_count != pieces * 6)) {
+            qa_error_set(error, QA_ERROR_FORMAT, 0, "Source rail lost its actual quad topology"); ok = false; break;
+        }
+        for (size_t piece = 0; ok && piece < pieces; ++piece) {
+            material_source_submission part = *row; uint32_t indices[6];
+            if (rail) {
+                part.mesh.vertices = row->mesh.vertices + piece * 4; part.mesh.vertex_count = 4;
+                part.mesh.index_count = 6; part.mesh.indices = indices;
+                for (size_t j = 0; j < 6; ++j) indices[j] = row->mesh.indices[piece * 6 + j] - (uint32_t)(piece * 4);
+            }
+            if (row->context.source_dlight_before_overflow) light_mask |= row->context.light_mask;
+            if (batch && (part.mesh.vertex_count || part.mesh.index_count) &&
+                (source->vertex_count + part.mesh.vertex_count >= QA_SOURCE_TESS_VERTICES ||
+                source->index_count + part.mesh.index_count >= QA_SOURCE_TESS_INDEXES)) {
+                ok = source_flush(source, batch, light_mask, frame, error); batch = NULL;
+                if (ok) { ok = source_begin_surface(source, row, error); light_mask = 0; }
+            }
+            if (!ok) break;
+            source_append(source, &part);
+            batch = row; key = next_key;
+            if (!row->context.source_dlight_before_overflow && part.mesh.index_count) light_mask |= row->context.light_mask;
+        }
+    }
+    if (ok && submit) ok = source_flush(source, batch, light_mask, frame, error);
+    source->head = source->tail = NULL; source->submission_count = 0;
+    source->sky = (qa_material_context){0};
+    source->pictures = false;
+    source->dispatching = false;
+    return ok;
+}
+bool qa_material_source_scene_end(qa_material_source_scratch *source, qa_scene_frame *frame,
+    bool submit, qa_error *error)
+{
+    if (!source || !source->entered || !source->collecting || source->frame != frame ||
+        source->dispatching || source->issuing || !material_source_current(source, error)) {
+        if (!error || error->code == QA_OK)
+            qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Source scene lost its actual collector");
+        return false;
+    }
+    if (!submit) return source_issue(source, frame, false, error);
+    material_source_operation *operation = frame_array(frame, 1, sizeof(*operation),
+        alignof(material_source_operation), error);
+    if (!operation) return false;
+    *operation = (material_source_operation){.head = source->head, .tail = source->tail,
+        .count = source->submission_count, .command_offset = frame->command_count,
+        .pictures = source->pictures, .view = source->view};
+    if (source->last_operation) source->last_operation->next = operation;
+    else source->operations = operation;
+    source->last_operation = operation;
+    source->head = source->tail = NULL; source->submission_count = 0;
+    source->collecting = source->pictures = false;
+    source->sky = (qa_material_context){0};
+    return true;
+}
+bool qa_material_source_issue_emitted(qa_material_source_scratch *source, qa_scene_frame *frame, qa_error *error)
+{
+    if (!source || !source->issuing) return true;
+    return material_source_execute_prefix(source, frame, false, error);
+}
+static bool source_issue(qa_material_source_scratch *source, qa_scene_frame *frame, bool submit, qa_error *error)
+{
+    bool requested = submit;
+    bool ok = !submit || material_source_current(source, error);
+    for (material_source_operation *operation = source->operations; ok && submit && operation; operation = operation->next) {
+        if (operation->view.valid && operation->view.read)
+            ok = operation->view.read(operation->view.context, &operation->view.diagnostics, error) &&
+                material_source_current(source, error);
+        for (material_source_submission *row = operation->head; ok && row; row = row->next)
+            if (row->context.source_diagnostics_read)
+                ok = row->context.source_diagnostics_read(row->context.source_diagnostics_context,
+                    &row->context.source_diagnostics, error) && material_source_current(source, error);
+    }
+    submit = submit && !frame->source_skip_backend;
+    size_t count = frame->command_count;
+    qa_scene_command *commands = NULL;
+    if (ok && submit) {
+        ok = qa_scene_frame_finish(frame, NULL, NULL, error);
+        count = frame->command_count;
+        if (ok && count) {
+            commands = frame_array(frame, count, sizeof(*commands), alignof(qa_scene_command), error);
+            ok = commands != NULL;
+            if (ok) memcpy(commands, frame->commands, count * sizeof(*commands));
+        }
+        for (material_source_operation *operation = source->operations; ok && operation; operation = operation->next)
+            if (operation->view.valid) {
+                material_source_view *policy = &operation->view;
+                if (policy->command_offset >= count || commands[policy->command_offset].kind != QA_SCENE_COMMAND_VIEW) {
+                    qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Source view lost its actual reached command"); ok = false; break;
+                }
+                qa_scene_view *view = &commands[policy->command_offset].data.view;
+                view->clear_color = policy->hyperspace || (policy->diagnostics.fast_sky && !policy->no_world);
+                if (view->clear_color) {
+                    float gray = policy->hyperspace ? (float)((uint32_t)policy->milliseconds & 255u) / 255 : 0;
+                    view->color = (qa_scene_vec4){gray, gray, gray, 1};
+                }
+            }
+    }
+    source->collecting = false; source->issuing = true;
+    source->issued_count = 0; source->issue_started = false;
+    if (ok && submit) {
+        frame->command_count = 0;
+        size_t copied = 0;
+        for (material_source_operation *operation = source->operations; ok && operation; operation = operation->next) {
+            if (operation->command_offset < copied || operation->command_offset > count) {
+                qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Source operation lost its actual command position"); ok = false; break;
+            }
+            if (operation->view.valid) {
+                source->projection_2d = false;
+                source->view_origin = operation->view.view.origin;
+                memcpy(source->view_axis, operation->view.view.axis, sizeof(source->view_axis));
+                source->view_mirror = operation->view.view.mirror;
+            }
+            while (ok && copied < operation->command_offset)
+                ok = qa_scene_frame_emit(frame, commands + copied++, error);
+            if (!ok) break;
+            source->head = operation->head; source->tail = operation->tail;
+            source->submission_count = operation->count; source->pictures = operation->pictures;
+            if (operation->pictures && operation->head) {
+                if (!source->projection_2d) {
+                    const qa_material_context *context = &operation->head->context;
+                    source->picture_milliseconds = context->source_picture_clock ?
+                        context->source_picture_clock(context->source_picture_clock_context) : (int32_t)context->milliseconds;
+                    if (!material_source_current(source, error)) { ok = false; break; }
+                }
+                for (material_source_submission *row = operation->head; row; row = row->next) {
+                    row->context.milliseconds = source->picture_milliseconds;
+                    row->context.seconds = (float)source->picture_milliseconds * .001f;
+                    row->context.local_view_origin = source->local_view_origin;
+                    row->context.view.origin = source->view_origin;
+                    memcpy(row->context.view.axis, source->view_axis, sizeof(source->view_axis));
+                    row->context.view.mirror = row->context.mirror = source->view_mirror;
+                }
+            }
+            if (operation->pictures) source->projection_2d = true;
+            source->collecting = true;
+            ok = source_dispatch_scene(source, frame, true, error);
+        }
+        while (ok && copied < count) ok = qa_scene_frame_emit(frame, commands + copied++, error);
+    }
+    if (source->issue_started) {
+        qa_error finish = {0};
+        bool completed = material_source_execute_prefix(source, frame, true, ok ? error : &finish);
+        if (ok && !completed) ok = false;
+        /* These commands have reached the actual renderer and must not replay. */
+        frame->command_count = frame->group_count = 0;
+    }
+    if (requested && frame->source_skip_backend) frame->command_count = frame->group_count = 0;
+    source->head = source->tail = NULL; source->submission_count = 0;
+    source->operations = source->last_operation = NULL;
+    source->sky = (qa_material_context){0}; source->frame = NULL;
+    source->view = (material_source_view){0};
+    source->issued_count = 0; source->issue_started = false;
+    source->collecting = source->pictures = source->dispatching = source->issuing = false;
+    frame->source_pending = NULL;
+    material_source_leave(source);
+    return ok;
 }
 bool qa_material_submit(const qa_material *original, const qa_scene_mesh *mesh,
                          const qa_material_context *context, qa_scene_frame *frame, qa_error *error)
@@ -380,28 +1178,28 @@ bool qa_material_submit(const qa_material *original, const qa_scene_mesh *mesh,
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid material submission");
         return false;
     }
-    if (mesh->vertex_count == 0 || mesh->index_count == 0) return true;
     for (size_t i = 0; i < mesh->index_count; ++i) if (mesh->indices[i] >= mesh->vertex_count) {
         qa_error_set(error, QA_ERROR_FORMAT, i, "Material mesh index exceeds vertex array");
         return false;
     }
+    if (context->source_scratch && context->source_scratch->collecting)
+        return source_collect(original, mesh, context, frame, error);
+    if ((mesh->vertex_count == 0 || mesh->index_count == 0) &&
+        !(context->source_scratch && context->source_writer == QA_SOURCE_WRITE_CLOUD)) return true;
+    if (!context->source_scratch && frame->source_pending &&
+        !qa_material_source_picture_end(frame->source_pending, frame, error)) return false;
     const qa_material *material = original;
-    float offset = context->time_offset;
-    for (size_t hop = 0; material->remapped != NULL; ++hop) {
-        if (hop >= 16384) {
-            qa_error_set(error, QA_ERROR_FORMAT, 0, "Material remap chain contains a cycle");
-            return false;
-        }
-        offset += material->remap_time_offset;
-        material = material->remapped;
-    }
+    if (material->remapped != NULL) material = material->remapped;
     if ((material->surface_flags & 128u) != 0) return true;
-    double seconds = context->seconds - offset;
+    double seconds = shader_seconds(original, material, context);
     if (material->clamp_time != 0.0f && seconds >= material->clamp_time) seconds = material->clamp_time;
     float time = (float)seconds;
     if (!isfinite(time)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Material shader time is nonfinite");
         return false;
+    }
+    if (context->source_scratch) {
+        return submit_source(original, material, mesh, context, time, frame, error);
     }
     qa_scene_mesh geometry;
     if (!qa_material_deform_mesh(material, mesh, context, time, frame, &geometry, error)) return false;
@@ -426,15 +1224,8 @@ bool qa_material_shadow_mesh(const qa_material *material, const qa_scene_mesh *m
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid material shadow geometry request");
         return false;
     }
-    float offset = context->time_offset;
-    for (size_t hop = 0; material->remapped != NULL; ++hop) {
-        if (hop >= 16384) {
-            qa_error_set(error, QA_ERROR_FORMAT, 0, "Material shadow remap chain contains a cycle");
-            return false;
-        }
-        offset += material->remap_time_offset;
-        material = material->remapped;
-    }
+    const qa_material *original = material;
+    if (material->remapped != NULL) material = material->remapped;
     bool excluded = material->sky || material->sort > 3.0f ||
         (material->surface_flags & 128u) != 0 ||
         (material->content_flags & (UINT32_C(0x20000000) | 8u | 16u | 32u)) != 0;
@@ -443,7 +1234,7 @@ bool qa_material_shadow_mesh(const qa_material *material, const qa_scene_mesh *m
             material->deforms[i].kind == QA_DEFORM_AUTOSPRITE2 ||
             material->deforms[i].kind == QA_DEFORM_PROJECTION_SHADOW) excluded = true;
     if (excluded) { *out = (qa_scene_mesh){0}; return true; }
-    double seconds = context->seconds - offset;
+    double seconds = shader_seconds(original, material, context);
     if (material->clamp_time != 0.0f && seconds >= material->clamp_time) seconds = material->clamp_time;
     if (!isfinite((float)seconds)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Material shadow time is nonfinite");

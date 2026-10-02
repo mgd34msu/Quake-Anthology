@@ -535,10 +535,11 @@ static bool launch(qa_q2_game *g, q2_actor *owner, qa_q2_grapple_kind kind, qa_v
                                     .plane = trace.contact_plane,
                                     .has_surface = rr && trace.has_surface,
                                     .surface = trace.surface};
-        return q2_grapple_touch(g, &contact, e);
+        return q2_grapple_touch(g, &contact, e) && q2_weapon_fired(g, owner->id, weapon, e);
     }
     *launched = true;
-    return !rr || loop(g, hook, "weapons/grapple/grfly.wav", e);
+    return (!rr || loop(g, hook, "weapons/grapple/grfly.wav", e)) &&
+           q2_weapon_fired(g, owner->id, weapon, e);
 }
 static bool fire_ctf(qa_q2_game *g, q2_actor *a, qa_error *e) {
     if (a->grapples[QA_Q2_CTF_GRAPPLE].phase != QA_Q2_GRAPPLE_FLY)

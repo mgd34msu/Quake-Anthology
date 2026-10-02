@@ -1,6 +1,7 @@
 #include "internal.h"
 #include "remap_save.h"
 #include "save_private.h"
+#include "native_q3_client.h"
 
 struct frontend_remap {
     frontend_remap *next;
@@ -18,6 +19,7 @@ static bool apply(qa_frontend *frontend, const char *original, const char *repla
     return (!frontend->scene_world || qa_scene_world_remap(frontend->scene_world, original, replacement, offset, error)) &&
         (!frontend->materials || qa_material_remap(frontend->materials, original, replacement, offset, error)) &&
         frontend_source_remap(frontend, original, replacement, offset, error) &&
+        frontend_native_q3_remap(frontend,original,replacement,offset,error) &&
         frontend_visuals_remap(frontend, original, replacement, offset, error);
 }
 bool frontend_shader_remap(qa_frontend *frontend, const char *original, const char *replacement, float offset, qa_error *error)

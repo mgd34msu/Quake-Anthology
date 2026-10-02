@@ -71,10 +71,28 @@ struct qa_scene_world {
     size_t pvs_capacity, pvs_size;
     int32_t pvs_selector, pvs_secondary;
     bool pvs_cached, pvs_all;
+    uint32_t *source_leaf_marks;
+    uint32_t *source_dlight_masks;
+    uint32_t source_vis_generation;
+    int32_t source_view_cluster;
+    uint8_t source_area_mask[32];
+    bool source_area_mask_modified;
     uint32_t cluster_count;
     bool sky_drawn;
     bool checkpoint_active;
     struct qa_scene_world_capture *capture;
+    qa_scene_world_image_policy *image_policy;
+};
+
+struct qa_scene_source_world_view {
+    const qa_scene_world *world;
+    const qa_scene_frame *frame;
+    uint64_t sequence;
+    qa_vec3 origin, axis[3];
+    qa_bounds bounds;
+    float projection_x, projection_y;
+    uint32_t *surfaces, *lights;
+    size_t count;
 };
 
 struct qa_scene_world_checkpoint_refs;

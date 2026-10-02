@@ -12,6 +12,41 @@
 #include "qa/cvars_save.h"
 #include "startup_flow.h"
 #include "guest_q3_client_console.h"
+#include "guest_q3_catalog.h"
+#include "guest_q3_weapons.h"
+#include "guest_q3_weapons_services.h"
+#include "guest_q3_combat.h"
+#include "guest_q3_pickups.h"
+
+static bool process_current(void *context, const qa_launch_instance *descriptor,
+    qa_actor_owner receiver, uint64_t service_owner, qa_error *error)
+{
+    q3g_role *role = context;
+    if (!role || !role->engine || !role->engine->provider || !role->descriptor ||
+        !descriptor || receiver != role->engine->provider->owner || service_owner != role->service_owner ||
+        !qa_sha256_equal(&descriptor->identity, &role->descriptor->identity) ||
+        !role->artifact || !role->artifact->resource || !role->module)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Native Q3 process lost its prepared role identity");
+    return true;
+}
+
+bool q3g_role_catalog_refresh(q3g_role *role, qa_error *error)
+{
+    if (!role || !role->weapons) return true;
+    const application_q3_catalog_weapon *borrowed;
+    size_t count;
+    if (!application_q3_catalog_current(role->catalog, role->image, role->vm, role->abi) ||
+        !application_q3_catalog_weapons(role->catalog, &borrowed, &count, error)) return false;
+    if (!count && !role->initialized && !role->engine->restore_pending) return true;
+    if (count > SIZE_MAX / sizeof(application_q3_weapon_catalog_entry))
+        return application_fail(error, QA_ERROR_MEMORY, "Retaining genuine Source weapon roster");
+    application_q3_weapon_catalog_entry *entries = count ? calloc(count, sizeof(*entries)) : NULL;
+    if (count && !entries) return application_fail(error, QA_ERROR_MEMORY, "Retaining genuine Source weapon roster");
+    for (size_t i = 0; i < count; ++i)
+        entries[i] = (application_q3_weapon_catalog_entry){borrowed[i].weapon, borrowed[i].item, borrowed[i].ammo};
+    bool ok = application_q3_weapons_catalog_refresh(role->weapons, entries, count, error);
+    free(entries); return ok;
+}
 
 static bool equipment_entity(void *context, const qa_qvm_call *call, int32_t pointer,
     const qa_q3_ref_entity *entity, bool *suppress, qa_error *error)
@@ -19,7 +54,9 @@ static bool equipment_entity(void *context, const qa_qvm_call *call, int32_t poi
     q3g_role *role = context;
     if (!role->equipment)
         return application_fail(error, QA_ERROR_ARGUMENT, "Source entity submission lost its actual equipment owner");
-    return application_q3_equipment_source_entity(role->equipment, call, pointer, entity, suppress, error);
+    if (!application_q3_equipment_source_entity(role->equipment, call, pointer, entity, suppress, error)) return false;
+    return *suppress || !role->body ||
+        application_q3_body_source_entity(role->body, call, pointer, entity, suppress, error);
 }
 
 static bool qvm_path(const char *path)
@@ -35,6 +72,12 @@ bool q3g_role_consume(q3g_role *role, qa_error *error)
 {
     if (!role || role->engine->calls || role->initialized)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 role must be idle and shut down before release");
+    while (application_q3_pickups_cleanup_ready(role->pickups) ||
+           application_q3_weapons_cleanup_ready(role->weapons)) {
+        if (application_q3_pickups_cleanup_ready(role->pickups)) {
+            if (!application_q3_pickups_cleanup(role->pickups, error)) return false;
+        } else if (!application_q3_weapons_cleanup(role->weapons, error)) return false;
+    }
     if (role->vm && !qa_qvm_can_destroy(role->vm))
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 role executor has an admitted source or lifecycle callback");
     if (role->native && !qa_native_host_destroy_ready(role->native))
@@ -43,12 +86,24 @@ bool q3g_role_consume(q3g_role *role, qa_error *error)
         if (!application_q3_equipment_destroy(role->equipment, error)) return false;
         role->equipment = NULL;
     }
-    if (!application_guest_projection_close(role, error)) return false;
+    if (role->body) {
+        if (!application_q3_body_destroy(role->body, error)) return false;
+        role->body = NULL;
+    }
     if (role->host) {
         if (!qa_q3_host_destroy_ready(role->host))
             return application_fail(error, QA_ERROR_ARGUMENT, "Q3 role host still owns live bindings or service callbacks");
         if (!application_guest_input_detach(role, error)) return false;
     }
+    if ((role->weapon_services && !application_q3_weapons_services_match_close(role->weapon_services, error)) ||
+        !application_q3_pickups_destroy(&role->pickups, error) ||
+        !application_q3_combat_destroy(&role->combat, error) ||
+        !application_q3_weapons_destroy(&role->weapons, error) ||
+        !application_q3_weapons_services_destroy(&role->weapon_services, error) ||
+        !application_guest_projection_close(role, error)) return false;
+    application_q3_pickup_profile_free(&role->pickup_profile);
+    application_q3_catalog_destroy(role->catalog);
+    role->catalog = NULL;
     qa_error first = {0};
     bool ok = true;
     /* OS loader destructors can still use imports and the shared bridge. */
@@ -63,6 +118,7 @@ bool q3g_role_consume(q3g_role *role, qa_error *error)
         qa_q3_host_native_consumed(role->host);
         if (role == role->engine->game) q3g_game_aliases(role->engine, role);
     }
+    if (!application_native_process_release(&role->process, error)) return false;
     if (role->vm) {
         if (!qa_qvm_destroy(role->vm, error)) return false;
         role->vm = NULL;
@@ -83,9 +139,11 @@ bool q3g_role_consume(q3g_role *role, qa_error *error)
         --role->client_engine->client_leases;
     role->client_engine = NULL;
     role->client_source = NULL;
-    /* Keep only the descriptor for a later close retry; consumed executors and
+    /* Keep the descriptor and resolver for a later close retry; consumed executors and
      * source shutdown callbacks must not be repeated after a cleanup fault. */
     if (!ok) { if (error) *error = first; return false; }
+    qa_catalog_write_resolver_destroy(role->write_resolver);
+    role->write_resolver = NULL;
     return true;
 }
 
@@ -119,6 +177,7 @@ static bool role_create(struct application_q3_guest *engine, qa_qvm_role kind,
     if (!role->path) { free(role); return false; }
     qa_q3_host_options options = {0};
     qa_application_q3_equipment_services equipment_services = {0};
+    qa_application_q3_body_services body_services = {0};
     qa_qvm_compatibility compatibility = {0};
     application_provider *provider = engine->provider;
     const qa_launch_instance *descriptor = kind == QA_QVM_GAME ? provider->launch :
@@ -178,6 +237,13 @@ static bool role_create(struct application_q3_guest *engine, qa_qvm_role kind,
     engine->constructing_equipment_services = NULL;
     --engine->calls;
     if (!services_ready) goto failed;
+    qa_catalog *catalog = qa_launch_instance_catalog(descriptor);
+    qa_fs_root *write_root = qa_catalog_product_write_root(catalog, descriptor->selection.product);
+    if (write_root && !qa_catalog_write_resolver_create(catalog, descriptor->selection.product,
+        &role->write_resolver, error)) goto failed;
+    options.write_view = (qa_q3_host_write_view){
+        .root = qa_catalog_write_resolver_root(role->write_resolver),
+        .resolver = qa_catalog_write_resolver_services(role->write_resolver)};
     if (kind != QA_QVM_GAME) {
         qa_console *console = NULL;
         if (!application_guest_q3_client_console_at(engine, seat, &console, NULL) ||
@@ -186,6 +252,10 @@ static bool role_create(struct application_q3_guest *engine, qa_qvm_role kind,
                 application_fail(error, QA_ERROR_ARGUMENT, "CLIENT services displaced its retained physical console");
             goto failed;
         }
+        qa_string_id globals_owner = QA_STRING_NONE;
+        if (!application_guest_q3_client_console_globals(engine, seat, &options.script_globals,
+            &globals_owner, error)) goto failed;
+        options.script_globals_owner = globals_owner;
     }
     if (saved_owner && kind != QA_QVM_GAME) {
         if (engine->restored_client_source_instance) {
@@ -231,10 +301,13 @@ static bool role_create(struct application_q3_guest *engine, qa_qvm_role kind,
             .console = options.console, .cvars = options.cvars,
             .command = options.command_context, .declaration_owner = role->service_owner};
         bool carried = false;
-        if ((!provider->attached && !application_startup_source_carry(provider, &source, &carried, error)) ||
-         !application_q3_world_restart_cvars(provider->application, provider, options.cvars, error) ||
-         !application_q3_campaign_launch_cvars(provider, options.cvars, role->service_owner, error) ||
-         !application_guest_q3_console_startup(provider, error)) goto failed;
+        engine->constructing_role = role;
+        bool prepared = (provider->attached || application_startup_source_carry(provider, &source, &carried, error)) &&
+            application_q3_world_restart_cvars(provider->application, provider, options.cvars, error) &&
+            application_q3_campaign_launch_cvars(provider, options.cvars, role->service_owner, error) &&
+            application_guest_q3_console_startup(provider, error);
+        engine->constructing_role = NULL;
+        if (!prepared) goto failed;
     }
     options.world = engine->world;
     options.service_owner = role->service_owner;
@@ -289,6 +362,16 @@ static bool role_create(struct application_q3_guest *engine, qa_qvm_role kind,
                 compatibility.equipment_presentation.size}, &shared->equipment_profile, error)) {
             goto failed;
         }
+        if (role->image && kind == QA_QVM_CGAME) {
+            bool found = false;
+            uint64_t size = 0;
+            if (!qa_vfs_probe(shared->view, "cgame-presentation.json", &found, &size, error) ||
+                (found && !qa_vfs_acquire_receipt(shared->view, "cgame-presentation.json",
+                    &shared->body_resource, &shared->body_acquisition, error))) goto failed;
+            qa_bytes declaration = found ? qa_resource_bytes(shared->body_resource) : (qa_bytes){0};
+            if (!application_q3_body_profile_read(role->image, kind, shared->abi, path,
+                found ? &declaration : NULL, &shared->body_profile, error)) goto failed;
+        }
         if (role->image && kind == QA_QVM_GAME && !application_q3_grapple_profile_create(role->image,
             kind, shared->abi, path, &shared->grapple_profile, error)) goto failed;
         shared->image = role->image; qa_qvm_image_retain(shared->image);
@@ -297,6 +380,20 @@ static bool role_create(struct application_q3_guest *engine, qa_qvm_role kind,
         shared->primary = compatibility.primary; compatibility.primary = (qa_buffer){0};
         shared->equipment_presentation = compatibility.equipment_presentation;
         compatibility.equipment_presentation = (qa_buffer){0};
+        if (kind == QA_QVM_GAME && role->image && !application_q3_combat_profile_create(role->image,
+            kind, shared->abi, path, (qa_bytes){shared->primary.data, shared->primary.size},
+            strings, &shared->combat_profile, error)) goto failed;
+        if (kind == QA_QVM_GAME && role->image && !shared->primary.size) {
+            bool found = false;
+            uint64_t size = 0;
+            if (!qa_vfs_probe(shared->view, "qvm-items.json", &found, &size, error) ||
+                (found && !qa_vfs_acquire_receipt(shared->view, "qvm-items.json",
+                    &shared->items_resource, &shared->items_acquisition, error))) goto failed;
+            if (found && !qa_resource_bytes(shared->items_resource).size) {
+                application_fail(error, QA_ERROR_FORMAT, "Retained Q3 item declaration is empty");
+                goto failed;
+            }
+        }
     }
     q3g_server_bind(role, &options);
     if (!q3g_client_bind(role, &options, error)) goto failed;
@@ -328,7 +425,7 @@ static bool role_create(struct application_q3_guest *engine, qa_qvm_role kind,
             .source_product = source ? source->product : NULL,
             .source_console = console, .source_cvars = cvars,
             .product_policy = application_q3_product_source_policy(provider->application),
-            .services = &options, .equipment_services = &equipment_services,
+            .services = &options, .equipment_services = &equipment_services, .body_services = &body_services,
             .restoring = engine->restore_pending, .restored_cvars = engine->restored_client_cvars,
             .cvars_role = engine->restore_pending ? engine->restored_client_role : kind,
             .cvars_seat = engine->restore_pending ? engine->restored_client_seat : seat};
@@ -340,7 +437,13 @@ static bool role_create(struct application_q3_guest *engine, qa_qvm_role kind,
         if (options.role != kind || options.owner != provider->owner || options.session != provider->application->session ||
             options.service_owner != role->service_owner || options.cvars != bound_services.cvars ||
             options.console != bound_services.console || !options.cvars || !options.console ||
+            options.script_globals != bound_services.script_globals ||
+            options.script_globals_owner != bound_services.script_globals_owner ||
             options.mounts != descriptor->content || options.command_context.owner != provider->owner ||
+            options.write_view.root != bound_services.write_view.root ||
+            options.write_view.resolver.context != bound_services.write_view.resolver.context ||
+            options.write_view.resolver.root != bound_services.write_view.resolver.root ||
+            options.writable_mount != bound_services.writable_mount ||
             options.command_context.seat != seat || options.client.context != bound_client.context ||
             options.client.gamestate != bound_client.gamestate ||
             options.client.current_snapshot != bound_client.current_snapshot ||
@@ -383,6 +486,14 @@ static bool role_create(struct application_q3_guest *engine, qa_qvm_role kind,
             !qa_q3_host_attach_qvm(role->host, role->vm, error)) goto failed;
         if (kind == QA_QVM_CGAME && !application_q3_equipment_create(role,
             &equipment_services, &role->equipment, error)) goto failed;
+        if (kind == QA_QVM_CGAME && body_services.prepare) {
+            application_q3_body_module body = {.session = provider->application->session,
+                .vm = role->vm, .image = role->image, .profile = &role->artifact->body_profile,
+                .receiver = provider->owner, .seat = seat, .client = role->client_services};
+            role->body_services = body_services;
+            if (!application_q3_body_create_module(&body, &role->body_services, NULL,
+                &role->body, error)) goto failed;
+        }
     } else {
         qa_application *app = provider->application;
         qa_native_host_q3_options native = {.role = kind, .abi = options.abi,
@@ -399,14 +510,51 @@ static bool role_create(struct application_q3_guest *engine, qa_qvm_role kind,
             native.instance.declaration = role->declaration;
             native.instance.declaration_digest = qa_native_declaration_digest(role->declaration);
         }
+        qa_native_module_info module = qa_native_module_describe(role->module);
+        qa_native_process_resource_artifact artifact = {.resource = role->artifact->resource,
+            .acquisition = &role->artifact->acquisition, .path = role->path};
+        if (!application_native_process_prepare(app, descriptor, provider->owner,
+            role->service_owner, &artifact, 1, 0, &module.image,
+            native.instance.observe || qa_native_declaration_region_count(role->declaration) != 0,
+            process_current, role, &role->process, error)) goto failed;
+        native.instance.process = &role->process.process;
         role->native_options = native;
     }
     if (kind == QA_QVM_GAME && role->vm) {
         qa_bytes primary = role->artifact->image ?
             (qa_bytes){role->artifact->primary.data, role->artifact->primary.size} :
             qa_native_declaration_primary(role->artifact->declaration);
+        if (role->artifact->items_resource && !qa_resource_bytes(role->artifact->items_resource).size) {
+            application_fail(error, QA_ERROR_FORMAT, "Restored Q3 item declaration is empty"); goto failed;
+        }
         if (!application_guest_input_attach(role, primary, error)) goto failed;
+        if (!application_q3_catalog_create(role->image, role->vm, role->abi,
+            qa_session_strings(provider->application->session), primary,
+            qa_resource_bytes(role->artifact->items_resource), false, &role->catalog, error)) goto failed;
         if (!application_guest_projection_prepare(role, primary, error)) goto failed;
+        if (role->projection && role->projection->inventory_public) {
+            guest_inventory_catalog_services inventory_catalog = {
+                .context = role->catalog, .read = application_q3_catalog_inventory_read};
+            if (!application_guest_inventory_catalog_bind(role, &inventory_catalog, error)) goto failed;
+        }
+        application_q3_weapon_profile weapons = {0};
+        if (!application_q3_weapon_profile_read(role, primary, NULL, 0, &weapons, error)) goto failed;
+        if (weapons.present) {
+            if (!application_q3_weapons_services_create(role, &role->weapon_services, error)) {
+                application_q3_weapon_profile_free(&weapons); goto failed;
+            }
+            application_q3_weapon_services services = application_q3_weapons_services_callbacks(role->weapon_services);
+            if (!application_q3_weapons_create(role, &weapons, &services, &role->weapons, error) ||
+                !application_guest_input_bind_weapons(role, role->weapons, error)) {
+                application_q3_weapon_profile_free(&weapons); goto failed;
+            }
+            if (!engine->restore_pending && !q3g_role_catalog_refresh(role, error)) goto failed;
+        } else application_q3_weapon_profile_free(&weapons);
+        if (role->artifact->combat_profile && !application_q3_combat_create(role,
+            role->artifact->combat_profile, &role->combat, error)) goto failed;
+        if (!application_q3_pickup_profile_read(role, primary, &role->pickup_profile, error)) goto failed;
+        if (role->pickup_profile.present && !application_q3_pickups_create(role,
+            &role->pickup_profile, &role->pickups, error)) goto failed;
     }
     qa_qvm_compatibility_free(&compatibility);
     role->ready = true; *out = role; return true;
@@ -484,6 +632,7 @@ bool q3g_role_shutdown_source(q3g_role *role, bool restart, qa_error *error)
         (role->native && !qa_native_can_destroy(qa_native_host_instance(role->native))))
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 shutdown requires idle source and world callbacks");
     if (!role->initialized) return true;
+    if (role->weapon_services && !application_q3_weapons_services_match_close(role->weapon_services, error)) return false;
     if (role->kind == QA_QVM_GAME && !application_guest_input_detach(role, error)) return false;
     /* Consume the callback attempt before source code can reenter its owner.
      * Failure does not authorize a second partially performed shutdown. */

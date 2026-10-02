@@ -11,6 +11,7 @@
 #include "qa/input.h"
 #include "qa/movement.h"
 #include "qa/native_host.h"
+#include "qa/native_process_resources.h"
 #include "qa/player_progress.h"
 #include "qa/q3_host.h"
 #include "qa/rankings.h"
@@ -18,11 +19,13 @@
 #include "qa/targets.h"
 #include "qa/q3_product_policy.h"
 #include "qa/network_q1.h"
+#include "qa/session.h"
 
 typedef struct qa_application qa_application;
 struct qa_application_q3_round_services;
 struct qa_application_startup_hooks;
 typedef struct qa_application_q3_equipment_services qa_application_q3_equipment_services;
+typedef struct qa_application_q3_body_services qa_application_q3_body_services;
 
 typedef struct qa_application_map_request {
     qa_product_id geometry, presentation;
@@ -35,6 +38,12 @@ typedef struct qa_application_map_view {
     qa_resource *resource;
     uint64_t revision;
 } qa_application_map_view;
+typedef struct qa_application_q2_flare_view {
+    const char *image;
+    qa_vec3 color, rim_color;
+    float fade_start, fade_end;
+    bool present, has_rim_color, lock_angle;
+} qa_application_q2_flare_view;
 typedef struct qa_application_visual_view {
     qa_actor_id actor;
     qa_actor_owner provider, character;
@@ -43,6 +52,8 @@ typedef struct qa_application_visual_view {
     qa_body_state body;
     const char *models[4], *skin_path;
     const qa_resource *model_resources[4];
+    /* Borrowed acquired-source receipts share the retained precache lifetime. */
+    const qa_vfs_acquisition *model_openings[4];
     int32_t colormap;
     uint8_t player_colors;
     bool has_player_colors;
@@ -54,6 +65,7 @@ typedef struct qa_application_visual_view {
     qa_q3_entity source_entity;
     int32_t source_number, source_client;
     bool has_source_entity;
+    qa_application_q2_flare_view q2_flare;
 } qa_application_visual_view;
 typedef struct qa_application_presentation_view {
     qa_actor_owner hud, menu;
@@ -155,8 +167,30 @@ typedef struct qa_application_control_view {
 /* A copied selected-player seed for private client prediction. Provider IDs
  * identify the actual admitted roles. No command, source call or world write
  * is performed; the prediction owner supplies its own scratch and clock. */
+typedef enum qa_application_numeric_rounding {
+    QA_APPLICATION_ROUND_NEAREST,
+    QA_APPLICATION_ROUND_DOWN,
+    QA_APPLICATION_ROUND_UP,
+    QA_APPLICATION_ROUND_ZERO
+} qa_application_numeric_rounding;
+
+/* Facts from the native C movement constructor. External Source execution
+ * leaves its recipe absent; the independent copied prediction kernel retains
+ * its own C recipe. This describes storage and evaluation, not each operation. */
+typedef struct qa_application_movement_numeric {
+    qa_string_id id;
+    uint32_t radix, scalar_mantissa_bits, double_mantissa_bits;
+    int32_t evaluation_method;
+    qa_application_numeric_rounding rounding;
+    bool native_c, qw_origin_binary64;
+} qa_application_movement_numeric;
+
 typedef struct qa_application_control_prediction_configuration {
     qa_actor_owner movement, character, arsenal;
+    qa_actor_owner profile_id;
+    qa_clock_config clock;
+    qa_application_movement_numeric numeric; /* Actual Source movement executor. */
+    qa_application_movement_numeric prediction_numeric; /* Independently copied C movement kernel. */
     qa_movement_input input;
     qa_vec3 q2r_pml_origin;
     qa_vec3 view_angles, command_angles;
@@ -168,13 +202,15 @@ typedef struct qa_application_control_prediction_configuration {
     float fractional_weapon_ms;
     uint32_t external_weapon_slot;
     int32_t requested_weapon;
+    bool has_client_view_offset;
+    qa_vec3 client_view_offset;
 } qa_application_control_prediction_configuration;
 
 typedef struct qa_application_camera_view {
     qa_actor_id actor;
     qa_vec3 origin, angles, view_offset;
     float view_height;
-    bool cutscene;
+    bool cutscene, has_client_view_offset;
 } qa_application_camera_view;
 
 typedef enum qa_application_state {
@@ -206,6 +242,7 @@ typedef struct qa_application_q3_client_preparation {
     /* The actual private client imports, before the host copies them. */
     qa_q3_host_options *services;
     qa_application_q3_equipment_services *equipment_services;
+    qa_application_q3_body_services *body_services;
     bool restoring;
     qa_bytes restored_cvars;
     qa_qvm_role cvars_role;
@@ -213,6 +250,9 @@ typedef struct qa_application_q3_client_preparation {
 } qa_application_q3_client_preparation;
 typedef bool (*qa_application_q3_client_prepare_fn)(void *, qa_application *,
     const qa_application_q3_client_preparation *, qa_error *);
+struct application_q3_component_scene_preparation;
+typedef bool (*qa_application_q3_component_scene_prepare_fn)(void *,
+    const struct application_q3_component_scene_preparation *,qa_error *);
 /* Qualifies a physical shared registry by its retained source constructor.
  * found=false leaves genuine provider-private registries with their owner. */
 typedef bool (*qa_application_q3_client_registry_reference_fn)(void *, const qa_cvars *,
@@ -258,9 +298,13 @@ typedef struct qa_application_options {
     const char *ranking_game_key;
     qa_application_ranking_effect_fn ranking_effect;
     const qa_native_runner_config *native_runner;
+    qa_native_runtime *native_runtime;
+    const char *native_bootstrap;
+    qa_native_process_resource_policy native_process_policy;
     void *guest_context;
     qa_application_q3_services_fn q3_services;
     qa_application_q3_client_prepare_fn q3_client_prepare;
+    qa_application_q3_component_scene_prepare_fn q3_component_scene_prepare;
     qa_application_q3_client_registry_reference_fn q3_client_registry_reference;
     qa_application_q3_client_effect_fn q3_client_effect;
     qa_application_q3_campaign_command_fn q3_campaign_command;
@@ -273,6 +317,10 @@ typedef struct qa_application_options {
     bool discover_mods;
     bool mixed_source_order;
     const struct qa_application_startup_hooks *startup_hooks;
+    /* Actual connected recipient capability, borrowed with its backend.
+     * An absent callback retains the source's unsupported-prompt behavior. */
+    void *prompt_context;
+    bool (*prompt_supported)(void *, qa_actor_id, bool *supported, qa_error *);
 } qa_application_options;
 
 void qa_application_options_default(qa_application_options *);
@@ -365,7 +413,8 @@ typedef enum qa_application_console_kind {
     QA_APPLICATION_CONSOLE_Q3_CGAME,
     QA_APPLICATION_CONSOLE_Q3_UI,
     QA_APPLICATION_CONSOLE_Q1_GAME,
-    QA_APPLICATION_CONSOLE_Q2_GAME
+    QA_APPLICATION_CONSOLE_Q2_GAME,
+    QA_APPLICATION_CONSOLE_CLIENT
 } qa_application_console_kind;
 typedef struct qa_application_console_scope {
     qa_actor_owner provider;
@@ -423,6 +472,15 @@ bool qa_application_control_qw_commands(qa_application *, qa_actor_id,
 /* Retain the physical NetQuake command until its genuine source actor turn. */
 bool qa_application_control_nq_command(qa_application *, qa_actor_id,
     uint64_t tick_sequence, const qa_q1_command *, qa_error *);
+/* Retain literal physical Q2 input independently of selected movement. */
+bool qa_application_control_q2_command(qa_application *, qa_actor_id,
+    uint64_t transport_sequence, const qa_movement_command *, qa_error *);
+struct qa_unified_input;
+struct qa_unified_movement;
+bool qa_application_control_project_unified(const struct qa_unified_movement *,
+    const qa_movement_state *, uint64_t sequence, qa_movement_command *, qa_error *);
+bool qa_application_control_unified_command(qa_application *, qa_actor_id,
+    const struct qa_unified_input *, qa_error *);
 /* Preserve the received Q3 words independently of the transport sequence and
  * the actor's selected movement profile. */
 bool qa_application_control_q3_command(qa_application *, qa_actor_id,

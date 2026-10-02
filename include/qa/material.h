@@ -1,6 +1,7 @@
 #ifndef QA_MATERIAL_H
 #define QA_MATERIAL_H
 #include "qa/scene.h"
+#include "qa/material_source_scratch.h"
 
 typedef struct qa_material_order_entry qa_material_order_entry;
 /* One renderer owner spans independently mounted provider libraries. All
@@ -60,6 +61,7 @@ typedef struct qa_material_profile {
     bool multitexture, texture_env_add, ignore_fast_path;
 } qa_material_profile;
 struct qa_material {
+    qa_material_library *library;
     char *name;
     uint64_t identity, revision;
     uint32_t registration, sorted_index;
@@ -86,6 +88,10 @@ struct qa_material {
     size_t deform_count;
     const qa_material *remapped;
     float remap_time_offset;
+    /* The original renderer stores remap time on the selected target shader.
+     * Shared registrations retain their independent per-binding offset. */
+    float source_time_offset;
+    bool source_remap;
 };
 typedef enum qa_material_iterator { QA_MATERIAL_GENERIC, QA_MATERIAL_SKY,
     QA_MATERIAL_VERTEX_LIT, QA_MATERIAL_LIGHTMAPPED } qa_material_iterator;
@@ -123,6 +129,25 @@ typedef struct qa_material_context {
     bool fragment_lighting;
     uint32_t light_mask, entity, fog_index;
     bool mirror, non_normalized_axis, projection_shadow;
+    bool source_primitives, source_depth_hack, source_sky_depth, source_picture;
+    bool source_dlighted;
+    bool source_dlight_before_overflow;
+    const qa_scene_world *source_light_world;
+    uint32_t source_light_surface;
+    qa_scene_matrix source_picture_projection;
+    qa_material_source_scratch *source_scratch;
+    const qa_scene_image *source_white;
+    qa_scene_source_diagnostics source_diagnostics;
+    qa_scene_source_diagnostics_read_fn source_diagnostics_read;
+    void *source_diagnostics_context;
+    int32_t (*source_picture_clock)(void *);
+    void *source_picture_clock_context;
+    qa_material_source_writer source_writer;
+    const qa_material *source_default_material;
+    size_t source_grid_columns, source_grid_rows;
+    bool (*source_surface)(void *, const qa_material *, const qa_material *,
+        const qa_scene_mesh *, const struct qa_material_context *, qa_scene_frame *, qa_error *);
+    void *source_surface_context;
     /* NUL-terminated source-byte glyph rows, as stored in Q3 refdef text. */
     const char *const *texts;
     size_t text_count;
@@ -134,6 +159,9 @@ typedef struct qa_material_context {
     const qa_scene_image *(*video_frame)(void *, uint64_t, double, qa_error *);
     void *video_context;
 } qa_material_context;
+bool qa_material_source_scene_sky(qa_material_source_scratch *, const qa_material_context *, qa_error *);
+bool qa_material_source_commands(const qa_material *, const qa_material_context *,
+    qa_scene_frame *, size_t first_command, qa_error *);
 qa_material_library *qa_material_library_create(qa_scene_resources *, qa_material_order *, qa_error *);
 /* Registration starts cinematics in source directive order. The returned image
  * is borrowed; the library retains it. NULL means the cinematic did not start. */
@@ -142,7 +170,23 @@ void qa_material_library_set_video_start(qa_material_library *, qa_material_vide
 /* Set before registering content. Changes after registrations require rebuilding
  * the material library and its dependent scene resources at renderer restart. */
 bool qa_material_library_set_profile(qa_material_library *, const qa_material_profile *, qa_error *);
+/* Called by an actual Source renderer constructor before content registration.
+ * The retained tag distinguishes Source restart profiles from shared recipes. */
+bool qa_material_library_set_source_profile(qa_material_library *, const qa_material_profile *, qa_error *);
+bool qa_material_library_has_source_profile(const qa_material_library *);
+typedef bool (*qa_material_source_upload_fn)(void *, bool allow_picmip, bool mipmap,
+    qa_q3_image_upload_options *, qa_error *);
+/* Bind the actual Source renderer's current upload producer. Restored image
+ * and material records keep their saved first-upload profiles unchanged. */
+bool qa_material_library_set_source_upload(qa_material_library *, qa_material_source_upload_fn, void *, qa_error *);
+bool qa_material_library_source_upload_is(const qa_material_library *, qa_material_source_upload_fn, const void *);
+typedef bool (*qa_material_source_ui_fullscreen_fn)(void *, bool *, qa_error *);
+bool qa_material_library_set_source_ui_fullscreen(qa_material_library *, qa_material_source_ui_fullscreen_fn, void *, qa_error *);
+bool qa_material_library_source_ui_fullscreen_is(const qa_material_library *, qa_material_source_ui_fullscreen_fn, const void *);
 void qa_material_library_destroy(qa_material_library *);
+/* Retains the actual registered material's library and owned records. */
+bool qa_material_retain(const qa_material *, qa_error *);
+void qa_material_release(const qa_material *);
 bool qa_material_library_parse(qa_material_library *, qa_bytes, const qa_scene_image_options *, qa_error *);
 bool qa_material_library_load_scripts(qa_material_library *, qa_vfs *, const qa_scene_image_options *, qa_error *);
 const qa_material *qa_material_find(const qa_material_library *, const char *);
@@ -174,6 +218,18 @@ bool qa_material_library_animate(qa_material_library *, double seconds, qa_scene
 bool qa_material_register(qa_material_library *, const char *, const qa_scene_image_options *,
                            bool lightmapped, const qa_material **, qa_error *);
 bool qa_material_remap(qa_material_library *, const char *, const char *, float, qa_error *);
+typedef enum qa_material_source_remap_status {
+    QA_MATERIAL_SOURCE_REMAP_APPLIED,
+    QA_MATERIAL_SOURCE_REMAP_ORIGINAL_DEFAULT,
+    QA_MATERIAL_SOURCE_REMAP_TARGET_DEFAULT
+} qa_material_source_remap_status;
+/* Source binds all currently admitted original-name variants to one actual
+ * target shader. A defaulted name is a successful warning result; no binding
+ * changes. Future registrations receive no inferred Source remap recipe. */
+bool qa_material_remap_source(qa_material_library *, const char *, const char *, float,
+    qa_material_source_remap_status *, qa_error *);
+bool qa_scene_world_remap_source(qa_scene_world *, const char *, const char *, float,
+    qa_material_source_remap_status *, qa_error *);
 float qa_material_wave_evaluate(const qa_material_wave *, double seconds);
 float qa_material_sine(unsigned index);
 bool qa_material_submit(const qa_material *, const qa_scene_mesh *, const qa_material_context *,

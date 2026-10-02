@@ -1,11 +1,14 @@
 #include "world/internal.h"
+#include "world/legacy/internal.h"
 #include "qa/scene_effects.h"
 #include "qa/scene_world_save.h"
 #include "qa/material_library_save.h"
 #include "qa/binary.h"
 
 #include <float.h>
+#include <inttypes.h>
 #include <limits.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -14,12 +17,37 @@ static bool world_error(qa_error *error, qa_status status, const char *message)
     qa_error_set(error, status, 0, "%s", message);
     return false;
 }
+static bool valid_input(const qa_scene_world *, const qa_scene_world_input *, qa_error *);
+static bool surface_culled(const qa_scene_world *, const qaw_surface *, const qa_scene_world_input *,
+    const qa_material_context *, const qa_model_transform *, const qa_scene_plane *, size_t);
+static uint32_t surface_light_mask(const qaw_surface *, uint32_t, const qa_scene_light *, size_t);
 uint64_t qa_scene_world_identity(const qa_scene_world *world)
 { return world ? world->identity : 0; }
+bool qa_scene_world_source_light_mask_read(const qa_scene_world *world, uint32_t surface,
+    uint32_t *out, qa_error *error)
+{
+    if (!qa_scene_world_observation_ready(world) || !out || world->bsp.family != QA_BSP_Q3 ||
+        surface >= world->surface_count || !world->source_dlight_masks ||
+        world->surfaces[surface].source_index != surface)
+        return world_error(error, QA_ERROR_ARGUMENT, "Source light read requires its actual retained world surface");
+    *out = world->source_dlight_masks[surface];
+    return true;
+}
 bool qa_scene_world_idle(const qa_scene_world *world)
 { return qa_scene_world_observation_ready(world) && !world->capture; }
 bool qa_scene_world_observation_ready(const qa_scene_world *world)
-{ return world && !world->transaction_depth && !world->admission_change_count && !world->checkpoint_active; }
+{ return world && !world->transaction_depth && !world->admission_change_count && !world->checkpoint_active && !world->image_policy; }
+bool qa_scene_world_remap_source(qa_scene_world *world, const char *original, const char *replacement,
+    float offset, qa_material_source_remap_status *status, qa_error *error)
+{
+    if (!qa_scene_world_idle(world) || !status)
+        return world_error(error, QA_ERROR_ARGUMENT, "Source shader remap requires its actual idle world");
+    if (world->revision == UINT64_MAX)
+        return world_error(error, QA_ERROR_MEMORY, "World material revision space exhausted");
+    if (!qa_material_remap_source(world->materials, original, replacement, offset, status, error)) return false;
+    if (*status == QA_MATERIAL_SOURCE_REMAP_APPLIED) ++world->revision;
+    return true;
+}
 bool qa_scene_world_options_read(const qa_scene_world *world, qa_scene_world_options *out)
 {
     if (!out || !qa_scene_world_observation_ready(world)) return false;
@@ -87,6 +115,225 @@ void qa_scene_world_materials_rebind(qa_scene_world *world, qa_material_library 
         world->surfaces[i].base_material = bindings[i].base_destination;
     }
     world->materials = destination;
+}
+
+typedef struct world_policy_surface {
+    qa_scene_mesh mesh;
+    qa_scene_vertex *vertices;
+    uint32_t *indices;
+    float sort;
+    bool sky;
+    const qa_material *material;
+} world_policy_surface;
+struct qa_scene_world_image_policy {
+    qa_scene_world *owner;
+    qa_scene_resource_policy *resources;
+    const qa_scene_material_image_policy *materials;
+    qawl_world textures;
+    world_policy_surface *surfaces;
+    size_t count;
+    bool sealed, published;
+};
+static bool world_policy_current(const qa_scene_world_image_policy *ticket)
+{
+    return ticket && ticket->owner->image_policy == ticket &&
+        !ticket->owner->transaction_depth && !ticket->owner->admission_change_count &&
+        !ticket->owner->checkpoint_active && !ticket->owner->capture &&
+        ticket->owner->resources == qa_scene_resource_policy_source(ticket->resources) &&
+        ticket->owner->surface_count == ticket->count;
+}
+static void world_policy_dispose(qa_scene_world_image_policy *ticket)
+{
+    qawl_textures_destroy(&ticket->textures);
+    for (size_t i = 0; i < ticket->count; ++i)
+        if (ticket->surfaces[i].mesh.geometry) qa_scene_geometry_release(ticket->surfaces[i].mesh.geometry);
+    free(ticket->surfaces); ticket->owner->image_policy = NULL; free(ticket);
+}
+bool qa_scene_world_image_policy_prepare(qa_scene_world *world, qa_scene_resource_policy *resources,
+    qa_scene_world_image_policy **out, qa_error *error)
+{
+    qa_scene_resources *destination = qa_scene_resource_policy_destination(resources);
+    if (!out || *out || !qa_scene_world_idle(world) || !destination ||
+        world->resources != qa_scene_resource_policy_source(resources) ||
+        world->surface_count > SIZE_MAX / sizeof(world_policy_surface))
+        return world_error(error, QA_ERROR_ARGUMENT, "World image preparation requires its actual resource policy");
+    qa_scene_world_image_policy *ticket = calloc(1, sizeof(*ticket));
+    if (!ticket) return world_error(error, QA_ERROR_MEMORY, "Retaining world image preparation");
+    ticket->surfaces = world->surface_count ? calloc(world->surface_count, sizeof(*ticket->surfaces)) : NULL;
+    if (world->surface_count && !ticket->surfaces) {
+        free(ticket); return world_error(error, QA_ERROR_MEMORY, "Preparing actual world surface image bindings");
+    }
+    ticket->owner = world; ticket->resources = resources; ticket->count = world->surface_count;
+    world->image_policy = ticket;
+    if (world->legacy_data) {
+        qa_scene_world staging = *world;
+        staging.resources = destination; staging.legacy_data = &ticket->textures;
+        if (!qawl_textures_build(&staging, error)) { world_policy_dispose(ticket); return false; }
+        const qawl_world *current = world->legacy_data;
+        if (current->texture_count != ticket->textures.texture_count) {
+            world_policy_dispose(ticket);
+            return world_error(error, QA_ERROR_ARGUMENT, "Prepared brush textures differ from the actual BSP roster");
+        }
+        for (size_t i = 0; i < ticket->count; ++i) {
+            const qaw_surface *surface = &world->surfaces[i];
+            world_policy_surface *prepared = &ticket->surfaces[i];
+            prepared->sort = surface->sort; prepared->sky = surface->sky;
+            if (!surface->legacy || surface->legacy->warp) continue;
+            size_t index = surface->legacy->texture;
+            const qawl_texture *old = &current->textures[index], *next = &ticket->textures.textures[index];
+            if (old->width == next->width && old->height == next->height) continue;
+            if (!old->width || !old->height || !next->width || !next->height ||
+                surface->mesh.revision == UINT64_MAX ||
+                surface->mesh.vertex_count > SIZE_MAX / sizeof(*prepared->vertices) ||
+                surface->mesh.index_count > SIZE_MAX / sizeof(*prepared->indices)) {
+                world_policy_dispose(ticket);
+                return world_error(error, QA_ERROR_FORMAT, "Prepared brush image dimensions cannot preserve its texture projection");
+            }
+            qa_bsp_face face; qa_bsp_texinfo texinfo;
+            if (!qa_bsp_read_face(&world->bsp, surface->source_index, &face, error) ||
+                !qa_bsp_read_texinfo(&world->bsp, face.texinfo, &texinfo, error)) {
+                world_policy_dispose(ticket); return false;
+            }
+            prepared->vertices = surface->mesh.vertex_count ? malloc(surface->mesh.vertex_count * sizeof(*prepared->vertices)) : NULL;
+            prepared->indices = surface->mesh.index_count ? malloc(surface->mesh.index_count * sizeof(*prepared->indices)) : NULL;
+            if ((surface->mesh.vertex_count && !prepared->vertices) || (surface->mesh.index_count && !prepared->indices)) {
+                free(prepared->vertices); free(prepared->indices); prepared->vertices = NULL; prepared->indices = NULL;
+                world_policy_dispose(ticket);
+                return world_error(error, QA_ERROR_MEMORY, "Preparing brush texture coordinate geometry");
+            }
+            if (surface->mesh.vertex_count) memcpy(prepared->vertices, surface->vertices,
+                surface->mesh.vertex_count * sizeof(*prepared->vertices));
+            if (surface->mesh.index_count) memcpy(prepared->indices, surface->indices,
+                surface->mesh.index_count * sizeof(*prepared->indices));
+            for (size_t v = 0; v < surface->mesh.vertex_count; ++v) {
+                qa_vec3 point = prepared->vertices[v].position;
+                float scale = next->quake64_shift && !surface->sky ? 2.0f * (float)next->quake64_shift : 1.0f;
+                const float *s = texinfo.projection[0], *t = texinfo.projection[1];
+                prepared->vertices[v].texcoord.x = (point.x * s[0] + point.y * s[1] + point.z * s[2] + s[3]) / ((float)next->width * scale);
+                prepared->vertices[v].texcoord.y = (point.x * t[0] + point.y * t[1] + point.z * t[2] + t[3]) / ((float)next->height * scale);
+                if (!isfinite(prepared->vertices[v].texcoord.x) || !isfinite(prepared->vertices[v].texcoord.y)) {
+                    free(prepared->vertices); free(prepared->indices); prepared->vertices = NULL; prepared->indices = NULL;
+                    world_policy_dispose(ticket);
+                    return world_error(error, QA_ERROR_FORMAT, "Prepared brush texture coordinates overflow");
+                }
+            }
+            qa_scene_geometry *geometry = qa_scene_geometry_adopt(prepared->vertices, surface->mesh.vertex_count,
+                prepared->indices, surface->mesh.index_count, error);
+            if (!geometry) {
+                free(prepared->vertices); free(prepared->indices); prepared->vertices = NULL; prepared->indices = NULL;
+                world_policy_dispose(ticket); return false;
+            }
+            prepared->mesh = surface->mesh; ++prepared->mesh.revision;
+            prepared->mesh.geometry = geometry; prepared->mesh.vertices = prepared->vertices;
+            prepared->mesh.indices = prepared->indices;
+        }
+    }
+    *out = ticket; return true;
+}
+bool qa_scene_world_image_policy_base(const qa_scene_world_image_policy *ticket, uint64_t world,
+    const char *name, const qa_scene_image *current, const qa_scene_image **destination)
+{
+    if (!destination || !name || !world_policy_current(ticket) || ticket->published ||
+        ticket->owner->identity != world || !ticket->owner->legacy_data) return false;
+    const qawl_world *source = ticket->owner->legacy_data;
+    for (size_t i = 0; i < source->texture_count; ++i)
+        if (source->textures[i].image == current && !strcmp(source->textures[i].name, name)) {
+            *destination = ticket->textures.textures[i].image; return true;
+        }
+    return false;
+}
+bool qa_scene_world_image_policy_ready(qa_scene_world_image_policy *ticket,
+    const qa_scene_material_image_policy *materials, qa_error *error)
+{
+    if (!world_policy_current(ticket) || ticket->published || !materials)
+        return world_error(error, QA_ERROR_ARGUMENT, "Prepared world images lost their actual owners");
+    if (ticket->sealed) return ticket->materials == materials;
+    qa_bsp_materials source_materials = {0};
+    if (ticket->owner->bsp.family == QA_BSP_Q3 && !qa_bsp_build_materials(&ticket->owner->bsp, &source_materials, error)) return false;
+    for (size_t i = 0; i < ticket->count; ++i) {
+        const qaw_surface *surface = &ticket->owner->surfaces[i];
+        world_policy_surface *prepared = &ticket->surfaces[i];
+        prepared->sky = surface->sky; prepared->sort = surface->sort;
+        prepared->material = surface->material;
+        if (surface->material) {
+            const qa_material *material = NULL;
+            if (!qa_scene_material_image_policy_read(materials, surface->material, &material)) {
+                qa_bsp_materials_free(&source_materials);
+                return world_error(error, QA_ERROR_ARGUMENT, "Prepared world lacks its actual registered material");
+            }
+            if (ticket->owner->bsp.family == QA_BSP_Q3) {
+                qa_bsp_surface source;
+                if (!qa_bsp_read_surface(&ticket->owner->bsp, surface->source_index, &source, error) ||
+                    surface->source_index >= source_materials.surface_count ||
+                    source_materials.surfaces[surface->source_index] >= source_materials.shader_count) {
+                    qa_bsp_materials_free(&source_materials); return false;
+                }
+                const qa_bsp_shader *shader = source_materials.shaders + source_materials.surfaces[surface->source_index];
+                char *name = qaw_string(shader->name, error);
+                const qa_material *registered = NULL, *pending = NULL;
+                int32_t lightmap = source.type == QA_BSP_SURFACE_PLANAR || source.type == QA_BSP_SURFACE_PATCH ? source.lightmap : -3;
+                bool found = name && qa_scene_material_image_policy_world(materials, ticket->owner->identity,
+                    lightmap, surface->lightmap != NULL, name, &ticket->owner->options.images, &registered, &pending, error);
+                free(name);
+                if (!found) { qa_bsp_materials_free(&source_materials); return false; }
+                const qa_material *fallback = qa_material_find(ticket->owner->materials, "*default");
+                if (surface->material == registered || surface->material == fallback) {
+                    prepared->material = pending->default_shader ? fallback : registered;
+                    if (!prepared->material || !qa_scene_material_image_policy_read(materials, prepared->material, &material)) {
+                        qa_bsp_materials_free(&source_materials);
+                        return world_error(error, QA_ERROR_ARGUMENT, "World shader fallback lacks its real prepared default");
+                    }
+                }
+            }
+            prepared->sort = material->sort;
+            if (ticket->owner->bsp.family == QA_BSP_Q3) prepared->sky = material->sky;
+        }
+    }
+    qa_bsp_materials_free(&source_materials);
+    ticket->materials = materials; ticket->sealed = true; return true;
+}
+bool qa_scene_world_image_policy_ready_is(const qa_scene_world_image_policy *ticket)
+{
+    return world_policy_current(ticket) && ticket->sealed && !ticket->published &&
+        qa_scene_resource_policy_ready_is(ticket->resources) &&
+        qa_scene_material_image_policy_ready_is(ticket->materials);
+}
+void qa_scene_world_image_policy_publish(qa_scene_world_image_policy *ticket)
+{
+    if (!world_policy_current(ticket) || !ticket->sealed || ticket->published) return;
+    qa_scene_world *world = ticket->owner;
+    if (world->legacy_data) {
+        qawl_world *current = world->legacy_data;
+        qawl_texture *textures = current->textures; size_t count = current->texture_count;
+        current->textures = ticket->textures.textures; current->texture_count = ticket->textures.texture_count;
+        ticket->textures.textures = textures; ticket->textures.texture_count = count;
+        for (size_t i = 0; i < 6; ++i) {
+            qa_scene_image *image = current->sky[i]; current->sky[i] = ticket->textures.sky[i]; ticket->textures.sky[i] = image;
+        }
+    }
+    for (size_t i = 0; i < ticket->count; ++i) {
+        qaw_surface *surface = &world->surfaces[i]; world_policy_surface *prepared = &ticket->surfaces[i];
+        surface->sky = prepared->sky; surface->sort = prepared->sort;
+        surface->material = prepared->material;
+        if (prepared->mesh.geometry) {
+            qa_scene_mesh mesh = surface->mesh; surface->mesh = prepared->mesh; prepared->mesh = mesh;
+            surface->vertices = (qa_scene_vertex *)surface->mesh.vertices;
+            surface->indices = (uint32_t *)surface->mesh.indices;
+        }
+    }
+    ticket->published = true;
+}
+bool qa_scene_world_image_policy_finish(qa_scene_world_image_policy **owner, qa_error *error)
+{
+    if (!owner || !world_policy_current(*owner) || !(*owner)->published)
+        return world_error(error, QA_ERROR_ARGUMENT, "World image retirement requires its published owner");
+    world_policy_dispose(*owner); *owner = NULL; return true;
+}
+bool qa_scene_world_image_policy_abort(qa_scene_world_image_policy **owner, qa_error *error)
+{
+    if (!owner || !world_policy_current(*owner) || (*owner)->published)
+        return world_error(error, QA_ERROR_ARGUMENT, "World image abort requires its unpublished owner");
+    world_policy_dispose(*owner); *owner = NULL; return true;
 }
 
 static void *world_array(size_t count, size_t stride, qa_error *error)
@@ -215,12 +462,14 @@ static bool world_topology(qa_scene_world *world, qa_error *error)
     WORLD_ALLOC(planes, world->plane_count);
     WORLD_ALLOC(nodes, world->node_count);
     WORLD_ALLOC(leaves, world->leaf_count);
+    if (world->bsp.family == QA_BSP_Q3) WORLD_ALLOC(source_leaf_marks, world->leaf_count);
     WORLD_ALLOC(leaf_surfaces, world->leaf_surface_count);
     WORLD_ALLOC(models, world->model_count);
     WORLD_ALLOC(surfaces, world->surface_count);
     WORLD_ALLOC(surface_marks, world->surface_count);
     WORLD_ALLOC(visible_surfaces, world->surface_count);
     WORLD_ALLOC(surface_lights, world->surface_count);
+    if (world->bsp.family == QA_BSP_Q3) WORLD_ALLOC(source_dlight_masks, world->surface_count);
     WORLD_ALLOC(admitted_surfaces, world->surface_count);
     WORLD_ALLOC(admission_changes, world->surface_count);
     world->admission_change_capacity = world->surface_count;
@@ -339,6 +588,8 @@ void qa_scene_world_destroy(qa_scene_world *world)
     for (size_t i = 0; i < world->model_count && world->models != NULL; ++i) free(world->models[i].surfaces);
     qa_bsp_lightgrid_free(&world->lightgrid);
     free(world->planes); free(world->nodes); free(world->leaves); free(world->leaf_surfaces);
+    free(world->source_leaf_marks);
+    free(world->source_dlight_masks);
     free(world->models); free(world->surfaces); free(world->surface_marks);
     free(world->visible_surfaces); free(world->surface_lights); free(world->admitted_surfaces);
     free(world->admission_changes); free(world->pending);
@@ -359,6 +610,25 @@ int32_t qa_scene_world_leaf(const qa_scene_world *world, qa_vec3 point)
         child = node->children[precise_dot(point, plane->normal) > plane->distance ? 0 : 1];
     }
     return (int32_t)(-1 - (int64_t)child);
+}
+
+bool qa_scene_world_source_begin_scene(qa_scene_world *world,
+    const qa_scene_world_input *input, qa_error *error)
+{
+    if (!qa_scene_world_idle(world) || !input || !input->source_order ||
+        (input->visible_area_bytes && !input->visible_areas) ||
+        input->visible_area_bytes > sizeof(world->source_area_mask))
+        return world_error(error, QA_ERROR_ARGUMENT, "Source scene area mask requires its idle actual world");
+    if (world->bsp.family != QA_BSP_Q3) return true;
+    world->source_area_mask_modified = false;
+    if (input->no_world) return true;
+    for (size_t i = 0; i < sizeof(world->source_area_mask); ++i) {
+        uint8_t mask = input->visible_areas && i < input->visible_area_bytes ?
+            (uint8_t)~input->visible_areas[i] : 0;
+        world->source_area_mask_modified |= mask != world->source_area_mask[i];
+        world->source_area_mask[i] = mask;
+    }
+    return true;
 }
 
 static bool update_pvs(qa_scene_world *world, int32_t eye, qa_vec3 origin,
@@ -427,6 +697,48 @@ static uint32_t all_lights(size_t count)
     return count >= 32 ? UINT32_MAX : (UINT32_C(1) << count) - 1;
 }
 
+static bool source_mark_leaves(qa_scene_world *world, int32_t eye, qa_vec3 origin,
+    const qa_scene_world_input *input, qa_error *error)
+{
+    if (input->lock_pvs) return true;
+    int32_t cluster = (int32_t)world->leaves[eye].cluster;
+    bool modified = input->source_show_cluster_modified;
+    if (input->source_cluster_modified &&
+        !input->source_cluster_modified(input->source_cluster_context, &modified, error)) return false;
+    if (world->source_view_cluster == cluster && !world->source_area_mask_modified &&
+        !modified) return true;
+    if (modified || input->source_show_cluster) {
+        if (input->source_cluster_clear && !input->source_cluster_clear(input->source_cluster_context, error)) return false;
+        if (input->source_show_cluster && input->source_cluster_print) {
+            char message[96];
+            snprintf(message, sizeof(message), "cluster:%d  area:%" PRId64 "\n", cluster, world->leaves[eye].area);
+            input->source_cluster_print(input->source_cluster_print_context, message);
+        }
+    }
+    if (++world->source_vis_generation == 0) {
+        memset(world->source_leaf_marks, 0, world->leaf_count * sizeof(*world->source_leaf_marks));
+        world->source_vis_generation = 1;
+    }
+    world->source_view_cluster = cluster;
+    bool all = input->no_vis || cluster == -1;
+    if (!all && !update_pvs(world, eye, origin, input, error)) return false;
+    for (size_t i = 0; i < world->leaf_count; ++i) {
+        const qa_bsp_leaf *leaf = &world->leaves[i];
+        if (!all) {
+            int64_t bit = leaf->cluster;
+            if (bit < 0 || (uint64_t)bit >= world->cluster_count) continue;
+            if (!world->pvs_all && ((uint64_t)bit / 8 >= world->pvs_size ||
+                !(world->pvs[(size_t)bit / 8] & (1u << ((unsigned)bit & 7))))) continue;
+            if (leaf->area < 0 || (uint64_t)leaf->area / 8 >= sizeof(world->source_area_mask) ||
+                (world->source_area_mask[(size_t)leaf->area / 8] & (1u << ((unsigned)leaf->area & 7)))) continue;
+        }
+        /* Q3 render leaves have zero contents, including cluster -1. The
+         * source novis branch marks all non-solid nodes without area checks. */
+        if (leaf->contents != 1) world->source_leaf_marks[i] = world->source_vis_generation;
+    }
+    return true;
+}
+
 static const qa_scene_light *projected_lights(const qa_scene_world *world,
                                               const qa_scene_world_input *input, size_t *count)
 {
@@ -438,13 +750,17 @@ static const qa_scene_light *projected_lights(const qa_scene_world *world,
     return *count != 0 ? input->lights : NULL;
 }
 
-static bool world_visible(qa_scene_world *world, const qa_scene_world_input *input, qa_error *error)
+static bool world_visible(qa_scene_world *world, const qa_scene_world_input *input,
+    qa_bounds *visible_bounds, qa_error *error)
 {
     world->visible_count = 0;
     qa_vec3 origin = input->use_pvs_origin ? input->pvs_origin : input->view.origin;
     int32_t eye = qa_scene_world_leaf(world, origin);
     if (eye < 0) return true;
-    if (!input->no_vis && !update_pvs(world, eye, origin, input, error)) return false;
+    bool source = world->bsp.family == QA_BSP_Q3 && input->source_order;
+    if (source) {
+        if (!source_mark_leaves(world, eye, origin, input, error)) return false;
+    } else if (!input->no_vis && !update_pvs(world, eye, origin, input, error)) return false;
     if (++world->visibility_generation == 0) {
         memset(world->surface_marks, 0, world->surface_count * sizeof(*world->surface_marks));
         world->visibility_generation = 1;
@@ -482,16 +798,18 @@ static bool world_visible(qa_scene_world *world, const qa_scene_world_input *inp
         size_t index = (size_t)(-1 - (int64_t)item.child);
         const qa_bsp_leaf *leaf = &world->leaves[index];
         if (world->bsp.family == QA_BSP_Q1 && index == 0) continue;
-        if (world->bsp.family != QA_BSP_Q1 && input->visible_areas != NULL
+        if (source && world->source_leaf_marks[index] != world->source_vis_generation) continue;
+        if (!source && world->bsp.family != QA_BSP_Q1 && input->visible_areas != NULL
             && (leaf->area < 0 || (uint64_t)leaf->area / 8 >= input->visible_area_bytes
                 || (input->visible_areas[(size_t)leaf->area / 8] & (1u << ((unsigned)leaf->area & 7))) == 0)) continue;
-        if (world->bsp.family == QA_BSP_Q3 && (input->no_vis || world->leaves[eye].cluster < 0) && leaf->cluster == -1) continue;
-        if (!input->no_vis && !world->pvs_all) {
+        if (!source && world->bsp.family == QA_BSP_Q3 && (input->no_vis || world->leaves[eye].cluster < 0) && leaf->cluster == -1) continue;
+        if (!source && !input->no_vis && !world->pvs_all) {
             int64_t bit = world->bsp.family == QA_BSP_Q1 ? (int64_t)index - 1 : leaf->cluster;
             if (bit < 0 || (uint64_t)bit / 8 >= world->pvs_size
                 || (world->pvs[(size_t)bit / 8] & (1u << ((unsigned)bit & 7))) == 0) continue;
         }
         if (!remaining_planes(bsp_bounds(leaf->bounds), planes, plane_count, &item.planes)) continue;
+        if (visible_bounds) *visible_bounds = qa_bounds_union(*visible_bounds, bsp_bounds(leaf->bounds));
         for (size_t i = leaf->faces.first; i < (size_t)leaf->faces.first + leaf->faces.count; ++i) {
             uint32_t surface = world->leaf_surfaces[i];
             if (world->surface_marks[surface] == world->visibility_generation) continue;
@@ -500,6 +818,72 @@ static bool world_visible(qa_scene_world *world, const qa_scene_world_input *inp
             world->visible_surfaces[world->visible_count++] = surface;
         }
     }
+    return true;
+}
+
+static bool source_view_current(const qa_scene_source_world_view *view,
+    const qa_scene_world *world, const qa_scene_world_input *input, const qa_scene_frame *frame)
+{
+    return view && view->world == world && view->frame == frame && view->sequence == frame->sequence &&
+        !memcmp(&view->origin, &input->view.origin, sizeof(view->origin)) &&
+        !memcmp(view->axis, input->view.axis, sizeof(view->axis)) &&
+        view->projection_x == input->view.projection.m[0] && view->projection_y == input->view.projection.m[5];
+}
+
+bool qa_scene_world_source_prepare_view(qa_scene_world *world, qa_scene_world_input *input,
+    qa_scene_frame *frame, qa_error *error)
+{
+    if (!qa_scene_world_idle(world) || !input || !frame || !input->source_order)
+        return world_error(error, QA_ERROR_ARGUMENT, "Source visibility preparation requires its actual idle world and frame");
+    if (!valid_input(world, input, error)) return false;
+    qa_scene_source_world_view *view = qa_arena_alloc(&frame->storage, sizeof(*view),
+        _Alignof(qa_scene_source_world_view), error);
+    if (!view) return false;
+    *view = (qa_scene_source_world_view){.world = world, .frame = frame, .sequence = frame->sequence,
+        .origin = input->view.origin, .axis = {input->view.axis[0], input->view.axis[1], input->view.axis[2]},
+        .projection_x = input->view.projection.m[0], .projection_y = input->view.projection.m[5]};
+    if (input->skip_world && input->source_visibility && input->source_visibility->world == world &&
+        input->source_visibility->frame == frame && input->source_visibility->sequence == frame->sequence)
+        view->bounds = input->source_visibility->bounds;
+    if (!input->no_world && !input->skip_world) {
+        view->bounds = (qa_bounds){qa_v3(99999,99999,99999), qa_v3(-99999,-99999,-99999)};
+        if (!world_visible(world, input, &view->bounds, error)) return false;
+        size_t count = world->visible_count;
+        if (count) {
+            view->surfaces = qa_arena_alloc(&frame->storage, count * sizeof(*view->surfaces),
+                _Alignof(uint32_t), error);
+            view->lights = qa_arena_alloc(&frame->storage, count * sizeof(*view->lights),
+                _Alignof(uint32_t), error);
+            if (!view->surfaces || !view->lights) return false;
+            qa_scene_plane planes[6];
+            size_t plane_count = input->no_cull ? 0 : qa_scene_frustum(&input->view, planes);
+            if (world->bsp.family == QA_BSP_Q3 && plane_count > 4) plane_count = 4;
+            qa_material_context context = {.local_view_origin = input->view.origin};
+            size_t light_count;
+            const qa_scene_light *lights = projected_lights(world, input, &light_count);
+            for (size_t i = 0; i < count; ++i) {
+                uint32_t index = world->visible_surfaces[i];
+                const qaw_surface *surface = &world->surfaces[index];
+                if (surface_culled(world, surface, input, &context, NULL, planes, plane_count)) continue;
+                uint32_t incoming = world->surface_lights[index];
+                uint32_t mask = surface_light_mask(surface, incoming, lights, light_count);
+                if (world->bsp.family == QA_BSP_Q3 && incoming) world->source_dlight_masks[index] = mask;
+                view->surfaces[view->count] = index;
+                view->lights[view->count++] = mask;
+            }
+        }
+    }
+    float maximum = 0;
+    for (unsigned i = 0; i < 8; ++i) {
+        qa_vec3 corner = qa_v3(i & 1 ? view->bounds.mins.x : view->bounds.maxs.x,
+            i & 2 ? view->bounds.mins.y : view->bounds.maxs.y,
+            i & 4 ? view->bounds.mins.z : view->bounds.maxs.z);
+        qa_vec3 delta = qa_vec_sub(corner, input->view.origin);
+        float distance = delta.x * delta.x + delta.y * delta.y + delta.z * delta.z;
+        if (distance > maximum) maximum = distance;
+    }
+    input->source_far_clip = input->no_world ? 2048 : sqrtf(maximum);
+    input->source_visibility = view;
     return true;
 }
 
@@ -523,9 +907,10 @@ static bool valid_input(const qa_scene_world *world, const qa_scene_world_input 
 {
     if (world == NULL || input == NULL)
         return world_error(error, QA_ERROR_ARGUMENT, "world submission requires world and input");
-    if (world->checkpoint_active || world->capture)
+    if (world->checkpoint_active || world->capture || world->image_policy)
         return world_error(error, QA_ERROR_ARGUMENT, "world continuation callback is active");
     if (!qa_vec_finite(input->view.origin) || !isfinite(input->seconds)
+        || input->legacy_phase < QA_LEGACY_WORLD_ALL || input->legacy_phase > QA_LEGACY_WORLD_WATER
         || (input->use_pvs_origin && !qa_vec_finite(input->pvs_origin))
         || (input->light_count != 0 && input->lights == NULL)
         || (input->shadow_light_count != 0 && input->shadow_lights == NULL)
@@ -585,9 +970,7 @@ static bool admit_surface(qa_scene_world *world, uint32_t index, bool *admitted,
 
 static const qa_material *effective_material(const qa_material *material)
 {
-    for (unsigned hops = 0; material != NULL && material->remapped != NULL && hops < 16384; ++hops)
-        material = material->remapped;
-    return material;
+    return material && material->remapped ? material->remapped : material;
 }
 
 static bool local_bounds_visible(qa_bounds bounds, const qa_model_transform *transform,
@@ -621,6 +1004,7 @@ static bool surface_culled(const qa_scene_world *world, const qaw_surface *surfa
     if (surface->type == QA_BSP_SURFACE_TRIANGLES)
         return !local_bounds_visible(surface->mesh.bounds, transform, planes, count);
     if (surface->type == QA_BSP_SURFACE_PATCH) {
+        if (input->source_order && input->no_curves) return true;
         qa_vec3 center = qa_vec_scale(qa_vec_add(surface->mesh.bounds.mins, surface->mesh.bounds.maxs), 0.5f);
         float radius = qa_vec_length(qa_vec_sub(surface->mesh.bounds.mins, center));
         if (transform != NULL) {
@@ -637,7 +1021,8 @@ static bool surface_culled(const qa_scene_world *world, const qaw_surface *surfa
         }
         return clipped && !local_bounds_visible(surface->mesh.bounds, transform, planes, count);
     }
-    const qa_material *material = effective_material(surface->material);
+    if (input->source_order && input->disable_face_plane_cull) return false;
+    const qa_material *material = input->source_order ? surface->material : effective_material(surface->material);
     if (!surface->has_plane || material == NULL || material->cull == QA_CULL_NONE) return false;
     double viewer = precise_dot(context->local_view_origin, surface->plane.normal);
     return material->cull == QA_CULL_FRONT ? viewer < (float)(surface->plane.distance - 8.0f)
@@ -674,8 +1059,13 @@ static qa_material_context world_context(const qa_scene_world *world, const qa_s
         .fog = input->fog,
         .entity = 1022, .mirror = input->view.mirror, .texts = input->render_texts,
         .text_count = input->render_text_count, .video_frame = input->video_frame,
-        .video_context = input->video_context
+        .video_context = input->video_context, .source_primitives = input->source_order,
+        .source_scratch = input->source_scratch, .source_diagnostics = input->source_diagnostics,
+        .source_diagnostics_read = input->source_diagnostics_read,
+        .source_diagnostics_context = input->source_diagnostics_context,
+        .source_white = qa_scene_white(world->resources)
     };
+    if (context.source_primitives) context.seconds = (float)input->milliseconds * .001f;
     context.lights = projected_lights(world, input, &context.light_count);
     qa_scene_matrix_identity(&context.model);
     return context;
@@ -704,6 +1094,113 @@ static bool fragment_context(const qa_scene_world *world, const qa_scene_world_i
 
 typedef struct surface_order { uint32_t surface; size_t ordinal; float sort; } surface_order;
 
+struct qa_scene_q1_mirror {
+    const qa_scene_world *world;
+    const qa_scene_frame *frame;
+    uint64_t identity, revision, sequence;
+    size_t texture, count;
+    const uint32_t *surfaces;
+    qa_scene_view parent, reflected;
+};
+typedef struct mirror_walk { int32_t child; bool faces; } mirror_walk;
+
+static bool mirror_current(const qa_scene_world *world, const qa_scene_q1_mirror *mirror,
+                            const qa_scene_frame *frame)
+{
+    return mirror && mirror->world == world && mirror->frame == frame &&
+        mirror->identity == world->identity && mirror->revision == world->revision &&
+        mirror->sequence == frame->sequence && world->bsp.family == QA_BSP_Q1;
+}
+
+bool qa_scene_world_q1_mirror_scope(const qa_scene_world *world, const qa_scene_world_input *input,
+                                    const qa_scene_frame *frame)
+{
+    return world && input && frame && mirror_current(world, input->q1_mirror, frame) &&
+        input->view.mirror && input->view.seat == input->q1_mirror->reflected.seat &&
+        !memcmp(&input->view.viewport, &input->q1_mirror->reflected.viewport, sizeof(input->view.viewport)) &&
+        !memcmp(&input->view.origin, &input->q1_mirror->reflected.origin,
+                                      sizeof(input->view.origin)) &&
+        !memcmp(input->view.axis, input->q1_mirror->reflected.axis, sizeof(input->view.axis));
+}
+
+bool qa_scene_world_q1_mirror(qa_scene_world *world, const qa_scene_world_input *input,
+                              qa_scene_frame *frame, const qa_scene_q1_mirror **out,
+                              qa_scene_view *reflected, bool *found, qa_error *error)
+{
+    if (!frame || !out || !reflected || !found || !valid_input(world, input, error)) return false;
+    *out = NULL; *found = false;
+    if (world->bsp.family != QA_BSP_Q1 || input->no_world || input->view.mirror) return true;
+    qawl_world *data = world->legacy_data;
+    size_t texture = SIZE_MAX;
+    for (size_t i = 0; i < data->texture_count; ++i)
+        if (!strncmp(data->textures[i].name, "window02_1", 10)) texture = i;
+    if (texture == SIZE_MAX || !world_visible(world, input, NULL, error)) return texture == SIZE_MAX;
+    if (world->surface_count > SIZE_MAX / sizeof(uint32_t) ||
+        world->node_count > (SIZE_MAX / sizeof(mirror_walk) - 1) / 2)
+        return world_error(error, QA_ERROR_MEMORY, "Mirror traversal exceeds addressable storage");
+    uint32_t *chain = world->surface_count ? qa_arena_alloc(&frame->storage,
+        world->surface_count * sizeof(*chain), _Alignof(uint32_t), error) : NULL;
+    if (world->surface_count && !chain) return false;
+    size_t capacity = world->node_count * 2 + 1;
+    mirror_walk *pending = qa_arena_alloc(&frame->storage, capacity * sizeof(*pending),
+        _Alignof(mirror_walk), error);
+    if (!pending) return false;
+    qa_scene_plane frustum[6];
+    size_t plane_count = input->no_cull ? 0 : qa_scene_frustum(&input->view, frustum), count = 0;
+    qa_scene_plane plane = {0};
+    qa_bsp_range faces = world->model_count ? world->models[0].source.faces : (qa_bsp_range){0};
+    size_t queued = world->node_count ? 1 : 0;
+    if (queued) pending[0] = (mirror_walk){.child = 0};
+    while (queued) {
+        mirror_walk item = pending[--queued];
+        if (item.child < 0) continue;
+        const qa_bsp_node *node = &world->nodes[item.child];
+        if (!item.faces) {
+            if (!qa_scene_bounds_visible(bsp_bounds(node->bounds), frustum, plane_count)) continue;
+            const qa_bsp_plane *split = &world->planes[node->plane];
+            unsigned near = qa_vec_dot(input->view.origin, split->normal) >= split->distance ? 0 : 1;
+            pending[queued++] = (mirror_walk){.child = node->children[near ^ 1]};
+            pending[queued++] = (mirror_walk){.child = item.child, .faces = true};
+            pending[queued++] = (mirror_walk){.child = node->children[near]};
+            continue;
+        }
+        /* The genuine texture chain prepends each face between the near and
+         * far child walks. Its eventual head determines the mirror plane. */
+        for (size_t i = node->faces.first; i < (size_t)node->faces.first + node->faces.count; ++i) {
+            const qaw_surface *surface = &world->surfaces[i];
+            if (i < faces.first || i - faces.first >= faces.count ||
+                world->surface_marks[i] != world->visibility_generation ||
+                !surface->legacy || surface->legacy->texture != texture ||
+                (!surface->legacy->underwater &&
+                 qa_vec_dot(input->view.origin, surface->plane.normal) - surface->plane.distance < -.01f) ||
+                !qa_scene_bounds_visible(surface->mesh.bounds, frustum, plane_count)) continue;
+            if (count == world->surface_count)
+                return world_error(error, QA_ERROR_FORMAT, "Mirror BSP face ownership repeats");
+            chain[count++] = (uint32_t)i;
+            plane = surface->plane;
+        }
+    }
+    if (!count) return true;
+    for (size_t i = 0; i < count / 2; ++i) {
+        uint32_t index = chain[i]; chain[i] = chain[count - 1 - i]; chain[count - 1 - i] = index;
+    }
+    qa_scene_q1_mirror *mirror = qa_arena_alloc(&frame->storage, sizeof(*mirror),
+        _Alignof(qa_scene_q1_mirror), error);
+    if (!mirror) return false;
+    *reflected = input->view;
+    reflected->origin = qa_vec_sub(input->view.origin, qa_vec_scale(plane.normal,
+        2 * (qa_vec_dot(input->view.origin, plane.normal) - plane.distance)));
+    for (unsigned i = 0; i < 3; ++i)
+        reflected->axis[i] = qa_vec_sub(input->view.axis[i], qa_vec_scale(plane.normal,
+            2 * qa_vec_dot(input->view.axis[i], plane.normal)));
+    reflected->mirror = true;
+    reflected->clear_color = reflected->clear_depth = reflected->clear_stencil = false;
+    *mirror = (qa_scene_q1_mirror){world, frame, world->identity, world->revision,
+        frame->sequence, texture, count, chain, input->view, *reflected};
+    *out = mirror; *found = true;
+    return true;
+}
+
 static int compare_surface_priority(const void *a, const void *b)
 {
     const surface_order *first = a, *second = b;
@@ -723,6 +1220,7 @@ static bool submit_surface(qa_scene_world *world, qaw_surface *surface, qa_mater
     bool result = world->bsp.family == QA_BSP_Q3 ? qaw_submit_q3(world, surface, context, input, frame, error)
         : qaw_submit_legacy(world, surface, context, input, frame, error);
     if (!result) return false;
+    if (frame->command_count == first) return true;
     float priority = surface->material != NULL ? surface->material->sort : surface->sort;
     if (surface->material == NULL && !surface->sky && context->entity_color.w < 1) priority = 9;
     const qa_material *effective = effective_material(surface->material);
@@ -730,7 +1228,8 @@ static bool submit_surface(qa_scene_world *world, qaw_surface *surface, qa_mater
     return qa_scene_frame_group(frame, first,
         surface->material == NULL ? QA_SCENE_GROUP_SEQUENCE
         : input->source_order ? QA_SCENE_GROUP_SOURCE : QA_SCENE_GROUP_COMPILED,
-        surface->material, priority, context->entity, context->fog_index, context->light_mask != 0, error);
+        surface->material, priority, context->entity, context->fog_index,
+        context->source_primitives ? context->source_dlighted : context->light_mask != 0, error);
 }
 
 static bool world_submit(qa_scene_world *world, const qa_scene_world_input *input,
@@ -739,26 +1238,40 @@ static bool world_submit(qa_scene_world *world, const qa_scene_world_input *inpu
     if (frame == NULL) return world_error(error, QA_ERROR_ARGUMENT, "world submission requires frame");
     if (!valid_input(world, input, error)) return false;
     if (world->bsp.family != QA_BSP_Q3 && !qawl_light_styles(world, input, error)) return false;
-    world->sky_drawn = false;
-    qa_scene_command view = {.kind = QA_SCENE_COMMAND_VIEW, .data.view = input->view};
+    if (input->legacy_phase != QA_LEGACY_WORLD_WATER) world->sky_drawn = false;
+    qa_scene_view scene_view = input->view;
+    if (input->legacy_phase == QA_LEGACY_WORLD_WATER)
+        scene_view.clear_color = scene_view.clear_depth = scene_view.clear_stencil = false;
+    qa_scene_command view = {.kind = QA_SCENE_COMMAND_VIEW, .data.view = scene_view};
     if (!qa_scene_frame_emit(frame, &view, error)) return false;
     world->admission_frame = NULL;
     if (!begin_admission(world, frame, error)) return false;
-    if (input->no_world) return true;
-    if (!world_visible(world, input, error)) return false;
-    if (world->visible_count == 0) return true;
-    surface_order *order = qa_arena_alloc(&frame->storage, world->visible_count * sizeof(*order),
+    if (input->no_world || (input->source_order && input->skip_world)) return true;
+    const qa_scene_source_world_view *prepared = input->source_order ? input->source_visibility : NULL;
+    if (prepared && !source_view_current(prepared, world, input, frame))
+        return world_error(error, QA_ERROR_ARGUMENT, "Source world draw lost its captured view receipt");
+    if (!prepared && !world_visible(world, input, NULL, error)) return false;
+    size_t visible_count = prepared ? prepared->count : world->visible_count;
+    if (visible_count == 0) return true;
+    surface_order *order = qa_arena_alloc(&frame->storage, visible_count * sizeof(*order),
         _Alignof(surface_order), error);
     if (order == NULL) return false;
     size_t count = 0;
     bool raw_surfaces = false;
-    for (size_t i = 0; i < world->visible_count; ++i) {
-        uint32_t index = world->visible_surfaces[i];
+    for (size_t i = 0; i < visible_count; ++i) {
+        uint32_t index = prepared ? prepared->surfaces[i] : world->visible_surfaces[i];
         if (world->bsp.family != QA_BSP_Q3 && world->model_count != 0) {
             qa_bsp_range faces = world->models[0].source.faces;
             if (index < faces.first || index - faces.first >= faces.count) continue;
         }
         const qaw_surface *surface = &world->surfaces[index];
+        if (world->bsp.family == QA_BSP_Q1 && input->legacy_phase != QA_LEGACY_WORLD_ALL) {
+            bool deferred_water = surface->legacy && surface->legacy->warp &&
+                (!input->legacy_texture_sort || surface->legacy->alpha < 1);
+            if ((input->legacy_phase == QA_LEGACY_WORLD_WATER) != deferred_water) continue;
+        }
+        if (input->q1_mirror && mirror_current(world, input->q1_mirror, frame) &&
+            surface->legacy && surface->legacy->texture == input->q1_mirror->texture) continue;
         const qa_material *material = effective_material(surface->material);
         raw_surfaces |= world->bsp.family != QA_BSP_Q3 && surface->base_material == NULL;
         order[count++] = (surface_order){index, i, material != NULL ? material->sort : surface->sort};
@@ -774,7 +1287,17 @@ static bool world_submit(qa_scene_world *world, const qa_scene_world_input *inpu
         bool admitted = true;
         if (input->source_order && !admit_surface(world, surface->source_index, &admitted, error)) return false;
         if (!admitted || surface_culled(world, surface, input, &context, NULL, planes, plane_count)) continue;
-        context.light_mask = surface_light_mask(surface, world->surface_lights[surface->source_index], context.lights, context.light_count);
+        uint32_t incoming = prepared ? prepared->lights[order[i].ordinal] : world->surface_lights[surface->source_index];
+        uint32_t mask = prepared ? incoming : surface_light_mask(surface, incoming, context.lights, context.light_count);
+        context.source_dlighted = incoming != 0 && mask != 0;
+        if (input->source_order && world->bsp.family == QA_BSP_Q3) {
+            if (!prepared && incoming) world->source_dlight_masks[surface->source_index] = mask;
+            context.light_mask = world->source_dlight_masks[surface->source_index];
+            if (context.source_scratch) {
+                context.source_light_world = world;
+                context.source_light_surface = surface->source_index;
+            }
+        } else context.light_mask = mask;
         if (!submit_surface(world, surface, &context, input, frame, error)) return false;
     }
     return true;
@@ -874,7 +1397,16 @@ static bool world_submit_model(qa_scene_world *world, uint32_t model_index,
         bool admitted = true;
         if (input->source_order && !admit_surface(world, surface->source_index, &admitted, error)) return false;
         if (!admitted || surface_culled(world, surface, input, &context, transform, planes, plane_count)) continue;
-        context.light_mask = surface_light_mask(surface, incoming, source_inline ? source_lights : lights, context.light_count);
+        uint32_t mask = surface_light_mask(surface, incoming, source_inline ? source_lights : lights, context.light_count);
+        context.source_dlighted = incoming != 0 && mask != 0;
+        if (input->source_order && world->bsp.family == QA_BSP_Q3) {
+            if (incoming) world->source_dlight_masks[surface->source_index] = mask;
+            context.light_mask = world->source_dlight_masks[surface->source_index];
+            if (context.source_scratch) {
+                context.source_light_world = world;
+                context.source_light_surface = surface->source_index;
+            }
+        } else context.light_mask = mask;
         if (!submit_surface(world, surface, &context, &local_input, frame, error)) return false;
     }
     return true;
@@ -918,17 +1450,47 @@ static bool transaction_end(qa_scene_world *world, qa_scene_frame *frame,
 bool qa_scene_world_submit(qa_scene_world *world, const qa_scene_world_input *input,
                            qa_scene_frame *frame, qa_error *error)
 {
-    if (world == NULL || frame == NULL || world->checkpoint_active || world->capture)
+    if (world == NULL || frame == NULL || world->checkpoint_active || world->capture || world->image_policy)
         return world_error(error, QA_ERROR_ARGUMENT, "world submission requires world and frame");
     world_transaction start = transaction_begin(world, frame);
     return transaction_end(world, frame, &start, world_submit(world, input, frame, error));
+}
+
+bool qa_scene_world_q1_mirror_overlay(qa_scene_world *world, const qa_scene_world_input *input,
+                                      float alpha, qa_scene_frame *frame, qa_error *error)
+{
+    if (!world || !input || !frame || !isfinite(alpha) ||
+        !mirror_current(world, input->q1_mirror, frame) || !valid_input(world, input, error))
+        return world_error(error, QA_ERROR_ARGUMENT, "Mirror overlay lost its actual parent surface chain");
+    world_transaction start = transaction_begin(world, frame);
+    qa_scene_world_input parent = *input;
+    parent.view = input->q1_mirror->parent;
+    parent.view.clear_color = parent.view.clear_depth = parent.view.clear_stencil = false;
+    qa_scene_command view = {.kind = QA_SCENE_COMMAND_VIEW, .data.view = parent.view};
+    bool ok = qa_scene_frame_emit(frame, &view, error);
+    qa_material_context context = world_context(world, &parent);
+    context.entity_color.w = alpha;
+    for (size_t i = 0; ok && i < input->q1_mirror->count; ++i) {
+        size_t first = frame->command_count;
+        qaw_surface *surface = &world->surfaces[input->q1_mirror->surfaces[i]];
+        ok = submit_surface(world, surface, &context, &parent, frame, error);
+        for (size_t j = first; ok && j < frame->command_count; ++j) {
+            qa_scene_command *command = &frame->commands[j];
+            if (command->kind != QA_SCENE_COMMAND_DRAW) continue;
+            command->data.draw.state.depth_near = 0;
+            command->data.draw.state.depth_far = .5f;
+            command->data.draw.state.blend_source = QA_BLEND_SRC_ALPHA;
+            command->data.draw.state.blend_destination = QA_BLEND_ONE_MINUS_SRC_ALPHA;
+        }
+    }
+    return transaction_end(world, frame, &start, ok);
 }
 
 bool qa_scene_world_submit_model(qa_scene_world *world, uint32_t model,
                                  const qa_model_transform *transform, const qa_scene_world_input *input,
                                  uint32_t entity, qa_scene_vec4 color, qa_scene_frame *frame, qa_error *error)
 {
-    if (world == NULL || frame == NULL || world->checkpoint_active || world->capture)
+    if (world == NULL || frame == NULL || world->checkpoint_active || world->capture || world->image_policy)
         return world_error(error, QA_ERROR_ARGUMENT, "inline model submission requires world and frame");
     world_transaction start = transaction_begin(world, frame);
     return transaction_end(world, frame, &start,
@@ -996,7 +1558,7 @@ bool qa_scene_world_shadow_caster(qa_scene_world *world, uint32_t model_index,
                                   const qa_scene_world_input *input, qa_scene_frame *frame,
                                   qa_scene_shadow_caster *out, qa_error *error)
 {
-    if (!world || !frame || world->checkpoint_active || world->capture)
+    if (!world || !frame || world->checkpoint_active || world->capture || world->image_policy)
         return world_error(error, QA_ERROR_ARGUMENT, "brush shadow submission requires idle continuation owners");
     world_transaction start = transaction_begin(world, frame);
     return transaction_end(world, frame, &start,
@@ -1013,10 +1575,14 @@ bool qa_scene_world_portal_view(qa_scene_world *world, const qa_scene_world_inpu
         return world_error(error, QA_ERROR_ARGUMENT, "invalid world portal-view outputs or entities");
     *view = input->view;
     *pvs_origin = input->view.origin;
-    if (input->no_world || input->view.clip_enabled || portal_count == 0) return true;
-    if (!world_visible(world, input, error)) return false;
-    for (size_t i = 0; i < world->visible_count; ++i) {
-        const qaw_surface *surface = &world->surfaces[world->visible_surfaces[i]];
+    if (input->no_world || (input->source_order && input->skip_world) || input->view.clip_enabled || portal_count == 0) return true;
+    const qa_scene_source_world_view *prepared = input->source_order ? input->source_visibility : NULL;
+    if (prepared && !source_view_current(prepared, world, input, prepared->frame))
+        return world_error(error, QA_ERROR_ARGUMENT, "Source portal search lost its captured parent visibility");
+    if (!prepared && !world_visible(world, input, NULL, error)) return false;
+    size_t visible_count = prepared ? prepared->count : world->visible_count;
+    for (size_t i = 0; i < visible_count; ++i) {
+        const qaw_surface *surface = &world->surfaces[prepared ? prepared->surfaces[i] : world->visible_surfaces[i]];
         const qa_material *material = effective_material(surface->material);
         if (!surface->has_plane || material == NULL || material->sort != 1) continue;
         const qa_scene_portal *portal = NULL;

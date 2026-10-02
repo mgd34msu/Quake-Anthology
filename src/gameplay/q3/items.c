@@ -693,7 +693,7 @@ static bool pickup_log(pickup_context *call, const qa_pickup_offer *offer,
     snprintf(line, sizeof(line), "Item: %u %s\n", slot, item->classname);
     return call->game->options.hooks.source_log(call->game->options.hooks.context, line, error);
 }
-static bool pickup_original(void *context, const qa_pickup_offer *offer, bool *accepted,
+static bool pickup_original_body(void *context, const qa_pickup_offer *offer, bool *accepted,
                             qa_error *error) {
     pickup_context *call = context;
     qa_q3_game *game = call->game;
@@ -920,6 +920,28 @@ static bool pickup_original(void *context, const qa_pickup_offer *offer, bool *a
         return false;
     *accepted = true;
     return true;
+}
+static bool pickup_original(void *context, const qa_pickup_offer *offer, bool *accepted,
+                            qa_error *error) {
+    pickup_context *call = context;
+    qa_q3_game *game = call->game;
+    q3_actor *item, *player;
+    bool selected = game->options.hooks.selected_client_effects &&
+        pickup_original_live(game, offer, &item, &player) &&
+        items[item->state.item.spawn.item_index].kind == QA_Q3_ITEM_PERSISTENT &&
+        (player->state.player.selections & (QA_Q3_ARSENAL | QA_Q3_EQUIPMENT));
+    qa_q3_selected_client_effects before;
+    if (selected && !qa_q3_selected_client_effects_read(game, offer->recipient, &before, error))
+        return false;
+    bool okay = pickup_original_body(context, offer, accepted, error);
+    player = q3_actor_get(game, offer->recipient);
+    if (selected && player && player->kind == Q3_ACTOR_PLAYER &&
+        (player->state.player.selections & (QA_Q3_ARSENAL | QA_Q3_EQUIPMENT))) {
+        qa_error publication = {0};
+        bool published = qa_q3_selected_client_effects_publish(game, offer->recipient, &before, &publication);
+        if (okay && !published) { if (error) *error = publication; okay = false; }
+    }
+    return okay;
 }
 static bool pickup_complete(void *context, const qa_pickup_offer *offer, bool accepted,
                             qa_error *error) {

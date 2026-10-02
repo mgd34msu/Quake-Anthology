@@ -4,13 +4,17 @@
 #include "config_scripts.h"
 #include "keys.h"
 #include "client_registry.h"
+#include "view_settings.h"
 #include "qa/application_startup_prepare.h"
+#include "qa/application_engine_shutdown.h"
 #include "qa/q3_host.h"
 
 typedef struct frontend_config_store frontend_config_store;
 typedef struct frontend_config_source frontend_config_source;
 typedef struct frontend_remote_config frontend_remote_config;
 typedef struct frontend_authored_bindings frontend_authored_bindings;
+typedef struct frontend_shared_settings frontend_shared_settings;
+typedef struct frontend_shared_storage frontend_shared_storage;
 typedef bool (*frontend_config_host_entry_read)(void *,qa_application *,
     const qa_application_startup_source *,const qa_q3_host **,qa_error *);
 typedef struct frontend_config_host_cvars {
@@ -34,6 +38,44 @@ frontend_remote_config *frontend_config_store_client(const frontend_config_store
  * borrowing a published owner as an isolated configuration source. */
 bool frontend_config_store_source_pending(const frontend_config_store *,qa_application *,const qa_launch_snapshot *,
     const qa_application_startup_source *);
+/* A real linked source joins the candidate's one canonical ENGINE ticket
+ * before its startup variables or configuration script execute. */
+bool frontend_config_store_shared_begin(frontend_config_store *,qa_application *,const qa_launch_snapshot *,
+    const qa_application_startup_source *,qa_error *);
+bool frontend_config_store_shared_pending(const frontend_config_store *);
+frontend_shared_settings *frontend_config_store_shared(const frontend_config_store *,const qa_application *,
+    const qa_launch_snapshot *);
+/* Before startup abort, finish only already retained release programmes.
+ * A genuine WAIT keeps the same candidate association and complete=false. */
+bool frontend_config_store_shared_cancel_advance(frontend_config_store *,qa_application *,
+    const qa_launch_snapshot *,bool *complete,qa_error *);
+/* Exact synchronous command admission for the separate retained image programme. */
+bool frontend_config_store_images_command_current(const frontend_config_store *,const qa_application *,
+    const qa_launch_snapshot *,const qa_console *,const qa_command_context *);
+const frontend_shared_storage *frontend_config_store_shared_storage(const frontend_config_store *);
+bool frontend_config_store_images_pending(const frontend_config_store *);
+/* Release the completed programme before final resources, retaining the
+ * copied shared archive and completion receipt through the actual outcome. */
+bool frontend_config_store_images_release(frontend_config_store *,qa_application *,
+    const qa_launch_snapshot *,qa_error *);
+bool frontend_config_store_apply_shared_archive(frontend_config_store *,qa_application *,
+    const qa_launch_snapshot *,const qa_application_startup_source *,qa_error *);
+/* Consumes only this candidate's failed shared owner under its genuine
+ * detached ENGINE loan. A completed cleanup clears the retained association. */
+bool frontend_config_store_shared_engine_shutdown(frontend_config_store *,
+    const qa_application_engine_shutdown *,bool *complete,qa_error *);
+bool frontend_config_store_cvar_edit(frontend_config_store *,qa_application *,const qa_console *,
+    const qa_command_context *,qa_cvars *,qa_cvars_edit **,qa_error *);
+bool frontend_config_store_config_filtered(frontend_config_store *,qa_application *,const qa_console *,
+    const qa_command_context *,qa_cvars *,qa_cvar_config_filter,void *,qa_buffer *,qa_error *);
+/* Private registry policy callbacks borrow their own pending source's
+ * canonical scalar view; published sources retain the live ENGINE view. */
+const qa_cvar_view *frontend_config_store_engine_value(const frontend_config_store *,
+    qa_application *,const qa_console *,const char *);
+bool frontend_config_store_stage_input(frontend_config_store *,const qa_console *,
+    const qa_command_invocation *,bool *staged,qa_error *);
+bool frontend_config_store_apply_archive(frontend_config_store *,qa_application *,const qa_launch_snapshot *,
+    const qa_application_startup_source *,qa_cvars *,const qa_cvar_archive *,bool shared,qa_error *);
 frontend_config_source *frontend_config_store_named_source(const frontend_config_store *,const char *);
 bool frontend_config_source_clone_bindings(const frontend_config_source *,uint32_t,frontend_authored_bindings **,qa_error *);
 qa_settings_store frontend_config_store_input_store(const frontend_config_store *);
@@ -63,6 +105,17 @@ qa_input_seat *frontend_config_store_candidate_input(const frontend_config_store
  * preparation when the actual primary GAME is physically reused. */
 qa_input_seat *frontend_config_store_prepared_input(const frontend_config_store *,qa_application *,
     const qa_launch_snapshot *,unsigned physical_ordinal);
+/* Borrow a real pending dictionary, or the stable dictionary only when its
+ * published source and authored physical seat are unchanged in this candidate.
+ * A NULL candidate requires the genuine source-free ENGINE bootstrap and its
+ * installed physical seat, rather than a missing source staging fallback. */
+bool frontend_config_store_input_configuration(const frontend_config_store *,qa_application *,
+    const qa_launch_snapshot *,unsigned physical_ordinal,qa_input_seat **,qa_error *);
+/* The same frontend publishes its initial or replacement view through the
+ * installed preference owner's actual consume history. CLIENT scopes alone
+ * do not imply ownership borrowed from a different frontend. */
+bool frontend_config_store_view_transition(const frontend_config_store *,qa_application *,
+    const qa_launch_snapshot *,frontend_view_transition *,qa_error *);
 /* The actual source factory calls before destination options/capacity/Init.
  * A different physical program/profile returns carried=false. The supplied
  * tuple identifies that fresh factory's real console, registry, GAME scope

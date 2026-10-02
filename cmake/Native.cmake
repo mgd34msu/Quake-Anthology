@@ -34,12 +34,16 @@ add_library(qa_native STATIC
     src/compat/native/module.c
     src/compat/native/observe.c
     src/compat/native/profiles.c
+    src/compat/native/process.c
     src/compat/native/protocol.c
     src/compat/native/region.c
     src/compat/native/runner_child.c
     src/compat/native/runner_host.c
     src/compat/native/variadic.c)
 target_link_libraries(qa_native PUBLIC qa_data PRIVATE PkgConfig::LIBFFI ${CMAKE_DL_LIBS})
+if(UNIX)
+    target_compile_definitions(qa_native PRIVATE _POSIX_C_SOURCE=200809L)
+endif()
 add_executable(qa-native-runner src/compat/native/main.c)
 set_target_properties(qa-native-runner PROPERTIES ENABLE_EXPORTS ON)
 target_link_libraries(qa-native-runner PRIVATE qa_native)
@@ -64,6 +68,9 @@ endif()
 set(QA_NATIVE_RUNTIME_INSTALL_ROOT "${CMAKE_INSTALL_LIBEXECDIR}/quake-anthology" CACHE STRING
     "Native runtime destination relative to the installation prefix")
 set(QA_NATIVE_INSTALL_DIR "${QA_NATIVE_RUNTIME_INSTALL_ROOT}/${QA_NATIVE_PLATFORM}-${QA_NATIVE_ARCH}")
+if(QA_NATIVE_PLATFORM STREQUAL "linux" AND QA_NATIVE_ARCH STREQUAL "x86_64")
+    enable_language(ASM)
+endif()
 include("${CMAKE_CURRENT_LIST_DIR}/NativeGuest.cmake")
 if(DEFINED QA_NATIVE_EXPECTED_PLATFORM AND NOT QA_NATIVE_PLATFORM STREQUAL QA_NATIVE_EXPECTED_PLATFORM)
     message(FATAL_ERROR "Native helper toolchain produced a different operating system")
@@ -100,7 +107,8 @@ if(QA_NATIVE_LIBFFI_PREFIX)
 endif()
 
 option(QA_NATIVE_DYNAMORIO "Build declared-region instrumentation for this helper ABI" OFF)
-if(QA_NATIVE_DYNAMORIO)
+include("${CMAKE_CURRENT_LIST_DIR}/NativeProfile.cmake")
+if(QA_NATIVE_DYNAMORIO AND NOT (QA_NATIVE_PLATFORM STREQUAL "linux" AND QA_NATIVE_ARCH STREQUAL "x86_64"))
     find_package(DynamoRIO CONFIG REQUIRED)
     if(UNIX)
         set(DynamoRIO_RPATH ON)

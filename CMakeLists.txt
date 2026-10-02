@@ -36,7 +36,7 @@ find_package(ZLIB REQUIRED)
 find_package(PNG REQUIRED)
 find_package(JPEG REQUIRED)
 find_package(CURL 7.85 REQUIRED)
-find_package(ICU REQUIRED COMPONENTS uc)
+find_package(ICU REQUIRED COMPONENTS uc i18n)
 find_package(Freetype REQUIRED)
 find_package(Threads REQUIRED)
 find_package(SDL2 2.0.18 REQUIRED)
@@ -95,7 +95,9 @@ add_library(qa_content STATIC
     src/formats/model/metadata.c
     src/formats/model/scales.c
     src/formats/model/lod.c
-    src/formats/model/transform.c)
+    src/formats/model/transform.c
+    src/formats/image/q3_color.c
+    src/formats/image/q3_upload.c)
 target_link_libraries(qa_content PUBLIC qa_core PRIVATE
     ZLIB::ZLIB PNG::PNG JPEG::JPEG ${QA_GIF_LIBRARY})
 
@@ -172,7 +174,8 @@ add_library(qa_qc STATIC
     src/compat/qc/visual.c
     src/compat/qc/weapon_visual.c
     src/compat/qc/checkpoint.c
-    src/compat/qc/text_save.c)
+    src/compat/qc/text_save.c    src/compat/qc/observation.c
+)
 target_link_libraries(qa_qc PUBLIC qa_session qa_gameplay qa_persistence)
 
 add_library(qa_gameplay STATIC
@@ -227,6 +230,12 @@ target_link_libraries(qa_builtin PUBLIC qa_session qa_gameplay qa_movement)
 add_library(qa_game_q1 STATIC
     src/gameplay/q1/bot_source.c
     src/gameplay/q1/source_clients.c
+    src/gameplay/q1/source_composition.c
+    src/gameplay/q1/source_entities.c
+    src/gameplay/q1/source_flags.c
+    src/gameplay/q1/source_obituary.c
+    src/gameplay/q1/source_rogue.c
+    src/gameplay/q1/source_runes.c
     src/gameplay/q1/addon_commands.c
     src/gameplay/q1/addon_monsters.c
     src/gameplay/q1/armagon.c
@@ -325,15 +334,22 @@ add_library(qa_game_q1 STATIC
     src/gameplay/q1/source_travel.c
     src/gameplay/q1/source_travel_state.c
     src/gameplay/q1/source_birth.c
+    src/gameplay/q1/source_powers.c
     src/gameplay/q1/sphere_points.c
     src/gameplay/q1/teleport.c
     src/gameplay/q1/weapons.c
     src/gameplay/q1/wire.c
-    src/gameplay/q1/wrath.c)
+    src/gameplay/q1/wrath.c
+    src/gameplay/q1/source_rogue_tag.c
+    src/gameplay/q1/source_rogue_flags.c
+    src/gameplay/q1/source_rogue_runes.c    src/gameplay/q1/player_ui.c
+)
 target_link_libraries(qa_game_q1 PUBLIC qa_builtin qa_campaign qa_persistence)
 
 add_library(qa_game_q2 STATIC
     src/gameplay/q2/bot_source.c
+    src/gameplay/q2/wire.c
+    src/gameplay/q2/save/wire.c
     src/gameplay/q2/player/rotation.c
     src/gameplay/q2/console.c
     src/gameplay/q2/ballistics.c
@@ -436,7 +452,9 @@ add_library(qa_game_q2 STATIC
     src/gameplay/q2/weapon_frame.c
     src/gameplay/q2/weapon_presentation.c
     src/gameplay/q2/weapon_state.c
-    src/gameplay/q2/weapon_throw.c)
+    src/gameplay/q2/weapon_throw.c
+    src/gameplay/q2/player/preferences.c    src/gameplay/q2/player/animation_read.c
+)
 target_link_libraries(qa_game_q2 PUBLIC qa_builtin qa_campaign qa_persistence)
 
 add_library(qa_game_q3 STATIC
@@ -595,6 +613,20 @@ add_library(qa_bots STATIC
     src/bots/library/items.c
     src/bots/library/assets_save.c
     src/bots/library/equipment_save.c
+    src/bots/library/source_weapon_resource.c
+    src/bots/library/source_weapon_parse.c
+    src/bots/library/source_weapon_resource_save.c
+    src/bots/library/source_weapon_resource_history.c
+    src/bots/library/source_weapon_view.c
+    src/bots/library/source_weapon_standalone.c
+    src/bots/library/source_weapon_standalone_save.c
+    src/bots/chat/source_initial.c
+    src/bots/chat/source_initial_parse.c
+    src/bots/chat/source_initial_resource.c
+    src/bots/library/source_weapon_config.c
+    src/bots/library/source_weapon_library.c
+    src/bots/library/source_weapon_library_save.c
+    src/bots/library/source_weapon_log.c
     src/bots/library/source_fuzzy.c
     src/bots/library/source_fuzzy_operations.c
     src/bots/library/source_fuzzy_parse.c
@@ -637,6 +669,7 @@ add_library(qa_bots STATIC
     src/bots/runtime/source_weapon_state.c
     src/bots/runtime/source_weapon_history.c
     src/bots/runtime/source_weapon_save.c
+    src/bots/runtime/source_weapon_setup.c
     src/bots/runtime/log.c
     src/bots/runtime/log_save.c
     src/bots/runtime/assets_save.c
@@ -647,7 +680,14 @@ add_library(qa_bots STATIC
     src/bots/runtime/observations_save.c
     src/bots/runtime/setup.c
     src/bots/runtime/variables.c
-    src/bots/source.c)
+    src/bots/source.c
+    src/bots/chat/source_initial_library.c
+    src/bots/chat/source_initial_load.c
+    src/bots/chat/source_initial_construct.c
+    src/bots/chat/source_initial_save.c
+    src/bots/chat/source_state.c
+    src/bots/chat/source_history.c    src/bots/chat/source_packed.c
+)
 target_link_libraries(qa_bots PUBLIC qa_builtin qa_navigation qa_script qa_content qa_persistence)
 
 add_library(qa_catalog STATIC
@@ -659,6 +699,8 @@ add_library(qa_catalog STATIC
     src/persistence/q1_product.c
     src/content/catalog/products.c)
 target_sources(qa_catalog PRIVATE src/content/catalog/q3_product.c)
+target_sources(qa_catalog PRIVATE src/content/catalog/q3_mods.c)
+target_sources(qa_catalog PRIVATE src/content/catalog/q3_write.c)
 target_sources(qa_catalog PRIVATE src/content/catalog/save.c)
 target_link_libraries(qa_catalog PUBLIC qa_content qa_persistence)
 
@@ -706,12 +748,16 @@ add_library(qa_media STATIC
     src/media/cinematic_scene.c
     src/media/cinematic_presentation_save.c
     src/media/library.c
+    src/media/library_prepare.c
     src/media/library_save.c
-    src/media/material_movies.c)
+    src/media/material_movies.c
+    src/media/material_movies_prepare.c
+    src/media/material_movies_save.c)
 target_link_libraries(qa_media PUBLIC qa_content qa_audio qa_scene qa_persistence
     PRIVATE PkgConfig::OGG PkgConfig::THEORADEC)
 
 add_library(qa_scene STATIC
+    src/render/scene/world/q1_sky.c
     src/render/scene/frame.c
     src/render/scene/frame_save.c
     src/render/scene/math.c
@@ -756,7 +802,8 @@ add_library(qa_scene STATIC
     src/render/material/math.c
     src/render/material/order.c
     src/render/material/parser.c
-    src/render/material/submit.c)
+    src/render/material/submit.c    src/render/output_domain.c
+)
 target_link_libraries(qa_scene PUBLIC qa_world qa_persistence)
 
 add_library(qa_render_cpu STATIC
@@ -778,6 +825,13 @@ add_library(qa_render_gl STATIC
     src/render/gl/passes.c
     src/render/gl/renderer.c)
 target_link_libraries(qa_render_gl PUBLIC qa_scene qa_display PRIVATE SDL2::SDL2)
+
+add_library(qa_render_controls STATIC
+    src/render/controls.c
+    src/render/controls_save.c)
+target_link_libraries(qa_render_controls PUBLIC qa_render_cpu qa_render_gl qa_persistence)
+target_link_libraries(qa_render_cpu PRIVATE qa_render_controls)
+target_link_libraries(qa_render_gl PRIVATE qa_render_controls)
 
 add_library(qa_input STATIC
     src/input/bindings.c
@@ -809,6 +863,9 @@ target_link_libraries(qa_settings PUBLIC qa_input)
 add_library(qa_network STATIC
     src/network/admin/owner.c
     src/network/browser/owner.c
+    src/network/browser/kex.c
+    src/network/browser/q3.c
+    src/network/browser/q3_save.c
     src/network/browser/persistence.c
     src/network/browser/wire.c
     src/network/connections.c
@@ -816,6 +873,9 @@ add_library(qa_network STATIC
     src/network/downloads/owner.c
     src/network/downloads/window.c
     src/network/ipx.c
+    src/network/interfaces.c
+    src/network/interfaces_native.c
+    src/network/interfaces_save.c
     src/network/message.c
     src/network/q1/channels.c
     src/network/q1/checksum.c
@@ -833,6 +893,7 @@ add_library(qa_network STATIC
     src/network/q1/download_save.c
     src/network/q1/token.c
     src/network/q2/channel.c
+    src/network/q2/bootstrap.c
     src/network/q2/checksum.c
     src/network/q2/codec.c
     src/network/q2/connectionless.c
@@ -841,16 +902,37 @@ add_library(qa_network STATIC
     src/network/q2/gtv.c
     src/network/q2/handshake.c
     src/network/q2/kex_channel.c
+    src/network/q2/kex_channel_save.c
     src/network/q2/kex_discovery.c
+    src/network/q2/kex_discovery_native.c
+    src/network/q2/kex_discovery_owner.c
+    src/network/q2/kex_discovery_owner_save.c
     src/network/q2/kex_game.c
     src/network/q2/kex_lan.c
+    src/network/q2/kex_lan_save.c
     src/network/q2/kex_packet.c
+    src/network/q2/kex_save_address.c
+    src/network/q2/kex_status.c
+    src/network/q2/kex_transport.c
+    src/network/q2/kex_transport_handoff.c
+    src/network/q2/kex_transport_save.c
     src/network/q2/messages.c
     src/network/q2/mvd.c
     src/network/q2/q2pro.c
     src/network/q2/q2pro_fields.c
     src/network/q2/r1q2.c
     src/network/q2/rerelease.c
+    src/network/q2/save_channel.c
+    src/network/q2/save_fields.c
+    src/network/q2/save_history.c
+    src/network/q2/save_messages.c
+    src/network/q2/save_record.c
+    src/network/q2/session.c
+    src/network/q2/session_client.c
+    src/network/q2/session_download.c
+    src/network/q2/session_records.c
+    src/network/q2/session_save.c
+    src/network/q2/session_server.c
     src/network/q2/temp_entities.c
     src/network/q2/vanilla.c
     src/network/q2/zpacket.c
@@ -890,8 +972,29 @@ add_library(qa_network STATIC
     src/network/unified/composition.c
     src/network/unified/document.c
     src/network/unified/packet.c
-    src/network/unified/schema.c)
+    src/network/unified/schema.c
+    src/network/q2/bootstrap_save.c
+    src/network/q2/session_control.c
+    src/network/unified/bootstrap.c
+    src/network/unified/bootstrap_save.c
+    src/network/unified/channel_state.c
+    src/network/unified/session.c
+    src/network/unified/session_commands.c
+    src/network/unified/session_entropy.c
+    src/network/unified/session_handshake.c
+    src/network/unified/session_identity.c
+    src/network/unified/session_inputs.c
+    src/network/unified/session_messages.c
+    src/network/unified/session_save.c
+    src/network/unified/value.c
+    src/network/runtime/q1_client.c
+    src/network/unified/channel_save.c    src/network/runtime/q1_client_save.c
+    src/network/unified/session_continuation.c
+)
 target_link_libraries(qa_network PUBLIC qa_world qa_movement qa_content qa_http PRIVATE ZLIB::ZLIB)
+if(WIN32)
+    target_link_libraries(qa_network PRIVATE iphlpapi ws2_32 bcrypt)
+endif()
 
 add_library(qa_qvm STATIC
     src/compat/qvm/compatibility.c
@@ -914,6 +1017,7 @@ add_library(qa_native_host STATIC
     src/compat/native_host/player.c
     src/compat/native_host/reconstruction.c
     src/compat/native_host/q2.c
+    src/compat/native_host/q2_wire.c
     src/compat/native_host/q3.c
     src/compat/native_host/world.c)
 target_link_libraries(qa_native_host PUBLIC
@@ -967,6 +1071,7 @@ add_library(qa_q3_host STATIC
     src/compat/q3_host/game_records.c
     src/compat/q3_host/game_spatial.c
     src/compat/q3_host/host.c
+    src/compat/q3_host/browser.c
     src/compat/q3_host/information.c
     src/compat/q3_host/input_lifetime.c
     src/compat/q3_host/memory.c
@@ -976,6 +1081,7 @@ add_library(qa_q3_host STATIC
 target_link_libraries(qa_q3_host PUBLIC qa_qvm qa_native_host qa_q3_presentation qa_bots qa_script qa_console qa_input)
 
 add_library(qa_application STATIC
+    src/app/application/acoustics.c
     src/app/application/bot_world.c
     src/app/application/bot_admission.c
     src/app/application/bots_catalog.c
@@ -1013,10 +1119,18 @@ add_library(qa_application STATIC
     src/app/application/engine_shutdown.c
     src/app/application/save_policy.c
     src/app/application/native_q1_console.c
+    src/app/application/native_q1_composition.c
+    src/app/application/native_q1_composition_player.c
+    src/app/application/native_q1_composition_birth.c
+    src/app/application/native_q1_composition_death.c
+    src/app/application/native_q1_composition_flags.c
+    src/app/application/native_q1_composition_rogue.c
+    src/app/application/native_q1_powers.c
     src/app/application/native_q1_respawn.c
     src/app/application/native_q1_wire.c
     src/app/application/native_q2_presentation.c
     src/app/application/native_q2_presentation_local.c
+    src/app/application/native_q2_delivery.c
     src/app/application/profile.c
     src/app/application/arsenal.c
     src/app/application/arsenal_guest.c
@@ -1038,6 +1152,7 @@ add_library(qa_application STATIC
     src/app/application/guest_bots.c
     src/app/application/guest_checkpoint.c
     src/app/application/guest_input_profile.c
+    src/app/application/guest_inventory_profile.c
     src/app/application/guest_native_q2.c
     src/app/application/guest_native_q2_equipment.c
     src/app/application/guest_q2_control.c
@@ -1060,6 +1175,21 @@ add_library(qa_application STATIC
     src/app/application/guest_q3_console.c
     src/app/application/guest_q3_client_console.c
     src/app/application/guest_q3_factory.c
+    src/app/application/guest_q3_body.c
+    src/app/application/guest_q3_body_profile.c
+    src/app/application/guest_q3_body_save.c
+    src/app/application/guest_q3_catalog.c
+    src/app/application/guest_q3_combat_profile.c
+    src/app/application/guest_q3_combat_state.c
+    src/app/application/guest_q3_combat_source.c
+    src/app/application/guest_q3_component_body.c
+    src/app/application/guest_q3_component_body_save.c
+    src/app/application/guest_q3_damage_scope.c
+    src/app/application/guest_q3_weapon_profile.c
+    src/app/application/guest_q3_weapons.c
+    src/app/application/guest_q3_weapons_save.c
+    src/app/application/guest_q3_weapons_services.c
+    src/app/application/guest_q3_weapons_services_save.c
     src/app/application/guest_q3_grapple_profile.c
     src/app/application/guest_q3_fire.c
     src/app/application/guest_q3_scene_world.c
@@ -1153,6 +1283,10 @@ add_library(qa_application STATIC
     src/app/application/q3_world_restart.c
     src/app/application/rankings.c
     src/app/application/network.c
+    src/app/application/network_q2.c
+    src/app/application/network_q2_frame.c
+    src/app/application/network_q2_save.c
+    src/app/application/network_q3_status.c
     src/app/application/network_q1_source.c
     src/app/application/network_q1_signon.c
     src/app/application/network_qw.c
@@ -1171,8 +1305,68 @@ add_library(qa_application STATIC
     src/app/application/save_native_q2.c
     src/app/application/save_native_q2_record.c
     src/app/application/save_resolvers.c
-    src/app/application/visuals.c)
+    src/app/application/visuals.c
+    src/app/application/network_q2_hooks.c
+    src/app/application/native_q2_rotation.c
+    src/app/application/view_preferences.c
+    src/app/application/guest_q3_combat.c
+    src/app/application/guest_q3_scene_profile.c
+    src/app/application/guest_q3_scene.c
+    src/app/application/guest_q3_scene_save.c
+    src/app/application/guest_q3_mod_input.c
+    src/app/application/guest_q3_mod_protection.c
+    src/app/application/guest_q3_mod_callbacks.c
+    src/app/application/guest_q3_mod_profile.c
+    src/app/application/guest_q3_mod_save.c
+    src/app/application/guest_q3_component_source.c
+    src/app/application/unified_output.c
+    src/app/application/unified_output_json.c
+    src/app/application/unified_presentations.c
+    src/app/application/unified_events.c
+    src/app/application/network_unified.c
+    src/app/application/network_unified_server.c
+    src/app/application/native_process_platform.c
+    src/app/application/native_q3_client_body.c
+    src/app/application/native_q3_client_functions.c
+    src/app/application/guest_q3_component.c
+    src/app/application/guest_q3_component_clients.c
+    src/app/application/guest_q3_component_frame.c
+    src/app/application/guest_q3_component_lifecycle.c
+    src/app/application/guest_q3_component_records.c
+    src/app/application/guest_q3_component_records_calls.c
+    src/app/application/guest_q3_component_services.c
+    src/app/application/guest_q3_mod.c
+    src/app/application/guest_q3_mod_operations.c
+    src/app/application/guest_q3_pickups.c
+    src/app/application/guest_q3_pickups_profile.c
+    src/app/application/guest_qc_presentation.c
+    src/app/application/native_client_roles.c
+    src/app/application/native_process_resources.c
+    src/app/application/native_q2_appearance.c
+    src/app/application/unified_native_q2_models.c
+    src/app/application/unified_player.c
+    src/app/application/unified_prediction.c
+    src/app/application/unified_q1_events.c
+    src/app/application/unified_q2_components.c
+    src/app/application/unified_q3_events.c    src/app/application/guest_q3_component_input.c
+    src/app/application/guest_q3_component_records_save.c
+    src/app/application/guest_q3_component_save.c
+    src/app/application/guest_q3_component_source_save.c
+    src/app/application/guest_q3_components.c
+    src/app/application/guest_q3_components_game.c
+    src/app/application/guest_q3_components_identity.c
+    src/app/application/guest_q3_components_publication.c
+    src/app/application/guest_q3_components_scenes.c
+    src/app/application/native_process_owner.c
+    src/app/application/native_q2_prediction.c
+    src/app/application/unified_components.c
+    src/app/application/unified_output_capture.c
+    src/app/application/unified_q2_events.c
+)
 target_link_libraries(qa_application PUBLIC qa_persistence qa_configuration qa_game_q1 qa_game_q2 qa_game_q3 qa_campaign qa_modes qa_player_services qa_qc_host qa_q3_host qa_text qa_settings)
+if(WIN32)
+    target_link_libraries(qa_application PRIVATE bcrypt)
+endif()
 
 add_library(qa_q3_native_presentation STATIC
     src/presentation/q3_native/pose.c
@@ -1335,6 +1529,15 @@ add_library(qa_frontend STATIC
     src/app/frontend/shared_ui.c
     src/app/frontend/shared_values.c
     src/app/frontend/shared_video.c
+    src/app/frontend/shared_gamma.c
+    src/app/frontend/shared_audio.c
+    src/app/frontend/shared_music_policy.c
+    src/app/frontend/shared_publication.c
+    src/app/frontend/shared_render_controls.c
+    src/app/frontend/shared_resource_policy.c
+    src/app/frontend/shared_storage.c
+    src/app/frontend/shared_acoustics.c
+    src/app/frontend/shared_settings.c
     src/app/frontend/menu_fonts.c
     src/app/frontend/original_frontend.c
     src/app/frontend/qc_rerelease_events.c
@@ -1355,25 +1558,46 @@ add_library(qa_frontend STATIC
     src/app/frontend/travel.c
     src/app/frontend/launch.c
     src/app/frontend/lifetime.c
+    src/app/frontend/legacy_render_policy.c
     src/app/frontend/map_events.c
     src/app/frontend/model_inventory.c
     src/app/frontend/material_inventory.c
+    src/app/frontend/material_movies.c
+    src/app/frontend/material_movies_prepare.c
+    src/app/frontend/material_movies_save.c
+    src/app/frontend/music_sources.c
+    src/app/frontend/music_sources_save.c
     src/app/frontend/player_inventory.c
     src/app/frontend/q3_inventory.c
+    src/app/frontend/q3_render_policy.c
     src/app/frontend/menu_save.c
     src/app/frontend/seat_inventory.c
     src/app/frontend/native_q2.c
     src/app/frontend/native_q2_baseline.c
+    src/app/frontend/native_q2_messages.c
     src/app/frontend/native_character.c
     src/app/frontend/native_composition.c
     src/app/frontend/network.c
+    src/app/frontend/network_kex.c
+    src/app/frontend/network_kex_save.c
+    src/app/frontend/network_browser.c
+    src/app/frontend/network_predictor.c
     src/app/frontend/remote_input.c
     src/app/frontend/remote_config.c
     src/app/frontend/remote_prediction.c
     src/app/frontend/remote_snapshots.c
     src/app/frontend/remote_q3_client.c
+    src/app/frontend/remote_q3_commands.c
+    src/app/frontend/remote_q3_graph.c
+    src/app/frontend/remote_q3_graph_children.c
+    src/app/frontend/remote_q3_graph_save.c
+    src/app/frontend/remote_q3_frame.c
+    src/app/frontend/remote_q3_runtime.c
+    src/app/frontend/remote_q3_session.c
+    src/app/frontend/remote_q3_transport.c
     src/app/frontend/remote_q3_services.c
     src/app/frontend/remote_q3_initial.c
+    src/app/frontend/remote_q3_modules.c
     src/app/frontend/native_q3_client.c
     src/app/frontend/native_q3_client_save.c
     src/app/frontend/native_q3_topology.c
@@ -1410,12 +1634,60 @@ add_library(qa_frontend STATIC
     src/app/frontend/selected_effects_q1_particles.c
     src/app/frontend/selected_effects_q2_particles.c
     src/app/frontend/source.c
+    src/app/frontend/startup_server_browser.c
+    src/app/frontend/system_cinematic.c
+    src/app/frontend/system_cinematic_save.c
     src/app/frontend/tools.c
     src/app/frontend/ui_restore.c
     src/app/frontend/visuals.c
+    src/app/frontend/view_settings.c
     src/app/frontend/wheels.c
-    src/app/frontend/world_inventory.c)
-target_link_libraries(qa_frontend PUBLIC qa_application qa_ui qa_tools qa_display qa_render_cpu qa_render_gl qa_input qa_settings qa_audio qa_q3_presentation qa_q3_native_presentation qa_network PRIVATE SDL2::SDL2)
+    src/app/frontend/world_inventory.c
+    src/app/frontend/global_settings_storage.c
+    src/app/frontend/view_bindings.c
+    src/app/frontend/startup_rotation.c
+    src/app/frontend/remote_q3_modules_save.c
+    src/app/frontend/remote_q3_graph_roster.c
+    src/app/frontend/remote_q2_client.c
+    src/app/frontend/remote_q2_media.c
+    src/app/frontend/remote_q2_download.c
+    src/app/frontend/remote_q2_presentation.c
+    src/app/frontend/remote_q2_restore.c
+    src/app/frontend/remote_q1_client.c
+    src/app/frontend/remote_q1_entities.c
+    src/app/frontend/remote_q1_qw.c
+    src/app/frontend/q1_sky.c
+    src/app/frontend/q1_sky_prepare.c
+    src/app/frontend/q1_sky_save.c
+    src/app/frontend/material_movie_inventory.c
+    src/app/frontend/q3_color_policy.c
+    src/app/frontend/qc_messages.c
+    src/app/frontend/remote_q1_effects.c
+    src/app/frontend/remote_q1_hud.c
+    src/app/frontend/remote_q1_media.c
+    src/app/frontend/remote_q1_presentation.c
+    src/app/frontend/remote_q1_restore.c
+    src/app/frontend/remote_q2_source.c
+    src/app/composition/recipe_choices.c
+    src/app/composition/recipe_import.c
+    src/app/composition/recipe_publish.c    src/app/frontend/client_source.c
+    src/app/frontend/component_scene.c
+    src/app/frontend/network_q2_client.c
+    src/app/frontend/network_q2_host.c
+    src/app/frontend/remote_q1_prediction.c
+    src/app/frontend/remote_q1_sky_policy.c
+    src/app/frontend/remote_q1_source.c
+    src/app/frontend/remote_q1_transport.c
+    src/app/frontend/remote_q2_policy.c
+    src/app/frontend/remote_q2_prediction.c
+    src/app/frontend/remote_unified.c
+    src/app/frontend/remote_unified_media.c
+    src/app/frontend/remote_unified_prediction.c
+    src/app/frontend/remote_unified_render.c
+    src/app/frontend/root_resources.c
+    src/app/frontend/source_prompt.c
+)
+target_link_libraries(qa_frontend PUBLIC qa_application qa_ui qa_tools qa_display qa_render_cpu qa_render_gl qa_render_controls qa_input qa_settings qa_audio qa_q3_presentation qa_q3_native_presentation qa_network PRIVATE SDL2::SDL2 ICU::i18n)
 get_filename_component(QA_NATIVE_RUNTIME_FULL_ROOT "${QA_NATIVE_RUNTIME_INSTALL_ROOT}"
     ABSOLUTE BASE_DIR "${CMAKE_INSTALL_PREFIX}")
 file(RELATIVE_PATH QA_NATIVE_RUNTIME_RELATIVE_ROOT
@@ -1431,7 +1703,11 @@ if(WIN32)
 endif()
 
 add_executable(quake-anthology src/main.c)
-target_link_libraries(quake-anthology PRIVATE qa_content qa_frontend)
+set_target_properties(quake-anthology PROPERTIES ENABLE_EXPORTS ON)
+if(TARGET qa-native-profile-build)
+    add_dependencies(quake-anthology qa-native-profile-build)
+endif()
+target_link_libraries(quake-anthology PRIVATE qa_content qa_frontend qa_native)
 target_compile_definitions(quake-anthology PRIVATE QA_VERSION="${PROJECT_VERSION}")
 
 include(CTest)

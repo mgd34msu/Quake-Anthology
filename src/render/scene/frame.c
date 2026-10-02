@@ -1,4 +1,5 @@
 #include "qa/scene.h"
+#include "qa/material_source_scratch.h"
 
 #include <limits.h>
 #include <math.h>
@@ -46,6 +47,10 @@ bool qa_scene_frame_material_order(qa_scene_frame *frame, qa_material_order *ord
 void qa_scene_frame_reset(qa_scene_frame *frame, uint64_t sequence)
 {
     if (frame == NULL) return;
+    if (frame->source_pending) {
+        qa_error ignored = {0};
+        (void)qa_material_source_frame_end(frame->source_pending, frame, false, &ignored);
+    }
     for (size_t i = 0; i < frame->image_count; ++i) qa_scene_image_release(frame->images[i]);
     frame->image_count = 0;
     for (size_t i = 0; i < frame->geometry_count; ++i)
@@ -54,6 +59,9 @@ void qa_scene_frame_reset(qa_scene_frame *frame, uint64_t sequence)
     frame->command_count = 0;
     frame->group_count = 0;
     frame->sequence = sequence;
+    frame->source_backend = false;
+    frame->source_skip_backend = false;
+    frame->source_clear_draw_buffer = false;
     qa_arena_reset(&frame->storage);
 }
 
@@ -113,12 +121,15 @@ bool qa_scene_frame_geometry(qa_scene_frame *frame, const qa_scene_geometry *geo
 bool qa_scene_frame_emit(qa_scene_frame *frame, const qa_scene_command *command, qa_error *error)
 {
     if (frame == NULL || command == NULL || command->kind < QA_SCENE_COMMAND_VIEW ||
-        command->kind > QA_SCENE_COMMAND_IMAGE) {
+        command->kind > QA_SCENE_COMMAND_OUTPUT_DOMAIN) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "invalid scene command");
         return false;
     }
     /* The command may be borrowed from this frame; snapshot before growth. */
     qa_scene_command copied = *command;
+    if (frame->source_pending && (copied.kind == QA_SCENE_COMMAND_VIEW || copied.kind == QA_SCENE_COMMAND_TARGET ||
+        copied.kind == QA_SCENE_COMMAND_OPACITY_BEGIN || copied.kind == QA_SCENE_COMMAND_OUTPUT_DOMAIN) &&
+        !qa_material_source_picture_end(frame->source_pending, frame, error)) return false;
     if (frame->command_count == SIZE_MAX) {
         qa_error_set(error, QA_ERROR_MEMORY, 0, "scene command count overflow");
         return false;
@@ -168,7 +179,16 @@ bool qa_scene_frame_emit(qa_scene_frame *frame, const qa_scene_command *command,
         if (!pin(frame, copied.data.target.image, error)) return false;
     }
     frame->commands[frame->command_count++] = copied;
-    return true;
+    return !frame->source_pending || qa_material_source_issue_emitted(frame->source_pending, frame, error);
+}
+bool qa_scene_frame_output_domain(qa_scene_frame *frame, qa_scene_rect rect, bool source, qa_error *error)
+{
+    if (rect.x < 0 || rect.y < 0 || !rect.width || !rect.height) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid output color domain region"); return false;
+    }
+    qa_scene_command command = {.kind = QA_SCENE_COMMAND_OUTPUT_DOMAIN,
+        .data.output_domain = {.rect = rect, .source = source}};
+    return qa_scene_frame_emit(frame, &command, error);
 }
 
 bool qa_scene_frame_group(qa_scene_frame *frame, size_t first, qa_scene_group_kind kind,

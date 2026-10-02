@@ -1,23 +1,56 @@
 #include "internal.h"
 #include <limits.h>
 #include "../save_fields.h"
+#include "qa/display.h"
 
 struct qa_cpu_surface_ticket {
   qa_cpu_renderer *renderer;
   cpu_framebuffer next, retired_display, retired_opacity;
+  qa_output_domains retired_domains;
   uint8_t *output, *retired_output;
   qa_cpu_options original;
   qa_cpu_present present;
   void *context;
   uint32_t width, height;
-  uint8_t gamma[256];
+  uint8_t gamma[256], original_gamma[256];
+  float gamma_value, original_gamma_value;
+  cpu_framebuffer original_display, original_opacity;
+  cpu_target *original_targets;
+  const qa_scene_image *original_bound[2];
+  cpu_vertex *original_vertices;
+  size_t original_vertex_capacity;
+  uint8_t *original_output;
+  bool original_gamma_enabled;
   bool gamma_enabled, resized, prepared, published;
 };
 
 static bool cpu_surface_idle(const qa_cpu_renderer *renderer, qa_error *error) {
-  if (renderer && !renderer->surface_ticket) return true;
-  qa_error_set(error, QA_ERROR_ARGUMENT, 0, "CPU renderer has a retained surface settings ticket");
+  if (renderer && !renderer->surface_ticket && !renderer->controls.ticket && !renderer->controls.source.entered) return true;
+  qa_error_set(error, QA_ERROR_ARGUMENT, 0, "CPU renderer has a retained settings ticket");
   return false;
+}
+
+qa_render_controls *qa_cpu_render_controls(qa_cpu_renderer *renderer) {
+  return renderer ? &renderer->controls : NULL;
+}
+bool qa_cpu_render_controls_current(const qa_render_controls *controls) {
+  const qa_cpu_renderer *renderer = controls ? controls->owner.cpu : NULL;
+  return renderer && controls->backend == QA_RENDER_CONTROLS_CPU &&
+      &renderer->controls == controls && !renderer->destroy_pending &&
+      !renderer->executing && !renderer->presenting && !renderer->capturing &&
+      !renderer->opacity_active && !renderer->opacity_parent;
+}
+void qa_cpu_render_controls_close(qa_render_controls *controls) {
+  qa_cpu_renderer *renderer = controls->owner.cpu;
+  if (renderer->destroy_pending) qa_cpu_destroy(renderer);
+}
+bool qa_cpu_source_scratch_current(const qa_render_controls *controls) {
+  const qa_cpu_renderer *renderer = controls ? controls->owner.cpu : NULL;
+  return renderer && controls->backend == QA_RENDER_CONTROLS_CPU &&
+      &renderer->controls == controls && !renderer->destroy_pending &&
+      !renderer->executing && !renderer->presenting && !renderer->capturing &&
+      !renderer->surface_ticket && (!renderer->opacity_active ||
+       (controls->source.entered && controls->source.issuing));
 }
 
 static bool dimensions(uint32_t width, uint32_t height, size_t *count,
@@ -93,6 +126,11 @@ qa_cpu_renderer *qa_cpu_create(const qa_cpu_options *options, qa_error *error) {
     return NULL;
   }
   renderer->options = *options;
+  qa_render_controls_init_cpu(&renderer->controls, renderer);
+  renderer->depth_write = renderer->color_write = true;
+  renderer->clear_depth = 1;
+  renderer->gamma_value = 1;
+  for (size_t i=0;i<256;++i) renderer->gamma[i]=(uint8_t)i;
   renderer->stencil_maximum =
       options->stencil_bits == 32
           ? UINT32_MAX
@@ -106,7 +144,8 @@ qa_cpu_renderer *qa_cpu_create(const qa_cpu_options *options, qa_error *error) {
 void qa_cpu_destroy(qa_cpu_renderer *renderer) {
   if (!renderer)
     return;
-  if (renderer->surface_ticket) { renderer->destroy_pending=true; return; }
+  if (renderer->surface_ticket || renderer->controls.ticket || renderer->controls.source.entered) { renderer->destroy_pending=true; return; }
+  material_source_release(&renderer->controls.source);
   for (size_t i = 0; i < 2; ++i)
     qa_scene_image_release(renderer->bound[i]);
   while (renderer->targets) {
@@ -120,7 +159,21 @@ void qa_cpu_destroy(qa_cpu_renderer *renderer) {
   buffer_destroy(&renderer->opacity);
   free(renderer->output);
   free(renderer->vertices);
+  qa_output_domains_destroy(&renderer->output_domains);
   free(renderer);
+}
+bool qa_cpu_capabilities_read(const qa_cpu_renderer *renderer, qa_cpu_capabilities *out, qa_error *error)
+{
+  if (!renderer || !out || renderer->destroy_pending || !renderer->display.color ||
+      !renderer->display.depth || !renderer->display.width || !renderer->display.height) {
+    qa_error_set(error, QA_ERROR_ARGUMENT, 0, "CPU capabilities require the actual retained framebuffer");
+    return false;
+  }
+  *out = (qa_cpu_capabilities){.color_bits = 3 * 8,
+    .alpha_bits = renderer->display.alpha ? 8 : 0,
+    .depth_bits = sizeof(*renderer->display.depth) * CHAR_BIT,
+    .stencil_bits = renderer->options.stencil_bits};
+  return true;
 }
 bool qa_cpu_resize(qa_cpu_renderer *renderer, uint32_t width, uint32_t height,
                    qa_error *error) {
@@ -155,6 +208,7 @@ bool qa_cpu_resize(qa_cpu_renderer *renderer, uint32_t width, uint32_t height,
     renderer->current = &renderer->display;
   renderer->view.viewport = (qa_scene_rect){0, 0, width, height};
   renderer->view.depth = 1;
+  qa_output_domains_destroy(&renderer->output_domains);
   return true;
 }
 const cpu_framebuffer *cpu_target_find(const qa_cpu_renderer *renderer,
@@ -373,18 +427,30 @@ bool qa_cpu_set_gamma(qa_cpu_renderer *renderer, float gamma, qa_error *error) {
   for (size_t i = 0; i < 256; ++i)
     renderer->gamma[i] =
         gamma == 1 ? (uint8_t)i : cpu_byte(pow((float)i / 255, 1.0f / gamma));
+  renderer->gamma_value=gamma;
   return true;
+}
+bool qa_cpu_gamma_read(const qa_cpu_renderer *renderer,float *out,qa_error *error)
+{
+  if (!renderer || !out || renderer->destroy_pending || !isfinite(renderer->gamma_value) ||
+      renderer->gamma_value<.5f || renderer->gamma_value>3) {
+    qa_error_set(error,QA_ERROR_ARGUMENT,0,"CPU brightness observation requires its actual live renderer"); return false;
+  }
+  *out=renderer->gamma_value; return true;
 }
 qa_bytes qa_cpu_pixels(qa_cpu_renderer *renderer) {
   if (!renderer || renderer->surface_ticket)
     return (qa_bytes){0};
   size_t count = (size_t)renderer->display.width * renderer->display.height;
-  if (!renderer->gamma_enabled)
+  bool native_gamma = renderer->options.present == qa_display_present_cpu &&
+      qa_display_gamma_applied_is(renderer->options.present_context);
+  if (!renderer->gamma_enabled || native_gamma)
     return (qa_bytes){renderer->display.color, count * 4};
   for (size_t i = 0; i < count; ++i) {
     for (size_t c = 0; c < 3; ++c)
-      renderer->output[i * 4 + c] =
-          renderer->gamma[renderer->display.color[i * 4 + c]];
+      renderer->output[i * 4 + c] = qa_output_domains_source(&renderer->output_domains,
+          (uint32_t)(i % renderer->display.width), (uint32_t)(i / renderer->display.width), QA_DRAW_BACK)
+          ? renderer->display.color[i * 4 + c] : renderer->gamma[renderer->display.color[i * 4 + c]];
     renderer->output[i * 4 + 3] = renderer->display.color[i * 4 + 3];
   }
   return (qa_bytes){renderer->output, count * 4};
@@ -407,8 +473,7 @@ bool qa_cpu_capture(qa_cpu_renderer *renderer, qa_buffer *out,
   *out = (qa_buffer){copy, pixels.size};
   return true;
 }
-bool qa_cpu_present_frame(qa_cpu_renderer *renderer, qa_error *error) {
-  if (!cpu_surface_idle(renderer,error)) return false;
+static bool cpu_present_frame(qa_cpu_renderer *renderer, qa_error *error) {
   if (!renderer || renderer->presenting || renderer->capturing || (renderer->opacity_active && renderer->opacity_value != 1)) {
     qa_error_set(error, QA_ERROR_ARGUMENT, 0,
                  "Cannot present an active CPU opacity scope");
@@ -419,7 +484,12 @@ bool qa_cpu_present_frame(qa_cpu_renderer *renderer, qa_error *error) {
          renderer->options.present(
              renderer->options.present_context, qa_cpu_pixels(renderer),
              renderer->display.width, renderer->display.height, error);
-  renderer->presenting=false; return ok;
+  renderer->presenting=false;
+  if (ok) renderer->controls.source.projection_2d = false;
+  return ok;
+}
+bool qa_cpu_present_frame(qa_cpu_renderer *renderer, qa_error *error) {
+  return cpu_surface_idle(renderer,error) && cpu_present_frame(renderer,error);
 }
 bool qa_cpu_read_depth(const qa_cpu_renderer *renderer, uint32_t x, uint32_t y,
                        float *out, qa_error *error) {
@@ -473,18 +543,31 @@ bool qa_cpu_read_overdraw(const qa_cpu_renderer *renderer, uint8_t *destination,
   }
   return true;
 }
-static bool cpu_execute(qa_cpu_renderer *renderer, const qa_scene_frame *frame,
-                    qa_error *error) {
+static bool cpu_execute_range(qa_cpu_renderer *renderer, const qa_scene_frame *frame,
+                    size_t first, bool begin, bool finish, qa_error *error) {
   if (!renderer || !frame || frame->owner != renderer->options.owner ||
-      (frame->command_count && !frame->commands) || renderer->opacity_active) {
+      (frame->command_count && !frame->commands) || first > frame->command_count ||
+      (begin && renderer->opacity_active)) {
     qa_error_set(error, QA_ERROR_ARGUMENT, 0,
                  "Invalid CPU frame or renderer owner");
     return false;
   }
+  if (frame->source_backend && frame->source_skip_backend) return true;
+  if (begin && frame->source_backend && frame->source_clear_draw_buffer) {
+    qa_scene_view clear = renderer->view;
+    clear.clear_color = renderer->color_write;
+    clear.clear_depth = renderer->depth_write;
+    clear.clear_stencil = false;
+    clear.color = (qa_scene_vec4){1, 0, 0.5f, 1};
+    clear.depth = renderer->clear_depth;
+    clear_view(renderer, &clear);
+    if (renderer->controls.source.issuing && renderer->controls.source.frame == frame)
+      renderer->controls.source.frame->source_clear_draw_buffer = false;
+  }
   /* Versions no longer retained by any scene can release their target storage.
    */
-  cpu_target **link = &renderer->targets;
-  while (*link) {
+  cpu_target **link = begin ? &renderer->targets : NULL;
+  while (link && *link) {
     cpu_target *target = *link;
     if (target->image->references == 1 &&
         renderer->current != &target->framebuffer) {
@@ -495,7 +578,7 @@ static bool cpu_execute(qa_cpu_renderer *renderer, const qa_scene_frame *frame,
     } else
       link = &target->next;
   }
-  for (size_t i = 0; i < frame->command_count; ++i) {
+  for (size_t i = first; i < frame->command_count; ++i) {
     const qa_scene_command *command = &frame->commands[i];
     bool ok = true;
     switch (command->kind) {
@@ -516,8 +599,14 @@ static bool cpu_execute(qa_cpu_renderer *renderer, const qa_scene_frame *frame,
         break;
       }
       renderer->view = command->data.view;
-      if (!renderer->opacity_skip)
+      if (!renderer->opacity_skip) {
+        if (renderer->view.clear_color) renderer->color_write = true;
+        if (renderer->view.clear_depth) {
+          renderer->depth_write = true;
+          renderer->clear_depth = renderer->view.depth;
+        }
         clear_view(renderer, &renderer->view);
+      }
       break;
     case QA_SCENE_COMMAND_DRAW:
       if (!renderer->opacity_skip)
@@ -528,6 +617,13 @@ static bool cpu_execute(qa_cpu_renderer *renderer, const qa_scene_frame *frame,
       break;
     case QA_SCENE_COMMAND_IMAGE:
       ok = update_image(renderer, command->data.image, error);
+      break;
+    case QA_SCENE_COMMAND_OUTPUT_DOMAIN:
+      if (renderer->current != &renderer->display || renderer->opacity_active) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, i, "Output color domain requires the actual CPU display target");
+        ok = false;
+      } else ok = qa_output_domains_assign(&renderer->output_domains, command->data.output_domain.rect,
+          QA_DRAW_BACK, command->data.output_domain.source, renderer->display.width, renderer->display.height, error);
       break;
     case QA_SCENE_COMMAND_OPACITY_BEGIN:
       ok = begin_opacity(renderer, command->data.opacity.value, error);
@@ -555,11 +651,13 @@ static bool cpu_execute(qa_cpu_renderer *renderer, const qa_scene_frame *frame,
         clear.clear_stencil = false;
         clear.color = (qa_scene_vec4){1, 0, 0.5f, 1};
         clear.depth = 1;
+        renderer->color_write = renderer->depth_write = true;
+        renderer->clear_depth = 1;
         clear_view(renderer, &clear);
       }
       break;
     case QA_SCENE_COMMAND_SWAP:
-      ok = qa_cpu_present_frame(renderer, error);
+      ok = cpu_present_frame(renderer, error);
       break;
     default:
       qa_error_set(error, QA_ERROR_ARGUMENT, i, "Unknown CPU render command");
@@ -576,7 +674,7 @@ static bool cpu_execute(qa_cpu_renderer *renderer, const qa_scene_frame *frame,
       return false;
     }
   }
-  if (renderer->opacity_active) {
+  if (finish && renderer->opacity_active) {
     if (renderer->opacity_value != 1)
       renderer->current = renderer->opacity_parent;
     renderer->opacity_parent = NULL;
@@ -587,14 +685,30 @@ static bool cpu_execute(qa_cpu_renderer *renderer, const qa_scene_frame *frame,
   }
   return true;
 }
+bool qa_cpu_source_execute_prefix(qa_render_controls *controls, const qa_scene_frame *frame,
+    size_t first, bool begin, bool finish, qa_error *error)
+{
+  if (!qa_cpu_source_scratch_current(controls) || controls->ticket ||
+      !controls->source.entered || !controls->source.issuing || controls->source.frame != frame) {
+    qa_error_set(error, QA_ERROR_ARGUMENT, first, "CPU Source issue lost its actual renderer/frame owner");
+    return false;
+  }
+  qa_cpu_renderer *renderer = controls->owner.cpu;
+  renderer->executing = true;
+  bool ok = cpu_execute_range(renderer, frame, first, begin, finish, error);
+  renderer->executing = false;
+  return ok;
+}
 bool qa_cpu_execute(qa_cpu_renderer *renderer,const qa_scene_frame *frame,qa_error *error)
 {
+  if (renderer && renderer->controls.source.entered)
+    return qa_material_source_frame_end(&renderer->controls.source, (qa_scene_frame *)frame, true, error);
   if (!cpu_surface_idle(renderer,error)) return false;
   if (!renderer || renderer->executing || renderer->presenting || renderer->capturing) {
     qa_error_set(error,QA_ERROR_ARGUMENT,0,"CPU renderer is absent or executing"); return false;
   }
   renderer->executing=true;
-  bool ok=cpu_execute(renderer,frame,error);
+  bool ok=cpu_execute_range(renderer,frame,0,true,true,error);
   renderer->executing=false; return ok;
 }
 static bool cpu_checkpoint_idle(const qa_cpu_renderer *renderer,qa_error *error)
@@ -643,10 +757,11 @@ static bool cpu_saved_fields(qa_source_save_io *io,qa_cpu_renderer *renderer,con
     const qa_cpu_options *installed)
 {
   bool reading=io->direction==QA_SOURCE_SAVE_READ;
-  uint8_t magic[4]={'Q','C','P','U'}; uint32_t version=1;
+  uint8_t magic[4]={'Q','C','P','U'}; uint32_t version=6;
   bool presenter=reading?false:renderer->options.present!=NULL;
   if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QCPU",4) ||
-      !qa_source_save_u32(io,&version) || version!=1 ||
+      !qa_source_save_u32(io,&version) || version<4 || version>6 ||
+      !qa_render_controls_saved_fields(io,&renderer->controls,version,refs) ||
       !qa_source_save_u32(io,&renderer->options.width) || !qa_source_save_u32(io,&renderer->options.height) ||
       !qa_source_save_u8(io,&renderer->options.subpixel_bits) || !qa_source_save_u8(io,&renderer->options.stencil_bits) ||
       !qa_source_save_u8(io,&renderer->options.alpha_bits) || !qa_source_save_u64(io,&renderer->options.owner) ||
@@ -665,6 +780,17 @@ static bool cpu_saved_fields(qa_source_save_io *io,qa_cpu_renderer *renderer,con
       renderer->display.alpha!=(renderer->options.alpha_bits!=0) ||
       renderer->display.width!=renderer->options.width || renderer->display.height!=renderer->options.height ||
       !cpu_saved_buffer(io,renderer,&renderer->opacity)) return false;
+  if (version>=5 && !qa_output_domains_codec(io,&renderer->output_domains,
+      renderer->display.width,renderer->display.height)) return false;
+  if (version>=6) {
+    if (!qa_source_save_bool(io,&renderer->depth_write) ||
+        !qa_source_save_bool(io,&renderer->color_write) ||
+        !qa_source_save_f32(io,&renderer->clear_depth) || !isfinite(renderer->clear_depth) ||
+        renderer->clear_depth<0 || renderer->clear_depth>1) return false;
+  } else if (reading) {
+    renderer->depth_write=renderer->color_write=true;
+    renderer->clear_depth=1;
+  }
   size_t count=0; uint64_t current=0;
   if (!reading) {
     if (renderer->current==&renderer->display) current=1;
@@ -695,6 +821,9 @@ static bool cpu_saved_fields(qa_source_save_io *io,qa_cpu_renderer *renderer,con
   if (!render_save_view(io,&renderer->view) || !render_save_rect(io,&renderer->opacity_viewport) ||
       !qa_source_save_bool(io,&renderer->opacity_skip) || !qa_source_save_f32(io,&renderer->opacity_value) ||
       !isfinite(renderer->opacity_value) || !qa_source_save_bool(io,&renderer->gamma_enabled) ||
+      !qa_source_save_f32(io,&renderer->gamma_value) || !isfinite(renderer->gamma_value) ||
+      renderer->gamma_value<.5f || renderer->gamma_value>3 ||
+      renderer->gamma_enabled!=(renderer->gamma_value!=1) ||
       !qa_source_save_bool(io,&renderer->overdraw) || !qa_source_save_bytes(io,renderer->gamma,256) ||
       !qa_source_save_count(io,&renderer->vertex_capacity,SIZE_MAX/sizeof(cpu_vertex))) return false;
   for (size_t i=0;i<2;++i) if (!render_save_image(io,refs,renderer->bound+i)) return false;
@@ -724,6 +853,7 @@ bool qa_cpu_restore(qa_bytes bytes,const qa_cpu_options *options,const qa_render
   if (!out || *out || !options) { qa_error_set(error,QA_ERROR_ARGUMENT,0,"CPU restore requires detached owner output/options"); return false; }
   qa_cpu_renderer *renderer=calloc(1,sizeof(*renderer));
   if (!renderer) { qa_error_set(error,QA_ERROR_MEMORY,0,"Allocating detached CPU renderer"); return false; }
+  qa_render_controls_init_cpu(&renderer->controls, renderer);
   qa_source_save_io io={0};
   bool ok=qa_source_save_reader(&io,NULL,bytes,error) && cpu_saved_fields(&io,renderer,refs,options) && qa_source_save_finish(&io,NULL);
   qa_source_save_dispose(&io);
@@ -735,8 +865,8 @@ bool qa_cpu_restore(qa_bytes bytes,const qa_cpu_options *options,const qa_render
   *out=renderer; return true;
 }
 
-bool qa_cpu_surface_prepare(qa_cpu_renderer *renderer,uint32_t width,uint32_t height,float gamma,
-    qa_cpu_present present,void *context,qa_cpu_surface_ticket **out,qa_error *error)
+static bool cpu_surface_prepare(qa_cpu_renderer *renderer,uint32_t width,uint32_t height,float gamma,
+    qa_cpu_present present,void *context,bool present_candidate,qa_cpu_surface_ticket **out,qa_error *error)
 {
   size_t count=0;
   if (!out || *out || !cpu_checkpoint_idle(renderer,error) || renderer->destroy_pending ||
@@ -749,6 +879,13 @@ bool qa_cpu_surface_prepare(qa_cpu_renderer *renderer,uint32_t width,uint32_t he
   qa_cpu_surface_ticket *ticket=calloc(1,sizeof(*ticket));
   if (!ticket) { qa_error_set(error,QA_ERROR_MEMORY,0,"Allocating CPU surface ticket"); return false; }
   ticket->renderer=renderer; ticket->original=renderer->options;
+  ticket->original_display=renderer->display; ticket->original_opacity=renderer->opacity;
+  ticket->original_targets=renderer->targets; ticket->original_vertices=renderer->vertices;
+  ticket->original_vertex_capacity=renderer->vertex_capacity;
+  for (size_t i=0;i<2;++i) ticket->original_bound[i]=renderer->bound[i];
+  ticket->original_output=renderer->output;
+  ticket->original_gamma_value=renderer->gamma_value; ticket->original_gamma_enabled=renderer->gamma_enabled;
+  memcpy(ticket->original_gamma,renderer->gamma,256); ticket->gamma_value=gamma;
   ticket->width=width; ticket->height=height; ticket->present=present; ticket->context=context;
   ticket->resized=width!=renderer->display.width || height!=renderer->display.height;
   ticket->gamma_enabled=gamma!=1;
@@ -763,12 +900,48 @@ bool qa_cpu_surface_prepare(qa_cpu_renderer *renderer,uint32_t width,uint32_t he
     for (size_t c=0;c<3;++c) ticket->output[i*4+c]=ticket->gamma[pixels[i*4+c]];
     ticket->output[i*4+3]=pixels[i*4+3];
   }
-  if (present && !present(context,(qa_bytes){ticket->output,count*4},width,height,error)) return false;
+  if (present_candidate && present && !present(context,(qa_bytes){ticket->output,count*4},width,height,error)) return false;
   ticket->prepared=true;
   return qa_cpu_surface_ready(ticket,error);
 }
 
-bool qa_cpu_surface_ready(const qa_cpu_surface_ticket *ticket,qa_error *error)
+bool qa_cpu_surface_prepare(qa_cpu_renderer *renderer,uint32_t width,uint32_t height,float gamma,
+    qa_cpu_present present,void *context,qa_cpu_surface_ticket **out,qa_error *error)
+{ return cpu_surface_prepare(renderer,width,height,gamma,present,context,true,out,error); }
+
+bool qa_cpu_gamma_prepare(qa_cpu_renderer *renderer,float gamma,qa_cpu_present present,void *context,
+    qa_cpu_surface_ticket **out,qa_error *error)
+{
+  if (!renderer || renderer->options.present!=present || renderer->options.present_context!=context) {
+    qa_error_set(error,QA_ERROR_ARGUMENT,0,"CPU gamma preparation requires its actual renderer and presentation endpoint"); return false;
+  }
+  return cpu_surface_prepare(renderer,renderer->options.width,renderer->options.height,gamma,
+      renderer->options.present,renderer->options.present_context,false,out,error);
+}
+
+bool qa_cpu_surface_refresh(qa_cpu_surface_ticket *ticket,qa_error *error)
+{
+  if (!qa_cpu_surface_ready(ticket,error)) return false;
+  qa_cpu_renderer *renderer=ticket->renderer;
+  const uint8_t *pixels=ticket->resized?ticket->next.color:renderer->display.color;
+  bool native=ticket->present==qa_display_present_cpu && qa_display_gamma_applied_is(ticket->context);
+  size_t count=(size_t)ticket->width*ticket->height;
+  for (size_t i=0;i<count;++i) {
+    bool direct=native || (!ticket->resized && qa_output_domains_source(&renderer->output_domains,
+        (uint32_t)(i%ticket->width),(uint32_t)(i/ticket->width),QA_DRAW_BACK));
+    for (size_t c=0;c<3;++c) ticket->output[i*4+c]=direct?pixels[i*4+c]:ticket->gamma[pixels[i*4+c]];
+    ticket->output[i*4+3]=pixels[i*4+3];
+  }
+  if (ticket->present && !ticket->present(ticket->context,(qa_bytes){ticket->output,count*4},
+      ticket->width,ticket->height,error)) return false;
+  return qa_cpu_surface_ready(ticket,error);
+}
+static bool cpu_buffer_same(const cpu_framebuffer *a,const cpu_framebuffer *b)
+{
+  return a->width==b->width && a->height==b->height && a->depth_only==b->depth_only &&
+      a->alpha==b->alpha && a->color==b->color && a->depth==b->depth && a->stencil==b->stencil;
+}
+bool qa_cpu_surface_ready_is(const qa_cpu_surface_ticket *ticket)
 {
   const qa_cpu_renderer *renderer=ticket?ticket->renderer:NULL;
   if (!renderer || renderer->surface_ticket!=ticket || renderer->destroy_pending || !ticket->prepared ||
@@ -777,10 +950,26 @@ bool qa_cpu_surface_ready(const qa_cpu_surface_ticket *ticket,qa_error *error)
       renderer->options.owner!=ticket->original.owner || renderer->options.width!=ticket->original.width ||
       renderer->options.height!=ticket->original.height || renderer->options.present!=ticket->original.present ||
       renderer->options.present_context!=ticket->original.present_context || !ticket->output ||
-      (ticket->resized && (!ticket->next.color || !ticket->next.depth))) {
-    qa_error_set(error,QA_ERROR_ARGUMENT,0,"CPU surface ticket is not prepared/current"); return false;
-  }
+      renderer->options.subpixel_bits!=ticket->original.subpixel_bits ||
+      renderer->options.stencil_bits!=ticket->original.stencil_bits || renderer->options.alpha_bits!=ticket->original.alpha_bits ||
+      !cpu_buffer_same(&renderer->display,&ticket->original_display) ||
+      !cpu_buffer_same(&renderer->opacity,&ticket->original_opacity) || renderer->opacity_parent ||
+      renderer->targets!=ticket->original_targets || renderer->vertices!=ticket->original_vertices ||
+      renderer->vertex_capacity!=ticket->original_vertex_capacity ||
+      renderer->bound[0]!=ticket->original_bound[0] || renderer->bound[1]!=ticket->original_bound[1] ||
+      renderer->output!=ticket->original_output ||
+      renderer->gamma_value!=ticket->original_gamma_value || renderer->gamma_enabled!=ticket->original_gamma_enabled ||
+      memcmp(renderer->gamma,ticket->original_gamma,256) ||
+      (ticket->resized && (!ticket->next.color || !ticket->next.depth || ticket->next.depth_only ||
+          ticket->next.width!=ticket->width || ticket->next.height!=ticket->height ||
+          ticket->next.alpha!=(renderer->options.alpha_bits!=0) ||
+          (ticket->next.stencil!=NULL)!=(renderer->options.stencil_bits!=0)))) return false;
   return true;
+}
+bool qa_cpu_surface_ready(const qa_cpu_surface_ticket *ticket,qa_error *error)
+{
+  if (qa_cpu_surface_ready_is(ticket)) return true;
+  qa_error_set(error,QA_ERROR_ARGUMENT,0,"CPU surface ticket is not prepared/current"); return false;
 }
 
 void qa_cpu_surface_publish(qa_cpu_surface_ticket *ticket)
@@ -788,6 +977,7 @@ void qa_cpu_surface_publish(qa_cpu_surface_ticket *ticket)
   if (!ticket || !ticket->prepared || ticket->published) return;
   qa_cpu_renderer *renderer=ticket->renderer;
   if (ticket->resized) {
+    ticket->retired_domains=renderer->output_domains; renderer->output_domains=(qa_output_domains){0};
     ticket->retired_display=renderer->display; ticket->retired_opacity=renderer->opacity;
     renderer->display=ticket->next; ticket->next=(cpu_framebuffer){0};
     renderer->opacity=(cpu_framebuffer){0}; renderer->current=&renderer->display;
@@ -795,6 +985,7 @@ void qa_cpu_surface_publish(qa_cpu_surface_ticket *ticket)
   }
   ticket->retired_output=renderer->output; renderer->output=ticket->output; ticket->output=NULL;
   memcpy(renderer->gamma,ticket->gamma,256); renderer->gamma_enabled=ticket->gamma_enabled;
+  renderer->gamma_value=ticket->gamma_value;
   renderer->options.width=ticket->width; renderer->options.height=ticket->height;
   renderer->options.present=ticket->present; renderer->options.present_context=ticket->context;
   ticket->published=true;
@@ -805,6 +996,7 @@ static void cpu_surface_release(qa_cpu_surface_ticket **out)
   qa_cpu_surface_ticket *ticket=*out; qa_cpu_renderer *renderer=ticket->renderer;
   buffer_destroy(&ticket->next); buffer_destroy(&ticket->retired_display); buffer_destroy(&ticket->retired_opacity);
   free(ticket->output); free(ticket->retired_output);
+  qa_output_domains_destroy(&ticket->retired_domains);
   renderer->surface_ticket=NULL; free(ticket); *out=NULL;
   if (renderer->destroy_pending) qa_cpu_destroy(renderer);
 }

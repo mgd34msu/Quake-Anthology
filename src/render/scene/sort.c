@@ -69,6 +69,10 @@ static int generic_compare(const void *left, const void *right)
     if (a->priority > b->priority) return 1;
     return a->ordinal < b->ordinal ? -1 : a->ordinal > b->ordinal ? 1 : 0;
 }
+bool material_source_sort(qa_scene_group **entries, size_t count, qa_error *error)
+{
+    return source_sort(entries, count, error);
+}
 
 static bool precedes(const qa_scene_group *a, const qa_scene_group *b)
 {
@@ -85,15 +89,8 @@ static bool finish_range(qa_scene_frame *frame, size_t start, size_t end,
         qa_scene_group *group = &frame->groups[i];
         if (group->kind != QA_SCENE_GROUP_SEQUENCE && group->material != NULL) {
             const qa_material *ordering = group->material;
-            if (group->kind == QA_SCENE_GROUP_COMPILED) {
-                for (size_t hop = 0; ordering->remapped != NULL; ++hop) {
-                    if (hop >= 16384) {
-                        qa_error_set(error, QA_ERROR_FORMAT, 0, "scene group material remap is cyclic");
-                        return false;
-                    }
-                    ordering = ordering->remapped;
-                }
-            }
+            if (group->kind == QA_SCENE_GROUP_COMPILED && ordering->remapped != NULL)
+                ordering = ordering->remapped;
             group->priority = ordering->sort;
         }
         if (group->kind == QA_SCENE_GROUP_SOURCE) {

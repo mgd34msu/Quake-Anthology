@@ -1,5 +1,6 @@
 #include "library_internal.h"
 #include "qa/media_resource.h"
+#include "qa/media_library_prepare.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -43,7 +44,7 @@ void qa_cinematic_asset_release(qa_cinematic_asset *asset) {
     free(asset);
 }
 void qa_media_library_destroy(qa_media_library *library) {
-    if (!library)
+    if (!library || !qa_media_library_idle(library))
         return;
     while (library->assets) {
         qa_cinematic_asset *next = library->assets->next;
@@ -54,7 +55,7 @@ void qa_media_library_destroy(qa_media_library *library) {
     free(library);
 }
 void qa_media_library_trim(qa_media_library *library) {
-    if (!library)
+    if (!library || !qa_media_library_idle(library))
         return;
     qa_cinematic_asset **link = &library->assets;
     while (*link) {
@@ -168,16 +169,8 @@ bool qa_media_asset_load(qa_media_library *library, qa_resource *resource, qa_ci
     qa_media_input_release(input);
     return ok;
 }
-bool qa_media_library_load(qa_media_library *library, qa_vfs *view, const char *path,
-                           qa_cinematic_asset **out, qa_error *error) {
-    if (!library || !view || !path || !out)
-        return cinematic_fail(error, "Invalid media library request");
-    qa_cinematic_format kind;
-    if (!qa_media_asset_format(path, &kind, error))
-        return false;
-    qa_resource *resource;
-    if (!qa_vfs_acquire(view, path, &resource, NULL, error))
-        return false;
+static bool library_asset(qa_media_library *library, const char *path, qa_cinematic_format kind,
+    qa_resource *resource, qa_cinematic_asset **out, qa_error *error) {
     const qa_sha256_digest *digest = qa_resource_digest(resource);
     for (qa_cinematic_asset *asset = library->assets; asset; asset = asset->next)
         if (asset->source.format == kind && qa_sha256_equal(&asset->digest, digest)) {
@@ -186,6 +179,12 @@ bool qa_media_library_load(qa_media_library *library, qa_vfs *view, const char *
             *out = asset;
             return true;
         }
+    for (const qa_media_library *parent = library->parent; parent; parent = parent->parent)
+        for (qa_cinematic_asset *asset = parent->assets; asset; asset = asset->next)
+            if (asset->source.format == kind && qa_sha256_equal(&asset->digest, digest)) {
+                qa_cinematic_asset_retain(asset); qa_resource_release(resource);
+                *out = asset; return true;
+            }
     qa_cinematic_asset *asset = calloc(1, sizeof(*asset));
     if (!asset) {
         qa_resource_release(resource);
@@ -218,6 +217,32 @@ bool qa_media_library_load(qa_media_library *library, qa_vfs *view, const char *
     qa_cinematic_asset_retain(asset);
     *out = asset;
     return true;
+}
+bool qa_media_library_load(qa_media_library *library, qa_vfs *view, const char *path,
+    qa_cinematic_asset **out, qa_error *error)
+{
+    if (!library || !view || !path || !out || !qa_media_library_idle(library))
+        return cinematic_fail(error, "Invalid media library request");
+    qa_cinematic_format kind;
+    if (!qa_media_asset_format(path, &kind, error)) return false;
+    qa_resource *resource = NULL;
+    if (!qa_vfs_acquire(view, path, &resource, NULL, error)) return false;
+    return library_asset(library, path, kind, resource, out, error);
+}
+bool qa_media_library_load_shader(qa_media_library *library, qa_vfs *view, const char *path,
+    qa_cinematic_asset **out, qa_error *error)
+{
+    if (!library || !view || !path || !out || !qa_media_library_idle(library))
+        return cinematic_fail(error, "Invalid shader media library request");
+    qa_resource *resource = NULL;
+    if (!qa_vfs_acquire(view, path, &resource, NULL, error)) return false;
+    qa_cinematic_format kind;
+    if (!qa_media_asset_format(path, &kind, error) || kind == QA_CINEMATIC_IMAGE) {
+        qa_resource_release(resource);
+        if (error && error->code == QA_OK) cinematic_fail(error, "Shader movie requires RoQ, CIN or OGV content");
+        return false;
+    }
+    return library_asset(library, path, kind, resource, out, error);
 }
 
 const qa_resource *qa_cinematic_asset_resource(const qa_cinematic_asset *asset)

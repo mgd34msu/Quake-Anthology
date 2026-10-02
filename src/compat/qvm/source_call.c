@@ -38,3 +38,28 @@ bool qa_qvm_source_global_word(const qa_qvm_call *call, const qa_qvm_image *imag
 {
     return qa_qvm_execution_source_word(call, image, offset, value, perform, context, error);
 }
+
+bool qa_qvm_source_words_begin(qa_qvm *vm, const qa_qvm_image *image,
+    const qa_qvm_source_word *words, size_t count, qa_qvm_word_projection **out, qa_error *error)
+{ return qa_qvm_execution_words_begin(vm, image, words, count, out, error); }
+bool qa_qvm_source_words_capture(qa_qvm *vm, const qa_qvm_image *image,
+    const uint32_t *addresses, size_t count, qa_qvm_word_projection **out, qa_error *error)
+{ return qa_qvm_execution_words_capture(vm, image, addresses, count, out, error); }
+bool qa_qvm_source_words_begin_observed(qa_qvm *vm, const qa_qvm_image *image,
+    const qa_qvm_source_word *words, size_t count, qa_qvm_word_projection **out, qa_error *error)
+{ return qa_qvm_execution_words_begin_observed(vm, image, words, count, out, error); }
+bool qa_qvm_source_words_capture_observed(qa_qvm *vm, const qa_qvm_image *image,
+    const uint32_t *addresses, size_t count, qa_qvm_word_projection **out, qa_error *error)
+{ return qa_qvm_execution_words_capture_observed(vm, image, addresses, count, out, error); }
+bool qa_qvm_source_words_end(qa_qvm_word_projection **lease, bool restore, qa_error *error)
+{ return qa_qvm_execution_words_end(lease, restore, error); }
+bool qa_qvm_source_words_is_last(const qa_qvm_word_projection *lease)
+{ return qa_qvm_execution_words_is_last(lease); }
+bool qa_qvm_source_returned(const qa_qvm *vm)
+{ return qa_qvm_execution_source_returned(vm); }
+bool qa_qvm_source_bytes_write(qa_qvm *vm, const qa_qvm_image *image,
+    uint32_t offset, qa_bytes bytes, qa_error *error)
+{ return qa_qvm_execution_source_bytes_write(vm, image, offset, bytes, error); }
+bool qa_qvm_source_scratch_run(qa_qvm *vm, const qa_qvm_image *image, size_t length,
+    qa_qvm_source_scratch_run_fn run, void *context, qa_error *error)
+{ return qa_qvm_execution_scratch_run(vm, image, length, run, context, error); }

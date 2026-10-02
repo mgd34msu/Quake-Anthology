@@ -4,6 +4,7 @@
 #include "map_players_private.h"
 #include "qa/cvars_save.h"
 #include "qa/console_cvar_observer.h"
+#include "qa/console_cvars_prepare.h"
 #include "qa/game_q2_source.h"
 #include <math.h>
 #include <stdio.h>
@@ -175,6 +176,11 @@ static qa_cvars *cvar_owner(void *opaque, const qa_command_context *context, con
     qa_cvars *registry = application_startup_cvar_owner(owner->provider, owner->console, context, name);
     return registry ? registry : owner->cvars;
 }
+static bool cvar_edit(void *opaque, const qa_command_context *context, qa_cvars *registry,
+                      qa_cvars_edit **out, qa_error *error) {
+    struct application_native_q2_console *owner = opaque;
+    return application_startup_cvar_edit(owner->provider, owner->console, context, registry, out, error);
+}
 static qa_cvars *visible_cvars(void *opaque, const qa_command_context *context, size_t index) {
     struct application_native_q2_console *owner = opaque;
     qa_cvars *registry = NULL;
@@ -316,7 +322,7 @@ bool application_native_q2_console_create_restored(application_provider *provide
     owner->cvars = qa_cvars_create(&variables, error);
     qa_console_options options = {.context = {.owner = provider->owner, .dialect = dialect(provider),
         .origin = QA_COMMAND_SERVER}, .cvars = owner->cvars, .user = owner, .print = print,
-        .cvar_owner = cvar_owner, .visible_cvars = visible_cvars,
+        .cvar_owner = cvar_owner, .visible_cvars = visible_cvars, .cvar_edit = cvar_edit,
         .capture_context = capture, .context_active = active, .read_script = read_script,
         .release_script = release_script, .script_complete = script_complete,
         .allow_command = allow_command, .source_command = command};
@@ -366,6 +372,16 @@ static bool observe(struct application_native_q2_console *owner, qa_error *error
 }
 static bool clone(application_provider *provider, qa_cvars *destination, bool *cloned, qa_error *error) {
     *cloned = false;
+    if (provider->application->startup_hooks) {
+        struct application_native_q2_console *owner = provider->native_q2_console;
+        qa_application_startup_source source = {
+            .descriptor = provider->launch,
+            .scope = {.provider = provider->owner, .kind = QA_APPLICATION_CONSOLE_Q2_GAME},
+            .console = owner->console, .cvars = destination, .declaration_owner = provider->owner,
+            .command = {.owner = provider->owner, .dialect = dialect(provider), .origin = QA_COMMAND_SERVER},
+        };
+        return application_startup_source_carry(provider, &source, cloned, error);
+    }
     for (application_provider *previous = provider->application->live_providers; previous; previous = previous->next_live) {
         if (previous == provider || previous->kind != APPLICATION_PROVIDER_Q2 ||
             !previous->constructed || !previous->attached || previous->close_pending ||
@@ -537,6 +553,39 @@ bool application_native_q2_console_restore(application_provider *provider, qa_by
     bool okay = qa_cvars_save_prepare(cvars, bytes, &ticket, error) && qa_cvars_save_commit(ticket, error);
     if (!okay) qa_cvars_save_abort(ticket);
     return okay && observe(provider->native_q2_console, error);
+}
+bool application_native_q2_rotation_changed(void *context, const qa_string_id *maps, size_t count, qa_error *error) {
+    application_provider *provider = context;
+    qa_console *console = NULL; qa_cvars *cvars = NULL; qa_command_context raw, command;
+    if (!provider || !maps || !count || !provider->state.q2 ||
+        !application_native_q2_console_at(provider, &console, &cvars, &raw) ||
+        qa_cvars_dialect(cvars) != QA_CONSOLE_Q2_RERELEASE || !qa_cvars_find(cvars, "g_map_list") ||
+        !qa_application_capture_command_context(provider->application, &raw, &command, error))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q2 rotation publication lost its actual rerelease Source");
+    qa_cvars *actual = NULL; qa_cvars_edit *ticket = NULL;
+    if (!qa_console_cvar_access(console, &command, "g_map_list", &actual, &ticket, error) || actual != cvars)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q2 rotation publication lost its actual private Source registry");
+    qa_strings *strings = qa_session_strings(provider->application->session);
+    size_t size = count;
+    for (size_t i = 0; i < count; ++i) {
+        const char *map = qa_strings_cstr(strings, maps[i]);
+        if (!map || !*map || strlen(map) > SIZE_MAX - size)
+            return application_fail(error, QA_ERROR_FORMAT, "Q2 shuffled rotation has no genuine map token");
+        size += strlen(map);
+    }
+    char *list = malloc(size);
+    if (!list) return application_fail(error, QA_ERROR_MEMORY, "Publishing actual shuffled Q2 Source rotation");
+    char *cursor = list;
+    for (size_t i = 0; i < count; ++i) {
+        const char *map = qa_strings_cstr(strings, maps[i]); size_t length = strlen(map);
+        memcpy(cursor, map, length); cursor += length;
+        if (i + 1 < count) *cursor++ = ' ';
+    }
+    *cursor = 0;
+    qa_cvars_edit_command edit = {.kind = QA_CVARS_EDIT_SET, .name = "g_map_list", .value = list,
+        .force = true, .owner = provider->owner};
+    bool okay = qa_console_cvar_apply(console, &command, &edit, error);
+    free(list); return okay;
 }
 bool application_native_q2_console_refresh(application_provider *provider, qa_error *error) {
     qa_cvars *cvars = application_native_q2_console_registry(provider);

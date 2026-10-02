@@ -27,6 +27,7 @@ bool application_native_q2_console_restore(application_provider *, qa_bytes, qa_
 /* Pure projection, also required after host player-service configuration and
  * candidate import. Current values are read; pending latches stay pending. */
 bool application_native_q2_console_refresh(application_provider *, qa_error *);
+bool application_native_q2_rotation_changed(void *, const qa_string_id *, size_t, qa_error *);
 bool application_native_q2_source_player_rules(application_provider *, qa_q2_player_rules *, qa_error *);
 bool application_native_q2_source_mode_rules(application_provider *, qa_mode_rules *, qa_error *);
 /* Runtime source-frame projection, after current GAME values have changed.

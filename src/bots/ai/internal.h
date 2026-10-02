@@ -45,8 +45,7 @@ typedef struct bot_ai_state {
     qa_bot_view view;
     qa_bot_player player;
     uint32_t character, goals, weapons, chat, movement, area, travel_flags;
-    int32_t setup_count,residual_ms,last_health;
-    float local_time, walker, long_term_until, nearby_until, stand_until, stand_enemy_time;
+    float long_term_until, nearby_until, stand_until, stand_enemy_time;
     float admitted_skill;
     char *admitted_character;
     char *admitted_name;

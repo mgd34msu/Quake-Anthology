@@ -1,6 +1,7 @@
 #include "q3_campaign_launch.h"
 #include "rankings.h"
 #include "q3_product.h"
+#include "startup_flow.h"
 #include "qa/cvars_save.h"
 
 #include <stdlib.h>
@@ -8,7 +9,7 @@
 
 struct application_q3_campaign_launch {
     const qa_launch_snapshot *previous;
-    const char *instance;
+    char *instance;
     qa_product_id product;
     qa_program_kind runtime;
     const qa_cvars *previous_cvars;
@@ -18,9 +19,21 @@ struct application_q3_campaign_launch {
     uint64_t candidate_cvar_owner, previous_cvar_owner;
     qa_buffer final_cvars;
     bool original;
-    const qa_application_q3_setting *settings;
+    qa_application_q3_setting *settings;
     size_t count;
 };
+
+static char *copy_text(const char *text, qa_error *error)
+{
+    size_t size = strlen(text);
+    char *copy = size < SIZE_MAX ? malloc(size + 1) : NULL;
+    if (!copy) {
+        application_fail(error, QA_ERROR_MEMORY, "Retaining campaign startup text");
+        return NULL;
+    }
+    memcpy(copy, text, size + 1);
+    return copy;
+}
 
 static bool named(const char *left, const char *right)
 {
@@ -31,6 +44,30 @@ static bool named(const char *left, const char *right)
         if (a != b) return false;
     }
     return *left == *right;
+}
+
+bool application_q3_campaign_launch_finish(qa_application *app,
+    bool published, qa_error *error)
+{
+    struct application_q3_campaign_launch *state = app ? app->q3_campaign_launch : NULL;
+    if (!state) return true;
+    bool okay = true;
+    if (published && app->state != QA_APPLICATION_FAULTED)
+        for (size_t i = 0; okay && i < state->count; ++i)
+            if (named(state->settings[i].name, "sv_cheats"))
+                okay = qa_cvars_set(app->cvars, "sv_cheats", state->settings[i].value, true, error);
+    if (!okay) application_fault(app, error);
+    app->q3_campaign_launch = NULL;
+    qa_launch_snapshot_release(state->previous);
+    qa_buffer_free(&state->final_cvars);
+    for (size_t i = 0; i < state->count; ++i) {
+        free((void *)state->settings[i].name);
+        free((void *)state->settings[i].value);
+    }
+    free(state->settings);
+    free(state->instance);
+    free(state);
+    return okay;
 }
 
 bool application_q3_campaign_launch_cvars(application_provider *provider,
@@ -156,7 +193,7 @@ static bool campaign_launch(qa_application *app,
 {
     if (!app || !draft || (count && !settings) ||
         (app->state != QA_APPLICATION_READY && app->state != QA_APPLICATION_RUNNING) ||
-        app->operation != APPLICATION_IDLE || app->q3_campaign_launch ||
+        app->operation != APPLICATION_IDLE || app->q3_campaign_launch || qa_application_startup_pending(app) ||
         app->q3_round_active || app->q3_world_restart || app->frame_preparing ||
         app->publication_started || app->pending_close || app->destroy_requested ||
         app->finalizing || !qa_session_safe(app->session) ||
@@ -191,17 +228,41 @@ static bool campaign_launch(qa_application *app,
             return application_fail(error, QA_ERROR_ARGUMENT,
                 "Campaign startup values require source names and values");
 
-    struct application_q3_campaign_launch state = {
+    if (count > SIZE_MAX / sizeof(*settings))
+        return application_fail(error, QA_ERROR_MEMORY, "Campaign startup settings exceed retained storage");
+    struct application_q3_campaign_launch *state = calloc(1, sizeof(*state));
+    if (!state) return application_fail(error, QA_ERROR_MEMORY, "Retaining campaign launch owner");
+    *state = (struct application_q3_campaign_launch){
         .previous = source ? source->publication : qa_application_launch(app),
-        .instance = selection->instance,
         .product = selection->product, .runtime = selection->runtime,
         .previous_cvars = source ? source->cvars : NULL,
         .previous_owner = source ? source->source_owner : 0,
-        .original = source && !source->native_source,
-        .settings = settings, .count = count};
-    if (state.previous) qa_launch_snapshot_retain(state.previous);
-    app->q3_campaign_launch = &state;
+        .original = source && !source->native_source};
+    if (state->previous) qa_launch_snapshot_retain(state->previous);
+    app->q3_campaign_launch = state;
+    state->instance = copy_text(selection->instance, error);
+    if (count) state->settings = calloc(count, sizeof(*state->settings));
+    bool copied = state->instance && (!count || state->settings);
+    if (!copied && (!error || error->code == QA_OK))
+        application_fail(error, QA_ERROR_MEMORY, "Retaining campaign startup settings");
+    for (size_t i = 0; copied && i < count; ++i) {
+        state->count = i + 1;
+        state->settings[i].name = copy_text(settings[i].name, error);
+        state->settings[i].value = copy_text(settings[i].value, error);
+        copied = state->settings[i].name && state->settings[i].value;
+    }
+    if (!copied) {
+        (void)application_q3_campaign_launch_finish(app, false, NULL);
+        return false;
+    }
     app->operation = APPLICATION_CONFIGURING;
+    if (app->startup_hooks) {
+        bool started = application_startup_flow_begin_replacing(app, draft, error);
+        app->operation = APPLICATION_IDLE;
+        if (!started && !qa_application_startup_pending(app))
+            (void)application_q3_campaign_launch_finish(app, false, NULL);
+        return started;
+    }
     qa_configuration_transaction *transaction = NULL;
     application_q3_product_preparation prepared = {0};
     bool okay = application_q3_product_prepare_draft(app, draft, &prepared, error) &&
@@ -218,23 +279,15 @@ static bool campaign_launch(qa_application *app,
         if (error) *error = first;
     }
     application_q3_product_finish(app, &prepared, published);
-    if (published && app->state != QA_APPLICATION_FAULTED)
-        for (size_t i = 0; okay && i < count; ++i)
-            if (named(settings[i].name, "sv_cheats")) {
-                okay = qa_cvars_set(app->cvars, "sv_cheats", settings[i].value,
-                    true, error);
-                if (!okay) application_fault(app, error);
-            }
+    bool finished = application_q3_campaign_launch_finish(app, published, error);
+    okay = okay && finished;
     if (okay && app->state == QA_APPLICATION_FAULTED) {
         okay = false;
         if (error) *error = app->publication_error;
     }
     if (okay && app->state == QA_APPLICATION_READY)
         app->state = QA_APPLICATION_RUNNING;
-    app->q3_campaign_launch = NULL;
     app->operation = APPLICATION_IDLE;
-    if (state.previous) qa_launch_snapshot_release(state.previous);
-    qa_buffer_free(&state.final_cvars);
     return okay;
 }
 

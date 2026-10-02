@@ -16,6 +16,12 @@
 #include "equipment_gear.h"
 #include "selected_character.h"
 #include "selected_effects.h"
+#include "global_settings_storage.h"
+#include "music_sources.h"
+#include "remote_q3_client.h"
+#include "remote_q1_client.h"
+#include "remote_q2_client.h"
+#include "client_source.h"
 
 static bool visit_view(const qa_application_content_visitor *visitor, const qa_vfs *view, qa_error *error)
 {
@@ -89,7 +95,19 @@ bool frontend_content_visit(void *context, const qa_application *application,
         if (!library) break;
         if (!visit_material_catalog(visitor,library,error)) return false;
     }
+    for(size_t i=0;i<frontend_remote_q1_count(frontend);++i) {
+        frontend_remote_q1_view owner;
+        if(!frontend_remote_q1_metadata_read(frontend_remote_q1_at(frontend,i),&owner,error) ||
+            !visit_catalog(visitor,owner.domain.catalog,error) || !visit_catalog(visitor,owner.content.catalog,error) ||
+            !visit_view(visitor,owner.content.mounts,error)) return false;
+    }
     if (!frontend_native_q3_content_visit(frontend,visitor,error) ||
+        !frontend_client_sources_visit(frontend,visitor,error) ||
+        !frontend_remote_q2_content_visit(frontend,visitor,error) ||
+        !frontend_music_sources_content_visit(frontend->music_sources,visitor,error) ||
+        (frontend->global_settings_storage &&
+            !frontend_global_settings_storage_visit(frontend->global_settings_storage,visitor,error)) ||
+        !frontend_remote_q3_content_visit(frontend,visitor,error) ||
         !frontend_equipment_q3_content_visit(frontend,visitor,error) ||
         !frontend_selected_character_content_visit(frontend,visitor,error) ||
         !frontend_selected_effects_content_visit(frontend,visitor,error) ||

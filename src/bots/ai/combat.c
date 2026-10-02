@@ -3,6 +3,8 @@
 #include "source_player.h"
 #include "source_view.h"
 #include "source_combat_vectors.h"
+#include "source_storage.h"
+#include "qa/bot_movement_source.h"
 
 enum { BOT_SOLID=1, BOT_LIQUID=8|16|32, BOT_FOG=64, BOT_PLAYERCLIP=0x10000,
        BOT_SHOT=1|0x2000000|0x4000000, BOT_FIRE_RELEASED=1, BOT_RADIAL=2 };
@@ -190,8 +192,11 @@ bool bot_ai_find_enemy(qa_bots *b, bot_ai_state *s, bool *found, qa_error *e) {
     float alertness, easy;
     if (!bot_ai_character_float(b, s, BOT_C_ALERTNESS, 0, 1, &alertness, e) ||
         !bot_ai_character_float(b, s, BOT_C_EASY_FRAGGER, 0, 1, &easy, e)) return false;
-    bool hurt = s->last_health > bot_ai_inventory_value(s,QA_BOT_INV_HEALTH);
-    s->last_health=bot_ai_inventory_value(s,QA_BOT_INV_HEALTH);
+    int32_t last_health;
+    if(!bot_ai_storage_i32(b,s,QA_BOT_SOURCE_LAST_HEALTH,&last_health,false,e)) return false;
+    bool hurt = last_health > bot_ai_inventory_value(s,QA_BOT_INV_HEALTH);
+    last_health=bot_ai_inventory_value(s,QA_BOT_INV_HEALTH);
+    if(!bot_ai_storage_i32(b,s,QA_BOT_SOURCE_LAST_HEALTH,&last_health,true,e)) return false;
     float best = INFINITY;
     if (bot_ai_live(b, s->view.enemy)) {
         qa_body_state enemy;
@@ -243,19 +248,67 @@ bool bot_ai_find_enemy(qa_bots *b, bot_ai_state *s, bool *found, qa_error *e) {
     }
     return true;
 }
+typedef struct bot_move_setup_source {
+    qa_bots *bots;
+    bot_ai_state *state;
+    qa_bot_move_input input;
+} bot_move_setup_source;
+static bool move_setup_integer(void *opaque,qa_bot_move_init_field field,int32_t *out,
+                               qa_error *e) {
+    bot_move_setup_source *source=opaque;
+    switch(field) {
+        case QA_BOT_INIT_ENTITY:*out=source->input.entity;return true;
+        case QA_BOT_INIT_CLIENT:*out=source->input.client;return true;
+        case QA_BOT_INIT_PRESENCE:*out=(int32_t)source->input.presence;return true;
+        case QA_BOT_INIT_FLAGS:*out=(int32_t)source->input.flags;return true;
+    }
+    return bot_ai_fail(e,"unknown bot movement setup field");
+}
+static bool move_setup_vector(void *opaque,qa_bot_move_init_vector field,unsigned axis,
+                              float *out,qa_error *e) {
+    bot_move_setup_source *source=opaque;uint32_t offset;
+    if(axis>2) return bot_ai_fail(e,"unknown bot movement setup component");
+    switch(field) {
+        case QA_BOT_INIT_ORIGIN:offset=QA_BOT_SOURCE_PLAYER+BOT_PS_ORIGIN;break;
+        case QA_BOT_INIT_VELOCITY:offset=QA_BOT_SOURCE_PLAYER+BOT_PS_VELOCITY;break;
+        case QA_BOT_INIT_VIEW_ANGLES:offset=QA_BOT_SOURCE_VIEW_ANGLES;break;
+        case QA_BOT_INIT_VIEW_OFFSET:
+            *out=axis==2?source->input.view_offset.z:0;return true;
+        default:return bot_ai_fail(e,"unknown bot movement setup vector");
+    }
+    return bot_ai_storage_f32(source->bots,source->state,offset+axis*4,out,false,e);
+}
+static bool move_setup_think_time(void *opaque,float *out,qa_error *e) {
+    bot_move_setup_source *source=opaque;(void)e;
+    *out=source->input.think_time;return true;
+}
 bool bot_ai_move_setup(qa_bots *b, bot_ai_state *s, qa_error *e) {
-    uint32_t flags = s->player.grounded ? QA_BOT_MOVE_ON_GROUND : 0;
-    if (s->player.teleported) flags |= QA_BOT_MOVE_TELEPORTED;
-    if (s->player.water_jump) flags |= QA_BOT_MOVE_WATER_JUMP;
-    if (s->player.grapple_pull) flags |= QA_BOT_MOVE_GRAPPLE_PULL;
-    float random;
-    if(!bot_ai_random(b,&random,e)) return false;
-    if (random < s->walker) flags |= QA_BOT_MOVE_WALK;
-    qa_bot_move_input input = {.origin=s->player.origin,.velocity=s->player.velocity,
-        .view_offset=qa_vec_sub(s->player.eye,s->player.origin),.entity=s->view.entity,
-        .client=(int32_t)s->view.client,.think_time=s->view.think_time,.presence=s->player.presence,
-        .view_angles=bot_ai_view_angles(s),.flags=flags};
-    return qa_bot_moves_initialize(qa_bot_runtime_moves(b->runtime),s->movement,&input,e);
+    int32_t ground,move_flags,move_time;
+    if(!bot_ai_source_player_word(b,s,BOT_PS_GROUND_ENTITY,&ground,e) ||
+       !bot_ai_source_player_word(b,s,BOT_PS_MOVE_FLAGS,&move_flags,e)) return false;
+    uint32_t flags=ground!=1023?QA_BOT_MOVE_ON_GROUND:0;
+    if(move_flags&64) {
+        if(!bot_ai_source_player_word(b,s,BOT_PS_MOVE_TIME,&move_time,e)) return false;
+        if(move_time>0) flags|=QA_BOT_MOVE_TELEPORTED;
+    }
+    if(move_flags&256) {
+        if(!bot_ai_source_player_word(b,s,BOT_PS_MOVE_TIME,&move_time,e)) return false;
+        if(move_time>0) flags|=QA_BOT_MOVE_WATER_JUMP;
+    }
+    float walker;
+    if(!bot_ai_storage_f32(b,s,QA_BOT_SOURCE_WALKER,&walker,false,e)) return false;
+    if (walker > .5f) flags |= QA_BOT_MOVE_WALK;
+    bot_move_setup_source source={.bots=b,.state=s,.input={.flags=flags}};
+    int32_t height;
+    if(!bot_ai_source_player_word(b,s,BOT_PS_VIEW_HEIGHT,&height,e) ||
+       !bot_ai_storage_i32(b,s,QA_BOT_SOURCE_ENTITY,&source.input.entity,false,e) ||
+       !bot_ai_storage_i32(b,s,QA_BOT_SOURCE_CLIENT,&source.input.client,false,e) ||
+       !bot_ai_storage_f32(b,s,QA_BOT_SOURCE_THINK_TIME,&source.input.think_time,false,e)) return false;
+    source.input.view_offset=qa_v3(0,0,(float)height);
+    source.input.presence=(move_flags&1)?4:2;
+    qa_bot_move_init_source input={.context=&source,.integer=move_setup_integer,
+        .vector=move_setup_vector,.think_time=move_setup_think_time};
+    return qa_bot_moves_initialize_from(qa_bot_runtime_moves(b->runtime),s->movement,&input,e);
 }
 bool bot_ai_attack_move(qa_bots *b, bot_ai_state *s, qa_error *e) {
     float skill,jumper,croucher;

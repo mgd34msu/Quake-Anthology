@@ -7,7 +7,7 @@
 
 struct qa_font_library_capture { qa_font_library *library; };
 bool qa_font_library_idle(const qa_font_library *library)
-{ return library && !library->capture && !library->codec_active && !library->callbacks; }
+{ return library && !library->capture && !library->policy && !library->codec_active && !library->callbacks; }
 bool qa_font_internal_admission_ready(const qa_font_library *library, qa_error *error)
 {
     return qa_font_library_idle(library) || qa_font_fail(error,QA_ERROR_ARGUMENT,0,"Font owner callback or continuation capture is active");
@@ -471,3 +471,218 @@ bool qa_font_resolve(const qa_font_selection *selection, uint32_t codepoint, boo
     }
     return qa_font_find_glyph(selection->classic, '?', out);
 }
+
+struct qa_font_resource_policy {
+    qa_font_library *source,*destination;
+    qa_scene_resource_policy *images;
+    qa_font **original,*original_state,*staged_state,**published;
+    size_t original_count,staged_count,published_capacity;
+    bool ready,published_state;
+};
+static bool policy_current(const qa_font_resource_policy *owner)
+{
+    if (!owner || !owner->source || owner->source->policy!=owner || !owner->destination ||
+        owner->source->capture || owner->source->codec_active || owner->source->callbacks ||
+        owner->destination->capture || owner->destination->codec_active || owner->destination->callbacks)
+        return false;
+    if (owner->published_state) return true;
+    if (owner->source->font_count!=owner->original_count ||
+        qa_scene_resource_policy_source(owner->images)!=owner->source->resources ||
+        qa_scene_resource_policy_destination(owner->images)!=owner->destination->resources) return false;
+    for (size_t i=0;i<owner->original_count;++i)
+        if (owner->source->fonts[i]!=owner->original[i] ||
+            memcmp(owner->original[i],&owner->original_state[i],sizeof(qa_font))) return false;
+    return true;
+}
+static qa_font *policy_clone(qa_font_library *destination,const qa_font *source,
+    qa_scene_resource_policy *images,qa_error *error)
+{
+    qa_font *font=calloc(1,sizeof(*font));
+    if (!font) { qa_font_fail(error,QA_ERROR_MEMORY,0,"Retaining prepared font bindings"); return NULL; }
+    *font=*source; font->library=destination; font->name=NULL;
+    font->glyphs=NULL; font->images=NULL; font->sources=NULL; font->truetype_coverage=NULL;
+    font->image_count=font->source_count=0;
+    font->name=qa_font_copy_string(source->name,error);
+    font->glyphs=source->glyph_capacity?calloc(source->glyph_capacity,sizeof(*font->glyphs)):NULL;
+    font->images=source->image_capacity?calloc(source->image_capacity,sizeof(*font->images)):NULL;
+    font->sources=source->source_capacity?calloc(source->source_capacity,sizeof(*font->sources)):NULL;
+    font->truetype_coverage=source->truetype_coverage_count?
+        malloc(source->truetype_coverage_count*sizeof(*font->truetype_coverage)):NULL;
+    const qa_scene_image **mapped=source->image_count?
+        calloc(source->image_count,sizeof(*mapped)):NULL;
+    if (!font->name || (source->glyph_capacity && !font->glyphs) ||
+        (source->image_capacity && !font->images) || (source->source_capacity && !font->sources) ||
+        (source->truetype_coverage_count && !font->truetype_coverage) ||
+        (source->image_count && !mapped)) {
+        qa_font_fail(error,QA_ERROR_MEMORY,0,"Preparing actual font collections");
+        free(mapped); qa_font_internal_destroy(font); return NULL;
+    }
+    for (size_t i=0;i<source->source_count;++i) {
+        qa_resource_retain(source->sources[i]); font->sources[font->source_count++]=source->sources[i];
+    }
+    if (source->truetype_coverage_count) memcpy(font->truetype_coverage,source->truetype_coverage,
+        source->truetype_coverage_count*sizeof(*font->truetype_coverage));
+    for (size_t i=0;i<source->image_count;++i) {
+        qa_scene_image *image=NULL;
+        if (!qa_scene_resource_policy_image(images,source->images[i],&image,error)) {
+            free(mapped); qa_font_internal_destroy(font); return NULL;
+        }
+        mapped[i]=image;
+        if (!qa_font_internal_take_image(font,image,error)) {
+            free(mapped); qa_font_internal_destroy(font); return NULL;
+        }
+    }
+    for (size_t i=0;i<source->glyph_count;++i) {
+        qa_font_glyph glyph=source->glyphs[i];
+        size_t image=0;
+        while (image<source->image_count && source->images[image]!=glyph.image) ++image;
+        if (image==source->image_count && glyph.image) {
+            qa_font_fail(error,QA_ERROR_ARGUMENT,i,"Font glyph lost its actual atlas owner");
+            free(mapped); qa_font_internal_destroy(font); return NULL;
+        }
+        if (glyph.image) {
+            const qa_scene_image *old=glyph.image,*next=mapped[image];
+            glyph.image=next;
+            if (font->kind==QA_FONT_CLASSIC) {
+                if (!next->logical_width || !next->logical_height ||
+                    next->logical_width%16 || next->logical_height%16) {
+                    qa_font_fail(error,QA_ERROR_FORMAT,i,"Prepared classic font has invalid cell dimensions");
+                    free(mapped); qa_font_internal_destroy(font); return NULL;
+                }
+                glyph.width=glyph.advance=(float)next->logical_width/16;
+                glyph.height=glyph.bearing_y=(float)next->logical_height/16;
+                float x=(float)(glyph.codepoint&15u)*glyph.width;
+                float y=(float)(glyph.codepoint>>4)*glyph.height;
+                glyph.uv=(qa_scene_vec4){x/next->logical_width,y/next->logical_height,
+                    (x+glyph.width)/next->logical_width,(y+glyph.height)/next->logical_height};
+                font->line_height=font->ascent=glyph.height; font->descent=0;
+            } else if (font->kind==QA_FONT_KFONT) {
+                if (!next->logical_width || !next->logical_height) {
+                    qa_font_fail(error,QA_ERROR_FORMAT,i,"Prepared KFONT atlas has no logical extent");
+                    free(mapped); qa_font_internal_destroy(font); return NULL;
+                }
+                glyph.uv.x*= (float)old->logical_width/next->logical_width;
+                glyph.uv.z*= (float)old->logical_width/next->logical_width;
+                glyph.uv.y*= (float)old->logical_height/next->logical_height;
+                glyph.uv.w*= (float)old->logical_height/next->logical_height;
+                if (glyph.uv.x<0 || glyph.uv.y<0 || glyph.uv.z>1 || glyph.uv.w>1) {
+                    qa_font_fail(error,QA_ERROR_FORMAT,i,"Prepared KFONT glyph exceeds its actual atlas");
+                    free(mapped); qa_font_internal_destroy(font); return NULL;
+                }
+            }
+        }
+        glyph.font=font; font->glyphs[i]=glyph;
+    }
+    if (font->kind==QA_FONT_KFONT || font->kind==QA_FONT_ATLAS) {
+        font->has_cap_ink=false; font->cap_top=font->cap_height=0;
+        qa_font_internal_measure_cap_ink(font);
+    }
+    size_t capacity=font->image_count?8:0;
+    while (capacity<font->image_count) capacity*=2;
+    font->image_capacity=capacity;
+    free(mapped);
+    return font;
+}
+bool qa_font_resource_policy_prepare(qa_font_library *source,qa_scene_resource_policy *images,
+    qa_font_resource_policy **out,qa_error *error)
+{
+    if (!out || *out || !qa_font_library_idle(source) ||
+        qa_scene_resource_policy_source(images)!=source->resources ||
+        !qa_scene_resource_policy_destination(images))
+        return qa_font_fail(error,QA_ERROR_ARGUMENT,0,"Font policy requires its actual idle library and prepared resource bank");
+    qa_font_resource_policy *owner=calloc(1,sizeof(*owner));
+    if (!owner) return qa_font_fail(error,QA_ERROR_MEMORY,0,"Retaining font resource handoff");
+    owner->source=source; owner->images=images; owner->original_count=source->font_count;
+    owner->original=source->font_count?calloc(source->font_count,sizeof(*owner->original)):NULL;
+    owner->original_state=source->font_count?calloc(source->font_count,sizeof(*owner->original_state)):NULL;
+    owner->destination=qa_font_library_create(source->vfs,qa_scene_resource_policy_destination(images),error);
+    if (!owner->destination || (source->font_count && (!owner->original || !owner->original_state))) {
+        qa_font_library_destroy(owner->destination); free(owner->original); free(owner->original_state); free(owner);
+        return qa_font_fail(error,QA_ERROR_MEMORY,0,"Preparing private font destination");
+    }
+    if (!reserve((void **)&owner->destination->fonts,&owner->destination->font_capacity,
+        source->font_count,sizeof(*source->fonts),error)) {
+        qa_font_library_destroy(owner->destination); free(owner->original); free(owner->original_state); free(owner); return false;
+    }
+    source->policy=owner; *out=owner;
+    for (size_t i=0;i<source->font_count;++i) {
+        owner->original[i]=source->fonts[i]; owner->original_state[i]=*source->fonts[i];
+    }
+    for (size_t i=0;i<source->font_count;++i) {
+        qa_font *font=policy_clone(owner->destination,source->fonts[i],images,error);
+        if (!font) return false;
+        owner->destination->fonts[owner->destination->font_count++]=font;
+    }
+    return true;
+}
+qa_font_library *qa_font_resource_policy_source(const qa_font_resource_policy *owner)
+{ return owner?owner->source:NULL; }
+qa_font_library *qa_font_resource_policy_destination(const qa_font_resource_policy *owner)
+{ return owner && !owner->ready && !owner->published_state?owner->destination:NULL; }
+bool qa_font_resource_policy_font(const qa_font_resource_policy *owner,const qa_font *candidate,const qa_font **out)
+{
+    if (!out || !candidate || !policy_current(owner)) return false;
+    for (size_t i=0;i<owner->destination->font_count;++i)
+        if (owner->destination->fonts[i]==candidate) {
+            *out=i<owner->original_count?owner->original[i]:candidate; return true;
+        }
+    return false;
+}
+bool qa_font_resource_policy_ready(qa_font_resource_policy *owner,qa_error *error)
+{
+    if (!policy_current(owner) || owner->published_state ||
+        owner->destination->font_count<owner->original_count)
+        return qa_font_fail(error,QA_ERROR_ARGUMENT,0,"Font policy lost its complete destination roster");
+    if (owner->ready) return qa_font_resource_policy_ready_is(owner);
+    owner->staged_count=owner->destination->font_count;
+    owner->published_capacity=owner->destination->font_capacity;
+    owner->published=owner->published_capacity?calloc(owner->published_capacity,sizeof(*owner->published)):NULL;
+    owner->staged_state=owner->staged_count?calloc(owner->staged_count,sizeof(*owner->staged_state)):NULL;
+    if ((owner->published_capacity && !owner->published) || (owner->staged_count && !owner->staged_state)) {
+        free(owner->published); owner->published=NULL; free(owner->staged_state); owner->staged_state=NULL;
+        return qa_font_fail(error,QA_ERROR_MEMORY,0,"Sealing font policy pointer handoff");
+    }
+    for (size_t i=0;i<owner->staged_count;++i) {
+        owner->published[i]=i<owner->original_count?owner->original[i]:owner->destination->fonts[i];
+        owner->staged_state[i]=*owner->destination->fonts[i];
+    }
+    owner->destination->policy=owner; owner->ready=true; return true;
+}
+bool qa_font_resource_policy_ready_is(const qa_font_resource_policy *owner)
+{
+    if (!policy_current(owner) || !owner->ready || owner->published_state ||
+        owner->destination->policy!=owner || owner->destination->font_count!=owner->staged_count ||
+        owner->destination->font_capacity!=owner->published_capacity) return false;
+    for (size_t i=0;i<owner->staged_count;++i)
+        if (memcmp(owner->destination->fonts[i],&owner->staged_state[i],sizeof(qa_font))) return false;
+    return true;
+}
+void qa_font_resource_policy_publish(qa_font_resource_policy *owner)
+{
+    for (size_t i=0;i<owner->original_count;++i) {
+        qa_font *stable=owner->original[i],*candidate=owner->destination->fonts[i];
+        qa_font old=*stable; *stable=*candidate; *candidate=old;
+    }
+    for (size_t i=0;i<owner->staged_count;++i) {
+        qa_font *font=owner->published[i]; font->library=owner->source;
+        for (size_t j=0;j<font->glyph_count;++j) font->glyphs[j].font=font;
+    }
+    free(owner->source->fonts); owner->source->fonts=owner->published; owner->published=NULL;
+    owner->source->font_count=owner->staged_count; owner->source->font_capacity=owner->published_capacity;
+    owner->destination->font_count=owner->original_count; owner->published_state=true;
+}
+static bool policy_dispose(qa_font_resource_policy **in,bool published,qa_error *error)
+{
+    if (!in || !*in) return true;
+    qa_font_resource_policy *owner=*in;
+    if (!policy_current(owner) || owner->published_state!=published)
+        return qa_font_fail(error,QA_ERROR_ARGUMENT,0,"Font policy cleanup retains nonterminal actual parents");
+    owner->source->policy=NULL; owner->destination->policy=NULL;
+    qa_font_library_destroy(owner->destination);
+    free(owner->original); free(owner->original_state); free(owner->staged_state); free(owner->published);
+    free(owner); *in=NULL; return true;
+}
+bool qa_font_resource_policy_finish(qa_font_resource_policy **owner,qa_error *error)
+{ return policy_dispose(owner,true,error); }
+bool qa_font_resource_policy_abort(qa_font_resource_policy **owner,qa_error *error)
+{ return policy_dispose(owner,false,error); }

@@ -60,8 +60,10 @@ static bool bytes_fields(qa_source_save_io *io,qa_bytes *bytes,bool owned)
 {
     bool reading=io->direction==QA_SOURCE_SAVE_READ;
     size_t count=reading?0:bytes->size;
-    if(!qa_source_save_count(io,&count,reading?io->input.size-io->offset:SIZE_MAX)) return false;
+    if(!qa_source_save_count(io,&count,SIZE_MAX)) return false;
     if(!reading) return !count || (bytes->data && qa_source_save_bytes(io,(void *)bytes->data,count));
+    if(io->offset>io->input.size || count>io->input.size-io->offset)
+        return frontend_fail(io->error,QA_ERROR_FORMAT,"Native topology bytes exceed their remaining envelope");
     if(!owned) { *bytes=(qa_bytes){io->input.data+io->offset,count}; io->offset+=count; return true; }
     uint8_t *copy=count?malloc(count):NULL;
     if(count && !copy) return frontend_fail(io->error,QA_ERROR_MEMORY,"Retaining native source options");

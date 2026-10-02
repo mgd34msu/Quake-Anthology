@@ -83,6 +83,7 @@ struct qa_audio_mixer {
     qa_audio_mixer_options options;
     qa_audio_listener listener;
     qa_audio_transmission_fn transmission;
+    qa_audio_transmission_checked_fn transmission_checked;
     void *transmission_user;
     qa_mixer_voice *voices;
     size_t voice_count, voice_capacity, free_head;

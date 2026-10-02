@@ -20,7 +20,7 @@ typedef struct q3_file {
     qa_buffer restored_bytes;
     char *restored_path;
     qa_sha256_digest restored_digest;
-    qa_vfs_file *writable;
+    qa_q3_host_write_file *writable;
     uint64_t position;
     bool zip;
 } q3_file;
@@ -80,6 +80,14 @@ typedef struct q3_cvar_cache {
     int32_t pointer,handle;
     uint64_t address;
 } q3_cvar_cache;
+typedef struct q3_cvar_status {
+    char *previous_value;
+    uint64_t previous_modification;
+    float previous_number;
+    int32_t previous_integer;
+    uint32_t revision;
+    bool read,previous_visible;
+} q3_cvar_status;
 
 struct qa_q3_host {
     qa_q3_host_options options;
@@ -103,9 +111,11 @@ struct qa_q3_host {
     size_t cvar_binding_count;
     q3_cvar_cache *cvar_caches;
     size_t cvar_cache_count;
+    q3_cvar_status cvar_status;
     qa_actor_definition slot_definition;
     unsigned calls;
     const struct q3_call *render_call;
+    const struct q3_call *system_movie_call;
     bool retired, restore_pending, scripts_reporting, bots_shutdown;
 };
 
@@ -164,7 +174,7 @@ q3_service_result q3_common(q3_call *, int32_t *, qa_error *);
 q3_service_result q3_cvars(q3_call *, int32_t *, qa_error *);
 void q3_cvars_bindings_free(q3_cvar_binding *,size_t);
 bool q3_cvars_bindings_capture(const qa_q3_host *,qa_buffer *,qa_error *);
-bool q3_cvars_bindings_decode(qa_bytes,q3_cvar_binding **,size_t *,q3_cvar_cache **,size_t *,qa_error *);
+bool q3_cvars_bindings_decode(qa_bytes,q3_cvar_binding **,size_t *,q3_cvar_cache **,size_t *,q3_cvar_status *,qa_error *);
 bool q3_cvars_bindings_restore_ready(qa_q3_host *,qa_error *);
 q3_service_result q3_files(q3_call *, int32_t *, qa_error *);
 q3_service_result q3_information(q3_call *, int32_t *, qa_error *);

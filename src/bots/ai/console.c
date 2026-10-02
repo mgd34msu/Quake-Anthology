@@ -19,6 +19,9 @@ static void uncolor(char *text) {
     }
     *out = 0;
 }
+static bool remove_console(qa_bot_chat *chat,uint32_t handle,qa_error *error) {
+    bool removed;return qa_bot_chat_console_remove_source(chat,handle,&removed,error);
+}
 bool bot_ai_console(qa_bots *b, bot_ai_state *s, qa_error *e) {
     if (!b->services.console) return true;
     for (;;) {
@@ -50,8 +53,12 @@ bool bot_ai_messages(qa_bots *b,bot_ai_state *s,qa_error *e) {
     qa_bot_console_message message;int32_t self;char bot_name[36];
     if(!bot_ai_source_client(b,s,&self,e) ||
        !bot_ai_client_name(b,self,bot_name,sizeof(bot_name),true,e)) return false;
-    while(qa_bot_chat_console_first(chat,&message)) {
-        if(qa_bot_chat_console_count(chat)<10 && message.type==1) {
+    for(;;) {
+        bool present;int32_t count;
+        if(!qa_bot_chat_console_first_source(chat,&message,&present,e)) return false;
+        if(!present) break;
+        if(!qa_bot_chat_console_count_source(chat,&count,e)) return false;
+        if(count<10 && message.type==1) {
             float random;if(!bot_ai_random(b,&random,e)) return false;
             volatile float delay=1+random,threshold=b->time-delay;
             if(message.time>threshold) break;
@@ -70,7 +77,7 @@ bool bot_ai_messages(qa_bots *b,bot_ai_state *s,qa_error *e) {
         if(s->retired || !bot_ai_live(b,s->view.actor)) return true;
         if(!matched && message.type==1 && !b->controls.no_chat) {
             if(!qa_bot_chat_find_match(system,message.text,128,&match,&found,e)) return false;
-            if(!found || (match.subtype&32768)) {qa_bot_chat_console_remove(chat,message.handle);continue;}
+            if(!found || (match.subtype&32768)) {if(!remove_console(chat,message.handle,e)) return false;continue;}
             char name[36],body[256];
             if(!qa_bot_chat_match_variable(&match,0,name,sizeof(name),e) ||
                !qa_bot_chat_match_variable(&match,2,body,sizeof(body),e)) return false;
@@ -85,13 +92,13 @@ bool bot_ai_messages(qa_bots *b,bot_ai_state *s,qa_error *e) {
                     if(!qa_bot_library_variable_set(qa_bot_runtime_library(b->runtime),"bot_testrchat","1",e) ||
                        !qa_bot_chat_reply_message(chat,body,synonym_context,16,variables,b->time,&reply,e) ||
                        !bot_ai_source_print(b,reply?"------------------------\n":"**** no valid reply ****\n",e)) return false;
-                    qa_bot_chat_console_remove(chat,message.handle);continue;
+                    if(!remove_console(chat,message.handle,e)) return false;continue;
                 }
                 bool allowed=false;
                 if(s->view.decision!=QA_BOT_STANDING &&
                    !bot_ai_source_valid_chat_position(b,s,&allowed,e)) return false;
                 allowed=allowed && b->source_goals.game_type<3;
-                if(!allowed) {qa_bot_chat_console_remove(chat,message.handle);continue;}
+                if(!allowed) {if(!remove_console(chat,message.handle,e)) return false;continue;}
                 float chance;
                 if(!bot_ai_character_float(b,s,BOT_C_CHAT_REPLY,0,1,&chance,e)) return false;
                 float first,second;
@@ -104,7 +111,7 @@ bool bot_ai_messages(qa_bots *b,bot_ai_state *s,qa_error *e) {
                     if(reply) {
                         float duration;
                         if(!bot_ai_source_chat_time(b,s,&duration,e)) return false;
-                        qa_bot_chat_console_remove(chat,message.handle);
+                        if(!remove_console(chat,message.handle,e)) return false;
                         s->stand_until=b->time+duration;s->stand_enemy_time=b->time+1;
                         s->view.decision=QA_BOT_STANDING;
                         return true;
@@ -112,7 +119,7 @@ bool bot_ai_messages(qa_bots *b,bot_ai_state *s,qa_error *e) {
                 }
             }
         }
-        qa_bot_chat_console_remove(chat,message.handle);
+        if(!remove_console(chat,message.handle,e)) return false;
         if(s->retired || !bot_ai_live(b,s->view.actor)) return true;
     }
     return true;

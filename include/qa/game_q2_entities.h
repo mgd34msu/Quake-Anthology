@@ -319,7 +319,7 @@ typedef struct qa_q2_entity_state {
     qa_q2_visual visual;
     qa_actor_collision collision;
     qa_actor_id activator, owner, enemy, goal, team_master, team_next;
-    qa_vec3 direction, beam_end;
+    qa_vec3 direction, beam_end, multicast_origin;
     float speed, accel, decel, wait, delay, damage, health, random, volume, attenuation;
     uint64_t due_ns, timestamp_ns, debounce_ns, sound_ns, expires_ns;
     int count, style, stage;
@@ -402,6 +402,9 @@ bool qa_q2_entity_defer_targets(qa_q2_game *, const qa_target_use *, qa_error *)
 bool qa_q2_entity_visual(qa_q2_game *, qa_actor_id, qa_q2_visual *, qa_error *);
 /* Native source state only; no selected-owner callbacks or fallback publication. */
 bool qa_q2_presentation_read(qa_q2_game *, qa_actor_id, qa_q2_visual *);
+/* The actual force-wall spawn retains its multicast center independently of
+ * its two beam endpoints. This query invokes no body or GAME callbacks. */
+bool qa_q2_force_wall_multicast_origin(qa_q2_game *, qa_actor_id, qa_vec3 *);
 bool qa_q2_entity_team(qa_q2_game *, qa_actor_id, qa_actor_id *master, qa_actor_id *next);
 typedef enum qa_q2_map_mover_kind {
     QA_Q2_MOVER_DOOR, QA_Q2_MOVER_ELEVATOR, QA_Q2_MOVER_TRAIN, QA_Q2_MOVER_STATIC

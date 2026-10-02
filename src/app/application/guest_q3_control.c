@@ -10,6 +10,7 @@ struct application_guest_q3_control {
     uint32_t client_think, run_client, move, duck, movement_global, mins, maxs, callback, mask;
     qa_qvm_binding binding;
     application_guest_q3_control_scope *scope;
+    bool body_trace;
 };
 
 static bool word(const application_guest_q3_control *owner, uint32_t address,
@@ -183,6 +184,10 @@ static bool duck(void *context, const qa_qvm_call *call, int32_t *result, qa_err
             write_bounds(owner, scope, call, scope->pose.bounds, error);
         if (ok) *result = 0;
     } else {
+        if (scope->requested && !owner->body_trace)
+            return application_fail(error, QA_ERROR_UNSUPPORTED,
+                "Original requested body bounds require their declared source trace");
+        if (!owner->body_trace) return qa_qvm_proceed(call, result, error);
         body_trace trace = {.owner = owner, .scope = scope, .call = call};
         uint32_t flags;
         if (!word(owner, scope->player + 12, &flags, error) ||
@@ -216,14 +221,15 @@ bool application_guest_q3_control_attach(q3g_role *role, const application_guest
 {
     if (!role || !profile || !out || *out || role->kind != QA_QVM_GAME)
         return application_fail(error, QA_ERROR_ARGUMENT, "Original body control requires an unattached GAME owner");
-    if (!profile->has_body_trace) return true;
+    if (!profile->has_duck) return true;
     if (!profile->input_present || !profile->has_duck || !profile->has_locomotion ||
         !role->vm || !role->image || role->retired || qa_qvm_get_role(role->vm) != QA_QVM_GAME ||
         qa_qvm_get_abi(role->vm) != role->abi ||
         !qa_sha256_equal(qa_qvm_digest(role->vm), qa_qvm_image_digest(role->image)))
         return application_fail(error, QA_ERROR_FORMAT, "Original body control has no admitted QVM movement declaration");
     uint32_t scratch;
-    if (!qa_qvm_source_scratch_qualify(role->image, 92, &scratch, error)) return false;
+    if (profile->has_body_trace &&
+        !qa_qvm_source_scratch_qualify(role->image, 92, &scratch, error)) return false;
     application_guest_q3_control *owner = calloc(1, sizeof(*owner));
     if (!owner) return application_fail(error, QA_ERROR_MEMORY, "Allocating original body control owner");
     *owner = (application_guest_q3_control){.role = role, .vm = role->vm, .image = role->image,
@@ -232,7 +238,7 @@ bool application_guest_q3_control_attach(q3g_role *role, const application_guest
         .run_client = profile->run_client, .move = profile->move, .duck = profile->duck,
         .movement_global = profile->movement_global, .mins = profile->movement_mins,
         .maxs = profile->movement_maxs, .callback = profile->movement_trace_callback,
-        .mask = profile->movement_trace_mask};
+        .mask = profile->movement_trace_mask, .body_trace = profile->has_body_trace};
     if (!qa_qvm_bind_function(owner->vm, owner->duck, true, duck, owner, &owner->binding, error)) {
         free(owner); return false;
     }
@@ -251,6 +257,11 @@ bool application_guest_q3_control_detach(application_guest_q3_control **address,
 
 bool application_guest_q3_control_supports_body(const application_guest_q3_control *owner)
 {
+    return owner && owner->body_trace && application_guest_q3_control_supports_pose(owner);
+}
+
+bool application_guest_q3_control_supports_pose(const application_guest_q3_control *owner)
+{
     return owner && owner->binding && !owner->role->retired &&
         owner->role->vm == owner->vm && owner->role->image == owner->image;
 }
@@ -263,7 +274,7 @@ qa_qvm_binding application_guest_q3_control_binding(const application_guest_q3_c
 bool application_guest_q3_control_descriptor(const application_guest_q3_control *owner,
     qa_qvm_saved_function *out, qa_error *error)
 {
-    if (!out || (owner && (owner->scope || !application_guest_q3_control_supports_body(owner))))
+    if (!out || (owner && (owner->scope || !application_guest_q3_control_supports_pose(owner))))
         return application_fail(error, QA_ERROR_ARGUMENT, "Original body control descriptor requires its idle admitted owner");
     *out = owner ? (qa_qvm_saved_function){owner->binding, owner->duck, true, duck, (void *)owner}
                  : (qa_qvm_saved_function){0};
@@ -284,7 +295,7 @@ bool application_guest_q3_control_begin(application_guest_q3_control *owner, con
     if (!scope) return application_fail(error, QA_ERROR_ARGUMENT, "Original body scope requires its destination");
     *scope = (application_guest_q3_control_scope){0};
     if (!owner) return true;
-    if (!application_guest_q3_control_supports_body(owner) || !call || call->vm != owner->vm ||
+    if (!application_guest_q3_control_supports_pose(owner) || !call || call->vm != owner->vm ||
         !client || client->vm != owner->vm ||
         (client->instruction != owner->client_think && client->instruction != owner->run_client) ||
         call->instruction != owner->move || !movement || (movement & 3u) || player > INT32_MAX)
@@ -309,7 +320,8 @@ bool application_guest_q3_control_begin(application_guest_q3_control *owner, con
     if (pointer != player)
         return application_fail(error, QA_ERROR_FORMAT, "Original body scope does not own its source player pointer");
     const uint32_t offsets[] = {owner->mins, owner->maxs, owner->callback, owner->mask};
-    for (size_t i = 0; i < sizeof(offsets) / sizeof(offsets[0]); ++i)
+    size_t offset_count = owner->body_trace ? sizeof(offsets) / sizeof(offsets[0]) : 2;
+    for (size_t i = 0; i < offset_count; ++i)
         if ((uint64_t)movement + offsets[i] + (i < 2 ? 12u : 4u) > qa_qvm_memory_size(owner->vm))
             return application_fail(error, QA_ERROR_FORMAT, "Original body scope leaves its source movement record");
     scope->actor = actor; scope->slot = slot; scope->player = player; scope->movement = movement;

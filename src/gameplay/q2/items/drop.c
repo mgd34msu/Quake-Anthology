@@ -310,7 +310,8 @@ static bool clear_start_offer(qa_q2_game *g, qa_actor_id player, qa_supply *supp
 }
 static bool clear_start(qa_q2_game *g, qa_actor_id player, const qa_q2_item_definition *d,
                         qa_error *e) {
-    qa_supply *supply = q2_item_supply(g, player);
+    qa_supply *supply;
+    if (!q2_item_supply(g, player, &supply, e)) return false;
     if (d->kind == QA_Q2_ITEM_AMMO && supply && qa_supply_maps(supply, d->item, false)) {
         qa_pickup_grant grant = {.item = d->item, .amount = 0};
         if (!clear_start_offer(

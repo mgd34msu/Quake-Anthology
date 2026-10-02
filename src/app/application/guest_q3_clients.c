@@ -5,6 +5,8 @@
 #include "guest_q3_restart.h"
 #include "native_q3_wire_state.h"
 #include "native_q3_console.h"
+#include "guest_q3_combat.h"
+#include "guest_q3_weapons_services.h"
 
 bool application_q3_guest_actor_bound(application_provider *provider, qa_actor_id actor,
     uint32_t *slot)
@@ -160,6 +162,16 @@ bool application_q3_guest_client_begin(application_provider *provider, uint32_t 
     client->begun = true;
     client->carry_pending = false;
     if (!application_guest_actor_admit(provider, client->actor, error)) return false;
+    if (application_provider_for(provider->application, client->actor, QA_ROLE_CHARACTER, "") == provider) {
+        if (engine->game->combat && !application_q3_combat_admit(engine->game->combat, client->actor, error)) return false;
+        if (engine->game->weapon_services &&
+            !application_q3_guest_selected_respawn(provider, client->actor, error)) return false;
+    }
+    uint32_t seat;
+    if (engine->game->weapon_services &&
+        application_world_provider(provider->application, QA_ROLE_ENTITIES, "") == provider &&
+        qa_application_player_seat(provider->application, client->actor, &seat) &&
+        !application_q3_weapons_services_match_admit(engine->game->weapon_services, client->actor, error)) return false;
     if (!client->gamestate) {
         client->gamestate = malloc(sizeof(*client->gamestate));
         if (!client->gamestate) return application_fail(error, QA_ERROR_MEMORY, "retaining Q3 local client gamestate");
@@ -246,6 +258,55 @@ bool application_q3_guest_client_command(application_provider *provider, uint32_
     qa_command_tokens_free(&engine->arguments); engine->arguments = prior;
     if (ok && !shutdown) ok = application_guest_bots_admit(provider, error);
     if (ok && !shutdown) ok = application_guest_clients_drain(provider, error);
+    return ok;
+}
+
+bool application_q3_guest_client_command_vector(application_provider *provider, qa_actor_id actor,
+    const char *const *values, size_t count, qa_error *error)
+{
+    struct application_q3_guest *engine = q3g_engine(provider);
+    uint32_t slot;
+    if (!engine || !engine->game || !engine->game->host || !count || !values ||
+        count > SIZE_MAX / sizeof(char *) ||
+        !qa_q3_host_actor_slot(engine->game->host, actor, &slot, error))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Source command vector requires its genuine GAME actor");
+    q3g_client *client = client_slot(provider, slot, &engine, error);
+    if (!client || !client->connected || !qa_actor_id_equal(client->actor, actor))
+        return application_fail(error, QA_ERROR_NOT_FOUND, "Source command vector lost its connected full actor");
+    size_t storage = 0, args = 0;
+    for (size_t i = 0; i < count; ++i) {
+        if (!values[i]) return application_fail(error, QA_ERROR_ARGUMENT, "Source command vector has an absent word");
+        size_t length = strlen(values[i]);
+        if (length == SIZE_MAX || length + 1 > SIZE_MAX - storage ||
+            (i && length + (i > 1) > SIZE_MAX - args))
+            return application_fail(error, QA_ERROR_MEMORY, "Source command vector exceeds its retained text extent");
+        storage += length + 1;
+        if (i) args += length + (i > 1);
+    }
+    if (args == SIZE_MAX) return application_fail(error, QA_ERROR_MEMORY, "Source command arguments exceed address space");
+    qa_command_tokens next = {.count = count, .values = calloc(count, sizeof(char *)),
+        .storage = malloc(storage), .args_text = malloc(args + 1)};
+    if (!next.values || !next.storage || !next.args_text) {
+        qa_command_tokens_free(&next);
+        return application_fail(error, QA_ERROR_MEMORY, "Retaining exact Source command vector");
+    }
+    size_t offset = 0, tail = 0;
+    for (size_t i = 0; i < count; ++i) {
+        size_t length = strlen(values[i]);
+        next.values[i] = next.storage + offset;
+        memcpy(next.values[i], values[i], length + 1); offset += length + 1;
+        if (i) {
+            if (i > 1) next.args_text[tail++] = ' ';
+            memcpy(next.args_text + tail, values[i], length); tail += length;
+        }
+    }
+    next.args_text[tail] = 0;
+    qa_command_tokens prior = engine->arguments; engine->arguments = next;
+    int32_t argument = (int32_t)slot, result;
+    bool ok = q3g_call(engine->game, 6, &argument, 1, &result, error);
+    qa_command_tokens_free(&engine->arguments); engine->arguments = prior;
+    if (ok) ok = application_guest_bots_admit(provider, error);
+    if (ok) ok = application_guest_clients_drain(provider, error);
     return ok;
 }
 

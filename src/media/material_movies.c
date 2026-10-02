@@ -1,21 +1,11 @@
-#include "cinematic_internal.h"
+#include "material_movies_internal.h"
+#include "material_image.h"
+#include "qa/cinematic_restore.h"
+#include "qa/material_movies_save.h"
 
 #include <stdlib.h>
 #include <string.h>
 
-typedef struct material_movie {
-    uint64_t initial;
-    qa_cinematic *playback;
-    bool enabled;
-} material_movie;
-struct qa_material_movies {
-    qa_scene_resources *resources;
-    material_movie *movies;
-    size_t count, capacity;
-    const qa_scene_frame *prepared;
-    uint64_t sequence;
-    bool busy;
-};
 qa_material_movies *qa_material_movies_create(qa_scene_resources *resources, qa_error *error) {
     if (!resources) {
         cinematic_fail(error, "Material movies require shared scene resources");
@@ -30,35 +20,25 @@ qa_material_movies *qa_material_movies_create(qa_scene_resources *resources, qa_
     return movies;
 }
 void qa_material_movies_destroy(qa_material_movies *movies) {
-    if (!movies || movies->busy)
+    if (!movies || movies->busy || movies->pending || movies->stage_sealed)
         return;
     movies->busy = true;
     for (size_t i = 0; i < movies->count; ++i)
-        qa_cinematic_destroy(movies->movies[i].playback);
+        if (movies->restore_pending) qa_cinematic_restore_discard(movies->movies[i].playback);
+        else qa_cinematic_destroy(movies->movies[i].playback);
     free(movies->movies);
     free(movies);
 }
-static size_t position(const qa_material_movies *movies, uint64_t initial) {
-    size_t first = 0, end = movies->count;
-    while (first < end) {
-        size_t middle = first + (end - first) / 2;
-        if (movies->movies[middle].initial < initial)
-            first = middle + 1;
-        else
-            end = middle;
-    }
-    return first;
-}
 static material_movie *find(qa_material_movies *movies, uint64_t initial) {
-    size_t index = position(movies, initial);
-    return index < movies->count && movies->movies[index].initial == initial
-               ? &movies->movies[index]
-               : NULL;
+    for (size_t i = 0; i < movies->count; ++i)
+        if (movies->movies[i].initial == initial) return &movies->movies[i];
+    return NULL;
 }
 bool qa_material_movies_add(qa_material_movies *movies, qa_cinematic *playback,
                             qa_scene_frame *frame, const qa_scene_image **out, qa_error *error) {
-    if (!movies || !playback || !frame || !out || movies->busy ||
-        playback->options.target.kind != QA_CINEMATIC_MATERIAL)
+    if (!movies || !playback || !frame || !out || movies->busy || movies->pending ||
+        movies->restore_pending || movies->stage_sealed ||
+        playback->options.target.kind != QA_CINEMATIC_MATERIAL || !playback->options.target.id.material)
         return cinematic_fail(error, "Invalid material movie registration");
     for (size_t i = 0; i < movies->count; ++i)
         if (movies->movies[i].playback == playback ||
@@ -78,21 +58,19 @@ bool qa_material_movies_add(qa_material_movies *movies, qa_cinematic *playback,
         movies->capacity = capacity;
     }
     const qa_scene_image *image;
-    if (!qa_cinematic_image(playback, movies->resources, frame, &image, error)) {
+    if (!cinematic_material_initial(playback, movies->resources, frame, &image, error)) {
         return false;
     }
-    size_t at = position(movies, image->identity);
-    memmove(movies->movies + at + 1, movies->movies + at,
-            (movies->count - at) * sizeof(*movies->movies));
-    movies->movies[at] =
+    if (!image || !image->identity || find(movies, image->identity))
+        return cinematic_fail(error, "Material initial image already has a playback owner");
+    movies->movies[movies->count] =
         (material_movie){.initial = image->identity, .playback = playback, .enabled = true};
     ++movies->count;
-    movies->prepared = NULL;
     *out = image;
     return true;
 }
 bool qa_material_movies_remove(qa_material_movies *movies, uint64_t initial, qa_error *error) {
-    if (!movies || movies->busy)
+    if (!movies || movies->busy || movies->pending || movies->restore_pending || movies->stage_sealed)
         return cinematic_fail(error, "Material movies are active");
     material_movie *entry = find(movies, initial);
     if (!entry)
@@ -104,12 +82,11 @@ bool qa_material_movies_remove(qa_material_movies *movies, uint64_t initial, qa_
     movies->busy = true;
     qa_cinematic_destroy(playback);
     movies->busy = false;
-    movies->prepared = NULL;
     return true;
 }
 bool qa_material_movies_enable(qa_material_movies *movies, uint64_t initial, bool enabled,
                                qa_error *error) {
-    if (!movies || movies->busy)
+    if (!movies || movies->busy || movies->pending || movies->restore_pending || movies->stage_sealed)
         return cinematic_fail(error, "Material movies are active");
     material_movie *entry = find(movies, initial);
     if (!entry)
@@ -120,29 +97,12 @@ bool qa_material_movies_enable(qa_material_movies *movies, uint64_t initial, boo
     if (!ok)
         return false;
     entry->enabled = enabled;
-    movies->prepared = NULL;
     return true;
 }
 bool qa_material_movies_prepare(qa_material_movies *movies, qa_scene_frame *frame,
                                 qa_error *error) {
-    if (!movies || !frame || movies->busy)
+    if (!movies || !frame || movies->busy || movies->pending || movies->restore_pending || movies->stage_sealed)
         return cinematic_fail(error, "Invalid material movie frame");
-    if (movies->prepared == frame && movies->sequence == frame->sequence)
-        return true;
-    movies->busy = true;
-    bool ok = true;
-    for (size_t i = 0; ok && i < movies->count; ++i) {
-        material_movie *entry = &movies->movies[i];
-        qa_media_tick tick;
-        if (entry->enabled)
-            ok = qa_cinematic_tick(entry->playback, &tick, error);
-        const qa_scene_image *image;
-        if (ok)
-            ok = qa_cinematic_image(entry->playback, movies->resources, frame, &image, error);
-    }
-    movies->busy = false;
-    if (!ok)
-        return false;
     movies->prepared = frame;
     movies->sequence = frame->sequence;
     return true;
@@ -151,7 +111,8 @@ const qa_scene_image *qa_material_movies_resolve(void *context, uint64_t initial
                                                  qa_error *error) {
     (void)seconds;
     qa_material_movies *movies = context;
-    if (!movies || movies->busy) {
+    if (!movies || movies->busy || movies->pending || movies->restore_pending || movies->stage_sealed ||
+        !movies->prepared || movies->prepared->sequence != movies->sequence) {
         cinematic_fail(error, "Material movie registry is unavailable");
         return NULL;
     }
@@ -160,5 +121,10 @@ const qa_scene_image *qa_material_movies_resolve(void *context, uint64_t initial
         qa_error_set(error, QA_ERROR_NOT_FOUND, 0, "Unknown material movie image");
         return NULL;
     }
-    return entry->playback->image;
+    movies->busy = true;
+    qa_media_tick tick;
+    const qa_scene_image *image = NULL;
+    bool ok = !entry->enabled || qa_cinematic_tick(entry->playback, &tick, error);
+    if (ok) ok = qa_cinematic_image(entry->playback, movies->resources, movies->prepared, &image, error);
+    movies->busy = false; return ok ? image : NULL;
 }

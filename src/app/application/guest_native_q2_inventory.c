@@ -314,20 +314,27 @@ bool application_native_q2_inventory_item(struct application_native_q2 *engine,
         if (p->rows[i].index == index) { *out = p->rows[i].item; return true; }
     return application_fail(error, QA_ERROR_NOT_FOUND, "Native source index is absent from its declared inventory");
 }
-static bool client_address(application_native_q2_client *client, qa_native_address *out, qa_error *error)
+static bool source_client_address(struct application_native_q2 *engine, uint32_t slot,
+    qa_actor_id actor, qa_native_address *out, qa_error *error)
 {
-    struct application_native_q2 *engine = client->inventory_engine;
     if (!engine || !engine->provider->state.native.host ||
-        !qa_actors_get(qa_session_actors(engine->provider->application->session), client->actor))
+        !qa_actors_get(qa_session_actors(engine->provider->application->session), actor))
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 inventory actor generation retired");
     qa_native_instance *instance = qa_native_host_instance(engine->provider->state.native.host);
     qa_native_slot_binding binding; qa_native_address entity;
-    if (!qa_native_slot(instance, client->inventory_slot, &binding, error)) return false;
-    if (!qa_actor_id_equal(binding.actor, client->actor))
+    if (!qa_native_slot(instance, slot, &binding, error)) return false;
+    if (binding.kind == QA_NATIVE_SLOT_FREE || !qa_actor_id_equal(binding.actor, actor))
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 inventory source slot changed its actor generation");
-    if (!qa_native_entity_address(instance, client->inventory_slot, &entity, error) ||
-        !pointer_read(engine, entity + engine->primary_inventory->client_pointer, out, error)) return false;
-    return *out != 0 || application_fail(error, QA_ERROR_NOT_FOUND, "Native Q2 inventory client pointer is absent");
+    if (!qa_native_entity_address(instance, slot, &entity, error)) return false;
+    if (entity > UINT64_MAX - engine->primary_inventory->client_pointer)
+        return application_fail(error, QA_ERROR_FORMAT, "Native Q2 source client pointer address overflows");
+    if (!pointer_read(engine, entity + engine->primary_inventory->client_pointer, out, error)) return false;
+    return (*out != 0 && *out <= UINT64_MAX - engine->primary_inventory->client_bytes) ||
+        application_fail(error, QA_ERROR_FORMAT, "Native Q2 source client pointer cannot contain its declared fields");
+}
+static bool client_address(application_native_q2_client *client, qa_native_address *out, qa_error *error)
+{
+    return source_client_address(client->inventory_engine, client->inventory_slot, client->actor, out, error);
 }
 static size_t inventory_count(void *opaque)
 {
@@ -378,6 +385,7 @@ static bool inventory_mutable(void *opaque, qa_item_id item)
 bool application_native_q2_inventory_admit(struct application_native_q2 *engine, uint32_t slot, qa_error *error)
 {
     application_native_q2_client *client = &engine->clients[slot];
+    if (engine->primary_inventory && !resolve(engine, error)) return false;
     if (application_provider_for(engine->provider->application, client->actor, QA_ROLE_INVENTORY, NULL) != engine->provider) return true;
     if (!engine->primary_inventory) return application_fail(error, QA_ERROR_UNSUPPORTED, "Native Q2 primary inventory requires its artifact-qualified world profile");
     if (!resolve(engine, error)) return false;
@@ -464,5 +472,85 @@ bool application_native_q2_inventory_close(struct application_native_q2 *engine,
         qa_json_destroy(engine->primary_inventory->document); free(engine->primary_inventory->rows);
         free(engine->primary_inventory); engine->primary_inventory = NULL;
     }
+    return true;
+}
+
+void application_native_q2_inventory_ui_free(application_native_q2_ui_inventory *value)
+{
+    if (!value) return;
+    for (size_t i = 0; i < value->count; ++i) free(value->items[i].label);
+    free(value->items);
+    *value = (application_native_q2_ui_inventory){0};
+}
+
+bool application_native_q2_inventory_ui_read(application_provider *provider, qa_actor_id actor,
+    application_native_q2_ui_inventory *out, qa_error *error)
+{
+    struct application_native_q2 *engine = provider ? provider->state.native.q2_engine : NULL;
+    if (!engine || !out || !engine->map_ready || engine->shutting_down || engine->calls ||
+        !engine->primary_inventory || !engine->provider->state.native.host)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 UI inventory requires its returned source owner");
+    application_native_q2_client *client = NULL;
+    uint32_t slot = 0;
+    for (uint32_t i = 1; i < 257; ++i)
+        if (engine->clients[i].reserved && engine->clients[i].connected && engine->clients[i].begun &&
+            !engine->clients[i].disconnect_started && qa_actor_id_equal(engine->clients[i].actor, actor)) {
+            if (client) return application_fail(error, QA_ERROR_FORMAT, "Native Q2 UI repeats a physical source client");
+            client = &engine->clients[i]; slot = i;
+        }
+    if (!client || client->inventory_prepared || !engine->primary_inventory->resolved)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 UI inventory lost its physical client binding");
+    struct application_native_q2_inventory *p = engine->primary_inventory;
+    uint32_t cursor;
+    int64_t empty;
+    qa_json_id declaration = qa_json_get(p->document, qa_json_root(p->document), "inventory");
+    if (!word(p->document, declaration, "cursor", &cursor, error) ||
+        !qa_json_i64(p->document, qa_json_get(p->document, declaration, "empty"), &empty, error) ||
+        empty < INT32_MIN || empty > INT32_MAX || cursor > p->client_bytes || p->client_bytes - cursor < 4)
+        return application_fail(error, QA_ERROR_FORMAT, "Native Q2 inventory cursor exceeds its declared client");
+    qa_native_address base;
+    int32_t selected;
+    ++engine->calls;
+    bool entered = source_client_address(engine, slot, actor, &base, error) &&
+        scalar_read(engine, base + cursor, 4, &selected, error);
+    --engine->calls;
+    if (!entered) return false;
+    if (p->count > SIZE_MAX / sizeof(application_native_q2_ui_item))
+        return application_fail(error, QA_ERROR_MEMORY, "Native Q2 UI inventory exceeds its host extent");
+    application_native_q2_ui_inventory value = {0};
+    value.items = p->count ? calloc(p->count, sizeof(*value.items)) : NULL;
+    if (p->count && !value.items)
+        return application_fail(error, QA_ERROR_MEMORY, "Copying native Q2 UI inventory");
+    uint32_t label_base = engine->profile == QA_NATIVE_Q2_GAME_API2023 ? 11326u : 1056u;
+    bool ok = true;
+    ++engine->calls;
+    for (size_t i = 0; ok && i < p->count; ++i) {
+        const q2_inventory_row *row = &p->rows[i];
+        int32_t count;
+        if (!scalar_read(engine, base + p->inventory_offset + row->index * 4u, 4, &count, error)) { ok = false; break; }
+        if (selected != empty && selected >= 0 && (uint32_t)selected == row->index) value.selected = row->item;
+        if (!count) continue;
+        if (row->index > UINT32_MAX - label_base || label_base + row->index >= engine->configstring_count) {
+            ok = application_fail(error, QA_ERROR_FORMAT, "Native Q2 item label leaves its actual configstring namespace");
+            break;
+        }
+        const char *label = engine->configstrings[label_base + row->index];
+        if (!label) label = ""; /* An absent slot is the source's empty configstring. */
+        size_t length = strlen(label);
+        application_native_q2_ui_item *item = &value.items[value.count++];
+        *item = (application_native_q2_ui_item){.item = row->item, .count = count, .source_index = row->index};
+        item->label = malloc(length + 1);
+        if (!item->label) { ok = application_fail(error, QA_ERROR_MEMORY, "Copying native Q2 source item label"); break; }
+        memcpy(item->label, label, length + 1);
+    }
+    if (ok) {
+        qa_native_address after;
+        ok = !engine->shutting_down && engine->map_ready && client->reserved && client->connected && client->begun &&
+            !client->disconnect_started &&
+            qa_actor_id_equal(client->actor, actor) && source_client_address(engine, slot, actor, &after, error) && after == base;
+    }
+    --engine->calls;
+    if (!ok) { application_native_q2_inventory_ui_free(&value); return false; }
+    *out = value;
     return true;
 }

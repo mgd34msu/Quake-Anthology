@@ -2,10 +2,16 @@
 #define QA_APPLICATION_GUEST_Q3_PRIVATE_H
 
 #include "internal.h"
+#include "native_process_owner.h"
 #include "guest_q3_equipment_profile.h"
 #include "guest_q3_equipment.h"
 #include "guest_q3_grapple_profile.h"
 #include "guest_q3_fire.h"
+#include "guest_q3_combat_profile.h"
+#include "guest_q3_pickups_profile.h"
+#include "guest_q3_body.h"
+#include "qa/application_q3_client.h"
+#include "qa/catalog_write.h"
 #include <limits.h>
 #include <stdlib.h>
 #include <string.h>
@@ -50,11 +56,17 @@ typedef struct q3g_artifact {
     qa_native_declaration *declaration;
     qa_resource *resource;
     qa_vfs_acquisition acquisition;
+    qa_resource *items_resource;
+    qa_vfs_acquisition items_acquisition;
+    qa_resource *body_resource;
+    qa_vfs_acquisition body_acquisition;
+    application_q3_body_profile body_profile;
     qa_launch_instance_lease *descriptor;
     qa_vfs *view;
     qa_buffer primary, equipment_presentation;
     application_q3_equipment_profile equipment_profile;
     application_q3_grapple_profile *grapple_profile;
+    application_q3_combat_profile *combat_profile;
     bool qvm;
 } q3g_artifact;
 typedef struct q3g_role {
@@ -70,18 +82,31 @@ typedef struct q3g_role {
     uint64_t service_sequence;
     qa_string_id service_owner;
     qa_q3_host *host;
+    qa_catalog_write_resolver *write_resolver;
     qa_qvm_image *image;
     qa_qvm *vm;
     qa_native_module *module;
     qa_native_host *native;
     qa_native_host_q3_options native_options;
+    application_native_process_owner process;
     qa_error activation_error;
     qa_native_declaration *declaration;
     q3g_artifact *artifact;
     const qa_launch_instance *descriptor;
     struct application_guest_input *input;
     struct application_guest_projection *projection;
+    struct application_q3_catalog *catalog;
+    struct application_q3_weapons *weapons;
+    struct application_q3_weapons_services *weapon_services;
+    struct application_q3_combat *combat;
+    application_q3_pickup_profile pickup_profile;
+    struct application_q3_pickups *pickups;
     application_q3_equipment *equipment;
+    application_q3_body *body;
+    qa_application_q3_body_services body_services;
+    qa_application_q3_client_context draw_source;
+    int32_t draw_arguments[3];
+    bool draw_entry;
     char *path;
     qa_command_tokens arguments;
     qa_q3_host_common_services common;
@@ -155,6 +180,7 @@ bool q3g_role_activate(q3g_role *, qa_error *);
 bool q3g_role_shutdown(q3g_role *, bool restart, qa_error *);
 bool q3g_role_shutdown_source(q3g_role *, bool restart, qa_error *);
 bool q3g_role_consume(q3g_role *, qa_error *);
+bool q3g_role_catalog_refresh(q3g_role *, qa_error *);
 void q3g_game_aliases(struct application_q3_guest *, q3g_role *);
 bool q3g_role_restart(q3g_role *, q3g_role **, qa_error *);
 void q3g_server_bind(q3g_role *, qa_q3_host_options *);

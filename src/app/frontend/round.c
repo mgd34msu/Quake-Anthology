@@ -1,3 +1,4 @@
+#include "remote_q1_effects.h"
 #include "internal.h"
 #include "round.h"
 #include "network_q3_restart.h"
@@ -84,7 +85,7 @@ static bool source_groups_same(const qa_application_q3_round_cut *cut, qa_error 
         frontend_source_group_view now;
         const frontend_round_group *group = &cut->groups[i];
         const frontend_source_group_view *old = &group->source;
-        if (!frontend_source_group_read(f, i, &now) || now.owner != old->owner || now.seat != old->seat ||
+        if (!frontend_source_group_read(f, i, &now) || now.owner != old->owner || now.seat != old->seat || now.launch_seat!=old->launch_seat ||
             now.identity != old->identity || memcmp(now.roles, old->roles, sizeof(now.roles)) ||
             now.source_files != old->source_files || now.mounts != old->mounts || now.images != old->images ||
             now.materials != old->materials || now.fonts != old->fonts || now.sounds != old->sounds ||
@@ -150,11 +151,12 @@ static bool local_inventory(qa_application_q3_round_cut *cut, qa_error *error)
         cut->locals[i].ui = seat->ui; cut->locals[i].hud = seat->hud; cut->locals[i].wheel = seat->wheel;
         cut->locals[i].library = seat->library; cut->locals[i].mods = seat->mods;
         cut->locals[i].rankings = seat->rankings; cut->locals[i].assistance = seat->assistance;
-        qa_actor_id actor;
-        if (!qa_application_player_actor(f->application, i, &actor)) continue;
+        qa_actor_id actor; uint32_t launch_seat;
+        if (!frontend_seat_launch_id_read(f,i,&launch_seat) ||
+            !qa_application_player_actor(f->application,launch_seat,&actor)) continue;
         const qa_application_q3_round_client *row = NULL;
         for (size_t j = 0; j < cut->count; ++j)
-            if (!cut->clients[j].remote && !cut->clients[j].bot && cut->clients[j].seat == i) {
+            if (!cut->clients[j].remote && !cut->clients[j].bot && cut->clients[j].seat == launch_seat) {
                 if (row) return frontend_fail(error, QA_ERROR_FORMAT, "Q3 round repeats a local input seat");
                 row = cut->clients + j;
             }
@@ -170,8 +172,8 @@ static bool local_inventory(qa_application_q3_round_cut *cut, qa_error *error)
     }
     for (size_t i = 0; i < cut->count && !f->options.dedicated; ++i) {
         const qa_application_q3_round_client *row = cut->clients + i;
-        qa_actor_id actor;
-        if (!row->remote && !row->bot && (row->seat >= f->options.seats ||
+        qa_actor_id actor; uint32_t ordinal;
+        if (!row->remote && !row->bot && (!frontend_seat_ordinal_read(f,row->seat,&ordinal) ||
             !qa_application_player_actor(f->application, row->seat, &actor) ||
             !qa_actor_id_equal(actor, row->previous_actor)))
             return frontend_fail(error, QA_ERROR_FORMAT, "Q3 round source local has no installed command owner");
@@ -290,6 +292,10 @@ static bool begin(qa_application_q3_round_cut *cut,
     }
     frontend_audio_retire_round_aliases(f);
     f->silent_audio_remainder = 0;
+    for (size_t i=0;i<frontend_remote_q1_count(f);++i) {
+        frontend_remote_q1 *row=frontend_remote_q1_at(f,i);
+        if (!row || !remote_q1_effects_audio_detach(row,error)) return false;
+    }
     return (!f->audio || qa_audio_engine_reset_round(f->audio, error)) &&
         (!f->device || qa_audio_device_reset_round(f->device, error));
 }
@@ -331,9 +337,10 @@ static bool admit_client(qa_application_q3_round_cut *cut,
     if (client->remote) {
         if (!frontend_network_q3_round_activate_client(cut->network, client->remote_client, error)) return false;
     } else if (!client->bot && !cut->frontend->options.dedicated) {
-        if (client->seat >= cut->frontend->options.seats)
+        uint32_t ordinal;
+        if (!frontend_seat_ordinal_read(cut->frontend,client->seat,&ordinal))
             return frontend_fail(error, QA_ERROR_FORMAT, "Q3 round local client leaves its installed input seats");
-        frontend_round_local *local = cut->locals + client->seat;
+        frontend_round_local *local = cut->locals + ordinal;
         frontend_seat *seat = local->seat; qa_actor_id actual; qa_application_control_view control;
         if (!qa_application_player_actor(cut->application, client->seat, &actual) ||
             !qa_actor_id_equal(actual, actor) || !qa_application_control_read(cut->application, actor, &control) ||

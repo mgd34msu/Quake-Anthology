@@ -248,13 +248,20 @@ static bool image_bind(material_parser *parser, qa_material_stage *stage, size_t
     if (!name) { parser->lexer.failed = true; return false; }
     qa_scene_image *image = NULL;
     if (builtins && (equal(name, "$whiteimage") || equal(name, "$lightmap"))) {
-        image = (qa_scene_image *)qa_scene_white(parser->library->resources);
+        image = (qa_scene_image *)(parser->options.source_q3 ? qa_scene_source_q3_white(parser->library->resources) :
+            qa_scene_white(parser->library->resources));
+        if (!image) { free(name); parser->lexer.failed = true;
+            qa_error_set(parser->lexer.error, QA_ERROR_ARGUMENT, 0, "Source shader has no admitted white image"); return false; }
         qa_scene_image_retain(image);
         stage->lightmap = equal(name, "$lightmap");
         stage->is_lightmap |= stage->lightmap;
     } else {
         qa_scene_image_options options = parser->options;
         options.mipmap = !parser->material->no_mipmaps;
+        if (options.source_q3) {
+            options.source_upload.mipmap = options.mipmap;
+            options.source_upload.allow_picmip = !parser->material->no_picmip;
+        }
         options.wrap = clamp ? QA_SCENE_CLAMP : QA_SCENE_REPEAT;
         bool base_matches = false;
         if (parser->base_image != NULL && parser->base_name != NULL) {
@@ -421,12 +428,53 @@ static void tcmod_parse(material_parser *parser, qa_material_stage *stage)
     line_skip(&parser->lexer);
 }
 
-static void video_parse(material_parser *parser, qa_material_stage *stage, const char *source)
+static void video_parse(material_parser *parser, qa_material_stage *stage, const material_token *command, const material_token *argument)
 {
+    const char *source = argument->text;
     qa_error error = {0};
-    const qa_scene_image *image = parser->library->video_start
-        ? parser->library->video_start(parser->library->video_context, source, &error) : NULL;
-    if (error.code == QA_ERROR_MEMORY) {
+    const qa_scene_image *image = NULL;
+    const qa_material_record *retained = parser->library->refresh_record;
+    if (retained) {
+        const qa_material_video_receipt *video = retained->videos;
+        while (video && video->offset != argument->start) video = video->next;
+        if (!video || video->command != command->start || video->command_end != command->end ||
+            video->end != argument->end || strcmp(video->source, source)) {
+            qa_error_set(parser->lexer.error, QA_ERROR_FORMAT, argument->start,
+                "Shader image refresh lacks its actual video callback receipt");
+            parser->lexer.failed = true; return;
+        }
+        image = video->image;
+    } else {
+        if (parser->library->policy_source &&
+            (!parser->library->policy_video || !parser->library->video_start)) {
+            qa_error_set(parser->lexer.error, QA_ERROR_UNSUPPORTED, argument->start,
+                "New video material requires its genuine prepared media producer");
+            parser->lexer.failed = true; return;
+        }
+        qa_material_record *record = parser->library->registration_record;
+        if (!record) {
+            qa_error_set(parser->lexer.error, QA_ERROR_ARGUMENT, argument->start,
+                "Shader video registration lacks its actual registration owner");
+            parser->lexer.failed = true; return;
+        }
+        qa_material_video_receipt *video = calloc(1, sizeof(*video));
+        if (video) video->source = qa_material_string(source, parser->lexer.error);
+        if (!video || !video->source) {
+            free(video); parser->lexer.failed = true;
+            if (parser->lexer.error && !parser->lexer.error->code)
+                qa_error_set(parser->lexer.error, QA_ERROR_MEMORY, argument->start, "Retaining shader video callback receipt");
+            return;
+        }
+        video->command = command->start; video->command_end = command->end;
+        video->offset = argument->start; video->end = argument->end;
+        qa_material_video_receipt **tail = &record->videos;
+        while (*tail) tail = &(*tail)->next;
+        *tail = video;
+        if (parser->library->video_start)
+            image = parser->library->video_start(parser->library->video_context, source, &error);
+        video->image = image; qa_scene_image_retain(image);
+    }
+    if (error.code != QA_OK) {
         if (parser->lexer.error) *parser->lexer.error = error;
         parser->lexer.failed = true;
         return;
@@ -516,7 +564,7 @@ static bool stage_parse(material_parser *parser)
             }
         } else if (equal(token.text, "videomap")) {
             if (!parameter(parser, &argument)) break;
-            video_parse(parser, stage, argument.text);
+            video_parse(parser, stage, &token, &argument);
         } else if (equal(token.text, "blendfunc")) {
             if (!token_next(&parser->lexer, false, &argument)) continue;
             bool complete = true;
@@ -645,6 +693,10 @@ static bool sky_images(material_parser *parser, const char *base, bool outer)
     const qa_scene_image **images = outer ? parser->material->sky_outer_images : parser->material->sky_inner_images;
     qa_scene_image_options options = parser->options;
     options.mipmap = true;
+    if (options.source_q3) {
+        options.source_upload.mipmap = true;
+        options.source_upload.allow_picmip = !parser->material->no_picmip;
+    }
     options.usage = QA_IMAGE_USAGE_SKY;
     options.wrap = outer ? QA_SCENE_CLAMP : QA_SCENE_REPEAT;
     size_t length = strlen(base);

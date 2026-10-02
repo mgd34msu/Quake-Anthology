@@ -9,9 +9,11 @@
 #include "native_q3_team_status.h"
 #include "native_q3_match.h"
 #include "native_q3_session.h"
+#include "unified_q3_events.h"
 #include "q3_restart.h"
 #include "guest_q3_restart.h"
 #include "native_q1_respawn.h"
+#include "native_q1_composition.h"
 #include "qa/game_q3_configstrings.h"
 #include "qa/game_q3_shader_remap.h"
 #include "qa/game_q3_source.h"
@@ -41,6 +43,11 @@ static bool q2_armor(void *opaque, qa_actor_id actor, qa_error *error) {
 application_provider *application_mode_provider(qa_application *app, qa_mode_id mode) {
     qa_mode_view view;
     if (!app->modes || !qa_modes_read(app->modes, mode, &view, NULL)) return NULL;
+    if (view.origin == QA_MODE_NATIVE_Q1_COMPOSITION) {
+        application_provider *source = application_world_provider(app, QA_ROLE_ENTITIES, "");
+        return source && application_native_q1_composition_current(app, view.source_owner,
+            view.rules.source, NULL) ? source : NULL;
+    }
     const qa_launch_snapshot *snapshot = app->routing_snapshot;
     if (!snapshot && app->configuration) snapshot = qa_configuration_current(app->configuration);
     const qa_launch_choices *choices = qa_launch_snapshot_choices(snapshot);
@@ -494,7 +501,8 @@ bool application_native_q3_source_end_frame(void *opaque,
          !application_native_q3_team_status(p, error) ||
          !application_native_q3_votes_frame(p, error))) return false;
     return application_native_q3_settings_check_cvars(p, error) &&
-        q3_list_entities(p, error) && q3_source_info(p, error);
+        q3_list_entities(p, error) && q3_source_info(p, error) &&
+        application_unified_q3_events_publish(p, frame, error);
 }
 
 bool application_native_mode_emit(void *opaque, qa_mode_id mode,

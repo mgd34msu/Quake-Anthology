@@ -87,8 +87,15 @@ bool q2_noise(q2_weapon_call *c, qa_vec3 origin, qa_error *e) {
     return q2_noise_for_actor(c->game, c->actor->id, origin, false, e);
 }
 bool q2_animation(q2_weapon_call *c, int priority, int first, int last, qa_error *e) {
-    if (!c->input.animate_player || !q2_actor_live(c->game, c->actor->id))
+    if (!q2_actor_live(c->game, c->actor->id))
         return true;
+    if (c->equipment && c->game->hooks.equipment_animation && (priority == 0 || priority == 2)) {
+        bool handled = false;
+        if (!c->game->hooks.equipment_animation(c->game->hooks.context, c->actor->id,
+            priority == 2, &handled, e)) return false;
+        if (handled || !q2_actor_live(c->game, c->actor->id)) return true;
+    }
+    if (!c->input.animate_player) return true;
     qa_builtin_event event = {.kind = QA_BUILTIN_ANIMATION,
                               .family = QA_GAME_Q2,
                               .provider = c->game->options.owner,
@@ -124,7 +131,25 @@ bool q2_power_sound(q2_weapon_call *c, qa_error *e) {
            c->game->hooks.ctf_haste_sound == NULL ||
            c->game->hooks.ctf_haste_sound(c->game->hooks.context, c->actor->id, e);
 }
-float q2_multiplier(q2_weapon_call *c) {
+bool q2_multiplier(q2_weapon_call *c, float *out, qa_error *e) {
+    if (c->game->hooks.source_damage_factor != NULL) {
+        qa_actor_id actor = c->actor->id;
+        bool handled = false;
+        float source;
+        if (!c->game->hooks.source_damage_factor(c->game->hooks.context, actor,
+                                                 &source, &handled, e))
+            return false;
+        if (q2_actor_get(c->game, actor, false, e) != c->actor)
+            return false;
+        if (handled) {
+            if (!isfinite(source) || source < 0) {
+                qa_error_set(e, QA_ERROR_FORMAT, 0, "Source Q2 damage factor is not finite and nonnegative");
+                return false;
+            }
+            *out = source;
+            return true;
+        }
+    }
     bool quad = c->input.quad_until_ns > c->now_ns;
     float result =
         quad ? (c->game->hooks.quad_multiplier == NULL
@@ -135,7 +160,8 @@ float q2_multiplier(q2_weapon_call *c) {
         result *= 2;
     if (c->game->hooks.damage_multiplier != NULL)
         result *= c->game->hooks.damage_multiplier(c->game->hooks.context, c->actor->id);
-    return result;
+    *out = result;
+    return true;
 }
 void q2_kick(q2_weapon_call *c, qa_vec3 origin, qa_vec3 angles, float seconds) {
     qa_q2_weapon_state *s = c->state;

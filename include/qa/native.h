@@ -10,6 +10,7 @@ typedef struct qa_native_module qa_native_module;
 typedef struct qa_native_instance qa_native_instance;
 typedef struct qa_native_declaration qa_native_declaration;
 typedef struct qa_native_region_binding qa_native_region_binding;
+struct qa_native_process_options;
 
 typedef uint64_t qa_native_address;
 
@@ -205,11 +206,13 @@ typedef struct qa_native_options {
     bool observe;
     /* Requires a separate source process without requesting instrumentation. */
     bool isolate;
+    const struct qa_native_process_options *process;
 } qa_native_options;
 
 typedef enum qa_native_backend {
     QA_NATIVE_BACKEND_DIRECT,
-    QA_NATIVE_BACKEND_RUNNER
+    QA_NATIVE_BACKEND_RUNNER,
+    QA_NATIVE_BACKEND_OWNED_PROCESS
 } qa_native_backend;
 
 /* Runner paths are explicit packaging inputs. A Windows target on a non-Windows
@@ -221,6 +224,7 @@ typedef enum qa_native_backend {
  * guest OS calls retain the helper account's authority. */
 typedef bool (*qa_native_runner_validate_fn)(void *context, qa_native_target target,
                                              bool instrumented, qa_error *error);
+typedef bool (*qa_native_profile_validate_fn)(void *context, qa_error *error);
 typedef struct qa_native_runner_config {
     const char *windows_i386_runner;
     const char *windows_x86_64_runner;
@@ -234,6 +238,9 @@ typedef struct qa_native_runner_config {
     const char *linux_x86_64_drrun;
     const char *linux_i386_client;
     const char *linux_x86_64_client;
+    /* Source instruction monitor for the isolated Linux x64 hardware child.
+     * This is separate from the declared-region hooks client above. */
+    const char *linux_x86_64_profile;
     /* Exact process-target fallback, including AARCH64, when its ABI-specific
      * runner slot is absent. It never supplies a foreign target helper. */
     const char *same_host_runner;
@@ -244,6 +251,7 @@ typedef struct qa_native_runner_config {
      * The callback and context remain borrowed until the instance is destroyed. */
     qa_native_runner_validate_fn validate;
     void *validation_context;
+    qa_native_profile_validate_fn validate_profile;
 } qa_native_runner_config;
 
 typedef enum qa_native_lifecycle {
@@ -408,7 +416,8 @@ bool qa_native_slot(const qa_native_instance *instance, uint32_t slot, qa_native
 typedef enum qa_native_checkpoint_kind {
     QA_NATIVE_CHECKPOINT_Q2_CLASSIC,
     QA_NATIVE_CHECKPOINT_Q2_RERELEASE,
-    QA_NATIVE_CHECKPOINT_HOST_ONLY
+    QA_NATIVE_CHECKPOINT_HOST_ONLY,
+    QA_NATIVE_CHECKPOINT_OWNED_PROCESS
 } qa_native_checkpoint_kind;
 
 typedef struct qa_native_checkpoint {
@@ -423,9 +432,11 @@ typedef struct qa_native_checkpoint {
     bool has_game;
     bool has_level;
     bool has_host;
+    bool has_process;
     qa_buffer game;
     qa_buffer level;
     qa_buffer host;
+    qa_buffer process;
 } qa_native_checkpoint;
 
 typedef struct qa_native_checkpoint_request {

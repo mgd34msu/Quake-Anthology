@@ -6,6 +6,66 @@ static bool owns(qa_q1_game *g, q1_player *player, qa_q1_weapon weapon) {
                                    NULL) &&
            entry.count > 0;
 }
+
+bool qa_q1_player_selected_impulse(qa_q1_game *g, qa_actor_id actor, uint8_t impulse,
+    bool *handled, qa_error *error) {
+    if (!handled) return false;
+    *handled = false;
+    qa_q1_game_operation operation = {0};
+    if (!qa_q1_game_operation_begin(g, &operation, error)) return false;
+    q1_player *player = q1_player_get(g, actor);
+    bool okay = player && player->arsenal && q1_alive(g, actor);
+    if (!okay) qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot,
+        "Selected Q1 impulse requires its admitted full actor");
+    if (okay && impulse && g->time >= player->attack_finished) {
+        bool known = (impulse >= 1 && impulse <= 8) || impulse == 10 || impulse == 12;
+        if (g->options.program == QA_Q1_HIPNOTIC)
+            known = known || impulse == 225 || impulse == 226 ||
+                (g->options.edition == QA_Q1_RERELEASE && (impulse == 227 || impulse == 228));
+        else if (g->options.program == QA_Q1_ROGUE)
+            known = known || impulse == 20 || impulse == 21 ||
+                (impulse == 22 && g->options.deathmatch && g->options.teamplay >= 4) ||
+                (impulse >= 60 && impulse <= 64) ||
+                (g->options.edition == QA_Q1_RERELEASE && impulse >= 65 && impulse <= 68);
+        else if (g->options.program == QA_Q1_MG3)
+            known = known || impulse == 225 || impulse == 9 || impulse == 99 || impulse == 100 ||
+                (impulse >= 111 && impulse <= 115) || impulse == 118 || impulse == 122 ||
+                impulse == 227 || impulse == 228;
+        okay = known ? q1_weapon_impulse(g, player, impulse, error) :
+            q1_enable_combos(g, player, error);
+        if (okay && (!qa_q1_game_operation_live(&operation) ||
+            q1_player_get(g, actor) != player || !q1_alive(g, actor))) {
+            qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot,
+                "Selected Q1 impulse retired its actual player");
+            okay = false;
+        }
+        if (okay) {
+            player->input.impulse = 0;
+            *handled = known;
+        }
+    }
+    qa_q1_game_operation_end(&operation);
+    return okay;
+}
+
+bool qa_q1_player_source_impulse(qa_q1_game *g, qa_actor_id actor, uint8_t impulse,
+    bool *handled, qa_error *error) {
+    if (!handled) return false;
+    *handled = false;
+    qa_q1_game_operation operation = {0};
+    if (!qa_q1_game_operation_begin(g, &operation, error)) return false;
+    bool okay = qa_q1_player_source_present(g, actor);
+    if (!okay) qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot,
+        "Q1 Source impulse requires its physical client");
+    if (okay) okay = q1_source_impulse(g, actor, impulse, handled, error);
+    if (okay && (!qa_q1_game_operation_live(&operation) ||
+        !qa_q1_player_source_present(g, actor))) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot, "Q1 Source impulse lost its physical client");
+        okay = false;
+    }
+    qa_q1_game_operation_end(&operation);
+    return okay;
+}
 static unsigned required(qa_q1_weapon weapon) {
     return weapon == QA_Q1_SUPER_SHOTGUN || weapon == QA_Q1_SUPER_NAILGUN ||
                    weapon == QA_Q1_LAVA_SUPER_NAILGUN

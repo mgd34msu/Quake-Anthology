@@ -1,5 +1,6 @@
 #include "network_q1_signon.h"
 #include "qa/source_save.h"
+#include "qa/game_q1_wire.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -19,6 +20,12 @@ static application_provider *source_owner(const qa_application *app, qa_actor_ow
         if (p && p->owner == owner && p->constructed && p->attached && !p->close_pending && p->launch) return p;
     }
     return NULL;
+}
+static bool native_source(application_provider *provider) {
+    return provider && provider->kind == APPLICATION_PROVIDER_Q1 &&
+        provider == application_world_provider(provider->application, QA_ROLE_ENTITIES, "") &&
+        provider->launch && provider->launch->selection.clock.kind == QA_CLOCK_NETQUAKE &&
+        qa_q1_wire_enabled(provider->state.q1);
 }
 static bool event_valid(const qa_application_protocol_event *e, qa_error *error)
 {
@@ -63,9 +70,10 @@ bool application_q1_signon_retain(application_provider *provider,
     if (!provider || !event) return application_fail(error, QA_ERROR_ARGUMENT, "Missing Q1 signon source emission");
     if (!event->signon || (event->dialect != QA_CLOCK_NETQUAKE && event->dialect != QA_CLOCK_QUAKEWORLD)) return true;
     qa_application *app = provider->application;
-    if (!app || !provider->launch || provider->kind != APPLICATION_PROVIDER_QC || provider->owner != event->provider ||
+    if (!app || !provider->launch ||
+        (provider->kind != APPLICATION_PROVIDER_QC && !native_source(provider)) || provider->owner != event->provider ||
         provider->launch->selection.clock.kind != event->dialect)
-        return application_fail(error, QA_ERROR_UNSUPPORTED, "Q1 signon emission lacks its actual QC source owner");
+        return application_fail(error, QA_ERROR_UNSUPPORTED, "Q1 signon emission lacks its actual primary source owner");
     if (!event_valid(event, error)) return false;
     if (event->reference_count > SIZE_MAX / sizeof(*event->references))
         return application_fail(error, QA_ERROR_MEMORY, "Q1 signon reference extent exhausted");
@@ -106,7 +114,7 @@ size_t application_q1_signon_count(const qa_application *app, qa_actor_owner pro
 static bool record_valid(const qa_application *app, const application_q1_signon_record *record, qa_error *error)
 {
     application_provider *p = source_owner(app, record->event.provider);
-    if (!p || p->kind != APPLICATION_PROVIDER_QC || p->launch->selection.clock.kind != record->event.dialect ||
+    if (!p || (p->kind != APPLICATION_PROVIDER_QC && !native_source(p)) || p->launch->selection.clock.kind != record->event.dialect ||
         !qa_sha256_equal(&p->launch->identity, &record->identity) || record->source_revision > app->map_revision)
         return application_fail(error, QA_ERROR_FORMAT, "Retained Q1 signon source generation is not admitted");
     return event_valid(&record->event, error);

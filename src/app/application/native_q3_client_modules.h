@@ -2,4 +2,9 @@
 #define QA_APPLICATION_NATIVE_Q3_CLIENT_MODULES_INTERNAL_H
 #include "internal.h"
 #include "qa/application_native_q3_client_modules.h"
+enum {
+    NATIVE_Q3_CG_CONSOLE_COMMAND = 2,
+    NATIVE_Q3_UI_CONSOLE_COMMAND = 8,
+    NATIVE_Q3_UI_DRAW_CONNECT_SCREEN = 9
+};
 #endif

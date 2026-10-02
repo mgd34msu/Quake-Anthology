@@ -21,6 +21,7 @@ struct qa_material_order {
     size_t count, capacity, references, capture_depth;
     uint64_t ordinal;
     bool dirty;
+    qa_material_order_image_policy *image_policy;
 };
 
 static bool fail(qa_error *error, qa_status code, const char *message)
@@ -29,12 +30,12 @@ static bool fail(qa_error *error, qa_status code, const char *message)
 }
 
 bool qa_material_order_idle(const qa_material_order *order)
-{ return order && !order->capture_depth; }
+{ return order && !order->capture_depth && !order->image_policy; }
 
 bool qa_material_order_capture_begin(const qa_material_order *borrowed, qa_error *error)
 {
     qa_material_order *order = (qa_material_order *)borrowed;
-    if (!order || order->capture_depth == SIZE_MAX)
+    if (!order || order->image_policy || order->capture_depth == SIZE_MAX)
         return fail(error, QA_ERROR_ARGUMENT, "Renderer order capture requires its actual retained owner");
     ++order->capture_depth;
     return true;
@@ -220,6 +221,152 @@ bool qa_material_order_checkpoint(const qa_material_order *order, const qa_mater
     qa_material_order_capture_end(order);
     return ok;
 }
+
+typedef struct policy_order_child {
+    qa_material_order *owner;
+    qa_material_order_entry **entries;
+    size_t count, capacity;
+    uint64_t ordinal;
+} policy_order_child;
+struct qa_material_order_image_policy {
+    qa_material_order *owner;
+    qa_material_order_entry **original_entries, **original_sorted;
+    size_t count, capacity;
+    uint64_t ordinal;
+    bool dirty;
+    policy_order_child *children;
+    size_t child_count;
+    qa_material_order_entry **entries, **sorted;
+    size_t prepared_count, prepared_capacity;
+    bool sealed, published;
+};
+bool qa_material_order_image_policy_current(const qa_material_order_image_policy *ticket)
+{
+    if (!ticket || ticket->owner->image_policy != ticket || ticket->owner->capture_depth) return false;
+    const qa_material_order *owner = ticket->owner;
+    if (!ticket->published && (owner->entries != ticket->original_entries || owner->sorted != ticket->original_sorted ||
+        owner->count != ticket->count || owner->capacity != ticket->capacity || owner->ordinal != ticket->ordinal ||
+        owner->dirty != ticket->dirty)) return false;
+    if (ticket->published && (owner->entries != ticket->entries || owner->sorted != ticket->sorted ||
+        owner->count != ticket->prepared_count || owner->capacity != ticket->prepared_capacity ||
+        owner->ordinal != ticket->ordinal + ticket->prepared_count - ticket->count ||
+        owner->dirty != (ticket->ordinal != 0 || ticket->prepared_count != 0))) return false;
+    for (size_t i = 0; i < ticket->child_count; ++i) {
+        const policy_order_child *child = ticket->children + i;
+        if (child->owner->entries != child->entries || child->owner->capacity != child->capacity ||
+            child->owner->ordinal != child->ordinal || child->owner->capture_depth ||
+            child->owner->count != (ticket->published ? 0 : child->count)) return false;
+    }
+    return true;
+}
+bool qa_material_order_image_policy_prepare(qa_material_order *owner,
+    qa_material_order_image_policy **out, qa_error *error)
+{
+    if (!out || *out || !qa_material_order_idle(owner))
+        return fail(error, QA_ERROR_ARGUMENT, "Material order preparation requires its actual idle owner");
+    qa_material_order_image_policy *ticket = calloc(1, sizeof(*ticket));
+    if (!ticket) return fail(error, QA_ERROR_MEMORY, "Retaining prepared material order");
+    ticket->owner = owner; ticket->original_entries = owner->entries; ticket->original_sorted = owner->sorted;
+    ticket->count = owner->count; ticket->capacity = owner->capacity;
+    ticket->ordinal = owner->ordinal; ticket->dirty = owner->dirty;
+    owner->image_policy = ticket; *out = ticket; return true;
+}
+qa_material_order *qa_material_order_image_policy_source(const qa_material_order_image_policy *ticket)
+{ return qa_material_order_image_policy_current(ticket) ? ticket->owner : NULL; }
+bool qa_material_order_image_policy_associated(const qa_material_order *order)
+{ return order && qa_material_order_image_policy_current(order->image_policy); }
+bool qa_material_order_image_policy_add(qa_material_order_image_policy *ticket,
+    qa_material_order *child, qa_error *error)
+{
+    if (!qa_material_order_image_policy_current(ticket) || ticket->sealed || ticket->published ||
+        !qa_material_order_idle(child) || child == ticket->owner)
+        return fail(error, QA_ERROR_ARGUMENT, "Material admission lost its prepared destination order");
+    for (size_t i = 0; i < ticket->child_count; ++i)
+        if (ticket->children[i].owner == child) return true;
+    if (ticket->child_count == SIZE_MAX / sizeof(*ticket->children))
+        return fail(error, QA_ERROR_MEMORY, "Prepared material order children exceed address space");
+    policy_order_child *children = realloc(ticket->children, (ticket->child_count + 1) * sizeof(*children));
+    if (!children) return fail(error, QA_ERROR_MEMORY, "Retaining actual destination material order");
+    ticket->children = children;
+    children[ticket->child_count++] = (policy_order_child){child, child->entries, child->count, child->capacity, child->ordinal};
+    return true;
+}
+bool qa_material_order_image_policy_ready(qa_material_order_image_policy *ticket, qa_error *error)
+{
+    if (!qa_material_order_image_policy_current(ticket) || ticket->published)
+        return fail(error, QA_ERROR_ARGUMENT, "Prepared material order lost its actual inventories");
+    if (ticket->sealed) return qa_material_order_image_policy_ready_is(ticket);
+    size_t count = ticket->count;
+    for (size_t i = 0; i < ticket->child_count; ++i) {
+        if (ticket->children[i].count > SIZE_MAX - count)
+            return fail(error, QA_ERROR_MEMORY, "Prepared material order exceeds address space");
+        count += ticket->children[i].count;
+    }
+    if (count > UINT32_MAX || count - ticket->count > UINT64_MAX - ticket->ordinal)
+        return fail(error, QA_ERROR_MEMORY, "Prepared material ordinals or ranks exhausted");
+    size_t capacity = ticket->capacity;
+    if (capacity < count && !capacity) capacity = 64;
+    while (capacity < count) {
+        if (capacity > SIZE_MAX / 2) return fail(error, QA_ERROR_MEMORY, "Prepared material capacity overflows");
+        capacity *= 2;
+    }
+    if (capacity > SIZE_MAX / sizeof(*ticket->entries))
+        return fail(error, QA_ERROR_MEMORY, "Prepared material arrays exceed address space");
+    qa_material_order_entry **entries = capacity ? malloc(capacity * sizeof(*entries)) : NULL;
+    qa_material_order_entry **sorted = capacity ? malloc(capacity * sizeof(*sorted)) : NULL;
+    if (capacity && (!entries || !sorted)) {
+        free(entries); free(sorted); return fail(error, QA_ERROR_MEMORY, "Preparing renderer material arrays");
+    }
+    size_t index = 0;
+    for (size_t i = 0; i < ticket->count; ++i) entries[index++] = ticket->original_entries[i];
+    for (size_t i = 0; i < ticket->child_count; ++i) {
+        const policy_order_child *child = ticket->children + i;
+        /* Each destination's genuine registration ordinal owns its admission order. */
+        size_t begin = index;
+        for (size_t j = 0; j < child->count; ++j) entries[index++] = child->entries[j];
+        for (size_t j = begin + 1; j < index; ++j) {
+            qa_material_order_entry *entry = entries[j]; size_t k = j;
+            while (k > begin && entries[k - 1]->ordinal > entry->ordinal) { entries[k] = entries[k - 1]; --k; }
+            entries[k] = entry;
+        }
+    }
+    for (size_t i = 0; i < count; ++i)
+        if (!entries[i] || (entries[i]->published && !isfinite(entries[i]->material->sort))) {
+            free(entries); free(sorted); return fail(error, QA_ERROR_FORMAT, "Prepared material order contains an invalid sort");
+        }
+    ticket->entries = entries; ticket->sorted = sorted;
+    ticket->prepared_count = count; ticket->prepared_capacity = capacity; ticket->sealed = true; return true;
+}
+bool qa_material_order_image_policy_ready_is(const qa_material_order_image_policy *ticket)
+{ return qa_material_order_image_policy_current(ticket) && ticket->sealed && !ticket->published; }
+void qa_material_order_image_policy_publish(qa_material_order_image_policy *ticket)
+{
+    if (!qa_material_order_image_policy_ready_is(ticket)) return;
+    for (size_t i = ticket->count; i < ticket->prepared_count; ++i) {
+        qa_material_order_entry *entry = ticket->entries[i];
+        entry->owner = ticket->owner; entry->slot = i;
+        entry->ordinal = ticket->ordinal + i - ticket->count;
+    }
+    for (size_t i = 0; i < ticket->child_count; ++i) ticket->children[i].owner->count = 0;
+    ticket->owner->entries = ticket->entries; ticket->owner->sorted = ticket->sorted;
+    ticket->owner->count = ticket->prepared_count; ticket->owner->capacity = ticket->prepared_capacity;
+    ticket->owner->ordinal = ticket->ordinal + ticket->prepared_count - ticket->count;
+    ticket->owner->dirty = ticket->ordinal != 0 || ticket->prepared_count != 0; ticket->published = true;
+}
+static bool order_policy_end(qa_material_order_image_policy **address, bool published, qa_error *error)
+{
+    if (!address || !qa_material_order_image_policy_current(*address) || (*address)->published != published)
+        return fail(error, QA_ERROR_ARGUMENT, "Material order cleanup retains its genuine preparation");
+    qa_material_order_image_policy *ticket = *address;
+    free(published ? ticket->original_entries : ticket->entries);
+    free(published ? ticket->original_sorted : ticket->sorted);
+    ticket->owner->image_policy = NULL;
+    free(ticket->children); free(ticket); *address = NULL; return true;
+}
+bool qa_material_order_image_policy_finish(qa_material_order_image_policy **ticket, qa_error *error)
+{ return order_policy_end(ticket, true, error); }
+bool qa_material_order_image_policy_abort(qa_material_order_image_policy **ticket, qa_error *error)
+{ return order_policy_end(ticket, false, error); }
 
 bool qa_material_order_restore(qa_bytes bytes, const qa_material_checkpoint_refs *refs,
                                 qa_material_order **out, qa_error *error)

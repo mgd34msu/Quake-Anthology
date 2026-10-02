@@ -41,6 +41,10 @@ bool qa_q3_prediction_scene_current(const qa_q3_prediction_scene *, const qa_q3_
  * only at the actual packet-presentation boundary, after prediction. */
 bool qa_q3_prediction_scene_publish_poses(qa_q3_prediction_scene *, bool smooth_clients, qa_error *);
 bool qa_q3_prediction_scene_consume_teleport(qa_q3_prediction_scene *, qa_error *);
+/* Before prediction, apply the actual returned CG player-transition feedback.
+ * This selects the retained current snapshot without changing its raw PS. */
+bool qa_q3_prediction_scene_mark_teleport(qa_q3_prediction_scene *,
+    const qa_q3_prediction_scene_view *, qa_error *);
 /* Ordered membership borrows the actual current centity, including retained
  * cold rows selected by the original BuildSolidList ordering. Publication is
  * the decoded message which assigned current state, never a frame counter. */
@@ -61,6 +65,10 @@ bool qa_q3_prediction_scene_item_position(const qa_q3_prediction_scene *, const 
     const qa_q3_prediction_scene_entity_view *, qa_vec3 *, qa_error *);
 bool qa_q3_prediction_scene_trace(const qa_q3_prediction_scene *, const qa_q3_prediction_scene_view *,
     const qa_q3_prediction_scene_collision *, const qa_trace_query *, qa_trace_result *, qa_error *);
+/* Returns the literal winning currentState.number from this same query,
+ * including cold row zero, WORLD and NONE, before actor adaptation. */
+bool qa_q3_prediction_scene_trace_with_number(const qa_q3_prediction_scene *, const qa_q3_prediction_scene_view *,
+    const qa_q3_prediction_scene_collision *, const qa_trace_query *, qa_trace_result *, int32_t *, qa_error *);
 bool qa_q3_prediction_scene_point_contents(const qa_q3_prediction_scene *, const qa_q3_prediction_scene_view *,
     const qa_q3_prediction_scene_collision *, const qa_point_query *, qa_point_contents *, qa_error *);
 bool qa_q3_prediction_scene_is_bsp(const qa_q3_prediction_scene *, const qa_q3_prediction_scene_view *,

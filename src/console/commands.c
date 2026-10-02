@@ -151,6 +151,11 @@ bool qa_console_idle(const qa_console *console)
     return console == NULL || (console->frame == NULL && console->redirect == NULL &&
         console->output_calls == 0 && !console->draining && !console->cvar_scope);
 }
+bool qa_console_invocation_current(const qa_console *console,const qa_command_invocation *command)
+{
+    return console && command && command->console==console && console->frame &&
+        console->frame->invocation==command;
+}
 
 bool qa_console_output_redirected(const qa_console *console)
 {
@@ -876,6 +881,34 @@ static bool expand_macros(qa_console *console, const qa_command_context *context
     return true;
 }
 
+bool qa_console_expand_command(qa_console *console, const qa_command_context *context,
+    const char *input, qa_buffer *out, qa_error *error)
+{
+    if (!console || !input || !out || out->data || out->size ||
+        !qac_console_release_access(console, error))
+        return qac_fail(error, QA_ERROR_ARGUMENT, "Source command expansion requires an empty owned output");
+    qa_command_context source = *context_for(console, context);
+    if (console->options.capture_context &&
+        !console->options.capture_context(console->options.user, &source, &source, error)) return false;
+    if (!valid_context(console, &source, error)) return false;
+    char *expanded = NULL;
+    if (qac_q2(source.dialect)) {
+        qa_error expansion = {0};
+        if (!expand_macros(console, &source, input, &expanded, &expansion)) {
+            if (expansion.code == QA_ERROR_FORMAT) {
+                output(console, &source, expansion.message);
+                output(console, &source, ", discarded.\n");
+                if (!console->release_owner) return true;
+            }
+            if (error) *error = expansion;
+            return false;
+        }
+    } else expanded = qac_copy(input, error);
+    if (!expanded) return false;
+    *out = (qa_buffer){.data = (uint8_t *)expanded, .size = strlen(expanded) + 1};
+    return true;
+}
+
 static qa_command_result fallback_call(qa_console *console, qa_command_fallback handler,
                                         const qa_command_invocation *command, qa_error *error)
 {
@@ -993,13 +1026,14 @@ static bool dispatch_inner(qa_console *console, const qa_command_context *contex
     console->frame = &frame;
     if (console->release_owner && console->release_advancing)
         console->release_dispatch_context=&command.context;
-    bool success = true;
+    bool success = true, dispatched = false;
     if (console->options.allow_command != NULL && !console->options.allow_command(console->options.user, &command)) {
         if (console->release_owner)
             success=qac_fail(error,QA_ERROR_ARGUMENT,"source release command was refused");
         goto done;
     }
     if (!valid_context(console, context, error)) { success = false; goto done; }
+    dispatched = true;
     qac_console_program_touch(console, false);
     qac_console_release_enter(console);
     bool handled = false;
@@ -1050,6 +1084,16 @@ static bool dispatch_inner(qa_console *console, const qa_command_context *contex
     }
     success = fallback(console, &command, error);
 done:
+    if (dispatched && console->options.post_dispatch) {
+        qa_error observation={0};
+        bool observed=console->options.post_dispatch(console->options.user,&command,success,&observation);
+        if (!observed && success) {
+            if (observation.code==QA_OK)
+                qac_fail(&observation,QA_ERROR_ARGUMENT,"post-dispatch observation refused its invocation");
+            if (error && error->code==QA_OK) *error=observation;
+            success=false;
+        }
+    }
     console->frame = frame.parent;
     qa_command_tokens_free(&tokens);
     return success;

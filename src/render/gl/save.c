@@ -180,7 +180,7 @@ void gl_restore_storage_destroy(qa_gl_renderer *renderer)
 }
 static bool gl_gpu_capture(qa_gl_renderer *renderer,gl_restore_storage *saved,bool full,qa_error *error)
 {
-    if (!renderer || renderer->closed || renderer->detached || renderer->executing || renderer->capturing || renderer->preparing || renderer->opacity.active ||
+    if (!renderer || renderer->closed || renderer->detached || renderer->executing || renderer->capturing || renderer->preparing || renderer->opacity.active || renderer->controls.source.entered ||
         !qa_display_make_current(renderer->options.display,error)) return gl_save_error(error,QA_ERROR_ARGUMENT,"GPU capture requires its completed actual renderer owner");
     if (renderer->capabilities.color_bits>24 || renderer->capabilities.alpha_bits>8)
         return gl_save_error(error,QA_ERROR_UNSUPPORTED,"Native GPU color visual exceeds this exact RGBA8 continuation capture");
@@ -300,7 +300,8 @@ static bool gl_saved_caps(qa_source_save_io *io,qa_gl_capabilities *caps)
         !qa_source_save_u32(io,&caps->maximum_texture_size) || !caps->maximum_texture_size ||
         !qa_source_save_u32(io,&caps->texture_units) || caps->texture_units<3 ||
         !qa_source_save_u32(io,&caps->vertex_attributes) || caps->vertex_attributes<5 ||
-        !qa_source_save_bool(io,&caps->stereo) || !qa_source_save_bool(io,&caps->floating_depth)) return false;
+        !qa_source_save_bool(io,&caps->stereo) || !qa_source_save_bool(io,&caps->floating_depth) ||
+        !qa_source_save_bool(io,&caps->compiled_vertex_arrays)) return false;
     caps->color_bits=color; caps->alpha_bits=alpha; caps->depth_bits=depth; caps->stencil_bits=stencil;
     char *strings[4]={caps->vendor,caps->renderer,caps->version,caps->shading_language};
     for (size_t i=0;i<4;++i)
@@ -313,6 +314,7 @@ static bool gl_caps_equal(const qa_gl_capabilities *a,const qa_gl_capabilities *
         a->stencil_bits==b->stencil_bits && a->maximum_texture_size==b->maximum_texture_size &&
         a->texture_units==b->texture_units && a->vertex_attributes==b->vertex_attributes &&
         a->stereo==b->stereo && a->floating_depth==b->floating_depth &&
+        a->compiled_vertex_arrays==b->compiled_vertex_arrays &&
         !strcmp(a->vendor,b->vendor) && !strcmp(a->renderer,b->renderer) && !strcmp(a->version,b->version) &&
         !strcmp(a->shading_language,b->shading_language);
 }
@@ -375,8 +377,9 @@ static bool gl_saved_private_fields(qa_source_save_io *io,qa_gl_renderer *render
     const qa_render_checkpoint_refs *refs,const qa_gl_options *installed,const qa_gl_renderer *active)
 {
     bool reading=io->direction==QA_SOURCE_SAVE_READ;
-    uint8_t magic[4]={'Q','G','L','R'}; uint32_t version=2,draw=renderer->draw_buffer;
-    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QGLR",4) || !qa_source_save_u32(io,&version) || version!=2 ||
+    uint8_t magic[4]={'Q','G','L','R'}; uint32_t version=6,draw=renderer->draw_buffer;
+    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QGLR",4) || !qa_source_save_u32(io,&version) || version<4 || version>6 ||
+        !qa_render_controls_saved_fields(io,&renderer->controls,version,refs) ||
         !qa_source_save_u64(io,&renderer->options.owner) || !qa_source_save_u32(io,&saved->width) ||
         !qa_source_save_u32(io,&saved->height) || !gl_saved_caps(io,&renderer->capabilities) ||
         !qa_source_save_u32(io,&draw) || draw>QA_DRAW_BACK_RIGHT ||
@@ -389,6 +392,7 @@ static bool gl_saved_private_fields(qa_source_save_io *io,qa_gl_renderer *render
     if (!gl_save_extent(saved->width,saved->height,&size,io->error) ||
         (renderer->presented && (renderer->presented_width!=saved->width || renderer->presented_height!=saved->height))) return false;
     renderer->draw_buffer=(qa_scene_draw_buffer)draw;
+    if (version>=5 && !qa_output_domains_codec(io,&renderer->output_domains,saved->width,saved->height)) return false;
     if (reading) {
         if (!installed || !active || installed->owner!=renderer->options.owner || !installed->display ||
             !gl_caps_equal(&renderer->capabilities,&active->capabilities)) return false;
@@ -509,7 +513,7 @@ static bool gl_saved_write(qa_gl_renderer *renderer,gl_restore_storage *saved,
 }
 bool qa_gl_checkpoint(qa_gl_renderer *renderer,const qa_render_checkpoint_refs *refs,qa_buffer *out,qa_error *error)
 {
-    if (!out || out->data || out->size || !renderer || renderer->surface_ticket)
+    if (!out || out->data || out->size || !renderer || renderer->surface_ticket || renderer->controls.ticket || renderer->controls.source.entered)
         return gl_save_error(error,QA_ERROR_ARGUMENT,"GPU checkpoint requires empty output and an owner without retained surface settings");
     gl_restore_storage *saved=calloc(1,sizeof(*saved));
     if (!saved) return gl_save_error(error,QA_ERROR_MEMORY,"Retaining completed GPU owner continuation");
@@ -525,7 +529,8 @@ static bool gl_saved_copy_pixels(qa_buffer *out,const qa_buffer *source,qa_error
 bool qa_gl_create_detached(const qa_gl_options *options,float gamma,qa_gl_renderer *active,
     qa_gl_renderer **out,qa_gl_restore_guard **guard_out,qa_error *error)
 {
-    if (!out || !guard_out || !options || !options->display || !active || active->surface_ticket || !isfinite(gamma) || gamma<0.5f || gamma>3)
+    if (!out || !guard_out || !options || !options->display || !active || active->surface_ticket ||
+        active->controls.ticket || active->controls.source.entered || !isfinite(gamma) || gamma<0.5f || gamma>3)
         return gl_save_error(error,QA_ERROR_ARGUMENT,"Fresh GPU owner requires a real display, renderer cut, and supported gamma");
     *out=NULL; *guard_out=NULL;
     qa_display_info info={0};
@@ -539,6 +544,7 @@ bool qa_gl_create_detached(const qa_gl_options *options,float gamma,qa_gl_render
         return gl_save_error(error,QA_ERROR_MEMORY,"Allocating fresh detached GPU owners");
     }
     candidate->options=*options; candidate->detached=true; candidate->restore=saved;
+    qa_render_controls_init_gl(&candidate->controls, candidate);
     candidate->capabilities=active->capabilities; candidate->draw_buffer=QA_DRAW_BACK; candidate->gamma=gamma;
     candidate->view.viewport=(qa_scene_rect){0,0,info.drawable_width,info.drawable_height}; candidate->view.depth=1;
     bool ok=gl_gpu_capture(active,saved,false,error) && saved->width==info.drawable_width && saved->height==info.drawable_height;
@@ -576,7 +582,8 @@ bool qa_gl_restore(qa_bytes bytes,const qa_gl_options *options,const qa_render_c
     const qa_gl_renderer *active,qa_gl_renderer **out,qa_gl_restore_guard **guard_out,qa_error *error)
 {
     if (!out || !guard_out || !options || !options->display || !active || active->closed || active->detached ||
-        active->executing || active->capturing || active->preparing || active->surface_ticket || active->opacity.active)
+        active->executing || active->capturing || active->preparing || active->surface_ticket ||
+        active->controls.ticket || active->controls.source.entered || active->opacity.active)
         return gl_save_error(error,QA_ERROR_ARGUMENT,"GPU restore requires its actual idle enclosing renderer/display");
     *out=NULL; *guard_out=NULL;
     qa_gl_renderer *candidate=calloc(1,sizeof(*candidate));
@@ -587,6 +594,7 @@ bool qa_gl_restore(qa_bytes bytes,const qa_gl_options *options,const qa_render_c
         return gl_save_error(error,QA_ERROR_MEMORY,"Allocating detached GPU continuation owners");
     }
     candidate->options=*options; candidate->detached=true; candidate->restore=saved;
+    qa_render_controls_init_gl(&candidate->controls, candidate);
     qa_source_save_io io={0};
     bool ok=qa_source_save_reader(&io,NULL,bytes,error) &&
         gl_saved_private_fields(&io,candidate,saved,refs,options,active) && qa_source_save_finish(&io,NULL);
@@ -612,7 +620,7 @@ bool qa_gl_restore_checkpoint(const qa_gl_restore_guard *guard,const qa_render_c
 
 static GLint gl_saved_color_internal(const qa_gl_renderer *renderer)
 {
-    return renderer->capabilities.alpha_bits?GL_RGBA8:renderer->capabilities.color_bits<=16?GL_RGB5:GL_RGB8;
+    return renderer->capabilities.alpha_bits?GL_RGBA8:renderer->capabilities.color_bits<=16?GL_RGB565:GL_RGB8;
 }
 static GLint gl_saved_depth_internal(const qa_gl_renderer *renderer,bool native)
 {
@@ -743,7 +751,9 @@ static bool gl_saved_guard_current(const qa_gl_restore_guard *guard,qa_error *er
 {
     if (!guard || guard->transferred || !guard->active || !guard->candidate || !guard->saved ||
         guard->active->closed || guard->active->detached || guard->active->executing || guard->active->capturing ||
-        guard->active->preparing || guard->active->opacity.active || guard->candidate->closed ||
+        guard->active->preparing || guard->active->controls.ticket || guard->active->surface_ticket ||
+        guard->active->opacity.active || guard->active->controls.source.entered ||
+        guard->candidate->closed || guard->candidate->controls.ticket || guard->candidate->controls.source.entered ||
         !guard->candidate->detached || guard->candidate->restore!=guard->saved ||
         !gl_caps_equal(&guard->active->capabilities,&guard->candidate->capabilities))
         return gl_save_error(error,QA_ERROR_ARGUMENT,"GPU publication lost its actual completed renderer owners");
@@ -868,7 +878,7 @@ static const GLenum gl_presentation_enables[5]={GL_DEPTH_TEST,GL_STENCIL_TEST,GL
 bool gl_presentation_capture(qa_gl_renderer *renderer,gl_presentation_snapshot **out,qa_error *error)
 {
     if (!out || *out || !renderer || renderer->closed || renderer->detached || renderer->executing ||
-        renderer->capturing || renderer->preparing || renderer->opacity.active || renderer->target ||
+        renderer->capturing || renderer->preparing || renderer->opacity.active || renderer->controls.source.entered || renderer->target ||
         (renderer->capabilities.stencil_bits && renderer->capabilities.stencil_bits!=8) ||
         !qa_display_make_current(renderer->options.display,error))
         return gl_save_error(error,QA_ERROR_ARGUMENT,"Native presentation capture requires a completed exact renderer");

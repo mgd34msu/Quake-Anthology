@@ -3,6 +3,7 @@
 
 #include "qa/horde.h"
 #include "qa/modes_q3_session.h"
+#include "qa/modes_q1_source.h"
 
 typedef struct qa_mode_member_state {
     qa_actor_id actor;
@@ -19,6 +20,7 @@ typedef struct qa_mode_member_state {
     uint32_t vote_calls[4];
     int8_t ballots[4];
     bool joined, admin, observer_jump;
+    qa_mode_q1_source_state q1;
 } qa_mode_member_state;
 typedef struct qa_mode_item_binding {
     qa_item_id source, inventory;

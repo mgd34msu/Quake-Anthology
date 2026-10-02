@@ -172,9 +172,10 @@ bool qa_q1_selected_arsenal_spawn(qa_q1_game *g, qa_actor_id actor, qa_q1_weapon
         player->mega_rot_at = -1;
         player->air_finished = g->time + 12;
         player->drown_damage = 2;
-        memset(player->power_expires, 0, sizeof(player->power_expires));
+        q1_powers_forget(player);
         memset(player->power_flash, 0, sizeof(player->power_flash));
         player->power_warned = 0;
+        player->power_lost = 0;
         player->max_health = max_health;
         player->auto_switch = source_preference ? *source_preference : QA_Q1_SWITCH_ALWAYS;
         ok = q1_player_select_read(g, actor, player, weapon, error) &&
@@ -620,6 +621,7 @@ bool q1_pickup_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     entity->physics.solid = QA_PHYSICS_TRIGGER;
     entity->physics.motion = QA_PHYSICS_TOSS;
     entity->physics.flags = 0;
+    entity->source_movement_flags = UINT32_C(256);
     return qa_world_body_write(g->services.world, entity->id, &body, error) &&
            q1_link(g, entity, error);
 }
@@ -754,8 +756,8 @@ static bool item_original(void *context, const qa_pickup_offer *offer, bool *tak
     }
     case Q1_ITEM_POWER:
         *taken = true;
-        return qa_q1_player_power(g, actor, (qa_q1_power)(unsigned)item->count,
-                                  g->time + item->duration, error);
+        return q1_power_give(g, actor, (qa_q1_power)(unsigned)item->count,
+            item->duration, error);
     case Q1_ITEM_HORN:
         *taken = true;
         return true;
@@ -1061,6 +1063,7 @@ bool qa_q1_pickup_spawn_external(qa_q1_game *g, const qa_q1_spawn *spawn, const 
     if (!q1_create(g, spawn->classname, Q1_PICKUP, (qa_actor_id){0}, &entity, error))
         return false;
     entity->spawnflags = spawn->spawnflags;
+    entity->source_movement_flags = spawn->source_movement_flags;
     entity->count = spawn->count;
     if (!define_item(g, entity, error))
         goto fail;
@@ -1143,6 +1146,7 @@ bool q1_pickup_think(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         entity->physics.solid = QA_PHYSICS_TRIGGER;
         entity->physics.motion = QA_PHYSICS_TOSS;
         entity->physics.flags = QA_PHYSICS_KILL_VELOCITY | QA_PHYSICS_ONGROUND;
+        entity->source_movement_flags = UINT32_C(256);
         if (mg3_special(item) && (entity->spawnflags & 4)) {
             entity->physics.solid = QA_PHYSICS_NOT_SOLID;
             entity->model = 0;

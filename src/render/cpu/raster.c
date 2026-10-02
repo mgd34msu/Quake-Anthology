@@ -78,7 +78,7 @@ static bool draw_valid(const qa_scene_draw *draw, qa_error *error) {
       (unsigned)draw->mesh.primitive > QA_SCENE_LINES ||
       (unsigned)s->blend_source > QA_BLEND_SRC_ALPHA_SATURATE ||
       (unsigned)s->blend_destination > QA_BLEND_SRC_ALPHA_SATURATE ||
-      (unsigned)s->depth_test > QA_DEPTH_LESS ||
+      (unsigned)s->depth_test > QA_DEPTH_GEQUAL ||
       (unsigned)s->alpha_test > QA_ALPHA_GE128 ||
       (unsigned)s->cull > QA_CULL_BACK ||
       (unsigned)s->stencil_test > QA_STENCIL_NOTEQUAL ||
@@ -713,6 +713,33 @@ static void draw_triangle(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
              project(&polygon[i + 1], renderer, scale), attributes);
   }
 }
+static cpu_vertex source_vertex(const qa_cpu_renderer *renderer, uint32_t index,
+                                bool discrete) {
+  cpu_vertex vertex = renderer->vertices[index];
+  if (discrete) {
+    for (size_t channel = 0; channel < 4; ++channel)
+      vertex.color[channel] = (double)cpu_byte(vertex.color[channel]) / 255.0;
+    for (size_t unit = 0; unit < 2; ++unit)
+      for (size_t axis = 0; axis < 2; ++axis)
+        vertex.uv[unit][axis] = (float)vertex.uv[unit][axis];
+  }
+  return vertex;
+}
+static void draw_source_strips(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
+                                bool discrete) {
+  size_t cursor = 0;
+  qa_render_strip strip;
+  while (qa_render_strip_next(draw->mesh.indices, draw->mesh.index_count, &cursor, &strip)) {
+    cpu_vertex a = source_vertex(renderer, qa_render_strip_vertex(&strip, 0), discrete);
+    cpu_vertex b = source_vertex(renderer, qa_render_strip_vertex(&strip, 1), discrete);
+    for (size_t ordinal = 2; ordinal < strip.triangles + 2; ++ordinal) {
+      cpu_vertex c = source_vertex(renderer, qa_render_strip_vertex(&strip, ordinal), discrete);
+      cpu_vertex vertices[3] = {ordinal & 1 ? b : a, ordinal & 1 ? a : b, c};
+      draw_triangle(renderer, draw, vertices);
+      a = b; b = c;
+    }
+  }
+}
 bool cpu_draw(qa_cpu_renderer *renderer, const qa_scene_draw *input,
               qa_error *error) {
   qa_scene_draw resolved = *input;
@@ -741,6 +768,8 @@ bool cpu_draw(qa_cpu_renderer *renderer, const qa_scene_draw *input,
                    "CPU draw index is outside vertex storage");
       return false;
     }
+  renderer->depth_write = draw->state.depth_write;
+  renderer->color_write = draw->state.color_write;
   if (draw->mesh.index_count && !transform(renderer, draw, error))
     return false;
   for (size_t i = 0; i < draw->texture_count; ++i)
@@ -750,6 +779,18 @@ bool cpu_draw(qa_cpu_renderer *renderer, const qa_scene_draw *input,
       qa_scene_image_release(renderer->bound[i]);
       renderer->bound[i] = input->textures[i];
     }
+  qa_render_primitive_mode mode = draw->source_primitives && draw->mesh.primitive == QA_SCENE_TRIANGLES
+      ? qa_render_primitives_mode(renderer->controls.values.primitives, false) : QA_RENDER_PRIMITIVES_INDEXED;
+  if (mode == QA_RENDER_PRIMITIVES_NONE) return true;
+  if (mode == QA_RENDER_PRIMITIVES_DISCRETE_STRIPS && draw->texture_count > 1) {
+    qa_error_set(error, QA_ERROR_ARGUMENT, 0,
+        "Q3 Source discrete multitexture targets 0 and 1 are invalid");
+    return false;
+  }
+  if (mode == QA_RENDER_PRIMITIVES_ARRAY_STRIPS || mode == QA_RENDER_PRIMITIVES_DISCRETE_STRIPS) {
+    draw_source_strips(renderer, draw, mode == QA_RENDER_PRIMITIVES_DISCRETE_STRIPS);
+    return true;
+  }
   if (draw->mesh.primitive == QA_SCENE_LINES) {
     for (size_t i = 0; i < draw->mesh.index_count; i += 2)
       line(renderer, draw, renderer->vertices[draw->mesh.indices[i]],

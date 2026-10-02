@@ -176,7 +176,7 @@ bool qa_pickups_observe(qa_pickups *service,qa_actor_id actor,qa_actor_owner own
         return fail(e,QA_ERROR_ARGUMENT,"pickup observation belongs to another source");
     if(actor.slot>=service->observation_capacity) {
         uint32_t capacity=qa_actors_capacity(service->actors);
-        if((size_t)capacity>SIZE_MAX/sizeof(*service->observations)) return fail(e,QA_ERROR_MEMORY,"pickup observation table overflow");
+        if(capacity && sizeof(*service->observations)>SIZE_MAX/(size_t)capacity) return fail(e,QA_ERROR_MEMORY,"pickup observation table overflow");
         pickup_observation_owner **slots=realloc(service->observations,(size_t)capacity*sizeof(*slots));
         if(!slots) return fail(e,QA_ERROR_MEMORY,"allocating pickup observation table");
         memset(slots+service->observation_capacity,0,(capacity-service->observation_capacity)*sizeof(*slots));
@@ -666,8 +666,15 @@ static void supply_leave(qa_supply *supply)
 static void supply_enter(qa_supply *supply)
 { ++supply->calls; qa_inventory_hold(supply->inventory); }
 
-static bool supply_current(qa_supply *supply, qa_error *e)
+static bool supply_available(qa_supply *supply, qa_error *e)
 { return (supply && !supply->closed) || fail(e, QA_ERROR_NOT_FOUND, "Pickup supply service retired"); }
+
+static bool supply_current(qa_supply *supply, qa_actor_id actor, qa_error *e)
+{
+    if (!supply_available(supply, e)) return false;
+    if (supply->hooks.current && !supply->hooks.current(supply->hooks.context, actor, e)) return false;
+    return supply_available(supply, e);
+}
 
 static const qa_supply_mapping *mapping_find(const qa_supply_mapping *mappings, size_t count, qa_item_id item)
 {
@@ -709,16 +716,25 @@ static bool mappings_copy(const qa_supply_mapping *input, size_t count,
     return ok;
 }
 
-static bool owners_valid(const qa_supply_source_owner *owners, size_t count,
-                          const qa_supply_mapping *mappings, size_t mapping_count, qa_error *e)
+static bool owners_unique(const qa_supply_source_owner *owners, size_t count, qa_error *e)
 {
     if ((count && !owners) || count > SIZE_MAX / sizeof(*owners)) return fail(e, QA_ERROR_ARGUMENT, "Invalid pickup source owners");
     for (size_t i = 0; i < count; ++i) {
-        if (!mapping_contains(mapping_find(mappings, mapping_count, owners[i].source), owners[i].item))
+        if (!owners[i].item || !owners[i].source)
             return fail(e, QA_ERROR_ARGUMENT, "Selected item has an invalid original owner");
         for (size_t j = 0; j < i; ++j) if (owners[j].item == owners[i].item)
             return fail(e, QA_ERROR_ARGUMENT, "Selected item has duplicate original owners");
     }
+    return true;
+}
+
+static bool owners_valid(const qa_supply_source_owner *owners, size_t count,
+                          const qa_supply_mapping *mappings, size_t mapping_count, qa_error *e)
+{
+    if (!owners_unique(owners, count, e)) return false;
+    for (size_t i = 0; i < count; ++i)
+        if (!mapping_contains(mapping_find(mappings, mapping_count, owners[i].source), owners[i].item))
+            return fail(e, QA_ERROR_ARGUMENT, "Selected item has an invalid original owner");
     return true;
 }
 
@@ -744,7 +760,7 @@ bool qa_supply_create(qa_inventory *inventory, const qa_supply_profile *profile,
     bool ok = mappings_copy(profile->weapons, profile->weapon_count, &supply->profile.weapons, e) &&
         mappings_copy(profile->ammo, profile->ammo_count, &supply->profile.ammo, e) &&
         owners_valid(profile->weapon_owners, profile->weapon_owner_count, supply->profile.weapons, profile->weapon_count, e) &&
-        owners_valid(profile->ammo_owners, profile->ammo_owner_count, supply->profile.ammo, profile->ammo_count, e) &&
+        owners_unique(profile->ammo_owners, profile->ammo_owner_count, e) &&
         owners_copy(profile->weapon_owners, profile->weapon_owner_count, &supply->profile.weapon_owners, e) &&
         owners_copy(profile->ammo_owners, profile->ammo_owner_count, &supply->profile.ammo_owners, e);
     if (!ok) { supply_free(supply); return false; }
@@ -757,6 +773,8 @@ void qa_supply_destroy(qa_supply *supply)
     supply->closed = true;
     if (!supply->calls) supply_free(supply);
 }
+
+bool qa_supply_idle(const qa_supply *supply) { return !supply || supply->calls == 0; }
 
 bool qa_supply_maps(const qa_supply *supply, qa_item_id item, bool weapon)
 {
@@ -841,9 +859,9 @@ static bool require_entries(qa_supply *supply, qa_actor_id actor, const supply_g
 {
     qa_inventory_entry entry;
     for (size_t i = 0; i < grants->weapon_count; ++i)
-        if (!qa_inventory_entry_read(supply->inventory, actor, grants->weapons[i], &entry, e) || !supply_current(supply, e)) return false;
+        if (!qa_inventory_entry_read(supply->inventory, actor, grants->weapons[i], &entry, e) || !supply_current(supply, actor, e)) return false;
     for (size_t i = 0; i < grants->ammo_count; ++i)
-        if (!qa_inventory_entry_read(supply->inventory, actor, grants->ammo[i].item, &entry, e) || !supply_current(supply, e)) return false;
+        if (!qa_inventory_entry_read(supply->inventory, actor, grants->ammo[i].item, &entry, e) || !supply_current(supply, actor, e)) return false;
     return true;
 }
 
@@ -855,9 +873,9 @@ static bool resolve_quantities(qa_supply *supply, qa_actor_id actor, supply_gran
     if (grants->ammo_count && !grants->exact) return fail(e, QA_ERROR_MEMORY, "Cannot allocate pickup quantity decisions");
     for (size_t i = 0; i < grants->ammo_count; ++i) {
         qa_inventory_entry entry;
-        if (!qa_inventory_entry_read(supply->inventory, actor, grants->ammo[i].item, &entry, e) || !supply_current(supply, e)) return false;
+        if (!qa_inventory_entry_read(supply->inventory, actor, grants->ammo[i].item, &entry, e) || !supply_current(supply, actor, e)) return false;
         qa_supply_quantity quantity = {0};
-        if (!options->quantity(options->quantity_context, &entry, &quantity, e) || !supply_current(supply, e)) return false;
+        if (!options->quantity(options->quantity_context, &entry, &quantity, e) || !supply_current(supply, actor, e)) return false;
         if (!isfinite(quantity.amount) || (!quantity.exact && quantity.amount < 0)) return fail(e, QA_ERROR_ARGUMENT, "Invalid original pickup quantity");
         grants->ammo[i].amount = quantity.amount;
         grants->exact[i] = quantity.exact;
@@ -875,14 +893,14 @@ static bool grant_ammo(qa_supply *supply, qa_actor_id actor, const supply_grants
     for (size_t i = 0; i < grants->ammo_count; ++i) {
         qa_inventory_entry entry;
         qa_pickup_grant grant = grants->ammo[i];
-        if (!qa_inventory_entry_read(supply->inventory, actor, grant.item, &entry, e) || !supply_current(supply, e)) return false;
+        if (!qa_inventory_entry_read(supply->inventory, actor, grant.item, &entry, e) || !supply_current(supply, actor, e)) return false;
         receipts[i] = (qa_pickup_receipt){.item = grant.item, .before = entry.count};
         if (grants->exact && grants->exact[i]) {
             entry.count += grant.amount;
-            if (!qa_inventory_configure(supply->inventory, actor, &entry, NULL, NULL, e) || !supply_current(supply, e) ||
-                !qa_inventory_entry_read(supply->inventory, actor, grant.item, &entry, e) || !supply_current(supply, e)) return false;
+            if (!qa_inventory_configure(supply->inventory, actor, &entry, NULL, NULL, e) || !supply_current(supply, actor, e) ||
+                !qa_inventory_entry_read(supply->inventory, actor, grant.item, &entry, e) || !supply_current(supply, actor, e)) return false;
             receipts[i].given = entry.count - receipts[i].before;
-        } else if (!qa_inventory_give(supply->inventory, actor, grant.item, grant.amount, &receipts[i].given, e) || !supply_current(supply, e)) return false;
+        } else if (!qa_inventory_give(supply->inventory, actor, grant.item, grant.amount, &receipts[i].given, e) || !supply_current(supply, actor, e)) return false;
     }
     return true;
 }
@@ -902,7 +920,7 @@ static bool grant_resolved(qa_supply *supply, qa_actor_id actor, supply_grants *
     if (!ok) { free(receipts); return false; }
     if (weapon_offer) for (size_t i = 0; ok && i < grants->weapon_count; ++i) {
         double given;
-        ok = qa_inventory_give(supply->inventory, actor, grants->weapons[i], 1, &given, e) && supply_current(supply, e);
+        ok = qa_inventory_give(supply->inventory, actor, grants->weapons[i], 1, &given, e) && supply_current(supply, actor, e);
     }
     if (ok) ok = grant_ammo(supply, actor, grants, receipts, e);
     bool taken = weapon_offer || (grants->acceptance_override && grants->accepted);
@@ -913,16 +931,16 @@ static bool grant_resolved(qa_supply *supply, qa_actor_id actor, supply_grants *
             for (size_t i = 0; ok && i < grants->weapon_count; ++i) {
                 bool shared = false;
                 for (size_t j = 0; j < grants->ammo_count; ++j) if (grants->ammo[j].item == grants->weapons[i]) { shared = true; break; }
-                if (!shared) { double given; ok = qa_inventory_give(supply->inventory, actor, grants->weapons[i], 1, &given, e) && supply_current(supply, e); }
+                if (!shared) { double given; ok = qa_inventory_give(supply->inventory, actor, grants->weapons[i], 1, &given, e) && supply_current(supply, actor, e); }
             }
         }
         if (ok && grants->weapon_count && supply->hooks.weapon_granted) {
             bool select = weapon_offer || !options->only_empty;
             for (size_t i = 0; i < grants->ammo_count; ++i) select |= receipts[i].before == 0 && receipts[i].given > 0;
             ok = supply->hooks.weapon_granted(supply->hooks.context, actor, grants->weapons, grants->weapon_count,
-                select ? options->selection : QA_PICKUP_SWITCH_NEVER, e);
+                select ? options->selection : QA_PICKUP_SWITCH_NEVER, e) && supply_current(supply, actor, e);
         } else if (ok && !weapon_offer && !grants->weapon_count && supply->hooks.ammo_granted)
-            ok = supply->hooks.ammo_granted(supply->hooks.context, actor, receipts, grants->ammo_count, options->auto_switch, e);
+            ok = supply->hooks.ammo_granted(supply->hooks.context, actor, receipts, grants->ammo_count, options->auto_switch, e) && supply_current(supply, actor, e);
     }
     free(receipts);
     if (ok) *accepted = taken;
@@ -933,11 +951,11 @@ bool qa_supply_apply(qa_supply *supply, qa_actor_id actor, const qa_supply_offer
                       const qa_supply_options *options, bool *accepted, qa_error *e)
 {
     if (!options || !accepted) return fail(e, QA_ERROR_ARGUMENT, "Missing pickup supply options or result");
-    if (!selection_valid(options->selection, e) || !supply_current(supply, e)) return false;
+    if (!selection_valid(options->selection, e) || !supply_available(supply, e)) return false;
     qa_supply_options captured = *options;
     supply_enter(supply);
     supply_grants grants = {0};
-    bool ok = resolve_offer(supply, offer, &captured, &grants, e) &&
+    bool ok = supply_current(supply, actor, e) && resolve_offer(supply, offer, &captured, &grants, e) &&
         grant_resolved(supply, actor, &grants, offer->kind == QA_SUPPLY_WEAPON, &captured, accepted, e);
     grants_free(&grants); supply_leave(supply); return ok;
 }
@@ -962,9 +980,9 @@ bool qa_supply_cargo(qa_supply *supply, qa_actor_id actor, const qa_pickup_cargo
                       qa_pickup_selection_mode selection, bool canonical, bool *accepted, qa_error *e)
 {
     if (!accepted) return fail(e, QA_ERROR_ARGUMENT, "Missing cargo acceptance result");
-    if (!supply_current(supply, e) || !selection_valid(selection, e) || !cargo_valid(cargo, count, e)) return false;
+    if (!supply_available(supply, e) || !selection_valid(selection, e) || !cargo_valid(cargo, count, e)) return false;
     supply_enter(supply);
-    supply_grants grants = {0}; bool ok = true;
+    supply_grants grants = {0}; bool ok = supply_current(supply, actor, e);
     for (size_t i = 0; ok && i < count; ++i)
         if (cargo[i].weapon) ok = resolve_weapon(supply, &grants, cargo[i].item, canonical, e);
         else ok = resolve_ammo(supply, &grants, (qa_pickup_grant){cargo[i].item, cargo[i].count}, canonical, false, e);
@@ -977,9 +995,9 @@ bool qa_supply_cargo(qa_supply *supply, qa_actor_id actor, const qa_pickup_cargo
 bool qa_supply_owns(qa_supply *supply, qa_actor_id actor, qa_item_id item, bool *owned, qa_error *e)
 {
     if (!owned) return fail(e, QA_ERROR_ARGUMENT, "Missing supply ownership result");
-    if (!supply_current(supply, e)) return false;
+    if (!supply_available(supply, e)) return false;
     supply_enter(supply);
-    const qa_supply_mapping *mapping = destinations(supply, item, true, e);
+    const qa_supply_mapping *mapping = supply_current(supply, actor, e) ? destinations(supply, item, true, e) : NULL;
     bool ok = mapping != NULL, all = true;
     for (size_t i = 0; ok && i < mapping->count; ++i) {
         qa_inventory_entry entry;
@@ -989,9 +1007,10 @@ bool qa_supply_owns(qa_supply *supply, qa_actor_id actor, qa_item_id item, bool 
             if (e) *e = read_error;
             ok = false; break;
         }
-        ok = supply_current(supply, e);
+        ok = supply_current(supply, actor, e);
         if (entry.count <= 0) { all = false; break; }
     }
+    if (ok) ok = supply_current(supply, actor, e);
     if (ok) *owned = all;
     supply_leave(supply); return ok;
 }
@@ -999,11 +1018,11 @@ bool qa_supply_owns(qa_supply *supply, qa_actor_id actor, qa_item_id item, bool 
 bool qa_supply_select_weapon(qa_supply *supply, qa_actor_id actor, qa_item_id item,
                               qa_pickup_selection_mode selection, qa_error *e)
 {
-    if (!selection_valid(selection, e) || !supply_current(supply, e)) return false;
+    if (!selection_valid(selection, e) || !supply_available(supply, e)) return false;
     supply_enter(supply);
     supply_grants grants = {0};
-    bool ok = resolve_weapon(supply, &grants, item, false, e) && require_entries(supply, actor, &grants, e);
-    if (ok && supply->hooks.weapon_granted) ok = supply->hooks.weapon_granted(supply->hooks.context, actor, grants.weapons, grants.weapon_count, selection, e);
+    bool ok = supply_current(supply, actor, e) && resolve_weapon(supply, &grants, item, false, e) && require_entries(supply, actor, &grants, e);
+    if (ok && supply->hooks.weapon_granted) ok = supply->hooks.weapon_granted(supply->hooks.context, actor, grants.weapons, grants.weapon_count, selection, e) && supply_current(supply, actor, e);
     grants_free(&grants); supply_leave(supply); return ok;
 }
 
@@ -1094,7 +1113,7 @@ static bool preview_resolved(qa_supply *supply, qa_actor_id actor, const supply_
     qa_pickup_grant *weapons = NULL;
     size_t count = 0;
     bool ok = require_entries(supply, actor, grants, e) &&
-        qa_inventory_entries(supply->inventory, actor, NULL, 0, &count, e) && supply_current(supply, e);
+        qa_inventory_entries(supply->inventory, actor, NULL, 0, &count, e) && supply_current(supply, actor, e);
     if (!ok) goto done;
     if (count > SIZE_MAX / sizeof(*entries) || grants->weapon_count > SIZE_MAX / sizeof(*weapons)) {
         ok = fail(e, QA_ERROR_MEMORY, "Pickup preview size overflow"); goto done;
@@ -1104,7 +1123,7 @@ static bool preview_resolved(qa_supply *supply, qa_actor_id actor, const supply_
     if (!entries || (grants->weapon_count && !weapons)) {
         ok = fail(e, QA_ERROR_MEMORY, "Cannot allocate pickup preview"); goto done;
     }
-    ok = qa_inventory_entries(supply->inventory, actor, entries, count, &count, e) && supply_current(supply, e);
+    ok = qa_inventory_entries(supply->inventory, actor, entries, count, &count, e) && supply_current(supply, actor, e);
     if (!ok) goto done;
     for (size_t i = 0; i < grants->weapon_count; ++i) weapons[i] = (qa_pickup_grant){grants->weapons[i], 1};
     qa_pickup_grant_plan plan = {.weapon_offer = weapon_offer, .weapons = weapons,
@@ -1120,10 +1139,10 @@ bool qa_supply_preview(qa_supply *supply, qa_actor_id actor, const qa_supply_off
                         bool canonical, qa_supply_preview_result *out, qa_error *e)
 {
     if(!out) return fail(e,QA_ERROR_ARGUMENT,"Missing supply preview result");
-    if(!supply_current(supply,e)) return false;
+    if(!supply_available(supply,e)) return false;
     supply_enter(supply);
     supply_grants grants={0};qa_supply_options options={.canonical=canonical};
-    bool ok=resolve_offer(supply,offer,&options,&grants,e) &&
+    bool ok=supply_current(supply,actor,e) && resolve_offer(supply,offer,&options,&grants,e) &&
         preview_resolved(supply,actor,&grants,offer->kind==QA_SUPPLY_WEAPON,out,e);
     grants_free(&grants);supply_leave(supply);return ok;
 }
@@ -1131,8 +1150,8 @@ bool qa_supply_cargo_preview(qa_supply *supply,qa_actor_id actor,const qa_pickup
                               size_t count,bool canonical,qa_supply_preview_result *out,qa_error *e)
 {
     if(!out) return fail(e,QA_ERROR_ARGUMENT,"Missing cargo preview result");
-    if(!supply_current(supply,e) || !cargo_valid(cargo,count,e)) return false;
-    supply_enter(supply);supply_grants grants={0};bool ok=true;
+    if(!supply_available(supply,e) || !cargo_valid(cargo,count,e)) return false;
+    supply_enter(supply);supply_grants grants={0};bool ok=supply_current(supply,actor,e);
     for(size_t i=0;ok && i<count;++i)
         if(cargo[i].weapon) ok=resolve_weapon(supply,&grants,cargo[i].item,canonical,e);
         else ok=resolve_ammo(supply,&grants,(qa_pickup_grant){cargo[i].item,cargo[i].count},canonical,false,e);
@@ -1158,7 +1177,7 @@ bool qa_supply_weapon_sources(const qa_supply_profile *profile,
     for (size_t i = 0; i < profile->ammo_count; ++i)
         if (profile->ammo[i].count && !profile->ammo[i].destinations) return fail(e, QA_ERROR_ARGUMENT, "Missing ammo supply destinations");
     if (!owners_valid(profile->weapon_owners, profile->weapon_owner_count, profile->weapons, profile->weapon_count, e) ||
-        !owners_valid(profile->ammo_owners, profile->ammo_owner_count, profile->ammo, profile->ammo_count, e)) return false;
+        !owners_unique(profile->ammo_owners, profile->ammo_owner_count, e)) return false;
     qa_item_id *sources = selected_count ? calloc(selected_count, sizeof(*sources)) : NULL;
     if (selected_count && !sources) return fail(e, QA_ERROR_MEMORY, "Cannot allocate selected weapon source mapping");
     bool ok = true;

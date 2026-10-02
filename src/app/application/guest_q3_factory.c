@@ -222,6 +222,27 @@ bool qa_application_q3_configuration_host_entered(const qa_application *app,
     return false;
 }
 
+bool qa_application_q3_game_configuration_entered_read(const qa_application *app,
+    const qa_q3_host *host, qa_application_startup_source *out, qa_error *error)
+{
+    if (!app || !host || !out)
+        return application_fail(error, QA_ERROR_ARGUMENT, "GAME declaration read requires its exact entered host");
+    for (application_provider *provider = app->live_providers; provider; provider = provider->next_live) {
+        struct application_q3_guest *engine = q3g_engine(provider);
+        q3g_role *role = engine ? engine->entered_role : NULL;
+        if (!role || role != engine->game || role->kind != QA_QVM_GAME || role->host != host) continue;
+        qa_application_startup_source source;
+        bool found;
+        if (!application_guest_q3_startup_source_at(provider, 0, &source, &found, error) || !found)
+            return application_fail(error, QA_ERROR_ARGUMENT, "Entered GAME lost its physical declaration tuple");
+        if (qa_q3_host_console(host, NULL, &source.command) != source.console ||
+            !qa_application_q3_configuration_host_entered(app, &source, host))
+            return application_fail(error, QA_ERROR_ARGUMENT, "GAME declaration lost its real entered source namespace");
+        *out = source; return true;
+    }
+    return application_fail(error, QA_ERROR_ARGUMENT, "GAME declaration has no actual entered host owner");
+}
+
 bool qa_application_q3_equipment_requests(qa_application *app, qa_actor_owner receiver,
     uint32_t seat, bool *hud, bool *view, qa_error *error)
 {
@@ -616,7 +637,7 @@ bool qa_application_q3_source_loading_screen(qa_application *app, qa_actor_owner
         return application_fail(error, QA_ERROR_ARGUMENT, "CGAME loading lost its successfully initialized source UI");
     int32_t overlay = 1, result;
     engine->initializing_role = ui;
-    bool ok = q3g_call(ui, 10, &overlay, 1, &result, error);
+    bool ok = q3g_call(ui, 9, &overlay, 1, &result, error);
     engine->initializing_role = cgame;
     if (ok) *drawn = true;
     return ok;
@@ -711,10 +732,17 @@ bool application_guest_q3_startup_source_at(application_provider *provider, size
     qa_console *console = application_guest_q3_console_owner(provider);
     if (console) {
         if (!index) {
+            const q3g_role *game = engine->game ? engine->game :
+                engine->constructing_role && engine->constructing_role->kind == QA_QVM_GAME ?
+                    engine->constructing_role : NULL;
+            if (game && (game->engine != engine || game->kind != QA_QVM_GAME ||
+                !same_descriptor(game->descriptor, provider->launch) || !game->service_owner))
+                return application_fail(error, QA_ERROR_ARGUMENT,
+                    "GAME startup enumeration lost its actual role declaration");
             *out = (qa_application_startup_source){.descriptor = provider->launch,
                 .scope = {.provider = provider->owner, .kind = QA_APPLICATION_CONSOLE_Q3_GAME},
                 .console = console, .cvars = application_guest_q3_console_registry(provider),
-                .declaration_owner = provider->owner,
+                .declaration_owner = game ? game->service_owner : provider->owner,
                 .command = {.owner = provider->owner, .dialect = QA_CONSOLE_Q3, .origin = QA_COMMAND_SERVER}};
             *found = true; return true;
         }

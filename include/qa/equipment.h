@@ -93,6 +93,8 @@ typedef struct qa_equipment_options {
     bool (*primary_resume)(void *, qa_actor_id, qa_error *);
     bool (*select_weapon)(void *, qa_actor_id, qa_item_id, qa_error *);
     qa_q2_hand_projection_fn grenade_projection;
+    bool (*grenade_interval)(void *, qa_actor_id, qa_actor_owner, uint64_t native_ns,
+                             uint64_t *, bool *handled, qa_error *);
 } qa_equipment_options;
 
 bool qa_equipment_create(const qa_equipment_options *, qa_equipment **, qa_error *);
@@ -122,6 +124,19 @@ bool qa_equipment_q3_pull(qa_equipment *, qa_actor_id, qa_vec3 *velocity, bool *
 float qa_equipment_gravity_scale(qa_equipment *, qa_actor_id);
 bool qa_equipment_publish_q3_items(qa_equipment *, qa_actor_id, qa_error *);
 bool qa_equipment_read(qa_equipment *, qa_actor_id, qa_equipment_state *);
+typedef struct qa_equipment_weapon_view {
+    qa_actor_id actor;
+    qa_equipment_source source;
+    qa_grapple_mechanic mechanic;
+    qa_item_id item;
+    const char *label;
+    bool active;
+} qa_equipment_weapon_view;
+/* Observes the already admitted slot allowance even while its primary weapon
+ * is visible. No source resolution, admission or execution callback runs. */
+bool qa_equipment_weapon_view_read(qa_equipment *, qa_actor_id,
+    qa_equipment_weapon_view *, bool *found, qa_error *);
+bool qa_equipment_weapon_view_current(qa_equipment *, const qa_equipment_weapon_view *);
 bool qa_equipment_restore(qa_equipment *, const qa_equipment_state *, qa_error *);
 void qa_equipment_actor_released(qa_equipment *, qa_actor_record);
 

@@ -11,6 +11,8 @@ typedef struct frontend_cinematic_language frontend_cinematic_language;
 bool frontend_ui_cinematic_language_prepare(qa_frontend *,uint32_t,const char *,
     frontend_cinematic_language **,qa_error *);
 bool frontend_ui_cinematic_language_ready(const frontend_cinematic_language *,qa_error *);
+/* Pure retained movie/caption identity proof; does not sample movie time. */
+bool frontend_ui_cinematic_language_ready_is(const frontend_cinematic_language *);
 void frontend_ui_cinematic_language_publish(frontend_cinematic_language *);
 /* Successful ready at the same held boundary permits publication plus idle
  * compiled-owner disposal without allocation, callbacks or device setters. */

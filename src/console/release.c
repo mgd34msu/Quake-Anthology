@@ -1,5 +1,7 @@
 #include "commands_private.h"
 #include "qa/console_release.h"
+#include <stdlib.h>
+#include <string.h>
 
 struct qa_console_release {
     qa_console *console;
@@ -142,10 +144,15 @@ bool qa_console_release_advance(qa_console_release *owner,qa_console_release_out
     }
     return true;
 }
+bool qa_console_release_completed_is(const qa_console_release *owner,const qa_console *console)
+{
+    return owner && console && owner->console==console && owner->started && owner->complete &&
+        owner->fault.code==QA_OK && !owner->prepared && console->release_leases &&
+        !console->release_owner && !console->release_advancing && qa_console_idle(console);
+}
 bool qa_console_release_ready(const qa_console_release *owner,const qa_console *console,qa_error *error)
 {
-    if (!owner || owner->console!=console || !owner->complete || owner->fault.code!=QA_OK ||
-        !console->release_leases || console->release_owner || !qa_console_idle(console))
+    if (!qa_console_release_completed_is(owner,console))
         return qac_fail(error,QA_ERROR_ARGUMENT,"source release has no completed successful actual program");
     return qac_console_context_current(console,&owner->context,error);
 }

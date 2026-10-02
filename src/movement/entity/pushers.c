@@ -156,7 +156,7 @@ static bool q1_push(qa_physics *p, const qa_physics_push *input,
             if (!blocked) continue;
         }
         if (!(props.flags & QA_PHYSICS_PLAYER)) {
-            props.flags &= ~QA_PHYSICS_ONGROUND;
+            props.flags &= ~(uint32_t)QA_PHYSICS_ONGROUND;
             body.ground = ph_none();
             if (!ph_properties(p, actor, &props, error) || !ph_write(p, actor, &body, error)) { ok = false; break; }
         }

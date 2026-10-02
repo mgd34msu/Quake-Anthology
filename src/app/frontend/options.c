@@ -105,6 +105,27 @@ bool qa_frontend_options_parse(int argc, char *const argv[], qa_frontend_options
         else if (!strcmp(arg, "--user-content-root")) options->application.user_root = value;
         else if (!strcmp(arg, "--native-runtime-root")) options->native_runtime_root = value;
         else if (!strcmp(arg, "--native-wine")) options->native_wine = value;
+        else if (!strcmp(arg, "--native-backend")) {
+            qa_native_process_resource_policy *policy = &options->application.native_process_policy;
+            if (!strcmp(value, "host")) {
+                policy->backend = QA_NATIVE_GUEST_HOST_X86_64; policy->instruction_budget = 0;
+            } else if (!strcmp(value, "emulated")) {
+                policy->backend = QA_NATIVE_GUEST_EMULATED; policy->instruction_budget = 50000000u;
+            } else { frontend_fail(error, QA_ERROR_ARGUMENT, "native backend must be host or emulated"); goto fail; }
+        }
+        else if (!strcmp(arg, "--native-stack-bytes") || !strcmp(arg, "--native-backing-bytes") ||
+            !strcmp(arg, "--native-image-bytes") || !strcmp(arg, "--native-trap-bytes") ||
+            !strcmp(arg, "--native-instruction-budget")) {
+            uint64_t number;
+            bool budget = !strcmp(arg, "--native-instruction-budget");
+            if (!integer(value, budget ? 0 : 1, SIZE_MAX, &number, error)) goto fail;
+            qa_native_process_resource_policy *policy = &options->application.native_process_policy;
+            if (budget) policy->instruction_budget = (size_t)number;
+            else if (!strcmp(arg, "--native-stack-bytes")) policy->stack_bytes = (size_t)number;
+            else if (!strcmp(arg, "--native-backing-bytes")) policy->maximum_backing_bytes = (size_t)number;
+            else if (!strcmp(arg, "--native-image-bytes")) policy->maximum_image_bytes = (size_t)number;
+            else policy->runtime_trap_bytes = (size_t)number;
+        }
         else if (!strcmp(arg, "--game")) options->game = value;
         else if (!strcmp(arg, "--map-game")) options->map_game = value;
         else if (!strcmp(arg, "--map")) options->map = value;
@@ -158,6 +179,11 @@ bool qa_frontend_options_parse(int argc, char *const argv[], qa_frontend_options
     }
     if (options->dedicated && !options->game) { frontend_fail(error, QA_ERROR_ARGUMENT, "dedicated startup requires --game"); goto fail; }
     if (options->network_host && options->network_connect) { frontend_fail(error, QA_ERROR_ARGUMENT, "select one host or remote connection"); goto fail; }
+    const qa_native_process_resource_policy *policy = &options->application.native_process_policy;
+    if (policy->stack_bytes % QA_NATIVE_GUEST_PAGE || policy->runtime_trap_bytes % QA_NATIVE_GUEST_PAGE ||
+        (policy->backend == QA_NATIVE_GUEST_EMULATED ? !policy->instruction_budget : policy->instruction_budget != 0)) {
+        frontend_fail(error, QA_ERROR_ARGUMENT, "native stack/trap extents require page multiples and execution requires its matching budget"); goto fail;
+    }
     options->menu |= !options->game;
     return true;
 fail:
@@ -171,6 +197,8 @@ void qa_frontend_options_destroy(qa_frontend_options *options)
     free((void *)options->startup); free((void *)options->mods);
     options->startup = NULL; options->startup_count = 0;
     options->mods = NULL; options->mod_count = 0;
+    free(options->native_bootstrap);
+    options->native_bootstrap = NULL;
 }
 bool qa_frontend_list_content(const qa_frontend_options *options, FILE *stream, qa_application **retained, qa_error *error)
 {

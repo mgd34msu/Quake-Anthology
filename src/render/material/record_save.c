@@ -1,4 +1,5 @@
 #include "library_save_private.h"
+#include "../scene/image_options_save.h"
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -64,7 +65,7 @@ static bool state(qa_source_save_io *io, qa_scene_state *s)
 {
     ENUM(s->blend_source, qa_scene_blend, QA_BLEND_SRC_ALPHA_SATURATE);
     ENUM(s->blend_destination, qa_scene_blend, QA_BLEND_SRC_ALPHA_SATURATE);
-    ENUM(s->depth_test, qa_scene_depth, QA_DEPTH_LESS); ENUM(s->alpha_test, qa_scene_alpha, QA_ALPHA_GE128);
+    ENUM(s->depth_test, qa_scene_depth, QA_DEPTH_GEQUAL); ENUM(s->alpha_test, qa_scene_alpha, QA_ALPHA_GE128);
     ENUM(s->cull, qa_scene_cull, QA_CULL_BACK);
     BOOL(s->depth_write); BOOL(s->color_write); BOOL(s->polygon_offset); BOOL(s->wireframe);
     FLOAT(s->depth_near); FLOAT(s->depth_far); FLOAT(s->offset_factor); FLOAT(s->offset_units); FLOAT(s->line_width);
@@ -127,7 +128,7 @@ static bool stage(qa_source_save_io *io, const qa_material_library_checkpoint_re
     }
     return true;
 }
-static bool options(qa_source_save_io *io, qa_material_record *record)
+static bool options(qa_source_save_io *io, qa_material_record *record, uint32_t schema)
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ; qa_scene_image_options *o = &record->options;
     ENUM(o->family, qa_scene_family, QA_SCENE_Q3); ENUM(o->wrap, qa_scene_wrap, QA_SCENE_CLAMP);
@@ -147,9 +148,11 @@ static bool options(qa_source_save_io *io, qa_material_record *record)
         o->palette_rgb = (qa_bytes){record->palette, palette}; o->translation = (qa_bytes){record->translation, translation};
     }
     return (!palette || o->palette_rgb.data) && (!translation || o->translation.data) &&
-        qa_source_save_bytes(io, (void *)o->palette_rgb.data, palette) && qa_source_save_bytes(io, (void *)o->translation.data, translation);
+        qa_source_save_bytes(io, (void *)o->palette_rgb.data, palette) && qa_source_save_bytes(io, (void *)o->translation.data, translation) &&
+        (schema < 7 || qa_scene_source_upload_fields(io, o));
 }
-bool qa_material_saved_record(qa_source_save_io *io, const qa_material_library_checkpoint_refs *refs, qa_material_record *record)
+bool qa_material_saved_record(qa_source_save_io *io, const qa_material_library_checkpoint_refs *refs,
+    uint32_t schema, qa_material_record *record)
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ; qa_material *m = &record->material;
     if (!qa_material_saved_text(io, &m->name) || !m->name || !*m->name ||
@@ -188,7 +191,9 @@ bool qa_material_saved_record(qa_source_save_io *io, const qa_material_library_c
         if (!qa_source_save_u32(io, &d->text_index)) return false;
     }
     FLOAT(m->remap_time_offset);
-    if (!options(io, record)) return false;
+    if (schema >= 5) { FLOAT(m->source_time_offset); BOOL(m->source_remap); }
+    else if (reading) { m->source_time_offset = 0; m->source_remap = false; }
+    if (!options(io, record, schema)) return false;
     ENUM(record->kind, qa_material_registration_kind, QA_MATERIAL_STENCIL_SHADOW);
     return qa_material_saved_identity(io, refs, &record->world_identity, true) &&
         qa_source_save_i32(io, &record->lightmap_index) && qa_material_saved_text(io, &record->base_name) &&

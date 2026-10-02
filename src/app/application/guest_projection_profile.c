@@ -90,7 +90,6 @@ static bool capacity(application_guest_projection *p, const qa_json_document *do
         out->overrides = calloc(out->override_count, sizeof(*out->overrides));
         if (!out->overrides) return application_fail(error, QA_ERROR_MEMORY, "Allocating source capacity selectors");
     }
-    size_t memory = qa_qvm_image_memory_size(p->role->image);
     for (size_t i = 0; i < out->override_count; ++i) {
         qa_json_id at = qa_json_at(doc, list, i);
         guest_capacity_override *value = &out->overrides[i];
@@ -99,9 +98,9 @@ static bool capacity(application_guest_projection *p, const qa_json_document *do
             !constant(p->role, doc, qa_json_get(doc, at, "instruction"), &value->value, error)) return false;
         qa_json_id comparison = qa_json_get(doc, at, "comparison");
         value->condition.equal = qa_json_string_equal(doc, comparison, "equals");
-        if ((!value->condition.equal && !qa_json_string_equal(doc, comparison, "not-equals")) ||
-            value->condition.address % 4 || memory < 4 || value->condition.address > memory - 4)
+        if (!value->condition.equal && !qa_json_string_equal(doc, comparison, "not-equals"))
             return application_fail(error, QA_ERROR_FORMAT, "Guest capacity selector leaves source storage");
+        if (!qa_qvm_qualify_global_word(p->role->image, value->condition.address, error)) return false;
     }
     return true;
 }
@@ -300,6 +299,7 @@ void application_guest_projection_profile_free(application_guest_projection *p)
         free(capacity->overrides);
     }
     free(p->inventory);
+    application_guest_public_inventory_profile_free(&p->public_inventory);
     free(p->state.teams); free(p->state.tiers); free(p->state.tier_conditions);
     p->inventory = NULL; p->inventory_count = 0;
 }
@@ -308,7 +308,14 @@ bool application_guest_projection_profile_read(q3g_role *role, qa_bytes primary,
                                                 application_guest_projection *p, qa_error *error)
 {
     p->role = role;
-    if (!primary.size || !role->image) return true;
+    if (!role->image) return true;
+    if (!primary.size) {
+        bool found;
+        if (!application_guest_public_inventory_profile_default(role->image, role->vm, role->abi,
+            &p->public_inventory, &found, error)) return false;
+        p->has_inventory = p->inventory_public = p->located_inventory = found;
+        return true;
+    }
     qa_json_document *doc = NULL;
     if (!qa_json_parse(primary, &doc, error)) return false;
     qa_json_id root = qa_json_root(doc), input = qa_json_get(doc, root, "input");
@@ -324,6 +331,11 @@ bool application_guest_projection_profile_read(q3g_role *role, qa_bytes primary,
     qa_json_id inventory = qa_json_get(doc, root, "inventory");
     qa_json_id storage = qa_json_get(doc, inventory, "storage");
     if (ok && storage != QA_JSON_NONE) ok = private_inventory(p, doc, storage, error);
+    else if (ok && inventory != QA_JSON_NONE) {
+        ok = application_guest_public_inventory_profile_read(role->image, role->vm, role->abi,
+            doc, inventory, &p->public_inventory, error);
+        p->has_inventory = p->inventory_public = ok;
+    }
     if (ok) ok = state_profile(p, doc, qa_json_get(doc, root, "combat"), error);
     qa_json_destroy(doc); return ok;
 }

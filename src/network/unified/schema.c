@@ -207,6 +207,13 @@ static bool numeric_profile(reader r) {
         !choices(field(r,"floatToInt"),"qvm-indefinite x86-indefinite checked-c-truncation") || !literal(field(r,"integerOverflow"),"wrap32")) return false;
     if (is(kind,"binary32")) return literal(field(a,"round"),"each-operation");
     if (is(kind,"donor-binary64")) return choices(field(a,"source"),"q1-ts q2-ts");
+    if (is(kind,"native-c")) return literal(field(r,"id"),"qa:numeric/movement-c") &&
+        literal(field(a,"kernel"),"qa-movement") && integer(field(a,"version"),1,1) &&
+        literal(field(a,"language"),"c17") && literal(field(a,"contraction"),"off") &&
+        integer(field(a,"radix"),2,4294967295.0) && integer(field(a,"scalarMantissaBits"),1,4294967295.0) &&
+        integer(field(a,"doubleMantissaBits"),1,4294967295.0) && integer(field(a,"evaluationMethod"),-1,2) &&
+        choices(field(a,"rounding"),"nearest-even toward-zero toward-positive toward-negative") &&
+        boolean(field(a,"quakeWorldOriginBinary64")) && literal(field(r,"floatToInt"),"checked-c-truncation");
     if (!choices(field(a,"rounding"),"nearest-even toward-zero toward-positive toward-negative")) return false;
     if (is(kind,"sse")) return fields(a,"flushToZero denormalsAreZero",boolean);
     double precision;
@@ -219,11 +226,22 @@ static bool profile(reader r) {
     if (!qa_json_string(r.json,kind.id,&name,r.error)) return false;
     bool matched=is(field(clock,"kind"),(const char *)name.data); qa_buffer_free(&name);
     if (!matched) return fail(r,"movement clock differs from profile");
+    reader arithmetic=field(field(r,"numeric"),"arithmetic");
+    bool native=is(field(arithmetic,"kind"),"native-c");
+    if (native) {
+        bool binary64;
+        if (!qa_json_bool(r.json,field(arithmetic,"quakeWorldOriginBinary64").id,&binary64,r.error) ||
+            binary64!=is(kind,"q1-quakeworld")) return fail(r,"native movement origin domain differs from its kernel");
+    }
     if (is(kind,"q1-netquake") || is(kind,"q1-quakeworld")) {
         if (!fields(field(r,"parameters"),"gravity stopSpeed maxSpeed spectatorMaxSpeed accelerate airAccelerate waterAccelerate friction waterFriction entityGravity",finite)) return false;
+        if (native && (is(kind,"q1-quakeworld") ? !boolean(field(r,"sharedControls")) :
+            (!fields(r,"maxVelocity idealPitchScale rollSpeed rollAngle",finite) ||
+             !fields(r,"noStep sourceJumpAuthority preserveFixAngleRoll",boolean)))) return false;
         return is(kind,"q1-quakeworld") || (choices(field(r,"edition"),"classic rerelease quake64") && finite(field(r,"edgeFriction")) && boolean(field(r,"noClipAngleHack")));
     }
-    if (is(kind,"q2-classic")) return finite(field(r,"airAccelerate")) && boolean(field(r,"snapInitial")) && optional(field(r,"strafejumpHack"),boolean);
+    if (is(kind,"q2-classic")) return finite(field(r,"airAccelerate")) && boolean(field(r,"snapInitial")) &&
+        (native ? boolean(field(r,"strafejumpHack")) : optional(field(r,"strafejumpHack"),boolean));
     if (is(kind,"q2-rerelease")) return finite(field(r,"airAccelerate")) && boolean(field(r,"n64Physics"));
     return literal(kind,"q3") && choices(field(r,"product"),"baseq3 missionpack") && nullable(field(r,"fixedMilliseconds"),finite) && boolean(field(r,"noFootsteps"));
 }
@@ -244,7 +262,7 @@ static bool collision(reader r) {
     return actor(field(b,"actor")) && body(field(b,"state")) && natural(field(b,"linkCount")) && bounds(field(b,"absoluteBounds")) &&
         choices(field(c,"family"),"q1 q2 q3") && choices(field(shape,"kind"),"box capsule model") &&
         (!is(field(shape,"kind"),"model") || natural(field(shape,"model"))) && signed_integer(field(c,"contents")) && nullable(field(c,"owner"),actor) &&
-        choices(field(c,"role"),"solid trigger") && fields(c,"monster deadMonster",boolean) &&
+        choices(field(c,"role"),"solid trigger both") && fields(c,"monster deadMonster",boolean) &&
         optional(field(c,"q1Corpse"),boolean) && (absent(field(c,"q3Owner")) || fields(field(c,"q3Owner"),"entityNumber ownerNumber",signed_integer));
 }
 static bool client_outputs(reader r) {
@@ -252,6 +270,17 @@ static bool client_outputs(reader r) {
         (absent(field(r,"mode")) || choices(field(r,"mode"),"normal noclip freeze"));
 }
 static bool contact(reader r) { return hit(field(r,"ground")) && fields(r,"waterLevel waterType",signed_integer); }
+static bool native_prediction(reader r) {
+    reader environment=field(r,"environment"),postures=field(r,"nativePostures");
+    double speed;
+    if (!fields(environment,"fixedPose fixedCrouched",boolean) ||
+        !fields(environment,"speedMultiplier poseViewHeight",finite) || !bounds(field(environment,"poseBounds")) ||
+        !number(field(environment,"speedMultiplier"),&speed) || speed<0 ||
+        !fields(postures,"crouchedBounds deadBounds invulnerabilityBounds",bounds) ||
+        !fields(postures,"crouchedViewHeight deadViewHeight",finite) || !contact(field(r,"contact")))
+        return fail(r,"invalid native movement environment or posture continuation");
+    return !is(field(field(r,"state"),"kind"),"q2-rerelease") || vector(field(r,"rereleaseOrigin"));
+}
 static bool prediction(reader r) {
     if (!literal(field(r,"schema"),"qts-unified-prediction") || !integer(field(r,"version"),1,1) ||
         !actor(field(r,"actor")) || !integer(field(r,"sequence"),-1,(double)QA_UNIFIED_SAFE_INTEGER) || !finite(field(r,"commandTimeMilliseconds")) ||
@@ -260,6 +289,8 @@ static bool prediction(reader r) {
     if (!qa_json_string(r.json,state_kind.id,&kind,r.error)) return false;
     bool same=is(field(field(r,"profile"),"kind"),(const char *)kind.data); qa_buffer_free(&kind);
     if (!same) return fail(r,"prediction movement differs from profile");
+    if (is(field(field(field(field(r,"profile"),"numeric"),"arithmetic"),"kind"),"native-c") &&
+        !native_prediction(r)) return false;
     reader arsenal_state=field(r,"arsenal"),anim=field(r,"animation"),environment=field(r,"environment");
     return namespaced(field(arsenal_state,"provider")) && nullable(field(arsenal_state,"activeWeapon"),namespaced) &&
         weapon_state(field(arsenal_state,"state")) && list(field(arsenal_state,"ammo"),0,SIZE_MAX,inventory) &&

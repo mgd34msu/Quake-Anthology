@@ -7,6 +7,9 @@
 #include "guest_q3_client_console.h"
 #include "q3_campaign_launch.h"
 #include "guest_q3_factory.h"
+#include "guest_q3_weapons_services.h"
+#include "guest_q3_combat.h"
+#include "guest_q3_pickups.h"
 
 struct application_q3_guest *q3g_engine(application_provider *provider)
 {
@@ -24,14 +27,35 @@ bool q3g_call(q3g_role *role, int32_t command, const int32_t *arguments, size_t 
             !(role->kind == QA_QVM_GAME && role->shutdown_entry && role->engine->calls && command == 6)) ||
         !result || count > 9 || (count && !arguments))
         return application_fail(error, QA_ERROR_ARGUMENT, "invalid Q3 guest entry");
+    if (role->kind == QA_QVM_CGAME && role->abi == QA_QVM_Q3_116N && command > 5)
+        return application_fail(error, QA_ERROR_UNSUPPORTED, "Legacy CGAME has no requested export");
     if (!q3g_role_activate(role, error)) return false;
     q3g_fire_scope fire = {0};
     if (!q3g_fire_begin(role, &fire, error)) return false;
-    bool drawing = role->equipment && role->kind == QA_QVM_CGAME && command == 3;
+    bool drawing = role->kind == QA_QVM_CGAME && command == 3;
+    if (drawing && (count != 3 || role->draw_entry)) {
+        qa_error cleanup = {0}; q3g_fire_end(&fire, &cleanup);
+        return application_fail(error, QA_ERROR_ARGUMENT, "CGAME Draw requires its exact unentered argument tuple");
+    }
     q3g_role *previous = role->engine->entered_role;
     role->engine->entered_role = role;
     ++role->engine->calls;
-    if (drawing && !application_q3_equipment_draw_begin(role->equipment, error)) {
+    if (drawing) {
+        memcpy(role->draw_arguments, arguments, sizeof(role->draw_arguments));
+        role->draw_source = (qa_application_q3_client_context){0};
+        if (role->local_client && !qa_application_q3_client_context_read(role->engine->provider->application,
+            role->engine->provider->owner, role->seat, &role->draw_source, error)) {
+            --role->engine->calls; role->engine->entered_role = previous;
+            qa_error cleanup = {0}; q3g_fire_end(&fire, &cleanup);
+            return false;
+        }
+        role->draw_entry = true;
+    }
+    if (drawing && ((role->equipment && !application_q3_equipment_draw_begin(role->equipment, error)) ||
+        (role->body && !application_q3_body_draw_begin(role->body, error)))) {
+        if (role->body) application_q3_body_draw_end(role->body);
+        if (role->equipment) application_q3_equipment_draw_end(role->equipment);
+        role->draw_entry = false;
         --role->engine->calls;
         role->engine->entered_role = previous;
         qa_error fire_error = {0};
@@ -54,7 +78,12 @@ bool q3g_call(q3g_role *role, int32_t command, const int32_t *arguments, size_t 
             qa_qvm_invoke_started(role->vm, 0, words, count + 1, result, &role->initialized, error) :
             qa_qvm_invoke(role->vm, 0, words, count + 1, result, error);
     }
-    if (drawing) application_q3_equipment_draw_end(role->equipment);
+    if (drawing) {
+        if (role->body) application_q3_body_draw_end(role->body);
+        if (role->equipment) application_q3_equipment_draw_end(role->equipment);
+        role->draw_entry = false;
+        role->draw_source = (qa_application_q3_client_context){0};
+    }
     --role->engine->calls;
     role->engine->entered_role = previous;
     qa_error fire_error = {0};
@@ -63,6 +92,7 @@ bool q3g_call(q3g_role *role, int32_t command, const int32_t *arguments, size_t 
         ok = false;
     }
     if (init && ok && role->initialized) role->init_succeeded = true;
+    if (init && ok && role->kind == QA_QVM_GAME) ok = q3g_role_catalog_refresh(role, error);
     return ok;
 }
 
@@ -420,8 +450,11 @@ bool application_q3_guest_actor_released(application_provider *provider, qa_acto
 {
     struct application_q3_guest *engine = q3g_engine(provider);
     if (!engine) return true;
-    for (q3g_role *role = engine->roles; role; role = role->next)
+    for (q3g_role *role = engine->roles; role; role = role->next) {
+        application_q3_weapons_services_actor_released(role->weapon_services, actor);
+        if (!application_q3_combat_actor_released(role->combat, actor, error)) return false;
         if (role->host && !qa_q3_host_actor_released(role->host, actor, error)) return false;
+    }
     for (size_t i = 0; i < 64; ++i)
         if (qa_actor_id_equal(engine->clients[i].actor, actor.id)) {
             q3g_client *client = &engine->clients[i];
@@ -491,10 +524,16 @@ bool application_q3_guest_deconstruct(application_provider *provider, qa_error *
         qa_qvm_image_release(artifact->image); qa_native_module_release(artifact->module);
         qa_native_declaration_destroy(artifact->declaration); qa_buffer_free(&artifact->primary);
         qa_resource_release(artifact->resource); qa_vfs_acquisition_dispose(&artifact->acquisition);
+        qa_resource_release(artifact->items_resource);
+        qa_vfs_acquisition_dispose(&artifact->items_acquisition);
+        qa_resource_release(artifact->body_resource);
+        qa_vfs_acquisition_dispose(&artifact->body_acquisition);
+        application_q3_body_profile_free(&artifact->body_profile);
         qa_launch_instance_lease_release(artifact->descriptor);
         qa_buffer_free(&artifact->equipment_presentation);
         application_q3_equipment_profile_free(&artifact->equipment_profile);
         application_q3_grapple_profile_destroy(artifact->grapple_profile);
+        application_q3_combat_profile_destroy(artifact->combat_profile);
         free(artifact->path); free(artifact);
     }
     application_guest_q3_save_clear(engine);
@@ -554,6 +593,11 @@ bool application_q3_guest_idle(const application_provider *provider)
     if (engine->calls || engine->entered_role || !application_guest_q3_console_idle(engine)) return false;
     for (const q3g_role *role = engine->roles; role; role = role->next) {
         if (role->equipment && !application_q3_equipment_idle(role->equipment)) return false;
+        if (role->body && !application_q3_body_idle(role->body)) return false;
+        if (role->weapons && !application_q3_weapons_idle(role->weapons)) return false;
+        if (role->weapon_services && !application_q3_weapons_services_idle(role->weapon_services)) return false;
+        if (role->combat && !application_q3_combat_idle(role->combat)) return false;
+        if (role->pickups && !application_q3_pickups_idle(role->pickups)) return false;
         if (role->vm && !qa_qvm_can_destroy(role->vm)) return false;
         if (role->native && !qa_native_can_destroy(qa_native_host_instance(role->native))) return false;
     }

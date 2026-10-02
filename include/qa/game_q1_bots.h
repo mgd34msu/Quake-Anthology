@@ -57,7 +57,14 @@ bool qa_q1_source_client_add_score(qa_q1_game *,qa_actor_id,double delta,qa_erro
 bool qa_q1_source_client_set_score(qa_q1_game *,qa_actor_id,float score,qa_error *);
 bool qa_q1_source_client_observer(qa_q1_game *,qa_actor_id,bool,qa_error *);
 bool qa_q1_source_client_spawned(qa_q1_game *,qa_actor_id,qa_error *);
+/* Mark the genuine source client's death before obituary, score and drop
+ * callbacks. Already recorded deaths return first=false without replay. */
+bool qa_q1_source_client_record_death(qa_q1_game *,qa_actor_id,bool *first,qa_error *);
+bool qa_q1_source_client_consume_impulse(qa_q1_game *,qa_actor_id,qa_error *);
 bool qa_q1_source_respawn_options_read(const qa_q1_game *,qa_q1_options *,double *source_seconds,qa_error *);
+/* Pure imported constructor policy, available only before source restore
+ * finish. It admits no gameplay, source clock or callbacks. */
+bool qa_q1_source_respawn_options_prepared(const qa_q1_game *,qa_q1_options *,qa_error *);
 bool qa_q1_source_client_request_respawn(qa_q1_game *,qa_actor_id,bool *force_spawn,qa_error *);
 bool qa_q1_bot_exit_level(qa_q1_game *,double seconds,bool same_level,qa_error *);
 /* The caller frees genuine supply receipts with qa_supply_preview_free.

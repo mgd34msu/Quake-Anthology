@@ -5,6 +5,7 @@
 #include "source_alias.h"
 #include "source_player.h"
 #include "source_view.h"
+#include "source_storage.h"
 
 static int32_t signed_word(uint32_t bits) {
     int32_t value;
@@ -116,8 +117,12 @@ bool bot_ai_think(qa_bots *b, bot_ai_state *s, float elapsed, qa_error *e) {
     int32_t delta[3];
     if(!delta_angles(b,s,delta,e)) return false;
     bot_ai_view_delta(s,delta,true);
-    s->local_time += elapsed;
+    float local_time;
+    if(!bot_ai_storage_f32(b,s,QA_BOT_SOURCE_LOCAL_TIME,&local_time,false,e)) return false;
+    local_time+=elapsed;
+    if(!bot_ai_storage_f32(b,s,QA_BOT_SOURCE_LOCAL_TIME,&local_time,true,e)) return false;
     s->view.think_time = elapsed;
+    if(!bot_ai_storage_f32(b,s,QA_BOT_SOURCE_THINK_TIME,&elapsed,true,e)) return false;
     int32_t height;
     bool ok=bot_ai_source_player_vector(b,s,BOT_PS_ORIGIN,&s->player.origin,e);
     if(ok) {
@@ -129,7 +134,7 @@ bool bot_ai_think(qa_bots *b, bot_ai_state *s, float elapsed, qa_error *e) {
     bool setup_ready=true;
     if(ok) ok=bot_ai_source_setup_frame(b,s,&setup_ready,e);
     if(ok && (!setup_ready || s->retired || !bot_ai_live(b,s->view.actor))) goto finished;
-    if (ok && s->setup_count<=0) {
+    if (ok) {
         bool intermission,observer;
         ok=bot_ai_source_intermission(b,s,&intermission,e);
         if(ok && (s->retired || !bot_ai_live(b,s->view.actor))) goto finished;
@@ -262,9 +267,13 @@ static bool frame(qa_bots *b, int32_t time, qa_error *e) {
     for (uint32_t i = 0; i < 64; ++i) {
         bot_ai_state *s = b->source_clients[i]?b->clients[b->source_clients[i]-1]:NULL;
         if (!s || s->retired) continue;
-        s->residual_ms = signed_word((uint32_t)s->residual_ms + (uint32_t)elapsed);
-        if (s->residual_ms < think) continue;
-        s->residual_ms = signed_word((uint32_t)s->residual_ms - (uint32_t)think);
+        int32_t residual;
+        if(!bot_ai_storage_i32(b,s,QA_BOT_SOURCE_RESIDUAL,&residual,false,e)) return false;
+        residual = signed_word((uint32_t)residual + (uint32_t)elapsed);
+        if(!bot_ai_storage_i32(b,s,QA_BOT_SOURCE_RESIDUAL,&residual,true,e)) return false;
+        if (residual < think) continue;
+        residual = signed_word((uint32_t)residual - (uint32_t)think);
+        if(!bot_ai_storage_i32(b,s,QA_BOT_SOURCE_RESIDUAL,&residual,true,e)) return false;
         if (!ready(b, s)) continue;
         if (connected(b, s) && !bot_ai_think(b, s, (float)think / 1000, e)) return false;
     }

@@ -1,6 +1,8 @@
 #include "guest_native_q2_private.h"
 #include "guest_native_q2_combat.h"
 #include "control_frame.h"
+#include "native_q2_delivery.h"
+#include "unified_events.h"
 #include "qa/network_q2_messages.h"
 #include <math.h>
 
@@ -73,6 +75,35 @@ static bool config_set(void *opaque, int32_t index, const char *value, qa_error 
     return protocol(engine, &event, (qa_actor_id){0}, true, error);
 }
 
+static bool register_sound(struct application_native_q2 *engine, const char *name, qa_error *error)
+{
+    if (!*name || *name == '*') return true;
+    char id[81]; bool found;
+    if (!application_unified_event_resource_lookup(engine->provider->application,
+        engine->provider->owner, name, id, &found, error)) return false;
+    if (found) return true;
+    const char *opening = *name == '#' ? name + 1 : name;
+    size_t length = strlen(opening), prefix = *name == '#' ? 0 : 6;
+    if (length > SIZE_MAX - 7)
+        return application_fail(error, QA_ERROR_MEMORY, "Native Q2 sound precache path is too large");
+    char *path = malloc(length + 7);
+    if (!path) return application_fail(error, QA_ERROR_MEMORY, "Retaining native Q2 sound precache path");
+    if (prefix) memcpy(path, "sound/", prefix);
+    memcpy(path + prefix, opening, length + 1);
+    qa_resource *held = NULL; qa_error acquisition = {0};
+    bool ok = qa_vfs_acquire(engine->provider->launch->content, path, &held, NULL, &acquisition);
+    free(path);
+    if (!ok) {
+        if (acquisition.code == QA_ERROR_NOT_FOUND) return true;
+        if (error) *error = acquisition;
+        return false;
+    }
+    ok = application_unified_event_resource_register(engine->provider->application,
+        engine->provider->owner, name, held, id, error);
+    qa_resource_release(held);
+    return ok;
+}
+
 static bool resource(void *opaque, qa_native_host_resource_kind kind, const char *name,
                        int32_t *out, qa_error *error)
 {
@@ -84,9 +115,13 @@ static bool resource(void *opaque, qa_native_host_resource_kind kind, const char
     uint32_t base = engine->resource_base[kind], maximum = engine->resource_limit[kind];
     for (uint32_t i = 1; i < maximum; ++i) {
         const char *value = engine->configstrings[base + i];
-        if (value && !strcmp(value, name)) { *out = (int32_t)i; return true; }
+        if (value && !strcmp(value, name)) {
+            if (kind == QA_NATIVE_HOST_SOUND && !register_sound(engine, name, error)) return false;
+            *out = (int32_t)i; return true;
+        }
         if (!value || !*value) {
             if (!config_set(engine, (int32_t)(base + i), name, error)) return false;
+            if (kind == QA_NATIVE_HOST_SOUND && !register_sound(engine, name, error)) return false;
             *out = (int32_t)i; return true;
         }
     }
@@ -108,29 +143,11 @@ static bool message(void *opaque, const qa_native_host_message *source, qa_error
     qa_application_protocol_event event = {.recipient = source->client, .origin = source->origin,
         .payload = source->payload, .destination = source->destination,
         .reliable = source->reliable, .multicast = source->target == QA_NATIVE_HOST_MULTICAST};
-    if (!application_emit_protocol(engine->provider, &event, error)) return false;
-    if (source->payload.size && (source->payload.data[0] == 4 || source->payload.data[0] == 5)) {
-        qa_bytes data = source->payload;
-        size_t layout_size = 0;
-        if (data.data[0] == 4) {
-            const uint8_t *end = memchr(data.data + 1, 0, data.size - 1);
-            if (!end || (layout_size = (size_t)(end - data.data - 1)) >= 1024)
-                return application_fail(error, QA_ERROR_FORMAT, "Native Q2 HUD layout exceeds the source client record");
-        } else if (data.size != 513)
-            return application_fail(error, QA_ERROR_FORMAT, "Native Q2 inventory message has an invalid source extent");
-        for (uint32_t i = 1; i < 257; ++i) {
-            application_native_q2_client *client = &engine->clients[i];
-            if (!client->connected || (source->target == QA_NATIVE_HOST_UNICAST &&
-                !qa_actor_id_equal(client->actor, source->client))) continue;
-            if (source->target == QA_NATIVE_HOST_MULTICAST && source->destination != 0 &&
-                source->destination != 3) continue;
-            if (data.data[0] == 4) {
-                memcpy(client->layout, data.data + 1, layout_size);
-                client->layout[layout_size] = 0;
-            } else for (size_t item = 0; item < 256; ++item)
-                client->inventory[item] = (int16_t)qa_load_u16le(data.data + 1 + item * 2);
-        }
-    }
+    qa_application_q2_protocol_delivery delivery;
+    if (!application_native_q2_message_capture(engine,source,&delivery,error)) return false;
+    bool emitted=application_emit_q2_protocol(engine->provider,&event,&delivery,error);
+    application_native_q2_delivery_dispose(&delivery.audience);
+    if (!emitted) return false;
     return !engine->platform.message || engine->platform.message(engine->platform.context, source, error);
 }
 
@@ -172,6 +189,11 @@ static uint32_t server_frame(void *opaque)
     return (uint32_t)((struct application_native_q2 *)opaque)->frame.number;
 }
 
+static uint64_t source_frame(void *opaque)
+{
+    return ((struct application_native_q2 *)opaque)->frame.number;
+}
+
 static bool hud_view(void *opaque, uint32_t seat, qa_native_host_q2_hud_view *out, qa_error *error)
 {
     struct application_native_q2 *engine = opaque;
@@ -185,6 +207,7 @@ qa_native_host_engine_services application_native_q2_services(struct application
     return (qa_native_host_engine_services){.context = engine, .print = print,
         .configstring_get = config_get, .configstring_set = config_set, .resource_index = resource,
         .command = command, .message = message, .sound = sound, .server_frame = server_frame,
+        .source_frame = source_frame,
         .checkpoint = application_native_q2_capture_engine, .restore = application_native_q2_restore_engine,
         .content_files = engine->provider->launch->content, .cvars = engine->cvars,
         .hud_view = hud_view};

@@ -2,6 +2,11 @@
 #include "capture.h"
 #include "visual_restore.h"
 #include "native_q3_client.h"
+#include "remote_q3_client.h"
+#include "remote_q3_initial.h"
+#include "network_initial_graph.h"
+#include "remote_q1_restore.h"
+#include "remote_q2_restore.h"
 #include "save_private.h"
 #include "qa/material_library_save.h"
 #include "qa/material_save.h"
@@ -9,7 +14,8 @@
 #include "qa/q3_assets_save.h"
 #include "qa/scene_resource_save.h"
 
-typedef enum material_owner_kind { MATERIAL_FRONTEND, MATERIAL_SOURCE, MATERIAL_VISUAL, MATERIAL_NATIVE_Q3 } material_owner_kind;
+typedef enum material_owner_kind { MATERIAL_FRONTEND, MATERIAL_SOURCE, MATERIAL_VISUAL, MATERIAL_NATIVE_Q3,
+    MATERIAL_REMOTE, MATERIAL_INITIAL, MATERIAL_REMOTE_Q1, MATERIAL_REMOTE_Q2 } material_owner_kind;
 typedef struct material_owner {
     qa_material_library *library;
     qa_scene_resources *images;
@@ -53,9 +59,24 @@ static bool provider_at(const qa_frontend *f,size_t ordinal,qa_q3_presentation_p
         *provider=(qa_q3_presentation_provider){visual.mounts,visual.images,visual.materials,visual.family}; return true;
     }
     ordinal-=visuals;
-    frontend_native_q3_view native; qa_error error={0};
-    if (!frontend_native_q3_read(f,ordinal,&native,&error)) return false;
-    *provider=(qa_q3_presentation_provider){native.mounts,native.images,native.materials,QA_SCENE_Q3}; return true;
+    qa_error error={0}; size_t native_count=frontend_native_q3_count(f);
+    if(ordinal<native_count) {
+        frontend_native_q3_view native;
+        if(!frontend_native_q3_read(f,ordinal,&native,&error)) return false;
+        *provider=(qa_q3_presentation_provider){native.mounts,native.images,native.materials,QA_SCENE_Q3}; return true;
+    }
+    ordinal-=native_count;
+    size_t remote_count=frontend_remote_q3_count(f);
+    if(ordinal<remote_count) {
+        frontend_remote_q3_resources remote;
+        if(!frontend_remote_q3_resources_read(frontend_remote_q3_at(f,ordinal),&remote,&error)) return false;
+        *provider=(qa_q3_presentation_provider){remote.mounts,remote.images,remote.materials,QA_SCENE_Q3}; return true;
+    }
+    ordinal-=remote_count;
+    frontend_network_initial_graph_view initial; frontend_remote_q3_initial_view owner;
+    if(ordinal || !frontend_network_initial_graph_read(f,&initial,&error) || !initial.present ||
+        !initial.parent || !frontend_remote_q3_initial_read(initial.parent,&owner,&error)) return false;
+    *provider=(qa_q3_presentation_provider){owner.mounts,owner.images,owner.materials,QA_SCENE_Q3}; return true;
 }
 bool frontend_material_provider_encode(const qa_frontend *f,const qa_q3_presentation_provider *provider,
     uint64_t *key,qa_error *error)
@@ -64,7 +85,11 @@ bool frontend_material_provider_encode(const qa_frontend *f,const qa_q3_presenta
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Q3 provider lookup requires actual frontend heaps");
     size_t groups=frontend_source_group_count(f),visuals=frontend_visual_owner_count(f),native=frontend_native_q3_count(f);
     if (groups==SIZE_MAX || visuals>SIZE_MAX-groups-1 || native>SIZE_MAX-groups-visuals-1) return false;
-    size_t count=(f->materials?1:0)+groups+visuals+native;
+    size_t count=(f->materials?1:0)+groups+visuals+native,remote=frontend_remote_q3_count(f);
+    frontend_network_initial_graph_view initial;
+    if(remote>SIZE_MAX-count || !frontend_network_initial_graph_read(f,&initial,error)) return false;
+    count+=remote;
+    if(initial.present) { if(count==SIZE_MAX) return false; ++count; }
     for (size_t i=0;i<count;++i) {
         qa_q3_presentation_provider actual;
         if (provider_at(f,i,&actual) && actual.mounts==provider->mounts && actual.images==provider->images &&
@@ -114,7 +139,17 @@ static bool collect(qa_frontend *f, bool restoring, material_owner **out, size_t
     if (!graph || groups==SIZE_MAX || visuals>SIZE_MAX-groups-1 || native>SIZE_MAX-groups-visuals-1 ||
         groups+visuals+native+1>SIZE_MAX/sizeof(material_owner))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Material inventory requires its bounded genuine content graph");
-    material_owner *owners=calloc(groups+visuals+native+1,sizeof(*owners));
+    size_t capacity=groups+visuals+native+1,remote=frontend_remote_q3_count(f);
+    frontend_network_initial_graph_view initial;
+    if(remote>SIZE_MAX-capacity || !frontend_network_initial_graph_read(f,&initial,error)) return false;
+    capacity+=remote;
+    if(initial.present) { if(capacity==SIZE_MAX) return false; ++capacity; }
+    size_t q1=frontend_remote_q1_count(f),q2=frontend_remote_q2_count(f);
+    if(q1>SIZE_MAX-capacity || q2>SIZE_MAX-capacity-q1) return false;
+    capacity+=q1+q2;
+    if(capacity>SIZE_MAX/sizeof(material_owner))
+        return frontend_fail(error,QA_ERROR_MEMORY,"Remote material inventory exceeds address space");
+    material_owner *owners=calloc(capacity,sizeof(*owners));
     if (!owners) return frontend_fail(error,QA_ERROR_MEMORY,"Collecting actual material library owners");
     bool ok=append(owners,count,graph,f->materials,f->images,f->mounts,MATERIAL_FRONTEND,0,0,0,NULL,0,error);
     for (size_t i=0;ok && i<groups;++i) {
@@ -137,6 +172,30 @@ static bool collect(qa_frontend *f, bool restoring, material_owner **out, size_t
             (!owner.assets || qa_q3_assets_idle(owner.assets));
         if (ok) ok=append(owners,count,graph,owner.materials,owner.images,owner.mounts,
             MATERIAL_NATIVE_Q3,i,owner.receiver,owner.identity,owner.source_files,QA_SCENE_Q3,error);
+    }
+    for(size_t i=0;ok && i<q1;++i) {
+        frontend_remote_q1_view owner; frontend_remote_q1 *row=frontend_remote_q1_at(f,i);
+        ok=restoring?frontend_remote_q1_import_read(row,&owner,error):frontend_remote_q1_metadata_read(row,&owner,error);
+        if(ok) ok=append(owners,count,graph,owner.materials,owner.images,owner.content.mounts,
+            MATERIAL_REMOTE_Q1,i,owner.domain.actor_owner,owner.map_generation,NULL,QA_SCENE_Q1,error);
+    }
+    for(size_t i=0;ok && i<q2;++i) {
+        frontend_remote_q2_view owner; frontend_remote_q2 *row=frontend_remote_q2_at(f,i);
+        ok=restoring?frontend_remote_q2_import_read(row,&owner,error):frontend_remote_q2_metadata_read(row,&owner,error);
+        if(ok) ok=append(owners,count,graph,owner.materials,owner.images,owner.content.mounts,
+            MATERIAL_REMOTE_Q2,i,0,owner.identity,NULL,QA_SCENE_Q2,error);
+    }
+    for(size_t i=0;ok && i<remote;++i) {
+        frontend_remote_q3_resources owner;
+        ok=frontend_remote_q3_resources_read(frontend_remote_q3_at(f,i),&owner,error) && owner.materials;
+        if(ok) ok=append(owners,count,graph,owner.materials,owner.images,owner.mounts,
+            MATERIAL_REMOTE,i,owner.domain.source.receiver.receiver,owner.identity,owner.domain.content,QA_SCENE_Q3,error);
+    }
+    if(ok && initial.present) {
+        frontend_remote_q3_initial_view owner;
+        ok=initial.parent && frontend_remote_q3_initial_read(initial.parent,&owner,error) && owner.materials;
+        if(ok) ok=append(owners,count,graph,owner.materials,owner.images,owner.mounts,
+            MATERIAL_INITIAL,0,owner.attempt.source.receiver.receiver,owner.identity,owner.descriptor->content,QA_SCENE_Q3,error);
     }
     for (size_t i=0;ok && i<*count;++i) {
         if (restoring) ok=qa_material_library_empty_detached(owners[i].library);
@@ -203,8 +262,8 @@ static bool metadata(qa_source_save_io *io,qa_frontend *f,const material_owner *
 }
 static bool header(qa_source_save_io *io,size_t count,bool *order)
 {
-    uint8_t magic[4]={'Q','F','M','A'}; uint32_t version=2; size_t saved=count;
-    return qa_source_save_bytes(io,magic,4) && !memcmp(magic,"QFMA",4) && qa_source_save_u32(io,&version) && version==2 &&
+    uint8_t magic[4]={'Q','F','M','A'}; uint32_t version=4; size_t saved=count;
+    return qa_source_save_bytes(io,magic,4) && !memcmp(magic,"QFMA",4) && qa_source_save_u32(io,&version) && version==4 &&
         qa_source_save_count(io,&saved,SIZE_MAX) && saved==count && qa_source_save_bool(io,order) && (!count || *order);
 }
 static bool write_blob(qa_source_save_io *io,const qa_buffer *buffer)

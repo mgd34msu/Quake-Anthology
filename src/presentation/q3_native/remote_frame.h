@@ -67,7 +67,10 @@ typedef enum q3n_remote_frame_stage {
     Q3N_REMOTE_INITIALIZATION,
     Q3N_REMOTE_SNAPSHOT_CALLBACK,
     Q3N_REMOTE_PREDICTION_CALLBACK,
-    Q3N_REMOTE_COMPLETED_FRAME
+    Q3N_REMOTE_COMPLETED_FRAME,
+    Q3N_REMOTE_CONSOLE,
+    Q3N_REMOTE_AWAITING_SNAPSHOT,
+    Q3N_REMOTE_LOADING_INFORMATION
 } q3n_remote_frame_stage;
 /* These are borrowed real cache rows. An unpublished constructor row is
  * available to entityAt; published and render-valid have separate meanings. */
@@ -113,6 +116,15 @@ typedef struct q3n_remote_frame_options {
     const qa_q3_player *transition_player, *previous_player;
     uint64_t initialization_scope; /* actual entered CG_Init constructor */
     uint64_t transition_scope; /* actual entered predictor-completion callback */
+    /* Returned initialized CGAME enters these distinct lexical scopes with
+     * its real cold/retained cache and PPS, without a predictor receipt. */
+    uint64_t console_scope;
+    uint64_t awaiting_snapshot_scope;
+    /* Authored loading text returns before snapshot processing, including
+     * when an earlier active snapshot remains in the actual cache. */
+    uint64_t loading_information_scope;
+    const char *loading_information_text;
+    bool (*loading_information_current)(void *, const q3n_remote_source_view *, const char *);
     void *context;
     bool (*current)(void *, const q3n_remote_frame *);
     bool (*entity)(void *, const q3n_remote_frame *, uint32_t, q3n_remote_entity *, qa_error *);
@@ -138,6 +150,11 @@ struct q3n_remote_frame {
     const qa_q3_player *transition_player, *previous_player;
     uint64_t initialization_scope;
     uint64_t transition_scope;
+    uint64_t console_scope;
+    uint64_t awaiting_snapshot_scope;
+    uint64_t loading_information_scope;
+    const char *loading_information_text;
+    bool (*loading_information_current)(void *, const q3n_remote_source_view *, const char *);
     void *context;
     bool (*current)(void *, const q3n_remote_frame *);
     bool (*entity)(void *, const q3n_remote_frame *, uint32_t, q3n_remote_entity *, qa_error *);

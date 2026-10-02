@@ -1,5 +1,6 @@
 #include "bot_records.h"
 #include "qa/bot_runtime.h"
+#include "qa/bot_weapons_source.h"
 
 #include <stdio.h>
 
@@ -34,10 +35,10 @@ q3_service_result q3_bot_weapons(q3_call *call, int32_t *result, qa_error *error
         ok = qa_bot_runtime_weapon_allocate(runtime, &handle, error);
         if (ok) *result = (int32_t)handle;
     } else if (call->service == 559) {
-        qa_bot_weapon_info weapon; qa_bot_projectile_info projectile; bool found;
-        ok = qa_bot_runtime_weapon_info(runtime, handle, (uint32_t)q3_integer(call, 1),
-                                         &weapon, &projectile, &found, error);
-        if (ok && found) ok = q3_bot_weapon_copy(call, call->arguments[2], &weapon, &projectile, error);
+        qa_bytes weapon; bool found;
+        ok = qa_bot_runtime_weapon_source_info(runtime, handle, (uint32_t)q3_integer(call, 1),
+                                                &weapon, &found, error);
+        if (ok && found) ok = q3_write(call, call->arguments[2], weapon, error);
     } else {
         if (call->service == 560) *result = 11;
         if (!state(call, runtime, (int32_t)handle)) return Q3_COMPLETED;

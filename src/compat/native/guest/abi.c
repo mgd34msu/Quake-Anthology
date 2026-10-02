@@ -24,6 +24,9 @@ struct guest_abi_plan {
     bool variadic, memory_result, x87_result;
 };
 
+size_t guest_abi_result_bytes(const guest_abi_plan *plan)
+{ return plan ? plan->result.layout.bytes : 0; }
+
 static bool align_size(size_t size, size_t alignment, size_t *out, qa_error *error)
 {
     if (!alignment || alignment & (alignment - 1) || size > SIZE_MAX - (alignment - 1))
@@ -48,7 +51,7 @@ static bool layout_copy(guest_abi_layout *out, const guest_abi_layout *source,
     unsigned word, bool result, qa_error *error)
 {
     if (source->kind == QA_NATIVE_VOID) {
-        if (!result || source->bytes || source->fields || source->field_count)
+        if (!result || source->bytes || source->fields || source->field_count || source->stack_only)
             return guest_fail(error, QA_ERROR_ARGUMENT, 0, "void guest ABI layout is only a result");
         *out = *source; return true;
     }
@@ -56,11 +59,12 @@ static bool layout_copy(guest_abi_layout *out, const guest_abi_layout *source,
         source->alignment > QA_NATIVE_GUEST_PAGE)
         return guest_fail(error, QA_ERROR_ARGUMENT, 0, "guest ABI layout needs actual extent and alignment");
     if (source->kind != QA_NATIVE_BYTES) {
-        if (source->bytes != scalar_bytes(source->kind, word) || source->fields || source->field_count)
+        if (source->bytes != scalar_bytes(source->kind, word) || source->fields || source->field_count || source->stack_only)
             return guest_fail(error, QA_ERROR_ARGUMENT, 0, "guest ABI scalar layout differs from its width");
         *out = *source; return true;
     }
-    if ((source->field_count && !source->fields) || source->field_count > SIZE_MAX / sizeof(*source->fields))
+    if ((source->stack_only && result) || (source->field_count && !source->fields) ||
+        source->field_count > SIZE_MAX / sizeof(*source->fields))
         return guest_fail(error, QA_ERROR_ARGUMENT, 0, "guest ABI aggregate needs actual scalar fields");
     for (size_t i = 0; i < source->field_count; ++i) {
         const guest_abi_field *field = &source->fields[i];
@@ -135,6 +139,11 @@ static bool assign(guest_abi_plan *plan, argument *arg, bool hidden, size_t inde
         QA_NATIVE_RCX, QA_NATIVE_R8, QA_NATIVE_R9};
     bool floating = arg->layout.kind == QA_NATIVE_F32 || arg->layout.kind == QA_NATIVE_F64;
     size_t bytes = arg->layout.kind != QA_NATIVE_BYTES && arg->layout.bytes < 4 ? 4 : arg->layout.bytes;
+    if (arg->layout.stack_only) {
+        if (plan->abi != QA_NATIVE_ABI_SYSTEM_V_X64 && plan->abi != QA_NATIVE_ABI_SYSTEM_V_I386)
+            return guest_fail(error, QA_ERROR_ARGUMENT, index, "stack-class argument requires its actual System V ABI");
+        return stack_argument(plan, arg, error);
+    }
     if (plan->abi == QA_NATIVE_ABI_MICROSOFT_X64) {
         unsigned position = plan->ordinal++;
         arg->indirect = arg->layout.kind == QA_NATIVE_BYTES && bytes != 1 && bytes != 2 && bytes != 4 && bytes != 8;
@@ -149,8 +158,8 @@ static bool assign(guest_abi_plan *plan, argument *arg, bool hidden, size_t inde
     if (plan->abi == QA_NATIVE_ABI_SYSTEM_V_X64) {
         unsigned classes[2];
         if (!system_classes(&arg->layout, classes)) return stack_argument(plan, arg, error);
-        unsigned integers = (classes[0] == 1) + (classes[1] == 1);
-        unsigned vectors = (classes[0] == 2) + (classes[1] == 2);
+        unsigned integers = (classes[0] == 1 ? 1u : 0u) + (classes[1] == 1 ? 1u : 0u);
+        unsigned vectors = (classes[0] == 2 ? 1u : 0u) + (classes[1] == 2 ? 1u : 0u);
         if (plan->integers + integers > 6 || plan->vectors + vectors > 8)
             return stack_argument(plan, arg, error);
         for (unsigned i = 0; i < 2; ++i) if (classes[i]) {
@@ -229,7 +238,7 @@ bool guest_abi_plan_create(const guest_abi_signature *signature, const guest_abi
         else okay = assign(plan, &plan->arguments[0], false, 0, error);
     }
     if (okay && plan->memory_result) {
-        plan->hidden.layout = (guest_abi_layout){QA_NATIVE_ADDRESS, plan->word, plan->word, NULL, 0};
+        plan->hidden.layout = (guest_abi_layout){.kind = QA_NATIVE_ADDRESS, .bytes = plan->word, .alignment = plan->word};
         okay = assign(plan, &plan->hidden, true, 0, error);
     }
     for (size_t i = first ? 1 : 0; okay && i < count; ++i)
@@ -271,7 +280,7 @@ static bool natural_type(const qa_native_type *type, qa_native_abi abi,
         if ((!bytes && type->kind != QA_NATIVE_VOID) || type->fields || type->field_count)
             return guest_fail(error, QA_ERROR_ARGUMENT, 0, "invalid native ABI scalar descriptor");
         size_t alignment = abi == QA_NATIVE_ABI_SYSTEM_V_I386 && bytes > 4 ? 4 : bytes;
-        *out = (guest_abi_layout){type->kind, bytes, alignment ? alignment : 1, NULL, 0};
+        *out = (guest_abi_layout){.kind = type->kind, .bytes = bytes, .alignment = alignment ? alignment : 1};
         return true;
     }
     if (!type->fields || !type->field_count)
@@ -314,7 +323,8 @@ static bool natural_type(const qa_native_type *type, qa_native_abi abi,
     }
     if (okay) okay = align_size(extent, alignment, &extent, error);
     if (!okay) { free(owner.fields); return false; }
-    *out = (guest_abi_layout){QA_NATIVE_BYTES, extent, alignment, owner.fields, owner.count};
+    *out = (guest_abi_layout){.kind = QA_NATIVE_BYTES, .bytes = extent, .alignment = alignment,
+        .fields = owner.fields, .field_count = owner.count};
     return true;
 }
 
@@ -441,6 +451,26 @@ static void write_registers(const argument *arg, const uint8_t *data, qa_native_
     }
 }
 
+bool guest_abi_decode_argument(const guest_abi_plan *plan, const qa_native_guest *guest,
+    size_t index, qa_native_value *out, qa_buffer *storage, qa_error *error)
+{
+    if (!plan_guest(plan, guest, error)) return false;
+    if (!out || !storage || storage->data || storage->size || index >= plan->count)
+        return guest_fail(error, QA_ERROR_ARGUMENT, index, "single guest ABI decode requires its actual location and empty storage");
+    const argument *arg = &plan->arguments[index];
+    size_t bytes = arg->layout.bytes < 8 ? 8 : arg->layout.bytes;
+    uint8_t *data = calloc(1, bytes), pointer[8] = {0};
+    if (!data) return guest_fail(error, QA_ERROR_MEMORY, index, "owning one decoded guest ABI argument");
+    qa_native_guest_cpu cpu;
+    bool okay = qa_native_guest_cpu_read(guest, &cpu, error) &&
+        read_locations(arg, guest, &cpu, arg->indirect ? pointer : data, error);
+    if (okay && arg->indirect)
+        okay = qa_native_guest_read(guest, load_integer(pointer, plan->word), data, arg->layout.bytes, error);
+    if (!okay) { free(data); return false; }
+    decode_value(&arg->layout, data, out);
+    *storage = (qa_buffer){data, bytes}; return true;
+}
+
 bool guest_abi_decode(const guest_abi_plan *plan, const qa_native_guest *guest,
     qa_native_value *out, size_t count, qa_buffer *storage, qa_error *error)
 {
@@ -475,6 +505,9 @@ bool guest_abi_decode(const guest_abi_plan *plan, const qa_native_guest *guest,
 static bool floating_result(const guest_abi_plan *plan, qa_native_guest *guest,
     uint8_t *data, bool push, qa_error *error)
 {
+    if (guest->options.backend != QA_NATIVE_GUEST_EMULATED)
+        return guest_fail(error, QA_ERROR_UNSUPPORTED, 0,
+            "i386 x87 ABI conversion requires its qualified emulated target");
     if (qa_unicorn_abi_fp_revision() != QA_UNICORN_ABI_FP_REVISION)
         return guest_fail(error, QA_ERROR_FORMAT, 0, "guest ABI floating extension differs from its contract");
     uint64_t bits = push ? load_integer(data, plan->result.layout.bytes) : 0;
@@ -546,12 +579,16 @@ static bool write_stack(const argument *arg, qa_native_guest *guest, uint64_t sp
     return true;
 }
 
-bool guest_abi_invoke(const guest_abi_plan *plan, qa_native_guest *guest, uint64_t target,
+static bool invoke(const guest_abi_plan *plan, qa_native_guest *guest, uint64_t target,
     uint64_t return_trap, const qa_native_value *values, size_t count,
-    qa_native_value *result, size_t budget, qa_error *error)
+    qa_native_value *result, size_t budget, bool native, uint64_t bypass, qa_error *error)
 {
     if (!plan_guest(plan, guest, error) || !guest_mutable(guest, error)) return false;
-    if (count != plan->count || (count && !values) || !budget || !result ||
+    if (native != (guest->options.backend == QA_NATIVE_GUEST_HOST_X86_64) ||
+        (native && (budget || guest->observe || plan->x87_result || bypass)))
+        return guest_fail(error, QA_ERROR_UNSUPPORTED, target,
+            "guest ABI execution capability differs from its actual backend");
+    if (count != plan->count || (count && !values) || (!native && !budget) || !result ||
         !return_trap || target == return_trap ||
         !guest_range(guest, target, 1, QA_NATIVE_GUEST_EXECUTE, error) ||
         !guest_range(guest, return_trap, 1, QA_NATIVE_GUEST_EXECUTE, error))
@@ -594,6 +631,8 @@ bool guest_abi_invoke(const guest_abi_plan *plan, qa_native_guest *guest, uint64
     qa_native_guest_cpu enclosing;
     if (okay) okay = qa_native_guest_cpu_read(guest, &enclosing, error);
     bool nested = guest->run != NULL;
+    guest_host_x86_64_state hardware = {0};
+    if (okay && native && nested) okay = guest_host_child_cpu_read(guest->child, &hardware, error);
     uint64_t original_sp = okay ? enclosing.registers[QA_NATIVE_RSP] : 0, sp = 0;
     if (okay && original_sp < needed + plan->stack_alignment + plan->word)
         okay = guest_fail(error, QA_ERROR_ARGUMENT, original_sp, "guest ABI stack reserve underflows");
@@ -636,7 +675,9 @@ bool guest_abi_invoke(const guest_abi_plan *plan, qa_native_guest *guest, uint64
         cpu.flags &= ~UINT64_C(0x400); cpu.registers[QA_NATIVE_RSP] = sp; cpu.instruction = target;
         okay = qa_native_guest_cpu_write(guest, &cpu, error);
     }
-    if (okay) okay = qa_native_guest_run(guest, target, return_trap, budget, error);
+    if (okay) okay = native ? qa_native_guest_run_native(guest, target, return_trap, error) :
+        bypass ? qa_native_guest_run_original(guest, bypass, target, return_trap, budget, error) :
+        qa_native_guest_run(guest, target, return_trap, budget, error);
     if (okay) okay = qa_native_guest_cpu_read(guest, &cpu, error);
     if (okay && cpu.registers[QA_NATIVE_RSP] != sp + plan->word + plan->callee_pop)
         okay = guest_fail(error, QA_ERROR_FORMAT, cpu.registers[QA_NATIVE_RSP], "guest returned with incorrect actual ABI stack cleanup");
@@ -647,12 +688,13 @@ bool guest_abi_invoke(const guest_abi_plan *plan, qa_native_guest *guest, uint64
         if (okay) okay = read_locations(&plan->result, guest, &cpu, data, error);
     }
     if (okay) {
-        if (nested) cpu = enclosing;
+        if (native && nested) okay = guest_host_child_cpu_write(guest->child, &hardware, error);
+        else if (nested) cpu = enclosing;
         else {
             okay = qa_native_guest_cpu_read(guest, &cpu, error);
             cpu.registers[QA_NATIVE_RSP] = original_sp; cpu.instruction = enclosing.instruction;
         }
-        if (okay) okay = qa_native_guest_cpu_write(guest, &cpu, error);
+        if (okay && !(native && nested)) okay = qa_native_guest_cpu_write(guest, &cpu, error);
     }
     if (okay) {
         if (layout->kind == QA_NATIVE_BYTES) {
@@ -661,5 +703,24 @@ bool guest_abi_invoke(const guest_abi_plan *plan, qa_native_guest *guest, uint64
         } else decode_value(layout, data, result);
     }
     if (!okay && effected) guest->failed = true;
+    guest_host_x86_64_state_free(&hardware);
     free(arguments); free(data); return okay;
 }
+
+bool guest_abi_invoke(const guest_abi_plan *plan, qa_native_guest *guest, uint64_t target,
+    uint64_t return_trap, const qa_native_value *values, size_t count,
+    qa_native_value *result, size_t budget, qa_error *error)
+{ return invoke(plan, guest, target, return_trap, values, count, result, budget, false, 0, error); }
+
+bool guest_abi_invoke_original(const guest_abi_plan *plan, qa_native_guest *guest,
+    uint64_t id, uint64_t target, uint64_t return_trap, const qa_native_value *values,
+    size_t count, qa_native_value *result, size_t budget, qa_error *error)
+{
+    if (!id) return guest_fail(error, QA_ERROR_ARGUMENT, 0, "original ABI invocation requires its callback identity");
+    return invoke(plan, guest, target, return_trap, values, count, result, budget, false, id, error);
+}
+
+bool guest_abi_invoke_native(const guest_abi_plan *plan, qa_native_guest *guest, uint64_t target,
+    uint64_t return_trap, const qa_native_value *values, size_t count,
+    qa_native_value *result, qa_error *error)
+{ return invoke(plan, guest, target, return_trap, values, count, result, 0, true, 0, error); }

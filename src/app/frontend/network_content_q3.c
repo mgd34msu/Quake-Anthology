@@ -382,6 +382,18 @@ bool frontend_q3_content_read(const frontend_q3_content *content, frontend_q3_co
     content_view(content, out);
     return true;
 }
+bool frontend_q3_content_metadata_read(const frontend_q3_content *content,
+    frontend_q3_content_metadata *out, qa_error *error)
+{
+    if (!content || !out || content->pending_native)
+        return fail(error, QA_ERROR_ARGUMENT, "Remote Q3 inventory cannot read missing or pending content");
+    frontend_q3_content_metadata metadata = {.application = content->application,
+        .source = {.descriptor = qa_launch_instance_lease_view(content->descriptor),
+            .receiver = content->receiver, .configuration_generation = content->configuration_generation,
+            .connection_epoch = content->connection_epoch}};
+    content_view(content, &metadata.content);
+    *out = metadata; return true;
+}
 bool frontend_q3_content_prepare(frontend_q3_content *content, qa_error *error)
 {
     if (!current(content, error) || content->phase != FRONTEND_Q3_CONTENT_CATALOG)

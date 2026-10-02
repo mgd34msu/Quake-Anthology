@@ -1,4 +1,5 @@
 #include "particles_internal.h"
+#include "player_state_internal.h"
 #include <stdio.h>
 
 static bool shader(const q3n_particles *o, int32_t value)
@@ -26,10 +27,12 @@ static bool topology(const q3n_particles *o)
 }
 bool q3np_codec_fields(qa_source_save_io *io, q3n_particles *o)
 {
-    uint8_t magic[4]={'Q','3','P','A'}; uint32_t schema=1,product=o->product;
-    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"Q3PA",4) ||
+    const char *signature=o->remote_source?"Q3RA":"Q3PA";
+    uint8_t magic[4]; memcpy(magic,signature,4); uint32_t schema=1,product=o->product;
+    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,signature,4) ||
         !qa_source_save_u32(io,&schema) || schema!=1 || !qa_source_save_u32(io,&product) ||
-        product!=(uint32_t)o->product || !qa_source_save_bool(io,&o->initialized) ||
+        product!=(uint32_t)o->product ||
+        !q3nh_remote_basis_fields(io,q3n_remote_source_client(o->remote_source)) || !qa_source_save_bool(io,&o->initialized) ||
         !qa_source_save_i32(io,&o->active) || !qa_source_save_i32(io,&o->free) ||
         !qa_source_save_u32(io,&o->count) || o->count>Q3N_PARTICLE_CAPACITY ||
         !scalar(io,&o->old_time) || !scalar(io,&o->view_roll)) return false;
@@ -82,7 +85,7 @@ bool q3n_particles_restore(q3n_particles *o, qa_bytes bytes, qa_error *error)
         return q3np_fail(error,QA_ERROR_ARGUMENT,"Particle restore cannot replace registered native media");
     o->busy=true; q3n_particles *candidate=calloc(1,sizeof(*candidate));
     if (!candidate) { o->busy=false; return q3np_fail(error,QA_ERROR_MEMORY,"Allocating native Q3 particle restore candidate"); }
-    candidate->assets=o->assets; candidate->product=o->product; qa_source_save_io io={0};
+    candidate->assets=o->assets; candidate->product=o->product; candidate->remote_source=o->remote_source; qa_source_save_io io={0};
     bool ok=qa_source_save_reader(&io,NULL,bytes,error) && q3np_codec_fields(&io,candidate) && qa_source_save_finish(&io,NULL);
     if (ok) { *o=*candidate; o->busy=true; }
     else if (error && error->code==QA_OK) q3np_fail(error,QA_ERROR_FORMAT,"Saved native Q3 particles do not bind their actual registry");

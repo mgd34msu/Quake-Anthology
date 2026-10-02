@@ -2,12 +2,14 @@
 #define QA_FRONTEND_NATIVE_Q3_CLIENT_INTERNAL_H
 #include "native_q3_client.h"
 #include "native_q3_commands.h"
+bool frontend_native_q3_music_restore_bind(frontend_native_q3 *,qa_error *);
 struct frontend_native_q3 {
     frontend_native_q3 *next;
     qa_frontend *frontend;
     frontend_native_q3_view view;
     frontend_native_q3_composition composition;
     qa_launch_instance_lease *source_lease;
+    struct frontend_material_movies *shader_movies;
     qa_console *console;
     qa_command_context command;
     frontend_native_q3_commands *commands;

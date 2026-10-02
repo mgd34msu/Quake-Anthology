@@ -1,4 +1,6 @@
 #include "guest_native_q2_private.h"
+#include "save_native_q2_record.h"
+#include "unified_events.h"
 #include "guest_native_q2_attack.h"
 #include "guest_native_q2_combat.h"
 #include "guest_q2_control.h"
@@ -7,6 +9,21 @@
 #include "qa/console_cvar_observer.h"
 
 static bool load_host(struct application_native_q2 *, qa_error *);
+
+static bool process_current(void *context, const qa_launch_instance *descriptor,
+    qa_actor_owner receiver, uint64_t service_owner, qa_error *error)
+{
+    struct application_native_q2 *engine = context;
+    application_provider *provider = engine ? engine->provider : NULL;
+    if (!provider || !provider->application || !provider->launch || !descriptor ||
+        provider->state.native.q2_engine != engine || !engine->prepared ||
+        receiver != provider->owner || service_owner != provider->owner ||
+        !qa_sha256_equal(&descriptor->identity, &provider->launch->identity) ||
+        !descriptor->artifact || !provider->launch->artifact ||
+        qa_resource_id(descriptor->artifact) != qa_resource_id(provider->launch->artifact))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 process lost its prepared source identity");
+    return true;
+}
 
 bool application_native_q2_idle(const application_provider *provider)
 {
@@ -62,6 +79,8 @@ static void actor_released(void *state, qa_session *session, qa_actor_record act
             engine->clients[i].actor = (qa_actor_id){0};
             engine->clients[i].connected = engine->clients[i].begun = false;
             engine->clients[i].inventory_bound = false;
+            engine->clients[i].protocol_fog = (qa_q2_wire_fog){0};
+            engine->clients[i].protocol_fog_actor = (qa_actor_id){0};
         }
     if (qa_actor_id_equal(engine->world_actor, actor.id)) engine->world_actor = (qa_actor_id){0};
 }
@@ -126,6 +145,12 @@ static qa_cvars *cvar_owner(void *opaque, const qa_command_context *command, con
     qa_cvars *owner = application_startup_cvar_owner(engine->provider, engine->console, command, name);
     return owner ? owner : engine->cvars;
 }
+static bool cvar_edit(void *opaque, const qa_command_context *command, qa_cvars *registry,
+    qa_cvars_edit **out, qa_error *error)
+{
+    struct application_native_q2 *engine = opaque;
+    return application_startup_cvar_edit(engine->provider, engine->console, command, registry, out, error);
+}
 static qa_cvars *visible_cvars(void *opaque, const qa_command_context *command, size_t index)
 {
     struct application_native_q2 *engine = opaque;
@@ -142,8 +167,12 @@ static qa_command_result console_command(void *opaque, const qa_command_invocati
     if (application_startup_source_active(engine->provider))
         return application_command_fallback(engine->provider->application, command, error);
     if (!engine->initialized) return QA_COMMAND_UNHANDLED;
-    if (!application_native_q2_console_command(engine->provider, command->context.actor,
-            command->raw, &handled, error)) return QA_COMMAND_FAILED;
+    bool ok = command->context.actor.registry
+        ? application_native_q2_client_command(engine->provider, command->context.actor,
+            command, &handled, error)
+        : application_native_q2_console_command(engine->provider, command->context.actor,
+            command->raw, &handled, error);
+    if (!ok) return QA_COMMAND_FAILED;
     return handled ? QA_COMMAND_HANDLED : QA_COMMAND_UNHANDLED;
 }
 
@@ -186,7 +215,7 @@ static bool prepare_owner(qa_application *app, application_provider *provider,
     qa_console_options console = {.context = engine->command_context, .cvars = engine->cvars,
         .user = engine, .print = console_print, .read_script = read_script, .release_script = release_script,
         .script_complete = script_complete, .allow_command = allow_command,
-        .cvar_owner = cvar_owner, .visible_cvars = visible_cvars,
+        .cvar_owner = cvar_owner, .visible_cvars = visible_cvars, .cvar_edit = cvar_edit,
         .source_command = console_command, .capture_context = capture_context, .context_active = context_active};
     engine->console = qa_console_create(&console, error);
     if (!engine->console) return false;
@@ -307,6 +336,29 @@ static bool load_host(struct application_native_q2 *engine, qa_error *error)
         .tick_rate = interval ? (uint32_t)(UINT64_C(1000000000) / interval) : 0,
         .frame_seconds = (float)interval / 1000000000.f,
         .frame_milliseconds = (uint32_t)(interval / UINT64_C(1000000))};
+    qa_native_module_info module = qa_native_module_describe(provider->state.native.module);
+    qa_native_process_resource_artifact artifact = {.resource = provider->launch->artifact,
+        .acquisition = provider->launch->artifact_acquisition, .path = provider->launch->selection.artifact};
+    if (provider->application->native_restore_image && !engine->process.resources) {
+        const qa_application_native_resource_refs *refs = provider->application->native_restore_resources;
+        const qa_save_record *saved = qa_save_image_find(provider->application->native_restore_image,
+            QA_SAVE_PROVIDER, provider->launch->selection.instance);
+        qa_bytes recipe = {0};
+        const qa_native_process_resources *capture = NULL;
+        if (!refs || !refs->resolve)
+            return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 cold construction requires its retained external graph resolver");
+        if (!saved || !qa_sha256_equal(&saved->owner.content, &provider->launch->identity) ||
+            !application_native_q2_save_resource_recipe(saved, &recipe, error) ||
+            !refs->resolve(refs->context, provider->launch->selection.instance,
+                qa_resource_id(provider->launch->artifact), recipe, &capture, error)) return false;
+        if (!application_native_process_rebind(provider->launch, provider->owner, provider->owner,
+                process_current, engine, capture, recipe, &engine->process, error)) return false;
+    }
+    if (!application_native_process_prepare(provider->application, provider->launch,
+        provider->owner, provider->owner, &artifact, 1, 0, &module.image,
+        instance.observe || qa_native_declaration_region_count(engine->declaration) != 0,
+        process_current, engine, &engine->process, error)) return false;
+    instance.process = &engine->process.process;
     bool ok;
     ++engine->calls;
     if (engine->profile == QA_NATIVE_Q2_CGAME_API2023) {
@@ -376,10 +428,15 @@ bool application_native_q2_spawn_map(application_provider *provider, const qa_bs
     engine->map_name = name; engine->spawn_point = spawn;
     if (!application_native_q2_activate(engine, error)) return false;
     if (!qa_native_host_world_actor_bind(provider->state.native.host, engine->world_actor, error)) return false;
+    if (!application_unified_event_registration_clear(provider->application, provider->owner, error)) return false;
     for (uint32_t i = 0; i < engine->configstring_count; ++i) {
         free(engine->configstrings[i]); engine->configstrings[i] = NULL;
     }
     provider->application->physics->world_actor = engine->world_actor;
+    for (size_t i = 1; i < 257; ++i) {
+        engine->clients[i].protocol_fog = (qa_q2_wire_fog){0};
+        engine->clients[i].protocol_fog_actor = engine->clients[i].actor;
+    }
     if (!application_native_q2_combat_load(engine, error)) return false;
     ++engine->calls;
     bool ok = true;
@@ -424,6 +481,7 @@ bool application_native_q2_retire_map(application_provider *provider, qa_error *
             return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 cgame map shutdown has not drained");
         bool ok = qa_native_host_destroy_owned(&provider->state.native.host, error);
         if (!ok) return false;
+        if (!application_native_process_release(&engine->process, error)) return false;
     }
     if (engine->profile == QA_NATIVE_Q2_CGAME_API2023) {
         if (engine->platform.release_frontend)
@@ -486,6 +544,8 @@ bool application_native_q2_deconstruct(application_provider *provider, qa_error 
     if (!application_native_q2_attack_close(engine, error)) return false;
     if (!application_native_q2_combat_close(engine, error)) return false;
     if (!application_q2_control_close(engine, error)) return false;
+    if (!application_native_process_release(&engine->process, error)) return false;
+    if (!application_unified_event_registration_clear(provider->application, provider->owner, error)) return false;
     if (engine->console && engine->cvars &&
         !application_startup_source_retire(provider, engine->console, engine->cvars, error)) return false;
     if (engine->platform.release_frontend)

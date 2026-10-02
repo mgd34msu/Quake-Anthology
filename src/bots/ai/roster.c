@@ -243,9 +243,9 @@ bool bot_ai_schedule(qa_bots *b,qa_error *e) {
         uint32_t bits = (uint32_t)b->source_match.cvars[BOT_SOURCE_THINK_TIME].integer_value * ordinal++;
         int32_t product;
         memcpy(&product, &bits, sizeof(product));
-        b->clients[client-1]->residual_ms = (int32_t)((int64_t)product / b->count);
+        int32_t residual = (int32_t)((int64_t)product / b->count);
         if(!bot_ai_storage_i32(b,b->clients[client-1],QA_BOT_SOURCE_RESIDUAL,
-                &b->clients[client-1]->residual_ms,true,e)) return false;
+                &residual,true,e)) return false;
     }
     return true;
 }
@@ -416,7 +416,6 @@ static bool admit(qa_bots *b,const qa_bot_admission *a,bool *rejected,qa_error *
     }
     if (ok) {
         s->inuse=true;
-        s->setup_count=4;
         s->view.enter_time=b->time;
         b->source_clients[source_client]=a->client+1;
         bot_ai_source_setup_stage(&s->source_setup,BOT_SOURCE_SETUP_PUBLISHED);

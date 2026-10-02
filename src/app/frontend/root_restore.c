@@ -82,5 +82,5 @@ bool frontend_roots_attach_restored(qa_frontend *f,frontend_world_inventory *roo
             if (!found) break;
         }
     }
-    return true;
+    return frontend_visual_model_receipts_ready(f,error);
 }

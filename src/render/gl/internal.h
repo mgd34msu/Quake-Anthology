@@ -2,6 +2,8 @@
 #define QA_RENDER_GL_INTERNAL_H
 
 #include "qa/render_gl.h"
+#include "../controls_private.h"
+#include "../output_domain.h"
 
 #include <SDL_opengl.h>
 
@@ -72,6 +74,10 @@ typedef struct gl_api {
     void (APIENTRY *VertexAttribPointer)(GLuint, GLint, GLenum, GLboolean,
                                          GLsizei, const void *);
     void (APIENTRY *DrawElements)(GLenum, GLsizei, GLenum, const void *);
+    void (APIENTRY *ArrayElement)(GLint);
+    void (APIENTRY *VertexAttrib4f)(GLuint, GLfloat, GLfloat, GLfloat, GLfloat);
+    void (APIENTRY *LockArraysEXT)(GLint, GLsizei);
+    void (APIENTRY *UnlockArraysEXT)(void);
     GLuint (APIENTRY *CreateShader)(GLenum);
     void (APIENTRY *ShaderSource)(GLuint, GLsizei, const GLchar *const *,
                                   const GLint *);
@@ -151,7 +157,7 @@ typedef struct gl_programs {
     GLuint stage, opacity, gamma, fog[3];
     gl_stage_uniforms stage_uniform;
     struct { GLint backdrop, result, opacity; } opacity_uniform;
-    struct { GLint raw, table; } gamma_uniform;
+    struct { GLint raw, table, apply; } gamma_uniform;
     gl_fog_uniforms fog_uniform[3];
 } gl_programs;
 
@@ -196,6 +202,7 @@ typedef struct gl_restore_storage gl_restore_storage;
 
 struct qa_gl_renderer {
     qa_gl_options options;
+    qa_render_controls controls;
     gl_api gl;
     qa_gl_capabilities capabilities;
     gl_programs programs;
@@ -210,6 +217,7 @@ struct qa_gl_renderer {
     qa_scene_view view;
     qa_scene_draw_buffer draw_buffer;
     float gamma;
+    qa_output_domains output_domains;
     uint64_t sequence;
     uint32_t presented_width, presented_height;
     bool overdraw, closed, presented, executing, capturing, preparing, detached;

@@ -18,4 +18,5 @@ bool qa_material_stage_color(const qa_material_stage *, const qa_scene_vertex *,
 bool qa_material_deform_mesh(const qa_material *, const qa_scene_mesh *,
                              const qa_material_context *, float time,
                              qa_scene_frame *, qa_scene_mesh *, qa_error *);
+bool material_source_sort(qa_scene_group **, size_t, qa_error *);
 #endif

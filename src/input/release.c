@@ -15,8 +15,10 @@ struct qa_input_release {
     size_t held_count;
     release_record *records;
     size_t count, cursor;
+    release_record *reserved;
+    size_t reserved_first, reserved_count;
     double time_ms;
-    bool advancing, entered, complete, metadata_entered;
+    bool advancing, entered, complete, metadata_entered, all_reserved;
     qa_error fault;
 };
 static bool fail(qa_error *error,const char *text)
@@ -36,6 +38,8 @@ const qa_console_release *qa_input_release_program_parent(const qa_input_release
 {
     if (!owner || owner->seat->release!=owner || owner->advancing) return NULL;
     for (size_t i=0;i<owner->count;++i) if (owner->records[i].program) return owner->records[i].program;
+    for (size_t i=owner->reserved_first;i<owner->reserved_count;++i)
+        if (owner->reserved[i].program) return owner->reserved[i].program;
     return NULL;
 }
 static bool scope_valid(const qa_input_release_scope *scope)
@@ -68,7 +72,17 @@ bool qa_input_release_action_access(const qa_input_seat *seat,qa_error *error)
 }
 static void storage_free(qa_input_release *owner)
 {
-    free(owner->keys); free(owner->snapshot); free(owner->records); free(owner);
+    free(owner->keys); free(owner->snapshot); free(owner->records); free(owner->reserved); free(owner);
+}
+static void reserved_discard(qa_input_release *owner)
+{
+    for (size_t i=owner->reserved_first;i<owner->reserved_count;++i)
+        if (owner->reserved[i].program) {
+            qa_console_release_outcome result;
+            qa_console_release_abort(owner->reserved[i].program,&result,NULL);
+        }
+    free(owner->reserved); owner->reserved=NULL;
+    owner->reserved_first=owner->reserved_count=0; owner->all_reserved=false;
 }
 static bool prepare(qa_input_seat *seat,const qa_input_release_scope *scope,
     double time,const qa_console_release *parent,qa_input_release **out,qa_error *error)
@@ -220,6 +234,106 @@ static bool physical_ready(const qa_input_release *owner,const qa_input_seat *se
             return fail(error,"actual held input changed during source release");
     return true;
 }
+bool qa_input_release_unentered_empty_is(const qa_input_release *owner,const qa_input_seat *seat)
+{
+    return owner && physical_ready(owner,seat,&owner->scope,NULL) &&
+        !owner->count && !owner->reserved_count && !owner->cursor && !owner->entered &&
+        !owner->metadata_entered && !owner->complete && owner->fault.code==QA_OK &&
+        qa_console_idle(seat->options.console);
+}
+bool qa_input_release_reserve_all(qa_input_release *owner,const qa_console_release *parent,qa_error *error)
+{
+    if (qa_input_release_all_reserved_is(owner,owner?owner->seat:NULL)) return true;
+    if (!owner || !physical_ready(owner,owner->seat,&owner->scope,error) ||
+        !qa_console_idle(owner->seat->options.console) || owner->entered || owner->cursor ||
+        owner->fault.code!=QA_OK)
+        return fail(error,"Dormant ALL capture requires its unentered returned physical plan");
+    if (!qa_input_seat_context_ready(owner->seat,&owner->seat->options.context,error)) return false;
+    if (!parent) parent=qa_input_release_program_parent(owner);
+    if (parent && !qa_console_release_parent_ready(parent,owner->seat->options.console,error)) return false;
+    release_record *records=owner->held_count?calloc(owner->held_count,sizeof(*records)):NULL;
+    if (owner->held_count && !records) {
+        qa_error_set(error,QA_ERROR_MEMORY,0,"Retaining dormant ALL source history"); return false;
+    }
+    size_t count=owner->count; bool ok=true;
+    for (size_t i=0;ok && i<owner->held_count;++i) {
+        const qa_held_binding *held=&owner->snapshot[i];
+        if (selected(&owner->scope,held->input)) continue;
+        release_record *record=&records[count++]; record->held=*held;
+        const qa_input_binding *binding=held->binding?&held->binding->view:NULL;
+        record->action=binding && binding->kind==QA_BIND_ACTION;
+        if (!binding || record->action) continue;
+        const char *text=NULL;
+        ok=qa_input_binding_release_text(owner->seat,held,owner->time_ms,&text,error);
+        qa_command_context context=owner->seat->options.context;
+        context.script="key-binding"; context.direct=false;
+        if (ok) ok=parent?qa_console_release_prepare_sibling(owner->seat->options.console,parent,
+            &context,text,&record->program,error):qa_console_release_prepare(owner->seat->options.console,
+            &context,text,&record->program,error);
+        if (ok && !parent) parent=record->program;
+    }
+    if (!ok) {
+        for (size_t i=owner->count;i<count;++i) if (records[i].program) {
+            qa_console_release_outcome result; qa_console_release_abort(records[i].program,&result,NULL);
+        }
+        free(records); return false;
+    }
+    owner->reserved=records; owner->reserved_first=owner->count; owner->reserved_count=count;
+    owner->all_reserved=true; return true;
+}
+bool qa_input_release_all_reserved_is(const qa_input_release *owner,const qa_input_seat *seat)
+{
+    return owner && ((owner->all_reserved && owner->reserved_first==owner->count &&
+        owner->reserved_count==owner->held_count) || (owner->scope.all &&
+        owner->count==owner->held_count && !owner->reserved)) &&
+        physical_ready(owner,seat,&owner->scope,NULL) && qa_console_idle(seat->options.console);
+}
+bool qa_input_release_failed_is(const qa_input_release *owner,const qa_input_seat *seat)
+{
+    return owner && owner->entered && owner->fault.code!=QA_OK &&
+        physical_ready(owner,seat,&owner->scope,NULL) && qa_console_idle(seat->options.console);
+}
+bool qa_input_release_waiting_is(const qa_input_release *owner,const qa_input_seat *seat)
+{
+    return owner && owner->entered && !owner->complete && owner->fault.code==QA_OK &&
+        physical_ready(owner,seat,&owner->scope,NULL) && qa_console_idle(seat->options.console);
+}
+bool qa_input_release_reserved_retirement_ready(const qa_input_release *owner,
+    qa_console_release_disposition disposition,qa_console_release_retirement_fn qualify,
+    void *context,qa_error *error)
+{
+    if (!qa_input_release_all_reserved_is(owner,owner?owner->seat:NULL) ||
+        !qa_input_release_retirement_scope_ready(owner,owner->seat,&owner->scope,
+            disposition,qualify,context,error))
+        return fail(error,"Dormant ALL history lacks actual complete coverage and retirement authority");
+    for (size_t i=owner->reserved_first;i<owner->reserved_count;++i)
+        if (owner->reserved[i].program && !qa_console_release_retirement_ready(
+            owner->reserved[i].program,disposition,qualify,context,error)) return false;
+    return true;
+}
+void qa_input_release_reserved_retirement_publish(qa_input_release *owner,double time)
+{
+    if (!owner->scope.all) {
+        if (owner->count) memcpy(owner->reserved,owner->records,owner->count*sizeof(*owner->records));
+        free(owner->records); owner->records=owner->reserved; owner->reserved=NULL;
+        owner->count=owner->reserved_count; owner->reserved_first=owner->reserved_count=0;
+    }
+    owner->all_reserved=false;
+    free(owner->keys); owner->keys=NULL;
+    owner->scope=(qa_input_release_scope){.all=true,.controller=-1};
+    owner->time_ms=time;
+    owner->complete=false; owner->metadata_entered=false;
+}
+bool qa_input_release_reserved_activate(qa_input_release *owner,qa_error *error)
+{
+    if (!qa_input_release_all_reserved_is(owner,owner?owner->seat:NULL) ||
+        owner->fault.code!=QA_OK ||
+        !qa_input_seat_context_ready(owner->seat,&owner->seat->options.context,error))
+        return fail(error,"Live ALL activation requires its retained successful current source plan");
+    if (owner->scope.all) return true;
+    qa_input_release_reserved_retirement_publish(owner,owner->time_ms);
+    return true;
+}
 bool qa_input_release_extend_all(qa_input_release *owner,double time,
     const qa_console_release *parent,qa_error *error)
 {
@@ -229,6 +343,8 @@ bool qa_input_release_extend_all(qa_input_release *owner,double time,
         (parent && !qa_console_release_parent_ready(parent,owner->seat->options.console,error)))
         return fail(error,"all-input extension requires its returned retained physical source");
     if (owner->scope.all) return true;
+    if (owner->all_reserved)
+        return fail(error,"Dormant ALL history requires its separate retirement admission");
     if (!qa_input_seat_context_ready(owner->seat,&owner->seat->options.context,error)) return false;
     size_t available=owner->held_count-owner->count,count=0;
     release_record *added=available?calloc(available,sizeof(*added)):NULL;
@@ -264,6 +380,23 @@ bool qa_input_release_extend_all(qa_input_release *owner,double time,
     owner->complete=false; owner->metadata_entered=false;
     return true;
 }
+bool qa_input_release_completed_is(const qa_input_release *owner,const qa_input_seat *seat,
+    const qa_input_release_scope *required)
+{
+    if (!physical_ready(owner,seat,required,NULL) || !owner->complete ||
+        owner->cursor!=owner->count || !owner->metadata_entered || owner->fault.code!=QA_OK ||
+        !qa_console_idle(seat->options.console)) return false;
+    for (size_t i=0;i<owner->count;++i)
+        if (!owner->records[i].complete || (owner->records[i].program &&
+            !qa_console_release_completed_is(owner->records[i].program,seat->options.console))) return false;
+    return true;
+}
+bool qa_input_release_completed_empty_is(const qa_input_release *owner,const qa_input_seat *seat,
+    const qa_input_release_scope *required)
+{
+    return owner && !owner->count && !owner->reserved_count &&
+        qa_input_release_completed_is(owner,seat,required);
+}
 bool qa_input_release_ready(const qa_input_release *owner,const qa_input_seat *seat,
     const qa_input_release_scope *required,qa_error *error)
 {
@@ -295,6 +428,7 @@ bool qa_input_release_retirement_scope_ready(const qa_input_release *owner,const
 }
 void qa_input_release_publish(qa_input_release *owner)
 {
+    reserved_discard(owner);
     qa_input_seat *seat=owner->seat;
     for (size_t i=0;i<seat->held_count;) {
         qa_held_binding *held=&seat->held[i];
@@ -321,7 +455,7 @@ bool qa_input_release_abort(qa_input_release *owner,qa_input_release_outcome *ou
         owner->records[i].program=NULL;
     }
     if (owner->entered) qa_input_release_publish(owner);
-    else { owner->seat->release=NULL; storage_free(owner); }
+    else { reserved_discard(owner); owner->seat->release=NULL; storage_free(owner); }
     return true;
 }
 bool qa_input_release_retirement_ready(const qa_input_release *owner,qa_console_release_disposition disposition,

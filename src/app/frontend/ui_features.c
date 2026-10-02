@@ -8,6 +8,7 @@
 #include "cinematic_captions.h"
 #include "qa/text.h"
 #include "qa/ui_presentation_prepare.h"
+#include "qa/application_q1_composition.h"
 #include <limits.h>
 
 frontend_ui_seat_features *frontend_ui_features_seat(frontend_seat *seat)
@@ -183,6 +184,57 @@ bool frontend_ui_source_message(qa_frontend *f,uint32_t seat,const qa_builtin_ev
         if (ok) *out=output;
     }
     qa_localization_release(catalog); free(arguments); return ok;
+}
+bool frontend_ui_source_prompt_text(qa_frontend *f,uint32_t seat,const qa_builtin_event *event,
+    qa_string_id field,char output[1024],const char **out,qa_error *error)
+{
+    if (!f || !f->application || !f->ui_features || !f->seats || !event || !output || !out ||
+        seat>=f->options.seats || f->source_restoring || f->ui_features->handling ||
+        !frontend_ui_features_seat(f->seats+seat) || event->kind!=QA_BUILTIN_SOURCE_PROMPT ||
+        event->family!=QA_GAME_Q1 || !event->provider || !event->actor.registry || !field ||
+        !event->text || (event->prompt_choice_count && !event->prompt_choices) ||
+        event->prompt_choice_count>SIZE_MAX/sizeof(*event->prompt_choices))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Localized prompt requires its actual Source recipient and fields");
+    qa_strings *strings=qa_session_strings(qa_application_session(f->application));
+    bool selected=field==event->text;
+    if (!qa_strings_cstr(strings,event->text))
+        return frontend_fail(error,QA_ERROR_FORMAT,"Source prompt lost its actual title string");
+    for (size_t i=0;i<event->prompt_choice_count;++i) {
+        const qa_builtin_prompt_choice *choice=event->prompt_choices+i;
+        if (!choice->label || !qa_strings_cstr(strings,choice->label) || choice->impulse<1 || choice->impulse>UINT8_MAX)
+            return frontend_fail(error,QA_ERROR_FORMAT,"Source prompt lost an actual ordered choice");
+        if (field==choice->label) selected=true;
+    }
+    if (!selected) return frontend_fail(error,QA_ERROR_ARGUMENT,"Text is not a field of this Source prompt");
+    qa_actor_id actor; uint32_t launch_seat;
+    if (!frontend_seat_launch_id_read(f,seat,&launch_seat) ||
+        !qa_application_player_actor(f->application,launch_seat,&actor) || !qa_actor_id_equal(actor,event->actor))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Source prompt belongs to another full actor");
+    uint64_t source_time=0; bool found=false;
+    if (!qa_application_q1_ctf_recipient_read(f->application,event->provider,event->actor,&source_time,&found,error)) return false;
+    if (!found) return frontend_fail(error,QA_ERROR_ARGUMENT,"Source prompt lost its actual provider recipient");
+    qa_command_context context={.owner=event->provider,.origin=QA_COMMAND_SERVER,.dialect=QA_CONSOLE_Q1},captured;
+    if (!qa_application_capture_command_context(f->application,&context,&captured,error)) return false;
+    qa_vfs *view=qa_application_context_files(f->application,&captured,NULL);
+    const qa_launch_snapshot *publication=qa_application_launch(f->application);
+    const char *instance=qa_application_provider_instance(f->application,event->provider);
+    const qa_launch_instance *source=instance?qa_launch_snapshot_find(publication,instance):NULL;
+    const qa_product *product=source?qa_catalog_product(qa_launch_snapshot_catalog(publication),source->selection.product):NULL;
+    if (!view || !product || product->family!=QA_GAME_Q1)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Source prompt lost its actual content view and edition");
+    qa_ui_preferences preferences; qa_localization *catalog=NULL;
+    if (!qa_ui_preferences_read(qa_application_cvars(f->application),seat,&preferences,error) ||
+        !qa_localization_acquire(f->ui_features->catalogs,view,preferences.language,
+            &(qa_localization_options){.profile=QA_LOCALIZATION_Q1_RERELEASE},&catalog,error)) return false;
+    const char *format=qa_strings_cstr(strings,field);
+    bool ok=true;
+    if (product->edition!=QA_EDITION_RERELEASE &&
+        (format[0]!='$' || !qa_localization_find(catalog,format+1)))
+        ok=frontend_q1_classic_text(format,NULL,0,output,1024,error);
+    else (void)qa_localize_presentation(catalog,format,NULL,0,true,output,1024);
+    if (ok) *out=output;
+    qa_localization_release(catalog);
+    return ok;
 }
 bool frontend_ui_features_assets_read(const qa_frontend *f, qa_audio_asset ***out, size_t *count, qa_error *error)
 {

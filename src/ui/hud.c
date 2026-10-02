@@ -1,6 +1,7 @@
 #include "internal.h"
 #include "qa/hud.h"
 #include "qa/source_save.h"
+#include "qa/application_q1_composition.h"
 #include <stdio.h>
 
 typedef struct hud_message { char *text; uint64_t starts, until, character_ns; bool chat, instant; } hud_message;
@@ -12,13 +13,41 @@ struct qa_hud {
     const qa_scene_image *pickup_icon;
     uint64_t pickup_until, hit_until;
     float hit_damage;
+    qa_builtin_ctf_status ctf_status;
+    qa_actor_id ctf_actor;
+    qa_actor_owner ctf_source;
+    uint64_t ctf_time_ns;
+    bool ctf_present;
+    qa_builtin_ctf_capture ctf_capture;
+    uint64_t ctf_capture_time_ns, ctf_capture_until_ns;
+    bool ctf_capture_present;
     bool drawing, checkpoint_active;
 };
 bool qa_hud_idle(const qa_hud *hud) { return hud && !hud->drawing && !hud->checkpoint_active; }
+static uint64_t after(uint64_t now, uint64_t duration);
 static bool hud_signature(qa_source_save_io *io) {
-    uint8_t magic[4] = {'Q', 'A', 'H', 'D'}; uint32_t version = 3;
+    uint8_t magic[4] = {'Q', 'A', 'H', 'D'}; uint32_t version = 5;
     return qa_source_save_bytes(io, magic, 4) && !memcmp(magic, "QAHD", 4) &&
-        qa_source_save_u32(io, &version) && version == 3;
+        qa_source_save_u32(io, &version) && version == 5;
+}
+static bool ctf_fields(qa_source_save_io *io, qa_hud *hud) {
+    if (!qa_source_save_bool(io, &hud->ctf_present)) return false;
+    if (!hud->ctf_present) return !hud->ctf_capture_present;
+    qa_builtin_ctf_status *status = &hud->ctf_status;
+    if (!(qa_source_save_actor(io, &hud->ctf_actor) && hud->ctf_actor.registry &&
+        qa_source_save_string(io, &hud->ctf_source) && hud->ctf_source &&
+        qa_source_save_u64(io, &hud->ctf_time_ns) &&
+        qa_source_save_f64(io, &status->red) && isfinite(status->red) &&
+        qa_source_save_f64(io, &status->blue) && isfinite(status->blue) &&
+        qa_source_save_f64(io, &status->flags) && isfinite(status->flags) &&
+        qa_source_save_f64(io, &status->rune_items) && isfinite(status->rune_items) &&
+        qa_source_save_bool(io, &hud->ctf_capture_present))) return false;
+    if (!hud->ctf_capture_present) return true;
+    return qa_source_save_bool(io, &hud->ctf_capture.blue) &&
+        qa_source_save_f64(io, &hud->ctf_capture.total) && isfinite(hud->ctf_capture.total) &&
+        qa_source_save_u64(io, &hud->ctf_capture_time_ns) &&
+        qa_source_save_u64(io, &hud->ctf_capture_until_ns) &&
+        hud->ctf_capture_until_ns == after(hud->ctf_capture_time_ns, UINT64_C(3000000000));
 }
 static bool hud_reservation(qa_source_save_io *io, size_t count, size_t capacity) {
     if (count > capacity || capacity > SIZE_MAX / sizeof(hud_message)) return false;
@@ -102,7 +131,8 @@ bool qa_hud_checkpoint(qa_hud *hud, const qa_hud_checkpoint_refs *refs, qa_buffe
     uint64_t pickup_until = hud->pickup_until, hit_until = hud->hit_until; float damage = hud->hit_damage;
     ok = ok && hud_text(&io, &pickup) && hud_image_fields(&io, refs, &icon) &&
         qa_source_save_u64(&io, &pickup_until) && (pickup || (!icon && !pickup_until)) &&
-        qa_source_save_u64(&io, &hit_until) && qa_source_save_f32(&io, &damage) && isfinite(damage);
+        qa_source_save_u64(&io, &hit_until) && qa_source_save_f32(&io, &damage) && isfinite(damage) &&
+        ctf_fields(&io, hud);
     if (ok) ok = qa_source_save_finish(&io, out);
     if (!ok && (!error || error->code == QA_OK)) qa_error_set(error, QA_ERROR_FORMAT, 0, "Invalid retained HUD state");
     qa_source_save_dispose(&io); hud->checkpoint_active = false; return ok;
@@ -134,7 +164,8 @@ bool qa_hud_restore(qa_bytes bytes, const qa_hud_options *options, const qa_hud_
     if (ok) ok = hud_text(&io, &hud->pickup) && hud_image_fields(&io, refs, &hud->pickup_icon) &&
         qa_source_save_u64(&io, &hud->pickup_until) && (hud->pickup || (!hud->pickup_icon && !hud->pickup_until)) &&
         qa_source_save_u64(&io, &hud->hit_until) &&
-        qa_source_save_f32(&io, &hud->hit_damage) && isfinite(hud->hit_damage) && qa_source_save_finish(&io, NULL);
+        qa_source_save_f32(&io, &hud->hit_damage) && isfinite(hud->hit_damage) &&
+        ctf_fields(&io, hud) && qa_source_save_finish(&io, NULL);
     if (!ok) {
         qa_hud_destroy(hud, NULL);
         if (!error || error->code == QA_OK) qa_error_set(error, QA_ERROR_FORMAT, 0, "Invalid saved HUD state");
@@ -224,6 +255,52 @@ bool qa_hud_pickup(qa_hud *hud, const char *text, const qa_scene_image *icon, ui
 void qa_hud_hit_marker(qa_hud *hud, float damage, uint64_t until) {
     if (hud && !hud->drawing && !hud->checkpoint_active && isfinite(damage)) { hud->hit_damage = damage; hud->hit_until = until; }
 }
+bool qa_hud_ctf_status(qa_hud *hud, const qa_builtin_event *event, qa_error *error) {
+    if (!hud || hud->drawing || hud->checkpoint_active || !event ||
+        event->kind != QA_BUILTIN_CTF_STATUS || event->family != QA_GAME_Q1 || event->argument_count ||
+        !event->provider || !qa_application_provider_instance(hud->options.application, event->provider) ||
+        !qa_actors_get(qa_session_actors(qa_application_session(hud->options.application)), event->actor) ||
+        !isfinite(event->ctf_status.red) || !isfinite(event->ctf_status.blue) ||
+        !isfinite(event->ctf_status.flags) || !isfinite(event->ctf_status.rune_items))
+        return ui_fail(error, "CTF HUD status requires its actual source and full recipient");
+    if (!hud->ctf_present || hud->ctf_source != event->provider ||
+        !qa_actor_id_equal(hud->ctf_actor, event->actor)) hud->ctf_capture_present = false;
+    hud->ctf_status = event->ctf_status;
+    hud->ctf_actor = event->actor; hud->ctf_source = event->provider;
+    hud->ctf_time_ns = event->time_ns; hud->ctf_present = true;
+    return true;
+}
+bool qa_hud_ctf_capture(qa_hud *hud, const qa_builtin_event *event,
+    qa_actor_id recipient, qa_error *error) {
+    if (!hud || hud->drawing || hud->checkpoint_active || !event ||
+        event->kind != QA_BUILTIN_CTF_CAPTURE || event->family != QA_GAME_Q1 ||
+        !event->provider || event->argument_count || event->text || event->resource ||
+        !qa_actor_id_equal(event->actor, (qa_actor_id){0}) ||
+        !qa_actor_id_equal(event->other, (qa_actor_id){0}) || !isfinite(event->ctf_capture.total))
+        return ui_fail(error, "CTF capture requires its typed source-wide total");
+    uint64_t time_ns;
+    bool found;
+    if (!qa_application_q1_ctf_recipient_read(hud->options.application, event->provider,
+            recipient, &time_ns, &found, error)) return false;
+    if (!found || event->time_ns > time_ns)
+        return ui_fail(error, "CTF capture lost its actual source recipient or clock");
+    if (!hud->ctf_present || hud->ctf_source != event->provider ||
+        !qa_actor_id_equal(hud->ctf_actor, recipient)) hud->ctf_status = (qa_builtin_ctf_status){0};
+    if (event->ctf_capture.blue) hud->ctf_status.blue = event->ctf_capture.total;
+    else hud->ctf_status.red = event->ctf_capture.total;
+    hud->ctf_actor = recipient; hud->ctf_source = event->provider;
+    hud->ctf_time_ns = event->time_ns; hud->ctf_present = true;
+    hud->ctf_capture = event->ctf_capture;
+    hud->ctf_capture_time_ns = event->time_ns;
+    hud->ctf_capture_until_ns = after(event->time_ns, UINT64_C(3000000000));
+    hud->ctf_capture_present = true;
+    return true;
+}
+static uint32_t source_bits(double value) {
+    double bits = fmod(trunc(value), 4294967296.0);
+    if (bits < 0) bits += 4294967296.0;
+    return (uint32_t)bits;
+}
 static void expire(hud_message *messages, size_t *count, uint64_t now) {
     size_t retained = 0;
     for (size_t i = 0; i < *count; ++i) {
@@ -254,6 +331,42 @@ static bool number(qa_hud *hud, qa_scene_frame *scene, qa_scene_rect target, flo
     qa_scene_vec4 color = warning ? (qa_scene_vec4){1, .3f, .2f, 1} : (qa_scene_vec4){1, 1, 1, 1};
     return text(hud, scene, target, x, y, label, color, .9f, QA_FONT_ALIGN_CENTER, error) &&
            text(hud, scene, target, x, y + 13, numeric, color, 1.5f, QA_FONT_ALIGN_CENTER, error);
+}
+static const char *flag_status(uint32_t bits) {
+    return bits & 4 ? "dropped" : bits & 2 ? "carried" : "home";
+}
+static bool ctf_draw(qa_hud *hud, const qa_hud_frame *frame, qa_scene_frame *scene,
+    qa_error *error) {
+    if (!hud->ctf_present || !qa_actor_id_equal(frame->actor, hud->ctf_actor) ||
+        !qa_actors_get(qa_session_actors(qa_application_session(hud->options.application)), frame->actor) ||
+        !qa_application_provider_instance(hud->options.application, hud->ctf_source)) return true;
+    uint64_t source_time_ns;
+    bool found;
+    if (!qa_application_q1_ctf_recipient_read(hud->options.application, hud->ctf_source,
+            frame->actor, &source_time_ns, &found, error)) return false;
+    if (!found) return true;
+    char red[32], blue[32], row[128];
+    if (!qa_format_number(hud->ctf_status.red, red, error) ||
+        !qa_format_number(hud->ctf_status.blue, blue, error)) return false;
+    snprintf(row, sizeof(row), "Red %s - Blue %s", red, blue);
+    qa_scene_vec4 color = {1, 1, 1, 1};
+    if (!text(hud, scene, frame->safe_area, 320, 56, row, color, 1, QA_FONT_ALIGN_CENTER, error)) return false;
+    uint32_t flags = source_bits(hud->ctf_status.flags), runes = source_bits(hud->ctf_status.rune_items);
+    snprintf(row, sizeof(row), "Red flag %s - Blue flag %s",
+        flag_status(flags & 7), flag_status((flags >> 3) & 7));
+    if (!text(hud, scene, frame->safe_area, 320, 72, row, color, 1, QA_FONT_ALIGN_CENTER, error)) return false;
+    static const char *const labels[] = {"Resistance", "Strength", "Haste", "Regeneration"};
+    float y = 88;
+    for (size_t i = 0; i < sizeof(labels) / sizeof(*labels); ++i) {
+        if (!(runes & (UINT32_C(32) << i))) continue;
+        if (!text(hud, scene, frame->safe_area, 320, y, labels[i], color, 1, QA_FONT_ALIGN_CENTER, error)) return false;
+        y += 16;
+    }
+    if (hud->ctf_capture_present && hud->ctf_capture_until_ns > source_time_ns &&
+        !text(hud, scene, frame->safe_area, 320, y,
+            hud->ctf_capture.blue ? "Blue captured the flag" : "Red captured the flag",
+            color, 1, QA_FONT_ALIGN_CENTER, error)) return false;
+    return true;
 }
 static bool caption_draw(qa_ui *ui,const qa_active_caption *values,size_t count,qa_scene_rect target,
     qa_scene_rect_f area,float fit,qa_scene_frame *scene,qa_error *error)
@@ -480,6 +593,7 @@ static bool draw(qa_hud *hud, const qa_hud_frame *frame, qa_scene_frame *scene, 
     for (size_t i = 0; i < data.help_count; ++i)
         if (!text(hud, scene, target, 24, 108 + (float)i * 16, data.help_lines[i],
             (qa_scene_vec4){1, 1, 1, 1}, 1, QA_FONT_ALIGN_LEFT, error)) return false;
+    if (!ctf_draw(hud, frame, scene, error)) return false;
     float fit=fminf((float)target.width/640,(float)target.height/480);
     return caption_draw(ui,data.captions,data.caption_count,target,
         (qa_scene_rect_f){(float)target.x+8,(float)target.y+(float)target.height*.60f,

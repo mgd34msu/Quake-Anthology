@@ -169,7 +169,9 @@ static bool binding_count(qa_inventory *table, inventory_store *store, item_grou
     if (!group && store->local) { *out = store->count; return true; }
     qa_inventory_binding binding = group ? group->binding : store->primary;
     uint64_t revision = store->revision;
-    *out = binding.count(binding.context);
+    if (binding.checked_count) {
+        if (!binding.checked_count(binding.context, out, e)) return false;
+    } else *out = binding.count(binding.context);
     if (!require_current(table, store, group, e)) return false;
     if (store->revision != revision)
         return fail(e, QA_ERROR_NOT_FOUND, "Inventory changed during count callback");
@@ -426,7 +428,10 @@ static bool primary_snapshot(qa_inventory *table, inventory_store *store,
                              qa_inventory_entry **out, size_t *out_count, qa_error *e)
 {
     uint64_t revision = store->revision;
-    size_t count = binding->count(binding->context);
+    size_t count;
+    if (binding->checked_count) {
+        if (!binding->checked_count(binding->context, &count, e)) return false;
+    } else count = binding->count(binding->context);
     if (!require_current(table, store, NULL, e)) return false;
     if (store->revision != revision)
         return fail(e, QA_ERROR_NOT_FOUND, "Inventory changed during primary count callback");
@@ -473,7 +478,8 @@ bool qa_inventory_adopt_primary(qa_inventory *table, qa_actor_id actor,
     if (!store->local) {
         if (store->primary.context != binding->context || store->primary.count != binding->count ||
             store->primary.at != binding->at || store->primary.write != binding->write ||
-            store->primary.mutable_capacity != binding->mutable_capacity) {
+            store->primary.mutable_capacity != binding->mutable_capacity ||
+            store->primary.checked_count != binding->checked_count) {
             fail(e, QA_ERROR_ARGUMENT, "Primary inventory already belongs to another source"); goto done;
         }
         *out = (qa_inventory_lease){actor, store->serial}; ok = true; goto done;

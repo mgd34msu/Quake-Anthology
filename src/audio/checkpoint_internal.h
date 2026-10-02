@@ -80,11 +80,13 @@ static inline bool qa_ac_double(qa_ac_writer *w, double value) {
 }
 static inline float qa_ac_getfloat(qa_ac_reader *r) {
     uint32_t bits = qa_ac_get32(r); float value; memcpy(&value, &bits, 4);
-    if (!isfinite(value)) qa_ac_bad(r, "Nonfinite audio checkpoint field"); return value;
+    if (!isfinite(value)) qa_ac_bad(r, "Nonfinite audio checkpoint field");
+    return value;
 }
 static inline double qa_ac_getdouble(qa_ac_reader *r) {
     uint64_t bits = qa_ac_get64(r); double value; memcpy(&value, &bits, 8);
-    if (!isfinite(value)) qa_ac_bad(r, "Nonfinite audio checkpoint field"); return value;
+    if (!isfinite(value)) qa_ac_bad(r, "Nonfinite audio checkpoint field");
+    return value;
 }
 static inline bool qa_ac_vec(qa_ac_writer *w, qa_vec3 value) {
     return qa_ac_float(w, value.x) && qa_ac_float(w, value.y) && qa_ac_float(w, value.z);

@@ -187,12 +187,42 @@ bool qa_q1_source_client_spawned(qa_q1_game *game,qa_actor_id actor,qa_error *er
     }
     qa_q1_game_operation_end(&operation);return okay;
 }
+bool qa_q1_source_client_consume_impulse(qa_q1_game *game,qa_actor_id actor,qa_error *error) {
+    qa_q1_game_operation operation={0};
+    if(!qa_q1_game_operation_begin(game,&operation,error)) return false;
+    q1_player *player=(q1_player *)client_const(game,actor);
+    bool okay=player!=NULL;
+    if(okay) {player->source_impulse=0;player->input.impulse=0;}
+    else qa_error_set(error,QA_ERROR_NOT_FOUND,actor.slot,"Source impulse client is absent");
+    qa_q1_game_operation_end(&operation);return okay;
+}
+bool qa_q1_source_client_record_death(qa_q1_game *game,qa_actor_id actor,bool *first,qa_error *error) {
+    if(!first) {qa_error_set(error,QA_ERROR_ARGUMENT,0,"Source death needs its first-record output");return false;}
+    qa_q1_game_operation operation={0};
+    if(!qa_q1_game_operation_begin(game,&operation,error)) return false;
+    q1_player *player=(q1_player *)client_const(game,actor);
+    uint32_t slot;
+    bool okay=player && qa_q1_native_client_slot(game,actor,&slot,error) &&
+        slot==player->client_slot;
+    if(okay) {*first=!player->source_death_recorded;player->source_death_recorded=true;}
+    else if(!player) qa_error_set(error,QA_ERROR_NOT_FOUND,actor.slot,"Source death client is absent");
+    else if(!error || error->code==QA_OK) qa_error_set(error,QA_ERROR_ARGUMENT,actor.slot,
+        "Source death differs from its real physical client slot");
+    qa_q1_game_operation_end(&operation);return okay;
+}
 bool qa_q1_source_respawn_options_read(const qa_q1_game *game,qa_q1_options *out,
     double *source_seconds,qa_error *error) {
     if(!game || !out || !source_seconds || game->destroy_pending || game->continuation_pending) {
         qa_error_set(error,QA_ERROR_ARGUMENT,0,"Q1 respawn has no current native source options");return false;
     }
     *out=game->options;*source_seconds=game->time;return true;
+}
+bool qa_q1_source_respawn_options_prepared(const qa_q1_game *game,qa_q1_options *out,
+    qa_error *error) {
+    if(!game || !out || game->destroy_pending || !game->continuation_pending) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"Q1 selector has no imported pending source options");return false;
+    }
+    *out=game->options;return true;
 }
 bool qa_q1_source_client_request_respawn(qa_q1_game *game,qa_actor_id actor,
     bool *force_spawn,qa_error *error) {

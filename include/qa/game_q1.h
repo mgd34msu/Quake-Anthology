@@ -144,6 +144,8 @@ typedef struct qa_q1_character_view {
     qa_physics_solid solid;
     qa_physics_motion motion;
     bool weapon_visible;
+    double next_frame_seconds;
+    int32_t animation_frame;
 } qa_q1_character_view;
 typedef struct qa_q1_weapon_parameters {
     float interval, nail_speed;
@@ -197,6 +199,12 @@ typedef struct qa_q1_host {
     bool (*console_give_item)(void *, qa_actor_id, const qa_command_invocation *,
                               bool *handled, qa_error *);
     bool (*console_power)(void *, qa_actor_id, qa_q1_power, double source_expiry, qa_error *);
+    bool (*powerup)(void *, qa_actor_id, qa_q1_power, double source_expiry, qa_error *);
+    bool (*fired)(void *, qa_actor_id, qa_item_id weapon, qa_error *);
+    bool (*base_team_health)(void *, bool *enabled, qa_error *);
+    bool (*grapple_weapon_frame)(void *, qa_actor_id, int32_t frame, qa_error *);
+    bool (*sound_precache)(void *, const char *path, qa_error *);
+    bool (*precache_reset)(void *, qa_error *);
 } qa_q1_host;
 typedef struct qa_q1_boss_fields {
     const char *wave1, *wave2, *wave3, *teleport_target;
@@ -209,6 +217,9 @@ typedef struct qa_q1_spawn {
     float health, speed, wait, delay, damage, count;
     const struct qa_q1_map_fields *map_fields;
     const qa_q1_boss_fields *boss_fields;
+    /* Explicit constructor-owned source bits, independent of physics.flags.
+     * Stock authored constructors and delayed PlaceItem own their stamps. */
+    uint32_t source_movement_flags;
 } qa_q1_spawn;
 typedef struct qa_q1_input {
     qa_vec3 view_angles;
@@ -243,6 +254,8 @@ typedef struct qa_q1_player_view {
     float max_health;
     double power_expires[QA_Q1_POWER_COUNT];
     bool holstered;
+    double attack_finished;
+    uint32_t source_weapon;
 } qa_q1_player_view;
 typedef struct qa_q1_mg3_progress {
     uint32_t health, shells, nails, rockets, cells, bloody;
@@ -250,7 +263,7 @@ typedef struct qa_q1_mg3_progress {
 typedef struct qa_q1_obituary_actor {
     qa_actor_id actor;
     qa_string_id name, classname, kill_string;
-    qa_team_id team;
+    double team;
     qa_q1_weapon weapon;
     float health;
     int32_t water_type;
@@ -263,9 +276,9 @@ typedef struct qa_q1_obituary_input {
     const qa_q1_obituary_actor *attacker, *telefrag_owner;
     qa_string_id death_type;
     qa_string_id inflictor_classname, attacker_death_type;
-    qa_team_id victim_saved_team;
+    double victim_saved_team;
     uint32_t gamecfg;
-    int32_t teamplay;
+    double teamplay;
     void *tag_context;
     bool (*tag_score)(void *, qa_actor_id victim, qa_actor_id attacker, int32_t *, qa_error *);
 } qa_q1_obituary_input;
@@ -353,6 +366,12 @@ bool qa_q1_player_input(qa_q1_game *, qa_actor_id, const qa_q1_input *, qa_error
  * or running weapon effects. The existing source clock remains unchanged. */
 bool qa_q1_player_source_input(qa_q1_game *, qa_actor_id, const qa_q1_input *, qa_error *);
 bool qa_q1_player_select(qa_q1_game *, qa_actor_id, qa_q1_weapon, qa_error *);
+/* Selected arsenal impulse dispatch, without Source campaign/cheat commands.
+ * A cooldown returns success with handled=false and preserves the command. */
+bool qa_q1_player_selected_impulse(qa_q1_game *, qa_actor_id, uint8_t,
+    bool *handled, qa_error *);
+bool qa_q1_player_source_impulse(qa_q1_game *, qa_actor_id, uint8_t,
+    bool *handled, qa_error *);
 bool qa_q1_player_read(const qa_q1_game *, qa_actor_id, qa_q1_player_view *);
 /* Source client membership uses the admitted client slot and full shared actor.
  * It creates source player state independently of selected character/arsenal. */
@@ -454,6 +473,9 @@ bool qa_q1_character_suicide_pose(qa_q1_game *, qa_actor_id, qa_error *);
 bool qa_q1_character_post_move(qa_q1_game *, qa_actor_id, qa_error *);
 bool qa_q1_character_environment(qa_q1_game *, qa_actor_id, bool suit, bool noclip, qa_error *);
 bool qa_q1_game_touch(qa_q1_game *, const qa_touch_contact *, qa_error *);
+/* Reports the genuine retained entity callback binding, independently of
+ * execution success and of an optional inner touch action. */
+bool qa_q1_game_touch_source(qa_q1_game *, const qa_touch_contact *, bool *, qa_error *);
 bool qa_q1_game_use(qa_q1_game *, qa_actor_id, qa_actor_id activator, qa_error *);
 bool qa_q1_game_reaction(qa_q1_game *, const qa_damage_outcome *, qa_error *);
 bool qa_q1_game_presentation(const qa_q1_game *, qa_actor_id, qa_q1_presentation *);

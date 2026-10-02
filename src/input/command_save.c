@@ -5,17 +5,20 @@
 static bool fields(qa_source_save_io *io, qa_input_command_builder *saved)
 {
     uint8_t magic[4] = {'Q','I','C','B'};
-    uint32_t schema = 1, kind = saved->kind;
+    uint32_t schema = 2, kind = saved->kind;
     if (!qa_source_save_bytes(io, magic, sizeof(magic)) || memcmp(magic, "QICB", sizeof(magic)) ||
-        !qa_source_save_u32(io, &schema) || schema != 1 ||
+        !qa_source_save_u32(io, &schema) || schema != 2 ||
         !qa_source_save_u32(io, &kind) || kind > QA_MOVEMENT_Q3 ||
-        !qa_source_save_vec3(io, &saved->angles) ||
-        !qa_source_save_f32(io, &saved->mouse.previous.x) ||
-        !qa_source_save_f32(io, &saved->mouse.previous.y) ||
+        !qa_source_save_vec3(io, &saved->angles) || !qa_vec_finite(saved->angles) ||
+        !qa_source_save_f32(io, &saved->mouse.previous.x) || !isfinite(saved->mouse.previous.x) ||
+        !qa_source_save_f32(io, &saved->mouse.previous.y) || !isfinite(saved->mouse.previous.y) ||
         !qa_source_save_bool(io, &saved->drift.drifting) ||
-        !qa_source_save_f32(io, &saved->drift.velocity) ||
-        !qa_source_save_f32(io, &saved->drift.moving_seconds) ||
-        !qa_source_save_bool(io, &saved->previous_mouse_look)) return false;
+        !qa_source_save_f32(io, &saved->drift.velocity) || !isfinite(saved->drift.velocity) ||
+        !qa_source_save_f32(io, &saved->drift.moving_seconds) || !isfinite(saved->drift.moving_seconds) ||
+        !qa_source_save_bool(io, &saved->previous_mouse_look) ||
+        !qa_source_save_u8(io, &saved->pending_impulse) ||
+        (saved->pending_impulse && kind != QA_MOVEMENT_NETQUAKE &&
+         kind != QA_MOVEMENT_QUAKEWORLD)) return false;
     saved->kind = (qa_movement_kind)kind;
     return true;
 }

@@ -12,6 +12,8 @@ typedef struct qa_inventory_binding {
     bool (*at)(void *, size_t, qa_inventory_entry *, qa_error *);
     bool (*write)(void *, const qa_inventory_entry *, qa_error *);
     bool (*mutable_capacity)(void *, qa_item_id);
+    /* Optional source reader; preferred over count when present. */
+    bool (*checked_count)(void *, size_t *, qa_error *);
 } qa_inventory_binding;
 typedef enum qa_item_action { QA_ITEM_USE = 1, QA_ITEM_DROP = 2 } qa_item_action;
 typedef struct qa_item_definition {
@@ -126,10 +128,14 @@ typedef struct qa_supply_hooks {
     void *context;
     bool (*ammo_granted)(void *, qa_actor_id, const qa_pickup_receipt *, size_t, bool auto_switch, qa_error *);
     bool (*weapon_granted)(void *, qa_actor_id, const qa_item_id *, size_t, qa_pickup_selection_mode, qa_error *);
+    /* Pure qualification of the actual provider/actor association. Called
+     * while the supplier is held, before grants and after source callbacks. */
+    bool (*current)(void *, qa_actor_id, qa_error *);
 } qa_supply_hooks;
 typedef struct qa_supply qa_supply;
 bool qa_supply_create(qa_inventory *, const qa_supply_profile *, const qa_supply_hooks *, qa_supply **, qa_error *);
 void qa_supply_destroy(qa_supply *);
+bool qa_supply_idle(const qa_supply *);
 bool qa_supply_maps(const qa_supply *, qa_item_id, bool weapon);
 bool qa_supply_owns(qa_supply *, qa_actor_id, qa_item_id, bool *, qa_error *);
 bool qa_supply_ammo(qa_supply *, qa_actor_id, qa_pickup_grant, bool, bool *, qa_error *);

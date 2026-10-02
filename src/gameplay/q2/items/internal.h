@@ -103,9 +103,13 @@ static inline uint64_t q2_item_seconds(float seconds) {
     double nanoseconds = (double)seconds * Q2_NS;
     return nanoseconds <= 0 ? 0 : nanoseconds >= 0x1p64 ? UINT64_MAX : (uint64_t)nanoseconds;
 }
-static inline qa_supply *q2_item_supply(qa_q2_game *g, qa_actor_id id) {
+static inline bool q2_item_supply(qa_q2_game *g, qa_actor_id id, qa_supply **out,
+    qa_error *error) {
     qa_q2_item_options *options = &g->item_runtime->options;
-    qa_supply *selected = options->supply_for ? options->supply_for(options->context, id) : NULL;
-    return selected ? selected : options->supply;
+    qa_supply *selected = NULL;
+    if (options->supply_for && !options->supply_for(options->context, id, &selected, error))
+        return false;
+    *out = selected ? selected : options->supply;
+    return true;
 }
 #endif

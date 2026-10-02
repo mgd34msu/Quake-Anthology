@@ -56,10 +56,19 @@ bool q3_radius(qa_q3_game *game, qa_actor_id inflictor, qa_actor_id attacker, qa
                    .projectile = inflictor,
                    .weapon_provider = game->options.owner,
                    .combat_provider = game->options.owner,
+                   .inventory_provider = game->options.owner,
+                   .movement_provider = game->options.owner,
                    .weapon = qa_q3_weapon_item(game, weapon, false),
                    .powerup_owner = game->options.owner,
                    .powerup_applied = true,
                    .cause = {.kind = QA_CAUSE_Q3, .source.q3 = {method, 1}}}};
+    if (game->options.hooks.attack_providers &&
+        !game->options.hooks.attack_providers(game->options.hooks.context, attacker,
+            attack.attack.weapon, &attack.attack.inventory_provider,
+            &attack.attack.movement_provider, error)) {
+        frame->active = false;
+        return false;
+    }
     attack.trace.contents_mask = 1;
     bool ok = qa_builtin_radius_damage(&game->options.services, &attack, NULL, error);
     frame->active = false;
@@ -445,6 +454,7 @@ static bool attach_hook(qa_q3_game *game, qa_actor_id actor, const qa_trace_resu
     player = q3_actor_get(game, owner);
     if (player && player->kind == Q3_ACTOR_PLAYER) {
         player->state.player.grapple_pull = true;
+        player->state.player.selected_pm_flags |= 0x800u;
         player->state.player.grapple_point = origin;
     }
     event = q3_wire_temporary(game, impact);

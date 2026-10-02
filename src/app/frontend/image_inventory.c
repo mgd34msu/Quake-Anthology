@@ -1,6 +1,11 @@
 #include "image_inventory.h"
 #include "save_private.h"
 #include "native_q3_client.h"
+#include "remote_q3_client.h"
+#include "remote_q3_initial.h"
+#include "network_initial_graph.h"
+#include "remote_q1_restore.h"
+#include "remote_q2_restore.h"
 #include "qa/scene_resource_save.h"
 #include "qa/persistence_content.h"
 
@@ -57,13 +62,37 @@ static bool collect(qa_frontend *f, image_inventory *inventory, qa_error *error)
         ok = frontend_native_q3_read(f, i, &owner, error) && owner.images &&
             add(inventory, graph, owner.images, 6, i, owner.identity, error);
     }
+    for(size_t i=0;ok && i<frontend_remote_q3_count(f);++i) {
+        frontend_remote_q3_resources owner;
+        ok=frontend_remote_q3_resources_read(frontend_remote_q3_at(f,i),&owner,error) && owner.images &&
+            add(inventory,graph,owner.images,7,i,owner.identity,error);
+    }
+    frontend_network_initial_graph_view initial;
+    if(ok) ok=frontend_network_initial_graph_read(f,&initial,error);
+    if(ok && initial.present) {
+        frontend_remote_q3_initial_view owner;
+        ok=initial.parent && frontend_remote_q3_initial_read(initial.parent,&owner,error) && owner.images &&
+            add(inventory,graph,owner.images,8,0,owner.identity,error);
+    }
+    for(size_t i=0;ok && i<frontend_remote_q1_count(f);++i) {
+        frontend_remote_q1_view owner; frontend_remote_q1 *row=frontend_remote_q1_at(f,i);
+        ok=(f->source_restoring?frontend_remote_q1_import_read(row,&owner,error):
+            frontend_remote_q1_metadata_read(row,&owner,error)) &&
+            add(inventory,graph,owner.images,9,i,owner.map_generation,error);
+    }
+    for(size_t i=0;ok && i<frontend_remote_q2_count(f);++i) {
+        frontend_remote_q2_view owner; frontend_remote_q2 *row=frontend_remote_q2_at(f,i);
+        ok=(f->source_restoring?frontend_remote_q2_import_read(row,&owner,error):
+            frontend_remote_q2_metadata_read(row,&owner,error)) &&
+            add(inventory,graph,owner.images,10,i,owner.identity,error);
+    }
     return ok;
 }
 static bool header(qa_source_save_io *io, const image_inventory *inventory)
 {
-    uint8_t magic[4] = {'Q','F','I','M'}; uint32_t version = 2; size_t count = inventory->count;
+    uint8_t magic[4] = {'Q','F','I','M'}; uint32_t version = 4; size_t count = inventory->count;
     if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "QFIM", 4) ||
-        !qa_source_save_u32(io, &version) || version != 2 ||
+        !qa_source_save_u32(io, &version) || version != 4 ||
         !qa_source_save_count(io, &count, SIZE_MAX / sizeof(image_owner)) || count != inventory->count) return false;
     for (size_t i = 0; i < count; ++i) {
         image_owner saved = inventory->entries[i];

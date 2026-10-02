@@ -1,6 +1,7 @@
 #ifndef QA_Q2_INTERNAL_H
 #define QA_Q2_INTERNAL_H
 #include "qa/game_q2.h"
+#include "qa/game_q2_wire.h"
 #include <limits.h>
 #include <math.h>
 #include <stdlib.h>
@@ -85,6 +86,12 @@ typedef struct q2_actor {
     struct q2_actor *all_next, *free_next;
     struct q2_actor *live_next, *live_previous;
     uint64_t source_order;
+    uint32_t wire_slot, wire_event;
+    uint64_t wire_event_frame;
+    bool wire_bound;
+    qa_q2_wire_view wire_view;
+    qa_q2_wire_movement wire_movement;
+    qa_q2_wire_lifetime wire_lifetime;
     uint64_t extra_effects;
     uint64_t combat_surprise_ns;
     uint64_t character_birth_epoch;
@@ -98,6 +105,7 @@ typedef struct q2_actor {
     bool weapon_bound, physics_bound;
     qa_q2_weapon_state weapon;
     qa_q2_weapon_input input;
+    qa_q2_weapon_turn_state weapon_turn;
     int silencer;
     q2_projectile projectile;
     qa_physics_properties physics;
@@ -159,6 +167,15 @@ struct qa_q2_game {
     q2_mt_random rerelease_random;
     qa_actor_id current_actor;
     uint64_t sequence, actor_sequence, now_ns, frame_ns;
+    qa_actor_id *wire_actors;
+    uint64_t *wire_freed_ns;
+    uint32_t wire_capacity, wire_extent, wire_clients;
+    uint64_t wire_frame;
+    qa_string_id wire_lightstyles[256];
+    qa_q2_wire_shadow_light wire_shadows[256];
+    uint32_t wire_shadow_count;
+    qa_string_id wire_music;
+    bool wire_music_present;
 };
 typedef struct q2_weapon_call {
     qa_q2_game *game;
@@ -186,6 +203,12 @@ typedef struct q2_hand_spec {
 q2_actor *q2_actor_get(qa_q2_game *, qa_actor_id, bool create, qa_error *);
 void q2_actor_publish_prepared(qa_q2_game *, q2_actor *, qa_actor_id, bool new_storage);
 void q2_actor_order(qa_q2_game *, q2_actor *, uint64_t);
+bool q2_wire_admit(qa_q2_game *, q2_actor *, qa_actor_id, qa_error *);
+bool q2_wire_player_motion(qa_q2_game *, q2_actor *, const qa_q2_player_motion *, qa_error *);
+bool q2_wire_shadow_event(qa_q2_game *, const qa_q2_map_event *, qa_error *);
+bool q2_wire_bind(qa_q2_game *, q2_actor *, uint32_t, qa_error *);
+void q2_wire_release(qa_q2_game *, q2_actor *);
+void q2_wire_reset(qa_q2_game *);
 bool q2_actor_live(qa_q2_game *, qa_actor_id);
 float q2_random(qa_q2_game *);
 bool q2_monster_timed_invulnerability(const q2_actor *, uint64_t now_ns);
@@ -213,15 +236,18 @@ bool q2_weapon_powerups(q2_weapon_call *, qa_error *);
 bool q2_generic(q2_weapon_call *, qa_error *);
 bool q2_generic_classic(q2_weapon_call *, qa_error *);
 bool q2_fire(q2_weapon_call *, bool buffered, qa_error *);
+bool q2_weapon_fired(qa_q2_game *, qa_actor_id, qa_q2_weapon, qa_error *);
 bool q2_throw_frame(q2_weapon_call *, qa_error *);
 bool q2_throw(q2_weapon_call *, bool held, qa_error *);
 bool q2_hand_calculate(q2_weapon_call *, uint64_t expires_ns, bool alive, bool held,
                        qa_q2_hand_projection_fn, void *, q2_hand_spec *, qa_error *);
 bool q2_hand_validate(const qa_q2_hand_grenade_state *, qa_error *);
 bool q2_present(q2_weapon_call *, qa_error *);
-uint64_t q2_animation_time(q2_weapon_call *);
-uint64_t q2_interval(q2_weapon_call *, uint64_t);
-float q2_multiplier(q2_weapon_call *);
+bool q2_animation_time(q2_weapon_call *, uint64_t *, qa_error *);
+bool q2_animation_deadline(q2_weapon_call *, uint64_t from, uint64_t extra_ns,
+                          uint64_t *, qa_error *);
+bool q2_interval(q2_weapon_call *, uint64_t, uint64_t *, qa_error *);
+bool q2_multiplier(q2_weapon_call *, float *, qa_error *);
 void q2_kick(q2_weapon_call *, qa_vec3, qa_vec3, float);
 void q2_recoil(q2_weapon_call *, qa_vec3 *origin, qa_vec3 *angles);
 bool q2_project(q2_weapon_call *, qa_vec3 angles, qa_vec3 offset, qa_vec3 *, qa_vec3 *, qa_error *);
@@ -288,6 +314,8 @@ bool q2_resolve_reference(qa_q2_game *, qa_q2_saved_reference, qa_actor_id *, qa
 bool q2_checkpoint_idle(qa_q2_game *, qa_error *);
 bool q2_item_tick(qa_q2_game *, q2_actor *, qa_error *);
 bool q2_client_tick(qa_q2_game *, q2_actor *, qa_error *);
+bool q2_client_early_weapon_turn(qa_q2_game *, q2_actor *, const qa_q2_weapon_input *, qa_error *);
+bool q2_client_weapon_frame(qa_q2_game *, q2_actor *, const qa_q2_weapon_input *, qa_error *);
 bool q2_entity_tick(qa_q2_game *, q2_actor *, qa_error *);
 bool q2_entity_prethink(qa_q2_game *, q2_actor *, qa_error *);
 bool q2_actor_think(qa_q2_game *, q2_actor *, qa_error *);

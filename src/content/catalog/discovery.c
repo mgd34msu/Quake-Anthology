@@ -387,15 +387,15 @@ static bool quakeworld_variants(qa_catalog *c, qa_error *error)
     return true;
 }
 
-static bool remote_q3_product(qa_catalog *c, const char *base_key,
+static bool remote_product(qa_catalog *c, const char *base_key,
     const char *requested, qa_product_id *selected, qa_error *error)
 {
     const qa_product *base = qa_catalog_find(c, base_key);
-    if (!base || base->family != QA_GAME_Q3) {
-        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Remote Q3 base is not a configured stock product"); return false;
+    if (!base || (base->family != QA_GAME_Q3 && base->family != QA_GAME_Q2)) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Remote base is not a configured Q2 or Q3 product"); return false;
     }
     const char *leaf = strrchr(base->directory, '/');
-    if (!leaf) { qa_error_set(error, QA_ERROR_FORMAT, 0, "Q3 base lacks its family directory"); return false; }
+    if (!leaf) { qa_error_set(error, QA_ERROR_FORMAT, 0, "Remote base lacks its family directory"); return false; }
     const char *name = *requested ? requested : leaf + 1;
     if (!catalog_remote_name(name)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Remote game directory must be one safe name"); return false;
@@ -407,7 +407,7 @@ static bool remote_q3_product(qa_catalog *c, const char *base_key,
     char *relative = malloc(parent + length + 1);
     char *identity = malloc(length + 64);
     if (!relative || !identity) {
-        free(relative); free(identity); qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining remote Q3 directory"); return false;
+        free(relative); free(identity); qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining remote game directory"); return false;
     }
     memcpy(relative, base->directory, parent);
     for (size_t i = 0; i < length; ++i) {
@@ -428,15 +428,16 @@ static bool remote_q3_product(qa_catalog *c, const char *base_key,
             }
             ancestor = qa_catalog_product(c, ancestor->base);
         }
-        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Remote Q3 product does not inherit the requested base"); goto done;
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Remote product does not inherit the requested base"); goto done;
     }
     static const char *editions[] = {"classic", "rerelease", "quakeworld", "demo"};
-    qa_product view = {.base = base->id, .family = QA_GAME_Q3, .edition = base->edition,
+    const char *family = base->family == QA_GAME_Q2 ? "q2" : "q3";
+    qa_product view = {.base = base->id, .family = base->family, .edition = base->edition,
         .directory = catalog_string(c, relative, error), .campaign = catalog_string(c, relative + parent, error)};
     view.title = view.campaign;
-    snprintf(identity, length + 64, "q3-%s-%s", editions[view.edition], relative + parent);
+    snprintf(identity, length + 64, "%s-%s-%s", family, editions[view.edition], relative + parent);
     view.key = catalog_string(c, identity, error);
-    snprintf(identity, length + 64, "q3:%s:%s:installed", editions[view.edition], relative + parent);
+    snprintf(identity, length + 64, "%s:%s:%s:installed", family, editions[view.edition], relative + parent);
     view.identity = catalog_string(c, identity, error);
     catalog_product *product;
     if (!view.directory || !view.campaign || !view.key || !view.identity ||
@@ -531,7 +532,7 @@ bool catalog_scan(qa_catalog *c, bool mods, const char *remote_base,
                 (c->user && !discover_directory(c, c->user, roots[i].directory, base, error))) return false;
         }
     }
-    if (remote_base && !remote_q3_product(c, remote_base, remote_directory, selected, error)) return false;
+    if (remote_base && !remote_product(c, remote_base, remote_directory, selected, error)) return false;
     if (!user_product_directories(c, error) || !corpus_directory(c, error)) return false;
     for (size_t i = 0; i < c->product_count; ++i) {
         catalog_product *p = &c->products[i];
@@ -564,6 +565,13 @@ bool catalog_scan(qa_catalog *c, bool mods, const char *remote_base,
             !mount_file(c, NULL, family, QA_ARCHIVE_AUTO, true, error)) return false;
         for (size_t i = 0; i < c->physical_count; ++i)
             if (!strcmp(c->physical[i].view.path, family)) c->q3_download_mount = c->physical[i].view.id;
+        static const char *q2_families[2] = {"q2", "q2/rerelease"};
+        for (size_t edition = 0; edition < 2; ++edition) {
+            if (!catalog_path(c, c->user, q2_families[edition], &family, error) || !family ||
+                !mount_file(c, NULL, family, QA_ARCHIVE_AUTO, true, error)) return false;
+            for (size_t i = 0; i < c->physical_count; ++i)
+                if (!strcmp(c->physical[i].view.path, family)) c->q2_download_mount[edition] = c->physical[i].view.id;
+        }
     }
     return true;
 }

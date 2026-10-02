@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "source_scratch_private.h"
 
 #include <math.h>
 #include <string.h>
@@ -7,6 +8,7 @@ typedef struct deform_mesh {
     qa_scene_mesh mesh;
     qa_scene_vertex *vertices;
     uint32_t *indices;
+    qa_material_source_scratch *retained;
 } deform_mesh;
 
 static qa_vec3 model_axis(const qa_material_context *context, unsigned axis)
@@ -40,6 +42,17 @@ static bool allocate_geometry(qa_scene_frame *frame, size_t vertex_count,
                               size_t index_count, deform_mesh *out,
                               qa_error *error)
 {
+    if (out->retained) {
+        if (vertex_count >= QA_SOURCE_TESS_VERTICES || index_count >= QA_SOURCE_TESS_INDEXES) {
+            qa_error_set(error, QA_ERROR_FORMAT, 0, "Deformed Source geometry exceeds tess allocation"); return false;
+        }
+        out->vertices = out->retained->vertices; out->indices = out->retained->indices;
+        out->mesh.vertices = out->vertices; out->mesh.indices = out->indices;
+        out->mesh.vertex_count = out->retained->vertex_count = vertex_count;
+        out->mesh.index_count = out->retained->index_count = index_count;
+        out->mesh.identity = out->mesh.revision = 0; out->mesh.geometry = NULL;
+        return true;
+    }
     if (vertex_count > UINT32_MAX || vertex_count > SIZE_MAX / sizeof(*out->vertices) ||
         index_count > SIZE_MAX / sizeof(*out->indices)) {
         qa_error_set(error, QA_ERROR_MEMORY, 0, "Material deformation geometry is too large");
@@ -195,7 +208,7 @@ static bool text_geometry(deform_mesh *geometry, uint32_t text_index,
                      "Text deformation has no retained source text row");
         return false;
     }
-    if (geometry->mesh.vertex_count < 4) {
+    if (geometry->mesh.vertex_count < 4 && !geometry->retained) {
         qa_error_set(error, QA_ERROR_FORMAT, 0, "Text deformation requires a four-vertex source quad");
         return false;
     }
@@ -379,11 +392,17 @@ bool qa_material_deform_mesh(const qa_material *material, const qa_scene_mesh *s
         return true;
     }
     deform_mesh geometry = {.mesh = *source};
-    if (!allocate_geometry(frame, source->vertex_count, source->index_count, &geometry, error)) return false;
-    if (source->vertex_count != 0)
-        memcpy(geometry.vertices, source->vertices, source->vertex_count * sizeof(*geometry.vertices));
-    if (source->index_count != 0)
-        memcpy(geometry.indices, source->indices, source->index_count * sizeof(*geometry.indices));
+    if (context->source_scratch && context->source_scratch->submitting &&
+        source->vertices == context->source_scratch->vertices && source->indices == context->source_scratch->indices) {
+        geometry.retained = context->source_scratch;
+        geometry.vertices = geometry.retained->vertices; geometry.indices = geometry.retained->indices;
+    } else {
+        if (!allocate_geometry(frame, source->vertex_count, source->index_count, &geometry, error)) return false;
+        if (source->vertex_count != 0)
+            memcpy(geometry.vertices, source->vertices, source->vertex_count * sizeof(*geometry.vertices));
+        if (source->index_count != 0)
+            memcpy(geometry.indices, source->indices, source->index_count * sizeof(*geometry.indices));
+    }
     for (size_t i = 0; i < material->deform_count; ++i) {
         const qa_material_deform *deform = &material->deforms[i];
         switch (deform->kind) {

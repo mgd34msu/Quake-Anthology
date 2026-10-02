@@ -1,4 +1,10 @@
 #include "map_private.h"
+#include "qa/game_q1_wire.h"
+#include "native_q1_wire.h"
+#include "native_q1_composition.h"
+#include "qa/game_q1_bots.h"
+#include "qa/game_q2_wire.h"
+#include "native_q2_console.h"
 #include "map_travel_private.h"
 #include "portals.h"
 #include "q3_round.h"
@@ -268,7 +274,15 @@ bool application_map_prepare(qa_application *application,
                 return false;
             continue;
         }
-        if (i > UINT32_MAX - choices->seat_count)
+        size_t source_clients = choices->seat_count;
+        if (publication->map_provider->kind == APPLICATION_PROVIDER_Q1) {
+            qa_q1_options source;
+            double seconds;
+            if (!qa_q1_source_respawn_options_read(publication->map_provider->state.q1,
+                &source, &seconds, error)) return false;
+            source_clients = source.max_clients;
+        }
+        if (source_clients > UINT32_MAX || i > UINT32_MAX - source_clients)
             return application_fail(error, QA_ERROR_MEMORY, "authored client source slots are exhausted");
         qa_mode_spawnpoint point = {0};
         qa_string_id target = QA_STRING_NONE;
@@ -292,7 +306,7 @@ bool application_map_prepare(qa_application *application,
             return false;
         point.no_bots = no_bots != 0;
         point.no_humans = no_humans != 0;
-        uint32_t ordinal = (uint32_t)(i + choices->seat_count);
+        uint32_t ordinal = (uint32_t)(i + source_clients);
         if (!application_players_point(publication->players, point, target, ordinal, error))
             return false;
     }
@@ -304,6 +318,12 @@ static bool emit_map_event(application_provider *provider,
 {
     event.provider = provider->owner;
     event.time_ns = qa_session_elapsed(provider->application->session);
+    if (provider->kind == APPLICATION_PROVIDER_Q1) {
+        double elapsed;
+        if (!qa_q1_game_clock_read(provider->state.q1, &event.time_ns, &elapsed))
+            return application_fail(error, QA_ERROR_NOT_FOUND,
+                                    "Q1 map event lost its actual source clock");
+    }
     return application_emit(provider->application, &event, error);
 }
 
@@ -328,30 +348,11 @@ static bool q1_fog_player(void *opaque, qa_actor_id player, float density,
 
 static bool q1_ctf_mode(application_provider *provider, qa_mode_id *out, qa_error *error)
 {
-    qa_application *application = provider->application;
-    bool found = false, ambiguous = false;
-    if (application->modes)
-        for (size_t i = 0; i < application->mode_count; ++i) {
-            qa_mode_id id = application->mode_ids[i];
-            qa_mode_view view;
-            if (!qa_modes_read(application->modes, id, &view, error)) return false;
-            if (!view.rules.enabled || view.rules.source != QA_MODE_THREEWAVE ||
-                application_mode_provider(application, id) != provider) continue;
-            if (application->primary_mode_ready &&
-                id.slot == application->primary_mode.slot &&
-                id.generation == application->primary_mode.generation) {
-                *out = id;
-                return true;
-            }
-            if (found) ambiguous = true;
-            *out = id;
-            found = true;
-        }
-    if (ambiguous)
-        return application_fail(error, QA_ERROR_ARGUMENT,
-                                "Q1 map selects ambiguous ThreeWave mode owners");
-    return found || application_fail(error, QA_ERROR_NOT_FOUND,
-                                      "Q1 map has no selected ThreeWave mode owner");
+    qa_mode_view view;
+    if (!application_native_q1_composition_mode(provider->application, provider, out, error) ||
+        !qa_modes_read(provider->application->modes, *out, &view, error)) return false;
+    return view.rules.source == QA_MODE_THREEWAVE ||
+        application_fail(error, QA_ERROR_ARGUMENT, "Q1 map has no genuine ThreeWave source controller");
 }
 
 static bool q1_ctf_state(void *opaque, qa_actor_id actor,
@@ -416,6 +417,9 @@ static bool q1_ambient(void *opaque, qa_vec3 origin, qa_string_id sound,
 static bool q1_lightstyle(void *opaque, int32_t style, qa_string_id pattern,
                           qa_error *error)
 {
+    application_provider *provider = opaque;
+    if (!qa_q1_wire_lightstyle(provider->state.q1, style, pattern, error))
+        return false;
     return emit_map_event(opaque,
                           (qa_builtin_event){.kind = QA_BUILTIN_LIGHT,
                                              .family = QA_GAME_Q1,
@@ -465,10 +469,10 @@ static application_provider *q1_alpha_provider(application_provider *origin,
                                                 qa_error *error)
 {
     application_provider *selected = application_provider_for(
-        origin->application, actor, QA_ROLE_APPEARANCE, "");
+        origin->application, actor, QA_ROLE_BODY, "");
     if (selected == NULL || !selected->constructed || selected->close_pending) {
         application_fail(error, QA_ERROR_NOT_FOUND,
-                         "Q1 alpha target has no selected appearance owner");
+                         "Q1 alpha target has no selected body owner");
         return NULL;
     }
     return selected;
@@ -495,7 +499,7 @@ static bool q1_alpha_read(void *opaque, qa_actor_id actor, float *out,
         return qa_q3_alpha_read(selected->state.q3, actor, out, error);
     default:
         return application_fail(error, QA_ERROR_UNSUPPORTED,
-                                "Selected guest appearance has no admitted alpha adapter");
+                                "Selected guest body has no admitted alpha adapter");
     }
 }
 
@@ -514,7 +518,7 @@ static bool q1_alpha_write(void *opaque, qa_actor_id actor, float value,
         return qa_q3_alpha(selected->state.q3, actor, value, error);
     default:
         return application_fail(error, QA_ERROR_UNSUPPORTED,
-                                "Selected guest appearance has no admitted alpha adapter");
+                                "Selected guest body has no admitted alpha adapter");
     }
 }
 
@@ -612,6 +616,7 @@ static bool q1_finale(void *opaque, const qa_q1_map_finale_view *view,
                                              .origin = view->origin,
                                              .direction = view->angles,
                                              .value = (float)view->exit_after,
+                                             .flags = UINT32_C(0x80000000),
                                              .code = (int32_t)view->stage},
                           error);
 }
@@ -655,6 +660,7 @@ static bool q1_level_begin(void *opaque, qa_string_id map, qa_actor_id cause,
                                              .actor = cause,
                                              .text = map,
                                              .value = (float)exit_after,
+                                             .flags = UINT32_C(0x80000000),
                                              .code = 1},
                           error);
 }
@@ -1045,6 +1051,12 @@ static bool q1_spawn_entity(application_provider *provider,
                               &fields.intermissiontext, error) ||
         !entity_optional_text(entities, index, "netname", arena,
                               &fields.netname, error) ||
+        !entity_optional_text(entities, index, "kill_string", arena,
+                              &fields.kill_string, error) ||
+        !entity_optional_text(entities, index, "deathtype", arena,
+                              &fields.death_type, error) ||
+        !entity_optional_text(entities, index, "team", arena,
+                              &fields.team, error) ||
         !entity_optional_text(entities, index, "event", arena,
                               &fields.event, error) ||
         !entity_optional_text(entities, index, "spawnfunction", arena,
@@ -1073,14 +1085,17 @@ static bool q1_spawn_entity(application_provider *provider,
         !entity_optional_text(entities, index, "message", arena, &message,
                               error))
         return false;
+    uint32_t source_slot;
+    if (!qa_q1_wire_authored_slot(provider->state.q1, index, &source_slot))
+        return application_fail(error, QA_ERROR_ARGUMENT,
+                                "Q1 authored spawn has no actual source namespace");
     qa_q1_spawn spawn = {
         .classname = classname,
         .target = target,
         .targetname = targetname,
         .killtarget = killtarget,
         .message = message,
-        .source_slot = index == 0 ? 0u : (uint32_t)(index +
-            qa_launch_snapshot_choices(provider->application->routing_snapshot)->seat_count),
+        .source_slot = source_slot,
         .has_source = true,
         .map_fields = &fields,
         .boss_fields = &boss,
@@ -1197,7 +1212,8 @@ static bool q1_spawn_map(application_provider *provider,
         }
     }
     qa_arena_destroy(&arena);
-    return ok && qa_q1_game_maps_finish(provider->state.q1, error);
+    return ok && qa_q1_game_maps_finish(provider->state.q1, error) &&
+        application_native_q1_wire_resources_prepare(provider, error);
 }
 
 static bool q2_visual(void *opaque, qa_actor_id actor,
@@ -1706,17 +1722,26 @@ static bool q2_spawn_map(application_provider *provider,
                          const qa_launch_choices *choices,
                          const qa_entities *entities, qa_error *error)
 {
+    int32_t clients, capacity;
+    if (!application_native_q2_source_integer(provider, "maxclients", &clients, error) ||
+        !application_native_q2_source_integer(provider, "maxentities", &capacity, error)) return false;
+    if (clients < 1 || clients > 256 || capacity <= clients || capacity > 65536 ||
+        choices->seat_count > (uint32_t)clients)
+        return application_fail(error, QA_ERROR_FORMAT,
+                                "Q2 source edict policy cannot reserve its real client rows");
+    if (!qa_q2_wire_configure(provider->state.q2, (uint32_t)capacity, (uint32_t)clients, error))
+        return false;
     qa_q2_entity_services services = q2_entity_services(provider, choices);
     services.spawn = q2_spawn;
     if (!qa_q2_entities_configure(provider->state.q2, &services, error))
         return false;
     for (size_t index = 0; index < entities->count; ++index) {
-        if (index > UINT32_MAX - choices->seat_count)
+        if (index > UINT32_MAX - (uint32_t)clients)
             return application_fail(error, QA_ERROR_MEMORY,
                                     "Q2 authored entity ordinal is exhausted");
         qa_actor_id actor = {0};
         if (!q2_spawn_fields(provider, choices, entities, index, true,
-                             index == 0 ? 0u : (uint32_t)(index + choices->seat_count), &actor, error))
+                             index == 0 ? 0u : (uint32_t)(index + (uint32_t)clients), &actor, error))
             return false;
         qa_bytes classname;
         if (qa_entity_value(entities, index, "classname", &classname) &&
@@ -2174,10 +2199,19 @@ bool application_map_publish(qa_application *application,
 
     bool spawned = false;
     switch (publication->map_provider->kind) {
-    case APPLICATION_PROVIDER_Q1:
+    case APPLICATION_PROVIDER_Q1: {
+        size_t models = qa_bsp_record_count(&publication->map, QA_BSP_MODELS);
+        if (!models || models - 1 > UINT32_MAX || publication->entities.count > UINT32_MAX)
+            return application_fail(error, QA_ERROR_FORMAT,
+                                    "Q1 source map exceeds its native physical extent");
+        if (!qa_q1_wire_begin_world(publication->map_provider->state.q1,
+                choices->world.map, (uint32_t)(models - 1),
+                (uint32_t)publication->entities.count, error))
+            return false;
         spawned = q1_spawn_map(publication->map_provider,
                             &publication->entities, error);
         break;
+    }
     case APPLICATION_PROVIDER_Q2:
         spawned = q2_spawn_map(publication->map_provider, choices,
                             &publication->entities, error);

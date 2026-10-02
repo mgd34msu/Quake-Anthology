@@ -13,6 +13,7 @@ typedef struct model_inventory {
     size_t count, capacity;
     qa_scene_model_saved_identity *identities;
     size_t identity_count;
+    uint32_t schema;
 } model_inventory;
 
 static bool fail(qa_error *error, qa_status code, const char *message)
@@ -107,7 +108,8 @@ static bool append(model_inventory *inventory, qa_scene_model *model, size_t par
 }
 static bool collect(model_inventory *inventory, qa_scene_model *model, qa_error *error)
 {
-    if (model->replacement_parent || model->replacement_next || !qa_scene_model_observation_ready(model) || !append(inventory, model, SIZE_MAX, error))
+    if (model->image_policy || model->replacement_parent || model->replacement_next ||
+        !qa_scene_model_observation_ready(model) || !append(inventory, model, SIZE_MAX, error))
         return fail(error, QA_ERROR_ARGUMENT, "Model capture requires an idle owned graph root");
     for (size_t i = 0; i < inventory->count; ++i) {
         qa_scene_model *parent = inventory->nodes[i].model;
@@ -484,8 +486,9 @@ static bool node_fields(qa_source_save_io *io, qa_scene_model *model, size_t nod
 }
 static bool prefix(qa_source_save_io *io, model_inventory *inventory, qa_bytes *body)
 {
-    bool reading = io->direction == QA_SOURCE_SAVE_READ; uint8_t magic[4] = {'Q','M','O','N'}; uint32_t schema = 1;
-    if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "QMON", 4) || !qa_source_save_u32(io, &schema) || schema != 1 ||
+    bool reading = io->direction == QA_SOURCE_SAVE_READ; uint8_t magic[4] = {'Q','M','O','N'}; uint32_t schema = 2;
+    if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "QMON", 4) || !qa_source_save_u32(io, &schema) ||
+        (schema != 1 && schema != 2) ||
         !qa_source_save_count(io, &inventory->identity_count, reading ? io->input.size / 28 : SIZE_MAX) || !inventory->identity_count) return false;
     if (reading) {
         if (inventory->identity_count > SIZE_MAX / sizeof(*inventory->identities)) return false;
@@ -504,7 +507,37 @@ static bool prefix(qa_source_save_io *io, model_inventory *inventory, qa_bytes *
             (inventory->identities[j].node == row->node && inventory->identities[j].kind == row->kind &&
              inventory->identities[j].ordinal == row->ordinal)) return false;
     }
-    return blob(io, body);
+    inventory->schema = schema; return blob(io, body);
+}
+static bool replacement_policy_fields(qa_source_save_io *io, model_inventory *inventory)
+{
+    if (io->direction == QA_SOURCE_SAVE_READ && inventory->schema < 2) return true;
+    qa_scene_model *root = inventory->nodes[0].model;
+    bool reading = io->direction == QA_SOURCE_SAVE_READ;
+    uint64_t selected = UINT64_MAX;
+    if (!reading && root->selected_replacement) {
+        for (size_t i = 1; i < inventory->count; ++i)
+            if (inventory->nodes[i].model == root->selected_replacement) { selected = i; break; }
+        if (selected == UINT64_MAX) return false;
+    }
+    if (!qa_source_save_bool(io, &root->replacement_policy_set) ||
+        !qa_source_save_bool(io, &root->replacement_policy_enabled) ||
+        !qa_source_save_f64(io, &root->replacement_distance) || !qa_source_save_u64(io, &selected)) return false;
+    if (!root->replacement_policy_set) {
+        if (root->replacement_policy_enabled || root->replacement_distance != 0 || selected != UINT64_MAX) return false;
+    } else if (root->source->format != QA_MODEL_MDL && root->source->format != QA_MODEL_MD2) return false;
+    if (selected != UINT64_MAX) {
+        if (selected >= inventory->count || inventory->nodes[selected].parent != 0 ||
+            !inventory->nodes[selected].model->replacement_source ||
+            inventory->nodes[selected].model->replacement_source->source != root->source) return false;
+        if (reading) root->selected_replacement = inventory->nodes[selected].model;
+    }
+    for (size_t i = 1; i < inventory->count; ++i) {
+        const qa_scene_model *child = inventory->nodes[i].model;
+        if (child->replacement_policy_set || child->replacement_policy_enabled ||
+            child->replacement_distance != 0 || child->selected_replacement) return false;
+    }
+    return true;
 }
 static bool identity_install(model_inventory *inventory, const qa_scene_model_owner_refs *refs, qa_error *error)
 {
@@ -548,7 +581,7 @@ bool qa_scene_model_owner_checkpoint(const qa_scene_model *model, const qa_scene
         uint64_t parent = inventory.nodes[i].parent == SIZE_MAX ? UINT64_MAX : inventory.nodes[i].parent;
         ok = qa_source_save_u64(&state, &parent) && node_fields(&state, inventory.nodes[i].model, i, refs);
     }
-    ok = ok && qa_source_save_finish(&state, &owned_body);
+    ok = ok && replacement_policy_fields(&state, &inventory) && qa_source_save_finish(&state, &owned_body);
     qa_bytes body = {owned_body.data, owned_body.size};
     ok = ok && qa_source_save_writer(&io, NULL, error) && prefix(&io, &inventory, &body) && qa_source_save_finish(&io, out);
     if (inventory.count) ((qa_scene_model *)model)->checkpoint_active = false;
@@ -595,7 +628,8 @@ bool qa_scene_model_owner_restore(const qa_model *qualified_source, qa_scene_res
                 (i == 1 || parent >= inventory.nodes[i - 1].parent);
         }
     }
-    ok = ok && qa_source_save_finish(&state, NULL) && identity_install(&inventory, refs, error);
+    ok = ok && replacement_policy_fields(&state, &inventory) &&
+        qa_source_save_finish(&state, NULL) && identity_install(&inventory, refs, error);
     if (ok) {
         for (size_t i = 1; i < inventory.count; ++i) {
             qa_scene_model *model = inventory.nodes[i].model, *parent = inventory.nodes[inventory.nodes[i].parent].model;

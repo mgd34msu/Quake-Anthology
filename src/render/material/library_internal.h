@@ -23,6 +23,12 @@ typedef struct qa_material_script {
     struct qa_material_script *next;
 } qa_material_script;
 
+typedef struct qa_material_video_receipt {
+    size_t command, command_end, offset, end;
+    char *source;
+    const qa_scene_image *image;
+    struct qa_material_video_receipt *next;
+} qa_material_video_receipt;
 typedef struct qa_material_record {
     qa_material material;
     qa_scene_image_options options;
@@ -32,7 +38,9 @@ typedef struct qa_material_record {
     uint8_t *palette, *translation;
     char *base_name;
     const qa_scene_image *base_image;
+    qa_material_video_receipt *videos;
     struct qa_material_record *next;
+    struct qa_material_record *admission_parent;
 } qa_material_record;
 
 typedef struct qa_material_remap_record {
@@ -48,6 +56,7 @@ typedef struct qa_material_generated {
 } qa_material_generated;
 
 struct qa_material_library {
+    size_t references;
     qa_scene_resources *resources;
     qa_material_order *order;
     qa_scene_image *fog_image, *dlight_image;
@@ -61,11 +70,21 @@ struct qa_material_library {
     qa_material_video_start_fn video_start;
     void *video_context;
     qa_material_profile profile;
+    bool source_profile;
+    qa_material_source_upload_fn source_upload;
+    void *source_upload_context;
+    qa_material_source_ui_fullscreen_fn source_ui_fullscreen;
+    void *source_ui_context;
     qa_vec3 sun_light, sun_direction;
     float sky_height;
     bool has_sun;
     size_t capture_depth;
     bool mutating, catalog_ready, video_required;
+    qa_scene_material_image_policy *image_policy;
+    const qa_material_record *refresh_record;
+    qa_material_record *registration_record;
+    const qa_material_library *policy_source;
+    bool policy_sealed, policy_video;
 };
 
 bool qa_material_order_retain(qa_material_order *, qa_error *);
@@ -73,6 +92,9 @@ bool qa_material_order_reserve(qa_material_order *, const qa_material *, qa_mate
 bool qa_material_order_publish(qa_material_order_entry *, qa_error *);
 void qa_material_order_remove(qa_material_order_entry *);
 void qa_material_order_changed(qa_material_order_entry *);
+bool qa_material_order_image_policy_add(qa_material_order_image_policy *, qa_material_order *, qa_error *);
+bool qa_material_order_image_policy_current(const qa_material_order_image_policy *);
+bool qa_material_order_image_policy_associated(const qa_material_order *);
 
 char *qa_material_string(const char *, qa_error *);
 char *qa_material_name(const char *, qa_error *);
@@ -80,6 +102,7 @@ unsigned qa_material_hash(const char *);
 void qa_material_stage_init(qa_material_stage *);
 void qa_material_stage_clear(qa_material_stage *);
 void qa_material_clear(qa_material *);
+void qa_material_videos_clear(qa_material_record *);
 void qa_material_finish(qa_material *, int32_t lightmap_index);
 bool qa_material_script_catalog(qa_material_library *, qa_bytes, qa_error *);
 bool qa_material_script_register(qa_material_library *, qa_material *, qa_bytes,

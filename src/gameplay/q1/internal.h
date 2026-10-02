@@ -4,6 +4,12 @@
 #include "boss_types.h"
 #include "frame_actions.h"
 #include "qa/game_q1.h"
+#include "qa/game_q1_source_powers.h"
+#include "qa/game_q1_rogue.h"
+#include "qa/game_q1_source_flags.h"
+#include "qa/game_q1_source_runes.h"
+#include "qa/game_q1_source_rogue_tag.h"
+#include "qa/game_q1_source_rogue_flags.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -18,7 +24,16 @@ typedef enum q1_entity_kind {
     Q1_PICKUP,
     Q1_GIB,
     Q1_MAP,
-    Q1_BOSS_CHILD
+    Q1_BOSS_CHILD,
+    Q1_ROGUE_TEAM_STATE,
+    Q1_SOURCE_CTF_FLAG,
+    Q1_SOURCE_CTF_RUNE,
+    Q1_SOURCE_CTF_RUNE_TIMER,
+    Q1_SOURCE_ROGUE_TAG,
+    Q1_SOURCE_ROGUE_FLAG,
+    Q1_SOURCE_ROGUE_FLAG_BASE,
+    Q1_SOURCE_ROGUE_RUNE,
+    Q1_SOURCE_ROGUE_RUNE_TIMER
 } q1_entity_kind;
 typedef enum q1_think_kind {
     Q1_THINK_NONE,
@@ -72,7 +87,19 @@ typedef enum q1_think_kind {
     Q1_THINK_GHOST_BUBBLES,
     Q1_THINK_HOMING_FLAME,
     Q1_THINK_BOSS_CHILD,
-    Q1_THINK_SPAWN_TEMPLATE
+    Q1_THINK_SPAWN_TEMPLATE,
+    Q1_THINK_SOURCE_CTF_FLAG_PLACE,
+    Q1_THINK_SOURCE_CTF_FLAG,
+    Q1_THINK_SOURCE_CTF_RUNE_SPAWN,
+    Q1_THINK_SOURCE_CTF_RUNE_RESPAWN,
+    Q1_THINK_SOURCE_ROGUE_TAG_PLACE,
+    Q1_THINK_SOURCE_ROGUE_TAG,
+    Q1_THINK_SOURCE_ROGUE_TAG_FALL,
+    Q1_THINK_SOURCE_ROGUE_TAG_RESPAWN,
+    Q1_THINK_SOURCE_ROGUE_FLAG_PLACE,
+    Q1_THINK_SOURCE_ROGUE_FLAG,
+    Q1_THINK_SOURCE_ROGUE_RUNE_SPAWN,
+    Q1_THINK_SOURCE_ROGUE_RUNE_RESPAWN
 } q1_think_kind;
 typedef enum q1_projectile_kind {
     Q1_SPIKE,
@@ -288,6 +315,14 @@ typedef struct q1_actor {
     bool restored_target;
     qa_actor_id id, owner, activator;
     qa_string_id classname, model, target, targetname, killtarget, message;
+    qa_string_id source_netname, source_kill_string, source_death_type, source_team;
+    qa_string_id rogue_next_update;
+    qa_actor_id rogue_tag_owner;
+    qa_string_id rogue_runes_spawned;
+    qa_actor_id rogue_rune_spawn;
+    qa_string_id ctf_last_capture, ctf_last_capture_team;
+    qa_string_id ctf_runes_spawned;
+    qa_actor_id ctf_rune_spawn;
     qa_vec3 initial_angles;
     qa_physics_properties physics;
     q1_entity_kind kind;
@@ -295,6 +330,9 @@ typedef struct q1_actor {
     double next_think;
     float max_health, delay, wait, speed, damage, count, alpha, scale;
     uint32_t spawnflags, effects;
+    /* Source-only movement bits such as FL_ITEM. Common physics bits retain
+     * their existing authority in physics.flags. CTF actors use their unions. */
+    uint32_t source_movement_flags;
     int32_t frame, skin;
     bool active, native, aimed_damage, consumed_corpse, axe_hit, touch_disabled;
     struct {
@@ -308,6 +346,24 @@ typedef struct q1_actor {
         q1_pickup pickup;
         q1_timed_effect effect;
         q1_boss_child boss_child;
+        qa_string_id rogue_fields[QA_Q1_ROGUE_FIELDS];
+        struct { qa_string_id frags, message_time; } source_tag;
+        qa_string_id rogue_rune;
+        struct {
+            qa_string_id words[3]; /* team, cnt, super_time */
+            qa_vec3 origin, angles;
+            bool placed;
+        } rogue_flag;
+        struct {
+            qa_vec3 base, angles;
+            qa_string_id return_word;
+            uint32_t movement_flags;
+            bool placed;
+        } source_flag;
+        struct {
+            qa_string_id rune;
+            uint32_t movement_flags;
+        } source_rune;
     } state;
 } q1_actor;
 typedef struct q1_character {
@@ -336,9 +392,10 @@ typedef struct q1_player {
     double attack_finished, next_weapon_frame, animation_at, lightning_sound_at;
     double hostile_until, mega_rot_at, air_finished, drown_at, hazard_at;
     double power_expires[QA_Q1_POWER_COUNT];
+    uint64_t power_order[QA_Q1_POWER_COUNT], power_sequence;
     double power_flash[QA_Q1_POWER_COUNT], scuba_at, shield_until, shield_sound_at;
     uint64_t wetsuit_scaled_frame;
-    uint16_t power_warned;
+    uint16_t power_warned, power_lost;
     uint8_t wetsuit_scaled_level;
     qa_q1_auto_switch auto_switch;
     qa_q1_mg3_progress mg3_progress;
@@ -381,13 +438,25 @@ typedef struct q1_actor_snapshot {
     size_t count;
     bool borrowed;
 } q1_actor_snapshot;
+typedef struct q1_rogue_rune_player {
+    struct q1_rogue_rune_player *next;
+    qa_actor_id actor;
+    uint32_t rune;
+    double notice, earth_noise, black_noise, hell_noise, regeneration;
+} q1_rogue_rune_player;
 struct qa_q1_game {
     qa_builtin_services services;
     qa_q1_options options;
     qa_q1_host host;
+    qa_q1_source_flags_services source_flags;
+    qa_q1_source_runes_services source_runes;
+    qa_q1_source_rogue_tag_services source_rogue_tag;
+    qa_q1_source_rogue_flags_services source_rogue_flags;
+    q1_rogue_rune_player *rogue_rune_players;
     void *source_client_context;
     bool (*source_client_publish)(void *,const struct qa_q1_source_client_view *,qa_error *);
     bool (*source_client_observer)(void *,qa_actor_id,bool,qa_error *);
+    double source_captures[2];
     q1_map_runtime *maps;
     struct q1_wire_state *wire;
     q1_actor **actors, *allocated_actors, *spare_actors, *retired_actors;
@@ -419,6 +488,23 @@ struct qa_q1_game {
     bool enemy_visible;
 };
 void q1_source_client_clear(q1_player *);
+bool q1_source_number_read(qa_bytes, double *, qa_error *);
+bool q1_source_flag_spawn(qa_q1_game *, q1_actor *, bool *, qa_error *);
+bool q1_source_flag_think(qa_q1_game *, q1_actor *, q1_think_kind, qa_error *);
+bool q1_source_flag_touch(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);
+bool q1_source_runes_start(qa_q1_game *, qa_error *);
+bool q1_source_rune_think(qa_q1_game *, q1_actor *, q1_think_kind, qa_error *);
+bool q1_source_rune_touch(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);
+bool q1_source_rogue_tag_spawn(qa_q1_game *, q1_actor *, bool *, qa_error *);
+bool q1_source_rogue_tag_think(qa_q1_game *, q1_actor *, q1_think_kind, qa_error *);
+bool q1_source_rogue_tag_touch(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);
+bool q1_source_rogue_flag_spawn(qa_q1_game *, q1_actor *, bool *, qa_error *);
+bool q1_source_rogue_flag_think(qa_q1_game *, q1_actor *, q1_think_kind, qa_error *);
+bool q1_source_rogue_flag_touch(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);
+bool q1_source_rogue_rune_think(qa_q1_game *, q1_actor *, q1_think_kind, qa_error *);
+bool q1_source_rogue_rune_touch(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);
+void q1_source_rogue_runes_release(qa_q1_game *, qa_actor_id);
+void q1_source_rogue_runes_free(qa_q1_game *);
 static inline void *q1_cvar_context(const qa_q1_game *game) {
     return game->services.cvar_context ? game->services.cvar_context : game->services.context;
 }
@@ -700,7 +786,11 @@ bool q1_horde_axe_interval(qa_q1_game *, q1_player *, float *, bool *, qa_error 
 bool q1_character_bubbles(qa_q1_game *, q1_actor *, qa_error *);
 bool q1_bubble_think(qa_q1_game *, q1_actor *, qa_error *);
 bool q1_environment_damage(qa_q1_game *, qa_actor_id, float, qa_hazard, qa_error *);
-bool q1_power_frame(qa_q1_game *, q1_player *, qa_error *);
+bool q1_power_frame(qa_q1_game *, q1_player *, double seconds, uint64_t frame_ns, qa_error *);
+bool q1_power_assign(qa_q1_game *, qa_actor_id, qa_q1_power, double, bool present, qa_error *);
+bool q1_power_give(qa_q1_game *, qa_actor_id, qa_q1_power, double duration, qa_error *);
+bool q1_powers_expire(qa_q1_game *, qa_actor_id, double seconds, qa_error *);
+void q1_powers_forget(q1_player *);
 bool q1_grapple_frame(qa_q1_game *, q1_player *, qa_error *);
 bool q1_grapple_think(qa_q1_game *, q1_actor *, q1_think_kind, qa_error *);
 bool q1_grapple_weapon_launch(qa_q1_game *, q1_actor *, qa_error *);

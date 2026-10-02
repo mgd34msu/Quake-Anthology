@@ -37,7 +37,7 @@ typedef struct prediction_state {
     prediction_command commands[64];
     size_t count;
     uint64_t discarded_sequence;
-    bool has_discarded, initialized;
+    bool has_discarded, initialized, valid_pps;
     qa_net_client_id connection;
     qa_actor_id actor;
     qa_actor_owner movement, character, arsenal;
@@ -57,6 +57,7 @@ struct frontend_remote_prediction {
     prediction_player initial;
     prediction_state state;
     qa_movement_result scratch;
+    const frontend_remote_prediction_cgame_seed *active_seed;
     bool busy;
 };
 typedef struct replay_context {
@@ -77,6 +78,65 @@ static int32_t subtract_word(int32_t a, int32_t b)
 static const qa_q3_snapshot *seed_snapshot(const frontend_remote_prediction_source *source)
 {
     return source->scene.prediction_snapshot;
+}
+static bool receipt_current(const frontend_remote_prediction *owner,
+    const frontend_remote_prediction_source *source)
+{
+    const frontend_remote_prediction_cgame_seed *seed = owner->active_seed;
+    return owner->options.source_current(owner->options.context, source) &&
+        (!seed || seed->current(seed->context, source, seed));
+}
+static const qa_q3_snapshot *current_snapshot(const frontend_remote_prediction *owner,
+    const frontend_remote_prediction_source *source)
+{ return owner->active_seed ? owner->active_seed->snapshot : source->scene.snapshot; }
+static const qa_q3_snapshot *next_snapshot(const frontend_remote_prediction *owner,
+    const frontend_remote_prediction_source *source)
+{ return owner->active_seed ? owner->active_seed->next_snapshot : source->scene.next_snapshot; }
+static const qa_q3_snapshot *player_snapshot(const frontend_remote_prediction *owner,
+    const frontend_remote_prediction_source *source)
+{
+    if (!owner->active_seed) return seed_snapshot(source);
+    return seed_snapshot(source) == source->scene.snapshot ?
+        owner->active_seed->snapshot : owner->active_seed->next_snapshot;
+}
+static bool this_teleport(const frontend_remote_prediction *owner,
+    const frontend_remote_prediction_source *source)
+{ return owner->active_seed ? owner->active_seed->this_frame_teleport : source->scene.this_frame_teleport; }
+static bool next_teleport(const frontend_remote_prediction *owner,
+    const frontend_remote_prediction_source *source)
+{ return owner->active_seed ? owner->active_seed->next_frame_teleport : source->scene.next_frame_teleport; }
+static bool retail_snapshot_matches(const qa_q3_snapshot *retail,
+    const qa_q3_snapshot *raw, qa_error *error)
+{
+    if (!retail || !raw) return retail == raw;
+    if (!retail->valid || !raw->valid || retail->message_number != raw->message_number ||
+        retail->server_time != raw->server_time || retail->player.product != raw->player.product)
+        return false;
+    qa_q3_player player = retail->player;
+    player.entityEventSequence = raw->player.entityEventSequence;
+    uint8_t a[1024], b[1024];
+    qa_net_writer wa, wb;
+    qa_net_writer_init(&wa, a, sizeof(a), error);
+    qa_net_writer_init(&wb, b, sizeof(b), error);
+    return qa_q3_save_player_fields(&wa, &player) &&
+        qa_q3_save_player_fields(&wb, &raw->player) &&
+        qa_net_writer_size(&wa) == qa_net_writer_size(&wb) &&
+        !memcmp(a, b, qa_net_writer_size(&wa));
+}
+static bool retail_seed_valid(const frontend_remote_prediction *owner,
+    const frontend_remote_prediction_source *source,
+    const frontend_remote_prediction_cgame_seed *seed, qa_error *error)
+{
+    if (!seed || !seed->owner || !seed->scope || !seed->current ||
+        !owner->options.source_current(owner->options.context, source) ||
+        !seed->current(seed->context, source, seed)) return false;
+    if (!retail_snapshot_matches(seed->snapshot, source->scene.snapshot, error) ||
+        !retail_snapshot_matches(seed->next_snapshot, source->scene.next_snapshot, error)) return false;
+    const qa_q3_snapshot *raw = seed->next_snapshot && !seed->next_frame_teleport &&
+        !seed->this_frame_teleport ? source->scene.next_snapshot : source->scene.snapshot;
+    return raw == seed_snapshot(source) && raw->server_time == source->scene.physics_time &&
+        seed->current(seed->context, source, seed) &&
+        owner->options.source_current(owner->options.context, source);
 }
 static qa_vec3 vector(const float value[3])
 { return qa_v3(value[0], value[1], value[2]); }
@@ -225,7 +285,7 @@ static bool weapon(replay_context *context, const qa_movement_command *command,
 
 static bool source_current(const replay_context *context, qa_error *error)
 {
-    return context->owner->options.source_current(context->owner->options.context, context->source) ||
+    return receipt_current(context->owner, context->source) ||
         fail(error, QA_ERROR_NOT_FOUND, "Private prediction lost its actual source receipt");
 }
 static bool trace(void *opaque, const qa_trace_query *query, qa_trace_result *out, qa_error *error)
@@ -411,7 +471,7 @@ static bool seed(frontend_remote_prediction *owner,
     const frontend_remote_prediction_source *source, const prediction_player *base,
     prediction_player *out, qa_error *error)
 {
-    if (!seed_player(owner, &seed_snapshot(source)->player, base, out, error)) return false;
+    if (!seed_player(owner, &player_snapshot(owner, source)->player, base, out, error)) return false;
     if (source->has_acknowledged_sequence && !source->history_unavailable)
         out->view.sequence = source->acknowledged_sequence;
     return true;
@@ -496,7 +556,8 @@ static float lerp_angle(float from, float to, float fraction)
 static bool interpolate(frontend_remote_prediction *owner, const frontend_remote_prediction_source *source,
     prediction_state *state, bool grab_angles, qa_error *error)
 {
-    const qa_q3_player *a = &source->scene.snapshot->player;
+    const qa_q3_snapshot *snapshot = current_snapshot(owner, source);
+    const qa_q3_player *a = &snapshot->player;
     prediction_player base = state->baseline;
     if (base.view.movement.kind != QA_MOVEMENT_Q3 && base.view.command_time != a->commandTime) {
         bool found = false;
@@ -509,13 +570,14 @@ static bool interpolate(frontend_remote_prediction *owner, const frontend_remote
         if (!found) return fail(error, QA_ERROR_NOT_FOUND, "Interpolation lost its selected continuation for the current source PS");
     }
     if (!seed_player(owner, a, &base, &state->predicted, error)) return false;
+    state->predicted.view.hyperspace = state->predicted.view.consumed_teleport = false;
     if (grab_angles && state->count && !update_angles(&state->predicted, state->commands + state->count - 1, error)) return false;
-    const qa_q3_snapshot *next = source->scene.next_snapshot;
+    const qa_q3_snapshot *next = next_snapshot(owner, source);
     qa_vec3 origin = vector(a->origin), velocity = vector(a->velocity);
-    if (!source->scene.next_frame_teleport && next && next->server_time > source->scene.snapshot->server_time) {
+    if (!next_teleport(owner, source) && next && next->server_time > snapshot->server_time) {
         const qa_q3_player *b = &next->player;
-        float fraction = (float)subtract_word(source->scene.time, source->scene.snapshot->server_time) /
-            (float)subtract_word(next->server_time, source->scene.snapshot->server_time);
+        float fraction = (float)subtract_word(source->scene.time, snapshot->server_time) /
+            (float)subtract_word(next->server_time, snapshot->server_time);
         origin = qa_vec_lerp(vector(a->origin), vector(b->origin), fraction);
         velocity = qa_vec_lerp(vector(a->velocity), vector(b->velocity), fraction);
         if (!qa_movement_set_origin(&state->predicted.view.movement, origin, error) ||
@@ -755,7 +817,7 @@ static bool step(frontend_remote_prediction *owner, const frontend_remote_predic
     return true;
 }
 
-static bool source_valid(frontend_remote_prediction *owner,
+static bool source_valid(const frontend_remote_prediction *owner,
     const frontend_remote_prediction_source *source)
 {
     const frontend_remote_input_source *input = &source->input;
@@ -836,10 +898,10 @@ static bool warning(frontend_remote_prediction *owner, const frontend_remote_pre
     const char *message, qa_error *error)
 {
     if (!source->settings.show_miss) return true;
-    if (!owner->options.source_current(owner->options.context, source))
+    if (!receipt_current(owner, source))
         return fail(error, QA_ERROR_NOT_FOUND, "Prediction diagnostic lost its genuine source owner");
     return owner->options.warning(owner->options.context, source, message, error) &&
-        (owner->options.source_current(owner->options.context, source) ||
+        (receipt_current(owner, source) ||
             fail(error, QA_ERROR_NOT_FOUND, "Prediction diagnostic retired its genuine source owner"));
 }
 static bool clamp_pmove_msec(frontend_remote_prediction *owner,
@@ -848,12 +910,12 @@ static bool clamp_pmove_msec(frontend_remote_prediction *owner,
     int32_t value = source->settings.pmove_msec;
     int32_t clamped = value < 8 ? 8 : value > 33 ? 33 : value;
     if (clamped == value) return true;
-    if (!owner->options.source_current(owner->options.context, source))
+    if (!receipt_current(owner, source))
         return fail(error, QA_ERROR_NOT_FOUND, "Prediction movement clamp lost its actual CLIENT registry");
     if (!owner->options.set_pmove_msec(owner->options.context, source, clamped, error)) return false;
     /* Publication changes the real registry, not the retained CGAME cache.
      * Its actual update owner advances that scalar at the next source boundary. */
-    return owner->options.source_current(owner->options.context, source) ||
+    return receipt_current(owner, source) ||
         fail(error, QA_ERROR_NOT_FOUND, "Prediction movement clamp changed its source receipt");
 }
 bool frontend_remote_prediction_create(const frontend_remote_prediction_options *options,
@@ -882,6 +944,10 @@ void frontend_remote_prediction_destroy(frontend_remote_prediction *owner)
 {
     if (!owner) return;
     qa_movement_result_free(&owner->scratch); free(owner);
+}
+bool frontend_remote_prediction_initialized(const frontend_remote_prediction *owner)
+{
+    return owner && owner->state.initialized;
 }
 void frontend_remote_prediction_clear(frontend_remote_prediction *owner)
 {
@@ -974,7 +1040,20 @@ bool frontend_remote_prediction_submit(frontend_remote_prediction *owner,
     return true;
 }
 
-bool frontend_remote_prediction_replay(frontend_remote_prediction *owner,
+bool frontend_remote_prediction_source_read(const frontend_remote_prediction *owner,
+    frontend_remote_prediction_source *out, bool *present, qa_error *error)
+{
+    if (!owner || owner->busy || !out || !present)
+        return fail(error, QA_ERROR_ARGUMENT, "Prediction source read requires its idle genuine owner");
+    frontend_remote_prediction_source source = {0}; bool admitted = false;
+    if (!owner->options.source_read(owner->options.context, &source, &admitted, error)) return false;
+    if (!admitted) { *present = false; return true; }
+    if (!source_valid(owner, &source))
+        return fail(error, QA_ERROR_NOT_FOUND, "Prediction source read lost its genuine source receipt");
+    *out = source; *present = true; return true;
+}
+static bool replay(frontend_remote_prediction *owner,
+    const frontend_remote_prediction_cgame_seed *retail,
     frontend_remote_prediction_view *out, bool *present, qa_error *error)
 {
     if (!owner || !out || !present || owner->busy)
@@ -984,9 +1063,21 @@ bool frontend_remote_prediction_replay(frontend_remote_prediction *owner,
     if (!admitted) { *present = false; return true; }
     if (!owner->state.initialized || !source_valid(owner, &source) || !same_identity(&owner->state, &source))
         return fail(error, QA_ERROR_ARGUMENT, "Prediction replay lost its admitted connection and selected owners");
+    if (retail && !retail_seed_valid(owner, &source, retail, error))
+        return fail(error, QA_ERROR_ARGUMENT, "Prediction replay lost its actual CGAME retail seed");
     owner->busy = true;
+    owner->active_seed = retail;
     prediction_state next = owner->state;
-    const qa_q3_snapshot *snapshot = seed_snapshot(&source);
+    const qa_q3_snapshot *snapshot = player_snapshot(owner, &source);
+    const qa_q3_snapshot *current = current_snapshot(owner, &source);
+    if (retail && !next.valid_pps) {
+        if (!seed_player(owner, &current->player, &next.baseline, &next.predicted, error) ||
+            !receipt_current(owner, &source)) {
+            owner->active_seed = NULL; owner->busy = false;
+            return false;
+        }
+        next.valid_pps = true;
+    }
     prediction_player base = next.baseline;
     bool acknowledged = source.has_acknowledged_sequence && !source.history_unavailable;
     bool available = acknowledged && base.view.sequence <= source.acknowledged_sequence &&
@@ -1010,17 +1101,19 @@ bool frontend_remote_prediction_replay(frontend_remote_prediction *owner,
         next.predicted.view.status = FRONTEND_REMOTE_PREDICTION_HISTORY_EXHAUSTED;
         next.predicted.view.hyperspace = next.predicted.view.consumed_teleport = false;
         set_receipt(&next, &source);
-        if (!owner->options.source_current(owner->options.context, &source)) {
+        if (!receipt_current(owner, &source)) {
+            owner->active_seed = NULL;
             owner->busy = false;
             return fail(error, QA_ERROR_NOT_FOUND, "Exhausted prediction history lost its actual current presentation receipt");
         }
         owner->state = next;
+        owner->active_seed = NULL;
         owner->busy = false; *out = next.predicted.view; *present = true;
         return true;
     }
     prediction_player old = next.predicted;
     uint32_t trace_mask = UINT32_C(1) | UINT32_C(0x10000) | UINT32_C(0x2000000);
-    if (old.view.player.pmType == 3 || source.scene.snapshot->player.persistant[3] == 3)
+    if (old.view.player.pmType == 3 || current->player.persistant[3] == 3)
         trace_mask &= ~UINT32_C(0x2000000);
     bool ok = seed(owner, &source, &base, &next.baseline, error);
     if (ok) {
@@ -1029,7 +1122,7 @@ bool frontend_remote_prediction_replay(frontend_remote_prediction *owner,
         next.predicted.view.hyperspace = false;
         next.predicted.view.consumed_teleport = false;
         qa_movement_state *state = &next.predicted.view.movement;
-        bool follow = (source.scene.snapshot->player.pmFlags & 4096) != 0;
+        bool follow = (current->player.pmFlags & 4096) != 0;
         bool disabled = (state->kind == QA_MOVEMENT_Q2_CLASSIC && (state->data.q2.flags & 64u)) ||
             (state->kind == QA_MOVEMENT_Q2_RERELEASE && (state->data.q2r.flags & 64u));
         if (source.settings.demo_playback || follow || source.settings.no_predict || source.settings.synchronous_clients) {
@@ -1038,10 +1131,12 @@ bool frontend_remote_prediction_replay(frontend_remote_prediction *owner,
             if (next.count) ok = update_angles(&next.predicted, next.commands + next.count - 1, error);
             next.predicted.view.status = FRONTEND_REMOTE_PREDICTION_DISABLED;
             if (ok) ok = write_player(owner, &next.predicted, error);
-        } else if (next.count == 64 && next.commands[0].source_time > source.scene.snapshot->player.commandTime &&
+        } else if (next.count == 64 && next.commands[0].source_time > current->player.commandTime &&
             next.commands[0].source_time < source.scene.time) {
             ok = warning(owner, &source, "exceeded PACKET_BACKUP on commands\n", error);
             next.predicted = old;
+            next.predicted.view.hyperspace = false;
+            next.predicted.view.consumed_teleport = false;
             next.predicted.view.status = FRONTEND_REMOTE_PREDICTION_HISTORY_EXHAUSTED;
         } else {
             bool moved = false;
@@ -1056,7 +1151,7 @@ bool frontend_remote_prediction_replay(frontend_remote_prediction *owner,
                 if (source.settings.pmove_fixed) ok = update_angles(&next.predicted, selected, error);
                 if (!ok || entry->source_time <= next.predicted.view.command_time || entry->source_time > latest_time) continue;
                 if (next.predicted.view.command_time == old.view.command_time) {
-                    if (source.scene.this_frame_teleport && !next.predicted.view.consumed_teleport) {
+                    if (this_teleport(owner, &source) && !next.predicted.view.consumed_teleport) {
                         next.prediction_error = qa_v3(0, 0, 0);
                         next.predicted.view.consumed_teleport = true;
                         ok = warning(owner, &source, "PredictionTeleport\n", error);
@@ -1112,11 +1207,22 @@ bool frontend_remote_prediction_replay(frontend_remote_prediction *owner,
         next.predicted.view.prediction_error = next.prediction_error;
         next.predicted.view.prediction_error_time = next.prediction_error_time;
     }
-    if (ok) ok = owner->options.source_current(owner->options.context, &source) ||
+    if (ok) ok = receipt_current(owner, &source) ||
         fail(error, QA_ERROR_NOT_FOUND, "Prediction source retired before copied continuation publication");
     if (ok) { owner->state = next; *out = next.predicted.view; *present = true; }
+    owner->active_seed = NULL;
     owner->busy = false;
     return ok;
+}
+bool frontend_remote_prediction_replay(frontend_remote_prediction *owner,
+    frontend_remote_prediction_view *out, bool *present, qa_error *error)
+{ return replay(owner, NULL, out, present, error); }
+bool frontend_remote_prediction_replay_seed(frontend_remote_prediction *owner,
+    const frontend_remote_prediction_cgame_seed *seed,
+    frontend_remote_prediction_view *out, bool *present, qa_error *error)
+{
+    if (!seed) return fail(error, QA_ERROR_ARGUMENT, "CGAME prediction replay requires its actual retail seed");
+    return replay(owner, seed, out, present, error);
 }
 bool frontend_remote_prediction_read(const frontend_remote_prediction *owner, const frontend_remote_prediction_source *source,
     frontend_remote_prediction_view *out)
@@ -1222,8 +1328,24 @@ static bool configuration_fields(qa_source_save_io *io, qa_application_control_p
     qa_movement_input *in = &v->input;
     uint32_t shape = in->shape.kind, solid = in->q1_solid;
     uint32_t family = in->trace_policy.family, move = in->trace_policy.q1_move;
+    uint32_t clock = v->clock.kind, rounding = v->numeric.rounding;
+    uint32_t prediction_rounding = v->prediction_numeric.rounding;
     if (in->q2r_pml_origin || !qa_source_save_string(io, &v->movement) ||
         !qa_source_save_string(io, &v->character) || !qa_source_save_string(io, &v->arsenal) ||
+        !qa_source_save_string(io, &v->profile_id) || !qa_source_save_u32(io, &clock) || clock > QA_CLOCK_Q3 ||
+        !qa_source_save_u64(io, &v->clock.initial_time_ns) || !qa_source_save_u64(io, &v->clock.interval_ns) ||
+        !qa_source_save_u64(io, &v->clock.minimum_frame_ns) || !qa_source_save_u64(io, &v->clock.maximum_frame_ns) ||
+        !qa_source_save_u64(io, &v->clock.initial_lead_ns) || !qa_source_save_u32(io, &v->clock.maximum_steps) ||
+        !qa_source_save_string(io, &v->numeric.id) || !qa_source_save_bool(io, &v->numeric.native_c) ||
+        !qa_source_save_u32(io, &v->numeric.radix) || !qa_source_save_u32(io, &v->numeric.scalar_mantissa_bits) ||
+        !qa_source_save_u32(io, &v->numeric.double_mantissa_bits) ||
+        !qa_source_save_i32(io, &v->numeric.evaluation_method) || !qa_source_save_u32(io, &rounding) ||
+        rounding > QA_APPLICATION_ROUND_ZERO || !qa_source_save_bool(io, &v->numeric.qw_origin_binary64) ||
+        !qa_source_save_string(io, &v->prediction_numeric.id) || !qa_source_save_bool(io, &v->prediction_numeric.native_c) ||
+        !qa_source_save_u32(io, &v->prediction_numeric.radix) || !qa_source_save_u32(io, &v->prediction_numeric.scalar_mantissa_bits) ||
+        !qa_source_save_u32(io, &v->prediction_numeric.double_mantissa_bits) ||
+        !qa_source_save_i32(io, &v->prediction_numeric.evaluation_method) || !qa_source_save_u32(io, &prediction_rounding) ||
+        prediction_rounding > QA_APPLICATION_ROUND_ZERO || !qa_source_save_bool(io, &v->prediction_numeric.qw_origin_binary64) ||
         !qa_source_save_actor(io, &in->actor) || !qa_persistence_movement(io, &in->state) ||
         !command_fields(io, &in->command) || !qa_persistence_movement_profile(io, &in->profile) ||
         !qa_source_save_u32(io, &shape) || shape > QA_SHAPE_CAPSULE ||
@@ -1250,11 +1372,25 @@ static bool configuration_fields(qa_source_save_io *io, qa_application_control_p
         !qa_source_save_i32(io, &v->water_type) || !qa_source_save_bool(io, &v->q3_character) ||
         !qa_source_save_bool(io, &v->q3_arsenal) || !qa_source_save_bool(io, &v->native_q3_character) ||
         !qa_source_save_bool(io, &v->native_q3_arsenal) || !qa_source_save_f32(io, &v->fractional_weapon_ms) ||
-        !qa_source_save_u32(io, &v->external_weapon_slot) || !qa_source_save_i32(io, &v->requested_weapon)) return false;
+        !qa_source_save_u32(io, &v->external_weapon_slot) || !qa_source_save_i32(io, &v->requested_weapon) ||
+        !qa_source_save_bool(io, &v->has_client_view_offset) || !qa_source_save_vec3(io, &v->client_view_offset)) return false;
+    v->clock.kind = (qa_clock_kind)clock;
+    v->numeric.rounding = (qa_application_numeric_rounding)rounding;
+    v->prediction_numeric.rounding = (qa_application_numeric_rounding)prediction_rounding;
     in->shape.kind = (qa_shape_kind)shape; in->q1_solid = (qa_q1_solid)solid;
     in->trace_policy.family = (qa_collision_family)family;
     in->trace_policy.q1_move = (qa_q1_move_kind)move;
-    return v->movement && v->character && v->arsenal && in->actor.registry && in->prediction &&
+    return v->movement && v->character && v->arsenal && v->profile_id == v->movement &&
+        v->prediction_numeric.native_c && v->prediction_numeric.id &&
+        v->prediction_numeric.radix && v->prediction_numeric.scalar_mantissa_bits &&
+        v->prediction_numeric.double_mantissa_bits && v->prediction_numeric.qw_origin_binary64 == (in->state.kind == QA_MOVEMENT_QUAKEWORLD) &&
+        in->actor.registry && in->prediction && qa_vec_finite(v->client_view_offset) &&
+        (v->has_client_view_offset || (!v->client_view_offset.x && !v->client_view_offset.y && !v->client_view_offset.z)) &&
+        (v->numeric.native_c ? v->numeric.id && v->numeric.radix && v->numeric.scalar_mantissa_bits &&
+            v->numeric.double_mantissa_bits && v->numeric.qw_origin_binary64 == (in->state.kind == QA_MOVEMENT_QUAKEWORLD) :
+            !v->numeric.id && !v->numeric.radix && !v->numeric.scalar_mantissa_bits &&
+            !v->numeric.double_mantissa_bits && !v->numeric.evaluation_method &&
+            !v->numeric.rounding && !v->numeric.qw_origin_binary64) &&
         in->state.kind == in->profile.kind && in->command.kind == in->state.kind &&
         (!in->has_source_seconds || isfinite(in->source_seconds)) &&
         bounds_valid(in->shape.bounds) && bounds_valid(in->current_bounds) &&
@@ -1313,10 +1449,11 @@ static bool state_fields(qa_source_save_io *io, prediction_state *state,
     qa_application_control_prediction_configuration *configuration, prediction_player *initial)
 {
     uint8_t magic[4] = {'Q','R','P','D'};
-    uint32_t version = 1;
+    uint32_t version = 4;
     if (!qa_source_save_bytes(io, magic, sizeof(magic)) || memcmp(magic, "QRPD", sizeof(magic)) ||
-        !qa_source_save_u32(io, &version) || version != 1 || !configuration_fields(io, configuration) ||
-        !qa_source_save_bool(io, &state->initialized)) return false;
+        !qa_source_save_u32(io, &version) || version != 4 || !configuration_fields(io, configuration) ||
+        !qa_source_save_bool(io, &state->initialized) ||
+        !qa_source_save_bool(io, &state->valid_pps) || (state->valid_pps && !state->initialized)) return false;
     if (io->direction == QA_SOURCE_SAVE_READ) *initial = initial_player(configuration);
     if (!state->initialized) return true;
     if (!qa_source_save_u64(io, &state->connection.owner) || !qa_source_save_u32(io, &state->connection.slot) ||

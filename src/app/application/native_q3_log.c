@@ -1,5 +1,6 @@
 #include "native_q3_log.h"
 #include "native_q3_console.h"
+#include "unified_q3_events.h"
 
 bool application_native_q3_source_log(void *context, const char *text,
                                      qa_error *error)
@@ -25,6 +26,7 @@ bool application_native_q3_log(application_provider *provider, const char *text,
         event.time_ns = (uint64_t)(uint32_t)source_time * UINT64_C(1000000);
         ok = qa_strings_intern_cstr(qa_session_strings(application->session),
                                    text, &event.text, error) &&
+             application_unified_q3_text(provider, APPLICATION_Q3_SOURCE_LOG, 0, text, error) &&
              application_emit(application, &event, error);
     }
     application_native_q3_console_release(provider);

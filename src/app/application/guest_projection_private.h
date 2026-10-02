@@ -3,6 +3,7 @@
 
 #include "guest_q3_private.h"
 #include "qa/json.h"
+#include "guest_inventory_profile.h"
 
 typedef enum guest_record_kind { GUEST_ENTITY_RECORD, GUEST_CLIENT_RECORD } guest_record_kind;
 typedef struct guest_field { guest_record_kind record; uint32_t offset; } guest_field;
@@ -37,7 +38,16 @@ typedef struct guest_inventory_field {
     guest_field field;
     uint32_t mask, private_mask, allowed_mask;
     guest_capacity capacity;
+    uint32_t public_weapon;
 } guest_inventory_field;
+typedef struct guest_inventory_weapon {
+    uint32_t weapon;
+    qa_item_id item, ammo; /* Zero ammo means actual source absence. */
+} guest_inventory_weapon;
+typedef struct guest_inventory_catalog_services {
+    void *context;
+    bool (*read)(void *, q3g_role *, const guest_inventory_weapon **, size_t *, qa_error *);
+} guest_inventory_catalog_services;
 typedef struct guest_projection_actor {
     struct guest_projection_actor *next;
     struct application_guest_projection *projection;
@@ -51,19 +61,27 @@ typedef struct application_guest_projection {
     uint32_t entity_stride, client_stride, client_pointer;
     guest_inventory_field *inventory;
     size_t inventory_count;
+    guest_public_inventory_profile public_inventory;
+    guest_inventory_catalog_services inventory_catalog;
     guest_projection_actor *actors;
     guest_state_profile state;
-    bool has_inventory, has_state;
+    bool has_inventory, has_state, inventory_public, located_inventory;
 } application_guest_projection;
 
 bool application_guest_projection_prepare(q3g_role *, qa_bytes, qa_error *);
 bool application_guest_projection_close(q3g_role *, qa_error *);
 bool application_guest_projection_admit(q3g_role *, qa_actor_id, qa_error *);
+/* Borrowed from this exact retained GAME's actual source catalog owner. */
+bool application_guest_inventory_catalog_bind(q3g_role *, const guest_inventory_catalog_services *, qa_error *);
 bool application_guest_projection_inventory_binding(q3g_role *, qa_actor_id,
     uint64_t saved_serial, qa_inventory_binding *, qa_error *);
 bool application_guest_projection_detach(q3g_role *, qa_actor_id, qa_error *);
 bool application_guest_projection_profile_read(q3g_role *, qa_bytes, application_guest_projection *, qa_error *);
 void application_guest_projection_profile_free(application_guest_projection *);
+typedef struct guest_inventory_projection_word { uint32_t address; int32_t value; } guest_inventory_projection_word;
+/* Compute original RAM substitutions without committing a temporary grant. */
+bool application_guest_inventory_project(q3g_role *, qa_actor_id, qa_item_id, int32_t count,
+    guest_inventory_projection_word [2], size_t *, qa_error *);
 bool application_guest_actor_admit(application_provider *, qa_actor_id, qa_error *);
 bool application_guest_client_drop(application_provider *, uint32_t, const char *, qa_error *);
 bool application_guest_bot_allocate(application_provider *, int32_t *, qa_error *);

@@ -28,6 +28,20 @@ typedef struct qa_application_native_baseline_services {
     bool (*destroy)(void *, qa_error *);
 } qa_application_native_baseline_services;
 
+/* The external save graph holds captured native capability owners separately
+ * from the running application. capture performs resources_capture and retains
+ * its output even on a checked cleanup failure. resolve borrows that exact held
+ * capture; it never opens a file or installs source services. Recipes contain
+ * named identities, not pointers. The graph outlives every save image that uses
+ * it and every candidate borrowing it during resources_rebind. */
+typedef struct qa_application_native_resource_refs {
+    void *context;
+    bool (*capture)(void *, const char *instance, uint64_t source,
+        const qa_native_process_resources *, qa_buffer *, qa_error *);
+    bool (*resolve)(void *, const char *instance, uint64_t source, qa_bytes,
+        const qa_native_process_resources **, qa_error *);
+} qa_application_native_resource_refs;
+
 typedef struct qa_application_persistence_ops {
     void *context;
     const qa_application_persistence_owner *owners;
@@ -36,6 +50,7 @@ typedef struct qa_application_persistence_ops {
      * is restored before any candidate content/provider factory is admitted. */
     qa_application_content_visit_fn visit_content;
     const qa_vfs_checkpoint_refs *content_files;
+    const qa_application_native_resource_refs *native_resources;
     /* Actual optional backend/native profile qualifications. Default rankings
      * are unconfigured; installed external providers require both readonly
      * binding/continuation refs and the final transactional handoff below. */

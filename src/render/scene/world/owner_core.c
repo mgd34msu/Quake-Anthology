@@ -155,6 +155,8 @@ static bool topology(qa_source_save_io *io, qa_scene_world *world)
         array(io,(void **)&world->admitted_surfaces,world->surface_count,sizeof(*world->admitted_surfaces)) &&
         array(io,(void **)&world->admission_changes,world->admission_change_capacity,sizeof(*world->admission_changes)) &&
         array(io,(void **)&world->pending,world->pending_capacity,sizeof(*world->pending)) &&
+        (!q3 || array(io,(void **)&world->source_leaf_marks,world->leaf_count,sizeof(*world->source_leaf_marks))) &&
+        (!q3 || array(io,(void **)&world->source_dlight_masks,world->surface_count,sizeof(*world->source_dlight_masks))) &&
         array(io,(void **)&world->pvs,world->pvs_capacity,1) && array(io,(void **)&world->secondary_pvs,world->pvs_capacity,1);
 }
 static bool mesh(qa_source_save_io *io, qaw_surface *surface, const qaw_owner_refs *refs)

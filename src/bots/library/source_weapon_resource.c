@@ -16,7 +16,9 @@ bool bot_weapon_resource_current(const bot_weapon_resource *resource,qa_error *e
     if(!resource || qa_bot_memory_disposed(resource->memory))
         return fail(error,"Weapon resource has no live source memory owner");
     if(resource->report_failed) {if(error) *error=resource->report_error;return false;}
-    return !resource->host.current || resource->host.current(resource->host.context,error);
+    return (!resource->host.current || resource->host.current(resource->host.context,error)) &&
+        (!resource->host.qualify || resource->host.qualify(resource->host.context,
+            resource->host.generation,resource->host.revision,error));
 }
 static bool reader_current(void *context,qa_error *error) {
     return bot_weapon_resource_current(context,error);
@@ -69,13 +71,19 @@ static bool source_read(void *context,const qa_script_include *request,qa_script
     if(!pending) {qa_error_set(error,QA_ERROR_MEMORY,0,"Retaining weapon source acquisition");return false;}
     bool ok=resource->services.read(resource->services.context,request,out,found,error);
     bool current=bot_weapon_resource_current(resource,error);
-    if(ok && *found && !current) {
+    bool invalid=ok && current && *found && request->kind==QA_SCRIPT_ROOT &&
+        out->path && !*out->path && (!out->bytes.size || out->bytes.data);
+    if(invalid) {
+        resource->invalid_root_path=true;resource->own_failure=true;
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"weapon config resolver returned an empty canonical path");
+    }
+    if(ok && *found && (!current || invalid)) {
         pending->value=*out;pending->next=resource->pending;resource->pending=pending;
         *out=(qa_script_resource){0};pending=NULL;
     }
     free(pending);
     if(ok && current && !*found && request->kind==QA_SCRIPT_ROOT) resource->missing_root=true;
-    return current && ok;
+    return current && ok && !invalid;
 }
 static void source_release(void *context,qa_script_resource *source) {
     bot_weapon_resource *resource=context;
@@ -168,7 +176,8 @@ bool bot_weapon_resource_bind(bot_weapon_resource *resource,bot_weapon_config_re
 }
 bool bot_weapon_resource_load(bot_weapon_resource *resource,const char *path,uint32_t weapons,
     uint32_t projectiles,bool *source_failure,qa_error *error) {
-    if(!resource || !source_failure || !path || !*path || resource->attempted || resource->active || resource->bound)
+    if(!resource || !source_failure || !path || !*path || resource->attempted || resource->active || resource->bound ||
+       !resource->services.read || !resource->services.release)
         return fail(error,"Weapon load requires an unattempted source owner, path and outcome");
     *source_failure=false;
     if(weapons>INT32_MAX || projectiles>INT32_MAX)
@@ -180,17 +189,33 @@ bool bot_weapon_resource_load(bot_weapon_resource *resource,const char *path,uin
     if(!bot_weapon_resource_current(resource,error)) ok=false;
     if(ok) {
         qa_script_location location=qa_script_position(resource->reader);
-        if(!location.path || !*location.path) ok=fail(error,"Weapon resolver returned an empty canonical path");
+        if(!location.path || !*location.path) {
+            resource->own_failure=true;ok=fail(error,"weapon config resolver returned an empty canonical path");
+        }
         else resource->path=copy_text(location.path,error);
         if(!resource->path) ok=false;
     }
-    if(ok) ok=bot_weapon_config_allocate(resource->memory,weapons,projectiles,&resource->record,error);
+    if(ok) {
+        uint32_t size=BOT_WEAPON_CONFIG_BYTES+weapons*BOT_WEAPON_INFO_BYTES+projectiles*BOT_PROJECTILE_INFO_BYTES;
+        if(size>INT32_MAX-4) {
+            resource->own_failure=true;ok=fail(error,"Bot memory allocation must fit a signed source size with its four-byte prefix");
+        } else {
+            ok=bot_weapon_config_allocate(resource->memory,weapons,projectiles,&resource->record,error);
+            if(!ok && resource->record.allocation.owner && bot_weapon_resource_current(resource,error))
+                resource->own_failure=true;
+        }
+    }
     if(ok) {
         bot_weapon_parser_host host={resource,reader_current,parser_report,complete};
         ok=bot_weapon_parse(resource->reader,resource->path,weapons,projectiles,
-            &resource->record,&host,source_failure,error);
+            &resource->record,&host,source_failure,&resource->own_failure,error);
     }
-    if(ok) ok=bot_weapon_resource_bind(resource,resource->record,resource->path,error);
+    if(ok) {
+        bot_weapon_config_record qualified;
+        ok=bot_weapon_config_bind(resource->memory,resource->record.allocation,&qualified,error);
+        if(!ok && bot_weapon_resource_current(resource,error)) resource->own_failure=true;
+        else if(ok) ok=bot_weapon_resource_bind(resource,qualified,resource->path,error);
+    }
     if(!ok && *source_failure) {
         qa_error reached=error?*error:(qa_error){0};
         if(!bot_weapon_resource_current(resource,error) ||
@@ -199,6 +224,12 @@ bool bot_weapon_resource_load(bot_weapon_resource *resource,const char *path,uin
         else if(error) *error=reached;
     }
     if(!ok && resource->missing_root && !resource->report_failed &&
+       bot_weapon_resource_current(resource,error)) *source_failure=true;
+    if(!ok && resource->invalid_root_path) {
+        resource->own_failure=true;
+        if(!resource->report_failed) qa_error_set(error,QA_ERROR_ARGUMENT,0,"weapon config resolver returned an empty canonical path");
+    }
+    if(!ok && resource->own_failure && !resource->report_failed &&
        bot_weapon_resource_current(resource,error)) *source_failure=true;
     resource->active=false;return ok;
 }

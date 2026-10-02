@@ -71,7 +71,7 @@ static const qa_aas_plane *plane(const qa_aas_view *v, int32_t node, uint32_t de
     }
     int32_t p = v->nodes[node].plane;
     if (p < 0 || (size_t)p >= v->count[QA_AAS_PLANES]) {
-        qa_error_set(e, QA_ERROR_FORMAT, node, "Invalid AAS BSP plane");
+        qa_error_set(e, QA_ERROR_FORMAT, (size_t)node, "Invalid AAS BSP plane");
         return NULL;
     }
     return v->planes + p;

@@ -76,7 +76,15 @@ bool qa_q1_wire_declare_model(qa_q1_game *g, const char *path, qa_error *error) 
 bool qa_q1_wire_declare_sound(qa_q1_game *g, const char *path, qa_error *error) {
     if (!g || !g->wire || !g->wire->loading || g->destroy_pending)
         return fail(error, "Q1 sound declaration requires the native loading stage");
-    return append(g, &g->wire->sounds, path, error);
+    qa_q1_game_operation operation = {0};
+    if (!qa_q1_game_operation_begin(g, &operation, error)) return false;
+    bool okay = append(g, &g->wire->sounds, path, error);
+    if (okay && g->host.sound_precache)
+        okay = g->host.sound_precache(g->host.context, path, error);
+    if (okay && !qa_q1_game_operation_live(&operation))
+        okay = fail(error, "Q1 source retired during its sound precache");
+    qa_q1_game_operation_end(&operation);
+    return okay;
 }
 bool qa_q1_wire_begin_world(qa_q1_game *g, const char *path, uint32_t inline_models,
                             uint32_t authored_entities, qa_error *error) {
@@ -111,6 +119,11 @@ bool qa_q1_wire_begin_world(qa_q1_game *g, const char *path, uint32_t inline_mod
         }
     }
     if (!qa_builtin_resource(&g->services, path, &wire->map_path, error)) {
+        state_free(wire);
+        return false;
+    }
+    if (g->host.precache_reset &&
+        !g->host.precache_reset(g->host.context, error)) {
         state_free(wire);
         return false;
     }
@@ -211,6 +224,14 @@ bool qa_q1_wire_emission_slot(const qa_q1_game *g, qa_actor_id actor, uint32_t *
     *out = record->source_slot;
     return true;
 }
+bool qa_q1_wire_registration_state(const qa_q1_game *g, uint64_t *generation, bool *loading) {
+    if (!g || g->destroy_pending || g->continuation_pending || !g->wire ||
+        !g->wire->id1 || !generation || !loading) return false;
+    *generation = g->wire->generation;
+    *loading = g->wire->loading;
+    return true;
+}
+
 bool qa_q1_wire_enabled(const qa_q1_game *g) {
     return g && !g->destroy_pending && g->wire && g->wire->id1;
 }
@@ -221,6 +242,14 @@ bool qa_q1_wire_lightstyle(qa_q1_game *g, int32_t style, qa_string_id pattern, q
     if (!g->wire) return true;
     g->wire->lightstyles[style] = pattern;
     q1_wire_changed(g->wire);
+    return true;
+}
+bool qa_q1_source_lightstyle_read(const qa_q1_game *g, uint32_t style,
+    qa_string_id *out, qa_error *error) {
+    if (!g || !out || style >= 64 || g->destroy_pending || g->observation_depth ||
+        !g->wire || g->wire->loading || !qa_session_safe(g->services.session))
+        return fail(error, "Q1 lightstyle observation requires its returned native map owner");
+    *out = g->wire->lightstyles[style];
     return true;
 }
 bool qa_q1_wire_world_read(const qa_q1_wire_receipt *receipt, qa_q1_wire_world *out) {

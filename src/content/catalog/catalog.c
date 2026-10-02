@@ -191,9 +191,39 @@ bool qa_catalog_discover_remote_q3(const qa_catalog *source, qa_product_id base_
     *out = fresh; *selected = choice; return true;
 }
 
-qa_fs_root *qa_catalog_q3_download_root(const qa_catalog *catalog)
+bool qa_catalog_discover_remote_q2(const qa_catalog *source, qa_product_id base_id,
+    const char *directory, uint64_t generation, qa_catalog **out,
+    qa_product_id *selected, qa_error *error)
 {
-    const catalog_physical *physical = catalog_package(catalog, catalog ? catalog->q3_download_mount : 0);
+    const qa_product *base = qa_catalog_product(source, base_id);
+    if (!base || base->family != QA_GAME_Q2 || base->base ||
+        (base->edition != QA_EDITION_CLASSIC && base->edition != QA_EDITION_RERELEASE) ||
+        !source->user || !*source->user || !directory || !out || *out || !selected) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Remote Q2 discovery requires its actual configured base and write root");
+        return false;
+    }
+    qa_catalog_options options = {.resources = source->resources, .content_root = source->root,
+        .user_root = source->user, .generation = generation};
+    qa_catalog *fresh = NULL; qa_product_id choice = QA_PRODUCT_NONE;
+    if (!discover(&options, base->key, directory, &choice, &fresh, error)) return false;
+    const qa_product *fresh_base = qa_catalog_find(fresh, base->key);
+    const qa_product *product = qa_catalog_product(fresh, choice);
+    if (!fresh_base || fresh_base->availability != QA_CONTENT_INSTALLED || !product ||
+        product->availability != QA_CONTENT_INSTALLED ||
+        !qa_catalog_product_write_root(fresh, fresh_base->id) ||
+        !qa_catalog_product_write_root(fresh, choice) || !qa_catalog_q2_download_root(fresh, base->edition)) {
+        qa_error_set(error, QA_ERROR_NOT_FOUND, 0, "Remote Q2 content requires its installed base and real writable directories");
+        qa_catalog_release(fresh); return false;
+    }
+    if (source->q3_demo_restricted && !qa_catalog_q3_restrict(fresh, error)) {
+        qa_catalog_release(fresh); return false;
+    }
+    *out = fresh; *selected = choice; return true;
+}
+
+static qa_fs_root *download_root(const qa_catalog *catalog, qa_mount_id id)
+{
+    const catalog_physical *physical = catalog_package(catalog, id);
     if (!physical || physical->view.format != QA_ARCHIVE_AUTO || !physical->view.writable) return NULL;
     const char *path = qa_vfs_mount_path(catalog->mounts, physical->view.id);
     if (!path || strcmp(path, physical->view.path)) return NULL;
@@ -203,6 +233,23 @@ qa_fs_root *qa_catalog_q3_download_root(const qa_catalog *catalog)
             return !mount.is_archive && mount.writable ? qa_vfs_mount_root(catalog->mounts, mount.id) : NULL;
     }
     return NULL;
+}
+qa_fs_root *qa_catalog_q3_download_root(const qa_catalog *catalog)
+{ return download_root(catalog, catalog ? catalog->q3_download_mount : 0); }
+qa_fs_root *qa_catalog_q2_download_root(const qa_catalog *catalog, qa_product_edition edition)
+{
+    if (!catalog || (edition != QA_EDITION_CLASSIC && edition != QA_EDITION_RERELEASE)) return NULL;
+    qa_mount_id id = catalog->q2_download_mount[edition == QA_EDITION_RERELEASE ? 1 : 0];
+    const catalog_physical *family = catalog_package(catalog, id);
+    const qa_product *base = qa_catalog_find(catalog, edition == QA_EDITION_RERELEASE ?
+        "q2-rerelease-baseq2" : "q2-classic-baseq2");
+    const qa_catalog_mount *write = base ? qa_catalog_product_write_mount(catalog, base->id) : NULL;
+    if (!family || !write) return NULL;
+    const char *leaf = strrchr(base->directory, '/'); size_t length = strlen(family->view.path);
+    if (!leaf || strlen(write->path) <= length || memcmp(write->path, family->view.path, length) ||
+        (write->path[length] != '/' && write->path[length] != '\\') ||
+        !catalog_ascii_equal(write->path + length + 1, leaf + 1)) return NULL;
+    return download_root(catalog, id);
 }
 
 void qa_catalog_retain(qa_catalog *catalog) { if (catalog) ++catalog->references; }

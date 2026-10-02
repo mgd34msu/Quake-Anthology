@@ -1,9 +1,12 @@
+#include "qa/material_source_scratch.h"
 #include "internal.h"
 #include "campaign_cinematic.h"
+#include "system_cinematic.h"
 #include "qa/audio_save.h"
 #include "campaign.h"
 #include "cinematic_captions.h"
 #include "ui_features.h"
+#include "shared_render_controls.h"
 #include <ctype.h>
 
 typedef struct cinematic_request {
@@ -173,7 +176,7 @@ static bool prepare(frontend_cinematic *owner,qa_error *error)
         options.sample_rate=qa_audio_engine_rate(f->audio); options.observer=NULL; options.observer_user=NULL;
         if (!qa_audio_engine_create(&options,&staging,error)) return false;
     }
-    qa_cinematic_options options={.clock={sample,owner},
+    qa_cinematic_options options={.clock={.context=owner,.sample=sample},
         .target={.kind=QA_CINEMATIC_SEAT,.id.seat=owner->request.seat},
         .loop=owner->request.loop,.hold=owner->request.hold,.silent=!f->audio,
         .audio=staging,.audio_bus=QA_FRONTEND_COMMAND_OWNER,.gain=1,
@@ -245,6 +248,7 @@ bool frontend_cinematic_drain(qa_frontend *f,qa_error *error)
     if (owner->busy || f->capture || f->preparing || f->round || !frontend_ui_features_idle(f) ||
         (f->audio && !qa_audio_engine_round_ready(f->audio,error)))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Cinematic drain requires completed callbacks");
+    if (owner->pending && !owner->stopping && !frontend_system_cinematic_stop_all(f,error)) return false;
     owner->busy=true; bool ok=true;
     if (owner->stopping) {
         release_playback(owner); owner->pending=false;
@@ -276,6 +280,13 @@ bool frontend_cinematic_input(qa_frontend *f,uint32_t seat,qa_input_focus focus,
     if (elapsed>1000 || (qa_cinematic_status(owner->movie)==QA_MEDIA_HELD && owner->clock_ms>1000))
         return qa_cinematic_end_playback(owner->movie,QA_CINEMATIC_SKIPPED,error);
     return true;
+}
+bool frontend_cinematic_view_current(const qa_frontend *f,const qa_vfs *files,const char *path,uint32_t seat)
+{
+    const frontend_cinematic *owner=f?f->cinematic:NULL;
+    return owner && owner->frontend==f && owner->movie && files && path &&
+        owner->request.files==files && owner->request.seat==seat && owner->request.path &&
+        !strcmp(owner->request.path,path) && current(owner);
 }
 bool frontend_cinematic_view_read(qa_frontend *f,frontend_cinematic_view *out,bool *found,qa_error *error)
 {
@@ -328,6 +339,12 @@ bool frontend_cinematic_frame(qa_frontend *f,uint64_t elapsed_ns,bool *rendered,
         if (!frontend_cinematic_view_read(f,&view,&found,error) || !found ||
             !frontend_ui_cinematic_draw(f,view.files,view.path,view.seat,view.elapsed_ms,view.source_ms,
                 view.loop,view.status,view.viewport,&f->frame,error)) return false;
+    }
+    if (!frontend_render_controls_live(f,error)) return false;
+    if (f->frame.source_backend && f->frame.source_skip_backend) {
+        if (f->frame.source_pending &&
+            !qa_material_source_frame_end(f->frame.source_pending,&f->frame,false,error)) return false;
+        *rendered=true; return true;
     }
     const qa_cvar_view *gamma=qa_cvars_find(qa_application_cvars(f->application),"r_gamma");
     float brightness=gamma?fmaxf(.5f,fminf(3,gamma->number)):f->options.gamma;

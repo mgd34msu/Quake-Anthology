@@ -1,0 +1,118 @@
+#ifndef QA_FRONTEND_REMOTE_Q2_PRIVATE_H
+#define QA_FRONTEND_REMOTE_Q2_PRIVATE_H
+#include "internal.h"
+#include "remote_q2_client.h"
+#include "qa/hud_q2.h"
+#include "qa/font.h"
+#include "model_inventory.h"
+
+typedef struct remote_q2_model {
+    struct remote_q2_model *next;
+    char *path;
+    qa_resource *resource;
+    qa_vfs_acquisition opening;
+    qa_model decoded;
+    const qa_model *source;
+    frontend_model_lease *source_lease;
+    uint64_t saved_model, saved_scene;
+    qa_scene_model *scene;
+} remote_q2_model;
+typedef struct remote_q2_picture {
+    struct remote_q2_picture *next;
+    char *name;
+    const qa_scene_image *image;
+    uint64_t saved_image;
+} remote_q2_picture;
+typedef struct remote_q2_layout {
+    uint16_t models, sounds, images, lights, items, players, checksum;
+    size_t max_models, max_sounds, max_images, max_configs;
+} remote_q2_layout;
+struct frontend_remote_q2_image_policy;
+typedef struct remote_q2_sent_command {
+    bool valid;
+    uint32_t packet_sequence;
+    uint64_t sent_ns;
+    uint64_t command_number;
+    qa_q2_usercmd command;
+    bool predicted;
+    qa_vec3 origin;
+} remote_q2_sent_command;
+struct frontend_remote_q2 {
+    frontend_remote_q2 *next;
+    qa_frontend *frontend;
+    frontend_remote_q2_options options;
+    uint64_t identity, loading_generation, content_generation, received_ns, sample_ns;
+    uint32_t acknowledged;
+    remote_q2_sent_command sent[64];
+    remote_q2_sent_command commands[64];
+    uint64_t last_command, acknowledged_command;
+    uint32_t last_sent;
+    bool sent_set, input_set;
+    bool predicted;
+    qa_vec3 prediction_origin, prediction_angles, prediction_error, prediction_pml;
+    float prediction_step;
+    uint64_t prediction_step_ns;
+    uint64_t prediction_command;
+    int32_t prediction_frame;
+    qa_movement_ground prediction_ground;
+    qa_collision_plane prediction_plane;
+    unsigned busy;
+    bool bound, selected, content_admitted, media_ready, retired, importing, restore_media_ready;
+    qa_q2_serverdata data;
+    remote_q2_layout layout;
+    frontend_remote_q2_content content;
+    char **configs;
+    qa_q2_entity *baselines;
+    size_t baseline_count;
+    qa_q2_wire_frame frame, previous;
+    float fraction, frame_ms, height_previous, height_current;
+    double height_changed_ms;
+    bool height_set;
+    qa_resource *map;
+    qa_vfs_acquisition map_opening;
+    qa_scene_resources *images;
+    qa_material_library *materials;
+    qa_audio_bank *sounds;
+    qa_font_library *fonts;
+    const qa_font *classic;
+    const qa_scene_image *white;
+    qa_scene_world *world;
+    qa_collision_geometry *geometry;
+    uint64_t saved_world, saved_classic, saved_white;
+    remote_q2_model *models;
+    remote_q2_picture *pictures;
+    struct frontend_remote_q2_image_policy *image_policy;
+    qa_hud_q2_table hud_table;
+    int32_t inventory[256];
+    char *overlay;
+    qa_fs_stage *download_stage;
+    qa_fs_root *download_root;
+    char *download_path;
+    uint64_t download_bytes;
+    uint64_t download_nonce;
+    uint64_t download_logical_nonce;
+    uint8_t download_percent;
+    char **download_attempted;
+    size_t download_attempted_count;
+    qa_input_command_builder input;
+};
+bool remote_q2_fail(qa_error *, qa_status, const char *);
+bool remote_q2_live(const frontend_remote_q2 *, qa_error *);
+bool remote_q2_capture_owned(const frontend_remote_q2 *);
+bool remote_q2_domain_equal(const frontend_remote_q2_domain *, const frontend_remote_q2_domain *);
+bool remote_q2_config_set(frontend_remote_q2 *, uint16_t, const char *, qa_error *);
+bool remote_q2_media_clear(frontend_remote_q2 *, qa_error *);
+bool remote_q2_media_prepare(frontend_remote_q2 *, qa_error *);
+bool remote_q2_prediction_replay(frontend_remote_q2 *, qa_error *);
+void remote_q2_prediction_receive(frontend_remote_q2 *);
+bool remote_q2_map_validate(const frontend_remote_q2 *, const qa_resource *, qa_bsp_view *, qa_error *);
+bool remote_q2_model_read(frontend_remote_q2 *, const char *, remote_q2_model **, qa_error *);
+const qa_scene_image *remote_q2_picture_read(void *, const char *, qa_error *);
+bool remote_q2_download_prepare(frontend_remote_q2 *, qa_q2_preparation *, qa_error *);
+bool remote_q2_download_receive(frontend_remote_q2 *, const qa_q2_server_event *, bool *, qa_error *);
+bool remote_q2_download_path_valid(const char *);
+qa_fs_root *remote_q2_download_destination(const frontend_remote_q2 *, const char *);
+void remote_q2_download_clear(frontend_remote_q2 *);
+bool remote_q2_records(frontend_remote_q2 *, const qa_q2_server_record *, size_t, qa_error *);
+remote_q2_layout remote_q2_layout_read(qa_net_protocol_id);
+#endif

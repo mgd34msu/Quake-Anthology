@@ -85,12 +85,25 @@ bool q1_save_player(q1_save_io *io, q1_player *player) {
     for (size_t i = 0; i < QA_Q1_POWER_COUNT; ++i) {
         Q1_SAVE(io, double, player->power_expires[i]);
         Q1_SAVE(io, double, player->power_flash[i]);
+        Q1_SAVE(io, u64, player->power_order[i]);
+    }
+    Q1_SAVE(io, u64, player->power_sequence);
+    for (size_t i = 0; i < QA_Q1_POWER_COUNT; ++i) {
+        if (player->power_order[i] > player->power_sequence ||
+            (!player->power_order[i] && player->power_expires[i] != 0))
+            return q1_save_fail(io, "Invalid Q1 timed power insertion order");
+        for (size_t j = 0; j < i; ++j)
+            if (player->power_order[i] && player->power_order[i] == player->power_order[j])
+                return q1_save_fail(io, "Duplicate Q1 timed power insertion order");
     }
     Q1_SAVE(io, double, player->scuba_at);
     Q1_SAVE(io, double, player->shield_until);
     Q1_SAVE(io, double, player->shield_sound_at);
     Q1_SAVE(io, u64, player->wetsuit_scaled_frame);
     Q1_SAVE(io, u16, player->power_warned);
+    Q1_SAVE(io, u16, player->power_lost);
+    if ((player->power_warned | player->power_lost) & ~((1u << QA_Q1_POWER_COUNT) - 1u))
+        return q1_save_fail(io, "Invalid Q1 mission power timer state");
     Q1_SAVE(io, u8, player->wetsuit_scaled_level);
     Q1_SAVE_ENUM(io, player->auto_switch, QA_Q1_SWITCH_NEVER);
     Q1_SAVE(io, u32, player->mg3_progress.health);

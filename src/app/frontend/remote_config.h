@@ -26,12 +26,19 @@ bool frontend_remote_config_read(const frontend_remote_config *,frontend_remote_
 bool frontend_remote_config_current(const frontend_remote_config *,const frontend_remote_config_view *);
 bool frontend_remote_config_pending(const frontend_remote_config *,qa_application *,const qa_launch_snapshot *,
     const qa_application_startup_source *);
+bool frontend_remote_config_tuple(const frontend_remote_config *,qa_application_startup_source *);
+const frontend_config_files *frontend_remote_config_files(const frontend_remote_config *);
+bool frontend_remote_config_cvar_active(const frontend_remote_config *,const qa_command_context *);
+bool frontend_remote_config_refresh(frontend_remote_config *,qa_application *,const qa_launch_snapshot *,
+    const qa_application_startup_source *,qa_error *);
 bool frontend_remote_config_registries(const frontend_remote_config *,qa_application *,
     const qa_application_startup_source *,qa_cvars *namespaces[8],qa_console **hosted_game,qa_error *);
 bool frontend_remote_config_bindings(const frontend_remote_config *,qa_application *,
     const qa_application_startup_source *,const qa_input_seat *,qa_input_seat **,qa_error *);
 qa_input_seat *frontend_remote_configs_candidate_input(const frontend_remote_configs *,qa_application *,
     const qa_launch_snapshot *,unsigned physical_ordinal);
+/* The actual new remote CGAME row has no carried same-profile input owner. */
+bool frontend_remote_configs_fresh_input(const frontend_remote_configs *,qa_application *,const qa_launch_snapshot *);
 bool frontend_remote_config_acquire(frontend_remote_config *,frontend_client_registry **,qa_error *);
 bool frontend_remote_config_reset_bindings(frontend_remote_config *,int32_t controller,qa_error *);
 bool frontend_remote_config_prepare(frontend_remote_configs *,qa_application *,const qa_launch_snapshot *,

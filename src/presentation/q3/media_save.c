@@ -65,6 +65,22 @@ static bool local(qa_source_save_io *io, qa_q3_presentation *p, q3p_movie *movie
     }
     qa_cinematic_checkpoint_free(&saved); qa_buffer_free(&playback); qa_buffer_free(&publication); return ok;
 }
+static bool system_movie(qa_source_save_io *io,q3p_movie *movie,const qa_q3_movie_checkpoint_refs *refs)
+{
+    bool reading=io->direction==QA_SOURCE_SAVE_READ;
+    if (!refs || (reading?(!refs->system_decode || !refs->system_discard):!refs->system_encode) ||
+        !qa_source_save_u32(io,&movie->flags) || !(movie->flags&1u))
+        return q3p_fail(io->error,QA_ERROR_ARGUMENT,"System cinematic requires its retained fullscreen codec owner");
+    qa_buffer saved={0};
+    bool ok=reading || refs->system_encode(refs->context,&movie->system,movie->flags,&saved,io->error);
+    if (ok) ok=blob(io,&saved);
+    if (ok && reading) {
+        ok=refs->system_decode(refs->context,(qa_bytes){saved.data,saved.size},movie->flags,&movie->system,io->error);
+        if (ok && (!movie->system.status || !movie->system.end || !movie->system.release))
+            ok=q3p_fail(io->error,QA_ERROR_FORMAT,"Restored system cinematic lacks genuine lifetime services");
+    }
+    qa_buffer_free(&saved); return ok;
+}
 static bool sources(qa_source_save_io *io, qa_q3_presentation *p, const qa_q3_movie_checkpoint_refs *refs)
 {
     size_t count=0;
@@ -123,20 +139,23 @@ static bool topology(const qa_q3_presentation *p, qa_error *error)
 static bool fields(qa_source_save_io *io, qa_q3_presentation *p, const qa_q3_movie_checkpoint_refs *refs,
     uint64_t bus, double anchor)
 {
-    uint8_t magic[4]={'Q','3','M','S'}; uint32_t schema=1;
-    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"Q3MS",4) || !qa_source_save_u32(io,&schema) || schema!=1 || !sources(io,p,refs)) return false;
+    uint8_t magic[4]={'Q','3','M','S'}; uint32_t schema=2;
+    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"Q3MS",4) || !qa_source_save_u32(io,&schema) || schema!=2 || !sources(io,p,refs)) return false;
     for (size_t i=0;i<16;++i) {
         uint32_t kind=p->movies[i].kind;
-        if (!qa_source_save_u32(io,&kind) || (kind!=Q3P_MOVIE_EMPTY && kind!=Q3P_MOVIE_LOCAL))
+        if (!qa_source_save_u32(io,&kind) || (kind!=Q3P_MOVIE_EMPTY && kind!=Q3P_MOVIE_LOCAL && kind!=Q3P_MOVIE_SYSTEM))
             return q3p_fail(io->error,QA_ERROR_UNSUPPORTED,"Q3 delegated/pending movie requires its actual external lifetime owner");
         if (io->direction==QA_SOURCE_SAVE_READ) p->movies[i].kind=(q3p_movie_kind)kind;
         if (kind==Q3P_MOVIE_LOCAL && !local(io,p,&p->movies[i],refs,bus,anchor)) return false;
+        if (kind==Q3P_MOVIE_SYSTEM && !system_movie(io,&p->movies[i],refs)) return false;
     }
     return topology(p,io->error);
 }
-static void discard(qa_q3_presentation *p)
+static void discard(qa_q3_presentation *p,const qa_q3_movie_checkpoint_refs *refs)
 {
     for (size_t i=0;i<16;++i) {
+        if (p->movies[i].kind==Q3P_MOVIE_SYSTEM && refs && refs->system_discard)
+            refs->system_discard(refs->context,&p->movies[i].system);
         qa_cinematic_restore_discard(p->movies[i].local); qa_cinematic_asset_release(p->movies[i].asset); free(p->movies[i].path);
     }
     while (p->movie_sources) {
@@ -175,6 +194,6 @@ bool qa_q3_presentation_media_restore(qa_q3_presentation *p,
             qa_cinematic_restore_commit(saved.movies[i].local);
         memcpy(p->movies,saved.movies,sizeof(p->movies)); p->movie_sources=saved.movie_sources;
     }
-    else { discard(&saved); if (error && error->code==QA_OK) q3p_fail(error,QA_ERROR_FORMAT,"Saved Q3 movie ownership is inconsistent"); }
+    else { discard(&saved,refs); if (error && error->code==QA_OK) q3p_fail(error,QA_ERROR_FORMAT,"Saved Q3 movie ownership is inconsistent"); }
     qa_source_save_dispose(&io); q3p_capture_end(p, owned_assets); return ok;
 }

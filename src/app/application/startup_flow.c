@@ -6,6 +6,9 @@
 #include "native_q1_console.h"
 #include "native_q3_console.h"
 #include "startup_program.h"
+#include "engine_shutdown.h"
+#include "rankings.h"
+#include "qa/console_cvar_observer.h"
 #include <stdlib.h>
 
 typedef struct startup_source {
@@ -20,12 +23,27 @@ struct application_startup_flow {
     application_q3_product_preparation product;
     qa_configuration_transaction *transaction;
     application_publication *publication;
+    application_publication *validated_publication;
     const qa_launch_snapshot *candidate, *previous;
+    qa_console *console;
+    qa_cvars *cvars;
+    qa_command_context root_command;
+    const qa_launch_snapshot *resources_candidate;
+    void *resources;
     startup_source *sources;
     size_t count, index, capacity;
     uint64_t generation;
-    bool advancing, configured, candidate_finished, cancelling, committed;
+    bool advancing, configured, validated, candidate_finished, cancelling, committed;
+    bool resources_ready, resources_consumed, resources_finished;
+    bool resources_consuming, resources_finishing;
+    bool resource_advancing, resource_waiting;
+    bool preparing_resources;
+    bool images_advancing, images_waiting, images_completed;
+    bool candidate_abort_refused;
+    bool engine_only, root_admitted, root_preparing, root_prepared, root_settled;
 };
+
+static bool source_consoles_idle(const struct application_startup_flow *);
 
 bool qa_application_startup_pending(const qa_application *app)
 { return app && app->startup_flow; }
@@ -45,6 +63,56 @@ void application_startup_flow_bound_client(qa_application *app, application_prov
 
 const qa_launch_snapshot *qa_application_startup_candidate(const qa_application *app)
 { return app && app->startup_flow ? app->startup_flow->candidate : NULL; }
+
+bool qa_application_startup_root_read(const qa_application *app,
+    const qa_launch_snapshot *candidate, qa_console **console, qa_cvars **cvars,
+    qa_command_context *command, qa_error *error)
+{
+    const struct application_startup_flow *flow = app ? app->startup_flow : NULL;
+    if (!flow || !flow->hooks.prepare_root || (!candidate && !flow->engine_only) ||
+        !flow->root_admitted ||
+        !flow->console || !flow->cvars || app->console != flow->console || app->cvars != flow->cvars ||
+        app->engine_shutdown || !app->session || flow->root_command.owner ||
+        flow->root_command.registry != qa_actors_identity(qa_session_actors(app->session)) ||
+        flow->root_command.generation != flow->generation)
+        return application_fail(error, QA_ERROR_ARGUMENT, "ENGINE root read lost its retained physical startup owner");
+    const qa_launch_snapshot *current = qa_configuration_current(app->configuration);
+    bool associated;
+    if (flow->engine_only)
+        associated = !candidate && !flow->candidate && !flow->transaction && !flow->publication &&
+            !flow->validated_publication && current == flow->previous;
+    else if (flow->committed)
+        associated = candidate && flow->resources_consumed && flow->resources_candidate == candidate &&
+            current == candidate;
+    else
+        associated = candidate && flow->candidate == candidate && flow->transaction &&
+            ((qa_configuration_candidate(flow->transaction) == candidate && current == flow->previous) ||
+             (flow->validated_publication && flow->validated_publication->candidate == candidate &&
+              current == candidate));
+    if (!associated)
+        return application_fail(error, QA_ERROR_ARGUMENT, "ENGINE root read selected another actual startup operation");
+    if (console) *console = flow->console;
+    if (cvars) *cvars = flow->cvars;
+    if (command) *command = flow->root_command;
+    return true;
+}
+
+bool qa_application_startup_root_phase(const qa_application *app,
+    const qa_launch_snapshot *candidate)
+{
+    const struct application_startup_flow *flow = app ? app->startup_flow : NULL;
+    if (!qa_application_startup_root_read(app, candidate, NULL, NULL, NULL, NULL) ||
+        flow->generation != app->command_generation || flow->committed || flow->cancelling ||
+        flow->candidate_finished || flow->resources_consumed || app->publication_started ||
+        app->frame_preparing || app->q3_round_active || app->destroy_requested ||
+        qa_application_should_stop(app) || qa_configuration_current(app->configuration) != flow->previous ||
+        (!flow->engine_only && qa_configuration_candidate(flow->transaction) != candidate) ||
+        !source_consoles_idle(flow) || !qa_console_idle(flow->console)) return false;
+    return (app->operation == APPLICATION_CONFIGURING && flow->advancing &&
+        (flow->root_preparing || flow->images_advancing || flow->resource_advancing)) ||
+        (app->operation == APPLICATION_IDLE && !flow->advancing &&
+         (flow->images_waiting || flow->resource_waiting));
+}
 
 application_provider *application_startup_flow_provider(const qa_application *app, uint64_t owner)
 {
@@ -166,6 +234,8 @@ bool qa_application_startup_replay_variables(qa_application *app, qa_console *co
 {
     struct application_startup_flow *flow = app ? app->startup_flow : NULL;
     if (!flow || !console || !command) return application_fail(error, QA_ERROR_ARGUMENT, "Variable replay needs its retained source console and command");
+    if (!flow->images_completed)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Variable replay precedes the actual completed image-settings programme");
     const qa_launch_snapshot *routing = app->routing_snapshot;
     application_provider **providers = app->routing_providers;
     size_t count = app->routing_provider_count;
@@ -247,6 +317,7 @@ application_publication *application_startup_flow_take_publication(qa_applicatio
         candidate != flow->candidate) return NULL;
     application_publication *publication = flow->publication;
     flow->publication = NULL;
+    flow->validated_publication = publication;
     return publication;
 }
 
@@ -309,11 +380,285 @@ static bool candidate_callbacks_idle(qa_application *app, struct application_sta
 {
     const qa_application_language_ticket *const *languages = NULL;
     size_t count = 0;
-    if (!flow->committed && flow->candidate && flow->hooks.candidate_languages &&
+    if (!flow->committed && (flow->candidate || flow->engine_only) && flow->hooks.candidate_languages &&
         !flow->hooks.candidate_languages(flow->hooks.context, app, flow->candidate, &languages, &count, error))
         return false;
     return application_guests_languages_idle(app, languages, count) ||
         application_fail(error, QA_ERROR_ARGUMENT, "Startup candidate still has unreturned source callbacks or unowned language admissions");
+}
+
+bool qa_application_startup_images_phase(const qa_application *app,
+    const qa_launch_snapshot *candidate, const qa_application_startup_source *linked)
+{
+    const struct application_startup_flow *flow = app ? app->startup_flow : NULL;
+    if (!flow || !candidate || flow->candidate != candidate || !linked || !linked->descriptor ||
+        !flow->hooks.advance_images || flow->images_completed || flow->index || flow->configured ||
+        flow->validated || flow->committed || flow->cancelling || flow->candidate_finished ||
+        !flow->transaction || qa_configuration_candidate(flow->transaction) != candidate ||
+        qa_configuration_current(app->configuration) != flow->previous ||
+        flow->generation != app->command_generation || app->publication_started ||
+        app->frame_preparing || app->q3_round_active || app->destroy_requested ||
+        app->engine_shutdown || qa_application_should_stop(app) || flow->resources ||
+        !flow->console || !flow->cvars || app->console != flow->console || app->cvars != flow->cvars ||
+        !source_consoles_idle(flow) || !qa_console_idle(app->console)) return false;
+    if (!((app->operation == APPLICATION_CONFIGURING && flow->advancing && flow->images_advancing) ||
+          (app->operation == APPLICATION_IDLE && !flow->advancing && flow->images_waiting))) return false;
+    for (size_t i = 0; i < flow->count; ++i) {
+        const qa_application_startup_source *actual = &flow->sources[i].owner;
+        const qa_command_context *a = &actual->command, *b = &linked->command;
+        if (actual->descriptor->storage == linked->descriptor->storage &&
+            actual->console == linked->console && actual->cvars == linked->cvars &&
+            actual->scope.provider == linked->scope.provider && actual->scope.kind == linked->scope.kind &&
+            actual->scope.seat == linked->scope.seat && actual->declaration_owner == linked->declaration_owner &&
+            a->owner == b->owner && a->session == b->session && a->client == b->client &&
+            a->seat == b->seat && a->origin == b->origin && a->dialect == b->dialect &&
+            a->registry == b->registry && a->generation == b->generation &&
+            a->console_text == b->console_text && a->script == b->script &&
+            qa_actor_id_equal(a->actor, b->actor)) return true;
+    }
+    return false;
+}
+
+static bool resource_phase_current(const qa_application *app,
+    const qa_launch_snapshot *candidate)
+{
+    const struct application_startup_flow *flow = app ? app->startup_flow : NULL;
+    if (!flow || (!candidate && !flow->engine_only) || flow->candidate != candidate || flow->committed ||
+        flow->cancelling || flow->candidate_finished || flow->index != flow->count ||
+        (flow->engine_only ? (!flow->root_prepared || flow->transaction || flow->publication ||
+            flow->validated_publication) : (!flow->transaction ||
+            qa_configuration_candidate(flow->transaction) != candidate)) ||
+        qa_configuration_current(app->configuration) != flow->previous ||
+        flow->generation != app->command_generation || flow->resources_consumed ||
+        app->publication_started || app->frame_preparing || app->q3_round_active ||
+        app->destroy_requested || app->engine_shutdown || !flow->console || !flow->cvars ||
+        app->console != flow->console || app->cvars != flow->cvars ||
+        !source_consoles_idle(flow) || !qa_console_idle(app->console)) return false;
+    return true;
+}
+
+bool qa_application_startup_resource_phase_associated(const qa_application *app,
+    const qa_launch_snapshot *candidate)
+{
+    if (!resource_phase_current(app, candidate) || qa_application_should_stop(app)) return false;
+    const struct application_startup_flow *flow = app->startup_flow;
+    if (app->operation == APPLICATION_IDLE && !flow->advancing && flow->resource_waiting) return true;
+    if (app->operation != APPLICATION_CONFIGURING || !flow->advancing) return false;
+    if (flow->resource_advancing) return true;
+    if (flow->engine_only)
+        return flow->root_settled && flow->configured && flow->resources_candidate == candidate &&
+            (flow->preparing_resources || flow->resources);
+    const application_publication *publication = flow->validated_publication;
+    return flow->validated && flow->configured && flow->resources_candidate == candidate &&
+        (flow->preparing_resources || flow->resources) && publication &&
+        publication->candidate == candidate && publication->previous == flow->previous &&
+        !publication->published && !publication->failed_retained;
+}
+
+static bool entered_resources_current(const qa_application *app,
+    const qa_launch_snapshot *candidate)
+{
+    const struct application_startup_flow *flow = app ? app->startup_flow : NULL;
+    const application_publication *publication = flow ? flow->validated_publication : NULL;
+    return flow && (candidate || flow->engine_only) && flow->resources && flow->resources_candidate == candidate &&
+        flow->resources_consumed && !flow->resources_finished && flow->configured &&
+        (flow->engine_only ? (flow->root_settled && !publication && !flow->transaction &&
+            qa_configuration_current(app->configuration) == flow->previous)
+          : (flow->validated && publication && publication->candidate == candidate &&
+            publication->previous == flow->previous && qa_configuration_current(app->configuration) == candidate)) &&
+        flow->generation == app->command_generation && !app->engine_shutdown &&
+        flow->console && flow->cvars && app->console == flow->console && app->cvars == flow->cvars &&
+        source_consoles_idle(flow) && qa_console_idle(app->console);
+}
+
+bool qa_application_startup_publication_consuming(const qa_application *app,
+    const qa_launch_snapshot *candidate)
+{
+    if (!entered_resources_current(app, candidate)) return false;
+    const struct application_startup_flow *flow = app->startup_flow;
+    if (flow->engine_only)
+        return flow->resources_consuming && !flow->resources_finishing && flow->advancing &&
+            !flow->cancelling && !flow->candidate_finished && flow->root_prepared &&
+            app->operation == APPLICATION_CONFIGURING && !app->destroy_requested &&
+            !app->frame_preparing && !app->q3_round_active;
+    return flow->resources_consuming && !flow->resources_finishing && flow->advancing &&
+        !flow->cancelling && !flow->committed && !flow->candidate_finished &&
+        flow->candidate == candidate && flow->transaction &&
+        app->operation == APPLICATION_CONFIGURING && app->publication_started &&
+        !flow->validated_publication->published && !flow->validated_publication->failed_retained &&
+        !app->destroy_requested && !app->frame_preparing && !app->q3_round_active;
+}
+
+bool qa_application_startup_publication_cleanup(const qa_application *app,
+    const qa_launch_snapshot *candidate)
+{
+    return entered_resources_current(app, candidate) && app->startup_flow->resources_finishing &&
+        !app->startup_flow->resources_consuming;
+}
+
+const qa_launch_snapshot *qa_application_startup_publication_previous(const qa_application *app,
+    const qa_launch_snapshot *candidate)
+{
+    return qa_application_startup_resource_phase_associated(app, candidate) ||
+        qa_application_startup_publication_consuming(app, candidate) ||
+        qa_application_startup_publication_cleanup(app, candidate)
+        ? app->startup_flow->previous : NULL;
+}
+
+static bool resource_phase_ready(const qa_application *app,
+    const qa_launch_snapshot *candidate, bool cleanup)
+{
+    if (!resource_phase_current(app, candidate)) return false;
+    struct application_startup_flow *flow = app->startup_flow;
+    if (cleanup ? (app->operation != APPLICATION_IDLE || flow->advancing ||
+            !flow->resource_waiting || flow->resources || flow->preparing_resources ||
+            app->state == QA_APPLICATION_FAULTED)
+        : !qa_application_startup_resource_phase_associated(app, candidate)) return false;
+    if (!app->session ||
+        !qa_session_safe(app->session) || (app->world && !qa_world_idle(app->world)) ||
+        !application_bots_can_destroy(app) || !application_rankings_idle(app) ||
+        !qa_inventory_idle(app->inventory) || (app->combat && !qa_combat_idle(app->combat)) ||
+        (app->pickups && !qa_pickups_idle(app->pickups)) ||
+        (app->modes && !qa_modes_idle(app->modes))) return false;
+    qa_error error = {0};
+    const qa_cvars_edit *values = NULL;
+    if (flow->hooks.candidate_values &&
+        !flow->hooks.candidate_values(flow->hooks.context, app, candidate, &values, &error))
+        return false;
+    if (values ? !qa_cvars_edit_returned_is(values, app->cvars)
+               : !qa_cvars_observer_idle(app->cvars)) return false;
+    return candidate_callbacks_idle((qa_application *)app, flow, &error);
+}
+
+bool qa_application_startup_resource_phase(const qa_application *app,
+    const qa_launch_snapshot *candidate)
+{ return resource_phase_ready(app, candidate, false); }
+
+bool qa_application_startup_release_cleanup_phase(const qa_application *app,
+    const qa_launch_snapshot *candidate)
+{ return resource_phase_ready(app, candidate, true); }
+
+bool application_startup_flow_configuration_idle(const qa_application *app)
+{
+    const struct application_startup_flow *flow = app ? app->startup_flow : NULL;
+    if (!flow) return application_guests_idle(app);
+    if (!flow->resources) {
+        if (flow->resources_consumed && !flow->resources_finished) return false;
+        const qa_cvars_edit *values = NULL;
+        qa_error error = {0};
+        if ((flow->candidate || flow->engine_only) && flow->hooks.candidate_values &&
+            !flow->hooks.candidate_values(flow->hooks.context, app, flow->candidate, &values, &error)) return false;
+        if (!values) return application_guests_idle(app);
+        return flow->advancing && flow->configured && !flow->cancelling && !flow->committed &&
+            app->operation == APPLICATION_CONFIGURING && flow->generation == app->command_generation &&
+            qa_configuration_current(app->configuration) == flow->previous && flow->transaction &&
+            qa_configuration_candidate(flow->transaction) == flow->candidate &&
+            qa_cvars_edit_returned_is(values, app->cvars) &&
+            candidate_callbacks_idle((qa_application *)app, (struct application_startup_flow *)flow, &error);
+    }
+    if (!flow->advancing || flow->cancelling || flow->committed || !flow->resources_ready ||
+        flow->resources_consumed || !flow->validated_publication ||
+        flow->validated_publication->candidate != flow->candidate ||
+        flow->validated_publication->previous != flow->previous ||
+        flow->validated_publication->published || flow->validated_publication->failed_retained ||
+        qa_configuration_current(app->configuration) != flow->previous ||
+        qa_configuration_candidate(flow->transaction) != flow->candidate ||
+        flow->resources_candidate != flow->candidate || app->operation != APPLICATION_CONFIGURING ||
+        flow->generation != app->command_generation ||
+        !flow->hooks.owned_publication_ready(flow->hooks.context, app, flow->candidate, flow->resources))
+        return false;
+    const qa_application_language_ticket *const *languages = NULL;
+    size_t count = 0;
+    qa_error error = {0};
+    if (flow->hooks.candidate_languages &&
+        !flow->hooks.candidate_languages(flow->hooks.context, (qa_application *)app,
+            flow->candidate, &languages, &count, &error)) return false;
+    return application_guests_languages_idle(app, languages, count);
+}
+
+bool application_startup_flow_retirement_ready(const qa_application *app,
+    const qa_launch_snapshot *candidate, const qa_cvars_edit *values, qa_error *error)
+{
+    struct application_startup_flow *flow = app ? app->startup_flow : NULL;
+    if (!flow || (!candidate && !flow->engine_only) || !values || flow->candidate != candidate ||
+        flow->advancing || !flow->cancelling || !flow->candidate_abort_refused ||
+        flow->committed || flow->candidate_finished || flow->resources || flow->resources_consumed ||
+        (flow->engine_only ? (!flow->root_admitted || flow->transaction || flow->publication ||
+            flow->validated_publication) : (!flow->transaction ||
+            qa_configuration_candidate(flow->transaction) != candidate)) ||
+        qa_configuration_current(app->configuration) != flow->previous ||
+        flow->generation != app->command_generation || !source_consoles_idle(flow) ||
+        !flow->hooks.candidate_values || !flow->hooks.candidate_retirement_ready)
+        return application_fail(error, QA_ERROR_ARGUMENT,
+            "Candidate ENGINE retirement requires its refused retained cancellation");
+    const qa_cvars_edit *owned = NULL;
+    if (!flow->hooks.candidate_values(flow->hooks.context, app, candidate, &owned, error)) return false;
+    if (owned != values || !qa_cvars_edit_abort_is(values, app->cvars))
+        return application_fail(error, QA_ERROR_ARGUMENT,
+            "Candidate ENGINE retirement lost its actual returned canonical edit");
+    return candidate_callbacks_idle((qa_application *)app, flow, error) &&
+        flow->hooks.candidate_retirement_ready(flow->hooks.context, app, candidate, values, error);
+}
+
+static bool finish_resources(qa_application *app, struct application_startup_flow *flow, qa_error *error)
+{
+    if (flow->resources_finished) return true;
+    if (!flow->resources)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Entered publication lost its resource cleanup receipt");
+    bool complete = false;
+    flow->resources_finishing = true;
+    bool ok = flow->hooks.finish_publication(flow->hooks.context, app, flow->resources_candidate,
+        &flow->resources, &complete, error);
+    flow->resources_finishing = false;
+    if (complete && flow->resources)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Completed publication cleanup retained its resource owner");
+    if (complete) flow->resources_finished = true;
+    return ok && (complete || application_fail(error, QA_ERROR_ARGUMENT,
+        "Entered publication retains unfinished resource cleanup"));
+}
+
+bool application_startup_flow_consume_publication(qa_application *app, application_publication *publication,
+    const qa_launch_snapshot *candidate, qa_error *error)
+{
+    struct application_startup_flow *flow = app ? app->startup_flow : NULL;
+    if (!flow || !flow->hooks.prepare_publication) return true;
+    if (!flow->advancing || !flow->validated || !flow->configured ||
+        flow->validated_publication != publication ||
+        flow->candidate != candidate || qa_configuration_current(app->configuration) != candidate ||
+        !app->publication_started || flow->generation != app->command_generation)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Resource consume lost its actual entered publication ticket");
+    if (!flow->resources) {
+        const qa_cvars_edit *values = NULL;
+        if (flow->resources_candidate || flow->resources_consumed || !flow->hooks.candidate_values)
+            return application_fail(error, QA_ERROR_ARGUMENT, "Publication lost its actual final resource owner");
+        return flow->hooks.candidate_values(flow->hooks.context, app, candidate, &values, error) &&
+            ((!values && qa_cvars_observer_idle(app->cvars)) || application_fail(error, QA_ERROR_ARGUMENT,
+                "Resource-free publication retains a canonical scalar owner or callback"));
+    }
+    if (!flow->resources_ready || flow->resources_consumed || flow->resources_candidate != candidate)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Resource consume lost its prepared actual bundle");
+    flow->resources_consumed = true;
+    flow->resources_consuming = true;
+    flow->hooks.consume_publication(flow->hooks.context, app, candidate, flow->resources);
+    flow->resources_consuming = false;
+    return finish_resources(app, flow, error);
+}
+
+bool application_startup_flow_cleanup_publication(qa_application *app, application_publication *publication,
+    qa_error *error)
+{
+    struct application_startup_flow *flow = app ? app->startup_flow : NULL;
+    if (!flow || flow->validated_publication != publication) return true;
+    if (flow->resources_consumed) {
+        if (flow->resources_finished) return true;
+        if (app->publication_started)
+            return application_fail(error, QA_ERROR_ARGUMENT, "Entered resources await returned publication cleanup");
+        return finish_resources(app, flow, error);
+    }
+    if (!flow->resources) return true;
+    return flow->hooks.abort_publication(flow->hooks.context, app, flow->resources_candidate,
+        &flow->resources, error) && (!flow->resources || application_fail(error, QA_ERROR_ARGUMENT,
+            "Aborted publication retains its resource owner"));
 }
 
 bool qa_application_startup_abort(qa_application *app, qa_error *error)
@@ -323,10 +668,29 @@ bool qa_application_startup_abort(qa_application *app, qa_error *error)
     if (flow->advancing || !source_consoles_idle(flow))
         return application_fail(error, QA_ERROR_ARGUMENT, "Startup cancellation requires returned source callbacks");
     if (!candidate_callbacks_idle(app, flow, error)) return false;
+    flow->resource_waiting = false;
+    flow->images_waiting = false;
     flow->advancing = true;
     flow->cancelling = true;
-    if (!flow->committed && flow->hooks.abort_candidate &&
-        !flow->hooks.abort_candidate(flow->hooks.context, app, flow->candidate, error)) goto fail;
+    if (flow->resources || (flow->resources_consumed && !flow->resources_finished)) {
+        if (flow->resources_consumed) {
+            if (!finish_resources(app, flow, error)) goto fail;
+        } else {
+            if (!flow->hooks.abort_publication(flow->hooks.context, app, flow->resources_candidate,
+                &flow->resources, error)) goto fail;
+            if (flow->resources) {
+                application_fail(error, QA_ERROR_ARGUMENT, "Aborted publication retains its resource owner");
+                goto fail;
+            }
+        }
+    }
+    if (!flow->committed && flow->hooks.abort_candidate) {
+        if (!flow->hooks.abort_candidate(flow->hooks.context, app, flow->candidate, error)) {
+            flow->candidate_abort_refused = true;
+            goto fail;
+        }
+        flow->candidate_abort_refused = false;
+    }
     if (!application_guests_idle(app)) {
         application_fail(error, QA_ERROR_ARGUMENT, "Startup cancellation retains settings or language children");
         goto fail;
@@ -334,13 +698,20 @@ bool qa_application_startup_abort(qa_application *app, qa_error *error)
     for (size_t i = flow->count; i-- > 0;)
         if (!application_startup_program_abort(&flow->sources[i].program, error)) goto fail;
     if (flow->committed) {
-        if (!application_q3_campaign_launch_finish(app, true, error)) goto fail;
+        if (flow->engine_only) finish_candidate(app, flow, NULL, true);
+        else if (!application_q3_campaign_launch_finish(app, true, error)) goto fail;
         app->startup_flow = NULL;
         free(flow->sources); free(flow);
         return true;
     }
     if (!release_phases(flow, error)) goto fail;
     finish_candidate(app, flow, flow->candidate, false);
+    if (flow->engine_only) {
+        application_engine_shutdown_release_candidate(app, NULL);
+        app->startup_flow = NULL;
+        free(flow);
+        return true;
+    }
     /* Instances must release their hosts before the detached world is freed. */
     for (size_t i = 0; i < qa_launch_snapshot_instance_count(flow->candidate); ++i) {
         application_provider *provider = qa_launch_snapshot_instance(flow->candidate, i)->state;
@@ -352,6 +723,7 @@ bool qa_application_startup_abort(qa_application *app, qa_error *error)
     }
     if (flow->transaction && !qa_configuration_abort(flow->transaction, error)) goto fail;
     flow->transaction = NULL;
+    application_engine_shutdown_release_candidate(app, flow->candidate);
     application_q3_product_finish(app, &flow->product, false);
     application_map_load_finish(app, false);
     if (!application_q3_campaign_launch_finish(app, false, error)) goto fail;
@@ -393,6 +765,61 @@ static startup_source *append_source(struct application_startup_flow *flow, qa_e
     return source;
 }
 
+static bool prepare_root(qa_application *app, struct application_startup_flow *flow, qa_error *error)
+{
+    if (!flow->hooks.prepare_root) return true;
+    qa_command_context actual = {.dialect = qa_cvars_dialect(flow->cvars), .origin = QA_COMMAND_LOCAL};
+    if (!qa_application_capture_command_context(app, &actual, &flow->root_command, error)) return false;
+    flow->root_admitted = true;
+    flow->root_preparing = true;
+    bool ok = flow->hooks.prepare_root(flow->hooks.context, app, flow->candidate,
+        flow->console, flow->cvars, &flow->root_command, error);
+    flow->root_preparing = false;
+    if (ok) flow->root_prepared = true;
+    return ok;
+}
+
+bool qa_application_startup_bootstrap(qa_application *app, qa_error *error)
+{
+    const qa_application_startup_hooks *hooks = app ? app->startup_hooks : NULL;
+    if (!app || !hooks || !hooks->prepare_root || !hooks->finish_candidate ||
+        app->startup_flow || app->operation != APPLICATION_IDLE || app->frame_preparing ||
+        app->q3_round_active || app->destroy_requested || app->engine_shutdown ||
+        app->publication_started || app->failed_publications || qa_application_should_stop(app) ||
+        app->live_providers || app->provider_states || app->pending_close || app->q1_original_save ||
+        app->routing_snapshot || app->routing_providers || app->routing_provider_count ||
+        qa_configuration_current(app->configuration) || !app->console || !app->cvars ||
+        !application_guests_idle(app) || !qa_console_idle(app->console) ||
+        !qa_cvars_observer_idle(app->cvars) || !app->session || !qa_session_safe(app->session) ||
+        (app->world && !qa_world_idle(app->world)) || !application_rankings_idle(app) ||
+        !application_bots_can_destroy(app) || !qa_inventory_idle(app->inventory) ||
+        (app->combat && !qa_combat_idle(app->combat)) ||
+        (app->pickups && !qa_pickups_idle(app->pickups)) ||
+        (app->modes && !qa_modes_idle(app->modes)))
+        return application_fail(error, QA_ERROR_ARGUMENT, "ENGINE bootstrap requires its genuine source-free returned application");
+    if (!hooks->candidate_values || !hooks->prepare_publication || !hooks->ready_publication ||
+        !hooks->owned_publication_ready || !hooks->consume_publication ||
+        !hooks->finish_publication || !hooks->abort_publication || !hooks->abort_candidate)
+        return application_fail(error, QA_ERROR_ARGUMENT, "ENGINE bootstrap requires its actual checked scalar and resource owners");
+    struct application_startup_flow *flow = calloc(1, sizeof(*flow));
+    if (!flow) return application_fail(error, QA_ERROR_MEMORY, "Retaining source-free ENGINE startup");
+    flow->hooks = *hooks;
+    flow->engine_only = true;
+    flow->images_completed = hooks->advance_images == NULL;
+    flow->console = app->console;
+    flow->cvars = app->cvars;
+    flow->generation = app->command_generation;
+    flow->previous = qa_configuration_current(app->configuration);
+    flow->advancing = true;
+    app->startup_flow = flow;
+    app->operation = APPLICATION_CONFIGURING;
+    bool ok = prepare_root(app, flow, error);
+    flow->advancing = false;
+    app->operation = APPLICATION_IDLE;
+    if (!ok) abort_failed_startup(app, error);
+    return ok;
+}
+
 static bool begin(qa_application *app, const qa_launch_draft *draft,
     bool replacing, qa_error *error)
 {
@@ -404,9 +831,17 @@ static bool begin(qa_application *app, const qa_launch_draft *draft,
         !hooks->read_source_script || !hooks->release_source_script ||
         app->startup_flow)
         return application_fail(error, QA_ERROR_ARGUMENT, "Startup preparation requires complete actual source owners");
+    if ((hooks->prepare_publication || hooks->ready_publication || hooks->owned_publication_ready ||
+         hooks->consume_publication || hooks->finish_publication || hooks->abort_publication) &&
+        (!hooks->prepare_publication || !hooks->ready_publication || !hooks->owned_publication_ready ||
+         !hooks->consume_publication || !hooks->finish_publication || !hooks->abort_publication))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Startup resources require complete checked publication owners");
     struct application_startup_flow *flow = calloc(1, sizeof(*flow));
     if (!flow) return application_fail(error, QA_ERROR_MEMORY, "Retaining startup candidate");
     flow->hooks = *hooks;
+    flow->images_completed = hooks->advance_images == NULL;
+    flow->console = app->console;
+    flow->cvars = app->cvars;
     flow->generation = app->command_generation;
     flow->advancing = true;
     app->startup_flow = flow;
@@ -415,6 +850,7 @@ static bool begin(qa_application *app, const qa_launch_draft *draft,
         (replacing ? qa_configuration_prepare_replacing(app->configuration, flow->product.draft, &flow->transaction, error)
             : qa_configuration_prepare(app->configuration, flow->product.draft, &flow->transaction, error));
     if (ok) flow->candidate = qa_configuration_candidate(flow->transaction);
+    if (ok) ok = prepare_root(app, flow, error);
     if (ok) ok = application_publication_begin(app, flow->previous, flow->candidate, &flow->publication, error);
     size_t provider_count = ok ? flow->publication->next_count : 0;
     const qa_launch_choices *choices = qa_launch_snapshot_choices(flow->candidate);
@@ -437,7 +873,7 @@ static bool begin(qa_application *app, const qa_launch_draft *draft,
     size_t primary = 0;
     while (ok && primary < provider_count &&
         flow->publication->next[primary] != primary_provider) ++primary;
-    if (ok && primary == provider_count)
+    if (ok && provider_count && primary == provider_count)
         ok = application_fail(error, QA_ERROR_ARGUMENT, "Startup candidate has no actual primary map source");
     for (size_t ordinal = 0; ok && ordinal < provider_count; ++ordinal) {
         size_t i = ordinal == 0 ? primary : ordinal <= primary ? ordinal - 1 : ordinal;
@@ -542,6 +978,114 @@ bool application_startup_flow_begin(qa_application *app, const qa_launch_draft *
 bool application_startup_flow_begin_replacing(qa_application *app, const qa_launch_draft *draft, qa_error *error)
 { return begin(app, draft, true, error); }
 
+static bool advance_images(qa_application *app, struct application_startup_flow *flow,
+    bool *complete, qa_error *error)
+{
+    *complete = flow->images_completed;
+    if (*complete) return true;
+    flow->images_advancing = true;
+    bool ok = flow->hooks.advance_images(flow->hooks.context, app, flow->candidate, complete, error);
+    flow->images_advancing = false;
+    flow->images_completed = ok && *complete;
+    flow->images_waiting = ok && !*complete;
+    *complete = flow->images_completed;
+    return ok;
+}
+
+bool qa_application_startup_bootstrap_images_ready(const qa_application *app)
+{
+    const struct application_startup_flow *flow = app ? app->startup_flow : NULL;
+    return flow && flow->engine_only && flow->root_prepared && flow->images_completed &&
+        !flow->advancing && !flow->cancelling && !flow->committed && !flow->candidate_finished &&
+        !flow->configured && !flow->root_settled && !flow->resources && !flow->resources_consumed &&
+        !flow->resource_waiting && !flow->preparing_resources && !flow->images_waiting &&
+        app->operation == APPLICATION_IDLE && !app->frame_preparing && !app->q3_round_active &&
+        !app->destroy_requested && !qa_application_should_stop(app) &&
+        flow->generation == app->command_generation && qa_console_idle(flow->console) &&
+        qa_application_startup_root_read(app, NULL, NULL, NULL, NULL, NULL);
+}
+
+bool qa_application_startup_bootstrap_images_advance(qa_application *app,
+    bool *complete, qa_error *error)
+{
+    struct application_startup_flow *flow = app ? app->startup_flow : NULL;
+    if (!complete || !flow || !flow->engine_only || !flow->root_prepared ||
+        flow->advancing || flow->cancelling || flow->committed || flow->candidate_finished ||
+        flow->configured || flow->root_settled || flow->resources || flow->resources_consumed ||
+        flow->resource_waiting || flow->preparing_resources ||
+        app->operation != APPLICATION_IDLE || app->frame_preparing || app->q3_round_active ||
+        app->destroy_requested || qa_application_should_stop(app) ||
+        flow->generation != app->command_generation || !qa_console_idle(flow->console) ||
+        !qa_application_startup_root_read(app, NULL, NULL, NULL, NULL, error))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Images-only bootstrap lost its actual returned ENGINE flow");
+    *complete = false;
+    if (!candidate_callbacks_idle(app, flow, error)) return false;
+    flow->advancing = true;
+    flow->images_waiting = false;
+    app->operation = APPLICATION_CONFIGURING;
+    bool ok = advance_images(app, flow, complete, error);
+    flow->advancing = false;
+    app->operation = APPLICATION_IDLE;
+    if (!ok) abort_failed_startup(app, error);
+    return ok;
+}
+
+static bool advance_root(qa_application *app, struct application_startup_flow *flow,
+    bool *complete, qa_error *error)
+{
+    bool ok = true;
+    if (!flow->resources_consumed) {
+        if (!flow->configured) {
+            bool done = !flow->hooks.advance_candidate;
+            flow->resource_advancing = true;
+            if (flow->hooks.advance_candidate)
+                ok = flow->hooks.advance_candidate(flow->hooks.context, app, NULL, &done, error);
+            flow->resource_advancing = false;
+            flow->resource_waiting = ok && !done;
+            if (!ok || !done) return ok;
+            flow->configured = true;
+        }
+        if (!flow->root_settled) {
+            bool done = !flow->hooks.advance_validated_candidate;
+            flow->resource_advancing = true;
+            if (flow->hooks.advance_validated_candidate)
+                ok = flow->hooks.advance_validated_candidate(flow->hooks.context, app, NULL, &done, error);
+            flow->resource_advancing = false;
+            flow->resource_waiting = ok && !done;
+            if (!ok || !done) return ok;
+            flow->root_settled = true;
+        }
+        const qa_cvars_edit *values = NULL;
+        if (!flow->hooks.candidate_values(flow->hooks.context, app, NULL, &values, error)) return false;
+        if (!values || !qa_cvars_edit_returned_is(values, flow->cvars))
+            return application_fail(error, QA_ERROR_ARGUMENT, "ENGINE bootstrap lost its actual returned canonical edit");
+        flow->resources_candidate = NULL;
+        flow->preparing_resources = true;
+        ok = flow->hooks.prepare_publication(flow->hooks.context, app, NULL, &flow->resources, error);
+        if (ok && !flow->resources)
+            ok = application_fail(error, QA_ERROR_ARGUMENT, "ENGINE resource preparation returned no actual owner");
+        if (ok) ok = flow->hooks.ready_publication(flow->hooks.context, app, NULL, flow->resources, error);
+        flow->preparing_resources = false;
+        if (!ok) return false;
+        flow->resources_ready = flow->hooks.owned_publication_ready(flow->hooks.context, app, NULL, flow->resources);
+        if (!flow->resources_ready)
+            return application_fail(error, QA_ERROR_ARGUMENT, "ENGINE resources lack actual owned child proofs");
+        flow->resources_consumed = true;
+        flow->committed = true;
+        flow->resources_consuming = true;
+        flow->hooks.consume_publication(flow->hooks.context, app, NULL, flow->resources);
+        flow->resources_consuming = false;
+    }
+    ok = finish_resources(app, flow, error);
+    if (flow->resources_finished) {
+        finish_candidate(app, flow, NULL, true);
+        app->startup_flow = NULL;
+        free(flow);
+        *complete = true;
+    }
+    return ok;
+}
+
 bool qa_application_startup_advance(qa_application *app, bool *complete, qa_error *error)
 {
     if (!app || !complete || app->operation != APPLICATION_IDLE || app->frame_preparing ||
@@ -556,7 +1100,18 @@ bool qa_application_startup_advance(qa_application *app, bool *complete, qa_erro
     if (!candidate_callbacks_idle(app, flow, error)) return false;
     flow->advancing = true;
     app->operation = APPLICATION_CONFIGURING;
+    flow->resource_waiting = false;
+    flow->images_waiting = false;
     bool ok = true;
+    if (!flow->images_completed) {
+        bool images_complete = false;
+        ok = advance_images(app, flow, &images_complete, error);
+        if (!ok || !images_complete) goto returned;
+    }
+    if (flow->engine_only) {
+        ok = advance_root(app, flow, complete, error);
+        goto returned;
+    }
     while (ok && flow->index < flow->count) {
         startup_source *source = flow->sources + flow->index;
         if (!source->phase) { ++flow->index; continue; }
@@ -570,18 +1125,80 @@ bool qa_application_startup_advance(qa_application *app, bool *complete, qa_erro
         }
         ++flow->index;
     }
-    bool candidate_complete = flow->hooks.advance_candidate == NULL;
-    if (ok && flow->index == flow->count && flow->hooks.advance_candidate)
+    bool candidate_complete = flow->validated || flow->hooks.advance_candidate == NULL;
+    if (ok && !flow->validated && flow->index == flow->count && flow->hooks.advance_candidate) {
+        flow->resource_advancing = true;
         ok = flow->hooks.advance_candidate(flow->hooks.context, app, flow->candidate,
             &candidate_complete, error);
+        flow->resource_advancing = false;
+        flow->resource_waiting = ok && !candidate_complete;
+    }
     if (ok && flow->index == flow->count && candidate_complete) {
-        ok = flow->hooks.prepare_candidate(flow->hooks.context, app, flow->candidate, error);
-        if (ok) flow->configured = true;
-        for (size_t i = 0; ok && i < flow->count; ++i)
-            if (flow->sources[i].phase && flow->sources[i].provider->kind == APPLICATION_PROVIDER_Q2)
-                ok = application_native_q2_console_scripts(flow->sources[i].provider, NULL, error);
-        if (ok) ok = release_phases(flow, error);
-        if (ok) ok = qa_configuration_validate(flow->transaction, error);
+        if (!flow->validated) {
+            ok = flow->hooks.prepare_candidate(flow->hooks.context, app, flow->candidate, error);
+            if (ok) flow->configured = true;
+            for (size_t i = 0; ok && i < flow->count; ++i)
+                if (flow->sources[i].phase && flow->sources[i].provider->kind == APPLICATION_PROVIDER_Q2)
+                    ok = application_native_q2_console_scripts(flow->sources[i].provider, NULL, error);
+            if (ok) ok = release_phases(flow, error);
+            if (ok) ok = qa_configuration_validate(flow->transaction, error);
+            if (ok) flow->validated = true;
+        }
+        for (size_t i = 0; ok && i < flow->count; ++i) {
+            startup_source *source = flow->sources + i;
+            qa_application_startup_source actual;
+            bool found = false;
+            for (size_t index = 0; ok; ++index) {
+                ok = application_provider_startup_source_at(source->provider, index, &actual, &found, error);
+                if (!ok || !found || actual.console == source->owner.console) break;
+            }
+            if (ok && (!found || !actual.descriptor ||
+                actual.descriptor->storage != source->owner.descriptor->storage ||
+                actual.cvars != source->owner.cvars || actual.scope.provider != source->owner.scope.provider ||
+                actual.scope.kind != source->owner.scope.kind || actual.scope.seat != source->owner.scope.seat ||
+                !actual.declaration_owner))
+                ok = application_fail(error, QA_ERROR_ARGUMENT, "Validated source changed its actual physical configuration authority");
+            if (ok) {
+                source->owner.declaration_owner = actual.declaration_owner;
+                if (source->program) ok = application_startup_program_refresh(source->program, &source->owner, error);
+                if (ok && flow->hooks.refresh_source)
+                    ok = flow->hooks.refresh_source(flow->hooks.context, app,
+                        flow->candidate, &source->owner, error);
+            }
+        }
+        bool publication_complete = flow->hooks.advance_validated_candidate == NULL;
+        if (ok && flow->hooks.advance_validated_candidate) {
+            flow->resource_advancing = true;
+            ok = flow->hooks.advance_validated_candidate(flow->hooks.context, app,
+                flow->candidate, &publication_complete, error);
+            flow->resource_advancing = false;
+            flow->resource_waiting = ok && !publication_complete;
+        }
+        if (ok && !publication_complete) goto returned;
+        const qa_cvars_edit *values = NULL;
+        if (ok && flow->hooks.candidate_values)
+            ok = flow->hooks.candidate_values(flow->hooks.context, app, flow->candidate, &values, error);
+        if (ok && values && !flow->hooks.prepare_publication)
+            ok = application_fail(error, QA_ERROR_ARGUMENT,
+                "Canonical values require their actual publication resource owner");
+        bool prepare_resources = flow->hooks.prepare_publication && (!flow->hooks.candidate_values || values);
+        if (ok && prepare_resources)
+            ok = flow->hooks.prepare_candidate(flow->hooks.context, app, flow->candidate, error);
+        if (ok && prepare_resources) {
+            flow->resources_candidate = flow->candidate;
+            flow->preparing_resources = true;
+            ok = flow->hooks.prepare_publication(flow->hooks.context, app, flow->candidate, &flow->resources, error);
+            if (ok && !flow->resources)
+                ok = application_fail(error, QA_ERROR_ARGUMENT, "Resource preparation returned no retained publication owner");
+            if (ok) ok = flow->hooks.ready_publication(flow->hooks.context, app, flow->candidate, flow->resources, error);
+            flow->preparing_resources = false;
+            if (ok) {
+                flow->resources_ready = flow->hooks.owned_publication_ready(flow->hooks.context, app,
+                    flow->candidate, flow->resources);
+                if (!flow->resources_ready)
+                    ok = application_fail(error, QA_ERROR_ARGUMENT, "Publication resources lack actual owned child proofs");
+            }
+        }
         for (size_t i = 0; ok && i < flow->count; ++i)
             ok = application_startup_program_preflight(flow->sources[i].program, error);
         for (size_t i = 0; ok && i < flow->count; ++i)
@@ -598,6 +1215,13 @@ bool qa_application_startup_advance(qa_application *app, bool *complete, qa_erro
             for (size_t i = 0; ok && i < flow->count; ++i)
                 ok = published ? application_startup_program_adopt(&flow->sources[i].program, error)
                     : application_startup_program_abort(&flow->sources[i].program, error);
+            if (ok && (flow->resources || (flow->resources_consumed && !flow->resources_finished))) {
+                if (app->state == QA_APPLICATION_FAULTED) {
+                    if (error) *error = app->publication_error;
+                    ok = false;
+                } else ok = application_fail(error, QA_ERROR_ARGUMENT,
+                    "Committed publication retains entered resource cleanup");
+            }
             if (!ok) application_fault(app, error);
             if (ok) ok = application_q3_campaign_launch_finish(app, published, error);
             if (ok) {
@@ -608,12 +1232,14 @@ bool qa_application_startup_advance(qa_application *app, bool *complete, qa_erro
             }
         }
     }
+returned:
     if (app->startup_flow) app->startup_flow->advancing = false;
     app->operation = APPLICATION_IDLE;
     if (ok && app->state == QA_APPLICATION_FAULTED) {
         if (error) *error = app->publication_error;
         ok = false;
     }
-    if (!ok) abort_failed_startup(app, error);
+    if (!ok && (!app->startup_flow || !app->startup_flow->engine_only ||
+        !app->startup_flow->resources_consumed)) abort_failed_startup(app, error);
     return ok;
 }

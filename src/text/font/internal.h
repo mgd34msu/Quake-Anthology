@@ -35,6 +35,7 @@ struct qa_font_library {
     size_t font_count, font_capacity;
     FT_Library freetype;
     struct qa_font_library_capture *capture;
+    qa_font_resource_policy *policy;
     bool codec_active;
     unsigned callbacks;
 };

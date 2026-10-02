@@ -1,8 +1,9 @@
 #include "internal.h"
 #include "../save_fields.h"
 #include "qa/bot_chat_save.h"
+#include "source_initial_save.h"
 
-static const uint8_t magic[8] = {'Q', 'A', 'B', 'C', 'H', 'A', 'T', 0};
+static const uint8_t magic[8] = {'Q', 'A', 'B', 'C', 'H', 'A', 'T', 3};
 
 static bool range_fields(qa_source_save_io *io, qa_bot_chat_range *range)
 {
@@ -33,6 +34,11 @@ bool bot_save_chat_asset_fields(qa_source_save_io *io, const qa_bot_chat_asset *
                                  qa_bot_chat_asset **out)
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
+    uint32_t raw=!reading && source && source->initial_source?1u:
+        !reading && source && source->packed_source?2u:0u;
+    if(!qa_source_save_u32(io,&raw) || raw>2) return false;
+    if(raw==1) return bot_chat_initial_asset_fields(io,source,NULL,NULL,out);
+    if(raw==2) return bot_chat_packed_fields(io,source,NULL,NULL,out);
     qa_bot_chat_asset decoded = {0};
     qa_bot_chat_asset_view view = reading ? (qa_bot_chat_asset_view){0} : source->view;
     uint32_t kind = (uint32_t)view.kind;

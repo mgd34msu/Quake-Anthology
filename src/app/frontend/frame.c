@@ -1,3 +1,7 @@
+#include "q3_color_policy.h"
+#include "network_q2_input.h"
+#include "qc_messages.h"
+#include "remote_q1_client.h"
 #include "internal.h"
 #include "capture.h"
 #include "save_commands.h"
@@ -7,7 +11,13 @@
 #include "ui_features.h"
 #include "input_profile.h"
 #include "config_store.h"
+#include "shared_settings.h"
+#include "music_sources.h"
+#include "view_bindings.h"
+#include "constructor.h"
+#include "remote_q2_client.h"
 #include "network_prediction.h"
+#include "network_predictor.h"
 #include "network_config.h"
 #include "equipment_events.h"
 #include "particle_clock.h"
@@ -86,8 +96,43 @@ static bool controls(qa_frontend *frontend,uint64_t elapsed_ns,uint64_t wall_ela
     double duration=(double)elapsed_ns/1000000.0;
     double wall_duration=(double)wall_elapsed_ns/1000000.0;
     if (wall_duration<=0) return true;
+    bool remote=frontend_network_remote(frontend);
     for (unsigned i = 0; i < frontend->options.seats; ++i) {
         frontend_seat *seat = &frontend->seats[i];
+        bool q2_owned=false;
+        for (size_t row=0;row<frontend_remote_q2_count(frontend);++row) {
+            frontend_remote_q2_view view;
+            if (!frontend_remote_q2_metadata_read(frontend_remote_q2_at(frontend,row),&view,error)) return false;
+            if (!view.retired && view.domain.physical_seat==i) {
+                if (q2_owned) return frontend_fail(error,QA_ERROR_ARGUMENT,"Two Q2 CLIENT receivers own one physical input");
+                q2_owned=true;
+            }
+        }
+        if (q2_owned) {
+            if (seat->sequence==UINT64_MAX)
+                return frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 physical sample sequence overflow");
+            qa_seat_input_sample sample;
+            if (!qa_input_seat_sample(seat->input,now,wall_duration,&sample,error)) return false;
+            qa_actor_id selected_actor; uint32_t selected_seat;
+            if (frontend_seat_launch_id_read(frontend,i,&selected_seat) &&
+                qa_application_player_actor(frontend->application,selected_seat,&selected_actor)) {
+                qa_application_control_view selected_control;
+                if (qa_application_control_read(frontend->application,selected_actor,&selected_control)) {
+                    qa_hud_wheel_command wheel;
+                    if (!qa_hud_wheel_update(seat->wheel,frontend->time_ns,error) ||
+                        !qa_hud_wheel_prepare(seat->wheel,sample.buttons[QA_INPUT_ATTACK].active,
+                            frontend->time_ns,&wheel,error)) return false;
+                    if (wheel.consume_attack) sample.buttons[QA_INPUT_ATTACK]=(qa_input_action_sample){0};
+                    if (wheel.holster) sample.buttons[QA_INPUT_HOLSTER].active=true;
+                }
+            }
+            bool handled=false;
+            uint64_t sequence=seat->sequence+1;
+            if (!frontend_network_q2_input(frontend,i,&sample,sequence,&handled,error)) return false;
+            if (!handled) return frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 physical sample lost its genuine CLIENT owner");
+            seat->sequence=sequence;
+            continue;
+        }
         qa_actor_id actor; uint32_t launch_seat;
         if (!frontend_seat_launch_id_read(frontend,i,&launch_seat) ||
             !qa_application_player_actor(frontend->application, launch_seat, &actor)) continue;
@@ -101,16 +146,17 @@ static bool controls(qa_frontend *frontend,uint64_t elapsed_ns,uint64_t wall_ela
             if (!qa_ui_rankings_reset_binding(seat->rankings, error)) return false;
             if (!qa_input_seat_release(seat->input, now, error) || !qa_input_seat_profile(seat->input, profile, error)) return false;
             qa_input_command_clear(&seat->builder); seat->builder.kind = kind; seat->actor = actor;
+            if (remote && !qa_input_command_angles(&seat->builder,state.view_angles,error)) return false;
         }
-        /* Read the authority each frame, including forced view angles after
-         * teleport/cutscene. Builder angles are not another player store. */
-        if (!frontend_network_remote(frontend) &&
+        /* Local forced angles come from the current player. Remote selected
+         * angles continue independently of the raw Q3 transport builder. */
+        if (!remote &&
             !qa_input_command_angles(&seat->builder, state.command_angles, error)) return false;
         qa_seat_input_sample sample;
         qa_input_command_tuning tuning;
         qa_movement_kind configured_kind;
         qa_cvars *input_settings, *view_settings;
-        if (frontend_network_remote(frontend)) {
+        if (remote) {
             frontend_remote_config_view configuration;
             if (!frontend_network_client_configuration(frontend,launch_seat,&configuration,error)) return false;
             input_settings=configuration.q3_mouse; view_settings=configuration.movement_mouse;
@@ -123,7 +169,7 @@ static bool controls(qa_frontend *frontend,uint64_t elapsed_ns,uint64_t wall_ela
             return frontend_fail(error,QA_ERROR_ARGUMENT,"Player input lacks its actual published source settings and movement profile");
         if (!qa_input_seat_sample(seat->input,now,wall_duration,&sample,error) ||
             !qa_input_settings_read_routed(input_settings, view_settings, kind, &tuning, error)) return false;
-        if (!frontend_network_remote(frontend) && qa_application_q1_paused(frontend->application)) continue;
+        if (!remote && qa_application_q1_paused(frontend->application)) continue;
         qa_hud_wheel_command wheel;
         if (!qa_hud_wheel_update(seat->wheel, frontend->time_ns, error) ||
             !qa_hud_wheel_prepare(seat->wheel, sample.buttons[QA_INPUT_ATTACK].active,
@@ -134,9 +180,11 @@ static bool controls(qa_frontend *frontend,uint64_t elapsed_ns,uint64_t wall_ela
             .server_time_ms = (int32_t)((frontend->time_ns / 1000000) & INT32_MAX),
             .sensitivity = 1, .attack_allowed = true, .grounded = state.ground.hit != QA_TRACE_HIT_NONE};
         qa_movement_command command;
-        if (!frontend_network_client_input(frontend, &seat->builder, &frame, error)) return false;
-        if (!qa_input_command_build(&seat->builder, &tuning, &sample, &frame, duration, &command, error) ||
-            !frontend_network_command(frontend, i, actor, &command, error)) return false;
+        if (!qa_input_command_build(&seat->builder, &tuning, &sample, &frame, duration, &command, error)) return false;
+        if (remote) {
+            if (!frontend_network_client_sample(frontend,i,actor,&command,
+                FRONTEND_REMOTE_PREDICTION_ABSOLUTE,&sample,duration,error)) return false;
+        } else if (!frontend_network_command(frontend,i,actor,&command,error)) return false;
         uint32_t source_slot;
         if (!qa_ui_rankings_set_slot(seat->rankings,
             qa_application_rankings_client_slot(frontend->application, actor, &source_slot) && source_slot <= INT32_MAX ?
@@ -200,7 +248,8 @@ bool frontend_events(qa_frontend *frontend, qa_error *error)
     }
     /* Network, demos and tools also consume application events. Their owner
      * must drain its projections before this shared queue is released. */
-    return frontend_equipment_events_drain(frontend->gear_events,error) &&
+    return (!frontend->qc_messages || frontend_qc_messages_drain(frontend->qc_messages,error)) &&
+        frontend_equipment_events_drain(frontend->gear_events,error) &&
         qa_application_clear_events(frontend->application, error);
 }
 static bool phase_end(qa_profiler *profiler, bool ok, qa_error *error)
@@ -246,25 +295,79 @@ static bool audio_positions(qa_frontend *frontend, qa_error *error)
     }
     return true;
 }
+static bool resource_wait(const qa_frontend *frontend)
+{
+    const qa_launch_snapshot *candidate=qa_application_startup_candidate(frontend->application);
+    return frontend_config_store_images_pending(frontend->config_store) ||
+        (frontend_config_store_shared_pending(frontend->config_store) &&
+        qa_application_startup_resource_phase(frontend->application,candidate));
+}
+static bool resource_returned(qa_frontend *frontend,qa_error *error)
+{
+    const qa_launch_snapshot *candidate=qa_application_startup_candidate(frontend->application);
+    if (!resource_wait(frontend) ||
+        !frontend_config_store_shared(frontend->config_store,frontend->application,candidate) ||
+        !frontend_owners_returned(frontend) || !frontend_seat_callbacks_returned(frontend))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Candidate settings lost their returned preparation phase");
+    return !frontend->input_settings ||
+        frontend_input_settings_shutdown_ready(frontend->input_settings,frontend,error);
+}
+static bool startup_advance(qa_frontend *frontend,bool *complete,qa_error *error)
+{
+    if (frontend->music_sources) {
+        size_t queued;
+        if (!frontend_music_sources_queued(frontend->music_sources,&queued) ||
+            (queued && !frontend_music_sources_flush(frontend->music_sources,error))) return false;
+    }
+    frontend->preparing=true;
+    bool prepared=qa_application_startup_advance(frontend->application,complete,error);
+    frontend->preparing=false;
+    if (!prepared || !*complete) return prepared;
+    if (!qa_application_launch(frontend->application)) {
+        if (frontend->options.game) {
+            if (!frontend_launch(frontend,error)) return false;
+            *complete=!qa_application_startup_pending(frontend->application);
+            return true;
+        }
+        return frontend->options.dedicated || frontend_game_menu(&frontend->seats[0],error);
+    }
+    if (!frontend_campaign_sync(frontend,error) || !frontend_view_bindings_apply_restored(frontend,error)) return false;
+    if (*complete && frontend->music_sources &&
+        (!frontend_music_sources_world(frontend->music_sources,error) ||
+         !frontend_source_publish_music(frontend,error) ||
+         !frontend_music_sources_output(frontend->music_sources,FRONTEND_MUSIC_WORLD,error))) return false;
+    uint64_t travel_revision;
+    return !*complete || qa_application_travel_publication_read(frontend->application,&travel_revision) ||
+        qa_application_rankings_start(frontend->application,error);
+}
 bool qa_frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *error)
 {
     if (!frontend || frontend->shutdown || frontend->stepping || frontend->preparing || frontend->round || !frontend_save_commands_idle(frontend) ||
         frontend_save_commands_restoring(frontend) ||
-        !frontend_owners_idle(frontend) || !frontend_seat_callbacks_idle(frontend) || frontend->frame_number == UINT64_MAX ||
+        frontend->frame_number == UINT64_MAX ||
         elapsed_ns > UINT64_MAX - frontend->wall_time_ns)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "invalid frontend frame duration or reentry");
-    if (qa_application_startup_pending(frontend->application)) {
-        frontend->preparing=true;
+    if (frontend_constructor_pending(frontend)) {
         bool complete=false;
-        bool prepared=qa_application_startup_advance(frontend->application,&complete,error);
-        frontend->preparing=false;
-        if (!prepared) return false;
-        if (complete && !frontend_campaign_sync(frontend,error)) return false;
-        uint64_t travel_revision;
-        if (complete && !qa_application_travel_publication_read(frontend->application,&travel_revision) &&
-            !qa_application_rankings_start(frontend->application,error)) return false;
+        return frontend_constructor_advance(frontend,elapsed_ns,&complete,error);
     }
-    if (!frontend_startup_replay(frontend,error)) return false;
+    bool waiting=resource_wait(frontend),wall_advanced=false;
+    if (waiting) {
+        if (!resource_returned(frontend,error)) return false;
+    } else if (!frontend_owners_idle(frontend) || !frontend_seat_callbacks_idle(frontend))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Frontend frame owners have not returned idle");
+    if (qa_application_startup_pending(frontend->application)) {
+        frontend->wall_time_ns+=elapsed_ns; wall_advanced=true;
+        bool complete=false;
+        if (!startup_advance(frontend,&complete,error)) return false;
+        if (!complete && resource_wait(frontend)) return resource_returned(frontend,error);
+        if (!frontend_owners_idle(frontend) || !frontend_seat_callbacks_idle(frontend))
+            return frontend_fail(error,QA_ERROR_ARGUMENT,"Candidate settings have not completed their physical release");
+    }
+    if (!frontend_q3_source_color_publication_finish(frontend,error) ||
+        !frontend_source_publish_music(frontend,error) ||
+        !frontend_view_bindings_finish_restore(frontend,error) ||
+        !frontend_startup_replay(frontend,error)) return false;
     qa_application_travel_view pending;
     bool retiring_map=qa_application_travel_read(frontend->application,&pending) &&
         pending.target.kind==QA_TRAVEL_MAP;
@@ -281,7 +384,7 @@ bool qa_frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *erro
         !qa_application_startup_pending(frontend->application) && !selected_bindings(frontend,error)) return false;
     frontend->stepping = true;
     uint64_t raw_elapsed=elapsed_ns;
-    frontend->wall_time_ns+=raw_elapsed;
+    if (!wall_advanced) frontend->wall_time_ns+=raw_elapsed;
     bool ok = frontend_tools_pump(frontend, error) && input_events(frontend, error);
     qa_console *console = qa_application_console(frontend->application);
     if (ok && frontend->terminal) {
@@ -337,7 +440,8 @@ bool qa_frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *erro
                 qa_profiler_push(profiler, "application", error);
             if (ok) ok = phase_end(profiler, qa_application_advance(frontend->application, elapsed_ns, error), error);
         }
-        if (ok) ok = frontend_network_publish(frontend, error) && frontend_source_times_sync(frontend, false, error) &&
+        if (ok) ok = frontend_remote_q1_sample_all(frontend,frontend->wall_time_ns,error) &&
+            frontend_remote_q2_sample(frontend,frontend->wall_time_ns,error) && frontend_network_publish(frontend, error) && frontend_source_times_sync(frontend, false, error) &&
             frontend_input_profile_bind(frontend,error) && frontend_campaign_drain(frontend,error);
         if (ok && !frontend->options.dedicated) ok = frontend_scene_sync(frontend, error) &&
             frontend_particle_source_complete(frontend, error) &&
@@ -361,8 +465,9 @@ bool qa_frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *erro
             if (ok) {
                 const qa_cvar_view *volume = qa_cvars_find(qa_application_cvars(frontend->application), "s_volume");
                 qa_audio_engine_gain(frontend->audio, volume ? fmaxf(0, fminf(1, volume->number)) : .7f);
-                qa_audio_engine_update(frontend->audio, (double)frontend->time_ns / 1000000);
-                ok = audio_positions(frontend, error) && frontend_event_audio(frontend, error) && qa_audio_engine_end_loop_frame(frontend->audio, error) &&
+                ok=frontend_music_sources_update(frontend->music_sources,error);
+                if (ok) qa_audio_engine_update(frontend->audio, (double)frontend->time_ns / 1000000);
+                if (ok) ok = audio_positions(frontend, error) && frontend_event_audio(frontend, error) && qa_audio_engine_end_loop_frame(frontend->audio, error) &&
                      audio_output(frontend, elapsed_ns, error);
                 ok = phase_end(profiler, ok, error);
             }

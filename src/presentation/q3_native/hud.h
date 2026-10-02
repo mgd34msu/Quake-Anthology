@@ -28,6 +28,9 @@ typedef struct q3n_hud_options {
     int32_t (*milliseconds)(void *);
     bool (*load_deferred)(void *, const q3n_frame *, qa_error *);
     bool (*client_command)(void *, const q3n_frame *, const char *, qa_error *);
+    /* Reads the actual current command number minus CMD_BACKUP plus one,
+     * lazily at CG_DrawDisconnect. Missing remote ring rows are errors. */
+    bool (*oldest_command)(void *, const q3n_frame *, qa_q3_usercmd *, qa_error *);
     bool (*weapon_warning)(void *, const q3n_frame *, q3n_weapon_hud *, qa_error *);
     /* Team Arena paints its real parsed cgame menus and fonts through their
      * native owner. The base HUD never substitutes an approximate layout. */
@@ -55,8 +58,13 @@ void q3n_hud_destroy(q3n_hud *);
 bool q3n_hud_idle(const q3n_hud *);
 const q3n_hud_state *q3n_hud_read(const q3n_hud *);
 bool q3n_hud_weapon_read(q3n_hud *, const q3n_frame *, q3n_weapon_hud *, qa_error *);
+/* Scalar text publication needs the actual initialized CLIENT and entered
+ * frame; it does not consume a snapshot or predicted player. */
 bool q3n_hud_center_print(q3n_hud *, const q3n_frame *, const char *, int32_t y, int32_t width, qa_error *);
 void q3n_hud_scores(q3n_hud *, bool show, int32_t source_time);
+/* Stamps the shared scoreboard request clock before reliable output. An
+ * entered remote console can request scores before its first snapshot. */
+bool q3n_hud_scores_request(q3n_hud *, const q3n_frame *, bool *due, qa_error *);
 bool q3n_hud_frame(q3n_hud *, const q3n_frame *, const q3n_hud_settings *,
     q3n_server_commands *, q3n_player_state *, qa_scene_rect viewport, qa_error *);
 bool q3n_hud_tile_clear(q3n_hud *, const q3n_frame *, qa_scene_rect viewport, qa_error *);

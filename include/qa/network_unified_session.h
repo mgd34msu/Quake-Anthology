@@ -1,0 +1,92 @@
+#ifndef QA_NETWORK_UNIFIED_SESSION_H
+#define QA_NETWORK_UNIFIED_SESSION_H
+
+#include "qa/network_runtime.h"
+
+typedef struct qa_unified_input {
+    uint64_t sequence;
+    qa_unified_movement command;
+    bool has_arsenal;
+    qa_unified_arsenal arsenal;
+} qa_unified_input;
+typedef struct qa_unified_input_batch {
+    uint32_t epoch;
+    qa_unified_input commands[64];
+    size_t count;
+    qa_buffer providers[64], weapons[64];
+} qa_unified_input_batch;
+bool qa_unified_inputs_read(const qa_unified_document *, qa_unified_input_batch *, qa_error *);
+bool qa_unified_inputs_document(uint32_t epoch, const qa_unified_input *, size_t,
+    qa_unified_document **, qa_error *);
+void qa_unified_inputs_free(qa_unified_input_batch *);
+
+/* Server receipts identify the admitted physical Source player. Client
+ * receipts identify its admitted replica actor and providers from the real
+ * prepared frame; they become available with the first ACTIVE frame. */
+typedef struct qa_unified_session_player {
+    qa_actor_id actor;
+    qa_net_seat_id seat;
+    qa_movement_kind movement;
+    qa_bytes arsenal;
+    qa_actor_owner source_owner;
+    uint32_t source_slot;
+} qa_unified_session_player;
+typedef struct qa_unified_session_commit {
+    bool applied;
+    int64_t acknowledged_input;
+    qa_unified_document *reply;
+    qa_unified_document *followups[8];
+    size_t followup_count;
+} qa_unified_session_commit;
+/* Successful Source callbacks transfer distinct immutable reply/followup
+ * documents. The lower owner retains them until the entire reliable response
+ * batch is queued and the delivery's phase transition completes. */
+typedef struct qa_unified_session_hooks {
+    void *context;
+    bool (*player)(void *, qa_net_client_id, qa_unified_session_player *, qa_error *);
+    bool (*control)(void *, qa_network_runtime *, qa_net_client_id, uint32_t epoch,
+        const qa_unified_document *, qa_unified_session_commit *, qa_error *);
+    bool (*input)(void *, qa_network_runtime *, qa_net_client_id,
+        const qa_unified_input_batch *, qa_error *);
+    bool (*prepare)(void *, qa_net_client_id, const qa_unified_document *, bool *ready, qa_error *);
+    bool (*frame)(void *, qa_network_runtime *, qa_net_client_id,
+        const qa_unified_document *, qa_unified_session_commit *, qa_error *);
+    bool (*restart)(void *, qa_network_runtime *, qa_net_client_id, uint32_t epoch,
+        const qa_sha256_digest *, qa_unified_document **offer, qa_error *);
+    void (*closed)(void *, qa_net_client_id);
+} qa_unified_session_hooks;
+typedef struct qa_unified_session qa_unified_session;
+/* Borrows the sole generic runtime and transfers the peer/channel on attach.
+ * Returned control borrows until runtime detach/destroy. One real local seat
+ * belongs to each production Anthology peer, independently of wire actors. */
+bool qa_unified_session_attach(qa_network_runtime *, const qa_net_connect *, bool server,
+    qa_unified_token, const qa_unified_limits *, const qa_unified_session_hooks *,
+    uint64_t now_ns, qa_net_client_id *, qa_unified_session **borrowed_control, qa_error *);
+/* Resolves only the true installed production peerops/state outside pumping
+ * and runtime callbacks, while the borrowed owner remains attached. */
+bool qa_unified_session_find(qa_network_runtime *, qa_net_client_id,
+    qa_unified_session **borrowed_control, qa_error *);
+/* Held decoded documents stay owned until actual preparation and publication
+ * finish. Process only outside runtime pumping and callbacks. */
+bool qa_unified_session_process(qa_unified_session *, bool *waiting, qa_error *);
+bool qa_unified_session_control(qa_unified_session *, const qa_unified_document *, qa_error *);
+bool qa_unified_session_frame(qa_unified_session *, const qa_unified_document *, qa_error *);
+bool qa_unified_session_input(qa_unified_session *, const qa_unified_input *, qa_error *);
+bool qa_unified_session_flush(qa_unified_session *, uint64_t now_ns, qa_error *);
+bool qa_unified_session_idle(const qa_unified_session *);
+bool qa_unified_session_disconnected(const qa_unified_session *);
+uint32_t qa_unified_session_epoch(const qa_unified_session *);
+int64_t qa_unified_session_acknowledged(const qa_unified_session *);
+
+typedef enum qa_unified_handshake_kind {
+    QA_UNIFIED_HELLO, QA_UNIFIED_CHALLENGE, QA_UNIFIED_CONNECT
+} qa_unified_handshake_kind;
+typedef struct qa_unified_handshake {
+    qa_unified_handshake_kind kind;
+    qa_unified_token nonce, token;
+} qa_unified_handshake;
+bool qa_unified_handshake_read(qa_bytes, qa_unified_handshake *, qa_error *);
+bool qa_unified_handshake_write(const qa_unified_handshake *, qa_buffer *, qa_error *);
+bool qa_unified_token_random(qa_unified_token *, qa_error *);
+
+#endif

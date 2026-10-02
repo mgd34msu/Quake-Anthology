@@ -3,6 +3,7 @@
 #include "q3_product.h"
 #include "qa/application_q3_factory.h"
 #include "engine_shutdown.h"
+#include "qa/script_defines_save.h"
 
 typedef enum client_configuration_state {
     CLIENT_CONFIGURATION_LIVE, CLIENT_CONFIGURATION_SHUTDOWN,
@@ -16,6 +17,8 @@ struct application_guest_q3_client_console {
     uint32_t seat;
     qa_console *console;
     qa_cvars *cvars;
+    qa_script_defines *script_globals;
+    qa_string_id script_globals_owner;
     size_t calls;
     application_provider *retiring_game;
     qa_application_startup_source retiring_source;
@@ -134,6 +137,13 @@ bool application_guest_q3_client_console_prepare(struct application_q3_guest *en
     struct application_guest_q3_client_console *row = calloc(1, sizeof(*row));
     if (!row) return application_fail(error, QA_ERROR_MEMORY, "Retaining private CLIENT console");
     row->engine = engine; row->kind = kind; row->seat = seat; row->owns_cvars = true;
+    char identity[65], name[160];
+    qa_sha256_hex(&engine->provider->launch->identity, identity);
+    snprintf(name, sizeof(name), "q3-client-globals:%u:%s:%u", engine->provider->owner, identity, seat);
+    if (!qa_strings_intern_cstr(qa_session_strings(engine->provider->application->session), name,
+        &row->script_globals_owner, error) || !qa_script_defines_create(&row->script_globals, error)) {
+        free(row); return false;
+    }
     qa_cvar_options cvars = {.dialect = QA_CONSOLE_Q3, .user = engine->provider->application,
         .print = cvar_print, .cheats_allowed = cheats};
     row->cvars = qa_cvars_create(&cvars, error);
@@ -145,7 +155,8 @@ bool application_guest_q3_client_console_prepare(struct application_q3_guest *en
         .source_command = dispatch};
     if (row->cvars) row->console = qa_console_create(&options, error);
     if (!row->console || (!engine->restore_pending && !application_startup_seed_source(engine->provider, row->cvars, error))) {
-        qa_console_destroy(row->console); qa_cvars_destroy(row->cvars); free(row); return false;
+        qa_console_destroy(row->console); qa_cvars_destroy(row->cvars);
+        qa_script_defines_release(row->script_globals); free(row); return false;
     }
     struct application_guest_q3_client_console **tail = &engine->client_preparation;
     while (*tail) tail = &(*tail)->next;
@@ -204,6 +215,29 @@ bool application_guest_q3_client_console_bind(struct application_q3_guest *engin
     if (!qa_console_set_profile(row->console, QA_CONSOLE_Q3, cvars, error)) return false;
     if (row->owns_cvars) qa_cvars_destroy(row->cvars);
     row->cvars = cvars; row->owns_cvars = false; return true;
+}
+
+bool application_guest_q3_client_console_globals(struct application_q3_guest *engine, uint32_t seat,
+    qa_script_defines **out, qa_string_id *owner, qa_error *error)
+{
+    struct application_guest_q3_client_console *row = find(engine, seat);
+    if (!row || !available(row) || !out || !owner || !row->script_globals || !row->script_globals_owner)
+        return application_fail(error, QA_ERROR_ARGUMENT, "CLIENT parser globals lost their physical console owner");
+    *out = row->script_globals; *owner = row->script_globals_owner; return true;
+}
+
+bool application_guest_q3_client_console_globals_restore(struct application_q3_guest *engine, uint32_t seat,
+    qa_qvm_role kind, qa_string_id owner, qa_bytes bytes, qa_error *error)
+{
+    struct application_guest_q3_client_console *row = find(engine, seat);
+    if (!row || !available(row) || row->kind != kind || row->script_globals_owner != owner ||
+        !engine->restore_pending || engine->provider->application->operation != APPLICATION_PERSISTING ||
+        engine->calls || row->calls || !qa_console_idle(row->console))
+        return application_fail(error, QA_ERROR_FORMAT, "Restored CLIENT globals changed their actual physical namespace");
+    for (const q3g_role *role = engine->roles; role; role = role->next)
+        if (role->kind != QA_QVM_GAME && role->seat == seat && role->host)
+            return application_fail(error, QA_ERROR_ARGUMENT, "CLIENT globals import must precede every shared host");
+    return qa_script_defines_save_restore_into(row->script_globals, bytes, error);
 }
 bool application_guest_q3_client_console_idle(const struct application_q3_guest *engine)
 {
@@ -452,6 +486,7 @@ bool application_guest_q3_client_consoles_retarget(struct application_q3_guest *
         *position = row->next;
         qa_console_destroy(row->console);
         if (row->owns_cvars) qa_cvars_destroy(row->cvars);
+        qa_script_defines_release(row->script_globals);
         free(row);
     }
     return true;
@@ -463,6 +498,10 @@ bool application_guest_q3_client_console_destroy(struct application_q3_guest *en
         return application_fail(error, QA_ERROR_ARGUMENT, "CLIENT console is borrowed");
     while (engine && engine->client_preparation) {
         struct application_guest_q3_client_console *row = engine->client_preparation;
+        for (const q3g_role *role = engine->roles; role; role = role->next)
+            if (role->kind != QA_QVM_GAME && role->seat == row->seat &&
+                (role->host || role->vm || role->native))
+                return application_fail(error, QA_ERROR_ARGUMENT, "CLIENT globals still have a retained module host");
         if (!qa_console_destroy_ready(row->console))
             return application_fail(error, QA_ERROR_ARGUMENT, "CLIENT console still has retained command owners");
         qa_application_startup_source source;
@@ -476,6 +515,7 @@ bool application_guest_q3_client_console_destroy(struct application_q3_guest *en
         engine->client_preparation = row->next;
         qa_console_destroy(row->console);
         if (row->owns_cvars) qa_cvars_destroy(row->cvars);
+        qa_script_defines_release(row->script_globals);
         free(row);
     }
     return true;

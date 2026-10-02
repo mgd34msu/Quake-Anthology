@@ -2,12 +2,15 @@
 #define QA_FRONTEND_VISUAL_RESTORE_H
 #include "internal.h"
 #include "model_inventory.h"
+#include "material_movies_save.h"
 typedef struct frontend_visual_owner_view {
     qa_actor_owner owner;
     qa_scene_family family;
     qa_vfs *mounts;
     qa_scene_resources *images;
     qa_material_library *materials;
+    qa_media_library *media;
+    struct frontend_material_movies *shader_movies;
 } frontend_visual_owner_view;
 typedef struct frontend_visual_model_view {
     const char *path;
@@ -17,6 +20,11 @@ typedef struct frontend_visual_model_view {
 } frontend_visual_model_view;
 size_t frontend_visual_owner_count(const qa_frontend *);
 bool frontend_visual_owner_read(const qa_frontend *, size_t, frontend_visual_owner_view *);
+bool frontend_visual_movie_source_read(qa_frontend *, size_t, frontend_material_movie_source *, qa_error *);
+/* After actual material/image/media import; binds the saved owner without
+ * registration, content acquisition, playback tick or global frame mutation. */
+bool frontend_visual_movies_restore(qa_frontend *, size_t, const frontend_material_movies_refs *,
+    qa_bytes, qa_error *);
 size_t frontend_visual_model_count(const qa_frontend *, size_t owner);
 bool frontend_visual_model_read(const qa_frontend *, size_t owner, size_t ordinal, frontend_visual_model_view *);
 bool frontend_visuals_idle(const qa_frontend *);
@@ -31,4 +39,7 @@ bool frontend_visual_model_attach_restored(qa_frontend *, size_t owner, const ch
 bool frontend_visual_topology_checkpoint(const qa_frontend *, qa_buffer *, qa_error *);
 bool frontend_visual_prepare_restored(qa_frontend *, qa_bytes, qa_error *);
 bool frontend_visual_topology_ready(const qa_frontend *, qa_error *);
+/* After actual root adoption, every saved physical cache row must have
+ * consumed its exact source opening receipt. No resource read or callback. */
+bool frontend_visual_model_receipts_ready(const qa_frontend *, qa_error *);
 #endif

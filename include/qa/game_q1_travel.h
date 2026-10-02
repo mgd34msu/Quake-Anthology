@@ -6,8 +6,7 @@ typedef struct qa_q1_travel_state qa_q1_travel_state;
 /* The originating session string table must outlive this retained state.
  * Decode remaps saved string bytes into its explicitly supplied session. */
 typedef struct qa_q1_travel_ctf {
-    int32_t last_team;
-    float status, access;
+    double last_team, status, access;
     bool start_map, pregame_over, observer, grapple_enabled, grapple_disabled;
 } qa_q1_travel_ctf;
 /* These callbacks borrow the actual source ThreeWave controller and selected
@@ -15,8 +14,8 @@ typedef struct qa_q1_travel_ctf {
 typedef struct qa_q1_travel_services {
     void *context;
     bool (*ctf_read)(void *, qa_actor_id, qa_q1_travel_ctf *, qa_error *);
-    bool (*ctf_restore)(void *, qa_actor_id, int32_t last_team,
-                        float status, float access, qa_error *);
+    bool (*ctf_restore)(void *, qa_actor_id, double last_team,
+                        double status, double access, qa_error *);
 } qa_q1_travel_services;
 
 bool qa_q1_travel_new(qa_q1_game *, qa_actor_id, const qa_q1_travel_services *,

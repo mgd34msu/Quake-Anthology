@@ -87,7 +87,7 @@ bool application_native_q2_capture_engine(void *opaque, qa_buffer *out, qa_error
     const char *map = engine->map_name ? qa_strings_cstr(qa_session_strings(app->session), engine->map_name) : "";
     const char *spawn = engine->spawn_point ? qa_strings_cstr(qa_session_strings(app->session), engine->spawn_point) : "";
     const char *entities = engine->entity_text ? engine->entity_text : "";
-    size_t size = 128u + 257u * 1568u + engine->configstring_count * 4u;
+    size_t size = 128u + 257u * 3680u + engine->configstring_count * 4u;
     const char *texts[] = {map, spawn, entities};
     for (size_t i = 0; i < 3; ++i) {
         if (!texts[i] || strlen(texts[i]) > 64u * 1024u * 1024u - size)
@@ -117,7 +117,7 @@ bool application_native_q2_capture_engine(void *opaque, qa_buffer *out, qa_error
     if (!buffer.data) { qa_buffer_free(&attack); qa_buffer_free(&combat); return application_fail(error, QA_ERROR_MEMORY, "Retaining native Q2 engine continuation"); }
     qa_net_writer writer; qa_net_writer_init(&writer, buffer.data, buffer.size, error);
     const qa_actor_registry *actors = qa_session_actors(app->session);
-    bool ok = qa_net_write_u32(&writer, UINT32_C(0x4532514e)) && qa_net_write_u32(&writer, 3) &&
+    bool ok = qa_net_write_u32(&writer, UINT32_C(0x4532514e)) && qa_net_write_u32(&writer, 5) &&
         qa_net_write_u32(&writer, (uint32_t)engine->profile) && qa_net_write_u32(&writer, engine->configstring_count) &&
         qa_net_write_u8(&writer, engine->initialized) && qa_net_write_u8(&writer, engine->map_ready) &&
         write_actor(&writer, actors, engine->world_actor, error) &&
@@ -130,12 +130,26 @@ bool application_native_q2_capture_engine(void *opaque, qa_buffer *out, qa_error
     for (uint32_t i = 0; ok && i < 257; ++i) {
         const application_native_q2_client *client = &engine->clients[i];
         uint8_t flags = (uint8_t)(client->reserved | client->connected << 1 | client->begun << 2 |
-            client->bot << 3 | client->disconnect_started << 4);
+            client->bot << 3 | client->disconnect_started << 4 | client->userinfo_present << 5);
+        size_t userinfo_limit = engine->profile == QA_NATIVE_Q2_GAME_API2023 ? 2048u : 512u;
+        if (!memchr(client->userinfo, 0, userinfo_limit) ||
+            (!client->userinfo_present && client->userinfo[0]) ||
+            (client->connected && !client->userinfo_present) ||
+            !qa_actor_id_equal(client->protocol_fog_actor, client->actor) ||
+            client->protocol_fog.bits || client->protocol_fog.time) {
+            ok = application_fail(error, QA_ERROR_FORMAT, "Native Q2 client lost its retained Source observer identity");
+            break;
+        }
         ok = write_actor(&writer, actors, client->actor, error) && qa_net_write_u32(&writer, client->seat) &&
             qa_net_write_u8(&writer, flags) &&
+            write_text(&writer, client->userinfo) &&
             qa_net_write_data(&writer, client->layout, sizeof(client->layout));
         for (size_t item = 0; ok && item < 256; ++item)
             ok = qa_net_write_u16(&writer, (uint16_t)client->inventory[item]);
+        qa_q2_wire_fog fog = client->protocol_fog;
+        fog.bits = UINT16_MAX;
+        if (ok) ok = write_actor(&writer, actors, client->protocol_fog_actor, error) &&
+            qa_q2_fog_write(&writer, &fog);
     }
     if (ok) ok = qa_net_write_u32(&writer, (uint32_t)attack.size) && qa_net_write_data(&writer, attack.data, attack.size);
     if (ok) ok = qa_net_write_u32(&writer, (uint32_t)combat.size) && qa_net_write_data(&writer, combat.data, combat.size);
@@ -155,7 +169,7 @@ bool application_native_q2_restore_engine(void *opaque, qa_bytes bytes, qa_error
         if (engine->clients[i].inventory_bound)
             return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 restore requires primary inventory retirement before source replacement");
     qa_net_reader reader; qa_net_reader_init(&reader, bytes, error);
-    if (qa_net_read_u32(&reader) != UINT32_C(0x4532514e) || qa_net_read_u32(&reader) != 3 ||
+    if (qa_net_read_u32(&reader) != UINT32_C(0x4532514e) || qa_net_read_u32(&reader) != 5 ||
         qa_net_read_u32(&reader) != (uint32_t)engine->profile ||
         qa_net_read_u32(&reader) != engine->configstring_count)
         return application_fail(error, QA_ERROR_FORMAT, "Native Q2 continuation profile differs from its admitted owner");
@@ -193,7 +207,18 @@ bool application_native_q2_restore_engine(void *opaque, qa_bytes bytes, qa_error
         client->seat = qa_net_read_u32(&reader); uint8_t flags = qa_net_read_u8(&reader);
         client->reserved = flags & 1; client->connected = flags & 2; client->begun = flags & 4;
         client->bot = flags & 8; client->disconnect_started = flags & 16;
-        ok = ok && !(flags & ~31u) && (!client->begun || client->connected) &&
+        client->userinfo_present = flags & 32;
+        char *userinfo = NULL;
+        if (ok) ok = read_text(&reader, &userinfo, error);
+        size_t userinfo_limit = engine->profile == QA_NATIVE_Q2_GAME_API2023 ? 2048u : 512u;
+        if (ok) {
+            ok = strlen(userinfo) < userinfo_limit &&
+                (client->userinfo_present || !*userinfo) &&
+                (!client->connected || client->userinfo_present);
+            if (ok) memcpy(client->userinfo, userinfo, strlen(userinfo) + 1);
+        }
+        free(userinfo);
+        ok = ok && !(flags & ~63u) && (!client->begun || client->connected) &&
             (i || (!client->actor.registry && !flags)) &&
             (!client->connected || client->actor.registry) &&
             (!client->disconnect_started || !client->connected) &&
@@ -203,6 +228,11 @@ bool application_native_q2_restore_engine(void *opaque, qa_bytes bytes, qa_error
         if (ok) { memcpy(client->layout, layout.data, 1024); ok = memchr(client->layout, 0, 1024) != NULL; }
         for (size_t item = 0; ok && item < 256; ++item)
             client->inventory[item] = (int16_t)qa_net_read_u16(&reader);
+        if (ok) ok = read_actor(&reader, actors, &client->protocol_fog_actor, error) &&
+            qa_q2_fog_read(&reader, &client->protocol_fog) &&
+            client->protocol_fog.bits == UINT16_MAX && !client->protocol_fog.time &&
+            qa_actor_id_equal(client->protocol_fog_actor, client->actor);
+        client->protocol_fog.bits = 0;
         for (uint32_t prior = 1; ok && client->actor.registry && prior < i; ++prior)
             if (qa_actor_id_equal(clients[prior].actor, client->actor)) ok = false;
         if (!ok && !reader.failed) application_fail(error, QA_ERROR_FORMAT, "Native Q2 continuation client record is invalid");

@@ -1,5 +1,15 @@
 #include "internal.h"
 
+bool q2_weapon_fired(qa_q2_game *g, qa_actor_id actor, qa_q2_weapon weapon, qa_error *e) {
+    if (g->hooks.fired == NULL || !q2_actor_live(g, actor))
+        return true;
+    if (weapon <= QA_Q2_WEAPON_NONE || weapon >= QA_Q2_WEAPON_COUNT || !g->items[weapon]) {
+        qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Completed Q2 shot has no registered weapon item");
+        return false;
+    }
+    return g->hooks.fired(g->hooks.context, actor, g->items[weapon], e);
+}
+
 static qa_vec3 forward(q2_weapon_call *c) {
     qa_vec3 f;
     qa_builtin_angle_vectors(c->input.angles, &f, NULL, NULL);
@@ -9,7 +19,8 @@ static bool flash(q2_weapon_call *c, int code, qa_error *e) {
     return q2_event(c, QA_BUILTIN_MUZZLE, code, qa_v3(0, 0, 0), qa_v3(0, 0, 0), e);
 }
 static bool finish(q2_weapon_call *c, int code, qa_vec3 start, int consume, qa_error *e) {
-    return flash(c, code, e) && q2_noise(c, start, e) && q2_consume(c, consume, true, e);
+    return flash(c, code, e) && q2_noise(c, start, e) && q2_consume(c, consume, true, e) &&
+           q2_weapon_fired(c->game, c->actor->id, c->definition->weapon, e);
 }
 static bool lag_begin(q2_weapon_call *c, qa_vec3 start, qa_vec3 direction, bool *active,
                       qa_error *e) {
@@ -36,10 +47,13 @@ static bool blaster(q2_weapon_call *c, qa_vec3 offset, float damage, bool hyper,
         kick.z = q2_crandom(c->game) * 0.7f;
     }
     q2_kick(c, qa_vec_scale(forward(c), -2), kick, c->rerelease ? 0.2f : 0);
-    return q2_projectile_spawn(c, Q2_BOLT, start, dir, damage * q2_multiplier(c), 1,
+    float multiplier;
+    if (!q2_multiplier(c, &multiplier, e)) return false;
+    return q2_projectile_spawn(c, Q2_BOLT, start, dir, damage * multiplier, 1,
                                c->rerelease && !hyper ? 1500 : 1000, 0, 0, 2, hyper ? 10 : 1, 0,
                                false, false, e) &&
-           flash(c, hyper ? 14 : 0, e) && q2_noise(c, start, e);
+           flash(c, hyper ? 14 : 0, e) && q2_noise(c, start, e) &&
+           q2_weapon_fired(c->game, c->actor->id, c->definition->weapon, e);
 }
 static bool hyperblaster(q2_weapon_call *c, qa_error *e) {
     qa_q2_weapon_state *s = c->state;
@@ -136,8 +150,10 @@ static bool machinegun(q2_weapon_call *c, qa_error *e) {
     bool lag;
     if (!lag_begin(c, start, dir, &lag, e))
         return false;
-    float m = q2_multiplier(c);
-    bool result = q2_bullet(c, start, dir, 8 * m, 2 * m, 300, 500, 1, 4, e);
+    float damage_factor, kick_factor;
+    if (!q2_multiplier(c, &damage_factor, e) || !q2_multiplier(c, &kick_factor, e))
+        return lag_end(c, lag, false, e);
+    bool result = q2_bullet(c, start, dir, 8 * damage_factor, 2 * kick_factor, 300, 500, 1, 4, e);
     if (!lag_end(c, lag, result, e) || (c->rerelease && !q2_power_sound(c, e)) ||
         !finish(c, 1, start, 1, e))
         return false;
@@ -206,13 +222,14 @@ static bool chaingun(q2_weapon_call *c, qa_error *e) {
     bool lag, result = true;
     if (!lag_begin(c, start, dir, &lag, e))
         return false;
-    float m = q2_multiplier(c);
     for (int i = 0; i < shots && result && q2_actor_live(c->game, c->actor->id); ++i) {
         float side = (c->rerelease ? 0 : 7) + q2_crandom(c->game) * 4;
         float up = q2_crandom(c->game) * 4 - 8;
+        float damage_factor, kick_factor;
         result = q2_project(c, c->input.angles, qa_v3(0, side, up), &start, &dir, e) &&
-                 q2_bullet(c, start, dir, (c->game->options.deathmatch ? 6 : 8) * m, 2 * m, 300,
-                           500, 1, 5, e);
+                 q2_multiplier(c, &damage_factor, e) && q2_multiplier(c, &kick_factor, e) &&
+                 q2_bullet(c, start, dir, (c->game->options.deathmatch ? 6 : 8) * damage_factor,
+                           2 * kick_factor, 300, 500, 1, 5, e);
     }
     return lag_end(c, lag, result, e) && (!c->rerelease || q2_power_sound(c, e)) &&
            finish(c, 3 + shots - 1, start, shots, e);
@@ -230,7 +247,6 @@ static bool shotgun(q2_weapon_call *c, bool super, qa_error *e) {
     bool lag, result = true;
     if (!lag_begin(c, start, dir, &lag, e))
         return false;
-    float m = q2_multiplier(c);
     if (super)
         for (int i = 0; i < 2 && result && q2_actor_live(c->game, c->actor->id); ++i) {
             qa_vec3 angles = c->input.angles;
@@ -239,11 +255,17 @@ static bool shotgun(q2_weapon_call *c, bool super, qa_error *e) {
                 result = q2_project(c, angles, qa_v3(0, 0, -8), &start, &dir, e);
             else
                 qa_builtin_angle_vectors(angles, &dir, NULL, NULL);
-            if (result)
-                result = q2_bullet(c, start, dir, 6 * m, 12 * m, 1000, 500, 10, 3, e);
+            if (result) {
+                float damage_factor, kick_factor;
+                result = q2_multiplier(c, &damage_factor, e) && q2_multiplier(c, &kick_factor, e) &&
+                    q2_bullet(c, start, dir, 6 * damage_factor, 12 * kick_factor, 1000, 500, 10, 3, e);
+            }
         }
-    else
-        result = q2_bullet(c, start, dir, 4 * m, 8 * m, 500, 500, 12, 2, e);
+    else {
+        float damage_factor, kick_factor;
+        result = q2_multiplier(c, &damage_factor, e) && q2_multiplier(c, &kick_factor, e) &&
+            q2_bullet(c, start, dir, 4 * damage_factor, 8 * kick_factor, 500, 500, 12, 2, e);
+    }
     if (!lag_end(c, lag, result, e))
         return false;
     if (!c->rerelease)
@@ -253,7 +275,8 @@ static bool shotgun(q2_weapon_call *c, bool super, qa_error *e) {
 static bool launch(q2_weapon_call *c, qa_error *e) {
     qa_vec3 start, dir, angles = c->input.angles, offset = qa_v3(8, 8, -8);
     qa_q2_weapon w = c->definition->weapon;
-    float m = q2_multiplier(c), damage = 0, speed = 0, radius = 0, splash = 0, fuse = 0, kick = 0;
+    float m = 1, damage = 0, speed = 0, radius = 0, splash = 0, fuse = 0, kick = 0;
+    if (w == QA_Q2_PHALANX && !q2_multiplier(c, &m, e)) return false;
     int mod = 0, splash_mod = 0, muzzle = 0;
     q2_projectile_kind kind = Q2_PROJECTILE_NONE;
     switch (w) {
@@ -263,7 +286,7 @@ static bool launch(q2_weapon_call *c, qa_error *e) {
             offset.y = 0;
         }
         kind = Q2_GRENADE;
-        damage = 120 * m;
+        damage = 120;
         speed = 600;
         radius = 160;
         splash = damage;
@@ -274,10 +297,10 @@ static bool launch(q2_weapon_call *c, qa_error *e) {
         break;
     case QA_Q2_ROCKETLAUNCHER:
         kind = Q2_ROCKET;
-        damage = (100 + floorf(q2_random(c->game) * 20)) * m;
+        damage = 100 + floorf(q2_random(c->game) * 20);
         speed = 650;
         radius = 120;
-        splash = 120 * m;
+        splash = 120;
         fuse = 8000 / speed;
         mod = 8;
         splash_mod = 9;
@@ -287,7 +310,7 @@ static bool launch(q2_weapon_call *c, qa_error *e) {
         angles.y += q2_crandom(c->game);
         offset = qa_v3(16, 7, -8);
         kind = Q2_ION;
-        damage = (c->game->options.deathmatch ? 30 : 50) * m;
+        damage = c->game->options.deathmatch ? 30 : 50;
         speed = 500;
         fuse = 3;
         mod = 34;
@@ -309,8 +332,7 @@ static bool launch(q2_weapon_call *c, qa_error *e) {
     case QA_Q2_DISINTEGRATOR:
         kind = Q2_TRACKER;
         damage = (c->rerelease ? (c->game->options.deathmatch ? 45 : 135)
-                               : (c->game->options.deathmatch ? 30 : 45)) *
-                 m;
+                               : (c->game->options.deathmatch ? 30 : 45));
         speed = 1000;
         fuse = 10;
         mod = 51;
@@ -319,7 +341,7 @@ static bool launch(q2_weapon_call *c, qa_error *e) {
         break;
     case QA_Q2_PROXLAUNCHER:
         kind = Q2_PROX;
-        damage = 90 * m;
+        damage = 90;
         splash = damage;
         speed = 600;
         radius = 192;
@@ -352,7 +374,7 @@ static bool launch(q2_weapon_call *c, qa_error *e) {
             }
         }
         kind = Q2_BFG_BALL;
-        damage = (c->game->options.deathmatch ? 200 : 500) * m;
+        damage = c->game->options.deathmatch ? 200 : 500;
         radius = 1000;
         speed = 400;
         fuse = 20;
@@ -381,21 +403,32 @@ static bool launch(q2_weapon_call *c, qa_error *e) {
         q2_kick(c, qa_vec_scale(aim, -3), qa_v3(-3, 0, 0), c->rerelease ? 0.2f : 0);
     } else if (w == QA_Q2_PHALANX)
         q2_kick(c, qa_vec_scale(forward(c), -2), qa_v3(-2, 0, 0), c->rerelease ? 0.2f : 0);
+    if (w != QA_Q2_PHALANX) {
+        if (!q2_multiplier(c, &m, e)) return false;
+        damage *= m;
+        if (w == QA_Q2_ROCKETLAUNCHER) {
+            if (!q2_multiplier(c, &m, e)) return false;
+            splash *= m;
+        } else if (w == QA_Q2_GRENADELAUNCHER || w == QA_Q2_PROXLAUNCHER)
+            splash = damage;
+    }
+    if (!q2_projectile_spawn(c, kind, start, dir, damage, kick, speed, radius, splash, fuse, mod,
+                             splash_mod, false, false, e))
+        return false;
     if (w == QA_Q2_BFG)
         q2_kick(c, qa_vec_scale(forward(c), -2),
                 qa_v3(c->rerelease ? -20 : -40, 0, q2_crandom(c->game) * 8),
                 c->rerelease ? fmaxf(0, 0.6f - (float)((double)c->frame_ns / 1e9)) : 0.5f);
-    if (!q2_projectile_spawn(c, kind, start, dir, damage, kick, speed, radius, splash, fuse, mod,
-                             splash_mod, false, false, e))
-        return false;
     bool second = w == QA_Q2_PHALANX && c->state->frame == 8;
     if (!c->rerelease)
         ++c->state->frame;
     if (w == QA_Q2_PHALANX)
-        return second ? q2_consume(c, 1, true, e) && (!c->rerelease || flash(c, 20, e))
-                      : flash(c, 18, e) && q2_noise(c, start, e);
+        return (second ? q2_consume(c, 1, true, e) && (!c->rerelease || flash(c, 20, e))
+                       : flash(c, 18, e) && q2_noise(c, start, e)) &&
+               q2_weapon_fired(c->game, c->actor->id, w, e);
     if (w == QA_Q2_BFG && !c->rerelease)
-        return q2_noise(c, start, e) && q2_consume(c, 50, true, e);
+        return q2_noise(c, start, e) && q2_consume(c, 50, true, e) &&
+               q2_weapon_fired(c->game, c->actor->id, w, e);
     return finish(c, muzzle, start, c->definition->quantity, e);
 }
 static bool rail(q2_weapon_call *c, qa_error *e) {
@@ -403,14 +436,17 @@ static bool rail(q2_weapon_call *c, qa_error *e) {
     if (!q2_project(c, c->input.angles, qa_v3(0, 7, -8), &start, &dir, e))
         return false;
     q2_kick(c, qa_vec_scale(forward(c), -3), qa_v3(-3, 0, 0), c->rerelease ? 0.2f : 0);
-    float m = q2_multiplier(c), damage = c->game->options.deathmatch ? 100
+    float damage = c->game->options.deathmatch ? 100
                                          : c->rerelease              ? 125
                                                                      : 150;
     float kick = c->game->options.deathmatch ? 200 : c->rerelease ? 225 : 250;
     bool lag;
     if (!lag_begin(c, start, dir, &lag, e))
         return false;
-    bool result = q2_rail(c, start, dir, damage * m, kick * m, 11, 0, e);
+    float damage_factor, kick_factor;
+    if (!q2_multiplier(c, &damage_factor, e) || !q2_multiplier(c, &kick_factor, e))
+        return lag_end(c, lag, false, e);
+    bool result = q2_rail(c, start, dir, damage * damage_factor, kick * kick_factor, 11, 0, e);
     if (!lag_end(c, lag, result, e))
         return false;
     if (!c->rerelease)
@@ -444,9 +480,12 @@ static bool heatbeam(q2_weapon_call *c, qa_error *e) {
     bool lag;
     if (!lag_begin(c, start, dir, &lag, e))
         return false;
-    float m = q2_multiplier(c);
+    float damage_factor, kick_factor;
+    if (!q2_multiplier(c, &damage_factor, e) || !q2_multiplier(c, &kick_factor, e))
+        return lag_end(c, lag, false, e);
     bool result =
-        q2_heatbeam(c, start, dir, 15 * m, (c->game->options.deathmatch ? 75 : 30) * m, e);
+        q2_heatbeam(c, start, dir, 15 * damage_factor,
+                   (c->game->options.deathmatch ? 75 : 30) * kick_factor, e);
     return lag_end(c, lag, result, e) && finish(c, 33, start, 2, e) && q2_attack_animation(c, 1, e);
 }
 static bool etf_rifle(q2_weapon_call *c, qa_error *e) {
@@ -494,8 +533,10 @@ static bool etf_rifle(q2_weapon_call *c, qa_error *e) {
                        qa_vec_scale(right, side)),
             qa_vec_scale(up, -8));
     }
-    float m = q2_multiplier(c);
-    if (!q2_projectile_spawn(c, Q2_FLECHETTE, start, dir, 10 * m, 3 * m, c->rerelease ? 1150 : 750,
+    float damage_factor, kick_factor;
+    if (!q2_multiplier(c, &damage_factor, e) || !q2_multiplier(c, &kick_factor, e)) return false;
+    if (!q2_projectile_spawn(c, Q2_FLECHETTE, start, dir, 10 * damage_factor, 3 * kick_factor,
+                             c->rerelease ? 1150 : 750,
                              0, 0, 8000 / (c->rerelease ? 1150.0f : 750.0f), 42, 0, false, false,
                              e))
         return false;
@@ -505,7 +546,8 @@ static bool etf_rifle(q2_weapon_call *c, qa_error *e) {
         return false;
     if (!c->rerelease)
         ++s->frame;
-    return q2_consume(c, c->definition->quantity, c->rerelease, e) && q2_attack_animation(c, 1, e);
+    return q2_consume(c, c->definition->quantity, c->rerelease, e) && q2_attack_animation(c, 1, e) &&
+           q2_weapon_fired(c->game, c->actor->id, c->definition->weapon, e);
 }
 bool q2_fire(q2_weapon_call *c, bool buffered, qa_error *e) {
     if (!q2_actor_live(c->game, c->actor->id))

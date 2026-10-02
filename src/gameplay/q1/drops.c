@@ -110,6 +110,7 @@ static bool launch(qa_q1_game *g, q1_actor *item, const qa_body_state *body, boo
     item->physics.solid = QA_PHYSICS_TRIGGER;
     item->physics.motion = QA_PHYSICS_BOUNCE;
     item->physics.flags = kill_velocity ? QA_PHYSICS_KILL_VELOCITY : 0;
+    if (kill_velocity) item->source_movement_flags |= UINT32_C(256);
     return qa_world_body_write(g->services.world, item->id, body, error) &&
            q1_link(g, item, error) && q1_schedule(g, item, 120, Q1_THINK_REMOVE, error);
 }

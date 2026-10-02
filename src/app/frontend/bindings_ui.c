@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "config_store.h"
 #include <stdio.h>
 
 static const char *binding_text(const qa_input_binding *binding)
@@ -73,8 +74,11 @@ static bool action(void *context, uint32_t id, qa_ui_id control, const qa_ui_act
     case 6:
         frontend_binding_cancel(seat, seat->id); return true;
     case 7: {
+        uint32_t logical;
+        if (!frontend_seat_launch_id_read(seat->frontend,seat->id,&logical))
+            return frontend_fail(error,QA_ERROR_ARGUMENT,"Binding Reset lost its published launch seat");
         int32_t controller = qa_input_platform_controller(seat->frontend->input, seat->id);
-        return qa_input_reset_default_bindings(seat->input, controller < 0 ? (int32_t)seat->id : controller, error);
+        return frontend_config_store_reset_bindings(seat->frontend->config_store,logical,controller,error);
     }
     default: return true;
     }

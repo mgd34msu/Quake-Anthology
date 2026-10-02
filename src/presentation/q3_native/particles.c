@@ -17,7 +17,16 @@ bool q3np_fail(qa_error *error, qa_status code, const char *message)
 { qa_error_set(error,code,0,"%s",message); return false; }
 static bool current(const q3n_frame *f, qa_error *error)
 {
+    if(f&&f->remote) {
+        if(!f->particles||!f->particles->initialized||!f->events||!f->presentation||
+           f->particles->assets!=f->assets||f->particles->product!=f->remote->source.basis.product||
+           f->particles->remote_source!=f->remote->source.owner||!q3n_frame_snapshot_player(f)||
+           !q3n_frame_current(f))
+            return q3np_fail(error,QA_ERROR_ARGUMENT,"Native Q3 particles require their actual remote source and snapshot");
+        return true;
+    }
     if (!(f && f->particles && f->particles->initialized && f->application && f->events &&
+        !f->particles->remote_source &&
         f->presentation && f->particles->assets == f->assets && f->particles->product == f->source.product &&
         f->time == f->source.source_time_ms && f->has_local_player &&
         qa_application_native_q3_presentation_current(f->application,&f->source)))
@@ -31,7 +40,7 @@ static bool current(const q3n_frame *f, qa_error *error)
 static bool source_current(q3n_particles *o, qa_application *app,
     const qa_application_native_q3_presentation *cut, int32_t time, qa_error *error)
 {
-    return app && cut && cut->product == o->product && time == cut->source_time_ms &&
+    return !o->remote_source && app && cut && cut->product == o->product && time == cut->source_time_ms &&
         qa_application_native_q3_presentation_current(app,cut) ? true :
         q3np_fail(error,QA_ERROR_ARGUMENT,"Native Q3 particle registration source was superseded");
 }
@@ -50,6 +59,13 @@ bool q3n_particles_create(qa_q3_presentation_assets *assets, qa_q3_product produ
     if (!o) return q3np_fail(error,QA_ERROR_MEMORY,"Allocating native Q3 particle pool");
     o->assets=assets; o->product=product; reset(o,0); *out=o; return true;
 }
+bool q3n_particles_create_remote(qa_q3_presentation_assets *assets,q3n_remote_source *source,q3n_particles **out,qa_error *error)
+{
+    q3n_remote_source_view view;
+    if(!source||!q3n_remote_source_read(source,&view,error)||!q3n_remote_source_current(&view))return false;
+    if(!q3n_particles_create(assets,view.basis.product,out,error))return false;
+    (*out)->remote_source=source; return true;
+}
 bool q3n_particles_idle(const q3n_particles *o) { return o && !o->busy; }
 void q3n_particles_destroy(q3n_particles *o) { if (q3n_particles_idle(o)) free(o); }
 void q3n_particles_round(q3n_particles *o, int32_t time) { if (q3n_particles_idle(o)) reset(o,time); }
@@ -61,6 +77,25 @@ bool q3n_particles_load(q3n_particles *o, qa_application *app,
     for (int32_t i=0;i<Q3N_PARTICLE_FRAMES && ok;++i) {
         char name[32]; snprintf(name,sizeof(name),"explode1%d",i+1);
         ok=qa_q3_register_shader(o->assets,name,true,&o->shaders[i],error) && source_current(o,app,cut,time,error);
+    }
+    o->initialized=ok; o->busy=false; return ok;
+}
+static bool registration_current(const q3n_particles *o,const q3n_frame *f,qa_error *e)
+{
+    return f&&f->remote&&f->particles==o&&f->assets==o->assets&&
+        f->presentation&&f->presentation->options.assets==o->assets&&
+        f->remote->source.owner==o->remote_source&&f->remote->source.basis.product==o->product&&
+        (f->remote->snapshots.stage==Q3N_REMOTE_INITIALIZATION||
+         f->remote->snapshots.stage==Q3N_REMOTE_SNAPSHOT_CALLBACK)&&q3n_frame_current(f)?true:
+        q3np_fail(e,QA_ERROR_ARGUMENT,"Remote particle registration requires its genuine entered Init or reached command frame");
+}
+bool q3n_particles_load_remote(q3n_particles *o,const q3n_frame *f,qa_error *e)
+{
+    if(!q3n_particles_idle(o)||!registration_current(o,f,e))return false;
+    o->busy=true; o->initialized=false; reset(o,f->time); bool ok=true;
+    for(int32_t i=0;i<Q3N_PARTICLE_FRAMES&&ok;++i) {
+        char name[32]; snprintf(name,sizeof(name),"explode1%d",i+1);
+        ok=qa_q3_register_shader(o->assets,name,true,&o->shaders[i],e)&&registration_current(o,f,e);
     }
     o->initialized=ok; o->busy=false; return ok;
 }
@@ -121,7 +156,8 @@ static bool draw(const q3n_frame *f, q3n_particle *p, qa_vec3 origin, qa_error *
     if (ratio>=1) ratio=0.9999f;
     float width=add(p->width,mul(ratio,add(p->end_width,-p->width)));
     float height=add(p->height,mul(ratio,add(p->end_height,-p->height)));
-    qa_vec3 distance=sum(qa_v3(f->local_player.origin[0],f->local_player.origin[1],f->local_player.origin[2]),scale(origin,-1));
+    const qa_q3_player *player=q3n_frame_snapshot_player(f);
+    qa_vec3 distance=sum(qa_v3(player->origin[0],player->origin[1],player->origin[2]),scale(origin,-1));
     float length=(float)sqrt((double)add(add(mul(distance.x,distance.x),mul(distance.y,distance.y)),mul(distance.z,distance.z)));
     if (length<divide(width,1.5f)) return true;
     int32_t index=integer((float)floor((double)mul(ratio,Q3N_PARTICLE_FRAMES)));

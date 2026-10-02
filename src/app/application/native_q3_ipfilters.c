@@ -1,6 +1,7 @@
 #include "native_q3_ipfilters.h"
 #include "native_q3_console.h"
 #include "native_q3_settings.h"
+#include "unified_q3_events.h"
 #include "qa/source_save.h"
 
 #include <stdio.h>
@@ -313,7 +314,8 @@ bool application_native_q3_ipfilters_console(application_provider *provider,
         qa_console *console;
         if (!application_native_q3_console_at(provider, &console, NULL, NULL))
             okay = application_fail(error, QA_ERROR_NOT_FOUND, "native Q3 IP filter console is absent");
-        else okay = qa_console_execute_now(console, &invocation->context, "g_banIPs\n", error) &&
+        else okay = application_unified_q3_console(provider, true, "g_banIPs\n", error) &&
+            qa_console_execute_now(console, &invocation->context, "g_banIPs\n", error) &&
             admitted(owner, &invocation->context, error);
     } else if (invocation->argc < 2) {
         okay = emit(owner, &invocation->context,

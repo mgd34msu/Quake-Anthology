@@ -142,7 +142,22 @@ bool qa_q3_teleport(qa_q3_game *game, qa_actor_id actor, qa_vec3 origin, qa_vec3
     if (!game || game->source_restored || game->observation_depth == SIZE_MAX)
         return q3_fail(error, "invalid Q3 teleport action boundary");
     ++game->observation_depth;
+    q3_actor *entry = q3_actor_get(game, actor);
+    bool selected = game->options.hooks.selected_client_effects && entry &&
+        entry->kind == Q3_ACTOR_PLAYER && (entry->state.player.selections & (QA_Q3_ARSENAL | QA_Q3_EQUIPMENT));
+    qa_q3_selected_client_effects before;
+    if (selected && !qa_q3_selected_client_effects_read(game, actor, &before, error)) {
+        --game->observation_depth;
+        return false;
+    }
     bool okay = teleport_player(game, actor, origin, angles, error);
+    entry = q3_actor_get(game, actor);
+    if (selected && entry && entry->kind == Q3_ACTOR_PLAYER &&
+        (entry->state.player.selections & (QA_Q3_ARSENAL | QA_Q3_EQUIPMENT))) {
+        qa_error publication = {0};
+        bool published = qa_q3_selected_client_effects_publish(game, actor, &before, &publication);
+        if (okay && !published) { if (error) *error = publication; okay = false; }
+    }
     --game->observation_depth;
     return okay;
 }

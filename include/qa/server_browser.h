@@ -5,15 +5,16 @@
 
 typedef struct qa_server_browser qa_server_browser;
 enum qa_server_source {
-    QA_SERVER_LAN = 1u, QA_SERVER_MASTER = 2u, QA_SERVER_FAVORITE = 4u, QA_SERVER_DIRECT = 8u
+    QA_SERVER_LAN = 1u, QA_SERVER_MASTER = 2u, QA_SERVER_FAVORITE = 4u, QA_SERVER_DIRECT = 8u,
+    QA_SERVER_SECONDARY_MASTER = 16u
 };
 typedef struct qa_server_entry {
     qa_net_address address;
     qa_net_protocol_id protocol;
     uint32_t sources, players, maximum_players;
     uint64_t updated_ns, ping_ns;
-    bool available, pending, timed_out;
-    char name[1025], map[256], rules[8193];
+    bool available, pending, timed_out, has_ping;
+    char name[1025], map[1025], rules[8193];
 } qa_server_entry;
 typedef struct qa_browser_hooks {
     void *context;

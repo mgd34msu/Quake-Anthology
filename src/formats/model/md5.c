@@ -530,8 +530,7 @@ invalid:
 }
 bool qa_model_animation_sample(const qa_model_animation *a, uint32_t frame, uint32_t previous,
                                float back, qa_model_pose *out, size_t count, qa_error *error) {
-    if (!a || !a->frame_count || !out || count < a->joint_count || !isfinite(back) || back < 0 ||
-        back > 1) {
+    if (!a || !a->frame_count || !out || count < a->joint_count || !isfinite(back)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "invalid MD5 animation sample");
         return false;
     }
@@ -543,7 +542,9 @@ bool qa_model_animation_sample(const qa_model_animation *a, uint32_t frame, uint
             continue;
         for (unsigned k = 0; k < 3; ++k)
             out[i].position[k] = old[i].position[k] * back + current[i].position[k] * (1 - back);
-        if (back == 1) {
+        if (back <= 0)
+            continue;
+        if (back >= 1) {
             memcpy(out[i].orientation, old[i].orientation, sizeof(out[i].orientation));
             continue;
         }

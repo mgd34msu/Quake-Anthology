@@ -41,7 +41,7 @@ static bool fog(qa_source_save_io *io, qa_scene_fog *value)
 static bool state(qa_source_save_io *io, qa_scene_state *value)
 {
     ENUM(qa_scene_blend,value,blend_source,QA_BLEND_SRC_ALPHA_SATURATE); ENUM(qa_scene_blend,value,blend_destination,QA_BLEND_SRC_ALPHA_SATURATE);
-    ENUM(qa_scene_depth,value,depth_test,QA_DEPTH_LESS); ENUM(qa_scene_alpha,value,alpha_test,QA_ALPHA_GE128);
+    ENUM(qa_scene_depth,value,depth_test,QA_DEPTH_GEQUAL); ENUM(qa_scene_alpha,value,alpha_test,QA_ALPHA_GE128);
     ENUM(qa_scene_cull,value,cull,QA_CULL_BACK);
     FIELD(bool,value,depth_write); FIELD(bool,value,color_write); FIELD(bool,value,polygon_offset); FIELD(bool,value,wireframe);
     FIELD(f32,value,depth_near); FIELD(f32,value,depth_far); FIELD(f32,value,offset_factor); FIELD(f32,value,offset_units); FIELD(f32,value,line_width);
@@ -217,11 +217,14 @@ static bool draw(qa_source_save_io *io, qa_scene_frame *frame, const qa_scene_fr
     }
     if (!image(io,frame,&value->shadow_atlas)) return false;
     FIELD(f32,value,shadow_near); FIELD(f32,value,shade_scale); FIELD(bool,value,model_shade_scale); FIELD(bool,value,luminance_alpha);
+    FIELD(bool,value,source_primitives);
     FIELD(u64,value,sort_key); FIELD(u32,value,entity); FIELD(u32,value,fog_index); FIELD(u32,value,light_mask); return true;
 }
-static bool command(qa_source_save_io *io, qa_scene_frame *frame, const qa_scene_frame_checkpoint_refs *refs, qa_scene_command *value)
+static bool command(qa_source_save_io *io, qa_scene_frame *frame, const qa_scene_frame_checkpoint_refs *refs,
+    uint32_t schema,qa_scene_command *value)
 {
-    ENUM(qa_scene_command_kind,value,kind,QA_SCENE_COMMAND_IMAGE);
+    ENUM(qa_scene_command_kind,value,kind,QA_SCENE_COMMAND_OUTPUT_DOMAIN);
+    if (schema<4 && value->kind==QA_SCENE_COMMAND_OUTPUT_DOMAIN) return false;
     switch (value->kind) {
     case QA_SCENE_COMMAND_VIEW: return view(io,&value->data.view);
     case QA_SCENE_COMMAND_DRAW: return draw(io,frame,refs,&value->data.draw);
@@ -234,6 +237,12 @@ static bool command(qa_source_save_io *io, qa_scene_frame *frame, const qa_scene
         ENUM(qa_scene_draw_buffer,&value->data.draw_buffer,buffer,QA_DRAW_BACK_RIGHT);
         return qa_source_save_bool(io,&value->data.draw_buffer.clear);
     case QA_SCENE_COMMAND_IMAGE: return image(io,frame,&value->data.image) && value->data.image;
+    case QA_SCENE_COMMAND_OUTPUT_DOMAIN:
+        FIELD(i32,&value->data.output_domain.rect,x); FIELD(i32,&value->data.output_domain.rect,y);
+        FIELD(u32,&value->data.output_domain.rect,width); FIELD(u32,&value->data.output_domain.rect,height);
+        return qa_source_save_bool(io,&value->data.output_domain.source) &&
+            value->data.output_domain.rect.x>=0 && value->data.output_domain.rect.y>=0 &&
+            value->data.output_domain.rect.width && value->data.output_domain.rect.height;
     }
     return false;
 }
@@ -268,9 +277,17 @@ static bool groups(qa_source_save_io *io, qa_scene_frame *frame, const qa_scene_
 }
 static bool fields(qa_source_save_io *io, qa_scene_frame *frame, uint64_t qualified_owner, const qa_scene_frame_checkpoint_refs *refs)
 {
-    uint8_t magic[4]={'Q','F','R','M'}; uint32_t schema=1;
-    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QFRM",4) || !qa_source_save_u32(io,&schema) || schema!=1) return false;
+    uint8_t magic[4]={'Q','F','R','M'}; uint32_t schema=4;
+    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QFRM",4) || !qa_source_save_u32(io,&schema) ||
+        (schema!=2 && schema!=3 && schema!=4)) return false;
     FIELD(u64,frame,owner); FIELD(u64,frame,sequence);
+    if (schema>=3) {
+        FIELD(bool,frame,source_backend); FIELD(bool,frame,source_skip_backend);
+        FIELD(bool,frame,source_clear_draw_buffer);
+        if (!frame->source_backend && (frame->source_skip_backend || frame->source_clear_draw_buffer)) return false;
+    } else {
+        frame->source_backend=false; frame->source_skip_backend=false; frame->source_clear_draw_buffer=false;
+    }
     if (frame->owner!=qualified_owner || !owners(io,frame,refs)) return false;
     bool reading=io->direction==QA_SOURCE_SAVE_READ; size_t count=frame->command_count;
     if (!qa_source_save_count(io,&count,reading?io->input.size/4:SIZE_MAX)) return false;
@@ -280,7 +297,7 @@ static bool fields(qa_source_save_io *io, qa_scene_frame *frame, uint64_t qualif
     }
     for (size_t i=0;i<count;++i) {
         qa_scene_command value=reading?(qa_scene_command){0}:frame->commands[i];
-        if (!command(io,frame,refs,&value)) return false;
+        if (!command(io,frame,refs,schema,&value)) return false;
         if (reading) frame->commands[i]=value;
     }
     return groups(io,frame,refs);
@@ -293,7 +310,7 @@ static bool refs_ready(const qa_scene_frame_checkpoint_refs *refs)
 }
 bool qa_scene_frame_checkpoint(const qa_scene_frame *frame, const qa_scene_frame_checkpoint_refs *refs, qa_buffer *out, qa_error *error)
 {
-    if (!frame || !out || !refs_ready(refs)) return failure(error,QA_ERROR_ARGUMENT,"Scene frame capture requires actual owner resolvers");
+    if (!frame || frame->source_pending || !out || !refs_ready(refs)) return failure(error,QA_ERROR_ARGUMENT,"Scene frame capture requires completed work and actual owner resolvers");
     qa_source_save_io io; qa_scene_frame saved=*frame;
     if (!qa_source_save_writer(&io,NULL,error)) return false;
     bool ok=fields(&io,&saved,frame->owner,refs) && qa_source_save_finish(&io,out);
@@ -302,7 +319,7 @@ bool qa_scene_frame_checkpoint(const qa_scene_frame *frame, const qa_scene_frame
 }
 bool qa_scene_frame_restore(qa_scene_frame *frame, qa_bytes bytes, const qa_scene_frame_checkpoint_refs *refs, qa_error *error)
 {
-    if (!frame || !refs_ready(refs)) return failure(error,QA_ERROR_ARGUMENT,"Scene frame restore requires actual candidate owner resolvers");
+    if (!frame || frame->source_pending || !refs_ready(refs)) return failure(error,QA_ERROR_ARGUMENT,"Scene frame restore requires completed work and actual candidate owner resolvers");
     qa_scene_frame saved; qa_scene_frame_init(&saved,frame->owner); saved.material_order=frame->material_order;
     qa_source_save_io io;
     if (!qa_source_save_reader(&io,NULL,bytes,error)) { qa_scene_frame_destroy(&saved); return false; }

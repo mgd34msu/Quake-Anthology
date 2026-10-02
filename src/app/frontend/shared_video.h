@@ -1,8 +1,13 @@
 #ifndef QA_FRONTEND_SHARED_VIDEO_H
 #define QA_FRONTEND_SHARED_VIDEO_H
 #include "input_settings.h"
+#include "qa/console_cvars_prepare.h"
 
 typedef struct frontend_shared_video frontend_shared_video;
+/* Project the actual canonical display rows against the returned native
+ * window before any resource preparation. This checked read may query SDL. */
+bool frontend_shared_video_settings(qa_frontend *,const qa_cvars_edit *,
+    qa_display_settings *,bool *changed,qa_error *);
 /* Settings are the enclosing canonical owner's admitted typed values. Every
  * physical ALL release must already be completed; preparation retains both
  * native windows, the same renderer, and its actual presentation resources.
@@ -10,6 +15,13 @@ typedef struct frontend_shared_video frontend_shared_video;
 bool frontend_shared_video_prepare(qa_frontend *,const qa_display_settings *,float gamma,
     frontend_input_settings *,frontend_shared_video **,qa_error *);
 bool frontend_shared_video_ready(const frontend_shared_video *,qa_error *);
+/* Pure exact child and surface receipts after successful checked readiness. */
+bool frontend_shared_video_ready_is(const frontend_shared_video *);
+/* Borrow the actual staged endpoint while its complete native handoff is
+ * retained. This reads only the prepared owner and its pure child receipts. */
+qa_display *frontend_shared_video_candidate(const frontend_shared_video *);
+/* Re-present retained CPU pixels after an actual native gamma child. */
+bool frontend_shared_video_refresh(frontend_shared_video *,qa_error *);
 /* Actual prepared native dimensions/fullscreen for the enclosing canonical
  * scalar owner, before it seals observed window settings. */
 bool frontend_shared_video_configuration(const frontend_shared_video *,qa_display_info *,qa_error *);

@@ -1,4 +1,6 @@
 #include "internal.h"
+#include "browser.h"
+#include "files.h"
 #include "qa/input.h"
 #include "qa/bot_runtime.h"
 #include "qa/scene_world_save.h"
@@ -38,7 +40,7 @@ static bool vm_string(void *context, uint64_t address, size_t maximum,
 
 static bool dispatch(q3_call *call, int32_t *result, qa_error *error)
 {
-    static const q3_handler handlers[] = {q3_common, q3_cvars, q3_files,
+    static const q3_handler handlers[] = {q3_browser, q3_common, q3_cvars, q3_files,
                                          q3_information, q3_client_state, q3_scripts,
                                          q3_bot_actions, q3_bot_library, q3_bot_chat, q3_bot_goals,
                                          q3_bot_genetic, q3_bot_weapons, q3_bot_navigation, q3_bot_movement,
@@ -266,6 +268,8 @@ bool qa_q3_host_create(const qa_q3_host_options *options, qa_q3_host **out, qa_e
         options->client_time_from_game ||
         (!!options->client_time_cvars != !!options->client_time_owner) ||
         (options->role == QA_QVM_GAME && options->client_time_cvars) ||
+        (options->script_globals_owner && (options->role == QA_QVM_GAME || !options->script_globals)) ||
+        (options->role != QA_QVM_GAME && options->script_globals && !options->script_globals_owner) ||
         (options->engine_cvars && (options->role != QA_QVM_GAME || !options->cvars ||
             qa_cvars_dialect(options->engine_cvars) != QA_CONSOLE_Q3 ||
             qa_cvars_dialect(options->cvars) != QA_CONSOLE_Q3)) ||
@@ -274,11 +278,22 @@ bool qa_q3_host_create(const qa_q3_host_options *options, qa_q3_host **out, qa_e
         (!!options->cvar_namespaces.reference != !!options->cvar_namespaces.resolve) ||
         (!!options->cvar_entry.context != !!options->cvar_entry.entered) ||
         (options->cvar_entry.entered && !options->console) ||
+        (!!options->cvar_status.context != !!options->cvar_status.visible) ||
+        (options->cvar_status.visible && options->role!=QA_QVM_CGAME) ||
         (!!options->input.context != !!options->input.bindings) ||
         (options->input.bindings && (!options->seat || options->role == QA_QVM_GAME)) ||
         (options->source_entity && options->role != QA_QVM_CGAME) ||
+        (!!options->client.ui_state_context != !!options->client.ui_state) ||
+        (options->client.ui_state && options->role != QA_QVM_UI) ||
+        (!!options->presentation.system_movie_context != !!options->presentation.system_movie) ||
+        (options->presentation.system_movie && options->role == QA_QVM_GAME) ||
         options->server.maximum_clients > 64)
         return q3_fail(error, QA_ERROR_ARGUMENT, 0, "invalid Q3 module host options");
+    if (!qa_q3_host_browser_services_validate(&options->browser,error) ||
+        (options->browser.context && options->role!=QA_QVM_UI))
+        return q3_fail(error, QA_ERROR_ARGUMENT, 0, "Q3 browser services require their actual UI host");
+    qa_fs_root *write_root=NULL;
+    if (!q3_write_view_root(options,&write_root,error)) return false;
     qa_q3_host *host = calloc(1, sizeof(*host));
     if (!host) return q3_fail(error, QA_ERROR_MEMORY, 0, "allocating Q3 module host");
     host->options = *options;
@@ -300,6 +315,7 @@ bool qa_q3_host_create(const qa_q3_host_options *options, qa_q3_host **out, qa_e
         free(host->game); free(host); return false;
     }
     qa_arena_init(&host->scratch, 16384);
+    qa_fs_root_retain(write_root); host->options.write_view.root=write_root;
     *out = host; return true;
 }
 
@@ -446,7 +462,19 @@ bool qa_q3_host_destroy(qa_q3_host *host, qa_error *error)
     if (host->options.seat && !host->options.input_owner)
         qa_input_seat_retire_catcher(host->options.seat, host->options.service_owner);
     if (host->options.cvars) qa_cvars_remove_owner(host->options.cvars, host->options.service_owner);
-    for (size_t i = 1; i < 64; ++i) q3_file_close(&host->files[i]);
+    qa_error close_fault={0}; bool files_closed=true;
+    for (size_t i = 1; i < 64; ++i) {
+        qa_error fault={0};
+        if (!q3_file_close_checked(&host->files[i],&fault)) {
+            files_closed=false;
+            if (close_fault.code==QA_OK) close_fault=fault;
+        }
+    }
+    if (!files_closed) {
+        if (error && error->code==QA_OK) *error=close_fault;
+        return false;
+    }
+    qa_fs_root_close(host->options.write_view.root); host->options.write_view.root=NULL;
     for (size_t i = 1; i < 64; ++i) q3_script_close(host->scripts[i]);
     while (host->crossings) {
         q3_crossings *lease = host->crossings;
@@ -458,6 +486,7 @@ bool qa_q3_host_destroy(qa_q3_host *host, qa_error *error)
     free(host->game);
     q3_cvars_bindings_free(host->cvar_bindings,host->cvar_binding_count);
     free(host->cvar_caches);
+    free(host->cvar_status.previous_value);
     void *frontend_lifetime=host->options.frontend_lifetime;
     void (*release_frontend)(void *)=host->options.release_frontend;
     host->options.frontend_lifetime=NULL;host->options.release_frontend=NULL;
@@ -489,6 +518,7 @@ void qa_q3_host_native_consumed(qa_q3_host *host)
 {
     if (!host) return;
     free(host->cvar_caches); host->cvar_caches=NULL; host->cvar_cache_count=0;
+    free(host->cvar_status.previous_value); host->cvar_status=(q3_cvar_status){0};
     host->native = NULL;
     host->native_host = NULL;
     host->memory = (qa_native_host_guest_memory){0};
@@ -502,6 +532,7 @@ void qa_q3_host_qvm_consumed(qa_q3_host *host)
 {
     if (!host) return;
     free(host->cvar_caches); host->cvar_caches=NULL; host->cvar_cache_count=0;
+    free(host->cvar_status.previous_value); host->cvar_status=(q3_cvar_status){0};
     host->vm = NULL;
     host->memory = (qa_native_host_guest_memory){0};
     if (host->game) {

@@ -28,6 +28,8 @@ bool q3n_loading_create_remote(const q3n_loading_options *, q3n_loading **, qa_e
 /* Pure installed-basis constructor; does not register assets or paint. */
 bool q3n_loading_create_restored(const q3n_loading_options *, q3n_loading **, qa_error *);
 bool q3n_loading_idle(const q3n_loading *);
+/* Borrowed authored information text, retained until the next loading write. */
+const char *q3n_loading_text(const q3n_loading *);
 void q3n_loading_destroy(q3n_loading *);
 bool q3n_loading_string(q3n_loading *, const q3n_frame *, const char *, qa_error *);
 bool q3n_loading_item(q3n_loading *, const q3n_frame *, uint32_t, qa_error *);

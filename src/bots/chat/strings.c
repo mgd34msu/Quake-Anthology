@@ -444,9 +444,9 @@ static bool replacement_capacity(char **text, size_t *capacity, size_t needed, q
     *capacity = size;
     return true;
 }
-static bool replace_words(char **storage, size_t *capacity, const char *word,
+static bool replace_words_value(char **storage, size_t *capacity, const char *word,
                           const char *replacement, const qa_bot_chat_text_io *io,
-                          const match_access *guard, qa_error *e) {
+                          const match_access *guard,bool growing, qa_error *e) {
     char *text = *storage;
     size_t size = strlen(replacement);
     int32_t found = chat_word(text, word, 0);
@@ -456,7 +456,7 @@ static bool replace_words(char **storage, size_t *capacity, const char *word,
             prior = chat_word(text, replacement, (size_t)prior + 1);
         if (prior < 0) {
             size_t removed = strlen(word), length = strlen(text);
-            if (io != NULL) {
+            if (io != NULL || growing) {
                 if (size >= SIZE_MAX - (length - removed)) {
                     qa_error_set(e, QA_ERROR_MEMORY, 0, "Bot replacement size overflow");
                     return false;
@@ -465,9 +465,9 @@ static bool replace_words(char **storage, size_t *capacity, const char *word,
                     return false;
                 text = *storage;
                 const char *tail = text + (uint32_t)found + removed;
-                if (!copy_external_text(io, (uint32_t)found + size, tail, strlen(tail) + 1, guard,
+                if (io && (!copy_external_text(io, (uint32_t)found + size, tail, strlen(tail) + 1, guard,
                                         e) ||
-                    !copy_external_text(io, (uint32_t)found, replacement, size, guard, e))
+                    !copy_external_text(io, (uint32_t)found, replacement, size, guard, e)))
                     return false;
             }
             if (!replace_at(text, *capacity, (uint32_t)found, removed, replacement, e))
@@ -477,10 +477,22 @@ static bool replace_words(char **storage, size_t *capacity, const char *word,
     }
     return true;
 }
+static bool replace_words(char **storage,size_t *capacity,const char *word,const char *replacement,
+    const qa_bot_chat_text_io *io,const match_access *guard,bool growing,qa_error *error) {
+    size_t word_size=strlen(word)+1,replacement_size=strlen(replacement)+1;
+    char *word_value=malloc(word_size),*replacement_value=malloc(replacement_size);
+    if(!word_value || !replacement_value) {
+        free(word_value);free(replacement_value);
+        qa_error_set(error,QA_ERROR_MEMORY,0,"Retaining reached synonym string values");return false;
+    }
+    memcpy(word_value,word,word_size);memcpy(replacement_value,replacement,replacement_size);
+    bool ok=replace_words_value(storage,capacity,word_value,replacement_value,io,guard,growing,error);
+    free(word_value);free(replacement_value);return ok;
+}
 static bool replace_synonyms(qa_bot_chat_system *system, char *text, size_t capacity,
                              uint32_t context, bool weighted, bool reply,
                              const qa_bot_chat_text_io *io, const match_access *guard,
-                             qa_error *e) {
+                             char **growing,qa_error *e) {
     if (system == NULL ||
         (io == NULL && (text == NULL || capacity == 0 || memchr(text, 0, capacity) == NULL)) ||
         (weighted && reply)) {
@@ -500,15 +512,28 @@ static bool replace_synonyms(qa_bot_chat_system *system, char *text, size_t capa
                 break;
             bool replaced = false;
             for (size_t i = 0; i < a->view.group_count && !replaced; ++i) {
-                const qa_bot_chat_synonyms *group = a->groups + i;
-                if ((group->context & context) == 0)
+                qa_bot_chat_synonyms group;
+                if(!bot_chat_packed_group(a,(uint32_t)i,&group,e)) return false;
+                if ((group.context & context) == 0)
                     continue;
-                const char *replacement = a->synonyms[group->entries.first].text;
-                for (uint32_t j = 1; j < group->entries.count; ++j) {
-                    const char *word = a->synonyms[group->entries.first + j].text;
+                for (uint32_t j = 1; j < group.entries.count; ++j) {
+                    qa_bot_chat_synonym entry,first;
+                    if(!bot_chat_packed_entry(a,group.entries.first+j,&entry,e)) return false;
+                    const char *word=entry.text;
+                    if(chat_word(text,word,pointer)!=(int64_t)pointer) continue;
+                    if(!bot_chat_packed_entry(a,group.entries.first,&first,e)) return false;
+                    const char *replacement=first.text;
                     if (chat_word(text, word, pointer) != (int64_t)pointer ||
                         chat_word(text, replacement, pointer) == (int64_t)pointer)
                         continue;
+                    if(growing) {
+                        size_t length=strlen(text),removed=strlen(word),size=strlen(replacement);
+                        if(size>=SIZE_MAX-(length-removed)) {
+                            qa_error_set(e,QA_ERROR_MEMORY,0,"Reply synonym exceeds native address range");return false;
+                        }
+                        bool ready=replacement_capacity(&text,&capacity,length-removed+size+1,e);
+                        *growing=text;if(!ready) return false;
+                    }
                     if (!replace_at(text, capacity, pointer, strlen(word), replacement, e))
                         return false;
                     replaced = true;
@@ -525,25 +550,30 @@ static bool replace_synonyms(qa_bot_chat_system *system, char *text, size_t capa
     size_t snapshot_capacity = 0;
     bool ok = true;
     for (size_t i = 0; ok && i < a->view.group_count; ++i) {
-        const qa_bot_chat_synonyms *group = a->groups + i;
-        if ((group->context & context) == 0)
+        qa_bot_chat_synonyms group;
+        if(!bot_chat_packed_group(a,(uint32_t)i,&group,e)) {ok=false;break;}
+        if ((group.context & context) == 0)
             continue;
         uint32_t chosen = 0;
         if (weighted) {
-            float value = bot_random(&system->services.random) * group->total_weight;
+            float random=bot_random(&system->services.random);
+            if(!bot_chat_packed_group(a,(uint32_t)i,&group,e)) {ok=false;break;}
+            float value=(float)(random*group.total_weight);
             if (value == 0)
                 continue;
             float total = 0;
-            for (chosen = 0; chosen < group->entries.count; ++chosen) {
-                total += a->synonyms[group->entries.first + chosen].weight;
+            for (chosen = 0; chosen < group.entries.count; ++chosen) {
+                float weight;
+                if(!bot_chat_packed_weight(a,group.entries.first+chosen,&weight,e)) {ok=false;break;}
+                total=(float)(total+weight);
                 if (value < total)
                     break;
             }
-            if (chosen == group->entries.count)
+            if(!ok) break;
+            if (chosen == group.entries.count)
                 continue;
         }
-        const char *replacement = a->synonyms[group->entries.first + chosen].text;
-        for (uint32_t j = weighted ? 0 : 1; ok && j < group->entries.count; ++j) {
+        for (uint32_t j = weighted ? 0 : 1; ok && j < group.entries.count; ++j) {
             if (j == chosen)
                 continue;
             if (io != NULL) {
@@ -562,12 +592,19 @@ static bool replace_synonyms(qa_bot_chat_system *system, char *text, size_t capa
                 if (source.size != 0)
                     memcpy(snapshot, source.data, source.size);
                 snapshot[source.size] = 0;
-                ok = replace_words(&snapshot, &snapshot_capacity,
-                                   a->synonyms[group->entries.first + j].text, replacement, io,
-                                   guard, e);
-            } else
-                ok = replace_words(&text, &capacity, a->synonyms[group->entries.first + j].text,
-                                   replacement, NULL, NULL, e);
+                qa_bot_chat_synonym entry,replacement;
+                ok=bot_chat_packed_entry(a,group.entries.first+j,&entry,e) &&
+                    bot_chat_packed_entry(a,group.entries.first+chosen,&replacement,e);
+                if(ok) ok = replace_words(&snapshot, &snapshot_capacity,
+                                   entry.text, replacement.text, io,guard,false, e);
+            } else {
+                qa_bot_chat_synonym entry,replacement;
+                ok=bot_chat_packed_entry(a,group.entries.first+j,&entry,e) &&
+                    bot_chat_packed_entry(a,group.entries.first+chosen,&replacement,e);
+                if(ok) ok = replace_words(&text, &capacity, entry.text,
+                                   replacement.text, NULL, NULL,growing!=NULL, e);
+                if(growing) *growing=text;
+            }
         }
     }
     free(snapshot);
@@ -575,7 +612,20 @@ static bool replace_synonyms(qa_bot_chat_system *system, char *text, size_t capa
 }
 bool qa_bot_chat_replace_synonyms(qa_bot_chat_system *system, char *text, size_t capacity,
                                   uint32_t context, bool weighted, bool reply, qa_error *e) {
-    return replace_synonyms(system, text, capacity, context, weighted, reply, NULL, NULL, e);
+    return replace_synonyms(system, text, capacity, context, weighted, reply, NULL, NULL,NULL, e);
+}
+bool chat_replace_source(qa_bot_chat_system *system,const char *source,uint32_t context,
+    bool weighted,bool reply,char **out,qa_error *error) {
+    if(!out || *out || !source || !system) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"Source synonym expansion requires its actual string/system/output");return false;
+    }
+    size_t size=strlen(source)+1;char *text=malloc(size);
+    if(!text) {qa_error_set(error,QA_ERROR_MEMORY,0,"Retaining source synonym result");return false;}
+    memcpy(text,source,size);qa_bot_chat_asset *asset=system->options.synonyms;qa_bot_chat_asset_retain(asset);
+    bool ok=replace_synonyms(system,text,size,context,weighted,reply,NULL,NULL,&text,error);
+    qa_bot_chat_asset_release(asset);
+    if(!ok) {free(text);return false;}
+    *out=text;return true;
 }
 bool qa_bot_chat_replace_synonyms_into(qa_bot_chat_system *system, const qa_bot_chat_text_io *io,
                                        uint32_t context, qa_error *e) {
@@ -590,7 +640,7 @@ bool qa_bot_chat_replace_synonyms_into(qa_bot_chat_system *system, const qa_bot_
     qa_bot_chat_asset *asset = system->options.synonyms;
     qa_bot_chat_asset_retain(asset);
     match_access guard = {.system = system, .revision = system->revision};
-    bool ok = replace_synonyms(system, NULL, 0, context, false, false, io, &guard, e);
+    bool ok = replace_synonyms(system, NULL, 0, context, false, false, io, &guard,NULL, e);
     qa_bot_chat_asset_release(asset);
     chat_system_release(system);
     return ok;

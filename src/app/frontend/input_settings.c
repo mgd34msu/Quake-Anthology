@@ -87,7 +87,9 @@ static bool release_all_prepare(frontend_input_settings *owner,double now,qa_err
         parent=qa_input_release_program_parent(owner->release[slot]);
     for (unsigned slot=0;slot<owner->seat_count;++slot) {
         if (owner->all_scopes&(1u<<slot)) continue;
-        bool ok=owner->release[slot]?qa_input_release_extend_all(owner->release[slot],now,parent,error):
+        bool ok=owner->release[slot]?(qa_input_release_all_reserved_is(owner->release[slot],owner->physical[slot])?
+            qa_input_release_reserved_activate(owner->release[slot],error):
+            qa_input_release_extend_all(owner->release[slot],now,parent,error)):
             parent?qa_input_release_prepare_sibling(owner->physical[slot],&all,now,parent,&owner->release[slot],error):
             qa_input_release_prepare(owner->physical[slot],&all,now,&owner->release[slot],error);
         if (!ok) return false;
@@ -123,6 +125,53 @@ bool frontend_input_settings_release_all_ready(const frontend_input_settings *ow
             !qa_input_release_ready(owner->release[slot],owner->physical[slot],&all,error))
             return fail(error,"Window release has not completed every actual physical held scope");
     return true;
+}
+bool frontend_input_settings_unentered_empty(const frontend_input_settings *owner,qa_error *error)
+{
+    if (!owner || !owner->prepared || owner->aborting || owner->terminal || owner->failure.code!=QA_OK ||
+        owner->frontend->input_settings!=owner ||
+        !frontend_input_settings_current(owner,owner->frontend,error) ||
+        !qa_input_platform_settings_retained(owner->platform,owner->native,error) ||
+        qa_input_platform_settings_result(owner->native)!=QA_INPUT_PLATFORM_SETTINGS_UNENTERED)
+        return fail(error,"Final resources require their actual unentered native input owner");
+    for (unsigned slot=0;slot<owner->seat_count;++slot)
+        if (owner->release[slot] &&
+            !qa_input_release_unentered_empty_is(owner->release[slot],owner->physical[slot]))
+            return fail(error,"Final resources cannot dispatch a captured physical release programme");
+    return true;
+}
+bool frontend_input_settings_reserve_all(frontend_input_settings *owner,qa_error *error)
+{
+    if (!owner || !owner->prepared || owner->aborting || owner->terminal || owner->failure.code!=QA_OK ||
+        owner->frontend->input_settings!=owner ||
+        !frontend_input_settings_current(owner,owner->frontend,error) ||
+        !qa_input_platform_settings_retained(owner->platform,owner->native,error)) return false;
+    const qa_console_release *parent=NULL;
+    for (unsigned slot=0;slot<owner->seat_count && !parent;++slot)
+        parent=qa_input_release_program_parent(owner->release[slot]);
+    qa_input_release_scope empty={.controller=-1};
+    for (unsigned slot=0;slot<owner->seat_count;++slot) {
+        if (!owner->release[slot]) {
+            bool ok=parent?qa_input_release_prepare_sibling(owner->physical[slot],&empty,
+                owner->now_ms,parent,&owner->release[slot],error):qa_input_release_prepare(
+                owner->physical[slot],&empty,owner->now_ms,&owner->release[slot],error);
+            if (!ok) return false;
+        }
+        if (!qa_input_release_reserve_all(owner->release[slot],parent,error)) return false;
+        if (!parent) parent=qa_input_release_program_parent(owner->release[slot]);
+    }
+    return true;
+}
+bool frontend_input_settings_failed_coverage_is(const frontend_input_settings *owner,const qa_frontend *f)
+{
+    if (!owner || !frontend_input_settings_shutdown_ready(owner,f,NULL) || owner->terminal ||
+        !owner->prepared || owner->failure.code==QA_OK) return false;
+    bool failed=false;
+    for (unsigned slot=0;slot<owner->seat_count;++slot) {
+        if (!qa_input_release_all_reserved_is(owner->release[slot],owner->physical[slot])) return false;
+        failed=failed || qa_input_release_failed_is(owner->release[slot],owner->physical[slot]);
+    }
+    return failed;
 }
 static frontend_input_settings *create(qa_frontend *frontend,double now,
     frontend_input_settings **out,qa_error *error)
@@ -274,6 +323,14 @@ bool frontend_input_settings_ready(const frontend_input_settings *owner,qa_error
     const qa_input_release *release[QA_INPUT_LOCAL_SEATS]; proofs(owner,release);
     return qa_input_platform_settings_ready(owner->native,release,error);
 }
+bool frontend_input_settings_ready_is(const frontend_input_settings *owner)
+{
+    if (!owner || !owner->prepared || owner->aborting || owner->terminal ||
+        owner->failure.code!=QA_OK || owner->frontend->input_settings!=owner ||
+        !frontend_input_settings_current(owner,owner->frontend,NULL)) return false;
+    const qa_input_release *release[QA_INPUT_LOCAL_SEATS]; proofs(owner,release);
+    return qa_input_platform_settings_ready_is(owner->native,owner->platform,release);
+}
 void frontend_input_settings_publish(frontend_input_settings *owner)
 {
     qa_input_platform_settings_publish(owner->native);
@@ -289,6 +346,12 @@ bool frontend_input_settings_abort(frontend_input_settings *owner,qa_error *erro
     if (qa_input_platform_settings_result(owner->native)==QA_INPUT_PLATFORM_SETTINGS_ENTERED)
         return frontend_input_settings_retire_entered(owner,error);
     owner->aborting=true;
+    /* A sibling's successful rows remain retained until failed history gains
+     * genuine retirement authority; disposal cannot destroy ALL coverage. */
+    for (unsigned slot=0;slot<owner->seat_count;++slot)
+        if (qa_input_release_failed_is(owner->release[slot],owner->physical[slot]) ||
+            qa_input_release_waiting_is(owner->release[slot],owner->physical[slot]))
+            return fail(error,"Entered unfinished input history requires actual completion or retirement");
     for (unsigned slot=0;slot<QA_INPUT_LOCAL_SEATS;++slot) if (owner->release[slot]) {
         if (!qa_input_release_abort(owner->release[slot],&owner->source[slot],error)) return false;
         owner->release[slot]=NULL;
@@ -309,6 +372,25 @@ bool frontend_input_settings_retire_entered(frontend_input_settings *owner,qa_er
     const qa_input_release *release[QA_INPUT_LOCAL_SEATS]; proofs(owner,release);
     bool ok=qa_input_platform_settings_retire_entered(owner->native,release,error);
     if (qa_input_platform_settings_result(owner->native)==QA_INPUT_PLATFORM_SETTINGS_RETIRED) {
+        for (unsigned slot=0;slot<QA_INPUT_LOCAL_SEATS;++slot) if (owner->release[slot]) {
+            qa_input_release_publish(owner->release[slot]); owner->release[slot]=NULL;
+        }
+        owner->terminal=true;
+    }
+    if (!ok) retain_failure(owner,error);
+    return ok;
+}
+bool frontend_input_settings_abort_empty(frontend_input_settings *owner,qa_error *error)
+{
+    if (!owner || owner->terminal || !owner->prepared ||
+        !frontend_input_settings_current(owner,owner->frontend,error))
+        return fail(error,"Empty resource cancellation lost its actual input parents");
+    if (qa_input_platform_settings_result(owner->native)!=QA_INPUT_PLATFORM_SETTINGS_ENTERED)
+        return frontend_input_settings_abort(owner,error);
+    const qa_input_release *release[QA_INPUT_LOCAL_SEATS]; proofs(owner,release);
+    bool ok=qa_input_platform_settings_retire_entered_empty(owner->native,release,error);
+    if (qa_input_platform_settings_result(owner->native)==QA_INPUT_PLATFORM_SETTINGS_RETIRED) {
+        owner->aborting=true;
         for (unsigned slot=0;slot<QA_INPUT_LOCAL_SEATS;++slot) if (owner->release[slot]) {
             qa_input_release_publish(owner->release[slot]); owner->release[slot]=NULL;
         }
@@ -345,6 +427,19 @@ bool frontend_input_settings_engine_shutdown(frontend_input_settings *owner,
     if (!qa_application_engine_shutdown_read(loan,&console,&cvars,error)) return false;
     (void)cvars;
     if (owner->terminal) { *complete=true; return true; }
+    if (qa_application_engine_shutdown_candidate(loan)) {
+        for (unsigned slot=0;slot<owner->seat_count;++slot)
+            if (!(owner->all_scopes&(1u<<slot)) &&
+                (!owner->release[slot] || qa_input_release_console(owner->release[slot])!=console ||
+                 !qa_input_release_reserved_retirement_ready(owner->release[slot],
+                    QA_CONSOLE_RELEASE_DETACHED_SOURCE,retirement,owner,error))) return false;
+        for (unsigned slot=0;slot<owner->seat_count;++slot)
+            if (!(owner->all_scopes&(1u<<slot))) {
+                qa_input_release_reserved_retirement_publish(owner->release[slot],
+                    (double)owner->frontend->wall_time_ns/1000000.0);
+                owner->all_scopes|=1u<<slot;
+            }
+    }
     /* Admit every retained history before native cleanup or the first consume.
      * The physical scope comes from the same native owner that prepared it. */
     for (unsigned slot=0;slot<QA_INPUT_LOCAL_SEATS;++slot) if (owner->release[slot]) {

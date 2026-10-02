@@ -242,6 +242,14 @@ bool application_save_content_collect(const qa_application *app, qa_application_
             qa_launch_snapshot_resource(launch, i), &g->resources[i], error);
     const qa_application_content_visitor visitor = {.context = g, .pool = add_pool, .catalog = add_catalog, .view = add_view};
     if (ok) ok = qa_application_q3_content_visit(app, &visitor, error);
+    for (size_t i = 0; ok && i < application_unified_event_resource_count(app); ++i) {
+        const application_unified_event_resource *row = application_unified_event_resource_at(app, i);
+        ok = row && row->pool && row->resource &&
+            qa_resource_pool_find(row->pool, qa_resource_id(row->resource)) == row->resource &&
+            add_pool(g, row->pool, error);
+        if (!ok && (!error || error->code == QA_OK))
+            fail(error, QA_ERROR_FORMAT, "Source event resource lost its actual immutable pool");
+    }
     for (size_t i = 0; ok && i < application_equipment_runtime_source_count(app->equipment_runtime); ++i) {
         application_equipment_runtime_source source;
         ok = application_equipment_runtime_source_at(app->equipment_runtime, i, &source, error);
@@ -368,6 +376,17 @@ uint64_t application_save_content_application_pool(const qa_application_content_
 uint64_t application_save_content_application_catalog(const qa_application_content_graph *g) { return g ? g->application_catalog : 0; }
 uint64_t application_save_content_launch_catalog(const qa_application_content_graph *g) { return g ? g->launch_catalog : 0; }
 uint64_t application_save_content_launch_view(const qa_application_content_graph *g) { return g ? g->launch_view : 0; }
+bool application_save_content_event_pool(qa_application_content_graph *g, uint64_t id,
+    qa_resource_pool **out, qa_error *error)
+{
+    qa_resource_pool *pool = qa_application_content_pool(g, id);
+    if (!g || !g->pending || !pool || !out || *out)
+        return fail(error, QA_ERROR_FORMAT, "Source event resource has no restored pool owner");
+    if (g->pools[id - 1].owned) g->pools[id - 1].owned = false;
+    else qa_resource_pool_retain(pool);
+    *out = pool;
+    return true;
+}
 bool application_save_content_instance(const qa_application_content_graph *g, const char *name,
     application_saved_instance_content *out, qa_error *error)
 {

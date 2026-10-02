@@ -34,6 +34,8 @@ typedef enum input_native_startup {
 } input_native_startup;
 struct qa_input_platform {
     qa_input_platform_options options;
+    const qa_cvars_edit *constructor_edit;
+    const qa_input_platform_settings *constructor_settings;
     struct device *devices;
     size_t device_count, device_capacity;
     struct seat_route seats[4];
@@ -48,6 +50,8 @@ struct qa_input_platform {
     int32_t joystick_instance;
     qa_source_joystick source;
     bool windows_joystick, mouse_available;
+    bool joystick_enabled, midi_enabled;
+    int requested_midi_device;
     int source_slot, midi_slot, midi_fd, midi_channel;
     qa_midi_decoder midi;
     bool midi_pending;

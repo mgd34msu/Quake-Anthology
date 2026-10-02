@@ -43,6 +43,7 @@ static bool same_target(const qa_target_binding *a, const qa_target_binding *b) 
 }
 /* Candidate storage never owns shared services or published bindings. */
 static void storage_free(qa_q1_game *g) {
+    q1_source_rogue_runes_free(g);
     q1_wire_destroy(g);
     while (g->allocated_actors) {
         q1_actor *next = g->allocated_actors->allocation_next;
@@ -217,6 +218,8 @@ static bool actors(q1_save_io *io, qa_q1_game *g, q1_door_group **index, size_t 
              actor->think == Q1_THINK_SPAWN_TEMPLATE) &&
             !map)
             return q1_save_fail(io, "Q1 authored continuation lacks its map state");
+        if (actor->kind == Q1_ROGUE_TEAM_STATE && map)
+            return q1_save_fail(io, "Rogue player state retained an authored map continuation");
     }
     return true;
 }
@@ -261,6 +264,41 @@ static bool players(q1_save_io *io, qa_q1_game *g) {
     }
     return true;
 }
+static bool rune_number(q1_save_io *io, double *value) {
+    uint64_t bits;
+    memcpy(&bits, value, sizeof(bits));
+    if (!q1_save_u64(io, &bits)) return false;
+    if (io->reading) memcpy(value, &bits, sizeof(bits));
+    return true;
+}
+static bool rogue_runes(q1_save_io *io, qa_q1_game *g) {
+    uint32_t count = 0;
+    if (!io->reading)
+        for (const q1_rogue_rune_player *row = g->rogue_rune_players; row; row = row->next) ++count;
+    Q1_SAVE(io, u32, count);
+    if (count > g->capacity || (count && g->options.program != QA_Q1_ROGUE) ||
+        (io->reading && count > (io->input.size - io->offset) / 56))
+        return q1_save_fail(io, "Invalid Rogue rune carrier count");
+    q1_rogue_rune_player **link = &g->rogue_rune_players;
+    for (uint32_t i = 0; i < count; ++i) {
+        if (io->reading) {
+            *link = allocate(io, 1, sizeof(**link));
+            if (!*link) return false;
+        }
+        q1_rogue_rune_player *row = *link;
+        if (!q1_save_owned_actor(io, &row->actor) || !row->actor.registry)
+            return q1_save_fail(io, "Rogue rune carrier has no live canonical owner");
+        Q1_SAVE(io, u32, row->rune);
+        if (!rune_number(io, &row->notice) || !rune_number(io, &row->earth_noise) ||
+            !rune_number(io, &row->black_noise) || !rune_number(io, &row->hell_noise) ||
+            !rune_number(io, &row->regeneration)) return false;
+        for (const q1_rogue_rune_player *prior = g->rogue_rune_players; prior != row; prior = prior->next)
+            if (qa_actor_id_equal(prior->actor, row->actor))
+                return q1_save_fail(io, "Duplicate Rogue rune carrier");
+        link = &row->next;
+    }
+    return true;
+}
 static bool payload(q1_save_io *io, qa_q1_game *g) {
     if (!q1_save_runtime(io, g) || !q1_save_wire(io, g))
         return false;
@@ -274,7 +312,35 @@ static bool payload(q1_save_io *io, qa_q1_game *g) {
     size_t count;
     if (!groups(io, g, &index, &count))
         return false;
-    bool ok = actors(io, g, index, count) && players(io, g) && q1_save_wire_validate(io, g);
+    bool ok = actors(io, g, index, count) && players(io, g) && rogue_runes(io, g) && q1_save_wire_validate(io, g);
+    for (uint32_t i = 0; ok && i < g->capacity; ++i) {
+        const q1_actor *actor = g->actors[i];
+        if (!actor) continue;
+        if ((actor->rogue_next_update || actor->rogue_tag_owner.registry ||
+             actor->rogue_runes_spawned || actor->rogue_rune_spawn.registry) &&
+            (!g->maps || !qa_actor_id_equal(g->maps->world_actor, actor->id)))
+            ok = q1_save_fail(io, "Rogue timer word differs from the actual source world");
+        if ((actor->ctf_last_capture || actor->ctf_last_capture_team ||
+             actor->ctf_runes_spawned || actor->ctf_rune_spawn.registry) &&
+            (!g->maps || !qa_actor_id_equal(g->maps->world_actor, actor->id)))
+            ok = q1_save_fail(io, "CTF words differ from the actual source world");
+        if (actor->kind != Q1_ROGUE_TEAM_STATE) continue;
+        const qa_actor_record *owner = qa_actors_get(qa_session_actors(g->services.session),
+            actor->owner);
+        if (owner) {
+            const q1_player *player = actor->owner.slot < g->capacity ?
+                g->players[actor->owner.slot] : NULL;
+            if (!player || !player->source_client || !player->active ||
+                !qa_actor_id_equal(player->id, actor->owner))
+                ok = q1_save_fail(io, "Rogue state has no matching physical source client");
+        }
+        for (uint32_t j = 0; ok && j < i; ++j) {
+            const q1_actor *prior = g->actors[j];
+            if (prior && prior->kind == Q1_ROGUE_TEAM_STATE &&
+                qa_actor_id_equal(prior->owner, actor->owner))
+                ok = q1_save_fail(io, "Duplicate Rogue player state continuation");
+        }
+    }
     free(index);
     return ok;
 }
@@ -342,6 +408,7 @@ bool qa_q1_game_restore_prepare(qa_q1_game *g, qa_bytes bytes, qa_q1_restore **o
     candidate->allocated_players = candidate->spare_players = candidate->retired_players = NULL;
     candidate->maps = NULL;
     candidate->wire = NULL;
+    candidate->rogue_rune_players = NULL;
     q1_save_io io = {.game = candidate, .input = bytes, .error = error, .reading = true};
     qa_string_id *strings = NULL;
     candidate->actors = allocate(&io, g->capacity, sizeof(*g->actors));

@@ -1,6 +1,7 @@
 #include "native_q2_combat_policy.h"
 #include "native_q2_console.h"
 #include "native_q2_feedback_wire.h"
+#include "native_q2_delivery.h"
 #include "qa/game_q2_combat.h"
 #include "qa/game_q2_feedback.h"
 
@@ -448,11 +449,11 @@ static bool source_feedback(void *opaque, qa_combat *combat,
     qa_vec3 point, normal;
     if (!application_native_q2_feedback_geometry(rules.edition == QA_Q2_RERELEASE,
             (uint8_t)effect, request->point, request->normal, &point, &normal, error)) return false;
-    return application_emit(app, &(qa_builtin_event){.kind = QA_BUILTIN_PARTICLES,
+    return application_emit_q2_particles(provider, &(qa_builtin_event){.kind = QA_BUILTIN_PARTICLES,
         .family = QA_GAME_Q2, .provider = provider->owner, .actor = request->target,
         .other = request->attack.attacker, .origin = point,
         .direction = normal, .code = effect,
-        .time_ns = qa_session_elapsed(app->session)}, error);
+        .time_ns = qa_session_elapsed(app->session)}, request->point, error);
 }
 
 bool application_native_q2_combat_policy(application_provider *provider,

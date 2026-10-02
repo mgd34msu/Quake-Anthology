@@ -25,13 +25,16 @@ typedef struct application_control_context {
     bool retained, defer_postthink;
     qa_actor_owner arsenal;
     qa_item_id weapon;
+    bool unified_command, unified_intent, unified_holdable;
+    bool unified_has_impulse;
+    uint8_t unified_impulse;
     bool command_only;
     qa_source_command command;
     uint64_t source_elapsed_ns;
     bool source_usercmd;
     bool source_holdable;
     bool source_guestcmd;
-    bool source_qwcmd, source_nqcmd, source_input_applied;
+    bool source_qwcmd, source_nqcmd, source_q2cmd, source_input_applied;
     qa_movement_command source_command;
 } application_control_context;
 static inline qa_actor_owner application_control_provider(const application_control_context *context)
@@ -49,6 +52,13 @@ struct application_control_turn;
 struct application_control_frames;
 struct application_qc_parked_input;
 struct application_source_input_scope;
+struct application_control_mod_input;
+struct application_control_mod_input *application_control_mod_head(const qa_application *);
+void application_control_mod_head_set(qa_application *, struct application_control_mod_input *);
+bool application_control_mod_abort_all(qa_application *, qa_error *);
+struct application_q3_mod_inputs;
+bool application_control_mod_usercmd(void *, qa_actor_id,
+    const struct application_q3_mod_inputs *, const qa_q3_player *, qa_q3_usercmd *, qa_error *);
 /* Borrowed only during an actual retained NQ PHYSICS turn. External GAME
  * hooks use this owner instead of synthesizing a nested command admission. */
 typedef struct application_control_external_stage {
@@ -75,6 +85,7 @@ bool application_qc_control_receipt_time(const application_provider *, qa_actor_
 bool application_qc_control_input_active(const application_provider *);
 bool application_player_bot(const qa_application *, qa_actor_id);
 bool application_control_q1_world_begin(application_provider *, qa_q1_game_operation *, qa_error *);
+void application_control_frames_consume_impulse(qa_application *, qa_actor_id, uint64_t);
 bool application_control_q1_source_prethink(qa_application *, qa_actor_id,
     const qa_movement_command *, qa_error *);
 bool application_control_frames_q1_prepared(const qa_application *, qa_actor_id, qa_actor_owner);
@@ -108,6 +119,8 @@ bool application_control_frames_q3_move(qa_application *, const qa_source_comman
 bool application_guest_input_interval(const qa_application *, qa_actor_id, uint64_t *);
 void application_control_frames_state(qa_application *, qa_actor_id, qa_movement_state *);
 qa_movement_state *application_control_frames_state_current(const qa_application *, qa_actor_id);
+const qa_movement_call *application_control_frames_call_swap(qa_application *, const qa_movement_call *);
+const qa_movement_call *application_control_frames_call_current(const qa_application *, qa_actor_id);
 bool application_control_q3_policy(application_provider *, qa_actor_id, uint8_t,
                                    const qa_q3_wire_policy *, qa_error *);
 bool application_control_q3_source_state(application_provider *, qa_actor_id,

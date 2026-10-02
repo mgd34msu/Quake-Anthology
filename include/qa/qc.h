@@ -383,6 +383,11 @@ bool qa_qc_slot(const qa_qc_instance *instance, uint32_t slot,
  * world and reserved/free rows. This does not bind or project an actor. */
 bool qa_qc_slot_reference(const qa_qc_instance *, uint32_t slot,
                            int32_t *out, qa_error *);
+/* Pure retained flags observation: no actor projection, body refresh or guest
+ * callbacks. A live actor without an allocated row or declared flags field
+ * returns found=false; a retired actor is an error. */
+bool qa_qc_actor_movement_flags_read(const qa_qc_instance *, qa_actor_id,
+    uint32_t *out, bool *found, qa_error *);
 bool qa_qc_actor_reference(qa_qc_instance *instance, qa_actor_id actor,
                            bool project, int32_t *out, qa_error *error);
 bool qa_qc_reference_actor(const qa_qc_instance *instance, int32_t reference,

@@ -6,6 +6,11 @@
 #include "map_travel_private.h"
 #include "equipment_runtime.h"
 #include "guest_input_private.h"
+#include "native_q1_composition.h"
+#include "native_q1_composition_player.h"
+#include "native_q1_composition_death.h"
+#include "guest_q3_private.h"
+#include "guest_q3_weapons_services.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -130,9 +135,33 @@ static bool mode_grapple_pulling(void *opaque, qa_actor_id actor)
            qa_q1_grapple_pulling(provider->state.q1, actor);
 }
 
+static bool restore_player_binding(void *opaque, qa_mode_id mode, qa_actor_id actor,
+    qa_actor_owner owner, qa_match_binding *out, qa_error *error)
+{
+    qa_application *application = opaque;
+    if (!application || !out)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Restored match player requires its actual application owner");
+    application_provider *provider = application_world_provider(application, QA_ROLE_ENTITIES, "");
+    struct application_q3_guest *engine = q3g_engine(provider);
+    if (!provider || provider->application != application ||
+        !provider->constructed || provider->close_pending || !engine || !engine->game ||
+        !engine->game->weapon_services)
+        return application_fail(error, QA_ERROR_NOT_FOUND,
+            "Restored match player has no selected original Q3 Source binding");
+    return application_q3_weapons_services_match_binding(engine->game->weapon_services,
+        mode, actor, owner, out, error);
+}
+
 static qa_modes_hooks mode_hooks(qa_application *application)
 {
     return (qa_modes_hooks){.context = application,
+                            .q1_composition_expected = application_native_q1_composition_expected,
+                            .q1_composition_current = application_native_q1_composition_current,
+                            .q1_composition_player_current = application_native_q1_composition_player_current,
+                            .q1_rogue_state = application_native_q1_rogue_state,
+                            .q1_rogue_state_current = application_native_q1_rogue_state_current,
+                            .q1_rogue_number_read = application_native_q1_rogue_number_read,
+                            .q1_rogue_number_write = application_native_q1_rogue_number_write,
                             .event = mode_event,
                             .emit = application_native_mode_emit,
                             .q3_clock = application_native_mode_q3_clock,
@@ -160,6 +189,7 @@ static qa_modes_hooks mode_hooks(qa_application *application)
                             .intent = mode_intent,
                             .respawn = application_native_mode_respawn,
                             .q1_source_score = application_native_q1_mode_score,
+                            .q1_source_death_bound = application_native_q1_source_death_bound,
                             .q1_source_set_score = application_native_q1_mode_set_score,
                             .q1_source_add_score = application_native_q1_mode_add_score,
                             .q1_ctf_suicide_notice = application_native_q1_ctf_suicide_notice,
@@ -185,7 +215,8 @@ static qa_modes_hooks mode_hooks(qa_application *application)
                             .horde_manager = application_native_horde_manager,
                             .campaign_restart = application_native_horde_restart,
                             .grapple_pulling = mode_grapple_pulling,
-                            .player_view = mode_player_view};
+                            .player_view = mode_player_view,
+                            .restore_player_binding = restore_player_binding};
 }
 
 static application_provider *named(application_publication *publication,
@@ -286,7 +317,7 @@ bool application_match_prepare_modes(qa_application *application,
 {
     const qa_launch_choices *choices =
         qa_launch_snapshot_choices(publication->candidate);
-    if (choices->mode_count > UINT32_MAX)
+    if (choices->mode_count >= UINT32_MAX)
         return application_fail(error, QA_ERROR_MEMORY,
                                 "selected mode roster exceeds engine capacity");
     qa_actor_owner owner;
@@ -302,9 +333,7 @@ bool application_match_prepare_modes(qa_application *application,
                                                : application->world,
             application->physics),
         .hooks = mode_hooks(application),
-        .mode_capacity = (uint32_t)(choices->mode_count == 0
-                                        ? 1
-                                        : choices->mode_count),
+        .mode_capacity = (uint32_t)choices->mode_count + 1,
         .objective_capacity = qa_actors_capacity(qa_session_actors(application->session)),
         .random_seed = application->catalog_generation ^
                        UINT64_C(0x9e3779b97f4a7c15),
@@ -354,7 +383,7 @@ bool application_match_prepare_modes(qa_application *application,
             publication->primary_mode = id;
     }
 
-    return true;
+    return application_native_q1_composition_prepare(application, publication, error);
 }
 
 bool application_match_prepare_equipment(qa_application *application,
@@ -374,6 +403,7 @@ bool application_match_prepare_equipment(qa_application *application,
         .primary_holster = equipment_holster,
         .primary_holstered = equipment_holstered,
         .primary_resume = equipment_resume,
+        .grenade_interval = application_q3_weapons_services_grenade_interval,
     };
     application_equipment_runtime_options runtime = {.application = application,
         .snapshot = publication->candidate, .providers = publication->next,

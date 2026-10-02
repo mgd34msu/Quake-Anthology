@@ -61,7 +61,8 @@ static bool bot_supply_actor(void *opaque,qa_actor_id pickup,qa_error *error) {
     if(!weapon && d->kind!=QA_Q2_ITEM_AMMO) return true;
     *call->found=true;
     if(!q2_item_eligible(g,actor,call->recipient,call->eligible,error)) return false;
-    qa_supply *selected=q2_item_supply(g,call->recipient);
+    qa_supply *selected;
+    if(!q2_item_supply(g,call->recipient,&selected,error)) return false;
     if(!q2_actor_live(g,pickup) || !q2_actor_live(g,call->recipient)) goto stale;
     if(weapon) {
         bool owned;
@@ -172,7 +173,8 @@ static bool native_preview(item_inspection *call, q2_actor *actor, qa_error *err
     case QA_Q2_ITEM_AMMO:
     case QA_Q2_ITEM_WEAPON: {
         bool weapon = d->kind == QA_Q2_ITEM_WEAPON;
-        qa_supply *supply = q2_item_supply(g, call->recipient);
+        qa_supply *supply;
+        if (!q2_item_supply(g, call->recipient, &supply, error)) return false;
         if (!q2_actor_live(g, call->recipient) || !q2_actor_live(g, call->pickup)) return true;
         bool mapped = supply && qa_supply_maps(supply, d->item, weapon);
         bool owned = entry.count > 0;

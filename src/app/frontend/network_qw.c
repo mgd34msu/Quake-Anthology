@@ -611,7 +611,7 @@ static bool source_status(void *context, const char **out, qa_error *error)
             *top = qa_qw_info_get(&parsed, "topcolor"), *bottom = qa_qw_info_get(&parsed, "bottomcolor");
         length = snprintf((char *)status.data + used, 65531 - used, "%u %.0f %" PRIu64 " %u \"%s\" \"%s\" %s %s\n",
             (uint32_t)peer->client.generation * 32u + (uint32_t)i + 1u, trunc((double)source.frags),
-            host->frontend->time_ns >= peer->connected_ns ? (host->frontend->time_ns - peer->connected_ns) / UINT64_C(60000000000) : 0,
+            host->frontend->wall_time_ns >= peer->connected_ns ? (host->frontend->wall_time_ns - peer->connected_ns) / UINT64_C(60000000000) : 0,
             peer_ping(peer), name ? name : "unnamed", skin ? skin : "", top && *top ? top : "0", bottom && *bottom ? bottom : "0");
         qa_qw_info_free(&parsed);
         if (length < 0 || (size_t)length >= 65531 - used) ok = false; else used += (size_t)length;
