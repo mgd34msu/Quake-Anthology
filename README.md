@@ -12,7 +12,7 @@ You need a C17 compiler, CMake 3.20 or newer, Git and pkg-config. Install the de
 git clone https://github.com/mgd34msu/Quake-Anthology.git
 cd Quake-Anthology
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build --parallel
+cmake --build build --target quake-anthology --parallel
 ```
 
 After arranging your game data as described below, open the startup menu:
