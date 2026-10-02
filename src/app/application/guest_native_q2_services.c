@@ -392,6 +392,10 @@ static bool movement_prepare(void *opaque, qa_native_host *host, qa_native_addre
     if (stage && (stage->application != app || !qa_actor_id_equal(stage->actor, actor) ||
         !stage->current || !stage->current(stage)))
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 Pmove lost its retained source turn");
+    const application_control_context *control_source = !raw && !stage
+        ? application_control_frame_current(app, actor) : NULL;
+    if (!raw && !stage && !control_source)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 Pmove has no actual source control admission");
     if (!qa_actors_get(qa_session_actors(app->session), actor) ||
         (!raw && application_provider_for(app, actor, QA_ROLE_MOVEMENT, NULL) != engine->provider))
         return application_fail(error, QA_ERROR_UNSUPPORTED, "Native Q2 Pmove cannot replace another selected movement owner");
@@ -400,7 +404,8 @@ static bool movement_prepare(void *opaque, qa_native_host *host, qa_native_addre
         !qa_combat_read_traits(app->combat, actor, &combat, error)) return false;
     input->actor = actor;
     input->command.sequence = engine->current_command_sequence;
-    input->time_ns = raw ? raw->time_ns : stage ? stage->source.frame.time_ns : qa_session_elapsed(app->session);
+    input->time_ns = raw ? raw->time_ns : stage ? application_control_time(&stage->source)
+        : application_control_time(control_source);
     input->elapsed_ns = (uint64_t)input->command.milliseconds * UINT64_C(1000000);
     input->environment.health = combat.health;
     const qa_cvar_view *air = qa_cvars_find(engine->cvars, "sv_airaccelerate");
