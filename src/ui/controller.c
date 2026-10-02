@@ -8,8 +8,8 @@ float ui_glyph_width(qa_ui *ui, uint32_t scalar) {
     qa_font_glyph glyph;
     qa_font_info info;
     if (!qa_font_resolve(&ui->options.fonts, scalar, false, &glyph) ||
-        !qa_font_describe(glyph.font, &info)) return 8 * ui->text_scale;
-    return glyph.advance * 8 * ui->text_scale / fmaxf(1, info.line_height);
+        !qa_font_describe(glyph.font, &info)) return 8 * UI_MENU_FONT_SCALE * ui->text_scale;
+    return glyph.advance * 8 * UI_MENU_FONT_SCALE * ui->text_scale / fmaxf(1, info.line_height);
 }
 bool ui_fail(qa_error *error, const char *message) {
     qa_error_set(error, QA_ERROR_ARGUMENT, 0, "%s", message);

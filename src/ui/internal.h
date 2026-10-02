@@ -6,6 +6,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#define UI_MENU_FONT_SCALE 2.6f
+
 typedef struct ui_cursor { qa_ui_id menu, control; float scroll; } ui_cursor;
 typedef struct ui_field { qa_ui_id menu, control; size_t cursor, top; uint64_t revision; bool overstrike, scrolled; } ui_field;
 struct qa_ui {

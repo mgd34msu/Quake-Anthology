@@ -96,12 +96,13 @@ static bool field_draw(qa_ui *ui, qa_scene_frame *frame, qa_scene_rect target,
     display[size] = 0;
     float x = control->rect.x + control->rect.width * .5f;
     if (!ui_draw_text(ui, frame, target, control->rect.x + 10, control->rect.y + 6,
-        control->label, color, 1, QA_FONT_ALIGN_LEFT, error) ||
-        !draw_text(ui, frame, target, x, control->rect.y + 6, display, color, 1,
+        control->label, color, UI_MENU_FONT_SCALE, QA_FONT_ALIGN_LEFT, error) ||
+        !draw_text(ui, frame, target, x, control->rect.y + 6, display, color, UI_MENU_FONT_SCALE,
             QA_FONT_ALIGN_LEFT, true, false, error)) return false;
+    float cursor_width = state->cursor < count ? cells[state->cursor].width : ui_glyph_width(ui, ' ');
     return !focused || fmod(floor(ui->time_ms / 256), 2) != 0 || ui_fill(ui, frame, target,
         (qa_scene_rect_f){x + width, control->rect.y + 5,
-            state->overstrike ? 8 * ui->text_scale : 1, 14 * ui->text_scale}, color, error);
+            state->overstrike ? cursor_width : 1, 8 * UI_MENU_FONT_SCALE * ui->text_scale}, color, error);
 }
 static bool list_draw(qa_ui *ui, qa_scene_frame *frame, qa_scene_rect target,
                        const qa_ui_control *control, qa_scene_vec4 color,
@@ -128,9 +129,9 @@ static bool list_draw(qa_ui *ui, qa_scene_frame *frame, qa_scene_rect target,
             label_x += height;
         }
         if (!ui_draw_text(ui, frame, clipped, label_x, y + 6,
-                           row->label, text_color, 1, QA_FONT_ALIGN_LEFT, error) ||
+                           row->label, text_color, UI_MENU_FONT_SCALE, QA_FONT_ALIGN_LEFT, error) ||
             !ui_draw_text(ui, frame, clipped, control->rect.x + control->rect.width - 20,
-                           y + 6, row->detail, text_color, .75f, QA_FONT_ALIGN_RIGHT, error)) return false;
+                           y + 6, row->detail, text_color, .75f * UI_MENU_FONT_SCALE, QA_FONT_ALIGN_RIGHT, error)) return false;
     }
     if (!maximum) return true;
     float thumb = fmaxf(24, control->rect.height * (float)page / (float)count);
@@ -189,7 +190,7 @@ static bool draw(qa_ui *ui, qa_scene_frame *frame, qa_scene_rect viewport, float
             continue;
         }
         if (!ui_draw_text(ui, frame, target, control.rect.x + 10, control.rect.y + 6,
-                           control.label, color, 1, QA_FONT_ALIGN_LEFT, error)) return false;
+                           control.label, color, UI_MENU_FONT_SCALE, QA_FONT_ALIGN_LEFT, error)) return false;
         const char *value = NULL;
         char numeric[32];
         if (control.kind == QA_UI_TOGGLE) value = control.value.checked ? "On" : "Off";
@@ -208,7 +209,7 @@ static bool draw(qa_ui *ui, qa_scene_frame *frame, qa_scene_rect viewport, float
                     control.rect.y + 8, 6, 14}, color, error)) return false;
         }
         if (!ui_draw_text(ui, frame, target, control.rect.x + control.rect.width - 10,
-                           control.rect.y + 6, value, color, 1, QA_FONT_ALIGN_RIGHT, error)) return false;
+                           control.rect.y + 6, value, color, UI_MENU_FONT_SCALE, QA_FONT_ALIGN_RIGHT, error)) return false;
     }
     if (menu.scrollable && menu.content_height > menu.scroll_rect.height) {
         float height = menu.scroll_rect.height;
@@ -219,7 +220,7 @@ static bool draw(qa_ui *ui, qa_scene_frame *frame, qa_scene_rect viewport, float
             top, 10, thumb}, (qa_scene_vec4){.7f, .7f, .7f, 1}, error)) return false;
     }
     if (ui->capture && !ui_draw_text(ui, frame, viewport, 320, 432,
-        "Press key/button. Esc cancels.", white, 1, QA_FONT_ALIGN_CENTER, error)) return false;
+        "Press key/button. Esc cancels.", white, UI_MENU_FONT_SCALE, QA_FONT_ALIGN_CENTER, error)) return false;
     return ui_fill(ui, frame, viewport,
         (qa_scene_rect_f){ui->cursor.x, ui->cursor.y, 3, 14}, white, error);
 }
