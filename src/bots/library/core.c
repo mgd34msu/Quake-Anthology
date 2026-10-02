@@ -96,6 +96,7 @@ bool qa_bot_library_create(const qa_bot_library_options *options, qa_bot_library
     library->options = *options;
     if(!qa_bot_memory_create(NULL,&library->memory,e)) {free(library);return false;}
     library->options.scripts.memory=qa_bot_memory_script_services(library->memory);
+    library->options.scripts.file_text=true;
     if (options->preprocessor.globals) {
         qa_script_defines_retain((qa_script_defines *)options->preprocessor.globals);
     } else {

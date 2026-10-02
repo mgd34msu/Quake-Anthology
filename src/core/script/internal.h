@@ -10,10 +10,28 @@
 #include <stdlib.h>
 #include <string.h>
 
+enum { SCRIPT_LEXER_BYTES=2148, SCRIPT_PUNCTUATION_BYTES=1024, SCRIPT_TOKEN_BYTES=1068,
+    SCRIPT_LEXER_BUFFER=1024, SCRIPT_LEXER_POINTER=1028, SCRIPT_LEXER_END=1032,
+    SCRIPT_LEXER_LAST_POINTER=1036, SCRIPT_LEXER_WHITESPACE=1040, SCRIPT_LEXER_END_WHITESPACE=1044,
+    SCRIPT_LEXER_LENGTH=1048, SCRIPT_LEXER_LINE=1052, SCRIPT_LEXER_LAST_LINE=1056,
+    SCRIPT_LEXER_AVAILABLE=1060, SCRIPT_LEXER_FLAGS=1064, SCRIPT_LEXER_PUNCTUATIONS=1068,
+    SCRIPT_LEXER_TABLE=1072, SCRIPT_LEXER_TOKEN=1076, SCRIPT_LEXER_NEXT=2144 };
+typedef struct script_lexer_allocation {
+    qa_script_memory_allocation allocation;
+    size_t reference;
+    uint8_t *bytes;
+    uint32_t size;
+    bool detached,retired;
+} script_lexer_allocation;
 struct qa_script_lexer {
     qa_bytes input;
     qa_script_lexer_options options;
-    qa_script_lexer_state state;
+    qa_script_memory memory;
+    script_lexer_allocation record,table;
+    uint32_t column;
+    qa_script_location token_location;
+    qa_bytes token_whitespace;
+    size_t token_extent;
     const char *path;
     qa_arena arena;
     const qa_script_punctuation *punctuations;
@@ -21,8 +39,52 @@ struct qa_script_lexer {
     qa_script_punctuation *owned_punctuations;
     int32_t *owned_index;
     size_t punctuation_count;
-    bool source_failure;
+    bool source_failure,released;
 };
+typedef struct script_lexer_cursor {size_t offset;uint32_t line,column;} script_lexer_cursor;
+static inline size_t script_lexer_offset(const qa_script_lexer *l) {
+    return (size_t)qa_load_u32le(l->record.bytes+SCRIPT_LEXER_POINTER)-SCRIPT_LEXER_BYTES;
+}
+static inline void script_lexer_offset_set(qa_script_lexer *l,size_t value) {
+    qa_store_u32le(l->record.bytes+SCRIPT_LEXER_POINTER,(uint32_t)value+SCRIPT_LEXER_BYTES);
+}
+static inline uint32_t script_lexer_line(const qa_script_lexer *l) {
+    return qa_load_u32le(l->record.bytes+SCRIPT_LEXER_LINE);
+}
+static inline void script_lexer_line_set(qa_script_lexer *l,uint32_t value) {
+    qa_store_u32le(l->record.bytes+SCRIPT_LEXER_LINE,value);
+}
+static inline uint32_t script_lexer_flags(const qa_script_lexer *l) {
+    return qa_load_u32le(l->record.bytes+SCRIPT_LEXER_FLAGS);
+}
+static inline bool script_lexer_available(const qa_script_lexer *l) {
+    return qa_load_u32le(l->record.bytes+SCRIPT_LEXER_AVAILABLE)!=0;
+}
+static inline void script_lexer_available_set(qa_script_lexer *l,bool value) {
+    qa_store_u32le(l->record.bytes+SCRIPT_LEXER_AVAILABLE,value);
+}
+static inline script_lexer_cursor script_lexer_cursor_get(const qa_script_lexer *l) {
+    return (script_lexer_cursor){script_lexer_offset(l),script_lexer_line(l),l->column};
+}
+static inline void script_lexer_cursor_set(qa_script_lexer *l,script_lexer_cursor cursor) {
+    script_lexer_offset_set(l,cursor.offset);script_lexer_line_set(l,cursor.line);l->column=cursor.column;
+}
+bool script_token_store(uint8_t *,const qa_script_token *,uint32_t,uint32_t,qa_error *);
+bool script_token_load(const uint8_t *,size_t,qa_script_location,qa_bytes,qa_arena *,qa_script_token *,qa_error *);
+bool script_lexer_memory_bind(qa_script_lexer *,qa_error *);
+bool script_lexer_memory_open(qa_script_lexer *,const char *,qa_bytes,qa_error *);
+bool script_lexer_punctuation_open(qa_script_lexer *,qa_error *);
+void script_lexer_copy_text(qa_script_lexer *,qa_bytes);
+void script_lexer_compress(qa_script_lexer *);
+bool script_lexer_memory_validate(qa_script_lexer *,qa_error *);
+void script_lexer_memory_close(qa_script_lexer *,bool);
+void script_lexer_dispose(qa_script_lexer *);
+bool script_lexer_retire(qa_script_lexer *,qa_error *);
+bool script_lexer_frame_capture(const qa_script_lexer *,qa_script_frame_state *,qa_arena *,qa_error *);
+bool script_lexer_frame_valid(const qa_script_frame_state *,qa_error *);
+bool script_lexer_frame_restore(const qa_script_lexer_options *,const qa_script_frame_state *,bool,qa_script_lexer **,qa_error *);
+bool script_lexer_memory_restore(qa_script_lexer *,const qa_script_frame_state *,bool,qa_error *);
+bool script_lexer_adopt(qa_script_lexer *,qa_error *);
 bool script_grow(void **, size_t *, size_t, size_t, qa_error *);
 char *script_string(qa_arena *, const void *, size_t, qa_error *);
 bool script_error(qa_script_lexer *, const char *, qa_error *);
@@ -120,7 +182,7 @@ struct qa_script {
 typedef struct script_checkpoint_storage {
     qa_arena arena;
 } script_checkpoint_storage;
-enum { SCRIPT_CHECKPOINT_VERSION = 4 };
+enum { SCRIPT_CHECKPOINT_VERSION = 5 };
 bool script_source_create(qa_script *,qa_error *);
 void script_source_stack(qa_script *);
 bool script_source_capture(const qa_script *,qa_script_checkpoint *,qa_arena *,qa_error *);

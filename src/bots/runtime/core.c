@@ -307,7 +307,8 @@ bool qa_bot_runtime_load_map(qa_bot_runtime *r, const char *name, qa_error *e) {
     if (r->map.source_entities.data || !r->map.entities) {
         qa_script_lexer_options options = {.token_limit = r->options.library.preprocessor.token_limit,
             .context = r->options.library.scripts.context,
-            .diagnostic = r->options.library.scripts.diagnostic};
+            .diagnostic = r->options.library.scripts.diagnostic,
+            .memory=qa_bot_memory_script_services(r->memory)};
         ok = qa_bot_bsp_load(r->map.source_entities, &options, &bsp, e);
     }
     const qa_entities *entities = bsp ? qa_bot_bsp_entities(bsp) : r->map.entities;

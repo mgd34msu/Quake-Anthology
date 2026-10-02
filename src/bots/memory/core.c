@@ -334,9 +334,9 @@ static qa_script_memory_allocation script_alias(qa_bot_memory_allocation a) {
 }
 static bool script_retain(void *context,qa_error *error) {return qa_bot_memory_retain(context,error);}
 static void script_release(void *context) {(void)qa_bot_memory_release(context,NULL);}
-static bool script_allocate(void *context,uint32_t size,qa_script_memory_allocation *out,qa_error *error) {
+static bool script_allocate(void *context,uint32_t size,bool clear,qa_script_memory_allocation *out,qa_error *error) {
     qa_bot_memory_allocation a;
-    if(!qa_bot_memory_allocate(context,size,QA_BOT_MEMORY_HEAP,false,NULL,&a,error)) return false;
+    if(!qa_bot_memory_allocate(context,size,QA_BOT_MEMORY_HEAP,clear,NULL,&a,error)) return false;
     *out=script_alias(a);return true;
 }
 static bool script_bytes(void *context,qa_script_memory_allocation a,qa_script_memory_span *out,qa_error *error) {
@@ -359,7 +359,7 @@ static bool script_resolve_history(void *context,size_t reference,qa_script_memo
     qa_bot_memory *memory=context;
     if(!memory || memory->busy || memory->disposed || reference>=memory->script_restored_count ||
        !bot_memory_owned(memory,memory->script_restored[reference]))
-        return bot_memory_fail(error,QA_ERROR_FORMAT,"History indent requires its committed MEMORY allocation alias");
+        return bot_memory_fail(error,QA_ERROR_FORMAT,"History script requires its committed MEMORY allocation alias");
     *out=script_alias(memory->script_restored[reference]);return true;
 }
 const qa_script_memory *qa_bot_memory_script_services(qa_bot_memory *memory) {

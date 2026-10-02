@@ -6,7 +6,7 @@ static int32_t signed_integer(uint32_t value) {
     return out;
 }
 bool script_number(qa_script_lexer *l, qa_script_token *out, qa_error *e) {
-    size_t start = l->state.offset;
+    size_t start = script_lexer_offset(l);
     out->kind = QA_SCRIPT_NUMBER;
     out->text = (qa_bytes){l->input.data + start, 0};
     unsigned radix = 10;
@@ -19,25 +19,25 @@ bool script_number(qa_script_lexer *l, qa_script_token *out, qa_error *e) {
         out->text.size = 2;
         for (;;) {
             uint8_t c = script_peek(l, 0);
-            bool hex = (l->options.flags & QA_SCRIPT_STRICT_NUMBERS) != 0
+            bool hex = (script_lexer_flags(l) & QA_SCRIPT_STRICT_NUMBERS) != 0
                            ? script_hex(c)
                            : script_digit(c) || (c >= 'a' && c <= 'f') || c == 'A';
             if (!hex)
                 break;
             script_advance(l, 1);
-            out->text.size = l->state.offset - start;
+            out->text.size = script_lexer_offset(l) - start;
             if (out->text.size >= l->options.token_limit)
                 return script_error(l, "Number exceeds script token limit", e);
         }
     } else if (first == '0' && (next == 'b' || next == 'B') &&
-               (l->options.flags & QA_SCRIPT_NO_BINARY) == 0) {
+               (script_lexer_flags(l) & QA_SCRIPT_NO_BINARY) == 0) {
         radix = 2;
         flags = QA_SCRIPT_BINARY;
         script_advance(l, 2);
         out->text.size = 2;
         while (script_peek(l, 0) == '0' || script_peek(l, 0) == '1') {
             script_advance(l, 1);
-            out->text.size = l->state.offset - start;
+            out->text.size = script_lexer_offset(l) - start;
             if (out->text.size >= l->options.token_limit)
                 return script_error(l, "Number exceeds script token limit", e);
         }
@@ -53,7 +53,7 @@ bool script_number(qa_script_lexer *l, qa_script_token *out, qa_error *e) {
             if (c == '8' || c == '9')
                 octal = false;
             script_advance(l, 1);
-            out->text.size = l->state.offset - start;
+            out->text.size = script_lexer_offset(l) - start;
             if (out->text.size >= l->options.token_limit - 1)
                 return script_error(l, "Number exceeds script token limit", e);
         }
@@ -62,10 +62,10 @@ bool script_number(qa_script_lexer *l, qa_script_token *out, qa_error *e) {
         if (dots != 0)
             flags |= QA_SCRIPT_FLOAT;
         out->subtype = flags;
-        if (dots > 1 && (l->options.flags & QA_SCRIPT_STRICT_NUMBERS) != 0)
+        if (dots > 1 && (script_lexer_flags(l) & QA_SCRIPT_STRICT_NUMBERS) != 0)
             return script_error(l, "Numeric token contains multiple decimal points", e);
     }
-    size_t end = l->state.offset;
+    size_t end = script_lexer_offset(l);
     out->subtype = flags;
     for (unsigned i = 0; i < 2; ++i) {
         uint8_t c = script_peek(l, 0);
@@ -84,7 +84,7 @@ bool script_number(qa_script_lexer *l, qa_script_token *out, qa_error *e) {
     out->subtype = flags;
     if ((flags & QA_SCRIPT_FLOAT) != 0) {
         double value = 0;
-        if ((l->options.flags & QA_SCRIPT_STRICT_NUMBERS) != 0) {
+        if ((script_lexer_flags(l) & QA_SCRIPT_STRICT_NUMBERS) != 0) {
             if (!qa_parse_number(out->text, &value, e))
                 return script_error(l, "Invalid floating script number", e);
         } else {

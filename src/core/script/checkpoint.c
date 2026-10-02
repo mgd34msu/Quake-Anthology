@@ -81,7 +81,8 @@ bool qa_script_capture(const qa_script *s, qa_script_checkpoint *out, qa_error *
                                    .outputs = s->outputs,
                                    .next_condition_pointer = s->next_condition_pointer,
                                    .empty_expansion = s->empty_expansion,
-                                   .source_failure = s->source_failure};
+                                   .source_failure = s->source_failure,
+                                   .file_text = s->services.file_text};
     qa_arena *arena = &storage->arena;
     const script_macro **macros = NULL;
     size_t mc = 0, mcap = 0;
@@ -172,12 +173,11 @@ bool qa_script_capture(const qa_script *s, qa_script_checkpoint *out, qa_error *
                                         .active = f->active};
         fs[i].path = script_string(arena, f->resource.path, strlen(f->resource.path), e);
         if (fs[i].path == NULL || !copy_bytes(arena, f->resource.bytes, &fs[i].source, e) ||
-            !qa_script_lexer_capture(f->lexer, &fs[i].lexer, e))
+            !qa_script_lexer_capture(f->lexer, &fs[i].lexer, e) ||
+            !script_lexer_frame_capture(f->lexer,&fs[i],arena,e))
             goto fail;
-        if (fs[i].lexer.unread && !copy_token(arena, &f->lexer->state.token, &fs[i].lexer.token, e))
+        if (!copy_token(arena, &fs[i].lexer.token, &fs[i].lexer.token, e))
             goto fail;
-        if (!fs[i].lexer.unread)
-            fs[i].lexer.token = (qa_script_token){0};
     }
     if (s->stack_count != 0)
         memcpy(stack, s->stack, s->stack_count * sizeof(*stack));
@@ -288,10 +288,12 @@ bool script_checkpoint_valid(const qa_script_checkpoint *c, qa_error *e) {
         const qa_script_frame_state *f = c->frames + i;
         if (f->path == NULL || f->path[0] == 0 || (f->source.size != 0 && f->source.data == NULL) ||
             f->lexer.offset > f->source.size || f->lexer.line == 0 || f->lexer.column == 0 ||
-            (f->lexer.unread && !token_valid(&f->lexer.token, c->options.token_limit)) ||
+            !token_valid(&f->lexer.token, c->options.token_limit) ||
             f->token_count > c->options.maximum_source_tokens ||
             (f->active && f->condition_base > c->condition_count))
             goto bad;
+        if (!script_lexer_frame_valid(f,e)) return false;
+        if (qa_load_u32le(f->script_record.data+SCRIPT_LEXER_NEXT)>i) goto bad;
         if (f->active)
             ++active;
     }
@@ -300,6 +302,8 @@ bool script_checkpoint_valid(const qa_script_checkpoint *c, qa_error *e) {
     for (size_t i = 0; i < c->stack_count; ++i) {
         if (c->stack[i] >= c->frame_count || !c->frames[c->stack[i]].active)
             goto bad;
+        if (qa_load_u32le(c->frames[c->stack[i]].script_record.data+SCRIPT_LEXER_NEXT)!=
+            (i?c->stack[i-1]+1:0)) goto bad;
         for (size_t j = 0; j < i; ++j)
             if (c->stack[i] == c->stack[j])
                 goto bad;
@@ -360,6 +364,7 @@ static bool restore_source(const qa_script_services *services, const qa_script_c
         return false;
     }
     s->services = *services;
+    s->services.file_text = c->file_text;
     if (!script_memory_bind(s,e)) {qa_script_dispose(s);return false;}
     s->memory_deferred=detached;
     s->expansions = c->expansions;
@@ -413,9 +418,10 @@ static bool restore_source(const qa_script_services *services, const qa_script_c
         qa_script_lexer_options options = {.flags = s->options.lexer_flags,
                                            .token_limit = s->options.token_limit,
                                            .context = services->context,
-                                           .diagnostic = services->diagnostic};
+                                           .diagnostic = services->diagnostic,
+                                           .memory=s->services.memory};
         qa_script_lexer *lexer;
-        if (!qa_script_lexer_open(saved->path, bytes, &options, &lexer, e))
+        if (!script_lexer_frame_restore(&options,saved,detached,&lexer,e))
             goto fail;
         script_frame frame = {.resource = {qa_script_lexer_position(lexer).path, bytes, NULL},
                               .lexer = lexer,
@@ -424,8 +430,7 @@ static bool restore_source(const qa_script_services *services, const qa_script_c
                               .active = saved->active,
                               .owned = true};
         s->frames[s->frame_count++] = frame;
-        if (!qa_script_lexer_restore(lexer, &saved->lexer, e))
-            goto fail;
+
     }
     if (c->stack_count != 0)
         memcpy(s->stack, c->stack, c->stack_count * sizeof(*s->stack));

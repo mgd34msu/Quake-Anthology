@@ -27,7 +27,7 @@ bool script_source_create(qa_script *s,qa_error *error)
     script_source_record *record=&s->source_record;
     record->memory_reference=SIZE_MAX;
     if(s->memory.context) {
-        if(!s->memory.allocate(s->memory.context,SCRIPT_SOURCE_BYTES,&record->allocation,error)) return false;
+        if(!s->memory.allocate(s->memory.context,SCRIPT_SOURCE_BYTES,false,&record->allocation,error)) return false;
         qa_script_memory_span span={0};
         bool borrowed=s->memory.bytes(s->memory.context,record->allocation,&span,error);
         if(!borrowed || span.size!=SCRIPT_SOURCE_BYTES) {

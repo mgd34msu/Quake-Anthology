@@ -116,6 +116,7 @@ typedef struct qa_script_diagnostic {
     qa_script_location location;
     const char *message;
 } qa_script_diagnostic;
+struct qa_script_memory;
 typedef struct qa_script_lexer_options {
     uint32_t flags;
     size_t token_limit; /* Zero selects source MAX_TOKEN 1024, including NUL. */
@@ -123,9 +124,10 @@ typedef struct qa_script_lexer_options {
     void (*diagnostic)(void *, const qa_script_diagnostic *);
     const qa_script_punctuation *punctuations;
     size_t punctuation_count;
+    const struct qa_script_memory *memory;
 } qa_script_lexer_options;
 typedef struct qa_script_lexer qa_script_lexer;
-/* Input bytes are immutable and borrowed through close. Source path is copied. */
+/* Immutable input is copied into the script_t text allocation. */
 bool qa_script_lexer_open(const char *path, qa_bytes, const qa_script_lexer_options *,
                           qa_script_lexer **, qa_error *);
 void qa_script_lexer_close(qa_script_lexer *);
@@ -169,7 +171,7 @@ typedef struct qa_script_memory {
     void *context;
     bool (*retain)(void *,qa_error *);
     void (*release)(void *);
-    bool (*allocate)(void *,uint32_t,qa_script_memory_allocation *,qa_error *);
+    bool (*allocate)(void *,uint32_t,bool,qa_script_memory_allocation *,qa_error *);
     bool (*bytes)(void *,qa_script_memory_allocation,qa_script_memory_span *,qa_error *);
     bool (*free)(void *,qa_script_memory_allocation,qa_error *);
     bool (*reference)(void *,qa_script_memory_allocation,size_t *,qa_error *);
@@ -186,6 +188,8 @@ typedef struct qa_script_services {
     /* Captured source-format __DATE__/__TIME__, for deterministic processing. */
     const char *date, *time;
     const qa_script_memory *memory;
+    /* LoadScriptFile compresses the loaded text in place before scanning. */
+    bool file_text;
 } qa_script_services;
 typedef struct qa_script_defines qa_script_defines;
 typedef struct qa_script qa_script;
@@ -244,6 +248,9 @@ typedef struct qa_script_frame_state {
     const char *path;
     qa_bytes source;
     qa_script_lexer_state lexer;
+    qa_bytes script_record,punctuation_record;
+    size_t script_reference,punctuation_reference;
+    bool script_released,punctuation_released;
     size_t condition_base, token_count;
     bool active;
 } qa_script_frame_state;
@@ -279,7 +286,7 @@ typedef struct qa_script_checkpoint {
     bool empty_expansion;
     qa_script_location last_location;
     qa_script_token raw_token;
-    bool source_failure;
+    bool source_failure, file_text;
     void *storage;
 } qa_script_checkpoint;
 bool qa_script_capture(const qa_script *, qa_script_checkpoint *, qa_error *);

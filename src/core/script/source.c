@@ -74,12 +74,15 @@ bool script_include(qa_script *s, const qa_script_include *request, qa_error *e)
     qa_script_lexer_options options = {.flags = s->options.lexer_flags,
                                        .token_limit = s->options.token_limit,
                                        .context = s->services.context,
-                                       .diagnostic = s->services.diagnostic};
+                                       .diagnostic = s->services.diagnostic,
+                                       .memory=s->services.memory};
     qa_script_lexer *lexer;
     if (!qa_script_lexer_open(resource.path, resource.bytes, &options, &lexer, e)) {
         s->services.release(s->services.context, &resource);
         return false;
     }
+    if(s->services.file_text) script_lexer_compress(lexer);
+    qa_store_u32le(lexer->record.bytes+SCRIPT_LEXER_NEXT,script_source_pointer(s));
     s->frames[s->frame_count] = (script_frame){
         .resource = resource, .lexer = lexer, .condition_base = s->condition_count, .active = true};
     s->stack[s->stack_count++] = s->frame_count++;
@@ -140,15 +143,21 @@ bool script_raw(qa_script *s, script_queued_token *out, bool *found, qa_error *e
             script_warn(s, s->last_location, "Missing #endif at end of script");
             if (!script_condition_pop(s,e)) return false;
         }
+        uint32_t next=qa_load_u32le(frame->lexer->record.bytes+SCRIPT_LEXER_NEXT);
+        uint32_t expected=s->stack_count>1?(uint32_t)s->stack[s->stack_count-2]+1:0;
+        if(next!=expected) {
+            qa_error_set(e,QA_ERROR_FORMAT,0,"Script next pointer does not name its actual parent frame");return false;
+        }
         if (s->stack_count == 1) {
-            frame->active=false;--s->stack_count;script_source_stack(s);
             *found = false;
             s->source_failure = !ok;
             return ok;
         }
         frame->active = false;
         --s->stack_count;
-        script_source_stack(s);
+        qa_store_u32le(s->source_record.bytes+SCRIPT_SOURCE_STACK,next);
+        if(!script_lexer_retire(frame->lexer,e)) return false;
+        s->last_location=qa_script_lexer_position(frame->lexer);
         s->source_failure = false;
         if (e != NULL)
             *e = (qa_error){0};
@@ -297,8 +306,17 @@ static void close_source(qa_script *s,bool source) {
     if (s == NULL)
         return;
     if (source && s->memory_deferred) (void)script_memory_enter(s,NULL);
-    for (size_t i = 0; i < s->frame_count; ++i) {
-        qa_script_lexer_close(s->frames[i].lexer);
+    for (size_t remaining=s->frame_count;remaining;--remaining) {
+        size_t i=remaining-1;
+        bool reached=source && (!s->source_record.bytes || script_source_pointer(s)==i+1);
+        if(reached && s->source_record.bytes) {
+            uint32_t next=qa_load_u32le(s->frames[i].lexer->record.bytes+SCRIPT_LEXER_NEXT);
+            qa_store_u32le(s->source_record.bytes+SCRIPT_SOURCE_STACK,next);
+            s->frames[i].active=false;
+            if(s->stack_count) --s->stack_count;
+        }
+        if(reached) qa_script_lexer_close(s->frames[i].lexer);
+        else script_lexer_dispose(s->frames[i].lexer);
         if (!s->frames[i].owned)
             s->services.release(s->services.context, &s->frames[i].resource);
     }

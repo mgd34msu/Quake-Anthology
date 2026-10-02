@@ -54,17 +54,17 @@ static bool escape(qa_script_lexer *l, uint8_t *out, qa_error *e) {
             *out = 0;
             return true;
         }
-        size_t start = l->state.offset;
+        size_t start = script_lexer_offset(l);
         for (;;) {
             c = script_peek(l, 0);
-            bool hex = (l->options.flags & QA_SCRIPT_STRICT_NUMBERS) != 0
+            bool hex = (script_lexer_flags(l) & QA_SCRIPT_STRICT_NUMBERS) != 0
                            ? script_hex(c)
                            : script_digit(c) || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
             if (radix == 16 ? !hex : !script_digit(c))
                 break;
             script_advance(l, 1);
         }
-        for (size_t i = start; i < l->state.offset; ++i) {
+        for (size_t i = start; i < script_lexer_offset(l); ++i) {
             c = l->input.data[i];
             uint32_t digit = script_digit(c) ? c - '0' : c >= 'a' ? c - 'a' + 10 : c - 'A' + 10;
             if (value > ((uint32_t)INT32_MAX - digit) / radix)
@@ -72,11 +72,11 @@ static bool escape(qa_script_lexer *l, uint8_t *out, qa_error *e) {
             value = value * radix + digit;
         }
         if (value > 255) {
-            --l->state.offset;
-            --l->state.column;
+            script_lexer_offset_set(l,script_lexer_offset(l)-1);
+            --l->column;
             script_warning(l, "Too large value in escape character");
-            ++l->state.offset;
-            ++l->state.column;
+            script_lexer_offset_set(l,script_lexer_offset(l)+1);
+            ++l->column;
             value = 255;
         }
         *out = (uint8_t)value;
@@ -89,7 +89,7 @@ static bool escape(qa_script_lexer *l, uint8_t *out, qa_error *e) {
 bool script_quoted(qa_script_lexer *l, qa_script_token *out, qa_error *e) {
     uint8_t quote = script_peek(l, 0), *bytes = NULL;
     size_t count = 1;
-    size_t start = l->state.offset;
+    size_t start = script_lexer_offset(l);
     out->kind = quote == '"' ? QA_SCRIPT_STRING : QA_SCRIPT_LITERAL;
     out->text = (qa_bytes){l->input.data + start, count};
     script_advance(l, 1);
@@ -101,12 +101,12 @@ bool script_quoted(qa_script_lexer *l, qa_script_token *out, qa_error *e) {
             return script_error(l, c == 0 ? "Missing trailing quote" : "Newline inside string", e);
         if (c == quote) {
             script_advance(l, 1);
-            if ((l->options.flags & QA_SCRIPT_NO_STRING_CONCAT) != 0)
+            if ((script_lexer_flags(l) & QA_SCRIPT_NO_STRING_CONCAT) != 0)
                 break;
-            qa_script_lexer_state saved = l->state;
+            script_lexer_cursor saved=script_lexer_cursor_get(l);
             script_whitespace(l);
             if (script_peek(l, 0) != quote) {
-                l->state = saved;
+                script_lexer_cursor_set(l,saved);
                 break;
             }
             if (!writable(l, out, &bytes, e))
@@ -114,7 +114,7 @@ bool script_quoted(qa_script_lexer *l, qa_script_token *out, qa_error *e) {
             script_advance(l, 1);
             continue;
         }
-        if (c == '\\' && (l->options.flags & QA_SCRIPT_NO_STRING_ESCAPES) == 0) {
+        if (c == '\\' && (script_lexer_flags(l) & QA_SCRIPT_NO_STRING_ESCAPES) == 0) {
             if (!writable(l, out, &bytes, e) || !escape(l, &c, e))
                 return false;
         } else

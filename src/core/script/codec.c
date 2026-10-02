@@ -209,9 +209,12 @@ static bool codec_frame(script_codec *c, qa_script_frame_state *value) {
     return codec_string(c, &value->path) && codec_span(c, &value->source) &&
            codec_size(c, &value->lexer.offset) && codec_u32(c, &value->lexer.line) &&
            codec_u32(c, &value->lexer.column) && codec_bool(c, &value->lexer.unread) &&
-           (!value->lexer.unread || codec_token(c, &value->lexer.token)) &&
+           codec_token(c, &value->lexer.token) &&
            codec_size(c, &value->condition_base) && codec_size(c, &value->token_count) &&
-           codec_bool(c, &value->active);
+           codec_bool(c, &value->active) && codec_span(c,&value->script_record) &&
+           codec_span(c,&value->punctuation_record) && codec_index(c,&value->script_reference) &&
+           codec_index(c,&value->punctuation_reference) && codec_bool(c,&value->script_released) &&
+           codec_bool(c,&value->punctuation_released);
 }
 /* A single field walk defines both directions; no structure bytes, pointer
  * values, native padding, or size_t widths enter the format. */
@@ -228,7 +231,8 @@ static bool codec_checkpoint(script_codec *c, qa_script_checkpoint *value) {
         !codec_size(c, &value->outputs) || !codec_u32(c, &value->next_condition_pointer) ||
         !codec_span(c, &value->source_record) || !codec_index(c, &value->source_reference) || !codec_bool(c, &value->empty_expansion) ||
         !codec_location(c, &value->last_location) || !codec_token(c, &value->raw_token) ||
-        !codec_bool(c, &value->source_failure) || !codec_size(c, &value->macro_count))
+        !codec_bool(c, &value->source_failure) || !codec_bool(c, &value->file_text) ||
+        !codec_size(c, &value->macro_count))
         return false;
     qa_script_macro_state *macros = NULL;
     if (!codec_array(c, value->macro_count, sizeof(*macros), _Alignof(qa_script_macro_state), 31,

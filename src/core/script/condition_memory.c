@@ -64,7 +64,7 @@ bool script_condition_push(qa_script *s,uint32_t type,bool skip,size_t frame,qa_
     script_condition_record *node;
     if(!record(s,&node,error)) return false;
     if(s->memory.context) {
-        if(!s->memory.allocate(s->memory.context,16,&node->allocation,error)) return false;
+        if(!s->memory.allocate(s->memory.context,16,false,&node->allocation,error)) return false;
         qa_script_memory_span span={0};
         bool borrowed=s->memory.bytes(s->memory.context,node->allocation,&span,error);
         if(!borrowed || span.size!=16) {
@@ -159,6 +159,7 @@ bool script_memory_enter(qa_script *s,qa_error *error)
 {
     if(!s->memory_deferred) return true;
     if(!script_source_adopt(s,error)) return false;
+    for(size_t i=0;i<s->frame_count;++i) if(!script_lexer_adopt(s->frames[i].lexer,error)) return false;
     if(s->memory.context) {
         for(size_t i=0;i<s->condition_records;++i) {
             script_condition_record *node=s->conditions+i;
