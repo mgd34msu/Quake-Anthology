@@ -8,6 +8,22 @@ static const char *resource_text(qa_application *application, qa_string_id id) {
     return id ? qa_strings_cstr(qa_session_strings(application->session), id) : NULL;
 }
 
+static bool visual_collision(qa_application *application, qa_actor_id actor,
+                             qa_application_visual_view *view, qa_error *error) {
+    qa_actor_collision collision;
+    qa_error observed = {0};
+    if (!qa_world_get_collision(application->world, actor, &collision, &observed)) {
+        if (observed.code == QA_OK)
+            return true;
+        if (error)
+            *error = observed;
+        return false;
+    }
+    view->inline_model = collision.model;
+    view->has_inline_model = collision.inline_model;
+    return true;
+}
+
 static bool native_visual(application_provider *provider, qa_actor_id actor,
                            qa_application_visual_view *out, qa_error *error) {
     qa_application *application = provider->application;
@@ -120,12 +136,9 @@ bool qa_application_visual_read(qa_application *application, qa_actor_id actor,
             .skin = object.skin, .effects = object.effects, .visible = object.visible,
             .family = mode.rules.source <= QA_MODE_Q1_HORDE ? QA_GAME_Q1
                 : mode.rules.source < QA_MODE_Q3 ? QA_GAME_Q2 : QA_GAME_Q3};
-        qa_actor_collision collision;
         if (!qa_world_body_read(application->world, actor, &view.body, error) ||
-            !qa_world_get_collision(application->world, actor, &collision, error))
+            !visual_collision(application, actor, &view, error))
             return false;
-        view.inline_model = collision.model;
-        view.has_inline_model = collision.inline_model;
         if (!qa_actors_get(qa_session_actors(application->session), actor))
             return application_fail(error, QA_ERROR_NOT_FOUND,
                                     "Mode object retired during visual observation");
@@ -154,14 +167,11 @@ bool qa_application_visual_read(qa_application *application, qa_actor_id actor,
             application_fail(error, QA_ERROR_NOT_FOUND, "Selected body has no source observation");
         return false;
     }
-    qa_actor_collision collision;
     application_provider *map = application_world_provider(application, QA_ROLE_ENTITIES, "");
     if (map != NULL && map->constructed && map->kind == APPLICATION_PROVIDER_Q1)
         (void)qa_q1_game_map_effects(map->state.q1, actor, &view.q1_effects);
-    if (!qa_world_get_collision(application->world, actor, &collision, error))
+    if (!visual_collision(application, actor, &view, error))
         return false;
-    view.inline_model = collision.model;
-    view.has_inline_model = collision.inline_model;
     if (!qa_actors_get(qa_session_actors(application->session), actor))
         return application_fail(error, QA_ERROR_NOT_FOUND, "Visual actor retired during observation");
     *out = view;
