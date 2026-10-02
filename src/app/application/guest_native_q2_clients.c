@@ -283,13 +283,16 @@ static bool declared_raw_think(struct application_native_q2 *engine,uint32_t slo
         {.name="impulse",.kind=APPLICATION_NATIVE_VALUE_NUMBER,.value.number=raw->impulse},
         {.name="forward-move",.kind=APPLICATION_NATIVE_VALUE_NUMBER,.value.number=(double)raw->forward_move/200.},
         {.name="side-move",.kind=APPLICATION_NATIVE_VALUE_NUMBER,.value.number=(double)raw->side_move/200.},
-        {.name="up-move",.kind=APPLICATION_NATIVE_VALUE_NUMBER,.value.number=(double)raw->up_move/200.}
+        {.name="up-move",.kind=APPLICATION_NATIVE_VALUE_NUMBER,.value.number=physical.kind==QA_MOVEMENT_Q2_RERELEASE?
+            (raw->buttons&8u)?1.:(raw->buttons&16u)?-1.:0.:(double)raw->up_move/200.}
     };
     application_native_callback_inputs inputs={values,sizeof(values)/sizeof(*values),command};
     declared_raw_call call={engine,&inputs};
     engine->current_client=slot;
     application_native_q2_visibility_invalidate(engine);
+    engine->raw_inputs=&inputs;
     bool ok=application_native_q2_callbacks_transfer(engine->callbacks,declared_raw_execute,&call,error);
+    engine->raw_inputs=NULL;
     engine->current_client=0; return ok;
 }
 

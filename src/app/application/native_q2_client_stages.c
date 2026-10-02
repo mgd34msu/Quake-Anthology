@@ -3,6 +3,7 @@
 #include "native_q2_client_stages.h"
 #include "native_q2_source_actors.h"
 #include "native_q2_client_outputs.h"
+#include "guest_native_q2_input.h"
 #include "qa/native_observe.h"
 #include "qa/network.h"
 #include <math.h>
@@ -491,6 +492,19 @@ bool application_native_q2_input_values(struct application_native_q2 *n,qa_actor
     if(!n||!n->callbacks||!values||!out||!application_native_q2_callbacks_storage_current(n->callbacks,e)||
         !qa_actors_get(qa_session_actors(n->provider->application->session),actor))
         return application_fail(e,QA_ERROR_ARGUMENT,"Native source inputs require their actual live actor and callback owner");
+    if(n->raw_inputs) {
+        const application_native_q2_input_stage *stage=n->input_stage;
+        const application_native_callback_inputs *raw=n->raw_inputs;
+        if(!stage||!n->input_command||!qa_actor_id_equal(stage->actor,actor)||
+            !stage->current(stage->context,actor)||
+            !application_native_q2_declared_raw_capable(n->provider)||
+            !application_native_q2_callbacks_transfer_current(n->callbacks)||
+            !raw->values||raw->count>Q3_MOD_VALUE_COUNT||!raw->user_command.data)
+            return application_fail(e,QA_ERROR_NOT_FOUND,"Declared source inputs lost their actual raw client command transfer");
+        memcpy(values,raw->values,raw->count*sizeof(*values));
+        *out=(application_native_callback_inputs){values,raw->count,raw->user_command};
+        return true;
+    }
     struct application_native_q2_input *s=n->stages?n->stages->inputs:NULL;
     if(s&&s->executing) {
         if(!input_values(s,values,out,e)) return false;

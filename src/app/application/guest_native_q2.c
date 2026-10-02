@@ -44,7 +44,9 @@ static bool process_current(void *context, const qa_launch_instance *descriptor,
 static bool owner_returned(const application_provider *provider)
 {
     const struct application_native_q2 *engine = provider ? provider->state.native.q2_engine : NULL;
-    return !engine || (!engine->baseline && !engine->calls && !engine->source_invocation && qa_world_idle(engine->world) &&
+    return !engine || (!engine->baseline && !engine->calls && !engine->source_invocation &&
+        !engine->input_stage && !engine->input_command && !engine->raw_inputs && !engine->movement_stage &&
+        !engine->input_arsenal && qa_world_idle(engine->world) &&
         application_native_q2_callbacks_idle(engine->callbacks) &&
         application_native_q2_stages_idle(engine->stages) &&
         application_native_q2_source_actors_returned(engine->source_actors) &&

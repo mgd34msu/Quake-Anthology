@@ -33,6 +33,7 @@ typedef struct application_native_q2_client {
 struct application_native_q2 {
     const struct application_native_q2_input_stage *input_stage;
     const qa_movement_command *input_command;
+    const struct application_native_callback_inputs *raw_inputs;
     bool input_arsenal, input_arsenal_committed;
     const qa_json_document *raw_input_document;
     bool raw_input_capable;
