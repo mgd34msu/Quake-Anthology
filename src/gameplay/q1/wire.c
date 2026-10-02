@@ -1,4 +1,5 @@
 #include "wire_internal.h"
+#include "wire_world_declarations.h"
 #include "qa/game_q1_maps.h"
 #include "maps/internal.h"
 #include "qa/game_q1_bots.h"
@@ -12,6 +13,9 @@ static bool fail(qa_error *error, const char *message) {
 static bool id1(const qa_q1_game *g) {
     return g->options.program == QA_Q1_ID1 && g->options.edition == QA_Q1_CLASSIC &&
            !g->options.quakeworld;
+}
+static bool netquake(const qa_q1_game *g) {
+    return g && !g->options.quakeworld;
 }
 void q1_wire_changed(q1_wire_state *wire) {
     if (wire && wire->revision != UINT64_MAX) ++wire->revision;
@@ -178,8 +182,8 @@ bool qa_q1_wire_authored_slot(const qa_q1_game *g, size_t ordinal, uint32_t *out
     return true;
 }
 bool qa_q1_wire_read_begin(qa_q1_game *g, qa_q1_wire_receipt *out, qa_error *error) {
-    if (!out || !g || !g->wire || g->wire->loading || !g->wire->id1)
-        return fail(error, "Q1 ordered wire source is not frozen classic id1");
+    if (!out || !netquake(g) || !g->wire || g->wire->loading)
+        return fail(error, "Q1 ordered NetQuake source is not frozen");
     qa_q1_game_operation operation = {0};
     if (!qa_q1_game_operation_begin(g, &operation, error)) return false;
     const q1_wire_state *wire = g->wire;
@@ -188,6 +192,9 @@ bool qa_q1_wire_read_begin(qa_q1_game *g, qa_q1_wire_receipt *out, qa_error *err
         .entity_slots = wire->next_dynamic, .models = wire->models.rows,
         .sounds = wire->sounds.rows, .model_count = wire->models.count,
         .sound_count = wire->sounds.count, .map_path = wire->map_path,
+        .program = g->options.program, .edition = g->options.edition,
+        .standard_quake = g->options.program != QA_Q1_HIPNOTIC &&
+            g->options.program != QA_Q1_ROGUE && g->options.program != QA_Q1_MG3,
         .seconds = g->time, .deathmatch = g->options.deathmatch};
     return true;
 }
@@ -213,14 +220,14 @@ bool qa_q1_wire_index(const qa_q1_wire_receipt *receipt, bool models, qa_string_
 }
 bool qa_q1_wire_emission_index(const qa_q1_game *g, bool models, qa_string_id resource,
                                uint32_t *out) {
-    if (!g || !g->wire || !g->wire->id1 || g->destroy_pending || !out) return false;
+    if (!netquake(g) || !g->wire || g->destroy_pending || !out) return false;
     const q1_wire_table *table = models ? &g->wire->models : &g->wire->sounds;
     for (size_t i = 0; i < table->count && i <= UINT32_MAX; ++i)
         if (table->rows[i] == resource) { *out = (uint32_t)i; return true; }
     return false;
 }
 bool qa_q1_wire_emission_slot(const qa_q1_game *g, qa_actor_id actor, uint32_t *out) {
-    if (!g || !g->wire || !g->wire->id1 || g->destroy_pending || !out) return false;
+    if (!netquake(g) || !g->wire || g->destroy_pending || !out) return false;
     uint32_t client;
     if (qa_q1_native_client_slot(g, actor, &client, NULL)) { *out = client + 1; return true; }
     const qa_actor_record *record = qa_actors_get(qa_session_actors(g->services.session), actor);
@@ -232,14 +239,14 @@ bool qa_q1_wire_emission_slot(const qa_q1_game *g, qa_actor_id actor, uint32_t *
 }
 bool qa_q1_wire_registration_state(const qa_q1_game *g, uint64_t *generation, bool *loading) {
     if (!g || g->destroy_pending || g->continuation_pending || !g->wire ||
-        !g->wire->id1 || !generation || !loading) return false;
+        !netquake(g) || !generation || !loading) return false;
     *generation = g->wire->generation;
     *loading = g->wire->loading;
     return true;
 }
 
 bool qa_q1_wire_enabled(const qa_q1_game *g) {
-    return g && !g->destroy_pending && g->wire && g->wire->id1;
+    return netquake(g) && !g->destroy_pending && g->wire;
 }
 bool qa_q1_wire_lightstyle(qa_q1_game *g, int32_t style, qa_string_id pattern, qa_error *error) {
     if (!g || g->destroy_pending || style < 0 || style >= 64 ||
@@ -271,6 +278,16 @@ bool qa_q1_wire_world_read(const qa_q1_wire_receipt *receipt, qa_q1_wire_world *
     memcpy(out->lightstyles, g->wire->lightstyles, sizeof(out->lightstyles));
     return true;
 }
+static qa_string_id player_weapon_model(const qa_q1_game *g, const q1_player *player) {
+    if (player->weapon == QA_Q1_MG3_MJOLNIR && player->mg3_hammer_glow &&
+        player->mg3_hammer_until > g->time)
+        return g->hammer_glow_model;
+    if (player->weapon == QA_Q1_SHOTGUN && (player->mg3_progress.bloody & 1))
+        return g->blood_shotgun_model;
+    if (player->weapon == QA_Q1_SUPER_SHOTGUN && (player->mg3_progress.bloody & 2))
+        return g->blood_super_shotgun_model;
+    return g->weapon_models[player->weapon];
+}
 bool qa_q1_wire_player_read(const qa_q1_wire_receipt *receipt, qa_actor_id actor,
     qa_q1_wire_player *out, qa_error *error) {
     if (!out || !qa_q1_wire_receipt_current(receipt))
@@ -283,33 +300,59 @@ bool qa_q1_wire_player_read(const qa_q1_wire_receipt *receipt, qa_actor_id actor
     int32_t frame = player->weapon_frame;
     double powers[QA_Q1_POWER_COUNT], seconds = g->time;
     memcpy(powers, player->power_expires, sizeof(powers));
-    if (weapon < QA_Q1_AXE || weapon > QA_Q1_LIGHTNING)
-        return fail(error, "Q1 source weapon leaves its authentic id1 table");
-    static const uint32_t bits[] = {4096, 1, 2, 4, 8, 16, 32, 64};
-    qa_q1_wire_player value = {.weapon_model = g->weapon_models[weapon],
+    uint32_t bits[QA_Q1_WEAPON_COUNT] = {0};
+    for (unsigned shift = 0; shift < 32; ++shift) {
+        qa_q1_weapon declared;
+        uint32_t bit = UINT32_C(1) << shift;
+        if (qa_q1_weapon_source(g->options.program, bit, &declared))
+            bits[declared] = bit;
+    }
+    if ((unsigned)weapon >= QA_Q1_WEAPON_COUNT || !bits[weapon])
+        return fail(error, "Q1 source weapon leaves its actual program table");
+    qa_q1_wire_player value = {.weapon_model = player_weapon_model(g, player),
         .weapon_frame = frame, .weapon = bits[weapon]};
     if (!qa_inventory_count_read(g->services.inventory, actor, g->ammo[QA_Q1_SHELLS], &value.shells, error) ||
         !qa_inventory_count_read(g->services.inventory, actor, g->ammo[QA_Q1_NAILS], &value.nails, error) ||
         !qa_inventory_count_read(g->services.inventory, actor, g->ammo[QA_Q1_ROCKETS], &value.rockets, error) ||
         !qa_inventory_count_read(g->services.inventory, actor, g->ammo[QA_Q1_CELLS], &value.cells, error)) return false;
     for (size_t i = 0; i < sizeof(bits)/sizeof(*bits); ++i) {
+        if (!bits[i]) continue;
         double count;
         if (!qa_inventory_count_read(g->services.inventory, actor, g->weapons[i], &count, error)) return false;
         if (count > 0) value.weapons |= bits[i];
     }
-    if (!qa_q1_wire_receipt_current(receipt) || !qa_q1_native_client_slot(g, actor, &slot, error)) return false;
-    player = g->players[actor.slot];
-    if (player->weapon != weapon || player->weapon_frame != frame || g->time != seconds ||
-        memcmp(player->power_expires, powers, sizeof(powers)))
-        return fail(error, "Q1 source player changed during canonical inventory observation");
     if (powers[QA_Q1_QUAD] > seconds) value.powers |= 4194304;
     if (powers[QA_Q1_INVULNERABILITY] > seconds) value.powers |= 1048576;
     if (powers[QA_Q1_INVISIBILITY] > seconds) value.powers |= 524288;
     if (powers[QA_Q1_SUIT] > seconds) value.powers |= 2097152;
-    value.ammo = weapon == QA_Q1_SHOTGUN || weapon == QA_Q1_SUPER_SHOTGUN ? value.shells :
-                 weapon == QA_Q1_NAILGUN || weapon == QA_Q1_SUPER_NAILGUN ? value.nails :
-                 weapon == QA_Q1_GRENADE || weapon == QA_Q1_ROCKET ? value.rockets :
-                 weapon == QA_Q1_LIGHTNING ? value.cells : 0;
+    int ammo = q1_weapon_declared_ammo(weapon);
+    if (ammo >= 0) {
+        if (ammo == QA_Q1_SHELLS) value.ammo = value.shells;
+        else if (ammo == QA_Q1_NAILS) value.ammo = value.nails;
+        else if (ammo == QA_Q1_ROCKETS) value.ammo = value.rockets;
+        else if (ammo == QA_Q1_CELLS) value.ammo = value.cells;
+        else if (!qa_inventory_count_read(g->services.inventory, actor, g->ammo[ammo], &value.ammo, error))
+            return false;
+        if (!g->wire->id1) {
+            if (ammo <= QA_Q1_CELLS)
+                value.ammo_items = (g->options.program == QA_Q1_ROGUE ? 128u : 256u) << (unsigned)ammo;
+            else
+                value.extra_items = (ammo == QA_Q1_LAVA_NAILS ? 8u :
+                    ammo == QA_Q1_MULTI_ROCKETS ? 32u : 16u) << 23;
+        }
+    }
+    if (g->options.program == QA_Q1_HIPNOTIC) {
+        if (powers[QA_Q1_WETSUIT] > seconds) value.extra_items |= 2u << 23;
+        if (powers[QA_Q1_EMPATHY] > seconds) value.extra_items |= 4u << 23;
+    } else if (g->options.program == QA_Q1_ROGUE && powers[QA_Q1_SHIELD] > seconds)
+        value.extra_items |= 64u << 23;
+    if (!qa_q1_wire_receipt_current(receipt) ||
+        !qa_q1_native_client_slot(g, actor, &slot, error)) return false;
+    player = g->players[actor.slot];
+    if (player->weapon != weapon || player->weapon_frame != frame || g->time != seconds ||
+        player_weapon_model(g, player) != value.weapon_model ||
+        memcmp(player->power_expires, powers, sizeof(powers)))
+        return fail(error, "Q1 source player changed during canonical inventory observation");
     *out = value;
     return true;
 }
@@ -381,7 +424,7 @@ bool qa_q1_wire_actor_at(const qa_q1_wire_receipt *receipt, uint32_t slot, qa_ac
 bool qa_q1_wire_feedback_add(qa_q1_game *g, qa_actor_id recipient, qa_actor_id inflictor,
                              float armor, float blood, const double origin[3], qa_error *error) {
     uint32_t slot;
-    if (!g || !g->wire || !g->wire->id1 || g->wire->revision == UINT64_MAX || g->destroy_pending || !origin ||
+    if (!netquake(g) || !g->wire || g->wire->revision == UINT64_MAX || g->destroy_pending || !origin ||
         !isfinite(armor) || !isfinite(blood) ||
         !isfinite(origin[0]) || !isfinite(origin[1]) || !isfinite(origin[2]) ||
         !qa_q1_native_client_slot(g, recipient, &slot, NULL))
@@ -547,13 +590,23 @@ static bool declare_rows(qa_q1_game *g, bool models, const char *const *rows, si
 #define MODEL(path) do { if (!qa_q1_wire_declare_model(g, (path), error)) return false; } while (0)
 #define SOUND(path) do { if (!qa_q1_wire_declare_sound(g, (path), error)) return false; } while (0)
 bool q1_wire_spawn_declarations(qa_q1_game *g, const qa_q1_spawn *spawn, qa_error *error) {
-    if (!g->wire || g->options.program != QA_Q1_ID1 || !g->wire->loading) return true;
+    if (!g->wire || !g->wire->loading) return true;
     const char *name = spawn->classname;
     int32_t sounds = spawn->map_fields ? spawn->map_fields->sounds : 0;
     uint32_t flags = spawn->spawnflags;
-    if (!strcmp(name, "worldspawn"))
+    if (!strcmp(name, "worldspawn")) {
+        if (g->options.program == QA_Q1_HIPNOTIC)
+            return declare_rows(g, false, hipnotic_world_sounds, sizeof(hipnotic_world_sounds)/sizeof(*hipnotic_world_sounds), error) &&
+                declare_rows(g, true, hipnotic_world_models, sizeof(hipnotic_world_models)/sizeof(*hipnotic_world_models), error);
+        if (g->options.program == QA_Q1_ROGUE)
+            return declare_rows(g, false, rogue_world_sounds, sizeof(rogue_world_sounds)/sizeof(*rogue_world_sounds), error) &&
+                declare_rows(g, true, rogue_world_models, sizeof(rogue_world_models)/sizeof(*rogue_world_models), error);
+        if (g->options.program == QA_Q1_MG3)
+            return declare_rows(g, false, mg3_world_sounds, sizeof(mg3_world_sounds)/sizeof(*mg3_world_sounds), error) &&
+                declare_rows(g, true, mg3_world_models, sizeof(mg3_world_models)/sizeof(*mg3_world_models), error);
         return declare_rows(g, false, world_sounds, sizeof(world_sounds)/sizeof(*world_sounds), error) &&
                declare_rows(g, true, world_models, sizeof(world_models)/sizeof(*world_models), error);
+    }
     const char *monster = !strcmp(name, "monster_ogre_marksman") ? "monster_ogre" : name;
     for (size_t i = 0; i < sizeof(monster_declarations)/sizeof(*monster_declarations); ++i) {
         const declarations *row = &monster_declarations[i];
@@ -598,6 +651,28 @@ bool q1_wire_spawn_declarations(qa_q1_game *g, const qa_q1_spawn *spawn, qa_erro
         MODEL("progs/invisibl.mdl"); SOUND("items/inv1.wav"); SOUND("items/inv2.wav"); SOUND("items/inv3.wav");
     } else if (!strcmp(name, "item_artifact_super_damage")) {
         MODEL("progs/quaddama.mdl"); SOUND("items/damage.wav"); SOUND("items/damage2.wav"); SOUND("items/damage3.wav");
+    } else if (!strcmp(name, "weapon_laser_gun")) { MODEL("progs/g_laserg.mdl");
+    } else if (!strcmp(name, "weapon_mjolnir")) { MODEL("progs/g_hammer.mdl");
+    } else if (!strcmp(name, "weapon_proximity_gun")) { MODEL("progs/g_prox.mdl");
+    } else if (!strcmp(name, "item_artifact_wetsuit")) {
+        MODEL("progs/wetsuit.mdl"); SOUND("misc/weton.wav");
+    } else if (!strcmp(name, "item_artifact_empathy_shields")) {
+        MODEL("progs/empathy.mdl"); SOUND("hipitems/empathy.wav");
+    } else if (!strcmp(name, "item_hornofconjuring")) {
+        MODEL("progs/horn.mdl"); SOUND("hipitems/horn.wav");
+    } else if (!strcmp(name, "item_powerup_shield")) {
+        MODEL("progs/shield.mdl"); SOUND("shield/pickup.wav");
+    } else if (!strcmp(name, "item_powerup_belt")) {
+        MODEL("progs/beltup.mdl"); SOUND("belt/pickup.wav");
+    } else if (!strcmp(name, "item_sphere") && g->options.deathmatch) {
+        MODEL("progs/sphere.mdl"); SOUND("sphere/sphere.wav");
+    } else if (!strcmp(name, "item_lava_spikes") || !strcmp(name, "item_multi_rockets") ||
+               !strcmp(name, "item_plasma")) {
+        char path[32];
+        const char *ammo = !strcmp(name, "item_lava_spikes") ? "lnail" :
+            !strcmp(name, "item_multi_rockets") ? "mrock" : "plas";
+        snprintf(path, sizeof(path), "maps/b_%s%u.bsp", ammo, flags & 1 ? 1u : 0u);
+        MODEL(path);
     } else if (!strcmp(name, "func_door")) {
         static const char *const keys[][2] = {{"doors/medtry.wav", "doors/meduse.wav"},
             {"doors/runetry.wav", "doors/runeuse.wav"}, {"doors/basetry.wav", "doors/baseuse.wav"}};

@@ -339,6 +339,9 @@ bool q1_target(qa_q1_game *g, qa_actor_id actor, qa_q1_target *target) {
     return true;
 }
 bool q1_model(qa_q1_game *g, q1_actor *entity, const char *path, qa_error *error) {
+    if (g->wire && !g->wire->id1 && g->wire->loading &&
+        !qa_q1_wire_declare_model(g, path, error))
+        return false;
     return qa_builtin_resource(&g->services, path, &entity->model, error);
 }
 bool q1_sound_resource(qa_q1_game *g, qa_actor_id actor, qa_string_id resource, int32_t channel,

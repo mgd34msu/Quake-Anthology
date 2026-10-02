@@ -574,7 +574,7 @@ bool application_native_q1_wire_world(qa_application *app, qa_actor_owner owner,
     bool okay = qa_q1_wire_world_read(&source.receipt, &world);
     if (okay) {
         qa_application_network_q1_world value = {.protocol = protocol(),
-            .max_clients = source.receipt.client_slots, .standard_quake = true,
+            .max_clients = source.receipt.client_slots, .standard_quake = source.receipt.standard_quake,
             .deathmatch = source.receipt.deathmatch != 0, .seconds = (float)source.receipt.seconds,
             .map = text(app, world.map), .level = text(app, world.level),
             .total_secrets = (int32_t)world.total_secrets, .found_secrets = (int32_t)world.found_secrets,
@@ -625,16 +625,23 @@ bool application_native_q1_wire_clientdata(qa_application *app, qa_actor_id acto
     if (okay) {
         const qa_nq_movement_state *movement = &row->state.data.nq;
         qa_q1_clientdata value = {.viewheight = row->view_height, .idealpitch = movement->ideal_pitch,
-            .items = player.weapons | player.powers | (world.server_flags << 28),
+            .items = player.weapons | player.powers | player.ammo_items | player.extra_items |
+                ((source.receipt.program == QA_Q1_HIPNOTIC || source.receipt.program == QA_Q1_ROGUE)
+                    ? 0 : world.server_flags << 28),
             .onground = (movement->flags & 512) != 0, .inwater = movement->water_level >= 2,
             .weapon_frame = source_byte(player.weapon_frame), .weapon_model = model,
             .armor = source_byte(combat.armor.regular.kind == QA_ARMOR_NONE ? 0 : combat.armor.regular.points),
             .health = source_short(combat.health), .ammo = source_byte(equipment.ammo ? equipment.ammo_count : 0),
             .shells = source_byte(player.shells), .nails = source_byte(player.nails),
-            .rockets = source_byte(player.rockets), .cells = source_byte(player.cells), .weapon = source_byte(player.weapon)};
-        if (combat.armor.regular.kind != QA_ARMOR_NONE)
-            value.items |= combat.armor.regular.kind == QA_ARMOR_Q1 && combat.armor.regular.protection.q1_absorption >= .8f ? 32768 :
-                combat.armor.regular.kind == QA_ARMOR_Q1 && combat.armor.regular.protection.q1_absorption >= .6f ? 16384 : 8192;
+            .rockets = source_byte(player.rockets), .cells = source_byte(player.cells),
+            .weapon = source.receipt.standard_quake ? source_byte(player.weapon) : player.weapon};
+        if (combat.armor.regular.kind != QA_ARMOR_NONE) {
+            unsigned armor = combat.armor.regular.kind == QA_ARMOR_Q1 &&
+                combat.armor.regular.protection.q1_absorption >= .8f ? 2u :
+                combat.armor.regular.kind == QA_ARMOR_Q1 &&
+                combat.armor.regular.protection.q1_absorption >= .6f ? 1u : 0u;
+            value.items |= (source.receipt.program == QA_Q1_ROGUE ? 1u << 23 : 8192u) << armor;
+        }
         vector(value.punch, movement->punch_angles); vector(value.velocity, movement->velocity);
         *out = value;
     } else if (error && error->code == QA_OK)
@@ -824,7 +831,12 @@ static bool emit_message(application_provider *p, const qa_builtin_event *event,
     const qa_application_protocol_reference *reference, qa_error *error) {
     uint8_t bytes[8192]; qa_net_writer writer;
     qa_net_writer_init(&writer, bytes, sizeof(bytes), error);
-    if (!qa_nq_write(&writer, protocol(), (qa_nq_options){.standard_quake = true},
+    qa_q1_options options;
+    double seconds;
+    if (!qa_q1_source_respawn_options_read(p->state.q1, &options, &seconds, error)) return false;
+    bool standard = options.program != QA_Q1_HIPNOTIC && options.program != QA_Q1_ROGUE &&
+        options.program != QA_Q1_MG3;
+    if (!qa_nq_write(&writer, protocol(), (qa_nq_options){.standard_quake = standard},
                     message, NULL, 0)) return false;
     qa_application_protocol_event record = {.provider = p->owner, .dialect = QA_CLOCK_NETQUAKE,
         .time_ns = event->time_ns, .recipient = recipient, .origin = event->origin,
