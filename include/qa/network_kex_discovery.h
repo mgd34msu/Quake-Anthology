@@ -19,7 +19,8 @@ bool qa_kex_mdns_owner_shutdown(qa_kex_mdns_owner *, qa_error *);
 void qa_kex_mdns_owner_destroy(qa_kex_mdns_owner *);
 bool qa_kex_mdns_owner_idle(const qa_kex_mdns_owner *);
 
-/* Decode is detached: no socket, interface enumeration, callbacks, queries or
+/* Capture retains any unfinished endpoint callback prefix for the next pump.
+ * Decode is detached: no socket, interface enumeration, callbacks, queries or
  * announcements run. Activate opens only the socket. Publish marks the real
  * activated owner for an initial announcement on its next pump; it allocates
  * nothing and sends nothing during enclosing candidate publication. */

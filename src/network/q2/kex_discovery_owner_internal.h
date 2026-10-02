@@ -10,8 +10,9 @@ struct qa_kex_mdns_owner {
     qa_kex_mdns_hooks hooks;
     qa_kex_mdns_endpoint endpoints[256];
     qa_kex_mdns_address addresses[256];
-    size_t endpoint_count, address_count;
+    size_t endpoint_count, address_count, found_cursor;
     bool entered, closed, published, announce_pending, bound_published;
+    bool found_pending;
 };
 
 bool qa_kex_mdns_owner_valid(const qa_kex_mdns_owner *);

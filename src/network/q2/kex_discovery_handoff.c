@@ -4,6 +4,7 @@ static bool records_equal(const qa_kex_mdns_owner *a, const qa_kex_mdns_owner *b
 {
     if (a->advertised_port != b->advertised_port || a->closed != b->closed ||
         a->published != b->published || a->announce_pending != b->announce_pending ||
+        a->found_pending != b->found_pending || a->found_cursor != b->found_cursor ||
         a->endpoint_count != b->endpoint_count || a->address_count != b->address_count) return false;
     for (size_t i = 0; i < a->endpoint_count; ++i) {
         const qa_kex_mdns_endpoint *p = a->endpoints + i, *q = b->endpoints + i;

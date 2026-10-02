@@ -36,7 +36,9 @@ bool qa_kex_mdns_owner_valid(const qa_kex_mdns_owner *o)
     if (!o || o->endpoint_count > 256 || o->address_count > 256 ||
         (o->closed && o->socket) || (o->published && o->closed) ||
         (o->bound_published && !o->socket) ||
-        (o->announce_pending && (!o->published || !o->advertised_port))) return false;
+        (o->announce_pending && (!o->published || !o->advertised_port)) ||
+        (o->found_pending && (o->closed || !o->hooks.found || o->found_cursor>=o->endpoint_count)) ||
+        (!o->found_pending && o->found_cursor)) return false;
     for (size_t i = 0; i < o->endpoint_count; ++i) {
         const qa_kex_mdns_endpoint *p = &o->endpoints[i];
         if (!p->port || !p->instance.size || !text_valid(p->instance, QA_KEX_DNS_NAME_BYTES) ||
@@ -170,6 +172,24 @@ static void retain_records(qa_kex_mdns_owner *o, qa_kex_mdns_result *r)
     }
 }
 
+static bool found_continue(qa_kex_mdns_owner *o,uint64_t now,qa_error *e)
+{
+    if(!o->found_pending) return true;
+    for(;o->found_cursor<o->endpoint_count;++o->found_cursor) {
+        const qa_kex_mdns_endpoint *endpoint=&o->endpoints[o->found_cursor];
+        for(size_t j=0;j<o->address_count;++j) {
+            if(!qa_kex_mdns_text_equal(endpoint->target,o->addresses[j].target)) continue;
+            qa_net_address address=o->addresses[j].address;
+            address.port=endpoint->port;
+            if(!o->hooks.found(o->hooks.context,&address,now,e)) return false;
+            break;
+        }
+    }
+    o->found_pending=false;
+    o->found_cursor=0;
+    return true;
+}
+
 bool qa_kex_mdns_owner_pump(qa_kex_mdns_owner *o, uint64_t now, qa_error *e)
 {
     if (!qa_kex_mdns_owner_valid(o) || o->entered || o->closed || !o->bound_published || !o->socket)
@@ -182,6 +202,7 @@ bool qa_kex_mdns_owner_pump(qa_kex_mdns_owner *o, uint64_t now, qa_error *e)
         ok = announce(o, 120, e);
         if (ok) o->announce_pending = false;
     }
+    if(ok) ok=found_continue(o,now,e);
     for (unsigned drained = 0; ok && drained < 4096; ++drained) {
         uint8_t bytes[9000];
         size_t n = 0;
@@ -198,16 +219,9 @@ bool qa_kex_mdns_owner_pump(qa_kex_mdns_owner *o, uint64_t now, qa_error *e)
         if (result->question && !announce(o, 120, e)) { ok = false; break; }
         retain_records(o, result);
         if (!o->hooks.found) continue;
-        for (size_t i = 0; ok && i < o->endpoint_count; ++i) {
-            const qa_kex_mdns_endpoint *endpoint = &o->endpoints[i];
-            for (size_t j = 0; j < o->address_count; ++j) {
-                if (!qa_kex_mdns_text_equal(endpoint->target, o->addresses[j].target)) continue;
-                qa_net_address address = o->addresses[j].address;
-                address.port = endpoint->port;
-                ok = o->hooks.found(o->hooks.context, &address, now, e);
-                break;
-            }
-        }
+        o->found_pending=o->endpoint_count!=0;
+        o->found_cursor=0;
+        ok=found_continue(o,now,e);
         if (!ok) break;
     }
     o->entered = false;
@@ -236,6 +250,8 @@ bool qa_kex_mdns_owner_shutdown(qa_kex_mdns_owner *o, qa_error *e)
     o->closed = true;
     o->published = false;
     o->announce_pending = false;
+    o->found_pending = false;
+    o->found_cursor = 0;
     o->bound_published = false;
     return ok;
 }

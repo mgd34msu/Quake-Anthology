@@ -44,9 +44,10 @@ bool qa_kex_mdns_owner_checkpoint(const qa_kex_mdns_owner *o, qa_buffer *out, qa
     if (!bytes) { qa_error_set(e, QA_ERROR_MEMORY, 0, "Encoding KEX mDNS continuation"); return false; }
     qa_net_writer w;
     qa_net_writer_init(&w, bytes, capacity, e);
-    bool ok = qa_net_write_data(&w, "QAMD", 4) && qa_net_write_u32(&w, 2) &&
+    bool ok = qa_net_write_data(&w, "QAMD", 4) && qa_net_write_u32(&w, 3) &&
         qa_net_write_u16(&w, o->advertised_port) && qa_net_write_u8(&w, o->closed) &&
         qa_net_write_u8(&w, o->published) && qa_net_write_u8(&w, o->announce_pending) &&
+        qa_net_write_u8(&w, o->found_pending) && qa_net_write_u16(&w, (uint16_t)o->found_cursor) &&
         qa_net_write_u16(&w, (uint16_t)o->endpoint_count) && qa_net_write_u16(&w, (uint16_t)o->address_count);
     for (size_t i = 0; ok && i < o->endpoint_count; ++i) {
         const qa_kex_mdns_endpoint *p = &o->endpoints[i];
@@ -78,14 +79,18 @@ bool qa_kex_mdns_owner_restore(qa_bytes bytes, const qa_kex_mdns_hooks *hooks,
     qa_net_reader r;
     qa_net_reader_init(&r, bytes, e);
     r.bit = 32;
-    bool ok = qa_net_read_u32(&r) == 2;
+    uint32_t version=qa_net_read_u32(&r);
+    bool ok = version==2 || version==3;
     o->advertised_port = qa_net_read_u16(&r);
     uint8_t closed = qa_net_read_u8(&r), published = qa_net_read_u8(&r), pending = qa_net_read_u8(&r);
     o->closed = closed != 0;
     o->published = published != 0;
     o->announce_pending = pending != 0;
+    uint8_t found_pending=version==3?qa_net_read_u8(&r):0;
+    o->found_pending=found_pending!=0;
+    o->found_cursor=version==3?qa_net_read_u16(&r):0;
     uint16_t endpoints = qa_net_read_u16(&r), addresses = qa_net_read_u16(&r);
-    ok = ok && !r.failed && closed <= 1 && published <= 1 && pending <= 1 && endpoints <= 256 &&
+    ok = ok && !r.failed && closed <= 1 && published <= 1 && pending <= 1 && found_pending<=1 && endpoints <= 256 &&
         addresses <= 256 && (o->advertised_port || hooks->found);
     for (size_t i = 0; ok && i < endpoints; ++i) {
         qa_kex_mdns_endpoint *p = &o->endpoints[o->endpoint_count++];
