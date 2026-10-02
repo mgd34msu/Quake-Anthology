@@ -474,6 +474,27 @@ static bool retained_allocation(qa_native_instance *instance, uint64_t address,
         native_fail(error, QA_ERROR_FORMAT, address, "native saved allocation differs from its true lower owner"));
 }
 
+static bool retained_sdk_callbacks(qa_native_instance *instance, size_t slots, qa_error *error)
+{
+    for (size_t i = 0; i < slots; ++i) {
+        qa_native_guest_callback expected;
+        if (!restored_callback(instance, instance->first_callback + i,
+            instance->callback_base + i * 16, &expected, error)) return false;
+        bool retained = false;
+        for (size_t j = 0; j < instance->guest->callback_count; ++j) {
+            const qa_native_guest_callback *actual = instance->guest->callbacks + j;
+            if (actual->id == expected.id && actual->address == expected.address &&
+                actual->invoke == expected.invoke && actual->context == expected.context) {
+                retained = true; break;
+            }
+        }
+        if (!retained)
+            return native_fail(error, QA_ERROR_FORMAT, expected.id,
+                "native restored SDK bridge lacks its actual lower callback owner");
+    }
+    return true;
+}
+
 bool native_process_restore(qa_native_instance *instance, const qa_native_process_options *options,
     qa_error *error)
 {
@@ -568,6 +589,7 @@ bool native_process_restore(qa_native_instance *instance, const qa_native_proces
         instance->source_library = native_strdup(artifact.path, error);
         if (!instance->source_library) return false;
     }
+    if (!retained_sdk_callbacks(instance, slots, error)) return false;
     if (!retained_allocation(instance, instance->callback_base, slots * 16, INT32_C(0x4e434254), error)) return false;
     if (instance->import_table_bytes && !retained_allocation(instance, instance->import_table_address,
         instance->import_table_bytes, INT32_C(0x4e494d50), error)) return false;
