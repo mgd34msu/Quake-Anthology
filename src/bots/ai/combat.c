@@ -710,7 +710,7 @@ static qa_actor_id source_viewer(qa_bots *b,const bot_ai_state *s) {
     return b->services.entity_actor(b->services.context,
         bot_source_i32_read(s->source_span.data+QA_BOT_SOURCE_ENTITY));
 }
-static bool source_aim(qa_bots *b,bot_ai_state *s,qa_error *e) {
+bool bot_ai_source_aim(qa_bots *b,bot_ai_state *s,qa_error *e) {
     int32_t enemy=bot_ai_enemy_number(s);
     if(enemy<0) return true;
     qa_bot_entity_info info;bool observed;
@@ -857,8 +857,17 @@ static bool source_aim(qa_bots *b,bot_ai_state *s,qa_error *e) {
     }
     return true;
 }
-static bool source_check_attack(qa_bots *b,bot_ai_state *s,qa_error *e) {
+bool bot_ai_source_check_attack(qa_bots *b,bot_ai_state *s,qa_error *e) {
     int32_t enemy=bot_ai_enemy_number(s);
+    qa_bot_entity_info info;bool observed;
+    SOURCE_ATTACK_CALL(qa_bot_runtime_entity(b->runtime,enemy,&info,&observed,e));
+    if(enemy>=64 && s->team_arena && (info.number==b->source_goals.red_obelisk.entity ||
+                                    info.number==b->source_goals.blue_obelisk.entity) &&
+       b->services.source_activator_frame) {
+        int32_t frame;bool present;
+        SOURCE_ATTACK_CALL(b->services.source_activator_frame(b->services.context,info.number,&frame,&present,e));
+        if(present && frame==2) return true;
+    }
     float reaction;
     SOURCE_ATTACK_CALL(bot_ai_character_float(b,s,BOT_C_REACTION,0,1,&reaction,e));
     if(bot_ai_enemy_sight_time(s)>b->time-reaction || bot_ai_teleport_time(s)>b->time-reaction ||
@@ -908,14 +917,18 @@ static bool source_check_attack(qa_bots *b,bot_ai_state *s,qa_error *e) {
         SOURCE_ATTACK_CALL(qa_bot_actions_add(qa_bot_runtime_actions(b->runtime),s->view.client,QA_BOT_ATTACK,e));
     bot_ai_flag_toggle(s,BOT_AI_ATTACKED);return true;
 }
+bool bot_ai_source_enemy(qa_bots *b,const bot_ai_state *s) {
+    qa_actor_id enemy=bot_ai_enemy_actor(b,s);
+    qa_actor_id source=bot_ai_source_actor(b,bot_ai_enemy_number(s));
+    return source.registry && qa_actor_id_equal(source,enemy);
+}
 bool bot_ai_attack(qa_bots *b,bot_ai_state *s,bool moving,qa_error *e) {
     qa_actor_id enemy=bot_ai_enemy_actor(b,s);
     s->view.enemy=enemy;
-    qa_actor_id source=bot_ai_source_actor(b,bot_ai_enemy_number(s));
-    if(source.registry && qa_actor_id_equal(source,enemy)) {
+    if(bot_ai_source_enemy(b,s)) {
         if(!source_attack_live(b,s) || !bot_ai_live(b,enemy)) return true;
-        SOURCE_ATTACK_CALL(source_aim(b,s,e));
-        return source_check_attack(b,s,e);
+        SOURCE_ATTACK_CALL(bot_ai_source_aim(b,s,e));
+        return bot_ai_source_check_attack(b,s,e);
     }
     return canonical_attack(b,s,moving,e);
 }

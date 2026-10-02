@@ -468,6 +468,32 @@ static bool movement_view(qa_bots *b,bot_ai_state *s,const qa_bot_goal *goal,
     if(result->flags&QA_BOT_MOVE_WEAPON) bot_ai_weapon_number_set(s,result->weapon);
     return true;
 }
+static bool source_battle_view(qa_bots *b,bot_ai_state *s,const qa_bot_goal *goal,
+                                const qa_bot_move_result *result,qa_bot_decision node,qa_error *e) {
+    uint32_t supplied=QA_BOT_MOVE_VIEW|QA_BOT_MOVE_SWIM_VIEW;
+    if(node==QA_BOT_CHASING) supplied|=QA_BOT_MOVE_VIEW_SET;
+    if(result->flags&supplied) bot_ai_view_ideal_set(s,result->ideal_view_angles);
+    else if(!bot_ai_flag(s,BOT_AI_IDEAL_VIEW_SET) &&
+            (node==QA_BOT_CHASING || !(result->flags&QA_BOT_MOVE_VIEW_SET))) {
+        bool aim;
+        if(node==QA_BOT_CHASING) aim=bot_ai_chase_time(s)>b->time-2;
+        else {
+            float skill;DECISION_CALL(bot_ai_character_float(b,s,BOT_C_ATTACK,0,1,&skill,e));
+            aim=skill>.3f;
+        }
+        if(aim) DECISION_CALL(bot_ai_source_aim(b,s,e));
+        else {
+            qa_vec3 target;bool found;
+            DECISION_CALL(qa_bot_moves_view_target(moves(b),s->movement,goal,bot_ai_travel_flags(s),300,&target,&found,e));
+            bot_ai_view_ideal_set(s,bot_ai_angles(found?qa_vec_sub(target,bot_ai_origin(s)):result->direction));
+        }
+        if(node==QA_BOT_CHASING || !aim) {
+            qa_vec3 ideal=bot_ai_view_ideal(s);bot_ai_view_ideal_axis_set(s,2,ideal.z*.5f);
+        }
+    }
+    if(result->flags&QA_BOT_MOVE_WEAPON) bot_ai_weapon_number_set(s,result->weapon);
+    return true;
+}
 static bool remember_enemy_position(qa_bots *b,bot_ai_state *s,qa_vec3 origin,qa_error *e) {
     int32_t enemy=bot_ai_enemy_number(s);
     if(enemy>=64 && s->team_arena &&
@@ -877,10 +903,12 @@ bool bot_ai_decide(qa_bots *b, bot_ai_state *s, qa_error *e) {
                 if(found) {ENTER(QA_BOT_FIGHTING);continue;}
             }
             qa_bot_goal goal={0};bool goal_found=true;
+            bool source_combat=bot_ai_source_enemy(b,s);
             if(node==QA_BOT_CHASING) {
                 if(!bot_ai_last_enemy_area(s) || !bot_ai_chase_time(s) || bot_ai_chase_time(s)<b->time-10) {ENTER(QA_BOT_SEEK_LONG_TERM);continue;}
                 goal=(qa_bot_goal){.origin=bot_ai_last_enemy_origin(s),.area=(int32_t)bot_ai_last_enemy_area(s),
-                    .mins=qa_v3(-8,-8,-8),.maxs=qa_v3(8,8,8),.entity=-1};
+                    .mins=qa_v3(-8,-8,-8),.maxs=qa_v3(8,8,8),
+                    .entity=source_combat?bot_ai_enemy_number(s):-1};
                 if(qa_bot_goal_touching(bot_ai_origin(s),&goal)) {bot_ai_chase_time_set(s,0);ENTER(QA_BOT_SEEK_LONG_TERM);continue;}
             } else if(node==QA_BOT_BATTLE_NEARBY) {
                 bool done=false;
@@ -894,6 +922,7 @@ bool bot_ai_decide(qa_bots *b, bot_ai_state *s, qa_error *e) {
             } else {
                 if(!bot_ai_source_team_goals(b,s,true,e)) return false;
                 if(s->retired || !bot_ai_live(b,s->view.actor)) return true;
+                if(source_combat) DECISION_CALL(battle_items(b,s,e));
                 if(!bot_ai_source_long_term_goal(b,s,true,&goal,&goal_found,e)) return false;
             }
             if(s->retired || !bot_ai_live(b,s->view.actor)) return true;
@@ -906,8 +935,8 @@ bool bot_ai_decide(qa_bots *b, bot_ai_state *s, qa_error *e) {
                 if(s->retired || !bot_ai_live(b,s->view.actor)) return true;
                 if(nearby_found) {
                     if(!qa_bot_moves_reset_avoid(moves(b),s->movement,true,e)) return false;
-                    volatile float added=range/100,until=b->time+added;
-                    bot_ai_nearby_until_set(s,node==QA_BOT_CHASING?b->time+16:until+1);
+                    volatile float added=node==QA_BOT_CHASING?.1f*range:range/100,until=b->time+added;
+                    bot_ai_nearby_until_set(s,node==QA_BOT_CHASING && !source_combat?b->time+16:until+1);
                     ENTER(QA_BOT_BATTLE_NEARBY);continue;
                 }
             }
@@ -916,13 +945,19 @@ bool bot_ai_decide(qa_bots *b, bot_ai_state *s, qa_error *e) {
             }
             qa_bot_move_result result;
             DECISION_CALL(move_goal(b,s,&goal,false,&result,e));
-            DECISION_CALL(movement_view(b,s,&goal,&result,node,e));
-            if(node==QA_BOT_BATTLE_NEARBY) {
-                DECISION_CALL(bot_ai_battle_inventory(b,s,bot_ai_enemy_number(s),e));
+            if(source_combat) {
+                if(node==QA_BOT_BATTLE_NEARBY) DECISION_CALL(bot_ai_battle_inventory(b,s,bot_ai_enemy_number(s),e));
+                if(node!=QA_BOT_CHASING) DECISION_CALL(bot_ai_choose_weapon(b,s,e));
+                DECISION_CALL(source_battle_view(b,s,&goal,&result,node,e));
+                if(node!=QA_BOT_CHASING) DECISION_CALL(bot_ai_source_check_attack(b,s,e));
+            } else {
+                DECISION_CALL(movement_view(b,s,&goal,&result,node,e));
+                if(node==QA_BOT_BATTLE_NEARBY) DECISION_CALL(bot_ai_battle_inventory(b,s,bot_ai_enemy_number(s),e));
+                if(visible && !(result.flags&(QA_BOT_MOVE_VIEW|QA_BOT_MOVE_SWIM_VIEW|QA_BOT_MOVE_VIEW_SET|QA_BOT_MOVE_WEAPON)))
+                    return battle(b,s,true,e);
             }
-            if(visible && !(result.flags&(QA_BOT_MOVE_VIEW|QA_BOT_MOVE_SWIM_VIEW|QA_BOT_MOVE_VIEW_SET|QA_BOT_MOVE_WEAPON)))
-                return battle(b,s,true,e);
             if(node==QA_BOT_CHASING) {
+                if(source_combat && bot_ai_area(s)==bot_ai_last_enemy_area(s)) bot_ai_chase_time_set(s,0);
                 DECISION_CALL(bot_ai_retreat(b,s,&retreat,e));
                 if(retreat) ENTER(QA_BOT_RETREATING);
             }
