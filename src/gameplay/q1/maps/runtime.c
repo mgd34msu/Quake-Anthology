@@ -1134,8 +1134,6 @@ bool q1_map_spawn(qa_q1_game *g, q1_actor *entity, const qa_q1_spawn *spawn, boo
          !strcmp(spawn->classname, "mge2m2_cleanup_corpses")))
         kind = Q1_MAP_FIELDS;
     bool addon_static = !strcmp(spawn->classname, "misc_corpse") ||
-                        !strcmp(spawn->classname, "ambient_drone") ||
-                        !strcmp(spawn->classname, "ambient_comp_hum") ||
                         !strcmp(spawn->classname, "ambient_generic");
     if ((!addon && (addon_static || q1_map_is_addon_visual(kind) || q1_map_is_addon_brush(kind) ||
                     kind == Q1_MAP_SHELTER)) ||
