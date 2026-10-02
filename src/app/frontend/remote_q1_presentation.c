@@ -137,6 +137,11 @@ static bool scene_current(void *context)
     return scene->row->busy==1 && scene->row->revision==scene->revision &&
         remote_q1_mutable(scene->row) && remote_q1_live(scene->row,NULL);
 }
+static bool scene_view_blend(void *context,const qa_scene_world_input *world,qa_scene_vec4 *out,qa_error *error)
+{
+    remote_scene *scene=context;
+    return scene_current(scene) && remote_q1_camera_contents_blend(scene->row,&world->view,out,error) && scene_current(scene);
+}
 static bool scene_visuals(void *context,const qa_scene_world_input *world,qa_scene_frame *frame,qa_error *error)
 {
     remote_scene *scene=context;
@@ -224,7 +229,7 @@ bool frontend_remote_q1_draw(frontend_remote_q1 *row, const qa_scene_view *view,
     }
     const qa_product *product=qa_catalog_product(row->content.catalog,row->content.product);
     frontend_legacy_scene_services services={.context=&scene,.current=scene_current,
-        .visuals=scene_visuals,.particles=scene_particles,.blend=scene_blend,.policy=scene_policy};
+        .view_blend=scene_view_blend,.visuals=scene_visuals,.particles=scene_particles,.blend=scene_blend,.policy=scene_policy};
     if(ok) {
         ++row->busy;
         ok=remote_q1_effects_scene(row,seconds,&world.lights,&world.light_count,error) &&

@@ -87,9 +87,13 @@ static bool producers(frontend_scene_inventory *inventory,sources *rows,qa_error
 {
     qa_frontend *f=inventory->frontend;
     if (f->scene_world && !world_bind(inventory,f->scene_world,f->map_resource,f->mounts,error)) return false;
-    frontend_renderer_worlds_view retained; bool present=false;
-    if(!frontend_renderer_worlds_read(f,&retained,&present,error) || (present && retained.world &&
-        !world_bind(inventory,retained.world,retained.resource,retained.files,error))) return false;
+    size_t retained_count=0;
+    if(!frontend_renderer_worlds_count(f,&retained_count,error)) return false;
+    for(size_t i=0;i<retained_count;++i) {
+        frontend_renderer_worlds_view retained;
+        if(!frontend_renderer_worlds_read_at(f,i,&retained,error) ||
+            !world_bind(inventory,retained.world,retained.resource,retained.files,error)) return false;
+    }
     size_t unified_count=0;
     if(!frontend_unified_media_inventory_count(f,&unified_count,error)) return false;
     for(size_t i=0;i<unified_count;++i) {

@@ -1,6 +1,7 @@
 #include "system_cinematic_private.h"
 #include "qa/media_save.h"
 #include "qa/source_save.h"
+#include "material_movies.h"
 #include <math.h>
 
 static bool text(qa_source_save_io *io,char **value)
@@ -44,16 +45,19 @@ static bool fields(qa_source_save_io *io,frontend_system_cinematic *row,uint32_t
     const frontend_system_cinematic_refs *refs)
 {
     bool reading=io->direction==QA_SOURCE_SAVE_READ;
-    uint8_t magic[4]={'Q','S','C','N'}; uint32_t schema=1,phase=row->phase,reason=row->ending_reason;
+    uint8_t magic[4]={'Q','S','C','N'}; uint32_t schema=2,phase=row->phase,reason=row->ending_reason;
     frontend_system_cinematic_identity id=row->source.identity;
-    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QSCN",4) || !qa_source_save_u32(io,&schema) || schema!=1 ||
+    bool numeric=row->numeric_source!=NULL;
+    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QSCN",4) || !qa_source_save_u32(io,&schema) || schema!=2 ||
+        !qa_source_save_bool(io,&numeric) || !qa_source_save_i32(io,&row->numeric_handle) ||
+        (numeric?(row->numeric_handle<0 || row->numeric_handle>=16):row->numeric_handle!=-1) ||
         !identity(io,&id) || !qa_source_save_u32(io,&phase) || phase>SYSTEM_STOPPED ||
         !qa_source_save_bool(io,&row->screen) || !qa_source_save_bool(io,&row->loop) ||
         !qa_source_save_bool(io,&row->hold) || !qa_source_save_bool(io,&row->silent) ||
         !qa_source_save_f64(io,&row->clock_ms) || !isfinite(row->clock_ms) || row->clock_ms<0 ||
         !qa_source_save_bool(io,&row->ending) || !qa_source_save_u32(io,&reason) || reason>QA_CINEMATIC_STOPPED ||
         !qa_source_save_bool(io,&row->appended) || !qa_source_save_bool(io,&row->focus_paused) ||
-        !text(io,&row->path) || !frontend_system_cinematic_path_valid(row->path) || !(flags&1u) ||
+        !text(io,&row->path) || (numeric?!*row->path:!frontend_system_cinematic_path_valid(row->path)) || !(flags&1u) ||
         row->loop!=((flags&2u)!=0) || row->hold!=((flags&4u)!=0) || row->silent!=((flags&8u)!=0) ||
         (row->screen!=(phase==SYSTEM_PLAYING)) || (row->appended && !row->ending)) return false;
     bool retained_next=row->nextmap!=NULL;
@@ -64,8 +68,16 @@ static bool fields(qa_source_save_io *io,frontend_system_cinematic *row,uint32_t
         frontend_system_cinematic_source source={0};
         if (!refs || !refs->source_decode || !refs->source_decode(refs->context,&id,&source,io->error)) return false;
         row->source=source;
+        row->numeric_source=numeric?source.cinematics:NULL;
         if (!same_identity(&id,&source.identity) || !frontend_system_cinematic_source_valid(row->frontend,&source))
             return frontend_fail(io->error,QA_ERROR_FORMAT,"Saved system cinematic leaves its genuine candidate source lease");
+        if (numeric) {
+            qa_q3_cinematic_source_options actual;
+            if (!row->numeric_source || qa_q3_cinematic_source_handles(row->numeric_source)!=row->frontend->source_cinematics ||
+                !qa_q3_cinematic_source_read(row->numeric_source,&actual) || actual.files!=source.files ||
+                actual.seat!=id.physical_seat || actual.audio_bus(actual.context)!=id.audio_bus)
+                return frontend_fail(io->error,QA_ERROR_FORMAT,"Saved fullscreen decoder leaves its genuine global Source lease");
+        }
     } else if (!frontend_system_cinematic_source_current(row))
         return frontend_fail(io->error,QA_ERROR_ARGUMENT,"System cinematic capture lost its actual source lease");
     bool active=phase==SYSTEM_PLAYING;
@@ -85,7 +97,10 @@ static bool fields(qa_source_save_io *io,frontend_system_cinematic *row,uint32_t
             ok=qa_cinematic_checkpoint_decode((qa_bytes){playback.data,playback.size},NULL,&saved,io->error);
             qa_cinematic_options options=frontend_system_cinematic_options(row,row->frontend->audio);
             qa_cinematic_source source=qa_cinematic_asset_source(row->asset); source.name=row->path;
-            if (ok) ok=qa_cinematic_restore_qualified(&source,&options,&saved,row->clock_ms,&row->movie,io->error) &&
+            double anchor=row->clock_ms;
+            if (ok && numeric) ok=frontend_material_movies_cinematic_source_clock_read(row->frontend,row->numeric_source,&anchor,io->error);
+            if (ok) ok=(!numeric || source.format==QA_CINEMATIC_ROQ) &&
+                qa_cinematic_restore_qualified(&source,&options,&saved,anchor,&row->movie,io->error) &&
                 qa_cinematic_presentation_restore(row->movie,&row->frontend->frame,&refs->publication,
                     (qa_bytes){publication.data,publication.size},io->error);
         }
@@ -100,7 +115,7 @@ bool frontend_system_cinematic_checkpoint(qa_frontend *f,const qa_q3_system_movi
     frontend_system_cinematic *row=NULL;
     for (frontend_system_cinematic *held=f->system_cinematics;held;held=held->next) if (held==handle->context) { row=held; break; }
     qa_q3_system_movie actual={0}; if (row) frontend_system_cinematic_handle(row,&actual);
-    if (!row || handle->status!=actual.status || handle->end!=actual.end || handle->release!=actual.release)
+    if (!row || handle->status!=actual.status || handle->end!=actual.end || handle->release!=actual.release || handle->playback!=actual.playback)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"System cinematic handle belongs to another source owner");
     row->busy=true; qa_source_save_io io={0};
     bool ok=qa_source_save_writer(&io,NULL,error) && fields(&io,row,flags,refs) && qa_source_save_finish(&io,out);
@@ -111,12 +126,12 @@ bool frontend_system_cinematic_checkpoint(qa_frontend *f,const qa_q3_system_movi
 bool frontend_system_cinematic_restore(qa_frontend *f,const frontend_system_cinematic_refs *refs,
     uint32_t flags,qa_bytes bytes,qa_q3_system_movie *out,qa_error *error)
 {
-    if (!f || !out || out->context || out->status || out->end || out->release || !f->source_restoring ||
+    if (!f || !out || out->context || out->status || out->end || out->release || out->playback || !f->source_restoring ||
         !frontend_system_cinematic_idle(f))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"System cinematic restore requires an empty qualified cold candidate");
     frontend_system_cinematic *row=calloc(1,sizeof(*row));
     if (!row) return frontend_fail(error,QA_ERROR_MEMORY,"Restoring actual source system cinematic owner");
-    row->frontend=f; row->restore_pending=true; row->busy=true;
+    row->frontend=f; row->numeric_handle=-1; row->restore_pending=true; row->busy=true;
     qa_source_save_io io={0};
     bool ok=qa_source_save_reader(&io,NULL,bytes,error) && fields(&io,row,flags,refs) && qa_source_save_finish(&io,NULL);
     qa_source_save_dispose(&io); row->busy=false;
@@ -137,6 +152,6 @@ void frontend_system_cinematic_discard(qa_q3_system_movie *handle)
     frontend_system_cinematic *row=handle->context;
     qa_q3_system_movie actual={0}; frontend_system_cinematic_handle(row,&actual);
     if (!row->restore_pending || row->busy || handle->status!=actual.status ||
-        handle->end!=actual.end || handle->release!=actual.release) return;
+        handle->end!=actual.end || handle->release!=actual.release || handle->playback!=actual.playback) return;
     *handle=(qa_q3_system_movie){0}; frontend_system_cinematic_row_free(row,true);
 }

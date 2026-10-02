@@ -3,6 +3,7 @@
 #include "campaign.h"
 #include "ui_features.h"
 #include "shared_render_controls.h"
+#include "q3_render_policy.h"
 #include <ctype.h>
 #include <math.h>
 
@@ -86,11 +87,15 @@ static void diagnostic(void *context,const char *text)
 { frontend_print(((frontend_system_cinematic *)context)->frontend,text); }
 qa_cinematic_options frontend_system_cinematic_options(frontend_system_cinematic *row,qa_audio_engine *audio)
 {
-    return (qa_cinematic_options){.clock={.context=row,.sample=sample},
+    qa_q3_cinematic_source_options numeric={0};
+    bool source=row->numeric_source && qa_q3_cinematic_source_read(row->numeric_source,&numeric);
+    return (qa_cinematic_options){.clock=source?numeric.clock:(qa_media_clock){.context=row,.sample=sample},
         .target={.kind=QA_CINEMATIC_SEAT,.id.seat=row->source.identity.physical_seat},
         .loop=row->loop,.hold=row->hold,.silent=row->silent,.audio=audio,
         .audio_bus=row->source.identity.audio_bus,.gain=1,
-        .audio_audience={.kind=QA_CINEMATIC_AUDIO_WORLD},.context=row,.diagnostic=diagnostic};
+        .audio_audience={.kind=QA_CINEMATIC_AUDIO_WORLD},.context=source?numeric.context:row,
+        .diagnostic=source?numeric.print:diagnostic,
+        .roq_scratch=source?qa_q3_cinematic_source_decoder_scratch(row->numeric_source):NULL};
 }
 static bool finish(frontend_system_cinematic *row,qa_cinematic_end reason,qa_error *error)
 {
@@ -168,8 +173,11 @@ static void release(void *context)
     if (!row || row->busy || (!row->restore_pending && row->phase==SYSTEM_PLAYING)) return;
     frontend_system_cinematic_row_free(row,row->restore_pending);
 }
+static qa_cinematic *playback(void *context)
+{ return ((frontend_system_cinematic *)context)->movie; }
 void frontend_system_cinematic_handle(frontend_system_cinematic *row,qa_q3_system_movie *out)
-{ *out=(qa_q3_system_movie){row,status,end,release}; }
+{ *out=(qa_q3_system_movie){.context=row,.status=status,.end=end,.release=release,
+    .playback=row->numeric_source?playback:NULL}; }
 bool frontend_system_cinematic_open(qa_frontend *f,const frontend_system_cinematic_source *source,
     const qa_q3_movie_request *request,qa_q3_system_movie *out,qa_error *error)
 {
@@ -179,7 +187,19 @@ bool frontend_system_cinematic_open(qa_frontend *f,const frontend_system_cinemat
     frontend_system_cinematic *row=calloc(1,sizeof(*row));
     if (!row) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining genuine system cinematic owner");
     row->frontend=f; row->source=*source; row->loop=request->loop; row->hold=request->hold; row->silent=request->silent;
-    row->path=resource_path(request->path,error);
+    row->numeric_source=request->numeric_source; row->numeric_handle=request->numeric_source?request->numeric_handle:-1;
+    if (row->numeric_source) {
+        qa_q3_cinematic_source_options numeric;
+        if (source->cinematics!=row->numeric_source || row->numeric_handle<0 || row->numeric_handle>=16 ||
+            qa_q3_cinematic_source_handles(row->numeric_source)!=f->source_cinematics ||
+            !qa_q3_cinematic_source_read(row->numeric_source,&numeric) || numeric.files!=source->files ||
+            numeric.seat!=source->identity.physical_seat ||
+            numeric.audio_bus(numeric.context)!=source->identity.audio_bus) {
+            free(row); return frontend_fail(error,QA_ERROR_ARGUMENT,"System cinematic request changed its creating numeric Source lease");
+        }
+    }
+    row->path=row->numeric_source && request->path && *request->path?
+        copy_text(request->path,error):resource_path(request->path,error);
     if (!row->path) { free(row); return false; }
     /* Source reserveMovie retires the previous screen request before preparing
      * the new decoder. Its numeric handle remains a genuine stopped owner. */
@@ -188,8 +208,10 @@ bool frontend_system_cinematic_open(qa_frontend *f,const frontend_system_cinemat
     }
     row->next=f->system_cinematics; f->system_cinematics=row; row->screen=true; row->busy=true;
     qa_error opened={0};
-    bool ok=qa_media_library_load(source->movies,source->files,row->path,&row->asset,&opened);
-    if (!ok && opened.code==QA_ERROR_NOT_FOUND && suffix(row->path,".cin")) {
+    bool ok=row->numeric_source?
+        qa_media_library_load_source_roq(source->movies,source->files,row->path,&row->asset,&opened):
+        qa_media_library_load(source->movies,source->files,row->path,&row->asset,&opened);
+    if (!ok && !row->numeric_source && opened.code==QA_ERROR_NOT_FOUND && suffix(row->path,".cin")) {
         memcpy(row->path+strlen(row->path)-4,".ogv",4);
         ok=qa_media_library_load(source->movies,source->files,row->path,&row->asset,&opened);
     }
@@ -354,7 +376,10 @@ bool frontend_system_cinematic_frame(qa_frontend *f,uint64_t elapsed_ns,bool *re
     }
     row->busy=true;
     qa_scene_frame_reset(&f->frame,f->frame_number); bool blank=false;
-    bool ok=qa_scene_frame_material_order(&f->frame,f->order,error) &&
+    bool ok=qa_scene_frame_material_order(&f->frame,f->order,error);
+    if (ok && row->numeric_source) ok=frontend_q3_source_begin_frame(f,0,error);
+    if (ok) ok=row->numeric_source?
+        qa_q3_cinematic_system_fullscreen(row->numeric_source,row->numeric_handle,(qa_scene_rect){0,0,f->width,f->height},&f->frame,&blank,error):
         qa_cinematic_fullscreen(row->movie,QA_CINEMATIC_GAME,(qa_scene_rect){0,0,f->width,f->height},f->ui_images,&f->frame,&blank,error);
     if (ok && !blank) {
         frontend_cinematic_view view; bool found=false;
@@ -398,6 +423,13 @@ bool frontend_system_cinematic_publish_ready(const qa_frontend *f,qa_error *erro
             (row->screen && (row->phase!=SYSTEM_PLAYING || !row->movie)) ||
             (row->phase!=SYSTEM_PLAYING && row->movie))
             return frontend_fail(error,QA_ERROR_ARGUMENT,"Cold system cinematic lost its genuine source or unique screen");
+        if (row->numeric_source) {
+            qa_q3_cinematic_slot slot;
+            if (row->source.cinematics!=row->numeric_source || row->numeric_handle<0 || row->numeric_handle>=16 ||
+                !qa_q3_cinematic_handles_at(f->source_cinematics,(uint32_t)row->numeric_handle,&slot) ||
+                slot.source!=row->numeric_source || !(slot.flags&1u) || !slot.system || slot.system->context!=row)
+                return frontend_fail(error,QA_ERROR_ARGUMENT,"Fullscreen publication lost its exact retained numeric Source slot");
+        }
     }
     return true;
 }

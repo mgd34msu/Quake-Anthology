@@ -767,6 +767,8 @@ static const char *provider_schema(const application_provider *provider)
     if (provider->kind == APPLICATION_PROVIDER_Q3) return "qa.q3.native";
     if (provider->kind == APPLICATION_PROVIDER_QC) return "qa.qc.guest";
     if (provider->kind == APPLICATION_PROVIDER_QVM) return "qa.q3.qvm";
+    if (provider->kind == APPLICATION_PROVIDER_NATIVE && provider->state.native.engine)
+        return "qa.q3.external-native";
     if (provider->kind == APPLICATION_PROVIDER_NATIVE && provider->state.native.q2_engine &&
         provider->state.native.q2_engine->profile != QA_NATIVE_Q2_CGAME_API2023)
         return "qa.q2.external-native";
@@ -1062,7 +1064,7 @@ static bool native_q3_saved_record(application_provider *provider,
     const qa_save_record *saved=qa_save_image_find(image,QA_SAVE_PROVIDER,
         provider->launch->selection.instance);
     qa_bytes bytes=saved ? saved->payload : (qa_bytes){0};
-    if (!saved || strcmp(saved->owner.schema,"qa.q3.native") || saved->owner.schema_version!=6 ||
+    if (!saved || strcmp(saved->owner.schema,"qa.q3.native") || saved->owner.schema_version!=7 ||
         saved->owner.backend[0] || !qa_sha256_equal(&saved->owner.content,&provider->launch->identity) ||
         !bytes.data || bytes.size<32 || memcmp(bytes.data,"QAPV",4) ||
         qa_load_u32le(bytes.data+4)!=1 || qa_load_u32le(bytes.data+8)!=APPLICATION_PROVIDER_Q3 ||
@@ -1080,7 +1082,7 @@ bool application_native_q3_checkpoint_prepare(application_provider *provider,
         provider->application->operation!=APPLICATION_PERSISTING || !saved ||
         saved->owner.kind!=QA_SAVE_PROVIDER || !saved->owner.instance ||
         strcmp(saved->owner.instance,provider->launch->selection.instance) ||
-        strcmp(saved->owner.schema,"qa.q3.native") || saved->owner.schema_version!=6 ||
+        strcmp(saved->owner.schema,"qa.q3.native") || saved->owner.schema_version!=7 ||
         saved->owner.backend[0] || !qa_sha256_equal(&saved->owner.content,&provider->launch->identity) ||
         !bytes.data || bytes.size<32 || memcmp(bytes.data,"QAPV",4) ||
         qa_load_u32le(bytes.data+4)!=1 || qa_load_u32le(bytes.data+8)!=APPLICATION_PROVIDER_Q3 ||
@@ -1258,7 +1260,7 @@ static bool provider_capture(application_provider *provider, qa_save_purpose pur
         ok = native_q3_capture(provider, &state, error);
     else if (provider->kind == APPLICATION_PROVIDER_NATIVE && provider->state.native.q2_engine)
         ok = application_native_q2_save_capture(provider, purpose, resources, &state, error);
-    else ok = application_guest_checkpoint_capture(provider, &state, error);
+    else ok = application_guest_checkpoint_capture(provider, resources, &state, error);
     if (!ok) return false;
     if (state.size > SIZE_MAX - 32) {
         qa_buffer_free(&state);
@@ -1337,7 +1339,9 @@ static bool persistence_inventory(application_persistence *operation, qa_applica
             owner->kind = QA_SAVE_PROVIDER; owner->instance = instance->selection.instance;
             owner->content = instance->identity; schema = provider_schema(provider);
             owner->backend = provider->kind == APPLICATION_PROVIDER_QC ? "quakec" :
-                provider->kind == APPLICATION_PROVIDER_QVM ? "qvm" : "";
+                provider->kind == APPLICATION_PROVIDER_QVM ? "qvm" :
+                (provider->kind == APPLICATION_PROVIDER_NATIVE && provider->state.native.engine)
+                    ? "native-owned" : "";
         }
         if (schema) {
             owner->schema = schema;
@@ -1350,7 +1354,7 @@ static bool persistence_inventory(application_persistence *operation, qa_applica
                                      provider->kind == APPLICATION_PROVIDER_NATIVE &&
                                      provider->state.native.q2_engine) ? 2 :
                                     owner->kind == QA_SAVE_CONTROLS ? 11 :
-                                    owner->kind == QA_SAVE_EQUIPMENT ? 4 :
+                                    owner->kind == QA_SAVE_EQUIPMENT ? 5 :
                                     owner->kind == QA_SAVE_EVENTS ? APPLICATION_EVENTS_SAVE_VERSION :
                                     owner->kind == QA_SAVE_INVENTORY || owner->kind == QA_SAVE_PROGRESSION ||
                                     owner->kind == QA_SAVE_TARGETS ? 2 : 1;
@@ -1632,6 +1636,17 @@ static bool persistence_create(void *opaque, const qa_save_image *image, void **
     }
     if (ok) ok = qa_configuration_commit_restored(transaction, error);
     if (!ok && transaction) (void)qa_configuration_abort(transaction, NULL);
+    for (size_t i = 0; ok && i < candidate->provider_count; ++i) {
+        application_provider *provider = candidate->providers[i];
+        if (provider->kind != APPLICATION_PROVIDER_NATIVE || !provider->state.native.q2_engine ||
+            !provider->state.native.q2_engine->callbacks)
+            continue;
+        const qa_save_record *saved = qa_save_image_find(image, QA_SAVE_PROVIDER,
+                                                        provider->launch->selection.instance);
+        ok = saved && provider_restore(operation, provider, saved->payload, error);
+        if (!saved)
+            application_fail(error, QA_ERROR_FORMAT, "Missing declared native Q2 restoration record");
+    }
     if (ok) ok = persistence_inventory(operation, candidate, image, error);
     if (ok) ok = application_save_resolvers(candidate, &operation->resolvers, error);
     candidate->native_restore_image = NULL;
@@ -1737,6 +1752,7 @@ static bool persistence_shared_match(qa_application *app, const qa_save_image *i
 
 static bool persistence_providers_match(qa_application *app,
                                           const qa_save_image *image,
+                                          const qa_application_native_resource_refs *resources,
                                           qa_error *error)
 {
     for (size_t i = 0; i < app->provider_count; ++i) {
@@ -1760,8 +1776,25 @@ static bool persistence_providers_match(qa_application *app,
                 return false;
             continue;
         }
+        if (provider->kind == APPLICATION_PROVIDER_QVM ||
+            (provider->kind == APPLICATION_PROVIDER_NATIVE && provider->state.native.engine)) {
+            qa_bytes bytes = record ? record->payload : (qa_bytes){0};
+            if (!bytes.data || bytes.size < 32 || memcmp(bytes.data, "QAPV", 4) ||
+                qa_load_u32le(bytes.data + 4) != 1 ||
+                qa_load_u32le(bytes.data + 8) != (uint32_t)provider->kind ||
+                qa_load_u32le(bytes.data + 12) != (provider->map_bound ? 1u : 0u) ||
+                qa_load_u32le(bytes.data + 16) != provider->q1_server_flags ||
+                qa_load_u32le(bytes.data + 20) != provider->q2_server_flags ||
+                qa_load_u64le(bytes.data + 24) != bytes.size - 32)
+                return application_fail(error, QA_ERROR_FORMAT,
+                                        "Q3 guest provider wrapper changed after restoration");
+            if (!application_guest_q3_save_matches(provider,
+                (qa_bytes){bytes.data + 32, bytes.size - 32}, resources, error))
+                return false;
+            continue;
+        }
         qa_buffer encoded = {0};
-        bool ok = provider_capture(provider, qa_save_image_metadata(image)->purpose, NULL, &encoded, error);
+        bool ok = provider_capture(provider, qa_save_image_metadata(image)->purpose, resources, &encoded, error);
         if (ok && (!record || encoded.size != record->payload.size ||
             memcmp(encoded.data, record->payload.data, encoded.size)))
             ok = application_fail(error, QA_ERROR_FORMAT,
@@ -1830,7 +1863,8 @@ static bool persistence_finish(void *opaque, void *value, const qa_save_image *i
             if (ok && saved.wire_present)
                 ok = application_native_q3_wire_finish(provider, error);
         }
-        else if (provider->kind == APPLICATION_PROVIDER_QVM)
+        else if (provider->kind == APPLICATION_PROVIDER_QVM ||
+                 (provider->kind == APPLICATION_PROVIDER_NATIVE && provider->state.native.engine))
             ok = application_guest_q3_save_finish(provider, error);
     }
     if (ok) ok = application_q3_components_finish_restore(candidate->components, error);
@@ -1862,7 +1896,7 @@ static bool persistence_finish(void *opaque, void *value, const qa_save_image *i
         memcmp(commands_before.data, commands_after.data, commands_before.size)))
         ok = application_fail(error, QA_ERROR_FORMAT, "final validation changed restored console continuation");
     qa_buffer_free(&commands_before); qa_buffer_free(&commands_after);
-    if (ok) ok = persistence_providers_match(candidate, image, error) &&
+    if (ok) ok = persistence_providers_match(candidate, image, operation->ops->native_resources, error) &&
         content_matches(operation, candidate, image, error);
     /* Producer restoration may reconnect bindings, but cannot allocate new
      * actor identities or replace the saved ordered string table. */

@@ -280,7 +280,8 @@ static void free_allocations(qa_native_instance *instance) {
 
 bool qa_native_can_destroy(const qa_native_instance *instance) {
     return instance && !instance->active_depth && !instance->callback_depth &&
-        !instance->checkpointing && !instance->destroying && !instance->region_scopes &&
+        !instance->region_depth && !instance->region_service_depth && !instance->write_depth &&
+        !instance->checkpointing && !instance->destroying && !instance->unloading && !instance->region_scopes &&
         !instance->write_scope && !instance->call_scope;
 }
 
@@ -315,9 +316,6 @@ bool qa_native_restart_ready(const qa_native_instance *instance, qa_error *error
 
 bool qa_native_restart_original(qa_native_instance *instance, qa_error *error) {
     if (!qa_native_restart_ready(instance, error)) return false;
-    if (instance->backend == QA_NATIVE_BACKEND_OWNED_PROCESS)
-        return native_fail(error, QA_ERROR_UNSUPPORTED, 0,
-            "owned module reload requires retaining the live process OS/runtime while replacing its source image");
     if (instance->lifecycle != QA_NATIVE_RESTART_READY || instance->restart_original_ready)
         return native_fail(error, QA_ERROR_ARGUMENT, 0, "native original reload requires consumed restart shutdown");
     for (uint32_t i = 0; i < instance->slot_capacity; ++i)
@@ -334,6 +332,11 @@ bool qa_native_restart_original(qa_native_instance *instance, qa_error *error) {
     bool ok;
     if (instance->backend == QA_NATIVE_BACKEND_RUNNER) {
         ok = native_runner_restart_original(instance, error);
+    } else if (instance->backend == QA_NATIVE_BACKEND_OWNED_PROCESS) {
+        instance->unloading = true;
+        ok = native_process_reload(instance, error);
+        instance->unloading = false;
+        if (!report_latched(instance, error)) ok = false;
     } else {
         qa_error unload_error = {0};
         instance->unloading = true;

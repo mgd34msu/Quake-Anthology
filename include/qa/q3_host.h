@@ -100,6 +100,7 @@ typedef struct qa_q3_host_presentation_services {
     /* The display owner supplies the fixed-width source glconfig record. */
     bool (*configuration)(void *, uint8_t out[11332], qa_error *);
     bool (*update_screen)(void *, qa_error *);
+    bool (*end_registration)(void *, qa_error *);
     /* The actual source call opens its fullscreen decoder through this lease. */
     void *system_movie_context;
     bool (*system_movie)(void *, const qa_q3_host *, const qa_qvm_call *,
@@ -371,6 +372,7 @@ typedef struct qa_q3_host_client_context {
 bool qa_q3_host_client_context_read(const qa_q3_host *, qa_q3_host_client_context *);
 /* Pure identity of this live host's actual renderer model registry. */
 qa_q3_presentation_assets *qa_q3_host_presentation_resources(const qa_q3_host *);
+bool qa_q3_host_end_registration(qa_q3_host *,qa_error *);
 bool qa_q3_host_retire_input(qa_q3_host *, uint32_t, bool retired, qa_error *);
 typedef struct qa_q3_host_visibility {
     int32_t area, area2, last_cluster, clusters[16];

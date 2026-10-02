@@ -150,6 +150,13 @@ static bool pickup_rule(void *opaque,qa_actor_id actor,qa_actor_owner owner,
         provider->state.native.q2_engine->callbacks)
         return application_native_q2_callbacks_pickup_saved_rule(provider->state.native.q2_engine,
             actor,owner,serial,id,out,error);
+    application_q3_component_publication component;
+    bool found = false;
+    if (!application_q3_components_checkpoint_publication_read(app, owner, &component, &found, error))
+        return false;
+    if (found)
+        return application_q3_mod_pickup_saved_rule(application_q3_component_mod(component.game),
+                                                   actor, owner, serial, id, out, error);
     return application_supplies_pickup_rule(app->supplies,actor,owner,serial,id,out,error);
 }
 

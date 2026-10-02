@@ -83,7 +83,14 @@ static bool calls(const qa_json_document *d, qa_json_id id, application_q3_scene
                 else if (qa_json_string_equal(d, value, "time")) a->kind = Q3SCENE_TIME;
                 else if (qa_json_string_equal(d, value, "snapshot-number")) a->kind = Q3SCENE_SNAPSHOT;
                 else if (qa_json_string_equal(d, value, "server-command-sequence")) a->kind = Q3SCENE_COMMAND_SEQUENCE;
-                else return fail(e, QA_ERROR_FORMAT, "Component scene call requires an event-independent source argument");
+                else if(p->player_events&&qa_json_string_equal(d,value,"player-state")) a->kind=Q3SCENE_PLAYER_STATE;
+                else if(p->player_events&&qa_json_string_equal(d,value,"snapshot")) a->kind=Q3SCENE_SNAPSHOT_ADDRESS;
+                else if(p->player_events&&qa_json_string_equal(d,value,"entity-state")) a->kind=Q3SCENE_ENTITY_STATE;
+                else if(p->player_events&&qa_json_string_equal(d,value,"centity")) a->kind=Q3SCENE_CENTITY;
+                else if(p->player_events&&qa_json_string_equal(d,value,"origin")) a->kind=Q3SCENE_ORIGIN;
+                else if(p->player_events&&qa_json_string_equal(d,value,"event")) a->kind=Q3SCENE_EVENT;
+                else if(p->player_events&&qa_json_string_equal(d,value,"parameter")) a->kind=Q3SCENE_PARAMETER;
+                else return fail(e, QA_ERROR_FORMAT, "Component call requires a declared source argument");
             } else if (qa_json_string_equal(d, kind, "address")) {
                 uint32_t n;
                 if (!word(d, value, &n, e) || !qa_qvm_qualify_source_span(p->image, n, 1, e)) return false;
@@ -109,7 +116,7 @@ static void calls_free(q3scene_calls *rows)
 void application_q3_scene_profile_destroy(application_q3_scene_profile *p)
 {
     if (!p) return;
-    calls_free(&p->initialize); calls_free(&p->refresh); calls_free(&p->snapshots); calls_free(&p->frame); calls_free(&p->hud);
+    calls_free(&p->project); calls_free(&p->event); free(p->snapshot_pointers.rows); calls_free(&p->initialize); calls_free(&p->refresh); calls_free(&p->snapshots); calls_free(&p->frame); calls_free(&p->hud);
     free(p->time.rows); free(p->frame_time.rows); free(p->origin.rows); free(p->angles.rows); free(p->axis.rows);
     for (size_t i = 0; p->cvars && i < p->cvar_count; ++i) { free(p->cvars[i].name); free(p->cvars[i].value); }
     free(p->cvars); free(p->gameplay_path); free(p->cgame_path);
@@ -162,16 +169,18 @@ bool application_q3_scene_profile_create(qa_qvm_image *image, qa_qvm_abi abi,
     if (!p) { qa_json_destroy(d); return fail(e, QA_ERROR_MEMORY, "Owning component scene profile"); }
     p->image = image; qa_qvm_image_retain(image); p->abi = abi; qa_sha256(bytes, &p->declaration_digest);
     qa_json_id root = qa_json_root(d), storage = qa_json_get(d, root, "storage"), ents = qa_json_get(d, storage, "centities");
+    p->player_events=qa_json_string_equal(d,qa_json_get(d,root,"runtime"),"qvm-player-events");
     uint64_t version;
     bool ok = qa_json_u64(d, qa_json_get(d, root, "version"), &version, e) && version == 1 &&
-        qa_json_string_equal(d, qa_json_get(d, root, "runtime"), "qvm-scene") &&
+        (p->player_events||qa_json_string_equal(d, qa_json_get(d, root, "runtime"), "qvm-scene")) &&
         program(d, qa_json_get(d, root, "gameplay"), gameplay_path, gameplay, abi, &p->gameplay_path, &p->gameplay_digest, e) &&
         program(d, qa_json_get(d, root, "cgame"), path, image, abi, &p->cgame_path, &p->cgame_digest, e) &&
         field(d, storage, "gameState", &p->game_state, e) && qa_qvm_qualify_source_span(image, p->game_state, 20100, e) &&
-        field(d, storage, "serverCommandSequence", &p->command_sequence, e) && qa_qvm_qualify_source_span(image, p->command_sequence, 4, e) &&
+        (p->player_events||(field(d, storage, "serverCommandSequence", &p->command_sequence, e) && qa_qvm_qualify_source_span(image, p->command_sequence, 4, e))) &&
         field(d, ents, "address", &p->entities, e) && field(d, ents, "stride", &p->stride, e) &&
         field(d, ents, "capacity", &p->capacity, e) && field(d, ents, "state", &p->state, e) &&
-        field(d, ents, "previousEvent", &p->previous_event, e) && field(d, ents, "snapshotTime", &p->snapshot_time, e);
+        (p->player_events?field(d,ents,"origin",&p->entity_origin,e):
+            (field(d, ents, "previousEvent", &p->previous_event, e) && field(d, ents, "snapshotTime", &p->snapshot_time, e)));
     if (ok) ok = p->stride && p->capacity && p->stride >= qa_qvm_entity_bytes(abi) &&
         p->state <= p->stride - qa_qvm_entity_bytes(abi) && p->stride >= 4 &&
         p->previous_event <= p->stride - 4 && p->snapshot_time <= p->stride - 4 &&
@@ -182,7 +191,36 @@ bool application_q3_scene_profile_create(qa_qvm_image *image, qa_qvm_abi abi,
         addresses(d, qa_json_get(d, storage, "viewAngles"), p, &p->angles, 12, true, e) &&
         addresses(d, qa_json_get(d, storage, "viewAxis"), p, &p->axis, 36, true, e);
     qa_json_id event = qa_json_get(d, root, "eventCheck"), vars = qa_json_get(d, root, "cvars"), hud = qa_json_get(d, root, "hud");
-    if (ok) ok = field(d, root, "eventEntityType", &p->event_type, e) && p->event_type <= INT32_MAX &&
+    if(ok&&p->player_events) {
+        qa_json_id snapshot=qa_json_get(d,storage,"snapshot");
+        ok=qa_json_string_equal(d,qa_json_get(d,snapshot,"kind"),"synthetic-player-event")&&
+            field(d,storage,"playerState",&p->player_state,e)&&qa_qvm_qualify_source_span(image,p->player_state,qa_qvm_player_bytes(abi),e)&&
+            field(d,snapshot,"address",&p->snapshot_address,e)&&qa_qvm_qualify_source_span(image,p->snapshot_address,qa_qvm_snapshot_bytes(abi),e)&&
+            addresses(d,qa_json_get(d,snapshot,"pointers"),p,&p->snapshot_pointers,4,false,e)&&
+            p->stride>=12&&p->entity_origin<=p->stride-12&&
+            calls(d,qa_json_get(d,root,"initialize"),p,&p->initialize,e)&&calls(d,qa_json_get(d,root,"refresh"),p,&p->refresh,e)&&
+            calls(d,qa_json_get(d,root,"project"),p,&p->project,e)&&calls(d,qa_json_get(d,root,"frame"),p,&p->frame,e);
+        if(ok) {
+            p->event.rows=calloc(1,sizeof(*p->event.rows)); p->event.count=p->event.rows?1:0;
+            if(!p->event.rows) ok=fail(e,QA_ERROR_MEMORY,"Retaining original player event caller");
+            else {
+                /* Parse a single authored event with the same call admission. */
+                qa_json_id event_id=qa_json_get(d,root,"event");
+                qa_bytes raw=qa_json_source(d,event_id); qa_buffer wrapper={.data=malloc(raw.size+2),.size=raw.size+2};
+                if(!wrapper.data) ok=fail(e,QA_ERROR_MEMORY,"Retaining player event declaration");
+                else { wrapper.data[0]='['; memcpy(wrapper.data+1,raw.data,raw.size); wrapper.data[raw.size+1]=']';
+                    qa_json_document *one=NULL; free(p->event.rows); p->event=(q3scene_calls){0};
+                    ok=qa_json_parse((qa_bytes){wrapper.data,wrapper.size},&one,e)&&calls(one,qa_json_root(one),p,&p->event,e);
+                    qa_json_destroy(one); qa_buffer_free(&wrapper);
+                }
+            }
+        }
+        if(ok) {
+            uint64_t snapshot_end=(uint64_t)p->snapshot_address+qa_qvm_snapshot_bytes(abi),player_end=(uint64_t)p->player_state+qa_qvm_player_bytes(abi);
+            ok=!(p->player_state<snapshot_end&&p->snapshot_address<player_end);
+        }
+    }
+    if (ok&&!p->player_events) ok = field(d, root, "eventEntityType", &p->event_type, e) && p->event_type <= INT32_MAX &&
         field(d, event, "entry", &p->event_entry, e) && entry(image, p->event_entry, e) &&
         field(d, event, "centityArgument", &p->event_argument, e) && p->event_argument < 62 &&
         body(d, qa_json_get(d, root, "body"), p, e) &&

@@ -7,7 +7,7 @@ typedef struct slot_binding {
     bool bound, retiring;
 } slot_binding;
 struct qa_weapon_slot {
-    qa_actor_registry *registry;
+    const qa_actor_registry *registry;
     qa_actor_id actor;
     qa_actor_owner primary;
     qa_weapon_slot_state state;
@@ -73,7 +73,7 @@ bool qa_weapon_slot_bind(qa_weapon_slot *s,const qa_equipment_weapon_binding *v,
     if(i==s->count)++s->count;
     return true;
 }
-bool qa_weapon_slot_create(qa_actor_registry *r,qa_actor_id actor,const qa_equipment_weapon_binding *primary,
+bool qa_weapon_slot_create(const qa_actor_registry *r,qa_actor_id actor,const qa_equipment_weapon_binding *primary,
     const qa_weapon_slot_state *restored,qa_weapon_slot **out,qa_error *e) {
     if(!out||!r||!qa_actors_get(r,actor)||!binding_valid(primary)||(restored&&!state_valid(restored)))
         return fail(e,"Weapon slot requires its actual actor and primary handoff");

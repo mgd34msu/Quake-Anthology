@@ -261,6 +261,13 @@ bool qa_q3_host_client_context_read(const qa_q3_host *host, qa_q3_host_client_co
         .frontend_lifetime = host->options.frontend_lifetime};
     return true;
 }
+bool qa_q3_host_end_registration(qa_q3_host *host,qa_error *error)
+{
+    if(!host||host->options.role!=QA_QVM_CGAME||host->retired)
+        return q3_fail(error,QA_ERROR_ARGUMENT,0,"Renderer registration requires its actual CG host");
+    return !host->options.presentation.end_registration||
+        host->options.presentation.end_registration(host->options.presentation.context,error);
+}
 qa_q3_presentation_assets *qa_q3_host_presentation_resources(const qa_q3_host *host)
 {
     return host && !host->retired && host->options.presentation.seat ?
@@ -323,6 +330,9 @@ bool qa_q3_host_create(const qa_q3_host_options *options, qa_q3_host **out, qa_e
     if (!qa_common_cursor_init(&host->entity_cursor, options->entity_text, QA_COMMON_TERMINATED, error)) {
         free(host->game); free(host); return false;
     }
+    if (!q3_script_namespace_bind(host, options->script_globals, error)) {
+        free(host->game); free(host); return false;
+    }
     qa_arena_init(&host->scratch, 16384);
     qa_fs_root_retain(write_root); host->options.write_view.root=write_root;
     *out = host; return true;
@@ -337,6 +347,12 @@ bool qa_q3_host_destroy_ready(const qa_q3_host *host)
 {
     if (!host) return true;
     if (host->calls || host->collision_holds || (host->options.world && !qa_world_idle(host->options.world))) return false;
+    if (host->script_namespace) {
+        if (host->script_namespace->reporting) return false;
+        for (size_t i=1;i<64;++i)
+            if (host->script_namespace->pending[i] ||
+                (host->script_namespace->scripts[i] && host->script_namespace->scripts[i]->operations)) return false;
+    }
     if (host->game) for (size_t i = 0; i < 1022; ++i) {
         const q3_entity_slot *slot = &host->game->slots[i];
         if (slot->input_motion) return false;
@@ -357,7 +373,7 @@ bool qa_q3_host_close_map(qa_q3_host *host, qa_error *error)
 bool qa_q3_host_round_ready(const qa_q3_host *host, qa_error *error)
 {
     if (!host || host->retired || host->restore_pending || !host->game ||
-        host->options.role != QA_QVM_GAME || host->calls || host->scripts_reporting ||
+        host->options.role != QA_QVM_GAME || host->calls || host->script_namespace->reporting ||
         (host->vm && !qa_qvm_can_destroy(host->vm)) ||
         (host->native && !qa_native_can_destroy(host->native)) ||
         !qa_session_safe(host->options.session) || !qa_world_idle(host->options.world) ||
@@ -367,7 +383,7 @@ bool qa_q3_host_round_ready(const qa_q3_host *host, qa_error *error)
         if (host->game->slots[i].input_motion)
             return q3_fail(error, QA_ERROR_ARGUMENT, i, "Q3 round restart has an admitted input motion");
     for (size_t i = 0; i < 64; ++i)
-        if (host->script_pending[i] || (host->scripts[i] && host->scripts[i]->operations))
+        if (host->script_namespace->pending[i] || (host->script_namespace->scripts[i] && host->script_namespace->scripts[i]->operations))
             return q3_fail(error, QA_ERROR_ARGUMENT, i, "Q3 round restart has an admitted script operation");
     for (const q3_crossings *lease = host->crossings; lease; lease = lease->next)
         if (lease->busy)
@@ -457,6 +473,14 @@ bool qa_q3_host_destroy(qa_q3_host *host, qa_error *error)
     if (!host) return true;
     if (host->calls || host->collision_holds || (host->options.world && !qa_world_idle(host->options.world)))
         return q3_fail(error, QA_ERROR_ARGUMENT, 0, "cannot destroy a Q3 module host during active service callbacks");
+    if (host->script_namespace) {
+        if (host->script_namespace->reporting)
+            return q3_fail(error,QA_ERROR_ARGUMENT,0,"Cannot destroy a Q3 host during shared PC shutdown reporting");
+        for (size_t i=1;i<64;++i)
+            if (host->script_namespace->pending[i] ||
+                (host->script_namespace->scripts[i] && host->script_namespace->scripts[i]->operations))
+                return q3_fail(error,QA_ERROR_ARGUMENT,i,"Cannot destroy a Q3 host during shared PC source operations");
+    }
     if (host->game) for (size_t i = 0; i < 1022; ++i) {
         const q3_entity_slot *slot = &host->game->slots[i];
         if (slot->input_motion)
@@ -485,7 +509,7 @@ bool qa_q3_host_destroy(qa_q3_host *host, qa_error *error)
         return false;
     }
     qa_fs_root_close(host->options.write_view.root); host->options.write_view.root=NULL;
-    for (size_t i = 1; i < 64; ++i) q3_script_close(host->scripts[i]);
+    q3_script_namespace_release(host);
     while (host->crossings) {
         q3_crossings *lease = host->crossings;
         host->crossings = lease->next;

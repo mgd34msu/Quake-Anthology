@@ -94,6 +94,10 @@ typedef struct qa_q3_asset_owner_refs {
 
 bool qa_q3_assets_owner_checkpoint(qa_q3_presentation_assets *, qa_session *,
     const qa_q3_asset_owner_refs *, qa_buffer *, qa_error *);
+/* Reads only the literal supported header/parent prefix for aggregate import
+ * ordering, with no resolver or allocation. Zero means no parent. This does
+ * not qualify the remaining payload; owner_restore performs full admission. */
+bool qa_q3_assets_owner_parent_key(qa_bytes, uint64_t *, qa_error *);
 /* Candidate services and map bindings are genuine qualified owners. Parsed
  * model holders and scenes/worlds/materials/audio already exist in the same
  * aggregate dictionary. Import copies private skin/name/LOD metadata and

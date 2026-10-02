@@ -104,6 +104,24 @@ static bool signature(qa_source_save_io *io, uint32_t *schema)
         !qa_source_save_u32(io, &version) || version < 3 || version > 6) return false;
     *schema = version; return true;
 }
+bool qa_q3_assets_owner_parent_key(qa_bytes bytes, uint64_t *out, qa_error *error)
+{
+    if (!out) return q3p_fail(error, QA_ERROR_ARGUMENT, "Q3 parent key requires an output");
+    qa_bytes header;
+    if (!qa_bytes_slice(bytes, 0, 8, &header, error)) return false;
+    uint32_t schema = qa_load_u32le(header.data + 4);
+    if (memcmp(header.data, "Q3AS", 4) || schema < 3 || schema > 6)
+        return q3p_fail(error, QA_ERROR_FORMAT, "Unsupported Q3 asset parent prefix");
+    uint64_t key = 0;
+    if (schema >= 5) {
+        qa_bytes parent;
+        if (!qa_bytes_slice(bytes, 8, 9, &parent, error)) return false;
+        if (parent.data[8] > 1)
+            return q3p_fail(error, QA_ERROR_FORMAT, "Invalid Q3 asset retired flag");
+        key = qa_load_u64le(parent.data);
+    }
+    *out = key; return true;
+}
 static bool refs_ready(const qa_q3_asset_owner_refs *r)
 {
     return r && r->services_encode && r->services_qualify && r->provider_encode && r->provider_decode &&

@@ -90,9 +90,48 @@ static bool provider_at(const qa_frontend *f,size_t ordinal,qa_q3_presentation_p
         }
         --ordinal;
     }
-    frontend_component_scene_view component;
-    if(!frontend_component_scene_metadata_read(f,ordinal,&component,&error)) return false;
-    *provider=(qa_q3_presentation_provider){component.files,component.images,component.materials,QA_SCENE_Q3}; return true;
+    size_t components=frontend_component_scene_count(f);
+    if(ordinal<components) {
+        frontend_component_scene_view component;
+        if(!frontend_component_scene_metadata_read(f,ordinal,&component,&error)) return false;
+        *provider=(qa_q3_presentation_provider){component.files,component.images,component.materials,QA_SCENE_Q3}; return true;
+    }
+    ordinal-=components;
+    size_t retained_count=0;
+    if(!frontend_renderer_materials_count(f,&retained_count,&error)) return false;
+    if(ordinal<retained_count) {
+        frontend_renderer_materials_view retained;
+        if(!frontend_renderer_materials_read_at(f,ordinal,&retained,&error)) return false;
+        *provider=(qa_q3_presentation_provider){retained.mounts,retained.images,retained.library,QA_SCENE_Q3}; return true;
+    }
+    ordinal-=retained_count;
+    size_t worlds=0;
+    if(!frontend_renderer_worlds_count(f,&worlds,&error)) return false;
+    if(ordinal<worlds) {
+        frontend_renderer_worlds_view world; qa_scene_world_options options;
+        if(!frontend_renderer_worlds_read_at(f,ordinal,&world,&error) ||
+            !qa_scene_world_options_read(world.world,&options)) return false;
+        *provider=(qa_q3_presentation_provider){qa_scene_resources_files(world.images),world.images,world.materials,options.images.family}; return true;
+    }
+    ordinal-=worlds;
+    size_t unified_count=0;
+    if(!frontend_unified_media_inventory_count(f,&unified_count,&error)) return false;
+    for(size_t i=0;i<unified_count;++i) {
+        frontend_unified_media *media=NULL;
+        if(!frontend_unified_media_inventory_at(f,i,&media,&error)) return false;
+        size_t count=media?frontend_unified_media_bank_count(media):0;
+        if(ordinal<count) {
+            frontend_unified_bank_view bank;
+            if(!frontend_unified_media_bank_read(media,ordinal,&bank) || !bank.product) return false;
+            qa_scene_family family=bank.product->family==QA_GAME_Q1?QA_SCENE_Q1:
+                bank.product->family==QA_GAME_Q2?QA_SCENE_Q2:QA_SCENE_Q3;
+            *provider=(qa_q3_presentation_provider){bank.files,bank.images,bank.materials,family}; return true;
+        }
+        ordinal-=count;
+    }
+    frontend_equipment_media_view equipment;
+    if(!frontend_equipment_media_at(f,ordinal,&equipment) || !equipment.source_slot) return false;
+    *provider=(qa_q3_presentation_provider){equipment.owner.mounts,equipment.owner.images,equipment.owner.materials,QA_SCENE_Q3}; return true;
 }
 bool frontend_material_provider_encode(const qa_frontend *f,const qa_q3_presentation_provider *provider,
     uint64_t *key,qa_error *error)
@@ -109,6 +148,22 @@ bool frontend_material_provider_encode(const qa_frontend *f,const qa_q3_presenta
     size_t components=frontend_component_scene_count(f);
     if(components>SIZE_MAX-count) return false;
     count+=components;
+    size_t retained=0,worlds=0,unified_count=0;
+    if(!frontend_renderer_materials_count(f,&retained,error) || retained>SIZE_MAX-count) return false;
+    count+=retained;
+    if(!frontend_renderer_worlds_count(f,&worlds,error) || worlds>SIZE_MAX-count) return false;
+    count+=worlds;
+    if(!frontend_unified_media_inventory_count(f,&unified_count,error)) return false;
+    for(size_t i=0;i<unified_count;++i) {
+        frontend_unified_media *media=NULL;
+        if(!frontend_unified_media_inventory_at(f,i,&media,error)) return false;
+        size_t banks=media?frontend_unified_media_bank_count(media):0;
+        if(banks>SIZE_MAX-count) return false;
+        count+=banks;
+    }
+    size_t equipment=frontend_equipment_media_count(f);
+    if(equipment>SIZE_MAX-count) return false;
+    count+=equipment;
     for (size_t i=0;i<count;++i) {
         qa_q3_presentation_provider actual;
         if (provider_at(f,i,&actual) && actual.mounts==provider->mounts && actual.images==provider->images &&
@@ -169,9 +224,9 @@ static bool collect(qa_frontend *f, bool restoring, material_owner **out, size_t
     size_t retained_count=0;
     if(!frontend_renderer_materials_count(f,&retained_count,error) || retained_count>SIZE_MAX-capacity) return false;
     capacity+=retained_count;
-    frontend_renderer_worlds_view retained_world; bool has_world=false;
-    if(!frontend_renderer_worlds_read(f,&retained_world,&has_world,error)) return false;
-    if(has_world && retained_world.private_heaps) { if(capacity==SIZE_MAX) return false; ++capacity; }
+    size_t world_count=0;
+    if(!frontend_renderer_worlds_count(f,&world_count,error) || world_count>SIZE_MAX-capacity) return false;
+    capacity+=world_count;
     size_t unified_count=0;
     if(!frontend_unified_media_inventory_count(f,&unified_count,error)) return false;
     for(size_t i=0;i<unified_count;++i) {
@@ -243,8 +298,22 @@ static bool collect(qa_frontend *f, bool restoring, material_owner **out, size_t
             append(owners,count,graph,retained.library,retained.images,retained.mounts,
                 MATERIAL_RENDERER,i,0,0,NULL,QA_SCENE_Q3,error);
     }
-    if(ok && has_world && retained_world.private_heaps) ok=append(owners,count,graph,
-        retained_world.materials,retained_world.images,retained_world.files,MATERIAL_RENDERER_WORLD,0,0,0,NULL,QA_SCENE_Q3,error);
+    for(size_t i=0;ok && i<world_count;++i) {
+        frontend_renderer_worlds_view retained_world;
+        ok=frontend_renderer_worlds_read_at(f,i,&retained_world,error);
+        bool repeated=false;
+        for(size_t j=0;ok && retained_world.private_heaps && j<i;++j) {
+            frontend_renderer_worlds_view prior;
+            ok=frontend_renderer_worlds_read_at(f,j,&prior,error);
+            if(ok && prior.materials==retained_world.materials) {
+                if(prior.images!=retained_world.images || prior.files!=retained_world.files)
+                    ok=frontend_fail(error,QA_ERROR_FORMAT,"Retained world library has conflicting paired heaps");
+                repeated=true;
+            }
+        }
+        if(ok && retained_world.private_heaps && !repeated) ok=append(owners,count,graph,
+            retained_world.materials,retained_world.images,retained_world.files,MATERIAL_RENDERER_WORLD,i,0,0,NULL,QA_SCENE_Q3,error);
+    }
     for(size_t i=0;ok && i<unified_count;++i) {
         frontend_unified_media *media=NULL;
         ok=frontend_unified_media_inventory_at(f,i,&media,error);

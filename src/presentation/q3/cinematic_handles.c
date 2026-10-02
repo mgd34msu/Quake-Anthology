@@ -1,4 +1,5 @@
 #include "cinematic_handles_private.h"
+#include "qa/material_source_scratch.h"
 #include <math.h>
 
 bool q3cin_fail(qa_error *error,qa_status status,const char *message)
@@ -41,6 +42,16 @@ bool qa_q3_cinematic_handles_idle(const qa_q3_cinematic_handles *owner)
 { return owner && !owner->busy && !owner->stage; }
 bool qa_q3_cinematic_handles_read(const qa_q3_cinematic_handles *owner,qa_q3_cinematic_handles_options *out)
 { if (!owner || !out) return false; *out=owner->options; return true; }
+bool qa_q3_cinematic_handles_rebind_ready(const qa_q3_cinematic_handles *owner,
+    const qa_q3_cinematic_handles_options *options,qa_error *error)
+{
+    return (qa_q3_cinematic_handles_idle(owner) && options && options->images==owner->options.images &&
+        options->upload==owner->options.upload && options->ui_limits==owner->options.ui_limits &&
+        options->fullscreen_draw==owner->options.fullscreen_draw) ||
+        q3cin_fail(error,QA_ERROR_ARGUMENT,"Cinematic pool adoption changed its physical scratch bank or renderer services");
+}
+void qa_q3_cinematic_handles_rebind(qa_q3_cinematic_handles *owner,const qa_q3_cinematic_handles_options *options)
+{ if (owner && options) owner->options=*options; }
 bool qa_q3_cinematic_handles_destroy(qa_q3_cinematic_handles **slot,qa_error *error)
 {
     if (!slot) return q3cin_fail(error,QA_ERROR_ARGUMENT,"Cinematic pool disposal requires its owned slot");
@@ -82,7 +93,7 @@ static void role_print(void *context,const char *message)
 {
     const qa_q3_cinematic_source *source=context;
     if (source->diagnostic_print) source->diagnostic_print(source->diagnostic_context,message);
-    else source->parent->options.print(source->parent->options.context,message);
+    else if (source->parent->options.print) source->parent->options.print(source->parent->options.context,message);
 }
 static bool role_current(void *context,const qa_q3_cinematic_source_options *options)
 {
@@ -151,6 +162,25 @@ bool qa_q3_cinematic_source_role_diagnostic_bind(qa_q3_cinematic_source *source,
         return q3cin_fail(error,QA_ERROR_ARGUMENT,"Role cinematic diagnostic binding must precede actual handle construction");
     source->diagnostic_context=context; source->diagnostic_print=print; source->diagnostic_current=current;
     source->options.print=role_print; return true;
+}
+bool qa_q3_cinematic_source_role_diagnostic_read(const qa_q3_cinematic_source *source,void **context,bool *bound)
+{
+    if (!source || !source->parent || !context || !bound) return false;
+    *context=source->diagnostic_context;
+    *bound=source->diagnostic_print!=NULL || source->diagnostic_current!=NULL;
+    return true;
+}
+bool qa_q3_cinematic_source_role_detach(qa_q3_cinematic_source *source,void *context,qa_error *error)
+{
+    if (!source || !source->parent || !qa_q3_cinematic_handles_idle(source->handles) || source->users ||
+        !source->diagnostic_print || !source->diagnostic_current || source->diagnostic_context!=context)
+        return q3cin_fail(error,QA_ERROR_ARGUMENT,"Detached cinematic role requires its returned actual diagnostic owner");
+    for (size_t i=0;i<16;++i) if (source->handles->movies[i].source==source &&
+        (source->handles->movies[i].flags&1u))
+        return q3cin_fail(error,QA_ERROR_ARGUMENT,"Detached cinematic role retains a real fullscreen lease on its retiring owner");
+    source->diagnostic_context=NULL; source->diagnostic_print=NULL; source->diagnostic_current=NULL;
+    source->options.print=source->parent->options.print?role_print:NULL;
+    return true;
 }
 void qa_q3_cinematic_source_release(qa_q3_cinematic_source *source)
 { if (source && source->users) --source->users; }
@@ -231,6 +261,21 @@ void qa_q3_cinematic_source_audio_rebind(qa_q3_cinematic_source *source,qa_audio
 }
 qa_q3_cinematic_handles *qa_q3_cinematic_source_handles(const qa_q3_cinematic_source *source)
 { return source?source->handles:NULL; }
+qa_roq_scratch *qa_q3_cinematic_source_decoder_scratch(const qa_q3_cinematic_source *source)
+{ return source && source->handles?source->handles->decoder_scratch:NULL; }
+bool qa_q3_cinematic_system_select(qa_q3_cinematic_source *source,int32_t handle,
+    qa_cinematic *playback,qa_error *error)
+{
+    if (!playback || handle<0 || handle>=16 || !q3cin_enter(source,error)) return false;
+    qa_q3_cinematic_handles *owner=source->handles;
+    q3cin_movie *movie=&owner->movies[handle];
+    bool ok=movie->source==source && (movie->flags&1u) && !movie->pending &&
+        movie->system.playback && movie->system.playback(movie->system.context)==playback;
+    if (!ok) q3cin_fail(error,QA_ERROR_ARGUMENT,"Fullscreen decoder lost its actual global cinematic slot");
+    if (ok && owner->decoder_handle!=handle) ok=qa_cinematic_roq_restart(playback,error);
+    if (ok) owner->selected_handle=owner->decoder_handle=handle;
+    return returned(source,ok,error);
+}
 qa_cinematic_options q3cin_options(const qa_q3_cinematic_source *source,uint32_t flags,uint64_t bus)
 {
     const qa_q3_cinematic_source_options *s=&source->options;
@@ -276,7 +321,7 @@ bool q3cin_play_into(qa_q3_cinematic_source *source,q3cin_movie slots[16],qa_med
         .pending=true,.occupied=true,.dirty=true,.play_on_walls=1,.status=1,.width=512,.height=512};
     bool ok;
     if (flags&1u) {
-        qa_q3_movie_request requested={.path=request,.loop=(flags&2u)!=0,.hold=(flags&4u)!=0,
+        qa_q3_movie_request requested={.path=path,.loop=(flags&2u)!=0,.hold=(flags&4u)!=0,
             .silent=(flags&8u)!=0,.numeric_source=source,.numeric_handle=(int32_t)index};
         ok=open && open(context,&requested,&movie->system,error);
         if (ok && (!movie->system.status || !movie->system.end || !movie->system.release))
@@ -346,11 +391,12 @@ static bool run(qa_q3_cinematic_handles *owner,int32_t handle,int32_t *out,qa_er
             return q3cin_fail(error,QA_ERROR_FORMAT,"Cannot reset an uninitialized cinematic without its retained decoder");
         *out=movie->status; return true;
     }
-    bool switched=movie->playback && owner->decoder_handle!=handle;
+    qa_cinematic *decoder=movie->playback?movie->playback:
+        movie->system.playback?movie->system.playback(movie->system.context):NULL;
+    bool switched=decoder && owner->decoder_handle!=handle;
     if (switched) {
         owner->selected_handle=owner->decoder_handle=handle;
-        if (qa_cinematic_asset_source(movie->asset).format==QA_CINEMATIC_ROQ &&
-            !qa_cinematic_roq_restart(movie->playback,error)) return false;
+        if (!qa_cinematic_roq_restart(decoder,error)) return false;
         movie->status=5;
     }
     if (movie->playback && movie->play_on_walls < -1) { *out=movie->status; return true; }
@@ -431,15 +477,17 @@ bool qa_q3_cinematic_handles_image_is(const qa_q3_cinematic_handles *owner,const
 static bool upload(qa_q3_cinematic_handles *owner,uint32_t index,bool shader,qa_scene_frame *frame,qa_error *error)
 {
     q3cin_movie *movie=&owner->movies[index];
-    const qa_media_frame *picture=movie->playback?qa_cinematic_frame(movie->playback):NULL;
+    qa_cinematic *decoder=movie->playback?movie->playback:
+        movie->system.playback?movie->system.playback(movie->system.context):NULL;
+    const qa_media_frame *picture=decoder?qa_cinematic_frame(decoder):NULL;
     if (!picture) return true;
     qa_media_frame reached;
     if (shader) {
-        if (!qa_cinematic_upload_frame(movie->playback,true,&reached,error)) return false;
-    } else if (!qa_cinematic_source_ui_frame(movie->playback,movie->draw_width,movie->draw_height,
+        if (!qa_cinematic_upload_frame(decoder,true,&reached,error)) return false;
+    } else if (!qa_cinematic_source_ui_frame(decoder,movie->draw_width,movie->draw_height,
         movie->dirty,&reached,error)) return false;
     picture=&reached;
-    uint64_t revision=qa_cinematic_revision(movie->playback);
+    uint64_t revision=qa_cinematic_revision(decoder);
     if (shader && movie->play_on_walls<=0 && movie->dirty) {
         if (movie->play_on_walls==0) movie->play_on_walls=-1;
         else if (movie->play_on_walls==-1) movie->play_on_walls=-2;
@@ -450,7 +498,8 @@ static bool upload(qa_q3_cinematic_handles *owner,uint32_t index,bool shader,qa_
     bool redefine=movie->redefine || previous->logical_width!=picture->width || previous->logical_height!=picture->height;
     qa_scene_image *next=NULL;
     if (dirty || redefine) {
-        qa_image pixels={.width=picture->width,.height=picture->height,.rgba=picture->rgba};
+        qa_image pixels={.width=picture->width,.height=picture->height,
+            .rgba={.data=(uint8_t *)picture->rgba.data,.size=picture->rgba.size}};
         if (!qa_scene_image_source_scratch_version(owner->options.images,index,previous,&pixels,&next,error)) return false;
     }
     const qa_scene_image *image=next?next:previous;
@@ -465,6 +514,51 @@ static bool upload(qa_q3_cinematic_handles *owner,uint32_t index,bool shader,qa_
         if (ok && enabled==0 && movie->play_on_walls==1) movie->play_on_walls=0;
     }
     if (ok && frame) ok=qa_scene_frame_image(frame,image,error);
+    return ok;
+}
+bool qa_q3_cinematic_system_fullscreen(qa_q3_cinematic_source *source,int32_t handle,
+    qa_scene_rect viewport,qa_scene_frame *frame,bool *blank,qa_error *error)
+{
+    if (!frame || !blank || !viewport.width || !viewport.height || handle<0 || handle>=16 ||
+        !source || !source->handles->options.fullscreen_draw) return false;
+    if (frame->source_pending && !qa_material_source_frame_end(frame->source_pending,frame,true,error)) return false;
+    qa_q3_cinematic_handles *owner=source->handles;
+    q3cin_movie *movie=&owner->movies[handle];
+    qa_cinematic *decoder=movie->system.playback?movie->system.playback(movie->system.context):NULL;
+    if (!qa_q3_cinematic_system_select(source,handle,decoder,error) || !q3cin_enter(source,error)) return false;
+    bool ok=decoder && movie->source==source && (movie->flags&1u) && !movie->pending && owner->decoder_handle==handle;
+    if (!ok) q3cin_fail(error,QA_ERROR_ARGUMENT,"Fullscreen draw lost its selected global decoder");
+    uint64_t before=ok?qa_cinematic_revision(decoder):0;
+    qa_media_tick tick={0};
+    if (ok) ok=qa_cinematic_tick(decoder,&tick,error);
+    bool visible=ok && tick.status!=QA_MEDIA_ENDED && tick.status!=QA_MEDIA_STOPPED && tick.frame;
+    if (visible) {
+        if (qa_cinematic_revision(decoder)!=before) movie->dirty=true;
+        const qa_media_frame *picture=qa_cinematic_frame(decoder);
+        if (movie->width!=picture->width || movie->height!=picture->height || !movie->draw_width) {
+            bool limited=false;
+            ok=owner->options.ui_limits(owner->options.context,&limited,error);
+            if (ok) {
+                movie->width=picture->width; movie->height=picture->height;
+                movie->draw_width=limited && picture->width>256?256:picture->width;
+                movie->draw_height=limited && picture->height>256?256:picture->height;
+            }
+        }
+        if (ok) ok=upload(owner,(uint32_t)handle,false,frame,error);
+    } else if (ok) {
+        qa_scene_command clear={.kind=QA_SCENE_COMMAND_VIEW,.data.view={.viewport=viewport,
+            .clear_color=true,.color={0,0,0,1},.seat=source->options.seat}};
+        ok=qa_scene_frame_emit(frame,&clear,error);
+    }
+    if (ok) *blank=!visible;
+    if (!returned(source,ok,error)) return false;
+    /* Raw submission may finish an earlier shader batch and reach another
+     * numeric decoder. Image upload returned before that renderer entry. */
+    if (visible) {
+        ok=owner->options.fullscreen_draw(owner->options.context,owner->scratch[handle],viewport,
+            source->options.seat,frame,error);
+        if (ok && movie->source==source) movie->dirty=false;
+    }
     return ok;
 }
 bool qa_q3_cinematic_image(qa_q3_cinematic_source *source,int32_t handle,qa_scene_frame *frame,

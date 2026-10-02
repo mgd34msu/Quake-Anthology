@@ -191,9 +191,13 @@ bool frontend_scene_namespace_capture_images(frontend_scene_namespace *space, qa
             images_owner(space,f,retained.images,&scratch,error) &&
             images_owner(space,f,retained.lightmap_images,&scratch,error);
     }
-    frontend_renderer_worlds_view world; bool has_world=false;
-    if(ok) ok=frontend_renderer_worlds_read(f,&world,&has_world,error);
-    if(ok && has_world && world.private_heaps) ok=images_owner(space,f,world.images,&scratch,error);
+    size_t world_count=0;
+    if(ok) ok=frontend_renderer_worlds_count(f,&world_count,error);
+    for(size_t i=0;ok && i<world_count;++i) {
+        frontend_renderer_worlds_view world;
+        ok=frontend_renderer_worlds_read_at(f,i,&world,error);
+        if(ok && world.private_heaps) ok=images_owner(space,f,world.images,&scratch,error);
+    }
     size_t unified_count=0;
     if(ok) ok=frontend_unified_media_inventory_count(f,&unified_count,error);
     for(size_t i=0;ok && i<unified_count;++i) {

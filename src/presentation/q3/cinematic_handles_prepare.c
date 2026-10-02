@@ -99,8 +99,9 @@ bool qa_q3_cinematic_handles_stage_ready(qa_q3_cinematic_handles_stage *stage,qa
         return q3cin_fail(error,QA_ERROR_ARGUMENT,"Prepared cinematic slots lost their actual global claim");
     if (stage->decoder_changed) for (size_t i=0;i<16;++i) {
         q3cin_movie *movie=&stage->movies[i];
-        if (movie->playback && qa_cinematic_asset_source(movie->asset).format==QA_CINEMATIC_ROQ &&
-            !qa_cinematic_roq_scratch_rebind_ready(movie->playback,stage->decoder_scratch,error)) return false;
+        qa_cinematic *decoder=movie->playback?movie->playback:
+            movie->system.playback?movie->system.playback(movie->system.context):NULL;
+        if (decoder && !qa_cinematic_roq_scratch_rebind_ready(decoder,stage->decoder_scratch,error)) return false;
     }
     stage->sealed=true;
     return qa_q3_cinematic_handles_stage_ready_is(stage) ||
@@ -114,8 +115,9 @@ void qa_q3_cinematic_handles_stage_publish(qa_q3_cinematic_handles_stage *stage)
     if (stage->decoder_changed) {
         for (size_t i=0;i<16;++i) {
             q3cin_movie *movie=&stage->movies[i];
-            if (movie->playback && qa_cinematic_asset_source(movie->asset).format==QA_CINEMATIC_ROQ)
-                qa_cinematic_roq_scratch_rebind(movie->playback,stage->decoder_scratch);
+            qa_cinematic *decoder=movie->playback?movie->playback:
+                movie->system.playback?movie->system.playback(movie->system.context):NULL;
+            if (decoder) qa_cinematic_roq_scratch_rebind(decoder,stage->decoder_scratch);
         }
         qa_roq_scratch_release(stage->owner->decoder_scratch);
         stage->owner->decoder_scratch=stage->decoder_scratch; stage->decoder_scratch=NULL;

@@ -229,8 +229,8 @@ static bool flare_draw(frontend_remote_q2 *row, const qa_q2_entity *packet,
             (float)((color >> 8) & 255u) / 255) : qa_v3(1, 1, 1),
         .lock_angle = (packet->renderfx & 1u) != 0,
         .separate_rim = (packet->renderfx & (1024u | 2048u | 4096u)) != 0,
-        .rim_color = {(packet->renderfx & 1024u) ? 1 : 0, (packet->renderfx & 2048u) ? 1 : 0,
-            (packet->renderfx & 4096u) ? 1 : 0},
+        .rim_color = {(packet->renderfx & 1024u) ? 1.f : 0.f, (packet->renderfx & 2048u) ? 1.f : 0.f,
+            (packet->renderfx & 4096u) ? 1.f : 0.f},
         .standard_image = flare_standard_image(path)};
     return qa_scene_flare(&row->frontend->frame, view, origin, &options, image, error);
 }

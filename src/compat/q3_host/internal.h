@@ -28,9 +28,21 @@ typedef struct q3_file {
 
 typedef struct q3_script {
     qa_script *reader;
+    qa_vfs *mounts;
+    qa_q3_host *member, *entered;
     unsigned operations;
     bool retired;
 } q3_script;
+
+typedef struct q3_script_namespace {
+    struct q3_script_namespace *next;
+    qa_script_defines *globals;
+    struct qa_bot_library *library;
+    qa_q3_host *members;
+    q3_script *scripts[64];
+    bool pending[64], reporting;
+    uint64_t generation;
+} q3_script_namespace;
 
 typedef struct q3_crossings {
     struct q3_crossings *next;
@@ -97,9 +109,8 @@ struct qa_q3_host {
     uint64_t file_serial;
     qa_arena scratch;
     q3_crossings *crossings;
-    q3_script *scripts[64];
-    bool script_pending[64];
-    uint64_t script_generation;
+    q3_script_namespace *script_namespace;
+    qa_q3_host *script_member_next;
     qa_common_cursor entity_cursor;
     qa_common_parser entity_parser;
     qa_bounds clip_bounds, clip_brush;
@@ -118,7 +129,7 @@ struct qa_q3_host {
     unsigned calls;
     const struct q3_call *render_call;
     const struct q3_call *system_movie_call;
-    bool retired, restore_pending, scripts_reporting, bots_shutdown;
+    bool retired, restore_pending, bots_shutdown;
     struct q3_collision_binding *collision_scene;
     size_t collision_holds;
 };
@@ -221,5 +232,11 @@ size_t q3_shared_offset(qa_qvm_abi, size_t modern);
 void q3_file_close(q3_file *);
 void q3_script_close(q3_script *);
 qa_script_services q3_script_services(qa_q3_host *);
+qa_script_services q3_script_handle_services(q3_script *, qa_q3_host *);
+bool q3_script_namespace_bind(qa_q3_host *, qa_script_defines *, qa_error *);
+void q3_script_namespace_release(qa_q3_host *);
+bool q3_script_namespace_library(qa_q3_host *, qa_error *);
+bool q3_script_namespace_shutdown(qa_q3_host *, qa_error *);
+bool q3_script_member(const qa_q3_host *, size_t);
 
 #endif

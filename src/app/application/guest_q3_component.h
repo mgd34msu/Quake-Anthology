@@ -5,6 +5,7 @@
 #include "guest_q3_mod_operations.h"
 #include "guest_q3_mod_items.h"
 #include "qa/equipment.h"
+#include "qa/application.h"
 
 typedef struct application_q3_component application_q3_component;
 typedef struct application_q3_component_clients {
@@ -32,6 +33,7 @@ typedef struct application_q3_component_options {
     qa_combat *combat;
     qa_inventory *inventory;
     qa_application *application;
+    bool (*source_player_event)(void *,const application_q3_scene_player_event *,uint64_t,qa_error *);
     qa_equipment *equipment;
     qa_q3_visibility_world visibility;
     uint64_t generation;

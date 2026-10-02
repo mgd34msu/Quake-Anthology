@@ -9,6 +9,8 @@
 #include "qa/native_observe.h"
 #include <math.h>
 
+enum { NATIVE_ACTOR_THINK = 4, NATIVE_ACTOR_CALLBACKS = 5 };
+
 typedef struct native_actor_entry {
     struct native_actor_entry *next;
     struct application_native_q2_source_actors *owner;
@@ -29,7 +31,7 @@ typedef struct native_source_actor {
         qa_native_write_observer *binding;
         qa_native_address address;
         size_t kind;
-    } watches[4];
+    } watches[NATIVE_ACTOR_CALLBACKS];
 } native_source_actor;
 typedef struct native_actor_touch {
     struct native_actor_touch *next;
@@ -40,8 +42,8 @@ struct application_native_q2_source_actors {
     struct application_native_q2 *engine;
     native_source_actor *actors;
     uint32_t velocity,ground;
-    uint32_t offsets[4];
-    bool present[4],rerelease,suspended;
+    uint32_t offsets[NATIVE_ACTOR_CALLBACKS];
+    bool present[NATIVE_ACTOR_CALLBACKS],rerelease,suspended;
     native_actor_entry *entries;
     native_actor_touch *touches;
     application_native_q2_source_combat_state *combat;
@@ -93,6 +95,7 @@ static bool request_eligible(struct application_native_q2_source_actors *o,
     application_q3_mod_operation operation,const application_q3_mod_actor_request *r)
 {
     if(!eligible(o,r->self))return false;
+    if(operation==Q3_MOD_THINK)return true;
     if(operation==Q3_MOD_USE)return eligible(o,r->source.use.other)&&eligible(o,r->source.use.activator);
     if(operation==Q3_MOD_TOUCH)return eligible(o,r->source.touch.other);
     if(operation==Q3_MOD_PAIN)return eligible(o,r->source.pain.attacker);
@@ -114,7 +117,7 @@ static bool original(void *context,const application_q3_mod_actor_request *reque
     struct application_native_q2_source_actors *o=call->entry->owner;
     if(!qa_actor_id_equal(request->self,call->actor)) return application_fail(e,QA_ERROR_ARGUMENT,"Native reaction target cannot change inside its source continuation");
     if(!request_eligible(o,call->entry->operation,request)) {*result=false;return true;}
-    if(request!=call->request){
+    if(request!=call->request&&call->entry->operation!=Q3_MOD_THINK){
         if(call->entry->operation==Q3_MOD_PAIN||call->entry->operation==Q3_MOD_DIE)
             return modified_reaction(call,request,result,e);
         qa_native_value arguments[4];memcpy(arguments,call->arguments,call->count*sizeof(*arguments));
@@ -149,12 +152,18 @@ static bool reaction(void *context,qa_native_instance *native,qa_native_entry_ob
     if(!qa_native_entity_slot(native,arguments[0].as.address,&slot,e)) return false;
     native_source_actor *r=row_at(o,slot);
     if(!r) return application_native_q2_source_original(o->engine,binding,arguments,count,result,e);
-    size_t kind=(size_t)entry->operation-Q3_MOD_TOUCH;qa_native_address target;
+    size_t kind=entry->operation==Q3_MOD_THINK?NATIVE_ACTOR_THINK:(size_t)entry->operation-Q3_MOD_TOUCH;
+    qa_native_address target;
     if(!pointer_read(o,arguments[0].as.address+o->offsets[kind],&target,e)) return false;
     if(target!=entry->address) return application_native_q2_source_original(o->engine,binding,arguments,count,result,e);
     if(!current(r,e)) return false;
     application_q3_mod_actor_request request={.self=r->actor};
-    if(entry->operation==Q3_MOD_USE) {
+    if(entry->operation==Q3_MOD_THINK) {
+        qa_source_frame frame;
+        if(count!=1||!application_native_q2_stages_time_read(o->engine,&frame,e))return false;
+        request.source.think.time_ns=frame.time_ns;
+        request.source.think.elapsed_ns=frame.elapsed_ns;
+    } else if(entry->operation==Q3_MOD_USE) {
         if(count!=3||!nullable(o,arguments+1,&request.source.use.other,e)||
             !nullable(o,arguments+2,&request.source.use.activator,e)) return false;
     } else if(entry->operation==Q3_MOD_TOUCH) {
@@ -196,7 +205,8 @@ static bool reaction(void *context,qa_native_instance *native,qa_native_entry_ob
         if(request.has_attack&&entry->operation==Q3_MOD_DIE)request.source.die.kick=knockback;
     }
     native_actor_call call={entry,arguments,count,result,r->actor,&request};
-    qa_invocation_kind invocation=entry->operation==Q3_MOD_USE?QA_INVOKE_USE:entry->operation==Q3_MOD_TOUCH?QA_INVOKE_TOUCH:
+    qa_invocation_kind invocation=entry->operation==Q3_MOD_THINK?QA_INVOKE_THINK:
+        entry->operation==Q3_MOD_USE?QA_INVOKE_USE:entry->operation==Q3_MOD_TOUCH?QA_INVOKE_TOUCH:
         entry->operation==Q3_MOD_PAIN?QA_INVOKE_PAIN:QA_INVOKE_DIE;
     ++o->calls;++o->engine->calls;
     bool ok=qa_session_invoke(o->engine->provider->application->session,r->actor,invocation,dispatch_reaction,&call,e);
@@ -210,7 +220,8 @@ static bool ensure(struct application_native_q2_source_actors *o,uint32_t slot,s
     qa_native_address address,target;
     if(!qa_native_entity_address(instance(o),slot,&address,e)||!pointer_read(o,address+o->offsets[kind],&target,e)) return false;
     if(!target) return true;
-    application_q3_mod_operation operation=(application_q3_mod_operation)(Q3_MOD_TOUCH+kind);
+    application_q3_mod_operation operation=kind==NATIVE_ACTOR_THINK?Q3_MOD_THINK:
+        (application_q3_mod_operation)(Q3_MOD_TOUCH+kind);
     native_actor_entry *entry=o->entries;
     while(entry&&entry->address!=target) entry=entry->next;
     if(entry&&entry->operation!=operation) return application_fail(e,QA_ERROR_FORMAT,"Native reaction entry has incompatible declared kinds");
@@ -220,7 +231,7 @@ static bool ensure(struct application_native_q2_source_actors *o,uint32_t slot,s
         if(!entry) return application_fail(e,QA_ERROR_MEMORY,"Retaining declared native reaction entry");
         entry->owner=o;entry->address=target;entry->operation=operation;entry->next=o->entries;o->entries=entry;
     }
-    qa_native_type parameters[6];size_t count=operation==Q3_MOD_USE?3:operation==Q3_MOD_TOUCH?4:
+    qa_native_type parameters[6];size_t count=operation==Q3_MOD_THINK?1:operation==Q3_MOD_USE?3:operation==Q3_MOD_TOUCH?4:
         operation==Q3_MOD_PAIN?(o->rerelease?5:4):(o->rerelease?6:5);
     for(size_t i=0;i<count;++i) parameters[i]=(qa_native_type){.kind=QA_NATIVE_ADDRESS,.count=1};
     if(operation==Q3_MOD_TOUCH&&o->rerelease) parameters[3].kind=QA_NATIVE_U8;
@@ -242,7 +253,7 @@ static bool changed(void *context,qa_native_instance *native,const qa_native_wri
 }
 static bool unwatch(native_source_actor *r,qa_error *e)
 {
-    for(size_t i=0;i<4;++i) {
+    for(size_t i=0;i<NATIVE_ACTOR_CALLBACKS;++i) {
         if(r->watches[i].binding&&!qa_native_unobserve_writes(r->watches[i].binding,e)) return false;
         r->watches[i].binding=NULL;
     }
@@ -255,7 +266,7 @@ static bool watch(native_source_actor *r,qa_error *e)
     qa_native_address address;
     if(!qa_native_entity_address(instance(o),r->slot,&address,e)) return false;
     size_t pointer=qa_native_module_describe(o->engine->provider->state.native.module).image.target.pointer_bytes;
-    for(size_t i=0;i<4;++i) if(o->present[i]) {
+    for(size_t i=0;i<NATIVE_ACTOR_CALLBACKS;++i) if(o->present[i]) {
         struct native_actor_watch *w=r->watches+i;qa_native_address field=address+o->offsets[i];
         if(w->binding&&w->address==field) continue;
         if(w->binding&&!qa_native_unobserve_writes(w->binding,e)) return false;
@@ -332,10 +343,10 @@ static bool prepare(struct application_native_q2 *n,qa_error *e)
         !nextthink_size||nextthink>table.stride||nextthink_size>table.stride-nextthink)
         return application_fail(e,QA_ERROR_FORMAT,"Declared native body fields exceed their actual source stride");
     qa_json_id callbacks=qa_json_get(d,qa_json_get(d,qa_json_root(d),"sourceActors"),"callbacks");
-    uint32_t offsets[4]={0};bool present[4]={0};
-    const char *names[]={"touch","use","pain","die"};
-    for(size_t i=0;i<4;++i) {
-        qa_json_id field=qa_json_get(d,i==1?fields:callbacks,names[i]);uint64_t offset;
+    uint32_t offsets[NATIVE_ACTOR_CALLBACKS]={0};bool present[NATIVE_ACTOR_CALLBACKS]={0};
+    const char *names[]={"touch","use","pain","die","think"};
+    for(size_t i=0;i<NATIVE_ACTOR_CALLBACKS;++i) {
+        qa_json_id field=qa_json_get(d,i==1||i==NATIVE_ACTOR_THINK?fields:callbacks,names[i]);uint64_t offset;
         if(field==QA_JSON_NONE||qa_json_type(d,field)==QA_JSON_NULL) continue;
         if(!qa_json_u64(d,field,&offset,e)||offset>UINT32_MAX||offset>table.stride||pointer>table.stride-offset)
             return application_fail(e,QA_ERROR_FORMAT,"Declared native reaction pointer exceeds its source stride");
@@ -375,7 +386,8 @@ static bool touch_mod_body(void *context,const application_q3_mod_actor_request 
     if(!request_eligible(call->actor->owner,Q3_MOD_TOUCH,request)){*handled=false;return true;}
     call->other=request->source.touch.other;call->transformed=true;
     bool ok=application_native_q2_callbacks_transfer(call->actor->owner->engine->callbacks,touch_original,call,e);
-    if(ok)*handled=true;return ok;
+    if(ok)*handled=true;
+    return ok;
 }
 static bool touch_mod_dispatch(void *context,qa_session *session,qa_error *e)
 {
@@ -566,7 +578,7 @@ bool application_native_q2_source_actors_admit(struct application_native_q2 *n,u
         r->serial=qa_world_body_storage_serial(n->world,actor);
     }
     if(!watch(r,e)) return false;
-    for(size_t i=0;i<4;++i) if(!ensure(o,slot,i,e)) return false;
+    for(size_t i=0;i<NATIVE_ACTOR_CALLBACKS;++i) if(!ensure(o,slot,i,e)) return false;
     if(o->combat){qa_combat_state state;
         if(!application_native_q2_source_combat_state_read(o->combat,actor,&state,e))return false;}
     return application_native_q2_source_damage_admit(o->damage,actor,e);
@@ -645,7 +657,8 @@ bool application_native_q2_source_actors_close(struct application_native_q2 *n,q
 }
 bool application_native_q2_source_actors_damage_capture(struct application_native_q2 *n,qa_buffer *out,qa_error *e)
 {
-    if(!out)return false;*out=(qa_buffer){0};
+    if(!out)return false;
+    *out=(qa_buffer){0};
     if(!application_native_q2_source_actors_declared(n))return true;
     if(!n->source_actors||!n->source_actors->ready)return application_fail(e,QA_ERROR_ARGUMENT,"SourceActor capture has no prepared original owner");
     return application_native_q2_source_damage_capture(n->source_actors->damage,out,e);

@@ -207,6 +207,27 @@ static bool onexit_execute(guest_windows *owner, uint64_t table, qa_error *error
     return windows_zero(owner, table, width * 3, error);
 }
 
+bool windows_crt_finalize_image(guest_windows *owner, uint64_t base, uint64_t bytes, qa_error *error)
+{
+    if (!bytes || base > UINT64_MAX - bytes)
+        return guest_fail(error, QA_ERROR_ARGUMENT, base, "CRT module retirement has no actual image range");
+    size_t width = owner->target.pointer_bytes;
+    uint64_t begin, end, table = owner->crt->onexit;
+    if (!windows_read(owner, table, width, &begin, error) ||
+        !windows_read(owner, table + width, width, &end, error)) return false;
+    if (!begin || !end) return true;
+    if (end < begin || (end - begin) % width)
+        return guest_fail(error, QA_ERROR_ARGUMENT, table, "CRT module retirement has an invalid onexit table");
+    for (uint64_t at = end; at > begin;) {
+        at -= width; uint64_t callback; qa_native_value result;
+        if (!windows_read(owner, at, width, &callback, error)) return false;
+        if (callback < base || callback >= base + bytes) continue;
+        if (!windows_write(owner, at, width, 0, error) ||
+            !windows_invoke(owner, callback, NULL, 0, QA_NATIVE_VOID, NULL, false, &result, error)) return false;
+    }
+    return true;
+}
+
 typedef struct sort_context { guest_windows *owner; uint64_t base, comparator; size_t bytes; } sort_context;
 
 static bool sort_compare(sort_context *sort, size_t left, size_t right, int32_t *out, qa_error *error)

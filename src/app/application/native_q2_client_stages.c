@@ -118,6 +118,25 @@ static bool intercepted(void *context,qa_native_instance *native,qa_native_entry
     --o->engine->calls;
     return ok;
 }
+static bool interval_read(const struct application_native_q2 *n,const qa_json_document *d,
+    qa_json_id definition,uint64_t *out,qa_error *e)
+{
+    if(definition==QA_JSON_NONE) {
+        qa_json_id clients=qa_json_get(d,qa_json_root(d),"clients");
+        bool frames=qa_json_size(d,qa_json_get(d,clients,"frame"))||
+            qa_json_size(d,qa_json_get(d,clients,"endFrame"));
+        *out=frames?n->provider->component.clock.interval_ns:0;
+        return !frames||*out||application_fail(e,QA_ERROR_FORMAT,
+            "Declared native client frames require an admitted source interval");
+    }
+    double seconds;
+    if(!qa_json_number(d,qa_json_get(d,definition,"frameSeconds"),&seconds,e)||!isfinite(seconds)||seconds<=0)
+        return application_fail(e,QA_ERROR_FORMAT,"Declared native source frame interval is invalid");
+    long double rounded=floorl((long double)seconds*1000000000.0L+0.5L);
+    if(rounded<1.0L||rounded>=18446744073709551616.0L)
+        return application_fail(e,QA_ERROR_FORMAT,"Declared native source frame interval exceeds clock resolution or range");
+    *out=(uint64_t)rounded;return true;
+}
 bool application_native_q2_stages_prepare(struct application_native_q2 *n,qa_error *e)
 {
     if(!n||!n->callbacks) return true;
@@ -130,19 +149,16 @@ bool application_native_q2_stages_prepare(struct application_native_q2 *n,qa_err
     if(!application_native_q2_client_outputs_create(n,&o->client_outputs,e))return false;
     const qa_json_document *d=application_native_q2_callbacks_document(n->callbacks);
     qa_json_id definition=source(n);
-    if(definition==QA_JSON_NONE) return true;
-    double seconds;
-    if(!qa_json_number(d,qa_json_get(d,definition,"frameSeconds"),&seconds,e)||
-        !isfinite(seconds)||seconds<=0||seconds>UINT64_MAX/1e9)
-        return application_fail(e,QA_ERROR_FORMAT,"Declared native source frame interval is invalid");
-    uint64_t interval=(uint64_t)floor(seconds*1e9+0.5);
-    if(!interval) return application_fail(e,QA_ERROR_FORMAT,"Declared native frame interval is below clock resolution");
+    uint64_t interval;
+    if(!interval_read(n,d,definition,&interval,e))return false;
+    if(!interval)return true;
     if(!o->interval_ns) {
         qa_source_frame now;
         if(!application_native_q2_stages_time_read(n,&now,e))return false;
         if(now.time_ns>UINT64_MAX-interval) return application_fail(e,QA_ERROR_FORMAT,"Declared native next frame overflows");
         o->interval_ns=interval; o->next_ns=now.time_ns+interval;
     } else if(o->interval_ns!=interval) return application_fail(e,QA_ERROR_ARGUMENT,"Declared native source clock changed");
+    if(definition==QA_JSON_NONE)return true;
     qa_native_module_info info=qa_native_module_describe(n->provider->state.native.module);
     qa_native_type pointer={.kind=QA_NATIVE_ADDRESS,.count=1};
     qa_native_signature allocate={.abi=info.image.target.abi,.result=pointer};
@@ -244,6 +260,8 @@ static bool releases(struct application_native_q2_stages *o,qa_error *e)
 bool application_native_q2_stages_advance(struct application_native_q2 *n,const qa_source_frame *frame,qa_error *e)
 {
     if(!n||!n->callbacks) return true;
+    if(!frame||frame->phase!=QA_FRAME_EXIT)
+        return application_fail(e,QA_ERROR_ARGUMENT,"Declared native cadence requires the actual primary frame exit");
     if(!application_native_q2_stages_prepare(n,e)) return false;
     struct application_native_q2_stages *o=n->stages;
     if(!current(o,e)||o->advancing||o->failed||o->inputs) return application_fail(e,QA_ERROR_ARGUMENT,"Declared native source retains an unfinished stage");
@@ -251,15 +269,17 @@ bool application_native_q2_stages_advance(struct application_native_q2 *n,const 
     const qa_json_document *d=application_native_q2_callbacks_document(n->callbacks);
     qa_json_id definition=source(n),update=qa_json_get(d,definition,"update");
     qa_source_frame outer=n->frame;bool ok=releases(o,e);o->advancing=true;
+    n->frame=*frame;n->frame.provider=n->provider->owner;n->frame.kind=n->provider->component.clock.kind;
     while(ok&&o->next_ns<=frame->time_ns) {
         if(o->frame==UINT64_MAX||o->next_ns>UINT64_MAX-o->interval_ns) { ok=application_fail(e,QA_ERROR_FORMAT,"Declared native clock is exhausted");break; }
         ++o->frame;n->frame.number=o->frame;n->frame.time_ns=o->next_ns;
         n->frame.start_ns=o->next_ns-o->interval_ns;n->frame.elapsed_ns=o->interval_ns;o->next_ns+=o->interval_ns;
         o->ticking=true;
-        ok=clock_write(o,e)&&qa_native_host_source_frame_begin(n->provider->state.native.host,e);
+        bool actors=definition!=QA_JSON_NONE;
+        ok=clock_write(o,e)&&(!actors||qa_native_host_source_frame_begin(n->provider->state.native.host,e));
         qa_native_entity_table table={0};
-        if(ok) ok=qa_native_entity_table_get(instance(n),&table,e);
-        for(o->cursor=0;ok;++o->cursor) {
+        if(ok&&actors) ok=qa_native_entity_table_get(instance(n),&table,e);
+        for(o->cursor=0;ok&&actors;++o->cursor) {
             ok=qa_native_entity_table_refresh(instance(n),&table,e);
             if(!ok||o->cursor>=table.count) break;
             if(o->cursor&&o->cursor<257&&n->clients[o->cursor].reserved&&n->clients[o->cursor].actor.registry) {
@@ -274,8 +294,9 @@ bool application_native_q2_stages_advance(struct application_native_q2 *n,const 
                 ok=qa_session_invoke(n->provider->application->session,binding.actor,QA_INVOKE_THINK,invoke_update,&call,e);
             }
         }
+        if(!actors)for(uint32_t slot=1;ok&&slot<257;++slot)ok=client_frame(n,slot,"clients.frame",e);
         for(uint32_t slot=1;ok&&slot<257;++slot) ok=client_frame(n,slot,"clients.endFrame",e);
-        if(ok) ok=qa_native_host_source_frame_end(n->provider->state.native.host,e);
+        if(ok&&actors) ok=qa_native_host_source_frame_end(n->provider->state.native.host,e);
         o->ticking=false;
     }
     n->frame=outer;o->ticking=false;o->advancing=false;o->failed=!ok;return ok;
@@ -325,7 +346,8 @@ void application_native_q2_stages_released(struct application_native_q2 *n,qa_ac
 }
 bool application_native_q2_stages_capture(struct application_native_q2 *n,qa_buffer *out,qa_error *e)
 {
-    if(!out) return false;*out=(qa_buffer){0};
+    if(!out) return false;
+    *out=(qa_buffer){0};
     if(!n||!n->callbacks) return true;
     struct application_native_q2_stages *o=n->stages;
     if(!o||!application_native_q2_stages_idle(o)||o->failed)
@@ -345,7 +367,8 @@ bool application_native_q2_stages_capture(struct application_native_q2 *n,qa_buf
     for(size_t i=0;i<o->pending_count;++i) qa_store_u32le(data+36+i*4,o->pending[i]);
     memcpy(data+36+o->pending_count*4,outputs.data,outputs.size);qa_buffer_free(&outputs);
     size_t offset=74+o->pending_count*4;qa_store_u32le(data+offset,(uint32_t)damage.size);
-    if(damage.size)memcpy(data+offset+4,damage.data,damage.size);qa_buffer_free(&damage);
+    if(damage.size)memcpy(data+offset+4,damage.data,damage.size);
+    qa_buffer_free(&damage);
     *out=(qa_buffer){data,bytes};return true;
 }
 bool application_native_q2_stages_restore(struct application_native_q2 *n,qa_bytes bytes,qa_error *e)
@@ -361,9 +384,10 @@ bool application_native_q2_stages_restore(struct application_native_q2 *n,qa_byt
     o->engine=n;o->frame=qa_load_u64le(bytes.data+4);o->next_ns=qa_load_u64le(bytes.data+12);
     o->interval_ns=qa_load_u64le(bytes.data+20);o->cursor=qa_load_u32le(bytes.data+28);
     const qa_json_document *d=application_native_q2_callbacks_document(n->callbacks);qa_json_id definition=source(n);
-    double seconds=0;bool has_clock=definition!=QA_JSON_NONE;
-    bool ok=(!has_clock||qa_json_number(d,qa_json_get(d,definition,"frameSeconds"),&seconds,e))&&
-        (has_clock?(isfinite(seconds)&&seconds>0&&seconds<UINT64_MAX/1e9&&o->interval_ns==(uint64_t)floor(seconds*1e9+0.5)&&o->interval_ns&&o->next_ns>=o->interval_ns):(!o->interval_ns&&!o->frame&&!o->next_ns&&!count));
+    uint64_t interval=0;
+    bool ok=interval_read(n,d,definition,&interval,e)&&
+        (interval?(o->interval_ns==interval&&o->next_ns>=o->interval_ns):(!o->interval_ns&&!o->frame&&!o->next_ns&&!count));
+    if(ok&&definition==QA_JSON_NONE&&count)ok=false;
     if(ok&&count) {o->pending=malloc((size_t)count*sizeof(*o->pending));ok=o->pending!=NULL;o->pending_count=o->pending_capacity=count;}
     if(ok&&damage_size){o->damage_saved.data=malloc(damage_size);ok=o->damage_saved.data!=NULL;
         if(ok){memcpy(o->damage_saved.data,bytes.data+damage_offset+4,damage_size);o->damage_saved.size=damage_size;}}
@@ -606,7 +630,8 @@ static bool outputs_open(struct application_native_q2_input *s,qa_json_id bindin
                 if(qa_json_string_equal(d,kind,"actor")&&qa_json_string_equal(d,qa_json_get(d,arg,"input"),"self")) {
                     qa_buffer name={0};if(!qa_json_string(d,qa_json_get(d,arg,"record"),&name,e)) return false;
                     bool ok=application_native_q2_callbacks_record(n->callbacks,s->actor,(char *)name.data,&o->self,e);qa_buffer_free(&name);
-                    if(!ok) return false;o->self_index=j;
+                    if(!ok) return false;
+                    o->self_index=j;
                 }
             }
             if(o->self_index==SIZE_MAX) return application_fail(e,QA_ERROR_FORMAT,"Native input handler has no self record argument");
@@ -626,15 +651,18 @@ static bool outputs_read(native_input_output *list,qa_error *e)
         if(!input_live(s)) break;
         if(!input_current(s,e)) return false;
         if(o->handler) {
-            if(!o->called) continue;result.consume=true;qa_json_id names=qa_json_get(d,o->declaration,"inputs");
+            if(!o->called) continue;
+            result.consume=true;qa_json_id names=qa_json_get(d,o->declaration,"inputs");
             for(size_t i=0;i<qa_json_size(d,names);++i) {size_t j=1;while(j<Q3_MOD_INPUT_COUNT&&!qa_json_string_equal(d,qa_json_at(d,names,i),input_names[j])) ++j;
-                if(j==Q3_MOD_INPUT_COUNT) return application_fail(e,QA_ERROR_FORMAT,"Native input consume names an unknown scalar input");result.value.inputs|=1u<<j;}
+                if(j==Q3_MOD_INPUT_COUNT) return application_fail(e,QA_ERROR_FORMAT,"Native input consume names an unknown scalar input");
+                result.value.inputs|=1u<<j;}
         } else {
             uint8_t bytes[12];if(!qa_native_read(instance(n),o->address,bytes,o->bytes,e)) return false;
             if(!memcmp(bytes,o->before,o->bytes)) continue;
             qa_json_id value=qa_json_get(d,o->declaration,"value"),name=qa_json_get(d,qa_json_get(d,value,"value"),"name");
             size_t j=0;while(j<Q3_MOD_INPUT_COUNT&&!qa_json_string_equal(d,name,input_names[j])) ++j;
-            if(j==Q3_MOD_INPUT_COUNT) return application_fail(e,QA_ERROR_FORMAT,"Native output field is not a declared client input");result.input=(application_q3_mod_input)j;
+            if(j==Q3_MOD_INPUT_COUNT) return application_fail(e,QA_ERROR_FORMAT,"Native output field is not a declared client input");
+            result.input=(application_q3_mod_input)j;
             qa_json_id kind=qa_json_get(d,value,"kind");
             if(!j) {if(o->bytes!=12) return application_fail(e,QA_ERROR_FORMAT,"Native view-angle output is not a source vector");result.value.angles=qa_v3(qa_load_f32le(bytes),qa_load_f32le(bytes+4),qa_load_f32le(bytes+8));}
             else if(qa_json_string_equal(d,kind,"float32")) result.value.scalar=qa_load_f32le(bytes);

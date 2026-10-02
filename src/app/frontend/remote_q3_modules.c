@@ -212,7 +212,7 @@ static bool movie_current(void *context, const frontend_system_cinematic_source 
     const frontend_system_cinematic_identity *id = &view->identity;
     const qa_q3_gamestate *gs = owner->kind == REMOTE_MODULE_INITIAL ? NULL : owner->basis.decoded.view.domain.gamestate;
     return view->context == lease && view->files == mounts(owner) && view->movies == movies(owner) &&
-        view->cvars == frontend_client_registry_cvars(lease->registry) &&
+        view->cvars == frontend_client_registry_cvars(lease->registry) && view->cinematics==lease->cinematics &&
         id->source_group == identity(owner) && id->source_owner == held->receiver.receiver &&
         id->service_owner == lease->service_owner && id->audio_bus == lease->service_owner &&
         id->role == lease->role && id->physical_seat == physical_seat(owner) &&
@@ -250,7 +250,7 @@ static bool system_movie(void *context, const qa_q3_host *host, const qa_qvm_cal
         .identity = {identity(owner), lease->service_owner, lease->service_owner,
             source(owner)->receiver.receiver, lease->role, physical_seat(owner), source(owner)->receiver.seat},
         .files = mounts(owner), .movies = movies(owner), .cvars = frontend_client_registry_cvars(lease->registry),
-        .context = lease, .current = movie_current, .append = movie_append, .release = movie_release};
+        .cinematics=lease->cinematics,.context = lease, .current = movie_current, .append = movie_append, .release = movie_release};
     ++lease->callbacks; ++lease->movie_references;
     bool ok = frontend_system_cinematic_open(owner->frontend, &view, request, out, error);
     if (!ok) --lease->movie_references;
@@ -273,7 +273,7 @@ bool frontend_remote_q3_modules_cinematic_source_decode(frontend_remote_q3_modul
             !same_host_context(&context, &lease->constructor)) return false;
         *out = (frontend_system_cinematic_source){.identity = *id, .files = mounts(owner),
             .movies = movies(owner), .cvars = frontend_client_registry_cvars(lease->registry),
-            .context = lease, .current = movie_current, .append = movie_append, .release = movie_release};
+            .cinematics=lease->cinematics,.context = lease, .current = movie_current, .append = movie_append, .release = movie_release};
         ++lease->movie_references; return true;
     }
     return frontend_fail(error, QA_ERROR_FORMAT, "Saved system movie has no actual role namespace");

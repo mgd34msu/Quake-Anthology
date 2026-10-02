@@ -803,11 +803,15 @@ static bool remote_capture_heaps(frontend_capture *capture,qa_error *error)
             !add(capture,CAPTURE_IMAGES,retained.images,error) || !add(capture,CAPTURE_LIBRARY,retained.library,error) ||
             !add(capture,CAPTURE_IMAGES,retained.lightmap_images,error)) return false;
     }
-    frontend_renderer_worlds_view world; bool has_world=false;
-    return frontend_renderer_worlds_read(capture->frontend,&world,&has_world,error) && (!has_world ||
-        (add(capture,CAPTURE_WORLD,world.world,error) && add(capture,CAPTURE_IMAGES,world.images,error) &&
-         add(capture,CAPTURE_LIBRARY,world.materials,error))) &&
-        unified_heaps(capture->frontend,capture_add,capture,error);
+    size_t world_count=0;
+    if(!frontend_renderer_worlds_count(capture->frontend,&world_count,error)) return false;
+    for(size_t i=0;i<world_count;++i) {
+        frontend_renderer_worlds_view world;
+        if(!frontend_renderer_worlds_read_at(capture->frontend,i,&world,error) ||
+            !add(capture,CAPTURE_WORLD,world.world,error) || !add(capture,CAPTURE_IMAGES,world.images,error) ||
+            !add(capture,CAPTURE_LIBRARY,world.materials,error)) return false;
+    }
+    return unified_heaps(capture->frontend,capture_add,capture,error);
 }
 static bool model_banks(frontend_resource_inventory *inventory,const qa_scene_model *root,qa_error *error)
 {
@@ -892,11 +896,15 @@ static bool resource_collect(frontend_resource_inventory *inventory,qa_error *er
             !resource_add(inventory,CAPTURE_LIBRARY,retained.library,error) ||
             !resource_add(inventory,CAPTURE_IMAGES,retained.lightmap_images,error)) return false;
     }
-    frontend_renderer_worlds_view retained_world; bool has_world=false;
-    if(!frontend_renderer_worlds_read(f,&retained_world,&has_world,error) || (has_world &&
-        (!resource_add(inventory,CAPTURE_WORLD,retained_world.world,error) ||
-         !resource_add(inventory,CAPTURE_IMAGES,retained_world.images,error) ||
-         !resource_add(inventory,CAPTURE_LIBRARY,retained_world.materials,error)))) return false;
+    size_t world_count=0;
+    if(!frontend_renderer_worlds_count(f,&world_count,error)) return false;
+    for(size_t i=0;i<world_count;++i) {
+        frontend_renderer_worlds_view retained_world;
+        if(!frontend_renderer_worlds_read_at(f,i,&retained_world,error) ||
+            !resource_add(inventory,CAPTURE_WORLD,retained_world.world,error) ||
+            !resource_add(inventory,CAPTURE_IMAGES,retained_world.images,error) ||
+            !resource_add(inventory,CAPTURE_LIBRARY,retained_world.materials,error)) return false;
+    }
     if(!unified_heaps(f,resource_add,inventory,error)) return false;
     for(size_t i=0;i<frontend_component_scene_count(f);++i) {
         frontend_component_scene_view view;

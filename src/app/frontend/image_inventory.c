@@ -99,9 +99,13 @@ static bool collect(qa_frontend *f, image_inventory *inventory, qa_error *error)
             add(inventory,graph,retained.images,11,i,0,error) &&
             add(inventory,graph,retained.lightmap_images,12,i,0,error);
     }
-    frontend_renderer_worlds_view world; bool has_world=false;
-    if(ok) ok=frontend_renderer_worlds_read(f,&world,&has_world,error);
-    if(ok && has_world && world.private_heaps) ok=add(inventory,graph,world.images,13,0,0,error);
+    size_t world_count=0;
+    if(ok) ok=frontend_renderer_worlds_count(f,&world_count,error);
+    for(size_t i=0;ok && i<world_count;++i) {
+        frontend_renderer_worlds_view world;
+        ok=frontend_renderer_worlds_read_at(f,i,&world,error);
+        if(ok && world.private_heaps) ok=add(inventory,graph,world.images,13,i,0,error);
+    }
     size_t unified_count=0;
     if(ok) ok=frontend_unified_media_inventory_count(f,&unified_count,error);
     for(size_t i=0;ok && i<unified_count;++i) {

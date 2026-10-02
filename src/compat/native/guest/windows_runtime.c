@@ -800,12 +800,45 @@ bool guest_windows_prepare(guest_windows *owner, const guest_windows_image *inpu
             !windows_write(owner, owner->static_tls + (uint64_t)owner->static_tls_count * owner->target.pointer_bytes,
                 owner->target.pointer_bytes, record->tls_block, error)) return lifecycle_failure(owner);
         record->tls_index = owner->static_tls_count++;
+    } else if (image->tls.present) {
+        size_t bytes = image->tls.initialized.size + image->tls.zero_bytes;
+        if (!windows_zero(owner, record->tls_block, bytes, error) ||
+            !qa_native_guest_write(owner->guest, record->tls_block, image->tls.initialized, error) ||
+            !windows_write(owner, image->base + image->tls.index, 4, record->tls_index, error) ||
+            !windows_write(owner, owner->static_tls + (uint64_t)record->tls_index * owner->target.pointer_bytes,
+                owner->target.pointer_bytes, record->tls_block, error)) return lifecycle_failure(owner);
     }
     if (!prepare_cfg(owner, image, error)) return lifecycle_failure(owner);
     if (!guest_grow((void **)&owner->prepared_ids, &owner->prepared_capacity,
         owner->prepared_count + 1, sizeof(*owner->prepared_ids), error)) return lifecycle_failure(owner);
     owner->prepared_ids[owner->prepared_count++] = record->id;
     record->prepared = true; return true;
+}
+
+bool guest_windows_reload_begin(guest_windows *owner, uint64_t id, qa_error *error)
+{
+    if (!guest_windows_idle(owner))
+        return guest_fail(error, QA_ERROR_ARGUMENT, id, "Windows module reload requires its returned process");
+    windows_image_record *record = (windows_image_record *)windows_image_at(owner, id);
+    if (!record || !record->prepared || record->initialized)
+        return guest_fail(error, QA_ERROR_ARGUMENT, id, "Windows module reload requires its finalized attached DLL");
+    const guest_pe_view *image = guest_pe_describe(record->image);
+    if (!windows_crt_finalize_image(owner, image->base, image->image.image_bytes, error)) return lifecycle_failure(owner);
+    for (size_t i = owner->prepared_count; i; --i)
+        if (owner->prepared_ids[i - 1] == id) {
+            memmove(owner->prepared_ids + i - 1, owner->prepared_ids + i,
+                (owner->prepared_count - i) * sizeof(*owner->prepared_ids));
+            --owner->prepared_count;
+        }
+    for (size_t i = owner->cfg_count; i; --i)
+        if (owner->cfg_targets[i - 1] >= image->base &&
+            owner->cfg_targets[i - 1] - image->base < image->image.image_bytes) {
+            memmove(owner->cfg_targets + i - 1, owner->cfg_targets + i,
+                (owner->cfg_count - i) * sizeof(*owner->cfg_targets));
+            --owner->cfg_count;
+        }
+    record->prepared = false;
+    return true;
 }
 
 static bool notification(guest_windows *owner, const windows_image_record *record,

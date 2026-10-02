@@ -75,6 +75,9 @@ bool guest_windows_inventory(guest_windows *, const guest_windows_image *, size_
 bool guest_windows_prepare(guest_windows *, const guest_windows_image *, qa_error *);
 bool guest_windows_initialize(guest_windows *, uint64_t, size_t, qa_error *);
 bool guest_windows_finalize(guest_windows *, uint64_t, size_t, qa_error *);
+/* Drop the finalized module's preparation/CFG receipt. Its process-owned TLS
+ * slot is retained and repopulated by the actual next prepare. */
+bool guest_windows_reload_begin(guest_windows *, uint64_t, qa_error *);
 bool guest_windows_idle(const guest_windows *);
 bool guest_windows_destroy(guest_windows **, qa_error *);
 /* Retires all real file close ownership while the lower owner is still retained

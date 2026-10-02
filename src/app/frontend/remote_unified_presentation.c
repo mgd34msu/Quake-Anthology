@@ -13,6 +13,8 @@
 #include "remote_unified_prediction_save.h"
 #include "remote_unified_input_save.h"
 #include "unified_q3_runtime_factory.h"
+#include "unified_q3_video.h"
+#include "video_guests.h"
 #include "qa/source_frame_time.h"
 
 #include <stdlib.h>
@@ -89,6 +91,7 @@ struct unified_presentation {
     bool restore_complete;
     frontend_unified_recipient_clock clock;
     bool clock_started;
+    const frontend_unified_q3_video *video;
 };
 static bool input(void *,frontend_remote_unified *,const qa_unified_input *,double,qa_error *);
 static bool q3_row_source(const unified_q3_client_row *,bool,frontend_unified_q3_source_view *,qa_error *);
@@ -198,15 +201,8 @@ static bool simulation(void *context, const qa_unified_document *doc, qa_json_id
     if (q3_family(doc,payload)) return frontend_unified_q3_simulation(p->q3,doc,row,error);
     return frontend_unified_q2_simulation(p->q2,doc,row,error);
 }
-static bool idle(void *context, const frontend_remote_unified *replica)
+static bool children_returned(const unified_presentation *p,const frontend_remote_unified *replica)
 {
-    unified_presentation *p = context;
-    if (p) for (const unified_q3_client_row *row=p->q3_clients;row;row=row->next)
-        if (!frontend_unified_q3_client_idle(row->client) ||
-            !frontend_unified_q3_runtime_factory_idle(row->factory)) return false;
-    if (p) for (const unified_q3_client_row *row=p->retired_q3;row;row=row->next)
-        if (!frontend_unified_q3_client_idle(row->client) ||
-            !frontend_unified_q3_runtime_factory_idle(row->factory)) return false;
     return p && (!p->replica || p->replica == replica) && !p->busy &&
         frontend_unified_media_idle(p->media) && frontend_unified_media_idle(p->candidate_media) &&
         frontend_unified_render_idle(p->render) && frontend_unified_render_idle(p->candidate_render) &&
@@ -218,6 +214,70 @@ static bool idle(void *context, const frontend_remote_unified *replica)
         (!p->q3 || frontend_unified_q3_idle(p->q3)) &&
         (!p->q3_sources || frontend_unified_q3_sources_idle(p->q3_sources)) &&
         (!p->components || frontend_unified_components_idle(p->components));
+}
+static bool idle(void *context, const frontend_remote_unified *replica)
+{
+    unified_presentation *p = context;
+    if (p) for (const unified_q3_client_row *row=p->q3_clients;row;row=row->next)
+        if (!frontend_unified_q3_client_idle(row->client) ||
+            !frontend_unified_q3_runtime_factory_idle(row->factory)) return false;
+    if (p) for (const unified_q3_client_row *row=p->retired_q3;row;row=row->next)
+        if (!frontend_unified_q3_client_idle(row->client) ||
+            !frontend_unified_q3_runtime_factory_idle(row->factory)) return false;
+    return p && !p->video && children_returned(p,replica);
+}
+bool frontend_remote_unified_presentation_video_current(const frontend_remote_unified *replica,
+    const frontend_unified_q3_video *video,qa_error *error)
+{
+    unified_presentation *p=replica && replica->options.consumers.input==input?
+        replica->options.consumers.context:NULL;
+    if (!p || p->replica!=replica || !video || p->video!=video || replica->busy ||
+        p->frame_prepared || p->candidate_render || p->candidate_prediction || p->component_frame ||
+        p->q3_source_frame || replica->prepared_frame || p->retired_q3 ||
+        !children_returned(p,replica) || !frontend_video_guests_read(p->frontend) ||
+        !frontend_remote_unified_current(replica,error))
+        return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Unified video lost its returned retained parent cohort");
+    for (const unified_q3_client_row *row=p->q3_clients;row;row=row->next)
+        if (row->born || row->frame || row->cg_prepared || row->retirement ||
+            !frontend_unified_q3_client_current(row->client) ||
+            !frontend_unified_q3_runtime_factory_idle(row->factory))
+            return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Unified video changed its real Source CLIENT cohort");
+    return true;
+}
+bool frontend_remote_unified_presentation_video_associate(frontend_remote_unified *replica,
+    const frontend_unified_q3_video *video,qa_error *error)
+{
+    unified_presentation *p=replica && replica->options.consumers.input==input?
+        replica->options.consumers.context:NULL;
+    if (!p || p->replica!=replica || !video || p->video || replica->busy || p->frame_prepared ||
+        p->candidate_render || p->candidate_prediction || p->component_frame || p->q3_source_frame ||
+        replica->prepared_frame || !frontend_video_guests_read(p->frontend) ||
+        !frontend_remote_unified_current(replica,error) || !q3_retirement_drain(p,error) || !idle(p,replica) ||
+        (p->physical && frontend_unified_input_pending(p->physical)))
+        return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Unified video requires its returned frame and drained Source retirement");
+    p->video=video; return true;
+}
+bool frontend_remote_unified_presentation_video_release(frontend_remote_unified *replica,
+    const frontend_unified_q3_video *video,qa_error *error)
+{
+    if (!frontend_remote_unified_presentation_video_current(replica,video,error)) return false;
+    unified_presentation *p=replica->options.consumers.context;
+    for (const unified_q3_client_row *row=p->q3_clients;row;row=row->next)
+        if (!frontend_unified_q3_client_idle(row->client))
+            return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Unified video release precedes actual CLIENT ticket return");
+    p->video=NULL; return true;
+}
+bool frontend_remote_unified_presentation_video_returned(const qa_frontend *frontend,
+    const frontend_video_guests *aggregate,qa_error *error)
+{
+    if (!frontend_video_guests_parent_is(frontend,aggregate)) return false;
+    for (const frontend_remote_unified *replica=frontend->remote_unified;replica;replica=replica->next) {
+        unified_presentation *p=replica->options.consumers.input==input?replica->options.consumers.context:NULL;
+        if (!p || p->replica!=replica || replica->busy || !children_returned(p,replica) ||
+            (p->video?!frontend_unified_q3_video_returned(p->video,aggregate,error):!idle(p,replica)))
+            return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Unified resource refresh lacks its actual closed video cohort");
+    }
+    return true;
 }
 static void import_free(unified_presentation_import *saved)
 {
@@ -254,6 +314,7 @@ static void frame_abort(unified_presentation *p)
 }
 static bool close_children(unified_presentation *p, qa_error *error)
 {
+    if (p->video) return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Unified retirement retains its video cohort");
     frame_abort(p);
     if (!idle(p,p->replica))
         return frontend_unified_fail(error, QA_ERROR_ARGUMENT, "Unified CLIENT children have not returned");
@@ -332,7 +393,7 @@ static bool prepare(void *context, frontend_remote_unified *replica, qa_executab
     bool *ready, qa_error *error)
 {
     unified_presentation *p = context;
-    if (!p || !ready || p->busy || (p->replica && p->replica != replica))
+    if (!p || !ready || p->busy || p->video || (p->replica && p->replica != replica))
         return frontend_unified_fail(error, QA_ERROR_ARGUMENT, "Unified media preparation changed its physical CLIENT");
     p->replica = replica;
     if (p->candidate_media && !frontend_unified_media_ready(p->candidate_media)) {
@@ -345,14 +406,14 @@ static bool prepare(void *context, frontend_remote_unified *replica, qa_executab
 static bool offer_publish(void *context, frontend_remote_unified *replica, qa_executable_recipe *recipe, qa_error *error)
 {
     unified_presentation *p = context;
-    if (!p || p->replica != replica || !p->candidate_media || !recipe ||
+    if (!p || p->video || p->replica != replica || !p->candidate_media || !recipe ||
         !frontend_unified_media_ready(p->candidate_media) || !close_children(p,error)) return false;
     p->media = p->candidate_media; p->candidate_media = NULL; return true;
 }
 static bool offer_ready(void *context, frontend_remote_unified *replica, qa_executable_recipe *recipe, qa_error *error)
 {
     unified_presentation *p = context;
-    if (!p || p->replica != replica || !p->media || recipe != frontend_remote_unified_recipe(replica))
+    if (!p || p->video || p->replica != replica || !p->media || recipe != frontend_remote_unified_recipe(replica))
         return frontend_unified_fail(error, QA_ERROR_ARGUMENT, "Unified child construction precedes actual recipe publication");
     if (!p->audio_owner && !frontend_source_identity_allocate(p->frontend,&p->audio_owner,error)) return false;
     frontend_unified_event_options options = {.audio_owner=p->audio_owner,.context=p,
@@ -377,7 +438,7 @@ static bool control(void *context, frontend_remote_unified *replica, const qa_un
     const qa_json_document *json = qa_unified_document_json(doc);
     qa_json_id value = qa_json_get(json,qa_unified_document_root(doc),"value");
     qa_json_id kind = qa_json_get(json,value,"kind");
-    if (!p || p->replica != replica || !p->events)
+    if (!p || p->video || p->replica != replica || !p->events)
         return frontend_unified_fail(error, QA_ERROR_ARGUMENT, "Unified control has no prepared CLIENT consumers");
     if (qa_json_string_equal(json,kind,"components"))
         return frontend_unified_components_control(p->components,doc,error);
@@ -799,6 +860,7 @@ static bool frame(void *context, frontend_remote_unified *replica, const qa_unif
     unified_presentation *p = context;
     if (!p || p->replica != replica || !state || !p->events || !p->q1 || !p->q2 || !p->q3)
         return frontend_unified_fail(error, QA_ERROR_ARGUMENT, "Unified frame has incomplete actual CLIENT children");
+    if (p->video) { *state=FRONTEND_UNIFIED_FRAME_WAIT; return true; }
     if (p->physical && frontend_unified_input_pending(p->physical)) {
         *state=FRONTEND_UNIFIED_FRAME_WAIT;
         return true;
@@ -826,7 +888,7 @@ static bool frame(void *context, frontend_remote_unified *replica, const qa_unif
 static bool publish(void *context, frontend_remote_unified *replica, const qa_unified_document *doc, qa_error *error)
 {
     unified_presentation *p = context;
-    if (!p || p->replica != replica || !p->frame_prepared || !p->candidate_render ||
+    if (!p || p->video || p->replica != replica || !p->frame_prepared || !p->candidate_render ||
         !p->candidate_prediction || p->busy || !frontend_unified_render_idle(p->render) ||
         !frontend_unified_render_idle(p->candidate_render) ||
         !frontend_remote_unified_prediction_idle(p->prediction) ||
@@ -857,14 +919,14 @@ static bool input(void *context, frontend_remote_unified *replica, const qa_unif
     double time, qa_error *error)
 {
     unified_presentation *p = context;
-    if (!p || p->replica != replica || !p->received)
+    if (!p || p->video || p->replica != replica || !p->received)
         return frontend_unified_fail(error, QA_ERROR_ARGUMENT, "Unified input awaits its authoritative prediction frame");
     return frontend_remote_unified_prediction_input(p->prediction,command,time,error);
 }
 static bool sample(void *context, frontend_remote_unified *replica, uint64_t now, qa_error *error)
 {
     unified_presentation *p = context; (void)now;
-    return p && p->replica == replica && q3_retirement_drain(p,error) && events_enter(p,error);
+    return p && !p->video && p->replica == replica && q3_retirement_drain(p,error) && events_enter(p,error);
 }
 static bool clock_read(void *context,const frontend_remote_unified *replica,
     frontend_unified_recipient_clock *out,qa_error *error)
@@ -882,7 +944,7 @@ static bool begin_frame(void *context,frontend_remote_unified *replica,uint64_t 
     uint64_t elapsed,qa_error *error)
 {
     unified_presentation *p=context;
-    if (!p || p->replica!=replica || p->busy || now!=p->frontend->wall_time_ns || elapsed>now)
+    if (!p || p->video || p->replica!=replica || p->busy || now!=p->frontend->wall_time_ns || elapsed>now)
         return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Unified recipient clock changed its physical frame receipt");
     if (p->clock_started && p->clock.begin_generation==p->frontend->recipient_begin_generation)
         return (p->clock.physical_frame==p->frontend->frame_number &&
@@ -906,6 +968,7 @@ static bool physical_ready(void *context, frontend_remote_unified *replica,
     if (!p || p->replica != replica || !sequence || !needed || p->busy)
         return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Unified physical input changed its CLIENT owner");
     *sequence=0; *needed=false;
+    if (p->video) return true;
     if (!p->received) return true;
     if (!p->physical && !frontend_unified_input_create(p->frontend,replica,p->prediction,&p->physical,error)) return false;
     bool completed=false;
@@ -924,7 +987,7 @@ static bool physical_input(void *context, frontend_remote_unified *replica,
     const qa_seat_input_sample *sample_value, uint64_t sequence, double source_elapsed_ms, qa_error *error)
 {
     unified_presentation *p=context;
-    if (!p || p->replica != replica || !p->physical || !p->received || p->busy)
+    if (!p || p->video || p->replica != replica || !p->physical || !p->received || p->busy)
         return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Unified physical sample has no authoritative input owner");
     frontend_unified_recipient_clock clock;
     (void)source_elapsed_ms;
@@ -1134,7 +1197,7 @@ static bool player_blend(void *context,qa_actor_id actor,bool present,const qa_s
 static bool draw(void *context, frontend_remote_unified *replica, float stereo, qa_audio_listener *listener, qa_error *error)
 {
     unified_presentation *p = context;
-    if (!p || p->replica != replica || !p->render || !p->received)
+    if (!p || p->video || p->replica != replica || !p->render || !p->received)
         return frontend_unified_fail(error, QA_ERROR_ARGUMENT, "Unified drawing awaits its actual received frame");
     frontend_unified_prediction_view prediction;
     bool source_listener=false;

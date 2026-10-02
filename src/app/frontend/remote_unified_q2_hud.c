@@ -737,7 +737,7 @@ static bool draw_pois(frontend_unified_q2_rr_hud *o, qa_actor_id viewer, rr_draw
                 image_scale=fmaxf(image_scale,fminf((float)maximum,1+(1-fraction)*((float)maximum-1)));
             }
         }
-        float w=row->image->logical_width*draw->scale*image_scale, h=row->image->logical_height*draw->scale*image_scale;
+        float w=(float)row->image->logical_width*draw->scale*image_scale, h=(float)row->image->logical_height*draw->scale*image_scale;
         qa_scene_vec4 tint=row->value.poi.tint;
         if (row->value.poi.flags&1) tint.w*=fmaxf(.25f,fminf(1,hypotf(x-left-width*.5f,y-top-height*.5f)/fmaxf(1,w*3)));
         qa_scene_rect_f rect={fmaxf(left,fminf(left+width-w,x-w*.5f)),fmaxf(top,fminf(top+height-h,y-h*.5f)),w,h};
@@ -815,8 +815,8 @@ bool frontend_unified_q2_rr_draw(frontend_unified_q2_rr_hud *o, qa_ui *ui,
     bool okay=qa_ui_presentation_read(ui,&draw.ui,e) &&
         qa_ui_preferences_read(qa_application_cvars(domain->application),domain->physical_seat,&draw.prefs,e);
     if (!okay) return false;
-    draw.scale=fminf(viewport.width/640.f,viewport.height/480.f);
-    draw.x=viewport.x+(viewport.width-640*draw.scale)*.5f; draw.y=viewport.y+(viewport.height-480*draw.scale)*.5f;
+    draw.scale=fminf((float)viewport.width/640.f,(float)viewport.height/480.f);
+    draw.x=(float)viewport.x+((float)viewport.width-640*draw.scale)*.5f; draw.y=(float)viewport.y+((float)viewport.height-480*draw.scale)*.5f;
     const char *content=o->report.document?o->report.content:o->bars?o->bars->row.content:
         o->help.document?o->help.content:o->path.document?o->path.content:o->coop.document?o->coop.content:
         o->poi_count?o->pois[0].content:o->damage_count?o->damage[0].row.content:NULL;
@@ -842,8 +842,8 @@ bool frontend_unified_q2_rr_draw(frontend_unified_q2_rr_hud *o, qa_ui *ui,
             qa_scene_vec4 point=qa_scene_matrix_point(projector,qa_vec_add(o->path.value.path.origin,
                 qa_vec_scale(o->path.value.path.direction,(float)i*24)));
             if (point.w>0) okay=qa_scene_frame_picture_f(frame,draw.white,viewport,
-                (qa_scene_rect_f){viewport.x+(point.x/point.w*.5f+.5f)*viewport.width-3,
-                    viewport.y+(-point.y/point.w*.5f+.5f)*viewport.height-3,6,6},
+                (qa_scene_rect_f){(float)viewport.x+(point.x/point.w*.5f+.5f)*(float)viewport.width-3,
+                    (float)viewport.y+(-point.y/point.w*.5f+.5f)*(float)viewport.height-3,6,6},
                 (qa_scene_vec4){0,0,1,1},(qa_scene_vec4){1,.8f,.3f,1},e);
         }
     }

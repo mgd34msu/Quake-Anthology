@@ -17,9 +17,9 @@ typedef struct frontend_network_q2_client_options {
     qa_kex_lan *lobby;
     void *context;
     bool (*current)(void *, const frontend_network_q2_client *);
-    bool (*download_nonce)(void *, uint64_t *, qa_error *);
-    bool (*restore_stage)(void *, qa_fs_root *, const char *, uint64_t, qa_bytes,
-        qa_fs_stage **, uint64_t *, qa_error *);
+    bool (*download_stage)(void *, qa_fs_root *, const char *, qa_fs_stage **, uint64_t *, qa_error *);
+    bool (*restore_stage)(void *, qa_fs_root *, const char *, uint64_t, bool, qa_bytes,
+        qa_fs_stage **, uint64_t *, qa_fs_identity *, qa_error *);
     bool (*records)(void *, const qa_application_client_source *,
         const qa_q2_server_record *, size_t, qa_error *);
 } frontend_network_q2_client_options;

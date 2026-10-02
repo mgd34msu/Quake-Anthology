@@ -94,4 +94,112 @@ static inline float bot_ai_attack_strafe_time(const bot_ai_state *s) {
 static inline void bot_ai_attack_strafe_time_set(bot_ai_state *s,float value) {
     bot_source_f32_write(s->source_span.data+QA_BOT_SOURCE_ATTACK_STRAFE_TIME,value);
 }
+static inline float bot_ai_long_term_until(const bot_ai_state *s) {
+    return bot_source_f32_read(s->source_span.data+QA_BOT_SOURCE_LTG_TIME);
+}
+static inline void bot_ai_long_term_until_set(bot_ai_state *s,float value) {
+    bot_source_f32_write(s->source_span.data+QA_BOT_SOURCE_LTG_TIME,value);
+}
+static inline float bot_ai_nearby_until(const bot_ai_state *s) {
+    return bot_source_f32_read(s->source_span.data+QA_BOT_SOURCE_NBG_TIME);
+}
+static inline void bot_ai_nearby_until_set(bot_ai_state *s,float value) {
+    bot_source_f32_write(s->source_span.data+QA_BOT_SOURCE_NBG_TIME,value);
+}
+static inline float bot_ai_stand_until(const bot_ai_state *s) {
+    return bot_source_f32_read(s->source_span.data+QA_BOT_SOURCE_STAND_TIME);
+}
+static inline void bot_ai_stand_until_set(bot_ai_state *s,float value) {
+    bot_source_f32_write(s->source_span.data+QA_BOT_SOURCE_STAND_TIME,value);
+}
+static inline float bot_ai_stand_enemy_time(const bot_ai_state *s) {
+    return bot_source_f32_read(s->source_span.data+QA_BOT_SOURCE_STAND_FIND_ENEMY_TIME);
+}
+static inline void bot_ai_stand_enemy_time_set(bot_ai_state *s,float value) {
+    bot_source_f32_write(s->source_span.data+QA_BOT_SOURCE_STAND_FIND_ENEMY_TIME,value);
+}
+static inline float bot_ai_chase_time(const bot_ai_state *s) {
+    return bot_source_f32_read(s->source_span.data+QA_BOT_SOURCE_CHASE_TIME);
+}
+static inline void bot_ai_chase_time_set(bot_ai_state *s,float value) {
+    bot_source_f32_write(s->source_span.data+QA_BOT_SOURCE_CHASE_TIME,value);
+}
+static inline float bot_ai_check_time(const bot_ai_state *s) {
+    return bot_source_f32_read(s->source_span.data+QA_BOT_SOURCE_CHECK_TIME);
+}
+static inline void bot_ai_check_time_set(bot_ai_state *s,float value) {
+    bot_source_f32_write(s->source_span.data+QA_BOT_SOURCE_CHECK_TIME,value);
+}
+static inline float bot_ai_not_blocked_time(const bot_ai_state *s) {
+    return bot_source_f32_read(s->source_span.data+QA_BOT_SOURCE_NOT_BLOCKED_TIME);
+}
+static inline void bot_ai_not_blocked_time_set(bot_ai_state *s,float value) {
+    bot_source_f32_write(s->source_span.data+QA_BOT_SOURCE_NOT_BLOCKED_TIME,value);
+}
+static inline float bot_ai_order_time(const bot_ai_state *s) {
+    return bot_source_f32_read(s->source_span.data+QA_BOT_SOURCE_ORDER_TIME);
+}
+static inline void bot_ai_order_time_set(bot_ai_state *s,float value) {
+    bot_source_f32_write(s->source_span.data+QA_BOT_SOURCE_ORDER_TIME,value);
+}
+static inline float bot_ai_team_message_time(const bot_ai_state *s) {
+    return bot_source_f32_read(s->source_span.data+QA_BOT_SOURCE_TEAM_MESSAGE_TIME);
+}
+static inline void bot_ai_team_message_time_set(bot_ai_state *s,float value) {
+    bot_source_f32_write(s->source_span.data+QA_BOT_SOURCE_TEAM_MESSAGE_TIME,value);
+}
+static inline float bot_ai_team_goal_time(const bot_ai_state *s) {
+    return bot_source_f32_read(s->source_span.data+QA_BOT_SOURCE_TEAM_GOAL_TIME);
+}
+static inline void bot_ai_team_goal_time_set(bot_ai_state *s,float value) {
+    bot_source_f32_write(s->source_span.data+QA_BOT_SOURCE_TEAM_GOAL_TIME,value);
+}
+static inline float bot_ai_teammate_visible_time(const bot_ai_state *s) {
+    return bot_source_f32_read(s->source_span.data+QA_BOT_SOURCE_TEAMMATE_VISIBLE_TIME);
+}
+static inline void bot_ai_teammate_visible_time_set(bot_ai_state *s,float value) {
+    bot_source_f32_write(s->source_span.data+QA_BOT_SOURCE_TEAMMATE_VISIBLE_TIME,value);
+}
+static inline float bot_ai_formation_distance(const bot_ai_state *s) {
+    return bot_source_f32_read(s->source_span.data+QA_BOT_SOURCE_FORMATION_DISTANCE);
+}
+static inline void bot_ai_formation_distance_set(bot_ai_state *s,float value) {
+    bot_source_f32_write(s->source_span.data+QA_BOT_SOURCE_FORMATION_DISTANCE,value);
+}
+static inline float bot_ai_arrive_time(const bot_ai_state *s) {
+    return bot_source_f32_read(s->source_span.data+QA_BOT_SOURCE_ARRIVE_TIME);
+}
+static inline void bot_ai_arrive_time_set(bot_ai_state *s,float value) {
+    bot_source_f32_write(s->source_span.data+QA_BOT_SOURCE_ARRIVE_TIME,value);
+}
+static inline float bot_ai_defend_away_time(const bot_ai_state *s) {
+    return bot_source_f32_read(s->source_span.data+QA_BOT_SOURCE_DEFEND_AWAY_TIME);
+}
+static inline void bot_ai_defend_away_time_set(bot_ai_state *s,float value) {
+    bot_source_f32_write(s->source_span.data+QA_BOT_SOURCE_DEFEND_AWAY_TIME,value);
+}
+static inline float bot_ai_harvest_away_time(const bot_ai_state *s) {
+    return bot_source_f32_read(s->source_span.data+QA_BOT_SOURCE_HARVEST_AWAY_TIME);
+}
+static inline void bot_ai_harvest_away_time_set(bot_ai_state *s,float value) {
+    bot_source_f32_write(s->source_span.data+QA_BOT_SOURCE_HARVEST_AWAY_TIME,value);
+}
+static inline float bot_ai_attack_away_time(const bot_ai_state *s) {
+    return bot_source_f32_read(s->source_span.data+QA_BOT_SOURCE_ATTACK_AWAY_TIME);
+}
+static inline void bot_ai_attack_away_time_set(bot_ai_state *s,float value) {
+    bot_source_f32_write(s->source_span.data+QA_BOT_SOURCE_ATTACK_AWAY_TIME,value);
+}
+static inline float bot_ai_rush_base_away_time(const bot_ai_state *s) {
+    return bot_source_f32_read(s->source_span.data+QA_BOT_SOURCE_RUSH_BASE_AWAY_TIME);
+}
+static inline void bot_ai_rush_base_away_time_set(bot_ai_state *s,float value) {
+    bot_source_f32_write(s->source_span.data+QA_BOT_SOURCE_RUSH_BASE_AWAY_TIME,value);
+}
+static inline float bot_ai_lead_time(const bot_ai_state *s) {
+    return bot_source_f32_read(s->source_span.data+QA_BOT_SOURCE_LEAD_TIME);
+}
+static inline void bot_ai_lead_time_set(bot_ai_state *s,float value) {
+    bot_source_f32_write(s->source_span.data+QA_BOT_SOURCE_LEAD_TIME,value);
+}
 #endif

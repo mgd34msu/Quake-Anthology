@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "qa/scene_effects.h"
+#include "qa/material_library_save.h"
 
 static qa_scene_cull model_cull(const qa_scene_model *model, const qa_scene_model_input *input) {
     qa_model_format format = model->source->format;
@@ -268,9 +269,9 @@ bool scene_model_emit(qa_scene_model *model, const qa_scene_model_input *input,
             context.source_model_old_frame = (int32_t)pose->input.old_frame;
             context.source_model_back_lerp = pose->input.back_lerp;
         }
-        context.source_white = context.source_scratch && world && world->source_white ? world->source_white :
-            qa_material_library_has_source_profile(model->materials) ? qa_scene_source_q3_white(model->resources) :
-            qa_scene_white(model->resources);
+        qa_material_library *registration=input->material_library?input->material_library:model->materials;
+        context.source_white = qa_material_library_has_source_profile(registration) ?
+            qa_scene_source_q3_white(qa_material_library_resource_owner(registration)) : qa_scene_white(model->resources);
         if (model->source->format == QA_MODEL_MD3 || model->source->format == QA_MODEL_MD4)
             context.source_writer = source_md4 ? QA_SOURCE_WRITE_MODEL_MD4 : QA_SOURCE_WRITE_MODEL;
         if (input->shadow_only) {

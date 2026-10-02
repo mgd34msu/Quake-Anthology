@@ -212,6 +212,8 @@ static bool scene(qa_scene_world *actual_world, const frontend_legacy_scene_serv
     const qa_scene_world_input *input, const frontend_legacy_render_policy *policy,
     qa_scene_frame *frame, qa_scene_vec4 *blend, qa_error *error)
 {
+    if (services->view_blend && (!scene_current(services,error) ||
+        !services->view_blend(services->context,input,blend,error) || !scene_current(services,error))) return false;
     qa_scene_world_input opaque = *input;
     if (policy->family == QA_SCENE_Q1) opaque.legacy_phase = QA_LEGACY_WORLD_OPAQUE;
     if (policy->family == QA_SCENE_Q1 && input->q1_sky_environment &&

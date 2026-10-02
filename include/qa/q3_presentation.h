@@ -113,6 +113,7 @@ typedef struct qa_q3_system_movie {
     qa_media_status (*status)(void *);
     bool (*end)(void *, qa_cinematic_end, qa_error *);
     void (*release)(void *);
+    qa_cinematic *(*playback)(void *);
 } qa_q3_system_movie;
 typedef struct qa_q3_movie_request {
     const char *path;

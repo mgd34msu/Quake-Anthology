@@ -747,7 +747,7 @@ bool application_q3_guest_role_initialize(application_provider *provider, qa_qvm
         role->engine->initializing_role = role;
         bool initialized = q3g_call(role, 0, arguments, 3, &result, error);
         role->engine->initializing_role = previous;
-        if (!initialized) return false;
+        if (!initialized || !qa_q3_host_end_registration(role->host,error)) return false;
     }
     role->initialized = true; return true;
 }

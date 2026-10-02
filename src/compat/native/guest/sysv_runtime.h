@@ -112,6 +112,12 @@ uint64_t guest_sysv_thread_pointer(const guest_sysv_runtime *);
 bool guest_sysv_load_begin(guest_sysv_runtime *, uint64_t provider,
     bool has_tls, uint64_t bytes, uint64_t alignment,
     guest_sysv_load **, guest_sysv_tls *, qa_error *);
+/* Replace a finalized module inside the same runtime. Its original static TLS
+ * identity stays allocated; the fresh commit installs its real template again. */
+bool guest_sysv_reload_begin(guest_sysv_runtime *, uint64_t provider,
+    guest_sysv_load **, guest_sysv_tls *, qa_error *);
+bool guest_sysv_finalize_image_destructors(guest_sysv_runtime *, uint64_t provider,
+    uint64_t base, uint64_t bytes, qa_error *);
 bool guest_sysv_load_commit(guest_sysv_load **,
     const guest_sysv_provider *, qa_bytes tls_template, qa_error *);
 bool guest_sysv_load_abort(guest_sysv_load **, qa_error *);

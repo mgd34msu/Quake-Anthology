@@ -1464,6 +1464,8 @@ add_library(qa_application STATIC
     src/app/application/native_q2_source_invocation.c
     src/app/application/native_q2_visibility.c
     src/app/application/native_q2_weapon_stage.c
+    src/app/application/guest_q3_component_player_events.c
+    src/app/application/guest_q3_mod_pickups.c
 )
 target_link_libraries(qa_application PUBLIC qa_persistence qa_configuration qa_game_q1 qa_game_q2 qa_game_q3 qa_campaign qa_modes qa_player_services qa_qc_host qa_q3_host qa_text qa_settings)
 if(WIN32)
@@ -1863,6 +1865,8 @@ add_library(qa_frontend STATIC
     src/app/frontend/unified_graph_save.c
     src/app/frontend/unified_q3_commands.c
     src/app/frontend/unified_q3_runtime_factory.c
+    src/app/frontend/native_components.c
+    src/app/frontend/unified_q3_video.c
 )
 target_link_libraries(qa_frontend PUBLIC qa_application qa_ui qa_tools qa_display qa_render_cpu qa_render_gl qa_render_controls qa_input qa_settings qa_audio qa_q3_presentation qa_q3_native_presentation qa_network PRIVATE SDL2::SDL2 ICU::i18n)
 get_filename_component(QA_NATIVE_RUNTIME_FULL_ROOT "${QA_NATIVE_RUNTIME_INSTALL_ROOT}"

@@ -9,6 +9,7 @@ typedef struct application_native_q2_items_options {
     application_native_q2_callbacks *callbacks;
     qa_session *session;
     qa_inventory *inventory;
+    qa_pickups *pickups;
     qa_actor_owner owner;
 } application_native_q2_items_options;
 bool application_native_q2_items_create(const application_native_q2_items_options *,

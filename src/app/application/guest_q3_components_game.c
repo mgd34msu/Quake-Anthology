@@ -116,7 +116,7 @@ bool q3components_create_game(component_game_row *row,qa_error *e)
         .visibility={.context=row,.point=point,.area_bits=areas,.areas_connected=connected,.cluster_visible=visible},
         .generation=row->publication.generation,.context=row,.current=q3components_current,.storage_current=q3components_storage,
         .match_read=match_read,.match_write=match_write,.clients=options->clients,
-        .actor_operations=options->application->mod_operations,.damage_context=damage_context,.source_command_event=source_event};
+        .actor_operations=options->application->mod_operations,.damage_context=damage_context,.source_command_event=source_event,.source_player_event=q3components_player_event};
     create.host.write_view.root=qa_catalog_product_write_root(row->provider->product_catalog,row->provider->launch->selection.product);
     for(size_t i=0;i<qa_vfs_mount_count(create.host.mounts);++i) {
         qa_vfs_mount_info mount;

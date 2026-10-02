@@ -286,6 +286,13 @@ bool qa_fs_stage_open_checked(qa_fs_root *, const char *target, uint64_t nonce,
 bool qa_fs_stage_open_unique_checked(qa_fs_root *, const char *target,
     uint64_t *namespace_nonce, uint64_t excluded_nonce, qa_fs_stage **,
     uint64_t *initial_size, qa_error *);
+/* A saved completed publication admits the real installed target only when
+ * its entire retained prefix and handle/name identity still match. The held
+ * owner never republishes or removes a former temporary; publication with
+ * the returned identity and exclusive=true resumes target/parent sync only.
+ * Failed admission returns a checked-releasable partial owner. */
+bool qa_fs_stage_open_published_checked(qa_fs_root *, const char *target,
+    qa_bytes expected_prefix, qa_fs_stage **, qa_fs_identity *, qa_error *);
 bool qa_fs_stage_size(qa_fs_stage *, uint64_t *, qa_error *);
 bool qa_fs_stage_read(qa_fs_stage *, uint64_t offset, void *, size_t capacity,
                        size_t *read, qa_error *);
@@ -293,7 +300,10 @@ bool qa_fs_stage_write(qa_fs_stage *, uint64_t offset, qa_bytes,
                         size_t *written, qa_error *);
 /* Flushes and freezes writes. Consumers inspect/hash by read-at, then publish
  * the same retained file identity. Exclusive publication never replaces an
- * installed target. created is valid even after a durability-sync failure. */
+ * installed target. created is valid even after a cleanup or durability-sync
+ * failure. Retrying publication with the same sealed identity and exclusive
+ * setting resumes only unfinished cleanup/sync and returns created=true for
+ * this owner's completed publication. Other retry identities/modes fail. */
 bool qa_fs_stage_seal(qa_fs_stage *, qa_fs_identity *, qa_error *);
 typedef struct qa_fs_stage_mapping qa_fs_stage_mapping;
 /* Read-only, demand-paged inspection of the same sealed file handle. No file
@@ -310,7 +320,8 @@ void qa_fs_stage_close(qa_fs_stage *, bool keep);
 /* Checked retirement retains the actual owner on refusal. POSIX consumed
  * descriptors are cleared even when close reports failure; retries never
  * reuse them. Once started, only another checked close with the same keep
- * decision is admitted. */
+ * decision is admitted. Published cleanup/sync is completed before releasing
+ * the owner, including after a failed publication return. */
 bool qa_fs_stage_close_checked(qa_fs_stage **, bool keep, qa_error *);
 
 #endif

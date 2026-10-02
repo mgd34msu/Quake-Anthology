@@ -7,6 +7,7 @@
 #include "qa/game_q2_wire.h"
 #include "unified_q2_native_events.h"
 #include "native_q2_console.h"
+#include "guest_native_q2_private.h"
 #include "map_travel_private.h"
 #include "portals.h"
 #include "q3_round.h"
@@ -2257,6 +2258,10 @@ bool application_map_publish(qa_application *application,
         if (provider->kind == APPLICATION_PROVIDER_QC &&
             !application_qc_initialize_map(provider, &publication->map,
                 &publication->entities, current_map, spawn_point, error))
+            return false;
+        if(provider->kind==APPLICATION_PROVIDER_NATIVE&&provider->state.native.q2_engine&&
+            provider->state.native.q2_engine->profile!=QA_NATIVE_Q2_CGAME_API2023&&
+            !application_native_q2_initialize_supplemental(provider,current_map,spawn_point,error))
             return false;
     }
     if (publication->map_provider->kind == APPLICATION_PROVIDER_Q3 &&

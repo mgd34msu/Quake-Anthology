@@ -234,7 +234,7 @@ bool qa_network_q2_client_continue(qa_network_runtime *runtime, qa_net_client_id
     if (!session || !qa_network_callbacks_idle(runtime) || session->busy)
         return q2_fail(error, QA_ERROR_ARGUMENT, "Q2 Source delivery requires its idle enclosing runtime");
     q2_client *client = &session->state.client; session->busy = true; runtime->callback = true;
-    bool ok = sent_continue(session, error), waiting = false;
+    bool ok = sent_continue(session, error), waiting = false, download_retry = false;
     if (ok && client->acknowledgement_held) {
         client->acknowledgement_held = false;
         ok = current(session, error) && client->hooks.acknowledged(client->hooks.context, id,
@@ -273,7 +273,10 @@ bool qa_network_q2_client_continue(qa_network_runtime *runtime, qa_net_client_id
             break;
         case QA_Q2_SVC_DOWNLOAD: {
             bool complete = false;
-            ok = client->hooks.download(client->hooks.context, id, event, &complete, error) && current(session, error);
+            ok = client->hooks.download(client->hooks.context, id, event, &complete, error);
+            if (!ok && (!error || (error->code != QA_ERROR_FORMAT && error->code != QA_ERROR_UNSUPPORTED))) {
+                --client->batch.cursor; download_retry = true; waiting = true;
+            } else if (ok) ok = current(session, error);
             if (ok && complete && client->preparing_game_state) ok = prepare(session, &waiting, error);
             break;
         }
@@ -291,7 +294,7 @@ bool qa_network_q2_client_continue(qa_network_runtime *runtime, qa_net_client_id
         (session->retiring || !ok || client->batch.cursor == client->batch.count)) {
         q2_records_free(&client->batch); client->receive_held = false;
     }
-    if (!ok && !client->sent_pending) session->retiring = true;
+    if (!ok && !client->sent_pending && !download_retry) session->retiring = true;
     runtime->callback = false; session->busy = false; return ok;
 }
 static bool queue_commands(q2_session *session, const qa_q2_usercmd *commands, size_t seats, qa_error *error)

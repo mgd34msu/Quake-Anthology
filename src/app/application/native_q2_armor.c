@@ -140,12 +140,12 @@ static bool selection_parse(application_native_q2_armor *o,qa_json_id id,armor_s
     if(!application_native_q2_field_parse(o->options.callbacks,qa_json_get(d,id,"field"),&out->field,e)) return false;
     if(qa_json_string_equal(d,qa_json_get(d,id,"kind"),"positive")) return true;
     out->enumeration=true;
-    return qa_json_string_equal(d,qa_json_get(d,id,"kind"),"enum")&&
+    return (qa_json_string_equal(d,qa_json_get(d,id,"kind"),"enum")&&
         qa_json_number(d,qa_json_get(d,id,"value"),&out->value,e)&&
         qa_json_number(d,qa_json_get(d,id,"none"),&out->none,e)&&out->value!=out->none&&
         application_native_q2_field_value(out->field.encoding,out->value,e)&&
         application_native_q2_field_value(out->field.encoding,out->none,e)&&
-        (out->field.encoding!=QA_NATIVE_F32||((double)(float)out->value==out->value&&(double)(float)out->none==out->none))||
+        (out->field.encoding!=QA_NATIVE_F32||((double)(float)out->value==out->value&&(double)(float)out->none==out->none)))||
         fail(e,"Native armor enumeration cannot be represented exactly");
 }
 static size_t field_count(const application_native_q2_armor *o)

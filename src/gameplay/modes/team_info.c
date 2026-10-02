@@ -45,7 +45,7 @@ bool qa_modes_team_info(qa_modes *m, qa_mode_id id, qa_actor_id recipient, qa_mo
         qa_mode_team_row row = {.actor = actor,
                                 .location = member->location,
                                 .health = fmaxf(0, state.health),
-                                .armor = fmaxf(0, state.armor.regular.points)};
+                                .armor = fmax(0, state.armor.regular.points)};
         if (m->options.hooks.team_equipment &&
             !m->options.hooks.team_equipment(m->options.hooks.context, actor, &row.weapon,
                                              &row.powerups, e))

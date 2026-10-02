@@ -109,8 +109,8 @@ bool frontend_scene_heap_read(const qa_frontend *f, root_heap heap, const qa_vfs
         if(heap.ordinal>SIZE_MAX || !frontend_renderer_materials_read_at(f,(size_t)heap.ordinal,&row,&error)) return false;
         *files=row.mounts; *images=row.images; *materials=row.library;
     } else if(heap.kind==9) {
-        frontend_renderer_worlds_view row; bool present=false; qa_error error={0};
-        if(heap.ordinal || !frontend_renderer_worlds_read(f,&row,&present,&error) || !present || !row.private_heaps) return false;
+        frontend_renderer_worlds_view row; qa_error error={0};
+        if(heap.ordinal>SIZE_MAX || !frontend_renderer_worlds_read_at(f,(size_t)heap.ordinal,&row,&error) || !row.private_heaps) return false;
         *files=row.files; *images=row.images; *materials=row.materials;
     } else if(heap.kind==10) {
         size_t media_ordinal,bank_ordinal; frontend_unified_media *media=NULL;
@@ -199,10 +199,16 @@ static bool heap_find(frontend_world_inventory *inventory,const qa_vfs *files,
     bool found=false;
     if(!frontend_scene_heap_find(inventory->frontend,files,images,materials,out,&found,error)) return false;
     if(found) return true;
-    const qa_vfs *actual_files=NULL; qa_scene_resources *actual_images=NULL; qa_material_library *actual_materials=NULL;
-    root_heap heap={9,0,qa_application_content_view_id(qa_application_content_graph_read(inventory->frontend->application),files)};
-    if(heap.view && frontend_scene_heap_read(inventory->frontend,heap,&actual_files,&actual_images,&actual_materials) &&
-        actual_files==files && actual_images==images && actual_materials==materials) { *out=heap; return true; }
+    size_t count=0;
+    if(!frontend_renderer_worlds_count(inventory->frontend,&count,error)) return false;
+    uint64_t view=qa_application_content_view_id(qa_application_content_graph_read(inventory->frontend->application),files);
+    for(size_t i=0;view && i<count;++i) {
+        frontend_renderer_worlds_view row;
+        if(!frontend_renderer_worlds_read_at(inventory->frontend,i,&row,error)) return false;
+        if(row.private_heaps && row.files==files && row.images==images && row.materials==materials) {
+            *out=(root_heap){9,i,view}; return true;
+        }
+    }
     return frontend_fail(error,QA_ERROR_FORMAT,"Scene root has no genuine paired frontend resource and material owner");
 }
 static bool root_resource(frontend_world_inventory *inventory,const qa_vfs *files,
@@ -234,7 +240,7 @@ static bool policy_capture(world_row *row,qa_error *error)
 static bool owner_shape(frontend_scene_owner owner,bool world)
 {
     if (owner.kind==FRONTEND_SCENE_OWNER_FRONTEND) return world && !owner.owner && !owner.row;
-    if (owner.kind==FRONTEND_SCENE_OWNER_RENDERER) return world && owner.owner==1 && owner.row==1;
+    if (owner.kind==FRONTEND_SCENE_OWNER_RENDERER) return world && owner.owner && owner.row==1;
     if(owner.kind==FRONTEND_SCENE_OWNER_UNIFIED_MAP) return world && owner.owner && owner.row==1;
     if(owner.kind==FRONTEND_SCENE_OWNER_UNIFIED_MODEL) return owner.owner && owner.row;
     if(owner.kind==FRONTEND_SCENE_OWNER_UNIFIED_Q3) return owner.owner && (owner.row>>32) && (uint32_t)owner.row;
@@ -470,12 +476,16 @@ static bool owners_capture(frontend_world_inventory *inventory,qa_error *error)
         if(!frontend_renderer_registries_at(f,i,&assets,error) ||
             !retained_registry_roots_claim(inventory,assets,i+1,error)) return false;
     }
-    frontend_renderer_worlds_view retained; bool present=false;
-    if(!frontend_renderer_worlds_read(f,&retained,&present,error)) return false;
-    if(present && retained.world) for(size_t i=0;i<inventory->world_count;++i) {
-        world_row *row=inventory->worlds+i;
-        if(row->source.world==retained.world && !row->claimed &&
-            !world_claim(inventory,retained.world,(frontend_scene_owner){FRONTEND_SCENE_OWNER_RENDERER,1,1},error)) return false;
+    size_t retained_count=0;
+    if(!frontend_renderer_worlds_count(f,&retained_count,error)) return false;
+    for(size_t i=0;i<retained_count;++i) {
+        frontend_renderer_worlds_view retained;
+        if(!frontend_renderer_worlds_read_at(f,i,&retained,error)) return false;
+        for(size_t j=0;j<inventory->world_count;++j) {
+            world_row *row=inventory->worlds+j;
+            if(row->source.world==retained.world && !row->claimed &&
+                !world_claim(inventory,retained.world,(frontend_scene_owner){FRONTEND_SCENE_OWNER_RENDERER,i+1,1},error)) return false;
+        }
     }
     return true;
 }

@@ -113,7 +113,7 @@ bool q3nn_allocate(const q3n_native_options *options,bool restoring,q3n_native *
 {
     if(!options || !out || *out || !options->application || !options->client || !options->reader || !options->presentation || !options->frame_settings ||
         (options->begin_frame==NULL)!=(options->end_frame==NULL) ||
-        (options->before_render && !options->begin_frame) ||
+        ((options->before_render || options->camera_ready) && !options->begin_frame) ||
         !qa_native_q3_wire_reader_idle(options->reader) ||
         !qa_native_q3_client_service_idle(options->client) || (!restoring && !qa_q3_presentation_idle(options->presentation)))
         return q3nn_fail(e,QA_ERROR_ARGUMENT,"Native CGAME requires its genuine idle client and backend");
@@ -426,6 +426,8 @@ static bool draw(q3n_native *o,int32_t latest,bool *rendered,bool *begun,
         !q3n_view_frame(o->view,f,&settings->view,o->player_state,backend.options.viewport,&in_water,e) ||
         !required_media(o,f,&local.visible,e))return false;
     memcpy(f->refdef.area_mask,local.visible.area_mask,sizeof(f->refdef.area_mask));
+    if(o->options.camera_ready && (!o->options.camera_ready(o->options.frame_context,f,e) ||
+        !qa_application_native_q3_presentation_current(f->application,&source)))return false;
     if(!f->third_person && !q3n_view_damage_blob(o->view,f,&settings->view,o->player_state,e))return false;
     q3n_packet_imports imports={.context=o,.rand=packet_rand,.body=packet_body,.player=packet_player,
         .trail=packet_trail,.powerups=packet_powerups};

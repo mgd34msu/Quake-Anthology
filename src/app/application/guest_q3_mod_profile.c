@@ -280,6 +280,100 @@ static bool storage(application_q3_mod_profile *p, const mod_field *f, qa_error 
     }
     return true;
 }
+static bool pickup_inventory(const qa_json_document *d,qa_json_id root,const qa_pickup_write *write,qa_strings *strings,qa_error *e)
+{
+    const char *name=qa_strings_cstr(strings,write->resource.item);
+    qa_json_id records=qa_json_get(d,root,"actorRecords");
+    if(write->fields==QA_PICKUP_COUNT) for(size_t i=0;i<qa_json_size(d,records);++i) {
+        qa_json_id fields=qa_json_get(d,qa_json_at(d,records,i),"fields");
+        for(size_t j=0;j<qa_json_size(d,fields);++j) {
+            qa_json_id f=qa_json_at(d,fields,j);
+            if(qa_json_string_equal(d,qa_json_get(d,f,"binding"),"inventory")&&qa_json_string_equal(d,qa_json_get(d,f,"item"),name)) return true;
+        }
+    }
+    qa_json_id rows=qa_json_get(d,qa_json_get(d,root,"items"),"storage");
+    for(size_t i=0;i<qa_json_size(d,rows);++i) {
+        qa_json_id row=qa_json_at(d,rows,i);
+        if(qa_json_string_equal(d,qa_json_get(d,row,"kind"),"bits")) {
+            qa_json_id items=qa_json_get(d,row,"items");
+            for(size_t j=0;write->fields==QA_PICKUP_COUNT&&j<qa_json_size(d,items);++j)
+                if(qa_json_string_equal(d,qa_json_get(d,qa_json_at(d,items,j),"item"),name)) return true;
+        } else if(qa_json_string_equal(d,qa_json_get(d,row,"item"),name)&&
+            (write->fields==QA_PICKUP_COUNT||qa_json_string_equal(d,qa_json_get(d,qa_json_get(d,row,"capacity"),"kind"),"field"))) return true;
+    }
+    return q3mod_fail(e,QA_ERROR_FORMAT,"Original pickup write has no declared count or capacity storage");
+}
+static bool pickups(const qa_json_document *d,qa_json_id root,application_q3_mod_profile *p,qa_strings *strings,qa_error *e)
+{
+    qa_json_id rows=qa_json_get(d,root,"pickups");
+    if(!array(d,rows,sizeof(*p->pickups),(void **)&p->pickups,&p->pickup_count,true,e)) return false;
+    if(p->pickup_count&&!p->clients) return q3mod_fail(e,QA_ERROR_FORMAT,"Original pickups require admitted source clients");
+    uint32_t mask=(UINT32_C(1)<<Q3_MOD_SELF)|(UINT32_C(1)<<Q3_MOD_OTHER)|(UINT32_C(1)<<Q3_MOD_ITEM)|
+        (UINT32_C(1)<<Q3_MOD_TIME)|(UINT32_C(1)<<Q3_MOD_PICKUP_COUNT)|(UINT32_C(1)<<Q3_MOD_PICKUP_HAS_COUNT)|(UINT32_C(1)<<Q3_MOD_PICKUP_DROPPED);
+    for(size_t i=0;i<p->pickup_count;++i) {
+        mod_pickup *v=p->pickups+i; qa_json_id at=qa_json_at(d,rows,i),operation=qa_json_get(d,at,"operation");
+        char *id=NULL;
+        if(!text(d,qa_json_get(d,at,"id"),&id,e)) return false;
+        bool valid=*id&&qa_strings_intern_cstr(strings,id,&v->id,e); free(id);
+        if(!valid||!array(d,qa_json_get(d,at,"offered"),sizeof(*v->offered),(void **)&v->offered,&v->offered_count,false,e)||!v->offered_count||
+            !array(d,qa_json_get(d,at,"writes"),sizeof(*v->writes),(void **)&v->writes,&v->write_count,false,e)||!v->write_count) return false;
+        for(size_t j=0;j<i;++j) if(p->pickups[j].id==v->id) return q3mod_fail(e,QA_ERROR_FORMAT,"Duplicate original pickup rule");
+        for(size_t j=0;j<v->offered_count;++j) {
+            if(!intern(d,qa_json_at(d,qa_json_get(d,at,"offered"),j),strings,v->offered+j,false,e)) return false;
+            for(size_t k=0;k<=i;++k) for(size_t l=0;l<(k==i?j:p->pickups[k].offered_count);++l)
+                if(p->pickups[k].offered[l]==v->offered[j]) return q3mod_fail(e,QA_ERROR_FORMAT,"Ambiguous original pickup item");
+        }
+        for(size_t j=0;j<v->write_count;++j) {
+            qa_pickup_write *w=v->writes+j; qa_json_id row=qa_json_at(d,qa_json_get(d,at,"writes"),j),kind=qa_json_get(d,row,"kind");
+            if(qa_json_string_equal(d,kind,"protection")) {
+                qa_json_id channel=qa_json_get(d,row,"channel"); w->resource.kind=QA_PICKUP_PROTECTION;
+                if(qa_json_string_equal(d,channel,"regular")) w->resource.channel=QA_PROTECTION_REGULAR;
+                else if(qa_json_string_equal(d,channel,"powered")) w->resource.channel=QA_PROTECTION_POWERED;
+                else return q3mod_fail(e,QA_ERROR_FORMAT,"Unknown original pickup protection channel");
+                bool found=false; for(size_t k=0;k<p->protection_count;++k) found|=p->protection[k].channel==w->resource.channel;
+                if(!found) return q3mod_fail(e,QA_ERROR_FORMAT,"Original pickup has no declared protection owner");
+            } else if(qa_json_string_equal(d,kind,"inventory")) {
+                w->resource.kind=QA_PICKUP_INVENTORY; qa_json_id fields=qa_json_get(d,row,"fields");
+                if(qa_json_string_equal(d,fields,"count")) w->fields=QA_PICKUP_COUNT;
+                else if(qa_json_string_equal(d,fields,"capacity")) w->fields=QA_PICKUP_CAPACITY;
+                else if(qa_json_string_equal(d,fields,"count-and-capacity")) w->fields=QA_PICKUP_COUNT_CAPACITY;
+                else return q3mod_fail(e,QA_ERROR_FORMAT,"Unknown original pickup inventory dimensions");
+                if(!intern(d,qa_json_get(d,row,"item"),strings,&w->resource.item,false,e)||!pickup_inventory(d,root,w,strings,e)) return false;
+            } else return q3mod_fail(e,QA_ERROR_FORMAT,"Unknown original pickup resource");
+        }
+        v->gated=qa_json_string_equal(d,qa_json_get(d,operation,"kind"),"gate-then-grant");
+        if(!v->gated&&!qa_json_string_equal(d,qa_json_get(d,operation,"kind"),"boolean-grant")) return false;
+        if(!call(d,qa_json_get(d,operation,"grant"),p,&v->grant,e)||!available(&v->grant,mask,p->clients,e)) return false;
+        if(v->gated) {
+            v->always=qa_json_string_equal(d,qa_json_get(d,operation,"grantAccepts"),"always");
+            if((!v->always&&!qa_json_string_equal(d,qa_json_get(d,operation,"grantAccepts"),"nonzero"))||
+                !call(d,qa_json_get(d,operation,"gate"),p,&v->gate,e)||!available(&v->gate,mask,p->clients,e)||v->gate.returns==MOD_VOID) return false;
+        }
+        if(!v->always&&v->grant.returns==MOD_VOID) return q3mod_fail(e,QA_ERROR_FORMAT,"Original pickup lacks its declared source decision");
+        qa_json_id contexts=qa_json_get(d,at,"context");
+        if(!array(d,contexts,sizeof(*v->context),(void **)&v->context,&v->context_count,false,e)) return false;
+        for(size_t j=0;j<v->context_count;++j) {
+            mod_pickup_context *f=v->context+j; qa_json_id row=qa_json_at(d,contexts,j);
+            if(!text(d,qa_json_get(d,row,"record"),&f->record,e)||!word(d,qa_json_get(d,row,"offset"),&f->offset,e)||
+                !argument(d,qa_json_get(d,row,"value"),p,&f->value,e)) return false;
+            const mod_record *r=record(p,f->record);
+            if(!r||r->client||f->offset%4||f->offset>r->stride-4) return q3mod_fail(e,QA_ERROR_FORMAT,"Original pickup context leaves its nonclient record");
+            mod_call check={.arguments=&f->value,.argument_count=1}; if(!available(&check,mask,p->clients,e)) return false;
+            for(size_t k=0;k<r->field_count;++k) if(!r->fields[k].private_field&&f->offset<r->fields[k].offset+r->fields[k].length&&r->fields[k].offset<f->offset+4)
+                return q3mod_fail(e,QA_ERROR_FORMAT,"Original pickup context overlaps canonical projection");
+            for(size_t k=0;k<j;++k) if(v->context[k].offset==f->offset&&!strcmp(v->context[k].record,f->record)) return false;
+            qa_json_id source=qa_json_get(d,root,"sourceActors");
+            if(p->entity_record!=SIZE_MAX&&r==p->records+p->entity_record&&source!=QA_JSON_NONE) {
+                uint32_t inuse; if(!word(d,qa_json_get(d,source,"inuse"),&inuse,e)||inuse==f->offset) return false;
+                qa_json_id callbacks=qa_json_get(d,source,"callbacks"); const char *names[]={"think","touch","use","pain","die"};
+                for(size_t k=0;k<5;++k) { qa_json_id field_id=qa_json_get(d,callbacks,names[k]); uint32_t offset;
+                    if(field_id!=QA_JSON_NONE&&(!word(d,field_id,&offset,e)||offset==f->offset)) return false;
+                }
+            }
+        }
+    }
+    return true;
+}
 static bool parse(const qa_json_document *d, qa_json_id root, application_q3_mod_profile *p, qa_strings *s, qa_error *e)
 {
     qa_json_id records=qa_json_get(d,root,"actorRecords"), clients=qa_json_get(d,root,"clients"),
@@ -456,7 +550,7 @@ static bool parse(const qa_json_document *d, qa_json_id root, application_q3_mod
         if (!available(&v->call,mask,clients!=QA_JSON_NONE,e)) return false;
         for (size_t k=0;k<i;++k) if (p->callbacks[k].id==v->id) return q3mod_fail(e,QA_ERROR_FORMAT,"Duplicate generic callback identity");
     }
-    return true;
+    return pickups(d,root,p,s,e);
 }
 void application_q3_mod_profile_destroy(application_q3_mod_profile *p)
 {
@@ -480,6 +574,12 @@ void application_q3_mod_profile_destroy(application_q3_mod_profile *p)
         for (size_t j=0;j<p->stages[i].count;++j) call_free(p->stages[i].calls+j);
         free(p->stages[i].calls);
     }
+    for(size_t i=0;i<p->pickup_count;++i) {
+        mod_pickup *v=p->pickups+i; call_free(&v->gate); call_free(&v->grant);
+        for(size_t j=0;j<v->context_count;++j) { free(v->context[j].record); argument_free(&v->context[j].value); }
+        free(v->context); free(v->writes); free(v->offered);
+    }
+    free(p->pickups);
     free(p->records); free(p->inputs); free(p->protection); free(p->callbacks); free(p->entries);
     free(p->declaration.data); qa_qvm_image_release(p->image); free(p);
 }

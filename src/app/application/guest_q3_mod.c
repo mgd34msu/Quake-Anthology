@@ -267,7 +267,7 @@ bool application_q3_mod_create(application_q3_mod_profile *p, qa_qvm *vm, qa_ses
     if (!p || !vm || !session || !owner || !out || *out || !s || !s->current || !s->storage_current || !s->pointer ||
         !s->eligible_actor || (p->clients && (!s->live_client || !s->client_slot || !s->player_state)) || !s->time ||
         !s->source_prepare || !s->source_enter || !s->source_leave ||
-        (p->protection_count && !combat) || qa_qvm_get_role(vm)!=QA_QVM_GAME ||
+        (p->pickup_count && !s->pickups) || (p->protection_count && !combat) || qa_qvm_get_role(vm)!=QA_QVM_GAME ||
         qa_qvm_get_abi(vm)!=p->abi || !qa_sha256_equal(qa_qvm_digest(vm),qa_qvm_image_digest(p->image)))
         return q3mod_fail(e,QA_ERROR_ARGUMENT,"Generic runtime requires its exact artifact and genuine source services");
     application_q3_mod *o=calloc(1,sizeof(*o));
@@ -277,7 +277,7 @@ bool application_q3_mod_create(application_q3_mod_profile *p, qa_qvm *vm, qa_ses
     *out=o; return true;
 }
 bool application_q3_mod_idle(const application_q3_mod *o)
-{ return !o || (!o->application && !o->capture && !o->stages && !o->calls && !o->source_calls); }
+{ return !o || (!o->application && !o->capture && !o->stages && !o->calls && !o->source_calls && !o->pickup_calls); }
 bool application_q3_mod_destroy(application_q3_mod **in, qa_error *e)
 {
     if (!in || !*in) return true;
@@ -285,7 +285,7 @@ bool application_q3_mod_destroy(application_q3_mod **in, qa_error *e)
     if (o->application || o->capture || o->calls)
         return q3mod_fail(e,QA_ERROR_ARGUMENT,"Generic runtime retains an actual source callback scope");
     o->closing=true;
-    if (!q3mod_protection_stages_close(o,e) || !q3mod_callbacks_close(o,e)) return false;
+    if (!q3mod_pickups_close(o,e) || !q3mod_protection_stages_close(o,e) || !q3mod_callbacks_close(o,e)) return false;
     while (o->source_calls) {
         mod_source_lease *source=o->source_calls;
         bool consumed=source_finish(o,source,e);
@@ -316,4 +316,89 @@ bool application_q3_mod_stage_run(application_q3_mod *o, application_q3_mod_stag
     const mod_call_group *group=o->profile->stages+stage; double ignored;
     for (size_t i=0;i<group->count;++i) if (!q3mod_invoke(o,group->calls+i,inputs,&ignored,e)) return false;
     return true;
+}
+
+typedef struct pickup_run {
+    call_run lowering;
+    const mod_pickup *definition;
+    const qa_pickup_offer *offer;
+    qa_pickup_execution *execution;
+    qa_pickup_outcome outcome;
+} pickup_run;
+static bool pickup_live(const pickup_run *r)
+{
+    application_q3_mod *o=r->lowering.owner;
+    return o->active&&!o->closing&&qa_pickup_current(r->execution)&&
+        qa_pickup_recipient_is(r->execution,r->offer->recipient)&&
+        qa_actors_get(qa_session_actors(o->session),r->offer->pickup)&&
+        o->services.live_client(o->services.context,r->offer->recipient);
+}
+static bool pickup_run_source(void *context,qa_qvm *vm,uint32_t scratch,qa_error *e)
+{
+    pickup_run *r=context; application_q3_mod *o=r->lowering.owner;
+    const mod_pickup *d=r->definition; r->lowering.scratch=scratch;
+    if(!o->services.source_prepare(o->services.context,e)||!q3mod_current(o,e)) return false;
+    uint32_t recipient,pickup;
+    if(o->profile->entity_record==SIZE_MAX||!q3mod_address(o,r->offer->recipient,o->profile->records[o->profile->entity_record].id,0,0,&recipient,e)||
+        !q3mod_address(o,r->offer->pickup,o->profile->records[o->profile->entity_record].id,0,0,&pickup,e)) return false;
+    (void)recipient; (void)pickup;
+    qa_qvm_source_word *words=d->context_count?calloc(d->context_count,sizeof(*words)):NULL;
+    if(d->context_count&&!words) return q3mod_fail(e,QA_ERROR_MEMORY,"Owning original offered pickup context");
+    bool ok=true;
+    for(size_t i=0;ok&&i<d->context_count;++i) {
+        ok=q3mod_address(o,r->offer->pickup,d->context[i].record,d->context[i].offset,4,&words[i].offset,e)&&
+            lower(&r->lowering,&d->context[i].value,&words[i].value,e);
+    }
+    mod_source_lease *held=ok?calloc(1,sizeof(*held)):NULL;
+    if(ok&&!held) ok=q3mod_fail(e,QA_ERROR_MEMORY,"Retaining offered pickup projection continuation");
+    if(held) { held->next=o->source_calls; o->source_calls=held; }
+    if(ok&&d->context_count) ok=qa_qvm_source_words_begin(vm,o->profile->image,words,d->context_count,&held->globals,e);
+    free(words);
+    double result=0; r->outcome=QA_PICKUP_REFUSED;
+    if(ok&&d->gated) ok=q3mod_pickup_observe(o,r->offer->recipient,r->execution,&d->gate,r->lowering.inputs,&result,e);
+    if(ok&&(!d->gated||result!=0)&&pickup_live(r)) {
+        ok=q3mod_pickup_observe(o,r->offer->recipient,r->execution,&d->grant,r->lowering.inputs,&result,e);
+        if(ok&&(d->always||result!=0)) r->outcome=QA_PICKUP_ACCEPTED;
+    }
+    if(ok&&!pickup_live(r)) r->outcome=QA_PICKUP_STALE;
+    if(held) {
+        qa_error cleanup={0}; bool returned=source_finish(o,held,&cleanup);
+        if(held->globals||held->scope) { o->failed_scope=true; returned=false; }
+        else { mod_source_lease **link=&o->source_calls; while(*link&&*link!=held) link=&(*link)->next; if(*link) *link=held->next; free(held); }
+        if(!returned&&ok) { if(e) *e=cleanup; ok=false; }
+    }
+    return ok;
+}
+bool q3mod_pickup_run(application_q3_mod *o,const mod_pickup *definition,const qa_pickup_offer *offer,
+    qa_pickup_execution *execution,qa_pickup_outcome *out,qa_error *e)
+{
+    const qa_actor_record *pickup=o&&offer?qa_actors_get(qa_session_actors(o->session),offer->pickup):NULL;
+    if(!o||!definition||!offer||!execution||!out||!q3mod_current(o,e)||!pickup||pickup->owner==o->owner||
+        qa_actor_id_equal(offer->pickup,offer->recipient)||o->services.live_client(o->services.context,offer->pickup))
+        return q3mod_fail(e,QA_ERROR_ARGUMENT,"Original pickup context requires its real foreign nonclient offered actor");
+    application_q3_mod_inputs inputs={0};
+    inputs.values[Q3_MOD_SELF]=(application_q3_mod_value){.kind=Q3_MOD_VALUE_ACTOR,.as.actor=offer->recipient};
+    inputs.values[Q3_MOD_OTHER]=(application_q3_mod_value){.kind=Q3_MOD_VALUE_ACTOR,.as.actor=offer->pickup};
+    inputs.values[Q3_MOD_ITEM]=(application_q3_mod_value){.kind=Q3_MOD_VALUE_STRING,.as.string=qa_strings_cstr(qa_session_strings(o->session),offer->item)};
+    inputs.values[Q3_MOD_TIME]=(application_q3_mod_value){.kind=Q3_MOD_VALUE_SCALAR,.as.scalar=(double)offer->time_ns/1e9};
+    inputs.values[Q3_MOD_PICKUP_COUNT]=(application_q3_mod_value){.kind=Q3_MOD_VALUE_SCALAR,.as.scalar=offer->override_count?offer->count:0};
+    inputs.values[Q3_MOD_PICKUP_HAS_COUNT]=(application_q3_mod_value){.kind=Q3_MOD_VALUE_SCALAR,.as.scalar=offer->override_count?1:0};
+    inputs.values[Q3_MOD_PICKUP_DROPPED]=(application_q3_mod_value){.kind=Q3_MOD_VALUE_SCALAR,.as.scalar=offer->dropped?1:0};
+    pickup_run run_value={.lowering={.owner=o,.inputs=&inputs},.definition=definition,.offer=offer,.execution=execution};
+    if(!pickup_live(&run_value)) return q3mod_fail(e,QA_ERROR_ARGUMENT,"Original pickup lost its actual recipient execution");
+    for(size_t i=0;i<definition->context_count;++i) {
+        const mod_argument *a=&definition->context[i].value;
+        if(a->kind!=MOD_VECTOR&&a->kind!=MOD_STRING) continue;
+        application_q3_mod_value v; size_t size=12;
+        if(!resolve(&run_value.lowering,a,&v,e)) return false;
+        if(a->kind==MOD_STRING) { if(!string_units(v.as.string,&size,e)||size==SIZE_MAX) return false; ++size; }
+        if(size>SIZE_MAX-3||((size+3)&~(size_t)3)>SIZE_MAX-run_value.lowering.length) return false;
+        run_value.lowering.length+=(size+3)&~(size_t)3;
+    }
+    ++o->pickup_calls;
+    bool ok=run_value.lowering.length?qa_qvm_source_scratch_run_reserved(o->vm,o->profile->image,run_value.lowering.length,65536,pickup_run_source,&run_value,e):
+        pickup_run_source(&run_value,o->vm,0,e);
+    --o->pickup_calls;
+    if(ok) *out=run_value.outcome;
+    return ok;
 }

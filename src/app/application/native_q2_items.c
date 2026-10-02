@@ -160,7 +160,7 @@ static bool storage_read(item_actor *a,size_t index,qa_inventory_entry *out,qa_e
 static bool pickup_check(item_actor *a,const qa_inventory_entry *before,const qa_inventory_entry *after,qa_error *e)
 {
     const qa_pickup_execution *execution=NULL; bool found=false;
-    if(!qa_pickups_execution_read(qa_session_pickups(a->owner->options.session),a->actor,0,&execution,&found,e)) return false;
+    if(!qa_pickups_execution_read(a->owner->options.pickups,a->actor,0,&execution,&found,e)) return false;
     if(!found) return true;
     if(!qa_pickup_recipient_is(execution,a->actor)) return fail(e,"Native item store left its actual pickup recipient");
     size_t count=0; const qa_pickup_write *writes=qa_pickup_writes(execution,&count);
@@ -337,7 +337,7 @@ static bool occupied(application_native_q2_items *o,qa_error *e)
 }
 static bool create_layout(const application_native_q2_items_options *options,application_native_q2_items **out,qa_error *e)
 {
-    if(!options||!out||*out||!options->callbacks||!options->session||!options->inventory||!options->owner) return fail(e,"Native items require actual acquired Source services");
+    if(!options||!out||*out||!options->callbacks||!options->session||!options->inventory||!options->pickups||!options->owner) return fail(e,"Native items require actual acquired Source services");
     const qa_json_document *d=application_native_q2_callbacks_document(options->callbacks);
     qa_json_id root=qa_json_root(d),items=qa_json_get(d,root,"items");
     if(items==QA_JSON_NONE) return true;
@@ -607,7 +607,8 @@ bool application_native_q2_items_idle(const application_native_q2_items *o)
 }
 bool application_native_q2_items_destroy(application_native_q2_items **owner,qa_error *e)
 {
-    if(!owner||!*owner) return true; application_native_q2_items *o=*owner;
+    if(!owner||!*owner) return true;
+    application_native_q2_items *o=*owner;
     if(o->calls||o->writing||o->receipts) return fail(e,"Native items retain source execution");
     while(o->actors) if(!application_native_q2_items_release(o,o->actors->actor,e)) return false;
     if(o->definitions) for(size_t i=0;i<o->count;++i) free(o->definitions[i].label);

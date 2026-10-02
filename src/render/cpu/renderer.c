@@ -1,5 +1,7 @@
 #include "internal.h"
 #include <limits.h>
+#include <stdio.h>
+#include <SDL_timer.h>
 #include "../save_fields.h"
 #include "qa/display.h"
 #include "qa/q3_source_scene_bank.h"
@@ -501,6 +503,14 @@ static bool cpu_present_frame(qa_cpu_renderer *renderer, qa_error *error) {
                  "Cannot present an active CPU opacity scope");
     return false;
   }
+  if (renderer->source_frame) {
+    qa_render_controls *controls=&renderer->controls;
+    if (controls->frame_values.show_images && !qa_cpu_source_image_grid(controls,controls->frame_values.show_images,error)) return false;
+    if (renderer->overdraw && renderer->display.stencil)
+      for (size_t i=0;i<(size_t)renderer->display.width*renderer->display.height;++i)
+        controls->counters.overdraw+=(uint8_t)renderer->display.stencil[i];
+    qa_render_source_report(controls,renderer->display.width,renderer->display.height);
+  }
   renderer->presenting=true;
   bool ok = !renderer->options.present ||
          renderer->options.present(
@@ -642,6 +652,11 @@ static bool cpu_execute_range(qa_cpu_renderer *renderer, const qa_scene_frame *f
         if (renderer->view.clear_depth) {
           renderer->pipeline.depth_write = true;
           renderer->clear_depth = (float)cpu_clamp(renderer->view.depth);
+        }
+        if (frame->source_backend && renderer->view.clear_depth) {
+          if (renderer->controls.frame_values.finish==0 || renderer->controls.frame_values.finish==1)
+            renderer->controls.finish_called=true;
+          if (renderer->overdraw) renderer->view.clear_stencil=true;
         }
         clear_view(renderer, &renderer->view);
       }
@@ -793,6 +808,7 @@ static void cpu_source_bind(qa_cpu_renderer *renderer,const qa_scene_image *imag
 {
   cpu_source_image *object=cpu_source_object(renderer,image);
   if (object) image=object->image;
+  qa_render_source_image_used(&renderer->controls,image);
   uint32_t unit=renderer->controls.attributes.texture_unit;
   const qa_scene_image **binding=renderer->bound+unit;
   if (*binding!=image) {
@@ -1286,10 +1302,10 @@ static bool cpu_saved_fields(qa_source_save_io *io,qa_cpu_renderer *renderer,con
     const qa_cpu_options *installed)
 {
   bool reading=io->direction==QA_SOURCE_SAVE_READ;
-  uint8_t magic[4]={'Q','C','P','U'}; uint32_t version=20;
+  uint8_t magic[4]={'Q','C','P','U'}; uint32_t version=21;
   bool presenter=reading?false:renderer->options.present!=NULL;
   if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QCPU",4) ||
-      !qa_source_save_u32(io,&version) || version<4 || version>20 ||
+      !qa_source_save_u32(io,&version) || version<4 || version>21 ||
       !qa_render_controls_saved_fields(io,&renderer->controls,version,refs) ||
       !qa_source_save_u32(io,&renderer->options.width) || !qa_source_save_u32(io,&renderer->options.height) ||
       !qa_source_save_u8(io,&renderer->options.subpixel_bits) || !qa_source_save_u8(io,&renderer->options.stencil_bits) ||
@@ -1555,4 +1571,60 @@ bool qa_cpu_surface_retire(qa_cpu_surface_ticket **out,qa_error *error)
   }
   if (*out) cpu_surface_release(out);
   return true;
+}
+
+bool qa_cpu_source_overdraw(qa_render_controls *controls,bool enabled,qa_error *error)
+{
+  qa_cpu_renderer *renderer=controls->owner.cpu;
+  if (enabled && renderer->options.stencil_bits<4) {
+    qa_error_set(error,QA_ERROR_UNSUPPORTED,0,"Source overdraw requires four stencil bits"); return false;
+  }
+  renderer->overdraw=enabled; return true;
+}
+bool qa_cpu_source_image_grid(qa_render_controls *controls,int32_t mode,qa_error *error)
+{
+  qa_cpu_renderer *renderer=controls->owner.cpu;
+  if (renderer->current!=&renderer->display || renderer->opacity_active) {
+    qa_error_set(error,QA_ERROR_ARGUMENT,0,"Source image grid requires its physical display target"); return false;
+  }
+  qa_scene_rect target={0,0,renderer->display.width,renderer->display.height};
+  if (!controls->source.projection_2d) {
+    qa_render_source_state_bits(&renderer->pipeline,false,true);
+    renderer->pipeline.depth_test=QA_DEPTH_DISABLED; renderer->pipeline.cull=QA_CULL_NONE;
+    renderer->view.viewport=target; controls->source.projection_2d=true;
+  }
+  qa_scene_view clear=renderer->view;
+  clear.clear_color=renderer->pipeline.color_write; clear.clear_depth=clear.clear_stencil=false;
+  clear_view(renderer,&clear);
+  uint64_t start=SDL_GetTicks64();
+  qa_scene_frame frame; qa_scene_frame_init(&frame,renderer->options.owner);
+  bool ok=true;
+  for (uint32_t i=0;ok && i<renderer->source_image_count;++i) {
+    const cpu_source_image *entry=renderer->source_images+i;
+    float w=(float)(target.width/20),h=(float)(target.height/15);
+    float x=(float)(i%20)*w,y=(float)(i/20)*h;
+    if (mode==2 && entry->texture.count) {
+      w*=(float)entry->texture.levels[0].width/512;
+      h*=(float)entry->texture.levels[0].height/512;
+    }
+    const qa_scene_image *binding=entry->image;
+    if (controls->frame_values.no_bind)
+      for (uint32_t j=renderer->source_image_count;j>0;--j)
+        if (renderer->source_images[j-1].image->source_dlight) { binding=renderer->source_images[j-1].image; break; }
+    size_t first=frame.command_count;
+    ok=qa_scene_frame_picture_f(&frame,binding,target,(qa_scene_rect_f){x,y,w,h},
+      (qa_scene_vec4){0,0,1,1},controls->attributes.color,error);
+    for (size_t c=first;ok && c<frame.command_count;++c) {
+      if (frame.commands[c].kind!=QA_SCENE_COMMAND_DRAW) continue;
+      qa_scene_draw *draw=&frame.commands[c].data.draw;
+      draw->source_direct=QA_SOURCE_DIRECT_IMAGE_GRID;
+      ok=cpu_draw(renderer,draw,error);
+    }
+  }
+  qa_scene_frame_destroy(&frame);
+  if (ok && controls->source_print) {
+    char text[100]; snprintf(text,sizeof(text),"%llu msec to draw all images\n",(unsigned long long)(SDL_GetTicks64()-start));
+    controls->source_print(controls->source_print_context,text);
+  }
+  return ok;
 }

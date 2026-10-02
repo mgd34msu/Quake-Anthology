@@ -25,6 +25,10 @@ void qa_bot_library_destroy(qa_bot_library *);
 bool qa_bot_library_idle(const qa_bot_library *);
 bool qa_bot_library_weights_shutdown(qa_bot_library *,qa_error *);
 void qa_bot_library_reload(qa_bot_library *, bool);
+bool qa_bot_library_pc_bind(qa_bot_library *, void *, bool (*)(void *),
+    bool (*)(void *, bool source, qa_error *), qa_error *);
+bool qa_bot_library_pc_close(qa_bot_library *, bool source, qa_error *);
+void qa_bot_library_pc_unbind(qa_bot_library *, const void *);
 const qa_script_defines *qa_bot_library_global_defines(const qa_bot_library *);
 bool qa_bot_library_global_define(qa_bot_library *, const char *definition, qa_error *);
 /* The runtime owns this logger and disposes it after the library. Binding and

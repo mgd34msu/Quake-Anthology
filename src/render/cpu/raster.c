@@ -762,7 +762,7 @@ static void draw_source_strips(qa_cpu_renderer *renderer, const qa_scene_draw *d
 bool cpu_draw(qa_cpu_renderer *renderer, const qa_scene_draw *input,
               qa_error *error) {
   qa_scene_draw resolved = *input;
-  if ((unsigned)input->source_direct>QA_SOURCE_DIRECT_RAW) {
+  if ((unsigned)input->source_direct>QA_SOURCE_DIRECT_IMAGE_GRID) {
     qa_error_set(error,QA_ERROR_ARGUMENT,0,"Invalid Source direct draw provenance");
     return false;
   }
@@ -775,11 +775,13 @@ bool cpu_draw(qa_cpu_renderer *renderer, const qa_scene_draw *input,
   bool source_pipeline=input->source_arrays || input->source_retain_depth_range || input->source_direct!=QA_SOURCE_DIRECT_NONE;
   for (size_t i = 0; i < resolved.texture_count; ++i) {
     size_t unit=source_pipeline && !input->source_arrays && i==0?renderer->controls.attributes.texture_unit:i;
+    if (source_pipeline && input->textures[i]) qa_render_source_image_used(&renderer->controls,input->textures[i]);
     if (resolved.retain_texture[i]) resolved.textures[i] = renderer->bound[unit];
     else if (!input->source_arrays && input->textures[i] && renderer->bound[unit]!=input->textures[i]) {
       qa_scene_image_retain(input->textures[i]);
       qa_scene_image_release(renderer->bound[unit]);
       renderer->bound[unit]=input->textures[i];
+      if (source_pipeline) qa_render_source_image_used(&renderer->controls,input->textures[i]);
       renderer->controls.attributes.actual_empty[unit]=false;
     }
   }
@@ -798,6 +800,8 @@ bool cpu_draw(qa_cpu_renderer *renderer, const qa_scene_draw *input,
       return false;
     }
   renderer->pipeline=draw->state;
+  if (draw->source_arrays && draw->mesh.primitive==QA_SCENE_TRIANGLES && !draw->state.wireframe)
+    renderer->controls.counters.total_indexes+=draw->mesh.index_count;
   if (draw->source_direct==QA_SOURCE_DIRECT_SHADOW_FINISH) renderer->view.clip_enabled=false;
   qa_render_primitive_mode mode = draw->source_primitives && draw->mesh.primitive == QA_SCENE_TRIANGLES
       ? qa_render_primitives_mode(renderer->controls.values.primitives, false) : QA_RENDER_PRIMITIVES_INDEXED;

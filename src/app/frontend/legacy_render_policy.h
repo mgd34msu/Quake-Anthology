@@ -29,6 +29,7 @@ bool frontend_legacy_model_input_product(const qa_frontend *, const qa_product *
 typedef struct frontend_legacy_scene_services {
     void *context;
     bool (*current)(void *);
+    bool (*view_blend)(void *,const qa_scene_world_input *,qa_scene_vec4 *,qa_error *);
     bool (*visuals)(void *, const qa_scene_world_input *, qa_scene_frame *, qa_error *);
     bool (*particles)(void *, const qa_scene_world_input *, qa_scene_frame *, qa_error *);
     bool (*dlights)(void *, const qa_scene_world_input *, qa_scene_frame *, qa_scene_vec4 *, qa_error *);

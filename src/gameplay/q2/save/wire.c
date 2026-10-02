@@ -61,6 +61,15 @@ static bool movement_fields(q2_save_io *io, qa_q2_wire_movement *s)
     return true;
 }
 
+static bool view_armor(q2_save_io *io, double *value)
+{
+    if (io->schema >= 26) return q2_save_f64(io, value);
+    float legacy = io->reading ? 0 : (float)*value;
+    if (!q2_save_f32(io, &legacy)) return false;
+    if (io->reading) *value = legacy;
+    return true;
+}
+
 static bool view_fields(q2_save_io *io, qa_q2_wire_view *s)
 {
     Q2B(present); Q2T(frame); Q2T(time_ns);
@@ -71,7 +80,7 @@ static bool view_fields(q2_save_io *io, qa_q2_wire_view *s)
         q2_save_f32(io, &v->blend.x) && q2_save_f32(io, &v->blend.y) &&
         q2_save_f32(io, &v->blend.z) && q2_save_f32(io, &v->blend.w) &&
         q2_save_f32(io, &v->fov) && q2_save_f32(io, &v->health) &&
-        q2_save_f32(io, &v->armor) && q2_save_f32(io, &v->ammo) &&
+        view_armor(io, &v->armor) && q2_save_f32(io, &v->ammo) &&
         q2_save_string(io, &v->ammo_icon) && q2_save_string(io, &v->armor_icon) &&
         q2_save_i32(io, &v->ammo_count) &&
         q2_save_i32(io, &v->score) && q2_save_i32(io, &v->flashes) &&

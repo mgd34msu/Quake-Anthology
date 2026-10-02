@@ -6,9 +6,9 @@
 static const uint8_t magic[8] = {'Q', 'A', 'B', 'P', 'O', 'P', 'U', 0};
 static bool signature(qa_source_save_io *io)
 {
-    uint8_t actual[8];memcpy(actual,magic,sizeof(actual));uint32_t version=17;
+    uint8_t actual[8];memcpy(actual,magic,sizeof(actual));uint32_t version=18;
     return qa_source_save_bytes(io,actual,sizeof(actual)) && qa_source_save_u32(io,&version) &&
-        (!memcmp(actual,magic,sizeof(actual)) && version==17?true:
+        (!memcmp(actual,magic,sizeof(actual)) && version==18?true:
             bot_save_fail(io,QA_ERROR_FORMAT,"Unsupported native bot population continuation schema"));
 }
 #define FIELD(kind, value) do { if (!qa_source_save_##kind(io, &(value))) return false; } while (0)
@@ -120,17 +120,16 @@ static bool state_fields(qa_source_save_io *io, bot_ai_state *state)
     if (!view_fields(io, &state->view) || !player_fields(io, &state->player)) return false;
     U(state->character); U(state->goals); U(state->weapons); U(state->chat); U(state->movement);
     U(state->area); U(state->travel_flags);
-    F(state->admitted_skill); F(state->long_term_until); F(state->nearby_until);
+    F(state->admitted_skill);
     const char *character=state->admitted_character,*name=state->admitted_name;
     if (!bot_save_text(io,&character)) return false;
     if (io->direction==QA_SOURCE_SAVE_READ) state->admitted_character=(char *)character;
     if (!bot_save_text(io,&name)) return false;
     if (io->direction==QA_SOURCE_SAVE_READ) state->admitted_name=(char *)name;
     if (state->view.actor.registry && (!character || !name)) return false;
-    F(state->stand_until); F(state->stand_enemy_time);
-    F(state->chase_time); F(state->check_time);
-    F(state->state_time); F(state->chase_until);
-    F(state->blocked_time); F(state->not_blocked_time);
+
+    F(state->state_time);
+    F(state->blocked_time);
     U(state->last_enemy_area);
     B(state->team_arena); B(state->retired);
     L(state->command_sequence); U(state->activation_count);
@@ -147,10 +146,8 @@ static bool state_fields(qa_source_save_io *io, bot_ai_state *state)
     if(!qa_source_save_bytes(io,state->team_leader_name,sizeof(state->team_leader_name))) return false;
     I(state->decisionmaker); I(state->long_term_goal); I(state->teammate);
     if(!goal_fields(io,&state->team_goal)) return false;
-    B(state->ordered); F(state->order_time); F(state->team_message_time); F(state->team_goal_time);
-    F(state->teammate_visible_time); F(state->formation_distance); F(state->arrive_time);
-    F(state->defend_away_time); F(state->harvest_away_time); F(state->attack_away_time);
-    F(state->rush_base_away_time); F(state->lead_time);
+    B(state->ordered);
+
     I(state->source_enemy);
     if(!source_order_fields(io,&state->source_order) || !source_policy_fields(io,&state->source_team_policy) ||
        !source_events_fields(io,&state->source_events)) return false;

@@ -4,6 +4,8 @@
 #include "q3_color_policy.h"
 #include "native_q3_client_internal.h"
 #include "native_composition.h"
+#include "native_components.h"
+#include "source_renderer_runtime.h"
 #include "config_store.h"
 #include "view_bindings.h"
 #include "shared_resource_policy.h"
@@ -22,6 +24,7 @@
 #include "qa/application_q3_asset_selection.h"
 #include "qa/q3_presentation_save.h"
 #include "qa/q3_assets_save.h"
+#include "qa/q3_assets_custody.h"
 #include "qa/scene_marks.h"
 #include "qa/scene_world_save.h"
 #include "qa/strings.h"
@@ -316,6 +319,7 @@ static bool prepare_view(void *context,const qa_q3_refdef *definition,qa_q3_scen
     if(!frontend_native_q3_current(row))return false;
     return frontend_source_prepare_scene(f,f->application,row->view.seat,definition,options,e) &&
         (!row->composition.prepare_view || row->composition.prepare_view(row->composition.context,definition,options,e)) &&
+        frontend_native_components_scene_prepare(row,options,e) &&
         frontend_native_q3_current(row) &&
         frontend_q3_scene_policy_read(f,options,e) &&
         frontend_q3_shadow_mode_read(row->view.cvars,&options->shadow_mode,e) && frontend_native_q3_current(row);
@@ -325,11 +329,13 @@ static bool submit_view(void *context,const qa_q3_scene_options *options,qa_scen
     frontend_native_q3 *row=context; qa_frontend *f=row->frontend;
     if(!frontend_native_q3_current(row))return false;
     if(row->composition.submit_view && !row->composition.submit_view(row->composition.context,options,frame,e))return false;
-    return frontend_source_submit_scene(f,row->view.seat,row->view.source_owner,options,frame,e) && frontend_native_q3_current(row);
+    return frontend_native_components_scene_submit(row,options,frame,e) &&
+        frontend_source_submit_scene(f,row->view.seat,row->view.source_owner,options,frame,e) && frontend_native_q3_current(row);
 }
 static void scene_cleared(void *context)
 {
     frontend_native_q3 *row=context;
+    frontend_native_components_clear(row);
     if(row->composition.scene_cleared)row->composition.scene_cleared(row->composition.context);
 }
 static bool remap(void *context,const char *from,const char *to,float time,qa_error *e)
@@ -587,14 +593,18 @@ static bool body_submit(void *context,const q3n_frame *f,const qa_application_na
     const qa_q3_ref_entity *ref,bool base,bool *consumed,qa_error *e)
 {
     frontend_native_q3 *row=context; *consumed=false;
-    return frontend_native_q3_cut(row,f,e) && (!row->composition.body ||
+    if(!frontend_native_q3_cut(row,f,e) || !frontend_native_components_body(row,f,actual->binding.actor,
+        part,ref,base,consumed,e)) return false;
+    return (*consumed || !row->composition.body ||
         row->composition.body(row->composition.context,f,actual,part,ref,base,consumed,e)) && frontend_native_q3_cut(row,f,e);
 }
 static bool packet(void *context,const q3n_frame *f,const qa_application_native_q3_entity *actual,q3n_entity *cent,
     const qa_q3_ref_entity *ref,bool *consumed,qa_error *e)
 {
     frontend_native_q3 *row=context; *consumed=false;
-    return frontend_native_q3_cut(row,f,e) && (!row->composition.packet ||
+    if(!frontend_native_q3_cut(row,f,e) || !frontend_native_components_body(row,f,actual->binding.actor,
+        3,ref,true,consumed,e)) return false;
+    return (*consumed || !row->composition.packet ||
         row->composition.packet(row->composition.context,f,actual,cent,ref,consumed,e)) && frontend_native_q3_cut(row,f,e);
 }
 static bool event(void *context,const q3n_frame *f,q3n_entity *cent,const qa_q3_entity *state,
@@ -710,7 +720,13 @@ static bool begin_frame(void *context,const q3n_frame *f,qa_error *e)
         frontend_native_q3_cut(row,f,e);
 }
 static void end_frame(void *context)
-{ frontend_native_q3 *row=context; row->composition.end_frame(row->composition.context); }
+{
+    frontend_native_q3 *row=context;
+    frontend_native_components_release(row);
+    row->composition.end_frame(row->composition.context);
+}
+static bool camera_ready(void *context,const q3n_frame *frame,qa_error *error)
+{ return frontend_native_components_prepare(context,frame,error); }
 static bool before_render(void *context,const q3n_frame *f,qa_error *e)
 {
     frontend_native_q3 *row=context;
@@ -755,7 +771,7 @@ bool frontend_native_q3_core_options(frontend_native_q3 *row,q3n_native_options 
     if(row->composition.weapon_warning) { out->hud.weapon_warning=weapon_warning; out->player_state.weapon_warning=weapon_warning; }
     if(row->composition.begin_frame) {
         if(!row->composition.end_frame)return frontend_fail(e,QA_ERROR_ARGUMENT,"Native composition lacks its actual frame unwind");
-        out->frame_context=row; out->begin_frame=begin_frame; out->end_frame=end_frame;
+        out->frame_context=row; out->begin_frame=begin_frame; out->end_frame=end_frame; out->camera_ready=camera_ready;
         if(row->composition.before_render)out->before_render=before_render;
     } else if(row->composition.end_frame)return frontend_fail(e,QA_ERROR_ARGUMENT,"Native composition unwind lacks its actual frame entry");
     return true;
@@ -950,6 +966,7 @@ static bool media_close(frontend_native_q3 *row,qa_error *e)
         if(!frontend_renderer_materials_adopt_movies(row->frontend,&expected,&row->shader_movies,&row->view.movies,e))return false;
     }
     if(!frontend_material_movies_destroy(&row->shader_movies,e))return false;
+    if(row->view.assets && !qa_q3_assets_services_retire(row->view.assets,e))return false;
     qa_q3_presentation_assets_destroy(row->view.assets); row->view.assets=NULL;
     qa_media_library_destroy(row->view.movies);
     qa_font_library_destroy(row->view.fonts); qa_audio_bank_destroy(row->view.sounds);
@@ -1021,7 +1038,8 @@ bool frontend_native_q3_video_row_reopen(frontend_native_q3 *row,qa_error *e)
     row->owns_media=true;
     if(!make_media(row,e) || !compose_row(row,&factory,e) || !frontend_native_q3_core_options(row,&options,e) ||
         !q3n_native_create(&options,&row->view.core,e) || !frontend_native_q3_make_children(row,&source,false,e) ||
-        !q3n_native_initialize_video(row->view.core,publication.reached_command_sequence,e))return false;
+        !q3n_native_initialize_video(row->view.core,publication.reached_command_sequence,e) ||
+        !frontend_source_renderer_end_registration(row->frontend,e))return false;
     row->constructed=true;
     return frontend_native_q3_current(row);
 }
@@ -1076,7 +1094,8 @@ bool frontend_native_q3_create(qa_frontend *f,const qa_application_native_q3_pre
         q3n_native_create(&options,&row->view.core,e) && frontend_native_q3_make_children(row,source,false,e);
     qa_native_q3_wire_publication publication;
     if(ok)ok=qa_native_q3_wire_reader_publication(row->view.reader,&publication,e) &&
-        q3n_native_initialize(row->view.core,publication.initial_command_sequence,e);
+        q3n_native_initialize(row->view.core,publication.initial_command_sequence,e) &&
+        frontend_source_renderer_end_registration(f,e);
     if(ok) {
         row->constructed=true; *out=row;
         return frontend_view_bindings_apply_restored(f,e);
@@ -1164,7 +1183,7 @@ bool frontend_native_q3_factory_view(const frontend_native_q3 *row,frontend_nati
 }
 static bool row_idle(const frontend_native_q3 *row)
 {
-    return row && !row->frame_active && !row->callbacks &&
+    return row && !row->frame_active && !row->callbacks && !row->components &&
         (!row->composition.idle || row->composition.idle(row->composition.context)) &&
         (!row->view.reader || qa_native_q3_wire_reader_idle(row->view.reader)) &&
         (!row->view.client || qa_native_q3_client_service_idle(row->view.client)) &&
@@ -1277,7 +1296,7 @@ bool frontend_native_q3_frame(qa_frontend *f,uint32_t seat,qa_scene_rect viewpor
     selected->view.has_listener=false;
     bool ok=q3n_native_draw(selected->view.core,publication.latest_command_sequence,rendered,e);
     selected->frame_active=false;
-    return ok;
+    return ok && (!*rendered || frontend_native_components_hud(selected,e));
 }
 bool frontend_native_q3_listener(const qa_frontend *f,uint32_t seat,qa_audio_listener *out)
 {

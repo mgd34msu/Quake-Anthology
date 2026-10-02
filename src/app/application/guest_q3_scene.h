@@ -6,6 +6,13 @@
 #include "qa/q3_presentation.h"
 
 typedef struct application_q3_scene application_q3_scene;
+typedef struct application_q3_scene_player_event {
+    qa_actor_id actor;
+    qa_q3_player player;
+    qa_vec3 origin;
+    int32_t event, parameter, time_ms, source_sequence;
+    bool external;
+} application_q3_scene_player_event;
 typedef struct application_q3_scene_actor { uint32_t slot; qa_actor_id actor; bool owned; } application_q3_scene_actor;
 typedef struct application_q3_scene_command {
     int32_t sequence;
@@ -56,6 +63,7 @@ bool application_q3_scene_create(const application_q3_scene_options *, bool rest
 bool application_q3_scene_initialize(application_q3_scene *, qa_error *);
 bool application_q3_scene_advance(application_q3_scene *, uint64_t sequence, qa_error *);
 bool application_q3_scene_hud(application_q3_scene *, uint64_t sequence, qa_error *);
+bool application_q3_scene_consume(application_q3_scene *,const application_q3_scene_player_event *,uint64_t,qa_error *);
 bool application_q3_scene_console(application_q3_scene *, const qa_command_tokens *, bool *, qa_error *);
 bool application_q3_scene_idle(const application_q3_scene *);
 bool application_q3_scene_destroy(application_q3_scene **, qa_error *);

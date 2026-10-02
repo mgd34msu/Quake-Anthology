@@ -12,6 +12,15 @@
 #include "remote_unified_q3.h"
 #include "remote_unified_components.h"
 #include "unified_q3_runtime_factory.h"
+typedef struct frontend_unified_q3_video frontend_unified_q3_video;
+bool frontend_remote_unified_presentation_video_associate(frontend_remote_unified *,
+    const frontend_unified_q3_video *,qa_error *);
+bool frontend_remote_unified_presentation_video_current(const frontend_remote_unified *,
+    const frontend_unified_q3_video *,qa_error *);
+bool frontend_remote_unified_presentation_video_release(frontend_remote_unified *,
+    const frontend_unified_q3_video *,qa_error *);
+bool frontend_remote_unified_presentation_video_returned(const qa_frontend *,
+    const frontend_video_guests *,qa_error *);
 
 typedef struct frontend_unified_presentation_children {
     frontend_unified_media *media,*pending_media;

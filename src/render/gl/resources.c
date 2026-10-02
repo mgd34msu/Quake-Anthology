@@ -239,6 +239,7 @@ bool gl_source_texture_bind(qa_gl_renderer *renderer,const qa_scene_image *image
 {
     gl_texture_entry *object=source_entry(renderer,image);
     if (object && object->source_admitted) image=object->image;
+    qa_render_source_image_used(&renderer->controls,image);
     uint32_t unit=renderer->controls.attributes.texture_unit;
     renderer->gl.ActiveTexture(GL_TEXTURE0+unit);
     if (renderer->bound[unit]==image) return gl_check(renderer,"Source cached texture binding",error);

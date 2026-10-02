@@ -73,6 +73,10 @@ bool qa_native_sysv_process_initialize(qa_native_sysv_process *, uint64_t, qa_er
 bool qa_native_sysv_process_finalize(qa_native_sysv_process *, uint64_t, qa_error *);
 bool qa_native_sysv_process_finalize_destructors(qa_native_sysv_process *, uint64_t, qa_error *);
 bool qa_native_sysv_process_finalize_all(qa_native_sysv_process *, qa_error *);
+/* Run the actual module finalizers, replace its physical image attachment,
+ * relocate and initialize it in the retained process/runtime/resource graph.
+ * Any failure after entry requires whole-process retirement. */
+bool qa_native_sysv_process_reload(qa_native_sysv_process *, uint64_t, qa_error *);
 /* Borrowed original bytes remain owned by this process until disposal. */
 bool qa_native_sysv_process_artifact_read(const qa_native_sysv_process *, uint64_t,
     qa_native_sysv_artifact *, qa_error *);

@@ -83,7 +83,7 @@ static bool finite_checkpoint(const qa_q2_monster_checkpoint *state) {
   const float *values[] = {
       &state->entity_scale,     &state->animation_scale,
       &state->base_health,      &state->health_scaling,
-      &state->max_health,       &state->max_power_armor,
+      &state->max_health,
       &state->gib_health,       &state->normal_height,
       &state->view_height,      &state->ideal_yaw,
       &state->yaw_speed,        &state->blind_fire_delay,
@@ -95,7 +95,7 @@ static bool finite_checkpoint(const qa_q2_monster_checkpoint *state) {
   for (size_t i = 0; i < sizeof(values) / sizeof(values[0]); ++i)
     if (!isfinite(*values[i]))
       return false;
-  return qa_vec_finite(state->last_sighting) &&
+  return isfinite(state->max_power_armor) && qa_vec_finite(state->last_sighting) &&
          qa_vec_finite(state->saved_goal) &&
          qa_vec_finite(state->blind_fire_target) &&
          qa_vec_finite(state->fly_ideal_position) &&

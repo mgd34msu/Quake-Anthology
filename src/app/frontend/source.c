@@ -1,4 +1,5 @@
 #include "source_cinematics.h"
+#include "source_renderer_runtime.h"
 #include "renderer_materials.h"
 #include "source_acoustics.h"
 #include "source_client_registry.h"
@@ -1039,6 +1040,14 @@ bool frontend_q3_configuration(qa_frontend *frontend,uint8_t out[11332],qa_error
     qa_store_u32le(out + 11324, caps && caps->stereo);
     return true;
 }
+static bool end_registration(void *context,qa_error *error)
+{
+    frontend_source *source=context;
+    if(!source || !source->frontend || source->application!=source->frontend->application ||
+        source->frontend->source_restoring || source->frontend->capture || source->frontend->resource_inventory)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Source registration completion lost its actual constructor renderer");
+    return frontend_source_renderer_end_registration(source->frontend,error);
+}
 static bool configuration(void *context,uint8_t out[11332],qa_error *error)
 {
     frontend_source *source=context;
@@ -1630,7 +1639,7 @@ bool frontend_source_services(void *context, qa_application *application, qa_act
     if (source->private_map)
         host->collision=(qa_q3_host_collision_services){source,source_map_geometry,source_map_load};
     host->presentation = (qa_q3_host_presentation_services){.context=source,.seat=source->presentation,
-        .fonts=source->fonts,.configuration=configuration,.update_screen=update_screen};
+        .fonts=source->fonts,.configuration=configuration,.update_screen=update_screen,.end_registration=end_registration};
     host->common = (qa_q3_host_common_services){lease, common_print, common_milliseconds,
         common_calendar, host->common.arguments ? common_arguments : NULL,
         (host->common.client_command || frontend_network_remote(frontend)) ? common_command : NULL, host->common.installed_mods ? common_mods : NULL,
@@ -1673,7 +1682,7 @@ static bool body_current(void *context,const qa_application_q3_body_draw *view)
         !qa_application_q3_body_entry_current(lease->source->application,&draw->entry)) return false;
     for (size_t i=0;i<draw->count;++i)
         if (!qa_application_q3_component_draw_current(lease->source->application,&draw->components[i].draw) ||
-            !qa_application_q3_component_bodies_current(&draw->components[i].bodies)) return false;
+            (draw->components[i].draw.bodies && !qa_application_q3_component_bodies_current(&draw->components[i].bodies))) return false;
     return true;
 }
 static bool body_prepare(void *context,qa_actor_owner receiver,uint32_t seat,
@@ -1710,8 +1719,8 @@ static bool body_prepare(void *context,qa_actor_owner receiver,uint32_t seat,
                 draw->entry.source.source_milliseconds,(int32_t)(draw->entry.source.source_frame.elapsed_ns/UINT64_C(1000000)),
                 draw->entry.source.source_frame.number,&child->draw,error)) return false;
             ++draw->count;
-            if (!qa_application_q3_component_bodies_borrow(child->draw.bodies,&child->lease,&child->bodies,error)) return false;
-            if (child->bodies.assets!=child->draw.assets)
+            if (child->draw.bodies && !qa_application_q3_component_bodies_borrow(child->draw.bodies,&child->lease,&child->bodies,error)) return false;
+            if (child->draw.bodies && child->bodies.assets!=child->draw.assets)
                 return frontend_fail(error,QA_ERROR_ARGUMENT,"Component body Draw changed its private numeric namespace");
             if (child->bodies.count) out->capture_active=true;
         }
@@ -1895,13 +1904,13 @@ static bool body_scene_submit(frontend_source_lease *lease,const qa_q3_scene_opt
                 if (!frontend_component_scene_packet_read(lease->source->frontend,child->draw.frontend_identity,child->draw.sequence,j,&packet,error)) return false;
                 for (size_t k=0;k<packet.entity_count;++k,++order)
                     if (!qa_q3_presentation_source_component_entity(lease->source->presentation,child->draw.assets,
-                        packet.entities+k,child->bodies.time_ms,options,order,frame,error)) return false;
+                        packet.entities+k,packet.definition.time,options,order,frame,error)) return false;
                 for (size_t k=0;k<packet.polygon_count;++k) {
                     const qa_q3_scene_polygon *polygon=packet.polygons+k;
                     if (polygon->first>packet.vertex_count || polygon->count>packet.vertex_count-polygon->first)
                         return frontend_fail(error,QA_ERROR_FORMAT,"Component polygon leaves its retained vertices");
                     if (!qa_q3_presentation_source_component_poly(lease->source->presentation,child->draw.assets,
-                        polygon->shader,packet.vertices+polygon->first,polygon->count,&polygon->fog,child->bodies.time_ms,options,frame,error)) return false;
+                        polygon->shader,packet.vertices+polygon->first,polygon->count,&polygon->fog,packet.definition.time,options,frame,error)) return false;
                 }
             }
         }

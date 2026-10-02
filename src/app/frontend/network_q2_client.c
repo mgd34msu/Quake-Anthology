@@ -312,22 +312,23 @@ static bool download_allowed(void *context,const char *path,bool *allowed,qa_err
     } else if(category) { char name[64]; snprintf(name,sizeof(name),"allow_download_%s",category); *allowed=*allowed && permission(owner->domain.cvars,name); }
     return true;
 }
-static bool download_nonce(void *context,uint64_t *out,qa_error *error)
+static bool download_stage(void *context,qa_fs_root *root,const char *path,
+    qa_fs_stage **out,uint64_t *nonce,qa_error *error)
 {
     frontend_network_q2_client *owner=context;
-    return out && source_current(owner,&owner->domain,error) &&
-        owner->options.download_nonce(owner->options.context,out,error) && *out &&
+    return out && !*out && nonce && !*nonce && source_current(owner,&owner->domain,error) &&
+        owner->options.download_stage(owner->options.context,root,path,out,nonce,error) && *out && *nonce &&
         source_current(owner,&owner->domain,error);
 }
 static bool restore_stage(void *context,qa_fs_root *root,const char *path,uint64_t logical_nonce,
-    qa_bytes prefix,qa_fs_stage **out,uint64_t *native_nonce,qa_error *error)
+    bool published,qa_bytes prefix,qa_fs_stage **out,uint64_t *native_nonce,qa_fs_identity *identity,qa_error *error)
 {
     frontend_network_q2_client *owner=context;
     if(!owner || !parent(owner) || !owner->importing || !owner->options.frontend->source_restoring ||
         !owner->options.restore_stage || owner->restore_stage || !out || *out || !native_nonce || *native_nonce)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 download import lost its retained native stage constructor");
-    if(!owner->options.restore_stage(owner->options.context,root,path,logical_nonce,prefix,
-        &owner->restore_stage,native_nonce,error)) return false;
+    if(!owner->options.restore_stage(owner->options.context,root,path,logical_nonce,published,prefix,
+        &owner->restore_stage,native_nonce,identity,error)) return false;
     *out=owner->restore_stage; owner->restore_stage=NULL; return true;
 }
 static bool identity(void *context,qa_q2_client_identity *out,qa_error *error)
@@ -399,7 +400,7 @@ static bool committed(void *context,const qa_q2_client_admission *claim,qa_net_c
 static frontend_remote_q2_source_options source_options(frontend_network_q2_client *owner)
 {
     return (frontend_remote_q2_source_options){.client={.domain=owner->domain,.context=owner,.current=source_current,
-        .download_allowed=download_allowed,.download_nonce=download_nonce,.entity_actor=entity_actor,
+        .download_allowed=download_allowed,.download_stage=download_stage,.entity_actor=entity_actor,
         .restore_stage=restore_stage,
         .records=records,.disconnected=disconnected_source,.material_scripts=owner->material_scripts,
         .entities_changed=entities_changed},
@@ -431,7 +432,7 @@ bool frontend_network_q2_client_create(const frontend_network_q2_client_options 
 {
     qa_q2_codec codec;
     if(!options || !out || *out || !options->frontend || !options->runtime || !options->current ||
-        !options->download_nonce ||
+        !options->download_stage ||
         options->physical_seat>=options->frontend->options.seats ||
         !qa_q2_codec_init(&codec,options->protocol,error) ||
         (options->protocol.kind==QA_NET_Q2KEX_2023 && !options->lobby) ||
@@ -725,7 +726,7 @@ bool frontend_network_q2_client_restore_prepare(const frontend_network_q2_client
     const frontend_network_q2_client_restore *saved,frontend_network_q2_client **out,qa_error *error)
 {
     if(!options || !saved || !saved->application || !out || *out || !options->frontend ||
-        !options->frontend->source_restoring || !options->runtime || !options->current || !options->download_nonce ||
+        !options->frontend->source_restoring || !options->runtime || !options->current || !options->download_stage ||
         saved->source.domain.application!=options->frontend->application ||
         saved->source.domain.runtime!=options->runtime || saved->source.domain.physical_seat!=options->physical_seat ||
         saved->source.domain.protocol.kind!=options->protocol.kind || saved->retired!=saved->source.retiring ||

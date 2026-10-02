@@ -1,6 +1,7 @@
 #include "guest_native_q2_private.h"
 #include "native_q2_source_invocation.h"
 #include "native_q2_source_damage.h"
+#include "native_q2_client_stages.h"
 #include "qa/native_observe.h"
 #include "qa/persistence_fields.h"
 #include <math.h>
@@ -123,15 +124,18 @@ static bool deferred_changed(void *context,qa_native_instance *native,const qa_n
 }
 static bool actor_watches_close(declared_damage_actor *r,qa_error *e)
 {
-    if(r->receipt_watch&&!qa_native_unobserve_writes(r->receipt_watch,e))return false;r->receipt_watch=NULL;
-    if(r->blood_watch&&!qa_native_unobserve_writes(r->blood_watch,e))return false;r->blood_watch=NULL;
+    if(r->receipt_watch&&!qa_native_unobserve_writes(r->receipt_watch,e))return false;
+    r->receipt_watch=NULL;
+    if(r->blood_watch&&!qa_native_unobserve_writes(r->blood_watch,e))return false;
+    r->blood_watch=NULL;
     r->watched=0;return true;
 }
 static bool actor_watches(declared_damage_actor *r,qa_error *e)
 {
     struct application_native_q2_source_damage *o=r->owner;if(!o->deferred||o->suspended)return true;
     qa_native_address base;if(!address_for(o,r->actor,&base,e))return false;
-    if(r->watched&&r->watched!=base&&!actor_watches_close(r,e))return false;r->watched=base;
+    if(r->watched&&r->watched!=base&&!actor_watches_close(r,e))return false;
+    r->watched=base;
     if(!r->receipt_watch&&!qa_native_observe_writes(instance(o),base+o->receipt,1,deferred_changed,r,&r->receipt_watch,e))return false;
     return r->blood_watch||qa_native_observe_writes(instance(o),base+o->blood.offset,
         application_native_q2_field_size(o->blood.encoding),deferred_changed,r,&r->blood_watch,e);
@@ -177,7 +181,8 @@ static bool health_changed(void *context,qa_native_instance *native,const qa_nat
     float before=f->health;f->health=state.health;
     if(!frame_live(f)||before==state.health)return true;
     qa_damage_mutation mutation={.kind=QA_MUTATION_HEALTH,.value.health={before,state.health}};
-    if(!qa_damage_observe(f->observer,&mutation,e))return false;f->result.applied_damage+=before-state.health;return true;
+    if(!qa_damage_observe(f->observer,&mutation,e))return false;
+    f->result.applied_damage+=before-state.health;return true;
 }
 static bool velocity_changed(void *context,qa_native_instance *native,const qa_native_write_event *event,qa_error *e)
 {
@@ -198,10 +203,13 @@ static bool armor_changed(void *context,const qa_armor *before,const qa_armor *a
 }
 static bool frame_close(declared_damage_frame *f,qa_error *e)
 {
-    if(f->health_watch&&!qa_native_unobserve_writes(f->health_watch,e))return false;f->health_watch=NULL;
-    if(f->velocity_watch&&!qa_native_unobserve_writes(f->velocity_watch,e))return false;f->velocity_watch=NULL;
+    if(f->health_watch&&!qa_native_unobserve_writes(f->health_watch,e))return false;
+    f->health_watch=NULL;
+    if(f->velocity_watch&&!qa_native_unobserve_writes(f->velocity_watch,e))return false;
+    f->velocity_watch=NULL;
     if(!application_native_q2_armor_observe_end(&f->armor_watch,e))return false;
-    if(f->scratch&&!qa_native_free(instance(f->owner),f->scratch,e))return false;f->scratch=0;return true;
+    if(f->scratch&&!qa_native_free(instance(f->owner),f->scratch,e))return false;
+    f->scratch=0;return true;
 }
 static bool original_damage(void *context,qa_error *e)
 {
@@ -297,11 +305,9 @@ static bool eligible(struct application_native_q2_source_damage *o,qa_actor_id a
 }
 static bool provenance(struct application_native_q2_source_damage *o,qa_actor_id target,qa_attack *attack,qa_error *e)
 {
-    qa_application *app=o->engine->provider->application;qa_clock_state clock;
-    application_provider *primary=application_world_provider(app,QA_ROLE_ENTITIES,"");
-    if(!primary||!qa_session_clock(app->session,primary->owner,&clock)||clock.frame.provider!=primary->owner)
-        return application_fail(e,QA_ERROR_ARGUMENT,"Declared damage lost the actual primary SourceFrame clock");
-    attack->time_ns=clock.frame.time_ns;attack->weapon_provider=o->engine->provider->owner;
+    qa_application *app=o->engine->provider->application;qa_source_frame frame;
+    if(!application_native_q2_stages_time_read(o->engine,&frame,e))return false;
+    attack->time_ns=frame.time_ns;attack->weapon_provider=o->engine->provider->owner;
     qa_actor_id source=attack->attacker.registry?attack->attacker:target;
     application_provider *combat=application_provider_for(app,target,QA_ROLE_COMBAT,""),
         *inventory=application_provider_for(app,source,QA_ROLE_INVENTORY,""),*movement=application_provider_for(app,target,QA_ROLE_MOVEMENT,"");
@@ -334,7 +340,8 @@ static bool incoming(void *context,qa_native_instance *native,qa_native_entry_ob
     if(a[1].as.address&&!qa_native_host_source_actor(o->engine->provider->state.native.host,a[1].as.address,true,&r.attack.inflictor,e))return false;
     if(a[2].as.address&&!qa_native_host_source_actor(o->engine->provider->state.native.host,a[2].as.address,true,&r.attack.attacker,e))return false;
     if(!eligible(o,r.target)||!eligible(o,r.attack.attacker)||!eligible(o,r.attack.inflictor)){
-        if(result)*result=(qa_native_value){.type=QA_NATIVE_VOID};return true;}
+        if(result)*result=(qa_native_value){.type=QA_NATIVE_VOID};
+        return true;}
     if(!vector_read(o,a[3].as.address,&r.direction,e)||!vector_read(o,a[4].as.address,&r.point,e)||!vector_read(o,a[5].as.address,&r.normal,e)||
         !application_native_q2_source_combat_cause_read(o->state,a+9,(uint32_t)a[8].as.i32,&r.attack.cause,e))return false;
     r.amount=(float)a[6].as.i32;r.knockback=(float)a[7].as.i32;r.radius=(a[8].as.i32&1)!=0;
@@ -348,7 +355,8 @@ static bool incoming(void *context,qa_native_instance *native,qa_native_entry_ob
         application_native_q2_callbacks_transfer(o->engine->callbacks,foreign_damage,&foreign,e);
     --o->engine->calls;qa_damage_outcome_free(&outcome);
     if(ok)ok=application_native_q2_callbacks_source_before(o->engine,e);
-    if(ok&&result)*result=(qa_native_value){.type=QA_NATIVE_VOID};return ok;
+    if(ok&&result)*result=(qa_native_value){.type=QA_NATIVE_VOID};
+    return ok;
 }
 static bool process_deferred(void *context,qa_native_instance *native,qa_native_entry_observer *entry,
     const qa_native_value *a,size_t count,qa_native_value *result,qa_error *e)
@@ -380,7 +388,9 @@ static bool process_deferred(void *context,qa_native_instance *native,qa_native_
 }
 bool application_native_q2_source_damage_activate(struct application_native_q2_source_damage *o,qa_error *e)
 {
-    if(!o)return true;if(!o->ready)return application_fail(e,QA_ERROR_ARGUMENT,"Declared damage retains unfinished declaration preparation");o->suspended=false;
+    if(!o)return true;
+    if(!o->ready)return application_fail(e,QA_ERROR_ARGUMENT,"Declared damage retains unfinished declaration preparation");
+    o->suspended=false;
     qa_native_address entry;
     qa_native_type fields[3]={{.kind=QA_NATIVE_U8,.count=1},{.kind=QA_NATIVE_U8,.count=1},{.kind=QA_NATIVE_U8,.count=1}},parameters[10];
     for(size_t i=0;i<6;++i)parameters[i]=(qa_native_type){.kind=QA_NATIVE_ADDRESS,.count=1};
@@ -400,7 +410,9 @@ bool application_native_q2_source_damage_create(struct application_native_q2 *n,
     application_native_q2_source_combat_state *state,uint32_t velocity,
     struct application_native_q2_source_damage **out,qa_error *e)
 {
-    if(!out)return false;if(!state)return true;if(*out)return application_native_q2_source_damage_activate(*out,e);
+    if(!out)return false;
+    if(!state)return true;
+    if(*out)return application_native_q2_source_damage_activate(*out,e);
     struct application_native_q2_source_damage *o=calloc(1,sizeof(*o));if(!o)return application_fail(e,QA_ERROR_MEMORY,"Retaining declared original damage entry");
     const qa_json_document *d=application_native_q2_callbacks_document(n->callbacks);
     qa_json_id damage=qa_json_get(d,qa_json_get(d,qa_json_get(d,qa_json_root(d),"sourceActors"),"combat"),"damage");
@@ -425,7 +437,8 @@ bool application_native_q2_source_damage_create(struct application_native_q2 *n,
 }
 bool application_native_q2_source_damage_admit(struct application_native_q2_source_damage *o,qa_actor_id actor,qa_error *e)
 {
-    if(!o)return true;declared_damage_actor *r=actor_find(o,actor);
+    if(!o)return true;
+    declared_damage_actor *r=actor_find(o,actor);
     const qa_actor_record *actual=qa_actors_get(qa_session_actors(o->engine->provider->application->session),actor);
     if(!actual||!actual->has_source||actual->owner!=o->engine->provider->owner)
         return application_fail(e,QA_ERROR_ARGUMENT,"Declared combat admission lost its owned SourceActor");
@@ -447,7 +460,8 @@ bool application_native_q2_source_damage_reaction(struct application_native_q2_s
         if(p&&qa_actor_id_equal(p->request.target,actor)){*present=true;*attack=p->request.attack;*knockback=p->request.knockback;}
         return true;}
     *present=true;*attack=f->request->attack;*knockback=f->request->knockback;
-    if(f->reacting)return true;f->reacting=true;f->result=*result;
+    if(f->reacting)return true;
+    f->reacting=true;f->result=*result;
     return qa_damage_before_reaction(f->observer,result,e);
 }
 void application_native_q2_source_damage_released(struct application_native_q2_source_damage *o,qa_actor_id actor)
@@ -458,19 +472,24 @@ bool application_native_q2_source_damage_idle(const struct application_native_q2
 {return !o||(!o->frames&&!o->processing&&!o->retained);}
 bool application_native_q2_source_damage_suspend(struct application_native_q2_source_damage *o,qa_error *e)
 {
-    if(!o)return true;if(o->frames||o->processing)return application_fail(e,QA_ERROR_ARGUMENT,"Declared original damage remains entered");
+    if(!o)return true;
+    if(o->frames||o->processing)return application_fail(e,QA_ERROR_ARGUMENT,"Declared original damage remains entered");
     o->suspended=true;
     while(o->retained){declared_damage_frame *f=o->retained;if(!frame_close(f,e))return false;o->retained=f->retained_next;free(f);}
     for(declared_damage_actor *r=o->actors;r;r=r->next)if(!actor_watches_close(r,e))return false;
-    if(o->process_binding&&!qa_native_unobserve_entry(o->process_binding,e))return false;o->process_binding=NULL;
-    if(o->binding&&!qa_native_unobserve_entry(o->binding,e))return false;o->binding=NULL;return true;
+    if(o->process_binding&&!qa_native_unobserve_entry(o->process_binding,e))return false;
+    o->process_binding=NULL;
+    if(o->binding&&!qa_native_unobserve_entry(o->binding,e))return false;
+    o->binding=NULL;return true;
 }
 bool application_native_q2_source_damage_destroy(struct application_native_q2_source_damage **out,qa_error *e)
 {
-    if(!out||!*out)return true;struct application_native_q2_source_damage *o=*out;
+    if(!out||!*out)return true;
+    struct application_native_q2_source_damage *o=*out;
     if(!application_native_q2_source_damage_suspend(o,e))return false;
     for(declared_damage_actor *r=o->actors;r;r=r->next)if(r->bound){qa_application *app=o->engine->provider->application;
-        if(qa_actors_get(qa_session_actors(app->session),r->actor)&&!qa_combat_detach_primary(app->combat,r->actor,r->serial,r,e))return false;r->bound=false;}
+        if(qa_actors_get(qa_session_actors(app->session),r->actor)&&!qa_combat_detach_primary(app->combat,r->actor,r->serial,r,e))return false;
+        r->bound=false;}
     while(o->actors){declared_damage_actor *r=o->actors;o->actors=r->next;free(r);}free(o);*out=NULL;return true;
 }
 static bool request_fields(qa_source_save_io *io,qa_damage_request *request)
@@ -514,7 +533,8 @@ static bool pending_read(declared_damage_actor *r,qa_error *e)
 }
 bool application_native_q2_source_damage_capture(struct application_native_q2_source_damage *o,qa_buffer *out,qa_error *e)
 {
-    if(!out)return false;*out=(qa_buffer){0};if(!o)return true;
+    if(!out)return false;
+    *out=(qa_buffer){0};if(!o)return true;
     if(!application_native_q2_source_damage_idle(o))return application_fail(e,QA_ERROR_ARGUMENT,"Declared damage capture retains original work");
     size_t count=0;qa_application *app=o->engine->provider->application;
     for(declared_damage_actor *r=o->actors;r;r=r->next){
@@ -522,14 +542,16 @@ bool application_native_q2_source_damage_capture(struct application_native_q2_so
         if(!r->bound)continue;
         const qa_actor_record *actual=qa_actors_get(qa_session_actors(app->session),r->actor);
         if(r->prepared||!actual||!actual->has_source||actual->owner!=o->engine->provider->owner||actual->source_slot!=r->slot||
-            !qa_combat_primary_current(app->combat,r->actor,r->serial,r))return application_fail(e,QA_ERROR_ARGUMENT,"Declared damage capture lost its full primary source receipt");++count;}
+            !qa_combat_primary_current(app->combat,r->actor,r->serial,r))return application_fail(e,QA_ERROR_ARGUMENT,"Declared damage capture lost its full primary source receipt");
+            ++count;}
     qa_source_save_io io={0};uint32_t version=UINT32_C(0x3243444e);
     bool ok=qa_source_save_writer(&io,app->session,e)&&qa_source_save_u32(&io,&version)&&
         qa_source_save_u64(&io,&o->sequence)&&qa_source_save_count(&io,&count,65536);
     for(declared_damage_actor *r=o->actors;ok&&r;r=r->next)if(r->bound){
         ok=qa_source_save_u32(&io,&r->slot)&&qa_source_save_u64(&io,&r->serial)&&qa_source_save_bool(&io,&r->pending);
         if(ok&&r->pending)ok=pending_read(r,e)&&pending_fields(&io,r);}
-    if(ok)ok=qa_source_save_finish(&io,out);qa_source_save_dispose(&io);return ok;
+    if(ok)ok=qa_source_save_finish(&io,out);
+    qa_source_save_dispose(&io);return ok;
 }
 bool application_native_q2_source_damage_restore(struct application_native_q2_source_damage *o,qa_bytes bytes,qa_error *e)
 {
@@ -556,7 +578,8 @@ bool application_native_q2_source_damage_restore(struct application_native_q2_so
         for(declared_damage_actor *p=rows;ok&&p!=r;p=p->next)if(p->slot==r->slot||p->serial==r->serial)
             ok=application_fail(e,QA_ERROR_FORMAT,"Saved declared damage repeats a slot or serial");
         r->pending_prepared=r->pending;}
-    if(ok)ok=qa_source_save_finish(&io,NULL);qa_source_save_dispose(&io);
+    if(ok)ok=qa_source_save_finish(&io,NULL);
+    qa_source_save_dispose(&io);
     if(!ok){while(rows){declared_damage_actor *r=rows;rows=r->next;free(r);}return false;}
     while(o->actors){declared_damage_actor *r=o->actors;o->actors=r->next;free(r);}o->actors=rows;o->sequence=sequence;return true;
 }

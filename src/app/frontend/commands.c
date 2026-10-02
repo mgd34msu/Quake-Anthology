@@ -5,6 +5,7 @@
 #include "system_cinematic.h"
 #include "music_sources.h"
 #include "q1_sky.h"
+#include "source_renderer_runtime.h"
 #include <stdio.h>
 
 static const char *const client_menus[]={"toggleconsole","menu","messagemode","messagemode2",
@@ -135,6 +136,15 @@ static bool command(void *context, const qa_command_invocation *invocation, qa_e
         if (!frontend_q1_sky_name(frontend->q1_sky,invocation->context.actor,&selected,error)) return false;
         char text[1200]; snprintf(text,sizeof(text),"\"sky\" is \"%s\"\n",selected); frontend_print(frontend,text); return true;
     }
+    if (!strcmp(name,"actualimagegrid")) {
+        if (invocation->argc>2) { frontend_print(frontend,"usage: actualimagegrid [1|2]\n"); return true; }
+        int32_t mode=1;
+        if (invocation->argc==2) {
+            if (!strcmp(invocation->argv[1],"2")) mode=2;
+            else if (strcmp(invocation->argv[1],"1")) { frontend_print(frontend,"usage: actualimagegrid [1|2]\n"); return true; }
+        }
+        return frontend_source_renderer_image_grid(frontend,mode,error);
+    }
     if (!strcmp(name, "quit")) { qa_application_request_stop(frontend->application); return true; }
     uint32_t slot;
     if (!frontend_command_seat_read(frontend,&invocation->context,&slot))
@@ -156,7 +166,7 @@ bool frontend_commands(qa_frontend *frontend, qa_error *error)
     qa_console *console = qa_application_console(frontend->application);
     const char *names[] = {"quit", "toggleconsole", "menu", "messagemode", "messagemode2", "weapnext", "weapprev",
         "menu_anthology", "library", "mods", "settings", "rankings", "assistance", "controls", "save", "load",
-        "cinematic", "cinematicpause", "stopcinematic", "cd", "music", "sky"};
+        "cinematic", "cinematicpause", "stopcinematic", "cd", "music", "sky", "actualimagegrid"};
     for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); ++i)
         if (!qa_console_register_owned(console, names[i], "Native frontend command", 0,
             QA_FRONTEND_COMMAND_OWNER, true, command, frontend, error)) return false;

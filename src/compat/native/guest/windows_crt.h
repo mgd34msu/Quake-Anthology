@@ -15,4 +15,5 @@ bool windows_crt_descriptors(guest_windows *, bool, qa_error *);
 bool windows_crt_initialize(guest_windows *, qa_error *);
 bool windows_crt_invoke(windows_service *, const qa_native_value *, size_t, qa_native_value *, qa_error *);
 bool windows_crt_validate(guest_windows *, qa_error *);
+bool windows_crt_finalize_image(guest_windows *, uint64_t, uint64_t, qa_error *);
 #endif

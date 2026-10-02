@@ -121,6 +121,13 @@ struct frontend_remote_q2 {
     uint64_t download_nonce;
     uint64_t download_logical_nonce;
     uint8_t download_percent;
+    qa_buffer download_block;
+    uint64_t download_block_offset, download_block_cursor;
+    uint8_t download_block_percent;
+    bool download_block_pending, download_block_committed, download_remembered;
+    bool download_sealed, download_published, download_refresh_pending, download_refreshed;
+    bool download_stage_sealed, download_stage_published;
+    qa_fs_identity download_identity;
     char **download_attempted;
     size_t download_attempted_count;
     qa_input_command_builder input;
@@ -146,7 +153,8 @@ bool remote_q2_download_prepare(frontend_remote_q2 *, qa_q2_preparation *, qa_er
 bool remote_q2_download_receive(frontend_remote_q2 *, const qa_q2_server_event *, bool *, qa_error *);
 bool remote_q2_download_path_valid(const char *);
 qa_fs_root *remote_q2_download_destination(const frontend_remote_q2 *, const char *);
-void remote_q2_download_clear(frontend_remote_q2 *);
+uint64_t remote_q2_download_extent(const frontend_remote_q2 *);
+bool remote_q2_download_clear(frontend_remote_q2 *, qa_error *);
 bool remote_q2_records(frontend_remote_q2 *, const qa_q2_server_record *, size_t, qa_error *);
 bool remote_q2_player_fog_receive(frontend_remote_q2 *, qa_error *);
 remote_q2_layout remote_q2_layout_read(qa_net_protocol_id);

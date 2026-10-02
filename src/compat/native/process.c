@@ -134,6 +134,27 @@ bool native_process_export(const qa_native_instance *instance, const char *name,
         qa_native_windows_process_export(instance->windows_process, instance->source_library, name, out, error);
 }
 
+bool native_process_reload(qa_native_instance *instance, qa_error *error)
+{
+    bool okay = instance->process_kind == QA_NATIVE_PROCESS_SYSV ?
+        qa_native_sysv_process_reload(instance->sysv_process, instance->source_id, error) :
+        qa_native_windows_process_reload(instance->windows_process, instance->source_id, error);
+    if (!okay) return false;
+    if (native_profile(instance->module->info.profile)->q3_vm)
+        okay = qa_native_guest_unbind(instance->guest, instance->first_callback, error);
+    else for (size_t i = 0; okay && i < instance->import_count; ++i)
+        okay = qa_native_guest_unbind(instance->guest, instance->imports[i].guest_id, error);
+    if (okay && instance->import_table_address)
+        okay = qa_native_guest_free(instance->guest, instance->import_table_address, error);
+    if (!okay) { instance->guest->failed = true; return false; }
+    instance->import_table_address = 0;
+    native_profile_unbind(instance);
+    instance->entities = (qa_native_entity_table){0};
+    okay = native_profile_bind(instance, error);
+    if (!okay) instance->guest->failed = true;
+    return okay;
+}
+
 static void process_dispatch(void *context)
 { native_call_started(context); }
 
@@ -341,7 +362,9 @@ bool native_process_checkpoint_host(qa_native_instance *instance, qa_bytes actua
     qa_buffer *out, qa_error *error)
 {
     if (!instance || instance->backend != QA_NATIVE_BACKEND_OWNED_PROCESS || !out || out->data || out->size ||
-        instance->active_depth || instance->callback_depth || instance->region_scopes || instance->destroying ||
+        instance->active_depth || instance->callback_depth || instance->region_depth ||
+        instance->region_service_depth || instance->write_depth || instance->region_scopes ||
+        instance->write_scope || instance->call_scope || instance->destroying ||
         qa_native_terminal(instance) || !qa_native_guest_idle(instance->guest))
         return native_fail(error, QA_ERROR_ARGUMENT, 0, "native process capture requires its idle complete source owner");
     qa_buffer process = {0};
@@ -370,9 +393,16 @@ bool native_process_checkpoint_host(qa_native_instance *instance, qa_bytes actua
 
 bool qa_native_process_checkpoint(qa_native_instance *instance, qa_buffer *out, qa_error *error)
 {
-    if (!instance || instance->checkpointing || instance->active_depth || instance->callback_depth || instance->region_scopes ||
-        instance->destroying || instance->process_host_pending || instance->backend != QA_NATIVE_BACKEND_OWNED_PROCESS ||
-        !instance->options.checkpoint || !instance->options.restore)
+    if (!instance || !out || out->data || out->size ||
+        instance->checkpointing || instance->active_depth || instance->callback_depth ||
+        instance->region_depth || instance->region_service_depth || instance->write_depth ||
+        instance->region_scopes || instance->write_scope || instance->call_scope ||
+        instance->destroying || instance->unloading || instance->process_host_pending ||
+        instance->backend != QA_NATIVE_BACKEND_OWNED_PROCESS ||
+        !instance->options.checkpoint || !instance->options.restore || qa_native_terminal(instance) ||
+        !(instance->process_kind == QA_NATIVE_PROCESS_SYSV ?
+            qa_native_sysv_process_idle(instance->sysv_process) :
+            qa_native_windows_process_idle(instance->windows_process)))
         return native_fail(error, QA_ERROR_ARGUMENT, 0, "native private capture requires its actual idle process/host binding");
     instance->checkpointing = true; qa_buffer host = {0};
     bool okay = instance->options.checkpoint(instance->options.context, &host, error) &&
@@ -384,7 +414,9 @@ bool qa_native_process_restore_host(qa_native_instance *instance, qa_bytes expec
 {
     if (!instance || instance->backend != QA_NATIVE_BACKEND_OWNED_PROCESS ||
         !instance->process_host_pending || !instance->process_host.size ||
-        instance->active_depth || instance->callback_depth || instance->region_scopes || instance->checkpointing ||
+        instance->active_depth || instance->callback_depth || instance->region_depth ||
+        instance->region_service_depth || instance->write_depth || instance->region_scopes ||
+        instance->write_scope || instance->call_scope || instance->checkpointing ||
         instance->destroying || qa_native_terminal(instance) || !qa_native_guest_idle(instance->guest))
         return native_fail(error, QA_ERROR_ARGUMENT, 0, "native host adoption requires its staged idle process continuation");
     if (!expected_host.data || expected_host.size != instance->process_host.size ||

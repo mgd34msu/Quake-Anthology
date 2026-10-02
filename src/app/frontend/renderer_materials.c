@@ -1,4 +1,5 @@
 #include "renderer_materials.h"
+#include "renderer_registries.h"
 #include "visual_restore.h"
 #include "native_q3_client.h"
 #include "native_q3_video.h"
@@ -145,9 +146,21 @@ static bool parent_images(const qa_frontend *f,const qa_scene_resources *images,
     const qa_render_controls *controls=f->cpu?qa_cpu_render_controls(f->cpu):f->gl?qa_gl_render_controls(f->gl):NULL;
     if(!*found && controls) {
         const qa_material_source_scratch *source=qa_render_controls_source_metadata(controls,error);
-        const qa_scene_world *world=NULL;
-        if(!source || !qa_material_source_world_metadata(source,&world,error)) return false;
-        *found=world && qa_scene_world_resource_owner(world)==images;
+        if(!source) return false;
+        for(size_t i=0;!*found && i<qa_material_source_world_count(source);++i) {
+            const qa_scene_world *world=qa_material_source_world_at(source,i);
+            if(!world) return false;
+            *found=qa_scene_world_resource_owner(world)==images;
+        }
+    }
+    for(size_t i=0;!*found && i<frontend_renderer_registries_count(f);++i) {
+        qa_q3_presentation_assets *assets=NULL;
+        if(!frontend_renderer_registries_at(f,i,&assets,error)) return false;
+        for(size_t j=0;!*found && j<qa_q3_assets_map_count(assets);++j) {
+            qa_q3_asset_map_custody map={0};
+            if(!qa_q3_assets_map_at(assets,j,&map) || !map.world) return false;
+            *found=qa_scene_world_resource_owner(map.world)==images;
+        }
     }
     for(size_t i=0;!*found && i<frontend_source_group_count(f);++i) {
         frontend_source_group_view row;

@@ -1811,6 +1811,8 @@ struct qa_fs_stage {
     wchar_t *temporary, *target;
     char *display;
     bool sealed, published, readonly, closing, closing_keep, cleanup_done;
+    bool publication_exclusive, publication_synced;
+    qa_fs_identity publication_identity;
 };
 static bool stage_argument(qa_error *error, const char *message) {
     qa_error_set(error, QA_ERROR_ARGUMENT, 0, "%s", message); return false;
@@ -1913,6 +1915,67 @@ bool qa_fs_stage_open_unique_checked(qa_fs_root *root, const char *target,
         if (!qa_fs_stage_close_checked(out, true, error)) return false;
     }
 }
+static bool stage_published_identity(qa_fs_stage *stage, qa_fs_identity *out, qa_error *error) {
+    BY_HANDLE_FILE_INFORMATION opened, named;
+    FILE_BASIC_INFO basic, named_basic;
+    if (!handle_info(stage->handle, &opened, &basic, error, stage->display)) return false;
+    HANDLE check = CreateFileW(stage->target, FILE_READ_ATTRIBUTES,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL, OPEN_EXISTING,
+        FILE_FLAG_OPEN_REPARSE_POINT, NULL);
+    if (check == INVALID_HANDLE_VALUE)
+        return fail_windows(error, "cannot inspect published target", stage->display, GetLastError());
+    bool ok = handle_info(check, &named, &named_basic, error, stage->display);
+    CloseHandle(check);
+    if (!ok) return false;
+    if (kind_from_attributes(opened.dwFileAttributes) != QA_FS_REGULAR ||
+        kind_from_attributes(named.dwFileAttributes) != QA_FS_REGULAR || !same_handle_object(&opened, &named)) {
+        qa_error_set(error, QA_ERROR_IO, 0, "Published target identity changed: %s", stage->display);
+        return false;
+    }
+    identity_from_info(&opened, &basic, out); return true;
+}
+bool qa_fs_stage_open_published_checked(qa_fs_root *root, const char *target,
+    qa_bytes prefix, qa_fs_stage **out, qa_fs_identity *identity, qa_error *error) {
+    if (!root || !out || *out || !identity || (prefix.size && !prefix.data) ||
+        !qa_fs_relative_valid(target, false, error))
+        return stage_argument(error, "Invalid published target continuation");
+    qa_fs_stage *stage = calloc(1, sizeof(*stage));
+    if (!stage) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining published target"); return false; }
+    *out = stage; stage->handle = INVALID_HANDLE_VALUE; stage->readonly = true;
+    stage->display = copy_string(target);
+    if (!stage->display) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining published target name"); return false; }
+    if (!writable_parent(root, target, false, &stage->locked, error)) return false;
+    stage->target = wide_child(stage->locked.parent_path, stage->locked.leaf, error);
+    if (!stage->target) return false;
+    /* FlushFileBuffers requires write access; this published owner exposes no writes. */
+    stage->handle = CreateFileW(stage->target, GENERIC_READ | GENERIC_WRITE | FILE_READ_ATTRIBUTES,
+        FILE_SHARE_READ | FILE_SHARE_DELETE, NULL, OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT, NULL);
+    if (stage->handle == INVALID_HANDLE_VALUE)
+        return fail_windows(error, "cannot open published target", target, GetLastError());
+    wchar_t *opened = handle_path(stage->handle, error);
+    bool contained = opened && path_within(stage->locked.root_path, opened);
+    free(opened);
+    if (!contained) return stage_argument(error, "Published target escapes its retained root");
+    qa_fs_identity admitted, current;
+    if (!stage_published_identity(stage, &admitted, error)) return false;
+    if (qa_fs_identity_size(&admitted) != prefix.size)
+        return stage_argument(error, "Published target length differs from its retained prefix");
+    uint8_t bytes[4096];
+    for (size_t offset = 0; offset < prefix.size;) {
+        size_t amount = prefix.size - offset, received = 0;
+        if (amount > sizeof(bytes)) amount = sizeof(bytes);
+        if (!qa_fs_stage_read(stage, offset, bytes, amount, &received, error)) return false;
+        if (received != amount || memcmp(bytes, prefix.data + offset, amount))
+            return stage_argument(error, "Published target bytes differ from its retained prefix");
+        offset += amount;
+    }
+    if (!stage_published_identity(stage, &current, error)) return false;
+    if (!qa_fs_identity_equal(&admitted, &current))
+        return stage_argument(error, "Published target changed during prefix qualification");
+    stage->sealed = stage->published = stage->publication_exclusive = true;
+    stage->readonly = false; stage->publication_identity = current; *identity = current;
+    return true;
+}
 bool qa_fs_stage_size(qa_fs_stage *stage, uint64_t *out, qa_error *error) {
     if (!stage || stage->closing || !out) return stage_argument(error, "Missing stage size output");
     LARGE_INTEGER size;
@@ -1996,11 +2059,25 @@ bool qa_fs_stage_map(qa_fs_stage *stage, qa_fs_stage_mapping **out, qa_error *er
     }
     *out = mapping; return true;
 }
+static bool stage_publication_finish(qa_fs_stage *stage, qa_error *error) {
+    if (stage->publication_synced) return true;
+    if (!FlushFileBuffers(stage->handle))
+        return fail_windows(error, "cannot sync published stage", stage->display, GetLastError());
+    stage->publication_synced = true;
+    return true;
+}
 bool qa_fs_stage_publish(qa_fs_stage *stage, const qa_fs_identity *expected, bool exclusive,
                           bool *created, qa_error *error) {
-    if (!stage || stage->closing || !expected || !created || !stage->sealed || stage->published || stage->readonly)
+    if (!stage || stage->closing || !expected || !created || !stage->sealed || stage->readonly)
         return stage_argument(error, "Invalid stage publication");
     *created = false;
+    if (stage->published) {
+        if (stage->publication_exclusive != exclusive ||
+            !qa_fs_identity_equal(expected, &stage->publication_identity))
+            return stage_argument(error, "Stage publication retry changed its sealed identity or mode");
+        *created = true;
+        return stage_publication_finish(stage, error);
+    }
     qa_fs_identity identity;
     if (!stage_identity(stage, &identity, error)) return false;
     if (!qa_fs_identity_equal(expected, &identity)) {
@@ -2027,12 +2104,13 @@ bool qa_fs_stage_publish(qa_fs_stage *stage, const qa_fs_identity *expected, boo
         if (exclusive && (code == ERROR_FILE_EXISTS || code == ERROR_ALREADY_EXISTS)) return true;
         return fail_windows(error, "cannot publish staged file", stage->display, code);
     }
-    stage->published = true; *created = true;
-    if (!FlushFileBuffers(stage->handle)) return fail_windows(error, "cannot sync published stage", stage->display, GetLastError());
-    return true;
+    stage->published = true; stage->publication_identity = *expected;
+    stage->publication_exclusive = exclusive; *created = true;
+    return stage_publication_finish(stage, error);
 }
 void qa_fs_stage_close(qa_fs_stage *stage, bool keep) {
     if (!stage) return;
+    if (stage->published) (void)stage_publication_finish(stage, NULL);
     if (stage->handle != INVALID_HANDLE_VALUE) {
         if (!keep && !stage->published && !stage->readonly) {
             FILE_DISPOSITION_INFO disposition = {TRUE};
@@ -2048,6 +2126,7 @@ bool qa_fs_stage_close_checked(qa_fs_stage **owned, bool keep, qa_error *error) 
     if (stage->closing && stage->closing_keep != keep)
         return stage_argument(error, "Stage cleanup cannot change its retained-file decision");
     stage->closing = true; stage->closing_keep = keep;
+    if (stage->published && !stage_publication_finish(stage, error)) return false;
     if (!stage->cleanup_done) {
         if (stage->handle != INVALID_HANDLE_VALUE && !stage->published && !stage->readonly) {
             if (keep) {

@@ -543,7 +543,8 @@ typedef struct qa_mode_location {
 typedef struct qa_mode_team_row {
     qa_actor_id actor;
     int32_t location;
-    float health, armor;
+    float health;
+    double armor;
     qa_item_id weapon;
     uint64_t powerups;
 } qa_mode_team_row;

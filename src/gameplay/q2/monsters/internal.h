@@ -274,7 +274,8 @@ struct qa_q2_monster {
   int frame, next_frame, old_frame, skin, style, count;
   uint32_t render_flags;
   float entity_scale, animation_scale, base_health, health_scaling;
-  float max_health, max_power_armor;
+  float max_health;
+  double max_power_armor;
   qa_power_kind initial_power_armor;
   float gib_health, normal_height, view_height, ideal_yaw, yaw_speed;
   float blind_fire_delay, fly_min_distance, fly_max_distance;
@@ -431,7 +432,7 @@ bool q2m_dispatch(q2m_context *, const char *, qa_error *);
 bool q2m_pain(q2m_context *, qa_error *);
 bool q2m_die(q2m_context *, qa_error *);
 bool q2m_corpse(q2m_context *, qa_error *);
-bool q2m_set_power_cells(q2m_context *, qa_power_kind, float cells, qa_error *);
+bool q2m_set_power_cells(q2m_context *, qa_power_kind, double cells, qa_error *);
 bool q2m_widow_powerups(q2m_context *, qa_error *);
 void q2m_widow_power_think(q2m_context *);
 void q2m_widow_clear_powerups(q2m_context *);

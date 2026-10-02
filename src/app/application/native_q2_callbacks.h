@@ -3,6 +3,7 @@
 
 #include "qa/native.h"
 #include "qa/session.h"
+#include "qa/inventory.h"
 
 struct application_native_q2;
 struct qa_application;

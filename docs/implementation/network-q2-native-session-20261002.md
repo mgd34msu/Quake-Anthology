@@ -45,6 +45,27 @@ Client handshake retries refresh genuine local identity and wait for actual
 LAN readiness. The real remote CLIENT constructor can retain a preparation
 generation until it supplies its actual canonical claim and hooks.
 
+Fresh native CLIENT downloads now allocate an actual exclusive filesystem stage
+through the enclosing Network namespace. The allocator advances past real
+staging-name collisions without borrowing or deleting another owner. Cold import
+uses a separate preparation namespace and excludes the retained logical nonce.
+The physical Source and CLIENT constructors both bind these actual stage owners.
+
+An accepted native block retains its owned bytes, immutable destination offset,
+written prefix cursor, committed byte count, and seal/publication/refresh stages.
+A failed write resumes only its remaining suffix; a failed `nextdl` queue retains
+the already written block without appending it again. The lower client retains
+that exact service record and receive batch for recoverable I/O/allocation/queue
+failure instead of retiring the session. Invalid protocol records retain their
+existing retirement policy. Q2RC version fourteen includes this continuation and the actual accepted
+stage prefix. Candidate reconstruction writes only an unpublished private prefix;
+an accepted publication instead authenticates the actual contained installed target
+against all saved bytes and retains that target's sealed identity. Import sends
+no publication, cleanup or sync operation. Ordinary continuation finishes the
+held filesystem durability work before content refresh and checked retirement.
+The completed refresh is retained when checked retirement must retry. Installed
+publication is recorded independently of a later directory cleanup/sync failure.
+
 The pure constructor recipe codec reuses the lower request and CLIENT policy
 field codecs. It retains endpoint, protocol, qport, physical seat, negotiated
 request, policy and composition as values. An unselected policy remains literal
@@ -303,3 +324,13 @@ emit percentage zero, and positive numeric offset overflow saturates before
 the file-length clamp. New bootstrap and settings bodies continue to receive
 source feedback without holding implementation. Integration, build checks,
 runtime behavior, performance, and final project completion remain unverified.
+
+## Recovery compiler validation
+
+The resumed production compiler commands were run with `-fsyntax-only` for the
+Network owner, Q2 CLIENT/Source/download/presentation/restore owners, lower Q2
+client delivery, Q2 HOST and CLIENT graph codecs, Unified graph and HUD, and
+application Q2 frame publication. All checked translation units passed the
+actual strict production flags. This validates their compilation boundaries;
+no game, remote transfer, cold load, campaign or multiplayer execution was run
+in this worker.

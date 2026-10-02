@@ -267,6 +267,30 @@ bool qa_native_sysv_process_initialize(qa_native_sysv_process *owner, uint64_t p
     if (!begin(owner, error)) return false;
     return end(owner, guest_sysv_initialize(owner->runtime, provider, owner->options.instruction_budget, error));
 }
+bool qa_native_sysv_process_reload(qa_native_sysv_process *owner, uint64_t provider, qa_error *error)
+{
+    sysv_process_image *row = NULL;
+    for (size_t i = 0; owner && i < owner->image_count; ++i)
+        if (owner->images[i].provider == provider) row = owner->images + i;
+    const guest_elf_view *image = row ? guest_elf_describe(row->artifact) : NULL;
+    if (!image || image->role != GUEST_ELF_LIBRARY || !row->loaded)
+        return guest_fail(error, QA_ERROR_ARGUMENT, provider, "System V reload requires its actual retained library attachment");
+    if (!begin(owner, error)) return false;
+    bool okay = guest_sysv_finalize(owner->runtime, provider, owner->options.instruction_budget, error) &&
+        guest_sysv_finalize_image_destructors(owner->runtime, provider, image->bias + image->first,
+            image->end - image->first, error) && guest_elf_loaded_unmap(row->loaded, error);
+    if (okay) {
+        guest_elf_loaded_abandon(&row->loaded);
+        guest_elf_load_options load = {.provider = provider, .return_trap = owner->returned,
+            .instruction_budget = owner->options.instruction_budget,
+            .memory = {owner->options.anonymous_permissions, owner->options.read_implies_execute},
+            .replacing = true};
+        okay = guest_elf_load(row->artifact, owner->runtime, &load, &row->loaded, error) &&
+            guest_sysv_initialize(owner->runtime, provider, owner->options.instruction_budget, error);
+    }
+    if (!okay) owner->guest->failed = true;
+    return end(owner, okay);
+}
 bool qa_native_sysv_process_finalize(qa_native_sysv_process *owner, uint64_t provider, qa_error *error)
 {
     if (!begin(owner, error)) return false;

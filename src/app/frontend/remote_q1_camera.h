@@ -25,4 +25,5 @@ void remote_q1_camera_reset(frontend_remote_q1 *);
 bool remote_q1_camera_fields(frontend_remote_q1 *, qa_source_save_io *);
 bool frontend_remote_q1_chase_camera(frontend_remote_q1 *, const frontend_q1_view_settings *,
     qa_vec3 eye, qa_vec3 aim_angles, qa_vec3 *origin, qa_vec3 *angles, qa_error *);
+bool remote_q1_camera_contents_blend(frontend_remote_q1 *,const qa_scene_view *,qa_scene_vec4 *,qa_error *);
 #endif

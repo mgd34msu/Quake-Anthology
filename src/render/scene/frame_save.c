@@ -227,7 +227,7 @@ static bool draw(qa_source_save_io *io, qa_scene_frame *frame, const qa_scene_fr
     FIELD(f32,value,shadow_near); FIELD(f32,value,shade_scale); FIELD(bool,value,model_shade_scale); FIELD(bool,value,luminance_alpha);
     if (schema>=3) { FIELD(bool,value,source_primitives); }
     if (schema>=5) {
-        ENUM(qa_scene_source_direct,value,source_direct,QA_SOURCE_DIRECT_RAW);
+        ENUM(qa_scene_source_direct,value,source_direct,QA_SOURCE_DIRECT_IMAGE_GRID);
         FIELD(bool,value,source_retain_depth_range);
     }
     if (schema>=6) {

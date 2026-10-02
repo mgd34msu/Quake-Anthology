@@ -9,6 +9,7 @@
 #include "remote_q3_compiled_video.h"
 #include "remote_q3_video_media.h"
 #include "network_q3_video.h"
+#include "unified_q3_video.h"
 #include "source_acoustics.h"
 #include "shared_resource_policy.h"
 #include "source_renderer_runtime.h"
@@ -32,6 +33,8 @@ struct frontend_video_guests {
     frontend_native_q3_video *native;
     video_remote_row *remote;
     size_t remote_count;
+    frontend_unified_q3_video **unified;
+    size_t unified_count;
     frontend_shared_resource_policy *resources;
     qa_display *resource_display;
     qa_cpu_renderer *resource_cpu;
@@ -62,6 +65,10 @@ bool frontend_video_guests_current(const frontend_video_guests *owner,qa_error *
         if (owner->remote[i].compiled &&
             !frontend_remote_q3_compiled_video_current(owner->remote[i].compiled,error)) return false;
     }
+    if(owner->prepared&&frontend_remote_unified_count(owner->frontend)!=owner->unified_count)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Video restart changed its actual Unified replica roster");
+    for(size_t i=0;i<owner->unified_count;++i)
+        if(owner->unified[i]&&!frontend_unified_q3_video_current(owner->unified[i],error))return false;
     return (!owner->hosted || application_guest_q3_video_current(owner->hosted,error)) &&
         (!owner->native || frontend_native_q3_video_current(owner->native,error)) &&
         (!owner->components || application_q3_components_video_current(owner->components,error));
@@ -71,16 +78,16 @@ bool frontend_video_guests_resources_returned(const qa_frontend *f,const fronten
     if (!frontend_video_guests_resources_associated(f,owner) ||
         frontend_remote_q3_count(f)+frontend_remote_q3_initial_count(f)!=owner->remote_count)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Video resource refresh lost its closed guest roster");
-    return frontend_video_guests_current(owner,error);
+    if(!frontend_video_guests_current(owner,error))return false;
+    for(size_t i=0;i<owner->unified_count;++i)
+        if(!frontend_unified_q3_video_returned(owner->unified[i],owner,error))return false;
+    return true;
 }
 bool frontend_video_guests_prepare(qa_frontend *f,frontend_video_guests **out,qa_error *error)
 {
     if (!f || !f->application || !out || *out || f->video_guests || !f->display ||
         f->capture || f->resource_inventory || f->source_restoring || f->input_shutdown)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Video guests require returned Source and input owners");
-    if (f->remote_unified)
-        return frontend_fail(error,QA_ERROR_UNSUPPORTED,
-            "This Source receiver requires its retained video media reconstruction producer");
     size_t decoded_count=frontend_remote_q3_count(f);
     for (size_t i=0;i<decoded_count;++i)
         if (!frontend_remote_q3_runtime_read(frontend_remote_q3_at(f,i)) &&
@@ -95,6 +102,11 @@ bool frontend_video_guests_prepare(qa_frontend *f,frontend_video_guests **out,qa
     frontend_video_guests *owner=calloc(1,sizeof(*owner));
     if (!owner) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining Source video guest recipes");
     owner->frontend=f; owner->application=f->application; *out=owner; f->video_guests=owner;
+    owner->unified_count=frontend_remote_unified_count(f);
+    if(owner->unified_count) {
+        owner->unified=calloc(owner->unified_count,sizeof(*owner->unified));
+        if(!owner->unified) { owner->unified_count=0;return frontend_fail(error,QA_ERROR_MEMORY,"Retaining Unified video replicas"); }
+    }
     owner->remote_count=decoded_count+(size_t)initial_present;
     if (owner->remote_count) {
         owner->remote=calloc(owner->remote_count,sizeof(*owner->remote));
@@ -117,6 +129,8 @@ bool frontend_video_guests_prepare(qa_frontend *f,frontend_video_guests **out,qa
         if (!(row->modules?frontend_remote_q3_modules_video_prepare(row->modules,&row->ticket,error):
             frontend_remote_q3_compiled_video_prepare(row->decoded,&row->compiled,error))) return false;
     }
+    for(size_t i=0;i<owner->unified_count;++i)
+        if(!frontend_unified_q3_video_prepare(f,frontend_remote_unified_at(f,i),owner->unified+i,error))return false;
     owner->prepared=true;
     return frontend_video_guests_current(owner,error);
 }
@@ -178,6 +192,8 @@ bool frontend_video_guests_reopen(frontend_video_guests *owner,qa_error *error)
         (owner->components && !application_q3_components_video_reopen(owner->components,error))) return false;
     for (size_t i=0;i<owner->remote_count;++i)
         if (!reopen_remote(owner,owner->remote+i,error)) return false;
+    for(size_t i=0;i<owner->unified_count;++i)
+        if(!frontend_unified_q3_video_reopen(owner->unified[i],error))return false;
     owner->reopened=true;
     return true;
 }
@@ -190,11 +206,13 @@ bool frontend_video_guests_finish(frontend_video_guests **slot,qa_error *error)
     for (size_t i=0;i<owner->remote_count;++i)
         if (!frontend_remote_q3_modules_video_finish(&owner->remote[i].ticket,error) ||
             !frontend_remote_q3_compiled_video_finish(&owner->remote[i].compiled,error)) return false;
+    for(size_t i=0;i<owner->unified_count;++i)
+        if(!frontend_unified_q3_video_finish(owner->unified+i,error))return false;
     if (!application_guest_q3_video_finish(&owner->hosted,error) ||
         !frontend_native_q3_video_finish(&owner->native,error) ||
         !application_q3_components_video_finish(&owner->components,error) ||
         !frontend_acoustics_source_bind(owner->frontend,error)) return false;
-    owner->frontend->video_guests=NULL; free(owner->remote); free(owner); *slot=NULL; return true;
+    owner->frontend->video_guests=NULL; free(owner->unified);free(owner->remote); free(owner); *slot=NULL; return true;
 }
 bool frontend_video_guests_abort(frontend_video_guests **slot,qa_error *error)
 {
@@ -205,6 +223,8 @@ bool frontend_video_guests_abort(frontend_video_guests **slot,qa_error *error)
         frontend_shared_resource_policy_finish(&owner->resources,error):
         frontend_shared_resource_policy_abort(&owner->resources,error))) return false;
     owner->resource_phase=false;
+    for(size_t i=owner->unified_count;i>0;--i)
+        if(!frontend_unified_q3_video_abort(owner->unified+i-1,error))return false;
     if (!frontend_video_guests_current(owner,error)) return false;
     for (size_t i=0;i<owner->remote_count;++i) {
         video_remote_row *row=owner->remote+i;
@@ -222,5 +242,5 @@ bool frontend_video_guests_abort(frontend_video_guests **slot,qa_error *error)
         !frontend_native_q3_video_abort(&owner->native,error) ||
         !application_q3_components_video_abort(&owner->components,error) ||
         !frontend_acoustics_source_bind(owner->frontend,error)) return false;
-    owner->frontend->video_guests=NULL; free(owner->remote); free(owner); *slot=NULL; return true;
+    owner->frontend->video_guests=NULL; free(owner->unified);free(owner->remote); free(owner); *slot=NULL; return true;
 }

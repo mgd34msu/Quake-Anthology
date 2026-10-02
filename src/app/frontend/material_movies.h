@@ -49,6 +49,7 @@ bool frontend_material_movies_cinematic_namespace_read(const frontend_material_m
 /* Reads retained frontend wall and canonical ENGINE timescale fields without
  * dispatching the source-current or clock callback. */
 bool frontend_material_movies_cinematic_clock_read(const frontend_material_movies *, double *, qa_error *);
+bool frontend_material_movies_cinematic_source_clock_read(const qa_frontend *,const qa_q3_cinematic_source *,double *,qa_error *);
 bool frontend_material_movies_library_owner(const qa_material_library *,
     frontend_material_movies **, qa_error *);
 bool frontend_material_movies_roster_count(const qa_frontend *, size_t *, qa_error *);

@@ -49,13 +49,13 @@ bool qa_q3_host_checkpoint_services(const qa_q3_host *host, qa_buffer *out, qa_e
         if (!qa_q3_host_checkpoint_portable_ready(host, error)) return false;
     } else {
         if (host->retired || host->calls || host->restore_pending || host->file_serial ||
-            host->script_generation || host->cvar_binding_count || host->cvar_cache_count ||
+            host->cvar_binding_count || host->cvar_cache_count ||
             host->bots_shutdown || (host->game && (host->game->entities || host->game->clients ||
                 host->game->entity_count || host->game->entity_stride || host->game->client_stride ||
                 host->game->portal_count)))
             return q3_fail(error, QA_ERROR_ARGUMENT, 0, "Prepared Q3 services retain mutable executor state");
         for (size_t i = 1; i < 64; ++i)
-            if (host->files[i].kind != Q3_FILE_CLOSED || host->scripts[i])
+            if (host->files[i].kind != Q3_FILE_CLOSED || q3_script_member(host, i))
                 return q3_fail(error, QA_ERROR_ARGUMENT, i, "Prepared Q3 services retain entered file or script state");
         for (size_t i = 0; host->game && i < 1024; ++i)
             if (host->game->slots[i].actor.registry || host->game->slots[i].input_motion || host->game->slots[i].input_retired)
@@ -266,8 +266,8 @@ static bool idle(qa_q3_host *host, qa_error *error)
     if (!host || host->retired || host->restore_pending || host->calls)
         return q3_fail(error, QA_ERROR_ARGUMENT, 0, "Q3 checkpoint requires an idle live host");
     for (size_t i = 1; i < 64; ++i)
-        if (host->script_pending[i] || (host->scripts[i] &&
-            (host->scripts[i]->operations || host->scripts[i]->retired)))
+        if (host->script_namespace->pending[i] || (host->script_namespace->scripts[i] &&
+            (host->script_namespace->scripts[i]->operations || host->script_namespace->scripts[i]->retired)))
             return q3_fail(error, QA_ERROR_ARGUMENT, i, "Q3 script checkpoint operation is active");
     return true;
 }
@@ -317,6 +317,11 @@ static bool save_file(checkpoint_writer *writer, size_t slot, const q3_file *fil
 bool qa_q3_host_checkpoint(qa_q3_host *host, qa_buffer *out, qa_error *error)
 {
     if (!out || !idle(host, error)) return false;
+    for (size_t i=1;i<64;++i)
+        if (q3_script_member(host,i) &&
+            !qa_vfs_lookup_equal(host->script_namespace->scripts[i]->mounts,host->options.mounts))
+            return q3_fail(error,QA_ERROR_UNSUPPORTED,i,
+                "PC continuation requires its originating content authority in the capturing source member");
     if (host->native && qa_native_get_backend(host->native) != QA_NATIVE_BACKEND_OWNED_PROCESS)
         return q3_fail(error, QA_ERROR_UNSUPPORTED, 0, "Native Q3 continuation requires an executor memory checkpoint");
     qa_buffer game = {0},bindings={0};
@@ -324,7 +329,7 @@ bool qa_q3_host_checkpoint(qa_q3_host *host, qa_buffer *out, qa_error *error)
     if (!q3_cvars_bindings_capture(host,&bindings,error)) { qa_buffer_free(&game); return false; }
     uint32_t files = 0, scripts = 0;
     for (size_t i = 1; i < 64; ++i) {
-        files += host->files[i].kind != Q3_FILE_CLOSED; scripts += host->scripts[i] != NULL;
+        files += host->files[i].kind != Q3_FILE_CLOSED; scripts += q3_script_member(host, i);
     }
     checkpoint_writer writer = {0};
     uint8_t header[64] = {'Q','3','H','C'};
@@ -333,7 +338,7 @@ bool qa_q3_host_checkpoint(qa_q3_host *host, qa_buffer *out, qa_error *error)
     qa_store_u32le(header + 20, scripts);
     qa_store_u64le(header + 24, game.size);
     qa_store_u64le(header + 32, host->file_serial);
-    qa_store_u64le(header + 40, host->script_generation);
+    qa_store_u64le(header + 40, host->script_namespace->generation);
     qa_store_u32le(header + 48, host->bots_shutdown);
     qa_store_u64le(header+56,bindings.size);
     for (size_t i = 1; i < 64; ++i)
@@ -372,9 +377,9 @@ bool qa_q3_host_checkpoint(qa_q3_host *host, qa_buffer *out, qa_error *error)
     for (size_t i = 1; ok && i < 64; ++i)
         if (host->files[i].kind != Q3_FILE_CLOSED) ok = save_file(&writer, i, &host->files[i], error);
     for (size_t i = 1; ok && i < 64; ++i) {
-        if (!host->scripts[i]) continue;
+        if (!q3_script_member(host, i)) continue;
         qa_script_checkpoint state = {0}; qa_buffer encoded = {0};
-        ok = qa_script_capture(host->scripts[i]->reader, &state, error) &&
+        ok = qa_script_capture(host->script_namespace->scripts[i]->reader, &state, error) &&
              qa_script_checkpoint_encode(&state, &encoded, error);
         if (ok) {
             uint8_t row[16] = {0};
@@ -467,7 +472,7 @@ bool qa_q3_host_restore(qa_q3_host *host, qa_bytes input, qa_error *error)
                 return q3_fail(error, QA_ERROR_ARGUMENT, i, "Q3 restore requires unpublished source actor bindings");
     }
     for (size_t i = 1; i < 64; ++i)
-        if (host->files[i].kind != Q3_FILE_CLOSED || host->scripts[i])
+        if (host->files[i].kind != Q3_FILE_CLOSED || q3_script_member(host, i))
             return q3_fail(error, QA_ERROR_ARGUMENT, i, "Q3 restore requires an unpublished empty host");
     if (!input.data || input.size < 64 || memcmp(input.data, "Q3HC", 4) ||
         qa_load_u32le(input.data + 4) != 6 || qa_load_u32le(input.data + 8) != (uint32_t)host->options.role ||
@@ -477,6 +482,9 @@ bool qa_q3_host_restore(qa_q3_host *host, qa_bytes input, qa_error *error)
     uint64_t game_size = qa_load_u64le(input.data + 24);
     uint64_t file_serial = qa_load_u64le(input.data + 32);
     uint64_t script_generation = qa_load_u64le(input.data + 40);
+    for (size_t i=1;i<64;++i)
+        if (host->script_namespace->scripts[i] && host->script_namespace->generation != script_generation)
+            return q3_fail(error,QA_ERROR_FORMAT,i,"Restored PC namespace lifetime differs from its live peer");
     uint64_t bindings_size=qa_load_u64le(input.data+56);
     uint32_t bots_shutdown = qa_load_u32le(input.data + 48);
     if (file_count >= 64 || script_count >= 64 || bots_shutdown > 1 || qa_load_u32le(input.data + 52))
@@ -536,6 +544,9 @@ bool qa_q3_host_restore(qa_q3_host *host, qa_bytes input, qa_error *error)
         if (!slot || slot >= 64 || script_present[slot] || qa_load_u32le(row.data + 4) || size > SIZE_MAX) {
             ok = q3_fail(error, QA_ERROR_FORMAT, reader.offset, "invalid Q3 checkpoint script record"); break;
         }
+        if (host->script_namespace->scripts[slot]) {
+            ok=q3_fail(error,QA_ERROR_FORMAT,slot,"Restored PC handle overlaps its shared source namespace"); break;
+        }
         if (!take(&reader, (size_t)size, &bytes, error)) { ok = false; break; }
         script_present[slot]=true;
         ok = qa_script_checkpoint_decode(bytes, &script_states[slot], error);
@@ -546,20 +557,26 @@ bool qa_q3_host_restore(qa_q3_host *host, qa_bytes input, qa_error *error)
      * can affect its external owner. */
     for (size_t i=1;ok && i<64;++i) if (files[i].kind==Q3_FILE_WRITE)
         ok=q3_write_file_resume(&host->options.write_view,&writable[i],&files[i].writable,error);
-    qa_script_services services = q3_script_services(host);
     for (size_t i=1;ok && i<64;++i) if (script_present[i]) {
         scripts[i]=calloc(1,sizeof(*scripts[i]));
         if (!scripts[i]) { ok=q3_fail(error,QA_ERROR_MEMORY,i,"restoring Q3 script handle"); break; }
+        if (!host->options.mounts || !qa_vfs_retain(host->options.mounts,error)) {
+            ok=false; break;
+        }
+        scripts[i]->mounts=host->options.mounts;
+        qa_script_services services=q3_script_handle_services(scripts[i],host);
         ok=qa_script_restore(&services,&script_states[i],&scripts[i]->reader,error);
+        scripts[i]->entered=NULL;
     }
     if (ok) {
         ok = q3_game_checkpoint_install(host, game, error);
         game = NULL;
     }
     if (ok) {
-        memcpy(host->files, files, sizeof(files)); memcpy(host->scripts, scripts, sizeof(scripts));
+        memcpy(host->files, files, sizeof(files));
+        for (size_t i=1;i<64;++i) if (scripts[i]) host->script_namespace->scripts[i]=scripts[i];
         host->file_serial = file_serial;
-        host->script_generation = script_generation;
+        host->script_namespace->generation = script_generation;
         host->bots_shutdown = bots_shutdown != 0;
         host->clip_bounds = clip_bounds; host->clip_brush = clip_brush;
         host->entity_cursor = restored_cursor; host->entity_parser = restored_parser;

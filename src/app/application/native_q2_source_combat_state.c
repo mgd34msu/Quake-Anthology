@@ -145,7 +145,8 @@ bool application_native_q2_source_combat_state_read(application_native_q2_source
 bool application_native_q2_source_combat_projection_read(application_native_q2_source_combat_state *o,
     qa_actor_id actor,qa_combat_state *out,qa_error *e)
 {
-    if(!out)return false;qa_native_address base,after;
+    if(!out)return false;
+    qa_native_address base,after;
     return projection_address(o,actor,&base,e)&&state_at(o,actor,base,out,e)&&
         projection_address(o,actor,&after,e)&&base==after;
 }

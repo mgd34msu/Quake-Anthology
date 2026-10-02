@@ -1147,8 +1147,14 @@ static bool advance_session(qa_session *session, uint64_t elapsed_ns,
             if (!entry->in_frame) continue;
             entry->clock.frame.phase = QA_FRAME_EXIT;
             entry->clock.frame.time_ns = entry->clock.frame.start_ns + entry->clock.frame.elapsed_ns;
-            entry->in_frame = false;
         }
+        frame_count = collect_active_frames(session);
+        if (session->options.frame_exit != NULL)
+            ok = session->options.frame_exit(session->options.release_context, session,
+                session->active_frames, frame_count, host_boundary, error);
+        if (!ok || session->faulted) { ok = false; break; }
+        for (uint32_t i = 0; i < session->options.component_capacity; ++i)
+            session->components[i].in_frame = false;
     }
     if (ok && !session->faulted && !completed_boundary)
         ok = command_boundary(session, error);
@@ -1273,6 +1279,11 @@ bool qa_session_round_step(qa_session *session, qa_actor_owner owner, uint64_t e
     }
     entry->clock.frame.phase = QA_FRAME_EXIT;
     entry->clock.frame.time_ns = start + elapsed_ns;
+    if (ok && !session->faulted && session->options.frame_exit != NULL) {
+        size_t count = collect_active_frames(session);
+        ok = session->options.frame_exit(session->options.release_context, session,
+            session->active_frames, count, session->frame_host_ns, error);
+    }
     entry->in_frame = false;
     session->stepping = false;
     if (!ok) fault(session, error);

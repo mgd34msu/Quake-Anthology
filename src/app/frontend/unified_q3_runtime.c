@@ -1,5 +1,6 @@
 #include "unified_q3_runtime_private.h"
 #include "unified_q3_runtime_video.h"
+#include "source_renderer_runtime.h"
 #include "../../presentation/q3_native/packet_compiled.h"
 #include "../../presentation/q3_native/marks.h"
 #include "../../presentation/q3_native/local_entities.h"
@@ -390,15 +391,18 @@ static bool initialize(void *ctx,const q3n_compiled_frame *r,qa_error *e)
         q3n_server_commands_initialize(o->children.commands,&f,r->source.basis.initial_command,e);
     return end(o,okay,e); }
 bool frontend_unified_q3_runtime_initialize(frontend_unified_q3_runtime *o,qa_error *e)
-{ if(!frontend_unified_q3_runtime_current(o) || o->initialized || o->video || !frontend_unified_q3_runtime_idle(o))
-    return fail(e,"Unified CG Init requires its real fresh constructor");
-    if(!frontend_unified_q3_snapshots_initialize(o->children.snapshots,initialize,o,e))return false;
+{
+    if(!frontend_unified_q3_runtime_current(o) || o->initialized || o->video || !frontend_unified_q3_runtime_idle(o))
+        return fail(e,"Unified CG Init requires its real fresh constructor");
+    if(!frontend_unified_q3_snapshots_initialize(o->children.snapshots,initialize,o,e) ||
+        !frontend_source_renderer_end_registration(o->options.frontend,e))return false;
     o->initialized=true; return true; }
 bool frontend_unified_q3_runtime_initialize_video(frontend_unified_q3_runtime *o,qa_error *e)
 {
     if(!frontend_unified_q3_runtime_current(o) || o->initialized || !o->video_constructor || !o->video ||
        !frontend_unified_q3_runtime_video_current(o->video,e))return fail(e,"Unified video Init requires its actual retained CLIENT ticket");
-    if(!frontend_unified_q3_snapshots_initialize(o->children.snapshots,initialize,o,e))return false;
+    if(!frontend_unified_q3_snapshots_initialize(o->children.snapshots,initialize,o,e) ||
+        !frontend_source_renderer_end_registration(o->options.frontend,e))return false;
     o->initialized=true; o->video_constructor=false; return true;
 }
 bool frontend_unified_q3_runtime_prepare(frontend_unified_q3_runtime *o,uint32_t stereo,qa_error *e)
@@ -413,7 +417,8 @@ bool frontend_unified_q3_runtime_prepare(frontend_unified_q3_runtime *o,uint32_t
     if(okay) { o->information_prepared=!o->options.scene_only && *text!=0;
         if(!o->information_prepared)okay=qa_q3_presentation_clear_loops(o->children.presentation,false,e) &&
             qa_q3_presentation_clear(o->children.presentation,e); }
-    if(!okay)o->faulted=true; return okay;
+    if(!okay)o->faulted=true;
+    return okay;
 }
 bool frontend_unified_q3_runtime_process(frontend_unified_q3_runtime *o,int32_t time,bool *active,qa_error *e)
 {
@@ -455,7 +460,8 @@ bool frontend_unified_q3_runtime_prediction(frontend_unified_q3_runtime *o,const
         actual.outcome=FRONTEND_UNIFIED_Q3_INTERPOLATED;actual.teleport_consumed=false;
     }
     bool okay=frontend_unified_q3_snapshots_prediction(o->children.snapshots,player,&actual,correction,time,hyperspace,e);
-    if(okay)o->prediction_applied=true;return okay;
+    if(okay)o->prediction_applied=true;
+    return okay;
 }
 bool frontend_unified_q3_runtime_prediction_baseline_read(const frontend_unified_q3_runtime *o,
     frontend_unified_q3_runtime_prediction_baseline *out,qa_error *e)
@@ -631,7 +637,7 @@ bool frontend_unified_q3_runtime_scene_camera(frontend_unified_q3_runtime *o,con
 {
     if(!view || !frontend_unified_q3_runtime_current(o) || !o->options.scene_only || !o->prepared ||
        o->scene_prepared ||
-       !frontend_unified_q3_runtime_idle(o) || view->viewport.width<=0 || view->viewport.height<=0 ||
+       !frontend_unified_q3_runtime_idle(o) || view->viewport.width<=0 || view->viewport.height<=0 || view->viewport.width>INT32_MAX || view->viewport.height>INT32_MAX ||
        !qa_vec_finite(view->origin) || !qa_vec_finite(view->axis[0]) || !qa_vec_finite(view->axis[1]) ||
        !qa_vec_finite(view->axis[2]) || !isfinite(view->projection.m[0]) || view->projection.m[0]<=0 ||
        !isfinite(view->projection.m[5]) || view->projection.m[5]<=0)
@@ -642,7 +648,7 @@ bool frontend_unified_q3_runtime_scene_camera(frontend_unified_q3_runtime *o,con
     if(!frontend_unified_q3_snapshots_read(o->children.snapshots,&r,e))return false;
     o->refdef.origin=view->origin;memcpy(o->refdef.axis,view->axis,sizeof(o->refdef.axis));
     o->refdef.x=view->viewport.x;o->refdef.y=view->viewport.y;
-    o->refdef.width=view->viewport.width;o->refdef.height=view->viewport.height;
+    o->refdef.width=(int32_t)view->viewport.width;o->refdef.height=(int32_t)view->viewport.height;
     o->refdef.fov_x=(float)(atan(1.0/(double)view->projection.m[0])*360.0/3.14159265358979323846);
     o->refdef.fov_y=(float)(atan(1.0/(double)view->projection.m[5])*360.0/3.14159265358979323846);
     o->refdef.time=r.time;memcpy(o->refdef.area_mask,r.snapshot->area_mask,sizeof(o->refdef.area_mask));
@@ -658,7 +664,8 @@ static bool draw(frontend_unified_q3_runtime *o,bool gather,bool *rendered,qa_er
         if(gather)return true;
         q3n_compiled_stage stage=o->information_prepared?Q3N_COMPILED_LOADING_INFORMATION:Q3N_COMPILED_AWAITING_SNAPSHOT;
         bool okay=frontend_unified_q3_snapshots_entered_draw(o->children.snapshots,stage,o->presentation_time,information_draw,o,e);
-        if(okay)*rendered=o->rendered=true; return okay;
+        if(okay)*rendered=o->rendered=true;
+        return okay;
     }
     if(!o->prediction_applied)return fail(e,"Compiled draw has not consumed its actual prediction outcome");
     if(o->options.scene_only) {
@@ -880,7 +887,8 @@ bool frontend_unified_q3_runtime_frame_end(frontend_unified_q3_runtime *o,bool c
     memset(o->packet_handled,0,sizeof(o->packet_handled));memset(o->packet_actors,0,sizeof(o->packet_actors));
     o->scene_bank=NULL;o->scene_light_count=0;
     o->prepared=false; o->prediction_prepared=false;o->prediction_applied=false; o->information_prepared=false;
-    if(!completed)o->faulted=true; return true;
+    if(!completed)o->faulted=true;
+    return true;
 }
 bool frontend_unified_q3_runtime_command_call(frontend_unified_q3_runtime *o,const q3n_compiled_frame *r,
     void *context,bool (*execute)(void *,const q3n_frame *,const frontend_unified_q3_runtime_owners *,qa_error *),qa_error *e)
@@ -952,8 +960,10 @@ void frontend_unified_q3_runtime_rebind_commit(frontend_unified_q3_runtime *o,co
 { if(!frontend_unified_q3_runtime_rebind_ready(o,f))return;
     const q3n_compiled_source_rebind_ticket *t=frontend_unified_q3_client_frame_rebind(f);
     q3n_server_commands_rebind_commit(o->children.commands,t);
-    if(o->children.mission)q3n_mission_hud_rebind_commit(o->children.mission,t); o->rebind=NULL; }
+    if(o->children.mission)q3n_mission_hud_rebind_commit(o->children.mission,t);
+    o->rebind=NULL; }
 void frontend_unified_q3_runtime_rebind_abort(frontend_unified_q3_runtime *o,const frontend_unified_q3_client_frame *f)
 { if(!o || o->rebind!=f)return; const q3n_compiled_source_rebind_ticket *t=frontend_unified_q3_client_frame_rebind(f);
     q3n_server_commands_rebind_abort(o->children.commands,t);
-    if(o->children.mission)q3n_mission_hud_rebind_abort(o->children.mission,t); o->rebind=NULL; }
+    if(o->children.mission)q3n_mission_hud_rebind_abort(o->children.mission,t);
+    o->rebind=NULL; }

@@ -45,14 +45,11 @@ typedef struct bot_ai_state {
     qa_bot_view view;
     qa_bot_player player;
     uint32_t character, goals, weapons, chat, movement, area, travel_flags;
-    float long_term_until, nearby_until, stand_until, stand_enemy_time;
     float admitted_skill;
     char *admitted_character;
     char *admitted_name;
-    float chase_time;
-    float check_time;
-    float state_time, chase_until;
-    float blocked_time, not_blocked_time;
+    float state_time;
+    float blocked_time;
     uint32_t last_enemy_area;
     bool team_arena, retired;
     uint64_t command_sequence;
@@ -66,9 +63,6 @@ typedef struct bot_ai_state {
     int32_t decisionmaker, long_term_goal, teammate;
     qa_bot_goal team_goal;
     bool ordered;
-    float order_time, team_message_time, team_goal_time, teammate_visible_time;
-    float formation_distance, arrive_time, defend_away_time, harvest_away_time;
-    float attack_away_time, rush_base_away_time, lead_time;
     bot_source_order_state source_order;
     bot_source_team_policy_state source_team_policy;
     bot_source_events_state source_events;

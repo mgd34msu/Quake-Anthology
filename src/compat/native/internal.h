@@ -300,6 +300,7 @@ void native_observer_dispatch(ffi_cif *cif, void *result, void **arguments, void
 bool native_direct_open(qa_native_instance *instance, qa_error *error);
 bool native_process_open(qa_native_instance *, const qa_native_process_options *, qa_error *);
 bool native_process_close(qa_native_instance *, qa_error *);
+bool native_process_reload(qa_native_instance *, qa_error *);
 bool native_process_export(const qa_native_instance *, const char *, qa_native_address *, qa_error *);
 bool native_process_invoke(qa_native_instance *, qa_native_address,
     const qa_native_signature *, const qa_native_value *, size_t, qa_native_value *, qa_error *);

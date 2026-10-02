@@ -18,6 +18,13 @@ void guest_elf_loaded_abandon(guest_elf_loaded **owner)
     free(*owner); *owner = NULL;
 }
 
+bool guest_elf_loaded_unmap(guest_elf_loaded *owner, qa_error *error)
+{
+    if (!owner || !owner->committed || !guest_sysv_idle(owner->runtime))
+        return guest_fail(error, QA_ERROR_ARGUMENT, 0, "ELF reload requires its finalized stopped module attachment");
+    return guest_elf_memory_close(&owner->memory, error);
+}
+
 bool guest_elf_load(const guest_elf *elf, guest_sysv_runtime *runtime,
     const guest_elf_load_options *options, guest_elf_loaded **out, qa_error *error)
 {
@@ -43,10 +50,12 @@ bool guest_elf_load(const guest_elf *elf, guest_sysv_runtime *runtime,
         .provider = options->provider, .return_trap = options->return_trap,
         .instruction_budget = options->instruction_budget};
     bool okay = guest_elf_memory_write_begin(owner->memory, error) &&
+        (options->replacing ? guest_sysv_reload_begin(runtime, options->provider,
+            &ticket, &binding.tls, error) :
         guest_sysv_load_begin(runtime, options->provider, image->tls != NULL,
             image->tls ? image->tls->memory_bytes : 0,
             image->tls && image->tls->alignment ? image->tls->alignment : 1,
-            &ticket, &binding.tls, error);
+            &ticket, &binding.tls, error));
     for (size_t i = 0; okay && i < image->symbol_count; ++i) {
         const guest_elf_symbol *symbol = image->symbols + i;
         if (!symbol->name[0] || !symbol->section || symbol->binding != 10 ||

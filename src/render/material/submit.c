@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "source_scratch_private.h"
+#include "../controls_private.h"
 #include "qa/scene_effects.h"
 #include "qa/q3_source_scene_bank.h"
 #include "qa/material_library_save.h"
@@ -442,6 +443,7 @@ static bool emit_dlights(const qa_material *material, const qa_material *origina
         uint8_t *clip = frame_array(frame, geometry->vertex_count, sizeof(*clip), alignof(uint8_t), error);
         uint32_t *indices = frame_array(frame, geometry->index_count, sizeof(*indices), alignof(uint32_t), error);
         if (vertices == NULL || clip == NULL || indices == NULL) return false;
+        if (context->source_scratch) context->source_scratch->owner->counters.dlight_vertices+=geometry->vertex_count;
         float scale = 1.0f / light->radius;
         for (size_t v = 0; v < geometry->vertex_count; ++v) {
             vertices[v] = geometry->vertices[v];
@@ -477,6 +479,7 @@ static bool emit_dlights(const qa_material *material, const qa_material *origina
         draw.mesh.vertices = vertices;
         draw.mesh.indices = indices;
         draw.mesh.index_count = count;
+        if (context->source_scratch) context->source_scratch->owner->counters.dlight_indexes+=count;
         draw.textures[0] = dlight;
         draw.texture_count = 1;
         draw.state.blend_source = light->additive ? QA_BLEND_ONE : QA_BLEND_DST_COLOR;
@@ -1263,6 +1266,11 @@ static bool source_flush(qa_material_source_scratch *source, const material_sour
         return source->issuing || qa_scene_frame_group(frame, first, QA_SCENE_GROUP_SEQUENCE, row->original,
             row->original->sort, context.entity, context.fog_index, 0, error);
     }
+    if (!context.source_diagnostics.debug_sort || context.source_diagnostics.debug_sort>=material->sort) {
+        ++source->owner->counters.shaders;
+        source->owner->counters.vertices+=source->vertex_count;
+        source->owner->counters.indexes+=source->index_count;
+    }
     if (material->sky && (context.source_scratch || context.source_surface)) {
         if (source->indices[QA_SOURCE_TESS_INDEXES - 1] != 0 || source->vertices[QA_SOURCE_TESS_VERTICES - 1].position.x != 0) {
             qa_error_set(error, QA_ERROR_FORMAT, 0, "Source tess sentinel was overwritten"); return false;
@@ -1380,6 +1388,7 @@ static bool source_dispatch_scene(qa_material_source_scratch *source, qa_scene_f
     bool old_depth_range = false;
     for (size_t i = 0; ok && submit && i < count; ++i) {
         material_source_submission *row = rows[ordered[i]->ordinal];
+        ++source->owner->counters.surfaces;
         uint32_t next_key = row->packed_sort;
         if (!source->pictures) {
             material_source_submission *decoded = decoded_rows + decoded_count;

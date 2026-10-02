@@ -41,7 +41,7 @@ struct guest_sysv_load {
     guest_sysv_runtime *runtime;
     uint64_t provider, next_used;
     guest_sysv_tls tls;
-    bool has_tls;
+    bool has_tls, replacing;
 };
 struct guest_sysv_runtime {
     qa_native_guest *guest;

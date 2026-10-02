@@ -17,6 +17,23 @@ typedef struct qa_render_source_restart_values {
     qa_scene_filter filter;
 } qa_render_source_restart_values;
 
+typedef struct qa_render_source_frame_values {
+    int32_t finish, show_images, speeds;
+    bool measure_overdraw, no_bind;
+} qa_render_source_frame_values;
+typedef struct qa_render_source_counters {
+    uint64_t shaders, surfaces, vertices, indexes, total_indexes, overdraw;
+    uint64_t leaves, dlight_surfaces, dlight_culled, dlight_vertices, dlight_indexes;
+    uint64_t patch_sphere[3], patch_box[3], md3_sphere[3], md3_box[3];
+    uint64_t flare_adds, flare_tests, flare_renders;
+    int32_t view_cluster;
+    float far_clip;
+} qa_render_source_counters;
+bool qa_render_controls_source_frame_policy(qa_render_controls *,const qa_render_source_frame_values *,qa_error *);
+bool qa_render_controls_source_print_bind(qa_render_controls *,void (*)(void *,const char *),void *,qa_error *);
+bool qa_render_controls_source_begin_frame(qa_render_controls *,qa_error *);
+bool qa_render_controls_source_image_grid(qa_render_controls *,int32_t,qa_error *);
+
 /* These are the actual renderer's settings; the renderer owns their lifetime. */
 qa_render_controls *qa_cpu_render_controls(qa_cpu_renderer *);
 qa_render_controls *qa_gl_render_controls(qa_gl_renderer *);

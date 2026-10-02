@@ -1,4 +1,5 @@
 #include "guest_q3_save.h"
+#include "guest_q3_catalog.h"
 #include "guest_checkpoint.h"
 #include "guest_input_private.h"
 #include "guest_projection_private.h"
@@ -1227,8 +1228,8 @@ static bool saved_collect(application_provider *provider,
                 saved_free(saved); return false;
             }
             const saved_role *prior = NULL;
-            for (size_t j = 0; expected && j < expected->role_count; ++j)
-                if (expected->roles[j].owner == row->owner) prior = expected->roles + j;
+            for (size_t k = 0; expected && k < expected->role_count; ++k)
+                if (expected->roles[k].owner == row->owner) prior = expected->roles + k;
             if (prior) {
                 qa_bytes lower = prior->lower_resources;
                 const qa_native_process_resources *held = NULL;

@@ -82,6 +82,9 @@ qa_native_guest *qa_native_windows_process_guest(const qa_native_windows_process
 bool qa_native_windows_process_artifact_read(const qa_native_windows_process *, uint64_t,
     qa_native_windows_artifact *, qa_error *);
 bool qa_native_windows_process_initialize(qa_native_windows_process *, uint64_t, qa_error *);
+/* Genuine DLL detach, new source image backing/imports/CFG and process attach.
+ * The actual process, capability graph and static TLS slot stay owned here. */
+bool qa_native_windows_process_reload(qa_native_windows_process *, uint64_t, qa_error *);
 bool qa_native_windows_process_finalize(qa_native_windows_process *, uint64_t, qa_error *);
 bool qa_native_windows_process_finalize_all(qa_native_windows_process *, qa_error *);
 /* Registers an already acquired capability for the exact source fopen name.

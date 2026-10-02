@@ -152,7 +152,8 @@ static bool retirement_receipt_hold(frontend_remote_q2_source *source, qa_error 
 {
     qa_application_client_source actual;
     if (!source->options.retirement_current || source->calls ||
-        !qa_application_client_physical_read(source->domain.application, source->domain.command_context.owner,
+        source->domain.command_context.owner > UINT32_MAX ||
+        !qa_application_client_physical_read(source->domain.application, (qa_actor_owner)source->domain.command_context.owner,
             source->domain.command_context.seat, &actual, error) ||
         !qa_application_client_retirement_current(source->domain.application, &actual)) return false;
     ++source->calls;
@@ -269,17 +270,21 @@ static qa_command_result forward(void *context, const qa_command_invocation *inv
 }
 static bool allowed(void *context, const char *path, bool *result, qa_error *error)
 { frontend_remote_q2_source *source = context; return source->options.client.download_allowed(source->options.client.context, path, result, error); }
-static bool nonce(void *context, uint64_t *out, qa_error *error)
-{ frontend_remote_q2_source *source = context; return source->options.client.download_nonce(source->options.client.context, out, error); }
+static bool download_stage(void *context, qa_fs_root *root, const char *path,
+    qa_fs_stage **out, uint64_t *nonce, qa_error *error)
+{
+    frontend_remote_q2_source *source = context;
+    return source->options.client.download_stage(source->options.client.context, root, path, out, nonce, error);
+}
 static bool restore_stage(void *context, qa_fs_root *root, const char *path, uint64_t logical_nonce,
-    qa_bytes prefix, qa_fs_stage **out, uint64_t *native_nonce, qa_error *error)
+    bool published, qa_bytes prefix, qa_fs_stage **out, uint64_t *native_nonce, qa_fs_identity *identity, qa_error *error)
 {
     frontend_remote_q2_source *source = context;
     if (!source || source->closing || source->calls || !source->frontend->source_restoring ||
         !source->options.client.restore_stage) return false;
     ++source->calls;
     bool ok = source->options.client.restore_stage(source->options.client.context, root, path,
-        logical_nonce, prefix, out, native_nonce, error);
+        logical_nonce, published, prefix, out, native_nonce, identity, error);
     --source->calls; return ok;
 }
 static bool entity_actor(void *context, const frontend_remote_q2_domain *domain,
@@ -383,7 +388,7 @@ bool frontend_remote_q2_source_create(qa_frontend *f, const frontend_remote_q2_s
 {
     if (!f || f->capture || f->resource_inventory || !options || !out || *out || !options->print || !options->prepare_namespace || !options->configure ||
         !options->admit_content || !options->client.current || !!options->read_script != !!options->release_script ||
-        !options->client.download_allowed || !options->client.download_nonce || !options->client.records || !options->client.disconnected ||
+        !options->client.download_allowed || !options->client.download_stage || !options->client.records || !options->client.disconnected ||
         options->client.domain.application != f->application || options->client.domain.console || options->client.domain.cvars ||
         options->client.domain.catalog != options->metadata.catalog || options->client.domain.product != options->metadata.profile ||
         options->client.domain.command_context.script)
@@ -468,7 +473,7 @@ bool frontend_remote_q2_source_advance(frontend_remote_q2_source *source, bool *
     frontend_remote_q2_options child = {.domain = source->domain, .context = source, .current = current,
         .retirement_current = retirement_current,
         .material_scripts = options->client.material_scripts,
-        .download_allowed = allowed, .download_nonce = nonce,
+        .download_allowed = allowed, .download_stage = download_stage,
         .restore_stage = options->client.restore_stage ? restore_stage : NULL, .records = records, .disconnected = disconnected,
         .entity_actor = options->client.entity_actor ? entity_actor : NULL,
         .entities_changed = options->client.entities_changed ? entities_changed : NULL,
@@ -618,7 +623,8 @@ bool frontend_remote_q2_source_retirement_custody_read(const frontend_remote_q2_
             !source->receiver->retiring || !remote_q2_domain_equal(&source->domain, &source->receiver->options.domain))) ||
         !frontend_remote_q2_source_owner_current(source, descriptor, source->console, source->domain.cvars,
             &source->domain.command_context, error) ||
-        !qa_application_client_physical_read(source->domain.application, source->domain.command_context.owner,
+        source->domain.command_context.owner > UINT32_MAX ||
+        !qa_application_client_physical_read(source->domain.application, (qa_actor_owner)source->domain.command_context.owner,
             source->domain.command_context.seat, &actual, error) ||
         !qa_application_client_retirement_current(source->domain.application, &actual))
         return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 disconnect checkpoint lost its physical CLIENT custody");
@@ -827,7 +833,7 @@ bool frontend_remote_q2_source_restore_prepare(qa_frontend *f,
             !saved->receiver.data || !saved->receiver.size) :
             (saved->receiver.data || saved->receiver.size || domain->client.owner || saved->selected)) ||
         !options->print || !options->admit_content || !options->client.current || !!options->read_script != !!options->release_script ||
-        !options->client.download_allowed || !options->client.download_nonce || !options->client.records ||
+        !options->client.download_allowed || !options->client.download_stage || !options->client.records ||
         !options->client.disconnected || domain->application != f->application || !domain->runtime ||
         (domain->client.owner ? (!domain->client.generation || !domain->epoch || !domain->seat.owner) :
             (domain->client.generation || domain->client.slot || domain->epoch || domain->seat.owner || domain->seat.index)) ||
@@ -913,7 +919,7 @@ bool frontend_remote_q2_source_restore_prepare(qa_frontend *f,
     frontend_remote_q2_options child = {.domain = source->domain, .context = source, .current = current,
         .retirement_current = retirement_current,
         .material_scripts = options->client.material_scripts,
-        .download_allowed = allowed, .download_nonce = nonce,
+        .download_allowed = allowed, .download_stage = download_stage,
         .restore_stage = options->client.restore_stage ? restore_stage : NULL, .records = records, .disconnected = disconnected,
         .entity_actor = options->client.entity_actor ? entity_actor : NULL, .content_admit = content_admit,
         .entities_changed = options->client.entities_changed ? entities_changed : NULL,

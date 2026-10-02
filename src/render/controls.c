@@ -3,7 +3,12 @@
 #include "qa/scene_world_save.h"
 #include "qa/q3_assets_custody.h"
 #include <stdlib.h>
+#include <string.h>
 #include <math.h>
+#include <stdio.h>
+#include <inttypes.h>
+#include "qa/render_cpu.h"
+#include "qa/render_gl.h"
 
 struct qa_render_controls_ticket {
     qa_render_controls *controls;
@@ -734,6 +739,8 @@ void qa_render_source_direct_state(qa_scene_state *out,const qa_scene_state *cur
         out->wireframe=false;
         out->cull=QA_CULL_NONE;
         break;
+    case QA_SOURCE_DIRECT_IMAGE_GRID:
+        break;
     case QA_SOURCE_DIRECT_SHADOW_FINISH:
         qa_render_source_state_bits(out,true,false);
         out->blend_source=QA_BLEND_DST_COLOR;
@@ -783,7 +790,7 @@ static bool source_draw_attributes(const qa_scene_draw *draw)
 }
 static bool source_direct_coordinates(const qa_scene_draw *draw)
 {
-    return draw->source_direct==QA_SOURCE_DIRECT_SKY || draw->source_direct==QA_SOURCE_DIRECT_RAW;
+    return draw->source_direct==QA_SOURCE_DIRECT_SKY || draw->source_direct==QA_SOURCE_DIRECT_RAW || draw->source_direct==QA_SOURCE_DIRECT_IMAGE_GRID;
 }
 static bool source_uniform_image(const qa_render_controls *controls,const qa_scene_image *image)
 {
@@ -1213,4 +1220,91 @@ bool qa_render_strip_next(const uint32_t *indices, size_t count, size_t *cursor,
 uint32_t qa_render_strip_vertex(const qa_render_strip *strip, size_t ordinal)
 {
     return strip->indices[ordinal < 3 ? ordinal : (ordinal - 2) * 3 + 2];
+}
+
+bool qa_render_controls_source_print_bind(qa_render_controls *controls,void (*print)(void *,const char *),
+    void *context,qa_error *error)
+{
+    if (!current(controls) || controls->ticket || controls->image_ticket || controls->source.entered || !print)
+        return fail(error,"Source renderer printing requires its actual idle physical owner");
+    controls->source_print=print; controls->source_print_context=context; return true;
+}
+bool qa_render_controls_source_frame_policy(qa_render_controls *controls,const qa_render_source_frame_values *values,
+    qa_error *error)
+{
+    if (!source_current(controls) || controls->ticket || controls->image_ticket || !values)
+        return fail(error,"Source frame diagnostics require their actual renderer owner");
+    controls->frame_values=*values;
+    return controls->backend==QA_RENDER_CONTROLS_CPU?qa_cpu_source_overdraw(controls,values->measure_overdraw,error):
+        qa_gl_source_overdraw(controls,values->measure_overdraw,error);
+}
+bool qa_render_controls_source_begin_frame(qa_render_controls *controls,qa_error *error)
+{
+    if (!source_current(controls) || controls->ticket || controls->image_ticket)
+        return fail(error,"Source BeginFrame diagnostics lost their physical owner");
+    controls->finish_called=false;
+    return true;
+}
+bool qa_render_controls_source_image_grid(qa_render_controls *controls,int32_t mode,qa_error *error)
+{
+    if (!source_current(controls) || controls->ticket || controls->image_ticket)
+        return fail(error,"Source image grid lost its physical image owner");
+    return controls->backend==QA_RENDER_CONTROLS_CPU?qa_cpu_source_image_grid(controls,mode,error):
+        qa_gl_source_image_grid(controls,mode,error);
+}
+
+void qa_render_source_report(qa_render_controls *controls,uint32_t width,uint32_t height)
+{
+    qa_render_source_counters *pc=&controls->counters;
+    char text[512]={0};
+    switch (controls->frame_values.speeds) {
+    case 1: {
+        uint64_t pixels=0;
+        size_t count=controls->backend==QA_RENDER_CONTROLS_CPU?qa_cpu_source_images_metadata_count(controls):
+            qa_gl_source_images_metadata_count(controls);
+        for (size_t i=0;i<count;++i) {
+            if (!controls->image_used[i]) continue;
+            const qa_scene_image *image=controls->backend==QA_RENDER_CONTROLS_CPU?
+                qa_cpu_source_image_metadata_at(controls,i):qa_gl_source_image_metadata_at(controls,i);
+            if (image && image->level_count) pixels+=(uint64_t)image->levels[0].width*image->levels[0].height;
+        }
+        snprintf(text,sizeof(text),"%" PRIu64 "/%" PRIu64 " shaders/surfs %" PRIu64 " leafs %" PRIu64
+            " verts %" PRIu64 "/%" PRIu64 " tris %.2f mtex %.2f dc\n",pc->shaders,pc->surfaces,pc->leaves,
+            pc->vertices,pc->indexes/3,pc->total_indexes/3,(double)pixels/1000000,
+            width && height?(double)pc->overdraw/((double)width*height):0);
+        break;
+    }
+    case 2:
+        snprintf(text,sizeof(text),"(patch) %" PRIu64 " sin %" PRIu64 " sclip %" PRIu64 " sout %" PRIu64
+            " bin %" PRIu64 " bclip %" PRIu64 " bout\n(md3) %" PRIu64 " sin %" PRIu64 " sclip %" PRIu64
+            " sout %" PRIu64 " bin %" PRIu64 " bclip %" PRIu64 " bout\n",
+            pc->patch_sphere[0],pc->patch_sphere[1],pc->patch_sphere[2],pc->patch_box[0],pc->patch_box[1],pc->patch_box[2],
+            pc->md3_sphere[0],pc->md3_sphere[1],pc->md3_sphere[2],pc->md3_box[0],pc->md3_box[1],pc->md3_box[2]); break;
+    case 3: snprintf(text,sizeof(text),"viewcluster: %" PRId32 "\n",pc->view_cluster); break;
+    case 4:
+        if (pc->dlight_vertices) snprintf(text,sizeof(text),"dlight srf:%" PRIu64 " culled:%" PRIu64
+            " verts:%" PRIu64 " tris:%" PRIu64 "\n",pc->dlight_surfaces,pc->dlight_culled,pc->dlight_vertices,pc->dlight_indexes/3);
+        break;
+    case 5: snprintf(text,sizeof(text),"zFar: %.0f\n",(double)pc->far_clip); break;
+    case 6: snprintf(text,sizeof(text),"flare adds:%" PRIu64 " tests:%" PRIu64 " renders:%" PRIu64 "\n",
+        pc->flare_adds,pc->flare_tests,pc->flare_renders); break;
+    default: break;
+    }
+    if (text[0] && controls->source_print) controls->source_print(controls->source_print_context,text);
+    *pc=(qa_render_source_counters){0};
+    memset(controls->image_used,0,sizeof(controls->image_used));
+}
+
+void qa_render_source_image_used(qa_render_controls *controls,const qa_scene_image *image)
+{
+    if (!image) return;
+    size_t count=controls->backend==QA_RENDER_CONTROLS_CPU?qa_cpu_source_images_metadata_count(controls):
+        qa_gl_source_images_metadata_count(controls);
+    for (size_t i=0;i<count;++i) {
+        const qa_scene_image *slot=controls->backend==QA_RENDER_CONTROLS_CPU?qa_cpu_source_image_metadata_at(controls,i):
+            qa_gl_source_image_metadata_at(controls,i);
+        if (slot==image || (slot->identity==image->identity && qa_scene_image_resource_owner(slot)==qa_scene_image_resource_owner(image))) {
+            controls->image_used[i]=true; return;
+        }
+    }
 }

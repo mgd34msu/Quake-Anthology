@@ -177,6 +177,10 @@ static bool close(qa_bot_runtime *r,bool source,qa_bot_runtime_source_shutdown s
         qa_script_defines_clear(r->globals);
         if(source) {bool succeeded;if(!qa_bot_log_close(r->log,&succeeded,error)) return false;}
     }
+    r->busy=true;
+    bool pc_closed=qa_bot_library_pc_close(r->library,source,error);
+    r->busy=false;
+    if (!pc_closed) return false;
     if(source && sources) {
         r->busy=true;
         bool ok=sources(source_context,error);

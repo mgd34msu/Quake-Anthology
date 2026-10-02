@@ -80,12 +80,38 @@ static bool end_frame(void *state, qa_session *session, const qa_source_frame *f
     struct application_native_q2 *engine = state;
     if (!engine->map_ready) return true;
     application_native_q2_visibility_invalidate(engine);
-    if (engine->callbacks) return application_native_q2_stages_advance(engine, frame, error) &&
-        application_native_q2_visibility_complete(engine, error);
+    if (engine->callbacks) return true;
     ++engine->calls;
     bool ok = qa_native_host_run_frame(engine->provider->state.native.host, true, error);
     --engine->calls;
     return ok && application_native_q2_visibility_complete(engine, error);
+}
+
+bool application_native_q2_frames_exit(void *context,qa_session *session,
+    const qa_source_frame *frames,size_t count,uint64_t host_ns,qa_error *error)
+{
+    (void)host_ns;
+    qa_application *app=context;
+    if(!app||app->session!=session||(count&&!frames))
+        return application_fail(error,QA_ERROR_ARGUMENT,"Native source exit lost its actual session boundary");
+    application_provider *primary=application_world_provider(app,QA_ROLE_ENTITIES,"");
+    const qa_source_frame *frame=NULL;
+    for(size_t i=0;primary&&i<count;++i) if(frames[i].provider==primary->owner) {
+        if(frame) return application_fail(error,QA_ERROR_ARGUMENT,"Native source exit repeats the primary clock");
+        frame=frames+i;
+    }
+    if(!frame) return true;
+    if(frame->phase!=QA_FRAME_EXIT||frame->time_ns!=frame->start_ns+frame->elapsed_ns)
+        return application_fail(error,QA_ERROR_ARGUMENT,"Native source cadence requires the advanced primary exit clock");
+    for(size_t i=0;i<app->provider_count;++i) {
+        application_provider *p=app->providers[i];
+        struct application_native_q2 *n=p&&p->kind==APPLICATION_PROVIDER_NATIVE?p->state.native.q2_engine:NULL;
+        if(!n||!n->callbacks||!n->initialized||!n->map_ready||!p->constructed||!p->attached||p->close_pending)continue;
+        n->frame=*frame;n->frame.provider=p->owner;n->frame.kind=p->component.clock.kind;
+        if(!application_native_q2_stages_advance(n,frame,error)||
+            !application_native_q2_visibility_complete(n,error))return false;
+    }
+    return true;
 }
 
 static void actor_released(void *state, qa_session *session, qa_actor_record actor)
@@ -503,6 +529,67 @@ bool application_native_q2_activate(struct application_native_q2 *engine, qa_err
     return load_host(engine, error);
 }
 
+static bool declared_initialize(struct application_native_q2 *engine,qa_error *error)
+{
+    if(!engine->callbacks||engine->provider->application->operation==APPLICATION_PERSISTING)return true;
+    qa_source_frame frame;
+    if(!application_native_q2_stages_time_read(engine,&frame,error))return false;
+    application_native_callback_value values[]={
+        {.name="time",.kind=APPLICATION_NATIVE_VALUE_NUMBER,.value.number=(double)frame.time_ns/1e9},
+        {.name="elapsed",.kind=APPLICATION_NATIVE_VALUE_NUMBER,.value.number=(double)frame.elapsed_ns/1e9}
+    };
+    application_native_callback_inputs inputs={values,2,{0}};
+    bool accepted;
+    return application_native_q2_callbacks_run(engine,"initialize",&inputs,&accepted,error)&&
+        (accepted||application_fail(error,QA_ERROR_ARGUMENT,"Declared native source rejected initialization"));
+}
+
+bool application_native_q2_initialize_supplemental(application_provider *provider,
+    qa_string_id name,qa_string_id spawn,qa_error *error)
+{
+    struct application_native_q2 *engine=provider?provider->state.native.q2_engine:NULL;
+    qa_application *app=provider?provider->application:NULL;
+    application_provider *primary=app?application_world_provider(app,QA_ROLE_ENTITIES,""):NULL;
+    if(!engine||!app||!primary||primary==provider||!primary->attached||!primary->map_bound||
+        !provider->attached||!provider->constructed||!engine->callbacks||engine->map_ready||
+        engine->profile==QA_NATIVE_Q2_CGAME_API2023||engine->world!=app->world||
+        app->operation==APPLICATION_PERSISTING||!application_native_q2_idle(provider))
+        return application_fail(error,QA_ERROR_ARGUMENT,"Supplemental native initialization lost its published primary world");
+    qa_source_frame frame;
+    if(!application_native_q2_stages_time_read(engine,&frame,error))return false;
+    engine->frame=frame;engine->frame.provider=provider->owner;engine->frame.kind=provider->component.clock.kind;
+    engine->map_name=name;engine->spawn_point=spawn;
+    if(!engine->world_actor.registry&&!qa_session_allocate(app->session,provider->owner,
+        engine->definition,true,0,&engine->world_actor,error))return false;
+    if(!application_native_q2_activate(engine,error)||
+        !qa_native_host_world_actor_bind(provider->state.native.host,engine->world_actor,error)||
+        !application_unified_event_registration_clear(app,provider->owner,error))return false;
+    for(uint32_t i=0;i<engine->configstring_count;++i){free(engine->configstrings[i]);engine->configstrings[i]=NULL;}
+    application_native_q2_wire_destroy(&engine->wire_engine);
+    application_native_q2_visibility_destroy(&engine->visibility);
+    if(!application_native_q2_combat_load(engine,error))return false;
+    ++engine->calls;
+    bool ok=application_native_q2_callbacks_validate(engine,error);
+    if(ok&&!engine->initialized){
+        ok=qa_native_host_initialize(provider->state.native.host,0,0,false,error);
+        if(ok)engine->initialized=true;
+    }
+    if(ok)ok=application_native_q2_callbacks_arrays_validate(engine,error)&&
+        application_native_q2_stages_prepare(engine,error)&&
+        application_native_q2_wire_begin(engine,error)&&
+        application_native_q2_attack_activate(engine,error)&&
+        application_native_q2_combat_activate(engine,error)&&
+        application_q2_control_activate(engine,error)&&declared_initialize(engine,error);
+    --engine->calls;
+    if(!ok)return false;
+    engine->map_ready=provider->map_bound=true;
+    qa_cvars_set_server_active(engine->cvars,true);
+    if(engine->inventory_rows&&(!application_native_q2_inventory_rows_prepare(engine->inventory_rows,error)||
+        !application_native_q2_inventory_scanner_activate(engine->inventory_scanner,error)))return false;
+    return application_native_q2_callbacks_register(engine,error)&&
+        application_native_q2_publication_activate(engine->publication,error);
+}
+
 bool application_native_q2_spawn_map(application_provider *provider, const qa_bsp_view *map,
     const qa_entities *entities, qa_string_id name, qa_string_id spawn, qa_error *error)
 {
@@ -564,18 +651,7 @@ bool application_native_q2_spawn_map(application_provider *provider, const qa_bs
         spawn ? qa_strings_cstr(qa_session_strings(provider->application->session), spawn) : "", error);
     qa_buffer_free(&declared_entities);
     if(ok) ok=application_native_q2_callbacks_arrays_validate(engine,error);
-    if (ok && engine->callbacks && provider->application->operation != APPLICATION_PERSISTING) {
-        bool accepted;qa_source_frame frame;
-        ok=application_native_q2_stages_time_read(engine,&frame,error);
-        if(ok) {
-            application_native_callback_value values[] = {
-                {.name="time",.kind=APPLICATION_NATIVE_VALUE_NUMBER,.value.number=(double)frame.time_ns/1e9},
-                {.name="elapsed",.kind=APPLICATION_NATIVE_VALUE_NUMBER,.value.number=(double)frame.elapsed_ns/1e9}
-            };
-            application_native_callback_inputs inputs={values,2,{0}};
-            ok = application_native_q2_callbacks_run(engine, "initialize", &inputs, &accepted, error);
-        }
-    }
+    if(ok)ok=declared_initialize(engine,error);
     --engine->calls;
     if (ok) {
         engine->map_ready = provider->map_bound = true;

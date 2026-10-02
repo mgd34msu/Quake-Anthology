@@ -196,14 +196,55 @@ static bool fog_fields(qa_source_save_io *io, qa_scene_fog *fog)
         qa_source_save_f32(io, &fog->height_end) && isfinite(fog->height_end) &&
         qa_source_save_f32(io, &fog->height_falloff) && isfinite(fog->height_falloff);
 }
+static bool download_fields(qa_source_save_io *io, frontend_remote_q2 *row, saved_q2 *saved)
+{
+    if (!frontend_save_text(io, &row->download_path) || !qa_source_save_u64(io, &row->download_logical_nonce) ||
+        !qa_source_save_u64(io, &row->download_bytes) || !qa_source_save_u8(io, &row->download_percent) ||
+        row->download_bytes > INT32_MAX || row->download_percent > 100 ||
+        !qa_source_save_bool(io, &row->download_block_pending) || !blob(io, &row->download_block) ||
+        !qa_source_save_u64(io, &row->download_block_offset) || !qa_source_save_u64(io, &row->download_block_cursor) ||
+        !qa_source_save_u8(io, &row->download_block_percent) ||
+        !qa_source_save_bool(io, &row->download_block_committed) || !qa_source_save_bool(io, &row->download_remembered) ||
+        !qa_source_save_bool(io, &row->download_sealed) || !qa_source_save_bool(io, &row->download_published) ||
+        !qa_source_save_bool(io, &row->download_refresh_pending) || !qa_source_save_bool(io, &row->download_refreshed) || !blob(io, &saved->stage)) return false;
+    if (!!row->download_path != !!row->download_logical_nonce ||
+        (row->download_path && !remote_q2_download_path_valid(row->download_path)) ||
+        row->download_block.size > INT32_MAX || row->download_block_offset > INT32_MAX - row->download_block.size ||
+        row->download_block_cursor > row->download_block.size || row->download_block_percent > 100) return false;
+    if (!row->download_block_pending) {
+        if (row->download_block.size || row->download_block_offset || row->download_block_cursor || row->download_block_percent ||
+            row->download_block_committed || row->download_remembered || row->download_sealed ||
+            row->download_published || row->download_refresh_pending || row->download_refreshed) return false;
+    } else {
+        bool final = row->download_block_percent == 100 || (!row->download_block.size && !row->download_block_offset);
+        if (!saved->selected || !saved->bound ||
+            (row->download_block_committed && row->download_block_cursor != row->download_block.size) ||
+            (row->download_remembered && (!final || !row->download_block_committed)) ||
+            (row->download_sealed && !row->download_remembered) ||
+            (row->download_published && !row->download_sealed) ||
+            (row->download_refresh_pending && (!row->download_published || !row->download_path)) ||
+            (row->download_refreshed && !row->download_refresh_pending)) return false;
+        if (row->download_path) {
+            if (row->download_block_committed ?
+                (row->download_bytes != row->download_block_offset + row->download_block.size ||
+                    row->download_percent != row->download_block_percent) :
+                (row->download_bytes != row->download_block_offset || row->download_percent > row->download_block_percent)) return false;
+        } else return false;
+    }
+    if (!row->download_path) return !saved->stage.size && !row->download_bytes && !row->download_percent;
+    if (saved->stage.size != remote_q2_download_extent(row)) return false;
+    return !row->download_block_pending || !row->download_block_cursor ||
+        !memcmp(saved->stage.data + (size_t)row->download_block_offset, row->download_block.data,
+            (size_t)row->download_block_cursor);
+}
 static bool fields(qa_source_save_io *io, frontend_remote_q2 *row,
     const frontend_remote_q2_restore_refs *refs, saved_q2 *saved)
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
-    uint8_t magic[4] = {'Q','2','R','C'}; uint32_t schema = 13;
+    uint8_t magic[4] = {'Q','2','R','C'}; uint32_t schema = 14;
     bool material_scripts = row->options.material_scripts;
     if (!qa_source_save_bytes(io, magic, sizeof(magic)) || memcmp(magic, "Q2RC", 4) ||
-        !qa_source_save_u32(io, &schema) || schema != 13 || !domain(io, &saved->domain) ||
+        !qa_source_save_u32(io, &schema) || schema != 14 || !domain(io, &saved->domain) ||
         !qa_source_save_bool(io, &material_scripts) || material_scripts != row->options.material_scripts ||
         !qa_source_save_bool(io, &saved->bound) || !qa_source_save_bool(io, &saved->selected) ||
         !qa_source_save_bool(io, &row->content_admitted) ||
@@ -344,12 +385,7 @@ static bool fields(qa_source_save_io *io, frontend_remote_q2 *row,
         row->download_attempted_count = count; if (count && !row->download_attempted) return false;
     }
     for (size_t i = 0; i < count; ++i) if (!frontend_save_text(io, row->download_attempted + i) || !row->download_attempted[i]) return false;
-    if (!frontend_save_text(io, &row->download_path) || !qa_source_save_u64(io, &row->download_logical_nonce) ||
-        !qa_source_save_u64(io, &row->download_bytes) || !qa_source_save_u8(io, &row->download_percent) ||
-        row->download_bytes > INT32_MAX || row->download_percent > 100 || !blob(io, &saved->stage)) return false;
-    return (!row->download_path || remote_q2_download_path_valid(row->download_path)) &&
-        (!!row->download_path == !!row->download_logical_nonce) &&
-        (row->download_path ? saved->stage.size == row->download_bytes : !saved->stage.size && !row->download_bytes && !row->download_percent);
+    return download_fields(io, row, saved);
 }
 bool frontend_remote_q2_checkpoint(const frontend_remote_q2 *source,
     const frontend_remote_q2_restore_refs *refs, qa_buffer *out, qa_error *error)
@@ -375,7 +411,7 @@ bool frontend_remote_q2_checkpoint(const frontend_remote_q2 *source,
         (!row->effects || frontend_remote_q2_effects_checkpoint(row->effects, &effects, &captured.saved_effects, error)) &&
         remote_q2_footsteps_checkpoint(row, refs->content, &saved.footsteps, error);
     if (ok && row->download_stage) {
-        saved.stage.size = (size_t)row->download_bytes;
+        saved.stage.size = (size_t)remote_q2_download_extent(row);
         saved.stage.data = saved.stage.size ? malloc(saved.stage.size) : NULL;
         if (saved.stage.size && !saved.stage.data) ok = false;
         size_t received = 0;
@@ -402,7 +438,7 @@ bool frontend_remote_q2_restore_prepare(qa_frontend *f, const frontend_remote_q2
 {
     if (!f || !f->source_restoring || !options || !refs || !refs->content || !out || *out ||
         f->application != options->domain.application || !options->current || !options->records || !options->disconnected ||
-        !options->download_allowed || !options->download_nonce) return false;
+        !options->download_allowed || !options->download_stage) return false;
     frontend_remote_q2 *row = calloc(1, sizeof(*row)); if (!row) return false;
     row->frontend = f; row->options = *options; row->layout = remote_q2_layout_read(options->domain.protocol);
     row->configs = calloc(row->layout.max_configs, sizeof(*row->configs)); row->importing = true;
@@ -451,7 +487,7 @@ bool frontend_remote_q2_restore_prepare(qa_frontend *f, const frontend_remote_q2
         row->download_root = remote_q2_download_destination(row, row->download_path);
         if (row->download_root) qa_fs_root_retain(row->download_root);
         qa_download_request request = {.path = row->download_path, .maximum_bytes = INT32_MAX, .stage_nonce = row->download_logical_nonce};
-        qa_download_view view = {.path = row->download_path, .received = row->download_bytes, .limit = INT32_MAX,
+        qa_download_view view = {.path = row->download_path, .received = remote_q2_download_extent(row), .limit = INT32_MAX,
             .state = QA_DOWNLOAD_RECEIVING, .stage_nonce = row->download_logical_nonce};
         qa_download_checkpoint_refs downloads = refs->downloads;
         if (!downloads.context && !downloads.resource && !downloads.stage && !downloads.artifact)

@@ -68,9 +68,12 @@ bool application_native_q2_visibility_complete(struct application_native_q2 *eng
     qa_native_entity_table table;
     const qa_cvar_view *clients = qa_cvars_find(engine->cvars, "maxclients");
     qa_source_frame frame;
+    application_provider *clock_owner = engine->callbacks ?
+        application_world_provider(engine->provider->application, QA_ROLE_ENTITIES, "") : engine->provider;
+    qa_frame_phase phase = engine->callbacks ? QA_FRAME_EXIT : QA_CLIENT_END_FRAME;
     if (!engine->map_ready || !host || !clients || clients->integer < 1 || clients->integer > 256 ||
-        !qa_session_active_frame(engine->provider->application->session, engine->provider->owner, &frame) ||
-        frame.phase != QA_CLIENT_END_FRAME || frame.number != engine->frame.number ||
+        !clock_owner || !qa_session_active_frame(engine->provider->application->session, clock_owner->owner, &frame) ||
+        frame.phase != phase || frame.number != engine->frame.number ||
         frame.time_ns != engine->frame.time_ns ||
         !qa_native_entity_table_get(qa_native_host_instance(host), &table, error))
         return application_fail(error, QA_ERROR_ARGUMENT, "Q2 visibility capture requires its completed actual Source stage");
@@ -107,9 +110,9 @@ bool application_native_q2_visibility_complete(struct application_native_q2 *eng
     qa_native_entity_table after;
     qa_source_frame returned;
     if (ok) ok = qa_native_entity_table_get(qa_native_host_instance(host), &after, error) &&
-        qa_session_active_frame(engine->provider->application->session, engine->provider->owner, &returned);
+        qa_session_active_frame(engine->provider->application->session, clock_owner->owner, &returned);
     if (ok && (after.base != table.base || after.stride != table.stride || after.count != table.count ||
-        after.capacity != table.capacity || returned.phase != QA_CLIENT_END_FRAME ||
+        after.capacity != table.capacity || returned.phase != phase ||
         returned.number != frame.number || returned.time_ns != frame.time_ns ||
         engine->frame.number != frame.number || engine->frame.time_ns != frame.time_ns))
         ok = application_fail(error, QA_ERROR_ARGUMENT, "Q2 visibility callbacks changed the completed Source table or frame");

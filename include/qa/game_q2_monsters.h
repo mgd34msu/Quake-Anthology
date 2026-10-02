@@ -99,7 +99,8 @@ typedef struct qa_q2_monster_checkpoint {
   int frame, next_frame, old_frame, skin, style, count;
   uint32_t render_flags;
   float entity_scale, animation_scale, base_health, health_scaling;
-  float max_health, max_power_armor;
+  float max_health;
+  double max_power_armor;
   uint32_t initial_power_armor, medic_tries;
   float gib_health, normal_height, view_height, ideal_yaw, yaw_speed;
   float blind_fire_delay, fly_min_distance, fly_max_distance;

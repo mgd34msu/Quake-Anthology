@@ -15,6 +15,7 @@ typedef struct qa_q3_cinematic_handles_options {
      * a clean frame. No constructor raw-unbind is performed here. */
     bool (*upload)(void *,const qa_scene_image *registered_slot,const qa_scene_image *version,
         bool redefine,bool dirty,qa_error *);
+    bool (*fullscreen_draw)(void *,const qa_scene_image *,qa_scene_rect,uint32_t,qa_scene_frame *,qa_error *);
 } qa_q3_cinematic_handles_options;
 typedef struct qa_q3_cinematic_source_options {
     qa_vfs *files;
@@ -33,6 +34,8 @@ typedef struct qa_q3_cinematic_source_options {
 bool qa_q3_cinematic_handles_create(const qa_q3_cinematic_handles_options *,qa_q3_cinematic_handles **,qa_error *);
 bool qa_q3_cinematic_handles_idle(const qa_q3_cinematic_handles *);
 bool qa_q3_cinematic_handles_read(const qa_q3_cinematic_handles *,qa_q3_cinematic_handles_options *);
+bool qa_q3_cinematic_handles_rebind_ready(const qa_q3_cinematic_handles *,const qa_q3_cinematic_handles_options *,qa_error *);
+void qa_q3_cinematic_handles_rebind(qa_q3_cinematic_handles *,const qa_q3_cinematic_handles_options *);
 bool qa_q3_cinematic_handles_image_is(const qa_q3_cinematic_handles *,const qa_scene_image *);
 bool qa_q3_cinematic_handles_destroy(qa_q3_cinematic_handles **,qa_error *);
 bool qa_q3_cinematic_source_create(qa_q3_cinematic_handles *,const qa_q3_cinematic_source_options *,qa_q3_cinematic_source **,qa_error *);
@@ -48,6 +51,8 @@ bool qa_q3_cinematic_source_role_find(const qa_q3_cinematic_source *parent,uint3
  * destruction; decoder output does not require an interpreter entry. */
 bool qa_q3_cinematic_source_role_diagnostic_bind(qa_q3_cinematic_source *,void *context,
     void (*print)(void *,const char *),bool (*current)(void *,const qa_q3_cinematic_source *),qa_error *);
+bool qa_q3_cinematic_source_role_diagnostic_read(const qa_q3_cinematic_source *,void **context,bool *bound);
+bool qa_q3_cinematic_source_role_detach(qa_q3_cinematic_source *,void *expected_context,qa_error *);
 bool qa_q3_cinematic_source_retain(qa_q3_cinematic_source *,qa_error *);
 void qa_q3_cinematic_source_release(qa_q3_cinematic_source *);
 bool qa_q3_cinematic_source_destroy(qa_q3_cinematic_source **,qa_error *);
@@ -58,6 +63,9 @@ bool qa_q3_cinematic_handles_source_at(const qa_q3_cinematic_handles *,size_t,qa
 bool qa_q3_cinematic_source_audio_rebind_ready(qa_q3_cinematic_source *,qa_audio_engine *,uint64_t,qa_error *);
 void qa_q3_cinematic_source_audio_rebind(qa_q3_cinematic_source *,qa_audio_engine *,uint64_t);
 qa_q3_cinematic_handles *qa_q3_cinematic_source_handles(const qa_q3_cinematic_source *);
+qa_roq_scratch *qa_q3_cinematic_source_decoder_scratch(const qa_q3_cinematic_source *);
+bool qa_q3_cinematic_system_select(qa_q3_cinematic_source *,int32_t,qa_cinematic *,qa_error *);
+bool qa_q3_cinematic_system_fullscreen(qa_q3_cinematic_source *,int32_t,qa_scene_rect,qa_scene_frame *,bool *,qa_error *);
 bool qa_q3_cinematic_play(qa_q3_cinematic_source *,const char *,qa_scene_rect_f,uint32_t,
     bool (*open)(void *,const qa_q3_movie_request *,qa_q3_system_movie *,qa_error *),void *,int32_t *,qa_error *);
 bool qa_q3_cinematic_run(qa_q3_cinematic_source *,int32_t,int32_t *,qa_error *);

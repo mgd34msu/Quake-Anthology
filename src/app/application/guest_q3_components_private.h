@@ -1,6 +1,7 @@
 #ifndef QA_APPLICATION_GUEST_Q3_COMPONENTS_PRIVATE_H
 #define QA_APPLICATION_GUEST_Q3_COMPONENTS_PRIVATE_H
 #include "guest_q3_components.h"
+bool q3components_player_event(void *,const application_q3_scene_player_event *,uint64_t,qa_error *);
 #include "guest_q3_mod_operations.h"
 #include "guest_q3_component_clients.h"
 #include "qa/collision.h"

@@ -48,14 +48,22 @@ static bool float_field(qa_source_save_io *io, float *value)
 { return qa_source_save_f32(io, value) && isfinite(*value); }
 static bool vector_field(qa_source_save_io *io, qa_vec3 *value)
 { return qa_source_save_vec3(io, value) && qa_vec_finite(*value); }
-static bool view_field(qa_source_save_io *io, qa_q2_player_view *view)
+static bool armor_field(qa_source_save_io *io, double *value, uint32_t version)
+{
+    if (version >= 3) return qa_source_save_f64(io, value) && isfinite(*value);
+    float legacy = 0;
+    if (!float_field(io, &legacy)) return false;
+    *value = legacy;
+    return true;
+}
+static bool view_field(qa_source_save_io *io, qa_q2_player_view *view, uint32_t version)
 {
     return vector_field(io, &view->angles) && vector_field(io, &view->offset) &&
         vector_field(io, &view->kick_angles) && vector_field(io, &view->gun_angles) &&
         vector_field(io, &view->gun_offset) && float_field(io, &view->blend.x) &&
         float_field(io, &view->blend.y) && float_field(io, &view->blend.z) &&
         float_field(io, &view->blend.w) && float_field(io, &view->fov) &&
-        float_field(io, &view->health) && float_field(io, &view->armor) &&
+        float_field(io, &view->health) && armor_field(io, &view->armor, version) &&
         float_field(io, &view->ammo) && int_field(io, &view->score) &&
         int_field(io, &view->flashes) && int_field(io, &view->layouts) &&
         qa_source_save_i32(io, &view->hit_marker_damage) &&
@@ -128,12 +136,12 @@ static bool scores_field(qa_source_save_io *io, player_record *row)
     }
     return offset == bytes || fail(io, "Player copied score names contain unowned trailing bytes");
 }
-static bool fields(qa_source_save_io *io, player_record *row)
+static bool fields(qa_source_save_io *io, player_record *row, uint32_t version)
 {
     if (io->direction == QA_SOURCE_SAVE_WRITE &&
         (row->timer.icon || row->timer.label != row->timer_label))
         return fail(io, "Player timer label leaves its actual copied owner");
-    if (!qa_source_save_actor(io, &row->actor) || !view_field(io, &row->view) ||
+    if (!qa_source_save_actor(io, &row->actor) || !view_field(io, &row->view, version) ||
         !vitals_field(io, row->vitals) || !qa_source_save_u64(io, &row->timer.until_ns) ||
         !qa_source_save_string(io, &row->timer_item) || !frontend_save_text(io, &row->timer_label)) return false;
     if (io->direction == QA_SOURCE_SAVE_READ) row->timer.label = row->timer_label;
@@ -149,13 +157,13 @@ static bool fields(qa_source_save_io *io, player_record *row)
         qa_source_save_bool(io, &row->help) && qa_source_save_bool(io, &row->inventory) &&
         (!row->view_ready || row->actor.registry != 0);
 }
-static bool header(qa_source_save_io *io, const qa_frontend *f)
+static bool header(qa_source_save_io *io, const qa_frontend *f, uint32_t *version)
 {
     uint8_t magic[] = {'Q','F','P','L'};
-    uint32_t version = 2, seats = f->options.seats;
+    uint32_t seats = f->options.seats;
     bool dedicated = f->options.dedicated;
     return qa_source_save_bytes(io, magic, sizeof(magic)) && !memcmp(magic, "QFPL", sizeof(magic)) &&
-        qa_source_save_u32(io, &version) && version == 2 && qa_source_save_u32(io, &seats) &&
+        qa_source_save_u32(io, version) && (*version == 2 || *version == 3) && qa_source_save_u32(io, &seats) &&
         seats == f->options.seats && qa_source_save_bool(io, &dedicated) && dedicated == f->options.dedicated;
 }
 static bool capture(const frontend_seat *seat, player_record *row, qa_error *error)
@@ -199,11 +207,12 @@ bool frontend_players_checkpoint(qa_frontend *f, qa_buffer *out, qa_error *error
         !f->options.seats || f->options.seats > QA_INPUT_LOCAL_SEATS || !frontend_seat_callbacks_checkpoint_ready(f,error))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Player projection capture requires its held frontend and empty output");
     qa_source_save_io io = {0};
-    bool ok = qa_source_save_writer(&io, qa_application_session(f->application), error) && header(&io, f);
+    uint32_t version = 3;
+    bool ok = qa_source_save_writer(&io, qa_application_session(f->application), error) && header(&io, f, &version);
     for (unsigned i = 0; ok && !f->options.dedicated && i < f->options.seats; ++i) {
         player_record row = {0}; uint32_t id = i;
         ok = actual(f, i) && capture(f->seats + i, &row, error) &&
-            qa_source_save_u32(&io, &id) && fields(&io, &row);
+            qa_source_save_u32(&io, &id) && fields(&io, &row, version);
     }
     if (ok) ok = qa_source_save_finish(&io, out);
     qa_source_save_dispose(&io);
@@ -218,10 +227,11 @@ bool frontend_players_restore(qa_frontend *f, qa_bytes bytes, qa_error *error)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Player projection import requires its isolated stable frontend seats");
     player_record records[QA_INPUT_LOCAL_SEATS] = {0};
     qa_source_save_io io = {0};
-    bool ok = qa_source_save_reader(&io, qa_application_session(f->application), bytes, error) && header(&io, f);
+    uint32_t version = 0;
+    bool ok = qa_source_save_reader(&io, qa_application_session(f->application), bytes, error) && header(&io, f, &version);
     for (unsigned i = 0; ok && !f->options.dedicated && i < f->options.seats; ++i) {
         uint32_t id = i;
-        ok = actual(f, i) && qa_source_save_u32(&io, &id) && id == i && fields(&io, records + i);
+        ok = actual(f, i) && qa_source_save_u32(&io, &id) && id == i && fields(&io, records + i, version);
     }
     if (ok) ok = qa_source_save_finish(&io, NULL);
     if (ok && !f->options.dedicated)

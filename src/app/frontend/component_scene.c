@@ -1,4 +1,5 @@
 #include "source_cinematics.h"
+#include "source_renderer_runtime.h"
 #include "renderer_materials.h"
 #include "component_scene.h"
 #include "shared_resource_policy.h"
@@ -363,6 +364,14 @@ static bool remap(void *context,const char *from,const char *to,float offset,qa_
     qa_material_source_remap_status status;
     return publication(owner,&view,e) && qa_material_remap_source(owner->materials,from,to,offset,&status,e) &&
         owner->request.source.current(owner->request.source.context,&view);
+}
+static bool end_registration(void *context,qa_error *error)
+{
+    struct frontend_component_scene *owner=context;
+    if(!owner || !owner->frontend || owner->retired || owner->request.restoring ||
+        owner->frontend->source_restoring || owner->frontend->capture || owner->frontend->resource_inventory)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Component registration completion needs its actual fresh constructor");
+    return frontend_source_renderer_end_registration(owner->frontend,error);
 }
 static bool configuration(void *context,uint8_t out[11332],qa_error *e)
 {
@@ -981,6 +990,7 @@ bool frontend_component_scene_prepare(void *context,const application_q3_compone
     request->host->sound_bank=owner->sounds; request->host->sound_mixer=f->audio?qa_audio_engine_seat_mixer(f->audio,request->physical_seat):NULL;
     request->host->presentation.context=owner; request->host->presentation.seat=owner->presentation;
     request->host->presentation.fonts=owner->fonts; request->host->presentation.configuration=configuration;
+    request->host->presentation.end_registration=end_registration;
     request->host->frontend_lifetime=owner; request->host->release_frontend=release_host;
     *request->assets=owner->assets; return true;
 }

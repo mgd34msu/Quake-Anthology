@@ -65,6 +65,7 @@ typedef struct application_q3_mod_operation_services {
 } application_q3_mod_operation_services;
 typedef struct application_q3_mod_services {
     void *context;
+    qa_pickups *pickups;
     bool (*current)(void *, qa_error *);
     /* Pure retained RAM/source identity proof, including checked retirement
      * and imported storage before executable activation. */
@@ -163,5 +164,7 @@ bool application_q3_mod_protection_binding(application_q3_mod *,
     qa_protection_lease, qa_protection_binding *, qa_error *);
 bool application_q3_mod_protection_saved_binding(application_q3_mod *,qa_actor_id,
     qa_protection_channel,const qa_protection_claim *,qa_protection_binding *,qa_error *);
+bool application_q3_mod_pickup_saved_rule(application_q3_mod *,qa_actor_id,
+    qa_actor_owner,uint64_t serial,uint32_t id,qa_pickup_rule *,qa_error *);
 
 #endif

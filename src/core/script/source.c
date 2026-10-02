@@ -89,6 +89,13 @@ qa_script_location qa_script_position(const qa_script *s) {
         return qa_script_lexer_position(s->frames[s->stack[s->stack_count - 1]].lexer);
     return s->last_location;
 }
+qa_script_location qa_script_source_position(const qa_script *s) {
+    if (!s || !s->frame_count) return (qa_script_location){0};
+    qa_script_location location=qa_script_position(s);
+    location.path=s->frames[0].resource.path;
+    if (!s->stack_count) location.line=0;
+    return location;
+}
 bool script_push(qa_script *s, script_queued_token token, qa_error *e) {
     if (s->queue_count >= s->options.maximum_queued_tokens)
         return script_fail(s, token.token.location, "Script queue exceeds configured limit", e);

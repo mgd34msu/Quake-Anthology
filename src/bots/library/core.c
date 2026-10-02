@@ -147,8 +147,32 @@ const qa_script_defines *qa_bot_library_global_defines(const qa_bot_library *lib
 qa_bot_memory *qa_bot_library_memory(const qa_bot_library *library) {
     return library?library->memory:NULL;
 }
+bool qa_bot_library_pc_bind(qa_bot_library *library, void *owner, bool (*idle)(void *),
+    bool (*close)(void *, bool, qa_error *), qa_error *error) {
+    if (!library || !owner || !idle || !close ||
+        (library->pc_owner && library->pc_owner != owner)) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Bot PC namespace differs from its actual library owner");
+        return false;
+    }
+    library->pc_owner=owner; library->pc_idle=idle; library->pc_close=close; return true;
+}
+bool qa_bot_library_pc_close(qa_bot_library *library, bool source, qa_error *error) {
+    if (!library || !library->pc_owner) return true;
+    void *owner=library->pc_owner;
+    if (!library->pc_idle(owner)) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"Bot PC shutdown overlaps entered source operations"); return false;
+    }
+    if (!library->pc_close(owner,source,error)) return false;
+    qa_bot_library_pc_unbind(library,owner); return true;
+}
+void qa_bot_library_pc_unbind(qa_bot_library *library, const void *owner) {
+    if (library && library->pc_owner==owner) {
+        library->pc_owner=NULL; library->pc_idle=NULL; library->pc_close=NULL;
+    }
+}
 bool qa_bot_library_idle(const qa_bot_library *library) {
     if(!library) return true;
+    if(library->pc_owner && !library->pc_idle(library->pc_owner)) return false;
     if(library->character_loading || library->item_loading || !qa_bot_memory_idle(library->memory) ||
        (library->fuzzy_store && library->fuzzy_store->active)) return false;
     for (qa_bot_character *c = library->characters; c; c = c->next)
@@ -186,6 +210,7 @@ bool qa_bot_library_global_define(qa_bot_library *library, const char *definitio
 void qa_bot_library_destroy(qa_bot_library *library) {
     if (library == NULL || !qa_bot_library_idle(library))
         return;
+    if (!qa_bot_library_pc_close(library,false,NULL)) return;
     for (qa_bot_weights *c = library->weights; c != NULL;) {
         qa_bot_weights *next = c->next;
         qa_bot_weights_release(c);

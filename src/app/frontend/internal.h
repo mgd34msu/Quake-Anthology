@@ -168,6 +168,7 @@ struct qa_frontend {
     struct frontend_qc_messages *qc_messages;
     struct frontend_q3_color *source_color;
     struct qa_q3_cinematic_handles *source_cinematics;
+    struct frontend_cinematic_roles *cinematic_roles;
     frontend_view_settings *view_restore_pending;
     struct frontend_global_settings_storage *global_settings_storage;
     frontend_ui_features *ui_features;

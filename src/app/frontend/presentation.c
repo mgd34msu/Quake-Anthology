@@ -317,5 +317,5 @@ bool frontend_present(qa_frontend *frontend, qa_error *error)
     if (frontend->cpu) return qa_cpu_set_gamma(frontend->cpu, brightness, error) &&
         qa_cpu_execute(frontend->cpu, &frontend->frame, error) && qa_cpu_present_frame(frontend->cpu, error);
     return qa_gl_set_gamma(frontend->gl, brightness, error) && qa_gl_execute(frontend->gl, &frontend->frame, error) &&
-        qa_gl_finish(frontend->gl, error) && qa_gl_swap(frontend->gl, error);
+        (frontend->frame.source_backend || qa_gl_finish(frontend->gl, error)) && qa_gl_swap(frontend->gl, error);
 }

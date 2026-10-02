@@ -4,6 +4,7 @@
 #include "remote_q2_effects.h"
 #include "qa/persistence_content.h"
 #include "qa/audio_save.h"
+#include "qa/ui.h"
 
 typedef struct frontend_unified_q2 frontend_unified_q2;
 typedef struct frontend_unified_q2_refs {

@@ -22,9 +22,14 @@ static bool checkpoint_ready(qa_native_instance *instance, qa_error *error) {
     if (!instance || instance->lifecycle != QA_NATIVE_INITIALIZED || instance->process_host_pending)
         return native_fail(error, QA_ERROR_ARGUMENT, 0,
                            "initialized native instance is required for checkpointing");
-    if (instance->active_depth || instance->callback_depth || instance->region_scopes ||
+    if (instance->active_depth || instance->callback_depth || instance->region_depth ||
+        instance->region_service_depth || instance->write_depth || instance->region_scopes ||
         instance->write_scope || instance->call_scope || instance->checkpointing ||
-        instance->destroying)
+        instance->destroying || instance->unloading ||
+        (instance->backend == QA_NATIVE_BACKEND_OWNED_PROCESS &&
+         !(instance->process_kind == QA_NATIVE_PROCESS_SYSV ?
+             qa_native_sysv_process_idle(instance->sysv_process) :
+             qa_native_windows_process_idle(instance->windows_process))))
         return native_fail(error, QA_ERROR_ARGUMENT, 0,
                            "native checkpoint requires an idle instance");
     return true;

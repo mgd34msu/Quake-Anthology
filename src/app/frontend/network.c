@@ -418,6 +418,33 @@ static bool q2_download_nonce(void *context,uint64_t *out,qa_error *error)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 download stage namespace is unavailable");
     *out=++n->nonce; return true;
 }
+static bool q2_download_stage(void *context,qa_fs_root *root,const char *path,
+    qa_fs_stage **out,uint64_t *nonce,qa_error *error)
+{
+    qa_frontend_network *n=context; uint64_t initial=0;
+    if(!n || !n->frontend || n->frontend->network!=n || n->detached_transport ||
+        !root || !path || !out || *out || !nonce || *nonce)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 download stage lacks its live Network namespace");
+    if(!qa_fs_stage_open_unique_checked(root,path,&n->nonce,0,out,&initial,error)) return false;
+    *nonce=n->nonce; return true;
+}
+static bool q2_restore_stage(void *context,qa_fs_root *root,const char *path,uint64_t logical_nonce,
+    bool published,qa_bytes prefix,qa_fs_stage **out,uint64_t *nonce,qa_fs_identity *identity,qa_error *error)
+{
+    qa_frontend_network *n=context; uint64_t initial=0; size_t written=0;
+    if(!n || !n->frontend || n->frontend->network!=n || !n->detached_transport ||
+        !n->frontend->source_restoring || !root || !path || !logical_nonce ||
+        !out || *out || !nonce || *nonce || !identity || (prefix.size && !prefix.data))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 download import lacks its isolated stage namespace");
+    if(published) {
+        if(!qa_fs_stage_open_published_checked(root,path,prefix,out,identity,error)) return false;
+        *nonce=logical_nonce; return true;
+    }
+    if(!n->preparation_nonce) n->preparation_nonce=n->nonce;
+    if(!qa_fs_stage_open_unique_checked(root,path,&n->preparation_nonce,logical_nonce,out,&initial,error) ||
+        initial || !qa_fs_stage_write(*out,0,prefix,&written,error) || written!=prefix.size) return false;
+    *nonce=n->preparation_nonce; return true;
+}
 bool frontend_network_client_commands_owned(const qa_frontend *f,const qa_application *app,
     const qa_application_console_scope *scope,const qa_console *console)
 {
@@ -734,7 +761,7 @@ bool frontend_network_q2_prepare_import(qa_frontend *f,qa_network_runtime *runti
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 staging requires its real detached Network and saved connection recipe");
     frontend_network_q2_client_options options={.frontend=f,.runtime=runtime,.remote=recipe->remote,
         .protocol=recipe->protocol,.qport=recipe->qport,.physical_seat=recipe->physical_seat,
-        .context=n,.current=q2_client_current,.download_nonce=q2_download_nonce,
+        .context=n,.current=q2_client_current,.download_stage=q2_download_stage,.restore_stage=q2_restore_stage,
         .lobby=n->kex_transport?qa_kex_transport_lobby(n->kex_transport):NULL};
     return frontend_network_q2_client_restore_prepare(&options,saved,&n->q2_client_owner,error);
 }
@@ -3776,7 +3803,7 @@ bool frontend_network_create(qa_frontend *f, qa_error *error)
     if(f->options.network_connect && q2_host_protocol(f->options.network_protocol)) {
         frontend_network_q2_client_options client={.frontend=f,.runtime=n->runtime,.remote=q2_remote,
             .protocol=f->options.network_protocol,.qport=(uint16_t)n->rotation_random,.physical_seat=0,
-            .context=n,.current=q2_client_current,.download_nonce=q2_download_nonce,
+            .context=n,.current=q2_client_current,.download_stage=q2_download_stage,.restore_stage=q2_restore_stage,
             .lobby=n->kex_transport?qa_kex_transport_lobby(n->kex_transport):NULL};
         if(!frontend_network_q2_client_create(&client,&n->q2_client_owner,error)) goto failed;
     }

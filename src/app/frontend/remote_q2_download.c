@@ -49,6 +49,11 @@ qa_fs_root *remote_q2_download_destination(const frontend_remote_q2 *row, const 
         ((prefix(path, "models/") || prefix(path, "players/")) && suffix(path, ".wal")))) ?
     (prefix(path, "players/") ? row->content.base_write_root : row->content.selected_write_root) : NULL; }
 
+uint64_t remote_q2_download_extent(const frontend_remote_q2 *row)
+{
+    return row->download_block_pending && !row->download_block_committed ?
+        row->download_block_offset + row->download_block_cursor : row->download_bytes;
+}
 static bool download_resource(void *context, const qa_download_request *request,
     const qa_download_view *view, bool staged, qa_error *error)
 {
@@ -60,7 +65,7 @@ static bool download_resource(void *context, const qa_download_request *request,
         strcmp(view->path, row->download_path) || request->stage_nonce != row->download_logical_nonce ||
         view->stage_nonce != row->download_logical_nonce || request->maximum_bytes != INT32_MAX ||
         request->expected_bytes || request->exact_identity || request->resume ||
-        view->received != row->download_bytes || view->received > INT32_MAX || view->limit != INT32_MAX ||
+        view->received != remote_q2_download_extent(row) || view->received > INT32_MAX || view->limit != INT32_MAX ||
         view->state != QA_DOWNLOAD_RECEIVING || view->published || view->mounted ||
         row->download_root != remote_q2_download_destination(row, row->download_path) ||
         !qa_catalog_product_view_current(row->content.catalog, row->content.selected, row->content.mounts))
@@ -77,17 +82,19 @@ static bool download_stage(void *context, const qa_download_request *request,
     frontend_remote_q2 *row = context;
     if (!out || *out || !nonce || *nonce || !download_resource(row, request, view, true, error) ||
         !row->importing || !row->frontend->source_restoring || row->download_stage ||
-        !row->options.restore_stage || bytes.size != row->download_bytes || (bytes.size && !bytes.data))
+        !row->options.restore_stage || bytes.size != remote_q2_download_extent(row) || (bytes.size && !bytes.data))
         return false;
-    qa_fs_stage *candidate = NULL; uint64_t native_nonce = 0, size = 0;
+    qa_fs_stage *candidate = NULL; uint64_t native_nonce = 0, size = 0; qa_fs_identity identity = {0};
     ++row->busy;
     bool ok = row->options.restore_stage(row->options.context, row->download_root,
-        row->download_path, row->download_logical_nonce, bytes, &candidate, &native_nonce, error);
+        row->download_path, row->download_logical_nonce, row->download_published, bytes, &candidate, &native_nonce, &identity, error);
     --row->busy;
-    if (ok) ok = candidate && native_nonce && native_nonce != row->download_logical_nonce &&
+    if (ok) ok = candidate && native_nonce && (row->download_published ? native_nonce == row->download_logical_nonce :
+            native_nonce != row->download_logical_nonce) &&
         download_resource(row, request, view, true, error) &&
         qa_fs_stage_size(candidate, &size, error) && size == bytes.size;
-    if (!ok) { qa_fs_stage_close(candidate, false); return false; }
+    if (!ok) { *out = candidate; return false; }
+    row->download_stage_sealed = row->download_published; row->download_identity = identity;
     *out = candidate; *nonce = native_nonce; return true;
 }
 static bool download_artifact(void *context, const qa_download_request *request,
@@ -99,7 +106,7 @@ static bool download_artifact(void *context, const qa_download_request *request,
     qa_fs_stage *artifact = NULL;
     if (!qa_fs_stage_open_readonly(row->download_root, row->download_path,
         row->download_nonce, &artifact, &size, error)) return false;
-    if (size != row->download_bytes || !download_resource(row, request, view, true, error)) {
+    if (size != remote_q2_download_extent(row) || !download_resource(row, request, view, true, error)) {
         qa_fs_stage_close(artifact, true); return false;
     }
     *out = artifact; return true;
@@ -110,7 +117,7 @@ bool frontend_remote_q2_download_refs(frontend_remote_q2 *row,
     if (!row || !out) return false;
     qa_download_request request = {.path = row->download_path, .maximum_bytes = INT32_MAX,
         .stage_nonce = row->download_logical_nonce};
-    qa_download_view view = {.path = row->download_path, .received = row->download_bytes,
+    qa_download_view view = {.path = row->download_path, .received = remote_q2_download_extent(row),
         .limit = INT32_MAX, .state = QA_DOWNLOAD_RECEIVING, .stage_nonce = row->download_logical_nonce};
     if (!download_resource(row, &request, &view, true, error)) return false;
     *out = (qa_download_checkpoint_refs){.context = row, .resource = download_resource,
@@ -143,18 +150,29 @@ static bool remember(frontend_remote_q2 *row, const char *path, qa_error *error)
     if (!items) { free(copy); return remote_q2_fail(error, QA_ERROR_MEMORY, "Retaining Q2 download refusal/attempt"); }
     strcpy(copy, path); items[count] = copy; row->download_attempted = items; ++row->download_attempted_count; return true;
 }
-static void pending_clear(frontend_remote_q2 *row)
+static void block_clear(frontend_remote_q2 *row)
 {
-    qa_fs_stage_close(row->download_stage, false); row->download_stage = NULL;
+    qa_buffer_free(&row->download_block);
+    row->download_block_offset = row->download_block_cursor = 0;
+    row->download_block_percent = 0; row->download_block_pending = row->download_block_committed = false;
+    row->download_remembered = row->download_sealed = row->download_published = row->download_refresh_pending = row->download_refreshed = false;
+}
+static bool stage_clear(frontend_remote_q2 *row, qa_error *error)
+{
+    if (!qa_fs_stage_close_checked(&row->download_stage, false, error)) return false;
     qa_fs_root_close(row->download_root); row->download_root = NULL;
     free(row->download_path); row->download_path = NULL; row->download_bytes = 0; row->download_percent = 0;
     row->download_nonce = row->download_logical_nonce = 0;
+    row->download_stage_sealed = row->download_stage_published = false;
+    row->download_identity = (qa_fs_identity){0}; return true;
 }
-void remote_q2_download_clear(frontend_remote_q2 *row)
+static bool pending_clear(frontend_remote_q2 *row, qa_error *error)
+{ if (!stage_clear(row, error)) return false; block_clear(row); return true; }
+bool remote_q2_download_clear(frontend_remote_q2 *row, qa_error *error)
 {
-    pending_clear(row);
+    if (!pending_clear(row, error)) return false;
     for (size_t i = 0; i < row->download_attempted_count; ++i) free(row->download_attempted[i]);
-    free(row->download_attempted); row->download_attempted = NULL; row->download_attempted_count = 0;
+    free(row->download_attempted); row->download_attempted = NULL; row->download_attempted_count = 0; return true;
 }
 static bool request(frontend_remote_q2 *row, const char *path, bool *waiting, qa_error *error)
 {
@@ -187,10 +205,10 @@ static bool request(frontend_remote_q2 *row, const char *path, bool *waiting, qa
     memcpy(directory, normalized, parent); directory[parent] = 0;
     bool ok = qa_fs_root_create_directory(root, directory, error); free(directory);
     uint64_t initial = 0;
-    if (ok) ok = row->options.download_nonce(row->options.context, &row->download_nonce, error) &&
-        row->download_nonce && remote_q2_live(row, error);
-    if (ok) ok = qa_fs_stage_open(root, normalized, row->download_nonce, false,
-        &row->download_stage, &initial, error);
+    if (ok) ok = row->options.download_stage(row->options.context, root, normalized,
+        &row->download_stage, &row->download_nonce, error) && row->download_stage &&
+        row->download_nonce && remote_q2_live(row, error) &&
+        qa_fs_stage_size(row->download_stage, &initial, error) && !initial;
     if (ok) {
         row->download_logical_nonce = row->download_nonce;
         qa_fs_root_retain(root); row->download_root = root; row->download_path = normalized;
@@ -204,7 +222,7 @@ static bool request(frontend_remote_q2 *row, const char *path, bool *waiting, qa
         }
     }
     free(normalized);
-    if (!ok) { pending_clear(row); return false; }
+    if (!ok) { (void)pending_clear(row, error); return false; }
     *waiting = true; return true;
 }
 static bool path_join(frontend_remote_q2 *row, const char *prefix, const char *name,
@@ -310,7 +328,7 @@ static bool model_palette(frontend_remote_q2 *row, const char *path, qa_bytes mo
 bool remote_q2_download_prepare(frontend_remote_q2 *row, qa_q2_preparation *result, qa_error *error)
 {
     *result = QA_Q2_PREPARATION_RECEIVING;
-    if (row->download_stage) return true;
+    if (row->download_stage || row->download_refresh_pending) return true;
     bool waiting = false;
     const char *map = frontend_remote_q2_config(row, row->layout.models + 1);
     if (!*map) return remote_q2_fail(error, QA_ERROR_FORMAT, "Q2 server supplied no map download identity");
@@ -418,29 +436,74 @@ bool remote_q2_download_receive(frontend_remote_q2 *row, const qa_q2_server_even
     bool *complete, qa_error *error)
 {
     if (!event || event->kind != QA_Q2_SVC_DOWNLOAD || !complete) return false;
-    *complete = false; if (!row->download_stage) return true;
-    bool allowed = false;
-    if (!row->options.download_allowed(row->options.context, row->download_path, &allowed, error) || !remote_q2_live(row, error)) return false;
-    if (!allowed || event->data.download.missing) {
-        if (!remember(row, row->download_path, error)) return false;
-        pending_clear(row); *complete = true; return true;
-    }
+    *complete = false;
+    if (!row->download_stage && !row->download_refresh_pending) return true;
     qa_bytes bytes = event->data.download.bytes;
     uint8_t percent = event->data.download.percent;
-    if (percent < row->download_percent || percent > 100 || bytes.size > INT32_MAX - row->download_bytes)
-        return remote_q2_fail(error, QA_ERROR_FORMAT, "Invalid native Q2 download progress");
-    size_t written = 0;
-    if (!qa_fs_stage_write(row->download_stage, row->download_bytes, bytes, &written, error) || written != bytes.size) return false;
-    row->download_bytes += written; row->download_percent = percent;
-    if (percent == 100 || (!bytes.size && !row->download_bytes)) {
-        qa_fs_identity identity; bool created = false;
-        if (!qa_fs_stage_seal(row->download_stage, &identity, error) ||
-            !qa_fs_stage_publish(row->download_stage, &identity, true, &created, error)) return false;
-        if (!remember(row, row->download_path, error)) return false;
-        pending_clear(row);
-        if (!refresh(row, error)) return false;
+    if (row->download_block_pending) {
+        if (event->data.download.missing || percent != row->download_block_percent ||
+            bytes.size != row->download_block.size || (bytes.size &&
+                (!bytes.data || memcmp(bytes.data, row->download_block.data, bytes.size))))
+            return remote_q2_fail(error, QA_ERROR_FORMAT, "Q2 retry changed its retained native download block");
+    }
+    if (row->download_refresh_pending) {
+        if (!row->download_refreshed) {
+            if (!refresh(row, error)) return false;
+            row->download_refreshed = true;
+        }
+        if (!pending_clear(row, error)) return false;
         *complete = true; return true;
     }
-    if (!bytes.size) return remote_q2_fail(error, QA_ERROR_FORMAT, "Q2 download made no progress");
-    return qa_network_q2_client_command(row->options.domain.runtime, row->options.domain.client, "nextdl", 0, error);
+    bool allowed = false;
+    if (!row->options.download_allowed(row->options.context, row->download_path, &allowed, error) || !remote_q2_live(row, error)) return false;
+    if ((!allowed || event->data.download.missing) && !row->download_block_pending) {
+        if (!remember(row, row->download_path, error)) return false;
+        if (!pending_clear(row, error)) return false;
+        *complete = true; return true;
+    }
+    if (!row->download_block_pending) {
+        if (percent < row->download_percent || percent > 100 || bytes.size > INT32_MAX - row->download_bytes ||
+            (bytes.size && !bytes.data) || (!bytes.size && row->download_bytes && percent != 100))
+            return remote_q2_fail(error, QA_ERROR_FORMAT, "Invalid native Q2 download progress");
+        row->download_block.data = bytes.size ? malloc(bytes.size) : NULL;
+        if (bytes.size && !row->download_block.data)
+            return remote_q2_fail(error, QA_ERROR_MEMORY, "Retaining accepted Q2 download block");
+        if (bytes.size) memcpy(row->download_block.data, bytes.data, bytes.size);
+        row->download_block.size = bytes.size; row->download_block_offset = row->download_bytes;
+        row->download_block_percent = percent; row->download_block_pending = true;
+    }
+    if (!row->download_block_committed) {
+        size_t cursor = (size_t)row->download_block_cursor, written = 0;
+        qa_bytes remaining = {row->download_block.size ? row->download_block.data + cursor : NULL,
+            row->download_block.size - cursor};
+        bool okay = qa_fs_stage_write(row->download_stage, row->download_block_offset + cursor, remaining, &written, error);
+        row->download_block_cursor += written;
+        if (!okay || written != remaining.size) return false;
+        row->download_bytes = row->download_block_offset + row->download_block_cursor;
+        row->download_percent = percent; row->download_block_committed = true;
+    }
+    if (percent == 100 || (!bytes.size && !row->download_bytes)) {
+        if (!row->download_remembered) {
+            if (!remember(row, row->download_path, error)) return false;
+            row->download_remembered = true;
+        }
+        if (!row->download_stage_sealed) {
+            if (!qa_fs_stage_seal(row->download_stage, &row->download_identity, error)) return false;
+            row->download_stage_sealed = row->download_sealed = true;
+        }
+        if (!row->download_stage_published) {
+            bool created = false;
+            bool published = qa_fs_stage_publish(row->download_stage, &row->download_identity, true, &created, error);
+            if (created) row->download_published = true;
+            if (!published) return false;
+            row->download_stage_published = row->download_published = true;
+        }
+        row->download_refresh_pending = true;
+        if (!refresh(row, error)) return false;
+        row->download_refreshed = true;
+        if (!pending_clear(row, error)) return false;
+        *complete = true; return true;
+    }
+    if (!qa_network_q2_client_command(row->options.domain.runtime, row->options.domain.client, "nextdl", 0, error)) return false;
+    block_clear(row); return true;
 }

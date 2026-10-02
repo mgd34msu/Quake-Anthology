@@ -12,6 +12,7 @@ typedef struct guest_elf_load_options {
      * hardware owner's unbudgeted resolver/lifecycle capability. */
     size_t instruction_budget;
     guest_elf_memory_options memory;
+    bool replacing;
 } guest_elf_load_options;
 
 /* Actual dependencies, runtime, stack/FP state and return trap must already
@@ -27,6 +28,7 @@ bool guest_elf_load(const guest_elf *, guest_sysv_runtime *,
     const guest_elf_load_options *, guest_elf_loaded **, qa_error *);
 bool guest_elf_loaded_initialize(guest_elf_loaded *, size_t, qa_error *);
 bool guest_elf_loaded_finalize(guest_elf_loaded *, size_t, qa_error *);
+bool guest_elf_loaded_unmap(guest_elf_loaded *, qa_error *);
 /* Capture only the committed idle loaded owner. Cold adoption joins its real
  * decoded/attached runtime provider to its actual already-restored backing
  * inventory and retained artifact. It never loads, resolves, binds, publishes

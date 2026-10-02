@@ -1,4 +1,5 @@
 #include "guest_q3_components_private.h"
+#include "guest_q3_component_private.h"
 #include "qa/json.h"
 #include "qa/application_q3_components.h"
 #include "guest_q3_components_video.h"
@@ -7,6 +8,7 @@
 #include "qa/persistence_fields.h"
 #include <stdio.h>
 
+typedef struct component_pending_event { application_q3_scene_player_event event; uint64_t sequence; } component_pending_event;
 struct component_scene_row {
     component_scene_row *next;
     component_game_row *game;
@@ -26,10 +28,25 @@ struct component_scene_row {
     qa_q3_presentation_assets *assets;
     application_q3_component_scene_frontend frontend;
     uint64_t sequence,frontend_identity;
+    component_pending_event *events;
+    size_t event_count,event_cursor;
     qa_buffer saved_scene,saved_cvars,saved_console;
     bool restore_pending,restore_constructed,restore_consoles,restore_imported;
     bool initialized,host_entered,advanced;
 };
+bool q3components_player_event(void *context,const application_q3_scene_player_event *event,uint64_t sequence,qa_error *e)
+{
+    component_game_row *game=context;
+    if(!game||!event||!sequence||!q3components_current(game)) return application_fail(e,QA_ERROR_ARGUMENT,"Player event lost its admitted component Source");
+    for(component_scene_row *row=game->scenes;row;row=row->next) {
+        if(!row->profile||!row->profile->player_events||!row->initialized) continue;
+        if(row->event_count==SIZE_MAX/sizeof(*row->events)) return application_fail(e,QA_ERROR_MEMORY,"Player event delivery queue overflows");
+        component_pending_event *events=realloc(row->events,(row->event_count+1)*sizeof(*events));
+        if(!events) return application_fail(e,QA_ERROR_MEMORY,"Retaining actual component CG player event delivery");
+        row->events=events; events[row->event_count++]=(component_pending_event){*event,sequence};
+    }
+    return true;
+}
 static bool retained(void *context)
 { component_scene_row *row=context; return row&&q3components_storage(row->game); }
 static bool published(void *context)
@@ -89,7 +106,7 @@ static bool open_scene(component_scene_row *row,qa_error *e)
     qa_json_document *document=NULL;
     if(!qa_json_parse(qa_resource_bytes(game->declaration),&document,e)) return false;
     qa_json_id presentation=qa_json_get(document,qa_json_root(document),"presentation");
-    if(!qa_json_string_equal(document,qa_json_get(document,presentation,"runtime"),"qvm-scene")) {
+    if((!qa_json_string_equal(document,qa_json_get(document,presentation,"runtime"),"qvm-scene")&&!qa_json_string_equal(document,qa_json_get(document,presentation,"runtime"),"qvm-player-events"))) {
         qa_json_destroy(document); return application_fail(e,QA_ERROR_UNSUPPORTED,"Component has no declared original scene presentation");
     }
     qa_buffer path={0};
@@ -169,7 +186,14 @@ bool application_q3_components_scene_advance(application_q3_components *owner,si
     while(row&&row->scene!=*scene) row=row->next;
     if(!row) return application_fail(e,QA_ERROR_ARGUMENT,"Component advance lost its actual viewer row");
     if(!row->advanced||sequence>row->sequence) {
-        if(!row->frontend.begin(row->frontend.owner,sequence,e)||!application_q3_scene_advance(*scene,sequence,e)) return false;
+        if(!row->frontend.begin(row->frontend.owner,sequence,e)) return false;
+        while(row->event_cursor<row->event_count) {
+            const component_pending_event *event=row->events+row->event_cursor;
+            if(!application_q3_scene_consume(*scene,&event->event,event->sequence,e)) return false;
+            ++row->event_cursor;
+        }
+        free(row->events); row->events=NULL; row->event_count=row->event_cursor=0;
+        if(!application_q3_scene_advance(*scene,sequence,e)) return false;
         row->sequence=sequence; row->advanced=true;
     } else if(sequence!=row->sequence) return application_fail(e,QA_ERROR_ARGUMENT,"Component advance sequence moved backwards");
     return row->frontend.completed(row->frontend.owner,sequence,frame,e);
@@ -193,7 +217,7 @@ bool q3components_scenes_destroy(component_game_row *game,qa_error *e)
         application_q3_scene_profile_destroy(row->profile); qa_qvm_image_release(row->image);
         qa_resource_release(row->artifact); qa_vfs_acquisition_dispose(&row->acquisition);
         qa_buffer_free(&row->saved_scene); qa_buffer_free(&row->saved_cvars); qa_buffer_free(&row->saved_console);
-        game->scenes=row->next; free(row);
+        game->scenes=row->next; free(row->events); free(row);
     }
     return true;
 }
@@ -202,7 +226,7 @@ size_t qa_application_q3_component_scene_count(const qa_application *app)
     application_q3_components *owner=app?app->components:NULL; size_t count=0;
     for(size_t i=0;owner&&!owner->closing&&i<owner->count;++i) {
         const char *runtime=owner->rows[i]->publication.presentation_runtime;
-        if(runtime&&!strcmp(runtime,"qvm-scene")) ++count;
+        if(runtime&&(!strcmp(runtime,"qvm-scene")||!strcmp(runtime,"qvm-player-events"))) ++count;
     }
     return count;
 }
@@ -214,7 +238,7 @@ bool qa_application_q3_component_draw_prepare(qa_application *app,size_t ordinal
     if(!owner||owner->closing||!out) return application_fail(e,QA_ERROR_ARGUMENT,"Component draw has no actual installed roster");
     for(;index<owner->count;++index) {
         const char *runtime=owner->rows[index]->publication.presentation_runtime;
-        if(runtime&&!strcmp(runtime,"qvm-scene")&&found++==ordinal) break;
+        if(runtime&&(!strcmp(runtime,"qvm-scene")||!strcmp(runtime,"qvm-player-events"))&&found++==ordinal) break;
     }
     if(index==owner->count) return application_fail(e,QA_ERROR_NOT_FOUND,"Component draw ordinal has no actual declared scene");
     application_q3_scene *scene=NULL; const qa_scene_frame *frame=NULL;
@@ -225,12 +249,12 @@ bool qa_application_q3_component_draw_prepare(qa_application *app,size_t ordinal
         return application_fail(e,QA_ERROR_FORMAT,"Component draw lacks its actual frontend identity");
     *out=(qa_application_q3_component_draw){.owner=row->game->publication.owner,.generation=row->game->publication.generation,
         .sequence=sequence,.frontend_identity=row->frontend_identity,.scene=scene,.bodies=application_q3_scene_bodies(scene),.assets=row->assets,.frame=frame};
-    return out->bodies!=NULL;
+    return row->profile->player_events||out->bodies!=NULL;
 }
 bool qa_application_q3_component_draw_current(const qa_application *app,const qa_application_q3_component_draw *draw)
 {
     application_q3_components *owner=app?app->components:NULL;
-    if(!owner||owner->closing||!draw||!draw->bodies) return false;
+    if(!owner||owner->closing||!draw) return false;
     for(size_t i=0;i<owner->count;++i) for(component_scene_row *row=owner->rows[i]->scenes;row;row=row->next) {
         if(row->scene!=draw->scene) continue;
         return q3components_current(row->game)&&row->game->publication.owner==draw->owner&&row->game->publication.generation==draw->generation&&
@@ -398,6 +422,18 @@ static bool scene_fields(qa_source_save_io *io,component_scene_row *row)
         !qa_source_save_i32(io,&row->view.frame_ms)||row->view.frame_ms<0||
         !qa_source_save_u64(io,&row->sequence)||!qa_source_save_bool(io,&row->advanced)||
         !scene_blob(io,&row->saved_scene)||!scene_blob(io,&row->saved_cvars)||!scene_blob(io,&row->saved_console)) return false;
+    size_t count=row->event_count-row->event_cursor;
+    if(!qa_source_save_count(io,&count,UINT32_MAX)) return false;
+    if(io->direction==QA_SOURCE_SAVE_READ) {
+        row->events=count?calloc(count,sizeof(*row->events)):NULL; row->event_count=count; row->event_cursor=0;
+        if(count&&!row->events) return application_fail(io->error,QA_ERROR_MEMORY,"Retaining saved original CG player event queue");
+    }
+    for(size_t i=0;i<count;++i) {
+        component_pending_event *event=row->events+row->event_cursor+i;
+        if(!qa_source_save_u64(io,&event->sequence)||!event->sequence||
+            !q3component_player_event_fields(row->game->publication.abi,io,&event->event)||
+            (i&&event[-1].sequence>=event->sequence)) return false;
+    }
     return true;
 }
 bool q3components_scenes_checkpoint(component_game_row *game,qa_buffer *out,qa_error *e)
@@ -406,7 +442,7 @@ bool q3components_scenes_checkpoint(component_game_row *game,qa_buffer *out,qa_e
         return application_fail(e,QA_ERROR_ARGUMENT,"Component scene capture requires returned physical children");
     size_t count=0;
     for(component_scene_row *row=game->scenes;row;row=row->next) ++count;
-    qa_source_save_io io={0}; uint8_t magic[4]={'Q','G','C','S'}; uint32_t version=1;
+    qa_source_save_io io={0}; uint8_t magic[4]={'Q','G','C','S'}; uint32_t version=2;
     bool ok=qa_source_save_writer(&io,game->roster->options.application->session,e)&&qa_source_save_bytes(&io,magic,4)&&
         qa_source_save_u32(&io,&version)&&qa_source_save_count(&io,&count,UINT32_MAX);
     for(component_scene_row *row=game->scenes;ok&&row;row=row->next) {
@@ -424,7 +460,7 @@ bool q3components_scenes_saved_read(component_game_row *game,qa_bytes bytes,qa_e
     if(!game||game->scenes) return application_fail(e,QA_ERROR_ARGUMENT,"Component scene topology requires an empty actual roster");
     qa_source_save_io io={0}; uint8_t magic[4]={0}; uint32_t version=0; size_t count=0;
     bool ok=qa_source_save_reader(&io,game->roster->options.application->session,bytes,e)&&qa_source_save_bytes(&io,magic,4)&&
-        !memcmp(magic,"QGCS",4)&&qa_source_save_u32(&io,&version)&&version==1&&qa_source_save_count(&io,&count,UINT32_MAX);
+        !memcmp(magic,"QGCS",4)&&qa_source_save_u32(&io,&version)&&version==2&&qa_source_save_count(&io,&count,UINT32_MAX);
     component_scene_row **tail=&game->scenes;
     for(size_t i=0;ok&&i<count;++i) {
         component_scene_row *row=calloc(1,sizeof(*row));

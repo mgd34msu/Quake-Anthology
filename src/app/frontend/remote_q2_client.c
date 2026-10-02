@@ -134,7 +134,7 @@ bool remote_q2_config_set(frontend_remote_q2 *row, uint16_t index, const char *v
 static bool content_clear(frontend_remote_q2 *row, qa_error *error)
 {
     if (!remote_q2_media_clear(row, error)) return false;
-    remote_q2_download_clear(row);
+    if (!remote_q2_download_clear(row, error)) return false;
     qa_q2_frame_free(&row->frame); qa_q2_frame_free(&row->previous);
     for (size_t i = 0; row->configs && i < row->layout.max_configs; ++i) { free(row->configs[i]); row->configs[i] = NULL; }
     free(row->baselines); row->baselines = NULL; row->baseline_count = 0;
@@ -167,7 +167,7 @@ bool frontend_remote_q2_create(qa_frontend *f, const frontend_remote_q2_options 
 {
     const frontend_remote_q2_domain *d = options ? &options->domain : NULL;
     const qa_product *product = d ? qa_catalog_product(d->catalog, d->product) : NULL;
-    if (!f || f->capture || f->resource_inventory || !options || !out || *out || !options->current || !options->download_allowed || !options->download_nonce || !options->records ||
+    if (!f || f->capture || f->resource_inventory || !options || !out || *out || !options->current || !options->download_allowed || !options->download_stage || !options->records ||
         !options->disconnected || !d->application || f->application != d->application ||
         !d->runtime || !d->console || !d->cvars || !product || product->family != QA_GAME_Q2 ||
         d->physical_seat >= f->options.seats || !f->seats || !f->seats[d->physical_seat].input ||
@@ -648,7 +648,7 @@ bool frontend_remote_q2_rebind_ready(const frontend_remote_q2 *row, qa_frontend 
         (f != row->frontend && (row->effects || row->media || row->shader_movies)) ||
         !remote_q2_domain_equal(&row->options.domain, &options->domain) ||
         f->application != options->domain.application || !options->current || !options->download_allowed ||
-        !options->download_nonce || !options->records || !options->disconnected)
+        !options->download_stage || !options->records || !options->disconnected)
         return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 handoff requires its exact retained CLIENT binding");
     return options->current(options->context, &options->domain, error);
 }

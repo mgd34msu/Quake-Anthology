@@ -19,6 +19,13 @@ typedef struct component_call_lease {
     int32_t result;
 } component_call_lease;
 typedef struct component_initial_store { uint32_t address; int32_t value; } component_initial_store;
+typedef struct component_player_cursor {
+    qa_actor_id actor;
+    uint32_t address;
+    int32_t external, external_time, sequence, observed;
+    uint64_t external_order, predictable_order[2];
+    int32_t predictable_sequence[2];
+} component_player_cursor;
 struct application_q3_component {
     application_q3_component_options options;
     application_q3_mod_profile *profile;
@@ -48,6 +55,11 @@ struct application_q3_component {
     uint32_t *frame_branches,*frame_locals;
     size_t frame_branch_count;
     qa_string_id definition;
+    component_player_cursor *player_cursors;
+    size_t player_cursor_count;
+    qa_qvm_binding player_watch;
+    qa_qvm_binding restored_player_watch;
+    uint64_t player_order, player_sequence;
     int32_t milliseconds;
     bool initialized,restoring,closing,busy,has_source,draining,scene;
     bool restored_storage,restored_baseline,restored_actors,restored_mod,restored_items,restored_callbacks;
@@ -65,5 +77,12 @@ bool q3component_frame_proceed(application_q3_component *,const qa_qvm_call *,in
 bool q3component_call(application_q3_component *,uint32_t,const int32_t *,size_t,int32_t *,qa_error *);
 bool q3component_actors_create(application_q3_component *,qa_error *);
 bool q3component_items_create(application_q3_component *,qa_error *);
+bool q3component_player_events_create(application_q3_component *,qa_error *);
+bool q3component_player_events_track(application_q3_component *,qa_actor_id,qa_error *);
+bool q3component_player_events_publish(application_q3_component *,bool,qa_error *);
+void q3component_player_events_release(application_q3_component *,qa_actor_id);
+bool q3component_player_events_destroy(application_q3_component *,qa_error *);
+bool q3component_player_events_fields(application_q3_component *,qa_source_save_io *);
+bool q3component_player_event_fields(qa_qvm_abi,qa_source_save_io *,application_q3_scene_player_event *);
 qa_qvm_function_hook q3component_actor_resolve(void *,const qa_qvm_call *,void **);
 #endif

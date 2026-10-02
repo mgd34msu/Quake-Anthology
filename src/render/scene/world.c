@@ -4,6 +4,7 @@
 #include "qa/scene_world_save.h"
 #include "qa/material_library_save.h"
 #include "qa/binary.h"
+#include "../controls_private.h"
 
 #include <float.h>
 #include <inttypes.h>
@@ -682,6 +683,15 @@ int32_t qa_scene_world_leaf(const qa_scene_world *world, qa_vec3 point)
     return (int32_t)(-1 - (int64_t)child);
 }
 
+bool qa_scene_world_q1_contents(const qa_scene_world *world,qa_vec3 origin,int32_t *out,qa_error *error)
+{
+    if (!world || !out || world->bsp.family!=QA_BSP_Q1 || !qa_vec_finite(origin))
+        return world_error(error,QA_ERROR_ARGUMENT,"Q1 camera contents require its actual BSP world and finite eye");
+    int32_t leaf=qa_scene_world_leaf(world,origin);
+    if (leaf<0 || (size_t)leaf>=world->leaf_count)
+        return world_error(error,QA_ERROR_FORMAT,"Q1 camera eye has no actual BSP leaf");
+    *out=world->leaves[leaf].contents; return true;
+}
 bool qa_scene_world_source_begin_scene(qa_scene_world *world,
     const qa_scene_world_input *input, qa_error *error)
 {
@@ -829,6 +839,7 @@ static bool world_visible(qa_scene_world *world, const qa_scene_world_input *inp
     if (eye < 0) return true;
     bool source = world->bsp.family == QA_BSP_Q3 && input->source_order;
     if (source) {
+        if (input->source_scratch) input->source_scratch->owner->counters.view_cluster=(int32_t)world->leaves[eye].cluster;
         if (!source_mark_leaves(world, eye, origin, input, error)) return false;
     } else if (!input->no_vis && !update_pvs(world, eye, origin, input, error)) return false;
     if (++world->visibility_generation == 0) {
@@ -879,6 +890,7 @@ static bool world_visible(qa_scene_world *world, const qa_scene_world_input *inp
                 || (world->pvs[(size_t)bit / 8] & (1u << ((unsigned)bit & 7))) == 0) continue;
         }
         if (!remaining_planes(bsp_bounds(leaf->bounds), planes, plane_count, &item.planes)) continue;
+        if (source && input->source_scratch) ++input->source_scratch->owner->counters.leaves;
         if (visible_bounds) *visible_bounds = qa_bounds_union(*visible_bounds, bsp_bounds(leaf->bounds));
         for (size_t i = leaf->faces.first; i < (size_t)leaf->faces.first + leaf->faces.count; ++i) {
             uint32_t surface = world->leaf_surfaces[i];
@@ -937,6 +949,10 @@ bool qa_scene_world_source_prepare_view(qa_scene_world *world, qa_scene_world_in
                 if (surface_culled(world, surface, input, &context, NULL, planes, plane_count)) continue;
                 uint32_t incoming = world->surface_lights[index];
                 uint32_t mask = surface_light_mask(surface, incoming, lights, light_count);
+                if (input->source_scratch) {
+                    if (mask) ++input->source_scratch->owner->counters.dlight_surfaces;
+                    else if (incoming) ++input->source_scratch->owner->counters.dlight_culled;
+                }
                 if (world->bsp.family == QA_BSP_Q3 && incoming) world->source_dlight_masks[index] = mask;
                 view->surfaces[view->count] = index;
                 view->lights[view->count++] = mask;
@@ -953,6 +969,7 @@ bool qa_scene_world_source_prepare_view(qa_scene_world *world, qa_scene_world_in
         if (distance > maximum) maximum = distance;
     }
     input->source_far_clip = input->no_world ? 2048 : sqrtf(maximum);
+    if (input->source_scratch) input->source_scratch->owner->counters.far_clip=input->source_far_clip;
     input->source_visibility = view;
     return true;
 }
@@ -1086,10 +1103,25 @@ static bool surface_culled(const qa_scene_world *world, const qaw_surface *surfa
         bool clipped = false;
         for (size_t i = 0; i < count; ++i) {
             float distance = (float)(precise_dot(center, planes[i].normal) - planes[i].distance);
-            if (distance < -radius) return true;
+            if (distance < -radius) {
+                if (input->source_scratch) ++input->source_scratch->owner->counters.patch_sphere[2];
+                return true;
+            }
             if (distance <= radius) clipped = true;
         }
-        return clipped && !local_bounds_visible(surface->mesh.bounds, transform, planes, count);
+        if (input->source_scratch) ++input->source_scratch->owner->counters.patch_sphere[clipped?1:0];
+        if (!clipped) return false;
+        bool visible=local_bounds_visible(surface->mesh.bounds, transform, planes, count),inside=true;
+        if (visible) for (size_t plane=0;plane<count;++plane) for (unsigned corner=0;corner<8;++corner) {
+            float local[3]={corner&1?surface->mesh.bounds.maxs.x:surface->mesh.bounds.mins.x,
+                corner&2?surface->mesh.bounds.maxs.y:surface->mesh.bounds.mins.y,
+                corner&4?surface->mesh.bounds.maxs.z:surface->mesh.bounds.mins.z};
+            float point[3]={local[0],local[1],local[2]};
+            if (transform) qa_model_transform_point(transform,local,point);
+            if (precise_dot(qa_v3(point[0],point[1],point[2]),planes[plane].normal)<=planes[plane].distance) inside=false;
+        }
+        if (input->source_scratch) ++input->source_scratch->owner->counters.patch_box[!visible?2:inside?0:1];
+        return !visible;
     }
     if (input->source_order && input->disable_face_plane_cull) return false;
     const qa_material *material = input->source_order ? surface->material : effective_material(surface->material);

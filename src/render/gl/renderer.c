@@ -6,6 +6,7 @@
 
 #include <SDL_video.h>
 #include <SDL_loadso.h>
+#include <SDL_timer.h>
 #include <limits.h>
 #include <stdio.h>
 
@@ -386,6 +387,12 @@ static bool begin_view(qa_gl_renderer *renderer, const qa_scene_view *view, bool
     if (renderer->opacity.skip) return true;
     gl_api *gl = &renderer->gl;
     if (source_backend && view->clear_depth) {
+        if (renderer->controls.frame_values.finish==1 && !renderer->controls.finish_called) {
+            gl->Finish(); renderer->controls.finish_called=true;
+        }
+        if (renderer->controls.frame_values.finish==0) renderer->controls.finish_called=true;
+    }
+    if (source_backend && view->clear_depth) {
         qa_scene_state initial=renderer->pipeline;
         qa_render_source_state_bits(&initial,true,false);
         draw_state(renderer,&initial,QA_SCENE_TRIANGLES);
@@ -412,7 +419,7 @@ static bool begin_view(qa_gl_renderer *renderer, const qa_scene_view *view, bool
         gl->ClearDepth(renderer->clear_depth);
         clear |= GL_DEPTH_BUFFER_BIT;
     }
-    if (view->clear_stencil) {
+    if (view->clear_stencil || (source_backend && view->clear_depth && renderer->overdraw)) {
         if (renderer->target != NULL || (!source_backend && renderer->capabilities.stencil_bits == 0)) {
             qa_error_set(error, QA_ERROR_UNSUPPORTED, 0,
                          "OpenGL view requested unavailable stencil storage");
@@ -732,7 +739,7 @@ static bool draw_scene(qa_gl_renderer *renderer, const qa_scene_draw *source,
 {
     qa_scene_draw draw = *source;
     qa_render_source_direct_state(&draw.state,&renderer->pipeline,source);
-    if ((unsigned)draw.source_direct>QA_SOURCE_DIRECT_RAW || !draw_valid(renderer,&draw,error)) {
+    if ((unsigned)draw.source_direct>QA_SOURCE_DIRECT_IMAGE_GRID || !draw_valid(renderer,&draw,error)) {
         if (!error || error->code==QA_OK)
             qa_error_set(error,QA_ERROR_ARGUMENT,0,"Invalid Source direct draw provenance");
         return false;
@@ -825,7 +832,8 @@ static bool draw_scene(qa_gl_renderer *renderer, const qa_scene_draw *source,
         }
         for (uint32_t unit=0;unit<2;++unit)
             if (((draw.source_direct!=QA_SOURCE_DIRECT_SKY &&
-                  draw.source_direct!=QA_SOURCE_DIRECT_RAW) || unit!=0) &&
+                  draw.source_direct!=QA_SOURCE_DIRECT_RAW &&
+                  draw.source_direct!=QA_SOURCE_DIRECT_IMAGE_GRID) || unit!=0) &&
                 (!draw.source_arrays || !renderer->controls.attributes.coordinate_array[unit])) {
                 renderer->gl.DisableVertexAttribArray(2+unit);
                 renderer->gl.VertexAttrib4f(2+unit,uv[unit].x,uv[unit].y,0,1);
@@ -848,6 +856,8 @@ static bool draw_scene(qa_gl_renderer *renderer, const qa_scene_draw *source,
                                   GL_UNSIGNED_INT, NULL);
     else if (mode == QA_RENDER_PRIMITIVES_ARRAY_STRIPS || mode == QA_RENDER_PRIMITIVES_DISCRETE_STRIPS)
         draw_source_strips(renderer, &draw, mode == QA_RENDER_PRIMITIVES_DISCRETE_STRIPS);
+    if (draw.source_arrays && draw.mesh.primitive==QA_SCENE_TRIANGLES && !draw.state.wireframe)
+        renderer->controls.counters.total_indexes+=draw.mesh.index_count;
     if (locked) renderer->gl.UnlockArraysEXT();
     qa_render_source_attributes_finish(&renderer->controls,&draw,mode);
     if (source_pipeline && renderer->controls.attributes.color_known) {
@@ -904,11 +914,33 @@ static bool source_draw_buffer_clear(qa_gl_renderer *renderer, qa_error *error)
     renderer->gl.Clear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     return gl_check(renderer,"Source draw-buffer clear",error);
 }
+static bool pack_state(qa_gl_renderer *,GLint,qa_error *);
 static bool gl_swap(qa_gl_renderer *renderer, bool source_front_buffer, qa_error *error)
 {
     if ((renderer->opacity.active && renderer->opacity.value != 1) || renderer->target) {
         qa_error_set(error,QA_ERROR_ARGUMENT,0,"Cannot swap an OpenGL opacity or depth target");
         return false;
+    }
+    if (renderer->source_frame) {
+        qa_render_controls *controls=&renderer->controls;
+        uint32_t width=0,height=0;
+        if (!gl_dimensions(renderer,&width,&height,error)) return false;
+        if (controls->frame_values.show_images && !qa_gl_source_image_grid(controls,controls->frame_values.show_images,error)) return false;
+        if (renderer->overdraw) {
+            size_t stride=((size_t)width+3)&~(size_t)3;
+            if (!height || stride>SIZE_MAX/height) return false;
+            uint8_t *pixels=malloc(stride*height);
+            if (!pixels) { qa_error_set(error,QA_ERROR_MEMORY,0,"Reading Source overdraw stencil"); return false; }
+            bool ok=pack_state(renderer,4,error);
+            if (ok) {
+                renderer->gl.ReadPixels(0,0,(GLsizei)width,(GLsizei)height,GL_STENCIL_INDEX,GL_UNSIGNED_BYTE,pixels);
+                ok=gl_check(renderer,"Source overdraw readback",error);
+            }
+            if (ok) for (size_t y=0;y<height;++y) for (size_t x=0;x<width;++x) controls->counters.overdraw+=pixels[y*stride+x];
+            free(pixels); if (!ok) return false;
+        }
+        if (!controls->finish_called) renderer->gl.Finish();
+        qa_render_source_report(controls,width,height);
     }
     if (!gl_output_resolve(renderer,error) ||
         !gl_dimensions(renderer,&renderer->presented_width,&renderer->presented_height,error) ||
@@ -1820,4 +1852,79 @@ bool qa_gl_surface_retire(qa_gl_surface_ticket **out,qa_error *error)
     }
     if (!gl_surface_objects_release(ticket,error)) return false;
     gl_surface_release(out); return true;
+}
+
+bool qa_gl_source_overdraw(qa_render_controls *controls,bool enabled,qa_error *error)
+{
+    qa_gl_renderer *renderer=controls->owner.gl;
+    if (enabled && renderer->capabilities.stencil_bits<4) {
+        qa_error_set(error,QA_ERROR_UNSUPPORTED,0,"Source overdraw requires four stencil bits"); return false;
+    }
+    if (renderer->overdraw==enabled) return true;
+    if (!qa_display_make_current(renderer->options.display,error)) return false;
+    renderer->overdraw=enabled;
+    if (enabled) {
+        renderer->gl.Enable(GL_STENCIL_TEST); renderer->gl.StencilMask(UINT_MAX);
+        renderer->gl.ClearStencil(0); renderer->gl.StencilFunc(GL_ALWAYS,0,UINT_MAX);
+        renderer->gl.StencilOp(GL_KEEP,GL_INCR,GL_INCR);
+    } else renderer->gl.Disable(GL_STENCIL_TEST);
+    return gl_check(renderer,"Source frame overdraw policy",error);
+}
+bool qa_gl_source_image_grid(qa_render_controls *controls,int32_t mode,qa_error *error)
+{
+    qa_gl_renderer *renderer=controls->owner.gl;
+    uint32_t width=0,height=0;
+    if (renderer->target || renderer->opacity.active || !qa_display_make_current(renderer->options.display,error) ||
+        !gl_dimensions(renderer,&width,&height,error) || !gl_bind_destination(renderer,error)) return false;
+    qa_scene_rect target={0,0,width,height};
+    if (!controls->source.projection_2d) {
+        qa_scene_state state=renderer->pipeline;
+        qa_render_source_state_bits(&state,false,true);
+        state.depth_test=QA_DEPTH_DISABLED; state.cull=QA_CULL_NONE;
+        draw_state(renderer,&state,QA_SCENE_TRIANGLES);
+        renderer->view=(qa_scene_view){.viewport=target,.depth=1};
+        renderer->gl.Viewport(0,0,(GLsizei)width,(GLsizei)height);
+        renderer->gl.Scissor(0,0,(GLsizei)width,(GLsizei)height);
+        renderer->gl.Enable(GL_SCISSOR_TEST);
+        controls->source.projection_2d=true;
+    }
+    renderer->gl.Clear(GL_COLOR_BUFFER_BIT);
+    renderer->gl.Finish();
+    uint64_t start=SDL_GetTicks64();
+    qa_scene_frame frame; qa_scene_frame_init(&frame,renderer->options.owner);
+    bool ok=true;
+    for (uint32_t i=0;ok && i<renderer->source_image_count;++i) {
+        gl_texture_entry *entry=renderer->source_images[i];
+        const qa_scene_image *image=entry->image;
+        float w=(float)(width/20),h=(float)(height/15);
+        float x=(float)(i%20)*w,y=(float)(i/20)*h;
+        if (mode==2 && entry->source_texture.count) {
+            w*= (float)entry->source_texture.levels[0].width/512;
+            h*= (float)entry->source_texture.levels[0].height/512;
+        }
+        const qa_scene_image *binding=image;
+        if (controls->frame_values.no_bind) {
+            const qa_scene_image *dlight=NULL;
+            for (uint32_t j=renderer->source_image_count;j>0;--j)
+                if (renderer->source_images[j-1]->image->source_dlight) { dlight=renderer->source_images[j-1]->image; break; }
+            if (dlight) binding=dlight;
+        }
+        size_t first=frame.command_count;
+        ok=qa_scene_frame_picture_f(&frame,binding,target,(qa_scene_rect_f){x,y,w,h},
+            (qa_scene_vec4){0,0,1,1},controls->attributes.color,error);
+        for (size_t c=first;ok && c<frame.command_count;++c) {
+            if (frame.commands[c].kind!=QA_SCENE_COMMAND_DRAW) continue;
+      qa_scene_draw *draw=&frame.commands[c].data.draw;
+            draw->source_direct=QA_SOURCE_DIRECT_IMAGE_GRID;
+            ok=draw_scene(renderer,draw,error);
+        }
+    }
+    qa_scene_frame_destroy(&frame);
+    renderer->gl.Finish();
+    if (ok) ok=gl_check(renderer,"Source image grid",error);
+    if (ok && controls->source_print) {
+        char text[100]; snprintf(text,sizeof(text),"%llu msec to draw all images\n",(unsigned long long)(SDL_GetTicks64()-start));
+        controls->source_print(controls->source_print_context,text);
+    }
+    return ok;
 }

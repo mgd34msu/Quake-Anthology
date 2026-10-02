@@ -2187,7 +2187,7 @@ static void Scroll_ListBox_ThumbFunc(void *p) {
 			pos = max;
 		}
 		listPtr->startPos = pos;
-		si->xStart = DC->cursorx;
+		si->xStart = (float)DC->cursorx;
 	}
 	else if (DC->cursory != si->yStart) {
 
@@ -2205,7 +2205,7 @@ static void Scroll_ListBox_ThumbFunc(void *p) {
 			pos = max;
 		}
 		listPtr->startPos = pos;
-		si->yStart = DC->cursory;
+		si->yStart = (float)DC->cursory;
 	}
 
 	if (DC->realTime > si->nextScrollTime) { 
@@ -2283,8 +2283,8 @@ void Item_StartCapture(itemDef_t *item, int key) {
 			} else if (flags & WINDOW_LB_THUMB) {
 				scrollInfo.scrollKey = key;
 				scrollInfo.item = item;
-				scrollInfo.xStart = DC->cursorx;
-				scrollInfo.yStart = DC->cursory;
+				scrollInfo.xStart = (float)DC->cursorx;
+				scrollInfo.yStart = (float)DC->cursory;
 				captureData = &scrollInfo;
 				captureFunc = &Scroll_ListBox_ThumbFunc;
 				itemCapture = item;
@@ -2297,8 +2297,8 @@ void Item_StartCapture(itemDef_t *item, int key) {
 			if (flags & WINDOW_LB_THUMB) {
 				scrollInfo.scrollKey = key;
 				scrollInfo.item = item;
-				scrollInfo.xStart = DC->cursorx;
-				scrollInfo.yStart = DC->cursory;
+				scrollInfo.xStart = (float)DC->cursorx;
+				scrollInfo.yStart = (float)DC->cursory;
 				captureData = &scrollInfo;
 				captureFunc = &Scroll_Slider_ThumbFunc;
 				itemCapture = item;
@@ -2776,7 +2776,7 @@ void Item_SetTextExtents(itemDef_t *item, int *width, int *height, const char *t
 		int originalWidth = DC->textWidth(item->text, item->textscale, 0);
 
 		if (item->type == ITEM_TYPE_OWNERDRAW && (item->textalignment == ITEM_ALIGN_CENTER || item->textalignment == ITEM_ALIGN_RIGHT)) {
-			originalWidth = (int)((float)originalWidth + DC->ownerDrawWidth(item->window.ownerDraw, item->textscale));
+			originalWidth = (int)((float)originalWidth + (float)DC->ownerDrawWidth(item->window.ownerDraw, item->textscale));
 		} else if (item->type == ITEM_TYPE_EDITFIELD && item->textalignment == ITEM_ALIGN_CENTER && item->cvar) {
 			char buff[256];
 			DC->getCVarString(item->cvar, buff, 256);
@@ -3624,7 +3624,7 @@ void Item_Model_Paint(itemDef_t *item) {
 			modelPtr->angle = (int)(modelPtr->angle + 1) % 360;
 		}
 	}
-	VectorSet( angles, 0, modelPtr->angle, 0 );
+	VectorSet( angles, 0, (float)modelPtr->angle, 0 );
 	AnglesToAxis( angles, ent.axis );
 
 	ent.hModel = item->asset;

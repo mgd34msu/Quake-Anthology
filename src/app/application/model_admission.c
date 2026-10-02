@@ -1,4 +1,5 @@
 #include "internal.h"
+#include <string.h>
 
 bool qa_application_model_admit(qa_application *app,
     const qa_application_model_admission_request *request,

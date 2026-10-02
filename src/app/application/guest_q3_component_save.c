@@ -14,11 +14,11 @@ static bool blob(qa_source_save_io *io,qa_buffer *buffer)
 }
 static bool fields(application_q3_component *c,qa_source_save_io *io,qa_buffer children[8],qa_qvm_binding *ids,qa_qvm_binding *resolver)
 {
-    uint8_t magic[4]={'Q','G','C','M'},expected[4]={'Q','G','C','M'}; uint32_t version=3,abi=(uint32_t)c->options.abi;
+    uint8_t magic[4]={'Q','G','C','M'},expected[4]={'Q','G','C','M'}; uint32_t version=4,abi=(uint32_t)c->options.abi;
     uint8_t program[32],declaration[32]; memcpy(program,&c->options.program_digest,32); memcpy(declaration,&c->options.declaration_digest,32);
     uint64_t owner=c->options.host.owner,services=c->options.host.service_owner,generation=c->options.generation;
     const char *path=c->options.program_path; size_t count=c->hook_count;
-    if(!qa_source_save_bytes(io,magic,4)||memcmp(magic,expected,4)||!qa_source_save_u32(io,&version)||version!=3||
+    if(!qa_source_save_bytes(io,magic,4)||memcmp(magic,expected,4)||!qa_source_save_u32(io,&version)||version!=4||
         !qa_source_save_u32(io,&abi)||abi!=(uint32_t)c->options.abi||!qa_source_save_bytes(io,program,32)||memcmp(program,&c->options.program_digest,32)||
         !qa_source_save_bytes(io,declaration,32)||memcmp(declaration,&c->options.declaration_digest,32)||!qa_source_save_text(io,&path)||!path||strcmp(path,c->options.program_path)||
         !qa_source_save_u64(io,&owner)||owner!=c->options.host.owner||!qa_source_save_u64(io,&services)||services!=c->options.host.service_owner||
@@ -32,17 +32,23 @@ static bool fields(application_q3_component *c,qa_source_save_io *io,qa_buffer c
     }
     if(!qa_source_save_u64(io,resolver)||!*resolver) return q3records_fail(io->error,QA_ERROR_FORMAT,"Component saved resolver is absent");
     for(size_t i=0;i<count;++i) if(ids[i]==*resolver) return q3records_fail(io->error,QA_ERROR_FORMAT,"Component saved resolver aliases a physical function");
+    if(!q3component_player_events_fields(c,io)) return false;
     for(size_t i=0;i<8;++i) if(!blob(io,children+i)) return false;
     return true;
 }
 static bool watches_read(application_q3_component *c,qa_qvm_saved_write_watch **out,qa_qvm_binding **ids,size_t *count,qa_error *e)
 {
-    *count=application_q3_mod_items_watch_count(c->items);
+    size_t items=application_q3_mod_items_watch_count(c->items);
+    *count=items+(c->player_watch?1u:0u);
     *out=*count?calloc(*count,sizeof(**out)):NULL;
     *ids=*count?calloc(*count,sizeof(**ids)):NULL;
     if(*count&&(!*out||!*ids)) return q3records_fail(e,QA_ERROR_MEMORY,"Retaining exact component item watch inventory");
-    for(size_t i=0;i<*count;++i)
+    for(size_t i=0;i<items;++i)
         if(!application_q3_mod_items_watch(c->items,i,*out+i,*ids+i,e)) return false;
+    if(c->player_watch) {
+        if(!qa_qvm_write_watch_read(c->vm,c->player_watch,*out+items,e)) return false;
+        (*ids)[items]=c->restoring?c->restored_player_watch:c->player_watch;
+    }
     return true;
 }
 bool application_q3_component_checkpoint(application_q3_component *c,qa_buffer *out,qa_error *e)
@@ -93,6 +99,7 @@ bool application_q3_component_restore(application_q3_component *c,qa_bytes bytes
     if(ok) {
         for(size_t i=0;i<c->hook_count;++i) c->hooks[i].id=ids[i];
         c->actor_resolver=saved_resolver;
+        if(c->player_watch) c->player_watch=c->restored_player_watch;
         ok=(!c->items||application_q3_mod_items_watches_adopt(c->items,e))&&
             qa_qvm_restore_candidate(c->vm,(qa_bytes){children[5].data,children[5].size},e);
     }
@@ -121,7 +128,7 @@ bool application_q3_component_finish_restore(application_q3_component *c,qa_erro
         c->restored_actors=true;
     }
     if(!c->restored_mod) {
-        if(!application_q3_mod_activate(c->mod,e)) return false;
+        if(!application_q3_component_activate(c,e)) return false;
         c->restored_mod=true;
     }
     if(!c->restored_items) {

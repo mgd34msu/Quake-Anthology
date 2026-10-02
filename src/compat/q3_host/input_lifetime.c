@@ -23,7 +23,9 @@ bool qa_q3_host_attach_bots(qa_q3_host *host, qa_bot_runtime *runtime,
     qa_script_defines *globals=qa_bot_runtime_global_defines(runtime);
     if(!globals || (host->options.script_globals && host->options.script_globals!=globals))
         return q3_fail(error,QA_ERROR_ARGUMENT,0,"Q3 host global definitions differ from the actual bot library owner");
+    if (!q3_script_namespace_bind(host, globals, error)) return false;
     host->options.bots = runtime;
+    if (!q3_script_namespace_library(host, error)) return false;
     host->options.script_globals=globals;
     host->options.bot_client_base = client_base;
     host->options.bot_entity_base = entity_base;

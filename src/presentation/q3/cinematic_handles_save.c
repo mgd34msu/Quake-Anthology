@@ -38,6 +38,17 @@ static bool image(qa_source_save_io *io,qa_q3_cinematic_handles *owner,uint32_t 
     }
     return true;
 }
+static bool state(qa_source_save_io *io,q3cin_movie *movie)
+{
+    return qa_source_save_u64(io,&movie->uploaded) && qa_source_save_bool(io,&movie->redefine) &&
+        qa_source_save_bool(io,&movie->occupied) && qa_source_save_bool(io,&movie->uploaded_shader) &&
+        qa_source_save_bool(io,&movie->dirty) && qa_source_save_i32(io,&movie->play_on_walls) &&
+        qa_source_save_i32(io,&movie->status) && qa_source_save_u32(io,&movie->width) &&
+        qa_source_save_u32(io,&movie->height) && qa_source_save_u32(io,&movie->draw_width) &&
+        qa_source_save_u32(io,&movie->draw_height) && movie->width && movie->width<=512 &&
+        movie->height && movie->height<=512 && movie->draw_width<=movie->width && movie->draw_height<=movie->height &&
+        (movie->status==0 || movie->status==1 || movie->status==2 || movie->status==5);
+}
 static bool local(qa_source_save_io *io,q3cin_movie *movie,const qa_q3_cinematic_handles_refs *refs,double anchor,
     qa_roq_scratch *scratch)
 {
@@ -47,15 +58,7 @@ static bool local(qa_source_save_io *io,q3cin_movie *movie,const qa_q3_cinematic
     if (!qa_source_save_bool(io,&owned) || !qa_source_save_bool(io,&playing) || (playing && !owned)) return false;
     if (io->direction==QA_SOURCE_SAVE_WRITE && owned && (!refs->asset_encode ||
         !refs->asset_encode(refs->context,movie->source,movie->asset,&asset,io->error))) return false;
-    if (!qa_source_save_u64(io,&asset) || !qa_source_save_u64(io,&movie->bus) ||
-        !qa_source_save_u64(io,&movie->uploaded) || !qa_source_save_bool(io,&movie->redefine) ||
-        !qa_source_save_bool(io,&movie->occupied) || !qa_source_save_bool(io,&movie->uploaded_shader) || !qa_source_save_bool(io,&movie->dirty) ||
-        !qa_source_save_i32(io,&movie->play_on_walls) || !qa_source_save_i32(io,&movie->status) ||
-        !qa_source_save_u32(io,&movie->width) || !qa_source_save_u32(io,&movie->height) ||
-        !qa_source_save_u32(io,&movie->draw_width) || !qa_source_save_u32(io,&movie->draw_height) ||
-        !movie->width || movie->width>512 || !movie->height || movie->height>512 ||
-        movie->draw_width>movie->width || movie->draw_height>movie->height ||
-        (movie->status!=0 && movie->status!=1 && movie->status!=2 && movie->status!=5)) return false;
+    if (!qa_source_save_u64(io,&asset) || !qa_source_save_u64(io,&movie->bus) || !state(io,movie)) return false;
     if (io->direction==QA_SOURCE_SAVE_READ && owned) {
         if (!refs->asset_decode || !refs->asset_decode(refs->context,movie->source,asset,movie->path,&movie->asset,io->error) || !movie->asset ||
             !refs->audio_bus_decode || !refs->audio_bus_decode(refs->context,movie->source,movie->bus,&movie->bus,io->error)) return false;
@@ -94,7 +97,8 @@ static bool system_movie(qa_source_save_io *io,q3cin_movie *movie,const qa_q3_ci
     qa_buffer saved={0}; bool reading=io->direction==QA_SOURCE_SAVE_READ;
     if ((reading && (!refs->system_decode || !refs->system_discard)) || (!reading && !refs->system_encode))
         return q3cin_fail(io->error,QA_ERROR_ARGUMENT,"Actual system cinematic codec is unbound");
-    bool ok=reading || refs->system_encode(refs->context,movie->source,&movie->system,movie->flags,&saved,io->error);
+    bool ok=state(io,movie) && movie->occupied && movie->status!=2;
+    if (ok) ok=reading || refs->system_encode(refs->context,movie->source,&movie->system,movie->flags,&saved,io->error);
     if (ok) ok=blob(io,&saved);
     if (ok && reading) ok=refs->system_decode(refs->context,movie->source,(qa_bytes){saved.data,saved.size},movie->flags,&movie->system,io->error) &&
         movie->system.status && movie->system.end && movie->system.release;
@@ -103,9 +107,9 @@ static bool system_movie(qa_source_save_io *io,q3cin_movie *movie,const qa_q3_ci
 static bool fields(qa_source_save_io *io,qa_q3_cinematic_handles *owner,
     const qa_q3_cinematic_handles_refs *refs,double anchor,qa_q3_cinematic_handles *actual)
 {
-    uint8_t magic[4]={'Q','3','C','H'}; uint32_t version=1;
+    uint8_t magic[4]={'Q','3','C','H'}; uint32_t version=2;
     if (!refs || !qa_source_save_bytes(io,magic,4) || memcmp(magic,"Q3CH",4) ||
-        !qa_source_save_u32(io,&version) || version!=1) return false;
+        !qa_source_save_u32(io,&version) || version!=2) return false;
     if (!qa_source_save_i32(io,&owner->selected_handle) || !qa_source_save_i32(io,&owner->decoder_handle) ||
         owner->selected_handle < -1 || owner->selected_handle>=16 ||
         owner->decoder_handle < -1 || owner->decoder_handle>=16) return false;
@@ -175,8 +179,10 @@ bool qa_q3_cinematic_handles_restore(qa_q3_cinematic_handles *owner,
         return q3cin_fail(error,QA_ERROR_ARGUMENT,"Global cinematic candidate retains live handle slots");
     owner->busy=true; qa_q3_cinematic_handles saved=*owner;
     memset(saved.movies,0,sizeof(saved.movies)); memset(saved.scratch,0,sizeof(saved.scratch));
-    saved.decoder_scratch=NULL;
-    if (!qa_roq_scratch_create(&saved.decoder_scratch,error)) { owner->busy=false; return false; }
+    /* Fullscreen leases are decoded by their genuine Source role. They borrow
+     * this same cold physical workspace before the numeric slots install. */
+    saved.decoder_scratch=owner->decoder_scratch;
+    qa_roq_scratch_retain(saved.decoder_scratch);
     qa_source_save_io io;
     if (!qa_source_save_reader(&io,NULL,bytes,error)) {
         qa_roq_scratch_release(saved.decoder_scratch); owner->busy=false; return false;

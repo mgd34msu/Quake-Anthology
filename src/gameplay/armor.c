@@ -87,47 +87,43 @@ bool qa_armor_absorb(const qa_armor *armor, float damage, qa_damage_flags flags,
     }
     qa_armor_result result = {.armor = *armor};
     if (damage == 0 || flags.no_armor) { *out = result; return true; }
+    double power_saved = 0, regular_saved = 0;
     qa_powered_armor *powered = &result.armor.powered;
     if (power && !flags.no_power_armor && (!context->rerelease || context->alive) &&
         powered->kind != QA_POWER_NONE && powered->cells > 0 &&
         (powered->kind != QA_POWER_SCREEN || context->screen_facing_dot > 0.3f)) {
-        float damage_per_cell = powered->kind == QA_POWER_SCREEN || context->ctf ? 1.0f : 2.0f;
-        float protected_damage = truncf(powered->kind == QA_POWER_SCREEN ? damage / 3 : 2 * damage / 3);
+        double damage_per_cell = powered->kind == QA_POWER_SCREEN || context->ctf ? 1 : 2;
+        double protected_damage = trunc(powered->kind == QA_POWER_SCREEN ? (double)damage / 3 : 2 * (double)damage / 3);
         bool doubled = context->rerelease ? flags.energy : flags.no_regular_armor;
-        float cells = (float)powered->cells;
-        if (!isfinite(cells)) {
-            qa_error_set(error, QA_ERROR_ARGUMENT, 0, "compiled armor cells exceed binary32 arithmetic"); return false;
-        }
-        float available = cells * damage_per_cell;
-        if (doubled) available = truncf(available / 2);
-        if (context->rerelease) { protected_damage = fmaxf(1, protected_damage); available = fmaxf(1, available); }
+        double available = powered->cells * damage_per_cell;
+        if (doubled) available = trunc(available / 2);
+        if (context->rerelease) { protected_damage = fmax(1, protected_damage); available = fmax(1, available); }
         if (available != 0) {
             result.power_activated = true;
-            result.power_saved = fminf(available, protected_damage);
-            float used = truncf(result.power_saved / damage_per_cell) * (doubled ? 2 : 1);
-            powered->cells = context->rerelease ? fmaxf(0, cells - fmaxf(damage_per_cell, used)) : cells - used;
+            power_saved = fmin(available, protected_damage);
+            double used = trunc(power_saved / damage_per_cell) * (doubled ? 2 : 1);
+            powered->cells = context->rerelease ? fmax(0, powered->cells - fmax(damage_per_cell, used)) : powered->cells - used;
         }
     }
     qa_regular_armor *item = &result.armor.regular;
     if (regular && !flags.no_regular_armor && item->kind != QA_ARMOR_NONE) {
-        float protection;
+        double protection;
         switch (item->kind) {
         case QA_ARMOR_Q1: protection = item->protection.q1_absorption; break;
-        case QA_ARMOR_Q2: protection = (float)(flags.energy ? item->protection.q2.energy : item->protection.q2.normal); break;
+        case QA_ARMOR_Q2: protection = flags.energy ? item->protection.q2.energy : item->protection.q2.normal; break;
         case QA_ARMOR_Q3: protection = item->protection.q3_protection; break;
         case QA_ARMOR_SOURCE:
             qa_error_set(error, QA_ERROR_ARGUMENT, 0, "source armor requires an absorption owner"); return false;
         default: protection = 0; break;
         }
-        float points = (float)item->points;
-        if (!isfinite(points) || !isfinite(protection)) {
-            qa_error_set(error, QA_ERROR_ARGUMENT, 0, "compiled armor exceeds binary32 arithmetic"); return false;
-        }
-        result.regular_saved = fminf(points, ceilf(protection * flags.regular_scale * (damage - result.power_saved)));
-        item->points = points - result.regular_saved;
+        regular_saved = fmin(item->points, ceil(protection * flags.regular_scale * ((double)damage - power_saved)));
+        item->points -= regular_saved;
         if (item->kind == QA_ARMOR_Q1 && item->points <= 0) item->protection.q1_absorption = 0;
     }
-    if (!isfinite(result.power_saved) || !isfinite(result.regular_saved) || !qa_armor_validate(&result.armor, error)) {
+    result.power_saved = (float)power_saved;
+    result.regular_saved = (float)regular_saved;
+    if (!isfinite(power_saved) || !isfinite(regular_saved) || !isfinite(result.power_saved) ||
+        !isfinite(result.regular_saved) || !qa_armor_validate(&result.armor, error)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "armor arithmetic overflow"); return false;
     }
     *out = result;

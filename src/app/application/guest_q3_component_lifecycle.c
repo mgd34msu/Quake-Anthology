@@ -53,7 +53,7 @@ static bool finish_call(application_q3_component *c,component_call_lease *lease,
 {
     if(lease->middleware&&!application_q3_mod_entry_end(&lease->middleware,lease->succeeded,lease->result,e)) return false;
     if(lease->scope&&!application_q3_component_records_leave(c->records,&lease->scope,lease->succeeded,lease->result,e)) return false;
-    return true;
+    return q3component_player_events_publish(c,lease->succeeded,e);
 }
 static bool drain(application_q3_component *c,qa_error *e)
 {
@@ -165,6 +165,7 @@ bool q3component_descriptors(application_q3_component *c,qa_qvm_saved_function *
 bool application_q3_component_actor_released(application_q3_component *c,qa_actor_record record,qa_error *e)
 {
     if(!c||!c->records) return true;
+    q3component_player_events_release(c,record.id);
     if(c->items&&!application_q3_mod_items_release(c->items,record.id,e)) return false;
     if(!application_q3_mod_actors_release(c->actor_semantics,record.id,e)) return false;
     if(c->mod&&!application_q3_mod_release_actor(c->mod,record.id,e)) return false;
@@ -180,7 +181,7 @@ bool application_q3_component_destroy(application_q3_component **slot,qa_error *
         return q3records_fail(e,QA_ERROR_ARGUMENT,"Component lifetime has active source or presentation users");
     /* Returned refused mod scopes retry while their real RAM and canonical
      * bindings still exist. Their false idle bit is not an execution lock. */
-    if(!application_q3_mod_items_destroy(&c->items,e)) return false;
+    if(!q3component_player_events_destroy(c,e)||!application_q3_mod_items_destroy(&c->items,e)) return false;
     if(!application_q3_mod_actors_destroy(&c->actor_semantics,e)) return false;
     if(c->mod&&!application_q3_mod_idle(c->mod)&&!application_q3_mod_destroy(&c->mod,e)) return false;
     for(size_t i=0;c->records&&i<c->records->actor_count;) {

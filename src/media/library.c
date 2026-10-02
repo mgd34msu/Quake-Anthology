@@ -268,7 +268,8 @@ bool qa_media_library_load_source_roq(qa_media_library *library, qa_vfs *view, c
     }
     if (bytes.size<2 || qa_load_u16le(bytes.data)!=UINT16_C(0x1084)) {
         qa_resource_release(resource);
-        return cinematic_fail(error,"Original cinematic requires the actual RoQ header magic");
+        qa_error_set(error,QA_ERROR_FORMAT,0,"Original cinematic requires the actual RoQ header magic");
+        return false;
     }
     return library_asset(library,path,QA_CINEMATIC_ROQ,true,resource,out,error);
 }

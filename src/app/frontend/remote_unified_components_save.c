@@ -5,6 +5,7 @@
 #include "qa/console_save.h"
 #include "qa/binary.h"
 #include <limits.h>
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 

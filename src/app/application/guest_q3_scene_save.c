@@ -105,11 +105,11 @@ static bool tokens(qa_source_save_io *io,qa_command_tokens *t)
 }
 static bool fields(qa_source_save_io *io,application_q3_scene *s,qa_buffer *vm,qa_buffer *body,qa_qvm_binding *event)
 {
-    uint8_t magic[8]={'Q','A','G','3','S','C',0,0}; uint32_t version=2;
+    uint8_t magic[8]={'Q','A','G','3','S','C',0,0}; uint32_t version=3;
     qa_sha256_digest declaration=s->options.profile->declaration_digest;
-    if(!qa_source_save_bytes(io,magic,8)||memcmp(magic,"QAG3SC\0\0",8)||!qa_source_save_u32(io,&version)||version!=2||
+    if(!qa_source_save_bytes(io,magic,8)||memcmp(magic,"QAG3SC\0\0",8)||!qa_source_save_u32(io,&version)||version!=3||
         !qa_source_save_bytes(io,declaration.bytes,32)||!qa_sha256_equal(&declaration,&s->options.profile->declaration_digest)||
-        !qa_source_save_u64(io,event)||!*event||!blob(io,body,SIZE_MAX)||!blob(io,vm,SIZE_MAX)||
+        !qa_source_save_u64(io,event)||(!s->options.profile->player_events&&!*event)||(s->options.profile->player_events&&*event)||!blob(io,body,SIZE_MAX)||!blob(io,vm,SIZE_MAX)||
         !qa_source_save_u64(io,&s->context.generation)||!qa_source_save_i64(io,&s->revision)||s->revision<0||
         !qa_source_save_i64(io,&s->scene_revision)||s->scene_revision<0||
         !qa_source_save_i32(io,&s->context.time_ms)||s->context.time_ms<0||
@@ -120,7 +120,7 @@ static bool fields(qa_source_save_io *io,application_q3_scene *s,qa_buffer *vm,q
         (uint32_t)s->context.client_number>=s->options.profile->capacity||
         !qa_source_save_vec3(io,&s->context.origin)||!qa_vec_finite(s->context.origin)) return false;
     for(size_t i=0;i<3;++i) if(!qa_source_save_vec3(io,s->context.axis+i)||!qa_vec_finite(s->context.axis[i])) return false;
-    if(!qa_source_save_bool(io,&s->frame_present)||!qa_source_save_u64(io,&s->frame)||
+    if(!qa_source_save_u64(io,&s->event_sequence)||!qa_source_save_bool(io,&s->frame_present)||!qa_source_save_u64(io,&s->frame)||
         !qa_source_save_bool(io,&s->hud_present)||!qa_source_save_u64(io,&s->hud_frame)||
         (s->hud_present&&(!s->frame_present||s->hud_frame>s->frame))||!game_state(io,s)||
         !blob(io,&s->defaults,(size_t)s->options.profile->stride*s->options.profile->capacity)||
@@ -160,10 +160,10 @@ bool application_q3_scene_checkpoint(application_q3_scene *s,qa_buffer *out,qa_e
 {
     qa_qvm_saved_function descriptors[3]; qa_buffer vm={0},body={0};
     if(!out||out->data||out->size||!s||!s->initialized||s->failed||s->restoring||
-        !q3scene_descriptors(s,descriptors,e)||!qa_qvm_checkpoint_functions(s->vm,descriptors,3,e))
+        !q3scene_descriptors(s,descriptors,e)||!qa_qvm_checkpoint_functions(s->vm,descriptors,s->options.profile->player_events?0:3,e))
         return q3scene_fail(e,QA_ERROR_ARGUMENT,"Component checkpoint requires its complete physical callback owner");
     qa_source_save_io io={0}; qa_qvm_binding event=s->event_binding;
-    bool ok=application_q3_component_body_checkpoint(s->body,&body,e)&&qa_qvm_checkpoint(s->vm,&vm,e)&&
+    bool ok=(s->options.profile->player_events||application_q3_component_body_checkpoint(s->body,&body,e))&&qa_qvm_checkpoint(s->vm,&vm,e)&&
         qa_source_save_writer(&io,s->options.host.session,e)&&fields(&io,s,&vm,&body,&event)&&qa_source_save_finish(&io,out);
     qa_source_save_dispose(&io); qa_buffer_free(&vm); qa_buffer_free(&body); return ok;
 }
@@ -174,10 +174,11 @@ bool application_q3_scene_restore(application_q3_scene *s,qa_bytes bytes,qa_erro
     qa_buffer vm={0},body={0}; qa_qvm_binding saved[3]={0}; qa_source_save_io io={0};
     bool ok=qa_source_save_reader(&io,s->options.host.session,bytes,e)&&fields(&io,s,&vm,&body,saved+2)&&qa_source_save_finish(&io,NULL);
     qa_qvm_saved_function descriptors[3];
-    if(ok) ok=application_q3_component_body_saved_read(&s->options.profile->body,(qa_bytes){body.data,body.size},saved,e)&&
-        q3scene_descriptors(s,descriptors,e)&&qa_qvm_restore_candidate_bindings(s->vm,(qa_bytes){vm.data,vm.size},descriptors,saved,3,e);
+    if(ok) ok=(s->options.profile->player_events?body.size==0:application_q3_component_body_saved_read(&s->options.profile->body,(qa_bytes){body.data,body.size},saved,e))&&
+        q3scene_descriptors(s,descriptors,e)&&qa_qvm_restore_candidate_bindings(s->vm,(qa_bytes){vm.data,vm.size},descriptors,saved,s->options.profile->player_events?0:3,e);
     if(ok) {
-        application_q3_component_body_adopt(s->body,saved); s->event_binding=saved[2];
+        if(s->body) application_q3_component_body_adopt(s->body,saved);
+        s->event_binding=saved[2];
         ok=qa_qvm_restore_candidate(s->vm,(qa_bytes){vm.data,vm.size},e);
     }
     if(ok) {

@@ -79,11 +79,15 @@ struct application_native_q2 {
     qa_actor_owner hud_source_owner;
     bool prepared, initialized, map_ready, shutting_down, activation_failed;
     bool host_constructing;
+    /* The immutable restore image owns this span through persistence_finish. */
+    qa_bytes restore_record;
     qa_error activation_error;
 };
 
 bool application_construct_native_q2(qa_application *, application_provider *, qa_world *,
                                        const qa_product *, const qa_launch_choices *, qa_error *);
+bool application_native_q2_initialize_supplemental(application_provider *,qa_string_id,qa_string_id,qa_error *);
+bool application_native_q2_frames_exit(void *,qa_session *,const qa_source_frame *,size_t,uint64_t,qa_error *);
 bool application_guest_native_q2_console_prepare(qa_application *, application_provider *, qa_world *,
     const qa_product *, const qa_launch_choices *, qa_console **, qa_cvars **,
     qa_command_context *, qa_error *);

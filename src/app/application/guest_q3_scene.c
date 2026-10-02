@@ -54,7 +54,7 @@ static bool body_current(void *context, uint64_t sequence, int32_t time)
     s->options.source.current(s->options.source.context,&s->body_context); }
 static bool source_entity(void *context, const qa_qvm_call *call, int32_t pointer,
     const qa_q3_ref_entity *ref, bool *suppress, qa_error *e)
-{ application_q3_scene *s = context; return application_q3_component_body_source_entity(s->body, call, pointer, ref, suppress, e); }
+{ application_q3_scene *s = context; if(!s->body) { *suppress=false; return true; } return application_q3_component_body_source_entity(s->body, call, pointer, ref, suppress, e); }
 static bool event_hook(void *context, const qa_qvm_call *call, int32_t *result, qa_error *e)
 {
     application_q3_scene *s = context; const application_q3_scene_profile *p = s->options.profile;
@@ -149,11 +149,12 @@ bool application_q3_scene_create(const application_q3_scene_options *options, bo
     s->game_state = calloc(1, sizeof(*s->game_state));
     s->players = calloc(options->profile->capacity, sizeof(*s->players));
     if (!s->game_state || !s->players) return q3scene_fail(e, QA_ERROR_MEMORY, "Retaining component source context");
-    qa_q3_host_options host = options->host; host.source_entity = source_entity; host.source_entity_context = s;
+    qa_q3_host_options host = options->host; if(!options->profile->player_events) { host.source_entity = source_entity; host.source_entity_context = s; }
     if (!qa_q3_host_create(&host, &s->host, e)) return false;
     s->lower = qa_q3_host_qvm_options(s->host, QA_QVM_INTERPRETED);
     qa_qvm_options vm = s->lower; vm.context = s; vm.syscall = syscall; vm.checkpoint = host_checkpoint; vm.restore = host_restore;
     if (!qa_qvm_create(options->profile->image, &vm, &s->vm, e) || !qa_q3_host_attach_qvm(s->host, s->vm, e)) return false;
+    if(options->profile->player_events) return true;
     application_q3_component_body_options body = {.vm = s->vm, .image = options->profile->image,
         .profile = &options->profile->body, .owner = host.owner, .assets = options->assets,
         .source = {.context = s, .actor = actor, .live = live, .current = body_current}};
@@ -199,7 +200,15 @@ static bool call_list(application_q3_scene *s, const q3scene_calls *list, qa_err
             case Q3SCENE_CLIENT: args[j]=s->context.client_number; break;
             case Q3SCENE_TIME: args[j]=s->context.time_ms; break;
             case Q3SCENE_SNAPSHOT: args[j]=s->snapshot_number?s->snapshot_number-1:0; break;
-            case Q3SCENE_COMMAND_SEQUENCE: args[j]=s->context.snapshot->server_command_number; break;
+            case Q3SCENE_COMMAND_SEQUENCE: args[j]=s->options.profile->player_events?0:s->context.snapshot->server_command_number; break;
+            case Q3SCENE_PLAYER_STATE: args[j]=(int32_t)s->options.profile->player_state; break;
+            case Q3SCENE_SNAPSHOT_ADDRESS: args[j]=(int32_t)s->options.profile->snapshot_address; break;
+            case Q3SCENE_ENTITY_STATE: case Q3SCENE_CENTITY: case Q3SCENE_ORIGIN: case Q3SCENE_EVENT: case Q3SCENE_PARAMETER:
+                if(!s->active_event) return q3scene_fail(e,QA_ERROR_ARGUMENT,"Original presentation call lacks its actual Source player event");
+                { uint32_t address=s->options.profile->entities+(uint32_t)s->active_event->player.clientNum*s->options.profile->stride;
+                    args[j]=a->kind==Q3SCENE_EVENT?s->active_event->event:a->kind==Q3SCENE_PARAMETER?s->active_event->parameter:
+                        (int32_t)(address+(a->kind==Q3SCENE_ENTITY_STATE?s->options.profile->state:a->kind==Q3SCENE_ORIGIN?s->options.profile->entity_origin:0));
+                } break;
             }
         }
         if (!qa_qvm_invoke(s->vm,call->entry,args,call->count,&result,e) || !q3scene_current(s))
@@ -224,6 +233,13 @@ static bool acquire(application_q3_scene *s, bool baseline, qa_error *e)
         if(!store(s,s->options.profile->time.rows[i],c.time_ms,e)) return false;
     for (size_t i=0;i<s->options.profile->frame_time.count;++i)
         if(!store(s,s->options.profile->frame_time.rows[i],c.frame_ms,e)) return false;
+    if(s->options.profile->player_events) {
+        const application_q3_scene_profile *p=s->options.profile;
+        qa_q3_snapshot synthetic={.valid=true,.server_time=c.snapshot->server_time,.player=c.snapshot->player};
+        if(!qa_qvm_write_snapshot(s->vm,(int32_t)p->snapshot_address,true,&synthetic,0,e)||
+            !qa_qvm_write_player(s->vm,(int32_t)p->player_state,true,false,&c.snapshot->player,e)) return false;
+        for(size_t i=0;i<p->snapshot_pointers.count;++i) if(!store(s,p->snapshot_pointers.rows[i],(int32_t)p->snapshot_address,e)) return false;
+    }
     return camera(s,e);
 }
 bool application_q3_scene_entered_context(const application_q3_scene *s,application_q3_scene_context *out)
@@ -275,7 +291,7 @@ static bool accept(application_q3_scene *s, bool baseline, bool *changed, qa_err
         }
     }
     free(s->actors); s->actors=actors; s->actor_count=c->actor_count;
-    if (baseline) for (size_t i=0;i<c->snapshot->entity_count;++i) {
+    if (baseline&&!p->player_events) for (size_t i=0;i<c->snapshot->entity_count;++i) {
         const qa_q3_entity *entity=c->snapshot->entities+i;
         if (entity->number<0 || (uint32_t)entity->number>=p->capacity) return q3scene_fail(e,QA_ERROR_FORMAT,"Component baseline leaves centities");
         uint32_t address=p->entities+(uint32_t)entity->number*p->stride;
@@ -321,11 +337,12 @@ bool application_q3_scene_initialize(application_q3_scene *s, qa_error *e)
         else ok=qa_qvm_read(s->vm,p->entities,s->defaults.data,s->defaults.size,e);
     }
     bool changed;
-    if (ok) { s->revision=s->context.game_state_revision; ok=store(s,p->command_sequence,s->context.snapshot->server_command_number,e); }
-    if (ok&&s->context.baseline) {
+    if (ok) { s->revision=s->context.game_state_revision; ok=p->player_events||store(s,p->command_sequence,s->context.snapshot->server_command_number,e); }
+    if (ok&&s->context.baseline&&!p->player_events) {
         ok=accept(s,true,&changed,e);
         if(ok) { s->restoring_scene=true; ok=call_list(s,&p->snapshots,e); s->restoring_scene=false; }
     }
+    if(ok) ok=qa_q3_host_end_registration(s->host,e);
     ok=finish_output(s,ok,e);
     s->initialized=ok; s->failed=!ok; release(s); s->busy=false; return ok;
 }
@@ -336,7 +353,7 @@ bool application_q3_scene_advance(application_q3_scene *s, uint64_t sequence, qa
     if (s->frame_present&&sequence<=s->frame) return true;
     s->busy=true; s->frame=sequence; s->frame_present=true;
     bool ok=acquire(s,false,e), entered=false, changed=false;
-    if (ok) { s->body_context=s->context; entered=application_q3_component_body_begin(s->body,sequence,s->context.time_ms,e); ok=entered; }
+    if (ok) { s->body_context=s->context; entered=s->body&&application_q3_component_body_begin(s->body,sequence,s->context.time_ms,e); ok=!s->body||entered; }
     if (ok&&s->revision!=s->context.game_state_revision) {
         ok=call_list(s,&s->options.profile->refresh,e); if (ok) s->revision=s->context.game_state_revision;
     }
@@ -346,6 +363,32 @@ bool application_q3_scene_advance(application_q3_scene *s, uint64_t sequence, qa
     if (entered) { qa_error end={0}; bool ended=application_q3_component_body_end(s->body,ok,&end); if (ok&&!ended) { ok=false; if(e)*e=end; } }
     ok=finish_output(s,ok,e);
     if (!ok) s->failed=true;
+    release(s); s->busy=false; return ok;
+}
+bool application_q3_scene_consume(application_q3_scene *s,const application_q3_scene_player_event *event,uint64_t sequence,qa_error *e)
+{
+    if(!s||!event||!s->options.profile->player_events||!s->initialized||!application_q3_scene_idle(s)||!sequence||s->restoring)
+        return q3scene_fail(e,QA_ERROR_ARGUMENT,"Original player event requires its initialized returned CG owner");
+    if(sequence<=s->event_sequence) return true;
+    const application_q3_scene_profile *p=s->options.profile; int32_t slot=event->player.clientNum;
+    if(slot<0||(uint32_t)slot>=p->capacity||!qa_vec_finite(event->origin)) return q3scene_fail(e,QA_ERROR_FORMAT,"Original player event leaves its declared CG projection");
+    if(!s->options.source.live(s->options.source.context,event->actor)) { s->event_sequence=sequence; return true; }
+    qa_actor_id actor_id; bool owned,found;
+    if(!s->options.source.actor(s->options.source.context,(uint32_t)slot,&actor_id,&owned,&found,e)) return false;
+    if(!found||!qa_actor_id_equal(actor_id,event->actor)) return q3scene_fail(e,QA_ERROR_ARGUMENT,"Original player event changed its actual Source slot");
+    s->event_sequence=sequence; s->busy=true; s->active_event=event;
+    bool ok=acquire(s,false,e); uint32_t entity=p->entities+(uint32_t)slot*p->stride;
+    if(ok&&!qa_actor_id_equal(s->players[slot],event->actor)) {
+        ok=qa_qvm_write(s->vm,entity,(qa_bytes){s->defaults.data+(size_t)slot*p->stride,p->stride},e);
+        if(ok) s->players[slot]=event->actor;
+    }
+    if(ok&&s->revision!=s->context.game_state_revision) { ok=call_list(s,&p->refresh,e); if(ok) s->revision=s->context.game_state_revision; }
+    if(ok) ok=qa_qvm_write_player(s->vm,(int32_t)p->player_state,true,false,&event->player,e)&&call_list(s,&p->project,e)&&
+        store(s,entity+p->state+180,event->event,e)&&store(s,entity+p->state+184,event->parameter,e);
+    float origin[]={event->origin.x,event->origin.y,event->origin.z};
+    if(ok) ok=words(s,entity+p->entity_origin,origin,3,e)&&call_list(s,&p->event,e);
+    ok=finish_output(s,ok,e); s->active_event=NULL;
+    if(!ok) s->failed=true;
     release(s); s->busy=false; return ok;
 }
 bool application_q3_scene_hud(application_q3_scene *s,uint64_t sequence,qa_error *e)
@@ -371,7 +414,9 @@ bool application_q3_scene_console(application_q3_scene *s,const qa_command_token
 }
 bool q3scene_descriptors(const application_q3_scene *s,qa_qvm_saved_function out[3],qa_error *e)
 {
-    if (!application_q3_scene_idle(s)||!application_q3_component_body_descriptors(s->body,out,e)) return false;
+    if(!application_q3_scene_idle(s)) return false;
+    if(s->options.profile->player_events) { memset(out,0,3*sizeof(*out)); return true; }
+    if(!application_q3_component_body_descriptors(s->body,out,e)) return false;
     out[2]=(qa_qvm_saved_function){s->event_binding,s->options.profile->event_entry,true,event_hook,(void *)s}; return true;
 }
 void q3scene_history_clear(application_q3_scene *s)

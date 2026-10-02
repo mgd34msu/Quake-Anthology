@@ -176,7 +176,7 @@ bool bot_ai_think(qa_bots *b, bot_ai_state *s, float elapsed, qa_error *e) {
                 float duration;ok=bot_ai_source_chat_time(b,s,&duration,e);
                 if(ok && (s->retired || !bot_ai_live(b,s->view.actor))) goto finished;
                 if(ok) {
-                    s->stand_until=b->time+duration;s->stand_enemy_time=b->time+1;
+                    bot_ai_stand_until_set(s,b->time+duration);bot_ai_stand_enemy_time_set(s,b->time+1);
                     s->view.decision=QA_BOT_STANDING;s->state_time=b->time;
                 }
             }

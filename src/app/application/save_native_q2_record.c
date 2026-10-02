@@ -220,8 +220,15 @@ bool application_native_q2_save_restore(application_provider *provider, qa_bytes
         ? provider->state.native.q2_engine : NULL;
     qa_application *app = provider ? provider->application : NULL;
     if (!engine || !app || !options || !ops || app->operation != APPLICATION_PERSISTING ||
-        engine->initialized || engine->map_ready || !provider->constructed || !provider->attached)
+        !provider->constructed || !provider->attached)
         return application_fail(error, QA_ERROR_ARGUMENT, "native Q2 restore requires its detached fresh source owner");
+    if(engine->callbacks&&engine->restore_record.data)
+        return (bytes.data==engine->restore_record.data&&bytes.size==engine->restore_record.size&&
+            engine->initialized&&engine->map_ready&&provider->state.native.host&&
+            application_native_q2_idle(provider))||
+            application_fail(error,QA_ERROR_ARGUMENT,"Native source restore differs from its already imported immutable image record");
+    if(engine->initialized||engine->map_ready)
+        return application_fail(error,QA_ERROR_ARGUMENT,"Native source restore requires its fresh uninitialized owner");
     if (!application_native_q2_continuation_portable(provider, error)) return false;
     qa_bytes parts[NATIVE_RECORD_PARTS];
     qa_native_checkpoint snapshot = {0};
@@ -251,6 +258,7 @@ bool application_native_q2_save_restore(application_provider *provider, qa_bytes
         }
         application_native_q2_continuation_abort(private);
         qa_native_checkpoint_free(&snapshot);
+        if(ok)engine->restore_record=bytes;
         return ok;
     }
     if (ok)

@@ -155,6 +155,18 @@ bool frontend_material_movies_cinematic_clock_read(const frontend_material_movie
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Source cinematic clock exceeds its original signed domain");
     *out=value; return true;
 }
+bool frontend_material_movies_cinematic_source_clock_read(const qa_frontend *frontend,
+    const qa_q3_cinematic_source *source,double *out,qa_error *error)
+{
+    if (!frontend || !source || !out || qa_q3_cinematic_source_handles(source)!=frontend->source_cinematics)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Cinematic clock receipt requires its actual frontend numeric source");
+    const qa_q3_cinematic_source *parent=qa_q3_cinematic_source_parent(source);
+    if (!parent) parent=source;
+    for (const frontend_material_movies *owner=frontend->material_movie_owners;owner;owner=owner->next)
+        if (owner->cinematic_source==parent)
+            return frontend_material_movies_cinematic_clock_read(owner,out,error);
+    return frontend_fail(error,QA_ERROR_ARGUMENT,"Cinematic clock receipt has no actual stable material provider");
+}
 bool frontend_material_movie_cinematic_reserve(frontend_material_movie_cinematic_receipt **rows,
     size_t *capacity, size_t needed, qa_error *error)
 {

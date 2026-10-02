@@ -2,6 +2,7 @@
 #include "save_private.h"
 #include "save_native_q2.h"
 #include "native_q2_callbacks.h"
+#include "guest_native_q2_private.h"
 #include "save_content.h"
 #include "control_frame.h"
 #include "bots_round.h"
@@ -268,6 +269,7 @@ static bool create_application(const qa_application_options *options,
         .prepare_commands = application_control_frames_prepare,
         .run_commands = application_control_frames_commands,
         .end_commands = application_control_frames_end,
+        .frame_exit = application_native_q2_frames_exit,
         .controlled_actor = application_control_frames_actor,
         .release_context = application,
     };

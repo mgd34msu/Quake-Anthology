@@ -18,9 +18,9 @@ static void enter(qa_bots *b, bot_ai_state *s, qa_bot_decision decision) {
     if(s->view.decision==QA_BOT_ACTIVATING && decision!=QA_BOT_ACTIVATING)
         s->activation_count=0;
     s->view.decision=decision;s->state_time=b->time;
-    if(decision==QA_BOT_CHASING) s->chase_until=b->time+10;
-    if(decision==QA_BOT_SEEK_LONG_TERM) s->check_time=0;
-    if(decision==QA_BOT_STANDING) s->stand_enemy_time=b->time+1;
+    if(decision==QA_BOT_CHASING) bot_ai_chase_time_set(s,b->time);
+    if(decision==QA_BOT_SEEK_LONG_TERM) bot_ai_check_time_set(s,0);
+    if(decision==QA_BOT_STANDING) bot_ai_stand_enemy_time_set(s,b->time+1);
 }
 bool bot_ai_source_reached_goal(qa_bots *b, bot_ai_state *s, const qa_bot_goal *goal,
                       bool *done, qa_error *e) {
@@ -114,18 +114,18 @@ static float objective_nearby_range(qa_bots *b,bot_ai_state *s,float range) {
 }
 bool bot_ai_source_item_goal(qa_bots *b, bot_ai_state *s, qa_bot_goal *goal, bool *found, qa_error *e) {
     if(!qa_bot_goals_top(goals(b),s->goals,false,goal,found,e)) return false;
-    if(!*found) s->long_term_until=0;
+    if(!*found) bot_ai_long_term_until_set(s,0);
     else {
         bool done;
         if(!bot_ai_source_reached_goal(b,s,goal,&done,e)) return false;
         if(done) {
             if(!bot_ai_choose_weapon(b,s,e)) return false;
-            s->long_term_until=0;
+            bot_ai_long_term_until_set(s,0);
         }
     }
-    if(s->long_term_until<b->time) {
+    if(bot_ai_long_term_until(s)<b->time) {
         if(!qa_bot_goals_pop(goals(b),s->goals,e) || !choose(b,s,false,NULL,0,found,e)) return false;
-        if(*found) s->long_term_until=b->time+20;
+        if(*found) bot_ai_long_term_until_set(s,b->time+20);
         else if(!qa_bot_goals_avoid_clear(goals(b),s->goals,e) ||
                 !qa_bot_moves_reset_avoid(moves(b),s->movement,false,e)) return false;
         if(!qa_bot_goals_top(goals(b),s->goals,false,goal,found,e)) return false;
@@ -169,7 +169,7 @@ static bool move_goal(qa_bots *b, bot_ai_state *s, const qa_bot_goal *goal,
     if(!bot_ai_move_setup(b,s,e) || !qa_bot_moves_goal(moves(b),s->movement,goal,s->travel_flags,result,e)) return false;
     if(result->failure) {
         if(!qa_bot_moves_reset_avoid(moves(b),s->movement,false,e)) return false;
-        s->long_term_until=0;
+        bot_ai_long_term_until_set(s,0);
         if(bot_ai_order_active(s)) s->view.order.status=QA_BOT_ORDER_ERROR;
     }
     if(result->blocked) {
@@ -196,9 +196,9 @@ static bool move_goal(qa_bots *b, bot_ai_state *s, const qa_bot_goal *goal,
             qa_vec3 escape=qa_vec_normalize(qa_v3(x*2-1,y*2-1,0));
             bool moved;
             if(!qa_bot_moves_direction(moves(b),s->movement,escape,400,QA_BOT_DIRECTION_JUMP,&moved,e)) return false;
-            if(s->blocked_time>3) s->long_term_until=0;
+            if(s->blocked_time>3) bot_ai_long_term_until_set(s,0);
         }
-    } else {s->blocked_time=0;s->not_blocked_time=b->time;}
+    } else {s->blocked_time=0;bot_ai_not_blocked_time_set(s,b->time);}
     if(result->flags&(QA_BOT_MOVE_VIEW|QA_BOT_MOVE_SWIM_VIEW|QA_BOT_MOVE_VIEW_SET))
         bot_ai_view_ideal_set(s,result->ideal_view_angles);
     else {
@@ -247,7 +247,7 @@ static bool lifecycle(qa_bots *b, bot_ai_state *s, bool *handled, qa_error *e) {
             bool chat;DECISION_CALL(bot_ai_source_chat_start_level(b,s,&chat,e));
             float duration=2;
             if(chat) {DECISION_CALL(bot_ai_source_chat_time(b,s,&duration,e));}
-            s->stand_until=b->time+duration;enter(b,s,QA_BOT_STANDING);
+            bot_ai_stand_until_set(s,b->time+duration);enter(b,s,QA_BOT_STANDING);
         }
         return true;
     }
@@ -329,18 +329,18 @@ bool bot_ai_decide(qa_bots *b, bot_ai_state *s, qa_error *e) {
                 bool chat;DECISION_CALL(bot_ai_source_chat_hit_talking(b,s,&chat,e));
                 if(chat) {
                     float duration;DECISION_CALL(bot_ai_source_chat_time(b,s,&duration,e));
-                    volatile float until=b->time+duration;s->stand_enemy_time=until+.1f;
+                    volatile float until=b->time+duration;bot_ai_stand_enemy_time_set(s,until+.1f);
                     DECISION_CALL(bot_ai_source_chat_time(b,s,&duration,e));
-                    until=b->time+duration;s->stand_until=until+.1f;
+                    until=b->time+duration;bot_ai_stand_until_set(s,until+.1f);
                 }
             }
-            if(s->stand_enemy_time<b->time) {
+            if(bot_ai_stand_enemy_time(s)<b->time) {
                 bool found;DECISION_CALL(bot_ai_find_enemy(b,s,&found,e));
                 if(found) {enter(b,s,QA_BOT_FIGHTING);continue;}
-                s->stand_enemy_time=b->time+1;
+                bot_ai_stand_enemy_time_set(s,b->time+1);
             }
             DECISION_CALL(qa_bot_actions_add(qa_bot_runtime_actions(b->runtime),s->view.client,QA_BOT_TALK,e));
-            if(s->stand_until<b->time) {
+            if(bot_ai_stand_until(s)<b->time) {
                 DECISION_CALL(qa_bot_chat_enter(qa_bot_runtime_chat(b->runtime,s->chat),0,
                     (qa_bot_chat_destination)s->source_chat.chat_to,e));
                 enter(b,s,QA_BOT_SEEK_LONG_TERM);continue;
@@ -354,7 +354,7 @@ bool bot_ai_decide(qa_bots *b, bot_ai_state *s, qa_error *e) {
                 bool chat;DECISION_CALL(bot_ai_source_chat_random(b,s,&chat,e));
                 if(chat) {
                     float duration;DECISION_CALL(bot_ai_source_chat_time(b,s,&duration,e));
-                    s->stand_until=b->time+duration;enter(b,s,QA_BOT_STANDING);continue;
+                    bot_ai_stand_until_set(s,b->time+duration);enter(b,s,QA_BOT_STANDING);continue;
                 }
             }
             DECISION_CALL(travel(b,s,e));
@@ -416,8 +416,8 @@ bool bot_ai_decide(qa_bots *b, bot_ai_state *s, qa_error *e) {
                 }
                 if(s->retired || !bot_ai_live(b,s->view.actor)) return true;
                 if(!found) return true;
-                if(!ordered && s->check_time<b->time) {
-                    s->check_time=b->time+.5f;
+                if(!ordered && bot_ai_check_time(s)<b->time) {
+                    bot_ai_check_time_set(s,b->time+.5f);
                     bool accepted,nearby_found;
                     if(!bot_ai_source_wants_camp(b,s,&accepted,e)) return false;
                     if(s->retired || !bot_ai_live(b,s->view.actor)) return true;
@@ -426,16 +426,16 @@ bool bot_ai_decide(qa_bots *b, bot_ai_state *s, qa_error *e) {
                     if(s->retired || !bot_ai_live(b,s->view.actor)) return true;
                     if(nearby_found) {
                         if(!qa_bot_moves_reset_avoid(moves(b),s->movement,true,e)) return false;
-                        volatile float added=range*.01f,until=b->time+4;s->nearby_until=until+added;
+                        volatile float added=range*.01f,until=b->time+4;bot_ai_nearby_until_set(s,until+added);
                         enter(b,s,QA_BOT_SEEK_NEARBY);continue;
                     }
                 }
             } else {
                 if(!qa_bot_goals_top(goals(b),s->goals,false,&goal,&found,e)) return false;
                 if(found && !bot_ai_source_reached_goal(b,s,&goal,&done,e)) return false;
-                if(!found || done || s->nearby_until<b->time) {
+                if(!found || done || bot_ai_nearby_until(s)<b->time) {
                     if(found && !qa_bot_goals_pop(goals(b),s->goals,e)) return false;
-                    enter(b,s,QA_BOT_SEEK_LONG_TERM);s->check_time=b->time+.05f;continue;
+                    enter(b,s,QA_BOT_SEEK_LONG_TERM);bot_ai_check_time_set(s,b->time+.05f);continue;
                 }
             }
             qa_bot_move_result result;
@@ -473,8 +473,8 @@ bool bot_ai_decide(qa_bots *b, bot_ai_state *s, qa_error *e) {
                         }
                         if(chat) {
                             float duration;DECISION_CALL(bot_ai_source_chat_time(b,s,&duration,e));
-                            s->stand_until=b->time+duration;enter(b,s,QA_BOT_STANDING);
-                        } else {s->long_term_until=0;enter(b,s,QA_BOT_SEEK_LONG_TERM);}
+                            bot_ai_stand_until_set(s,b->time+duration);enter(b,s,QA_BOT_STANDING);
+                        } else {bot_ai_long_term_until_set(s,0);enter(b,s,QA_BOT_SEEK_LONG_TERM);}
                         continue;
                     }
                 } else {
@@ -505,7 +505,7 @@ bool bot_ai_decide(qa_bots *b, bot_ai_state *s, qa_error *e) {
                 }
                 if(chat) {
                     float duration;DECISION_CALL(bot_ai_source_chat_time(b,s,&duration,e));
-                    s->stand_until=b->time+duration;enter(b,s,QA_BOT_STANDING);continue;
+                    bot_ai_stand_until_set(s,b->time+duration);enter(b,s,QA_BOT_STANDING);continue;
                 }
             }
             DECISION_CALL(enemy_state(b,s,&alive,&visible,e));
@@ -537,15 +537,15 @@ bool bot_ai_decide(qa_bots *b, bot_ai_state *s, qa_error *e) {
             }
             qa_bot_goal goal={0};bool goal_found=true;
             if(node==QA_BOT_CHASING) {
-                if(!s->last_enemy_area || s->chase_until<b->time) {enter(b,s,QA_BOT_SEEK_LONG_TERM);continue;}
+                if(!s->last_enemy_area || !bot_ai_chase_time(s) || bot_ai_chase_time(s)<b->time-10) {enter(b,s,QA_BOT_SEEK_LONG_TERM);continue;}
                 goal=(qa_bot_goal){.origin=bot_ai_last_enemy_origin(s),.area=(int32_t)s->last_enemy_area,
                     .mins=qa_v3(-8,-8,-8),.maxs=qa_v3(8,8,8),.entity=-1};
-                if(qa_bot_goal_touching(s->player.origin,&goal)) {enter(b,s,QA_BOT_SEEK_LONG_TERM);continue;}
+                if(qa_bot_goal_touching(s->player.origin,&goal)) {bot_ai_chase_time_set(s,0);enter(b,s,QA_BOT_SEEK_LONG_TERM);continue;}
             } else if(node==QA_BOT_BATTLE_NEARBY) {
                 bool done=false;
                 if(!qa_bot_goals_top(goals(b),s->goals,false,&goal,&goal_found,e)) return false;
                 if(goal_found && !bot_ai_source_reached_goal(b,s,&goal,&done,e)) return false;
-                if(!goal_found || done || s->nearby_until<b->time) {
+                if(!goal_found || done || bot_ai_nearby_until(s)<b->time) {
                     if(goal_found && !qa_bot_goals_pop(goals(b),s->goals,e)) return false;
                     if(!qa_bot_goals_top(goals(b),s->goals,false,&goal,&goal_found,e)) return false;
                     enter(b,s,goal_found?QA_BOT_RETREATING:QA_BOT_FIGHTING);continue;
@@ -557,8 +557,8 @@ bool bot_ai_decide(qa_bots *b, bot_ai_state *s, qa_error *e) {
             }
             if(s->retired || !bot_ai_live(b,s->view.actor)) return true;
             if(!goal_found) {enter(b,s,QA_BOT_FIGHTING);bot_ai_flag_set(s,BOT_AI_FIGHT_SUICIDAL,true);continue;}
-            if(node!=QA_BOT_BATTLE_NEARBY && s->check_time<b->time) {
-                s->check_time=b->time+1;
+            if(node!=QA_BOT_BATTLE_NEARBY && bot_ai_check_time(s)<b->time) {
+                bot_ai_check_time_set(s,b->time+1);
                 bool nearby_found;
                 float range=node==QA_BOT_RETREATING?objective_nearby_range(b,s,150):150;
                 if(!nearby(b,s,&goal,range,&nearby_found,e)) return false;
@@ -566,7 +566,7 @@ bool bot_ai_decide(qa_bots *b, bot_ai_state *s, qa_error *e) {
                 if(nearby_found) {
                     if(!qa_bot_moves_reset_avoid(moves(b),s->movement,true,e)) return false;
                     volatile float added=range/100,until=b->time+added;
-                    s->nearby_until=node==QA_BOT_CHASING?b->time+16:until+1;
+                    bot_ai_nearby_until_set(s,node==QA_BOT_CHASING?b->time+16:until+1);
                     enter(b,s,QA_BOT_BATTLE_NEARBY);continue;
                 }
             }

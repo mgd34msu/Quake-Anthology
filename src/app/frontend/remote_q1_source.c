@@ -10,6 +10,9 @@ bool frontend_remote_q1_source_defaults(qa_cvars *cvars,uint64_t owner,uint32_t 
 {
     if (!cvars || !owner || qa_cvars_dialect(cvars)>QA_CONSOLE_QW) return false;
     if (!frontend_legacy_source_register(cvars, qa_cvars_dialect(cvars), owner, error)) return false;
+    if (!qa_cvars_register(cvars,"gl_cshiftpercent","100",0,owner,"Source camera color shift scale",error)) return false;
+    if (qa_cvars_dialect(cvars)==QA_CONSOLE_QW &&
+        !qa_cvars_register(cvars,"v_contentblend","1",0,owner,"Source camera contents color shift",error)) return false;
     if (qa_cvars_dialect(cvars)==QA_CONSOLE_Q1) {
         char name[48]; if (seat==0) snprintf(name,sizeof(name),"Player");
         else snprintf(name,sizeof(name),"Player %llu",(unsigned long long)seat+1);

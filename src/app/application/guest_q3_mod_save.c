@@ -2,13 +2,13 @@
 
 static bool prefix(application_q3_mod *o, qa_source_save_io *io)
 {
-    uint8_t magic[4]={'Q','G','M','D'}; uint32_t version=1,abi=(uint32_t)o->profile->abi;
+    uint8_t magic[4]={'Q','G','M','D'}; uint32_t version=2,abi=(uint32_t)o->profile->abi;
     uint8_t expected[4]; memcpy(expected,magic,4);
     uint8_t digest[32]; memcpy(digest,qa_qvm_image_digest(o->profile->image),sizeof(digest));
     uint8_t original_digest[32]; memcpy(original_digest,digest,sizeof(digest));
     size_t bytes=o->profile->declaration.size;
     if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,expected,4) ||
-        !qa_source_save_u32(io,&version) || version!=1 || !qa_source_save_u32(io,&abi) || abi!=(uint32_t)o->profile->abi ||
+        !qa_source_save_u32(io,&version) || version!=2 || !qa_source_save_u32(io,&abi) || abi!=(uint32_t)o->profile->abi ||
         !qa_source_save_bytes(io,digest,sizeof(digest)) || memcmp(digest,original_digest,sizeof(digest)) ||
         !qa_source_save_count(io,&bytes,o->profile->declaration.size) || bytes!=o->profile->declaration.size)
         return q3mod_fail(io->error,QA_ERROR_FORMAT,"Generic source continuation header differs from its actual declaration");
@@ -34,12 +34,12 @@ bool application_q3_mod_checkpoint(application_q3_mod *o, qa_buffer *out, qa_err
             qa_source_save_count(&io,&definition,o->profile->protection_count) && qa_source_save_string(&io,&rule) &&
             qa_source_save_u64(&io,&serial) && qa_source_save_bool(&io,&bound);
     }
-    if (ok) ok=qa_source_save_finish(&io,out);
+    if (ok) ok=q3mod_pickups_fields(o,&io)&&qa_source_save_finish(&io,out);
     qa_source_save_dispose(&io); return ok;
 }
 bool application_q3_mod_restore(application_q3_mod *o, qa_bytes bytes, qa_error *e)
 {
-    if (!o || !o->restoring || o->channels || o->callbacks || !application_q3_mod_idle(o))
+    if (!o || !o->restoring || o->channels || o->callbacks || o->pickup_actors || !application_q3_mod_idle(o))
         return q3mod_fail(e,QA_ERROR_ARGUMENT,"Generic child restore requires its fresh detached source owner");
     qa_source_save_io io; if (!qa_source_save_reader(&io,o->session,bytes,e)) return false;
     bool active=false, callbacks=false; size_t count=0;
@@ -64,7 +64,7 @@ bool application_q3_mod_restore(application_q3_mod *o, qa_bytes bytes, qa_error 
         c->lease.actor=c->actor; c->lease.channel=o->profile->protection[c->definition].channel;
         *tail=c; tail=&c->next;
     }
-    if (ok) ok=qa_source_save_finish(&io,NULL);
+    if (ok) { o->active=active; ok=q3mod_pickups_fields(o,&io)&&qa_source_save_finish(&io,NULL); }
     qa_source_save_dispose(&io);
     if (!ok) { while (head) { mod_actor_channel *next=head->next; free(head); head=next; } return false; }
     o->channels=head; o->active=active; o->restored_callbacks=callbacks; return true;
@@ -86,7 +86,7 @@ static bool channels_current(application_q3_mod *o, qa_error *e)
 }
 bool application_q3_mod_validate(application_q3_mod *o, qa_error *e)
 {
-    if (!channels_current(o,e)) return false;
+    if (!channels_current(o,e)||!q3mod_pickups_validate(o,e)) return false;
     for (size_t i=0;i<o->profile->callback_count;++i) if (!o->callbacks || !o->callbacks[i].registration) {
         if (o->callbacks_active) return q3mod_fail(e,QA_ERROR_ARGUMENT,"Source callback continuation has incomplete actual registrations");
     } else if (!o->callbacks_active) return q3mod_fail(e,QA_ERROR_ARGUMENT,"Inactive source callback owner retains a physical operation hook");

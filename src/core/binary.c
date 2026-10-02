@@ -73,6 +73,13 @@ void qa_store_u64le(void *data, uint64_t value)
     qa_store_u32le(bytes + 4, (uint32_t)(value >> 32));
 }
 
+void qa_store_f32le(void *data, float value)
+{
+    uint32_t bits;
+    memcpy(&bits, &value, sizeof(bits));
+    qa_store_u32le(data, bits);
+}
+
 bool qa_bytes_slice(qa_bytes source, size_t offset, size_t size,
                     qa_bytes *out, qa_error *error)
 {

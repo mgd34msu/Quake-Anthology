@@ -22,7 +22,7 @@ struct qa_native_region_scope {
     bool invoking, invoked, reached;
 };
 static bool fail(qa_error *error, const char *message) {
-    return native_fail(error, QA_ERROR_ARGUMENT, 0, "%s", message);
+    return native_fail(error, QA_ERROR_ARGUMENT, 0, message);
 }
 bool qa_native_region_scope_argument_bytes(const qa_native_signature *signature,
     size_t *out, qa_error *error) {

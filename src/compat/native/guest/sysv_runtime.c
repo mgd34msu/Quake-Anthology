@@ -523,6 +523,24 @@ bool guest_sysv_load_begin(guest_sysv_runtime *runtime, uint64_t provider,
     if (!unsupported_access(runtime, true, error)) { runtime->failed = true; return false; }
     return true;
 }
+bool guest_sysv_reload_begin(guest_sysv_runtime *runtime, uint64_t provider,
+    guest_sysv_load **out, guest_sysv_tls *tls, qa_error *error)
+{
+    if (!out || *out || !tls || !guest_sysv_idle(runtime) || !sysv_current(runtime, error))
+        return sysv_fail(error, QA_ERROR_ARGUMENT, "System V reload requires its returned process and empty load lease");
+    sysv_image *image = image_find(runtime, provider);
+    if (!image || image->lifecycle != GUEST_SYSV_FINALIZED)
+        return sysv_fail(error, QA_ERROR_ARGUMENT, "System V reload requires the actual finalized module");
+    guest_sysv_load *load = calloc(1, sizeof(*load));
+    if (!load) return sysv_fail(error, QA_ERROR_MEMORY, "retaining System V module reload lease");
+    load->runtime = runtime; load->provider = provider; load->replacing = true;
+    load->has_tls = image->tls.module_id != 0; load->tls = image->tls;
+    load->next_used = runtime->tls_used;
+    runtime->loading = load; *out = load; *tls = load->tls;
+    if (!unsupported_access(runtime, true, error)) { runtime->failed = true; return false; }
+    return true;
+}
+
 bool guest_sysv_load_commit(guest_sysv_load **owner,
     const guest_sysv_provider *provider, qa_bytes tls_template, qa_error *error)
 {
@@ -559,11 +577,15 @@ bool guest_sysv_load_commit(guest_sysv_load **owner,
         }
         size_t p = runtime->target.pointer_bytes;
         if (!sysv_put_pointer(runtime, runtime->dtv + load->tls.module_id * 2 * p, load->tls.address, error) ||
-            !sysv_store(runtime, runtime->dtv, p, load->tls.module_id + 1, error)) goto failed;
+            (!load->replacing && !sysv_store(runtime, runtime->dtv, p, load->tls.module_id + 1, error))) goto failed;
         runtime->tls_used = load->next_used;
     }
     if (!unsupported_access(runtime, false, error)) goto failed;
-    runtime->images[runtime->image_count++] = image;
+    if (load->replacing) {
+        sysv_image *previous = image_find(runtime, load->provider);
+        if (!previous || previous->lifecycle != GUEST_SYSV_FINALIZED) goto failed;
+        image_free(previous); *previous = image;
+    } else runtime->images[runtime->image_count++] = image;
     runtime->loading = NULL; free(load); *owner = NULL; return true;
 failed:
     image_free(&image); runtime->failed = true; return false;
@@ -762,6 +784,50 @@ bool guest_sysv_finalize_destructors(guest_sysv_runtime *runtime, uint64_t dso, 
         if (!sysv_invoke(runtime, entry.target, &type, 1, QA_NATIVE_VOID, &argument, &result, error)) return false;
     }
 }
+bool guest_sysv_finalize_image_destructors(guest_sysv_runtime *runtime, uint64_t provider,
+    uint64_t base, uint64_t bytes, qa_error *error)
+{
+    if (!bytes || base > UINT64_MAX - bytes || !guest_sysv_idle(runtime) || !sysv_current(runtime, error))
+        return sysv_fail(error, QA_ERROR_ARGUMENT, "System V module destructors require the actual stopped image range");
+    const sysv_image *image = image_find(runtime, provider);
+    if (!image || image->lifecycle != GUEST_SYSV_FINALIZED)
+        return sysv_fail(error, QA_ERROR_ARGUMENT, "System V module finalizers have not returned");
+    uint64_t end = base + bytes;
+    for (;;) {
+        size_t index = runtime->destructor_count;
+        while (index) {
+            const sysv_destructor *entry = runtime->destructors + --index;
+            if (!entry->called && ((entry->target >= base && entry->target < end) ||
+                (entry->dso >= base && entry->dso < end))) break;
+        }
+        if (!runtime->destructor_count) break;
+        sysv_destructor entry = runtime->destructors[index];
+        if (entry.called || !((entry.target >= base && entry.target < end) ||
+            (entry.dso >= base && entry.dso < end))) break;
+        runtime->destructors[index].called = true;
+        const qa_native_value_type type = QA_NATIVE_ADDRESS;
+        qa_native_value argument = {.type = type, .as.address = entry.argument};
+        qa_native_value result = {.type = QA_NATIVE_VOID};
+        if (!sysv_invoke(runtime, entry.target, &type, 1, QA_NATIVE_VOID, &argument, &result, error)) return false;
+    }
+    for (size_t i = runtime->destructor_count; i; --i) {
+        sysv_destructor entry = runtime->destructors[i - 1];
+        if ((entry.target >= base && entry.target < end) || (entry.dso >= base && entry.dso < end)) {
+            memmove(runtime->destructors + i - 1, runtime->destructors + i,
+                (runtime->destructor_count - i) * sizeof(*runtime->destructors));
+            --runtime->destructor_count;
+        }
+    }
+    for (size_t i = runtime->unique_count; i; --i)
+        if (runtime->unique[i - 1].address >= base && runtime->unique[i - 1].address < end) {
+            free(runtime->unique[i - 1].name);
+            memmove(runtime->unique + i - 1, runtime->unique + i,
+                (runtime->unique_count - i) * sizeof(*runtime->unique));
+            --runtime->unique_count;
+        }
+    return true;
+}
+
 size_t guest_sysv_trace_count(const guest_sysv_runtime *runtime)
 { return runtime ? runtime->trace_count : 0; }
 bool guest_sysv_finalize_all(guest_sysv_runtime *runtime, size_t budget, qa_error *error)

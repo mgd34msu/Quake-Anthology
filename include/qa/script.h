@@ -203,6 +203,7 @@ bool qa_script_define(qa_script *, const char *definition, qa_error *);
 bool qa_script_undefine(qa_script *, const char *name, qa_error *);
 bool qa_script_is_defined(const qa_script *, const char *name);
 qa_script_location qa_script_position(const qa_script *);
+qa_script_location qa_script_source_position(const qa_script *);
 bool qa_script_expect(qa_script *, const char *, qa_error *);
 bool qa_script_check(qa_script *, const char *, bool *matched, qa_error *);
 bool qa_script_skip_until(qa_script *, const char *, bool *found, qa_error *);

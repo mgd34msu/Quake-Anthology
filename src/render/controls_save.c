@@ -2,6 +2,8 @@
 #include "qa/render_save.h"
 #include "qa/q3_source_scene_bank.h"
 #include "save_fields.h"
+#include <stdlib.h>
+#include <string.h>
 
 static bool color_fields(qa_source_save_io *io, qa_scene_vec4 *color)
 {
@@ -212,9 +214,35 @@ static bool source_fields(qa_source_save_io *io, qa_material_source_scratch *sou
     return true;
 }
 
+static bool diagnostics_fields(qa_source_save_io *io,qa_render_controls *controls)
+{
+    qa_render_source_frame_values *values=&controls->frame_values;
+    qa_render_source_counters *pc=&controls->counters;
+    if (!qa_source_save_i32(io,&values->finish) || !qa_source_save_i32(io,&values->show_images) ||
+        !qa_source_save_i32(io,&values->speeds) || !qa_source_save_bool(io,&values->measure_overdraw) ||
+        !qa_source_save_bool(io,&values->no_bind) || !qa_source_save_bool(io,&controls->finish_called)) return false;
+    uint64_t *fields[]={&pc->shaders,&pc->surfaces,&pc->vertices,&pc->indexes,&pc->total_indexes,&pc->overdraw,
+        &pc->leaves,&pc->dlight_surfaces,&pc->dlight_culled,&pc->dlight_vertices,&pc->dlight_indexes,
+        &pc->flare_adds,&pc->flare_tests,&pc->flare_renders};
+    for (size_t i=0;i<sizeof(fields)/sizeof(*fields);++i)
+        if (!qa_source_save_u64(io,fields[i])) return false;
+    for (size_t i=0;i<3;++i)
+        if (!qa_source_save_u64(io,pc->patch_sphere+i) || !qa_source_save_u64(io,pc->patch_box+i) ||
+            !qa_source_save_u64(io,pc->md3_sphere+i) || !qa_source_save_u64(io,pc->md3_box+i)) return false;
+    if (!qa_source_save_i32(io,&pc->view_cluster) || !qa_source_save_f32(io,&pc->far_clip) || !isfinite(pc->far_clip)) return false;
+    for (size_t i=0;i<sizeof(controls->image_used)/sizeof(*controls->image_used);++i)
+        if (!qa_source_save_bool(io,controls->image_used+i)) return false;
+    return true;
+}
 bool qa_render_controls_saved_fields(qa_source_save_io *io, qa_render_controls *controls, uint32_t version,
     const qa_render_checkpoint_refs *refs)
 {
+    if (version>=21 && !diagnostics_fields(io,controls)) return false;
+    if (version<21 && io->direction==QA_SOURCE_SAVE_READ) {
+        controls->frame_values=(qa_render_source_frame_values){0};
+        controls->counters=(qa_render_source_counters){0}; controls->finish_called=false;
+        memset(controls->image_used,0,sizeof(controls->image_used));
+    }
     if (version>=17 && !qa_render_source_texture_saved_fields(io,&controls->zero_texture,version,refs)) return false;
     /* The enclosing CPU/GL codec owns the schema version and idle boundary. */
     qa_render_source_attributes *attributes=&controls->attributes;

@@ -1,5 +1,6 @@
 #include "remote_q3_session.h"
 #include "remote_q3_transport.h"
+#include "source_renderer_runtime.h"
 
 static bool fail(qa_error *error,const char *text)
 { return error && error->code!=QA_OK?false:frontend_fail(error,QA_ERROR_ARGUMENT,text); }
@@ -62,6 +63,7 @@ static bool create_decoded(qa_frontend *f,const frontend_network_client_domain *
         !qa_application_native_q3_client_modules_initialize(owner,request,error)) return false;
     if(!recipe.pure && !frontend_remote_q3_frame_initialize(frames,runtime,
         frontend_remote_q3_runtime_initialize,error)) return false;
+    if(!frontend_source_renderer_end_registration(f,error)) return false;
     frontend_remote_q3_session_view completed;
     return frontend_remote_q3_session_read(row,&completed,error);
 }

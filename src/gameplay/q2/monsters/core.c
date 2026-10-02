@@ -1401,7 +1401,7 @@ static bool initialize_body(qa_q2_game *game, q2_actor *actor,
   return true;
 }
 
-bool q2m_set_power_cells(q2m_context *context, qa_power_kind kind, float cells,
+bool q2m_set_power_cells(q2m_context *context, qa_power_kind kind, double cells,
                             qa_error *error) {
   qa_q2_game *game = context->game;
   qa_actor_id id = context->actor->id;
@@ -1826,12 +1826,12 @@ static bool monster_admit(qa_q2_game *game, qa_actor_id id,
       return false;
     }
     if (found) {
-      if (!isfinite(fuel.count) || fuel.count < 0 || fuel.count > FLT_MAX) {
+      if (!isfinite(fuel.count) || fuel.count < 0) {
         qa_error_set(error, QA_ERROR_ARGUMENT, id.slot,
-                     "Q2 monster power reserve is outside float range");
+                     "Q2 monster power reserve must be finite and nonnegative");
         return false;
       }
-      monster->max_power_armor = (float)fuel.count;
+      monster->max_power_armor = fuel.count;
     }
   }
   if (previous && game->options.edition == QA_Q2_RERELEASE) {

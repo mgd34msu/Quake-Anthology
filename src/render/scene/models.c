@@ -1,4 +1,5 @@
 #include "models/internal.h"
+#include "../controls_private.h"
 #include "qa/scene_model_save.h"
 #include <limits.h>
 #include <stdio.h>
@@ -748,6 +749,7 @@ static bool source_md3_visible(const qa_scene_model *model, const qa_scene_model
     if (!input->non_normalized_axis) {
         int a = source_md3_sphere(input, current, planes), b = current == previous ? a :
             source_md3_sphere(input, previous, planes);
+        if (input->source_scratch) ++input->source_scratch->owner->counters.md3_sphere[a==b && a? a>0?0:2:1];
         if (a == b && a) return a > 0;
     }
     qa_model_bounds merged;
@@ -755,7 +757,7 @@ static bool source_md3_visible(const qa_scene_model *model, const qa_scene_model
         merged.min[axis] = fminf(current->bounds.min[axis], previous->bounds.min[axis]);
         merged.max[axis] = fmaxf(current->bounds.max[axis], previous->bounds.max[axis]);
     }
-    bool front[4] = {false};
+    bool front[4] = {false},back[4]={false};
     for (unsigned corner = 0; corner < 8; ++corner) {
         float local[3], point[3];
         for (unsigned axis = 0; axis < 3; ++axis)
@@ -763,8 +765,12 @@ static bool source_md3_visible(const qa_scene_model *model, const qa_scene_model
         qa_model_transform_point(&input->transform, local, point);
         for (unsigned plane = 0; plane < 4; ++plane)
             if (qa_vec_dot(model_vec(point), planes[plane].normal) > planes[plane].distance) front[plane] = true;
+            else back[plane]=true;
     }
-    return front[0] && front[1] && front[2] && front[3];
+    bool visible=front[0] && front[1] && front[2] && front[3];
+    bool inside=!(back[0] || back[1] || back[2] || back[3]);
+    if (input->source_scratch) ++input->source_scratch->owner->counters.md3_box[!visible?2:inside?0:1];
+    return visible;
 }
 bool qa_scene_model_source_admission(const qa_scene_model *model, const qa_scene_model_input *original,
     bool *visible, qa_error *error)

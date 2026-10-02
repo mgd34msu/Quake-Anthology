@@ -14,6 +14,7 @@ struct mod_protection_stage {
     application_q3_mod *owner;
     qa_actor_id actor;
     qa_protection_observer *observer;
+    qa_pickup_execution *pickup;
     watched_channel channels[2];
     size_t count;
     qa_armor before;
@@ -209,7 +210,7 @@ bool application_q3_mod_reserve(application_q3_mod *o, qa_actor_id actor, qa_err
 bool application_q3_mod_admit(application_q3_mod *o, qa_actor_id actor, qa_error *e)
 {
     if (!q3mod_current(o,e)) return false;
-    if (!o->profile->protection_count) return true;
+    if (!o->profile->protection_count) return q3mod_pickups_admit(o,actor,e);
     if (!o->active || !o->services.live_client(o->services.context,actor)) return true;
     for (mod_actor_channel *c=o->channels;c;c=c->next) if (qa_actor_id_equal(c->actor,actor) && !c->bound) {
         qa_armor current={0}; qa_protection_binding binding;
@@ -217,7 +218,7 @@ bool application_q3_mod_admit(application_q3_mod *o, qa_actor_id actor, qa_error
             !qa_combat_bind_protection(o->combat,c->lease,&binding,e)) return false;
         c->bound=true;
     }
-    return true;
+    return q3mod_pickups_admit(o,actor,e);
 }
 static bool stop(mod_protection_stage *stage, qa_error *e)
 {
@@ -247,6 +248,7 @@ bool q3mod_protection_stages_close(application_q3_mod *o, qa_error *e)
 bool application_q3_mod_release_actor(application_q3_mod *o, qa_actor_id actor, qa_error *e)
 {
     if (!o) return true;
+    if(!q3mod_pickups_release(o,actor,e)) return false;
     for (mod_protection_stage *s=o->stages;s;s=s->previous) if (qa_actor_id_equal(s->actor,actor) && !stop(s,e)) return false;
     mod_actor_channel **link=&o->channels;
     while (*link) {
@@ -289,21 +291,21 @@ static bool publish(void *context, qa_qvm *vm, const qa_qvm_committed_write *eve
 static bool after(void *context, qa_qvm *vm, const qa_qvm_committed_write *event, qa_error *e)
 {
     mod_protection_stage *s=context; (void)vm;
-    if (!s->running || !s->observer)
+    if (!s->running || (!s->observer&&!s->pickup))
         return q3mod_fail(e,QA_ERROR_ARGUMENT,"Protection observer left its actual absorption scope");
     store_delivery **link=&s->deliveries;
     while (*link && (*link)->sequence!=event->sequence) link=&(*link)->next;
     if (!*link) return true;
     store_delivery *delivery=*link; *link=delivery->next;
     qa_protection_store change=delivery->store; free(delivery);
-    return qa_protection_observe(s->observer,&change,e);
+    return s->pickup?qa_pickup_store_protection(s->pickup,&change,e):qa_protection_observe(s->observer,&change,e);
 }
-bool q3mod_protection_observe(application_q3_mod *o, qa_actor_id actor, qa_protection_observer *observer,
+static bool observe(application_q3_mod *o, qa_actor_id actor, qa_protection_observer *observer,qa_pickup_execution *pickup,
     const mod_call *call, const application_q3_mod_inputs *inputs, double *result, qa_error *e)
 {
     mod_protection_stage *stage=calloc(1,sizeof(*stage));
     if (!stage) return q3mod_fail(e,QA_ERROR_MEMORY,"Owning actual protection write continuation");
-    *stage=(mod_protection_stage){.owner=o,.actor=actor,.observer=observer,.previous=o->stages,.running=true};
+    *stage=(mod_protection_stage){.owner=o,.actor=actor,.observer=observer,.pickup=pickup,.previous=o->stages,.running=true};
     qa_qvm_write_range ranges[4]; size_t n=0;
     for (mod_actor_channel *c=o->channels;c;c=c->next) if (c->bound && qa_actor_id_equal(c->actor,actor)) {
         if (stage->count==2) { stage_free(stage); return q3mod_fail(e,QA_ERROR_ARGUMENT,"Protection owner duplicates a physical channel"); }
@@ -318,7 +320,7 @@ bool q3mod_protection_observe(application_q3_mod *o, qa_actor_id actor, qa_prote
     if (ok && qa_actors_get(qa_session_actors(o->session),actor))
         for (mod_actor_channel *c=o->channels;ok && c;c=c->next)
             if (qa_actor_id_equal(c->actor,actor)) ok=require(c,e);
-    stage->running=false; stage->observer=NULL;
+    stage->running=false; stage->observer=NULL; stage->pickup=NULL;
     qa_error cleanup={0}; bool stopped=stop(stage,&cleanup);
     if (stopped) {
         mod_protection_stage **link=&o->stages;
@@ -329,3 +331,10 @@ bool q3mod_protection_observe(application_q3_mod *o, qa_actor_id actor, qa_prote
     if (!stopped && ok) { if (e) *e=cleanup; ok=false; }
     return ok;
 }
+
+bool q3mod_protection_observe(application_q3_mod *o,qa_actor_id actor,qa_protection_observer *observer,
+    const mod_call *call,const application_q3_mod_inputs *inputs,double *result,qa_error *e)
+{ return observe(o,actor,observer,NULL,call,inputs,result,e); }
+bool q3mod_pickup_observe(application_q3_mod *o,qa_actor_id actor,qa_pickup_execution *pickup,
+    const mod_call *call,const application_q3_mod_inputs *inputs,double *result,qa_error *e)
+{ return observe(o,actor,NULL,pickup,call,inputs,result,e); }

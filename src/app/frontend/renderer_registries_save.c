@@ -159,7 +159,8 @@ bool frontend_renderer_registries_prepare_restored(qa_frontend *f,frontend_q3_in
     qa_source_save_io io={0}; uint8_t magic[4]={0}; uint32_t version=0; size_t count=0;
     bool okay=qa_source_save_reader(&io,NULL,bytes,error) && qa_source_save_bytes(&io,magic,4) &&
         !memcmp(magic,"QFRG",4) && qa_source_save_u32(&io,&version) && version==1 &&
-        qa_source_save_count(&io,&count,SIZE_MAX/sizeof(registry_prefix));
+        qa_source_save_count(&io,&count,SIZE_MAX/sizeof(registry_prefix)) &&
+        io.offset<=io.input.size && count<=(io.input.size-io.offset)/8;
     registry_prefix *rows=okay && count?calloc(count,sizeof(*rows)):NULL;
     okay=okay && (!count || rows);
     for(size_t i=0;okay && i<count;++i) okay=row_fields(&io,rows+i);

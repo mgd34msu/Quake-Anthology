@@ -246,3 +246,26 @@ bool remote_q1_camera_fields(frontend_remote_q1 *row, qa_source_save_io *io)
         qa_vec_finite(v->origin) && qa_vec_finite(v->angles) &&
         (!c->has_view || (c->tracking && c->locked));
 }
+
+bool remote_q1_camera_contents_blend(frontend_remote_q1 *row,const qa_scene_view *view,
+    qa_scene_vec4 *out,qa_error *error)
+{
+    if (!row || !view || !out || !row->world || view->seat!=row->options.domain.physical_seat ||
+        !remote_q1_mutable(row) || !remote_q1_live(row,error)) return false;
+    int32_t contents;
+    if (!qa_scene_world_q1_contents(row->world,view->origin,&contents,error)) return false;
+    const qa_cvar_view *scale=qa_cvars_find(row->options.domain.cvars,"gl_cshiftpercent");
+    bool quakeworld=qa_q1_is_qw(row->options.domain.protocol);
+    const qa_cvar_view *enabled=quakeworld?qa_cvars_find(row->options.domain.cvars,"v_contentblend"):NULL;
+    if (!scale || !isfinite(scale->number) || (quakeworld && (!enabled || !isfinite(enabled->number))))
+        return remote_q1_fail(error,QA_ERROR_ARGUMENT,"Q1 camera blend lost its actual Source controls");
+    *out=(qa_scene_vec4){0};
+    if ((quakeworld && !enabled->number) || contents==-1 || (!quakeworld && contents==-2)) return true;
+    float percent;
+    if (contents==-5) { *out=(qa_scene_vec4){1,80.0f/255,0,0}; percent=150; }
+    else if (contents==-4 || (quakeworld && contents==-2)) {
+        *out=(qa_scene_vec4){0,25.0f/255,5.0f/255,0}; percent=150;
+    } else { *out=(qa_scene_vec4){130.0f/255,80.0f/255,50.0f/255,0}; percent=128; }
+    out->w=(float)fmin(1,fmax(0,(double)percent*scale->number/100/255));
+    return remote_q1_live(row,error);
+}

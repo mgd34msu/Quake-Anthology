@@ -85,6 +85,18 @@ typedef struct mod_callback {
     bool knockback;
     mod_call call;
 } mod_callback;
+typedef struct mod_pickup_context { char *record; uint32_t offset; mod_argument value; } mod_pickup_context;
+typedef struct mod_pickup {
+    qa_string_id id;
+    qa_item_id *offered;
+    size_t offered_count;
+    qa_pickup_write *writes;
+    size_t write_count;
+    mod_call gate, grant;
+    bool gated, always;
+    mod_pickup_context *context;
+    size_t context_count;
+} mod_pickup;
 struct application_q3_mod_profile {
     qa_qvm_image *image;
     qa_buffer declaration;
@@ -100,6 +112,8 @@ struct application_q3_mod_profile {
     size_t protection_count;
     mod_callback *callbacks;
     size_t callback_count;
+    mod_pickup *pickups;
+    size_t pickup_count;
     uint32_t *entries;
     size_t entry_count;
     mod_call_group stages[Q3_MOD_STAGE_COUNT];
@@ -126,6 +140,15 @@ typedef struct mod_source_lease {
     bool succeeded;
     int32_t result;
 } mod_source_lease;
+typedef struct mod_pickup_bound { struct mod_pickup_actor *actor; const mod_pickup *definition; } mod_pickup_bound;
+typedef struct mod_pickup_actor {
+    struct mod_pickup_actor *next;
+    application_q3_mod *owner;
+    qa_actor_id actor;
+    qa_pickup_lease lease;
+    qa_pickup_rule *rules;
+    mod_pickup_bound *bindings;
+} mod_pickup_actor;
 struct application_q3_mod {
     application_q3_mod_profile *profile;
     qa_qvm *vm;
@@ -139,6 +162,8 @@ struct application_q3_mod {
     mod_registered_callback *callbacks;
     mod_protection_stage *stages;
     mod_source_lease *source_calls;
+    mod_pickup_actor *pickup_actors;
+    unsigned pickup_calls;
     unsigned calls;
     bool restoring, restored_owner, active, callbacks_active, restored_callbacks, closing, failed_scope;
 };
@@ -157,5 +182,14 @@ bool q3mod_protection_close(application_q3_mod *, qa_error *);
 bool q3mod_protection_stages_close(application_q3_mod *, qa_error *);
 bool q3mod_protection_observe(application_q3_mod *, qa_actor_id, qa_protection_observer *,
     const mod_call *, const application_q3_mod_inputs *, double *, qa_error *);
+bool q3mod_pickup_observe(application_q3_mod *, qa_actor_id, qa_pickup_execution *,
+    const mod_call *, const application_q3_mod_inputs *, double *, qa_error *);
+bool q3mod_pickup_run(application_q3_mod *,const mod_pickup *,const qa_pickup_offer *,
+    qa_pickup_execution *,qa_pickup_outcome *,qa_error *);
+bool q3mod_pickups_admit(application_q3_mod *,qa_actor_id,qa_error *);
+bool q3mod_pickups_release(application_q3_mod *,qa_actor_id,qa_error *);
+bool q3mod_pickups_close(application_q3_mod *,qa_error *);
+bool q3mod_pickups_fields(application_q3_mod *,qa_source_save_io *);
+bool q3mod_pickups_validate(application_q3_mod *,qa_error *);
 
 #endif

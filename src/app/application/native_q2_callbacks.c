@@ -1442,7 +1442,8 @@ static bool components_prepare(application_native_q2_callbacks *o,qa_error *e)
     struct application_native_q2 *n=o->engine;
     qa_application *app=n->provider->application;
     if(!o->items&&qa_json_size(o->document,qa_json_get(o->document,qa_json_root(o->document),"items"))) {
-        application_native_q2_items_options options={o,app->session,app->inventory,n->provider->owner};
+        application_native_q2_items_options options={.callbacks=o,.session=app->session,
+            .inventory=app->inventory,.pickups=app->pickups,.owner=n->provider->owner};
         if(!application_native_q2_items_create(&options,&o->items,e)) return false;
     }
     if(!o->protection&&qa_json_size(o->document,qa_json_get(o->document,qa_json_root(o->document),"protection"))) {

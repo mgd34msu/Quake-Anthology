@@ -12,6 +12,7 @@
 #include <string.h>
 
 typedef struct event_store {
+    uint32_t schema_version;
     application_event_record *builtin;
     application_q2_map_event_record *q2_map;
     qa_application_q3_map_event *q3_map;
@@ -75,21 +76,23 @@ static bool acquisition_text(qa_source_save_io *io, char **value)
     return true;
 }
 
-static bool signature(qa_source_save_io *io)
+static bool signature(qa_source_save_io *io, uint32_t *schema_version)
 {
     uint8_t magic[sizeof(event_magic)];
     memcpy(magic, event_magic, sizeof(magic));
     uint32_t version = APPLICATION_EVENTS_SAVE_VERSION;
-    return qa_source_save_bytes(io, magic, sizeof(magic)) &&
-        qa_source_save_u32(io, &version) &&
-        ((!memcmp(magic, event_magic, sizeof(magic)) &&
-          version == APPLICATION_EVENTS_SAVE_VERSION) ||
-         event_fail(io, QA_ERROR_FORMAT, "Unsupported application event schema"));
+    if (!qa_source_save_bytes(io, magic, sizeof(magic)) ||
+        !qa_source_save_u32(io, &version)) return false;
+    if (memcmp(magic, event_magic, sizeof(magic)) ||
+        (version != APPLICATION_EVENTS_SAVE_VERSION && version != 20))
+        return event_fail(io, QA_ERROR_FORMAT, "Unsupported application event schema");
+    *schema_version = version;
+    return true;
 }
 
 static bool prefix(qa_source_save_io *io, event_store *store)
 {
-    if (!signature(io) ||
+    if (!signature(io, &store->schema_version) ||
         !qa_source_save_u64(io, &store->protocol_generation) ||
         !qa_source_save_count(io, &store->arena_block_size, SIZE_MAX)) return false;
     for (size_t i = 0; i < 5; ++i) {
@@ -566,14 +569,23 @@ static bool q3_map_field(qa_source_save_io *io, qa_application_q3_map_event *rec
     return true;
 }
 
-static bool view_field(qa_source_save_io *io, qa_q2_player_view *view)
+static bool armor_field(qa_source_save_io *io, uint32_t version, double *armor)
+{
+    if (version != 20) return qa_source_save_f64(io, armor);
+    float legacy = 0;
+    if (!qa_source_save_f32(io, &legacy)) return false;
+    *armor = legacy;
+    return true;
+}
+
+static bool view_field(qa_source_save_io *io, uint32_t version, qa_q2_player_view *view)
 {
     return qa_source_save_vec3(io, &view->angles) && qa_source_save_vec3(io, &view->offset) &&
         qa_source_save_vec3(io, &view->kick_angles) && qa_source_save_vec3(io, &view->gun_angles) &&
         qa_source_save_vec3(io, &view->gun_offset) && qa_source_save_f32(io, &view->blend.x) &&
         qa_source_save_f32(io, &view->blend.y) && qa_source_save_f32(io, &view->blend.z) &&
         qa_source_save_f32(io, &view->blend.w) && qa_source_save_f32(io, &view->fov) &&
-        qa_source_save_f32(io, &view->health) && qa_source_save_f32(io, &view->armor) &&
+        qa_source_save_f32(io, &view->health) && armor_field(io, version, &view->armor) &&
         qa_source_save_f32(io, &view->ammo) &&
         qa_source_save_string(io, &view->ammo_icon) && qa_source_save_string(io, &view->armor_icon) &&
         qa_source_save_i32(io, &view->ammo_count) && int_field(io, &view->score) &&
@@ -648,7 +660,7 @@ static bool q2_player_field(qa_source_save_io *io, event_store *store,
     if (!provider_field(io, &record->provider, true) || !qa_source_save_u64(io, &record->time_ns) ||
         !enum_field(io, &kind, QA_Q2_PLAYER_ALPHA) || !actor_field(io, &event->actor) ||
         !actor_field(io, &event->target) || !text_field(io, store, &event->text) ||
-        !text_field(io, store, &event->skin) || !view_field(io, &event->view)) return false;
+        !text_field(io, store, &event->skin) || !view_field(io, store->schema_version, &event->view)) return false;
     event->kind = (qa_q2_player_event_kind)kind;
     if (!player_arrays(io, store, event) || !vector_field(io, &event->origin) ||
         !vector_field(io, &event->direction) || !qa_source_save_u64(io, &event->time_ns) ||

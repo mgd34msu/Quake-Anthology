@@ -1,4 +1,5 @@
 #include "guest_q3_component_private.h"
+#include "internal.h"
 #include <limits.h>
 
 bool q3component_storage(void *context,qa_error *e)
@@ -57,7 +58,11 @@ static bool prepare(void *context,qa_error *e)
 static bool enter(void *context,uint32_t at,const int32_t *words,size_t n,void **scope,qa_error *e)
 { return application_q3_component_records_enter(((application_q3_component *)context)->records,at,words,n,scope,e); }
 static bool leave(void *context,void **scope,bool ok,int32_t result,qa_error *e)
-{ return application_q3_component_records_leave(((application_q3_component *)context)->records,scope,ok,result,e); }
+{
+    application_q3_component *c=context;
+    if(!application_q3_component_records_leave(c->records,scope,ok,result,e)) return false;
+    return q3component_player_events_publish(c,ok,e);
+}
 static bool source_metadata(application_q3_component *c,qa_error *e)
 {
     qa_json_document *d=NULL; if(!qa_json_parse(application_q3_mod_declaration(c->profile),&d,e)) return false;
@@ -116,11 +121,11 @@ bool application_q3_component_create(const application_q3_component_options *o,b
     if(!source_metadata(c,e)||!q3component_bootstrap_profile(c,e)||!q3component_frame_profile(c,e)||!qa_strings_intern_cstr(qa_session_strings(o->host.session),"qvm:mod-actor",&c->definition,e)) return false;
     if(c->maximum&&(!o->clients.current||!o->clients.userinfo||!o->clients.set_userinfo||!o->clients.command||!o->clients.drop))
         return q3records_fail(e,QA_ERROR_ARGUMENT,"Declared component clients lack their real canonical client services");
-    application_q3_mod_services services={.context=c,.current=q3component_current,.storage_current=q3component_storage,.pointer=pointer,.eligible_actor=eligible,.live_client=client,
+    application_q3_mod_services services={.context=c,.pickups=o->application?o->application->pickups:NULL,.current=q3component_current,.storage_current=q3component_storage,.pointer=pointer,.eligible_actor=eligible,.live_client=client,
         .client_slot=client_slot,.player_state=player,.time=time_read,.source_prepare=prepare,.source_enter=enter,.source_leave=leave};
     memcpy(services.operations,o->operations,sizeof(services.operations));
     if(!application_q3_mod_create(c->profile,c->vm,o->host.session,o->host.owner,o->combat,&services,restoring,&c->mod,e)||
-        !q3component_actors_create(c,e)||!q3component_items_create(c,e)||!q3component_bind_hooks(c,e)||
+        !q3component_actors_create(c,e)||!q3component_items_create(c,e)||!q3component_player_events_create(c,e)||!q3component_bind_hooks(c,e)||
         !qa_qvm_bind_resolver(c->vm,q3component_actor_resolve,c,&c->actor_resolver,e)) return false;
     /* Restored publication attaches once executable activation is qualified. */
     if(!restoring&&!application_q3_component_source_attach(c->source,c->vm,c->host,e)) return false;

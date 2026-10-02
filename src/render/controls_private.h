@@ -49,7 +49,20 @@ struct qa_render_controls {
     qa_render_controls_ticket *ticket;
     qa_render_source_images_ticket *image_ticket;
     qa_material_source_scratch source;
+    qa_render_source_frame_values frame_values;
+    qa_render_source_counters counters;
+    bool finish_called;
+    bool image_used[2048];
+    void (*source_print)(void *,const char *);
+    void *source_print_context;
 };
+bool qa_cpu_source_overdraw(qa_render_controls *,bool,qa_error *);
+bool qa_gl_source_overdraw(qa_render_controls *,bool,qa_error *);
+bool qa_cpu_source_image_grid(qa_render_controls *,int32_t,qa_error *);
+bool qa_gl_source_image_grid(qa_render_controls *,int32_t,qa_error *);
+void qa_render_source_image_used(qa_render_controls *,const qa_scene_image *);
+void qa_render_source_report(qa_render_controls *,uint32_t,uint32_t);
+
 typedef enum qa_render_primitive_mode {
     QA_RENDER_PRIMITIVES_NONE, QA_RENDER_PRIMITIVES_INDEXED,
     QA_RENDER_PRIMITIVES_ARRAY_STRIPS, QA_RENDER_PRIMITIVES_DISCRETE_STRIPS

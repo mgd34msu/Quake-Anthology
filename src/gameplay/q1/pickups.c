@@ -702,11 +702,11 @@ static bool item_original(void *context, const qa_pickup_offer *offer, bool *tak
         qa_regular_armor armor = combat.armor.regular;
         if (armor.kind == QA_ARMOR_SOURCE)
             return true;
-        float protection = armor.kind == QA_ARMOR_Q1   ? armor.protection.q1_absorption
+        double protection = armor.kind == QA_ARMOR_Q1   ? armor.protection.q1_absorption
                            : armor.kind == QA_ARMOR_Q2 ? armor.protection.q2.normal
                            : armor.kind == QA_ARMOR_Q3 ? armor.protection.q3_protection
                                                        : 0;
-        if ((float)armor.points * protection >= item->count * item->absorption)
+        if (armor.points * protection >= (double)item->count * item->absorption)
             return true;
         armor = (qa_regular_armor){.kind = QA_ARMOR_Q1,
                                    .points = item->count,
@@ -818,7 +818,7 @@ static bool item_original(void *context, const qa_pickup_offer *offer, bool *tak
         armor = (qa_regular_armor){
             .kind = QA_ARMOR_Q1,
             .item = identity,
-            .points = fminf(200, (float)armor.points + 5),
+            .points = fmin(200, armor.points + 5),
             .protection.q1_absorption =
                 armor.kind == QA_ARMOR_Q1 ? fmaxf(0.3f, armor.protection.q1_absorption) : 0.3f};
         *taken = true;
@@ -1372,11 +1372,11 @@ bool q1_toss_backpack(qa_q1_game *g, qa_actor_id owner, qa_vec3 origin, qa_vec3 
                                 ammo, out, error);
 }
 
-static float protection_value(qa_regular_armor armor) {
-    float absorption = armor.kind == QA_ARMOR_Q1 ? armor.protection.q1_absorption
+static double protection_value(qa_regular_armor armor) {
+    double absorption = armor.kind == QA_ARMOR_Q1 ? armor.protection.q1_absorption
         : armor.kind == QA_ARMOR_Q2 ? armor.protection.q2.normal
         : armor.kind == QA_ARMOR_Q3 ? armor.protection.q3_protection : 0;
-    return (float)armor.points * absorption;
+    return armor.points * absorption;
 }
 bool qa_q1_bot_supply_preview(qa_q1_game *g,qa_actor_id pickup,qa_actor_id recipient,
     qa_supply_preview_result *out,bool *eligible,bool *found,qa_error *error) {
@@ -1483,13 +1483,14 @@ static bool pickup_preview(qa_q1_game *g, qa_actor_id actor, const q1_pickup *it
         qa_regular_armor armor = state.armor.regular;
         if (armor.kind == QA_ARMOR_SOURCE)
             return true;
-        float before = protection_value(armor);
+        double before = protection_value(armor);
         if (item->kind == Q1_ITEM_ARMOR) {
-            *utility = fmaxf(0, item->count * item->absorption - before);
-            *accepted = *utility > 0;
+            double benefit = fmax(0, (double)item->count * item->absorption - before);
+            *utility = (float)benefit;
+            *accepted = benefit > 0;
         } else if (armor.points < 200) {
             float absorption = armor.kind == QA_ARMOR_Q1 ? fmaxf(.3f, armor.protection.q1_absorption) : .3f;
-            *utility = fmaxf(0, fminf(200, (float)armor.points + 5) * absorption - before);
+            *utility = (float)fmax(0, fmin(200, armor.points + 5) * absorption - before);
             *accepted = true;
         }
         return true;

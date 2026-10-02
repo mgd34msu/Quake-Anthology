@@ -18,6 +18,7 @@ struct frontend_native_q3 {
     bool frame_active, constructed;
     size_t callbacks;
     struct frontend_native_q3_video *video;
+    struct frontend_native_components *components;
 };
 bool frontend_native_q3_video_row_close(frontend_native_q3 *,qa_error *);
 bool frontend_native_q3_video_row_reopen(frontend_native_q3 *,qa_error *);

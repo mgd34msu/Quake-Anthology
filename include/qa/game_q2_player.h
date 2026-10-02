@@ -30,7 +30,8 @@ typedef struct qa_q2_blend {
 typedef struct qa_q2_player_view {
     qa_vec3 angles, offset, kick_angles, gun_angles, gun_offset;
     qa_q2_blend blend;
-    float fov, health, armor, ammo;
+    float fov, health, ammo;
+    double armor;
     qa_string_id ammo_icon, armor_icon;
     int32_t ammo_count;
     int score, flashes, layouts;

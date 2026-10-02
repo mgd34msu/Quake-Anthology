@@ -263,6 +263,25 @@ bool qa_native_windows_process_initialize(qa_native_windows_process *owner, uint
     if (!begin(owner, error)) return false;
     return end(owner, guest_windows_initialize(owner->runtime, image, owner->options.instruction_budget, error));
 }
+bool qa_native_windows_process_reload(qa_native_windows_process *owner, uint64_t id, qa_error *error)
+{
+    windows_process_image *row = NULL;
+    for (size_t i = 0; owner && i < owner->image_count; ++i)
+        if (owner->images[i].id == id) row = owner->images + i;
+    if (!row || !row->memory)
+        return guest_fail(error, QA_ERROR_ARGUMENT, id, "Windows reload requires its actual retained DLL attachment");
+    if (!begin(owner, error)) return false;
+    bool okay = guest_windows_finalize(owner->runtime, id, owner->options.instruction_budget, error) &&
+        guest_windows_reload_begin(owner->runtime, id, error) && guest_pe_memory_close(&row->memory, error) &&
+        guest_pe_memory_attach(row->artifact, owner->guest, &row->memory, error);
+    if (okay) {
+        guest_windows_image image = {id, row->artifact, row->path};
+        okay = guest_windows_prepare(owner->runtime, &image, error) &&
+            guest_windows_initialize(owner->runtime, id, owner->options.instruction_budget, error);
+    }
+    if (!okay) owner->guest->failed = true;
+    return end(owner, okay);
+}
 bool qa_native_windows_process_finalize(qa_native_windows_process *owner, uint64_t image, qa_error *error)
 {
     if (!begin(owner, error)) return false;

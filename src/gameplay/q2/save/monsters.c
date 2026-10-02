@@ -9,7 +9,14 @@ bool q2_save_monster(q2_save_io *io, qa_q2_monster_checkpoint *s) {
     Q2U(start_phase); Q2N(combat_target); Q2N(weapon_sound); Q2T(start_due_ns); Q2B(death_notified);
     Q2I(frame); Q2I(next_frame); Q2I(old_frame); Q2I(skin); Q2I(style); Q2I(count);
     Q2U(render_flags); Q2F(entity_scale); Q2F(animation_scale); Q2F(base_health);
-    Q2F(health_scaling); Q2F(max_health); Q2F(max_power_armor); Q2U(initial_power_armor);
+    Q2F(health_scaling); Q2F(max_health);
+    if (io->schema >= 26) { Q2S(f64, max_power_armor); }
+    else {
+        float legacy = io->reading ? 0 : (float)s->max_power_armor;
+        if (!q2_save_f32(io, &legacy)) return false;
+        if (io->reading) s->max_power_armor = legacy;
+    }
+    Q2U(initial_power_armor);
     Q2U(medic_tries); Q2F(gib_health); Q2F(normal_height); Q2F(view_height);
     Q2F(ideal_yaw); Q2F(yaw_speed); Q2F(blind_fire_delay); Q2F(fly_min_distance);
     Q2F(fly_max_distance); Q2F(fly_acceleration); Q2F(fly_speed);

@@ -89,6 +89,8 @@ typedef struct qa_session_options {
     qa_session_frames_fn prepare_commands;
     qa_session_frames_fn run_commands;
     qa_session_frames_fn end_commands;
+    /* Runs after all clocks at this boundary publish their advanced exit time. */
+    qa_session_frames_fn frame_exit;
     qa_session_control_fn controlled_actor;
     /* Wraps the actual scheduled callback inside its checked THINK invocation.
      * Receives the original callback, context and source scope once. */

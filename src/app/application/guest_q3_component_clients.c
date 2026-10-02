@@ -37,8 +37,8 @@ bool application_q3_component_admit(application_q3_component *c,qa_actor_id acto
     if(!client_current(c,actor,e)) return false;
     component_actor *existing=q3records_actor(c->records,actor);
     if(existing&&existing->client&&existing->admitted&&!existing->retired) {
-        if(!application_q3_mod_admit(c->mod,actor,e)) return false;
-        return !c->items||application_q3_mod_items_admit(c->items,actor,e);
+        if(c->items&&!application_q3_mod_items_admit(c->items,actor,e)) return false;
+        return application_q3_mod_admit(c->mod,actor,e)&&q3component_player_events_track(c,actor,e);
     }
     if(!application_q3_component_idle(c)) return q3records_fail(e,QA_ERROR_ARGUMENT,"New component client admission requires returned source execution");
     c->busy=true; uint32_t slot;
@@ -52,8 +52,8 @@ bool application_q3_component_admit(application_q3_component *c,qa_actor_id acto
         application_q3_mod_inputs values=inputs(c,actor,0);
         if(ok) ok=application_q3_mod_stage_run(c->mod,Q3_MOD_CLIENT_ADMIT,&values,e);
     }
-    if(ok) ok=client_current(c,actor,e)&&application_q3_mod_admit(c->mod,actor,e)&&
-        (!c->items||application_q3_mod_items_admit(c->items,actor,e))&&application_q3_component_source_publish(c->source,c->milliseconds,false,e);
+    if(ok) ok=client_current(c,actor,e)&&(!c->items||application_q3_mod_items_admit(c->items,actor,e))&&
+        application_q3_mod_admit(c->mod,actor,e)&&q3component_player_events_track(c,actor,e)&&application_q3_component_source_publish(c->source,c->milliseconds,false,e);
     c->busy=false; return ok;
 }
 bool application_q3_component_userinfo(application_q3_component *c,qa_actor_id actor,qa_error *e)
@@ -81,7 +81,7 @@ bool application_q3_component_disconnect(application_q3_component *c,qa_actor_id
         row=q3records_actor(c->records,actor);
         if(ok&&row) row->projected=false;
     }
-    if(ok) ok=application_q3_component_records_release(c->records,actor,e);
+    if(ok) { q3component_player_events_release(c,actor); ok=application_q3_component_records_release(c->records,actor,e); }
     if(ok) ok=application_q3_component_source_publish(c->source,c->milliseconds,false,e);
     c->busy=false; return ok;
 }
@@ -136,6 +136,11 @@ bool application_q3_component_frame(application_q3_component *c,const qa_source_
     c->busy=false; return ok;
 }
 bool application_q3_component_activate(application_q3_component *c,qa_error *e)
-{ return c&&c->initialized&&q3component_current(c,e)&&application_q3_mod_activate(c->mod,e); }
+{
+    if(!c||!c->initialized||!q3component_current(c,e)||!application_q3_mod_activate(c->mod,e)) return false;
+    for(size_t i=0;i<c->records->actor_count;++i) if(c->records->actors[i].client&&c->records->actors[i].admitted&&!c->records->actors[i].retired)
+        if(!application_q3_mod_admit(c->mod,c->records->actors[i].actor,e)) return false;
+    return true;
+}
 bool application_q3_component_callbacks_register(application_q3_component *c,qa_error *e)
 { return c&&c->initialized&&q3component_current(c,e)&&application_q3_mod_callbacks_register(c->mod,e); }

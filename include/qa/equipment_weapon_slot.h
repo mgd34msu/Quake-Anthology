@@ -42,7 +42,7 @@ typedef struct qa_equipment_weapon_binding {
     bool (*restore_request)(void *, qa_actor_id, uint64_t, qa_item_id, qa_error *);
 } qa_equipment_weapon_binding;
 
-bool qa_weapon_slot_create(qa_actor_registry *, qa_actor_id,
+bool qa_weapon_slot_create(const qa_actor_registry *, qa_actor_id,
     const qa_equipment_weapon_binding *primary, const qa_weapon_slot_state *restored,
     qa_weapon_slot **, qa_error *);
 bool qa_weapon_slot_destroy(qa_weapon_slot **, qa_error *);

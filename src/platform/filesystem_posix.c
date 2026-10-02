@@ -1376,6 +1376,8 @@ struct qa_fs_stage {
     char *leaf, *display;
     char temporary[64];
     bool sealed, published, readonly, closing, closing_keep, cleanup_done;
+    bool publication_exclusive, temporary_retired, publication_synced;
+    qa_fs_identity publication_identity;
 };
 static bool stage_argument(qa_error *error, const char *message) {
     qa_error_set(error, QA_ERROR_ARGUMENT, 0, "%s", message); return false;
@@ -1459,6 +1461,53 @@ bool qa_fs_stage_open_unique_checked(qa_fs_root *root, const char *target,
         if (!qa_fs_stage_close_checked(out, true, error)) return false;
     }
 }
+static bool stage_published_identity(qa_fs_stage *stage, qa_fs_identity *out, qa_error *error) {
+    struct stat opened, named;
+    if (!descriptor_stat(stage->descriptor, &opened) ||
+        fstatat(stage->parent, stage->leaf, &named, AT_SYMLINK_NOFOLLOW) < 0)
+        return fail_errno(error, "cannot inspect published target", stage->display, errno);
+    if (!S_ISREG(opened.st_mode) || !S_ISREG(named.st_mode) || opened.st_size < 0 ||
+        opened.st_dev != named.st_dev || opened.st_ino != named.st_ino) {
+        qa_error_set(error, QA_ERROR_IO, 0, "Published target identity changed: %s", stage->display);
+        return false;
+    }
+    identity_from_stat(&opened, out); return true;
+}
+bool qa_fs_stage_open_published_checked(qa_fs_root *root, const char *target,
+    qa_bytes prefix, qa_fs_stage **out, qa_fs_identity *identity, qa_error *error) {
+    if (!root || !out || *out || !identity || (prefix.size && !prefix.data) ||
+        !qa_fs_relative_valid(target, false, error))
+        return stage_argument(error, "Invalid published target continuation");
+    qa_fs_stage *stage = calloc(1, sizeof(*stage));
+    if (!stage) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining published target"); return false; }
+    *out = stage; stage->parent = stage->descriptor = -1; stage->readonly = true;
+    stage->display = copy_string(target);
+    if (!stage->display) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining published target name"); return false; }
+    stage->parent = writable_parent(root, target, false, &stage->leaf, error);
+    if (stage->parent < 0) return false;
+    do { stage->descriptor = openat(stage->parent, stage->leaf, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK); }
+    while (stage->descriptor < 0 && errno == EINTR);
+    if (stage->descriptor < 0) return fail_errno(error, "cannot open published target", target, errno);
+    qa_fs_identity admitted, current;
+    if (!stage_published_identity(stage, &admitted, error)) return false;
+    if (qa_fs_identity_size(&admitted) != prefix.size)
+        return stage_argument(error, "Published target length differs from its retained prefix");
+    uint8_t bytes[4096];
+    for (size_t offset = 0; offset < prefix.size;) {
+        size_t amount = prefix.size - offset, received = 0;
+        if (amount > sizeof(bytes)) amount = sizeof(bytes);
+        if (!qa_fs_stage_read(stage, offset, bytes, amount, &received, error)) return false;
+        if (received != amount || memcmp(bytes, prefix.data + offset, amount))
+            return stage_argument(error, "Published target bytes differ from its retained prefix");
+        offset += amount;
+    }
+    if (!stage_published_identity(stage, &current, error)) return false;
+    if (!qa_fs_identity_equal(&admitted, &current))
+        return stage_argument(error, "Published target changed during prefix qualification");
+    stage->sealed = stage->published = stage->publication_exclusive = stage->temporary_retired = true;
+    stage->readonly = false; stage->publication_identity = current; *identity = current;
+    return true;
+}
 bool qa_fs_stage_size(qa_fs_stage *stage, uint64_t *out, qa_error *error) {
     if (!stage || stage->closing || !out) return stage_argument(error, "Missing stage size output");
     struct stat info;
@@ -1532,11 +1581,42 @@ bool qa_fs_stage_map(qa_fs_stage *stage, qa_fs_stage_mapping **out, qa_error *er
     }
     *out = mapping; return true;
 }
+static bool stage_publication_finish(qa_fs_stage *stage, qa_error *error) {
+    if (stage->publication_synced) return true;
+    if (stage->publication_exclusive && !stage->temporary_retired) {
+        struct stat opened, named;
+        if (!descriptor_stat(stage->descriptor, &opened))
+            return fail_errno(error, "cannot inspect published stage", stage->display, errno);
+        if (fstatat(stage->parent, stage->temporary, &named, AT_SYMLINK_NOFOLLOW) < 0) {
+            if (errno != ENOENT)
+                return fail_errno(error, "cannot inspect published stage name", stage->display, errno);
+        } else {
+            if (!S_ISREG(named.st_mode) || opened.st_dev != named.st_dev || opened.st_ino != named.st_ino) {
+                qa_error_set(error, QA_ERROR_IO, 0, "Published stage name changed: %s", stage->display);
+                return false;
+            }
+            if (unlinkat(stage->parent, stage->temporary, 0) < 0 && errno != ENOENT)
+                return fail_errno(error, "cannot retire published stage name", stage->display, errno);
+        }
+        stage->temporary_retired = true;
+    }
+    if (fsync(stage->parent) < 0)
+        return fail_errno(error, "cannot sync published stage parent", stage->display, errno);
+    stage->publication_synced = true;
+    return true;
+}
 bool qa_fs_stage_publish(qa_fs_stage *stage, const qa_fs_identity *expected, bool exclusive,
                           bool *created, qa_error *error) {
-    if (!stage || stage->closing || !expected || !created || !stage->sealed || stage->published || stage->readonly)
+    if (!stage || stage->closing || !expected || !created || !stage->sealed || stage->readonly)
         return stage_argument(error, "Invalid stage publication");
     *created = false;
+    if (stage->published) {
+        if (stage->publication_exclusive != exclusive ||
+            !qa_fs_identity_equal(expected, &stage->publication_identity))
+            return stage_argument(error, "Stage publication retry changed its sealed identity or mode");
+        *created = true;
+        return stage_publication_finish(stage, error);
+    }
     qa_fs_identity current;
     if (!stage_identity(stage, &current, error)) return false;
     if (!qa_fs_identity_equal(expected, &current)) {
@@ -1554,14 +1634,14 @@ bool qa_fs_stage_publish(qa_fs_stage *stage, const qa_fs_identity *expected, boo
         if (exclusive && errno == EEXIST) return true;
         return fail_errno(error, "cannot publish staged file", stage->display, errno);
     }
-    stage->published = true; *created = true;
-    if (exclusive && unlinkat(stage->parent, stage->temporary, 0) < 0)
-        return fail_errno(error, "cannot retire published stage name", stage->display, errno);
-    if (fsync(stage->parent) < 0) return fail_errno(error, "cannot sync published stage parent", stage->display, errno);
-    return true;
+    stage->published = true; stage->publication_identity = *expected;
+    stage->publication_exclusive = exclusive; stage->temporary_retired = !exclusive;
+    *created = true;
+    return stage_publication_finish(stage, error);
 }
 void qa_fs_stage_close(qa_fs_stage *stage, bool keep) {
     if (!stage) return;
+    if (stage->published) (void)stage_publication_finish(stage, NULL);
     if (!keep && !stage->readonly && stage->parent >= 0 && stage->temporary[0]) {
         struct stat opened, named;
         if (stage->descriptor >= 0 && descriptor_stat(stage->descriptor, &opened) &&
@@ -1579,6 +1659,7 @@ bool qa_fs_stage_close_checked(qa_fs_stage **owned, bool keep, qa_error *error) 
     if (stage->closing && stage->closing_keep != keep)
         return stage_argument(error, "Stage cleanup cannot change its retained-file decision");
     stage->closing = true; stage->closing_keep = keep;
+    if (stage->published && !stage_publication_finish(stage, error)) return false;
     if (!stage->cleanup_done) {
         if (keep && !stage->readonly && !stage->published && stage->descriptor >= 0 && fsync(stage->descriptor) < 0)
             return fail_errno(error, "cannot sync retained stage", stage->display, errno);

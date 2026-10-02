@@ -144,7 +144,7 @@ static frontend_music_origin music_origin(frontend_unified_q3_runtime_factory *o
 {
     const frontend_remote_unified_domain *d=frontend_remote_unified_domain_read(o->options.replica);
     return (frontend_music_origin){.kind=FRONTEND_MUSIC_REMOTE,.bus=o->options.audio_owner,.physical_seat=d->physical_seat,
-        .receiver=o->options.receiver,.recipe=frontend_unified_media_recipe(o->options.media),.recipe_provider=o->options.source.provider,
+        .receiver=(qa_actor_owner)o->options.receiver,.recipe=frontend_unified_media_recipe(o->options.media),.recipe_provider=o->options.source.provider,
         .catalog=d->catalog,.product=o->options.source.provider->selection.product,.files=o->options.source.files,
         .music=o->music,.context=o,.current=music_current,.checkpoint_current=music_checkpoint_current,.stop=music_stop};
 }
@@ -262,7 +262,7 @@ static bool movie_append(void *context,const char *text,qa_error *e)
 static frontend_system_cinematic_source movie_source(frontend_unified_q3_runtime_factory *o,
     const q3n_compiled_source_view *source)
 { return (frontend_system_cinematic_source){.identity={o->options.receiver,o->options.audio_owner,o->options.audio_owner,
-        o->options.receiver,QA_QVM_CGAME,source->basis.physical_seat,source->basis.seat},
+        (qa_actor_owner)o->options.receiver,QA_QVM_CGAME,source->basis.physical_seat,source->basis.seat},
     .files=o->options.source.files,.movies=o->movies,
     .cvars=o->restoring?frontend_unified_q3_client_checkpoint_cvars(o->options.client):frontend_unified_q3_client_cvars(o->options.client),
     .context=o,.current=movie_current,.append=movie_append,.release=movie_release}; }
@@ -317,7 +317,8 @@ static bool system_movie(void *context,const qa_q3_movie_request *request,qa_q3_
        o->restoring || o->codec_busy || o->calls==SIZE_MAX || o->movie_references==SIZE_MAX)return fail(e,"Compiled system movie requires its actual entered CG role");
     frontend_system_cinematic_source value=movie_source(o,&source);++o->movie_references;++o->calls;
     bool okay=frontend_system_cinematic_open(o->options.frontend,&value,request,out,e);
-    if(!okay)--o->movie_references;--o->calls;return okay;
+    if(!okay)--o->movie_references;
+    --o->calls;return okay;
 }
 static bool video_shutdown(void *context,qa_error *e)
 { frontend_unified_q3_runtime_factory *o=context;return frontend_unified_q3_commands_video_reset(o->commands,e); }
@@ -486,8 +487,10 @@ bool frontend_unified_q3_runtime_factory_hud(frontend_unified_q3_runtime_factory
 bool frontend_unified_q3_runtime_factory_frame_end(frontend_unified_q3_runtime_factory *o,bool complete,qa_error *e)
 { return o && frontend_unified_q3_runtime_frame_end(o->runtime,complete,e); }
 bool frontend_unified_q3_runtime_factory_listener(const frontend_unified_q3_runtime_factory *o,qa_audio_listener *out,bool *present,qa_error *e)
-{ if(!out || !present || !frontend_unified_q3_runtime_factory_idle(o) || !frontend_unified_q3_runtime_factory_current(o))
-    return fail(e,"Compiled listener read requires its returned actual factory");*present=o->has_listener;if(*present)*out=o->listener;return true; }
+{
+    if(!out || !present || !frontend_unified_q3_runtime_factory_idle(o) || !frontend_unified_q3_runtime_factory_current(o))
+        return fail(e,"Compiled listener read requires its returned actual factory");
+    *present=o->has_listener;if(*present)*out=o->listener;return true; }
 qa_command_result frontend_unified_q3_runtime_factory_command(frontend_unified_q3_runtime_factory *o,const qa_command_invocation *call,qa_error *e)
 { return o?frontend_unified_q3_commands_execute(o->commands,call,e):QA_COMMAND_UNHANDLED; }
 

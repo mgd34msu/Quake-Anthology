@@ -359,11 +359,11 @@ static void integer_statistic(int32_t value, int16_t *out)
     memcpy(out, &bits, sizeof(bits));
 }
 
-static bool statistic(float value, int16_t *out, qa_error *error)
+static bool statistic(double value, int16_t *out, qa_error *error)
 {
     if (!isfinite(value))
         return application_fail(error, QA_ERROR_FORMAT, "Q2 Source statistic is not finite");
-    double narrowed = fmod(trunc((double)value), 65536);
+    double narrowed = fmod(trunc(value), 65536);
     if (narrowed < 0) narrowed += 65536;
     uint16_t bits = (uint16_t)narrowed;
     memcpy(out, &bits, sizeof(bits));

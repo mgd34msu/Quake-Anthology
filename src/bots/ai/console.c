@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "source_timers.h"
 
 static bool word(const char *text, const char *expected) {
     while (*text && *expected) {
@@ -113,7 +114,7 @@ bool bot_ai_messages(qa_bots *b,bot_ai_state *s,qa_error *e) {
                         float duration;
                         if(!bot_ai_source_chat_time(b,s,&duration,e)) return false;
                         if(!remove_console(chat,message.handle,e)) return false;
-                        s->stand_until=b->time+duration;s->stand_enemy_time=b->time+1;
+                        bot_ai_stand_until_set(s,b->time+duration);bot_ai_stand_enemy_time_set(s,b->time+1);
                         s->view.decision=QA_BOT_STANDING;
                         return true;
                     }

@@ -574,10 +574,10 @@ static bool rows(void *context, qa_actor_id actor,
                     okay = application_q3_components_item_read(app, actor, group->owner,
                         definition->item, &metadata, &metadata_found, error);
                     if (okay && metadata_found) {
-                        const qa_item_definition *actual = &metadata.admission.definition;
-                        okay = actual->item == definition->item && actual->owner == group->owner &&
-                            actual->weapon == definition->weapon && actual->ammo == definition->ammo &&
-                            actual->actions == definition->actions;
+                        const qa_item_definition *admitted = &metadata.admission.definition;
+                        okay = admitted->item == definition->item && admitted->owner == group->owner &&
+                            admitted->weapon == definition->weapon && admitted->ammo == definition->ammo &&
+                            admitted->actions == definition->actions;
                         if (!okay) application_fail(error, QA_ERROR_ARGUMENT,
                             "Component inventory snapshot differs from its admitted item definition");
                         if (okay) okay = component_icon(&metadata, &row.presentation, &icon, &lump, error);

@@ -110,7 +110,7 @@ bool bot_ai_source_check_event(qa_bots *b,bot_ai_state *s,const qa_q3_entity *en
         if(!strcmp(sound,"sound/items/poweruprespawn.wav")) {
             static const char *const names[]={"Quad Damage","Regeneration","Battle Suit","Speed","Invisibility"};
             for(size_t i=0;i<5 && live(b,s);++i) if(!dont_avoid(b,s,names[i],e)) return false;
-            if(live(b,s)) s->long_term_until=0;
+            if(live(b,s)) bot_ai_long_term_until_set(s,0);
         }
         return true;
     }

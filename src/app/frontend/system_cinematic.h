@@ -17,6 +17,7 @@ typedef struct frontend_system_cinematic_source {
     qa_vfs *files;
     qa_media_library *movies;
     qa_cvars *cvars;
+    struct qa_q3_cinematic_source *cinematics;
     void *context;
     /* The constructor transfers one real role lease. Current is pure and
      * proves that same source/CLIENT namespace and physical recipient. */

@@ -108,11 +108,13 @@ bool application_native_q2_client_outputs_create(struct application_native_q2 *n
         if(!field_parse(n,qa_json_get(d,r,kind==APPLICATION_CLIENT_BODY_SHAPE?"min":f->height?"height":"field"),vector,&f->first,e)||
             !exclusive(n,&f->first,vector?12:application_native_q2_field_size(f->first.encoding),kind==APPLICATION_CLIENT_BODY_SHAPE?"bounds-min":NULL,e))return false;
         if(kind==APPLICATION_CLIENT_BODY_SHAPE){if(!field_parse(n,qa_json_get(d,r,"max"),true,&f->second,e)||
-            !exclusive(n,&f->second,12,"bounds-max",e))return false;continue;}
+            !exclusive(n,&f->second,12,"bounds-max",e))return false;
+            continue;}
         if(kind==APPLICATION_CLIENT_VIEW_OFFSET)continue;
         f->masked=qa_json_get(d,r,"mask")!=QA_JSON_NONE;
         uint64_t mask;if(f->masked&&(!qa_json_u64(d,qa_json_get(d,r,"mask"),&mask,e)||!mask||mask>UINT32_MAX))return fail(e,"Native client output mask is invalid");
-        if(f->masked)f->mask=(uint32_t)mask;f->values=qa_json_get(d,r,"values");
+        if(f->masked)f->mask=(uint32_t)mask;
+        f->values=qa_json_get(d,r,"values");
         if(qa_json_type(d,f->values)!=QA_JSON_ARRAY||!qa_json_size(d,f->values))return fail(e,"Native client output mapping is empty");
         for(size_t j=0;j<qa_json_size(d,f->values);++j){qa_json_id v=qa_json_at(d,f->values,j);double value;
             if(!qa_json_number(d,qa_json_get(d,v,"value"),&value,e)||!isfinite(value)||
@@ -124,7 +126,8 @@ bool application_native_q2_client_outputs_create(struct application_native_q2 *n
 }
 void application_native_q2_client_outputs_destroy(struct application_native_q2_client_outputs **out)
 {
-    if(!out||!*out)return;struct application_native_q2_client_outputs *o=*out;
+    if(!out||!*out)return;
+    struct application_native_q2_client_outputs *o=*out;
     for(size_t i=0;i<o->count;++i){application_native_q2_field_dispose(&o->fields[i].first);application_native_q2_field_dispose(&o->fields[i].second);}
     free(o);*out=NULL;
 }
@@ -158,7 +161,8 @@ static bool read_values(struct application_native_q2_client_outputs *o,qa_actor_
     for(size_t i=0;i<o->count;++i){native_output_declaration *f=o->fields+i;double value;
         if(f->channel==APPLICATION_CLIENT_BODY_SHAPE){v.has_body_bounds=true;
             if(!vector_read(o,actor,&f->first,&v.body_bounds.mins,e)||!vector_read(o,actor,&f->second,&v.body_bounds.maxs,e))return false;
-            if(v.body_bounds.mins.x>v.body_bounds.maxs.x||v.body_bounds.mins.y>v.body_bounds.maxs.y||v.body_bounds.mins.z>v.body_bounds.maxs.z)return fail(e,"Native client body output has backwards bounds");continue;}
+            if(v.body_bounds.mins.x>v.body_bounds.maxs.x||v.body_bounds.mins.y>v.body_bounds.maxs.y||v.body_bounds.mins.z>v.body_bounds.maxs.z)return fail(e,"Native client body output has backwards bounds");
+            continue;}
         if(f->channel==APPLICATION_CLIENT_VIEW_OFFSET){v.has_view_offset=true;
             if(!f->height){if(!vector_read(o,actor,&f->first,&v.view_offset,e))return false;}
             else {if(!application_native_q2_field_read(o->engine->callbacks,actor,&f->first,&value,e)||!isfinite(value)||fabs(value)>FLT_MAX)return fail(e,"Native client view height is nonfinite");v.view_offset=qa_v3(0,0,(float)value);}continue;}
@@ -167,7 +171,8 @@ static bool read_values(struct application_native_q2_client_outputs *o,qa_actor_
             value=(uint32_t)(value<0?value+4294967296.0:value)&f->mask;}
         qa_json_id selected=QA_JSON_NONE;
         for(size_t j=0;j<qa_json_size(d,f->values);++j){qa_json_id row=qa_json_at(d,f->values,j);double mapped;
-            if(!qa_json_number(d,qa_json_get(d,row,"value"),&mapped,e))return false;if(mapped==value){selected=row;break;}}
+            if(!qa_json_number(d,qa_json_get(d,row,"value"),&mapped,e))return false;
+            if(mapped==value){selected=row;break;}}
         if(selected==QA_JSON_NONE)return fail(e,"Native client output has no declared source value");
         if(f->channel==APPLICATION_CLIENT_STANCE){v.has_stance=true;if(!qa_json_bool(d,qa_json_get(d,selected,"crouched"),&v.crouched,e))return false;}
         else {v.has_mode=true;qa_json_id mode=qa_json_get(d,selected,"mode");v.mode=qa_json_string_equal(d,mode,"normal")?QA_MOVEMENT_MODE_NORMAL:qa_json_string_equal(d,mode,"noclip")?QA_MOVEMENT_MODE_NOCLIP:QA_MOVEMENT_MODE_FREEZE;}}
@@ -184,7 +189,8 @@ bool application_native_q2_client_outputs_admit(struct application_native_q2 *n,
 {
     struct application_native_q2_client_outputs *o=application_native_q2_stages_outputs(n);
     if(!o||!o->ready)return fail(e,"Native client outputs were not prepared");
-    if(!o->channels)return true;uint32_t slot;application_client_outputs values;
+    if(!o->channels)return true;
+    uint32_t slot;application_client_outputs values;
     if(o->restoring)return fail(e,"Native client outputs still retain a cold publication receipt");
     if(!publication_slot(o,actor,&slot,e)||!read_values(o,actor,&values,e)||
         !application_control_output_admit(n->provider->application,actor,o->channels,e)||
@@ -194,11 +200,14 @@ bool application_native_q2_client_outputs_admit(struct application_native_q2 *n,
 bool application_native_q2_client_outputs_publish(struct application_native_q2 *n,qa_error *e)
 {
     struct application_native_q2_client_outputs *o=application_native_q2_stages_outputs(n);
-    if(!o)return true;if(!o->ready||o->restoring)return fail(e,"Native output refresh has an unfinished declaration or restore");
+    if(!o)return true;
+    if(!o->ready||o->restoring)return fail(e,"Native output refresh has an unfinished declaration or restore");
     for(uint32_t i=1;i<257;++i){native_output_publication *p=o->clients+i;if(!p->published)continue;
         bool live;if(!application_native_q2_callbacks_client_live_read(n->callbacks,p->actor,&live,e))return false;
-        if(!live)continue;uint32_t slot;application_client_outputs values;
-        if(!publication_slot(o,p->actor,&slot,e)||slot!=i||!read_values(o,p->actor,&values,e))return false;p->values=values;}
+        if(!live)continue;
+        uint32_t slot;application_client_outputs values;
+        if(!publication_slot(o,p->actor,&slot,e)||slot!=i||!read_values(o,p->actor,&values,e))return false;
+        p->values=values;}
     return true;
 }
 void application_native_q2_client_outputs_release(struct application_native_q2 *n,qa_actor_id actor)
@@ -236,11 +245,14 @@ bool application_native_q2_client_outputs_finish_restore(struct application_nati
 }
 bool application_native_q2_control_outputs(const qa_application *app,qa_actor_id actor,application_client_outputs *out,qa_error *e)
 {
-    if(!app||!out)return fail(e,"Native output read requires its actual application and destination");*out=(application_client_outputs){0};uint8_t claimed=0;
+    if(!app||!out)return fail(e,"Native output read requires its actual application and destination");
+    *out=(application_client_outputs){0};uint8_t claimed=0;
     for(size_t i=0;i<app->provider_count;++i){application_provider *p=app->providers[i];
         if(!p||!p->attached||!p->constructed||p->close_pending||p->kind!=APPLICATION_PROVIDER_NATIVE||!p->state.native.q2_engine)continue;
         struct application_native_q2_client_outputs *o=application_native_q2_stages_outputs(p->state.native.q2_engine);
-        if(!o||!o->claimed)continue;if(!o->ready||o->restoring||(claimed&o->claimed))return fail(e,"Native output read found unresolved or competing source leases");claimed|=o->claimed;
+        if(!o||!o->claimed)continue;
+        if(!o->ready||o->restoring||(claimed&o->claimed))return fail(e,"Native output read found unresolved or competing source leases");
+        claimed|=o->claimed;
         for(uint32_t j=1;j<257;++j){native_output_publication *v=o->clients+j;if(!v->published||!qa_actor_id_equal(v->actor,actor))continue;uint32_t slot;
             if(!publication_slot(o,actor,&slot,e)||slot!=j)return false;
             if(v->values.has_view_offset){out->has_view_offset=true;out->view_offset=v->values.view_offset;}
