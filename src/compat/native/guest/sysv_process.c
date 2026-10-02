@@ -40,25 +40,55 @@ static bool clock_read(void *context, int64_t *seconds, qa_error *error)
     return sysv_process_current(owner, error) &&
         owner->options.time(owner->options.context, seconds, error);
 }
+static void pending_file_remove(qa_native_sysv_process *owner, sysv_process_opened_file *file)
+{
+    sysv_process_opened_file **link = &owner->pending_files;
+    while (*link != file) link = &(*link)->next;
+    *link = file->next; free(file);
+}
+static bool pending_files_close(qa_native_sysv_process *owner, qa_error *error)
+{
+    while (owner->pending_files) {
+        sysv_process_opened_file *pending = owner->pending_files;
+        if (pending->opened) {
+            if (!pending->file.close)
+                return guest_fail(error, QA_ERROR_ARGUMENT, pending->file.capability,
+                    "opened System V file has no actual close capability");
+            if (!pending->file.close(pending->file.context, error)) return false;
+        }
+        pending_file_remove(owner, pending);
+    }
+    return true;
+}
 static bool open_file(void *context, const char *name, uint32_t mode, uint32_t creation,
     uint64_t *handle, bool *opened, qa_error *error)
 {
     qa_native_sysv_process *owner = context;
-    qa_native_sysv_file actual = {0};
     *opened = false;
     if (!sysv_process_current(owner, error)) return false;
+    sysv_process_opened_file *pending = calloc(1, sizeof(*pending));
+    if (!pending) return guest_fail(error, QA_ERROR_MEMORY, 0,
+        "retaining provisional opened System V file owner");
+    pending->next = owner->pending_files; owner->pending_files = pending;
+    /* Registration can allocate after the authority transfers ownership.
+     * Keep the actual close callback until the registry accepts that owner. */
     bool okay = owner->options.open_file(owner->options.file_context, name,
-        mode, creation, &actual, opened, error);
+        mode, creation, &pending->file, &pending->opened, error);
+    *opened = pending->opened;
     qa_error first = error ? *error : (qa_error){0};
     if (*opened) {
-        guest_runtime_file_capability capability = {actual.capability, actual.mode,
-            actual.read, actual.write, actual.size, actual.truncate, actual.flush,
-            actual.close, actual.context};
-        if (!guest_runtime_resources_file(owner->resources, actual.handle,
-                actual.name, actual.creation, &capability, error)) return false;
+        const qa_native_sysv_file *actual = &pending->file;
+        guest_runtime_file_capability capability = {actual->capability, actual->mode,
+            actual->read, actual->write, actual->size, actual->truncate, actual->flush,
+            actual->close, actual->context};
+        if (!guest_runtime_resources_file(owner->resources, actual->handle,
+                actual->name, actual->creation, &capability, error)) {
+            owner->failed = true; return false;
+        }
         owner->options.file_count = guest_runtime_resources_count(owner->resources);
-        *handle = actual.handle;
+        *handle = actual->handle;
     }
+    pending_file_remove(owner, pending);
     if (!okay) { if (error) *error = first; return false; }
     if (!*opened)
         return guest_fail(error, QA_ERROR_NOT_FOUND, 0, "System V opener found no contained file");
@@ -241,7 +271,7 @@ bool qa_native_sysv_process_create(const qa_native_sysv_process_options *options
 bool qa_native_sysv_process_idle(const qa_native_sysv_process *owner)
 {
     return owner && owner->complete && !owner->busy && !owner->failed && !owner->disposing &&
-        !owner->provisional && guest_sysv_idle(owner->runtime) &&
+        !owner->provisional && !owner->pending_files && guest_sysv_idle(owner->runtime) &&
         guest_runtime_resources_idle(owner->resources) && qa_native_guest_idle(owner->guest);
 }
 qa_native_guest *qa_native_sysv_process_guest(const qa_native_sysv_process *owner)
@@ -456,6 +486,7 @@ bool qa_native_sysv_process_dispose(qa_native_sysv_process **pointer, qa_error *
     for (size_t i = 0; i < owner->image_count; ++i) guest_elf_loaded_abandon(&owner->images[i].loaded);
     guest_sysv_abandon(&owner->runtime);
     if (!guest_runtime_resources_destroy(&owner->resources, error)) { owner->busy = false; return false; }
+    if (!pending_files_close(owner, error)) { owner->busy = false; return false; }
     for (size_t i = 0; i < owner->image_count; ++i) guest_elf_close(&owner->images[i].artifact);
     guest_profile_artifacts_destroy(&owner->profile);
     free(owner->images); free(owner); *pointer = NULL; return true;

@@ -15,6 +15,11 @@ typedef struct sysv_process_stream {
     struct qa_native_sysv_process *process;
     uint64_t handle;
 } sysv_process_stream;
+typedef struct sysv_process_opened_file {
+    qa_native_sysv_file file;
+    bool opened;
+    struct sysv_process_opened_file *next;
+} sysv_process_opened_file;
 struct qa_native_sysv_process {
     qa_native_sysv_process_options options;
     qa_native_guest *guest;
@@ -25,6 +30,7 @@ struct qa_native_sysv_process {
     size_t image_count;
     uint64_t stack, returned;
     sysv_process_stream streams[3];
+    sysv_process_opened_file *pending_files;
     bool complete, busy, failed, disposing, provisional;
 };
 
