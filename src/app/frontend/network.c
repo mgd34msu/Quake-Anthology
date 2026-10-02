@@ -7744,7 +7744,7 @@ bool frontend_network_menu_read(const qa_frontend *f, uint32_t physical,
     bool restoring=n && n->detached_transport && f->source_restoring &&
         (n->menu_connections_prefix.data || n->q3_connections_prefix.data);
     if(!out || !n || n->frontend!=f || (n->detached_transport && !restoring) || n->busy ||
-        !n->runtime || !n->browser || !n->admin || (!restoring && !n->downloads) || !n->preferences ||
+        !n->runtime || !n->browser || !n->admin || !n->preferences ||
         !qa_network_callbacks_idle(n->runtime) || !f->seats || physical>=f->options.seats ||
         f->seats[physical].frontend!=f || f->seats[physical].id!=physical ||
         !f->seats[physical].input || !f->seats[physical].console)
@@ -8005,8 +8005,11 @@ bool frontend_network_menu_connect(qa_frontend *f, const frontend_network_menu_v
 bool frontend_network_menu_download_begin(qa_frontend *f, const frontend_network_menu_view *view,
     const qa_download_request *request, const char *url, qa_download_id *id, qa_error *error)
 {
-    return menu_mutable(f,view,error) && qa_downloads_begin(f->network->downloads,request,url,id,error) &&
-        menu_admitted(f,view,error);
+    if(!menu_mutable(f,view,error) || !downloads_ready(f->network,error)) return false;
+    frontend_network_menu_view current=*view;
+    current.downloads=f->network->downloads;
+    return menu_mutable(f,&current,error) && qa_downloads_begin(f->network->downloads,request,url,id,error) &&
+        menu_admitted(f,&current,error);
 }
 bool frontend_network_menu_download_stop(qa_frontend *f, const frontend_network_menu_view *view,
     qa_download_id id, bool suspend, qa_error *error)
@@ -8063,6 +8066,7 @@ bool frontend_network_menu_download_rows(const qa_frontend *f, const frontend_ne
     if(!count || (capacity && !out) || !menu_admitted(f,view,error)) return false;
     if(view->restore_readonly && !view->downloads)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Download jobs await their actual restored resource owner");
+    if(!view->downloads) { *count=0; return true; }
     size_t total=qa_downloads_count(view->downloads);
     for(size_t i=0;i<total && i<capacity;++i)
         if(!qa_downloads_at(view->downloads,i,out+i))
