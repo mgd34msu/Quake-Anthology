@@ -228,7 +228,7 @@ static bool codec_checkpoint(script_codec *c, qa_script_checkpoint *value) {
     }
     if (!codec_options(c, &value->options) || !codec_string(c, &value->date) ||
         !codec_string(c, &value->time) || !codec_size(c, &value->expansions) ||
-        !codec_size(c, &value->outputs) || !codec_u32(c, &value->next_condition_pointer) ||
+        !codec_size(c, &value->outputs) || !codec_u32(c, &value->next_condition_pointer) || !codec_u32(c,&value->next_token_pointer) ||
         !codec_span(c, &value->source_record) || !codec_index(c, &value->source_reference) || !codec_bool(c, &value->empty_expansion) ||
         !codec_location(c, &value->last_location) || !codec_token(c, &value->raw_token) ||
         !codec_bool(c, &value->source_failure) || !codec_bool(c, &value->file_text) ||
@@ -295,12 +295,14 @@ static bool codec_checkpoint(script_codec *c, qa_script_checkpoint *value) {
     if (!codec_size(c, &value->queue_count))
         return false;
     qa_script_queued_state *queue = NULL;
-    if (!codec_array(c, value->queue_count, sizeof(*queue), _Alignof(qa_script_queued_state), 72,
+    if (!codec_array(c, value->queue_count, sizeof(*queue), _Alignof(qa_script_queued_state), 1160,
                      (void **)&queue))
         return false;
     for (size_t i = 0; i < value->queue_count; ++i) {
         qa_script_queued_state queued = c->decoding ? (qa_script_queued_state){0} : value->queue[i];
-        if (!codec_token(c, &queued.token) || !codec_index(c, &queued.expansion))
+        if (!codec_token(c, &queued.token) || !codec_index(c, &queued.expansion) ||
+            !codec_u32(c,&queued.pointer) || !codec_index(c,&queued.memory_reference) ||
+            !codec_index(c,&queued.text_extent) || !codec_bytes(c,queued.bytes,sizeof(queued.bytes)))
             return false;
         if (c->decoding)
             queue[i] = queued;

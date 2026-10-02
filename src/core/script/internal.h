@@ -70,6 +70,7 @@ static inline void script_lexer_cursor_set(qa_script_lexer *l,script_lexer_curso
     script_lexer_offset_set(l,cursor.offset);script_lexer_line_set(l,cursor.line);l->column=cursor.column;
 }
 bool script_token_store(uint8_t *,const qa_script_token *,uint32_t,uint32_t,qa_error *);
+bool script_token_saved_valid(const qa_script_queued_state *,qa_error *);
 bool script_token_load(const uint8_t *,size_t,qa_script_location,qa_bytes,qa_arena *,qa_script_token *,qa_error *);
 bool script_lexer_memory_bind(qa_script_lexer *,qa_error *);
 bool script_lexer_memory_open(qa_script_lexer *,const char *,qa_bytes,qa_error *);
@@ -130,7 +131,17 @@ typedef struct script_expansion {
 typedef struct script_queued_token {
     qa_script_token token;
     const script_expansion *expansion;
+    uint8_t bytes[SCRIPT_TOKEN_BYTES];
+    bool raw;
 } script_queued_token;
+typedef struct script_token_record {
+    script_lexer_allocation record;
+    uint32_t pointer;
+    qa_script_location location;
+    qa_bytes whitespace;
+    size_t extent;
+    const script_expansion *expansion;
+} script_token_record;
 typedef struct script_frame {
     qa_script_resource resource;
     qa_script_lexer *lexer;
@@ -138,7 +149,7 @@ typedef struct script_frame {
     bool active, owned;
 } script_frame;
 enum { SCRIPT_SOURCE_BYTES=3144, SCRIPT_SOURCE_INCLUDE=1024,
-       SCRIPT_SOURCE_STACK=2052, SCRIPT_SOURCE_INDENT=2068, SCRIPT_SOURCE_SKIP=2072 };
+       SCRIPT_SOURCE_STACK=2052, SCRIPT_SOURCE_TOKENS=2056, SCRIPT_SOURCE_TOKEN=2076, SCRIPT_SOURCE_INDENT=2068, SCRIPT_SOURCE_SKIP=2072 };
 typedef struct script_source_record {
     qa_script_memory_allocation allocation;
     size_t memory_reference;
@@ -164,8 +175,9 @@ struct qa_script {
     qa_arena arena;
     script_frame *frames;
     size_t frame_count, frame_capacity, *stack, stack_count, stack_capacity;
-    script_queued_token *queue;
-    size_t queue_count, queue_capacity;
+    script_token_record *queue;
+    size_t queue_count, queue_records, queue_capacity;
+    uint32_t next_token_pointer;
     qa_script_memory memory;
     script_source_record source_record;
     script_condition_record *conditions;
@@ -182,7 +194,7 @@ struct qa_script {
 typedef struct script_checkpoint_storage {
     qa_arena arena;
 } script_checkpoint_storage;
-enum { SCRIPT_CHECKPOINT_VERSION = 5 };
+enum { SCRIPT_CHECKPOINT_VERSION = 6 };
 bool script_source_create(qa_script *,qa_error *);
 void script_source_stack(qa_script *);
 bool script_source_capture(const qa_script *,qa_script_checkpoint *,qa_arena *,qa_error *);
@@ -208,6 +220,11 @@ static inline void script_indent_head_set(qa_script *s,uint32_t value) {
 static inline void script_skipping_set(qa_script *s,uint32_t value) {
     qa_store_u32le(s->source_record.bytes+SCRIPT_SOURCE_SKIP,value);
 }
+bool script_queue_pop(qa_script *,script_queued_token *,qa_error *);
+bool script_queue_snapshot(const qa_script *,qa_script_queued_state *,qa_arena *,qa_error *);
+bool script_queue_restore(qa_script *,const qa_script_checkpoint *,const script_expansion *,qa_error *);
+bool script_queue_adopt(qa_script *,qa_error *);
+void script_queue_close(qa_script *,bool);
 bool script_memory_bind(qa_script *,qa_error *);
 bool script_memory_enter(qa_script *,qa_error *);
 bool script_condition_top(qa_script *,script_condition *,qa_error *);

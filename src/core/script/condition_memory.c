@@ -4,6 +4,7 @@
 bool script_memory_bind(qa_script *s,qa_error *error)
 {
     s->next_condition_pointer=1;
+    s->next_token_pointer=1;
     const qa_script_memory *memory=s->services.memory;
     if(!memory) return true;
     if(!memory->context || !memory->retain || !memory->release || !memory->allocate || !memory->bytes ||
@@ -180,6 +181,7 @@ bool script_memory_enter(qa_script *s,qa_error *error)
             free(node->bytes);node->bytes=span.data;node->detached=false;
         }
     }
+    if(!script_queue_adopt(s,error)) return false;
     s->memory_deferred=false;return true;
 }
 

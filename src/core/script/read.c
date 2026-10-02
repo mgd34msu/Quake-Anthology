@@ -78,6 +78,10 @@ accept_token:
         }
         goto read_next;
     }
+    if (!frame->raw && !script_token_store(frame->bytes,token,0,0,e)) {
+        ok=false; goto completed;
+    }
+    memcpy(s->source_record.bytes+SCRIPT_SOURCE_TOKEN,frame->bytes,SCRIPT_TOKEN_BYTES);
     *found = true;
     ok = true;
 completed:
@@ -95,8 +99,13 @@ completed:
     ok = true;
     if (*found) {
         frame = s->reads + s->read_count - 1;
-        ok = next.token.kind == QA_SCRIPT_STRING ? concatenate(s, &frame->token, &next.token, e)
-                                                 : script_push(s, next, e);
+        if (next.token.kind == QA_SCRIPT_STRING) {
+            ok=concatenate(s,&frame->token,&next.token,e);
+            if (ok && frame->raw) {
+                memset(frame->bytes,0,1024);
+                memcpy(frame->bytes,frame->token.text.data,frame->token.text.size);
+            }
+        } else ok=script_push(s,next,e);
         if (!ok)
             goto completed;
     }
@@ -138,7 +147,7 @@ bool qa_script_unread(qa_script *s, const qa_script_token *token, qa_error *e) {
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Missing unread script token/source");
         return false;
     }
-    return script_push(s, (script_queued_token){*token, NULL}, e);
+    return script_push(s, (script_queued_token){.token=*token}, e);
 }
 bool qa_script_expect(qa_script *s, const char *text, qa_error *e) {
     if (text == NULL) {
@@ -166,7 +175,10 @@ bool qa_script_check(qa_script *s, const char *text, bool *matched, qa_error *e)
     if (!qa_script_next(s, &token, &found, e))
         return false;
     *matched = found && qa_script_token_is(&token, text);
-    return !found || *matched || qa_script_unread(s, &token, e);
+    if(!found || *matched) return true;
+    script_queued_token copied={.token=token,.raw=true};
+    memcpy(copied.bytes,s->source_record.bytes+SCRIPT_SOURCE_TOKEN,SCRIPT_TOKEN_BYTES);
+    return script_push(s,copied,e);
 }
 bool qa_script_skip_until(qa_script *s, const char *text, bool *found, qa_error *e) {
     if (text == NULL || found == NULL) {

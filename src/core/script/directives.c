@@ -196,14 +196,14 @@ bool script_eval_directive(qa_script *s, qa_script_location location, bool integ
                              .number = number,
                              .text = {(const uint8_t *)stored, size},
                              .location = qa_script_position(s)};
-    if (!script_push(s, (script_queued_token){token, NULL}, e))
+    if (!script_push(s, (script_queued_token){.token=token}, e))
         return false;
     if (number < 0) {
         token = (qa_script_token){.kind = QA_SCRIPT_PUNCTUATION,
                                   .subtype = QA_SCRIPT_SUB,
                                   .text = script_bytes("-"),
                                   .location = token.location};
-        if (!script_push(s, (script_queued_token){token, NULL}, e))
+        if (!script_push(s, (script_queued_token){.token=token}, e))
             return false;
     }
     return true;

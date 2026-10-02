@@ -181,7 +181,7 @@ static bool builtin(qa_script *s, const script_macro *m, script_queued_token inv
     token.text = (qa_bytes){(const uint8_t *)text, size};
     if (token.kind == QA_SCRIPT_NAME)
         token.subtype = (uint32_t)size;
-    return script_push(s, (script_queued_token){token, invocation.expansion}, e);
+    return script_push(s, (script_queued_token){.token=token,.expansion=invocation.expansion}, e);
 }
 bool script_expand(qa_script *s, script_queued_token invocation, script_macro *m, qa_error *e) {
     s->empty_expansion = false;
@@ -228,7 +228,7 @@ bool script_expand(qa_script *s, script_queued_token invocation, script_macro *m
             if (!stringize(s, arg_tokens, args[index], invocation.token.location, &token, e))
                 goto fail;
         }
-        if (!append(s, &tokens, &count, &capacity, (script_queued_token){token, expansion}, e))
+        if (!append(s, &tokens, &count, &capacity, (script_queued_token){.token=token,.expansion=expansion}, e))
             goto fail;
     }
     for (size_t i = 0; i + 2 < count;) {
@@ -247,6 +247,7 @@ bool script_expand(qa_script *s, script_queued_token invocation, script_macro *m
         if (!joined(s, a->text, b->text, strings ? 1 : 0, strings ? 1 : 0, &a->text, e))
             goto fail;
         a->subtype = (uint32_t)a->text.size;
+        tokens[i].raw=false;
         memmove(tokens + i + 1, tokens + i + 3, (count - i - 3) * sizeof(*tokens));
         count -= 2;
     }

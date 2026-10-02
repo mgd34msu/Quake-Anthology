@@ -103,18 +103,9 @@ qa_script_location qa_script_source_position(const qa_script *s) {
     if (!script_source_pointer(s)) location.line=0;
     return location;
 }
-bool script_push(qa_script *s, script_queued_token token, qa_error *e) {
-    if (s->queue_count >= s->options.maximum_queued_tokens)
-        return script_fail(s, token.token.location, "Script queue exceeds configured limit", e);
-    if (!script_grow((void **)&s->queue, &s->queue_capacity, s->queue_count + 1, sizeof(*s->queue),
-                     e))
-        return false;
-    s->queue[s->queue_count++] = token;
-    return true;
-}
 bool script_raw(qa_script *s, script_queued_token *out, bool *found, qa_error *e) {
-    if (s->queue_count != 0) {
-        *out = s->queue[--s->queue_count];
+    if (qa_load_u32le(s->source_record.bytes+SCRIPT_SOURCE_TOKENS)) {
+        if (!script_queue_pop(s,out,e)) return false;
         *found = true;
         return true;
     }
@@ -129,6 +120,8 @@ bool script_raw(qa_script *s, script_queued_token *out, bool *found, qa_error *e
         if (!ok && !frame->lexer->source_failure)
             return false;
         if (*found) {
+            memcpy(out->bytes,frame->lexer->record.bytes+SCRIPT_LEXER_TOKEN,SCRIPT_TOKEN_BYTES);
+            out->raw=out->token.kind!=QA_SCRIPT_PRIMITIVE;
             if (frame->token_count >= s->options.maximum_source_tokens)
                 return script_fail(s, out->token.location, "Source token limit exceeded", e);
             ++frame->token_count;
@@ -322,7 +315,7 @@ static void close_source(qa_script *s,bool source) {
     }
     free(s->frames);
     free(s->stack);
-    free(s->queue);
+    script_queue_close(s,source);
     script_conditions_close(s,source);
     script_source_close(s,source);
     if(s->memory.context) s->memory.release(s->memory.context);

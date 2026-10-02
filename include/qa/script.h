@@ -260,6 +260,9 @@ typedef struct qa_script_expansion_state {
 typedef struct qa_script_queued_state {
     qa_script_token token;
     size_t expansion;
+    uint32_t pointer;
+    size_t memory_reference, text_extent;
+    uint8_t bytes[1068];
 } qa_script_queued_state;
 typedef struct qa_script_condition_state {
     size_t frame;
@@ -280,7 +283,7 @@ typedef struct qa_script_checkpoint {
     const qa_script_condition_state *conditions;
     size_t macro_count, frame_count, stack_count, expansion_count, queue_count, condition_count;
     size_t expansions, outputs;
-    uint32_t next_condition_pointer;
+    uint32_t next_condition_pointer, next_token_pointer;
     qa_bytes source_record;
     size_t source_reference;
     bool empty_expansion;
