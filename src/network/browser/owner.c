@@ -250,7 +250,8 @@ static void http_complete(void *context, qa_http_request_id id, const qa_http_re
                 uint16_t port = browser->master_protocol.kind == QA_NET_Q3_68 ? 27960 :
                     browser->master_protocol.kind <= QA_NET_RMQ999 ? 26000 :
                     browser->master_protocol.kind <= QA_NET_QW29 ? 27500 : 27910;
-                if ((size_t)(stop - start) > 255 || !qa_net_address_resolve(start, port, 0, &address, &error) ||
+                if ((size_t)(stop-start)>255) { qa_browser_fail(&error,"Master list address exceeds its admitted extent"); break; }
+                if (!qa_net_address_resolve(start, port, 0, &address, &error) ||
                     !qa_server_browser_add(browser, &address, browser->master_protocol, QA_SERVER_MASTER, &error) ||
                     !qa_browser_status_enqueue(browser, &address, browser->master_protocol, &error)) break;
             }

@@ -388,7 +388,7 @@ void frontend_console_print(void *context, const qa_command_context *source, con
             fprintf(stderr, "console output: %s\n", error.message);
     }
 }
-struct frontend_constructor { qa_error failure; bool outputs_entered; };
+struct frontend_constructor { qa_error failure; bool outputs_entered,outputs_completed; };
 static bool outputs_create(qa_frontend *frontend,frontend_shared_settings *prepared,qa_error *error)
 {
     qa_frontend_options *options=&frontend->options;
@@ -460,18 +460,12 @@ static bool outputs_create(qa_frontend *frontend,frontend_shared_settings *prepa
     if (!frontend_source_renderer_runtime_bind(frontend,error) ||
         !frontend_music_sources_create(frontend,&frontend->music_sources,error) ||
         !frontend_tools_create(frontend, error) || !frontend_save_commands_create(frontend,error) ||
-        (!qa_application_startup_pending(frontend->application) && !frontend_launch(frontend,error)) ||
         !frontend_input_profile_bind(frontend,error) ||
-        !frontend_tools_sync(frontend, error) || !frontend_network_create(frontend, error)) return false;
+        !frontend_tools_sync(frontend, error)) return false;
     if (!frontend_restart_binding_create(frontend,error)) return false;
     if (!options->dedicated) for (unsigned i = 0; i < options->seats; ++i)
         if (!qa_ui_llm_create(frontend->seats[i].ui, frontend_tools_llm(frontend),
             FRONTEND_ASSISTANCE, &frontend->seats[i].assistance, error)) return false;
-    if (!qa_application_startup_pending(frontend->application) &&
-        !qa_application_rankings_start(frontend->application, error)) return false;
-    if (!options->dedicated && (options->menu ||
-        (!qa_application_launch(frontend->application) && !qa_application_startup_pending(frontend->application))))
-        if (!frontend_game_menu(&frontend->seats[0], error)) return false;
     frontend->archive_enabled=true;
     return true;
 }
@@ -485,19 +479,28 @@ bool frontend_constructor_advance(qa_frontend *f,uint64_t elapsed_ns,bool *compl
     *complete=false;
     struct frontend_constructor *owner=f->constructor;
     if (owner->failure.code!=QA_OK) { if (error) *error=owner->failure; return false; }
-    if (owner->outputs_entered) return frontend_fail(error,QA_ERROR_ARGUMENT,"First native output construction cannot replay an entered factory");
+    if (owner->outputs_entered && !owner->outputs_completed)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"First native output construction cannot replay an entered factory");
     f->wall_time_ns+=elapsed_ns;
-    f->preparing=true;
-    bool images=false;
-    bool ok=qa_application_startup_bootstrap_images_advance(f->application,&images,error);
-    f->preparing=false;
-    if (!ok) { if (error) owner->failure=*error; return false; }
-    if (!images) return true;
-    frontend_shared_settings *settings=frontend_config_store_shared(f->config_store,f->application,NULL);
-    if (!settings || !qa_application_startup_bootstrap_images_ready(f->application))
-        return frontend_fail(error,QA_ERROR_ARGUMENT,"First native outputs lack their real completed bootstrap images receipt");
-    owner->outputs_entered=true;
-    if (!outputs_create(f,settings,error)) { if (error) owner->failure=*error; return false; }
+    if (!owner->outputs_completed) {
+        f->preparing=true;
+        bool images=false;
+        bool ok=qa_application_startup_bootstrap_images_advance(f->application,&images,error);
+        f->preparing=false;
+        if (!ok) { if (error) owner->failure=*error; return false; }
+        if (!images) return true;
+        frontend_shared_settings *settings=frontend_config_store_shared(f->config_store,f->application,NULL);
+        if (!settings || !qa_application_startup_bootstrap_images_ready(f->application))
+            return frontend_fail(error,QA_ERROR_ARGUMENT,"First native outputs lack their real completed bootstrap images receipt");
+        owner->outputs_entered=true;
+        if (!outputs_create(f,settings,error)) { if (error) owner->failure=*error; return false; }
+        owner->outputs_completed=true;
+    }
+    bool started=false;
+    if (!frontend_startup_advance(f,&started,error)) { if (error) owner->failure=*error; return false; }
+    if (!started) return true;
+    if (!f->options.dedicated && f->options.menu && qa_application_launch(f->application) &&
+        !frontend_game_menu(&f->seats[0],error)) { if (error) owner->failure=*error; return false; }
     f->constructor=NULL; free(owner); *complete=true; return true;
 }
 

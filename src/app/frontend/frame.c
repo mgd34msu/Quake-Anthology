@@ -358,7 +358,7 @@ static bool resource_returned(qa_frontend *frontend,qa_error *error)
     return !frontend->input_settings ||
         frontend_input_settings_shutdown_ready(frontend->input_settings,frontend,error);
 }
-static bool startup_advance(qa_frontend *frontend,bool *complete,qa_error *error)
+bool frontend_startup_advance(qa_frontend *frontend,bool *complete,qa_error *error)
 {
     if (frontend->music_sources) {
         size_t queued;
@@ -373,9 +373,11 @@ static bool startup_advance(qa_frontend *frontend,bool *complete,qa_error *error
         if (frontend->options.game) {
             if (!frontend_launch(frontend,error)) return false;
             *complete=!qa_application_startup_pending(frontend->application);
-            return true;
+            if (!*complete) return true;
+        } else {
+            return frontend_network_create(frontend,error) &&
+                (frontend->options.dedicated || frontend_game_menu(&frontend->seats[0],error));
         }
-        return frontend->options.dedicated || frontend_game_menu(&frontend->seats[0],error);
     }
     if (!frontend_campaign_sync(frontend,error) || !frontend_view_bindings_apply_restored(frontend,error)) return false;
     if (*complete && frontend->music_sources &&
@@ -383,8 +385,9 @@ static bool startup_advance(qa_frontend *frontend,bool *complete,qa_error *error
          !frontend_source_publish_music(frontend,error) ||
          !frontend_music_sources_output(frontend->music_sources,FRONTEND_MUSIC_WORLD,error))) return false;
     uint64_t travel_revision;
-    return !*complete || qa_application_travel_publication_read(frontend->application,&travel_revision) ||
-        qa_application_rankings_start(frontend->application,error);
+    return (qa_application_travel_publication_read(frontend->application,&travel_revision) ||
+        qa_application_rankings_start(frontend->application,error)) &&
+        frontend_network_create(frontend,error);
 }
 bool qa_frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *error)
 {
@@ -422,7 +425,7 @@ bool qa_frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *erro
     if (qa_application_startup_pending(frontend->application)) {
         frontend->wall_time_ns+=elapsed_ns; wall_advanced=true;
         bool complete=false;
-        if (!startup_advance(frontend,&complete,error)) return false;
+        if (!frontend_startup_advance(frontend,&complete,error)) return false;
         if (!complete && resource_wait(frontend)) return resource_returned(frontend,error);
         if (!frontend_owners_idle(frontend) || !frontend_seat_callbacks_idle(frontend))
             return frontend_fail(error,QA_ERROR_ARGUMENT,"Candidate settings have not completed their physical release");

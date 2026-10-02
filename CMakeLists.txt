@@ -1608,6 +1608,7 @@ add_library(qa_frontend STATIC
     src/app/frontend/chat.c
     src/app/frontend/config_scripts.c
     src/app/frontend/config_store.c
+    src/app/frontend/source_admin.c
     src/app/frontend/config_bindings.c
     src/app/frontend/authored_bindings.c
     src/app/frontend/client_registry.c

@@ -14,9 +14,16 @@ struct qa_q3_client_downloads {
     size_t count, next;
     uint64_t generation, stage_nonce, native_stage_nonce;
     qa_fs_stage *stage;
+    qa_fs_identity publication_identity;
+    qa_q3_download pending;
+    size_t write_cursor;
+    qa_error failure;
+    uint8_t finish_sent;
     char *stage_path;
     int32_t block, received, size, advertised_size;
     bool active, paused, receiving, reload_pending;
+    bool request_pending,block_pending,block_written,acknowledged,inspected,published;
+    bool finish_pending,reloaded,stop_pending,stop_queued;
 };
 static bool fail(qa_error *error, qa_status code, const char *text)
 { qa_error_set(error, code, 0, "%s", text); return false; }
@@ -27,6 +34,12 @@ static void release_requests(qa_q3_client_downloads *owner)
 }
 static bool current(qa_q3_client_downloads *owner, qa_error *error)
 { return owner && owner->bindings.current(owner->bindings.context, error); }
+static bool returned(qa_q3_client_downloads *owner,uint64_t generation,qa_error *error)
+{
+    return (owner->generation==generation && current(owner,error)) ||
+        fail(error,QA_ERROR_ARGUMENT,"Q3 download callback retired its actual package continuation");
+}
+static void retained_failure(qa_q3_client_downloads *,const qa_error *);
 static bool destination(qa_q3_client_downloads *owner, const char *name, qa_buffer *out, qa_error *error)
 {
     if (!qa_q3_download_name(name, error) || !owner->bindings.destination(owner->bindings.context, name, out, error)) return false;
@@ -51,6 +64,10 @@ void qa_q3_client_downloads_close(qa_q3_client_downloads *owner)
     qa_fs_stage_close(owner->stage, false); owner->stage = NULL; owner->stage_nonce = owner->native_stage_nonce = 0;
     free(owner->stage_path); owner->stage_path = NULL;
     release_requests(owner); owner->active = owner->paused = owner->reload_pending = false; owner->advertised_size = 0;
+    owner->request_pending=owner->block_pending=owner->block_written=owner->acknowledged=false;
+    owner->inspected=owner->published=owner->finish_pending=owner->reloaded=false;
+    owner->stop_pending=owner->stop_queued=false; owner->write_cursor=0; owner->finish_sent=0;
+    owner->pending=(qa_q3_download){0}; owner->failure=(qa_error){0};
     if (owner->generation != UINT64_MAX) ++owner->generation;
 }
 void qa_q3_client_downloads_destroy(qa_q3_client_downloads *owner)
@@ -58,7 +75,7 @@ void qa_q3_client_downloads_destroy(qa_q3_client_downloads *owner)
 void qa_q3_client_downloads_rebind(qa_q3_client_downloads *owner, void *context)
 { if (owner) owner->bindings.context = context; }
 bool qa_q3_client_downloads_active(const qa_q3_client_downloads *owner)
-{ return owner && (owner->active || owner->reload_pending) && !owner->paused; }
+{ return owner && (owner->active || owner->finish_pending || owner->reload_pending) && !owner->paused; }
 size_t qa_q3_client_downloads_progress_count(const qa_q3_client_downloads *owner)
 { return owner && (owner->active || owner->paused) ? owner->count - owner->next : 0; }
 bool qa_q3_client_downloads_progress_at(const qa_q3_client_downloads *owner, size_t ordinal,
@@ -75,13 +92,17 @@ bool qa_q3_client_downloads_progress_at(const qa_q3_client_downloads *owner, siz
 }
 static bool start_next(qa_q3_client_downloads *owner, bool *started, qa_error *error)
 {
+    uint64_t generation=owner->generation;
     owner->active = owner->next < owner->count; *started = owner->active; owner->advertised_size = 0;
     if (!owner->active) return true;
     package_request *request = owner->requests + owner->next;
     owner->block = owner->received = owner->size = 0;
     owner->bindings.progress(owner->bindings.context, request->remote, 0, 0);
+    if(!returned(owner,generation,error)) return false;
     char command[80]; snprintf(command, sizeof(command), "download %s", request->remote);
-    return owner->bindings.reliable(owner->bindings.context, command, error);
+    owner->request_pending=true;
+    if (!owner->bindings.reliable(owner->bindings.context, command, error) || !returned(owner,generation,error)) return false;
+    owner->request_pending=false; return true;
 }
 typedef struct existence { qa_q3_client_downloads *owner; qa_error failure; } existence;
 static bool exists(void *context, const char *name)
@@ -141,14 +162,18 @@ bool qa_q3_client_downloads_begin(qa_q3_client_downloads *owner, const qa_q3_pac
         if (ok) ok = owner->bindings.reference(owner->bindings.context, remote, checksum, error);
         if (separator) *separator = '@';
     }
-    if (ok) ok = start_next(owner, downloading, error);
+    if (ok) {
+        qa_error operation={0}; ok=start_next(owner,downloading,&operation);
+        if (!ok && owner->request_pending) { retained_failure(owner,&operation); ok=true; }
+        else if (!ok && error) *error=operation;
+    }
     if (!ok) qa_q3_client_downloads_close(owner);
     return ok;
 }
 bool qa_q3_client_downloads_size(qa_q3_client_downloads *owner, int32_t size, int32_t *effective, qa_error *error)
 {
     if (!current(owner, error) || !effective) return false;
-    if (owner->stage && size != owner->advertised_size)
+    if ((owner->stage || owner->block_pending) && size != owner->advertised_size)
         return fail(error, QA_ERROR_FORMAT, "Q3 package size changed during the genuine native transfer");
     owner->advertised_size = owner->size = size; *effective = size;
     const char *name = owner->active ? owner->requests[owner->next].local : "";
@@ -177,80 +202,167 @@ static bool inspect(qa_q3_client_downloads *owner, const package_request *reques
     if (ok && checksum != request->checksum) ok = fail(error, QA_ERROR_FORMAT, "Downloaded Q3 package checksum differs from its server reference");
     free(crc); free(sizes); qa_archive_close(archive); qa_fs_stage_unmap(mapping); return ok;
 }
-static bool receive(qa_q3_client_downloads *owner, const qa_q3_download *download, qa_error *error)
+static void retained_failure(qa_q3_client_downloads *owner,const qa_error *error)
 {
-    if (download->file_size < 0) {
-        if (!memchr(download->error, 0, sizeof(download->error)))
-            return fail(error, QA_ERROR_FORMAT, "Q3 download denial exceeds its decoded source string");
-        return fail(error, QA_ERROR_FORMAT, download->error);
-    }
-    if (download->block != owner->block) return true;
-    if (!owner->active) return owner->bindings.reliable(owner->bindings.context, "stopdl", error);
-    package_request *request = owner->requests + owner->next;
-    if (!owner->stage) {
-        if (owner->advertised_size <= 0) return fail(error, QA_ERROR_FORMAT, "Q3 block has no admitted positive package size");
-        qa_buffer mapped = {0}; uint64_t initial = 0;
-        bool ok = destination(owner, request->local, &mapped, error);
-        if (ok) { owner->stage_path = copy_string((const char *)mapped.data, error); ok = owner->stage_path != NULL; }
-        if (ok) ok =
-            owner->bindings.nonce(owner->bindings.context, &owner->stage_nonce, error) && owner->stage_nonce &&
-            qa_fs_stage_open(owner->bindings.root, (const char *)mapped.data, owner->stage_nonce, false, &owner->stage, &initial, error);
-        qa_buffer_free(&mapped); owner->native_stage_nonce = owner->stage_nonce;
-        if (!ok || initial) return (error && error->code) ? false :
-            fail(error, QA_ERROR_FORMAT, "Q3 package requires a fresh actual private stage nonce");
-    }
-    if (download->size > sizeof(download->data) || owner->received > owner->advertised_size ||
-        download->size > (size_t)(owner->advertised_size - owner->received) || owner->block == INT32_MAX)
-        return fail(error, QA_ERROR_FORMAT, "Q3 package block exceeds its admitted source size or sequence");
-    size_t written = 0;
-    if (download->size && (!qa_fs_stage_write(owner->stage, (uint64_t)owner->received,
-        (qa_bytes){download->data, download->size}, &written, error) || written != download->size)) return false;
-    if (!current(owner, error)) return false;
-    char acknowledgement[40]; snprintf(acknowledgement, sizeof(acknowledgement), "nextdl %" PRId32, owner->block);
-    if (!owner->bindings.reliable(owner->bindings.context, acknowledgement, error)) return false;
-    ++owner->block; owner->received += (int32_t)download->size;
-    owner->bindings.progress(owner->bindings.context, request->local, owner->received, owner->size);
-    if (download->size) return true;
-    if (owner->received != owner->advertised_size) return fail(error, QA_ERROR_FORMAT, "Q3 package ended before its advertised size");
-    qa_fs_identity identity;
-    if (!qa_fs_stage_seal(owner->stage, &identity, error) || !inspect(owner, request, error) || !current(owner, error)) return false;
-    bool allowed;
-    if (!owner->bindings.permission(owner->bindings.context, &allowed, error) || !allowed)
-        return fail(error, QA_ERROR_ARGUMENT, "Q3 package publication permission denied");
-    bool created = false;
-    if (!qa_fs_stage_publish(owner->stage, &identity, true, &created, error) || !created)
-        return (error && error->code) ? false : fail(error, QA_ERROR_IO, "Q3 package destination was already published");
-    qa_fs_stage_close(owner->stage, false); owner->stage = NULL; owner->stage_nonce = owner->native_stage_nonce = 0;
-    free(owner->stage_path); owner->stage_path = NULL;
-    owner->active = false; ++owner->next;
-    owner->bindings.progress(owner->bindings.context, "", owner->received, owner->size);
-    if (!owner->bindings.send_packet(owner->bindings.context, error) || !current(owner, error) ||
-        !owner->bindings.send_packet(owner->bindings.context, error) || !current(owner, error)) return false;
-    bool started;
-    if (!start_next(owner, &started, error)) return false;
-    if (started) return true;
-    owner->reload_pending = true; return true;
+    if (!error || error->code==QA_OK) return;
+    bool changed=owner->failure.code!=error->code || owner->failure.offset!=error->offset ||
+        strcmp(owner->failure.message,error->message);
+    owner->failure=*error;
+    if(changed && owner->bindings.failure) owner->bindings.failure(owner->bindings.context,error);
 }
-bool qa_q3_client_downloads_receive(qa_q3_client_downloads *owner, const qa_q3_download *download, qa_error *error)
+static void clear_block(qa_q3_client_downloads *owner)
 {
-    if (!current(owner, error) || !download || owner->receiving)
-        return fail(error, QA_ERROR_ARGUMENT, "Q3 download block lacks its idle current receiver");
+    owner->block_pending=owner->block_written=owner->acknowledged=false;
+    owner->inspected=owner->published=false; owner->write_cursor=0;
+    owner->pending=(qa_q3_download){0};
+}
+static bool receive(qa_q3_client_downloads *owner,const qa_q3_download *download,qa_error *error)
+{
+    if(download->file_size<0) {
+        if(!memchr(download->error,0,sizeof(download->error)))
+            return fail(error,QA_ERROR_FORMAT,"Q3 download denial exceeds its decoded source string");
+        return fail(error,QA_ERROR_FORMAT,download->error);
+    }
+    if(download->block!=owner->block) return true;
+    if(!owner->active) { owner->stop_pending=true; return true; }
+    if(download->size>sizeof(download->data) || owner->advertised_size<=0 ||
+        owner->received>owner->advertised_size || owner->block==INT32_MAX)
+        return fail(error,QA_ERROR_FORMAT,"Q3 package block exceeds its admitted source size or sequence");
+    if(owner->block_pending) {
+        return (download->block==owner->pending.block && download->file_size==owner->pending.file_size &&
+            download->size==owner->pending.size && !memcmp(download->data,owner->pending.data,download->size)) ||
+            fail(error,QA_ERROR_FORMAT,"Repeated Q3 block differs from its retained delivery");
+    }
+    if(download->size>(size_t)(owner->advertised_size-owner->received) ||
+        (!download->size && owner->received!=owner->advertised_size))
+        return fail(error,QA_ERROR_FORMAT,"Q3 package block exceeds or ends before its advertised size");
+    owner->pending=*download; owner->block_pending=true; return true;
+}
+static bool progress(qa_q3_client_downloads *owner,bool *terminal,qa_error *error)
+{
+    *terminal=false;
+    uint64_t generation=owner->generation;
+    if(owner->stop_pending) {
+        if(!owner->stop_queued) {
+            if(!owner->bindings.reliable(owner->bindings.context,"stopdl",error) || !returned(owner,generation,error)) return false;
+            owner->stop_queued=true;
+        }
+        if(!owner->bindings.send_packet(owner->bindings.context,error) || !returned(owner,generation,error)) return false;
+        owner->stop_pending=owner->stop_queued=false;
+    }
+    if(owner->paused) return true;
+    if(owner->request_pending) {
+        char command[80]; snprintf(command,sizeof(command),"download %s",owner->requests[owner->next].remote);
+        if(!owner->bindings.reliable(owner->bindings.context,command,error) || !returned(owner,generation,error)) return false;
+        owner->request_pending=false;
+    }
+    if(owner->block_pending) {
+        package_request *request=owner->requests+owner->next;
+        if(!owner->stage) {
+            qa_buffer mapped={0}; uint64_t initial=0;
+            bool ok=destination(owner,request->local,&mapped,error);
+            if(ok && !owner->stage_path) owner->stage_path=copy_string((const char *)mapped.data,error);
+            if(ok) ok=owner->stage_path!=NULL;
+            if(ok && !owner->stage_nonce)
+                ok=owner->bindings.nonce(owner->bindings.context,&owner->stage_nonce,error) &&
+                    returned(owner,generation,error) && owner->stage_nonce;
+            if(ok) {
+                if(!owner->native_stage_nonce) owner->native_stage_nonce=owner->stage_nonce;
+                ok=qa_fs_stage_open_unique_checked(owner->bindings.root,(const char *)mapped.data,
+                    &owner->native_stage_nonce,0,&owner->stage,&initial,error);
+            }
+            qa_buffer_free(&mapped);
+            if(!ok) { qa_fs_stage_close(owner->stage,false); owner->stage=NULL; return false; }
+            if(initial) { *terminal=true; return fail(error,QA_ERROR_FORMAT,"Q3 package requires its fresh actual private stage"); }
+        }
+        if(!owner->block_written) {
+            size_t written=0;
+            qa_bytes remaining={owner->pending.data+owner->write_cursor,owner->pending.size-owner->write_cursor};
+            bool ok=!remaining.size || qa_fs_stage_write(owner->stage,
+                (uint64_t)owner->received+owner->write_cursor,remaining,&written,error);
+            owner->write_cursor+=written;
+            if(!ok || owner->write_cursor!=owner->pending.size) return false;
+            owner->received+=(int32_t)owner->pending.size; owner->block_written=true;
+        }
+        if(!owner->acknowledged) {
+            char acknowledgement[40]; snprintf(acknowledgement,sizeof(acknowledgement),"nextdl %" PRId32,owner->block);
+            if(!owner->bindings.reliable(owner->bindings.context,acknowledgement,error) || !returned(owner,generation,error)) return false;
+            owner->acknowledged=true; ++owner->block;
+            owner->bindings.progress(owner->bindings.context,request->local,owner->received,owner->size);
+            if(!returned(owner,generation,error)) return false;
+        }
+        if(owner->pending.size) clear_block(owner);
+        else {
+            if(!owner->inspected) {
+                if(!qa_fs_stage_seal(owner->stage,&owner->publication_identity,error)) return false;
+                if(!inspect(owner,request,error)) { *terminal=error && error->code==QA_ERROR_FORMAT; return false; }
+                owner->inspected=true;
+            }
+            bool allowed;
+            if(!owner->bindings.permission(owner->bindings.context,&allowed,error) || !returned(owner,generation,error)) return false;
+            if(!allowed) return qa_q3_client_downloads_cancel(owner,error);
+            bool created=false;
+            if(!qa_fs_stage_publish(owner->stage,&owner->publication_identity,true,&created,error)) {
+                owner->published=created; return false;
+            }
+            if(!created) { *terminal=true; return fail(error,QA_ERROR_IO,"Q3 package destination was already published"); }
+            owner->published=true;
+            qa_fs_stage_close(owner->stage,false); owner->stage=NULL;
+            owner->stage_nonce=owner->native_stage_nonce=0;
+            free(owner->stage_path); owner->stage_path=NULL;
+            clear_block(owner); owner->active=false; ++owner->next;
+            owner->finish_pending=true; owner->finish_sent=0;
+            owner->bindings.progress(owner->bindings.context,"",owner->received,owner->size);
+            if(!returned(owner,generation,error)) return false;
+        }
+    }
+    if(owner->finish_pending) {
+        while(owner->finish_sent<2) {
+            if(!owner->bindings.send_packet(owner->bindings.context,error) || !returned(owner,generation,error)) return false;
+            ++owner->finish_sent;
+        }
+        owner->finish_pending=false; owner->finish_sent=0;
+        bool started;
+        if(!start_next(owner,&started,error)) return false;
+        if(!started) owner->reload_pending=true;
+    }
+    if(owner->reload_pending) {
+        if(!owner->reloaded) {
+            if(!owner->bindings.reload_packages(owner->bindings.context,error) || !returned(owner,generation,error)) return false;
+            owner->reloaded=true;
+        }
+        if(!owner->bindings.reliable(owner->bindings.context,"donedl",error) || !returned(owner,generation,error)) return false;
+        owner->reload_pending=owner->reloaded=false;
+    }
+    return current(owner,error);
+}
+bool qa_q3_client_downloads_receive(qa_q3_client_downloads *owner,const qa_q3_download *download,qa_error *error)
+{
+    if(!current(owner,error) || !download || owner->receiving)
+        return fail(error,QA_ERROR_ARGUMENT,"Q3 download block lacks its idle current receiver");
     bool allowed;
-    if (!owner->bindings.permission(owner->bindings.context, &allowed, error)) return false;
-    if (!allowed) return qa_q3_client_downloads_cancel(owner, error);
-    owner->receiving = true; bool ok = receive(owner, download, error); owner->receiving = false;
-    if (!ok) qa_q3_client_downloads_close(owner);
+    if(!owner->bindings.permission(owner->bindings.context,&allowed,error)) return false;
+    if(!allowed) return qa_q3_client_downloads_cancel(owner,error);
+    owner->receiving=true; bool ok=receive(owner,download,error); owner->receiving=false;
+    if(!ok) qa_q3_client_downloads_close(owner);
     return ok;
 }
-bool qa_q3_client_downloads_pump(qa_q3_client_downloads *owner, qa_error *error)
+bool qa_q3_client_downloads_pump(qa_q3_client_downloads *owner,qa_error *error)
 {
-    if (!current(owner, error) || owner->receiving)
-        return fail(error, QA_ERROR_ARGUMENT, "Q3 package refresh requires the current idle packet owner");
-    if (!owner->reload_pending) return true;
-    uint64_t generation = owner->generation; owner->reload_pending = false;
-    return owner->bindings.reload_packages(owner->bindings.context, error) && current(owner, error) &&
-        (owner->generation == generation || fail(error, QA_ERROR_ARGUMENT, "Q3 download retired during filesystem refresh")) &&
-        owner->bindings.reliable(owner->bindings.context, "donedl", error);
+    if(!current(owner,error) || owner->receiving)
+        return fail(error,QA_ERROR_ARGUMENT,"Q3 package continuation requires its current returned packet owner");
+    uint64_t generation=owner->generation; bool terminal=false; qa_error operation={0};
+    owner->receiving=true;
+    bool ok=progress(owner,&terminal,&operation); owner->receiving=false;
+    if((owner->generation!=generation && !(owner->paused && owner->stop_pending &&
+        owner->generation==generation+1)) || !current(owner,error))
+        return fail(error,QA_ERROR_ARGUMENT,"Q3 download retired during its actual continuation");
+    if(!ok) {
+        if(terminal) { if(error) *error=operation; qa_q3_client_downloads_close(owner); return false; }
+        if(operation.code==QA_OK) fail(&operation,QA_ERROR_IO,"Q3 package operation retained an incomplete result");
+        retained_failure(owner,&operation); return true;
+    }
+    owner->failure=(qa_error){0}; return true;
 }
 bool qa_q3_client_downloads_cancel(qa_q3_client_downloads *owner, qa_error *error)
 {
@@ -259,17 +371,24 @@ bool qa_q3_client_downloads_cancel(qa_q3_client_downloads *owner, qa_error *erro
     qa_fs_stage_close(owner->stage, false); owner->stage = NULL; owner->stage_nonce = owner->native_stage_nonce = 0;
     free(owner->stage_path); owner->stage_path = NULL;
     owner->paused = true; owner->active = owner->reload_pending = false; owner->advertised_size = 0;
+    clear_block(owner); owner->request_pending=owner->finish_pending=owner->reloaded=false;
+    owner->finish_sent=0; owner->stop_pending=true; owner->stop_queued=false;
     if (owner->generation == UINT64_MAX) return fail(error, QA_ERROR_FORMAT, "Q3 download generation exhausted");
     ++owner->generation;
-    return owner->bindings.reliable(owner->bindings.context, "stopdl", error) && owner->bindings.send_packet(owner->bindings.context, error);
+    return true;
 }
 bool qa_q3_client_downloads_retry(qa_q3_client_downloads *owner, bool *started, qa_error *error)
 {
     if (!current(owner, error) || !started || owner->receiving) return false;
     *started = false; bool allowed;
+    if (owner->stop_pending) return true;
     if (!owner->paused || !owner->bindings.permission(owner->bindings.context, &allowed, error)) return !owner->paused;
     if (!allowed) return true;
-    owner->paused = false; return start_next(owner, started, error);
+    owner->paused = false; qa_error operation={0};
+    if (start_next(owner,started,&operation)) return true;
+    if (owner->request_pending) { retained_failure(owner,&operation); return true; }
+    if(error) *error=operation;
+    return false;
 }
 static bool saved_text(qa_source_save_io *io, char **text, size_t maximum, bool optional)
 {
@@ -290,12 +409,29 @@ static bool valid(qa_q3_client_downloads *owner, bool staged, qa_error *error)
     if (!current(owner, error) || owner->receiving || !owner->generation || owner->generation == UINT64_MAX ||
         owner->count > QA_Q3_SEARCH_PATHS || owner->next > owner->count ||
         (owner->active && (owner->paused || owner->next == owner->count)) ||
-        (!owner->active && !owner->paused && owner->next != owner->count) || owner->block < 0 || owner->received < 0 ||
+        (!owner->active && !owner->paused && !owner->finish_pending && owner->next != owner->count) || owner->block < 0 || owner->received < 0 ||
         (owner->reload_pending && (owner->active || owner->paused || owner->next != owner->count || !owner->count)) ||
-        staged != (owner->stage_nonce != 0) || staged != (owner->stage_path != NULL) ||
+        (owner->stage_nonce!=0) != (owner->stage_path!=NULL) || (staged && !owner->stage_nonce) ||
         (staged && (!owner->active || owner->advertised_size <= 0 || owner->advertised_size != owner->size ||
-            owner->received > owner->advertised_size || !owner->block)) ||
-        (owner->active && !staged && (owner->block || owner->received)))
+            owner->received > owner->advertised_size || (!owner->block && !owner->block_pending))) ||
+        (owner->active && !staged && (owner->block || owner->received || owner->write_cursor || owner->block_written)) ||
+        (owner->request_pending && (!owner->active || owner->block_pending || staged || owner->block || owner->received)) ||
+        (owner->acknowledged && !owner->block_written) || (owner->inspected && (!owner->acknowledged || owner->pending.size)) ||
+        (owner->published && !owner->inspected) || (owner->stop_queued && !owner->stop_pending) ||
+        (owner->reloaded && !owner->reload_pending) || owner->finish_sent>2 ||
+        (owner->finish_pending && (owner->active || owner->paused || staged || !owner->next || owner->block_pending)) ||
+        (!owner->finish_pending && owner->finish_sent) ||
+        (owner->block_pending && (!owner->active || owner->paused || owner->request_pending ||
+            owner->pending.file_size<0 || owner->advertised_size<=0 || owner->received>owner->advertised_size ||
+            owner->pending.size>sizeof(owner->pending.data) || owner->write_cursor>owner->pending.size ||
+            (!owner->block_written && owner->pending.size>(size_t)(owner->advertised_size-owner->received)) ||
+            (owner->block_written && owner->pending.size>(size_t)owner->received) ||
+            (!owner->pending.size && owner->received!=owner->advertised_size) || (owner->inspected && !staged) ||
+            (owner->block_written && owner->write_cursor!=owner->pending.size) ||
+            owner->block!=(int32_t)owner->pending.block+(owner->acknowledged?1:0))) ||
+        (!owner->block_pending && (owner->pending.block || owner->pending.file_size || owner->pending.size ||
+            owner->write_cursor || owner->block_written || owner->acknowledged || owner->inspected || owner->published)) ||
+        (unsigned)owner->failure.code>QA_ERROR_NOT_FOUND || !memchr(owner->failure.message,0,sizeof(owner->failure.message)))
         return fail(error, QA_ERROR_FORMAT, "Q3 client continuation differs from its genuine queue and staged source cursors");
     for (size_t i = 0; i < owner->count; ++i) {
         package_request *request = owner->requests + i;
@@ -307,7 +443,7 @@ static bool valid(qa_q3_client_downloads *owner, bool staged, qa_error *error)
         if (strcmp(request->local, request->remote) && strcmp(request->local, renamed))
             return fail(error, QA_ERROR_FORMAT, "Q3 local package name differs from its admitted source checksum recipe");
     }
-    if (staged) {
+    if (owner->stage_path) {
         qa_buffer mapped = {0};
         bool ok = destination(owner, owner->requests[owner->next].local, &mapped, error) &&
             !strcmp((const char *)mapped.data, owner->stage_path);
@@ -315,7 +451,8 @@ static bool valid(qa_q3_client_downloads *owner, bool staged, qa_error *error)
         if (!ok) return fail(error, QA_ERROR_FORMAT, "Q3 native stage belongs to another selected mount destination");
         if (owner->stage) {
             uint64_t size = 0;
-            if (!owner->native_stage_nonce || !qa_fs_stage_size(owner->stage, &size, error) || size != (uint64_t)owner->received)
+            uint64_t expected=(uint64_t)owner->received+(owner->block_written?0:owner->write_cursor);
+            if ((!owner->native_stage_nonce && !owner->published) || !qa_fs_stage_size(owner->stage, &size, error) || size != expected)
                 return fail(error, QA_ERROR_FORMAT, "Q3 stage bytes differ from its real source receive cursor");
         }
     }
@@ -323,9 +460,9 @@ static bool valid(qa_q3_client_downloads *owner, bool staged, qa_error *error)
 }
 static bool fields(qa_source_save_io *io, qa_q3_client_downloads *owner, bool *staged)
 {
-    uint32_t magic = UINT32_C(0x44433351), version = 1;
+    uint32_t magic = UINT32_C(0x44433351), version = 2;
     if (!qa_source_save_u32(io, &magic) || magic != UINT32_C(0x44433351) ||
-        !qa_source_save_u32(io, &version) || version != 1 || !qa_source_save_u64(io, &owner->generation) ||
+        !qa_source_save_u32(io, &version) || (version != 1 && version != 2) || !qa_source_save_u64(io, &owner->generation) ||
         !qa_source_save_count(io, &owner->count, QA_Q3_SEARCH_PATHS) || !qa_source_save_count(io, &owner->next, owner->count) ||
         !qa_source_save_bool(io, &owner->active) || !qa_source_save_bool(io, &owner->paused) ||
         !qa_source_save_bool(io, &owner->reload_pending) ||
@@ -340,8 +477,25 @@ static bool fields(qa_source_save_io *io, qa_q3_client_downloads *owner, bool *s
         if (!saved_text(io, &request->remote, 63, false) || !saved_text(io, &request->local, 4095, false) ||
             !qa_source_save_u32(io, &request->checksum)) return false;
     }
-    return qa_source_save_bool(io, staged) && qa_source_save_u64(io, &owner->stage_nonce) &&
-        saved_text(io, &owner->stage_path, 4095, true);
+    if (!qa_source_save_bool(io, staged) || !qa_source_save_u64(io, &owner->stage_nonce) ||
+        !saved_text(io, &owner->stage_path, 4095, true)) return false;
+    if(version==1) return true;
+    int32_t block=owner->pending.block; uint32_t status=(uint32_t)owner->failure.code;
+    uint64_t offset=owner->failure.offset;
+    if (!qa_source_save_bool(io,&owner->request_pending) || !qa_source_save_bool(io,&owner->block_pending) ||
+        !qa_source_save_bool(io,&owner->block_written) || !qa_source_save_bool(io,&owner->acknowledged) ||
+        !qa_source_save_bool(io,&owner->inspected) || !qa_source_save_bool(io,&owner->published) ||
+        !qa_source_save_bool(io,&owner->finish_pending) || !qa_source_save_u8(io,&owner->finish_sent) ||
+        !qa_source_save_bool(io,&owner->reloaded) || !qa_source_save_bool(io,&owner->stop_pending) ||
+        !qa_source_save_bool(io,&owner->stop_queued) || !qa_source_save_count(io,&owner->write_cursor,sizeof(owner->pending.data)) ||
+        !qa_source_save_i32(io,&block) || block<INT16_MIN || block>INT16_MAX ||
+        !qa_source_save_i32(io,&owner->pending.file_size) ||
+        !qa_source_save_count(io,&owner->pending.size,sizeof(owner->pending.data)) ||
+        !qa_source_save_bytes(io,owner->pending.data,owner->pending.size) ||
+        !qa_source_save_u32(io,&status) || status>QA_ERROR_NOT_FOUND || !qa_source_save_u64(io,&offset) || offset>SIZE_MAX ||
+        !qa_source_save_bytes(io,owner->failure.message,sizeof(owner->failure.message))) return false;
+    owner->pending.block=(int16_t)block; owner->failure.code=(qa_status)status; owner->failure.offset=(size_t)offset;
+    return true;
 }
 bool qa_q3_client_downloads_checkpoint(const qa_q3_client_downloads *source, qa_buffer *out, qa_error *error)
 {
@@ -350,7 +504,7 @@ bool qa_q3_client_downloads_checkpoint(const qa_q3_client_downloads *source, qa_
     qa_q3_client_downloads copy = *owner; bool staged = owner->stage != NULL;
     qa_source_save_io io = {0};
     bool ok = qa_source_save_writer(&io, NULL, error) && fields(&io, &copy, &staged);
-    size_t length = staged ? (size_t)owner->received : 0;
+    size_t length = staged ? (size_t)owner->received+(owner->block_written?0:owner->write_cursor) : 0;
     if (ok) ok = qa_source_save_count(&io, &length, INT32_MAX);
     uint8_t buffer[65536]; size_t offset = 0;
     while (ok && offset < length) {
@@ -378,13 +532,16 @@ bool qa_q3_client_downloads_restore(qa_bytes bytes, const qa_q3_client_download_
         else fail(error, QA_ERROR_FORMAT, "Truncated actual Q3 staged prefix");
     }
     if (ok) ok = qa_source_save_finish(&io, NULL) &&
-        length == (staged ? (size_t)owner->received : 0) && valid(owner, staged, error);
+        length == (staged ? (size_t)owner->received+(owner->block_written?0:owner->write_cursor) : 0) && valid(owner, staged, error);
     qa_source_save_dispose(&io);
     if (ok && staged) {
-        ok = owner->bindings.prepare_stage(owner->bindings.context, owner->stage_path, owner->stage_nonce,
-            prefix, &owner->stage, &owner->native_stage_nonce, error) && owner->stage && owner->native_stage_nonce && valid(owner, true, error);
+        if(owner->published) ok=qa_fs_stage_open_published_checked(owner->bindings.root,owner->stage_path,prefix,
+            &owner->stage,&owner->publication_identity,error);
+        else ok = owner->bindings.prepare_stage(owner->bindings.context, owner->stage_path, owner->stage_nonce,
+            prefix, &owner->stage, &owner->native_stage_nonce, error);
+        ok=ok && owner->stage && (owner->published || owner->native_stage_nonce) && valid(owner,true,error);
         size_t written = 0;
-        if (ok) ok = qa_fs_stage_write(owner->stage, prefix.size, (qa_bytes){0}, &written, error) && !written;
+        if (ok && !owner->published) ok = qa_fs_stage_write(owner->stage, prefix.size, (qa_bytes){0}, &written, error) && !written;
         uint8_t buffer[65536]; size_t offset = 0;
         while (ok && offset < prefix.size) {
             size_t span = prefix.size - offset; if (span > sizeof(buffer)) span = sizeof(buffer); size_t read = 0;
@@ -392,6 +549,7 @@ bool qa_q3_client_downloads_restore(qa_bytes bytes, const qa_q3_client_download_
             if (!ok && (!error || error->code == QA_OK)) fail(error, QA_ERROR_FORMAT, "Q3 candidate stage differs from its original source prefix");
             offset += span;
         }
+        if(ok && owner->inspected && !owner->published) ok=qa_fs_stage_seal(owner->stage,&owner->publication_identity,error);
     }
     if (!ok) { qa_q3_client_downloads_destroy(owner); return false; }
     *out = owner; return true;
@@ -410,4 +568,6 @@ void qa_q3_client_downloads_handoff_publish(qa_q3_client_downloads *active, qa_q
 {
     qa_fs_stage *stage = active->stage; active->stage = candidate->stage; candidate->stage = stage;
     uint64_t nonce = active->native_stage_nonce; active->native_stage_nonce = candidate->native_stage_nonce; candidate->native_stage_nonce = nonce;
+    qa_fs_identity identity=active->publication_identity;
+    active->publication_identity=candidate->publication_identity; candidate->publication_identity=identity;
 }

@@ -131,8 +131,7 @@ static bool original_create(qa_frontend *active,const qa_q1_save_data *save,cons
     f->options.game=NULL;
     if (!music_ready) return false;
     if (!frontend_source_renderer_runtime_bind(f,error) ||
-        !frontend_tools_create(f,error) || !frontend_save_commands_create(f,error) ||
-        !frontend_network_create(f,error)) return false;
+        !frontend_tools_create(f,error) || !frontend_save_commands_create(f,error)) return false;
     if (!frontend_restart_binding_create(f,error)) return false;
     if (!f->options.dedicated) {
         if (!qa_ui_llm_create(f->seats[0].ui,frontend_tools_llm(f),FRONTEND_ASSISTANCE,
@@ -173,7 +172,8 @@ bool qa_frontend_q1_restore_advance(qa_frontend_q1_restore *operation,qa_fronten
     if (!imported) return true;
     operation->finished=true;
     qa_save_image *image=NULL;
-    bool ok=frontend_input_profile_bind(source,error) && frontend_tools_sync(source,error) &&
+    bool ok=frontend_network_create(source,error) &&
+        frontend_input_profile_bind(source,error) && frontend_tools_sync(source,error) &&
         (source->options.dedicated || frontend_scene_sync(source,error)) &&
         qa_application_rankings_start(source->application,error);
     if (ok) {

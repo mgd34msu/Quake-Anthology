@@ -27,6 +27,8 @@ typedef struct qa_q3_client_download_bindings {
     bool (*send_packet)(void *, qa_error *);
     bool (*reload_packages)(void *, qa_error *);
     void (*progress)(void *, const char *, int32_t count, int32_t size);
+    /* Reports retained operation errors; accepted blocks remain retryable. */
+    void (*failure)(void *,const qa_error *);
     /* Detached restore creates a new private native stage with the saved
      * logical identity and prefix. It must not publish or reopen a writer. */
     bool (*prepare_stage)(void *, const char *, uint64_t logical_nonce, qa_bytes,
@@ -39,8 +41,9 @@ bool qa_q3_client_downloads_begin(qa_q3_client_downloads *, const qa_q3_package 
     const uint32_t *loaded_checksums, size_t, bool *downloading, qa_error *);
 bool qa_q3_client_downloads_size(qa_q3_client_downloads *, int32_t, int32_t *effective, qa_error *);
 bool qa_q3_client_downloads_receive(qa_q3_client_downloads *, const qa_q3_download *, qa_error *);
-/* Finish the actual filesystem refresh after packet/source callbacks return.
- * Only successful refresh queues donedl; a callback attempt is never replayed. */
+/* Progress retained block writes, reliable acknowledgements, publication and
+ * filesystem refresh after packet/source callbacks return. Successful stages
+ * run once; operation errors are reported through failure and retried idle. */
 bool qa_q3_client_downloads_pump(qa_q3_client_downloads *, qa_error *);
 bool qa_q3_client_downloads_cancel(qa_q3_client_downloads *, qa_error *);
 bool qa_q3_client_downloads_retry(qa_q3_client_downloads *, bool *started, qa_error *);

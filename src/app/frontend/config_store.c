@@ -11,6 +11,7 @@
 #include "qa/source_frame_time.h"
 #include "network_config.h"
 #include "network_admin.h"
+#include "source_admin.h"
 #include "native_q3_client.h"
 #include "selected_effects.h"
 #include "shared_settings.h"
@@ -84,6 +85,7 @@ struct frontend_config_store {
     frontend_config_source *sources;
     frontend_remote_configs *clients;
     frontend_neutral_configs *neutral;
+    frontend_source_admin *admin;
     config_variable_carry *variable_carries;
     frontend_config_source *prepared_primary;
     const qa_launch_snapshot *prepared;
@@ -859,6 +861,32 @@ static frontend_config_source *published_primary(const frontend_config_store *ma
     }
     return NULL;
 }
+bool frontend_config_store_server_invocation_read(frontend_config_store *manager,
+    const qa_command_invocation *call,qa_application_startup_source *out,qa_error *error)
+{
+    if (!manager || !call || !out || !call->console ||
+        !qa_console_invocation_current(call->console,call))
+        return fail(error,QA_ERROR_ARGUMENT,"Server operator requires its actual entered Source invocation");
+    for (frontend_config_source *source=manager->sources;source;source=source->next) {
+        if (!source->primary || source->console!=call->console || !source_context(source,&call->context)) continue;
+        const qa_launch_instance *selected=instance(source);
+        if (!selected || !source->cvars || qa_console_cvars(source->console)!=source->cvars)
+            return fail(error,QA_ERROR_ARGUMENT,"Server operator lost its retained physical Source");
+        *out=(qa_application_startup_source){.descriptor=selected,.scope=source->scope,
+            .console=source->console,.cvars=source->cvars,.command=call->context,
+            .declaration_owner=source->declaration_owner}; return true;
+    }
+    return fail(error,QA_ERROR_ARGUMENT,"Server operator has no actual primary Source namespace");
+}
+bool frontend_config_store_server_invocation_application(frontend_config_store *manager,
+    const qa_command_invocation *call,qa_application **out,qa_error *error)
+{
+    qa_application_startup_source source;
+    if (!out || !frontend_config_store_server_invocation_read(manager,call,&source,error)) return false;
+    frontend_config_source *physical=frontend_config_store_source(manager,source.console);
+    if (!physical) return fail(error,QA_ERROR_ARGUMENT,"Server operator lost its actual application owner");
+    *out=physical->application; return true;
+}
 bool frontend_config_store_primary_server_read(frontend_config_store *manager,
     qa_application_startup_source *out,bool *present,qa_error *error)
 {
@@ -872,6 +900,33 @@ bool frontend_config_store_primary_server_read(frontend_config_store *manager,
     *out=(qa_application_startup_source){.descriptor=instance(source),.scope=source->scope,
         .console=source->console,.cvars=source->cvars,.command=command,.declaration_owner=source->declaration_owner};
     *present=true; return true;
+}
+bool frontend_config_store_admin_dispatch(frontend_config_store *manager,const qa_command_invocation *call,
+    size_t skip,bool *handled,qa_error *error)
+{
+    qa_application_startup_source source;
+    if (!frontend_config_store_server_invocation_read(manager,call,&source,error)) return false;
+    if (!manager->admin)
+        return fail(error,QA_ERROR_ARGUMENT,"Early Source operator lost its retained administration owner");
+    frontend_config_source *physical=frontend_config_store_source(manager,call->console);
+    if (!physical || !frontend_source_admin_bind(manager->admin,physical->application,
+        source.console,source.cvars,&call->context,error)) return false;
+    return frontend_source_admin_dispatch(manager->admin,call,skip,handled,error);
+}
+bool frontend_config_store_admin_pending(const frontend_config_store *manager)
+{ return manager && manager->admin; }
+bool frontend_config_store_admin_adopt(frontend_config_store *manager,qa_error *error)
+{
+    if (!manager || !manager->frontend->network)
+        return fail(error,QA_ERROR_ARGUMENT,"Source administration adoption requires its real Network owner");
+    if (!manager->admin) return true;
+    qa_application_startup_source source; bool present=false;
+    if (!frontend_config_store_primary_server_read(manager,&source,&present,error)) return false;
+    if (present && !frontend_source_admin_bind(manager->admin,manager->frontend->application,
+        source.console,source.cvars,&source.command,error)) return false;
+    if (!frontend_source_admin_adopt(manager->admin,error) ||
+        !frontend_source_admin_destroy(manager->admin,error)) return false;
+    manager->admin=NULL; return true;
 }
 bool frontend_config_store_primary_legacy_read(const frontend_config_store *manager,uint32_t logical,
     frontend_config_legacy_view *out,bool *present,qa_error *error)
@@ -1539,6 +1594,7 @@ static bool source_destroy(frontend_config_source *source,qa_error *error)
     if (source->registry_references)
         return fail(error,QA_ERROR_ARGUMENT,"Configuration source retains live client registry callback contexts");
     qa_input_console_destroy(source->bindings); source->bindings=NULL;
+    if (!frontend_source_admin_unbind(source->manager->admin,source->console,error)) return false;
     frontend_network_source_admin_unbind(source->console,source->command.owner,source->admin_registered);
     source->admin_registered=0;
     if (source->write_registered) qa_console_unregister(source->console,"writeconfig",source->command.owner);
@@ -1570,6 +1626,14 @@ static bool install_commands(frontend_config_source *source,qa_error *error)
 {
     if (source->primary && !source->imported &&
         !qa_server_admin_declarations(source->cvars,source->declaration_owner,error)) return false;
+    if (source->primary && !source->imported && !source->manager->frontend->network) {
+        frontend_config_store *manager=source->manager;
+        if (manager->admin) {
+            if (!frontend_source_admin_bind(manager->admin,source->application,source->console,
+                source->cvars,&source->command,error)) return false;
+        } else if (!frontend_source_admin_create(manager->frontend,source->application,source->console,
+            source->cvars,&source->command,&manager->admin,error)) return false;
+    }
     if (source->primary && !frontend_network_source_admin_bind(source->manager->frontend,source->console,
         source->command.owner,&source->admin_registered,error)) return false;
     if (source->primary && source->seat_count) {
@@ -2643,6 +2707,8 @@ bool frontend_config_store_destroy(frontend_config_store *manager,qa_error *erro
         if (!source_destroy(source,error)) return false;
         manager->sources=next;
     }
+    if (!frontend_source_admin_destroy(manager->admin,error)) return false;
+    manager->admin=NULL;
     variable_carries_discard(manager,NULL,NULL,NULL);
     frontend_shared_storage_destroy(manager->storage);
     qa_buffer_free(&manager->restored_storage);
@@ -2767,7 +2833,7 @@ bool frontend_config_store_retire(frontend_config_store *manager,const qa_consol
     *at=next; return true;
 }
 void frontend_config_store_rebind(frontend_config_store *manager,qa_frontend *frontend)
-{ if (manager && !manager->running && !manager->shared) { manager->frontend=frontend; frontend_remote_configs_rebind(manager->clients,frontend,manager); frontend_neutral_configs_rebind(manager->neutral,frontend,manager); } }
+{ if (manager && !manager->running && !manager->shared) { manager->frontend=frontend; frontend_source_admin_rebind(manager->admin,frontend); frontend_remote_configs_rebind(manager->clients,frontend,manager); frontend_neutral_configs_rebind(manager->neutral,frontend,manager); } }
 
 bool frontend_config_store_neutral_options(frontend_config_store *manager,uint32_t physical,
     qa_movement_kind movement,frontend_client_source_options *out,qa_error *error)

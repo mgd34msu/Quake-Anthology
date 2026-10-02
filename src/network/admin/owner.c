@@ -17,8 +17,9 @@ struct qa_server_admin {
     rate_entry *rates;
     char **prefixes, **rotation;
     size_t prefix_count, rotation_count, rotation_index;
-    qa_net_address *masters;
-    size_t master_count;
+    qa_net_address *masters[4];
+    size_t master_count[4];
+    qa_buffer master_names;
     uint64_t heartbeat_time, rcon_time;
     uint32_t heartbeat_sequence;
     bool heartbeat_sent, rcon_sent, shuffle, callback, executing;
@@ -76,9 +77,26 @@ bool qa_server_admin_create(const qa_admin_options *options, qa_server_admin **o
     if (!admin->filters || !admin->rates) { qa_server_admin_destroy(admin); qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating server filters/limiter"); return false; }
     admin->options = *options; *out = admin; return true;
 }
+bool qa_server_admin_adopt(qa_server_admin *destination,qa_server_admin **source,qa_error *error)
+{
+    qa_server_admin *held=source?*source:NULL;
+    if (!destination || !held || destination==held || destination->callback || held->callback ||
+        destination->options.filters!=held->options.filters ||
+        destination->options.rate_entries!=held->options.rate_entries ||
+        destination->options.burst!=held->options.burst ||
+        destination->options.rate_interval_ns!=held->options.rate_interval_ns ||
+        destination->options.heartbeat_interval_ns!=held->options.heartbeat_interval_ns)
+        return fail(error,"Administration adoption differs from its retained state and returned custody");
+    qa_server_admin previous=*destination;
+    *destination=*held; destination->options=previous.options;
+    destination->rate_registry=NULL;
+    *held=previous; qa_server_admin_destroy(held); *source=NULL; return true;
+}
 void qa_server_admin_destroy(qa_server_admin *admin) {
     if (!admin || admin->callback) return;
-    free(admin->filters); free(admin->rates); free(admin->masters); free(admin->rate_text);
+    free(admin->filters); free(admin->rates); free(admin->rate_text);
+    for (size_t i=0;i<4;++i) free(admin->masters[i]);
+    qa_buffer_free(&admin->master_names);
     strings_free(admin->prefixes, admin->prefix_count); strings_free(admin->rotation, admin->rotation_count); free(admin);
 }
 bool qa_server_admin_policy(qa_server_admin *admin,qa_console_dialect dialect,
@@ -86,6 +104,7 @@ bool qa_server_admin_policy(qa_server_admin *admin,qa_console_dialect dialect,
 {
     if (!admin || (admin->callback && !admin->executing) || dialect>QA_CONSOLE_Q3)
         return fail(error,"Administration policy requires its actual returned Source");
+    if (admin->options.dialect!=dialect) admin->heartbeat_sent=false;
     admin->options.dialect=dialect; admin->options.deny_matches=deny_matches;
     admin->options.public_server=public_server; return true;
 }
@@ -361,7 +380,12 @@ bool qa_server_admin_receive(qa_server_admin *admin, const qa_net_datagram *pack
     if (!qa_tokenizer_next(&lexer, &token, &found, error)) return false;
     if (found && !qa_token_copy(&token, supplied, sizeof(supplied), error)) return false;
     size_t offset = lexer.offset;
-    while (offset < text.size && (text.data[offset] == ' ' || text.data[offset] == '\t')) ++offset;
+    if (admin->options.dialect==QA_CONSOLE_Q3) {
+        offset=4;
+        while (offset<text.size && text.data[offset]==' ') ++offset;
+        while (offset<text.size && text.data[offset]!=' ') ++offset;
+        while (offset<text.size && text.data[offset]==' ') ++offset;
+    } else while (offset < text.size && (text.data[offset] == ' ' || text.data[offset] == '\t')) ++offset;
     size_t length = text.size - offset;
     if (admin->options.dialect == QA_CONSOLE_Q3 && length > 1023) length = 1023;
     char command[16385]; memcpy(command, text.data + offset, length); command[length] = 0;
@@ -380,11 +404,12 @@ bool qa_server_admin_receive(qa_server_admin *admin, const qa_net_datagram *pack
     bool ok;
     if (!is_full && !is_limited) {
         *out = disabled ? QA_ADMIN_DISABLED : QA_ADMIN_DENIED;
-        ok = write_output(&output, disabled ? "No rconpassword set on the server.\n" : "Bad rconpassword or command not permitted.\n", error);
+        ok = write_output(&output, disabled ? "No rconpassword set on the server.\n" :
+            admin->options.dialect==QA_CONSOLE_Q3?"Bad rconpassword.\n":"Bad rconpassword or command not permitted.\n", error);
     } else {
         *out = QA_ADMIN_EXECUTED;
         admin->executing=true;
-        ok = admin->options.hooks.execute(admin->options.hooks.context, &packet->from, command,
+        ok = !*command || admin->options.hooks.execute(admin->options.hooks.context, &packet->from, command,
             is_limited, write_output, &output, error);
         admin->executing=false;
     }
@@ -392,33 +417,93 @@ bool qa_server_admin_receive(qa_server_admin *admin, const qa_net_datagram *pack
     if (admin->options.hooks.record) admin->options.hooks.record(admin->options.hooks.context, &packet->from, *out);
     admin->callback = false; return ok;
 }
-bool qa_server_admin_masters(qa_server_admin *admin, const qa_net_address *addresses, size_t count, qa_error *error) {
-    if (!admin || (admin->callback && !admin->executing) || count > 32 || (count && !addresses)) return fail(error, "Invalid server masters");
+static size_t master_group(qa_console_dialect dialect)
+{
+    return dialect==QA_CONSOLE_QW?0:
+        dialect==QA_CONSOLE_Q2 || dialect==QA_CONSOLE_Q2_RERELEASE?1:
+        dialect==QA_CONSOLE_Q3?2:3;
+}
+bool qa_server_admin_source_masters(qa_server_admin *admin,qa_console_dialect dialect,
+    const qa_net_address *addresses,size_t count,qa_error *error) {
+    if (!admin || (admin->callback && !admin->executing) || dialect>QA_CONSOLE_Q3 || count > 32 || (count && !addresses)) return fail(error, "Invalid server masters");
     for (size_t i = 0; i < count; ++i)
         if (!service_address_valid(addresses + i)) return fail(error, "Invalid server master address");
     qa_net_address *owned = count ? malloc(count * sizeof(*owned)) : NULL;
     if (count && !owned) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining server masters"); return false; }
     if (count) memcpy(owned, addresses, count * sizeof(*owned));
-    free(admin->masters); admin->masters = owned; admin->master_count = count; admin->heartbeat_sent = false; return true;
+    size_t group=master_group(dialect);
+    free(admin->masters[group]); admin->masters[group]=owned; admin->master_count[group]=count;
+    admin->heartbeat_sent=false; return true;
+}
+bool qa_server_admin_masters(qa_server_admin *admin,const qa_net_address *addresses,size_t count,qa_error *error)
+{
+    if (!admin) return fail(error,"Missing actual master owner");
+    return qa_server_admin_source_masters(admin,admin->options.dialect,addresses,count,error);
+}
+bool qa_server_admin_request_heartbeat(qa_server_admin *admin,qa_error *error)
+{
+    if (!admin || (admin->callback && !admin->executing)) return fail(error,"Heartbeat request lost its actual operator");
+    admin->heartbeat_sent=false; return true;
+}
+bool qa_server_admin_refresh_masters(qa_server_admin *admin,qa_cvars *registry,qa_error *error)
+{
+    if (!admin || admin->callback || !registry || admin->options.dialect!=QA_CONSOLE_Q3 ||
+        qa_cvars_dialect(registry)!=QA_CONSOLE_Q3)
+        return fail(error,"Q3 master refresh requires its returned Source registry");
+    const char *values[5]; size_t size=0;
+    for (unsigned i=0;i<5;++i) {
+        char name[16]; snprintf(name,sizeof(name),"sv_master%u",i+1);
+        const qa_cvar_view *v=qa_cvars_find(registry,name);
+        if (!v) return fail(error,"Q3 master refresh has no actual Source declaration");
+        values[i]=v->value; size_t length=strlen(v->value)+1;
+        if (length>65536-size) return fail(error,"Q3 master names exceed their retained extent");
+        size+=length;
+    }
+    uint8_t *names=malloc(size);
+    if (!names) { qa_error_set(error,QA_ERROR_MEMORY,0,"Retaining actual Q3 master names"); return false; }
+    size_t at=0;
+    for (size_t i=0;i<5;++i) { size_t length=strlen(values[i])+1; memcpy(names+at,values[i],length); at+=length; }
+    if (admin->master_names.size==size && !memcmp(admin->master_names.data,names,size)) { free(names); return true; }
+    qa_net_address addresses[5]; size_t count=0; at=0;
+    for (size_t i=0;i<5;++i) {
+        const char *name=(const char *)names+at; at+=strlen(name)+1; if (!*name) continue;
+        qa_error local={0};
+        if (qa_net_address_resolve(name,27950,4,&addresses[count],&local)) ++count;
+        else if (admin->options.hooks.print) {
+            char message[768]; snprintf(message,sizeof(message),"Bad master address %.255s: %.400s\n",name,local.message);
+            admin->callback=true; admin->options.hooks.print(admin->options.hooks.context,message); admin->callback=false;
+        }
+    }
+    if (!qa_server_admin_masters(admin,addresses,count,error)) { free(names); return false; }
+    qa_buffer_free(&admin->master_names); admin->master_names=(qa_buffer){names,size}; return true;
 }
 static bool heartbeat(qa_server_admin *admin, bool shutdown, qa_error *error) {
     uint8_t bytes[128]; qa_net_writer writer; qa_net_writer_init(&writer, bytes, sizeof(bytes), error);
     bool ok;
-    if (admin->options.dialect == QA_CONSOLE_QW)
-        ok = shutdown ? qa_qw_shutdown(&writer) : qa_qw_heartbeat(++admin->heartbeat_sequence,
-            admin->options.hooks.players(admin->options.hooks.context), &writer);
+    if (admin->options.dialect == QA_CONSOLE_QW) {
+        uint32_t players=0;
+        if (!shutdown && !admin->options.hooks.players(admin->options.hooks.context,&players,error)) return false;
+        ok = shutdown ? qa_qw_shutdown(&writer) : qa_qw_heartbeat(++admin->heartbeat_sequence,players,&writer);
+    }
     else if (admin->options.dialect == QA_CONSOLE_Q3)
         ok = qa_q2_oob_write(&writer, shutdown ? "heartbeat flatline\n" : "heartbeat QuakeArena-1\n");
     else ok = qa_q2_oob_write(&writer, shutdown ? "shutdown\n" : "heartbeat\n");
     if (!ok) return false;
-    for (size_t i = 0; i < admin->master_count; ++i)
-        if (!admin->options.hooks.send(admin->options.hooks.context, &admin->masters[i],
+    size_t group=master_group(admin->options.dialect);
+    if (group==1) {
+        const qa_net_address builtin={.kind=QA_NET_IPV4,.port=27900,.host.ipv4={192,246,40,37}};
+        if (!admin->options.hooks.send(admin->options.hooks.context,&builtin,
+            (qa_bytes){bytes,qa_net_writer_size(&writer)},error)) return false;
+    }
+    for (size_t i = 0; i < admin->master_count[group]; ++i)
+        if (!admin->options.hooks.send(admin->options.hooks.context, &admin->masters[group][i],
             (qa_bytes){bytes, qa_net_writer_size(&writer)}, error)) return false;
     return true;
 }
 bool qa_server_admin_tick(qa_server_admin *admin, uint64_t now, bool force, qa_error *error) {
     if (!admin || (admin->callback && !admin->executing)) return fail(error, "Invalid administration heartbeat");
-    if (!admin->options.public_server || !admin->master_count) return true;
+    size_t group=master_group(admin->options.dialect);
+    if (!admin->options.public_server || group==3 || (!admin->master_count[group] && group!=1)) return true;
     if (!force && admin->heartbeat_sent && (now < admin->heartbeat_time || now - admin->heartbeat_time < admin->options.heartbeat_interval_ns)) return true;
     bool outer_callback = admin->callback, outer_execution = admin->executing;
     admin->callback = true; admin->executing = false;
@@ -428,7 +513,7 @@ bool qa_server_admin_tick(qa_server_admin *admin, uint64_t now, bool force, qa_e
 }
 bool qa_server_admin_shutdown(qa_server_admin *admin, qa_error *error) {
     if (!admin || admin->callback) return fail(error, "Invalid server shutdown");
-    if (!admin->options.public_server) return true;
+    if (!admin->options.public_server || master_group(admin->options.dialect)==3) return true;
     admin->callback = true; bool ok = heartbeat(admin, true, error); admin->callback = false; return ok;
 }
 static bool map_name(const char *text) {
@@ -503,7 +588,7 @@ bool qa_server_admin_restore_filters(qa_server_admin *admin, qa_bytes bytes, qa_
 static bool admin_checkpoint_valid(const qa_server_admin *a)
 {
     if (!a || a->callback || a->filter_count > a->options.filters || a->prefix_count > 256 ||
-        a->rotation_count > 256 || a->master_count > 32 ||
+        a->rotation_count > 256 || a->master_names.size>65536 ||
         (a->rotation_count ? a->rotation_index >= a->rotation_count : a->rotation_index != 0) ||
         (a->rate_text && (strlen(a->rate_text)>65535 || a->credit>a->credit_cap))) return false;
     for (size_t i = 0; i < a->filter_count; ++i) {
@@ -519,18 +604,32 @@ static bool admin_checkpoint_valid(const qa_server_admin *a)
     for (size_t i = 0; i < a->prefix_count; ++i)
         if (!a->prefixes[i] || !*a->prefixes[i] || strlen(a->prefixes[i]) > 1023) return false;
     for (size_t i = 0; i < a->rotation_count; ++i) if (!map_name(a->rotation[i])) return false;
-    for (size_t i = 0; i < a->master_count; ++i) if (!service_address_valid(&a->masters[i])) return false;
+    for (size_t group=0;group<4;++group) {
+        if (a->master_count[group]>32 || (a->master_count[group] && !a->masters[group])) return false;
+        for (size_t i=0;i<a->master_count[group];++i) if (!service_address_valid(&a->masters[group][i])) return false;
+    }
+    if (a->master_names.size) {
+        if (!a->master_names.data) return false;
+        size_t at=0;
+        for (size_t i=0;i<5;++i) {
+            if (at>=a->master_names.size) return false;
+            const uint8_t *end=memchr(a->master_names.data+at,0,a->master_names.size-at);
+            if (!end) return false;
+            at=(size_t)(end-a->master_names.data)+1;
+        }
+        if (at!=a->master_names.size) return false;
+    }
     return true;
 }
 bool qa_server_admin_checkpoint(const qa_server_admin *a, qa_buffer *out, qa_error *error)
 {
     if (!out || !admin_checkpoint_valid(a)) return fail(error, "Invalid administration continuation ownership");
-    size_t capacity = 65536 + 512 + (size_t)a->options.filters * 8 + (size_t)a->options.rate_entries * 160 +
-        a->prefix_count * 1024 + a->rotation_count * 128 + a->master_count * 160;
+    size_t capacity = 2 * 65536 + 512 + (size_t)a->options.filters * 8 + (size_t)a->options.rate_entries * 160 +
+        a->prefix_count * 1024 + a->rotation_count * 128 + 4 * 32 * 160;
     uint8_t *data = malloc(capacity);
     if (!data) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Encoding administration continuation"); return false; }
     qa_net_writer w; qa_net_writer_init(&w, data, capacity, error);
-    bool ok = qa_net_write_u32(&w, UINT32_C(0x41534151)) && qa_net_write_u32(&w, 2) &&
+    bool ok = qa_net_write_u32(&w, UINT32_C(0x41534151)) && qa_net_write_u32(&w, 3) &&
         qa_net_write_u32(&w, a->options.dialect) && qa_net_write_u32(&w, a->options.filters) &&
         qa_net_write_u32(&w, a->options.rate_entries) && qa_net_write_u32(&w, a->options.burst) &&
         qa_net_write_u64(&w, a->options.rate_interval_ns) && qa_net_write_u64(&w, a->options.heartbeat_interval_ns) &&
@@ -548,8 +647,12 @@ bool qa_server_admin_checkpoint(const qa_server_admin *a, qa_buffer *out, qa_err
     for (size_t i = 0; ok && i < a->prefix_count; ++i) ok = qa_net_write_string(&w, a->prefixes[i]);
     ok = ok && qa_net_write_u32(&w, (uint32_t)a->rotation_count) && qa_net_write_u32(&w, (uint32_t)a->rotation_index);
     for (size_t i = 0; ok && i < a->rotation_count; ++i) ok = qa_net_write_string(&w, a->rotation[i]);
-    ok = ok && qa_net_write_u32(&w, (uint32_t)a->master_count);
-    for (size_t i = 0; ok && i < a->master_count; ++i) ok = q3_save_address(&w, &a->masters[i]);
+    for (size_t group=0;ok && group<4;++group) {
+        ok=qa_net_write_u32(&w,(uint32_t)a->master_count[group]);
+        for (size_t i=0;ok && i<a->master_count[group];++i) ok=q3_save_address(&w,&a->masters[group][i]);
+    }
+    ok=ok && qa_net_write_u32(&w,(uint32_t)a->master_names.size) &&
+        qa_net_write_data(&w,a->master_names.data,a->master_names.size);
     ok=ok && qa_net_write_u8(&w,a->options.hooks.rate_registry!=NULL) && qa_net_write_u8(&w,a->rate_text!=NULL);
     if (ok && a->rate_text) ok=qa_net_write_string(&w,a->rate_text) && qa_net_write_u64(&w,a->rate_revision) &&
         qa_net_write_u32(&w,a->rate_time) && qa_net_write_u32(&w,a->credit) &&
@@ -564,7 +667,7 @@ bool qa_server_admin_restore_checkpoint(qa_bytes bytes, const qa_admin_options *
         return fail(error, "Invalid administration continuation extent/output");
     qa_net_reader r; qa_net_reader_init(&r, bytes, error);
     uint32_t magic=qa_net_read_u32(&r),version=qa_net_read_u32(&r);
-    if (magic != UINT32_C(0x41534151) || (version!=1 && version!=2) ||
+    if (magic != UINT32_C(0x41534151) || (version<1 || version>3) ||
         qa_net_read_u32(&r) != (uint32_t)options->dialect || qa_net_read_u32(&r) != options->filters ||
         qa_net_read_u32(&r) != options->rate_entries || qa_net_read_u32(&r) != options->burst ||
         qa_net_read_u64(&r) != options->rate_interval_ns || qa_net_read_u64(&r) != options->heartbeat_interval_ns)
@@ -591,11 +694,28 @@ bool qa_server_admin_restore_checkpoint(qa_bytes bytes, const qa_admin_options *
     if (ok && a->rotation_count) { a->rotation = calloc(a->rotation_count, sizeof(*a->rotation)); if (!a->rotation) ok = false; }
     if (!a->rotation) a->rotation_count = 0;
     for (size_t i = 0; ok && i < a->rotation_count; ++i) ok = service_restore_text(&r, &a->rotation[i], 127);
-    a->master_count = qa_net_read_u32(&r);
-    if (a->master_count > 32) { a->master_count = 0; ok = false; }
-    if (ok && a->master_count) { a->masters = calloc(a->master_count, sizeof(*a->masters)); if (!a->masters) ok = false; }
-    for (size_t i = 0; ok && i < a->master_count; ++i) ok = q3_restore_address(&r, &a->masters[i]);
-    if (ok && version==2) {
+    size_t groups=version>=3?4:1;
+    for (size_t n=0;ok && n<groups;++n) {
+        size_t group=version>=3?n:master_group(options->dialect);
+        size_t count=qa_net_read_u32(&r);
+        if (r.failed || count>32) { ok=false; break; }
+        if (count) {
+            a->masters[group]=calloc(count,sizeof(*a->masters[group]));
+            if (!a->masters[group]) { qa_error_set(error,QA_ERROR_MEMORY,0,"Restoring master addresses"); ok=false; break; }
+        }
+        a->master_count[group]=count;
+        for (size_t i=0;ok && i<count;++i) ok=q3_restore_address(&r,&a->masters[group][i]);
+    }
+    if (ok && version>=3) {
+        size_t size=qa_net_read_u32(&r);
+        if (r.failed || size>65536) ok=false;
+        else if (size) {
+            a->master_names.data=malloc(size); a->master_names.size=size;
+            if (!a->master_names.data) { qa_error_set(error,QA_ERROR_MEMORY,0,"Restoring master name recipe"); ok=false; }
+            else ok=qa_net_read_data(&r,a->master_names.data,size);
+        }
+    }
+    if (ok && version>=2) {
         bool has_registry=q3_save_bool(&r),has_rate=q3_save_bool(&r);
         ok=!r.failed && has_registry==(options->hooks.rate_registry!=NULL) && (!has_rate || has_registry);
         if (ok && has_rate) {

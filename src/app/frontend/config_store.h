@@ -196,8 +196,16 @@ bool frontend_config_store_read(frontend_config_store *,const qa_console *,const
     const char *,qa_bytes *,void **lease,qa_error *);
 bool frontend_config_store_write_source_text(frontend_config_store *,const qa_command_invocation *,
     const char *,qa_bytes,qa_error *);
+bool frontend_config_store_server_invocation_read(frontend_config_store *,const qa_command_invocation *,
+    qa_application_startup_source *,qa_error *);
+bool frontend_config_store_server_invocation_application(frontend_config_store *,const qa_command_invocation *,
+    qa_application **,qa_error *);
 bool frontend_config_store_primary_server_read(frontend_config_store *,qa_application_startup_source *,
     bool *present,qa_error *);
+bool frontend_config_store_admin_dispatch(frontend_config_store *,const qa_command_invocation *,
+    size_t skip,bool *handled,qa_error *);
+bool frontend_config_store_admin_adopt(frontend_config_store *,qa_error *);
+bool frontend_config_store_admin_pending(const frontend_config_store *);
 void frontend_config_store_release(frontend_config_store *,const qa_console *,void *lease);
 bool frontend_config_store_save(frontend_config_store *,qa_error *);
 bool frontend_config_store_retire(frontend_config_store *,const qa_console *,qa_error *);
