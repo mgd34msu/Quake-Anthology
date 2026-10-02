@@ -69,7 +69,8 @@ static bool base_parameters(qa_q1_game *g, q1_player *player, qa_q1_weapon weapo
 
 static void shotgun_shape(const q1_player *player, qa_q1_weapon weapon, double shells,
                             qa_q1_weapon_view *view) {
-    bool super = weapon == QA_Q1_SUPER_SHOTGUN && shells > 1;
+    double selected_ammo = player->weapon == weapon ? player->current_ammo : shells;
+    bool super = weapon == QA_Q1_SUPER_SHOTGUN && selected_ammo > 1;
     const qa_q1_weapon_view *shape = q1_weapon_shape(super ? weapon : QA_Q1_SHOTGUN);
     view->ammo_per_shot = shape->ammo_per_shot;
     view->shots = shape->shots;
@@ -87,6 +88,26 @@ double q1_ammo_count(qa_q1_game *g, qa_actor_id actor, qa_q1_ammo ammo) {
                ? entry.count
                : 0;
 }
+bool q1_current_ammo_select(qa_q1_game *g, q1_player *player, qa_error *error) {
+    if (!player || q1_player_get(g, player->id) != player || g->destroy_pending) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q1 currentammo lost its actual player");
+        return false;
+    }
+    qa_actor_id actor = player->id;
+    qa_q1_weapon weapon = player->weapon;
+    int ammo = q1_weapon_declared_ammo(weapon);
+    double count = 0;
+    if (ammo >= 0 && !qa_inventory_count_read(g->services.inventory, actor,
+        g->ammo[ammo], &count, error)) return false;
+    if (q1_player_get(g, actor) != player || player->weapon != weapon ||
+        !isfinite(count) || fabs(count) > FLT_MAX) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot,
+            "Q1 currentammo changed its source weapon or finite field");
+        return false;
+    }
+    player->current_ammo = (float)count;
+    return true;
+}
 bool q1_consume(qa_q1_game *g, qa_actor_id actor, qa_q1_ammo ammo, float amount, qa_error *error) {
     q1_player *player = q1_player_get(g, actor);
     if (player && player->mg3_infinite_ammo)
@@ -98,7 +119,8 @@ bool q1_consume(qa_q1_game *g, qa_actor_id actor, qa_q1_ammo ammo, float amount,
     if (!consumed)
         qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot,
                      "Q1 ammunition changed during admitted attack");
-    return consumed;
+    return consumed && (!player || q1_weapon_declared_ammo(player->weapon) != (int)ammo ||
+        q1_current_ammo_select(g, player, error));
 }
 static bool owns(qa_q1_game *g, qa_actor_id actor, qa_q1_weapon weapon) {
     qa_inventory_entry entry;
@@ -404,7 +426,8 @@ bool qa_q1_player_attach(qa_q1_game *g, qa_actor_id actor, bool initial_inventor
     qa_body_state body;
     if (qa_world_body_read(g->services.world, actor, &body, NULL))
         player->input.view_angles = body.angles;
-    result = q1_weapon_event(g, player, 0, 0, error);
+    result = q1_current_ammo_select(g, player, error) &&
+        q1_weapon_event(g, player, 0, 0, error);
 finish:
     if (result && (!qa_q1_game_operation_live(&operation) ||
                    q1_player_get(g, actor) != player)) {
@@ -464,7 +487,8 @@ bool qa_q1_player_select(qa_q1_game *g, qa_actor_id actor, qa_q1_weapon weapon, 
     player->weapon_frame = 0;
     player->continuous = false;
     player->animation_at = -1;
-    return q1_weapon_event(g, player, 0, 0, error);
+    return q1_current_ammo_select(g, player, error) &&
+        q1_weapon_event(g, player, 0, 0, error);
 }
 bool q1_player_select_read(qa_q1_game *g, qa_actor_id actor, q1_player *player,
     qa_q1_weapon weapon, qa_error *error) {
@@ -484,7 +508,8 @@ bool q1_player_select_read(qa_q1_game *g, qa_actor_id actor, q1_player *player,
     player->weapon_frame = 0;
     player->continuous = false;
     player->animation_at = -1;
-    return q1_weapon_event(g, player, 0, 0, error) &&
+    return q1_current_ammo_select(g, player, error) &&
+        q1_weapon_event(g, player, 0, 0, error) &&
         best_player_current(g, actor, player, error);
 }
 bool qa_q1_player_read(const qa_q1_game *g, qa_actor_id actor, qa_q1_player_view *out) {
@@ -1302,7 +1327,8 @@ static bool fire_weapon(qa_q1_game *g, q1_player *player, bool *fired, qa_error 
     case QA_Q1_SHOTGUN:
     case QA_Q1_SUPER_SHOTGUN: {
         double shells = q1_ammo_count(g,player->id,QA_Q1_SHELLS);
-        bool super = weapon == QA_Q1_SUPER_SHOTGUN && shells > 1;
+        bool super = weapon == QA_Q1_SUPER_SHOTGUN &&
+            (player->weapon == weapon ? player->current_ammo : shells) > 1;
         qa_q1_weapon_view shape = *q1_weapon_shape(weapon);
         shotgun_shape(player,weapon,shells,&shape);
         punch = super ? -4 : -2;

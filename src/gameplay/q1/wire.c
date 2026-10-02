@@ -394,7 +394,7 @@ bool qa_q1_wire_player_read(const qa_q1_wire_receipt *receipt, qa_actor_id actor
     if ((unsigned)weapon >= QA_Q1_WEAPON_COUNT || !bits[weapon])
         return fail(error, "Q1 source weapon leaves its actual program table");
     qa_q1_wire_player value = {.weapon_model = player_weapon_model(g, player),
-        .weapon_frame = frame, .weapon = bits[weapon]};
+        .weapon_frame = frame, .weapon = bits[weapon], .ammo = player->current_ammo};
     if (!qa_inventory_count_read(g->services.inventory, actor, g->ammo[QA_Q1_SHELLS], &value.shells, error) ||
         !qa_inventory_count_read(g->services.inventory, actor, g->ammo[QA_Q1_NAILS], &value.nails, error) ||
         !qa_inventory_count_read(g->services.inventory, actor, g->ammo[QA_Q1_ROCKETS], &value.rockets, error) ||
@@ -411,12 +411,6 @@ bool qa_q1_wire_player_read(const qa_q1_wire_receipt *receipt, qa_actor_id actor
     if (powers[QA_Q1_SUIT] > seconds) value.powers |= 2097152;
     int ammo = q1_weapon_declared_ammo(weapon);
     if (ammo >= 0) {
-        if (ammo == QA_Q1_SHELLS) value.ammo = value.shells;
-        else if (ammo == QA_Q1_NAILS) value.ammo = value.nails;
-        else if (ammo == QA_Q1_ROCKETS) value.ammo = value.rockets;
-        else if (ammo == QA_Q1_CELLS) value.ammo = value.cells;
-        else if (!qa_inventory_count_read(g->services.inventory, actor, g->ammo[ammo], &value.ammo, error))
-            return false;
         if (!g->wire->id1) {
             if (ammo <= QA_Q1_CELLS)
                 value.ammo_items = (g->options.program == QA_Q1_ROGUE ? 128u : 256u) << (unsigned)ammo;
@@ -444,7 +438,8 @@ bool qa_q1_wire_player_read(const qa_q1_wire_receipt *receipt, qa_actor_id actor
     if (!qa_q1_wire_receipt_current(receipt) ||
         !qa_q1_native_client_slot(g, actor, &slot, error)) return false;
     player = g->players[actor.slot];
-    if (player->weapon != weapon || player->weapon_frame != frame || g->time != seconds ||
+    if (player->weapon != weapon || player->weapon_frame != frame ||
+        player->current_ammo != value.ammo || g->time != seconds ||
         player_weapon_model(g, player) != value.weapon_model ||
         memcmp(player->power_expires, powers, sizeof(powers)))
         return fail(error, "Q1 source player changed during canonical inventory observation");

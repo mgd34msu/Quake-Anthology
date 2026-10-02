@@ -69,6 +69,7 @@ bool q1_save_player(q1_save_io *io, q1_player *player) {
         return false;
     Q1_SAVE_ENUM(io, player->weapon, QA_Q1_WEAPON_COUNT - 1);
     Q1_SAVE(io, i32, player->weapon_frame);
+    Q1_SAVE(io, float, player->current_ammo);
     Q1_SAVE(io, i32, player->animation_base);
     if (player->animation_base > INT32_MAX - 5)
         return q1_save_fail(io, "Invalid Q1 checkpoint weapon animation base");

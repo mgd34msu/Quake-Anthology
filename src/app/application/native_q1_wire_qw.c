@@ -171,7 +171,7 @@ static bool client_read(application_native_q1_wire_source *held,qa_actor_id acto
             if (okay) {
                 if (!value.spectator) {value.health=combat.health;value.weapon_frame=player.weapon_frame;}
                 value.stats[0]=trunc((double)combat.health);value.stats[2]=model;
-                value.stats[3]=trunc(equipment.ammo?equipment.ammo_count:0);
+                value.stats[3]=trunc(player.ammo);
                 value.stats[4]=trunc((double)(combat.armor.regular.kind==QA_ARMOR_NONE?0:combat.armor.regular.points));
                 value.stats[5]=player.weapon_frame; value.stats[6]=trunc(player.shells);value.stats[7]=trunc(player.nails);
                 value.stats[8]=trunc(player.rockets);value.stats[9]=trunc(player.cells);

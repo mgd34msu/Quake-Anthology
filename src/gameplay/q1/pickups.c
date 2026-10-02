@@ -91,7 +91,7 @@ static bool supply_weapons(void *context, qa_actor_id actor, const qa_item_id *i
                     return true;
             }
         }
-    return true;
+    return q1_current_ammo_select(g, player, error);
 }
 static bool supply_ammo(void *context, qa_actor_id actor, const qa_pickup_receipt *receipts,
                         size_t count, bool auto_switch, qa_error *error) {
@@ -102,8 +102,10 @@ static bool supply_ammo(void *context, qa_actor_id actor, const qa_pickup_receip
     qa_q1_weapon before = q1_best_weapon_before(g, player, receipts, count);
     if (!q1_enable_combos(g, player, error))
         return false;
-    if (!q1_alive(g, actor) || !auto_switch || player->weapon != before)
+    if (!q1_alive(g, actor))
         return true;
+    if (!auto_switch || player->weapon != before)
+        return q1_current_ammo_select(g, player, error);
     return qa_q1_player_select(g, actor, q1_best_weapon(g, player), error);
 }
 bool qa_q1_player_auto_switch_read(const qa_q1_game *g, qa_actor_id actor,
@@ -206,6 +208,8 @@ bool qa_q1_selected_pickup_ammo(qa_q1_game *g, qa_actor_id actor,
         ok = q1_best_weapon_before_read(g, actor, player, NULL, 0, &after, error) &&
             q1_player_select_read(g, actor, player, after, error) &&
             selected_player_current(&operation, actor, player, error);
+    if (ok) ok = q1_current_ammo_select(g, player, error) &&
+        selected_player_current(&operation, actor, player, error);
     qa_q1_game_operation_end(&operation);
     return ok;
 }
@@ -234,6 +238,8 @@ bool qa_q1_selected_pickup_weapons(qa_q1_game *g, qa_actor_id actor,
                 ok = q1_player_select_read(g, actor, player, (qa_q1_weapon)weapon, error) &&
                     selected_player_current(&operation, actor, player, error);
         }
+    if (ok) ok = q1_current_ammo_select(g, player, error) &&
+        selected_player_current(&operation, actor, player, error);
     qa_q1_game_operation_end(&operation);
     return ok;
 }

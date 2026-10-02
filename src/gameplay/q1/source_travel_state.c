@@ -325,7 +325,8 @@ static bool select_weapon(travel_call *call, qa_q1_weapon weapon,
     call->player->weapon_frame = 0;
     call->player->continuous = false;
     call->player->animation_at = -1;
-    return q1_weapon_event(game, call->player, 0, 0, error) && current(call, error);
+    return q1_current_ammo_select(game, call->player, error) &&
+        q1_weapon_event(game, call->player, 0, 0, error) && current(call, error);
 }
 static bool mg3_restore(travel_call *call, const qa_q1_mg3_progress *progress,
     const qa_q1_travel_services *services, qa_error *error) {

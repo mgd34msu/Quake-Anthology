@@ -37,6 +37,7 @@
 #include "qa/game_q3_wire.h"
 #include "qa/game_q1_bots.h"
 #include "qa/game_q1_supply.h"
+#include "qa/game_q1_source_birth.h"
 #include "qa/game_q1_source_travel.h"
 #include "qa/modes_q1_source.h"
 #include "qa/network_q1_channel.h"
@@ -2207,7 +2208,8 @@ static bool q1_finish_first_spawn(qa_application *app, const qa_launch_choices *
     uint64_t source_time;
     double seconds;
     size_t ordinal;
-    if (!q1_spawn_overlap(app, source, character, arsenal, actor, begun, error)) return false;
+    if (!qa_q1_source_current_ammo_select(source->state.q1, actor, error) ||
+        !q1_spawn_overlap(app, source, character, arsenal, actor, begun, error)) return false;
     receiver = qa_actors_get(qa_session_actors(app->session), point);
     if (!receiver || receiver->owner != source->owner)
         return application_fail(error, QA_ERROR_ARGUMENT,
@@ -2299,7 +2301,8 @@ bool application_players_native_q1_respawn(qa_application *app,
         .contents = family == QA_COLLISION_Q1 ? -2 : 0x2000000, .role = QA_COLLISION_SOLID};
     if (!qa_world_set_collision(app->world, actor, &collision, error) ||
         !qa_world_link(app->world, actor, NULL, error)) return false;
-    if (!q1_spawn_overlap(app, source, character, arsenal, actor, true, error)) return false;
+    if (!qa_q1_source_current_ammo_select(source->state.q1, actor, error) ||
+        !q1_spawn_overlap(app, source, character, arsenal, actor, true, error)) return false;
     if (!source->q1_level)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q1 respawn lost its actual level-rule owner");
     if (!qa_q1_level_reset_player(source->q1_level, actor, error) ||

@@ -392,6 +392,7 @@ typedef struct q1_player {
     qa_q1_input input;
     qa_q1_weapon weapon;
     int32_t weapon_frame, animation_base, nail_side;
+    float current_ammo;
     double attack_finished, next_weapon_frame, animation_at, lightning_sound_at;
     double hostile_until, mega_rot_at, air_finished, drown_at, hazard_at;
     double power_expires[QA_Q1_POWER_COUNT];
@@ -622,6 +623,7 @@ bool q1_create(qa_q1_game *, const char *, q1_entity_kind, qa_actor_id owner, q1
                qa_error *);
 bool q1_remove(qa_q1_game *, q1_actor *, qa_error *);
 bool q1_schedule(qa_q1_game *, q1_actor *, double, q1_think_kind, qa_error *);
+bool q1_current_ammo_select(qa_q1_game *, q1_player *, qa_error *);
 bool q1_local_time(const q1_actor *, double *, qa_error *);
 bool q1_think_deadline(double, double, double *, qa_error *);
 bool q1_think(qa_q1_game *, q1_actor *, qa_error *);

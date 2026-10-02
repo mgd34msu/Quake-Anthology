@@ -45,7 +45,8 @@ bool q1_source_select_weapon(qa_q1_game *game, qa_actor_id actor,
     player->weapon_frame = 0;
     player->continuous = false;
     player->animation_at = -1;
-    if (!q1_weapon_event(game, player, 0, 0, error) ||
+    if (!q1_current_ammo_select(game, player, error) ||
+        !q1_weapon_event(game, player, 0, 0, error) ||
         !source_current(&operation, actor, player, slot, error)) goto finish;
     *selected = true;
     okay = true;
@@ -63,6 +64,21 @@ bool qa_q1_source_select_base_weapon(qa_q1_game *game, qa_actor_id actor,
         return false;
     }
     return q1_source_select_weapon(game, actor, weapon, selected, error);
+}
+
+bool qa_q1_source_current_ammo_select(qa_q1_game *game, qa_actor_id actor,
+    qa_error *error)
+{
+    qa_q1_game_operation operation = {0};
+    if (!qa_q1_game_operation_begin(game, &operation, error)) return false;
+    uint32_t slot;
+    q1_player *player = q1_player_get(game, actor);
+    bool okay = qa_q1_native_client_slot(game, actor, &slot, error) &&
+        source_current(&operation, actor, player, slot, error) &&
+        q1_current_ammo_select(game, player, error) &&
+        source_current(&operation, actor, player, slot, error);
+    qa_q1_game_operation_end(&operation);
+    return okay;
 }
 
 static bool grant(qa_q1_game_operation *operation, qa_actor_id actor,
@@ -84,6 +100,50 @@ static bool named_grant(qa_q1_game_operation *operation, qa_actor_id actor,
     return qa_builtin_resource(&operation->game->services, name, &item, error) &&
         source_current(operation, actor, player, slot, error) &&
         grant(operation, actor, player, slot, item, count, 1, error);
+}
+
+bool qa_q1_source_qw_dm5_birth(qa_q1_game *game, qa_actor_id actor, qa_error *error)
+{
+    if (!game || !game->options.quakeworld || game->options.program != QA_Q1_ID1 ||
+        game->options.edition != QA_Q1_CLASSIC || game->options.deathmatch != 5) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot,
+            "QuakeWorld deathmatch 5 birth requires its actual source program");
+        return false;
+    }
+    qa_q1_game_operation operation = {0};
+    if (!qa_q1_game_operation_begin(game, &operation, error)) return false;
+    uint32_t slot;
+    q1_player *player = q1_player_get(game, actor);
+    bool okay = qa_q1_native_client_slot(game, actor, &slot, error) &&
+        source_current(&operation, actor, player, slot, error);
+    static const qa_q1_ammo ammo[] = {QA_Q1_NAILS, QA_Q1_SHELLS, QA_Q1_ROCKETS, QA_Q1_CELLS};
+    static const double count[] = {80, 30, 10, 30};
+    for (size_t i = 0; okay && i < sizeof(ammo) / sizeof(*ammo); ++i)
+        okay = grant(&operation, actor, player, slot, game->ammo[ammo[i]], count[i],
+            ammo[i] == QA_Q1_NAILS ? 200 : 100, error);
+    static const qa_q1_weapon weapons[] = {QA_Q1_NAILGUN, QA_Q1_SUPER_NAILGUN,
+        QA_Q1_SUPER_SHOTGUN, QA_Q1_ROCKET, QA_Q1_GRENADE, QA_Q1_LIGHTNING};
+    for (size_t i = 0; okay && i < sizeof(weapons) / sizeof(*weapons); ++i)
+        okay = grant(&operation, actor, player, slot, game->weapons[weapons[i]], 1, 1, error);
+    qa_item_id armor;
+    if (okay) okay = qa_builtin_resource(&game->services, "q1:item_armorInv", &armor, error) &&
+        source_current(&operation, actor, player, slot, error);
+    if (okay) {
+        qa_armor protection = {.regular = {.kind = QA_ARMOR_Q1, .item = armor,
+            .points = 200, .protection.q1_absorption = .8f}};
+        okay = qa_combat_set_armor(game->services.combat, actor, &protection, error) &&
+            source_current(&operation, actor, player, slot, error) &&
+            qa_combat_set_health(game->services.combat, actor, 200, error) &&
+            source_current(&operation, actor, player, slot, error);
+    }
+    if (okay) {
+        player->power_flash[QA_Q1_INVULNERABILITY] = 1;
+        okay = q1_power_assign(game, actor, QA_Q1_INVULNERABILITY,
+            (double)(float)(game->time + 3), true, error) &&
+            source_current(&operation, actor, player, slot, error);
+    }
+    qa_q1_game_operation_end(&operation);
+    return okay;
 }
 
 bool qa_q1_source_ctf_spawn_arsenal(qa_q1_game *game, qa_actor_id actor,
