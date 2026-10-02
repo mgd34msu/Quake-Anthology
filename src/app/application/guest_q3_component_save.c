@@ -1,5 +1,6 @@
 #include "guest_q3_component_private.h"
 #include "qa/cvars_save.h"
+#include "qa/q3_host_save.h"
 #include <limits.h>
 
 static bool blob(qa_source_save_io *io,qa_buffer *buffer)
@@ -61,7 +62,8 @@ bool application_q3_component_checkpoint(application_q3_component *c,qa_buffer *
     qa_buffer children[8]={{0}}; qa_source_save_io io={0};
     qa_qvm_saved_write_watch *watches=NULL; qa_qvm_binding *watch_ids=NULL; size_t watch_count=0;
     qa_qvm_saved_resolver resolver={c->actor_resolver,q3component_actor_resolve,c};
-    bool ok=q3component_descriptors(c,descriptors,e)&&watches_read(c,&watches,&watch_ids,&watch_count,e)&&
+    bool ok=qa_q3_host_checkpoint_portable_ready(c->host,e)&&
+        q3component_descriptors(c,descriptors,e)&&watches_read(c,&watches,&watch_ids,&watch_count,e)&&
         qa_qvm_checkpoint_inventory(c->vm,descriptors,c->hook_count,&resolver,watches,watch_count,e)&&
         application_q3_component_records_checkpoint(c->records,children+0,e)&&application_q3_mod_checkpoint(c->mod,children+1,e)&&
         application_q3_component_source_checkpoint(c->source,children+2,e)&&qa_cvars_save_capture(c->cvars,children+3,e)&&
@@ -96,6 +98,13 @@ bool application_q3_component_restore(application_q3_component *c,qa_bytes bytes
         q3component_descriptors(c,descriptors,e)&&watches_read(c,&watches,&watch_ids,&watch_count,e)&&
         qa_qvm_restore_candidate_inventory(c->vm,(qa_bytes){children[5].data,children[5].size},descriptors,ids,c->hook_count,
             &resolver,saved_resolver,watches,watch_ids,watch_count,e);
+    if(ok) {
+        /* Candidate inventory has qualified the complete QAVM2 envelope.
+         * Admit its host bytes before importing RAM or reopening streams. */
+        size_t memory=qa_qvm_memory_size(c->vm);
+        ok=qa_q3_host_checkpoint_portable_state((qa_bytes){children[5].data+160+memory,
+            children[5].size-160-memory},e);
+    }
     if(ok) {
         for(size_t i=0;i<c->hook_count;++i) c->hooks[i].id=ids[i];
         c->actor_resolver=saved_resolver;

@@ -1,5 +1,6 @@
 #include "guest_q3_scene_private.h"
 #include "qa/q3_abi.h"
+#include "qa/q3_host_save.h"
 #include <limits.h>
 
 static bool blob(qa_source_save_io *io, qa_buffer *b, size_t maximum)
@@ -165,7 +166,8 @@ bool application_q3_scene_checkpoint(application_q3_scene *s,qa_buffer *out,qa_e
         !q3scene_descriptors(s,descriptors,e)||!qa_qvm_checkpoint_functions(s->vm,descriptors,s->options.profile->player_events?0:3,e))
         return q3scene_fail(e,QA_ERROR_ARGUMENT,"Component checkpoint requires its complete physical callback owner");
     qa_source_save_io io={0}; qa_qvm_binding event=s->event_binding;
-    bool ok=(s->options.profile->player_events||application_q3_component_body_checkpoint(s->body,&body,e))&&qa_qvm_checkpoint(s->vm,&vm,e)&&
+    bool ok=qa_q3_host_checkpoint_portable_ready(s->host,e)&&
+        (s->options.profile->player_events||application_q3_component_body_checkpoint(s->body,&body,e))&&qa_qvm_checkpoint(s->vm,&vm,e)&&
         qa_source_save_writer(&io,s->options.host.session,e)&&fields(&io,s,&vm,&body,&event)&&qa_source_save_finish(&io,out);
     qa_source_save_dispose(&io); qa_buffer_free(&vm); qa_buffer_free(&body); return ok;
 }
@@ -178,6 +180,12 @@ bool application_q3_scene_restore(application_q3_scene *s,qa_bytes bytes,qa_erro
     qa_qvm_saved_function descriptors[3];
     if(ok) ok=(s->options.profile->player_events?body.size==0:application_q3_component_body_saved_read(&s->options.profile->body,(qa_bytes){body.data,body.size},saved,e))&&
         q3scene_descriptors(s,descriptors,e)&&qa_qvm_restore_candidate_bindings(s->vm,(qa_bytes){vm.data,vm.size},descriptors,saved,s->options.profile->player_events?0:3,e);
+    if(ok) {
+        /* Binding admission proved the QAVM2 memory and host extents.
+         * Validate the host stream before the actual VM import can reopen it. */
+        size_t memory=qa_qvm_memory_size(s->vm);
+        ok=qa_q3_host_checkpoint_portable_state((qa_bytes){vm.data+160+memory,vm.size-160-memory},e);
+    }
     if(ok) {
         if(s->body) application_q3_component_body_adopt(s->body,saved);
         s->event_binding=saved[2];
