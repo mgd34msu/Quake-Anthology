@@ -26,5 +26,6 @@ struct qa_kex_channel {
 };
 
 bool qa_kex_channel_valid(const qa_kex_channel *);
+bool qa_kex_channel_tick_expiry(qa_kex_channel *, uint64_t, bool *, qa_error *);
 
 #endif

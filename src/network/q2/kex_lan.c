@@ -1,4 +1,5 @@
 #include "kex_lan_internal.h"
+#include "kex_channel_internal.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -562,9 +563,9 @@ static bool tick_body(qa_kex_lan*l,uint64_t now,qa_error*e) {
         qa_error failure= {
             0
         };
-        if(!qa_kex_channel_tick(l->peers[i]->channel,now,&failure)) {
-            struct peer*p=l->peers[i];
-            remove_peer(l,p,e);
+        bool expired=false;
+        if(!qa_kex_channel_tick_expiry(l->peers[i]->channel,now,&expired,&failure)) {
+            if(expired) remove_peer(l,l->peers[i],e);
             if(e)*e=failure;
             return false;
         }

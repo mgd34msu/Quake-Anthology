@@ -312,7 +312,7 @@ static bool receive_body(qa_kex_channel*c,qa_bytes bytes,uint64_t now,qa_kex_mes
     *present=true;
     return true;
 }
-static bool tick_body(qa_kex_channel*c,uint64_t now,qa_error*e) {
+static bool tick_body(qa_kex_channel*c,uint64_t now,bool *expired,qa_error*e) {
     if(!c) {
         qa_error_set(e,QA_ERROR_ARGUMENT,0,"Missing KEX channel");
         return false;
@@ -335,6 +335,7 @@ static bool tick_body(qa_kex_channel*c,uint64_t now,qa_error*e) {
     }
     if(c->head&&now>=c->retry_at&&now-c->retry_at>=UINT64_C(500000000)) {
         if(++c->retries>=40) {
+            *expired=true;
             qa_error_set(e,QA_ERROR_IO,0,"KEX LAN peer timed out");
             return false;
         }
@@ -399,12 +400,23 @@ bool qa_kex_channel_receive(qa_kex_channel *c, qa_bytes bytes, uint64_t now,
     return ok;
 }
 
-bool qa_kex_channel_tick(qa_kex_channel *c, uint64_t now, qa_error *e)
+bool qa_kex_channel_tick_expiry(qa_kex_channel *c, uint64_t now, bool *expired, qa_error *e)
 {
+    if(!expired) {
+        qa_error_set(e,QA_ERROR_ARGUMENT,0,"KEX channel tick requires its expiry receipt");
+        return false;
+    }
+    *expired=false;
     if (!enter(c, e)) return false;
-    bool ok = tick_body(c, now, e);
+    bool ok = tick_body(c, now, expired, e);
     c->entered = false;
     return ok;
+}
+
+bool qa_kex_channel_tick(qa_kex_channel *c, uint64_t now, qa_error *e)
+{
+    bool expired;
+    return qa_kex_channel_tick_expiry(c,now,&expired,e);
 }
 
 bool qa_kex_channel_idle(const qa_kex_channel *c)
