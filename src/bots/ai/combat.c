@@ -191,6 +191,20 @@ bool bot_ai_retreat(qa_bots *b, bot_ai_state *s, bool *retreat, qa_error *e) {
     *retreat = aggression < 50 || s->player.carrying_objective;
     return true;
 }
+static int32_t source_inventory_integer(float value) {
+    return value >= -2147483648.0f && value < 2147483648.0f ? (int32_t)value : INT32_MIN;
+}
+bool bot_ai_battle_inventory(qa_bots *b,bot_ai_state *s,int32_t enemy,qa_error *e) {
+    qa_bot_entity_info info;bool found;
+    if(!qa_bot_runtime_entity(b->runtime,enemy,&info,&found,e)) return false;
+    qa_vec3 direction=qa_vec_sub(info.state.origin,bot_ai_origin(s));
+    bot_source_inventory inventory={b,s};
+    if(!bot_ai_source_inventory_write(&inventory,QA_BOT_INV_ENEMY_HEIGHT,
+        source_inventory_integer(direction.z),e)) return false;
+    direction.z=0;
+    return bot_ai_source_inventory_write(&inventory,QA_BOT_INV_ENEMY_DISTANCE,
+        source_inventory_integer(qa_vec_length(direction)),e);
+}
 bool bot_ai_find_enemy(qa_bots *b, bot_ai_state *s, bool *found, qa_error *e) {
     *found = false;
     float alertness, easy;
@@ -237,6 +251,12 @@ bool bot_ai_find_enemy(qa_bots *b, bot_ai_state *s, bool *found, qa_error *e) {
         if (!visible) continue;
         if (bot_ai_enemy_number(s)<0 && distance > 100*100 && !hurt && !player.firing &&
             !in_view(player.view_angles,qa_vec_scale(d,-1),90)) {
+            qa_bot_entity candidate;
+            if(!b->services.entity(b->services.context,actor,&candidate,e)) return false;
+            if(s->retired || !bot_ai_live(b,s->view.actor) || !bot_ai_live(b,actor)) return true;
+            if(!candidate.present ||
+               !qa_actor_id_equal(b->services.entity_actor(b->services.context,candidate.number),actor)) continue;
+            if(!bot_ai_battle_inventory(b,s,candidate.number,e)) return false;
             bool retreat;
             if (!bot_ai_retreat(b,s,&retreat,e)) return false;
             if (retreat) continue;
@@ -377,9 +397,6 @@ bool bot_ai_attack_move(qa_bots *b, bot_ai_state *s, qa_error *e) {
     }
     return true;
 }
-static int32_t source_inventory_integer(float value) {
-    return value >= -2147483648.0f && value < 2147483648.0f ? (int32_t)value : INT32_MIN;
-}
 bool bot_ai_attack(qa_bots *b, bot_ai_state *s, bool moving, qa_error *e) {
     (void)moving;
     qa_actor_id enemy=bot_ai_enemy_actor(b,s);
@@ -389,12 +406,6 @@ bool bot_ai_attack(qa_bots *b, bot_ai_state *s, bool moving, qa_error *e) {
     if(!bot_ai_target(b,s,enemy,&target,&present,e)) return false;
     if(!present || s->retired || !bot_ai_live(b,s->view.actor) || !bot_ai_live(b,enemy) || target.dead) return true;
     bot_ai_enemy_origin_set(s,target.origin);bot_ai_enemy_velocity_set(s,target.velocity);
-    qa_vec3 displacement=qa_vec_sub(target.origin,bot_ai_origin(s));
-    bot_source_inventory inventory={b,s};
-    if(!bot_ai_source_inventory_write(&inventory,QA_BOT_INV_ENEMY_HEIGHT,
-        source_inventory_integer(displacement.z),e) ||
-       !bot_ai_source_inventory_write(&inventory,QA_BOT_INV_ENEMY_DISTANCE,
-        source_inventory_integer(hypotf(displacement.x,displacement.y)),e)) return false;
     const qa_bot_weapon_knowledge *weapons;size_t count;void *lease;
     if(!arsenal(b,s,&weapons,&count,&lease,e)) return false;
     qa_bot_weapon_knowledge selected={0};bool exists=false;

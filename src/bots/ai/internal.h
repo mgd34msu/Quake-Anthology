@@ -117,6 +117,7 @@ bool bot_ai_source_observer(qa_bots *,bot_ai_state *,bool *,qa_error *);
 bool bot_ai_input(qa_bots *, bot_ai_state *, int32_t time, int32_t elapsed, qa_error *);
 bool bot_ai_character_float(qa_bots *, bot_ai_state *, uint32_t, float, float, float *, qa_error *);
 bool bot_ai_choose_weapon(qa_bots *, bot_ai_state *, qa_error *);
+bool bot_ai_battle_inventory(qa_bots *,bot_ai_state *,int32_t,qa_error *);
 bool bot_ai_find_enemy(qa_bots *, bot_ai_state *, bool *, qa_error *);
 bool bot_ai_attack(qa_bots *, bot_ai_state *, bool moving, qa_error *);
 bool bot_ai_enemy_visible(qa_bots *, bot_ai_state *, qa_actor_id, float *, qa_error *);
