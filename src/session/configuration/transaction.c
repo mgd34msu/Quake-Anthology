@@ -428,6 +428,19 @@ static bool prepare_instance(qa_configuration_transaction *transaction, const qa
             error_message(error, "component declaration changed since catalog discovery"); goto fail;
         }
     }
+    const qa_product *product = qa_catalog_product(candidate->draft->catalog, selection->product);
+    bool q2_cgame = (roles & QA_ROLE_BIT(QA_ROLE_HUD)) &&
+        !(roles & (QA_ROLE_BIT(QA_ROLE_ENTITIES) | QA_ROLE_BIT(QA_ROLE_CHARACTER) | QA_ROLE_BIT(QA_ROLE_ARSENAL)));
+    if (!owner->view.declaration && selection->runtime == QA_PROGRAM_NATIVE &&
+        product && product->family == QA_GAME_Q2 && !q2_cgame) {
+        for (size_t i = 0; i < owner->view.interface_count; ++i) {
+            const qa_launch_resource *interface = owner->view.interfaces + i;
+            if (strcmp(interface->path, "native-compatibility.json")) continue;
+            owner->view.declaration = interface->resource;
+            qa_resource_retain((qa_resource *)owner->view.declaration);
+            break;
+        }
+    }
     if (!selected_behaviors(owner, &candidate->draft->choices, error)) goto fail;
     if (!instance_identity(owner, &candidate->draft->choices, error)) goto fail;
     if (!transaction->replacing && transaction->previous) for (size_t i = 0; i < transaction->previous->instance_count; ++i) {
