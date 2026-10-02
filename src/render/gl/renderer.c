@@ -792,12 +792,10 @@ static bool draw_scene(qa_gl_renderer *renderer, const qa_scene_draw *source,
     }
     if (!gl_bind_destination(renderer, error) ||
         !gl_program_stage(renderer, &draw, error)) return false;
-    for (unsigned unit = 0; unit < 2; ++unit) {
-        if (!source_pipeline) {
+    for (unsigned unit = 0; unit < draw.texture_count; ++unit) {
+        if (!source_pipeline && textures[unit] != NULL) {
             renderer->gl.ActiveTexture(GL_TEXTURE0 + unit);
-            renderer->gl.BindTexture(GL_TEXTURE_2D,
-                unit < draw.texture_count && textures[unit] != NULL
-                    ? textures[unit]->name : renderer->white_texture);
+            renderer->gl.BindTexture(GL_TEXTURE_2D, textures[unit]->name);
         }
     }
     renderer->gl.ActiveTexture(GL_TEXTURE2);
