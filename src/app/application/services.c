@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "map_players_private.h"
 #include "guest_q3_components.h"
 #include "guest_q3_component.h"
 #include "control_frame.h"
@@ -842,6 +843,24 @@ static bool builtin_players(void *opaque, qa_actor_id *actors, size_t capacity,
             return application_fail(error, QA_ERROR_MEMORY,
                                     "player roster output is too small");
         actors[written++] = actor;
+    }
+    const struct application_player_roster *roster = application->players;
+    for (size_t index = 0; roster && index < roster->count; ++index) {
+        const application_player_record *record = &roster->records[index];
+        if (record->retiring ||
+            !qa_actors_get(qa_session_actors(application->session), record->actor))
+            continue;
+        bool emitted = false;
+        for (size_t previous = 0; previous < written; ++previous)
+            if (qa_actor_id_equal(actors[previous], record->actor)) {
+                emitted = true;
+                break;
+            }
+        if (emitted) continue;
+        if (written == capacity)
+            return application_fail(error, QA_ERROR_MEMORY,
+                                    "player roster output is too small");
+        actors[written++] = record->actor;
     }
     *count = written;
     return true;
