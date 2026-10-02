@@ -675,6 +675,10 @@ bool qa_frontend_destroy(qa_frontend *frontend, qa_error *error)
         frontend_view_settings_destroy(&frontend->view_settings,error))) return false;
     if (frontend->engine_shutdown &&
         !qa_application_engine_shutdown_finish(frontend->application,&frontend->engine_shutdown,error)) return false;
+    if (!frontend_native_q2_discard_unbound(frontend, error) ||
+        !frontend_source_discard_unbound(frontend, error)) return false;
+    qa_scene_frame_destroy(&frontend->frame);
+    if (!frontend_root_resources_destroy(frontend,error)) return false;
     if (frontend->application && !qa_application_destroy(frontend->application, error)) return false;
     frontend->application = NULL;
     if (frontend->shutdown) frontend->shutdown->application=NULL;
@@ -682,8 +686,6 @@ bool qa_frontend_destroy(qa_frontend *frontend, qa_error *error)
     if (!frontend_global_settings_storage_destroy(&frontend->global_settings_storage,error)) return false;
     frontend->config_store=NULL;
     frontend_input_profile_destroy(frontend);
-    if (!frontend_native_q2_discard_unbound(frontend, error)) return false;
-    if (!frontend_source_discard_unbound(frontend, error)) return false;
     if (!frontend_client_registries_retired(frontend,error)) return false;
     if (!frontend_client_registries_discard_restore(frontend,error)) return false;
     if (!frontend_keys_destroy(frontend->keys,error)) return false;
@@ -691,7 +693,6 @@ bool qa_frontend_destroy(qa_frontend *frontend, qa_error *error)
     qa_native_runtime_release(frontend->native_runtime); frontend->native_runtime=NULL;
     qa_dedicated_console_destroy(frontend->terminal);
     qa_audio_device_close(frontend->device); frontend->device=NULL;
-    qa_scene_frame_destroy(&frontend->frame);
     if (!frontend_equipment_retire(frontend,error)) return false;
     frontend_equipment_destroy(frontend);
     if (!frontend_equipment_q3_retire(frontend,error)) return false;
@@ -701,7 +702,6 @@ bool qa_frontend_destroy(qa_frontend *frontend, qa_error *error)
     frontend_particle_retire(frontend);
     if (!frontend_event_retire_checked(frontend,error)) return false;
     frontend_shader_destroy(frontend);
-    if (!frontend_root_resources_destroy(frontend,error)) return false;
     qa_scene_world_destroy(frontend->scene_world);
     qa_resource_release(frontend->map_resource);
     qa_audio_bank_destroy(frontend->sounds);
