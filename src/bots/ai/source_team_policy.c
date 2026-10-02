@@ -402,10 +402,12 @@ static bool create_group(qa_bots *b, bot_ai_state *s, const int32_t teammates[64
     int32_t leader,self;char leader_text[36];
     if(!at(teammates,count,start,&leader,e) || !bot_ai_client_name(b,leader,leader_text,sizeof(leader_text),true,e)) return false;
     if(!alive(b,s)) return true;
-    if(!bot_ai_source_client(b,s,&self,e)) return false;
     for(int32_t i=1;i<group_size && alive(b,s);++i) {
         int32_t teammate;char name[36];
         if(!at(teammates,count,start+i,&teammate,e) || !bot_ai_client_name(b,teammate,name,sizeof(name),true,e)) return false;
+        if(!alive(b,s)) return true;
+        if(!bot_ai_source_client(b,s,&self,e)) return false;
+        if(!alive(b,s)) return true;
         if(!chat_initial(b,s,leader==self?"cmd_accompanyme":"cmd_accompany",name,leader==self?NULL:leader_text,e) ||
            !say_order(b,s,teammate,true,e)) return false;
     }
