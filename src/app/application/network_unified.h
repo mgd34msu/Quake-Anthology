@@ -20,11 +20,17 @@ typedef struct application_unified_source {
 
 bool application_unified_source_read(qa_application *, application_unified_source *, qa_error *);
 bool application_unified_source_current(const qa_application *, const application_unified_source *);
+bool application_unified_source_checkpoint_read(qa_application *, application_unified_source *, qa_error *);
+bool application_unified_source_checkpoint_current(const qa_application *, const application_unified_source *);
 bool application_unified_source_slot_occupied(qa_application *, uint32_t client_slot,
     bool *, qa_error *);
 bool application_unified_player_read(qa_application *, qa_net_client_id, qa_net_seat_id,
     qa_unified_session_player *, qa_error *);
 bool application_unified_player_current(qa_application *, qa_net_client_id,
+    const qa_unified_session_player *);
+bool application_unified_player_checkpoint_read(qa_application *, qa_net_client_id, qa_net_seat_id,
+    qa_unified_session_player *, qa_error *);
+bool application_unified_player_checkpoint_current(qa_application *, qa_net_client_id,
     const qa_unified_session_player *);
 bool application_unified_player_admit(qa_application *, qa_network_runtime *, const qa_application_remote_player_request *,
     qa_unified_session_player *, qa_error *);
@@ -32,6 +38,9 @@ bool application_unified_player_userinfo(qa_application *, qa_net_client_id, qa_
     const char *, qa_error *);
 bool application_unified_player_command(qa_application *, qa_net_client_id, qa_net_seat_id,
     const char *name, const char *const *arguments, size_t count, qa_error *);
+bool application_unified_component_command(qa_application *, qa_net_client_id, qa_net_seat_id,
+    const qa_unified_document *owner, uint64_t generation, const char *const *arguments,
+    size_t count, qa_error *);
 bool application_unified_player_input(qa_application *, qa_net_client_id, qa_net_seat_id,
     qa_actor_id, const qa_unified_input *, qa_error *);
 bool application_unified_player_disconnect(qa_application *, qa_net_client_id, qa_net_seat_id,

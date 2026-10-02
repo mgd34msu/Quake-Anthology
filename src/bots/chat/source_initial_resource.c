@@ -197,10 +197,10 @@ bool bot_chat_initial_resource_load(bot_chat_initial_resource *resource,bool *so
             &grammar_failure,&own_failure,&not_found,error);
         resource->own_failure=resource->own_failure || own_failure;
         if(!ok && grammar_failure) {
-            qa_error reached=error?*error:(qa_error){0};
+            qa_error grammar_error=error?*error:(qa_error){0};
             if(complete(resource,error)) {
                 resource->failure=BOT_CHAT_INITIAL_GRAMMAR_FAILURE;*source_failure=true;
-                if(error) *error=reached;
+                if(error) *error=grammar_error;
             }
         }
         if(ok && not_found) {

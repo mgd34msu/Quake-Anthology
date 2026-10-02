@@ -30,7 +30,7 @@ struct qa_cpu_renderer {
   cpu_framebuffer *current, *opacity_parent;
   cpu_target *targets;
   qa_scene_view view;
-  bool depth_write, color_write;
+  qa_scene_state pipeline;
   float clear_depth;
   qa_scene_rect opacity_viewport;
   bool opacity_active, opacity_skip, gamma_enabled, overdraw;

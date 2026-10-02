@@ -1,5 +1,6 @@
 #include "guest_native_q2_private.h"
 #include "guest_native_q2_combat.h"
+#include "native_q2_callbacks.h"
 #include "control_frame.h"
 #include <math.h>
 
@@ -145,6 +146,18 @@ static struct application_native_q2 *client_owner(application_provider *provider
     return engine;
 }
 
+static bool declared_client(struct application_native_q2 *engine,uint32_t slot,
+    const char *stage,qa_bytes command,bool *accepted,qa_error *error)
+{
+    application_native_callback_value values[] = {
+        {.name="self",.kind=APPLICATION_NATIVE_VALUE_ACTOR,.value.actor=engine->clients[slot].actor},
+        {.name="time",.kind=APPLICATION_NATIVE_VALUE_NUMBER,.value.number=(double)engine->frame.time_ns/1e9},
+        {.name="elapsed",.kind=APPLICATION_NATIVE_VALUE_NUMBER,.value.number=(double)engine->frame.elapsed_ns/1e9}
+    };
+    application_native_callback_inputs inputs={values,3,command};
+    return application_native_q2_callbacks_run(engine,stage,&inputs,accepted,error);
+}
+
 bool application_native_q2_client_admit(application_provider *provider, uint32_t slot,
     qa_actor_id actor, const char *userinfo, const char *social_id, bool bot,
     bool *accepted, qa_error *error)
@@ -166,6 +179,25 @@ bool application_native_q2_client_admit(application_provider *provider, uint32_t
     client->protocol_fog = (qa_q2_wire_fog){0};
     client->protocol_fog_actor = actor;
     client->userinfo_present = false; client->userinfo[0] = 0;
+    if (engine->callbacks) {
+        size_t bytes=strlen(userinfo),capacity=engine->profile==QA_NATIVE_Q2_GAME_API3?512u:2048u;
+        if(bytes>=capacity) return application_fail(error,QA_ERROR_ARGUMENT,"Declared native userinfo exceeds its real API extent");
+        memcpy(client->userinfo,userinfo,bytes+1); client->userinfo_present=true;
+        bool ok=qa_native_host_client_retained_set(provider->state.native.host,slot,true,error)&&
+            declared_client(engine,slot,"clients.admit",(qa_bytes){0},accepted,error);
+        if(ok&&*accepted) {
+            if(!qa_actor_id_equal(client->actor,actor)||!qa_actors_get(qa_session_actors(provider->application->session),actor))
+                return application_fail(error,QA_ERROR_ARGUMENT,"Declared native admission retired its actual actor");
+            client->connected=true; return true;
+        }
+        qa_error cleanup={0};
+        bool detached=qa_native_host_client_retained_set(provider->state.native.host,slot,false,&cleanup)&&
+            qa_native_host_detach_actor(provider->state.native.host,slot,actor,&cleanup);
+        if(detached) { client->actor=(qa_actor_id){0}; client->userinfo_present=false; client->userinfo[0]=0;
+            client->protocol_fog=(qa_q2_wire_fog){0}; client->protocol_fog_actor=(qa_actor_id){0}; }
+        if(ok&&!detached&&error) *error=cleanup;
+        return ok&&detached;
+    }
     qa_native_host_client_request request = {.slot = slot, .userinfo = userinfo,
         .social_id = social_id ? social_id : "", .bot = bot};
     ++engine->calls;
@@ -204,7 +236,7 @@ bool application_native_q2_client_begin(application_provider *provider, uint32_t
         application_native_q2_combat_admit(
             engine, slot, engine->clients[slot].actor, false, error);
     ++engine->calls;
-    bool ok = qa_native_host_client_begin(provider->state.native.host, slot, error);
+    bool ok = engine->callbacks || qa_native_host_client_begin(provider->state.native.host, slot, error);
     --engine->calls;
     if (ok) engine->clients[slot].begun = true;
     return ok && application_native_q2_inventory_admit(engine, slot, error) &&
@@ -222,6 +254,13 @@ bool application_native_q2_client_userinfo(application_provider *provider, uint3
         !qa_native_host_destroy_ready(provider->state.native.host))
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 userinfo requires its returned physical client call");
     qa_actor_id actor = engine->clients[slot].actor;
+    if(engine->callbacks) {
+        size_t bytes=strlen(userinfo),capacity=engine->profile==QA_NATIVE_Q2_GAME_API3?512u:2048u;
+        if(bytes>=capacity) return application_fail(error,QA_ERROR_ARGUMENT,"Declared native userinfo exceeds its API buffer");
+        memcpy(engine->clients[slot].userinfo,userinfo,bytes+1); engine->clients[slot].userinfo_present=true;
+        bool accepted;
+        return declared_client(engine,slot,"clients.userinfo",(qa_bytes){0},&accepted,error);
+    }
     qa_buffer returned = {0};
     ++engine->calls;
     bool ok = qa_native_host_client_userinfo_result(provider->state.native.host,
@@ -247,19 +286,31 @@ bool application_native_q2_client_disconnect(application_provider *provider, uin
     if (!engine) return false;
     application_native_q2_client *client = &engine->clients[slot];
     if (!client->actor.registry) return true;
-    if (!application_native_q2_combat_detach(engine, client->actor, error)) return false;
-    if (!application_native_q2_inventory_detach(engine, slot, error)) return false;
     qa_actor_id actor = client->actor;
     bool ok = true; qa_error first = {0};
     if (client->connected && !client->disconnect_started) {
-        client->disconnect_started = true; client->connected = client->begun = false;
+        client->disconnect_started = true;
         if (!qa_native_terminal(qa_native_host_instance(provider->state.native.host))) {
+            engine->disconnect_client = slot;
             ++engine->calls;
-            ok = qa_native_host_client_disconnect(provider->state.native.host, slot, &first);
+            if(engine->callbacks) {
+                bool accepted;
+                ok=declared_client(engine,slot,"clients.disconnect",(qa_bytes){0},&accepted,&first)&&
+                    qa_native_host_client_retained_set(provider->state.native.host,slot,false,&first);
+            } else ok = qa_native_host_client_disconnect(provider->state.native.host, slot, &first);
             --engine->calls;
+            engine->disconnect_client = 0;
         }
     }
+    if (!qa_actor_id_equal(client->actor, actor))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 disconnect replaced its entered Source generation");
+    client->connected = client->begun = false;
     qa_error current = {0};
+    if (!application_native_q2_combat_detach(engine, actor, &current) ||
+        !application_native_q2_inventory_detach(engine, slot, &current)) {
+        if (error) *error = ok ? current : first;
+        return false;
+    }
     if (!qa_native_host_detach_actor(provider->state.native.host, slot, actor, &current)) {
         if (error) *error = ok ? current : first;
         return false;
@@ -270,6 +321,22 @@ bool application_native_q2_client_disconnect(application_provider *provider, uin
     client->userinfo_present = false; client->userinfo[0] = 0;
     if (!ok && error) *error = first;
     return ok;
+}
+
+bool application_native_q2_actor_disconnect(application_provider *provider,
+    qa_actor_id actor, qa_error *error)
+{
+    struct application_native_q2 *engine = provider && provider->kind == APPLICATION_PROVIDER_NATIVE ?
+        provider->state.native.q2_engine : NULL;
+    if (!engine || engine->profile == QA_NATIVE_Q2_CGAME_API2023)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 disconnect requires its actual GAME owner");
+    uint32_t slot = 0;
+    for (uint32_t i = 1; i < 257; ++i) {
+        if (!qa_actor_id_equal(engine->clients[i].actor, actor)) continue;
+        if (slot) return application_fail(error, QA_ERROR_FORMAT, "Native Q2 disconnect aliases two physical clients");
+        slot = i;
+    }
+    return !slot || application_native_q2_client_disconnect(provider, slot, error);
 }
 
 bool application_native_q2_client_think(application_provider *provider, uint32_t slot,

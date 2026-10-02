@@ -383,7 +383,7 @@ static bool floor_item(qa_q2_game *g, q2_actor *a, qa_error *e) {
     a->item->touchable = true;
     qa_physics_solid solid = QA_PHYSICS_TRIGGER;
     if (a->item->spawn.team) {
-        a->physics.flags &= ~QA_PHYSICS_TEAM_SLAVE;
+        a->physics.flags &= ~(uint32_t)QA_PHYSICS_TEAM_SLAVE;
         if (a->entity) {
             a->item->spawn.team_master = a->entity->team_master;
             a->item->spawn.team_next = a->entity->team_next;

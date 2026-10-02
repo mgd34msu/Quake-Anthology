@@ -1,6 +1,7 @@
 #include "remote_q1_private.h"
 #include "internal.h"
 #include "remote_q1_prediction.h"
+#include "remote_q1_skins.h"
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -98,6 +99,7 @@ static bool names_copy(char ***out, size_t *count, const char *const *names, siz
 }
 void remote_q1_clear(frontend_remote_q1 *row)
 {
+    remote_q1_camera_reset(row);
     remote_q1_prediction_clear(row);
     remote_q1_media_clear(row);
     remote_q1_qw_queue_clear(row);
@@ -114,7 +116,7 @@ void remote_q1_clear(frontend_remote_q1 *row)
     memset(row->qw_player_valid, 0, sizeof(row->qw_player_valid)); memset(row->qw_stats, 0, sizeof(row->qw_stats));
     row->max_clients = row->view_entity = 0; row->view_angles = qa_v3(0, 0, 0);
     row->pending_impulse = 0;
-    row->has_data = row->loaded = row->qw_ready = row->qw_frame = row->qw_intermission = false;
+    row->has_data = row->loaded = row->qw_ready = row->qw_frame = row->qw_intermission = row->intermission = false;
     row->seconds = row->previous_seconds = 0; row->fraction = 1; row->qw_kick = 0;
     qa_resource_release(row->map); row->map = NULL; qa_vfs_acquisition_dispose(&row->map_opening);
     qa_vfs_destroy(row->content.mounts); qa_catalog_release(row->content.catalog); row->content = (frontend_remote_q1_content){0};
@@ -130,7 +132,7 @@ bool frontend_remote_q1_create(qa_frontend *f, const frontend_remote_q1_options 
         !d->console || !d->cvars || !d->actors || !d->actor_owner ||
         d->physical_seat >= f->options.seats || !f->seats || !f->seats[d->physical_seat].input ||
         d->client.owner || d->client.generation || d->client.slot || d->epoch || !qa_q1_profile_valid(d->protocol, error) ||
-        (qa_q1_is_qw(d->protocol) && !options->qw_skins))
+        (qa_q1_is_qw(d->protocol) && !options->skin_bindings))
         return remote_q1_fail(error, QA_ERROR_ARGUMENT, "Q1 construction requires its pending canonical CLIENT source");
     if (!options->current(options->context, d, error)) return false;
     frontend_remote_q1 *row = calloc(1, sizeof(*row));
@@ -139,7 +141,8 @@ bool frontend_remote_q1_create(qa_frontend *f, const frontend_remote_q1_options 
     row->fraction = 1; row->revision = row->next_event = 1;
     qa_catalog_retain(d->catalog);
     frontend_remote_q1 **tail = &f->remote_q1; while (*tail) tail = &(*tail)->next;
-    *tail = row; *out = row; return true;
+    *tail = row; *out = row;
+    return !qa_q1_is_qw(d->protocol) || frontend_remote_q1_skins_create(row,options->skin_bindings,&row->skins,error);
 }
 bool frontend_remote_q1_bind(frontend_remote_q1 *row, const frontend_remote_q1_domain *actual, qa_error *error)
 {
@@ -171,7 +174,13 @@ static bool serverinfo(frontend_remote_q1 *row, const qa_nq_serverinfo *info, qa
     if (!remote_q1_effects_clear(row, error) || !actors_release(row, error)) {
         qa_vfs_destroy(held); qa_catalog_release(content.catalog); return false;
     }
+    if (row->skins && !frontend_remote_q1_skins_reset(row->skins,error)) { qa_vfs_destroy(held); qa_catalog_release(content.catalog); return false; }
     remote_q1_clear(row); content.mounts = held; row->content = content;
+    if (row->skins) {
+        const qa_product *base=qa_catalog_find(content.catalog,"q1-quakeworld");
+        qa_fs_root *root=base?qa_catalog_product_write_root(content.catalog,base->id):NULL;
+        if (!root || !frontend_remote_q1_skins_content(row->skins,held,root,error)) return false;
+    }
     if (!names_copy(&row->models, &row->model_count, info->models, info->model_count, error) ||
         !names_copy(&row->sounds, &row->sound_count, info->sounds, info->sound_count, error)) return false;
     if (!qa_vfs_acquire_receipt(row->content.mounts, map, &row->map, &row->map_opening, error)) return false;
@@ -223,6 +232,7 @@ bool frontend_remote_q1_receive_nq(frontend_remote_q1 *row, const qa_nq_message 
         row->clients[index].present = true;
         break;
     }
+    case QA_NQ_INTERMISSION: case QA_NQ_FINALE: case QA_NQ_CUTSCENE: row->intermission = true; break;
     default: break;
     }
     if (ok) ok = remote_q1_effects_service(row, message, error);
@@ -234,6 +244,8 @@ bool frontend_remote_q1_sample(frontend_remote_q1 *row, uint64_t now, qa_error *
 {
     if (!remote_q1_mutable(row) || row->busy || !remote_q1_live(row, error)) return false;
     if (row->revision == UINT64_MAX) return remote_q1_fail(error, QA_ERROR_FORMAT, "Q1 presentation revision is exhausted");
+    if (row->skins && (!frontend_remote_q1_skins_resume(row->skins,error) ||
+        !frontend_remote_q1_skins_prepare(row->skins,error))) return false;
     if (row->seconds - row->previous_seconds > .1) row->previous_seconds = row->seconds - .1;
     double duration = fmax(0, row->seconds - row->previous_seconds);
     row->fraction = duration == 0 ? 1 : fmin(1, fmax(0, now >= row->received_ns ?
@@ -263,12 +275,16 @@ bool frontend_remote_q1_current(const frontend_remote_q1_view *view)
         view->content.catalog == row->content.catalog && view->content.mounts == row->content.mounts &&
         view->loaded == row->loaded && view->retired == row->retired;
 }
-bool frontend_remote_q1_idle(const frontend_remote_q1 *row) { return row && !row->busy && !row->sky_policy; }
+bool frontend_remote_q1_idle(const frontend_remote_q1 *row)
+{ return row && !row->busy && !row->sky_policy && (!row->skins || frontend_remote_q1_skins_idle(row->skins)); }
+struct frontend_remote_q1_skins *frontend_remote_q1_skins_owner(const frontend_remote_q1 *row)
+{ return row ? row->skins : NULL; }
 bool frontend_remote_q1_destroy(frontend_remote_q1 **owned, qa_error *error)
 {
     frontend_remote_q1 *row = owned ? *owned : NULL; if (!row) return true;
     if (row->busy || row->sky_policy || row->frontend->capture || row->frontend->resource_inventory)
         return remote_q1_fail(error, QA_ERROR_ARGUMENT, "Q1 presentation destruction overlaps its actual parent lease");
+    if (!frontend_remote_q1_skins_destroy(&row->skins,error)) return false;
     frontend_remote_q1 **link = &row->frontend->remote_q1;
     while (*link && *link != row) link = &(*link)->next;
     if (*link != row) return remote_q1_fail(error, QA_ERROR_ARGUMENT, "Q1 owner is outside its real frontend parent list");
@@ -283,11 +299,17 @@ bool frontend_remote_q1_disconnected(frontend_remote_q1 *row, const char *reason
 {
     if (!remote_q1_mutable(row) || !reason || row->busy || !row->bound) return false;
     if (row->retired) {
-        ++row->busy; bool cleared = remote_q1_effects_clear(row, error); --row->busy; return cleared;
+        ++row->busy;
+        bool cleared = (!row->skins || frontend_remote_q1_skins_reset(row->skins,error)) &&
+            remote_q1_effects_clear(row, error);
+        --row->busy; return cleared;
     }
     ++row->busy;
     bool ok = row->options.disconnected(row->options.context, &row->options.domain, reason, error);
-    if (ok) { row->retired = true; ++row->revision; ok = remote_q1_effects_clear(row, error); }
+    if (ok) {
+        row->retired = true; ++row->revision;
+        ok = (!row->skins || frontend_remote_q1_skins_reset(row->skins,error)) && remote_q1_effects_clear(row,error);
+    }
     --row->busy; return ok;
 }
 size_t frontend_remote_q1_count(const qa_frontend *f)

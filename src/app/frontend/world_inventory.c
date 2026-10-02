@@ -20,7 +20,7 @@ typedef struct root_heap { uint32_t kind; uint64_t ordinal, view; } root_heap;
 typedef struct world_policy {
     qa_scene_world_options options;
     char *sky;
-    qa_bytes spans[3];
+    qa_bytes spans[4];
 } world_policy;
 typedef struct world_row {
     frontend_world_source source;
@@ -134,8 +134,9 @@ static bool policy_capture(world_row *row,qa_error *error)
 {
     if (!qa_scene_world_options_read(row->source.world,&row->policy.options))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"World policy cannot be observed under its actual owner lease");
-    qa_bytes spans[]={row->policy.options.external_lit,row->policy.options.images.palette_rgb,row->policy.options.images.translation};
-    for (size_t i=0;i<3;++i) {
+    qa_bytes spans[]={row->policy.options.external_lit,row->policy.options.images.palette_rgb,
+        row->policy.options.images.translation,row->policy.options.external_entities};
+    for (size_t i=0;i<4;++i) {
         if (spans[i].size && !spans[i].data) return false;
         row->policy.spans[i]=spans[i];
     }
@@ -413,14 +414,15 @@ static bool world_source_qualify(void *context,qa_bytes bytes,const qa_scene_wor
         a->mipmap!=b->mipmap || a->transparent!=b->transparent || a->fullbright_only!=b->fullbright_only ||
         a->transparent_index!=b->transparent_index || options->q3_overbright!=expected->q3_overbright ||
         options->q1_lightmap_encoding!=expected->q1_lightmap_encoding ||
+        options->has_external_entities!=expected->has_external_entities ||
         memcmp(&options->subdivisions,&expected->subdivisions,sizeof(float)) ||
         memcmp(&options->q1_water_alpha,&expected->q1_water_alpha,sizeof(float)) ||
         memcmp(&options->q2_light_modulate,&expected->q2_light_modulate,sizeof(float)) ||
         (options->q2_sky!=NULL)!=(policy->sky!=NULL) ||
         (options->q2_sky && strcmp(options->q2_sky,policy->sky)))
         return frontend_fail(error,QA_ERROR_FORMAT,"Scene world source or actual constructor policy differs");
-    qa_bytes spans[]={options->external_lit,a->palette_rgb,a->translation};
-    for (size_t i=0;i<3;++i) {
+    qa_bytes spans[]={options->external_lit,a->palette_rgb,a->translation,options->external_entities};
+    for (size_t i=0;i<4;++i) {
         if (spans[i].size!=policy->spans[i].size || (spans[i].size && !spans[i].data) ||
             (spans[i].size && memcmp(spans[i].data,policy->spans[i].data,spans[i].size)))
             return frontend_fail(error,QA_ERROR_FORMAT,"World retained lighting or image policy bytes differ");
@@ -546,11 +548,12 @@ static bool policy_fields(qa_source_save_io *io,world_policy *policy)
         !qa_source_save_bool(io,&image->transparent) || !qa_source_save_bool(io,&image->fullbright_only) ||
         !qa_source_save_f32(io,&o->subdivisions) || !qa_source_save_f32(io,&o->q1_water_alpha) ||
         !qa_source_save_f32(io,&o->q2_light_modulate) || !qa_source_save_u32(io,&o->q3_overbright) ||
-        !qa_source_save_u32(io,&encoding) || !frontend_save_text(io,&policy->sky)) return false;
+        !qa_source_save_u32(io,&encoding) || !qa_source_save_bool(io,&o->has_external_entities) ||
+        !frontend_save_text(io,&policy->sky)) return false;
     image->family=(qa_scene_family)family; image->wrap=(qa_scene_wrap)wrap;
     image->filter=(qa_scene_filter)filter; image->usage=(qa_scene_image_usage)usage;
     image->transparent_index=transparent_index; o->q1_lightmap_encoding=(qa_scene_q1_lightmap_encoding)encoding;
-    for (size_t i=0;i<3;++i) {
+    for (size_t i=0;i<4;++i) {
         size_t count=policy->spans[i].size;
         if (!qa_source_save_count(io,&count,io->direction==QA_SOURCE_SAVE_READ?io->input.size-io->offset:SIZE_MAX)) return false;
         if (io->direction==QA_SOURCE_SAVE_WRITE) {
@@ -560,7 +563,7 @@ static bool policy_fields(qa_source_save_io *io,world_policy *policy)
             policy->spans[i]=(qa_bytes){io->input.data+io->offset,count}; io->offset+=count;
         }
     }
-    return true;
+    return o->has_external_entities || policy->spans[3].size==0;
 }
 static bool blob(qa_source_save_io *io,qa_bytes *state)
 {
@@ -601,9 +604,9 @@ static bool rows_fields(qa_source_save_io *io,frontend_world_inventory *inventor
 }
 static bool header(qa_source_save_io *io,size_t *worlds,size_t *models)
 {
-    uint8_t magic[4]={'Q','F','W','R'}; uint32_t version=9;
+    uint8_t magic[4]={'Q','F','W','R'}; uint32_t version=10;
     size_t maximum=io->direction==QA_SOURCE_SAVE_READ?io->input.size-io->offset:SIZE_MAX;
-    return qa_source_save_bytes(io,magic,4) && !memcmp(magic,"QFWR",4) && qa_source_save_u32(io,&version) && version==9 &&
+    return qa_source_save_bytes(io,magic,4) && !memcmp(magic,"QFWR",4) && qa_source_save_u32(io,&version) && version==10 &&
         qa_source_save_count(io,worlds,maximum) && qa_source_save_count(io,models,maximum);
 }
 bool frontend_world_inventory_checkpoint(const frontend_world_inventory *inventory,qa_buffer *out,qa_error *error)

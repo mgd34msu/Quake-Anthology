@@ -240,6 +240,128 @@ static bool reply_key(const qa_bot_chat_asset *a, const qa_bot_chat_key *key,
     }
     return false;
 }
+static bool graph_text(const bot_chat_graph *graph,uint32_t key,const char **out,qa_error *error) {
+    uint32_t string;
+    return bot_chat_graph_link(graph,key,BOT_CHAT_GRAPH_KEY,4,BOT_CHAT_GRAPH_STRING,&string,error) &&
+        bot_chat_graph_text(graph,string,out,error);
+}
+static bool graph_reply_key(qa_bot_chat_asset *asset,uint32_t key,qa_bot_chat *state,
+    const qa_bot_chat_text_source *input,qa_bot_chat_match *match,bool *out,qa_error *error) {
+    bot_chat_graph *graph=&asset->packed_source->graph;uint32_t flags;
+    *out=false;
+    if(!bot_chat_graph_word(graph,key,BOT_CHAT_GRAPH_KEY,0,&flags,error)) return false;
+    if(flags&4) {
+        char *text=NULL,*name;
+        if(!chat_text_copy(input,SIZE_MAX,&text,error)) return false;
+        bool ok=chat_state_text(state,CHAT_NAME,32,&name,error);
+        if(ok) *out=qa_bot_chat_contains(text,name,false)>=0;
+        free(text);return ok;
+    }
+    if(flags&32) {
+        const char *text;char *name;
+        if(!graph_text(graph,key,&text,error) || !chat_state_text(state,CHAT_NAME,32,&name,error)) return false;
+        *out=qa_bot_chat_contains(text,name,false)>=0;return true;
+    }
+    if(flags&(64|128|256)) {
+        uint32_t gender;
+        if(!chat_state_get(state,CHAT_GENDER,&gender,error)) return false;
+        *out=gender==(flags&64?1u:flags&128?2u:0u);return true;
+    }
+    if(flags&16) {
+        uint32_t first;
+        return bot_chat_graph_link(graph,key,BOT_CHAT_GRAPH_KEY,8,BOT_CHAT_GRAPH_PIECE,&first,error) &&
+            bot_chat_graph_match(asset,first,match,out,error);
+    }
+    if(flags&8) {
+        char *text=NULL;const char *word;
+        if(!chat_text_copy(input,SIZE_MAX,&text,error)) return false;
+        bool ok=graph_text(graph,key,&word,error);
+        if(ok) *out=chat_word(text,word,0)>=0;
+        free(text);return ok;
+    }
+    return true;
+}
+static bool graph_priority(const bot_chat_graph *graph,uint32_t reply,float *out,qa_error *error) {
+    uint32_t bits;
+    if(!bot_chat_graph_word(graph,reply,BOT_CHAT_GRAPH_REPLY,4,&bits,error)) return false;
+    memcpy(out,&bits,4);return true;
+}
+static bool graph_reply_message(qa_bot_chat *state,qa_bot_chat_asset *asset,const char *input,
+    const qa_bot_chat_text_source *source,uint32_t context,uint32_t variable_context,
+    const qa_bot_chat_text_source variables[8],float time,bool *found,qa_error *error) {
+    bot_chat_graph *graph=&asset->packed_source->graph;
+    qa_bot_chat_match match,best_match;chat_match_clear(&match,input);
+    float priority=-1;uint32_t selected=0,best_reply=0;
+    uint32_t reply=graph->root;
+    for(size_t visited=0;reply;++visited) {
+        if(visited>=graph->count) {qa_error_set(error,QA_ERROR_ARGUMENT,0,"Reply source list cycles");return false;}
+        uint32_t key;bool matches=false;
+        if(!bot_chat_graph_link(graph,reply,BOT_CHAT_GRAPH_REPLY,0,BOT_CHAT_GRAPH_KEY,&key,error)) return false;
+        for(size_t seen=0;key;++seen) {
+            if(seen>=graph->count) {qa_error_set(error,QA_ERROR_ARGUMENT,0,"Reply source key list cycles");return false;}
+            bool result;uint32_t flags;
+            if(!graph_reply_key(asset,key,state,source,&match,&result,error) ||
+               !bot_chat_graph_word(graph,key,BOT_CHAT_GRAPH_KEY,0,&flags,error)) return false;
+            if(flags&1) {if(!result) {matches=false;break;}}
+            else if(flags&2) {if(result) {matches=false;break;}}
+            else if(result) matches=true;
+            if(!bot_chat_graph_link(graph,key,BOT_CHAT_GRAPH_KEY,12,BOT_CHAT_GRAPH_KEY,&key,error)) return false;
+        }
+        float value;
+        if(matches && !graph_priority(graph,reply,&value,error)) return false;
+        if(matches && !(value<=priority)) {
+            uint32_t message,eligible=0;
+            if(!bot_chat_graph_link(graph,reply,BOT_CHAT_GRAPH_REPLY,12,BOT_CHAT_GRAPH_MESSAGE,&message,error)) return false;
+            for(size_t seen=0;message;++seen) {
+                if(seen>=graph->count) {qa_error_set(error,QA_ERROR_ARGUMENT,0,"Reply source message list cycles");return false;}
+                float cooldown,current;
+                if(!bot_chat_graph_message_time(asset,message,&cooldown,false,error) ||
+                   !chat_source_time(state->system,time,&current,error)) return false;
+                if(cooldown<=current) ++eligible;
+                if(!bot_chat_graph_link(graph,message,BOT_CHAT_GRAPH_MESSAGE,8,BOT_CHAT_GRAPH_MESSAGE,&message,error)) return false;
+            }
+            double draw=trunc((double)(float)(bot_random(&state->system->services.random)*(float)eligible));
+            if(!bot_chat_graph_link(graph,reply,BOT_CHAT_GRAPH_REPLY,12,BOT_CHAT_GRAPH_MESSAGE,&message,error)) return false;
+            for(size_t seen=0;message;++seen) {
+                if(seen>=graph->count) {qa_error_set(error,QA_ERROR_ARGUMENT,0,"Reply selection source list cycles");return false;}
+                if(--draw<0) {
+                    selected=message;best_reply=reply;best_match=match;
+                    if(!graph_priority(graph,reply,&value,error)) return false;
+                    priority=truncf(value);break;
+                }
+                float cooldown,current;
+                if(!bot_chat_graph_message_time(asset,message,&cooldown,false,error) ||
+                   !chat_source_time(state->system,time,&current,error)) return false;
+                if(!bot_chat_graph_link(graph,message,BOT_CHAT_GRAPH_MESSAGE,8,BOT_CHAT_GRAPH_MESSAGE,&message,error)) return false;
+            }
+        }
+        if(!bot_chat_graph_link(graph,reply,BOT_CHAT_GRAPH_REPLY,16,BOT_CHAT_GRAPH_REPLY,&reply,error)) return false;
+    }
+    if(!selected) return true;
+    if(!chat_append_variables_from(&best_match,variables,error)) return false;
+    qa_bot_chat_services services=state->system->services;
+    if(services.test_reply && services.test_reply(services.context)) {
+        uint32_t message;
+        if(!bot_chat_graph_link(graph,best_reply,BOT_CHAT_GRAPH_REPLY,12,BOT_CHAT_GRAPH_MESSAGE,&message,error)) return false;
+        for(size_t seen=0;message;++seen) {
+            if(seen>=graph->count) {qa_error_set(error,QA_ERROR_ARGUMENT,0,"Reply test source list cycles");return false;}
+            const char *text;char *output;
+            if(!bot_chat_graph_message_text(asset,message,&text,error) ||
+               !chat_construct(state,text,context,&best_match,variable_context,true,error) ||
+               !chat_state_message_strip(state,error) || !chat_state_text(state,CHAT_MESSAGE,256,&output,error) ||
+               !chat_print(state->system,QA_SCRIPT_INFO,output,error)) return false;
+            if(!bot_chat_graph_link(graph,message,BOT_CHAT_GRAPH_MESSAGE,8,BOT_CHAT_GRAPH_MESSAGE,&message,error)) return false;
+        }
+    } else {
+        float current;const char *text;
+        if(!chat_source_time(state->system,time,&current,error)) return false;
+        current=(float)(current+20);
+        if(!bot_chat_graph_message_time(asset,selected,&current,true,error) ||
+           !bot_chat_graph_message_text(asset,selected,&text,error) ||
+           !chat_construct(state,text,context,&best_match,variable_context,true,error)) return false;
+    }
+    *found=true;return true;
+}
 static bool reply_message(qa_bot_chat *state,qa_bot_chat_asset *asset,const char *input,
                                const qa_bot_chat_text_source *source,uint32_t context,
                                uint32_t variable_context,const qa_bot_chat_text_source variables[8],
@@ -247,6 +369,8 @@ static bool reply_message(qa_bot_chat *state,qa_bot_chat_asset *asset,const char
     *found = false;
     if (asset == NULL)
         return true;
+    if(asset->packed_source) return graph_reply_message(state,asset,input,source,context,
+        variable_context,variables,time,found,e);
     qa_bot_chat_match match, best_match;
     chat_match_clear(&match, input);
     float priority = -1;

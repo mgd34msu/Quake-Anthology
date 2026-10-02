@@ -191,6 +191,10 @@ typedef bool (*qa_qvm_source_scratch_run_fn)(void *, qa_qvm *, uint32_t, qa_erro
  * Nested calls inherit its stack floor and exact bytes restore on all exits. */
 bool qa_qvm_source_scratch_run(qa_qvm *, const qa_qvm_image *, size_t,
     qa_qvm_source_scratch_run_fn, void *, qa_error *);
+/* Generic Mod arguments retain their four-byte bump cursor and reserve space
+ * below the current paused stack. The caller supplies its donor reservation. */
+bool qa_qvm_source_scratch_run_reserved(qa_qvm *, const qa_qvm_image *, size_t,
+    uint32_t stack_reservation, qa_qvm_source_scratch_run_fn, void *, qa_error *);
 
 /* Raw offsets are checked without masking. Host pointer APIs mask only the
  * base word and treat zero as NULL. Mutable host writes use these operations. */

@@ -29,6 +29,7 @@ static bool options(qa_source_save_io *io, qa_q2_message_options *value)
         !qa_source_save_count(io, &value->max_inflated_bytes, SIZE_MAX) ||
         !qa_source_save_bool(io, &value->demo) || !qa_source_save_bool(io, &value->override_extended_temps) ||
         !qa_source_save_bool(io, &value->extended_temps) ||
+        !qa_source_save_bool(io, &value->native_api2023) ||
         !qa_source_save_bytes(io, value->private_opcodes, sizeof(value->private_opcodes))) return false;
     bool bound = value->private_read != NULL;
     if (!qa_source_save_bool(io, &bound)) return false;
@@ -43,6 +44,7 @@ static bool same_options(const qa_q2_message_options *a, const qa_q2_message_opt
     return a->config_strings == b->config_strings && a->inventory_slots == b->inventory_slots &&
         a->history_capacity == history && a->max_inflated_bytes == inflated && a->demo == b->demo &&
         a->override_extended_temps == b->override_extended_temps && a->extended_temps == b->extended_temps &&
+        a->native_api2023 == b->native_api2023 &&
         !memcmp(a->private_opcodes, b->private_opcodes, sizeof(a->private_opcodes)) &&
         (a->private_read != NULL) == (b->private_read != NULL);
 }

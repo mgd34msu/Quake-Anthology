@@ -72,6 +72,8 @@ static bool view_fields(q2_save_io *io, qa_q2_wire_view *s)
         q2_save_f32(io, &v->blend.z) && q2_save_f32(io, &v->blend.w) &&
         q2_save_f32(io, &v->fov) && q2_save_f32(io, &v->health) &&
         q2_save_f32(io, &v->armor) && q2_save_f32(io, &v->ammo) &&
+        q2_save_string(io, &v->ammo_icon) && q2_save_string(io, &v->armor_icon) &&
+        q2_save_i32(io, &v->ammo_count) &&
         q2_save_i32(io, &v->score) && q2_save_i32(io, &v->flashes) &&
         q2_save_i32(io, &v->layouts) && q2_save_i32(io, &v->hit_marker_damage) &&
         q2_save_string(io, &v->selected_item) && q2_save_string(io, &v->timer_item) &&

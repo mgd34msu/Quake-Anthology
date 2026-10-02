@@ -93,9 +93,11 @@ static bool movement(json *j, const qa_actor_registry *registry,
     case QA_MOVEMENT_Q2_CLASSIC: {
         const qa_q2_movement_state *v = &s->data.q2;
         ok = scalar(j, "type", v->type, e) &&
-            triple(j, "originEighths", v->origin_eighths[0], v->origin_eighths[1], v->origin_eighths[2], e) &&
-            triple(j, "velocityEighths", v->velocity_eighths[0], v->velocity_eighths[1], v->velocity_eighths[2], e) &&
-            scalar(j, "flags", v->flags, e) && scalar(j, "timeEightMilliseconds", v->time_eight_ms, e) &&
+            triple(j, "originEighths", qa_q2_movement_coordinate(v, false, 0), qa_q2_movement_coordinate(v, false, 1), qa_q2_movement_coordinate(v, false, 2), e) &&
+            triple(j, "velocityEighths", qa_q2_movement_coordinate(v, true, 0), qa_q2_movement_coordinate(v, true, 1), qa_q2_movement_coordinate(v, true, 2), e) &&
+            scalar(j, "flags", v->flags, e) &&
+            (v->wide_coordinates ? text(j, ",\"coordinateStorage\":\"q2pro-extended-v2\"", e) &&
+                scalar(j, "timeMilliseconds", v->wide.time_ms, e) : scalar(j, "timeEightMilliseconds", v->time_eight_ms, e)) &&
             scalar(j, "gravity", v->gravity, e) &&
             triple(j, "deltaAngleShorts", v->delta_angle_shorts[0], v->delta_angle_shorts[1], v->delta_angle_shorts[2], e);
         break;

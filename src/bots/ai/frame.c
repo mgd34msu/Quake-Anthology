@@ -87,7 +87,7 @@ bool bot_ai_input(qa_bots *b, bot_ai_state *s, int32_t time, int32_t elapsed, qa
         qa_bot_actions_input(actions, s->view.client, (float)time / 1000, &input, e);
     if (ok) ok = bot_ai_source_command_read(b, s, &command, e);
     if (ok && (input.action_flags & QA_BOT_RESPAWN) && (command.buttons & 1))
-        input.action_flags &= ~(QA_BOT_RESPAWN | QA_BOT_ATTACK);
+        input.action_flags &= ~(uint32_t)(QA_BOT_RESPAWN | QA_BOT_ATTACK);
     if (ok) ok = delta_angles(b,s,delta,e) && qa_bot_input_q3_command(&input, delta, time, &command, e) &&
         bot_ai_source_command_write(b, s, &command, e);
     if(!ok) return false;
@@ -221,7 +221,8 @@ static bool retire_pending(qa_bots *b, qa_error *e) {
         bool published=s->inuse;
         if (!bot_ai_cleanup(b, s, &local)) {if(!first.code) first=local;continue;}
         if(published && !qa_bot_source_record_clear(&b->services.memory,s->source_record,false,&local)) {
-            if(!first.code) first=local;continue;
+            if(!first.code) first=local;
+            continue;
         }
         bot_ai_source_cell_clear(b,s);
     }

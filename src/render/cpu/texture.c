@@ -62,7 +62,7 @@ static void sample_level(const qa_cpu_renderer *renderer,
   }
   double x = u * level->width - 0.5, y = v * level->height - 0.5;
   int64_t x0 = (int64_t)floor(x), y0 = (int64_t)floor(y);
-  double fx = x - x0, fy = y - y0;
+  double fx = x - (double)x0, fy = y - (double)y0;
   double taps[4][4];
   texel(image, level, target, x0, y0, taps[0]);
   texel(image, level, target, x0 + 1, y0, taps[1]);
@@ -79,11 +79,12 @@ void cpu_sample_texture(const qa_cpu_renderer *renderer,
   if (!image || !image->levels || !image->level_count || !isfinite(u) ||
       !isfinite(v))
     return;
-  bool linear = image->filter == QA_SCENE_LINEAR ||
-                image->filter == QA_SCENE_LINEAR_MIPMAP_NEAREST ||
-                image->filter == QA_SCENE_LINEAR_MIPMAP_LINEAR;
+  qa_scene_filter filter=qa_render_controls_image_filter(&renderer->controls,image);
+  bool linear = filter == QA_SCENE_LINEAR ||
+                filter == QA_SCENE_LINEAR_MIPMAP_NEAREST ||
+                filter == QA_SCENE_LINEAR_MIPMAP_LINEAR;
   bool mipmap =
-      image->filter != QA_SCENE_NEAREST && image->filter != QA_SCENE_LINEAR;
+      filter != QA_SCENE_NEAREST && filter != QA_SCENE_LINEAR;
   size_t count = 1;
   if (mipmap) {
     uint32_t width = image->levels[0].width, height = image->levels[0].height;
@@ -100,12 +101,12 @@ void cpu_sample_texture(const qa_cpu_renderer *renderer,
     return;
   }
   double lod = fmin((double)(count - 1), log2(rho));
-  bool blend = image->filter == QA_SCENE_NEAREST_MIPMAP_LINEAR ||
-               image->filter == QA_SCENE_LINEAR_MIPMAP_LINEAR;
+  bool blend = filter == QA_SCENE_NEAREST_MIPMAP_LINEAR ||
+               filter == QA_SCENE_LINEAR_MIPMAP_LINEAR;
   size_t first =
       blend ? (size_t)floor(lod) : (size_t)fmax(0, ceil(lod + 0.5) - 1);
   sample_level(renderer, image, first, u, v, linear, out);
-  double fraction = lod - first;
+  double fraction = lod - (double)first;
   if (blend && fraction > 0 && first + 1 < count) {
     double next[4];
     sample_level(renderer, image, first + 1, u, v, linear, next);

@@ -1,8 +1,8 @@
 #include "internal.h"
 #include <math.h>
 
-#define HOST_CHECKPOINT_VERSION 4u
-#define HOST_CHECKPOINT_HEADER 64u
+#define HOST_CHECKPOINT_VERSION 6u
+#define HOST_CHECKPOINT_HEADER 72u
 #define HOST_CHECKPOINT_SLOT 248u
 
 typedef struct saved_slot {
@@ -12,7 +12,7 @@ typedef struct saved_slot {
     qa_vec3 creation_origin;
     uint64_t creation_frame;
     qa_native_host_q2_origin origins[8];
-    bool creation_present;
+    bool creation_present, linked;
 } saved_slot;
 
 typedef struct saved_cvar {
@@ -122,6 +122,7 @@ static bool capture_checkpoint(qa_native_host *host, qa_buffer *out, qa_error *e
     size_t total = HOST_CHECKPOINT_HEADER;
     bool sized = add_records(&total, slot_count, HOST_CHECKPOINT_SLOT, error) &&
                  add_records(&total, retained_count, 4u, error) &&
+                 add_records(&total, host->message_reference_count, 24u, error) &&
                  add_size(&total, host->message_size, error) &&
                  add_size(&total, engine.size, error) && add_size(&total, bridge.size, error);
     for (size_t index = 0; sized && index < cvar_count; ++index) {
@@ -160,6 +161,7 @@ static bool capture_checkpoint(qa_native_host *host, qa_buffer *out, qa_error *e
     put_u64(&cursor, bridge.size);
     put_u32(&cursor, (uint32_t)host->q3_role);
     put_u32(&cursor, (uint32_t)host->q3_abi);
+    put_u64(&cursor, host->message_reference_count);
     const qa_actor_registry *actors = host->world.session
                                          ? qa_session_actors(host->world.session)
                                          : NULL;
@@ -185,13 +187,14 @@ static bool capture_checkpoint(qa_native_host *host, qa_buffer *out, qa_error *e
         const native_host_q2_lifetime *lifetime = slot < host->q2_lifetime_capacity ?
             &host->q2_lifetimes[slot] : NULL;
         bool present = lifetime && lifetime->present;
-        if (present && (!qa_actor_id_equal(lifetime->actor, binding.actor) ||
+        bool linked = lifetime && lifetime->linked;
+        if ((present || linked) && (!qa_actor_id_equal(lifetime->actor, binding.actor) ||
             !qa_vec_finite(lifetime->creation_origin) || (host->engine.source_frame &&
                 lifetime->creation_frame > host->engine.source_frame(host->engine.context)))) {
             free(data); qa_buffer_free(&engine); qa_buffer_free(&bridge);
             return native_host_fail(error, QA_ERROR_FORMAT, slot, "Native Q2 creation continuation lost its Source actor");
         }
-        put_u32(&cursor, present ? 1u : 0u);
+        put_u32(&cursor, (present ? 1u : 0u) | (linked ? 2u : 0u));
         put_u64(&cursor, present ? lifetime->creation_frame : 0u);
         const float components[3] = {present ? lifetime->creation_origin.x : 0,
             present ? lifetime->creation_origin.y : 0, present ? lifetime->creation_origin.z : 0};
@@ -233,6 +236,22 @@ static bool capture_checkpoint(qa_native_host *host, qa_buffer *out, qa_error *e
     if (host->message_size) {
         memcpy(cursor, host->message, host->message_size);
         cursor += host->message_size;
+    }
+    for (size_t i = 0; i < host->message_reference_count; ++i) {
+        const qa_native_host_message_reference *reference = host->message_references + i;
+        qa_saved_actor_id saved = {0};
+        if (!actors || reference->offset > host->message_size || host->message_size - reference->offset < 2 ||
+            (i && reference->offset < host->message_references[i - 1].offset + 2) ||
+            !qa_actors_save_reference(actors, reference->actor, &saved, error)) {
+            free(data); qa_buffer_free(&engine); qa_buffer_free(&bridge);
+            if (!error || error->code == QA_OK)
+                native_host_fail(error, QA_ERROR_FORMAT, i, "Native Q2 message lost its written Source entity reference");
+            return false;
+        }
+        put_u64(&cursor, reference->offset);
+        put_u32(&cursor, saved.slot);
+        put_u32(&cursor, 0);
+        put_u64(&cursor, saved.generation);
     }
     if (engine.size) {
         memcpy(cursor, engine.data, engine.size);
@@ -297,10 +316,12 @@ static bool restore_checkpoint(qa_native_host *host, qa_bytes state, bool cvars_
     uint64_t bridge_size = take_u64(&cursor);
     uint32_t q3_role = take_u32(&cursor);
     uint32_t q3_abi = take_u32(&cursor);
+    uint64_t reference_count = take_u64(&cursor);
     if (version != HOST_CHECKPOINT_VERSION || profile != (uint32_t)host->profile ||
         q3_role != (uint32_t)host->q3_role || q3_abi != (uint32_t)host->q3_abi ||
         owner != host->world.owner || message_size > host->message_capacity ||
-        engine_size > SIZE_MAX || bridge_size > SIZE_MAX)
+        engine_size > SIZE_MAX || bridge_size > SIZE_MAX ||
+        reference_count > message_size / 2 || reference_count > SIZE_MAX / sizeof(qa_native_host_message_reference))
         return native_host_fail(error, QA_ERROR_FORMAT, 0,
                                 "native host checkpoint identity or sizes are invalid");
     qa_native_entity_table table = {0};
@@ -323,8 +344,10 @@ static bool restore_checkpoint(qa_native_host *host, qa_bytes state, bool cvars_
         slots[index].actor.slot = take_u32(&cursor);
         take_u32(&cursor);
         slots[index].actor.generation = take_u64(&cursor);
-        uint32_t creation = take_u32(&cursor);
+        uint32_t lifetime_flags = take_u32(&cursor);
+        uint32_t creation = lifetime_flags & 1u;
         slots[index].creation_present = creation != 0;
+        slots[index].linked = (lifetime_flags & 2u) != 0;
         slots[index].creation_frame = take_u64(&cursor);
         slots[index].creation_origin = (qa_vec3){qa_load_f32le(cursor), qa_load_f32le(cursor + 4), qa_load_f32le(cursor + 8)};
         cursor += 12;
@@ -342,10 +365,10 @@ static bool restore_checkpoint(qa_native_host *host, qa_bytes state, bool cvars_
         }
         if (slots[index].kind == QA_NATIVE_SLOT_FREE ||
             slots[index].kind > QA_NATIVE_SLOT_BORROWED ||
-            creation > 1 || !history_valid || !qa_vec_finite(slots[index].creation_origin) ||
+            lifetime_flags > 3 || !history_valid || !qa_vec_finite(slots[index].creation_origin) ||
             (!creation && (slots[index].creation_frame || slots[index].creation_origin.x ||
                 slots[index].creation_origin.y || slots[index].creation_origin.z)) ||
-            (creation && (host->kind != NATIVE_HOST_Q2_GAME || !slots[index].slot)) ||
+            ((creation || slots[index].linked) && (host->kind != NATIVE_HOST_Q2_GAME || !slots[index].slot)) ||
             (index && slots[index].slot <= slots[index - 1].slot) ||
             (!cvars_only && slots[index].slot >= table.capacity)) {
             free(slots);
@@ -386,18 +409,20 @@ static bool restore_checkpoint(qa_native_host *host, qa_bytes state, bool cvars_
         return native_host_fail(error, QA_ERROR_MEMORY, 0,
                                 "allocating restored native cvars");
     }
+    qa_native_host_message_reference *references = NULL;
     for (uint32_t index = 0; index < cvar_count; ++index) {
         if (!span(cursor, end, 12))
             goto truncated;
         uint32_t name = take_u32(&cursor), value = take_u32(&cursor);
         cvars[index].flags = take_u32(&cursor);
         size_t remaining = (size_t)(end - cursor);
+        size_t name_size = (size_t)name + 1u, value_size = (size_t)value + 1u;
         if (!name || name > remaining || value > remaining - name ||
-            (size_t)name == SIZE_MAX || (size_t)value == SIZE_MAX ||
+            name_size <= name || value_size <= value ||
             memchr(cursor, 0, name) || memchr(cursor + name, 0, value))
             goto truncated;
-        cvars[index].name = malloc((size_t)name + 1u);
-        cvars[index].value = malloc((size_t)value + 1u);
+        cvars[index].name = malloc(name_size);
+        cvars[index].value = malloc(value_size);
         if (!cvars[index].name || !cvars[index].value) {
             free(slots);
             free(retained);
@@ -416,6 +441,8 @@ static bool restore_checkpoint(qa_native_host *host, qa_bytes state, bool cvars_
     if (message_size > remaining)
         goto truncated;
     remaining -= (size_t)message_size;
+    if (reference_count > remaining / 24u) goto truncated;
+    remaining -= (size_t)reference_count * 24u;
     if (engine_size > remaining)
         goto truncated;
     remaining -= (size_t)engine_size;
@@ -423,6 +450,31 @@ static bool restore_checkpoint(qa_native_host *host, qa_bytes state, bool cvars_
         goto truncated;
     qa_bytes message = {cursor, (size_t)message_size};
     cursor += message.size;
+    if (!cvars_only && reference_count) {
+        references = calloc((size_t)reference_count, sizeof(*references));
+        if (!references) {
+            free(slots); free(retained); free_saved_cvars(cvars, cvar_count);
+            return native_host_fail(error, QA_ERROR_MEMORY, 0, "Restoring written native Q2 message entity references");
+        }
+    }
+    const qa_actor_registry *actors = host->world.session ? qa_session_actors(host->world.session) : NULL;
+    uint64_t previous_offset = 0;
+    for (size_t i = 0; i < (size_t)reference_count; ++i) {
+        uint64_t offset = take_u64(&cursor);
+        qa_saved_actor_id saved = {.slot = take_u32(&cursor)};
+        uint32_t reserved = take_u32(&cursor);
+        saved.generation = take_u64(&cursor);
+        if (reserved || offset > message_size || message_size - offset < 2 ||
+            (i && offset < previous_offset + 2) || !saved.generation) goto truncated;
+        previous_offset = offset;
+        if (!cvars_only) {
+            references[i].offset = (size_t)offset;
+            if (!actors || !qa_actors_reference_saved(actors, saved, true, &references[i].actor, error)) {
+                free(slots); free(retained); free(references); free_saved_cvars(cvars, cvar_count);
+                return false;
+            }
+        }
+    }
     qa_bytes engine = {cursor, (size_t)engine_size};
     cursor += engine.size;
     qa_bytes bridge = {cursor, (size_t)bridge_size};
@@ -436,9 +488,6 @@ static bool restore_checkpoint(qa_native_host *host, qa_bytes state, bool cvars_
         return ok;
     }
     bool ok = true;
-    const qa_actor_registry *actors = host->world.session
-                                         ? qa_session_actors(host->world.session)
-                                         : NULL;
     if (slot_count && !actors)
         ok = native_host_fail(error, QA_ERROR_ARGUMENT, 0,
                               "native slot restore requires the shared actor registry");
@@ -475,14 +524,15 @@ static bool restore_checkpoint(qa_native_host *host, qa_bytes state, bool cvars_
         if (!values) ok = native_host_fail(error, QA_ERROR_MEMORY, 0, "Restoring native Q2 Source creation metadata");
         for (uint32_t index = 0; ok && index < slot_count; ++index) {
             const saved_slot *saved = &slots[index];
-            if (!saved->creation_present) continue;
+            if (!saved->creation_present && !saved->linked) continue;
             const qa_actor_record *record = qa_actors_resolve_saved(actors, saved->actor);
             if (!record || values[saved->slot].present) {
                 ok = native_host_fail(error, QA_ERROR_FORMAT, saved->slot, "Native Q2 creation continuation aliases its Source slot");
                 break;
             }
             values[saved->slot] = (native_host_q2_lifetime){.actor = record->id,
-                .creation_origin = saved->creation_origin, .creation_frame = saved->creation_frame, .present = true};
+                .creation_origin = saved->creation_origin, .creation_frame = saved->creation_frame,
+                .present = saved->creation_present, .linked = saved->linked};
             memcpy(values[saved->slot].origins, saved->origins, sizeof(saved->origins));
         }
         if (ok) {
@@ -493,6 +543,9 @@ static bool restore_checkpoint(qa_native_host *host, qa_bytes state, bool cvars_
     if (ok) {
         memcpy(host->message, message.data, message.size);
         host->message_size = message.size;
+        free(host->message_references);
+        host->message_references = references; references = NULL;
+        host->message_reference_count = host->message_reference_capacity = (size_t)reference_count;
         host->message_failed = false;
     }
     if (ok && engine.size) {
@@ -523,12 +576,14 @@ static bool restore_checkpoint(qa_native_host *host, qa_bytes state, bool cvars_
     host->restoring = false;
     free(slots);
     free(retained);
+    free(references);
     free_saved_cvars(cvars, cvar_count);
     return ok;
 
 truncated:
     free(slots);
     free(retained);
+    free(references);
     free_saved_cvars(cvars, cvar_count);
     return native_host_fail(error, QA_ERROR_FORMAT, (size_t)(cursor - state.data),
                             "native host checkpoint payload is truncated");

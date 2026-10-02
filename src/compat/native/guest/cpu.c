@@ -312,7 +312,7 @@ static bool run(qa_native_guest *guest, uint64_t start, uint64_t stop,
     if (guest->options.backend != QA_NATIVE_GUEST_EMULATED)
         return guest_fail(error, QA_ERROR_UNSUPPORTED, start,
             "exact instruction budgets require the qualified emulated execution backend");
-    if (!budget || !stop || (guest->run && !guest->callback_depth && !guest->publication_depth) ||
+    if (!budget || (!stop && !syscall) || (guest->run && !guest->callback_depth && !guest->publication_depth) ||
         (guest->options.image.target.pointer_bytes == 4 && stop > UINT32_MAX) ||
         !guest_range(guest, start, 1, QA_NATIVE_GUEST_EXECUTE, error))
         return guest_fail(error, QA_ERROR_ARGUMENT, start, "native guest execution requires a genuine executable entry and bounded continuation");

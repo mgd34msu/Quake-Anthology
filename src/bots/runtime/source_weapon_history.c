@@ -103,7 +103,7 @@ bool bot_weapon_pointer_capture(qa_bot_runtime *runtime,bot_weapon_pointers *poi
     qa_bot_weapons *config,bot_fuzzy_history *fuzzy,
     bot_weapon_pointer_history **out,qa_error *error) {
     qa_bot_library *library=runtime?runtime->library:NULL;
-    if(!library || !pointers || !states || !count || count>SIZE_MAX/sizeof(*states) || !fuzzy || !out || *out) {
+    if(!library || !pointers || !states || !count || SIZE_MAX/count<sizeof(*states) || !fuzzy || !out || *out) {
         qa_error_set(error,QA_ERROR_ARGUMENT,0,"Weapon pointer capture requires actual owners and empty output");return false;
     }
     bot_weapon_pointer_history *image=calloc(1,sizeof(*image));

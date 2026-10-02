@@ -38,7 +38,7 @@ static void spread(frontend_fx_q2_particle *value, qa_builtin_random *random,
 void frontend_fx_q2_impact_particles(frontend_fx_particles *state, qa_builtin_random *random,
     qa_vec3 origin, qa_vec3 direction, uint32_t color, int32_t count, double seconds, frontend_fx_q2_impact kind)
 {
-    for (int32_t i = 0; i < count; ++i) {
+    for (int32_t i = 0; i < count && state->count < FRONTEND_FX_PARTICLE_CAPACITY; ++i) {
         frontend_fx_q2_particle value = particle(seconds);
         value.color = color + ((kind == FRONTEND_FX_Q2_FIXED || kind == FRONTEND_FX_Q2_UP) ? 0 : draw(random) & 7);
         uint32_t mask = kind == FRONTEND_FX_Q2_NORMAL ? 31 : kind == FRONTEND_FX_Q2_BLASTER ? 15 : 7;
@@ -58,7 +58,7 @@ void frontend_fx_q2_impact_particles(frontend_fx_particles *state, qa_builtin_ra
 void frontend_fx_q2_explosion(frontend_fx_particles *state, qa_builtin_random *random,
     qa_vec3 origin, double seconds, bool bfg)
 {
-    for (unsigned i = 0; i < 256; ++i) {
+    for (unsigned i = 0; i < 256 && state->count < FRONTEND_FX_PARTICLE_CAPACITY; ++i) {
         frontend_fx_q2_particle value = particle(seconds);
         value.color = (bfg ? 0xd0u : 0xe0u) + (draw(random) & 7);
         value.origin.x = origin.x + ((float)(draw(random) % 32) - 16);
@@ -157,7 +157,7 @@ void frontend_fx_q2_respawn_particles(frontend_fx_particles *state, qa_builtin_r
 {
     bool logout = kind != FRONTEND_FX_Q2_ITEM;
     uint32_t base = kind == FRONTEND_FX_Q2_LOGIN ? 0xd0 : kind == FRONTEND_FX_Q2_LOGOUT ? 0x40 : kind == FRONTEND_FX_Q2_RESPAWN ? 0xe0 : 0xd4;
-    for (unsigned i = 0; i < (logout ? 500u : 64u); ++i) {
+    for (unsigned i = 0; i < (logout ? 500u : 64u) && state->count < FRONTEND_FX_PARTICLE_CAPACITY; ++i) {
         frontend_fx_q2_particle value = particle(seconds); value.color = base + (draw(random) & (logout ? 7u : 3u));
         if (logout) {
             value.origin.x = (float)(origin.x - 16 + unit(random) * 32);
@@ -172,6 +172,7 @@ void frontend_fx_q2_respawn_particles(frontend_fx_particles *state, qa_builtin_r
 void frontend_fx_q2_teleport(frontend_fx_particles *state, qa_builtin_random *random, qa_vec3 origin, double seconds)
 {
     for (int i = -16; i <= 16; i += 4) for (int j = -16; j <= 16; j += 4) for (int k = -16; k <= 32; k += 4) {
+        if (state->count == FRONTEND_FX_PARTICLE_CAPACITY) return;
         frontend_fx_q2_particle value = particle(seconds); value.color = 7 + (draw(random) & 7);
         value.alpha_velocity = (float)(-1 / (.3 + (draw(random) & 7) * .02));
         value.origin.x = origin.x + ((float)i + (float)(draw(random) & 3));
@@ -250,13 +251,13 @@ void frontend_fx_q2_rail(frontend_fx_particles *state, qa_builtin_random *random
 {
     qa_vec3 delta = qa_vec_sub(end, start), direction = qa_vec_normalize(delta), right, up;
     double length = qa_vec_length(delta); basis(direction, &right, &up);
-    for (double i = 0; i < length; ++i) {
+    for (double i = 0; i < length && state->count < FRONTEND_FX_PARTICLE_CAPACITY; ++i) {
         qa_vec3 radial = qa_vec_add(qa_vec_scale(right, (float)cos(i * .1)), qa_vec_scale(up, (float)sin(i * .1)));
         frontend_fx_q2_particle value = particle(seconds); value.alpha_velocity = (float)(-1 / (1 + unit(random) * .2));
         value.color = 0x74 + (draw(random) & 7); value.origin = qa_vec_add(qa_vec_add(start, qa_vec_scale(direction, (float)i)), qa_vec_scale(radial, 3));
         value.velocity = qa_vec_scale(radial, 6); if (!append(state, value)) return;
     }
-    for (double i = 0; i < length; i += .75) {
+    for (double i = 0; i < length && state->count < FRONTEND_FX_PARTICLE_CAPACITY; i += .75) {
         frontend_fx_q2_particle value = particle(seconds); value.alpha_velocity = (float)(-1 / (.6 + unit(random) * .2));
         value.color = draw(random) & 15; spread(&value, random, qa_vec_add(start, qa_vec_scale(direction, (float)i)), 3, 3);
         if (!append(state, value)) return;
@@ -267,7 +268,7 @@ void frontend_fx_q2_bubbles(frontend_fx_particles *state, qa_builtin_random *ran
     qa_vec3 start, qa_vec3 end, double seconds)
 {
     qa_vec3 delta = qa_vec_sub(end, start), direction = qa_vec_normalize(delta); double length = qa_vec_length(delta);
-    for (double i = 0; i < length; i += 32) {
+    for (double i = 0; i < length && state->count < FRONTEND_FX_PARTICLE_CAPACITY; i += 32) {
         frontend_fx_q2_particle value = particle(seconds); value.alpha_velocity = (float)(-1 / (1 + unit(random) * .2));
         value.color = 4 + (draw(random) & 7); spread(&value, random, qa_vec_add(start, qa_vec_scale(direction, (float)i)), 2, 5);
         value.velocity.z += 6; if (!append(state, value)) return;

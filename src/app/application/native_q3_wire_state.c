@@ -751,7 +751,7 @@ bool application_native_q3_wire_snapshot(application_provider *provider, uint32_
     if (!value || !value->valid || !client->begun || !client->gamestate ||
         wire->round_pending || value->message_number <= client->snapshot_sequence ||
         value->server_command_number != client->reliable.sequence ||
-        value->player.clientNum < 0 || value->player.clientNum >= QA_Q3_SOURCE_CLIENTS ||
+        value->player.clientNum < 0 || (uint32_t)value->player.clientNum >= QA_Q3_SOURCE_CLIENTS ||
         value->entity_count > 256 ||
         (value->entity_count && !value->entities) || value->area_bytes > sizeof(value->area_mask) ||
         value->flags != wire->snapshot_bit)
@@ -1444,9 +1444,11 @@ bool application_native_q3_wire_client_bind(application_provider *provider,
     application_native_q3_wire_client_lease *lease = client_lease_create(wire, receiver,
         seat, slot, arguments, options->role == QA_QVM_CGAME, error);
     if (!lease) return false;
-    options->client = (qa_q3_host_client_services){lease, leased_gamestate,
-        leased_current_snapshot, leased_snapshot, leased_server_command,
-        leased_current_command, leased_user_command, leased_command_values, leased_source_actor};
+    options->client = (qa_q3_host_client_services){.context = lease, .gamestate = leased_gamestate,
+        .current_snapshot = leased_current_snapshot, .snapshot = leased_snapshot,
+        .server_command = leased_server_command, .current_command = leased_current_command,
+        .user_command = leased_user_command, .command_values = leased_command_values,
+        .source_actor = leased_source_actor};
     *out = lease;
     return true;
 }
@@ -1477,8 +1479,9 @@ bool application_native_q3_wire_client_arguments(application_native_q3_wire_clie
     if (!lease || !lease->wire || !lease->arguments || !out)
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q3 client command view has no retained role owner");
     qa_command_tokens *args = lease->arguments;
-    *out = (qa_native_host_command_view){args->count, (const char *const *)args->values,
-                                        args->args_text ? args->args_text : ""};
+    *out = (qa_native_host_command_view){.count = args->count,
+        .arguments = (const char *const *)args->values,
+        .tail = args->args_text ? args->args_text : ""};
     return true;
 }
 
@@ -1783,7 +1786,8 @@ static bool reader_fields(qa_source_save_io *io,const qa_native_q3_wire_basis *b
     qa_native_q3_wire_reader *continuation,const native_q3_wire_client *client)
 {
     uint8_t magic[4]={'Q','3','W','R'}; uint32_t schema=1,product=basis->product;
-    qa_actor_owner source=basis->source_owner,receiver=basis->receiver;
+    qa_actor_owner source=basis->source_owner;
+    uint64_t receiver=basis->receiver;
     uint32_t seat=basis->seat,slot=basis->physical_client;
     uint64_t publication=basis->publication_generation,map=basis->map_revision;
     qa_actor_id actor=basis->actor;

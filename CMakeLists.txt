@@ -97,7 +97,9 @@ add_library(qa_content STATIC
     src/formats/model/lod.c
     src/formats/model/transform.c
     src/formats/image/q3_color.c
-    src/formats/image/q3_upload.c)
+    src/formats/image/q3_upload.c    src/content/map_sidecars.c
+    src/content/map_sidecars_save.c
+)
 target_link_libraries(qa_content PUBLIC qa_core PRIVATE
     ZLIB::ZLIB PNG::PNG JPEG::JPEG ${QA_GIF_LIBRARY})
 
@@ -687,6 +689,7 @@ add_library(qa_bots STATIC
     src/bots/chat/source_initial_save.c
     src/bots/chat/source_state.c
     src/bots/chat/source_history.c    src/bots/chat/source_packed.c
+    src/bots/chat/source_graph.c
 )
 target_link_libraries(qa_bots PUBLIC qa_builtin qa_navigation qa_script qa_content qa_persistence)
 
@@ -990,6 +993,10 @@ add_library(qa_network STATIC
     src/network/runtime/q1_client.c
     src/network/unified/channel_save.c    src/network/runtime/q1_client_save.c
     src/network/unified/session_continuation.c
+    src/network/q2/kex_discovery_handoff.c
+    src/network/runtime/local.c
+    src/network/q2/unicast.c
+    src/network/unified/session_close.c
 )
 target_link_libraries(qa_network PUBLIC qa_world qa_movement qa_content qa_http PRIVATE ZLIB::ZLIB)
 if(WIN32)
@@ -1362,6 +1369,26 @@ add_library(qa_application STATIC
     src/app/application/unified_components.c
     src/app/application/unified_output_capture.c
     src/app/application/unified_q2_events.c
+    src/app/application/guest_q3_component_client_adapter.c
+    src/app/application/guest_q3_components_command.c
+    src/app/application/guest_q3_component_actors.c
+    src/app/application/guest_q3_mod_actors.c
+    src/app/application/guest_q3_mod_actors_callbacks.c
+    src/app/application/guest_q3_mod_actors_damage.c
+    src/app/application/guest_q3_mod_actors_profile.c
+    src/app/application/guest_q3_mod_actors_state.c
+    src/app/application/guest_q3_weapon_models_profile.c
+    src/app/application/map_sidecars.c
+    src/app/application/native_q2_publication.c
+    src/app/application/client_events.c
+    src/app/application/guest_q3_components_save.c
+    src/app/application/guest_q3_mod_actors_save.c
+    src/app/application/guest_q3_weapon_models.c
+    src/app/application/guest_q3_weapon_models_save.c
+    src/app/application/native_q2_callbacks.c
+    src/app/application/native_q2_wire_engine.c
+    src/app/application/network_q2_resources.c
+    src/app/application/unified_q2_native_events.c
 )
 target_link_libraries(qa_application PUBLIC qa_persistence qa_configuration qa_game_q1 qa_game_q2 qa_game_q3 qa_campaign qa_modes qa_player_services qa_qc_host qa_q3_host qa_text qa_settings)
 if(WIN32)
@@ -1686,6 +1713,24 @@ add_library(qa_frontend STATIC
     src/app/frontend/remote_unified_render.c
     src/app/frontend/root_resources.c
     src/app/frontend/source_prompt.c
+    src/app/frontend/remote_q1_camera.c
+    src/app/frontend/native_resource_inventory.c
+    src/app/frontend/remote_q1_skins.c
+    src/app/frontend/remote_q2_effects.c
+    src/app/frontend/remote_q2_effects_bridge.c
+    src/app/frontend/remote_q2_effects_policy.c
+    src/app/frontend/remote_unified_events.c
+    src/app/frontend/network_q1_client.c
+    src/app/frontend/network_q1_skin_commands.c
+    src/app/frontend/network_unified.c
+    src/app/frontend/remote_q2_effects_entities.c
+    src/app/frontend/remote_q2_effects_save.c
+    src/app/frontend/remote_unified_presentation.c
+    src/app/frontend/remote_unified_q1.c
+    src/app/frontend/remote_unified_q2.c
+    src/app/frontend/remote_unified_q3.c
+    src/app/frontend/renderer_materials.c
+    src/app/frontend/source_acoustics.c
 )
 target_link_libraries(qa_frontend PUBLIC qa_application qa_ui qa_tools qa_display qa_render_cpu qa_render_gl qa_render_controls qa_input qa_settings qa_audio qa_q3_presentation qa_q3_native_presentation qa_network PRIVATE SDL2::SDL2 ICU::i18n)
 get_filename_component(QA_NATIVE_RUNTIME_FULL_ROOT "${QA_NATIVE_RUNTIME_INSTALL_ROOT}"

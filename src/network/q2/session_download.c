@@ -57,14 +57,32 @@ bool q2_download_begin(q2_session *session, const char *name, const char *offset
     free(normalized); if (!allowed) return refused(session, error);
     q2_download_close(server);
     qa_resource *resource = NULL; qa_vfs_acquisition opening = {0};
-    if (!qa_vfs_acquire_receipt(source.content, name, &resource, &opening, &admission_error)) return refused(session, error);
+    const qa_vfs *view = source.content; bool present = false;
+    if (source.resource && !source.resource(source.resource_context, name, &view, &resource,
+        &opening, &present, error)) {
+        qa_resource_release(resource); qa_vfs_acquisition_dispose(&opening); return false;
+    }
+    if (present) {
+        if (!view || !resource || opening.resource_id != qa_resource_id(resource) ||
+            !qa_vfs_acquisition_retained(view, &opening, error)) {
+            qa_resource_release(resource); qa_vfs_acquisition_dispose(&opening);
+            return q2_fail(error, QA_ERROR_ARGUMENT, "Qualified Q2 download lost its genuine Source resource opening");
+        }
+    } else {
+        if (resource || opening.path) {
+            qa_resource_release(resource); qa_vfs_acquisition_dispose(&opening);
+            return q2_fail(error, QA_ERROR_ARGUMENT, "Absent Q2 resource resolver retained an unclaimed opening");
+        }
+        view = source.content;
+        if (!qa_vfs_acquire_receipt(source.content, name, &resource, &opening, &admission_error)) return refused(session, error);
+    }
     qa_bytes bytes = qa_resource_bytes(resource); qa_sha256_digest archive; size_t ordinal;
     bool archived_map = qa_resource_archive_origin(resource, &archive, &ordinal) &&
         (prefix(name, "maps/") || prefix(opening.lookup_path, "maps/"));
     if (bytes.size > INT32_MAX || archived_map) {
         qa_resource_release(resource); qa_vfs_acquisition_dispose(&opening); return refused(session, error);
     }
-    server->download = resource; server->download_view = source.content; server->download_opening = opening;
+    server->download = resource; server->download_view = view; server->download_opening = opening;
     server->download_offset = (size_t)offset > bytes.size ? bytes.size : (size_t)offset;
     return q2_download_next(session, error);
 }

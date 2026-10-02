@@ -153,7 +153,8 @@ static bool flush(rcon_output *output, qa_error *error) {
     }
     if (ok) ok = output->admin->options.hooks.send(output->admin->options.hooks.context,
         &output->address, (qa_bytes){bytes, qa_net_writer_size(&writer)}, error);
-    if (ok) output->size = 0; return ok;
+    if (ok) output->size = 0;
+    return ok;
 }
 static bool write_output(void *context, const char *text, qa_error *error) {
     rcon_output *output = context; if (!text) return fail(error, "Missing administration output");

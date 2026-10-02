@@ -43,7 +43,7 @@ static bool scalar_read(application_q3_component_records *r,qa_actor_id actor,co
     return q3records_fail(e,QA_ERROR_FORMAT,"Actual shared team has no component source alias");
 }
 static qa_vec3 body_vector(const qa_body_state *body,component_field_kind kind)
-{ return kind==COMPONENT_ORIGIN?body->origin:kind==COMPONENT_VELOCITY?body->velocity:kind==COMPONENT_ANGLES?body->angles:kind==COMPONENT_MIN?body->bounds.min:body->bounds.max; }
+{ return kind==COMPONENT_ORIGIN?body->origin:kind==COMPONENT_VELOCITY?body->velocity:kind==COMPONENT_ANGLES?body->angles:kind==COMPONENT_MIN?body->bounds.mins:body->bounds.maxs; }
 bool application_q3_component_records_refresh(application_q3_component_records *r,qa_error *e)
 {
     if(!r||!r->options.storage_current(r->options.context,e)) return false;
@@ -123,8 +123,8 @@ static bool commit(application_q3_component_records *r,const component_observati
     if(f->kind==COMPONENT_ORIGIN) body.origin=v;
     else if(f->kind==COMPONENT_VELOCITY) body.velocity=v;
     else if(f->kind==COMPONENT_ANGLES) body.angles=v;
-    else if(f->kind==COMPONENT_MIN) body.bounds.min=v;
-    else body.bounds.max=v;
+    else if(f->kind==COMPONENT_MIN) body.bounds.mins=v;
+    else body.bounds.maxs=v;
     return qa_world_body_write(r->options.world,row->actor,&body,e);
 }
 bool application_q3_component_records_prepare(void *context,qa_error *e)

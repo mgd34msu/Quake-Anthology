@@ -62,6 +62,7 @@ qa_material_library *qa_material_library_create_detached(qa_scene_resources *res
     }
     library->resources = resources;
     library->references = 1;
+    if (!qa_scene_resources_retain(resources, error)) { free(library); return NULL; }
     return library;
 }
 
@@ -312,12 +313,13 @@ static void vertex_lighting_collapse(qa_material *material, float sort, int32_t 
     truncate_stages(material, 1);
 }
 
-void qa_material_finish(qa_material *material, int32_t lightmap_index)
+void qa_material_finish(qa_material *material, int32_t lightmap_index, bool source_profile)
 {
     material->lightmap_index = lightmap_index;
     float sort = material->sort;
     if (material->sky) sort = 2;
     if (material->polygon_offset && sort == 0) sort = 4;
+    bool has_lightmap = false;
     for (size_t i = 0; i < material->stage_count; ++i) {
         qa_material_stage *stage = &material->stages[i];
         stage->state.cull = material->cull;
@@ -343,6 +345,7 @@ void qa_material_finish(qa_material *material, int32_t lightmap_index)
             break;
         }
         if (stage->tcgen == QA_TC_BAD) stage->tcgen = stage->is_lightmap ? QA_TC_LIGHTMAP : QA_TC_TEXTURE;
+        if (stage->is_lightmap) has_lightmap = true;
         if (blended(stage) && blended(&material->stages[0])) {
             stage->fog_adjustment = fog_adjustment(stage);
             if (sort == 0) sort = stage->state.depth_write ? 5 : 9;
@@ -351,7 +354,11 @@ void qa_material_finish(qa_material *material, int32_t lightmap_index)
     if (sort == 0) sort = 3;
     if (material->stage_count > 1 && ((material->profile.vertex_lighting && !material->profile.ui_fullscreen) ||
                                      material->profile.permedia2))
+    {
         vertex_lighting_collapse(material, sort, lightmap_index);
+        has_lightmap = false;
+    }
+    if (source_profile && lightmap_index >= 0 && !has_lightmap) material->lightmap_index = -1;
     if (!material->stage_count) sort = 7;
     material->sort = sort;
 }
@@ -430,6 +437,7 @@ static bool publish(qa_material_library *library, qa_material_record *record, qa
         library->capacity = capacity;
     }
     qa_material *material = &record->material;
+    material->library = library;
     material->registration = (uint32_t)library->count;
     material->identity = qa_scene_identity();
     material->revision = 1;
@@ -464,6 +472,128 @@ bool qa_material_sample_image(qa_material_library *library, const qa_scene_image
                                bool mipmap, qa_scene_wrap wrap, qa_scene_image **out, qa_error *error)
 {
     return qa_scene_image_sample(library->resources, source, mipmap, wrap, out, error);
+}
+
+typedef bool (*material_image_mapper)(void *, const qa_scene_image *, qa_scene_image **, qa_error *);
+static bool material_copy_images(const qa_material *source, qa_material *out,
+    material_image_mapper map, void *context, qa_error *error)
+{
+    *out = *source;
+    out->name = NULL; out->sky_outer = NULL; out->sky_inner = NULL;
+    out->stages = NULL; out->stage_count = 0; out->deforms = NULL; out->deform_count = 0;
+    memset(out->sky_outer_images, 0, sizeof(out->sky_outer_images));
+    memset(out->sky_inner_images, 0, sizeof(out->sky_inner_images));
+    out->name = qa_material_string(source->name, error);
+    if (!out->name) goto failed;
+    if (source->sky_outer && !(out->sky_outer = qa_material_string(source->sky_outer, error))) goto failed;
+    if (source->sky_inner && !(out->sky_inner = qa_material_string(source->sky_inner, error))) goto failed;
+    for (unsigned face = 0; face < 6; ++face) {
+        qa_scene_image *image = NULL;
+        if (source->sky_outer_images[face]) {
+            if (!map(context, source->sky_outer_images[face], &image, error)) goto failed;
+            out->sky_outer_images[face] = image;
+        }
+        image = NULL;
+        if (source->sky_inner_images[face]) {
+            if (!map(context, source->sky_inner_images[face], &image, error)) goto failed;
+            out->sky_inner_images[face] = image;
+        }
+    }
+    if (source->deform_count) {
+        out->deforms = malloc(source->deform_count * sizeof(*out->deforms));
+        if (!out->deforms) goto memory;
+        memcpy(out->deforms, source->deforms, source->deform_count * sizeof(*out->deforms));
+        out->deform_count = source->deform_count;
+    }
+    out->stages = source->stage_count ? calloc(source->stage_count, sizeof(*out->stages)) : NULL;
+    if (source->stage_count && !out->stages) goto memory;
+    for (size_t i = 0; i < source->stage_count; ++i) {
+        const qa_material_stage *original = source->stages + i;
+        qa_material_stage *stage = out->stages + i;
+        *stage = *original;
+        stage->images = NULL; stage->image_names = NULL; stage->image_count = 0;
+        stage->tcmods = NULL; stage->tcmod_count = 0; stage->video_name = NULL;
+        ++out->stage_count;
+        if (original->video_name && !(stage->video_name = qa_material_string(original->video_name, error))) goto failed;
+        if (original->tcmod_count) {
+            stage->tcmods = malloc(original->tcmod_count * sizeof(*stage->tcmods));
+            if (!stage->tcmods) goto memory;
+            memcpy(stage->tcmods, original->tcmods, original->tcmod_count * sizeof(*stage->tcmods));
+            stage->tcmod_count = original->tcmod_count;
+        }
+        for (size_t frame = 0; frame < original->image_count; ++frame) {
+            qa_scene_image *image = NULL;
+            if (!map(context, original->images[frame], &image, error)) goto failed;
+            if (!qa_material_stage_image(stage, frame, original->image_names[frame], image, error)) {
+                qa_scene_image_release(image); goto failed;
+            }
+        }
+    }
+    return true;
+memory:
+    qa_error_set(error, QA_ERROR_MEMORY, 0, "Cloning actual compiled material inputs");
+failed:
+    qa_material_clear(out); return false;
+}
+typedef struct source_variant_mapper {
+    qa_scene_resources *resources;
+    qa_q3_image_upload_options upload;
+} source_variant_mapper;
+static bool source_variant_image(void *opaque, const qa_scene_image *source,
+    qa_scene_image **out, qa_error *error)
+{
+    source_variant_mapper *mapper = opaque;
+    qa_q3_image_upload_options upload = mapper->upload;
+    qa_scene_image_request request;
+    if (qa_scene_image_request_read(mapper->resources, source, &request))
+        upload.mipmap = upload.mipmap && request.options.mipmap;
+    return qa_scene_image_source_q3_variant(mapper->resources, source, &upload, out, error);
+}
+static bool policy_variant_image(void *opaque, const qa_scene_image *source,
+    qa_scene_image **out, qa_error *error)
+{ return qa_scene_resource_policy_image(opaque, source, out, error); }
+
+bool qa_material_source_q3_variant(qa_material_library *library, const qa_material *source,
+    const qa_q3_image_upload_options *upload, const qa_material **out, qa_error *error)
+{
+    if (!out || *out || !source || source->library != library ||
+        !qa_q3_image_upload_options_valid(upload, error) || !mutation_begin(library, error)) return false;
+    qa_material_record *parent = NULL;
+    for (size_t i = 0; i < library->count; ++i)
+        if (&library->ordered[i]->material == source) parent = library->ordered[i];
+    if (!parent) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Recipient material lost its actual registered parent");
+        return mutation_end(library, false);
+    }
+    if (parent->options.source_q3) { *out = source; return mutation_end(library, true); }
+    for (size_t i = 0; i < library->count; ++i) {
+        qa_material_record *record = library->ordered[i];
+        if (record->source_variant_parent == parent && record->source_variant_revision == source->revision &&
+            qa_q3_image_upload_options_equal(&record->source_variant_upload, upload)) {
+            *out = &record->material; return mutation_end(library, true);
+        }
+    }
+    qa_material_record *record = calloc(1, sizeof(*record));
+    if (!record) {
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "Registering actual Source recipient material");
+        return mutation_end(library, false);
+    }
+    record->kind = parent->kind; record->world_identity = parent->world_identity;
+    record->lightmap_index = parent->lightmap_index;
+    record->source_variant_parent = parent; record->source_variant_revision = source->revision;
+    record->source_variant_upload = *upload;
+    source_variant_mapper mapper = {.resources = library->resources, .upload = *upload};
+    if (source->no_mipmaps) mapper.upload.mipmap = false;
+    if (source->no_picmip) mapper.upload.allow_picmip = false;
+    bool ok = copy_options(record, &parent->options, error) &&
+        material_copy_images(source, &record->material, source_variant_image, &mapper, error);
+    record->material.order_entry = NULL;
+    record->material.remapped = NULL;
+    if (ok) ok = qa_material_order_reserve(library->order, &record->material, &record->material.order_entry, error) &&
+        publish(library, record, error);
+    if (!ok) record_free(record);
+    else *out = &record->material;
+    return mutation_end(library, ok);
 }
 
 static bool implicit(qa_material_library *library, qa_material_record *record,
@@ -551,7 +681,7 @@ static bool implicit(qa_material_library *library, qa_material_record *record,
     if (material->family != QA_SCENE_Q3 && kind == QA_MATERIAL_DYNAMIC)
         base->rgb = QA_COLOR_EXACT_VERTEX;
     if (kind == QA_MATERIAL_STENCIL_SHADOW) material->sort = 14;
-    qa_material_finish(material, kind == QA_MATERIAL_PICTURE ? -4 : record->lightmap_index);
+    qa_material_finish(material, kind == QA_MATERIAL_PICTURE ? -4 : record->lightmap_index, library->source_profile);
     return true;
 }
 
@@ -702,12 +832,22 @@ bool qa_scene_material_image_policy_prepare_profile(qa_material_library *library
             const qa_material_stage *stage = &current->material.stages[current->material.stage_count - 1];
             if (stage->image_count && stage->image_names && stage->image_names[0]) request = stage->image_names[0];
         }
-        bool ok = script && !generated && current->kind != QA_MATERIAL_DEFAULT &&
+        bool ok;
+        if (current->source_variant_parent) {
+            qa_material_clear(&pending.material);
+            ok = material_copy_images(&current->material, &pending.material, policy_variant_image, resources, error);
+        } else ok = script && !generated && current->kind != QA_MATERIAL_DEFAULT &&
             current->kind != QA_MATERIAL_STENCIL_SHADOW
             ? qa_material_script_register(&staging, &pending.material, (qa_bytes){script->text, script->size},
                 &current->options, current->lightmap_index, current->base_name, prepared->base, error)
             : implicit(&staging, &pending, request, error);
         if (!ok) { qa_material_clear(&pending.material); material_policy_dispose(ticket); return false; }
+        if (library->source_profile && pending.material.lightmap_index >= 0) {
+            bool lightmap = false;
+            for (size_t stage = 0; stage < pending.material.stage_count; ++stage)
+                if (pending.material.stages[stage].is_lightmap) lightmap = true;
+            if (!lightmap) pending.material.lightmap_index = -1;
+        }
         pending.material.identity = current->material.identity;
         pending.material.revision = current->material.revision + 1;
         pending.material.registration = current->material.registration;
@@ -718,17 +858,19 @@ bool qa_scene_material_image_policy_prepare_profile(qa_material_library *library
         pending.material.remap_time_offset = current->material.remap_time_offset;
         pending.material.source_time_offset = current->material.source_time_offset;
         pending.material.source_remap = current->material.source_remap;
+        pending.material.library = library;
         prepared->material = pending.material;
     }
     for (size_t i = 0; i < ticket->count; ++i) {
         material_policy_record *prepared = &ticket->records[i];
+        if (prepared->record->source_variant_parent) continue;
         if (prepared->material.source_remap) continue;
         for (const qa_material_remap_record *remap = library->remaps; remap; remap = remap->next) {
             if (strcmp(remap->original, prepared->material.name)) continue;
             prepared->material.remapped = NULL;
             for (size_t j = 0; j < ticket->count; ++j) {
                 const material_policy_record *target = &ticket->records[j];
-                if (target->record->kind == prepared->record->kind &&
+                if (!target->record->source_variant_parent && target->record->kind == prepared->record->kind &&
                     target->record->world_identity == prepared->record->world_identity &&
                     target->record->lightmap_index == prepared->record->lightmap_index &&
                     !strcmp(target->material.name, remap->replacement) &&
@@ -844,7 +986,7 @@ bool qa_scene_material_image_policy_world(const qa_scene_material_image_policy *
     for (size_t i = 0; i < ticket->count; ++i) {
         const material_policy_record *prepared = ticket->records + i;
         const qa_material_record *record = prepared->record;
-        if (record->kind == kind && record->world_identity == world && record->lightmap_index == lightmap &&
+        if (!record->source_variant_parent && record->kind == kind && record->world_identity == world && record->lightmap_index == lightmap &&
             !record->base_image && !strcmp(record->material.name, key) && same_options(&record->options, &options)) {
             *current = &record->material; *destination = &prepared->material;
             free(key); return true;
@@ -880,6 +1022,7 @@ void qa_scene_material_image_policy_publish(qa_scene_material_image_policy *tick
         while (record) {
             qa_material_record *next = record->next;
             record->material.registration += (uint32_t)ticket->count;
+            record->material.library = library;
             record->next = library->records[bucket]; library->records[bucket] = record;
             record = next;
         }
@@ -944,6 +1087,21 @@ static bool register_material(qa_material_library *library, const char *name,
         return false;
     }
     options.usage = kind == QA_MATERIAL_PICTURE ? QA_IMAGE_USAGE_PICTURE : QA_IMAGE_USAGE_WALL;
+    if (library->source_profile) {
+        char *source_key = qa_material_name(name, error);
+        if (!source_key) return false;
+        unsigned source_bucket = qa_material_hash(source_key);
+        const qa_material_library *owners[] = {library, library->policy_source};
+        for (unsigned owner = 0; owner < 2; ++owner) {
+            if (!owners[owner]) continue;
+            for (const qa_material_record *cached = owners[owner]->records[source_bucket]; cached; cached = cached->next)
+                if (!cached->source_variant_parent && !strcmp(cached->material.name, source_key) &&
+                    (cached->material.default_shader || cached->material.lightmap_index == lightmap_index)) {
+                    *out = &cached->material; free(source_key); return true;
+                }
+        }
+        free(source_key);
+    }
     if (library->source_profile && kind != QA_MATERIAL_DEFAULT && kind != QA_MATERIAL_STENCIL_SHADOW &&
         !options.source_q3) {
         if (!library->source_upload) {
@@ -965,7 +1123,7 @@ static bool register_material(qa_material_library *library, const char *name,
     if (!key) return false;
     unsigned bucket = qa_material_hash(key);
     for (qa_material_record *record = library->records[bucket]; record; record = record->next) {
-        if (record->kind == kind && record->world_identity == world_identity &&
+        if (!library->source_profile && !record->source_variant_parent && record->kind == kind && record->world_identity == world_identity &&
             record->lightmap_index == lightmap_index && !strcmp(record->material.name, key) &&
             record->base_image == base_image &&
             same_options(&record->options, &options)) {
@@ -976,7 +1134,7 @@ static bool register_material(qa_material_library *library, const char *name,
     }
     if (library->policy_source) {
         for (qa_material_record *record = library->policy_source->records[bucket]; record; record = record->next)
-            if (record->kind == kind && record->world_identity == world_identity &&
+            if (!library->source_profile && !record->source_variant_parent && record->kind == kind && record->world_identity == world_identity &&
                 record->lightmap_index == lightmap_index && !strcmp(record->material.name, key) &&
                 record->base_image == base_image && same_options(&record->options, &options)) {
                 *out = &record->material; free(key); return true;
@@ -994,7 +1152,8 @@ static bool register_material(qa_material_library *library, const char *name,
         }
         ++admitting;
     }
-    if (admitting >= QA_MATERIAL_MAX_REGISTERED - library->count) {
+    if ((!library->source_profile && admitting >= QA_MATERIAL_MAX_REGISTERED - library->count) ||
+        admitting >= QA_MATERIAL_MAX_REGISTERED) {
         free(key);
         qa_error_set(error, QA_ERROR_FORMAT, library->count, "Source material registration limit reached");
         return false;
@@ -1048,6 +1207,18 @@ static bool register_material(qa_material_library *library, const char *name,
               record->base_name, record->base_image, error)
         : implicit(library, record, name, error);
     if (!compiled) { library->registration_record = previous_record; record_free(record); return false; }
+    if (library->source_profile && record->material.lightmap_index >= 0) {
+        bool lightmap = false;
+        for (size_t i = 0; i < record->material.stage_count; ++i)
+            if (record->material.stages[i].is_lightmap) lightmap = true;
+        if (!lightmap) record->material.lightmap_index = -1;
+    }
+    if (library->source_profile && library->count >= QA_MATERIAL_MAX_REGISTERED) {
+        library->registration_record = previous_record;
+        record_free(record);
+        *out = qa_material_find(library, "*default");
+        return *out != NULL;
+    }
     size_t registered_before = library->count;
     qa_material_remap_record *remap = remap_find(library, key);
     if (remap) {
@@ -1066,6 +1237,10 @@ static bool register_material(qa_material_library *library, const char *name,
     }
     library->registration_record = previous_record;
     record->admission_parent = NULL;
+    if (library->source_profile && library->count >= QA_MATERIAL_MAX_REGISTERED) {
+        record_free(record); *out = qa_material_find(library, "*default");
+        return *out != NULL;
+    }
     if (!publish(library, record, error)) {
         registration_rollback(library, registered_before);
         record_free(record); return false;
@@ -1170,6 +1345,7 @@ static bool generated_picture(qa_material_library *library, const char *name,
         qa_material *destination = &prepared[i].record->material;
         qa_material_order_entry *entry = destination->order_entry;
         qa_material_clear(destination); *destination = prepared[i].material;
+        destination->library = library;
         destination->order_entry = entry;
         qa_material_order_changed(entry);
         if (recovered == NULL || destination->registration < recovered->registration) recovered = destination;
@@ -1230,7 +1406,7 @@ const qa_material *qa_material_find(const qa_material_library *library, const ch
     if (!key) return NULL;
     const qa_material *result = NULL;
     for (qa_material_record *record = library->records[qa_material_hash(key)]; record; record = record->next)
-        if (!strcmp(record->material.name, key) && (!result || record->material.registration < result->registration))
+        if (!record->source_variant_parent && !strcmp(record->material.name, key) && (!result || record->material.registration < result->registration))
             result = &record->material;
     free(key);
     return result;
@@ -1324,6 +1500,14 @@ bool qa_material_library_set_source_profile(qa_material_library *library,
 }
 bool qa_material_library_has_source_profile(const qa_material_library *library)
 { return library && library->source_profile; }
+bool qa_material_library_source_profile_read(const qa_material_library *library,
+    qa_material_profile *out, qa_error *error)
+{
+    if (!library || !out || !library->source_profile) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Material profile requires its actual Source owner"); return false;
+    }
+    *out = library->profile; return true;
+}
 bool qa_material_library_set_source_upload(qa_material_library *library,
     qa_material_source_upload_fn producer, void *context, qa_error *error)
 {
@@ -1489,7 +1673,8 @@ static bool remap_material(qa_material_library *library, const char *original,
         if (old) { *link = old->next; free(old->original); free(old->replacement); free(old); }
         for (size_t i = 0; i < library->count; ++i) {
             qa_material *material = &library->ordered[i]->material;
-            if (!strcmp(material->name, from) && (material->remapped || material->source_remap)) {
+            if (!library->ordered[i]->source_variant_parent && !strcmp(material->name, from) &&
+                (material->remapped || material->source_remap)) {
                 material->remapped = NULL;
                 material->remap_time_offset = 0;
                 material->source_remap = false;
@@ -1501,7 +1686,7 @@ static bool remap_material(qa_material_library *library, const char *original,
     }
     size_t count = 0;
     for (qa_material_record *record = library->records[qa_material_hash(from)]; record; record = record->next)
-        if (!strcmp(record->material.name, from)) ++count;
+        if (!record->source_variant_parent && !strcmp(record->material.name, from)) ++count;
     qa_material_record **sources = count ? malloc(count * sizeof(*sources)) : NULL;
     const qa_material **targets = count ? malloc(count * sizeof(*targets)) : NULL;
     qa_material_remap_record *prepared = calloc(1, sizeof(*prepared));
@@ -1512,7 +1697,7 @@ static bool remap_material(qa_material_library *library, const char *original,
     }
     size_t at = 0;
     for (qa_material_record *record = library->records[qa_material_hash(from)]; record; record = record->next)
-        if (!strcmp(record->material.name, from)) sources[at++] = record;
+        if (!record->source_variant_parent && !strcmp(record->material.name, from)) sources[at++] = record;
     size_t registered_before = library->count;
     qa_vec3 sun_light = library->sun_light, sun_direction = library->sun_direction;
     bool had_sun = library->has_sun;
@@ -1569,7 +1754,7 @@ bool qa_material_remap(qa_material_library *library, const char *original,
 static qa_material *source_shader(qa_material_library *library, const char *key)
 {
     for (qa_material_record *record = library->records[qa_material_hash(key)]; record; record = record->next)
-        if (!strcmp(record->material.name, key)) return &record->material;
+        if (!record->source_variant_parent && !strcmp(record->material.name, key)) return &record->material;
     return NULL;
 }
 static bool source_shader_admit(qa_material_library *library, const char *request, const char *key,
@@ -1600,13 +1785,14 @@ bool qa_material_remap_source(qa_material_library *library, const char *original
             /* Admission may grow the bucket. Qualify all revisions before
              * changing any live binding or the selected target timestamp. */
             for (qa_material_record *record = library->records[qa_material_hash(from)]; record; record = record->next)
-                if (!strcmp(record->material.name, from) && record->material.revision == UINT64_MAX) ok = false;
+                if (!record->source_variant_parent && !strcmp(record->material.name, from) &&
+                    record->material.revision == UINT64_MAX) ok = false;
             if (target->revision == UINT64_MAX) ok = false;
             if (!ok) qa_error_set(error, QA_ERROR_MEMORY, 0, "Source shader revisions exhausted");
             else {
                 for (qa_material_record *record = library->records[qa_material_hash(from)]; record; record = record->next) {
                     qa_material *material = &record->material;
-                    if (strcmp(material->name, from)) continue;
+                    if (record->source_variant_parent || strcmp(material->name, from)) continue;
                     material->remapped = material != target ? target : NULL;
                     material->source_remap = true;
                     ++material->revision;
@@ -1629,7 +1815,7 @@ qa_material_library *qa_material_library_create(qa_scene_resources *resources,
     }
     qa_material_library *library = qa_material_library_create_detached(resources, error);
     if (!library) return NULL;
-    if (!qa_material_order_retain(order, error)) { free(library); return NULL; }
+    if (!qa_material_order_retain(order, error)) { qa_material_library_destroy(library); return NULL; }
     library->resources = resources;
     library->order = order;
     library->profile = (qa_material_profile){.detail_textures = true,
@@ -1663,18 +1849,36 @@ qa_material_library *qa_material_library_create(qa_scene_resources *resources,
     return library;
 }
 
+bool qa_material_library_retain(qa_material_library *library, qa_error *error)
+{
+    if (!library || !library->resources || !library->references || library->references == SIZE_MAX) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Material library retention requires its actual live owner");
+        return false;
+    }
+    ++library->references;
+    return true;
+}
+bool qa_material_registration_read(const qa_material *material, qa_material_registration_kind *out)
+{
+    const qa_material_library *library = material ? material->library : NULL;
+    if (!library || !out) return false;
+    for (size_t i = 0; i < library->count; ++i)
+        if (&library->ordered[i]->material == material) {
+            *out = library->ordered[i]->kind; return true;
+        }
+    return false;
+}
 bool qa_material_retain(const qa_material *material, qa_error *error)
 {
     qa_material_library *library = material ? material->library : NULL;
     bool found = false;
     if (library) for (size_t i = 0; i < library->count; ++i)
         if (&library->ordered[i]->material == material) { found = true; break; }
-    if (!found || !library->references || library->references == SIZE_MAX) {
+    if (!found) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Material retention requires its actual registered library row");
         return false;
     }
-    ++library->references;
-    return true;
+    return qa_material_library_retain(library, error);
 }
 void qa_material_release(const qa_material *material)
 {
@@ -1722,5 +1926,6 @@ void qa_material_library_destroy(qa_material_library *library)
     qa_scene_image_release(library->fog_image);
     qa_scene_image_release(library->dlight_image);
     qa_material_order_destroy(library->order);
+    qa_scene_resources_destroy(library->resources);
     free(library);
 }

@@ -16,7 +16,7 @@ typedef struct q3gear_binding {
     qa_actor_id actor;
     uint32_t pointer;
     qa_vec3 origin;
-    bool player, retired;
+    bool player, retired, connected, begun;
 } q3gear_binding;
 typedef struct q3gear_tether {
     qa_actor_id owner, actor;

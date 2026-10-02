@@ -29,6 +29,9 @@ static qa_material_context material_context(const qa_scene_model_input *input, b
     context.view = input->view;
     context.source_primitives = input->source_order;
     context.source_scratch = input->source_scratch;
+    context.source_entity_cell = input->source_entity_cell;
+    context.source_recipient_image = input->source_recipient_image;
+    context.source_recipient_context = input->source_recipient_context;
     context.source_depth_hack = input->family == QA_SCENE_Q3 && (input->flags & 8u) != 0;
     if (world) qa_scene_matrix_identity(&context.model);
     else context.model = qa_scene_model_matrix(&input->transform);
@@ -205,6 +208,22 @@ static bool planar_shadow(qa_scene_model *model, const qa_scene_model_input *inp
     return qa_scene_frame_draw(frame, &draw, error);
 }
 
+static bool recipient_image(const qa_scene_model *model, const qa_scene_model_input *input, const qa_scene_image **image,
+    qa_error *error)
+{
+    if (!input->source_recipient_image) return true;
+    const qa_scene_image *mapped = NULL;
+    bool mipmap = model->options.mipmap && model->source->format != QA_MODEL_SPR && model->source->format != QA_MODEL_SP2;
+    if (!*image || !input->source_recipient_image(input->source_recipient_context, *image,
+        mipmap, mipmap, &mapped, error)) return false;
+    if (!mapped) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Source model recipient lost its reached image");
+        return false;
+    }
+    *image = mapped;
+    return true;
+}
+
 bool scene_model_emit(qa_scene_model *model, const qa_scene_model_input *input,
                        const qa_scene_mesh *mesh, const scene_model_image *image,
                        bool unlit, bool world, qa_scene_frame *frame, qa_error *error) {
@@ -275,6 +294,7 @@ bool scene_model_emit(qa_scene_model *model, const qa_scene_model_input *input,
         qa_scene_matrix_multiply(qa_scene_view_matrix(&input->view), draw.model));
     draw.textures[0] = image && image->base ? qa_scene_image_at_time(image->base, input->seconds) : qa_scene_missing(model->resources);
     if (shell_image || input->shadow_only) draw.textures[0] = qa_scene_white(model->resources);
+    if (!recipient_image(model, input, &draw.textures[0], error)) return false;
     draw.texture_count = 1;
     draw.environment = QA_TEXTURE_MODULATE;
     qa_scene_state_default(&draw.state);
@@ -302,6 +322,7 @@ bool scene_model_emit(qa_scene_model *model, const qa_scene_model_input *input,
         for (size_t i = 0; i < mesh->vertex_count; ++i) vertices[i].color = (qa_scene_vec4){1, 1, 1, input->color.w};
         draw.mesh.vertices = vertices; draw.mesh.identity = 0;
         draw.textures[0] = qa_scene_image_at_time(image->fullbright, input->seconds);
+        if (!recipient_image(model, input, &draw.textures[0], error)) return false;
         draw.state.depth_write = false;
         draw.state.depth_test = transparent ? QA_DEPTH_LEQUAL : QA_DEPTH_EQUAL;
         draw.state.blend_source = QA_BLEND_SRC_ALPHA;

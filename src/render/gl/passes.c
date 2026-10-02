@@ -374,6 +374,65 @@ static void composite_state(qa_gl_renderer *renderer, uint32_t width,
     gl->PolygonMode(GL_FRONT_AND_BACK, GL_FILL);
 }
 
+typedef struct gl_composite_state {
+    GLint depth_mask,color_mask[4],polygon_mode[2],program,active,texture[3];
+    GLint blend_source,blend_destination,viewport[4],scissor[4];
+    GLfloat color[4];
+    bool depth,cull,stencil,blend,offset,scissor_enabled;
+} gl_composite_state;
+static void composite_state_read(qa_gl_renderer *renderer,gl_composite_state *state)
+{
+    gl_api *gl=&renderer->gl;
+    gl->GetIntegerv(GL_DEPTH_WRITEMASK,&state->depth_mask);
+    gl->GetIntegerv(GL_COLOR_WRITEMASK,state->color_mask);
+    gl->GetIntegerv(GL_POLYGON_MODE,state->polygon_mode);
+    gl->GetIntegerv(GL_CURRENT_PROGRAM,&state->program);
+    gl->GetIntegerv(GL_ACTIVE_TEXTURE,&state->active);
+    gl->GetIntegerv(GL_BLEND_SRC,&state->blend_source);
+    gl->GetIntegerv(GL_BLEND_DST,&state->blend_destination);
+    gl->GetIntegerv(GL_VIEWPORT,state->viewport);
+    gl->GetIntegerv(GL_SCISSOR_BOX,state->scissor);
+    gl->GetFloatv(GL_CURRENT_COLOR,state->color);
+    for (size_t i=0;i<3;++i) {
+        gl->ActiveTexture(GL_TEXTURE0+(GLenum)i);
+        gl->GetIntegerv(GL_TEXTURE_BINDING_2D,state->texture+i);
+    }
+    gl->ActiveTexture((GLenum)state->active);
+    state->depth=gl->IsEnabled(GL_DEPTH_TEST)!=GL_FALSE;
+    state->cull=gl->IsEnabled(GL_CULL_FACE)!=GL_FALSE;
+    state->stencil=gl->IsEnabled(GL_STENCIL_TEST)!=GL_FALSE;
+    state->blend=gl->IsEnabled(GL_BLEND)!=GL_FALSE;
+    state->offset=gl->IsEnabled(GL_POLYGON_OFFSET_FILL)!=GL_FALSE;
+    state->scissor_enabled=gl->IsEnabled(GL_SCISSOR_TEST)!=GL_FALSE;
+}
+static void composite_enable(gl_api *gl,GLenum capability,bool enabled)
+{ if (enabled) gl->Enable(capability); else gl->Disable(capability); }
+static void composite_state_restore(qa_gl_renderer *renderer,const gl_composite_state *state)
+{
+    gl_api *gl=&renderer->gl;
+    gl->DepthMask(state->depth_mask?GL_TRUE:GL_FALSE);
+    gl->ColorMask(state->color_mask[0]?GL_TRUE:GL_FALSE,state->color_mask[1]?GL_TRUE:GL_FALSE,
+        state->color_mask[2]?GL_TRUE:GL_FALSE,state->color_mask[3]?GL_TRUE:GL_FALSE);
+    gl->PolygonMode(GL_FRONT,(GLenum)state->polygon_mode[0]);
+    gl->PolygonMode(GL_BACK,(GLenum)state->polygon_mode[1]);
+    composite_enable(gl,GL_DEPTH_TEST,state->depth);
+    composite_enable(gl,GL_CULL_FACE,state->cull);
+    composite_enable(gl,GL_STENCIL_TEST,state->stencil);
+    composite_enable(gl,GL_BLEND,state->blend);
+    composite_enable(gl,GL_POLYGON_OFFSET_FILL,state->offset);
+    gl->BlendFunc((GLenum)state->blend_source,(GLenum)state->blend_destination);
+    gl->Viewport(state->viewport[0],state->viewport[1],state->viewport[2],state->viewport[3]);
+    gl->Scissor(state->scissor[0],state->scissor[1],state->scissor[2],state->scissor[3]);
+    composite_enable(gl,GL_SCISSOR_TEST,state->scissor_enabled);
+    gl->Color4f(state->color[0],state->color[1],state->color[2],state->color[3]);
+    for (size_t i=0;i<3;++i) {
+        gl->ActiveTexture(GL_TEXTURE0+(GLenum)i);
+        gl->BindTexture(GL_TEXTURE_2D,(GLuint)state->texture[i]);
+    }
+    gl->ActiveTexture((GLenum)state->active);
+    gl->UseProgram((GLuint)state->program);
+}
+
 bool gl_output_resolve(qa_gl_renderer *renderer, qa_error *error)
 {
     if (!renderer->output.enabled) {
@@ -394,6 +453,8 @@ bool gl_output_resolve(qa_gl_renderer *renderer, qa_error *error)
     gl->GetIntegerv(GL_VIEWPORT, viewport);
     gl->GetIntegerv(GL_SCISSOR_BOX, scissor_box);
     bool scissor = gl->IsEnabled(GL_SCISSOR_TEST) != GL_FALSE;
+    gl_composite_state retained;
+    composite_state_read(renderer,&retained);
     composite_state(renderer, output->width, output->height);
     gl->BindFramebuffer(GL_FRAMEBUFFER, 0);
     gl->UseProgram(renderer->programs.gamma);
@@ -436,6 +497,7 @@ bool gl_output_resolve(qa_gl_renderer *renderer, qa_error *error)
     gl->Scissor(scissor_box[0], scissor_box[1], scissor_box[2],
                 scissor_box[3]);
     if (scissor) gl->Enable(GL_SCISSOR_TEST);
+    composite_state_restore(renderer,&retained);
     if (!gl_check(renderer, "OpenGL output gamma resolve", error)) return false;
     for (unsigned slot = 0; slot < GL_DRAW_BUFFER_COUNT_QA; ++slot)
         if ((resolved & (1u << slot)) != 0) output->dirty[slot] = false;
@@ -614,6 +676,8 @@ bool gl_opacity_end(qa_gl_renderer *renderer, qa_error *error)
     if (value == 0 || value == 1) return gl_bind_destination(renderer, error);
     gl_api *gl = &renderer->gl;
     opacity_restore_parent(renderer);
+    gl_composite_state retained;
+    composite_state_read(renderer,&retained);
     composite_state(renderer, opacity->width, opacity->height);
     int64_t x0 = opacity->parent_viewport[0] > 0
                      ? opacity->parent_viewport[0] : 0;
@@ -651,6 +715,7 @@ bool gl_opacity_end(qa_gl_renderer *renderer, qa_error *error)
     gl_draw_quad(renderer);
     gl->UseProgram(0);
     opacity_restore_raster(renderer);
+    composite_state_restore(renderer,&retained);
     return gl_check(renderer, "OpenGL opacity composite", error);
 }
 
@@ -744,6 +809,8 @@ bool gl_depth_fog(qa_gl_renderer *renderer, const qa_scene_fog *fog,
         return false;
     }
     GLint bottom = (GLint)height - rect.y - (GLint)rect.height;
+    gl_composite_state retained;
+    composite_state_read(renderer,&retained);
     gl->ActiveTexture(GL_TEXTURE0);
     gl->BindTexture(GL_TEXTURE_2D, renderer->fog_depth);
     gl->TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
@@ -773,10 +840,14 @@ bool gl_depth_fog(qa_gl_renderer *renderer, const qa_scene_fog *fog,
              (fog->height_density <= 0 || fog->height_falloff <= 0)) ||
             (pass == 2 && (fog->sky_factor <= 0 || !fog->sky_drawn)))
             continue;
-        if (!gl_program_fog(renderer, pass, fog, view, error)) return false;
+        if (!gl_program_fog(renderer, pass, fog, view, error)) {
+            composite_state_restore(renderer,&retained);
+            return false;
+        }
         gl_draw_quad(renderer);
     }
     gl->UseProgram(0);
+    composite_state_restore(renderer,&retained);
     return gl_check(renderer, "OpenGL Q2 fog pass", error);
 }
 

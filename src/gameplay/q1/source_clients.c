@@ -58,8 +58,8 @@ static uint8_t color(const char *text) {
     } else {
         for(size_t i=0;i<length;++i)
             if(!isdigit((unsigned char)text[i]) && text[i]!='.' && text[i]!='e' && text[i]!='E' && text[i]!='+' && text[i]!='-') return 0;
-        char *end;value=strtod(text,&end);
-        if(end==text || (size_t)(end-text)!=length) return 0;
+        char *parsed_end;value=strtod(text,&parsed_end);
+        if(parsed_end==text || (size_t)(parsed_end-text)!=length) return 0;
     }
     if(!isfinite(value)) return 0;
     return value<=0?0:value>=13?13:(uint8_t)trunc(value);
@@ -116,7 +116,8 @@ static bool userinfo(qa_q1_game *game,qa_actor_id actor,const char *text,const c
     if(!player) {qa_error_set(error,QA_ERROR_NOT_FOUND,0,"Q1 source userinfo client is absent");goto finish;}
     uint8_t previous=color(info(game,player,"bottomcolor"));
     q1_source_client_clear(player);
-    const char *cursor=strchr(text,'\\');qa_strings *strings=qa_session_strings(game->services.session);
+    const char *cursor=strchr(text,'\\');
+    qa_strings *strings=qa_session_strings(game->services.session);
     while(cursor) {
         const char *key=cursor+1,*separator=strchr(key,'\\');if(!separator) break;
         const char *value=separator+1,*next=strchr(value,'\\');
@@ -141,6 +142,35 @@ finish:
 }
 bool qa_q1_source_client_userinfo(qa_q1_game *game,qa_actor_id actor,const char *text,qa_error *error) {
     return userinfo(game,actor,text,NULL,error);
+}
+bool qa_q1_source_client_userinfo_storage(qa_q1_game *game,qa_actor_id actor,const char *text,qa_error *error) {
+    qa_q1_game_operation operation={0};
+    if(!text||!qa_q1_game_operation_begin(game,&operation,error)) return false;
+    q1_player *player=(q1_player *)client_const(game,actor);
+    q1_source_info *entries=NULL;size_t count=0;bool okay=false;
+    if(!player) {qa_error_set(error,QA_ERROR_NOT_FOUND,0,"Q1 stored userinfo client is absent");goto finish;}
+    qa_strings *strings=qa_session_strings(game->services.session);
+    const char *cursor=text+(*text=='\\');
+    while(*cursor) {
+        const char *separator=strchr(cursor,'\\');if(!separator) break;
+        const char *value=separator+1,*next=strchr(value,'\\');
+        qa_string_id key_id,value_id;
+        if(!qa_strings_intern(strings,(qa_bytes){(const uint8_t *)cursor,(size_t)(separator-cursor)},&key_id,error)||
+            !qa_strings_intern(strings,(qa_bytes){(const uint8_t *)value,next?(size_t)(next-value):strlen(value)},&value_id,error)) goto finish;
+        size_t index=0;while(index<count&&entries[index].key!=key_id) ++index;
+        if(index==count) {
+            if(count>=SIZE_MAX/sizeof(*entries)) {qa_error_set(error,QA_ERROR_MEMORY,0,"Q1 stored userinfo extent overflows");goto finish;}
+            q1_source_info *grown=realloc(entries,(count+1)*sizeof(*entries));
+            if(!grown) {qa_error_set(error,QA_ERROR_MEMORY,0,"Retaining Q1 stored userinfo dictionary");goto finish;}
+            entries=grown;entries[count++]=(q1_source_info){key_id,value_id};
+        }
+        if(!next) break;
+        cursor=next+1;
+    }
+    q1_source_client_clear(player);player->source_info=entries;player->source_info_count=count;
+    entries=NULL;okay=true;
+finish:
+    free(entries);qa_q1_game_operation_end(&operation);return okay;
 }
 bool qa_q1_source_client_userinfo_named(qa_q1_game *game,qa_actor_id actor,const char *text,
     const char *name,qa_error *error) {
@@ -296,9 +326,7 @@ bool qa_q1_source_client_name(qa_q1_game *game,qa_actor_id actor,const char *nam
     q1_player *player=(q1_player *)client_const(game,actor);bool okay=false;
     if(!player) qa_error_set(error,QA_ERROR_NOT_FOUND,0,"Q1 source name client is absent");
     else {
-        char declared[16];size_t length=strlen(name);if(length>15) length=15;
-        memcpy(declared,name,length);declared[length]=0;
-        okay=info_set(game,player,"name",declared,error) && publish(game,player,error);
+        okay=info_set(game,player,"name",name,error) && publish(game,player,error);
     }
     qa_q1_game_operation_end(&operation);return okay;
 }

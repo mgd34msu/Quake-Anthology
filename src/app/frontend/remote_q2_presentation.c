@@ -1,4 +1,5 @@
 #include "remote_q2_private.h"
+#include "remote_q2_effects_bridge.h"
 #include "qa/material.h"
 #include <stdlib.h>
 #include <string.h>
@@ -198,9 +199,14 @@ static bool submit_model(frontend_remote_q2 *row, const char *path, const char *
         .entity = current->number, .back_lerp = previous ? 1 - row->fraction : 0,
         .seconds = world->seconds, .view_model = view_model, .player = current->modelindex == 255,
         .material_library = row->materials, .custom_material = skin, .source_path = path};
+    const qa_cvar_view *hand = qa_cvars_find(row->options.domain.cvars, "hand");
+    if (view_model && hand && isfinite(hand->number) && hand->number >= 0 && hand->number <= 2)
+        input.left_hand = (uint8_t)hand->number;
     qa_vec3 ambient = qa_v3(1, 1, 1), directed = qa_v3(0, 0, 0), direction = qa_v3(0, 0, 1);
-    if (!world->no_world && qa_scene_world_sample_light(row->world, origin, &ambient, &directed, &direction))
+    if (!world->no_world) {
+        if (!qa_scene_world_sample_light_input(row->world, world, origin, &ambient, &directed, &direction, error)) return false;
         ambient = qa_vec_add(ambient, directed);
+    }
     input.ambient = ambient; input.light_direction = direction;
     return qa_scene_model_submit(model->scene, &input, &row->frontend->frame, error);
 }
@@ -284,9 +290,32 @@ bool frontend_remote_q2_draw(qa_frontend *f, uint32_t seat, float stereo,
     qa_scene_world_input world = {.view = view, .seconds = time * 0.001, .milliseconds = (int64_t)time,
         .visible_areas = frame->area_bits.data, .visible_area_bytes = frame->area_bits.size,
         .q2_styles = styles, .style_count = 256, .no_world = (frame->player.rdflags & 2) != 0};
+    int sky_auto = 1;
+    if (row->layout.max_models == 8192)
+        (void)sscanf(frontend_remote_q2_config(row, 3), "%f %d", &world.sky_rotation, &sky_auto);
+    else world.sky_rotation = strtof(frontend_remote_q2_config(row, 3), NULL);
+    if (sscanf(frontend_remote_q2_config(row, 4), "%f %f %f", &world.sky_axis.x,
+        &world.sky_axis.y, &world.sky_axis.z) != 3) world.sky_axis = qa_v3(0, 0, 0);
+    if (!isfinite(world.sky_rotation) || !qa_vec_finite(world.sky_axis))
+        ok = remote_q2_fail(error, QA_ERROR_FORMAT, "Q2 sky configuration has nonfinite received parameters");
+    world.sky_auto_rotate = sky_auto != 0;
+    frontend_remote_q2_effects_sample effects_sample = {0}; frontend_remote_q2_effects_pose *effects_poses = NULL;
+    if (ok) ok = remote_q2_effects_sample_prepare(row, &view, vector(frame->player.gunoffset), frame->player.clientnum,
+        &effects_sample, &effects_poses, &world.lights, &world.light_count, error);
+    effects_sample.world_input = &world;
+    const qa_cvar_view *light_setting = qa_cvars_find(row->options.domain.cvars, "cl_lights");
+    const qa_cvar_view *entities_setting = qa_cvars_find(row->options.domain.cvars, "cl_entities");
+    bool entities_enabled = !entities_setting || entities_setting->number != 0;
+    if (light_setting && light_setting->number == 0) world.light_count = 0;
     if (ok) ok = qa_scene_world_submit(row->world, &world, &f->frame, error);
-    for (size_t i = 0; ok && i < row->frame.entity_count; ++i) {
+    for (size_t i = 0; ok && entities_enabled && i < row->frame.entity_count; ++i) {
         const qa_q2_entity *current = &row->frame.entities[i];
+        if (current->renderfx & 128) {
+            if (current->frame > INT32_MAX) { ok = remote_q2_fail(error, QA_ERROR_FORMAT, "Q2 beam width leaves its native integer range"); break; }
+            ok = frontend_remote_q2_effects_entity_beam(row->effects, &view, vector(current->origin),
+                vector(current->old_origin), current->skinnum, (int32_t)current->frame, &f->frame, error);
+            continue;
+        }
         if (!current->modelindex || current->modelindex >= row->layout.max_models ||
             current->number == (uint32_t)frame->player.clientnum + 1) continue;
         const qa_q2_entity *prior = entity(&row->previous, current->number);
@@ -311,14 +340,34 @@ bool frontend_remote_q2_draw(qa_frontend *f, uint32_t seat, float stereo,
             ok = submit_model(row, frontend_remote_q2_config(row, (uint16_t)(row->layout.models + linked[j])), NULL,
                 &view, &world, current, prior, false, position, direction, error);
     }
-    if (ok && frame->player.gunindex && frame->player.gunindex < row->layout.max_models) {
-        qa_q2_entity gun = {.number = (uint32_t)frame->player.clientnum + 1, .frame = frame->player.gunframe, .skinnum = frame->player.gunskin, .scale = 1};
+    const qa_cvar_view *gun_setting = qa_cvars_find(row->options.domain.cvars, "cl_gun");
+    if (ok && entities_enabled && (!gun_setting || gun_setting->number != 0) &&
+        (row->layout.max_models == 8192 || frame->player.fov <= 90) &&
+        frame->player.gunindex && frame->player.gunindex < row->layout.max_models) {
+        qa_q2_entity gun = {.number = (uint32_t)frame->player.clientnum + 1, .frame = frame->player.gunframe,
+            .skinnum = frame->player.gunskin, .renderfx = 1 | 4 | 16, .scale = 1};
         qa_q2_entity old = gun; old.frame = before && before->player.gunindex == frame->player.gunindex ? before->player.gunframe : gun.frame;
+        if (!gun.frame) old.frame = 0;
+        qa_vec3 gun_offset = continuous ? qa_vec_lerp(vector(before->player.gunoffset), vector(frame->player.gunoffset), row->fraction) :
+            vector(frame->player.gunoffset);
+        qa_vec3 gun_angles = continuous ? angles_lerp(before->player.gunangles, frame->player.gunangles, row->fraction) :
+            vector(frame->player.gunangles);
         ok = submit_model(row, frontend_remote_q2_config(row, (uint16_t)(row->layout.models + frame->player.gunindex)), NULL,
-            &view, &world, &gun, &old, true, qa_vec_add(origin, vector(frame->player.gunoffset)),
-            qa_vec_add(angles, vector(frame->player.gunangles)), error);
+            &view, &world, &gun, &old, true, qa_vec_add(origin, gun_offset), qa_vec_add(angles, gun_angles), error);
     }
+    const qa_cvar_view *particles_setting = qa_cvars_find(row->options.domain.cvars, "cl_particles");
+    if (ok) ok = frontend_remote_q2_effects_draw(row->effects, &effects_sample,
+        !particles_setting || particles_setting->number != 0, entities_enabled,
+        &f->frame, error);
+    free(effects_poses);
     if (ok) ok = qa_scene_frame_finish(&f->frame, &view, &world.fog, error);
+    const qa_cvar_view *blend_setting = qa_cvars_find(row->options.domain.cvars, "cl_blend");
+    if (ok && (!blend_setting || blend_setting->number != 0) && frame->player.blend[3] > 0) {
+        qa_scene_vec4 blend = {frame->player.blend[0], frame->player.blend[1],
+            frame->player.blend[2], frame->player.blend[3]};
+        ok = qa_scene_frame_picture(&f->frame, row->white, view.viewport, view.viewport,
+            (qa_scene_vec4){0, 0, 1, 1}, blend, error);
+    }
     if (ok && row->classic) {
         qa_hud_q2_options options = {.viewport = view.viewport, .scale = 1, .font_line_height = 8, .white = row->white,
             .fonts = f->seats[seat].fonts, .table = &row->hud_table, .context = row,

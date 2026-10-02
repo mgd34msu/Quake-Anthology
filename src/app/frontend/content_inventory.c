@@ -20,8 +20,10 @@
 #include "music_sources.h"
 #include "remote_q3_client.h"
 #include "remote_q1_client.h"
+#include "remote_q1_skins.h"
 #include "remote_q2_client.h"
 #include "client_source.h"
+#include "remote_unified.h"
 
 static bool visit_view(const qa_application_content_visitor *visitor, const qa_vfs *view, qa_error *error)
 {
@@ -91,6 +93,11 @@ bool frontend_content_visit(void *context, const qa_application *application,
         if (!visit_view(visitor, view, error)) return false;
     }
     for (size_t i=0;;++i) {
+        const qa_scene_resources *images=frontend_capture_images_at(frontend->capture,i);
+        if(!images) break;
+        if(!visit_view(visitor,qa_scene_resources_files(images),error)) return false;
+    }
+    for (size_t i=0;;++i) {
         const qa_material_library *library=frontend_capture_library_at(frontend->capture,i);
         if (!library) break;
         if (!visit_material_catalog(visitor,library,error)) return false;
@@ -100,10 +107,13 @@ bool frontend_content_visit(void *context, const qa_application *application,
         if(!frontend_remote_q1_metadata_read(frontend_remote_q1_at(frontend,i),&owner,error) ||
             !visit_catalog(visitor,owner.domain.catalog,error) || !visit_catalog(visitor,owner.content.catalog,error) ||
             !visit_view(visitor,owner.content.mounts,error)) return false;
+        frontend_remote_q1_skins *skins=frontend_remote_q1_skins_owner(frontend_remote_q1_at(frontend,i));
+        if(skins && !visit_view(visitor,frontend_remote_q1_skins_files(skins),error)) return false;
     }
     if (!frontend_native_q3_content_visit(frontend,visitor,error) ||
         !frontend_client_sources_visit(frontend,visitor,error) ||
         !frontend_remote_q2_content_visit(frontend,visitor,error) ||
+        !frontend_remote_unified_content_visit(frontend,visitor,error) ||
         !frontend_music_sources_content_visit(frontend->music_sources,visitor,error) ||
         (frontend->global_settings_storage &&
             !frontend_global_settings_storage_visit(frontend->global_settings_storage,visitor,error)) ||

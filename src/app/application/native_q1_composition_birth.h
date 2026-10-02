@@ -12,5 +12,7 @@ bool application_native_q1_ctf_impulse(application_provider *, qa_actor_id,
     const qa_q1_input *, bool *handled, qa_error *);
 bool application_native_q1_source_impulse(qa_application *, qa_actor_id,
     const qa_q1_input *, bool *consumed, qa_error *);
+bool application_native_q1_weapon_changed(void *, qa_actor_id, qa_item_id,
+    qa_error *);
 
 #endif

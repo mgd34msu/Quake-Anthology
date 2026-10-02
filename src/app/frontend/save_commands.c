@@ -361,7 +361,7 @@ bool frontend_save_commands_drain(qa_frontend **slot, qa_error *error)
             else ok = write_original(f, owner, &request, nonce, &source, &local);
         }
     }
-    qa_save_image_destroy(image);
+    if (!frontend_save_image_release(f,&image,ok?&local:&cleanup)) ok=false;
     qa_q1_save_destroy(source);
     if (ok && !complete) {
         owner->pending = true; owner->draining = false;

@@ -137,6 +137,9 @@ typedef bool (*qa_q2_private_read_fn)(void *, uint8_t opcode, qa_q2_codec *, qa_
 typedef struct qa_q2_message_options {
     size_t config_strings, inventory_slots, history_capacity, max_inflated_bytes;
     bool demo, override_extended_temps, extended_temps;
+    /* Original API2023 GAME import messages use the Source sound index
+     * width flag; actual KEX transport messages always carry a word index. */
+    bool native_api2023;
     uint8_t private_opcodes[32];
     qa_q2_private_read_fn private_read;
     void *private_user;

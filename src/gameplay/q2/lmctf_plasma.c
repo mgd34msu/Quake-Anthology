@@ -205,7 +205,7 @@ bool q2_lmctf_plasma_touch(qa_q2_game *g, const qa_touch_contact *contact, qa_er
     q2_projectile p = a->projectile;
     if (p.phase != 0)
         return true;
-    if (contact->has_surface && (contact->surface.flags & 4u) != 0)
+    if (contact->has_surface && ((uint32_t)contact->surface.flags & 4u) != 0)
         return qa_session_release(g->services.session, a->id, e);
     bool bounce = p.kind == Q2_LMCTF_PLASMA_BOUNCE;
     if (!bounce && contact->other.slot < g->capacity) {

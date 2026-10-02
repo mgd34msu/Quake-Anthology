@@ -1,6 +1,7 @@
 #ifndef QA_TARGETS_H
 #define QA_TARGETS_H
 #include "qa/session.h"
+#include "qa/math.h"
 
 typedef struct qa_authored_target {
     qa_string_id classname, targetname, target, killtarget, message;

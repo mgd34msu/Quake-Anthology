@@ -202,6 +202,42 @@ bool frontend_q3_source_output(qa_frontend *f,const qa_material_library *materia
     return qa_scene_frame_output_domain(&f->frame,rect,true,error);
 }
 
+static bool recipient_image(void *context, const qa_scene_image *source,
+    bool allow_picmip, bool mipmap, const qa_scene_image **out, qa_error *error)
+{
+    qa_frontend *f = context;
+    if (!f || !source || !out)
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Source recipient requires its reached image");
+    qa_q3_image_upload_options upload;
+    if (!frontend_q3_source_upload_read(f, allow_picmip, mipmap, &upload, error)) return false;
+    qa_scene_resources *bank = qa_scene_image_resource_owner(source);
+    if (!bank)
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Source recipient image lost its real retained bank");
+    if (source->kind == QA_SCENE_DEPTH32F) { *out = source; return true; }
+    qa_scene_image_request request;
+    if (qa_scene_image_request_read(bank, source, &request)) {
+        upload.mipmap = upload.mipmap && request.options.mipmap;
+        if (!upload.mipmap) upload.allow_picmip = false;
+    }
+    qa_scene_image *mapped = NULL;
+    if (!qa_scene_image_source_q3_variant(bank, source, &upload, &mapped, error)) return false;
+    /* The bank owns the retained correspondence; the eventual draw pins this
+     * borrowed immutable version independently until frame reset. */
+    *out = mapped;
+    qa_scene_image_release(mapped);
+    return true;
+}
+
+bool frontend_q3_source_recipient(qa_frontend *f, qa_scene_world_input *input, qa_error *error)
+{
+    if (!f || !input || !f->source_color || !f->source_color->initialized ||
+        !current(f->source_color, error) ||
+        !profile_device_current(f->source_color, f->display, &f->source_color->upload, error)) return false;
+    input->source_recipient_image = recipient_image;
+    input->source_recipient_context = f;
+    return true;
+}
+
 bool frontend_q3_source_color_retire(qa_frontend *f, qa_error *error)
 {
     if (!f) return frontend_fail(error, QA_ERROR_ARGUMENT, "Invalid Source color retirement");

@@ -21,6 +21,31 @@ static bool valid_input(const qa_scene_world *, const qa_scene_world_input *, qa
 static bool surface_culled(const qa_scene_world *, const qaw_surface *, const qa_scene_world_input *,
     const qa_material_context *, const qa_model_transform *, const qa_scene_plane *, size_t);
 static uint32_t surface_light_mask(const qaw_surface *, uint32_t, const qa_scene_light *, size_t);
+bool qaw_world_owners_retain(qa_scene_world *world,qa_scene_resources *resources,
+    qa_material_library *materials,qa_error *error)
+{
+    if (!world || world->references || !resources || !materials ||
+        qa_material_library_resource_owner(materials)!=resources)
+        return world_error(error,QA_ERROR_ARGUMENT,"World retention requires its actual resource and material owners");
+    world->references=1;
+    world->resources=resources;
+    world->materials=materials;
+    if (!qa_scene_resources_retain(resources,error)) return false;
+    world->retained_resources=resources;
+    if (!qa_material_library_retain(materials,error)) return false;
+    world->retained_materials=materials;
+    return true;
+}
+bool qa_scene_world_retain(qa_scene_world *world,qa_error *error)
+{
+    if (!world || !world->references || world->references==SIZE_MAX || !world->identity ||
+        world->resources!=world->retained_resources || world->materials!=world->retained_materials ||
+        qa_material_library_resource_owner(world->materials)!=world->resources)
+        return world_error(error,QA_ERROR_ARGUMENT,"World retention requires its actual live owning world");
+    ++world->references;
+    return true;
+}
+void qa_scene_world_release(qa_scene_world *world) { qa_scene_world_destroy(world); }
 uint64_t qa_scene_world_identity(const qa_scene_world *world)
 { return world ? world->identity : 0; }
 bool qa_scene_world_source_light_mask_read(const qa_scene_world *world, uint32_t surface,
@@ -109,12 +134,17 @@ bool qa_scene_world_materials_rebind_ready(const qa_scene_world *world, const qa
 void qa_scene_world_materials_rebind(qa_scene_world *world, qa_material_library *destination,
     const qa_scene_world_material_binding *bindings)
 {
-    if (!qa_scene_world_idle(world)) return;
+    if (!qa_scene_world_idle(world) || !destination ||
+        qa_material_library_resource_owner(destination)!=world->resources) return;
+    qa_material_library *previous=world->retained_materials;
+    if (destination!=previous && !qa_material_library_retain(destination,NULL)) return;
     for (size_t i = 0; i < world->surface_count; ++i) {
         world->surfaces[i].material = bindings[i].destination;
         world->surfaces[i].base_material = bindings[i].base_destination;
     }
     world->materials = destination;
+    world->retained_materials=destination;
+    if (previous!=destination) qa_material_library_destroy(previous);
 }
 
 typedef struct world_policy_surface {
@@ -532,8 +562,7 @@ bool qa_scene_world_create(const qa_bsp_view *bsp, qa_scene_resources *resources
         return world_error(error, QA_ERROR_ARGUMENT, "world creation requires BSP, resources, materials and output");
     qa_scene_world *world = calloc(1, sizeof(*world));
     if (world == NULL) return world_error(error, QA_ERROR_MEMORY, "cannot allocate scene world");
-    world->resources = resources;
-    world->materials = materials;
+    if (!qaw_world_owners_retain(world,resources,materials,error)) goto fail;
     world->options = options != NULL ? *options : (qa_scene_world_options){
         .subdivisions = 4, .q1_water_alpha = 1, .q2_light_modulate = 1, .q3_overbright = 2,
         .images = {.mipmap = true, .transparent_index = -1, .filter = QA_SCENE_LINEAR_MIPMAP_NEAREST}
@@ -548,6 +577,24 @@ bool qa_scene_world_create(const qa_bsp_view *bsp, qa_scene_resources *resources
         || !world_copy(world->options.external_lit, &world->lit_bytes, error)
         || !world_copy(world->options.images.palette_rgb, &world->palette_bytes, error)
         || !world_copy(world->options.images.translation, &world->translation_bytes, error)) goto fail;
+    const qa_bsp_lump *incoming = &bsp->lumps[QA_BSP_ENTITIES];
+    const qa_bsp_lump *embedded = &world->bsp.lumps[QA_BSP_ENTITIES];
+    bool substituted = incoming->present && (incoming->bytes.size != embedded->bytes.size ||
+        incoming->offset != embedded->offset || incoming->bytes.data != bsp->source.data + embedded->offset);
+    if (substituted || world->options.has_external_entities) {
+        qa_bytes entities = world->options.has_external_entities ? world->options.external_entities : incoming->bytes;
+        if (bsp->family != QA_BSP_Q1 || (entities.size && !entities.data) ||
+            (substituted && world->options.has_external_entities &&
+                (entities.size != incoming->bytes.size || (entities.size && memcmp(entities.data, incoming->bytes.data, entities.size))))) {
+            world_error(error, QA_ERROR_ARGUMENT, "Scene entity override differs from its actual Q1 map admission"); goto fail;
+        }
+        if (!world_copy(entities, &world->entity_bytes, error)) goto fail;
+        world->options.has_external_entities = true;
+        world->bsp.lumps[QA_BSP_ENTITIES] = (qa_bsp_lump){.bytes = {world->entity_bytes.data, world->entity_bytes.size}, .present = true};
+    } else if (world->options.external_entities.size || world->options.external_entities.data) {
+        world_error(error, QA_ERROR_ARGUMENT, "Scene entity bytes lack an actual override admission"); goto fail;
+    }
+    world->options.external_entities = (qa_bytes){world->entity_bytes.data, world->entity_bytes.size};
     world->options.external_lit = (qa_bytes){world->lit_bytes.data, world->lit_bytes.size};
     world->options.images.palette_rgb = (qa_bytes){world->palette_bytes.data, world->palette_bytes.size};
     world->options.images.translation = (qa_bytes){world->translation_bytes.data, world->translation_bytes.size};
@@ -573,6 +620,7 @@ fail:
 
 void qa_scene_world_destroy(qa_scene_world *world)
 {
+    if (world && world->references>1) { --world->references; return; }
     if (!qa_scene_world_idle(world)) return;
     if (world->bsp.family == QA_BSP_Q3) qaw_destroy_q3(world);
     else qaw_destroy_legacy(world);
@@ -594,8 +642,10 @@ void qa_scene_world_destroy(qa_scene_world *world)
     free(world->visible_surfaces); free(world->surface_lights); free(world->admitted_surfaces);
     free(world->admission_changes); free(world->pending);
     free(world->pvs); free(world->secondary_pvs); free(world->sky_name);
-    qa_buffer_free(&world->bytes); qa_buffer_free(&world->lit_bytes);
+    qa_buffer_free(&world->bytes); qa_buffer_free(&world->lit_bytes); qa_buffer_free(&world->entity_bytes);
     qa_buffer_free(&world->palette_bytes); qa_buffer_free(&world->translation_bytes);
+    qa_material_library_destroy(world->retained_materials);
+    qa_scene_resources_destroy(world->retained_resources);
     free(world);
 }
 
@@ -1057,13 +1107,16 @@ static qa_material_context world_context(const qa_scene_world *world, const qa_s
         .view = input->view, .entity_color = {1, 1, 1, 1}, .local_view_origin = input->view.origin,
         .identity_light = input->identity_light, .seconds = input->seconds, .milliseconds = input->milliseconds,
         .fog = input->fog,
-        .entity = 1022, .mirror = input->view.mirror, .texts = input->render_texts,
+        .entity = 1022,
+        .mirror = input->view.mirror, .texts = input->render_texts,
         .text_count = input->render_text_count, .video_frame = input->video_frame,
         .video_context = input->video_context, .source_primitives = input->source_order,
         .source_scratch = input->source_scratch, .source_diagnostics = input->source_diagnostics,
         .source_diagnostics_read = input->source_diagnostics_read,
         .source_diagnostics_context = input->source_diagnostics_context,
-        .source_white = qa_scene_white(world->resources)
+        .source_white = qa_scene_white(world->resources),
+        .source_recipient_image = input->source_recipient_image,
+        .source_recipient_context = input->source_recipient_context
     };
     if (context.source_primitives) context.seconds = (float)input->milliseconds * .001f;
     context.lights = projected_lights(world, input, &context.light_count);
@@ -1329,6 +1382,7 @@ static bool world_submit_model(qa_scene_world *world, uint32_t model_index,
     qa_material_context context = world_context(world, input);
     if (!fragment_context(world, input, frame, &context, error)) return false;
     context.entity = entity;
+    context.source_entity_cell = input->source_entity_cells;
     context.entity_color = color;
     if (input->entity_material) {
         const qa_scene_world_entity *material = input->entity_material;

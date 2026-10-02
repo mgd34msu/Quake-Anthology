@@ -80,7 +80,7 @@ bool qa_bot_runtime_create(const qa_bot_runtime_options *options,
         options->observations > QA_BOT_OBSERVATION_MODULE)
         return bot_runtime_fail(e, "invalid bot runtime services/profile");
     uint32_t maximum = options->maximum_states ? options->maximum_states : 64;
-    if (maximum > INT32_MAX || maximum > SIZE_MAX / sizeof(bot_weapon_state))
+    if (maximum > INT32_MAX || SIZE_MAX / maximum < sizeof(bot_weapon_state))
         return bot_runtime_fail(e, "bot runtime handle capacity overflow");
     qa_bot_runtime *r = calloc(1, sizeof(*r));
     if (!r) { qa_error_set(e, QA_ERROR_MEMORY, 0, "allocating bot runtime"); return false; }
@@ -132,6 +132,7 @@ static bool close(qa_bot_runtime *r,bool source,qa_error *error) {
         if(!ok) return false;
     }
     qa_bot_moves_destroy(r->moves); r->moves = NULL;
+    if(source && !qa_bot_goals_shutdown(r->goals,error)) return false;
     qa_bot_goals_destroy(r->goals); r->goals = NULL;
     if(source) {
         r->busy=true;

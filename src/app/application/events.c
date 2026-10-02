@@ -7,6 +7,7 @@
 #include "native_q1_composition.h"
 #include "unified_q1_events.h"
 #include "unified_q2_events.h"
+#include "unified_q2_native_events.h"
 #include "guest_q3_weapons_services.h"
 
 #include <inttypes.h>
@@ -268,6 +269,7 @@ bool application_emit_q2_map(application_provider *provider,
         application_native_q2_delivery_retain(application,&audience,&retained,error);
     application_native_q2_delivery_dispose(&audience);
     if (!ready) return false;
+    if (!application_unified_q2_native_map(provider, event, &retained, error)) return false;
     qa_builtin_message_arg *arguments = NULL;
     if (event->argument_count != 0) {
         size_t bytes = event->argument_count * sizeof(*event->arguments);
@@ -435,6 +437,7 @@ static bool emit_event(qa_application *application, const qa_builtin_event *even
         !application_q3_weapons_services_q2_muzzle(application, event, error) ||
         !application_native_q1_wire_emit(application, event, error) ||
         !application_unified_q1_event(application, event, error) ||
+        !application_unified_q2_native_builtin(application, event, audience, error) ||
         !reserve_event(application, error) ||
         !application_event_journal_reserve(application, error))
         return false;
@@ -545,6 +548,7 @@ bool application_emit_q2_player(application_provider *provider,
     if (!storage) return false;
     application->q2_player_events = storage;
     if (!application_event_journal_reserve(application,error)) return false;
+    if (!application_unified_q2_native_player(provider, event, error)) return false;
     qa_q2_player_event copied = *event;
     if (!event_text(application, event->text, &copied.text, error) ||
         !event_text(application, event->skin, &copied.skin, error))

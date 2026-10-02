@@ -43,7 +43,9 @@ static bool source_read(frontend_seat *seat,const qa_save_slot_entry *entry,
     if (ok && (!*source || ((*source)->version==5?QA_SAVE_SLOT_Q1_V5:QA_SAVE_SLOT_Q1_V6)!=entry->format))
         ok=frontend_fail(error,QA_ERROR_ARGUMENT,"Saved game changed format; refresh its slot");
     if (ok) ok=qa_fs_root_join(root,entry->name,path,error);
-    qa_save_image_destroy(image); return ok;
+    qa_error cleanup={0};
+    if (!frontend_save_image_release(seat->frontend,&image,ok?error:&cleanup)) ok=false;
+    return ok;
 }
 static bool select_product(frontend_seat *seat,const qa_q1_save_data *source,const char *path,
     const char *key,const qa_product **out,qa_error *error)

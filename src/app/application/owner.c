@@ -11,6 +11,7 @@
 #include "q3_product.h"
 #include "startup_flow.h"
 #include "guest_q3_mod_operations.h"
+#include "guest_q3_components.h"
 #include "qa/rankings_save.h"
 #include "qa/player_progress_save.h"
 #include "qa/catalog_save.h"
@@ -155,10 +156,13 @@ static bool create_application(const qa_application_options *options,
     application->native_bootstrap = copy_text(options->native_bootstrap, error);
     if (options->native_bootstrap && !application->native_bootstrap) goto fail;
     application->guest_context = options->guest_context;
+    application->prompt_context = options->prompt_context;
+    application->prompt_supported = options->prompt_supported;
     application->startup_hooks = options->startup_hooks;
     application->q3_services = options->q3_services;
     application->q3_client_prepare = options->q3_client_prepare;
     application->q3_component_scene_prepare = options->q3_component_scene_prepare;
+    application->q3_component_client_drop = options->q3_component_client_drop;
     application->q3_client_registry_reference = options->q3_client_registry_reference;
     application->q3_client_effect = options->q3_client_effect;
     application->q3_campaign_command = options->q3_campaign_command;
@@ -719,6 +723,8 @@ void qa_application_guest_context_rebind(qa_application *application, void *cont
             application_guest_frontend_rebind(provider, destination_frame,
                 previous_context, context);
     application->guest_context = context;
+    if (application->prompt_context == previous_context)
+        application->prompt_context = context;
 }
 
 bool qa_application_q1_paused(const qa_application *application)
@@ -832,6 +838,8 @@ bool qa_application_advance(qa_application *application, uint64_t elapsed_ns,
     }
     if (ok)
         ok = application_rankings_frame_ordinary(application, error);
+    if (ok)
+        ok = application_q3_components_drain(application->components, error);
     if (ok)
         ok = application_native_q1_wire_observe(application, error);
     if (ok)

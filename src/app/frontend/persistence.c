@@ -60,12 +60,17 @@
 #include "material_movie_inventory.h"
 #include "material_movie_bindings.h"
 #include "root_resources.h"
+#include "client_source.h"
+#include "network_client_commands.h"
 #include "q3_color_policy.h"
 #include "q1_sky_save.h"
 #include "qc_messages.h"
 #include "remote_q3_graph_roster.h"
 #include "native_q3_topology.h"
 #include "native_composition.h"
+#include "native_resource_inventory.h"
+#include "qa/audio_acoustics_prepare.h"
+#include "renderer_materials.h"
 #include "config_store.h"
 #include "keys.h"
 #include "client_registry.h"
@@ -90,7 +95,8 @@ typedef enum frontend_section {
     SECTION_KEYS, SECTION_CONFIG_STORE, SECTION_CLIENT_REGISTRIES, SECTION_NATIVE_Q3_TOPOLOGY,
     SECTION_CHARACTER_TOPOLOGY, SECTION_EFFECTS_TOPOLOGY, SECTION_GEAR_EVENTS, SECTION_GEAR_TOPOLOGY,
     SECTION_GLOBAL_SETTINGS, SECTION_REMOTE_GRAPH, SECTION_MUSIC_SOURCES, SECTION_VIEW_SETTINGS,
-    SECTION_MATERIAL_MOVIES, SECTION_Q1_SKY, SECTION_QC_MESSAGES, SECTION_SOURCE_COLOR, SECTION_COUNT
+    SECTION_MATERIAL_MOVIES, SECTION_Q1_SKY, SECTION_QC_MESSAGES, SECTION_SOURCE_COLOR,
+    SECTION_RENDERER_MATERIALS, SECTION_COUNT
 } frontend_section;
 typedef struct frontend_section_set {
     qa_buffer owned[SECTION_COUNT];
@@ -113,6 +119,8 @@ struct frontend_persistence {
     qa_application_persistence_ops ops;
     qa_application_ranking_checkpoint_refs ranking;
     qa_vfs_checkpoint_refs content_files;
+    frontend_native_resource_context native_resources;
+    qa_application_native_resource_refs native_resource_refs;
     frontend_section_set sections;
     frontend_capture *capture;
     frontend_capture *candidate_capture;
@@ -165,16 +173,16 @@ static const char *key_registry_instance(void *context,qa_actor_owner owner)
 static bool key_registry_resolve(void *context,const char *name,qa_actor_owner *owner,qa_error *error)
 {
     qa_frontend *f=context;
-    return f && f->application && name && owner &&
-        qa_application_provider_owner(f->application,name,owner) ||
+    return (f && f->application && name && owner &&
+        qa_application_provider_owner(f->application,name,owner)) ||
         frontend_fail(error,QA_ERROR_FORMAT,"Saved key scope lacks its actual provider instance");
 }
 static bool key_registry_qualify(void *context,const qa_application_console_scope *scope,
     const qa_cvars *registry,qa_error *error)
 {
     qa_application_console_scope actual;
-    return scope && key_registry_encode(context,registry,&actual,error) &&
-        actual.provider==scope->provider && actual.kind==scope->kind && actual.seat==scope->seat ||
+    return (scope && key_registry_encode(context,registry,&actual,error) &&
+        actual.provider==scope->provider && actual.kind==scope->kind && actual.seat==scope->seat) ||
         frontend_fail(error,QA_ERROR_FORMAT,"Saved key scope differs from its physical registry");
 }
 static frontend_keys_cvar_refs key_registry_refs(qa_frontend *f)
@@ -226,7 +234,7 @@ static bool blob(qa_source_save_io *io, qa_bytes *bytes)
 static bool envelope(qa_source_save_io *io, qa_save_owner_kind expected,
     frontend_section_set *set, const frontend_section *ids, size_t count)
 {
-    uint8_t magic[4]={'Q','F','E','X'}; uint32_t required=expected==QA_SAVE_PRESENTATION?16:
+    uint8_t magic[4]={'Q','F','E','X'}; uint32_t required=expected==QA_SAVE_PRESENTATION?17:
         expected==QA_SAVE_AUDIO?6:expected==QA_SAVE_INPUT?4:expected==QA_SAVE_MEDIA?2:1,
         version=required,kind=expected; size_t saved=count;
     if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QFEX",4) ||
@@ -244,7 +252,7 @@ static const frontend_section presentation_sections[]={SECTION_TOPOLOGY,SECTION_
     SECTION_EVENTS,SECTION_PARTICLES,SECTION_PLAYERS,SECTION_NATIVE,SECTION_SEATS_PRESENTATION,SECTION_SHADERS,SECTION_ALIASES,SECTION_RENDERER,SECTION_QC_DEBUG,
     SECTION_EQUIPMENT_TOPOLOGY,SECTION_SELECTED_Q3_TOPOLOGY,SECTION_NATIVE_Q3_TOPOLOGY,SECTION_CHARACTER_TOPOLOGY,
     SECTION_EFFECTS_TOPOLOGY,SECTION_GEAR_EVENTS,SECTION_GEAR_TOPOLOGY,SECTION_REMOTE_GRAPH,SECTION_VIEW_SETTINGS,
-    SECTION_MATERIAL_MOVIES,SECTION_Q1_SKY,SECTION_QC_MESSAGES,SECTION_SOURCE_COLOR};
+    SECTION_MATERIAL_MOVIES,SECTION_Q1_SKY,SECTION_QC_MESSAGES,SECTION_SOURCE_COLOR,SECTION_RENDERER_MATERIALS};
 static const frontend_section audio_sections[]={SECTION_AUDIO_IDS,SECTION_BANKS,SECTION_ENGINE,SECTION_DEVICE,SECTION_UI_FEATURES,
     SECTION_MUSIC_SOURCES};
 static const frontend_section input_sections[]={SECTION_SEATS_INPUT,SECTION_PLATFORM,SECTION_TERMINAL,SECTION_SAVE_COMMANDS,SECTION_INPUT_PROFILE,
@@ -578,6 +586,7 @@ static qa_render_checkpoint_refs renderer_refs(frontend_scene_namespace *space)
     return (qa_render_checkpoint_refs){.context=space,
         .image_encode=frontend_scene_image_encode,.image_decode=frontend_scene_image_decode,
         .geometry_encode=frontend_scene_geometry_encode,.geometry_decode=frontend_scene_geometry_decode,
+        .material_encode=frontend_scene_material_encode,.material_decode=frontend_scene_material_decode,
         .mesh_identity_encode=frontend_scene_mesh_identity_encode,.mesh_identity_decode=frontend_scene_mesh_identity_decode};
 }
 static bool renderer_fields(qa_source_save_io *io,uint32_t expected,qa_bytes *display,qa_bytes *renderer)
@@ -774,7 +783,8 @@ static bool capture_components(frontend_persistence *operation, qa_error *error)
         frontend_scene_namespace_create(&operation->space,error) &&
         frontend_scene_namespace_capture_images(operation->space,f,error) &&
         frontend_materials_capture_namespace(f,operation->space,error) &&
-        frontend_scene_inventory_namespace(operation->scenes,operation->space,error);
+        frontend_scene_inventory_namespace(operation->scenes,operation->space,error) &&
+        frontend_materials_capture_world_history(f,operation->space,error);
     operation->models=frontend_scene_inventory_models(operation->scenes);
     event_scope.space=operation->space;
     ok=ok && frontend_event_capture_namespace(f,&event_scope,error) &&
@@ -829,6 +839,7 @@ static bool capture_components(frontend_persistence *operation, qa_error *error)
         optional_encode("QFQK",!f->options.dedicated,(qa_bytes){sky.data,sky.size},set->owned+SECTION_Q1_SKY,error) &&
         frontend_qc_messages_checkpoint(f->qc_messages,set->owned+SECTION_QC_MESSAGES,error) &&
         frontend_q3_source_color_checkpoint(f,set->owned+SECTION_SOURCE_COLOR,error) &&
+        frontend_renderer_materials_checkpoint(f,set->owned+SECTION_RENDERER_MATERIALS,error) &&
         capture_engine(operation,set->owned+SECTION_ENGINE,error) &&
         frontend_ui_features_checkpoint(f,operation->audio,set->owned+SECTION_UI_FEATURES,error) &&
         capture_device(operation,set->owned+SECTION_DEVICE,error) &&
@@ -923,6 +934,7 @@ static bool prepare_services(void *context, qa_application *candidate, const qa_
         restore_configuration_prefix(operation,error) &&
         frontend_topology_decode(candidate,section(&operation->sections,SECTION_TOPOLOGY),&operation->topology,error) &&
         frontend_topology_prepare(f,operation->topology,error) &&
+        frontend_renderer_materials_prepare_restored(f,section(&operation->sections,SECTION_RENDERER_MATERIALS),error) &&
         frontend_remote_q3_graph_decode(f,section(&operation->sections,SECTION_REMOTE_GRAPH),
             &operation->remote_graph,error) &&
         frontend_native_q3_topology_decode(f,section(&operation->sections,SECTION_NATIVE_Q3_TOPOLOGY),
@@ -1012,6 +1024,7 @@ static bool import_components(frontend_persistence *operation, qa_error *error)
         frontend_native_q3_material_bindings_restore(f,error) &&
         frontend_remote_q3_material_bindings_restore(f,error) &&
         frontend_remote_q3_initial_material_bindings_restore(f,error) &&
+        frontend_renderer_materials_bind_restored(f,error) &&
         frontend_audio_id_restore(f,section(set,SECTION_AUDIO_IDS),error) &&
         frontend_audio_banks_restore(f,&banks,section(set,SECTION_BANKS),&operation->audio,error);
     frontend_scene_identity_scope events={operation->space,1};
@@ -1104,6 +1117,33 @@ static bool ranking_capture(void *context,qa_application_ranking_effect_fn insta
     qa_application_ranking_checkpoint_refs refs=frontend_ranking_refs(f);
     return refs.capture(refs.context,installed,binding,out,error);
 }
+static bool client_commands_capture(void *context,qa_application *application,
+    const qa_application_console_scope *scope,qa_console *console,qa_buffer *out,qa_error *error)
+{
+    frontend_persistence *operation=context;
+    qa_frontend *f=operation->candidate && operation->candidate->application==application?operation->candidate:
+        operation->active && operation->active->application==application?operation->active:NULL;
+    if (!f) return frontend_fail(error,QA_ERROR_ARGUMENT,"CLIENT command capture has no actual frontend application owner");
+    bool generic=frontend_client_source_commands_owned(f,application,scope,console);
+    bool network=frontend_network_client_commands_owned(f,application,scope,console);
+    if (generic==network)
+        return frontend_fail(error,QA_ERROR_FORMAT,"CLIENT command console has no unique physical frontend owner");
+    return generic?frontend_client_source_commands_capture(f,application,scope,console,out,error):
+        frontend_network_client_commands_capture(f,application,scope,console,out,error);
+}
+static bool client_commands_restore(void *context,qa_application *application,
+    const qa_application_console_scope *scope,qa_console *console,qa_bytes bytes,qa_error *error)
+{
+    frontend_persistence *operation=context; qa_frontend *f=operation->candidate;
+    if (!f || f->application!=application)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"CLIENT command import has no actual isolated frontend owner");
+    bool generic=frontend_client_source_commands_owned(f,application,scope,console);
+    bool network=frontend_network_client_commands_owned(f,application,scope,console);
+    if (generic==network)
+        return frontend_fail(error,QA_ERROR_FORMAT,"CLIENT command import has no unique physical frontend owner");
+    return generic?frontend_client_source_commands_restore(f,application,scope,console,bytes,error):
+        frontend_network_client_commands_restore(f,application,scope,console,bytes,error);
+}
 static bool ranking_resolve(void *context,qa_bytes bytes,qa_application_ranking_effect_fn *installed,
     void **binding,qa_error *error)
 {
@@ -1186,8 +1226,10 @@ static bool validate(void *context,qa_application *application,const qa_save_ima
     ok=ok && (!f->music_sources || frontend_music_sources_restore_finish(f->music_sources,error));
     if (ok) {
         ok=frontend_config_store_finish_restore(f->config_store,error) &&
-            frontend_client_registries_finish_restore(f,error) && frontend_keys_finish_restore(f->keys,error);
+            frontend_client_registries_finish_restore(f,error) && frontend_keys_finish_restore(f->keys,error) &&
+            frontend_client_sources_finish_restore(f,error) && frontend_network_client_sources_finish_restore(f,error);
     }
+    if(ok) ok=frontend_root_sidecars_bind_restored(f,error);
     if (ok) {
         frontend_native_q2_topology_finish(f);
         frontend_source_finish_groups(f);
@@ -1267,7 +1309,10 @@ static bool discard_services(void *context,qa_application *candidate,qa_error *e
     return frontend_qc_messages_destroy(&f->qc_messages,error) && frontend_q1_sky_destroy(&f->q1_sky,error) &&
         frontend_music_sources_destroy(&f->music_sources,error) &&
         frontend_view_settings_destroy(&f->view_settings,error) &&
-        frontend_tools_before_world_change(f,error) && qa_application_retire_sources(candidate,error) &&
+        frontend_tools_before_world_change(f,error) &&
+        (!f->audio || qa_audio_engine_acoustics_release(f->audio,error)) &&
+        frontend_client_sources_destroy(f,error) &&
+        qa_application_retire_sources(candidate,error) &&
         frontend_root_resources_destroy(f,error) &&
         frontend_network_destroy(f,error) && frontend_tools_destroy(f,error);
 }
@@ -1381,7 +1426,7 @@ static bool operation_init(frontend_persistence *operation,qa_frontend *active,
         operation->bindings[i]=(frontend_owner_binding){operation,kinds[i],i};
         operation->owners[i]=(qa_application_persistence_owner){
             .identity={.kind=kinds[i],.instance="",.schema=schemas[i],.schema_version=kinds[i]==QA_SAVE_CAMPAIGN?3:
-                kinds[i]==QA_SAVE_PRESENTATION?16:
+                kinds[i]==QA_SAVE_PRESENTATION?17:
                 kinds[i]==QA_SAVE_AUDIO?6:kinds[i]==QA_SAVE_INPUT?4:kinds[i]==QA_SAVE_MEDIA?2:1,.backend=""},
             .context=operation->bindings+i,.capture=capture_owner,.restore=restore_owner};
     }
@@ -1397,23 +1442,41 @@ static bool operation_init(frontend_persistence *operation,qa_frontend *active,
     }
     operation->ranking=(qa_application_ranking_checkpoint_refs){operation,ranking_capture,ranking_resolve};
     operation->content_files=(qa_vfs_checkpoint_refs){operation,content_archive_open,content_directory_open};
+    operation->native_resource_refs=frontend_native_resource_refs(&operation->native_resources);
     operation->ops=(qa_application_persistence_ops){.context=operation,
         .owners=operation->producer_inventory,.owner_count=7+extra,.visit_content=content_visit,
-        .content_files=&operation->content_files,.rankings=services?services->rankings:NULL,
+        .content_files=&operation->content_files,.native_resources=services && services->native_resources?
+            services->native_resources:&operation->native_resource_refs,
+        .rankings=services?services->rankings:NULL,
         .progress=services?services->progress:NULL,.ranking_source=&operation->ranking,
         .rankings_handoff=services && services->rankings_handoff?ranking_handoff:NULL,
         .prepare_services=prepare_services,.prepare_native_baseline=native_baseline,.prepare_content=prepare_content,
+        .client_commands_capture=client_commands_capture,.client_commands_restore=client_commands_restore,
         .reconnect=reconnect,.validate=validate,.publish_ready=publish_ready,.publish=publish,.discard_services=discard_services};
     return true;
+}
+static void native_capture_close(frontend_persistence *operation)
+{
+    if (!operation->native_resources.captured) return;
+    qa_error cleanup={0};
+    if (!qa_native_resource_inventory_release(&operation->native_resources.captured,&cleanup)) {
+        /* The active frontend was proved to have no previous refused capture
+         * before this operation began. Keep this admitted partial graph there. */
+        operation->active->native_resource_inventory_pending=operation->native_resources.captured;
+        operation->native_resources.captured=NULL;
+    }
 }
 bool frontend_persistence_capture(qa_frontend *f,const qa_application_persistence_ops *services,
     qa_save_purpose purpose,qa_save_image **out,qa_error *error)
 {
-    if (!out || *out) return frontend_fail(error,QA_ERROR_ARGUMENT,"Frontend capture needs an empty image output");
+    if (!f || !out || *out)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Frontend capture needs an empty image output and returned native capture graph");
+    if (!qa_save_image_destroy_checked(&f->save_image_pending,error) ||
+        !qa_native_resource_inventory_release(&f->native_resource_inventory_pending,error)) return false;
     frontend_persistence operation={0};
     bool ok=operation_init(&operation,f,services,error) && frontend_capture_begin(f,&operation.capture,error) &&
         qa_application_persistence_capture(f->application,&operation.ops,purpose,out,error);
-    cut_destroy(&operation); free(operation.producer_inventory); return ok;
+    native_capture_close(&operation); cut_destroy(&operation); free(operation.producer_inventory); return ok;
 }
 bool frontend_persistence_capture_detached(qa_frontend *f,const qa_application_persistence_ops *services,
     const frontend_persistence_native *native,qa_save_purpose purpose,qa_save_image **out,qa_error *error)
@@ -1424,9 +1487,11 @@ bool frontend_persistence_capture_detached(qa_frontend *f,const qa_application_p
     frontend_persistence cut={.input_guard=native->input,.device_guard=native->device,
         .display_guard=native->display,.gl_guard=native->gl};
     frontend_persistence operation={.restored_from=&cut};
+    if (!qa_save_image_destroy_checked(&f->save_image_pending,error) ||
+        !qa_native_resource_inventory_release(&f->native_resource_inventory_pending,error)) return false;
     bool ok=operation_init(&operation,f,services,error) && frontend_capture_begin(f,&operation.capture,error) &&
         qa_application_persistence_capture(f->application,&operation.ops,purpose,out,error);
-    cut_destroy(&operation); free(operation.producer_inventory); return ok;
+    native_capture_close(&operation); cut_destroy(&operation); free(operation.producer_inventory); return ok;
 }
 static bool restore_frontend(qa_frontend **slot,const qa_application_persistence_ops *services,
     qa_frontend *constructor,const qa_save_image *image,qa_frontend **displaced,qa_frontend **retained,qa_error *error)
@@ -1434,7 +1499,8 @@ static bool restore_frontend(qa_frontend **slot,const qa_application_persistence
     if (!slot || !*slot || !image || !displaced || !retained || *retained ||
         slot==displaced || slot==retained || displaced==retained)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Frontend restore needs distinct active, displaced and empty retained owner slots");
-    frontend_persistence operation={.slot=slot,.constructor=constructor,.fresh_original=constructor!=NULL};
+    frontend_persistence operation={.slot=slot,.constructor=constructor,.fresh_original=constructor!=NULL,
+        .native_resources={.image=image}};
     bool ok=operation_init(&operation,*slot,services,error) &&
         frontend_capture_begin(operation.active,&operation.capture,error);
     const qa_frontend *source=constructor?constructor:operation.active;

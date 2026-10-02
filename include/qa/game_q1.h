@@ -203,6 +203,8 @@ typedef struct qa_q1_host {
     bool (*fired)(void *, qa_actor_id, qa_item_id weapon, qa_error *);
     bool (*base_team_health)(void *, bool *enabled, qa_error *);
     bool (*grapple_weapon_frame)(void *, qa_actor_id, int32_t frame, qa_error *);
+    /* Applies the held physical Source's factor at each reached damage request. */
+    bool (*source_damage)(void *, qa_damage_request *, qa_error *);
     bool (*sound_precache)(void *, const char *path, qa_error *);
     bool (*precache_reset)(void *, qa_error *);
 } qa_q1_host;

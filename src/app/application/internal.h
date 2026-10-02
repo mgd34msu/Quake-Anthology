@@ -69,6 +69,8 @@ typedef struct application_provider {
     const qa_product *product;
     qa_catalog *product_catalog;
     qa_actor_owner owner;
+    qa_source_frame event_retirement_frame;
+    bool event_retirement_frame_present;
     qa_component component;
     qa_combat_policy policy;
     qa_q1_game_operation q1_lifetime;
@@ -192,6 +194,7 @@ typedef struct application_publication {
     application_provider_admission *admissions;
     size_t admission_count;
     qa_resource *map_resource;
+    struct qa_map_sidecars *map_sidecars;
     qa_bsp_view map;
     qa_collision_geometry *geometry;
     qa_world *initial_world;
@@ -236,9 +239,12 @@ struct qa_application {
     char *native_bootstrap;
     qa_native_process_resource_policy native_process_policy;
     void *guest_context;
+    void *prompt_context;
+    bool (*prompt_supported)(void *, qa_actor_id, bool *, qa_error *);
     qa_application_q3_services_fn q3_services;
     qa_application_q3_client_prepare_fn q3_client_prepare;
     qa_application_q3_component_scene_prepare_fn q3_component_scene_prepare;
+    qa_application_q3_component_client_drop_fn q3_component_client_drop;
     qa_application_q3_client_registry_reference_fn q3_client_registry_reference;
     qa_application_q3_client_effect_fn q3_client_effect;
     qa_application_q3_campaign_command_fn q3_campaign_command;
@@ -291,6 +297,7 @@ struct qa_application {
     struct application_q3_components *components;
     qa_physics *physics;
     qa_resource *map_resource;
+    struct qa_map_sidecars *map_sidecars;
     qa_collision_geometry *geometry;
     application_provider **providers;
     size_t provider_count;
@@ -316,6 +323,12 @@ struct qa_application {
     size_t unified_event_count, unified_event_capacity;
     uint64_t presentation_event_sequence;
     uint64_t unified_event_sequence;
+    application_unified_persistent_event *unified_persistent;
+    size_t unified_persistent_count, unified_persistent_capacity;
+    uint64_t unified_persistent_revision;
+    application_unified_event_owner *unified_event_owners;
+    size_t unified_event_owner_count, unified_event_owner_capacity;
+    uint64_t unified_event_owner_generation;
     application_unified_event_resource *unified_event_resources;
     size_t unified_event_resource_count, unified_event_resource_capacity;
     application_unified_event_registration *unified_event_registrations;

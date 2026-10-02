@@ -17,6 +17,12 @@ bool q3np_fail(qa_error *error, qa_status code, const char *message)
 { qa_error_set(error,code,0,"%s",message); return false; }
 static bool current(const q3n_frame *f, qa_error *error)
 {
+    if (f && f->unified_effects) {
+        return f->particles && f->particles->initialized && !f->particles->remote_source &&
+            f->particles->assets==f->assets && f->particles->product==f->unified_effects->product &&
+            f->events && f->presentation && q3n_frame_current(f) ? true :
+            q3np_fail(error,QA_ERROR_ARGUMENT,"Unified Q3 particles lost their actual CLIENT source and dictionary");
+    }
     if(f&&f->remote) {
         if(!f->particles||!f->particles->initialized||!f->events||!f->presentation||
            f->particles->assets!=f->assets||f->particles->product!=f->remote->source.basis.product||
@@ -99,6 +105,23 @@ bool q3n_particles_load_remote(q3n_particles *o,const q3n_frame *f,qa_error *e)
     }
     o->initialized=ok; o->busy=false; return ok;
 }
+static bool unified_registration_current(q3n_particles *o,const q3n_frame *f,qa_error *e)
+{
+    return f && f->unified_effects && f->particles==o && !o->remote_source &&
+        f->assets==o->assets && f->unified_effects->product==o->product && f->presentation &&
+        q3n_frame_current(f) ? true : q3np_fail(e,QA_ERROR_ARGUMENT,"Unified particle registration lost its actual CLIENT receipt");
+}
+bool q3n_particles_load_unified(q3n_particles *o,const q3n_frame *f,qa_error *e)
+{
+    if (!q3n_particles_idle(o) || !unified_registration_current(o,f,e)) return false;
+    if (o->initialized) return true;
+    o->busy=true; reset(o,f->time); bool okay=true;
+    for (int32_t i=0; i<Q3N_PARTICLE_FRAMES && okay; ++i) {
+        char name[32]; snprintf(name,sizeof(name),"explode1%d",i+1);
+        okay=qa_q3_register_shader(o->assets,name,true,&o->shaders[i],e) && unified_registration_current(o,f,e);
+    }
+    o->initialized=okay; o->busy=false; return okay;
+}
 static bool same_animation(const char *name)
 {
     const char *expected="explode1";
@@ -157,7 +180,8 @@ static bool draw(const q3n_frame *f, q3n_particle *p, qa_vec3 origin, qa_error *
     float width=add(p->width,mul(ratio,add(p->end_width,-p->width)));
     float height=add(p->height,mul(ratio,add(p->end_height,-p->height)));
     const qa_q3_player *player=q3n_frame_snapshot_player(f);
-    qa_vec3 distance=sum(qa_v3(player->origin[0],player->origin[1],player->origin[2]),scale(origin,-1));
+    qa_vec3 eye=f->unified_effects ? f->refdef.origin : qa_v3(player->origin[0],player->origin[1],player->origin[2]);
+    qa_vec3 distance=sum(eye,scale(origin,-1));
     float length=(float)sqrt((double)add(add(mul(distance.x,distance.x),mul(distance.y,distance.y)),mul(distance.z,distance.z)));
     if (length<divide(width,1.5f)) return true;
     int32_t index=integer((float)floor((double)mul(ratio,Q3N_PARTICLE_FRAMES)));

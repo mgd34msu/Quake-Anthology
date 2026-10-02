@@ -338,13 +338,13 @@ static void trim(int64_t *left, int64_t *right, edge_equation edge, double y) {
     int64_t x = (int64_t)fmax((double)*left,
                               fmin((double)(*right + 1), floor(crossing)));
     while (x > *left) {
-      double value = edge.x * (x - 0.5) + row + edge.c;
+      double value = edge.x * ((double)x - 0.5) + row + edge.c;
       if (!(value > 0 || (value == 0 && edge.inclusive)))
         break;
       --x;
     }
     while (x <= *right) {
-      double value = edge.x * (x + 0.5) + row + edge.c;
+      double value = edge.x * ((double)x + 0.5) + row + edge.c;
       if (value > 0 || (value == 0 && edge.inclusive))
         break;
       ++x;
@@ -354,13 +354,13 @@ static void trim(int64_t *left, int64_t *right, edge_equation edge, double y) {
     int64_t x = (int64_t)fmax((double)(*left - 1),
                               fmin((double)*right, ceil(crossing)));
     while (x < *right) {
-      double value = edge.x * (x + 1.5) + row + edge.c;
+      double value = edge.x * ((double)x + 1.5) + row + edge.c;
       if (!(value > 0 || (value == 0 && edge.inclusive)))
         break;
       ++x;
     }
     while (x >= *left) {
-      double value = edge.x * (x + 0.5) + row + edge.c;
+      double value = edge.x * ((double)x + 0.5) + row + edge.c;
       if (value > 0 || (value == 0 && edge.inclusive))
         break;
       --x;
@@ -383,10 +383,10 @@ static void triangle(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
     area = -area;
   }
   cpu_scissor bounds = scissor(renderer);
-  double min_x = fmax(bounds.x0, ceil(fmin(a.x, fmin(b.x, c.x)) - 0.5));
-  double max_x = fmin(bounds.x1, floor(fmax(a.x, fmax(b.x, c.x)) - 0.5));
-  double min_y = fmax(bounds.y0, ceil(fmin(a.y, fmin(b.y, c.y)) - 0.5));
-  double max_y = fmin(bounds.y1, floor(fmax(a.y, fmax(b.y, c.y)) - 0.5));
+  double min_x = fmax((double)bounds.x0, ceil(fmin(a.x, fmin(b.x, c.x)) - 0.5));
+  double max_x = fmin((double)bounds.x1, floor(fmax(a.x, fmax(b.x, c.x)) - 0.5));
+  double min_y = fmax((double)bounds.y0, ceil(fmin(a.y, fmin(b.y, c.y)) - 0.5));
+  double max_y = fmin((double)bounds.y1, floor(fmax(a.y, fmax(b.y, c.y)) - 0.5));
   if (min_x > max_x || min_y > max_y)
     return;
   edge_equation coverage[3] = {edge(b, c), edge(c, a), edge(a, b)};
@@ -434,11 +434,11 @@ static void triangle(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
   for (int64_t y = (int64_t)min_y; y <= (int64_t)max_y; ++y) {
     int64_t left = (int64_t)min_x, right = (int64_t)max_x;
     for (size_t i = 0; i < 3; ++i)
-      trim(&left, &right, coverage[i], y + 0.5);
+      trim(&left, &right, coverage[i], (double)y + 0.5);
     for (int64_t x = left; x <= right; ++x) {
       double weight[3], perspective[3], q = 0, z = 0;
       for (size_t i = 0; i < 3; ++i) {
-        weight[i] = evaluate(attributes[i], x + 0.5, y + 0.5) * inverse_area;
+        weight[i] = evaluate(attributes[i], (double)x + 0.5, (double)y + 0.5) * inverse_area;
         q += vertices[i].q * weight[i];
         z += vertices[i].z * weight[i];
       }
@@ -583,7 +583,7 @@ static void line(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
   double maximum_width = 2 * fmax(view.width, view.height) + 1;
   int64_t thickness = (int64_t)fmin(
       maximum_width, fmax(1, floor(draw->state.line_width + 0.5)));
-  double shift = (thickness - 1) * 0.5;
+  double shift = (double)(thickness - 1) * 0.5;
   double pa_x = ax - (x_major ? 0 : shift) - 1e-5,
          pa_y = ay - (x_major ? shift : 0) - 1e-10;
   double pb_x = bx - (x_major ? 0 : shift) - 1e-5,
@@ -597,19 +597,19 @@ static void line(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
           major_max = x_major ? right : top;
   int64_t minor_min = x_major ? bottom : left,
           minor_max = x_major ? top : right;
-  int64_t first_major = (int64_t)fmax(major_min, floor(fmin(major_a, major_b)));
-  int64_t last_major = (int64_t)fmin(major_max, floor(fmax(major_a, major_b)));
+  int64_t first_major = (int64_t)fmax((double)major_min, floor(fmin(major_a, major_b)));
+  int64_t last_major = (int64_t)fmin((double)major_max, floor(fmax(major_a, major_b)));
   double near_depth = cpu_clamp(draw->state.depth_near),
          far_depth = cpu_clamp(draw->state.depth_far);
   for (int64_t major = first_major; major <= last_major; ++major) {
-    double fraction = (major + 0.5 - major_a) / (major_b - major_a);
+    double fraction = ((double)major + 0.5 - major_a) / (major_b - major_a);
     int64_t center = (int64_t)floor(minor_a + (minor_b - minor_a) * fraction);
     for (int64_t minor = center - 1; minor <= center + 1; ++minor) {
       int64_t x = x_major ? major : minor, y = x_major ? minor : major;
-      if (!exits_diamond(pa_x, pa_y, pb_x, pb_y, x + 0.5, y + 0.5))
+      if (!exits_diamond(pa_x, pa_y, pb_x, pb_y, (double)x + 0.5, (double)y + 0.5))
         continue;
-      double base_x = x + (x_major ? 0 : shift),
-             base_y = y + (x_major ? shift : 0);
+      double base_x = (double)x + (x_major ? 0 : shift),
+             base_y = (double)y + (x_major ? shift : 0);
       double t =
           cpu_clamp(((base_x + 0.5 - ax) * dx + (base_y + 0.5 - ay) * dy) /
                     length_squared);
@@ -743,6 +743,11 @@ static void draw_source_strips(qa_cpu_renderer *renderer, const qa_scene_draw *d
 bool cpu_draw(qa_cpu_renderer *renderer, const qa_scene_draw *input,
               qa_error *error) {
   qa_scene_draw resolved = *input;
+  if ((unsigned)input->source_direct>QA_SOURCE_DIRECT_SHADOW_FINISH) {
+    qa_error_set(error,QA_ERROR_ARGUMENT,0,"Invalid Source direct draw provenance");
+    return false;
+  }
+  qa_render_source_direct_state(&resolved.state,&renderer->pipeline,input);
   if (resolved.texture_count > 2) {
     qa_error_set(error, QA_ERROR_ARGUMENT, 0,
                  "CPU draw exceeds texture unit count");
@@ -768,8 +773,8 @@ bool cpu_draw(qa_cpu_renderer *renderer, const qa_scene_draw *input,
                    "CPU draw index is outside vertex storage");
       return false;
     }
-  renderer->depth_write = draw->state.depth_write;
-  renderer->color_write = draw->state.color_write;
+  renderer->pipeline=draw->state;
+  if (draw->source_direct==QA_SOURCE_DIRECT_SHADOW_FINISH) renderer->view.clip_enabled=false;
   if (draw->mesh.index_count && !transform(renderer, draw, error))
     return false;
   for (size_t i = 0; i < draw->texture_count; ++i)
@@ -803,5 +808,7 @@ bool cpu_draw(qa_cpu_renderer *renderer, const qa_scene_draw *input,
       draw_triangle(renderer, draw, vertices);
     }
   }
+  if (draw->source_direct==QA_SOURCE_DIRECT_AXIS) renderer->pipeline.line_width=1;
+  if (draw->source_direct==QA_SOURCE_DIRECT_SHADOW_FINISH) renderer->pipeline.stencil_enabled=false;
   return true;
 }

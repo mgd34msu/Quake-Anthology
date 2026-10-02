@@ -62,7 +62,8 @@ static bool layout_field(const qa_json_document *doc, qa_json_id layout, const c
 
 bool application_native_q2_inventory_prepare(struct application_native_q2 *engine, qa_error *error)
 {
-    if (!engine->declaration || engine->profile == QA_NATIVE_Q2_CGAME_API2023) return true;
+    if (!engine->declaration || engine->profile == QA_NATIVE_Q2_CGAME_API2023 ||
+        qa_native_declaration_callbacks(engine->declaration).data) return true;
     struct application_native_q2_inventory *p = calloc(1, sizeof(*p));
     if (!p) return application_fail(error, QA_ERROR_MEMORY, "Preparing native Q2 source inventory");
     engine->primary_inventory = p;
@@ -397,7 +398,8 @@ bool application_native_q2_inventory_admit(struct application_native_q2 *engine,
         client->inventory_prepared = false;
         return true;
     }
-    qa_inventory_binding binding = {client, inventory_count, inventory_at, inventory_write, inventory_mutable};
+    qa_inventory_binding binding = {.context = client, .count = inventory_count,
+        .at = inventory_at, .write = inventory_write, .mutable_capacity = inventory_mutable};
     if (!qa_inventory_adopt_primary(engine->provider->application->inventory, client->actor, &binding, &client->inventory_lease, error)) return false;
     client->inventory_bound = true; client->inventory_prepared = false; return true;
 }
@@ -443,7 +445,8 @@ bool application_native_q2_inventory_binding(application_provider *provider, qa_
     client->inventory_engine = engine; client->inventory_slot = slot;
     qa_native_address address;
     if (!client_address(client, &address, error)) return false;
-    *out = (qa_inventory_binding){client, inventory_count, inventory_at, inventory_write, inventory_mutable};
+    *out = (qa_inventory_binding){.context = client, .count = inventory_count,
+        .at = inventory_at, .write = inventory_write, .mutable_capacity = inventory_mutable};
     if (!client->inventory_bound) client->inventory_prepared = true;
     client->inventory_lease = (qa_inventory_lease){actor, saved_serial};
     client->inventory_bound = true;

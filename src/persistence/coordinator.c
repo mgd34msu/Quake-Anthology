@@ -3,7 +3,7 @@
 bool qa_save_capture(void *context, const qa_save_capture_ops *ops, qa_save_purpose purpose,
                       qa_save_image **out, qa_error *error)
 {
-    if (!ops || !ops->begin || !ops->capture || !ops->validate || !ops->end || !out ||
+    if (!ops || !ops->begin || !ops->capture || !ops->validate || !ops->end || !out || *out ||
         (unsigned)purpose > QA_SAVE_DEMO_KEYFRAME)
         return persistence_fail(error, QA_ERROR_ARGUMENT, "Invalid save capture producer");
     qa_save_metadata metadata = {0};
@@ -23,11 +23,19 @@ bool qa_save_capture(void *context, const qa_save_capture_ops *ops, qa_save_purp
         records[i].payload = (qa_bytes){payload.data, payload.size};
     }
     if (ok) ok = qa_save_image_create(&metadata, records, count, &image, error);
+    if (ok && ops->attach) ok = ops->attach(context, image, error);
     if (ok) ok = ops->validate(context, image, error);
     if (records) for (size_t i = 0; i < count; ++i) free((void *)records[i].payload.data);
     free(records);
     ops->end(context);
-    if (!ok) { qa_save_image_destroy(image); return false; }
+    if (!ok) {
+        qa_error cleanup = {0};
+        if (!qa_save_image_destroy_checked(&image, &cleanup)) {
+            *out = image;
+            if (error && error->code == QA_OK) *error = cleanup;
+        }
+        return false;
+    }
     *out = image;
     return true;
 }

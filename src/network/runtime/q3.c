@@ -292,7 +292,8 @@ static void close_peer(void *context)
     q3_runtime_peer *p = context;
     qa_q3_server_peer_destroy(p->source); free(p);
 }
-static const qa_network_peer_ops ops = {receive, flush, local_command, restart, rebind, close_peer};
+static const qa_network_peer_ops ops = {.receive=receive,.flush=flush,.command=local_command,
+    .restart=restart,.rebind=rebind,.close=close_peer};
 static q3_runtime_peer *get(qa_network_runtime *runtime, qa_net_client_id id, qa_error *error)
 {
     qa_network_peer *peer = qa_network_peer_get(runtime, id, error);

@@ -28,6 +28,7 @@ typedef struct frontend_remote_unified_consumers {
     void *context;
     bool (*prepare)(void *, frontend_remote_unified *, qa_executable_recipe *, bool *, qa_error *);
     bool (*offer_publish)(void *, frontend_remote_unified *, qa_executable_recipe *, qa_error *);
+    bool (*offer_ready)(void *, frontend_remote_unified *, qa_executable_recipe *, qa_error *);
     bool (*control)(void *, frontend_remote_unified *, const qa_unified_document *, qa_error *);
     bool (*frame)(void *, frontend_remote_unified *, const qa_unified_document *,
         const qa_unified_document *prediction, bool *ready, qa_error *);
@@ -39,6 +40,7 @@ typedef struct frontend_remote_unified_consumers {
     bool (*close)(void *, frontend_remote_unified *, qa_error *);
     bool (*content_visit)(void *, const frontend_remote_unified *,
         const qa_application_content_visitor *, qa_error *);
+    void (*dispose)(void *);
 } frontend_remote_unified_consumers;
 typedef struct frontend_remote_unified_options {
     frontend_remote_unified_domain domain;

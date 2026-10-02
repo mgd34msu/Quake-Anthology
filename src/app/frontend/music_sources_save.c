@@ -46,7 +46,7 @@ static bool origin_fields(qa_source_save_io *io, frontend_music_sources *owner) 
     char *key = reading ? NULL : product ? (char *)product->key : NULL;
     qa_sha256_digest identity = reading ? (qa_sha256_digest){0} : descriptor ? descriptor->identity : (qa_sha256_digest){0};
     bool ok = (reading || (owner->origin_bound && origin->current(origin->context, origin))) &&
-        qa_source_save_u32(io, &kind) && kind <= FRONTEND_MUSIC_MODULE &&
+        qa_source_save_u32(io, &kind) && kind <= FRONTEND_MUSIC_COMPONENT &&
         qa_source_save_u32(io, &origin->physical_seat) && origin->physical_seat < owner->frontend->options.seats &&
         frontend_save_text(io, &receiver) && receiver && *receiver &&
         frontend_save_text(io, &instance) && instance && *instance &&

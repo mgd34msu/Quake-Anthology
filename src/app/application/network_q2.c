@@ -125,6 +125,12 @@ bool application_network_q2_resource(qa_application_network_q2 *owner, unsigned 
 {
     if (!out || kind > 2) return application_fail(error, QA_ERROR_ARGUMENT, "Invalid Q2 source resource kind");
     if (!path || !*path) { *out = 0; return true; }
+    if (owner->host.source.kind == QA_APPLICATION_NATIVE_Q2_ORIGINAL) {
+        application_provider *provider = application_network_q2_provider(owner);
+        struct application_native_q2 *engine = provider ? provider->state.native.q2_engine : NULL;
+        if (!application_native_q2_wire_resource(engine, kind, path, out, error)) return false;
+        return application_network_q2_config(owner, owner->resources[kind].base + *out, path, error);
+    }
     application_q2_resource_table *table = &owner->resources[kind];
     for (uint32_t i = 1; i <= table->count; ++i)
         if (!strcmp(table->paths[i], path)) { *out = i; return true; }
@@ -271,6 +277,7 @@ void qa_application_network_q2_destroy(qa_application_network_q2 *owner)
     if (!owner) return;
     application_network_q2_unbind(owner);
     application_network_q2_free_tables(owner);
+    application_network_q2_resources_free(owner);
     free(owner->entities); free(owner->baselines); free(owner->status_players); free(owner->status_names);
     free(owner->motion_rows);
     free(owner->event_actors); free(owner->events);
@@ -331,7 +338,8 @@ bool qa_application_network_q2_download_source(qa_application_network_q2 *owner,
     qa_network_q2_download_source *out, qa_error *error)
 {
     if (!out || !application_network_q2_current(owner, error)) return false;
-    *out = (qa_network_q2_download_source){owner->host.content, owner->host.cvars};
+    *out = (qa_network_q2_download_source){.content = owner->host.content, .cvars = owner->host.cvars,
+        .resource_context = owner, .resource = application_network_q2_download_resource};
     return true;
 }
 

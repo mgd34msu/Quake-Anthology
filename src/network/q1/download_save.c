@@ -58,7 +58,8 @@ static bool open_mounted(const qa_qw_download_admission *admission, const char *
     qa_resource *resource = NULL; qa_error local = {0};
     if (!qa_vfs_acquire(admission->content, name, &resource, NULL, &local)) {
         if (local.code == QA_ERROR_NOT_FOUND) { *found = false; return true; }
-        if (error) *error = local; return false;
+        if (error) *error = local;
+        return false;
     }
     qa_bytes bytes = qa_resource_bytes(resource);
     if (bytes.size > admission->maximum_bytes ||

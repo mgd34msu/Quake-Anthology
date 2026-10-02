@@ -1,4 +1,17 @@
 #include "guest_q3_component_source_private.h"
+
+static bool q3scene_fail(qa_error *,qa_status,const char *);
+
+bool application_q3_component_source_continuation_read(const application_q3_component_source *source,
+    int64_t *game_state_revision,int32_t *command_sequence,int64_t *publication_revision,qa_error *e)
+{
+    if(!source||!game_state_revision||!command_sequence||!publication_revision)
+        return q3scene_fail(e,QA_ERROR_ARGUMENT,"Component continuation requires its retained source publication");
+    *game_state_revision=source->game_state_revision;
+    *command_sequence=source->command_sequence;
+    *publication_revision=source->revision;
+    return true;
+}
 #include "qa/json.h"
 #include <limits.h>
 #include <stdio.h>
@@ -48,6 +61,7 @@ bool application_q3_component_source_create(const application_q3_component_sourc
 }
 bool application_q3_component_source_attach(application_q3_component_source *s,qa_qvm *vm,qa_q3_host *host,qa_error *e)
 {
+    if(s&&s->options.vm==vm&&s->options.host==host&&vm&&host&&!s->borrows&&current(s)) return true;
     if(!s||s->options.vm||s->options.host||!vm||!host||s->borrows)
         return q3scene_fail(e,QA_ERROR_ARGUMENT,"Component publication attach requires its unbound physical constructor");
     s->options.vm=vm; s->options.host=host;
@@ -141,11 +155,10 @@ bool application_q3_component_source_command(void *context,int32_t physical,cons
     application_q3_component_source *s=context; qa_actor_id recipient={0};
     if(physical>=0) {
         component_source_actor *row=at(s,(uint32_t)physical);
-        if(!row||!row->client||!qa_actors_get(qa_session_actors(s->options.session),row->row.actor))
-            return q3scene_fail(e,QA_ERROR_ARGUMENT,"Component command has no admitted physical source client");
+        if(!row||!row->client||!qa_actors_get(qa_session_actors(s->options.session),row->row.actor)) return true;
         recipient=row->row.actor;
     }
-    return command(s,recipient,text,e);
+    return !s->options.scene||command(s,recipient,text,e);
 }
 static bool publication(application_q3_component_source *s,int32_t time,component_source_publication *out,qa_error *e)
 {

@@ -64,6 +64,8 @@ static bool embedded_texture(qa_scene_world *world, qawl_texture *texture,
     if (fullbright && !qa_scene_image_create(world->resources, texture->name, QA_SCENE_RGBA8, bright_levels, count,
                                             QA_SCENE_REPEAT, world->options.images.filter,
                                             (qa_scene_vec4){0,0,0,0}, &texture->fullbright, error)) goto done;
+    texture->image->recipient_upload_pixels = true;
+    if (texture->fullbright) ((qa_scene_image *)texture->fullbright)->recipient_upload_pixels = true;
     result = true;
 done:
     for (size_t i = 0; i < 4; ++i) { qa_image_free(&images[i]); qa_image_free(&bright[i]); }

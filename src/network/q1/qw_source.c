@@ -302,7 +302,8 @@ bool qa_qw_source_history_checkpoint(const qa_qw_source_history *history, uint32
     if (!bytes.data) return fail(error, QA_ERROR_MEMORY, "Encoding QuakeWorld source Number history");
     qa_net_writer writer; qa_net_writer_init(&writer, bytes.data, capacity, error);
     uint16_t baselines = 0;
-    for (size_t i = 1; i < 512; ++i) baselines += history->baselines[i].present ? 1 : 0;
+    for (size_t i = 1; i < 512; ++i)
+        if (history->baselines[i].present) ++baselines;
     qa_net_write_u32(&writer, UINT32_C(0x48535751)); qa_net_write_u32(&writer, 1);
     qa_net_write_u16(&writer, baselines);
     for (size_t i = 1; i < 512; ++i)

@@ -6,6 +6,18 @@
 /* Pure qualification of the player's actual published weapon definition lease. */
 bool qa_q1_game_weapon_definitions_current(qa_q1_game *, qa_actor_id);
 
+typedef struct qa_q1_weapon_ui_definition {
+    qa_q1_weapon weapon;
+    qa_item_id item, ammo;
+    const char *label;
+    size_t ordinal;
+    double quantity;
+} qa_q1_weapon_ui_definition;
+/* Declared UI ammunition and quantity from this actual player's retained
+ * definition lease. No shot/body observation or source callback runs. */
+bool qa_q1_game_weapon_ui_definition_read(qa_q1_game *, qa_actor_id, qa_item_id,
+    qa_q1_weapon_ui_definition *, bool *found, qa_error *);
+
 /* Read the actual declared weapon's source availability without selecting it. */
 bool qa_q1_game_weapon_item_read(qa_q1_game *, qa_actor_id, qa_item_id,
     qa_q1_weapon_view *, bool *found, qa_error *);

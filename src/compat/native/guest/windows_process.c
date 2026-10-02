@@ -1,4 +1,6 @@
 #include "windows_process_private.h"
+#include "windows_kernel.h"
+#include "windows_stdio.h"
 
 uint64_t qa_native_windows_process_callback_minimum(void)
 { return GUEST_WINDOWS_CALLBACK_MINIMUM; }
@@ -275,6 +277,42 @@ bool qa_native_windows_process_finalize_all(qa_native_windows_process *owner, qa
         okay = guest_windows_finalize(owner->runtime, image, owner->options.instruction_budget, error);
     }
     return end(owner, okay);
+}
+bool qa_native_windows_process_file_add(qa_native_windows_process *owner, const char *name,
+    uint32_t creation, const qa_native_windows_file *file, qa_error *error)
+{
+    if (!name || !file)
+        return guest_fail(error, QA_ERROR_ARGUMENT, 0, "Windows file registration needs its actual acquired capability and source name");
+    if (!begin(owner, error)) return false;
+    guest_runtime_file_capability capability = file_capability(file);
+    return end(owner, guest_runtime_resources_file(owner->runtime->resources, file->id,
+        name, creation, &capability, error));
+}
+static bool temporary_file(qa_native_windows_process *owner, uint64_t handle, qa_error *error)
+{
+    if (!owner || !handle)
+        return guest_fail(error, QA_ERROR_ARGUMENT, handle, "Windows retirement requires its actual file handle");
+    if (!begin(owner, error)) return false;
+    for (size_t i = 0; i < owner->runtime->kernel->standard_count; ++i)
+        if (owner->runtime->kernel->standards[i].handle == handle) {
+            guest_fail(error, QA_ERROR_ARGUMENT, handle, "temporary retirement cannot remove a Windows standard stream");
+            return end(owner, false);
+        }
+    if (windows_stdio_file_in_use(owner->runtime, handle)) {
+        guest_fail(error, QA_ERROR_ARGUMENT, handle, "Windows FILE still owns this capability");
+        return end(owner, false);
+    }
+    return true;
+}
+bool qa_native_windows_process_file_close(qa_native_windows_process *owner, uint64_t handle, qa_error *error)
+{
+    if (!temporary_file(owner, handle, error)) return false;
+    return end(owner, guest_runtime_resources_close(owner->runtime->resources, handle, error));
+}
+bool qa_native_windows_process_file_remove(qa_native_windows_process *owner, uint64_t handle, qa_error *error)
+{
+    if (!temporary_file(owner, handle, error)) return false;
+    return end(owner, guest_runtime_resources_remove_closed(owner->runtime->resources, handle, error));
 }
 static bool process_invoke(qa_native_windows_process *owner, uint64_t original, uint64_t target,
     const qa_native_signature *signature, const qa_native_value *arguments, size_t count,

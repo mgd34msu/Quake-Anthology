@@ -161,6 +161,7 @@ static bool upload_indexed(qa_scene_model *model, const char *name, const qa_ind
                                               chain.levels[i].rgba.data, chain.levels[i].rgba.size};
     bool ok = qa_scene_image_create(model->resources, name, QA_SCENE_RGBA8, levels, chain.count + 1,
         model->options.wrap, model->options.filter, (qa_scene_vec4){0}, out, error);
+    if (ok) (*out)->recipient_upload_pixels = true;
     free(levels); qa_mip_chain_free(&chain); qa_image_free(&image);
     return ok;
 }
@@ -207,11 +208,44 @@ bool scene_model_indexed(qa_scene_model *model, const char *name, qa_bytes pixel
     return true;
 }
 
+bool scene_model_indexed_override(qa_scene_model *model, const qa_scene_model_indexed_skin *skin,
+    scene_model_image **out, qa_error *error) {
+    if (!skin || !skin->name || !*skin->name || !skin->width || !skin->height ||
+        skin->width > SIZE_MAX / skin->height || !skin->indices.data ||
+        skin->indices.size != (size_t)skin->width * skin->height ||
+        model->source->format != QA_MODEL_MDL || model->options.family != QA_SCENE_Q1) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Indexed override requires an actual Q1 MDL skin");
+        return false;
+    }
+    for (scene_model_image *entry = model->images; entry; entry = entry->next) {
+        if (strcmp(entry->name, skin->name)) continue;
+        if (!entry->indexed_override || entry->indexed_width != skin->width ||
+            entry->indexed_height != skin->height || entry->indexed_pixels.size != skin->indices.size ||
+            memcmp(entry->indexed_pixels.data, skin->indices.data, skin->indices.size)) {
+            qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Indexed skin name identifies different retained pixels");
+            return false;
+        }
+        *out = entry; return true;
+    }
+    qa_buffer retained = {malloc(skin->indices.size), skin->indices.size};
+    if (!retained.data) {
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining indexed skin pixels"); return false;
+    }
+    memcpy(retained.data, skin->indices.data, skin->indices.size);
+    scene_model_image *entry = NULL;
+    if (!scene_model_indexed(model, skin->name, skin->indices, skin->width, skin->height,
+        false, &entry, error)) { qa_buffer_free(&retained); return false; }
+    entry->indexed_override = true; entry->indexed_pixels = retained;
+    entry->indexed_width = skin->width; entry->indexed_height = skin->height;
+    *out = entry; return true;
+}
+
 void scene_model_images_destroy(qa_scene_model *model) {
     scene_model_image *entry = model->images;
     while (entry) {
         scene_model_image *next = entry->next;
         qa_scene_image_release(entry->base); qa_scene_image_release(entry->fullbright);
+        qa_buffer_free(&entry->indexed_pixels);
         free(entry->name); free(entry); entry = next;
     }
     free(model->skins); free(model->sprites);

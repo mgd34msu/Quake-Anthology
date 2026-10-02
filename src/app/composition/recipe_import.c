@@ -1,4 +1,5 @@
 #include "recipe_private.h"
+#include "qa/map_sidecars.h"
 #include "qa/persistence_content.h"
 #include <math.h>
 #include <stdio.h>
@@ -28,9 +29,10 @@ static bool view_read(qa_executable_recipe *r, const qa_json_document *json, qa_
     if (!files) { qa_buffer_free(&name); return false; }
     bool ok = recipe_view_add(r, (const char *)name.data, r->catalog, files, true, &view, error); qa_buffer_free(&name);
     if (!ok) { qa_vfs_destroy(files); return false; }
-    if (!strncmp(r->views[view].owner, "content:", 8)) {
-        const qa_product *product = qa_catalog_find(r->catalog, r->views[view].owner + 8);
-        if (!product || strcmp(product->identity, r->views[view].owner + 8)) return recipe_fail(error, "Content view has no actual installed product owner");
+    if (!strncmp(r->views[view].owner, "content:", 8) || !strncmp(r->views[view].owner, "map-sidecars:", 13)) {
+        const char *identity = r->views[view].owner + (!strncmp(r->views[view].owner, "content:", 8) ? 8 : 13);
+        const qa_product *product = qa_catalog_find(r->catalog, identity);
+        if (!product || strcmp(product->identity, identity)) return recipe_fail(error, "Content view has no actual installed product owner");
         r->views[view].product = product->id;
     } else if (strcmp(r->views[view].owner, "main") && (strncmp(r->views[view].owner, "provider:", 9) || !r->views[view].owner[9]))
         return recipe_fail(error, "Unknown canonical recipe content owner");
@@ -313,6 +315,74 @@ static bool ordering_read(qa_executable_recipe *r, const qa_json_document *json,
     return true;
 }
 
+static bool sidecar_scope(qa_executable_recipe *r, size_t view, qa_product_id product, qa_error *error)
+{
+    const qa_mount_id *expected = NULL; size_t count = 0;
+    const qa_vfs *files = r->views[view].files, *catalog = qa_catalog_files(r->catalog);
+    const qa_sha256_digest *pure = NULL; size_t pure_count = 0; bool demo = false;
+    if (!qa_catalog_product_mounts(r->catalog, product, &expected, &count) || count != qa_vfs_mount_count(files) ||
+        qa_vfs_prefix_count(files) || qa_vfs_link_count(files) || !qa_vfs_restrictions_read(files, &pure, &pure_count, &demo) || pure_count || demo)
+        return recipe_fail(error, "Map sidecar view differs from its genuine geometry product scope");
+    for (size_t i = 0; i < count; ++i) {
+        qa_vfs_mount_info actual;
+        const qa_catalog_mount *physical = NULL;
+        for (size_t j = 0; j < qa_catalog_mount_count(r->catalog); ++j) {
+            const qa_catalog_mount *candidate = qa_catalog_mount_at(r->catalog, j);
+            if (candidate->id == expected[i]) { physical = candidate; break; }
+        }
+        if (!physical || !qa_vfs_mount_at(files, i, &actual) || actual.comparison != QA_ARCHIVE_CASE_INSENSITIVE || actual.user_overlay ||
+            actual.format != physical->format || strcmp(qa_vfs_mount_path(files, actual.id), physical->path) ||
+            (actual.is_archive ? !actual.digest || !physical->digest || !qa_sha256_equal(actual.digest, physical->digest) :
+                !qa_fs_root_same_object(qa_vfs_mount_root(files, actual.id), qa_vfs_mount_root(catalog, expected[i]))))
+            return recipe_fail(error, "Map sidecar mount order differs from its actual geometry content");
+    }
+    return true;
+}
+static const qa_recipe_sidecar *sidecar_path(const qa_executable_recipe *r, const char *path)
+{
+    for (size_t i = 0; i < r->sidecar_count; ++i) if (!strcmp(r->sidecars[i].path, path)) return r->sidecars + i;
+    return NULL;
+}
+static char *q1_sidecar_path(const char *map, const char *extension, qa_error *error)
+{
+    size_t length = strlen(map); char *path = malloc(length + 1);
+    if (!path) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Resolving map sidecar identity"); return NULL; }
+    memcpy(path, map, length + 1);
+    if (length >= 4 && !strcmp(path + length - 4, ".bsp")) memcpy(path + length - 4, extension, 5);
+    return path;
+}
+static bool sidecar_inventory(qa_executable_recipe *r, const qa_launch_resource *map, qa_error *error)
+{
+    if (r->bsp.family == QA_BSP_Q1) {
+        char *ent = q1_sidecar_path(map->path, ".ent", error), *lit = q1_sidecar_path(map->path, ".lit", error);
+        const qa_recipe_sidecar *entities = ent ? sidecar_path(r, ent) : NULL, *lighting = lit ? sidecar_path(r, lit) : NULL;
+        bool okay = entities && lighting && r->sidecar_count == (!strcmp(ent, lit) ? 1u : 2u);
+        if (okay && entities->resource) r->bsp.lumps[QA_BSP_ENTITIES] = (qa_bsp_lump){.bytes = qa_resource_bytes(entities->resource), .present = true};
+        if (okay && lighting->resource) {
+            qa_bsp_lighting result;
+            okay = qa_resource_bytes(lighting->resource).size >= 8 && qa_bsp_select_lighting(&r->bsp, qa_resource_bytes(lighting->resource), &result, error);
+        }
+        free(ent); free(lit); return okay || recipe_fail(error, "Offered Q1 sidecars omit or invalidate actual map inputs");
+    }
+    if (r->bsp.family != QA_BSP_Q2) return !r->sidecar_count || recipe_fail(error, "Q3 map has unexpected sidecar observations");
+    for (size_t i = 0; i < qa_bsp_record_count(&r->bsp, QA_BSP_TEXINFO); ++i) {
+        qa_bsp_texinfo texture; char path[1040];
+        if (!qa_bsp_read_texinfo(&r->bsp, i, &texture, error) || texture.name.size > 1024 || memchr(texture.name.data, 0, texture.name.size)) return false;
+        int size = snprintf(path, sizeof(path), "textures/%.*s.mat", (int)texture.name.size, (const char *)texture.name.data);
+        if (size < 0 || (size_t)size >= sizeof(path) || !sidecar_path(r, path)) return recipe_fail(error, "Offered Q2 sidecars omit an actual map texture");
+    }
+    for (size_t i = 0; i < r->sidecar_count; ++i) {
+        bool used = false;
+        for (size_t j = 0; !used && j < qa_bsp_record_count(&r->bsp, QA_BSP_TEXINFO); ++j) {
+            qa_bsp_texinfo texture; char path[1040];
+            if (!qa_bsp_read_texinfo(&r->bsp, j, &texture, error)) return false;
+            snprintf(path, sizeof(path), "textures/%.*s.mat", (int)texture.name.size, (const char *)texture.name.data);
+            used = !strcmp(path, r->sidecars[i].path);
+        }
+        if (!used) return recipe_fail(error, "Offered Q2 sidecar has no actual map texture");
+    }
+    return true;
+}
 static bool map_read(qa_executable_recipe *r, const qa_json_document *json, qa_json_id id, qa_error *error)
 {
     recipe_reader reader = {.json = json, .recipe = r, .error = error};
@@ -321,29 +391,38 @@ static bool map_read(qa_executable_recipe *r, const qa_json_document *json, qa_j
     if (reader.failed || r->map_index >= r->resource_count || !array(&reader, sidecars, &count)) return recipe_fail(error, "Recipe map resource is absent");
     const qa_launch_resource *map = &r->resources[r->map_index]->value;
     if (map->product != r->choices.world.geometry || strcmp(map->path, r->choices.world.map)) return recipe_fail(error, "Offered map differs from its authored geometry choice");
+    size_t sidecar_view = SIZE_MAX;
+    for (size_t i = 0; i < r->view_count; ++i) if (!strncmp(r->views[i].owner, "map-sidecars:", 13)) {
+        if (sidecar_view != SIZE_MAX || r->views[i].product != map->product) return recipe_fail(error, "Offered map has an unrelated sidecar owner");
+        sidecar_view = i;
+    }
+    if (sidecar_view == SIZE_MAX || !sidecar_scope(r, sidecar_view, map->product, error)) return false;
     r->sidecars = calloc(count ? count : 1, sizeof(*r->sidecars));
     if (!r->sidecars) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining actual map sidecar observations"); return false; }
     r->sidecar_count = count;
     for (size_t i = 0; i < count; ++i) {
         if (!recipe_record(&reader, qa_json_at(json, sidecars, i), 3)) return false;
         qa_recipe_sidecar *s = &r->sidecars[i]; s->product = recipe_product(&reader); s->path = recipe_text(&reader); qa_json_id resource = recipe_take(&reader);
-        if (reader.failed || !s->product || !recipe_path(s->path, error)) return recipe_fail(error, "Invalid actual sidecar identity");
+        if (reader.failed || s->product != map->product || !recipe_path(s->path, error) ||
+            (i && strcmp(r->sidecars[i - 1].path, s->path) >= 0)) return recipe_fail(error, "Invalid actual sidecar identity");
         for (size_t j = 0; j < i; ++j) if (r->sidecars[j].product == s->product && !strcmp(r->sidecars[j].path, s->path)) return recipe_fail(error, "Duplicate map sidecar");
         if (qa_json_type(json, resource) == QA_JSON_NULL) {
-            qa_vfs *files = NULL; qa_resource *observed = NULL; qa_error reason = {0};
-            if (!qa_catalog_open(r->catalog, s->product, &files, error)) return false;
-            bool exists = qa_vfs_acquire(files, s->path, &observed, NULL, &reason); qa_resource_release(observed); qa_vfs_destroy(files);
+            qa_resource *observed = NULL; qa_error reason = {0};
+            bool exists = qa_vfs_acquire(r->views[sidecar_view].files, s->path, &observed, NULL, &reason); qa_resource_release(observed);
             if (exists || reason.code != QA_ERROR_NOT_FOUND) { if (!exists && error) *error = reason; return recipe_fail(error, "Actual local sidecar observation differs from Source miss"); }
-        } else { s->resource = resource_index(&reader, resource, s->product, s->path, false); if (reader.failed) return false; }
+        } else {
+            s->resource = resource_index(&reader, resource, s->product, s->path, false);
+            uint32_t index;
+            if (reader.failed || !unsigned_field(json, resource, &index, error) || r->resources[index]->view != sidecar_view) return recipe_fail(error, "Sidecar bytes leave the genuine map content view");
+        }
     }
-    if (!qa_bsp_open(qa_resource_bytes(map->resource), &r->bsp, error) || !qa_collision_create(&r->bsp, &r->geometry, error)) return false;
+    if (!qa_bsp_open(qa_resource_bytes(map->resource), &r->bsp, error) || !sidecar_inventory(r, map, error) ||
+        !qa_collision_create(&r->bsp, &r->geometry, error)) return false;
     if (r->bsp.family == QA_BSP_Q2) for (size_t i = 0; i < qa_bsp_record_count(&r->bsp, QA_BSP_TEXINFO); ++i) {
-        qa_bsp_texinfo texture; if (!qa_bsp_read_texinfo(&r->bsp, i, &texture, error)) return false;
-        if (texture.name.size > 1024 || memchr(texture.name.data, 0, texture.name.size)) return recipe_fail(error, "Invalid Q2 sidecar texture path");
-        char path[1040]; int size = snprintf(path, sizeof(path), "textures/%.*s.mat", (int)texture.name.size, (const char *)texture.name.data);
-        if (size < 0 || (size_t)size >= sizeof(path)) return recipe_fail(error, "Q2 sidecar path is too long");
+        char path[1040]; if (!qa_map_sidecars_material_path(&r->bsp, i, path, error)) return false;
         for (size_t j = 0; j < r->sidecar_count; ++j) if (r->sidecars[j].product == map->product && !strcmp(r->sidecars[j].path, path) && r->sidecars[j].resource)
-            if (i > UINT32_MAX || !qa_collision_set_surface_material(r->geometry, (uint32_t)i, qa_resource_bytes(r->sidecars[j].resource), error)) return false;
+            if (i > UINT32_MAX || !qa_collision_set_surface_material(r->geometry, (uint32_t)i,
+                qa_map_sidecars_material_input(qa_resource_bytes(r->sidecars[j].resource)), error)) return false;
     }
     return true;
 }

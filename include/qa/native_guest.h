@@ -180,7 +180,8 @@ typedef bool (*qa_native_guest_syscall_fn)(void *, qa_native_guest *,
  * syscall stops before any host syscall. A successful returning service commits
  * RAX/RCX/R11 and its two-byte source continuation; stop retains the stopped
  * source CPU for the kernel owner's exit receipt. EMULATED requires a positive
- * shared budget; HOST requires zero. No syscall authority leaks into nested
+ * shared budget; HOST requires zero. stop may be zero for a program with no
+ * return continuation. No syscall authority leaks into nested
  * ordinary library invocations. */
 bool qa_native_guest_run_program(qa_native_guest *, uint64_t, uint64_t, size_t,
     qa_native_guest_syscall_fn, void *, bool *, qa_error *);

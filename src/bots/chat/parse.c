@@ -21,7 +21,7 @@ bool chat_string(qa_bot_chat_asset *a, qa_script *s, const char **out, qa_error 
     qa_bytes text = qa_script_token_value(&t);
     const void *end = memchr(text.data, 0, text.size);
     if (end != NULL)
-        text.size = (const uint8_t *)end - text.data;
+        text.size = (size_t)((const uint8_t *)end - text.data);
     *out = bot_string(&a->arena, text, e);
     return *out != NULL;
 }
@@ -39,7 +39,7 @@ bool chat_message_parse(qa_bot_chat_asset *a, qa_script *s, const char **out, qa
             part = qa_script_token_value(&t);
             const void *end = memchr(part.data, 0, part.size);
             if (end != NULL)
-                part.size = (const uint8_t *)end - part.data;
+                part.size = (size_t)((const uint8_t *)end - part.data);
         } else if (t.kind == QA_SCRIPT_NUMBER && (t.subtype & QA_SCRIPT_INTEGER) != 0) {
             if (!qa_format_ecmascript_number(t.integer, integer, e))
                 goto finish;

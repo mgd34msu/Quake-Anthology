@@ -5,6 +5,7 @@
 #include "qa/input_command_save.h"
 #include "qa/scene_resource_save.h"
 #include "qa/material_library_save.h"
+#include "remote_q2_effects_bridge.h"
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
@@ -15,6 +16,37 @@ typedef struct saved_q2 {
     frontend_remote_q2_domain domain;
     qa_buffer input, stage, geometry;
 } saved_q2;
+typedef struct effects_refs {
+    const frontend_remote_q2 *row;
+    const frontend_remote_q2_restore_refs *refs;
+} effects_refs;
+static bool effect_image_encode(void *context, const qa_scene_image *image, uint64_t *out, qa_error *error)
+{
+    effects_refs *refs = context;
+    return frontend_scene_image_encode(refs->refs->scene, image, out, error);
+}
+static bool effect_image_decode(void *context, uint64_t id, const qa_scene_image **out, qa_error *error)
+{
+    effects_refs *refs = context;
+    return frontend_scene_image_decode(refs->refs->scene, id, out, error);
+}
+static bool effect_actor_encode(void *context, qa_actor_id actor, qa_saved_actor_id *out, qa_error *error)
+{
+    effects_refs *refs = context;
+    return qa_actors_save_reference(qa_session_actor_registry(qa_application_session(refs->row->options.domain.application)),
+        actor, out, error);
+}
+static bool effect_actor_decode(void *context, qa_saved_actor_id saved, qa_actor_id *out, qa_error *error)
+{
+    effects_refs *refs = context;
+    return qa_actors_reference_saved(qa_session_actor_registry(qa_application_session(refs->row->options.domain.application)),
+        saved, true, out, error);
+}
+static frontend_remote_q2_effects_refs effect_refs(effects_refs *context)
+{
+    return (frontend_remote_q2_effects_refs){context, effect_image_encode, effect_image_decode,
+        effect_actor_encode, effect_actor_decode};
+}
 static bool geometry_fields(qa_source_save_io *io, qa_collision_portal_checkpoint *state)
 {
     uint32_t family = state->family, format = state->format;
@@ -103,7 +135,8 @@ static bool retained(frontend_remote_q2 *row, const frontend_remote_q2_restore_r
         ((saved->materials || saved->fonts) && !saved->images) ||
         (row->saved_world && (!map || !saved->images || !saved->materials)) ||
         (row->models && (!saved->images || !saved->materials)) ||
-        (saved->ready && (!row->saved_world || !saved->images || !saved->materials || !saved->fonts || !saved->sounds)) ||
+        (row->saved_effects.size && (!map || !saved->images || !saved->materials || !row->saved_white)) ||
+        (saved->ready && (!row->saved_world || !saved->images || !saved->materials || !saved->fonts || !saved->sounds || !row->saved_effects.size)) ||
         (saved->selected && (!qa_catalog_product_view_current(row->content.catalog, row->content.selected, row->content.mounts) ||
             !row->content.selected_write_root || !row->content.base_write_root)))
         return remote_q2_fail(error, QA_ERROR_FORMAT, "Q2 cold resource topology leaves its actual catalog/private view");
@@ -121,9 +154,9 @@ static bool fields(qa_source_save_io *io, frontend_remote_q2 *row,
     const frontend_remote_q2_restore_refs *refs, saved_q2 *saved)
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
-    uint8_t magic[4] = {'Q','2','R','C'}; uint32_t schema = 2;
+    uint8_t magic[4] = {'Q','2','R','C'}; uint32_t schema = 3;
     if (!qa_source_save_bytes(io, magic, sizeof(magic)) || memcmp(magic, "Q2RC", 4) ||
-        !qa_source_save_u32(io, &schema) || schema != 2 || !domain(io, &saved->domain) ||
+        !qa_source_save_u32(io, &schema) || schema != 3 || !domain(io, &saved->domain) ||
         !qa_source_save_bool(io, &saved->bound) || !qa_source_save_bool(io, &saved->selected) ||
         !qa_source_save_bool(io, &row->content_admitted) ||
         !qa_source_save_bool(io, &saved->ready) || !qa_source_save_bool(io, &saved->retired) ||
@@ -153,7 +186,7 @@ static bool fields(qa_source_save_io *io, frontend_remote_q2 *row,
         !qa_source_save_u64(io, &saved->map_pool) || !qa_source_save_u64(io, &saved->map_resource) ||
         !opening(io, &row->map_opening, refs, saved->mounts, row->content.mounts) || !qa_source_save_u64(io, &row->saved_world) ||
         !qa_source_save_u64(io, &row->saved_classic) || !qa_source_save_u64(io, &row->saved_white) ||
-        !blob(io, &saved->geometry) || !blob(io, &saved->input)) return false;
+        !blob(io, &saved->geometry) || !blob(io, &saved->input) || !blob(io, &row->saved_effects)) return false;
     if (row->content_admitted && !saved->selected) return false;
     uint32_t ground = row->prediction_ground.hit;
     if (!qa_source_save_u32(io, &ground) || ground > QA_TRACE_HIT_ACTOR ||
@@ -251,8 +284,7 @@ bool frontend_remote_q2_checkpoint(const frontend_remote_q2 *source,
 {
     frontend_remote_q2 *row = (frontend_remote_q2 *)source;
     if (!row || !refs || !refs->content || !refs->models || !refs->roots || !refs->scene ||
-        !out || out->data || out->size || !remote_q2_capture_owned(row) ||
-        (row->bound && !row->retired && !remote_q2_live(row, error))) return false;
+        !out || out->data || out->size || !remote_q2_capture_owned(row)) return false;
     saved_q2 saved = {.domain = row->options.domain, .bound = row->bound, .selected = row->selected,
         .ready = row->media_ready, .retired = row->retired,
         .images = row->images != NULL, .materials = row->materials != NULL,
@@ -261,11 +293,14 @@ bool frontend_remote_q2_checkpoint(const frontend_remote_q2 *source,
         .catalog = qa_application_content_catalog_id(refs->content, row->content.catalog),
         .mounts = qa_application_content_view_id(refs->content, row->content.mounts)};
     frontend_remote_q2 captured = *row; captured.saved_world = captured.saved_classic = captured.saved_white = 0;
+    captured.saved_effects = (qa_buffer){0};
+    effects_refs effect_context = {row, refs}; frontend_remote_q2_effects_refs effects = effect_refs(&effect_context);
     bool ok = (!row->map || qa_application_content_resource_id(refs->content, row->map, &saved.map_pool, &saved.map_resource)) &&
         (!row->world || frontend_world_encode(refs->roots, row->world, &captured.saved_world, error)) &&
         frontend_font_encode(row->frontend, row->classic, &captured.saved_classic, error) &&
         frontend_scene_image_encode(refs->scene, row->white, &captured.saved_white, error) &&
-        qa_input_command_checkpoint(&row->input, &saved.input, error) && geometry_checkpoint(row->geometry, &saved.geometry, error);
+        qa_input_command_checkpoint(&row->input, &saved.input, error) && geometry_checkpoint(row->geometry, &saved.geometry, error) &&
+        (!row->effects || frontend_remote_q2_effects_checkpoint(row->effects, &effects, &captured.saved_effects, error));
     if (ok && row->download_stage) {
         saved.stage.size = (size_t)row->download_bytes;
         saved.stage.data = saved.stage.size ? malloc(saved.stage.size) : NULL;
@@ -277,6 +312,7 @@ bool frontend_remote_q2_checkpoint(const frontend_remote_q2 *source,
     if (ok) ok = qa_source_save_writer(&io, qa_application_session(row->frontend->application), error) &&
         fields(&io, &captured, refs, &saved) && retained(&captured, refs, &saved, error) && qa_source_save_finish(&io, out);
     --row->busy; qa_source_save_dispose(&io); qa_buffer_free(&saved.input); qa_buffer_free(&saved.stage); qa_buffer_free(&saved.geometry);
+    qa_buffer_free(&captured.saved_effects);
     return ok;
 }
 bool frontend_remote_q2_import_read(const frontend_remote_q2 *row, frontend_remote_q2_view *out, qa_error *error)
@@ -417,8 +453,20 @@ bool frontend_remote_q2_restore_finish(frontend_remote_q2 *row,
         !frontend_scene_image_decode(refs->scene, row->saved_white, &white, error)) return false;
     if (row->white && row->white != white) return false;
     if (white && !row->white) { qa_scene_image_retain(white); row->white = white; }
+    if (row->saved_effects.size && !row->effects_imported) {
+        frontend_remote_q2_effects_source source;
+        effects_refs context = {row, refs}; frontend_remote_q2_effects_refs effects = effect_refs(&context);
+        if (!frontend_remote_q2_effects_destroy(&row->effects, error) || !remote_q2_effects_source_read(row, &source, error) ||
+            !frontend_remote_q2_effects_restore(&source, &effects,
+            (qa_bytes){row->saved_effects.data, row->saved_effects.size}, &row->effects, error)) return false;
+        row->effects_imported = true;
+    }
+    if (row->restore_media_ready && !row->effects)
+        return remote_q2_fail(error, QA_ERROR_FORMAT, "Q2 ready media has no retained actual effects owner");
     if (row->bound && !row->retired && (!row->options.current(row->options.context, &row->options.domain, error) ||
         qa_network_epoch(row->options.domain.runtime, row->options.domain.client) != row->options.domain.epoch)) return false;
     row->media_ready = row->restore_media_ready; row->restore_media_ready = false;
+    qa_buffer_free(&row->saved_effects);
+    row->effects_imported = false;
     row->importing = false; return true;
 }

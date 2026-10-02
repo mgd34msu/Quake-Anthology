@@ -83,7 +83,7 @@ static bool restore_sources(qa_server_browser *browser, qa_bytes bytes, uint32_t
         protocol.revision = qa_net_read_u32(&reader); protocol.flags = qa_net_read_u32(&reader);
         qa_net_address address;
         ok = !reader.failed && address_read(&reader, &address) && sources &&
-            !(sources & ~(QA_SERVER_FAVORITE | QA_SERVER_DIRECT)) && qa_net_protocol_valid(protocol, error);
+            !(sources & ~(uint32_t)(QA_SERVER_FAVORITE | QA_SERVER_DIRECT)) && qa_net_protocol_valid(protocol, error);
         sources &= source_mask;
         if (ok && sources) ok = qa_server_browser_add(&candidate, &address, protocol, sources, error);
     }

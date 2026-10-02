@@ -159,20 +159,20 @@ static bool arsenal(reader r) {
     return record(r) && namespaced(field(r,"provider")) && nullable(field(r,"weapon"),namespaced) && boolean(field(r,"useHoldable")) &&
         (absent(field(r,"impulse")) || integer(field(r,"impulse"),0,255));
 }
-static bool angle_word(reader r) { return integer(r,-2147483648.0,2147483647.0); }
+static bool int32_value(reader r) { return integer(r,-2147483648.0,2147483647.0); }
 static bool move_value(reader r) { return integer(r,-32768,32767); }
 static bool command(reader r) {
     reader kind=field(r,"kind");
     if (!record(r) || !integer(field(r,"buttons"),0,4294967295.0)) return false;
     if (is(kind,"q3")) return integer(field(r,"serverTimeMilliseconds"),0,2147483647) &&
-        list(field(r,"angleWords"),3,3,angle_word) && integer(field(r,"weapon"),0,255) && fields(r,"forwardMove rightMove upMove",move_value);
+        list(field(r,"angleWords"),3,3,int32_value) && integer(field(r,"weapon"),0,255) && fields(r,"forwardMove rightMove upMove",move_value);
     if (is(kind,"q2-rerelease")) return integer(field(r,"milliseconds"),0,1000) && vector(field(r,"angles")) &&
         fields(r,"forwardMove sideMove",finite) && integer(field(r,"serverFrame"),-1,2147483647);
     if (!fields(r,"forwardMove sideMove upMove",move_value) || !integer(field(r,"impulse"),0,255)) return false;
     if (is(kind,"q1-netquake")) return finite(field(r,"acknowledgedServerTimeSeconds")) && vector(field(r,"viewAngles"));
     if (!integer(field(r,"milliseconds"),0,255)) return false;
     if (is(kind,"q1-quakeworld")) return vector(field(r,"angles"));
-    return literal(kind,"q2-classic") && list(field(r,"angleShorts"),3,3,angle_word) && integer(field(r,"lightLevel"),0,255);
+    return literal(kind,"q2-classic") && list(field(r,"angleShorts"),3,3,int32_value) && integer(field(r,"lightLevel"),0,255);
 }
 static bool input(reader r) { return record(r) && natural(field(r,"sequence")) && command(field(r,"command")) && optional(field(r,"arsenal"),arsenal); }
 static bool inventory(reader r) {
@@ -187,8 +187,15 @@ static bool movement(reader r) {
         fields(r,"moveType flags waterLevel waterType teleportTimeSeconds idealPitch health",finite) && hit(field(r,"ground")) && boolean(field(r,"fixAngle"));
     if (is(kind,"q1-quakeworld")) return fields(r,"origin velocity angles",vector) && fields(r,"oldButtons waterJumpTimeSeconds spectator",finite) &&
         boolean(field(r,"dead")) && hit(field(r,"ground"));
-    if (is(kind,"q2-classic")) return fields(r,"type flags timeEightMilliseconds gravity",finite) &&
-        list(field(r,"originEighths"),3,3,finite) && list(field(r,"velocityEighths"),3,3,finite) && list(field(r,"deltaAngleShorts"),3,3,finite);
+    if (is(kind,"q2-classic")) {
+        reader storage=field(r,"coordinateStorage");
+        bool wide=!absent(storage);
+        return fields(r,"type flags gravity",finite) &&
+            (wide ? (literal(storage,"q2pro-extended-v2") && absent(field(r,"timeEightMilliseconds")) &&
+                integer(field(r,"timeMilliseconds"),0,65535)) : finite(field(r,"timeEightMilliseconds"))) &&
+            list(field(r,"originEighths"),3,3,wide?int32_value:finite) &&
+            list(field(r,"velocityEighths"),3,3,wide?int32_value:finite) && list(field(r,"deltaAngleShorts"),3,3,finite);
+    }
     if (is(kind,"q2-rerelease")) return fields(r,"type flags timeMilliseconds gravity viewHeight",finite) && fields(r,"origin velocity deltaAngles",vector);
     return literal(kind,"q3") && fields(r,"commandTimeMilliseconds movementType bobCycle movementFlags movementTimeMilliseconds gravity speed movementDirection flags viewHeight predictableEventSequence movementFrame jumpPadFrame",finite) &&
         fields(r,"origin velocity grapplePoint viewAngles",vector) && list(field(r,"deltaAngleWords"),3,3,finite) && hit(field(r,"ground")) && nullable(field(r,"jumpPad"),actor);
@@ -289,8 +296,10 @@ static bool prediction(reader r) {
     if (!qa_json_string(r.json,state_kind.id,&kind,r.error)) return false;
     bool same=is(field(field(r,"profile"),"kind"),(const char *)kind.data); qa_buffer_free(&kind);
     if (!same) return fail(r,"prediction movement differs from profile");
-    if (is(field(field(field(field(r,"profile"),"numeric"),"arithmetic"),"kind"),"native-c") &&
-        !native_prediction(r)) return false;
+    bool native=is(field(field(field(field(r,"profile"),"numeric"),"arithmetic"),"kind"),"native-c");
+    if (!absent(field(field(r,"state"),"coordinateStorage")) && !native)
+        return fail(r,"extended Q2 prediction requires its actual native C kernel");
+    if (native && !native_prediction(r)) return false;
     reader arsenal_state=field(r,"arsenal"),anim=field(r,"animation"),environment=field(r,"environment");
     return namespaced(field(arsenal_state,"provider")) && nullable(field(arsenal_state,"activeWeapon"),namespaced) &&
         weapon_state(field(arsenal_state,"state")) && list(field(arsenal_state,"ammo"),0,SIZE_MAX,inventory) &&

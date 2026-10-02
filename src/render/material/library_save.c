@@ -224,8 +224,20 @@ static bool library_valid(const qa_material_library *library, qa_error *error)
     for (size_t i = 0; ok && i < count; ++i) {
         const qa_material *material = &library->ordered[i]->material; uint64_t edge = UINT64_MAX;
         ok = material->sorted_index == i && material->registration < count &&
+            material->library == library &&
             canonical(material->name, error) && same_profile(&material->profile, &library->profile, library->source_profile) &&
             material_index(library, material->remapped, &edge) && edge != i;
+        const qa_material_record *record = library->ordered[i];
+        if (ok && record->source_variant_parent) {
+            const qa_material_record *parent = record->source_variant_parent;
+            uint64_t parent_index = UINT64_MAX;
+            ok = material_index(library, &parent->material, &parent_index) && parent_index != i &&
+                !parent->source_variant_parent && !strcmp(parent->material.name, material->name) &&
+                record->kind == parent->kind && record->world_identity == parent->world_identity &&
+                record->lightmap_index == parent->lightmap_index && record->source_variant_revision &&
+                record->source_variant_revision <= parent->material.revision && !material->remapped &&
+                qa_q3_image_upload_options_valid(&record->source_variant_upload, error);
+        }
         if (ok) {
             ok = !registrations[material->registration]; registrations[material->registration] = true;
             if (material->registration == 0)
@@ -379,10 +391,10 @@ bool qa_material_library_catalog_restore(qa_scene_resources *resources, qa_bytes
 static bool library_header(qa_source_save_io *io, qa_material_library *library, const qa_material_library *qualified,
     const qa_material_library_checkpoint_refs *refs, uint32_t *schema)
 {
-    uint8_t magic[4] = {'Q', 'A', 'M', 'L'}; uint32_t version = 7;
+    uint8_t magic[4] = {'Q', 'A', 'M', 'L'}; uint32_t version = 8;
     bool reading = io->direction == QA_SOURCE_SAVE_READ, video = library->video_required;
     if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "QAML", 4) ||
-        !qa_source_save_u32(io, &version) || (version < 3 || version > 7) || !qa_source_save_bool(io, &video) ||
+        !qa_source_save_u32(io, &version) || (version < 3 || version > 8) || !qa_source_save_bool(io, &video) ||
         (reading && video != qualified->video_required)) return false;
     *schema = version;
     if (reading) library->video_required = video;
@@ -550,13 +562,17 @@ bool qa_material_library_checkpoint(const qa_material_library *source, const qa_
         qa_source_save_count(&io, &count, QA_MATERIAL_MAX_REGISTERED) &&
         qa_source_save_count(&io, &capacity, QA_MATERIAL_MAX_REGISTERED);
     for (size_t i = 0; ok && i < count; ++i) {
-        qa_material_record copy = *source->ordered[i]; uint64_t remapped = UINT64_MAX;
+        qa_material_record copy = *source->ordered[i]; uint64_t remapped = UINT64_MAX, parent = UINT64_MAX;
         ok = copy.material.sorted_index == i && copy.material.registration < count &&
             copy.material.fog_image == source->fog_image && copy.material.dlight_image == source->dlight_image &&
             qa_material_order_has_record(source->order, &source->ordered[i]->material) &&
             qa_material_saved_record(&io, refs, schema, &copy) && videos(&io, source, &copy, refs) &&
             material_index(source, copy.material.remapped, &remapped) &&
             qa_source_save_u64(&io, &remapped);
+        if (ok) ok = material_index(source, copy.source_variant_parent ? &copy.source_variant_parent->material : NULL, &parent) &&
+            qa_source_save_u64(&io, &parent) &&
+            (parent == UINT64_MAX || (qa_source_save_u64(&io, &copy.source_variant_revision) &&
+                qa_q3_image_upload_options_codec(&io, &copy.source_variant_upload)));
     }
     if (ok) ok = record_order(&io, &library) && remaps(&io, &library) && generated(&io, &library, refs) && qa_source_save_finish(&io, out);
     qa_source_save_dispose(&io);
@@ -579,9 +595,10 @@ bool qa_material_library_restore(const qa_material_library *qualified, qa_bytes 
         qa_source_save_count(&io, &capacity, QA_MATERIAL_MAX_REGISTERED) &&
         registration_capacity(count, capacity) && count <= bytes.size / 100;
     uint64_t *remapped = ok && count ? malloc(count * sizeof(*remapped)) : NULL;
+    uint64_t *parents = ok && count ? malloc(count * sizeof(*parents)) : NULL;
     if (ok && count) {
         library->ordered = calloc(capacity, sizeof(*library->ordered)); library->capacity = capacity;
-        if (!library->ordered || !remapped) ok = fail(error, QA_ERROR_MEMORY, "allocating restored material registration table");
+        if (!library->ordered || !remapped || !parents) ok = fail(error, QA_ERROR_MEMORY, "allocating restored material registration table");
     }
     for (size_t i = 0; ok && i < count; ++i) {
         qa_material_record *record = calloc(1, sizeof(*record));
@@ -590,6 +607,11 @@ bool qa_material_library_restore(const qa_material_library *qualified, qa_bytes 
             (schema < 4 || videos(&io, library, record, refs)) &&
             record->material.registration < count && record->material.sorted_index == i &&
             qa_source_save_u64(&io, &remapped[i]) && (remapped[i] == UINT64_MAX || remapped[i] < count);
+        parents[i] = UINT64_MAX;
+        if (ok && schema >= 8) ok = qa_source_save_u64(&io, &parents[i]) &&
+            (parents[i] == UINT64_MAX || (parents[i] < count && parents[i] != i &&
+                qa_source_save_u64(&io, &record->source_variant_revision) && record->source_variant_revision &&
+                qa_q3_image_upload_options_codec(&io, &record->source_variant_upload)));
         if (ok && i && library->ordered[i - 1]->material.sort > record->material.sort) ok = false;
         if (ok) {
             record->material.identity = qa_scene_identity();
@@ -597,17 +619,26 @@ bool qa_material_library_restore(const qa_material_library *qualified, qa_bytes 
         }
         if (!ok) { record_free(record); break; }
         record->material.fog_image = library->fog_image; record->material.dlight_image = library->dlight_image;
+        record->material.library = library;
+        if (schema < 8 && library->source_profile && record->material.lightmap_index >= 0) {
+            bool lightmap = false;
+            for (size_t stage = 0; stage < record->material.stage_count; ++stage)
+                if (record->material.stages[stage].is_lightmap) lightmap = true;
+            if (!lightmap) record->material.lightmap_index = -1;
+        }
         unsigned bucket = qa_material_hash(record->material.name);
         record->next = library->records[bucket]; library->records[bucket] = record;
         library->ordered[library->count++] = record;
     }
     if (ok) {
-        for (size_t i = 0; i < count; ++i)
+        for (size_t i = 0; i < count; ++i) {
             library->ordered[i]->material.remapped = remapped[i] == UINT64_MAX ? NULL : &library->ordered[remapped[i]]->material;
+            library->ordered[i]->source_variant_parent = parents[i] == UINT64_MAX ? NULL : library->ordered[parents[i]];
+        }
         ok = record_order(&io, library) && remaps(&io, library) && generated(&io, library, refs) &&
             qa_source_save_finish(&io, NULL) && library_valid(library, error);
     }
-    free(remapped); qa_source_save_dispose(&io);
+    free(remapped); free(parents); qa_source_save_dispose(&io);
     qa_material_library_capture_end(qualified);
     if (ok) { library->catalog_ready = true; *out = library; }
     else {
@@ -638,9 +669,11 @@ bool qa_material_library_restore_into_empty(qa_material_library *target,
     bool ok = qa_material_library_restore(qualified, bytes, refs, &decoded, error);
     target->mutating = false;
     if (!ok) return false;
-    /* No child stores the address of the temporary outer library. Records,
-     * definitions, resources and aliases retain their actual heap addresses. */
+    size_t references = target->references;
+    qa_scene_resources_destroy(target->resources);
     *target = *decoded;
+    target->references = references;
+    for (size_t i = 0; i < target->count; ++i) target->ordered[i]->material.library = target;
     free(decoded);
     return true;
 }

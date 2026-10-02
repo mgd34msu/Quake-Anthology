@@ -67,7 +67,7 @@ bool qa_demo_record_append(qa_demo_recorder *recorder, qa_demo_record_kind kind,
         const qa_save_metadata *metadata = qa_save_image_metadata(image);
         bool matches = metadata->elapsed_ns == recorder->time_ns &&
                        qa_sha256_equal(&metadata->composition, &recorder->composition);
-        qa_save_image_destroy(image);
+        if (!qa_save_image_destroy_checked(&image, error)) return false;
         if (!matches) return persistence_fail(error, QA_ERROR_FORMAT, "Demo keyframe time/composition differs from recording");
     }
     uint8_t header[DEMO_RECORD_HEADER];
@@ -216,7 +216,7 @@ bool qa_demo_take(qa_buffer *buffer, bool recover_tail, qa_demo **out, qa_error 
             if (!ok) break;
             const qa_save_metadata *metadata = qa_save_image_metadata(image);
             bool matches = metadata->elapsed_ns == record.time_ns && qa_sha256_equal(&metadata->composition, &composition);
-            qa_save_image_destroy(image);
+            if (!qa_save_image_destroy_checked(&image, error)) { ok = false; break; }
             if (!matches) { ok = persistence_fail(error, QA_ERROR_FORMAT, "Shared demo keyframe composition/time mismatch"); break; }
         }
         if (!retain_record(demo, record, error)) { ok = false; break; }
@@ -256,7 +256,7 @@ bool qa_demo_seek(const qa_demo *demo, uint64_t target_ns, void *context, const 
     if (!qa_save_image_decode(demo->records[keyframe].payload, &image, error)) return false;
     void *candidate = NULL;
     bool ok = ops->create(context, image, &candidate, error);
-    qa_save_image_destroy(image);
+    if (!qa_save_image_destroy_checked(&image, error)) ok = false;
     if (!ok || !candidate) {
         if (candidate) ops->discard(context, candidate);
         if (ok) persistence_fail(error, QA_ERROR_FORMAT, "Demo restore returned no candidate");

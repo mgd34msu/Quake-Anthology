@@ -38,7 +38,7 @@ typedef struct q2_server {
     int32_t wire_frame;
     bool has_source_frame;
     qa_resource *download;
-    qa_vfs *download_view;
+    const qa_vfs *download_view;
     qa_vfs_acquisition download_opening;
     size_t download_offset;
     qa_buffer datagram;

@@ -20,6 +20,8 @@
 #include "qa/llm.h"
 #include "qa/recovery.h"
 #include "qa/native_runtime.h"
+#include "qa/native_resource_inventory.h"
+#include "qa/save.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -144,6 +146,9 @@ struct qa_frontend {
     struct frontend_component_scene *component_scenes;
     frontend_qc_rerelease *qc_rerelease;
     qa_native_runtime *native_runtime;
+    qa_native_resource_inventory *native_resource_inventory_pending;
+    qa_save_image *save_image_pending;
+    struct frontend_renderer_materials *renderer_materials;
     frontend_event_state *events;
     frontend_particle_state *particles;
     qa_application_q3_round_cut *round;
@@ -222,6 +227,7 @@ struct qa_frontend {
     bool (*native_clipboard)(void *, const char *, qa_error *);
 };
 bool frontend_fail(qa_error *, qa_status, const char *);
+bool frontend_save_image_release(qa_frontend *,qa_save_image **,qa_error *);
 bool frontend_clipboard_write(qa_frontend *, const char *, qa_error *);
 bool frontend_tools_create_diagnostics(qa_frontend *, qa_vfs *, qa_error *);
 bool frontend_protocol(const char *, qa_net_protocol_id *, qa_error *);
@@ -350,6 +356,7 @@ typedef struct frontend_source_group_view {
 size_t frontend_source_group_count(const qa_frontend *);
 bool frontend_source_group_read(const qa_frontend *, size_t, frontend_source_group_view *);
 bool frontend_source_identity_allocate(qa_frontend *,uint64_t *,qa_error *);
+bool frontend_source_identity_used(const qa_frontend *,uint64_t);
 bool frontend_q3_configuration(qa_frontend *,uint8_t out[11332],qa_error *);
 bool frontend_source_prepare_scene(qa_frontend *,qa_application *,uint32_t,
     const qa_q3_refdef *,qa_q3_scene_options *,qa_error *);

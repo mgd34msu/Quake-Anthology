@@ -173,7 +173,7 @@ bool q1_save_player(q1_save_io *io, q1_player *player) {
     if((!io->reading && player->source_info_count>UINT32_MAX) || !q1_save_u32(io,&info_count)) return false;
     if(io->reading) {
         if(io->offset>io->input.size || info_count>(io->input.size-io->offset)/8 ||
-           (uint64_t)info_count>SIZE_MAX/sizeof(*player->source_info))
+           (info_count && sizeof(*player->source_info)>SIZE_MAX/info_count))
             return q1_save_fail(io,"Q1 source userinfo map exceeds its saved extent");
         q1_source_client_clear(player);
         if(info_count && !(player->source_info=calloc(info_count,sizeof(*player->source_info))))

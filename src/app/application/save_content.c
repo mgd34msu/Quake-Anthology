@@ -1,10 +1,12 @@
 #include "save_content.h"
+#include "guest_q3_components.h"
 #include "internal.h"
 #include "qa/catalog_save.h"
 #include "qa/source_save.h"
 #include "qa/vfs_save.h"
 #include "qa/application_q3_factory.h"
 #include "equipment_runtime.h"
+#include "qa/map_sidecars.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -241,7 +243,9 @@ bool application_save_content_collect(const qa_application *app, qa_application_
         ok = copy_resource(g, qa_vfs_resources(qa_launch_snapshot_mounts(launch)),
             qa_launch_snapshot_resource(launch, i), &g->resources[i], error);
     const qa_application_content_visitor visitor = {.context = g, .pool = add_pool, .catalog = add_catalog, .view = add_view};
+    if (ok) ok = qa_map_sidecars_content_visit(app->map_sidecars, &visitor, error);
     if (ok) ok = qa_application_q3_content_visit(app, &visitor, error);
+    if (ok) ok = application_q3_components_content_visit(app->components,&visitor,error);
     for (size_t i = 0; ok && i < application_unified_event_resource_count(app); ++i) {
         const application_unified_event_resource *row = application_unified_event_resource_at(app, i);
         ok = row && row->pool && row->resource &&
@@ -376,7 +380,7 @@ uint64_t application_save_content_application_pool(const qa_application_content_
 uint64_t application_save_content_application_catalog(const qa_application_content_graph *g) { return g ? g->application_catalog : 0; }
 uint64_t application_save_content_launch_catalog(const qa_application_content_graph *g) { return g ? g->launch_catalog : 0; }
 uint64_t application_save_content_launch_view(const qa_application_content_graph *g) { return g ? g->launch_view : 0; }
-bool application_save_content_event_pool(qa_application_content_graph *g, uint64_t id,
+bool qa_application_content_retain_pool(qa_application_content_graph *g, uint64_t id,
     qa_resource_pool **out, qa_error *error)
 {
     qa_resource_pool *pool = qa_application_content_pool(g, id);
@@ -387,6 +391,10 @@ bool application_save_content_event_pool(qa_application_content_graph *g, uint64
     *out = pool;
     return true;
 }
+
+bool application_save_content_event_pool(qa_application_content_graph *g, uint64_t id,
+    qa_resource_pool **out, qa_error *error)
+{ return qa_application_content_retain_pool(g, id, out, error); }
 bool application_save_content_instance(const qa_application_content_graph *g, const char *name,
     application_saved_instance_content *out, qa_error *error)
 {

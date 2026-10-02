@@ -173,9 +173,12 @@ static bool flush(void *context, qa_network_runtime *runtime, qa_net_client_id i
             if (!current(c, e) || !c->hooks.qw_loss(c->hooks.context, c->id, sequence, &loss, e) || !current(c, e)) {
                 ok = false; break;
             }
-            qa_q1_client_message message = {.op = QA_Q1_CLC_MOVE,
-                .data.qw_move = {oldest ? oldest->command : (qa_qw_command){0},
-                    previous ? previous->command : (qa_qw_command){0}, move->command.qw, loss}};
+            qa_q1_client_message message = {0};
+            message.op = QA_Q1_CLC_MOVE;
+            message.data.qw_move.oldest = oldest ? oldest->command : (qa_qw_command){0};
+            message.data.qw_move.previous = previous ? previous->command : (qa_qw_command){0};
+            message.data.qw_move.current = move->command.qw;
+            message.data.qw_move.loss = loss;
             ok = qa_q1_client_write(&writer, c->protocol, sequence, &message);
             if (ok && c->has_delta) {
                 message = (qa_q1_client_message){.op = QA_Q1_CLC_DELTA, .data.delta = (uint8_t)c->last_frame};
@@ -217,9 +220,23 @@ static bool enqueue_move(q1_runtime_client *c, const qa_q1_command *nq, const qa
 static bool command(void *context, const qa_network_command *value, qa_error *e)
 {
     q1_runtime_client *c = context; qa_q1_command nq; qa_qw_command qw;
-    return current(c, e) && (c->qw ? c->hooks.command_qw(c->hooks.context, value, &qw, e) :
-        c->hooks.command_nq(c->hooks.context, value, &nq, e)) && current(c, e) &&
-        enqueue_move(c, c->qw ? NULL : &nq, c->qw ? &qw : NULL, e);
+    if (!c->active || c->command_count == c->policy.pending_commands || !current(c, e))
+        return qa_network_fail(e, "Q1 command lacks its actual active Source or retained queue capacity");
+    if (!(c->qw ? c->hooks.command_qw(c->hooks.context, value, c->runtime->now_ns, &qw, e) :
+        c->hooks.command_nq(c->hooks.context, value, &nq, e)) || !current(c, e)) return false;
+    if (c->qw && c->hooks.qw_teleport) {
+        qa_vec3 origin; bool present=false;
+        if (!c->hooks.qw_teleport(c->hooks.context,c->id,&origin,&present,e) || !current(c,e)) return false;
+        if (present) {
+            if (!qa_vec_finite(origin)) return qa_network_fail(e,"QW camera supplied a nonfinite spectator teleport");
+            uint8_t data[13]; qa_net_writer writer; qa_net_writer_init(&writer,data,sizeof(data),e);
+            qa_q1_client_message message={.op=QA_Q1_CLC_TELEPORT,
+                .data.teleport={origin.x,origin.y,origin.z}};
+            if (!qa_q1_client_write(&writer,c->protocol,0,&message) ||
+                !q1_client_queue(c,(qa_bytes){data,qa_net_writer_size(&writer)},e)) return false;
+        }
+    }
+    return enqueue_move(c, c->qw ? NULL : &nq, c->qw ? &qw : NULL, e);
 }
 static bool restart(void *context, uint64_t epoch, const qa_sha256_digest *composition, qa_error *e)
 { (void)context; (void)epoch; (void)composition; return qa_network_fail(e, "Q1 CLIENT travel must arrive from its original server"); }
@@ -327,7 +344,7 @@ static bool qw_game_state(q1_runtime_client *c, uint32_t *checksum, qa_error *e)
     bool ok = current(c, e) && c->hooks.qw_game_state(c->hooks.context, c->id, a, models, b, sounds, checksum, e) && current(c, e);
     free(a); free(b); return ok;
 }
-static bool qw_stuff(q1_runtime_client *c, const char *text, qa_net_writer *writer, qa_error *e)
+static bool qw_stuff(q1_runtime_client *c, const char *text, bool *skins_requested, qa_error *e)
 {
     while (*text) {
         const char *end = text; bool quoted = false;
@@ -348,22 +365,15 @@ static bool qw_stuff(q1_runtime_client *c, const char *text, qa_net_writer *writ
         } else if (ok && present && !strcmp(name, "skins")) {
             char extra[2]; bool argument;
             ok = qa_q1_token(&cursor, true, extra, sizeof(extra), &argument, e);
-            if (ok && !argument) {
-                qa_net_writer_init(writer, writer->data, writer->capacity, e);
-                bool ready = false;
-                ok = current(c, e) && c->hooks.qw_skins(c->hooks.context, c->id, &ready, e) && current(c, e);
-                if (ok && !c->active) {
-                    c->waiting_skins = !ready;
-                    if (ready) ok = qa_qw_precache_skins_ready(c->precache, writer) && emit_writer(c, writer, e);
-                }
-            }
+            if (ok && !argument) *skins_requested=true;
         }
         free(line); if (!ok) return false;
         text = *end ? end + 1 : end;
     }
     return true;
 }
-static bool protocol_service(q1_runtime_client *c, q1_client_record *record, qa_net_writer *writer, qa_error *e)
+static bool protocol_service(q1_runtime_client *c, q1_client_record *record, qa_net_writer *writer,
+    bool *skins_requested, qa_error *e)
 {
     if (!c->qw) {
         qa_nq_message *m = &record->service.nq;
@@ -375,7 +385,8 @@ static bool protocol_service(q1_runtime_client *c, q1_client_record *record, qa_
         }
         if (m->op == QA_NQ_ENTITY) qa_nq_signon_first_entity(&c->signon);
         if (c->signon.stage == 4 && !c->active) {
-            if (!qa_network_phase(c->runtime, c->id, QA_NET_ACTIVE, e)) return false; c->active = true;
+            if (!qa_network_phase(c->runtime, c->id, QA_NET_ACTIVE, e)) return false;
+            c->active = true;
         }
         if (m->op == QA_NQ_DISCONNECT) c->retiring = true;
         return true;
@@ -401,7 +412,7 @@ static bool protocol_service(q1_runtime_client *c, q1_client_record *record, qa_
         if (!c->active) { if (!qa_network_phase(c->runtime, c->id, QA_NET_ACTIVE, e)) return false; c->active = true; }
     } else if (m->kind == QA_QW_INVALID_DELTA) c->has_delta = false;
     else if (m->kind == QA_QW_DISCONNECT) c->retiring = true;
-    else if (m->kind == QA_QW_STUFFTEXT && !qw_stuff(c, m->data.text.value, writer, e)) return false;
+    else if (m->kind == QA_QW_STUFFTEXT && !qw_stuff(c, m->data.text.value, skins_requested, e)) return false;
     return true;
 }
 bool qa_network_q1_client_continue(qa_network_runtime *runtime, qa_net_client_id id, qa_error *e)
@@ -413,18 +424,29 @@ bool qa_network_q1_client_continue(qa_network_runtime *runtime, qa_net_client_id
     uint8_t *data = malloc(c->policy.message_bytes);
     if (!data) { qa_error_set(e, QA_ERROR_MEMORY, 0, "Encoding original Q1 signon responses"); return false; }
     c->busy = true; runtime->callback = true;
-    bool ok = current(c, e);
+    bool ok = current(c, e), skins_requested=false;
     if (ok && c->qw) {
         qa_qw_history_acknowledge(&c->history, c->acknowledged, (double)c->received_ns / 1e9);
         ok = c->hooks.acknowledged(c->hooks.context, id, c->acknowledged, c->received_ns, e) && current(c, e);
     }
     while (ok && !c->retiring && c->cursor < c->record_count) {
         qa_net_writer writer; qa_net_writer_init(&writer, data, c->policy.message_bytes, e);
-        ok = current(c, e) && protocol_service(c, &c->records[c->cursor], &writer, e);
+        ok = current(c, e) && protocol_service(c, &c->records[c->cursor], &writer, &skins_requested, e);
         if (ok) ++c->cursor;
     }
     if (ok) ok = c->hooks.end(c->hooks.context, id, c->received_ns, e);
     if (ok && !c->retiring) ok = current(c, e);
+    if (ok && !c->retiring && skins_requested) {
+        bool ready=false;
+        ok=c->hooks.qw_skins(c->hooks.context,c->id,&ready,e) && current(c,e);
+        if (ok && !c->active) {
+            c->waiting_skins=!ready;
+            if (ready) {
+                qa_net_writer writer; qa_net_writer_init(&writer,data,c->policy.message_bytes,e);
+                ok=qa_qw_precache_skins_ready(c->precache,&writer) && emit_writer(c,&writer,e);
+            }
+        }
+    }
     if (c->retiring || !ok) {
         c->retiring = true; c->active = false;
         qa_error ignored = {0}; bool dropped = c->hooks.drop(c->hooks.context, id,

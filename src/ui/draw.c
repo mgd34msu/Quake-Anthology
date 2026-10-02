@@ -150,8 +150,8 @@ static bool draw(qa_ui *ui, qa_scene_frame *frame, qa_scene_rect viewport, float
     ui->scale = fminf((float)viewport.width / 640, (float)viewport.height / 480) * scale;
     if (!isfinite(ui->scale) || ui->scale <= 0)
         return ui_fail(error, "UI canvas scale overflow");
-    ui->bias_x = viewport.x + ((float)viewport.width - 640 * ui->scale) * .5f;
-    ui->bias_y = viewport.y + ((float)viewport.height - 480 * ui->scale) * .5f;
+    ui->bias_x = (float)viewport.x + ((float)viewport.width - 640 * ui->scale) * .5f;
+    ui->bias_y = (float)viewport.y + ((float)viewport.height - 480 * ui->scale) * .5f;
     if (ui->has_pointer) ui->cursor = (qa_input_pair){(ui->pointer.x - ui->bias_x) / ui->scale,
                                                     (ui->pointer.y - ui->bias_y) / ui->scale};
     qa_ui_menu menu;

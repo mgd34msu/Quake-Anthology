@@ -27,7 +27,7 @@ bool qa_network_create(qa_net_transport *transport, const qa_network_options *op
                         qa_network_runtime **out, qa_error *error) {
     if (!transport || !options || !out || !options->owner || !options->clients ||
         !options->packets_per_pump || !options->hooks.admit || !options->hooks.controlled ||
-        !options->hooks.command || (uint64_t)options->clients > SIZE_MAX / sizeof(qa_network_peer))
+        !options->hooks.command || SIZE_MAX / options->clients < sizeof(qa_network_peer))
         return qa_network_fail(error, "Invalid network runtime options");
     qa_network_runtime *runtime = calloc(1, sizeof(*runtime));
     if (!runtime) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating network runtime"); return false; }
@@ -113,6 +113,20 @@ bool qa_network_detach(qa_network_runtime *runtime, qa_net_client_id id, const c
     qa_network_peer *peer = qa_network_peer_get(runtime, id, error);
     if (!peer) return false;
     retire(runtime, peer, reason ? reason : "disconnected"); return true;
+}
+bool qa_network_discard_incomplete(qa_network_runtime *runtime,qa_net_client_id id,qa_error *error)
+{
+    if(!runtime || runtime->callback || runtime->pumping ||
+        !qa_net_connections_get(runtime->connections,id) || id.slot>=runtime->options.clients ||
+        runtime->peers[id.slot].occupied || runtime->peers[id.slot].state || runtime->peers[id.slot].seats)
+        return qa_network_fail(error,"Only an actual incomplete cold connection can be discarded");
+    if(!qa_net_connections_remove(runtime->connections,id,error)) return false;
+    runtime->peers[id.slot]=(qa_network_peer){0}; return true;
+}
+bool qa_network_connection_incomplete(const qa_network_runtime *runtime,qa_net_client_id id)
+{
+    return runtime && id.slot<runtime->options.clients && qa_net_connections_get(runtime->connections,id) &&
+        !runtime->peers[id.slot].occupied && !runtime->peers[id.slot].state && !runtime->peers[id.slot].seats;
 }
 bool qa_network_send(qa_network_runtime *runtime, qa_net_client_id id, qa_bytes bytes, qa_error *error) {
     const qa_net_client *client = runtime ? qa_net_connections_get(runtime->connections, id) : NULL;

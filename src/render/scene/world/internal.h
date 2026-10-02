@@ -34,7 +34,10 @@ typedef struct qaw_pending { int32_t child; uint32_t lights, planes; } qaw_pendi
 typedef struct qaw_admission_change { uint32_t surface; uint64_t previous; } qaw_admission_change;
 
 struct qa_scene_world {
-    qa_buffer bytes, lit_bytes, palette_bytes, translation_bytes;
+    size_t references;
+    qa_scene_resources *retained_resources;
+    qa_material_library *retained_materials;
+    qa_buffer bytes, lit_bytes, entity_bytes, palette_bytes, translation_bytes;
     char *sky_name;
     qa_bsp_view bsp;
     qa_scene_resources *resources;
@@ -96,6 +99,7 @@ struct qa_scene_source_world_view {
 };
 
 struct qa_scene_world_checkpoint_refs;
+bool qaw_world_owners_retain(qa_scene_world *, qa_scene_resources *, qa_material_library *, qa_error *);
 struct qa_scene_world_image_refs;
 bool qaw_world_checkpoint_locked(const qa_scene_world *, const struct qa_scene_world_checkpoint_refs *, qa_buffer *, qa_error *);
 bool qaw_lighting_checkpoint_locked(const qa_scene_world *, const struct qa_scene_world_image_refs *, qa_buffer *, qa_error *);

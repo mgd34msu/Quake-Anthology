@@ -2,6 +2,7 @@
 #include "network_q2_input.h"
 #include "qc_messages.h"
 #include "remote_q1_client.h"
+#include "remote_unified.h"
 #include "internal.h"
 #include "capture.h"
 #include "save_commands.h"
@@ -440,7 +441,8 @@ bool qa_frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *erro
                 qa_profiler_push(profiler, "application", error);
             if (ok) ok = phase_end(profiler, qa_application_advance(frontend->application, elapsed_ns, error), error);
         }
-        if (ok) ok = frontend_remote_q1_sample_all(frontend,frontend->wall_time_ns,error) &&
+        if (ok) ok = frontend_remote_unified_sample(frontend,frontend->wall_time_ns,error) &&
+            frontend_remote_q1_sample_all(frontend,frontend->wall_time_ns,error) &&
             frontend_remote_q2_sample(frontend,frontend->wall_time_ns,error) && frontend_network_publish(frontend, error) && frontend_source_times_sync(frontend, false, error) &&
             frontend_input_profile_bind(frontend,error) && frontend_campaign_drain(frontend,error);
         if (ok && !frontend->options.dedicated) ok = frontend_scene_sync(frontend, error) &&

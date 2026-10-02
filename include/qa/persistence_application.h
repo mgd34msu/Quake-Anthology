@@ -39,7 +39,8 @@ typedef struct qa_application_native_resource_refs {
     bool (*capture)(void *, const char *instance, uint64_t source,
         const qa_native_process_resources *, qa_buffer *, qa_error *);
     bool (*resolve)(void *, const char *instance, uint64_t source, qa_bytes,
-        const qa_native_process_resources **, qa_error *);
+        const qa_native_process_resources **, qa_bytes *lower_recipe, qa_error *);
+    bool (*attach)(void *, qa_save_image *, qa_error *);
 } qa_application_native_resource_refs;
 
 typedef struct qa_application_persistence_ops {
@@ -100,6 +101,16 @@ typedef struct qa_application_persistence_ops {
      * application is still alive. False retains both owners for a later retry;
      * the application's ordinary destruction follows only after true. */
     bool (*discard_services)(void *, qa_application *, qa_error *);
+    /* Neutral physical CLIENT consoles belong to the frontend's QFCS owner.
+     * Capture returns that exact queue codec. Restore qualifies the queue
+     * already imported by the CONNECTIONS prefix against these saved bytes;
+     * it must not replay configuration or import the queue a second time.
+     * Both callbacks are required whenever the real console inventory contains
+     * a CLIENT scope. Other scopes use the application's ordinary codec. */
+    bool (*client_commands_capture)(void *, qa_application *,
+        const qa_application_console_scope *, qa_console *, qa_buffer *, qa_error *);
+    bool (*client_commands_restore)(void *, qa_application *,
+        const qa_application_console_scope *, qa_console *, qa_bytes, qa_error *);
 } qa_application_persistence_ops;
 
 bool qa_application_persistence_capture(qa_application *,

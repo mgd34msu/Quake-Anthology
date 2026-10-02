@@ -128,15 +128,20 @@ typedef struct qa_material_context {
     float shadow_near;
     bool fragment_lighting;
     uint32_t light_mask, entity, fog_index;
+    bool source_entity_cell;
     bool mirror, non_normalized_axis, projection_shadow;
     bool source_primitives, source_depth_hack, source_sky_depth, source_picture;
     bool source_dlighted;
     bool source_dlight_before_overflow;
     const qa_scene_world *source_light_world;
+    qa_scene_world *source_sky_world;
+    float source_sky_far_clip;
     uint32_t source_light_surface;
     qa_scene_matrix source_picture_projection;
     qa_material_source_scratch *source_scratch;
     const qa_scene_image *source_white;
+    qa_scene_recipient_image_fn source_recipient_image;
+    void *source_recipient_context;
     qa_scene_source_diagnostics source_diagnostics;
     qa_scene_source_diagnostics_read_fn source_diagnostics_read;
     void *source_diagnostics_context;
@@ -174,6 +179,7 @@ bool qa_material_library_set_profile(qa_material_library *, const qa_material_pr
  * The retained tag distinguishes Source restart profiles from shared recipes. */
 bool qa_material_library_set_source_profile(qa_material_library *, const qa_material_profile *, qa_error *);
 bool qa_material_library_has_source_profile(const qa_material_library *);
+bool qa_material_library_source_profile_read(const qa_material_library *, qa_material_profile *, qa_error *);
 typedef bool (*qa_material_source_upload_fn)(void *, bool allow_picmip, bool mipmap,
     qa_q3_image_upload_options *, qa_error *);
 /* Bind the actual Source renderer's current upload producer. Restored image
@@ -184,6 +190,7 @@ typedef bool (*qa_material_source_ui_fullscreen_fn)(void *, bool *, qa_error *);
 bool qa_material_library_set_source_ui_fullscreen(qa_material_library *, qa_material_source_ui_fullscreen_fn, void *, qa_error *);
 bool qa_material_library_source_ui_fullscreen_is(const qa_material_library *, qa_material_source_ui_fullscreen_fn, const void *);
 void qa_material_library_destroy(qa_material_library *);
+bool qa_material_library_retain(qa_material_library *, qa_error *);
 /* Retains the actual registered material's library and owned records. */
 bool qa_material_retain(const qa_material *, qa_error *);
 void qa_material_release(const qa_material *);
@@ -191,6 +198,10 @@ bool qa_material_library_parse(qa_material_library *, qa_bytes, const qa_scene_i
 bool qa_material_library_load_scripts(qa_material_library *, qa_vfs *, const qa_scene_image_options *, qa_error *);
 const qa_material *qa_material_find(const qa_material_library *, const char *);
 bool qa_material_has_authored(const qa_material_library *, const char *);
+/* A registered recipient variant keeps the original compiled program and
+ * maps only its real retained image inputs into Source uploads. */
+bool qa_material_source_q3_variant(qa_material_library *, const qa_material *,
+    const qa_q3_image_upload_options *, const qa_material **, qa_error *);
 /* Source skyParms rebuilds one renderer-global cloud table. */
 float qa_material_library_cloud_height(const qa_material_library *);
 bool qa_material_library_sun(const qa_material_library *, qa_vec3 *light, qa_vec3 *direction);
@@ -199,6 +210,7 @@ typedef enum qa_material_registration_kind {
     QA_MATERIAL_WHITE, QA_MATERIAL_PICTURE, QA_MATERIAL_DEFAULT,
     QA_MATERIAL_STENCIL_SHADOW
 } qa_material_registration_kind;
+bool qa_material_registration_read(const qa_material *, qa_material_registration_kind *);
 bool qa_material_register_kind(qa_material_library *, const char *, const qa_scene_image_options *,
                                 qa_material_registration_kind, const qa_material **, qa_error *);
 /* World identity must be stable and unique for that world's lifetime. Q3 source

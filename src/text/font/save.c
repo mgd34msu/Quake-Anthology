@@ -132,8 +132,8 @@ static bool classic_glyph(const qa_font *font, size_t index)
     if (!image->logical_width || !image->logical_height || image->logical_width%16 || image->logical_height%16) return false;
     float width=(float)image->logical_width/16.0f, height=(float)image->logical_height/16.0f, zero=0;
     float x=(float)(index&15u)*width, y=(float)(index>>4)*height;
-    qa_scene_vec4 uv={x/image->logical_width,y/image->logical_height,
-        (x+width)/image->logical_width,(y+height)/image->logical_height};
+    qa_scene_vec4 uv={x/(float)image->logical_width,y/(float)image->logical_height,
+        (x+width)/(float)image->logical_width,(y+height)/(float)image->logical_height};
     return value->codepoint==index && value->image==image && !memcmp(&value->uv,&uv,sizeof(uv)) &&
         !memcmp(&value->width,&width,sizeof(width)) && !memcmp(&value->height,&height,sizeof(height)) &&
         !memcmp(&value->advance,&width,sizeof(width)) && !memcmp(&value->bearing_y,&height,sizeof(height)) &&

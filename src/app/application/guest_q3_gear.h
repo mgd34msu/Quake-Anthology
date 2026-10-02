@@ -53,6 +53,8 @@ bool application_q3_gear_initialize(application_q3_gear *, int32_t seed, qa_erro
 bool application_q3_gear_idle(const application_q3_gear *);
 bool application_q3_gear_destroy(application_q3_gear *, qa_error *);
 bool application_q3_gear_admit(application_q3_gear *, qa_actor_id, qa_error *);
+bool application_q3_gear_userinfo_bound(application_q3_gear *,qa_actor_id,bool *,qa_error *);
+bool application_q3_gear_userinfo_changed(application_q3_gear *,qa_actor_id,qa_error *);
 bool application_q3_gear_begin_frame(application_q3_gear *, int32_t time_ms,
     int32_t frame, qa_error *);
 bool application_q3_gear_fire(application_q3_gear *, qa_actor_id, qa_error *);

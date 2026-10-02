@@ -4,16 +4,17 @@
 #include "qa/qc_observation.h"
 #include <limits.h>
 
-static bool source_ready(const application_provider *p)
+static bool source_returned(const application_provider *p)
 {
     const struct application_qc_state *engine=p && p->kind==APPLICATION_PROVIDER_QC?p->state.qc.engine:NULL;
     return engine && p->application && p->constructed && p->attached && !p->close_pending &&
         p->launch && p->product && p->state.qc.program && p->state.qc.instance &&
         engine->provider==p && engine->initialized && !engine->loading && !engine->projecting &&
         qa_qc_idle(p->state.qc.instance) && application_qc_input_idle(p) &&
-        !p->application->destroy_requested && qa_session_safe(p->application->session) &&
-        !qa_session_faulted(p->application->session) && qa_world_idle(p->application->world);
+        !p->application->destroy_requested && !qa_session_faulted(p->application->session);
 }
+static bool source_ready(const application_provider *p)
+{ return source_returned(p) && qa_session_safe(p->application->session) && qa_world_idle(p->application->world); }
 static application_provider *owner(qa_application *app,qa_actor_owner id)
 {
     application_provider *found=NULL;
@@ -120,6 +121,23 @@ bool qa_application_qc_message_client(qa_application *app,const qa_application_q
     if(!found) return application_fail(error,QA_ERROR_ARGUMENT,"QC message recipient is not a connected source client");
     *out=found; return true;
 }
+bool qa_application_qc_message_client_at(qa_application *app,const qa_application_qc_message_source *view,
+    uint32_t slot,qa_actor_id *out,bool *found,qa_error *error)
+{
+    if(!out || !found || !qa_application_qc_message_source_current(app,view) ||
+        !slot || slot>view->client_slots)
+        return application_fail(error,QA_ERROR_ARGUMENT,"QC message client slot is not an actual source slot");
+    *found=false;
+    application_provider *p=owner(app,view->provider);
+    const application_qc_client *client=&p->state.qc.engine->clients[slot];
+    if(!client->connected) return true;
+    qa_actor_id bound; uint32_t actual_slot;
+    if(!qa_application_qc_message_entity(app,view,slot,&bound,error) ||
+        !qa_actor_id_equal(bound,client->actor) ||
+        !qa_application_qc_message_client(app,view,bound,&actual_slot,error) || actual_slot!=slot)
+        return application_fail(error,QA_ERROR_FORMAT,"QC connected client lost its unique physical source binding");
+    *out=bound; *found=true; return true;
+}
 bool qa_application_qc_message_signon_count(qa_application *app,const qa_application_qc_message_source *view,
     size_t *out,qa_error *error)
 {
@@ -195,13 +213,19 @@ static bool hipnotic_ui(const qa_qc_program *program)
     qa_qc_program_info actual=qa_qc_program_describe(program);
     return qa_sha256_equal(&actual.digest,&digest);
 }
-bool qa_application_qc_message_player_ui_read(qa_application *app,
-    const qa_application_qc_message_source *source,qa_actor_id actor,
+static bool selected_ui_basis(qa_application *app,application_provider *p,qa_actor_id actor,uint32_t slot)
+{
+    uint32_t actual;
+    return app && (app->operation==APPLICATION_IDLE || app->operation==APPLICATION_ADVANCING) &&
+        source_returned(p) && p->application==app &&
+        application_provider_for(app,actor,QA_ROLE_ARSENAL,"")==p &&
+        qa_actors_get(qa_session_actors(app->session),actor) &&
+        qa_qc_actor_observation_slot(p->state.qc.instance,actor,&actual,NULL) && actual==slot;
+}
+static bool player_ui_read(qa_application *app,application_provider *p,
+    const qa_application_qc_message_source *source,qa_actor_id actor,uint32_t slot,bool selected,
     qa_application_qc_player_ui *out,qa_error *error)
 {
-    uint32_t slot;
-    if(!out || !qa_application_qc_message_client(app,source,actor,&slot,error)) return false;
-    application_provider *p=owner(app,source->provider);
     const struct application_qc_profile *profile=p->state.qc.qualified;
     if(profile) {
         if(!profile->weapon_field || !profile->weapon_count)
@@ -212,7 +236,7 @@ bool qa_application_qc_message_player_ui_read(qa_application *app,
     }
     qa_application_qc_player_ui value={.source=*source,.recipient=actor,.source_slot=slot,
         .now_seconds=(double)p->state.qc.engine->source_time_ns/1e9,
-        .binding_count=profile?profile->weapon_count:hipnotic_ui(p->state.qc.program)?11:8};
+        .binding_count=profile?profile->weapon_count:hipnotic_ui(p->state.qc.program)?11:8,.selected_arsenal=selected};
     double items;
     if(!scalar(p,slot,actor,"items",NULL,&items,error) ||
         !scalar(p,slot,actor,"weapon",profile?profile->weapon_field:NULL,&value.weapon,error) ||
@@ -233,14 +257,48 @@ bool qa_application_qc_message_player_ui_read(qa_application *app,
         if(!scalar(p,slot,actor,timers[i].field,field,&expires,error)) return false;
         value.timers[value.timer_count++]=(qa_application_qc_power_timer){timers[i].item,timers[i].label,expires};
     }
-    if(!qa_application_qc_message_source_current(app,source))
+    if(!(selected?selected_ui_basis(app,p,actor,slot):qa_application_qc_message_source_current(app,source)))
         return application_fail(error,QA_ERROR_ARGUMENT,"QC UI source changed during observation");
     *out=value; return true;
+}
+bool qa_application_qc_message_player_ui_read(qa_application *app,
+    const qa_application_qc_message_source *source,qa_actor_id actor,
+    qa_application_qc_player_ui *out,qa_error *error)
+{
+    uint32_t slot;
+    return out && qa_application_qc_message_client(app,source,actor,&slot,error) &&
+        player_ui_read(app,owner(app,source->provider),source,actor,slot,false,out,error);
+}
+bool qa_application_qc_selected_player_ui_read(qa_application *app,qa_actor_id actor,qa_launch_role role,
+    qa_application_qc_player_ui *out,qa_error *error)
+{
+    if(!app || !out || role!=QA_ROLE_ARSENAL)
+        return application_fail(error,QA_ERROR_ARGUMENT,"QC selected UI requires its actual arsenal role");
+    application_provider *p=application_provider_for(app,actor,role,""); uint32_t slot;
+    if(!source_returned(p) || !p->product->campaign ||
+        !qa_qc_actor_observation_slot(p->state.qc.instance,actor,&slot,error) || !selected_ui_basis(app,p,actor,slot))
+        return application_fail(error,QA_ERROR_ARGUMENT,"QC selected UI lost its returned selected actor binding");
+    const struct application_qc_state *engine=p->state.qc.engine;
+    if(!qa_q1_profile_valid(engine->protocol,error)) return false;
+    qa_application_qc_message_source source={.provider=p->owner,.descriptor=p->launch,.program=p->state.qc.program,
+        .instance=p->state.qc.instance,.protocol=engine->protocol,.client_slots=engine->max_clients,
+        .map_revision=app->map_revision,.options={.standard_quake=strcmp(p->product->campaign,"hipnotic") &&
+            strcmp(p->product->campaign,"rogue"),.private_rerelease=engine->profile==QA_QC_RERELEASE}};
+    return player_ui_read(app,p,&source,actor,slot,true,out,error);
 }
 bool qa_application_qc_message_player_ui_current(qa_application *app,const qa_application_qc_player_ui *view)
 {
     qa_application_qc_player_ui actual;
-    if(!view || !qa_application_qc_message_player_ui_read(app,&view->source,view->recipient,&actual,NULL) ||
+    if(!view || !(view->selected_arsenal?
+        qa_application_qc_selected_player_ui_read(app,view->recipient,QA_ROLE_ARSENAL,&actual,NULL):
+        qa_application_qc_message_player_ui_read(app,&view->source,view->recipient,&actual,NULL)) ||
+        actual.source.provider!=view->source.provider || actual.source.descriptor!=view->source.descriptor ||
+        actual.source.program!=view->source.program || actual.source.instance!=view->source.instance ||
+        actual.source.map_revision!=view->source.map_revision || actual.selected_arsenal!=view->selected_arsenal ||
+        actual.source.protocol.kind!=view->source.protocol.kind || actual.source.protocol.flags!=view->source.protocol.flags ||
+        actual.source.protocol.revision!=view->source.protocol.revision || actual.source.client_slots!=view->source.client_slots ||
+        actual.source.options.standard_quake!=view->source.options.standard_quake ||
+        actual.source.options.private_rerelease!=view->source.options.private_rerelease ||
         actual.source_slot!=view->source_slot || actual.items!=view->items || actual.weapon!=view->weapon ||
         actual.current_ammo!=view->current_ammo || actual.now_seconds!=view->now_seconds ||
         actual.binding_count!=view->binding_count || actual.timer_count!=view->timer_count) return false;

@@ -329,8 +329,8 @@ void qa_qvm_execution_restore(qa_qvm *vm, const uint64_t values[3], bool candida
     exec->breaks = values[1];
     exec->instructions = values[2];
 }
-bool qa_qvm_checkpoint_functions(const qa_qvm *vm, const qa_qvm_saved_function *expected,
-                                  size_t count, qa_error *error)
+bool qa_qvm_checkpoint_callbacks(const qa_qvm *vm, const qa_qvm_saved_function *expected,
+    size_t count, const qa_qvm_saved_resolver *resolver, qa_error *error)
 {
     if (!qa_qvm_live(vm,error)) return false;
     if ((count && !expected) || vm->watches || vm->lifecycle_depth || vm->write_delivery_depth)
@@ -345,8 +345,24 @@ bool qa_qvm_checkpoint_functions(const qa_qvm *vm, const qa_qvm_saved_function *
             if (expected[i].binding == expected[j].binding)
                 return error_at(error,0,"QVM source callback descriptor is duplicated");
     }
+    if (resolver) {
+        if (!resolver->binding || !resolver->resolver || count == SIZE_MAX)
+            return error_at(error,0,"QVM dynamic resolver descriptor is absent or exceeds its inventory");
+        for (size_t i = 0; i < count; ++i)
+            if (expected[i].binding == resolver->binding)
+                return error_at(error,0,"QVM resolver identity duplicates a source function");
+    }
     size_t actual = 0;
     for (const binding *value = state(vm)->bindings; value; value = value->next) {
+        if (value->kind == BIND_RESOLVER) {
+            if (!value->active || !resolver || value != state(vm)->resolver ||
+                value->instruction != NO_INSTRUCTION || value->host_invocations ||
+                value->id != resolver->binding || value->fn.resolver != resolver->resolver ||
+                value->context != resolver->context)
+                return error_at(error,0,"QVM installed resolver differs from its exact source owner");
+            ++actual;
+            continue;
+        }
         size_t i = 0;
         while (i < count && expected[i].binding != value->id) ++i;
         if (!value->active || value->kind != BIND_FUNCTION || i == count ||
@@ -355,27 +371,37 @@ bool qa_qvm_checkpoint_functions(const qa_qvm *vm, const qa_qvm_saved_function *
             return error_at(error,0,"QVM installed callback differs from its exact source owner");
         ++actual;
     }
-    return actual == count || error_at(error,0,"QVM source callback inventory is incomplete");
+    return actual == count + (resolver != NULL) || error_at(error,0,"QVM source callback inventory is incomplete");
 }
-bool qa_qvm_execution_restore_bindings(qa_qvm *vm, uint64_t generation,
-    const qa_qvm_saved_function *constructed, const qa_qvm_binding *saved,
+bool qa_qvm_checkpoint_functions(const qa_qvm *vm, const qa_qvm_saved_function *expected,
     size_t count, qa_error *error)
+{ return qa_qvm_checkpoint_callbacks(vm, expected, count, NULL, error); }
+bool qa_qvm_execution_restore_callbacks(qa_qvm *vm, uint64_t generation,
+    const qa_qvm_saved_function *constructed, const qa_qvm_binding *saved,
+    size_t count, const qa_qvm_saved_resolver *resolver, qa_qvm_binding saved_resolver,
+    qa_error *error)
 {
     if (count && !saved) return error_at(error, 0, "QVM candidate saved binding inventory is absent");
-    if (!qa_qvm_checkpoint_functions(vm, constructed, count, error)) return false;
+    if (!qa_qvm_checkpoint_callbacks(vm, constructed, count, resolver, error)) return false;
+    size_t total = count + (resolver != NULL);
     execution *exec = state(vm);
-    if (exec->next_binding != count || vm->next_watch != 1 || vm->write_sequence ||
-        exec->instructions || exec->breaks || exec->failed || generation < count)
+    if (exec->next_binding != total || vm->next_watch != 1 || vm->write_sequence ||
+        exec->instructions || exec->breaks || exec->failed || generation < total)
         return error_at(error, 0, "QVM binding reconstruction requires untouched constructor identities");
+    if ((resolver && (!saved_resolver || saved_resolver > generation)) || (!resolver && saved_resolver))
+        return error_at(error, 0, "QVM saved resolver differs from its actual constructor owner");
     for (size_t i = 0; i < count; ++i) {
         if (!saved[i] || saved[i] > generation)
             return error_at(error, i, "QVM saved binding leaves its source generation");
+        if (resolver && saved[i] == saved_resolver)
+            return error_at(error, i, "QVM saved function duplicates its resolver identity");
         for (size_t j = 0; j < i; ++j)
             if (saved[i] == saved[j])
                 return error_at(error, i, "QVM saved binding identity is duplicated");
     }
     /* All lookups use constructor identities before changing any binding. */
     for (binding *value = exec->bindings; value; value = value->next) {
+        if (value->kind == BIND_RESOLVER) { value->id = saved_resolver; continue; }
         size_t i = 0;
         while (constructed[i].binding != value->id) ++i;
         value->id = saved[i];
@@ -383,6 +409,10 @@ bool qa_qvm_execution_restore_bindings(qa_qvm *vm, uint64_t generation,
     exec->next_binding = generation;
     return true;
 }
+bool qa_qvm_execution_restore_bindings(qa_qvm *vm, uint64_t generation,
+    const qa_qvm_saved_function *constructed, const qa_qvm_binding *saved,
+    size_t count, qa_error *error)
+{ return qa_qvm_execution_restore_callbacks(vm, generation, constructed, saved, count, NULL, 0, error); }
 void qa_qvm_execution_destroy(qa_qvm *vm)
 {
     execution *exec = state(vm); if (exec == NULL) return;
@@ -1323,11 +1353,13 @@ bool qa_qvm_execution_source_callback(const qa_qvm_call *call, const qa_qvm_imag
     int32_t arguments[QVM_ARGUMENTS];
     if (count) memcpy(arguments, words, count * sizeof(*arguments));
     uint32_t base;
+    uint32_t floor = exec->active->floor;
+    if (exec->scratch_floor > floor) floor = exec->scratch_floor;
     if (!stack_address(vm, (int64_t)exec->program_stack - 8 - (int64_t)count * 4, &base, error) ||
-        base < exec->active->floor)
+        base < floor)
         return error_at(error, 0, "QVM imported callback arguments exceed the active source stack reservation");
     operands stack = {0};
-    execution_frame setup = {exec->active, exec->host->owner, &stack, base, exec->active->floor};
+    execution_frame setup = {exec->active, exec->host->owner, &stack, base, floor};
     uint32_t previous_stack = exec->program_stack;
     exec->active = &setup;
     int32_t trap = (int32_t)(~(uint32_t)pointer);
@@ -1352,6 +1384,29 @@ bool qa_qvm_execution_source_callback(const qa_qvm_call *call, const qa_qvm_imag
     return ok;
 }
 
+static bool scratch_span(qa_qvm *vm, size_t length, uint32_t reservation,
+    uint32_t *offset, uint32_t *end, qa_error *error)
+{
+    execution *exec = state(vm);
+    uint32_t source;
+    if (!qa_qvm_source_scratch_qualify(vm->image, length, &source, error)) return false;
+    uint64_t start = source;
+    if (exec->scratch_floor > start) start = exec->scratch_floor;
+    if (exec->active && exec->active->floor > start) start = exec->active->floor;
+    uint64_t alignment = reservation ? 4u : 16u;
+    start = (start + alignment - 1) & ~(alignment - 1);
+    uint64_t limit = vm->image->memory_size - UINT32_C(65536);
+    if (exec->program_stack < reservation)
+        return error_at(error, source, "QVM argument scratch exceeds its current source stack reservation");
+    uint64_t current_limit = exec->program_stack - reservation;
+    if (current_limit < limit) limit = current_limit;
+    if (start > limit || length > limit - start || exec->scratch_depth == SIZE_MAX)
+        return error_at(error, source, "QVM nested scratch exceeds its actual source reservation");
+    uint64_t finish = (start + length + 3) & ~UINT64_C(3);
+    if (finish > limit || finish > exec->program_stack)
+        return error_at(error, source, "QVM scratch overlaps its actual paused source stack");
+    *offset = (uint32_t)start; *end = (uint32_t)finish; return true;
+}
 bool qa_qvm_execution_source_scratch(const qa_qvm_call *call, const qa_qvm_image *image,
     size_t length, qa_qvm_source_scratch_fn perform, void *context, qa_error *error)
 {
@@ -1360,26 +1415,26 @@ bool qa_qvm_execution_source_scratch(const qa_qvm_call *call, const qa_qvm_image
     if (!qa_qvm_execution_token(call, error)) return false;
     qa_qvm *vm = call->vm;
     execution *exec = state(vm);
-    uint32_t offset;
+    uint32_t offset, end;
     if (!image || image != vm->image || !perform || exec->counter ||
         vm->data_size != image->memory_size)
         return error_at(error, 0, "QVM source scratch differs from its admitted image or source scope");
     if (!healthy(vm, error)) return false;
-    if (!qa_qvm_source_scratch_qualify(image, length, &offset, error)) return false;
-    uint64_t end = ((uint64_t)offset + length + 3) & ~UINT64_C(3);
-    if (end > exec->program_stack)
-        return error_at(error, offset, "QVM source scratch overlaps the paused caller stack");
+    if (!scratch_span(vm, length, 0, &offset, &end, error)) return false;
     uint8_t *saved = malloc(length);
     if (!saved) return qa_qvm_error(error, QA_ERROR_MEMORY, offset, "Retaining scoped QVM source scratch");
     memcpy(saved, vm->data + offset, length);
     execution_frame *frame = exec->active;
     uint32_t previous_floor = frame->floor;
-    if (end > frame->floor) frame->floor = (uint32_t)end;
+    uint32_t previous_scratch = exec->scratch_floor;
+    if (end > frame->floor) frame->floor = end;
+    exec->scratch_floor = end; ++exec->scratch_depth;
     bool ok = perform(context, call, offset, error);
     if (!ok && (!exec->cancelled || error->code != QA_OK)) latch(vm, error);
     qa_error first = *error, cleanup = {0};
     bool restored = qa_qvm_memory_restore_scratch(vm, offset, (qa_bytes){saved, length}, &cleanup);
     frame->floor = previous_floor;
+    --exec->scratch_depth; exec->scratch_floor = previous_scratch;
     free(saved);
     if (exec->failed) { *error = exec->failure; return false; }
     if (!ok) { *error = first; return false; }
@@ -1546,25 +1601,22 @@ bool qa_qvm_execution_source_bytes_write(qa_qvm *vm, const qa_qvm_image *image,
     return true;
 }
 
-bool qa_qvm_execution_scratch_run(qa_qvm *vm, const qa_qvm_image *image, size_t length,
-    qa_qvm_source_scratch_run_fn run, void *context, qa_error *error)
+bool qa_qvm_execution_scratch_run_reserved(qa_qvm *vm, const qa_qvm_image *image, size_t length,
+    uint32_t reservation, qa_qvm_source_scratch_run_fn run, void *context, qa_error *error)
 {
     qa_error local = {0};
     if (!error) error = &local;
     if (!qa_qvm_execution_reentry(vm, error)) return false;
     execution *exec = state(vm);
-    uint32_t offset;
+    uint32_t offset, end;
     if (!image || image != vm->image || !run || exec->counter ||
-        !qa_qvm_source_scratch_qualify(image, length, &offset, error)) return false;
+        !scratch_span(vm, length, reservation, &offset, &end, error)) return false;
     if (exec->active && !healthy(vm, error)) return false;
-    uint64_t end = ((uint64_t)offset + length + 3) & ~UINT64_C(3);
-    if (end > exec->program_stack || exec->scratch_depth == SIZE_MAX)
-        return error_at(error, offset, "QVM scratch owner overlaps its actual paused source stack");
     uint8_t *saved = malloc(length);
     if (!saved) return qa_qvm_error(error, QA_ERROR_MEMORY, offset, "Retaining actual host-initiated source scratch");
     memcpy(saved, vm->data + offset, length);
     uint32_t previous_floor = exec->scratch_floor;
-    if (end > exec->scratch_floor) exec->scratch_floor = (uint32_t)end;
+    exec->scratch_floor = end;
     ++exec->scratch_depth;
     bool ok = run(context, vm, offset, error);
     qa_error first = *error, cleanup = {0};
@@ -1574,6 +1626,10 @@ bool qa_qvm_execution_scratch_run(qa_qvm *vm, const qa_qvm_image *image, size_t 
     if (!restored) { *error = cleanup; return false; }
     return true;
 }
+
+bool qa_qvm_execution_scratch_run(qa_qvm *vm, const qa_qvm_image *image, size_t length,
+    qa_qvm_source_scratch_run_fn run, void *context, qa_error *error)
+{ return qa_qvm_execution_scratch_run_reserved(vm, image, length, 0, run, context, error); }
 
 static bool evaluation_stack(qa_qvm *vm, const qa_qvm_evaluation_stack *requested,
                               uint32_t *floor, uint32_t *top, qa_error *error)

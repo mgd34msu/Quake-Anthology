@@ -167,7 +167,8 @@ static bool video_command(void *context,const qa_command_invocation *command,qa_
     if (!qa_display_info_get(owner->options.frontend->display,&info,error)) return false;
     char *script=NULL;
     if (command->context.script) { script=malloc(strlen(command->context.script)+1);
-        if (!script) return fail(error,QA_ERROR_MEMORY,"Retaining video request script origin"); strcpy(script,command->context.script); }
+        if (!script) return fail(error,QA_ERROR_MEMORY,"Retaining video request script origin");
+        strcpy(script,command->context.script); }
     if (!qa_restart_request(owner->controls,QA_RESTART_VIDEO,error)) { free(script); return false; }
     free(owner->script); owner->script=script; owner->command=command->context; owner->command.script=script;
     owner->backend=command->argc==1?info.backend:!strcmp(command->argv[1],"cpu")?QA_DISPLAY_CPU:QA_DISPLAY_OPENGL;

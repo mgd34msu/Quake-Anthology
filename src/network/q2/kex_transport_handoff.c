@@ -68,47 +68,23 @@ static bool lan_equal(const qa_kex_lan *a, const qa_kex_lan *b)
     return !p && !q;
 }
 
-static bool mdns_equal(const qa_kex_mdns_owner *a, const qa_kex_mdns_owner *b)
-{
-    if (!a || !b) return a == b;
-    if (a->advertised_port != b->advertised_port || a->closed != b->closed ||
-        a->published != b->published || a->announce_pending != b->announce_pending ||
-        a->endpoint_count != b->endpoint_count || a->address_count != b->address_count) return false;
-    for (size_t i = 0; i < a->endpoint_count; ++i) {
-        const qa_kex_mdns_endpoint *p = &a->endpoints[i], *q = &b->endpoints[i];
-        if (p->port != q->port || !qa_kex_mdns_text_equal(p->instance, q->instance) ||
-            !qa_kex_mdns_text_equal(p->target, q->target)) return false;
-    }
-    for (size_t i = 0; i < a->address_count; ++i)
-        if (!qa_kex_mdns_text_equal(a->addresses[i].target, b->addresses[i].target) ||
-            !qa_net_address_equal(&a->addresses[i].address, &b->addresses[i].address, true)) return false;
-    return true;
-}
-
 bool qa_kex_transport_handoff_ready(const qa_kex_transport *active, const qa_kex_transport *candidate, qa_error *e)
 {
     if (!active || !candidate || active == candidate || !qa_kex_transport_idle(active) ||
         !qa_kex_transport_idle(candidate) || !active->published || !active->raw_owned ||
         candidate->raw || candidate->published || candidate->raw_owned ||
         active->raw_limit != candidate->raw_limit ||
-        (candidate->discovery && candidate->discovery->socket) ||
-        !lan_equal(active->lobby, candidate->lobby) || !mdns_equal(active->discovery, candidate->discovery)) {
+        (active->discovery != NULL) != (candidate->discovery != NULL) ||
+        !lan_equal(active->lobby, candidate->lobby)) {
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "KEX active transport advanced beyond the complete saved continuation"); return false;
     }
-    return true;
+    return !active->discovery || qa_kex_mdns_owner_handoff_ready(active->discovery, candidate->discovery, e);
 }
 
 bool qa_kex_transport_handoff(qa_kex_transport *active, qa_kex_transport *candidate, qa_error *e)
 {
     if (!qa_kex_transport_handoff_ready(active, candidate, e)) return false;
-    if (active->discovery) {
-        candidate->discovery->socket = active->discovery->socket;
-        candidate->discovery->bound_published = active->discovery->bound_published;
-        active->discovery->socket = NULL;
-        active->discovery->bound_published = false;
-        active->discovery->published = false;
-        active->discovery->announce_pending = false;
-    }
+    if (active->discovery && !qa_kex_mdns_owner_handoff(active->discovery, candidate->discovery, e)) return false;
     candidate->raw = active->raw;
     candidate->raw_owned = candidate->published = true;
     active->raw = NULL;

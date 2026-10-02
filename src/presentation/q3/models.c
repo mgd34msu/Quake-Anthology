@@ -97,7 +97,13 @@ const qa_model *q3p_model_source(const q3p_model *model, uint32_t slot)
 bool q3p_model_get(const qa_q3_presentation_assets *a, int32_t handle,
                     const q3p_model **out, qa_error *error)
 {
-    if (!a || !out || handle < 0 || (size_t)handle > a->model_count)
+    if (!a || !out)
+        return q3p_fail(error, QA_ERROR_ARGUMENT, "invalid Q3 model lookup");
+    if ((handle < 0 || (size_t)handle > a->model_count) &&
+        qa_material_library_has_source_profile(a->options.provider.materials)) {
+        *out = NULL; return true;
+    }
+    if (handle < 0 || (size_t)handle > a->model_count)
         return q3p_fail(error, QA_ERROR_ARGUMENT, "invalid Q3 model handle");
     *out = handle ? a->models[handle - 1] : NULL; return true;
 }

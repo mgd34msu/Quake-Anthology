@@ -604,7 +604,7 @@ static bool replacement_read(const qa_model *native, const char *requested, int6
     return ok;
 }
 static bool retained_source_rank(qa_frontend *frontend, frontend_visual_owner *owner, const char *path,
-    const qa_resource *source, int64_t *out, qa_error *error)
+    const qa_resource *source, const qa_vfs_acquisition *receipt, int64_t *out, qa_error *error)
 {
     qa_command_context request = {.owner = owner->owner, .origin = QA_COMMAND_SERVER,
         .dialect = owner->family == QA_SCENE_Q2 ? QA_CONSOLE_Q2 : owner->family == QA_SCENE_Q3 ? QA_CONSOLE_Q3 : QA_CONSOLE_Q1};
@@ -621,15 +621,24 @@ static bool retained_source_rank(qa_frontend *frontend, frontend_visual_owner *o
         for (size_t i = 0; ok && i < qa_vfs_retained_read_count(views[view]); ++i) {
             qa_vfs_read_reference row;
             if (!qa_vfs_retained_read_at(views[view], i, &row) || row.resource != source || strcmp(row.path, normalized)) continue;
+            if (receipt) {
+                if (row.mount != receipt->mount || receipt->resource_id != qa_resource_id(source) ||
+                    !receipt->path || !receipt->lookup_path || !receipt->link_source || !receipt->link_target ||
+                    strcmp(row.path, receipt->path) || strcmp(row.lookup_path, receipt->lookup_path) ||
+                    strcmp(row.link_source, receipt->link_source) || strcmp(row.link_target, receipt->link_target)) continue;
+                found = true;
+                continue;
+            }
             int64_t rank = row.opening.rank;
             if (ok && found && rank != *out) ok = frontend_fail(error, QA_ERROR_ARGUMENT, "Held model has ambiguous actual opening ranks");
             if (ok) { *out = rank; found = true; }
         }
     free(normalized);
+    if (ok && found && receipt) return opening_rank(owner->mounts, receipt, out, error);
     return ok && (found || frontend_fail(error, QA_ERROR_ARGUMENT, "Held alias model lacks its genuine source opening receipt"));
 }
 static bool model_read(qa_frontend *frontend, frontend_visual_owner *owner, const char *path, const qa_resource *source,
-    bool colored, uint8_t colors, frontend_model **out, qa_error *error)
+    const qa_vfs_acquisition *source_opening, bool colored, uint8_t colors, frontend_model **out, qa_error *error)
 {
     uint8_t translation[256];
     if (colored) player_translation(colors, translation);
@@ -677,7 +686,12 @@ static bool model_read(qa_frontend *frontend, frontend_visual_owner *owner, cons
     frontend_model_policy policy;
     if (ok) ok = frontend_model_policy_read(frontend, &policy, error);
     bool alias = ok && (model->model->format == QA_MODEL_MDL || model->model->format == QA_MODEL_MD2);
-    if (alias) ok = source ? retained_source_rank(frontend, owner, path, source, &model->source_rank, error)
+    if (alias && source && source_opening) {
+        ok = source_opening->resource_id == qa_resource_id(source) && source_opening->opening_present &&
+            retained_source_rank(frontend, owner, path, source, source_opening, &model->source_rank, error);
+        if (!ok && (!error || error->code == QA_OK))
+            frontend_fail(error, QA_ERROR_ARGUMENT, "Borrowed model lost its actual constructor opening receipt");
+    } else if (alias) ok = source ? retained_source_rank(frontend, owner, path, source, NULL, &model->source_rank, error)
         : opening_rank(owner->mounts, &opening, &model->source_rank, error);
     if (ok && alias) model->source_rank_known = true;
     qa_vfs_acquisition_dispose(&opening);
@@ -1067,7 +1081,7 @@ bool frontend_visual_model_acquire(qa_frontend *frontend, qa_actor_owner provide
     frontend_visual_owner *owner;
     if (!live_owner(frontend, provider, family, &owner, error)) return false;
     frontend_model *model;
-    if (!model_read(frontend, owner, path, source, false, 0, &model, error)) return false;
+    if (!model_read(frontend, owner, path, source, NULL, false, 0, &model, error)) return false;
     *out = (frontend_visual_model_view){model->path, model->resource, model->model, model->scene};
     return true;
 }
@@ -1169,7 +1183,7 @@ bool frontend_visuals_submit(qa_frontend *frontend, uint32_t seat, qa_actor_owne
             if (!owner && !visual_owner(frontend, &view, &owner, error)) return false;
             if (owner->shader_movies && !frontend_material_movies_frame(owner->shader_movies, frame, error)) return false;
             frontend_model *model;
-            if (!model_read(frontend, owner, path, view.model_resources[part],
+            if (!model_read(frontend, owner, path, view.model_resources[part], view.model_openings[part],
                 view.family == QA_GAME_Q1 && view.has_player_colors, view.player_colors, &model, error)) return false;
             qa_scene_model_input input = {.view = world->view, .transform = placement,
                 .previous_origin = view.body.origin, .color = color, .family = owner->family,

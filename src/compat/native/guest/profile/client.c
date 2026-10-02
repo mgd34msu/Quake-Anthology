@@ -108,7 +108,7 @@ static bool fp_original(void *context, byte *fp)
 }
 static profile_scope *scope_read(const guest_profile_guard_control *control)
 {
-    if (!control->scope || !control->entry || !control->stop || !control->fault ||
+    if (!control->scope || !control->entry || (!control->stop && !control->syscalls) || !control->fault ||
         !control->mapping_count || control->mapping_count > SIZE_MAX / sizeof(guest_profile_guard_mapping) ||
         control->callback_count > SIZE_MAX / sizeof(guest_profile_guard_callback)) return NULL;
     profile_scope *row = dr_global_alloc(sizeof(*row));
@@ -140,8 +140,8 @@ static profile_scope *scope_read(const guest_profile_guard_control *control)
     }
     byte trap;
     okay = okay && scope_range(row, row->entry, 1, QA_NATIVE_GUEST_EXECUTE, NULL) &&
-        scope_range(row, row->stop, 1, QA_NATIVE_GUEST_READ | QA_NATIVE_GUEST_EXECUTE, NULL) &&
-        copy_from_app((void *)(ptr_uint_t)row->stop, &trap, 1) && trap == 0xcc;
+        (!row->stop || (scope_range(row, row->stop, 1, QA_NATIVE_GUEST_READ | QA_NATIVE_GUEST_EXECUTE, NULL) &&
+        copy_from_app((void *)(ptr_uint_t)row->stop, &trap, 1) && trap == 0xcc));
     if (!okay) { scope_free(row); return NULL; }
     return row;
 }
@@ -208,8 +208,8 @@ static uint64_t operand_address(profile_instruction *description, opnd_t operand
     dr_mcontext_t *cpu, size_t bytes)
 {
     int64_t displacement = bit_displacement(description->operands, cpu, bytes);
-    uint64_t segment = opnd_get_segment(operand) == DR_REG_FS ? scope->fs_base :
-        opnd_get_segment(operand) == DR_REG_GS ? scope->gs_base : 0;
+    uint64_t segment = opnd_get_segment(operand) == DR_SEG_FS ? scope->fs_base :
+        opnd_get_segment(operand) == DR_SEG_GS ? scope->gs_base : 0;
     uint64_t offset;
     if (opnd_is_base_disp(operand)) {
         reg_id_t base = opnd_get_base(operand), index = opnd_get_index(operand);
@@ -590,8 +590,8 @@ DR_EXPORT void dr_client_main(client_id_t id, int argc, const char *argv[])
     if (!dr_using_all_private_caches() || !drmgr_init() || !drutil_init() ||
         !drmgr_register_module_load_event(module_load) || !drmgr_register_signal_event(signal_event) ||
         !drmgr_register_filter_syscall_event(syscall_filter) || !drmgr_register_pre_syscall_event(syscall_pre) ||
-        !drmgr_register_bb_app2app_event(app2app, NULL) || !drmgr_register_bb_instrumentation_event(NULL, instrument, NULL)) dr_abort();
-    dr_register_exit_event(process_exit);
+        !drmgr_register_bb_app2app_event(app2app, NULL) || !drmgr_register_bb_instrumentation_event(NULL, instrument, NULL) ||
+        !drmgr_register_exit_event(process_exit)) dr_abort();
 }
 #else
 int qa_native_profile_client_requires_linux_x64_dynamorio;

@@ -57,6 +57,8 @@ struct application_control_mod_input *application_control_mod_head(const qa_appl
 void application_control_mod_head_set(qa_application *, struct application_control_mod_input *);
 bool application_control_mod_abort_all(qa_application *, qa_error *);
 struct application_q3_mod_inputs;
+bool application_control_last_mod_command(const qa_application *, qa_actor_id,
+    const qa_q3_player *, qa_q3_usercmd *, qa_error *);
 bool application_control_mod_usercmd(void *, qa_actor_id,
     const struct application_q3_mod_inputs *, const qa_q3_player *, qa_q3_usercmd *, qa_error *);
 /* Borrowed only during an actual retained NQ PHYSICS turn. External GAME
@@ -110,7 +112,6 @@ const application_control_context *application_control_frame_current(const qa_ap
 bool application_control_frames_owns(const qa_application *, qa_actor_id);
 bool application_control_frames_apply_nested(qa_application *, qa_actor_id,
                                               const qa_movement_command *, qa_movement_command *, qa_error *);
-bool application_control_last_q3_command(const qa_application *, qa_actor_id, qa_q3_usercmd *, qa_error *);
 bool application_control_last_qw_command(const qa_application *, qa_actor_id,
     qa_movement_command *, uint64_t *, bool *, qa_error *);
 bool application_control_q3_flags(application_provider *, qa_actor_id, uint32_t, uint32_t, qa_error *);

@@ -1,9 +1,11 @@
 #include "internal.h"
+#include "unified_events.h"
 #include "save_native_q2.h"
 #include "guest_native_q2_private.h"
 #include "guest_native_q2_baseline.h"
 #include "map_private.h"
 #include "world_bounds.h"
+#include "qa/map_sidecars.h"
 
 #include <stdlib.h>
 
@@ -74,11 +76,15 @@ bool application_native_q2_scratch_prepare(application_provider *target,
     qa_application *app = scratch->application;
     qa_resource_retain(candidate->map_resource);
     app->map_resource = candidate->map_resource;
+    app->map_sidecars = candidate->map_sidecars;
+    qa_map_sidecars_retain(app->map_sidecars);
     qa_bsp_view map;
     qa_world *world = NULL;
     qa_world_hooks hooks = application_world_hooks(app);
     ok = qa_bsp_open(qa_resource_bytes(app->map_resource), &map, error) &&
+        qa_map_sidecars_apply_entities(app->map_sidecars, &map, error) &&
         qa_collision_create(&map, &app->geometry, error) &&
+        qa_map_sidecars_apply_materials(app->map_sidecars, app->geometry, error) &&
         qa_world_create(qa_session_actor_registry(app->session), app->geometry, &hooks, &world, error);
     if (!ok) return false;
     qa_physics_services physics = application_physics_services(app);
@@ -99,7 +105,8 @@ bool application_native_q2_scratch_prepare(application_provider *target,
     app->provider_count = 1;
     app->routing_providers = app->providers;
     app->routing_provider_count = 1;
-    if (!application_provider_construct(app, scratch->source, app->world,
+    if (!application_unified_event_owner_bind(app, scratch->source, true, false, error) ||
+        !application_provider_construct(app, scratch->source, app->world,
         target->product_catalog, target->product, qa_launch_snapshot_choices(snapshot), error)) return false;
     if (!qa_session_add(app->session, &scratch->source->component, error)) return false;
     scratch->source->component_attached = true;

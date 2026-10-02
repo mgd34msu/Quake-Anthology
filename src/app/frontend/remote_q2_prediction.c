@@ -19,7 +19,7 @@ static bool brush(const frontend_remote_q2 *row, const qa_q2_entity *entity, uin
     if (end == path + 1 || *end || !index || index >= qa_collision_model_count(row->geometry)) return false;
     *model = (uint32_t)index; return true;
 }
-static qa_bounds bounds(const frontend_remote_q2 *row, uint32_t solid)
+qa_bounds remote_q2_solid_bounds(const frontend_remote_q2 *row, uint32_t solid)
 {
     qa_net_protocol_id protocol = row->options.domain.protocol;
     bool short_solid = protocol.kind == QA_NET_Q2_34 ||
@@ -36,7 +36,7 @@ static qa_bounds bounds(const frontend_remote_q2 *row, uint32_t solid)
         v2 ? (float)((solid >> 24) & 255) - 32 : (float)(solid >> 16) - 32768;
     return (qa_bounds){qa_v3(-x, -y, -down), qa_v3(x, y, up)};
 }
-static bool trace(void *context, const qa_trace_query *query, qa_trace_result *out, qa_error *error)
+bool remote_q2_trace(void *context, const qa_trace_query *query, qa_trace_result *out, qa_error *error)
 {
     frontend_remote_q2 *row = context; const qa_q2_player *self = player(row);
     qa_trace_query q = *query; q.target = (qa_collision_target){0};
@@ -44,6 +44,11 @@ static bool trace(void *context, const qa_trace_query *query, qa_trace_result *o
     for (size_t i = 0; i < row->frame.entity_count && !out->all_solid; ++i) {
         const qa_q2_entity *entity = row->frame.entities + i;
         if (!entity->solid || (self && entity->number == (uint32_t)self->clientnum + 1)) continue;
+        bool extended = row->layout.max_models == 8192 ||
+            (row->options.domain.protocol.kind == QA_NET_Q2PRO_36 &&
+                row->data.protocol_revision >= 1025 && (row->data.wire_flags & 16u));
+        unsigned long clients = strtoul(frontend_remote_q2_config(row, row->layout.max_models == 8192 ? 60 : 30), NULL, 10);
+        if (extended && entity->number <= clients && !(query->policy.contents_mask & (UINT32_C(1) << 30))) continue;
         uint32_t model = 0; qa_trace_result hit;
         q = *query;
         if (entity->solid == 31) {
@@ -52,7 +57,7 @@ static bool trace(void *context, const qa_trace_query *query, qa_trace_result *o
                 .origin = vector(entity->origin), .angles = vector(entity->angles)};
             if (!qa_collision_trace(row->geometry, &q, &hit, error)) return false;
         } else if (!qa_collision_trace_body(&q, QA_COLLISION_Q2, QA_SHAPE_BOX,
-            bounds(row, entity->solid), vector(entity->origin), INT32_C(0x2000000), &hit, error)) return false;
+            remote_q2_solid_bounds(row, entity->solid), vector(entity->origin), INT32_C(0x2000000), &hit, error)) return false;
         bool start_solid = out->start_solid || hit.start_solid;
         if (hit.all_solid || hit.fraction < out->fraction) {
             if (!row->options.entity_actor(row->options.context, &row->options.domain, entity->number, &hit.actor, error) ||
@@ -110,6 +115,8 @@ bool remote_q2_prediction_replay(frontend_remote_q2 *row, qa_error *error)
     }
     qa_actor_id actor;
     bool rerelease = row->layout.max_models == 8192;
+    bool wide = row->options.domain.protocol.kind == QA_NET_Q2PRO_36 &&
+        row->data.protocol_revision >= 1025 && (row->data.wire_flags & 16u);
     qa_movement_kind kind = rerelease ? QA_MOVEMENT_Q2_RERELEASE : QA_MOVEMENT_Q2_CLASSIC;
     qa_movement_state state = qa_movement_state_default(kind, qa_v3(0, 0, 0));
     if (rerelease) {
@@ -120,12 +127,20 @@ bool remote_q2_prediction_replay(frontend_remote_q2 *row, qa_error *error)
             .view_height = (float)received->pmove.viewheight};
     } else {
         state.data.q2.type = received->pmove.type; state.data.q2.flags = (uint32_t)received->pmove.flags;
-        state.data.q2.time_eight_ms = (uint8_t)received->pmove.time; state.data.q2.gravity = (int16_t)received->pmove.gravity;
+        state.data.q2.wide_coordinates = wide;
+        if (received->pmove.time < 0 || received->pmove.time > (wide ? UINT16_MAX : UINT8_MAX))
+            return remote_q2_fail(error, QA_ERROR_FORMAT, "Q2 prediction timer leaves its actual wire profile");
+        if (wide) state.data.q2.wide.time_ms = (uint16_t)received->pmove.time;
+        else state.data.q2.time_eight_ms = (uint8_t)received->pmove.time;
+        state.data.q2.gravity = (int16_t)received->pmove.gravity;
         for (size_t i = 0; i < 3; ++i) {
-            if (received->pmove.origin[i] < INT16_MIN || received->pmove.origin[i] > INT16_MAX ||
-                received->pmove.velocity[i] < INT16_MIN || received->pmove.velocity[i] > INT16_MAX) return true;
-            state.data.q2.origin_eighths[i] = (int16_t)received->pmove.origin[i];
-            state.data.q2.velocity_eighths[i] = (int16_t)received->pmove.velocity[i];
+            int32_t minimum = wide ? -INT32_C(4194304) : INT16_MIN;
+            int32_t maximum = wide ? INT32_C(4194303) : INT16_MAX;
+            if (received->pmove.origin[i] < minimum || received->pmove.origin[i] > maximum ||
+                received->pmove.velocity[i] < minimum || received->pmove.velocity[i] > maximum)
+                return remote_q2_fail(error, QA_ERROR_FORMAT, "Q2 prediction coordinates leave their actual wire profile");
+            qa_q2_movement_coordinate_set(&state.data.q2, false, (unsigned)i, received->pmove.origin[i]);
+            qa_q2_movement_coordinate_set(&state.data.q2, true, (unsigned)i, received->pmove.velocity[i]);
             state.data.q2.delta_angle_shorts[i] = received->pmove.delta_angles[i];
         }
     }
@@ -138,7 +153,7 @@ bool remote_q2_prediction_replay(frontend_remote_q2 *row, qa_error *error)
     if (rerelease) { profile.data.q2r.air_accelerate = (float)air;
         profile.data.q2r.n64_physics = strtod(frontend_remote_q2_config(row, 12103), NULL) != 0; }
     else { profile.data.q2.air_accelerate = (float)air; profile.data.q2.strafejump_hack = row->data.strafejump_hack; }
-    qa_movement_services services = {.context = row, .trace = trace, .point_contents = contents, .is_bsp = is_brush};
+    qa_movement_services services = {.context = row, .trace = remote_q2_trace, .point_contents = contents, .is_bsp = is_brush};
     qa_movement_result result = {0}; bool ok = true; qa_vec3 pml = row->prediction_pml;
     ++row->busy;
     if (received->clientnum < 0 || !row->options.entity_actor(row->options.context, &row->options.domain,

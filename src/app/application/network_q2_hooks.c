@@ -1,6 +1,7 @@
 #include "network_q2_private.h"
 #include "qa/application_network.h"
 #include "qa/text.h"
+#include "native_q2_wire_engine.h"
 
 static const qa_net_client *client(qa_application_network_q2 *owner,
     qa_net_client_id id, qa_error *error)
@@ -271,11 +272,13 @@ void application_network_q2_unbind(qa_application_network_q2 *owner)
     if (engine == owner->recipient_engine && engine->network_recipient_users &&
         engine->network_recipient_runtime == owner->bindings.runtime &&
         engine->network_recipient_context == owner->bindings.recipient_context &&
-        engine->network_recipient == owner->bindings.recipient) {
+        engine->network_recipient == owner->bindings.recipient &&
+        engine->network_unicast == owner->bindings.unicast) {
         if (!--engine->network_recipient_users) {
             engine->network_recipient_runtime = NULL;
             engine->network_recipient_context = NULL;
             engine->network_recipient = NULL;
+            engine->network_unicast = NULL;
         }
     }
     owner->recipient_engine = NULL;
@@ -310,7 +313,8 @@ bool qa_application_network_q2_recipient(qa_application *app, qa_actor_owner sou
         !qa_actor_id_equal(physical.actor, actor))
         return application_fail(error, QA_ERROR_ARGUMENT, "Q2 recipient lost its actual SDK client binding");
     *out = (qa_application_network_q2_recipient_view){0}; *present = false;
-    if (!engine->clients[slot].connected || engine->clients[slot].disconnect_started ||
+    bool disconnecting = engine->disconnect_client == slot && engine->calls;
+    if (!engine->clients[slot].connected || (engine->clients[slot].disconnect_started && !disconnecting) ||
         !engine->network_recipient) return true;
     qa_application_network_q2_recipient_view value = {0};
     bool found = false;
@@ -325,7 +329,8 @@ bool qa_application_network_q2_recipient(qa_application *app, qa_actor_owner sou
         connection->seats[value.remote_index].seat.owner != value.seat.owner ||
         connection->seats[value.remote_index].seat.index != value.seat.index ||
         recipient_source(app, source) != provider || provider->state.native.q2_engine != engine ||
-        !engine->clients[slot].connected || engine->clients[slot].disconnect_started ||
+        !engine->clients[slot].connected ||
+        (engine->clients[slot].disconnect_started && !(engine->disconnect_client == slot && engine->calls)) ||
         !qa_actor_id_equal(engine->clients[slot].actor, actor) ||
         !qa_actors_get(qa_session_actors(app->session), actor))
         return application_fail(error, QA_ERROR_ARGUMENT, "Q2 recipient changed its authentic connection group");
@@ -333,16 +338,64 @@ bool qa_application_network_q2_recipient(qa_application *app, qa_actor_owner sou
     return true;
 }
 
+bool qa_application_network_q2_unicast(qa_application *app, qa_actor_owner source,
+    qa_actor_id actor, uint32_t key, bool remember, bool *duplicate, qa_error *error)
+{
+    if (!duplicate) return application_fail(error, QA_ERROR_ARGUMENT, "Q2 unicast requires a duplicate receipt");
+    *duplicate = false;
+    if (!key) return true;
+    qa_application_network_q2_recipient_view recipient;
+    bool present;
+    if (!qa_application_network_q2_recipient(app, source, actor, &recipient, &present, error)) return false;
+    if (!present) return true;
+    application_provider *provider = recipient_source(app, source);
+    struct application_native_q2 *engine = provider ? provider->state.native.q2_engine : NULL;
+    qa_clock_state clock;
+    if (!engine || !engine->calls || !engine->network_unicast || !app->map_resource ||
+        !qa_session_clock(app->session, source, &clock) || clock.frame.provider != source ||
+        clock.frame.kind != (engine->profile == QA_NATIVE_Q2_GAME_API3 ? QA_CLOCK_Q2_CLASSIC : QA_CLOCK_Q2_RERELEASE) ||
+        (clock.frame.number && (engine->frame.provider != source ||
+            engine->frame.number != clock.frame.number || engine->frame.time_ns != clock.frame.time_ns)))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q2 unicast lost its executing Source clock or cache owner");
+    qa_q2_unicast_claim claim = {.client = recipient.client, .connection_epoch = recipient.connection_epoch,
+        .source = source, .source_frame = clock.frame.number, .source_time_ns = clock.frame.time_ns, .key = key};
+    qa_sha256(qa_resource_bytes(app->map_resource), &claim.map);
+    if (!engine->network_unicast(engine->network_recipient_context, &claim, remember, duplicate, error)) return false;
+    qa_application_network_q2_recipient_view after;
+    bool current;
+    if (!qa_application_network_q2_recipient(app, source, actor, &after, &current, error) || !current ||
+        !qa_net_client_id_equal(after.client, recipient.client) || after.connection_epoch != recipient.connection_epoch ||
+        recipient_source(app, source) != provider || provider->state.native.q2_engine != engine ||
+        !qa_session_clock(app->session, source, &clock) || clock.frame.number != claim.source_frame ||
+        clock.frame.time_ns != claim.source_time_ns)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q2 unicast changed its actual Source or recipient group");
+    return true;
+}
+
+bool qa_application_network_q2_entity_number(qa_application *app, qa_actor_owner source,
+    qa_actor_id actor, uint32_t *out, qa_error *error)
+{
+    application_provider *provider = recipient_source(app, source);
+    struct application_native_q2 *engine = provider && provider->kind == APPLICATION_PROVIDER_NATIVE ?
+        provider->state.native.q2_engine : NULL;
+    if (!engine || !engine->calls || !provider->constructed || !provider->attached ||
+        provider->close_pending || engine->world != app->world ||
+        engine->profile == QA_NATIVE_Q2_CGAME_API2023)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q2 entity reference requires its genuine executing GAME namespace");
+    if (!engine->wire_engine && !application_native_q2_wire_begin(engine, error)) return false;
+    return application_native_q2_wire_number(engine, actor, out, error);
+}
+
 bool qa_application_network_q2_hooks(qa_application_network_q2 *owner,
     const qa_application_network_q2_bindings *bindings,
     qa_network_q2_server_hooks *out, qa_error *error)
 {
-    if (!out || !bindings || !bindings->runtime || !bindings->input || !bindings->drop || !bindings->recipient ||
+    if (!out || !bindings || !bindings->runtime || !bindings->input || !bindings->drop || !bindings->recipient || !bindings->unicast ||
         !application_network_q2_current(owner, error) ||
         (owner->bindings.runtime && (owner->bindings.runtime != bindings->runtime ||
             owner->bindings.context != bindings->context || owner->bindings.input != bindings->input ||
             owner->bindings.drop != bindings->drop || owner->bindings.recipient_context != bindings->recipient_context ||
-            owner->bindings.recipient != bindings->recipient)))
+            owner->bindings.recipient != bindings->recipient || owner->bindings.unicast != bindings->unicast)))
         return application_fail(error, QA_ERROR_ARGUMENT, "Q2 host hooks require their real Network input and retirement owners");
     if (owner->host.source.kind == QA_APPLICATION_NATIVE_Q2_ORIGINAL) {
         application_provider *provider = application_network_q2_provider(owner);
@@ -350,7 +403,7 @@ bool qa_application_network_q2_hooks(qa_application_network_q2 *owner,
         if (!engine || (engine->network_recipient_users &&
             (engine->network_recipient_runtime != bindings->runtime ||
                 engine->network_recipient_context != bindings->recipient_context ||
-                engine->network_recipient != bindings->recipient)))
+                engine->network_recipient != bindings->recipient || engine->network_unicast != bindings->unicast)))
             return application_fail(error, QA_ERROR_ARGUMENT, "Q2 peers disagree on their actual Source recipient owner");
         if (!owner->recipient_engine) {
             if (engine->network_recipient_users == SIZE_MAX)
@@ -358,6 +411,7 @@ bool qa_application_network_q2_hooks(qa_application_network_q2 *owner,
             engine->network_recipient_runtime = bindings->runtime;
             engine->network_recipient_context = bindings->recipient_context;
             engine->network_recipient = bindings->recipient;
+            engine->network_unicast = bindings->unicast;
             ++engine->network_recipient_users; owner->recipient_engine = engine;
         } else if (owner->recipient_engine != engine)
             return application_fail(error, QA_ERROR_ARGUMENT, "Q2 publisher retained a retired Source recipient binding");

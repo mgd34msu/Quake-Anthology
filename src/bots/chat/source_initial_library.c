@@ -237,6 +237,8 @@ bool chat_asset_message_time(qa_bot_chat_asset *asset,uint32_t index,float *time
     if(asset->initial_source)
         return bot_chat_initial_message_time(&asset->initial_source->initial,
             asset->initial_messages[index],time,write,error);
+    if(asset->packed_source && asset->view.kind==QA_BOT_CHAT_REPLIES)
+        return bot_chat_graph_message_time(asset,asset->graph_messages[index],time,write,error);
     if(write) asset->cooldowns[index]=*time;
     else *time=asset->cooldowns[index];
     return true;
@@ -251,7 +253,9 @@ bool chat_asset_message_text(const qa_bot_chat_asset *asset,uint32_t index,const
         if(!bot_chat_initial_message_text(&asset->initial_source->initial,
             asset->initial_messages[index],&text,error)) return false;
         *out=(const char *)text.data;
-    } else *out=asset->messages[index];
+    } else if(asset->packed_source && asset->view.kind==QA_BOT_CHAT_REPLIES)
+        return bot_chat_graph_message_text(asset,asset->graph_messages[index],out,error);
+    else *out=asset->messages[index];
     return true;
 }
 bool chat_initial_asset_from_view(const qa_bot_chat_asset_view *view,qa_bot_chat_asset **out,

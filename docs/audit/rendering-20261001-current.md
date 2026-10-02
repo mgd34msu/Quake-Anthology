@@ -161,7 +161,7 @@ Fresh current picture and material reads now establish the bounded repair: Sourc
 
 Verdict confirmed by an accepted source shader directive and actual production error paths. Original `tr_shader.c` admits `alphaGen wave noise 0 1 0 1`; `tr_shade_calc.c` alpha evaluation calls `TableForFunc`, which raises `ERR_DROP` for noise. RGB noise has its own supported branch and does not refute this alpha failure. Original and family TypeScript stage iterators execute each reached stage through the backend before evaluating the next stage. A valid stage zero followed by this active alpha-wave stage therefore retains the earlier draw, native bindings and depth before the later error.
 
-The native parser likewise accepts noise and the actual Source alpha evaluator rejects it at the reached later stage. Common has now removed Source command rollback, preserving the earlier emitted command prefix and mutated scratch. Current frontend Source-present and public CPU/GL execute still return on Source frame-end failure before physical backend execution, however. Prebuilding a retained command prefix therefore does not preserve the authentic earlier framebuffer or native state effects. The concrete accepted-directive witness was sent to Common and Root; actual incremental execution remains required. Generic material atomic behavior is a separate contract.
+The native parser likewise accepts noise and the actual Source alpha evaluator rejects it at the reached later stage. Common removed Source command rollback, preserving the earlier emitted command prefix and mutated scratch; at that snapshot, frontend Source-present and public CPU/GL execute still returned before physical execution on frame-end failure. Subsequent current reads now establish genuine CPU/GL prefix executors called as each command is emitted during Source issue, with a final scope check and consumed commands removed to prevent replay. This resolves the earlier commands-only architecture gap at the reviewed cuts. Full enclosing backend state, error and application current/cold joins remain moving. Generic material atomic behavior is a separate contract.
 
 ### R26. Source UI coordinate evaluation loses the last reached orientation
 
@@ -174,6 +174,98 @@ Fresh current scratch, reached queue and controls-codec reads now establish reta
 Verdict confirmed against genuine Q3 API producers. Original `RB_StretchPic` calls BeginSurface and selects the distinct zeroed BSS `entity2D` only when the picture shader differs from retained `tess.shader`. Ordinary EndSurface clears indexes while retaining vertex count, shader and shader time. A real model using custom shader handle S followed by StretchPic with that same handle therefore appends after the prior vertex count and retains the previous entity color and shader time. The native selected model and picture APIs accept that same retained shader handle, but the reviewed picture dispatcher starts with no batch and resets both counts.
 
 Even on an ordinary shader change, native `picture.c` supplies SetColor as `entity_color`, while the authentic new 2D entity's shader RGBA remains zero; SetColor separately supplies the picture vertex colors. An authored UI `rgbGen entity` or `alphaGen entity` stage thus reads a different value. A blanket zero-color substitution would still miss the valid same-shader continuation. The exact producer, Begin/End conditions, retained count/time and zeroed entity records were supplied to Common and Root. Closure requires the actual renderer's selected-material/entity/clock ownership and current/cold association, not an unrelated per-picture cache.
+
+Current focused reads establish retained selected material, fog, shader time and entity primitive fields, same-shader picture count/time reuse, and zeroed entity2D selection only on a shader change. The actual library retention and renderer teardown release are implemented, and the controls codec qualifies material through real namespace callbacks. The actual renderer callback omission below was corrected. Live entity-cell reuse and retained owners after provider retirement remain independent required joins.
+
+### R28. Source shader aliases lose first-registration identity
+
+Verdict confirmed through the actual Q3 registration API. Identical full-path RegisterShader and RegisterShaderNoMip calls already reuse the first handle through `q3p_find_name`; that simple mismatch candidate is refuted. The concrete witness is NoMip(`ui/pic.tga`) followed by mip(`ui/pic`) for a valid shader or image. `assets.c:182` caches full input names, so the second spelling reaches the lower library. Both names become `ui/pic`, but `library.c` requires matching mipmap/filter options and allocates a second material and public shader handle.
+
+Original `tr_shader.c:2404` caches the stripped, case-insensitive name with the lightmap index, or an existing defaulted shader, without comparing the requested mip policy. Both exported registration functions select the same 2D lightmap index. The family TypeScript registry preserves that first-registration identity. Existing defaulted names also match other lighting modes, which the reviewed lower library's exact kind/index comparison cannot express. The exact caller and cache witnesses were sent to NativeView and Root. Closure requires Source-specific lookup and retained current/cold identity while preserving generic multi-family option variants; upload POD and gamma are not cache-key defects.
+
+NativeView's current Source-only early lookup now selects an existing canonical name with the same finished lightmap index or a defaulted shader before sampling new upload policy. Focused current reads corroborate this bounded first-registration repair. The separate finished-key rule below and complete policy/current/cold owner remain moving.
+
+### R29. Per-row Source clock updates discard BeginSurface clamping
+
+Verdict confirmed and subsequently corrected at the reviewed Source dispatcher. Two reached world surfaces with distinct shaders, with the second shader's `clampTime` equal to one at time two, expose the difference. Original BeginSurface clamps that second shader to one; the unchanged world entity prevents the backend's separate entity-change clock reset. The reviewed native dispatcher instead reset shader time on every row and restored two. Genuine entity changes deliberately reset an unclamped shader time in the donor, so blanket clamping was not the correction.
+
+Common now tracks the selected entity independently of batch lifetime, starting each actual list with an invalid entity sentinel. Fresh focused reads establish that only a genuine entity transition performs the unclamped reset; shader/fog/light transitions for the same entity preserve BeginSurface clamping. Full Source continuation remains moving.
+
+### R30. Actual renderer checkpoints omit the new material reference callbacks
+
+Verdict confirmed and the immediate installer omission corrected. The controls codec requires material encoding whenever a reached Source stage retains a selected material. Actual `persistence.c` renderer references initially supplied only image, geometry and mesh identity callbacks, so a real rendered Source continuation could not checkpoint. The separate frame-reference constructor already supplying material callbacks did not satisfy this renderer contract.
+
+Guest installed actual material encode/decode callbacks in the renderer reference constructor, and fresh current reads establish that repair. Renderer-retained material/library ownership can outlive its original frontend provider. Its genuine material, image, movie and world namespace roots still require current/cold capture rather than assuming every retained material belongs to a currently active provider; Guest and Controls are implementing those joins.
+
+Fresh actual CPU and GL resource visitor reads also establish a separate retained Source lightmap image root, independent of the resident texture cache or active provider world. The current material observer and aggregate retired-provider namespace installation remain distinct joins.
+
+### R31. Copied entity color misses real retained Source cell reuse
+
+Verdict confirmed against authentic original and family entity allocation. With non-SMP rendering, original frame rollover resets entity counters without clearing the physical `backEndData[0]` cells. AddRefEntity overwrites the next cell, while `backEnd.currentEntity` can still point to that same allocation from the preceding frame. After a frame ends with model cell zero and shader S, next-frame AddRefEntity can replace cell zero's shader RGBA before a same-S StretchPic. With no shader switch, the UI keeps the selected entity and reads the new RGBA; reached orientation and shader time remain retained separately.
+
+The family TypeScript entity owner likewise keeps real DataView-backed cells across rollover, and the tess context getter rereads the selected cell. The native primitive entity copy preserves the old color instead. The exact allocation, rollover, overwrite and stage-read witness was supplied to Common and Root. Closure requires the genuine selected allocation/ordinal and current/cold owner association, without replacing retained orientation or time from an unrelated new submission.
+
+Current focused reads now establish a real renderer-owned bank with 1023 retained physical cells, admission of 1022 scene entities, selected cell ordinal, Source ClearScene/AddRefEntity callers and swap counter reset without erasing cells. Same-shader UI reads current raw color/texcoord and lighting from that cell while retaining the reached matrix, orientation and shader time separately. The controls codec includes all allocated cells and selected ordinal, and Q3 presentation includes its first scene ordinal. This resolves the bounded color reuse witness; complete raw pose, cached lighting and aggregate namespace/current/cold joins remain moving.
+
+### R32. Source shader capacity rejects the authentic default fallback
+
+Verdict confirmed at the reviewed registration boundary. Native material admission and publication return a format error at 16384 shader rows, causing the actual Q3 registration caller to fail. Original `GeneratePermanentShader` warns and returns the genuine default shader at that limit after reached shader preparation; its public registration consequently succeeds with handle zero. The family TypeScript registry preserves that fallback.
+
+Distinct scripted shaders can share one valid image, so this witness does not depend on exhausting the separate image limit. Closure requires the actual Source fallback object, public zero-handle identity and reached preparation side effects. Returning the lower default object alone is insufficient if the public constructor assigns it a positive handle. NativeView has the exact producer and boundary trace; generic registration contracts remain separate.
+
+Current focused reads now show Source admission proceeding through material preparation before returning the genuine default at capacity, with the public registration caller preserving handle zero for registration zero. Complete final material admission, refresh and codec coverage remains moving.
+
+### R33. Source cache retains the requested lightmap key after finishing changes it
+
+Verdict confirmed by the actual shader finisher and BSP constructor. Original FinishShader changes a nonnegative lightmap index to `LIGHTMAP_NONE` when no active lightmap stage remains, including vertex-light collapse. The family finisher and registry keep that finished key. The reviewed native finisher retained the input index, and its new Source lookup compared the record's original request recipe.
+
+A BSP shader requested with lightmap zero whose script maps only a diffuse image demonstrates the observable identity difference: repeated positive-index requests create distinct finished rows in the source, while a subsequent no-lightmap request reuses the latest finished row. NativeView received the exact cache/finisher cuts. Required closure preserves the request recipe for refresh/import and the distinct finished material key for Source lookup, including its versioned continuation.
+
+Current focused registration reads now use the finished material key and apply the no-active-lightmap-stage correction after preparation. Further current codec reads establish schema eight for the finished field, derivation from the request recipe for older schemas and the Source no-active-lightmap-stage correction on older imports. Complete final material and aggregate continuation coverage remains moving.
+
+### R34. Source pictures are clipped before authored deformation
+
+Verdict confirmed and subsequently corrected in the current complete picture owner. The generic geometry helper clips and normalizes the input rectangle to the viewport before shader execution. Original StretchPic and its family TypeScript writer append the complete signed rectangle with four vertices and six indexes before deformation and raster clipping.
+
+A valid `deformVertexes move 100 0 0 sin 1 0 0 1` shader moves an initially offscreen rectangle at x minus forty and width twenty into view at x sixty through eighty; the reviewed native helper dropped it first. Negative dimensions also lose authentic winding, while zero-area pictures still have reached stage and scratch effects in the source. Common installed a separate raw Source writer with the authentic index pattern `3,0,2,2,0,1`, preserving the shared helper's existing policy. Fresh whole `picture.c` at 131 lines establishes this bounded correction; full Source execution/current/cold remains moving.
+
+### R35. Source public shader registration admits names beyond its path limit
+
+Verdict confirmed at the actual public registration boundary. Original `RE_RegisterShader` and `RE_RegisterShaderNoMip` return handle zero when the input name has at least 64 characters, before shader lookup or loading. The family TypeScript world registration has the same limit. Native `qa_q3_register_shader` instead checks its name cache and normalizes the input without that Source boundary; the lower material key supports longer names.
+
+A 64-character explicit shader name mapping to an existing short image can therefore receive a positive native handle while both donors return zero without registration side effects. This witness does not depend on a long image filename or the separate image-name limit. NativeView received the actual public caller and donor cuts. Source invalid-handle fallback is a separate boundary obligation; custom-shader handle zero must continue to mean no override.
+
+Current focused public-caller reads now establish the Source-profile 64-character guard before cached-name lookup and provider selection, returning successful handle zero. This resolves the bounded length witness; the independent separator key and invalid-handle consumer obligations remain open.
+
+### R36. Source handle lookup rejects authentic default fallbacks
+
+Verdict confirmed at genuine UI and cgame consumers. Original `R_GetShaderByHandle` warns and returns the real default shader for negative or out-of-range handles; `R_GetModelByHandle` similarly returns model zero. Native `q3p_shader_get` and `q3p_model_get` instead return argument errors. A Source StretchPic with shader minus one consequently fails before reaching the default material.
+
+Original AddRefEntity stores handles without looking them up, then reaches fallback during scene generation. Native entity admission validates these handles before appending its real retained cell. NativeView received the public and late-consumer distinctions. A Source correction must preserve the distinct custom-shader-zero no-override contract and model-zero axis behavior rather than relaxing every generic boundary.
+
+### R37. Source scene completion and clearing lose frame allocation membership
+
+Verdict confirmed against original and family physical scene allocation. Original successful RenderScene advances first entity, light and polygon ordinals; a second RenderScene without new additions has empty membership. Native `qa_q3_presentation_render` retains its local entity, light and polygon counts and old first entity ordinal. Add model A, RenderScene, RenderScene therefore submits A twice natively.
+
+Original ClearScene advances membership without reclaiming frame capacity, and dynamic-light admission is capped at 32 across that frame. Native clearing resets its local light count, while light admission has no frame-global cap. Add 32 lights, ClearScene, add a thirty-third light and render a scene therefore supplies that light natively even though the authentic donor discards it. Clamping projected lights to 32 within each local scene does not resolve this witness. Common and Root received the actual completion, clear, admission, rollover and codec owner joins; generic scene reuse remains a separate contract.
+
+### R38. Source public shader lookup folds distinct path separators
+
+Verdict confirmed through the actual public caller and catalog. Original shader lookup and script lookup use Q_stricmp, preserving distinct forward and backward separators; the family normalizer explicitly preserves them too. Native material keys and catalog entries have that behavior, but `qa_q3_register_shader` first applies VFS path normalization and passes the folded result to material registration.
+
+Two explicit shaders named `ui\\pic` and `ui/pic`, both mapping the white image but selecting red and green constant RGB respectively, therefore collapse to the slash shader in the native public caller. The original and family select their distinct materials. NativeView received the precise producer and consumer cuts. The Source shader key must remain distinct from the normalized path used to select a safe VFS provider.
+
+### R39. GL output resolution changes masks before the next Source clear
+
+Verdict confirmed through the actual gamma target and Source frame paths. With gamma different from one, `gl_output_resolve` runs `composite_state`, disabling depth writes and forcing color writes. It restores viewport and scissor, but leaves those native masks changed while the renderer's retained pipeline still describes the last Source draw. The subsequent Source draw-buffer clear deliberately uses the actual native masks, unlike the CPU clear's retained pipeline fields.
+
+An opaque Source stage with depth writes enabled, swap through gamma 1.4 and a next-frame UI-only Source clear therefore clears depth in the original but leaves it stale in native GL. An authored UI deformation moving Z to minus one half produces depth one half and can then encounter the retained prior depth. Controls and Root received the actual output and clear boundary. Required closure restores genuine Source state around product compositing and capture operations, without reintroducing unconditional write-mask changes into the Source clear itself.
+
+### R40. Authored projection-shadow deformation requires an unrelated render flag
+
+Verdict confirmed against both genuine deformation donors. Original `RB_ProjectionShadowDeform` reads retained selected entity orientation, shadow plane and light direction without requiring `RF_SHADOW_PLANE`. The family world and picture deformation callers likewise supply this context whenever the real entity has a shadow plane.
+
+Native model and inline-world context producers set `projection_shadow` only for flag 256, and the deformation evaluator rejects an absent value. A valid ordinary MD3 entity with flags zero and an authored `deformVertexes projectionShadow` shader therefore projects in both donors and fails natively. Common and Root received the actual producer, retained-cell and evaluator cuts. Availability of authentic deformation context must remain distinct from flag 256 admission for the separate selected shadow pass.
 
 ## Required source behavior gaps
 
@@ -292,9 +384,11 @@ Read completely in this lane so far:
 - Original Q3 `code/renderer/tr_shade.c`, `tr_init.c`, `tr_mesh.c`, `tr_flares.c`, `tr_backend.c` (1143), `tr_surface.c` (1215) and `tr_sky.c` (845) are read in full.
 - Original Q3 `tr_world.c` (668), `tr_shadows.c` and family TypeScript `stencil-shadows.ts` are also read in full. Current native stencil effect owner and actual deferred shadow end have fresh whole/focused reads respectively; complete source scratch/current/cold assembly remains moving.
 - Family TypeScript `draw2d.ts` is read in full, with fresh focused picture-material/command/backend reads establishing R24. Those focused enclosing reads do not count as a new whole final Source renderer review.
+- Family TypeScript `scene-entities.ts` (218) is freshly read in full. Original frame rollover/AddRefEntity and the live tess context getter have focused reads establishing R31; the enclosing native Source entity allocation and aggregate continuation remain required implementation.
 - Current legacy world consumer (494), frontend legacy render policy (146) and Q3 picture consumer (96) are freshly read in full. The new mirror query and overlay have focused current reads; these do not establish the complete changing world owner.
 - Subsequent whole material submission (983), deformation (448), controls (188), controls private/save (40/36), public/private Source scratch headers and scene frame (305) reads cover actual sorted collection, partial writes, deformation continuation and UI flush/cancel installation. Changed Source shadow and direct-draw paths remain under implementation.
 - Subsequent complete material submission at its 1171-line snapshot, current scratch/control codecs and public/private headers, shared renderer-control helper and Q3 policy helper have whole coverage; newer incremental backend issue and retained view/2D continuation changes have focused current reads. These moving joins do not inherit whole-task acceptance from the preceding snapshot.
+- Actual Remote Q1 presentation (106), media (140) and HUD (62) have whole coverage. Its model inputs omit the new eyes/planar policy, and its raw world/entity/effect sequence bypasses the shared flashblend, deferred-water, mirror and canonical far-plane helper. These actual caller joins were sent to Root and the legacy writer; local visual coverage does not establish remote-family completion.
 - New frontend Q1 sky owner (298), policy preparation (120), codec (156), public/private/save headers and lower Q1 sky consumer (221) with its header are read in full. The changed actual legacy helper and primary/portal visibility/projection joins have focused current reads only.
 - Actual Q3 presentation scene owner (854 at the whole-read snapshot) and subsequent selected polygon, beam, sky iterator, no-world projection and scene-end changes have whole/focused coverage. The new Remote Q2 presentation is freshly read in full before and after its model-light correction; its complete effects, controls and remote continuation are not accepted from this bounded source result.
 - Original Q1 `WinQuake/gl_rmain.c`, `gl_rlight.c`, `gl_mesh.c`, `gl_rsurf.c`; original Q2 `ref_gl/gl_rmain.c`, `gl_light.c`, `gl_mesh.c`.

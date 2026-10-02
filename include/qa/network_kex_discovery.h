@@ -28,5 +28,11 @@ bool qa_kex_mdns_owner_restore(qa_bytes, const qa_kex_mdns_hooks *,
                                qa_kex_mdns_owner **, qa_error *);
 bool qa_kex_mdns_owner_activate(qa_kex_mdns_owner *, qa_error *);
 bool qa_kex_mdns_owner_publish(qa_kex_mdns_owner *, qa_error *);
+/* A complete saved logical cut admits the real socket/publication transfer.
+ * The retired owner closes quietly; no multicast query or announcement runs. */
+bool qa_kex_mdns_owner_handoff_ready(const qa_kex_mdns_owner *active,
+    const qa_kex_mdns_owner *candidate, qa_error *);
+bool qa_kex_mdns_owner_handoff(qa_kex_mdns_owner *active,
+    qa_kex_mdns_owner *candidate, qa_error *);
 
 #endif

@@ -173,21 +173,21 @@ static bool set_targetname(void *context, qa_actor_id id, qa_string_id name, qa_
 static bool set_target(void *context, qa_actor_id id, qa_string_id name, qa_error *e) {
     return qa_q2_entity_set_target(context, id, name, e);
 }
-static bool set_delay(void *context, qa_actor_id id, double value, qa_error *e) {
+static bool set_delay(void *context, qa_actor_id id, float value, qa_error *e) {
     qa_q2_game *g = context;
     q2_actor *a = q2_actor_get(g, id, false, NULL);
     if (!a || (!a->entity && !a->item)) {
         qa_error_set(e, QA_ERROR_NOT_FOUND, 0, "Q2 delay owner is missing");
         return false;
     }
-    if (!isfinite(value) || fabs(value) > FLT_MAX) {
+    if (!isfinite(value)) {
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Q2 target delay exceeds source float range");
         return false;
     }
     if (a->item)
-        a->item->spawn.delay = (float)value;
+        a->item->spawn.delay = value;
     else
-        a->entity->delay = (float)value;
+        a->entity->delay = value;
     return true;
 }
 bool qa_q2_game_target_binding(qa_q2_game *g, qa_actor_id id, qa_target_binding *out, qa_error *e) {

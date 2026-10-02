@@ -306,7 +306,7 @@ bool q2_player_build_view(qa_q2_game *g, q2_actor *a, const qa_q2_player_movemen
                       (rr ? fminf(roll, 1.2f) : roll) * sign);
         if (rr && s->quake_ns > g->now_ns) {
             float factor =
-                g->now_ns ? fminf(1, (float)((double)s->quake_ns / g->now_ns) * .25f) : 1;
+                g->now_ns ? fminf(1, (float)((double)s->quake_ns / (double)g->now_ns) * .25f) : 1;
             view.kick_angles.x += q2_crandom(g) * factor;
             view.kick_angles.y += q2_crandom(g) * factor;
             view.kick_angles.z += q2_crandom(g) * factor;
@@ -409,15 +409,30 @@ bool q2_player_build_view(qa_q2_game *g, q2_actor *a, const qa_q2_player_movemen
             q2_clamp(q2_seconds_left(s->nuke_ns, g->now_ns) / (s->nuke_inside ? 2 : 1), 0, 1));
     view.underwater = (mask & 56) != 0;
     view.armor = combat.armor.regular.kind == QA_ARMOR_NONE ? 0 : combat.armor.regular.points;
-    if (combat.armor.powered.kind != QA_POWER_NONE &&
-        (view.armor == 0 || (((g->now_ns + 50 * Q2_MS) / (100 * Q2_MS)) & 8)))
+    bool powered_armor = combat.armor.powered.kind != QA_POWER_NONE &&
+        (view.armor == 0 || (rr ? g->now_ns % (3 * Q2_NS) < 1500 * Q2_MS : (g->wire_frame & 8) != 0));
+    const char *armor_icon = NULL;
+    if (powered_armor) {
         view.armor = combat.armor.powered.cells;
+        armor_icon = rr && combat.armor.powered.kind == QA_POWER_SCREEN ? "i_powerscreen" : "i_powershield";
+    } else if (view.armor > 0 && combat.armor.regular.item) {
+        const qa_q2_item_definition *armor = q2_item_by_id(g, combat.armor.regular.item);
+        if (armor && armor->kind == QA_Q2_ITEM_ARMOR) armor_icon = armor->icon;
+    }
+    if (armor_icon && !qa_builtin_resource(&g->services, armor_icon, &view.armor_icon, e)) return false;
+    if (!q2_actor_live(g, a->id)) return true;
     if (weapon.q2_weapon != QA_Q2_WEAPON_NONE && weapon.ammo) {
+        const qa_q2_item_definition *definition = q2_item_by_id(g, weapon.ammo);
         int ammo;
         if (!q2_count(g, a->id, weapon.ammo, &ammo, e))
             return false;
-        view.ammo = (float)ammo;
+        if (!(rr && (g->options.deathmatch_flags & 8192) && definition && definition->infinite_quantity)) {
+            view.ammo = (float)ammo; view.ammo_count = ammo;
+            if (definition && definition->icon &&
+                !qa_builtin_resource(&g->services, definition->icon, &view.ammo_icon, e)) return false;
+        }
     }
+    if (!q2_actor_live(g, a->id)) return true;
     view.layouts = (s->show_scores || s->show_help || combat.health <= 0 || intermission ? 1 : 0) |
                    (s->show_inventory && combat.health > 0 ? 2 : 0);
     if (intermission) {
@@ -445,7 +460,7 @@ bool q2_player_build_view(qa_q2_game *g, q2_actor *a, const qa_q2_player_movemen
         a->wire_event_frame = g->wire_frame;
         s->event = 0;
         if (!qa_builtin_emit(&g->services,
-                             &(qa_builtin_event){.kind = QA_BUILTIN_ANIMATION,
+                             &(qa_builtin_event){.kind = QA_BUILTIN_Q2_ENTITY_EVENT,
                                                  .family = QA_GAME_Q2,
                                                  .provider = g->options.owner,
                                                  .actor = a->id,

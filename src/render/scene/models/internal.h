@@ -12,6 +12,9 @@ typedef struct scene_model_image {
     char *name;
     const qa_material *material;
     const qa_scene_image *base, *fullbright;
+    qa_buffer indexed_pixels;
+    uint32_t indexed_width, indexed_height;
+    bool indexed_override;
     struct scene_model_image *next;
 } scene_model_image;
 
@@ -75,6 +78,8 @@ bool scene_model_external_material(qa_scene_model *, qa_material_library *, cons
                                    const qa_material **, qa_error *);
 bool scene_model_indexed(qa_scene_model *, const char *, qa_bytes, uint32_t, uint32_t,
                          bool sprite, scene_model_image **, qa_error *);
+bool scene_model_indexed_override(qa_scene_model *, const qa_scene_model_indexed_skin *,
+                                  scene_model_image **, qa_error *);
 void scene_model_images_destroy(qa_scene_model *);
 bool scene_model_topology(qa_scene_model *, uint32_t, qa_error *);
 void scene_model_topology_destroy(qa_scene_model *);

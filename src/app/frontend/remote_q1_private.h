@@ -2,6 +2,7 @@
 #define QA_FRONTEND_REMOTE_Q1_PRIVATE_H
 #include "remote_q1_client.h"
 #include "model_inventory.h"
+#include "remote_q1_camera.h"
 
 typedef struct remote_q1_model {
     struct remote_q1_model *next;
@@ -32,7 +33,9 @@ struct frontend_remote_q1 {
     struct frontend_remote_q1_effects *effects;
     struct frontend_remote_q1_hud_storage *hud;
     struct frontend_remote_q1_prediction *prediction;
+    struct frontend_remote_q1_skins *skins;
     struct frontend_remote_q1_sky_policy *sky_policy;
+    remote_q1_camera camera;
     qa_frontend *frontend;
     frontend_remote_q1_options options;
     qa_net_protocol_id protocol;
@@ -52,7 +55,7 @@ struct frontend_remote_q1 {
     uint8_t pending_impulse;
     qa_vec3 view_angles;
     qa_q1_clientdata data;
-    bool bound, loaded, retired, has_data, importing;
+    bool bound, loaded, retired, has_data, importing, intermission;
     uint64_t saved_world, saved_sky[6];
     unsigned busy;
     remote_q1_entities current, previous, statics, qw_entities, qw_nails, qw_batch_players;

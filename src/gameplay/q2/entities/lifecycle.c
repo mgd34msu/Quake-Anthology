@@ -360,7 +360,7 @@ bool qa_q2_entities_post_spawn(qa_q2_game *g, qa_error *e) {
         s->team_next = (qa_actor_id){0};
         if (a->item)
             a->item->spawn.team = s->team;
-        a->physics.flags &= ~QA_PHYSICS_TEAM_SLAVE;
+        a->physics.flags &= ~(uint32_t)QA_PHYSICS_TEAM_SLAVE;
         count += s->team != 0;
     }
     if (!count)
@@ -411,7 +411,7 @@ bool qa_q2_entities_post_spawn(qa_q2_game *g, qa_error *e) {
                     continue;
                 train->entity->team_master = train->id;
                 train->entity->team_next = (qa_actor_id){0};
-                train->physics.flags &= ~QA_PHYSICS_TEAM_SLAVE;
+                train->physics.flags &= ~(uint32_t)QA_PHYSICS_TEAM_SLAVE;
                 last = train;
                 for (size_t j = first; j < end; ++j) {
                     q2_actor *member = members[j].actor;

@@ -16,7 +16,8 @@ bool q3component_lifecycle_begin(void *context,uint32_t entry,const int32_t *wor
     uint32_t index;
     if(count<=c->release_argument||!slot(c,words[c->release_argument],&index,e)) return false;
     component_actor *actor=actor_at(c,index);
-    return !actor||actor->owned||q3records_fail(e,QA_ERROR_ARGUMENT,"Component source cannot release a foreign actor without its owner continuation");
+    if(actor&&!actor->owned) return q3records_fail(e,QA_ERROR_ARGUMENT,"Component source cannot release a foreign actor without its owner continuation");
+    return !actor||application_q3_mod_actors_before_release(c->actor_semantics,actor->actor,e);
 }
 bool q3component_lifecycle(void *context,uint32_t entry,const int32_t *words,size_t count,int32_t result,qa_error *e)
 {
@@ -29,11 +30,16 @@ bool q3component_lifecycle(void *context,uint32_t entry,const int32_t *words,siz
     component_actor *row=actor_at(c,index);
     if(entry==c->allocate_entry) {
         if(index<c->maximum||row||!qa_load_i32le(bytes)) return q3records_fail(e,QA_ERROR_FORMAT,"Component allocator returned an occupied, inactive or reserved client row");
+        for(size_t i=0;i<c->records->record_count;++i)
+            if(!c->records->records[i].client&&index>=c->records->records[i].capacity)
+                return q3records_fail(e,QA_ERROR_FORMAT,"Allocated component actor exceeds its declared auxiliary records");
+        if(!q3records_reserve_actor(c->records,e)) return false;
         qa_actor_id actor;
         if(!qa_session_allocate(c->options.host.session,c->options.host.owner,c->definition,true,index,&actor,e)) return false;
         /* Bind retains the allocated full actor before any fallible body or
          * collision admission. Checked retirement can always reach it. */
-        return application_q3_component_records_bind(c->records,actor,index,true,false,e);
+        return application_q3_component_records_bind(c->records,actor,index,true,false,e)&&
+            application_q3_mod_actors_admit(c->actor_semantics,actor,e);
     }
     if(!row||qa_load_i32le(bytes)) return true;
     if(!row->owned) return q3records_fail(e,QA_ERROR_ARGUMENT,"Component source removed a foreign actor");
@@ -79,17 +85,24 @@ static bool hook(void *context,const qa_qvm_call *call,int32_t *result,qa_error 
 {
     component_hook *binding=context; application_q3_component *c=binding->owner;
     if(!q3component_current(c,e)) return false;
+    if(!application_q3_mod_actors_entry_begin(c->actor_semantics,call,e)) return false;
     bool source=call->caller_instruction!=UINT32_MAX;
-    component_call_lease *lease=calloc(1,sizeof(*lease)); if(!lease) return q3records_fail(e,QA_ERROR_MEMORY,"Retaining actual component function scope");
+    component_call_lease *lease=calloc(1,sizeof(*lease));
+    if(!lease) {
+        application_q3_mod_actors_entry_end(c->actor_semantics,call);
+        return q3records_fail(e,QA_ERROR_MEMORY,"Retaining actual component function scope");
+    }
     int32_t words[62]; size_t count=call->argument_count;
     bool ok=count<=62;
     for(size_t i=0;ok&&i<count;++i) ok=qa_qvm_call_argument(call,i,words+i,e);
     if(ok&&source&&(binding->allocate||binding->release)) ok=application_q3_component_records_prepare(c->records,e)&&application_q3_component_records_enter(c->records,call->instruction,words,count,&lease->scope,e);
     if(ok&&binding->middleware) ok=application_q3_mod_entry_begin(c->mod,call,&lease->middleware,e);
-    if(ok) ok=binding->frame?q3component_frame_proceed(c,call,&lease->result,e):qa_qvm_proceed(call,&lease->result,e);
+    if(ok) ok=binding->actor?application_q3_mod_actors_hook(c->actor_semantics,call,&lease->result,e):
+        binding->frame?q3component_frame_proceed(c,call,&lease->result,e):qa_qvm_proceed(call,&lease->result,e);
     lease->succeeded=ok; int32_t raw=lease->result; qa_error first=e?*e:(qa_error){0},cleanup={0};
     bool closed=finish_call(c,lease,&cleanup);
     if(!closed) { lease->next=c->calls; c->calls=lease; } else free(lease);
+    application_q3_mod_actors_entry_end(c->actor_semantics,call);
     if(!ok) { if(e) *e=first; return false; }
     if(!closed) { if(e) *e=cleanup; return false; }
     *result=raw; return true;
@@ -103,13 +116,18 @@ static bool hook_add(application_q3_component *c,uint32_t entry,bool middleware,
 bool q3component_bind_hooks(application_q3_component *c,qa_error *e)
 {
     size_t entries=application_q3_mod_entry_count(c->mod);
-    c->hooks=calloc(entries+(c->has_source?2:0)+(c->has_actor_frame?1:0),sizeof(*c->hooks));
+    c->hooks=calloc(entries+(c->has_source?2:0)+(c->has_actor_frame?1:0)+1,sizeof(*c->hooks));
     if((entries||c->has_source||c->has_actor_frame)&&!c->hooks) return q3records_fail(e,QA_ERROR_MEMORY,"Retaining complete component function union");
     for(size_t i=0;i<entries;++i) { uint32_t entry; if(!application_q3_mod_entry_instruction(c->mod,i,&entry)||!hook_add(c,entry,true,false,false,e)) return false; }
     if(c->has_source&&(!hook_add(c,c->allocate_entry,false,true,false,e)||!hook_add(c,c->release_entry,false,false,true,e))) return false;
     if(c->has_actor_frame) {
         if(!hook_add(c,c->frame_entry,false,false,false,e)) return false;
         for(size_t i=0;i<c->hook_count;++i) if(c->hooks[i].entry==c->frame_entry) c->hooks[i].frame=true;
+    }
+    uint32_t damage;
+    if(application_q3_mod_actors_damage_entry(c->actor_semantics,&damage)) {
+        if(!hook_add(c,damage,false,false,false,e)) return false;
+        for(size_t i=0;i<c->hook_count;++i) if(c->hooks[i].entry==damage) c->hooks[i].actor=true;
     }
     for(size_t i=0;i<c->hook_count;++i) if(!qa_qvm_bind_function(c->vm,c->hooks[i].entry,true,hook,c->hooks+i,&c->hooks[i].id,e)) return false;
     return true;
@@ -127,6 +145,7 @@ bool q3component_descriptors(application_q3_component *c,qa_qvm_saved_function *
 bool application_q3_component_actor_released(application_q3_component *c,qa_actor_record record,qa_error *e)
 {
     if(!c||!c->records) return true;
+    if(!application_q3_mod_actors_release(c->actor_semantics,record.id,e)) return false;
     if(c->mod&&!application_q3_mod_release_actor(c->mod,record.id,e)) return false;
     if(!application_q3_component_records_release(c->records,record.id,e)) return false;
     return !c->host||qa_q3_host_actor_released(c->host,record,e);
@@ -140,6 +159,7 @@ bool application_q3_component_destroy(application_q3_component **slot,qa_error *
         return q3records_fail(e,QA_ERROR_ARGUMENT,"Component lifetime has active source or presentation users");
     /* Returned refused mod scopes retry while their real RAM and canonical
      * bindings still exist. Their false idle bit is not an execution lock. */
+    if(!application_q3_mod_actors_destroy(&c->actor_semantics,e)) return false;
     if(c->mod&&!application_q3_mod_idle(c->mod)&&!application_q3_mod_destroy(&c->mod,e)) return false;
     for(size_t i=0;c->records&&i<c->records->actor_count;) {
         component_actor row=c->records->actors[i];
@@ -157,6 +177,7 @@ bool application_q3_component_destroy(application_q3_component **slot,qa_error *
     if(c->source&&!application_q3_component_source_destroy(&c->source,e)) return false;
     if(c->host&&!qa_q3_host_destroy_ready(c->host)) return q3records_fail(e,QA_ERROR_ARGUMENT,"Component host has retained service users");
     for(size_t i=0;i<c->hook_count;++i) if(c->hooks[i].id) { if(!qa_qvm_unbind(c->vm,c->hooks[i].id,e)) return false; c->hooks[i].id=0; }
+    if(c->actor_resolver) { if(!qa_qvm_unbind(c->vm,c->actor_resolver,e)) return false; c->actor_resolver=0; }
     if(c->vm) { if(!qa_qvm_destroy(c->vm,e)) return false; c->vm=NULL; qa_q3_host_qvm_consumed(c->host); }
     if(c->host) { if(!qa_q3_host_destroy(c->host,e)) return false; c->host=NULL; }
     qa_console_destroy(c->console); qa_cvars_destroy(c->cvars); free(c->hooks); free(c->frame_branches); free(c->frame_locals); free(c->initial_stores);

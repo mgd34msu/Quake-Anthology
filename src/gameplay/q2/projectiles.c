@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "player/internal.h"
 #include "monsters/reinforcements.h"
 
 static bool live(qa_q2_game *g, qa_actor_id id) { return q2_actor_live(g, id); }
@@ -412,8 +413,8 @@ static bool bfg_fly_run(qa_q2_game *g, qa_actor_id id, const q2_projectile *p, q
                 break;
             }
             bool duplicate = false;
-            for (size_t i = 0; i < count; ++i)
-                duplicate |= qa_actor_id_equal(excluded[i], hit);
+            for (size_t excluded_index = 0; excluded_index < count; ++excluded_index)
+                duplicate |= qa_actor_id_equal(excluded[excluded_index], hit);
             if (duplicate || count >= limit)
                 break;
             excluded[count++] = hit;
@@ -647,7 +648,7 @@ bool qa_q2_physics_write(qa_q2_game *g, qa_actor_id id, const qa_physics_propert
     a->physics = *properties;
     return true;
 }
-bool qa_q2_touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *e) {
+static bool touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *e) {
     if (g == NULL || contact == NULL) {
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Missing Q2 touch contact");
         return false;
@@ -745,7 +746,7 @@ bool qa_q2_touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *e) {
             return true;
     }
     if (!hurt && (p.kind == Q2_ROCKET || p.kind == Q2_HEAT_ROCKET) && !g->options.deathmatch &&
-        !g->options.cooperative && contact->has_surface && (contact->surface.flags & 120u) == 0) {
+        !g->options.cooperative && contact->has_surface && ((uint32_t)contact->surface.flags & 120u) == 0) {
         int count = (int)(q2_random(g) * 5);
         for (int i = 0; i < count; ++i) {
             if (!q2_spawn_debris(g, id, e))
@@ -817,6 +818,32 @@ bool qa_q2_touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *e) {
                                                                    : "q2:rocket-explosion";
     return q2_projectile_event(g, id, QA_BUILTIN_EXPLOSION, effect, 0, origin, normal, e) &&
            (!live(g, id) || qa_session_release(g->services.session, id, e));
+}
+bool qa_q2_touch_source(qa_q2_game *g, const qa_touch_contact *contact,
+                        bool *reached, qa_error *e) {
+    if (g == NULL || contact == NULL || reached == NULL) {
+        qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Missing Q2 source touch contact");
+        return false;
+    }
+    *reached = false;
+    qa_actor_id id = contact->self;
+    if (!q2_actor_live(g, id) || id.slot >= g->capacity || g->actors[id.slot] == NULL ||
+        !qa_actor_id_equal(g->actors[id.slot]->id, id))
+        return true;
+    const q2_actor *a = g->actors[id.slot];
+    /* Source entities bind a wrapper even when their optional touch leaf is
+     * absent. Borrowed CHARACTER and weapon-only extensions do not bind it. */
+    bool bound = a->entity != NULL || a->item != NULL || a->monster != NULL ||
+                 a->projectile.kind != Q2_PROJECTILE_NONE ||
+                 (a->client != NULL && !a->client->character_configured);
+    if (!bound)
+        return true;
+    *reached = true;
+    return touch(g, contact, e);
+}
+bool qa_q2_touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *e) {
+    bool reached;
+    return qa_q2_touch_source(g, contact, &reached, e);
 }
 bool q2_tracker_target(q2_weapon_call *c, qa_vec3 start, qa_vec3 direction, qa_actor_id *out,
                        qa_error *e) {
@@ -1162,10 +1189,10 @@ bool q2_projectile_spawn(q2_weapon_call *c, q2_projectile_kind kind, qa_vec3 sta
             start = spawn.body.origin;
             direction = a->projectile.movedir;
         }
-        qa_body_state owner;
-        if (!qa_world_body_read(g->services.world, c->actor->id, &owner, e))
+        qa_body_state owner_body;
+        if (!qa_world_body_read(g->services.world, c->actor->id, &owner_body, e))
             return false;
-        qa_trace_query query = {.start = owner.origin,
+        qa_trace_query query = {.start = owner_body.origin,
                                 .end = start,
                                 .pass_actor = id,
                                 .policy = qa_collision_default_policy(QA_COLLISION_Q2)};

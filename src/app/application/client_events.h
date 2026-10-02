@@ -1,0 +1,10 @@
+#ifndef QA_APPLICATION_CLIENT_EVENTS_H
+#define QA_APPLICATION_CLIENT_EVENTS_H
+
+#include "internal.h"
+
+/* The Source has already published the canonical userinfo and completed its
+ * own callback. Notify the other physical, admitted client listeners once. */
+bool application_client_userinfo_changed(qa_application *, qa_actor_id, qa_error *);
+
+#endif

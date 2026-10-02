@@ -65,7 +65,8 @@ void qa_q2_messages_destroy(qa_q2_messages *m) {
 bool qa_q2_messages_create(qa_net_protocol_id protocol, const qa_q2_message_options *options,
                             qa_q2_messages **out, qa_error *error) {
     if (!out || !options || !options->config_strings || options->config_strings > UINT16_MAX ||
-        !options->inventory_slots || options->inventory_slots > 32768) {
+        !options->inventory_slots || options->inventory_slots > 32768 ||
+        (options->native_api2023 && protocol.kind != QA_NET_Q2KEX_2023)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid Q2 message layout limits"); return false;
     }
     qa_q2_messages *m = calloc(1, sizeof(*m));
@@ -259,7 +260,7 @@ static bool inflate_download(qa_q2_messages *m, qa_net_reader *r, qa_bytes bytes
         qa_q2_inflate_segment *segment = calloc(1, sizeof(*segment));
         if (segment && bytes.size) segment->compressed.data = malloc(bytes.size);
         if (!segment || (bytes.size && !segment->compressed.data)) {
-            if (segment) free(segment); free(data); download_reset(m);
+            free(segment); free(data); download_reset(m);
             return qa_net_reader_fail(r, "Cannot retain Q2 deflate continuation receipt");
         }
         if (bytes.size) memcpy(segment->compressed.data, bytes.data, bytes.size);
@@ -391,7 +392,12 @@ static bool parse_server(qa_q2_messages *m, qa_net_reader *r, qa_q2_server_emit_
                   (qa_q2_entity_span){m->baselines, m->baseline_count}, &event.data.frame);
             break;
         }
-        case 9: event.kind = QA_Q2_SVC_SOUND; ok = read_sound(&m->codec, r, &event.data.sound); break;
+        case 9: {
+            event.kind = QA_Q2_SVC_SOUND;
+            qa_q2_codec sound_codec = m->codec;
+            if (m->options.native_api2023) sound_codec.protocol.kind = QA_NET_Q2REPRO_1038;
+            ok = read_sound(&sound_codec, r, &event.data.sound); break;
+        }
         case 3:
             event.kind = QA_Q2_SVC_TEMP_ENTITY;
             ok = qa_q2_temp_entity_read(&m->codec, r, m->options.override_extended_temps ? m->options.extended_temps : extended(&m->codec), &event.data.temporary);

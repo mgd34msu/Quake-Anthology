@@ -82,12 +82,12 @@ static qa_script_services services(bot_chat_packed *packed) {
 bool bot_chat_packed_owner(qa_bot_chat_asset *asset,qa_bot_library *library,qa_bot_memory *memory,
     qa_error *error) {
     if(!asset || asset->packed_source || !memory || (library && library->memory!=memory) ||
-       (asset->view.kind!=QA_BOT_CHAT_SYNONYMS && asset->view.kind!=QA_BOT_CHAT_RANDOMS))
+       asset->view.kind>=QA_BOT_CHAT_INITIAL)
         return fail(error,"Packed chat requires its actual single source/MEMORY owner");
     bot_chat_packed *packed=calloc(1,sizeof(*packed));
     if(!packed) {qa_error_set(error,QA_ERROR_MEMORY,0,"Retaining packed chat source owner");return false;}
     if(!qa_bot_memory_retain(memory,error)) {free(packed);return false;}
-    packed->memory=memory;packed->asset=asset;
+    packed->memory=memory;packed->asset=asset;packed->graph.memory=memory;
     if(library) {
         packed->services=library->options.scripts;packed->options=library->options.preprocessor;
         qa_script_defines_retain((qa_script_defines *)packed->options.globals);
@@ -103,6 +103,7 @@ failed:
 void bot_chat_packed_destroy(bot_chat_packed *packed) {
     if(!packed) return;
     qa_script_close(packed->reader);
+    bot_chat_graph_dispose(&packed->graph);
     while(packed->pending) {
         bot_chat_initial_acquired *row=packed->pending;packed->pending=row->next;
         if(row->owned) {free((void *)row->resource.path);free((void *)row->resource.bytes.data);}
@@ -351,6 +352,295 @@ static bool randoms(packed_parser *parser,qa_error *error) {
         }
     }
 }
+static bool graph_number(packed_parser *parser,bool integer,uint32_t *out,qa_error *error) {
+    qa_script_token token;
+    if(!required(parser,&token,error)) return false;
+    if(token.kind!=QA_SCRIPT_NUMBER) return token_error(parser,"expected a number, found ",&token,"",error);
+    if(integer) {
+        if(!(token.subtype&QA_SCRIPT_INTEGER)) return fail(error,"PC_ExpectTokenType integer-subtype error formats an uninitialized source string");
+        *out=(uint32_t)token.integer;return true;
+    }
+    float value=(float)token.number;
+    if(!isfinite(value)) return fail(error,"Chat number exceeds finite source range");
+    memcpy(out,&value,4);return true;
+}
+static bool pieces(packed_parser *parser,const char *end,uint32_t *out,qa_error *error) {
+    bot_chat_graph *graph=&parser->packed->graph;
+    graph->cleanup=BOT_CHAT_GRAPH_PIECES;graph->unfinished=0;
+    uint32_t last=0;bool previous_variable=false;
+    for(;;) {
+        qa_script_token token;bool found;
+        if(!next(parser,&token,&found,error)) return false;
+        if(!found) break;
+        uint32_t piece;
+        if(token.kind==QA_SCRIPT_NUMBER && (token.subtype&QA_SCRIPT_INTEGER)) {
+            if(token.integer<0 || token.integer>=8) return grammar(parser,error,"can't have more than 8 match variables\n");
+            if(previous_variable) return grammar(parser,error,"not allowed to have adjacent variables\n");
+            previous_variable=true;
+            if(!bot_chat_graph_new(graph,BOT_CHAT_GRAPH_PIECE,(qa_bytes){0},&piece,error) ||
+               !bot_chat_graph_write(graph,piece,BOT_CHAT_GRAPH_PIECE,0,1,error) ||
+               !bot_chat_graph_write(graph,piece,BOT_CHAT_GRAPH_PIECE,8,(uint32_t)token.integer,error)) return false;
+        } else if(token.kind==QA_SCRIPT_STRING) {
+            if(!bot_chat_graph_new(graph,BOT_CHAT_GRAPH_PIECE,(qa_bytes){0},&piece,error) ||
+               !bot_chat_graph_write(graph,piece,BOT_CHAT_GRAPH_PIECE,0,2,error)) return false;
+        } else return token_error(parser,"invalid token ",&token,"\n",error);
+        if(last) {
+            if(!bot_chat_graph_write(graph,last,BOT_CHAT_GRAPH_PIECE,12,piece,error)) return false;
+        } else graph->unfinished=piece;
+        last=piece;
+        if(token.kind==QA_SCRIPT_STRING) {
+            uint32_t last_string=0;bool empty=false;
+            for(;;) {
+                qa_bytes value=string_value(&token);
+                if(last_string && !string(parser,&value,error)) return false;
+                uint32_t cell;
+                if(!bot_chat_graph_new(graph,BOT_CHAT_GRAPH_MATCH_STRING,value,&cell,error)) return false;
+                if(!value.size) empty=true;
+                if(last_string) {
+                    if(!bot_chat_graph_write(graph,last_string,BOT_CHAT_GRAPH_MATCH_STRING,4,cell,error)) return false;
+                } else if(!bot_chat_graph_write(graph,piece,BOT_CHAT_GRAPH_PIECE,4,cell,error)) return false;
+                last_string=cell;
+                bool more;if(!check(parser,"|",&more,error)) return false;
+                if(!more) break;
+            }
+            if(!empty) previous_variable=false;
+        }
+        bool done;if(!check(parser,end,&done,error)) return false;
+        if(done) break;
+        if(!expect(parser,",",error)) return false;
+    }
+    *out=graph->unfinished;graph->unfinished=0;graph->cleanup=BOT_CHAT_GRAPH_OUTER;return true;
+}
+static bool empty_pieces(packed_parser *parser,qa_error *error,const char *message) {
+    parser->packed->graph.cleanup=BOT_CHAT_GRAPH_GRAPHS;
+    parser->packed->source_failure=true;
+    return fail(error,message);
+}
+static bool matches(packed_parser *parser,qa_error *error) {
+    bot_chat_graph *graph=&parser->packed->graph;uint32_t last=0;
+    for(;;) {
+        qa_script_token token;bool found;
+        if(!next(parser,&token,&found,error)) return false;
+        if(!found) return true;
+        if(token.kind!=QA_SCRIPT_NUMBER || !(token.subtype&QA_SCRIPT_INTEGER))
+            return token_error(parser,"expected integer, found ",&token,"\n",error);
+        uint32_t context=(uint32_t)token.integer;
+        if(!expect(parser,"{",error)) return false;
+        for(;;) {
+            if(!next(parser,&token,&found,error)) return false;
+            if(!found || qa_script_token_is(&token,"}")) break;
+            if(!qa_script_unread(parser->packed->reader,&token,error)) return false;
+            uint32_t match,first,value;
+            if(!bot_chat_graph_new(graph,BOT_CHAT_GRAPH_TEMPLATE,(qa_bytes){0},&match,error) ||
+               !bot_chat_graph_write(graph,match,BOT_CHAT_GRAPH_TEMPLATE,0,context,error)) return false;
+            if(last) {
+                if(!bot_chat_graph_write(graph,last,BOT_CHAT_GRAPH_TEMPLATE,16,match,error)) return false;
+            } else graph->root=match;
+            last=match;
+            if(!pieces(parser,"=",&first,error) || !bot_chat_graph_write(graph,match,BOT_CHAT_GRAPH_TEMPLATE,12,first,error)) return false;
+            if(!first) return empty_pieces(parser,error,"empty match template");
+            if(!expect(parser,"(",error) || !graph_number(parser,true,&value,error) ||
+               !bot_chat_graph_write(graph,match,BOT_CHAT_GRAPH_TEMPLATE,4,value,error) ||
+               !expect(parser,",",error) || !graph_number(parser,true,&value,error) ||
+               !bot_chat_graph_write(graph,match,BOT_CHAT_GRAPH_TEMPLATE,8,value,error) ||
+               !expect(parser,")",error) || !expect(parser,";",error)) return false;
+        }
+    }
+}
+static bool warning(packed_parser *parser,qa_error *error,const char *format,...) {
+    va_list args,copy;va_start(args,format);va_copy(copy,args);
+    int length=vsnprintf(NULL,0,format,copy);va_end(copy);
+    if(length<0) {va_end(args);return fail(error,"Formatting reply source warning");}
+    char *message=malloc((size_t)length+1);
+    if(!message) {va_end(args);qa_error_set(error,QA_ERROR_MEMORY,0,"Retaining reply source warning");return false;}
+    (void)vsnprintf(message,(size_t)length+1,format,args);va_end(args);
+    qa_script_diagnostic issue={.severity=QA_SCRIPT_WARNING,.location=parser->location,.message=message};
+    bool ok=print_issue(parser->packed,&issue,error);free(message);return ok;
+}
+static bool graph_string(bot_chat_graph *graph,uint32_t pointer,bot_chat_graph_kind kind,
+    const char **out,qa_error *error) {
+    uint32_t string;
+    if(!bot_chat_graph_link(graph,pointer,kind,kind==BOT_CHAT_GRAPH_KEY?4u:0u,BOT_CHAT_GRAPH_STRING,&string,error)) return false;
+    if(!string) return fail(error,"Chat graph has a null source string pointer");
+    return bot_chat_graph_text(graph,string,out,error);
+}
+static bool pattern_space(bot_chat_graph *graph,uint32_t first,const char *word,bool *out,qa_error *error) {
+    *out=false;
+    for(size_t seen=0;first;++seen) {
+        if(seen>=graph->count) return fail(error,"Reply match piece list cycles");
+        uint32_t type;
+        if(!bot_chat_graph_word(graph,first,BOT_CHAT_GRAPH_PIECE,0,&type,error)) return false;
+        if(type==1) {*out=true;return true;}
+        if(type==2) {
+            uint32_t string;
+            if(!bot_chat_graph_link(graph,first,BOT_CHAT_GRAPH_PIECE,4,BOT_CHAT_GRAPH_MATCH_STRING,&string,error)) return false;
+            for(size_t count=0;string;++count) {
+                if(count>=graph->count) return fail(error,"Reply match alternative list cycles");
+                const char *text;
+                if(!graph_string(graph,string,BOT_CHAT_GRAPH_MATCH_STRING,&text,error)) return false;
+                if(qa_bot_chat_contains(text,word,false)>=0) {*out=true;return true;}
+                if(!bot_chat_graph_link(graph,string,BOT_CHAT_GRAPH_MATCH_STRING,4,BOT_CHAT_GRAPH_MATCH_STRING,&string,error)) return false;
+            }
+        }
+        if(!bot_chat_graph_link(graph,first,BOT_CHAT_GRAPH_PIECE,12,BOT_CHAT_GRAPH_PIECE,&first,error)) return false;
+    }
+    return true;
+}
+static bool reply_warnings(packed_parser *parser,uint32_t keys,qa_error *error) {
+    bot_chat_graph *graph=&parser->packed->graph;bool all_prefixed=true,has_variables=false,has_string=false;
+    for(uint32_t key=keys,seen=0;key;++seen) {
+        if(seen>=graph->count) return fail(error,"Reply key list cycles");
+        uint32_t flags;
+        if(!bot_chat_graph_word(graph,key,BOT_CHAT_GRAPH_KEY,0,&flags,error)) return false;
+        if(!(flags&3)) {
+            all_prefixed=false;
+            if(flags&16) {
+                uint32_t piece;
+                if(!bot_chat_graph_link(graph,key,BOT_CHAT_GRAPH_KEY,8,BOT_CHAT_GRAPH_PIECE,&piece,error)) return false;
+                for(size_t count=0;piece;++count) {
+                    if(count>=graph->count) return fail(error,"Reply warning piece list cycles");
+                    uint32_t type;
+                    if(!bot_chat_graph_word(graph,piece,BOT_CHAT_GRAPH_PIECE,0,&type,error)) return false;
+                    if(type==1) has_variables=true;
+                    if(!bot_chat_graph_link(graph,piece,BOT_CHAT_GRAPH_PIECE,12,BOT_CHAT_GRAPH_PIECE,&piece,error)) return false;
+                }
+            } else if(flags&8) has_string=true;
+        } else if((flags&1) && (flags&8)) {
+            for(uint32_t other=keys,count=0;other;++count) {
+                if(count>=graph->count) return fail(error,"Reply warning key list cycles");
+                uint32_t other_flags;
+                if(!bot_chat_graph_word(graph,other,BOT_CHAT_GRAPH_KEY,0,&other_flags,error)) return false;
+                if(other!=key && !(other_flags&2) && (other_flags&16)) {
+                    uint32_t first;const char *word;bool space;
+                    if(!bot_chat_graph_link(graph,other,BOT_CHAT_GRAPH_KEY,8,BOT_CHAT_GRAPH_PIECE,&first,error) ||
+                       !graph_string(graph,key,BOT_CHAT_GRAPH_KEY,&word,error) ||
+                       !pattern_space(graph,first,word,&space,error)) return false;
+                    if(!space && !warning(parser,error,"one of the match templates does not leave space for the key %s with the & prefix",word)) return false;
+                }
+                if(!bot_chat_graph_link(graph,other,BOT_CHAT_GRAPH_KEY,12,BOT_CHAT_GRAPH_KEY,&other,error)) return false;
+            }
+        }
+        if(!bot_chat_graph_word(graph,key,BOT_CHAT_GRAPH_KEY,0,&flags,error)) return false;
+        if((flags&2) && (flags&8)) {
+            for(uint32_t other=keys,count=0;other;++count) {
+                if(count>=graph->count) return fail(error,"Reply warning key list cycles");
+                uint32_t other_flags;
+                if(!bot_chat_graph_word(graph,other,BOT_CHAT_GRAPH_KEY,0,&other_flags,error)) return false;
+                if(other!=key && !(other_flags&2)) {
+                    if(other_flags&8) {
+                        const char *text,*word;
+                        if(!graph_string(graph,other,BOT_CHAT_GRAPH_KEY,&text,error) || !graph_string(graph,key,BOT_CHAT_GRAPH_KEY,&word,error)) return false;
+                        if(qa_bot_chat_contains(text,word,false)>=0 && !warning(parser,error,"the key %s with prefix ! is inside the key %s",word,text)) return false;
+                    } else if(other_flags&16) {
+                        uint32_t piece;
+                        if(!bot_chat_graph_link(graph,other,BOT_CHAT_GRAPH_KEY,8,BOT_CHAT_GRAPH_PIECE,&piece,error)) return false;
+                        for(size_t pieces_seen=0;piece;++pieces_seen) {
+                            if(pieces_seen>=graph->count) return fail(error,"Reply warning piece list cycles");
+                            uint32_t type;
+                            if(!bot_chat_graph_word(graph,piece,BOT_CHAT_GRAPH_PIECE,0,&type,error)) return false;
+                            if(type==2) {
+                                uint32_t string;
+                                if(!bot_chat_graph_link(graph,piece,BOT_CHAT_GRAPH_PIECE,4,BOT_CHAT_GRAPH_MATCH_STRING,&string,error)) return false;
+                                for(size_t strings_seen=0;string;++strings_seen) {
+                                    if(strings_seen>=graph->count) return fail(error,"Reply warning string list cycles");
+                                    const char *text,*word;
+                                    if(!graph_string(graph,string,BOT_CHAT_GRAPH_MATCH_STRING,&text,error) || !graph_string(graph,key,BOT_CHAT_GRAPH_KEY,&word,error)) return false;
+                                    if(qa_bot_chat_contains(text,word,false)>=0 && !warning(parser,error,"the key %s with prefix ! is inside the match template string %s",word,text)) return false;
+                                    if(!bot_chat_graph_link(graph,string,BOT_CHAT_GRAPH_MATCH_STRING,4,BOT_CHAT_GRAPH_MATCH_STRING,&string,error)) return false;
+                                }
+                            }
+                            if(!bot_chat_graph_link(graph,piece,BOT_CHAT_GRAPH_PIECE,12,BOT_CHAT_GRAPH_PIECE,&piece,error)) return false;
+                        }
+                    }
+                }
+                if(!bot_chat_graph_link(graph,other,BOT_CHAT_GRAPH_KEY,12,BOT_CHAT_GRAPH_KEY,&other,error)) return false;
+            }
+        }
+        if(!bot_chat_graph_link(graph,key,BOT_CHAT_GRAPH_KEY,12,BOT_CHAT_GRAPH_KEY,&key,error)) return false;
+    }
+    return (!all_prefixed || warning(parser,error,"all keys have a & or ! prefix")) &&
+        (!has_variables || !has_string || warning(parser,error,"variables from the match template(s) could be invalid when outputting one of the chat messages"));
+}
+static bool replies(packed_parser *parser,qa_error *error) {
+    bot_chat_graph *graph=&parser->packed->graph;
+    for(;;) {
+        qa_script_token token;bool found;
+        if(!next(parser,&token,&found,error)) return false;
+        if(!found) return true;
+        if(!qa_script_token_is(&token,"[")) return token_error(parser,"expected [, found ",&token,"",error);
+        uint32_t reply;
+        if(!bot_chat_graph_new(graph,BOT_CHAT_GRAPH_REPLY,(qa_bytes){0},&reply,error) ||
+           !bot_chat_graph_write(graph,reply,BOT_CHAT_GRAPH_REPLY,16,graph->root,error)) return false;
+        graph->root=reply;
+        for(;;) {
+            uint32_t key,previous,flags=0;bool matched;
+            if(!bot_chat_graph_new(graph,BOT_CHAT_GRAPH_KEY,(qa_bytes){0},&key,error) ||
+               !bot_chat_graph_link(graph,reply,BOT_CHAT_GRAPH_REPLY,0,BOT_CHAT_GRAPH_KEY,&previous,error) ||
+               !bot_chat_graph_write(graph,key,BOT_CHAT_GRAPH_KEY,12,previous,error) ||
+               !bot_chat_graph_write(graph,reply,BOT_CHAT_GRAPH_REPLY,0,key,error) || !check(parser,"&",&matched,error)) return false;
+            if(matched) flags|=1;
+            else {if(!check(parser,"!",&matched,error)) return false;if(matched) flags|=2;}
+            if(!bot_chat_graph_write(graph,key,BOT_CHAT_GRAPH_KEY,0,flags,error)) return false;
+            static const char *const names[]={"name","female","male","it","(","<"};
+            static const uint32_t bits[]={4,64,128,256,16,32};size_t kind=0;
+            for(;kind<6;++kind) {if(!check(parser,names[kind],&matched,error)) return false;if(matched) break;}
+            flags|=kind<6?bits[kind]:8u;
+            if(!bot_chat_graph_write(graph,key,BOT_CHAT_GRAPH_KEY,0,flags,error)) return false;
+            if(kind==4) {
+                uint32_t first;
+                if(!pieces(parser,")",&first,error) || !bot_chat_graph_write(graph,key,BOT_CHAT_GRAPH_KEY,8,first,error)) return false;
+                if(!first) return empty_pieces(parser,error,"empty reply match template");
+            } else if(kind==5) {
+                qa_buffer joined={0};size_t length=0;
+                for(;;) {
+                    qa_bytes name;if(!string(parser,&name,error)) {qa_buffer_free(&joined);return false;}
+                    size_t separator=length?1u:0u;
+                    if(name.size>SIZE_MAX-length-separator) {qa_buffer_free(&joined);return fail(error,"Bot name key exceeds native extent");}
+                    size_t size=length+separator+name.size;
+                    uint8_t *data=realloc(joined.data,size?size:1);
+                    if(!data) {qa_buffer_free(&joined);qa_error_set(error,QA_ERROR_MEMORY,0,"Retaining joined source bot names");return false;}
+                    joined.data=data;
+                    if(separator) data[length++]='\\';
+                    if(name.size) memcpy(data+length,name.data,name.size);
+                    length=size;joined.size=size;
+                    if(!check(parser,",",&matched,error)) {qa_buffer_free(&joined);return false;}
+                    if(!matched) break;
+                }
+                if(!expect(parser,">",error)) {qa_buffer_free(&joined);return false;}
+                if(length>=256) {qa_buffer_free(&joined);return fail(error,"Bot name key exceeds the source 256-byte buffer");}
+                uint32_t string_pointer;
+                bool ok=bot_chat_graph_new(graph,BOT_CHAT_GRAPH_STRING,(qa_bytes){joined.data,length},&string_pointer,error) &&
+                    bot_chat_graph_write(graph,key,BOT_CHAT_GRAPH_KEY,4,string_pointer,error);
+                qa_buffer_free(&joined);if(!ok) return false;
+            } else if(kind==6) {
+                qa_bytes name;uint32_t string_pointer;
+                if(!string(parser,&name,error) || !bot_chat_graph_new(graph,BOT_CHAT_GRAPH_STRING,name,&string_pointer,error) ||
+                   !bot_chat_graph_write(graph,key,BOT_CHAT_GRAPH_KEY,4,string_pointer,error)) return false;
+            }
+            if(!check(parser,",",&matched,error) || !check(parser,"]",&matched,error)) return false;
+            if(matched) break;
+        }
+        uint32_t keys,value;
+        if(!bot_chat_graph_link(graph,reply,BOT_CHAT_GRAPH_REPLY,0,BOT_CHAT_GRAPH_KEY,&keys,error) ||
+           !reply_warnings(parser,keys,error) || !expect(parser,"=",error) || !graph_number(parser,false,&value,error) ||
+           !bot_chat_graph_write(graph,reply,BOT_CHAT_GRAPH_REPLY,4,value,error) || !expect(parser,"{",error) ||
+           !bot_chat_graph_write(graph,reply,BOT_CHAT_GRAPH_REPLY,8,0,error)) return false;
+        for(;;) {
+            bool end;if(!check(parser,"}",&end,error)) return false;
+            if(end) break;
+            char text[256];size_t length;uint32_t message_pointer,first,count,bits;
+            if(!message(parser,text,&length,error) || !bot_chat_graph_new(graph,BOT_CHAT_GRAPH_MESSAGE,
+                (qa_bytes){(const uint8_t *)text,length},&message_pointer,error)) return false;
+            float time=-40;memcpy(&bits,&time,4);
+            if(!bot_chat_graph_write(graph,message_pointer,BOT_CHAT_GRAPH_MESSAGE,4,bits,error) ||
+               !bot_chat_graph_link(graph,reply,BOT_CHAT_GRAPH_REPLY,12,BOT_CHAT_GRAPH_MESSAGE,&first,error) ||
+               !bot_chat_graph_write(graph,message_pointer,BOT_CHAT_GRAPH_MESSAGE,8,first,error) ||
+               !bot_chat_graph_write(graph,reply,BOT_CHAT_GRAPH_REPLY,12,message_pointer,error) ||
+               !bot_chat_graph_word(graph,reply,BOT_CHAT_GRAPH_REPLY,8,&count,error) ||
+               !bot_chat_graph_write(graph,reply,BOT_CHAT_GRAPH_REPLY,8,count+1,error)) return false;
+        }
+    }
+}
 bool bot_chat_packed_load(qa_bot_chat_asset *asset,qa_bot_chat_system *system,uint64_t revision,
     bool *source_failure,qa_error *error) {
     bot_chat_packed *packed=asset?asset->packed_source:NULL;
@@ -359,7 +649,9 @@ bool bot_chat_packed_load(qa_bot_chat_asset *asset,qa_bot_chat_system *system,ui
     *source_failure=false;packed->loading_system=system;packed->loading_revision=revision;
     packed->active=packed->attempted=true;bool ok=true;
     qa_script_services source=services(packed);
-    for(;ok && packed->pass<2;++packed->pass) {
+    bool graphs=asset->view.kind>=QA_BOT_CHAT_MATCHES;
+    uint32_t passes=graphs?1u:2u;
+    for(;ok && packed->pass<passes;++packed->pass) {
         if(!current(packed,error)) {ok=false;break;}
         if(packed->pass && packed->size) {
             ok=qa_bot_memory_allocate(packed->memory,packed->size,QA_BOT_MEMORY_HUNK,true,NULL,&packed->allocation,error);
@@ -374,15 +666,37 @@ bool bot_chat_packed_load(qa_bot_chat_asset *asset,qa_bot_chat_system *system,ui
         }
         if(!current(packed,error)) {ok=false;break;}
         packed_parser parser={.packed=packed,.location={.path=asset->view.path,.line=1,.column=1}};
-        ok=asset->view.kind==QA_BOT_CHAT_SYNONYMS?synonyms(&parser,error):randoms(&parser,error);
+        switch(asset->view.kind) {
+        case QA_BOT_CHAT_SYNONYMS:ok=synonyms(&parser,error);break;
+        case QA_BOT_CHAT_RANDOMS:ok=randoms(&parser,error);break;
+        case QA_BOT_CHAT_MATCHES:ok=matches(&parser,error);break;
+        case QA_BOT_CHAT_REPLIES:ok=replies(&parser,error);break;
+        case QA_BOT_CHAT_INITIAL:ok=fail(error,"Packed parser cannot load initial chat");break;
+        }
         packed->size=parser.size;
-        if(ok || packed->source_failure) {
+        bool language=packed->source_failure && !packed->service_failed && !packed->report_failed;
+        if(ok || (language && (!graphs || packed->graph.cleanup==BOT_CHAT_GRAPH_PIECES))) {
             qa_script *reader=packed->reader;packed->reader=NULL;qa_script_close(reader);
             if(!current(packed,error)) {ok=false;packed->source_failure=false;}
         }
+        if(!ok && language && graphs && packed->source_failure) {
+            ok=bot_chat_graph_free_pieces(&packed->graph,packed->graph.unfinished,error);
+            if(ok) packed->graph.unfinished=0;
+            if(ok) ok=bot_chat_graph_free_root(&packed->graph,
+                asset->view.kind==QA_BOT_CHAT_MATCHES?BOT_CHAT_GRAPH_TEMPLATE:BOT_CHAT_GRAPH_REPLY,error);
+            if(ok && packed->graph.cleanup==BOT_CHAT_GRAPH_OUTER) {
+                qa_script *reader=packed->reader;packed->reader=NULL;qa_script_close(reader);
+                ok=current(packed,error);
+            }
+            if(!ok) {packed->source_failure=false;packed->service_failed=true;}
+            ok=false;
+        }
     }
     *source_failure=packed->source_failure;
-    if(ok) {packed->loaded=true;asset->source_loaded=true;ok=bot_chat_packed_refresh(asset,error);}
+    if(ok) {
+        packed->loaded=true;asset->source_loaded=true;
+        if(!graphs) ok=bot_chat_packed_refresh(asset,error);
+    }
     else if(!packed->source_failure && !packed->retired_abort && !packed->service_failed && !packed->report_failed)
         packed->own_failure=true;
     packed->active=false;packed->loading_system=NULL;return ok;
@@ -448,6 +762,7 @@ bool bot_chat_packed_message(const qa_bot_chat_asset *asset,uint32_t index,const
 bool bot_chat_packed_refresh(qa_bot_chat_asset *asset,qa_error *error) {
     bot_chat_packed *packed=asset->packed_source;
     if(!packed || !packed->loaded) return true;
+    if(asset->view.kind>=QA_BOT_CHAT_MATCHES) return bot_chat_graph_project(asset,error);
     if(asset->view.kind==QA_BOT_CHAT_SYNONYMS) {
         if(!bot_grow((void **)&asset->groups,&asset->group_capacity,packed->group_count,sizeof(*asset->groups),error) ||
            !bot_grow((void **)&asset->synonyms,&asset->synonym_capacity,packed->entry_count,sizeof(*asset->synonyms),error)) return false;
@@ -602,13 +917,21 @@ static bool resource_fields(qa_source_save_io *io,bot_chat_packed *packed) {
         ok=group->first<=packed->entry_count && group->count<=packed->entry_count-group->first;
         if(ok && packed->loaded && packed->asset->view.kind==QA_BOT_CHAT_SYNONYMS) ok=group->count>=2;
     }
-    if(ok) ok=reader_fields(io,packed) && pending_fields(io,packed);
-    if(ok && (packed->active || (packed->loaded && (packed->pass!=2 || packed->reader ||
+    if(ok) ok=bot_chat_graph_fields(io,&packed->graph) && reader_fields(io,packed) && pending_fields(io,packed);
+    bool graphs=packed->asset->view.kind>=QA_BOT_CHAT_MATCHES;
+    if(ok && graphs) {
+        bot_chat_graph_kind root=packed->asset->view.kind==QA_BOT_CHAT_MATCHES?BOT_CHAT_GRAPH_TEMPLATE:BOT_CHAT_GRAPH_REPLY;
+        ok=!allocated && !packed->group_count && !packed->entry_count &&
+            (!packed->graph.root || packed->graph.pointers[packed->graph.root-1].kind==root) &&
+            (!packed->graph.unfinished || packed->graph.pointers[packed->graph.unfinished-1].kind==BOT_CHAT_GRAPH_PIECE);
+    } else if(ok) ok=!packed->graph.count && !packed->graph.root && !packed->graph.unfinished;
+    uint32_t passes=packed->asset->view.kind>=QA_BOT_CHAT_MATCHES?1u:2u;
+    if(ok && (packed->active || (packed->loaded && (packed->pass!=passes || packed->reader ||
         packed->source_failure || packed->own_failure || packed->retired_abort || packed->service_failed || packed->report_failed)) ||
-        (!packed->attempted && (allocated || packed->group_count || packed->entry_count || packed->reader || packed->pending ||
+        (!packed->attempted && (allocated || packed->group_count || packed->entry_count || packed->graph.count || packed->reader || packed->pending ||
          packed->source_failure || packed->own_failure || packed->retired_abort || packed->service_failed || packed->report_failed)) ||
         (!allocated && (packed->group_count || packed->entry_count) && packed->pass==0))) ok=false;
-    if(ok && packed->loaded) ok=bot_chat_packed_refresh(packed->asset,io->error);
+    if(ok && packed->loaded && !graphs) ok=bot_chat_packed_refresh(packed->asset,io->error);
     if(!ok && !io->failed) return bot_save_fail(io,QA_ERROR_FORMAT,"Invalid reached packed chat source stage");
     return ok;
 }
@@ -635,7 +958,7 @@ bool bot_chat_packed_fields(qa_source_save_io *io,const qa_bot_chat_asset *sourc
     uint32_t kind=reading?0:(uint32_t)source->view.kind;
     const char *path=reading?NULL:source->view.path,*name=reading?NULL:source->view.name;
     qa_bot_chat_asset *asset=(qa_bot_chat_asset *)source;
-    bool ok=qa_source_save_u32(io,&kind) && (kind==QA_BOT_CHAT_SYNONYMS || kind==QA_BOT_CHAT_RANDOMS) &&
+    bool ok=qa_source_save_u32(io,&kind) && kind<QA_BOT_CHAT_INITIAL &&
         bot_save_text(io,&path) && path && bot_save_text(io,&name) && name;
     if(ok && reading) ok=chat_asset_allocate((qa_bot_chat_asset_kind)kind,path,name,&asset,io->error);
     if(reading) {free((void *)path);free((void *)name);}
@@ -662,6 +985,7 @@ bool bot_chat_packed_copy(const bot_chat_packed *source,const qa_bot_memory_prep
     if(!target) {qa_error_set(error,QA_ERROR_MEMORY,0,"Retaining packed chat history");return false;}
     if(!qa_bot_memory_retain(source->memory,error)) {free(target);return false;}
     *target=*source;target->reader=NULL;target->pending=NULL;target->groups=target->entries=NULL;
+    target->graph.pointers=NULL;
     target->include_path=target->date=target->time=NULL;
     qa_script_defines_retain((qa_script_defines *)target->options.globals);
     target->loading_system=NULL;bool ok=true;
@@ -669,7 +993,7 @@ bool bot_chat_packed_copy(const bot_chat_packed *source,const qa_bot_memory_prep
     if(source->date && !(target->date=copy_text(source->date,error))) ok=false;
     if(source->time && !(target->time=copy_text(source->time,error))) ok=false;
     target->options.include_path=target->include_path;target->services.date=target->date;target->services.time=target->time;
-    if(source->allocation.owner && memory)
+    if(ok && source->allocation.owner && memory)
         ok=qa_bot_memory_checkpoint_resolve(memory,source->allocation,&target->allocation,error);
     if(ok && source->group_count) {
         target->groups=malloc(source->group_count*sizeof(*target->groups));ok=target->groups!=NULL;
@@ -690,6 +1014,7 @@ bool bot_chat_packed_copy(const bot_chat_packed *source,const qa_bot_memory_prep
         }
     }
     target->group_capacity=target->group_count;target->entry_capacity=target->entry_count;
+    if(ok) ok=bot_chat_graph_copy(&source->graph,memory,&target->graph,error);
     if(ok && source->reader) {
         qa_script_checkpoint checkpoint={0};qa_script_services wrapped=services(target);
         ok=qa_script_capture(source->reader,&checkpoint,error) && qa_script_restore(&wrapped,&checkpoint,&target->reader,error);

@@ -19,7 +19,5 @@ bool application_native_q1_rogue_attack_delay(application_provider *, qa_actor_i
 bool application_native_q1_rogue_after_physics(application_provider *, qa_actor_id, qa_error *);
 bool application_native_q1_rogue_impulse(application_provider *, qa_actor_id,
     int32_t impulse, bool *handled, qa_error *);
-bool application_native_q1_rogue_prethink(application_provider *, qa_actor_id,
-    const qa_q1_input *, qa_error *);
 
 #endif

@@ -644,6 +644,7 @@ static bool update_loading(void *context,q3n_loading *loading,const q3n_frame *f
     if(loading!=row->view.loading || !frontend_native_q3_cut(row,frame,e) ||
         row->restoring || f->capture)return false;
     qa_scene_frame_reset(&f->frame,f->frame_number);
+    if (!frontend_q3_texture_mode_begin_frame(f,e)) return false;
     if (!frontend_q3_source_output(f,row->view.materials,frontend_viewport(f,row->view.seat),e)) return false;
     if(!qa_q3_presentation_frame(row->view.presentation,&f->frame,frontend_viewport(f,row->view.seat),e) ||
         !q3n_loading_draw_information(loading,frame,e))return false;
@@ -654,7 +655,7 @@ static bool update_loading(void *context,q3n_loading *loading,const q3n_frame *f
         return frontend_native_q3_cut(row,frame,e);
     }
     bool ok=f->cpu?(qa_cpu_execute(f->cpu,&f->frame,e) && qa_cpu_present_frame(f->cpu,e)):
-        (f->gl && qa_gl_execute(f->gl,&f->frame,e) && qa_gl_finish(f->gl,e) && qa_display_swap(f->display,e));
+        (f->gl && qa_gl_execute(f->gl,&f->frame,e) && qa_gl_finish(f->gl,e) && qa_gl_swap(f->gl,e));
     return ok && frontend_native_q3_cut(row,frame,e);
 }
 static bool loading(void *context,const q3n_frame *f,const char *text,int32_t item,qa_error *e)

@@ -2,6 +2,7 @@
 #include "native_q3_remote_role_save.h"
 #include "startup_flow.h"
 #include "qa/cvars_save.h"
+#include "qa/catalog_save.h"
 #include "qa/launch_save.h"
 #include "qa/source_save.h"
 #include "qa/application_native_q3_client_modules.h"

@@ -7,6 +7,7 @@
 #include "network_initial_graph.h"
 #include "remote_q1_restore.h"
 #include "remote_q2_restore.h"
+#include "renderer_materials.h"
 #include "save_private.h"
 #include "qa/material_library_save.h"
 #include "qa/material_save.h"
@@ -15,7 +16,7 @@
 #include "qa/scene_resource_save.h"
 
 typedef enum material_owner_kind { MATERIAL_FRONTEND, MATERIAL_SOURCE, MATERIAL_VISUAL, MATERIAL_NATIVE_Q3,
-    MATERIAL_REMOTE, MATERIAL_INITIAL, MATERIAL_REMOTE_Q1, MATERIAL_REMOTE_Q2 } material_owner_kind;
+    MATERIAL_REMOTE, MATERIAL_INITIAL, MATERIAL_REMOTE_Q1, MATERIAL_REMOTE_Q2, MATERIAL_RENDERER } material_owner_kind;
 typedef struct material_owner {
     qa_material_library *library;
     qa_scene_resources *images;
@@ -147,6 +148,9 @@ static bool collect(qa_frontend *f, bool restoring, material_owner **out, size_t
     size_t q1=frontend_remote_q1_count(f),q2=frontend_remote_q2_count(f);
     if(q1>SIZE_MAX-capacity || q2>SIZE_MAX-capacity-q1) return false;
     capacity+=q1+q2;
+    frontend_renderer_materials_view retained; bool has_retained=false;
+    if(!frontend_renderer_materials_read(f,&retained,&has_retained,error)) return false;
+    if(has_retained) { if(capacity==SIZE_MAX) return false; ++capacity; }
     if(capacity>SIZE_MAX/sizeof(material_owner))
         return frontend_fail(error,QA_ERROR_MEMORY,"Remote material inventory exceeds address space");
     material_owner *owners=calloc(capacity,sizeof(*owners));
@@ -197,6 +201,8 @@ static bool collect(qa_frontend *f, bool restoring, material_owner **out, size_t
         if(ok) ok=append(owners,count,graph,owner.materials,owner.images,owner.mounts,
             MATERIAL_INITIAL,0,owner.attempt.source.receiver.receiver,owner.identity,owner.descriptor->content,QA_SCENE_Q3,error);
     }
+    if(ok && has_retained) ok=append(owners,count,graph,retained.library,retained.images,retained.mounts,
+        MATERIAL_RENDERER,0,0,0,NULL,QA_SCENE_Q3,error);
     for (size_t i=0;ok && i<*count;++i) {
         if (restoring) ok=qa_material_library_empty_detached(owners[i].library);
         else ok=frontend_capture_library_at(f->capture,i)==owners[i].library &&
@@ -284,6 +290,14 @@ bool frontend_materials_capture_namespace(qa_frontend *f,frontend_scene_namespac
     material_owner *owners=NULL; size_t count=0;
     bool ok=collect(f,false,&owners,&count,error);
     for (size_t i=0;ok && i<count;++i) ok=frontend_scene_namespace_capture_library(space,i+1,owners[i].library,error);
+    free(owners); return ok;
+}
+bool frontend_materials_capture_world_history(qa_frontend *f,frontend_scene_namespace *space,qa_error *error)
+{
+    material_owner *owners=NULL; size_t count=0;
+    bool ok=collect(f,false,&owners,&count,error);
+    for(size_t i=0;ok && i<count;++i)
+        ok=frontend_scene_namespace_capture_library_worlds(space,i+1,owners[i].library,error);
     free(owners); return ok;
 }
 bool frontend_materials_checkpoint(qa_frontend *f,frontend_scene_namespace *space,qa_buffer *out,qa_error *error)

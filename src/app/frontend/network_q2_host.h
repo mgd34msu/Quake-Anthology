@@ -5,6 +5,7 @@
 #include "qa/network_q2_bootstrap.h"
 #include "qa/server_admin.h"
 #include "qa/network_q2_kex.h"
+#include "qa/network_local.h"
 typedef struct frontend_network_q2_host frontend_network_q2_host;
 typedef struct frontend_network_q2_host_options {
     qa_frontend *frontend;
@@ -25,4 +26,5 @@ bool frontend_network_q2_host_publish(frontend_network_q2_host *,uint64_t,qa_err
 void frontend_network_q2_host_disconnected(frontend_network_q2_host *,qa_net_client_id);
 bool frontend_network_q2_host_idle(const frontend_network_q2_host *);
 bool frontend_network_q2_host_destroy(frontend_network_q2_host **,qa_error *);
+bool frontend_network_q2_host_local_hooks(frontend_network_q2_host *,const qa_net_client *,qa_network_local_hooks *,qa_error *);
 #endif

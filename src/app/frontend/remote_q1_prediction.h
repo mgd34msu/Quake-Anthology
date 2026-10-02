@@ -12,7 +12,9 @@ bool remote_q1_prediction_choked(frontend_remote_q1 *,uint8_t,qa_error *);
 bool remote_q1_prediction_invalid_delta(frontend_remote_q1 *,qa_error *);
 bool remote_q1_prediction_loss(frontend_remote_q1 *,uint32_t outgoing_sequence,uint8_t *,qa_error *);
 bool remote_q1_prediction_receive(frontend_remote_q1 *,qa_error *);
+bool remote_q1_prediction_camera_receive(frontend_remote_q1 *,qa_vec3,qa_error *);
 bool remote_q1_prediction_read(const frontend_remote_q1 *,qa_qw_movement_state *,float *,bool *);
+bool remote_q1_prediction_camera_trace(frontend_remote_q1 *,qa_vec3,qa_vec3,qa_trace_result *,qa_error *);
 void remote_q1_prediction_clear(frontend_remote_q1 *);
 bool remote_q1_prediction_fields(frontend_remote_q1 *,qa_source_save_io *,qa_error *);
 #endif

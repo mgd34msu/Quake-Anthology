@@ -5,6 +5,16 @@
 #include <string.h>
 
 static bool token_equal(qa_unified_token a, qa_unified_token b) { return !memcmp(a.bytes, b.bytes, 16); }
+static bool local_reason(const qa_unified_session *s, const qa_unified_document *d, qa_error *e)
+{
+    const qa_json_document *json = qa_unified_document_json(d);
+    qa_json_id reason = qa_json_get(json, qa_unified_session_value(d), "reason");
+    if (s->close_cause == 1) return qa_json_string_equal(json, reason, "Connection timed out");
+    qa_buffer text = {0};
+    if (!qa_json_string(json, reason, &text, e)) return false;
+    bool okay = text.size <= 4096 && (!text.size || !memchr(text.data, 0, text.size));
+    qa_buffer_free(&text); return okay;
+}
 
 bool qa_unified_session_qualified(const qa_unified_session *s, const qa_net_client *client, qa_error *e)
 {
@@ -19,6 +29,8 @@ bool qa_unified_session_qualified(const qa_unified_session *s, const qa_net_clie
         (s->admitted && (s->closing || s->disconnected || client->phase == QA_NET_CONNECTED || (s->server && client->phase != QA_NET_ACTIVE))) ||
         (s->closing && (s->closing_ns > s->now_ns || !s->required)) ||
         (s->timeout_pending && (s->closing || s->disconnected)) ||
+        (s->timeout_pending ? (s->close_cause < 1 || s->close_cause > 2) : s->close_cause != 0) ||
+        (s->close_cause == 2 && !s->timeout_delivery) ||
         qa_unified_channel_closed(s->channel) || !qa_unified_channel_descriptor(s->channel, &token, &limits, e) ||
         !qa_unified_channel_progress_read(s->channel, &progress, e) || !token_equal(token, s->token) ||
         (uint64_t)s->required + 1 != progress.next_reliable || progress.time_ceiling > s->now_ns ||
@@ -59,11 +71,10 @@ bool qa_unified_session_qualified(const qa_unified_session *s, const qa_net_clie
         return qa_unified_session_fail(e, QA_ERROR_FORMAT, "Held production queue counters disagree");
     if (s->timeout_delivery) {
         const qa_unified_held *held = s->timeout_delivery;
-        const qa_json_document *json = qa_unified_document_json(held->document);
         if (!s->timeout_pending || held->next || held->sequence || held->required || !held->wire.data ||
-            held->wire.size != held->bytes || held->wire.size > 512 ||
+            held->wire.size != held->bytes || held->wire.size > s->limits.message_bytes ||
             !qa_unified_session_kind(held->document, "disconnect") ||
-            !qa_json_string_equal(json, qa_json_get(json, qa_unified_session_value(held->document), "reason"), "Connection timed out") ||
+            !local_reason(s, held->document, e) ||
             !qa_unified_session_continuation_valid(s, held, e))
             return qa_unified_session_fail(e, QA_ERROR_FORMAT, "Retained timeout is not the actual local closure continuation");
     }
@@ -89,7 +100,7 @@ bool qa_unified_session_checkpoint(const qa_unified_session *s, qa_buffer *out, 
     if (ok && s->epoch) ok = qa_unified_inputs_document(s->epoch, s->inputs.commands, s->inputs.count, &document, e) &&
         qa_unified_document_encode(document, &inputs, e);
     qa_unified_document_destroy(document);
-    size_t capacity = 65;
+    size_t capacity = 66;
     if (channel.size > UINT32_MAX || inputs.size > UINT32_MAX || channel.size > SIZE_MAX - capacity ||
         inputs.size > SIZE_MAX - capacity - channel.size || s->held_bytes > SIZE_MAX - capacity - channel.size - inputs.size ||
         s->held_count > (SIZE_MAX - capacity - channel.size - inputs.size - s->held_bytes) / 17)
@@ -106,11 +117,11 @@ bool qa_unified_session_checkpoint(const qa_unified_session *s, qa_buffer *out, 
     uint8_t *data = ok ? malloc(capacity) : NULL;
     if (ok && !data) ok = qa_unified_session_fail(e, QA_ERROR_MEMORY, "Capturing complete production session");
     qa_net_writer w; qa_net_writer_init(&w, data, ok ? capacity : 0, e);
-    ok = ok && qa_net_write_data(&w, "QAUS2", 5) && qa_net_write_u8(&w, s->server) &&
+    ok = ok && qa_net_write_data(&w, "QAUS3", 5) && qa_net_write_u8(&w, s->server) &&
         qa_net_write_u32(&w, s->epoch) && qa_net_write_u32(&w, s->required) && qa_net_write_u64(&w, (uint64_t)s->acknowledged) &&
         qa_net_write_u64(&w, s->now_ns) && qa_net_write_u64(&w, s->closing_ns) &&
         qa_net_write_u8(&w, s->admitted) && qa_net_write_u8(&w, s->disconnected) && qa_net_write_u8(&w, s->closing) &&
-        qa_net_write_u8(&w, s->timeout_pending) &&
+        qa_net_write_u8(&w, s->timeout_pending) && qa_net_write_u8(&w, s->close_cause) &&
         qa_net_write_u32(&w, s->reliable_applied) && qa_net_write_u32(&w, s->frame_applied) &&
         qa_net_write_u32(&w, (uint32_t)channel.size) && qa_net_write_data(&w, channel.data, channel.size) &&
         qa_net_write_u32(&w, (uint32_t)inputs.size) && qa_net_write_data(&w, inputs.data, inputs.size) &&
@@ -165,7 +176,7 @@ bool qa_unified_session_restore(qa_bytes bytes, qa_network_runtime *runtime, con
     s->runtime = runtime; s->id = client->id; s->seat = client->seats[0].seat; s->hooks = *hooks;
     qa_net_reader r; qa_net_reader_init(&r, bytes, e);
     char magic[5]; bool ok = qa_net_read_data(&r, magic, 5);
-    if (ok && memcmp(magic, "QAUS2", 5)) ok = qa_net_reader_fail(&r, "Unknown production session continuation");
+    if (ok && memcmp(magic, "QAUS3", 5)) ok = qa_net_reader_fail(&r, "Unknown production session continuation");
     ok = ok && flag(&r, &s->server);
     s->epoch = qa_net_read_u32(&r); s->required = qa_net_read_u32(&r);
     uint64_t acknowledged = qa_net_read_u64(&r);
@@ -174,6 +185,7 @@ bool qa_unified_session_restore(qa_bytes bytes, qa_network_runtime *runtime, con
     s->acknowledged = acknowledged == UINT64_MAX ? -1 : (int64_t)acknowledged;
     s->now_ns = qa_net_read_u64(&r); s->closing_ns = qa_net_read_u64(&r);
     ok = ok && flag(&r, &s->admitted) && flag(&r, &s->disconnected) && flag(&r, &s->closing) && flag(&r, &s->timeout_pending);
+    s->close_cause = qa_net_read_u8(&r);
     s->reliable_applied = qa_net_read_u32(&r); s->frame_applied = qa_net_read_u32(&r);
     qa_bytes channel = {0}, inputs = {0};
     ok = ok && blob(&r, &channel) && qa_unified_channel_restore(channel, &s->channel, e) &&
@@ -221,7 +233,7 @@ bool qa_unified_session_restore(qa_bytes bytes, qa_network_runtime *runtime, con
         s->timeout_delivery = held;
         qa_bytes wire = {0};
         if (ok) ok = blob(&r, &wire);
-        if (ok && wire.size > 512) ok = qa_net_reader_fail(&r, "Timeout continuation exceeds its actual control extent");
+        if (ok && wire.size > s->limits.message_bytes) ok = qa_net_reader_fail(&r, "Local closure continuation exceeds its actual control extent");
         if (ok) {
             held->wire.data = malloc(wire.size ? wire.size : 1);
             if (!held->wire.data) ok = qa_unified_session_fail(e, QA_ERROR_MEMORY, "Restoring actual timeout control bytes");

@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "qa/map_sidecars.h"
 #include "match_intents.h"
 #include "network_q1_signon.h"
 #include "guest_native_q2_private.h"
@@ -232,7 +233,7 @@ bool application_finalize(qa_application *application, qa_error *error)
         application->configuration != NULL || application->provider_states != 0 ||
         application->pending_close != NULL || application->live_providers != NULL ||
         !application_acoustics_idle(application) ||
-        application->equipment_runtime != NULL)
+        application->equipment_runtime != NULL || application->components != NULL)
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "application services still have retained owners");
     if (!qa_session_destroy_ready(application->session) ||
@@ -345,6 +346,7 @@ bool application_finalize(qa_application *application, qa_error *error)
 
     application_map_dispose(application);
     qa_collision_destroy(application->geometry);
+    qa_map_sidecars_release(application->map_sidecars);
     qa_resource_release(application->map_resource);
     free(application->physics);
     qa_arena_destroy(&application->event_arena);
@@ -355,6 +357,8 @@ bool application_finalize(qa_application *application, qa_error *error)
     free(application->protocol_events);
     free(application->event_journal);
     free(application->unified_events);
+    application_unified_persistent_dispose(application);
+    free(application->unified_event_owners);
     application_unified_events_resources_dispose(application);
     free(application->unified_world_text);
     free(application->mode_ids);

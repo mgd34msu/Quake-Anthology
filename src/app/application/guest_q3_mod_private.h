@@ -122,6 +122,7 @@ typedef struct mod_protection_stage mod_protection_stage;
 typedef struct mod_source_lease {
     struct mod_source_lease *next;
     void *scope;
+    qa_qvm_word_projection *globals;
     bool succeeded;
     int32_t result;
 } mod_source_lease;
@@ -148,6 +149,7 @@ bool q3mod_address(application_q3_mod *, qa_actor_id, const char *, uint32_t,
     size_t, uint32_t *, qa_error *);
 bool q3mod_scalar_word(double, mod_scalar, int32_t *, qa_error *);
 bool q3mod_invoke(application_q3_mod *, const mod_call *, const application_q3_mod_inputs *, double *, qa_error *);
+bool q3mod_invoke_started(application_q3_mod *, const mod_call *, const application_q3_mod_inputs *, double *, bool *, qa_error *);
 bool q3mod_callbacks_activate(application_q3_mod *, qa_error *);
 bool q3mod_callbacks_close(application_q3_mod *, qa_error *);
 bool q3mod_protection_read(mod_actor_channel *, qa_armor *, qa_error *);

@@ -221,6 +221,34 @@ bool qa_catalog_discover_remote_q2(const qa_catalog *source, qa_product_id base_
     *out = fresh; *selected = choice; return true;
 }
 
+bool qa_catalog_discover_remote_q1(const qa_catalog *source, qa_product_id base_id,
+    const char *directory, uint64_t generation, qa_catalog **out,
+    qa_product_id *selected, qa_error *error)
+{
+    const qa_product *base = qa_catalog_product(source, base_id);
+    if (!base || base->family != QA_GAME_Q1 || !source->user || !*source->user ||
+        !directory || !out || *out || !selected) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Remote Q1 discovery requires its actual configured base and write root");
+        return false;
+    }
+    qa_catalog_options options = {.resources = source->resources, .content_root = source->root,
+        .user_root = source->user, .generation = generation};
+    qa_catalog *fresh = NULL; qa_product_id choice = QA_PRODUCT_NONE;
+    if (!discover(&options, base->key, directory, &choice, &fresh, error)) return false;
+    const qa_product *fresh_base = qa_catalog_find(fresh, base->key);
+    const qa_product *product = qa_catalog_product(fresh, choice);
+    if (!fresh_base || fresh_base->availability != QA_CONTENT_INSTALLED || !product ||
+        product->availability != QA_CONTENT_INSTALLED ||
+        !qa_catalog_product_write_root(fresh, fresh_base->id) || !qa_catalog_product_write_root(fresh, choice)) {
+        qa_error_set(error, QA_ERROR_NOT_FOUND, 0, "Remote Q1 content requires its installed base and real writable directories");
+        qa_catalog_release(fresh); return false;
+    }
+    if (source->q3_demo_restricted && !qa_catalog_q3_restrict(fresh, error)) {
+        qa_catalog_release(fresh); return false;
+    }
+    *out = fresh; *selected = choice; return true;
+}
+
 static qa_fs_root *download_root(const qa_catalog *catalog, qa_mount_id id)
 {
     const catalog_physical *physical = catalog_package(catalog, id);

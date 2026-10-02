@@ -17,7 +17,7 @@ typedef struct qa_native_host_q2_entity {
     uint64_t creation_frame;
     qa_vec3 creation_origin;
     qa_native_host_q2_origin origins[8];
-    int32_t areas[2], cluster_count, clusters[16], headnode;
+    int32_t areas[2], cluster_count, clusters[16], headnode, solid;
     bool in_use, linked, creation_present;
 } qa_native_host_q2_entity;
 
@@ -25,6 +25,10 @@ typedef struct qa_native_host_q2_entity {
  * source bindings. They neither reconcile actors nor invoke the module. */
 bool qa_native_host_q2_wire_count(qa_native_host *, uint32_t *, qa_error *);
 bool qa_native_host_q2_wire_entity(qa_native_host *, uint32_t,
+    qa_native_host_q2_entity *, qa_error *);
+/* This borrows the actual SDK row during a genuine GAME import callback.
+ * New Source rows can be observed before the completed table count advances. */
+bool qa_native_host_q2_wire_entity_import(qa_native_host *, uint32_t,
     qa_native_host_q2_entity *, qa_error *);
 bool qa_native_host_q2_wire_player(qa_native_host *, uint32_t,
     qa_actor_id, qa_q2_player *, qa_error *);

@@ -1,5 +1,6 @@
 #include "native_q3_remote_client.h"
 #include "qa/source_frame_time.h"
+#include "qa/console_cvar_observer.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

@@ -49,7 +49,28 @@ static const crt_descriptor descriptors[] = {
     D("convert","atoi",C_ATOI,I,1,P), D("convert","atoll",C_ATOLL,QA_NATIVE_I64,1,P), D("convert","atof",C_ATOF,R,1,P),
     D("time","_time64",C_TIME,QA_NATIVE_I64,1,P), D("time","_localtime64",C_LOCALTIME,P,1,P), D("locale","localeconv",C_LOCALE,P,0,0),
     D("stdio","__stdio_common_vsprintf",C_PRINTF,I,6,QA_NATIVE_U64,P,Z,P,P,P),
-    D("stdio","__stdio_common_vsscanf",C_SCANF,I,6,QA_NATIVE_U64,P,Z,P,P,P)
+    D("stdio","__stdio_common_vsscanf",C_SCANF,I,6,QA_NATIVE_U64,P,Z,P,P,P),
+    D("stdio","fopen",WST_OPEN,P,2,P,P),
+    D("stdio","fclose",WST_CLOSE,I,1,P),
+    D("stdio","fread",WST_READ,Z,4,P,Z,Z,P),
+    D("stdio","fwrite",WST_WRITE,Z,4,P,Z,Z,P),
+    D("stdio","fseek",WST_SEEK,I,3,P,I,I),
+    D("stdio","ftell",WST_TELL,I,1,P),
+    D("stdio","_fseeki64",WST_SEEK64,I,3,P,QA_NATIVE_I64,I),
+    D("stdio","_ftelli64",WST_TELL64,QA_NATIVE_I64,1,P),
+    D("stdio","fflush",WST_FLUSH,I,1,P),
+    D("stdio","feof",WST_EOF,I,1,P),
+    D("stdio","ferror",WST_ERROR,I,1,P),
+    D("stdio","clearerr",WST_CLEAR,V,1,P),
+    D("stdio","rewind",WST_REWIND,V,1,P),
+    D("stdio","fgetc",WST_GET,I,1,P),
+    D("stdio","getc",WST_GET,I,1,P),
+    D("stdio","_filbuf",WST_GET,I,1,P),
+    D("stdio","fputc",WST_PUT,I,2,I,P),
+    D("stdio","putc",WST_PUT,I,2,I,P),
+    D("stdio","_flsbuf",WST_PUT,I,2,I,P),
+    D("stdio","ungetc",WST_UNGET,I,2,I,P),
+    D("stdio","_fileno",WST_FILENO,I,1,P)
 };
 #undef D
 #undef P
@@ -109,6 +130,8 @@ bool windows_crt_descriptors(guest_windows *owner, bool bind, qa_error *error)
 bool windows_crt_initialize(guest_windows *owner, qa_error *error)
 {
     guest_windows_crt *crt = owner->crt; size_t width = owner->target.pointer_bytes;
+    crt->next_file = 3;
+    crt->has_file_opener = owner->capabilities.open_file != NULL;
     const uint16_t decimal[] = {'.'};
     if (!windows_storage(owner, width * 3, &crt->onexit, error) ||
         !windows_storage(owner, 4, &crt->error_number, error) || !windows_storage(owner, 36, &crt->time_buffer, error) ||
@@ -233,6 +256,8 @@ bool windows_crt_invoke(windows_service *service, const qa_native_value *args,
     uint32_t operation = service->operation; size_t width = owner->target.pointer_bytes;
     uint64_t a = count ? integer(args) : 0, b = count > 1 ? integer(args + 1) : 0, value = 0;
     qa_native_value_type type = service->function.signature.result.kind; result(out, type, 0);
+    if (operation >= WST_OPEN && operation <= WST_FILENO)
+        return windows_stdio_invoke(service, args, count, out, error);
     if (operation >= C_ACOS && operation <= C_SIGN) {
         double left = args[0].type == QA_NATIVE_F32 ? args[0].as.f32 : args[0].as.f64;
         double right = count > 1 && args[1].type == QA_NATIVE_F32 ? args[1].as.f32 : count > 1 && args[1].type == QA_NATIVE_F64 ? args[1].as.f64 : 0;
@@ -1059,5 +1084,6 @@ bool windows_crt_validate(guest_windows *owner, qa_error *error)
         windows_validate_storage(owner,crt->time_buffer,36,0x57494e,error) &&
         windows_validate_storage(owner,crt->locale,width*10+16,0x57494e,error) &&
         windows_validate_storage(owner,crt->empty,1,0x57494e,error) &&
-        windows_validate_storage(owner,crt->decimal,2,0x57494e,error);
+        windows_validate_storage(owner,crt->decimal,2,0x57494e,error) &&
+        windows_stdio_lower_valid(owner,error);
 }

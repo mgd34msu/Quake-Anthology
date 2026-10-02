@@ -7,9 +7,9 @@
  * immutable resource, while the actual Source owns the VFS view lifetime. */
 typedef struct qa_network_q2_checkpoint_refs {
     void *context;
-    bool (*source_server)(void *, const qa_net_client *, qa_network_q2_server_policy *,
+    bool (*source_server)(void *, qa_network_runtime *, const qa_net_client *, qa_network_q2_server_policy *,
         qa_network_q2_server_hooks *, qa_error *);
-    bool (*source_client)(void *, const qa_net_client *, qa_network_q2_client_policy *,
+    bool (*source_client)(void *, qa_network_runtime *, const qa_net_client *, qa_network_q2_client_policy *,
         qa_network_q2_client_hooks *, qa_error *);
     bool (*view_encode)(void *, const qa_vfs *, uint64_t *, qa_error *);
     bool (*view_decode)(void *, uint64_t, qa_vfs **, qa_error *);

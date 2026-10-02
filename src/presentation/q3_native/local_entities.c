@@ -27,7 +27,7 @@ q3n_local_entity *q3n_local_allocate(q3n_events *o, q3n_local_type type, qa_q3_r
 }
 static bool entity(const q3n_frame *f, const qa_q3_ref_entity *ref, qa_error *error)
 {
-    if (f->effects_source && f->effect_entity_output) {
+    if ((f->effects_source || f->unified_effects) && f->effect_entity_output) {
         float radius = 0;
         /* ApplicationEffects captures the exact activeLocal.ref identity.
          * Stack-generated shockwaves and copied refs have no pool radius. */

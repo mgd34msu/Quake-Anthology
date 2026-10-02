@@ -1,6 +1,8 @@
 #include "network_q2_client.h"
 #include "qa/network_q3.h"
 #include "qa/application_network.h"
+#include "qa/network_q2_bootstrap_save.h"
+#include "remote_q2_effects_bridge.h"
 #include <math.h>
 #include <stdio.h>
 #include <ctype.h>
@@ -17,6 +19,8 @@ struct frontend_network_q2_client {
     qa_q2_connect_request negotiated;
     unsigned calls;
     bool app_created, negotiating, admitting, retired, closing;
+    bool importing;
+    const qa_application_client_state *restored_application;
     char reason[1024];
 };
 static bool parent(const frontend_network_q2_client *owner)
@@ -50,7 +54,11 @@ static bool retain(void *context,qa_error *error)
 static bool release(void *context,qa_error *error)
 { return frontend_remote_q2_source_owner_release(((frontend_network_q2_client *)context)->source,error); }
 static bool idle(void *context)
-{ return frontend_remote_q2_source_owner_idle(((frontend_network_q2_client *)context)->source); }
+{
+    frontend_network_q2_client *owner=context;
+    return owner->importing ? frontend_remote_q2_source_owner_import_idle(owner->source) :
+        frontend_remote_q2_source_owner_idle(owner->source);
+}
 static bool entity_current(void *context,const qa_application_client_source *source,uint32_t number,uint64_t *generation)
 {
     frontend_network_q2_client *owner=context; frontend_remote_q2_source_view view; qa_error error={0};
@@ -141,8 +149,11 @@ static bool records(void *context,const frontend_remote_q2_domain *domain,
     const qa_q2_server_record *batch,size_t count,qa_error *error)
 {
     frontend_network_q2_client *owner=context;
-    return source_current(owner,domain,error) && owner->options.records(owner->options.context,
-        &owner->application_source,batch,count,error) && source_current(owner,domain,error);
+    frontend_remote_q2_source_view source;
+    if(!source_current(owner,domain,error) || !frontend_remote_q2_source_read(owner->source,&source,error)) return false;
+    bool ok=owner->options.records?owner->options.records(owner->options.context,&owner->application_source,batch,count,error):
+        frontend_remote_q2_effects_records(source.receiver,batch,count,error);
+    return ok && source_current(owner,domain,error);
 }
 static bool disconnected_source(void *context,const frontend_remote_q2_domain *domain,const char *reason,qa_error *error)
 {
@@ -247,12 +258,26 @@ static bool committed(void *context,const qa_q2_client_admission *claim,qa_net_c
     if(!frontend_remote_q2_source_bind(owner->source,&owner->domain,error)) return false;
     owner->admitting=false; return true;
 }
+static frontend_remote_q2_source_options source_options(frontend_network_q2_client *owner)
+{
+    return (frontend_remote_q2_source_options){.client={.domain=owner->domain,.context=owner,.current=source_current,
+        .download_allowed=download_allowed,.download_nonce=download_nonce,.entity_actor=entity_actor,
+        .records=records,.disconnected=disconnected_source},.prepare_namespace=namespace_prepare,.print=print_source,
+        .configure=configure,.admit_content=admit_content};
+}
+static qa_q2_client_bootstrap_options bootstrap_options(frontend_network_q2_client *owner)
+{
+    return (qa_q2_client_bootstrap_options){.remote=owner->options.remote,.protocols=&owner->options.protocol,.protocol_count=1,
+        .payload_bytes=1390,.qport=owner->options.qport,.timeout_ns=UINT64_C(120000000000),
+        .hooks={.context=owner,.identity=identity,.prepare=prepare,.committed=committed,.abort=abort_source,
+            .cancel=cancel,.print=print_bootstrap,.failed=failed}};
+}
 bool frontend_network_q2_client_create(const frontend_network_q2_client_options *options,
     frontend_network_q2_client **out,qa_error *error)
 {
     qa_q2_codec codec;
     if(!options || !out || *out || !options->frontend || !options->runtime || !options->current ||
-        !options->download_nonce || !options->records ||
+        !options->download_nonce ||
         options->physical_seat>=options->frontend->options.seats ||
         !qa_q2_codec_init(&codec,options->protocol,error) || options->protocol.kind==QA_NET_Q2KEX_2023 ||
         options->protocol.kind==QA_NET_Q2KEX_DEMO_2022)
@@ -263,20 +288,14 @@ bool frontend_network_q2_client_create(const frontend_network_q2_client_options 
     qa_frontend *f=options->frontend; uint32_t seat=qa_input_seat_context(f->seats[options->physical_seat].input).seat;
     owner->domain=(frontend_remote_q2_domain){.application=f->application,.runtime=options->runtime,
         .physical_seat=options->physical_seat,.protocol=options->protocol,.catalog=qa_application_catalog(f->application)};
-    frontend_remote_q2_source_options source={.client={.domain=owner->domain,.context=owner,.current=source_current,
-        .download_allowed=download_allowed,.download_nonce=download_nonce,.entity_actor=entity_actor,
-        .records=records,.disconnected=disconnected_source},.prepare_namespace=namespace_prepare,.print=print_source,
-        .configure=configure,.admit_content=admit_content};
+    frontend_remote_q2_source_options source=source_options(owner);
     qa_vfs *prepared=NULL;
     if(!frontend_remote_q2_source_recipe(owner->domain.catalog,options->protocol,"remote-q2-client",seat,
         &source.metadata,&prepared,error)) return false;
     owner->domain.product=source.metadata.profile; source.client.domain=owner->domain;
     bool created=frontend_remote_q2_source_create(f,&source,&owner->source,error); qa_vfs_destroy(prepared);
     if(!created) return false;
-    qa_q2_client_bootstrap_options bootstrap={.remote=options->remote,.protocols=&owner->options.protocol,.protocol_count=1,
-        .payload_bytes=1390,.qport=options->qport,.timeout_ns=UINT64_C(120000000000),
-        .hooks={.context=owner,.identity=identity,.prepare=prepare,.committed=committed,.abort=abort_source,
-            .cancel=cancel,.print=print_bootstrap,.failed=failed}};
+    qa_q2_client_bootstrap_options bootstrap=bootstrap_options(owner);
     return qa_network_q2_bootstrap_client(options->runtime,&bootstrap,&owner->bootstrap,error);
 }
 bool frontend_network_q2_client_admit(frontend_network_q2_client *owner,const qa_net_connect *request,
@@ -328,16 +347,20 @@ bool frontend_network_q2_client_tick(frontend_network_q2_client *owner,uint64_t 
 bool frontend_network_q2_client_idle(const frontend_network_q2_client *owner)
 {
     return !owner || (!owner->calls && !owner->negotiating && !owner->admitting &&
-        (!owner->source || frontend_remote_q2_source_owner_idle(owner->source)));
+        (!owner->source || idle((void *)owner)));
 }
 bool frontend_network_q2_client_destroy(frontend_network_q2_client **owned,qa_error *error)
 {
     frontend_network_q2_client *owner=owned?*owned:NULL;
     if(!owner) return true;
     if(owner->calls || !qa_network_callbacks_idle(owner->options.runtime) ||
-        (owner->source && !frontend_remote_q2_source_owner_idle(owner->source))) return false;
+        (owner->source && !idle(owner))) return false;
     if(owner->domain.client.owner && qa_net_connections_get(qa_network_connections(owner->options.runtime),owner->domain.client)) {
-        if(!qa_network_q2_client_disconnect(owner->options.runtime,owner->domain.client,owner->options.frontend->wall_time_ns,error) ||
+        if(owner->importing) {
+            bool incomplete=qa_network_connection_incomplete(owner->options.runtime,owner->domain.client);
+            if(incomplete ? !qa_network_discard_incomplete(owner->options.runtime,owner->domain.client,error) :
+                !qa_network_detach(owner->options.runtime,owner->domain.client,"Q2 candidate closed",error)) return false;
+        } else if(!qa_network_q2_client_disconnect(owner->options.runtime,owner->domain.client,owner->options.frontend->wall_time_ns,error) ||
             !qa_network_detach(owner->options.runtime,owner->domain.client,"Q2 CLIENT closed",error)) return false;
     }
     if(owner->app_created) {
@@ -348,4 +371,126 @@ bool frontend_network_q2_client_destroy(frontend_network_q2_client **owned,qa_er
     if(owner->receiver && !qa_application_client_provider_release(owner->domain.application,owner->receiver,error)) return false;
     owner->receiver=0; owner->closing=true;
     qa_network_q2_bootstrap_destroy(owner->bootstrap); free(owner); *owned=NULL; return true;
+}
+bool frontend_network_q2_client_commands_owned(const frontend_network_q2_client *owner,const qa_application *app,
+    const qa_application_console_scope *scope,const qa_console *console)
+{
+    return owner && parent(owner) && owner->app_created && owner->source && app==owner->domain.application &&
+        scope && scope->kind==QA_APPLICATION_CONSOLE_CLIENT && scope->provider==owner->receiver &&
+        scope->seat==owner->domain.command_context.seat && console==owner->domain.console &&
+        idle((void *)owner) && qa_application_client_idle(owner->domain.application,&owner->application_source);
+}
+bool frontend_network_q2_client_commands_capture(frontend_network_q2_client *owner,qa_application *app,
+    const qa_application_console_scope *scope,const qa_console *console,qa_buffer *out,qa_error *error)
+{
+    return frontend_network_q2_client_commands_owned(owner,app,scope,console) &&
+        frontend_remote_q2_source_commands_capture(owner->source,app,scope,console,out,error);
+}
+bool frontend_network_q2_client_commands_restore(frontend_network_q2_client *owner,qa_application *app,
+    const qa_application_console_scope *scope,qa_console *console,qa_bytes bytes,qa_error *error)
+{
+    return frontend_network_q2_client_commands_owned(owner,app,scope,console) &&
+        frontend_remote_q2_source_commands_restore(owner->source,app,scope,console,bytes,error);
+}
+bool frontend_network_q2_client_finish_restore(frontend_network_q2_client *owner,qa_error *error)
+{
+    if(!owner) return true;
+    if(!frontend_remote_q2_source_finish_restore(owner->source,error)) return false;
+    owner->importing=false; return true;
+}
+void frontend_network_q2_client_state_free(frontend_network_q2_client_state *state)
+{
+    if(!state) return;
+    frontend_remote_q2_source_state_free(&state->source);
+    qa_application_client_state_free(&state->application);
+    qa_buffer_free(&state->receiver); qa_buffer_free(&state->bootstrap);
+    *state=(frontend_network_q2_client_state){0};
+}
+bool frontend_network_q2_client_capture(frontend_network_q2_client *owner,
+    const frontend_remote_q2_restore_refs *refs,frontend_network_q2_client_state *out,qa_error *error)
+{
+    if(!out || !refs || !parent(owner) || owner->importing || owner->retired || !owner->app_created ||
+        !frontend_network_q2_client_idle(owner))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 capture requires its returned actual physical CLIENT");
+    frontend_network_q2_client_state state={.remote=owner->options.remote,.protocol=owner->options.protocol,
+        .qport=owner->options.qport,.physical_seat=owner->options.physical_seat,
+        .negotiated=owner->negotiated,.policy=owner->admission.policy,
+        .composition=owner->admission.connection.composition};
+    frontend_remote_q2_source_view view;
+    bool ok=frontend_remote_q2_source_capture(owner->source,&state.source,error) &&
+        frontend_remote_q2_source_read(owner->source,&view,error) &&
+        qa_application_client_capture(owner->domain.application,&owner->application_source,&state.application,error) &&
+        frontend_remote_q2_checkpoint(view.receiver,refs,&state.receiver,error) &&
+        qa_network_q2_bootstrap_capture(owner->bootstrap,&state.bootstrap,error);
+    if(!ok) { frontend_network_q2_client_state_free(&state); return false; }
+    *out=state; return true;
+}
+static bool physical_restore(void *context,const qa_launch_instance *descriptor,qa_cvars *cvars,
+    qa_console *console,qa_error *error)
+{
+    frontend_network_q2_client *owner=context;
+    if(!parent(owner) || !owner->importing || !owner->restored_application ||
+        !qa_application_client_provider_prepare(owner->domain.application,descriptor,&owner->receiver,error) ||
+        owner->receiver!=owner->restored_application->receiver)
+        return frontend_fail(error,QA_ERROR_FORMAT,"Q2 restored descriptor changed its actual CLIENT provider");
+    owner->domain.console=console; owner->domain.cvars=cvars;
+    qa_application_client_options options={.descriptor=descriptor,.receiver=owner->receiver,
+        .seat=owner->domain.command_context.seat,.physical_seat=owner->options.physical_seat,
+        .configuration_generation=owner->domain.configuration_generation,.runtime=owner->options.runtime,
+        .console=console,.cvars=cvars,.command=owner->domain.command_context,
+        .owner={owner,retain,release,physical,idle,attachment,entity_current}};
+    if(!qa_application_client_create_restored(owner->domain.application,&options,owner->restored_application,
+        &owner->application_source,error)) return false;
+    owner->app_created=true; return true;
+}
+bool frontend_network_q2_client_importing(const frontend_network_q2_client *owner)
+{ return owner && owner->importing && owner->options.frontend->source_restoring; }
+bool frontend_network_q2_client_restore_prepare(const frontend_network_q2_client_options *options,
+    const frontend_network_q2_client_restore *saved,frontend_network_q2_client **out,qa_error *error)
+{
+    if(!options || !saved || !saved->application || !out || *out || !options->frontend ||
+        !options->frontend->source_restoring || !options->runtime || !options->current || !options->download_nonce ||
+        saved->source.domain.application!=options->frontend->application ||
+        saved->source.domain.runtime!=options->runtime || saved->source.domain.physical_seat!=options->physical_seat ||
+        saved->source.domain.protocol.kind!=options->protocol.kind ||
+        !qa_net_client_id_equal(saved->application->client,saved->source.domain.client) ||
+        saved->application->connection_epoch!=saved->source.domain.epoch ||
+        saved->application->network_seat.owner!=saved->source.domain.seat.owner ||
+        saved->application->network_seat.index!=saved->source.domain.seat.index)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 import requires its real candidate connection and claimed Source recipes");
+    frontend_network_q2_client *owner=calloc(1,sizeof(*owner));
+    if(!owner) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining restored Q2 CLIENT owner");
+    *out=owner; owner->options=*options; owner->domain=saved->source.domain; owner->importing=true;
+    owner->receiver=saved->application->receiver; owner->binding=(qa_net_seat_binding){saved->source.domain.seat,0};
+    owner->negotiated=saved->negotiated; owner->admission.policy=saved->policy;
+    owner->admission.connection=(qa_net_connect){.attachment=QA_NET_REMOTE,.endpoint=options->remote,
+        .protocol=owner->domain.protocol,.seats=&owner->binding,.seat_count=1,.composition=saved->composition};
+    owner->admission.source_claim=owner; owner->restored_application=saved->application;
+    frontend_remote_q2_source_options source=source_options(owner);
+    frontend_remote_q2_source_restore request=saved->source; request.physical_admit=physical_restore;
+    bool ok=frontend_remote_q2_source_restore_prepare(options->frontend,&source,&request,&owner->source,error);
+    owner->restored_application=NULL;
+    if(!ok) return false;
+    qa_q2_client_bootstrap_options bootstrap=bootstrap_options(owner);
+    return qa_network_q2_bootstrap_restore_client(options->runtime,&bootstrap,saved->bootstrap,&owner->bootstrap,error);
+}
+bool frontend_network_q2_client_restore_hooks(frontend_network_q2_client *owner,qa_network_runtime *runtime,
+    const qa_net_client *client,qa_network_q2_client_policy *policy,qa_network_q2_client_hooks *hooks,qa_error *error)
+{
+    if(!owner || !client || !policy || !hooks || !frontend_network_q2_client_importing(owner) ||
+        !parent(owner) || runtime!=owner->options.runtime || !qa_net_client_id_equal(client->id,owner->domain.client) ||
+        client->attachment!=QA_NET_REMOTE || client->seat_count!=1 ||
+        !qa_net_address_equal(&client->endpoint,&owner->options.remote,true) ||
+        !protocol_equal(client->protocol,owner->domain.protocol) ||
+        client->seats[0].seat.owner!=owner->binding.seat.owner || client->seats[0].seat.index!=owner->binding.seat.index ||
+        client->seats[0].remote_index || !qa_sha256_equal(&client->composition,&owner->admission.connection.composition))
+        return frontend_fail(error,QA_ERROR_FORMAT,"Q2 wire import has another real physical CLIENT attachment");
+    frontend_remote_q2_source_view view;
+    if(!frontend_remote_q2_source_read(owner->source,&view,error) || !frontend_remote_q2_hooks(view.receiver,hooks,error)) return false;
+    *policy=owner->admission.policy; return true;
+}
+bool frontend_network_q2_client_source_read(const frontend_network_q2_client *owner,
+    frontend_remote_q2_source_view *view,qa_error *error)
+{
+    return parent(owner) && frontend_remote_q2_source_read(owner->source,view,error);
 }

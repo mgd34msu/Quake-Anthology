@@ -2,6 +2,9 @@
 #include "qa/network_q3.h"
 #include "qa/q3_host_save.h"
 #include "qa/script.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 static bool consume(native_client_module *, qa_error *);
 
@@ -105,7 +108,7 @@ static bool decoded_pure(const qa_q3_gamestate *state, bool *pure, qa_error *err
     *pure = false;
     if (!state) return true;
     char value[QA_Q3_BIG_INFO_CHARS];
-    if (!qa_q3_info_value(qa_q3_gamestate_configstring(state, 1), "sv_pure", value, sizeof(value), error)) return false;
+    if (!qa_q3_info_value(qa_q3_configstring(state, 1), "sv_pure", value, sizeof(value), error)) return false;
     *pure = strtol(value, NULL, 10) != 0; return true;
 }
 

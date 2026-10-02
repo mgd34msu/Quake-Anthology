@@ -45,12 +45,20 @@ typedef struct qa_native_host_sound {
     float volume, attenuation, time_offset;
     bool positioned, local, reliable;
     const char *name;
+    const qa_actor_id *recipients;
+    size_t recipient_count;
+    bool audience_captured;
 } qa_native_host_sound;
 
 typedef enum qa_native_host_message_target {
     QA_NATIVE_HOST_MULTICAST,
     QA_NATIVE_HOST_UNICAST
 } qa_native_host_message_target;
+
+typedef struct qa_native_host_message_reference {
+    size_t offset;
+    qa_actor_id actor;
+} qa_native_host_message_reference;
 
 typedef struct qa_native_host_message {
     qa_native_host_message_target target;
@@ -60,6 +68,8 @@ typedef struct qa_native_host_message {
     int32_t destination;
     uint32_t flags;
     bool reliable, positioned;
+    const qa_native_host_message_reference *references;
+    size_t reference_count;
 } qa_native_host_message;
 
 typedef struct qa_native_host_link_metadata {
@@ -108,6 +118,7 @@ typedef struct qa_native_host_engine_services {
     /* Pure application-owner lifetime predicate for detached frontend adoption. */
     void *owner_context;
     bool (*owner_idle)(void *);
+    bool (*entity_number)(void *, qa_actor_id, uint32_t *, qa_error *);
 } qa_native_host_engine_services;
 
 typedef struct qa_native_host_instance_options {
@@ -313,6 +324,9 @@ bool qa_native_host_client_choose_slot(qa_native_host *, const char *userinfo,
                                        bool spectator, uint32_t *slot, qa_error *);
 bool qa_native_host_client_connect(qa_native_host *, const qa_native_host_client_request *,
                                    bool *accepted, qa_error *);
+/* Declared native client calls retain the real source slot independently of
+ * the conventional ClientConnect entry. This performs no original callback. */
+bool qa_native_host_client_retained_set(qa_native_host *, uint32_t slot, bool, qa_error *);
 bool qa_native_host_client_connect_userinfo(qa_native_host *, const qa_native_host_client_request *,
     bool *accepted, qa_buffer *returned_userinfo, qa_error *);
 bool qa_native_host_client_begin(qa_native_host *, uint32_t slot, qa_error *);

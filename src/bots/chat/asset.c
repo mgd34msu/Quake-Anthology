@@ -50,6 +50,8 @@ void qa_bot_chat_asset_release(qa_bot_chat_asset *a) {
     free(a->cooldowns);
     free(a->initial_types);
     free(a->initial_messages);
+    free(a->graph_templates);free(a->graph_pieces);free(a->graph_alternatives);
+    free(a->graph_keys);free(a->graph_replies);free(a->graph_messages);
     bot_chat_initial_resource_destroy(a->initial_source);
     bot_chat_packed_destroy(a->packed_source);
     qa_arena_destroy(&a->projection_arena);
@@ -88,7 +90,7 @@ bool chat_asset_finish(qa_bot_chat_asset *a, qa_error *e) {
     return true;
 }
 bool chat_asset_parse(qa_bot_library *library, qa_bot_chat_asset *a, qa_error *e) {
-    if(a->view.kind==QA_BOT_CHAT_INITIAL || a->view.kind==QA_BOT_CHAT_SYNONYMS || a->view.kind==QA_BOT_CHAT_RANDOMS) {
+    if(a->view.kind<=QA_BOT_CHAT_INITIAL) {
         qa_error_set(e,QA_ERROR_ARGUMENT,0,"Initial chat parsing requires its retained two-pass source owner");
         return false;
     }
@@ -130,7 +132,7 @@ bool chat_asset_load(qa_bot_library *library, qa_bot_chat_asset_kind kind, const
     if (name == NULL)
         name = "";
     *cached = false;
-    if(kind==QA_BOT_CHAT_SYNONYMS || kind==QA_BOT_CHAT_RANDOMS) {
+    if(kind<QA_BOT_CHAT_INITIAL) {
         bool source_failure;
         bool ok=chat_asset_setup_load(library,kind,path,NULL,0,out,&source_failure,e);
         if(!ok) {qa_bot_chat_asset_release(*out);*out=NULL;}
@@ -170,7 +172,7 @@ bool chat_asset_setup_load(qa_bot_library *library,qa_bot_chat_asset_kind kind,c
     qa_bot_chat_system *system,uint64_t revision,qa_bot_chat_asset **out,bool *source_failure,
     qa_error *error) {
     if(!library || !path || !out || !source_failure ||
-       (kind!=QA_BOT_CHAT_SYNONYMS && kind!=QA_BOT_CHAT_RANDOMS)) {
+       kind>=QA_BOT_CHAT_INITIAL) {
         qa_error_set(error,QA_ERROR_ARGUMENT,0,"Packed chat setup requires its actual source/library/output");return false;
     }
     *out=NULL;*source_failure=false;qa_bot_chat_asset *asset=NULL;
@@ -181,7 +183,8 @@ bool chat_asset_setup_load(qa_bot_library *library,qa_bot_chat_asset_kind kind,c
     return bot_chat_packed_load(asset,system,revision,source_failure,error);
 }
 const float *qa_bot_chat_cooldowns(const qa_bot_chat_asset *a, size_t *count) {
-    if(a && a->initial_source && a->source_loaded) {
+    if(a && a->source_loaded && (a->initial_source || (a->packed_source && a->view.kind==QA_BOT_CHAT_REPLIES))) {
+        if(a->packed_source && !bot_chat_packed_refresh((qa_bot_chat_asset *)a,NULL)) {if(count) *count=0;return NULL;}
         qa_bot_chat_asset *mutable=(qa_bot_chat_asset *)a;
         size_t size=a->view.message_count;
         if(size>SIZE_MAX/sizeof(float)) {if(count) *count=0;return NULL;}
@@ -209,7 +212,7 @@ bool qa_bot_chat_cooldowns_restore(qa_bot_chat_asset *a, const float *times, siz
     for (size_t i = 0; i < count; ++i)
         if (!isfinite(times[i]))
             goto invalid;
-    if(a->initial_source) {
+    if(a->initial_source || (a->packed_source && a->view.kind==QA_BOT_CHAT_REPLIES)) {
         for(uint32_t index=0;index<count;++index) {
             float time=times[index];
             if(!chat_asset_message_time(a,index,&time,true,e)) return false;

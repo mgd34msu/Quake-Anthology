@@ -127,7 +127,7 @@ qa_cpu_renderer *qa_cpu_create(const qa_cpu_options *options, qa_error *error) {
   }
   renderer->options = *options;
   qa_render_controls_init_cpu(&renderer->controls, renderer);
-  renderer->depth_write = renderer->color_write = true;
+  qa_scene_state_default(&renderer->pipeline);
   renderer->clear_depth = 1;
   renderer->gamma_value = 1;
   for (size_t i=0;i<256;++i) renderer->gamma[i]=(uint8_t)i;
@@ -485,7 +485,11 @@ static bool cpu_present_frame(qa_cpu_renderer *renderer, qa_error *error) {
              renderer->options.present_context, qa_cpu_pixels(renderer),
              renderer->display.width, renderer->display.height, error);
   renderer->presenting=false;
-  if (ok) renderer->controls.source.projection_2d = false;
+  if (ok) {
+    renderer->controls.source.projection_2d = false;
+    renderer->controls.source.entity_count = renderer->controls.source.first_scene_entity = 0;
+    renderer->controls.source.submitted_light_count = renderer->controls.source.first_scene_light = 0;
+  }
   return ok;
 }
 bool qa_cpu_present_frame(qa_cpu_renderer *renderer, qa_error *error) {
@@ -555,8 +559,8 @@ static bool cpu_execute_range(qa_cpu_renderer *renderer, const qa_scene_frame *f
   if (frame->source_backend && frame->source_skip_backend) return true;
   if (begin && frame->source_backend && frame->source_clear_draw_buffer) {
     qa_scene_view clear = renderer->view;
-    clear.clear_color = renderer->color_write;
-    clear.clear_depth = renderer->depth_write;
+    clear.clear_color = renderer->pipeline.color_write;
+    clear.clear_depth = renderer->pipeline.depth_write;
     clear.clear_stencil = false;
     clear.color = (qa_scene_vec4){1, 0, 0.5f, 1};
     clear.depth = renderer->clear_depth;
@@ -600,10 +604,12 @@ static bool cpu_execute_range(qa_cpu_renderer *renderer, const qa_scene_frame *f
       }
       renderer->view = command->data.view;
       if (!renderer->opacity_skip) {
-        if (renderer->view.clear_color) renderer->color_write = true;
+        if (frame->source_backend && renderer->view.clear_depth)
+          qa_render_source_state_bits(&renderer->pipeline,true,false);
+        if (renderer->view.clear_color) renderer->pipeline.color_write = true;
         if (renderer->view.clear_depth) {
-          renderer->depth_write = true;
-          renderer->clear_depth = renderer->view.depth;
+          renderer->pipeline.depth_write = true;
+          renderer->clear_depth = (float)cpu_clamp(renderer->view.depth);
         }
         clear_view(renderer, &renderer->view);
       }
@@ -646,13 +652,15 @@ static bool cpu_execute_range(qa_cpu_renderer *renderer, const qa_scene_frame *f
       }
       if (command->data.draw_buffer.clear && !renderer->opacity_skip) {
         qa_scene_view clear = renderer->view;
-        clear.clear_color = true;
-        clear.clear_depth = true;
+        clear.clear_color = !frame->source_backend || renderer->pipeline.color_write;
+        clear.clear_depth = !frame->source_backend || renderer->pipeline.depth_write;
         clear.clear_stencil = false;
         clear.color = (qa_scene_vec4){1, 0, 0.5f, 1};
-        clear.depth = 1;
-        renderer->color_write = renderer->depth_write = true;
-        renderer->clear_depth = 1;
+        clear.depth = frame->source_backend ? renderer->clear_depth : 1;
+        if (!frame->source_backend) {
+          renderer->pipeline.color_write = renderer->pipeline.depth_write = true;
+          renderer->clear_depth = 1;
+        }
         clear_view(renderer, &clear);
       }
       break;
@@ -699,6 +707,42 @@ bool qa_cpu_source_execute_prefix(qa_render_controls *controls, const qa_scene_f
   renderer->executing = false;
   return ok;
 }
+bool qa_cpu_source_depth_range(qa_render_controls *controls,float near_depth,float far_depth,
+    qa_error *error)
+{
+  if (!qa_cpu_source_scratch_current(controls) || controls->ticket || !controls->source.entered ||
+      !controls->source.issuing || !isfinite(near_depth) || !isfinite(far_depth) ||
+      near_depth<0 || near_depth>1 || far_depth<0 || far_depth>1) {
+    qa_error_set(error,QA_ERROR_ARGUMENT,0,"Source depth range lost its actual CPU issue owner");
+    return false;
+  }
+  controls->owner.cpu->pipeline.depth_near=near_depth;
+  controls->owner.cpu->pipeline.depth_far=far_depth;
+  return true;
+}
+bool qa_cpu_source_polygon_offset(qa_render_controls *controls,bool enabled,float factor,float units,
+    qa_error *error)
+{
+  if (!qa_cpu_source_scratch_current(controls) || controls->ticket || !controls->source.entered ||
+      !controls->source.issuing || !isfinite(factor) || !isfinite(units)) {
+    qa_error_set(error,QA_ERROR_ARGUMENT,0,"Source polygon offset lost its actual CPU issue owner");
+    return false;
+  }
+  qa_scene_state *state=&controls->owner.cpu->pipeline;
+  state->polygon_offset=enabled;
+  if (enabled) { state->offset_factor=factor; state->offset_units=units; }
+  return true;
+}
+bool qa_cpu_source_cull(qa_render_controls *controls,qa_scene_cull cull,qa_error *error)
+{
+  if (!qa_cpu_source_scratch_current(controls) || controls->ticket || !controls->source.entered ||
+      !controls->source.issuing || (unsigned)cull>QA_CULL_BACK) {
+    qa_error_set(error,QA_ERROR_ARGUMENT,0,"Source cull lost its actual CPU issue owner");
+    return false;
+  }
+  controls->owner.cpu->pipeline.cull=cull;
+  return true;
+}
 bool qa_cpu_execute(qa_cpu_renderer *renderer,const qa_scene_frame *frame,qa_error *error)
 {
   if (renderer && renderer->controls.source.entered)
@@ -728,6 +772,8 @@ bool qa_cpu_checkpoint_resources(const qa_cpu_renderer *renderer,qa_render_resou
     if (renderer->bound[i] && !visit(context,renderer->bound[i],NULL,ordinal,error)) return false;
   for (const cpu_target *target=renderer->targets;target;target=target->next,++ordinal)
     if (!visit(context,target->image,NULL,ordinal,error)) return false;
+  if (renderer->controls.source.lightmap &&
+      !visit(context,renderer->controls.source.lightmap,NULL,ordinal,error)) return false;
   return true;
 }
 static bool cpu_saved_buffer(qa_source_save_io *io,qa_cpu_renderer *renderer,cpu_framebuffer *buffer)
@@ -783,12 +829,11 @@ static bool cpu_saved_fields(qa_source_save_io *io,qa_cpu_renderer *renderer,con
   if (version>=5 && !qa_output_domains_codec(io,&renderer->output_domains,
       renderer->display.width,renderer->display.height)) return false;
   if (version>=6) {
-    if (!qa_source_save_bool(io,&renderer->depth_write) ||
-        !qa_source_save_bool(io,&renderer->color_write) ||
+    if (!render_save_pipeline(io,&renderer->pipeline) ||
         !qa_source_save_f32(io,&renderer->clear_depth) || !isfinite(renderer->clear_depth) ||
         renderer->clear_depth<0 || renderer->clear_depth>1) return false;
   } else if (reading) {
-    renderer->depth_write=renderer->color_write=true;
+    qa_scene_state_default(&renderer->pipeline);
     renderer->clear_depth=1;
   }
   size_t count=0; uint64_t current=0;

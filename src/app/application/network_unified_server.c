@@ -1,4 +1,4 @@
-#include "network_unified.h"
+#include "network_unified_private.h"
 #include "map_players_private.h"
 #include "unified_output.h"
 #include "unified_output_capture.h"
@@ -8,27 +8,6 @@
 
 #include <stdlib.h>
 #include <string.h>
-
-struct application_unified_server {
-    qa_application *application;
-    qa_network_runtime *runtime;
-    qa_net_seat_id seat;
-    uint32_t application_seat, epoch;
-    qa_net_client_id client;
-    qa_unified_session *session;
-    application_unified_inputs *inputs;
-    application_unified_component_publisher *components;
-    application_unified_output_capture *pending_capture;
-    application_unified_source offered;
-    qa_sha256_digest composition;
-    qa_unified_document *offer;
-    application_unified_output pending;
-    size_t control_cursor;
-    uint64_t frame_before, published_frame;
-    uint64_t events_after, pending_events_through;
-    int64_t acknowledged;
-    bool bound, admitted, player_attached, preparing_frame, entered, closed;
-};
 
 static qa_json_id control_value(const qa_unified_document *document)
 {
@@ -197,8 +176,8 @@ static bool control_entered(void *context, qa_network_runtime *runtime, qa_net_c
         application_unified_events initial = {0};
         application_unified_source current_source;
         if (okay) okay = application_unified_source_read(owner->application, &current_source, error) &&
-            application_unified_events_read(owner->application, &current_source, client, &actual,
-                epoch, owner->events_after, &initial, error);
+            application_unified_events_initial_read(owner->application, &current_source, client, &actual,
+                epoch, &initial, error);
         if (okay && initial.control_count > sizeof(commit->followups) / sizeof(commit->followups[0]))
             okay = application_fail(error, QA_ERROR_FORMAT, "Initial Source controls exceed the actual ordered reply capacity");
         if (okay && !application_unified_events_current(&initial))
@@ -236,6 +215,25 @@ static bool control_entered(void *context, qa_network_runtime *runtime, qa_net_c
             (const char *)name.data, words, count, error);
         for (size_t i = 0; i < count; ++i) qa_buffer_free(retained + i);
         qa_buffer_free(&name); commit->applied = okay; return okay;
+    }
+    if (qa_json_string_equal(json, kind, "component-command")) {
+        qa_json_id arguments = qa_json_get(json, value, "args");
+        size_t count = qa_json_size(json, arguments); uint64_t generation;
+        if (!owner->admitted || !count || count > 128)
+            return application_fail(error, QA_ERROR_ARGUMENT, "Component command has no admitted physical Source recipient");
+        qa_buffer retained[128] = {0}; const char *words[128];
+        qa_unified_document *component = NULL;
+        bool okay = qa_json_u64(json, qa_json_get(json, value, "generation"), &generation, error) &&
+            qa_unified_document_create(QA_UNIFIED_CHECKPOINT,
+                qa_json_source(json, qa_json_get(json, value, "owner")), &component, error);
+        for (size_t i = 0; okay && i < count; ++i) {
+            okay = qa_json_string(json, qa_json_at(json, arguments, i), retained + i, error);
+            if (okay) words[i] = (const char *)retained[i].data;
+        }
+        if (okay) okay = application_unified_component_command(owner->application, client, owner->seat,
+            component, generation, words, count, error);
+        for (size_t i = 0; i < count; ++i) qa_buffer_free(retained + i);
+        qa_unified_document_destroy(component); commit->applied = okay; return okay;
     }
     if (qa_json_string_equal(json, kind, "disconnect")) {
         bool okay = !owner->player_attached || application_unified_player_disconnect(owner->application, client, owner->seat, error);

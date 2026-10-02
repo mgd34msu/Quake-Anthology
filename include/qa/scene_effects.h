@@ -115,5 +115,7 @@ bool qa_scene_source_stencil_shadow(qa_scene_frame *, const qa_scene_view *, con
                                     const qa_scene_image *white, qa_error *);
 bool qa_scene_stencil_finish(qa_scene_frame *, const qa_scene_view *,
                              const qa_scene_image *white, qa_error *);
+bool qa_scene_source_stencil_finish(qa_scene_frame *, const qa_scene_view *,
+                                    const qa_scene_image *white, qa_error *);
 
 #endif

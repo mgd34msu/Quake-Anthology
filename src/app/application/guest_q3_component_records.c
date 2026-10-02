@@ -131,6 +131,15 @@ static bool reset(application_q3_component_records *r,uint32_t slot,bool client,
     }
     return true;
 }
+bool q3records_reserve_actor(application_q3_component_records *r,qa_error *e)
+{
+    if(r->actor_count<r->actor_capacity) return true;
+    if(r->actor_count==SIZE_MAX/sizeof(*r->actors)) return q3records_fail(e,QA_ERROR_MEMORY,"Component actor row extent overflows");
+    size_t capacity=r->actor_count+1;
+    component_actor *rows=realloc(r->actors,capacity*sizeof(*rows));
+    if(!rows) return q3records_fail(e,QA_ERROR_MEMORY,"Retaining actual component actor row");
+    r->actors=rows; r->actor_capacity=capacity; return true;
+}
 bool application_q3_component_records_bind(application_q3_component_records *r,qa_actor_id actor,uint32_t slot,bool owned,bool client,qa_error *e)
 {
     if(!r||(!owned&&!r->defaults_ready)||!q3records_live(r,actor)||!r->options.storage_current(r->options.context,e)||slot>=1022||
@@ -140,8 +149,10 @@ bool application_q3_component_records_bind(application_q3_component_records *r,q
     if(existing&&existing->projected) return true;
     for(size_t i=0;i<r->actor_count;++i) if(r->actors+i!=existing&&r->actors[i].slot==slot) return q3records_fail(e,QA_ERROR_FORMAT,"Component projection slot is occupied");
     for(size_t i=0;i<r->record_count;++i) if((!r->records[i].client||client)&&slot>=r->records[i].capacity) return q3records_fail(e,QA_ERROR_FORMAT,"Component auxiliary projection capacity exceeded");
-    if(!existing) { component_actor *rows=realloc(r->actors,(r->actor_count+1)*sizeof(*rows)); if(!rows) return q3records_fail(e,QA_ERROR_MEMORY,"Retaining actual component actor row");
-        r->actors=rows; rows[r->actor_count++]=(component_actor){.actor=actor,.slot=slot,.owned=owned,.client=client}; }
+    if(!existing) {
+        if(!q3records_reserve_actor(r,e)) return false;
+        r->actors[r->actor_count++]=(component_actor){.actor=actor,.slot=slot,.owned=owned,.client=client};
+    }
     if(!owned) {
         if(!reset(r,slot,client,e)) return false;
         for(size_t i=0;i<r->record_count;++i) {
@@ -167,8 +178,8 @@ bool application_q3_component_records_reserve_client(application_q3_component_re
     uint32_t slot=0;
     for(;slot<r->client_maximum;++slot) { bool used=false; for(size_t i=0;i<r->actor_count;++i) if(r->actors[i].slot==slot) used=true; if(!used) break; }
     if(slot==r->client_maximum) return q3records_fail(e,QA_ERROR_FORMAT,"Component source client capacity exceeded");
-    component_actor *rows=realloc(r->actors,(r->actor_count+1)*sizeof(*rows)); if(!rows) return q3records_fail(e,QA_ERROR_MEMORY,"Retaining genuine component client reservation");
-    r->actors=rows; rows[r->actor_count++]=(component_actor){.actor=actor,.slot=slot,.client=true}; *out=slot; return true;
+    if(!q3records_reserve_actor(r,e)) return false;
+    r->actors[r->actor_count++]=(component_actor){.actor=actor,.slot=slot,.client=true}; *out=slot; return true;
 }
 bool q3records_finish_retired(application_q3_component_records *r,qa_error *e)
 {

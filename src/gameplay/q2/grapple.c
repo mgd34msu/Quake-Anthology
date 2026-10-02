@@ -312,7 +312,7 @@ bool q2_grapple_touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *
     }
     if (!q2_actor_live(g, hook_id))
         return true;
-    if ((contact->has_surface && (contact->surface.flags & 4u) != 0) ||
+    if ((contact->has_surface && ((uint32_t)contact->surface.flags & 4u) != 0) ||
         (lm && (classification == ANCHOR_NONE || classification == ANCHOR_BOX ||
                 dead(g, contact->other) ||
                 (g->hooks.grapple_can_attach != NULL &&

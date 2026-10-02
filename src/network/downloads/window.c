@@ -17,7 +17,7 @@ static bool fail(qa_error *error, const char *message) {
 bool qa_download_window_create(qa_bytes bytes, size_t block, uint32_t capacity, uint64_t retry,
                                 qa_download_window **out, qa_error *error) {
     if (!out || !block || !capacity || !retry || (bytes.size && !bytes.data) ||
-        (uint64_t)capacity > SIZE_MAX / sizeof(window_slot)) return fail(error, "Invalid download window");
+        sizeof(window_slot) > SIZE_MAX / (size_t)capacity) return fail(error, "Invalid download window");
     qa_download_window *window = calloc(1, sizeof(*window));
     if (!window) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating download window"); return false; }
     window->slots = calloc(capacity, sizeof(*window->slots));
@@ -85,7 +85,7 @@ static bool window_checkpoint_valid(const qa_download_window *w)
 }
 bool qa_download_window_checkpoint(const qa_download_window *window, qa_buffer *out, qa_error *error)
 {
-    if (!out || !window_checkpoint_valid(window) || (uint64_t)window->capacity > (SIZE_MAX - 92) / 17)
+    if (!out || !window_checkpoint_valid(window) || (size_t)17 > (SIZE_MAX - 92) / (size_t)window->capacity)
         return fail(error, "Invalid reliable download window continuation");
     size_t capacity = 92 + (size_t)window->capacity * 17;
     uint8_t *data = malloc(capacity);
@@ -117,7 +117,7 @@ bool qa_download_window_restore_checkpoint(qa_bytes record, qa_bytes content,
         return fail(error, "Download window content digest differs from candidate resource");
     uint64_t block = qa_net_read_u64(&r); uint32_t capacity = qa_net_read_u32(&r);
     uint64_t retry = qa_net_read_u64(&r), base = qa_net_read_u64(&r), next = qa_net_read_u64(&r), blocks = qa_net_read_u64(&r);
-    if (r.failed || !block || block > SIZE_MAX || !capacity || (uint64_t)capacity > SIZE_MAX / sizeof(window_slot) ||
+    if (r.failed || !block || block > SIZE_MAX || !capacity || sizeof(window_slot) > SIZE_MAX / (size_t)capacity ||
         (uint64_t)capacity > qa_net_reader_remaining(&r) / 17 || qa_net_reader_remaining(&r) != (size_t)capacity * 17)
         return fail(error, "Invalid download window continuation slot extent");
     qa_download_window *window = NULL;

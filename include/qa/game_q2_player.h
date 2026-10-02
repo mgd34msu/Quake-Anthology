@@ -31,6 +31,8 @@ typedef struct qa_q2_player_view {
     qa_vec3 angles, offset, kick_angles, gun_angles, gun_offset;
     qa_q2_blend blend;
     float fov, health, armor, ammo;
+    qa_string_id ammo_icon, armor_icon;
+    int32_t ammo_count;
     int score, flashes, layouts;
     int32_t hit_marker_damage;
     qa_item_id selected_item, timer_item;
@@ -135,6 +137,9 @@ typedef struct qa_q2_player_services {
      * obituary supplies presentation only; score_read remains authoritative. */
     bool shared_score_owned;
     bool (*spawned)(void *, qa_actor_id, qa_error *);
+    /* The complete source placement, including post-respawn motion/events,
+     * precedes this callback. It does not replace inventory's spawned hook. */
+    bool (*spawn_completed)(void *, qa_actor_id, qa_error *);
     /* Borrowed CHARACTER members ask the selected campaign to place the same
      * actor before qa_q2_character_respawned publishes its source reset. */
     bool (*request_respawn)(void *, qa_actor_id, qa_error *);
@@ -280,6 +285,7 @@ bool qa_q2_player_admit(qa_q2_game *, qa_actor_id, const qa_q2_player_admission 
 bool qa_q2_character_configure(qa_q2_game *, qa_actor_id, qa_string_id model, int skin, qa_error *);
 bool qa_q2_character_respawned(qa_q2_game *, qa_actor_id, qa_error *);
 bool qa_q2_player_userinfo(qa_q2_game *, qa_actor_id, const char *, qa_error *);
+bool qa_q2_player_userinfo_storage(qa_q2_game *, qa_actor_id, const char *, qa_error *);
 bool qa_q2_player_userinfo_read(qa_q2_game *, qa_actor_id, const char **, qa_error *);
 bool qa_q2_player_read(qa_q2_game *, qa_actor_id, qa_q2_player_info *);
 bool qa_q2_player_notarget(qa_q2_game *, qa_actor_id, bool *enabled, qa_error *);

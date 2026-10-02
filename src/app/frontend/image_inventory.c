@@ -6,6 +6,7 @@
 #include "network_initial_graph.h"
 #include "remote_q1_restore.h"
 #include "remote_q2_restore.h"
+#include "renderer_materials.h"
 #include "qa/scene_resource_save.h"
 #include "qa/persistence_content.h"
 
@@ -86,6 +87,10 @@ static bool collect(qa_frontend *f, image_inventory *inventory, qa_error *error)
             frontend_remote_q2_metadata_read(row,&owner,error)) &&
             add(inventory,graph,owner.images,10,i,owner.identity,error);
     }
+    frontend_renderer_materials_view retained; bool present=false;
+    if(ok) ok=frontend_renderer_materials_read(f,&retained,&present,error);
+    if(ok && present) ok=add(inventory,graph,retained.images,11,0,0,error);
+    if(ok && present) ok=add(inventory,graph,retained.lightmap_images,12,0,0,error);
     return ok;
 }
 static bool header(qa_source_save_io *io, const image_inventory *inventory)

@@ -2,9 +2,9 @@
 #define QA_FRONTEND_NETWORK_Q3_RESTART_H
 #include "qa/frontend.h"
 #include "qa/application_q3_client.h"
-bool frontend_network_q3_client_context_read(qa_frontend *, qa_actor_owner,
+bool frontend_network_q3_client_context_read(const qa_frontend *, qa_actor_owner,
     uint32_t, qa_application_q3_client_context *, qa_error *);
-bool frontend_network_q3_client_context_current(qa_frontend *,
+bool frontend_network_q3_client_context_current(const qa_frontend *,
     const qa_application_q3_client_context *);
 
 bool frontend_network_q3_client_effect(qa_frontend *,

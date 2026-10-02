@@ -3,6 +3,55 @@
 #include "internal.h"
 #include <limits.h>
 #include <stdlib.h>
+#include <stdio.h>
+
+bool frontend_remote_q1_source_defaults(qa_cvars *cvars,uint64_t owner,uint32_t seat,qa_error *error)
+{
+    if (!cvars || !owner || qa_cvars_dialect(cvars)>QA_CONSOLE_QW) return false;
+    if (qa_cvars_dialect(cvars)==QA_CONSOLE_Q1) {
+        char name[48]; if (seat==0) snprintf(name,sizeof(name),"Player");
+        else snprintf(name,sizeof(name),"Player %llu",(unsigned long long)seat+1);
+        return qa_cvars_register(cvars,"name",name,QA_CVAR_ARCHIVE,owner,"",error) &&
+            qa_cvars_register(cvars,"color","0",QA_CVAR_ARCHIVE,owner,"",error) &&
+            qa_input_settings_register(cvars,QA_MOVEMENT_NETQUAKE,error);
+    }
+    static const struct { const char *name,*value; uint32_t flags; } settings[]={
+        {"cl_hightrack","0",0},{"cl_chasecam","0",0},
+        {"rate","25000",QA_CVAR_ARCHIVE|QA_CVAR_USERINFO},
+        {"noskins","0",QA_CVAR_ARCHIVE},{"baseskin","base",QA_CVAR_ARCHIVE},
+        {"name","unnamed",QA_CVAR_ARCHIVE|QA_CVAR_USERINFO},{"team","",QA_CVAR_ARCHIVE|QA_CVAR_USERINFO},
+        {"skin","",QA_CVAR_ARCHIVE|QA_CVAR_USERINFO},{"topcolor","0",QA_CVAR_ARCHIVE|QA_CVAR_USERINFO},
+        {"bottomcolor","0",QA_CVAR_ARCHIVE|QA_CVAR_USERINFO},{"noaim","0",QA_CVAR_ARCHIVE|QA_CVAR_USERINFO},
+        {"msg","1",QA_CVAR_ARCHIVE|QA_CVAR_USERINFO},{"password","",QA_CVAR_USERINFO}};
+    for (size_t i=0;i<sizeof(settings)/sizeof(*settings);++i)
+        if (!qa_cvars_register(cvars,settings[i].name,settings[i].value,settings[i].flags,owner,"",error)) return false;
+    return qa_input_settings_register(cvars,QA_MOVEMENT_QUAKEWORLD,error);
+}
+bool frontend_remote_q1_skin_recipe(qa_catalog *catalog,qa_product_id selected,
+    qa_vfs **view,qa_fs_root **root,qa_error *error)
+{
+    if (!catalog) return false;
+    const qa_product *product=qa_catalog_product(catalog,selected),*base=qa_catalog_find(catalog,"q1-quakeworld");
+    if (!catalog || !product || !base || !view || *view || !root || *root || product->family!=QA_GAME_Q1 ||
+        product->edition!=QA_EDITION_QUAKEWORLD || base->family!=QA_GAME_Q1 || base->edition!=QA_EDITION_QUAKEWORLD)
+        return remote_q1_fail(error,QA_ERROR_ARGUMENT,"QW skins require their actual selected catalog and shared base");
+    const qa_product *ancestor=product; bool linked=false;
+    for (size_t i=0;ancestor && i<=qa_catalog_count(catalog);++i) {
+        if (ancestor->id==base->id) { linked=true; break; }
+        ancestor=qa_catalog_product(catalog,qa_catalog_configuration_base(catalog,ancestor->id));
+    }
+    qa_fs_root *actual=linked?qa_catalog_product_write_root(catalog,base->id):NULL;
+    if (!actual || !qa_catalog_open(catalog,selected,view,error)) return false;
+    bool found=false;
+    for (size_t i=0;i<qa_vfs_mount_count(*view);++i) {
+        qa_vfs_mount_info mount;
+        if (qa_vfs_mount_at(*view,i,&mount) && !mount.is_archive && mount.writable &&
+            qa_fs_root_same_object(actual,qa_vfs_mount_root(*view,mount.id))) found=true;
+    }
+    if (!found) { qa_vfs_destroy(*view); *view=NULL;
+        return remote_q1_fail(error,QA_ERROR_ARGUMENT,"QW selected read view omits its actual shared skin write directory"); }
+    *root=actual; return true;
+}
 
 struct frontend_remote_q1_source {
     qa_frontend *frontend;
@@ -61,22 +110,13 @@ static bool disconnected(void *context, const frontend_remote_q1_domain *expecte
     bool ok = owner->options.disconnected(owner->options.context, &view.source, reason, error);
     --owner->calls; return ok;
 }
-static bool skins(void *context, const frontend_remote_q1_domain *expected, bool *ready, qa_error *error)
-{
-    frontend_remote_q1_source *owner = context; frontend_client_source_view view;
-    if (!physical(owner, expected, &view, error) || !owner->options.qw_skins) return false;
-    ++owner->calls;
-    bool ok = owner->options.qw_skins(owner->options.context, &view.source, ready, error);
-    --owner->calls;
-    return ok && physical(owner, expected, &view, error);
-}
 static bool create(qa_frontend *f, const frontend_remote_q1_source_options *options,
     const frontend_remote_q1_restore_refs *refs, qa_bytes bytes, frontend_remote_q1_source **out, qa_error *error)
 {
     if (!f || f->capture || f->resource_inventory || (refs ? !f->source_restoring : f->source_restoring) ||
         !options || !options->physical || !options->load_content || !options->service || !options->disconnected ||
         !out || *out || !qa_q1_profile_valid(options->protocol, error) ||
-        (qa_q1_is_qw(options->protocol) && !options->qw_skins)) return false;
+        (qa_q1_is_qw(options->protocol) && !options->skin_bindings)) return false;
     frontend_client_source_view view;
     bool read = refs ? frontend_client_source_metadata_read(options->physical, &view, error) :
         frontend_client_source_read(options->physical, &view, error);
@@ -92,7 +132,7 @@ static bool create(qa_frontend *f, const frontend_remote_q1_source_options *opti
     owner->retained = true;
     frontend_remote_q1_options receiver = {.domain = domain(owner, &view.source), .context = owner,
         .current = current, .load_content = load, .service = service, .disconnected = disconnected,
-        .qw_skins = options->qw_skins ? skins : NULL};
+        .skin_bindings = options->skin_bindings};
     return refs ? frontend_remote_q1_restore_prepare(f, &receiver, refs, bytes, &owner->receiver, error) :
         frontend_remote_q1_create(f, &receiver, &owner->receiver, error);
 }
@@ -102,6 +142,20 @@ bool frontend_remote_q1_source_create(qa_frontend *f, const frontend_remote_q1_s
 bool frontend_remote_q1_source_restore_prepare(qa_frontend *f, const frontend_remote_q1_source_options *options,
     const frontend_remote_q1_restore_refs *refs, qa_bytes bytes, frontend_remote_q1_source **out, qa_error *error)
 { return refs && create(f, options, refs, bytes, out, error); }
+bool frontend_remote_q1_source_checkpoint(const frontend_remote_q1_source *owner,
+    const frontend_remote_q1_restore_refs *refs, qa_buffer *out, qa_error *error)
+{
+    return owner && !owner->closing && !owner->calls && owner->retained && owner->receiver &&
+        frontend_client_source_idle(owner->options.physical) &&
+        frontend_remote_q1_checkpoint(owner->receiver, refs, out, error);
+}
+bool frontend_remote_q1_source_restore_finish(frontend_remote_q1_source *owner,
+    const frontend_remote_q1_restore_refs *refs, qa_error *error)
+{
+    return owner && !owner->closing && !owner->calls && owner->retained && owner->receiver &&
+        frontend_client_source_idle(owner->options.physical) &&
+        frontend_remote_q1_restore_finish(owner->receiver, refs, error);
+}
 bool frontend_remote_q1_source_read(const frontend_remote_q1_source *source,
     frontend_remote_q1_source_view *out, qa_error *error)
 {

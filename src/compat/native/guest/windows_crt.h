@@ -9,6 +9,7 @@ struct guest_windows_crt {
     uint32_t next_file;
     windows_stdio_pending **pending_files;
     size_t pending_file_count, pending_file_capacity;
+    bool has_file_opener;
 };
 bool windows_crt_descriptors(guest_windows *, bool, qa_error *);
 bool windows_crt_initialize(guest_windows *, qa_error *);

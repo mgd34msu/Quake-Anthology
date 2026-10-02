@@ -114,14 +114,16 @@ bool application_q3_component_create(const application_q3_component_options *o,b
     application_q3_mod_services services={.context=c,.current=q3component_current,.storage_current=q3component_storage,.pointer=pointer,.eligible_actor=eligible,.live_client=client,
         .client_slot=client_slot,.player_state=player,.time=time_read,.source_prepare=prepare,.source_enter=enter,.source_leave=leave};
     memcpy(services.operations,o->operations,sizeof(services.operations));
-    if(!application_q3_mod_create(c->profile,c->vm,o->host.session,o->host.owner,o->combat,&services,restoring,&c->mod,e)||!q3component_bind_hooks(c,e)) return false;
+    if(!application_q3_mod_create(c->profile,c->vm,o->host.session,o->host.owner,o->combat,&services,restoring,&c->mod,e)||
+        !q3component_actors_create(c,e)||!q3component_bind_hooks(c,e)||
+        !qa_qvm_bind_resolver(c->vm,q3component_actor_resolve,c,&c->actor_resolver,e)) return false;
     /* Restored publication attaches once executable activation is qualified. */
     if(!restoring&&!application_q3_component_source_attach(c->source,c->vm,c->host,e)) return false;
     return true;
 }
 bool application_q3_component_idle(const application_q3_component *c)
 { return c&&!c->busy&&!c->calls&&!c->draining&&(!c->vm||qa_qvm_can_destroy(c->vm))&&(!c->records||application_q3_component_records_idle(c->records))&&
-    (!c->mod||application_q3_mod_idle(c->mod))&&(!c->source||application_q3_component_source_idle(c->source))&&qa_console_idle(c->console); }
+    (!c->mod||application_q3_mod_idle(c->mod))&&application_q3_mod_actors_idle(c->actor_semantics)&&(!c->source||application_q3_component_source_idle(c->source))&&qa_console_idle(c->console); }
 bool application_q3_component_initialize(application_q3_component *c,qa_error *e)
 {
     if(!c||!q3component_current(c,e)||c->initialized||!application_q3_component_idle(c)) return q3records_fail(e,QA_ERROR_ARGUMENT,"Component Initialize requires its fresh actual executor");
@@ -139,7 +141,7 @@ bool application_q3_component_initialize(application_q3_component *c,qa_error *e
     if(ok) c->initialized=true;
     c->busy=false; return ok;
 }
-application_q3_component_source *application_q3_component_publication(application_q3_component *c) { return c?c->source:NULL; }
+application_q3_component_source *application_q3_component_source_read(application_q3_component *c) { return c?c->source:NULL; }
 application_q3_mod *application_q3_component_mod(application_q3_component *c) { return c?c->mod:NULL; }
 qa_console *application_q3_component_console(application_q3_component *c,qa_cvars **cvars) { if(cvars) *cvars=c?c->cvars:NULL; return c?c->console:NULL; }
 const application_q3_mod_profile *application_q3_component_profile(const application_q3_component *c) { return c?c->profile:NULL; }

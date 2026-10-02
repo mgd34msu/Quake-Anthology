@@ -1,4 +1,4 @@
-#include "network_unified.h"
+#include "network_unified_private.h"
 #include "map_players_private.h"
 #include "network_q1_source.h"
 #include "guest_q3_private.h"
@@ -7,6 +7,8 @@
 #include "native_q3_clients.h"
 #include "native_q3_wire_state.h"
 #include "native_q3_console.h"
+#include "guest_q3_components.h"
+#include "client_events.h"
 #include "qa/application_network.h"
 #include "qa/game_q1_bots.h"
 #include "qa/game_q2_bots.h"
@@ -21,17 +23,23 @@ static application_provider *primary(const qa_application *app)
     return app ? application_world_provider((qa_application *)app, QA_ROLE_ENTITIES, "") : NULL;
 }
 
-static bool source_ready(const qa_application *app, const application_provider *source)
+static bool checkpoint_lane(const qa_application *app)
+{
+    return app && app->operation == APPLICATION_PERSISTING &&
+        (app->capture_content_graph || (app->native_restore_image && app->content_graph)) &&
+        !app->publication_started && !app->finalizing;
+}
+static bool source_ready(const qa_application *app, const application_provider *source, bool checkpoint)
 {
     return app && app->state == QA_APPLICATION_RUNNING && !app->destroy_requested &&
-        app->operation == APPLICATION_IDLE && !app->frame_preparing && !app->q3_round_active &&
+        (checkpoint ? checkpoint_lane(app) : app->operation == APPLICATION_IDLE) && !app->frame_preparing && !app->q3_round_active &&
         !app->q3_world_restart && app->session && app->world && app->players &&
         qa_session_safe(app->session) && !qa_session_faulted(app->session) && qa_world_idle(app->world) &&
         source && source == app->players->map_provider && source->constructed && source->attached &&
         source->map_bound && !source->close_pending && source->owner && source->launch && source->product;
 }
 
-static bool capacity(application_provider *source, uint32_t *out, qa_error *error)
+static bool capacity(application_provider *source, uint32_t *out, bool checkpoint, qa_error *error)
 {
     if (source->kind == APPLICATION_PROVIDER_Q1)
         return qa_q1_bot_max_clients(source->state.q1, out, error);
@@ -57,33 +65,14 @@ static bool capacity(application_provider *source, uint32_t *out, qa_error *erro
     }
     struct application_q3_guest *engine = q3g_engine(source);
     if (!engine || !engine->game || !engine->game->initialized || engine->game->retired ||
-        !engine->map_ready || engine->restore_pending || engine->calls || engine->draining_clients ||
+        !engine->map_ready || (engine->restore_pending && !(checkpoint &&
+            checkpoint_lane(source->application) && source->application->native_restore_image)) || engine->calls || engine->draining_clients ||
         !engine->game->host ||
         !engine->loaded_compatibility || engine->loaded_max_clients < 1 || engine->loaded_max_clients > 64)
         return application_fail(error, QA_ERROR_UNSUPPORTED, "Unified Source has no initialized physical client owner");
     *out = (uint32_t)engine->loaded_max_clients;
     return true;
 }
-
-typedef struct retained_input {
-    qa_unified_input value;
-    qa_buffer provider, weapon;
-} retained_input;
-
-struct application_unified_inputs {
-    qa_application *application;
-    qa_network_runtime *runtime;
-    qa_net_client_id client;
-    qa_net_seat_id seat;
-    qa_actor_id actor;
-    qa_actor_owner source;
-    uint32_t epoch, source_slot;
-    uint64_t publication, map_revision, runtime_epoch;
-    retained_input *commands;
-    size_t count, cursor;
-    int64_t queued, submitted;
-    bool advancing;
-};
 
 static bool bytes_copy(qa_bytes value, qa_buffer *out, qa_error *error)
 {
@@ -257,17 +246,16 @@ bool application_unified_inputs_destroy(application_unified_inputs *owner, qa_er
     return true;
 }
 
-bool application_unified_source_read(qa_application *app, application_unified_source *out,
-    qa_error *error)
+static bool source_read(qa_application *app, application_unified_source *out, bool checkpoint, qa_error *error)
 {
     application_provider *source = primary(app);
-    if (!out || !source_ready(app, source))
+    if (!out || !source_ready(app, source, checkpoint))
         return application_fail(error, QA_ERROR_ARGUMENT, "Unified hosting requires its returned primary Source");
     qa_clock_state clock;
     uint32_t maximum;
     if (!qa_session_clock(app->session, source->owner, &clock) ||
         clock.frame.provider != source->owner || clock.frame.kind != source->component.clock.kind ||
-        !capacity(source, &maximum, error))
+        !capacity(source, &maximum, checkpoint, error))
         return application_fail(error, QA_ERROR_ARGUMENT, "Unified hosting lost its actual Source clock or client owner");
     if (!maximum || maximum > 256 || (source->product->family != QA_GAME_Q1 &&
         source->product->family != QA_GAME_Q2 && source->product->family != QA_GAME_Q3))
@@ -278,24 +266,32 @@ bool application_unified_source_read(qa_application *app, application_unified_so
         .frame_revision = app->frame_revision, .max_clients = maximum};
     return true;
 }
+bool application_unified_source_read(qa_application *app, application_unified_source *out, qa_error *error)
+{ return source_read(app,out,false,error); }
+bool application_unified_source_checkpoint_read(qa_application *app, application_unified_source *out, qa_error *error)
+{ return source_read(app,out,true,error); }
 
-bool application_unified_source_current(const qa_application *app, const application_unified_source *receipt)
+static bool source_current(const qa_application *app, const application_unified_source *receipt, bool checkpoint)
 {
     application_provider *source = primary(app);
     qa_clock_state clock;
     uint32_t maximum;
-    return receipt && source_ready(app, source) && source->owner == receipt->owner &&
+    return receipt && source_ready(app, source, checkpoint) && source->owner == receipt->owner &&
         source->product->family == receipt->family && qa_application_launch(app) == receipt->launch &&
         app->session == receipt->session && app->world == receipt->world &&
         app->publication_generation == receipt->publication && app->map_revision == receipt->map_revision &&
         app->frame_revision == receipt->frame_revision &&
-        capacity(source, &maximum, NULL) && maximum == receipt->max_clients &&
+        capacity(source, &maximum, checkpoint, NULL) && maximum == receipt->max_clients &&
         qa_session_clock(app->session, source->owner, &clock) &&
         clock.frame.provider == receipt->frame.provider && clock.frame.kind == receipt->frame.kind &&
         clock.frame.phase == receipt->frame.phase && clock.frame.number == receipt->frame.number &&
         clock.frame.start_ns == receipt->frame.start_ns && clock.frame.time_ns == receipt->frame.time_ns &&
         clock.frame.elapsed_ns == receipt->frame.elapsed_ns;
 }
+bool application_unified_source_current(const qa_application *app, const application_unified_source *receipt)
+{ return source_current(app,receipt,false); }
+bool application_unified_source_checkpoint_current(const qa_application *app, const application_unified_source *receipt)
+{ return source_current(app,receipt,true); }
 
 bool application_unified_source_slot_occupied(qa_application *app, uint32_t slot,
     bool *out, qa_error *error)
@@ -405,11 +401,11 @@ static bool physical_player(application_provider *source, const application_play
     return true;
 }
 
-bool application_unified_player_read(qa_application *app, qa_net_client_id client, qa_net_seat_id seat,
-    qa_unified_session_player *out, qa_error *error)
+static bool player_read(qa_application *app, qa_net_client_id client, qa_net_seat_id seat,
+    qa_unified_session_player *out, bool checkpoint, qa_error *error)
 {
     application_unified_source source;
-    if (!out || !application_unified_source_read(app, &source, error)) return false;
+    if (!out || !source_read(app, &source, checkpoint, error)) return false;
     const application_player_record *row = remote(app, client, seat);
     qa_application_control_view control;
     if (!row || row->deferred || row->source_begin_pending || row->client_slot >= source.max_clients ||
@@ -420,13 +416,19 @@ bool application_unified_player_read(qa_application *app, qa_net_client_id clien
     if (!physical_player(primary(app), row, &entity, error)) return false;
     application_provider *arsenal = application_provider_for(app, row->actor, QA_ROLE_ARSENAL, "");
     const char *instance = arsenal && arsenal->launch ? arsenal->launch->selection.instance : NULL;
-    if (!instance || !instance[0] || !application_unified_source_current(app, &source))
+    if (!instance || !instance[0] || !source_current(app, &source, checkpoint))
         return application_fail(error, QA_ERROR_ARGUMENT, "Unified player lost its selected arsenal or Source receipt");
     *out = (qa_unified_session_player){.actor = row->actor, .seat = seat,
         .movement = control.state.kind, .arsenal = {(const uint8_t *)instance, strlen(instance)},
         .source_owner = source.owner, .source_slot = entity};
     return true;
 }
+bool application_unified_player_read(qa_application *app, qa_net_client_id client, qa_net_seat_id seat,
+    qa_unified_session_player *out, qa_error *error)
+{ return player_read(app,client,seat,out,false,error); }
+bool application_unified_player_checkpoint_read(qa_application *app, qa_net_client_id client, qa_net_seat_id seat,
+    qa_unified_session_player *out, qa_error *error)
+{ return player_read(app,client,seat,out,true,error); }
 
 bool application_unified_player_current(qa_application *app, qa_net_client_id client,
     const qa_unified_session_player *player)
@@ -436,6 +438,15 @@ bool application_unified_player_current(qa_application *app, qa_net_client_id cl
         qa_actor_id_equal(actual.actor, player->actor) && actual.movement == player->movement &&
         actual.source_owner == player->source_owner && actual.source_slot == player->source_slot &&
         same_bytes(actual.arsenal, player->arsenal);
+}
+bool application_unified_player_checkpoint_current(qa_application *app, qa_net_client_id client,
+    const qa_unified_session_player *player)
+{
+    qa_unified_session_player actual;
+    return player && player_read(app,client,player->seat,&actual,true,NULL) &&
+        qa_actor_id_equal(actual.actor,player->actor) && actual.movement==player->movement &&
+        actual.source_owner==player->source_owner && actual.source_slot==player->source_slot &&
+        same_bytes(actual.arsenal,player->arsenal);
 }
 
 bool application_unified_player_input(qa_application *app, qa_net_client_id client,
@@ -554,6 +565,24 @@ static bool userinfo_source(application_provider *source, const qa_unified_sessi
     return application_q3_guest_client_userinfo(source, client_slot, value, error);
 }
 
+static void q1_name(const char *value, char out[46])
+{
+    qa_bytes text={(const uint8_t *)value,strlen(value)};
+    size_t cursor=0, units=0, written=0; uint32_t scalar;
+    while (units<15 && qa_utf8_next(text,&cursor,&scalar)) {
+        if (scalar>0xffff && units==14) {
+            uint32_t high=0xd800+((scalar-0x10000)>>10);
+            out[written++]=(char)(0xe0|(high>>12));
+            out[written++]=(char)(0x80|((high>>6)&63));
+            out[written++]=(char)(0x80|(high&63));
+            break;
+        }
+        written+=qa_utf8_encode(scalar,out+written);
+        units+=scalar>0xffff?2:1;
+    }
+    out[written]=0;
+}
+
 bool application_unified_player_userinfo(qa_application *app, qa_net_client_id client,
     qa_net_seat_id seat, const char *value, qa_error *error)
 {
@@ -582,6 +611,7 @@ bool application_unified_player_userinfo(qa_application *app, qa_net_client_id c
     application_player_record *actual = (application_player_record *)row;
     free(actual->userinfo); actual->userinfo = canonical;
     if (!userinfo_source(source, &player, slot, canonical, error) ||
+        !application_client_userinfo_changed(app, player.actor, error) ||
         !application_unified_source_current(app, &receipt) ||
         !application_unified_player_current(app, client, &player)) {
         application_fault(app, error); return false;
@@ -658,9 +688,21 @@ bool application_unified_player_command(qa_application *app, qa_net_client_id cl
     bool handled = false;
     if (okay && source->kind == APPLICATION_PROVIDER_Q1 && !strcmp(name, "name")) {
         const char *value = count ? arguments[0] : "unconnected";
-        char truncated[16]; size_t length = strlen(value); if (length > 15) length = 15;
-        memcpy(truncated, value, length); truncated[length] = 0;
-        okay = qa_q1_source_client_name(source->state.q1, player.actor, truncated, error); handled = true;
+        char declared_name[46]; q1_name(value,declared_name);
+        okay = qa_q1_source_client_name(source->state.q1, player.actor, declared_name, error); handled = true;
+        qa_buffer userinfo = {0}; qa_q1_source_client_view current;
+        if (okay) okay = qa_q1_source_client_read(source->state.q1,player.actor,&current) &&
+            qa_q1_source_client_userinfo_read(source->state.q1,player.actor,true,&userinfo,error);
+        char *declared = okay ? malloc(strlen(current.name)+1) : NULL;
+        if (okay && !declared) okay = application_fail(error,QA_ERROR_MEMORY,"Retaining changed Source client name");
+        if (okay) {
+            strcpy(declared,current.name);
+            application_player_record *actual = (application_player_record *)row;
+            free(actual->name); actual->name=declared;
+            free(actual->userinfo); actual->userinfo=(char *)userinfo.data; userinfo=(qa_buffer){0};
+            okay=application_client_userinfo_changed(app,player.actor,error);
+        }
+        qa_buffer_free(&userinfo);
     }
     if (okay && !handled && source->kind == APPLICATION_PROVIDER_Q1 && !strcmp(name, "color")) {
         const char *top = count ? arguments[0] : "0";
@@ -686,6 +728,41 @@ bool application_unified_player_command(qa_application *app, qa_net_client_id cl
     free(args);
     if (!okay) { application_fault(app, error); return false; }
     return true;
+}
+
+bool application_unified_component_command(qa_application *app, qa_net_client_id client,
+    qa_net_seat_id seat, const qa_unified_document *owner, uint64_t generation,
+    const char *const *arguments, size_t count, qa_error *error)
+{
+    qa_unified_session_player player;
+    if (!owner || !arguments || !count || count > 128 ||
+        !application_unified_player_read(app, client, seat, &player, error))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Component command requires its admitted Source recipient");
+    size_t extent = 0;
+    for (size_t i = 0; i < count; ++i) {
+        if (!arguments[i] || strlen(arguments[i]) > 8192)
+            return application_fail(error, QA_ERROR_FORMAT, "Component command argument exceeds its actual immutable extent");
+        if (i) extent += strlen(arguments[i]) + (i > 1);
+    }
+    char *tail = malloc(extent + 1);
+    if (!tail) return application_fail(error, QA_ERROR_MEMORY, "Retaining component command arguments");
+    size_t offset = 0;
+    for (size_t i = 1; i < count; ++i) {
+        if (i > 1) tail[offset++] = ' ';
+        size_t length = strlen(arguments[i]); memcpy(tail + offset, arguments[i], length); offset += length;
+    }
+    tail[offset] = 0;
+    const application_player_record *row = remote(app, client, seat);
+    qa_command_invocation command = {.console = app->console, .argc = count, .argv = arguments,
+        .args_text = tail, .context = {.origin = QA_COMMAND_REMOTE, .owner = player.source_owner,
+        .actor = player.actor, .seat = row->seat, .dialect = QA_CONSOLE_Q3}};
+    bool handled = false;
+    bool okay = qa_application_capture_command_context(app, &command.context, &command.context, error) &&
+        application_q3_components_command(app, player.actor, owner, generation, &command, &handled, error);
+    free(tail);
+    if (okay && !handled)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Component command names no admitted recipient handler");
+    return okay;
 }
 
 bool application_unified_player_admit(qa_application *app,

@@ -4,6 +4,7 @@
 #include "qa/input.h"
 #include "qa/bot_runtime.h"
 #include "qa/scene_world_save.h"
+#include "qa/q3_presentation.h"
 
 static bool vm_read(void *context, uint64_t address, void *out, size_t size, qa_error *error)
 {
@@ -259,6 +260,11 @@ bool qa_q3_host_client_context_read(const qa_q3_host *host, qa_q3_host_client_co
         .client_time_owner = host->options.client_time_owner,
         .frontend_lifetime = host->options.frontend_lifetime};
     return true;
+}
+qa_q3_presentation_assets *qa_q3_host_presentation_resources(const qa_q3_host *host)
+{
+    return host && !host->retired && host->options.presentation.seat ?
+        qa_q3_presentation_resources(host->options.presentation.seat) : NULL;
 }
 
 bool qa_q3_host_create(const qa_q3_host_options *options, qa_q3_host **out, qa_error *error)

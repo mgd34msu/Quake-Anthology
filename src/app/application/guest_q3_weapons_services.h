@@ -61,6 +61,8 @@ bool application_q3_weapons_services_q2_powerups(void *actual_native_q2_provider
     qa_actor_id, qa_builtin_powerups *, bool *handled, qa_error *);
 bool application_q3_weapons_services_q2_input(void *actual_native_q2_provider,
     qa_actor_id, qa_q2_weapon_input *, qa_error *);
+bool application_q3_weapons_services_q1_damage(void *actual_native_q1_provider,
+    qa_damage_request *, qa_error *);
 /* Request payload imports only into the isolated restored constructor; full
  * actor references are checked after Source RAM and clients have been adopted. */
 bool application_q3_weapons_services_checkpoint(application_q3_weapons_services *, qa_buffer *, qa_error *);

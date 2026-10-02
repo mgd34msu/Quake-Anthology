@@ -1,6 +1,7 @@
 #include "internal.h"
 
 #include <math.h>
+#include "../../world/collision/internal.h"
 
 static void store_f32(uint8_t *out, float value)
 {
@@ -443,7 +444,8 @@ static bool lifetime_capacity(qa_native_host *host, uint32_t slot, qa_error *err
     if (slot < host->q2_lifetime_capacity) return true;
     qa_native_entity_table table;
     if (!qa_native_entity_table_get(host->instance, &table, error)) return false;
-    if (slot >= table.capacity || table.capacity > SIZE_MAX / sizeof(*host->q2_lifetimes))
+    size_t bytes = (size_t)table.capacity * sizeof(*host->q2_lifetimes);
+    if (slot >= table.capacity || bytes / sizeof(*host->q2_lifetimes) != table.capacity)
         return native_host_fail(error, QA_ERROR_FORMAT, slot, "Native Q2 link leaves its real Source table");
     native_host_q2_lifetime *values = calloc(table.capacity, sizeof(*values));
     if (!values) return native_host_fail(error, QA_ERROR_MEMORY, slot, "Retaining native Q2 Source creation metadata");
@@ -631,6 +633,8 @@ bool native_host_link(qa_native_host *host, qa_native_address address, qa_error 
         lifetime->origins[frame & 7u] = (qa_native_host_q2_origin){
             .source_frame = frame, .origin = origin, .present = true};
     }
+    host->q2_lifetimes[slot].actor = actor;
+    host->q2_lifetimes[slot].linked = true;
     return true;
 }
 
@@ -649,8 +653,10 @@ bool native_host_unlink(qa_native_host *host, qa_native_address address, qa_erro
     if (binding.kind != QA_NATIVE_SLOT_BORROWED && actor.registry && slot != 0 &&
         !qa_world_unlink(host->world.world, actor, error))
         return false;
-    if (host->profile == QA_NATIVE_Q2_GAME_API2023 && slot != 0)
-        return native_host_write_u8(host, address + NATIVE_Q2_RR_LINKED, 0, error);
+    if (host->profile == QA_NATIVE_Q2_GAME_API2023 && slot != 0 &&
+        !native_host_write_u8(host, address + NATIVE_Q2_RR_LINKED, 0, error)) return false;
+    if (slot < host->q2_lifetime_capacity && qa_actor_id_equal(host->q2_lifetimes[slot].actor, actor))
+        host->q2_lifetimes[slot].linked = false;
     return true;
 }
 
@@ -919,7 +925,7 @@ bool native_host_box_edicts(qa_native_host *host, const qa_native_import_call *c
     int32_t area = native_argument_i32(call, 4);
     if (area != 1 && area != 2) {
         free(actors);
-        return native_host_fail(error, QA_ERROR_ARGUMENT, area,
+        return native_host_fail(error, QA_ERROR_ARGUMENT, (size_t)(uint32_t)area,
                                 "native BoxEdicts area is invalid");
     }
     box_visit_context visit = {.actors = actors, .capacity = candidate_capacity};
@@ -967,7 +973,7 @@ bool native_host_box_edicts(qa_native_host *host, const qa_native_import_call *c
                 }
                 decision = filter_result.as.i32;
                 if (decision & ~65) {
-                    ok = native_host_fail(error, QA_ERROR_FORMAT, decision,
+                    ok = native_host_fail(error, QA_ERROR_FORMAT, (size_t)(uint32_t)decision,
                                           "native BoxEdicts filter returned invalid flags");
                     break;
                 }

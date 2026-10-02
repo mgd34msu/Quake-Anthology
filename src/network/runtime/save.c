@@ -14,7 +14,7 @@ bool qa_network_connections_checkpoint(const qa_network_runtime *runtime, const 
     qa_buffer *out, qa_error *error)
 {
     if (!runtime || !refs || !out || !qa_network_callbacks_idle(runtime) ||
-        runtime->options.clients > (SIZE_MAX - 16) / 512)
+        (runtime->options.clients && (SIZE_MAX - 16) / runtime->options.clients < 512))
         return qa_network_fail(error, "Network continuation requires an idle runtime owner");
     qa_buffer table = {0}; qa_net_writer tw;
     if (!writer_storage((size_t)runtime->options.clients * 512 + 16, &table, &tw, error)) return false;
@@ -34,7 +34,10 @@ bool qa_network_connections_checkpoint(const qa_network_runtime *runtime, const 
         if (!client || !peer->epoch || peer->seat_count != client->seat_count) {
             ok = qa_network_fail(error, "Network peer and connection inventory differ"); break;
         }
-        if(qa_network_q1_client_peer(peer)) {
+        if(qa_network_local_peer(peer)) {
+            kinds[i]=QA_NETWORK_SOURCE_LOCAL;
+            ok=qa_network_local_checkpoint_peer(peer,refs,&sources[i],error);
+        } else if(qa_network_q1_client_peer(peer)) {
             kinds[i]=QA_NETWORK_SOURCE_Q1_CLIENT;
             ok=qa_network_q1_client_checkpoint_peer(peer,&sources[i],error);
         } else if (qa_network_nq_peer(peer)) {
@@ -87,7 +90,7 @@ bool qa_network_connections_restore(qa_bytes bytes, qa_net_transport *transport,
     if (!options || !out || !transport || !refs ||
         (!refs->source && !refs->source_nq && !refs->source_qw &&
          !refs->q2.source_server && !refs->q2.source_client && !refs->source_unified &&
-         !refs->source_q1_client) || !bytes.data)
+         !refs->source_q1_client && !refs->source_local) || !bytes.data)
         return qa_network_fail(error, "Network restore requires qualified candidate consumers");
     qa_net_reader r; qa_net_reader_init(&r, bytes, error);
     uint32_t tag = qa_net_read_u32(&r), version = qa_net_read_u32(&r);
@@ -118,8 +121,13 @@ bool qa_network_connections_restore(qa_bytes bytes, qa_net_transport *transport,
             qa_net_reader_fail(&r, "Saved source peer has no admitted connection"); goto failure;
         }
         qa_network_peer *peer = &runtime->peers[slot];
+        /* Canonical identity and epoch precede physical Source callbacks;
+         * the owned protocol channel transfers only after decoding succeeds. */
+        peer->id=client->id; peer->epoch=epoch; peer->seat_count=client->seat_count;
         bool restored;
-        if(kind==QA_NETWORK_SOURCE_Q1_CLIENT) {
+        if(kind==QA_NETWORK_SOURCE_LOCAL) {
+            restored=qa_network_local_restore_peer(runtime,client,source,refs,peer,error);
+        } else if(kind==QA_NETWORK_SOURCE_Q1_CLIENT) {
             qa_network_q1_client_policy policy={0}; qa_network_q1_client_hooks hooks={0};
             restored=refs->source_q1_client && refs->source_q1_client(refs->context,client,&policy,&hooks,error) &&
                 qa_network_q1_client_restore_peer(runtime,client,source,&policy,&hooks,peer,error);
@@ -177,10 +185,8 @@ bool qa_network_source_publication_ready(const qa_network_runtime *runtime,qa_er
             !qa_unified_session_peer_source_ready(&runtime->peers[i],error)) return false;
     return true;
 }
-void qa_network_transport_exchange(qa_network_runtime *active, qa_network_runtime *candidate)
+void qa_network_transport_publish_retained(qa_network_runtime *active,qa_network_runtime *candidate)
 {
-    qa_net_transport *transport = active->transport;
-    active->transport = candidate->transport; candidate->transport = transport;
     for (uint32_t i = 0; i < active->options.clients; ++i)
         if (active->peers[i].occupied) {
             qa_unified_session_peer_source_retire(&active->peers[i]);
@@ -195,6 +201,12 @@ void qa_network_transport_exchange(qa_network_runtime *active, qa_network_runtim
             qa_network_qw_transport_rebind(&candidate->peers[i], candidate->transport);
             qa_network_q1_client_transport_rebind(&candidate->peers[i],candidate->transport);
         }
+}
+void qa_network_transport_exchange(qa_network_runtime *active, qa_network_runtime *candidate)
+{
+    qa_net_transport *transport = active->transport;
+    active->transport = candidate->transport; candidate->transport = transport;
+    qa_network_transport_publish_retained(active,candidate);
 }
 const qa_net_address *qa_network_local_address(const qa_network_runtime *runtime)
 { return runtime ? qa_net_transport_address(runtime->transport) : NULL; }

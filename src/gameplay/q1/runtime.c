@@ -1107,17 +1107,19 @@ static void damage_geometry(qa_q1_game *g, qa_damage_request *request) {
 bool q1_damage_typed(qa_q1_game *g, qa_actor_id target, qa_actor_id inflictor, qa_actor_id attacker,
                      float amount, qa_q1_weapon weapon, qa_q1_armor_effect armor,
                      qa_string_id death_type, qa_error *error) {
-    if (!q1_damageable(g, target))
-        return true;
     qa_damage_request request = {
         .attack = q1_attack(g, attacker, inflictor, weapon), .target = target, .amount = amount};
     request.attack.cause = (qa_damage_cause){
         .kind = QA_CAUSE_Q1, .source.q1 = {.armor = armor, .death_type = death_type}};
-    if (!qa_attack_next(&g->attack_sequence, &request.attack, error))
-        return false;
     if (g->host.combat_provider)
         request.attack.combat_provider = g->host.combat_provider(g->host.context, target);
     damage_geometry(g, &request);
+    if (g->host.source_damage && !g->host.source_damage(g->host.context, &request, error))
+        return false;
+    if (!q1_damageable(g, target)) return true;
+    if (!qa_attack_next(&g->attack_sequence, &request.attack, error))
+        return false;
+    if (!q1_alive(g, target)) return true;
     qa_damage_outcome outcome = {0};
     bool ok = qa_combat_apply(g->services.combat, &request, &outcome, error);
     qa_damage_outcome_free(&outcome);
@@ -1135,11 +1137,13 @@ static bool radius_adjust(void *context, qa_actor_id target, float *damage, floa
 }
 static bool radius_prepare(void *context, qa_damage_request *request, bool *allowed,
                            qa_error *error) {
-    (void)allowed;
     qa_q1_game *g = context;
     if (g->host.combat_provider)
         request->attack.combat_provider = g->host.combat_provider(g->host.context, request->target);
     damage_geometry(g, request);
+    if (g->host.source_damage && !g->host.source_damage(g->host.context, request, error))
+        return false;
+    if (!q1_alive(g, request->target)) { *allowed = false; return true; }
     return qa_attack_next(&g->attack_sequence, &request->attack, error);
 }
 bool q1_radius(qa_q1_game *g, qa_actor_id inflictor, qa_actor_id attacker, float amount,

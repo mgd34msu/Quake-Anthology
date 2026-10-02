@@ -83,7 +83,7 @@ bool q2_item_armor_result(qa_q2_game *g, const qa_q2_item_definition *d,
             .protection.q2 = {.normal = d->normal_protection, .energy = d->energy_protection}};
     } else {
         const qa_q2_item_definition *previous = q2_item_by_id(g, old->item);
-        float maximum = previous ? previous->capacity : 200;
+        float maximum = previous ? (float)previous->capacity : 200.0f;
         float salvage =
             old->protection.q2.normal > 0
                 ? truncf((float)d->quantity * d->normal_protection / old->protection.q2.normal)
@@ -127,14 +127,14 @@ bool q2_item_grant(qa_q2_game *g, q2_actor *a, qa_actor_id recipient, bool *acce
         if (!qa_combat_set_health(
                 g->services.combat, recipient,
                 d->ignore_maximum
-                    ? combat.health + (item->spawn.count ? item->spawn.count : d->quantity)
+                    ? combat.health + (float)(item->spawn.count ? item->spawn.count : d->quantity)
                     : fminf(powers->maximum_health,
-                            combat.health + (item->spawn.count ? item->spawn.count : d->quantity)),
+                            combat.health + (float)(item->spawn.count ? item->spawn.count : d->quantity)),
                 e))
             return false;
         break;
     case QA_Q2_ITEM_FOOD:
-        if (!qa_combat_set_health(g->services.combat, recipient, combat.health + item->spawn.count,
+        if (!qa_combat_set_health(g->services.combat, recipient, combat.health + (float)item->spawn.count,
                                   e))
             return false;
         break;
@@ -142,7 +142,7 @@ bool q2_item_grant(qa_q2_game *g, q2_actor *a, qa_actor_id recipient, bool *acce
     case QA_Q2_ITEM_SHARD:
         return armor(g, recipient, d, &combat.armor.regular, accepted, e);
     case QA_Q2_ITEM_MAX_HEALTH:
-        powers->maximum_health += d->fill && g->options.deathmatch ? 0 : d->quantity;
+        powers->maximum_health += d->fill && g->options.deathmatch ? 0.0f : (float)d->quantity;
         if (d->fill && combat.health < powers->maximum_health &&
             !qa_combat_set_health(g->services.combat, recipient, powers->maximum_health, e))
             return false;

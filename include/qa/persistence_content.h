@@ -34,7 +34,11 @@ bool qa_application_content_resource_id(const qa_application_content_graph *,
  * private VFS has one destructor owner; catalog-owned views cannot be claimed.
  * Outputs must be empty. Borrowed aliases use the lookup functions above. */
 bool qa_application_content_claim_pool(qa_application_content_graph *, uint64_t,
-    qa_resource_pool **, qa_error *);
+                                     qa_resource_pool **, qa_error *);
+/* Own the decoded graph reference if still unclaimed, otherwise retain its
+ * already adopted real pool. Both cases return one releasable reference. */
+bool qa_application_content_retain_pool(qa_application_content_graph *, uint64_t,
+                                      qa_resource_pool **, qa_error *);
 bool qa_application_content_claim_view(qa_application_content_graph *, uint64_t,
     qa_vfs **, qa_error *);
 bool qa_application_content_retain_catalog(qa_application_content_graph *, uint64_t,

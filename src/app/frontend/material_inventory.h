@@ -8,6 +8,7 @@
  * content. The aggregate holds its frontend/content/scene leases throughout
  * collection and the complete codecs, and uses these ordinals for Q3 assets. */
 bool frontend_materials_capture_namespace(qa_frontend *, frontend_scene_namespace *, qa_error *);
+bool frontend_materials_capture_world_history(qa_frontend *, frontend_scene_namespace *, qa_error *);
 bool frontend_materials_checkpoint(qa_frontend *, frontend_scene_namespace *, qa_buffer *, qa_error *);
 /* Candidate construction provides genuine empty detached library placeholders
  * at their stable borrowed addresses and an empty renderer order. The complete

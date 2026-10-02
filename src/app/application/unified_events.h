@@ -24,13 +24,54 @@ typedef struct application_unified_event_record {
     uint64_t order, presentation_sequence, simulation_sequence, time_ns, simulation_time_ns;
     qa_clock_kind clock, presentation_clock;
     qa_actor_id recipient, simulation_recipient;
+    qa_saved_actor_id recipient_saved, simulation_recipient_saved;
     qa_net_client_id client;
     qa_actor_owner provider;
     qa_string_id content;
     int32_t source_entity;
     bool has_source_entity;
     bool link_presentation;
+    /* Native receipt: payload ActorIds use imported checkpoint history after
+     * decode. The original pair stays in the continuation until projection. */
+    bool payload_checkpoint;
+    uint64_t owner_generation;
 } application_unified_event_record;
+
+typedef struct application_unified_event_owner {
+    qa_actor_owner provider;
+    qa_string_id content;
+    uint64_t generation;
+    bool active;
+} application_unified_event_owner;
+struct application_provider;
+bool application_unified_event_owner_bind(qa_application *, struct application_provider *,
+    bool primary, bool restoring, qa_error *);
+bool application_unified_event_component_owner_bind(qa_application *, qa_actor_owner,
+    bool restoring, qa_error *);
+
+typedef struct application_unified_event_source {
+    qa_actor_owner owner;
+    const qa_launch_instance *descriptor;
+    const qa_product *product;
+    qa_vfs *content;
+    qa_clock_kind clock;
+    uint64_t owner_generation;
+} application_unified_event_source;
+bool application_unified_event_source_read(qa_application *, qa_actor_owner,
+    application_unified_event_source *, qa_error *);
+
+typedef struct application_unified_persistent_event {
+    application_unified_event_record event;
+    qa_buffer key, payload;
+} application_unified_persistent_event;
+
+bool application_unified_persistent_key(qa_application *,
+    const application_unified_event_record *, qa_buffer *, bool *remove, qa_error *);
+void application_unified_persistent_dispose(qa_application *);
+bool application_unified_persistent_retire(qa_application *, qa_actor_owner,
+    qa_actor_id recipient, qa_error *);
+bool application_unified_event_owner_retire(qa_application *, qa_actor_owner,
+    const qa_source_frame *actual_primary_clock, qa_error *);
 
 typedef struct application_unified_event_resource {
     qa_actor_owner provider;
@@ -82,6 +123,9 @@ bool application_unified_event_emit(qa_application *, qa_actor_owner,
     qa_actor_id simulation_recipient, uint64_t time_ns, int32_t source_entity,
     bool has_source_entity, bool link_presentation, qa_error *);
 bool application_unified_event_payload_valid(qa_bytes, bool presentation, bool link_presentation, qa_error *);
+bool application_unified_event_actors_valid(qa_application *, const application_unified_event_record *, qa_error *);
+bool application_unified_event_recipient(qa_application *, const application_unified_event_record *,
+    bool simulation, qa_actor_id *, qa_error *);
 bool application_unified_damage_emit(qa_application *, const qa_damage_outcome *, qa_error *);
 
 bool application_event_journal_reserve(qa_application *, qa_error *);
@@ -102,11 +146,17 @@ typedef struct application_unified_events {
     size_t resource_count;
     uint64_t registration_revision;
     uint64_t world_text_revision;
+    uint64_t persistent_revision;
 } application_unified_events;
 
 bool application_unified_events_read(qa_application *, const application_unified_source *,
     qa_net_client_id, const qa_unified_session_player *, uint32_t epoch,
     uint64_t after, application_unified_events *, qa_error *);
+/* Actual admission reads retained presentation only. It owns no simulation
+ * replay; through is committed by the caller after retaining every control. */
+bool application_unified_events_initial_read(qa_application *, const application_unified_source *,
+    qa_net_client_id, const qa_unified_session_player *, uint32_t epoch,
+    application_unified_events *, qa_error *);
 bool application_unified_events_current(const application_unified_events *);
 void application_unified_events_dispose(application_unified_events *);
 

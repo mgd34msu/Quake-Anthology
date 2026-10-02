@@ -362,7 +362,10 @@ bool qa_scene_world_source_sky_context(const qa_scene_world *world, qa_material_
     qaw_source_sky *sky = qa_arena_alloc(&frame->storage, sizeof(*sky), _Alignof(qaw_source_sky), error);
     if (!sky) return false;
     *sky = (qaw_source_sky){world, materials, *input};
-    context->source_surface = source_sky_end; context->source_surface_context = sky; return true;
+    context->source_surface = source_sky_end; context->source_surface_context = sky;
+    context->source_sky_world = (qa_scene_world *)world;
+    context->source_sky_far_clip = input->source_far_clip;
+    return true;
 }
 
 static bool submit_material_sky(const qa_scene_world *world, qa_material_library *materials, const qa_material *original,
@@ -423,6 +426,7 @@ static bool submit_material_sky(const qa_scene_world *world, qa_material_library
                         ((uint64_t)context->fog_index << 2) |
                         ((context->source_scratch ? context->source_dlighted : context->light_mask != 0) ? 1u : 0u);
         draw.environment = QA_TEXTURE_MODULATE;
+        if (context->source_scratch) draw.source_direct = QA_SOURCE_DIRECT_SKY;
         qa_scene_state_default(&draw.state);
         draw.state.cull = QA_CULL_NONE;
         draw.state.depth_near = draw.state.depth_far = context->source_scratch && context->source_diagnostics.show_sky ? 0 : 1;
@@ -451,6 +455,20 @@ bool qaw_submit_material_sky(const qa_scene_world *world, const qa_material *ori
     const qa_scene_world_input *input, qa_scene_frame *frame, qa_error *error)
 {
     return submit_material_sky(world, world->materials, original, material, mesh, context, input, frame, error);
+}
+bool qa_scene_world_source_sky_submit(const qa_scene_world *world, const qa_material *original,
+    const qa_material *material, const qa_scene_mesh *mesh, const qa_material_context *context,
+    float far_clip, qa_scene_frame *frame, qa_error *error)
+{
+    if (!material || !material->library || !context || !context->source_scratch ||
+        (world && !qa_scene_world_observation_ready(world))) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Source sky lost its actual world or registered shader owner");
+        return false;
+    }
+    qa_scene_world_input input = {.view = context->view, .source_scratch = context->source_scratch,
+        .source_far_clip = far_clip, .source_order = true,
+        .fast_sky = context->source_diagnostics.fast_sky};
+    return submit_material_sky(world, material->library, original, material, mesh, context, &input, frame, error);
 }
 
 bool qaw_submit_q3(qa_scene_world *world, qaw_surface *surface, const qa_material_context *context,

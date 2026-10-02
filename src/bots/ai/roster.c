@@ -28,7 +28,7 @@ bool bot_ai_context_create(qa_bot_runtime *runtime, const qa_bot_services *servi
         !services->submit || !services->random || !services->source_client || !services->source_actor ||
         !services->memory.allocate || !services->memory.read || !services->memory.write || !services->memory.borrow_span)
         return bot_ai_fail(e, "native bot population requires live shared gameplay and botlib services");
-    if (client_capacity > INT32_MAX || (uint64_t)client_capacity > SIZE_MAX / sizeof(bot_ai_state *))
+    if (client_capacity > INT32_MAX || (client_capacity && SIZE_MAX / client_capacity < sizeof(bot_ai_state *)))
         return bot_ai_fail(e, "native bot client capacity exceeds its source memory extent");
     qa_bots *b = calloc(1, sizeof(*b));
     if (!b) { qa_error_set(e, QA_ERROR_MEMORY, 0, "allocating native bot population"); return false; }
@@ -346,7 +346,7 @@ static bool admit(qa_bots *b,const qa_bot_admission *a,bool *rejected,qa_error *
         return bot_ai_fail(e,"bot source or virtual client already has an active setup state");
     if (a->actor.slot >= b->actor_capacity) {
         uint32_t capacity=qa_actors_capacity(qa_session_actors(b->services.shared.session));
-        if ((size_t)capacity>SIZE_MAX/sizeof(*b->actor_clients)) return bot_ai_fail(e,"bot actor lookup overflow");
+        if (capacity && SIZE_MAX/capacity<sizeof(*b->actor_clients)) return bot_ai_fail(e,"bot actor lookup overflow");
         uint32_t *lookup=realloc(b->actor_clients,(size_t)capacity*sizeof(*lookup));
         if (!lookup) {qa_error_set(e,QA_ERROR_MEMORY,capacity,"growing bot actor lookup");return false;}
         memset(lookup+b->actor_capacity,0,(capacity-b->actor_capacity)*sizeof(*lookup));
@@ -435,7 +435,8 @@ bool qa_bots_admit_source(qa_bots *b,const qa_bot_admission *a,bool *accepted,qa
     bool okay=admit(b,a,&rejected,&source_error);
     if(okay) {*accepted=true;return true;}
     if(rejected) return true;
-    if(e) *e=source_error;return false;
+    if(e) *e=source_error;
+    return false;
 }
 bool qa_bots_release(qa_bots *b, qa_actor_id actor, qa_error *e) {
     if (!bot_ai_mutable(b, e)) return false;

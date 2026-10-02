@@ -6,6 +6,7 @@
 #include "qa/material_library_save.h"
 #include "qa/font_save.h"
 #include "capture.h"
+#include "remote_q2_effects.h"
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -42,7 +43,8 @@ bool remote_q2_domain_equal(const frontend_remote_q2_domain *a, const frontend_r
 }
 bool remote_q2_live(const frontend_remote_q2 *row, qa_error *error)
 {
-    if (!row || !linked(row) || !row->bound || row->retired || row->importing || row->image_policy || row->frontend->resource_inventory ||
+    if (!row || !linked(row) || !row->bound || row->retired || row->importing || row->image_policy ||
+        row->frontend->capture || row->frontend->resource_inventory ||
         row->frontend->application != row->options.domain.application ||
         qa_network_epoch(row->options.domain.runtime, row->options.domain.client) != row->options.domain.epoch)
         return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Remote Q2 receiver has no current authenticated CLIENT");
@@ -105,7 +107,7 @@ bool frontend_remote_q2_create(qa_frontend *f, const frontend_remote_q2_options 
 {
     const frontend_remote_q2_domain *d = options ? &options->domain : NULL;
     const qa_product *product = d ? qa_catalog_product(d->catalog, d->product) : NULL;
-    if (!f || f->resource_inventory || !options || !out || *out || !options->current || !options->download_allowed || !options->download_nonce || !options->records ||
+    if (!f || f->capture || f->resource_inventory || !options || !out || *out || !options->current || !options->download_allowed || !options->download_nonce || !options->records ||
         !options->disconnected || !d->application || f->application != d->application ||
         !d->runtime || !d->console || !d->cvars || !product || product->family != QA_GAME_Q2 ||
         d->physical_seat >= f->options.seats || !f->seats || !f->seats[d->physical_seat].input ||
@@ -124,7 +126,7 @@ bool frontend_remote_q2_create(qa_frontend *f, const frontend_remote_q2_options 
 }
 bool frontend_remote_q2_bind(frontend_remote_q2 *row, const frontend_remote_q2_domain *actual, qa_error *error)
 {
-    if (!row || !actual || !linked(row) || row->frontend->resource_inventory || row->bound || row->busy || row->retired ||
+    if (!row || !actual || !linked(row) || row->frontend->capture || row->frontend->resource_inventory || row->image_policy || row->bound || row->busy || row->retired ||
         !actual->client.owner || !actual->client.generation || !actual->epoch)
         return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 bind requires its actual successful attach result");
     frontend_remote_q2_domain expected = row->options.domain;
@@ -245,8 +247,11 @@ static bool hook_frame(void *context, qa_net_client_id id, const qa_q2_wire_fram
     qa_q2_frame_free(&row->previous); row->previous = row->frame; row->frame = held;
     row->received_ns = received_ns; row->fraction = 0;
     row->frame_ms = row->data.server_fps ? 1000.0f / (float)row->data.server_fps : 100;
+    ++row->busy;
     remote_q2_prediction_receive(row);
-    return remote_q2_prediction_replay(row, error);
+    bool ok = remote_q2_prediction_replay(row, error);
+    --row->busy;
+    return ok && remote_q2_live(row, error);
 }
 static bool hook_records(void *context, qa_net_client_id id, const qa_q2_server_record *records,
     size_t count, qa_error *error)
@@ -340,7 +345,8 @@ static bool hook_print(void *context, qa_net_client_id id, const char *text, qa_
 static bool hook_drop(void *context, qa_net_client_id id, const char *reason, qa_error *error)
 {
     frontend_remote_q2 *row = context;
-    if (!row || !qa_net_client_id_equal(id, row->options.domain.client) || row->retired) return false;
+    if (!row || !qa_net_client_id_equal(id, row->options.domain.client) || row->retired ||
+        row->frontend->capture || row->frontend->resource_inventory || row->image_policy) return false;
     row->retired = true; ++row->busy;
     bool ok = row->options.disconnected(row->options.context, &row->options.domain, reason, error);
     --row->busy; return ok;
@@ -376,7 +382,7 @@ bool frontend_remote_q2_current(const frontend_remote_q2_view *view)
 }
 static bool media_idle(const frontend_remote_q2 *row)
 {
-    if ((row->world && !qa_scene_world_idle(row->world)) ||
+    if (!frontend_remote_q2_effects_idle(row->effects) || (row->world && !qa_scene_world_idle(row->world)) ||
         (row->images && !qa_scene_resources_idle(row->images)) ||
         (row->materials && !qa_material_library_idle(row->materials)) ||
         (row->fonts && !qa_font_library_idle(row->fonts))) return false;
@@ -386,7 +392,17 @@ static bool media_idle(const frontend_remote_q2 *row)
 }
 bool remote_q2_capture_owned(const frontend_remote_q2 *row)
 {
-    if (!row || !linked(row) || row->busy || row->importing || row->image_policy || !row->frontend->capture) return false;
+    if (!row || !linked(row) || row->busy || row->importing || row->image_policy || !frontend_remote_q2_effects_idle(row->effects) || !row->frontend->capture ||
+        row->frontend->application != row->options.domain.application) return false;
+    if (row->bound && !row->retired) {
+        const frontend_remote_q2_domain *domain = &row->options.domain;
+        const qa_net_client *client = qa_net_connections_get(qa_network_connections(domain->runtime), domain->client);
+        uint32_t remote_index; qa_error error = {0};
+        if (!client || qa_network_epoch(domain->runtime, domain->client) != domain->epoch ||
+            client->protocol.kind != domain->protocol.kind || client->protocol.revision != domain->protocol.revision ||
+            client->protocol.flags != domain->protocol.flags ||
+            !frontend_remote_q2_wire_seat(row, &remote_index, &error)) return false;
+    }
     const frontend_capture *capture = row->frontend->capture;
     bool images = !row->images, materials = !row->materials, fonts = !row->fonts, world = !row->world;
     for (size_t i = 0; frontend_capture_images_at(capture, i); ++i)
@@ -466,8 +482,11 @@ bool frontend_remote_q2_destroy(frontend_remote_q2 **owned, qa_error *error)
 {
     frontend_remote_q2 *row = owned ? *owned : NULL;
     if (!row) return true;
-    if (!linked(row) || row->frontend->resource_inventory || row->busy || row->image_policy || !media_idle(row) || (row->importing && !row->frontend->source_restoring))
+    if (!linked(row) || row->frontend->capture || row->frontend->resource_inventory || row->busy || row->image_policy || !media_idle(row) || (row->importing && !row->frontend->source_restoring))
         return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 destruction requires returned Source callbacks");
+    if (row->bound && !row->importing && qa_net_connections_get(
+        qa_network_connections(row->options.domain.runtime), row->options.domain.client))
+        return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 receiver still owns its attached transport callbacks");
     if (!content_clear(row, error)) return false;
     qa_catalog_release(row->options.domain.catalog); free(row->configs);
     frontend_remote_q2 **link = &row->frontend->remote_q2;
@@ -476,7 +495,7 @@ bool frontend_remote_q2_destroy(frontend_remote_q2 **owned, qa_error *error)
 }
 bool frontend_remote_q2_destroy_all(qa_frontend *f, qa_error *error)
 {
-    if (!f || f->resource_inventory) return false;
+    if (!f || f->capture || f->resource_inventory) return false;
     for (frontend_remote_q2 *row = f->remote_q2; row; row = row->next)
         if (row->busy || row->image_policy || (row->importing && !f->source_restoring))
             return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 children are still entered");
@@ -499,7 +518,7 @@ bool frontend_remote_q2_content_visit(const qa_frontend *f, const qa_application
 bool frontend_remote_q2_rebind_ready(const frontend_remote_q2 *row, qa_frontend *f,
     const frontend_remote_q2_options *options, qa_error *error)
 {
-    if (!row || !f || !options || row->busy || row->importing || row->image_policy || !linked(row) ||
+    if (!row || !f || !options || f->capture || f->resource_inventory || row->busy || row->importing || row->image_policy || !linked(row) ||
         !remote_q2_domain_equal(&row->options.domain, &options->domain) ||
         f->application != options->domain.application || !options->current || !options->download_allowed ||
         !options->download_nonce || !options->records || !options->disconnected)

@@ -45,6 +45,9 @@ const guest_host_x86_64_capabilities *guest_host_child_capability(const guest_ho
  * qualification remains a separate required boundary. */
 bool guest_host_child_profile_read(const guest_host_child *, guest_profile_guard_receipt *, qa_error *);
 bool guest_host_child_source_domain(const guest_host_child *, guest_profile_cpu_domain *, qa_error *);
+/* Actual child PID/TID observed in its authenticated READY, distinct from any
+ * source kernel's retained logical task IDs across a cold replacement. */
+bool guest_host_child_process_read(const guest_host_child *, uint64_t *, uint64_t *, qa_error *);
 /* Called only by actual fresh source construction before its first invocation.
  * A restored source supplies its retained named CPU instead. */
 bool guest_host_child_source_initialize(guest_host_child *, qa_error *);
@@ -73,7 +76,8 @@ bool guest_host_child_run(guest_host_child *, uint64_t, uint64_t,
  * before execution. On successful service return commit RAX, RCX, R11 and the
  * observed next PC; failure retains entry state. stop=true ends the entered
  * scope without resuming source code and sets program_stopped. The ordinary
- * library run does not admit raw syscalls. */
+ * library run does not admit raw syscalls. A zero return trap means the raw
+ * PROGRAM has no controller return continuation; only its source exit stops. */
 bool guest_host_child_run_with_syscalls(guest_host_child *, uint64_t, uint64_t,
     guest_host_import_fn, guest_host_syscall_fn, void *, bool *program_stopped, qa_error *);
 bool guest_host_child_last_fault(const guest_host_child *, guest_host_stop *, qa_error *);

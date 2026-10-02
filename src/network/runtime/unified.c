@@ -190,7 +190,8 @@ static bool rebind(void *context, const qa_net_address *endpoint, qa_error *erro
 static void close_peer(void *context) {
     unified_peer *peer = context; qa_unified_channel_destroy(peer->channel); free(peer);
 }
-static const qa_network_peer_ops unified_ops = {receive, flush, command, restart, rebind, close_peer};
+static const qa_network_peer_ops unified_ops = {.receive=receive,.flush=flush,.command=command,
+    .restart=restart,.rebind=rebind,.close=close_peer};
 bool qa_network_attach_unified(qa_network_runtime *runtime, const qa_net_connect *request,
                                 qa_unified_token token, const qa_unified_limits *limits,
                                 const qa_network_unified_hooks *hooks, uint64_t now,

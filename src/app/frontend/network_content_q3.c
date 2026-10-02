@@ -4,6 +4,7 @@
 #include "qa/network_q3_fields_save.h"
 #include "qa/source_save.h"
 #include "qa/vfs_view_save.h"
+#include "qa/catalog_save.h"
 #include <limits.h>
 #include <math.h>
 #include <stdio.h>
@@ -101,8 +102,8 @@ static bool game_type(const char *text, int32_t *out)
         unsigned value = 0; const unsigned char *cursor = start + 2;
         if (cursor == end) return false;
         for (; cursor < end; ++cursor) {
-            unsigned digit = *cursor >= '0' && *cursor <= '9' ? *cursor - '0' :
-                lower(*cursor) >= 'a' && lower(*cursor) <= 'f' ? lower(*cursor) - 'a' + 10 : radix;
+            unsigned digit = *cursor >= '0' && *cursor <= '9' ? (unsigned)(*cursor - '0') :
+                lower(*cursor) >= 'a' && lower(*cursor) <= 'f' ? (unsigned)(lower(*cursor) - 'a' + 10) : radix;
             if (digit >= radix || value > 4 || digit > 4 || value * radix + digit > 4) return false;
             value = value * radix + digit;
         }

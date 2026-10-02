@@ -443,8 +443,8 @@ static bool draw(qa_hud *hud, const qa_hud_frame *frame, qa_scene_frame *scene, 
     qa_ui *ui = hud->options.ui;
     ui->scale = fminf((float)frame->safe_area.width / 640, (float)frame->safe_area.height / 480) * frame->scale;
     if (!isfinite(ui->scale) || ui->scale <= 0) return ui_fail(error, "HUD scale overflow");
-    ui->bias_x = frame->safe_area.x + ((float)frame->safe_area.width - 640 * ui->scale) * .5f;
-    ui->bias_y = frame->safe_area.y + ((float)frame->safe_area.height - 480 * ui->scale) * .5f;
+    ui->bias_x = (float)frame->safe_area.x + ((float)frame->safe_area.width - 640 * ui->scale) * .5f;
+    ui->bias_y = (float)frame->safe_area.y + ((float)frame->safe_area.height - 480 * ui->scale) * .5f;
     qa_hud_data data = {.crosshair_visible = true, .crosshair_color = {1, 1, 1, 1}};
     if (hud->options.read && !hud->options.read(hud->options.context, frame, &data, error)) return false;
     if ((data.vital_count && !data.vitals) || (data.bar_count && !data.bars) ||

@@ -474,7 +474,7 @@ bool q1_player_select_read(qa_q1_game *g, qa_actor_id actor, q1_player *player,
     if (!best_player_current(g, actor, player, error) ||
         !qa_inventory_entry_read(g->services.inventory, actor, g->weapons[weapon], &owned, error) ||
         !best_player_current(g, actor, player, error)) return false;
-    if (owned.count <= 0) {
+    if (owned.count == 0) {
         qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot, "Selected Q1 weapon is not owned");
         return false;
     }
@@ -1259,7 +1259,7 @@ static bool fire_weapon(qa_q1_game *g, q1_player *player, bool *fired, qa_error 
         qa_q1_weapon_view shape = *q1_weapon_shape(weapon);
         shotgun_shape(player,weapon,shells,&shape);
         punch = super ? -4 : -2;
-        if (!q1_consume(g, player->id, QA_Q1_SHELLS, shape.ammo_per_shot, error) ||
+        if (!q1_consume(g, player->id, QA_Q1_SHELLS, (float)shape.ammo_per_shot, error) ||
             !q1_sound(g, player->id, super ? "weapons/shotgn2.wav" : "weapons/guncock.wav", 1, 1,
                       error) ||
             !q1_aim(g, player->id, forward, &direction, error) ||

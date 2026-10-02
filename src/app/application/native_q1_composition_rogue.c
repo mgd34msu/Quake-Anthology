@@ -936,19 +936,6 @@ bool application_native_q1_rogue_impulse(application_provider *source,
     return okay;
 }
 
-bool application_native_q1_rogue_prethink(application_provider *source, qa_actor_id actor,
-    const qa_q1_input *input, qa_error *error)
-{
-    qa_q1_options options;
-    double now;
-    if (!source || source->kind != APPLICATION_PROVIDER_Q1 || !source->state.q1 || !input ||
-        !qa_q1_source_respawn_options_read(source->state.q1, &options, &now, error))
-        return application_fail(error, QA_ERROR_ARGUMENT, "Rogue input lost its actual source GAME");
-    if (options.program != QA_Q1_ROGUE) return true;
-    bool handled;
-    return application_native_q1_rogue_impulse(source, actor, input->impulse, &handled, error);
-}
-
 static bool set_color(rogue_call *call, qa_actor_id actor, double value, qa_error *error)
 {
     double integer = trunc(value) - 1;

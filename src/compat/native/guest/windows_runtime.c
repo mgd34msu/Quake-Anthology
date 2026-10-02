@@ -476,7 +476,14 @@ static void dispose(guest_windows *owner)
     if (owner->requested) for (size_t i = 0; i < owner->requested_count; ++i) free(owner->requested[i]);
     free(owner->prepared_ids); free(owner->initialized_ids);
     free(owner->requested); free(owner->services); free(owner->libraries); free(owner->images); free(owner->allocations); free(owner->cfg_targets);
-    windows_kernel_dispose(owner->kernel); free(owner->crt); free(owner->msvc); free(owner);
+    windows_kernel_dispose(owner->kernel);
+    if (owner->crt) {
+        for (size_t i = 0; i < owner->crt->pending_file_count; ++i) {
+            free(owner->crt->pending_files[i]->name); free(owner->crt->pending_files[i]);
+        }
+        free(owner->crt->pending_files); free(owner->crt->files); free(owner->crt);
+    }
+    free(owner->msvc); free(owner);
 }
 
 void guest_windows_abandon(guest_windows **pointer)
@@ -495,7 +502,9 @@ bool guest_windows_close_files(guest_windows *owner, qa_error *error)
         owner->guest->stepping || owner->guest->restoring || owner->guest->faulting)
         return guest_fail(error,QA_ERROR_ARGUMENT,0,"Windows file retirement requires its genuinely stopped retained lower owner");
     owner->retiring=true;
-    if (!windows_kernel_close_pending(owner,error) || !guest_runtime_resources_destroy(&owner->resources,error)) return false;
+    if (owner->files_closed) return true;
+    if (!windows_stdio_close_files(owner,error) || !windows_kernel_close_pending(owner,error) ||
+        !guest_runtime_resources_destroy(&owner->resources,error)) return false;
     owner->files_closed=true; return true;
 }
 
@@ -986,6 +995,18 @@ static bool codec_crt(windows_codec *io, guest_windows_crt *crt)
 {
     uint64_t *values[] = {&crt->onexit,&crt->error_number,&crt->time_buffer,&crt->locale,&crt->empty,&crt->decimal};
     for (size_t i = 0; i < sizeof(values)/sizeof(*values); ++i) if (!codec_u64(io,values[i])) return false;
+    if (!codec_bool(io,&crt->has_file_opener) || !codec_u32(io,&crt->next_file) ||
+        !codec_count(io,&crt->file_count,44)) return false;
+    if (io->reading && !guest_grow((void **)&crt->files,&crt->file_capacity,
+        crt->file_count,sizeof(*crt->files),io->error)) return false;
+    for (size_t i = 0; i < crt->file_count; ++i) {
+        windows_stdio_file *f = crt->files + i;
+        if (!codec_u64(io,&f->address) || !codec_u64(io,&f->handle) || !codec_u64(io,&f->capability) ||
+            !codec_u32(io,&f->mode) || !codec_u32(io,&f->descriptor) || !codec_u32(io,&f->flags) ||
+            !codec_bytes(io,&f->pushback,1) || !codec_bytes(io,&f->pending,1) ||
+            !codec_bool(io,&f->legacy) || !codec_bool(io,&f->binary) || !codec_bool(io,&f->append) ||
+            !codec_bool(io,&f->closing) || !codec_bool(io,&f->has_pushback) || !codec_bool(io,&f->has_pending)) return false;
+    }
     return true;
 }
 
@@ -1113,7 +1134,7 @@ static bool records_valid(guest_windows *owner, qa_error *error)
         return guest_fail(error, QA_ERROR_FORMAT, owner->primary_image, "Windows primary differs from its retained lower artifact witness");
     /* Open acquisition failures retain close owners, but the corresponding
      * source callback makes the CPU terminal. They have no healthy cold cut. */
-    if (kernel->pending_count || owner->files_closed)
+    if (kernel->pending_count || owner->crt->pending_file_count || owner->files_closed)
         return guest_fail(error,QA_ERROR_ARGUMENT,0,"Windows failure-only file acquisition or retirement cannot be checkpointed");
     if (!owner->capability_id || !owner->teb || !owner->peb || !owner->static_tls || !owner->return_trap ||
         !owner->stack_base || !owner->stack_bytes || owner->stack_bytes > UINT64_MAX - owner->stack_base ||
@@ -1250,8 +1271,8 @@ bool guest_windows_checkpoint(const guest_windows *source, qa_buffer *out, qa_er
     if (!guest_windows_idle(source) || !out || out->data || out->size)
         return guest_fail(error,QA_ERROR_ARGUMENT,0,"Windows checkpoint requires idle real owner and empty output");
     windows_codec io = {.error=error}; guest_windows *owner = (guest_windows *)source;
-    char magic[] = "QAWN3"; qa_buffer imports = {0}, resources = {0};
-    bool okay = records_valid(owner,error) && registry_valid(owner,error) && codec_bytes(&io,magic,5) && codec_owner(&io,owner,NULL,NULL) &&
+    char magic[] = "QAWN4"; qa_buffer imports = {0}, resources = {0};
+    bool okay = records_valid(owner,error) && windows_stdio_lower_valid(owner,error) && registry_valid(owner,error) && codec_bytes(&io,magic,5) && codec_owner(&io,owner,NULL,NULL) &&
         guest_runtime_imports_checkpoint(owner->imports,&imports,error) &&
         guest_runtime_resources_checkpoint(owner->resources,&resources,error) && blob(&io,&imports) && blob(&io,&resources);
     qa_buffer_free(&imports); qa_buffer_free(&resources);
@@ -1268,13 +1289,14 @@ bool guest_windows_decode(qa_bytes bytes, guest_windows_image_resolve_fn resolve
     owner->detached = true; owner->kernel = calloc(1,sizeof(*owner->kernel)); owner->crt = calloc(1,sizeof(*owner->crt)); owner->msvc = calloc(1,sizeof(*owner->msvc));
     if (!owner->kernel || !owner->crt || !owner->msvc) { dispose(owner); return guest_fail(error,QA_ERROR_MEMORY,0,"allocating detached Windows services"); }
     windows_codec io = {.input=bytes,.error=error,.reading=true}; char magic[5]; qa_buffer imports = {0}, resources = {0};
-    bool okay = codec_bytes(&io,magic,5) && !memcmp(magic,"QAWN3",5);
+    bool okay = codec_bytes(&io,magic,5) && !memcmp(magic,"QAWN4",5);
     if (!okay) guest_fail(error,QA_ERROR_FORMAT,0,"Windows continuation signature differs");
     if (okay) okay = codec_owner(&io,owner,resolve,context) && blob(&io,&imports) && blob(&io,&resources);
     if (okay && io.offset != bytes.size) okay = guest_fail(error,QA_ERROR_FORMAT,io.offset,"Windows continuation has trailing bytes");
     if (okay) okay = records_valid(owner,error) &&
         guest_runtime_imports_decode((qa_bytes){imports.data,imports.size},&owner->target,function_resolve,owner,&owner->imports,error) &&
         guest_runtime_resources_decode((qa_bytes){resources.data,resources.size},&owner->resources,error) &&
+        windows_stdio_valid(owner,error) &&
         registry_valid(owner,error) &&
         resolve_images(owner,resolve,context,error);
     qa_buffer_free(&imports); qa_buffer_free(&resources);
@@ -1351,6 +1373,7 @@ bool guest_windows_attach(guest_windows *owner, qa_native_guest *guest,
     if (!owner || !owner->detached || owner->guest || !qa_native_guest_idle(guest) || !capabilities ||
         qa_native_guest_execution(guest) != owner->execution ||
         capabilities->id != owner->capability_id || !capabilities->milliseconds || !capabilities->performance || !capabilities->calendar ||
+        (capabilities->open_file != NULL) != owner->crt->has_file_opener ||
         capabilities->standard_input.id != owner->stream_ids[0] || capabilities->standard_output.id != owner->stream_ids[1] ||
         capabilities->standard_error.id != owner->stream_ids[2] ||
         (owner->stream_ids[0] && !capabilities->standard_input.read) ||

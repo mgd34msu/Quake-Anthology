@@ -32,7 +32,7 @@ bool qa_q1_player_selected_impulse(qa_q1_game *g, qa_actor_id actor, uint8_t imp
                 (impulse >= 111 && impulse <= 115) || impulse == 118 || impulse == 122 ||
                 impulse == 227 || impulse == 228;
         okay = known ? q1_weapon_impulse(g, player, impulse, error) :
-            q1_enable_combos(g, player, error);
+            q1_enable_combos_read(g, actor, player, error);
         if (okay && (!qa_q1_game_operation_live(&operation) ||
             q1_player_get(g, actor) != player || !q1_alive(g, actor))) {
             qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot,
@@ -57,7 +57,11 @@ bool qa_q1_player_source_impulse(qa_q1_game *g, qa_actor_id actor, uint8_t impul
     bool okay = qa_q1_player_source_present(g, actor);
     if (!okay) qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot,
         "Q1 Source impulse requires its physical client");
-    if (okay) okay = q1_source_impulse(g, actor, impulse, handled, error);
+    if (okay && g->options.program == QA_Q1_MG3) {
+        q1_player *player = q1_player_get(g, actor);
+        okay = q1_mg3_impulse(g, player, impulse, handled, error);
+    }
+    if (okay && !*handled) okay = q1_source_impulse(g, actor, impulse, handled, error);
     if (okay && (!qa_q1_game_operation_live(&operation) ||
         !qa_q1_player_source_present(g, actor))) {
         qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot, "Q1 Source impulse lost its physical client");
@@ -169,7 +173,7 @@ static const char *switch_message(qa_q1_weapon previous, qa_q1_weapon selected) 
     }
 }
 bool q1_weapon_impulse(qa_q1_game *g, q1_player *player, uint8_t impulse, qa_error *error) {
-    if (!q1_enable_combos(g, player, error))
+    if (!q1_enable_combos_read(g, player->id, player, error))
         return false;
     if (!q1_alive(g, player->id))
         return true;

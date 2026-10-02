@@ -36,6 +36,10 @@ bool qa_application_qc_message_source_read(qa_application *,qa_actor_owner,
 bool qa_application_qc_message_source_current(qa_application *,const qa_application_qc_message_source *);
 bool qa_application_qc_message_client(qa_application *,const qa_application_qc_message_source *,
     qa_actor_id,uint32_t *slot,qa_error *);
+/* Observe one physical client slot. Disconnected slots return found=false;
+ * connected slots must retain their actual full-generation entity binding. */
+bool qa_application_qc_message_client_at(qa_application *,const qa_application_qc_message_source *,
+    uint32_t slot,qa_actor_id *,bool *found,qa_error *);
 bool qa_application_qc_message_entity(qa_application *,const qa_application_qc_message_source *,
     uint32_t slot,qa_actor_id *,qa_error *);
 bool qa_application_qc_message_signon_count(qa_application *,const qa_application_qc_message_source *,
@@ -68,11 +72,16 @@ typedef struct qa_application_qc_player_ui {
     double weapon, current_ammo, now_seconds;
     size_t binding_count, timer_count;
     qa_application_qc_power_timer timers[4];
+    bool selected_arsenal;
 } qa_application_qc_player_ui;
 /* Pure reads of the returned, already allocated Source client. UI bindings
  * come from its retained declaration or the original program's SDK table. */
 bool qa_application_qc_message_player_ui_read(qa_application *,const qa_application_qc_message_source *,
     qa_actor_id,qa_application_qc_player_ui *,qa_error *);
+/* A separate selected ARSENAL observation may run during another Source's
+ * genuine application advance. Its own QC instance/projection must be returned. */
+bool qa_application_qc_selected_player_ui_read(qa_application *,qa_actor_id,qa_launch_role,
+    qa_application_qc_player_ui *,qa_error *);
 bool qa_application_qc_message_player_ui_current(qa_application *,const qa_application_qc_player_ui *);
 bool qa_application_qc_message_player_ui_binding(qa_application *,const qa_application_qc_player_ui *,
     size_t,qa_application_qc_weapon_ui_binding *,qa_error *);

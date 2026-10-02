@@ -1,5 +1,6 @@
 #include "qa/application_native_q3_remote_content.h"
 #include "native_q3_remote_role.h"
+#include "qa/catalog_save.h"
 
 static application_provider *admission_receiver(qa_application *app,
     const qa_application_native_q3_remote_content_admission *request, qa_error *error)

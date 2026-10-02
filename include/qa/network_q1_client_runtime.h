@@ -28,7 +28,10 @@ typedef struct qa_network_q1_client_hooks {
     bool (*qw_skins)(void *, qa_net_client_id, bool *ready, qa_error *);
     bool (*end)(void *, qa_net_client_id, uint64_t received_ns, qa_error *);
     bool (*command_nq)(void *, const qa_network_command *, qa_q1_command *, qa_error *);
-    bool (*command_qw)(void *, const qa_network_command *, qa_qw_command *, qa_error *);
+    bool (*command_qw)(void *, const qa_network_command *, uint64_t now_ns, qa_qw_command *, qa_error *);
+    /* The actual camera owner supplies its pending spectator teleport after
+     * command_qw. This native coordinate service enters the reliable FIFO. */
+    bool (*qw_teleport)(void *, qa_net_client_id, qa_vec3 *, bool *present, qa_error *);
     bool (*qw_loss)(void *, qa_net_client_id, uint32_t outgoing_sequence, uint8_t *, qa_error *);
     bool (*sent)(void *, qa_net_client_id, uint32_t sequence, const qa_q1_command *,
         const qa_qw_command *, uint64_t sent_ns, qa_error *);

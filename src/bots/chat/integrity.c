@@ -44,7 +44,7 @@ bool qa_bot_chat_check_integrity(qa_bot_chat_system *system, qa_bot_chat_asset *
     }
     if(asset->initial_source && !chat_initial_asset_refresh(asset,e)) return false;
     qa_bot_memory *memory=asset->initial_source?asset->initial_source->memory:
-        system->library?system->library->memory:NULL;
+        asset->packed_source?asset->packed_source->memory:system->library?system->library->memory:NULL;
     bool own_memory=memory==NULL;
     if(own_memory && !qa_bot_memory_create(NULL,&memory,e)) return false;
     chat_integrity_string *missing=NULL;uint32_t head=0;
@@ -53,15 +53,20 @@ bool qa_bot_chat_check_integrity(qa_bot_chat_system *system, qa_bot_chat_asset *
     ++system->references;
     qa_bot_chat_asset_retain(asset);
     bool ok = true;
+    bool graph=asset->packed_source!=NULL;bot_chat_graph_messages cursor={0};
     for (size_t message = 0; ok && !system->retired && system->revision == revision &&
-                             message < asset->view.message_count;
+                             (graph || message < asset->view.message_count);
          ++message) {
         const char *text;
-        if(!chat_asset_message_text(asset,(uint32_t)message,&text,e)) {ok=false;break;}
+        if(graph && !bot_chat_graph_message_next(asset,&cursor,e)) {ok=false;break;}
+        if(graph && !cursor.message) break;
+        if(!(graph?bot_chat_graph_message_text(asset,cursor.message,&text,e):
+            chat_asset_message_text(asset,(uint32_t)message,&text,e))) {ok=false;break;}
         for (size_t i = 0; ok && !system->retired && system->revision == revision;) {
             /* Each iteration follows a possible RNG/Print/FILE callback. The
              * source getter must qualify the allocation again at that stage. */
-            if(!chat_asset_message_text(asset,(uint32_t)message,&text,e)) {ok=false;break;}
+            if(!(graph?bot_chat_graph_message_text(asset,cursor.message,&text,e):
+                chat_asset_message_text(asset,(uint32_t)message,&text,e))) {ok=false;break;}
             size_t extent=strlen(text);
             if(i>=extent) break;
             if (text[i++] != 1)

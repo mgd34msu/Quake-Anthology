@@ -4,10 +4,14 @@
 #include "map_players_private.h"
 #include "unified_output.h"
 #include "qa/json.h"
+#include "guest_q3_components.h"
 
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
+
+static bool payload_actor_read(qa_application *, qa_bytes, bool,
+    application_unified_json *, qa_error *);
 
 static application_provider *source_provider(qa_application *app, qa_actor_owner owner)
 {
@@ -16,8 +20,77 @@ static application_provider *source_provider(qa_application *app, qa_actor_owner
     return NULL;
 }
 
+bool application_unified_event_source_read(qa_application *app, qa_actor_owner owner,
+    application_unified_event_source *out, qa_error *error)
+{
+    if (!app || !owner || !out) return application_fail(error, QA_ERROR_ARGUMENT, "Source event receipt has no actual owner");
+    application_provider *provider = source_provider(app, owner);
+    if (provider && provider->launch && provider->product) {
+        *out = (application_unified_event_source){owner, provider->launch, provider->product,
+            provider->launch->content, provider->launch->selection.clock.kind};
+        return true;
+    }
+    application_q3_component_publication component;
+    if (!application_q3_components_event_source_read(app, owner, &component, error)) return false;
+    if (!component.descriptor || !component.product || !component.content || !component.catalog)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Component Source event lost its retained content owner");
+    *out = (application_unified_event_source){owner, component.descriptor, component.product,
+        component.content, QA_CLOCK_Q3, 0};
+    return true;
+}
+
 size_t application_unified_event_resource_count(const qa_application *app)
 { return app ? app->unified_event_resource_count : 0; }
+
+static bool bind_owner(qa_application *app, qa_actor_owner owner, const qa_product *product,
+    bool primary, qa_error *error)
+{
+    if (!product || !product->identity || app->unified_persistent_revision == UINT64_MAX ||
+        (!primary && app->unified_event_owner_generation >= QA_UNIFIED_SAFE_INTEGER))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Presentation activation lost its actual product or generation");
+    qa_string_id content;
+    if (!qa_strings_intern_cstr(qa_session_strings(app->session), product->identity, &content, error)) return false;
+    size_t index = 0;
+    while (index < app->unified_event_owner_count && app->unified_event_owners[index].provider != owner) ++index;
+    if (index < app->unified_event_owner_count && app->unified_event_owners[index].active)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Presentation Source is already activated");
+    if (index == app->unified_event_owner_capacity) {
+        size_t capacity = index ? index * 2 : 16;
+        if (capacity < index || capacity > SIZE_MAX / sizeof(*app->unified_event_owners))
+            return application_fail(error, QA_ERROR_MEMORY, "Presentation owner extent exhausted");
+        void *rows = realloc(app->unified_event_owners, capacity * sizeof(*app->unified_event_owners));
+        if (!rows) return application_fail(error, QA_ERROR_MEMORY, "Retaining actual Presentation Source activation");
+        app->unified_event_owners = rows; app->unified_event_owner_capacity = capacity;
+    }
+    uint64_t generation = primary ? 0 : app->unified_event_owner_generation + 1;
+    app->unified_event_owners[index] = (application_unified_event_owner){owner, content, generation, true};
+    if (index == app->unified_event_owner_count) ++app->unified_event_owner_count;
+    if (!primary) app->unified_event_owner_generation = generation;
+    ++app->unified_persistent_revision;
+    return true;
+}
+
+bool application_unified_event_owner_bind(qa_application *app, application_provider *provider,
+    bool primary, bool restoring, qa_error *error)
+{
+    if (!app || !provider || provider->application != app || !provider->owner || !provider->launch ||
+        source_provider(app, provider->owner) != provider)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Presentation activation requires its actual constructing Source");
+    /* The actual no-Init restore imports its original tokens later. */
+    if (restoring) return true;
+    const qa_product *product = provider->product;
+    qa_catalog *catalog = qa_launch_instance_catalog(provider->launch);
+    if (!product && catalog) product = qa_catalog_product(catalog, provider->launch->selection.product);
+    return bind_owner(app, provider->owner, product, primary, error);
+}
+
+bool application_unified_event_component_owner_bind(qa_application *app, qa_actor_owner owner,
+    bool restoring, qa_error *error)
+{
+    application_unified_event_source source;
+    if (!application_unified_event_source_read(app, owner, &source, error)) return false;
+    return restoring || bind_owner(app, owner, source.product, false, error);
+}
 
 const application_unified_event_resource *application_unified_event_resource_at(
     const qa_application *app, size_t index)
@@ -35,7 +108,8 @@ const qa_resource *application_unified_event_resource_read(const qa_application 
 bool application_unified_event_resource_lookup(qa_application *app, qa_actor_owner owner,
     const char *path, char id[81], bool *found, qa_error *error)
 {
-    if (!source_provider(app, owner) || !path || !id || !found)
+    application_unified_event_source source;
+    if (!application_unified_event_source_read(app, owner, &source, error) || !path || !id || !found)
         return application_fail(error, QA_ERROR_ARGUMENT, "Source sound lookup lost its actual registration owner");
     id[0] = 0; *found = false;
     for (size_t i = 0; i < app->unified_event_registration_count; ++i) {
@@ -116,10 +190,10 @@ void application_unified_events_resources_dispose(qa_application *app)
 bool application_unified_event_resource_register(qa_application *app, qa_actor_owner owner,
     const char *path, const qa_resource *resource, char id[81], qa_error *error)
 {
-    application_provider *provider = source_provider(app, owner);
-    if (!provider || !provider->launch || !provider->product || !path || !*path || !resource || !id)
+    application_unified_event_source source;
+    if (!application_unified_event_source_read(app, owner, &source, error) || !path || !*path || !resource || !id)
         return application_fail(error, QA_ERROR_ARGUMENT, "Source registration has no genuine held resource");
-    const qa_vfs *view = provider->launch->content;
+    const qa_vfs *view = source.content;
     bool opened = false;
     const char *registration_path = NULL;
     for (size_t i = 0; i < qa_vfs_read_count(view); ++i) {
@@ -135,7 +209,7 @@ bool application_unified_event_resource_register(qa_application *app, qa_actor_o
         return application_fail(error, QA_ERROR_FORMAT, "Source registration is outside its actual precache opening");
     qa_unified_document *key = NULL;
     char actual_id[81];
-    if (!application_unified_resource_key(provider->product, registration_path, resource, &key, actual_id, error)) return false;
+    if (!application_unified_resource_key(source.product, registration_path, resource, &key, actual_id, error)) return false;
     for (size_t i = 0; i < app->unified_event_resource_count; ++i) {
         if (!strcmp(app->unified_event_resources[i].id, actual_id)) {
             bool ok = registration_bind(app, owner, path, i, error);
@@ -149,8 +223,8 @@ bool application_unified_event_resource_register(qa_application *app, qa_actor_o
     row.key.data = malloc(bytes.size);
     bool ok = row.key.data != NULL &&
         qa_strings_intern_cstr(qa_session_strings(app->session), registration_path, &row.path, error) &&
-        qa_strings_intern_cstr(qa_session_strings(app->session), provider->product->identity, &row.content, error) &&
-        qa_launch_instance_retain_metadata(provider->launch, &row.descriptor, error);
+        qa_strings_intern_cstr(qa_session_strings(app->session), source.product->identity, &row.content, error) &&
+        qa_launch_instance_retain_metadata(source.descriptor, &row.descriptor, error);
     if (!row.key.data) application_fail(error, QA_ERROR_MEMORY, "Retaining Source resource key");
     if (ok && app->unified_event_resource_count == app->unified_event_resource_capacity) {
         size_t capacity = app->unified_event_resource_capacity ? app->unified_event_resource_capacity * 2 : 32;
@@ -257,14 +331,287 @@ static bool retain_payload(qa_application *app, qa_bytes input, qa_bytes *out, q
     return true;
 }
 
+bool application_unified_persistent_key(qa_application *app,
+    const application_unified_event_record *row, qa_buffer *out, bool *remove, qa_error *error)
+{
+    *remove = false;
+    if (!row->presentation.size) return true;
+    qa_json_document *json = NULL;
+    if (!qa_json_parse(row->presentation, &json, error)) return false;
+    qa_json_id root = qa_json_root(json), kind = qa_json_get(json, root, "kind");
+    qa_json_id event = qa_json_get(json, root, "event"), action = qa_json_get(json, event, "kind");
+    bool q1 = qa_json_string_equal(json, kind, "q1"), q2 = qa_json_string_equal(json, kind, "q2");
+    const char *domain = NULL;
+    bool unique = q1 && (qa_json_string_equal(json, action, "ambient") || qa_json_string_equal(json, action, "static-model"));
+    bool loop = q2 && qa_json_string_equal(json, action, "sound") && !qa_json_string_equal(json, qa_json_get(json, event, "loop"), "once");
+    bool client = qa_json_string_equal(json, kind, "q1-client");
+    bool style = (q1 || q2) && qa_json_string_equal(json, action, "lightstyle");
+    if (qa_json_string_equal(json, kind, "q1-sky")) domain = "sky";
+    else if (client) domain = "client";
+    else if (style) domain = "style";
+    else if ((q1 || qa_json_string_equal(json, kind, "q1-level")) && qa_json_string_equal(json, action, "finale")) domain = "finale";
+    else if (qa_json_string_equal(json, kind, "music")) domain = qa_json_string_equal(json, action, "pause") ? "music:pause" : "music:track";
+    else if (q2 && qa_json_string_equal(json, action, "music")) domain = "music:track";
+    if (!domain && !unique && !loop) { qa_json_destroy(json); return true; }
+    application_unified_json key = {0};
+    bool ok = application_unified_json_text(&key, "[", error) &&
+        (row->owner_generation ? application_unified_json_string(&key, qa_strings_cstr(qa_session_strings(app->session), row->provider), error) :
+            application_unified_json_text(&key, "null", error)) &&
+        application_unified_json_text(&key, ",", error) && application_unified_json_natural(&key, row->owner_generation, error) &&
+        application_unified_json_text(&key, ",", error) &&
+        application_unified_json_string(&key, unique ? "unique" : loop ? "sound" : domain, error);
+    if (ok && unique) ok = application_unified_json_text(&key, ",", error) &&
+        application_unified_json_natural(&key, row->presentation_sequence, error);
+    if (ok && client) ok = application_unified_json_text(&key, ",", error) &&
+        application_unified_json_string(&key, qa_strings_cstr(qa_session_strings(app->session), row->content), error) &&
+        application_unified_json_text(&key, ",", error) &&
+        application_unified_json_append(&key, qa_json_source(json, qa_json_get(json, event, "slot")), error) &&
+        application_unified_json_text(&key, ",", error) && application_unified_json_append(&key, qa_json_source(json, action), error);
+    if (ok && style) ok = application_unified_json_text(&key, ",", error) &&
+        application_unified_json_append(&key, qa_json_source(json, qa_json_get(json, event, "style")), error);
+    if (ok && loop) {
+        const char *fields[] = {"loopOwner", "actor", "channel", "path"};
+        for (size_t i = 0; ok && i < 4; ++i) {
+            qa_json_id value = qa_json_get(json, event, fields[i]);
+            ok = application_unified_json_text(&key, ",", error) &&
+                (value == QA_JSON_NONE ? application_unified_json_text(&key, "null", error) :
+                 application_unified_json_append(&key, qa_json_source(json, value), error));
+        }
+        *remove = qa_json_string_equal(json, qa_json_get(json, event, "loop"), "stop");
+    }
+    if (ok) ok = application_unified_json_text(&key, ",", error) &&
+        (row->recipient.registry ? application_unified_json_actor(&key, row->payload_checkpoint ?
+            (qa_actor_id){row->recipient.registry, row->recipient_saved.generation, row->recipient_saved.slot} : row->recipient, error) :
+         application_unified_json_text(&key, "null", error)) && application_unified_json_text(&key, "]", error);
+    qa_json_destroy(json);
+    qa_json_document *admitted = NULL;
+    if (ok) ok = qa_json_parse((qa_bytes){key.bytes.data, key.bytes.size}, &admitted, error);
+    qa_json_destroy(admitted);
+    if (ok) { *out = key.bytes; key.bytes = (qa_buffer){0}; }
+    application_unified_json_dispose(&key);
+    return ok;
+}
+
+void application_unified_persistent_dispose(qa_application *app)
+{
+    for (size_t i = 0; i < app->unified_persistent_count; ++i) {
+        qa_buffer_free(&app->unified_persistent[i].key);
+        qa_buffer_free(&app->unified_persistent[i].payload);
+    }
+    free(app->unified_persistent);
+    app->unified_persistent = NULL;
+    app->unified_persistent_count = app->unified_persistent_capacity = 0;
+}
+
+bool application_unified_persistent_retire(qa_application *app, qa_actor_owner owner,
+    qa_actor_id recipient, qa_error *error)
+{
+    if (!app || (!owner && !recipient.registry)) return application_fail(error, QA_ERROR_ARGUMENT, "Presentation retirement requires its actual owner or actor");
+    size_t matches = 0;
+    for (size_t i = 0; i < app->unified_persistent_count; ++i) {
+        qa_actor_id actual;
+        if (!application_unified_event_recipient(app, &app->unified_persistent[i].event, false, &actual, error)) return false;
+        matches += owner ? app->unified_persistent[i].event.provider == owner : qa_actor_id_equal(actual, recipient);
+    }
+    application_unified_event_owner *activation = NULL;
+    for (size_t i = 0; owner && i < app->unified_event_owner_count; ++i)
+        if (app->unified_event_owners[i].provider == owner && app->unified_event_owners[i].active)
+            activation = app->unified_event_owners + i;
+    if (!matches && !activation) return true;
+    if (app->unified_persistent_revision == UINT64_MAX) return application_fail(error, QA_ERROR_FORMAT, "Presentation revision exhausted");
+    size_t kept = 0;
+    for (size_t i = 0; i < app->unified_persistent_count; ++i) {
+        application_unified_persistent_event row = app->unified_persistent[i];
+        qa_actor_id actual;
+        if (!application_unified_event_recipient(app, &row.event, false, &actual, error)) return false;
+        if (owner ? row.event.provider == owner : qa_actor_id_equal(actual, recipient)) {
+            qa_buffer_free(&row.key); qa_buffer_free(&row.payload);
+        } else app->unified_persistent[kept++] = row;
+    }
+    app->unified_persistent_count = kept;
+    if (activation) activation->active = false;
+    ++app->unified_persistent_revision;
+    return true;
+}
+
+static bool persistent_record(qa_application *app, const application_unified_event_record *event, qa_error *error)
+{
+    qa_buffer key = {0}; bool remove = false;
+    if (!application_unified_persistent_key(app, event, &key, &remove, error)) return false;
+    if (!key.size) return true;
+    size_t index = 0;
+    while (index < app->unified_persistent_count) {
+        const application_unified_persistent_event *previous = app->unified_persistent + index;
+        qa_buffer current_key = {0};
+        bool ignored = false, ok = true;
+        if (previous->event.payload_checkpoint) {
+            application_unified_event_record current = previous->event;
+            application_unified_json payload = {0};
+            ok = payload_actor_read(app, current.presentation, true, &payload, error) &&
+                application_unified_event_recipient(app, &current, false, &current.recipient, error);
+            current.presentation = (qa_bytes){payload.bytes.data, payload.bytes.size};
+            current.payload_checkpoint = false;
+            if (ok) ok = application_unified_persistent_key(app, &current, &current_key, &ignored, error);
+            application_unified_json_dispose(&payload);
+        }
+        const qa_buffer *candidate = previous->event.payload_checkpoint ? &current_key : &previous->key;
+        bool same = ok && key.size == candidate->size && !memcmp(key.data, candidate->data, key.size);
+        qa_buffer_free(&current_key);
+        if (!ok) { qa_buffer_free(&key); return false; }
+        if (same) break;
+        ++index;
+    }
+    if (remove && index == app->unified_persistent_count) { qa_buffer_free(&key); return true; }
+    if (app->unified_persistent_revision == UINT64_MAX) { qa_buffer_free(&key); return application_fail(error, QA_ERROR_FORMAT, "Presentation revision exhausted"); }
+    qa_buffer payload = {0};
+    if (!remove) {
+        payload.data = malloc(event->presentation.size); payload.size = event->presentation.size;
+        if (!payload.data) { qa_buffer_free(&key); return application_fail(error, QA_ERROR_MEMORY, "Retaining persistent Source presentation"); }
+        memcpy(payload.data, event->presentation.data, payload.size);
+        if (index == app->unified_persistent_capacity) {
+            size_t capacity = index ? index * 2 : 32;
+            if (capacity < index || capacity > SIZE_MAX / sizeof(*app->unified_persistent)) { qa_buffer_free(&payload); qa_buffer_free(&key); return application_fail(error, QA_ERROR_MEMORY, "Persistent presentation extent exhausted"); }
+            void *rows = realloc(app->unified_persistent, capacity * sizeof(*app->unified_persistent));
+            if (!rows) { qa_buffer_free(&payload); qa_buffer_free(&key); return application_fail(error, QA_ERROR_MEMORY, "Retaining persistent presentation slots"); }
+            app->unified_persistent = rows; app->unified_persistent_capacity = capacity;
+        }
+    }
+    if (index < app->unified_persistent_count) {
+        qa_buffer_free(&app->unified_persistent[index].key); qa_buffer_free(&app->unified_persistent[index].payload);
+        memmove(app->unified_persistent + index, app->unified_persistent + index + 1,
+            (--app->unified_persistent_count - index) * sizeof(*app->unified_persistent));
+    }
+    if (remove) qa_buffer_free(&key);
+    else {
+        application_unified_persistent_event row = {.event = *event, .key = key, .payload = payload};
+        row.event.presentation = (qa_bytes){payload.data, payload.size};
+        row.event.simulation = (qa_bytes){0}; row.event.simulation_sequence = 0; row.event.link_presentation = false;
+        app->unified_persistent[app->unified_persistent_count++] = row;
+    }
+    ++app->unified_persistent_revision;
+    return true;
+}
+
+/* Compare actual persistent domains, excluding the owning activation token.
+ * Slot comparison additionally includes the real addressed recipient. */
+static bool persistent_domain_equal(const qa_buffer *a, const qa_buffer *b, bool slot,
+    bool *equal, qa_error *error)
+{
+    qa_json_document *left = NULL, *right = NULL;
+    bool ok = qa_json_parse((qa_bytes){a->data, a->size}, &left, error) &&
+        qa_json_parse((qa_bytes){b->data, b->size}, &right, error);
+    *equal = false;
+    if (ok) {
+        qa_json_id x = qa_json_root(left), y = qa_json_root(right);
+        size_t count = qa_json_size(left, x);
+        if (count >= 4 && count == qa_json_size(right, y) &&
+            !qa_json_string_equal(left, qa_json_at(left, x, 2), "unique") &&
+            !qa_json_string_equal(left, qa_json_at(left, x, 2), "sound")) {
+            *equal = true;
+            for (size_t n = 2; *equal && n < count - (slot ? 0 : 1); ++n) {
+                qa_bytes p = qa_json_source(left, qa_json_at(left, x, n));
+                qa_bytes q = qa_json_source(right, qa_json_at(right, y, n));
+                *equal = p.size == q.size && !memcmp(p.data, q.data, p.size);
+            }
+        }
+    }
+    qa_json_destroy(left); qa_json_destroy(right);
+    return ok;
+}
+
+bool application_unified_event_owner_retire(qa_application *app, qa_actor_owner owner,
+    const qa_source_frame *clock, qa_error *error)
+{
+    if (!app || !clock || !clock->provider || clock->kind > QA_CLOCK_Q3)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Presentation retirement requires the retained actual primary clock");
+    application_unified_event_owner *activation = NULL;
+    for (size_t i = 0; i < app->unified_event_owner_count; ++i)
+        if (app->unified_event_owners[i].provider == owner && app->unified_event_owners[i].active)
+            activation = app->unified_event_owners + i;
+    if (!activation || !activation->generation)
+        return application_unified_persistent_retire(app, owner, (qa_actor_id){0}, error);
+    size_t count = app->unified_persistent_count;
+    size_t *winners = count ? malloc(count * sizeof(*winners)) : NULL;
+    if (count && !winners) return application_fail(error, QA_ERROR_MEMORY, "Retaining actual presentation replacement slots");
+    size_t winner_count = 0;
+    bool ok = true;
+    for (size_t i = 0; ok && i < count; ++i) {
+        const application_unified_persistent_event *row = app->unified_persistent + i;
+        if (row->event.provider == owner) continue;
+        bool affected = false;
+        for (size_t n = 0; ok && !affected && n < count; ++n)
+            if (app->unified_persistent[n].event.provider == owner)
+                ok = persistent_domain_equal(&row->key, &app->unified_persistent[n].key, false, &affected, error);
+        if (!affected) continue;
+        size_t match = 0;
+        for (; ok && match < winner_count; ++match) {
+            bool same;
+            ok = persistent_domain_equal(&row->key, &app->unified_persistent[winners[match]].key, true, &same, error);
+            if (ok && same) break;
+        }
+        if (ok) {
+            if (match == winner_count) ++winner_count;
+            winners[match] = i;
+        }
+    }
+    /* The retained rows are chronological; replacing a slot can change its
+     * position in winners, so emit the actual winners by original sequence. */
+    for (size_t i = 1; i < winner_count; ++i) {
+        size_t value = winners[i], n = i;
+        while (n && app->unified_persistent[winners[n - 1]].event.presentation_sequence >
+            app->unified_persistent[value].event.presentation_sequence) { winners[n] = winners[n - 1]; --n; }
+        winners[n] = value;
+    }
+    size_t additions = winner_count + 1;
+    if (ok && (additions > QA_UNIFIED_SAFE_INTEGER - app->unified_event_sequence ||
+        additions > QA_UNIFIED_SAFE_INTEGER - app->presentation_event_sequence ||
+        app->unified_persistent_revision == UINT64_MAX || additions > SIZE_MAX - app->unified_event_count))
+        ok = application_fail(error, QA_ERROR_FORMAT, "Presentation retirement sequence domain exhausted");
+    size_t required = ok ? app->unified_event_count + additions : 0;
+    if (ok && required > app->unified_event_capacity) {
+        if (required > SIZE_MAX / sizeof(*app->unified_events)) ok = application_fail(error, QA_ERROR_MEMORY, "Presentation retirement extent overflows");
+        else {
+            void *rows = realloc(app->unified_events, required * sizeof(*app->unified_events));
+            if (!rows) ok = application_fail(error, QA_ERROR_MEMORY, "Retaining actual Source retirement chronology");
+            else { app->unified_events = rows; app->unified_event_capacity = required; }
+        }
+    }
+    application_unified_json payload = {0};
+    qa_bytes retired = {0};
+    if (ok) ok = application_unified_json_text(&payload, "{\"kind\":\"presentation-owner\",\"event\":{\"kind\":\"retired\",\"owner\":{\"provider\":", error) &&
+        application_unified_json_string(&payload, qa_strings_cstr(qa_session_strings(app->session), owner), error) &&
+        application_unified_json_text(&payload, ",\"generation\":", error) &&
+        application_unified_json_natural(&payload, activation->generation, error) &&
+        application_unified_json_text(&payload, "}}}", error) &&
+        retain_payload(app, (qa_bytes){payload.bytes.data, payload.bytes.size}, &retired, error);
+    application_unified_event_record *prepared = ok ? calloc(additions, sizeof(*prepared)) : NULL;
+    if (ok && !prepared) ok = application_fail(error, QA_ERROR_MEMORY, "Preparing atomic Source presentation retirement");
+    if (ok) prepared[0] = (application_unified_event_record){.presentation = retired,
+        .provider = owner, .content = activation->content, .clock = clock->kind,
+        .presentation_clock = clock->kind, .time_ns = clock->time_ns, .simulation_time_ns = clock->time_ns};
+    for (size_t i = 0; ok && i < winner_count; ++i) {
+        prepared[i + 1] = app->unified_persistent[winners[i]].event;
+        prepared[i + 1].simulation = (qa_bytes){0}; prepared[i + 1].simulation_sequence = 0;
+        ok = retain_payload(app, prepared[i + 1].presentation, &prepared[i + 1].presentation, error);
+    }
+    if (ok) ok = application_unified_persistent_retire(app, owner, (qa_actor_id){0}, error);
+    if (ok) for (size_t i = 0; i < additions; ++i) {
+        prepared[i].order = app->unified_event_sequence++;
+        prepared[i].presentation_sequence = app->presentation_event_sequence++;
+        app->unified_events[app->unified_event_count++] = prepared[i];
+    }
+    free(prepared); free(winners); application_unified_json_dispose(&payload);
+    return ok;
+}
+
 bool application_unified_event_emit(qa_application *app, qa_actor_owner owner,
     qa_bytes presentation, qa_bytes simulation, qa_actor_id recipient,
     qa_actor_id simulation_recipient, uint64_t time_ns, int32_t source_entity,
     bool has_source_entity, bool link_presentation, qa_error *error)
 {
-    application_provider *provider = source_provider(app, owner);
-    if (!app || !app->session || app->destroy_requested || !provider || !provider->launch ||
-        !provider->product || !provider->product->identity ||
+    application_unified_event_source source;
+    if (!app || !app->session || app->destroy_requested || !application_unified_event_source_read(app, owner, &source, error) ||
+        !source.product->identity ||
         (!presentation.size && !simulation.size) || (presentation.size && !presentation.data) ||
         (simulation.size && !simulation.data) ||
         (link_presentation && (!presentation.size || !simulation.size)) ||
@@ -274,10 +621,21 @@ bool application_unified_event_emit(qa_application *app, qa_actor_owner owner,
         return application_fail(error, QA_ERROR_ARGUMENT, "Source emission lost its actual owner, payload or sequence domain");
     application_unified_event_record record = {.recipient = recipient,
         .simulation_recipient = simulation_recipient, .provider = owner,
-        .clock = provider->launch->selection.clock.kind, .time_ns = time_ns,
-        .presentation_clock = provider->launch->selection.clock.kind,
+        .clock = source.clock, .time_ns = time_ns,
+        .presentation_clock = source.clock,
         .simulation_time_ns = time_ns, .source_entity = source_entity,
-        .has_source_entity = has_source_entity, .link_presentation = link_presentation};
+        .has_source_entity = has_source_entity, .link_presentation = link_presentation,
+        .owner_generation = source.owner_generation};
+    bool activated = false;
+    for (size_t i = 0; i < app->unified_event_owner_count; ++i)
+        if (app->unified_event_owners[i].provider == owner && app->unified_event_owners[i].active) {
+            const char *identity = qa_strings_cstr(qa_session_strings(app->session), app->unified_event_owners[i].content);
+            if (!identity || strcmp(identity, source.product->identity))
+                return application_fail(error, QA_ERROR_ARGUMENT, "Source presentation activation changed its actual content");
+            record.owner_generation = app->unified_event_owners[i].generation;
+            activated = true;
+        }
+    if (!activated) return application_fail(error, QA_ERROR_ARGUMENT, "Source event has no actual presentation activation receipt");
     if (!has_source_entity) record.source_entity = 0;
     if (simulation.size && simulation_recipient.registry) {
         bool found = false;
@@ -299,10 +657,11 @@ bool application_unified_event_emit(qa_application *app, qa_actor_owner owner,
     }
     if (!application_unified_event_payload_valid(presentation, true, false, error) ||
         !application_unified_event_payload_valid(simulation, false, record.link_presentation, error) ||
-        !qa_strings_intern_cstr(qa_session_strings(app->session), provider->product->identity,
+        !qa_strings_intern_cstr(qa_session_strings(app->session), source.product->identity,
             &record.content, error) ||
         !retain_payload(app, presentation, &record.presentation, error) ||
         !retain_payload(app, simulation, &record.simulation, error)) return false;
+    if (!application_unified_event_actors_valid(app, &record, error)) return false;
     if (app->unified_event_count == app->unified_event_capacity) {
         size_t capacity = app->unified_event_capacity ? app->unified_event_capacity : 64;
         if (app->unified_event_capacity) {
@@ -316,9 +675,13 @@ bool application_unified_event_emit(qa_application *app, qa_actor_owner owner,
         if (!rows) return application_fail(error, QA_ERROR_MEMORY, "Retaining Source event projection");
         app->unified_events = rows; app->unified_event_capacity = capacity;
     }
-    record.order = app->unified_event_sequence++;
-    if (presentation.size) record.presentation_sequence = app->presentation_event_sequence++;
-    if (simulation.size) record.simulation_sequence = app->simulation_event_sequence++;
+    record.order = app->unified_event_sequence;
+    if (presentation.size) record.presentation_sequence = app->presentation_event_sequence;
+    if (simulation.size) record.simulation_sequence = app->simulation_event_sequence;
+    if (!persistent_record(app, &record, error)) return false;
+    ++app->unified_event_sequence;
+    if (presentation.size) ++app->presentation_event_sequence;
+    if (simulation.size) ++app->simulation_event_sequence;
     app->unified_events[app->unified_event_count++] = record;
     return true;
 }
@@ -523,6 +886,73 @@ void application_event_journal_append(qa_application *app, application_event_que
     app->event_journal[app->event_journal_count++] = record;
 }
 
+static bool actor_property(const qa_json_document *json, qa_json_id key)
+{
+    const char *names[] = {"actor", "player", "attacker", "inflictor", "originatingProjectile",
+        "target", "killer", "victim", "other", "activator", "ground", "projectile", "entity"};
+    for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); ++i)
+        if (qa_json_string_equal(json, key, names[i])) return true;
+    return false;
+}
+
+static bool payload_actors(qa_application *app, const qa_json_document *json, qa_json_id value,
+    bool actor_value, bool checkpoint, unsigned depth, application_unified_json *out, qa_error *error)
+{
+    if (depth > 128) return application_fail(error, QA_ERROR_FORMAT, "Source actor payload nesting exceeds its admitted extent");
+    qa_json_kind kind = qa_json_type(json, value);
+    if (actor_value && kind == QA_JSON_OBJECT && qa_json_get(json, value, "slot") != QA_JSON_NONE &&
+        qa_json_get(json, value, "generation") != QA_JSON_NONE) {
+        uint64_t slot, generation;
+        qa_actor_id actor;
+        if (qa_json_size(json, value) != 2 || !qa_json_u64(json, qa_json_get(json, value, "slot"), &slot, error) ||
+            slot > UINT32_MAX || !qa_json_u64(json, qa_json_get(json, value, "generation"), &generation, error) ||
+            !qa_actors_reference_saved(qa_session_actors(app->session),
+                (qa_saved_actor_id){generation, (uint32_t)slot}, checkpoint, &actor, error))
+            return application_fail(error, QA_ERROR_FORMAT, "Source payload ActorId is outside its actual retained actor history");
+        return !out || application_unified_json_actor(out, actor, error);
+    }
+    if (kind != QA_JSON_OBJECT && kind != QA_JSON_ARRAY)
+        return !out || application_unified_json_append(out, qa_json_source(json, value), error);
+    bool object = kind == QA_JSON_OBJECT;
+    if (out && !application_unified_json_text(out, object ? "{" : "[", error)) return false;
+    for (size_t i = 0; i < qa_json_size(json, value); ++i) {
+        qa_json_id key = object ? qa_json_key_at(json, value, i) : QA_JSON_NONE;
+        if (out && ((i && !application_unified_json_text(out, ",", error)) ||
+            (object && (!application_unified_json_append(out, qa_json_source(json, key), error) ||
+                !application_unified_json_text(out, ":", error))))) return false;
+        if (!payload_actors(app, json, qa_json_at(json, value, i), object && actor_property(json, key),
+            checkpoint, depth + 1, out, error)) return false;
+    }
+    return !out || application_unified_json_text(out, object ? "}" : "]", error);
+}
+
+static bool payload_actor_read(qa_application *app, qa_bytes bytes, bool checkpoint,
+    application_unified_json *out, qa_error *error)
+{
+    if (!bytes.size) return true;
+    qa_json_document *json = NULL;
+    if (!qa_json_parse(bytes, &json, error)) return false;
+    bool ok = payload_actors(app, json, qa_json_root(json), false, checkpoint, 0, out, error);
+    qa_json_destroy(json);
+    return ok;
+}
+
+bool application_unified_event_actors_valid(qa_application *app,
+    const application_unified_event_record *row, qa_error *error)
+{
+    return payload_actor_read(app, row->presentation, row->payload_checkpoint, NULL, error) &&
+        payload_actor_read(app, row->simulation, row->payload_checkpoint, NULL, error);
+}
+
+bool application_unified_event_recipient(qa_application *app, const application_unified_event_record *row,
+    bool simulation, qa_actor_id *out, qa_error *error)
+{
+    qa_actor_id actor = simulation ? row->simulation_recipient : row->recipient;
+    if (!actor.registry || !row->payload_checkpoint) { *out = actor; return true; }
+    return qa_actors_reference_saved(qa_session_actors(app->session), simulation ?
+        row->simulation_recipient_saved : row->recipient_saved, true, out, error);
+}
+
 static bool payload_begin(application_unified_json *json, qa_bytes payload, qa_error *error)
 {
     while (payload.size && (payload.data[payload.size - 1] == ' ' || payload.data[payload.size - 1] == '\n' ||
@@ -567,22 +997,31 @@ static bool presentation_write(application_unified_json *j, qa_application *app,
         int32_t signed_word; memcpy(&signed_word, &word, sizeof(word));
         seconds = (double)signed_word / 1000;
     }
-    bool ok = payload_begin(j, row->presentation, error) &&
+    application_unified_json payload = {0};
+    qa_actor_id recipient;
+    bool ok = application_unified_event_recipient(app, row, false, &recipient, error) &&
+        payload_actor_read(app, row->presentation, row->payload_checkpoint, &payload, error) &&
+        payload_begin(j, (qa_bytes){payload.bytes.data, payload.bytes.size}, error) &&
         application_unified_json_text(j, ",\"sequence\":", error) &&
         application_unified_json_natural(j, row->presentation_sequence, error) &&
         application_unified_json_text(j, ",\"content\":", error) &&
         application_unified_json_string(j, content, error) &&
         application_unified_json_text(j, ",\"seconds\":", error) &&
         application_unified_json_number(j, seconds, error);
-    if (ok && row->recipient.registry) ok = application_unified_json_text(j, ",\"recipient\":", error) &&
-        application_unified_json_actor(j, row->recipient, error);
+    if (ok && recipient.registry) ok = application_unified_json_text(j, ",\"recipient\":", error) &&
+        application_unified_json_actor(j, recipient, error);
+    if (ok && row->owner_generation) ok = application_unified_json_text(j, ",\"owner\":{\"provider\":", error) &&
+        application_unified_json_string(j, qa_strings_cstr(qa_session_strings(app->session), row->provider), error) &&
+        application_unified_json_text(j, ",\"generation\":", error) &&
+        application_unified_json_natural(j, row->owner_generation, error) && application_unified_json_text(j, "}", error);
     if (ok) ok = application_unified_json_text(j, ",\"sourceEntity\":", error) &&
         (row->has_source_entity ? application_unified_json_number(j, row->source_entity, error) :
             application_unified_json_text(j, "null", error)) && application_unified_json_text(j, "}", error);
+    application_unified_json_dispose(&payload);
     return ok;
 }
 
-static bool simulation_write(application_unified_json *j,
+static bool simulation_write(application_unified_json *j, qa_application *app,
     const application_unified_event_record *row, qa_error *error)
 {
     bool seconds = row->clock != QA_CLOCK_Q2_RERELEASE && row->clock != QA_CLOCK_Q3;
@@ -600,11 +1039,14 @@ static bool simulation_write(application_unified_json *j,
         application_unified_json_text(j, "}}", error);
     else if (ok) ok = application_unified_json_text(j, "{\"kind\":\"world\"}", error);
     if (ok) ok = application_unified_json_text(j, ",\"payload\":", error);
-    if (ok && row->link_presentation) ok = payload_begin(j, row->simulation, error) &&
+    application_unified_json payload = {0};
+    if (ok) ok = payload_actor_read(app, row->simulation, row->payload_checkpoint, &payload, error);
+    if (ok && row->link_presentation) ok = payload_begin(j, (qa_bytes){payload.bytes.data, payload.bytes.size}, error) &&
         application_unified_json_text(j, ",\"sourcePresentationSequence\":", error) &&
         application_unified_json_natural(j, row->presentation_sequence, error) &&
         application_unified_json_text(j, "}", error);
-    else if (ok) ok = application_unified_json_append(j, row->simulation, error);
+    else if (ok) ok = application_unified_json_append(j, (qa_bytes){payload.bytes.data, payload.bytes.size}, error);
+    application_unified_json_dispose(&payload);
     return ok && application_unified_json_text(j, "}", error);
 }
 
@@ -667,9 +1109,9 @@ static bool world_text_read(qa_application *app, const application_unified_sourc
     return ok;
 }
 
-bool application_unified_events_read(qa_application *app, const application_unified_source *source,
+static bool events_project(qa_application *app, const application_unified_source *source,
     qa_net_client_id recipient, const qa_unified_session_player *player, uint32_t epoch,
-    uint64_t after, application_unified_events *out, qa_error *error)
+    uint64_t after, bool initial, application_unified_events *out, qa_error *error)
 {
     if (!app || !source || !player || !out || !epoch || after > app->unified_event_sequence ||
         !application_unified_source_current(app, source) || !application_unified_player_current(app, recipient, player))
@@ -678,7 +1120,8 @@ bool application_unified_events_read(qa_application *app, const application_unif
         .player = *player, .generation = app->protocol_events_generation,
         .through = app->unified_event_sequence, .count = app->unified_event_count,
         .resource_count = app->unified_event_resource_count,
-        .registration_revision = app->unified_event_registration_revision};
+        .registration_revision = app->unified_event_registration_revision,
+        .persistent_revision = app->unified_persistent_revision};
     application_unified_json presentation = {0}, simulation = {0}, control = {0}, wire = {0};
     size_t presentations = 0, simulations = 0;
     size_t *references = result.resource_count ? calloc(result.resource_count, sizeof(*references)) : NULL;
@@ -687,19 +1130,23 @@ bool application_unified_events_read(qa_application *app, const application_unif
         application_unified_json_text(&presentation, "[", error) && application_unified_json_text(&simulation, "[", error);
     if (result.resource_count && !references)
         application_fail(error, QA_ERROR_MEMORY, "Retaining actual referenced Source sounds");
-    for (size_t i = 0; ok && i < result.count; ++i) {
-        const application_unified_event_record *row = app->unified_events + i;
-        if (row->order < after) continue;
-        if (row->presentation.size && (!row->recipient.registry || qa_actor_id_equal(row->recipient, player->actor))) {
+    size_t rows = initial ? app->unified_persistent_count : result.count;
+    for (size_t i = 0; ok && i < rows; ++i) {
+        const application_unified_event_record *row = initial ? &app->unified_persistent[i].event : app->unified_events + i;
+        if (!initial && row->order < after) continue;
+        qa_actor_id presentation_recipient, simulation_recipient;
+        ok = application_unified_event_recipient(app, row, false, &presentation_recipient, error) &&
+            application_unified_event_recipient(app, row, true, &simulation_recipient, error);
+        if (ok && row->presentation.size && (!presentation_recipient.registry || qa_actor_id_equal(presentation_recipient, player->actor))) {
             ok = (!presentations || application_unified_json_text(&presentation, ",", error)) &&
                 presentation_write(&presentation, app, row, error);
             ++presentations;
         }
-        if (ok && row->simulation.size && (!row->simulation_recipient.registry ||
-            (qa_actor_id_equal(row->simulation_recipient, player->actor) && row->client.owner == recipient.owner &&
+        if (ok && row->simulation.size && (!simulation_recipient.registry ||
+            (qa_actor_id_equal(simulation_recipient, player->actor) && row->client.owner == recipient.owner &&
              row->client.slot == recipient.slot && row->client.generation == recipient.generation))) {
             ok = (!simulations || application_unified_json_text(&simulation, ",", error)) &&
-                simulation_write(&simulation, row, error);
+                simulation_write(&simulation, app, row, error);
             ++simulations;
             qa_unified_document *payload = NULL;
             if (ok) ok = qa_unified_document_create(QA_UNIFIED_CHECKPOINT, row->simulation, &payload, error);
@@ -729,7 +1176,9 @@ bool application_unified_events_read(qa_application *app, const application_unif
         presentation_wire(&wire, qa_unified_document_json(presentation_value), qa_unified_document_root(presentation_value), 0, error) &&
         qa_unified_document_create(QA_UNIFIED_EVENTS_DOCUMENT, (qa_bytes){wire.bytes.data, wire.bytes.size}, &events, error) &&
         qa_unified_document_create(QA_UNIFIED_CHECKPOINT, (qa_bytes){simulation.bytes.data, simulation.bytes.size}, &result.simulation, error) &&
-        world_text_read(app, source, &result.world_text, error);
+        (initial ? qa_unified_document_create(QA_UNIFIED_CHECKPOINT,
+            (qa_bytes){(const uint8_t *)"[]", 2}, &result.world_text, error) :
+            world_text_read(app, source, &result.world_text, error));
     result.world_text_revision = app->unified_world_text_revision;
     if (ok && (reference_count || presentations || simulations)) {
         result.controls = calloc(2, sizeof(*result.controls));
@@ -755,7 +1204,7 @@ bool application_unified_events_read(qa_application *app, const application_unif
             qa_unified_checkpoint_bytes((qa_bytes){simulation_encoded.data, simulation_encoded.size}, &simulation_bytes, error) &&
             application_unified_json_text(&control, "{\"schema\":\"qts-control\",\"version\":1,\"value\":{\"kind\":\"events\",\"epoch\":", error) &&
             application_unified_json_natural(&control, epoch, error) && application_unified_json_text(&control, ",\"frame\":", error) &&
-            application_unified_json_natural(&control, source->frame.number, error) &&
+            application_unified_json_natural(&control, initial ? 0 : source->frame.number, error) &&
             application_unified_json_text(&control, ",\"payload\":", error) &&
             application_unified_json_append(&control, (qa_bytes){bytes.data, bytes.size}, error) &&
             application_unified_json_text(&control, ",\"simulation\":", error) &&
@@ -777,6 +1226,16 @@ bool application_unified_events_read(qa_application *app, const application_unif
     return true;
 }
 
+bool application_unified_events_read(qa_application *app, const application_unified_source *source,
+    qa_net_client_id recipient, const qa_unified_session_player *player, uint32_t epoch,
+    uint64_t after, application_unified_events *out, qa_error *error)
+{ return events_project(app, source, recipient, player, epoch, after, false, out, error); }
+
+bool application_unified_events_initial_read(qa_application *app, const application_unified_source *source,
+    qa_net_client_id recipient, const qa_unified_session_player *player, uint32_t epoch,
+    application_unified_events *out, qa_error *error)
+{ return events_project(app, source, recipient, player, epoch, 0, true, out, error); }
+
 bool application_unified_events_current(const application_unified_events *events)
 {
     return events && events->application &&
@@ -787,6 +1246,7 @@ bool application_unified_events_current(const application_unified_events *events
         events->count == events->application->unified_event_count &&
         events->resource_count == events->application->unified_event_resource_count &&
         events->registration_revision == events->application->unified_event_registration_revision &&
+        events->persistent_revision == events->application->unified_persistent_revision &&
         events->world_text_revision == events->application->unified_world_text_revision;
 }
 

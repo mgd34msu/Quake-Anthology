@@ -162,6 +162,28 @@ bool application_q3_mod_protection_binding(application_q3_mod *o, qa_protection_
     }
     return q3mod_fail(e,QA_ERROR_NOT_FOUND,"Protection lease does not belong to this actual source owner");
 }
+bool application_q3_mod_protection_saved_binding(application_q3_mod *o,qa_actor_id actor,
+    qa_protection_channel channel,const qa_protection_claim *claim,qa_protection_binding *out,qa_error *e)
+{
+    if(!o||!claim||!out||!q3mod_storage_current(o,e)||
+        !qa_actors_get(qa_session_actors(o->session),actor))
+        return q3mod_fail(e,QA_ERROR_ARGUMENT,"Saved protection requires its retained source and full actor");
+    for(mod_actor_channel *c=o->channels;c;c=c->next) {
+        if(!qa_actor_id_equal(c->actor,actor)||c->lease.channel!=channel) continue;
+        if(c->definition>=o->profile->protection_count)
+            return q3mod_fail(e,QA_ERROR_FORMAT,"Saved protection has no actual declared channel");
+        const mod_protection *definition=o->profile->protection+c->definition;
+        qa_protection_claim actual=definition->claim; actual.owner=o->owner;
+        int32_t slot;
+        if(!c->bound||!c->lease.serial||definition->channel!=channel||
+            claim->owner!=actual.owner||claim->expected_owner!=actual.expected_owner||
+            claim->rule!=actual.rule||claim->admission!=actual.admission||
+            !o->services.client_slot(o->services.context,actor,&slot,e)||slot!=c->client)
+            return q3mod_fail(e,QA_ERROR_FORMAT,"Saved protection claim differs from its actual retained source lease");
+        return application_q3_mod_protection_binding(o,c->lease,out,e);
+    }
+    return q3mod_fail(e,QA_ERROR_NOT_FOUND,"Saved protection has no bound source channel row");
+}
 bool application_q3_mod_reserve(application_q3_mod *o, qa_actor_id actor, qa_error *e)
 {
     if (!q3mod_current(o,e)) return false;

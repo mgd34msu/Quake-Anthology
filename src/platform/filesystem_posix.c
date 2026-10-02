@@ -49,9 +49,11 @@ struct qa_fs_stream {
     qa_fs_object_reference object;
 };
 
+static _Thread_local qa_fs_native_error opened_native_failure;
 static bool fail_errno(qa_error *error, const char *operation,
                        const char *path, int code)
 {
+    opened_native_failure = (qa_fs_native_error){1, (uint32_t)code, true};
     qa_error_set(error, code == ENOENT || code == ENOTDIR
                            ? QA_ERROR_NOT_FOUND
                            : QA_ERROR_IO,
@@ -1373,7 +1375,7 @@ struct qa_fs_stage {
     int parent, descriptor;
     char *leaf, *display;
     char temporary[64];
-    bool sealed, published, readonly;
+    bool sealed, published, readonly, closing, closing_keep, cleanup_done;
 };
 static bool stage_argument(qa_error *error, const char *message) {
     qa_error_set(error, QA_ERROR_ARGUMENT, 0, "%s", message); return false;
@@ -1389,26 +1391,27 @@ static bool stage_identity(qa_fs_stage *stage, qa_fs_identity *out, qa_error *er
     }
     identity_from_stat(&info, out); return true;
 }
-static bool stage_open(qa_fs_root *root, const char *target, uint64_t nonce, bool resume, bool readonly,
+static bool stage_open(qa_fs_root *root, const char *target, uint64_t nonce, bool resume, bool readonly, bool checked,
                        qa_fs_stage **out, uint64_t *initial, qa_error *error) {
-    if (!root || !out || !initial || !qa_fs_relative_valid(target, false, error))
+    if (!root || !out || (checked && *out) || !initial || !qa_fs_relative_valid(target, false, error))
         return stage_argument(error, "Invalid contained staging request");
     qa_fs_stage *stage = calloc(1, sizeof(*stage));
     if (!stage) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating file stage"); return false; }
+    if (checked) *out = stage;
     stage->parent = -1; stage->descriptor = -1;
     stage->readonly = readonly; stage->sealed = readonly;
     stage->display = copy_string(target);
-    if (!stage->display) { qa_fs_stage_close(stage, true); qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining stage target"); return false; }
+    if (!stage->display) { if (!checked) qa_fs_stage_close(stage, true); qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining stage target"); return false; }
     stage->parent = writable_parent(root, target, !resume, &stage->leaf, error);
-    if (stage->parent < 0) { qa_fs_stage_close(stage, true); return false; }
+    if (stage->parent < 0) { if (!checked) qa_fs_stage_close(stage, true); return false; }
     (void)snprintf(stage->temporary, sizeof(stage->temporary), ".qa-stage-%016" PRIx64, nonce);
-    if (!strcmp(stage->temporary, stage->leaf)) { qa_fs_stage_close(stage, true); return stage_argument(error, "Stage and target names must differ"); }
+    if (!strcmp(stage->temporary, stage->leaf)) { if (!checked) qa_fs_stage_close(stage, true); return stage_argument(error, "Stage and target names must differ"); }
     int flags = (readonly ? O_RDONLY : O_RDWR) | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK;
     if (!resume) flags |= O_CREAT | O_EXCL;
     do { stage->descriptor = openat(stage->parent, stage->temporary, flags, 0600); }
     while (stage->descriptor < 0 && errno == EINTR);
     if (stage->descriptor < 0) {
-        int code = errno; qa_fs_stage_close(stage, true);
+        int code = errno; if (!checked) qa_fs_stage_close(stage, true);
         return fail_errno(error, "cannot open staged file", target, code);
     }
     /* A shared root cannot admit two active writers of the same resume nonce. */
@@ -1420,20 +1423,29 @@ static bool stage_open(qa_fs_root *root, const char *target, uint64_t nonce, boo
     if (locked < 0 || !private_file || !stage_identity(stage, &identity, error)) {
         if (locked < 0) fail_errno(error, "cannot lock staged file", target, errno);
         else if (!private_file) stage_argument(error, "Resume stage must remain private to its owner");
-        qa_fs_stage_close(stage, resume); return false;
+        if (!checked) qa_fs_stage_close(stage, resume);
+        return false;
     }
     *initial = identity.words[2]; *out = stage; return true;
 }
 bool qa_fs_stage_open(qa_fs_root *root, const char *target, uint64_t nonce, bool resume,
     qa_fs_stage **out, uint64_t *initial, qa_error *error) {
-    return stage_open(root, target, nonce, resume, false, out, initial, error);
+    return stage_open(root, target, nonce, resume, false, false, out, initial, error);
 }
 bool qa_fs_stage_open_readonly(qa_fs_root *root, const char *target, uint64_t nonce,
     qa_fs_stage **out, uint64_t *initial, qa_error *error) {
-    return stage_open(root, target, nonce, true, true, out, initial, error);
+    return stage_open(root, target, nonce, true, true, false, out, initial, error);
+}
+bool qa_fs_stage_open_checked(qa_fs_root *root, const char *target, uint64_t nonce, bool resume,
+    qa_fs_stage **out, uint64_t *initial, qa_error *error) {
+    return stage_open(root, target, nonce, resume, false, true, out, initial, error);
+}
+bool qa_fs_stage_open_readonly_checked(qa_fs_root *root, const char *target, uint64_t nonce,
+    qa_fs_stage **out, uint64_t *initial, qa_error *error) {
+    return stage_open(root, target, nonce, true, true, true, out, initial, error);
 }
 bool qa_fs_stage_size(qa_fs_stage *stage, uint64_t *out, qa_error *error) {
-    if (!stage || !out) return stage_argument(error, "Missing stage size output");
+    if (!stage || stage->closing || !out) return stage_argument(error, "Missing stage size output");
     struct stat info;
     if (!descriptor_stat(stage->descriptor, &info)) return fail_errno(error, "cannot inspect staged size", stage->display, errno);
     if (info.st_size < 0) return stage_argument(error, "Staged file has negative size");
@@ -1441,7 +1453,7 @@ bool qa_fs_stage_size(qa_fs_stage *stage, uint64_t *out, qa_error *error) {
 }
 bool qa_fs_stage_read(qa_fs_stage *stage, uint64_t offset, void *bytes, size_t capacity,
                        size_t *received, qa_error *error) {
-    if (!stage || !received || (capacity && !bytes) || offset > INT64_MAX ||
+    if (!stage || stage->closing || !received || (capacity && !bytes) || offset > INT64_MAX ||
         (uint64_t)capacity > (uint64_t)INT64_MAX - offset)
         return stage_argument(error, "Invalid stage read range");
     *received = 0;
@@ -1457,7 +1469,7 @@ bool qa_fs_stage_read(qa_fs_stage *stage, uint64_t offset, void *bytes, size_t c
     return true;
 }
 bool qa_fs_stage_write(qa_fs_stage *stage, uint64_t offset, qa_bytes bytes, size_t *written, qa_error *error) {
-    if (!stage || !written || stage->sealed || stage->published || (bytes.size && !bytes.data) ||
+    if (!stage || stage->closing || !written || stage->sealed || stage->published || (bytes.size && !bytes.data) ||
         offset > INT64_MAX || (uint64_t)bytes.size > (uint64_t)INT64_MAX - offset)
         return stage_argument(error, "Invalid stage write range/state");
     *written = 0;
@@ -1472,7 +1484,7 @@ bool qa_fs_stage_write(qa_fs_stage *stage, uint64_t offset, qa_bytes bytes, size
     return true;
 }
 bool qa_fs_stage_seal(qa_fs_stage *stage, qa_fs_identity *identity, qa_error *error) {
-    if (!stage || !identity || stage->published || stage->readonly) return stage_argument(error, "Invalid stage seal");
+    if (!stage || stage->closing || !identity || stage->published || stage->readonly) return stage_argument(error, "Invalid stage seal");
     if (fsync(stage->descriptor) < 0) return fail_errno(error, "cannot sync staged file", stage->display, errno);
     if (!stage_identity(stage, identity, error)) return false;
     stage->sealed = true; return true;
@@ -1488,7 +1500,7 @@ void qa_fs_stage_unmap(qa_fs_stage_mapping *mapping) {
 }
 bool qa_fs_stage_map(qa_fs_stage *stage, qa_fs_stage_mapping **out, qa_error *error) {
     qa_fs_identity identity;
-    if (!stage || !out || !stage->sealed || stage->published) return stage_argument(error, "Stage mapping requires a sealed unpublished file");
+    if (!stage || stage->closing || !out || !stage->sealed || stage->published) return stage_argument(error, "Stage mapping requires a sealed unpublished file");
     if (!stage_identity(stage, &identity, error)) return false;
     uint64_t size = identity.words[2];
     if (size > SIZE_MAX || size > PTRDIFF_MAX) return stage_argument(error, "Stage exceeds mapping address range");
@@ -1507,7 +1519,7 @@ bool qa_fs_stage_map(qa_fs_stage *stage, qa_fs_stage_mapping **out, qa_error *er
 }
 bool qa_fs_stage_publish(qa_fs_stage *stage, const qa_fs_identity *expected, bool exclusive,
                           bool *created, qa_error *error) {
-    if (!stage || !expected || !created || !stage->sealed || stage->published || stage->readonly)
+    if (!stage || stage->closing || !expected || !created || !stage->sealed || stage->published || stage->readonly)
         return stage_argument(error, "Invalid stage publication");
     *created = false;
     qa_fs_identity current;
@@ -1545,6 +1557,36 @@ void qa_fs_stage_close(qa_fs_stage *stage, bool keep) {
     if (stage->descriptor >= 0) (void)close(stage->descriptor);
     if (stage->parent >= 0) (void)close(stage->parent);
     free(stage->leaf); free(stage->display); free(stage);
+}
+bool qa_fs_stage_close_checked(qa_fs_stage **owned, bool keep, qa_error *error) {
+    qa_fs_stage *stage = owned ? *owned : NULL;
+    if (!stage) return true;
+    if (stage->closing && stage->closing_keep != keep)
+        return stage_argument(error, "Stage cleanup cannot change its retained-file decision");
+    stage->closing = true; stage->closing_keep = keep;
+    if (!stage->cleanup_done) {
+        if (keep && !stage->readonly && !stage->published && stage->descriptor >= 0 && fsync(stage->descriptor) < 0)
+            return fail_errno(error, "cannot sync retained stage", stage->display, errno);
+        if (!keep && !stage->readonly && !stage->published && stage->parent >= 0 && stage->descriptor >= 0) {
+            struct stat opened, named;
+            if (!descriptor_stat(stage->descriptor, &opened)) return fail_errno(error, "cannot inspect closing stage", stage->display, errno);
+            if (fstatat(stage->parent, stage->temporary, &named, AT_SYMLINK_NOFOLLOW) < 0) {
+                if (errno != ENOENT) return fail_errno(error, "cannot inspect closing stage name", stage->display, errno);
+            } else if (opened.st_dev == named.st_dev && opened.st_ino == named.st_ino &&
+                unlinkat(stage->parent, stage->temporary, 0) < 0)
+                return fail_errno(error, "cannot remove closing stage", stage->display, errno);
+        }
+        stage->cleanup_done = true;
+    }
+    if (stage->descriptor >= 0) {
+        int descriptor = stage->descriptor; stage->descriptor = -1;
+        if (close(descriptor) < 0) return fail_errno(error, "cannot close stage", stage->display, errno);
+    }
+    if (stage->parent >= 0) {
+        int parent = stage->parent; stage->parent = -1;
+        if (close(parent) < 0) return fail_errno(error, "cannot close stage parent", stage->display, errno);
+    }
+    free(stage->leaf); free(stage->display); free(stage); *owned = NULL; return true;
 }
 
 bool qa_fs_stream_sync(qa_fs_stream *stream, qa_error *error) {

@@ -258,11 +258,11 @@ bool qa_unified_session_process(qa_unified_session *s, bool *waiting, qa_error *
         }
         if (ok) ok = process_control(s, s->timeout_delivery, e);
         if (ok) {
-            s->timeout_pending = false;
+            s->timeout_pending = false; s->close_cause = 0;
             qa_unified_session_delivery_free(s->timeout_delivery); s->timeout_delivery = NULL;
         }
     }
-    while (ok && s->held && !s->disconnected) {
+    while (ok && s->held && !s->disconnected && !s->timeout_pending) {
         qa_unified_held *held = s->held;
         qa_unified_document_kind kind = qa_unified_document_type(held->document);
         bool obsolete = false;

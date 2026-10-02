@@ -69,11 +69,7 @@ struct qa_q3_presentation_assets {
     unsigned busy, users;
     bool capturing, codec_busy;
 };
-typedef struct q3p_polygon {
-    int32_t shader;
-    size_t first, count;
-    qa_scene_fog_volume fog;
-} q3p_polygon;
+typedef qa_q3_scene_polygon q3p_polygon;
 typedef enum q3p_movie_kind { Q3P_MOVIE_EMPTY, Q3P_MOVIE_PENDING, Q3P_MOVIE_LOCAL, Q3P_MOVIE_SYSTEM } q3p_movie_kind;
 typedef struct q3p_movie_source {
     struct q3p_movie_source *next;
@@ -101,6 +97,7 @@ struct qa_q3_presentation {
     qa_common_cursor cursor;
     qa_q3_ref_entity *entities;
     size_t entity_count, entity_capacity;
+    uint32_t source_entity_first;
     q3p_polygon *polygons;
     size_t polygon_count, polygon_capacity;
     qa_scene_vertex *vertices;

@@ -19,6 +19,7 @@
 #include "bots_catalog.h"
 #include "supplies.h"
 #include "qa/game_q3_configstrings.h"
+#include "qa/game_q3_client.h"
 #include "qa/game_q3_wire.h"
 #include "qa/modes_q3_clients.h"
 
@@ -634,6 +635,14 @@ bool application_native_q3_client_spawn(application_provider *provider, qa_actor
     if (!source(provider, actor, &slot, error) ||
         !application_native_q3_console_borrow(provider, error)) return false;
     bool ok = client_spawn(provider, actor, spawn, command, error) && source(provider, actor, &slot, error);
+    if (ok) {
+        application_native_q3_wire_client_view wire;
+        bool present;
+        ok = application_native_q3_wire_client_admission_read(provider, slot, &wire, &present, error);
+        if (ok && present && wire.begun)
+            ok = application_players_source_spawned(provider, actor, error) &&
+                source(provider, actor, &slot, error);
+    }
     application_native_q3_console_release(provider);
     return ok;
 }
@@ -673,7 +682,9 @@ bool application_native_q3_client_begin(application_provider *provider, qa_actor
         ok = application_native_q3_log(provider, text, error) &&
              source(provider, actor, &slot, error) &&
              application_native_q3_wire_begin(provider, slot, error) &&
-             application_native_q3_rank(provider, error);
+             application_native_q3_rank(provider, error) &&
+             application_players_source_spawned(provider, actor, error) &&
+             source(provider, actor, &slot, error);
     }
     application_native_q3_console_release(provider);
     return ok;
@@ -1402,8 +1413,8 @@ bool application_native_q3_client_spectator_buttons(application_provider *provid
 {
     uint32_t slot, old_buttons;
     if (!command || !source(provider, actor, &slot, error) ||
-        !qa_q3_client_buttons(provider->state.q3, actor, command->buttons, false, &old_buttons, error)) return false;
-    return !(command->buttons & 1u) || (old_buttons & 1u) ||
+        !qa_q3_client_buttons(provider->state.q3, actor, (uint32_t)command->buttons, false, &old_buttons, error)) return false;
+    return !((uint32_t)command->buttons & 1u) || (old_buttons & 1u) ||
         follow_command(provider, actor, NULL, 1, error);
 }
 
@@ -1485,8 +1496,8 @@ bool application_native_q3_client_think_special(application_provider *provider,
     if (intermission) {
         *handled = true;
         if (!qa_q3_client_player_flags_update(provider->state.q3, slot, 0, 0x1100u, error) ||
-            !qa_q3_client_buttons(provider->state.q3, actor, command->buttons, false, &old_buttons, error)) return false;
-        return !(command->buttons & 5u & (old_buttons ^ command->buttons)) ||
+            !qa_q3_client_buttons(provider->state.q3, actor, (uint32_t)command->buttons, false, &old_buttons, error)) return false;
+        return !((uint32_t)command->buttons & 5u & (old_buttons ^ (uint32_t)command->buttons)) ||
             qa_q3_client_ready(provider->state.q3, actor, true, error);
     }
     if (sess.team == 3 && sess.spectator_state == QA_Q3_SPECTATOR_SCOREBOARD) {

@@ -74,6 +74,7 @@ static bool trace(void *context,const qa_trace_query *query,qa_trace_result *out
             q=*query; q.target=(qa_collision_target){.inline_model=true,.model=(uint32_t)model,.origin=vector(entity->origin)};
             if(!qa_collision_trace(row->prediction->geometry,&q,&hit,error)) return false;
         } else {
+            if(query->policy.q1_move==QA_Q1_MOVE_NO_MONSTERS) continue;
             if(!entity->number || entity->number>32 || !row->qw_player_valid[entity->number-1] ||
                 (row->qw_players[entity->number-1].flags&QA_QW_PF_DEAD)) continue;
             q=*query;
@@ -87,6 +88,22 @@ static bool trace(void *context,const qa_trace_query *query,qa_trace_result *out
         merge(out,hit);
     }
     return true;
+}
+bool remote_q1_prediction_camera_trace(frontend_remote_q1 *row,qa_vec3 start,qa_vec3 end,
+    qa_trace_result *out,qa_error *error)
+{
+    if(!row || !out || !qa_vec_finite(start) || !qa_vec_finite(end) || !row->loaded ||
+        !qa_q1_is_qw(row->options.domain.protocol) || !remote_q1_mutable(row) || !remote_q1_live(row,error) ||
+        !retain(row,error)) return false;
+    qa_trace_query query={.start=start,.end=end,
+        .shape={QA_SHAPE_BOX,{qa_v3(-16,-16,-24),qa_v3(16,16,32)}},
+        .policy=qa_collision_default_policy(QA_COLLISION_Q1)};
+    query.policy.q1_move=QA_Q1_MOVE_NO_MONSTERS;
+    query.policy.q1_hull=1;
+    ++row->busy;
+    bool ok=geometry(row,error) && trace(row,&query,out,error);
+    --row->busy;
+    return ok && remote_q1_live(row,error);
 }
 static bool contents(void *context,const qa_point_query *query,qa_point_contents *out,qa_error *error)
 {
@@ -208,10 +225,10 @@ bool remote_q1_prediction_loss(frontend_remote_q1 *row,uint32_t outgoing,uint8_t
     for(unsigned age=0;age<256;++age) if(p->latency[(outgoing-age)&255]==9999) ++lost;
     *out=(uint8_t)(lost*100/256); return true;
 }
-bool remote_q1_prediction_receive(frontend_remote_q1 *row,qa_error *error)
+static bool receive_player(frontend_remote_q1 *row,const qa_vec3 *camera_origin,qa_error *error)
 {
     if(!row || !remote_q1_mutable(row) || !remote_q1_live(row,error)) return false;
-    if(!qa_q1_is_qw(row->options.domain.protocol) || row->qw.spectator || row->qw_intermission ||
+    if(!qa_q1_is_qw(row->options.domain.protocol) || row->qw_intermission ||
         !row->loaded || !row->has_data || !row->qw_player_valid[row->qw.player_slot]) return true;
     if(!retain(row,error)) return false;
     frontend_remote_q1_prediction *p=row->prediction;
@@ -219,20 +236,27 @@ bool remote_q1_prediction_receive(frontend_remote_q1 *row,qa_error *error)
     qa_qw_movement_state state=p->initialized?p->received:(qa_qw_movement_state){0};
     for(size_t i=0;i<p->count;++i) if(p->history[i].sequence==p->acknowledged && p->history[i].predicted)
         state=p->history[i].continuation;
-    state.origin=qa_qw_origin_from_vec3(vector(own->origin)); state.velocity=vector(own->velocity);
-    state.angles=row->view_angles; state.dead=row->data.health<=0; state.spectator=0;
+    state.origin=qa_qw_origin_from_vec3(camera_origin?*camera_origin:vector(own->origin)); state.velocity=vector(own->velocity);
+    state.angles=row->view_angles; state.dead=row->data.health<=0; state.spectator=row->qw.spectator?1:0;
     p->view_height=own->flags&QA_QW_PF_GIB?8:own->flags&QA_QW_PF_DEAD?-16:22;
-    p->received=state; p->received_sequence=p->acknowledged; p->initialized=true;
+    p->received=p->predicted=state; p->received_sequence=p->acknowledged; p->initialized=true;
     size_t retained=0;
     for(size_t i=0;i<p->count;++i) if(p->history[i].sequence>p->acknowledged) p->history[retained++]=p->history[i];
     p->count=retained;
     return replay(row,error);
 }
+bool remote_q1_prediction_receive(frontend_remote_q1 *row,qa_error *error)
+{ return receive_player(row,NULL,error); }
+bool remote_q1_prediction_camera_receive(frontend_remote_q1 *row,qa_vec3 origin,qa_error *error)
+{
+    if(!qa_vec_finite(origin)) return remote_q1_fail(error,QA_ERROR_ARGUMENT,"QW camera continuation origin is not finite");
+    return receive_player(row,&origin,error);
+}
 bool remote_q1_prediction_read(const frontend_remote_q1 *row,qa_qw_movement_state *out,float *height,bool *present)
 {
     if(!row || !out || !height || !present) return false;
     const frontend_remote_q1_prediction *p=row->prediction;
-    *present=p && p->initialized && !exhausted(p) && !row->qw.spectator && !row->qw_intermission;
+    *present=p && p->initialized && !exhausted(p) && !row->qw_intermission;
     if(*present) { *out=p->predicted; *height=p->view_height; }
     return true;
 }
@@ -243,7 +267,7 @@ static bool state_fields(qa_source_save_io *io,qa_qw_movement_state *state)
         !qa_source_save_f64(io,&state->origin.z) || !qa_source_save_vec3(io,&state->velocity) ||
         !qa_source_save_vec3(io,&state->angles) || !qa_source_save_u32(io,&state->old_buttons) ||
         !qa_source_save_f32(io,&state->water_jump_time_seconds) || !qa_source_save_bool(io,&state->dead) ||
-        !qa_source_save_i32(io,&state->spectator) || state->spectator || !qa_source_save_u32(io,&hit) ||
+        !qa_source_save_i32(io,&state->spectator) || state->spectator<0 || state->spectator>1 || !qa_source_save_u32(io,&hit) ||
         hit>QA_TRACE_HIT_ACTOR || !qa_source_save_actor(io,&state->ground.actor) ||
         !qa_source_save_u32(io,&state->ground.model) || !isfinite(state->origin.x) ||
         !isfinite(state->origin.y) || !isfinite(state->origin.z) || !qa_vec_finite(state->velocity) ||
@@ -280,7 +304,9 @@ bool remote_q1_prediction_fields(frontend_remote_q1 *row,qa_source_save_io *io,q
         !qa_source_save_bool(io,&p->discarded) || !qa_source_save_u32(io,&p->discarded_sequence) ||
         (p->discarded && (!p->has_sent || p->discarded_sequence>p->last_sent)) ||
         !qa_source_save_f32(io,&p->view_height) || !isfinite(p->view_height) ||
-        !state_fields(io,&p->received) || !state_fields(io,&p->predicted) || !qa_source_save_count(io,&p->count,64)) return false;
+        !state_fields(io,&p->received) || !state_fields(io,&p->predicted) ||
+        (p->initialized && (p->received.spectator!=(row->qw.spectator?1:0) ||
+            p->predicted.spectator!=p->received.spectator)) || !qa_source_save_count(io,&p->count,64)) return false;
     for(size_t i=0;i<p->count;++i) {
         sent_command *entry=p->history+i;
         if(!qa_source_save_u32(io,&entry->sequence) || !p->has_sent || entry->sequence>p->last_sent ||

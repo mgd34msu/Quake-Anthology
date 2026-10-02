@@ -298,11 +298,14 @@ void qa_scene_image_release(const qa_scene_image *image)
         qa_scene_image_release(image->animation[i]);
     free((void *)image->animation);
     qa_scene_image_release(owned->sampling_source);
+    qa_scene_image_release(owned->source_variant_source);
+    qa_scene_resources *parent_owner = owned->source_variant_owner;
     for (size_t i = 0; i < image->level_count; ++i) free((void *)owned->levels[i].pixels);
     free(owned->levels);
     if (--owned->lineage->references == 0) free(owned->lineage);
     names_release(owned->names);
     free(owned);
+    qa_scene_resources_destroy(parent_owner);
 }
 
 const qa_scene_image *qa_scene_image_at_time(const qa_scene_image *image, double seconds)
@@ -465,6 +468,8 @@ bool qa_scene_image_replace(qa_scene_resources *resources, const qa_scene_image 
     image->revision = ++owned->lineage->revision;
     image->logical_width = source->logical_width;
     image->logical_height = source->logical_height;
+    image->source_q3 = source->source_q3; image->source_mipmap = source->source_mipmap;
+    image->recipient_upload_pixels = source->recipient_upload_pixels;
     *out = image;
     return true;
 }
@@ -485,6 +490,8 @@ bool qa_scene_image_sample(qa_scene_resources *resources, const qa_scene_image *
     image->logical_width = source->logical_width; image->logical_height = source->logical_height;
     ((owned_image *)image)->sampling_source = source;
     ((owned_image *)image)->sampling_mipmap = mipmap;
+    image->source_q3 = source->source_q3; image->source_mipmap = source->source_mipmap && mipmap;
+    image->recipient_upload_pixels = source->recipient_upload_pixels;
     qa_scene_image_retain(source);
     if (source->animation_count > 1) {
         if (source->animation_count > (size_t)PTRDIFF_MAX / sizeof(qa_scene_image *)) {
@@ -509,6 +516,8 @@ bool qa_scene_image_sample(qa_scene_resources *resources, const qa_scene_image *
             ++owned->lineage->references;
             sampled->identity = image->identity; sampled->revision = ++owned->lineage->revision;
             sampled->logical_width = source->logical_width; sampled->logical_height = source->logical_height;
+            sampled->source_q3 = frame->source_q3; sampled->source_mipmap = frame->source_mipmap && mipmap;
+            sampled->recipient_upload_pixels = frame->recipient_upload_pixels;
             owned->sampling_source = frame; owned->sampling_mipmap = mipmap;
             qa_scene_image_retain(frame);
             frames[i] = sampled;
@@ -524,10 +533,14 @@ qa_scene_resources *qa_scene_resources_create_detached(qa_vfs *vfs, qa_error *er
     resources->names = calloc(1, sizeof(*resources->names));
     if (resources->names == NULL) { free(resources); goto failed; }
     resources->names->references = 1;
+    resources->references = 1; resources->names->owner = resources;
     if (!qa_strings_create(&resources->names->strings, error)) {
         free(resources->names); free(resources); return NULL;
     }
     resources->vfs = vfs;
+    if (vfs && !qa_vfs_retain(vfs, error)) {
+        names_release(resources->names); free(resources); return NULL;
+    }
     resources->detached = true;
     return resources;
 failed:
@@ -571,9 +584,48 @@ qa_vfs *qa_scene_resources_files(const qa_scene_resources *resources)
     return resources ? resources->vfs : NULL;
 }
 
+bool qa_scene_resources_retain(qa_scene_resources *resources, qa_error *error)
+{
+    if (!resources || !resources->references || resources->references == SIZE_MAX) {
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining actual image bank"); return false;
+    }
+    ++resources->references; return true;
+}
+qa_scene_resources *qa_scene_image_owner(const qa_scene_image *image)
+{
+    if (!image) return NULL;
+    const owned_image *owned = (const owned_image *)image;
+    return owned->listed && owned->names ? owned->names->owner : NULL;
+}
+qa_scene_resources *qa_scene_image_resource_owner(const qa_scene_image *image)
+{ return qa_scene_image_owner(image); }
+size_t qa_scene_resources_parent_count(const qa_scene_resources *resources)
+{
+    size_t count = 0;
+    for (const owned_image *image = resources ? resources->names->images : NULL; image; image = image->next)
+        if (image->source_variant_owner) ++count;
+    return count;
+}
+bool qa_scene_resources_parent_at(const qa_scene_resources *resources, size_t index, qa_scene_resources **out)
+{
+    if (!resources || !out) return false;
+    for (const owned_image *image = resources->names->images; image; image = image->next) {
+        if (!image->source_variant_owner) continue;
+        if (index) { --index; continue; }
+        *out = image->source_variant_owner; return true;
+    }
+    return false;
+}
 void qa_scene_resources_destroy(qa_scene_resources *resources)
 {
+    if (resources && resources->references > 1) { --resources->references; return; }
     if (!qa_scene_resources_idle(resources)) return;
+    resources->names->owner = NULL;
+    while (resources->variants) {
+        owned_image *image = resources->variants;
+        resources->variants = image->variant_next;
+        image->variant_next = NULL; qa_scene_image_release(&image->image);
+    }
     for (size_t i = 0; i < resources->cache_count; ++i) {
         qa_scene_image_release(resources->cache[i].image);
         qa_resource_release(resources->cache[i].source_record);
@@ -586,6 +638,7 @@ void qa_scene_resources_destroy(qa_scene_resources *resources)
     qa_scene_image_release(resources->source_white); qa_scene_image_release(resources->source_missing);
     qa_scene_image_release(resources->source_identity);
     names_release(resources->names);
+    qa_vfs_destroy(resources->vfs);
     free(resources);
 }
 
@@ -661,6 +714,7 @@ bool qa_scene_resource_policy_prepare(qa_scene_resources *owner,
     qa_scene_resources *destination = ticket->destination;
     destination->fullbright_first = owner->fullbright_first;
     destination->white = owner->white; qa_scene_image_retain(destination->white);
+    destination->policy_source = owner;
     destination->missing = owner->missing; qa_scene_image_retain(destination->missing);
     destination->source_builtins = owner->source_builtins;
     destination->source_builtins_upload = owner->source_builtins_upload;
@@ -762,6 +816,13 @@ bool qa_scene_resource_policy_image(qa_scene_resource_policy *ticket, const qa_s
         found = true; break;
     }
     const owned_image *owned = (const owned_image *)image;
+    if (!found && owned->source_variant_source) {
+        qa_scene_image *parent = NULL;
+        ok = policy_parent_image(ticket, owned->source_variant_source, &parent, error);
+        if (ok) ok = qa_scene_image_source_q3_variant(ticket->destination, parent,
+            &owned->source_variant_upload, out, error);
+        qa_scene_image_release(parent); found = true;
+    }
     if (!found && owned->sampling_source) {
         qa_scene_image *parent = NULL;
         ok = policy_parent_image(ticket, owned->sampling_source, &parent, error);
@@ -836,6 +897,10 @@ void qa_scene_resource_policy_publish(qa_scene_resource_policy *ticket)
         destination->names->images = image->next;
         if (image->next) image->next->previous = NULL;
         --destination->names->image_count; --destination->names->references;
+        if (image->source_variant_owner == owner) {
+            image->source_variant_owner = NULL;
+            qa_scene_resources_destroy(owner);
+        }
         image->names = owner->names; ++owner->names->references;
         image->previous = NULL; image->next = owner->names->images;
         if (image->next) image->next->previous = image;
@@ -845,6 +910,8 @@ void qa_scene_resource_policy_publish(qa_scene_resource_policy *ticket)
     owner->cache = destination->cache; owner->cache_count = destination->cache_count;
     owner->cache_capacity = destination->cache_capacity;
     destination->cache = cache; destination->cache_count = count; destination->cache_capacity = capacity;
+    owned_image *variants = owner->variants;
+    owner->variants = destination->variants; destination->variants = variants;
     for (unsigned family = 0; family < 3; ++family) {
         if (!owner->palettes[family].size) {
             owner->palettes[family] = destination->palettes[family];
@@ -952,7 +1019,10 @@ static bool image_from_rgba(qa_scene_resources *resources, const char *name, con
         }
         bool ok = qa_scene_image_create(resources, name, QA_SCENE_RGBA8, levels, uploaded.count,
             options->wrap, options->filter, (qa_scene_vec4){0}, out, error);
-        if (ok) { (*out)->logical_width = source->width; (*out)->logical_height = source->height; }
+        if (ok) {
+            (*out)->logical_width = source->width; (*out)->logical_height = source->height;
+            (*out)->source_q3 = true; (*out)->source_mipmap = options->source_upload.mipmap;
+        }
         free(levels); qa_mip_chain_free(&uploaded); return ok;
     }
     qa_image scaled = {0};
@@ -1107,10 +1177,16 @@ static bool indexed_rgba(qa_scene_resources *resources, qa_image *image,
     return true;
 }
 
-static bool decode_asset(qa_scene_resources *resources, const char *request, const char *path,
+static bool decode_asset_upload(qa_scene_resources *resources, const char *request, const char *path,
                           qa_bytes bytes, const qa_scene_image_options *options,
+                          const qa_q3_image_upload_options *recipient,
                           qa_scene_image **out, qa_error *error)
 {
+    qa_scene_image_options upload = *options;
+    if (recipient) {
+        upload.source_q3 = true; upload.source_upload = *recipient;
+        upload.mipmap = recipient->mipmap;
+    }
     if (options->fullbright_only && !suffix_equal(path, ".lmp") && !suffix_equal(path, ".mip")) {
         qa_error_set(error, QA_ERROR_NOT_FOUND, 0, "scene image has no indexed fullbright layer");
         return false;
@@ -1119,7 +1195,7 @@ static bool decode_asset(qa_scene_resources *resources, const char *request, con
         qa_gif gif = {0};
         if (!qa_image_decode_gif(bytes, &gif, error)) return false;
         qa_scene_image *first = NULL;
-        if (gif.frame_count == 0 || !image_from_rgba(resources, request, &gif.frames[0].image, options, &first, error)) {
+        if (gif.frame_count == 0 || !image_from_rgba(resources, request, &gif.frames[0].image, &upload, &first, error)) {
             qa_gif_free(&gif); return false;
         }
         if (gif.frame_count > 1) {
@@ -1131,7 +1207,7 @@ static bool decode_asset(qa_scene_resources *resources, const char *request, con
             first->animation = frames; first->animation_count = gif.frame_count;
             for (size_t i = 1; i < gif.frame_count; ++i) {
                 qa_scene_image *frame = NULL;
-                if (!image_from_rgba(resources, request, &gif.frames[i].image, options, &frame, error)) {
+                if (!image_from_rgba(resources, request, &gif.frames[i].image, &upload, &frame, error)) {
                     qa_scene_image_release(first); qa_gif_free(&gif); return false;
                 }
                 owned_image *owned = (owned_image *)frame;
@@ -1152,7 +1228,7 @@ static bool decode_asset(qa_scene_resources *resources, const char *request, con
         qa_mip_texture mip = {0};
         ok = suffix_equal(path, ".wal") ? qa_image_decode_wal(bytes, &mip, error) : qa_image_decode_mip(bytes, &mip, error);
         if (ok && !mip.external) {
-            if (!options->source_q3 && (options->family != QA_SCENE_Q2 || !options->mipmap)) {
+            if (!recipient && !options->source_q3 && (options->family != QA_SCENE_Q2 || !options->mipmap)) {
                 qa_image images[4] = {0};
                 qa_scene_image_level levels[4];
                 for (size_t i = 0; i < 4 && ok; ++i) {
@@ -1184,11 +1260,134 @@ static bool decode_asset(qa_scene_resources *resources, const char *request, con
     else qa_error_set(error, QA_ERROR_UNSUPPORTED, 0, "unsupported scene image extension: %s", path);
     if (ok && decoded.indices.size != 0 && (pcx || decoded.rgba.size == 0 || options->translation.size != 0 || options->fullbright_only))
         ok = indexed_rgba(resources, &decoded, options, pcx, error);
-    qa_scene_image_options upload = *options;
-    if (suffix_equal(path, ".lmp") && options->family != QA_SCENE_Q2 && !options->source_q3) upload.mipmap = false;
+    if (!recipient && suffix_equal(path, ".lmp") && options->family != QA_SCENE_Q2 && !options->source_q3) upload.mipmap = false;
     if (ok) ok = image_from_rgba(resources, request, &decoded, &upload, out, error);
     qa_image_free(&decoded);
     return ok;
+}
+static bool decode_asset(qa_scene_resources *resources, const char *request, const char *path,
+    qa_bytes bytes, const qa_scene_image_options *options, qa_scene_image **out, qa_error *error)
+{ return decode_asset_upload(resources, request, path, bytes, options, NULL, out, error); }
+
+bool scene_resource_variant_parent_retain(qa_scene_resources *destination, const qa_scene_image *source,
+    qa_scene_resources **out, qa_error *error)
+{
+    qa_scene_resources *parent = qa_scene_image_resource_owner(source);
+    if (!parent) { qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Variant parent lost its actual resource bank"); return false; }
+    if (parent->policy_source) parent = parent->policy_source;
+    if (destination->policy_source) destination = destination->policy_source;
+    *out = NULL;
+    if (parent == destination) return true;
+    qa_scene_resources **banks = malloc(sizeof(*banks));
+    if (!banks) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Inspecting variant bank dependencies"); return false; }
+    size_t count = 1; banks[0] = parent; bool ok = true;
+    for (size_t at = 0; ok && at < count; ++at) {
+        if (banks[at] == destination) {
+            qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Recipient resource banks form a retention cycle"); ok = false; break;
+        }
+        qa_scene_resources *rows[2] = {banks[at], banks[at]->policy_pending ? banks[at]->policy_pending->destination : NULL};
+        for (unsigned row = 0; ok && row < 2; ++row)
+        for (const owned_image *image = rows[row] ? rows[row]->names->images : NULL; ok && image; image = image->next) {
+            qa_scene_resources *next = image->source_variant_owner;
+            if (!next) continue;
+            size_t i = 0; while (i < count && banks[i] != next) ++i;
+            if (i < count) continue;
+            if (count >= SIZE_MAX / sizeof(*banks)) { ok = false; break; }
+            qa_scene_resources **grown = realloc(banks, (count + 1) * sizeof(*banks));
+            if (!grown) { ok = false; break; }
+            banks = grown; banks[count++] = next;
+        }
+    }
+    free(banks);
+    if (!ok) {
+        if (!error || error->code == QA_OK) qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining variant bank dependency graph");
+        return false;
+    }
+    if (!qa_scene_resources_retain(parent, error)) return false;
+    *out = parent; return true;
+}
+
+bool qa_scene_image_source_q3_variant(qa_scene_resources *resources, const qa_scene_image *source,
+    const qa_q3_image_upload_options *profile, qa_scene_image **out, qa_error *error)
+{
+    if (!out || *out || !source || !admission_ready(resources, error) ||
+        !qa_q3_image_upload_options_valid(profile, error)) return false;
+    qa_q3_image_upload_options actual = *profile;
+    qa_scene_resources *source_owner = qa_scene_image_resource_owner(source);
+    if (!source_owner) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Recipient image lost its actual bank"); return false;
+    }
+    qa_scene_image_request admission;
+    if (qa_scene_image_request_read(source_owner, source, &admission)) actual.mipmap = actual.mipmap && admission.options.mipmap;
+    else if (((const owned_image *)source)->sampling_source)
+        actual.mipmap = actual.mipmap && ((const owned_image *)source)->sampling_mipmap;
+    if (!actual.mipmap) actual.allow_picmip = false;
+    profile = &actual;
+    const owned_image *original = NULL;
+    for (const owned_image *image = resources->names->images; image; image = image->next) {
+        if (&image->image == source) original = image;
+        if (image->source_variant_source == source &&
+            qa_q3_image_upload_options_equal(&image->source_variant_upload, profile)) {
+            qa_scene_image_retain(&image->image); *out = (qa_scene_image *)&image->image; return true;
+        }
+    }
+    if (!original) original = (const owned_image *)source;
+    if (source->source_q3) {
+        qa_scene_image_retain(source); *out = (qa_scene_image *)source; return true;
+    }
+    for (size_t i = 0; i < source_owner->cache_count; ++i) {
+        const qa_scene_image *first = source_owner->cache[i].image;
+        for (size_t frame = 1; frame < first->animation_count; ++frame)
+            if (first->animation[frame] == source) {
+                qa_scene_image *mapped = NULL;
+                if (!qa_scene_image_source_q3_variant(resources, first, profile, &mapped, error)) return false;
+                if (frame >= mapped->animation_count || !mapped->animation[frame]) {
+                    qa_scene_image_release(mapped);
+                    qa_error_set(error, QA_ERROR_ARGUMENT, frame, "Source animation lost its actual frame correspondence"); return false;
+                }
+                *out = (qa_scene_image *)mapped->animation[frame]; qa_scene_image_retain(*out);
+                qa_scene_image_release(mapped); return true;
+            }
+    }
+    if (original->sampling_source) {
+        qa_scene_image *parent = NULL;
+        bool ok = qa_scene_image_source_q3_variant(resources, original->sampling_source, profile, &parent, error);
+        if (ok) ok = qa_scene_image_sample(resources, parent, original->sampling_mipmap, source->wrap, out, error);
+        qa_scene_image_release(parent);
+        if (!ok) return false;
+        (*out)->source_q3 = true; (*out)->source_mipmap = profile->mipmap && original->sampling_mipmap;
+    } else {
+        qa_scene_image_request request;
+        if (qa_scene_image_request_read(source_owner, source, &request)) {
+            if (request.options.source_q3) {
+                qa_scene_image_retain(source); *out = (qa_scene_image *)source; return true;
+            }
+            qa_bytes palette;
+            if (!request.options.palette_rgb.size &&
+                qa_scene_resources_palette_read(source_owner, request.options.family, &palette))
+                request.options.palette_rgb = palette;
+            if (!decode_asset_upload(resources, request.name, qa_resource_path(request.source),
+                qa_resource_bytes(request.source), &request.options, profile, out, error)) return false;
+        } else {
+            if (!source->recipient_upload_pixels || source->kind != QA_SCENE_RGBA8) {
+                qa_scene_image_retain(source); *out = (qa_scene_image *)source; return true;
+            }
+            qa_image pixels = {.width = source->levels[0].width, .height = source->levels[0].height,
+                .rgba = {(uint8_t *)source->levels[0].pixels, source->levels[0].bytes}};
+            qa_scene_image_options sampling = {.wrap = source->wrap, .filter = source->filter,
+                .source_q3 = true, .source_upload = *profile};
+            if (!image_from_rgba(resources, source->name, &pixels, &sampling, out, error)) return false;
+        }
+    }
+    (*out)->logical_width = source->logical_width; (*out)->logical_height = source->logical_height;
+    owned_image *variant = (owned_image *)*out;
+    if (!scene_resource_variant_parent_retain(resources, source, &variant->source_variant_owner, error)) {
+        qa_scene_image_release(*out); *out = NULL; return false;
+    }
+    variant->source_variant_source = source; variant->source_variant_upload = *profile;
+    variant->variant_next = resources->variants; resources->variants = variant;
+    qa_scene_image_retain(&variant->image);
+    qa_scene_image_retain(source); return true;
 }
 
 static bool same_options(const image_cache *entry, const qa_scene_image_options *options)

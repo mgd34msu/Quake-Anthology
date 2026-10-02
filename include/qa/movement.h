@@ -83,11 +83,35 @@ typedef struct qa_qw_movement_state {
 } qa_qw_movement_state;
 typedef struct qa_q2_movement_state {
     int32_t type;
-    int16_t origin_eighths[3], velocity_eighths[3];
+    /* Q2PRO extended-v2 owns signed 23-bit coordinates and a millisecond
+     * timer; ordinary Classic keeps its short coordinates and eight-ms timer. */
+    bool wide_coordinates;
+    union {
+        struct { int16_t origin_eighths[3], velocity_eighths[3]; };
+        struct { int32_t origin_eighths[3], velocity_eighths[3]; uint16_t time_ms; } wide;
+    };
     uint32_t flags;
     uint8_t time_eight_ms;
     int16_t gravity, delta_angle_shorts[3];
 } qa_q2_movement_state;
+static inline int32_t qa_q2_movement_coordinate(const qa_q2_movement_state *state,
+                                               bool velocity, unsigned axis) {
+    if (state->wide_coordinates)
+        return velocity ? state->wide.velocity_eighths[axis] : state->wide.origin_eighths[axis];
+    return velocity ? state->velocity_eighths[axis] : state->origin_eighths[axis];
+}
+static inline void qa_q2_movement_coordinate_set(qa_q2_movement_state *state,
+                                                bool velocity, unsigned axis, int32_t value) {
+    if (state->wide_coordinates) {
+        if (velocity) state->wide.velocity_eighths[axis] = value;
+        else state->wide.origin_eighths[axis] = value;
+    } else {
+        uint32_t word = (uint32_t)value & 65535u;
+        int16_t narrow = (int16_t)(word < 32768u ? (int32_t)word : (int32_t)word - 65536);
+        if (velocity) state->velocity_eighths[axis] = narrow;
+        else state->origin_eighths[axis] = narrow;
+    }
+}
 typedef struct qa_q2r_movement_state {
     int32_t type;
     qa_vec3 origin, velocity;

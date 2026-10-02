@@ -220,6 +220,16 @@ bool qa_qvm_restore_candidate_bindings(qa_qvm *vm, qa_bytes state,
     if (!safe_point(vm, error) || !restore_envelope(vm, state, true, &source, error)) return false;
     return qa_qvm_execution_restore_bindings(vm, source.counters[0], constructed, saved, count, error);
 }
+bool qa_qvm_restore_candidate_callbacks(qa_qvm *vm, qa_bytes state,
+    const qa_qvm_saved_function *constructed, const qa_qvm_binding *saved,
+    size_t count, const qa_qvm_saved_resolver *resolver, qa_qvm_binding saved_resolver,
+    qa_error *error)
+{
+    saved_execution source;
+    if (!safe_point(vm, error) || !restore_envelope(vm, state, true, &source, error)) return false;
+    return qa_qvm_execution_restore_callbacks(vm, source.counters[0], constructed, saved,
+        count, resolver, saved_resolver, error);
+}
 
 static bool restore(qa_qvm *vm, qa_bytes state, bool candidate, qa_error *error)
 {

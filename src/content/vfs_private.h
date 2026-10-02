@@ -71,6 +71,7 @@ typedef struct retained_read {
     qa_vfs_read_reference recipe;
 } retained_read;
 struct qa_vfs {
+    size_t references;
     qa_resource_pool *pool;
     mount **mounts;
     size_t count;

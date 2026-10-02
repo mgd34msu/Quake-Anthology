@@ -12,7 +12,7 @@ bool qa_unified_session_player_read(const qa_unified_session *s, qa_unified_sess
 {
     qa_unified_session_player player = {0};
     if (!s->hooks.player(s->hooks.context, s->id, &player, e)) return false;
-    if (!player.actor.registry || !player.actor.generation || !player.source_owner ||
+    if (!player.actor.registry || !player.source_owner ||
         player.seat.owner != s->seat.owner || player.seat.index != s->seat.index ||
         (unsigned)player.movement > QA_MOVEMENT_Q3 || (player.arsenal.size && !player.arsenal.data))
         return qa_unified_session_fail(e, QA_ERROR_ARGUMENT, "Production player lacks its retained physical Source seat");

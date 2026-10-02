@@ -161,7 +161,8 @@ static void close_peer(void *context)
     nq_server *peer = context; if (!peer) return;
     queue_clear(peer); qa_nq_channel_destroy(peer->native.channel.nq); free(peer);
 }
-static const qa_network_peer_ops ops = {receive, flush, command, restart, rebind, close_peer};
+static const qa_network_peer_ops ops = {.receive=receive,.flush=flush,.command=command,
+    .restart=restart,.rebind=rebind,.close=close_peer};
 static nq_server *get(qa_network_runtime *runtime, qa_net_client_id id, qa_error *error)
 {
     qa_network_peer *peer = qa_network_peer_get(runtime, id, error);

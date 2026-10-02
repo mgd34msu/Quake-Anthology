@@ -11,6 +11,10 @@
 #include "network_session.h"
 #include "remote_q2_client.h"
 #include "remote_q1_client.h"
+#include "remote_unified.h"
+#include "remote_q1_camera.h"
+#include "qa/network_q1.h"
+#include "q3_render_policy.h"
 #include "view_settings.h"
 #include "q1_sky.h"
 #include "shared_resource_policy.h"
@@ -65,9 +69,28 @@ static bool remote_q1_present(qa_frontend *f,unsigned seat,const qa_scene_view *
     if (!frontend_view_settings_read(f->view_settings,&fov,&explicit_override))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Q1 CLIENT camera lost its actual published view preference");
     (void)explicit_override;
+    frontend_q1_view_settings settings;
+    if (!frontend_view_settings_q1_sample(f->view_settings,
+        qa_q1_is_qw(source.protocol)?QA_CONSOLE_QW:QA_CONSOLE_Q1,&settings,error)) return false;
     qa_scene_view view=*fallback;
     view.origin=player.origin; view.origin.z+=player.view_height;
-    frontend_camera_axes(qa_vec_add(player.angles,player.kick_angles),view.axis);
+    qa_vec3 angles=qa_vec_add(player.angles,player.kick_angles);
+    if (settings.chase && !player.intermission &&
+        !frontend_remote_q1_chase_camera(selected,&settings,view.origin,player.angles,
+            &view.origin,&angles,error)) return false;
+    frontend_camera_axes(angles,view.axis);
+    double size=player.intermission?120:settings.size;
+    uint32_t lines=size>=120?0:size>=110?24:48;
+    uint32_t reserved=settings.overlay_status && size>=100?0:lines;
+    uint32_t available=view.viewport.height>reserved?view.viewport.height-reserved:1;
+    double fraction=fmin(size,100)/100;
+    uint32_t width=(uint32_t)fmax(96,trunc(view.viewport.width*fraction));
+    if (width>view.viewport.width) width=view.viewport.width;
+    uint32_t height=(uint32_t)fmax(1,trunc(view.viewport.height*fraction));
+    if (height>available) height=available;
+    view.viewport.x+=(int32_t)((view.viewport.width-width)/2);
+    if (size<100) view.viewport.y+=(int32_t)((available-height)/2);
+    view.viewport.width=width; view.viewport.height=height;
     const qa_cvar_view *far_clip=qa_cvars_find(qa_application_cvars(f->application),"gl_farclip");
     if (!far_clip || !isfinite(far_clip->number) || far_clip->number<=4)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Q1 CLIENT camera lost its actual far clip declaration");
@@ -78,7 +101,7 @@ static bool remote_q1_present(qa_frontend *f,unsigned seat,const qa_scene_view *
     if (!frontend_remote_q1_draw(selected,&view,listener,rendered,error)) return false;
     frontend_seat *physical=&f->seats[seat];
     return qa_hud_draw(physical->hud,&(qa_hud_frame){.seat=seat,.actor=player.actor,
-        .time_ns=f->time_ns,.viewport=view.viewport,.safe_area=view.viewport,
+        .time_ns=f->time_ns,.viewport=fallback->viewport,.safe_area=fallback->viewport,
         .scale=preferences->hud_scale,.show_scores=physical->scores,.visible=visible},&f->frame,error);
 }
 bool frontend_present(qa_frontend *frontend, qa_error *error)
@@ -98,6 +121,7 @@ bool frontend_present(qa_frontend *frontend, qa_error *error)
         qa_application_map_read(frontend->application, &native_map);
     if (native_ready && !frontend_native_q3_sync(frontend, &native_factory, error)) return false;
     qa_scene_frame_reset(&frontend->frame, frontend->frame_number);
+    if (!frontend_q3_texture_mode_begin_frame(frontend,error)) return false;
     if (!qa_scene_frame_material_order(&frontend->frame, frontend->order, error)) return false;
     qa_audio_listener listeners[4]; size_t listener_count = 0;
     for (unsigned i = 0; i < frontend->options.seats; ++i) {
@@ -146,6 +170,10 @@ bool frontend_present(qa_frontend *frontend, qa_error *error)
             &remote_listener_present,error)) return false;
         if (!remote_rendered) {
             if (!frontend_remote_q2_draw(frontend,i,0,&remote_listener,&remote_rendered,error)) return false;
+            remote_listener_present=remote_rendered && remote_listener.actor!=QA_AUDIO_NO_ACTOR;
+        }
+        if (!remote_rendered) {
+            if (!frontend_remote_unified_draw(frontend,i,0,&remote_listener,&remote_rendered,error)) return false;
             remote_listener_present=remote_rendered && remote_listener.actor!=QA_AUDIO_NO_ACTOR;
         }
         if (!remote_rendered) {
@@ -223,5 +251,5 @@ bool frontend_present(qa_frontend *frontend, qa_error *error)
     if (frontend->cpu) return qa_cpu_set_gamma(frontend->cpu, brightness, error) &&
         qa_cpu_execute(frontend->cpu, &frontend->frame, error) && qa_cpu_present_frame(frontend->cpu, error);
     return qa_gl_set_gamma(frontend->gl, brightness, error) && qa_gl_execute(frontend->gl, &frontend->frame, error) &&
-        qa_gl_finish(frontend->gl, error) && qa_display_swap(frontend->display, error);
+        qa_gl_finish(frontend->gl, error) && qa_gl_swap(frontend->gl, error);
 }

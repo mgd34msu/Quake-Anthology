@@ -6,6 +6,7 @@
 #include "internal.h"
 #include "selected_effects_particles.h"
 #include "qa/scene_save.h"
+#include "legacy_render_policy.h"
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -365,13 +366,14 @@ bool remote_q1_effects_scene(frontend_remote_q1 *row,double seconds,
     }
     return true;
 }
-static bool beam(frontend_remote_q1 *row,const remote_beam *value,const qa_scene_view *view,double seconds,qa_error *error)
+static bool beam(frontend_remote_q1 *row,const remote_beam *value,const qa_scene_view *view,
+    const qa_scene_world_input *world,qa_vec3 viewer_origin,qa_error *error)
 {
     const char *path=value->type==5?"progs/bolt.mdl":value->type==6?"progs/bolt2.mdl":value->type==9?"progs/bolt3.mdl":"progs/beam.mdl";
     remote_q1_model *model;
     if(!remote_q1_model_read(row,&(frontend_remote_q1_entity_view){.model=path},&model,error)) return false;
     qa_vec3 start=value->start,end=value->end;
-    if(value->entity==row->view_entity) start=qa_vec_sub(view->origin,qa_v3(0,0,row->data.viewheight));
+    if(value->entity==row->view_entity) start=viewer_origin;
     qa_vec3 delta=qa_vec_sub(end,start); float distance=qa_vec_length(delta);
     qa_vec3 direction=distance?qa_vec_scale(delta,1/distance):qa_v3(0,0,0);
     qa_vec3 angles=qa_v3((float)(atan2(delta.z,sqrt(delta.x*delta.x+delta.y*delta.y))*180/3.141592653589793),
@@ -383,8 +385,11 @@ static bool beam(frontend_remote_q1 *row,const remote_beam *value,const qa_scene
         transform.origin[0]=start.x; transform.origin[1]=start.y; transform.origin[2]=start.z;
         for(unsigned i=0;i<3;++i) { transform.axes[i][0]=axes[i].x; transform.axes[i][1]=axes[i].y; transform.axes[i][2]=axes[i].z; }
         qa_scene_model_input input={.view=*view,.transform=transform,.previous_origin=start,.color={1,1,1,1},
-            .family=QA_SCENE_Q1,.seconds=seconds,.source_path=path,.entity=value->entity,.identity_light=1};
-        if(!qa_scene_model_submit(model->scene,&input,&row->frontend->frame,error)) return false;
+            .family=QA_SCENE_Q1,.seconds=world->seconds,.source_path=path,.entity=value->entity,.identity_light=1};
+        const qa_product *product=qa_catalog_product(row->content.catalog,row->content.product);
+        if(!frontend_legacy_model_input_product(row->frontend,product,row->world,world,&input,error) ||
+            !remote_q1_model_lighting(row,world,&input,error) ||
+            !qa_scene_model_submit(model->scene,&input,&row->frontend->frame,error)) return false;
         start=qa_vec_add(start,qa_vec_scale(direction,30)); distance-=30;
     }
     return true;
@@ -399,13 +404,13 @@ static bool ambient_voice(const remote_ambient *value,qa_audio_mixer *mixer)
         voice.volume==volume && voice.attenuation==(double)truncf(value->attenuation*64)/64000;
 }
 bool remote_q1_effects_models(frontend_remote_q1 *row,const qa_scene_view *view,
-    const qa_scene_world_input *world,qa_error *error)
+    const qa_scene_world_input *world,qa_vec3 viewer_origin,qa_error *error)
 {
     if(!row || !view || !world || !remote_q1_mutable(row) || !remote_q1_live(row,error)) return false;
     frontend_remote_q1_effects *fx=row->effects;
     if(!fx) return true;
     for(size_t i=0;i<BEAMS;++i) if(fx->beams[i].active && fx->beams[i].die>=world->seconds &&
-        !beam(row,fx->beams+i,view,world->seconds,error)) return false;
+        !beam(row,fx->beams+i,view,world,viewer_origin,error)) return false;
     return remote_q1_live(row,error);
 }
 bool remote_q1_effects_blend(frontend_remote_q1 *row,const qa_scene_view *view,

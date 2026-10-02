@@ -258,6 +258,7 @@ qa_vfs *qa_vfs_create(qa_resource_pool *pool, qa_error *error)
         return NULL;
     }
     vfs->pool = pool;
+    vfs->references = 1;
     vfs->next_mount = 1;
     vfs->read_generation = 1;
     pool->references++;
@@ -681,9 +682,17 @@ void vfs_mount_free(mount *source)
     free(source);
 }
 
+bool qa_vfs_retain(qa_vfs *vfs, qa_error *error)
+{
+    if (!vfs || !vfs->references || vfs->references == SIZE_MAX) {
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining actual VFS owner"); return false;
+    }
+    ++vfs->references; return true;
+}
 void qa_vfs_destroy(qa_vfs *vfs)
 {
     if (vfs == NULL) return;
+    if (vfs->references > 1) { --vfs->references; return; }
     qa_vfs_clear_references(vfs);
     for (size_t i = 0; i < vfs->count; i++) vfs_mount_free(vfs->mounts[i]);
     free(vfs->mounts);

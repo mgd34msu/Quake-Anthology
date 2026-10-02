@@ -1,6 +1,7 @@
 #ifndef QA_RENDER_CONTROLS_H
 #define QA_RENDER_CONTROLS_H
 #include "qa/common.h"
+#include "qa/scene.h"
 
 typedef struct qa_cpu_renderer qa_cpu_renderer;
 typedef struct qa_gl_renderer qa_gl_renderer;
@@ -16,6 +17,9 @@ qa_render_controls *qa_cpu_render_controls(qa_cpu_renderer *);
 qa_render_controls *qa_gl_render_controls(qa_gl_renderer *);
 bool qa_render_controls_read(const qa_render_controls *, qa_render_controls_values *, qa_error *);
 bool qa_render_controls_live_primitives(qa_render_controls *, int32_t, qa_error *);
+bool qa_render_controls_source_texture_mode_read(const qa_render_controls *,
+    qa_scene_filter *, bool *initialized, qa_error *);
+bool qa_render_controls_source_texture_mode(qa_render_controls *, qa_scene_filter, qa_error *);
 
 /* Preserve the Source integer, including values which suppress stage draws.
  * A ticket holds the renderer until publish/finish or checked abort. */

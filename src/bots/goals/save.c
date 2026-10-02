@@ -5,9 +5,9 @@
 
 static const uint8_t magic[8] = {'Q', 'A', 'B', 'G', 'O', 'A', 'L', 0};
 static bool signature(qa_source_save_io *io) {
-    uint8_t bytes[8];memcpy(bytes,magic,sizeof(bytes));uint32_t version=3;
+    uint8_t bytes[8];memcpy(bytes,magic,sizeof(bytes));uint32_t version=4;
     return qa_source_save_bytes(io,bytes,sizeof(bytes)) && !memcmp(bytes,magic,sizeof(bytes)) &&
-        qa_source_save_u32(io,&version) && version==3 ? true :
+        qa_source_save_u32(io,&version) && version==4 ? true :
         bot_save_fail(io,QA_ERROR_FORMAT,"Unsupported goal allocation continuation schema");
 }
 
@@ -39,13 +39,6 @@ static bool level_fields(qa_source_save_io *io, bot_level_item *item)
         qa_source_save_f32(io, &item->weight) && qa_source_save_f32(io, &item->timeout) &&
         qa_source_save_vec3(io, &item->origin) && qa_source_save_vec3(io, &item->goal_origin) &&
         qa_source_save_u32(io, &item->goal_area);
-}
-static bool map_fields(qa_source_save_io *io, bot_map_goal *goal)
-{
-    return qa_source_save_bytes(io, goal->name, sizeof(goal->name)) && memchr(goal->name, 0, sizeof(goal->name)) &&
-        qa_source_save_vec3(io, &goal->origin) && qa_source_save_u32(io, &goal->area) &&
-        qa_source_save_f32(io, &goal->range) && qa_source_save_f32(io, &goal->weight) &&
-        qa_source_save_f32(io, &goal->wait) && qa_source_save_f32(io, &goal->random);
 }
 static bool asset_field(qa_source_save_io *io, const qa_bot_saved_assets *assets,
                         qa_bot_saved_asset_kind kind, void **object)
@@ -97,8 +90,8 @@ static bool topology(const qa_bot_goals *goals, qa_error *error)
                                     (goals->source_capacity & (goals->source_capacity - 1)) ||
                                     !goals->source_count || (goals->source_capacity > 64 &&
                                      goals->source_count <= goals->source_capacity / 2))) ||
-        goals->next_source < QA_BOT_SOURCE_GOAL_MIN - 1 ||
-        (goals->location_count && !goals->locations) || (goals->camp_count && !goals->camps)) goto invalid;
+        goals->next_source < QA_BOT_SOURCE_GOAL_MIN - 1) goto invalid;
+    if (!bot_goal_info_topology(goals, error)) return false;
     uint8_t *marks = capacity ? calloc(capacity, 1) : NULL;
     if (capacity && !marks) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Validating bot level pool"); return false; }
     bool ok = true; uint32_t previous = 0;
@@ -236,12 +229,21 @@ static bool fields(qa_source_save_io *io, qa_bot_goals *goals, const qa_bot_save
         qa_source_save_i32(io, &goals->initial_count) && qa_source_save_i32(io, &goals->next_source);
     if (ok && reading) ok = array(io, (void **)&goals->level, goals->level_capacity, sizeof(*goals->level), 60);
     for (size_t i = 0; ok && i < goals->level_capacity; ++i) ok = level_fields(io, &goals->level[i]);
-    if (ok) ok = qa_source_save_count(io, &goals->location_count, SIZE_MAX);
-    if (ok && reading) ok = array(io, (void **)&goals->locations, goals->location_count, sizeof(*goals->locations), 160);
-    for (size_t i = 0; ok && i < goals->location_count; ++i) ok = map_fields(io, &goals->locations[i]);
-    if (ok) ok = qa_source_save_count(io, &goals->camp_count, SIZE_MAX);
-    if (ok && reading) ok = array(io, (void **)&goals->camps, goals->camp_count, sizeof(*goals->camps), 160);
-    for (size_t i = 0; ok && i < goals->camp_count; ++i) ok = map_fields(io, &goals->camps[i]);
+    if (ok) ok = qa_source_save_u64(io, &goals->next_info) &&
+        qa_source_save_u32(io, &goals->location_head) && qa_source_save_u32(io, &goals->camp_head) &&
+        qa_source_save_count(io, &goals->info_count, UINT32_MAX);
+    if (ok && reading) {
+        ok = array(io, (void **)&goals->info, goals->info_count, sizeof(*goals->info), 13);
+        goals->info_capacity = goals->info_count;
+    }
+    for (size_t i = 0; ok && i < goals->info_count; ++i) {
+        bot_map_info *row = &goals->info[i]; size_t reference = 0;
+        ok = qa_source_save_u32(io, &row->pointer) && qa_source_save_bool(io, &row->camp);
+        if (ok && !reading) ok = qa_bot_memory_reference(goals->memory, row->allocation, &reference, io->error);
+        if (ok) ok = qa_source_save_count(io, &reference, SIZE_MAX);
+        if (ok && reading) ok = qa_bot_memory_resolve(goals->memory, reference, &row->allocation, io->error);
+        if (!ok) io->failed = true;
+    }
     if (ok) ok = qa_source_save_count(io, &goals->source_capacity, SIZE_MAX / sizeof(*goals->source)) &&
         qa_source_save_count(io, &goals->source_count, goals->source_capacity);
     if (ok && reading) {

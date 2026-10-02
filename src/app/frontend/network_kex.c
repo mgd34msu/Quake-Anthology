@@ -95,6 +95,31 @@ bool frontend_kex_browser_publish(frontend_kex_browser *b, qa_error *e)
     return qa_kex_mdns_owner_publish(b->discovery, e);
 }
 
+bool frontend_kex_browser_handoff_ready(const frontend_kex_browser *active,
+    const frontend_kex_browser *candidate, qa_error *e)
+{
+    if (!active || !candidate || active == candidate || !frontend_kex_browser_idle(active) ||
+        !frontend_kex_browser_idle(candidate) || active->query_count != candidate->query_count) {
+        qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Retail browser handoff requires its complete idle saved queries");
+        return false;
+    }
+    for (size_t i = 0; i < active->query_count; ++i) {
+        const frontend_kex_query *a = active->queries + i, *b = candidate->queries + i;
+        if (a->sent_ns != b->sent_ns || !qa_net_address_equal(&a->address, &b->address, true)) {
+            qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Retail browser query advanced beyond its saved continuation");
+            return false;
+        }
+    }
+    return qa_kex_mdns_owner_handoff_ready(active->discovery, candidate->discovery, e);
+}
+
+bool frontend_kex_browser_handoff(frontend_kex_browser *active,
+    frontend_kex_browser *candidate, qa_error *e)
+{
+    if (!frontend_kex_browser_handoff_ready(active, candidate, e)) return false;
+    return qa_kex_mdns_owner_handoff(active->discovery, candidate->discovery, e);
+}
+
 void frontend_kex_browser_destroy(frontend_kex_browser *b)
 {
     if (!b || b->entered) return;

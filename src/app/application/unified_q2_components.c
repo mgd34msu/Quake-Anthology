@@ -151,7 +151,7 @@ static bool camera(application_unified_json *j, const application_unified_q2_sou
     bool ok = text(j, "{\"origin\":{\"x\":", e) && number(j, origin[0], e) && text(j, ",\"y\":", e) &&
         number(j, origin[1], e) && text(j, ",\"z\":", e) && number(j, origin[2], e) &&
         text(j, "},\"angles\":", e) && vector(j, s->viewangles, e) && text(j, ",\"viewHeight\":", e) &&
-        number(j, classic ? s->viewoffset[2] : s->pmove.viewheight, e) &&
+        number(j, classic ? (double)s->viewoffset[2] : (double)s->pmove.viewheight, e) &&
         text(j, ",\"kickAngles\":", e) && vector(j, s->kick_angles, e) &&
         text(j, ",\"fieldOfView\":", e) && number(j, s->fov, e) && text(j, ",\"blend\":", e) && color(j, s->blend, e);
     if (ok && !classic) ok = text(j, ",\"damageBlend\":", e) && color(j, s->damage_blend, e);
@@ -213,4 +213,86 @@ void application_unified_q2_source_documents_dispose(application_unified_q2_sour
     qa_unified_document_destroy(v->hud_state); qa_unified_document_destroy(v->hud_frame);
     qa_unified_document_destroy(v->camera);
     *v = (application_unified_q2_source_documents){0};
+}
+
+static bool publication_owner(application_unified_json *j,
+    const application_unified_q2_component_documents *v, qa_error *e)
+{
+    const char *name = qa_strings_cstr(qa_session_strings(v->source.source.session), v->publication.owner);
+    return name && text(j, "{\"provider\":", e) && application_unified_json_string(j, name, e) &&
+        text(j, ",\"generation\":", e) && application_unified_json_natural(j, v->publication.activation_generation, e) &&
+        text(j, "}", e);
+}
+
+bool application_unified_q2_component_documents_build(qa_application *app,
+    const application_unified_source *source, qa_net_client_id recipient,
+    const qa_unified_session_player *player, application_unified_q2_component_documents *out, qa_error *e)
+{
+    if (!out || !source || !player || !application_unified_source_current(app, source) ||
+        !application_unified_player_current(app, recipient, player))
+        return application_fail(e, QA_ERROR_ARGUMENT, "Native component documents require their actual Source recipient");
+    application_unified_q2_component_documents v = {0}; bool registered;
+    if (!application_native_q2_publication_read(app, source, &v.publication, &registered, e)) return false;
+    if (!registered) {
+        v.source.source = *source; v.source.recipient = recipient; v.source.player = *player;
+        v.source.actors_revision = qa_actors_revision(qa_session_actors(source->session));
+        if (!application_unified_q2_component_documents_current(app, &v))
+            return application_fail(e, QA_ERROR_ARGUMENT, "Native component absence changed its actual Source recipient");
+        *out = v;
+        return true;
+    }
+    if (!application_unified_q2_source_documents_build(app, source, recipient, player, &v.source, e)) return false;
+    if (!v.source.present) {
+        application_unified_q2_component_documents_dispose(&v);
+        return application_fail(e, QA_ERROR_ARGUMENT, "Registered native component has no admitted physical HUD source");
+    }
+    application_unified_json state = {0}, frame = {0};
+    bool ok = text(&state, "{\"owner\":", e) && publication_owner(&state, &v, e) &&
+        text(&state, ",\"identity\":", e) && application_unified_json_document(&state, v.publication.identity, e) &&
+        text(&state, ",\"generation\":", e) && application_unified_json_natural(&state, v.publication.generation, e) &&
+        text(&state, ",\"hud\":", e);
+    if (ok && v.publication.hud == APPLICATION_NATIVE_Q2_HUD_NONE) ok = text(&state, "null", e);
+    else if (ok) ok = text(&state, v.publication.hud == APPLICATION_NATIVE_Q2_HUD_OVERLAY ?
+        "{\"mode\":\"layout-overlay\",\"frame\":" : "{\"mode\":\"replace-status\",\"frame\":", e) &&
+        application_unified_json_document(&state, v.source.hud_state, e) && text(&state, "}", e);
+    if (ok) ok = text(&state, "}", e) && text(&frame, "{\"owner\":", e) && publication_owner(&frame, &v, e) &&
+        text(&frame, ",\"generation\":", e) && application_unified_json_natural(&frame, v.publication.generation, e) &&
+        text(&frame, ",\"viewer\":", e) && application_unified_json_actor(&frame, player->actor, e) &&
+        text(&frame, ",\"hud\":", e) && (v.publication.hud == APPLICATION_NATIVE_Q2_HUD_NONE ?
+            text(&frame, "null", e) : application_unified_json_document(&frame, v.source.hud_frame, e)) &&
+        text(&frame, ",\"view\":", e) && (v.publication.camera ?
+            application_unified_json_document(&frame, v.source.camera, e) : text(&frame, "null", e)) &&
+        text(&frame, "}", e) && document(&state, &v.state, e) && document(&frame, &v.frame, e);
+    v.present = ok;
+    if (ok && !application_unified_q2_component_documents_current(app, &v))
+        ok = application_fail(e, QA_ERROR_ARGUMENT, "Native component changed its registration or receiver during publication");
+    application_unified_json_dispose(&state); application_unified_json_dispose(&frame);
+    if (!ok) { application_unified_q2_component_documents_dispose(&v); return false; }
+    *out = v;
+    return true;
+}
+
+bool application_unified_q2_component_documents_current(qa_application *app,
+    const application_unified_q2_component_documents *v)
+{
+    if (!v || !application_unified_q2_source_documents_current(app, &v->source)) return false;
+    if (!v->present) {
+        application_native_q2_publication_view actual; bool found;
+        return !v->state && !v->frame &&
+            application_native_q2_publication_read(app, &v->source.source, &actual, &found, NULL) && !found;
+    }
+    return v->state && v->frame && application_native_q2_publication_current(app,
+        &v->source.source, &v->publication);
+}
+
+const qa_unified_document *application_unified_q2_component_camera(
+    const application_unified_q2_component_documents *v)
+{ return v && v->present && v->publication.camera ? v->source.camera : NULL; }
+
+void application_unified_q2_component_documents_dispose(application_unified_q2_component_documents *v)
+{
+    if (!v) return;
+    qa_unified_document_destroy(v->state); qa_unified_document_destroy(v->frame);
+    application_unified_q2_source_documents_dispose(&v->source);
+    *v = (application_unified_q2_component_documents){0};
 }

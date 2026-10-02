@@ -92,7 +92,8 @@ bool bot_ai_messages(qa_bots *b,bot_ai_state *s,qa_error *e) {
                     if(!qa_bot_library_variable_set(qa_bot_runtime_library(b->runtime),"bot_testrchat","1",e) ||
                        !qa_bot_chat_reply_message(chat,body,synonym_context,16,variables,b->time,&reply,e) ||
                        !bot_ai_source_print(b,reply?"------------------------\n":"**** no valid reply ****\n",e)) return false;
-                    if(!remove_console(chat,message.handle,e)) return false;continue;
+                    if(!remove_console(chat,message.handle,e)) return false;
+                    continue;
                 }
                 bool allowed=false;
                 if(s->view.decision!=QA_BOT_STANDING &&

@@ -2,6 +2,7 @@
 #include "remote_q2_private.h"
 #include "client_registry.h"
 #include "qa/cvars_save.h"
+#include "qa/console_cvar_observer.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -14,11 +15,21 @@ struct frontend_remote_q2_source {
     frontend_remote_q2 *receiver;
     qa_console *console;
     qa_cvars *pending_cvars;
+    qa_vfs *pending_selected;
+    qa_buffer imported_commands, imported_current;
     frontend_remote_q2_domain domain;
     size_t references;
     unsigned calls;
-    bool closing, configured;
+    bool closing, configured, commands_verified;
 };
+static bool profile_protocol(const qa_product *profile, qa_net_protocol_id protocol, qa_error *error)
+{
+    qa_q2_codec codec;
+    bool rerelease = protocol.kind == QA_NET_Q2REPRO_1038 || protocol.kind == QA_NET_Q2KEX_2023 ||
+        protocol.kind == QA_NET_Q2KEX_DEMO_2022;
+    return profile && qa_q2_codec_init(&codec, protocol, error) &&
+        profile->family == QA_GAME_Q2 && profile->edition == (rerelease ? QA_EDITION_RERELEASE : QA_EDITION_CLASSIC);
+}
 bool frontend_remote_q2_source_recipe(qa_catalog *catalog, qa_net_protocol_id protocol,
     const char *instance, uint32_t seat, qa_launch_q2_client_metadata *out, qa_vfs **prepared, qa_error *error)
 {
@@ -66,7 +77,18 @@ bool frontend_remote_q2_source_owner_idle(const frontend_remote_q2_source *sourc
 {
     return source && !source->calls && qa_console_idle(source->console) &&
         (!source->domain.cvars || qa_cvars_observer_idle(source->domain.cvars)) &&
-        (!source->receiver || (!source->receiver->busy && !source->receiver->importing));
+        (!source->receiver || (!source->receiver->busy && !source->receiver->importing && !source->receiver->image_policy));
+}
+bool frontend_remote_q2_source_owner_import_idle(const frontend_remote_q2_source *source)
+{
+    return source && source->frontend->source_restoring && !source->closing && source->configured &&
+        source->frontend->application == source->domain.application && !source->calls && source->registry &&
+        source->imported_commands.data && source->imported_current.data &&
+        qa_console_idle(source->console) && qa_cvars_observer_idle(source->domain.cvars) &&
+        source->domain.cvars == frontend_client_registry_cvars(source->registry) &&
+        frontend_client_registry_matches(source->registry, qa_launch_instance_lease_view(source->constructor_metadata),
+            source->options.metadata.seat) &&
+        (!source->receiver || (!source->receiver->busy && !source->receiver->image_policy));
 }
 bool frontend_remote_q2_source_owner_current(const frontend_remote_q2_source *source,
     const qa_launch_instance *descriptor, const qa_console *console, const qa_cvars *registry,
@@ -217,7 +239,7 @@ static bool defaults(frontend_remote_q2_source *source, qa_error *error)
 bool frontend_remote_q2_source_create(qa_frontend *f, const frontend_remote_q2_source_options *options,
     frontend_remote_q2_source **out, qa_error *error)
 {
-    if (!f || f->resource_inventory || !options || !out || *out || !options->print || !options->prepare_namespace || !options->configure ||
+    if (!f || f->capture || f->resource_inventory || !options || !out || *out || !options->print || !options->prepare_namespace || !options->configure ||
         !options->admit_content || !options->client.current ||
         !options->client.download_allowed || !options->client.download_nonce || !options->client.records || !options->client.disconnected ||
         options->client.domain.application != f->application || options->client.domain.console || options->client.domain.cvars ||
@@ -231,6 +253,8 @@ bool frontend_remote_q2_source_create(qa_frontend *f, const frontend_remote_q2_s
     if (!qa_launch_instance_prepare_q2_client_metadata(&options->metadata, &source->metadata, error)) return false;
     if (!qa_launch_instance_retain_metadata(qa_launch_instance_lease_view(source->metadata),
         &source->constructor_metadata, error)) return false;
+    if (!profile_protocol(qa_catalog_product(options->metadata.catalog, options->metadata.profile),
+        source->domain.protocol, error)) return false;
     ++source->calls;
     bool prepared = options->prepare_namespace(options->client.context, qa_launch_instance_lease_view(source->metadata),
         &source->domain, error);
@@ -289,8 +313,8 @@ bool frontend_remote_q2_source_pending_protocol(frontend_remote_q2_source *sourc
 {
     qa_q2_codec codec;
     if (!source || !source->configured || source->closing || source->calls || !source->receiver ||
-        source->frontend->resource_inventory || source->receiver->bound || source->receiver->busy ||
-        source->receiver->retired || source->receiver->importing ||
+        source->frontend->capture || source->frontend->resource_inventory || source->receiver->bound || source->receiver->busy ||
+        source->receiver->retired || source->receiver->importing || source->receiver->image_policy ||
         protocol.kind != source->domain.protocol.kind || !qa_q2_codec_init(&codec, protocol, error))
         return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 negotiation requires its actual pending same-family CLIENT");
     frontend_remote_q2_domain candidate = source->domain; candidate.protocol = protocol;
@@ -310,20 +334,24 @@ bool frontend_remote_q2_source_bind(frontend_remote_q2_source *source, const fro
 }
 bool frontend_remote_q2_source_drain(frontend_remote_q2_source *source, size_t budget, size_t *executed, qa_error *error)
 {
-    if (!source || !source->configured || source->closing || source->calls || !source->console) return false;
+    if (!source || !source->configured || source->closing || source->calls || !source->console ||
+        source->frontend->capture || source->frontend->resource_inventory ||
+        (source->receiver && source->receiver->image_policy)) return false;
     ++source->calls; bool ok = qa_console_drain(source->console, budget, executed, error); --source->calls; return ok;
 }
 bool frontend_remote_q2_source_destroy(frontend_remote_q2_source **owned, qa_error *error)
 {
     frontend_remote_q2_source *source = owned ? *owned : NULL;
     if (!source) return true;
-    if (source->frontend->resource_inventory || source->calls || source->references != (source->registry ? 2u : 1u) || !qa_console_destroy_ready(source->console) ||
+    if (source->frontend->capture || source->frontend->resource_inventory || source->calls || source->references != (source->registry ? 2u : 1u) || !qa_console_destroy_ready(source->console) ||
         !frontend_client_registry_release_ready(source->registry, error)) return false;
     source->closing = true;
     if (!frontend_remote_q2_destroy(&source->receiver, error)) { source->closing = false; return false; }
     qa_console_destroy(source->console); source->console = NULL; source->domain.console = NULL;
     if (!frontend_client_registry_release(&source->registry, error)) return false;
     qa_cvars_destroy(source->pending_cvars); source->pending_cvars = NULL;
+    qa_vfs_destroy(source->pending_selected); source->pending_selected = NULL;
+    qa_buffer_free(&source->imported_commands); qa_buffer_free(&source->imported_current);
     qa_launch_instance_lease_release(source->metadata); source->metadata = NULL;
     qa_launch_instance_lease_release(source->constructor_metadata); source->constructor_metadata = NULL;
     if (source->references != 1) return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 Source callback holders remain retained");
@@ -371,35 +399,47 @@ bool frontend_remote_q2_source_restore_prepare(qa_frontend *f,
 {
     const frontend_remote_q2_domain *domain = saved ? &saved->domain : NULL;
     if (!f || !f->source_restoring || f->capture || f->resource_inventory || !f->client_registry_import ||
-        !options || !saved || !out || *out || !saved->constructor || !saved->constructor->content ||
+        !options || !saved || !out || *out || !saved->constructor || !saved->constructor->catalog || !saved->constructor->content ||
         !saved->physical_admit || !saved->console_resolvers || !saved->receiver_refs ||
         !saved->console.data || !saved->console.size || !saved->receiver.data || !saved->receiver.size ||
         !options->print || !options->admit_content || !options->client.current ||
         !options->client.download_allowed || !options->client.download_nonce || !options->client.records ||
         !options->client.disconnected || domain->application != f->application || !domain->runtime ||
-        !domain->client.owner || !domain->client.generation || !domain->epoch || !domain->seat.owner ||
+        (domain->client.owner ? (!domain->client.generation || !domain->epoch || !domain->seat.owner) :
+            (domain->client.generation || domain->client.slot || domain->epoch || domain->seat.owner || domain->seat.index)) ||
+        domain->physical_seat >= f->options.seats ||
         domain->console || domain->cvars || !domain->command_context.owner ||
         !domain->command_context.registry || !domain->command_context.generation || domain->command_context.script ||
         domain->catalog != saved->constructor_request.catalog || domain->product != saved->constructor_request.profile ||
         domain->command_context.seat != saved->constructor_request.seat ||
-        (saved->selected && saved->selected->content == saved->constructor->content))
+        (saved->selected && (!saved->selected->catalog || !saved->selected->content ||
+            saved->selected->content == saved->constructor->content ||
+            saved->selected_request.seat != saved->constructor_request.seat ||
+            !saved->selected_request.instance || !saved->constructor_request.instance ||
+            strcmp(saved->selected_request.instance, saved->constructor_request.instance))))
         return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 physical import requires its actual staged heap and claimed descriptors");
     frontend_remote_q2_source *source = calloc(1, sizeof(*source));
     if (!source) return remote_q2_fail(error, QA_ERROR_MEMORY, "Restoring Q2 physical Source");
     *out = source; source->frontend = f; source->options = *options;
     source->options.metadata = saved->constructor_request; source->domain = *domain; source->references = 1;
+    source->pending_selected = saved->selected ? saved->selected->content : NULL;
     if (!qa_launch_instance_restore_q2_client_metadata(&saved->constructor_request, saved->constructor,
         &source->constructor_metadata, error)) return false;
     const qa_launch_instance *constructor = qa_launch_instance_lease_view(source->constructor_metadata);
     source->options.metadata.instance = constructor->selection.instance;
     source->options.metadata.prepared = constructor->content;
     if (saved->selected) {
+        source->pending_selected = NULL; /* The metadata producer takes this claimed view on every outcome. */
         if (!qa_launch_instance_restore_q2_client_metadata(&saved->selected_request, saved->selected,
             &source->metadata, error)) return false;
     } else if (!qa_launch_instance_retain_metadata(constructor, &source->metadata, error)) return false;
+    const qa_launch_instance *selected = qa_launch_instance_lease_view(source->metadata);
+    if (strcmp(selected->selection.implementation, constructor->selection.implementation) ||
+        selected->selection.clock.kind != constructor->selection.clock.kind)
+        return remote_q2_fail(error, QA_ERROR_FORMAT, "Q2 restored selection changed its physical compiled profile");
     const qa_product *profile = qa_catalog_product(source->options.metadata.catalog, source->options.metadata.profile);
     qa_console_dialect dialect = profile && profile->edition == QA_EDITION_RERELEASE ? QA_CONSOLE_Q2_RERELEASE : QA_CONSOLE_Q2;
-    if (!profile || domain->command_context.dialect != dialect) return false;
+    if (!profile_protocol(profile, domain->protocol, error) || domain->command_context.dialect != dialect) return false;
     qa_cvar_options variables = {.dialect = dialect, .user = source, .print = cvar_print};
     source->pending_cvars = qa_cvars_create(&variables, error); source->domain.cvars = source->pending_cvars;
     if (!source->pending_cvars) return false;
@@ -411,8 +451,15 @@ bool frontend_remote_q2_source_restore_prepare(qa_frontend *f,
         .print = print, .cvar_owner = cvars, .visible_cvars = visible, .capture_context = capture, .context_active = active,
         .read_script = script, .release_script = script_release, .source_command = command, .forward = forward};
     source->console = qa_console_create(&console, error); source->domain.console = source->console;
-    if (!source->console || !qa_console_save_restore(source->console, qa_application_session(domain->application),
-        saved->console_resolvers, saved->console, error)) return false;
+    if (!source->console) return false;
+    source->imported_commands.data = malloc(saved->console.size);
+    if (!source->imported_commands.data) return remote_q2_fail(error, QA_ERROR_MEMORY, "Retaining Q2 console import receipt");
+    source->imported_commands.size = saved->console.size;
+    memcpy(source->imported_commands.data, saved->console.data, saved->console.size);
+    if (!qa_console_save_restore(source->console, qa_application_session(domain->application),
+        saved->console_resolvers, saved->console, error) ||
+        !qa_console_save_capture(source->console, qa_application_session(domain->application),
+            &source->imported_current, error)) return false;
     ++source->calls;
     bool admitted = saved->physical_admit(options->client.context, qa_launch_instance_lease_view(source->metadata),
         source->domain.cvars, source->console, error);
@@ -425,4 +472,53 @@ bool frontend_remote_q2_source_restore_prepare(qa_frontend *f,
         .select_content = options->client.select_content ? select_content : NULL};
     return frontend_remote_q2_restore_prepare(f, &child, saved->receiver_refs, saved->receiver,
         &source->receiver, error);
+}
+static bool console_scope(const frontend_remote_q2_source *source, qa_application *app,
+    const qa_application_console_scope *scope, const qa_console *console)
+{
+    qa_application_console_scope actual;
+    return source && !source->closing && source->configured && !source->calls && app == source->domain.application &&
+        source->frontend->application == app && console == source->console && scope &&
+        scope->kind == QA_APPLICATION_CONSOLE_CLIENT && scope->provider == source->domain.command_context.owner &&
+        scope->seat == source->domain.command_context.seat && qa_console_idle(console) &&
+        qa_application_console_scope_read(app, console, &actual) && actual.kind == scope->kind &&
+        actual.provider == scope->provider && actual.seat == scope->seat;
+}
+bool frontend_remote_q2_source_commands_capture(const frontend_remote_q2_source *source, qa_application *app,
+    const qa_application_console_scope *scope, const qa_console *console, qa_buffer *out, qa_error *error)
+{
+    if (!out || out->data || out->size || !console_scope(source, app, scope, console))
+        return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 command capture names a different physical CLIENT console");
+    return qa_console_save_capture(console, qa_application_session(app), out, error);
+}
+bool frontend_remote_q2_source_commands_restore(frontend_remote_q2_source *source, qa_application *app,
+    const qa_application_console_scope *scope, qa_console *console, qa_bytes bytes, qa_error *error)
+{
+    if (!console_scope(source, app, scope, console) || !source->frontend->source_restoring ||
+        !source->imported_commands.data || !source->imported_current.data ||
+        bytes.size != source->imported_commands.size || !bytes.data ||
+        memcmp(bytes.data, source->imported_commands.data, bytes.size))
+        return remote_q2_fail(error, QA_ERROR_FORMAT, "Q2 aggregate commands differ from the genuine physical prefix");
+    qa_buffer current = {0};
+    bool ok = qa_console_save_capture(console, qa_application_session(app), &current, error) &&
+        current.size == source->imported_current.size &&
+        !memcmp(current.data, source->imported_current.data, current.size);
+    qa_buffer_free(&current);
+    if (!ok) return remote_q2_fail(error, QA_ERROR_FORMAT, "Q2 imported CLIENT commands changed before aggregate admission");
+    source->commands_verified = true; return true;
+}
+bool frontend_remote_q2_source_finish_restore(frontend_remote_q2_source *source, qa_error *error)
+{
+    if (!source || source->closing || source->calls || !source->frontend->source_restoring ||
+        !source->configured || !source->receiver || source->receiver->importing || !source->commands_verified ||
+        !source->imported_commands.data || !source->imported_current.data)
+        return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 physical restore retains unfinished receiver or command admission");
+    qa_buffer current = {0};
+    bool ok = qa_console_save_capture(source->console, qa_application_session(source->domain.application), &current, error) &&
+        current.size == source->imported_current.size &&
+        !memcmp(current.data, source->imported_current.data, current.size);
+    qa_buffer_free(&current);
+    if (!ok) return remote_q2_fail(error, QA_ERROR_FORMAT, "Q2 imported console changed before physical finish");
+    qa_buffer_free(&source->imported_commands); qa_buffer_free(&source->imported_current);
+    return true;
 }

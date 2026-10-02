@@ -479,7 +479,7 @@ bool q2m_fire(q2m_context *context, const q2m_fire_spec *spec,
     fired = q2_bullet(&call, spec->start, spec->direction, spec->damage,
                       spec->kick, spec->horizontal_spread,
                       spec->vertical_spread, (int)spec->pellets,
-                      spec->direct_mod, error);
+                      spec->direct_mod, spec->kind == Q2M_ATTACK_SHOTGUN, error);
     break;
   case Q2M_ATTACK_RAIL:
     fired = q2_rail(&call, spec->start, spec->direction, spec->damage,
@@ -852,12 +852,12 @@ bool q2m_attack(q2m_context *context, q2m_attack_kind kind, float damage,
         &call, start, direction, damage, 4.0f, wide ? 900.0f : 300.0f,
         wide && context->monster->definition->species != Q2M_CARRIER ? 1500.0f
                                                                      : 500.0f,
-        1, Q2M_MOD_MACHINEGUN, error);
+        1, Q2M_MOD_MACHINEGUN, false, error);
     break;
   }
   case Q2M_ATTACK_SHOTGUN:
     result = q2_bullet(&call, start, direction, damage, 8.0f, 500.0f, 500.0f,
-                       12, Q2M_MOD_SHOTGUN, error);
+                       12, Q2M_MOD_SHOTGUN, true, error);
     break;
   case Q2M_ATTACK_BLASTER:
     result = q2_projectile_spawn(&call, Q2_BOLT, start, direction, damage, 1.0f,

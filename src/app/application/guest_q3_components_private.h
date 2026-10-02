@@ -2,11 +2,18 @@
 #define QA_APPLICATION_GUEST_Q3_COMPONENTS_PRIVATE_H
 #include "guest_q3_components.h"
 #include "guest_q3_mod_operations.h"
+#include "guest_q3_component_clients.h"
 #include "qa/collision.h"
 #include <stdlib.h>
 #include <string.h>
 
 typedef struct component_scene_row component_scene_row;
+typedef struct component_saved_row {
+    const char *instance,*key;
+    uint64_t owner,generation,services;
+    qa_sha256_digest program,declaration;
+    qa_buffer game;
+} component_saved_row;
 typedef struct component_game_row {
     application_q3_components *roster;
     application_provider *provider;
@@ -21,16 +28,20 @@ typedef struct component_game_row {
     char *presentation_runtime;
     qa_unified_document *identity;
     component_scene_row *scenes;
-    bool attached,initialized,activated,registered;
+    bool attached,initialized,initializing,activated,registered;
 } component_game_row;
 struct application_q3_components {
     application_q3_components_options options;
     component_game_row **rows;
     bool *retained;
     application_q3_components *retired;
+    application_q3_component_client_adapter *clients_adapter;
     size_t count;
-    bool closing;
+    bool closing,owns_clients;
     qa_error visibility_failure;
+    qa_buffer entity_text;
+    component_saved_row *saved;
+    size_t saved_count;
 };
 bool q3components_storage(void *);
 bool q3components_current(void *);
@@ -38,4 +49,6 @@ bool q3components_create_game(component_game_row *,qa_error *);
 bool q3components_scenes_destroy(component_game_row *,qa_error *);
 bool q3components_scenes_idle(const component_game_row *);
 bool q3components_identity(component_game_row *,qa_error *);
+bool q3components_saved_read(application_q3_components *,qa_bytes,qa_error *);
+bool q3components_saved_import(component_game_row *,qa_error *);
 #endif

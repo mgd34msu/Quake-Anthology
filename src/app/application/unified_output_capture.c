@@ -72,9 +72,14 @@ static bool presentation(application_unified_output_capture *v, qa_error *e)
     if (ok && components)
         ok = application_unified_json_text(&j, ",\"components\":", e) &&
             application_unified_json_document(&j, components, e);
-    if (ok && v->external.native_camera)
+    const qa_unified_document *native_camera = v->components ?
+        application_unified_components_camera(v->components) : NULL;
+    if (native_camera && v->external.native_camera)
+        ok = application_fail(e, QA_ERROR_ARGUMENT, "Unified capture has competing native camera publication owners");
+    if (!native_camera) native_camera = v->external.native_camera;
+    if (ok && native_camera)
         ok = application_unified_json_text(&j, ",\"nativeCamera\":", e) &&
-            application_unified_json_document(&j, v->external.native_camera, e);
+            application_unified_json_document(&j, native_camera, e);
     if (ok) ok = application_unified_json_text(&j, "}", e) &&
         qa_unified_document_create(QA_UNIFIED_CHECKPOINT, (qa_bytes){j.bytes.data, j.bytes.size}, &v->presentation, e);
     application_unified_json_dispose(&j);

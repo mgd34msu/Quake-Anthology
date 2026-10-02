@@ -1,6 +1,7 @@
 #include "remote_q2_private.h"
 #include "shared_resource_policy.h"
 #include "visual_access.h"
+#include "remote_q2_effects_bridge.h"
 #include "qa/material.h"
 #include "qa/hash.h"
 #include <math.h>
@@ -62,6 +63,9 @@ bool remote_q2_media_clear(frontend_remote_q2 *row, qa_error *error)
 {
     if (!row || row->image_policy)
         return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 media remains held by its image policy transaction");
+    if (!frontend_remote_q2_effects_destroy(&row->effects, error)) return false;
+    qa_buffer_free(&row->saved_effects);
+    row->effects_imported = false;
     if (row->frontend->audio && row->identity && !qa_audio_engine_stop_owner(row->frontend->audio,
         row->identity, row->options.domain.physical_seat, error)) return false;
     qa_scene_world_destroy(row->world); row->world = NULL;
@@ -151,6 +155,6 @@ bool remote_q2_media_prepare(frontend_remote_q2 *row, qa_error *error)
     const qa_scene_image *conchars = remote_q2_picture_read(row, "conchars", &issue);
     if (conchars && !qa_font_classic_create(row->fonts, "remote-q2:conchars", conchars,
         QA_FONT_BAKED_COLOR, &row->classic, error)) return false;
-    if (!remote_q2_live(row, error)) return false;
+    if (!remote_q2_effects_create(row, error) || !remote_q2_live(row, error)) return false;
     row->media_ready = true; return true;
 }

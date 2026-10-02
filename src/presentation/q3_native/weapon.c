@@ -34,6 +34,13 @@ static qa_q3_ref_entity reference(qa_q3_ref_kind kind,int32_t model)
 }
 static bool frame_valid(const q3n_frame *f,qa_error *e)
 {
+    if (f && f->unified_effects) {
+        return f->weapons && f->assets==f->weapons->options.assets &&
+            q3n_frame_product(f)==f->weapons->options.product && f->media && f->events &&
+            f->presentation && f->weapon_settings && q3n_frame_current(f) &&
+            q3n_media_unified_effects_current(f->media,f->unified_effects,e) ? true :
+            q3p_fail(e,QA_ERROR_ARGUMENT,"Unified weapon effect lost its actual CLIENT source and media");
+    }
     return f && !f->effects_source && f->weapons && f->assets==f->weapons->options.assets && q3n_frame_product(f)==f->weapons->options.product &&
         f->media && f->events && f->presentation && f->weapon_settings && f->entities &&
         q3n_frame_current(f) && (!f->remote ||
@@ -45,7 +52,14 @@ static bool frame_valid(const q3n_frame *f,qa_error *e)
 static bool emit(const q3n_frame *f,const qa_q3_ref_entity *ref,qa_error *e)
 { return qa_q3_presentation_entity(f->presentation,ref,e) && frame_valid(f,e); }
 static bool start_sound(const q3n_frame *f,int32_t handle,const qa_vec3 *origin,int32_t number,int32_t channel,qa_error *e)
-{ return qa_q3_presentation_sound(f->presentation,handle,origin,number,channel,false,e) && frame_valid(f,e); }
+{
+    if (f->unified_effects) {
+        qa_audio_asset *asset=q3p_sound(f->assets,handle);
+        return !asset || (origin && f->effect_sound_output &&
+            f->effect_sound_output(f->effect_output_context,f,asset,origin,channel,e) && frame_valid(f,e));
+    }
+    return qa_q3_presentation_sound(f->presentation,handle,origin,number,channel,false,e) && frame_valid(f,e);
+}
 static bool loop_sound(const q3n_frame *f,int32_t handle,int32_t number,qa_vec3 origin,qa_error *e)
 { return qa_q3_presentation_loop(f->presentation,handle,number,origin,qa_v3(0,0,0),false,e) && frame_valid(f,e); }
 static bool attach(const q3n_frame *f,qa_q3_ref_entity *child,const qa_q3_ref_entity *parent,const char *tag,bool rotated,qa_error *e)
@@ -651,11 +665,9 @@ static void colored(q3n_local_entity *le,qa_vec3 color,float byte_scale,uint8_t 
     le->ref.color[2]=(uint8_t)((uint32_t)integer(mul(color.z,byte_scale))&255u); le->ref.color[3]=alpha;
     le->color[0]=mul(color.x,fade); le->color[1]=mul(color.y,fade); le->color[2]=mul(color.z,fade); le->color[3]=fade_alpha;
 }
-bool q3n_weapons_rail(const q3n_frame *f,int32_t client,qa_vec3 *start,qa_vec3 end,qa_error *e)
+static bool rail(const q3n_frame *f,qa_vec3 color1,qa_vec3 color2,qa_vec3 *start,qa_vec3 end,qa_error *e)
 {
-    if (!frame_valid(f,e) || !start || client<0 || client>=64) return false;
-    const q3n_client_info *ci=q3n_clients_get(f->clients,(uint32_t)client);
-    if (!ci) return q3p_fail(e,QA_ERROR_FORMAT,"Rail trail requires its genuine client-info row");
+    if (!frame_valid(f,e) || !start) return false;
     start->z=add(start->z,-4); qa_vec3 move=*start,delta=minus(end,*start);
     float extent=length(delta); qa_vec3 direction=normalized(delta),temp=perpendicular(direction),axes[36];
     for (size_t i=0;i<36;++i) axes[i]=rotated(direction,temp,(float)(i*10));
@@ -664,7 +676,7 @@ bool q3n_weapons_rail(const q3n_frame *f,int32_t client,qa_vec3 *start,qa_vec3 e
     core->start_time=f->time; core->end_time=integer(add((float)f->time,f->weapon_settings->rail_trail_time));
     core->life_rate=divide(1,(float)difference(core->end_time,f->time)); core->ref.shader_time=divide((float)f->time,1000);
     core->ref.custom_shader=media->graphics[Q3N_G_RAIL_CORE]; core->ref.origin=*start; core->ref.old_origin=end;
-    colored(core,ci->color1,255,255,.75f,1);
+    colored(core,color1,255,255,.75f,1);
     move=ma(move,20,direction); qa_vec3 step=scale(direction,5);
     if (f->weapon_settings->old_rail) { core->ref.origin.z=add(core->ref.origin.z,-8); core->ref.old_origin.z=add(core->ref.old_origin.z,-8); return true; }
     int32_t skip=-1; size_t j=18;
@@ -673,7 +685,7 @@ bool q3n_weapons_rail(const q3n_frame *f,int32_t client,qa_vec3 *start,qa_vec3 e
             skip=i+5; q3n_local_entity *ring=q3n_local_allocate(f->events,Q3N_LE_MOVE_SCALE_FADE,QA_Q3_REF_SPRITE);
             ring->flags=Q3N_LE_DONT_SCALE; ring->start_time=f->time; ring->end_time=sum(sum(f->time,i>>1),600);
             ring->life_rate=divide(1,(float)difference(ring->end_time,f->time)); ring->ref.shader_time=divide((float)f->time,1000);
-            ring->ref.radius=1.1f; ring->ref.custom_shader=media->graphics[Q3N_G_RAIL_RINGS]; colored(ring,ci->color2,255,255,.75f,1);
+            ring->ref.radius=1.1f; ring->ref.custom_shader=media->graphics[Q3N_G_RAIL_RINGS]; colored(ring,color2,255,255,.75f,1);
             ring->pos.type=2; ring->pos.time=f->time; vector(ring->pos.base,ma(move,4,axes[j])); vector(ring->pos.delta,scale(axes[j],6));
         }
         move=plus(move,step); j=(j+1)%36;
@@ -681,6 +693,15 @@ bool q3n_weapons_rail(const q3n_frame *f,int32_t client,qa_vec3 *start,qa_vec3 e
     }
     return true;
 }
+bool q3n_weapons_rail(const q3n_frame *f,int32_t client,qa_vec3 *start,qa_vec3 end,qa_error *e)
+{
+    if (!frame_valid(f,e) || f->unified_effects || client<0 || client>=64) return false;
+    const q3n_client_info *ci=q3n_clients_get(f->clients,(uint32_t)client);
+    return ci ? rail(f,ci->color1,ci->color2,start,end,e) :
+        q3p_fail(e,QA_ERROR_FORMAT,"Rail trail requires its genuine client-info row");
+}
+bool q3n_weapons_effect_rail(const q3n_frame *f,qa_vec3 color1,qa_vec3 color2,qa_vec3 *start,qa_vec3 end,qa_error *e)
+{ return f && f->unified_effects && qa_vec_finite(color1) && qa_vec_finite(color2) && rail(f,color1,color2,start,end,e); }
 static bool plasma(const q3n_frame *f,q3n_entity *cent,const qa_q3_entity *state,qa_error *e)
 {
     if (f->weapon_settings->no_projectile_trail || f->weapon_settings->old_plasma) return true;
@@ -805,9 +826,9 @@ bool q3n_weapons_impact(const q3n_frame *f,int32_t number,int32_t client,qa_vec3
         sound=media->sounds[random==0?Q3N_S_RICOCHET1:random==1?Q3N_S_RICOCHET2:Q3N_S_RICOCHET3]; radius=8; break;
     }
     }
-    if (sound && (!qa_q3_presentation_sound(f->presentation,sound,&origin,1022,0,false,e) || !frame_valid(f,e))) return false;
+    if (sound && !start_sound(f,sound,&origin,1022,0,e)) return false;
     const q3n_client_info *ci=NULL;
-    if (number==7) {
+    if (number==7 && !f->unified_effects) {
         ci=client>=0 && client<64?q3n_clients_get(f->clients,(uint32_t)client):NULL;
         if (!ci) return q3p_fail(e,QA_ERROR_FORMAT,"Rail impact requires its actual client-info colors");
     }
@@ -896,9 +917,8 @@ static bool bullet(const q3n_frame *f,qa_vec3 end,int32_t source,bool flesh,int3
 }
 static float shot_random(uint32_t *seed)
 { *seed=69069u * *seed+1u; return mul(2,add((float)(*seed&65535u)/65536.0f,-.5f)); }
-static bool shotgun(const q3n_frame *f,const qa_q3_entity *state,qa_error *e)
+static bool shotgun_pattern(const q3n_frame *f,qa_vec3 muzzle,qa_vec3 direction,uint32_t seed,int32_t skip,qa_error *e)
 {
-    qa_vec3 muzzle=from(state->pos.base),direction=from(state->origin2);
     uint32_t contents;
     if (!f->weapon_settings->ragepro) {
         if (!q3n_events_point_contents(f,muzzle,-1,&contents,e)) return false;
@@ -910,13 +930,12 @@ static bool shotgun(const q3n_frame *f,const qa_q3_entity *state,qa_error *e)
         }
     }
     qa_vec3 forward=normalized(direction),right=perpendicular(forward),up=cross(forward,right);
-    uint32_t seed=(uint32_t)state->eventParm;
     for (size_t i=0;i<11;++i) {
         float horizontal=mul(mul(shot_random(&seed),700),16);
         float vertical=mul(mul(shot_random(&seed),700),16);
         qa_vec3 end=ma(ma(ma(muzzle,131072,forward),horizontal,right),vertical,up);
         qa_trace_result trace; qa_bounds bounds={0};
-        if (!q3n_events_trace(f,muzzle,end,bounds,state->otherEntityNum,1u|0x2000000u|0x4000000u,&trace,e)) return false;
+        if (!q3n_events_trace(f,muzzle,end,bounds,skip,1u|0x2000000u|0x4000000u,&trace,e)) return false;
         uint32_t destination;
         if (!q3n_events_point_contents(f,muzzle,-1,&contents,e) || !q3n_events_point_contents(f,trace.end,-1,&destination,e)) return false;
         if (contents==destination) {
@@ -929,6 +948,12 @@ static bool shotgun(const q3n_frame *f,const qa_q3_entity *state,qa_error *e)
             if (!q3n_events_trace(f,muzzle,end,bounds,-1,32,&water,e) || !q3n_effect_bubbles(f,trace.end,water.end,32,e)) return false;
         }
         if (trace.surface_flags&16) continue;
+        if (f->unified_effects) {
+            if (trace.hit==QA_TRACE_HIT_ACTOR) q3n_effect_bleed(f,trace.end,-1);
+            else if (!q3n_weapons_impact(f,3,-1,trace.end,trace.contact?trace.contact_plane.normal:qa_v3(0,0,0),
+                (trace.surface_flags&4096)?Q3N_IMPACT_METAL:Q3N_IMPACT_DEFAULT,e)) return false;
+            continue;
+        }
         int32_t target;
         if (!q3n_events_trace_number(f,&trace,&target,e)) return false;
         qa_vec3 normal=trace.contact?trace.contact_plane.normal:qa_v3(0,0,0);
@@ -943,6 +968,11 @@ static bool shotgun(const q3n_frame *f,const qa_q3_entity *state,qa_error *e)
     }
     return true;
 }
+static bool shotgun(const q3n_frame *f,const qa_q3_entity *state,qa_error *e)
+{ return shotgun_pattern(f,from(state->pos.base),from(state->origin2),(uint32_t)state->eventParm,state->otherEntityNum,e); }
+bool q3n_weapons_effect_shotgun(const q3n_frame *f,qa_vec3 muzzle,qa_vec3 direction,uint32_t seed,qa_error *e)
+{ return f && f->unified_effects && frame_valid(f,e) && qa_vec_finite(muzzle) && qa_vec_finite(direction) &&
+    shotgun_pattern(f,muzzle,direction,seed,-1,e); }
 bool q3n_weapons_event(void *context,const q3n_frame *f,q3n_entity *cent,const qa_q3_entity *state,int32_t event,qa_vec3 position,qa_error *e)
 {
     (void)context;

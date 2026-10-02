@@ -71,6 +71,17 @@ typedef struct frontend_client_source_state {
     uint32_t capabilities;
     bool ready;
 } frontend_client_source_state;
+typedef struct frontend_client_source_prefix {
+    qa_launch_client_metadata recipe;
+    qa_launch_restored_instance descriptor;
+    frontend_client_source_state state;
+    uint64_t content_id;
+} frontend_client_source_prefix;
+/* The graph-backed recipe and descriptor borrow the actual candidate graph
+ * and session. State arrays/queue are owned; no view claim or callbacks occur. */
+bool frontend_client_source_prefix_read(qa_frontend *, qa_application_content_graph *, qa_bytes,
+    frontend_client_source_prefix *, qa_error *);
+void frontend_client_source_prefix_free(frontend_client_source_prefix *);
 bool frontend_client_source_capture(frontend_client_source *, frontend_client_source_state *, qa_error *);
 void frontend_client_source_state_free(frontend_client_source_state *);
 bool frontend_client_source_restore(qa_frontend *, const frontend_client_source_options *,
@@ -80,4 +91,11 @@ bool frontend_client_source_checkpoint(frontend_client_source *, const qa_applic
 bool frontend_client_source_restore_prefix(qa_frontend *, const frontend_client_source_options *,
     qa_application_content_graph *, const qa_console_save_resolvers *, qa_bytes,
     frontend_client_source **, qa_error *);
+bool frontend_client_source_commands_capture(qa_frontend *, qa_application *,
+    const qa_application_console_scope *, const qa_console *, qa_buffer *, qa_error *);
+bool frontend_client_source_commands_restore(qa_frontend *, qa_application *,
+    const qa_application_console_scope *, qa_console *, qa_bytes, qa_error *);
+bool frontend_client_sources_finish_restore(qa_frontend *, qa_error *);
+bool frontend_client_source_commands_owned(const qa_frontend *, const qa_application *,
+    const qa_application_console_scope *, const qa_console *);
 #endif

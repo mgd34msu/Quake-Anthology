@@ -1,4 +1,5 @@
 #include "../internal.h"
+#include <limits.h>
 
 enum {
     Q2_NORMAL, Q2_SPECTATOR, Q2_DEAD, Q2_GIB, Q2_FREEZE
@@ -29,12 +30,16 @@ typedef struct q2_classic_move {
     qa_bounds character, bounds;
     qa_movement_ground ground;
     qa_trace_result ground_trace;
-    int16_t previous_origin[3];
+    int32_t previous_origin[3];
     float dt, speed_multiplier, view_height;
     int32_t water_level, water_type;
     unsigned raw_contacts;
     bool ladder;
 } q2_classic_move;
+
+static uint32_t q2_time(const qa_q2_movement_state *state);
+static void q2_time_set(qa_q2_movement_state *state, uint32_t value);
+static uint32_t q2_time_shift(const qa_q2_movement_state *state);
 
 static qa_vec3 q2_advance(qa_vec3 origin, float time, qa_vec3 velocity)
 {
@@ -62,7 +67,13 @@ static float q2_height(const q2_classic_move *pm, float source)
 static bool q2_trace_bounds(q2_classic_move *pm, qa_vec3 start, qa_vec3 end,
                             qa_bounds bounds, qa_trace_result *trace)
 {
-    return qa_move_trace(pm->context, start, end, bounds, Q2_MASK_PLAYER,
+    uint32_t mask = Q2_MASK_PLAYER;
+    if (pm->state->wide_coordinates) {
+        if (pm->state->type == Q2_DEAD || pm->state->type == Q2_GIB)
+            mask &= ~(UINT32_C(1) << 25);
+        if (!(pm->state->flags & (UINT32_C(1) << 7))) mask |= UINT32_C(1) << 30;
+    }
+    return qa_move_trace(pm->context, start, end, bounds, mask,
                          false, trace);
 }
 
@@ -136,7 +147,7 @@ static bool q2_slide(q2_classic_move *pm)
         }
         pm->velocity = candidate;
     }
-    if (pm->state->time_eight_ms != 0) pm->velocity = primal;
+    if (q2_time(pm->state) != 0) pm->velocity = primal;
     return true;
 }
 
@@ -295,13 +306,13 @@ static bool q2_categorize(q2_classic_move *pm)
             pm->ground = qa_move_ground(&trace);
             if (pm->state->flags & Q2_TIME_WATERJUMP) {
                 pm->state->flags &= ~(uint32_t)Q2_TIME_FLAGS;
-                pm->state->time_eight_ms = 0;
+                q2_time_set(pm->state, 0);
             }
             if (!(pm->state->flags & Q2_ON_GROUND)) {
                 pm->state->flags |= Q2_ON_GROUND;
                 if (pm->velocity.z < -200.0f && !pm->context->input->profile.data.q2.strafejump_hack) {
                     pm->state->flags |= Q2_TIME_LAND;
-                    pm->state->time_eight_ms = pm->velocity.z < -400.0f ? 25 : 18;
+                    q2_time_set(pm->state, (pm->velocity.z < -400.0f ? 200u : 144u) >> q2_time_shift(pm->state));
                 }
             }
         }
@@ -348,7 +359,7 @@ static void q2_check_jump(q2_classic_move *pm)
 
 static bool q2_check_special(q2_classic_move *pm)
 {
-    if (pm->state->time_eight_ms != 0) return true;
+    if (q2_time(pm->state) != 0) return true;
     pm->ladder = false;
     qa_vec3 flat = qa_v3(pm->forward.x, pm->forward.y, 0);
     q2_normalize(&flat);
@@ -367,7 +378,7 @@ static bool q2_check_special(q2_classic_move *pm)
     pm->velocity = qa_vec_scale(flat, 50.0f);
     pm->velocity.z = 350.0f;
     pm->state->flags |= Q2_TIME_WATERJUMP;
-    pm->state->time_eight_ms = 255;
+    q2_time_set(pm->state, 2040u >> q2_time_shift(pm->state));
     return true;
 }
 
@@ -442,17 +453,33 @@ static bool q2_check_duck(q2_classic_move *pm)
     return true;
 }
 
-static int16_t q2_packed_short(float value)
+static int32_t q2_packed(const qa_q2_movement_state *state, float value)
 {
-    /* The wire state wraps after truncation, including at the signed boundary. */
     if (!isfinite(value)) return 0;
-    return qa_move_short((int32_t)fmodf(truncf(value), 65536.0f));
+    float modulus = state->wide_coordinates ? 8388608.0f : 65536.0f;
+    float word = fmodf(truncf(value), modulus);
+    if (word < 0) word += modulus;
+    return (int32_t)word - (word >= modulus * 0.5f ? (int32_t)modulus : 0);
 }
 
-static qa_vec3 q2_unpack(const int16_t value[3])
+static qa_vec3 q2_unpack(const qa_q2_movement_state *state, bool velocity)
 {
-    return qa_v3((float)value[0] * 0.125f, (float)value[1] * 0.125f, (float)value[2] * 0.125f);
+    return qa_v3((float)qa_q2_movement_coordinate(state, velocity, 0) * 0.125f,
+                 (float)qa_q2_movement_coordinate(state, velocity, 1) * 0.125f,
+                 (float)qa_q2_movement_coordinate(state, velocity, 2) * 0.125f);
 }
+
+static uint32_t q2_time(const qa_q2_movement_state *state)
+{ return state->wide_coordinates ? state->wide.time_ms : state->time_eight_ms; }
+
+static void q2_time_set(qa_q2_movement_state *state, uint32_t value)
+{
+    if (state->wide_coordinates) state->wide.time_ms = (uint16_t)value;
+    else state->time_eight_ms = (uint8_t)value;
+}
+
+static uint32_t q2_time_shift(const qa_q2_movement_state *state)
+{ return state->wide_coordinates ? 0u : 3u; }
 
 static bool q2_good_position(q2_classic_move *pm, bool *good)
 {
@@ -460,51 +487,59 @@ static bool q2_good_position(q2_classic_move *pm, bool *good)
         *good = true;
         return true;
     }
-    qa_vec3 origin = q2_unpack(pm->state->origin_eighths);
+    qa_vec3 origin = q2_unpack(pm->state, false);
     qa_trace_result trace;
     if (!q2_trace(pm, origin, origin, &trace)) return false;
     *good = !trace.all_solid;
     return true;
 }
 
+static int32_t q2_offset(int32_t base, int offset)
+{
+    uint32_t word = (uint32_t)base + (uint32_t)offset;
+    return word <= INT32_MAX ? (int32_t)word : -1 - (int32_t)(UINT32_MAX - word);
+}
+
 static bool q2_snap(q2_classic_move *pm)
 {
     static const unsigned jitter[8] = {0, 4, 1, 2, 3, 5, 6, 7};
     int sign[3];
-    int16_t base[3];
+    int32_t base[3];
     for (unsigned i = 0; i < 3; ++i) {
         float origin = qa_move_component(pm->origin, i);
-        pm->state->velocity_eighths[i] = q2_packed_short(qa_move_component(pm->velocity, i) * 8.0f);
-        base[i] = q2_packed_short(origin * 8.0f);
+        qa_q2_movement_coordinate_set(pm->state, true, i, q2_packed(pm->state, qa_move_component(pm->velocity, i) * 8.0f));
+        base[i] = q2_packed(pm->state, origin * 8.0f);
         sign[i] = (float)base[i] * 0.125f == origin ? 0 : origin >= 0.0f ? 1 : -1;
     }
     for (unsigned j = 0; j < 8; ++j) {
         for (unsigned i = 0; i < 3; ++i)
-            pm->state->origin_eighths[i] = qa_move_short((int32_t)base[i] + ((jitter[j] & (1u << i)) ? sign[i] : 0));
+            qa_q2_movement_coordinate_set(pm->state, false, i, q2_offset(base[i], (jitter[j] & (1u << i)) ? sign[i] : 0));
         bool good;
         if (!q2_good_position(pm, &good)) return false;
         if (good) return true;
     }
-    memcpy(pm->state->origin_eighths, pm->previous_origin, sizeof(pm->previous_origin));
+    for (unsigned i = 0; i < 3; ++i)
+        qa_q2_movement_coordinate_set(pm->state, false, i, pm->previous_origin[i]);
     return true;
 }
 
 static bool q2_initial_snap(q2_classic_move *pm)
 {
     static const int offset[3] = {0, -1, 1};
-    int16_t base[3];
-    memcpy(base, pm->state->origin_eighths, sizeof(base));
+    int32_t base[3];
+    for (unsigned i = 0; i < 3; ++i) base[i] = qa_q2_movement_coordinate(pm->state, false, i);
     for (unsigned z = 0; z < 3; ++z) {
-        pm->state->origin_eighths[2] = qa_move_short((int32_t)base[2] + offset[z]);
+        qa_q2_movement_coordinate_set(pm->state, false, 2, q2_offset(base[2], offset[z]));
         for (unsigned y = 0; y < 3; ++y) {
-            pm->state->origin_eighths[1] = qa_move_short((int32_t)base[1] + offset[y]);
+            qa_q2_movement_coordinate_set(pm->state, false, 1, q2_offset(base[1], offset[y]));
             for (unsigned x = 0; x < 3; ++x) {
-                pm->state->origin_eighths[0] = qa_move_short((int32_t)base[0] + offset[x]);
+                qa_q2_movement_coordinate_set(pm->state, false, 0, q2_offset(base[0], offset[x]));
                 bool good;
                 if (!q2_good_position(pm, &good)) return false;
                 if (good) {
-                    pm->origin = q2_unpack(pm->state->origin_eighths);
-                    memcpy(pm->previous_origin, pm->state->origin_eighths, sizeof(pm->previous_origin));
+                    pm->origin = q2_unpack(pm->state, false);
+                    for (unsigned i = 0; i < 3; ++i)
+                        pm->previous_origin[i] = qa_q2_movement_coordinate(pm->state, false, i);
                     return true;
                 }
             }
@@ -535,7 +570,7 @@ static bool q2_run(q2_classic_move *pm)
     if (pm->context->input->environment.flight && pm->context->input->environment.health > 0 &&
         pm->state->type == Q2_NORMAL) {
         pm->state->flags &= ~(uint32_t)(Q2_ON_GROUND | Q2_DUCKED | Q2_TIME_WATERJUMP);
-        pm->state->time_eight_ms = 0;
+        q2_time_set(pm->state, 0);
         return q2_fly_move(pm, true) && q2_snap(pm);
     }
     if (pm->state->type == Q2_SPECTATOR) return q2_fly_move(pm, false) && q2_snap(pm);
@@ -550,14 +585,14 @@ static bool q2_run(q2_classic_move *pm)
         pm->velocity = speed <= 20.0f ? qa_v3(0, 0, 0) : qa_vec_scale(qa_vec_normalize(pm->velocity), speed - 20.0f);
     }
     if (!q2_check_special(pm)) return false;
-    if (pm->state->time_eight_ms != 0) {
-        uint32_t elapsed = pm->command.milliseconds >> 3;
+    if (q2_time(pm->state) != 0) {
+        uint32_t elapsed = pm->command.milliseconds >> q2_time_shift(pm->state);
         if (elapsed == 0) elapsed = 1;
-        if (elapsed >= pm->state->time_eight_ms) {
+        if (elapsed >= q2_time(pm->state)) {
             pm->state->flags &= ~(uint32_t)Q2_TIME_FLAGS;
-            pm->state->time_eight_ms = 0;
+            q2_time_set(pm->state, 0);
         } else {
-            pm->state->time_eight_ms = (uint8_t)(pm->state->time_eight_ms - elapsed);
+            q2_time_set(pm->state, q2_time(pm->state) - elapsed);
         }
     }
     if (pm->state->flags & Q2_TIME_TELEPORT) {
@@ -566,7 +601,7 @@ static bool q2_run(q2_classic_move *pm)
         pm->velocity.z -= (float)pm->state->gravity * pm->dt;
         if (pm->velocity.z < 0.0f) {
             pm->state->flags &= ~(uint32_t)Q2_TIME_FLAGS;
-            pm->state->time_eight_ms = 0;
+            q2_time_set(pm->state, 0);
         }
         if (!q2_step_slide(pm)) return false;
     } else {
@@ -582,7 +617,12 @@ static bool q2_run(q2_classic_move *pm)
             if (!q2_air_move(pm)) return false;
         }
     }
-    return q2_categorize(pm) && q2_snap(pm);
+    if (!q2_categorize(pm) || !q2_snap(pm)) return false;
+    if (pm->state->wide_coordinates) {
+        if (pm->ladder) pm->state->flags |= UINT32_C(1) << 8;
+        else pm->state->flags &= ~(UINT32_C(1) << 8);
+    }
+    return true;
 }
 
 bool qa_move_q2(qa_move_context *context)
@@ -595,7 +635,7 @@ bool qa_move_q2(qa_move_context *context)
     if (mode_override) state->type = qa_move_mode_type(QA_MOVEMENT_Q2_CLASSIC, environment->mode);
     if (environment->fixed_pose) {
         state->type = Q2_FREEZE;
-        memset(state->velocity_eighths, 0, sizeof(state->velocity_eighths));
+        for (unsigned i = 0; i < 3; ++i) qa_q2_movement_coordinate_set(state, true, i, 0);
     }
     q2_classic_move pm = {0};
     pm.context = context;
@@ -606,9 +646,9 @@ bool qa_move_q2(qa_move_context *context)
     pm.character = environment->fixed_pose ? environment->pose.bounds :
         input->shape.kind == QA_SHAPE_POINT ? (qa_bounds){0} : input->shape.bounds;
     pm.bounds = pm.character;
-    pm.origin = q2_unpack(state->origin_eighths);
-    pm.velocity = q2_unpack(state->velocity_eighths);
-    memcpy(pm.previous_origin, state->origin_eighths, sizeof(pm.previous_origin));
+    pm.origin = q2_unpack(state, false);
+    pm.velocity = q2_unpack(state, true);
+    for (unsigned i = 0; i < 3; ++i) pm.previous_origin[i] = qa_q2_movement_coordinate(state, false, i);
     bool success = q2_run(&pm);
     if (environment->fixed_pose) {
         pm.view_height = environment->pose.view_height;
@@ -623,7 +663,7 @@ bool qa_move_q2(qa_move_context *context)
     result->ground = pm.ground;
     result->water_level = pm.water_level;
     result->water_type = pm.water_type;
-    qa_vec3 velocity = q2_unpack(state->velocity_eighths);
+    qa_vec3 velocity = q2_unpack(state, true);
     result->horizontal_speed = sqrtf(velocity.x * velocity.x + velocity.y * velocity.y);
     return true;
 }

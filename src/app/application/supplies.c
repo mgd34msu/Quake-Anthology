@@ -489,7 +489,7 @@ static bool hipnotic_rows(application_supplies *owner, qa_supply_mapping *weapon
         qa_item_id source;
         if (!intern(owner, extensions[i].source, &source, error)) return false;
         qa_supply_mapping *row = mapping(weapons, count, source);
-        if (!row) return application_fail(error, QA_ERROR_STATE, "Hipnotic source mapping is absent");
+        if (!row) return application_fail(error, QA_ERROR_NOT_FOUND, "Hipnotic source mapping is absent");
         for (size_t j = 0; j < 4 && extensions[i].destinations[j]; ++j) {
             qa_item_id item;
             if (!intern(owner, extensions[i].destinations[j], &item, error) ||
@@ -693,6 +693,7 @@ static bool original_player_current(application_provider *provider, qa_actor_id 
                 const q3g_client *client = engine->clients + slot;
                 uint32_t actual;
                 if (client->allocated && client->connected && !client->disconnect_pending &&
+                    !client->disconnect_started && !client->pending_retirement &&
                     qa_actor_id_equal(client->actor, actor) &&
                     qa_q3_host_actor_slot(engine->game->host, actor, &actual, error) && actual == slot)
                     return true;
@@ -872,9 +873,16 @@ static bool pickup_actor_bind(supply_actor *entry, qa_error *error) {
     if (!pair->pickup_rule_count || entry->pickups.serial) return true;
     if (!qa_pickups_idle(pair->owner->application->pickups))
         return application_fail(error, QA_ERROR_ARGUMENT, "Selected pickup admission retains an entered grant");
-    return qa_pickups_bind(pair->owner->application->pickups, entry->actor, pair->arsenal->owner,
-        pair->pickup_rules, pair->pickup_rule_count, &entry->pickups, error) &&
-        pair_current(pair, entry->actor, error);
+    qa_actor_id actor = entry->actor;
+    qa_pickup_lease lease = {0};
+    if (!qa_pickups_bind(pair->owner->application->pickups, actor, pair->arsenal->owner,
+        pair->pickup_rules, pair->pickup_rule_count, &lease, error)) return false;
+    if (actor_find(pair->owner, pair, actor) != entry) {
+        if (!qa_pickups_close(pair->owner->application->pickups, lease, error)) return false;
+        return application_fail(error, QA_ERROR_NOT_FOUND, "Selected pickup recipient retired during its real inventory admission");
+    }
+    entry->pickups = lease;
+    return pair_current(pair, actor, error);
 }
 static bool ammo_granted(void *, qa_actor_id, const qa_pickup_receipt *, size_t, bool, qa_error *);
 static bool weapon_granted(void *, qa_actor_id, const qa_item_id *, size_t,
@@ -915,7 +923,8 @@ bool application_supplies_idle(const application_supplies *owner) {
     if (!owner) return true;
     if (owner->calls) return false;
     for (const supply_pair *pair = owner->pairs; pair; pair = pair->next)
-        if (!qa_supply_idle(pair->supply)) return false;
+        if (!qa_supply_idle(pair->supply) ||
+            (pair->pickup_rule_count && !qa_pickups_idle(owner->application->pickups))) return false;
     return true;
 }
 bool application_supplies_destroy(application_supplies *owner, qa_error *error) {
@@ -1033,13 +1042,17 @@ bool application_supplies_admit(application_supplies *owner, application_provide
         return pair ? false : application_fail(error, QA_ERROR_ARGUMENT, "Selected supply pair was not prepared");
     supply_actor *existing = actor_find(owner, pair, actor);
     if (existing) {
+        ++owner->calls; owner->admitting = true;
+        bool ok = true;
         if (existing->pickups.serial) {
-            if (!qa_pickups_idle(owner->application->pickups) ||
-                !qa_pickups_close(owner->application->pickups, existing->pickups, error))
-                return application_fail(error, QA_ERROR_ARGUMENT, "Selected pickup rebind requires its returned grant owner");
-            existing->pickups = (qa_pickup_lease){0}; existing->pickup_imported = false;
+            if (!qa_pickups_idle(owner->application->pickups))
+                ok = application_fail(error, QA_ERROR_ARGUMENT, "Selected pickup rebind requires its returned grant owner");
+            else ok = qa_pickups_close(owner->application->pickups, existing->pickups, error);
+            if (ok) { existing->pickups = (qa_pickup_lease){0}; existing->pickup_imported = false; }
         }
-        return pickup_actor_bind(existing, error);
+        if (ok) ok = pickup_actor_bind(existing, error);
+        owner->admitting = false; --owner->calls;
+        return ok;
     }
     supply_actor *entry = calloc(1, sizeof(*entry));
     if (!entry) return application_fail(error, QA_ERROR_MEMORY, "Allocating supply actor admission");
@@ -1204,6 +1217,77 @@ static bool source_item(const supply_pair *pair, qa_item_id item) {
         for (size_t i = 0; i < counts[list]; ++i)
             if (lists[list][i].source == item) return true;
     return false;
+}
+bool application_supplies_cheat_arsenal(void *context, qa_actor_id actor,
+    qa_q1_cheat_grant category, bool *handled, qa_error *error) {
+    application_provider *publisher = context;
+    qa_application *app = publisher ? publisher->application : NULL;
+    application_supplies *owner = app ? app->supplies : NULL;
+    if (!handled || !owner || owner->calls == SIZE_MAX ||
+        (category != QA_Q1_CHEAT_WEAPONS && category != QA_Q1_CHEAT_AMMO) ||
+        !provider_current(owner, publisher))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q1 cheat grant lost its actual supplier");
+    *handled = false;
+    application_provider *source = application_world_provider(app, QA_ROLE_ENTITIES, "");
+    application_provider *arsenal = application_provider_for(app, actor, QA_ROLE_ARSENAL, "");
+    supply_pair *pair = pair_find(owner, source, arsenal);
+    if (!pair) return application_fail(error, QA_ERROR_ARGUMENT, "Q1 cheat grant has no admitted supply pair");
+    if (!supply_current(pair, actor, error)) return false;
+    if (source == arsenal) return true;
+    ++owner->calls;
+    size_t definition_count = 0, entry_count = 0, written = 0;
+    qa_item_definition *definitions = NULL;
+    qa_inventory_entry *entries = NULL;
+    bool okay = qa_inventory_item_definitions(owner->inventory, actor, NULL, 0,
+        &definition_count, error) && supply_current(pair, actor, error) &&
+        qa_inventory_entries(owner->inventory, actor, NULL, 0, &entry_count, error) &&
+        supply_current(pair, actor, error);
+    if (okay && (definition_count > SIZE_MAX / sizeof(*definitions) ||
+        entry_count > SIZE_MAX / sizeof(*entries)))
+        okay = application_fail(error, QA_ERROR_MEMORY, "Selected grant exceeds native inventory extent");
+    if (okay) {
+        definitions = definition_count ? malloc(definition_count * sizeof(*definitions)) : NULL;
+        entries = entry_count ? malloc(entry_count * sizeof(*entries)) : NULL;
+        if ((definition_count && !definitions) || (entry_count && !entries))
+            okay = application_fail(error, QA_ERROR_MEMORY, "Retaining actual selected arsenal grant");
+    }
+    if (okay) {
+        okay = qa_inventory_item_definitions(owner->inventory, actor, definitions,
+            definition_count, &written, error) && supply_current(pair, actor, error);
+        if (okay && written > definition_count)
+            okay = application_fail(error, QA_ERROR_ARGUMENT, "Selected grant definitions changed extent");
+        if (okay) definition_count = written;
+    }
+    if (okay) {
+        okay = qa_inventory_entries(owner->inventory, actor, entries, entry_count,
+            &written, error) && supply_current(pair, actor, error);
+        if (okay && written > entry_count)
+            okay = application_fail(error, QA_ERROR_ARGUMENT, "Selected grant inventory changed extent");
+        if (okay) entry_count = written;
+    }
+    bool declared = false;
+    for (size_t i = 0; okay && i < entry_count; ++i) {
+        bool weapon = false, ammunition = false;
+        for (size_t j = 0; j < definition_count; ++j) {
+            const qa_item_definition *definition = definitions + j;
+            if (definition->owner != arsenal->owner || !definition->weapon) continue;
+            declared = true;
+            weapon |= definition->item == entries[i].item;
+            ammunition |= definition->ammo && definition->ammo == entries[i].item;
+        }
+        if (category == QA_Q1_CHEAT_WEAPONS ? !weapon : weapon || !ammunition) continue;
+        qa_inventory_entry entry = entries[i];
+        entry.count = category == QA_Q1_CHEAT_WEAPONS ? 1 : entry.capacity;
+        okay = qa_inventory_configure(owner->inventory, actor, &entry, NULL, NULL, error) &&
+            supply_current(pair, actor, error);
+    }
+    if (okay && !declared)
+        okay = application_fail(error, QA_ERROR_UNSUPPORTED,
+            "Selected cheat grant has no admitted arsenal definitions");
+    if (okay) *handled = true;
+    free(definitions); free(entries);
+    --owner->calls;
+    return okay;
 }
 static bool starter_count(supply_pair *pair, qa_actor_id actor, qa_item_id item,
     double count, bool clamp, qa_error *error) {
@@ -1976,7 +2060,8 @@ bool qa_application_supplies_restore(qa_application *app, qa_bytes bytes, qa_err
     /* Complete source identity/actor/pool decoding precedes any inventory
      * admission callback. Failure retains the ordinary candidate's owners. */
     for (supply_actor *row = decoded; ok && row; row = row->next) {
-        ok = application_supplies_admit(owner, row->pair->source, row->actor, error);
+        if (!actor_find(owner, row->pair, row->actor))
+            ok = application_supplies_admit(owner, row->pair->source, row->actor, error);
         for (size_t i = 0; ok && i < row->timer_count; ++i) {
             qa_inventory_entry entry;
             ok = qa_inventory_entry_read(owner->inventory, row->actor, row->timers[i].item, &entry, error) &&

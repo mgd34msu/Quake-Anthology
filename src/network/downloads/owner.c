@@ -62,7 +62,7 @@ bool qa_downloads_create(qa_http *http, qa_fs_root *root, const qa_download_opti
                          qa_downloads **out, qa_error *error) {
     if (!http || !root || !options || !out || !options->jobs || !options->maximum_pending_bytes ||
         !options->hooks.permit || !options->hooks.inspect || !options->hooks.remount ||
-        (uint64_t)options->jobs > SIZE_MAX / sizeof(download_job)) return fail(error, "Invalid download owner options");
+        sizeof(download_job) > SIZE_MAX / (size_t)options->jobs) return fail(error, "Invalid download owner options");
     qa_downloads *owner = calloc(1, sizeof(*owner));
     if (!owner) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating download owner"); return false; }
     owner->jobs = calloc(options->jobs, sizeof(*owner->jobs));
@@ -382,7 +382,7 @@ static bool download_save_job(qa_net_writer *w, const download_job *job)
 }
 bool qa_downloads_checkpoint(const qa_downloads *owner, qa_buffer *out, qa_error *error)
 {
-    if (!out || !download_checkpoint_valid(owner) || (uint64_t)owner->options.jobs > (SIZE_MAX - 36) / 530)
+    if (!out || !download_checkpoint_valid(owner) || (size_t)530 > (SIZE_MAX - 36) / (size_t)owner->options.jobs)
         return fail(error, "Download continuation requires idle native jobs and HTTP callbacks");
     size_t capacity = 36 + (size_t)owner->options.jobs * 530;
     for (uint32_t i = 0; i < owner->options.jobs; ++i) {
@@ -538,7 +538,8 @@ bool qa_downloads_restore_checkpoint(qa_bytes bytes, qa_http *http, qa_fs_root *
     if (!ok) {
         owner->options.hooks.changed = NULL;
         qa_downloads_destroy(owner);
-        if (!error || !error->code) fail(error, "Invalid native download continuation ownership"); return false;
+        if (!error || !error->code) fail(error, "Invalid native download continuation ownership");
+        return false;
     }
     *out = owner; return true;
 }

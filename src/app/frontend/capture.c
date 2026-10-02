@@ -29,6 +29,8 @@
 #include "qc_messages.h"
 #include "client_source.h"
 #include "component_scene.h"
+#include "renderer_materials.h"
+#include "remote_unified.h"
 #include "qa/scene_resource_save.h"
 #include "qa/material_library_save.h"
 #include "qa/material_save.h"
@@ -186,7 +188,7 @@ bool frontend_owners_returned(const qa_frontend *f)
     if (!f || f->capture || f->resource_inventory || f->root_resources_pending ||
         !frontend_cinematic_idle(f) || !frontend_qc_rerelease_idle(f) || !frontend_native_q2_children_idle(f) ||
         !frontend_native_q3_idle(f) || !frontend_remote_q3_idle(f) ||
-        !frontend_remote_q2_idle(f) ||
+        !frontend_remote_q2_idle(f) || !frontend_remote_unified_idle(f) ||
         !frontend_client_sources_idle(f) ||
         !frontend_component_scenes_idle(f) ||
         !frontend_remote_q3_initial_idle_all(f) || !frontend_ui_features_idle(f) ||
@@ -645,8 +647,12 @@ static bool remote_capture_heaps(frontend_capture *capture,qa_error *error)
             !add(capture,CAPTURE_WORLD,owner->world,error)) return false;
     }
     const frontend_remote_q3_initial_view *owner=&capture->initial;
-    return !capture->has_initial || (add(capture,CAPTURE_IMAGES,owner->images,error) &&
-        add(capture,CAPTURE_LIBRARY,owner->materials,error) && add(capture,CAPTURE_FONTS,owner->fonts,error));
+    if(capture->has_initial && (!add(capture,CAPTURE_IMAGES,owner->images,error) ||
+        !add(capture,CAPTURE_LIBRARY,owner->materials,error) || !add(capture,CAPTURE_FONTS,owner->fonts,error))) return false;
+    frontend_renderer_materials_view retained; bool present=false;
+    return frontend_renderer_materials_read(capture->frontend,&retained,&present,error) && (!present ||
+        (add(capture,CAPTURE_IMAGES,retained.images,error) && add(capture,CAPTURE_LIBRARY,retained.library,error) &&
+         add(capture,CAPTURE_IMAGES,retained.lightmap_images,error)));
 }
 static bool model_banks(frontend_resource_inventory *inventory,const qa_scene_model *root,qa_error *error)
 {
@@ -722,6 +728,11 @@ static bool resource_collect(frontend_resource_inventory *inventory,qa_error *er
         !resource_add(inventory,CAPTURE_IMAGES,initial.images,error) ||
         !resource_add(inventory,CAPTURE_LIBRARY,initial.materials,error) ||
         !resource_add(inventory,CAPTURE_FONTS,initial.fonts,error))) return false;
+    frontend_renderer_materials_view retained; bool has_retained=false;
+    if(!frontend_renderer_materials_read(f,&retained,&has_retained,error) || (has_retained &&
+        (!resource_add(inventory,CAPTURE_IMAGES,retained.images,error) ||
+         !resource_add(inventory,CAPTURE_LIBRARY,retained.library,error) ||
+         !resource_add(inventory,CAPTURE_IMAGES,retained.lightmap_images,error)))) return false;
     if (inventory->checking) {
         if (inventory->observation_cursor!=inventory->checking->root_observation_count) return false;
     } else inventory->root_observation_count=inventory->observation_count;
@@ -813,6 +824,7 @@ bool frontend_resource_inventory_collect(qa_frontend *f,qa_application *app,cons
 {
     if (f && f->component_scenes)
         return frontend_fail(error,QA_ERROR_UNSUPPORTED,"Component scene roots require their actual metadata namespace inventory");
+    if(f && !frontend_renderer_materials_prune(f,error)) return false;
     bool engine_only=!candidate && app && qa_application_startup_resource_phase(app,NULL);
     if (!f || !app || f->application!=app || !out || *out || f->resource_inventory || f->stepping ||
         f->round || f->shutdown || f->capture || f->source_restoring ||
@@ -931,6 +943,7 @@ bool frontend_capture_begin(qa_frontend *f, frontend_capture **out, qa_error *er
 {
     if (f && f->component_scenes)
         return frontend_fail(error,QA_ERROR_UNSUPPORTED,"Component scene roots require their actual saved namespace inventory");
+    if(f && !frontend_renderer_materials_prune(f,error)) return false;
     if (!f || !out || *out || f->stepping || f->preparing || f->round || f->shutdown || f->source_restoring ||
         !f->application || !frontend_owners_idle(f) || !frontend_seat_callbacks_idle(f) ||
         !frontend_save_commands_capture_ready(f) || !frontend_cinematic_capture_ready(f))

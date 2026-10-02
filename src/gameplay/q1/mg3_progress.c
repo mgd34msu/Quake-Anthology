@@ -70,8 +70,12 @@ bool q1_mg3_upgrade(qa_q1_game *g, q1_player *player, unsigned type, uint32_t fl
         if (!qa_inventory_configure(g->services.inventory, player->id, &entry, NULL, NULL, error))
             return false;
     }
-    return !q1_alive(g, player->id) || !player->arsenal ||
-           qa_q1_player_select(g, player->id, player->weapon, error);
+    if (!q1_alive(g, player->id)) return true;
+    if (player->source_client) {
+        bool selected;
+        return q1_source_select_weapon(g, player->id, player->weapon, &selected, error);
+    }
+    return !player->arsenal || qa_q1_player_select(g, player->id, player->weapon, error);
 }
 static bool capacities_current(qa_q1_game_operation *operation, qa_actor_id actor,
     q1_player *player, qa_error *error) {

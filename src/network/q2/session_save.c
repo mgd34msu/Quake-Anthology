@@ -86,8 +86,10 @@ static bool download(qa_source_save_io *io, q2_server *server, const qa_network_
         !qa_source_save_count(io, &server->download_offset, INT32_MAX)) return false;
     if (reading) {
         const qa_resource *decoded = NULL;
-        if (!refs->view_decode(refs->context, view, &server->download_view, io->error) || !server->download_view ||
+        qa_vfs *decoded_view = NULL;
+        if (!refs->view_decode(refs->context, view, &decoded_view, io->error) || !decoded_view ||
             !refs->resource_decode(refs->context, pool, resource, &decoded, io->error) || !decoded) return false;
+        server->download_view = decoded_view;
         server->download = (qa_resource *)decoded; qa_resource_retain(server->download);
         server->download_opening.resource_id = qa_resource_id(decoded);
     }
@@ -225,11 +227,11 @@ static bool client_fields(qa_source_save_io *io, q2_session *session)
 static bool fields(qa_source_save_io *io, q2_session *session, const qa_net_client *client,
     const qa_network_q2_checkpoint_refs *refs)
 {
-    uint32_t tag = UINT32_C(0x32534e51), version = 3, slot = session->id.slot;
+    uint32_t tag = UINT32_C(0x32534e51), version = 4, slot = session->id.slot;
     uint64_t generation = session->id.generation; bool server = session->server; size_t seats = session->seats;
     if (!qa_source_save_u32(io, &tag) || !qa_source_save_u32(io, &version) || !qa_source_save_bool(io, &server) ||
         !qa_source_save_u32(io, &slot) || !qa_source_save_u64(io, &generation) || !qa_source_save_count(io, &seats, QA_NETWORK_MAX_SEATS)) return false;
-    if (tag != UINT32_C(0x32534e51) || version != 3 || server != session->server || !seats ||
+    if (tag != UINT32_C(0x32534e51) || version != 4 || server != session->server || !seats ||
         slot != client->id.slot || generation != client->id.generation || seats != client->seat_count)
         return invalid(io, "Saved Q2 session does not belong to its actual candidate connection");
     session->seats = seats;
@@ -265,8 +267,8 @@ bool qa_network_q2_restore_peer(qa_network_runtime *runtime, const qa_net_client
     q2_session *session = calloc(1, sizeof(*session));
     if (!session) return q2_fail(error, QA_ERROR_MEMORY, "Restoring Q2 native session owner");
     session->runtime = runtime; session->id = client->id; session->server = server; session->seats = client->seat_count;
-    bool ok = server ? refs->source_server(refs->context, client, &session->state.server.policy, &session->state.server.hooks, error) :
-        refs->source_client(refs->context, client, &session->state.client.policy, &session->state.client.hooks, error);
+    bool ok = server ? refs->source_server(refs->context, runtime, client, &session->state.server.policy, &session->state.server.hooks, error) :
+        refs->source_client(refs->context, runtime, client, &session->state.client.policy, &session->state.client.hooks, error);
     if (ok && !(server ? q2_server_hooks_valid(&session->state.server.hooks) : q2_client_hooks_valid(&session->state.client.hooks)))
         ok = q2_fail(error, QA_ERROR_ARGUMENT, "Q2 candidate Source callback inventory is incomplete");
     qa_source_save_io io = {0};

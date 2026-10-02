@@ -71,7 +71,7 @@ static bool configstring_get(qa_native_host *host, int32_t index,
                              qa_native_address *out, qa_error *error)
 {
     if (!host->engine.configstring_get)
-        return native_host_fail(error, QA_ERROR_UNSUPPORTED, index,
+        return native_host_fail(error, QA_ERROR_UNSUPPORTED, (size_t)(uint32_t)index,
                                 "native configstring reader is unbound");
     const char *value = NULL;
     if (!host->engine.configstring_get(host->engine.context, index, &value, error))
@@ -238,6 +238,7 @@ static bool sound_import(qa_native_host *host, const qa_native_import_call *call
     qa_native_address position = (positioned || local)
                                      ? native_argument_address(call, cursor++)
                                      : 0;
+    sound.positioned = position != 0;
     if (position && !native_host_read_vec3(host, position, &sound.origin, error))
         return false;
     qa_native_address entity = native_argument_address(call, cursor++);

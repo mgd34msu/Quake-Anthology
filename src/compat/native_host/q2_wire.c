@@ -14,6 +14,15 @@ static bool ready(qa_native_host *host, qa_error *error)
             "Q2 wire observation requires its idle installed GAME owner");
 }
 
+static bool import_ready(qa_native_host *host, qa_error *error)
+{
+    return (host && host->kind == NATIVE_HOST_Q2_GAME && host->instance && host->edict &&
+        host->callback_depth && !host->destroying && !host->restoring && !host->reconstruction &&
+        !qa_native_terminal(host->instance) && host->world.session && host->world.world) ||
+        native_host_fail(error, QA_ERROR_ARGUMENT, 0,
+            "Q2 import observation requires its actual executing GAME callback");
+}
+
 static bool binding_equal(qa_native_slot_binding a, qa_native_slot_binding b)
 {
     return a.kind == b.kind && a.slot == b.slot && a.owner == b.owner &&
@@ -42,10 +51,11 @@ static bool binding_current(qa_native_host *host, uint32_t slot,
 }
 
 static bool table_current(qa_native_host *host, const qa_native_entity_table *before,
-    qa_error *error)
+    bool importing, qa_error *error)
 {
     qa_native_entity_table after;
-    return ready(host, error) && qa_native_entity_table_get(host->instance, &after, error) &&
+    return (importing ? import_ready(host, error) : ready(host, error)) &&
+        qa_native_entity_table_get(host->instance, &after, error) &&
         ((after.base == before->base && after.stride == before->stride &&
             after.count == before->count && after.capacity == before->capacity) ||
             native_host_fail(error, QA_ERROR_ARGUMENT, 0,
@@ -79,19 +89,21 @@ static bool entity_finite(const qa_q2_entity *state, qa_bounds bounds)
         isfinite(state->loop_volume) && isfinite(state->loop_attenuation);
 }
 
-bool qa_native_host_q2_wire_entity(qa_native_host *host, uint32_t slot,
-    qa_native_host_q2_entity *out, qa_error *error)
+static bool entity_read(qa_native_host *host, uint32_t slot,
+    qa_native_host_q2_entity *out, bool importing, qa_error *error)
 {
     qa_native_entity_table table;
     qa_native_host_q2_entity value = {0};
-    if (!out || !ready(host, error) ||
+    if (!out || !(importing ? import_ready(host, error) : ready(host, error)) ||
         !qa_native_entity_table_get(host->instance, &table, error)) return false;
-    if (slot >= table.count || table.stride < host->edict->bytes)
+    if (slot >= (importing ? table.capacity : table.count) || table.stride < host->edict->bytes)
         return native_host_fail(error, QA_ERROR_ARGUMENT, slot,
             "Q2 wire edict is outside its physical source table");
     if (!binding_current(host, slot, &value.binding, error)) return false;
     if (value.binding.kind == QA_NATIVE_SLOT_FREE) {
-        if (!table_current(host, &table, error)) return false;
+        if (importing) return native_host_fail(error, QA_ERROR_ARGUMENT, slot,
+            "Q2 import entity has no actual Source actor binding");
+        if (!table_current(host, &table, false, error)) return false;
         *out = value;
         return true;
     }
@@ -102,10 +114,11 @@ bool qa_native_host_q2_wire_entity(qa_native_host *host, uint32_t slot,
     const native_host_edict_layout *layout = host->edict;
     bool classic = host->profile == QA_NATIVE_Q2_GAME_API3;
     value.in_use = classic ? qa_load_i32le(bytes + layout->inuse) != 0 : bytes[layout->inuse] != 0;
-    qa_linked_body linked;
-    value.linked = classic ? qa_world_linked(host->world.world, value.binding.actor, &linked)
-        : bytes[NATIVE_Q2_RR_LINKED] != 0;
+    value.linked = classic ? (slot < host->q2_lifetime_capacity &&
+        qa_actor_id_equal(host->q2_lifetimes[slot].actor, value.binding.actor) && host->q2_lifetimes[slot].linked) :
+        bytes[NATIVE_Q2_RR_LINKED] != 0;
     value.server_flags = qa_load_u32le(bytes + layout->flags);
+    value.solid = classic ? qa_load_i32le(bytes + layout->solid) : bytes[layout->solid];
     value.link_count = qa_load_u32le(bytes + layout->linkcount);
     if (slot < host->q2_lifetime_capacity && host->q2_lifetimes[slot].present) {
         const native_host_q2_lifetime *lifetime = &host->q2_lifetimes[slot];
@@ -164,13 +177,21 @@ bool qa_native_host_q2_wire_entity(qa_native_host *host, uint32_t slot,
         return native_host_fail(error, QA_ERROR_FORMAT, slot,
             "Q2 public entity contains non-finite wire coordinates");
     qa_native_slot_binding after;
-    if (!table_current(host, &table, error) || !binding_current(host, slot, &after, error)) return false;
+    if (!table_current(host, &table, importing, error) || !binding_current(host, slot, &after, error)) return false;
     if (!binding_equal(value.binding, after))
         return native_host_fail(error, QA_ERROR_ARGUMENT, slot,
             "Q2 public entity binding changed during observation");
     *out = value;
     return true;
 }
+
+bool qa_native_host_q2_wire_entity(qa_native_host *host, uint32_t slot,
+    qa_native_host_q2_entity *out, qa_error *error)
+{ return entity_read(host, slot, out, false, error); }
+
+bool qa_native_host_q2_wire_entity_import(qa_native_host *host, uint32_t slot,
+    qa_native_host_q2_entity *out, qa_error *error)
+{ return entity_read(host, slot, out, true, error); }
 
 static void classic_player(const uint8_t *bytes, qa_q2_player *state)
 {
@@ -247,7 +268,7 @@ bool qa_native_host_q2_wire_player(qa_native_host *host, uint32_t slot,
     qa_buffer_free(&bytes);
     if (!player_finite(&value, host->profile == QA_NATIVE_Q2_GAME_API3))
         return native_host_fail(error, QA_ERROR_FORMAT, slot, "Q2 public player contains invalid Source wire fields");
-    if (!table_current(host, &table, error) || !binding_current(host, slot, &after, error)) return false;
+    if (!table_current(host, &table, false, error) || !binding_current(host, slot, &after, error)) return false;
     if (!binding_equal(before, after))
         return native_host_fail(error, QA_ERROR_ARGUMENT, slot,
             "Q2 public player binding changed during observation");
@@ -275,7 +296,7 @@ bool qa_native_host_q2_wire_ping(qa_native_host *host, uint32_t slot,
     size_t offset = host->profile == QA_NATIVE_Q2_GAME_API2023 ? 296u : 184u;
     if (!client || client > UINT64_MAX - offset ||
         !native_host_read(host, client + offset, bytes, sizeof(bytes), error) ||
-        !table_current(host, &table, error) || !binding_current(host, slot, &after, error)) return false;
+        !table_current(host, &table, false, error) || !binding_current(host, slot, &after, error)) return false;
     if (!binding_equal(before, after))
         return native_host_fail(error, QA_ERROR_ARGUMENT, slot, "Q2 ping lost its actual source player");
     *out = qa_load_i32le(bytes);

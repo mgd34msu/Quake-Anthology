@@ -11,6 +11,7 @@ typedef struct material_source_submission {
     qa_material_context context;
     qa_scene_command *commands;
     size_t command_count;
+    qa_scene_world *held_light_world;
 } material_source_submission;
 typedef struct material_source_view {
     size_t command_offset;
@@ -20,6 +21,10 @@ typedef struct material_source_view {
     int64_t milliseconds;
     bool valid, no_world, hyperspace;
     qa_scene_view view;
+    qa_scene_light lights[32];
+    size_t light_count;
+    qa_scene_world *world;
+    float far_clip;
 } material_source_view;
 typedef struct material_source_operation {
     struct material_source_operation *next;
@@ -31,6 +36,7 @@ typedef struct material_source_operation {
 typedef struct material_source_entity {
     qa_scene_vec4 color;
     qa_scene_vec2 texcoord;
+    qa_scene_matrix model;
     qa_vec3 ambient, directed, light_direction;
     float ambient_alpha, time_offset, shadow_plane;
     uint32_t number;
@@ -68,11 +74,26 @@ struct qa_material_source_scratch {
     bool fog_has_surface;
     qa_scene_plane fog_surface;
     qa_vec3 fog_volume_color;
+    const qa_scene_image *lightmap;
+    qa_scene_resources *lightmap_owner;
+    qa_scene_world *world;
+    float far_clip;
     material_source_entity entity;
+    material_source_entity entities[1023];
+    uint32_t entity_count, first_scene_entity, entity_cell;
+    uint32_t submitted_light_count, first_scene_light;
+    bool entity_is_cell;
+    uint32_t light_mask;
+    qa_scene_light lights[32];
+    size_t light_count;
 };
 bool material_source_enter(qa_material_source_scratch *, qa_error *);
 bool material_source_current(const qa_material_source_scratch *, qa_error *);
 void material_source_leave(qa_material_source_scratch *);
 bool material_source_execute_prefix(qa_material_source_scratch *, const qa_scene_frame *, bool finish, qa_error *);
 void material_source_release(qa_material_source_scratch *);
+bool material_source_depth_range(qa_material_source_scratch *, float near_depth, float far_depth, qa_error *);
+bool material_source_polygon_offset(qa_material_source_scratch *, bool enabled, float factor, float units, qa_error *);
+bool material_source_cull(qa_material_source_scratch *, qa_scene_cull, qa_error *);
+bool material_source_lightmap_set(qa_material_source_scratch *, const qa_scene_image *, qa_error *);
 #endif

@@ -224,6 +224,8 @@ bool q2_consume(q2_weapon_call *, int, bool honor_infinite, qa_error *);
 bool q2_sound(q2_weapon_call *, const char *, int, float attenuation, qa_error *);
 bool q2_loop(q2_weapon_call *, const char *, qa_error *);
 bool q2_event(q2_weapon_call *, qa_builtin_event_kind, int, qa_vec3, qa_vec3, qa_error *);
+bool q2_event_named(q2_weapon_call *, qa_builtin_event_kind, const char *, int,
+    qa_vec3, qa_vec3, qa_error *);
 bool q2_noise(q2_weapon_call *, qa_vec3, qa_error *);
 bool q2_animation(q2_weapon_call *, int priority, int first, int last, qa_error *);
 bool q2_attack_animation(q2_weapon_call *, int offset, qa_error *);
@@ -253,7 +255,7 @@ void q2_recoil(q2_weapon_call *, qa_vec3 *origin, qa_vec3 *angles);
 bool q2_project(q2_weapon_call *, qa_vec3 angles, qa_vec3 offset, qa_vec3 *, qa_vec3 *, qa_error *);
 qa_attack q2_attack(q2_weapon_call *, int mod, uint32_t flags);
 bool q2_bullet(q2_weapon_call *, qa_vec3, qa_vec3, float damage, float kick, float hs, float vs,
-               int count, int mod, qa_error *);
+               int count, int mod, bool shotgun, qa_error *);
 bool q2_rail(q2_weapon_call *, qa_vec3, qa_vec3, float, float, int mod, uint32_t flags, qa_error *);
 bool q2_heatbeam(q2_weapon_call *, qa_vec3, qa_vec3, float, float, qa_error *);
 bool q2_fire_chainfist(q2_weapon_call *, qa_error *);

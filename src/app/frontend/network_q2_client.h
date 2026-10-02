@@ -4,6 +4,7 @@
 #include "qa/network_q2_bootstrap.h"
 #include "remote_q2_source.h"
 #include "qa/application_client.h"
+#include "qa/application_client_save.h"
 typedef struct frontend_network_q2_client frontend_network_q2_client;
 typedef struct frontend_network_q2_client_options {
     qa_frontend *frontend;
@@ -28,4 +29,41 @@ bool frontend_network_q2_client_admit(frontend_network_q2_client *,
     const qa_net_connect *, bool *recognized, qa_error *);
 void frontend_network_q2_client_disconnected(frontend_network_q2_client *, qa_net_client_id);
 bool frontend_network_q2_client_destroy(frontend_network_q2_client **, qa_error *);
+bool frontend_network_q2_client_commands_owned(const frontend_network_q2_client *,const qa_application *,
+    const qa_application_console_scope *,const qa_console *);
+bool frontend_network_q2_client_commands_capture(frontend_network_q2_client *,qa_application *,
+    const qa_application_console_scope *,const qa_console *,qa_buffer *,qa_error *);
+bool frontend_network_q2_client_commands_restore(frontend_network_q2_client *,qa_application *,
+    const qa_application_console_scope *,qa_console *,qa_bytes,qa_error *);
+bool frontend_network_q2_client_finish_restore(frontend_network_q2_client *,qa_error *);
+typedef struct frontend_network_q2_client_state {
+    qa_net_address remote;
+    qa_net_protocol_id protocol;
+    uint16_t qport;
+    uint32_t physical_seat;
+    frontend_remote_q2_source_state source;
+    qa_application_client_state application;
+    qa_q2_connect_request negotiated;
+    qa_network_q2_client_policy policy;
+    qa_sha256_digest composition;
+    qa_buffer receiver, bootstrap;
+} frontend_network_q2_client_state;
+bool frontend_network_q2_client_capture(frontend_network_q2_client *,
+    const frontend_remote_q2_restore_refs *,frontend_network_q2_client_state *,qa_error *);
+void frontend_network_q2_client_state_free(frontend_network_q2_client_state *);
+typedef struct frontend_network_q2_client_restore {
+    frontend_remote_q2_source_restore source;
+    const qa_application_client_state *application;
+    qa_q2_connect_request negotiated;
+    qa_network_q2_client_policy policy;
+    qa_sha256_digest composition;
+    qa_bytes bootstrap;
+} frontend_network_q2_client_restore;
+bool frontend_network_q2_client_restore_prepare(const frontend_network_q2_client_options *,
+    const frontend_network_q2_client_restore *,frontend_network_q2_client **,qa_error *);
+bool frontend_network_q2_client_importing(const frontend_network_q2_client *);
+bool frontend_network_q2_client_restore_hooks(frontend_network_q2_client *,qa_network_runtime *,
+    const qa_net_client *,qa_network_q2_client_policy *,qa_network_q2_client_hooks *,qa_error *);
+bool frontend_network_q2_client_source_read(const frontend_network_q2_client *,
+    frontend_remote_q2_source_view *,qa_error *);
 #endif

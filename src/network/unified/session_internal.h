@@ -26,6 +26,7 @@ struct qa_unified_session {
     qa_unified_input_batch inputs;
     uint32_t epoch, required;
     uint32_t reliable_applied, frame_applied;
+    uint8_t close_cause; /* 0 none, 1 actual timeout, 2 actual Source request. */
     uint64_t now_ns, closing_ns;
     int64_t acknowledged;
     bool server, admitted, disconnected, closing, timeout_pending, bound_source, entered, processing;

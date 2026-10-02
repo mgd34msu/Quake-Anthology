@@ -72,6 +72,10 @@ bool qa_unified_session_process(qa_unified_session *, bool *waiting, qa_error *)
 bool qa_unified_session_control(qa_unified_session *, const qa_unified_document *, qa_error *);
 bool qa_unified_session_frame(qa_unified_session *, const qa_unified_document *, qa_error *);
 bool qa_unified_session_input(qa_unified_session *, const qa_unified_input *, qa_error *);
+/* Retains a real local close request, including from the actual Source
+ * callback. Source retirement and the signed reply run at the next returned
+ * process boundary; retries preserve the original reason. */
+bool qa_unified_session_close(qa_unified_session *, const char *reason, qa_error *);
 bool qa_unified_session_flush(qa_unified_session *, uint64_t now_ns, qa_error *);
 bool qa_unified_session_idle(const qa_unified_session *);
 bool qa_unified_session_disconnected(const qa_unified_session *);

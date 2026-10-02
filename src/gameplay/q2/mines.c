@@ -355,9 +355,14 @@ static bool tesla_active(qa_q2_game *g, q2_actor *a, qa_builtin_actor_snapshot *
         qa_attack attack = q2_projectile_attack(g, id, &p, 45, 0);
         if (!q2_damage(g, &attack, target, p.damage, grounded_monster ? 0 : 8,
                        qa_vec_sub(body.origin, start), trace.end, trace.contact_plane.normal, false,
-                       e) ||
-            !q2_projectile_event(g, id, QA_BUILTIN_BEAM, "q2:bfg-lightning", 0, start, trace.end,
-                                 e))
+                       e))
+            return false;
+        qa_builtin_event beam = {.kind = QA_BUILTIN_BEAM,
+            .family = QA_GAME_Q2, .provider = g->options.owner, .actor = id,
+            .time_ns = g->now_ns, .origin = start, .end = trace.end,
+            .value = (float)((double)g->frame_ns / 1e9)};
+        if (!qa_builtin_resource(&g->services, "q2:bfg-lightning", &beam.resource, e) ||
+            !qa_builtin_emit(&g->services, &beam, e))
             return false;
     }
     a->projectile.next_ns =

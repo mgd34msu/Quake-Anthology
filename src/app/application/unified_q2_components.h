@@ -4,6 +4,7 @@
 #include "network_unified.h"
 #include "qa/application_native_q2_presentation.h"
 #include "qa/network_q2.h"
+#include "native_q2_publication.h"
 
 typedef struct application_unified_q2_source_documents {
     application_unified_source source;
@@ -27,5 +28,23 @@ bool application_unified_q2_source_documents_build(qa_application *,
 bool application_unified_q2_source_documents_current(qa_application *,
     const application_unified_q2_source_documents *);
 void application_unified_q2_source_documents_dispose(application_unified_q2_source_documents *);
+
+typedef struct application_unified_q2_component_documents {
+    application_unified_q2_source_documents source;
+    application_native_q2_publication_view publication;
+    qa_unified_document *state, *frame;
+    bool present;
+} application_unified_q2_component_documents;
+
+/* Full reliable/native frame rows for the real registered component. The
+ * recipient publisher owns shared reliable revision and config delta policy. */
+bool application_unified_q2_component_documents_build(qa_application *,
+    const application_unified_source *, qa_net_client_id, const qa_unified_session_player *,
+    application_unified_q2_component_documents *, qa_error *);
+bool application_unified_q2_component_documents_current(qa_application *,
+    const application_unified_q2_component_documents *);
+const qa_unified_document *application_unified_q2_component_camera(
+    const application_unified_q2_component_documents *);
+void application_unified_q2_component_documents_dispose(application_unified_q2_component_documents *);
 
 #endif

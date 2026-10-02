@@ -241,6 +241,7 @@ static void free_records(qa_native_host *host)
         host->models = next;
     }
     free(host->message);
+    free(host->message_references);
     free(host->retained_clients);
     free(host->q2_lifetimes);
 }
@@ -471,6 +472,15 @@ static bool retain_client(qa_native_host *host, uint32_t slot, bool retained, qa
     return true;
 }
 
+bool qa_native_host_client_retained_set(qa_native_host *host, uint32_t slot,
+    bool retained, qa_error *error)
+{
+    if (!host || host->kind != NATIVE_HOST_Q2_GAME || !slot)
+        return native_host_fail(error, QA_ERROR_ARGUMENT, 0,
+            "Declared native client retention requires its actual game host and slot");
+    return retain_client(host, slot, retained, error) && native_host_reconcile(host, error);
+}
+
 bool qa_native_host_client_choose_slot(qa_native_host *host, const char *userinfo,
                                        const char *social_id, bool bot, char *client_info,
                                        size_t client_info_capacity, bool spectator,
@@ -597,7 +607,7 @@ static bool q3_game_slot_call(qa_native_host *host, int32_t command,
         return qa_native_host_q3_vm_call(host, command, &argument, 1, &result, error);
     }
     if (!ql_entry)
-        return native_host_fail(error, QA_ERROR_UNSUPPORTED, command,
+        return native_host_fail(error, QA_ERROR_UNSUPPORTED, (size_t)(uint32_t)command,
                                 "Quake Live API 10 has no matching game entry");
     qa_native_value argument = {.type = QA_NATIVE_I32, .as.i32 = (int32_t)slot};
     return qa_native_call(host->instance, ql_entry, &argument, 1, NULL, error);

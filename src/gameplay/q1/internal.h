@@ -751,6 +751,7 @@ bool q1_gremlin_lightning(qa_q1_game *, q1_actor *, qa_error *);
 bool q1_gremlin_backpack(qa_q1_game *, q1_actor *, qa_error *);
 bool q1_weapon_impulse(qa_q1_game *, q1_player *, uint8_t, qa_error *);
 bool q1_source_impulse(qa_q1_game *, qa_actor_id, uint8_t, bool *handled, qa_error *);
+bool q1_source_select_weapon(qa_q1_game *, qa_actor_id, qa_q1_weapon, bool *, qa_error *);
 bool q1_addon_omnicide(qa_q1_game *, qa_actor_id, qa_error *);
 bool q1_monster_pain(qa_q1_game *, q1_actor *, qa_actor_id, float, qa_error *);
 bool q1_monster_die(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);

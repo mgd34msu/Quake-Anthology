@@ -48,6 +48,9 @@ bool frontend_remote_q2_source_destroy(frontend_remote_q2_source **, qa_error *)
 bool frontend_remote_q2_source_owner_retain(void *, qa_error *);
 bool frontend_remote_q2_source_owner_release(void *, qa_error *);
 bool frontend_remote_q2_source_owner_idle(const frontend_remote_q2_source *);
+/* Candidate import has returned its physical constructor, although receiver
+ * readiness is still deferred to the real resource/lower-session joins. */
+bool frontend_remote_q2_source_owner_import_idle(const frontend_remote_q2_source *);
 bool frontend_remote_q2_source_owner_current(const frontend_remote_q2_source *,
     const qa_launch_instance *, const qa_console *, const qa_cvars *, const qa_command_context *, qa_error *);
 typedef struct frontend_remote_q2_source_state {
@@ -80,4 +83,9 @@ typedef struct frontend_remote_q2_source_restore {
  * Partial construction stays in out for checked candidate destruction. */
 bool frontend_remote_q2_source_restore_prepare(qa_frontend *, const frontend_remote_q2_source_options *,
     const frontend_remote_q2_source_restore *, frontend_remote_q2_source **, qa_error *);
+bool frontend_remote_q2_source_commands_capture(const frontend_remote_q2_source *, qa_application *,
+    const qa_application_console_scope *, const qa_console *, qa_buffer *, qa_error *);
+bool frontend_remote_q2_source_commands_restore(frontend_remote_q2_source *, qa_application *,
+    const qa_application_console_scope *, qa_console *, qa_bytes, qa_error *);
+bool frontend_remote_q2_source_finish_restore(frontend_remote_q2_source *, qa_error *);
 #endif

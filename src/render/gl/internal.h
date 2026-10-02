@@ -215,6 +215,7 @@ struct qa_gl_renderer {
     const qa_scene_image *target;
     const qa_scene_image *bound[2];
     qa_scene_view view;
+    qa_scene_state pipeline;
     qa_scene_draw_buffer draw_buffer;
     float gamma;
     qa_output_domains output_domains;

@@ -439,7 +439,7 @@ static bool update_loading(void *context,q3n_loading *loading,const q3n_frame *f
     }
     bool okay=frontend->cpu?(qa_cpu_execute(frontend->cpu,&frontend->frame,e) && qa_cpu_present_frame(frontend->cpu,e)):
         (frontend->gl && qa_gl_execute(frontend->gl,&frontend->frame,e) && qa_gl_finish(frontend->gl,e) &&
-         qa_display_swap(frontend->display,e));
+         qa_gl_swap(frontend->gl,e));
     return okay && cut(o,f,e);
 }
 static bool loading(void *context,const q3n_frame *f,const char *text,int32_t item,qa_error *e)

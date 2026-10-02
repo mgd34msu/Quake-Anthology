@@ -132,6 +132,11 @@ bool qa_q3_presentation_audio_assets_read(const qa_q3_presentation_assets *a,
 }
 bool q3p_shader_get(const qa_q3_presentation_assets *a, int32_t handle, const qa_material **out, qa_error *error)
 {
+    if (!a || !out) return q3p_fail(error, QA_ERROR_ARGUMENT, "invalid Q3 shader lookup");
+    if ((handle < 0 || (size_t)handle > a->shader_count) &&
+        qa_material_library_has_source_profile(a->options.provider.materials)) {
+        *out = qa_material_find(a->options.provider.materials, "*default"); return *out != NULL;
+    }
     if (handle < 0 || (size_t)handle > a->shader_count)
         return q3p_fail(error, QA_ERROR_ARGUMENT, "invalid Q3 shader handle");
     *out = handle ? a->shaders[handle - 1] : NULL; return true;
@@ -139,6 +144,11 @@ bool q3p_shader_get(const qa_q3_presentation_assets *a, int32_t handle, const qa
 
 bool q3p_skin_get(const qa_q3_presentation_assets *a, int32_t handle, const qa_model_skin_map **out, qa_error *error)
 {
+    if (!a || !out) return q3p_fail(error, QA_ERROR_ARGUMENT, "invalid Q3 skin lookup");
+    if ((handle < 0 || (size_t)handle > a->skin_count) &&
+        qa_material_library_has_source_profile(a->options.provider.materials)) {
+        *out = NULL; return true;
+    }
     if (handle < 0 || (size_t)handle > a->skin_count)
         return q3p_fail(error, QA_ERROR_ARGUMENT, "invalid Q3 skin handle");
     *out = handle ? &a->skins[handle - 1]->map : NULL; return true;
@@ -183,6 +193,9 @@ bool qa_q3_register_shader(qa_q3_presentation_assets *a, const char *path, bool 
                              int32_t *out, qa_error *error)
 {
     if (!a || a->busy || !path || !out) return q3p_fail(error, QA_ERROR_ARGUMENT, "invalid Q3 shader request");
+    if (qa_material_library_has_source_profile(a->options.provider.materials) && strlen(path) >= 64) {
+        *out = 0; return true;
+    }
     q3p_name *prior = q3p_find_name(a, Q3P_SHADER, path);
     if (prior) { *out = prior->handle; return true; }
     qa_error local = {0}; char *normalized = qa_vfs_normalize_path(path, &local);
@@ -196,7 +209,13 @@ bool qa_q3_register_shader(qa_q3_presentation_assets *a, const char *path, bool 
     qa_scene_image_options images = {.family = provider.family, .wrap = QA_SCENE_REPEAT,
         .filter = mipmap ? QA_SCENE_LINEAR_MIPMAP_LINEAR : QA_SCENE_LINEAR, .mipmap = mipmap,
         .usage = QA_IMAGE_USAGE_PICTURE, .transparent_index = -1};
-    if (ok) ok = qa_material_register_kind(provider.materials, normalized, &images, QA_MATERIAL_PICTURE, &material, error);
+    bool source_shader = ok && qa_material_library_has_source_profile(provider.materials);
+    if (ok) ok = qa_material_register_kind(provider.materials, source_shader ? path : normalized,
+        &images, QA_MATERIAL_PICTURE, &material, error);
+    if (ok && material && material->registration == 0 && qa_material_library_has_source_profile(provider.materials)) {
+        if (a->options.print) a->options.print(a->options.context, "WARNING: MAX_SHADERS hit\n");
+        free(normalized); --a->busy; *out = 0; return true;
+    }
     int32_t handle = 0; bool append = false;
     if (ok && material && !material->default_shader) {
         for (size_t i = 0; i < a->shader_count; ++i)
@@ -209,7 +228,7 @@ bool qa_q3_register_shader(qa_q3_presentation_assets *a, const char *path, bool 
         }
         if (ok && append) a->shaders[a->shader_count++] = material;
         if (ok) ok = q3p_add_name(a, Q3P_SHADER, path, handle, mipmap, error);
-        if (ok && strcmp(path, normalized)) ok = q3p_add_name(a, Q3P_SHADER, normalized, handle, mipmap, error);
+        if (ok && !source_shader && strcmp(path, normalized)) ok = q3p_add_name(a, Q3P_SHADER, normalized, handle, mipmap, error);
     }
     free(normalized); --a->busy;
     if (ok) *out = handle;

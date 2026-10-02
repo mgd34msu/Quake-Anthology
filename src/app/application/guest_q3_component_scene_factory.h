@@ -3,6 +3,12 @@
 
 #include "guest_q3_component_source.h"
 #include "qa/catalog.h"
+#include "qa/executable_recipe.h"
+
+typedef enum application_q3_component_scene_origin {
+    APPLICATION_Q3_COMPONENT_SCENE_LOCAL,
+    APPLICATION_Q3_COMPONENT_SCENE_REMOTE
+} application_q3_component_scene_origin;
 
 typedef struct application_q3_component_scene_frontend {
     void *owner;
@@ -17,8 +23,13 @@ typedef struct application_q3_component_scene_frontend {
 } application_q3_component_scene_frontend;
 
 typedef struct application_q3_component_scene_preparation {
+    application_q3_component_scene_origin origin;
     const qa_catalog_mod *component;
     const qa_launch_instance *descriptor;
+    /* Remote rows borrow the genuinely admitted immutable recipe. They have
+     * no launch execution storage or local GAME component. */
+    qa_executable_recipe *recipe;
+    const qa_recipe_provider *recipe_provider;
     qa_catalog *catalog;
     qa_actor_owner owner;
     uint64_t generation, service_owner;

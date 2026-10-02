@@ -5,6 +5,28 @@ const qa_material *q3p_default_material(const qa_q3_presentation *p)
 {
     return qa_material_find(p->options.assets->options.provider.materials, "*default");
 }
+static bool source_picture_geometry(qa_scene_frame *frame, qa_scene_rect target,
+    qa_scene_rect_f rect, qa_scene_vec4 uv, qa_scene_vec4 color, qa_scene_mesh *mesh, qa_error *error)
+{
+    if (!target.width || !target.height || !isfinite(rect.x) || !isfinite(rect.y) ||
+        !isfinite(rect.width) || !isfinite(rect.height) || !isfinite(rect.x + rect.width) ||
+        !isfinite(rect.y + rect.height))
+        return q3p_fail(error, QA_ERROR_ARGUMENT, "Source picture requires its actual finite rectangle and viewport");
+    qa_scene_vertex *vertices = qa_arena_alloc(&frame->storage, 4 * sizeof(*vertices), _Alignof(qa_scene_vertex), error);
+    uint32_t *indices = qa_arena_alloc(&frame->storage, 6 * sizeof(*indices), _Alignof(uint32_t), error);
+    if (!vertices || !indices) return false;
+    const uint32_t pattern[6] = {3, 0, 2, 2, 0, 1};
+    memcpy(indices, pattern, sizeof(pattern));
+    vertices[0] = (qa_scene_vertex){.position = {rect.x, rect.y, 0}, .texcoord = {uv.x, uv.y}, .color = color};
+    vertices[1] = (qa_scene_vertex){.position = {rect.x + rect.width, rect.y, 0}, .texcoord = {uv.z, uv.y}, .color = color};
+    vertices[2] = (qa_scene_vertex){.position = {rect.x + rect.width, rect.y + rect.height, 0}, .texcoord = {uv.z, uv.w}, .color = color};
+    vertices[3] = (qa_scene_vertex){.position = {rect.x, rect.y + rect.height, 0}, .texcoord = {uv.x, uv.w}, .color = color};
+    *mesh = (qa_scene_mesh){.vertices = vertices, .indices = indices, .vertex_count = 4,
+        .index_count = 6, .primitive = QA_SCENE_TRIANGLES,
+        .bounds = {{fminf(rect.x, rect.x + rect.width), fminf(rect.y, rect.y + rect.height), 0},
+            {fmaxf(rect.x, rect.x + rect.width), fmaxf(rect.y, rect.y + rect.height), 0}}};
+    return true;
+}
 
 bool q3p_picture(qa_q3_presentation *p, const qa_material *material,
                  qa_scene_rect_f rect, qa_scene_vec4 uv, qa_error *error)
@@ -15,8 +37,6 @@ bool q3p_picture(qa_q3_presentation *p, const qa_material *material,
     qa_scene_rect target = p->options.viewport;
     rect.x += (float)target.x; rect.y += (float)target.y;
     qa_scene_mesh mesh;
-    if (!qa_scene_picture_geometry(p->frame, target, rect, uv, p->color, &mesh, error)) return false;
-    if (!mesh.vertex_count) return true;
     qa_material_context context = {.entity_color = p->color,
         .identity_light = p->options.identity_light,
         .source_scratch = p->options.source_scratch,
@@ -35,6 +55,9 @@ bool q3p_picture(qa_q3_presentation *p, const qa_material *material,
     context.local_view_origin = context.view.origin;
     qa_scene_matrix_identity(&context.model);
     if (p->options.prepare_picture && !p->options.prepare_picture(p->options.context, &context, error)) return false;
+    if (!(context.source_scratch ? source_picture_geometry(p->frame, target, rect, uv, p->color, &mesh, error) :
+        qa_scene_picture_geometry(p->frame, target, rect, uv, p->color, &mesh, error))) return false;
+    if (!mesh.vertex_count) return true;
     context.source_primitives = true;
     context.source_writer = QA_SOURCE_WRITE_PICTURE;
     context.fog = (qa_scene_fog){0}; context.fog_tc_scale = 0; context.fog_index = 0;

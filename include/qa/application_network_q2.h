@@ -3,6 +3,7 @@
 
 #include "qa/application_native_q2_presentation.h"
 #include "qa/network_q2_session.h"
+#include "qa/network_q2_unicast.h"
 
 typedef struct qa_application_network_q2 qa_application_network_q2;
 typedef struct qa_application_network_q2_host {
@@ -25,6 +26,13 @@ typedef struct qa_application_network_q2_recipient_view {
     uint64_t connection_epoch;
     uint8_t remote_index;
 } qa_application_network_q2_recipient_view;
+typedef struct qa_application_network_q2_resource_view {
+    qa_actor_owner provider;
+    const char *instance, *path, *wire_path;
+    const qa_vfs *view;
+    const qa_resource *resource;
+    const qa_vfs_acquisition *opening;
+} qa_application_network_q2_resource_view;
 
 /* Host discovery and binding require the actual physical ENTITIES GAME. A
  * local seat or selected CHARACTER is not a substitute for source admission. */
@@ -51,6 +59,9 @@ bool qa_application_network_q2_status(qa_application_network_q2 *,
     qa_q2_status *, qa_error *);
 bool qa_application_network_q2_download_source(qa_application_network_q2 *,
     qa_network_q2_download_source *, qa_error *);
+size_t qa_application_network_q2_resource_count(const qa_application_network_q2 *);
+bool qa_application_network_q2_resource_read(const qa_application_network_q2 *, size_t,
+    qa_application_network_q2_resource_view *, qa_error *);
 
 typedef struct qa_application_network_q2_bindings {
     qa_network_runtime *runtime;
@@ -61,6 +72,8 @@ typedef struct qa_application_network_q2_bindings {
     void *recipient_context;
     bool (*recipient)(void *, qa_actor_id, qa_application_network_q2_recipient_view *,
         bool *present, qa_error *);
+    bool (*unicast)(void *, const qa_q2_unicast_claim *, bool remember,
+        bool *duplicate, qa_error *);
 } qa_application_network_q2_bindings;
 /* The existing Network owner supplies its genuine raw Source-input entry and
  * retirement marker. All remaining hooks resolve the real canonical roster
@@ -74,6 +87,10 @@ bool qa_application_network_q2_client_frame(qa_application_network_q2 *,
  * connection group; it does not advance or publish a completed frame. */
 bool qa_application_network_q2_recipient(qa_application *, qa_actor_owner source,
     qa_actor_id, qa_application_network_q2_recipient_view *, bool *present, qa_error *);
+bool qa_application_network_q2_unicast(qa_application *, qa_actor_owner source,
+    qa_actor_id, uint32_t key, bool remember, bool *duplicate, qa_error *);
+bool qa_application_network_q2_entity_number(qa_application *, qa_actor_owner source,
+    qa_actor_id, uint32_t *, qa_error *);
 bool qa_application_network_q2_discovery(qa_application_network_q2 *,
     qa_q2_status *, const char **name, const char **map, qa_error *);
 bool qa_application_network_q2_download_server(qa_application_network_q2 *,

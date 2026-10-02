@@ -1,5 +1,6 @@
 #include "remote_q1_private.h"
 #include "remote_q1_prediction.h"
+#include "remote_q1_skins.h"
 #include <limits.h>
 #include <stdlib.h>
 #include <string.h>
@@ -135,6 +136,15 @@ bool frontend_remote_q1_receive_qw(frontend_remote_q1 *row, const qa_qw_service 
     if (!remote_q1_mutable(row) || !service || row->busy || !remote_q1_live(row, error) || !qa_q1_is_qw(row->options.domain.protocol)) return false;
     if (row->revision == UINT64_MAX) return remote_q1_fail(error, QA_ERROR_FORMAT, "QW presentation revision is exhausted");
     ++row->revision;
+    if (service->kind == QA_QW_DOWNLOAD) {
+        bool completed=false;
+        if (!row->skins || !frontend_remote_q1_skins_resume(row->skins,error) ||
+            !frontend_remote_q1_skins_receive(row->skins,service,&completed,error)) return false;
+        if (!completed) return true;
+        qa_network_q1_client_state actual;
+        return qa_network_q1_client_state_read(row->options.domain.runtime,row->options.domain.client,&actual,error) &&
+            (!actual.waiting_skins || qa_network_q1_client_skins_ready(row->options.domain.runtime,row->options.domain.client,error));
+    }
     if (!row->qw_ready) {
         if (service->kind == QA_QW_CD_TRACK) row->qw_pending_track = service->data.byte, row->qw_has_pending_track = true;
         return true;
@@ -145,6 +155,7 @@ bool frontend_remote_q1_receive_qw(frontend_remote_q1 *row, const qa_qw_service 
         const qa_qw_player *p = &service->data.player;
         if (p->slot >= 32) return remote_q1_fail(error, QA_ERROR_FORMAT, "QW playerinfo slot exceeds native players");
         row->qw_players[p->slot] = *p; row->qw_player_valid[p->slot] = true;
+        if (p->slot == row->qw.player_slot) row->camera.self_present = false;
         qa_q1_entity entity; qa_q1_entity_init(&entity);
         entity.number = (uint32_t)p->slot + 1; entity.model = p->model; entity.frame = p->frame; entity.colormap = entity.number;
         entity.skin = p->skin; entity.effects = p->effects; entity.step = true;

@@ -73,6 +73,11 @@ victim. Warmup and missed attacks do not introduce factor calls. A handled
 Source multiplier supplies its own powerups without a second native quad factor.
 The genuine original-QVM primary and hand inputs retain their zero native power
 timers instead of receiving generic selected CHARACTER powerups.
+Selected Q1 direct damage and each reached radius victim invoke the original
+Source factor at the actual damage request, after distance and visibility
+decisions. The request retains that physical Source's powerup ownership so a
+selected combat policy does not apply quad a second time. A retained projectile
+continues to use its real weapon provider after a new arsenal selection.
 Movement reads original Source water. Prediction reads the genuine ABI player
 weapon/state/time tuple, separately from custom active-weapon identity.
 
@@ -82,6 +87,35 @@ refreshing original Source input before each tick. The input reader uses the
 actual accepted turn buttons outside a movement slice and preserves the slice's
 attack decision inside it. Typed actor checkpoint 7 and portable Q2 version 21
 retain that continuation and reject invalid saved credit.
+
+The original CG weapon model producer is in
+`guest_q3_weapon_models_profile.c`, `guest_q3_weapon_models.c` and
+`guest_q3_weapon_models_save.c`. Its retained opening is
+`cgame-weapon-models.json`. Version 1 names `artifactPath`, `artifactDigest`,
+`registrationEntry`, `weaponArgument`, and the actual `game` namespace
+(`artifactPath`, `artifactDigest`, `abiProfile`). `table` declares `base`,
+`count`, `stride`, `registeredOffset`, and either the actual indexed
+`indexBase` or a stored `weaponOffset`. `table.models` requires `gun` and may
+name `hands`, `barrel`, `flash`, `invisibility`, `battle`, and `quad`; each
+value is its actual four-byte table offset. No guessed source entry, native
+weapon enum, inferred model suffix, or catalog model field supplies a receipt.
+
+The real registration hook proceeds before reading that live source table.
+Only genuine registered model/shader handles enter its receipt inventory.
+QAG3WM/1 retains the actual source IDs, table rows, handles and binding ID.
+Import stores those receipts before outer RAM restoration; the parent qualifies
+them afterward against the actual restored CG registry and matching GAME
+namespace. The real host registry getter is
+`qa_q3_host_presentation_resources`. Factory owns artifact opening, constructor,
+lifetime and the complete callback codec; the selected frontend still needs
+the genuine typed tuple consumer. A selected GAME arsenal can lack a CG role
+when HUD comes from another provider, so that caller must admit an actual
+matching CG registration owner instead of borrowing the physical HUD's table.
+
+The lower complete callback inventory now supports a genuinely retained
+dynamic resolver alongside the full function union. Nested Source scratch
+allocates above the current cursor and frame reservation, and restores both
+the bytes and reservation after each call.
 
 Other physical-source effect branches and complete independent source review
 remain open. No required

@@ -31,12 +31,11 @@ typedef struct bot_level_item {
     qa_vec3 origin, goal_origin;
     uint32_t goal_area;
 } bot_level_item;
-typedef struct bot_map_goal {
-    char name[128];
-    qa_vec3 origin;
-    uint32_t area;
-    float range, weight, wait, random;
-} bot_map_goal;
+typedef struct bot_map_info {
+    qa_bot_memory_allocation allocation;
+    uint32_t pointer;
+    bool camp;
+} bot_map_info;
 typedef struct bot_source_goal {
     qa_actor_id actor;
     char *name;
@@ -61,8 +60,10 @@ struct qa_bot_goals {
     size_t level_capacity;
     uint32_t level_head, free_head;
     int32_t initial_count, next_source;
-    bot_map_goal *locations, *camps;
-    size_t location_count, camp_count;
+    bot_map_info *info;
+    size_t info_count, info_capacity;
+    uint64_t next_info;
+    uint32_t location_head, camp_head;
     bot_source_goal *source;
     size_t source_count, source_capacity;
     uint32_t source_buckets[256];
@@ -76,6 +77,9 @@ float bot_goal_default_avoid(const qa_bot_item_info *);
 qa_bot_goal bot_goal_item(const qa_bot_goals *, const bot_level_item *);
 bot_level_item *bot_goal_find(const qa_bot_goals *, int32_t);
 void bot_goal_map_clear(qa_bot_goals *);
+bool bot_goal_info_free(qa_bot_goals *, qa_error *);
+bool bot_goal_info_span(const qa_bot_goals *, uint32_t, qa_bot_memory_span *, bool *, qa_error *);
+bool bot_goal_info_topology(const qa_bot_goals *, qa_error *);
 bool bot_goal_push(qa_bot_goals *, bot_goal_slot *, const qa_bot_goal *, bool *, qa_error *);
 bool bot_goal_dump_stack(qa_bot_goals *, const bot_goal_slot *, qa_error *);
 bool bot_goal_report(qa_bot_goals *, qa_script_severity, const char *,qa_error *);

@@ -1,6 +1,7 @@
 #include "native_q1_powers.h"
 #include "map_players_private.h"
 #include "qa/game_q1_bots.h"
+#include "qa/source_number.h"
 
 #include <math.h>
 
@@ -89,4 +90,25 @@ bool application_native_q1_set_gravity(void *opaque, qa_actor_id actor, float sc
         return application_fail(error, QA_ERROR_ARGUMENT, "Invalid source Q1 gravity scale");
     return current(&binding, error) && application_control_gravity(app, actor, scale, error) &&
         current(&binding, error);
+}
+
+bool application_native_q1_console_power(void *opaque, qa_actor_id actor,
+    qa_q1_power power, double expires, qa_error *error)
+{
+    application_provider *source = opaque;
+    qa_application *app = source ? source->application : NULL;
+    power_binding binding = {.publisher = source, .primary = source,
+        .application = app, .actor = actor};
+    if (!isfinite(expires) || power < QA_Q1_QUAD || power >= QA_Q1_POWER_COUNT)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q1 power cheat has an invalid timed power");
+    if (!current(&binding, error)) return false;
+    qa_q1_game_operation operation = {0};
+    if (!qa_q1_game_operation_begin(source->state.q1, &operation, error)) return false;
+    bool okay = qa_q1_player_power(operation.game, actor, power,
+        qa_source_fround(expires), error) && qa_q1_game_operation_live(&operation) &&
+        source->state.q1 == operation.game && current(&binding, error);
+    if (!okay && error && error->code == QA_OK)
+        application_fail(error, QA_ERROR_ARGUMENT, "Q1 power cheat lost its physical Source");
+    qa_q1_game_operation_end(&operation);
+    return okay;
 }

@@ -32,7 +32,9 @@ typedef enum qa_builtin_event_kind {
     QA_BUILTIN_CTF_CAPTURE,
     QA_BUILTIN_Q1_POWERUP,
     QA_BUILTIN_SOURCE_PROMPT,
-    QA_BUILTIN_CLEAR_PROMPT
+    QA_BUILTIN_CLEAR_PROMPT,
+    QA_BUILTIN_Q2_PLAYER_ANIMATION,
+    QA_BUILTIN_Q2_ENTITY_EVENT
 } qa_builtin_event_kind;
 
 typedef enum qa_builtin_message_arg_kind {
@@ -86,6 +88,8 @@ typedef struct qa_builtin_event {
     qa_actor_id actor, other;
     uint64_t time_ns;
     qa_string_id resource, text;
+    /* Q2 pickup's authored canonical item, distinct from icon and display name. */
+    qa_item_id item;
     qa_vec3 origin, end, direction;
     float volume, attenuation, value;
     int32_t code, channel, count, frame;

@@ -9,6 +9,7 @@ void native_host_message_clear(qa_native_host *host)
     if (!host)
         return;
     host->message_size = 0;
+    host->message_reference_count = 0;
     host->message_failed = false;
 }
 
@@ -133,10 +134,31 @@ bool native_host_message_write(qa_native_host *host, const qa_native_import_call
         if (!native_host_actor_for_address(host, native_argument_address(call, 0), false,
                                            &actor, &slot, error))
             return false;
+        if (host->engine.entity_number &&
+            !host->engine.entity_number(host->engine.context, actor, &slot, error)) return false;
         if (!actor.registry || slot > INT16_MAX)
             return native_host_fail(error, QA_ERROR_ARGUMENT, slot,
                                     "native Q2 message entity is not representable");
-        return append_u16(host, (uint16_t)slot, error);
+        if (host->message_reference_count == host->message_reference_capacity) {
+            size_t capacity = host->message_reference_capacity ? host->message_reference_capacity * 2 : 16;
+            if (capacity < host->message_reference_capacity ||
+                capacity > SIZE_MAX / sizeof(*host->message_references)) {
+                host->message_failed = true;
+                return native_host_fail(error, QA_ERROR_MEMORY, slot, "Native Q2 message reference extent overflows");
+            }
+            void *references = realloc(host->message_references, capacity * sizeof(*host->message_references));
+            if (!references) {
+                host->message_failed = true;
+                return native_host_fail(error, QA_ERROR_MEMORY, slot, "Retaining native Q2 WriteEntity identity");
+            }
+            host->message_references = references;
+            host->message_reference_capacity = capacity;
+        }
+        size_t offset = host->message_size;
+        if (!append_u16(host, (uint16_t)slot, error)) return false;
+        host->message_references[host->message_reference_count++] =
+            (qa_native_host_message_reference){offset, actor};
+        return true;
     }
     return native_host_fail(error, QA_ERROR_NOT_FOUND, call->slot,
                             "unknown native Q2 message writer");
@@ -156,6 +178,8 @@ bool native_host_message_send(qa_native_host *host, const qa_native_import_call 
     }
     qa_native_host_message message = {
         .payload = {host->message, host->message_size},
+        .references = host->message_references,
+        .reference_count = host->message_reference_count,
         .target = !strcmp(call->name, "unicast") ? QA_NATIVE_HOST_UNICAST
                                                  : QA_NATIVE_HOST_MULTICAST};
     bool deliver = host->message_size != 0;

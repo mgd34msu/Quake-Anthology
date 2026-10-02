@@ -176,7 +176,8 @@ bool qa_frontend_q1_restore_advance(qa_frontend_q1_restore *operation,qa_fronten
             frontend_persistence_restore_original(slot,operation->services,source,image,displaced,retained_candidate,error);
         operation->final_cut=false;
     }
-    qa_save_image_destroy(image);
+    qa_error cleanup={0};
+    if (!frontend_save_image_release(source,&image,ok?error:&cleanup)) ok=false;
     *complete=ok;
     return ok;
 }

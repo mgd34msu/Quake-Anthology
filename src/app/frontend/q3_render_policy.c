@@ -36,6 +36,52 @@ static bool permedia2(const qa_gl_capabilities *caps)
     renderer[sizeof(renderer) - 1] = 0;
     return strstr(renderer, "permedia2") != NULL;
 }
+static bool texture_mode_parse(const char *value, qa_scene_filter *out)
+{
+    static const char *const modes[]={"GL_NEAREST","GL_LINEAR","GL_NEAREST_MIPMAP_NEAREST",
+        "GL_LINEAR_MIPMAP_NEAREST","GL_NEAREST_MIPMAP_LINEAR","GL_LINEAR_MIPMAP_LINEAR"};
+    for (unsigned i=0;i<sizeof(modes)/sizeof(*modes);++i) {
+        const unsigned char *a=(const unsigned char *)value,*b=(const unsigned char *)modes[i];
+        while (*a && *b) {
+            unsigned char c=*a;
+            if (c>='a' && c<='z') c-='a'-'A';
+            if (c!=*b) break;
+            ++a; ++b;
+        }
+        if (!*a && !*b) { *out=(qa_scene_filter)i; return true; }
+    }
+    return false;
+}
+static bool texture_mode_apply(qa_frontend *f,qa_render_controls *controls,
+    const qa_cvar_view *row,qa_error *error)
+{
+    qa_scene_filter filter;
+    if (!texture_mode_parse(row->value,&filter)) {
+        frontend_print(f,"bad filter name\n");
+        qa_scene_filter previous; bool initialized;
+        return qa_render_controls_source_texture_mode_read(controls,&previous,&initialized,error) &&
+            (initialized || qa_render_controls_source_texture_mode(controls,previous,error));
+    }
+    const qa_gl_capabilities *caps=f->gl?qa_gl_capabilities_get(f->gl):NULL;
+    if (filter==QA_SCENE_LINEAR_MIPMAP_LINEAR && caps) {
+        char renderer[sizeof(caps->renderer)];
+        for (size_t i=0;i<sizeof(renderer);++i) {
+            unsigned char c=(unsigned char)caps->renderer[i];
+            renderer[i]=(char)(c>='A' && c<='Z'?c+'a'-'A':c);
+        }
+        renderer[sizeof(renderer)-1]=0;
+#ifdef _WIN32
+        bool voodoo=strstr(renderer,"banshee") || strstr(renderer,"voodoo3");
+#else
+        bool voodoo=strstr(renderer,"banshee") || strstr(renderer,"voodoo_graphics");
+#endif
+        if (voodoo) {
+            frontend_print(f,"Refusing to set trilinear on a voodoo.\n");
+            filter=QA_SCENE_LINEAR_MIPMAP_NEAREST;
+        }
+    }
+    return qa_render_controls_source_texture_mode(controls,filter,error);
+}
 
 static bool records(qa_frontend *f, const qa_cvars_edit *edit, const char *const *names,
     size_t count, const qa_cvar_view **out, qa_error *error)
@@ -58,10 +104,46 @@ bool frontend_q3_material_profile_initialize(qa_frontend *f, qa_material_library
     const qa_cvars_edit *edit = NULL;
     qa_material_profile profile;
     return frontend_q3_source_color_ensure(f, error) &&
+        frontend_q3_texture_mode_initialize(f,error) &&
         frontend_resource_policy_admission_edit(f, &edit, error) &&
         frontend_q3_material_profile_read(f, edit, &profile, error) &&
         qa_material_library_set_source_profile(library, &profile, error) &&
         frontend_q3_material_source_bind(f, library, error);
+}
+bool frontend_q3_texture_mode_initialize(qa_frontend *f,qa_error *error)
+{
+    if (!f || !f->application || (f->cpu && f->gl))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Source texture initialization lost its physical frontend");
+    if (!f->cpu && !f->gl) return true;
+    qa_render_controls *controls=f->cpu?qa_cpu_render_controls(f->cpu):qa_gl_render_controls(f->gl);
+    qa_scene_filter filter; bool initialized;
+    if (!qa_render_controls_source_texture_mode_read(controls,&filter,&initialized,error)) return false;
+    if (initialized) return true;
+    const qa_cvars_edit *edit=NULL;
+    const qa_cvar_view *row;
+    static const char *const names[]={"r_textureMode"};
+    return frontend_resource_policy_admission_edit(f,&edit,error) &&
+        records(f,edit,names,1,&row,error) && texture_mode_apply(f,controls,row,error);
+}
+bool frontend_q3_texture_mode_begin_frame(qa_frontend *f,qa_error *error)
+{
+    if (!f || !f->application || (f->cpu && f->gl))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Source texture frame lost its physical frontend");
+    if (!f->cpu && !f->gl) return true;
+    qa_render_controls *controls=f->cpu?qa_cpu_render_controls(f->cpu):qa_gl_render_controls(f->gl);
+    qa_scene_filter filter; bool initialized;
+    if (!qa_render_controls_source_texture_mode_read(controls,&filter,&initialized,error)) return false;
+    if (!initialized) return true;
+    qa_cvars *registry=qa_application_cvars(f->application);
+    const qa_cvar_view *row=frontend_render_control_record(registry,"r_textureMode");
+    if (!row || !row->value)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Source texture frame has no real ENGINE mode row");
+    if (!row->modified) return true;
+    if (!texture_mode_apply(f,controls,row,error)) return false;
+    qa_cvars_clear_modified(registry,"r_textureMode");
+    row=frontend_render_control_record(registry,"r_textureMode");
+    return (row && !row->modified) ||
+        frontend_fail(error,QA_ERROR_ARGUMENT,"Source texture frame lost its modification acknowledgment");
 }
 bool frontend_q3_material_source_bind(qa_frontend *f, qa_material_library *library, qa_error *error)
 {
@@ -144,7 +226,8 @@ bool frontend_q3_scene_policy_read(qa_frontend *f, qa_q3_scene_options *out, qa_
     qa_q3_color_lighting lighting;
     if (!frontend_q3_source_color_lighting_read(f, NULL, &lighting, error)) return false;
     out->world.identity_light = lighting.identity_light;
-    return frontend_q3_material_diagnostics_read(f, &out->world.source_diagnostics, error);
+    return frontend_q3_source_recipient(f,&out->world,error) &&
+        frontend_q3_material_diagnostics_read(f, &out->world.source_diagnostics, error);
 }
 bool frontend_q3_material_diagnostics_read(qa_frontend *f, qa_scene_source_diagnostics *out,
     qa_error *error)

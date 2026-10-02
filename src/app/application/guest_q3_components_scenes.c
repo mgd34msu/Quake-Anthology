@@ -34,7 +34,7 @@ static bool entered(void *context,application_q3_scene_context *out)
 static void print(void *context,const char *text)
 {
     component_scene_row *row=context;
-    qa_command_context command={.owner=row->services,.dialect=QA_CONSOLE_Q3,.origin=QA_COMMAND_CLIENT};
+    qa_command_context command={.owner=row->services,.dialect=QA_CONSOLE_Q3,.origin=QA_COMMAND_LOCAL};
     application_console_print(row->game->roster->options.application,&command,text);
 }
 static void console_print(void *context,const qa_command_context *command,const char *text)
@@ -97,7 +97,7 @@ static bool open_scene(component_scene_row *row,qa_error *e)
     if(!ok||!scene_identity(row,e)) return false;
     qa_cvar_options cvars={.dialect=QA_CONSOLE_Q3,.user=row,.print=print,.cheats_allowed=cheats};
     row->cvars=qa_cvars_create(&cvars,e); if(!row->cvars) return false;
-    qa_console_options console={.context={.owner=row->services,.dialect=QA_CONSOLE_Q3,.origin=QA_COMMAND_CLIENT},
+    qa_console_options console={.context={.owner=row->services,.dialect=QA_CONSOLE_Q3,.origin=QA_COMMAND_LOCAL},
         .cvars=row->cvars,.user=row,.print=console_print,.cvar_owner=cvar_owner,.source_command=console_command,
         .capture_context=capture,.context_active=active};
     row->console=qa_console_create(&console,e); if(!row->console) return false;
@@ -134,7 +134,7 @@ bool application_q3_components_scene_prepare(application_q3_components *owner,si
         row->game=game; row->viewer=viewer; row->seat=seat;
         row->next=game->scenes; game->scenes=row;
         row->view=(application_q3_component_view){.source=publication.source,.viewer=viewer,
-            .weapon_presented=owner->options.weapon_presented,.weapon_context=owner->options.context};
+            .weapon_presented=owner->options.weapon_presented,.weapon_context=owner->options.weapon_context};
         row->source=application_q3_component_view_services(&row->view);
     } else if(!row->initialized) return application_fail(e,QA_ERROR_ARGUMENT,"Component scene retains a failed physical constructor");
     row->view.origin=*origin; memcpy(row->view.axis,axis,sizeof(row->view.axis)); row->view.time_ms=time; row->view.frame_ms=elapsed;

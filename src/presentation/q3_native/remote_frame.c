@@ -464,7 +464,15 @@ bool q3n_remote_frame_prediction_error_clear(const q3n_remote_frame *f, qa_error
 
 bool q3n_frame_current(const q3n_frame *f)
 {
-    if (!f || !f->application) return false;
+    if (!f) return false;
+    if (f->unified_effects) {
+        const q3n_unified_effect_source *s=f->unified_effects;
+        return !f->application && !f->remote && !f->effects_source && !f->effect_event &&
+            !f->source.source_game && !f->reader && !f->client_service && !f->has_local_player &&
+            !f->clients && !f->entities && s->provider && s->content && s->assets && s->current &&
+            f->assets==s->assets && f->time==s->time && s->current(s);
+    }
+    if (!f->application) return false;
     if (f->remote) return !f->source.source_game && !f->has_local_player && !f->effects_source && !f->effect_event &&
         !f->reader && !f->client_service && f->application == f->remote->source.basis.application &&
         f->entities == f->remote->snapshots.entities && f->time == f->remote->snapshots.time &&
@@ -478,7 +486,7 @@ bool q3n_frame_current(const q3n_frame *f)
     return !f->effect_event && qa_application_native_q3_presentation_current(f->application, &f->source);
 }
 qa_q3_product q3n_frame_product(const q3n_frame *f)
-{ return f->remote ? f->remote->source.basis.product : f->effects_source ? f->effects_source->q3_product : f->source.product; }
+{ return f->unified_effects ? f->unified_effects->product : f->remote ? f->remote->source.basis.product : f->effects_source ? f->effects_source->q3_product : f->source.product; }
 int32_t q3n_frame_game_type(const q3n_frame *f)
 { return f->remote ? f->remote->source.game_type : f->source.game_type; }
 int32_t q3n_frame_max_clients(const q3n_frame *f)
@@ -494,7 +502,7 @@ const qa_q3_player *q3n_frame_predicted_player(const q3n_frame *f)
 { return !f ? NULL : f->remote ? f->remote->predicted_player : f->has_local_player ? &f->local_player : NULL; }
 bool q3n_frame_configstring(const q3n_frame *f, uint32_t index, const char **text, uint64_t *revision, qa_error *e)
 {
-    if (!q3n_frame_current(f) || f->effects_source)
+    if (!q3n_frame_current(f) || f->effects_source || f->unified_effects)
         return fail(e, QA_ERROR_ARGUMENT, "Configstrings require an actual local or remote reached client receipt");
     if (f->remote) return q3n_remote_source_configstring(f->remote->source.owner, index, text, revision, e);
     return qa_native_q3_wire_reader_configstring(f->reader, index, text, revision, e);
@@ -502,7 +510,7 @@ bool q3n_frame_configstring(const q3n_frame *f, uint32_t index, const char **tex
 bool q3n_frame_entity(const q3n_frame *f, uint32_t number, qa_q3_entity *state,
     q3n_entity **cent, bool *present, qa_error *e)
 {
-    if (!state || !cent || !present || !q3n_frame_current(f) || f->effects_source ||
+    if (!state || !cent || !present || !q3n_frame_current(f) || f->effects_source || f->unified_effects ||
         number >= q3n_frame_entity_capacity(f))
         return fail(e, QA_ERROR_ARGUMENT, "Entity observation requires its actual local or remote frame domain");
     if (f->remote) {

@@ -7,8 +7,11 @@ struct qa_fs_opened_file {
     bool ready;
     size_t references;
 };
+bool qa_fs_opened_native_error_read(qa_fs_native_error *out)
+{ if (!out) return false; *out = opened_native_failure; return true; }
 static bool opened_error(qa_error *error, const char *path, DWORD code)
 {
+    opened_native_failure = (qa_fs_native_error){2, code, true};
     qa_error_set(error, code == ERROR_FILE_NOT_FOUND || code == ERROR_PATH_NOT_FOUND ?
         QA_ERROR_NOT_FOUND : QA_ERROR_IO, 0, "cannot open native file %s (Windows error %lu)",
         path, (unsigned long)code); return false;
@@ -16,6 +19,7 @@ static bool opened_error(qa_error *error, const char *path, DWORD code)
 bool qa_fs_root_opened_file(qa_fs_root *root, const char *path, uint32_t mode,
     qa_fs_opened_creation creation, qa_fs_opened_file **out, bool *opened, qa_error *error)
 {
+    opened_native_failure = (qa_fs_native_error){0};
     if (opened) *opened = false;
     if (!root || !out || *out || !opened || (mode & ~3u) || creation < 1 || creation > 5 ||
         !qa_fs_relative_valid(path, false, error)) {
@@ -35,11 +39,16 @@ bool qa_fs_root_opened_file(qa_fs_root *root, const char *path, uint32_t mode,
     writable_path locked = {0}; wchar_t *target = NULL;
     bool changing = (mode & QA_FS_OPENED_WRITE) || creation != QA_FS_OPEN_EXISTING;
     if (changing) {
-        if (!writable_parent(root, path, false, &locked, error)) { qa_fs_opened_file_close(&file, NULL); return false; }
+        if (!writable_parent(root, path, false, &locked, error)) {
+            qa_fs_native_error failure = opened_native_failure;
+            qa_fs_opened_file_close(&file, NULL); opened_native_failure = failure; return false;
+        }
         target = wide_child(locked.parent_path, locked.leaf, error);
         qa_fs_entry_kind existing;
         if (!target || !status_wide(target, false, &existing, NULL, error, path)) {
-            free(target); writable_path_close(&locked); qa_fs_opened_file_close(&file, NULL); return false;
+            qa_fs_native_error failure = opened_native_failure;
+            free(target); writable_path_close(&locked); qa_fs_opened_file_close(&file, NULL);
+            opened_native_failure = failure; return false;
         }
         if (existing != QA_FS_MISSING && existing != QA_FS_REGULAR) {
             qa_error_set(error, QA_ERROR_IO, 0, "Opened file target is not regular: %s", path);
@@ -57,7 +66,11 @@ bool qa_fs_root_opened_file(qa_fs_root *root, const char *path, uint32_t mode,
     } else {
         locked.root_path = handle_path(root->handle, error);
         if (locked.root_path) target = join_wide(locked.root_path, path, error);
-        if (!target) { writable_path_close(&locked); qa_fs_opened_file_close(&file, NULL); return false; }
+        if (!target) {
+            qa_fs_native_error failure = opened_native_failure;
+            writable_path_close(&locked); qa_fs_opened_file_close(&file, NULL);
+            opened_native_failure = failure; return false;
+        }
         file->handle = CreateFileW(target, access, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
             NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
         DWORD code = GetLastError(); free(target);
@@ -99,6 +112,7 @@ bool qa_fs_opened_file_reference_read(const qa_fs_opened_file *file, qa_fs_opene
 }
 bool qa_fs_opened_file_current(const qa_fs_opened_file *file, qa_error *error)
 {
+    opened_native_failure = (qa_fs_native_error){0};
     if (!file || !file->ready || file->handle == INVALID_HANDLE_VALUE) {
         qa_error_set(error, QA_ERROR_IO, 0, "Opened native file has no admitted handle"); return false;
     }
@@ -124,6 +138,7 @@ static bool opened_position(qa_fs_opened_file *file, uint64_t offset, qa_error *
 bool qa_fs_opened_file_read(qa_fs_opened_file *file, uint64_t offset, void *out,
     size_t bytes, size_t *done, qa_error *error)
 {
+    opened_native_failure = (qa_fs_native_error){0};
     if (done) *done = 0;
     if (!done || (!out && bytes) || !file || !(file->mode & QA_FS_OPENED_READ)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid actual native file read"); return false;
@@ -136,6 +151,7 @@ bool qa_fs_opened_file_read(qa_fs_opened_file *file, uint64_t offset, void *out,
 bool qa_fs_opened_file_write(qa_fs_opened_file *file, uint64_t offset, qa_bytes bytes,
     size_t *done, qa_error *error)
 {
+    opened_native_failure = (qa_fs_native_error){0};
     if (done) *done = 0;
     if (!done || (!bytes.data && bytes.size) || !file || !(file->mode & QA_FS_OPENED_WRITE)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid actual native file write"); return false;
@@ -147,6 +163,7 @@ bool qa_fs_opened_file_write(qa_fs_opened_file *file, uint64_t offset, qa_bytes 
 }
 bool qa_fs_opened_file_size(qa_fs_opened_file *file, uint64_t *out, qa_error *error)
 {
+    opened_native_failure = (qa_fs_native_error){0};
     if (!out) { qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Missing actual file size output"); return false; }
     if (!qa_fs_opened_file_current(file, error)) return false;
     LARGE_INTEGER size;
@@ -154,19 +171,28 @@ bool qa_fs_opened_file_size(qa_fs_opened_file *file, uint64_t *out, qa_error *er
     if (size.QuadPart < 0) { qa_error_set(error, QA_ERROR_IO, 0, "Negative native file size"); return false; }
     *out = (uint64_t)size.QuadPart; return true;
 }
+bool qa_fs_opened_file_posix_status_read(qa_fs_opened_file *file, qa_fs_posix_status *out, qa_error *error)
+{
+    opened_native_failure = (qa_fs_native_error){0};
+    (void)file; (void)out;
+    qa_error_set(error, QA_ERROR_UNSUPPORTED, 0, "Windows opened objects do not supply POSIX file metadata"); return false;
+}
 bool qa_fs_opened_file_truncate(qa_fs_opened_file *file, uint64_t bytes, qa_error *error)
 {
+    opened_native_failure = (qa_fs_native_error){0};
     if (!file || !(file->mode & QA_FS_OPENED_WRITE)) { qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Native truncate needs write authority"); return false; }
     if (!qa_fs_opened_file_current(file, error) || !opened_position(file, bytes, error)) return false;
     return SetEndOfFile(file->handle) != 0 || fail_windows(error, "cannot truncate opened file", file->path, GetLastError());
 }
 bool qa_fs_opened_file_flush(qa_fs_opened_file *file, qa_error *error)
 {
+    opened_native_failure = (qa_fs_native_error){0};
     if (!qa_fs_opened_file_current(file, error)) return false;
     return FlushFileBuffers(file->handle) != 0 || fail_windows(error, "cannot flush opened file", file->path, GetLastError());
 }
 bool qa_fs_opened_file_close(qa_fs_opened_file **pointer, qa_error *error)
 {
+    opened_native_failure = (qa_fs_native_error){0};
     if (!pointer) { qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Opened-file close needs its owned pointer"); return false; }
     qa_fs_opened_file *file = *pointer; if (!file) return true;
     if (file->references > 1) { --file->references; *pointer = NULL; return true; }

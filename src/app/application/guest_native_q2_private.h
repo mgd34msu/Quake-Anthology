@@ -10,6 +10,7 @@
 
 struct qa_application_network_q2_recipient_view;
 struct qa_network_runtime;
+struct qa_q2_unicast_claim;
 
 typedef struct application_native_q2_client {
     qa_actor_id actor;
@@ -34,6 +35,9 @@ struct application_native_q2 {
     qa_world *world;
     qa_native_profile profile;
     qa_native_declaration *declaration;
+    struct application_native_q2_callbacks *callbacks;
+    struct application_native_q2_publication *publication;
+    struct application_native_q2_wire_engine *wire_engine;
     application_native_process_owner process;
     struct application_native_q2_inventory *primary_inventory;
     struct application_native_q2_attack *source_attack;
@@ -55,13 +59,14 @@ struct application_native_q2 {
     qa_string_id map_name, spawn_point;
     char *entity_text;
     unsigned calls;
-    uint32_t current_client;
+    uint32_t current_client, disconnect_client;
     uint64_t current_command_sequence;
     uint64_t config_revision, hud_config_revision;
     struct qa_network_runtime *network_recipient_runtime;
     void *network_recipient_context;
     bool (*network_recipient)(void *, qa_actor_id,
         struct qa_application_network_q2_recipient_view *, bool *, qa_error *);
+    bool (*network_unicast)(void *, const struct qa_q2_unicast_claim *, bool, bool *, qa_error *);
     size_t network_recipient_users;
     qa_actor_owner hud_source_owner;
     bool prepared, initialized, map_ready, shutting_down, activation_failed;
@@ -84,6 +89,7 @@ bool application_native_q2_client_admit(application_provider *, uint32_t, qa_act
 bool application_native_q2_client_begin(application_provider *, uint32_t, qa_error *);
 bool application_native_q2_client_userinfo(application_provider *, uint32_t, const char *, qa_error *);
 bool application_native_q2_client_disconnect(application_provider *, uint32_t, qa_error *);
+bool application_native_q2_actor_disconnect(application_provider *, qa_actor_id, qa_error *);
 bool application_native_q2_client_think(application_provider *, uint32_t, qa_bytes, qa_error *);
 bool application_native_q2_console_command(application_provider *, qa_actor_id, const char *,
                                             bool *, qa_error *);

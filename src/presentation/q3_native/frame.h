@@ -29,6 +29,7 @@ typedef struct q3n_frame {
     /* A standalone selected effect borrows its independent native producer.
      * It has no primary GAME snapshot, physical client or invented player S. */
     const qa_application_selected_effects *effects_source;
+    const q3n_unified_effect_source *unified_effects;
     const qa_application_effect_event *effect_event;
     void *effect_output_context;
     bool (*effect_entity_output)(void *, const qa_q3_ref_entity *, float cull_radius, qa_error *);

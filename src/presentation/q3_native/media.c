@@ -571,11 +571,29 @@ bool q3n_media_effects_current(const q3n_media *m, qa_application *app,
     return q3n_media_effects_ready(m) && effect_source_current((q3n_media *)m, app, source, event, e);
 }
 
-bool q3n_media_load_effects(q3n_media *m, qa_application *app,
-    const qa_application_selected_effects *source, const qa_application_effect_event *event, qa_error *e)
+static bool unified_effect_current(q3n_media *m, const q3n_unified_effect_source *s, qa_error *e)
+{
+    if (!m || !s || !s->provider || !s->content || !s->current ||
+        s->assets != m->options.assets || s->product != m->options.product ||
+        m->options.remote_source ||
+        m->options.assets->options.provider.mounts != s->content ||
+        m->options.assets->options.provider.family != QA_SCENE_Q3 || !s->current(s))
+        return q3p_fail(e, QA_ERROR_ARGUMENT, "Unified effect media lost its actual CLIENT source and dictionary");
+    return true;
+}
+bool q3n_media_unified_effects_current(const q3n_media *m, const q3n_unified_effect_source *s, qa_error *e)
+{ return q3n_media_effects_ready(m) && unified_effect_current((q3n_media *)m, s, e); }
+static bool effect_request_current(q3n_media *m, qa_application *app,
+    const qa_application_selected_effects *source, const qa_application_effect_event *event,
+    const q3n_unified_effect_source *unified, qa_error *e)
+{ return unified ? (!app && !source && !event && unified_effect_current(m, unified, e)) :
+    effect_source_current(m, app, source, event, e); }
+static bool load_effects(q3n_media *m, qa_application *app,
+    const qa_application_selected_effects *source, const qa_application_effect_event *event,
+    const q3n_unified_effect_source *unified, qa_error *e)
 {
     if (!enter(m, e)) return false;
-    bool okay = effect_source_current(m, app, source, event, e);
+    bool okay = effect_request_current(m, app, source, event, unified, e);
     if (okay && m->effects_loaded) return leave(m, true);
     static const graphic_request common[] = {
         G(WATER_BUBBLE,"waterBubble",SHADER), G(SMOKE_RAGEPRO,"smokePuffRagePro",SHADER),
@@ -592,15 +610,15 @@ bool q3n_media_load_effects(q3n_media *m, qa_application *app,
     /* Keep registration order from ApplicationEffects' real ClientEffects
      * and LocalEntitySystem construction, including the product branch. */
     for (size_t i = 0; okay && i < 3; ++i)
-        okay = graphics(m, &common[i], 1, e) && effect_source_current(m, app, source, event, e);
+        okay = graphics(m, &common[i], 1, e) && effect_request_current(m, app, source, event, unified, e);
     if (okay) okay = graphic_one(m, Q3N_G_TELEPORT_MODEL,
         m->options.product == QA_Q3_ARENA ? "models/misc/telep.md3" : "models/powerups/pop.md3",
-        GRAPHIC_MODEL, e) && effect_source_current(m, app, source, event, e);
+        GRAPHIC_MODEL, e) && effect_request_current(m, app, source, event, unified, e);
     for (size_t i = 3; okay && i < 14; ++i)
-        okay = graphics(m, &common[i], 1, e) && effect_source_current(m, app, source, event, e);
+        okay = graphics(m, &common[i], 1, e) && effect_request_current(m, app, source, event, unified, e);
     if (okay && m->options.product == QA_Q3_ARENA)
         okay = graphic_one(m, Q3N_G_TELEPORT_SHADER, "teleportEffect", GRAPHIC_SHADER, e) &&
-            effect_source_current(m, app, source, event, e);
+            effect_request_current(m, app, source, event, unified, e);
     if (okay && m->options.product == QA_Q3_TEAM_ARENA) {
         static const graphic_request mission[] = {
             G(LIGHTNING_SHADER,"lightningBolt",SHADER), G(KAMIKAZE_EFFECT,"models/weaphits/kamboom2.md3",MODEL),
@@ -617,39 +635,44 @@ bool q3n_media_load_effects(q3n_media *m, qa_application *app,
             S(INVULNERABILITY_JUICED,"sound/items/invul_juiced.wav",false)
         };
         for (size_t i = 0; okay && i < 4; ++i)
-            okay = graphics(m, &mission[i], 1, e) && effect_source_current(m, app, source, event, e);
+            okay = graphics(m, &mission[i], 1, e) && effect_request_current(m, app, source, event, unified, e);
         for (size_t i = 0; okay && i < 3; ++i)
-            okay = sounds(m, &hits[i], 1, e) && effect_source_current(m, app, source, event, e);
-        if (okay) okay = graphics(m, &mission[4], 1, e) && effect_source_current(m, app, source, event, e);
+            okay = sounds(m, &hits[i], 1, e) && effect_request_current(m, app, source, event, unified, e);
+        if (okay) okay = graphics(m, &mission[4], 1, e) && effect_request_current(m, app, source, event, unified, e);
         for (size_t i = 3; okay && i < 6; ++i)
-            okay = sounds(m, &hits[i], 1, e) && effect_source_current(m, app, source, event, e);
-        if (okay) okay = graphics(m, &mission[5], 1, e) && effect_source_current(m, app, source, event, e);
-        if (okay) okay = sounds(m, &hits[6], 1, e) && effect_source_current(m, app, source, event, e);
+            okay = sounds(m, &hits[i], 1, e) && effect_request_current(m, app, source, event, unified, e);
+        if (okay) okay = graphics(m, &mission[5], 1, e) && effect_request_current(m, app, source, event, unified, e);
+        if (okay) okay = sounds(m, &hits[6], 1, e) && effect_request_current(m, app, source, event, unified, e);
     }
     for (size_t i = 14; okay && i < sizeof(common) / sizeof(common[0]); ++i)
-        okay = graphics(m, &common[i], 1, e) && effect_source_current(m, app, source, event, e);
+        okay = graphics(m, &common[i], 1, e) && effect_request_current(m, app, source, event, unified, e);
     const char *const numbers[] = {"zero","one","two","three","four","five","six","seven","eight","nine","minus"};
     for (size_t i = 0; okay && i < sizeof(numbers) / sizeof(numbers[0]); ++i) {
         char path[64]; snprintf(path, sizeof(path), "gfx/2d/numbers/%s_32b", numbers[i]);
-        okay = shader(m, path, true, &m->view.number_shaders[i], e) && effect_source_current(m, app, source, event, e);
+        okay = shader(m, path, true, &m->view.number_shaders[i], e) && effect_request_current(m, app, source, event, unified, e);
     }
     static const sound_request bounce[] = {
         S(GIB_BOUNCE1,"sound/player/gibimp1.wav",false), S(GIB_BOUNCE2,"sound/player/gibimp2.wav",false),
         S(GIB_BOUNCE3,"sound/player/gibimp3.wav",false)
     };
     for (size_t i = 0; okay && i < sizeof(bounce) / sizeof(bounce[0]); ++i)
-        okay = sounds(m, &bounce[i], 1, e) && effect_source_current(m, app, source, event, e);
+        okay = sounds(m, &bounce[i], 1, e) && effect_request_current(m, app, source, event, unified, e);
     if (okay && m->options.product == QA_Q3_TEAM_ARENA) {
         okay = graphic_one(m, Q3N_G_KAMIKAZE_SHOCKWAVE, "models/weaphits/kamwave.md3", GRAPHIC_MODEL, e) &&
-            effect_source_current(m, app, source, event, e);
+            effect_request_current(m, app, source, event, unified, e);
         const sound_request kamikaze[] = {S(KAMIKAZE_EXPLODE,"sound/items/kam_explode.wav",false),
             S(KAMIKAZE_IMPLODE,"sound/items/kam_implode.wav",false)};
         for (size_t i = 0; okay && i < sizeof(kamikaze) / sizeof(kamikaze[0]); ++i)
-            okay = sounds(m, &kamikaze[i], 1, e) && effect_source_current(m, app, source, event, e);
+            okay = sounds(m, &kamikaze[i], 1, e) && effect_request_current(m, app, source, event, unified, e);
     }
     if (okay) m->effects_loaded = true;
     return leave(m, okay);
 }
+bool q3n_media_load_effects(q3n_media *m, qa_application *app,
+    const qa_application_selected_effects *source, const qa_application_effect_event *event, qa_error *e)
+{ return load_effects(m, app, source, event, NULL, e); }
+bool q3n_media_load_unified_effects(q3n_media *m, const q3n_unified_effect_source *s, qa_error *e)
+{ return load_effects(m, NULL, NULL, NULL, s, e); }
 static bool load_graphics_now(q3n_media *m,const q3n_media_load *load,qa_error *e)
 {
     if (!load_valid(m,load,e)) return false;

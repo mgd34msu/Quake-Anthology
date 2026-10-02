@@ -153,7 +153,7 @@ static bool machinegun(q2_weapon_call *c, qa_error *e) {
     float damage_factor, kick_factor;
     if (!q2_multiplier(c, &damage_factor, e) || !q2_multiplier(c, &kick_factor, e))
         return lag_end(c, lag, false, e);
-    bool result = q2_bullet(c, start, dir, 8 * damage_factor, 2 * kick_factor, 300, 500, 1, 4, e);
+    bool result = q2_bullet(c, start, dir, 8 * damage_factor, 2 * kick_factor, 300, 500, 1, 4, false, e);
     if (!lag_end(c, lag, result, e) || (c->rerelease && !q2_power_sound(c, e)) ||
         !finish(c, 1, start, 1, e))
         return false;
@@ -229,7 +229,7 @@ static bool chaingun(q2_weapon_call *c, qa_error *e) {
         result = q2_project(c, c->input.angles, qa_v3(0, side, up), &start, &dir, e) &&
                  q2_multiplier(c, &damage_factor, e) && q2_multiplier(c, &kick_factor, e) &&
                  q2_bullet(c, start, dir, (c->game->options.deathmatch ? 6 : 8) * damage_factor,
-                           2 * kick_factor, 300, 500, 1, 5, e);
+                           2 * kick_factor, 300, 500, 1, 5, false, e);
     }
     return lag_end(c, lag, result, e) && (!c->rerelease || q2_power_sound(c, e)) &&
            finish(c, 3 + shots - 1, start, shots, e);
@@ -258,13 +258,13 @@ static bool shotgun(q2_weapon_call *c, bool super, qa_error *e) {
             if (result) {
                 float damage_factor, kick_factor;
                 result = q2_multiplier(c, &damage_factor, e) && q2_multiplier(c, &kick_factor, e) &&
-                    q2_bullet(c, start, dir, 6 * damage_factor, 12 * kick_factor, 1000, 500, 10, 3, e);
+                    q2_bullet(c, start, dir, 6 * damage_factor, 12 * kick_factor, 1000, 500, 10, 3, true, e);
             }
         }
     else {
         float damage_factor, kick_factor;
         result = q2_multiplier(c, &damage_factor, e) && q2_multiplier(c, &kick_factor, e) &&
-            q2_bullet(c, start, dir, 4 * damage_factor, 8 * kick_factor, 500, 500, 12, 2, e);
+            q2_bullet(c, start, dir, 4 * damage_factor, 8 * kick_factor, 500, 500, 12, 2, true, e);
     }
     if (!lag_end(c, lag, result, e))
         return false;

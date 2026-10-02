@@ -156,5 +156,7 @@ bool application_q3_mod_checkpoint(application_q3_mod *, qa_buffer *, qa_error *
 bool application_q3_mod_restore(application_q3_mod *, qa_bytes, qa_error *);
 bool application_q3_mod_protection_binding(application_q3_mod *,
     qa_protection_lease, qa_protection_binding *, qa_error *);
+bool application_q3_mod_protection_saved_binding(application_q3_mod *,qa_actor_id,
+    qa_protection_channel,const qa_protection_claim *,qa_protection_binding *,qa_error *);
 
 #endif

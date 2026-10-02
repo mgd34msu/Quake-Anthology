@@ -41,6 +41,9 @@ typedef struct qa_material_record {
     qa_material_video_receipt *videos;
     struct qa_material_record *next;
     struct qa_material_record *admission_parent;
+    struct qa_material_record *source_variant_parent;
+    qa_q3_image_upload_options source_variant_upload;
+    uint64_t source_variant_revision;
 } qa_material_record;
 
 typedef struct qa_material_remap_record {
@@ -103,7 +106,7 @@ void qa_material_stage_init(qa_material_stage *);
 void qa_material_stage_clear(qa_material_stage *);
 void qa_material_clear(qa_material *);
 void qa_material_videos_clear(qa_material_record *);
-void qa_material_finish(qa_material *, int32_t lightmap_index);
+void qa_material_finish(qa_material *, int32_t lightmap_index, bool source_profile);
 bool qa_material_script_catalog(qa_material_library *, qa_bytes, qa_error *);
 bool qa_material_script_register(qa_material_library *, qa_material *, qa_bytes,
                                  const qa_scene_image_options *, int32_t lightmap_index,

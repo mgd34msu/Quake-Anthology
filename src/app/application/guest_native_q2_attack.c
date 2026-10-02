@@ -90,7 +90,8 @@ static attack_factor *factor_for(struct application_native_q2_attack *p, qa_acto
 }
 bool application_native_q2_attack_prepare(struct application_native_q2 *engine, qa_error *error)
 {
-    if (!engine->declaration || engine->profile == QA_NATIVE_Q2_CGAME_API2023) return true;
+    if (!engine->declaration || engine->profile == QA_NATIVE_Q2_CGAME_API2023 ||
+        qa_native_declaration_callbacks(engine->declaration).data) return true;
     struct application_native_q2_attack *p = calloc(1, sizeof(*p));
     if (!p) return application_fail(error, QA_ERROR_MEMORY, "Preparing native source attack producer");
     engine->source_attack = p; p->engine = engine;

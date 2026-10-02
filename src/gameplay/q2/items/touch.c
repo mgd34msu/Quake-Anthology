@@ -117,6 +117,7 @@ static bool complete(void *context, const qa_pickup_offer *offer, bool accepted,
                                                  .other = a->id,
                                                  .resource = icon,
                                                  .text = name,
+                                                 .item = d->item,
                                                  .code = 0,
                                                  .time_ns = g->now_ns},
                              e))

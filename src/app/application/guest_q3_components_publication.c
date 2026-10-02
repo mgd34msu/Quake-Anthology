@@ -18,7 +18,7 @@ bool application_q3_components_publication_borrow(application_q3_components *own
     lease->owner=owner->rows[index];
     lease->view=(application_q3_component_view){.source=publication.source,.viewer=actor,.origin=*origin,
         .axis={axis[0],axis[1],axis[2]},.time_ms=time,.frame_ms=elapsed,
-        .weapon_presented=owner->options.weapon_presented,.weapon_context=owner->options.context};
+        .weapon_presented=owner->options.weapon_presented,.weapon_context=owner->options.weapon_context};
     lease->source=application_q3_component_view_services(&lease->view);
     if(!lease->source.acquire(lease->source.context,false,&lease->context,e)) { free(lease); return false; }
     *context=lease->context; *out=lease; return true;

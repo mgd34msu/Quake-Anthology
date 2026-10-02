@@ -224,7 +224,7 @@ static bool secret_fire(qa_q1_game *g, q1_actor *entity, qa_actor_id activator, 
     float length = state->length ? state->length : fabsf(qa_vec_dot(forward, size));
     qa_vec3 side = entity->spawnflags & 4
                        ? qa_vec_scale(up, -width)
-                       : qa_vec_scale(right, width * (1 - (int)(entity->spawnflags & 2)));
+                       : qa_vec_scale(right, width * (float)(1 - (int)(entity->spawnflags & 2)));
     move->dest1 = qa_vec_add(move->pos1, side);
     move->dest2 = qa_vec_add(move->dest1, qa_vec_scale(forward, length));
     if (!q1_sound(g, entity->id,

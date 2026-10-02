@@ -4,6 +4,7 @@
 #include "qa/bots_allocator.h"
 #include "qa/bots_allocator_checkpoint.h"
 #include "qa/source_save.h"
+#include "source_graph.h"
 
 typedef struct bot_chat_packed_member {
     uint32_t offset,text,first,count;
@@ -24,6 +25,7 @@ typedef struct bot_chat_packed {
     uint64_t loading_revision;
     qa_script *reader;
     struct bot_chat_initial_acquired *pending;
+    bot_chat_graph graph;
     bot_chat_packed_member *groups,*entries;
     size_t group_count,group_capacity,entry_count,entry_capacity;
     uint32_t size,pass;

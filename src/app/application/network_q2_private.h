@@ -11,6 +11,16 @@
 #include "qa/hash.h"
 #include "qa/game_q2_items.h"
 #include "qa/game_q2_bots.h"
+#include "native_q2_wire_engine.h"
+
+typedef struct application_q2_held_resource {
+    qa_actor_owner provider;
+    char *instance, *path, *wire_path;
+    qa_sha256_digest identity;
+    qa_vfs *view;
+    qa_resource *resource;
+    qa_vfs_acquisition opening;
+} application_q2_held_resource;
 
 typedef struct application_q2_resource_table {
     uint32_t base, maximum, count;
@@ -40,6 +50,8 @@ struct qa_application_network_q2 {
     bool initialized, restored;
     qa_application_network_q2_bindings bindings;
     struct application_native_q2 *recipient_engine;
+    application_q2_held_resource *held_resources;
+    size_t held_resource_count, held_resource_capacity;
 };
 
 bool application_network_q2_current(qa_application_network_q2 *, qa_error *);
@@ -56,5 +68,12 @@ bool application_network_q2_player_state(qa_application_network_q2 *, qa_actor_i
     qa_q2_player *, qa_error *);
 char *application_network_q2_copy(const char *, qa_error *);
 void application_network_q2_unbind(qa_application_network_q2 *);
+bool application_network_q2_visual_resource(qa_application_network_q2 *,
+    const qa_application_visual_view *, unsigned, uint32_t *, qa_error *);
+bool application_network_q2_download_resource(void *, const char *, const qa_vfs **,
+    qa_resource **, qa_vfs_acquisition *, bool *, qa_error *);
+void application_network_q2_resources_free(qa_application_network_q2 *);
+bool application_network_q2_resources_capture(qa_application_network_q2 *, qa_buffer *, qa_error *);
+bool application_network_q2_resources_restore(qa_application_network_q2 *, qa_bytes, qa_error *);
 
 #endif

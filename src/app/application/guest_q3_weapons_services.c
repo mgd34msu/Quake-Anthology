@@ -532,6 +532,45 @@ bool application_q3_weapons_services_q2_powerups(void *context, qa_actor_id acto
     *handled = true;
     return true;
 }
+bool application_q3_weapons_services_q1_damage(void *context, qa_damage_request *request,
+    qa_error *error)
+{
+    application_provider *provider = context;
+    if (!provider || provider->kind != APPLICATION_PROVIDER_Q1 || !provider->application ||
+        !provider->constructed || !provider->attached || provider->close_pending ||
+        !provider->state.q1 || !request)
+        return application_fail(error, QA_ERROR_NOT_FOUND, "Selected Q1 damage lost its actual native Source owner");
+    qa_application *app = provider->application;
+    application_provider *physical = application_world_provider(app, QA_ROLE_ENTITIES, "");
+    if (!physical || physical->kind != APPLICATION_PROVIDER_QVM ||
+        !request->attack.attacker.registry || !request->attack.weapon ||
+        request->attack.weapon_provider != provider->owner) return true;
+    bool declared = false;
+    for (qa_q1_weapon weapon = QA_Q1_AXE; weapon < QA_Q1_WEAPON_COUNT; ++weapon)
+        if (qa_q1_weapon_item(provider->state.q1, weapon) == request->attack.weapon) { declared = true; break; }
+    if (!declared)
+        return application_fail(error, QA_ERROR_FORMAT, "Selected Q1 damage leaves its actual weapon declaration");
+    struct application_q3_guest *engine = q3g_engine(physical);
+    q3g_role *role = engine ? engine->game : NULL;
+    application_q3_weapons_services *s = role ? role->weapon_services : NULL;
+    q3_weapon_actor source;
+    if (!q3_weapon_services_source(s, request->attack.attacker, &source, error)) return false;
+    qa_q1_game *game = provider->state.q1;
+    ++s->calls;
+    float factor;
+    bool ok = application_q3_weapons_damage_factor(role->weapons, request->attack.attacker, &factor, error);
+    if (ok && (!q3_weapons_current(role->weapons, &source) ||
+        application_world_provider(app, QA_ROLE_ENTITIES, "") != physical ||
+        provider->state.q1 != game || !provider->constructed || !provider->attached || provider->close_pending))
+        ok = application_fail(error, QA_ERROR_NOT_FOUND, "Selected Q1 damage replaced its held physical Source or native owner");
+    if (ok) {
+        request->amount *= factor;
+        request->knockback = request->amount;
+        request->attack.powerup_applied = true;
+        request->attack.powerup_owner = physical->owner;
+    }
+    --s->calls; return ok;
+}
 bool application_q3_weapons_services_q2_input(void *context, qa_actor_id actor,
     qa_q2_weapon_input *input, qa_error *error)
 {
@@ -575,6 +614,7 @@ bool application_q3_weapons_services_q2_input(void *context, qa_actor_id actor,
     input->spectator = !available;
     input->notarget = input->animate_player = input->haste = input->no_stack_double = false;
     input->instant_switch = input->quick_switch = input->infinite_ammo = false;
+    input->weapon_thunk = input->rune_damage = false;
     input->players_collide = true; input->hand = QA_Q2_RIGHT_HAND;
     input->quad_until_ns = input->double_until_ns = input->quad_fire_until_ns = 0;
     return true;

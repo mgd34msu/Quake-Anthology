@@ -7,6 +7,7 @@
 #include "qa/network_q1_client_runtime.h"
 #include "qa/network_q2_session_save.h"
 #include "qa/network_unified_save.h"
+#include "qa/network_local.h"
 
 /* Connection records replace the process-local owner namespace with the
  * admitted candidate owner, preserving slot generations and source seat IDs.
@@ -19,7 +20,7 @@ typedef enum qa_network_source_kind {
     QA_NETWORK_SOURCE_Q3_CLIENT = 1, QA_NETWORK_SOURCE_Q3_SERVER,
     QA_NETWORK_SOURCE_NQ_SERVER, QA_NETWORK_SOURCE_QW_SERVER,
     QA_NETWORK_SOURCE_Q2_SERVER, QA_NETWORK_SOURCE_Q2_CLIENT, QA_NETWORK_SOURCE_UNIFIED,
-    QA_NETWORK_SOURCE_Q1_CLIENT
+    QA_NETWORK_SOURCE_Q1_CLIENT, QA_NETWORK_SOURCE_LOCAL
 } qa_network_source_kind;
 typedef struct qa_network_checkpoint_refs {
     void *context;
@@ -36,6 +37,7 @@ typedef struct qa_network_checkpoint_refs {
     bool (*source_unified)(void *, const qa_net_client *, qa_unified_session_hooks *, qa_error *);
     bool (*source_q1_client)(void *,const qa_net_client *,qa_network_q1_client_policy *,
         qa_network_q1_client_hooks *,qa_error *);
+    bool (*source_local)(void *,const qa_net_client *,qa_network_local_hooks *,qa_error *);
 } qa_network_checkpoint_refs;
 
 /* Transport is an explicitly prepared candidate binding. Source callback
@@ -55,6 +57,9 @@ bool qa_network_prediction_restore(qa_network_runtime *, const qa_network_checkp
 /* No-fail final exchange after both owners have passed their idle/identity
  * admission. Keeps the live local socket endpoint and its sole receive owner. */
 void qa_network_transport_exchange(qa_network_runtime *, qa_network_runtime *);
+/* Wrappers which already moved their actual native socket retain their
+ * installed transport containers while publishing the same Source custody. */
+void qa_network_transport_publish_retained(qa_network_runtime *,qa_network_runtime *);
 /* Qualify actual restored Source callbacks before the final aggregate exchange.
  * Pure decoded channels remain unbound until that successful publication. */
 bool qa_network_source_publication_ready(const qa_network_runtime *,qa_error *);

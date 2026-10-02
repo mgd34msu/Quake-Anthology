@@ -829,6 +829,6 @@ bool qa_material_script_register(qa_material_library *library, qa_material *mate
     if (!closed || (!material->stage_count && !material->sky && !(material->content_flags & 64)))
         parser.rejected = true;
     material->default_shader = parser.rejected;
-    qa_material_finish(material, lightmap_index);
+    qa_material_finish(material, lightmap_index, library->source_profile);
     return true;
 }

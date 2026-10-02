@@ -129,7 +129,8 @@ static bool capture(application_provider *source, qa_vec3 origin,
             if (!source_slot) continue;
             const application_native_q2_client *client=&engine->clients[source_slot];
             if ((!client->connected && delivery!=QA_APPLICATION_Q2_UNICAST) ||
-                client->disconnect_started || (!client->begun && !before_begin) ||
+                (client->disconnect_started && !(engine->calls && engine->disconnect_client == source_slot)) ||
+                (!client->begun && !before_begin) ||
                 (delivery==QA_APPLICATION_Q2_UNICAST && !qa_actor_id_equal(row.actor,message->client))) continue;
             qa_native_slot_binding binding;
             if (!source->state.native.host ||
@@ -155,7 +156,8 @@ static bool capture(application_provider *source, qa_vec3 origin,
             uint32_t slot=row.client_slot+1;
             const application_native_q2_client *client=physical_engine->clients+slot;
             if ((!client->connected && delivery!=QA_APPLICATION_Q2_UNICAST) ||
-                (!client->begun && !before_begin) || client->disconnect_started ||
+                (!client->begun && !before_begin) ||
+                (client->disconnect_started && !(physical_engine->calls && physical_engine->disconnect_client == slot)) ||
                 !qa_actor_id_equal(client->actor,row.actor) ||
                 !qa_native_slot(qa_native_host_instance(physical->state.native.host),slot,&binding,error) ||
                 binding.kind==QA_NATIVE_SLOT_FREE || !qa_actor_id_equal(binding.actor,row.actor)) {
@@ -235,7 +237,8 @@ bool application_native_q2_message_capture(struct application_native_q2 *engine,
             message->target==QA_NATIVE_HOST_UNICAST ? message->flags:0};
     bool connected=false;
     for (uint32_t slot=1;slot<257;++slot)
-        connected=connected || (!engine->clients[slot].disconnect_started &&
+        connected=connected || ((!engine->clients[slot].disconnect_started ||
+            (engine->calls && engine->disconnect_client == slot)) &&
             (message->target==QA_NATIVE_HOST_UNICAST ?
                 (message->client.registry && qa_actor_id_equal(engine->clients[slot].actor,message->client)) :
                 engine->clients[slot].connected));

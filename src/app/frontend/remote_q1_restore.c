@@ -2,6 +2,7 @@
 #include "remote_q1_private.h"
 #include "remote_q1_effects.h"
 #include "remote_q1_prediction.h"
+#include "remote_q1_skins.h"
 #include "save_private.h"
 #include "qa/scene_resource_save.h"
 #include "qa/scene_save.h"
@@ -76,7 +77,7 @@ static bool domain(qa_source_save_io *io, frontend_remote_q1_domain *v)
         !qa_source_save_u32(io, &v->seat.index) || !qa_source_save_u64(io, &v->epoch) ||
         !qa_source_save_u64(io, &v->configuration_generation) || !qa_source_save_u32(io, &v->physical_seat) ||
         !protocol(io, &v->protocol) || !qa_source_save_u32(io, &v->product) ||
-        !qa_source_save_u64(io, &v->actor_owner) || !qa_source_save_u32(io, &v->actor_definition) ||
+        !qa_source_save_u32(io, &v->actor_owner) || !qa_source_save_u32(io, &v->actor_definition) ||
         !qa_source_save_u64(io, &c->session) || !qa_source_save_u64(io, &c->owner) ||
         !qa_source_save_u64(io, &c->client) || !qa_source_save_u32(io, &c->seat) ||
         !qa_source_save_u64(io, &c->registry) || !qa_source_save_u64(io, &c->generation) ||
@@ -177,12 +178,13 @@ static bool fields(qa_source_save_io *io, frontend_remote_q1 *row,
     const frontend_remote_q1_restore_refs *refs, saved_q1 *saved)
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
-    uint8_t magic[4] = {'Q','1','R','C'}, kick = (uint8_t)row->qw_kick; uint32_t schema = 2;
-    if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "Q1RC", 4) || !qa_source_save_u32(io, &schema) || schema != 2 ||
+    uint8_t magic[4] = {'Q','1','R','C'}, kick = (uint8_t)row->qw_kick; uint32_t schema = 4;
+    if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "Q1RC", 4) || !qa_source_save_u32(io, &schema) || schema != 4 ||
         !domain(io, &saved->domain) || !protocol(io, &row->protocol) ||
         qa_q1_is_qw(row->protocol) != qa_q1_is_qw(saved->domain.protocol) || !qa_source_save_u64(io, &saved->domain_catalog) ||
         !qa_source_save_bool(io, &row->bound) || !qa_source_save_bool(io, &saved->loaded) ||
         !qa_source_save_bool(io, &row->retired) || !qa_source_save_bool(io, &row->has_data) ||
+        !qa_source_save_bool(io, &row->intermission) ||
         !qa_source_save_u64(io, &saved->catalog) || !qa_source_save_u64(io, &saved->mounts) ||
         !qa_source_save_u32(io, &row->content.product)) return false;
     if (reading && (saved->catalog || saved->mounts)) {
@@ -290,7 +292,21 @@ static bool fields(qa_source_save_io *io, frontend_remote_q1 *row,
         }
         link = &m->next;
     }
-    return remote_q1_effects_fields(row, io, refs, io->error) && remote_q1_prediction_fields(row, io, io->error);
+    if (!remote_q1_effects_fields(row, io, refs, io->error) || !remote_q1_prediction_fields(row, io, io->error) ||
+        !remote_q1_camera_fields(row, io)) return false;
+    bool has_skins=row->skins!=NULL;
+    if (!qa_source_save_bool(io,&has_skins) || has_skins!=qa_q1_is_qw(row->options.domain.protocol)) return false;
+    if (!has_skins) return true;
+    qa_buffer bytes={0}; size_t child_count=0;
+    if (!reading && !frontend_remote_q1_skins_checkpoint(row->skins,refs,&bytes,io->error)) return false;
+    if (!reading) child_count=bytes.size;
+    bool ok=qa_source_save_count(io,&child_count,reading?io->input.size-io->offset:SIZE_MAX) && child_count!=0 &&
+        (!reading || child_count<=io->input.size-io->offset);
+    if (ok && reading) {
+        qa_bytes child={io->input.data+io->offset,child_count}; io->offset+=child_count;
+        ok=row->options.skin_bindings && frontend_remote_q1_skins_restore(row,row->options.skin_bindings,refs,child,&row->skins,io->error);
+    } else if (ok) ok=qa_source_save_bytes(io,bytes.data,child_count);
+    qa_buffer_free(&bytes); return ok;
 }
 static bool retained(frontend_remote_q1 *row, const frontend_remote_q1_restore_refs *refs,
     const saved_q1 *saved, qa_error *error)
@@ -358,7 +374,7 @@ bool frontend_remote_q1_restore_prepare(qa_frontend *f, const frontend_remote_q1
     if (!f || !f->source_restoring || !options || !refs || !refs->content || !refs->owner || !out || *out ||
         f->application != options->domain.application || !options->current || !options->load_content ||
         !options->service || !options->disconnected || !options->domain.actors || !options->domain.actor_owner ||
-        (qa_q1_is_qw(options->domain.protocol) && !options->qw_skins)) return false;
+        (qa_q1_is_qw(options->domain.protocol) && !options->skin_bindings)) return false;
     frontend_remote_q1 *row = calloc(1, sizeof(*row));
     if (!row) return remote_q1_fail(error, QA_ERROR_MEMORY, "Retaining Q1 isolated cold owner");
     row->frontend = f; row->options = *options; row->importing = true;

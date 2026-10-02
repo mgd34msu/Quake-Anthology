@@ -11,6 +11,7 @@
 #include "qa/modes_save.h"
 #include "guest_q3_combat.h"
 #include "supplies.h"
+#include "guest_q3_components.h"
 
 static application_provider *source_owner(qa_application *app, qa_actor_owner owner)
 {
@@ -27,6 +28,8 @@ static bool combat_binding(void *opaque, qa_actor_id actor, uint64_t serial,
                             qa_combat_binding *out, qa_error *error)
 {
     qa_application *app = opaque;
+    application_q3_component *component=application_q3_components_actor_owner(app,actor);
+    if(component) return application_q3_component_combat_binding(component,actor,serial,out,error);
     const qa_actor_record *record = qa_actors_get(qa_session_actors(app->session), actor);
     application_provider *provider = record ? source_owner(app, record->owner) : NULL;
     application_provider *character = application_provider_for(app, actor, QA_ROLE_CHARACTER, "");

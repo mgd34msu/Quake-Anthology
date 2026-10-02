@@ -129,7 +129,7 @@ static bool owns_item(void *opaque,int32_t client,int32_t entity,bool *out,qa_er
     if(bots->shared_world || !source || source->kind!=APPLICATION_PROVIDER_Q3) return true;
     if(!source->constructed || !source->attached || !source->map_bound || source->close_pending)
         return application_fail(error,QA_ERROR_ARGUMENT,"Bot item ownership has no actual live Q3 GAME source");
-    if(entity<0 || entity>=QA_Q3_SOURCE_ENTITIES)
+    if(entity<0 || (uint32_t)entity>=QA_Q3_SOURCE_ENTITIES)
         return application_fail(error,QA_ERROR_ARGUMENT,"Bot item ownership exceeds the genuine source pool");
     qa_q3_source_binding binding;
     if(!qa_q3_source_binding_read(source->state.q3,(uint32_t)entity,&binding,error)) return false;
@@ -137,7 +137,8 @@ static bool owns_item(void *opaque,int32_t client,int32_t entity,bool *out,qa_er
     qa_q3_item_spawn spawn;bool finished;qa_error local={0};
     if(!qa_q3_source_item_spawn_read(source->state.q3,binding.actor,&spawn,&finished,&local)) {
         if(local.code==QA_ERROR_NOT_FOUND) return true;
-        if(error) *error=local;return false;
+        if(error) *error=local;
+        return false;
     }
     qa_q3_product product;int32_t game_type;
     if(!qa_q3_source_match_context_read(source->state.q3,&product,&game_type,error)) return false;
@@ -172,7 +173,8 @@ static bool bot_memory_read(void *opaque,uint32_t offset,void *out,uint32_t size
         application_bot_memory_view view;
         if(!application_bot_world_memory_alias(bots->shared_world,
                 (application_bot_memory_alias){offset,size},&view,error)) return false;
-        if(size) memcpy(out,view.data,size);return true;
+        if(size) memcpy(out,view.data,size);
+        return true;
     }
     if(source && source->kind==APPLICATION_PROVIDER_Q3 && source->state.q3)
         return qa_q3_source_memory_read(source->state.q3,offset,out,size,error);
@@ -184,7 +186,8 @@ static bool bot_memory_write(void *opaque,uint32_t offset,const void *bytes,uint
         application_bot_memory_view view;
         if(!application_bot_world_memory_alias(bots->shared_world,
                 (application_bot_memory_alias){offset,size},&view,error)) return false;
-        if(size) memmove(view.data,bytes,size);return true;
+        if(size) memmove(view.data,bytes,size);
+        return true;
     }
     if(source && source->kind==APPLICATION_PROVIDER_Q3 && source->state.q3)
         return qa_q3_source_memory_write(source->state.q3,offset,bytes,size,error);
@@ -263,7 +266,7 @@ static bool bot_source_player(void *opaque,int32_t client,qa_bot_source_player *
         *out=(qa_bot_source_player){.present=actual.present,.bot=actual.bot,.origin=actual.origin};return true;
     }
     application_provider *source=bot_source(opaque);qa_q3_wire_client_view actual;
-    if(!source || source->kind!=APPLICATION_PROVIDER_Q3 || client<0 || client>=QA_Q3_SOURCE_CLIENTS)
+    if(!source || source->kind!=APPLICATION_PROVIDER_Q3 || client<0 || (uint32_t)client>=QA_Q3_SOURCE_CLIENTS)
         return application_fail(error,QA_ERROR_UNSUPPORTED,"bot policy requires its actual fixed native Q3 client source");
     if(!qa_q3_wire_client_read(source->state.q3,(uint32_t)client,&actual,error)) return false;
     if(actual.present) {
@@ -295,7 +298,7 @@ static bool bot_source_player_state(void *opaque,int32_t client,qa_bot_source_pl
             .pm_type=actual.player.pmType,.score=actual.player.persistant[0],.last_hurt_client=0,.last_hurt_mod=0};return true;
     }
     application_provider *source=bot_source(opaque);qa_q3_bot_player_state actual;
-    if(!out || !source || source->kind!=APPLICATION_PROVIDER_Q3 || client<0 || client>=QA_Q3_SOURCE_CLIENTS)
+    if(!out || !source || source->kind!=APPLICATION_PROVIDER_Q3 || client<0 || (uint32_t)client>=QA_Q3_SOURCE_CLIENTS)
         return application_fail(error,QA_ERROR_ARGUMENT,"bot chat requires its real fixed Q3 source client");
     if(!qa_q3_client_bot_state_read(source->state.q3,(uint32_t)client,&actual,error)) return false;
     *out=(qa_bot_source_player_state){.present=actual.present,.has_player=actual.has_player,
@@ -319,7 +322,7 @@ static bool bot_source_row(void *opaque,int32_t number,qa_bot_source_row *out,qa
     }
     application_provider *source=bot_source(opaque);qa_q3_source_binding binding;qa_q3_wire_visibility visibility;
     *out=(qa_bot_source_row){0};
-    if(!source || source->kind!=APPLICATION_PROVIDER_Q3 || number<0 || number>=QA_Q3_SOURCE_ENTITIES)
+    if(!source || source->kind!=APPLICATION_PROVIDER_Q3 || number<0 || (uint32_t)number>=QA_Q3_SOURCE_ENTITIES)
         return application_fail(error,QA_ERROR_UNSUPPORTED,"bot source row requires its actual native Q3 entity");
     if(!qa_q3_source_binding_read(source->state.q3,(uint32_t)number,&binding,error)) return false;
     out->present=binding.in_use;out->classname=binding.classname;
@@ -349,14 +352,14 @@ static bool bot_source_entity(void *opaque,int32_t number,qa_q3_entity *out,bool
     }
     application_provider *source=bot_source(opaque);qa_q3_source_binding binding;qa_q3_wire_visibility visibility;
     *out=(qa_q3_entity){0};*available=false;
-    if(!source || source->kind!=APPLICATION_PROVIDER_Q3 || number<0 || number>=QA_Q3_SOURCE_ENTITIES)
+    if(!source || source->kind!=APPLICATION_PROVIDER_Q3 || number<0 || (uint32_t)number>=QA_Q3_SOURCE_ENTITIES)
         return application_fail(error,QA_ERROR_UNSUPPORTED,"bot event entity requires its actual fixed native Q3 source");
     if(!qa_q3_source_binding_read(source->state.q3,(uint32_t)number,&binding,error)) return false;
     if(!binding.in_use) return true;
     if(!qa_q3_wire_entity_read(source->state.q3,(uint32_t)number,out,&visibility,error)) return false;
     *available=visibility.linked && !(visibility.server_flags&1);
     if(!*available) *out=(qa_q3_entity){0};
-    else if(number<QA_Q3_SOURCE_CLIENTS) {
+    else if((uint32_t)number<QA_Q3_SOURCE_CLIENTS) {
         int32_t phase;
         if(!application_bot_source_weapon(opaque,binding.actor,&out->weapon,&phase,error)) return false;
     }
@@ -370,7 +373,7 @@ static bool bot_source_event_time(void *opaque,int32_t number,int32_t *out,qa_er
         *out=0;return true;
     }
     application_provider *source=bot_source(opaque);
-    if(!source || source->kind!=APPLICATION_PROVIDER_Q3 || number<0 || number>=QA_Q3_SOURCE_ENTITIES)
+    if(!source || source->kind!=APPLICATION_PROVIDER_Q3 || number<0 || (uint32_t)number>=QA_Q3_SOURCE_ENTITIES)
         return application_fail(error,QA_ERROR_UNSUPPORTED,"bot event time requires its actual fixed native Q3 source");
     return qa_q3_wire_entity_event_time(source->state.q3,(uint32_t)number,out,error);
 }
@@ -823,7 +826,7 @@ static bool prepare_bots(qa_application *application,const qa_launch_choices *ch
             probe=NULL;local=(qa_error){0};have_assets=qa_vfs_acquire(files,"botfiles/bots/default_c.c",&probe,NULL,&local);
             qa_resource_release(probe);
             if(have_assets) {
-                if(!qa_strings_intern_cstr(qa_session_strings(application->session),product->id,&bots->files_product,error)) {
+                if(!qa_strings_intern_cstr(qa_session_strings(application->session),product->key,&bots->files_product,error)) {
                     qa_vfs_destroy(files);goto fail;
                 }
                 qa_vfs_destroy(bots->files);bots->files=files;bots->files_launch=false;opened=true;break;

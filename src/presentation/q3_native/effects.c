@@ -59,7 +59,8 @@ void q3n_effect_spawn(const q3n_frame *f, qa_vec3 origin)
     for(unsigned i=0;i<4;++i)v->color[i]=1;
     v->ref.shader_time=q3ne_div((float)f->time,1000); q3ne_identity(v->ref.axis);
     v->ref.model=m->graphics[Q3N_G_TELEPORT_MODEL]; v->ref.origin=origin;
-    qa_q3_product product = f->effects_source ? f->effects_source->q3_product : q3n_frame_product(f);
+    qa_q3_product product = f->unified_effects ? f->unified_effects->product :
+        f->effects_source ? f->effects_source->q3_product : q3n_frame_product(f);
     v->ref.origin.z=q3ne_add(origin.z,product==QA_Q3_ARENA?-24:16);
     if(product==QA_Q3_ARENA)v->ref.custom_shader=m->graphics[Q3N_G_TELEPORT_SHADER];
 }
@@ -158,7 +159,8 @@ static int32_t hit_sound(q3n_events *o, const q3n_media_view *m, q3n_sound a, q3
 { int32_t value=q3n_events_rand(o)&3; return m->sounds[value<2?a:value==2?b:c]; }
 bool q3n_effect_mission(const q3n_frame *f, int32_t event, qa_vec3 origin, qa_vec3 angles, qa_error *error)
 {
-    qa_q3_product product = f->effects_source ? f->effects_source->q3_product : q3n_frame_product(f);
+    qa_q3_product product = f->unified_effects ? f->unified_effects->product :
+        f->effects_source ? f->effects_source->q3_product : q3n_frame_product(f);
     if(product!=QA_Q3_TEAM_ARENA)return q3ne_fail(error,QA_ERROR_FORMAT,"Missionpack effect reached baseq3 cgame");
     const q3n_media_view *m=q3n_media_read(f->media); q3n_events *o=f->events;
     q3n_local_entity *v=NULL;

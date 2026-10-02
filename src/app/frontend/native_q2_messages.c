@@ -35,7 +35,8 @@ bool frontend_native_q2_messages(qa_frontend *frontend, qa_error *error)
         /* These are the actual API3/API2023 engine configstring extents,
          * shared with the original source namespace in guest_native_q2.c. */
         qa_q2_message_options options={.config_strings=
-            context.delivery.profile==QA_NATIVE_Q2_GAME_API3?2080:12448,.inventory_slots=256};
+            context.delivery.profile==QA_NATIVE_Q2_GAME_API3?2080:12448,.inventory_slots=256,
+            .native_api2023=context.delivery.profile==QA_NATIVE_Q2_GAME_API2023};
         qa_q2_messages *reader=NULL;
         bool ok=qa_q2_messages_create(protocol,&options,&reader,error) &&
             qa_q2_messages_read(reader,context.message.payload,NULL,NULL,error);

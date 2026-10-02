@@ -294,6 +294,21 @@ static void draw_state(qa_scene_draw *draw, const qa_material_context *context, 
     draw->state.cull = context->mirror != reflected ? QA_CULL_BACK : QA_CULL_FRONT;
 }
 
+static bool recipient_image(const qa_material_context *context, const qa_scene_image **image,
+    bool mipmap, qa_error *error)
+{
+    if (!context->source_recipient_image) return true;
+    const qa_scene_image *mapped = NULL;
+    if (!*image || !context->source_recipient_image(context->source_recipient_context, *image,
+        mipmap, mipmap, &mapped, error)) return false;
+    if (!mapped) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Source world recipient lost its reached texture");
+        return false;
+    }
+    *image = mapped;
+    return true;
+}
+
 static bool sky_submit(qa_scene_world *world, const qaw_surface *surface,
                         const qa_material_context *context, const qa_scene_world_input *input,
                         qa_scene_frame *frame, qa_error *error)
@@ -314,7 +329,10 @@ static bool sky_submit(qa_scene_world *world, const qaw_surface *surface,
         qa_scene_sky_bounds_reset(bounds);
         if (!qa_scene_sky_clip(&mesh, 1, input->view.origin, bounds, error)) return false;
         const qa_scene_image *images[6];
-        for (size_t i = 0; i < 6; ++i) images[i] = input->override_sky ? input->sky_images[i] : data->sky[i];
+        for (size_t i = 0; i < 6; ++i) {
+            images[i] = input->override_sky ? input->sky_images[i] : data->sky[i];
+            if (images[i] && !recipient_image(context, images + i, false, error)) return false;
+        }
         float angle = input->sky_auto_rotate ? (float)(input->seconds * input->sky_rotation) : input->sky_rotation;
         size_t first = frame->command_count;
         if (!qa_scene_q2_sky(frame, &input->view, images, bounds, angle, input->sky_axis,
@@ -342,6 +360,7 @@ static bool sky_submit(qa_scene_world *world, const qaw_surface *surface,
         qa_scene_draw draw;
         draw_state(&draw, context, &mesh);
         draw.textures[0] = texture->sky[layer] ? texture->sky[layer] : texture->image;
+        if (!recipient_image(context, &draw.textures[0], false, error)) return false;
         draw.state.cull = QA_CULL_NONE;
         draw.state.depth_write = true;
         draw.state.blend_source = layer ? QA_BLEND_SRC_ALPHA : QA_BLEND_ONE;
@@ -417,6 +436,7 @@ bool qaw_submit_legacy(qa_scene_world *world, qaw_surface *surface, const qa_mat
     bool q1 = world->bsp.family == QA_BSP_Q1;
     qawl_texture *texture = animated_texture(world, legacy, input);
     const qa_scene_image *base_image = qa_scene_image_at_time(texture->image, input->seconds);
+    if (!recipient_image(context, &base_image, world->options.images.mipmap, error)) return false;
     float alpha = legacy->alpha * context->entity_color.w;
     bool blended = alpha < 1, paired = surface->lightmap && (blended || (input->fog.kind == QA_FOG_EXP2 && input->fog.density > 0));
     float intensity = !q1 && (legacy->warp || blended) ? 0.5f : 1;
@@ -489,6 +509,7 @@ bool qaw_submit_legacy(qa_scene_world *world, qaw_surface *surface, const qa_mat
         qa_scene_draw bright_draw = draw;
         bright_draw.mesh = bright_mesh;
         bright_draw.textures[0] = qa_scene_image_at_time(texture->fullbright, input->seconds);
+        if (!recipient_image(context, &bright_draw.textures[0], world->options.images.mipmap, error)) return false;
         bright_draw.textures[1] = NULL;
         bright_draw.texture_count = 1;
         bright_draw.lighting = QA_LIGHT_VERTEX;

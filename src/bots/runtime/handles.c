@@ -52,6 +52,10 @@ bool bot_runtime_chat_shutdown(qa_bot_runtime *runtime,qa_error *error) {
     }
     if(system->console_heap.owner && !qa_bot_memory_free(system->memory,system->console_heap,error)) return false;
     system->console_heap=(qa_bot_memory_allocation){0};
+    qa_bot_chat_asset *matches=system->options.matches;
+    if(matches && matches->packed_source && !bot_chat_graph_free_root(&matches->packed_source->graph,
+        BOT_CHAT_GRAPH_TEMPLATE,error)) return false;
+    system->options.matches=NULL;qa_bot_chat_asset_release(matches);
     qa_bot_chat_asset **packed[2]={&system->options.randoms,&system->options.synonyms};
     for(size_t index=0;index<2;++index) {
         qa_bot_chat_asset *asset=*packed[index];
@@ -59,7 +63,10 @@ bool bot_runtime_chat_shutdown(qa_bot_runtime *runtime,qa_error *error) {
            !qa_bot_memory_free(asset->packed_source->memory,asset->packed_source->allocation,error)) return false;
         *packed[index]=NULL;qa_bot_chat_asset_release(asset);
     }
-    /* Actual match/reply graph frees follow their retained graph owner port. */
+    qa_bot_chat_asset *replies=system->options.replies;
+    if(replies && replies->packed_source && !bot_chat_graph_free_root(&replies->packed_source->graph,
+        BOT_CHAT_GRAPH_REPLY,error)) return false;
+    system->options.replies=NULL;qa_bot_chat_asset_release(replies);
     return true;
 }
 const qa_bot_character *qa_bot_runtime_character(const qa_bot_runtime *r, uint32_t id) {

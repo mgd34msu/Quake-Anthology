@@ -84,6 +84,12 @@ bool qa_native_windows_process_artifact_read(const qa_native_windows_process *, 
 bool qa_native_windows_process_initialize(qa_native_windows_process *, uint64_t, qa_error *);
 bool qa_native_windows_process_finalize(qa_native_windows_process *, uint64_t, qa_error *);
 bool qa_native_windows_process_finalize_all(qa_native_windows_process *, qa_error *);
+/* Registers an already acquired capability for the exact source fopen name.
+ * Close/removal refuse a capability still referenced by a live CRT FILE. */
+bool qa_native_windows_process_file_add(qa_native_windows_process *, const char *, uint32_t,
+    const qa_native_windows_file *, qa_error *);
+bool qa_native_windows_process_file_close(qa_native_windows_process *, uint64_t, qa_error *);
+bool qa_native_windows_process_file_remove(qa_native_windows_process *, uint64_t, qa_error *);
 /* Fixed stock/POD native signature; i386 uses its declared stock C convention.
  * API-specific stdcall/fastcall/thiscall bridges require their typed ABI plan. */
 bool qa_native_windows_process_invoke(qa_native_windows_process *, uint64_t,

@@ -1,5 +1,6 @@
 #include "native_q3_remote_role_private.h"
 #include "qa/application_native_q3_remote_lifecycle.h"
+#include "qa/console_cvar_observer.h"
 
 static struct application_native_q3_remote_role *source_row(qa_application *app,
     const qa_application_q3_remote_source *source, qa_error *error)

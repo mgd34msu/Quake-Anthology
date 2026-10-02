@@ -159,6 +159,31 @@ bool qa_q1_game_weapon_definitions_current(qa_q1_game *game, qa_actor_id actor) 
         qa_actor_id_equal(player->weapon_definitions.actor, actor) &&
         qa_inventory_lease_current(game->services.inventory, player->weapon_definitions);
 }
+bool qa_q1_game_weapon_ui_definition_read(qa_q1_game *game, qa_actor_id actor, qa_item_id item,
+    qa_q1_weapon_ui_definition *out, bool *found, qa_error *error) {
+    if (!game || !out || !found || game->destroy_pending || game->continuation_pending)
+        return fail(error, actor, "Q1 UI definition requires its live source owner and outputs");
+    *found = false;
+    if (!qa_q1_game_weapon_definitions_current(game, actor)) return true;
+    size_t source_ordinal = 0;
+    for (unsigned ordinal = 0; ordinal < QA_Q1_WEAPON_COUNT; ++ordinal) {
+        qa_q1_weapon weapon = definition_weapon(game, ordinal);
+        qa_q1_weapon_profile profile;
+        if (!qa_q1_weapon_profile_identity(game->options.program, weapon, &profile)) continue;
+        if (game->weapons[weapon] == item) {
+            int ammo = q1_weapon_declared_ammo(weapon);
+            double quantity = weapon == QA_Q1_SUPER_SHOTGUN || weapon == QA_Q1_SUPER_NAILGUN ? 2 : 1;
+            if (weapon == QA_Q1_MG3_MJOLNIR) quantity = 0;
+            if (game->options.program == QA_Q1_MG3 && weapon == QA_Q1_SUPER_SHOTGUN) quantity = 1;
+            *out = (qa_q1_weapon_ui_definition){.weapon = weapon, .item = item,
+                .ammo = ammo < 0 ? 0 : game->ammo[ammo], .label = profile.label,
+                .ordinal = source_ordinal, .quantity = quantity};
+            *found = true; return true;
+        }
+        ++source_ordinal;
+    }
+    return true;
+}
 bool qa_q1_game_weapon_item_read(qa_q1_game *game, qa_actor_id actor, qa_item_id item,
     qa_q1_weapon_view *out, bool *found, qa_error *error) {
     if (!game || !out || !found)

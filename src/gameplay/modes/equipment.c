@@ -827,6 +827,8 @@ bool qa_equipment_weapon_view_current(qa_equipment *g, const qa_equipment_weapon
     qa_equipment_weapon_view actual; bool found;
     return view && qa_equipment_weapon_view_read(g, view->actor, &actual, &found, NULL) && found &&
         actual.item == view->item && actual.mechanic == view->mechanic && actual.active == view->active &&
+        actual.label == view->label && actual.source.weapon_item == view->source.weapon_item &&
+        actual.source.q3_product == view->source.q3_product &&
         actual.source.owner == view->source.owner && actual.source.q1 == view->source.q1 &&
         actual.source.q2 == view->source.q2 && actual.source.q3 == view->source.q3 &&
         actual.source.context == view->source.context && actual.source.current == view->source.current;

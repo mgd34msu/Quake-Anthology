@@ -9,6 +9,20 @@
 typedef struct q3n_media q3n_media;
 typedef struct q3n_remote_source_view q3n_remote_source_view;
 typedef struct q3n_remote_source q3n_remote_source;
+/* A normalized remote CLIENT effect owns no GAME or retail snapshot. The
+ * entered producer qualifies its actual provider, actor, clock and dictionary. */
+typedef struct q3n_unified_effect_source {
+    void *context;
+    qa_actor_owner provider;
+    qa_actor_id actor;
+    qa_vfs *content;
+    qa_q3_presentation_assets *assets;
+    qa_q3_product product;
+    int32_t time;
+    bool (*current)(const struct q3n_unified_effect_source *);
+} q3n_unified_effect_source;
+bool q3n_media_unified_effects_current(const q3n_media *, const q3n_unified_effect_source *, qa_error *);
+bool q3n_media_load_unified_effects(q3n_media *, const q3n_unified_effect_source *, qa_error *);
 typedef enum q3n_missile_trail {
     Q3N_TRAIL_NONE, Q3N_TRAIL_ROCKET, Q3N_TRAIL_GRENADE,
     Q3N_TRAIL_GRAPPLE, Q3N_TRAIL_PLASMA, Q3N_TRAIL_NAIL

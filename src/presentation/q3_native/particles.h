@@ -14,6 +14,7 @@ bool q3n_particles_load(q3n_particles *, qa_application *,
     const qa_application_native_q3_presentation *, int32_t source_time, qa_error *);
 /* Genuine entered CG_Init or reached-command clear; no transport replay. */
 bool q3n_particles_load_remote(q3n_particles *, const q3n_frame *, qa_error *);
+bool q3n_particles_load_unified(q3n_particles *, const q3n_frame *, qa_error *);
 void q3n_particles_round(q3n_particles *, int32_t source_time);
 bool q3n_particles_explosion(const q3n_frame *, const char *, qa_vec3 origin,
     qa_vec3 velocity, int32_t duration, float start_size, float end_size, qa_error *);

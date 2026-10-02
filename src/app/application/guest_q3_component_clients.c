@@ -15,9 +15,19 @@ static bool client_current(application_q3_component *c,qa_actor_id actor,qa_erro
         return q3records_fail(e,QA_ERROR_ARGUMENT,"Component lifecycle lost its actual canonical client");
     return q3component_current(c,e);
 }
+bool application_q3_component_client_current(const application_q3_component *c,qa_actor_id actor)
+{
+    qa_error e={0};
+    return c&&c->initialized&&application_q3_component_idle(c)&&c->options.clients.current&&
+        c->options.clients.current(c->options.clients.context,actor)&&q3records_live(c->records,actor)&&
+        application_q3_component_records_live_client(c->records,actor)&&q3component_current((void *)c,&e);
+}
 bool application_q3_component_admit(application_q3_component *c,qa_actor_id actor,qa_error *e)
 {
-    if(!client_current(c,actor,e)||!application_q3_component_idle(c)) return false;
+    if(!client_current(c,actor,e)) return false;
+    component_actor *existing=q3records_actor(c->records,actor);
+    if(existing&&existing->client&&existing->admitted&&!existing->retired) return true;
+    if(!application_q3_component_idle(c)) return q3records_fail(e,QA_ERROR_ARGUMENT,"New component client admission requires returned source execution");
     c->busy=true; uint32_t slot;
     bool ok=application_q3_component_records_reserve_client(c->records,actor,&slot,e)&&application_q3_mod_reserve(c->mod,actor,e);
     if(ok) ok=application_q3_component_records_bind(c->records,actor,slot,false,true,e);

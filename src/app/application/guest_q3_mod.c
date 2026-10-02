@@ -57,6 +57,7 @@ typedef struct call_run {
     uint32_t scratch, cursor;
     size_t length;
     int32_t result;
+    bool *started;
 } call_run;
 static bool resolve(call_run *r, const mod_argument *a, application_q3_mod_value *v, qa_error *e)
 {
@@ -147,6 +148,21 @@ static bool lower(call_run *r, const mod_argument *a, int32_t *word, qa_error *e
     }
     memcpy(word,&at,4); return true;
 }
+static bool source_finish(application_q3_mod *o, mod_source_lease *source, qa_error *e)
+{
+    bool ok=true;
+    if (source->scope) ok=o->services.source_leave(o->services.context,&source->scope,
+        source->succeeded,source->result,e);
+    if (source->scope) {
+        if (ok) q3mod_fail(e,QA_ERROR_ARGUMENT,"Source projection cleanup retains its actual continuation");
+        return false;
+    }
+    qa_error first=e?*e:(qa_error){0},cleanup={0};
+    bool returned=qa_qvm_source_words_end(&source->globals,true,&cleanup);
+    if (!ok) { if (e) *e=first; return false; }
+    if (!returned) { if (e) *e=cleanup; return false; }
+    return true;
+}
 static bool run(void *context, qa_qvm *vm, uint32_t scratch, qa_error *e)
 {
     call_run *r=context; r->scratch=scratch;
@@ -170,15 +186,16 @@ static bool run(void *context, qa_qvm *vm, uint32_t scratch, qa_error *e)
             for (size_t j=0;ok && j<3;++j) globals[n++]=(qa_qvm_source_word){g->address+(uint32_t)j*4,qa_load_i32le(bytes+j*4)};
         } else globals[n++]=(qa_qvm_source_word){g->address,value};
     }
-    qa_qvm_word_projection *lease=NULL;
-    if (ok && n) ok=qa_qvm_source_words_begin(vm,r->owner->profile->image,globals,n,&lease,e);
     mod_source_lease *source=ok?calloc(1,sizeof(*source)):NULL;
     if (ok && !source) ok=q3mod_fail(e,QA_ERROR_MEMORY,"Owning actual source projection continuation");
     if (source) { source->next=r->owner->source_calls; r->owner->source_calls=source; }
+    if (ok && n) ok=qa_qvm_source_words_begin(vm,r->owner->profile->image,globals,n,&source->globals,e);
     if (ok) ok=r->owner->services.source_enter(r->owner->services.context,r->call->entry,
         words,r->call->argument_count,&source->scope,e);
     if (ok && !source->scope) ok=q3mod_fail(e,QA_ERROR_ARGUMENT,"Source projection omitted its actual call scope");
-    if (ok) ok=qa_qvm_invoke(vm,r->call->entry,words,r->call->argument_count,&r->result,e);
+    if (ok) ok=r->started?
+        qa_qvm_invoke_started(vm,r->call->entry,words,r->call->argument_count,&r->result,r->started,e):
+        qa_qvm_invoke(vm,r->call->entry,words,r->call->argument_count,&r->result,e);
     if (ok && r->call->returns==MOD_FLOAT32) {
         float value; memcpy(&value,&r->result,4);
         if (!isfinite(value)) ok=q3mod_fail(e,QA_ERROR_FORMAT,"Source callback returned a nonfinite scalar");
@@ -187,9 +204,8 @@ static bool run(void *context, qa_qvm *vm, uint32_t scratch, qa_error *e)
     bool left=true;
     if (source) {
         source->succeeded=ok; source->result=r->result;
-        if (source->scope) left=r->owner->services.source_leave(r->owner->services.context,&source->scope,ok,r->result,&cleanup);
-        if (source->scope) { r->owner->failed_scope=true; left=false;
-            if (cleanup.code==QA_OK) q3mod_fail(&cleanup,QA_ERROR_ARGUMENT,"Source projection cleanup retains its actual continuation"); }
+        left=source_finish(r->owner,source,&cleanup);
+        if (source->scope || source->globals) { r->owner->failed_scope=true; left=false; }
         else { mod_source_lease **link=&r->owner->source_calls;
             while (*link && *link!=source) link=&(*link)->next;
             if (*link) *link=source->next;
@@ -197,17 +213,16 @@ static bool run(void *context, qa_qvm *vm, uint32_t scratch, qa_error *e)
         }
     }
     if (!left && ok) { if (e) *e=cleanup; ok=false; }
-    cleanup=(qa_error){0}; bool returned=qa_qvm_source_words_end(&lease,true,&cleanup);
     free(globals);
-    if (!returned && ok) { if (e) *e=cleanup; ok=false; }
     return ok && q3mod_current(r->owner,e);
 }
-bool q3mod_invoke(application_q3_mod *o, const mod_call *call,
-    const application_q3_mod_inputs *inputs, double *result, qa_error *e)
+static bool invoke(application_q3_mod *o, const mod_call *call,
+    const application_q3_mod_inputs *inputs, double *result, bool *started, qa_error *e)
 {
+    if(started) *started=false;
     if (!q3mod_current(o,e) || !call || call->profile!=o->profile || !inputs || !result || o->calls>=64)
         return q3mod_fail(e,QA_ERROR_ARGUMENT,"Source callback exceeds its admitted recursion scope");
-    call_run r={.owner=o,.call=call,.inputs=inputs};
+    call_run r={.owner=o,.call=call,.inputs=inputs,.started=started};
     if (call->global_count>SIZE_MAX-call->argument_count)
         return q3mod_fail(e,QA_ERROR_MEMORY,"Source argument inventory overflows");
     size_t total=call->argument_count+call->global_count;
@@ -235,6 +250,15 @@ bool q3mod_invoke(application_q3_mod *o, const mod_call *call,
     else if (call->returns==MOD_INT32) *result=r.result;
     else { float f; memcpy(&f,&r.result,4); if (!isfinite(f)) return q3mod_fail(e,QA_ERROR_FORMAT,"Source callback returned nonfinite savings"); *result=f; }
     return true;
+}
+bool q3mod_invoke(application_q3_mod *o,const mod_call *call,
+    const application_q3_mod_inputs *inputs,double *result,qa_error *e)
+{ return invoke(o,call,inputs,result,NULL,e); }
+bool q3mod_invoke_started(application_q3_mod *o,const mod_call *call,
+    const application_q3_mod_inputs *inputs,double *result,bool *started,qa_error *e)
+{
+    if(!started) return q3mod_fail(e,QA_ERROR_ARGUMENT,"Source invocation requires its actual entry receipt");
+    return invoke(o,call,inputs,result,started,e);
 }
 bool application_q3_mod_create(application_q3_mod_profile *p, qa_qvm *vm, qa_session *session,
     qa_actor_owner owner, qa_combat *combat, const application_q3_mod_services *s,
@@ -264,8 +288,8 @@ bool application_q3_mod_destroy(application_q3_mod **in, qa_error *e)
     if (!q3mod_protection_stages_close(o,e) || !q3mod_callbacks_close(o,e)) return false;
     while (o->source_calls) {
         mod_source_lease *source=o->source_calls;
-        bool consumed=!source->scope || o->services.source_leave(o->services.context,&source->scope,source->succeeded,source->result,e);
-        if (source->scope) return false;
+        bool consumed=source_finish(o,source,e);
+        if (source->scope || source->globals) return false;
         o->source_calls=source->next; free(source);
         if (!consumed) return false;
     }

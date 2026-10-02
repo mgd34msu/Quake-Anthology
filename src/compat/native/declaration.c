@@ -86,6 +86,51 @@ static bool required_primary(const qa_json_document *document, qa_json_id primar
     return true;
 }
 
+static bool callback_document(qa_native_declaration *declaration, const char *path,
+    const qa_native_module *module, qa_error *error)
+{
+    const qa_json_document *d = declaration->document;
+    qa_json_id root = qa_json_root(d), program = qa_json_get(d, root, "program"),
+        target = qa_json_get(d, root, "target"), api = qa_json_get(d, target, "api"),
+        abi = qa_json_get(d, target, "abi");
+    qa_buffer declared_path = {0}, digest = {0};
+    char *normalized = NULL;
+    qa_sha256_digest expected;
+    uint64_t version, pointer_bytes;
+    bool classic = module->info.profile == QA_NATIVE_Q2_GAME_API3;
+    bool ok = qa_json_u64(d, qa_json_get(d, root, "version"), &version, error) && version == 1 &&
+        qa_json_string_equal(d, qa_json_get(d, root, "runtime"), "native") &&
+        qa_json_string(d, qa_json_get(d, program, "path"), &declared_path, error) &&
+        normalize_path((qa_bytes){declared_path.data, declared_path.size}, &normalized, error) &&
+        !strcmp(normalized, path) &&
+        qa_json_string(d, qa_json_get(d, program, "digest"), &digest, error) &&
+        digest_text((qa_bytes){digest.data, digest.size}, &expected, error) &&
+        qa_sha256_equal(&expected, &module->info.image.digest) &&
+        qa_json_string_equal(d, qa_json_get(d, api, "kind"),
+            classic ? "q2-classic-game" : "q2-rerelease-game") &&
+        qa_json_u64(d, qa_json_get(d, api, "version"), &version, error) &&
+        version == (classic ? 3u : 2023u) &&
+        qa_json_string_equal(d, qa_json_get(d, abi, "kind"),
+            classic ? "windows-i386" : "windows-x86-64") &&
+        qa_json_string_equal(d, qa_json_get(d, abi, "image"), classic ? "pe32" : "pe32+") &&
+        qa_json_string_equal(d, qa_json_get(d, abi, "call"), classic ? "cdecl" : "microsoft-x64") &&
+        qa_json_u64(d, qa_json_get(d, abi, "pointerBytes"), &pointer_bytes, error) &&
+        pointer_bytes == (classic ? 4u : 8u) &&
+        module->info.image.target.os == QA_NATIVE_OS_WINDOWS &&
+        module->info.image.target.abi == (classic ? QA_NATIVE_ABI_CDECL_I386 : QA_NATIVE_ABI_MICROSOFT_X64);
+    static const char *arrays[] = {"actorRecords", "initialize", "project", "release", "callbacks", "cvars"};
+    for (size_t i = 0; ok && i < sizeof(arrays) / sizeof(arrays[0]); ++i)
+        ok = qa_json_type(d, qa_json_get(d, root, arrays[i])) == QA_JSON_ARRAY;
+    qa_json_id spawn = qa_json_get(d, root, "spawnEntities"), entity = qa_json_get(d, root, "entityRecord");
+    if (ok) ok = (qa_json_type(d, spawn) == QA_JSON_NULL || qa_json_type(d, spawn) == QA_JSON_STRING) &&
+        (qa_json_type(d, entity) == QA_JSON_NULL || qa_json_type(d, entity) == QA_JSON_STRING);
+    free(normalized); qa_buffer_free(&declared_path); qa_buffer_free(&digest);
+    if (!ok && (!error || error->code == QA_OK))
+        native_fail(error, QA_ERROR_FORMAT, 0, "native callbacks differ from the acquired artifact or declared target");
+    declaration->callbacks = ok;
+    return ok;
+}
+
 static bool executable_pe_rva(const qa_native_module *module, uint32_t rva) {
     qa_bytes bytes = {module->bytes, module->size};
     if (bytes.size < 0x40)
@@ -323,6 +368,18 @@ bool qa_native_declaration_load(qa_bytes json, const char *artifact_path,
     }
     qa_json_document *document = declaration->document;
     qa_json_id root = qa_json_root(document);
+    if (qa_json_get(document, root, "runtime") != QA_JSON_NONE) {
+        bool valid = callback_document(declaration, selected_path, module, error);
+        if (valid) {
+            declaration->primary = root;
+            qa_sha256(owned_json, &declaration->digest);
+            valid = collect_regions(declaration, module, root, "", 0, error);
+        }
+        free(selected_path);
+        if (!valid) { qa_native_declaration_destroy(declaration); return false; }
+        *out = declaration;
+        return true;
+    }
     int64_t version;
     qa_json_id modules;
     bool valid = qa_json_type(document, root) == QA_JSON_OBJECT &&
@@ -434,9 +491,14 @@ const qa_sha256_digest *qa_native_declaration_digest(const qa_native_declaration
 }
 
 qa_bytes qa_native_declaration_primary(const qa_native_declaration *declaration) {
-    if (!declaration)
+    if (!declaration || declaration->callbacks)
         return (qa_bytes){0};
     return (qa_bytes){declaration->json + declaration->primary_offset, declaration->primary_size};
+}
+
+qa_bytes qa_native_declaration_callbacks(const qa_native_declaration *declaration) {
+    return declaration && declaration->callbacks
+        ? (qa_bytes){declaration->json, declaration->json_size} : (qa_bytes){0};
 }
 
 size_t qa_native_declaration_region_count(const qa_native_declaration *declaration) {

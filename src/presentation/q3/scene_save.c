@@ -116,8 +116,9 @@ static bool arrays(qa_source_save_io *io, qa_q3_presentation *p)
         qa_q3_ref_entity e=io->direction==QA_SOURCE_SAVE_WRITE?p->entities[i]:(qa_q3_ref_entity){0};
         if (!entity(io,&e)) return false;
         const qa_material *shader; const qa_model_skin_map *skin; const q3p_model *model;
-        if (e.kind!=QA_Q3_REF_POLY && e.kind!=QA_Q3_REF_PORTAL && !q3p_shader_get(p->options.assets,e.custom_shader,&shader,io->error)) return false;
-        if (e.kind==QA_Q3_REF_MODEL && (!q3p_model_get(p->options.assets,e.model,&model,io->error) || !q3p_skin_get(p->options.assets,e.custom_skin,&skin,io->error))) return false;
+        bool source_scene=p->options.source_state || p->options.source_scene_membership;
+        if (!source_scene && e.kind!=QA_Q3_REF_POLY && e.kind!=QA_Q3_REF_PORTAL && !q3p_shader_get(p->options.assets,e.custom_shader,&shader,io->error)) return false;
+        if (!source_scene && e.kind==QA_Q3_REF_MODEL && (!q3p_model_get(p->options.assets,e.model,&model,io->error) || !q3p_skin_get(p->options.assets,e.custom_skin,&skin,io->error))) return false;
         if (io->direction==QA_SOURCE_SAVE_READ) p->entities[i]=e;
     }
     size_t next=0;
@@ -143,8 +144,10 @@ static bool arrays(qa_source_save_io *io, qa_q3_presentation *p)
 }
 static bool fields(qa_source_save_io *io, qa_q3_presentation *p)
 {
-    uint8_t magic[4]={'Q','3','P','S'}; uint32_t schema=2;
-    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"Q3PS",4) || !qa_source_save_u32(io,&schema) || schema!=2) return false;
+    uint8_t magic[4]={'Q','3','P','S'}; uint32_t schema=3;
+    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"Q3PS",4) || !qa_source_save_u32(io,&schema) ||
+        (schema!=2 && schema!=3)) return false;
+    if (schema>=3 && (!qa_source_save_u32(io,&p->source_entity_first) || p->source_entity_first>1022)) return false;
     FIELD(bool,p,world_loaded); FIELD(bool,p,material_view_valid);
     if (p->world_loaded && (!p->world || !p->geometry)) return false;
     FIELD(i32,p,render_milliseconds);
@@ -183,6 +186,7 @@ bool qa_q3_presentation_scene_restore(qa_q3_presentation *p, qa_bytes bytes, qa_
         p->entities=saved.entities; p->polygons=saved.polygons; p->vertices=saved.vertices; p->lights=saved.lights;
         p->portals=saved.portals;
         p->entity_count=saved.entity_count; p->polygon_count=saved.polygon_count; p->vertex_count=saved.vertex_count; p->light_count=saved.light_count;
+        p->source_entity_first=saved.source_entity_first;
         p->entity_capacity=saved.entity_capacity; p->polygon_capacity=saved.polygon_capacity; p->vertex_capacity=saved.vertex_capacity; p->light_capacity=saved.light_capacity;
         p->portal_capacity=saved.portal_capacity;
         p->parser=saved.parser; p->cursor=saved.cursor; p->color=saved.color; p->material_view=saved.material_view;

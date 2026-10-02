@@ -12,8 +12,9 @@ bool remote_q1_effects_scene(frontend_remote_q1 *, double,
     const qa_scene_light **, size_t *, qa_error *);
 bool remote_q1_effects_draw(frontend_remote_q1 *, const qa_scene_view *,
     const qa_scene_world_input *, qa_error *);
-bool remote_q1_effects_models(frontend_remote_q1 *,const qa_scene_view *,const qa_scene_world_input *,qa_error *);
+bool remote_q1_effects_models(frontend_remote_q1 *,const qa_scene_view *,const qa_scene_world_input *,qa_vec3,qa_error *);
 bool remote_q1_effects_blend(frontend_remote_q1 *,const qa_scene_view *,double,qa_scene_vec4,qa_error *);
+bool remote_q1_model_lighting(frontend_remote_q1 *,const qa_scene_world_input *,qa_scene_model_input *,qa_error *);
 /* Cold fields contain no sound dispatch or resource opening. Images are
  * restored through the enclosing owner's genuine shared image graph. */
 bool remote_q1_effects_fields(frontend_remote_q1 *, qa_source_save_io *,

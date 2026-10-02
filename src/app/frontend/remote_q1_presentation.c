@@ -2,12 +2,13 @@
 #include "internal.h"
 #include "legacy_render_policy.h"
 #include "remote_q1_effects.h"
+#include "view_settings.h"
 #include "qa/material.h"
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
-static bool model_light(frontend_remote_q1 *row, const frontend_remote_q1_entity_view *entity,
+bool remote_q1_model_lighting(frontend_remote_q1 *row,
     const qa_scene_world_input *world, qa_scene_model_input *input, qa_error *error)
 {
     qa_vec3 ambient, directed, direction;
@@ -22,11 +23,11 @@ static bool model_light(frontend_remote_q1 *row, const frontend_remote_q1_entity
     float values[] = {ambient.x, ambient.y, ambient.z};
     for (unsigned i = 0; i < 3; ++i) {
         float base = values[i] * 255;
-        if (entity->view_weapon) base = fmaxf(base, 24);
+        if (input->view_model) base = fmaxf(base, 24);
         float total = base + dynamic, clamped = fminf(total, 128);
         float shade = fminf(total, 192 - clamped);
-        if ((entity->has_colors || !strcmp(entity->model, "progs/player.mdl")) && clamped < 8) shade = 8;
-        if (!strcmp(entity->model, "progs/flame.mdl") || !strcmp(entity->model, "progs/flame2.mdl")) shade = 256;
+        if ((input->player || !strcmp(input->source_path, "progs/player.mdl")) && clamped < 8) shade = 8;
+        if (!strcmp(input->source_path, "progs/flame.mdl") || !strcmp(input->source_path, "progs/flame2.mdl")) shade = 256;
         values[i] = shade / 200 * 2;
     }
     input->alias_lighting = QA_ALIAS_PREPARED_LIGHT;
@@ -65,7 +66,7 @@ static bool model_submit(frontend_remote_q1 *row, const frontend_remote_q1_entit
         .material_library = row->materials, .source_path = model->path, .identity_light = 1};
     const qa_product *product=qa_catalog_product(row->content.catalog,row->content.product);
     return frontend_legacy_model_input_product(row->frontend,product,row->world,world,&input,error) &&
-        model_light(row, entity, world, &input, error) &&
+        remote_q1_model_lighting(row, world, &input, error) &&
         qa_scene_model_submit(model->scene, &input, &row->frontend->frame, error);
 }
 static bool sky_environment(frontend_remote_q1 *row,qa_scene_q1_sky_environment *out,qa_error *error)
@@ -89,6 +90,7 @@ typedef struct remote_scene {
     frontend_remote_q1_entity_view *entities;
     size_t count;
     uint64_t revision;
+    qa_vec3 viewer_origin;
 } remote_scene;
 static bool scene_current(void *context)
 {
@@ -110,7 +112,7 @@ static bool scene_visuals(void *context,const qa_scene_world_input *world,qa_sce
         }
         if(!model_submit(row,&entity,&world->view,world,error) || !scene_current(scene)) return false;
     }
-    return remote_q1_effects_models(row,&world->view,world,error);
+    return remote_q1_effects_models(row,&world->view,world,scene->viewer_origin,error);
 }
 static bool scene_particles(void *context,const qa_scene_world_input *world,qa_scene_frame *frame,qa_error *error)
 {
@@ -152,13 +154,25 @@ bool frontend_remote_q1_draw(frontend_remote_q1 *row, const qa_scene_view *view,
     qa_scene_q1_sky_environment sky;
     if(!sky_environment(row,&sky,error)) return false;
     world.q1_sky_environment=&sky;
-    remote_scene scene={.row=row,.count=frontend_remote_q1_entity_count(row),.revision=row->revision};
+    frontend_q1_view_settings settings;
+    if(!frontend_view_settings_q1_sample(row->frontend->view_settings,
+        qa_q1_is_qw(row->options.domain.protocol)?QA_CONSOLE_QW:QA_CONSOLE_Q1,&settings,error)) return false;
+    remote_scene scene={.row=row,.count=frontend_remote_q1_entity_count(row),.revision=row->revision,
+        .viewer_origin=player.origin};
     if(scene.count>SIZE_MAX/sizeof(*scene.entities)) return false;
     scene.entities=scene.count?malloc(scene.count*sizeof(*scene.entities)):NULL;
     if(scene.count && !scene.entities) return remote_q1_fail(error,QA_ERROR_MEMORY,"Retaining actual remote Q1 scene rows");
     bool ok=true;
-    for(size_t i=0;ok && i<scene.count;++i)
-        ok=frontend_remote_q1_entity_at(row,i,scene.entities+i,error) && row->revision==scene.revision;
+    for(size_t i=0;ok && i<scene.count;++i) {
+        frontend_remote_q1_entity_view *entity=scene.entities+i;
+        ok=frontend_remote_q1_entity_at(row,i,entity,error) && row->revision==scene.revision;
+        if(!ok) break;
+        if(entity->view_weapon) {
+            if(settings.chase) entity->visible=false;
+            float height=settings.size==110?1:settings.size==100?2:settings.size==90?1:settings.size==80?.5f:0;
+            entity->entity.origin[2]+=height;
+        } else if(settings.chase && entity->entity.number==row->view_entity) entity->visible=true;
+    }
     const qa_product *product=qa_catalog_product(row->content.catalog,row->content.product);
     frontend_legacy_scene_services services={.context=&scene,.current=scene_current,
         .visuals=scene_visuals,.particles=scene_particles,.blend=scene_blend};

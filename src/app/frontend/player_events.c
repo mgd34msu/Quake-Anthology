@@ -136,7 +136,7 @@ bool frontend_player_events(qa_frontend *frontend, qa_error *error)
                     const uint64_t duration = UINT64_C(150000000);
                     if (observed.time_ns > UINT64_MAX - duration)
                         return frontend_fail(error, QA_ERROR_ARGUMENT, "Q2 hit-marker deadline overflow");
-                    qa_hud_hit_marker(seat->hud, event->view.hit_marker_damage,
+                    qa_hud_hit_marker(seat->hud, (float)event->view.hit_marker_damage,
                         observed.time_ns + duration);
                 }
                 if (!timer(seat, frontend->time_ns, error)) return false;

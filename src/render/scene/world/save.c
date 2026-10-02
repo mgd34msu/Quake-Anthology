@@ -55,6 +55,7 @@ static bool profile(qa_source_save_io *io, const qa_scene_world *world)
     bool sky=options.q2_sky!=NULL; size_t length=sky?strlen(options.q2_sky):0;
     if (!qa_source_save_u32(io,&family) || !qa_source_save_u32(io,&format) ||
         !bytes_digest(io,(qa_bytes){world->bytes.data,world->bytes.size}) || !bytes_digest(io,options.external_lit) ||
+        !qa_source_save_bool(io,&options.has_external_entities) || !bytes_digest(io,options.external_entities) ||
         !bytes_digest(io,image.palette_rgb) || !bytes_digest(io,image.translation) ||
         !qa_source_save_bool(io,&sky) || !qa_source_save_count(io,&length,SIZE_MAX) ||
         !qa_source_save_bytes(io,(void *)options.q2_sky,length) || !qa_source_save_u32(io,&image_family) ||
@@ -249,9 +250,9 @@ static bool fields(qa_source_save_io *io, const qa_scene_world *world, qa_scene_
     q3_data *q3, const qa_scene_world_checkpoint_refs *refs, qa_bytes *lighting)
 {
     bool reading=io->direction==QA_SOURCE_SAVE_READ, is_q3=world->bsp.family==QA_BSP_Q3;
-    uint8_t magic[4]={'Q','W','S','T'}; uint32_t schema=3;
+    uint8_t magic[4]={'Q','W','S','T'}; uint32_t schema=4;
     if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QWST",4) ||
-        !qa_source_save_u32(io,&schema) || (schema!=2 && schema!=3) || !qualify(io,world)) return false;
+        !qa_source_save_u32(io,&schema) || schema!=4 || !qualify(io,world)) return false;
     if (reading) {
         if (!allocate(io,(void **)&saved->surfaces,world->surface_count,sizeof(*saved->surfaces)) ||
             !allocate(io,(void **)&saved->surface_marks,world->surface_count,sizeof(*saved->surface_marks)) ||

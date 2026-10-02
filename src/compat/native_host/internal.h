@@ -47,7 +47,7 @@ typedef struct native_host_q2_lifetime {
     qa_vec3 creation_origin;
     uint64_t creation_frame;
     qa_native_host_q2_origin origins[8];
-    bool present;
+    bool present, linked;
 } native_host_q2_lifetime;
 
 typedef struct native_host_edict_layout {
@@ -99,6 +99,8 @@ struct qa_native_host {
     size_t q2_lifetime_capacity;
     uint8_t *message;
     size_t message_size, message_capacity;
+    qa_native_host_message_reference *message_references;
+    size_t message_reference_count, message_reference_capacity;
     bool message_failed;
     bool *retained_clients;
     size_t retained_capacity;

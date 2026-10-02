@@ -1,46 +1,13 @@
-#include "unified_components.h"
+#include "unified_components_internal.h"
 #include "unified_output_json.h"
 #include "guest_q3_components.h"
+#include "native_q2_publication.h"
+#include "unified_q2_components.h"
 #include "qa/q3_abi.h"
 
 #include <limits.h>
 #include <stdlib.h>
 #include <string.h>
-
-typedef struct component_cursor {
-    qa_actor_owner owner;
-    uint64_t generation;
-    int64_t game_state_revision;
-    int32_t sequence;
-    qa_qvm_abi abi;
-    bool scene;
-    qa_sha256_digest identity;
-} component_cursor;
-
-struct application_unified_component_publisher {
-    qa_application *application;
-    qa_net_client_id recipient;
-    qa_actor_id actor;
-    uint64_t revision, serial;
-    uint32_t epoch;
-    component_cursor *rows;
-    size_t count;
-    application_unified_component_capture *pending;
-};
-
-struct application_unified_component_capture {
-    application_unified_component_publisher *owner;
-    application_unified_source source;
-    qa_unified_session_player player;
-    application_q3_components *roster;
-    application_q3_component_publication_lease **leases;
-    component_cursor *rows;
-    size_t count;
-    uint64_t revision, serial;
-    uint32_t epoch;
-    qa_unified_document *frame, *control;
-    bool sealed, committed;
-};
 
 static bool text(application_unified_json *j, const char *s, qa_error *e)
 { return application_unified_json_text(j, s, e); }
@@ -102,6 +69,86 @@ static bool identity_hash(const qa_unified_document *identity, qa_sha256_digest 
     return ok;
 }
 
+static bool json_hash(const qa_json_document *j, qa_json_id value, qa_sha256_digest *out, qa_error *e)
+{
+    qa_buffer canonical = {0};
+    bool ok = qa_unified_value_canonical(qa_json_source(j, value), &canonical, e);
+    if (ok) qa_sha256((qa_bytes){canonical.data, canonical.size}, out);
+    qa_buffer_free(&canonical);
+    return ok;
+}
+
+static bool native_owner(application_unified_json *j,
+    const application_unified_component_capture *v, qa_error *e)
+{
+    return text(j, "{\"provider\":", e) && string(j,
+        qa_strings_cstr(qa_session_strings(v->source.session), v->native.owner), e) &&
+        text(j, ",\"generation\":", e) && application_unified_json_natural(j, v->native.activation, e) && text(j, "}", e);
+}
+
+static bool native_states(application_unified_json *j, const application_unified_component_capture *v,
+    bool configs, qa_error *e)
+{
+    if (configs || v->native_documents.publication.hud == APPLICATION_NATIVE_Q2_HUD_NONE)
+        return application_unified_json_document(j, v->native_documents.state, e);
+    const qa_json_document *json = qa_unified_document_json(v->native_documents.state);
+    qa_json_id root = qa_unified_document_root(v->native_documents.state);
+    qa_json_id hud = qa_json_get(json, root, "hud"), frame = qa_json_get(json, hud, "frame");
+    static const char *const fields[] = {"owner", "identity", "generation"};
+    bool ok = text(j, "{", e);
+    for (size_t i = 0; ok && i < sizeof(fields) / sizeof(fields[0]); ++i)
+        ok = (!i || text(j, ",", e)) && string(j, fields[i], e) && text(j, ":", e) &&
+            application_unified_json_append(j, qa_json_source(json, qa_json_get(json, root, fields[i])), e);
+    if (ok) ok = text(j, ",\"hud\":{\"mode\":", e) && application_unified_json_append(j,
+        qa_json_source(json, qa_json_get(json, hud, "mode")), e) && text(j, ",\"frame\":{\"configstrings\":null", e);
+    static const char *const frame_fields[] = {"protocol", "layout", "inventory", "playerNumber"};
+    for (size_t i = 0; ok && i < sizeof(frame_fields) / sizeof(frame_fields[0]); ++i)
+        ok = text(j, ",", e) && string(j, frame_fields[i], e) && text(j, ":", e) &&
+            application_unified_json_append(j, qa_json_source(json, qa_json_get(json, frame, frame_fields[i])), e);
+    return ok && text(j, "}}}", e);
+}
+
+static bool native_prepare(application_unified_component_capture *v, application_unified_json *frames,
+    application_unified_json *states, bool *changed, qa_error *e)
+{
+    qa_application *app = v->owner->application;
+    if (!application_unified_q2_component_documents_build(app, &v->source, v->owner->recipient,
+        &v->player, &v->native_documents, e)) return false;
+    const native_cursor *old = v->owner->epoch == v->epoch ? &v->owner->native : NULL;
+    if (!v->native_documents.present) { *changed |= v->owner->native.present; return text(frames, "[]", e) && text(states, "[]", e); }
+    const application_native_q2_publication_view *p = &v->native_documents.publication;
+    v->native = (native_cursor){.owner=p->owner, .activation=p->activation_generation,
+        .generation=p->generation, .present=true};
+    for (size_t i = 0; i < v->count; ++i)
+        if (v->rows[i].owner == p->owner)
+            return application_fail(e, QA_ERROR_FORMAT, "Native and original components alias one presentation owner");
+    if (v->count >= 256)
+        return application_fail(e, QA_ERROR_FORMAT, "Combined components exceed their wire owner extent");
+    if (!identity_hash(p->identity, &v->native.identity, e)) return false;
+    bool same = old && old->present && old->owner == p->owner && old->activation == p->activation_generation &&
+        old->generation == p->generation;
+    if (same && !qa_sha256_equal(&old->identity, &v->native.identity))
+        return application_fail(e, QA_ERROR_FORMAT, "Native component activation changed its actual identity");
+    const qa_json_document *json = qa_unified_document_json(v->native_documents.source.hud_state);
+    qa_json_id root = qa_unified_document_root(v->native_documents.source.hud_state);
+    if (!json_hash(json, qa_json_get(json, root, "configstrings"), &v->native.configs, e)) return false;
+    if (!identity_hash(v->native_documents.state, &v->native.state, e)) return false;
+    *changed |= !same || !qa_sha256_equal(&old->state, &v->native.state);
+    bool ok = text(states, "[", e) && native_states(states, v,
+        !same || !qa_sha256_equal(&old->configs, &v->native.configs), e) && text(states, "]", e) &&
+        text(frames, "[", e) && application_unified_json_document(frames, v->native_documents.frame, e) && text(frames, "]", e);
+    if (ok && p->camera) {
+        application_unified_json camera_json = {0};
+        ok = text(&camera_json, "{\"owner\":", e) && native_owner(&camera_json, v, e) && text(&camera_json, ",\"identity\":", e) &&
+            application_unified_json_document(&camera_json, p->identity, e) && text(&camera_json, ",\"generation\":", e) &&
+            application_unified_json_natural(&camera_json, p->generation, e) && text(&camera_json, ",\"view\":", e) &&
+            application_unified_json_document(&camera_json, application_unified_q2_component_camera(&v->native_documents), e) && text(&camera_json, "}", e) &&
+            qa_unified_document_create(QA_UNIFIED_CHECKPOINT, (qa_bytes){camera_json.bytes.data,camera_json.bytes.size}, &v->native_camera, e);
+        application_unified_json_dispose(&camera_json);
+    }
+    return ok;
+}
+
 static bool game_state(application_unified_json *j, const qa_q3_gamestate *gs, qa_error *e)
 {
     if (!gs || gs->string_bytes > QA_Q3_GAMESTATE_CHARS || gs->strings[0])
@@ -131,8 +178,12 @@ static bool commands(application_unified_json *j, const application_q3_scene_con
             return application_fail(e, QA_ERROR_FORMAT, "Component command exceeds its authentic argument extent");
         if ((!first && !text(j, ",", e)) || !text(j, "{\"sequence\":", e) || !number(j, row->sequence, e) ||
             !text(j, ",\"arguments\":[", e)) return false;
-        for (size_t a = 0; a < tokens.count; ++a)
-            if ((a && !text(j, ",", e)) || !string(j, qa_q3_token(&tokens, a), e)) return false;
+        for (size_t a = 0; a < tokens.count; ++a) {
+            const char *argument = qa_q3_token(&tokens, a);
+            if (strlen(argument) > 8192)
+                return application_fail(e, QA_ERROR_FORMAT, "Component command argument exceeds its wire extent");
+            if ((a && !text(j, ",", e)) || !string(j, argument, e)) return false;
+        }
         if (!text(j, "]}", e)) return false;
         previous = row->sequence; first = false;
     }
@@ -147,6 +198,7 @@ static bool frame_source(application_unified_json *j, const application_unified_
     const qa_q3_snapshot *snap = context->snapshot;
     if (!snap || !context->has_weapon_presented || context->actor_count > QA_Q3_ENTITIES ||
         snap->entity_count > 256 || snap->server_time < 0 || context->revision < 0 ||
+        context->revision > (int64_t)QA_UNIFIED_SAFE_INTEGER ||
         context->client_number < 0 || context->client_number >= QA_Q3_ENTITIES)
         return application_fail(e, QA_ERROR_FORMAT, "Component frame lacks its real receiver snapshot or weapon policy");
     bool ok = text(j, "{\"owner\":", e) && owner_write(j, v, row, e) &&
@@ -191,12 +243,19 @@ static bool camera(const qa_unified_document *player, qa_vec3 *origin, qa_vec3 a
     for (size_t v = 0; v < 2; ++v) {
         qa_json_id value = qa_json_get(j, view, fields[v]);
         double values[3];
-        for (size_t c = 0; c < 3; ++c)
-            if (!qa_json_number(j, qa_json_get(j, value, components[c]), values + c, e) || !isfinite(values[c])) return false;
+        for (size_t c = 0; c < 3; ++c) {
+            if (!qa_json_number(j, qa_json_get(j, value, components[c]), values + c, e)) return false;
+            if (!isfinite(values[c]))
+                return application_fail(e, QA_ERROR_FORMAT, "Component receiver camera contains a nonfinite scalar");
+        }
         *vectors[v] = qa_v3((float)values[0], (float)values[1], (float)values[2]);
+        if (!qa_vec_finite(*vectors[v]))
+            return application_fail(e, QA_ERROR_FORMAT, "Component receiver camera leaves its Source scalar extent");
     }
     double height;
-    if (!qa_json_number(j, qa_json_get(j, view, "viewHeight"), &height, e) || !isfinite(height)) return false;
+    if (!qa_json_number(j, qa_json_get(j, view, "viewHeight"), &height, e)) return false;
+    if (!isfinite(height))
+        return application_fail(e, QA_ERROR_FORMAT, "Component receiver view height is nonfinite");
     origin->z += (float)height;
     qa_builtin_angle_vectors(angles, axis, axis + 1, axis + 2);
     axis[1] = qa_vec_scale(axis[1], -1);
@@ -233,7 +292,7 @@ bool application_unified_components_current(const application_unified_component_
         !application_unified_player_current(app, v->owner->recipient, &v->player) || app->components != v->roster) return false;
     for (size_t i = 0; i < v->count; ++i)
         if (!application_q3_components_publication_current(v->leases[i])) return false;
-    return true;
+    return application_unified_q2_component_documents_current(app, &v->native_documents);
 }
 
 bool application_unified_components_prepare(application_unified_component_publisher *p,
@@ -284,6 +343,9 @@ bool application_unified_components_prepare(application_unified_component_publis
         *row = (component_cursor){.owner = publication.owner, .generation = publication.generation,
             .game_state_revision = context.game_state_revision, .sequence = scene && ok && context.snapshot ? context.snapshot->server_command_number : 0,
             .abi = publication.abi, .scene = scene};
+        for (size_t i = 0; ok && i < at; ++i)
+            if (v->rows[i].owner == row->owner)
+                ok = application_fail(e, QA_ERROR_FORMAT, "Component publication aliases an actual owner");
         if (ok) ok = identity_hash(publication.identity, &row->identity, e);
         const component_cursor *old = NULL;
         if (p->epoch == epoch) for (size_t i = 0; i < p->count; ++i)
@@ -307,6 +369,8 @@ bool application_unified_components_prepare(application_unified_component_publis
             text(&states, ",\"commandBase\":", e) && number(&states, base, e) && text(&states, ",\"commands\":", e) &&
             (scene ? commands(&states, &context, base, row->sequence, e) : text(&states, "[]", e)) && text(&states, "}", e);
     }
+    application_unified_json native_frames = {0}, native_states_json = {0};
+    if (ok) ok = native_prepare(v, &native_frames, &native_states_json, &changed, e);
     changed |= v->count != p->count;
     for (size_t i = 0; i < v->count && !changed; ++i)
         changed = v->rows[i].owner != p->rows[i].owner || v->rows[i].generation != p->rows[i].generation;
@@ -317,16 +381,20 @@ bool application_unified_components_prepare(application_unified_component_publis
     if (ok) ok = text(&frames, "]", e) && text(&states, "]", e);
     application_unified_json document = {0};
     if (ok) ok = text(&document, "{\"revision\":", e) && application_unified_json_natural(&document, v->revision, e) &&
-        text(&document, ",\"native\":[],\"sources\":", e) && application_unified_json_append(&document,
+        text(&document, ",\"native\":", e) && application_unified_json_append(&document,
+            (qa_bytes){native_frames.bytes.data, native_frames.bytes.size}, e) && text(&document, ",\"sources\":", e) && application_unified_json_append(&document,
             (qa_bytes){frames.bytes.data, frames.bytes.size}, e) && text(&document, "}", e) &&
         qa_unified_document_create(QA_UNIFIED_CHECKPOINT, (qa_bytes){document.bytes.data, document.bytes.size}, &v->frame, e);
     application_unified_json_dispose(&document);
     if (ok && changed) ok = text(&document, "{\"schema\":\"qts-control\",\"version\":1,\"value\":{\"kind\":\"components\",\"epoch\":", e) &&
         number(&document, epoch, e) && text(&document, ",\"update\":{\"revision\":", e) &&
-        application_unified_json_natural(&document, v->revision, e) && text(&document, ",\"native\":[],\"sources\":", e) &&
+        application_unified_json_natural(&document, v->revision, e) && text(&document, ",\"native\":", e) &&
+        application_unified_json_append(&document, (qa_bytes){native_states_json.bytes.data, native_states_json.bytes.size}, e) &&
+        text(&document, ",\"sources\":", e) &&
         application_unified_json_append(&document, (qa_bytes){states.bytes.data, states.bytes.size}, e) && text(&document, "}}}", e) &&
         qa_unified_document_create(QA_UNIFIED_CONTROL_DOCUMENT, (qa_bytes){document.bytes.data, document.bytes.size}, &v->control, e);
     application_unified_json_dispose(&document); application_unified_json_dispose(&frames); application_unified_json_dispose(&states);
+    application_unified_json_dispose(&native_frames); application_unified_json_dispose(&native_states_json);
     if (ok && !application_unified_components_current(v)) ok = application_fail(e, QA_ERROR_ARGUMENT, "Component Source retired while its output was assembled");
     if (!ok) { application_unified_components_dispose(v); return false; }
     *out = v; return true;
@@ -336,6 +404,8 @@ const qa_unified_document *application_unified_components_frame(const applicatio
 { return v ? v->frame : NULL; }
 const qa_unified_document *application_unified_components_control(const application_unified_component_capture *v)
 { return v ? v->control : NULL; }
+const qa_unified_document *application_unified_components_camera(const application_unified_component_capture *v)
+{ return v ? v->native_camera : NULL; }
 bool application_unified_components_seal(application_unified_component_capture *v, qa_error *e)
 {
     if (!application_unified_components_current(v))
@@ -352,11 +422,13 @@ void application_unified_components_commit(application_unified_component_capture
     application_unified_component_publisher *p = v->owner;
     free(p->rows); p->rows = v->rows; v->rows = NULL; p->count = v->count;
     p->epoch = v->epoch; p->revision = v->revision; ++p->serial; p->pending = NULL; v->committed = true;
+    p->native = v->native;
 }
 void application_unified_components_dispose(application_unified_component_capture *v)
 {
     if (!v) return;
     if (v->leases) for (size_t i = 0; i < v->count; ++i) application_q3_components_publication_return(v->leases + i);
     if (v->owner->pending == v) v->owner->pending = NULL;
-    free(v->rows); free(v->leases); qa_unified_document_destroy(v->frame); qa_unified_document_destroy(v->control); free(v);
+    free(v->rows); free(v->leases); qa_unified_document_destroy(v->frame); qa_unified_document_destroy(v->control);
+    qa_unified_document_destroy(v->native_camera); application_unified_q2_component_documents_dispose(&v->native_documents); free(v);
 }

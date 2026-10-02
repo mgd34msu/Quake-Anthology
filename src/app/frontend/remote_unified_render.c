@@ -194,7 +194,7 @@ bool frontend_unified_render_create(qa_frontend *f,frontend_remote_unified *repl
     *out=r; return true;
 }
 bool frontend_unified_render_draw(frontend_unified_render *r,const frontend_unified_prediction_view *predicted,
-    float stereo,qa_audio_listener *listener,qa_error *e)
+    const frontend_unified_render_children *children,float stereo,qa_audio_listener *listener,qa_error *e)
 {
     if (!r || r->busy || !listener || !isfinite(stereo) || !frontend_unified_media_current(r->media))
         return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Unified draw lost its actual received frame");
@@ -222,7 +222,7 @@ bool frontend_unified_render_draw(frontend_unified_render *r,const frontend_unif
     view.origin=qa_vec_add(view.origin,qa_vec_scale(view.axis[1],stereo));
     if (!(fov>0 && fov<180) || !view.viewport.width || !view.viewport.height)
         return frontend_unified_fail(e,QA_ERROR_FORMAT,"Unified received camera has no finite projection");
-    float vertical=2*atanf(tanf((float)fov*.008726646259971648f)*(float)view.viewport.height/view.viewport.width)*57.29577951308232f;
+    float vertical=2*atanf(tanf((float)fov*.008726646259971648f)*(float)view.viewport.height/(float)view.viewport.width)*57.29577951308232f;
     view.projection=qa_scene_projection((float)fov,vertical,4,16384);
     r->busy=true;
     qa_scene_world_input world={.view=view,.seconds=r->seconds,.milliseconds=(int64_t)(r->seconds*1000),.identity_light=1};
@@ -236,6 +236,10 @@ bool frontend_unified_render_draw(frontend_unified_render *r,const frontend_unif
         if (okay && qa_json_string_equal(j,field(j,row,"kind"),"q1")) okay=real(r->frame,field(j,row,"value"),q1+index,e);
         else if (okay) okay=vector(r->frame,field(j,row,"rgb"),q2+index,e); }
     world.q1_styles=q1; world.q2_styles=q2; world.style_count=256;
+    if (okay && children && children->world_input)
+        okay=children->world_input(children->context,&world,e);
+    if (okay && children && children->lights)
+        okay=children->lights(children->context,&view,&world,&world.lights,&world.light_count,e);
     if (okay) okay=qa_scene_frame_emit(&r->frontend->frame,&(qa_scene_command){.kind=QA_SCENE_COMMAND_VIEW,.data.view=view},e) &&
         qa_scene_world_submit(frontend_unified_media_world(r->media),&world,&r->frontend->frame,e);
     for (size_t i=0;okay && i<r->model_count;++i) {
@@ -257,17 +261,25 @@ bool frontend_unified_render_draw(frontend_unified_render *r,const frontend_unif
             &input.transform,&world,m->actor.slot,input.color,&r->frontend->frame,e);
         else {
             qa_scene_world_sample_light(frontend_unified_media_world(r->media),position,&input.ambient,&input.directed,&input.light_direction);
-            okay=frontend_legacy_model_input(r->frontend,m->product->id,frontend_unified_media_world(r->media),&world,&input,e) &&
-                qa_scene_model_submit(m->media.scene,&input,&r->frontend->frame,e);
+            okay=frontend_legacy_model_input(r->frontend,m->product->id,frontend_unified_media_world(r->media),&world,&input,e);
+            if (okay && children && children->model)
+                okay=children->model(children->context,m->actor,m->product->identity,m->path,&input,e);
+            if (okay) okay=qa_scene_model_submit(m->media.scene,&input,&r->frontend->frame,e);
         }
     }
+    if (okay && children && children->world)
+        okay=children->world(children->context,&view,&world,&r->frontend->frame,e);
     if (okay) okay=qa_scene_frame_finish(&r->frontend->frame,&view,&world.fog,e);
     if (okay) okay=qa_hud_draw(r->hud,&(qa_hud_frame){.seat=d->physical_seat,.actor=player,
         .time_ns=(uint64_t)(r->seconds*1e9),.viewport=view.viewport,.safe_area=view.viewport,.scale=1,.visible=true},&r->frontend->frame,e);
+    if (okay && children && children->hud)
+        okay=children->hud(children->context,r->frontend->seats[d->physical_seat].ui,view.viewport,&r->frontend->frame,e);
     if (okay) { *listener=(qa_audio_listener){.seat=d->physical_seat,.actor=player.slot,.origin=view.origin,.gain=1};
         memcpy(listener->axis,view.axis,sizeof(view.axis)); }
     r->busy=false; return okay;
 }
+bool frontend_unified_render_idle(const frontend_unified_render *r)
+{ return !r || (!r->busy && (!r->hud || qa_hud_idle(r->hud))); }
 bool frontend_unified_render_destroy(frontend_unified_render **slot,qa_error *e)
 {
     if (!slot || !*slot) return true;

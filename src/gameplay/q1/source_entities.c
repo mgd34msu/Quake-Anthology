@@ -79,12 +79,12 @@ bool qa_q1_source_entity_first(const qa_q1_game *game, const char *name,
 
 static bool observer_door(qa_q1_game *game, q1_actor *door, qa_body_state *body,
                           bool *written, qa_error *error) {
-    q1_door_group *group = door->state.map->movement.group;
+    q1_door_group *group = door->map->movement.group;
     qa_actor_id master_id = group && group->count ? group->members[0] : door->owner;
     q1_actor *master = q1_entity(game, master_id);
-    if (!master || master->kind != Q1_MAP || !master->state.map ||
-        master->state.map->movement.position != Q1_MAP_BOTTOM) return true;
-    group = master->state.map->movement.group;
+    if (!master || master->kind != Q1_MAP || !master->map ||
+        master->map->movement.position != Q1_MAP_BOTTOM) return true;
+    group = master->map->movement.group;
     size_t count = group && group->count ? group->count : 1;
     qa_vec3 low = qa_v3(INFINITY, INFINITY, INFINITY);
     qa_vec3 high = qa_v3(-INFINITY, -INFINITY, -INFINITY);
@@ -159,7 +159,7 @@ bool qa_q1_source_observer_body(qa_q1_game *game, qa_actor_id actor, const qa_q1
     for (uint32_t i = 0; i < game->capacity; ++i) {
         q1_actor *entity = game->actors[i];
         if (!entity || !entity->active || !entity->native || entity->kind != Q1_MAP ||
-            !entity->state.map || !q1_alive(game, entity->id) ||
+            !entity->map || !q1_alive(game, entity->id) ||
             (!q1_classnamed(game, entity->id, "func_door") &&
              !q1_classnamed(game, entity->id, "trigger_teleport"))) continue;
         qa_body_state target;
@@ -197,14 +197,14 @@ bool qa_q1_source_observer_body(qa_q1_game *game, qa_actor_id actor, const qa_q1
                 }
             }
             if (destination) {
-                if (destination->kind != Q1_MAP || !destination->state.map) {
+                if (destination->kind != Q1_MAP || !destination->map) {
                     qa_error_set(error, QA_ERROR_UNSUPPORTED, destination->id.slot,
                         "Observer destination has no retained native source mangle");
                     return false;
                 }
                 if (!qa_world_body_read(game->services.world, destination->id, &target, error)) return false;
                 body.origin = target.origin;
-                *view_angles = destination->state.map->mangle;
+                *view_angles = destination->map->mangle;
                 qa_builtin_angle_vectors(*view_angles, &forward, NULL, NULL);
                 body.velocity = qa_vec_scale(forward, 300);
                 *until = game->time + .7;

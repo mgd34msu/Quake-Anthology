@@ -261,40 +261,37 @@ static bool setup_chat(qa_bot_runtime *r, qa_error *e) {
         ok = bot_runtime_variable(r, names[i], defaults[i], &path, e);
         if (!ok) break;
         qa_error local = {0};qa_bot_chat_asset *asset=NULL;
-        if(i<2) {
+        {
             bool language_failure=false;
             ok=chat_asset_setup_load(r->library,(qa_bot_chat_asset_kind)i,path->string,
                 r->chat_system,revision,&asset,&language_failure,&local);
             if(!ok && language_failure) {
                 if(asset->packed_source->missing_root) {
-                    size_t size=strlen(path->string);
+                    size_t size=strlen(asset->view.path);
                     char *message=malloc(size+32);
                     if(!message) {qa_error_set(e,QA_ERROR_MEMORY,0,"Retaining chat missing-root diagnostic");ok=false;}
                     else {
-                        (void)snprintf(message,size+32,"counldn't load %s",path->string);
+                        (void)snprintf(message,size+32,"counldn't load %s",asset->view.path);
                         ok=chat_print(r->chat_system,QA_SCRIPT_ERROR,message,e);free(message);
                     }
                 } else ok=true;
                 if(ok) {qa_bot_chat_asset_release(asset);asset=NULL;}
             } else if(!ok && e) *e=local;
             if(ok && asset) {
-                size_t size=strlen(path->string);char *message=malloc(size+16);
+                size_t size=strlen(asset->view.path);char *message=malloc(size+16);
                 if(!message) {qa_error_set(e,QA_ERROR_MEMORY,0,"Retaining chat loaded diagnostic");ok=false;}
                 else {
-                    (void)snprintf(message,size+16,"loaded %s",path->string);
+                    (void)snprintf(message,size+16,"loaded %s",asset->view.path);
                     ok=chat_print(r->chat_system,QA_SCRIPT_INFO,message,e);free(message);
                 }
             }
-        } else if (!qa_bot_chat_asset_load(r->library, (qa_bot_chat_asset_kind)i, path->string, NULL, &asset, &local)) {
-            ok = source_failure(r, &local);
-            if (!ok && e) *e = local;
         }
         if(ok && (r->chat_system->retired || r->chat_system->revision!=revision))
             ok=bot_runtime_fail(e,"Chat setup retired during its source load");
         if(ok && i==3) {
             const qa_bot_variable *developer=qa_bot_library_variable(r->library,"bot_developer");
             if(asset && developer && developer->value!=0) ok=qa_bot_chat_check_integrity(r->chat_system,asset,e);
-            if(ok && !asset) ok=chat_print(r->chat_system,QA_SCRIPT_INFO,"no rchats",e);
+            if(ok && (!asset || !asset->packed_source->graph.root)) ok=chat_print(r->chat_system,QA_SCRIPT_INFO,"no rchats",e);
         }
         if(ok) {
             qa_bot_chat_asset **target=i==0?&r->chat_system->options.synonyms:

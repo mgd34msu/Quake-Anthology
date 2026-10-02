@@ -59,7 +59,15 @@ typedef struct qa_scene_image {
     const struct qa_scene_image *const *animation;
     size_t animation_count;
     size_t references;
+    bool source_q3, source_mipmap;
+    /* Original decoded embedded model/BSP pixels may admit a recipient upload;
+     * dynamic cinematic and generated control surfaces retain their identity. */
+    bool recipient_upload_pixels;
 } qa_scene_image;
+/* The entered renderer recipient maps a reached immutable version into its
+ * own upload domain. It preserves the original material and model identity. */
+typedef bool (*qa_scene_recipient_image_fn)(void *, const qa_scene_image *,
+    bool allow_picmip, bool mipmap, const qa_scene_image **, qa_error *);
 typedef enum qa_scene_image_usage { QA_IMAGE_USAGE_DEFAULT, QA_IMAGE_USAGE_SKIN,
     QA_IMAGE_USAGE_SPRITE, QA_IMAGE_USAGE_WALL, QA_IMAGE_USAGE_PICTURE, QA_IMAGE_USAGE_SKY } qa_scene_image_usage;
 typedef struct qa_scene_image_options {
@@ -87,6 +95,13 @@ typedef struct qa_scene_image_policy {
 
 qa_scene_resources *qa_scene_resources_create(qa_vfs *, qa_error *);
 void qa_scene_resources_destroy(qa_scene_resources *);
+bool qa_scene_resources_retain(qa_scene_resources *, qa_error *);
+qa_scene_resources *qa_scene_image_owner(const qa_scene_image *);
+qa_scene_resources *qa_scene_image_resource_owner(const qa_scene_image *);
+/* Actual retained parent banks for cross-bank recipient image recipes.
+ * Repeated parents are returned once per image edge; no admission or hold. */
+size_t qa_scene_resources_parent_count(const qa_scene_resources *);
+bool qa_scene_resources_parent_at(const qa_scene_resources *, size_t, qa_scene_resources **);
 /* Live immutable image versions allocated by this resource owner. Array lives
  * in scratch; images borrow until the next owner/image mutation. No loading. */
 bool qa_scene_resources_images(const qa_scene_resources *, qa_arena *,
@@ -240,6 +255,10 @@ typedef struct qa_scene_image_request {
 } qa_scene_image_request;
 /* Borrow the retained successful file admission for this exact image. */
 bool qa_scene_image_request_read(const qa_scene_resources *, const qa_scene_image *, qa_scene_image_request *);
+/* Re-decode the actual retained file using its original content rules, then
+ * upload for a Source recipient. Raw playback/procedural images stay live. */
+bool qa_scene_image_source_q3_variant(qa_scene_resources *, const qa_scene_image *,
+    const qa_q3_image_upload_options *, qa_scene_image **, qa_error *);
 bool qa_scene_image_replace(qa_scene_resources *, const qa_scene_image *, size_t level,
                            const qa_scene_image_level *, qa_scene_image **, qa_error *);
 bool qa_scene_image_sample(qa_scene_resources *, const qa_scene_image *, bool mipmap,
@@ -344,6 +363,10 @@ typedef struct qa_scene_shadow_light {
 typedef enum qa_scene_lighting_kind { QA_LIGHT_VERTEX, QA_LIGHT_Q2_WORLD, QA_LIGHT_Q2_MODEL_SHADOW } qa_scene_lighting_kind;
 typedef enum qa_scene_light_pass { QA_LIGHT_PASS_TEXTURE, QA_LIGHT_PASS_LIGHTMAP,
     QA_LIGHT_PASS_MATERIAL_LIGHTMAP, QA_LIGHT_PASS_MODEL } qa_scene_light_pass;
+typedef enum qa_scene_source_direct {
+    QA_SOURCE_DIRECT_NONE, QA_SOURCE_DIRECT_BEAM, QA_SOURCE_DIRECT_AXIS, QA_SOURCE_DIRECT_SKY,
+    QA_SOURCE_DIRECT_SHADOW_FINISH
+} qa_scene_source_direct;
 typedef struct qa_scene_draw {
     qa_scene_mesh mesh;
     qa_scene_matrix model, mvp;
@@ -365,6 +388,9 @@ typedef struct qa_scene_draw {
     bool luminance_alpha;
     /* Reached Q3 Source stage submission, independent of queue grouping. */
     bool source_primitives;
+    qa_scene_source_direct source_direct;
+    bool source_retain_depth_range;
+    bool source_retain_polygon_offset;
     /* Packed Q3 shader/entity/fog/light order or caller's ordered sequence. */
     uint64_t sort_key;
     uint32_t entity, fog_index, light_mask;
@@ -486,6 +512,8 @@ typedef struct qa_scene_world_options {
     uint32_t q3_overbright;
     const char *q2_sky;
     qa_bytes external_lit;
+    qa_bytes external_entities;
+    bool has_external_entities;
     qa_scene_q1_lightmap_encoding q1_lightmap_encoding;
 } qa_scene_world_options;
 typedef struct qa_scene_world_entity {
@@ -532,8 +560,11 @@ typedef struct qa_scene_world_input {
     const qa_scene_light *lights;
     size_t light_count;
     bool use_projected_lights, source_order;
+    bool source_entity_cells;
     qa_material_source_scratch *source_scratch;
     const qa_scene_image *source_white;
+    qa_scene_recipient_image_fn source_recipient_image;
+    void *source_recipient_context;
     qa_scene_source_diagnostics source_diagnostics;
     qa_scene_source_diagnostics_read_fn source_diagnostics_read;
     void *source_diagnostics_context;
@@ -574,11 +605,12 @@ typedef struct qa_scene_world_input {
 bool qa_scene_world_q1_sky_begin(qa_scene_world *, const qa_scene_world_input *,
     qa_scene_frame *, qa_scene_q1_sky **, qa_error *);
 bool qa_scene_world_q1_sky_finish(qa_scene_q1_sky *, qa_scene_frame *, qa_error *);
-/* World retains a private immutable BSP byte copy and owns render resources;
- * material library and resource service must outlive it. */
+/* World retains its immutable BSP bytes and the actual resource/material owners. */
 bool qa_scene_world_create(const qa_bsp_view *, qa_scene_resources *, qa_material_library *,
                            const qa_scene_world_options *, qa_scene_world **, qa_error *);
 void qa_scene_world_destroy(qa_scene_world *);
+bool qa_scene_world_retain(qa_scene_world *, qa_error *);
+void qa_scene_world_release(qa_scene_world *);
 int32_t qa_scene_world_leaf(const qa_scene_world *, qa_vec3);
 /* Original Q3 compares its area mask once for the parent scene. Portal views
  * share that result while each view can replace the retained PVS marks. */
@@ -591,6 +623,8 @@ bool qa_scene_world_source_prepare_view(qa_scene_world *, qa_scene_world_input *
 bool qa_scene_world_source_light_mask_read(const qa_scene_world *, uint32_t, uint32_t *, qa_error *);
 bool qa_scene_world_source_sky_context(const qa_scene_world *, qa_material_library *,
     const qa_scene_world_input *, qa_scene_frame *, qa_material_context *, qa_error *);
+bool qa_scene_world_source_sky_submit(const qa_scene_world *, const qa_material *, const qa_material *,
+    const qa_scene_mesh *, const qa_material_context *, float far_clip, qa_scene_frame *, qa_error *);
 bool qa_scene_world_submit(qa_scene_world *, const qa_scene_world_input *, qa_scene_frame *, qa_error *);
 bool qa_scene_world_submit_model(qa_scene_world *, uint32_t model, const qa_model_transform *,
                                  const qa_scene_world_input *, uint32_t entity,
@@ -638,6 +672,11 @@ typedef struct qa_scene_model_attachment {
     qa_scene_model *model;
     const qa_scene_model_input *input;
 } qa_scene_model_attachment;
+typedef struct qa_scene_model_indexed_skin {
+    const char *name;
+    uint32_t width, height;
+    qa_bytes indices;
+} qa_scene_model_indexed_skin;
 struct qa_scene_model_input {
     qa_scene_view view;
     qa_model_transform transform;
@@ -656,6 +695,8 @@ struct qa_scene_model_input {
     size_t pose_count;
     const qa_material *custom_material;
     const qa_model_skin_map *custom_skin;
+    /* Per-input MDL skin; uploaded cache entries own the indexed pixels. */
+    const qa_scene_model_indexed_skin *indexed_skin;
     /* Borrowed registration owner for Q3 surface, default and shadow materials.
      * Geometry may belong to another content owner. No library is retained. */
     qa_material_library *material_library;
@@ -669,6 +710,9 @@ struct qa_scene_model_input {
     bool q1_double_eyes;
     bool non_normalized_axis;
     bool source_order, fog_has_surface;
+    bool source_entity_cell;
+    qa_scene_recipient_image_fn source_recipient_image;
+    void *source_recipient_context;
     qa_material_source_scratch *source_scratch;
     qa_scene_source_diagnostics source_diagnostics;
     qa_scene_source_diagnostics_read_fn source_diagnostics_read;

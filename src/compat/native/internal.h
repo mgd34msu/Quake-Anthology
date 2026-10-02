@@ -204,6 +204,7 @@ struct qa_native_declaration {
     uint8_t *json;
     size_t json_size;
     size_t primary_offset, primary_size;
+    bool callbacks;
     qa_json_document *document;
     qa_json_id primary;
     native_region_slot *regions;

@@ -6,6 +6,7 @@
 #include "network_initial_graph.h"
 #include "remote_q1_client.h"
 #include "remote_q2_client.h"
+#include "renderer_materials.h"
 #include "qa/material_library_save.h"
 #include "qa/scene_geometry_save.h"
 #include "qa/source_save.h"
@@ -18,7 +19,7 @@ typedef enum scene_row_kind {
 } scene_row_kind;
 typedef enum scene_origin { SCENE_IMAGES, SCENE_LIBRARY, SCENE_WORLD_OWNER,
     SCENE_MODEL_OWNER, SCENE_FRAME_OWNER, SCENE_LIGHT_OWNER, SCENE_STATIC_AUDIO_OWNER,
-    SCENE_RENDERER_OWNER } scene_origin;
+    SCENE_RENDERER_OWNER, SCENE_LIBRARY_WORLD_OWNER } scene_origin;
 typedef struct scene_row {
     scene_row_kind kind;
     scene_origin origin;
@@ -171,6 +172,10 @@ bool frontend_scene_namespace_capture_images(frontend_scene_namespace *space, qa
         ok=frontend_remote_q2_metadata_read(frontend_remote_q2_at(f,i),&owner,error) &&
             images_owner(space,f,owner.images,&scratch,error);
     }
+    frontend_renderer_materials_view retained; bool present=false;
+    if(ok) ok=frontend_renderer_materials_read(f,&retained,&present,error);
+    if(ok && present) ok=images_owner(space,f,retained.images,&scratch,error);
+    if(ok && present) ok=images_owner(space,f,retained.lightmap_images,&scratch,error);
     qa_arena_destroy(&scratch);
     if (ok) space->images_captured = true;
     if (!ok && error && error->code == QA_OK) fail(error, QA_ERROR_FORMAT, "Actual scene image owner graph is incomplete");
@@ -186,6 +191,23 @@ bool frontend_scene_namespace_capture_library(frontend_scene_namespace *space, u
         if (!material || !material->identity || !pointer_add(space, (scene_row){.kind = SCENE_MATERIAL,
             .origin = SCENE_LIBRARY, .owner = owner, .ordinal = i, .saved = material->identity,
             .installed = material->identity, .pointer = material, .qualified = true}, error)) return false;
+    }
+    return true;
+}
+bool frontend_scene_namespace_capture_library_worlds(frontend_scene_namespace *space,uint64_t owner,
+    const qa_material_library *library,qa_error *error)
+{
+    if(!open(space,false,error) || !owner || !library)
+        return fail(error,QA_ERROR_ARGUMENT,"Material world history requires its actual retained library");
+    for(size_t i=0;i<qa_material_library_record_count(library);++i) {
+        qa_material_library_record_view record;
+        if(!qa_material_library_record_read(library,i,&record)) return false;
+        if(!record.world_identity) continue;
+        bool found=false;
+        for(size_t j=0;j<space->count;++j) if(space->rows[j].kind==SCENE_WORLD &&
+            space->rows[j].installed==record.world_identity) { found=true; break; }
+        if(!found && !number_add(space,SCENE_WORLD,SCENE_LIBRARY_WORLD_OWNER,owner,0,i,
+            record.world_identity,error)) return false;
     }
     return true;
 }
@@ -573,6 +595,18 @@ bool frontend_scene_namespace_bind_library(frontend_scene_namespace *space, uint
         for (size_t j = 0; j < space->count; ++j) if (space->rows[j].pointer == material)
             return fail(error, QA_ERROR_FORMAT, "Decoded libraries share duplicate material destructor authority");
         row->pointer = material; row->installed = material->identity; row->qualified = true;
+        qa_material_library_record_view record;
+        if(!qa_material_library_record_read(library,i,&record)) return false;
+        scene_row *history=position(space,SCENE_WORLD,SCENE_LIBRARY_WORLD_OWNER,owner,0,i);
+        if(history) {
+            if(history->installed!=record.world_identity)
+                return fail(error,QA_ERROR_FORMAT,"Decoded material world history differs from its retained record");
+            history->qualified=true;
+        }
+        if(record.world_identity) {
+            uint64_t key=0;
+            if(!frontend_scene_world_identity_encode(space,record.world_identity,&key,error)) return false;
+        }
     }
     return true;
 }
@@ -616,7 +650,8 @@ static bool row_valid(const scene_row *row)
         (row->origin != SCENE_RENDERER_OWNER || !row->node);
     case SCENE_MATERIAL: return row->origin == SCENE_LIBRARY && row->owner && !row->node && row->saved;
     case SCENE_FRAME: return row->origin == SCENE_FRAME_OWNER && row->owner && !row->node && !row->ordinal;
-    case SCENE_WORLD: return row->origin == SCENE_WORLD_OWNER && row->owner && !row->node && !row->ordinal && row->saved;
+    case SCENE_WORLD: return (row->origin == SCENE_WORLD_OWNER || row->origin == SCENE_LIBRARY_WORLD_OWNER) &&
+        row->owner && !row->node && row->saved && (row->origin == SCENE_LIBRARY_WORLD_OWNER || !row->ordinal);
     case SCENE_MODEL: return (row->origin == SCENE_WORLD_OWNER || row->origin == SCENE_MODEL_OWNER) && row->owner && row->saved &&
         (row->origin == SCENE_WORLD_OWNER ? !row->node : !row->ordinal);
     case SCENE_MESH: return (row->origin == SCENE_WORLD_OWNER || row->origin == SCENE_MODEL_OWNER ||
@@ -631,10 +666,10 @@ static bool row_valid(const scene_row *row)
 static bool prefix(qa_source_save_io *io, frontend_scene_namespace *space, const qa_scene_image_set *images)
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
-    uint8_t magic[4] = {'Q','F','S','I'}; uint32_t version = 4;
+    uint8_t magic[4] = {'Q','F','S','I'}; uint32_t version = 5;
     size_t count = space->count, image_count = space->image_count;
     if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "QFSI", 4) ||
-        !qa_source_save_u32(io, &version) || version != 4 ||
+        !qa_source_save_u32(io, &version) || version != 5 ||
         !qa_source_save_count(io, &count, reading ? io->input.size / 48 : SIZE_MAX / sizeof(scene_row)) ||
         !qa_source_save_count(io, &image_count, count) || (reading && image_count != qa_scene_image_set_count(images))) return false;
     if (reading) { space->image_count = image_count; space->images_captured = true; }
@@ -642,7 +677,7 @@ static bool prefix(qa_source_save_io *io, frontend_scene_namespace *space, const
     for (size_t i = 0; i < count; ++i) {
         scene_row row = reading ? (scene_row){0} : space->rows[i];
         uint32_t kind = row.kind, origin = row.origin;
-        if (!qa_source_save_u32(io, &kind) || kind > SCENE_STATIC_AUDIO || !qa_source_save_u32(io, &origin) || origin > SCENE_RENDERER_OWNER ||
+        if (!qa_source_save_u32(io, &kind) || kind > SCENE_STATIC_AUDIO || !qa_source_save_u32(io, &origin) || origin > SCENE_LIBRARY_WORLD_OWNER ||
             !qa_source_save_u64(io, &row.owner) || !qa_source_save_u64(io, &row.node) ||
             !qa_source_save_u64(io, &row.ordinal) || !qa_source_save_u64(io, &row.saved)) return false;
         row.kind = (scene_row_kind)kind; row.origin = (scene_origin)origin;

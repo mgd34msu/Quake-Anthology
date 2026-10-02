@@ -1,6 +1,7 @@
 #include "remote_q1_private.h"
 #include "internal.h"
 #include "remote_q1_prediction.h"
+#include "remote_q1_skins.h"
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -75,7 +76,7 @@ static bool nq_command(void *context, const qa_network_command *source, qa_q1_co
         .impulse = m->impulse ? m->impulse : row->pending_impulse};
     row->pending_impulse = 0; return true;
 }
-static bool qw_command(void *context, const qa_network_command *source, qa_qw_command *out, qa_error *error)
+static bool qw_command(void *context, const qa_network_command *source, uint64_t now, qa_qw_command *out, qa_error *error)
 {
     frontend_remote_q1 *row = context;
     if (!out || !source || source->movement.kind != QA_MOVEMENT_QUAKEWORLD || !command(row, source, error)) return false;
@@ -84,8 +85,13 @@ static bool qw_command(void *context, const qa_network_command *source, qa_qw_co
         .forward = source_short(m->forward_move), .side = source_short(m->side_move), .up = source_short(m->up_move),
         .msec = (uint8_t)m->milliseconds, .buttons = (uint8_t)m->buttons,
         .impulse = m->impulse ? m->impulse : row->pending_impulse};
-    row->pending_impulse = 0; return true;
+    row->pending_impulse = 0;
+    if (!remote_q1_camera_command(row,out,now,error)) return false;
+    row->view_angles=qa_v3(out->angles[0],out->angles[1],out->angles[2]);
+    return true;
 }
+static bool teleport(void *context,qa_net_client_id id,qa_vec3 *out,bool *present,qa_error *error)
+{ frontend_remote_q1 *row=context; return current(row,id,error) && remote_q1_camera_take_teleport(row,out,present,error); }
 static bool negotiated(frontend_remote_q1 *row, qa_net_client_id id, qa_net_protocol_id protocol, qa_error *error)
 {
     if (!current(row, id, error) || !qa_q1_profile_valid(protocol, error) ||
@@ -117,8 +123,9 @@ static bool game_state(void *context, qa_net_client_id id, const char *const *mo
 static bool skins(void *context, qa_net_client_id id, bool *ready, qa_error *error)
 {
     frontend_remote_q1 *row = context;
-    return ready && current(row, id, error) && row->options.qw_skins &&
-        row->options.qw_skins(row->options.context, &row->options.domain, ready, error) && current(row, id, error);
+    return ready && current(row, id, error) && row->skins &&
+        frontend_remote_q1_skins_resume(row->skins,error) &&
+        frontend_remote_q1_skins_refresh(row->skins,ready,error) && current(row,id,error);
 }
 static bool end(void *context, qa_net_client_id id, uint64_t received, qa_error *error)
 { frontend_remote_q1 *row = context; return current(row, id, error) && frontend_remote_q1_receive_end(row, received, error); }
@@ -148,7 +155,7 @@ bool frontend_remote_q1_hooks(frontend_remote_q1 *row, qa_network_q1_client_hook
         (row->importing ? !row->frontend->source_restoring : row->bound || !remote_q1_mutable(row)))
         return remote_q1_fail(error, QA_ERROR_ARGUMENT, "Q1 hooks require their genuine pending or importing CLIENT owner");
     *out = (qa_network_q1_client_hooks){.context = row, .nq = nq, .qw = qw, .qw_game_state = game_state,
-        .qw_skins = skins, .end = end, .command_nq = nq_command, .command_qw = qw_command,
+        .qw_skins = skins, .end = end, .command_nq = nq_command, .command_qw = qw_command, .qw_teleport = teleport,
         .qw_loss = loss, .sent = sent, .acknowledged = acknowledged, .drop = drop}; return true;
 }
 bool frontend_remote_q1_player_command(frontend_remote_q1 *row, qa_actor_id actor,

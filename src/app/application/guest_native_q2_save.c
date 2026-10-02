@@ -3,6 +3,8 @@
 #include "guest_native_q2_combat.h"
 #include "guest_q2_control.h"
 #include "qa/network.h"
+#include "native_q2_publication.h"
+#include "native_q2_wire_engine.h"
 #include <limits.h>
 
 static bool write_actor(qa_net_writer *writer, const qa_actor_registry *actors,
@@ -81,7 +83,7 @@ bool application_native_q2_restore_finish(application_provider *provider, qa_err
 bool application_native_q2_capture_engine(void *opaque, qa_buffer *out, qa_error *error)
 {
     struct application_native_q2 *engine = opaque;
-    if (!engine || !out || engine->current_client || engine->arguments.count || engine->shutting_down)
+    if (!engine || !out || engine->current_client || engine->disconnect_client || engine->arguments.count || engine->shutting_down)
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 engine continuation requires drained client and command calls");
     qa_application *app = engine->provider->application;
     const char *map = engine->map_name ? qa_strings_cstr(qa_session_strings(app->session), engine->map_name) : "";
@@ -113,11 +115,29 @@ bool application_native_q2_capture_engine(void *opaque, qa_buffer *out, qa_error
         return application_fail(error, QA_ERROR_MEMORY, "Native deferred damage continuation exceeds the engine budget");
     }
     size += 4u + combat.size;
+    qa_buffer publication = {0};
+    if (!application_native_q2_publication_capture(engine, &publication, error)) {
+        qa_buffer_free(&attack); qa_buffer_free(&combat); return false;
+    }
+    if (size > 64u * 1024u * 1024u - 4u || publication.size > 64u * 1024u * 1024u - size - 4u) {
+        qa_buffer_free(&attack); qa_buffer_free(&combat); qa_buffer_free(&publication);
+        return application_fail(error, QA_ERROR_MEMORY, "Native publication continuation exceeds the engine budget");
+    }
+    size += 4u + publication.size;
+    qa_buffer wire = {0};
+    if (!application_native_q2_wire_capture(engine, &wire, error)) {
+        qa_buffer_free(&attack); qa_buffer_free(&combat); qa_buffer_free(&publication); return false;
+    }
+    if (size > 64u * 1024u * 1024u - 4u || wire.size > 64u * 1024u * 1024u - size - 4u) {
+        qa_buffer_free(&attack); qa_buffer_free(&combat); qa_buffer_free(&publication); qa_buffer_free(&wire);
+        return application_fail(error, QA_ERROR_MEMORY, "Original Q2 Engine namespace exceeds the cold budget");
+    }
+    size += 4u + wire.size;
     qa_buffer buffer = {.data = malloc(size), .size = size};
-    if (!buffer.data) { qa_buffer_free(&attack); qa_buffer_free(&combat); return application_fail(error, QA_ERROR_MEMORY, "Retaining native Q2 engine continuation"); }
+    if (!buffer.data) { qa_buffer_free(&attack); qa_buffer_free(&combat); qa_buffer_free(&publication); qa_buffer_free(&wire); return application_fail(error, QA_ERROR_MEMORY, "Retaining native Q2 engine continuation"); }
     qa_net_writer writer; qa_net_writer_init(&writer, buffer.data, buffer.size, error);
     const qa_actor_registry *actors = qa_session_actors(app->session);
-    bool ok = qa_net_write_u32(&writer, UINT32_C(0x4532514e)) && qa_net_write_u32(&writer, 5) &&
+    bool ok = qa_net_write_u32(&writer, UINT32_C(0x4532514e)) && qa_net_write_u32(&writer, 7) &&
         qa_net_write_u32(&writer, (uint32_t)engine->profile) && qa_net_write_u32(&writer, engine->configstring_count) &&
         qa_net_write_u8(&writer, engine->initialized) && qa_net_write_u8(&writer, engine->map_ready) &&
         write_actor(&writer, actors, engine->world_actor, error) &&
@@ -153,7 +173,11 @@ bool application_native_q2_capture_engine(void *opaque, qa_buffer *out, qa_error
     }
     if (ok) ok = qa_net_write_u32(&writer, (uint32_t)attack.size) && qa_net_write_data(&writer, attack.data, attack.size);
     if (ok) ok = qa_net_write_u32(&writer, (uint32_t)combat.size) && qa_net_write_data(&writer, combat.data, combat.size);
+    if (ok) ok = qa_net_write_u32(&writer, (uint32_t)publication.size) && qa_net_write_data(&writer, publication.data, publication.size);
+    if (ok) ok = qa_net_write_u32(&writer, (uint32_t)wire.size) && qa_net_write_data(&writer, wire.data, wire.size);
     qa_buffer_free(&attack); qa_buffer_free(&combat);
+    qa_buffer_free(&publication);
+    qa_buffer_free(&wire);
     if (!ok) { qa_buffer_free(&buffer); return false; }
     buffer.size = qa_net_writer_size(&writer); *out = buffer;
     return true;
@@ -162,14 +186,14 @@ bool application_native_q2_capture_engine(void *opaque, qa_buffer *out, qa_error
 bool application_native_q2_restore_engine(void *opaque, qa_bytes bytes, qa_error *error)
 {
     struct application_native_q2 *engine = opaque;
-    if (!engine || engine->current_client || engine->arguments.count || engine->shutting_down ||
+    if (!engine || engine->current_client || engine->disconnect_client || engine->arguments.count || engine->shutting_down ||
         bytes.size > 64u * 1024u * 1024u)
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 engine restore requires drained source calls");
     for (uint32_t i = 1; i < 257; ++i)
         if (engine->clients[i].inventory_bound)
             return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 restore requires primary inventory retirement before source replacement");
     qa_net_reader reader; qa_net_reader_init(&reader, bytes, error);
-    if (qa_net_read_u32(&reader) != UINT32_C(0x4532514e) || qa_net_read_u32(&reader) != 5 ||
+    if (qa_net_read_u32(&reader) != UINT32_C(0x4532514e) || qa_net_read_u32(&reader) != 7 ||
         qa_net_read_u32(&reader) != (uint32_t)engine->profile ||
         qa_net_read_u32(&reader) != engine->configstring_count)
         return application_fail(error, QA_ERROR_FORMAT, "Native Q2 continuation profile differs from its admitted owner");
@@ -248,6 +272,20 @@ bool application_native_q2_restore_engine(void *opaque, qa_bytes bytes, qa_error
         uint32_t extent = qa_net_read_u32(&reader);
         ok = !reader.failed && qa_net_read_bytes(&reader, extent, &combat_state);
     }
+    application_native_q2_publication_restore *publication = NULL;
+    if (ok) {
+        uint32_t extent = qa_net_read_u32(&reader); qa_bytes state;
+        ok = !reader.failed && qa_net_read_bytes(&reader, extent, &state) &&
+            application_native_q2_publication_restore_prepare(engine, state, map_ready != 0, &publication, error);
+    }
+    application_native_q2_wire_engine *wire = NULL;
+    if (ok) {
+        uint32_t extent = qa_net_read_u32(&reader); qa_bytes state;
+        ok = !reader.failed && qa_net_read_bytes(&reader, extent, &state) &&
+            application_native_q2_wire_restore(engine, state, &wire, error);
+        if (ok && ((map_ready && engine->profile != QA_NATIVE_Q2_CGAME_API2023) != (wire != NULL)))
+            ok = application_fail(error, QA_ERROR_FORMAT, "Original Q2 Engine namespace differs from its real map lifecycle");
+    }
     qa_string_id map_id = 0, spawn_id = 0;
     if (ok) ok = qa_net_reader_finish(&reader) &&
         qa_strings_intern_cstr(qa_session_strings(engine->provider->application->session), map, &map_id, error) &&
@@ -258,6 +296,9 @@ bool application_native_q2_restore_engine(void *opaque, qa_bytes bytes, qa_error
     if (ok) {
         application_native_q2_attack_restore_commit(engine, attack); attack = NULL;
         application_native_q2_combat_restore_commit(engine, combat); combat = NULL;
+        application_native_q2_publication_restore_commit(publication); publication = NULL;
+        application_native_q2_wire_destroy(&engine->wire_engine);
+        engine->wire_engine = wire; wire = NULL;
         for (uint32_t i = 0; i < engine->configstring_count; ++i) free(engine->configstrings[i]);
         free(engine->configstrings); engine->configstrings = config; config = NULL;
         memcpy(engine->clients, clients, sizeof(engine->clients));
@@ -272,5 +313,7 @@ bool application_native_q2_restore_engine(void *opaque, qa_bytes bytes, qa_error
     free(clients); free(map); free(spawn); free(entities);
     application_native_q2_attack_restore_abort(attack);
     application_native_q2_combat_restore_abort(combat);
+    application_native_q2_publication_restore_abort(publication);
+    application_native_q2_wire_destroy(&wire);
     return ok;
 }

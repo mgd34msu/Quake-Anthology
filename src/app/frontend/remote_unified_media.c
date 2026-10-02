@@ -1,44 +1,12 @@
 #include "remote_unified_private.h"
-#include "remote_unified_media.h"
+#include "remote_unified_media_private.h"
 #include "shared_resource_policy.h"
 #include "q3_render_policy.h"
 #include "visual_access.h"
+#include "qa/q3_assets_save.h"
 
 #include <stdlib.h>
 #include <string.h>
-
-typedef struct unified_media_bank {
-    struct unified_media_bank *next;
-    char *content;
-    qa_vfs *files;
-    const qa_product *product;
-    qa_scene_resources *images;
-    qa_material_library *materials;
-    qa_font_library *fonts;
-    qa_audio_bank *sounds;
-} unified_media_bank;
-typedef struct unified_media_model {
-    struct unified_media_model *next;
-    unified_media_bank *bank;
-    char *path;
-    qa_scene_family family;
-    qa_scene_image_options options;
-    uint8_t *palette, *translation;
-    qa_resource *resource;
-    qa_vfs_acquisition opening;
-    qa_model decoded;
-    qa_scene_model *scene;
-    qa_scene_world *world;
-} unified_media_model;
-struct frontend_unified_media {
-    qa_frontend *frontend;
-    qa_executable_recipe *recipe;
-    unified_media_bank *banks;
-    unified_media_model *models;
-    qa_scene_world *world;
-    unified_media_bank *world_bank;
-    bool busy;
-};
 
 static qa_scene_image_options image_options(qa_scene_family family, qa_scene_image_usage usage)
 {
@@ -94,6 +62,34 @@ bool frontend_unified_media_bank(frontend_unified_media *owner, const char *cont
     if (!images || !materials || !fonts || !sounds || !bank(owner, content, &row, error)) return false;
     *images = row->images; *materials = row->materials; *fonts = row->fonts; *sounds = row->sounds; return true;
 }
+bool frontend_unified_media_files(frontend_unified_media *owner, const char *content,
+    qa_vfs **files, const qa_product **product, qa_error *error)
+{
+    unified_media_bank *row;
+    if (!files || !product || !bank(owner, content, &row, error)) return false;
+    *files = row->files; *product = row->product; return true;
+}
+bool frontend_unified_media_q3_assets(frontend_unified_media *owner, const char *content,
+    qa_q3_presentation_assets **out, qa_error *error)
+{
+    unified_media_bank *row;
+    if (!out || !bank(owner, content, &row, error)) return false;
+    if (!row->q3_assets) {
+        qa_q3_presentation_asset_options options = {.provider = {
+            .mounts = row->files, .images = row->images, .materials = row->materials,
+            .family = QA_SCENE_Q3}, .sounds = row->sounds};
+        if (!qa_q3_presentation_assets_create(&options, &row->q3_assets, error)) return false;
+    }
+    *out = row->q3_assets; return true;
+}
+bool frontend_unified_media_q3_assets_read(const frontend_unified_media *owner, const char *content,
+    qa_q3_presentation_assets **out)
+{
+    if (!owner || !content || !out || owner->busy) return false;
+    for (unified_media_bank *row=owner->banks;row;row=row->next)
+        if (!strcmp(row->content,content)) { *out=row->q3_assets; return row->q3_assets!=NULL; }
+    return false;
+}
 bool frontend_unified_media_create(qa_frontend *frontend, qa_executable_recipe *recipe,
     frontend_unified_media **out, qa_error *error)
 {
@@ -117,6 +113,11 @@ bool frontend_unified_media_create(qa_frontend *frontend, qa_executable_recipe *
             if (sidecar && sidecar->product == product->id && length >= 4 &&
                 !strcmp(sidecar->path + length - 4, ".lit") && sidecar->resource)
                 options.external_lit = qa_resource_bytes(sidecar->resource);
+            if (sidecar && sidecar->product == product->id && length >= 4 &&
+                !strcmp(sidecar->path + length - 4, ".ent") && sidecar->resource) {
+                options.external_entities = qa_resource_bytes(sidecar->resource);
+                options.has_external_entities = true;
+            }
         }
         okay = (family != QA_SCENE_Q3 || frontend_q3_world_policy_initialize(frontend, &options, error)) &&
             qa_scene_world_create(&bsp, owner->world_bank->images, owner->world_bank->materials, &options, &owner->world, error);
@@ -161,7 +162,8 @@ bool frontend_unified_media_model(frontend_unified_media *owner, const char *con
     if (!bank(owner, content, &files, error)) return false;
     for (unified_media_model *row = owner->models; row; row = row->next)
         if (row->bank == files && row->family == family && !strcmp(row->path, path) && same_options(&row->options, options)) {
-            *out = (frontend_unified_model){row->resource, &row->opening, row->world ? NULL : &row->decoded, row->scene, row->world}; return true;
+            *out = (frontend_unified_model){.resource=row->resource,.opening=&row->opening,
+                .model=row->world?NULL:&row->decoded,.scene=row->scene,.brush_world=row->world}; return true;
         }
     unified_media_model *row = calloc(1, sizeof(*row));
     if (!row) return frontend_unified_fail(error, QA_ERROR_MEMORY, "Retaining unified model geometry");
@@ -195,7 +197,8 @@ bool frontend_unified_media_model(frontend_unified_media *owner, const char *con
         free(row->palette); free(row->translation); free(row->path); free(row); return false;
     }
     row->next = owner->models; owner->models = row;
-    *out = (frontend_unified_model){row->resource, &row->opening, row->world ? NULL : &row->decoded, row->scene, row->world}; return true;
+    *out = (frontend_unified_model){.resource=row->resource,.opening=&row->opening,
+        .model=row->world?NULL:&row->decoded,.scene=row->scene,.brush_world=row->world}; return true;
 }
 qa_scene_world *frontend_unified_media_world(const frontend_unified_media *owner)
 { return owner ? owner->world : NULL; }
@@ -208,6 +211,9 @@ bool frontend_unified_media_destroy(frontend_unified_media *owner, qa_error *err
 {
     if (!owner) return true;
     if (owner->busy) return frontend_unified_fail(error, QA_ERROR_ARGUMENT, "Unified media cleanup overlaps an actual registration");
+    for (unified_media_bank *row = owner->banks; row; row = row->next)
+        if (row->q3_assets && !qa_q3_assets_idle(row->q3_assets))
+            return frontend_unified_fail(error, QA_ERROR_ARGUMENT, "Unified media retains an active Q3 asset registry");
     qa_scene_world_destroy(owner->world);
     while (owner->models) {
         unified_media_model *row = owner->models; owner->models = row->next;
@@ -217,6 +223,7 @@ bool frontend_unified_media_destroy(frontend_unified_media *owner, qa_error *err
     }
     while (owner->banks) {
         unified_media_bank *row = owner->banks; owner->banks = row->next;
+        qa_q3_presentation_assets_destroy(row->q3_assets);
         qa_audio_bank_destroy(row->sounds); qa_font_library_destroy(row->fonts);
         qa_material_library_destroy(row->materials); qa_scene_resources_destroy(row->images); free(row->content); free(row);
     }

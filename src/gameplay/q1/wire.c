@@ -107,7 +107,7 @@ bool qa_q1_wire_begin_world(qa_q1_game *g, const char *path, uint32_t inline_mod
     wire->loading = true;
     wire->id1 = id1(g);
     if (g->options.max_clients) {
-        if ((size_t)g->options.max_clients > SIZE_MAX / sizeof(*wire->board)) {
+        if (sizeof(*wire->board) > SIZE_MAX / g->options.max_clients) {
             state_free(wire);
             return fail(error, "Q1 source client observation extent exhausted");
         }
@@ -541,7 +541,7 @@ static bool declare_rows(qa_q1_game *g, bool models, const char *const *rows, si
 #define MODEL(path) do { if (!qa_q1_wire_declare_model(g, (path), error)) return false; } while (0)
 #define SOUND(path) do { if (!qa_q1_wire_declare_sound(g, (path), error)) return false; } while (0)
 bool q1_wire_spawn_declarations(qa_q1_game *g, const qa_q1_spawn *spawn, qa_error *error) {
-    if (!g->wire || !g->wire->id1 || !g->wire->loading) return true;
+    if (!g->wire || g->options.program != QA_Q1_ID1 || !g->wire->loading) return true;
     const char *name = spawn->classname;
     int32_t sounds = spawn->map_fields ? spawn->map_fields->sounds : 0;
     uint32_t flags = spawn->spawnflags;

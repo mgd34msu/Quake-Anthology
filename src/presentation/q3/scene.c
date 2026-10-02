@@ -9,6 +9,11 @@ qa_scene_vec4 q3p_color(const uint8_t bytes[4])
 bool qa_q3_presentation_clear(qa_q3_presentation *p, qa_error *error)
 {
     if (!q3p_begin(p, error)) return false;
+    if (p->options.source_state) {
+        qa_material_source_scratch *source = p->options.source_state(p->options.context, error);
+        if (!source || !qa_material_source_entity_scene(source, &p->source_entity_first, error))
+            return q3p_end(p, false);
+    }
     p->entity_count = p->polygon_count = p->vertex_count = p->light_count = 0;
     if (p->options.scene_cleared) p->options.scene_cleared(p->options.context);
     return q3p_end(p, true);
@@ -18,18 +23,38 @@ bool qa_q3_presentation_entity(qa_q3_presentation *p, const qa_q3_ref_entity *en
                                 qa_error *error)
 {
     if (!entity || !q3p_begin(p, error)) return false;
+    qa_material_source_scratch *source = NULL;
+    if (p->options.source_state) {
+        bool available = false;
+        source = p->options.source_state(p->options.context, error);
+        if (!source || !qa_material_source_entity_capacity(source, &available, error)) return q3p_end(p, false);
+        if (!available) return q3p_end(p, true);
+    }
     const qa_material *shader; const qa_model_skin_map *skin; const q3p_model *model;
     bool ok = entity->kind >= QA_Q3_REF_MODEL && entity->kind <= QA_Q3_REF_PORTAL;
     if (!ok) q3p_fail(error, QA_ERROR_FORMAT, "RE_AddRefEntityToScene: bad reType");
-    if (ok && entity->kind != QA_Q3_REF_POLY && entity->kind != QA_Q3_REF_PORTAL)
+    bool source_scene = p->options.source_state || p->options.source_scene_membership;
+    if (ok && !source_scene && entity->kind != QA_Q3_REF_POLY && entity->kind != QA_Q3_REF_PORTAL)
         ok = q3p_shader_get(p->options.assets, entity->custom_shader, &shader, error);
-    if (ok && entity->kind == QA_Q3_REF_MODEL)
+    if (ok && !source_scene && entity->kind == QA_Q3_REF_MODEL)
         ok = q3p_model_get(p->options.assets, entity->model, &model, error) &&
              q3p_skin_get(p->options.assets, entity->custom_skin, &skin, error);
     if (ok && p->entity_count == SIZE_MAX) ok = q3p_fail(error, QA_ERROR_MEMORY, "Q3 scene entity count overflow");
     if (ok) ok = q3p_reserve((void **)&p->entities, &p->entity_capacity,
         p->entity_count + 1, sizeof(*p->entities), error);
-    if (ok) p->entities[p->entity_count++] = *entity;
+    bool admitted = true;
+    if (ok && p->options.source_state) {
+        qa_material_context context = {.entity_color = q3p_color(entity->color),
+            .entity_texcoord = entity->shader_texcoord, .time_offset = entity->shader_time,
+            .shadow_plane = entity->shadow_plane, .non_normalized_axis = entity->non_normalized_axes,
+            .projection_shadow = (entity->flags & 256) != 0};
+        uint32_t ordinal = 0;
+        ok = source && qa_material_source_entity_append(source, &context, &ordinal, &admitted, error);
+        if (ok && admitted && p->entity_count == 0) p->source_entity_first = ordinal;
+        if (ok && admitted && ordinal != p->source_entity_first + p->entity_count)
+            ok = q3p_fail(error, QA_ERROR_ARGUMENT, "Source scene entity membership changed between additions");
+    }
+    if (ok && admitted) p->entities[p->entity_count++] = *entity;
     return q3p_end(p, ok);
 }
 
@@ -67,12 +92,21 @@ bool qa_q3_presentation_light(qa_q3_presentation *p, qa_vec3 origin, float radiu
                                qa_vec3 color, bool additive, qa_error *error)
 {
     if (!q3p_begin(p, error)) return false;
+    qa_material_source_scratch *source = NULL;
+    if (p->options.source_state) {
+        bool available = false;
+        source = p->options.source_state(p->options.context, error);
+        if (!source || !qa_material_source_light_capacity(source, &available, error)) return q3p_end(p, false);
+        if (!available) return q3p_end(p, true);
+    }
     if (radius <= 0) return q3p_end(p, true);
     bool ok = p->light_count < SIZE_MAX;
     if (!ok) q3p_fail(error, QA_ERROR_MEMORY, "Q3 scene light count overflow");
     if (ok) ok = q3p_reserve((void **)&p->lights, &p->light_capacity,
         p->light_count + 1, sizeof(*p->lights), error);
-    if (ok) p->lights[p->light_count++] = (qa_scene_light){.origin = origin, .radius = radius,
+    bool admitted = true;
+    if (ok && source) ok = qa_material_source_light_append(source, &admitted, error);
+    if (ok && admitted) p->lights[p->light_count++] = (qa_scene_light){.origin = origin, .radius = radius,
         .color = color, .additive = additive, .family = QA_SCENE_Q3};
     return q3p_end(p, ok);
 }

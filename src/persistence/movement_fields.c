@@ -43,8 +43,17 @@ bool qa_persistence_ground(qa_source_save_io *io, qa_movement_ground *value)
 bool qa_persistence_movement(qa_source_save_io *io, qa_movement_state *state)
 {
     if (!state) return false;
+    if (io->direction == QA_SOURCE_SAVE_WRITE && (unsigned)state->kind > QA_MOVEMENT_Q3)
+        return fail(io, "Invalid saved movement family");
     uint32_t kind = state->kind;
-    if (!qa_source_save_u32(io, &kind) || kind > QA_MOVEMENT_Q3) return fail(io, "Invalid saved movement family");
+    const uint32_t wide_tag = UINT32_C(0x80000000);
+    if (io->direction == QA_SOURCE_SAVE_WRITE && state->kind == QA_MOVEMENT_Q2_CLASSIC &&
+        state->data.q2.wide_coordinates) kind |= wide_tag;
+    if (!qa_source_save_u32(io, &kind)) return false;
+    bool wide = (kind & wide_tag) != 0;
+    kind &= ~wide_tag;
+    if (kind > QA_MOVEMENT_Q3 || (wide && kind != QA_MOVEMENT_Q2_CLASSIC))
+        return fail(io, "Invalid saved movement family");
     state->kind = (qa_movement_kind)kind;
     switch (state->kind) {
     case QA_MOVEMENT_NETQUAKE: {
@@ -64,10 +73,17 @@ bool qa_persistence_movement(qa_source_save_io *io, qa_movement_state *state)
     }
     case QA_MOVEMENT_Q2_CLASSIC: {
         qa_q2_movement_state *s = &state->data.q2;
+        s->wide_coordinates = wide;
         I(s->type);
-        for (size_t i = 0; i < 3; ++i)
-            if (!short_field(io, &s->origin_eighths[i]) || !short_field(io, &s->velocity_eighths[i])) return false;
-        U(s->flags); FIELD(u8, s->time_eight_ms);
+        for (size_t i = 0; i < 3; ++i) {
+            if (wide) {
+                I(s->wide.origin_eighths[i]); I(s->wide.velocity_eighths[i]);
+            }
+            else if (!short_field(io, &s->origin_eighths[i]) || !short_field(io, &s->velocity_eighths[i])) return false;
+        }
+        U(s->flags);
+        if (wide) { FIELD(u16, s->wide.time_ms); }
+        else { FIELD(u8, s->time_eight_ms); }
         if (!short_field(io, &s->gravity)) return false;
         for (size_t i = 0; i < 3; ++i) if (!short_field(io, &s->delta_angle_shorts[i])) return false;
         return true;

@@ -30,6 +30,7 @@ struct qa_bot_chat_asset {
     uint64_t loading_revision;
     bool source_loaded;
     uint32_t *initial_types, *initial_messages;
+    uint32_t *graph_templates,*graph_pieces,*graph_alternatives,*graph_keys,*graph_replies,*graph_messages;
     const qa_bot_chat_text_source *loading_path,*loading_name;
     struct qa_bot_chat_asset *next;
 };

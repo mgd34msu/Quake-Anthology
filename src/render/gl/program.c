@@ -42,7 +42,7 @@ static const char stage_vertex[] =
 
 /* Q2 rerelease receiver equations retain the donor's bottom-left atlas UVs,
  * cone projection bias, 3x2 point-light faces, and 2x2 PCF. */
-static const char stage_fragment[] =
+static const char *const stage_fragment[] = {
     "#version 120\n"
     "uniform sampler2D primaryTexture;\n"
     "uniform sampler2D secondaryTexture;\n"
@@ -75,7 +75,7 @@ static const char stage_fragment[] =
     "varying vec2 coordinates1;\n"
     "varying vec3 worldPosition;\n"
     "varying vec3 worldNormal;\n"
-    "varying float clipDistance;\n"
+    "varying float clipDistance;\n",
     "float shadowFactor(int i, bool model) {\n"
     "  if (u_light_shadow[i] == 0.0) return 1.0;\n"
     "  vec2 rect_lo = u_light_atlas[i].xy;\n"
@@ -127,7 +127,7 @@ static const char stage_fragment[] =
     "  }\n"
     "  return lit*0.25;\n"
     "}\n"
-    "vec3 dynamicLights() {\n"
+    , "vec3 dynamicLights() {\n"
     "  vec3 shade=vec3(0.0);\n"
     "  for (int i=0; i<8; ++i) {\n"
     "    if (i>=u_light_count) break;\n"
@@ -181,7 +181,7 @@ static const char stage_fragment[] =
     "  if(alphaMode==2&&color.a>=0.5) discard;\n"
     "  if(alphaMode==3&&color.a<0.5) discard;\n"
     "  gl_FragColor=color;\n"
-    "}\n";
+    "}\n"};
 
 static const char quad_vertex[] =
     "#version 120\n"
@@ -255,17 +255,18 @@ static bool program_status(qa_gl_renderer *renderer, GLuint program,
 }
 
 static bool compile_program(qa_gl_renderer *renderer, const char *vertex,
-                            const char *fragment, bool attributes, GLuint *out,
+                            const char *const *fragments, GLsizei fragment_count, bool attributes, GLuint *out,
                             qa_error *error)
 {
     GLuint shaders[2] = {0, 0}, program = 0;
     const GLenum kinds[2] = {GL_VERTEX_SHADER, GL_FRAGMENT_SHADER};
-    const char *sources[2] = {vertex, fragment};
     bool ok = false;
     for (size_t i = 0; i < 2; ++i) {
-        if (strlen(sources[i]) > INT_MAX) {
+        const char *const *sources=i?fragments:&vertex;
+        GLsizei count=i?fragment_count:1;
+        if (count<=0) {
             qa_error_set(error, QA_ERROR_MEMORY, 0,
-                         "Embedded OpenGL shader exceeds signed length");
+                         "Embedded OpenGL shader requires its source segments");
             goto done;
         }
         shaders[i] = renderer->gl.CreateShader(kinds[i]);
@@ -274,9 +275,7 @@ static bool compile_program(qa_gl_renderer *renderer, const char *vertex,
                          "OpenGL could not allocate a shader");
             goto done;
         }
-        GLint length = (GLint)strlen(sources[i]);
-        const GLchar *source = sources[i];
-        renderer->gl.ShaderSource(shaders[i], 1, &source, &length);
+        renderer->gl.ShaderSource(shaders[i], count, sources, NULL);
         renderer->gl.CompileShader(shaders[i]);
         if (!shader_status(renderer, shaders[i], error)) goto done;
     }
@@ -403,10 +402,10 @@ static bool fog_uniforms(qa_gl_renderer *renderer, unsigned pass,
 bool gl_programs_create(qa_gl_renderer *renderer, qa_error *error)
 {
     gl_programs *p = &renderer->programs;
-    if (!compile_program(renderer, stage_vertex, stage_fragment, true,
+    if (!compile_program(renderer, stage_vertex, stage_fragment, 3, true,
                          &p->stage, error) ||
         !stage_uniforms(renderer, error) ||
-        !compile_program(renderer, quad_vertex, opacity_fragment, false,
+        !compile_program(renderer, quad_vertex, (const char *[]){opacity_fragment}, 1, false,
                          &p->opacity, error) ||
         !uniform(renderer, p->opacity, "backdrop",
                  &p->opacity_uniform.backdrop, error) ||
@@ -414,7 +413,7 @@ bool gl_programs_create(qa_gl_renderer *renderer, qa_error *error)
                  &p->opacity_uniform.result, error) ||
         !uniform(renderer, p->opacity, "opacity",
                  &p->opacity_uniform.opacity, error) ||
-        !compile_program(renderer, quad_vertex, gamma_fragment, false,
+        !compile_program(renderer, quad_vertex, (const char *[]){gamma_fragment}, 1, false,
                          &p->gamma, error) ||
         !uniform(renderer, p->gamma, "rawColor", &p->gamma_uniform.raw,
                  error) ||
@@ -425,7 +424,7 @@ bool gl_programs_create(qa_gl_renderer *renderer, qa_error *error)
     const char *fog_fragments[3] = {fog_global_fragment, fog_height_fragment,
                                     fog_sky_fragment};
     for (unsigned i = 0; i < 3; ++i)
-        if (!compile_program(renderer, fog_vertex, fog_fragments[i], false,
+        if (!compile_program(renderer, fog_vertex, fog_fragments+i, 1, false,
                              &p->fog[i], error) ||
             !fog_uniforms(renderer, i, error)) return false;
     renderer->gl.UseProgram(p->stage);

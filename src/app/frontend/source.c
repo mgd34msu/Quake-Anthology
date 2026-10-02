@@ -42,6 +42,7 @@
 #include "material_movies.h"
 #include "material_movie_bindings.h"
 #include "qa/material_source_scratch.h"
+#include "source_acoustics.h"
 #include "q3_color_policy.h"
 #include "qa/render_controls.h"
 #include "visual_access.h"
@@ -137,6 +138,7 @@ struct source_render_scope {
 static bool render_enter(void *,const qa_q3_host *,const qa_qvm_call *,
     const qa_q3_refdef *,void **,qa_error *);
 static void render_leave(void *,void *,bool);
+static void body_scene_clear(frontend_source_lease *);
 static bool body_scene_prepare(frontend_source_lease *,qa_q3_scene_options *,qa_error *);
 static bool body_scene_submit(frontend_source_lease *,const qa_q3_scene_options *,qa_scene_frame *,qa_error *);
 static void source_retry_retirement(frontend_source *);
@@ -240,7 +242,8 @@ static bool time_refresh(frontend_source_lease *lease,bool subscriptions,qa_erro
     if (time_current(lease)) for (size_t i=0;i<suppressed;++i) {
         qa_error cleanup={0};
         if (!qa_cvars_observer_suppress(mirror,lease->time_mirror_tokens[i],false,&cleanup)) {
-            if (ok && error) *error=cleanup; ok=false;
+            if (ok && error) *error=cleanup;
+            ok=false;
         }
     }
     return ok;
@@ -758,6 +761,16 @@ static qa_material_source_scratch *source_scratch(frontend_source *source,qa_err
     if (!controls) { frontend_fail(error,QA_ERROR_ARGUMENT,"Source draw lacks its actual physical renderer"); return NULL; }
     return qa_render_controls_source_scratch(controls,error);
 }
+static qa_material_source_scratch *source_state(void *context,qa_error *error)
+{
+    frontend_source *source=context;
+    if (source && source->constructed && source->leases && source->frontend &&
+        source->application==source->frontend->application)
+        for (frontend_source *row=source->frontend->sources;row;row=row->next)
+            if (row==source) return source_scratch(source,error);
+    frontend_fail(error,QA_ERROR_ARGUMENT,"Source renderer state lost its retained physical namespace");
+    return NULL;
+}
 static bool diagnostics_read(void *context,qa_scene_source_diagnostics *out,qa_error *error)
 {
     frontend_source *source=context;
@@ -827,8 +840,21 @@ static bool submit_view(void *context,const qa_q3_scene_options *options,qa_scen
 static void scene_cleared(void *context)
 {
     frontend_source *source=context;
-    for (frontend_source_lease *lease=source->lease_list;lease;lease=lease->next)
+    for (frontend_source_lease *lease=source->lease_list;lease;lease=lease->next) {
         frontend_equipment_source_clear(lease->equipment);
+        body_scene_clear(lease);
+    }
+}
+static bool scene_completed(void *context,const qa_q3_refdef *definition,const qa_q3_scene_options *options,
+    const qa_q3_ref_entity *entities,size_t entity_count,const qa_q3_scene_polygon *polygons,size_t polygon_count,
+    const qa_scene_vertex *vertices,size_t vertex_count,const qa_scene_light *lights,size_t light_count,qa_error *error)
+{
+    frontend_source *source=context; source_render_scope *scope=source->render_scope;
+    (void)options; (void)entities; (void)entity_count; (void)polygons; (void)polygon_count;
+    (void)vertices; (void)vertex_count; (void)lights; (void)light_count;
+    if (!render_current(source,scope) || scope->definition!=definition)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Source scene completion lost its actual reached render scope");
+    scene_cleared(source); return true;
 }
 static void float_word(uint8_t *out, float value)
 {
@@ -884,7 +910,7 @@ static bool update_screen(void *context, qa_error *error)
         return true;
     }
     if (frontend->cpu) return qa_cpu_execute(frontend->cpu, &frontend->frame, error) && qa_cpu_present_frame(frontend->cpu, error);
-    return qa_gl_execute(frontend->gl, &frontend->frame, error) && qa_gl_finish(frontend->gl, error) && qa_display_swap(frontend->display, error);
+    return qa_gl_execute(frontend->gl, &frontend->frame, error) && qa_gl_finish(frontend->gl, error) && qa_gl_swap(frontend->gl, error);
 }
 static void common_print(void *context, const char *text)
 {
@@ -1077,14 +1103,14 @@ bool frontend_source_retire_client_configuration(qa_frontend *f,qa_application *
     }
     if(!qa_application_q3_client_configuration_retiring(app,held))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Old CLIENT configuration loan changed during checked drain");
-    for(const frontend_source *source=f->sources;source;source=source->next) {
-        if(source->owner!=held->scope.provider || source->launch_seat!=held->scope.seat) continue;
-        if(retired_client_group(source,held,profile))
+    for(const frontend_source *remaining=f->sources;remaining;remaining=remaining->next) {
+        if(remaining->owner!=held->scope.provider || remaining->launch_seat!=held->scope.seat) continue;
+        if(retired_client_group(remaining,held,profile))
             return frontend_fail(error,QA_ERROR_ARGUMENT,"Old CLIENT drain retained its source key profile group");
-        for(const frontend_source_lease *lease=source->lease_list;lease;lease=lease->next)
+        for(const frontend_source_lease *lease=remaining->lease_list;lease;lease=lease->next)
             if(lease->cvars==held->cvars)
                 return frontend_fail(error,QA_ERROR_ARGUMENT,"Old CLIENT drain retained an active registry alias");
-        for(const frontend_source_lease *lease=source->retired_leases;lease;lease=lease->next)
+        for(const frontend_source_lease *lease=remaining->retired_leases;lease;lease=lease->next)
             if(lease->cvars==held->cvars)
                 return frontend_fail(error,QA_ERROR_ARGUMENT,"Old CLIENT drain retained a checked retirement alias");
     }
@@ -1167,9 +1193,9 @@ static bool construct_source(frontend_source *source, const qa_q3_host_options *
         .clock = {source, milliseconds}, .seat = source->seat, .owner = source->identity,
         .viewport = {0, 0, frontend->width, frontend->height}, .near_clip = 4, .far_clip = 16384,
         .identity_light = 1, .lod_scale = 5, .rail_core_width = 6, .rail_ring_width = 16, .rail_segment_length = 32,
-        .context = source, .audio_actor = source_actor, .listener = listener, .music = music,
+        .context = source, .source_state=source_state, .audio_actor = source_actor, .listener = listener, .music = music,
         .frame_number = frame_number, .milliseconds = source_milliseconds, .audio_bus = audio_bus,
-        .prepare_view = prepare_view, .submit_view = submit_view, .scene_cleared=scene_cleared,
+        .prepare_view = prepare_view, .submit_view = submit_view, .scene_cleared=scene_cleared,.scene_completed=scene_completed,
         .prepare_picture=prepare_picture,.video_frame=frontend_material_movies_frontend_resolve,.video_context=frontend,
         .remap = source_remap, .print = print_source};
     if (ok && !restoring) ok=frontend_q3_renderer_options_read(frontend,&presentation,error);
@@ -1423,8 +1449,8 @@ bool frontend_source_services(void *context, qa_application *application, qa_act
     host->sound_bank = source->sounds;
     if (source->private_map)
         host->collision=(qa_q3_host_collision_services){source,source_map_geometry,source_map_load};
-    host->presentation = (qa_q3_host_presentation_services){source, source->presentation,
-        source->fonts, configuration, update_screen};
+    host->presentation = (qa_q3_host_presentation_services){.context=source,.seat=source->presentation,
+        .fonts=source->fonts,.configuration=configuration,.update_screen=update_screen};
     host->common = (qa_q3_host_common_services){lease, common_print, common_milliseconds,
         common_calendar, host->common.arguments ? common_arguments : NULL,
         (host->common.client_command || frontend_network_remote(frontend)) ? common_command : NULL, host->common.installed_mods ? common_mods : NULL,
@@ -1444,6 +1470,7 @@ typedef struct source_body_ref {
     qa_application_q3_body_part part;
     uint32_t helper;
     qa_q3_ref_entity ref;
+    const qa_resource *resource;
     bool base;
 } source_body_ref;
 struct source_body_draw {
@@ -1530,19 +1557,16 @@ static bool body_submit(void *context,const qa_application_q3_body_draw *view,qa
     if (!ref || !handled || !body_actor(context,view,actor,&hidden,&selected,error)) return false;
     *handled=false;
     if (!selected) return true;
-    source_body_draw *draw=view->token; bool matched=false;
-    for (size_t i=0;i<draw->count;++i) for (size_t j=0;j<draw->components[i].bodies.count;++j) {
-        qa_application_q3_component_actor body;
-        if (!qa_application_q3_component_body_at(&draw->components[i].bodies,j,&body)) return false;
-        if (!qa_actor_id_equal(body.actor,actor)) continue;
-        for (size_t k=0;k<body.count;++k) if (body.parts[k].part==part) matched=true;
-    }
-    if (!matched) return true;
+    source_body_draw *draw=view->token;
+    qa_q3_model_opening opening;
+    if (ref->kind!=QA_Q3_REF_MODEL || ref->model<=0 ||
+        !qa_q3_assets_model_opening(draw->lease->source->assets,(size_t)(ref->model-1),
+            QA_Q3_MODEL_PRIMARY_OPENING,&opening,error)) return false;
     if (draw->ref_count==SIZE_MAX/sizeof(*draw->refs))
         return frontend_fail(error,QA_ERROR_MEMORY,"Source body capture extent overflow");
     source_body_ref *refs=realloc(draw->refs,(draw->ref_count+1)*sizeof(*refs));
     if (!refs) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining actual primary body pose");
-    draw->refs=refs; refs[draw->ref_count++]=(source_body_ref){actor,part,helper,*ref,base};
+    draw->refs=refs; refs[draw->ref_count++]=(source_body_ref){actor,part,helper,*ref,opening.resource,base};
     *handled=true; return body_current(context,view);
 }
 static void body_release(void *context,qa_application_q3_body_draw *view)
@@ -1553,6 +1577,10 @@ static void body_release(void *context,qa_application_q3_body_draw *view)
     if (lease->body_draw==draw) lease->body_draw=NULL;
     free(draw->components); free(draw->refs); free(draw); view->token=NULL;
     time_leave(lease);
+}
+static void body_scene_clear(frontend_source_lease *lease)
+{
+    if (lease->body_draw) lease->body_draw->ref_count=0;
 }
 static bool body_scene_prepare(frontend_source_lease *lease,qa_q3_scene_options *options,qa_error *error)
 {
@@ -1572,21 +1600,60 @@ static bool body_scene_submit(frontend_source_lease *lease,const qa_q3_scene_opt
     if (!body_current(lease,&view)) return frontend_fail(error,QA_ERROR_ARGUMENT,"Body scene lost its retained component receipts");
     for (size_t i=0;i<draw->ref_count;++i) {
         const source_body_ref *primary=draw->refs+i;
+        bool visible=true;
+        for (size_t j=0;j<draw->count;++j) for (size_t k=0;k<draw->components[j].bodies.count;++k) {
+            qa_application_q3_component_actor body;
+            if (!qa_application_q3_component_body_at(&draw->components[j].bodies,k,&body)) return false;
+            if (!qa_actor_id_equal(primary->actor,body.actor)) continue;
+            if (!body.count) visible=false;
+            for (size_t m=0;m<body.count;++m)
+                if ((primary->part==QA_APPLICATION_Q3_BODY || body.parts[m].part==QA_APPLICATION_Q3_BODY ||
+                    body.parts[m].part==primary->part) && !body.parts[m].base) visible=false;
+        }
+        uint32_t order=draw->first_order+(uint32_t)i;
+        if ((!primary->base || visible) && !qa_q3_presentation_source_body_pass(lease->source->presentation,
+            &primary->ref,lease->source->assets,&primary->ref,draw->entry.source.source_milliseconds,
+            options,order,frame,error)) return false;
+        bool posed=false;
+        for (size_t j=0;j<i;++j)
+            if (qa_actor_id_equal(draw->refs[j].actor,primary->actor) && draw->refs[j].part==primary->part &&
+                draw->refs[j].resource==primary->resource) { posed=true; break; }
+        if (posed) continue;
         for (size_t j=0;j<draw->count;++j) for (size_t k=0;k<draw->components[j].bodies.count;++k) {
             qa_application_q3_component_actor body;
             if (!qa_application_q3_component_body_at(&draw->components[j].bodies,k,&body)) return false;
             if (!qa_actor_id_equal(primary->actor,body.actor)) continue;
             for (size_t m=0;m<body.count;++m) {
                 const qa_application_q3_component_part *part=body.parts+m;
-                if (part->part!=primary->part) continue;
-                uint32_t order=draw->first_order+(uint32_t)i;
-                if (part->base && primary->base && !qa_q3_presentation_source_body_pass(lease->source->presentation,
-                    &primary->ref,lease->source->assets,&primary->ref,draw->entry.source.source_milliseconds,
-                    options,order,frame,error)) return false;
-                for (size_t n=0;n<part->count;++n)
-                    if (!qa_q3_presentation_source_body_pass(lease->source->presentation,&primary->ref,
+                if (primary->part!=QA_APPLICATION_Q3_BODY && part->part!=QA_APPLICATION_Q3_BODY && part->part!=primary->part) continue;
+                for (size_t n=0;n<part->count;++n) {
+                    size_t occurrence=0; bool seen=false,equal;
+                    for (size_t x=0;x<=m;++x) {
+                        const qa_application_q3_component_part *prior=body.parts+x;
+                        if (prior->helper!=part->helper) continue;
+                        size_t limit=x==m?n:prior->count;
+                        for (size_t y=0;y<limit;++y) {
+                            if (!qa_q3_presentation_source_body_material_equal(lease->source->presentation,
+                                draw->components[j].bodies.assets,part->passes+n,prior->passes+y,&equal,error)) return false;
+                            if (equal) ++occurrence;
+                        }
+                    }
+                    for (size_t x=0;x<m && !seen;++x) {
+                        const qa_application_q3_component_part *prior=body.parts+x;
+                        if (prior->helper==part->helper || (primary->part!=QA_APPLICATION_Q3_BODY &&
+                            prior->part!=QA_APPLICATION_Q3_BODY && prior->part!=primary->part)) continue;
+                        size_t matches=0;
+                        for (size_t y=0;y<prior->count;++y) {
+                            if (!qa_q3_presentation_source_body_material_equal(lease->source->presentation,
+                                draw->components[j].bodies.assets,part->passes+n,prior->passes+y,&equal,error)) return false;
+                            if (equal) ++matches;
+                        }
+                        if (matches>occurrence) seen=true;
+                    }
+                    if (!seen && !qa_q3_presentation_source_body_pass(lease->source->presentation,&primary->ref,
                         draw->components[j].bodies.assets,part->passes+n,draw->components[j].bodies.time_ms,
                         options,order,frame,error)) return false;
+                }
             }
         }
     }
@@ -2031,7 +2098,8 @@ bool frontend_world_change_ready(void *context, qa_application *application, qa_
     if (!frontend_cinematic_capture_ready(frontend))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Finish or skip the cinematic before changing worlds");
     return frontend_owners_idle(frontend) && frontend_campaign_ready(frontend) ?
-        frontend_tools_world_change_ready(frontend,error) && frontend_network_world_change_ready(frontend,error) :
+        frontend_tools_world_change_ready(frontend,error) && frontend_network_world_change_ready(frontend,error) &&
+        (!frontend->audio || qa_audio_engine_acoustics_release(frontend->audio,error)) :
         frontend_fail(error,QA_ERROR_ARGUMENT,"World change requires idle frontend child owners");
 }
 bool frontend_world_retired(void *context, qa_application *application, qa_error *error)
@@ -2123,6 +2191,21 @@ bool frontend_source_group_read(const qa_frontend *frontend, size_t index, front
     view.music=source->music_attached?qa_audio_engine_bus_music(frontend->audio,source->identity):source->music;
     *out=view; return true;
 }
+bool frontend_source_acoustics_shared(const qa_frontend *f,bool *out,qa_error *error)
+{
+    if (!f || !out || !f->application) return frontend_fail(error,QA_ERROR_ARGUMENT,"Acoustic source roster requires its actual frontend");
+    *out=true;
+    for (const frontend_source *source=f->sources;source;source=source->next) {
+        if (!source->constructed || source->frontend!=f || source->application!=f->application ||
+            source->role_operations || (!source->map_resource!=!source->geometry))
+            return frontend_fail(error,QA_ERROR_ARGUMENT,"Acoustic source roster retains an incomplete or entered role");
+        for (const frontend_source_lease *lease=source->lease_list;lease;lease=lease->next)
+            if (lease->source!=source || lease->released || lease->time_busy || lease->body_draw)
+                return frontend_fail(error,QA_ERROR_ARGUMENT,"Acoustic source roster retains its actual Draw borrower");
+        if (source->private_map) *out=false;
+    }
+    return true;
+}
 bool frontend_source_group_q3_ready(const qa_frontend *f,size_t index,
     const qa_q3_presentation_options *p,const qa_q3_presentation_asset_options *a,qa_error *error)
 {
@@ -2131,7 +2214,7 @@ bool frontend_source_group_q3_ready(const qa_frontend *f,size_t index,
     if (!f || !f->application || f->stepping || !source || !source->constructed ||
         source->frontend!=f || source->application!=f->application || !source->leases || !p || !a ||
         p->assets!=source->assets || p->audio!=f->audio || p->clock.context!=source || p->clock.sample!=milliseconds ||
-        p->seat!=source->seat || p->owner!=source->identity || p->context!=source ||
+        p->seat!=source->seat || p->owner!=source->identity || p->context!=source || p->source_state!=source_state ||
         p->far_clip!=16384 || p->lod_scale!=5 || p->lod_bias ||
         p->rail_core_width!=6 || p->rail_ring_width!=16 || p->rail_segment_length!=32 ||
         p->audio_actor!=source_actor || p->listener!=listener || p->music!=music ||
@@ -2139,6 +2222,7 @@ bool frontend_source_group_q3_ready(const qa_frontend *f,size_t index,
         p->system_movie || p->prepare_picture!=prepare_picture ||
         p->video_frame!=frontend_material_movies_frontend_resolve || p->video_context!=f ||
         p->prepare_view!=prepare_view || p->submit_view!=submit_view || p->scene_cleared!=scene_cleared ||
+        p->scene_completed!=scene_completed ||
         p->remap!=source_remap || p->print!=print_source ||
         a->provider.mounts!=source->mounts || a->provider.images!=source->images ||
         a->provider.materials!=source->materials || a->provider.family!=QA_SCENE_Q3 ||

@@ -122,7 +122,7 @@ static bool contents(q2_weapon_call *c, qa_vec3 origin, int32_t *out, qa_error *
     return true;
 }
 static bool lead(q2_weapon_call *c, qa_vec3 start, qa_vec3 direction, float damage, float kick,
-                 float hs, float vs, int mod, qa_error *e) {
+                 float hs, float vs, int mod, bool shotgun, qa_error *e) {
     qa_body_state own;
     if (!qa_world_body_read(c->game->services.world, c->actor->id, &own, e))
         return false;
@@ -217,7 +217,9 @@ static bool lead(q2_weapon_call *c, qa_vec3 start, qa_vec3 direction, float dama
                 }
             }
         } else if (!sky(&trace)) {
-            if (!q2_event(c, QA_BUILTIN_IMPACT, mod, trace.end, trace.contact_plane.normal, e))
+            if (!q2_event_named(c, QA_BUILTIN_IMPACT,
+                shotgun ? "q2:shotgun" : "q2:gunshot",
+                mod, trace.end, trace.contact_plane.normal, e))
                 return false;
             if (!q2_noise_for_actor(c->game, c->actor->id, trace.end, true, e))
                 return false;
@@ -239,15 +241,15 @@ static bool lead(q2_weapon_call *c, qa_vec3 start, qa_vec3 direction, float dama
                 return false;
             water_end = trace.end;
         }
-        if (!q2_event(c, QA_BUILTIN_BEAM, 11, water_start, water_end, e))
+        if (!q2_event_named(c, QA_BUILTIN_BEAM, "q2:bubble-trail", 11, water_start, water_end, e))
             return false;
     }
     return true;
 }
 bool q2_bullet(q2_weapon_call *c, qa_vec3 start, qa_vec3 direction, float damage, float kick,
-               float hs, float vs, int count, int mod, qa_error *e) {
+               float hs, float vs, int count, int mod, bool shotgun, qa_error *e) {
     for (int i = 0; i < count && q2_actor_live(c->game, c->actor->id); ++i)
-        if (!lead(c, start, direction, damage, kick, hs, vs, mod, e))
+        if (!lead(c, start, direction, damage, kick, hs, vs, mod, shotgun, e))
             return false;
     return true;
 }
@@ -324,8 +326,9 @@ static bool rail_run(q2_weapon_call *c, qa_vec3 start, qa_vec3 direction, float 
         if (!c->rerelease)
             query.start = trace.end;
     }
-    return q2_event(c, QA_BUILTIN_BEAM, mod, start, trace.end, e) &&
-           (!(water && !c->rerelease) || q2_event(c, QA_BUILTIN_BEAM, 12, start, trace.end, e)) &&
+    return q2_event_named(c, QA_BUILTIN_BEAM, "q2:rail", mod, start, trace.end, e) &&
+           (!(water && !c->rerelease) || q2_event_named(c, QA_BUILTIN_BEAM,
+                "q2:rail-water", 12, start, trace.end, e)) &&
            q2_noise_for_actor(c->game, c->actor->id, trace.end, true, e);
 }
 q2_trace_frame *q2_scratch_acquire(qa_q2_game *g, qa_error *e) {
@@ -400,7 +403,8 @@ bool q2_heatbeam(q2_weapon_call *c, qa_vec3 start, qa_vec3 direction, float dama
         water = true;
         water_start = trace.end;
         if (qa_vec_length(qa_vec_sub(start, water_start)) != 0 &&
-            !q2_event(c, QA_BUILTIN_IMPACT, 44, water_start, trace.contact_plane.normal, e))
+            !q2_event_named(c, QA_BUILTIN_IMPACT, "q2:heatbeam_sparks", 44,
+                water_start, trace.contact_plane.normal, e))
             return false;
         query.start = water_start;
         query.policy.contents_mask = mask;
@@ -416,7 +420,8 @@ bool q2_heatbeam(q2_weapon_call *c, qa_vec3 start, qa_vec3 direction, float dama
                            direction, trace.end, trace.contact_plane.normal, false, e))
                 return false;
         } else if (!water &&
-                   !q2_event(c, QA_BUILTIN_IMPACT, 45, trace.end, trace.contact_plane.normal, e))
+                   !q2_event_named(c, QA_BUILTIN_IMPACT, "q2:heatbeam_steam", 45,
+                       trace.end, trace.contact_plane.normal, e))
             return false;
     }
     qa_vec3 end = trace.end;
@@ -435,10 +440,13 @@ bool q2_heatbeam(q2_weapon_call *c, qa_vec3 start, qa_vec3 direction, float dama
                 return false;
             water_end = trace.end;
         }
-        if (!q2_event(c, QA_BUILTIN_BEAM, 11, water_start, water_end, e))
+        if (!q2_event_named(c, QA_BUILTIN_BEAM, "q2:bubble-trail", 11, water_start, water_end, e))
             return false;
     }
-    return q2_event(c, QA_BUILTIN_BEAM, 44, start, end, e);
+    bool player;
+    if (!q2_target_creature(c->game, c->actor->id, NULL, &player, e)) return false;
+    return q2_event_named(c, QA_BUILTIN_BEAM,
+        player ? "q2:heatbeam" : "q2:monster-heatbeam", 44, start, end, e);
 }
 static qa_vec3 closest(qa_vec3 p, qa_bounds b) {
     return qa_v3(fmaxf(b.mins.x, fminf(b.maxs.x, p.x)), fmaxf(b.mins.y, fminf(b.maxs.y, p.y)),

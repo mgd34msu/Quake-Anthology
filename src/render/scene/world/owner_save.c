@@ -63,14 +63,22 @@ static bool source(qa_source_save_io *io, qa_scene_world *world, const qa_scene_
     bool reading=io->direction==QA_SOURCE_SAVE_READ;
     if (!qa_source_save_u32(io,&family) || !qa_source_save_u32(io,&format) ||
         !buffer(io,&world->bytes) || !buffer(io,&world->lit_bytes) || !buffer(io,&world->palette_bytes) ||
-        !buffer(io,&world->translation_bytes) || !text(io,&world->sky_name)) return false;
+        !buffer(io,&world->translation_bytes) || !text(io,&world->sky_name) ||
+        !qa_source_save_bool(io,&options->has_external_entities) || !buffer(io,&world->entity_bytes) ||
+        (options->has_external_entities ? family!=QA_BSP_Q1 : world->entity_bytes.size!=0)) return false;
     if (reading) {
         if (!qa_bsp_open((qa_bytes){world->bytes.data,world->bytes.size},&world->bsp,io->error) ||
             !qa_bsp_validate(&world->bsp,io->error) || world->bsp.family!=family || world->bsp.format!=format) return false;
         options->external_lit=(qa_bytes){world->lit_bytes.data,world->lit_bytes.size};
+        options->external_entities=(qa_bytes){world->entity_bytes.data,world->entity_bytes.size};
+        if (options->has_external_entities) world->bsp.lumps[QA_BSP_ENTITIES] =
+            (qa_bsp_lump){.bytes = options->external_entities, .present = true};
         options->images.translation=(qa_bytes){world->translation_bytes.data,world->translation_bytes.size};
         options->q2_sky=world->sky_name;
     } else if (options->external_lit.data!=world->lit_bytes.data || options->external_lit.size!=world->lit_bytes.size ||
+        options->external_entities.data!=world->entity_bytes.data || options->external_entities.size!=world->entity_bytes.size ||
+        (options->has_external_entities && (world->bsp.lumps[QA_BSP_ENTITIES].bytes.data!=world->entity_bytes.data ||
+            world->bsp.lumps[QA_BSP_ENTITIES].bytes.size!=world->entity_bytes.size)) ||
         options->images.translation.data!=world->translation_bytes.data || options->images.translation.size!=world->translation_bytes.size ||
         options->q2_sky!=world->sky_name) return false;
     if (expected && (family!=expected->family || format!=expected->format || world->bytes.size!=expected->source.size ||
@@ -131,8 +139,8 @@ static bool q3_source_images(const qa_scene_world *world, qa_error *error)
 static bool fields(qa_source_save_io *io, qa_scene_world *world, const qa_scene_world_owner_refs *refs,
     const qa_bsp_view *expected, qa_bytes *state)
 {
-    uint8_t magic[4]={'Q','W','O','N'}; uint32_t schema=1;
-    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QWON",4) || !qa_source_save_u32(io,&schema) || schema!=1 ||
+    uint8_t magic[4]={'Q','W','O','N'}; uint32_t schema=2;
+    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QWON",4) || !qa_source_save_u32(io,&schema) || schema!=2 ||
         !qa_source_save_u64(io,&world->identity) || !world->identity || !source(io,world,refs,expected)) return false;
     qaw_owner_refs core={.context=refs->context,.geometry_encode=refs->geometry_encode,
         .geometry_decode=refs->geometry_decode,.images=refs->state.images};
@@ -222,7 +230,8 @@ bool qa_scene_world_owner_restore(const qa_bsp_view *qualified_source, qa_scene_
         return fail(error,QA_ERROR_ARGUMENT,"World owner restore requires qualified source, installed tables and empty output");
     qa_scene_world *world=calloc(1,sizeof(*world));
     if (!world) return fail(error,QA_ERROR_MEMORY,"Allocating detached scene world owner");
-    world->resources=resources; world->materials=materials; qa_bytes state={0}; qa_source_save_io io={0};
+    if (!qaw_world_owners_retain(world,resources,materials,error)) { qa_scene_world_destroy(world); return false; }
+    qa_bytes state={0}; qa_source_save_io io={0};
     bool ok=qa_source_save_reader(&io,NULL,bytes,error) && fields(&io,world,refs,qualified_source,&state) && qa_source_save_finish(&io,NULL);
     if (ok) ok=identities(world,refs,error) && qa_scene_world_restore(world,state,&refs->state,error);
     if (ok) *out=world;
@@ -240,6 +249,7 @@ bool qa_scene_world_owner_identities_read(const qa_bsp_view *qualified_source, q
         return fail(error,QA_ERROR_ARGUMENT,"World namespace read requires qualified owners and empty outputs");
     qa_scene_world *world=calloc(1,sizeof(*world));
     if (!world) return fail(error,QA_ERROR_MEMORY,"Allocating private world namespace view");
+    world->references=1;
     world->resources=resources; qa_source_save_io io={0}; qa_bytes state={0};
     bool ok=qa_source_save_reader(&io,NULL,bytes,error) && fields(&io,world,refs,qualified_source,&state) && qa_source_save_finish(&io,NULL);
     qa_scene_world_saved_identity *identities=NULL; size_t count=0;

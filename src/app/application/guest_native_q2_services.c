@@ -4,6 +4,8 @@
 #include "native_q2_delivery.h"
 #include "unified_events.h"
 #include "qa/network_q2_messages.h"
+#include "qa/native_host_q2_wire.h"
+#include "qa/application_network_q2.h"
 #include <math.h>
 
 static bool protocol(struct application_native_q2 *engine, const qa_q2_server_event *source,
@@ -132,20 +134,43 @@ static bool command(void *opaque, qa_native_host_command_view *out, qa_error *er
 {
     (void)error;
     struct application_native_q2 *engine = opaque;
-    *out = (qa_native_host_command_view){engine->arguments.count,
-        (const char *const *)engine->arguments.values, engine->arguments.args_text};
+    *out = (qa_native_host_command_view){.count = engine->arguments.count,
+        .arguments = (const char *const *)engine->arguments.values, .tail = engine->arguments.args_text};
     return true;
 }
 
 static bool message(void *opaque, const qa_native_host_message *source, qa_error *error)
 {
     struct application_native_q2 *engine = opaque;
+    if (source->reference_count > SIZE_MAX / sizeof(qa_application_protocol_reference) ||
+        (source->reference_count && !source->references))
+        return application_fail(error, QA_ERROR_FORMAT, "Native Q2 message reference extent is invalid");
+    qa_application_protocol_reference *references = source->reference_count ?
+        calloc(source->reference_count, sizeof(*references)) : NULL;
+    if (source->reference_count && !references)
+        return application_fail(error, QA_ERROR_MEMORY, "Retaining written native Q2 message identities");
+    for (size_t i = 0; i < source->reference_count; ++i)
+        references[i] = (qa_application_protocol_reference){.offset = source->references[i].offset,
+            .actor = source->references[i].actor};
     qa_application_protocol_event event = {.recipient = source->client, .origin = source->origin,
         .payload = source->payload, .destination = source->destination,
+        .references = references, .reference_count = source->reference_count,
         .reliable = source->reliable, .multicast = source->target == QA_NATIVE_HOST_MULTICAST};
     qa_application_q2_protocol_delivery delivery;
-    if (!application_native_q2_message_capture(engine,source,&delivery,error)) return false;
+    if (!application_native_q2_message_capture(engine,source,&delivery,error)) { free(references); return false; }
+    bool duplicate = false;
+    bool keyed = delivery.dupe_key && delivery.audience.captured && delivery.audience.count;
+    if (keyed && !qa_application_network_q2_unicast(engine->provider->application,
+        engine->provider->owner, source->client, delivery.dupe_key, false, &duplicate, error)) {
+        free(references); application_native_q2_delivery_dispose(&delivery.audience); return false;
+    }
+    if (duplicate) {
+        free(references); application_native_q2_delivery_dispose(&delivery.audience); return true;
+    }
     bool emitted=application_emit_q2_protocol(engine->provider,&event,&delivery,error);
+    if (emitted && keyed) emitted = qa_application_network_q2_unicast(engine->provider->application,
+        engine->provider->owner, source->client, delivery.dupe_key, true, &duplicate, error);
+    free(references);
     application_native_q2_delivery_dispose(&delivery.audience);
     if (!emitted) return false;
     return !engine->platform.message || engine->platform.message(engine->platform.context, source, error);
@@ -156,10 +181,19 @@ static bool sound(void *opaque, const qa_native_host_sound *source, qa_error *er
     struct application_native_q2 *engine = opaque;
     if (source->index <= 0 || (uint32_t)source->index >= engine->resource_limit[QA_NATIVE_HOST_SOUND])
         return application_fail(error, QA_ERROR_FORMAT, "Native Q2 sound references an unregistered source index");
-    const char *name = engine->configstrings[engine->resource_base[QA_NATIVE_HOST_SOUND] + source->index];
+    const char *name = engine->configstrings[engine->resource_base[QA_NATIVE_HOST_SOUND] + (uint32_t)source->index];
     if (!name || !*name) return application_fail(error, QA_ERROR_FORMAT, "Native Q2 sound has no admitted source resource");
     qa_native_host_sound named = *source; named.name = name;
+    bool rerelease = engine->profile == QA_NATIVE_Q2_GAME_API2023;
+    if (!isfinite(source->volume) || source->volume < 0 || source->volume > 1 ||
+        !isfinite(source->attenuation) || source->attenuation < 0 || source->attenuation > 4 ||
+        !isfinite(source->time_offset) || source->time_offset < 0 || source->time_offset > .255f ||
+        (!rerelease && !source->actor.registry) ||
+        (!source->actor.registry && !source->positioned))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 sound parameters exceed the genuine Source ranges");
+    if (source->local && !source->client.registry) return true;
     uint32_t slot = 0;
+    qa_native_host_q2_entity actual = {0};
     if (source->actor.registry) {
         qa_native_entity_table table;
         qa_native_instance *instance = qa_native_host_instance(engine->provider->state.native.host);
@@ -173,15 +207,71 @@ static bool sound(void *opaque, const qa_native_host_sound *source, qa_error *er
             }
         }
         if (!found) return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 sound actor projection retired");
+        if (!qa_native_host_q2_wire_entity_import(engine->provider->state.native.host, slot, &actual, error)) return false;
+        if (!qa_actor_id_equal(actual.binding.actor, source->actor))
+            return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 sound Source binding changed during its import");
     }
+    qa_vec3 origin = source->origin;
+    if (!source->positioned) {
+        origin = (qa_vec3){actual.state.origin[0], actual.state.origin[1], actual.state.origin[2]};
+        if (actual.solid == 3)
+            origin = qa_vec_add(origin, qa_vec_scale(qa_vec_add(actual.bounds.mins, actual.bounds.maxs), .5f));
+    }
+    if (!qa_vec_finite(origin))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 sound Source origin is not finite");
+    bool positioned = rerelease || source->positioned || (actual.server_flags & 1u) || actual.solid == 3;
+    if (source->actor.registry && !qa_application_network_q2_entity_number(engine->provider->application,
+        engine->provider->owner, source->actor, &slot, error)) return false;
+    bool no_phs = (source->channel & 8u) != 0;
+    bool reliable = (source->channel & 16u) != 0 && (rerelease || !no_phs);
     qa_q2_server_event event = {.kind = QA_Q2_SVC_SOUND, .data.sound = {
-        .flags = (uint8_t)source->flags, .index = (uint16_t)source->index,
+        .flags = source->actor.registry ? 8u : 0u, .index = (uint16_t)source->index,
         .volume = source->volume, .attenuation = source->attenuation,
-        .time_offset = source->time_offset, .entity = slot, .channel = source->channel,
-        .has_position = source->positioned,
-        .position = {source->origin.x, source->origin.y, source->origin.z}}};
-    if (!protocol(engine, &event, source->client, source->reliable, error)) return false;
-    return !engine->platform.sound || engine->platform.sound(engine->platform.context, &named, error);
+        .time_offset = source->time_offset, .entity = slot,
+        .channel = source->actor.registry ? source->channel & 7u : 0u,
+        .has_position = positioned, .position = {origin.x, origin.y, origin.z}}};
+    qa_q2_codec codec; uint8_t bytes[64]; qa_net_writer writer;
+    qa_net_protocol_id profile = {.kind = rerelease ? QA_NET_Q2REPRO_1038 : QA_NET_Q2_34};
+    if (!qa_q2_codec_init(&codec, profile, error)) return false;
+    qa_net_writer_init(&writer, bytes, sizeof(bytes), error);
+    if (!qa_q2_server_event_write(&codec, &writer, &event)) return false;
+    qa_native_host_message packet = {.target = source->local ? QA_NATIVE_HOST_UNICAST : QA_NATIVE_HOST_MULTICAST,
+        .payload = {bytes, qa_net_writer_size(&writer)}, .origin = origin, .client = source->client,
+        .destination = no_phs || source->attenuation == 0 ? 0 : 1,
+        .flags = source->local ? source->flags : 0, .reliable = reliable, .positioned = true};
+    qa_application_protocol_reference reference = {.actor = source->actor, .packed_sound = true};
+    if (source->actor.registry)
+        reference.offset = 2u + ((bytes[1] & 32u) ? 2u : 1u) +
+            ((bytes[1] & 1u) != 0) + ((bytes[1] & 2u) != 0) + ((bytes[1] & 16u) != 0);
+    qa_application_protocol_event publication = {.recipient = packet.client, .origin = origin,
+        .payload = packet.payload, .destination = packet.destination, .reliable = reliable,
+        .multicast = !source->local, .references = source->actor.registry ? &reference : NULL,
+        .reference_count = source->actor.registry ? 1u : 0u};
+    qa_application_q2_protocol_delivery delivery;
+    if (!application_native_q2_message_capture(engine, &packet, &delivery, error)) return false;
+    bool duplicate = false;
+    bool keyed = delivery.dupe_key && delivery.audience.captured && delivery.audience.count;
+    if (keyed && !qa_application_network_q2_unicast(engine->provider->application,
+        engine->provider->owner, source->client, delivery.dupe_key, false, &duplicate, error)) {
+        application_native_q2_delivery_dispose(&delivery.audience); return false;
+    }
+    if (duplicate) { application_native_q2_delivery_dispose(&delivery.audience); return true; }
+    qa_actor_id *recipients = delivery.audience.count ? malloc(delivery.audience.count * sizeof(*recipients)) : NULL;
+    if (delivery.audience.count && !recipients) {
+        application_native_q2_delivery_dispose(&delivery.audience);
+        return application_fail(error, QA_ERROR_MEMORY, "Retaining actual Q2 sound recipients");
+    }
+    for (size_t i = 0; i < delivery.audience.count; ++i) recipients[i] = delivery.audience.recipients[i].actor;
+    named.origin = origin; named.positioned = positioned; named.reliable = reliable;
+    named.channel = event.data.sound.channel; named.recipients = recipients;
+    named.recipient_count = delivery.audience.count; named.audience_captured = delivery.audience.captured;
+    bool ok = application_emit_q2_protocol(engine->provider, &publication, &delivery, error);
+    if (ok && keyed) ok = qa_application_network_q2_unicast(engine->provider->application,
+        engine->provider->owner, source->client, delivery.dupe_key, true, &duplicate, error);
+    if (ok && named.audience_captured && engine->platform.sound)
+        ok = engine->platform.sound(engine->platform.context, &named, error);
+    free(recipients); application_native_q2_delivery_dispose(&delivery.audience);
+    return ok;
 }
 
 static uint32_t server_frame(void *opaque)
@@ -192,6 +282,13 @@ static uint32_t server_frame(void *opaque)
 static uint64_t source_frame(void *opaque)
 {
     return ((struct application_native_q2 *)opaque)->frame.number;
+}
+
+static bool entity_number(void *opaque, qa_actor_id actor, uint32_t *out, qa_error *error)
+{
+    struct application_native_q2 *engine = opaque;
+    return qa_application_network_q2_entity_number(engine->provider->application,
+        engine->provider->owner, actor, out, error);
 }
 
 static bool hud_view(void *opaque, uint32_t seat, qa_native_host_q2_hud_view *out, qa_error *error)
@@ -208,6 +305,7 @@ qa_native_host_engine_services application_native_q2_services(struct application
         .configstring_get = config_get, .configstring_set = config_set, .resource_index = resource,
         .command = command, .message = message, .sound = sound, .server_frame = server_frame,
         .source_frame = source_frame,
+        .entity_number = entity_number,
         .checkpoint = application_native_q2_capture_engine, .restore = application_native_q2_restore_engine,
         .content_files = engine->provider->launch->content, .cvars = engine->cvars,
         .hud_view = hud_view};

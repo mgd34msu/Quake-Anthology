@@ -33,6 +33,10 @@ bool guest_elf_memory_finish(guest_elf_memory *, qa_error *);
  * Seal raw page ownership for capture without relocation, RELRO or RAM writes. */
 bool guest_elf_memory_program_ready(const guest_elf_memory *, qa_error *);
 bool guest_elf_memory_program_seal(guest_elf_memory *, qa_error *);
+/* Records a successful kernel-owned removal/replacement of raw PROGRAM pages.
+ * The original artifact/backing receipt remains historical; the lower current
+ * mapping inventory becomes authoritative for surviving aliases and pages. */
+bool guest_elf_memory_program_changed(guest_elf_memory *, uint64_t, size_t, qa_error *);
 bool guest_elf_memory_checkpoint(const guest_elf_memory *, qa_buffer *, qa_error *);
 /* Restore host ownership records only against actual already-restored RAM,
  * backing provenance and source artifact. Saved mutable bytes/rights win. */

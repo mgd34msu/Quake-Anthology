@@ -3,6 +3,8 @@
 #include "qa/q3_host_save.h"
 #include "qa/source_save.h"
 #include "qa/script_defines_save.h"
+#include <stdlib.h>
+#include <string.h>
 
 typedef struct saved_opening {
     const char *path;

@@ -1,7 +1,7 @@
 #include "internal.h"
 
-bool q2_event(q2_weapon_call *c, qa_builtin_event_kind kind, int code, qa_vec3 origin, qa_vec3 end,
-              qa_error *e) {
+bool q2_event_named(q2_weapon_call *c, qa_builtin_event_kind kind, const char *path,
+    int code, qa_vec3 origin, qa_vec3 end, qa_error *e) {
     if (!q2_actor_live(c->game, c->actor->id))
         return true;
     qa_builtin_event event = {.kind = kind,
@@ -11,9 +11,15 @@ bool q2_event(q2_weapon_call *c, qa_builtin_event_kind kind, int code, qa_vec3 o
                               .time_ns = c->now_ns,
                               .origin = origin,
                               .end = end,
+                              .direction = kind == QA_BUILTIN_IMPACT ? end : qa_v3(0, 0, 0),
                               .code = code,
                               .flags = c->silenced ? 128u : 0u};
+    if (path && !qa_builtin_resource(&c->game->services, path, &event.resource, e)) return false;
     return qa_builtin_emit(&c->game->services, &event, e);
+}
+bool q2_event(q2_weapon_call *c, qa_builtin_event_kind kind, int code, qa_vec3 origin, qa_vec3 end,
+    qa_error *e) {
+    return q2_event_named(c, kind, NULL, code, origin, end, e);
 }
 bool q2_sound(q2_weapon_call *c, const char *path, int channel, float attenuation, qa_error *e) {
     if (!q2_actor_live(c->game, c->actor->id))
@@ -96,7 +102,7 @@ bool q2_animation(q2_weapon_call *c, int priority, int first, int last, qa_error
         if (handled || !q2_actor_live(c->game, c->actor->id)) return true;
     }
     if (!c->input.animate_player) return true;
-    qa_builtin_event event = {.kind = QA_BUILTIN_ANIMATION,
+    qa_builtin_event event = {.kind = QA_BUILTIN_Q2_PLAYER_ANIMATION,
                               .family = QA_GAME_Q2,
                               .provider = c->game->options.owner,
                               .actor = c->actor->id,

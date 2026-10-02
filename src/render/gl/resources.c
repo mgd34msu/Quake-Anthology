@@ -112,8 +112,7 @@ static bool image_valid(const qa_gl_renderer *renderer,
     return true;
 }
 
-static void texture_parameters(qa_gl_renderer *renderer,
-                               const qa_scene_image *image)
+static void texture_filter(qa_gl_renderer *renderer,qa_scene_filter filter)
 {
     static const GLenum minimum[] = {
         GL_NEAREST, GL_LINEAR, GL_NEAREST_MIPMAP_NEAREST,
@@ -125,9 +124,15 @@ static void texture_parameters(qa_gl_renderer *renderer,
     };
     gl_api *gl = &renderer->gl;
     gl->TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
-                      (GLint)minimum[image->filter]);
+                      (GLint)minimum[filter]);
     gl->TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER,
-                      (GLint)magnification[image->filter]);
+                      (GLint)magnification[filter]);
+}
+static void texture_parameters(qa_gl_renderer *renderer,
+                               const qa_scene_image *image)
+{
+    gl_api *gl=&renderer->gl;
+    texture_filter(renderer,qa_render_controls_image_filter(&renderer->controls,image));
     GLenum wrap = image->wrap == QA_SCENE_REPEAT ? GL_REPEAT :
                   image->kind == QA_SCENE_DEPTH32F ? GL_CLAMP_TO_EDGE : GL_CLAMP;
     gl->TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, (GLint)wrap);
@@ -137,6 +142,23 @@ static void texture_parameters(qa_gl_renderer *renderer,
     GLfloat border[4] = {image->border.x, image->border.y, image->border.z,
                          image->border.w};
     gl->TexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, border);
+}
+bool qa_gl_source_texture_filter_apply(qa_render_controls *controls,qa_error *error)
+{
+    if (!qa_gl_source_scratch_current(controls) || controls->ticket || controls->source.entered) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"Source filter lost its real idle OpenGL image owner");
+        return false;
+    }
+    qa_gl_renderer *renderer=controls->owner.gl;
+    if (!qa_display_make_current(renderer->options.display,error)) return false;
+    renderer->gl.ActiveTexture(GL_TEXTURE0);
+    for (gl_texture_entry *entry=renderer->textures;entry;entry=entry->next)
+        if (entry->image->source_q3 && entry->image->source_mipmap) {
+            renderer->gl.BindTexture(GL_TEXTURE_2D,entry->name);
+            texture_filter(renderer,controls->source_filter);
+            if (!gl_check(renderer,"Source texture-mode image",error)) return false;
+        }
+    return true;
 }
 
 static bool texture_upload(qa_gl_renderer *renderer,

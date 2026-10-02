@@ -312,8 +312,8 @@ static bool fields(qa_source_save_io *io, qa_bots *bots)
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
     U(bots->client_capacity); U(bots->actor_capacity); U(bots->count);
     for(size_t i=0;i<64;++i) U(bots->source_clients[i]);
-    if (bots->client_capacity > INT32_MAX || bots->client_capacity > SIZE_MAX / sizeof(*bots->clients) ||
-        bots->actor_capacity > SIZE_MAX / sizeof(*bots->actor_clients) || bots->count > bots->client_capacity) return false;
+    if (bots->client_capacity > INT32_MAX || (bots->client_capacity && SIZE_MAX / bots->client_capacity < sizeof(*bots->clients)) ||
+        (bots->actor_capacity && SIZE_MAX / bots->actor_capacity < sizeof(*bots->actor_clients)) || bots->count > bots->client_capacity) return false;
     if (!controls_fields(io, &bots->controls)) return false;
     I(bots->local_time_ms); I(bots->library_residual_ms); I(bots->scheduled_think_ms);
     F(bots->time); F(bots->regular_update_time); L(bots->command_sequence);

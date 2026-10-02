@@ -621,7 +621,7 @@ bool application_native_q1_wire_clientdata(qa_application *app, qa_actor_id acto
         application_world_provider(app, QA_ROLE_ENTITIES, "") == source.provider &&
         client(&source, actor, &slot, error) && (row = control(app, actor)) != NULL;
     if (okay) {
-        const qa_nq_movement_state *movement = &row->state.nq;
+        const qa_nq_movement_state *movement = &row->state.data.nq;
         qa_q1_clientdata value = {.viewheight = row->view_height, .idealpitch = movement->ideal_pitch,
             .items = player.weapons | player.powers | (world.server_flags << 28),
             .onground = (movement->flags & 512) != 0, .inwater = movement->water_level >= 2,
@@ -692,10 +692,10 @@ bool application_native_q1_wire_feedback(qa_application *app, qa_actor_id actor,
     if (okay) {
         qa_application_network_q1_feedback value = {.damage = feedback.armor != 0 || feedback.blood != 0,
             .armor = source_byte(feedback.armor), .blood = source_byte(feedback.blood),
-            .set_angle = row->state.nq.fix_angle};
+            .set_angle = row->state.data.nq.fix_angle};
         memcpy(value.origin, feedback.origin, sizeof(value.origin));
-        vector(value.angles, row->state.nq.angles);
-        row->state.nq.fix_angle = false;
+        vector(value.angles, row->state.data.nq.angles);
+        row->state.data.nq.fix_angle = false;
         *out = value;
     } else if (error && error->code == QA_OK)
         application_fail(error, QA_ERROR_ARGUMENT, "Native Q1 feedback requires an actual spawned source client");
@@ -919,7 +919,8 @@ bool application_native_q1_wire_emit(qa_application *app, const qa_builtin_event
             if (!qa_q1_wire_emission_slot(p->state.q1, event->actor, &slot)) return true;
             message.data.sound.entity = slot;
             reference = (qa_application_protocol_reference){.actor = event->actor, .packed_sound = true,
-                .offset = 2 + (message.data.sound.volume != 255) + (event->attenuation != 1)};
+                .offset = (size_t)2 + (size_t)(message.data.sound.volume != 255) +
+                    (size_t)(event->attenuation != 1)};
             has_reference = true;
         }
         break;

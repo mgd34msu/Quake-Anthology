@@ -177,43 +177,73 @@ static bool match_text(const match_access *match, char storage[256], const char 
 }
 static bool match_offset(match_access *match, uint32_t index, int32_t *value, bool write,
                          qa_error *e) {
+    if(index>=8) {qa_error_set(e,QA_ERROR_ARGUMENT,0,"Chat match variable outside source 0..7");return false;}
     if (match->external != NULL) {
         const qa_bot_chat_match_io *io = match->external;
         bool ok = write ? io->write_offset(io->text.context, index, *value, e)
                         : io->read_offset(io->text.context, index, value, e);
         return ok && match_current(match, e);
     }
-    if (write)
-        match->native->variables[index].offset = (int16_t)*value;
-    else
+    if (write) {
+        uint8_t byte = (uint8_t)(uint32_t)*value;
+        int8_t offset;
+        memcpy(&offset, &byte, sizeof(offset));
+        match->native->variables[index].offset = offset;
+    } else
         *value = match->native->variables[index].offset;
     return true;
 }
 static bool match_length(match_access *match, uint32_t index, int32_t value, qa_error *e) {
+    if(index>=8) {qa_error_set(e,QA_ERROR_ARGUMENT,0,"Chat match variable outside source 0..7");return false;}
     if (match->external != NULL)
         return match->external->write_length(match->external->text.context, index, value, e) &&
                match_current(match, e);
     match->native->variables[index].length = (uint16_t)value;
     return true;
 }
-static bool match_pieces(const qa_bot_chat_asset *a, qa_bot_chat_range range, match_access *match,
+static bool match_pieces(const qa_bot_chat_asset *a, qa_bot_chat_range range,bool source, match_access *match,
                          bool *matched, qa_error *e) {
     int32_t last = -1;
     size_t pointer = 0;
     size_t native_length = match->native != NULL ? strlen(match->native->text) : 0;
     *matched = false;
-    for (uint32_t i = 0; i < range.count; ++i) {
-        const qa_bot_chat_piece *piece = a->pieces + range.first + i;
+    const bot_chat_graph *graph=source?&a->packed_source->graph:NULL;
+    uint32_t source_piece=source?range.first:0;
+    for (uint32_t i = 0; source?source_piece!=0:i<range.count; ++i) {
+        if(source && i>=graph->count) {qa_error_set(e,QA_ERROR_ARGUMENT,0,"Chat match piece list cycles");return false;}
+        qa_bot_chat_piece projected={0};
+        const qa_bot_chat_piece *piece = source?&projected:a->pieces + range.first + i;
+        uint32_t type=0;
+        if(source) {
+            if(!bot_chat_graph_word(graph,source_piece,BOT_CHAT_GRAPH_PIECE,0,&type,e)) return false;
+            if(type!=1 && type!=2) {
+                if(!bot_chat_graph_link(graph,source_piece,BOT_CHAT_GRAPH_PIECE,12,BOT_CHAT_GRAPH_PIECE,&source_piece,e)) return false;
+                continue;
+            }
+            projected.kind=type==1?QA_BOT_CHAT_VARIABLE:QA_BOT_CHAT_ALTERNATIVES;
+            if(type==1 && !bot_chat_graph_word(graph,source_piece,BOT_CHAT_GRAPH_PIECE,8,&projected.data.variable,e)) return false;
+        }
         if (piece->kind == QA_BOT_CHAT_VARIABLE) {
             int32_t offset = (int32_t)pointer;
+            if(piece->data.variable>=8) {qa_error_set(e,QA_ERROR_ARGUMENT,0,"Chat match variable outside source 0..7");return false;}
             if (!match_offset(match, piece->data.variable, &offset, true, e))
                 return false;
+            if(source && !bot_chat_graph_word(graph,source_piece,BOT_CHAT_GRAPH_PIECE,8,&projected.data.variable,e)) return false;
             last = (int32_t)piece->data.variable;
+            if(source && !bot_chat_graph_link(graph,source_piece,BOT_CHAT_GRAPH_PIECE,12,BOT_CHAT_GRAPH_PIECE,&source_piece,e)) return false;
             continue;
         }
         bool found = false;
-        for (uint32_t j = 0; j < piece->data.alternatives.count; ++j) {
-            const char *alternative = a->alternatives[piece->data.alternatives.first + j];
+        uint32_t source_string=0;
+        if(source && !bot_chat_graph_link(graph,source_piece,BOT_CHAT_GRAPH_PIECE,4,BOT_CHAT_GRAPH_MATCH_STRING,&source_string,e)) return false;
+        for (uint32_t j = 0; source?source_string!=0:j<piece->data.alternatives.count; ++j) {
+            if(source && j>=graph->count) {qa_error_set(e,QA_ERROR_ARGUMENT,0,"Chat match string list cycles");return false;}
+            const char *alternative;
+            if(source) {
+                uint32_t string;
+                if(!bot_chat_graph_link(graph,source_string,BOT_CHAT_GRAPH_MATCH_STRING,0,BOT_CHAT_GRAPH_STRING,&string,e) ||
+                   !bot_chat_graph_text(graph,string,&alternative,e)) return false;
+            } else alternative=a->alternatives[piece->data.alternatives.first+j];
             size_t size = strlen(alternative);
             if (size == 0) {
                 found = true;
@@ -221,13 +251,21 @@ static bool match_pieces(const qa_bot_chat_asset *a, qa_bot_chat_range range, ma
             }
             char storage[256];
             const char *text;
-            if (!match_text(match, storage, &text, e))
-                return false;
+            char *snapshot=NULL;
+            if(source && match->external) {
+                snapshot=malloc(size+1);
+                if(!snapshot) {qa_error_set(e,QA_ERROR_MEMORY,0,"Retaining match alternative across source text callback");return false;}
+                memcpy(snapshot,alternative,size+1);alternative=snapshot;
+            }
+            if (!match_text(match, storage, &text, e)) {free(snapshot);return false;}
             size_t length = match->native != NULL ? native_length : strlen(text);
             int32_t offset = qa_bot_chat_contains(text + (pointer < length ? pointer : length),
                                                   alternative, false);
-            if (offset < 0)
+            free(snapshot);
+            if (offset < 0) {
+                if(source && !bot_chat_graph_link(graph,source_string,BOT_CHAT_GRAPH_MATCH_STRING,4,BOT_CHAT_GRAPH_MATCH_STRING,&source_string,e)) return false;
                 continue;
+            }
             if (last >= 0) {
                 int32_t beginning;
                 if (!match_offset(match, (uint32_t)last, &beginning, false, e) ||
@@ -243,9 +281,11 @@ static bool match_pieces(const qa_bot_chat_asset *a, qa_bot_chat_range range, ma
                 found = true;
                 break;
             }
+            if(source && !bot_chat_graph_link(graph,source_string,BOT_CHAT_GRAPH_MATCH_STRING,4,BOT_CHAT_GRAPH_MATCH_STRING,&source_string,e)) return false;
         }
         if (!found)
             return true;
+        if(source && !bot_chat_graph_link(graph,source_piece,BOT_CHAT_GRAPH_PIECE,12,BOT_CHAT_GRAPH_PIECE,&source_piece,e)) return false;
     }
     int32_t beginning = 0;
     if (last >= 0 && !match_offset(match, (uint32_t)last, &beginning, false, e))
@@ -272,7 +312,12 @@ bool chat_match_pieces(const qa_bot_chat_asset *a, qa_bot_chat_range range,
                        qa_bot_chat_match *match) {
     match_access access = {.native = match};
     bool found;
-    return match_pieces(a, range, &access, &found, NULL) && found;
+    if(a->packed_source) range.first=range.count?a->graph_pieces[range.first]:0;
+    return match_pieces(a, range,a->packed_source!=NULL, &access, &found, NULL) && found;
+}
+bool bot_chat_graph_match(const qa_bot_chat_asset *asset,uint32_t first,qa_bot_chat_match *match,bool *found,qa_error *error) {
+    match_access access={.native=match};
+    return match_pieces(asset,(qa_bot_chat_range){.first=first},true,&access,found,error);
 }
 static bool copy_external_text(const qa_bot_chat_text_io *io, size_t offset, const char *text,
                                size_t count, const match_access *guard, qa_error *e) {
@@ -323,33 +368,43 @@ static bool find_match(const qa_bot_chat_system *system, const char *text, uint3
     const qa_bot_chat_asset *a = system != NULL ? system->options.matches : NULL;
     if (a == NULL)
         return true;
-    for (size_t i = 0; i < a->view.template_count; ++i) {
-        const qa_bot_chat_template *t = a->templates + i;
+    const bot_chat_graph *graph=a->packed_source?&a->packed_source->graph:NULL;
+    uint32_t source_template=graph?graph->root:0;
+    for (size_t i = 0; graph?source_template!=0:i<a->view.template_count; ++i) {
+        if(graph && i>=graph->count) {qa_error_set(e,QA_ERROR_ARGUMENT,0,"Chat match template list cycles");return false;}
+        qa_bot_chat_template projection={0};const qa_bot_chat_template *t=graph?&projection:a->templates+i;
+        if(graph && !bot_chat_graph_word(graph,source_template,BOT_CHAT_GRAPH_TEMPLATE,0,&projection.context,e)) return false;
         if ((t->context & context) == 0)
-            continue;
+            goto next_template;
         for (uint32_t j = 0; j < 8; ++j) {
             int32_t absent = -1;
             if (!match_offset(match, j, &absent, true, e))
                 return false;
         }
         bool matched;
-        if (!match_pieces(a, t->pieces, match, &matched, e))
+        if(graph && !bot_chat_graph_link(graph,source_template,BOT_CHAT_GRAPH_TEMPLATE,12,BOT_CHAT_GRAPH_PIECE,&projection.pieces.first,e)) return false;
+        if (!match_pieces(a, t->pieces,graph!=NULL, match, &matched, e))
             return false;
         if (matched) {
+            uint32_t bits;
+            if(graph) {if(!bot_chat_graph_word(graph,source_template,BOT_CHAT_GRAPH_TEMPLATE,4,&bits,e)) return false;memcpy(&projection.type,&bits,4);}
             if (match->external != NULL) {
                 const qa_bot_chat_match_io *io = match->external;
                 if (!io->write_type(io->text.context, false, t->type, e) ||
-                    !match_current(match, e) ||
-                    !io->write_type(io->text.context, true, t->subtype, e) ||
                     !match_current(match, e))
                     return false;
+                if(graph) {if(!bot_chat_graph_word(graph,source_template,BOT_CHAT_GRAPH_TEMPLATE,8,&bits,e)) return false;memcpy(&projection.subtype,&bits,4);}
+                if(!io->write_type(io->text.context,true,t->subtype,e) || !match_current(match,e)) return false;
             } else {
                 match->native->type = t->type;
+                if(graph) {if(!bot_chat_graph_word(graph,source_template,BOT_CHAT_GRAPH_TEMPLATE,8,&bits,e)) return false;memcpy(&projection.subtype,&bits,4);}
                 match->native->subtype = t->subtype;
             }
             *found = true;
             break;
         }
+next_template:
+        if(graph && !bot_chat_graph_link(graph,source_template,BOT_CHAT_GRAPH_TEMPLATE,16,BOT_CHAT_GRAPH_TEMPLATE,&source_template,e)) return false;
     }
     return true;
 }

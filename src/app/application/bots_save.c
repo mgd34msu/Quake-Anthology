@@ -97,10 +97,14 @@ static bool files_field(qa_source_save_io *io,application_bots *bots) {
         if(bots->files_launch) bots->files=qa_vfs_clone(qa_launch_snapshot_mounts(launch(app)),io->error);
         else {
             const char *id=qa_strings_cstr(qa_session_strings(app->session),bots->files_product);
-            const qa_product *product=id?qa_catalog_product(app->catalog,id):NULL;
+            const qa_product *product=NULL;
+            for(size_t i=0;id && i<qa_catalog_count(app->catalog);++i) {
+                const qa_product *candidate=qa_catalog_at(app->catalog,i);
+                if(!strcmp(candidate->key,id)) {product=candidate;break;}
+            }
             if(!product || product->family!=QA_GAME_Q3 || product->availability!=QA_CONTENT_INSTALLED)
                 return bot_save_fail(io,QA_ERROR_FORMAT,"Saved bot content product is unavailable");
-            if(!qa_catalog_open(app->catalog,id,&bots->files,io->error)) return false;
+            if(!qa_catalog_open(app->catalog,product->id,&bots->files,io->error)) return false;
         }
         if(!bots->files) return false;
     }

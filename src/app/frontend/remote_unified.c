@@ -49,7 +49,7 @@ bool frontend_remote_unified_create(qa_frontend *frontend, const frontend_remote
         !d->seat.owner || d->client.owner || d->client.generation || d->client.slot ||
         d->physical_seat >= frontend->options.seats || !frontend->seats || !frontend->seats[d->physical_seat].input ||
         !options->identity_capacity || !options->current || !options->userinfo || !options->disconnected ||
-        !c->prepare || !c->offer_publish || !c->control || !c->frame || !c->publish || !c->input ||
+        !c->prepare || !c->offer_publish || !c->offer_ready || !c->control || !c->frame || !c->publish || !c->input ||
         !c->sample || !c->draw || !c->idle || !c->close || !c->content_visit ||
         !options->current(options->context, d, error))
         return frontend_unified_fail(error, QA_ERROR_ARGUMENT, "Unified construction requires its actual CLIENT and presentation consumers");
@@ -153,12 +153,17 @@ bool frontend_remote_unified_actor(frontend_remote_unified *owner, uint32_t slot
     if (!owner || !out || !linked(owner) || owner->retired)
         return frontend_unified_fail(error, QA_ERROR_ARGUMENT, "Unified identity needs its actual replica namespace");
     for (frontend_unified_identity *row = owner->identities; row; row = row->next)
-        if (row->wire.slot == slot && row->wire.generation == generation) { *out = row->actual; return true; }
-    if ((owner->prepared_frame || owner->frame) && !frontend_remote_unified_actor_present(owner, slot, generation))
-        return frontend_unified_fail(error, QA_ERROR_FORMAT, "Unified reference lacks its received actor metadata");
+        if (row->wire.slot == slot && row->wire.generation == generation) {
+            if (frontend_remote_unified_actor_present(owner, slot, generation) && !qa_actors_get(owner->actors, row->actual))
+                return frontend_unified_fail(error, QA_ERROR_FORMAT, "Unified frame resurrects a retired wire identity");
+            *out = row->actual; return true;
+        }
+    bool historical = (owner->prepared_frame || owner->frame) &&
+        !frontend_remote_unified_actor_present(owner, slot, generation);
     frontend_unified_identity *row = calloc(1, sizeof(*row));
     if (!row) return frontend_unified_fail(error, QA_ERROR_MEMORY, "Retaining unified wire identity");
     if (!qa_actors_allocate(owner->actors, 0, 0, &row->actual, error)) { free(row); return false; }
+    if (historical && !qa_actors_release(owner->actors, row->actual, error)) { free(row); return false; }
     row->wire = (qa_saved_actor_id){.slot = slot, .generation = generation};
     row->next = owner->identities; owner->identities = row; *out = row->actual; return true;
 }
@@ -300,6 +305,10 @@ static bool prepare_frame(frontend_remote_unified *owner, const qa_unified_docum
             return frontend_unified_fail(error, QA_ERROR_FORMAT, "Unified prediction changes the admitted player or acknowledgement"); }
         owner->prediction = prediction; owner->prepared_frame = copy;
     }
+    qa_json_id snapshot = qa_json_get(json,qa_json_get(json,root,"output"),"snapshot");
+    uint64_t number;
+    if (!qa_json_u64(json,qa_json_get(json,qa_json_get(json,snapshot,"frame"),"frame"),&number,error)) return false;
+    if (owner->frame && number <= owner->frame_number) { *ready = true; return true; }
     if (!owner->metadata && !stage_metadata(owner, error)) return false;
     return owner->options.consumers.frame(owner->options.consumers.context, owner,
         owner->prepared_frame, owner->prediction, ready, error) && frontend_remote_unified_current(owner, error);
@@ -379,6 +388,7 @@ static bool control(void *context, qa_network_runtime *runtime, qa_net_client_id
                 qa_unified_document_destroy(owner->frame); owner->frame = NULL;
                 qa_unified_document_destroy(owner->prepared_frame); owner->prepared_frame = NULL;
                 qa_unified_document_destroy(owner->prediction); owner->prediction = NULL;
+                free(owner->metadata); owner->metadata = NULL; owner->metadata_count = 0;
                 okay = qa_actors_clear(owner->actors, error);
                 if (okay) while (owner->identities) { frontend_unified_identity *row = owner->identities;
                     owner->identities = row->next; free(row); }
@@ -386,6 +396,8 @@ static bool control(void *context, qa_network_runtime *runtime, qa_net_client_id
         }
         if (okay && owner->retiring_recipe) { okay = qa_executable_recipe_close(owner->retiring_recipe, error);
             if (okay) owner->retiring_recipe = NULL; }
+        if (okay) okay = owner->options.consumers.offer_ready(owner->options.consumers.context,
+            owner, owner->recipe, error);
         if (okay && !owner->transport_restarted) {
             okay = qa_network_restart(runtime, client, qa_executable_recipe_digest(owner->recipe), error);
             if (okay) owner->transport_restarted = true;
@@ -570,12 +582,15 @@ bool frontend_remote_unified_destroy(frontend_remote_unified **slot, qa_error *e
     if (!qa_actors_destroy(owner->actors, error)) return false;
     qa_strings_destroy(owner->strings); free(owner->metadata);
     frontend_remote_unified **row = &owner->frontend->remote_unified;
-    while (*row != owner) row = &(*row)->next; *row = owner->next;
+    while (*row != owner) row = &(*row)->next;
+    *row = owner->next;
     while (owner->identities) { frontend_unified_identity *identity = owner->identities;
         owner->identities = identity->next; free(identity); }
     qa_unified_document_destroy(owner->offer); qa_unified_document_destroy(owner->frame);
     qa_unified_document_destroy(owner->prepared_frame); qa_unified_document_destroy(owner->prediction);
-    qa_catalog_release(owner->options.domain.catalog); free(owner); *slot = NULL; return true;
+    qa_catalog_release(owner->options.domain.catalog);
+    if (owner->options.consumers.dispose) owner->options.consumers.dispose(owner->options.consumers.context);
+    free(owner); *slot = NULL; return true;
 }
 bool frontend_remote_unified_transport_retired(frontend_remote_unified *owner,
     const qa_unified_session *session, qa_error *error)

@@ -97,6 +97,11 @@ typedef struct qa_q3_poly_vertex {
     qa_scene_vec2 texcoord;
     uint8_t color[4];
 } qa_q3_poly_vertex;
+typedef struct qa_q3_scene_polygon {
+    int32_t shader;
+    size_t first, count;
+    qa_scene_fog_volume fog;
+} qa_q3_scene_polygon;
 
 typedef struct qa_q3_system_movie {
     void *context;
@@ -127,6 +132,8 @@ typedef struct qa_q3_presentation_options {
     qa_q3_presentation_assets *assets;
     qa_audio_engine *audio;
     qa_material_source_scratch *source_scratch;
+    qa_material_source_scratch *(*source_state)(void *, qa_error *);
+    bool source_scene_membership;
     qa_media_clock clock;
     uint32_t seat;
     uint64_t owner;
@@ -149,6 +156,11 @@ typedef struct qa_q3_presentation_options {
     bool (*prepare_view)(void *, const qa_q3_refdef *, qa_q3_scene_options *, qa_error *);
     bool (*submit_view)(void *, const qa_q3_scene_options *, qa_scene_frame *, qa_error *);
     bool (*prepare_picture)(void *, qa_material_context *, qa_error *);
+    /* Borrowed only during the successful RenderScene call, before its Source
+     * membership advances. The receiver owns any retained snapshot. */
+    bool (*scene_completed)(void *, const qa_q3_refdef *, const qa_q3_scene_options *,
+        const qa_q3_ref_entity *, size_t, const qa_q3_scene_polygon *, size_t,
+        const qa_scene_vertex *, size_t, const qa_scene_light *, size_t, qa_error *);
     const qa_scene_image *(*video_frame)(void *, uint64_t initial_image_identity, double, qa_error *);
     void *video_context;
     /* Renderer-wide remapping includes independently selected providers. */
@@ -190,6 +202,10 @@ bool qa_q3_presentation_poly(qa_q3_presentation *, int32_t shader, const qa_q3_p
 bool qa_q3_presentation_light(qa_q3_presentation *, qa_vec3, float radius, qa_vec3 color,
                               bool additive, qa_error *);
 bool qa_q3_presentation_render(qa_q3_presentation *, const qa_q3_refdef *, qa_error *);
+/* The caller already owns this unfinished view and its world submission.
+ * Submit retained Q3 refs through their real registry without starting or
+ * finishing another view, redrawing the world, or presenting a surface. */
+bool qa_q3_presentation_supplement(qa_q3_presentation *, const qa_q3_scene_options *, qa_scene_frame *, qa_error *);
 /* Only the actual submit_view callback may submit a retained selected model.
  * The scene, decoded source and transform remain owned by its content owner. */
 bool qa_q3_presentation_selected_model(qa_q3_presentation *, qa_scene_model *,
@@ -230,6 +246,9 @@ bool qa_q3_presentation_source_body_pass(qa_q3_presentation *, const qa_q3_ref_e
     const qa_q3_scene_options *, uint32_t order, qa_scene_frame *, qa_error *);
 bool qa_q3_presentation_body_material_equal(qa_q3_presentation *,
     const qa_q3_presentation_assets *source_assets, const qa_q3_ref_entity *,
+    const qa_q3_ref_entity *, bool *, qa_error *);
+bool qa_q3_presentation_source_body_material_equal(qa_q3_presentation *,
+    const qa_q3_presentation_assets *material_assets, const qa_q3_ref_entity *,
     const qa_q3_ref_entity *, bool *, qa_error *);
 /* Captured selected output uses its own model/shader namespace and actual
  * source material clock during the primary submit_view lease. Lights must be

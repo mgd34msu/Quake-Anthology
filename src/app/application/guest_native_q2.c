@@ -1,4 +1,6 @@
 #include "guest_native_q2_private.h"
+#include "native_q2_callbacks.h"
+#include "native_q2_wire_engine.h"
 #include "save_native_q2_record.h"
 #include "unified_events.h"
 #include "guest_native_q2_attack.h"
@@ -7,6 +9,7 @@
 #include "q3_product.h"
 #include "startup_flow.h"
 #include "qa/console_cvar_observer.h"
+#include "native_q2_publication.h"
 
 static bool load_host(struct application_native_q2 *, qa_error *);
 
@@ -29,6 +32,7 @@ bool application_native_q2_idle(const application_provider *provider)
 {
     const struct application_native_q2 *engine = provider ? provider->state.native.q2_engine : NULL;
     return !engine || (!engine->baseline && !engine->calls && qa_world_idle(engine->world) &&
+        application_native_q2_callbacks_idle(engine->callbacks) &&
         (!engine->console || qa_console_idle(engine->console)) &&
         (!engine->cvars || qa_cvars_observer_idle(engine->cvars)) &&
         (!provider->state.native.host || qa_native_host_destroy_ready(provider->state.native.host)));
@@ -68,6 +72,7 @@ static void actor_released(void *state, qa_session *session, qa_actor_record act
 {
     (void)session;
     struct application_native_q2 *engine = state;
+    application_native_q2_wire_released(engine, actor.id);
     application_native_q2_attack_released(engine, actor.id);
     application_native_q2_combat_released(engine, actor.id);
     qa_error error = {0};
@@ -201,6 +206,8 @@ static bool prepare_owner(qa_application *app, application_provider *provider,
     if (provider->launch->declaration && !qa_native_declaration_load(
             qa_resource_bytes(provider->launch->declaration), provider->launch->selection.artifact,
             provider->state.native.module, &engine->declaration, error)) return false;
+    if (!application_native_q2_callbacks_prepare(engine, error)) return false;
+    if (!application_native_q2_publication_create(engine, &engine->publication, error)) return false;
     if (!application_native_q2_inventory_prepare(engine, error) ||
         !application_native_q2_attack_prepare(engine, error)) return false;
     if (!application_native_q2_combat_prepare(engine, error) ||
@@ -243,6 +250,22 @@ static bool prepare_owner(qa_application *app, application_provider *provider,
     const char *values[] = {maximum, skill, deathmatch ? "1" : "0", coop ? "1" : "0"};
     for (size_t i = 0; i < 4; ++i)
         if (!qa_cvars_register(engine->cvars, names[i], values[i], 0, provider->owner, NULL, error)) return false;
+    if (engine->callbacks) {
+        const qa_json_document *d = application_native_q2_callbacks_document(engine->callbacks);
+        qa_json_id root = qa_json_root(d), declared = qa_json_get(d, root, "cvars");
+        for (size_t i = 0; i < qa_json_size(d, declared); ++i) {
+            qa_json_id row = qa_json_at(d, declared, i);
+            qa_buffer name = {0}, value = {0};
+            bool ok = qa_json_string(d, qa_json_get(d, row, "name"), &name, error) &&
+                qa_json_string(d, qa_json_get(d, row, "value"), &value, error) &&
+                !memchr(name.data, 0, name.size) && !memchr(value.data, 0, value.size);
+            if (ok) ok = qa_cvars_find(engine->cvars, (char *)name.data)
+                ? qa_cvars_set(engine->cvars, (char *)name.data, (char *)value.data, true, error)
+                : qa_cvars_register(engine->cvars, (char *)name.data, (char *)value.data, 0, provider->owner, NULL, error);
+            qa_buffer_free(&name); qa_buffer_free(&value);
+            if (!ok) return false;
+        }
+    }
     for (size_t i = 0; i < choices->seat_count; ++i) {
         engine->clients[i + 1].reserved = true;
         engine->clients[i + 1].seat = choices->seats[i].id;
@@ -343,16 +366,16 @@ static bool load_host(struct application_native_q2 *engine, qa_error *error)
         const qa_application_native_resource_refs *refs = provider->application->native_restore_resources;
         const qa_save_record *saved = qa_save_image_find(provider->application->native_restore_image,
             QA_SAVE_PROVIDER, provider->launch->selection.instance);
-        qa_bytes recipe = {0};
+        qa_bytes recipe = {0}, lower_recipe = {0};
         const qa_native_process_resources *capture = NULL;
         if (!refs || !refs->resolve)
             return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 cold construction requires its retained external graph resolver");
         if (!saved || !qa_sha256_equal(&saved->owner.content, &provider->launch->identity) ||
             !application_native_q2_save_resource_recipe(saved, &recipe, error) ||
             !refs->resolve(refs->context, provider->launch->selection.instance,
-                qa_resource_id(provider->launch->artifact), recipe, &capture, error)) return false;
+                qa_resource_id(provider->launch->artifact), recipe, &capture, &lower_recipe, error)) return false;
         if (!application_native_process_rebind(provider->launch, provider->owner, provider->owner,
-                process_current, engine, capture, recipe, &engine->process, error)) return false;
+                process_current, engine, capture, lower_recipe, &engine->process, error)) return false;
     }
     if (!application_native_process_prepare(provider->application, provider->launch,
         provider->owner, provider->owner, &artifact, 1, 0, &module.image,
@@ -438,20 +461,50 @@ bool application_native_q2_spawn_map(application_provider *provider, const qa_bs
         engine->clients[i].protocol_fog_actor = engine->clients[i].actor;
     }
     if (!application_native_q2_combat_load(engine, error)) return false;
+    application_native_q2_wire_destroy(&engine->wire_engine);
     ++engine->calls;
     bool ok = true;
     if (!engine->initialized) {
         ok = qa_native_host_initialize(provider->state.native.host, 0, 0, false, error);
         if (ok) engine->initialized = true;
     }
+    if (ok) ok = application_native_q2_callbacks_validate(engine, error);
+    if (ok && !engine->wire_engine) ok = application_native_q2_wire_begin(engine, error);
     if (ok) ok = application_native_q2_attack_activate(engine, error);
     if (ok) ok = application_native_q2_combat_activate(engine, error);
     if (ok) ok = application_q2_control_activate(engine, error);
-    if (ok) ok = qa_native_host_spawn_entities(provider->state.native.host,
-        qa_strings_cstr(qa_session_strings(provider->application->session), name), copy,
+    const char *source_entities = copy;
+    qa_buffer declared_entities = {0};
+    bool spawn_entities = true;
+    if (ok && engine->callbacks) {
+        const qa_json_document *d = application_native_q2_callbacks_document(engine->callbacks);
+        qa_json_id spawn_entities_id = qa_json_get(d, qa_json_root(d), "spawnEntities");
+        spawn_entities = qa_json_type(d, spawn_entities_id) != QA_JSON_NULL;
+        if (spawn_entities) {
+            ok = qa_json_string(d, spawn_entities_id, &declared_entities, error) &&
+                !memchr(declared_entities.data, 0, declared_entities.size);
+            source_entities = (char *)declared_entities.data;
+        }
+    }
+    if (ok && spawn_entities) ok = qa_native_host_spawn_entities(provider->state.native.host,
+        qa_strings_cstr(qa_session_strings(provider->application->session), name), source_entities,
         spawn ? qa_strings_cstr(qa_session_strings(provider->application->session), spawn) : "", error);
+    qa_buffer_free(&declared_entities);
+    if (ok && engine->callbacks && provider->application->operation != APPLICATION_PERSISTING) {
+        bool accepted;
+        application_native_callback_value values[] = {
+            {.name="time",.kind=APPLICATION_NATIVE_VALUE_NUMBER,.value.number=(double)engine->frame.time_ns/1e9},
+            {.name="elapsed",.kind=APPLICATION_NATIVE_VALUE_NUMBER,.value.number=(double)engine->frame.elapsed_ns/1e9}
+        };
+        application_native_callback_inputs inputs={values,2,{0}};
+        ok = application_native_q2_callbacks_run(engine, "initialize", &inputs, &accepted, error);
+    }
     --engine->calls;
-    if (ok) { engine->map_ready = provider->map_bound = true; qa_cvars_set_server_active(engine->cvars, true); }
+    if (ok) {
+        engine->map_ready = provider->map_bound = true;
+        qa_cvars_set_server_active(engine->cvars, true);
+        ok = application_native_q2_publication_activate(engine->publication, error);
+    }
     return ok;
 }
 
@@ -497,6 +550,7 @@ bool application_native_q2_retire_map(application_provider *provider, qa_error *
     for (uint32_t i = 1; i < 257; ++i)
         if (engine->clients[i].actor.registry && !application_native_q2_client_disconnect(provider, i, error)) return false;
     if (!application_q2_control_suspend(engine, error)) return false;
+    if (!application_native_q2_publication_retire(engine->publication, error)) return false;
     engine->map_ready = provider->map_bound = false;
     qa_cvars_set_server_active(engine->cvars, false);
     return true;
@@ -513,6 +567,7 @@ bool application_native_q2_deconstruct(application_provider *provider, qa_error 
     bool terminal = provider->state.native.host && qa_native_terminal(qa_native_host_instance(provider->state.native.host));
     if (terminal && !qa_native_host_terminal_retired(provider->state.native.host))
         return application_fail(error, QA_ERROR_ARGUMENT, "Terminal native Q2 cleanup requires actual canonical actor retirement");
+    if (!application_native_q2_callbacks_close(engine, error)) return false;
     qa_error first = {0}; bool ok = true;
     if (provider->state.native.host) {
         if (terminal) engine->initialized = false;
@@ -533,6 +588,7 @@ bool application_native_q2_deconstruct(application_provider *provider, qa_error 
         if (!application_native_q2_attack_close(engine, error)) return false;
         if (!application_native_q2_combat_close(engine, error)) return false;
         if (!application_q2_control_close(engine, error)) return false;
+        if (!application_native_q2_callbacks_close(engine, error)) return false;
         qa_error cleanup = {0};
         if (!qa_native_host_destroy_ready(provider->state.native.host))
             return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 host teardown has not drained");
@@ -544,6 +600,7 @@ bool application_native_q2_deconstruct(application_provider *provider, qa_error 
     if (!application_native_q2_attack_close(engine, error)) return false;
     if (!application_native_q2_combat_close(engine, error)) return false;
     if (!application_q2_control_close(engine, error)) return false;
+    if (!application_native_q2_callbacks_close(engine, error)) return false;
     if (!application_native_process_release(&engine->process, error)) return false;
     if (!application_unified_event_registration_clear(provider->application, provider->owner, error)) return false;
     if (engine->console && engine->cvars &&
@@ -551,6 +608,8 @@ bool application_native_q2_deconstruct(application_provider *provider, qa_error 
     if (engine->platform.release_frontend)
         engine->platform.release_frontend(engine->platform.frontend_lifetime);
     qa_console_destroy(engine->console); qa_cvars_destroy(engine->cvars);
+    application_native_q2_publication_destroy(&engine->publication);
+    application_native_q2_wire_destroy(&engine->wire_engine);
     qa_native_declaration_destroy(engine->declaration);
     qa_command_tokens_free(&engine->arguments);
     if (engine->configstrings)

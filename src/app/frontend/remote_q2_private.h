@@ -28,6 +28,8 @@ typedef struct remote_q2_layout {
     size_t max_models, max_sounds, max_images, max_configs;
 } remote_q2_layout;
 struct frontend_remote_q2_image_policy;
+struct frontend_remote_q2_effects;
+struct remote_q2_footsteps;
 typedef struct remote_q2_sent_command {
     bool valid;
     uint32_t packet_sequence;
@@ -79,9 +81,13 @@ struct frontend_remote_q2 {
     qa_scene_world *world;
     qa_collision_geometry *geometry;
     uint64_t saved_world, saved_classic, saved_white;
+    qa_buffer saved_effects;
+    bool effects_imported;
+    struct remote_q2_footsteps *footsteps;
     remote_q2_model *models;
     remote_q2_picture *pictures;
     struct frontend_remote_q2_image_policy *image_policy;
+    struct frontend_remote_q2_effects *effects;
     qa_hud_q2_table hud_table;
     int32_t inventory[256];
     char *overlay;
@@ -104,6 +110,8 @@ bool remote_q2_config_set(frontend_remote_q2 *, uint16_t, const char *, qa_error
 bool remote_q2_media_clear(frontend_remote_q2 *, qa_error *);
 bool remote_q2_media_prepare(frontend_remote_q2 *, qa_error *);
 bool remote_q2_prediction_replay(frontend_remote_q2 *, qa_error *);
+bool remote_q2_trace(void *, const qa_trace_query *, qa_trace_result *, qa_error *);
+qa_bounds remote_q2_solid_bounds(const frontend_remote_q2 *, uint32_t);
 void remote_q2_prediction_receive(frontend_remote_q2 *);
 bool remote_q2_map_validate(const frontend_remote_q2 *, const qa_resource *, qa_bsp_view *, qa_error *);
 bool remote_q2_model_read(frontend_remote_q2 *, const char *, remote_q2_model **, qa_error *);

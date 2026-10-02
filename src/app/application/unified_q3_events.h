@@ -27,4 +27,9 @@ bool application_unified_q3_participant(void *, qa_actor_id, int32_t, int32_t,
 bool application_unified_q3_attack_providers(void *, qa_actor_id, qa_item_id,
     qa_actor_owner *, qa_actor_owner *, qa_error *);
 
+struct application_q3_component_publication;
+bool application_unified_q3_component_command(qa_application *,
+    const struct application_q3_component_publication *, qa_actor_id recipient,
+    const char *text, int32_t source_time_ms, qa_error *);
+
 #endif

@@ -1,5 +1,15 @@
 include(FetchContent)
 
+function(qa_native_guest_write_source output contents)
+    if(EXISTS "${output}")
+        file(READ "${output}" current)
+        if("${current}" STREQUAL "${contents}")
+            return()
+        endif()
+    endif()
+    file(WRITE "${output}" "${contents}")
+endfunction()
+
 function(qa_native_guest_replace_source target original replacement)
     get_target_property(source_root ${target} SOURCE_DIR)
     get_target_property(sources ${target} SOURCES)
@@ -35,7 +45,7 @@ function(qa_native_guest_replace_text variable before after expected)
 endfunction()
 
 function(qa_native_guest_wrap_source target original extension output)
-    file(WRITE "${output}" "#include \"${original}\"\n#include \"${extension}\"\n")
+    qa_native_guest_write_source("${output}" "#include \"${original}\"\n#include \"${extension}\"\n")
     qa_native_guest_replace_source(${target} "${original}" "${output}")
 endfunction()
 
@@ -70,7 +80,7 @@ function(qa_native_guest_dependency)
     file(MAKE_DIRECTORY "${extension_root}")
     set(x86_original "${qa_unicorn_SOURCE_DIR}/qemu/target/i386/unicorn.c")
     set(x86_extension "${extension_root}/unicorn-x86.c")
-    file(WRITE "${x86_extension}"
+    qa_native_guest_write_source("${x86_extension}"
         "#include \"${x86_original}\"\n#include \"${guest_root}/unicorn_state.inc.c\"\n")
     qa_native_guest_replace_source(x86_64-softmmu "${x86_original}" "${x86_extension}")
 
@@ -101,7 +111,7 @@ function(qa_native_guest_dependency)
     qa_native_guest_replace_text(stores
         "store_memop(haddr, val, op);"
         "qa_unicorn_ram_store(env, paddr, haddr, val, op);" 2)
-    file(WRITE "${store_extension}" "${stores}")
+    qa_native_guest_write_source("${store_extension}" "${stores}")
     qa_native_guest_replace_source(x86_64-softmmu "${store_original}" "${store_extension}")
 
     set(flush_original "${qa_unicorn_SOURCE_DIR}/qemu/accel/tcg/translate-all.c")
@@ -113,7 +123,7 @@ function(qa_native_guest_dependency)
     qa_native_guest_replace_text(flush
         "qht_reset_size(cpu->uc, &cpu->uc->tcg_ctx->tb_ctx.htable, CODE_GEN_HTABLE_SIZE);"
         "qa_unicorn_memory_tb_reset(cpu);" 1)
-    file(WRITE "${flush_extension}" "${flush}")
+    qa_native_guest_write_source("${flush_extension}" "${flush}")
     qa_native_guest_replace_source(x86_64-softmmu "${flush_original}" "${flush_extension}")
 
     set(hash_original "${qa_unicorn_SOURCE_DIR}/glib_compat/glib_compat.c")
@@ -125,7 +135,7 @@ function(qa_native_guest_dependency)
     qa_native_guest_replace_text(hashes
         "    g_hash_table_remove_all (hash_table);\n    g_hash_table_unref (hash_table);"
         "    if (qa_unicorn_hash_destroy_single_owner(hash_table)) return;\n    g_hash_table_remove_all (hash_table);\n    g_hash_table_unref (hash_table);" 1)
-    file(WRITE "${hash_extension}" "${hashes}")
+    qa_native_guest_write_source("${hash_extension}" "${hashes}")
     qa_native_guest_replace_source(unicorn-common "${hash_original}" "${hash_extension}")
     target_include_directories(unicorn PRIVATE "${guest_root}" "${project_headers}")
     target_include_directories(x86_64-softmmu PRIVATE "${guest_root}" "${project_headers}"
@@ -166,11 +176,15 @@ function(qa_native_guest_dependency)
         "${guest_root}/sysv_iostream.c"
         "${guest_root}/sysv_process.c"
         "${guest_root}/sysv_process_save.c"
+        "${guest_root}/sysv_program.c"
+        "${guest_root}/sysv_program_kernel.c"
+        "${guest_root}/sysv_program_save.c"
         "${guest_root}/windows_runtime.c"
         "${guest_root}/windows_process.c"
         "${guest_root}/windows_process_save.c"
         "${guest_root}/windows_kernel.c"
         "${guest_root}/windows_crt.c"
+        "${guest_root}/windows_stdio.c"
         "${guest_root}/windows_msvc.c"
         "${guest_root}/pe_memory.c")
     target_sources(qa_native PRIVATE

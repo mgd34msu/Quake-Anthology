@@ -157,6 +157,21 @@ typedef struct qa_fs_opened_reference {
     uint32_t mode, creation;
     const char *path;
 } qa_fs_opened_reference;
+/* Named actual POSIX stat values, independent of the host struct stat layout.
+ * A Windows file owner does not manufacture Unix ownership or permissions. */
+typedef struct qa_fs_posix_status {
+    uint64_t device, inode, links, special_device;
+    uint32_t mode, uid, gid;
+    int64_t size, block_size, blocks;
+    qa_fs_timestamp access, modification, change;
+} qa_fs_posix_status;
+typedef struct qa_fs_native_error {
+    uint32_t platform, code; /* POSIX errno (1), Win32 (2), Windows CRT errno (3). */
+    bool available;
+} qa_fs_native_error;
+/* Immediate same-thread receipt of the last opened-file operation. Boundary
+ * validation has no native error; neither diagnostics nor cleanup invent one. */
+bool qa_fs_opened_native_error_read(qa_fs_native_error *);
 /* Holds the actual contained native object. Zero mode admits metadata only.
  * Creating/writable traversal never follows child links; no parent directory
  * is synthesized. The owner is allocated before opening. opened=true and a
@@ -172,6 +187,7 @@ bool qa_fs_opened_file_read(qa_fs_opened_file *, uint64_t, void *, size_t,
 bool qa_fs_opened_file_write(qa_fs_opened_file *, uint64_t, qa_bytes,
     size_t *completed, qa_error *);
 bool qa_fs_opened_file_size(qa_fs_opened_file *, uint64_t *, qa_error *);
+bool qa_fs_opened_file_posix_status_read(qa_fs_opened_file *, qa_fs_posix_status *, qa_error *);
 bool qa_fs_opened_file_truncate(qa_fs_opened_file *, uint64_t, qa_error *);
 bool qa_fs_opened_file_flush(qa_fs_opened_file *, qa_error *);
 /* Linux close consumes its descriptor even on a reported error. Windows close
@@ -249,6 +265,12 @@ bool qa_fs_stage_open(qa_fs_root *, const char *target, uint64_t nonce,
  * Its retained handle qualifies the same contained regular file identity. */
 bool qa_fs_stage_open_readonly(qa_fs_root *, const char *target, uint64_t nonce,
                                 qa_fs_stage **, uint64_t *initial_size, qa_error *);
+/* Checked admission requires an empty output and returns any actual partial
+ * owner there on failure. The caller must retire it with checked close. */
+bool qa_fs_stage_open_checked(qa_fs_root *, const char *target, uint64_t nonce,
+                               bool resume, qa_fs_stage **, uint64_t *initial_size, qa_error *);
+bool qa_fs_stage_open_readonly_checked(qa_fs_root *, const char *target, uint64_t nonce,
+                                        qa_fs_stage **, uint64_t *initial_size, qa_error *);
 bool qa_fs_stage_size(qa_fs_stage *, uint64_t *, qa_error *);
 bool qa_fs_stage_read(qa_fs_stage *, uint64_t offset, void *, size_t capacity,
                        size_t *read, qa_error *);
@@ -270,5 +292,10 @@ bool qa_fs_stage_publish(qa_fs_stage *, const qa_fs_identity *,
 /* keep=true retains an unpublished temporary for restart; false removes it.
  * Publication consumes only the temporary name, not the retained stage handle. */
 void qa_fs_stage_close(qa_fs_stage *, bool keep);
+/* Checked retirement retains the actual owner on refusal. POSIX consumed
+ * descriptors are cleared even when close reports failure; retries never
+ * reuse them. Once started, only another checked close with the same keep
+ * decision is admitted. */
+bool qa_fs_stage_close_checked(qa_fs_stage **, bool keep, qa_error *);
 
 #endif

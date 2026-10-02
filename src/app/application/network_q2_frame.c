@@ -69,7 +69,8 @@ static bool builtin_entity(qa_application_network_q2 *owner, uint32_t slot,
     uint32_t *models[] = {&value.modelindex, &value.modelindex2, &value.modelindex3, &value.modelindex4};
     for (unsigned i = 0; !flare && i < 4; ++i) {
         const char *path = selected_visual ? selected.models[i] : text(owner, visual.models[i]);
-        if (!application_network_q2_resource(owner, 0, path, models[i], error)) return false;
+        if (!(selected_visual ? application_network_q2_visual_resource(owner, &selected, i, models[i], error) :
+            application_network_q2_resource(owner, 0, path, models[i], error))) return false;
     }
     if (flare) {
         float start = selected_visual ? selected.q2_flare.fade_start : source.flare_start;
@@ -108,12 +109,81 @@ static bool builtin_entity(qa_application_network_q2 *owner, uint32_t slot,
     return true;
 }
 
+static struct application_native_q2 *original_engine(qa_application_network_q2 *owner)
+{
+    application_provider *provider = application_network_q2_provider(owner);
+    return provider ? provider->state.native.q2_engine : NULL;
+}
+
+static bool original_entity(qa_application_network_q2 *owner, uint32_t number,
+    qa_q2_entity *out, bool *present, qa_error *error)
+{
+    struct application_native_q2 *engine = original_engine(owner);
+    if (!engine || !engine->wire_engine || number >= engine->wire_engine->capacity)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Original Q2 entity lost its installed Engine wire namespace");
+    const application_native_q2_wire_row *row = &engine->wire_engine->rows[number];
+    *present = false;
+    if (!row->occupied) return true;
+    if (!qa_actors_get(qa_session_actors(owner->app->session), row->actor))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Original Q2 Engine row lost its live full actor");
+    qa_q2_entity value = {.number = number};
+    qa_native_host_q2_entity source = {0};
+    if (row->original) {
+        if (!qa_native_host_q2_wire_entity(engine->provider->state.native.host, row->source_slot, &source, error)) return false;
+        if (!source.in_use || !qa_actor_id_equal(source.binding.actor, row->actor)) return true;
+        if (source.server_flags & 1) return true;
+        value = source.state; value.number = number;
+        if (owner->host.source.edition == QA_Q2_CLASSIC && value.solid && value.solid != 31 &&
+            (owner->host.protocol.kind == QA_NET_Q2PRO_36 ||
+             (owner->host.protocol.kind == QA_NET_R1Q2_35 && owner->host.protocol.revision >= 1905)))
+            value.solid = packed_solid(owner->host.protocol, source.bounds);
+        if (value.owner) {
+            qa_native_slot_binding binding;
+            if (!qa_native_slot(qa_native_host_instance(engine->provider->state.native.host), value.owner, &binding, error)) return false;
+            if (binding.kind != QA_NATIVE_SLOT_FREE &&
+                !application_native_q2_wire_number(engine, binding.actor, &value.owner, error)) return false;
+        }
+    }
+    qa_application_visual_view visual;
+    qa_error observation = {0};
+    bool selected = qa_application_visual_read(owner->app, row->actor, &visual, &observation);
+    if (!selected && observation.code != QA_OK && observation.code != QA_ERROR_NOT_FOUND) {
+        if (error) *error = observation;
+        return false;
+    }
+    if (selected && visual.provider != owner->host.source.source_owner) {
+        if (!visual.visible) return true;
+        vector(value.origin, visual.body.origin); vector(value.old_origin, visual.body.origin);
+        vector(value.angles, visual.body.angles);
+        value.frame = (uint32_t)visual.frame; value.old_frame = visual.old_frame >= 0 ? (uint32_t)visual.old_frame : 0;
+        value.skinnum = (uint32_t)visual.skin; value.effects = visual.effects;
+        value.renderfx = visual.render_flags; value.alpha = visual.alpha; value.scale = visual.scale == 1 ? 0 : visual.scale;
+        uint32_t *models[] = {&value.modelindex, &value.modelindex2, &value.modelindex3, &value.modelindex4};
+        for (unsigned i = 0; i < 4; ++i)
+            if (!application_network_q2_visual_resource(owner, &visual, i, models[i], error)) return false;
+        if (!row->original) {
+            qa_actor_collision collision = {0};
+            qa_error collision_error = {0};
+            if (qa_world_get_collision(owner->app->world, row->actor, &collision, &collision_error)) {
+                if (collision.role != QA_COLLISION_TRIGGER) value.solid = collision.inline_model ? 31 :
+                    packed_solid(owner->host.protocol, visual.body.bounds);
+            } else if (collision_error.code != QA_OK) { if (error) *error = collision_error; return false; }
+        }
+    } else if (!row->original) return true;
+    *out = value; *present = visible_state(&value); return true;
+}
+
 bool application_network_q2_entities(qa_application_network_q2 *owner, qa_error *error)
 {
     uint32_t extent;
     bool builtin = owner->host.source.kind == QA_APPLICATION_NATIVE_Q2_BUILTIN;
-    if (!(builtin ? qa_q2_wire_extent(owner->host.source.source.game, &extent, error) :
-        qa_native_host_q2_wire_count((qa_native_host *)owner->host.source.source.original.host, &extent, error))) return false;
+    if (builtin) {
+        if (!qa_q2_wire_extent(owner->host.source.source.game, &extent, error)) return false;
+    } else {
+        struct application_native_q2 *engine = original_engine(owner);
+        if (!application_native_q2_wire_prepare(engine, error)) return false;
+        extent = engine->wire_engine->capacity;
+    }
     if (extent > owner->entity_capacity) return application_fail(error, QA_ERROR_FORMAT, "Q2 entity publication exceeds its admitted physical extent");
     owner->entity_count = 0;
     for (uint32_t slot = 1; slot < extent; ++slot) {
@@ -122,13 +192,7 @@ bool application_network_q2_entities(qa_application_network_q2 *owner, qa_error 
         if (builtin) {
             if (!builtin_entity(owner, slot, &value, &present, error)) return false;
         } else {
-            qa_native_host_q2_entity source;
-            if (!qa_native_host_q2_wire_entity((qa_native_host *)owner->host.source.source.original.host, slot, &source, error)) return false;
-            value = source.state; present = source.in_use && !(source.server_flags & 1) && visible_state(&value);
-            if (owner->host.source.edition == QA_Q2_CLASSIC && value.solid && value.solid != 31 &&
-                (owner->host.protocol.kind == QA_NET_Q2PRO_36 ||
-                    (owner->host.protocol.kind == QA_NET_R1Q2_35 && owner->host.protocol.revision >= 1905)))
-                value.solid = packed_solid(owner->host.protocol, source.bounds);
+            if (!original_entity(owner, slot, &value, &present, error)) return false;
         }
         if (present) owner->entities[owner->entity_count++] = value;
     }
@@ -145,8 +209,13 @@ bool qa_application_network_q2_motion(qa_application_network_q2 *owner,
         return application_fail(error, QA_ERROR_UNSUPPORTED, "Q2 native frame history exceeds its genuine Source FPS profile");
     bool builtin = owner->host.source.kind == QA_APPLICATION_NATIVE_Q2_BUILTIN;
     uint32_t extent;
-    if (!(builtin ? qa_q2_wire_extent(owner->host.source.source.game, &extent, error) :
-        qa_native_host_q2_wire_count((qa_native_host *)owner->host.source.source.original.host, &extent, error))) return false;
+    if (builtin) {
+        if (!qa_q2_wire_extent(owner->host.source.source.game, &extent, error)) return false;
+    } else {
+        struct application_native_q2 *engine = original_engine(owner);
+        if (!application_native_q2_wire_prepare(engine, error)) return false;
+        extent = engine->wire_engine->capacity;
+    }
     if (extent > owner->entity_capacity)
         return application_fail(error, QA_ERROR_FORMAT, "Q2 Source history exceeds its real physical namespace");
     qa_q2_source_motion motion = {.source_owner = owner->host.source.source_owner,
@@ -164,9 +233,18 @@ bool qa_application_network_q2_motion(qa_application_network_q2 *owner,
                 row.origins[i] = (qa_q2_source_origin){.source_frame = source.lifetime.origins[i].source_frame,
                     .origin = source.lifetime.origins[i].origin, .present = source.lifetime.origins[i].present};
         } else {
+            struct application_native_q2 *engine = original_engine(owner);
+            const application_native_q2_wire_row *binding = &engine->wire_engine->rows[slot];
+            if (!binding->occupied) continue;
+            if (!binding->original) {
+                row = binding->motion; row.source_frame = motion.source_frame;
+                qa_body_state body;
+                if (!qa_world_body_read(owner->app->world, binding->actor, &body, error)) return false;
+                row.origin = body.origin;
+            } else {
             qa_native_host_q2_entity source;
             if (!qa_native_host_q2_wire_entity((qa_native_host *)owner->host.source.source.original.host,
-                slot, &source, error)) return false;
+                binding->source_slot, &source, error)) return false;
             if (!source.in_use) continue;
             row.actor = source.binding.actor;
             row.origin = qa_v3(source.state.origin[0], source.state.origin[1], source.state.origin[2]);
@@ -175,6 +253,7 @@ bool qa_application_network_q2_motion(qa_application_network_q2 *owner,
             for (size_t i = 0; i < 8; ++i)
                 row.origins[i] = (qa_q2_source_origin){.source_frame = source.origins[i].source_frame,
                     .origin = source.origins[i].origin, .present = source.origins[i].present};
+            }
         }
         if (!row.actor.registry || !qa_actors_get(qa_session_actors(owner->app->session), row.actor) ||
             !qa_vec_finite(row.origin) || !qa_vec_finite(row.creation_origin) ||
@@ -279,15 +358,19 @@ bool application_network_q2_player_state(qa_application_network_q2 *owner, qa_ac
             return application_fail(error, QA_ERROR_FORMAT, "Q2 Source gun rate exceeds its wire field");
         value.gunrate = (uint32_t)entity.weapon.gun_rate;
     }
-    uint32_t health_icon;
+    uint32_t health_icon, ammo_icon, armor_icon;
     if (!application_network_q2_resource(owner, 2, "i_health", &health_icon, error) || health_icon > INT16_MAX ||
-        !statistic(view.health, &value.stats[1], error) || !statistic(view.ammo, &value.stats[3], error) ||
+        !application_network_q2_resource(owner, 2, text(owner, view.ammo_icon), &ammo_icon, error) || ammo_icon > INT16_MAX ||
+        !application_network_q2_resource(owner, 2, text(owner, view.armor_icon), &armor_icon, error) || armor_icon > INT16_MAX ||
+        !statistic(view.health, &value.stats[1], error) ||
         !statistic(view.armor, &value.stats[5], error)) return false;
+    integer_statistic(view.ammo_count, &value.stats[3]);
     integer_statistic(view.timer_seconds, &value.stats[10]);
     integer_statistic(view.layouts, &value.stats[13]);
     integer_statistic(view.score, &value.stats[14]);
     integer_statistic(view.flashes, &value.stats[15]);
     value.stats[0] = (int16_t)health_icon; value.stats[17] = view.spectator ? 1 : 0;
+    value.stats[2] = (int16_t)ammo_icon; value.stats[4] = (int16_t)armor_icon;
     for (size_t i = 0; i < qa_q2_item_count(game); ++i) {
         const qa_q2_item_definition *item = qa_q2_item_at(game, i);
         uint32_t image;
@@ -362,6 +445,7 @@ static bool source_visible(qa_application_network_q2 *owner, const q2_recipient 
 {
     qa_collision_geometry *geometry = owner->app->geometry;
     bool builtin = owner->host.source.kind == QA_APPLICATION_NATIVE_Q2_BUILTIN;
+    bool sdk = false;
     bool rr = owner->host.source.edition == QA_Q2_RERELEASE;
     qa_bounds bounds;
     uint32_t flags;
@@ -376,10 +460,28 @@ static bool source_visible(qa_application_network_q2 *owner, const q2_recipient 
         else bounds = (qa_bounds){qa_vec_sub(qa_vec_add(source.body.origin, source.body.bounds.mins), qa_v3(1, 1, 1)),
             qa_vec_add(qa_vec_add(source.body.origin, source.body.bounds.maxs), qa_v3(1, 1, 1))};
     } else {
-        if (!qa_native_host_q2_wire_entity((qa_native_host *)owner->host.source.source.original.host, state->number, &original, error)) return false;
-        if (!original.in_use) return application_fail(error, QA_ERROR_ARGUMENT, "Original Q2 edict retired during visibility");
-        flags = original.server_flags; bounds = original.absolute_bounds;
-        *owned = original.owner_slot == recipient->slot;
+        struct application_native_q2 *engine = original_engine(owner);
+        if (!engine || !engine->wire_engine || state->number >= engine->wire_engine->capacity)
+            return application_fail(error, QA_ERROR_ARGUMENT, "Original Q2 visibility lost its Engine namespace");
+        const application_native_q2_wire_row *binding = &engine->wire_engine->rows[state->number];
+        if (!binding->occupied) return application_fail(error, QA_ERROR_ARGUMENT, "Original Q2 Engine actor retired during visibility");
+        sdk = binding->original;
+        if (sdk) {
+            if (!qa_native_host_q2_wire_entity(engine->provider->state.native.host, binding->source_slot, &original, error)) return false;
+            if (!original.in_use || !qa_actor_id_equal(original.binding.actor, binding->actor))
+                return application_fail(error, QA_ERROR_ARGUMENT, "Original Q2 edict retired during visibility");
+            flags = original.server_flags; bounds = original.absolute_bounds;
+            *owned = original.owner_slot == recipient->slot;
+        } else {
+            qa_linked_body linked;
+            qa_actor_collision collision = {0};
+            qa_error collision_error = {0};
+            if (!qa_world_linked(owner->app->world, binding->actor, &linked)) { *out = false; *owned = false; return true; }
+            bounds = linked.absolute_bounds; flags = 0; *owned = false;
+            if (qa_world_get_collision(owner->app->world, binding->actor, &collision, &collision_error))
+                *owned = qa_actor_id_equal(collision.owner, recipient->actor);
+            else if (collision_error.code != QA_OK) { if (error) *error = collision_error; return false; }
+        }
     }
     *out = false;
     if (flags & 1) return true;
@@ -388,7 +490,7 @@ static bool source_visible(qa_application_network_q2 *owner, const q2_recipient 
     bool beam = (state->renderfx & 128) != 0, shadow = rr && (state->renderfx & 16384) != 0;
     bool phs = beam || (rr && (shadow || state->sound));
     bool area = false, visible = false;
-    if (!builtin && !rr) {
+    if (sdk && !rr) {
         if (!qa_collision_areas_connected(geometry, (int32_t)recipient->leaf.area, original.areas[0], &area, error)) return false;
         if (!area && original.areas[1] &&
             !qa_collision_areas_connected(geometry, (int32_t)recipient->leaf.area, original.areas[1], &area, error)) return false;

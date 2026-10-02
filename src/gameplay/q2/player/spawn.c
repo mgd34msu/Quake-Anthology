@@ -102,8 +102,16 @@ static bool player_start_items(void *context, qa_actor_id id, qa_error *e) {
 bool qa_q2_player_start_items(qa_q2_game *g, qa_actor_id id, qa_error *e) {
     return qa_q2_run_actor(g, id, player_start_items, g, e);
 }
-bool qa_q2_player_spawn(qa_q2_game *g, qa_actor_id id, bool restore, const qa_q2_landmark *landmark,
-                        qa_error *e) {
+static bool spawn_completed(qa_q2_game *g, qa_actor_id id, qa_error *e) {
+    q2_actor *a = q2_actor_live(g, id) ? q2_actor_get(g, id, false, NULL) : NULL;
+    if (!a || !a->client || !a->client->info.connected || !a->client->spawned ||
+        a->client->awaiting_respawn)
+        return true;
+    qa_q2_player_services *services = &g->player_runtime->services;
+    return !services->spawn_completed || services->spawn_completed(services->context, id, e);
+}
+static bool player_spawn(qa_q2_game *g, qa_actor_id id, bool restore,
+    const qa_q2_landmark *landmark, bool complete, qa_error *e) {
     q2_actor *a = q2_client(g, id, e);
     if (!a)
         return false;
@@ -336,7 +344,13 @@ bool qa_q2_player_spawn(qa_q2_game *g, qa_actor_id id, bool restore, const qa_q2
                                     NULL, NULL, e))
             return false;
     }
-    return !q2_actor_live(g, id) || !was_waiting || post_respawn(g, a, e);
+    if (!q2_actor_live(g, id)) return true;
+    if (was_waiting && !post_respawn(g, a, e)) return false;
+    return !complete || spawn_completed(g, id, e);
+}
+bool qa_q2_player_spawn(qa_q2_game *g, qa_actor_id id, bool restore,
+    const qa_q2_landmark *landmark, qa_error *e) {
+    return player_spawn(g, id, restore, landmark, true, e);
 }
 bool qa_q2_player_respawn(qa_q2_game *g, qa_actor_id id, qa_error *e) {
     q2_actor *a = q2_client(g, id, e);
@@ -351,11 +365,11 @@ bool qa_q2_player_respawn(qa_q2_game *g, qa_actor_id id, qa_error *e) {
         return false;
     if (!q2_actor_live(g, id))
         return true;
-    if (!qa_q2_player_spawn(g, id, true, NULL, e))
+    if (!player_spawn(g, id, true, NULL, false, e))
         return false;
     if (!q2_actor_live(g, id) || a->client->awaiting_respawn)
         return true;
-    return post_respawn(g, a, e);
+    return post_respawn(g, a, e) && spawn_completed(g, id, e);
 }
 bool qa_q2_player_teleport(qa_q2_game *g, qa_actor_id id, qa_vec3 origin, qa_vec3 angles,
                            qa_error *e) {

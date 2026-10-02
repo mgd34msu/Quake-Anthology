@@ -354,6 +354,9 @@ bool qa_q2_clear_trackers(qa_q2_game *, qa_actor_id target, qa_error *);
 bool qa_q2_physics_read(qa_q2_game *, qa_actor_id, qa_physics_properties *);
 bool qa_q2_physics_write(qa_q2_game *, qa_actor_id, const qa_physics_properties *, qa_error *);
 bool qa_q2_touch(qa_q2_game *, const qa_touch_contact *, qa_error *);
+/* Reports the actual Source entity touch wrapper, independently of whether
+ * its optional leaf callback performs an action. */
+bool qa_q2_touch_source(qa_q2_game *, const qa_touch_contact *, bool *reached, qa_error *);
 bool qa_q2_projectile_reaction(qa_q2_game *, const qa_damage_outcome *, qa_error *);
 bool qa_q2_damage_reaction(qa_q2_game *, const qa_damage_outcome *, qa_error *);
 bool qa_q2_item_reaction(qa_q2_game *, const qa_damage_outcome *, qa_error *);

@@ -47,14 +47,14 @@ static bool info_remove(char *info, size_t capacity, const char *key, size_t *le
         const char *name = read;
         while (*read && *read != '\\')
             read++;
-        size_t length = (size_t)(read - name);
+        size_t name_length = (size_t)(read - name);
         if (!*read)
             break;
         read++;
         while (*read && *read != '\\')
             read++;
         const char *next = *read ? read + 1 : read;
-        if (length != wanted || memcmp(name, key, length)) {
+        if (name_length != wanted || memcmp(name, key, name_length)) {
             size_t bytes = (size_t)(read - name);
             info[used++] = '\\';
             memmove(info + used, name, bytes);
@@ -256,6 +256,21 @@ static bool player_userinfo(void *context, qa_actor_id id, qa_error *e) {
 bool qa_q2_player_userinfo(qa_q2_game *g, qa_actor_id id, const char *source, qa_error *e) {
     player_userinfo_call call = {.game = g, .source = source};
     return qa_q2_run_actor(g, id, player_userinfo, &call, e);
+}
+static bool userinfo_storage(void *context,qa_actor_id actor,qa_error *e) {
+    player_userinfo_call *call=context;
+    q2_actor *a=q2_client(call->game,actor,e);
+    if(!a || !call->source) return false;
+    size_t length=strlen(call->source);
+    if(length>=sizeof(a->client->userinfo)) {
+        qa_error_set(e,QA_ERROR_FORMAT,0,"Q2 stored userinfo exceeds its actual client storage");return false;
+    }
+    memcpy(a->client->userinfo,call->source,length+1);return true;
+}
+bool qa_q2_player_userinfo_storage(qa_q2_game *g,qa_actor_id actor,const char *text,qa_error *e) {
+    if(!text) {qa_error_set(e,QA_ERROR_ARGUMENT,0,"Q2 stored userinfo is absent");return false;}
+    player_userinfo_call call={.game=g,.source=text};
+    return qa_q2_run_actor(g,actor,userinfo_storage,&call,e);
 }
 typedef struct player_admission_call {
     qa_q2_game *game;

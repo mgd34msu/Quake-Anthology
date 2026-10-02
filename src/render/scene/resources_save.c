@@ -38,7 +38,7 @@ static bool name_field(qa_source_save_io *io, const char **name, char **owned)
     text[size] = 0; *name = text; return true;
 }
 static bool image_fields(qa_source_save_io *io, qa_scene_resources *owner, const qa_scene_image *source,
-    qa_scene_image **out, uint64_t *lineage_revision)
+    qa_scene_image **out, uint64_t *lineage_revision, uint32_t version)
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ; const char *name = reading ? NULL : source->name;
     char *owned_name = NULL; uint32_t kind = reading ? 0 : source->kind, wrap = reading ? 0 : source->wrap, filter = reading ? 0 : source->filter;
@@ -46,6 +46,8 @@ static bool image_fields(qa_source_save_io *io, qa_scene_resources *owner, const
     uint32_t logical_width = reading ? 0 : source->logical_width, logical_height = reading ? 0 : source->logical_height;
     qa_scene_vec4 border = reading ? (qa_scene_vec4){0} : source->border;
     size_t levels = reading ? 0 : source->level_count;
+    bool source_q3 = reading ? false : source->source_q3, source_mipmap = reading ? false : source->source_mipmap;
+    bool recipient_upload_pixels = reading ? false : source->recipient_upload_pixels;
     bool ok = name_field(io, &name, &owned_name) && qa_source_save_u32(io, &kind) && kind <= QA_SCENE_DEPTH32F &&
         qa_source_save_u32(io, &wrap) && wrap <= QA_SCENE_CLAMP && qa_source_save_u32(io, &filter) && filter <= QA_SCENE_LINEAR_MIPMAP_LINEAR &&
         qa_source_save_u64(io, &revision) && revision && qa_source_save_u64(io, lineage_revision) && *lineage_revision >= revision &&
@@ -54,6 +56,9 @@ static bool image_fields(qa_source_save_io *io, qa_scene_resources *owner, const
         qa_source_save_f32(io, &border.z) && qa_source_save_f32(io, &border.w) &&
         isfinite(border.x) && isfinite(border.y) && isfinite(border.z) && isfinite(border.w) &&
         qa_source_save_count(io, &levels, reading ? io->input.size / 8 : SIZE_MAX) && levels;
+    if (ok && version >= 2) ok = qa_source_save_bool(io, &source_q3) &&
+        qa_source_save_bool(io, &source_mipmap) && (source_q3 || !source_mipmap) &&
+        qa_source_save_bool(io, &recipient_upload_pixels);
     qa_scene_image_level *decoded = reading && ok ? calloc(levels, sizeof(*decoded)) : NULL;
     if (reading && ok && !decoded) { qa_error_set(io->error, QA_ERROR_MEMORY, io->offset, "Allocating saved mip levels"); ok = false; }
     for (size_t i = 0; ok && i < levels; ++i) {
@@ -82,16 +87,19 @@ static bool image_fields(qa_source_save_io *io, qa_scene_resources *owner, const
             (qa_scene_wrap)wrap, (qa_scene_filter)filter, border, out, io->error);
         if (ok) {
             (*out)->revision = revision; (*out)->logical_width = logical_width; (*out)->logical_height = logical_height;
+            (*out)->source_q3 = source_q3; (*out)->source_mipmap = source_mipmap;
+            (*out)->recipient_upload_pixels = recipient_upload_pixels;
             ((owned_image *)*out)->lineage->revision = *lineage_revision;
         }
     }
     if (decoded) for (size_t i = 0; i < levels; ++i) free((void *)decoded[i].pixels);
     free(decoded); free(owned_name); return ok;
 }
-static bool signature(qa_source_save_io *io)
+static bool signature(qa_source_save_io *io, uint32_t *version)
 {
-    uint8_t magic[4] = {'Q','A','I','M'}; uint32_t version = 1;
-    return qa_source_save_bytes(io, magic, 4) && !memcmp(magic, "QAIM", 4) && qa_source_save_u32(io, &version) && version == 1;
+    uint8_t magic[4] = {'Q','A','I','M'};
+    return qa_source_save_bytes(io, magic, 4) && !memcmp(magic, "QAIM", 4) &&
+        qa_source_save_u32(io, version) && *version >= 1 && *version <= 2;
 }
 bool qa_scene_images_checkpoint(const qa_scene_resources *const *owners, size_t count, qa_buffer *out, qa_error *error)
 {
@@ -108,7 +116,8 @@ bool qa_scene_images_checkpoint(const qa_scene_resources *const *owners, size_t 
     size_t at = 0;
     for (size_t i = 0; i < count; ++i) for (const owned_image *image = owners[i]->names->images; image; image = image->next) images[at++] = image;
     qa_source_save_io io = {0}; size_t owner_count = count;
-    bool ok = at == total && qa_source_save_writer(&io, NULL, error) && signature(&io) &&
+    uint32_t version = 2;
+    bool ok = at == total && qa_source_save_writer(&io, NULL, error) && signature(&io, &version) &&
         qa_source_save_count(&io, &owner_count, SIZE_MAX) && qa_source_save_count(&io, &total, SIZE_MAX);
     at = 0;
     for (size_t owner = 0; ok && owner < count; ++owner) for (const owned_image *entry = owners[owner]->names->images; ok && entry; entry = entry->next, ++at) {
@@ -116,7 +125,7 @@ bool qa_scene_images_checkpoint(const qa_scene_resources *const *owners, size_t 
         for (size_t i = 0; i < at; ++i) if (images[i]->lineage == entry->lineage) { group = i; break; }
         uint64_t latest = entry->lineage->revision;
         ok = qa_source_save_count(&io, &scope, SIZE_MAX) && qa_source_save_count(&io, &group, SIZE_MAX) &&
-            image_fields(&io, NULL, &entry->image, NULL, &latest) && qa_source_save_count(&io, &animation, SIZE_MAX);
+            image_fields(&io, NULL, &entry->image, NULL, &latest, version) && qa_source_save_count(&io, &animation, SIZE_MAX);
         for (size_t i = 0; ok && i < animation; ++i) {
             uint64_t index = UINT64_MAX;
             const qa_scene_image *frame = entry->image.animation ? entry->image.animation[i] : NULL;
@@ -171,7 +180,8 @@ bool qa_scene_images_restore(qa_scene_resources *const *owners, size_t count, qa
         for (size_t j = 0; j < i; ++j) if (owners[i] == owners[j]) return fail(error, "Image restore resource owner is duplicated");
     }
     qa_source_save_io io = {0}; size_t owner_count = 0, total = 0;
-    bool ok = qa_source_save_reader(&io, NULL, bytes, error) && signature(&io) &&
+    uint32_t version = 0;
+    bool ok = qa_source_save_reader(&io, NULL, bytes, error) && signature(&io, &version) &&
         qa_source_save_count(&io, &owner_count, count) && owner_count == count &&
         qa_source_save_count(&io, &total, bytes.size / 16) && total <= SIZE_MAX / sizeof(qa_scene_image *);
     qa_scene_image_set *set = ok ? calloc(1, sizeof(*set)) : NULL;
@@ -185,7 +195,7 @@ bool qa_scene_images_restore(qa_scene_resources *const *owners, size_t count, qa
     for (size_t i = 0; ok && i < total; ++i) {
         size_t scope = 0, group = 0; uint64_t latest = 0;
         ok = qa_source_save_count(&io, &scope, count - 1) && qa_source_save_count(&io, &group, i) &&
-            image_fields(&io, owners[scope], NULL, &set->images[i], &latest);
+            image_fields(&io, owners[scope], NULL, &set->images[i], &latest, version);
         if (!ok) break;
         owned_image *image = (owned_image *)set->images[i];
         if (group != i) {

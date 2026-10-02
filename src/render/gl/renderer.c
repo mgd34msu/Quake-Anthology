@@ -250,6 +250,8 @@ qa_gl_renderer *qa_gl_create(const qa_gl_options *input, qa_error *error)
     }
     renderer->options = *options;
     qa_render_controls_init_gl(&renderer->controls, renderer);
+    qa_scene_state_default(&renderer->pipeline);
+    renderer->pipeline.depth_test=QA_DEPTH_LESS;
     renderer->draw_buffer = QA_DRAW_BACK;
     renderer->gamma = 1;
     renderer->view.viewport = (qa_scene_rect){0, 0, info.drawable_width,
@@ -349,6 +351,7 @@ static bool view_dimensions(qa_gl_renderer *renderer, uint32_t *width,
     return true;
 }
 
+static void draw_state(qa_gl_renderer *,const qa_scene_state *,qa_scene_primitive);
 static bool begin_view(qa_gl_renderer *renderer, const qa_scene_view *view, bool source_backend,
                        qa_error *error)
 {
@@ -375,6 +378,11 @@ static bool begin_view(qa_gl_renderer *renderer, const qa_scene_view *view, bool
     renderer->view = *view;
     if (renderer->opacity.skip) return true;
     gl_api *gl = &renderer->gl;
+    if (source_backend && view->clear_depth) {
+        qa_scene_state initial=renderer->pipeline;
+        qa_render_source_state_bits(&initial,true,false);
+        draw_state(renderer,&initial,QA_SCENE_TRIANGLES);
+    }
     gl->Viewport(view->viewport.x, (GLint)bottom,
                  (GLsizei)view->viewport.width,
                  (GLsizei)view->viewport.height);
@@ -384,12 +392,14 @@ static bool begin_view(qa_gl_renderer *renderer, const qa_scene_view *view, bool
                 (GLsizei)view->viewport.height);
     GLbitfield clear = 0;
     if (view->clear_color) {
+        renderer->pipeline.color_write=true;
         gl->ColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
         gl->ClearColor(view->color.x, view->color.y, view->color.z,
                        view->color.w);
         clear |= GL_COLOR_BUFFER_BIT;
     }
     if (view->clear_depth) {
+        renderer->pipeline.depth_write=true;
         gl->DepthMask(GL_TRUE);
         gl->ClearDepth(view->depth);
         clear |= GL_DEPTH_BUFFER_BIT;
@@ -429,6 +439,7 @@ static GLenum stencil_operation(qa_scene_stencil_op operation)
 static void draw_state(qa_gl_renderer *renderer, const qa_scene_state *state,
                        qa_scene_primitive primitive)
 {
+    renderer->pipeline=*state;
     gl_api *gl = &renderer->gl;
     gl->Enable(GL_DEPTH_TEST);
     gl->DepthFunc(state->depth_test == QA_DEPTH_ALWAYS ? GL_ALWAYS :
@@ -647,8 +658,14 @@ static void draw_source_strips(qa_gl_renderer *renderer, const qa_scene_draw *dr
 static bool draw_scene(qa_gl_renderer *renderer, const qa_scene_draw *source,
                        qa_error *error)
 {
-    if (!draw_valid(renderer, source, error)) return false;
     qa_scene_draw draw = *source;
+    qa_render_source_direct_state(&draw.state,&renderer->pipeline,source);
+    if ((unsigned)draw.source_direct>QA_SOURCE_DIRECT_SHADOW_FINISH || !draw_valid(renderer,&draw,error)) {
+        if (!error || error->code==QA_OK)
+            qa_error_set(error,QA_ERROR_ARGUMENT,0,"Invalid Source direct draw provenance");
+        return false;
+    }
+    if (draw.source_direct==QA_SOURCE_DIRECT_SHADOW_FINISH) renderer->view.clip_enabled=false;
     gl_texture_entry *textures[2] = {NULL, NULL}, *shadow = NULL;
     for (size_t unit = 0; unit < draw.texture_count; ++unit) {
         if (draw.retain_texture[unit]) draw.textures[unit] = renderer->bound[unit];
@@ -713,6 +730,14 @@ static bool draw_scene(qa_gl_renderer *renderer, const qa_scene_draw *source,
         draw_source_strips(renderer, &draw, mode == QA_RENDER_PRIMITIVES_DISCRETE_STRIPS);
     if (locked) renderer->gl.UnlockArraysEXT();
     gl_mesh_unbind(renderer);
+    if (draw.source_direct==QA_SOURCE_DIRECT_AXIS) {
+        renderer->gl.LineWidth(1);
+        renderer->pipeline.line_width=1;
+    }
+    if (draw.source_direct==QA_SOURCE_DIRECT_SHADOW_FINISH) {
+        renderer->gl.Disable(GL_STENCIL_TEST);
+        renderer->pipeline.stencil_enabled=false;
+    }
     return gl_check(renderer, "OpenGL scene draw", error);
 }
 
@@ -729,6 +754,7 @@ static bool select_draw_buffer(qa_gl_renderer *renderer,
     renderer->draw_buffer = buffer;
     if (!gl_bind_destination(renderer, error)) return false;
     if (clear && !renderer->opacity.skip) {
+        renderer->pipeline.color_write=renderer->pipeline.depth_write=true;
         renderer->gl.ColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
         renderer->gl.DepthMask(GL_TRUE);
         renderer->gl.ClearColor(1, 0, 0.5f, 1);
@@ -738,6 +764,27 @@ static bool select_draw_buffer(qa_gl_renderer *renderer,
         renderer->gl.Clear(mask);
     }
     return gl_check(renderer, "OpenGL draw-buffer selection", error);
+}
+static bool source_draw_buffer_clear(qa_gl_renderer *renderer, qa_error *error)
+{
+    renderer->gl.ClearColor(1, 0, 0.5f, 1);
+    renderer->gl.Clear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    return gl_check(renderer,"Source draw-buffer clear",error);
+}
+static bool gl_swap(qa_gl_renderer *renderer, qa_error *error)
+{
+    if ((renderer->opacity.active && renderer->opacity.value != 1) || renderer->target) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"Cannot swap an OpenGL opacity or depth target");
+        return false;
+    }
+    if (!gl_output_resolve(renderer,error) ||
+        !gl_dimensions(renderer,&renderer->presented_width,&renderer->presented_height,error) ||
+        !qa_display_swap(renderer->options.display,error)) return false;
+    renderer->presented=true;
+    renderer->controls.source.projection_2d=false;
+    renderer->controls.source.entity_count=renderer->controls.source.first_scene_entity=0;
+    renderer->controls.source.submitted_light_count=renderer->controls.source.first_scene_light=0;
+    return true;
 }
 
 static bool gl_execute_range(qa_gl_renderer *renderer, const qa_scene_frame *frame,
@@ -762,9 +809,7 @@ static bool gl_execute_range(qa_gl_renderer *renderer, const qa_scene_frame *fra
     if (!qa_display_make_current(renderer->options.display, error)) return false;
     if (begin && frame->source_backend && frame->source_clear_draw_buffer) {
         if (!select_draw_buffer(renderer, renderer->draw_buffer, false, error)) return false;
-        renderer->gl.ClearColor(1, 0, 0.5f, 1);
-        renderer->gl.Clear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-        if (!gl_check(renderer, "Source draw-buffer clear", error)) return false;
+        if (!source_draw_buffer_clear(renderer,error)) return false;
         if (renderer->controls.source.issuing && renderer->controls.source.frame == frame)
             renderer->controls.source.frame->source_clear_draw_buffer = false;
     }
@@ -804,25 +849,12 @@ static bool gl_execute_range(qa_gl_renderer *renderer, const qa_scene_frame *fra
             break;
         case QA_SCENE_COMMAND_DRAW_BUFFER:
             ok = select_draw_buffer(renderer, command->data.draw_buffer.buffer,
-                                    command->data.draw_buffer.clear, error);
+                                    command->data.draw_buffer.clear && !frame->source_backend, error);
+            if (ok && command->data.draw_buffer.clear && frame->source_backend)
+                ok=source_draw_buffer_clear(renderer,error);
             break;
         case QA_SCENE_COMMAND_SWAP:
-            ok = (!renderer->opacity.active || renderer->opacity.value == 1) &&
-                 renderer->target == NULL &&
-                 gl_output_resolve(renderer, error) &&
-                 gl_dimensions(renderer, &renderer->presented_width, &renderer->presented_height, error) &&
-                 qa_display_swap(renderer->options.display, error);
-            if (ok) {
-                renderer->presented = true;
-                renderer->controls.source.projection_2d = false;
-            }
-            if (!ok && renderer->opacity.active &&
-                renderer->opacity.value != 1)
-                qa_error_set(error, QA_ERROR_ARGUMENT, 0,
-                             "Cannot swap inside an OpenGL opacity scope");
-            else if (!ok && renderer->target != NULL)
-                qa_error_set(error, QA_ERROR_ARGUMENT, 0,
-                             "Cannot swap an OpenGL depth target");
+            ok=gl_swap(renderer,error);
             break;
         case QA_SCENE_COMMAND_IMAGE:
             ok = gl_image_update(renderer, command->data.image, error);
@@ -870,6 +902,58 @@ bool qa_gl_source_execute_prefix(qa_render_controls *controls, const qa_scene_fr
     renderer->executing = false;
     return ok;
 }
+bool qa_gl_source_depth_range(qa_render_controls *controls,float near_depth,float far_depth,
+    qa_error *error)
+{
+    if (!qa_gl_source_scratch_current(controls) || controls->ticket || !controls->source.entered ||
+        !controls->source.issuing || !isfinite(near_depth) || !isfinite(far_depth) ||
+        near_depth<0 || near_depth>1 || far_depth<0 || far_depth>1) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"Source depth range lost its actual OpenGL issue owner");
+        return false;
+    }
+    qa_gl_renderer *renderer=controls->owner.gl;
+    if (!qa_display_make_current(renderer->options.display,error)) return false;
+    renderer->pipeline.depth_near=near_depth;
+    renderer->pipeline.depth_far=far_depth;
+    renderer->gl.DepthRange(near_depth,far_depth);
+    return gl_check(renderer,"Source depth range",error);
+}
+bool qa_gl_source_polygon_offset(qa_render_controls *controls,bool enabled,float factor,float units,
+    qa_error *error)
+{
+    if (!qa_gl_source_scratch_current(controls) || controls->ticket || !controls->source.entered ||
+        !controls->source.issuing || !isfinite(factor) || !isfinite(units)) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"Source polygon offset lost its actual OpenGL issue owner");
+        return false;
+    }
+    qa_gl_renderer *renderer=controls->owner.gl;
+    if (!qa_display_make_current(renderer->options.display,error)) return false;
+    renderer->pipeline.polygon_offset=enabled;
+    if (enabled) {
+        renderer->pipeline.offset_factor=factor;
+        renderer->pipeline.offset_units=units;
+        renderer->gl.Enable(GL_POLYGON_OFFSET_FILL);
+        renderer->gl.PolygonOffset(factor,units);
+    } else renderer->gl.Disable(GL_POLYGON_OFFSET_FILL);
+    return gl_check(renderer,"Source polygon offset",error);
+}
+bool qa_gl_source_cull(qa_render_controls *controls,qa_scene_cull cull,qa_error *error)
+{
+    if (!qa_gl_source_scratch_current(controls) || controls->ticket || !controls->source.entered ||
+        !controls->source.issuing || (unsigned)cull>QA_CULL_BACK) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"Source cull lost its actual OpenGL issue owner");
+        return false;
+    }
+    qa_gl_renderer *renderer=controls->owner.gl;
+    if (!qa_display_make_current(renderer->options.display,error)) return false;
+    renderer->pipeline.cull=cull;
+    if (cull==QA_CULL_NONE) renderer->gl.Disable(GL_CULL_FACE);
+    else {
+        renderer->gl.Enable(GL_CULL_FACE);
+        renderer->gl.CullFace(cull==QA_CULL_FRONT?GL_FRONT:GL_BACK);
+    }
+    return gl_check(renderer,"Source cull",error);
+}
 bool qa_gl_execute(qa_gl_renderer *renderer,const qa_scene_frame *frame,qa_error *error)
 {
     if (renderer && renderer->controls.source.entered)
@@ -893,6 +977,9 @@ bool qa_gl_checkpoint_resources(const qa_gl_renderer *renderer,qa_render_resourc
     for (size_t i=0;i<2;++i,++ordinal)
         if (renderer->bound[i] && !visit(context,renderer->bound[i],NULL,ordinal,error)) return false;
     if (renderer->target && !visit(context,renderer->target,NULL,ordinal,error)) return false;
+    ++ordinal;
+    if (renderer->controls.source.lightmap &&
+        !visit(context,renderer->controls.source.lightmap,NULL,ordinal,error)) return false;
     ordinal=0;
     for (const gl_mesh_entry *entry=renderer->meshes;entry;entry=entry->next,++ordinal)
         if (!entry->geometry || (qa_scene_geometry_active(entry->geometry) &&
@@ -927,6 +1014,18 @@ bool qa_gl_finish(qa_gl_renderer *renderer, qa_error *error)
     }
     renderer->gl.Finish();
     return gl_check(renderer, "OpenGL finish", error);
+}
+bool qa_gl_swap(qa_gl_renderer *renderer, qa_error *error)
+{
+    if (!gl_surface_idle(renderer,error)) return false;
+    if (renderer->closed || renderer->detached || renderer->destroy_pending ||
+        renderer->executing || renderer->capturing || renderer->preparing ||
+        !qa_display_make_current(renderer->options.display,error)) {
+        if (!error || error->code==QA_OK)
+            qa_error_set(error,QA_ERROR_ARGUMENT,0,"OpenGL swap requires its actual idle renderer/display");
+        return false;
+    }
+    return gl_swap(renderer,error);
 }
 
 bool qa_gl_set_gamma(qa_gl_renderer *renderer, float gamma, qa_error *error)

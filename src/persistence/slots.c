@@ -48,7 +48,7 @@ bool qa_save_slot_inspect(qa_fs_root *root, const char *name,
             source_value(&save->globals, "found_secrets", &source.found_secrets, error) &&
             source_value(&save->globals, "total_secrets", &source.total_secrets, error);
     }
-    qa_save_image_destroy(image);
+    if (!qa_save_image_destroy_checked(&image, error)) ok = false;
     qa_q1_save_destroy(save);
     if (!ok) { qa_q1_save_slot_metadata_dispose(&source); return false; }
     *format = kind; *out = shared; *original = source;

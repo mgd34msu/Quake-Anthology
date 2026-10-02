@@ -3,6 +3,8 @@
 #include "q3_render_policy.h"
 #include "q3_color_policy.h"
 #include "material_movies.h"
+#include "music_sources.h"
+#include "qa/audio_music_prepare.h"
 #include "visual_access.h"
 #include "qa/scene_resource_save.h"
 #include "qa/material_library_save.h"
@@ -11,6 +13,13 @@
 #include "qa/binary.h"
 #include <limits.h>
 #include <stdio.h>
+typedef struct component_scene_packet {
+    struct component_scene_packet *next;
+    frontend_component_scene_packet view;
+    uint8_t *areas;
+    qa_scene_light *world_lights,*projected_lights;
+    const char *texts[8];
+} component_scene_packet;
 
 struct frontend_component_scene {
     struct frontend_component_scene *next;
@@ -28,9 +37,13 @@ struct frontend_component_scene {
     qa_q3_presentation *presentation;
     qa_cvars *cvars;
     qa_command_context command;
+    qa_audio_music *music;
+    char *music_intro,*music_loop;
     qa_scene_frame frame;
+    component_scene_packet *packets,*last_packet;
+    size_t packet_count;
     uint64_t identity,sequence;
-    bool host_borrow,ready,begun;
+    bool host_borrow,ready,begun,music_looping,music_pending;
 };
 static bool retained(const struct frontend_component_scene *owner)
 {
@@ -80,6 +93,123 @@ static int32_t frame_number(void *context)
         (int32_t)((uint64_t)view.revision&INT32_MAX):0;
 }
 static uint64_t audio_bus(void *context) { return ((struct frontend_component_scene *)context)->identity; }
+static qa_audio_family music_family(const struct frontend_component_scene *owner)
+{
+    const qa_launch_instance *descriptor=qa_launch_instance_lease_view(owner->descriptor);
+    const qa_product *product=descriptor?qa_catalog_product(owner->request.catalog,descriptor->selection.product):NULL;
+    return product && product->family==QA_GAME_Q1?QA_AUDIO_Q1:
+        product && product->family==QA_GAME_Q2?QA_AUDIO_Q2:QA_AUDIO_Q3;
+}
+static bool music_published(const struct frontend_component_scene *owner)
+{ return retained(owner) && owner->request.published && owner->request.published(owner->request.context); }
+static bool music_stop(void *context,qa_error *e)
+{
+    struct frontend_component_scene *owner=context;
+    qa_audio_music *attached=qa_audio_engine_bus_music(owner->frontend->audio,owner->identity);
+    if (attached && attached!=owner->music)
+        return frontend_fail(e,QA_ERROR_ARGUMENT,"Component music bus contains another player");
+    qa_audio_engine_remove_music(owner->frontend->audio,owner->identity);
+    if (qa_audio_engine_bus_music(owner->frontend->audio,owner->identity))
+        return frontend_fail(e,QA_ERROR_ARGUMENT,"Component music stop retained its exact bus");
+    if (owner->music) qa_audio_music_stop(owner->music);
+    free(owner->music_intro); free(owner->music_loop);
+    owner->music_intro=owner->music_loop=NULL; owner->music_looping=owner->music_pending=false;
+    return true;
+}
+static bool music_current(void *context,const frontend_music_origin *origin)
+{
+    struct frontend_component_scene *owner=context;
+    const qa_launch_instance *descriptor=owner?qa_launch_instance_lease_view(owner->descriptor):NULL;
+    return origin && descriptor && music_published(owner) && origin->kind==FRONTEND_MUSIC_COMPONENT &&
+        origin->context==owner && origin->receiver==owner->request.owner && origin->bus==owner->identity &&
+        origin->physical_seat==owner->request.physical_seat && origin->descriptor &&
+        origin->descriptor->storage==descriptor->storage && origin->catalog==owner->request.catalog &&
+        origin->product==descriptor->selection.product && origin->files==owner->files && origin->music==owner->music &&
+        (!qa_audio_engine_bus_music(owner->frontend->audio,owner->identity) ||
+         qa_audio_engine_bus_music(owner->frontend->audio,owner->identity)==owner->music);
+}
+static frontend_music_origin music_origin(struct frontend_component_scene *owner)
+{
+    const qa_launch_instance *descriptor=qa_launch_instance_lease_view(owner->descriptor);
+    return (frontend_music_origin){.kind=FRONTEND_MUSIC_COMPONENT,.receiver=owner->request.owner,
+        .bus=owner->identity,.physical_seat=owner->request.physical_seat,.descriptor=descriptor,
+        .catalog=owner->request.catalog,.product=descriptor->selection.product,.files=owner->files,
+        .music=owner->music,.context=owner,.current=music_current,.stop=music_stop};
+}
+static bool music_publish(struct frontend_component_scene *owner,qa_error *e)
+{
+    if (!owner->music_pending) return true;
+    if (!music_published(owner)) return true;
+    frontend_music_origin origin=music_origin(owner);
+    if (!frontend_music_sources_explicit_begin(owner->frontend->music_sources,&origin,e)) return false;
+    qa_audio_music *attached=qa_audio_engine_bus_music(owner->frontend->audio,owner->identity);
+    if (attached && attached!=owner->music)
+        return frontend_fail(e,QA_ERROR_ARGUMENT,"Pending component cue lost its actual player bus");
+    if (qa_audio_music_playing(owner->music) && !attached) {
+        if (!qa_audio_music_retain(owner->music,e)) return false;
+        if (!qa_audio_engine_music(owner->frontend->audio,owner->identity,owner->request.physical_seat,1,owner->music,e)) {
+            qa_audio_music_release(owner->music); return false;
+        }
+    }
+    if (!frontend_music_sources_explicit(owner->frontend->music_sources,&origin,
+        owner->music_intro?owner->music_intro:"",owner->music_loop?owner->music_loop:"",owner->music_looping,e)) return false;
+    owner->music_pending=false; return true;
+}
+static bool music(void *context,const char *intro_name,const char *loop_name,qa_error *e)
+{
+    struct frontend_component_scene *owner=context; application_q3_scene_context view;
+    if (!publication(owner,&view,e)) return false;
+    if (!owner->frontend->audio) return frontend_fail(e,QA_ERROR_UNSUPPORTED,"Component music output is disabled");
+    qa_audio_music *attached=qa_audio_engine_bus_music(owner->frontend->audio,owner->identity);
+    if (attached && attached!=owner->music)
+        return frontend_fail(e,QA_ERROR_ARGUMENT,"Component cue lost its actual player bus");
+    if (!owner->music && !qa_audio_music_create(qa_audio_engine_rate(owner->frontend->audio),
+        music_family(owner),true,&owner->music,e)) return false;
+    frontend_music_origin origin=music_origin(owner);
+    bool published=music_published(owner);
+    if (published && !frontend_music_sources_explicit_selected(owner->frontend->music_sources,&origin)) {
+        if (attached || !qa_audio_music_idle(owner->music))
+            return frontend_fail(e,QA_ERROR_ARGUMENT,"Component source selection retains its previous player");
+        qa_audio_music *fresh=NULL;
+        if (!qa_audio_music_create(qa_audio_engine_rate(owner->frontend->audio),music_family(owner),true,&fresh,e)) return false;
+        qa_audio_music_release(owner->music); owner->music=fresh;
+        free(owner->music_intro); free(owner->music_loop); owner->music_intro=owner->music_loop=NULL;
+        owner->music_looping=false; origin=music_origin(owner);
+    }
+    qa_audio_music_controls *controls=frontend_music_sources_controls(owner->frontend->music_sources);
+    if (!controls || (!qa_audio_music_controls_is(owner->music,controls) &&
+        !qa_audio_music_controls_bind(owner->music,controls,e))) return false;
+    if (published && !frontend_music_sources_explicit_begin(owner->frontend->music_sources,&origin,e)) return false;
+    bool enabled=false;
+    if (!qa_audio_music_controls_enabled(controls,&enabled)) return false;
+    if (intro_name && *intro_name && !enabled) return true;
+    const char *loop_text=loop_name?loop_name:"";
+    if (intro_name && owner->music_intro && owner->music_loop && owner->music_looping &&
+        !strcmp(intro_name,owner->music_intro) && !strcmp(loop_text,owner->music_loop) &&
+        qa_audio_music_playing(owner->music)) return true;
+    qa_audio_music_stop(owner->music);
+    free(owner->music_intro); free(owner->music_loop); owner->music_intro=owner->music_loop=NULL;
+    owner->music_looping=false; owner->music_pending=true;
+    if (intro_name && *intro_name) {
+        owner->music_intro=malloc(strlen(intro_name)+1); owner->music_loop=malloc(strlen(loop_text)+1);
+        if (!owner->music_intro || !owner->music_loop) {
+            free(owner->music_intro); free(owner->music_loop); owner->music_intro=owner->music_loop=NULL;
+            return frontend_fail(e,QA_ERROR_MEMORY,"Retaining private component cue names");
+        }
+        strcpy(owner->music_intro,intro_name); strcpy(owner->music_loop,loop_text);
+        qa_audio_stream *intro=NULL,*loop=NULL;
+        if (!qa_audio_bank_music_cue(owner->sounds,intro_name,music_family(owner),NULL,NULL,&intro,e)) return false;
+        if (intro) {
+            loop=intro;
+            if (*loop_text && strcmp(intro_name,loop_text) &&
+                !qa_audio_bank_music_cue(owner->sounds,loop_text,music_family(owner),NULL,NULL,&loop,e)) {
+                qa_audio_stream_close(intro); return false;
+            }
+            owner->music_looping=loop!=NULL; qa_audio_music_start(owner->music,intro,loop);
+        }
+    }
+    return (!published || music_publish(owner,e)) && owner->request.source.current(owner->request.source.context,&view);
+}
 static bool audio_actor(void *context,int32_t number,uint64_t *out,qa_error *e)
 {
     struct frontend_component_scene *owner=context; application_q3_scene_context view;
@@ -134,6 +264,71 @@ static bool configuration(void *context,uint8_t out[11332],qa_error *e)
     return publication(owner,&view,e) && frontend_q3_configuration(owner->frontend,out,e) &&
         owner->request.source.current(owner->request.source.context,&view);
 }
+static void packet_destroy(component_scene_packet *packet)
+{
+    free((void *)packet->view.entities); free((void *)packet->view.polygons);
+    free((void *)packet->view.vertices); free((void *)packet->view.lights);
+    free(packet->areas); free(packet->world_lights); free(packet->projected_lights); free(packet);
+}
+static void packets_clear(struct frontend_component_scene *owner)
+{
+    while (owner->packets) {
+        component_scene_packet *packet=owner->packets;
+        owner->packets=packet->next; packet_destroy(packet);
+    }
+    owner->last_packet=NULL; owner->packet_count=0;
+}
+static bool copy_span(const void *span,size_t count,size_t element,void **out,qa_error *e)
+{
+    if (count && (!span || count>SIZE_MAX/element))
+        return frontend_fail(e,QA_ERROR_FORMAT,"Completed component scene span exceeds its real source extent");
+    if (!count) { *out=NULL; return true; }
+    *out=malloc(count*element);
+    if (!*out) return frontend_fail(e,QA_ERROR_MEMORY,"Retaining completed component scene");
+    memcpy(*out,span,count*element); return true;
+}
+static bool scene_completed(void *context,const qa_q3_refdef *definition,const qa_q3_scene_options *options,
+    const qa_q3_ref_entity *entities,size_t entity_count,const qa_q3_scene_polygon *polygons,size_t polygon_count,
+    const qa_scene_vertex *vertices,size_t vertex_count,const qa_scene_light *lights,size_t light_count,qa_error *e)
+{
+    struct frontend_component_scene *owner=context; application_q3_scene_context source;
+    if (!publication(owner,&source,e) || !owner->begun || !definition || !options ||
+        owner->packet_count==SIZE_MAX || options->world.shadow_light_count || options->world.entity_material ||
+        options->world.q1_mirror || options->world.q1_sky_environment || options->world.q1_sky)
+        return frontend_fail(e,QA_ERROR_ARGUMENT,"Component scene completion leaves its genuine private render namespace");
+    for (size_t i=0;i<polygon_count;++i)
+        if (!polygons || polygons[i].first>vertex_count || polygons[i].count>vertex_count-polygons[i].first)
+            return frontend_fail(e,QA_ERROR_FORMAT,"Completed component polygon leaves its issued vertices");
+    component_scene_packet *packet=calloc(1,sizeof(*packet));
+    if (!packet) return frontend_fail(e,QA_ERROR_MEMORY,"Retaining completed component render packet");
+    packet->view=(frontend_component_scene_packet){.definition=*definition,.options=*options,
+        .entity_count=entity_count,.polygon_count=polygon_count,.vertex_count=vertex_count,.light_count=light_count};
+    void *entity_copy=NULL,*polygon_copy=NULL,*vertex_copy=NULL,*light_copy=NULL;
+    bool ok=copy_span(entities,entity_count,sizeof(*entities),&entity_copy,e) &&
+        copy_span(polygons,polygon_count,sizeof(*polygons),&polygon_copy,e) &&
+        copy_span(vertices,vertex_count,sizeof(*vertices),&vertex_copy,e) &&
+        copy_span(lights,light_count,sizeof(*lights),&light_copy,e);
+    packet->view.entities=entity_copy; packet->view.polygons=polygon_copy;
+    packet->view.vertices=vertex_copy; packet->view.lights=light_copy;
+    void *areas=NULL,*world_lights=NULL,*projected=NULL;
+    if (ok) ok=copy_span(options->world.visible_areas,options->world.visible_area_bytes,1,&areas,e) &&
+        copy_span(options->world.lights,options->world.light_count,sizeof(qa_scene_light),&world_lights,e) &&
+        copy_span(options->world.projected_lights,options->world.projected_light_count,sizeof(qa_scene_light),&projected,e);
+    packet->areas=areas; packet->world_lights=world_lights; packet->projected_lights=projected;
+    if (ok && options->world.render_text_count>8)
+        ok=frontend_fail(e,QA_ERROR_FORMAT,"Completed component scene exceeds its actual refdef text slots");
+    if (ok) {
+        packet->view.options.world.visible_areas=packet->areas;
+        packet->view.options.world.lights=packet->world_lights;
+        packet->view.options.world.projected_lights=packet->projected_lights;
+        for (size_t i=0;i<options->world.render_text_count;++i) packet->texts[i]=packet->view.definition.text[i];
+        packet->view.options.world.render_texts=packet->texts;
+        ok=owner->request.source.current(owner->request.source.context,&source);
+    }
+    if (!ok) { packet_destroy(packet); return false; }
+    if (owner->last_packet) owner->last_packet->next=packet; else owner->packets=packet;
+    owner->last_packet=packet; ++owner->packet_count; return true;
+}
 static void release_host(void *context) { ((struct frontend_component_scene *)context)->host_borrow=false; }
 static bool idle(const void *context)
 {
@@ -147,9 +342,13 @@ static bool destroy(void **slot,qa_error *e)
     if (!owner) return true;
     if (owner->host_borrow || !idle(owner) || owner->frontend->capture || owner->frontend->resource_inventory)
         return frontend_fail(e,QA_ERROR_ARGUMENT,"Component renderer retains its real host or output borrower");
+    if ((owner->frontend->music_sources &&
+        !frontend_music_sources_explicit_retire(owner->frontend->music_sources,owner,e)) || !music_stop(owner,e)) return false;
+    qa_audio_music_release(owner->music); owner->music=NULL;
     if (owner->presentation && !qa_q3_presentation_destroy(owner->presentation,e)) return false;
     owner->presentation=NULL;
     if (!frontend_material_movies_destroy(&owner->movies,e)) return false;
+    packets_clear(owner);
     qa_scene_frame_destroy(&owner->frame);
     qa_q3_presentation_assets_destroy(owner->assets);
     qa_font_library_destroy(owner->fonts); qa_audio_bank_destroy(owner->sounds);
@@ -172,6 +371,8 @@ static bool begin(void *context,uint64_t sequence,qa_error *e)
     struct frontend_component_scene *owner=context;
     if (!retained(owner) || !owner->ready || !owner->host_borrow || !idle(owner))
         return frontend_fail(e,QA_ERROR_ARGUMENT,"Component output begin needs its real returned private renderer");
+    if (!music_publish(owner,e)) return false;
+    packets_clear(owner);
     qa_scene_frame_reset(&owner->frame,sequence);
     owner->sequence=sequence; owner->begun=true;
     return qa_q3_presentation_frame(owner->presentation,&owner->frame,frontend_viewport(owner->frontend,owner->request.physical_seat),e);
@@ -181,8 +382,10 @@ static bool finish(void *context,bool submitted,qa_error *e)
     struct frontend_component_scene *owner=context;
     if (!retained(owner) || !owner->ready || !owner->host_borrow)
         return frontend_fail(e,QA_ERROR_ARGUMENT,"Component output finish lost its retained entered renderer");
-    return !owner->frame.source_pending ||
+    bool ok=!owner->frame.source_pending ||
         qa_material_source_frame_end(owner->frame.source_pending,&owner->frame,submitted,e);
+    if (!submitted || !ok) packets_clear(owner);
+    return ok;
 }
 static bool completed(void *context,uint64_t sequence,const qa_scene_frame **out,qa_error *e)
 {
@@ -197,6 +400,45 @@ bool frontend_component_scenes_idle(const qa_frontend *f)
 {
     for (const struct frontend_component_scene *row=f?f->component_scenes:NULL;row;row=row->next) if (!idle(row)) return false;
     return true;
+}
+size_t frontend_component_scene_count(const qa_frontend *f)
+{
+    size_t count=0;
+    for (const struct frontend_component_scene *row=f?f->component_scenes:NULL;row;row=row->next) ++count;
+    return count;
+}
+bool frontend_component_scene_read(const qa_frontend *f,size_t ordinal,frontend_component_scene_view *out,qa_error *e)
+{
+    const struct frontend_component_scene *owner=f?f->component_scenes:NULL;
+    while (owner && ordinal--) owner=owner->next;
+    if (!out || !owner || !owner->ready || !retained(owner) || !idle(owner) || owner->frontend!=f)
+        return frontend_fail(e,QA_ERROR_ARGUMENT,"Component graph read requires its genuine returned private renderer");
+    qa_audio_music *attached=qa_audio_engine_bus_music(f->audio,owner->identity);
+    if (attached && attached!=owner->music)
+        return frontend_fail(e,QA_ERROR_FORMAT,"Component graph music differs from its actual bus player");
+    *out=(frontend_component_scene_view){.identity=owner->identity,.sequence=owner->sequence,
+        .packet_count=owner->packet_count,
+        .generation=owner->request.generation,.service_owner=owner->request.service_owner,
+        .receiver=owner->request.owner,.physical_seat=owner->request.physical_seat,.viewer=owner->request.viewer,
+        .descriptor=qa_launch_instance_lease_view(owner->descriptor),.catalog=owner->request.catalog,
+        .files=owner->files,.images=owner->images,.materials=owner->materials,.fonts=owner->fonts,
+        .sounds=owner->sounds,.media=owner->media,.movies=owner->movies,.assets=owner->assets,
+        .presentation=owner->presentation,.frame=&owner->frame,.music=owner->music,
+        .music_intro=owner->music_intro,.music_loop=owner->music_loop,.begun=owner->begun,
+        .music_attached=attached!=NULL,.music_looping=owner->music_looping,.music_pending=owner->music_pending};
+    return true;
+}
+bool frontend_component_scene_packet_read(const qa_frontend *f,uint64_t identity,uint64_t sequence,
+    size_t ordinal,frontend_component_scene_packet *out,qa_error *e)
+{
+    const struct frontend_component_scene *owner=f?f->component_scenes:NULL;
+    while (owner && owner->identity!=identity) owner=owner->next;
+    if (!owner || !out || !retained(owner) || !idle(owner) || !owner->begun || owner->sequence!=sequence)
+        return frontend_fail(e,QA_ERROR_ARGUMENT,"Component scene packet lost its returned actual Draw sequence");
+    const component_scene_packet *packet=owner->packets;
+    while (packet && ordinal--) packet=packet->next;
+    if (!packet) return frontend_fail(e,QA_ERROR_ARGUMENT,"Component scene packet ordinal leaves its completed roster");
+    *out=packet->view; return true;
 }
 bool frontend_component_scene_prepare(void *context,const application_q3_component_scene_preparation *request,qa_error *e)
 {
@@ -251,10 +493,11 @@ bool frontend_component_scene_prepare(void *context,const application_q3_compone
         .sounds=owner->sounds,.movies=owner->media,.context=owner,.print=print,.model_initialize=model_initialize};
     if (!qa_q3_presentation_assets_create(&assets,&owner->assets,e)) return false;
     qa_q3_presentation_options options={.assets=owner->assets,.audio=f->audio,.clock={owner,milliseconds},
+        .source_scene_membership=true,
         .seat=request->physical_seat,.owner=owner->identity,.viewport=frontend_viewport(f,request->physical_seat),
         .near_clip=4,.far_clip=16384,.identity_light=1,.lod_scale=5,.rail_core_width=6,.rail_ring_width=16,.rail_segment_length=32,
-        .context=owner,.audio_actor=audio_actor,.frame_number=frame_number,.milliseconds=source_time,.audio_bus=audio_bus,
-        .prepare_view=prepare_view,.prepare_picture=prepare_picture,.remap=remap,.print=print,
+        .context=owner,.audio_actor=audio_actor,.music=music,.frame_number=frame_number,.milliseconds=source_time,.audio_bus=audio_bus,
+        .prepare_view=prepare_view,.prepare_picture=prepare_picture,.scene_completed=scene_completed,.remap=remap,.print=print,
         .video_frame=frontend_material_movies_frontend_resolve,.video_context=f};
     if (!request->restoring && !frontend_q3_renderer_options_read(f,&options,e)) return false;
     if (!qa_q3_presentation_create(&options,&owner->presentation,e)) return false;

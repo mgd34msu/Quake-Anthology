@@ -81,7 +81,7 @@ static char *text_copy(const char *text)
     return copy;
 }
 
-void qa_save_image_destroy(qa_save_image *image)
+static void image_free(qa_save_image *image)
 {
     if (!image) return;
     for (size_t i = 0; i < image->count; ++i) {
@@ -94,6 +94,32 @@ void qa_save_image_destroy(qa_save_image *image)
     free(image);
 }
 
+bool qa_save_image_destroy_checked(qa_save_image **pointer, qa_error *error)
+{
+    if (!pointer) return persistence_fail(error, QA_ERROR_ARGUMENT, "Save image retirement needs its owning pointer");
+    qa_save_image *image = *pointer;
+    if (!image) return true;
+    image->retiring = true;
+    if (image->native_resources &&
+        !image->native_release(&image->native_resources, error)) return false;
+    if (image->native_resources)
+        return persistence_fail(error, QA_ERROR_FORMAT, "Native save graph release retained an owner after reporting success");
+    image_free(image); *pointer = NULL;
+    return true;
+}
+
+bool qa_save_image_native_attach(qa_save_image *image, qa_native_resource_inventory *inventory,
+    qa_save_native_release_fn release, qa_error *error)
+{
+    if (!image || !inventory || !release || image->retiring || image->native_resources)
+        return persistence_fail(error, QA_ERROR_ARGUMENT, "Save image attachment requires its actual unowned native graph");
+    image->native_resources = inventory; image->native_release = release;
+    return true;
+}
+
+const qa_native_resource_inventory *qa_save_image_native_read(const qa_save_image *image)
+{ return image && !image->retiring ? image->native_resources : NULL; }
+
 bool qa_save_image_create(const qa_save_metadata *metadata, const qa_save_record *records,
                           size_t count, qa_save_image **out, qa_error *error)
 {
@@ -104,7 +130,7 @@ bool qa_save_image_create(const qa_save_metadata *metadata, const qa_save_record
     if (!image) return persistence_fail(error, QA_ERROR_MEMORY, "Allocating save image");
     image->records = calloc(count, sizeof(*image->records));
     if (!image->records) {
-        qa_save_image_destroy(image);
+        image_free(image);
         return persistence_fail(error, QA_ERROR_MEMORY, "Allocating save owner records");
     }
     image->metadata = *metadata;
@@ -118,7 +144,7 @@ bool qa_save_image_create(const qa_save_metadata *metadata, const qa_save_record
         uint8_t *payload = malloc(records[i].payload.size);
         copy->payload = (qa_bytes){payload, records[i].payload.size};
         if (!copy->owner.instance || !copy->owner.schema || !copy->owner.backend || !payload) {
-            qa_save_image_destroy(image);
+            image_free(image);
             return persistence_fail(error, QA_ERROR_MEMORY, "Copying save owner record");
         }
         memcpy(payload, records[i].payload.data, records[i].payload.size);
@@ -153,7 +179,7 @@ static bool size_add(size_t *size, size_t add, qa_error *error)
 
 bool qa_save_image_encode(const qa_save_image *image, qa_buffer *out, qa_error *error)
 {
-    if (!image || !out) return persistence_fail(error, QA_ERROR_ARGUMENT, "Invalid save encode request");
+    if (!image || image->retiring || !out) return persistence_fail(error, QA_ERROR_ARGUMENT, "Invalid or retiring save encode owner");
     size_t size = SAVE_HEADER + SAVE_DIGEST;
     for (size_t i = 0; i < image->count; ++i) {
         const qa_save_record *record = image->records + i;
@@ -253,7 +279,7 @@ bool qa_save_image_decode(qa_bytes bytes, qa_save_image **out, qa_error *error)
     if (!image) return persistence_fail(error, QA_ERROR_MEMORY, "Allocating decoded save image");
     image->records = calloc(count, sizeof(*image->records));
     if (!image->records) {
-        qa_save_image_destroy(image);
+        image_free(image);
         return persistence_fail(error, QA_ERROR_MEMORY, "Allocating decoded save records");
     }
     image->metadata = metadata;
@@ -290,7 +316,7 @@ bool qa_save_image_decode(qa_bytes bytes, qa_save_image **out, qa_error *error)
         qa_net_read_data(&reader, payload, (size_t)payload_size);
     }
     if (!qa_net_reader_finish(&reader) || !persistence_owner_set(image->records, count, error)) {
-        qa_save_image_destroy(image);
+        image_free(image);
         return false;
     }
     *out = image;

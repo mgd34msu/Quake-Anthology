@@ -486,7 +486,7 @@ bool bot_ai_decide(qa_bots *b, bot_ai_state *s, qa_error *e) {
                     }
                 }
                 uint32_t flags=(1u<<7)|(1u<<8)|(b->services.team_arena?(1u<<9):0);
-                if(!(info.state.powerups&flags) && (info.state.powerups&(1u<<4)) &&
+                if(!((uint32_t)info.state.powerups&flags) && ((uint32_t)info.state.powerups&(1u<<4)) &&
                    !(info.state.flags&0x100)) {
                     float random;DECISION_CALL(bot_ai_random(b,&random,e));
                     if(random<.2f) {enter(b,s,QA_BOT_SEEK_LONG_TERM);continue;}

@@ -253,7 +253,7 @@ static bool text_geometry(deform_mesh *geometry, uint32_t text_index,
 static bool projection_shadow(deform_mesh *geometry, const qa_material_context *context,
                                qa_error *error)
 {
-    if (!context->projection_shadow) {
+    if (!context->source_scratch && !context->projection_shadow) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0,
                      "projectionshadow requires retained entity orientation and lighting");
         return false;

@@ -413,7 +413,12 @@ static bool model_policy_node_prepare(model_policy_node *node, qa_scene_resource
     size_t at = 0;
     for (const scene_model_image *image = owner->images; image; image = image->next, ++at) {
         scene_model_image *prepared = NULL; bool indexed = false;
-        if (owner->source->format == QA_MODEL_MDL) {
+        if (image->indexed_override) {
+            qa_scene_model_indexed_skin skin = {image->name, image->indexed_width, image->indexed_height,
+                {image->indexed_pixels.data, image->indexed_pixels.size}};
+            indexed = true;
+            if (!scene_model_indexed_override(&node->images, &skin, &prepared, error)) return false;
+        } else if (owner->source->format == QA_MODEL_MDL) {
             for (uint32_t i = 0; !indexed && i < owner->source->skin_count; ++i) {
                 if (owner->skins[i] != image) continue;
                 indexed = true;
@@ -640,6 +645,8 @@ static bool select_image(qa_scene_model *model, const qa_scene_model_input *inpu
                           scene_model_image *external, scene_model_image **out, qa_error *error) {
     const qa_model_mesh *mesh = &model->source->meshes[index];
     *out = NULL;
+    if (input->indexed_skin && model->source->format == QA_MODEL_MDL)
+        return scene_model_indexed_override(model, input->indexed_skin, out, error);
     bool custom_allowed = model->source->format != QA_MODEL_MDL;
     bool shell_image = scene_model_has_shell(input) &&
         (model->source->format == QA_MODEL_MD2 || model->source->format == QA_MODEL_MD5);
@@ -959,7 +966,9 @@ static bool model_submit_body(qa_scene_model *model, const qa_scene_model_input 
         return qa_scene_beam(frame, &input.view, model_origin(&input), input.previous_origin,
                               (float)input.frame, tint, qa_scene_white(model->resources), error);
     }
-    if (model->replacement_policy_set) {
+    if (model->source->format == QA_MODEL_MDL && input.indexed_skin) {
+        input.replacement = NULL;
+    } else if (model->replacement_policy_set) {
         input.replacement = NULL;
         qa_scene_model *selected = model->selected_replacement;
         double dx = (double)input.transform.origin[0] - input.view.origin.x;

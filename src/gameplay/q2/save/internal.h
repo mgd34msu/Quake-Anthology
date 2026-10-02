@@ -51,6 +51,12 @@ bool q2_save_wire(q2_save_io *);
         if ((uint64_t)s->MEMBER != (uint64_t)value) \
             return q2_save_fail(io, "Q2 continuation integer exceeds field range"); } } while (0)
 #define Q2B(MEMBER) Q2S(bool, MEMBER)
+#define Q2U8(MEMBER) do { uint32_t value = s->MEMBER; \
+    if (!q2_save_u32(io, &value)) return false; \
+    if (io->reading) { \
+        if (value > UINT8_MAX) \
+            return q2_save_fail(io, "Q2 continuation integer exceeds byte field range"); \
+        s->MEMBER = (uint8_t)value; } } while (0)
 #define Q2F(MEMBER) Q2S(f32, MEMBER)
 #define Q2T(MEMBER) Q2S(u64, MEMBER)
 #define Q2I(MEMBER) Q2S(i32, MEMBER)

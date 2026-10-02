@@ -26,7 +26,7 @@ static bool fields(application_q3_component_records *r,qa_source_save_io *io)
     size_t actors=r->actor_count;
     if(!qa_source_save_count(io,&actors,1022)) return false;
     if(io->direction==QA_SOURCE_SAVE_READ) {
-        r->actors=actors?calloc(actors,sizeof(*r->actors)):NULL; r->actor_count=actors;
+        r->actors=actors?calloc(actors,sizeof(*r->actors)):NULL; r->actor_count=r->actor_capacity=actors;
         if(actors&&!r->actors) return q3records_fail(io->error,QA_ERROR_MEMORY,"Retaining actual component actor continuation");
     }
     for(size_t i=0;i<actors;++i) {

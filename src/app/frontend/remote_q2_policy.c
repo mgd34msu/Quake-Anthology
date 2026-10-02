@@ -1,6 +1,7 @@
 #include "remote_q2_policy.h"
 #include "remote_q2_private.h"
 #include "capture.h"
+#include "remote_q2_effects.h"
 #include <stdlib.h>
 
 typedef struct policy_source {
@@ -8,6 +9,8 @@ typedef struct policy_source {
     frontend_remote_q2_view view;
     remote_q2_picture *pictures;
     qa_scene_resource_policy *bank;
+    frontend_remote_q2_effects_policy *effects;
+    bool held;
 } policy_source;
 typedef struct policy_image {
     const qa_scene_image **slot;
@@ -21,7 +24,7 @@ struct frontend_remote_q2_image_policy {
     policy_source *sources;
     policy_image *images;
     size_t source_count, image_count;
-    bool sealed, published;
+    bool complete, sealed, published;
 };
 static bool current(const frontend_remote_q2_image_policy *ticket)
 {
@@ -31,6 +34,10 @@ static bool current(const frontend_remote_q2_image_policy *ticket)
     for (frontend_remote_q2 *row = ticket->head; row; row = row->next, ++count) {
         if (count == ticket->source_count) return false;
         const policy_source *saved = ticket->sources + count; const frontend_remote_q2_view *view = &saved->view;
+        if (!saved->held) {
+            if (ticket->complete || row->busy || row->importing || row->image_policy == ticket) return false;
+            continue;
+        }
         if (row != saved->owner || row->busy || row->importing || row->image_policy != ticket ||
             row->frontend != ticket->frontend || !remote_q2_domain_equal(&row->options.domain, &view->domain) ||
             row->identity != view->identity || row->loading_generation != view->loading_generation ||
@@ -42,8 +49,10 @@ static bool current(const frontend_remote_q2_image_policy *ticket)
             row->media_ready != view->media_ready || row->retired != view->retired || row->pictures != saved->pictures) return false;
     }
     if (count != ticket->source_count) return false;
-    for (size_t i = 0; i < ticket->image_count; ++i)
+    for (size_t i = 0; i < ticket->image_count; ++i) {
+        if (!ticket->images[i].slot) { if (ticket->complete) return false; continue; }
         if (*ticket->images[i].slot != (ticket->published ? ticket->images[i].prepared : ticket->images[i].original)) return false;
+    }
     return true;
 }
 static void dispose(frontend_remote_q2_image_policy *ticket)
@@ -88,7 +97,7 @@ bool frontend_remote_q2_image_policy_prepare(qa_frontend *f, qa_scene_resource_p
             saved->bank = banks[i];
         }
         if (row->images && !saved->bank) goto failed;
-        row->image_policy = ticket;
+        row->image_policy = ticket; saved->held = true;
         if (row->white) {
             policy_image *image = ticket->images + image_index++;
             image->slot = &row->white; image->original = row->white;
@@ -103,10 +112,20 @@ bool frontend_remote_q2_image_policy_prepare(qa_frontend *f, qa_scene_resource_p
             if (!saved->bank || !qa_scene_resource_policy_image(saved->bank, picture->image, &prepared, error)) goto failed;
             image->prepared = prepared;
         }
+        if (row->effects && (!saved->bank ||
+            !frontend_remote_q2_effects_policy_prepare(row->effects, saved->bank, &saved->effects, error))) goto failed;
     }
+    ticket->complete = true;
     if (!current(ticket)) goto failed;
     *out = ticket; return true;
 failed:
+    if (ticket->sources) for (size_t i = 0; i < ticket->source_count; ++i) {
+        if (!frontend_remote_q2_effects_policy_abort(&ticket->sources[i].effects, error)) {
+            /* Keep the actual parent child and its mapped slots reachable for
+             * the enclosing checked cleanup to retry. */
+            *out = ticket; return false;
+        }
+    }
     if (ticket->images) for (size_t i = 0; i < ticket->image_count; ++i) qa_scene_image_release(ticket->images[i].prepared);
     if (ticket->sources) for (size_t i = 0; i < ticket->source_count; ++i)
         if (ticket->sources[i].owner && ticket->sources[i].owner->image_policy == ticket) ticket->sources[i].owner->image_policy = NULL;
@@ -116,7 +135,9 @@ failed:
 }
 bool frontend_remote_q2_image_policy_ready(frontend_remote_q2_image_policy *ticket, qa_error *error)
 {
-    if (!current(ticket) || ticket->published) return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Remote Q2 picture owners changed during preparation");
+    if (!ticket || !ticket->complete || !current(ticket) || ticket->published) return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Remote Q2 picture owners changed during preparation");
+    for (size_t i = 0; i < ticket->source_count; ++i)
+        if (ticket->sources[i].effects && !frontend_remote_q2_effects_policy_ready(ticket->sources[i].effects, error)) return false;
     ticket->sealed = true; return true;
 }
 bool frontend_remote_q2_image_policy_ready_is(const frontend_remote_q2_image_policy *ticket)
@@ -124,12 +145,16 @@ bool frontend_remote_q2_image_policy_ready_is(const frontend_remote_q2_image_pol
     if (!current(ticket) || !ticket->sealed || ticket->published) return false;
     for (size_t i = 0; i < ticket->source_count; ++i)
         if (ticket->sources[i].bank && !qa_scene_resource_policy_ready_is(ticket->sources[i].bank)) return false;
+    for (size_t i = 0; i < ticket->source_count; ++i)
+        if (ticket->sources[i].effects && !frontend_remote_q2_effects_policy_ready_is(ticket->sources[i].effects)) return false;
     return true;
 }
 void frontend_remote_q2_image_policy_publish(frontend_remote_q2_image_policy *ticket)
 {
     if (!current(ticket) || !ticket->sealed || ticket->published) return;
     for (size_t i = 0; i < ticket->image_count; ++i) *ticket->images[i].slot = ticket->images[i].prepared;
+    for (size_t i = 0; i < ticket->source_count; ++i)
+        frontend_remote_q2_effects_policy_publish(ticket->sources[i].effects);
     ticket->published = true;
 }
 static bool end(frontend_remote_q2_image_policy **owner, bool published, qa_error *error)
@@ -137,6 +162,11 @@ static bool end(frontend_remote_q2_image_policy **owner, bool published, qa_erro
     if (!owner || !*owner) return true;
     if (!current(*owner) || (*owner)->published != published)
         return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Remote Q2 picture policy remains owned by its nonterminal roster");
+    for (size_t i = 0; i < (*owner)->source_count; ++i) {
+        frontend_remote_q2_effects_policy **child = &(*owner)->sources[i].effects;
+        if (!(published ? frontend_remote_q2_effects_policy_finish(child, error) :
+            frontend_remote_q2_effects_policy_abort(child, error))) return false;
+    }
     dispose(*owner); *owner = NULL; return true;
 }
 bool frontend_remote_q2_image_policy_finish(frontend_remote_q2_image_policy **owner, qa_error *error)

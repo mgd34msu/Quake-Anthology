@@ -8,7 +8,7 @@ static bool header_write(qa_application_network_q2 *owner, qa_net_writer *writer
     const char *name = qa_strings_cstr(qa_session_strings(owner->app->session), owner->app->current_map);
     if (!name || !source->launch->selection.instance)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q2 wire continuation lost its actual source names");
-    return qa_net_write_data(writer, "QAQ2WIRE", 8) && qa_net_write_u32(writer, 2) &&
+    return qa_net_write_data(writer, "QAQ2WIRE", 8) && qa_net_write_u32(writer, 3) &&
         qa_net_write_u32(writer, owner->host.protocol.kind) && qa_net_write_u32(writer, owner->host.protocol.revision) &&
         qa_net_write_u32(writer, owner->host.protocol.flags) && qa_net_write_i32(writer, owner->server_count) &&
         qa_net_write_u32(writer, source->kind) && qa_net_write_u32(writer, source->edition) &&
@@ -55,8 +55,15 @@ bool qa_application_network_q2_capture(qa_application_network_q2 *owner, qa_buff
     if (events > (SIZE_MAX - capacity) / 20)
         return application_fail(error, QA_ERROR_MEMORY, "Q2 wire continuation event extent overflows");
     capacity += (size_t)events * 20;
+    qa_buffer holders = {0};
+    if (!application_network_q2_resources_capture(owner, &holders, error)) return false;
+    if (holders.size > UINT32_MAX || capacity > SIZE_MAX - 4 || holders.size > SIZE_MAX - capacity - 4) {
+        qa_buffer_free(&holders);
+        return application_fail(error, QA_ERROR_MEMORY, "Q2 actual resource holder continuation extent overflows");
+    }
+    capacity += 4 + holders.size;
     qa_buffer saved = {.data = malloc(capacity)};
-    if (!saved.data) return application_fail(error, QA_ERROR_MEMORY, "Retaining actual Q2 wire publication continuation");
+    if (!saved.data) { qa_buffer_free(&holders); return application_fail(error, QA_ERROR_MEMORY, "Retaining actual Q2 wire publication continuation"); }
     qa_net_writer writer;
     qa_net_writer_init(&writer, saved.data, capacity, error);
     bool ok = header_write(owner, &writer, error) && qa_net_write_u32(&writer, owner->config_count) &&
@@ -80,6 +87,8 @@ bool qa_application_network_q2_capture(qa_application_network_q2 *owner, qa_buff
             qa_net_write_u32(&writer, (uint32_t)slot) && qa_net_write_u32(&writer, actor.slot) &&
             qa_net_write_u64(&writer, actor.generation) && qa_net_write_u32(&writer, owner->events[slot]);
     }
+    if (ok) ok = qa_net_write_u32(&writer, (uint32_t)holders.size) && qa_net_write_data(&writer, holders.data, holders.size);
+    qa_buffer_free(&holders);
     if (ok && !qa_application_native_q2_presentation_current(owner->app, &owner->host.source))
         ok = application_fail(error, QA_ERROR_ARGUMENT, "Q2 wire continuation changed its real Source cut");
     if (ok) { saved.size = qa_net_writer_size(&writer); *out = saved; }
@@ -112,7 +121,7 @@ static bool header_read(qa_application_network_q2 *owner, qa_net_reader *reader,
     qa_sha256(qa_resource_bytes(owner->app->map_resource), &actual_map);
     const char *name = qa_strings_cstr(qa_session_strings(owner->app->session), owner->app->current_map);
     const qa_application_native_q2_presentation *source = &owner->host.source;
-    if (reader->failed || memcmp(magic, "QAQ2WIRE", 8) || version != 2 ||
+    if (reader->failed || memcmp(magic, "QAQ2WIRE", 8) || version != 3 ||
         kind != (uint32_t)owner->host.protocol.kind || revision != owner->host.protocol.revision || flags != owner->host.protocol.flags ||
         server_count != owner->server_count || source_kind != (uint32_t)source->kind || edition != (uint32_t)source->edition ||
         clients != owner->host.client_slots || entities != owner->host.entity_slots ||
@@ -193,6 +202,11 @@ bool qa_application_network_q2_restore(qa_application_network_q2 *owner, qa_byte
         previous = slot;
     }
     candidate->event_frame = frame;
+    if (ok) {
+        uint32_t size = qa_net_read_u32(&reader); qa_bytes holders;
+        ok = !reader.failed && qa_net_read_bytes(&reader, size, &holders) &&
+            application_network_q2_resources_restore(candidate, holders, error);
+    }
     ok = ok && qa_net_reader_finish(&reader);
     char **published = NULL;
     if (ok) {
@@ -219,6 +233,7 @@ bool qa_application_network_q2_restore(qa_application_network_q2 *owner, qa_byte
         ok = application_fail(error, QA_ERROR_ARGUMENT, "Q2 import changed its real restored Source cut");
     if (ok) {
         application_network_q2_free_tables(owner);
+        application_network_q2_resources_free(owner);
         free(owner->event_actors); free(owner->events);
         owner->configs = candidate->configs; candidate->configs = NULL;
         owner->entries = candidate->entries; candidate->entries = NULL;
@@ -228,6 +243,9 @@ bool qa_application_network_q2_restore(qa_application_network_q2 *owner, qa_byte
         }
         owner->event_actors = candidate->event_actors; candidate->event_actors = NULL;
         owner->events = candidate->events; candidate->events = NULL;
+        owner->held_resources = candidate->held_resources; candidate->held_resources = NULL;
+        owner->held_resource_count = candidate->held_resource_count; candidate->held_resource_count = 0;
+        owner->held_resource_capacity = candidate->held_resource_capacity; candidate->held_resource_capacity = 0;
         owner->event_frame = frame; owner->initialized = owner->restored = true;
     }
     qa_application_network_q2_destroy(candidate);

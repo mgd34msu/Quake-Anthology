@@ -73,6 +73,16 @@ qa_vec3 q3ne_rotate(qa_vec3 forward, qa_vec3 point, float degrees)
 bool q3ne_current(const q3n_frame *f, qa_error *error)
 {
     const q3n_media_view *media=f && f->media?q3n_media_read(f->media):NULL;
+    if (f && f->unified_effects) {
+        const q3n_unified_effect_source *source=f->unified_effects;
+        if (!f->events || !f->events->standalone_effects || f->events->remote_source ||
+            f->remote || f->effects_source || f->effect_event || f->clients || f->has_local_player ||
+            !f->event_settings || !f->presentation || !media || f->assets!=source->assets ||
+            f->events->options.assets!=source->assets || f->events->options.product!=source->product ||
+            f->time!=source->time || !q3n_media_unified_effects_current(f->media,source,error))
+            return q3ne_fail(error,QA_ERROR_ARGUMENT,"Unified effects lost their real CLIENT event and resource cut");
+        return true;
+    }
     if (f && f->effects_source) {
         const qa_application_selected_effects *source = f->effects_source;
         bool clock = f->time == source->sample_time_ms;
@@ -113,7 +123,7 @@ bool q3ne_current(const q3n_frame *f, qa_error *error)
 bool q3ne_sound(const q3n_frame *f, int32_t sound, const qa_vec3 *origin, int32_t number, int32_t channel, bool local, qa_error *error)
 {
     if (!q3ne_current(f, error)) return false;
-    if (f->effects_source) {
+    if (f->effects_source || f->unified_effects) {
         if (sound < 0 || (size_t)sound > f->assets->sound_count) return true;
         qa_audio_asset *asset = q3p_sound(f->assets, sound);
         if (!asset) return true;

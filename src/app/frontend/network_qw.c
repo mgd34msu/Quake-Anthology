@@ -357,7 +357,8 @@ static bool source_command(void *context, qa_net_client_id id, const char *text,
         char message[1400]; int prefix = snprintf(message, sizeof(message), team_only ? "(%.31s): " : "%.31s: ", sender ? sender : "unnamed");
         qa_qw_info_free(&info);
         if (prefix < 0 || (size_t)prefix + length + 2 >= sizeof(message)) return frontend_fail(error, QA_ERROR_FORMAT, "QuakeWorld chat exceeds source message extent");
-        memcpy(message + prefix, cursor, length); message[prefix + length] = '\n'; message[prefix + length + 1] = 0;
+        size_t prefix_size=(size_t)prefix;
+        memcpy(message + prefix_size, cursor, length); message[prefix_size + length] = '\n'; message[prefix_size + length + 1] = 0;
         frontend_print(host->frontend, message);
         for (size_t i = 0; i < QW_CLIENTS; ++i) {
             qw_frontend_peer *recipient = host->peers + i;
@@ -829,7 +830,7 @@ static qa_qw_source_player source_player(const qa_application_network_qw_client 
     if (client->health <= 0) player.flags |= QA_QW_PF_DEAD;
     if (client->minimum[2] != -24) player.flags |= QA_QW_PF_GIB;
     if (qa_actor_id_equal(client->actor, viewer->actor)) {
-        player.flags &= ~(QA_QW_PF_MSEC | QA_QW_PF_COMMAND);
+        player.flags &= (uint16_t)~(QA_QW_PF_MSEC | QA_QW_PF_COMMAND);
         if (player.weapon_frame != 0) player.flags |= QA_QW_PF_WEAPONFRAME;
     }
     uint64_t age = client->command_present && source_time >= client->command_time_ns ?

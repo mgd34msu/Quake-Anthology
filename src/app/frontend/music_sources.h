@@ -5,7 +5,8 @@
 typedef struct frontend_music_sources frontend_music_sources;
 typedef enum frontend_music_slot { FRONTEND_MUSIC_MENU, FRONTEND_MUSIC_WORLD } frontend_music_slot;
 typedef enum frontend_music_origin_kind {
-    FRONTEND_MUSIC_SOURCE, FRONTEND_MUSIC_NATIVE, FRONTEND_MUSIC_REMOTE, FRONTEND_MUSIC_MODULE
+    FRONTEND_MUSIC_SOURCE, FRONTEND_MUSIC_NATIVE, FRONTEND_MUSIC_REMOTE, FRONTEND_MUSIC_MODULE,
+    FRONTEND_MUSIC_COMPONENT
 } frontend_music_origin_kind;
 /* The actual first-role declaration and player, supplied by the constructor
  * which owns this bus. Equal declarations may share a SOURCE group; different

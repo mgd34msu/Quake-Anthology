@@ -163,9 +163,9 @@ static bool native_run(qa_native_guest *guest, uint64_t start,
 {
     if (!guest_mutable(guest, error)) return false;
     if (guest->options.backend != QA_NATIVE_GUEST_HOST_X86_64 || guest->observe ||
-        !stop || (guest->run && !guest->callback_depth) ||
+        (!stop && !syscall) || (guest->run && !guest->callback_depth) ||
         !guest_range(guest, start, 1, QA_NATIVE_GUEST_EXECUTE, error) ||
-        !guest_range(guest, stop, 1, QA_NATIVE_GUEST_READ | QA_NATIVE_GUEST_EXECUTE, error))
+        (stop && !guest_range(guest, stop, 1, QA_NATIVE_GUEST_READ | QA_NATIVE_GUEST_EXECUTE, error)))
         return guest_fail(error, QA_ERROR_ARGUMENT, start,
             "native invocation requires its hardware owner and unbudgeted capability");
     guest_run frame = {.parent = guest->run};

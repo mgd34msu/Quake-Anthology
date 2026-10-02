@@ -13,6 +13,7 @@
 #include "native_q1_composition_flags.h"
 #include "native_q1_composition_death.h"
 #include "native_q1_composition_rogue.h"
+#include "native_q1_composition_birth.h"
 #include "native_q2_console.h"
 #include "native_q2_arsenal.h"
 #include "native_q2_combat_policy.h"
@@ -38,6 +39,8 @@
 #include "native_q3_log.h"
 #include "native_q3_postgame.h"
 #include "unified_q3_events.h"
+#include "unified_q1_events.h"
+#include "unified_events.h"
 #include "native_q3_team_combat.h"
 #include "qa/game_q3_clients.h"
 #include "qa/game_q3_source.h"
@@ -492,9 +495,15 @@ static bool construct_q1(qa_application *application,
                        .console_suicide = application_native_q1_suicide,
                        .powerup = application_native_q1_powerup,
                        .set_gravity = application_native_q1_set_gravity,
+                       .console_power = application_native_q1_console_power,
+                       .cheat_arsenal = application_supplies_cheat_arsenal,
+                       .weapon_changed = application_native_q1_weapon_changed,
                        .fired = q1_selected_fired,
                        .base_team_health = application_native_q1_base_team_health,
+                       .sound_precache = application_unified_q1_sound_precache,
+                       .precache_reset = application_unified_q1_precache_reset,
                        .grapple_weapon_frame = application_q3_weapons_services_grapple_frame,
+                       .source_damage = application_q3_weapons_services_q1_damage,
                        .weapon_parameters = application_q1_weapon_parameters,
                        .weapon_observation = application_q1_weapon_observation,
                        .before_fire = application_q1_before_fire,
@@ -1446,6 +1455,14 @@ bool application_provider_deconstruct(application_provider *provider, qa_error *
     application_provider *previous = app ? app->engine_shutdown_provider : NULL;
     if (app && app->engine_shutdown) app->engine_shutdown_provider = provider;
     bool ok = deconstruct_provider(provider, error);
+    if(ok && provider)
+        ok=application_unified_event_registration_clear(app,provider->owner,error);
+    if(ok && provider) {
+        ok = provider->event_retirement_frame_present ?
+            application_unified_event_owner_retire(app, provider->owner, &provider->event_retirement_frame, error) :
+            application_unified_persistent_retire(app,provider->owner,(qa_actor_id){0},error);
+        if (ok) provider->event_retirement_frame_present = false;
+    }
     if (app) app->engine_shutdown_provider = previous;
     return ok;
 }

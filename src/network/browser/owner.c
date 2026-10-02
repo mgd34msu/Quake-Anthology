@@ -95,10 +95,11 @@ bool qa_server_browser_query(qa_server_browser *browser, const qa_net_address *a
     /* Challenge-less native dialects have one pending query per endpoint. */
     if (!broadcast) for (uint32_t i = 0; i < browser->capacity; ++i) {
         if (browser->records[i].occupied && browser->records[i].entry.pending &&
-            qa_net_address_equal(&browser->records[i].entry.address, address, true))
+            qa_net_address_equal(&browser->records[i].entry.address, address, true)) {
             if (protocol.kind == QA_NET_Q3_68 && browser->records[i].entry.protocol.kind == QA_NET_Q3_68)
                 browser->records[i].entry.pending = false;
             else return qa_browser_fail(error, "Endpoint already has a pending discovery query");
+        }
     }
     uint64_t query = browser->next_query++;
     uint8_t bytes[256]; qa_net_writer writer; qa_net_writer_init(&writer, bytes, sizeof(bytes), error);

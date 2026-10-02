@@ -51,7 +51,7 @@ bool qa_net_connections_create(uint64_t owner, uint32_t capacity,
                                 qa_net_connections **out, qa_error *error)
 {
     if (owner == 0 || capacity == 0 || out == NULL || admit == NULL ||
-        (uint64_t)capacity > SIZE_MAX / sizeof(client_slot))
+        SIZE_MAX / capacity < sizeof(client_slot))
         return fail(error, "Invalid connection owner configuration");
     qa_net_connections *table = calloc(1, sizeof(*table));
     if (table == NULL) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Cannot allocate connection owner"); return false; }

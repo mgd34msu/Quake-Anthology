@@ -6,6 +6,8 @@
 typedef struct application_q3_mod_operations application_q3_mod_operations;
 typedef struct application_q3_mod_actor_request {
     qa_actor_id self;
+    bool has_attack;
+    qa_attack attack;
     union {
         struct { uint64_t time_ns, elapsed_ns; } think;
         struct { qa_actor_id other; } touch;

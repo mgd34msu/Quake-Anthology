@@ -14,13 +14,13 @@ static bool blob(qa_source_save_io *io, qa_buffer *bytes)
 
 static bool header(qa_source_save_io *io, application_q3_gear *gear)
 {
-    uint8_t magic[4] = {'Q','A','G','E'}; uint32_t schema = 1;
+    uint8_t magic[4] = {'Q','A','G','E'}; uint32_t schema = 2;
     qa_sha256_digest digest = *qa_qvm_image_digest(gear->image);
     const char *profile = gear->definition->id, *path = gear->path;
     const char *owner = qa_strings_cstr(qa_session_strings(gear->options.host.session), gear->options.host.owner);
     uint64_t service_owner = gear->options.host.service_owner;
     bool okay = qa_source_save_bytes(io, magic, 4) && !memcmp(magic, "QAGE", 4) &&
-        qa_source_save_u32(io, &schema) && schema == 1 &&
+        qa_source_save_u32(io, &schema) && schema == 2 &&
         qa_source_save_bytes(io, digest.bytes, sizeof(digest.bytes)) &&
         qa_sha256_equal(&digest, qa_qvm_image_digest(gear->image)) &&
         qa_source_save_text(io, &profile) && profile && !strcmp(profile, gear->definition->id) &&
@@ -36,7 +36,9 @@ static bool binding_fields(qa_source_save_io *io, q3gear_binding *row)
     return qa_source_save_actor(io, &row->actor) && row->actor.registry &&
         qa_source_save_u32(io, &row->pointer) && row->pointer &&
         qa_source_save_vec3(io, &row->origin) && isfinite(row->origin.x) && isfinite(row->origin.y) && isfinite(row->origin.z) &&
-        qa_source_save_bool(io, &row->player);
+        qa_source_save_bool(io, &row->player) && qa_source_save_bool(io,&row->connected) &&
+        qa_source_save_bool(io,&row->begun) && (!row->begun || row->connected) &&
+        (row->player || (!row->connected && !row->begun));
 }
 
 static bool tether_fields(qa_source_save_io *io, q3gear_tether *row)

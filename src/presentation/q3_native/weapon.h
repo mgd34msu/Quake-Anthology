@@ -139,6 +139,8 @@ bool q3n_weapons_view(const q3n_frame *, const q3n_weapon_view *, qa_error *);
 bool q3n_weapons_draw_selection(const q3n_frame *,const q3n_weapon_drawing *,qa_error *);
 bool q3n_weapons_trail(const q3n_frame *, q3n_entity *, const qa_q3_entity *, qa_error *);
 bool q3n_weapons_rail(const q3n_frame *, int32_t client, qa_vec3 *start, qa_vec3 end, qa_error *);
+bool q3n_weapons_effect_rail(const q3n_frame *, qa_vec3 color1, qa_vec3 color2, qa_vec3 *start, qa_vec3 end, qa_error *);
+bool q3n_weapons_effect_shotgun(const q3n_frame *, qa_vec3 muzzle, qa_vec3 direction, uint32_t seed, qa_error *);
 bool q3n_weapons_impact(const q3n_frame *, int32_t weapon, int32_t client,
     qa_vec3 origin, qa_vec3 direction, q3n_impact_sound, qa_error *);
 bool q3n_weapons_event(void *, const q3n_frame *, q3n_entity *,

@@ -76,7 +76,7 @@ bool application_native_q2_save_capture(application_provider *provider, qa_save_
         application_native_q2_continuation_capture(provider, &snapshot, parts + 1, error) &&
         qa_native_checkpoint_encode(&snapshot, parts, error);
     if (ok && engine->process.resources) {
-        if (!resources || !resources->capture || !resources->resolve)
+        if (!resources || !resources->capture || !resources->resolve || !resources->attach)
             ok = application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 capture requires its historical external capability graph");
         else
             ok = resources->capture(resources->context, provider->launch->selection.instance,

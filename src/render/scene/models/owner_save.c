@@ -313,7 +313,7 @@ static bool image_slot(qa_source_save_io *io, scene_model_image **images, size_t
     return true;
 }
 static bool images(qa_source_save_io *io, qa_scene_model *model, const qa_scene_model_owner_refs *refs,
-    scene_model_image ***table, size_t *out_count)
+    scene_model_image ***table, size_t *out_count, uint32_t schema)
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ; size_t count = 0;
     if (!reading) for (scene_model_image *entry = model->images; entry; entry = entry->next) ++count;
@@ -330,6 +330,21 @@ static bool images(qa_source_save_io *io, qa_scene_model *model, const qa_scene_
         (*table)[i] = entry;
         if (!name(io, &entry->name) || !material_ref(io, refs, &entry->material) ||
             !image_ref(io, refs, &entry->base) || !image_ref(io, refs, &entry->fullbright)) return false;
+        if (schema >= 3 && !qa_source_save_bool(io, &entry->indexed_override)) return false;
+        if (entry->indexed_override) {
+            size_t pixels = reading ? 0 : entry->indexed_pixels.size;
+            if (model->source->format != QA_MODEL_MDL || model->options.family != QA_SCENE_Q1 ||
+                entry->material || !qa_source_save_u32(io, &entry->indexed_width) ||
+                !qa_source_save_u32(io, &entry->indexed_height) || !entry->indexed_width || !entry->indexed_height ||
+                entry->indexed_width > SIZE_MAX / entry->indexed_height ||
+                !qa_source_save_count(io, &pixels, reading ? io->input.size : SIZE_MAX) ||
+                pixels != (size_t)entry->indexed_width * entry->indexed_height) return false;
+            if (reading) {
+                entry->indexed_pixels.data = malloc(pixels); entry->indexed_pixels.size = pixels;
+                if (!entry->indexed_pixels.data) return fail(io->error, QA_ERROR_MEMORY, "Restoring indexed override pixels");
+            }
+            if (!entry->indexed_pixels.data || !qa_source_save_bytes(io, entry->indexed_pixels.data, pixels)) return false;
+        } else if (entry->indexed_pixels.data || entry->indexed_pixels.size || entry->indexed_width || entry->indexed_height) return false;
         for (size_t j = 0; j < i; ++j) if (!strcmp((*table)[j]->name, entry->name)) return false;
         if (entry->material ? model->options.family != QA_SCENE_Q3 || entry->base || entry->fullbright : !entry->base) return false;
         if (entry->material) {
@@ -426,7 +441,8 @@ static bool mesh(qa_source_save_io *io, qa_scene_model *model, size_t node, size
         if (!image_slot(io, image_table, image_count, &value->shaders[i])) return false;
     return mesh_source_ready(model, index);
 }
-static bool node_fields(qa_source_save_io *io, qa_scene_model *model, size_t node, const qa_scene_model_owner_refs *refs)
+static bool node_fields(qa_source_save_io *io, qa_scene_model *model, size_t node,
+    const qa_scene_model_owner_refs *refs, uint32_t schema)
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
     if (!model_ref(io, refs, &model->source, &model->source_lease) || !options(io, model) ||
@@ -437,7 +453,7 @@ static bool node_fields(qa_source_save_io *io, qa_scene_model *model, size_t nod
         !allocate(io, model->source->sprite_count, sizeof(*model->sprites), (void **)&model->sprites))) return false;
     if (!model->meshes || !model->skins || !model->sprites) return false;
     scene_model_image **image_table = NULL; size_t image_count = 0;
-    bool ok = images(io, model, refs, &image_table, &image_count);
+    bool ok = images(io, model, refs, &image_table, &image_count, schema);
     for (size_t i = 0; ok && i < model->source->mesh_count; ++i) ok = mesh(io, model, node, i, refs, image_table, image_count);
     for (size_t i = 0; ok && i < (model->source->skin_count ? model->source->skin_count : 1); ++i)
         ok = image_slot(io, image_table, image_count, &model->skins[i]);
@@ -486,9 +502,9 @@ static bool node_fields(qa_source_save_io *io, qa_scene_model *model, size_t nod
 }
 static bool prefix(qa_source_save_io *io, model_inventory *inventory, qa_bytes *body)
 {
-    bool reading = io->direction == QA_SOURCE_SAVE_READ; uint8_t magic[4] = {'Q','M','O','N'}; uint32_t schema = 2;
+    bool reading = io->direction == QA_SOURCE_SAVE_READ; uint8_t magic[4] = {'Q','M','O','N'}; uint32_t schema = 3;
     if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "QMON", 4) || !qa_source_save_u32(io, &schema) ||
-        (schema != 1 && schema != 2) ||
+        (schema < 1 || schema > 3) ||
         !qa_source_save_count(io, &inventory->identity_count, reading ? io->input.size / 28 : SIZE_MAX) || !inventory->identity_count) return false;
     if (reading) {
         if (inventory->identity_count > SIZE_MAX / sizeof(*inventory->identities)) return false;
@@ -569,7 +585,7 @@ bool qa_scene_model_owner_checkpoint(const qa_scene_model *model, const qa_scene
 {
     if (!model || !refs_ready(refs) || !out || out->data || out->size)
         return fail(error, QA_ERROR_ARGUMENT, "Model capture requires qualified references and empty output");
-    model_inventory inventory = {0}; qa_source_save_io io = {0}, state = {0}; qa_buffer owned_body = {0};
+    model_inventory inventory = {.schema = 3}; qa_source_save_io io = {0}, state = {0}; qa_buffer owned_body = {0};
     bool ok = collect(&inventory, (qa_scene_model *)model, error);
     for (size_t i=0;ok && refs->identity_encode && i<inventory.identity_count;++i) {
         qa_scene_model_saved_identity *row=inventory.identities+i;
@@ -579,7 +595,7 @@ bool qa_scene_model_owner_checkpoint(const qa_scene_model *model, const qa_scene
     ok = ok && qa_source_save_writer(&state, NULL, error) && qa_source_save_count(&state, &inventory.count, SIZE_MAX);
     for (size_t i = 0; ok && i < inventory.count; ++i) {
         uint64_t parent = inventory.nodes[i].parent == SIZE_MAX ? UINT64_MAX : inventory.nodes[i].parent;
-        ok = qa_source_save_u64(&state, &parent) && node_fields(&state, inventory.nodes[i].model, i, refs);
+        ok = qa_source_save_u64(&state, &parent) && node_fields(&state, inventory.nodes[i].model, i, refs, inventory.schema);
     }
     ok = ok && replacement_policy_fields(&state, &inventory) && qa_source_save_finish(&state, &owned_body);
     qa_bytes body = {owned_body.data, owned_body.size};
@@ -619,7 +635,7 @@ bool qa_scene_model_owner_restore(const qa_model *qualified_source, qa_scene_res
         qa_scene_model *model = calloc(1, sizeof(*model)); inventory.nodes[i].model = model;
         if (!model) { ok = fail(error, QA_ERROR_MEMORY, "Allocating detached retained model"); break; }
         model->resources = resources; model->materials = materials;
-        ok = node_fields(&state, model, i, refs) && (i || model->source == qualified_source) &&
+        ok = node_fields(&state, model, i, refs, inventory.schema) && (i || model->source == qualified_source) &&
             (model->options.family != QA_SCENE_Q3 || materials);
         if (ok && i) {
             const qa_scene_model *parent_model = inventory.nodes[(size_t)parent].model;

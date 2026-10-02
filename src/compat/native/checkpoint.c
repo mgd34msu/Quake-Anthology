@@ -69,6 +69,7 @@ static bool release_source_string(qa_native_instance *instance, qa_native_addres
 typedef struct source_file {
     uint64_t root, handle;
     qa_native_sysv_file capability;
+    qa_native_windows_file windows_capability;
     bool opened, registered;
 } source_file;
 
@@ -97,16 +98,19 @@ static bool source_file_admit(qa_native_instance *instance, const char *director
     if (okay) okay = qa_native_process_resources_root_add(instance->process_resources, &authority, &file->root, error);
     qa_fs_root_close(root); free(prefix);
     if (!okay) return false;
-    if (instance->process_kind != QA_NATIVE_PROCESS_SYSV)
-        return native_fail(error, QA_ERROR_UNSUPPORTED, 0, "Windows source FILE adapter is unavailable");
-    okay = qa_native_process_resources_open_sysv_file(instance->process_resources, path, mode,
+    bool windows = instance->process_kind == QA_NATIVE_PROCESS_WINDOWS;
+    okay = windows ? qa_native_process_resources_open_file(instance->process_resources, path, mode,
+        QA_FS_OPEN_EXISTING, &file->windows_capability, &file->opened, error) :
+        qa_native_process_resources_open_sysv_file(instance->process_resources, path, mode,
         QA_FS_OPEN_EXISTING, &file->capability, &file->opened, error);
-    if (file->opened) file->handle = file->capability.handle;
+    if (file->opened) file->handle = windows ? file->windows_capability.id : file->capability.handle;
     if (okay && !file->opened)
         okay = native_fail(error, QA_ERROR_NOT_FOUND, 0,
             "actual native save file is absent from its temporary directory");
     if (okay) {
-        okay = qa_native_sysv_process_file_add(instance->sysv_process, &file->capability, error);
+        okay = windows ? qa_native_windows_process_file_add(instance->windows_process, path,
+            QA_FS_OPEN_EXISTING, &file->windows_capability, error) :
+            qa_native_sysv_process_file_add(instance->sysv_process, &file->capability, error);
         file->registered = okay;
     }
     return okay;
@@ -117,10 +121,14 @@ static bool source_file_release(qa_native_instance *instance, source_file *file,
 {
     if (instance->backend != QA_NATIVE_BACKEND_OWNED_PROCESS) return okay;
     qa_error cleanup = {0}; bool closed = true;
+    bool windows = instance->process_kind == QA_NATIVE_PROCESS_WINDOWS;
     if (file->registered) {
-        closed = qa_native_sysv_process_file_close(instance->sysv_process, file->handle, &cleanup);
-        if (closed) closed = qa_native_sysv_process_file_remove(instance->sysv_process, file->handle, &cleanup);
-    } else if (file->opened) closed = file->capability.close(file->capability.context, &cleanup);
+        closed = windows ? qa_native_windows_process_file_close(instance->windows_process, file->handle, &cleanup) :
+            qa_native_sysv_process_file_close(instance->sysv_process, file->handle, &cleanup);
+        if (closed) closed = windows ? qa_native_windows_process_file_remove(instance->windows_process, file->handle, &cleanup) :
+            qa_native_sysv_process_file_remove(instance->sysv_process, file->handle, &cleanup);
+    } else if (file->opened) closed = windows ? file->windows_capability.close(file->windows_capability.context, &cleanup) :
+        file->capability.close(file->capability.context, &cleanup);
     if (closed && file->root)
         closed = qa_native_process_resources_root_remove(instance->process_resources, file->root, &cleanup);
     if (okay && !closed && error) *error = cleanup;

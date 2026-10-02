@@ -38,8 +38,12 @@ void qa_qvm_execution_checkpoint(const qa_qvm *, uint64_t values[3]);
 bool qa_qvm_execution_checkpoint_ready(const qa_qvm *, const uint64_t values[3], bool candidate, qa_error *);
 void qa_qvm_execution_restore(qa_qvm *, const uint64_t values[3], bool candidate);
 struct qa_qvm_saved_function;
+struct qa_qvm_saved_resolver;
 bool qa_qvm_execution_restore_bindings(qa_qvm *, uint64_t generation,
     const struct qa_qvm_saved_function *, const qa_qvm_binding *, size_t, qa_error *);
+bool qa_qvm_execution_restore_callbacks(qa_qvm *, uint64_t generation,
+    const struct qa_qvm_saved_function *, const qa_qvm_binding *, size_t,
+    const struct qa_qvm_saved_resolver *, qa_qvm_binding, qa_error *);
 bool qa_qvm_execution_active(const qa_qvm *);
 bool qa_qvm_execution_reentry(const qa_qvm *, qa_error *);
 bool qa_qvm_execution_token(const qa_qvm_call *, qa_error *);
@@ -70,6 +74,8 @@ bool qa_qvm_execution_source_bytes_write(qa_qvm *, const qa_qvm_image *,
     uint32_t, qa_bytes, qa_error *);
 bool qa_qvm_execution_scratch_run(qa_qvm *, const qa_qvm_image *, size_t,
     qa_qvm_source_scratch_run_fn, void *, qa_error *);
+bool qa_qvm_execution_scratch_run_reserved(qa_qvm *, const qa_qvm_image *, size_t,
+    uint32_t, qa_qvm_source_scratch_run_fn, void *, qa_error *);
 typedef bool (*qa_qvm_effect_fn)(void *, qa_error *);
 bool qa_qvm_execution_effect(qa_qvm *, qa_qvm_effect_fn, void *, qa_error *);
 void qa_qvm_memory_close(qa_qvm *);

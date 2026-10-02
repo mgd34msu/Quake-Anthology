@@ -48,5 +48,7 @@ application_q3_scene_source application_q3_component_view_services(application_q
 bool application_q3_component_source_checkpoint(application_q3_component_source *,qa_buffer *,qa_error *);
 bool application_q3_component_source_restore(application_q3_component_source *,qa_bytes,qa_error *);
 bool application_q3_component_source_validate(application_q3_component_source *,qa_error *);
+bool application_q3_component_source_continuation_read(const application_q3_component_source *,
+    int64_t *game_state_revision,int32_t *command_sequence,int64_t *publication_revision,qa_error *);
 
 #endif

@@ -1,3 +1,6 @@
+#if defined(__linux__) && !defined(_GNU_SOURCE)
+#define _GNU_SOURCE 1
+#endif
 #if !defined(_WIN32) && !defined(_POSIX_C_SOURCE)
 #define _POSIX_C_SOURCE 200809L
 #endif
@@ -20,8 +23,11 @@
 #include <sys/stat.h>
 #else
 #include <fcntl.h>
+#include <pthread.h>
+#include <signal.h>
 #if defined(__linux__)
 #include <sys/random.h>
+#include <sys/utsname.h>
 #endif
 #include <sys/stat.h>
 #include <unistd.h>
@@ -44,8 +50,37 @@ struct qa_native_process_platform {
     platform_stream streams[3];
     bool closing, failed, terminal;
 };
+static _Thread_local const qa_native_process_platform *native_error_owner;
+static _Thread_local qa_fs_native_error native_error_value;
+static _Thread_local uint64_t native_error_operation;
+static void platform_operation_begin(const qa_native_process_platform *owner)
+{ native_error_owner = owner; native_error_value = (qa_fs_native_error){0}; ++native_error_operation; }
+bool qa_native_process_platform_native_error_read(const qa_native_process_platform *owner,
+    qa_fs_native_error *out, uint64_t *operation)
+{
+    if (!owner || !out || !operation) return false;
+    *out = native_error_owner == owner ? native_error_value : (qa_fs_native_error){0};
+    *operation = native_error_owner == owner ? native_error_operation : 0; return true;
+}
 static bool fail(qa_error *error, qa_status status, const char *message)
 { qa_error_set(error, status, 0, "%s", message); return false; }
+static bool platform_fail_errno(const qa_native_process_platform *owner, int code, qa_error *error, const char *message)
+{
+    native_error_owner = owner;
+#if defined(_WIN32)
+    native_error_value = (qa_fs_native_error){3, (uint32_t)code, true};
+#else
+    native_error_value = (qa_fs_native_error){1, (uint32_t)code, true};
+#endif
+    return fail(error, QA_ERROR_IO, message);
+}
+#if defined(_WIN32)
+static bool platform_fail_windows(const qa_native_process_platform *owner, DWORD code, qa_error *error, const char *message)
+{
+    native_error_owner = owner; native_error_value = (qa_fs_native_error){2, code, true};
+    return fail(error, QA_ERROR_IO, message);
+}
+#endif
 static bool stream_identity(int descriptor, uint64_t *device, uint64_t *object)
 {
 #if defined(_WIN32)
@@ -69,14 +104,22 @@ static bool stream_identity(int descriptor, uint64_t *device, uint64_t *object)
 }
 bool qa_native_process_platform_current(const qa_native_process_platform *owner, qa_error *error)
 {
+    platform_operation_begin(owner);
     if (!owner || owner->closing || owner->failed)
         return fail(error, QA_ERROR_ARGUMENT, "Native platform resource owner is retiring");
     for (size_t i = 0; i < 3; ++i) {
         const platform_stream *stream = owner->streams + i;
         if (stream->closed) continue;
         uint64_t device, object;
-        if (!stream_identity(stream->descriptor, &device, &object) ||
-            device != stream->device || object != stream->object)
+        if (!stream_identity(stream->descriptor, &device, &object)) {
+#if !defined(_WIN32)
+            return platform_fail_errno(owner, errno, error, "Reading retained native standard object");
+#else
+            native_error_value = (qa_fs_native_error){2, GetLastError(), true};
+            return fail(error, QA_ERROR_IO, "Reading retained native standard object");
+#endif
+        }
+        if (device != stream->device || object != stream->object)
             return fail(error, QA_ERROR_IO, "Native standard descriptor lost its retained object");
     }
     return true;
@@ -98,6 +141,7 @@ bool qa_native_process_platform_create(const qa_native_process_platform_options 
     }
     qa_native_process_platform *owner = calloc(1, sizeof(*owner));
     if (!owner) return fail(error, QA_ERROR_MEMORY, "Owning native platform capabilities");
+    platform_operation_begin(owner);
     owner->id = options->id; owner->references = 1; owner->failed = true;
     for (size_t i = 0; i < 3; ++i) owner->streams[i].closed = true;
 #if defined(_WIN32)
@@ -177,7 +221,8 @@ bool qa_native_process_platform_entropy(void *context, void *out, size_t bytes, 
         size_t count = bytes - offset > (size_t)SSIZE_MAX ? (size_t)SSIZE_MAX : bytes - offset;
         ssize_t received = getrandom((uint8_t *)out + offset, count, 0);
         if (received < 0 && errno == EINTR) continue;
-        if (received <= 0) return fail(error, QA_ERROR_IO, "Reading actual platform entropy");
+        if (received < 0) return platform_fail_errno(owner, errno, error, "Reading actual platform entropy");
+        if (!received) return fail(error, QA_ERROR_IO, "Actual platform entropy made no progress");
         offset += (size_t)received;
     }
 #else
@@ -197,7 +242,7 @@ bool qa_native_process_platform_milliseconds(void *context, int64_t *out, qa_err
     *out = ticks >= epoch ? (int64_t)(delta / 10000) : -(int64_t)((delta + 9999) / 10000);
 #else
     struct timespec time;
-    if (clock_gettime(CLOCK_REALTIME, &time)) return fail(error, QA_ERROR_IO, "Reading actual platform wall clock");
+    if (clock_gettime(CLOCK_REALTIME, &time)) return platform_fail_errno(context, errno, error, "Reading actual platform wall clock");
     if (time.tv_sec > INT64_MAX / 1000 || time.tv_sec < INT64_MIN / 1000)
         return fail(error, QA_ERROR_UNSUPPORTED, "Platform wall clock exceeds signed milliseconds");
     int64_t base = (int64_t)time.tv_sec * 1000, fraction = time.tv_nsec / 1000000;
@@ -221,7 +266,7 @@ bool qa_native_process_platform_performance(void *context, int64_t *out, qa_erro
     *out = value.QuadPart;
 #else
     struct timespec time;
-    if (clock_gettime(CLOCK_MONOTONIC, &time)) return fail(error, QA_ERROR_IO, "Reading actual performance counter");
+    if (clock_gettime(CLOCK_MONOTONIC, &time)) return platform_fail_errno(context, errno, error, "Reading actual performance counter");
     if (time.tv_sec < 0 || time.tv_sec > INT64_MAX / INT64_C(1000000000) ||
         (int64_t)time.tv_sec * INT64_C(1000000000) > INT64_MAX - time.tv_nsec)
         return fail(error, QA_ERROR_UNSUPPORTED, "Actual performance counter exceeds signed native value");
@@ -272,12 +317,118 @@ bool qa_native_process_platform_calendar(void *context, int64_t milliseconds, bo
         date.tm_yday, date.tm_isdst, (int32_t)timezone};
     return true;
 }
+bool qa_native_process_platform_linux_identity_read(qa_native_process_platform *owner,
+    qa_native_process_linux_identity *out, qa_error *error)
+{
+    if (!out || !qa_native_process_platform_current(owner, error)) return false;
+#if defined(__linux__)
+    struct utsname native;
+    long ticks = sysconf(_SC_CLK_TCK);
+    if (ticks <= 0) return fail(error, QA_ERROR_UNSUPPORTED, "Actual Linux clock tick policy is unavailable");
+    if (uname(&native)) return platform_fail_errno(owner, errno, error, "Reading actual Linux kernel identity");
+    qa_native_process_linux_identity value = {.uid = (uint32_t)getuid(), .effective_uid = (uint32_t)geteuid(),
+        .gid = (uint32_t)getgid(), .effective_gid = (uint32_t)getegid(), .clock_ticks = (int64_t)ticks};
+    const char *sources[6] = {native.sysname, native.nodename, native.release, native.version, native.machine, native.domainname};
+    char *targets[6] = {value.system, value.node, value.release, value.version, value.machine, value.domain};
+    for (size_t i = 0; i < 6; ++i) {
+        size_t bytes = strlen(sources[i]);
+        if (bytes >= sizeof(value.system)) return fail(error, QA_ERROR_UNSUPPORTED, "Actual Linux kernel identity exceeds the owned named field");
+        memcpy(targets[i], sources[i], bytes + 1);
+    }
+    if (!qa_native_process_platform_current(owner, error)) return false;
+    *out = value; return true;
+#else
+    return fail(error, QA_ERROR_UNSUPPORTED, "Actual Linux kernel identity producer is unavailable on this operating system");
+#endif
+}
+bool qa_native_process_platform_linux_clock_read(qa_native_process_platform *owner,
+    int32_t id, int64_t *seconds, int32_t *nanoseconds, qa_error *error)
+{
+    if (!seconds || !nanoseconds || !qa_native_process_platform_current(owner, error)) return false;
+#if defined(__linux__)
+    switch (id) {
+    case CLOCK_REALTIME: case CLOCK_MONOTONIC:
+#if defined(CLOCK_MONOTONIC_RAW)
+    case CLOCK_MONOTONIC_RAW:
+#endif
+#if defined(CLOCK_REALTIME_COARSE)
+    case CLOCK_REALTIME_COARSE:
+#endif
+#if defined(CLOCK_MONOTONIC_COARSE)
+    case CLOCK_MONOTONIC_COARSE:
+#endif
+#if defined(CLOCK_BOOTTIME)
+    case CLOCK_BOOTTIME:
+#endif
+#if defined(CLOCK_REALTIME_ALARM)
+    case CLOCK_REALTIME_ALARM:
+#endif
+#if defined(CLOCK_BOOTTIME_ALARM)
+    case CLOCK_BOOTTIME_ALARM:
+#endif
+#if defined(CLOCK_TAI)
+    case CLOCK_TAI:
+#endif
+        break;
+    case CLOCK_PROCESS_CPUTIME_ID: case CLOCK_THREAD_CPUTIME_ID:
+        return fail(error, QA_ERROR_UNSUPPORTED, "Source CPU clock requires its actual task owner");
+    default:
+        return fail(error, QA_ERROR_UNSUPPORTED, "Linux clock ID is outside the retained global-clock capability");
+    }
+    struct timespec time;
+    if (clock_gettime((clockid_t)id, &time))
+        return platform_fail_errno(owner, errno, error, "Reading actual Linux global clock");
+    if (time.tv_nsec < 0 || time.tv_nsec >= 1000000000L)
+        return fail(error, QA_ERROR_IO, "Actual Linux clock nanoseconds exceed their native domain");
+    if (!qa_native_process_platform_current(owner, error)) return false;
+    *seconds = (int64_t)time.tv_sec; *nanoseconds = (int32_t)time.tv_nsec;
+    return true;
+#else
+    (void)id;
+    return fail(error, QA_ERROR_UNSUPPORTED, "Actual Linux clock producer is unavailable on this operating system");
+#endif
+}
+bool qa_native_process_platform_file_status(qa_native_process_platform *owner, uint64_t id,
+    qa_fs_posix_status *out, qa_error *error)
+{
+    if (!out || !qa_native_process_platform_current(owner, error)) return false;
+    platform_stream *row = NULL;
+    for (size_t i = 0; i < 3; ++i) if (owner->streams[i].id == id) row = owner->streams + i;
+    if (!row || row->closed) return fail(error, QA_ERROR_NOT_FOUND, "Native standard file capability is absent or closed");
+#if !defined(_WIN32)
+    struct stat info;
+    int result;
+    do { result = fstat(row->descriptor, &info); } while (result < 0 && errno == EINTR);
+    if (result < 0) return platform_fail_errno(owner, errno, error, "Reading actual native standard file status");
+#if defined(__APPLE__)
+    struct timespec access = info.st_atimespec, modification = info.st_mtimespec, change = info.st_ctimespec;
+#else
+    struct timespec access = info.st_atim, modification = info.st_mtim, change = info.st_ctim;
+#endif
+    if (access.tv_nsec < 0 || access.tv_nsec >= 1000000000L ||
+        modification.tv_nsec < 0 || modification.tv_nsec >= 1000000000L ||
+        change.tv_nsec < 0 || change.tv_nsec >= 1000000000L)
+        return fail(error, QA_ERROR_IO, "Actual native standard timestamps are outside their POSIX domain");
+    qa_fs_posix_status value = {.device = (uint64_t)info.st_dev, .inode = (uint64_t)info.st_ino,
+        .links = (uint64_t)info.st_nlink, .special_device = (uint64_t)info.st_rdev,
+        .mode = (uint32_t)info.st_mode, .uid = (uint32_t)info.st_uid, .gid = (uint32_t)info.st_gid,
+        .size = (int64_t)info.st_size, .block_size = (int64_t)info.st_blksize, .blocks = (int64_t)info.st_blocks,
+        .access = {(int64_t)access.tv_sec, (uint32_t)access.tv_nsec},
+        .modification = {(int64_t)modification.tv_sec, (uint32_t)modification.tv_nsec},
+        .change = {(int64_t)change.tv_sec, (uint32_t)change.tv_nsec}};
+    if (!qa_native_process_platform_current(owner, error)) return false;
+    *out = value; return true;
+#else
+    return fail(error, QA_ERROR_UNSUPPORTED, "Windows standard objects do not supply POSIX file metadata");
+#endif
+}
 
 static bool stream_read(void *context, uint64_t offset, void *out, size_t bytes,
     size_t *done, qa_error *error)
 {
     (void)offset;
     platform_stream *stream = context;
+    platform_operation_begin(stream ? stream->owner : NULL);
     if (done) *done = 0;
     if (!stream || !done || (!out && bytes) || stream->closed || !(stream->mode & 1) ||
         !qa_native_process_platform_current(stream->owner, error))
@@ -291,13 +442,59 @@ static bool stream_read(void *context, uint64_t offset, void *out, size_t bytes,
     ssize_t result; do { result = read(stream->descriptor, out, count); } while (result < 0 && errno == EINTR);
 #endif
     --stream->owner->busy;
-    if (result < 0) return fail(error, QA_ERROR_IO, "Reading actual native standard input");
+    if (result < 0) return platform_fail_errno(stream->owner, errno, error, "Reading actual native standard input");
     *done = (size_t)result; return true;
 }
+#if !defined(_WIN32)
+static bool standard_write(platform_stream *stream, const void *bytes, size_t count,
+    ssize_t *result, qa_error *error)
+{
+    sigset_t blocked, previous, pending;
+    sigemptyset(&blocked); sigaddset(&blocked, SIGPIPE);
+    int status = pthread_sigmask(SIG_BLOCK, &blocked, &previous);
+    if (status) return fail(error, QA_ERROR_IO, "Blocking SIGPIPE around actual native stream write");
+    if (sigpending(&pending)) {
+        status = pthread_sigmask(SIG_SETMASK, &previous, NULL);
+        return fail(error, QA_ERROR_IO, status ? "Restoring native stream signal mask" :
+            "Reading pending SIGPIPE before actual native stream write");
+    }
+    bool already_pending = sigismember(&pending, SIGPIPE) == 1;
+    do { *result = write(stream->descriptor, bytes, count); } while (*result < 0 && errno == EINTR);
+    int write_error = errno;
+    if (*result < 0) {
+        native_error_owner = stream->owner;
+        native_error_value = (qa_fs_native_error){1, (uint32_t)write_error, true};
+    }
+    bool okay = true;
+    /* A failed pipe write generates a thread-directed signal. Consume only
+     * this write's new signal; a signal pending on entry belongs to its caller. */
+    if (*result < 0 && write_error == EPIPE && !already_pending) {
+#if defined(__APPLE__)
+        if (sigpending(&pending)) okay = false;
+        else if (sigismember(&pending, SIGPIPE) == 1) {
+            int received = 0;
+            status = sigwait(&blocked, &received);
+            okay = !status && received == SIGPIPE;
+        }
+#else
+        const struct timespec immediate = {0, 0};
+        int received;
+        do { received = sigtimedwait(&blocked, NULL, &immediate); }
+        while (received < 0 && errno == EINTR);
+        okay = received == SIGPIPE || (received < 0 && errno == EAGAIN);
+#endif
+    }
+    status = pthread_sigmask(SIG_SETMASK, &previous, NULL);
+    errno = write_error;
+    if (status) return fail(error, QA_ERROR_IO, "Restoring native stream signal mask");
+    return okay || fail(error, QA_ERROR_IO, "Consuming actual native stream write SIGPIPE");
+}
+#endif
 static bool stream_write(void *context, uint64_t offset, qa_bytes bytes, size_t *done, qa_error *error)
 {
     (void)offset;
     platform_stream *stream = context;
+    platform_operation_begin(stream ? stream->owner : NULL);
     if (done) *done = 0;
     if (!stream || !done || (!bytes.data && bytes.size) || stream->closed || !(stream->mode & 2) ||
         !qa_native_process_platform_current(stream->owner, error))
@@ -308,11 +505,16 @@ static bool stream_write(void *context, uint64_t offset, qa_bytes bytes, size_t 
     int result; do { result = _write(stream->descriptor, bytes.data, count); } while (result < 0 && errno == EINTR);
 #else
     size_t count = bytes.size > (size_t)SSIZE_MAX ? (size_t)SSIZE_MAX : bytes.size;
-    ssize_t result; do { result = write(stream->descriptor, bytes.data, count); } while (result < 0 && errno == EINTR);
+    ssize_t result = -1;
+    bool signals_okay = standard_write(stream, bytes.data, count, &result, error);
 #endif
     --stream->owner->busy;
-    if (result < 0) return fail(error, QA_ERROR_IO, "Writing actual native standard output");
-    *done = (size_t)result; return true;
+    if (result >= 0) *done = (size_t)result;
+#if !defined(_WIN32)
+    if (!signals_okay) return false;
+#endif
+    if (result < 0) return platform_fail_errno(stream->owner, errno, error, "Writing actual native standard output");
+    return true;
 }
 static bool windows_stream_read(void *context, void *out, size_t bytes, size_t *done, qa_error *error)
 { return stream_read(context, 0, out, bytes, done, error); }
@@ -330,37 +532,42 @@ static bool windows_stream_write(void *context, qa_bytes bytes, qa_error *error)
 static bool stream_size(void *context, uint64_t *out, qa_error *error)
 {
     platform_stream *stream = context;
+    platform_operation_begin(stream ? stream->owner : NULL);
     if (!stream || !out || stream->closed || !qa_native_process_platform_current(stream->owner, error)) return false;
 #if defined(_WIN32)
     struct _stat64 info;
-    if (_fstat64(stream->descriptor, &info) || info.st_size < 0)
+    if (_fstat64(stream->descriptor, &info))
 #else
     struct stat info;
-    if (fstat(stream->descriptor, &info) || info.st_size < 0)
+    if (fstat(stream->descriptor, &info))
 #endif
-        return fail(error, QA_ERROR_IO, "Reading actual native standard stream metadata");
+        return platform_fail_errno(stream->owner, errno, error, "Reading actual native standard stream metadata");
+    if (info.st_size < 0) return fail(error, QA_ERROR_IO, "Actual native standard stream size is negative");
     *out = (uint64_t)info.st_size; return true;
 }
 static bool stream_flush(void *context, qa_error *error)
 {
     platform_stream *stream = context;
+    platform_operation_begin(stream ? stream->owner : NULL);
     if (!stream || stream->closed || !qa_native_process_platform_current(stream->owner, error)) return false;
     /* Writes bypass stdio buffering. Disk handles still receive a real sync;
      * terminals and pipes have no buffered data in this owner to flush. */
 #if defined(_WIN32)
     HANDLE handle = (HANDLE)_get_osfhandle(stream->descriptor);
     if (GetFileType(handle) == FILE_TYPE_DISK && !FlushFileBuffers(handle))
+        return platform_fail_windows(stream->owner, GetLastError(), error, "Flushing actual native standard stream");
 #else
     struct stat info;
-    if (fstat(stream->descriptor, &info)) return fail(error, QA_ERROR_IO, "Reading actual native standard stream kind");
+    if (fstat(stream->descriptor, &info)) return platform_fail_errno(stream->owner, errno, error, "Reading actual native standard stream kind");
     if (S_ISREG(info.st_mode) && fsync(stream->descriptor))
+        return platform_fail_errno(stream->owner, errno, error, "Flushing actual native standard stream");
 #endif
-        return fail(error, QA_ERROR_IO, "Flushing actual native standard stream");
     return true;
 }
 static bool stream_close(void *context, qa_error *error)
 {
     platform_stream *stream = context;
+    platform_operation_begin(stream ? stream->owner : NULL);
     if (stream && stream->closed) return true;
     if (!stream || !stream->owner || stream->owner->busy)
         return fail(error, QA_ERROR_ARGUMENT, "Native standard stream is inside actual I/O");
@@ -374,8 +581,9 @@ static bool stream_close(void *context, qa_error *error)
      * descriptor that the OS could already have reused for another object. */
     int result = close(stream->descriptor);
 #endif
+    int code = errno;
     stream->closed = true; free(stream->held); stream->held = NULL;
-    return !result || fail(error, QA_ERROR_IO, "Closing actual native standard descriptor");
+    return !result || platform_fail_errno(stream->owner, code, error, "Closing actual native standard descriptor");
 }
 bool qa_native_process_platform_windows_streams(qa_native_process_platform *owner,
     qa_native_windows_stream out[3], qa_error *error)
@@ -455,5 +663,6 @@ bool qa_native_process_platform_release(qa_native_process_platform **pointer, qa
         if (!stream_close(owner->streams + i, &failure) && okay) { okay = false; first = failure; }
     }
     if (!okay) { if (error) *error = first; return false; }
+    if (native_error_owner == owner) platform_operation_begin(NULL);
     free(owner); *pointer = NULL; return true;
 }

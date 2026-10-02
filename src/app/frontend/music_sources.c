@@ -21,7 +21,7 @@ static void origin_dispose(frontend_music_sources *owner) {
 }
 static bool origin_admit(frontend_music_sources *owner, const frontend_music_origin *origin, qa_error *e) {
     const qa_product *row = origin && origin->catalog ? qa_catalog_product(origin->catalog, origin->product) : NULL;
-    if (!frontend_music_sources_current(owner) || !origin || (unsigned)origin->kind > FRONTEND_MUSIC_MODULE ||
+    if (!frontend_music_sources_current(owner) || !origin || (unsigned)origin->kind > FRONTEND_MUSIC_COMPONENT ||
         !origin->bus || !origin->descriptor || !origin->descriptor->storage || !origin->receiver ||
         !row || row->availability != QA_CONTENT_INSTALLED || !origin->files || !origin->music ||
         !origin->context || !origin->current || !origin->stop || origin->physical_seat >= owner->frontend->options.seats ||

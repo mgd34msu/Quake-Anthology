@@ -45,7 +45,15 @@ bool q3gear_mirror(application_q3_gear *gear, const application_q3_gear_target *
                 qa_error_set(error, QA_ERROR_ARGUMENT, slot, "Separate QVM gear rejected borrowed client: %.*s",
                     (int)(reason.size > 180 ? 180 : reason.size), (const char *)reason.data); return false;
             }
+            if(!q3gear_current(gear,error) ||
+                !qa_actor_id_equal(gear->bindings[actor.slot].actor,actor) || gear->bindings[actor.slot].retired ||
+                !qa_actors_get(qa_session_actors(gear->options.host.session),actor)) return false;
+            gear->bindings[actor.slot].connected=true;
             if (!q3gear_call(gear, 0, begin, 2, &result, error)) return false;
+            if(!q3gear_current(gear,error) ||
+                !qa_actor_id_equal(gear->bindings[actor.slot].actor,actor) || gear->bindings[actor.slot].retired ||
+                !qa_actors_get(qa_session_actors(gear->options.host.session),actor)) return false;
+            gear->bindings[actor.slot].begun=true;
         } else {
             if (!q3gear_call(gear, gear->definition->callbacks.allocate, NULL, 0, &result, error) ||
                 !q3gear_slot(gear, (uint32_t)result, &slot, error)) return false;
@@ -110,6 +118,42 @@ bool q3gear_mirror(application_q3_gear *gear, const application_q3_gear_target *
         !q3gear_store(gear, binding.pointer + gear->definition->fields.health, (int32_t)target.health, error) ||
         !q3gear_store(gear, binding.pointer + gear->definition->fields.takedamage, target.health > 0, error)) return false;
     gear->bindings[actor.slot].origin = body->origin; return q3gear_current(gear, error);
+}
+
+bool application_q3_gear_userinfo_bound(application_q3_gear *gear,qa_actor_id actor,bool *out,qa_error *error)
+{
+    if(!out || !gear || !q3gear_current(gear,error)) return false;
+    *out=false;
+    if(actor.slot>=gear->capacity) return true;
+    const q3gear_binding *binding=&gear->bindings[actor.slot];
+    if(!binding->actor.registry || !qa_actor_id_equal(binding->actor,actor) || !binding->player) return true;
+    if(binding->retired || !binding->connected || !binding->begun || !gear->initialized || gear->restoring)
+        return q3gear_fail(error,QA_ERROR_ARGUMENT,"Gear userinfo recipient has not completed its actual Connect and Begin");
+    uint32_t slot,actual; qa_q3_host_game_data layout; int32_t client,live;
+    if(!q3gear_layout(gear,&layout,error) || !q3gear_slot(gear,binding->pointer,&slot,error) || slot>=64 ||
+        !gear->userinfo[slot] || !qa_q3_host_actor_slot(gear->host,actor,&actual,error) || actual!=slot ||
+        !q3gear_word(gear,binding->pointer+gear->definition->fields.client,&client,error) ||
+        (uint32_t)client!=layout.clients_address+slot*layout.client_stride ||
+        !q3gear_word(gear,binding->pointer+gear->definition->fields.inuse,&live,error) || !live)
+        return q3gear_fail(error,QA_ERROR_FORMAT,"Gear userinfo recipient lost its real physical client");
+    *out=true; return true;
+}
+bool application_q3_gear_userinfo_changed(application_q3_gear *gear,qa_actor_id actor,qa_error *error)
+{
+    bool bound=false;
+    if(!gear || !application_q3_gear_idle(gear) ||
+        !application_q3_gear_userinfo_bound(gear,actor,&bound,error) || !bound)
+        return error && error->code!=QA_OK?false:
+            q3gear_fail(error,QA_ERROR_ARGUMENT,"Gear userinfo event requires its returned admitted client");
+    gear->busy=true;
+    application_q3_gear_target target; uint32_t slot; int32_t result;
+    bool okay=q3gear_target(gear,actor,&target,error) && target.player && target.userinfo &&
+        q3gear_slot(gear,gear->bindings[actor.slot].pointer,&slot,error) &&
+        q3gear_replace_text(&gear->userinfo[slot],target.userinfo,error);
+    int32_t words[]={4,(int32_t)(okay?slot:0)};
+    if(okay) okay=q3gear_call(gear,0,words,2,&result,error) &&
+        application_q3_gear_userinfo_bound(gear,actor,&bound,error) && bound;
+    return q3gear_leave(gear,okay,error);
 }
 
 bool q3gear_forget(application_q3_gear *gear, qa_actor_id actor, qa_error *error)

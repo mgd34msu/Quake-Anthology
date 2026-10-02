@@ -4,6 +4,10 @@
 #include "qa/application_native_q3_remote_client.h"
 #include "qa/application_character_selection.h"
 #include "native_q3_client_modules.h"
+#include "qa/console_cvar_observer.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 static struct application_native_q3_remote_role *find(application_provider *provider, uint32_t seat)
 {
@@ -309,7 +313,7 @@ bool application_native_q3_remote_roles_preinit(application_provider *provider, 
         if (!application_native_q3_remote_role_source_at(provider, i, &source, &found, error)) return false;
         if (!found) return true;
         if (!application_startup_tuple_preinit(provider, &source, error) ||
-            (provider->application->operation != APPLICATION_PERSISTING && !qa_cvars_apply_latches(source.cvars, error))) return false;
+            (provider->application->operation != APPLICATION_PERSISTING && !qa_cvars_apply_latched(source.cvars, NULL, error))) return false;
     }
 }
 static bool replace_ready(const struct application_native_q3_remote_role *row)

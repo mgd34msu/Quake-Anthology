@@ -12,6 +12,8 @@ typedef struct qa_render_checkpoint_refs {
     bool (*mesh_identity_decode)(void *,uint64_t,uint64_t *,qa_error *);
     bool (*material_encode)(void *,const qa_material *,uint64_t *,qa_error *);
     bool (*material_decode)(void *,uint64_t,const qa_material **,qa_error *);
+    bool (*world_encode)(void *,const qa_scene_world *,uint64_t *,qa_error *);
+    bool (*world_decode)(void *,uint64_t,const qa_scene_world **,qa_error *);
 } qa_render_checkpoint_refs;
 /* Image and geometry ordinals each follow their genuine physical retained
  * rows. The caller protects the renderer/resource lifetime throughout. */

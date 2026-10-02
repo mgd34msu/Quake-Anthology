@@ -10,6 +10,8 @@
 #include "guest_q3_components.h"
 #include "guest_q3_component_input.h"
 #include "qa/game_q3_source.h"
+#include "qa/game_q3_clients.h"
+#include "qa/game_q1_bots.h"
 #include "qa/game_q3_wire.h"
 #include "qa/source_number.h"
 
@@ -326,7 +328,7 @@ static void state_body(application_control_record *record,
                                                    .actor = body->ground};
         record->state.data.nq.ground = record->ground;
         if (record->ground.hit == QA_TRACE_HIT_NONE)
-            record->state.data.nq.flags &= ~APPLICATION_Q1_ONGROUND;
+            record->state.data.nq.flags &= ~(uint32_t)APPLICATION_Q1_ONGROUND;
         else
             record->state.data.nq.flags |= APPLICATION_Q1_ONGROUND;
         break;
@@ -345,7 +347,7 @@ static void state_body(application_control_record *record,
                 : (double)record->application->physics->gravity *
                       (double)record->gravity_multiplier);
         if (record->ground.hit == QA_TRACE_HIT_NONE)
-            record->state.data.q2.flags &= ~APPLICATION_Q2_ONGROUND;
+            record->state.data.q2.flags &= ~(uint32_t)APPLICATION_Q2_ONGROUND;
         else
             record->state.data.q2.flags |= APPLICATION_Q2_ONGROUND;
         break;
@@ -356,7 +358,7 @@ static void state_body(application_control_record *record,
                 : (double)record->application->physics->gravity *
                       (double)record->gravity_multiplier);
         if (record->ground.hit == QA_TRACE_HIT_NONE)
-            record->state.data.q2r.flags &= ~APPLICATION_Q2_ONGROUND;
+            record->state.data.q2r.flags &= ~(uint32_t)APPLICATION_Q2_ONGROUND;
         else
             record->state.data.q2r.flags |= APPLICATION_Q2_ONGROUND;
         break;
@@ -567,6 +569,23 @@ static qa_q1_input q1_input(const qa_movement_call *call)
     };
 }
 
+static bool q1_source_weapon_impulse(qa_application *app, qa_actor_id actor,
+    qa_movement_command *command, qa_q1_input *input, qa_error *error)
+{
+    application_provider *source = application_world_provider(app, QA_ROLE_ENTITIES, "");
+    qa_q1_source_client_view client;
+    if (!source || source->kind != APPLICATION_PROVIDER_Q1 ||
+        !qa_q1_source_client_read(source->state.q1, actor, &client) || !client.impulse)
+        return true;
+    bool consumed;
+    if (!application_native_q1_source_impulse(app, actor, input, &consumed, error)) return false;
+    if (consumed) {
+        application_control_frames_consume_impulse(app, actor, command->sequence);
+        command->impulse = input->impulse = 0;
+    }
+    return true;
+}
+
 static qa_vec3 call_view_angles(const application_move_call *move, const qa_movement_call *call)
 {
     if (call->state->kind == QA_MOVEMENT_NETQUAKE)
@@ -663,7 +682,7 @@ typedef struct application_control_mod_input {
     qa_movement_command *command;
     qa_vec3 aim;
     int32_t impulse;
-    uint64_t elapsed_ns;
+    uint64_t elapsed_ns, command_sequence;
     bool borrowed, suspended;
     size_t count;
     application_q3_component_input **scopes;
@@ -701,7 +720,12 @@ static bool component_input_current(const application_control_mod_input *scope, 
         application_control_provider(current) != application_control_provider(&scope->source) ||
         application_control_kind(current) != application_control_kind(&scope->source) ||
         application_control_time(current) != application_control_time(&scope->source) ||
-        (current->command_only && current->command.sequence != scope->source.command.sequence))
+        current->command_only != scope->source.command_only ||
+        !scope->command || scope->command->sequence != scope->command_sequence ||
+        (current->command_only && (current->command.phase != scope->source.command.phase ||
+            current->command.completed_frame_number != scope->source.command.completed_frame_number ||
+            current->command.elapsed_ns != scope->source.command.elapsed_ns ||
+            current->command.host_elapsed_ns != scope->source.command.host_elapsed_ns)))
         return application_fail(error, QA_ERROR_ARGUMENT, "Component input lost its actual command borrow");
     return true;
 }
@@ -744,9 +768,9 @@ static bool component_input_set(application_control_mod_input *scope, applicatio
             (double)angles->y - scope->aim.y, (double)angles->z - scope->aim.z};
         if (next.kind == QA_MOVEMENT_NETQUAKE) next.angles = *angles;
         else if (next.kind == QA_MOVEMENT_QUAKEWORLD || next.kind == QA_MOVEMENT_Q2_RERELEASE) {
-            next.angles = qa_v3(qa_source_fround((double)next.angles.x + difference[0]),
-                qa_source_fround((double)next.angles.y + difference[1]),
-                qa_source_fround((double)next.angles.z + difference[2]));
+            next.angles = qa_v3((float)qa_source_fround((double)next.angles.x + difference[0]),
+                (float)qa_source_fround((double)next.angles.y + difference[1]),
+                (float)qa_source_fround((double)next.angles.z + difference[2]));
             if (!qa_vec_finite(next.angles))
                 return application_fail(error, QA_ERROR_ARGUMENT, "Component aim exceeds its command fields");
         } else {
@@ -792,7 +816,7 @@ static bool component_input_set(application_control_mod_input *scope, applicatio
                     return application_fail(error, QA_ERROR_ARGUMENT, "Component movement exceeds its command fields");
                 scaled = trunc(scaled);
             }
-            float published = qa_source_fround(scaled);
+            float published = (float)qa_source_fround(scaled);
             if (input == Q3_MOD_FORWARD) next.forward_move = published;
             else if (input == Q3_MOD_SIDE) next.side_move = published;
             else next.up_move = published;
@@ -838,7 +862,8 @@ static bool component_input_close(application_control_mod_input **in, bool compl
     if (completed) for (size_t i = 0; i < scope->count; ++i) {
         qa_error current = {0};
         if (!application_q3_component_input_complete(scope->scopes[i], true, component_input_values, scope, &current)) {
-            if (ok) first = current; ok = false;
+            if (ok) first = current;
+            ok = false;
         }
     }
     for (size_t i = scope->count; i > 0; --i) {
@@ -893,7 +918,8 @@ static bool component_input_boundary(application_move_call *move, qa_movement_st
     input->scopes = calloc(count, sizeof(*input->scopes));
     if (!input->scopes) { free(input); return application_fail(error, QA_ERROR_MEMORY, "Retaining component input roster"); }
     input->application = move->application; input->actor = move->control->actor; input->source = *source;
-    input->state = state; input->command = command; input->elapsed_ns = elapsed_ns; input->borrowed = true;
+    input->state = state; input->command = command; input->command_sequence = command->sequence;
+    input->elapsed_ns = elapsed_ns; input->borrowed = true;
     input->aim = aim ? *aim : component_aim(state, command);
     input->next = application_control_mod_head(move->application);
     input->impulse = command->impulse;
@@ -1224,6 +1250,14 @@ static qa_movement_control move_phase_body(void *opaque, qa_movement_phase phase
         if (!live(move->application, actor)) return QA_MOVEMENT_REMOVED;
     }
     bool source_weapon_slice = application_guest_input_weapon_slice(move->application, actor);
+    if (phase == QA_MOVE_WEAPON && !source_weapon_slice && !qw_spectator &&
+        !move->context.defer_postthink) {
+        qa_q1_input input = q1_input(call);
+        input.view_angles = call_view_angles(move, call);
+        if (!q1_source_weapon_impulse(move->application, actor, call->command, &input, error))
+            return QA_MOVEMENT_ERROR;
+        if (!live(move->application, actor)) return QA_MOVEMENT_REMOVED;
+    }
     if (phase == QA_MOVE_WEAPON && !source_weapon_slice &&
         !qw_spectator &&
         !move->context.defer_postthink &&
@@ -2149,7 +2183,7 @@ static bool external_stage_locomotion(const application_control_external_stage *
     qa_movement_services services = movement_services(move);
     bool ok = qa_movement_move(&input, &services, &move->control->result, error);
     if (ok && live(move->application, stage->actor)) {
-        const qa_movement_result *result = &move->control->result;
+        qa_movement_result *result = &move->control->result;
         ok = publish_result_body(move, &result->state, result->bounds, result->ground,
             result->view_angles, false, false, error);
         if (ok) {
@@ -2412,7 +2446,7 @@ static bool control_move(qa_application *application,
         move.external_nq_physics = true;
         ok = qa_movement_physics_netquake(&input, &services, &record->result, error);
         if (ok && live(application, actor)) {
-            const qa_movement_result *result = &record->result;
+            qa_movement_result *result = &record->result;
             ok = publish_result_body(&move, &result->state, result->bounds, result->ground,
                 result->view_angles, false, false, error);
             if (ok) {
@@ -2724,7 +2758,7 @@ bool application_control_q3_source_state(application_provider *provider, qa_acto
 {
     qa_application *app = provider ? provider->application : NULL;
     uint32_t slot;
-    if (!app || !source || !fields || (fields & ~QA_Q3_SOURCE_PM_ALL) ||
+    if (!app || !source || !fields || (fields & ~(uint32_t)QA_Q3_SOURCE_PM_ALL) ||
         provider->kind != APPLICATION_PROVIDER_Q3 || !provider->constructed || !provider->attached ||
         provider->close_pending || actor.slot >= app->control_capacity || !live(app, actor) ||
         ((fields & QA_Q3_SOURCE_PM_VIEW) &&
@@ -2826,6 +2860,7 @@ bool application_control_group_post(qa_application *app, qa_actor_id actor, qa_e
     qa_movement_input input = qa_movement_input_default(record->state.kind, actor);
     input.state = record->state; input.shape.bounds = record->bounds; input.profile = record->profile;
     input.command.kind = record->state.kind; input.command.buttons = record->buttons;
+    input.command.sequence = record->command_sequence;
     input.command.angles = record->command_angles; input.time_ns = application_control_time(context);
     input.elapsed_ns = application_control_elapsed(context);
     application_move_call move = {.application = app, .control = record, .input = &input,
@@ -2833,6 +2868,10 @@ bool application_control_group_post(qa_application *app, qa_actor_id actor, qa_e
         .arsenal = application_provider_for(app, actor, QA_ROLE_ARSENAL, "")};
     qa_movement_call call = input_call(&move);
     if (move_phase(&move, QA_MOVE_POSTTHINK, &call, error) == QA_MOVEMENT_ERROR) return false;
+    if (!live(app, actor)) return true;
+    qa_q1_input source_input = q1_input(&call);
+    source_input.view_angles = call_view_angles(&move, &call);
+    if (!q1_source_weapon_impulse(app, actor, &input.command, &source_input, error)) return false;
     if (!live(app, actor)) return true;
     if (move.arsenal && move.arsenal->kind == APPLICATION_PROVIDER_Q1) {
         qa_q1_player_view view;
@@ -2942,6 +2981,15 @@ static bool guest_complete(qa_application *application, qa_actor_id actor,
         input.state = record->state;
         if (stage) return external_stage_current(stage);
         bool source_weapons = application_guest_input_source_weapons(application, actor);
+        if (!source_weapons && command->milliseconds) {
+            qa_q1_input source_input = {.view_angles = record->view_angles,
+                .attack = (input.command.buttons & 1u) != 0, .jump = command_jump(&input.command),
+                .use = (input.command.buttons & 4u) != 0, .impulse = input.command.impulse,
+                .water_level = (uint8_t)(record->water_level < 0 ? 0 : record->water_level > 3 ? 3 : record->water_level),
+                .water_type = record->water_type};
+            ok = q1_source_weapon_impulse(application, actor, &input.command, &source_input, error);
+        }
+        if (!ok || !live(application, actor)) goto guest_weapons_finished;
         if (!source_weapons && move.arsenal && move.arsenal->kind == APPLICATION_PROVIDER_Q2) {
             qa_q2_weapon_input controls;
             ok = application_q2_weapon_input(move.arsenal, actor, &controls, error);
@@ -2951,7 +2999,7 @@ static bool guest_complete(qa_application *application, qa_actor_id actor,
         } else if (!source_weapons && command->milliseconds && move.arsenal && move.arsenal->kind == APPLICATION_PROVIDER_Q1) {
             qa_q1_input controls = {.view_angles = record->view_angles,
                 .attack = (command->buttons & 1u) != 0, .jump = command_jump(command),
-                .use = (command->buttons & 4u) != 0, .impulse = command->impulse,
+                .use = (command->buttons & 4u) != 0, .impulse = input.command.impulse,
                 .water_level = (uint8_t)record->water_level, .water_type = record->water_type};
             ok = qa_q1_player_input(move.arsenal->state.q1, actor, &controls, error) &&
                 (!live(application, actor) || qa_q1_player_postthink(move.arsenal->state.q1, actor, error));
@@ -2972,6 +3020,7 @@ static bool guest_complete(qa_application *application, qa_actor_id actor,
                 record->result.water_type = record->water_type;
             }
         }
+guest_weapons_finished:
         if (ok && live(application, actor)) ok = finish_native_players(&move, &record->result, error);
     }
     if (stage) return ok && (!live(application, actor) || external_stage_current(stage));
@@ -3121,6 +3170,10 @@ bool qa_application_control_prediction_read(qa_application *application,
     }
     result.input.state = record->state;
     result.input.profile = record->profile;
+    /* Copied-state prediction has no QC PlayerPreThink invocation to consume
+     * jump. Its admitted C kernel owns that action independently of Source. */
+    if (record->state.kind == QA_MOVEMENT_NETQUAKE)
+        result.input.profile.data.nq.source_jump_authority = false;
     application_provider *physical = application_world_provider(application, QA_ROLE_ENTITIES, "");
     if (record->state.kind == QA_MOVEMENT_Q3 && physical && physical->kind == APPLICATION_PROVIDER_Q3) {
         uint32_t source_slot;
@@ -3144,11 +3197,29 @@ bool qa_application_control_prediction_read(qa_application *application,
     result.input.has_current_bounds = true;
     result.input.view_offset = record->view_offset;
     result.input.environment.health = combat.health;
+    result.input.environment.invulnerable = combat.invulnerable;
     result.input.environment.flight = record->flight;
     result.input.environment.gravity_multiplier = record->gravity_multiplier;
     result.input.environment.has_mode = record->player_mode_set;
     result.input.environment.mode = record->player_mode;
     result.input.prediction = true;
+    if (physical && physical->kind == APPLICATION_PROVIDER_QVM) {
+        struct application_q3_guest *engine = q3g_engine(physical);
+        if (engine && engine->game && engine->game->weapons) {
+            int32_t flight, haste;
+            if (!application_q3_weapons_powerup_until(engine->game->weapons, actor,
+                    APPLICATION_Q3_FLIGHT, &flight, error) ||
+                !application_q3_weapons_powerup_until(engine->game->weapons, actor,
+                    APPLICATION_Q3_HASTE, &haste, error)) return false;
+            if (!live(application, actor) ||
+                application_world_provider(application, QA_ROLE_ENTITIES, "") != physical ||
+                physical->close_pending || !physical->constructed || !physical->attached)
+                return application_fail(error, QA_ERROR_NOT_FOUND,
+                    "Prediction Source powers retired their actual original GAME owner");
+            result.input.environment.flight = flight != 0;
+            result.input.environment.haste = haste != 0;
+        }
+    }
     application_provider *effects = application_provider_for(application, actor, QA_ROLE_EFFECTS, "");
     application_provider *q3[] = {movement, character, arsenal, effects};
     for (size_t i = 0; i < sizeof(q3) / sizeof(q3[0]); ++i) {
@@ -3600,7 +3671,7 @@ bool application_control_source_spawn(qa_application *application,
     case QA_MOVEMENT_NETQUAKE:
         state.data.nq.old_origin = body.origin;
         state.data.nq.angles = state.data.nq.view_angles = view_angles;
-        state.data.nq.flags &= ~APPLICATION_Q1_ONGROUND;
+        state.data.nq.flags &= ~(uint32_t)APPLICATION_Q1_ONGROUND;
         state.data.nq.move_type = 3;
         state.data.nq.ground = (qa_movement_ground){0};
         state.data.nq.fix_angle = false;

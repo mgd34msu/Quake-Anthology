@@ -4,6 +4,7 @@
 #include "native_q1_composition.h"
 #include "qa/game_q1_bots.h"
 #include "qa/game_q2_wire.h"
+#include "unified_q2_native_events.h"
 #include "native_q2_console.h"
 #include "map_travel_private.h"
 #include "portals.h"
@@ -1240,7 +1241,7 @@ static bool q2_visual(void *opaque, qa_actor_id actor,
         .revision = revision + 1,
         .active = true,
     };
-    return true;
+    return application_unified_q2_native_visual(provider, actor, visual, error);
 }
 
 static bool q2_read_visual(void *opaque, qa_actor_id actor,

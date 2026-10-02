@@ -118,6 +118,9 @@ bool qa_network_attach(qa_network_runtime *, const qa_net_connect *,
                         const qa_network_peer_ops *, void *peer, uint64_t now_ns,
                         qa_net_client_id *, qa_error *);
 bool qa_network_detach(qa_network_runtime *, qa_net_client_id, const char *, qa_error *);
+/* Removes an actual cold canonical row whose protocol peer never transferred. */
+bool qa_network_discard_incomplete(qa_network_runtime *,qa_net_client_id,qa_error *);
+bool qa_network_connection_incomplete(const qa_network_runtime *,qa_net_client_id);
 bool qa_network_pump(qa_network_runtime *, uint64_t now_ns, qa_error *);
 bool qa_network_send(qa_network_runtime *, qa_net_client_id, qa_bytes, qa_error *);
 /* Connectionless services share this transport; they never open a second

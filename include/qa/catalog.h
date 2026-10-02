@@ -103,6 +103,11 @@ bool qa_catalog_discover_remote_q3(const qa_catalog *, qa_product_id base,
 bool qa_catalog_discover_remote_q2(const qa_catalog *, qa_product_id base,
     const char *directory, uint64_t generation, qa_catalog **out,
     qa_product_id *selected, qa_error *);
+/* Uses the actual selected Q1/QW base's family directory and configured user
+ * capability, including QW's genuine id1 ancestry. */
+bool qa_catalog_discover_remote_q1(const qa_catalog *, qa_product_id base,
+    const char *directory, uint64_t generation, qa_catalog **out,
+    qa_product_id *selected, qa_error *);
 /* Actual configured Q2 family capability for HTTP game-relative destinations.
  * Only classic/rerelease editions are admitted; retain before catalog release. */
 qa_fs_root *qa_catalog_q2_download_root(const qa_catalog *, qa_product_edition);

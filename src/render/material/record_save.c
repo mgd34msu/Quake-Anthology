@@ -158,7 +158,7 @@ bool qa_material_saved_record(qa_source_save_io *io, const qa_material_library_c
     if (!qa_material_saved_text(io, &m->name) || !m->name || !*m->name ||
         !qa_source_save_u64(io, &m->revision) || !m->revision ||
         !qa_source_save_u32(io, &m->registration) || !qa_source_save_u32(io, &m->sorted_index) ||
-        !qa_source_save_i32(io, &m->lightmap_index)) return false;
+        (schema >= 8 && !qa_source_save_i32(io, &m->lightmap_index))) return false;
     ENUM(m->family, qa_scene_family, QA_SCENE_Q3); BOOL(m->default_shader);
     if (!profile(io, &m->profile)) return false;
     FLOAT(m->sort); FLOAT(m->clamp_time); FLOAT(m->portal_range); ENUM(m->cull, qa_scene_cull, QA_CULL_BACK);
@@ -195,7 +195,9 @@ bool qa_material_saved_record(qa_source_save_io *io, const qa_material_library_c
     else if (reading) { m->source_time_offset = 0; m->source_remap = false; }
     if (!options(io, record, schema)) return false;
     ENUM(record->kind, qa_material_registration_kind, QA_MATERIAL_STENCIL_SHADOW);
-    return qa_material_saved_identity(io, refs, &record->world_identity, true) &&
+    bool ok = qa_material_saved_identity(io, refs, &record->world_identity, true) &&
         qa_source_save_i32(io, &record->lightmap_index) && qa_material_saved_text(io, &record->base_name) &&
         qa_material_saved_image(io, refs, &record->base_image);
+    if (ok && reading && schema < 8) m->lightmap_index = record->lightmap_index;
+    return ok;
 }

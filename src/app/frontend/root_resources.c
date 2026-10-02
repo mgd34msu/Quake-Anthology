@@ -3,6 +3,8 @@
 #include "q3_render_policy.h"
 #include "q1_sky.h"
 #include "native_q3_client.h"
+#include "qa/map_sidecars.h"
+#include "source_acoustics.h"
 
 struct frontend_root_resources {
     qa_frontend *frontend;
@@ -15,6 +17,7 @@ struct frontend_root_resources {
     qa_scene_world *world;
     qa_audio_bank *sounds;
     qa_resource *map;
+    qa_map_sidecars *sidecars;
     char *name;
     uint64_t configuration,revision;
     bool installed;
@@ -66,6 +69,7 @@ static bool dispose(frontend_root_resources **slot,qa_error *error)
     qa_material_library_destroy(owner->materials);
     qa_scene_resources_destroy(owner->images);
     qa_vfs_destroy(owner->mounts);
+    qa_map_sidecars_release(owner->sidecars);
     *slot=NULL; free(owner); return true;
 }
 bool frontend_root_resources_destroy(qa_frontend *f,qa_error *error)
@@ -91,6 +95,10 @@ bool frontend_root_resources_prepare_restored(qa_frontend *f,qa_error *error)
     if (!owner) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining imported root media provider");
     owner->frontend=f; owner->application=f->application; owner->mounts=f->mounts;
     owner->images=f->images; owner->materials=f->materials; owner->installed=true;
+    const qa_map_sidecars *sidecars=qa_application_map_sidecars(f->application);
+    if (sidecars) {
+        owner->sidecars=(qa_map_sidecars *)sidecars; qa_map_sidecars_retain(owner->sidecars);
+    }
     f->root_resources=owner;
     owner->media=qa_media_library_create(owner->images,error);
     return owner->media!=NULL;
@@ -100,6 +108,21 @@ bool frontend_root_movies_restore(qa_frontend *f,const frontend_material_movies_
     frontend_material_movie_source source;
     return f && f->source_restoring && frontend_root_movie_source_read(f,&source,error) &&
         frontend_material_movies_restore(&source,refs,bytes,&f->root_resources->movies,error);
+}
+bool frontend_root_sidecars_bind_restored(qa_frontend *f,qa_error *error)
+{
+    frontend_root_resources *owner=f?f->root_resources:NULL;
+    if (!f || !f->source_restoring || !owner || owner->frontend!=f || owner->application!=f->application)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Restored root sidecars lost their actual detached parent");
+    const qa_map_sidecars *sidecars=qa_application_map_sidecars(f->application);
+    if (!f->map_resource) return !sidecars && !owner->sidecars;
+    if (!sidecars || !qa_map_sidecars_current(sidecars) || qa_map_sidecars_map(sidecars)!=f->map_resource ||
+        (owner->sidecars && owner->sidecars!=sidecars))
+        return frontend_fail(error,QA_ERROR_FORMAT,"Restored root sidecars differ from the prepared application map");
+    if (!owner->sidecars) {
+        owner->sidecars=(qa_map_sidecars *)sidecars; qa_map_sidecars_retain(owner->sidecars);
+    }
+    return true;
 }
 bool frontend_root_resources_sync(qa_frontend *f,qa_error *error)
 {
@@ -117,6 +140,12 @@ bool frontend_root_resources_sync(qa_frontend *f,qa_error *error)
     owner->frontend=f; owner->application=f->application; owner->configuration=configuration;
     owner->revision=map.revision; owner->map=map.resource; qa_resource_retain(owner->map);
     f->root_resources_pending=owner;
+    const qa_map_sidecars *sidecars=qa_application_map_sidecars(f->application);
+    if (!sidecars || !qa_map_sidecars_current(sidecars) || qa_map_sidecars_map(sidecars)!=map.resource ||
+        qa_map_sidecars_product(sidecars)!=map.geometry) {
+        frontend_fail(error,QA_ERROR_ARGUMENT,"Root world lost its actual admitted map sidecars"); goto fail;
+    }
+    owner->sidecars=(qa_map_sidecars *)sidecars; qa_map_sidecars_retain(owner->sidecars);
     owner->mounts=qa_vfs_clone(qa_launch_snapshot_mounts(snapshot),error);
     owner->images=owner->mounts?qa_scene_resources_create(owner->mounts,error):NULL;
     if (!owner->images || !frontend_image_policy_initialize(f,owner->images,error)) goto fail;
@@ -128,9 +157,12 @@ bool frontend_root_resources_sync(qa_frontend *f,qa_error *error)
         product->family==QA_GAME_Q2?QA_SCENE_Q2:QA_SCENE_Q1;
     qa_scene_world_options options={.images={.family=family,.wrap=QA_SCENE_REPEAT,
         .filter=QA_SCENE_LINEAR_MIPMAP_LINEAR,.mipmap=true,.transparent_index=255},
-        .subdivisions=64,.q1_water_alpha=1,.q2_light_modulate=1,.q3_overbright=1};
+        .subdivisions=64,.q1_water_alpha=1,.q2_light_modulate=1,.q3_overbright=1,
+        .external_lit=qa_map_sidecars_external_lit(owner->sidecars)};
     qa_bsp_view bsp;
+    options.has_external_entities=qa_map_sidecars_external_entities(owner->sidecars,&options.external_entities);
     if (!qa_bsp_open(qa_resource_bytes(owner->map),&bsp,error) ||
+        !qa_map_sidecars_apply_entities(owner->sidecars,&bsp,error) ||
         !qa_material_library_load_scripts(owner->materials,owner->mounts,&options.images,error) ||
         !qa_scene_world_create(&bsp,owner->images,owner->materials,&options,&owner->world,error) ||
         (f->audio && !qa_audio_bank_create(owner->mounts,&owner->sounds,error))) goto fail;
@@ -152,7 +184,7 @@ bool frontend_root_resources_sync(qa_frontend *f,qa_error *error)
     owner->installed=true; f->root_resources=owner; f->root_resources_pending=NULL;
     return (!f->q1_sky || frontend_q1_sky_map(f->q1_sky,error)) &&
         frontend_material_remaps(f,f->materials,error) && frontend_source_publish_world(f,error) &&
-        frontend_native_q3_publish_world(f,error);
+        frontend_native_q3_publish_world(f,error) && frontend_acoustics_source_bind(f,error);
 fail: {
     qa_error cleanup={0};
     (void)dispose(&f->root_resources_pending,&cleanup);

@@ -63,3 +63,6 @@ bool qa_qvm_source_bytes_write(qa_qvm *vm, const qa_qvm_image *image,
 bool qa_qvm_source_scratch_run(qa_qvm *vm, const qa_qvm_image *image, size_t length,
     qa_qvm_source_scratch_run_fn run, void *context, qa_error *error)
 { return qa_qvm_execution_scratch_run(vm, image, length, run, context, error); }
+bool qa_qvm_source_scratch_run_reserved(qa_qvm *vm, const qa_qvm_image *image, size_t length,
+    uint32_t reservation, qa_qvm_source_scratch_run_fn run, void *context, qa_error *error)
+{ return qa_qvm_execution_scratch_run_reserved(vm, image, length, reservation, run, context, error); }

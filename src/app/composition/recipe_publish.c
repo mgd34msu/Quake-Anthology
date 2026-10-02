@@ -1,6 +1,7 @@
 #include "recipe_private.h"
 #include "qa/launch_identity.h"
 #include "../application/internal.h"
+#include "qa/map_sidecars.h"
 #include <inttypes.h>
 #include <stdio.h>
 
@@ -176,27 +177,56 @@ bool recipe_resource_add_from(qa_executable_recipe *r, qa_product_id product, co
 bool recipe_resource_add(qa_executable_recipe *r, qa_product_id product, const char *path,
     const qa_resource *held, size_t *out, qa_error *error)
 { return recipe_resource_add_from(r, product, path, held, SIZE_MAX, out, error); }
+static bool held_sidecar_add(qa_executable_recipe *r, qa_product_id product,
+    size_t view, const qa_map_sidecar *held, size_t *out, qa_error *error)
+{
+    const qa_vfs_acquisition *source = held->acquisition;
+    if (!source || !source->opening_present || view >= r->view_count ||
+        !qa_vfs_acquisition_retained(r->views[view].files, source, error) ||
+        qa_resource_pool_find(qa_vfs_resources(r->views[view].files), source->resource_id) != held->resource ||
+        r->resource_count == RECIPE_MAX_RECORDS) return recipe_fail(error, "Source sidecar lost its actual retained opening");
+    recipe_resource *entry = calloc(1, sizeof(*entry));
+    if (!entry) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining historical sidecar transfer"); return false; }
+    qa_vfs_acquisition *receipt = &entry->acquisition;
+    receipt->mount = source->mount; receipt->resource_id = source->resource_id;
+    const char *strings[] = {source->path, source->lookup_path, source->link_source, source->link_target, source->opening.prefix};
+    char **targets[] = {&receipt->path, &receipt->lookup_path, &receipt->link_source, &receipt->link_target, (char **)&receipt->opening.prefix};
+    bool okay = true;
+    for (size_t i = 0; okay && i < 5; ++i) if (strings[i]) {
+        *targets[i] = malloc(strlen(strings[i]) + 1);
+        if (!*targets[i]) okay = false;
+        else strcpy(*targets[i], strings[i]);
+    }
+    receipt->opening.rank = source->opening.rank; receipt->opening.user_overlay = source->opening.user_overlay;
+    receipt->opening.order_count = source->opening.order_count; receipt->opening_present = true;
+    if (okay && receipt->opening.order_count) {
+        qa_mount_id *order = malloc(receipt->opening.order_count * sizeof(*order)); receipt->opening.order = order;
+        if (!order) okay = false;
+        else memcpy(order, source->opening.order, receipt->opening.order_count * sizeof(*order));
+    }
+    recipe_resource **next = okay ? realloc(r->resources, (r->resource_count + 1) * sizeof(*next)) : NULL;
+    if (!next) { qa_vfs_acquisition_dispose(receipt); free(entry); qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining historical sidecar transfer"); return false; }
+    r->resources = next; *out = r->resource_count;
+    entry->value = (qa_launch_resource){product, receipt->path, held->resource}; entry->view = view; entry->owns_resource = true;
+    qa_resource_retain((qa_resource *)held->resource); r->resources[r->resource_count++] = entry; return true;
+}
 bool recipe_resource_write(qa_json_writer *w, const qa_executable_recipe *r, size_t index, qa_error *error)
 {
     const recipe_resource *entry = r->resources[index]; const qa_vfs *files = r->views[entry->view].files;
-    qa_vfs_read_reference opening = {0}; bool found = false;
-    for (size_t i = 0; i < qa_vfs_read_count(files); ++i) if (qa_vfs_read_at(files, i, &opening) &&
-        opening.mount == entry->acquisition.mount && qa_resource_id(opening.resource) == entry->acquisition.resource_id &&
-        !strcmp(opening.path, entry->acquisition.path) && !strcmp(opening.lookup_path, entry->acquisition.lookup_path) &&
-        !strcmp(opening.link_source, entry->acquisition.link_source) && !strcmp(opening.link_target, entry->acquisition.link_target)) { found = true; break; }
+    const qa_vfs_acquisition *opening = &entry->acquisition;
     size_t mount;
-    if (!found || !qa_vfs_acquisition_retained(files, &entry->acquisition, error) || !mount_index(files, entry->acquisition.mount, &mount, error)) return false;
+    if (!opening->opening_present || !qa_vfs_acquisition_retained(files, opening, error) || !mount_index(files, opening->mount, &mount, error)) return false;
     qa_sha256_digest archive; size_t ordinal = 0; bool archived = qa_resource_archive_origin(entry->value.resource, &archive, &ordinal);
     qa_json_writer_array(w);
     if (!product_write(w, r->catalog, entry->value.product, error)) return false;
     qa_json_writer_string(w, entry->value.path); qa_json_writer_number(w, (double)entry->view); qa_json_writer_number(w, (double)mount);
     qa_json_writer_string(w, qa_resource_path(entry->value.resource)); qa_json_writer_bool(w, archived); word_write(w, ordinal);
-    qa_json_writer_string(w, opening.lookup_path); qa_json_writer_string(w, opening.link_source); qa_json_writer_string(w, opening.link_target);
+    qa_json_writer_string(w, opening->lookup_path); qa_json_writer_string(w, opening->link_source); qa_json_writer_string(w, opening->link_target);
     recipe_digest_write(w, qa_resource_digest(entry->value.resource)); word_write(w, qa_resource_bytes(entry->value.resource).size);
-    qa_json_writer_number(w, (double)opening.opening.rank);
-    if (!order_write(w, files, opening.opening.order, opening.opening.order_count, error)) return false;
-    if (opening.opening.prefix) qa_json_writer_string(w, opening.opening.prefix); else qa_json_writer_null(w);
-    qa_json_writer_bool(w, opening.opening.user_overlay); qa_json_writer_end(w); return !w->failed;
+    qa_json_writer_number(w, (double)opening->opening.rank);
+    if (!order_write(w, files, opening->opening.order, opening->opening.order_count, error)) return false;
+    if (opening->opening.prefix) qa_json_writer_string(w, opening->opening.prefix); else qa_json_writer_null(w);
+    qa_json_writer_bool(w, opening->opening.user_overlay); qa_json_writer_end(w); return !w->failed;
 }
 static bool optional_resource_write(qa_json_writer *w, qa_executable_recipe *r, const qa_launch_instance *instance,
     const qa_resource *resource, size_t *index, qa_error *error)
@@ -315,6 +345,25 @@ bool qa_application_unified_offer(qa_application *app, uint32_t epoch, const cha
         app->frame_preparing || app->q3_round_active || app->q3_world_restart || !qa_session_safe(app->session) ||
         qa_session_faulted(app->session) || !qa_world_idle(app->world) || !launch || !qa_application_map_read(app, &map))
         return recipe_fail(error, "Composition offer requires its idle published Source world");
+    const qa_map_sidecars *admission = qa_application_map_sidecars(app);
+    const qa_launch_choices *choices = qa_launch_snapshot_choices(launch);
+    const qa_product *admitted_product = admission ? qa_catalog_product(qa_map_sidecars_catalog(admission), qa_map_sidecars_product(admission)) : NULL;
+    const qa_product *current_product = admitted_product ? qa_catalog_find(qa_launch_snapshot_catalog(launch), admitted_product->identity) : NULL;
+    size_t observed_count = qa_map_sidecars_count(admission);
+    if (!admission || !current_product || current_product->id != choices->world.geometry ||
+        (sidecar_count && sidecar_count != observed_count)) return recipe_fail(error, "Source offer lacks its genuine published map sidecars");
+    qa_recipe_sidecar *observed = calloc(observed_count ? observed_count : 1, sizeof(*observed));
+    if (!observed) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Publishing historical sidecar inventory"); return false; }
+    for (size_t i = 0; i < observed_count; ++i) {
+        const qa_map_sidecar *row = qa_map_sidecars_at(admission, i);
+        observed[i] = (qa_recipe_sidecar){current_product->id, row->path, row->resource};
+        if (sidecar_count && (sidecars[i].product != observed[i].product || !sidecars[i].path ||
+            strcmp(sidecars[i].path, row->path) || sidecars[i].resource != row->resource)) {
+            free(observed); return recipe_fail(error, "Caller sidecars differ from the actual map admission");
+        }
+    }
+    sidecars = observed; sidecar_count = observed_count;
+    qa_map_sidecars_retain((qa_map_sidecars *)admission);
     qa_launch_snapshot_retain(launch); uint64_t generation = qa_application_configuration_generation(app);
     qa_executable_recipe r = {.catalog = qa_launch_snapshot_catalog(launch), .pool = qa_application_resources(app)};
     qa_buffer identity = {0}; qa_json_document *json = NULL; qa_json_writer w = {0}, offer = {0}; qa_buffer body = {0}, encoded = {0}; qa_unified_composition canonical = {0};
@@ -334,7 +383,16 @@ bool qa_application_unified_offer(qa_application *app, uint32_t epoch, const cha
             if (!current) ok = recipe_fail(error, "Retained provider content is absent from current composition catalog");
             else r.views[index].product = current->id; }
     }
-    const qa_launch_choices *choices = qa_launch_snapshot_choices(launch);
+    size_t sidecar_view = SIZE_MAX;
+    if (ok) {
+        qa_vfs *files = (qa_vfs *)qa_map_sidecars_view(admission);
+        size_t length = strlen(admitted_product->identity) + 14;
+        char *owner = malloc(length);
+        if (owner) snprintf(owner, length, "map-sidecars:%s", admitted_product->identity);
+        ok = owner && files && recipe_view_add(&r, owner, qa_map_sidecars_catalog(admission), files, false, &sidecar_view, error);
+        free(owner);
+        if (ok) r.views[sidecar_view].product = current_product->id;
+    }
     if (ok) ok = recipe_resource_add(&r, choices->world.geometry, choices->world.map, map.resource, &r.map_index, error);
     qa_json_writer_object(&w); qa_json_writer_key(&w, "schemaVersion"); qa_json_writer_number(&w, 1);
     qa_json_writer_key(&w, "recipe"); qa_json_writer_object(&w);
@@ -353,7 +411,7 @@ bool qa_application_unified_offer(qa_application *app, uint32_t epoch, const cha
         for (size_t j = 0; j < i; ++j) if (sidecars[j].product == sidecars[i].product && !strcmp(sidecars[j].path, sidecars[i].path)) ok = recipe_fail(error, "Duplicate actual sidecar observation");
         qa_json_writer_array(&w); if (ok) ok = product_write(&w, r.catalog, sidecars[i].product, error);
         qa_json_writer_string(&w, sidecars[i].path);
-        if (sidecars[i].resource) { size_t index; if (ok) ok = recipe_resource_add(&r, sidecars[i].product, sidecars[i].path, sidecars[i].resource, &index, error); if (ok) qa_json_writer_number(&w, (double)index); }
+        if (sidecars[i].resource) { size_t index; if (ok) ok = held_sidecar_add(&r, sidecars[i].product, sidecar_view, qa_map_sidecars_at(admission, i), &index, error); if (ok) qa_json_writer_number(&w, (double)index); }
         else qa_json_writer_null(&w);
         qa_json_writer_end(&w);
     }
@@ -382,11 +440,13 @@ bool qa_application_unified_offer(qa_application *app, uint32_t epoch, const cha
     }
     qa_application_map_view current;
     if (ok && (qa_application_launch(app) != launch || qa_application_configuration_generation(app) != generation ||
-        !qa_application_map_read(app, &current) || current.revision != map.revision || current.resource != map.resource)) ok = recipe_fail(error, "Source composition changed during transfer preparation");
+        !qa_application_map_read(app, &current) || current.revision != map.revision || current.resource != map.resource ||
+        qa_application_map_sidecars(app) != admission)) ok = recipe_fail(error, "Source composition changed during transfer preparation");
     if (ok) ok = qa_unified_document_create(QA_UNIFIED_CONTROL_DOCUMENT, (qa_bytes){encoded.data, encoded.size}, out, error);
     for (size_t i = 0; i < r.resource_count; ++i) { qa_resource_release((qa_resource *)r.resources[i]->value.resource); qa_vfs_acquisition_dispose(&r.resources[i]->acquisition); free(r.resources[i]); }
-    for (size_t i = 0; i < r.view_count; ++i) { qa_vfs_destroy(r.views[i].files); qa_catalog_release((qa_catalog *)r.views[i].catalog); }
+    for (size_t i = 0; i < r.view_count; ++i) { if (r.views[i].owns_files) qa_vfs_destroy(r.views[i].files); qa_catalog_release((qa_catalog *)r.views[i].catalog); }
     free(r.resources); free(r.views); qa_arena_destroy(&r.arena); qa_json_destroy(json); qa_buffer_free(&identity);
     qa_json_writer_destroy(&w); qa_json_writer_destroy(&offer); qa_buffer_free(&body); qa_buffer_free(&encoded); qa_unified_composition_free(&canonical); qa_launch_snapshot_release(launch);
+    qa_map_sidecars_release((qa_map_sidecars *)admission); free(observed);
     return ok;
 }

@@ -210,25 +210,25 @@ bool q1_power_frame(qa_q1_game *g, q1_player *player, double seconds,
                     return true;
             }
             if (!player->wetsuit_scaled_level || player->wetsuit_scaled_frame != frame_ns) {
-                qa_actor_id actor = player->id;
+                qa_actor_id receiver = player->id;
                 qa_body_state body;
-                if (!qa_world_body_read(g->services.world, actor, &body, error))
-                    return !q1_player_get(g, actor);
-                player = q1_player_get(g, actor);
+                if (!qa_world_body_read(g->services.world, receiver, &body, error))
+                    return !q1_player_get(g, receiver);
+                player = q1_player_get(g, receiver);
                 if (!player)
                     return true;
                 body.velocity = qa_vec_scale(body.velocity, water == 2 ? 1.25f : 1.5f);
                 uint64_t scaled_frame = frame_ns;
-                if (!qa_world_body_write(g->services.world, actor, &body, error))
+                if (!qa_world_body_write(g->services.world, receiver, &body, error))
                     return false;
-                player = q1_player_get(g, actor);
+                player = q1_player_get(g, receiver);
                 if (!player)
                     return true;
                 player->wetsuit_scaled_frame = scaled_frame;
                 player->wetsuit_scaled_level = water;
-                if (!notify_motion(g, actor, &body, error))
+                if (!notify_motion(g, receiver, &body, error))
                     return false;
-                player = q1_player_get(g, actor);
+                player = q1_player_get(g, receiver);
                 if (!player)
                     return true;
             }

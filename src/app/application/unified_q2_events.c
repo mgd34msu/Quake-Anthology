@@ -4,6 +4,8 @@
 #include "guest_native_q2_private.h"
 #include "map_players_private.h"
 #include "qa/network_q2_messages.h"
+#include "qa/application_network_q2.h"
+#include "qa/native_host_q2_wire.h"
 #include "../../gameplay/q2/monsters/muzzle_data.h"
 
 #include <math.h>
@@ -70,30 +72,33 @@ static bool source_entity(const q2_projection *p, uint32_t slot, qa_actor_id *ac
     *present = false; *actor_out = (qa_actor_id){0};
     bool captured = reference_actor(p, slot, actor_out);
     qa_native_instance *instance = qa_native_host_instance(p->provider->state.native.host);
-    qa_native_entity_table before, after;
-    qa_native_slot_binding binding, final_binding;
+    qa_native_entity_table before;
+    qa_native_slot_binding binding;
     if (!instance || !qa_native_entity_table_get(instance, &before, e)) return false;
-    if (slot >= before.count) return true;
+    if (captured) {
+        const qa_actor_record *record = qa_actors_get(qa_session_actors(p->provider->application->session), *actor_out);
+        if (!record) return true;
+        if (record->owner == p->provider->owner && record->has_source) slot = record->source_slot;
+        else {
+            uint32_t physical = player_slot(p, *actor_out);
+            if (!physical) return true;
+            slot = physical;
+        }
+    }
+    if (slot >= before.capacity) return true;
     if (!qa_native_slot(instance, slot, &binding, e)) return false;
     if (binding.kind == QA_NATIVE_SLOT_FREE) return true;
     if (captured && !qa_actor_id_equal(binding.actor, *actor_out)) return true;
     if (binding.slot != slot || binding.source_slot != slot || binding.owner != p->provider->owner ||
         !qa_actors_get(qa_session_actors(p->provider->application->session), binding.actor))
         return application_fail(e, QA_ERROR_FORMAT, "Q2 service entity lost its full Source binding");
-    if (before.stride < 28)
-        return application_fail(e, QA_ERROR_FORMAT, "Q2 public entity prefix is truncated");
-    qa_native_address address; uint8_t bytes[24];
-    if (!qa_native_entity_address(instance, slot, &address, e) ||
-        address > UINT64_MAX - 28 || !qa_native_read(instance, address + 4, bytes, sizeof(bytes), e)) return false;
-    *origin = qa_v3(qa_load_f32le(bytes), qa_load_f32le(bytes + 4), qa_load_f32le(bytes + 8));
-    *angles = qa_v3(qa_load_f32le(bytes + 12), qa_load_f32le(bytes + 16), qa_load_f32le(bytes + 20));
+    qa_native_host_q2_entity actual;
+    if (!qa_native_host_q2_wire_entity_import(p->provider->state.native.host, slot, &actual, e)) return false;
+    *origin = vec(actual.state.origin); *angles = vec(actual.state.angles);
     if (!qa_vec_finite(*origin) || !qa_vec_finite(*angles))
         return application_fail(e, QA_ERROR_FORMAT, "Q2 service entity has nonfinite Source coordinates");
-    if (!qa_native_entity_table_get(instance, &after, e) || !qa_native_slot(instance, slot, &final_binding, e)) return false;
-    if (before.base != after.base || before.stride != after.stride || before.count != after.count ||
-        before.capacity != after.capacity || binding.kind != final_binding.kind ||
-        binding.owner != final_binding.owner || binding.source_slot != final_binding.source_slot ||
-        !qa_actor_id_equal(binding.actor, final_binding.actor))
+    if (!qa_actor_id_equal(binding.actor, actual.binding.actor) || binding.owner != actual.binding.owner ||
+        binding.source_slot != actual.binding.source_slot || binding.kind != actual.binding.kind)
         return application_fail(e, QA_ERROR_ARGUMENT, "Q2 service entity changed during Source observation");
     *actor_out = binding.actor; *present = true;
     return true;
@@ -405,10 +410,10 @@ static bool emit_to(q2_projection *p, const qa_q2_server_record *record, qa_acto
         const qa_q2_kex_sound *sound = &event->data.sound;
         qa_actor_id a = {0}; qa_vec3 origin = {0}, angles; bool present;
         const char *path = resource_path(p, QA_NATIVE_HOST_SOUND, sound->index, e);
-        ok = path && source_entity(p, sound->entity, &a, &origin, &angles, &present, e);
-        if (!sound->entity) a = (qa_actor_id){0};
+        ok = path != NULL;
+        if (ok && (sound->flags & 8u)) ok = source_entity(p, sound->entity, &a, &origin, &angles, &present, e);
         if (sound->has_position) origin = vec(sound->position);
-        source = sound->entity; has_source = true;
+        source = sound->entity; has_source = (sound->flags & 8u) != 0;
         if (ok) ok = text(&presentation, "{\"kind\":\"q2\",\"event\":{\"kind\":\"sound\"", e) &&
             actor(&presentation, ",\"actor\":", a, e) && vector(&presentation, ",\"origin\":", origin, e) &&
             string(&presentation, ",\"path\":", path, e) && number(&presentation, ",\"channel\":", sound->channel, e) &&
@@ -468,11 +473,22 @@ static bool receive(void *opaque, const qa_q2_server_record *record, qa_error *e
 {
     q2_projection *p = opaque;
     p->record = record;
+    if (record->event.kind == QA_Q2_SVC_SEAT) return true;
     if (p->delivery && p->delivery->original) {
         const qa_application_q2_audience *audience = &p->delivery->audience;
         if (!audience->captured) return true;
-        for (size_t i = 0; i < audience->count; ++i)
-            if (!emit_to(p, record, audience->recipients[i].actor, e)) return false;
+        for (size_t i = 0; i < audience->count; ++i) {
+            qa_actor_id target = audience->recipients[i].actor;
+            if (record->seat) {
+                qa_application_network_q2_recipient_view group; bool present;
+                if (!qa_application_network_q2_recipient(p->provider->application, p->provider->owner,
+                    target, &group, &present, e)) return false;
+                if (!present)
+                    return application_fail(e, QA_ERROR_ARGUMENT, "Selected Q2 service has no actual connection group");
+                if (record->seat != group.remote_index + 1u) continue;
+            }
+            if (!emit_to(p, record, target, e)) return false;
+        }
         return true;
     }
     if (p->message->recipient.registry) return emit_to(p, record, p->message->recipient, e);
@@ -511,7 +527,8 @@ bool application_unified_q2_protocol_event(application_provider *provider,
     q2_projection p = {.provider = provider, .engine = engine, .message = message, .delivery = delivery,
         .time_ns = delivery && delivery->audience.captured ? delivery->audience.source_time_ns : clock.frame.time_ns};
     qa_net_protocol_id protocol = {.kind = engine->profile == QA_NATIVE_Q2_GAME_API3 ? QA_NET_Q2_34 : QA_NET_Q2KEX_2023};
-    qa_q2_message_options options = {.config_strings = engine->configstring_count, .inventory_slots = 256};
+    qa_q2_message_options options = {.config_strings = engine->configstring_count, .inventory_slots = 256,
+        .native_api2023 = engine->profile == QA_NATIVE_Q2_GAME_API2023};
     qa_q2_messages *decoder = NULL;
     bool ok = qa_q2_messages_create(protocol, &options, &decoder, e) &&
         qa_q2_messages_read(decoder, message->payload, validate, NULL, e);

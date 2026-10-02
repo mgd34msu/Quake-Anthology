@@ -45,11 +45,13 @@ typedef struct qa_q1_source_client_services {
 bool qa_q1_source_clients_configure(qa_q1_game *,const qa_q1_source_client_services *,qa_error *);
 bool qa_q1_source_client_read(const qa_q1_game *,qa_actor_id,qa_q1_source_client_view *);
 bool qa_q1_source_client_userinfo(qa_q1_game *,qa_actor_id,const char *,qa_error *);
+bool qa_q1_source_client_userinfo_storage(qa_q1_game *,qa_actor_id,const char *,qa_error *);
 /* The separately admitted name is used only when received userinfo has no name
  * key. It is a typed source value, so original Q1 backslashes remain intact. */
 bool qa_q1_source_client_userinfo_named(qa_q1_game *,qa_actor_id,const char *,const char *,qa_error *);
 /* Continuations can retain name separately from delimiter-based userinfo. */
 bool qa_q1_source_client_userinfo_read(const qa_q1_game *,qa_actor_id,bool include_name,qa_buffer *,qa_error *);
+/* Publishes the exact name admitted by the source command boundary. */
 bool qa_q1_source_client_name(qa_q1_game *,qa_actor_id,const char *,qa_error *);
 bool qa_q1_source_client_colors(qa_q1_game *,qa_actor_id,int32_t,int32_t,qa_error *);
 bool qa_q1_source_client_info(const qa_q1_game *,qa_actor_id,const char *,const char **);

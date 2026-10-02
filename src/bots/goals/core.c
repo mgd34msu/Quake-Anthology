@@ -112,6 +112,7 @@ bool qa_bot_goals_create(qa_bot_items *items, const qa_bot_goal_options *options
     g->configured = true;
     g->next_source = INT32_MAX;
     g->next_pointer=1;
+    g->next_info=1;
     qa_bot_items_retain(items);
     if (!qa_bot_memory_create(NULL,&g->memory,e) || !qa_bot_weight_workspace_create(&g->workspace, e)) {
         qa_bot_goals_destroy(g);
@@ -123,10 +124,6 @@ bool qa_bot_goals_create(qa_bot_items *items, const qa_bot_goal_options *options
 void qa_bot_goals_destroy(qa_bot_goals *g) {
     if (!g || g->busy) return;
     g->busy=true;
-    for (uint32_t i = 0; i < g->options.maximum_states; ++i) if(g->states[i].used) {
-        (void)release_weights(g,&g->states[i],NULL);
-        (void)qa_bot_memory_free(g->memory,g->states[i].record.allocation,NULL);
-    }
     while(g->weights) {bot_goal_weights *w=g->weights;g->weights=w->next;qa_bot_weights_release(w->weights);free(w);}
     bot_goal_indexes_clear(g);
     bot_goal_map_clear(g);
@@ -135,6 +132,16 @@ void qa_bot_goals_destroy(qa_bot_goals *g) {
     free(g->states);
     (void)qa_bot_memory_release(g->memory,NULL);
     free(g);
+}
+bool qa_bot_goals_shutdown(qa_bot_goals *g, qa_error *error) {
+    if (!g) return true;
+    if (!bot_goal_mutable(g, error)) return false;
+    g->configured = false;
+    if (!bot_goal_info_free(g, error)) return false;
+    bot_goal_map_clear(g);
+    for (uint32_t i = 0; i < g->options.maximum_states; ++i)
+        if (g->states[i].used && !qa_bot_goals_free(g, i + 1, error)) return false;
+    return true;
 }
 bool qa_bot_goals_reconfigure(qa_bot_goals *g, qa_bot_items *items, int32_t game_type,
                                uint32_t next_map_capacity, qa_error *e) {

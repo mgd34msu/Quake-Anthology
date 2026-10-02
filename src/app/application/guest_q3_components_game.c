@@ -1,5 +1,6 @@
 #include "guest_q3_components_private.h"
 #include "guest_q3_component_private.h"
+#include "unified_q3_events.h"
 #include <limits.h>
 #include <time.h>
 
@@ -62,6 +63,28 @@ static bool match_write(void *context,qa_actor_id actor,bool team,qa_string_id i
     component_game_row *row=context; application_q3_components_options *options=&row->roster->options;
     return options->match_write&&options->match_write(options->context,actor,team,id,score,e);
 }
+static bool damage_context(void *context,qa_damage_request *request,qa_error *e)
+{
+    component_game_row *row=context; qa_application *app=row->roster->options.application;
+    qa_clock_state clock;
+    if(!q3components_current(row)||!qa_session_clock(app->session,row->publication.owner,&clock))
+        return application_fail(e,QA_ERROR_ARGUMENT,"Component damage lost its genuine Source clock");
+    request->attack.time_ns=clock.frame.time_ns;
+    request->attack.weapon_provider=row->publication.owner;
+    qa_actor_id source=request->attack.attacker.registry?request->attack.attacker:request->target;
+    application_provider *combat=application_provider_for(app,request->target,QA_ROLE_COMBAT,"");
+    application_provider *inventory=application_provider_for(app,source,QA_ROLE_INVENTORY,"");
+    application_provider *movement=application_provider_for(app,request->target,QA_ROLE_MOVEMENT,"");
+    request->attack.combat_provider=combat?combat->owner:0;
+    request->attack.inventory_provider=inventory?inventory->owner:0;
+    request->attack.movement_provider=movement?movement->owner:0;
+    return true;
+}
+static bool source_event(void *context,qa_actor_id recipient,const char *text,int32_t time,qa_error *e)
+{
+    component_game_row *row=context;
+    return application_unified_q3_component_command(row->roster->options.application,&row->publication,recipient,text,time,e);
+}
 bool q3components_create_game(component_game_row *row,qa_error *e)
 {
     application_q3_components_options *options=&row->roster->options;
@@ -83,6 +106,7 @@ bool q3components_create_game(component_game_row *row,qa_error *e)
         .program_path=row->publication.metadata->program_path,.program_digest=row->publication.metadata->program_digest,
         .declaration_digest=row->publication.metadata->declaration_digest,.image=row->image,.abi=layout,
         .host={.role=QA_QVM_GAME,.abi=layout,.session=options->application->session,.world=options->world,
+            .restoring=options->restoring,
             .owner=row->publication.owner,.service_owner=row->services,.mounts=row->publication.content,
             .command_context={.owner=row->publication.owner,.dialect=QA_CONSOLE_Q3,.origin=QA_COMMAND_SERVER},
             .common={.context=row,.print=print,.calendar=calendar},
@@ -90,7 +114,8 @@ bool q3components_create_game(component_game_row *row,qa_error *e)
         .combat=options->application->combat,.inventory=options->application->inventory,
         .visibility={.context=row,.point=point,.area_bits=areas,.areas_connected=connected,.cluster_visible=visible},
         .generation=row->publication.generation,.context=row,.current=q3components_current,.storage_current=q3components_storage,
-        .match_read=match_read,.match_write=match_write,.clients=options->clients};
+        .match_read=match_read,.match_write=match_write,.clients=options->clients,
+        .actor_operations=options->application->mod_operations,.damage_context=damage_context,.source_command_event=source_event};
     create.host.write_view.root=qa_catalog_product_write_root(row->provider->product_catalog,row->provider->launch->selection.product);
     for(size_t i=0;i<qa_vfs_mount_count(create.host.mounts);++i) {
         qa_vfs_mount_info mount;
@@ -98,6 +123,6 @@ bool q3components_create_game(component_game_row *row,qa_error *e)
             qa_fs_root_same_object(create.host.write_view.root,qa_vfs_mount_root(create.host.mounts,mount.id))) { create.host.writable_mount=mount.id; break; }
     }
     if(!application_q3_mod_operations_read(options->application->mod_operations,create.operations,e)||
-        !application_q3_component_create(&create,false,&row->publication.game,e)) return false;
-    row->publication.source=application_q3_component_publication(row->publication.game); return true;
+        !application_q3_component_create(&create,options->restoring,&row->publication.game,e)) return false;
+    row->publication.source=application_q3_component_source_read(row->publication.game); return true;
 }

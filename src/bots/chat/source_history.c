@@ -174,6 +174,10 @@ static bool image_copy(qa_bot_runtime *runtime,const bot_chat_history *saved,
     }
     for(qa_bot_chat *state=image->system.states;ok && state;state=state->next)
         if(state->initial) ok=resource_add(image,saved,state->initial,memory,error);
+    qa_bot_chat_asset *selected[]={image->system.options.synonyms,image->system.options.randoms,
+        image->system.options.matches,image->system.options.replies};
+    for(size_t index=0;ok && index<4;++index)
+        if(selected[index]) ok=resource_add(image,saved,selected[index],memory,error);
     if(!ok) {
         if(!error || error->code==QA_OK) qa_error_set(error,QA_ERROR_MEMORY,0,"Retaining source chat history maps");
         bot_chat_history_destroy(image);return false;

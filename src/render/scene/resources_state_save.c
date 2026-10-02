@@ -263,18 +263,27 @@ typedef struct sampling_row {
     qa_scene_image *image;
     const qa_scene_image *source;
     bool mipmap;
+    bool source_variant;
+    qa_q3_image_upload_options upload;
+    qa_scene_resources *parent_owner;
 } sampling_row;
 typedef struct sampling_state { sampling_row *rows; size_t count; } sampling_state;
 static void sampling_clear(sampling_state *state)
 {
     for (size_t i = 0; i < state->count; ++i) {
         qa_scene_image_release(state->rows[i].image); qa_scene_image_release(state->rows[i].source);
+        qa_scene_resources_destroy(state->rows[i].parent_owner);
     }
     free(state->rows); *state = (sampling_state){0};
 }
 static bool sampling_copy(const sampling_row *row)
 {
     const qa_scene_image *image = row->image, *source = row->source;
+    if (row->source_variant)
+        return image != source && image->kind == QA_SCENE_RGBA8 && source->kind == QA_SCENE_RGBA8 &&
+            !strcmp(image->name, source->name) && image->wrap == source->wrap && image->filter == source->filter &&
+            image->logical_width == source->logical_width && image->logical_height == source->logical_height &&
+            image->animation_count == source->animation_count;
     size_t levels = row->mipmap ? source->level_count : 1;
     if (image == source || image->kind != source->kind || image->filter !=
         (row->mipmap ? QA_SCENE_LINEAR_MIPMAP_NEAREST : QA_SCENE_LINEAR) ||
@@ -293,7 +302,8 @@ static const qa_scene_image *sampling_parent(const sampling_state *state, const 
 {
     for (size_t i = 0; i < state->count; ++i)
         if (state->rows[i].image == image) return state->rows[i].source;
-    return ((const owned_image *)image)->sampling_source;
+    const owned_image *owned = (const owned_image *)image;
+    return owned->source_variant_source ? owned->source_variant_source : owned->sampling_source;
 }
 typedef struct sampling_visit { const qa_scene_image *image; size_t edge; bool active; } sampling_visit;
 static bool sampling_graph(const sampling_state *state, qa_error *error)
@@ -336,12 +346,12 @@ static bool sampling_graph(const sampling_state *state, qa_error *error)
     free(visits); free(stack); return ok;
 }
 static bool sampling_fields(qa_source_save_io *io, qa_scene_resources *owner,
-    const qa_scene_resource_checkpoint_refs *refs, sampling_state *state)
+    const qa_scene_resource_checkpoint_refs *refs, sampling_state *state, uint32_t version)
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
     size_t count = 0;
     if (!reading) for (const owned_image *image = owner->names->images; image; image = image->next)
-        if (image->sampling_source) ++count;
+        if (image->sampling_source || image->source_variant_source) ++count;
     if (!qa_source_save_count(io, &count, reading ? io->input.size / 17 : SIZE_MAX / sizeof(*state->rows)) ||
         count > SIZE_MAX / sizeof(*state->rows)) return false;
     state->rows = count ? calloc(count, sizeof(*state->rows)) : NULL;
@@ -351,10 +361,13 @@ static bool sampling_fields(qa_source_save_io *io, qa_scene_resources *owner,
     for (size_t i = 0; i < count; ++i) {
         sampling_row *row = state->rows + i;
         if (!reading) {
-            while (image && !image->sampling_source) image = image->next;
+            while (image && !image->sampling_source && !image->source_variant_source) image = image->next;
             if (!image) return false;
-            row->image = (qa_scene_image *)&image->image; row->source = image->sampling_source;
-            row->mipmap = image->sampling_mipmap; image = image->next;
+            row->image = (qa_scene_image *)&image->image;
+            row->source_variant = image->source_variant_source != NULL;
+            row->source = row->source_variant ? image->source_variant_source : image->sampling_source;
+            row->upload = image->source_variant_upload;
+            row->mipmap = row->source_variant ? false : image->sampling_mipmap; image = image->next;
             qa_scene_image_retain(row->image); qa_scene_image_retain(row->source);
         }
         /* image_field owns one retained target reference on decode only. */
@@ -362,12 +375,16 @@ static bool sampling_fields(qa_source_save_io *io, qa_scene_resources *owner,
         uint64_t source = 0;
         if (!reading && !refs->image_encode(refs->context, row->source, &source, io->error)) return false;
         if (!qa_source_save_u64(io, &source) || !qa_source_save_bool(io, &row->mipmap)) return false;
+        if (version >= 8 && (!qa_source_save_bool(io, &row->source_variant) ||
+            (row->source_variant && (!qa_q3_image_upload_options_codec(io, &row->upload) || row->mipmap)))) return false;
         if (reading) {
             const qa_scene_image *decoded = NULL;
             if (!refs->image_decode(refs->context, source, &decoded, io->error) || !decoded) return false;
             qa_scene_image_retain(decoded); row->source = decoded;
         }
         if (!sampling_copy(row)) return false;
+        if (reading && row->source_variant &&
+            !scene_resource_variant_parent_retain(owner, row->source, &row->parent_owner, io->error)) return false;
         for (size_t j = 0; j < i; ++j) if (state->rows[j].image == row->image) return false;
     }
     return sampling_graph(state, io->error);
@@ -377,9 +394,9 @@ static bool resource_fields(qa_source_save_io *io, qa_scene_resources *owner, qa
     const qa_scene_resource_checkpoint_refs *refs, sampling_state *sampling)
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
-    uint8_t magic[4] = {'Q', 'A', 'R', 'S'}; uint32_t version = 7, fullbright = state->fullbright_first;
+    uint8_t magic[4] = {'Q', 'A', 'R', 'S'}; uint32_t version = 8, fullbright = state->fullbright_first;
     if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "QARS", 4) ||
-        !qa_source_save_u32(io, &version) || (version < 2 || version > 7) || !names_fields(io, owner, state) ||
+        !qa_source_save_u32(io, &version) || (version < 2 || version > 8) || !names_fields(io, owner, state) ||
         !qa_source_save_bool(io, &state->registrations_started) || !qa_source_save_u32(io, &fullbright) || fullbright > 256 ||
         !image_field(io, refs, owner, &state->white) || !image_field(io, refs, owner, &state->missing)) return false;
     if (!builtin_image(state->white, false) || !builtin_image(state->missing, true) ||
@@ -433,7 +450,7 @@ static bool resource_fields(qa_source_save_io *io, qa_scene_resources *owner, qa
         else if (entry->source != qa_resource_id(entry->source_record) || entry->logical_source != qa_resource_id(entry->logical_record)) return false;
         for (size_t j = 0; j < i; ++j) if (same_cache_key(entry, &state->cache[j])) return false;
     }
-    return version < 3 || sampling_fields(io, owner, refs, sampling);
+    return version < 3 || sampling_fields(io, owner, refs, sampling, version);
 }
 
 static void state_clear(qa_scene_resources *state)
@@ -501,15 +518,50 @@ bool qa_scene_resources_restore(qa_scene_resources *owner, qa_bytes bytes, const
         owner->source_white = state.source_white; owner->source_missing = state.source_missing;
         owner->source_identity = state.source_identity; owner->source_builtins = state.source_builtins;
         owner->source_builtins_upload = state.source_builtins_upload;
+        if (owner->source_builtins) {
+            owner->source_white->source_q3 = true; owner->source_white->source_mipmap = false;
+            owner->source_missing->source_q3 = true; owner->source_missing->source_mipmap = true;
+            owner->source_identity->source_q3 = true; owner->source_identity->source_mipmap = false;
+        }
         owner->cache = state.cache; owner->cache_count = state.cache_count; owner->cache_capacity = state.cache_capacity;
+        for (size_t i = 0; i < owner->cache_count; ++i) {
+            const image_cache *entry = owner->cache + i;
+            if (!entry->options.source_q3) continue;
+            entry->image->source_q3 = true; entry->image->source_mipmap = entry->options.source_upload.mipmap;
+            for (size_t frame = 1; frame < entry->image->animation_count; ++frame) {
+                qa_scene_image *image = (qa_scene_image *)entry->image->animation[frame];
+                image->source_q3 = true; image->source_mipmap = entry->options.source_upload.mipmap;
+            }
+        }
         owner->fullbright_first = state.fullbright_first; owner->registrations_started = state.registrations_started;
         owner->detached = false;
         for (size_t i = 0; i < sampling.count; ++i) {
             sampling_row *row = sampling.rows + i; owned_image *image = (owned_image *)row->image;
             qa_scene_image_release(image->sampling_source);
-            image->sampling_source = row->source; image->sampling_mipmap = row->mipmap;
+            qa_scene_image_release(image->source_variant_source);
+            qa_scene_resources_destroy(image->source_variant_owner);
+            image->sampling_source = row->source_variant ? NULL : row->source;
+            image->source_variant_source = row->source_variant ? row->source : NULL;
+            image->source_variant_owner = row->parent_owner; row->parent_owner = NULL;
+            image->source_variant_upload = row->upload; image->sampling_mipmap = row->mipmap;
+            if (row->source_variant) {
+                image->image.source_q3 = true; image->image.source_mipmap = row->upload.mipmap;
+                image->variant_next = owner->variants; owner->variants = image;
+                qa_scene_image_retain(&image->image);
+            }
             row->source = NULL;
         }
+        /* Legacy immutable images acquire the actual sampling provenance from
+         * these saved parent edges after every edge has been installed. */
+        for (size_t pass = 0; pass < sampling.count; ++pass)
+            for (size_t i = 0; i < sampling.count; ++i) {
+                sampling_row *row = sampling.rows + i;
+                const qa_scene_image *parent = ((owned_image *)row->image)->sampling_source;
+                if (parent && parent->source_q3) {
+                    row->image->source_q3 = true;
+                    row->image->source_mipmap = parent->source_mipmap && row->mipmap;
+                }
+            }
     } else state_clear(&state);
     sampling_clear(&sampling); qa_source_save_dispose(&io);
     owner->continuation_active = false;

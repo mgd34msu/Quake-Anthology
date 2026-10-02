@@ -99,6 +99,7 @@ bool application_players_checkpoint_restore(qa_application *candidate, qa_bytes,
 bool application_players_native_q3_retire(qa_application *, application_provider *,
     qa_actor_id, qa_error *);
 bool application_players_bot_detach(qa_application *,qa_actor_id,qa_error *);
+bool application_players_component_retire(qa_application *,application_provider *,qa_actor_id,qa_error *);
 bool application_players_bot_allocate(qa_application *,const qa_launch_seat *,int32_t *,qa_error *);
 bool application_players_bot_begin(qa_application *,uint32_t,qa_error *);
 bool application_player_equipment_selection(qa_application *, const qa_launch_choices *,
@@ -108,5 +109,6 @@ bool application_players_native_q1_respawn(qa_application *, application_provide
 bool application_players_native_q1_spawn_pose(qa_application *, application_provider *,
     qa_actor_id, qa_body_state *, bool *found, qa_error *);
 bool application_players_selected_character_respawn(void *, qa_actor_id, qa_error *);
+bool application_players_source_spawned(void *, qa_actor_id, qa_error *);
 
 #endif

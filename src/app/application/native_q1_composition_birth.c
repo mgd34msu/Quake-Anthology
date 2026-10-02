@@ -12,6 +12,7 @@
 #include "native_q1_composition_rogue.h"
 #include "native_q1_respawn.h"
 #include "map_players_private.h"
+#include "unified_player.h"
 #include "qa/application_equipment.h"
 #include "qa/text.h"
 
@@ -309,8 +310,8 @@ static bool frame_message(source_birth *call, const char *text, qa_error *error)
 static bool prompt_supported(source_birth *call, bool *out, qa_error *error) {
     *out = false;
     return current(call, error) &&
-        (!call->app->options.prompt_supported ||
-         call->app->options.prompt_supported(call->app->options.prompt_context, call->actor, out, error)) &&
+        (!call->app->prompt_supported ||
+         call->app->prompt_supported(call->app->prompt_context, call->actor, out, error)) &&
         current(call, error);
 }
 static bool team_prompt(source_birth *call, qa_error *error) {
@@ -573,6 +574,29 @@ bool application_native_q1_ctf_prethink(application_provider *source, qa_actor_i
     return okay;
 }
 
+bool application_native_q1_weapon_changed(void *context, qa_actor_id actor,
+    qa_item_id acquired, qa_error *error)
+{
+    application_provider *source = context;
+    qa_application *app = source ? source->application : NULL;
+    (void)acquired;
+    if (!app || source->kind != APPLICATION_PROVIDER_Q1 || !source->constructed ||
+        !source->attached || source->close_pending ||
+        application_world_provider(app, QA_ROLE_ENTITIES, "") != source)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q1 weapon change lost its physical Source");
+    qa_q1_game_operation operation;
+    if (!qa_q1_game_operation_begin(source->state.q1, &operation, error)) return false;
+    application_unified_player_selection selected;
+    bool okay = application_unified_player_selection_read(app, actor, &selected, error) &&
+        application_unified_player_selection_current(app, &selected) &&
+        qa_q1_game_operation_live(&operation) && source->state.q1 == operation.game &&
+        application_world_provider(app, QA_ROLE_ENTITIES, "") == source;
+    if (!okay && error && error->code == QA_OK)
+        application_fail(error, QA_ERROR_ARGUMENT, "Q1 weapon change lost its selected arsenal");
+    qa_q1_game_operation_end(&operation);
+    return okay;
+}
+
 bool application_native_q1_ctf_impulse(application_provider *source, qa_actor_id actor,
     const qa_q1_input *input, bool *handled, qa_error *error) {
     if (!handled || !input || !source || source->kind != APPLICATION_PROVIDER_Q1)
@@ -597,10 +621,10 @@ bool application_native_q1_ctf_impulse(application_provider *source, qa_actor_id
     if (okay && command.impulse && !consumed) {
         double policy;
         okay = source_cvar(&call, "teamplay", &policy, error);
-        qa_application_equipment_view selected = {0};
+        application_unified_player_selection selected = {0};
         if (okay && (command.impulse == 1 || command.impulse == 20 || command.impulse == 21))
-            okay = qa_application_equipment_read(call.app, actor, &selected, error) &&
-                qa_application_equipment_current(call.app, &selected) && current(&call, error);
+            okay = application_unified_player_selection_read(call.app, actor, &selected, error) &&
+                application_unified_player_selection_current(call.app, &selected) && current(&call, error);
         qa_item_id source_grapple = qa_strings_find(qa_session_strings(call.app->session),
             (qa_bytes){(const uint8_t *)"q1:ctf/weapon/grapple", 21});
         if (okay && (command.impulse == 22 || (command.impulse == 1 &&

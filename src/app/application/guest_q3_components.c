@@ -1,5 +1,6 @@
 #include "guest_q3_components_private.h"
 #include "qa/json.h"
+#include "unified_events.h"
 #include <limits.h>
 #include <stdio.h>
 
@@ -52,6 +53,22 @@ static bool namespace(component_game_row *row,qa_error *e)
     char *name=malloc(size),*service=malloc(size+16);
     if(!name||!service) { free(name); free(service); return application_fail(e,QA_ERROR_MEMORY,"Retaining component namespace identity"); }
     bool ok=false;
+    if(row->roster->options.restoring) {
+        for(size_t i=0;i<row->roster->saved_count;++i) {
+            component_saved_row *saved=row->roster->saved+i;
+            if(strcmp(saved->instance,row->provider->launch->selection.instance)||strcmp(saved->key,component)) continue;
+            int n=snprintf(name,size,"qvm-component:%s:%s:%s:%llu",saved->instance,component,digest,(unsigned long long)saved->generation);
+            snprintf(service,size+16,"%s:services",name);
+            ok=n>=0&&(size_t)n<size&&qa_strings_find(strings,(qa_bytes){(const uint8_t *)name,(size_t)n})==saved->owner&&
+                qa_strings_find(strings,(qa_bytes){(const uint8_t *)service,strlen(service)})==saved->services&&
+                qa_sha256_equal(&saved->program,&row->publication.metadata->program_digest)&&
+                qa_sha256_equal(&saved->declaration,&row->publication.metadata->declaration_digest);
+            if(ok) { row->publication.owner=saved->owner; row->publication.generation=saved->generation; row->services=saved->services; }
+            break;
+        }
+        free(name); free(service);
+        return ok||application_fail(e,QA_ERROR_FORMAT,"Saved component namespace differs from its exact retained declaration");
+    }
     for(uint64_t generation=1;generation;++generation) {
         int n=snprintf(name,size,"qvm-component:%s:%s:%s:%llu",row->provider->launch->selection.instance,component,digest,(unsigned long long)generation);
         if(n<0||(size_t)n>=size) break;
@@ -73,7 +90,31 @@ bool application_q3_components_create(const application_q3_components_options *o
     application_q3_components *owner=calloc(1,sizeof(*owner));
     if(!owner) return application_fail(e,QA_ERROR_MEMORY,"Retaining external component roster");
     owner->options=*options; *out=owner;
+    qa_launch_snapshot_retain(options->snapshot);
+    if(options->entity_text.size) {
+        owner->entity_text.data=malloc(options->entity_text.size);
+        if(!owner->entity_text.data) return application_fail(e,QA_ERROR_MEMORY,"Retaining actual component map entity bytes");
+        memcpy(owner->entity_text.data,options->entity_text.data,options->entity_text.size);
+        owner->entity_text.size=options->entity_text.size;
+    }
+    owner->options.entity_text=(qa_bytes){owner->entity_text.data,owner->entity_text.size};
+    if(options->previous) {
+        if(options->previous->options.world_source!=options->world_source||!options->previous->clients_adapter)
+            return application_fail(e,QA_ERROR_ARGUMENT,"Retained component clients changed their physical WORLD source");
+        owner->clients_adapter=options->previous->clients_adapter;
+    } else {
+        if(!application_q3_component_client_adapter_create(options->application,options->world_source,options->world,&owner->clients_adapter,e)) return false;
+        owner->owns_clients=true;
+    }
+    owner->options.clients=application_q3_component_client_adapter_services(owner->clients_adapter);
+    if(options->application->q3_component_client_drop&&
+        !application_q3_component_client_adapter_transport_bind(owner->clients_adapter,
+            options->application->guest_context,options->application->q3_component_client_drop,e)) return false;
+    owner->options.context=owner->clients_adapter;
+    owner->options.match_read=application_q3_component_client_match_read;
+    owner->options.match_write=application_q3_component_client_match_write;
     const qa_launch_choices *choices=qa_launch_snapshot_choices(options->snapshot);
+    if(options->restoring&&!q3components_saved_read(owner,options->saved,e)) return false;
     owner->rows=choices->mod_count?calloc(choices->mod_count,sizeof(*owner->rows)):NULL;
     owner->retained=choices->mod_count?calloc(choices->mod_count,sizeof(*owner->retained)):NULL;
     if(choices->mod_count&&(!owner->rows||!owner->retained)) return application_fail(e,QA_ERROR_MEMORY,"Retaining actual enabled component rows");
@@ -85,8 +126,14 @@ bool application_q3_components_create(const application_q3_components_options *o
             if(row&&selected_row(owner,row)) { owner->rows[owner->count]=row; owner->retained[owner->count++]=true; }
         }
     }
-    for(size_t i=0;i<choices->mod_count;++i) {
-        const qa_launch_mod_selection *selection=choices->mods+i;
+    size_t loop_count=options->restoring?owner->saved_count:choices->mod_count;
+    for(size_t i=0;i<loop_count;++i) {
+        const qa_launch_mod_selection *selection=options->restoring?NULL:choices->mods+i;
+        if(options->restoring) for(size_t j=0;j<choices->mod_count;++j) {
+            const qa_launch_mod_selection *candidate=choices->mods+j;
+            if(candidate->enabled&&!strcmp(candidate->instance,owner->saved[i].instance)&&!strcmp(candidate->component,owner->saved[i].key)) { selection=candidate; break; }
+        }
+        if(!selection) return application_fail(e,QA_ERROR_FORMAT,"Restored component is absent from the actual enabled choices");
         if(!selection->enabled) continue;
         application_provider *selected=provider(owner,selection->instance);
         if(!selected||!selected->constructed) return application_fail(e,QA_ERROR_ARGUMENT,"Enabled component has no constructed selected content provider");
@@ -99,6 +146,7 @@ bool application_q3_components_create(const application_q3_components_options *o
         component_game_row *row=calloc(1,sizeof(*row));
         if(!row) return application_fail(e,QA_ERROR_MEMORY,"Retaining physical component GAME row");
         owner->rows[owner->count++]=row; row->roster=owner; row->provider=selected; row->publication.metadata=metadata;
+        row->publication.catalog=selected->product_catalog; row->publication.product=selected->product;
         if(!qa_launch_instance_retain_metadata(selected->launch,&row->metadata_lease,e)) return false;
         row->publication.descriptor=qa_launch_instance_lease_view(row->metadata_lease); row->publication.content=row->publication.descriptor->content;
         if(!qa_vfs_acquire(row->publication.content,metadata->program_path,&row->program,&row->program_acquisition,e)||
@@ -106,9 +154,19 @@ bool application_q3_components_create(const application_q3_components_options *o
         row->publication.program=row->program; row->publication.declaration=row->declaration;
         if(!qa_sha256_equal(qa_resource_digest(row->program),&metadata->program_digest)||!qa_sha256_equal(qa_resource_digest(row->declaration),&metadata->declaration_digest))
             return application_fail(e,QA_ERROR_FORMAT,"Enabled component resources differ from the actual catalog discovery");
-        if(!qa_qvm_image_load(qa_resource_bytes(row->program),&row->image,e)||!namespace(row,e)||!q3components_identity(row,e)||!q3components_create_game(row,e)) return false;
+        if(!qa_qvm_image_load(qa_resource_bytes(row->program),&row->image,e)||!namespace(row,e)||!q3components_identity(row,e)||!q3components_create_game(row,e)||
+            (options->restoring&&!q3components_saved_import(row,e))) return false;
         row->participant=(qa_component){.owner=row->publication.owner,.clock=qa_clock_defaults(QA_CLOCK_Q3),.state=row,.begin_frame=frame};
         row->participant.clock.initial_time_ns=options->world_source->component.clock.initial_time_ns;
+    }
+    if(options->restoring) {
+        size_t expected=0;
+        for(size_t i=0;i<choices->mod_count;++i) if(choices->mods[i].enabled) {
+            application_provider *selected=provider(owner,choices->mods[i].instance);
+            const qa_catalog_mod *metadata=selected?qa_catalog_mod_find(selected->product_catalog,choices->mods[i].component):NULL;
+            if(metadata&&metadata->runtime==QA_PROGRAM_QVM) ++expected;
+        }
+        if(expected!=owner->count) return application_fail(e,QA_ERROR_FORMAT,"Saved component chronology omits an enabled physical QVM owner");
     }
     return true;
 }
@@ -131,6 +189,7 @@ bool application_q3_components_commit(application_q3_components *owner,qa_error 
         if(owner->retained[i]) continue;
         if(!qa_component_admission_commit(row->admission,e)) return false;
         row->admission=NULL; row->attached=true;
+        if(owner->options.restoring) continue;
         qa_clock_state clock;
         if(!qa_session_clock(owner->options.application->session,owner->options.world_source->owner,&clock))
             return application_fail(e,QA_ERROR_ARGUMENT,"Component registration lost its actual shared WORLD clock");
@@ -145,7 +204,12 @@ bool application_q3_components_initialize(application_q3_components *owner,qa_er
     for(size_t i=0;i<owner->count;++i) {
         component_game_row *row=owner->rows[i];
         if(!row->initialized) {
-            if(!row->attached||!application_q3_component_initialize(row->publication.game,e)) return false;
+            if(!row->attached) return false;
+            row->initializing=true;
+            bool initialized=application_unified_event_component_owner_bind(owner->options.application,row->publication.owner,false,e)&&
+                application_q3_component_initialize(row->publication.game,e);
+            row->initializing=false;
+            if(!initialized) return false;
             row->initialized=true;
         }
         if(!row->activated) {
@@ -162,13 +226,17 @@ bool application_q3_components_initialize(application_q3_components *owner,qa_er
 bool application_q3_components_idle(const application_q3_components *owner)
 {
     if(!owner) return true;
+    if(!application_q3_component_client_adapter_idle(owner->clients_adapter)) return false;
     for(size_t i=0;i<owner->count;++i) if(owner->rows[i]&&(!q3components_scenes_idle(owner->rows[i])||(owner->rows[i]->publication.game&&!application_q3_component_idle(owner->rows[i]->publication.game)))) return false;
     return true;
 }
 bool application_q3_components_destroy(application_q3_components **slot,qa_error *e)
 {
     if(!slot||!*slot) return true;
-    application_q3_components *owner=*slot; owner->closing=true;
+    application_q3_components *owner=*slot;
+    if(!application_q3_component_client_adapter_idle(owner->clients_adapter))
+        return application_fail(e,QA_ERROR_ARGUMENT,"Component retirement retains client commands or deferred drops and their actual content owners");
+    owner->closing=true;
     if(owner->retired&&!application_q3_components_destroy(&owner->retired,e)) return false;
     for(size_t i=0;i<owner->count;++i) {
         component_game_row *row=owner->rows[i];
@@ -190,7 +258,16 @@ bool application_q3_components_destroy(application_q3_components **slot,qa_error
         qa_unified_document_destroy(row->identity); row->identity=NULL;
         free(row); owner->rows[i]=NULL;
     }
+    if(owner->owns_clients&&!application_q3_component_client_adapter_destroy(&owner->clients_adapter,e)) return false;
+    qa_buffer_free(&owner->entity_text);
+    for(size_t i=0;i<owner->saved_count;++i) qa_buffer_free(&owner->saved[i].game);
+    free(owner->saved);
+    qa_launch_snapshot_release(owner->options.snapshot);
     free(owner->retained); free(owner->rows); free(owner); *slot=NULL; return true;
+}
+bool application_q3_components_drain(application_q3_components *owner,qa_error *e)
+{
+    return !owner||application_q3_component_client_adapter_drain(owner->clients_adapter,e);
 }
 bool application_q3_components_adopt(qa_application *app,application_q3_components **slot,qa_error *e)
 {
@@ -198,6 +275,16 @@ bool application_q3_components_adopt(qa_application *app,application_q3_componen
     application_q3_components *owner=*slot,*previous=app->components;
     if(owner->options.previous&&owner->options.previous!=previous) return application_fail(e,QA_ERROR_ARGUMENT,"Component adoption changed its retained roster");
     if(previous&&!application_q3_components_idle(previous)) return application_fail(e,QA_ERROR_ARGUMENT,"Component adoption retains active old output");
+    for(size_t i=0;i<owner->count;++i) if(owner->retained[i]) {
+        bool found=false;
+        for(size_t j=0;previous&&j<previous->count;++j) if(previous->rows[j]==owner->rows[i]) { found=true; break; }
+        if(!found) return application_fail(e,QA_ERROR_FORMAT,"Retained component adoption lost its physical row");
+    }
+    if(!owner->owns_clients&&previous) {
+        if(owner->clients_adapter!=previous->clients_adapter||!previous->owns_clients)
+            return application_fail(e,QA_ERROR_ARGUMENT,"Component adoption lost its retained client services owner");
+        previous->clients_adapter=NULL; previous->owns_clients=false; owner->owns_clients=true;
+    }
     for(size_t i=0;i<owner->count;++i) if(owner->retained[i]) {
         component_game_row *row=owner->rows[i]; bool found=false;
         for(size_t j=0;previous&&j<previous->count;++j) if(previous->rows[j]==row) { previous->rows[j]=NULL; found=true; break; }
@@ -224,6 +311,17 @@ bool application_q3_components_publication_at(application_q3_components *owner,s
         return application_fail(e,QA_ERROR_ARGUMENT,"Component publication has no actual initialized source");
     *out=owner->rows[index]->publication; return true;
 }
+bool application_q3_components_event_source_read(const qa_application *app,qa_actor_owner id,application_q3_component_publication *out,qa_error *e)
+{
+    application_q3_components *owner=app?app->components:NULL;
+    if(owner&&!owner->closing&&out) for(size_t i=0;i<owner->count;++i) {
+        component_game_row *row=owner->rows[i];
+        if(row&&row->publication.owner==id&&row->attached&&(row->initialized||row->initializing)&&q3components_current(row)) {
+            *out=row->publication; return true;
+        }
+    }
+    return application_fail(e,QA_ERROR_NOT_FOUND,"Component event has no genuine installed or entered Init source owner");
+}
 bool application_q3_components_admit(application_q3_components *owner,qa_actor_id actor,qa_error *e)
 {
     if(!owner||owner->closing) return false;
@@ -241,9 +339,21 @@ bool application_q3_components_actor_released(application_q3_components *owner,q
     for(size_t i=0;i<owner->count;++i) if(owner->rows[i]&&owner->rows[i]->publication.game&&!application_q3_component_actor_released(owner->rows[i]->publication.game,actor,e)) return false;
     return true;
 }
+application_q3_component *application_q3_components_actor_owner(const qa_application *app,qa_actor_id actor)
+{
+    const qa_actor_record *actual=app?qa_actors_get(qa_session_actors(app->session),actor):NULL;
+    application_q3_components *owner=app?app->components:NULL;
+    if(!actual||!owner) return NULL;
+    for(size_t i=0;i<owner->count;++i) {
+        component_game_row *row=owner->rows[i];
+        if(row&&row->publication.owner==actual->owner&&q3components_storage(row)) return row->publication.game;
+    }
+    return NULL;
+}
 bool application_q3_components_content_visit(const application_q3_components *owner,const qa_application_content_visitor *visitor,qa_error *e)
 {
-    if(!owner||!visitor||!visitor->view||!visitor->catalog) return false;
+    if(!visitor||!visitor->view||!visitor->catalog) return false;
+    if(!owner) return true;
     for(size_t i=0;i<owner->count;++i) {
         const component_game_row *row=owner->rows[i];
         if(!visitor->catalog(visitor->context,row->provider->product_catalog,e)||!visitor->view(visitor->context,row->publication.content,e)) return false;

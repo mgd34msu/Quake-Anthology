@@ -24,6 +24,8 @@ void frontend_scene_namespace_destroy(frontend_scene_namespace *);
 bool frontend_scene_namespace_capture_images(frontend_scene_namespace *, qa_frontend *, qa_error *);
 bool frontend_scene_namespace_capture_library(frontend_scene_namespace *, uint64_t owner,
     const qa_material_library *, qa_error *);
+bool frontend_scene_namespace_capture_library_worlds(frontend_scene_namespace *, uint64_t owner,
+    const qa_material_library *, qa_error *);
 bool frontend_scene_namespace_capture_world(frontend_scene_namespace *, uint64_t owner,
     const qa_scene_world *, qa_error *);
 bool frontend_scene_namespace_capture_model(frontend_scene_namespace *, uint64_t owner,

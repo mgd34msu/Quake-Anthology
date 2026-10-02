@@ -100,7 +100,7 @@ bool qa_recovery_restore(qa_fs_root *root, const char *name, void *context,
     bool ok = first && qa_save_image_decode(first->payload, &image, error);
     if (ok && qa_save_image_metadata(image)->purpose != QA_SAVE_RECOVERY)
         ok = persistence_fail(error, QA_ERROR_FORMAT, "Recording is not a recovery journal");
-    qa_save_image_destroy(image);
+    if (!qa_save_image_destroy_checked(&image, error)) ok = false;
     if (ok) ok = qa_demo_seek(demo, qa_demo_end_time(demo), context, ops, reached_ns, error);
     qa_demo_destroy(demo);
     return ok;

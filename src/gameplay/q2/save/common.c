@@ -133,11 +133,11 @@ bool q2_save_runtime(q2_save_io *io, qa_q2_runtime_checkpoint *s) {
         return q2_save_fail(io,"Invalid Q2 source arsenal count");
     for (uint32_t i = 0; i < s->definition_count; ++i) Q2U(definition_order[i]);
     for (size_t i = 0; i < 31; ++i) Q2U(random.words[i]);
-    Q2U(random.front); Q2U(random.rear); Q2T(random.draws);
+    Q2U8(random.front); Q2U8(random.rear); Q2T(random.draws);
     for (size_t i = 0; i < 624; ++i) Q2U(rerelease_words[i]);
     Q2U(rerelease_index); Q2T(rerelease_draws); Q2T(sequence); Q2T(actor_sequence);
     Q2T(now_ns); Q2T(frame_ns); Q2F(grapple_options.fly_speed);
     Q2F(grapple_options.pull_speed); Q2F(grapple_options.damage); Q2B(grapple_options.players_collide);
-    Q2B(lmctf_plasma_quad); Q2U(widow_damage_multiplier); Q2U(widow_shot_phase);
+    Q2B(lmctf_plasma_quad); Q2U8(widow_damage_multiplier); Q2U8(widow_shot_phase);
     return true;
 }

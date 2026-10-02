@@ -326,8 +326,8 @@ bool qa_font_classic_create(qa_font_library *library, const char *name, const qa
         qa_font_glyph glyph = {
             .codepoint = code,
             .image = image,
-            .uv = {x / image->logical_width, y / image->logical_height,
-                   (x + width) / image->logical_width, (y + height) / image->logical_height},
+            .uv = {x / (float)image->logical_width, y / (float)image->logical_height,
+                   (x + width) / (float)image->logical_width, (y + height) / (float)image->logical_height},
             .width = width,
             .height = height,
             .advance = width,
@@ -553,18 +553,18 @@ static qa_font *policy_clone(qa_font_library *destination,const qa_font *source,
                 glyph.height=glyph.bearing_y=(float)next->logical_height/16;
                 float x=(float)(glyph.codepoint&15u)*glyph.width;
                 float y=(float)(glyph.codepoint>>4)*glyph.height;
-                glyph.uv=(qa_scene_vec4){x/next->logical_width,y/next->logical_height,
-                    (x+glyph.width)/next->logical_width,(y+glyph.height)/next->logical_height};
+                glyph.uv=(qa_scene_vec4){x/(float)next->logical_width,y/(float)next->logical_height,
+                    (x+glyph.width)/(float)next->logical_width,(y+glyph.height)/(float)next->logical_height};
                 font->line_height=font->ascent=glyph.height; font->descent=0;
             } else if (font->kind==QA_FONT_KFONT) {
                 if (!next->logical_width || !next->logical_height) {
                     qa_font_fail(error,QA_ERROR_FORMAT,i,"Prepared KFONT atlas has no logical extent");
                     free(mapped); qa_font_internal_destroy(font); return NULL;
                 }
-                glyph.uv.x*= (float)old->logical_width/next->logical_width;
-                glyph.uv.z*= (float)old->logical_width/next->logical_width;
-                glyph.uv.y*= (float)old->logical_height/next->logical_height;
-                glyph.uv.w*= (float)old->logical_height/next->logical_height;
+                glyph.uv.x*= (float)old->logical_width/(float)next->logical_width;
+                glyph.uv.z*= (float)old->logical_width/(float)next->logical_width;
+                glyph.uv.y*= (float)old->logical_height/(float)next->logical_height;
+                glyph.uv.w*= (float)old->logical_height/(float)next->logical_height;
                 if (glyph.uv.x<0 || glyph.uv.y<0 || glyph.uv.z>1 || glyph.uv.w>1) {
                     qa_font_fail(error,QA_ERROR_FORMAT,i,"Prepared KFONT glyph exceeds its actual atlas");
                     free(mapped); qa_font_internal_destroy(font); return NULL;

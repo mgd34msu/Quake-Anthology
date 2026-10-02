@@ -239,7 +239,8 @@ bool qa_q3_client_downloads_receive(qa_q3_client_downloads *owner, const qa_q3_d
     if (!owner->bindings.permission(owner->bindings.context, &allowed, error)) return false;
     if (!allowed) return qa_q3_client_downloads_cancel(owner, error);
     owner->receiving = true; bool ok = receive(owner, download, error); owner->receiving = false;
-    if (!ok) qa_q3_client_downloads_close(owner); return ok;
+    if (!ok) qa_q3_client_downloads_close(owner);
+    return ok;
 }
 bool qa_q3_client_downloads_pump(qa_q3_client_downloads *owner, qa_error *error)
 {

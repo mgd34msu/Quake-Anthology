@@ -2,6 +2,7 @@
 #include "unified_events.h"
 #include "unified_output_json.h"
 #include "native_q3_console.h"
+#include "guest_q3_components.h"
 #include "qa/game_q3_source.h"
 #include "qa/game_q3_wire.h"
 #include "qa/source_save.h"
@@ -54,6 +55,36 @@ bool application_unified_q3_source_emit(application_provider *p, qa_bytes event,
         application_unified_event_emit(p->application, p->owner,
             (qa_bytes){j.bytes.data, j.bytes.size}, (qa_bytes){0}, recipient,
             (qa_actor_id){0}, ns, slot, has_slot, false, e);
+    application_unified_json_dispose(&j);
+    return ok;
+}
+
+static bool component_emit(qa_application *app, const application_q3_component_publication *p,
+    application_unified_json *event, qa_actor_id recipient, int32_t time, qa_error *e)
+{
+    if (!app || !p || !p->owner || !p->descriptor || !p->content || !p->game || !p->source ||
+        !p->identity || !p->metadata || !p->generation)
+        return application_fail(e, QA_ERROR_ARGUMENT, "Q3 component event lost its admitted physical Source");
+    application_unified_json payload = {0};
+    bool ok = application_unified_json_text(&payload, "{\"kind\":\"q3-source\",\"event\":", e) &&
+        application_unified_json_append(&payload, (qa_bytes){event->bytes.data,event->bytes.size}, e) &&
+        application_unified_json_text(&payload, "}", e) && application_unified_event_emit(app, p->owner,
+            (qa_bytes){payload.bytes.data,payload.bytes.size}, (qa_bytes){0}, recipient,
+            (qa_actor_id){0}, (uint64_t)(uint32_t)time * UINT64_C(1000000), 0, false, false, e);
+    application_unified_json_dispose(&payload);
+    return ok;
+}
+
+bool application_unified_q3_component_command(qa_application *app,
+    const application_q3_component_publication *p, qa_actor_id recipient, const char *value,
+    int32_t time, qa_error *e)
+{
+    if (!value)
+        return application_fail(e, QA_ERROR_ARGUMENT, "Q3 component command lost its actual lexical client/text");
+    application_unified_json j = {0};
+    bool ok = application_unified_json_text(&j, "{\"kind\":\"server-command\",\"client\":-1,\"text\":", e) &&
+        application_unified_json_string(&j, value, e) && application_unified_json_text(&j, "}", e) &&
+        component_emit(app, p, &j, recipient, time, e);
     application_unified_json_dispose(&j);
     return ok;
 }

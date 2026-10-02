@@ -28,6 +28,11 @@ typedef struct qa_network_q2_player {
 typedef struct qa_network_q2_download_source {
     qa_vfs *content;
     const qa_cvars *cvars;
+    void *resource_context;
+    /* Successful present loans the actual view and transfers a retained
+     * resource plus its owned opening. Absent leaves both outputs empty. */
+    bool (*resource)(void *, const char *requested, const qa_vfs **view,
+        qa_resource **retained, qa_vfs_acquisition *owned_opening, bool *present, qa_error *);
 } qa_network_q2_download_source;
 typedef struct qa_network_q2_server_hooks {
     void *context;

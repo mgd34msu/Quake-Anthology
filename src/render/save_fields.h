@@ -2,6 +2,43 @@
 #define QA_RENDER_SAVE_FIELDS_H
 #include "qa/render_save.h"
 #include "qa/source_save.h"
+#include <math.h>
+static inline bool render_save_pipeline(qa_source_save_io *io,qa_scene_state *state)
+{
+    uint32_t blend_source=state->blend_source,blend_destination=state->blend_destination,
+        depth=state->depth_test,alpha=state->alpha_test,cull=state->cull,
+        stencil_test=state->stencil_test,fail=state->stencil_fail,
+        depth_fail=state->stencil_depth_fail,depth_pass=state->stencil_depth_pass;
+    if (!qa_source_save_u32(io,&blend_source) || blend_source>QA_BLEND_SRC_ALPHA_SATURATE ||
+        !qa_source_save_u32(io,&blend_destination) || blend_destination>QA_BLEND_SRC_ALPHA_SATURATE ||
+        !qa_source_save_u32(io,&depth) || depth>QA_DEPTH_GEQUAL ||
+        !qa_source_save_u32(io,&alpha) || alpha>QA_ALPHA_GE128 ||
+        !qa_source_save_u32(io,&cull) || cull>QA_CULL_BACK ||
+        !qa_source_save_bool(io,&state->depth_write) || !qa_source_save_bool(io,&state->color_write) ||
+        !qa_source_save_bool(io,&state->polygon_offset) || !qa_source_save_bool(io,&state->wireframe) ||
+        !qa_source_save_f32(io,&state->depth_near) || !isfinite(state->depth_near) ||
+        !qa_source_save_f32(io,&state->depth_far) || !isfinite(state->depth_far) ||
+        !qa_source_save_f32(io,&state->offset_factor) || !isfinite(state->offset_factor) ||
+        !qa_source_save_f32(io,&state->offset_units) || !isfinite(state->offset_units) ||
+        !qa_source_save_f32(io,&state->line_width) || !isfinite(state->line_width) || state->line_width<=0 ||
+        !qa_source_save_bool(io,&state->stencil_enabled) ||
+        !qa_source_save_u32(io,&stencil_test) || stencil_test>QA_STENCIL_NOTEQUAL ||
+        !qa_source_save_u32(io,&state->stencil_reference) ||
+        !qa_source_save_u32(io,&state->stencil_compare_mask) || !qa_source_save_u32(io,&state->stencil_write_mask) ||
+        !qa_source_save_u32(io,&fail) || fail>QA_STENCIL_INVERT ||
+        !qa_source_save_u32(io,&depth_fail) || depth_fail>QA_STENCIL_INVERT ||
+        !qa_source_save_u32(io,&depth_pass) || depth_pass>QA_STENCIL_INVERT) return false;
+    if (io->direction==QA_SOURCE_SAVE_READ) {
+        state->blend_source=(qa_scene_blend)blend_source;
+        state->blend_destination=(qa_scene_blend)blend_destination;
+        state->depth_test=(qa_scene_depth)depth; state->alpha_test=(qa_scene_alpha)alpha;
+        state->cull=(qa_scene_cull)cull; state->stencil_test=(qa_scene_stencil_test)stencil_test;
+        state->stencil_fail=(qa_scene_stencil_op)fail;
+        state->stencil_depth_fail=(qa_scene_stencil_op)depth_fail;
+        state->stencil_depth_pass=(qa_scene_stencil_op)depth_pass;
+    }
+    return true;
+}
 static bool render_save_rect(qa_source_save_io *io,qa_scene_rect *rect)
 {
     return qa_source_save_i32(io,&rect->x) && qa_source_save_i32(io,&rect->y) &&

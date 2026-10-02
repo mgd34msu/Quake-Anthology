@@ -10,6 +10,9 @@ struct qa_save_image {
     qa_save_metadata metadata;
     qa_save_record *records;
     size_t count;
+    qa_native_resource_inventory *native_resources;
+    qa_save_native_release_fn native_release;
+    bool retiring;
 };
 
 static inline bool persistence_fail(qa_error *error, qa_status code, const char *message)

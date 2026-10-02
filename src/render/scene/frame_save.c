@@ -192,7 +192,8 @@ static bool mesh(qa_source_save_io *io, qa_scene_frame *frame, const qa_scene_fr
     for (size_t i=0;i<value->index_count;++i) if (value->indices[i]>=value->vertex_count) return false;
     return true;
 }
-static bool draw(qa_source_save_io *io, qa_scene_frame *frame, const qa_scene_frame_checkpoint_refs *refs, qa_scene_draw *value)
+static bool draw(qa_source_save_io *io, qa_scene_frame *frame, const qa_scene_frame_checkpoint_refs *refs,
+    uint32_t schema, qa_scene_draw *value)
 {
     if (!mesh(io,frame,refs,&value->mesh) || !matrix(io,&value->model) || !matrix(io,&value->mvp)) return false;
     FIELD(u8,value,texture_count); if (value->texture_count>2) return false;
@@ -218,6 +219,11 @@ static bool draw(qa_source_save_io *io, qa_scene_frame *frame, const qa_scene_fr
     if (!image(io,frame,&value->shadow_atlas)) return false;
     FIELD(f32,value,shadow_near); FIELD(f32,value,shade_scale); FIELD(bool,value,model_shade_scale); FIELD(bool,value,luminance_alpha);
     FIELD(bool,value,source_primitives);
+    if (schema>=5) {
+        ENUM(qa_scene_source_direct,value,source_direct,QA_SOURCE_DIRECT_SHADOW_FINISH);
+        FIELD(bool,value,source_retain_depth_range);
+    }
+    if (schema>=6) FIELD(bool,value,source_retain_polygon_offset);
     FIELD(u64,value,sort_key); FIELD(u32,value,entity); FIELD(u32,value,fog_index); FIELD(u32,value,light_mask); return true;
 }
 static bool command(qa_source_save_io *io, qa_scene_frame *frame, const qa_scene_frame_checkpoint_refs *refs,
@@ -227,7 +233,7 @@ static bool command(qa_source_save_io *io, qa_scene_frame *frame, const qa_scene
     if (schema<4 && value->kind==QA_SCENE_COMMAND_OUTPUT_DOMAIN) return false;
     switch (value->kind) {
     case QA_SCENE_COMMAND_VIEW: return view(io,&value->data.view);
-    case QA_SCENE_COMMAND_DRAW: return draw(io,frame,refs,&value->data.draw);
+    case QA_SCENE_COMMAND_DRAW: return draw(io,frame,refs,schema,&value->data.draw);
     case QA_SCENE_COMMAND_TARGET:
         return image(io,frame,&value->data.target.image) && (!value->data.target.image || value->data.target.image->kind==QA_SCENE_DEPTH32F);
     case QA_SCENE_COMMAND_OPACITY_BEGIN: return qa_source_save_f32(io,&value->data.opacity.value);
@@ -277,9 +283,9 @@ static bool groups(qa_source_save_io *io, qa_scene_frame *frame, const qa_scene_
 }
 static bool fields(qa_source_save_io *io, qa_scene_frame *frame, uint64_t qualified_owner, const qa_scene_frame_checkpoint_refs *refs)
 {
-    uint8_t magic[4]={'Q','F','R','M'}; uint32_t schema=4;
+    uint8_t magic[4]={'Q','F','R','M'}; uint32_t schema=6;
     if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QFRM",4) || !qa_source_save_u32(io,&schema) ||
-        (schema!=2 && schema!=3 && schema!=4)) return false;
+        (schema<2 || schema>6)) return false;
     FIELD(u64,frame,owner); FIELD(u64,frame,sequence);
     if (schema>=3) {
         FIELD(bool,frame,source_backend); FIELD(bool,frame,source_skip_backend);

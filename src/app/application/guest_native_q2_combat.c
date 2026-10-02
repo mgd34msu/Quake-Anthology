@@ -597,7 +597,8 @@ static bool armor_entry(void *opaque, qa_native_instance *instance, qa_native_en
 }
 bool application_native_q2_combat_prepare(struct application_native_q2 *engine, qa_error *error)
 {
-    if (!engine->declaration || engine->profile == QA_NATIVE_Q2_CGAME_API2023) return true;
+    if (!engine->declaration || engine->profile == QA_NATIVE_Q2_CGAME_API2023 ||
+        qa_native_declaration_callbacks(engine->declaration).data) return true;
     struct application_native_q2_combat *p = calloc(1, sizeof(*p));
     if (!p) return application_fail(error, QA_ERROR_MEMORY, "Preparing original native combat producer");
     p->engine = engine; engine->source_combat = p;

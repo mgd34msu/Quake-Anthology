@@ -86,6 +86,7 @@ static bool stencil_shadow(qa_scene_frame *frame, const qa_scene_view *view,
     qa_effect_bounds(&mesh);
     qa_scene_draw draw;
     qa_effect_draw(&draw, view, &mesh, white, false);
+    draw.source_retain_depth_range = source_edges;
     draw.model = model;
     draw.mvp = qa_scene_matrix_multiply(draw.mvp, model);
     draw.state.blend_source = QA_BLEND_ONE;
@@ -103,9 +104,11 @@ static bool stencil_shadow(qa_scene_frame *frame, const qa_scene_view *view,
         draw.state.cull = view->mirror ? QA_CULL_BACK : QA_CULL_FRONT;
         if (qa_scene_frame_draw(frame, &draw, error)) return true;
     }
-    for (size_t i = images_before; i < frame->image_count; ++i) qa_scene_image_release(frame->images[i]);
-    frame->image_count = images_before;
-    frame->command_count = count_before;
+    if (!source_edges) {
+        for (size_t i = images_before; i < frame->image_count; ++i) qa_scene_image_release(frame->images[i]);
+        frame->image_count = images_before;
+        frame->command_count = count_before;
+    }
     return false;
 }
 
@@ -122,8 +125,8 @@ bool qa_scene_source_stencil_shadow(qa_scene_frame *frame, const qa_scene_view *
     return stencil_shadow(frame, view, mesh, model, light, white, true, error);
 }
 
-bool qa_scene_stencil_finish(qa_scene_frame *frame, const qa_scene_view *view,
-                             const qa_scene_image *white, qa_error *error)
+static bool stencil_finish(qa_scene_frame *frame, const qa_scene_view *view,
+                            const qa_scene_image *white, bool source, qa_error *error)
 {
     if (!frame || !view) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Stencil finish requires a scene view");
@@ -143,6 +146,8 @@ bool qa_scene_stencil_finish(qa_scene_frame *frame, const qa_scene_view *view,
     qa_effect_bounds(&mesh);
     qa_scene_draw draw;
     qa_effect_draw(&draw, view, &mesh, white, false);
+    draw.source_direct = source ? QA_SOURCE_DIRECT_SHADOW_FINISH : QA_SOURCE_DIRECT_NONE;
+    draw.source_retain_depth_range = source;
     draw.mvp = view->projection;
     draw.state.blend_source = QA_BLEND_DST_COLOR;
     draw.state.blend_destination = QA_BLEND_ZERO;
@@ -155,8 +160,21 @@ bool qa_scene_stencil_finish(qa_scene_frame *frame, const qa_scene_view *view,
     command.data.view.clear_color = command.data.view.clear_depth = command.data.view.clear_stencil = false;
     size_t count_before = frame->command_count, images_before = frame->image_count;
     if (qa_scene_frame_emit(frame, &command, error) && qa_scene_frame_draw(frame, &draw, error)) return true;
-    for (size_t i = images_before; i < frame->image_count; ++i) qa_scene_image_release(frame->images[i]);
-    frame->image_count = images_before;
-    frame->command_count = count_before;
+    if (!source) {
+        for (size_t i = images_before; i < frame->image_count; ++i) qa_scene_image_release(frame->images[i]);
+        frame->image_count = images_before;
+        frame->command_count = count_before;
+    }
     return false;
+}
+
+bool qa_scene_stencil_finish(qa_scene_frame *frame, const qa_scene_view *view,
+                             const qa_scene_image *white, qa_error *error)
+{
+    return stencil_finish(frame, view, white, false, error);
+}
+bool qa_scene_source_stencil_finish(qa_scene_frame *frame, const qa_scene_view *view,
+                                    const qa_scene_image *white, qa_error *error)
+{
+    return stencil_finish(frame, view, white, true, error);
 }

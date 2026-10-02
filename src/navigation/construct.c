@@ -215,7 +215,7 @@ static bool face_samples(construction *c, qa_error *e) {
         if (normal.z < c->options->profile.minimum_floor_normal)
             continue;
         if (face.edges.count > capacity) {
-            if (face.edges.count > SIZE_MAX / sizeof(*points)) {
+            if (face.edges.count && SIZE_MAX / face.edges.count < sizeof(*points)) {
                 ok = false;
                 qa_error_set(e, QA_ERROR_MEMORY, i, "Navigation face is too large");
                 break;

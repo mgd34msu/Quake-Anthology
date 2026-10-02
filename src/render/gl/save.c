@@ -393,6 +393,9 @@ static bool gl_saved_private_fields(qa_source_save_io *io,qa_gl_renderer *render
         (renderer->presented && (renderer->presented_width!=saved->width || renderer->presented_height!=saved->height))) return false;
     renderer->draw_buffer=(qa_scene_draw_buffer)draw;
     if (version>=5 && !qa_output_domains_codec(io,&renderer->output_domains,saved->width,saved->height)) return false;
+    if (version>=6) {
+        if (!render_save_pipeline(io,&renderer->pipeline)) return false;
+    } else if (reading) qa_scene_state_default(&renderer->pipeline);
     if (reading) {
         if (!installed || !active || installed->owner!=renderer->options.owner || !installed->display ||
             !gl_caps_equal(&renderer->capabilities,&active->capabilities)) return false;
@@ -720,7 +723,7 @@ static bool gl_saved_target_upload(qa_gl_renderer *renderer,gl_saved_surface *sa
         if (!*depth_stencil) gl->GenRenderbuffers(1,depth_stencil);
         if (!*depth_stencil) return gl_save_error(error,QA_ERROR_MEMORY,"Preparing retained private GPU depth/stencil owner");
         gl->BindRenderbuffer(GL_RENDERBUFFER,*depth_stencil);
-        gl->RenderbufferStorage(GL_RENDERBUFFER,gl_saved_depth_internal(renderer,false),
+        gl->RenderbufferStorage(GL_RENDERBUFFER,(GLenum)gl_saved_depth_internal(renderer,false),
             (GLsizei)saved->width,(GLsizei)saved->height);
     }
     if (depth_stencil && *depth_stencil) {

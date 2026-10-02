@@ -15,12 +15,14 @@ static bool source_current(qa_q1_game_operation *operation, qa_actor_id actor,
     return false;
 }
 
-bool qa_q1_source_select_base_weapon(qa_q1_game *game, qa_actor_id actor,
+bool q1_source_select_weapon(qa_q1_game *game, qa_actor_id actor,
     qa_q1_weapon weapon, bool *selected, qa_error *error)
 {
-    if (!selected || weapon < QA_Q1_AXE || weapon > QA_Q1_LIGHTNING) {
+    qa_q1_weapon_profile profile;
+    if (!game || !selected || !qa_q1_weapon_profile_identity(game->options.program,
+            weapon, &profile)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot,
-            "Q1 source selection requires a foundation weapon and result");
+            "Q1 source selection requires its registered weapon and result");
         return false;
     }
     *selected = false;
@@ -50,6 +52,17 @@ bool qa_q1_source_select_base_weapon(qa_q1_game *game, qa_actor_id actor,
 finish:
     qa_q1_game_operation_end(&operation);
     return okay;
+}
+
+bool qa_q1_source_select_base_weapon(qa_q1_game *game, qa_actor_id actor,
+    qa_q1_weapon weapon, bool *selected, qa_error *error)
+{
+    if (weapon < QA_Q1_AXE || weapon > QA_Q1_LIGHTNING) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot,
+            "Q1 source selection requires a foundation weapon");
+        return false;
+    }
+    return q1_source_select_weapon(game, actor, weapon, selected, error);
 }
 
 static bool grant(qa_q1_game_operation *operation, qa_actor_id actor,

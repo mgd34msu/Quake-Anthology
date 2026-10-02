@@ -371,7 +371,7 @@ bool frontend_system_cinematic_frame(qa_frontend *f,uint64_t elapsed_ns,bool *re
         const qa_cvar_view *gamma=qa_cvars_find(qa_application_cvars(f->application),"r_gamma");
         float brightness=gamma?fmaxf(.5f,fminf(3,gamma->number)):f->options.gamma;
         ok=f->cpu?(qa_cpu_set_gamma(f->cpu,brightness,error) && qa_cpu_execute(f->cpu,&f->frame,error) && qa_cpu_present_frame(f->cpu,error)):
-            (qa_gl_set_gamma(f->gl,brightness,error) && qa_gl_execute(f->gl,&f->frame,error) && qa_gl_finish(f->gl,error) && qa_display_swap(f->display,error));
+            (qa_gl_set_gamma(f->gl,brightness,error) && qa_gl_execute(f->gl,&f->frame,error) && qa_gl_finish(f->gl,error) && qa_gl_swap(f->gl,error));
     }
     row->busy=false;
     if (!ok) return false;

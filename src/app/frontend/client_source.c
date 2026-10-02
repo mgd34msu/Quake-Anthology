@@ -13,6 +13,7 @@ struct frontend_client_source {
     qa_launch_instance_lease *metadata;
     frontend_client_registry *registry;
     qa_cvars *pending_cvars;
+    qa_buffer imported_commands, imported_current;
     qa_console *console;
     qa_application_client_source application;
     qa_command_context command;
@@ -20,7 +21,7 @@ struct frontend_client_source {
     uint64_t configuration_generation;
     size_t references;
     unsigned calls;
-    bool constructing, ready, closing, app_attached;
+    bool constructing, ready, closing, app_attached, commands_verified;
 };
 static bool linked(const frontend_client_source *s)
 {
@@ -99,6 +100,7 @@ static bool active(void *context, const qa_command_context *command)
 {
     frontend_client_source *s = context;
     return linked(s) && !s->closing && !s->frontend->resource_inventory && !s->frontend->capture &&
+        !s->frontend->source_restoring &&
         s->calls != UINT_MAX && tuple(command, &s->command, false) &&
         qa_application_command_context_active(s->frontend->application, command);
 }
@@ -217,8 +219,10 @@ static bool construct(qa_frontend *f, const frontend_client_source_options *opti
     const qa_launch_restored_instance *metadata, const frontend_client_source_state *state,
     const qa_console_save_resolvers *resolvers, frontend_client_source **out, qa_error *error)
 {
-    if (!f || !f->application || f->capture || f->resource_inventory || !options || !out || *out ||
-        !options->runtime || !options->print || !options->connection_current ||
+    if (!f || !f->application || f->capture || f->resource_inventory ||
+        (state ? !f->source_restoring : f->source_restoring) || !options || !out || *out ||
+        !options->runtime || options->physical_seat >= f->options.seats ||
+        !options->print || !options->connection_current ||
         (!state && (!options->initialize || !options->configure)) ||
         ((options->read_script != NULL) != (options->release_script != NULL)) ||
         (state && (!metadata || !resolvers || !state->console.data || !state->console.size ||
@@ -285,8 +289,15 @@ static bool construct(qa_frontend *f, const frontend_client_source_options *opti
         if (!ok) goto done;
     }
     if (state) {
+        s->imported_commands.data = malloc(state->console.size);
+        if (!s->imported_commands.data) {
+            frontend_fail(error, QA_ERROR_MEMORY, "Retaining genuine CLIENT command import receipt"); goto done;
+        }
+        s->imported_commands.size = state->console.size;
+        memcpy(s->imported_commands.data, state->console.data, state->console.size);
         if (!qa_console_save_restore(s->console, qa_application_session(f->application), resolvers,
             (qa_bytes){state->console.data, state->console.size}, error)) goto done;
+        if (!qa_console_save_capture(s->console, qa_application_session(f->application), &s->imported_current, error)) goto done;
         s->ready = state->ready; success = true;
     } else {
         s->constructing = false;
@@ -309,7 +320,7 @@ bool frontend_client_source_restore(qa_frontend *f, const frontend_client_source
 bool frontend_client_source_advance(frontend_client_source *s, bool *ready, qa_error *error)
 {
     if (!ready || !frontend_client_source_idle(s) || s->closing || !s->app_attached ||
-        s->frontend->resource_inventory || s->frontend->capture)
+        s->frontend->resource_inventory || s->frontend->capture || s->frontend->source_restoring)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "CLIENT configuration requires its returned physical constructor");
     if (!s->ready) {
         if (!s->options.configure) return frontend_fail(error, QA_ERROR_ARGUMENT, "CLIENT programme has no retained configuration owner");
@@ -348,7 +359,7 @@ bool frontend_client_source_bind(frontend_client_source *s, qa_net_client_id cli
     qa_net_seat_id seat, uint64_t epoch, qa_error *error)
 {
     if (!frontend_client_source_idle(s) || s->closing || !s->ready || !s->app_attached || s->application.client.owner ||
-        s->frontend->resource_inventory || s->frontend->capture)
+        s->frontend->resource_inventory || s->frontend->capture || s->frontend->source_restoring)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "CLIENT bind requires its completed pending constructor");
     qa_application_client_source actual;
     if (!qa_application_client_bind(s->frontend->application, &s->application, client, seat, epoch, &actual, error)) return false;
@@ -357,7 +368,7 @@ bool frontend_client_source_bind(frontend_client_source *s, qa_net_client_id cli
 bool frontend_client_source_drain(frontend_client_source *s, size_t budget, size_t *executed, qa_error *error)
 {
     if (!frontend_client_source_idle(s) || s->closing || !s->app_attached ||
-        s->frontend->resource_inventory || s->frontend->capture) return false;
+        s->frontend->resource_inventory || s->frontend->capture || s->frontend->source_restoring) return false;
     ++s->calls; bool ok = qa_console_drain(s->console, budget, executed, error); --s->calls; return ok;
 }
 bool frontend_client_source_destroy(frontend_client_source **owned, qa_error *error)
@@ -378,6 +389,7 @@ bool frontend_client_source_destroy(frontend_client_source **owned, qa_error *er
     if (s->receiver && !qa_application_client_provider_release(s->frontend->application, s->receiver, error)) return false;
     s->receiver = 0;
     qa_launch_instance_lease_release(s->metadata); s->metadata = NULL;
+    qa_buffer_free(&s->imported_commands); qa_buffer_free(&s->imported_current);
     frontend_client_source **link = &s->frontend->client_sources;
     while (*link != s) link = &(*link)->next;
     *link = s->next; free(s); *owned = NULL; return true;
@@ -572,4 +584,95 @@ bool frontend_client_source_restore_prefix(qa_frontend *f, const frontend_client
     if (!ok && error && error->code == QA_OK)
         frontend_fail(error, QA_ERROR_FORMAT, "CLIENT prefix differs from its actual constructor recipe");
     return ok;
+}
+
+bool frontend_client_source_prefix_read(qa_frontend *f, qa_application_content_graph *graph, qa_bytes bytes,
+    frontend_client_source_prefix *out, qa_error *error)
+{
+    if (!f || !f->application || !f->source_restoring || !graph || !out || out->state.application.actors ||
+        out->state.console.data || out->descriptor.content)
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "CLIENT recipe decode requires its actual isolated graph");
+    client_source_prefix p = {0}; qa_source_save_io io = {0};
+    bool ok = qa_source_save_reader(&io, qa_application_session(f->application), bytes, error) &&
+        prefix_fields(&io, &p) && qa_source_save_finish(&io, NULL);
+    qa_source_save_dispose(&io);
+    qa_catalog *catalog = qa_application_content_catalog(graph, p.catalog);
+    qa_vfs *view = qa_application_content_view(graph, p.content);
+    if (ok) ok = catalog && view && qa_catalog_product(catalog, p.profile) &&
+        qa_catalog_product(catalog, p.selected) && p.selection.product == p.selected;
+    if (!ok) {
+        frontend_client_source_state_free(&p.state);
+        if (error && error->code == QA_OK) frontend_fail(error, QA_ERROR_FORMAT, "CLIENT recipe leaves its imported graph");
+        return false;
+    }
+    *out = (frontend_client_source_prefix){
+        .recipe = {catalog, p.profile, p.selected, view, p.selection.instance,
+            p.state.application.seat, p.selection.clock.kind},
+        .descriptor = {.catalog = catalog, .selection = p.selection, .content = view, .identity = p.identity},
+        .state = p.state, .content_id = p.content};
+    return true;
+}
+void frontend_client_source_prefix_free(frontend_client_source_prefix *prefix)
+{
+    if (!prefix) return;
+    frontend_client_source_state_free(&prefix->state); *prefix = (frontend_client_source_prefix){0};
+}
+static frontend_client_source *commands_owner(const qa_frontend *f, const qa_application *app,
+    const qa_application_console_scope *scope, const qa_console *console)
+{
+    if (!f || app != f->application || !scope || scope->kind != QA_APPLICATION_CONSOLE_CLIENT || !console) return NULL;
+    for (frontend_client_source *s = f->client_sources; s; s = s->next)
+        if (s->receiver == scope->provider && s->options.metadata.seat == scope->seat && s->console == console &&
+            s->app_attached && physical_current(s, s->application.descriptor, s->console, registry(s), &s->command) &&
+            qa_application_client_idle(f->application, &s->application)) return s;
+    return NULL;
+}
+bool frontend_client_source_commands_owned(const qa_frontend *f, const qa_application *app,
+    const qa_application_console_scope *scope, const qa_console *console)
+{ return commands_owner(f, app, scope, console) != NULL; }
+bool frontend_client_source_commands_capture(qa_frontend *f, qa_application *app,
+    const qa_application_console_scope *scope, const qa_console *console, qa_buffer *out, qa_error *error)
+{
+    frontend_client_source *s = commands_owner(f, app, scope, console);
+    if (!s || !out || out->data || out->size || !frontend_client_source_idle(s) ||
+        !qa_application_client_idle(app, &s->application))
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "CLIENT command capture has no exact physical source owner");
+    return qa_console_save_capture(console, qa_application_session(app), out, error);
+}
+static bool imported_commands_unchanged(frontend_client_source *s, qa_error *error)
+{
+    qa_buffer current = {0};
+    bool ok = qa_console_save_capture(s->console, qa_application_session(s->frontend->application), &current, error);
+    if (ok && (current.size != s->imported_current.size ||
+        memcmp(current.data, s->imported_current.data, current.size)))
+        ok = frontend_fail(error, QA_ERROR_FORMAT, "CLIENT command queue changed after its actual prefix import");
+    qa_buffer_free(&current); return ok;
+}
+bool frontend_client_source_commands_restore(qa_frontend *f, qa_application *app,
+    const qa_application_console_scope *scope, qa_console *console, qa_bytes bytes, qa_error *error)
+{
+    frontend_client_source *s = commands_owner(f, app, scope, console);
+    if (!s || !f->source_restoring || !frontend_client_source_idle(s) || !bytes.data ||
+        !s->imported_commands.data || !s->imported_current.data || bytes.size != s->imported_commands.size ||
+        memcmp(bytes.data, s->imported_commands.data, bytes.size))
+        return frontend_fail(error, QA_ERROR_FORMAT, "CLIENT command section differs from its genuine physical prefix");
+    bool ok = imported_commands_unchanged(s, error);
+    if (ok) s->commands_verified = true;
+    return ok;
+}
+bool frontend_client_sources_finish_restore(qa_frontend *f, qa_error *error)
+{
+    if (!f || !f->source_restoring || f->capture || f->resource_inventory)
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "CLIENT source finish requires its actual isolated restoration");
+    for (frontend_client_source *s = f->client_sources; s; s = s->next)
+        if (!frontend_client_source_idle(s) || !s->app_attached || !s->imported_commands.data ||
+            !s->imported_current.data || !s->commands_verified ||
+            !qa_application_client_current(f->application, &s->application))
+            return frontend_fail(error, QA_ERROR_ARGUMENT, "CLIENT source finish lost an imported physical owner");
+    for (frontend_client_source *s = f->client_sources; s; s = s->next)
+        if (!imported_commands_unchanged(s, error)) return false;
+    for (frontend_client_source *s = f->client_sources; s; s = s->next) {
+        qa_buffer_free(&s->imported_commands); qa_buffer_free(&s->imported_current);
+    }
+    return true;
 }

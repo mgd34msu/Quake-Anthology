@@ -18,9 +18,13 @@
 #include "native_q3_checkpoint.h"
 #include "supplies.h"
 #include "equipment_runtime.h"
+#include "guest_q3_components.h"
 #include "world_bounds.h"
 #include "qa/game_q1_source_entities.h"
 #include "qa/game_q2_wire.h"
+#include "native_q2_wire_engine.h"
+#include "qa/map_sidecars.h"
+#include "unified_events.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -397,6 +401,11 @@ static bool construct_and_reserve(qa_application *application,
                 product = saved.product;
             }
             bool constructed = false;
+            if (product != NULL && !application_unified_event_owner_bind(application,
+                provider, provider == publication->map_provider, image != NULL, error)) {
+                okay = false;
+                break;
+            }
             if (product != NULL && image != NULL && provider->kind == APPLICATION_PROVIDER_QVM) {
                 const qa_save_record *record = qa_save_image_find(image, QA_SAVE_PROVIDER,
                     provider->launch->selection.instance);
@@ -570,14 +579,18 @@ static void source_body_linked(void *opaque, const qa_linked_body *linked)
     qa_application *application = opaque;
     if (application->operation == APPLICATION_PERSISTING) return;
     application_provider *source = application_world_provider(application, QA_ROLE_ENTITIES, "");
-    if (!source || source->kind != APPLICATION_PROVIDER_Q2 || !source->state.q2) return;
+    if (!source) return;
+    struct application_native_q2 *original = source->kind == APPLICATION_PROVIDER_NATIVE ? source->state.native.q2_engine : NULL;
+    bool compiled = source->kind == APPLICATION_PROVIDER_Q2 && source->state.q2;
+    if (!compiled && (!original || !original->wire_engine || original->profile == QA_NATIVE_Q2_CGAME_API2023)) return;
     qa_world *world = application->physics ? application->physics->world : NULL;
     qa_error error = {0};
     qa_linked_body current;
     if (!world || (application->world && application->world != world) ||
         qa_world_actors(world) != qa_session_actors(application->session) ||
         !qa_world_linked(world, linked->actor, &current) || current.link_count != linked->link_count ||
-        !qa_q2_wire_linked(source->state.q2, linked, &error)) {
+        !(compiled ? qa_q2_wire_linked(source->state.q2, linked, &error) :
+            application_native_q2_wire_linked(original, linked, &error))) {
         if (error.code == QA_OK)
             application_fail(&error, QA_ERROR_ARGUMENT, "Q2 Source link lost its canonical World");
         application_fault(application, &error);
@@ -600,10 +613,22 @@ static bool prepare_world(qa_application *application,
                                 "candidate map resource is absent");
     publication->map_resource = (qa_resource *)selected->resource;
     qa_resource_retain(publication->map_resource);
+    if (publication->restoring) {
+        publication->map_sidecars = application->map_sidecars;
+        qa_map_sidecars_retain(publication->map_sidecars);
+        if (!qa_map_sidecars_current(publication->map_sidecars) ||
+            qa_map_sidecars_map(publication->map_sidecars) != publication->map_resource ||
+            strcmp(qa_map_sidecars_map_path(publication->map_sidecars), selected->path))
+            return application_fail(error, QA_ERROR_FORMAT, "Restored world lacks its genuine sidecar admission");
+    } else if (!qa_map_sidecars_create(qa_launch_snapshot_catalog(publication->candidate), selected->product,
+        selected->path, qa_vfs_resources(qa_launch_snapshot_mounts(publication->candidate)),
+        publication->map_resource, &publication->map_sidecars, error)) return false;
     if (!qa_bsp_open(qa_resource_bytes(publication->map_resource),
                      &publication->map, error) ||
+        !qa_map_sidecars_apply_entities(publication->map_sidecars, &publication->map, error) ||
         !qa_collision_create(&publication->map, &publication->geometry,
-                             error))
+                             error) ||
+        !qa_map_sidecars_apply_materials(publication->map_sidecars, publication->geometry, error))
         return false;
 
     if (application->world == NULL) {
@@ -699,14 +724,30 @@ bool application_publication_finish(qa_application *application,
 {
     if (!publication || !publication->candidate || publication->admissions)
         return application_fail(error, QA_ERROR_ARGUMENT, "Publication completion lost its detached ticket");
-    if (!publication->travel) return true;
+    if (!publication->travel) {
+        qa_bsp_view map;
+        if(!application->map_resource||!qa_bsp_open(qa_resource_bytes(application->map_resource),&map,error)) return false;
+        application_q3_components_options options={.previous=application->components,.application=application,
+            .snapshot=publication->candidate,.providers=publication->next,.provider_count=publication->next_count,
+            .world_source=application_world_provider(application,QA_ROLE_ENTITIES,""),.world=application->world,
+            .entity_text=map.lumps[QA_BSP_ENTITIES].bytes,
+            .scene_factory={.context=application->guest_context,.prepare=application->q3_component_scene_prepare}};
+        return application_q3_components_create(&options,&publication->components,error)&&
+            application_q3_components_prepare(publication->components,error);
+    }
     if (!construct_and_reserve(application, publication, NULL, error) ||
         !prepare_supplies(application, publication, error) ||
         !application_match_prepare(application, publication, error) ||
         !application_equipment_runtime_prepare_components(publication->equipment_runtime, error) ||
         !application_q3_world_restart_prepared(application, publication, error))
         return false;
-    return true;
+    application_q3_components_options options={.application=application,.snapshot=publication->candidate,
+        .providers=publication->next,.provider_count=publication->next_count,.world_source=publication->map_provider,
+        .world=publication->initial_world?publication->initial_world:application->world,
+        .entity_text=publication->map.lumps[QA_BSP_ENTITIES].bytes,
+        .scene_factory={.context=application->guest_context,.prepare=application->q3_component_scene_prepare}};
+    return application_q3_components_create(&options,&publication->components,error)&&
+        application_q3_components_prepare(publication->components,error);
 }
 
 bool application_publication_prepare(qa_application *application,
@@ -748,6 +789,7 @@ static bool publication_dispose_checked(qa_application *application,
         application_q3_world_restart_configuration_finish(application, publication->candidate, false);
     }
     if (!application_startup_program_publication_abort(&publication->programs, error)) return false;
+    if (!application_q3_components_destroy(&publication->components,error)) return false;
     if (!close_equipment(&publication->equipment, &publication->equipment_runtime, error)) return false;
     abort_admissions(publication);
     qa_world_geometry_admission_abort(publication->geometry_admission);
@@ -782,6 +824,7 @@ static bool publication_dispose_checked(qa_application *application,
     free(publication->mode_ids);
     qa_entities_free(&publication->entities);
     qa_collision_destroy(publication->geometry);
+    qa_map_sidecars_release(publication->map_sidecars);
     qa_resource_release(publication->map_resource);
     if (publication->physics_initialized &&
         (!publication->published || discarded_initial_world)) {
@@ -852,6 +895,18 @@ static bool detach_removed(qa_application *application,
                            application_publication *publication,
                            qa_error *error)
 {
+    application_provider *primary = application_world_provider(application, QA_ROLE_ENTITIES, "");
+    qa_clock_state primary_clock;
+    bool has_primary_clock = primary && qa_session_clock(application->session, primary->owner, &primary_clock);
+    /* Preserve the real primary receipt before the first component removal.
+     * A partial retirement retry must keep the original Source clock. */
+    for (size_t i = 0; i < publication->removed_count; ++i) {
+        application_provider *provider = publication->removed[i];
+        if (!provider->event_retirement_frame_present && has_primary_clock) {
+            provider->event_retirement_frame = primary_clock.frame;
+            provider->event_retirement_frame_present = true;
+        }
+    }
     bool ok = true;
     qa_error first = {0};
     for (size_t index = 0; index < publication->removed_count; ++index) {
@@ -938,6 +993,8 @@ static bool commit_admissions(application_publication *publication,
     }
     if (ok)
         ok = application_equipment_runtime_commit_components(publication->equipment_runtime, &first);
+    if (ok && publication->components)
+        ok = application_q3_components_commit(publication->components, &first);
     if (!ok && error != NULL)
         *error = first;
     return ok;
@@ -971,7 +1028,7 @@ bool application_save_prepare_content(qa_application *candidate,
         candidate->operation != APPLICATION_PERSISTING ||
         candidate->world != NULL || candidate->provider_count != 0 ||
         candidate->providers != NULL || candidate->modes != NULL ||
-        candidate->equipment != NULL || candidate->equipment_runtime != NULL ||
+        candidate->equipment != NULL || candidate->equipment_runtime != NULL || candidate->components != NULL ||
         !qa_session_safe(candidate->session))
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "save content requires an isolated restored application");
@@ -981,9 +1038,12 @@ bool application_save_prepare_content(qa_application *candidate,
                                 "cannot allocate restored content preparation");
     publication->candidate = snapshot;
     publication->restoring = true;
-    bool ok = application_equipment_runtime_saved(candidate->session, image,
+    qa_bytes components_saved = {0};
+    bool ok = application_save_components_decode(image, &components_saved, error) &&
+              application_equipment_runtime_saved(candidate->session, image,
                   &publication->equipment_runtime_saved, error) &&
               provider_roster(publication, error) &&
+              application_save_sidecars_decode(image, candidate, error) &&
               prepare_world(candidate, publication, error);
     if (ok)
         ok = qa_session_adopt_restored_world(candidate->session,
@@ -998,6 +1058,9 @@ bool application_save_prepare_content(qa_application *candidate,
         publication->geometry = NULL;
         candidate->map_resource = publication->map_resource;
         publication->map_resource = NULL;
+        qa_map_sidecars_release(candidate->map_sidecars);
+        candidate->map_sidecars = publication->map_sidecars;
+        publication->map_sidecars = NULL;
         candidate->routing_snapshot = snapshot;
         candidate->routing_providers = publication->next;
         candidate->routing_provider_count = publication->next_count;
@@ -1027,6 +1090,16 @@ bool application_save_prepare_content(qa_application *candidate,
                  prepare_supplies(candidate, publication, error) &&
                  application_match_prepare_equipment(candidate, publication, error) &&
                  application_equipment_runtime_prepare_components(publication->equipment_runtime, error);
+        if (ok) {
+            application_q3_components_options options = {.application=candidate,.snapshot=snapshot,
+                .providers=publication->next,.provider_count=publication->next_count,
+                .world_source=publication->map_provider,.world=candidate->world,
+                .entity_text=publication->map.lumps[QA_BSP_ENTITIES].bytes,
+                .saved=components_saved,.restoring=true,
+                .scene_factory={.context=candidate->guest_context,.prepare=candidate->q3_component_scene_prepare}};
+            ok = application_q3_components_create(&options, &publication->components, error) &&
+                application_q3_components_prepare(publication->components, error);
+        }
     }
     if (ok) {
         ok = commit_admissions(publication, error);
@@ -1038,6 +1111,8 @@ bool application_save_prepare_content(qa_application *candidate,
         publication->equipment = NULL;
         candidate->equipment_runtime = publication->equipment_runtime;
         publication->equipment_runtime = NULL;
+        candidate->components = publication->components;
+        publication->components = NULL;
         if (ok)
             ok = application_map_restore_bind(candidate, snapshot, error);
     }
@@ -1129,7 +1204,9 @@ static bool publish_travel(qa_application *application,
     application->routing_provider_count = application->provider_count;
     application_provider *old_source = application_world_provider(application, QA_ROLE_ENTITIES, "");
     const qa_launch_choices *choices = qa_launch_snapshot_choices(publication->candidate);
-    bool retired_services = close_equipment(&application->equipment,
+    bool retired_services = application_q3_components_drain(application->components,error)&&
+        application_q3_components_destroy(&application->components,error)&&
+        close_equipment(&application->equipment,
         &application->equipment_runtime, error) &&
         application_q3_world_restart_begin(application, publication, error);
     for (size_t i = 0; retired_services && i < application->provider_count; ++i)
@@ -1233,6 +1310,11 @@ static bool publish_travel(qa_application *application,
     publication->equipment = NULL;
     application->equipment_runtime = publication->equipment_runtime;
     publication->equipment_runtime = NULL;
+    if(ok) {
+        bool components=application_q3_components_adopt(application,&publication->components,&current)&&
+            application_q3_components_initialize(application->components,&current);
+        remember_failure(components,&current,"External component GAME publication failed",&ok,&first);
+    }
     application->modes = publication->modes;
     publication->modes = NULL;
     application->mode_ids = publication->mode_ids;
@@ -1250,11 +1332,15 @@ static bool publish_travel(qa_application *application,
                 "Geometry release retains an actual acoustic world receipt");
         qa_collision_geometry *old_geometry = application->geometry;
         qa_resource *old_resource = application->map_resource;
+        qa_map_sidecars *old_sidecars = application->map_sidecars;
         application->geometry = publication->geometry;
         publication->geometry = NULL;
         application->map_resource = publication->map_resource;
         publication->map_resource = NULL;
+        application->map_sidecars = publication->map_sidecars;
+        publication->map_sidecars = NULL;
         qa_collision_destroy(old_geometry);
+        qa_map_sidecars_release(old_sidecars);
         qa_resource_release(old_resource);
     }
 
@@ -1295,6 +1381,8 @@ static bool publish_travel(qa_application *application,
 bool application_publication_retire(qa_application *application,
                                     qa_error *error)
 {
+    if (!application_q3_components_drain(application->components,error) ||
+        !application_q3_components_destroy(&application->components,error)) return false;
     if (!close_equipment(&application->equipment, &application->equipment_runtime, error))
         return false;
     application_provider *old_source = application_world_provider(application, QA_ROLE_ENTITIES, "");
@@ -1365,8 +1453,13 @@ void application_publication_publish(qa_application *application,
     if (ok && application->command_generation != UINT64_MAX)
         ++application->command_generation;
     if (ok && !publication->travel) {
-        publish_roster(application, publication);
-        ++application->publication_generation;
+        ok=application_q3_components_commit(publication->components,&error)&&
+            application_q3_components_adopt(application,&publication->components,&error);
+        if(ok) {
+            publish_roster(application, publication);
+            ok=application_q3_components_initialize(application->components,&error);
+            if(ok) ++application->publication_generation;
+        }
     } else if (ok) {
         ok = publish_travel(application, publication, &error);
     }

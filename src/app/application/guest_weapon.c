@@ -2,6 +2,7 @@
 #include "guest_qc_profile.h"
 #include "guest_q3_weapons.h"
 #include "guest_q3_catalog.h"
+#include "qa/qc_observation.h"
 
 static bool canonical(application_provider *provider, qa_actor_id actor,
                          const char *name, qa_item_id *out, qa_error *error)
@@ -25,15 +26,15 @@ bool application_guest_weapon_read(application_provider *provider, qa_actor_id a
     if (provider->kind == APPLICATION_PROVIDER_QC) {
         struct application_qc_state *engine = provider->state.qc.engine;
         if (!engine) return application_fail(error, QA_ERROR_NOT_FOUND, "QuakeC weapon owner is absent");
-        int32_t reference;
-        if (!application_qc_reference(engine, actor, &reference, error)) return false;
+        uint32_t slot;
+        if (!qa_qc_actor_observation_slot(provider->state.qc.instance, actor, &slot, error)) return false;
         const struct application_qc_profile *profile = provider->state.qc.qualified;
         const qa_qc_definition *field = profile ? profile->weapon_field :
             qa_qc_program_find_field(provider->state.qc.program, "weapon");
         if (!field || field->type != QA_QC_FLOAT)
             return application_fail(error, QA_ERROR_NOT_FOUND, "QuakeC selected weapon has no declared source observer");
         float value;
-        if (!qa_qc_entity_float(provider->state.qc.instance, reference, field->offset, &value, error)) return false;
+        if (!qa_qc_actor_observation_float(provider->state.qc.instance, slot, actor, field->offset, &value, error)) return false;
         if (!isfinite(value)) return application_fail(error, QA_ERROR_FORMAT, "QuakeC selected weapon is not finite");
         if (profile) {
             for (size_t i = 0; i < profile->weapon_count; ++i)

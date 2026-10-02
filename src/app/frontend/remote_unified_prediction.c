@@ -75,6 +75,8 @@ static bool i16(const prediction_reader *r, qa_json_id id, int16_t *out, qa_erro
 { int64_t v; if (!integer(r, id, INT16_MIN, INT16_MAX, &v, e)) return false; *out = (int16_t)v; return true; }
 static bool u8(const prediction_reader *r, qa_json_id id, uint8_t *out, qa_error *e)
 { int64_t v; if (!integer(r, id, 0, UINT8_MAX, &v, e)) return false; *out = (uint8_t)v; return true; }
+static bool u16(const prediction_reader *r, qa_json_id id, uint16_t *out, qa_error *e)
+{ int64_t v; if (!integer(r, id, 0, UINT16_MAX, &v, e)) return false; *out = (uint16_t)v; return true; }
 static bool boolean(const prediction_reader *r, qa_json_id id, bool *out, qa_error *e)
 { return qa_json_bool(r->json, id, out, e); }
 static bool vector(const prediction_reader *r, qa_json_id id, qa_vec3 *out, qa_error *e)
@@ -148,12 +150,24 @@ static bool state_read(const prediction_reader *r, qa_json_id id, qa_movement_st
     case QA_MOVEMENT_Q2_CLASSIC: {
         qa_q2_movement_state *v = &out->data.q2;
         qa_json_id origin=get(r,id,"originEighths"), velocity=get(r,id,"velocityEighths"), delta=get(r,id,"deltaAngleShorts");
+        qa_json_id storage=get(r,id,"coordinateStorage");
+        if (storage!=QA_JSON_NONE) {
+            if (!equal(r,storage,"q2pro-extended-v2")) return fail(e,QA_ERROR_FORMAT,"Unified Q2 state has an unknown coordinate storage");
+            v->wide_coordinates=true;
+        }
         if (qa_json_size(r->json,origin)!=3 || qa_json_size(r->json,velocity)!=3 || qa_json_size(r->json,delta)!=3)
-            return fail(e,QA_ERROR_FORMAT,"Unified Q2 state changes its short vector extent");
-        for (size_t i=0;i<3;++i) if (!i16(r,qa_json_at(r->json,origin,i),v->origin_eighths+i,e) ||
-            !i16(r,qa_json_at(r->json,velocity,i),v->velocity_eighths+i,e) ||
-            !i16(r,qa_json_at(r->json,delta,i),v->delta_angle_shorts+i,e)) return false;
-        return I(v->type,"type") && U(v->flags,"flags") && u8(r,get(r,id,"timeEightMilliseconds"),&v->time_eight_ms,e) &&
+            return fail(e,QA_ERROR_FORMAT,"Unified Q2 state changes its coordinate vector extent");
+        for (size_t i=0;i<3;++i) {
+            if (!i16(r,qa_json_at(r->json,delta,i),v->delta_angle_shorts+i,e)) return false;
+            if (v->wide_coordinates) {
+                if (!i32(r,qa_json_at(r->json,origin,i),v->wide.origin_eighths+i,e) ||
+                    !i32(r,qa_json_at(r->json,velocity,i),v->wide.velocity_eighths+i,e)) return false;
+            } else if (!i16(r,qa_json_at(r->json,origin,i),v->origin_eighths+i,e) ||
+                !i16(r,qa_json_at(r->json,velocity,i),v->velocity_eighths+i,e)) return false;
+        }
+        return I(v->type,"type") && U(v->flags,"flags") &&
+            (v->wide_coordinates ? u16(r,get(r,id,"timeMilliseconds"),&v->wide.time_ms,e) :
+                u8(r,get(r,id,"timeEightMilliseconds"),&v->time_eight_ms,e)) &&
             i16(r,get(r,id,"gravity"),&v->gravity,e);
     }
     case QA_MOVEMENT_Q2_RERELEASE: {
@@ -412,6 +426,32 @@ bool frontend_remote_unified_prediction_receive(frontend_remote_unified_predicti
         fail(e,QA_ERROR_FORMAT,"Unified prediction does not match its actual admitted player snapshot");
     return ok;
 }
+static bool same_number(double a, double b)
+{ return a==b && (a!=0 || signbit(a)==signbit(b)); }
+static bool same_command(const qa_unified_movement *a, const qa_unified_movement *b)
+{
+    if(a->kind!=b->kind) return false;
+#define EQ(field) same_number(a->data.field,b->data.field)
+    switch(a->kind) {
+    case QA_MOVEMENT_NETQUAKE:
+        return EQ(nq.acknowledged_seconds) && EQ(nq.angles.x) && EQ(nq.angles.y) && EQ(nq.angles.z) &&
+            EQ(nq.forward) && EQ(nq.side) && EQ(nq.up) && EQ(nq.buttons) && EQ(nq.impulse);
+    case QA_MOVEMENT_QUAKEWORLD:
+        return EQ(qw.milliseconds) && EQ(qw.angles.x) && EQ(qw.angles.y) && EQ(qw.angles.z) &&
+            EQ(qw.forward) && EQ(qw.side) && EQ(qw.up) && EQ(qw.buttons) && EQ(qw.impulse);
+    case QA_MOVEMENT_Q2_CLASSIC:
+        return EQ(q2.milliseconds) && EQ(q2.angle_shorts[0]) && EQ(q2.angle_shorts[1]) && EQ(q2.angle_shorts[2]) &&
+            EQ(q2.forward) && EQ(q2.side) && EQ(q2.up) && EQ(q2.buttons) && EQ(q2.impulse) && EQ(q2.light_level);
+    case QA_MOVEMENT_Q2_RERELEASE:
+        return EQ(q2r.milliseconds) && EQ(q2r.angles.x) && EQ(q2r.angles.y) && EQ(q2r.angles.z) &&
+            EQ(q2r.forward) && EQ(q2r.side) && EQ(q2r.buttons) && EQ(q2r.server_frame);
+    case QA_MOVEMENT_Q3:
+        return EQ(q3.server_time_ms) && EQ(q3.angle_words[0]) && EQ(q3.angle_words[1]) && EQ(q3.angle_words[2]) &&
+            EQ(q3.buttons) && EQ(q3.weapon) && EQ(q3.forward) && EQ(q3.right) && EQ(q3.up);
+    }
+#undef EQ
+    return false;
+}
 bool frontend_remote_unified_prediction_input(frontend_remote_unified_prediction *p,
     const qa_unified_input *input, double time_ms, qa_error *e)
 {
@@ -419,6 +459,9 @@ bool frontend_remote_unified_prediction_input(frontend_remote_unified_prediction
         input->command.kind!=p->snapshot.input.state.kind || !current(p,e)) return false;
     qa_movement_command probe;
     if(!qa_application_control_project_unified(&input->command,&p->snapshot.input.state,input->sequence,&probe,e)) return false;
+    for(size_t i=0;i<p->command_count;++i) if(input->sequence==p->commands[i].sequence)
+        return (same_number(time_ms,p->commands[i].time_ms) && same_command(&input->command,&p->commands[i].raw)) ||
+            fail(e,QA_ERROR_ARGUMENT,"Prediction retry changes its retained command or source time");
     if((int64_t)input->sequence<=p->snapshot.sequence || (p->command_count && input->sequence<=p->commands[p->command_count-1].sequence)) return true;
     if(p->command_count==64) {
         p->discarded=(int64_t)p->commands[0].sequence;
@@ -456,11 +499,13 @@ static bool replay(frontend_remote_unified_prediction *p, prediction_snapshot *s
             const prediction_command *last=p->commands+p->command_count-1;
             if(!qa_application_control_project_unified(&last->raw,&s->input.state,last->sequence,&command,e)) return false;
             if(command.kind==QA_MOVEMENT_Q2_CLASSIC) {
+                float angles[3];
                 for(unsigned i=0;i<3;++i) {
                     uint16_t word=(uint16_t)command.angle_words[i];
                     int32_t angle=word<=INT16_MAX?word:(int32_t)word-65536;
-                    qa_vec_set_component(&s->angles,i,(float)(angle*(360.0/65536.0)+s->input.state.data.q2.delta_angle_shorts[i]*(360.0/65536.0)));
+                    angles[i]=(float)(angle*(360.0/65536.0)+s->input.state.data.q2.delta_angle_shorts[i]*(360.0/65536.0));
                 }
+                s->angles=qa_v3(angles[0],angles[1],angles[2]);
             } else s->angles=qa_vec_add(command.angles,s->input.state.data.q2r.delta_angles);
         }
         return true;

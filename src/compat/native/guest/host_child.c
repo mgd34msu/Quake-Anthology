@@ -10,6 +10,7 @@
 #include <spawn.h>
 #include <stdio.h>
 #include <sys/socket.h>
+#include <sys/syscall.h>
 #include <sys/wait.h>
 #include <unistd.h>
 extern char **environ;
@@ -20,7 +21,7 @@ struct guest_host_child {
     qa_native_target target;
     int descriptor;
     int64_t process;
-    uint64_t sequence;
+    uint64_t sequence,thread;
     unsigned running,callback_depth;
     bool failed,source_initialized,state_written;
     guest_host_memory *memory;
@@ -368,7 +369,7 @@ static bool server_dispatch(host_server *server,host_packet *packet,bool *comple
         bool saved_stopped=server->stopped,saved_syscalls=server->syscalls;
         server->stop=qa_load_u64le(data);server->run_sequence=packet->sequence;
         server->syscalls=data[8]!=0;
-        bool entered=server->stop && server_profile(server,GUEST_PROFILE_GUARD_ENTER,&state,&failure);
+        bool entered=(server->stop || server->syscalls) && server_profile(server,GUEST_PROFILE_GUARD_ENTER,&state,&failure);
         okay=entered && guest_host_x86_64_enter(&state,&failure);
         if(entered) {
             qa_error leave_error={0};
@@ -408,14 +409,17 @@ bool guest_host_child_bootstrap(int argc,char *const *argv,bool *handled,int *st
         guest_profile_cpu_domain_read(&server.state,&server.capability,&server.domain,error) &&
         guest_host_x86_64_bridge_open(server_stop,&server,error);
     qa_buffer hardware={0},body={0};
+    long thread=okay?syscall(SYS_gettid):-1;
+    if(okay && thread<=0)okay=fail(error,QA_ERROR_ARGUMENT,0,"reading actual child thread identity failed");
     if(okay) okay=state_encode(&server.state,&hardware,error);
-    if(okay) {body.size=40+hardware.size;body.data=malloc(body.size);
+    if(okay) {body.size=48+hardware.size;body.data=malloc(body.size);
         if(!body.data)okay=fail(error,QA_ERROR_MEMORY,body.size,"owning actual child READY receipt");}
     if(okay) {
         qa_store_u64le(body.data,server.capability.xfeatures);qa_store_u32le(body.data+8,server.capability.xsave_bytes);qa_store_u32le(body.data+12,server.capability.mxcsr_mask);
         qa_store_u32le(body.data+16,server.profile.policy);qa_store_u32le(body.data+20,server.profile.version);
         qa_store_u64le(body.data+24,(uint64_t)getpid());qa_store_u64le(body.data+32,(uint64_t)getpgrp());
-        memcpy(body.data+40,hardware.data,hardware.size);okay=packet_send(server.descriptor,HOST_READY,0,0,(qa_bytes){body.data,body.size},-1,error);
+        qa_store_u64le(body.data+40,(uint64_t)thread);
+        memcpy(body.data+48,hardware.data,hardware.size);okay=packet_send(server.descriptor,HOST_READY,0,0,(qa_bytes){body.data,body.size},-1,error);
     }
     qa_buffer_free(&hardware);qa_buffer_free(&body);
     if(!okay) {qa_error transport={0};reply_failure(server.descriptor,HOST_READY,0,error,&transport);}
@@ -468,13 +472,15 @@ bool guest_host_child_create(const guest_host_child_options *options,guest_host_
             qa_error_set(error,status,0,"native child did not admit its actual source profile: %.*s",
                 ready.body.size>INT_MAX?INT_MAX:(int)ready.body.size,ready.body.data?(char *)ready.body.data:"");
         }
-        okay=ready.operation==HOST_READY && !ready.sequence && !ready.status && ready.descriptor<0 && ready.body.size>=40 &&
-            qa_load_u64le(ready.body.data+24)==(uint64_t)process && qa_load_u64le(ready.body.data+32)==(uint64_t)process;
+        okay=ready.operation==HOST_READY && !ready.sequence && !ready.status && ready.descriptor<0 && ready.body.size>=48 &&
+            qa_load_u64le(ready.body.data+24)==(uint64_t)process && qa_load_u64le(ready.body.data+32)==(uint64_t)process &&
+            qa_load_u64le(ready.body.data+40)>0 && qa_load_u64le(ready.body.data+40)<=(uint64_t)INT_MAX;
         if(okay) {
             child->capability=(guest_host_x86_64_capabilities){qa_load_u64le(ready.body.data),qa_load_u32le(ready.body.data+8),qa_load_u32le(ready.body.data+12)};
             child->profile=(guest_profile_guard_receipt){qa_load_u32le(ready.body.data+16),qa_load_u32le(ready.body.data+20)};
+            child->thread=qa_load_u64le(ready.body.data+40);
             okay=child->profile.policy==GUEST_PROFILE_GUARD_SOURCE_X64 && child->profile.version==GUEST_PROFILE_GUARD_SOURCE_VERSION &&
-                state_decode((qa_bytes){ready.body.data+40,ready.body.size-40},&child->capability,&child->state,error) &&
+                state_decode((qa_bytes){ready.body.data+48,ready.body.size-48},&child->capability,&child->state,error) &&
                 guest_profile_cpu_domain_read(&child->state,&child->capability,&child->domain,error);
         }
         packet_free(&ready);
@@ -499,6 +505,12 @@ bool guest_host_child_source_domain(const guest_host_child *child,guest_profile_
 {
     if(!usable(child) || !out)return fail(error,QA_ERROR_ARGUMENT,0,"source CPU domain requires its actual stopped child");
     *out=child->domain;return true;
+}
+bool guest_host_child_process_read(const guest_host_child *child,uint64_t *process,uint64_t *thread,qa_error *error)
+{
+    if(!usable(child) || !process || !thread || child->process<=0 || !child->thread)
+        return fail(error,QA_ERROR_ARGUMENT,0,"native process identity requires its actual stopped child");
+    *process=(uint64_t)child->process;*thread=child->thread;return true;
 }
 bool guest_host_child_source_initialize(guest_host_child *child,qa_error *error)
 {
@@ -602,10 +614,10 @@ static bool child_run(guest_host_child *child,uint64_t start,uint64_t stop,
 {
     if(program_stopped)*program_stopped=false;
     uint8_t trap;
-    if(!usable(child) || !start || !stop || !invoke || child->running==UINT_MAX || child->sequence==UINT64_MAX ||
+    if(!usable(child) || !start || (!stop && !syscall) || !invoke || child->running==UINT_MAX || child->sequence==UINT64_MAX ||
         !guest_host_memory_check(child->memory,start,1,QA_NATIVE_GUEST_EXECUTE,error) ||
-        !guest_host_memory_check(child->memory,stop,1,QA_NATIVE_GUEST_READ|QA_NATIVE_GUEST_EXECUTE,error) ||
-        !guest_host_memory_read(child->memory,stop,&trap,1,error) || trap!=0xcc)
+        (stop && (!guest_host_memory_check(child->memory,stop,1,QA_NATIVE_GUEST_READ|QA_NATIVE_GUEST_EXECUTE,error) ||
+        !guest_host_memory_read(child->memory,stop,&trap,1,error) || trap!=0xcc)))
         return fail(error,QA_ERROR_ARGUMENT,start,"native invocation requires genuine owned return trap and stopped callbacks");
     if(!guest_profile_cpu_current(&child->domain,&child->capability,&child->state,error))return false;
     child->state.instruction=start;qa_buffer hardware={0},body={0};
@@ -747,6 +759,8 @@ bool guest_host_child_profile_read(const guest_host_child *child,guest_profile_g
 {(void)child;(void)out;return fail(error,QA_ERROR_UNSUPPORTED,0,"native instruction monitor platform is unavailable");}
 bool guest_host_child_source_domain(const guest_host_child *child,guest_profile_cpu_domain *out,qa_error *error)
 {(void)child;(void)out;return fail(error,QA_ERROR_UNSUPPORTED,0,"native source CPU domain platform is unavailable");}
+bool guest_host_child_process_read(const guest_host_child *child,uint64_t *process,uint64_t *thread,qa_error *error)
+{(void)child;(void)process;(void)thread;return fail(error,QA_ERROR_UNSUPPORTED,0,"native child process identity platform is unavailable");}
 bool guest_host_child_source_initialize(guest_host_child *child,qa_error *error)
 {(void)child;return fail(error,QA_ERROR_UNSUPPORTED,0,"native source CPU initialization platform is unavailable");}
 bool guest_host_child_destroy(guest_host_child **owner,qa_error *error)

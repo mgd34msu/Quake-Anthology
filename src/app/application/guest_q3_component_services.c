@@ -3,19 +3,51 @@
 static bool source_config(void *context,uint32_t index,const char **out,qa_error *e)
 { return application_q3_component_source_configstring(((application_q3_component *)context)->source,index,out,e); }
 static bool source_set_config(void *context,uint32_t index,const char *text,qa_error *e)
-{ return application_q3_component_source_set_configstring(((application_q3_component *)context)->source,index,text,e); }
-static bool source_command(void *context,int32_t slot,const char *text,qa_error *e)
-{ return application_q3_component_source_command(((application_q3_component *)context)->source,slot,text,e); }
-static bool actual_client(application_q3_component *c,uint32_t slot,qa_actor_id *actor,qa_error *e)
 {
+    application_q3_component *c=context;
+    return application_q3_component_source_set_configstring(c->source,index,text,e);
+}
+static bool find_client(application_q3_component *,uint32_t,qa_actor_id *,bool *,qa_error *);
+static bool source_command(void *context,int32_t slot,const char *text,qa_error *e)
+{
+    application_q3_component *c=context;
+    qa_actor_id recipient={0};
+    if(slot!=-1) {
+        bool found=false;
+        if(slot<0) return true;
+        if(!find_client(c,(uint32_t)slot,&recipient,&found,e)) return false;
+        if(!found) return true;
+    }
+    return application_q3_component_source_command(c->source,slot,text,e)&&
+        c->options.source_command_event&&c->options.source_command_event(c->options.context,recipient,text,c->milliseconds,e);
+}
+static bool find_client(application_q3_component *c,uint32_t slot,qa_actor_id *actor,bool *found,qa_error *e)
+{
+    *found=false;
     for(size_t i=0;c->records&&i<c->records->actor_count;++i) {
         component_actor row=c->records->actors[i];
-        if(row.slot==slot&&row.client&&!row.retired&&c->options.clients.current&&c->options.clients.current(c->options.clients.context,row.actor)) { *actor=row.actor; return true; }
+        if(row.slot==slot&&row.client&&!row.retired) {
+            if(!c->options.clients.current||!c->options.clients.current(c->options.clients.context,row.actor))
+                return q3records_fail(e,QA_ERROR_ARGUMENT,"Component client binding lost its retained physical source");
+            *actor=row.actor; *found=true; return true;
+        }
     }
+    return true;
+}
+static bool actual_client(application_q3_component *c,uint32_t slot,qa_actor_id *actor,qa_error *e)
+{
+    bool found=false;
+    if(!find_client(c,slot,actor,&found,e)) return false;
+    if(found) return true;
     return q3records_fail(e,QA_ERROR_NOT_FOUND,"Component service has no actual bound client identity");
 }
 static bool userinfo(void *context,uint32_t slot,const char **out,qa_error *e)
-{ application_q3_component *c=context; qa_actor_id actor; return actual_client(c,slot,&actor,e)&&c->options.clients.userinfo&&c->options.clients.userinfo(c->options.clients.context,actor,out,e); }
+{
+    application_q3_component *c=context; qa_actor_id actor; bool found=false;
+    if(!out||!find_client(c,slot,&actor,&found,e)) return false;
+    if(!found) { *out=""; return true; }
+    return c->options.clients.userinfo&&c->options.clients.userinfo(c->options.clients.context,actor,out,e);
+}
 static bool set_userinfo(void *context,uint32_t slot,const char *text,qa_error *e)
 { application_q3_component *c=context; qa_actor_id actor; return actual_client(c,slot,&actor,e)&&c->options.clients.set_userinfo&&c->options.clients.set_userinfo(c->options.clients.context,actor,text,e); }
 static bool user_command(void *context,uint32_t slot,qa_q3_usercmd *out,qa_error *e)
@@ -24,16 +56,20 @@ static bool user_command(void *context,uint32_t slot,qa_q3_usercmd *out,qa_error
     if(!out||!actual_client(c,slot,&actor,e)) return false;
     application_q3_mod_inputs inputs={0}; bool found=false;
     if(!application_q3_mod_input_current(c->mod,actor,&inputs,&found,e)) return false;
+    qa_q3_player state;
+    if(!qa_q3_host_source_player(c->host,slot,&state,e)) return false;
     if(found) {
-        qa_q3_player state;
         if(!c->options.clients.active_command) return q3records_fail(e,QA_ERROR_ARGUMENT,"Component usercmd has no actual active command converter");
-        if(!qa_q3_host_source_player(c->host,slot,&state,e)) return false;
         return c->options.clients.active_command(c->options.clients.context,actor,&inputs,&state,out,e);
     }
-    return c->options.clients.command&&c->options.clients.command(c->options.clients.context,actor,out,e);
+    return c->options.clients.command&&c->options.clients.command(c->options.clients.context,actor,&state,out,e);
 }
 static bool drop(void *context,uint32_t slot,const char *reason,qa_error *e)
-{ application_q3_component *c=context; qa_actor_id actor; return actual_client(c,slot,&actor,e)&&c->options.clients.drop&&c->options.clients.drop(c->options.clients.context,actor,reason,e); }
+{
+    application_q3_component *c=context; qa_actor_id actor; bool found=false;
+    if(!find_client(c,slot,&actor,&found,e)) return false;
+    return !found||(c->options.clients.drop&&c->options.clients.drop(c->options.clients.context,c->options.host.owner,actor,reason,e));
+}
 static uint32_t milliseconds(void *context) { return (uint32_t)((application_q3_component *)context)->milliseconds; }
 static int32_t calendar(void *context,qa_q3_host_calendar *out)
 {
@@ -107,6 +143,8 @@ bool q3component_syscall(void *context,const qa_qvm_call *call,int32_t trap,int3
             if(row->address==(uint32_t)clients&&row->stride==(uint32_t)client_stride&&(c->player_record==SIZE_MAX||i==c->player_record)) found=true;
         }
         if(!found) return q3records_fail(e,QA_ERROR_FORMAT,"Component LocateGameData has another client record");
+        *result=0;
+        return q3component_current(c,e)&&application_q3_component_records_refresh(c->records,e);
     }
     bool ok=c->lower.syscall(c->lower.context,call,trap,result,e);
     if(ok) ok=q3component_current(c,e)&&application_q3_component_records_refresh(c->records,e);

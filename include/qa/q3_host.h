@@ -20,6 +20,7 @@ typedef struct qa_text_field qa_text_field;
 typedef struct qa_script_defines qa_script_defines;
 typedef struct qa_q3_key qa_q3_key;
 typedef struct qa_q3_presentation qa_q3_presentation;
+typedef struct qa_q3_presentation_assets qa_q3_presentation_assets;
 typedef struct qa_font_library qa_font_library;
 typedef struct qa_scene_image qa_scene_image;
 typedef struct qa_q3_ref_entity qa_q3_ref_entity;
@@ -362,6 +363,8 @@ typedef struct qa_q3_host_client_context {
 /* Pure borrowed identity, valid during the host's synchronous source callbacks.
  * frontend_lifetime stays owned by the host and must not be released here. */
 bool qa_q3_host_client_context_read(const qa_q3_host *, qa_q3_host_client_context *);
+/* Pure identity of this live host's actual renderer model registry. */
+qa_q3_presentation_assets *qa_q3_host_presentation_resources(const qa_q3_host *);
 bool qa_q3_host_retire_input(qa_q3_host *, uint32_t, bool retired, qa_error *);
 typedef struct qa_q3_host_visibility {
     int32_t area, area2, last_cluster, clusters[16];

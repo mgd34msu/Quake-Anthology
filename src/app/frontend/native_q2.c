@@ -450,14 +450,9 @@ static bool platform_sound_body(void *context, const qa_native_host_sound *event
     if (!frontend->audio) return true;
     if (!event || !event->name || !*event->name)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "native Q2 sound lacks its canonical source resource name");
-    uint32_t audience = QA_AUDIO_WORLD;
-    if (event->client.registry) {
-        for (audience = 0; audience < frontend->options.seats; ++audience) {
-            qa_actor_id actor;
-            if (frontend_seat_actor_read(frontend,audience,&actor) && qa_actor_id_equal(actor,event->client)) break;
-        }
-        if (audience == frontend->options.seats) return true;
-    }
+    if (!event->audience_captured || !event->recipient_count) return true;
+    if (!event->recipients)
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Native Q2 sound lost its captured full recipient identities");
     if (!source_files(source, error)) return false;
     qa_audio_asset *asset = NULL;
     if (!qa_audio_bank_register(source->sounds, event->name, QA_AUDIO_Q2, &asset, error)) return false;
@@ -466,11 +461,22 @@ static bool platform_sound_body(void *context, const qa_native_host_sound *event
     if (event->actor.registry && actor == QA_AUDIO_NO_ACTOR) { qa_audio_asset_release(asset); return false; }
     qa_audio_play sound = {.sample = qa_audio_asset_sample(asset), .asset = asset,
         .resource_id = qa_resource_id(qa_audio_asset_resource(asset)), .name = event->name, .family = QA_AUDIO_Q2,
-        .actor = actor, .owner = source->identity, .audience = audience,
-        .origin_kind = event->local ? QA_AUDIO_LOCAL : event->positioned ? QA_AUDIO_FIXED : QA_AUDIO_ACTOR,
+        .actor = actor, .owner = source->identity,
+        .origin_kind = event->positioned ? QA_AUDIO_FIXED : QA_AUDIO_ACTOR,
         .origin_actor = actor, .origin = event->origin, .channel = event->channel,
         .volume = event->volume, .attenuation = event->attenuation, .delay_seconds = event->time_offset};
-    bool ok = qa_audio_engine_play(frontend->audio, &sound, (int32_t)((frontend->time_ns / 1000000) & INT32_MAX), error);
+    bool ok = true;
+    for (uint32_t seat = 0; ok && seat < frontend->options.seats; ++seat) {
+        qa_actor_id recipient;
+        if (!frontend_seat_actor_read(frontend, seat, &recipient)) continue;
+        bool admitted = false;
+        for (size_t i = 0; i < event->recipient_count; ++i)
+            if (qa_actor_id_equal(recipient, event->recipients[i])) { admitted = true; break; }
+        if (!admitted) continue;
+        sound.audience = seat;
+        ok = qa_audio_engine_play(frontend->audio, &sound,
+            (int32_t)((frontend->time_ns / 1000000) & INT32_MAX), error);
+    }
     qa_audio_asset_release(asset); return ok;
 }
 static bool platform_hud_view_body(void *context, uint32_t launch_seat,

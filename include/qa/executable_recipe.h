@@ -72,8 +72,8 @@ typedef struct qa_recipe_provider {
 typedef struct qa_executable_recipe qa_executable_recipe;
 struct qa_application_content_visitor;
 
-/* The source caller supplies its actual observed sidecars, including misses.
- * Publication reads real held launch/content owners, not an application save. */
+/* Publication uses the actual retained initial map sidecars, including misses.
+ * Optional supplied rows must exactly match that genuine admission inventory. */
 bool qa_application_unified_offer(qa_application *, uint32_t epoch,
     const char *mode, uint32_t max_clients, const qa_recipe_sidecar *, size_t,
     qa_unified_document **owned, qa_error *);

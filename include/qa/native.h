@@ -480,6 +480,9 @@ bool qa_native_declaration_load(qa_bytes json, const char *artifact_path,
 void qa_native_declaration_destroy(qa_native_declaration *declaration);
 const qa_sha256_digest *qa_native_declaration_digest(const qa_native_declaration *declaration);
 qa_bytes qa_native_declaration_primary(const qa_native_declaration *declaration);
+/* The original callback document is a distinct contract. A primary wrapper
+ * has no callback document, and a callback document has no primary wrapper. */
+qa_bytes qa_native_declaration_callbacks(const qa_native_declaration *declaration);
 
 typedef struct qa_native_declared_region {
     uint32_t id;

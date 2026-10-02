@@ -50,6 +50,8 @@ typedef struct qa_save_record {
     qa_bytes payload;
 } qa_save_record;
 typedef struct qa_save_image qa_save_image;
+typedef struct qa_native_resource_inventory qa_native_resource_inventory;
+typedef bool (*qa_save_native_release_fn)(qa_native_resource_inventory **, qa_error *);
 
 /* The image owns every descriptor string and payload. Decoding verifies the
  * complete envelope digest before allocating, then validates the owner set.
@@ -58,7 +60,16 @@ bool qa_save_image_create(const qa_save_metadata *, const qa_save_record *, size
                            qa_save_image **, qa_error *);
 bool qa_save_image_decode(qa_bytes, qa_save_image **, qa_error *);
 bool qa_save_image_encode(const qa_save_image *, qa_buffer *, qa_error *);
-void qa_save_image_destroy(qa_save_image *);
+/* Checked release consumes the image only after all attached native references
+ * close successfully. A refusal retains *image for retry; that retiring image
+ * can no longer be encoded or used as an active capability graph. */
+bool qa_save_image_destroy_checked(qa_save_image **, qa_error *);
+/* Transfers the actual inventory on success. No pointer enters the encoded
+ * image. A decoded image requires its real external graph to be attached by
+ * the preparation owner before restoring native capabilities. */
+bool qa_save_image_native_attach(qa_save_image *, qa_native_resource_inventory *,
+    qa_save_native_release_fn, qa_error *);
+const qa_native_resource_inventory *qa_save_image_native_read(const qa_save_image *);
 const qa_save_metadata *qa_save_image_metadata(const qa_save_image *);
 size_t qa_save_image_record_count(const qa_save_image *);
 const qa_save_record *qa_save_image_record_at(const qa_save_image *, size_t);
@@ -75,7 +86,12 @@ typedef struct qa_save_capture_ops {
     bool (*capture)(void *, const qa_save_owner *, qa_buffer *, qa_error *);
     bool (*validate)(void *, const qa_save_image *, qa_error *);
     void (*end)(void *);
+    /* Move captured external holds into the genuine image before the capture
+     * scope ends. Failure leaves every untransferred hold with its producer. */
+    bool (*attach)(void *, qa_save_image *, qa_error *);
 } qa_save_capture_ops;
+/* A failed capture can return a retained image only when actual checked native
+ * cleanup refuses. The caller must keep it and retry checked destruction. */
 bool qa_save_capture(void *, const qa_save_capture_ops *, qa_save_purpose,
                       qa_save_image **, qa_error *);
 

@@ -253,6 +253,8 @@ typedef bool (*qa_application_q3_client_prepare_fn)(void *, qa_application *,
 struct application_q3_component_scene_preparation;
 typedef bool (*qa_application_q3_component_scene_prepare_fn)(void *,
     const struct application_q3_component_scene_preparation *,qa_error *);
+typedef bool (*qa_application_q3_component_client_drop_fn)(void *,qa_actor_owner,
+    qa_actor_id,const char *,qa_error *);
 /* Qualifies a physical shared registry by its retained source constructor.
  * found=false leaves genuine provider-private registries with their owner. */
 typedef bool (*qa_application_q3_client_registry_reference_fn)(void *, const qa_cvars *,
@@ -305,6 +307,7 @@ typedef struct qa_application_options {
     qa_application_q3_services_fn q3_services;
     qa_application_q3_client_prepare_fn q3_client_prepare;
     qa_application_q3_component_scene_prepare_fn q3_component_scene_prepare;
+    qa_application_q3_component_client_drop_fn q3_component_client_drop;
     qa_application_q3_client_registry_reference_fn q3_client_registry_reference;
     qa_application_q3_client_effect_fn q3_client_effect;
     qa_application_q3_campaign_command_fn q3_campaign_command;

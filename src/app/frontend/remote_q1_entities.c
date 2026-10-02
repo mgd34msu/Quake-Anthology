@@ -62,7 +62,13 @@ bool frontend_remote_q1_entity_at(frontend_remote_q1 *row, size_t index, fronten
         out->bottom_color = (colors & 15) > 13 ? 13 : colors & 15;
     }
     if (qa_q1_is_qw(row->options.domain.protocol) && row->qw_intermission && weapon) out->visible = false;
-    if (qa_q1_is_qw(row->options.domain.protocol) && row->qw.spectator && weapon) out->visible = false;
+    const remote_q1_camera_view *camera = remote_q1_camera_read(row);
+    if (qa_q1_is_qw(row->options.domain.protocol) && row->qw.spectator) {
+        if (weapon) {
+            out->visible = out->visible && camera && camera->chase;
+            if (camera && camera->chase) out->entity.frame = camera->target_weapon_frame;
+        } else if (camera && camera->chase && value.number == (uint32_t)camera->target_slot+1) out->visible = false;
+    }
     return true;
 }
 bool frontend_remote_q1_client_at(const frontend_remote_q1 *row, uint32_t slot, frontend_remote_q1_client_row *out, qa_error *error)
@@ -90,7 +96,8 @@ bool frontend_remote_q1_player_read(frontend_remote_q1 *row, frontend_remote_q1_
         .origin = qa_v3(value.origin[0], value.origin[1], value.origin[2]), .angles = row->view_angles,
         .kick_angles = qa_v3(row->data.punch[0], row->data.punch[1], row->data.punch[2]),
         .velocity = qa_v3(row->data.velocity[0], row->data.velocity[1], row->data.velocity[2]),
-        .view_height = row->data.viewheight, .ideal_pitch = row->data.idealpitch, .grounded = row->data.onground};
+        .view_height = row->data.viewheight, .ideal_pitch = row->data.idealpitch, .grounded = row->data.onground,
+        .intermission = row->intermission || row->qw_intermission};
     if (row->qw_intermission) {
         out->origin = row->qw_intermission_origin; out->angles = row->qw_intermission_angles;
         out->view_height = 0; out->kick_angles = qa_v3(0, 0, 0); out->pitch_drift_disabled = true; out->grounded = false;
@@ -103,6 +110,13 @@ bool frontend_remote_q1_player_read(frontend_remote_q1 *row, frontend_remote_q1_
         out->view_height = height; out->grounded = predicted.ground.hit != QA_TRACE_HIT_NONE; out->ideal_pitch = 0;
     }
     if (qa_q1_is_qw(row->options.domain.protocol) && row->qw.spectator) out->pitch_drift_disabled = true;
+    const remote_q1_camera_view *camera = remote_q1_camera_read(row);
+    if (!row->qw_intermission && row->qw.spectator && camera) {
+        out->origin = camera->origin; out->angles = camera->angles;
+        out->view_height = camera->chase && (camera->target_flags & QA_QW_PF_DEAD) ? -16 : 22;
+        out->kick_angles = qa_v3(0,0,0); out->grounded = false; out->ideal_pitch = 0;
+        out->pitch_drift_disabled = true;
+    }
     return remote_q1_live(row, error);
 }
 bool frontend_remote_q1_receive_end(frontend_remote_q1 *row, uint64_t received, qa_error *error)

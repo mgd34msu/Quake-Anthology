@@ -24,5 +24,9 @@ bool frontend_kex_browser_restore(qa_bytes, qa_server_browser *,
     const frontend_kex_browser_hooks *, frontend_kex_browser **, qa_error *);
 bool frontend_kex_browser_activate(frontend_kex_browser *, qa_error *);
 bool frontend_kex_browser_publish(frontend_kex_browser *, qa_error *);
+bool frontend_kex_browser_handoff_ready(const frontend_kex_browser *active,
+    const frontend_kex_browser *candidate, qa_error *);
+bool frontend_kex_browser_handoff(frontend_kex_browser *active,
+    frontend_kex_browser *candidate, qa_error *);
 
 #endif

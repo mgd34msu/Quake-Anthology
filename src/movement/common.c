@@ -117,7 +117,7 @@ qa_vec3 qa_movement_origin(const qa_movement_state *s) {
     switch (s->kind) {
     case QA_MOVEMENT_NETQUAKE: return s->data.nq.origin;
     case QA_MOVEMENT_QUAKEWORLD: return qa_qw_origin_to_vec3(s->data.qw.origin);
-    case QA_MOVEMENT_Q2_CLASSIC: return qa_v3(s->data.q2.origin_eighths[0]*0.125f,s->data.q2.origin_eighths[1]*0.125f,s->data.q2.origin_eighths[2]*0.125f);
+    case QA_MOVEMENT_Q2_CLASSIC: return qa_v3((float)qa_q2_movement_coordinate(&s->data.q2,false,0)*0.125f,(float)qa_q2_movement_coordinate(&s->data.q2,false,1)*0.125f,(float)qa_q2_movement_coordinate(&s->data.q2,false,2)*0.125f);
     case QA_MOVEMENT_Q2_RERELEASE: return s->data.q2r.origin;
     case QA_MOVEMENT_Q3: return s->data.q3.origin;
     }
@@ -128,7 +128,7 @@ qa_vec3 qa_movement_velocity(const qa_movement_state *s) {
     switch (s->kind) {
     case QA_MOVEMENT_NETQUAKE: return s->data.nq.velocity;
     case QA_MOVEMENT_QUAKEWORLD: return s->data.qw.velocity;
-    case QA_MOVEMENT_Q2_CLASSIC: return qa_v3(s->data.q2.velocity_eighths[0]*0.125f,s->data.q2.velocity_eighths[1]*0.125f,s->data.q2.velocity_eighths[2]*0.125f);
+    case QA_MOVEMENT_Q2_CLASSIC: return qa_v3((float)qa_q2_movement_coordinate(&s->data.q2,true,0)*0.125f,(float)qa_q2_movement_coordinate(&s->data.q2,true,1)*0.125f,(float)qa_q2_movement_coordinate(&s->data.q2,true,2)*0.125f);
     case QA_MOVEMENT_Q2_RERELEASE: return s->data.q2r.velocity;
     case QA_MOVEMENT_Q3: return s->data.q3.velocity;
     }
@@ -144,13 +144,19 @@ static bool write_vector(qa_movement_state *s, qa_vec3 value, bool velocity, qa_
     case QA_MOVEMENT_QUAKEWORLD:
         if (velocity) s->data.qw.velocity=value; else s->data.qw.origin=qa_qw_origin_from_vec3(value); break;
     case QA_MOVEMENT_Q2_CLASSIC: {
-        int16_t words[3];
+        int32_t words[3];
+        float modulus=s->data.q2.wide_coordinates?8388608.0f:65536.0f;
         for (unsigned axis=0;axis<3;axis++) {
             float scaled=qa_move_component(value,axis)*8.0f;
             if (!isfinite(scaled)) { qa_error_set(error,QA_ERROR_ARGUMENT,axis,"Movement eighth conversion overflow"); return false; }
-            words[axis]=qa_move_short((int32_t)fmodf(truncf(scaled),65536.0f));
+            float wrapped=fmodf(truncf(scaled),modulus);
+            if (wrapped<0) wrapped+=modulus;
+            words[axis]=(int32_t)wrapped;
+            if (wrapped>=modulus*0.5f) words[axis]-=(int32_t)modulus;
         }
-        memcpy(velocity?s->data.q2.velocity_eighths:s->data.q2.origin_eighths,words,sizeof(words)); break;
+        for (unsigned axis=0;axis<3;axis++)
+            qa_q2_movement_coordinate_set(&s->data.q2,velocity,axis,words[axis]);
+        break;
     }
     case QA_MOVEMENT_Q2_RERELEASE:
         if (velocity) s->data.q2r.velocity=value; else s->data.q2r.origin=value; break;

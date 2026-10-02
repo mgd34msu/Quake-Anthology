@@ -5,6 +5,11 @@
 #include <stdalign.h>
 #include <string.h>
 static bool source_issue(qa_material_source_scratch *, qa_scene_frame *, bool, qa_error *);
+static bool stencil_material(const qa_material *material)
+{
+    qa_material_registration_kind kind;
+    return qa_material_registration_read(material, &kind) && kind == QA_MATERIAL_STENCIL_SHADOW;
+}
 
 static bool blend_enabled(const qa_material_stage *stage)
 {
@@ -36,7 +41,7 @@ static void *frame_array(qa_scene_frame *frame, size_t count, size_t size, size_
     if (count == 0) return NULL;
     return qa_arena_alloc(&frame->storage, count * size, alignment, error);
 }
-static bool texture(const qa_material_stage *stage, const qa_material_context *context,
+static bool original_texture(const qa_material_stage *stage, const qa_material_context *context,
                     float time, const qa_scene_image **out, qa_error *error)
 {
     if (stage->retain_texture) { *out = NULL; return true; }
@@ -68,6 +73,22 @@ static bool texture(const qa_material_stage *stage, const qa_material_context *c
         qa_error_set(error, QA_ERROR_NOT_FOUND, index, "Material animation contains an unloaded image");
         return false;
     }
+    return true;
+}
+static bool texture(const qa_material *material, const qa_material_stage *stage, const qa_material_context *context,
+                    float time, const qa_scene_image **out, qa_error *error)
+{
+    if (!original_texture(stage, context, time, out, error)) return false;
+    if (!*out || !context->source_recipient_image) return true;
+    const qa_scene_image *image = NULL;
+    bool mipmap = !material->no_mipmaps && !stage->video && !stage->is_lightmap;
+    if (!context->source_recipient_image(context->source_recipient_context, *out,
+        !material->no_picmip && mipmap, mipmap, &image, error)) return false;
+    if (!image) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Source recipient lost its reached image version");
+        return false;
+    }
+    *out = image;
     return true;
 }
 static bool same_wave(qa_material_wave a, qa_material_wave b)
@@ -129,6 +150,8 @@ static qa_scene_draw initial_draw(const qa_material *material, const qa_material
     draw.fog_index = context->fog_index;
     draw.light_mask = context->light_mask;
     draw.source_primitives = context->source_primitives;
+    draw.source_retain_depth_range = context->source_scratch != NULL;
+    draw.source_retain_polygon_offset = context->source_scratch != NULL;
     draw.sort_key = ((uint64_t)original->sorted_index << 17) | ((uint64_t)context->entity << 7) |
                     ((uint64_t)context->fog_index << 2) |
                     ((context->source_scratch ? context->source_dlighted : context->light_mask != 0) ? 1u : 0u);
@@ -246,11 +269,11 @@ static bool emit_stage(const qa_material *material, const qa_material *original,
     }
     if (context->source_depth_hack) { draw.state.depth_near = 0; draw.state.depth_far = .3f; }
     if (context->source_sky_depth) draw.state.depth_near = draw.state.depth_far = context->source_diagnostics.show_sky ? 0 : 1;
-    if (!texture(first_binding, context, time, &draw.textures[0], error)) return false;
+    if (!texture(material, first_binding, context, time, &draw.textures[0], error)) return false;
     draw.retain_texture[0] = first_binding->retain_texture;
     draw.texture_count = 1;
     if (second_binding != NULL) {
-        if (!texture(second_binding, context, time, &draw.textures[1], error)) return false;
+        if (!texture(material, second_binding, context, time, &draw.textures[1], error)) return false;
         draw.retain_texture[1] = second_binding->retain_texture;
         draw.texture_count = 2;
     }
@@ -498,34 +521,53 @@ static double shader_seconds(const qa_material *original, const qa_material *mat
 static void source_entity_read(qa_material_source_scratch *source, const qa_material_context *context)
 {
     source->entity = (material_source_entity){.color = context->entity_color,
-        .texcoord = context->entity_texcoord, .ambient = context->ambient, .directed = context->directed,
+        .texcoord = context->entity_texcoord, .model = context->model,
+        .ambient = context->ambient, .directed = context->directed,
         .light_direction = context->light_direction, .ambient_alpha = context->ambient_alpha,
         .time_offset = context->time_offset, .shadow_plane = context->shadow_plane,
         .number = context->entity, .non_normalized_axis = context->non_normalized_axis,
         .projection_shadow = context->projection_shadow};
     source->local_view_origin = context->local_view_origin;
+    source->light_count = context->light_count;
+    if (context->light_count) memcpy(source->lights, context->lights, context->light_count * sizeof(*context->lights));
+    source->entity_is_cell = context->source_entity_cell && context->entity < 1022;
+    if (source->entity_is_cell) {
+        source->entity_cell = context->entity;
+        material_source_entity *cell = source->entities + context->entity;
+        cell->ambient = context->ambient; cell->directed = context->directed;
+        cell->light_direction = context->light_direction; cell->ambient_alpha = context->ambient_alpha;
+    }
 }
 static void source_entity_apply(const qa_material_source_scratch *source, qa_material_context *context)
 {
-    context->entity_color = source->entity.color; context->entity_texcoord = source->entity.texcoord;
-    context->ambient = source->entity.ambient; context->directed = source->entity.directed;
-    context->light_direction = source->entity.light_direction; context->ambient_alpha = source->entity.ambient_alpha;
-    context->time_offset = source->entity.time_offset; context->shadow_plane = source->entity.shadow_plane;
-    context->entity = source->entity.number; context->non_normalized_axis = source->entity.non_normalized_axis;
-    context->projection_shadow = source->entity.projection_shadow;
+    const material_source_entity *entity = source->entity_is_cell ?
+        source->entities + source->entity_cell : &source->entity;
+    context->entity_color = entity->color; context->entity_texcoord = entity->texcoord;
+    context->model = source->entity.model;
+    context->ambient = entity->ambient; context->directed = entity->directed;
+    context->light_direction = entity->light_direction; context->ambient_alpha = entity->ambient_alpha;
+    context->time_offset = entity->time_offset; context->shadow_plane = entity->shadow_plane;
+    context->entity = source->entity.number; context->non_normalized_axis = entity->non_normalized_axis;
+    context->projection_shadow = entity->projection_shadow;
     context->local_view_origin = source->local_view_origin;
     context->fog_index = source->fog_index; context->fog = source->fog;
     context->fog_tc_scale = source->fog_tc_scale; context->fog_has_surface = source->fog_has_surface;
     context->fog_surface = source->fog_surface; context->fog_volume_color = source->fog_volume_color;
+    context->lightmap = source->lightmap;
+    context->lights = source->lights; context->light_count = source->light_count;
 }
 static bool source_begin_surface(qa_material_source_scratch *source,
     const material_source_submission *row, qa_error *error)
 {
     const qa_material *material = row->original->remapped ? row->original->remapped : row->original;
     if (!qa_material_retain(material, error)) return false;
+    if (!material_source_lightmap_set(source, row->context.lightmap, error)) {
+        qa_material_release(material); return false;
+    }
     const qa_material *previous = source->material;
     source->material = material; qa_material_release(previous);
     source->vertex_count = source->index_count = 0;
+    source->light_mask = 0;
     source->fog_index = row->context.fog_index; source->fog = row->context.fog;
     source->fog_tc_scale = row->context.fog_tc_scale; source->fog_has_surface = row->context.fog_has_surface;
     source->fog_surface = row->context.fog_surface; source->fog_volume_color = row->context.fog_volume_color;
@@ -535,6 +577,13 @@ static bool source_begin_surface(qa_material_source_scratch *source,
     source->shader_time = (float)seconds;
     return true;
 }
+static bool source_restart_surface(qa_material_source_scratch *source,
+    const material_source_submission *row, qa_error *error)
+{
+    material_source_submission restart = *row;
+    restart.original = source->material;
+    return source_begin_surface(source, &restart, error);
+}
 static bool source_debug(const qa_material *material, const qa_material *original,
     const qa_scene_mesh *mesh, const qa_material_context *context, qa_scene_frame *frame, qa_error *error)
 {
@@ -543,6 +592,8 @@ static bool source_debug(const qa_material *material, const qa_material *origina
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Source diagnostics lost their actual white image"); return false;
     }
     if (context->source_diagnostics.show_triangles) {
+        if (context->source_scratch && context->source_scratch->issuing &&
+            !material_source_depth_range(context->source_scratch, 0, 0, error)) return false;
         qa_scene_draw draw = initial_draw(material, original, *mesh, context);
         qa_scene_vertex *vertices = frame_array(frame, mesh->vertex_count, sizeof(*vertices), alignof(qa_scene_vertex), error);
         if (!vertices) return false;
@@ -552,8 +603,12 @@ static bool source_debug(const qa_material *material, const qa_material *origina
         draw.mesh.vertices = vertices; draw.textures[0] = context->source_diagnostics.no_bind ? material->dlight_image : context->source_white; draw.texture_count = 1;
         qa_scene_state_default(&draw.state); draw.state.depth_near = draw.state.depth_far = 0; draw.state.wireframe = true;
         if (!qa_scene_frame_draw(frame, &draw, error)) return false;
+        if (context->source_scratch && context->source_scratch->issuing &&
+            !material_source_depth_range(context->source_scratch, 0, 1, error)) return false;
     }
     if (context->source_diagnostics.show_normals) {
+        if (context->source_scratch && context->source_scratch->issuing &&
+            !material_source_depth_range(context->source_scratch, 0, 0, error)) return false;
         qa_scene_draw draw = initial_draw(material, original, *mesh, context);
         qa_scene_vertex *vertices = frame_array(frame, mesh->vertex_count * 2, sizeof(*vertices), alignof(qa_scene_vertex), error);
         uint32_t *indices = frame_array(frame, mesh->vertex_count * 2, sizeof(*indices), alignof(uint32_t), error);
@@ -569,6 +624,8 @@ static bool source_debug(const qa_material *material, const qa_material *origina
         draw.textures[0] = context->source_diagnostics.no_bind ? material->dlight_image : context->source_white; draw.texture_count = 1;
         qa_scene_state_default(&draw.state); draw.state.depth_near = draw.state.depth_far = 0;
         if (!qa_scene_frame_draw(frame, &draw, error)) return false;
+        if (context->source_scratch && context->source_scratch->issuing &&
+            !material_source_depth_range(context->source_scratch, 0, 1, error)) return false;
     }
     return true;
 }
@@ -583,6 +640,7 @@ static bool submit_source(const qa_material *original, const qa_material *materi
     if (!source->dispatching || context->source_writer == QA_SOURCE_WRITE_CLOUD)
         source->vertex_count = source->index_count = 0;
     bool cloud = context->source_writer == QA_SOURCE_WRITE_CLOUD;
+    bool stencil = stencil_material(material);
     bool grid = source->dispatching || context->source_grid_columns != 0;
     bool ok = cloud || (grid ? mesh->vertex_count <= QA_SOURCE_TESS_VERTICES && mesh->index_count <= QA_SOURCE_TESS_INDEXES :
         mesh->vertex_count < QA_SOURCE_TESS_VERTICES && mesh->index_count < QA_SOURCE_TESS_INDEXES);
@@ -619,7 +677,7 @@ static bool submit_source(const qa_material *original, const qa_material *materi
                 vertex.normal = previous.normal; vertex.lightmap = previous.lightmap; vertex.color.w = previous.color.w; break;
             case QA_SOURCE_WRITE_BSP: vertex.normal = previous.normal; break;
             case QA_SOURCE_WRITE_BSP_NORMAL:
-                if (material == context->source_default_material || material->kind == QA_MATERIAL_STENCIL_SHADOW)
+                if (material == context->source_default_material || stencil)
                     vertex.normal = previous.normal;
                 break;
             case QA_SOURCE_WRITE_CLOUD:
@@ -659,10 +717,21 @@ static bool submit_source(const qa_material *original, const qa_material *materi
         ok = indices != NULL;
         if (ok) { memcpy(indices, geometry.indices, geometry.index_count * sizeof(*indices)); geometry.indices = indices; }
     }
-    if (ok && !skipped && geometry.vertex_count && geometry.index_count)
-        ok = execute_material(material, original, &geometry, context, time, frame, error) &&
+    bool offset = ok && !skipped && geometry.vertex_count && geometry.index_count && material->polygon_offset;
+    if (ok && !skipped && geometry.vertex_count && geometry.index_count && source->issuing)
+        ok = material_source_cull(source, material_cull(material, context), error);
+    if (offset && source->issuing)
+        ok = material_source_polygon_offset(source, true, context->source_diagnostics.polygon_offset_factor,
+            context->source_diagnostics.polygon_offset_units, error);
+    if (ok && !skipped && geometry.vertex_count && geometry.index_count) {
+        ok = execute_material(material, original, &geometry, context, time, frame, error);
+        if (ok && offset && source->issuing)
+            ok = material_source_polygon_offset(source, false, context->source_diagnostics.polygon_offset_factor,
+                context->source_diagnostics.polygon_offset_units, error);
+        ok = ok &&
             (cloud || source_debug(material, original, &geometry, context, frame, error)) &&
             material_source_current(source, error);
+    }
     if (ok && !skipped && !cloud) source->index_count = 0; /* ordinary EndSurface */
     material_source_leave(source);
     return ok;
@@ -697,6 +766,13 @@ bool qa_material_source_scene_view(qa_material_source_scratch *source, const qa_
     source->view.diagnostics = input->source_diagnostics;
     source->view.read = input->source_diagnostics_read;
     source->view.context = input->source_diagnostics_context;
+    const qa_scene_light *lights = input->use_projected_lights ? input->projected_lights : input->lights;
+    size_t count = input->use_projected_lights ? input->projected_light_count : input->light_count;
+    if (count > 32 || (count && !lights)) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Source view has no admitted bounded light list"); return false;
+    }
+    source->view.light_count = count;
+    if (count) memcpy(source->view.lights, lights, count * sizeof(*lights));
     return true;
 }
 bool qa_material_source_scene_sky(qa_material_source_scratch *source, const qa_material_context *context, qa_error *error)
@@ -705,6 +781,10 @@ bool qa_material_source_scene_sky(qa_material_source_scratch *source, const qa_m
         !material_source_current(source, error)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Source sky requires its actual entered scene and iterator"); return false;
     }
+    if (context->source_sky_world && !qa_scene_world_retain(context->source_sky_world, error)) return false;
+    qa_scene_world_release(source->view.world);
+    source->view.world = context->source_sky_world;
+    source->view.far_clip = context->source_sky_far_clip;
     source->sky = *context; return true;
 }
 bool qa_material_source_picture_begin(qa_material_source_scratch *source, qa_scene_frame *frame,
@@ -785,13 +865,19 @@ static bool source_collect(const qa_material *original, const qa_scene_mesh *mes
         }
         row->context.texts = texts;
     }
+    if (!qa_material_retain(original, error)) return false;
+    if (context->source_light_world && !qa_scene_world_retain((qa_scene_world *)context->source_light_world, error)) {
+        qa_material_release(original); return false;
+    }
+    row->held_light_world = (qa_scene_world *)context->source_light_world;
     if (source->tail) source->tail->next = row; else source->head = row;
     source->tail = row; ++source->submission_count; return true;
 }
 static void source_append(qa_material_source_scratch *source, const material_source_submission *row)
 {
     size_t base = source->vertex_count;
-    const qa_material *material = row->original->remapped ? row->original->remapped : row->original;
+    const qa_material *material = source->material;
+    bool stencil = stencil_material(material);
     for (size_t i = 0; i < row->mesh.vertex_count; ++i) {
         qa_scene_vertex previous = source->vertices[base + i], vertex = row->mesh.vertices[i];
         switch (row->context.source_writer) {
@@ -802,7 +888,7 @@ static void source_append(qa_material_source_scratch *source, const material_sou
             vertex.normal = previous.normal; vertex.lightmap = previous.lightmap; vertex.color.w = previous.color.w; break;
         case QA_SOURCE_WRITE_BSP: vertex.normal = previous.normal; break;
         case QA_SOURCE_WRITE_BSP_NORMAL:
-            if (material == row->context.source_default_material || material->kind == QA_MATERIAL_STENCIL_SHADOW)
+            if (material == row->context.source_default_material || stencil)
                 vertex.normal = previous.normal;
             break;
         case QA_SOURCE_WRITE_CLOUD:
@@ -820,7 +906,8 @@ bool qa_material_source_commands(const qa_material *material, const qa_material_
 {
     qa_material_source_scratch *source = context ? context->source_scratch : NULL;
     if (!material || !source || !source->collecting || source->pictures || source->frame != frame ||
-        first > frame->command_count || !material_source_current(source, error)) return false;
+        first > frame->command_count || context->light_count > 32 ||
+        (context->light_count && !context->lights) || !material_source_current(source, error)) return false;
     if (source->submission_count == SIZE_MAX) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Source submission count is exhausted"); return false;
     }
@@ -833,6 +920,11 @@ bool qa_material_source_commands(const qa_material *material, const qa_material_
         if (!row->commands) return false;
         memcpy(row->commands, frame->commands + first, row->command_count * sizeof(*row->commands));
     }
+    if (!qa_material_retain(material, error)) return false;
+    if (context->source_light_world && !qa_scene_world_retain((qa_scene_world *)context->source_light_world, error)) {
+        qa_material_release(material); return false;
+    }
+    row->held_light_world = (qa_scene_world *)context->source_light_world;
     frame->command_count = first;
     if (source->tail) source->tail->next = row; else source->head = row;
     source->tail = row; ++source->submission_count; return true;
@@ -853,7 +945,7 @@ static bool source_flush(qa_material_source_scratch *source, const material_sour
     mesh.vertex_count = source->vertex_count; mesh.index_count = source->index_count;
     mesh.identity = mesh.revision = 0; mesh.geometry = NULL;
     size_t first = frame->command_count;
-    if (material->kind == QA_MATERIAL_STENCIL_SHADOW) {
+    if (stencil_material(material)) {
         if (source->indices[QA_SOURCE_TESS_INDEXES - 1] != 0 || source->vertices[QA_SOURCE_TESS_VERTICES - 1].position.x != 0) {
             qa_error_set(error, QA_ERROR_FORMAT, 0, "Source tess sentinel was overwritten"); return false;
         }
@@ -867,14 +959,21 @@ static bool source_flush(qa_material_source_scratch *source, const material_sour
         return source->issuing || qa_scene_frame_group(frame, first, QA_SCENE_GROUP_SEQUENCE, row->original,
             row->original->sort, context.entity, context.fog_index, 0, error);
     }
-    if (material->sky && context.source_surface) {
+    if (material->sky && (context.source_scratch || context.source_surface)) {
         if (source->indices[QA_SOURCE_TESS_INDEXES - 1] != 0 || source->vertices[QA_SOURCE_TESS_VERTICES - 1].position.x != 0) {
             qa_error_set(error, QA_ERROR_FORMAT, 0, "Source tess sentinel was overwritten"); return false;
         }
         if (context.source_diagnostics.debug_sort != 0 && context.source_diagnostics.debug_sort < material->sort) return true;
-        bool ok = context.source_surface(context.source_surface_context, row->original, material,
-            &mesh, &context, frame, error) && material_source_current(source, error);
+        bool depth_changed = source->issuing && !context.source_diagnostics.fast_sky;
+        if (depth_changed && !material_source_depth_range(source,
+            context.source_diagnostics.show_sky ? 0 : 1, context.source_diagnostics.show_sky ? 0 : 1, error)) return false;
+        bool ok = (context.source_scratch ?
+            qa_scene_world_source_sky_submit(source->world, row->original, material, &mesh, &context,
+                source->far_clip, frame, error) :
+            context.source_surface(context.source_surface_context, row->original, material,
+                &mesh, &context, frame, error)) && material_source_current(source, error);
         if (!ok) return false;
+        if (depth_changed && !material_source_depth_range(source, 0, 1, error)) return false;
         mesh.vertex_count = source->vertex_count; mesh.index_count = source->index_count;
         if (mesh.vertex_count && mesh.index_count &&
             !source_debug(material, row->original, &mesh, &context, frame, error)) return false;
@@ -920,7 +1019,9 @@ static bool source_dispatch_scene(qa_material_source_scratch *source, qa_scene_f
     }
     source->collecting = false; source->dispatching = true;
     const material_source_submission *batch = NULL;
-    uint32_t key = 0, light_mask = 0;
+    uint32_t key = 0, light_mask = source->pictures ? source->light_mask : 0;
+    uint32_t selected_entity = UINT32_MAX;
+    bool old_depth_range = false;
     for (size_t i = 0; ok && submit && i < count; ++i) {
         material_source_submission *row = rows[ordered[i]->ordinal];
         uint32_t next_key = ordered[i]->source_sort;
@@ -932,18 +1033,40 @@ static bool source_dispatch_scene(qa_material_source_scratch *source, qa_scene_f
             ok = source_flush(source, batch, light_mask, frame, error); batch = NULL;
         }
         if (!ok) break;
+        if (row->context.source_entity_cell && (row->context.entity >= 1022 ||
+            row->context.entity >= source->entity_count)) {
+            qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Source surface lost its actual admitted entity cell");
+            ok = false; break;
+        }
         if (!batch) {
             if (!source->pictures || row->original != source->material) {
+                if (source->pictures && source->material && source->index_count) {
+                    material_source_submission previous = *row;
+                    previous.original = source->material;
+                    ok = source_flush(source, &previous, source->light_mask, frame, error);
+                    if (!ok) break;
+                }
                 ok = source_begin_surface(source, row, error);
                 if (!ok) break;
-                if (source->pictures) source->entity = (material_source_entity){0};
+                if (source->pictures) {
+                    qa_scene_matrix orientation = source->entity.model;
+                    source->entity = (material_source_entity){.model = orientation};
+                    source->entity_is_cell = false;
+                }
             }
-            light_mask = 0;
+            light_mask = source->light_mask;
         }
-        if (!source->pictures) {
+        if (!source->pictures && row->context.entity != selected_entity) {
             source_entity_read(source, &row->context);
             source->shader_time = (float)shader_seconds(row->original, source->material, &row->context);
-        } else source_entity_apply(source, &row->context);
+            selected_entity = row->context.entity;
+            bool depth_range = row->context.entity != 1022 && row->context.source_depth_hack;
+            if (source->issuing && depth_range != old_depth_range &&
+                !material_source_depth_range(source, 0, depth_range ? .3f : 1, error)) {
+                ok = false; break;
+            }
+            old_depth_range = depth_range;
+        } else if (source->pictures) source_entity_apply(source, &row->context);
         if (row->context.source_light_world && !qa_scene_world_source_light_mask_read(
             row->context.source_light_world, row->context.source_light_surface, &row->context.light_mask, error)) {
             ok = false; break;
@@ -969,12 +1092,12 @@ static bool source_dispatch_scene(qa_material_source_scratch *source, qa_scene_f
                 row->mesh.vertex_count != columns * height || row->mesh.index_count != (columns - 1) * (height - 1) * 6) {
                 qa_error_set(error, QA_ERROR_FORMAT, 0, "Source grid lost its selected row/column topology"); ok = false; break;
             }
-            light_mask |= row->context.light_mask;
+            light_mask |= row->context.light_mask; source->light_mask = light_mask;
             size_t used = 0;
             bool first_slab = true;
             while (ok && used < height - 1) {
                 if (!batch && !first_slab) {
-                    ok = source_begin_surface(source, row, error); light_mask = 0;
+                    ok = source_restart_surface(source, row, error); light_mask = source->light_mask;
                     if (!ok) break;
                 }
                 first_slab = false;
@@ -1000,7 +1123,7 @@ static bool source_dispatch_scene(qa_material_source_scratch *source, qa_scene_f
             continue;
         }
         if (!rail && (row->mesh.vertex_count >= QA_SOURCE_TESS_VERTICES || row->mesh.index_count >= QA_SOURCE_TESS_INDEXES)) {
-            if (row->context.source_dlight_before_overflow) light_mask |= row->context.light_mask;
+            if (row->context.source_dlight_before_overflow) { light_mask |= row->context.light_mask; source->light_mask = light_mask; }
             if (batch) { ok = source_flush(source, batch, light_mask, frame, error); batch = NULL; }
             if (!ok) break;
             qa_error_set(error, QA_ERROR_FORMAT, 0, "Source surface exceeds tess sentinel limits"); ok = false; break;
@@ -1016,20 +1139,24 @@ static bool source_dispatch_scene(qa_material_source_scratch *source, qa_scene_f
                 part.mesh.index_count = 6; part.mesh.indices = indices;
                 for (size_t j = 0; j < 6; ++j) indices[j] = row->mesh.indices[piece * 6 + j] - (uint32_t)(piece * 4);
             }
-            if (row->context.source_dlight_before_overflow) light_mask |= row->context.light_mask;
-            if (batch && (part.mesh.vertex_count || part.mesh.index_count) &&
+            if (row->context.source_dlight_before_overflow) { light_mask |= row->context.light_mask; source->light_mask = light_mask; }
+            if ((part.mesh.vertex_count || part.mesh.index_count) &&
                 (source->vertex_count + part.mesh.vertex_count >= QA_SOURCE_TESS_VERTICES ||
                 source->index_count + part.mesh.index_count >= QA_SOURCE_TESS_INDEXES)) {
                 ok = source_flush(source, batch, light_mask, frame, error); batch = NULL;
-                if (ok) { ok = source_begin_surface(source, row, error); light_mask = 0; }
+                if (ok) { ok = source_restart_surface(source, row, error); light_mask = source->light_mask; }
             }
             if (!ok) break;
             source_append(source, &part);
             batch = row; key = next_key;
-            if (!row->context.source_dlight_before_overflow && part.mesh.index_count) light_mask |= row->context.light_mask;
+            if (!row->context.source_dlight_before_overflow && part.mesh.index_count) {
+                light_mask |= row->context.light_mask; source->light_mask = light_mask;
+            }
         }
     }
     if (ok && submit) ok = source_flush(source, batch, light_mask, frame, error);
+    if (ok && submit && source->issuing && !source->pictures && old_depth_range)
+        ok = material_source_depth_range(source, 0, 1, error);
     source->head = source->tail = NULL; source->submission_count = 0;
     source->sky = (qa_material_context){0};
     source->pictures = false;
@@ -1058,6 +1185,7 @@ bool qa_material_source_scene_end(qa_material_source_scratch *source, qa_scene_f
     source->head = source->tail = NULL; source->submission_count = 0;
     source->collecting = source->pictures = false;
     source->sky = (qa_material_context){0};
+    source->view = (material_source_view){0};
     return true;
 }
 bool qa_material_source_issue_emitted(qa_material_source_scratch *source, qa_scene_frame *frame, qa_error *error)
@@ -1067,6 +1195,8 @@ bool qa_material_source_issue_emitted(qa_material_source_scratch *source, qa_sce
 }
 static bool source_issue(qa_material_source_scratch *source, qa_scene_frame *frame, bool submit, qa_error *error)
 {
+    material_source_submission *pending = source->collecting ? source->head : NULL;
+    qa_scene_world *pending_world = source->view.world;
     bool requested = submit;
     bool ok = !submit || material_source_current(source, error);
     for (material_source_operation *operation = source->operations; ok && submit && operation; operation = operation->next) {
@@ -1091,6 +1221,10 @@ static bool source_issue(qa_material_source_scratch *source, qa_scene_frame *fra
         }
         for (material_source_operation *operation = source->operations; ok && operation; operation = operation->next)
             if (operation->view.valid) {
+                if (operation->view.world && !qa_scene_world_retain(operation->view.world, error)) { ok = false; break; }
+                qa_scene_world_release(source->world);
+                source->world = operation->view.world;
+                source->far_clip = operation->view.far_clip;
                 material_source_view *policy = &operation->view;
                 if (policy->command_offset >= count || commands[policy->command_offset].kind != QA_SCENE_COMMAND_VIEW) {
                     qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Source view lost its actual reached command"); ok = false; break;
@@ -1117,6 +1251,12 @@ static bool source_issue(qa_material_source_scratch *source, qa_scene_frame *fra
                 source->view_origin = operation->view.view.origin;
                 memcpy(source->view_axis, operation->view.view.axis, sizeof(source->view_axis));
                 source->view_mirror = operation->view.view.mirror;
+                qa_scene_matrix orientation = source->entity.model;
+                source->entity = (material_source_entity){.model = orientation, .number = 1022};
+                source->entity_is_cell = false;
+                source->light_count = operation->view.light_count;
+                if (source->light_count) memcpy(source->lights, operation->view.lights,
+                    source->light_count * sizeof(*source->lights));
             }
             while (ok && copied < operation->command_offset)
                 ok = qa_scene_frame_emit(frame, commands + copied++, error);
@@ -1153,6 +1293,16 @@ static bool source_issue(qa_material_source_scratch *source, qa_scene_frame *fra
         frame->command_count = frame->group_count = 0;
     }
     if (requested && frame->source_skip_backend) frame->command_count = frame->group_count = 0;
+    for (material_source_submission *row = pending; row; row = row->next) {
+        qa_scene_world_release(row->held_light_world); qa_material_release(row->original);
+    }
+    qa_scene_world_release(pending_world);
+    for (material_source_operation *operation = source->operations; operation; operation = operation->next) {
+        for (material_source_submission *row = operation->head; row; row = row->next) {
+            qa_scene_world_release(row->held_light_world); qa_material_release(row->original);
+        }
+        qa_scene_world_release(operation->view.world);
+    }
     source->head = source->tail = NULL; source->submission_count = 0;
     source->operations = source->last_operation = NULL;
     source->sky = (qa_material_context){0}; source->frame = NULL;

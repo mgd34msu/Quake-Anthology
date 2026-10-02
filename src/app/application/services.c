@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "guest_q3_components.h"
+#include "guest_q3_component.h"
 #include "control_frame.h"
 #include "native_q2_combat_policy.h"
 #include "native_q1_wire.h"
@@ -278,6 +279,9 @@ bool application_actor_released(void *opaque, qa_session *session,
     bool ok = true;
     qa_error first = {0};
     qa_error current = {0};
+    remember_failure(application_unified_persistent_retire(application, 0, released.id, &current),
+                     &current, "presentation actor retirement failed", &ok, &first);
+    current = (qa_error){0};
     remember_failure(application_bots_actor_released(application, released, &current),
                      &current, "bot actor retirement failed", &ok, &first);
     current = (qa_error){0};
@@ -432,6 +436,16 @@ static bool before_reaction(void *opaque, const qa_damage_outcome *outcome,
            qa_q3_before_reaction(source->state.q3, outcome, error);
 }
 
+typedef struct component_reaction_body {
+    application_q3_component *component;
+    application_q3_mod_operation operation;
+} component_reaction_body;
+static bool component_reaction_invoke(void *opaque,
+    const application_q3_mod_actor_request *request,bool *result,qa_error *error)
+{
+    component_reaction_body *body=opaque;
+    return application_q3_component_actor_callback(body->component,body->operation,request,result,error);
+}
 static bool selected_source_reaction(void *opaque, const qa_damage_outcome *outcome,
                                      qa_actor_owner source_owner,
                                      qa_source_reaction_body original,
@@ -452,7 +466,9 @@ static bool selected_source_reaction(void *opaque, const qa_damage_outcome *outc
         return false;
     application_provider *provider = application_provider_for(
         application, outcome->request.target, QA_ROLE_CHARACTER, "");
-    if (provider == NULL && original == NULL)
+    application_q3_component *component = application_q3_components_actor_owner(
+        application, outcome->request.target);
+    if (provider == NULL && original == NULL && component == NULL)
         return true;
     bool death = outcome->result.reaction == QA_REACTION_DEATH;
     if (death && application->modes != NULL)
@@ -463,7 +479,27 @@ static bool selected_source_reaction(void *opaque, const qa_damage_outcome *outc
     bool ok = true;
     if (qa_actors_get(qa_session_actors(application->session),
                       outcome->request.target) != NULL) {
-      if (original != NULL && (provider == NULL || provider->owner == source_owner)) {
+      if (component != NULL) {
+        application_q3_mod_actor_request request = {
+            .self = outcome->request.target, .has_attack = true,
+            .attack = outcome->request.attack
+        };
+        if (death) {
+            request.source.die.attacker = outcome->request.attack.attacker;
+            request.source.die.inflictor = outcome->request.attack.inflictor;
+            request.source.die.damage = outcome->result.applied_damage;
+            request.source.die.kick = outcome->request.knockback;
+            request.source.die.point = outcome->request.point;
+        } else {
+            request.source.pain.attacker = outcome->request.attack.attacker;
+            request.source.pain.damage = outcome->result.applied_damage;
+            request.source.pain.kick = outcome->request.knockback;
+        }
+        bool handled;
+        component_reaction_body body={component,death ? Q3_MOD_DIE : Q3_MOD_PAIN};
+        ok = application_q3_mod_actor_dispatch(application->mod_operations,body.operation,
+            &request,component_reaction_invoke,&body,&handled,error);
+      } else if (original != NULL && (provider == NULL || provider->owner == source_owner)) {
         ok = original(original_context, error);
       } else switch (provider->kind) {
     case APPLICATION_PROVIDER_Q1:
@@ -1055,6 +1091,9 @@ static bool physics_touch_body(void *opaque, const application_q3_mod_actor_requ
         return false;
     application_provider *provider = application_provider_for(
         application, contact->self, QA_ROLE_ENTITIES, "");
+    application_q3_component *component = application_q3_components_actor_owner(application, contact->self);
+    if (component != NULL)
+        return application_q3_component_touch(component, contact, result, error);
     if (provider == NULL) {
         *result = accepted;
         return true;
@@ -1063,7 +1102,7 @@ static bool physics_touch_body(void *opaque, const application_q3_mod_actor_requ
     if (provider->kind == APPLICATION_PROVIDER_Q1)
         return qa_q1_game_touch_source(provider->state.q1, contact, result, error);
     else if (provider->kind == APPLICATION_PROVIDER_Q2)
-        okay = qa_q2_touch(provider->state.q2, contact, error);
+        return qa_q2_touch_source(provider->state.q2, contact, result, error);
     else if (provider->kind == APPLICATION_PROVIDER_Q3)
         okay = qa_q3_touch(provider->state.q3, contact, error);
     else if (provider->kind == APPLICATION_PROVIDER_QC)

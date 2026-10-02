@@ -116,8 +116,11 @@ static bool project(frontend_qc_messages *owner,qc_recipient *row,const qa_nq_me
     if(!row->next_sequence) return frontend_fail(error,QA_ERROR_MEMORY,"Local QC camera receipt sequence is exhausted");
     if(message->op==QA_NQ_SKYBOX) {
         if(!event->recipient.registry && row->camera.recipient.registry) return true;
-        if(!owner->frontend->q1_sky || !frontend_q1_sky_receive(owner->frontend->q1_sky,
-            row->camera.source.provider,row->camera.recipient,message->data.text,error)) return false;
+        if(owner->frontend->q1_sky) {
+            if(!frontend_q1_sky_receive(owner->frontend->q1_sky,row->camera.source.provider,
+                row->camera.recipient,message->data.text,error)) return false;
+        } else if(!owner->frontend->options.dedicated)
+            return frontend_fail(error,QA_ERROR_ARGUMENT,"Local QC sky delivery has no presentation owner");
     } else if(message->op==QA_NQ_SETVIEW) {
         qa_actor_id target;
         if(!captured_target(message,event,start,&target,error)) return false;
@@ -189,8 +192,6 @@ bool frontend_qc_messages_drain(frontend_qc_messages *owner,qa_error *error)
 {
     if(!current(owner) || owner->busy || owner->frontend->capture || owner->frontend->resource_inventory ||
         owner->frontend->source_restoring) return false;
-    qa_frontend *f=owner->frontend;
-    if(f->options.dedicated || frontend_network_remote(f)) return true;
     owner->busy=true; bool okay=true;
     size_t sources=qa_application_qc_message_source_count(owner->application);
     for(size_t i=0;okay && i<sources;++i) {
@@ -199,17 +200,10 @@ bool frontend_qc_messages_drain(frontend_qc_messages *owner,qa_error *error)
         if(!okay || !found || qa_q1_is_qw(source.protocol)) continue;
         qc_recipient *baseline=NULL;
         okay=row_get(owner,&source,(qa_actor_id){0},0,&baseline,error);
-        for(unsigned seat=0;okay && seat<f->options.seats;++seat) {
-            uint32_t launch_seat,slot; qa_actor_id actor;
-            if(!frontend_seat_launch_id_read(f,seat,&launch_seat) ||
-                !qa_application_player_actor(owner->application,launch_seat,&actor)) continue;
-            bool member=false;
-            qa_error admission={0};
-            member=qa_application_qc_message_client(owner->application,&source,actor,&slot,&admission);
-            if(!member) {
-                if(admission.code==QA_ERROR_ARGUMENT) continue;
-                if(error) *error=admission; okay=false; break;
-            }
+        for(uint32_t slot=1;okay && slot<=source.client_slots;++slot) {
+            qa_actor_id actor; bool connected=false;
+            okay=qa_application_qc_message_client_at(owner->application,&source,slot,&actor,&connected,error);
+            if(!okay || !connected) continue;
             qc_recipient *row=NULL;
             okay=row_get(owner,&source,actor,slot,&row,error);
         }

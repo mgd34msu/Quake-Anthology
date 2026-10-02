@@ -1,6 +1,7 @@
 #include "shared_register.h"
 #include "shared_settings.h"
 #include "qa/cvars_alias.h"
+#include "qa/console_cvar_observer.h"
 #include "qa/ui_preferences.h"
 #include "qa/text.h"
 #include <stdio.h>
@@ -65,6 +66,7 @@ static const shared_declaration declarations[]={
     {"r_simpleMipMaps","1","Source simple mipmap sampling",QA_CVAR_ARCHIVE|QA_CVAR_LATCH,ANY},
     {"r_colorMipLevels","0","Source mipmap color diagnostics",QA_CVAR_LATCH,ANY},
     {"r_picmip","1","Source texture mip level",QA_CVAR_ARCHIVE|QA_CVAR_LATCH,ANY},
+    {"r_textureMode","GL_LINEAR_MIPMAP_NEAREST","Source texture sampling filter",QA_CVAR_ARCHIVE,ANY},
     {"r_norefresh","0","Disable source scene refresh",QA_CVAR_CHEAT,ANY},
     {"r_showcluster","0","Source visibility cluster diagnostic",QA_CVAR_CHEAT,ANY},
     {"r_skipBackEnd","0","Skip source backend drawing",QA_CVAR_CHEAT,ANY},
@@ -289,7 +291,7 @@ bool frontend_shared_register(qa_cvars *cvars,const qa_console_dialect *source,
     };
     for (size_t i=0;i<sizeof(aliases)/sizeof(*aliases);++i)
         if (!qa_cvars_alias_register(cvars,aliases[i].name,aliases[i].target,aliases[i].conversion,
-            aliases[i].summary,&(qa_console_documentation){.summary=aliases[i].summary,.usage=aliases[i].usage},error)) return false;
+            aliases[i].summary,&(qa_console_documentation){.usage=aliases[i].usage},error)) return false;
     return qa_input_settings_register(cvars,QA_MOVEMENT_NETQUAKE,error) &&
         qa_input_device_settings_register(cvars,error) &&
         qa_ui_preferences_register(cvars,QA_FRONTEND_COMMAND_OWNER,error);

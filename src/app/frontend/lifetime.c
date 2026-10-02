@@ -2,6 +2,9 @@
 #include "component_scene.h"
 #include "client_source.h"
 #include "root_resources.h"
+#include "renderer_materials.h"
+#include "remote_unified.h"
+#include "qa/audio_acoustics_prepare.h"
 #include "qc_messages.h"
 #include "remote_q1_client.h"
 #include "q3_color_policy.h"
@@ -196,7 +199,8 @@ static bool shutdown_inputs(qa_frontend *f,qa_error *error)
     }
     if(owner->failure.code!=QA_OK && !owner->failure_reported) {
         owner->failure_reported=true; owner->retry_cleanup=true;
-        if(error) *error=owner->failure; return false;
+        if(error) *error=owner->failure;
+        return false;
     }
     return owner->phase==SHUTDOWN_READY;
 }
@@ -562,6 +566,17 @@ fail: {
     }
     return false;
 }}
+bool frontend_save_image_release(qa_frontend *frontend,qa_save_image **image,qa_error *error)
+{
+    if (!frontend || !image) return frontend_fail(error,QA_ERROR_ARGUMENT,"Save image release requires its actual frontend custody");
+    if (!*image) return true;
+    if (frontend->save_image_pending && frontend->save_image_pending!=*image)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Frontend retains a previous refused save image");
+    if (qa_save_image_destroy_checked(image,error)) {
+        frontend->save_image_pending=NULL; return true;
+    }
+    frontend->save_image_pending=*image; *image=NULL; return false;
+}
 bool qa_frontend_destroy(qa_frontend *frontend, qa_error *error)
 {
     if (!frontend) return true;
@@ -570,6 +585,8 @@ bool qa_frontend_destroy(qa_frontend *frontend, qa_error *error)
         frontend->shutdown->retry_cleanup=false;
     }
     if (!shutdown_admitted(frontend,error)) return false;
+    if (!qa_save_image_destroy_checked(&frontend->save_image_pending,error)) return false;
+    if (!qa_native_resource_inventory_release(&frontend->native_resource_inventory_pending,error)) return false;
     if (frontend->archive_enabled && !frontend->archive_saved && frontend->application &&
         !frontend->source_restoring && !qa_application_startup_pending(frontend->application)) {
         if (!frontend_keys_save(frontend->keys,error) ||
@@ -577,12 +594,13 @@ bool qa_frontend_destroy(qa_frontend *frontend, qa_error *error)
         frontend->archive_saved=true;
     }
     if (!shutdown_inputs(frontend,error)) return false;
+    if (frontend->audio && !qa_audio_engine_acoustics_release(frontend->audio,error)) return false;
     if (!frontend_network_close_client(frontend,error) || !frontend_cinematic_destroy(frontend,error) || !frontend_save_commands_destroy(frontend,error) ||
         !frontend_campaign_destroy(frontend,error)) return false;
     if (!frontend_selected_effects_retire(frontend,error)) return false;
     if (!frontend_remote_q3_destroy(frontend,error) ||
         !frontend_remote_q3_initial_destroy_all(frontend,error)) return false;
-    if (!frontend_remote_q1_destroy_all(frontend,error) ||
+    if (!frontend_remote_unified_destroy_all(frontend,error) || !frontend_remote_q1_destroy_all(frontend,error) ||
         !frontend_remote_q2_destroy_all(frontend,error) ||
         !frontend_native_q3_destroy(frontend,error)) return false;
     if (!frontend_equipment_gear_retire(frontend,error)) return false;
@@ -600,11 +618,11 @@ bool qa_frontend_destroy(qa_frontend *frontend, qa_error *error)
     if (!frontend_qc_messages_destroy(&frontend->qc_messages,error) ||
         !frontend_q1_sky_destroy(&frontend->q1_sky,error) ||
         !frontend_music_sources_destroy(&frontend->music_sources,error)) return false;
+    if (!frontend_client_sources_destroy(frontend,error)) return false;
     if (frontend->application &&
         (!frontend_tools_before_world_change(frontend, error) ||
          !qa_application_retire_sources(frontend->application, error))) return false;
-    if (!frontend_client_sources_destroy(frontend,error) ||
-        !frontend_network_destroy(frontend, error) || !frontend_tools_destroy(frontend, error)) return false;
+    if (!frontend_network_destroy(frontend, error) || !frontend_tools_destroy(frontend, error)) return false;
     frontend_qc_rerelease_destroy(frontend);
     if (frontend->config_store && !frontend_config_store_retired_ready(frontend->config_store,error)) return false;
     if (!frontend_ui_features_destroy(frontend,error) || !frontend_seats_destroy(frontend,error)) return false;
@@ -653,7 +671,10 @@ bool qa_frontend_destroy(qa_frontend *frontend, qa_error *error)
     qa_vfs_destroy(frontend->ui_mounts);
     qa_material_order_destroy(frontend->order);
     if (!frontend_q3_source_color_retire(frontend,error)) return false;
-    qa_cpu_destroy(frontend->cpu); qa_gl_destroy(frontend->gl); qa_display_destroy(frontend->display);
+    qa_cpu_destroy(frontend->cpu); frontend->cpu=NULL;
+    qa_gl_destroy(frontend->gl); frontend->gl=NULL;
+    if (!frontend_renderer_materials_destroy(&frontend->renderer_materials,error)) return false;
+    qa_display_destroy(frontend->display); frontend->display=NULL;
     if (frontend->sdl_subsystems) SDL_QuitSubSystem(frontend->sdl_subsystems);
     free(frontend->constructor); free(frontend->map_name); free(frontend->audio_ids); free(frontend->seats); free(frontend->shutdown); free(frontend);
     return true;
