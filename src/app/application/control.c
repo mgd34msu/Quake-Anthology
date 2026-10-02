@@ -973,6 +973,13 @@ static bool component_input_boundary(application_move_call *move, qa_movement_st
         application_provider *provider = move->application->providers[i];
         if (provider->kind != APPLICATION_PROVIDER_NATIVE || !provider->attached ||
             !provider->state.native.q2_engine || !provider->state.native.q2_engine->callbacks) continue;
+        struct application_native_q2 *native=provider->state.native.q2_engine;
+        if(native->input_stage && qa_actor_id_equal(native->input_stage->actor,input->actor) &&
+            native->input_stage->current(native->input_stage->context,input->actor) &&
+            application_native_q2_declared_raw_capable(provider) &&
+            application_native_q2_callbacks_transfer_current(native->callbacks) &&
+            source->source_q2cmd && application_control_provider(source)==provider->owner)
+            continue;
         size_t index = input->native_count++;
         if (!application_native_q2_input_begin(provider->state.native.q2_engine, input->actor, slice,
             component_input_values, component_input_output, input, input->native_scopes + index, error)) return false;

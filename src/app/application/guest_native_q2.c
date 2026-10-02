@@ -22,7 +22,8 @@ static bool command_actor(void *state,qa_session *session,qa_actor_id actor)
 {
     struct application_native_q2 *engine=state;
     return engine&&engine->provider&&engine->provider->application->session==session&&
-        application_native_q2_source_client(engine->provider,actor);
+        (application_native_q2_source_client(engine->provider,actor)||
+         application_native_q2_declared_source_client(engine->provider,actor));
 }
 
 static bool process_current(void *context, const qa_launch_instance *descriptor,
@@ -264,7 +265,8 @@ static bool prepare_owner(qa_application *app, application_provider *provider,
     if (provider->launch->declaration && !qa_native_declaration_load(
             qa_resource_bytes(provider->launch->declaration), provider->launch->selection.artifact,
             provider->state.native.module, &engine->declaration, error)) return false;
-    if (!application_native_q2_callbacks_prepare(engine, error)) return false;
+    if (!application_native_q2_callbacks_prepare(engine, error) ||
+        !application_native_q2_declared_input_prepare(engine,error)) return false;
     if (!application_native_q2_publication_create(engine, &engine->publication, error)) return false;
     if (!application_native_q2_inventory_prepare(engine, error) ||
         !application_native_q2_attack_prepare(engine, error)) return false;

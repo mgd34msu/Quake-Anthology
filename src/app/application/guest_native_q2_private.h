@@ -3,6 +3,7 @@
 #include "internal.h"
 #include "native_process_owner.h"
 #include "qa/binary.h"
+#include "qa/json.h"
 #include "qa/network_q2_messages.h"
 #include <stdlib.h>
 #include <string.h>
@@ -33,6 +34,8 @@ struct application_native_q2 {
     const struct application_native_q2_input_stage *input_stage;
     const qa_movement_command *input_command;
     bool input_arsenal, input_arsenal_committed;
+    const qa_json_document *raw_input_document;
+    bool raw_input_capable;
     const struct application_control_external_stage *movement_stage;
     struct application_native_q2_baseline *baseline;
     application_provider *provider;

@@ -161,7 +161,14 @@ static bool raw_move(control_frame *frame,bool *handled,qa_error *error)
         .server_frame=(int32_t)qa_load_u32le(bytes+76)};
     input.snap_initial=bytes[80]!=0; input.current_bounds=frame->accepted; input.has_current_bounds=true;
     input.shape=(qa_trace_shape){.kind=QA_SHAPE_BOX,.bounds=frame->accepted};
-    input.view_offset=load_vector(bytes+RR_PM_OFFSET);
+    qa_buffer player={0};
+    bool present=qa_native_host_q2_player_state(frame->client.host,frame->client.slot,&player,error)&&
+        client_live(&frame->client,error);
+    if(present&&player.size!=296u)
+        present=raw_fail(error,QA_ERROR_FORMAT,"Native Pmove input lost its actual public player-state extent");
+    if(present) input.view_offset=load_vector(player.data+64);
+    qa_buffer_free(&player);
+    if(!present) return false;
     qa_native_host_movement_services movement=application_native_q2_movement_services(engine);
     qa_movement_services services=movement.kernel;
     bool ok=movement.prepare(movement.context,frame->client.host,frame->address,&input,error)&&

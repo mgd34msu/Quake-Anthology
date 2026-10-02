@@ -18,7 +18,7 @@ static uint32_t source_client_slot(const application_provider *provider, qa_acto
 {
     const struct application_native_q2 *engine = provider && provider->kind == APPLICATION_PROVIDER_NATIVE
         ? provider->state.native.q2_engine : NULL;
-    if (!engine || engine->profile == QA_NATIVE_Q2_CGAME_API2023 || engine->callbacks) return 0;
+    if (!engine || engine->profile == QA_NATIVE_Q2_CGAME_API2023) return 0;
     uint32_t slot = 0;
     for (uint32_t i = 1; i < 257; ++i)
         if (engine->clients[i].connected && engine->clients[i].begun &&
@@ -30,9 +30,77 @@ static uint32_t source_client_slot(const application_provider *provider, qa_acto
 }
 
 bool application_native_q2_source_client(const application_provider *provider, qa_actor_id actor)
-{ return source_client_slot(provider, actor) != 0; }
+{
+    return source_client_slot(provider, actor) != 0 && !provider->state.native.q2_engine->callbacks;
+}
 
-bool application_native_q2_input_read(application_provider *provider, qa_actor_id actor,
+bool application_native_q2_declared_source_client(const application_provider *provider,qa_actor_id actor)
+{
+    if(!source_client_slot(provider,actor)) return false;
+    struct application_native_q2 *engine=provider->state.native.q2_engine;
+    if(!engine->callbacks) return false;
+    const qa_json_document *doc=application_native_q2_callbacks_document(engine->callbacks);
+    qa_json_id root=qa_json_root(doc),entity=qa_json_get(doc,root,"entityRecord");
+    return qa_json_type(doc,entity)==QA_JSON_STRING &&
+        qa_json_type(doc,qa_json_get(doc,root,"clients"))==QA_JSON_OBJECT;
+}
+
+static bool declared_raw_recipe(const qa_json_document *doc,const char *entity_name)
+{
+    qa_json_id root=qa_json_root(doc),entity=qa_json_get(doc,root,"entityRecord"),
+        clients=qa_json_get(doc,root,"clients"),input=qa_json_get(doc,clients,"input");
+    if(qa_json_type(doc,entity)!=QA_JSON_STRING||qa_json_type(doc,input)!=QA_JSON_ARRAY||
+        qa_json_size(doc,qa_json_get(doc,clients,"inputFields"))) return false;
+    size_t producers=0;
+    for(size_t i=0;i<qa_json_size(doc,input);++i) {
+        qa_json_id binding=qa_json_at(doc,input,i),phase=qa_json_get(doc,binding,"phase");
+        if(!qa_json_string_equal(doc,qa_json_get(doc,binding,"scope"),"client-command") ||
+            qa_json_size(doc,qa_json_get(doc,binding,"outputs"))) return false;
+        qa_json_id calls=qa_json_get(doc,binding,"calls");
+        for(size_t j=0;j<qa_json_size(doc,calls);++j) {
+            qa_json_id call=qa_json_at(doc,calls,j),entry=qa_json_get(doc,call,"entry");
+            if(!qa_json_string_equal(doc,qa_json_get(doc,entry,"kind"),"game-export")||
+                !qa_json_string_equal(doc,qa_json_get(doc,entry,"name"),"ClientThink")) continue;
+            qa_json_id args=qa_json_get(doc,call,"arguments"),self=qa_json_at(doc,args,0),command=qa_json_at(doc,args,1);
+            bool same=qa_json_string_equal(doc,qa_json_get(doc,self,"record"),entity_name);
+            if(!same||!qa_json_string_equal(doc,phase,"before")||qa_json_size(doc,args)!=2||
+                !qa_json_string_equal(doc,qa_json_get(doc,self,"kind"),"actor")||
+                !qa_json_string_equal(doc,qa_json_get(doc,self,"input"),"self")||
+                !qa_json_string_equal(doc,qa_json_get(doc,command,"kind"),"user-command")||
+                !qa_json_string_equal(doc,qa_json_get(doc,call,"returns"),"void")||
+                qa_json_size(doc,qa_json_get(doc,call,"skips"))) return false;
+            ++producers;
+        }
+    }
+    return producers==1;
+}
+
+bool application_native_q2_declared_input_prepare(struct application_native_q2 *engine,qa_error *error)
+{
+    if(!engine||!engine->callbacks) return true;
+    const qa_json_document *doc=application_native_q2_callbacks_document(engine->callbacks);
+    qa_json_id entity=qa_json_get(doc,qa_json_root(doc),"entityRecord");
+    bool capable=false;
+    if(qa_json_type(doc,entity)==QA_JSON_STRING) {
+        qa_buffer name={0};
+        if(!qa_json_string(doc,entity,&name,error)) return false;
+        capable=!memchr(name.data,0,name.size)&&declared_raw_recipe(doc,(const char *)name.data);
+        qa_buffer_free(&name);
+    }
+    engine->raw_input_document=doc; engine->raw_input_capable=capable;
+    return true;
+}
+
+bool application_native_q2_declared_raw_capable(const application_provider *provider)
+{
+    const struct application_native_q2 *engine=provider&&provider->kind==APPLICATION_PROVIDER_NATIVE
+        ?provider->state.native.q2_engine:NULL;
+    return engine&&engine->callbacks&&engine->profile!=QA_NATIVE_Q2_CGAME_API2023&&
+        engine->raw_input_capable&&engine->raw_input_document==
+            application_native_q2_callbacks_document(engine->callbacks);
+}
+
+static bool physical_input_read(application_provider *provider, qa_actor_id actor,
     qa_q2_wire_movement *out, qa_error *error)
 {
     uint32_t slot = source_client_slot(provider, actor);
@@ -53,6 +121,10 @@ bool application_native_q2_input_read(application_provider *provider, qa_actor_i
     qa_buffer bytes={0};
     if(!qa_native_host_q2_player_state(provider->state.native.host,slot,&bytes,error)) return false;
     bool classic = engine->profile == QA_NATIVE_Q2_GAME_API3;
+    if(bytes.size!=(classic?184u:296u)) {
+        qa_buffer_free(&bytes);
+        return application_fail(error,QA_ERROR_FORMAT,"Native input lost its actual public player-state extent");
+    }
     const uint8_t *data=bytes.data;
     player.pmove.type=qa_load_i32le(data);
     if(classic) {
@@ -115,6 +187,7 @@ bool application_native_q2_input_read(application_provider *provider, qa_actor_i
     if(!qa_vec_finite(qa_movement_origin(&state))||!qa_vec_finite(qa_movement_velocity(&state))||
         !qa_vec_finite(out->view_angles)||!qa_vec_finite(out->view_offset))
         return application_fail(error,QA_ERROR_FORMAT,"Native Q2 physical input contains nonfinite SDK motion");
+    if(engine->callbacks) return true;
     if(!application_native_q2_attack_input_fields(engine,slot,actor,out,error)) return false;
     /* The profile publishes Source waterlevel; watertype is a genuine current
      * shared-world sample in that Source collision dialect. */
@@ -126,6 +199,98 @@ bool application_native_q2_input_read(application_provider *provider, qa_actor_i
     if(!qa_world_point_contents(engine->world,&query,&contents,error)) return false;
     out->water_type=out->water_level && (contents.contents & 56) ? (uint32_t)contents.contents : 0;
     return true;
+}
+
+bool application_native_q2_input_read(application_provider *provider,qa_actor_id actor,
+    qa_q2_wire_movement *out,qa_error *error)
+{
+    if(!application_native_q2_source_client(provider,actor))
+        return application_fail(error,QA_ERROR_UNSUPPORTED,"Native Q2 input requires its Original physical Source producer");
+    return physical_input_read(provider,actor,out,error);
+}
+bool application_native_q2_declared_input_read(application_provider *provider,qa_actor_id actor,
+    qa_movement_state *out,qa_error *error)
+{
+    if(!out||!application_native_q2_declared_source_client(provider,actor)||
+        !application_native_q2_declared_raw_capable(provider))
+        return application_fail(error,QA_ERROR_UNSUPPORTED,"Declared native Q2 has no raw physical ClientThink producer");
+    if(application_provider_for(provider->application,actor,QA_ROLE_ARSENAL,NULL)!=provider)
+        return application_fail(error,QA_ERROR_UNSUPPORTED,"Declared raw Source lacks its reached isolated foreign arsenal capability");
+    qa_q2_wire_movement physical;
+    if(!physical_input_read(provider,actor,&physical,error)) return false;
+    *out=physical.state; return true;
+}
+
+typedef struct declared_raw_call {
+    struct application_native_q2 *engine;
+    const application_native_callback_inputs *inputs;
+} declared_raw_call;
+static bool declared_raw_execute(void *context,qa_error *error)
+{
+    declared_raw_call *raw=context;
+    struct application_native_q2 *engine=raw->engine;
+    const qa_json_document *doc=application_native_q2_callbacks_document(engine->callbacks);
+    qa_json_id bindings=qa_json_get(doc,qa_json_get(doc,qa_json_root(doc),"clients"),"input");
+    static const char *const phases[]={"before","after"};
+    for(size_t phase=0;phase<2;++phase) for(size_t i=0;i<qa_json_size(doc,bindings);++i) {
+        if(!engine->input_stage->current(engine->input_stage->context,engine->input_stage->actor)) {
+            if(!qa_actors_get(qa_session_actors(engine->provider->application->session),engine->input_stage->actor)) return true;
+            return application_fail(error,QA_ERROR_NOT_FOUND,"Declared raw Source command changed its actual client stage");
+        }
+        qa_json_id binding=qa_json_at(doc,bindings,i);
+        if(!qa_json_string_equal(doc,qa_json_get(doc,binding,"phase"),phases[phase])) continue;
+        qa_json_id calls=qa_json_get(doc,binding,"calls");
+        for(size_t j=0;j<qa_json_size(doc,calls);++j) {
+            if(!engine->input_stage->current(engine->input_stage->context,engine->input_stage->actor))
+                return application_fail(error,QA_ERROR_NOT_FOUND,"Declared raw Source changed its actual client before a call");
+            double result;
+            if(!application_native_q2_callbacks_call_scoped(engine->callbacks,qa_json_at(doc,calls,j),raw->inputs,&result,error)) return false;
+            if(!qa_actors_get(qa_session_actors(engine->provider->application->session),engine->input_stage->actor)) return true;
+        }
+    }
+    return true;
+}
+static bool declared_raw_think(struct application_native_q2 *engine,uint32_t slot,qa_bytes command,qa_error *error)
+{
+    application_provider *provider=engine->provider;
+    qa_application *app=provider->application;
+    qa_actor_id actor=engine->clients[slot].actor;
+    if(!engine->input_stage||!engine->input_command||!application_native_q2_declared_raw_capable(provider)||
+        !application_native_q2_declared_source_client(provider,actor)||engine->calls||
+        !engine->input_stage->current(engine->input_stage->context,actor))
+        return application_fail(error,QA_ERROR_UNSUPPORTED,"Declared native Source lacks its admitted raw ClientThink recipe");
+    if(application_provider_for(app,actor,QA_ROLE_ARSENAL,NULL)!=provider)
+        return application_fail(error,QA_ERROR_UNSUPPORTED,"Declared raw Source lacks its reached isolated foreign arsenal capability");
+    const qa_movement_command *raw=engine->input_command;
+    qa_movement_state physical;
+    if(!application_native_q2_declared_input_read(provider,actor,&physical,error)) return false;
+    qa_vec3 aim;
+    if(physical.kind==QA_MOVEMENT_Q2_CLASSIC) {
+        float axes[3];
+        for(size_t i=0;i<3;++i) {
+            uint16_t word=(uint16_t)((uint16_t)raw->angle_words[i]+(uint16_t)physical.data.q2.delta_angle_shorts[i]);
+            axes[i]=(float)word*(360.f/65536.f);
+        }
+        aim=qa_v3(axes[0],axes[1],axes[2]);
+    } else aim=qa_vec_add(raw->angles,physical.data.q2r.delta_angles);
+    application_native_callback_value values[]={
+        {.name="self",.kind=APPLICATION_NATIVE_VALUE_ACTOR,.value.actor=actor},
+        {.name="time",.kind=APPLICATION_NATIVE_VALUE_NUMBER,.value.number=(double)engine->input_stage->time_ns/1e9},
+        {.name="elapsed",.kind=APPLICATION_NATIVE_VALUE_NUMBER,.value.number=(double)raw->milliseconds/1000.},
+        {.name="view-angles",.kind=APPLICATION_NATIVE_VALUE_VECTOR,.value.vector=aim},
+        {.name="attack",.kind=APPLICATION_NATIVE_VALUE_NUMBER,.value.number=(raw->buttons&1u)!=0},
+        {.name="jump",.kind=APPLICATION_NATIVE_VALUE_NUMBER,.value.number=physical.kind==QA_MOVEMENT_Q2_RERELEASE?(raw->buttons&8u)!=0:raw->up_move>0},
+        {.name="impulse",.kind=APPLICATION_NATIVE_VALUE_NUMBER,.value.number=raw->impulse},
+        {.name="forward-move",.kind=APPLICATION_NATIVE_VALUE_NUMBER,.value.number=(double)raw->forward_move/200.},
+        {.name="side-move",.kind=APPLICATION_NATIVE_VALUE_NUMBER,.value.number=(double)raw->side_move/200.},
+        {.name="up-move",.kind=APPLICATION_NATIVE_VALUE_NUMBER,.value.number=(double)raw->up_move/200.}
+    };
+    application_native_callback_inputs inputs={values,sizeof(values)/sizeof(*values),command};
+    declared_raw_call call={engine,&inputs};
+    engine->current_client=slot;
+    application_native_q2_visibility_invalidate(engine);
+    bool ok=application_native_q2_callbacks_transfer(engine->callbacks,declared_raw_execute,&call,error);
+    engine->current_client=0; return ok;
 }
 
 bool application_native_q2_input_think(application_provider *provider, qa_actor_id actor,
@@ -168,7 +333,7 @@ bool application_native_q2_input_think(application_provider *provider, qa_actor_
     if (ok && qa_actors_get(qa_session_actors(app->session),actor) &&
         application_provider_for(app,actor,QA_ROLE_MOVEMENT,NULL)==provider) {
         qa_q2_wire_movement physical;
-        if (!application_native_q2_input_read(provider,actor,&physical,error)) return false;
+        if (!physical_input_read(provider,actor,&physical,error)) return false;
         if (actor.slot>=app->control_capacity || !app->controls[actor.slot].active ||
             !qa_actor_id_equal(app->controls[actor.slot].actor,actor))
             return application_fail(error,QA_ERROR_NOT_FOUND,"Native Q2 Source completion lost its selected control generation");
@@ -193,6 +358,8 @@ static bool native_move(application_provider *provider, qa_actor_id actor,
     *handled = false;
     struct application_native_q2 *engine = provider ? provider->state.native.q2_engine : NULL;
     if (!engine || engine->profile == QA_NATIVE_Q2_CGAME_API2023) return true;
+    if(engine->callbacks && application_provider_for(provider->application,actor,QA_ROLE_MOVEMENT,NULL)==provider)
+        return application_fail(error,QA_ERROR_UNSUPPORTED,"Declared native MOVEMENT needs its admitted physical Source ClientThink producer");
     qa_application *app = provider->application;
     if (application_provider_for(app, actor, QA_ROLE_MOVEMENT, NULL) != provider) return true;
     *handled = true;
@@ -547,8 +714,7 @@ bool application_native_q2_client_think(application_provider *provider, uint32_t
         if (!slot || slot >= 257 || !declared->clients[slot].connected || !declared->clients[slot].begun ||
             !qa_actors_get(qa_session_actors(provider->application->session), declared->clients[slot].actor))
             return application_fail(error, QA_ERROR_ARGUMENT, "Declared native input lost its admitted physical client");
-        /* Declared input executes at the shared command/slice boundaries. */
-        return true;
+        return declared_raw_think(declared,slot,command,error);
     }
     struct application_native_q2 *engine = client_owner(provider, slot, true, error);
     if (!engine || !engine->clients[slot].begun) return false;

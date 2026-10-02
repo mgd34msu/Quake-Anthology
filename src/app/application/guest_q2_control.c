@@ -42,7 +42,7 @@ struct application_q2_control {
     qa_native_entry_observer *pmove_hook, *dimensions_hook;
     control_frame *current;
     qa_native_abi abi;
-    bool active;
+    bool active, raw_only;
 };
 
 static bool client_live(const control_client *client, qa_error *error)
@@ -174,7 +174,11 @@ static bool read_pointer(qa_native_instance *native, qa_native_address address,
 static bool frame_live(struct application_q2_control *p, const control_frame *frame, qa_error *error)
 {
     struct application_native_q2 *engine = p->engine;
-    if (!p->active || !application_q2_control_body_admitted(engine) || engine->source_control != p || p->host != frame->client.host ||
+    bool raw=p->raw_only && engine->input_stage &&
+        qa_actor_id_equal(engine->input_stage->actor,frame->client.actor) &&
+        engine->input_stage->current(engine->input_stage->context,frame->client.actor) &&
+        application_native_q2_declared_raw_capable(engine->provider);
+    if (!p->active || (!application_q2_control_body_admitted(engine) && !raw) || engine->source_control != p || p->host != frame->client.host ||
         p->native != frame->client.native || !engine->calls || engine->current_client != frame->client.slot ||
         (application_provider_for(engine->provider->application, frame->client.actor,
             QA_ROLE_MOVEMENT, NULL) != engine->provider &&
@@ -298,7 +302,7 @@ static bool pmove_entry(void *context, qa_native_instance *native, qa_native_ent
         return application_fail(error, QA_ERROR_ARGUMENT, "Original Pmove observer has a different public invocation");
     ++engine->calls;
     uint32_t slot = engine->current_client;
-    if (!p->active || !slot || slot >= 257) {
+    if (!p->active || !slot || slot >= 257 || (p->raw_only && !engine->input_stage)) {
         bool ok = qa_native_invoke_original(binding, arguments, count, result, error);
         --engine->calls; return ok;
     }
@@ -308,6 +312,23 @@ static bool pmove_entry(void *context, qa_native_instance *native, qa_native_ent
     if (ok) ok = read_pointer(native, frame.address + RR_PM_PLAYER, &player, error);
     if (ok && player != frame.client.player) {
         ok = qa_native_invoke_original(binding, arguments, count, result, error);
+        --engine->calls; return ok;
+    }
+    if(p->raw_only) {
+        qa_body_state source;
+        if(ok) ok=frame_live(p,&frame,error)&&
+            qa_world_body_read(engine->world,frame.client.actor,&source,error);
+        if(ok&&!valid_bounds(source.bounds))
+            ok=application_fail(error,QA_ERROR_FORMAT,"Declared Pmove lost its actual Source body bounds");
+        if(ok) frame.accepted=source.bounds;
+        p->current=&frame;
+        bool selected=false;
+        if(ok) ok=raw_move(&frame,&selected,error);
+        if(ok&&selected) *result=(qa_native_value){.type=QA_NATIVE_VOID};
+        if(ok&&!selected) ok=frame_live(p,&frame,error)&&
+            qa_native_invoke_original(binding,arguments,count,result,error)&&
+            frame_live(p,&frame,error)&&raw_native_commit(&frame,error);
+        p->current=frame.previous;
         --engine->calls; return ok;
     }
     application_client_outputs outputs = {0}; qa_body_state body;
@@ -376,8 +397,9 @@ bool application_q2_control_prepare(struct application_native_q2 *engine, qa_err
     if (!engine) return application_fail(error, QA_ERROR_ARGUMENT, "Native movement producer has no source owner");
     if (engine->profile != QA_NATIVE_Q2_GAME_API2023 || !engine->declaration) return true;
     qa_json_kind kind = qa_native_declaration_kind(engine->declaration, "/world/movement/body");
-    if (kind == QA_JSON_INVALID) return true;
-    if (kind != QA_JSON_OBJECT) return application_fail(error, QA_ERROR_FORMAT, "Native body movement declaration is not an object");
+    bool raw_only=kind==QA_JSON_INVALID && application_native_q2_declared_raw_capable(engine->provider);
+    if (kind == QA_JSON_INVALID && !raw_only) return true;
+    if (!raw_only && kind != QA_JSON_OBJECT) return application_fail(error, QA_ERROR_FORMAT, "Native body movement declaration is not an object");
     if (engine->source_control) return application_fail(error, QA_ERROR_ARGUMENT, "Native movement producer is already prepared");
     qa_native_module_info info = qa_native_module_describe(engine->provider->state.native.module);
     /* declaration_load already checked the selected artifact path and digest. */
@@ -386,6 +408,11 @@ bool application_q2_control_prepare(struct application_native_q2 *engine, qa_err
         return application_fail(error, QA_ERROR_FORMAT, "Native body movement declaration differs from its original API2023 artifact");
     struct application_q2_control *p = calloc(1, sizeof(*p));
     if (!p) return application_fail(error, QA_ERROR_MEMORY, "Retaining original native movement producer");
+    if(raw_only) {
+        p->engine=engine; p->module=engine->provider->state.native.module;
+        p->declaration=engine->declaration; p->abi=info.image.target.abi; p->raw_only=true;
+        engine->source_control=p; return true;
+    }
     bool ok = declared_rva(engine, "/world/movement/gameApi", 1, &p->game_api_rva, error) &&
         declared_rva(engine, "/world/movement/pmove", 1, &p->pmove_rva, error) &&
         declared_rva(engine, "/world/movement/body/dimensions", 1, &p->dimensions_rva, error) &&
@@ -405,7 +432,7 @@ bool application_q2_control_prepare(struct application_native_q2 *engine, qa_err
 bool application_q2_control_body_admitted(const struct application_native_q2 *engine)
 {
     return engine && engine->profile == QA_NATIVE_Q2_GAME_API2023 && engine->source_control &&
-        engine->source_control->engine == engine && engine->source_control->declaration == engine->declaration &&
+        !engine->source_control->raw_only && engine->source_control->engine == engine && engine->source_control->declaration == engine->declaration &&
         engine->source_control->module == engine->provider->state.native.module;
 }
 
@@ -414,7 +441,9 @@ bool application_q2_control_activate(struct application_native_q2 *engine, qa_er
     struct application_q2_control *p = engine ? engine->source_control : NULL;
     if (!p) return true;
     qa_native_host *host = engine->provider->state.native.host;
-    if (!application_q2_control_body_admitted(engine) || !engine->initialized || !host || p->current || engine->shutting_down ||
+    bool raw=p->raw_only && p->engine==engine && p->module==engine->provider->state.native.module &&
+        p->declaration==engine->declaration && application_native_q2_declared_raw_capable(engine->provider);
+    if ((!application_q2_control_body_admitted(engine) && !raw) || !engine->initialized || !host || p->current || engine->shutting_down ||
         qa_native_host_profile(host) != QA_NATIVE_Q2_GAME_API2023)
         return application_fail(error, QA_ERROR_ARGUMENT, "Native movement activation requires its initialized actual game host");
     qa_native_instance *native = qa_native_host_instance(host);
@@ -423,22 +452,24 @@ bool application_q2_control_activate(struct application_native_q2 *engine, qa_er
     if (p->active) return true;
     p->host = host; p->native = native;
     qa_native_address expected, game_api, pmove, dimensions;
-    if (!qa_native_export(native, "GetGameAPI", &game_api, error) ||
-        !qa_native_rva(native, p->game_api_rva, 1, &expected, error)) return false;
-    if (game_api != expected) return application_fail(error, QA_ERROR_FORMAT, "Native movement metadata differs from the actual GetGameAPI export");
-    if (!qa_native_entry_address(native, "Pmove", &pmove, error) ||
-        !qa_native_rva(native, p->pmove_rva, 1, &expected, error)) return false;
-    if (pmove != expected) return application_fail(error, QA_ERROR_FORMAT, "Native movement metadata differs from the actual Pmove API callback");
-    if (!qa_native_rva(native, p->dimensions_rva, 1, &dimensions, error) ||
-        !qa_native_rva(native, p->trace_rva, 1, &p->trace, error) ||
-        !qa_native_rva(native, p->global_rva, 8, &p->global, error)) return false;
+    if (!qa_native_entry_address(native,"Pmove",&pmove,error)) return false;
+    if(!p->raw_only) {
+        if (!qa_native_export(native, "GetGameAPI", &game_api, error) ||
+            !qa_native_rva(native, p->game_api_rva, 1, &expected, error)) return false;
+        if (game_api != expected) return application_fail(error, QA_ERROR_FORMAT, "Native movement metadata differs from the actual GetGameAPI export");
+        if (!qa_native_rva(native, p->pmove_rva, 1, &expected, error)) return false;
+        if (pmove != expected) return application_fail(error, QA_ERROR_FORMAT, "Native movement metadata differs from the actual Pmove API callback");
+        if (!qa_native_rva(native, p->dimensions_rva, 1, &dimensions, error) ||
+            !qa_native_rva(native, p->trace_rva, 1, &p->trace, error) ||
+            !qa_native_rva(native, p->global_rva, 8, &p->global, error)) return false;
+    }
     const qa_native_signature *pmove_signature = qa_native_entry_signature(native, "Pmove");
     if (!pmove_signature || pmove_signature->abi != p->abi || pmove_signature->variadic ||
         pmove_signature->parameter_count != 1 || pmove_signature->parameters[0].kind != QA_NATIVE_ADDRESS ||
         pmove_signature->parameters[0].count != 1 || pmove_signature->result.kind != QA_NATIVE_VOID)
         return application_fail(error, QA_ERROR_FORMAT, "Native movement lost its public void Pmove(pointer) ABI");
     qa_native_signature dimensions_signature = {.abi = p->abi, .result = {.kind = QA_NATIVE_VOID, .count = 1}};
-    if (!p->dimensions_hook && !qa_native_observe_entry(native, dimensions, &dimensions_signature,
+    if (!p->raw_only && !p->dimensions_hook && !qa_native_observe_entry(native, dimensions, &dimensions_signature,
             dimensions_entry, p, &p->dimensions_hook, error)) return false;
     if (!p->pmove_hook && !qa_native_observe_entry(native, pmove, pmove_signature,
             pmove_entry, p, &p->pmove_hook, error)) return false;

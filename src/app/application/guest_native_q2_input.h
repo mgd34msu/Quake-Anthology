@@ -17,6 +17,11 @@ typedef struct application_native_q2_input_stage {
 
 /* Membership uses restored Engine custody and never reads SDK storage. */
 bool application_native_q2_source_client(const application_provider *, qa_actor_id);
+bool application_native_q2_declared_source_client(const application_provider *,qa_actor_id);
+bool application_native_q2_declared_input_prepare(struct application_native_q2 *,qa_error *);
+bool application_native_q2_declared_raw_capable(const application_provider *);
+bool application_native_q2_declared_input_read(application_provider *,qa_actor_id,
+    qa_movement_state *,qa_error *);
 bool application_native_q2_input_read(application_provider *, qa_actor_id,
     qa_q2_wire_movement *, qa_error *);
 bool application_native_q2_input_think(application_provider *, qa_actor_id,
