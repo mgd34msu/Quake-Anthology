@@ -169,6 +169,34 @@ static bool overlay(qa_launch_draft *draft, const char *name, uint64_t roles, co
     qa_launch_draft_destroy(source);
     return ok;
 }
+static char *launch_map_path(const char *input, qa_error *error)
+{
+    char *name = qa_vfs_normalize_path(input, error);
+    if (!name) return NULL;
+    size_t length = strlen(name);
+    if (!length || length > SIZE_MAX - 10) {
+        free(name);
+        frontend_fail(error, length ? QA_ERROR_MEMORY : QA_ERROR_ARGUMENT,
+            length ? "launch map path is too long" : "launch map has no destination");
+        return NULL;
+    }
+    bool prefix = !strncmp(name, "maps/", 5);
+    bool suffix = length >= 4 && !strcmp(name + length - 4, ".bsp");
+    char *path = malloc(length + (prefix ? 0u : 5u) + (suffix ? 0u : 4u) + 1u);
+    if (!path) {
+        free(name);
+        frontend_fail(error, QA_ERROR_MEMORY, "cannot retain launch map path");
+        return NULL;
+    }
+    size_t used = 0;
+    if (!prefix) { memcpy(path, "maps/", 5); used = 5; }
+    memcpy(path + used, name, length);
+    used += length;
+    if (!suffix) { memcpy(path + used, ".bsp", 4); used += 4; }
+    path[used] = 0;
+    free(name);
+    return path;
+}
 bool frontend_launch(qa_frontend *frontend, qa_error *error)
 {
     if (!frontend->options.game) return qa_application_startup_bootstrap(frontend->application,error);
@@ -189,8 +217,13 @@ bool frontend_launch(qa_frontend *frontend, qa_error *error)
         }
     }
     if (!map) return frontend_fail(error, QA_ERROR_ARGUMENT, "launch product has no installed map");
+    char *selected_map = frontend->options.map ? launch_map_path(map, error) : NULL;
+    if (frontend->options.map && !selected_map) return false;
+    if (selected_map) map = selected_map;
     qa_launch_draft *draft = NULL;
-    if (!qa_launch_draft_create(catalog, product->id, map, &draft, error)) return false;
+    bool created = qa_launch_draft_create(catalog, product->id, map, &draft, error);
+    free(selected_map);
+    if (!created) return false;
     qa_launch_world world = qa_launch_draft_choices(draft)->world;
     if (starts && count) world.start_command = episode && episode->command && *episode->command ? episode->command : starts[0].bsp;
     bool ok = true;
