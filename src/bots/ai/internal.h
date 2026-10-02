@@ -142,6 +142,7 @@ bool bot_ai_source_goals_load(qa_bots *,qa_error *);
 bool bot_ai_session_read(qa_bots *,bot_ai_state *,qa_error *);
 bool bot_ai_session_write(qa_bots *,bot_ai_state *,qa_error *);
 bool bot_ai_source_client(qa_bots *,bot_ai_state *,int32_t *,qa_error *);
+bool bot_ai_admitted_source_client(qa_bots *,bot_ai_state *,int32_t *,qa_error *);
 qa_actor_id bot_ai_source_actor(qa_bots *,int32_t);
 bool bot_ai_client_name(qa_bots *,int32_t,char *,size_t,bool,qa_error *);
 bool bot_ai_leader_client_name(qa_bots *,bot_ai_state *,int32_t,qa_error *);

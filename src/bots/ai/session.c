@@ -4,6 +4,9 @@
 #include <stdio.h>
 
 bool bot_ai_source_client(qa_bots *b,bot_ai_state *s,int32_t *client,qa_error *e) {
+    return bot_ai_storage_i32(b,s,QA_BOT_SOURCE_CLIENT,client,false,e);
+}
+bool bot_ai_admitted_source_client(qa_bots *b,bot_ai_state *s,int32_t *client,qa_error *e) {
     if(!b->services.source_client(b->services.context,s->view.actor,client,e)) return false;
     return *client==s->view.source_client?true:
         bot_ai_fail(e,"bot actual source client differs from its admitted AI owner");

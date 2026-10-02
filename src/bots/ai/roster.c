@@ -176,7 +176,7 @@ void bot_ai_source_cell_clear(qa_bots *b,bot_ai_state *s) {
 }
 bool bot_ai_source_shutdown_client(qa_bots *b,bot_ai_state *s,bool restart,qa_error *e) {
     int32_t client;
-    if(!s->inuse || s->retired || !bot_ai_live(b,s->view.actor) || !bot_ai_source_client(b,s,&client,e)) return false;
+    if(!s->inuse || s->retired || !bot_ai_live(b,s->view.actor) || !bot_ai_admitted_source_client(b,s,&client,e)) return false;
     if(s->shutdown_phase==BOT_SHUTDOWN_FAILED)
         return bot_ai_fail(e,"bot source shutdown failed after consuming its actual source state");
     if(s->shutdown_phase==BOT_SHUTDOWN_RUNNING) {
@@ -233,7 +233,7 @@ bool qa_bots_shutdown(qa_bots *b,bool restart,qa_error *e) {
         for(uint32_t i=0;i<b->client_capacity;++i) {
             bot_ai_state *s=b->clients[i];if(!s || !s->inuse) continue;
             int32_t client;
-            if(s->retired || !bot_ai_live(b,s->view.actor) || !bot_ai_source_client(b,s,&client,e)) {ok=false;break;}
+            if(s->retired || !bot_ai_live(b,s->view.actor) || !bot_ai_admitted_source_client(b,s,&client,e)) {ok=false;break;}
             if(!next || client<first) {next=s;first=client;}
         }
         if(!ok || !next) break;
