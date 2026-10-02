@@ -1,5 +1,6 @@
 #include "guest_native_q2_private.h"
 #include "guest_q2_control.h"
+#include "guest_native_q2_input.h"
 #include "qa/native_observe.h"
 #include <limits.h>
 
@@ -175,8 +176,10 @@ static bool frame_live(struct application_q2_control *p, const control_frame *fr
     struct application_native_q2 *engine = p->engine;
     if (!p->active || !application_q2_control_body_admitted(engine) || engine->source_control != p || p->host != frame->client.host ||
         p->native != frame->client.native || !engine->calls || engine->current_client != frame->client.slot ||
-        application_provider_for(engine->provider->application, frame->client.actor,
-            QA_ROLE_MOVEMENT, NULL) != engine->provider)
+        (application_provider_for(engine->provider->application, frame->client.actor,
+            QA_ROLE_MOVEMENT, NULL) != engine->provider &&
+         (!engine->input_stage || !qa_actor_id_equal(engine->input_stage->actor,frame->client.actor) ||
+          !engine->input_stage->current(engine->input_stage->context,frame->client.actor))))
         return application_fail(error, QA_ERROR_NOT_FOUND, "Native Pmove lost its actual movement invocation");
     if (!client_live(&frame->client, error)) return false;
     qa_native_address player;
@@ -284,6 +287,8 @@ static bool dimensions_entry(void *context, qa_native_instance *native, qa_nativ
     --p->engine->calls; return ok;
 }
 
+#include "guest_q2_control_input.h"
+
 static bool pmove_entry(void *context, qa_native_instance *native, qa_native_entry_observer *binding,
     const qa_native_value *arguments, size_t count, qa_native_value *result, qa_error *error)
 {
@@ -338,8 +343,11 @@ static bool pmove_entry(void *context, qa_native_instance *native, qa_native_ent
         }
     }
     p->current = &frame;
-    if (ok) ok = frame_live(p, &frame, error) && qa_native_invoke_original(binding, arguments, count, result, error) &&
-        frame_live(p, &frame, error);
+    bool selected=false;
+    if(ok) ok=raw_move(&frame,&selected,error);
+    if(ok&&selected) *result=(qa_native_value){.type=QA_NATIVE_VOID};
+    if (ok&&!selected) ok = frame_live(p, &frame, error) && qa_native_invoke_original(binding, arguments, count, result, error) &&
+        frame_live(p, &frame, error) && raw_native_commit(&frame,error);
     if (projected) {
         qa_error cleanup = {0}; uint8_t current[4];
         bool retained = frame_live(p, &frame, &cleanup);

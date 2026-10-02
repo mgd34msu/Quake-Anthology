@@ -130,6 +130,9 @@ const qa_movement_result *application_control_q3_result(application_provider *, 
 bool application_arsenal_guest_output_admit(application_provider *, uint8_t, qa_error *);
 bool application_arsenal_guest_source_command(qa_application *, qa_actor_id,
     const qa_movement_command *, qa_error *);
+/* Only an entered original Q2 weapon decision can lend this synchronous turn. */
+bool application_control_native_q2_weapon_step(application_provider *, qa_actor_id,
+    const qa_movement_command *, uint64_t source_time_ns, qa_error *);
 bool application_control_group_touch_once(qa_application *, qa_actor_id, qa_actor_id, bool *, qa_error *);
 bool application_control_frames_prepare(void *, qa_session *, const qa_source_frame *, size_t,
                                          uint64_t, qa_error *);

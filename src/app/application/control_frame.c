@@ -5,6 +5,7 @@
 #include "bots_round.h"
 #include "native_q3_clients.h"
 #include "native_q3_wire_state.h"
+#include "guest_native_q2_input.h"
 #include "qa/game_q3_source.h"
 #include "qa/game_q2_wire.h"
 #include "qa/network_unified_session.h"
@@ -447,7 +448,7 @@ static bool saved_source_client(application_provider *map, qa_actor_id actor, qa
             member = qa_q1_native_client_slot_prepared(map->state.q1, actor, &slot, NULL);
         else if (map->kind == APPLICATION_PROVIDER_Q3)
             member = qa_q3_native_client_slot(map->state.q3, actor, &slot, NULL);
-        else if (map->kind == APPLICATION_PROVIDER_Q2) {
+        else if (map->kind == APPLICATION_PROVIDER_Q2 || application_native_q2_source_client(map, actor)) {
             member = map->component.command_actor &&
                 map->component.command_actor(map->component.state, map->application->session, actor);
         }
@@ -871,15 +872,20 @@ bool qa_application_control_q2_command(qa_application *app, qa_actor_id actor,
     qa_clock_state clock;
     qa_q2_wire_movement source;
     if (!record->active || record->retired || record->moving || !qa_actor_id_equal(record->actor, actor) ||
-        !provider || provider->kind != APPLICATION_PROVIDER_Q2 || !provider->constructed ||
+        !provider || (provider->kind != APPLICATION_PROVIDER_Q2 &&
+            !application_native_q2_source_client(provider, actor)) || !provider->constructed ||
         !provider->attached || provider->close_pending || frames->draining || frames->current ||
         provider != application_world_provider(app, QA_ROLE_ENTITIES, "") ||
         !provider->component.command_actor ||
         !provider->component.command_actor(provider->component.state, app->session, actor) ||
-        !qa_session_clock(app->session, provider->owner, &clock) ||
-        !qa_q2_wire_movement_read(provider->state.q2, actor, &source, error) ||
-        raw->kind != source.state.kind || !q2_raw_valid(raw))
+        !qa_session_clock(app->session, provider->owner, &clock))
         return application_fail(error, QA_ERROR_ARGUMENT, "Raw Q2 input lacks its physical source and literal dialect");
+    bool physical = provider->kind == APPLICATION_PROVIDER_Q2
+        ? qa_q2_wire_movement_read(provider->state.q2, actor, &source, error)
+        : application_native_q2_input_read(provider, actor, &source, error);
+    if (!physical) return false;
+    if (raw->kind != source.state.kind || !q2_raw_valid(raw))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Raw Q2 input differs from its physical Source command fields");
     bool seen; uint64_t previous;
     (void)application_control_frames_sequence(app, actor, &seen, &previous);
     control_input *input = &frames->inputs[actor.slot];
@@ -1823,6 +1829,80 @@ static bool qw_foreign_command(command_group_call *call, application_control_con
     return ok;
 }
 
+typedef struct native_q2_command_call {
+    qa_application *app;
+    application_provider *source, *movement, *arsenal;
+    const application_control_context *current;
+} native_q2_command_call;
+
+static bool native_q2_command_current(void *context, qa_actor_id actor)
+{
+    native_q2_command_call *call = context;
+    qa_application *app = call->app;
+    const application_control_context *current = call->current;
+    return app->state == QA_APPLICATION_RUNNING && app->control_frames->current == current &&
+        current->source_q2cmd && current->command_only && qa_actor_id_equal(current->actor, actor) &&
+        current->command.provider == call->source->owner && source_provider(app, actor) == call->source &&
+        application_native_q2_source_client(call->source, actor) &&
+        application_provider_for(app, actor, QA_ROLE_MOVEMENT, "") == call->movement &&
+        application_provider_for(app, actor, QA_ROLE_ARSENAL, "") == call->arsenal &&
+        actor.slot < app->control_capacity && qa_actors_get(qa_session_actors(app->session), actor) &&
+        app->controls[actor.slot].active && !app->controls[actor.slot].retired &&
+        qa_actor_id_equal(app->controls[actor.slot].actor, actor);
+}
+
+static bool native_q2_command_move(void *context, const qa_movement_input *input,
+    const qa_movement_services *services, qa_movement_result *out, qa_error *error)
+{
+    native_q2_command_call *call = context;
+    (void)services;
+    if (!input || !out || !native_q2_command_current(call, input->actor) ||
+        input->command.sequence != call->current->source_command.sequence ||
+        input->state.kind != call->current->source_command.kind || call->movement == call->source)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 Pmove lost its selected Source command stage");
+    qa_q2_wire_movement physical = {.state = input->state};
+    qa_movement_command selected;
+    if (!q2_selected_command(call->app, input->actor, call->source, &physical,
+            &input->command, &call->current->command, &selected, error) ||
+        !application_control_stage_move(call->app, input->actor, &selected, NULL, error)) return false;
+    if (!qa_actors_get(qa_session_actors(call->app->session), input->actor)) {
+        qa_movement_result_free(out);
+        *out = (qa_movement_result){.status = QA_MOVEMENT_ACTOR_REMOVED,
+            .actor = input->actor, .command_sequence = selected.sequence};
+        return true;
+    }
+    application_control_record *record = &call->app->controls[input->actor.slot];
+    const qa_movement_result *result = &record->result;
+    if (!native_q2_command_current(call, input->actor) || record->moving ||
+        result->status != QA_MOVEMENT_ACTIVE || !qa_actor_id_equal(result->actor, input->actor) ||
+        result->command_sequence != selected.sequence || result->contact_count > result->contact_capacity ||
+        (result->contact_count && !result->contacts) ||
+        result->contact_count > SIZE_MAX / sizeof(*result->contacts))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 Pmove lacks its completed selected movement result");
+    qa_movement_contact *contacts = NULL;
+    if (result->contact_count) {
+        contacts = malloc(result->contact_count * sizeof(*contacts));
+        if (!contacts) return application_fail(error, QA_ERROR_MEMORY, "Retaining selected Native Q2 movement contacts");
+        memcpy(contacts, result->contacts, result->contact_count * sizeof(*contacts));
+    }
+    qa_movement_result_free(out);
+    *out = *result;
+    out->contacts = contacts; out->contact_capacity = out->contact_count;
+    return true;
+}
+
+static bool native_q2_command_arsenal(void *context, qa_actor_id actor,
+    const qa_movement_command *raw, uint64_t time_ns, qa_error *error)
+{
+    native_q2_command_call *call = context;
+    if (!raw || !native_q2_command_current(call, actor) || call->movement != call->source ||
+        !call->arsenal || call->arsenal == call->source || time_ns != call->current->command.time_ns ||
+        raw->kind != call->current->source_command.kind ||
+        raw->sequence != call->current->source_command.sequence || !q2_raw_valid(raw))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 weapon dispatcher lost its selected Source command stage");
+    return application_control_native_q2_weapon_step(call->source, actor, raw, time_ns, error);
+}
+
 static bool apply_command_group(void *opaque, qa_session *session, const qa_source_command *command, qa_error *error)
 {
     command_group_call *call = opaque;
@@ -1886,36 +1966,45 @@ static bool apply_command_group(void *opaque, qa_session *session, const qa_sour
     } else if (group->domain == CONTROL_COMMAND_Q2_SOURCE) {
         application_provider *source = source_provider(app, group->actor);
         current.source_q2cmd = true; current.source_command = group->commands[call->index];
-        current.source_elapsed_ns = source_interval(app->controls[group->actor.slot].state.kind,
-            (uint64_t)current.source_command.milliseconds * UINT64_C(1000000));
+        current.source_elapsed_ns = (uint64_t)current.source_command.milliseconds * UINT64_C(1000000);
         current.retained = true;
         owner->current = &current;
-        qa_movement_command selected;
-        qa_q2_wire_movement physical;
-        bool run_pmove = false;
-        bool source_movement = application_provider_for(app, group->actor, QA_ROLE_MOVEMENT, "") == source;
-        ok = source && source->kind == APPLICATION_PROVIDER_Q2 &&
-            qa_q2_wire_movement_prepare(source->state.q2, group->actor,
-                &current.source_command, &physical, &run_pmove, error);
-        bool cutscene = ok && app->controls[group->actor.slot].cutscene;
-        if (ok && run_pmove && !cutscene && qa_actors_get(qa_session_actors(session), group->actor)) {
-            if (source_movement) app->controls[group->actor.slot].state = physical.state;
-            ok = q2_selected_command(app, group->actor, source, &physical,
-                &current.source_command, command, &selected, error) &&
-                application_control_stage_move(app, group->actor, &selected, NULL, error);
-        }
-        if (ok && run_pmove && qa_actors_get(qa_session_actors(session), group->actor)) {
-            application_control_record *record = &app->controls[group->actor.slot];
-            if (source_provider(app, group->actor) != source || !record->active || record->moving ||
-                record->retired || !qa_actor_id_equal(record->actor, group->actor) ||
-                (!cutscene && (!qa_actor_id_equal(record->result.actor, group->actor) ||
-                    record->result.command_sequence != selected.sequence)))
-                ok = application_fail(error, QA_ERROR_ARGUMENT, "Q2 Source completion lost its selected phase");
-            else ok = qa_q2_wire_movement_complete(source->state.q2, group->actor,
-                cutscene ? NULL : &record->result, &current.source_command,
-                !cutscene && source_movement, error);
-            if (ok && !cutscene)
-                ok = qa_q2_player_after_movement(source->state.q2, group->actor, error);
+        if (application_native_q2_source_client(source, group->actor)) {
+            native_q2_command_call native = {.app = app, .source = source, .current = &current,
+                .movement = application_provider_for(app, group->actor, QA_ROLE_MOVEMENT, ""),
+                .arsenal = application_provider_for(app, group->actor, QA_ROLE_ARSENAL, "")};
+            application_native_q2_input_stage stage = {.context = &native, .actor = group->actor,
+                .time_ns = command->time_ns, .current = native_q2_command_current, .move = native_q2_command_move,
+                .arsenal = native_q2_command_arsenal};
+            ok = application_native_q2_input_think(source, group->actor, &current.source_command, &stage, error);
+        } else {
+            qa_movement_command selected;
+            qa_q2_wire_movement physical;
+            bool run_pmove = false;
+            bool source_movement = application_provider_for(app, group->actor, QA_ROLE_MOVEMENT, "") == source;
+            ok = source && source->kind == APPLICATION_PROVIDER_Q2 &&
+                qa_q2_wire_movement_prepare(source->state.q2, group->actor,
+                    &current.source_command, &physical, &run_pmove, error);
+            bool cutscene = ok && app->controls[group->actor.slot].cutscene;
+            if (ok && run_pmove && !cutscene && qa_actors_get(qa_session_actors(session), group->actor)) {
+                if (source_movement) app->controls[group->actor.slot].state = physical.state;
+                ok = q2_selected_command(app, group->actor, source, &physical,
+                    &current.source_command, command, &selected, error) &&
+                    application_control_stage_move(app, group->actor, &selected, NULL, error);
+            }
+            if (ok && run_pmove && qa_actors_get(qa_session_actors(session), group->actor)) {
+                application_control_record *record = &app->controls[group->actor.slot];
+                if (source_provider(app, group->actor) != source || !record->active || record->moving ||
+                    record->retired || !qa_actor_id_equal(record->actor, group->actor) ||
+                    (!cutscene && (!qa_actor_id_equal(record->result.actor, group->actor) ||
+                        record->result.command_sequence != selected.sequence)))
+                    ok = application_fail(error, QA_ERROR_ARGUMENT, "Q2 Source completion lost its selected phase");
+                else ok = qa_q2_wire_movement_complete(source->state.q2, group->actor,
+                    cutscene ? NULL : &record->result, &current.source_command,
+                    !cutscene && source_movement, error);
+                if (ok && !cutscene)
+                    ok = qa_q2_player_after_movement(source->state.q2, group->actor, error);
+            }
         }
     } else if (group->domain == CONTROL_COMMAND_Q3_SOURCE) {
         current.source_guestcmd = true; current.retained = true;
@@ -2250,7 +2339,8 @@ static bool domain_owner(qa_application *app, application_provider *source, qa_a
         return source->component.clock.kind == QA_CLOCK_Q3 &&
             (source->kind == APPLICATION_PROVIDER_Q3 || original_q3(source));
     if (domain == CONTROL_COMMAND_Q2_SOURCE)
-        return source->kind == APPLICATION_PROVIDER_Q2 &&
+        return (source->kind == APPLICATION_PROVIDER_Q2 ||
+            application_native_q2_source_client(source, actor)) &&
             (source->component.clock.kind == QA_CLOCK_Q2_CLASSIC || source->component.clock.kind == QA_CLOCK_Q2_RERELEASE);
     if (domain == CONTROL_COMMAND_NQ_SOURCE)
         return source_client(source) && source->component.clock.kind == QA_CLOCK_NETQUAKE &&
@@ -2410,7 +2500,9 @@ bool application_control_frames_fields(qa_source_save_io *io, qa_application *ap
         if (ok && (qw != value.quakeworld || before_source(actor_source) != value.before_source ||
             (qw && value.count > 20) || (value.domain == CONTROL_COMMAND_Q3_SOURCE &&
                 (value.count != 1 || actor_source->kind != APPLICATION_PROVIDER_Q3)) ||
-            (value.domain == CONTROL_COMMAND_Q2_SOURCE && (value.count != 1 || actor_source->kind != APPLICATION_PROVIDER_Q2)) ||
+            (value.domain == CONTROL_COMMAND_Q2_SOURCE && (value.count != 1 ||
+                (actor_source->kind != APPLICATION_PROVIDER_Q2 &&
+                 !application_native_q2_source_client(actor_source, value.actor)))) ||
             (value.domain == CONTROL_COMMAND_UNIFIED && (value.count != 1 || value.bot || value.quakeworld)) ||
             (value.bot && (value.count != 1 ||
                 !application_player_bot(app, value.actor) || !application_bots_actor(app, value.actor)))))

@@ -961,6 +961,16 @@ static bool encode_trace(qa_native_host *host, const qa_trace_result *trace,
     return true;
 }
 
+bool qa_native_host_q2_trace_encode(qa_native_host *host,const qa_trace_result *trace,
+    qa_buffer bytes,qa_error *error)
+{
+    if(!host||host->kind!=NATIVE_HOST_Q2_GAME||!host->instance||host->destroying||host->restoring||
+        host->reconstruction||qa_native_terminal(host->instance)||!trace||!bytes.data)
+        return native_host_fail(error,QA_ERROR_ARGUMENT,0,"Native trace encoding requires its installed live GAME owner");
+    qa_native_value result={.type=QA_NATIVE_BYTES,.as.bytes={bytes.data,bytes.size}};
+    return encode_trace(host,trace,0,&result,error);
+}
+
 struct qa_native_host_source_touch {
     qa_native_host *host;
     qa_native_address scratch;

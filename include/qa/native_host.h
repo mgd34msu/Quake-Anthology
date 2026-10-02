@@ -174,6 +174,11 @@ typedef struct qa_native_host_movement_services {
      * The adapter fills source state and command fields before this callback. */
     bool (*prepare)(void *, qa_native_host *, qa_native_address, qa_movement_input *,
                     qa_error *);
+    /* Optional selected movement execution at the actual SDK Pmove call.
+     * The result owns its contacts and must use the physical Source dialect. */
+    bool (*execute)(void *, qa_native_host *, qa_native_address,
+                    const qa_movement_input *, const qa_movement_services *,
+                    qa_movement_result *, qa_error *);
     bool (*commit)(void *, qa_native_host *, qa_native_address,
                    const qa_movement_result *, qa_error *);
 } qa_native_host_movement_services;
@@ -324,6 +329,10 @@ bool qa_native_host_source_touch_prepare(qa_native_host *, bool rerelease,
 bool qa_native_host_source_touch_arguments(const qa_native_host_source_touch *,
     qa_native_value arguments[4], qa_error *);
 bool qa_native_host_source_touch_close(qa_native_host_source_touch **, qa_error *);
+/* Encode the actual GAME ABI trace, retaining physical entity and surface
+ * pointers owned by this host. The output span is borrowed; ownership stays
+ * with the caller. No Source call or movement is executed. */
+bool qa_native_host_q2_trace_encode(qa_native_host *,const qa_trace_result *,qa_buffer,qa_error *);
 
 bool qa_native_host_initialize(qa_native_host *, int32_t level_time, int32_t random_seed,
                                bool restart, qa_error *);

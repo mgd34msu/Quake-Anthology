@@ -3,6 +3,7 @@
 #include "native_q2_source_actors.h"
 #include "guest_native_q2_combat.h"
 #include "control_frame.h"
+#include "guest_native_q2_input.h"
 #include "native_q2_delivery.h"
 #include "native_q2_callbacks.h"
 #include "native_q2_protocol_resources.h"
@@ -384,18 +385,22 @@ static bool movement_prepare(void *opaque, qa_native_host *host, qa_native_addre
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 Pmove requires the active admitted client call");
     qa_actor_id actor = engine->clients[slot].actor;
     const application_control_external_stage *stage = engine->movement_stage;
+    const application_native_q2_input_stage *raw = engine->input_stage;
+    if (raw && (!qa_actor_id_equal(raw->actor, actor) || !raw->current ||
+        !raw->current(raw->context, actor)))
+        return application_fail(error, QA_ERROR_NOT_FOUND, "Native Q2 Pmove lost its raw Source command stage");
     if (stage && (stage->application != app || !qa_actor_id_equal(stage->actor, actor) ||
         !stage->current || !stage->current(stage)))
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 Pmove lost its retained source turn");
     if (!qa_actors_get(qa_session_actors(app->session), actor) ||
-        application_provider_for(app, actor, QA_ROLE_MOVEMENT, NULL) != engine->provider)
+        (!raw && application_provider_for(app, actor, QA_ROLE_MOVEMENT, NULL) != engine->provider))
         return application_fail(error, QA_ERROR_UNSUPPORTED, "Native Q2 Pmove cannot replace another selected movement owner");
     qa_body_state body; qa_combat_state combat;
     if (!qa_world_body_read(engine->world, actor, &body, error) ||
         !qa_combat_read_traits(app->combat, actor, &combat, error)) return false;
     input->actor = actor;
     input->command.sequence = engine->current_command_sequence;
-    input->time_ns = stage ? stage->source.frame.time_ns : qa_session_elapsed(app->session);
+    input->time_ns = raw ? raw->time_ns : stage ? stage->source.frame.time_ns : qa_session_elapsed(app->session);
     input->elapsed_ns = (uint64_t)input->command.milliseconds * UINT64_C(1000000);
     input->environment.health = combat.health;
     const qa_cvar_view *air = qa_cvars_find(engine->cvars, "sv_airaccelerate");
@@ -414,6 +419,36 @@ static bool movement_prepare(void *opaque, qa_native_host *host, qa_native_addre
     return true;
 }
 
+static bool movement_execute(void *opaque, qa_native_host *host, qa_native_address record,
+    const qa_movement_input *input, const qa_movement_services *services,
+    qa_movement_result *result, qa_error *error)
+{
+    (void)record;
+    struct application_native_q2 *engine = opaque;
+    qa_application *app = engine->provider->application;
+    const application_native_q2_input_stage *stage = engine->input_stage;
+    if (host != engine->provider->state.native.host)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 movement execution has another physical host");
+    if (!stage || application_provider_for(app, input->actor, QA_ROLE_MOVEMENT, NULL) == engine->provider)
+        return qa_movement_move(input, services, result, error);
+    if (!qa_actor_id_equal(stage->actor,input->actor) || !stage->current(stage->context,input->actor))
+        return application_fail(error, QA_ERROR_NOT_FOUND, "Native Q2 selected movement lost its raw Source stage");
+    if (!stage->move(stage->context,input,services,result,error)) return false;
+    if (!qa_actor_id_equal(result->actor,input->actor))
+        return application_fail(error, QA_ERROR_NOT_FOUND, "Native Q2 selected movement returned another Source actor");
+    if(result->status==QA_MOVEMENT_ACTOR_REMOVED && !qa_actors_get(qa_session_actors(app->session),input->actor)) return true;
+    if (!stage->current(stage->context,input->actor))
+        return application_fail(error, QA_ERROR_NOT_FOUND, "Native Q2 selected movement returned another Source actor or stage");
+    qa_vec3 origin=qa_movement_origin(&result->state), velocity=qa_movement_velocity(&result->state);
+    /* Source flags, gravity, timers and delta angles remain its own namespace. */
+    qa_movement_state physical=input->state;
+    if (!qa_movement_set_origin(&physical,origin,error) ||
+        !qa_movement_set_velocity(&physical,velocity,error)) return false;
+    if (physical.kind==QA_MOVEMENT_Q2_RERELEASE) physical.data.q2r.view_height=result->view_height;
+    result->state=physical;
+    return true;
+}
+
 static bool movement_commit(void *opaque, qa_native_host *host, qa_native_address record,
     const qa_movement_result *result, qa_error *error)
 {
@@ -426,6 +461,11 @@ static bool movement_commit(void *opaque, qa_native_host *host, qa_native_addres
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 Pmove completion differs from its active source client");
     if (result->status == QA_MOVEMENT_ACTOR_REMOVED ||
         !qa_actors_get(qa_session_actors(app->session), result->actor)) return true;
+    const application_native_q2_input_stage *raw=engine->input_stage;
+    if (raw && (!qa_actor_id_equal(raw->actor,result->actor) || !raw->current(raw->context,result->actor)))
+        return application_fail(error,QA_ERROR_NOT_FOUND,"Native Q2 Pmove completion lost its raw Source stage");
+    if (raw && application_provider_for(app,result->actor,QA_ROLE_MOVEMENT,NULL)!=engine->provider)
+        return true;
     const application_control_external_stage *stage = engine->movement_stage;
     if (stage && (stage->application != app || !qa_actor_id_equal(stage->actor, result->actor) ||
         !stage->current || !stage->current(stage)))
@@ -438,13 +478,27 @@ static bool movement_commit(void *opaque, qa_native_host *host, qa_native_addres
     control->state = result->state; control->bounds = result->bounds;
     control->ground = result->ground; control->water_level = result->water_level;
     control->water_type = result->water_type; control->view_height = result->view_height;
+    control->view_angles = result->view_angles; control->view_offset = result->view_offset;
+    if (raw) {
+        qa_movement_result copy=*result;
+        copy.contacts=NULL;
+        copy.contact_capacity=copy.contact_count;
+        if (result->contact_count) {
+            if (result->contact_count>SIZE_MAX/sizeof(*result->contacts))
+                return application_fail(error,QA_ERROR_FORMAT,"Native Q2 Pmove contact count exceeds its result storage");
+            copy.contacts=malloc(result->contact_count*sizeof(*copy.contacts));
+            if (!copy.contacts) return application_fail(error,QA_ERROR_MEMORY,"Retaining actual native Q2 Pmove contacts");
+            memcpy(copy.contacts,result->contacts,result->contact_count*sizeof(*copy.contacts));
+        }
+        qa_movement_result_free(&control->result); control->result=copy;
+    }
     return true;
 }
 
 qa_native_host_movement_services application_native_q2_movement_services(struct application_native_q2 *engine)
 {
     return (qa_native_host_movement_services){.context = engine, .prepare = movement_prepare,
-        .commit = movement_commit};
+        .execute = movement_execute, .commit = movement_commit};
 }
 
 bool application_native_q2_project(void *opaque, qa_native_host *host, uint32_t slot,

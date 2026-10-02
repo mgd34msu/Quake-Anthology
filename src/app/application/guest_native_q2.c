@@ -1,4 +1,5 @@
 #include "guest_native_q2_private.h"
+#include "guest_native_q2_input.h"
 #include "native_q2_callbacks.h"
 #include "native_q2_client_stages.h"
 #include "native_q2_source_actors.h"
@@ -17,6 +18,12 @@
 #include "native_q2_inventory_rows.h"
 
 static bool load_host(struct application_native_q2 *, qa_error *);
+static bool command_actor(void *state,qa_session *session,qa_actor_id actor)
+{
+    struct application_native_q2 *engine=state;
+    return engine&&engine->provider&&engine->provider->application->session==session&&
+        application_native_q2_source_client(engine->provider,actor);
+}
 
 static bool process_current(void *context, const qa_launch_instance *descriptor,
     qa_actor_owner receiver, uint64_t service_owner, qa_error *error)
@@ -361,6 +368,7 @@ static bool prepare_owner(qa_application *app, application_provider *provider,
     provider->component = (qa_component){.owner = provider->owner,
         .clock = provider->launch->selection.clock, .state = engine,
         .begin_frame = cgame ? NULL : begin_frame, .end_frame = cgame ? NULL : end_frame,
+        .command_actor = cgame ? NULL : command_actor,
         .actor_released = cgame ? NULL : actor_released};
     engine->prepared = true;
     return true;

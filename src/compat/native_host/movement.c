@@ -260,7 +260,10 @@ bool native_host_pmove(qa_native_host *host, qa_native_address address, qa_error
         .firing = bridge_firing,
         .is_bsp = bridge_is_bsp};
     qa_movement_result movement = {0};
-    bool moved = qa_movement_move(&input, &services, &movement, error);
+    bool moved = host->movement.execute
+        ? host->movement.execute(host->movement.context, host, address, &input,
+            &services, &movement, error)
+        : qa_movement_move(&input, &services, &movement, error);
     if (bridge.scratch) {
         qa_error cleanup = {0};
         bool freed = qa_native_free(host->instance, bridge.scratch, &cleanup);
@@ -269,6 +272,17 @@ bool native_host_pmove(qa_native_host *host, qa_native_address address, qa_error
     if (!moved) {
         qa_movement_result_free(&movement);
         return false;
+    }
+    if(movement.status==QA_MOVEMENT_ACTOR_REMOVED &&
+        qa_actor_id_equal(movement.actor,input.actor) &&
+        !qa_actors_get(qa_session_actors(host->world.session),input.actor)) {
+        qa_movement_result_free(&movement); return true;
+    }
+    if (movement.state.kind != QA_MOVEMENT_Q2_CLASSIC ||
+        !qa_actor_id_equal(movement.actor, input.actor)) {
+        qa_movement_result_free(&movement);
+        return native_host_fail(error, QA_ERROR_FORMAT, 0,
+            "classic Q2 Pmove result differs from its physical Source actor or dialect");
     }
     const qa_q2_movement_state *state = &movement.state.data.q2;
     qa_store_u32le(bytes, (uint32_t)state->type);

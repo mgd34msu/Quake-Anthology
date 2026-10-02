@@ -30,6 +30,9 @@ typedef struct application_native_q2_client {
 } application_native_q2_client;
 
 struct application_native_q2 {
+    const struct application_native_q2_input_stage *input_stage;
+    const qa_movement_command *input_command;
+    bool input_arsenal, input_arsenal_committed;
     const struct application_control_external_stage *movement_stage;
     struct application_native_q2_baseline *baseline;
     application_provider *provider;

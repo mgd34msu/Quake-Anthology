@@ -5,11 +5,184 @@
 #include "native_q2_visibility.h"
 #include "native_q2_inventory_scanner.h"
 #include "control_frame.h"
+#include "guest_native_q2_input.h"
+#include "guest_native_q2_attack.h"
 #include <math.h>
 
 static void store_float(uint8_t *data, float value)
 {
     uint32_t bits; memcpy(&bits, &value, sizeof(bits)); qa_store_u32le(data, bits);
+}
+
+static uint32_t source_client_slot(const application_provider *provider, qa_actor_id actor)
+{
+    const struct application_native_q2 *engine = provider && provider->kind == APPLICATION_PROVIDER_NATIVE
+        ? provider->state.native.q2_engine : NULL;
+    if (!engine || engine->profile == QA_NATIVE_Q2_CGAME_API2023 || engine->callbacks) return 0;
+    uint32_t slot = 0;
+    for (uint32_t i = 1; i < 257; ++i)
+        if (engine->clients[i].connected && engine->clients[i].begun &&
+            qa_actor_id_equal(engine->clients[i].actor, actor)) {
+            if (slot) return 0;
+            slot = i;
+        }
+    return slot;
+}
+
+bool application_native_q2_source_client(const application_provider *provider, qa_actor_id actor)
+{ return source_client_slot(provider, actor) != 0; }
+
+bool application_native_q2_input_read(application_provider *provider, qa_actor_id actor,
+    qa_q2_wire_movement *out, qa_error *error)
+{
+    uint32_t slot = source_client_slot(provider, actor);
+    struct application_native_q2 *engine = slot ? provider->state.native.q2_engine : NULL;
+    bool reached=engine&&engine->input_arsenal&&engine->input_stage&&
+        qa_actor_id_equal(engine->input_stage->actor,actor)&&
+        engine->input_stage->current(engine->input_stage->context,actor);
+    if (!out || !engine || !engine->initialized || !engine->map_ready || (engine->calls&&!reached) ||
+        !qa_actors_get(qa_session_actors(provider->application->session), actor))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 input read requires its live idle physical client");
+    qa_native_instance *native=qa_native_host_instance(provider->state.native.host);
+    qa_native_slot_binding binding,after;
+    if(!qa_native_slot(native,slot,&binding,error)) return false;
+    if(binding.kind==QA_NATIVE_SLOT_FREE||binding.slot!=slot||binding.source_slot!=slot||
+        binding.owner!=provider->owner||!qa_actor_id_equal(binding.actor,actor))
+        return application_fail(error,QA_ERROR_NOT_FOUND,"Native Q2 physical input binding differs from its full Source actor");
+    qa_q2_player player={0};
+    qa_buffer bytes={0};
+    if(!qa_native_host_q2_player_state(provider->state.native.host,slot,&bytes,error)) return false;
+    bool classic = engine->profile == QA_NATIVE_Q2_GAME_API3;
+    const uint8_t *data=bytes.data;
+    player.pmove.type=qa_load_i32le(data);
+    if(classic) {
+        for(size_t i=0;i<3;++i) {
+            player.pmove.origin[i]=(int16_t)qa_load_u16le(data+4+i*2);
+            player.pmove.velocity[i]=(int16_t)qa_load_u16le(data+10+i*2);
+            player.pmove.delta_angles[i]=(int16_t)qa_load_u16le(data+20+i*2);
+        }
+        player.pmove.flags=data[16]; player.pmove.time=data[17]; player.pmove.gravity=(int16_t)qa_load_u16le(data+18);
+    } else {
+        for(size_t i=0;i<3;++i) {
+            player.pmove.origin_f[i]=qa_load_f32le(data+4+i*4);
+            player.pmove.velocity_f[i]=qa_load_f32le(data+16+i*4);
+            player.pmove.delta_angles_f[i]=qa_load_f32le(data+36+i*4);
+        }
+        player.pmove.flags=qa_load_u16le(data+28); player.pmove.time=qa_load_u16le(data+30);
+        player.pmove.gravity=(int16_t)qa_load_u16le(data+32); player.pmove.viewheight=(int8_t)data[48];
+    }
+    size_t angles=classic?28u:52u;
+    for(size_t i=0;i<3;++i) {
+        player.viewangles[i]=qa_load_f32le(data+angles+i*4);
+        player.viewoffset[i]=qa_load_f32le(data+angles+12+i*4);
+    }
+    qa_buffer_free(&bytes);
+    qa_body_state body;
+    if(!qa_world_body_read(engine->world,actor,&body,error)||!qa_native_slot(native,slot,&after,error)) return false;
+    if(after.kind!=binding.kind||after.slot!=binding.slot||after.owner!=binding.owner||
+        after.source_slot!=binding.source_slot||!qa_actor_id_equal(after.actor,binding.actor))
+        return application_fail(error,QA_ERROR_NOT_FOUND,"Native Q2 physical player read changed its Source binding");
+    qa_movement_state state = qa_movement_state_default(classic ? QA_MOVEMENT_Q2_CLASSIC :
+        QA_MOVEMENT_Q2_RERELEASE, body.origin);
+    if (classic) {
+        state.data.q2.type = player.pmove.type;
+        for (size_t i = 0; i < 3; ++i) {
+            state.data.q2.origin_eighths[i] = (int16_t)player.pmove.origin[i];
+            state.data.q2.velocity_eighths[i] = (int16_t)player.pmove.velocity[i];
+            state.data.q2.delta_angle_shorts[i] = player.pmove.delta_angles[i];
+        }
+        state.data.q2.flags = (uint32_t)player.pmove.flags;
+        state.data.q2.time_eight_ms = (uint8_t)player.pmove.time;
+        state.data.q2.gravity = (int16_t)player.pmove.gravity;
+    } else {
+        state.data.q2r.type = player.pmove.type;
+        state.data.q2r.origin = qa_v3(player.pmove.origin_f[0],player.pmove.origin_f[1],player.pmove.origin_f[2]);
+        state.data.q2r.velocity = qa_v3(player.pmove.velocity_f[0],player.pmove.velocity_f[1],player.pmove.velocity_f[2]);
+        state.data.q2r.flags = (uint16_t)player.pmove.flags;
+        state.data.q2r.time_ms = (uint16_t)player.pmove.time;
+        state.data.q2r.gravity = (int16_t)player.pmove.gravity;
+        state.data.q2r.delta_angles = qa_v3(player.pmove.delta_angles_f[0],player.pmove.delta_angles_f[1],player.pmove.delta_angles_f[2]);
+        state.data.q2r.view_height = (float)player.pmove.viewheight;
+    }
+    *out = (qa_q2_wire_movement){.state=state,
+        .view_angles=qa_v3(player.viewangles[0],player.viewangles[1],player.viewangles[2]),
+        .view_offset=qa_v3(player.viewoffset[0],player.viewoffset[1],player.viewoffset[2]),
+        .bounds=body.bounds,.frame=engine->frame.number,.time_ns=engine->frame.time_ns,
+        .view_height=classic ? player.viewoffset[2] : (float)player.pmove.viewheight,.present=true};
+    if (body.ground.registry) out->ground = qa_actor_id_equal(body.ground,engine->world_actor)
+        ? (qa_movement_ground){.hit=QA_TRACE_HIT_WORLD}
+        : (qa_movement_ground){.hit=QA_TRACE_HIT_ACTOR,.actor=body.ground};
+    if(!qa_vec_finite(qa_movement_origin(&state))||!qa_vec_finite(qa_movement_velocity(&state))||
+        !qa_vec_finite(out->view_angles)||!qa_vec_finite(out->view_offset))
+        return application_fail(error,QA_ERROR_FORMAT,"Native Q2 physical input contains nonfinite SDK motion");
+    if(!application_native_q2_attack_input_fields(engine,slot,actor,out,error)) return false;
+    /* The profile publishes Source waterlevel; watertype is a genuine current
+     * shared-world sample in that Source collision dialect. */
+    qa_vec3 origin=qa_movement_origin(&out->state);
+    qa_point_query query={.point=qa_v3(origin.x,origin.y,origin.z+body.bounds.mins.z+1.f),
+        .policy=qa_collision_default_policy(QA_COLLISION_Q2),.pass_actor=actor};
+    query.policy.q2_merged_contents=!classic;
+    qa_point_contents contents;
+    if(!qa_world_point_contents(engine->world,&query,&contents,error)) return false;
+    out->water_type=out->water_level && (contents.contents & 56) ? (uint32_t)contents.contents : 0;
+    return true;
+}
+
+bool application_native_q2_input_think(application_provider *provider, qa_actor_id actor,
+    const qa_movement_command *command, const application_native_q2_input_stage *stage, qa_error *error)
+{
+    uint32_t slot = source_client_slot(provider, actor);
+    struct application_native_q2 *engine = slot ? provider->state.native.q2_engine : NULL;
+    if (!engine || !command || !stage || !stage->current || !stage->move ||
+        !qa_actor_id_equal(stage->actor,actor) || !stage->current(stage->context,actor) ||
+        engine->input_stage || engine->movement_stage || !engine->map_ready)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 raw input requires its current synchronous Source stage");
+    bool classic = engine->profile == QA_NATIVE_Q2_GAME_API3;
+    if (command->kind != (classic ? QA_MOVEMENT_Q2_CLASSIC : QA_MOVEMENT_Q2_RERELEASE) ||
+        command->milliseconds > UINT8_MAX || command->buttons > UINT8_MAX ||
+        !isfinite(command->forward_move) || !isfinite(command->side_move) ||
+        !isfinite(command->up_move) || !qa_vec_finite(command->angles))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 raw command differs from its physical SDK dialect");
+    uint8_t bytes[28] = {0}; bytes[0]=(uint8_t)command->milliseconds; bytes[1]=(uint8_t)command->buttons;
+    if (classic) {
+        float axes[]={command->forward_move,command->side_move,command->up_move};
+        for (size_t i=0;i<3;++i) {
+            if (axes[i]<INT16_MIN || axes[i]>INT16_MAX)
+                return application_fail(error,QA_ERROR_ARGUMENT,"Classic Q2 raw axis exceeds its Source short");
+            qa_store_u16le(bytes+2+i*2,(uint16_t)command->angle_words[i]);
+            qa_store_u16le(bytes+8+i*2,(uint16_t)(int16_t)axes[i]);
+        }
+        bytes[14]=command->impulse; bytes[15]=command->light_level;
+    } else {
+        store_float(bytes+4,command->angles.x); store_float(bytes+8,command->angles.y);
+        store_float(bytes+12,command->angles.z); store_float(bytes+16,command->forward_move);
+        store_float(bytes+20,command->side_move); qa_store_u32le(bytes+24,(uint32_t)command->server_frame);
+    }
+    engine->input_stage=stage; engine->input_command=command; engine->current_command_sequence=command->sequence;
+    bool ok=application_native_q2_client_think(provider,slot,(qa_bytes){bytes,classic?16u:28u},error);
+    engine->input_stage=NULL; engine->input_command=NULL; engine->current_command_sequence=0;
+    if (ok && qa_actors_get(qa_session_actors(provider->application->session),actor) &&
+        !stage->current(stage->context,actor))
+        ok=application_fail(error,QA_ERROR_NOT_FOUND,"Native Q2 raw input lost its actual Source command stage");
+    qa_application *app=provider->application;
+    if (ok && qa_actors_get(qa_session_actors(app->session),actor) &&
+        application_provider_for(app,actor,QA_ROLE_MOVEMENT,NULL)==provider) {
+        qa_q2_wire_movement physical;
+        if (!application_native_q2_input_read(provider,actor,&physical,error)) return false;
+        if (actor.slot>=app->control_capacity || !app->controls[actor.slot].active ||
+            !qa_actor_id_equal(app->controls[actor.slot].actor,actor))
+            return application_fail(error,QA_ERROR_NOT_FOUND,"Native Q2 Source completion lost its selected control generation");
+        application_control_record *control=&app->controls[actor.slot];
+        control->state=physical.state; control->bounds=physical.bounds;
+        control->view_angles=physical.view_angles; control->view_offset=physical.view_offset;
+        control->view_height=physical.view_height;
+        control->command_angles=classic?qa_v3((float)command->angle_words[0]*(360.f/65536.f),
+            (float)command->angle_words[1]*(360.f/65536.f),(float)command->angle_words[2]*(360.f/65536.f)):command->angles;
+        control->result.state=control->state; control->result.bounds=control->bounds;
+        control->result.view_angles=control->view_angles; control->result.view_offset=control->view_offset;
+        control->result.view_height=control->view_height;
+    }
+    return ok;
 }
 
 static bool native_move(application_provider *provider, qa_actor_id actor,
@@ -379,7 +552,7 @@ bool application_native_q2_client_think(application_provider *provider, uint32_t
     }
     struct application_native_q2 *engine = client_owner(provider, slot, true, error);
     if (!engine || !engine->clients[slot].begun) return false;
-    if (application_provider_for(provider->application, engine->clients[slot].actor,
+    if (!engine->source_attack && application_provider_for(provider->application, engine->clients[slot].actor,
             QA_ROLE_ARSENAL, NULL) != provider)
         return application_fail(error, QA_ERROR_UNSUPPORTED,
             "Native Q2 ClientThink requires its declared weapon-dispatch boundary for a foreign arsenal");

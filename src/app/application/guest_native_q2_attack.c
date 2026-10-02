@@ -1,5 +1,6 @@
 #include "guest_native_q2_private.h"
 #include "guest_native_q2_attack.h"
+#include "guest_native_q2_input.h"
 #include "native_q2_inventory_scanner.h"
 #include "qa/native_observe.h"
 #include "qa/persistence_fields.h"
@@ -35,6 +36,33 @@ typedef struct attack_hook {
     qa_native_entry_observer *binding;
     qa_native_address address;
 } attack_hook;
+typedef struct decision_region {
+    struct application_native_q2_attack *owner;
+    qa_json_id fields;
+    uint32_t id;
+    qa_native_region_binding *binding;
+} decision_region;
+typedef struct decision_saved {
+    qa_native_address address;
+    uint32_t bits, mask;
+    size_t bytes;
+    bool written;
+} decision_saved;
+typedef struct decision_projection {
+    struct decision_projection *next;
+    decision_region *region;
+    decision_saved *fields;
+    size_t count;
+    qa_actor_id actor;
+    qa_native_address entity;
+} decision_projection;
+typedef struct decision_frame {
+    struct decision_frame *previous;
+    qa_actor_id actor;
+    qa_native_address entity;
+    decision_projection *base;
+    bool committed, reached;
+} decision_frame;
 struct application_native_q2_attack {
     struct application_native_q2 *engine;
     qa_json_document *document;
@@ -53,6 +81,14 @@ struct application_native_q2_attack {
     attack_projectile *projectiles;
     attack_frame *current;
     uint64_t sequence;
+    uint32_t dispatcher_entry, dispatcher_argument, dispatcher_count;
+    qa_native_type dispatcher_parameters[16];
+    qa_native_entry_observer *dispatcher_hook;
+    decision_region *decisions;
+    size_t decision_count;
+    decision_frame *dispatch;
+    decision_projection *projections;
+    qa_json_id committed;
     bool active, items_ready;
 };
 static bool word(const qa_json_document *doc, qa_json_id object, const char *name,
@@ -60,7 +96,7 @@ static bool word(const qa_json_document *doc, qa_json_id object, const char *nam
 {
     uint64_t value;
     if (!qa_json_u64(doc, qa_json_get(doc, object, name), &value, error)) return false;
-    if (value > UINT32_MAX) return application_fail(error, QA_ERROR_FORMAT, "Native attack source field exceeds uint32");
+    if (value > UINT32_MAX) { application_fail(error, QA_ERROR_FORMAT, "Native attack source field exceeds uint32"); return false; }
     *out = (uint32_t)value; return true;
 }
 static qa_native_instance *instance(struct application_native_q2_attack *p)
@@ -83,6 +119,35 @@ static bool source_actor(struct application_native_q2_attack *p, qa_native_addre
     if (!qa_native_host_source_actor(p->engine->provider->state.native.host, address, true, out, error)) return false;
     return out->registry != 0 || application_fail(error, QA_ERROR_NOT_FOUND, "Native attack actor is not in use");
 }
+#include "guest_native_q2_attack_decisions.h"
+bool application_native_q2_attack_input_fields(struct application_native_q2 *engine,uint32_t slot,
+    qa_actor_id actor,qa_q2_wire_movement *out,qa_error *error)
+{
+    struct application_native_q2_attack *p=engine?engine->source_attack:NULL;
+    if(!p||!out) return application_fail(error,QA_ERROR_NOT_FOUND,"Native Source input has no qualified primary field producer");
+    qa_native_address entity,client;
+    qa_actor_id current;
+    if(!qa_native_entity_address(instance(p),slot,&entity,error)||
+        !qa_native_host_source_actor(engine->provider->state.native.host,entity,false,&current,error)||
+        !pointer_read(p,entity+p->client_pointer,&client,error)) return false;
+    if(!qa_actor_id_equal(current,actor)||!client)
+        return application_fail(error,QA_ERROR_NOT_FOUND,"Native input fields lost their physical Source client");
+    qa_json_id root=qa_json_root(p->document),weapons=qa_json_get(p->document,root,"weapons"),
+        entity_fields=qa_json_get(p->document,weapons,"entity");
+    double water;
+    if(!decision_scalar(p,entity,qa_json_get(p->document,entity_fields,"waterLevel"),&water,error)) return false;
+    if(water<0||water>3||trunc(water)!=water)
+        return application_fail(error,QA_ERROR_FORMAT,"Native Source water level exceeds its actual SDK domain");
+    out->water_level=(int32_t)water;
+    uint32_t offset;
+    if(!word(p->document,qa_json_get(p->document,root,"player"),"commandAngles",&offset,error)) return false;
+    if(offset>p->client_bytes||p->client_bytes-offset<12)
+        return application_fail(error,QA_ERROR_FORMAT,"Native Source command angles exceed its qualified client record");
+    uint8_t bytes[12];
+    if(!qa_native_read(instance(p),client+offset,bytes,sizeof(bytes),error)) return false;
+    out->command_angles=qa_v3(qa_load_f32le(bytes),qa_load_f32le(bytes+4),qa_load_f32le(bytes+8));
+    return qa_vec_finite(out->command_angles)||application_fail(error,QA_ERROR_FORMAT,"Native Source command angles are not finite");
+}
 static attack_factor *factor_for(struct application_native_q2_attack *p, qa_actor_id actor)
 {
     for (attack_factor *factor = p->factors; factor; factor = factor->next)
@@ -104,6 +169,31 @@ bool application_native_q2_attack_prepare(struct application_native_q2 *engine, 
         entries = qa_json_get(doc, qa_json_get(doc, root, "world"), "entries");
     qa_native_module_info info = qa_native_module_describe(engine->provider->state.native.module);
     p->pointer_bytes = info.image.target.pointer_bytes; p->abi = info.image.target.abi;
+    qa_json_id dispatcher=qa_json_get(doc,weapons,"dispatcher");
+    if(!qa_json_string_equal(doc,qa_json_get(doc,dispatcher,"record"),"entity") ||
+        !qa_json_string_equal(doc,qa_json_get(doc,qa_json_get(doc,dispatcher,"entry"),"kind"),"rva") ||
+        !word(doc,qa_json_get(doc,dispatcher,"entry"),"rva",&p->dispatcher_entry,error) ||
+        !word(doc,dispatcher,"arguments",&p->dispatcher_count,error) ||
+        !word(doc,dispatcher,"argument",&p->dispatcher_argument,error)) return false;
+    if(!p->dispatcher_count||p->dispatcher_count>16||p->dispatcher_argument>=p->dispatcher_count)
+        return application_fail(error,QA_ERROR_FORMAT,"Native weapon dispatcher actor exceeds its real argument roster");
+    for(size_t i=0;i<p->dispatcher_count;++i) p->dispatcher_parameters[i]=scalar(QA_NATIVE_ADDRESS);
+    p->committed=qa_json_get(doc,weapons,"committedInput");
+    qa_json_id decisions=qa_json_get(doc,weapons,"decisions");
+    p->decision_count=qa_json_size(doc,decisions);
+    if(qa_json_type(doc,p->committed)!=QA_JSON_ARRAY || qa_json_type(doc,decisions)!=QA_JSON_ARRAY || !p->decision_count)
+        return application_fail(error,QA_ERROR_FORMAT,"Native weapon dispatcher lacks its actual decision and commitment rosters");
+    p->decisions=calloc(p->decision_count,sizeof(*p->decisions));
+    if(!p->decisions) return application_fail(error,QA_ERROR_MEMORY,"Retaining qualified original weapon decisions");
+    for(size_t i=0;i<p->decision_count;++i) {
+        char path[64]; snprintf(path,sizeof(path),"/weapons/decisions/%zu",i);
+        qa_native_declared_region region;
+        if(!qa_native_declaration_find_region(engine->declaration,path,&region,error)) return false;
+        qa_json_id fields=qa_json_get(doc,qa_json_at(doc,decisions,i),"fields");
+        if(qa_json_type(doc,fields)!=QA_JSON_ARRAY||!qa_json_size(doc,fields))
+            return application_fail(error,QA_ERROR_FORMAT,"Native weapon decision lacks its actual input mask roster");
+        p->decisions[i]=(decision_region){.owner=p,.fields=fields,.id=region.id};
+    }
     if (!word(doc, client, "pointer", &p->client_pointer, error) ||
         !word(doc, client, "weapon", &p->weapon, error) ||
         !word(doc, source_client, "byteLength", &p->client_bytes, error) ||
@@ -165,6 +255,8 @@ static bool capture(struct application_native_q2_attack *p, attack_frame *frame,
     if (!qa_actors_get(qa_session_actors(app->session), frame->actor))
         return application_fail(error, QA_ERROR_NOT_FOUND, "Native weapon actor retired before firing");
     application_provider *arsenal = application_provider_for(app, frame->actor, QA_ROLE_ARSENAL, NULL);
+    if(arsenal!=p->engine->provider && p->dispatch && p->dispatch->committed &&
+        qa_actor_id_equal(p->dispatch->actor,frame->actor)) arsenal=p->engine->provider;
     if (arsenal != p->engine->provider)
         return application_fail(error, QA_ERROR_UNSUPPORTED, "Native weapon firing requires its selected original arsenal producer");
     application_provider *combat = application_provider_for(app, frame->actor, QA_ROLE_COMBAT, NULL),
@@ -340,6 +432,15 @@ bool application_native_q2_attack_activate(struct application_native_q2 *engine,
                 weapon_entry, hook, &hook->binding, error)) return false;
     }
     qa_native_address entry;
+    if(!p->dispatcher_hook) {
+        qa_native_signature dispatcher_sig=signature(p,p->dispatcher_parameters,p->dispatcher_count,QA_NATIVE_VOID);
+        if(!qa_native_rva(instance(p),p->dispatcher_entry,1,&entry,error)||
+            !qa_native_observe_entry(instance(p),entry,&dispatcher_sig,dispatcher_call,p,&p->dispatcher_hook,error)) return false;
+    }
+    for(size_t i=0;i<p->decision_count;++i) {
+        decision_region *region=p->decisions+i;
+        if(!region->binding&&!qa_native_bind_region(instance(p),region->id,decision_call,region,&region->binding,error)) return false;
+    }
     if (!p->spawn_hook) {
         qa_native_signature sig = signature(p, NULL, 0, QA_NATIVE_ADDRESS);
         if (!qa_native_rva(instance(p), p->spawn, 1, &entry, error) ||
@@ -492,14 +593,19 @@ bool application_native_q2_attack_suspend(struct application_native_q2 *engine, 
 {
     struct application_native_q2_attack *p = engine->source_attack;
     if (!p) return true;
-    if (p->current) return application_fail(error, QA_ERROR_ARGUMENT, "Native attack close requires drained original weapon calls");
+    if (p->current||p->dispatch||p->projections) return application_fail(error, QA_ERROR_ARGUMENT, "Native attack close requires drained original weapon calls");
     p->active = false;
     for (attack_hook *hook = p->weapons; hook; hook = hook->next) {
         if (hook->binding && !qa_native_unobserve_entry(hook->binding, error)) return false;
         hook->binding = NULL;
     }
-    qa_native_entry_observer **bindings[] = {&p->factor_hook, &p->spawn_hook, &p->free_hook};
-    for (size_t i = 0; i < 3; ++i) {
+    for(size_t i=0;i<p->decision_count;++i) {
+        decision_region *region=p->decisions+i;
+        if(region->binding&&!qa_native_remove_region(region->binding,error)) return false;
+        region->binding=NULL;
+    }
+    qa_native_entry_observer **bindings[] = {&p->factor_hook, &p->spawn_hook, &p->free_hook,&p->dispatcher_hook};
+    for (size_t i = 0; i < 4; ++i) {
         if (*bindings[i] && !qa_native_unobserve_entry(*bindings[i], error)) return false;
         *bindings[i] = NULL;
     }
@@ -513,7 +619,7 @@ bool application_native_q2_attack_close(struct application_native_q2 *engine, qa
     if (!application_native_q2_attack_suspend(engine, error)) return false;
     while (p->factors) { attack_factor *next = p->factors->next; free(p->factors); p->factors = next; }
     while (p->projectiles) { attack_projectile *next = p->projectiles->next; free(p->projectiles); p->projectiles = next; }
-    qa_json_destroy(p->document); free(p->items); free(p); engine->source_attack = NULL;
+    qa_json_destroy(p->document); free(p->decisions); free(p->items); free(p); engine->source_attack = NULL;
     return true;
 }
 

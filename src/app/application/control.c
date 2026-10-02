@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "guest_native_q2_private.h"
+#include "guest_native_q2_input.h"
 #include "native_q2_client_stages.h"
 #include "guest_input_private.h"
 #include "control_frame.h"
@@ -2301,6 +2302,112 @@ static bool unified_arsenal_input(qa_application *app, qa_actor_id actor,
             command->weapon = (uint8_t)player.requested_weapon;
     }
     return true;
+}
+
+static bool native_q2_weapon_current(application_provider *source, application_provider *arsenal,
+    qa_actor_id actor, const qa_movement_command *command, uint64_t time_ns, qa_error *error)
+{
+    qa_application *app = source ? source->application : NULL;
+    struct application_native_q2 *engine = source && source->kind == APPLICATION_PROVIDER_NATIVE
+        ? source->state.native.q2_engine : NULL;
+    const application_control_context *current = app ? application_control_frame_current(app, actor) : NULL;
+    const application_native_q2_input_stage *stage = engine ? engine->input_stage : NULL;
+    if (!app || !command || !arsenal || arsenal == source || !live(app, actor) ||
+        !source->constructed || !source->attached || source->close_pending ||
+        !arsenal->constructed || !arsenal->attached || arsenal->close_pending ||
+        !engine || !engine->input_arsenal || engine->input_command != command ||
+        !stage || !stage->current || !qa_actor_id_equal(stage->actor, actor) || stage->time_ns != time_ns ||
+        !stage->current(stage->context, actor) || !current || !current->source_q2cmd ||
+        !current->command_only || !current->retained || !qa_actor_id_equal(current->actor, actor) ||
+        current->command.provider != source->owner || current->command.time_ns != time_ns ||
+        current->command.kind != source->component.clock.kind ||
+        current->source_command.kind != command->kind || current->source_command.sequence != command->sequence ||
+        current->source_elapsed_ns != (uint64_t)command->milliseconds * UINT64_C(1000000) ||
+        application_world_provider(app, QA_ROLE_ENTITIES, "") != source ||
+        application_provider_for(app, actor, QA_ROLE_MOVEMENT, "") != source ||
+        application_provider_for(app, actor, QA_ROLE_ARSENAL, "") != arsenal ||
+        !application_native_q2_source_client(source, actor) || actor.slot >= app->control_capacity)
+        return application_fail(error, QA_ERROR_NOT_FOUND, "Native Q2 weapon decision lost its actual Source and selected arsenal");
+    const application_control_record *control = &app->controls[actor.slot];
+    if (!control->active || control->retired || control->moving || !qa_actor_id_equal(control->actor, actor))
+        return application_fail(error, QA_ERROR_NOT_FOUND, "Native Q2 weapon decision lost its full control generation");
+    return true;
+}
+
+bool application_control_native_q2_weapon_step(application_provider *source, qa_actor_id actor,
+    const qa_movement_command *command, uint64_t source_time_ns, qa_error *error)
+{
+    qa_application *app = source ? source->application : NULL;
+    application_provider *arsenal = app ? application_provider_for(app, actor, QA_ROLE_ARSENAL, "") : NULL;
+    if (!native_q2_weapon_current(source, arsenal, actor, command, source_time_ns, error)) return false;
+    if (arsenal->kind != APPLICATION_PROVIDER_Q1 && arsenal->kind != APPLICATION_PROVIDER_Q2 &&
+        arsenal->kind != APPLICATION_PROVIDER_Q3)
+        return application_fail(error, QA_ERROR_UNSUPPORTED, "Selected original arsenal has no isolated native Q2 weapon-decision capability");
+    qa_q2_wire_movement physical;
+    qa_combat_state combat;
+    if (!application_native_q2_input_read(source, actor, &physical, error) ||
+        !qa_combat_read(app->combat, actor, &combat, error)) return false;
+    if (!native_q2_weapon_current(source, arsenal, actor, command, source_time_ns, error)) return false;
+    application_control_record *control = &app->controls[actor.slot];
+    control->state = physical.state; control->bounds = physical.bounds; control->ground = physical.ground;
+    control->view_angles = physical.view_angles; control->view_offset = physical.view_offset;
+    control->view_height = physical.view_height; control->water_level = physical.water_level;
+    memcpy(&control->water_type, &physical.water_type, sizeof(control->water_type));
+    control->command_angles = physical.command_angles;
+    control->previous_buttons = control->buttons; control->buttons = command->buttons;
+    qa_movement_command applied = *command;
+    const application_control_context *context = application_control_frame_current(app, actor);
+    if (!unified_arsenal_input(app, actor, context, &applied, error)) return false;
+    if (!live(app, actor)) return true;
+    if (!native_q2_weapon_current(source, arsenal, actor, command, source_time_ns, error)) return false;
+    bool attack = combat.health > 0 && !control->cutscene && (applied.buttons & 1u) &&
+        !source->state.native.q2_engine->input_arsenal_committed &&
+        (!app->equipment || qa_equipment_primary_selected(app->equipment, actor));
+    bool okay;
+    if (arsenal->kind == APPLICATION_PROVIDER_Q1) {
+        qa_q1_player_view player;
+        if (!qa_q1_player_read(arsenal->state.q1, actor, &player))
+            return application_fail(error, QA_ERROR_NOT_FOUND, "Selected Q1 weapon decision has no admitted player");
+        qa_vec3 point = qa_movement_origin(&physical.state);
+        point.z += physical.bounds.mins.z + 1;
+        qa_point_query query = {.point = point, .pass_actor = actor,
+            .policy = qa_collision_default_policy(QA_COLLISION_Q1)};
+        qa_point_contents contents;
+        if (!qa_world_point_contents(app->world, &query, &contents, error) ||
+            !native_q2_weapon_current(source, arsenal, actor, command, source_time_ns, error)) return false;
+        qa_q1_game_operation operation = {0};
+        if (!qa_q1_game_command_begin(arsenal->state.q1, source_time_ns,
+            (uint64_t)applied.milliseconds * UINT64_C(1000000), &operation, error)) return false;
+        qa_q1_input input = {.view_angles = physical.view_angles, .attack = attack,
+            .water_level = (uint8_t)(physical.water_level < 0 ? 0 : physical.water_level > 3 ? 3 : physical.water_level),
+            .water_type = contents.contents};
+        okay = qa_q1_player_input(arsenal->state.q1, actor, &input, error) &&
+            (!live(app, actor) || qa_q1_player_postthink(arsenal->state.q1, actor, error));
+        if (okay && !qa_q1_game_operation_live(&operation))
+            okay = application_fail(error, QA_ERROR_NOT_FOUND, "Selected Q1 weapon decision retired its source operation");
+        qa_q1_game_operation_end(&operation);
+    } else if (arsenal->kind == APPLICATION_PROVIDER_Q2) {
+        qa_q2_weapon_input input;
+        okay = application_q2_weapon_input(arsenal, actor, &input, error);
+        if (okay && live(app, actor)) {
+            if (!native_q2_weapon_current(source, arsenal, actor, command, source_time_ns, error)) return false;
+            input.angles = physical.view_angles; input.view_height = physical.view_height;
+            input.gravity = physical.state.kind == QA_MOVEMENT_Q2_CLASSIC
+                ? (float)physical.state.data.q2.gravity : (float)physical.state.data.q2r.gravity;
+            input.attack = attack;
+            okay = qa_q2_weapon_early_turn(arsenal->state.q2, actor, &input, error);
+        }
+    } else {
+        qa_q3_player_state player;
+        if (!qa_q3_player_read(arsenal->state.q3, actor, &player) || !(player.selections & QA_Q3_ARSENAL))
+            return application_fail(error, QA_ERROR_NOT_FOUND, "Selected Q3 weapon decision has no admitted arsenal player");
+        qa_q3_controls input = {.attack = attack,
+            .use_holdable = context->unified_intent && context->unified_holdable,
+            .requested_weapon = player.requested_weapon};
+        okay = qa_q3_player_set_view(arsenal->state.q3, actor, physical.view_angles, physical.view_height, error) &&
+            (!live(app, actor) || qa_q3_arsenal_step(arsenal->state.q3, actor, &input, (float)applied.milliseconds, error));
+    }
+    return okay && (!live(app, actor) || native_q2_weapon_current(source, arsenal, actor, command, source_time_ns, error));
 }
 
 static bool control_move(qa_application *application,
