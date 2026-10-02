@@ -1,4 +1,5 @@
 #include "internal.h"
+#include <stdio.h>
 
 static size_t string_size(qa_bytes text) {
     const uint8_t *zero = text.size ? memchr(text.data, 0, text.size) : NULL;
@@ -81,7 +82,9 @@ accept_token:
     if (!frame->raw && !script_token_store(frame->bytes,token,0,0,e)) {
         ok=false; goto completed;
     }
+    frame->raw=true;
     memcpy(s->source_record.bytes+SCRIPT_SOURCE_TOKEN,frame->bytes,SCRIPT_TOKEN_BYTES);
+    s->source_unsupported=frame->unsupported;
     *found = true;
     ok = true;
 completed:
@@ -125,29 +128,39 @@ bool qa_script_next(qa_script *s, qa_script_token *out, bool *found, qa_error *e
         return false;
     }
     if (!script_memory_enter(s,e)) return false;
-    s->raw_token = (qa_script_token){0};
+    s->output = (script_queued_token){0};
     s->source_failure = false;
     *found = false;
     bool ok = read_token(s, found, e);
     if (s->read_count)
-        s->raw_token = s->reads[0].token;
+        s->output = s->reads[0];
     if (ok && *found) {
         if (s->outputs >= s->options.maximum_output_tokens)
-            ok = script_fail(s, s->raw_token.location, "Script output exceeds token limit", e);
+            ok = script_fail(s, s->output.token.location, "Script output exceeds token limit", e);
         else
             ++s->outputs;
     }
+    if(ok && *found && s->output.unsupported) {
+        char message[256];
+        snprintf(message,sizeof(message),"source token profile is unsupported: %s",s->output.unsupported);
+        ok=script_fail(s,s->output.token.location,message,e);
+    }
     s->read_count = 0;
-    *out = s->raw_token;
+    if(!s->output.unsupported) *out = s->output.token;
     if (!ok)
         *found = false;
     return ok;
 }
-bool qa_script_raw_token(const qa_script *s, qa_script_token *out) {
-    if (!s || !out)
-        return false;
-    *out = s->read_count ? s->reads[0].token : s->raw_token;
-    return true;
+bool qa_script_raw_token(const qa_script *s, qa_script_token *out, qa_error *e) {
+    if (!s || !out) {
+        qa_error_set(e,QA_ERROR_ARGUMENT,0,"Missing raw source token/output");return false;
+    }
+    const script_queued_token *token=s->read_count?s->reads:&s->output;
+    if(token->unsupported) {
+        qa_error_set(e,QA_ERROR_UNSUPPORTED,token->token.location.offset,
+            "source token profile is unsupported: %s",token->unsupported);return false;
+    }
+    *out=token->token;return true;
 }
 bool qa_script_source_failure(const qa_script *s) { return s && s->source_failure; }
 bool qa_script_unread(qa_script *s, const qa_script_token *token, qa_error *e) {
@@ -184,7 +197,7 @@ bool qa_script_check(qa_script *s, const char *text, bool *matched, qa_error *e)
         return false;
     *matched = found && qa_script_token_is(&token, text);
     if(!found || *matched) return true;
-    script_queued_token copied={.token=token,.raw=true};
+    script_queued_token copied={.token=token,.raw=true,.unsupported=s->source_unsupported};
     memcpy(copied.bytes,s->source_record.bytes+SCRIPT_SOURCE_TOKEN,SCRIPT_TOKEN_BYTES);
     return script_push(s,copied,e);
 }

@@ -217,13 +217,15 @@ void qa_script_dispose(qa_script *);
 /* Publish a detached history reader after its MEMORY restore has committed. */
 bool qa_script_adopt_memory(qa_script *,qa_error *);
 bool qa_script_next(qa_script *, qa_script_token *, bool *found, qa_error *);
-/* Every qa_script_next publishes its current token, including partial failure and the
- * cleared EOF token. Text is borrowed through source close. Raw text may fill
- * token_limit bytes after an overflow; a source ABI must reject that missing
+/* Retrieves the current operation output, including partial failure and EOF.
+ * Generated fields with an uninitialized Source profile return UNSUPPORTED and
+ * leave output unchanged. Text is borrowed through source close. Raw text may
+ * fill token_limit bytes after overflow; a source ABI must reject that missing
  * terminator rather than silently truncate it. */
-bool qa_script_raw_token(const qa_script *, qa_script_token *);
-/* Distinguishes recognized source-language failure from service, allocation,
- * or unsupported-profile failure. Inspect after qa_script_next returns false. */
+bool qa_script_raw_token(const qa_script *, qa_script_token *, qa_error *);
+/* Distinguishes recognized source-language failure from service/allocation
+ * failure. An uninitialized generated output fails as Source language during
+ * next; raw-token access separately reports its unsupported profile. */
 bool qa_script_source_failure(const qa_script *);
 bool qa_script_unread(qa_script *, const qa_script_token *, qa_error *);
 bool qa_script_define(qa_script *, const char *definition, qa_error *);
@@ -268,6 +270,7 @@ typedef struct qa_script_queued_state {
     uint32_t pointer;
     size_t memory_reference, text_extent;
     uint8_t bytes[1068];
+    const char *unsupported; /* Retained original reason; NULL means defined fields. */
 } qa_script_queued_state;
 typedef struct qa_script_condition_state {
     size_t frame;
@@ -296,6 +299,8 @@ typedef struct qa_script_checkpoint {
     bool empty_expansion;
     qa_script_location last_location;
     qa_script_token raw_token;
+    uint8_t output_record[1068];
+    const char *output_unsupported, *source_unsupported;
     bool source_failure, file_text;
     void *storage;
 } qa_script_checkpoint;

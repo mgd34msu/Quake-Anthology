@@ -39,6 +39,10 @@ static bool copy_token(qa_arena *arena, const qa_script_token *source, qa_script
            copy_bytes(arena, source->leading_whitespace, &out->leading_whitespace, e) &&
            copy_location(arena, source->location, &out->location, e);
 }
+static bool copy_profile(qa_arena *arena,const char *input,const char **out,qa_error *e) {
+    *out=input?script_string(arena,input,strlen(input),e):NULL;
+    return !input || *out;
+}
 static bool copy_options(qa_arena *arena, const qa_script_options *source, qa_script_options *out,
                          qa_error *e) {
     *out = *source;
@@ -137,8 +141,11 @@ bool qa_script_capture(const qa_script *s, qa_script_checkpoint *out, qa_error *
     if (!script_source_capture(s,&result,arena,e) || !script_conditions_capture(s,cs,e)) goto fail;
     if (!copy_options(arena, &s->options, &result.options, e) ||
         !copy_location(arena, s->last_location, &result.last_location, e) ||
-        !copy_token(arena, &s->raw_token, &result.raw_token, e))
+        !copy_token(arena, &s->output.token, &result.raw_token, e) ||
+        !copy_profile(arena,s->output.unsupported,&result.output_unsupported,e) ||
+        !copy_profile(arena,s->source_unsupported,&result.source_unsupported,e))
         goto fail;
+    memcpy(result.output_record,s->output.bytes,SCRIPT_TOKEN_BYTES);
     if (s->services.date != NULL) {
         result.date = script_string(arena, s->services.date, strlen(s->services.date), e);
         if (result.date == NULL)
@@ -209,6 +216,14 @@ bool script_checkpoint_valid(const qa_script_checkpoint *c, qa_error *e) {
         (c->condition_count != 0 && c->conditions == NULL) ||
         !raw_token_valid(&c->raw_token, c->options.token_limit))
         goto bad;
+    if(c->output_unsupported) {
+        qa_script_queued_state output={.token=c->raw_token,.text_extent=c->raw_token.text.size};
+        memcpy(output.bytes,c->output_record,SCRIPT_TOKEN_BYTES);
+        if(!script_token_saved_valid(&output,e)) return false;
+    }
+    if(c->source_unsupported &&
+       (qa_load_u32le(c->source_record.data+SCRIPT_SOURCE_TOKEN+1024)>QA_SCRIPT_PUNCTUATION ||
+        !memchr(c->source_record.data+SCRIPT_SOURCE_TOKEN,0,1024))) goto bad;
     if(!script_table_saved_valid(c,false,e)) return false;
     size_t active = 0;
     for (size_t i = 0; i < c->macro_count; ++i) {
@@ -347,8 +362,11 @@ static bool restore_source(const qa_script_services *services, const qa_script_c
     script_expansion *expansions = NULL;
     if (!copy_options(&s->arena, &c->options, &s->options, e) ||
         !copy_location(&s->arena, c->last_location, &s->last_location, e) ||
-        !copy_token(&s->arena, &c->raw_token, &s->raw_token, e))
+        !copy_token(&s->arena, &c->raw_token, &s->output.token, e) ||
+        !copy_profile(&s->arena,c->output_unsupported,&s->output.unsupported,e) ||
+        !copy_profile(&s->arena,c->source_unsupported,&s->source_unsupported,e))
         goto fail;
+    memcpy(s->output.bytes,c->output_record,SCRIPT_TOKEN_BYTES);s->output.raw=true;
     if (c->date != NULL) {
         s->services.date = script_string(&s->arena, c->date, strlen(c->date), e);
         if (s->services.date == NULL)

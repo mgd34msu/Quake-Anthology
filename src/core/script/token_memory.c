@@ -120,6 +120,10 @@ bool script_heap_copy_token(script_macro_table *s,script_queued_token token,scri
     script_token_record *node;
     if(!queue_slot(s,&node,error) || !queue_context(s,node,&token.token,error)) return false;
     if(!token.raw && !script_token_store(token.bytes,&token.token,0,0,error)) return false;
+    if(token.unsupported) {
+        node->unsupported=script_string(&s->arena,token.unsupported,strlen(token.unsupported),error);
+        if(!node->unsupported) return false;
+    }
     node->pointer=s->next_token_pointer++;
     if(s->memory.context) {
         if(!s->memory.allocate(s->memory.context,SCRIPT_TOKEN_BYTES,false,&node->record.allocation,error)) return false;
@@ -172,7 +176,7 @@ bool script_queue_pop(qa_script *s,script_queued_token *out,qa_error *error)
     if(next && !script_heap_token(&s->macros,next)) {
         qa_error_set(error,QA_ERROR_FORMAT,0,"Source token next pointer has no live token_t");return false;
     }
-    *out=(script_queued_token){.expansion=node->expansion,.raw=true};
+    *out=(script_queued_token){.expansion=node->expansion,.raw=true,.unsupported=node->unsupported};
     memcpy(out->bytes,node->record.bytes,SCRIPT_TOKEN_BYTES);
     if(!script_token_load(out->bytes,node->extent,node->location,node->whitespace,&s->arena,&out->token,error)) return false;
     qa_store_u32le(s->source_record.bytes+SCRIPT_SOURCE_TOKENS,next);
@@ -187,6 +191,10 @@ bool script_queue_snapshot(const script_macro_table *s,qa_script_queued_state *o
         if(!script_heap_token_bytes(s,node,error)) return false;
         qa_script_queued_state *saved=out+count++;
         saved->pointer=node->pointer;saved->memory_reference=node->record.reference;saved->text_extent=node->extent;
+        if(node->unsupported) {
+            saved->unsupported=script_string(arena,node->unsupported,strlen(node->unsupported),error);
+            if(!saved->unsupported) return false;
+        }
         memcpy(saved->bytes,node->record.bytes,SCRIPT_TOKEN_BYTES);
         if(s->memory.context && !node->record.detached && !s->memory.reference(s->memory.context,
             node->record.allocation,&saved->memory_reference,error)) return false;
@@ -200,6 +208,10 @@ bool script_queue_restore(script_macro_table *s,const qa_script_checkpoint *chec
     for(size_t i=0;i<checkpoint->queue_count;++i) {
         const qa_script_queued_state *saved=checkpoint->queue+i;script_token_record *node;
         if(!queue_slot(s,&node,error) || !queue_context(s,node,&saved->token,error)) return false;
+        if(saved->unsupported) {
+            node->unsupported=script_string(&s->arena,saved->unsupported,strlen(saved->unsupported),error);
+            if(!node->unsupported) return false;
+        }
         node->pointer=saved->pointer;node->extent=saved->text_extent;
         node->expansion=saved->expansion==SIZE_MAX?NULL:expansions+saved->expansion;
         node->record.reference=saved->memory_reference;

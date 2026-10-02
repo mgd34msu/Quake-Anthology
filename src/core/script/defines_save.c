@@ -26,10 +26,20 @@ static bool location(qa_source_save_io *io,qa_arena *arena,qa_script_location *v
     if(io->direction==QA_SOURCE_SAVE_READ) value->path=(char *)bytes.data;
     return qa_source_save_u32(io,&value->line) && qa_source_save_u32(io,&value->column) && qa_source_save_count(io,&value->offset,SIZE_MAX);
 }
+static bool profile(qa_source_save_io *io,qa_arena *arena,const char **value)
+{
+    bool present=*value!=NULL;
+    if(!qa_source_save_bool(io,&present)) return false;
+    if(!present) {*value=NULL;return true;}
+    qa_bytes text=io->direction==QA_SOURCE_SAVE_READ?(qa_bytes){0}:script_bytes(*value);
+    if(!span(io,arena,&text) || (text.size && memchr(text.data,0,text.size))) return fail(io,"Invalid source token profile reason");
+    if(io->direction==QA_SOURCE_SAVE_READ) *value=(const char *)text.data;
+    return true;
+}
 static bool signature(qa_source_save_io *io)
 {
-    static const uint8_t expected[8]={'Q','A','S','D','E','F','S',0};uint8_t bytes[8];memcpy(bytes,expected,8);uint32_t version=2;
-    return qa_source_save_bytes(io,bytes,8) && !memcmp(bytes,expected,8) && qa_source_save_u32(io,&version) && version==2;
+    static const uint8_t expected[8]={'Q','A','S','D','E','F','S',0};uint8_t bytes[8];memcpy(bytes,expected,8);uint32_t version=3;
+    return qa_source_save_bytes(io,bytes,8) && !memcmp(bytes,expected,8) && qa_source_save_u32(io,&version) && version==3;
 }
 static bool fields(qa_source_save_io *io,qa_script_checkpoint *saved,qa_arena *arena)
 {
@@ -66,6 +76,7 @@ static bool fields(qa_source_save_io *io,qa_script_checkpoint *saved,qa_arena *a
         if(!qa_source_save_u32(io,&value.pointer) || !qa_source_save_count(io,&value.memory_reference,SIZE_MAX) ||
            !qa_source_save_count(io,&value.text_extent,SIZE_MAX) || !qa_source_save_bytes(io,value.bytes,SCRIPT_TOKEN_BYTES) ||
            !location(io,arena,&value.token.location) || !span(io,arena,&value.token.leading_whitespace) ||
+           !profile(io,arena,&value.unsupported) ||
            !value.pointer || value.pointer>=saved->next_token_pointer) return fail(io,"Invalid global token allocation");
         for(size_t j=0;j<i;++j) if(tokens[j].pointer==value.pointer ||
             (value.memory_reference!=SIZE_MAX && tokens[j].memory_reference==value.memory_reference)) return fail(io,"Duplicate global token owner identity");

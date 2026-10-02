@@ -390,7 +390,7 @@ q3_service_result q3_scripts(q3_call *call, int32_t *result, qa_error *error)
     else if (!ok && error) *error = local;
     if (ok && (script->retired || host->script_namespace->scripts[handle] != script))
         ok = q3_fail(error, QA_ERROR_ARGUMENT, 0, "Q3 script handle was freed during token read");
-    if (ok) ok = qa_script_raw_token(script->reader, &token);
+    if (ok) ok = qa_script_raw_token(script->reader, &token, error);
     if (ok) ok = publish_token(call, &token, error);
     script->entered = NULL;
     --script->operations;

@@ -233,6 +233,8 @@ static bool codec_checkpoint(script_codec *c, qa_script_checkpoint *value) {
         !codec_u32(c,&value->define_first) || !codec_span(c,&value->define_hash) || !codec_index(c,&value->hash_reference) ||
         !codec_span(c, &value->source_record) || !codec_index(c, &value->source_reference) || !codec_bool(c, &value->empty_expansion) ||
         !codec_location(c, &value->last_location) || !codec_token(c, &value->raw_token) ||
+        !codec_bytes(c,value->output_record,sizeof(value->output_record)) ||
+        !codec_string(c,&value->output_unsupported) || !codec_string(c,&value->source_unsupported) ||
         !codec_bool(c, &value->source_failure) || !codec_bool(c, &value->file_text) ||
         !codec_size(c, &value->macro_count))
         return false;
@@ -304,7 +306,8 @@ static bool codec_checkpoint(script_codec *c, qa_script_checkpoint *value) {
         qa_script_queued_state queued = c->decoding ? (qa_script_queued_state){0} : value->queue[i];
         if (!codec_token(c, &queued.token) || !codec_index(c, &queued.expansion) ||
             !codec_u32(c,&queued.pointer) || !codec_index(c,&queued.memory_reference) ||
-            !codec_index(c,&queued.text_extent) || !codec_bytes(c,queued.bytes,sizeof(queued.bytes)))
+            !codec_index(c,&queued.text_extent) || !codec_bytes(c,queued.bytes,sizeof(queued.bytes)) ||
+            !codec_string(c,&queued.unsupported))
             return false;
         if (c->decoding)
             queue[i] = queued;

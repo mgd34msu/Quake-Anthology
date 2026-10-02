@@ -196,18 +196,24 @@ bool script_eval_directive(qa_script *s, qa_script_location location, bool integ
     qa_script_token token = {.kind = QA_SCRIPT_NUMBER,
                              .subtype = QA_SCRIPT_DECIMAL | QA_SCRIPT_LONG |
                                         (integer_mode ? QA_SCRIPT_INTEGER : QA_SCRIPT_FLOAT),
-                             .integer = value.integer,
-                             .number = number,
+                             .integer = 0,
+                             .number = dollar ? number : magnitude,
                              .text = {(const uint8_t *)stored, size},
                              .location = qa_script_position(s)};
-    if (!script_push(s, (script_queued_token){.token=token}, e))
+    double integral=fmod(trunc(token.number),4294967296.0);
+    if(integral<0) integral+=4294967296.0;
+    uint32_t integer=(uint32_t)integral;
+    memcpy(&token.integer,&integer,4);
+    const char *unsupported=dollar?NULL:"#eval and #evalfloat leave numeric fields uninitialized";
+    if (!script_push(s, (script_queued_token){.token=token,.unsupported=unsupported}, e))
         return false;
     if (number < 0) {
         token = (qa_script_token){.kind = QA_SCRIPT_PUNCTUATION,
                                   .subtype = QA_SCRIPT_SUB,
                                   .text = script_bytes("-"),
                                   .location = token.location};
-        if (!script_push(s, (script_queued_token){.token=token}, e))
+        if (!script_push(s, (script_queued_token){.token=token,
+                .unsupported="evaluation sign token leaves numeric fields uninitialized"}, e))
             return false;
     }
     return true;

@@ -112,6 +112,7 @@ typedef struct script_queued_token {
     const script_expansion *expansion;
     uint8_t bytes[SCRIPT_TOKEN_BYTES];
     bool raw;
+    const char *unsupported;
 } script_queued_token;
 typedef struct script_token_record {
     script_lexer_allocation record;
@@ -120,6 +121,7 @@ typedef struct script_token_record {
     qa_bytes whitespace;
     size_t extent;
     const script_expansion *expansion;
+    const char *unsupported;
 } script_token_record;
 typedef struct script_macro {
     struct script_macro *registry_next;
@@ -189,7 +191,8 @@ struct qa_script {
     size_t expansions, outputs;
     bool empty_expansion, memory_deferred;
     qa_script_location last_location;
-    qa_script_token raw_token;
+    script_queued_token output;
+    const char *source_unsupported;
     script_queued_token *reads;
     size_t read_count, read_capacity;
     bool source_failure;
@@ -197,7 +200,7 @@ struct qa_script {
 typedef struct script_checkpoint_storage {
     qa_arena arena;
 } script_checkpoint_storage;
-enum { SCRIPT_CHECKPOINT_VERSION = 7 };
+enum { SCRIPT_CHECKPOINT_VERSION = 8 };
 bool script_source_create(qa_script *,qa_error *);
 void script_source_stack(qa_script *);
 bool script_source_capture(const qa_script *,qa_script_checkpoint *,qa_arena *,qa_error *);

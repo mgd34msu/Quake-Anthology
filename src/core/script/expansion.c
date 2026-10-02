@@ -4,7 +4,7 @@ typedef struct token_chain {uint32_t first,last;size_t count;} token_chain;
 static bool value(qa_script *source,uint32_t pointer,script_queued_token *out,qa_error *error) {
     script_token_record *token=script_heap_token(&source->macros,pointer);
     if(!script_heap_token_bytes(&source->macros,token,error)) return false;
-    *out=(script_queued_token){.raw=true,.expansion=token->expansion};
+    *out=(script_queued_token){.raw=true,.expansion=token->expansion,.unsupported=token->unsupported};
     memcpy(out->bytes,token->record.bytes,SCRIPT_TOKEN_BYTES);
     return script_token_load(out->bytes,token->extent,token->location,token->whitespace,&source->arena,&out->token,error);
 }
@@ -107,26 +107,34 @@ static qa_bytes joined(qa_script *source,qa_bytes left,qa_bytes right,size_t lef
     if(right.size!=right_trim) memcpy(text+left.size-left_trim,right.data+right_trim,right.size-right_trim);
     text[length]=0;return (qa_bytes){text,length};
 }
-static bool stringize(qa_script *source,uint32_t head,qa_script_location location,qa_script_token *out,qa_error *error) {
+static bool stringize(qa_script *source,uint32_t head,qa_script_location location,script_queued_token *out,qa_error *error) {
     size_t length=2,remaining=source->macros.queue_count;uint32_t pointer=head;
     while(pointer) {
         script_queued_token token;
         if(!chain_value(source,pointer,&remaining,&token,error)) return false;
-        if(token.token.text.size>SIZE_MAX-length) return script_fail(source,location,"Macro string size overflow",error);
-        length+=token.token.text.size;if(!next(source,pointer,&pointer,error)) return false;
+        size_t size=strlen((const char *)token.bytes);
+        if(size>SIZE_MAX-length) return script_fail(source,location,"Macro string size overflow",error);
+        length+=size;if(!next(source,pointer,&pointer,error)) return false;
     }
     if(length>=source->options.token_limit) return script_fail(source,location,"Stringized macro exceeds token limit",error);
+    if(length>=1024) {qa_error_set(error,QA_ERROR_UNSUPPORTED,location.offset,"Stringized token does not fit source token_t");return false;}
     char *text=qa_arena_alloc(&source->arena,length+1,1,error);if(!text) return false;
     size_t at=1;text[0]='"';pointer=head;remaining=source->macros.queue_count;
     while(pointer) {
         script_queued_token token;
         if(!chain_value(source,pointer,&remaining,&token,error)) return false;
-        memcpy(text+at,token.token.text.data,token.token.text.size);at+=token.token.text.size;
+        size_t size=strlen((const char *)token.bytes);
+        memcpy(text+at,token.bytes,size);at+=size;
         if(!next(source,pointer,&pointer,error)) return false;
     }
     text[at++]='"';text[at]=0;
-    *out=(qa_script_token){.kind=QA_SCRIPT_STRING,.subtype=(uint32_t)length,
-        .text={(uint8_t *)text,length},.location=location};return true;
+    /* localToken starts with physical zero bytes. Stringizing writes only the
+     * string and type; its remaining fields have no supported public profile. */
+    memset(out->bytes,0,SCRIPT_TOKEN_BYTES);memcpy(out->bytes,text,length);
+    qa_store_u32le(out->bytes+1024,QA_SCRIPT_STRING);out->raw=true;
+    out->unsupported="macro stringizing leaves subtype and numeric fields uninitialized";
+    location.line=0;location.offset=0;
+    return script_token_load(out->bytes,SIZE_MAX,location,(qa_bytes){0},&source->arena,&out->token,error);
 }
 static bool builtin(qa_script *s, script_macro *macro, script_queued_token invocation,
                     token_chain *chain,qa_error *e) {
@@ -237,7 +245,7 @@ bool script_expand(qa_script *source,script_queued_token invocation,script_macro
                         continue;
                     }
                     pointer=following;copied=(script_queued_token){.expansion=expansion};
-                    if(index>=128 || (uint32_t)index>=script_macro_word(macro,12) || !stringize(source,heads[index],invocation.token.location,&copied.token,error)) return false;
+                    if(index>=128 || (uint32_t)index>=script_macro_word(macro,12) || !stringize(source,heads[index],invocation.token.location,&copied,error)) return false;
                 }
                 if(!append(source,&expanded,copied,invocation.token.location,error)) return false;
             }

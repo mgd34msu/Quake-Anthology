@@ -220,7 +220,7 @@ bool script_globals_import(script_macro_table *to,const qa_script_defines *from,
             while(token_pointer) {
                 script_token_record *node=script_heap_token(owner,token_pointer),*copied;
                 if(!token_remaining-- || !script_heap_token_bytes(owner,node,error)) return false;
-                script_queued_token token={.raw=true};memcpy(token.bytes,node->record.bytes,SCRIPT_TOKEN_BYTES);
+                script_queued_token token={.raw=true,.unsupported=node->unsupported};memcpy(token.bytes,node->record.bytes,SCRIPT_TOKEN_BYTES);
                 if(!script_token_load(token.bytes,node->extent,node->location,node->whitespace,&to->arena,&token.token,error) ||
                    !script_heap_copy_token(to,token,&copied,error)) return false;
                 if(last) qa_store_u32le(script_heap_token(to,last)->record.bytes+1064,copied->pointer);
