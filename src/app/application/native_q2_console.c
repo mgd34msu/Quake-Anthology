@@ -18,6 +18,22 @@ typedef struct q2_source_cvar {
     uint32_t flags;
 } q2_source_cvar;
 
+/* The Source settings owner declares this ENGINE value in both Q2 dialects.
+ * Rerelease GAME may separately register it through its actual imports. */
+static const q2_source_cvar engine_cvars[] = {
+    {"sv_airaccelerate", "0", 0},
+};
+
+bool application_native_q2_engine_cvars(qa_cvars *cvars, uint64_t owner, qa_error *error) {
+    if (!cvars || !owner || (qa_cvars_dialect(cvars) != QA_CONSOLE_Q2 &&
+        qa_cvars_dialect(cvars) != QA_CONSOLE_Q2_RERELEASE))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q2 ENGINE declarations require their physical Source registry");
+    for (size_t i = 0; i < sizeof(engine_cvars) / sizeof(*engine_cvars); ++i)
+        if (!qa_cvars_register(cvars, engine_cvars[i].name, engine_cvars[i].value,
+            engine_cvars[i].flags, owner, NULL, error)) return false;
+    return true;
+}
+
 /* Original InitGame and the TypeScript Q2 source settings owner. Q2 flags
  * retain their source word; GAME belongs only to rerelease GAME registrations. */
 static const q2_source_cvar common[] = {
@@ -37,7 +53,6 @@ static const q2_source_cvar common[] = {
     {"run_pitch", "0.002", 0}, {"run_roll", "0.005", 0},
     {"bob_up", "0.005", 0}, {"bob_pitch", "0.002", 0}, {"bob_roll", "0.002", 0},
     {"flood_msgs", "4", 0}, {"flood_persecond", "4", 0}, {"flood_waitdelay", "10", 0},
-    {"sv_airaccelerate", "0", 0},
 };
 static const q2_source_cvar rerelease[] = {
     {"sv_stopspeed", "100", 0},
@@ -82,7 +97,7 @@ struct application_native_q2_console {
     qa_cvars *cvars;
     application_q2_source_scripts scripts;
     size_t calls;
-    qa_cvar_observer_token observers[sizeof(common) / sizeof(*common) + sizeof(rerelease) / sizeof(*rerelease) + sizeof(rogue) / sizeof(*rogue) + sizeof(lmctf) / sizeof(*lmctf) + 2];
+    qa_cvar_observer_token observers[sizeof(engine_cvars) / sizeof(*engine_cvars) + sizeof(common) / sizeof(*common) + sizeof(rerelease) / sizeof(*rerelease) + sizeof(rogue) / sizeof(*rogue) + sizeof(lmctf) / sizeof(*lmctf) + 2];
     size_t observer_count;
 };
 
@@ -385,6 +400,8 @@ static bool observe_name(struct application_native_q2_console *owner, const char
 }
 static bool observe(struct application_native_q2_console *owner, qa_error *error) {
     if (owner->observer_count) return true;
+    for (size_t i = 0; i < sizeof(engine_cvars) / sizeof(*engine_cvars); ++i)
+        if (!observe_name(owner, engine_cvars[i].name, error)) return false;
     for (size_t i = 0; i < sizeof(common) / sizeof(*common); ++i)
         if (!observe_name(owner, common[i].name, error)) return false;
     if (dialect(owner->provider) == QA_CONSOLE_Q2_RERELEASE) {
@@ -475,6 +492,7 @@ bool application_native_q2_console_prepare(application_provider *provider, const
     bool present[4];
     for (size_t i = 0; i < 4; ++i) present[i] = qa_cvars_find(cvars, names[i]) != NULL;
     if (okay && !cloned) okay = definitions(provider, common, sizeof(common) / sizeof(*common), error);
+    if (okay && !cloned) okay = application_native_q2_engine_cvars(cvars, provider->owner, error);
     if (okay) okay = qa_server_admin_declarations(cvars,provider->owner,error);
     if (okay && dedicated_value) okay = qa_cvars_set(cvars, "dedicated", dedicated_value, true, error);
     free(dedicated_value);

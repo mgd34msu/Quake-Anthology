@@ -8,6 +8,9 @@ typedef struct application_q2_source_scripts {
     void (*release)(void *, void *);
     void (*complete)(void *, const qa_command_context *, const char *, bool);
 } application_q2_source_scripts;
+/* Declare ENGINE-owned values on a fresh physical Source registry before
+ * configuration and GAME Init. Cold and carried registries retain saved rows. */
+bool application_native_q2_engine_cvars(qa_cvars *, uint64_t, qa_error *);
 /* Borrow preparation callbacks until an idle, empty console unbinds them with
  * NULL, or until console destruction. The caller retains the callback owner. */
 bool application_native_q2_console_scripts(application_provider *, const application_q2_source_scripts *, qa_error *);

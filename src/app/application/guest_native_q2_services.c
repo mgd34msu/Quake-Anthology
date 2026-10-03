@@ -409,7 +409,9 @@ static bool movement_prepare(void *opaque, qa_native_host *host, qa_native_addre
     input->elapsed_ns = (uint64_t)input->command.milliseconds * UINT64_C(1000000);
     input->environment.health = combat.health;
     const qa_cvar_view *air = qa_cvars_find(engine->cvars, "sv_airaccelerate");
-    if (air && isfinite(air->number)) input->profile.data.q2.air_accelerate = (float)air->number;
+    if (!air || !isfinite(air->number))
+        return application_fail(error, QA_ERROR_FORMAT, "Native Q2 Pmove lost its physical Source air acceleration");
+    input->profile.data.q2.air_accelerate = (float)air->number;
     application_provider *character = application_provider_for(app, actor, QA_ROLE_CHARACTER, NULL);
     if (character != engine->provider) {
         input->environment.has_body_bounds = true; input->environment.body_bounds = body.bounds;

@@ -5,6 +5,7 @@
 #include "native_q2_source_actors.h"
 #include "native_q2_wire_engine.h"
 #include "native_q2_visibility.h"
+#include "native_q2_console.h"
 #include "save_native_q2_record.h"
 #include "unified_events.h"
 #include "guest_native_q2_attack.h"
@@ -297,6 +298,7 @@ static bool prepare_owner(qa_application *app, application_provider *provider,
             .command = engine->command_context, .declaration_owner = provider->owner};
         bool carried = false;
         if (!application_startup_source_carry(provider, &source, &carried, error)) return false;
+        if (!carried && !application_native_q2_engine_cvars(engine->cvars, provider->owner, error)) return false;
     }
     uint32_t clients = choices->seat_count ? (uint32_t)choices->seat_count : 1;
     if(engine->callbacks) {
