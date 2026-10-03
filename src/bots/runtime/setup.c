@@ -147,12 +147,29 @@ static bool model(void *context, int32_t id, qa_bot_travel_model *out, bool *fou
     *found = false;
     return true;
 }
+static bool selected_client(qa_bot_runtime *r, int32_t client, int32_t *out, qa_error *e) {
+    if (!r->services.movement.source_action_client) {
+        *out = client;
+        return true;
+    }
+    uint32_t input;
+    if (!r->services.movement.source_action_client(r->services.movement.context, client, &input, e))
+        return false;
+    if (input > INT32_MAX) {
+        bot_runtime_fail(e, "Selected movement input client exceeds its namespace");
+        return false;
+    }
+    *out = (int32_t)input;
+    return true;
+}
 static bool travel_weapon(void *context, int32_t client, qa_nav_travel mode,
                             int32_t *out, bool *found, qa_error *e) {
     qa_bot_runtime *r = context;
     if (r->services.movement.travel_weapon) {
         bool previous = r->busy; r->busy = true;
-        bool ok = r->services.movement.travel_weapon(r->services.movement.context, client, mode, out, found, e);
+        int32_t input;
+        bool ok = selected_client(r, client, &input, e) &&
+            r->services.movement.travel_weapon(r->services.movement.context, input, mode, out, found, e);
         r->busy = previous;
         return ok;
     }
@@ -164,7 +181,9 @@ static bool grapple_observation(void *context, int32_t client,
     qa_bot_runtime *r = context;
     if (r->services.movement.grapple_state) {
         bool previous = r->busy; r->busy = true;
-        bool ok = r->services.movement.grapple_state(r->services.movement.context, client, out, e);
+        int32_t input;
+        bool ok = selected_client(r, client, &input, e) &&
+            r->services.movement.grapple_state(r->services.movement.context, input, out, e);
         r->busy = previous;
         return ok;
     }
