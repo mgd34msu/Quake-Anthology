@@ -11,6 +11,9 @@ static bool entity_read(const qa_q3_game *game, qa_actor_id actor, qa_q3_entity_
                          qa_error *error) {
     const q3_actor *entry = q3_actor_const(game, actor);
     const qa_q3_map_actor_state *map = entry ? NULL : q3_map_const(game, actor);
+    bool native_owner = entry != NULL;
+    bool mover_owner = map && map->kind >= QA_Q3_MAP_MOVER_DOOR &&
+        map->kind <= QA_Q3_MAP_MOVER_PENDULUM;
     uint32_t source_slot;
     bool source = qa_q3_source_actor_slot(game, actor, &source_slot, NULL);
     if (!entry && !source && (!map || map->kind < QA_Q3_MAP_MOVER_DOOR ||
@@ -39,6 +42,24 @@ static bool entity_read(const qa_q3_game *game, qa_actor_id actor, qa_q3_entity_
         const qa_q3_entity *s = &view.source_entity;
         view.kind = QA_Q3_ENTITY_TEAM;
         view.alpha = entry ? entry->alpha : map ? map->alpha : 1;
+        view.flags = (uint32_t)s->eFlags;
+        view.constant_light = (uint32_t)s->constantLight;
+        view.position = source_trajectory(&s->pos);
+        view.angular = source_trajectory(&s->apos);
+        *out = view;
+        return true;
+    }
+    if (!entry && !native_owner && !mover_owner && view.has_source_entity &&
+        view.source_entity.eType == 0 && !view.source_entity.modelindex) {
+        qa_q3_source_binding binding;
+        if (!qa_q3_source_binding_read(game, source_slot, &binding, error)) return false;
+        if (!binding.in_use || !binding.body_attached || !qa_actor_id_equal(binding.actor, actor))
+            return q3_fail(error, "Q3 general presentation lost its actual Source owner");
+        /* CG_General emits no model for modelindex zero, including the actual
+         * worldspawn row. Its complete Source state still belongs to this view. */
+        const qa_q3_entity *s = &view.source_entity;
+        view.kind = QA_Q3_ENTITY_HIDDEN;
+        view.alpha = map ? map->alpha : 1;
         view.flags = (uint32_t)s->eFlags;
         view.constant_light = (uint32_t)s->constantLight;
         view.position = source_trajectory(&s->pos);
