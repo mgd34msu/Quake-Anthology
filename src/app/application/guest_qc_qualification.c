@@ -35,16 +35,22 @@ static bool number(const qa_json_document *doc, qa_json_id node, float *out, qa_
 static bool input(const char *name, application_qc_input_id *out)
 {
     static const char *names[] = {"self", "other", "time", "elapsed", "view-angles", "attack", "jump", "impulse",
-        "forward-move", "side-move", "up-move", "result", "activator"};
+        "forward-move", "side-move", "up-move", "result", "activator",
+        "attacker", "inflictor", "amount", "knockback", "point"};
     for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); ++i)
         if (strcmp(name, names[i]) == 0) { *out = (application_qc_input_id)i; return true; }
     return false;
 }
 static qa_qc_value_type source_type(const application_qc_value *value)
 {
-    if (value->kind == QC_VALUE_INPUT) return value->source == QC_INPUT_SELF || value->source == QC_INPUT_OTHER ||
-        value->source == QC_INPUT_ACTIVATOR ? QA_QC_ENTITY :
-        value->source == QC_INPUT_ANGLES ? QA_QC_VECTOR : QA_QC_FLOAT;
+    if (value->kind == QC_VALUE_INPUT) {
+        switch (value->source) {
+        case QC_INPUT_SELF: case QC_INPUT_OTHER: case QC_INPUT_ACTIVATOR:
+        case QC_INPUT_ATTACKER: case QC_INPUT_INFLICTOR: return QA_QC_ENTITY;
+        case QC_INPUT_ANGLES: case QC_INPUT_POINT: return QA_QC_VECTOR;
+        default: return QA_QC_FLOAT;
+        }
+    }
     if (value->kind == QC_VALUE_ARGUMENTS_TEXT) return QA_QC_STRING;
     if (value->kind == QC_VALUE_ARGUMENT_COUNT) return QA_QC_FLOAT;
     return value->constant.kind == QA_QC_GAME_STRING ? QA_QC_STRING :
@@ -553,10 +559,20 @@ bool application_qc_qualify(application_provider *provider, qa_error *error)
         if (qa_json_string_equal(doc, operation, "actor.think")) callback->operation = Q3_MOD_THINK;
         else if (qa_json_string_equal(doc, operation, "actor.touch")) callback->operation = Q3_MOD_TOUCH;
         else if (qa_json_string_equal(doc, operation, "actor.use")) callback->operation = Q3_MOD_USE;
+        else if (qa_json_string_equal(doc, operation, "actor.pain")) callback->operation = Q3_MOD_PAIN;
+        else if (qa_json_string_equal(doc, operation, "actor.die")) callback->operation = Q3_MOD_DIE;
         else { ok = application_fail(error, QA_ERROR_UNSUPPORTED, "QC callback operation has no declared application owner yet"); break; }
-        uint64_t available = (UINT64_C(1) << QC_INPUT_SELF) | (UINT64_C(1) << QC_INPUT_TIME) |
-            (UINT64_C(1) << (callback->operation == Q3_MOD_THINK ? QC_INPUT_ELAPSED : QC_INPUT_OTHER));
-        if (callback->operation == Q3_MOD_USE) available |= UINT64_C(1) << QC_INPUT_ACTIVATOR;
+        uint64_t available = (UINT64_C(1) << QC_INPUT_SELF) | (UINT64_C(1) << QC_INPUT_TIME);
+        if (callback->operation == Q3_MOD_THINK) available |= UINT64_C(1) << QC_INPUT_ELAPSED;
+        else if (callback->operation == Q3_MOD_TOUCH || callback->operation == Q3_MOD_USE) {
+            available |= UINT64_C(1) << QC_INPUT_OTHER;
+            if (callback->operation == Q3_MOD_USE) available |= UINT64_C(1) << QC_INPUT_ACTIVATOR;
+        } else {
+            available |= (UINT64_C(1) << QC_INPUT_ATTACKER) | (UINT64_C(1) << QC_INPUT_AMOUNT) |
+                (UINT64_C(1) << QC_INPUT_KNOCKBACK);
+            if (callback->operation == Q3_MOD_DIE)
+                available |= (UINT64_C(1) << QC_INPUT_INFLICTOR) | (UINT64_C(1) << QC_INPUT_POINT);
+        }
         if (qa_json_string_equal(doc, stage, "observe")) {
             callback->stage = QA_OPERATION_OBSERVE;
             available |= UINT64_C(1) << QC_INPUT_RESULT;

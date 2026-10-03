@@ -6,6 +6,14 @@ The original audit authority is dependency plan revision 7, tasks B01–B05. Its
 
 The user's latest correction forbids review gates and test infrastructure in front of implementation. Audit continues alongside production installation, without new manifests, hashes or freeze requirements. The later implementation assignment supersedes the initial document-only edit scope for the concrete owners below. Historical snapshot/peer evidence below records work already performed; none of it imposes a prerequisite on current implementation. Concrete defects go directly to the author. Current owner/build files can change as genuine callers are installed.
 
+## Authorized B22 declared QC pain/death callbacks, 2026-10-03
+
+External `actor.pain` and `actor.die` observe/replace declarations now receive their actual canonical Source reaction values through the same operation owner. Both stages preserve full self/attacker identities and real damage/kick; death also preserves the genuine inflictor and impact point. Compiled argument/global admission allows each input only at its declared stage, using QC entity, scalar or vector types. Calls, boolean replacement, observer result, registration lifetime and cold rebind use the existing kernel.
+
+These additional values are call-local and do not change saved fields, public APIs or body custody. Movement and client input declarations retain their existing bounded input set. Both changed production translation units passed their actual optimized GCC and Clang commands privately in `qc-declared-reaction-objects`; scoped whitespace checks passed. Actual reaction-callback execution remains a separate runtime obligation, and nonempty damage/inventory callback stages plus combat/protection/item/pickup/objective/presentation declarations remain unfinished.
+
+Private actual runtime flows on coherent artifact `4bf16a92` separately failed before qualification: the authored entity recipe applied but its next startup frame rejected the receiver authority; the independent Copper addition flow failed in its native Q1 `e1m1` baseline because shared check-client admission was absent. Both bounded processes exited without timeout. Neither reached callback, SAVE, LOAD or travel checks; these concrete producer defects were sent to Root for repair.
+
 ## Authorized B22 declared QC use callbacks, 2026-10-03
 
 External `actor.use` observe/replace declarations now reach the existing canonical actor operation and QC call kernel. The native Source callback producer already supplies the actual self, other and activator actors; the QC adapter preserves those full identities, the owner's Source time and the observer's canonical boolean result. Compiled argument/global admission recognizes activator as an entity input only at that declared use stage. Replacement keeps the same compiled return-word boolean contract as think/touch.

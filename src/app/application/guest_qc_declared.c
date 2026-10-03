@@ -32,6 +32,11 @@ static bool resolve(const application_qc_value *value, const application_qc_inpu
     case QC_INPUT_SELF: out.kind = QA_QC_GAME_ACTOR; out.value.actor = inputs->self; break;
     case QC_INPUT_OTHER: out.kind = QA_QC_GAME_ACTOR; out.value.actor = inputs->other; break;
     case QC_INPUT_ACTIVATOR: out.kind = QA_QC_GAME_ACTOR; out.value.actor = inputs->activator; break;
+    case QC_INPUT_ATTACKER: out.kind = QA_QC_GAME_ACTOR; out.value.actor = inputs->attacker; break;
+    case QC_INPUT_INFLICTOR: out.kind = QA_QC_GAME_ACTOR; out.value.actor = inputs->inflictor; break;
+    case QC_INPUT_AMOUNT: out.value.number = inputs->amount; break;
+    case QC_INPUT_KNOCKBACK: out.value.number = inputs->knockback; break;
+    case QC_INPUT_POINT: out.kind = QA_QC_GAME_VECTOR; out.value.vector = inputs->point; break;
     case QC_INPUT_TIME: out.value.number = (float)((double)inputs->time_ns / 1e9); break;
     case QC_INPUT_ELAPSED: out.value.number = (float)((double)inputs->elapsed_ns / 1e9); break;
     case QC_INPUT_RESULT: out.value.number = inputs->result; break;
@@ -121,7 +126,7 @@ static bool callback_inputs(application_qc_callback *callback, const void *reque
         const application_q3_mod_actor_request *actor = request;
         inputs->time_ns = actor->source.think.time_ns;
         inputs->elapsed_ns = actor->source.think.elapsed_ns;
-    } else {
+    } else if (callback->operation == Q3_MOD_TOUCH || callback->operation == Q3_MOD_USE) {
         const application_q3_mod_value *other = values.values + Q3_MOD_OTHER;
         if (other->kind != Q3_MOD_VALUE_ACTOR)
             return application_fail(error, QA_ERROR_ARGUMENT, "QC contact callback requires its actual other actor");
@@ -131,6 +136,24 @@ static bool callback_inputs(application_qc_callback *callback, const void *reque
             if (activator->kind != Q3_MOD_VALUE_ACTOR)
                 return application_fail(error, QA_ERROR_ARGUMENT, "QC use callback requires its actual activator actor");
             inputs->activator = activator->as.actor;
+        }
+    } else {
+        const application_q3_mod_value *attacker = values.values + Q3_MOD_ATTACKER;
+        const application_q3_mod_value *amount = values.values + Q3_MOD_AMOUNT;
+        const application_q3_mod_value *knockback = values.values + Q3_MOD_KNOCKBACK;
+        if (attacker->kind != Q3_MOD_VALUE_ACTOR || amount->kind != Q3_MOD_VALUE_SCALAR ||
+            knockback->kind != Q3_MOD_VALUE_SCALAR)
+            return application_fail(error, QA_ERROR_ARGUMENT, "QC reaction callback requires its actual damage values");
+        inputs->attacker = attacker->as.actor;
+        inputs->amount = (float)amount->as.scalar;
+        inputs->knockback = (float)knockback->as.scalar;
+        if (callback->operation == Q3_MOD_DIE) {
+            const application_q3_mod_value *inflictor = values.values + Q3_MOD_INFLICTOR;
+            const application_q3_mod_value *point = values.values + Q3_MOD_POINT;
+            if (inflictor->kind != Q3_MOD_VALUE_ACTOR || point->kind != Q3_MOD_VALUE_VECTOR)
+                return application_fail(error, QA_ERROR_ARGUMENT, "QC death callback requires its actual source inflictor and point");
+            inputs->inflictor = inflictor->as.actor;
+            inputs->point = point->as.vector;
         }
     }
     if (result) {
