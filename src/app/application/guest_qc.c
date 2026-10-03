@@ -257,12 +257,17 @@ bool application_qc_create_console(struct application_qc_state *engine, qa_cvars
     if (!console) return false;
     engine->console = console; engine->cvars = cvars;
     const struct application_qc_profile *profile = engine->provider->state.qc.qualified;
+    qa_application *application = engine->provider->application;
+    application_provider *previous_provider = application->startup_preinit_provider;
+    if (application->operation == APPLICATION_PERSISTING)
+        application->startup_preinit_provider = engine->provider;
     bool ok = true;
     for (size_t i = 0; ok && profile && i < profile->command_count; ++i)
         if (!qa_console_register(console, profile->commands[i].name, "Declared QuakeC command",
             engine->provider->owner, false, application_qc_declared_command, engine, error)) {
             ok = false;
         }
+    application->startup_preinit_provider = previous_provider;
     engine->console = previous_console; engine->cvars = previous_cvars;
     if (!ok && qa_console_destroy_ready(console)) { qa_console_destroy(console); console = NULL; }
     *out = console;
@@ -1280,6 +1285,13 @@ static bool load_map(application_provider *provider, const qa_bsp_view *bsp,
     if (world_name == NULL) return false;
     engine->resources[engine->resource_count++] = (application_qc_resource){.name = world_name,
         .kind = QA_QC_RESOURCE_MODEL, .world_model = true, .value = {.index = 1, .bounds = {world_model.bounds.min, world_model.bounds.max}}};
+    size_t model_count = qa_bsp_record_count(bsp, QA_BSP_MODELS);
+    for (size_t i = 1; i < model_count; ++i) {
+        char inline_name[32]; qa_qc_game_resource resource;
+        snprintf(inline_name, sizeof(inline_name), "*%zu", i);
+        if (!application_qc_resource_lookup(engine, QA_QC_RESOURCE_MODEL,
+            inline_name, true, &resource, error)) return false;
+    }
     const qa_qc_definition *mapname = qa_qc_program_find_global(provider->state.qc.program, "mapname");
     int32_t name;
     bool ok = mapname != NULL && mapname->type == QA_QC_STRING && qa_qc_string_allocate(vm, map, &name, error) &&
