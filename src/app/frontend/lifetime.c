@@ -544,6 +544,10 @@ bool frontend_constructor_advance(qa_frontend *f,uint64_t elapsed_ns,bool *compl
             return frontend_fail(error,QA_ERROR_ARGUMENT,"First native outputs lack their real completed bootstrap images receipt");
         owner->outputs_entered=true;
         if (!outputs_create(f,settings,error)) { if (error) owner->failure=*error; return false; }
+        if(!f->options.network_host && !f->options.network_connect && !frontend_network_create(f,error)) {
+            if(error) owner->failure=*error;
+            return false;
+        }
         owner->outputs_completed=true;
     }
     bool started=false;
