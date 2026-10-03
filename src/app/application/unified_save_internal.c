@@ -121,7 +121,9 @@ bool application_unified_save_source(qa_source_save_io *io, qa_application *app,
         if (saved->frame_revision > actual->frame_revision || saved->frame.number > actual->frame.number ||
             saved->frame.time_ns > actual->frame.time_ns || saved->frame.start_ns > actual->frame.start_ns ||
             (unsigned)saved->frame.phase > QA_FRAME_EXIT) return false;
-    } else if (saved->frame_revision != actual->frame_revision || !frame_equal(&saved->frame, &actual->frame)) return false;
+    } else if (saved->frame_revision != actual->frame_revision || !frame_equal(&saved->frame, &actual->frame))
+        return application_fail(io->error, QA_ERROR_FORMAT,
+            "Unified saved frame differs from the restored Source clock");
     saved->launch = actual->launch; saved->session = actual->session; saved->world = actual->world;
     return true;
 }
