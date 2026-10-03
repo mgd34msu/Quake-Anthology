@@ -6545,7 +6545,7 @@ bool frontend_network_destroy(qa_frontend *f, qa_error *error)
         if(!qa_application_engine_shutdown_read(f->engine_shutdown,&console,&cvars,error)) return false;
     }
     if (n->registered && !qa_console_remove_owner(console, NETWORK_OWNER, error)) return false;
-    qa_cvars_remove_owner(cvars, NETWORK_OWNER);
+    if (f->engine_shutdown) qa_cvars_remove_owner(cvars, NETWORK_OWNER);
     qa_downloads_destroy(n->downloads); frontend_q3_browser_destroy(n->q3_browser);
     frontend_kex_browser_destroy(n->kex_browser);
     qa_server_browser_destroy(n->browser); qa_server_admin_destroy(n->admin);
