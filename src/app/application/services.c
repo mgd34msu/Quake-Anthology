@@ -973,6 +973,19 @@ static bool target_defer(void *opaque, const qa_target_use *request,
 static bool target_message(void *opaque, const qa_target_use *request,
                            qa_error *error)
 {
+    qa_application *application = opaque;
+    if (!application || !application->session || !request)
+        return application_fail(error, QA_ERROR_ARGUMENT,
+                                "Target message lost its actual application request");
+    application_provider *provider = application_provider_for(
+        application, request->source, QA_ROLE_ENTITIES, "");
+    qa_clock_state clock;
+    if (!provider || !provider->constructed || provider->close_pending ||
+        provider->component.clock.kind != request->dialect ||
+        !qa_session_clock(application->session, provider->owner, &clock) ||
+        clock.frame.provider != provider->owner || clock.frame.kind != request->dialect)
+        return application_fail(error, QA_ERROR_ARGUMENT,
+                                "Target message lost its actual Source clock owner");
     qa_game_family family =
         request->dialect == QA_CLOCK_Q3
             ? QA_GAME_Q3
@@ -984,6 +997,7 @@ static bool target_message(void *opaque, const qa_target_use *request,
         opaque,
         &(qa_builtin_event){.kind = QA_BUILTIN_CENTERPRINT,
                             .family = family,
+                            .provider = provider->owner,
                             .actor = request->activator,
                             .other = request->source,
                             .time_ns = request->time_ns,
