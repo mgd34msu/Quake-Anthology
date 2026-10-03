@@ -431,8 +431,8 @@ const char *qa_application_provider_instance(const qa_application *application,
 {
     if (application == NULL || owner == 0 || application->destroy_requested)
         return NULL;
-    for (size_t i = 0; i < application->provider_count; ++i) {
-        const application_provider *provider = application->providers[i];
+    for (const application_provider *provider = application->live_providers;
+         provider; provider = provider->next_live) {
         if (provider->attached && provider->constructed && provider->owner == owner)
             return provider->launch->selection.instance;
     }
