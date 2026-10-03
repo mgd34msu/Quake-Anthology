@@ -244,11 +244,12 @@ static bool controls(qa_frontend *frontend,uint64_t elapsed_ns,uint64_t wall_ela
 }
 static bool input_events(qa_frontend *frontend, qa_error *error)
 {
+    if (qa_application_should_stop(frontend->application)) return true;
     if (!frontend_ui_features_sync(frontend,error)) return false;
     SDL_Event event;
     double now = (double)frontend->wall_time_ns / 1000000.0;
-    while (SDL_PollEvent(&event)) {
-        if (event.type == SDL_QUIT) { qa_application_request_stop(frontend->application); continue; }
+    while (!qa_application_should_stop(frontend->application) && SDL_PollEvent(&event)) {
+        if (event.type == SDL_QUIT) { qa_application_request_stop(frontend->application); return true; }
         if (frontend->options.dedicated) continue;
         if (event.type == SDL_KEYDOWN && event.key.keysym.sym == SDLK_BACKQUOTE) {
             qa_display_info display;
@@ -258,11 +259,13 @@ static bool input_events(qa_frontend *frontend, qa_error *error)
             continue;
         }
         bool handled;
-        if (!qa_input_platform_event(frontend->input, &event, now, &handled, error) ||
-            !frontend_ui_features_sync(frontend,error)) return false;
+        if (!qa_input_platform_event(frontend->input, &event, now, &handled, error)) return false;
+        if (qa_application_should_stop(frontend->application)) return true;
+        if (!frontend_ui_features_sync(frontend,error)) return false;
     }
-    return frontend->options.dedicated || (qa_input_platform_frame(frontend->input, now, error) &&
-        frontend_ui_features_sync(frontend,error));
+    if (qa_application_should_stop(frontend->application) || frontend->options.dedicated) return true;
+    if (!qa_input_platform_frame(frontend->input, now, error)) return false;
+    return qa_application_should_stop(frontend->application) || frontend_ui_features_sync(frontend,error);
 }
 bool frontend_events(qa_frontend *frontend, qa_error *error)
 {
@@ -459,6 +462,10 @@ bool qa_frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *erro
     uint64_t raw_elapsed=elapsed_ns;
     if (!wall_advanced) frontend->wall_time_ns+=raw_elapsed;
     bool ok = frontend_tools_pump(frontend, error) && input_events(frontend, error);
+    if (ok && qa_application_should_stop(frontend->application)) {
+        frontend->stepping=false;
+        return true;
+    }
     qa_console *console = qa_application_console(frontend->application);
     qa_console *terminal_console=console;
     qa_command_context terminal_context={.origin=QA_COMMAND_LOCAL,.dialect=QA_CONSOLE_Q1,.direct=true};
