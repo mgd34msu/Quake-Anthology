@@ -879,28 +879,39 @@ static bool builtin_player_info(void *opaque, qa_actor_id actor,
         qa_q2_player_projection(provider->state.q2, actor, out))
         return true;
 
-    const qa_launch_choices *choices = active_choices(application);
-    if (choices == NULL)
-        return false;
-    for (size_t index = 0; index < choices->seat_count; ++index) {
-        const qa_launch_seat *seat = &choices->seats[index];
-        qa_actor_id live = seat->actor;
-        (void)qa_application_player_actor(application, seat->id, &live);
-        if (!qa_actor_id_equal(live, actor))
-            continue;
-        *out = (qa_builtin_player_info){.name = seat->name,
-                                        .slot = (uint32_t)index,
-                                        .connected = true,
-                                        .spectator = seat->spectator};
-        qa_builtin_actor_traits traits = {0};
-        if (provider_traits(provider, actor, &traits))
-            out->view_height = traits.view_height;
-        qa_combat_state combat;
-        if (qa_combat_read(application->combat, actor, &combat, NULL))
-            out->dead = combat.health <= 0;
-        return true;
+    bool matched = false;
+    const struct application_player_roster *roster = application->players;
+    for (size_t index = 0; roster && index < roster->count; ++index) {
+        const application_player_record *record = &roster->records[index];
+        if (!qa_actor_id_equal(record->actor, actor)) continue;
+        if (record->retiring || record->character != provider || !record->name) return false;
+        *out = (qa_builtin_player_info){.name = record->name, .skin = record->skin,
+            .slot = record->client_slot,
+            .connected = !record->deferred && !record->source_begin_pending,
+            .spectator = record->spectator};
+        matched = true;
+        break;
     }
-    return false;
+    if (!matched) {
+        const qa_launch_choices *choices = active_choices(application);
+        if (choices == NULL) return false;
+        for (size_t index = 0; index < choices->seat_count; ++index) {
+            const qa_launch_seat *seat = &choices->seats[index];
+            qa_actor_id live = seat->actor;
+            (void)qa_application_player_actor(application, seat->id, &live);
+            if (!qa_actor_id_equal(live, actor)) continue;
+            *out = (qa_builtin_player_info){.name = seat->name,
+                .slot = (uint32_t)index, .connected = true, .spectator = seat->spectator};
+            matched = true;
+            break;
+        }
+    }
+    if (!matched) return false;
+    qa_builtin_actor_traits traits = {0};
+    if (provider_traits(provider, actor, &traits)) out->view_height = traits.view_height;
+    qa_combat_state combat;
+    if (qa_combat_read(application->combat, actor, &combat, NULL)) out->dead = combat.health <= 0;
+    return true;
 }
 
 static bool builtin_traits(void *opaque, qa_actor_id actor,
