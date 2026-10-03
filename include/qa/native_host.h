@@ -334,6 +334,10 @@ bool qa_native_host_source_touch_close(qa_native_host_source_touch **, qa_error 
  * with the caller. No Source call or movement is executed. */
 bool qa_native_host_q2_trace_encode(qa_native_host *,const qa_trace_result *,qa_buffer,qa_error *);
 
+/* Q2 refreshes its real cvars and executes SDK Init. The GAME constructor then
+ * activates its source producers before qa_native_host_source_reconcile admits
+ * canonical actors. Cold reconstruction imports its saved HOST bindings before
+ * resuming reconciliation; CGAME has no GAME actor table to reconcile. */
 bool qa_native_host_initialize(qa_native_host *, int32_t level_time, int32_t random_seed,
                                bool restart, qa_error *);
 bool qa_native_host_shutdown(qa_native_host *, bool restart, qa_error *);

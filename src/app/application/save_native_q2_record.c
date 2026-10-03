@@ -263,6 +263,9 @@ bool application_native_q2_save_restore(application_provider *provider, qa_bytes
                 &engine->command_context, error);
     if (ok) {
         ++engine->calls;
+        /* SDK Init creates provisional source storage. Saved HOST slot bindings
+         * are imported below; admitting these fresh slots into the restored
+         * shared actor registry would precede its suspended source producers. */
         ok = qa_native_host_initialize(provider->state.native.host, 0, 0, false, error);
         --engine->calls;
         if (ok) engine->initialized = true;

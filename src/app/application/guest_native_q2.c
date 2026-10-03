@@ -590,7 +590,9 @@ bool application_native_q2_initialize_supplemental(application_provider *provide
         application_native_q2_wire_begin(engine,error)&&
         application_native_q2_attack_activate(engine,error)&&
         application_native_q2_combat_activate(engine,error)&&
-        application_q2_control_activate(engine,error)&&declared_initialize(engine,error);
+        application_q2_control_activate(engine,error)&&
+        qa_native_host_source_reconcile(provider->state.native.host,error)&&
+        declared_initialize(engine,error);
     --engine->calls;
     if(!ok)return false;
     engine->map_ready=provider->map_bound=true;
@@ -644,6 +646,7 @@ bool application_native_q2_spawn_map(application_provider *provider, const qa_bs
     if (ok) ok = application_native_q2_attack_activate(engine, error);
     if (ok) ok = application_native_q2_combat_activate(engine, error);
     if (ok) ok = application_q2_control_activate(engine, error);
+    if (ok) ok = qa_native_host_source_reconcile(provider->state.native.host, error);
     const char *source_entities = copy;
     qa_buffer declared_entities = {0};
     bool spawn_entities = true;

@@ -365,8 +365,6 @@ bool qa_native_host_initialize(qa_native_host *host, int32_t level_time,
     }
     else
         ok = qa_native_initialize(host->instance, error);
-    if (ok && host->kind == NATIVE_HOST_Q2_GAME)
-        ok = native_host_reconcile(host, error);
     return ok;
 }
 
