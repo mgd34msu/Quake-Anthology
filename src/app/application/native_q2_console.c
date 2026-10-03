@@ -381,10 +381,16 @@ bool application_native_q2_console_create_restored(application_provider *provide
         return false;
     }
     provider->native_q2_console = owner;
-    if (!qa_console_register(owner->console, "status", "Print Q2 source map and connected players",
-            provider->owner, true, operator_command, owner, error) ||
-        !qa_console_register(owner->console, "dumpuser", "Print a Q2 source player's userinfo",
-            provider->owner, true, operator_command, owner, error)) {
+    qa_application *application = provider->application;
+    application_provider *prior = application->startup_preinit_provider;
+    if (application->operation == APPLICATION_PERSISTING)
+        application->startup_preinit_provider = provider;
+    bool registered = qa_console_register(owner->console, "status", "Print Q2 source map and connected players",
+            provider->owner, true, operator_command, owner, error) &&
+        qa_console_register(owner->console, "dumpuser", "Print a Q2 source player's userinfo",
+            provider->owner, true, operator_command, owner, error);
+    application->startup_preinit_provider = prior;
+    if (!registered) {
         application_native_q2_console_destroy(provider, NULL);
         return false;
     }
