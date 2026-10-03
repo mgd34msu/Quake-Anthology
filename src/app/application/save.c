@@ -13,6 +13,7 @@
 #include "qa/persistence_fields.h"
 #include "qa/persistence_gameplay.h"
 #include "qa/binary.h"
+#include "qa/native_process.h"
 #include "guest_checkpoint.h"
 #include "map_players_private.h"
 #include "bots_save_private.h"
@@ -666,8 +667,11 @@ typedef struct application_persistence {
     uint64_t configuration_generation, publication_generation, actor_revision;
     uint64_t restored_command_generation;
     qa_save_purpose purpose;
-    bool leased, provider_clocks_restored;
+    bool leased;
 } application_persistence;
+
+static bool persistence_restore_provider_clocks(application_persistence *,
+    qa_application *, qa_error *);
 
 static bool persistence_safe(qa_application *app)
 {
@@ -1615,10 +1619,13 @@ static bool persistence_create(void *opaque, const qa_save_image *image, void **
     }
     if (ok) ok = qa_configuration_commit_restored(transaction, error);
     if (!ok && transaction) (void)qa_configuration_abort(transaction, NULL);
+    if (ok) ok = persistence_restore_provider_clocks(operation, candidate, error);
     for (size_t i = 0; ok && i < candidate->provider_count; ++i) {
         application_provider *provider = candidate->providers[i];
         if (provider->kind != APPLICATION_PROVIDER_NATIVE || !provider->state.native.q2_engine ||
-            !provider->state.native.q2_engine->callbacks)
+            provider->state.native.q2_engine->profile == QA_NATIVE_Q2_CGAME_API2023 ||
+            !provider->state.native.host ||
+            !qa_native_process_restore_pending(qa_native_host_instance(provider->state.native.host)))
             continue;
         const qa_save_record *saved = qa_save_image_find(image, QA_SAVE_PROVIDER,
                                                         provider->launch->selection.instance);
@@ -1660,8 +1667,7 @@ static bool persistence_restore_provider_clocks(application_persistence *operati
         ok = qa_session_restore_clock(candidate->session, provider->owner, &clock->state, error);
     }
     qa_session_checkpoint_free(&saved);
-    if (ok) operation->provider_clocks_restored = true;
-    else if (!error || error->code == QA_OK)
+    if (!ok && (!error || error->code == QA_OK))
         application_fail(error, QA_ERROR_FORMAT, "Source clock import requires its actual candidate save image");
     return ok;
 }
@@ -1724,8 +1730,6 @@ static bool persistence_restore_owner(void *opaque, void *value,
         return binding && binding->restore(binding->context, candidate, record->payload, error);
     }
     default: {
-        if (record->owner.kind == QA_SAVE_CONNECTIONS && !operation->provider_clocks_restored &&
-            !persistence_restore_provider_clocks(operation, candidate, error)) return false;
         const qa_application_persistence_owner *binding = external_owner(operation->ops, &record->owner);
         return binding && binding->restore(binding->context, candidate, record->payload, error);
     }

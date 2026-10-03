@@ -18,7 +18,7 @@ typedef struct continuation_profile {
     bool classic;
 } continuation_profile;
 struct application_native_q2_continuation {
-    bool owned_callbacks;
+    bool owned_process;
     qa_sha256_digest artifact, declaration, launch;
     qa_buffer fields[CONTINUATION_FIELDS];
     size_t count;
@@ -27,13 +27,13 @@ struct application_native_q2_continuation {
     struct { bool present, connected, spawned; qa_actor_id actor; } clients[257];
 };
 
-static bool callback_identity(struct application_native_q2 *engine,
+static bool process_identity(struct application_native_q2 *engine,
     const qa_native_checkpoint *snapshot, qa_error *error)
 {
     qa_native_module_info module = qa_native_module_describe(engine->provider->state.native.module);
     const qa_sha256_digest *declaration = qa_native_declaration_digest(engine->declaration);
     qa_native_instance *instance = qa_native_host_instance(engine->provider->state.native.host);
-    return (engine->callbacks && qa_native_declaration_callbacks(engine->declaration).size &&
+    return ((engine->profile == QA_NATIVE_Q2_GAME_API3 || engine->profile == QA_NATIVE_Q2_GAME_API2023) &&
         instance && qa_native_get_backend(instance) == QA_NATIVE_BACKEND_OWNED_PROCESS &&
         !qa_native_terminal(instance) && snapshot && snapshot->has_process && snapshot->process.size &&
         snapshot->has_host && snapshot->host.size && !snapshot->has_game && !snapshot->has_level &&
@@ -48,15 +48,15 @@ static bool callback_identity(struct application_native_q2 *engine,
         snapshot->has_declaration && declaration &&
         qa_sha256_equal(&snapshot->declaration, declaration) &&
         qa_sha256_equal(&snapshot->image.digest, &module.image.digest)) ||
-        application_fail(error, QA_ERROR_FORMAT, "Native callback continuation requires its actual complete process and declaration owner");
+        application_fail(error, QA_ERROR_FORMAT, "Native Q2 continuation requires its actual complete process and declaration owner");
 }
 
-static bool callback_receipt(struct application_native_q2 *engine,
+static bool process_receipt(struct application_native_q2 *engine,
     const qa_native_checkpoint *snapshot, qa_buffer *out, qa_error *error)
 {
-    if (!callback_identity(engine, snapshot, error)) return false;
+    if (!process_identity(engine, snapshot, error)) return false;
     qa_buffer bytes = {.data = calloc(1, 164), .size = 164};
-    if (!bytes.data) return application_fail(error, QA_ERROR_MEMORY, "Retaining native callback process identity");
+    if (!bytes.data) return application_fail(error, QA_ERROR_MEMORY, "Retaining native Q2 process identity");
     memcpy(bytes.data, "QNCB", 4);
     memcpy(bytes.data + 4, snapshot->image.digest.bytes, 32);
     memcpy(bytes.data + 36, snapshot->declaration.bytes, 32);
@@ -238,13 +238,13 @@ bool application_native_q2_continuation_portable(application_provider *provider,
     struct application_native_q2 *engine = provider && provider->kind == APPLICATION_PROVIDER_NATIVE ? provider->state.native.q2_engine : NULL;
     if (!engine || !provider->launch || !provider->state.native.module || !application_native_q2_idle(provider))
         return application_fail(error, QA_ERROR_ARGUMENT, "Native full private qualification requires its idle actual source provider");
-    if (engine->callbacks) {
-        qa_native_instance *instance = provider->state.native.host ? qa_native_host_instance(provider->state.native.host) : NULL;
-        return (qa_native_declaration_callbacks(engine->declaration).size && instance &&
-            qa_native_get_backend(instance) == QA_NATIVE_BACKEND_OWNED_PROCESS &&
-            !qa_native_terminal(instance)) || application_fail(error, QA_ERROR_UNSUPPORTED,
-                "Native callback cold save requires its owned original process continuation");
-    }
+    qa_native_instance *instance = provider->state.native.host ? qa_native_host_instance(provider->state.native.host) : NULL;
+    if (instance && qa_native_get_backend(instance) == QA_NATIVE_BACKEND_OWNED_PROCESS)
+        return ((engine->profile == QA_NATIVE_Q2_GAME_API3 || engine->profile == QA_NATIVE_Q2_GAME_API2023) &&
+            qa_native_declaration_digest(engine->declaration) && !qa_native_terminal(instance)) ||
+            application_fail(error, QA_ERROR_UNSUPPORTED, "Native Q2 cold save requires its complete original process and declaration");
+    if (engine->callbacks)
+        return application_fail(error, QA_ERROR_UNSUPPORTED, "Native callback cold save requires its owned original process continuation");
     continuation_profile profile = {0};
     bool ok = profile_read(engine, &profile, error) && application_q2_private_qualified(engine, error);
     qa_json_destroy(profile.document); return ok;
@@ -298,7 +298,8 @@ bool application_native_q2_continuation_capture(application_provider *provider, 
 {
     struct application_native_q2 *engine = owner(provider, error); continuation_profile profile = {0};
     if (!engine || !out) return false;
-    if (engine->callbacks) return callback_receipt(engine, snapshot, out, error);
+    if (qa_native_get_backend(qa_native_host_instance(provider->state.native.host)) == QA_NATIVE_BACKEND_OWNED_PROCESS)
+        return process_receipt(engine, snapshot, out, error);
     bool ok = application_native_q2_continuation_portable(provider, error) && profile_read(engine, &profile, error) && identity(engine, snapshot, &profile, error);
     struct application_native_q2_continuation *state = ok ? allocate(&profile, error) : NULL;
     ok = ok && state; qa_native_instance *instance = qa_native_host_instance(provider->state.native.host);
@@ -342,15 +343,15 @@ bool application_native_q2_continuation_prepare(application_provider *provider, 
     struct application_native_q2 *engine = owner(provider, error); continuation_profile profile = {0};
     if (!engine || !out) return false;
     *out = NULL;
-    if (engine->callbacks) {
+    if (qa_native_get_backend(qa_native_host_instance(provider->state.native.host)) == QA_NATIVE_BACKEND_OWNED_PROCESS) {
         qa_buffer expected = {0};
-        bool valid = callback_receipt(engine, snapshot, &expected, error) &&
+        bool valid = process_receipt(engine, snapshot, &expected, error) &&
             bytes.size == expected.size && bytes.data && !memcmp(bytes.data, expected.data, bytes.size);
         qa_buffer_free(&expected);
-        if (!valid) return application_fail(error, QA_ERROR_FORMAT, "Native callback receipt differs from its saved process capsule");
+        if (!valid) return application_fail(error, QA_ERROR_FORMAT, "Native Q2 receipt differs from its saved process capsule");
         struct application_native_q2_continuation *state = calloc(1, sizeof(*state));
         if (!state) return application_fail(error, QA_ERROR_MEMORY, "Owning native callback continuation");
-        state->owned_callbacks = true;
+        state->owned_process = true;
         state->artifact = snapshot->image.digest;
         state->declaration = snapshot->declaration;
         state->launch = provider->launch->identity;
@@ -386,14 +387,15 @@ bool application_native_q2_continuation_apply(application_provider *provider,
 {
     struct application_native_q2 *engine = owner(provider, error); continuation_profile profile = {0};
     if (!engine || !state) return false;
-    if (state->owned_callbacks) {
+    if (state->owned_process) {
         qa_native_module_info module = qa_native_module_describe(provider->state.native.module);
         const qa_sha256_digest *declaration = qa_native_declaration_digest(engine->declaration);
-        if (!(engine->callbacks && engine->initialized && engine->map_ready && declaration &&
+        if (!(engine->initialized && engine->map_ready && declaration &&
+            qa_native_get_backend(qa_native_host_instance(provider->state.native.host)) == QA_NATIVE_BACKEND_OWNED_PROCESS &&
             qa_sha256_equal(&state->artifact, &module.image.digest) &&
             qa_sha256_equal(&state->declaration, declaration) &&
             qa_sha256_equal(&state->launch, &provider->launch->identity)))
-            return application_fail(error, QA_ERROR_FORMAT, "Native callback restored ownership differs from its source capsule");
+            return application_fail(error, QA_ERROR_FORMAT, "Native Q2 restored ownership differs from its source capsule");
         return application_native_q2_continuation_portable(provider, error) &&
             qa_native_restore_ready(qa_native_host_instance(provider->state.native.host), error);
     }

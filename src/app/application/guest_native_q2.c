@@ -405,7 +405,8 @@ bool application_construct_native_q2(qa_application *app, application_provider *
     if (!engine) {
         if (!prepare_owner(app, provider, world, product, choices, error)) return false;
         engine = provider->state.native.q2_engine;
-        if (app->native_restore_image && engine->callbacks && !load_host(engine, error)) return false;
+        if (app->native_restore_image && engine->profile != QA_NATIVE_Q2_CGAME_API2023 &&
+            !load_host(engine, error)) return false;
     } else if (!app || !world || !product || !choices || provider->application != app ||
         provider->product != product || product->family != QA_GAME_Q2 || engine->provider != provider ||
         engine->world != world || !engine->prepared || !provider->constructed || provider->attached ||
@@ -469,7 +470,7 @@ static bool load_host(struct application_native_q2 *engine, qa_error *error)
         instance.observe || qa_native_declaration_region_count(engine->declaration) != 0,
         process_current, engine, &engine->process, error)) return false;
     qa_native_checkpoint cold = {0};
-    if (provider->application->native_restore_image && engine->callbacks) {
+    if (provider->application->native_restore_image && engine->profile != QA_NATIVE_Q2_CGAME_API2023) {
         const qa_save_record *saved = qa_save_image_find(provider->application->native_restore_image,
             QA_SAVE_PROVIDER, provider->launch->selection.instance);
         if (!saved || !application_native_q2_save_process(saved, &cold, error)) return false;
