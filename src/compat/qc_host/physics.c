@@ -100,7 +100,7 @@ bool qa_qc_game_read_physics(qa_qc_game *game, qa_actor_id actor, qa_physics_pro
         (double)water_type < INT32_MIN || (double)water_type > INT32_MAX)
         return qc_game_fail(error, QA_ERROR_FORMAT, "QC water properties exceed source bounds");
     value.water_level = (int32_t)water_level; value.water_type = (int32_t)water_type;
-    if (!value.gravity_scale) value.gravity_scale = 1;
+    if (value.gravity_scale == 0) value.gravity_scale = 1;
     value.q1_pusher = (qa_q1_pusher_clock){.local_seconds = local, .next_think_seconds = next};
     if (!still_actor(game, reference, actor, error)) return false;
     *out = value; return true;
