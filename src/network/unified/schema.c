@@ -359,7 +359,7 @@ static bool scene(reader r) {
     return source_time(field(r,"time")) && nullable(field(r,"world"),resource) && list(field(r,"entities"),0,SIZE_MAX,entity) &&
         list(field(r,"lights"),0,SIZE_MAX,light) && list(field(r,"particles"),0,SIZE_MAX,particle) && list(field(r,"lightStyles"),0,SIZE_MAX,light_style) && nullable(field(r,"areaBits"),bytes);
 }
-static bool actor_record(reader r) { return actor(field(r,"id")) && fields(r,"owner definition",namespaced); }
+static bool actor_record(reader r) { return actor(field(r,"id")) && namespaced(field(r,"owner")) && protocol_string(field(r,"definition")); }
 static bool actor_body(reader r) { return actor(field(r,"actor")) && body(field(r,"body")); }
 static bool actor_inventory(reader r) { return actor(field(r,"actor")) && list(field(r,"entries"),0,SIZE_MAX,inventory); }
 static bool actor_configuration(reader r) {
