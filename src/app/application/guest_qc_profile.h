@@ -7,7 +7,7 @@
 typedef enum application_qc_input_id {
     QC_INPUT_SELF, QC_INPUT_OTHER, QC_INPUT_TIME, QC_INPUT_ELAPSED,
     QC_INPUT_ANGLES, QC_INPUT_ATTACK, QC_INPUT_JUMP, QC_INPUT_IMPULSE,
-    QC_INPUT_FORWARD, QC_INPUT_SIDE, QC_INPUT_UP, QC_INPUT_RESULT, QC_INPUT_COUNT
+    QC_INPUT_FORWARD, QC_INPUT_SIDE, QC_INPUT_UP, QC_INPUT_RESULT, QC_INPUT_ACTIVATOR, QC_INPUT_COUNT
 } application_qc_input_id;
 typedef enum application_qc_value_kind {
     QC_VALUE_CONSTANT, QC_VALUE_INPUT, QC_VALUE_ARGUMENT,
@@ -114,7 +114,7 @@ struct application_qc_profile {
     size_t weapon_count;
 };
 typedef struct application_qc_inputs {
-    qa_actor_id self, other;
+    qa_actor_id self, other, activator;
     const qa_movement_command *command;
     const qa_command_invocation *console;
     uint64_t time_ns, elapsed_ns;

@@ -6,6 +6,12 @@ The original audit authority is dependency plan revision 7, tasks B01–B05. Its
 
 The user's latest correction forbids review gates and test infrastructure in front of implementation. Audit continues alongside production installation, without new manifests, hashes or freeze requirements. The later implementation assignment supersedes the initial document-only edit scope for the concrete owners below. Historical snapshot/peer evidence below records work already performed; none of it imposes a prerequisite on current implementation. Concrete defects go directly to the author. Current owner/build files can change as genuine callers are installed.
 
+## Authorized B22 declared QC use callbacks, 2026-10-03
+
+External `actor.use` observe/replace declarations now reach the existing canonical actor operation and QC call kernel. The native Source callback producer already supplies the actual self, other and activator actors; the QC adapter preserves those full identities, the owner's Source time and the observer's canonical boolean result. Compiled argument/global admission recognizes activator as an entity input only at that declared use stage. Replacement keeps the same compiled return-word boolean contract as think/touch.
+
+The new activator field is a call-local value, with no saved layout or private state mirror. Client input fields and consumed movement handlers still admit only their existing input range. Registration, suspension, checked teardown and cold rebind use the same existing hook owner. Both changed production translation units passed their actual optimized GCC and Clang commands privately in `qc-declared-use-objects`; scoped whitespace checks passed. Actual use-callback execution still requires the coherent runtime artifact. `actor.pain`, `actor.die`, damage/inventory callback stages and the remaining nonempty gameplay declaration owners remain unfinished.
+
 ## Authorized B22 QC prepared cvar consumer, 2026-10-03
 
 The public qualified-primary CLI on SAVE10 artifact `5e0f013d` failed before startup scripts while replaying `r_customwidth=640`. A bounded private GDB run traced the actual ConfigStore replay through `application_startup_seed_console` and `qa_console_cvar_startup_set`: the canonical registry held its genuine prepared edit, but the QC console lacked the edit-consumer callback and attempted a direct live mutation.

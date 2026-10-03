@@ -31,6 +31,7 @@ static bool resolve(const application_qc_value *value, const application_qc_inpu
     switch (value->source) {
     case QC_INPUT_SELF: out.kind = QA_QC_GAME_ACTOR; out.value.actor = inputs->self; break;
     case QC_INPUT_OTHER: out.kind = QA_QC_GAME_ACTOR; out.value.actor = inputs->other; break;
+    case QC_INPUT_ACTIVATOR: out.kind = QA_QC_GAME_ACTOR; out.value.actor = inputs->activator; break;
     case QC_INPUT_TIME: out.value.number = (float)((double)inputs->time_ns / 1e9); break;
     case QC_INPUT_ELAPSED: out.value.number = (float)((double)inputs->elapsed_ns / 1e9); break;
     case QC_INPUT_RESULT: out.value.number = inputs->result; break;
@@ -123,8 +124,14 @@ static bool callback_inputs(application_qc_callback *callback, const void *reque
     } else {
         const application_q3_mod_value *other = values.values + Q3_MOD_OTHER;
         if (other->kind != Q3_MOD_VALUE_ACTOR)
-            return application_fail(error, QA_ERROR_ARGUMENT, "QC touch callback requires its actual other actor");
+            return application_fail(error, QA_ERROR_ARGUMENT, "QC contact callback requires its actual other actor");
         inputs->other = other->as.actor;
+        if (callback->operation == Q3_MOD_USE) {
+            const application_q3_mod_value *activator = values.values + Q3_MOD_ACTIVATOR;
+            if (activator->kind != Q3_MOD_VALUE_ACTOR)
+                return application_fail(error, QA_ERROR_ARGUMENT, "QC use callback requires its actual activator actor");
+            inputs->activator = activator->as.actor;
+        }
     }
     if (result) {
         const application_q3_mod_value *observed = values.values + Q3_MOD_RESULT;
