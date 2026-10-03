@@ -225,6 +225,11 @@ static bool current(const qa_render_controls *controls)
     }
     return false;
 }
+static bool callback_owner(const qa_render_controls *controls)
+{
+    return current(controls) || (controls && controls->backend == QA_RENDER_CONTROLS_GL &&
+        qa_gl_render_controls_callback_candidate(controls));
+}
 static bool fail(qa_error *error, const char *message)
 {
     qa_error_set(error, QA_ERROR_ARGUMENT, 0, "%s", message);
@@ -394,7 +399,7 @@ bool qa_render_controls_source_runtime_bind(qa_render_controls *owner,
     bool (*diagnostics)(void *, qa_scene_source_diagnostics *, qa_error *), void *diagnostics_context,
     bool (*frame_policy)(void *, qa_scene_frame *, qa_error *), void *frame_context, qa_error *error)
 {
-    if (!current(owner) || owner->ticket || owner->image_ticket || owner->source.entered || !diagnostics || !frame_policy ||
+    if (!callback_owner(owner) || owner->ticket || owner->image_ticket || owner->source.entered || !diagnostics || !frame_policy ||
         (owner->source.runtime_diagnostics && (owner->source.runtime_diagnostics != diagnostics ||
             owner->source.runtime_diagnostics_context != diagnostics_context ||
             owner->source.runtime_video_frame != video_frame || owner->source.runtime_video_context != video_context ||
@@ -1225,7 +1230,7 @@ uint32_t qa_render_strip_vertex(const qa_render_strip *strip, size_t ordinal)
 bool qa_render_controls_source_print_bind(qa_render_controls *controls,void (*print)(void *,const char *),
     void *context,qa_error *error)
 {
-    if (!current(controls) || controls->ticket || controls->image_ticket || controls->source.entered || !print)
+    if (!callback_owner(controls) || controls->ticket || controls->image_ticket || controls->source.entered || !print)
         return fail(error,"Source renderer printing requires its actual idle physical owner");
     controls->source_print=print; controls->source_print_context=context; return true;
 }

@@ -37,13 +37,24 @@ static bool gl_surface_idle(const qa_gl_renderer *renderer,qa_error *error)
 
 qa_render_controls *qa_gl_render_controls(qa_gl_renderer *renderer)
 { return renderer ? &renderer->controls : NULL; }
-bool qa_gl_render_controls_current(const qa_render_controls *controls)
+static const qa_gl_renderer *controls_idle_owner(const qa_render_controls *controls)
 {
     const qa_gl_renderer *renderer = controls ? controls->owner.gl : NULL;
     return renderer && controls->backend == QA_RENDER_CONTROLS_GL &&
-        &renderer->controls == controls && !renderer->closed && !renderer->detached &&
+        &renderer->controls == controls && !renderer->closed &&
         !renderer->destroy_pending && !renderer->executing && !renderer->capturing &&
-        (!renderer->preparing || renderer->surface_ticket) && !renderer->opacity.active;
+        !renderer->opacity.active ? renderer : NULL;
+}
+bool qa_gl_render_controls_current(const qa_render_controls *controls)
+{
+    const qa_gl_renderer *renderer = controls_idle_owner(controls);
+    return renderer && !renderer->detached && (!renderer->preparing || renderer->surface_ticket);
+}
+bool qa_gl_render_controls_callback_candidate(const qa_render_controls *controls)
+{
+    const qa_gl_renderer *renderer = controls_idle_owner(controls);
+    return renderer && renderer->detached && renderer->restore && !renderer->preparing &&
+        !renderer->surface_ticket && controls->source.owner == controls;
 }
 void qa_gl_render_controls_close(qa_render_controls *controls)
 {
