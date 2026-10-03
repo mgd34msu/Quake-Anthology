@@ -447,8 +447,14 @@ bool frontend_seats_recipients_restore(qa_frontend *f,qa_error *error)
 {
     if (!f || !f->source_restoring)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Input recipient import requires the actual restoring frontend");
-    if (f->options.dedicated) return !f->seats ||
-        frontend_fail(error,QA_ERROR_FORMAT,"Dedicated input import has unexpected physical seats");
+    if (f->options.dedicated) {
+        if (f->input)
+            return frontend_fail(error,QA_ERROR_FORMAT,"Dedicated input import has an unexpected physical platform");
+        for (uint32_t i=0;f->seats && i<f->options.seats;++i)
+            if (f->seats[i].input || f->seats[i].console)
+                return frontend_fail(error,QA_ERROR_FORMAT,"Dedicated input import has unexpected physical seats");
+        return true;
+    }
     if (!f->seats || !f->options.seats || f->options.seats>QA_INPUT_LOCAL_SEATS)
         return frontend_fail(error,QA_ERROR_FORMAT,"Input import lost its actual physical seat roster");
     frontend_network_client_recipient recipients[QA_INPUT_LOCAL_SEATS]={0};
