@@ -19,7 +19,8 @@ typedef struct guest_public_inventory_profile {
     qa_qvm_abi abi;
     uint32_t weapons_offset, ammo_offset;
     enum { GUEST_PUBLIC_CONSTANT, GUEST_PUBLIC_GLOBAL,
-           GUEST_PUBLIC_REGION, GUEST_PUBLIC_COUNTER, GUEST_PUBLIC_THREEWAVE } capacity_kind;
+           GUEST_PUBLIC_REGION, GUEST_PUBLIC_COUNTER, GUEST_PUBLIC_THREEWAVE,
+           GUEST_PUBLIC_CLIENT_LIMITS } capacity_kind;
     int32_t constant;
     uint32_t global, function;
     uint32_t *functions, *locals;
@@ -28,6 +29,8 @@ typedef struct guest_public_inventory_profile {
     uint32_t game_type, lithium;
     int32_t *weapon_limits;
     size_t weapon_limit_count;
+    uint32_t client_selector_offset;
+    int32_t client_selector_values[2];
     guest_inventory_word arguments[GUEST_INVENTORY_ARGUMENTS];
     size_t argument_count;
     guest_inventory_word *inputs;

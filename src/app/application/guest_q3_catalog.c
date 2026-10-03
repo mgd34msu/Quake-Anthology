@@ -241,7 +241,8 @@ static bool refresh(application_q3_catalog *c, bool full_records, bool roster, q
     for (size_t i = 0; roster && ok && i < used; ++i) {
         application_q3_catalog_record *r = records + i;
         if (!c->live && (r->type == c->weapon_type || r->type == c->ammo_type) &&
-            (r->tag < 1 || (!c->private_inventory && r->tag > 15))) {
+            (r->tag < 0 || (r->type == c->weapon_type && !r->tag) ||
+             (!c->private_inventory && r->tag > 15))) {
             ok = fail(e, QA_ERROR_FORMAT, "Catalog item exceeds its original inventory representation");
             break;
         }
@@ -339,6 +340,19 @@ bool application_q3_catalog_create(qa_qvm_image *image, qa_qvm *vm, qa_qvm_abi a
     application_q3_catalog *c = calloc(1, sizeof(*c));
     if (!c) return fail(e, QA_ERROR_MEMORY, "Retaining original source catalog");
     qa_qvm_image_retain(image); c->image = image; c->vm = vm; c->abi = abi; c->strings = strings;
+    bool source_roster = false; uint32_t roster_first = 0;
+    if (!declared.size && abi == QA_QVM_Q3_MODERN) {
+        char digest[65]; qa_sha256_hex(qa_qvm_image_digest(image), digest);
+        if (!strcmp(digest, "57c52bf22e4f528c064f8af1553a7103723bab0a02276bb11eed944bf829b219")) {
+            c->source_address = 2552; c->source_count = 36;
+        } else if (!strcmp(digest, "9751bad99a2d138f96a9b0436d2ea2d965b86214175dc33e4cea95e059419337")) {
+            c->source_address = 5304; c->source_count = 50;
+            source_roster = true; roster_first = 1;
+        } else if (!strcmp(digest, "b9e396cf5ed2b913548cd92e2b0886ad5992653c8903fa3f9ed0b1f4167ca43e")) {
+            c->source_address = 2140; c->source_count = 43;
+            source_roster = true;
+        }
+    }
     qa_json_document *doc = NULL; bool ok = true;
     if (declared.size) ok = qa_json_parse(declared, &doc, e) && primary(c, doc, e);
     else if (items.size) {
@@ -354,9 +368,10 @@ bool application_q3_catalog_create(qa_qvm_image *image, qa_qvm *vm, qa_qvm_abi a
         if (!ok && (!e || !e->code)) fail(e, QA_ERROR_FORMAT,
             "Item declaration is not an immutable matching artifact receipt");
     } else {
-        char digest[65]; qa_sha256_hex(qa_qvm_image_digest(image), digest);
-        if (!strcmp(digest, "9751bad99a2d138f96a9b0436d2ea2d965b86214175dc33e4cea95e059419337")) {
-            c->table = true; c->address.value = 5356; c->count.value = 49; c->stride = 52;
+        if (source_roster) {
+            c->table = true; c->stride = 52;
+            c->address.value = c->source_address + roster_first * c->stride;
+            c->count.value = c->source_count - roster_first;
             c->fields[1] = 28; c->fields[2] = 36; c->fields[3] = 40;
             c->weapon_type = 1; c->ammo_type = 2;
         } else {
@@ -382,14 +397,6 @@ bool application_q3_catalog_create(qa_qvm_image *image, qa_qvm *vm, qa_qvm_abi a
         }
     }
     qa_json_destroy(doc);
-    if (ok && !declared.size && abi == QA_QVM_Q3_MODERN) {
-        char digest[65]; qa_sha256_hex(qa_qvm_image_digest(image), digest);
-        if (!strcmp(digest, "57c52bf22e4f528c064f8af1553a7103723bab0a02276bb11eed944bf829b219")) {
-            c->source_address = 2552; c->source_count = 36;
-        } else if (!strcmp(digest, "9751bad99a2d138f96a9b0436d2ea2d965b86214175dc33e4cea95e059419337")) {
-            c->source_address = 5304; c->source_count = 50;
-        }
-    }
     if (ok && c->table && !c->live) ok = refresh(c, false, true, e);
     if (!ok) { application_q3_catalog_destroy(c); return false; }
     *out = c; return true;

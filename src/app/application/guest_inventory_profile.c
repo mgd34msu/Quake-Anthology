@@ -176,6 +176,93 @@ static bool source_limit(const qa_qvm_image *image, uint32_t comparison, uint32_
     *out = a; return true;
 }
 
+static bool source_threshold(const qa_qvm_image *image, uint32_t index,
+    uint32_t ammo_offset, uint32_t *weapon, int32_t *limit, qa_error *error)
+{
+    size_t count;
+    const qa_qvm_instruction *code = qa_qvm_image_instructions(image, &count);
+    static const qa_qvm_opcode operations[] = {
+        QA_QVM_LOCAL, QA_QVM_LOAD4, QA_QVM_CONST, QA_QVM_ADD, QA_QVM_LOAD4,
+        QA_QVM_CONST, QA_QVM_LTI, QA_QVM_LOCAL, QA_QVM_LOAD4, QA_QVM_CONST,
+        QA_QVM_ADD, QA_QVM_LOAD4, QA_QVM_CONST, QA_QVM_NE, QA_QVM_CONST,
+        QA_QVM_LEAVE
+    };
+    if (index < 2 || (uint64_t)index + 14 > count)
+        return fail(error, "Qualified original ammo threshold leaves its source function");
+    for (size_t i = 0; i < sizeof(operations) / sizeof(*operations); ++i)
+        if (code[index - 2 + i].opcode != operations[i])
+            return fail(error, "Qualified original ammo threshold lost its source comparison");
+    int32_t field = code[index].operand, tag = code[index + 10].operand;
+    if (code[index - 2].operand != 80 || code[index + 5].operand != 16 ||
+        code[index + 7].operand != 40 || code[index + 12].operand != 0 ||
+        code[index + 13].operand != 64 ||
+        code[index + 4].operand != code[index + 11].operand ||
+        code[index + 4].operand <= (int32_t)(index + 13) ||
+        (uint32_t)code[index + 4].operand >= count ||
+        field < (int32_t)ammo_offset || ((uint32_t)field - ammo_offset) % 4 ||
+        ((uint32_t)field - ammo_offset) / 4 > 15 || tag < 1 || tag > 15 ||
+        code[index + 3].operand < 0)
+        return fail(error, "Qualified original ammo threshold lost its item or player field");
+    *weapon = ((uint32_t)field - ammo_offset) / 4;
+    /* The Source grenade pickup also tests its genuine mirrored hand-grenade counter. */
+    if (*weapon != (uint32_t)tag && !(*weapon == 11 && tag == 4))
+        return fail(error, "Qualified original ammo threshold disagrees with its item tag");
+    *limit = code[index + 3].operand; return true;
+}
+
+static bool client_limits(const qa_qvm_image *image, guest_public_inventory_profile *p,
+    qa_error *error)
+{
+    static const uint32_t thresholds[2][9] = {
+        {6617, 6635, 6653, 6671, 6689, 6707, 6725, 6743, 6761},
+        {6786, 6804, 6822, 6840, 6858, 6876, 6894, 6912, 6930}
+    };
+    int32_t selector, boosted_selector, weapons_offset, ammo_offset;
+    if (!source_constant(image, 6610, &selector, error) ||
+        !source_constant(image, 6779, &boosted_selector, error) ||
+        !source_constant(image, 6613, &p->client_selector_values[0], error) ||
+        !source_constant(image, 6782, &p->client_selector_values[1], error) ||
+        !source_constant(image, 143361, &weapons_offset, error) ||
+        !source_constant(image, 143228, &ammo_offset, error)) return false;
+    size_t count, bytes = qa_qvm_player_bytes(p->abi);
+    const qa_qvm_instruction *code = qa_qvm_image_instructions(image, &count);
+    if (count <= 143380 || selector < 0 || selector != boosted_selector ||
+        (selector & 3) || bytes < 4 || (uint32_t)selector > bytes - 4 ||
+        weapons_offset < 0 || weapons_offset != (int32_t)p->weapons_offset ||
+        ammo_offset < 0 || ammo_offset != (int32_t)p->ammo_offset ||
+        bytes < 64 || p->ammo_offset > bytes - 64 || p->weapons_offset > bytes - 4 ||
+        p->client_selector_values[0] != 0 || p->client_selector_values[1] != 1 ||
+        code[6608].opcode != QA_QVM_LOCAL || code[6608].operand != 80 ||
+        code[6609].opcode != QA_QVM_LOAD4 || code[6611].opcode != QA_QVM_ADD ||
+        code[6612].opcode != QA_QVM_LOAD4 || code[6614].opcode != QA_QVM_NE || code[6614].operand != 6777 ||
+        code[6777].opcode != QA_QVM_LOCAL || code[6777].operand != 80 ||
+        code[6778].opcode != QA_QVM_LOAD4 || code[6780].opcode != QA_QVM_ADD ||
+        code[6781].opcode != QA_QVM_LOAD4 || code[6783].opcode != QA_QVM_NE || code[6783].operand != 6946 ||
+        code[143360].opcode != QA_QVM_LOAD4 || code[143362].opcode != QA_QVM_ADD ||
+        code[143369].opcode != QA_QVM_CONST || code[143369].operand != 1 ||
+        code[143378].opcode != QA_QVM_LSH || code[143379].opcode != QA_QVM_BOR ||
+        code[143380].opcode != QA_QVM_STORE4 ||
+        code[143221].opcode != QA_QVM_CONST || code[143221].operand != 2 ||
+        code[143222].opcode != QA_QVM_LSH || code[143227].opcode != QA_QVM_LOAD4 ||
+        code[143229].opcode != QA_QVM_ADD || code[143230].opcode != QA_QVM_ADD ||
+        code[143231].opcode != QA_QVM_STORE4)
+        return fail(error, "Qualified original ammo selector lost its actual player field");
+    p->client_selector_offset = (uint32_t)selector;
+    p->weapon_limit_count = 16;
+    p->weapon_limits = malloc(2 * p->weapon_limit_count * sizeof(*p->weapon_limits));
+    if (!p->weapon_limits) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining original player ammo thresholds"); return false; }
+    for (size_t i = 0; i < 2 * p->weapon_limit_count; ++i) p->weapon_limits[i] = -1;
+    for (size_t mode = 0; mode < 2; ++mode)
+        for (size_t i = 0; i < 9; ++i) {
+            uint32_t weapon; int32_t limit;
+            if (!source_threshold(image, thresholds[mode][i], p->ammo_offset, &weapon, &limit, error)) return false;
+            int32_t *row = p->weapon_limits + mode * p->weapon_limit_count;
+            if (row[weapon] >= 0) return fail(error, "Qualified original player ammo threshold repeats its slot");
+            row[weapon] = limit;
+        }
+    return true;
+}
+
 bool application_guest_public_inventory_profile_default(const qa_qvm_image *image, qa_qvm *vm,
     qa_qvm_abi abi, guest_public_inventory_profile *out, bool *found, qa_error *error)
 {
@@ -185,13 +272,15 @@ bool application_guest_public_inventory_profile_default(const qa_qvm_image *imag
     char digest[65]; qa_sha256_hex(qa_qvm_image_digest(image), digest);
     bool stock = !strcmp(digest, "57c52bf22e4f528c064f8af1553a7103723bab0a02276bb11eed944bf829b219");
     bool threewave = !strcmp(digest, "9751bad99a2d138f96a9b0436d2ea2d965b86214175dc33e4cea95e059419337");
-    if (!stock && !threewave) { *found = false; return true; }
+    bool lrctf = !strcmp(digest, "b9e396cf5ed2b913548cd92e2b0886ad5992653c8903fa3f9ed0b1f4167ca43e");
+    if (!stock && !threewave && !lrctf) { *found = false; return true; }
     if (abi != QA_QVM_Q3_MODERN) return fail(error, "Qualified original inventory requires the modern GAME ABI");
     guest_public_inventory_profile p = {.image = image, .vm = vm, .abi = abi,
-        .ammo_offset = 376, .weapons_offset = stock ? 192 : 204,
-        .capacity_kind = stock ? GUEST_PUBLIC_CONSTANT : GUEST_PUBLIC_THREEWAVE};
+        .ammo_offset = 376, .weapons_offset = threewave ? 204 : 192,
+        .capacity_kind = stock ? GUEST_PUBLIC_CONSTANT : threewave ? GUEST_PUBLIC_THREEWAVE : GUEST_PUBLIC_CLIENT_LIMITS};
     bool ok;
     if (stock) ok = source_limit(image, 103202, 103216, &p.constant, error);
+    else if (lrctf) ok = client_limits(image, &p, error);
     else {
         int32_t game_type, lithium, last, jump_table;
         ok = source_limit(image, 166830, 166844, &p.constant, error) &&
@@ -270,6 +359,19 @@ bool application_guest_public_inventory_capacity(const guest_public_inventory_pr
             int64_t index = (int64_t)source->weapon - p->first_weapon;
             value = index >= 0 && (uint64_t)index < p->weapon_limit_count ? p->weapon_limits[index] : p->fallback;
         }
+    } else if (p->capacity_kind == GUEST_PUBLIC_CLIENT_LIMITS) {
+        uint64_t address = (uint64_t)source->client + p->client_selector_offset;
+        uint8_t bytes[4];
+        if (address > UINT32_MAX) return fail(error, "Original ammo selector address overflowed");
+        if (!qa_qvm_read(vm, (uint32_t)address, bytes, sizeof(bytes), error)) return false;
+        int32_t selector = qa_load_i32le(bytes);
+        size_t mode;
+        if (selector == p->client_selector_values[0]) mode = 0;
+        else if (selector == p->client_selector_values[1]) mode = 1;
+        else return fail(error, "Original ammo selector has no qualified source threshold");
+        if (source->weapon >= p->weapon_limit_count || !p->weapon_limits)
+            return fail(error, "Original ammo threshold lacks its actual weapon slot");
+        value = p->weapon_limits[mode * p->weapon_limit_count + source->weapon];
     } else {
         int32_t arguments[GUEST_INVENTORY_ARGUMENTS] = {0};
         for (size_t i = 0; i < p->argument_count; ++i) arguments[i] = source_value(p->arguments[i], source);
