@@ -161,6 +161,64 @@ static int candidate_compare(const void *first, const void *second) {
         return a->time < b->time ? -1 : 1;
     return a->order < b->order ? -1 : a->order != b->order;
 }
+typedef struct constructed_filter {
+    bot_travel *travel;
+    uint32_t node, goal_area, move_flags, result_flags;
+    bool failed;
+    qa_error error;
+} constructed_filter;
+static bool constructed_edge(void *context, const qa_nav_edge *edge) {
+    constructed_filter *filter = context;
+    if (filter->failed) return false;
+    if (edge->from != filter->node) return true;
+    bot_travel *t = filter->travel;
+    bot_move_record *s = t->state;
+    bot_reach reach;
+    if (!bot_reach_describe(t, edge, &reach, &filter->error)) {
+        filter->failed = true;
+        return false;
+    }
+    if (!(qa_nav_aas_travel_flag(reach.type) & filter->move_flags) ||
+        (bot_move_word(s,BM_AVOID_REACHABILITY) == reach.number &&
+         bot_move_float(s,BM_AVOID_TIME) >= t->moves->time &&
+         bot_move_integer(s,BM_AVOID_TRIES) > 4) ||
+        (bot_move_word(s,BM_LAST_GOAL_AREA) == filter->goal_area &&
+         reach.area == bot_move_word(s,BM_LAST_AREA))) return false;
+    if (avoid_spots(s, &reach)) {
+        filter->result_flags |= QA_BOT_MOVE_AVOID_SPOT;
+        return false;
+    }
+    return true;
+}
+static bool constructed_reach(bot_travel *t, const qa_nav_node *start,
+                              const qa_bot_move_goal_source *goal, uint32_t travel_flags,
+                              uint32_t move_flags, uint32_t *number, uint32_t *result_flags,
+                              qa_error *e) {
+    uint32_t goal_area;
+    if (!bot_goal_area(goal, &goal_area, e)) return false;
+    const qa_nav_node *destination = qa_navigation_node(t->runtime,
+        qa_bot_navigation_node(t->navigation, goal_area));
+    if (!destination) return true;
+    constructed_filter filter = {.travel = t, .node = start->id, .goal_area = goal_area,
+                                  .move_flags = move_flags};
+    qa_nav_route_query query = {.actor = t->actor,
+        .start = bot_move_vector(t->state,BM_ORIGIN), .goal = destination->origin,
+        .start_node = start->id, .goal_node = destination->id,
+        .has_travel_flags = true, .travel_flags = travel_flags,
+        .context = &filter, .edge_filter = constructed_edge};
+    bool ok = qa_navigation_route(t->runtime, t->moves->workspace, &query,
+                                   &t->moves->trajectory, e);
+    if (filter.failed) {
+        if (e) *e = filter.error;
+        return false;
+    }
+    if (!ok) return false;
+    *result_flags = filter.result_flags;
+    if (t->moves->trajectory.found && t->moves->trajectory.edge_count)
+        *number = qa_bot_navigation_source_area(t->navigation,
+            t->moves->trajectory.edges[0]);
+    return true;
+}
 bool bot_reach_select(bot_travel *t, const qa_bot_move_goal_source *goal, uint32_t travel_flags,
                       uint32_t move_flags, uint32_t *number, uint32_t *result_flags, qa_error *e) {
     bot_move_record *s = t->state;
@@ -176,6 +234,11 @@ bool bot_reach_select(bot_travel *t, const qa_bot_move_goal_source *goal, uint32
         }
     }
     uint32_t node = qa_bot_navigation_node(t->navigation, bot_move_word(s,BM_AREA));
+    const qa_nav_node *start = qa_navigation_node(t->runtime, node);
+    if (!qa_nav_asset_aas(t->graph->asset) && start &&
+        start->source.kind == QA_NAV_ORIGIN_CONSTRUCTED)
+        return constructed_reach(t, start, goal, travel_flags, move_flags, number,
+                                 result_flags, e);
     size_t count = qa_navigation_outgoing_count(t->runtime, node), candidates = 0;
     if (!reserve((void **)&m->candidates, &m->candidate_capacity, count, sizeof(*m->candidates), e))
         return false;
