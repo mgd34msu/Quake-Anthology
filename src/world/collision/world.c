@@ -12,27 +12,56 @@ int32_t qa_world_actor_contents(const qa_actor_collision *collision,qa_collision
     return qa_collision_convert_contents(collision->contents,collision->family,to);
 }
 
-typedef struct actor_snapshot { qa_spatial_actor *actors; size_t count,capacity; bool counting; } actor_snapshot;
+typedef struct actor_snapshot {
+    qa_spatial_actor local[8], *actors;
+    size_t count, capacity;
+    qa_error *error;
+    bool failed;
+} actor_snapshot;
 static qa_spatial_visit snapshot_actor(void *opaque,const qa_spatial_actor *actor)
 {
     actor_snapshot *snapshot=opaque;
-    if(snapshot->counting) ++snapshot->count;
-    else if(snapshot->count<snapshot->capacity) snapshot->actors[snapshot->count++]=*actor;
+    if(snapshot->count==snapshot->capacity) {
+        size_t maximum=SIZE_MAX/sizeof(*snapshot->actors);
+        size_t capacity=snapshot->capacity<=maximum/2?snapshot->capacity*2:maximum;
+        if(capacity<=snapshot->count) {
+            snapshot->failed=true;
+            (void)fail(snapshot->error,QA_ERROR_MEMORY,"Spatial snapshot is too large");
+            return QA_SPATIAL_STOP;
+        }
+        qa_spatial_actor *actors=snapshot->actors==snapshot->local?
+            malloc(capacity*sizeof(*actors)):realloc(snapshot->actors,capacity*sizeof(*actors));
+        if(actors==NULL) {
+            snapshot->failed=true;
+            (void)fail(snapshot->error,QA_ERROR_MEMORY,"Cannot allocate spatial snapshot");
+            return QA_SPATIAL_STOP;
+        }
+        if(snapshot->actors==snapshot->local)
+            memcpy(actors,snapshot->local,snapshot->count*sizeof(*actors));
+        snapshot->actors=actors;
+        snapshot->capacity=capacity;
+    }
+    snapshot->actors[snapshot->count++]=*actor;
     return QA_SPATIAL_CONTINUE;
+}
+
+static void snapshot_dispose(actor_snapshot *snapshot)
+{
+    if(snapshot->actors!=snapshot->local) free(snapshot->actors);
 }
 
 static bool snapshot(qa_world *world,qa_bounds bounds,actor_snapshot *out,qa_error *error)
 {
-    actor_snapshot result={.counting=true};
-    if(!qa_spatial_visit_raw(world,bounds,snapshot_actor,&result,error)) return false;
-    if(result.count>SIZE_MAX/sizeof(*result.actors)) return fail(error,QA_ERROR_MEMORY,"Spatial snapshot is too large");
-    if(result.count!=0) {
-        result.actors=malloc(result.count*sizeof(*result.actors));
-        if(result.actors==NULL) return fail(error,QA_ERROR_MEMORY,"Cannot allocate spatial snapshot");
+    out->actors=out->local;
+    out->count=0;
+    out->capacity=sizeof(out->local)/sizeof(out->local[0]);
+    out->error=error;
+    out->failed=false;
+    if(!qa_spatial_visit_raw(world,bounds,snapshot_actor,out,error) || out->failed) {
+        snapshot_dispose(out);
+        return false;
     }
-    result.capacity=result.count; result.count=0; result.counting=false;
-    if(!qa_spatial_visit_raw(world,bounds,snapshot_actor,&result,error)) { free(result.actors); return false; }
-    *out=result; return true;
+    return true;
 }
 
 static qa_bounds swept_bounds(const qa_trace_query *query)
@@ -122,7 +151,7 @@ bool qa_world_trace_excluding(qa_world *world,const qa_trace_query *query,const 
         } else if(hit.start_solid) result.start_solid=true;
         if(result.all_solid) break;
     }
-    free(candidates.actors);
+    snapshot_dispose(&candidates);
     if(ok) *out=result;
     return ok;
 }
@@ -172,7 +201,7 @@ bool qa_world_point_contents(qa_world *world,const qa_point_query *query,qa_poin
         if(result.family==QA_COLLISION_Q2) { result.stored|=added; result.merged|=added; result.contents=query->policy.q2_merged_contents?result.merged:result.stored; }
         else result.contents|=added;
     }
-    free(candidates.actors);
+    snapshot_dispose(&candidates);
     if(ok) *out=result;
     return ok;
 }
