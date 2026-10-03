@@ -466,8 +466,14 @@ bool application_control_q3_client_think(application_provider *provider, qa_acto
             int64_t movement = (int64_t)call.accepted.serverTime - command_time;
             call.movement_milliseconds = movement <= 0 ? 0u : movement > 200 ? 200u : (uint32_t)movement;
             uint64_t elapsed = (uint64_t)call.movement_milliseconds * UINT64_C(1000000);
-            ok = qa_session_command_call(app->session, provider->owner, actor, elapsed,
-                client_think, &call, error);
+            qa_source_command active;
+            if (qa_session_active_command(app->session, provider->owner, &active) &&
+                active.provider == provider->owner && active.kind == QA_CLOCK_Q3 &&
+                active.phase == QA_CLIENT_COMMAND && qa_actor_id_equal(active.actor, actor))
+                ok = client_think(&call, app->session, &active, error);
+            else
+                ok = qa_session_command_call(app->session, provider->owner, actor, elapsed,
+                    client_think, &call, error);
         }
     }
     app->operation = previous;
