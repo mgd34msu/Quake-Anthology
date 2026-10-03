@@ -12,6 +12,7 @@
 #include "qa/source_frame_time.h"
 #include "qa/application_players.h"
 #include "network_config.h"
+#include "network_recipient.h"
 #include "network_admin.h"
 #include "source_admin.h"
 #include "network_qw_logfile.h"
@@ -3040,6 +3041,21 @@ static bool startup_source(void *context,qa_application *application,const qa_la
         !source->console || !source->cvars || qa_console_cvars(source->console)!=source->cvars)
         return fail(error,QA_ERROR_ARGUMENT,"Startup route lost its actual physical configuration source");
     *primary=false;
+    if (frontend_network_client_only(manager->frontend)) {
+        frontend_network_client_recipient recipient;
+        bool present=false;
+        if (!frontend_network_client_recipient_read(manager->frontend,0,&recipient,&present,error)) return false;
+        if (present) {
+            if (!frontend_network_client_recipient_current(manager->frontend,0,&recipient))
+                return fail(error,QA_ERROR_ARGUMENT,"Startup selection lost its actual CLIENT recipient");
+            *primary=source->scope.kind==QA_APPLICATION_CONSOLE_CLIENT &&
+                source->scope.provider==recipient.source.context.receiver &&
+                source->scope.seat==recipient.source.context.seat &&
+                source->console==recipient.source.context.console && source->cvars==recipient.source.context.cvars &&
+                frontend_client_source_descriptor_equal(selected,recipient.source.descriptor);
+            return true;
+        }
+    }
     const qa_launch_choices *choices=qa_launch_snapshot_choices(snapshot);
     const qa_launch_binding *binding=NULL;
     if (frontend_network_remote(manager->frontend)) {
