@@ -681,7 +681,7 @@ static bool client_globals_fields(qa_source_save_io *io, q3g_restore *saved)
         saved_client_globals *row = saved->globals + i;
         if (!qa_source_save_u32(io, &row->kind) || row->kind < QA_QVM_CGAME || row->kind > QA_QVM_UI ||
             !qa_source_save_u32(io, &row->seat) || row->seat == UINT32_MAX ||
-            !qa_source_save_u32(io, &row->owner) || !row->owner || !blob(io,&row->memory,20) || !blob(io, &row->definitions, 20))
+            !qa_source_save_u32(io, &row->owner) || !row->owner || !blob(io,&row->memory,16) || !blob(io, &row->definitions, 20))
             return state_fail(io, QA_ERROR_FORMAT, "Invalid physical CLIENT parser globals namespace");
         for (size_t j = 0; j < i; ++j)
             if (saved->globals[j].seat == row->seat || saved->globals[j].owner == row->owner)
