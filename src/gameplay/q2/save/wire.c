@@ -149,10 +149,11 @@ bool q2_save_wire(q2_save_io *io)
             ? qa_actors_resolve_saved(qa_session_actors(g->services.session), ref.actor)
             : qa_actors_get(qa_session_actors(g->services.session), actors[slot]);
         q2_actor *a = record && record->id.slot < g->capacity ? g->actors[record->id.slot] : NULL;
+        bool player = a && a->client && !a->client->corpse;
         if (!a || !qa_actor_id_equal(a->id, record->id) || seen[record->id.slot] ||
             (record->owner == g->options.owner && record->has_source && record->source_slot != slot) ||
-            (a->client && a->client->info.slot + 1 != slot) ||
-            (!a->client && slot && slot <= clients) ||
+            (player && a->client->info.slot + 1 != slot) ||
+            (!player && slot && slot <= clients) ||
             !a->wire_bound || (!io->reading && a->wire_slot != slot)) {
             ok = q2_save_fail(io, "Q2 continuation physical edict aliases an actor or client");
             break;
@@ -166,10 +167,10 @@ bool q2_save_wire(q2_save_io *io)
         uint64_t event_frame = a->wire_event_frame;
         ok = view_fields(io, &value) && movement_fields(io, &movement) && lifetime_fields(io, &lifetime, frame) &&
             q2_save_u32(io, &event) && q2_save_u64(io, &event_frame);
-        if (ok && ((value.present && (!a->client || value.frame > frame || value.time_ns > g->now_ns)) ||
+        if (ok && ((value.present && (!player || value.frame > frame || value.time_ns > g->now_ns)) ||
             value.view.hit_marker_damage < INT16_MIN || value.view.hit_marker_damage > INT16_MAX ||
-            (movement.present && (!a->client || movement.frame > frame || movement.time_ns > g->now_ns)) ||
-            (a->client && !movement.present) || event_frame > frame || event > 255))
+            (movement.present && (!player || movement.frame > frame || movement.time_ns > g->now_ns)) ||
+            (player && !movement.present) || event_frame > frame || event > 255))
             ok = q2_save_fail(io, "Q2 continuation VIEW/event exceeds its actual source publication");
         if (ok && io->reading) {
             a->wire_view = value; a->wire_event = event; a->wire_event_frame = event_frame;
