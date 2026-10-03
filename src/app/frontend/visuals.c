@@ -16,6 +16,8 @@
 #include "material_movies.h"
 #include "material_movies_save.h"
 #include "renderer_materials.h"
+#include "config_store.h"
+#include "qa/application_equipment.h"
 #include "remote_q1_client.h"
 #include "remote_q2_client.h"
 #include "qa/media_library_save.h"
@@ -1311,6 +1313,70 @@ static bool visual_flare(qa_frontend *frontend, const qa_application_visual_view
     qa_scene_image_release(image);
     return ok;
 }
+static bool local_q2_view_weapon(qa_frontend *frontend, uint32_t seat, qa_actor_id actor,
+    const qa_scene_world_input *world, qa_scene_frame *frame, qa_error *error)
+{
+    frontend_seat *recipient = &frontend->seats[seat];
+    if (!actor.registry || world->view.clip_enabled || !recipient->q2_view_ready ||
+        !qa_actor_id_equal(actor, recipient->q2_actor) || recipient->q2_view.spectator ||
+        recipient->q2_view.health <= 0) return true;
+    qa_application_equipment_view weapon;
+    if (!qa_application_equipment_read(frontend->application, actor, &weapon, error)) return false;
+    if (weapon.selected || weapon.provider != weapon.primary || weapon.family != QA_GAME_Q2 ||
+        !weapon.visible || !weapon.view_model || !weapon.view_model[0]) return true;
+    qa_application_camera_view camera;
+    if (!qa_application_control_camera(frontend->application, actor, &camera))
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Q2 view weapon lost its actual local camera");
+    if (camera.cutscene) return true;
+    uint32_t authored;
+    frontend_config_legacy_view source;
+    bool present = false;
+    if (!frontend_seat_launch_id_read(frontend, seat, &authored))
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Q2 view weapon lost its authored seat");
+    if (!frontend_config_store_primary_legacy_read(frontend->config_store, authored, &source, &present, error))
+        return false;
+    if (!present || source.product->family != QA_GAME_Q2) return true;
+    const qa_cvar_view *gun = qa_cvars_find(source.registry, "cl_gun");
+    const qa_cvar_view *hand = qa_cvars_find(source.registry, "hand");
+    if (!gun || !hand)
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Q2 view weapon lost its retained CLIENT settings");
+    if (gun->number == 0 || hand->number == 2 ||
+        (source.product->edition == QA_EDITION_CLASSIC && recipient->q2_view.fov > 90)) return true;
+    frontend_visual_owner_view media;
+    frontend_visual_model_view model;
+    if (!frontend_visual_media_acquire(frontend, weapon.provider, weapon.family, &media, error) ||
+        !frontend_visual_model_acquire(frontend, weapon.provider, weapon.family,
+            weapon.view_model, weapon.view_source, &model, error)) return false;
+    if (media.shader_movies && !frontend_material_movies_frame(media.shader_movies, frame, error)) return false;
+    qa_vec3 origin = qa_vec_add(world->view.origin, recipient->q2_view.gun_offset);
+    qa_vec3 angles = qa_vec_add(qa_vec_add(recipient->q2_view.angles,
+        recipient->q2_view.kick_angles), recipient->q2_view.gun_angles);
+    qa_vec3 axes[3]; frontend_camera_axes(angles, axes);
+    qa_model_transform placement; qa_model_transform_identity(&placement);
+    placement.origin[0] = origin.x; placement.origin[1] = origin.y; placement.origin[2] = origin.z;
+    for (size_t i = 0; i < 3; ++i) {
+        placement.axes[i][0] = axes[i].x; placement.axes[i][1] = axes[i].y; placement.axes[i][2] = axes[i].z;
+    }
+    uint32_t model_frame = weapon.frame >= 0 ? (uint32_t)weapon.frame : 0;
+    qa_scene_model_input input = {.view = world->view, .transform = placement,
+        .previous_origin = origin, .color = {1, 1, 1, 1}, .family = QA_SCENE_Q2,
+        .view_model = true, .flags = 1 | 4 | 16, .frame = model_frame, .old_frame = model_frame,
+        .skin = weapon.has_skin ? (uint32_t)weapon.skin : 0, .entity = actor.slot,
+        .identity_light = world->identity_light, .seconds = world->seconds, .ambient = {1, 1, 1},
+        .fog = world->fog, .source_path = model.path,
+        .video_frame = frontend_material_movies_frontend_resolve, .video_context = frontend};
+    if (hand->number >= 0 && hand->number <= 2) input.left_hand = (uint8_t)hand->number;
+    qa_vec3 directed;
+    if (!qa_scene_world_sample_light_input(frontend->scene_world, world, origin,
+        &input.ambient, &directed, &input.light_direction, error)) return false;
+    input.ambient = qa_vec_add(input.ambient, directed);
+    if (!frontend_config_store_primary_legacy_current(frontend->config_store, &source) ||
+        !qa_application_equipment_current(frontend->application, &weapon))
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Q2 view weapon changed its retained player or CLIENT settings");
+    return frontend_legacy_model_input_product(frontend, source.product, frontend->scene_world, world, &input, error) &&
+        qa_scene_model_submit(model.scene, &input, frame, error);
+}
+
 bool frontend_visuals_submit(qa_frontend *frontend, uint32_t seat, qa_actor_owner exclude,
     const qa_scene_world_input *world, qa_scene_frame *frame, qa_error *error)
 {
@@ -1375,5 +1441,5 @@ bool frontend_visuals_submit(qa_frontend *frontend, uint32_t seat, qa_actor_owne
             if (!qa_scene_model_submit(model->scene, &input, frame, error)) return false;
         }
     }
-    return true;
+    return exclude || local_q2_view_weapon(frontend, seat, local, world, frame, error);
 }
