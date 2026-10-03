@@ -51,8 +51,10 @@ static bool pcm_equal(const qa_audio_sample *a, const qa_audio_sample *b)
 }
 bool qa_bank_asset_valid(const qa_audio_asset *asset, qa_error *error)
 {
-    if (!asset || !asset->resource || !asset->sample || (unsigned)asset->family > QA_AUDIO_Q3 ||
+    qa_vfs_resource_origin origin;
+    if (!asset || !asset->files || !asset->resource || !asset->sample || (unsigned)asset->family > QA_AUDIO_Q3 ||
         !asset->mount || asset->resource_id != qa_resource_id(asset->resource) ||
+        !qa_vfs_resource_origin_read(asset->files, asset->mount, asset->resource, &origin) ||
         asset->policy != source_policy(asset->resource, asset->family))
         return fail(error, QA_ERROR_FORMAT, "Audio asset identity is not source-qualified");
     qa_audio_sample *parsed = NULL;
@@ -91,8 +93,8 @@ bool qa_bank_cache_valid(const qa_audio_bank *bank, qa_error *error)
         return fail(error, QA_ERROR_ARGUMENT, "Audio bank storage is not qualified");
     for (size_t i = 0; i < bank->count; ++i) {
         const bank_entry *entry = &bank->entries[i];
-        if (!entry->asset || entry->touched > bank->registration)
-            return fail(error, QA_ERROR_FORMAT, "Audio registration epoch is invalid");
+        if (!entry->asset || entry->asset->files != bank->view || entry->touched > bank->registration)
+            return fail(error, QA_ERROR_FORMAT, "Audio registration source or epoch is invalid");
         for (size_t j = 0; j < i; ++j)
             if (entry->asset->resource_id == bank->entries[j].asset->resource_id &&
                 entry->asset->family == bank->entries[j].asset->family)
@@ -103,11 +105,12 @@ bool qa_bank_cache_valid(const qa_audio_bank *bank, qa_error *error)
 bool qa_bank_write_asset(qa_ac_writer *w, const struct asset_row *row,
     const struct sample_row *samples, size_t sample_count, const qa_audio_bank_checkpoint_refs *refs)
 {
-    const qa_audio_asset *a = row->asset; uint64_t pool = 0, resource = 0;
-    if (!refs->resource_encode(refs->context, a->resource, &pool, &resource, w->error)) { w->failed = true; return false; }
+    const qa_audio_asset *a = row->asset; uint64_t view = 0, pool = 0, resource = 0;
+    if (!refs->view_encode(refs->context, a->files, &view, w->error) ||
+        !refs->resource_encode(refs->context, a->resource, &pool, &resource, w->error)) { w->failed = true; return false; }
     const qa_sha256_digest *digest = qa_resource_digest(a->resource);
     if (!digest) { w->failed = true; return fail(w->error, QA_ERROR_FORMAT, "Audio source digest is absent"); }
-    return qa_ac_u64(w, pool) && qa_ac_u64(w, resource) && qa_ac_write(w, digest, sizeof(*digest)) &&
+    return qa_ac_u64(w, view) && qa_ac_u64(w, pool) && qa_ac_u64(w, resource) && qa_ac_write(w, digest, sizeof(*digest)) &&
         qa_ac_u64(w, a->mount) && qa_ac_u32(w, a->family) && qa_ac_u32(w, a->policy) &&
         qa_ac_blob(w, (qa_bytes){(const uint8_t *)a->name, strlen(a->name)}) &&
         qa_ac_u64(w, qa_bank_sample_index(samples, sample_count, a->sample));
@@ -149,7 +152,7 @@ bool qa_audio_bank_checkpoint(const qa_audio_bank *bank, qa_audio_asset *const *
 bool qa_bank_read_asset(qa_ac_reader *r, struct asset_row *row, struct sample_row *samples,
     size_t sample_count, const qa_audio_bank_checkpoint_refs *refs)
 {
-    uint64_t pool = qa_ac_get64(r), resource = qa_ac_get64(r); qa_bytes digest, name;
+    uint64_t view = qa_ac_get64(r), pool = qa_ac_get64(r), resource = qa_ac_get64(r); qa_bytes digest, name;
     if (!qa_ac_read(r, sizeof(qa_sha256_digest), &digest)) return false;
     uint64_t mount = qa_ac_get64(r); uint32_t family = qa_ac_get32(r), policy = qa_ac_get32(r);
     if (!qa_ac_getblob(r, &name)) return false;
@@ -158,12 +161,17 @@ bool qa_bank_read_asset(qa_ac_reader *r, struct asset_row *row, struct sample_ro
         name.size > SIZE_MAX - sizeof(qa_audio_asset) - 1 || memchr(name.data, 0, name.size))
         return qa_ac_bad(r, "Invalid saved audio asset");
     const qa_resource *source = NULL;
+    const qa_vfs *files = NULL;
+    if (!refs->view_decode(refs->context, view, &files, r->error)) { r->failed = true; return false; }
+    if (!files) return qa_ac_bad(r, "Saved audio source view is absent");
     if (!refs->resource_decode(refs->context, pool, resource, &source, r->error)) { r->failed = true; return false; }
     if (!source || !qa_resource_digest(source) || memcmp(qa_resource_digest(source), digest.data, digest.size))
         return qa_ac_bad(r, "Saved audio source identity changed");
     qa_audio_asset *a = calloc(1, sizeof(*a) + name.size + 1);
     if (!a) { r->failed = true; return fail(r->error, QA_ERROR_MEMORY, "Restoring audio asset"); }
     atomic_init(&a->references, 1); row->asset = a;
+    if (!qa_vfs_retain((qa_vfs *)files, r->error)) { r->failed = true; return false; }
+    a->files = (qa_vfs *)files;
     a->resource = (qa_resource *)source; qa_resource_retain(a->resource);
     a->resource_id = qa_resource_id(source); a->mount = mount; a->family = (qa_audio_family)family; a->policy = (qa_audio_wav_policy)policy;
     memcpy(a->name, name.data, name.size); a->sample = qa_audio_sample_retain(samples[sample].sample);
@@ -193,7 +201,7 @@ bool qa_audio_bank_restore(qa_audio_bank *bank, qa_audio_asset **external, size_
     const qa_vfs *resolved = NULL;
     ok = ok && !r.failed && slots == count && entries <= capacity && capacity <= SIZE_MAX / sizeof(bank_entry) &&
         sample_count <= SIZE_MAX / sizeof(struct sample_row) && asset_count <= SIZE_MAX / sizeof(struct asset_row) &&
-        sample_count <= bytes.size / 52 && asset_count <= bytes.size / 80 && entries <= bytes.size / 16 && count <= bytes.size / 8 &&
+        sample_count <= bytes.size / 52 && asset_count <= bytes.size / 88 && entries <= bytes.size / 16 && count <= bytes.size / 8 &&
         refs->view_decode(refs->context, view, &resolved, error) && resolved == bank->view &&
         qa_bank_read_extent(&r, capacity, entries);
     struct sample_row *samples = NULL; struct asset_row *assets = NULL; qa_audio_asset **holders = NULL;

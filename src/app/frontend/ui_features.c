@@ -1,7 +1,5 @@
 #include "ui_features_private.h"
 #include "accessibility.h"
-#include "audio_inventory.h"
-#include "native_q2_save.h"
 #include "source_restore.h"
 #include "campaign_menu.h"
 #include "q1_text.h"
@@ -18,19 +16,14 @@ frontend_ui_seat_features *frontend_ui_features_seat(frontend_seat *seat)
     return f && f->ui_features && f->ui_features->frontend == f && f->seats &&
         seat->id < f->options.seats && seat == &f->seats[seat->id] ? &f->ui_features->seats[seat->id] : NULL;
 }
-static bool bank_view(qa_audio_bank *bank, qa_audio_asset *asset, qa_vfs **out)
-{
-    qa_resource *resource = qa_audio_asset_resource(asset);
-    if (!bank || !resource || qa_audio_bank_get(bank, qa_resource_id(resource), qa_audio_asset_family(asset)) != asset) return false;
-    *out = (qa_vfs *)qa_audio_bank_files(bank); return *out != NULL;
-}
 static bool sound_view(void *context, qa_audio_asset *asset, qa_vfs **out, qa_error *error)
 {
-    qa_frontend *f = context;
-    if (bank_view(f->sounds, asset, out)) return true;
-    if (frontend_source_audio_view(f,asset,out) || frontend_event_audio_view(f,asset,out) ||
-        frontend_native_q2_audio_view(f,asset,out)) return true;
-    return frontend_fail(error, QA_ERROR_NOT_FOUND, "Caption voice lost its actual source bank view");
+    (void)context;
+    const qa_vfs *files = qa_audio_asset_files(asset);
+    if (!out || !files)
+        return frontend_fail(error, QA_ERROR_NOT_FOUND, "Caption voice lost its actual source bank view");
+    *out = (qa_vfs *)files;
+    return true;
 }
 bool frontend_ui_features_prepare(qa_frontend *f, qa_error *error)
 {

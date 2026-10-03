@@ -257,7 +257,8 @@ bool qa_sound_captions_event(qa_sound_captions *captions, const qa_audio_voice_e
             !(catalog->captions = qa_media_captions_create(&captions->options.captions, e))) {
             if (catalog) { qa_vfs_destroy(catalog->view); qa_media_captions_destroy(catalog->captions); free(catalog); }
             voice_free(voice);
-            return fail(e, e && e->code != QA_OK ? e->code : QA_ERROR_MEMORY, "Retaining original sound caption content");
+            if (e && e->code != QA_OK) return false;
+            return fail(e, QA_ERROR_MEMORY, "Retaining original sound caption content");
         }
         catalog->asset = qa_audio_asset_retain(event->asset);
         catalog->next = captions->catalogs; captions->catalogs = catalog;

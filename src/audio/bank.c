@@ -24,6 +24,7 @@ void qa_audio_asset_release(qa_audio_asset *asset) {
         return;
     qa_audio_sample_release(asset->sample);
     qa_resource_release(asset->resource);
+    qa_vfs_destroy(asset->files);
     free(asset);
 }
 
@@ -33,6 +34,10 @@ qa_audio_sample *qa_audio_asset_sample(const qa_audio_asset *asset) {
 
 qa_resource *qa_audio_asset_resource(const qa_audio_asset *asset) {
     return asset != NULL ? asset->resource : NULL;
+}
+
+const qa_vfs *qa_audio_asset_files(const qa_audio_asset *asset) {
+    return asset != NULL ? asset->files : NULL;
 }
 
 qa_mount_id qa_audio_asset_mount(const qa_audio_asset *asset) {
@@ -227,6 +232,13 @@ bool qa_audio_bank_register(qa_audio_bank *bank, const char *name, qa_audio_fami
     atomic_init(&asset->references, 1);
     asset->sample = NULL;
     asset->resource = resource;
+    asset->files = NULL;
+    if (!qa_vfs_retain(bank->view, error)) {
+        qa_audio_asset_release(asset);
+        free(prefixed);
+        return false;
+    }
+    asset->files = bank->view;
     asset->resource_id = resource_id;
     asset->mount = mount;
     asset->family = family;

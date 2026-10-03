@@ -6,6 +6,7 @@ struct qa_audio_asset {
     atomic_uint references;
     qa_audio_sample *sample;
     qa_resource *resource;
+    qa_vfs *files;
     uint64_t resource_id;
     qa_mount_id mount;
     qa_audio_family family;

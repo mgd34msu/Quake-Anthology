@@ -80,7 +80,7 @@ bool qa_audio_stream_restore(qa_bytes, qa_audio_stream **, qa_error *);
 
 typedef struct qa_audio_bank qa_audio_bank;
 typedef struct qa_audio_asset qa_audio_asset;
-/* A bank borrows its live content view. Assets retain source leases and PCM,
+/* A bank borrows its live content view. Assets retain that view, source leases and PCM,
  * surviving bank pruning/destruction. Register returns an owned asset
  * reference; a missing optional asset succeeds with *out == NULL. Calls are
  * serialized; final asset/stream release follows the VFS owner-thread contract. */
@@ -101,6 +101,8 @@ qa_audio_asset *qa_audio_asset_retain(qa_audio_asset *asset);
 void qa_audio_asset_release(qa_audio_asset *asset);
 qa_audio_sample *qa_audio_asset_sample(const qa_audio_asset *asset);
 qa_resource *qa_audio_asset_resource(const qa_audio_asset *asset);
+/* Borrow the real registration view for this asset's retained lifetime. */
+const qa_vfs *qa_audio_asset_files(const qa_audio_asset *asset);
 qa_mount_id qa_audio_asset_mount(const qa_audio_asset *asset);
 const char *qa_audio_asset_name(const qa_audio_asset *asset);
 qa_audio_family qa_audio_asset_family(const qa_audio_asset *asset);
