@@ -900,8 +900,18 @@ static bool refresh(qa_application_content_graph *g, qa_error *error)
         content_view *v = &g->views[i]; qa_buffer bytes = {0};
         if (!qa_vfs_checkpoint(v->value, &bytes, error)) return false;
         if (v->qualified) {
-            bool unchanged = equal_bytes(&bytes, &v->baseline); qa_buffer_free(&bytes);
-            if (!unchanged) return fail(error, QA_ERROR_FORMAT, "Qualified saved VFS changed after native content admission");
+            bool unchanged = equal_bytes(&bytes, &v->baseline);
+            if (!unchanged) {
+                size_t common = bytes.size < v->baseline.size ? bytes.size : v->baseline.size;
+                size_t offset = 0;
+                while (offset < common && bytes.data[offset] == v->baseline.data[offset]) ++offset;
+                qa_error_set(error, QA_ERROR_FORMAT, 0,
+                    "Qualified saved VFS changed after native content admission: view %zu, expected %zu bytes, current %zu bytes, first difference %zu",
+                    i + 1, v->baseline.size, bytes.size, offset);
+                qa_buffer_free(&bytes);
+                return false;
+            }
+            qa_buffer_free(&bytes);
         } else { qa_buffer_free(&v->bytes); v->bytes = bytes; }
     }
     qa_catalog_checkpoint_refs refs = {.context = g, .files_encode = files_encode};
