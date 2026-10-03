@@ -130,23 +130,37 @@ static void line_skip(material_lexer *lexer)
 bool qa_material_script_catalog(qa_material_library *library, qa_bytes source, qa_error *error)
 {
     material_lexer lexer = { .source = source, .line = 1, .error = error };
-    material_token name, opening, token;
+    material_token name, token;
     while (token_next(&lexer, true, &name)) {
-        if (name.text[0] == '{' || name.text[0] == '}') {
-            qa_error_set(error, QA_ERROR_FORMAT, name.start, "Expected shader name at line %zu", name.line);
-            return false;
-        }
-        if (!token_next(&lexer, true, &opening) || opening.text[0] != '{') {
-            if (!lexer.failed) qa_error_set(error, QA_ERROR_FORMAT, name.end,
-                                            "Missing shader opening brace after '%s'", name.text);
-            return false;
-        }
-        unsigned depth = 1;
+        if (!name.text[0]) break;
+        material_token opening = {0};
+        bool body = token_next(&lexer, true, &opening);
+        if (lexer.failed) return false;
+        if (!body) opening.start = opening.end = lexer.at;
         size_t end = opening.end;
-        while (depth && token_next(&lexer, true, &token)) {
-            if (token.text[0] == '{') ++depth;
-            if (token.text[0] == '}') --depth;
+        int64_t depth = 0;
+        token = opening;
+        /* Source indexing consumes one token even when it is not an opening brace.
+         * The selected shader's material parser validates the retained body. */
+        while (body) {
+            if (!token.text[1]) {
+                if (token.text[0] == '{') {
+                    if (depth == INT64_MAX) {
+                        qa_error_set(error, QA_ERROR_FORMAT, token.start, "Shader catalog brace depth overflowed");
+                        return false;
+                    }
+                    ++depth;
+                } else if (token.text[0] == '}') {
+                    if (depth == INT64_MIN) {
+                        qa_error_set(error, QA_ERROR_FORMAT, token.start, "Shader catalog brace depth overflowed");
+                        return false;
+                    }
+                    --depth;
+                }
+            }
             end = token.end;
+            if (!depth) break;
+            body = token_next(&lexer, true, &token);
         }
         if (lexer.failed) return false;
         char *key = qa_material_name(name.text, error);
