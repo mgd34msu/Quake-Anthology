@@ -170,8 +170,8 @@ bool qa_bank_read_asset(qa_ac_reader *r, struct asset_row *row, struct sample_ro
     qa_audio_asset *a = calloc(1, sizeof(*a) + name.size + 1);
     if (!a) { r->failed = true; return fail(r->error, QA_ERROR_MEMORY, "Restoring audio asset"); }
     atomic_init(&a->references, 1); row->asset = a;
-    if (!qa_vfs_retain((qa_vfs *)files, r->error)) { r->failed = true; return false; }
-    a->files = (qa_vfs *)files;
+    if (!refs->view_retain(refs->context, view, &a->files, r->error)) { r->failed = true; return false; }
+    if (a->files != files) return qa_ac_bad(r, "Saved audio source view changed during ownership adoption");
     a->resource = (qa_resource *)source; qa_resource_retain(a->resource);
     a->resource_id = qa_resource_id(source); a->mount = mount; a->family = (qa_audio_family)family; a->policy = (qa_audio_wav_policy)policy;
     memcpy(a->name, name.data, name.size); a->sample = qa_audio_sample_retain(samples[sample].sample);
@@ -190,7 +190,7 @@ static bool take_holder(qa_ac_reader *r, struct asset_row *rows, size_t count, b
 bool qa_audio_bank_restore(qa_audio_bank *bank, qa_audio_asset **external, size_t count,
     const qa_audio_bank_checkpoint_refs *refs, qa_bytes bytes, qa_error *error)
 {
-    if (!bank || !bank->view || bank->count || (count && !external) || !refs || !refs->view_decode ||
+    if (!bank || !bank->view || bank->count || (count && !external) || !refs || !refs->view_decode || !refs->view_retain ||
         !refs->resource_decode || (bytes.size && !bytes.data))
         return fail(error, QA_ERROR_ARGUMENT, "Audio bank restore requires an empty candidate and content resolvers");
     for (size_t i = 0; i < count; ++i) if (external[i]) return fail(error, QA_ERROR_ARGUMENT, "Audio external holder destination is occupied");

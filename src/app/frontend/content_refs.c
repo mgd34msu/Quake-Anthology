@@ -14,6 +14,8 @@ static bool view_decode(void *context, uint64_t id, const qa_vfs **out, qa_error
     if (!view) return frontend_fail(error, QA_ERROR_FORMAT, "Saved audio bank view is absent from the restored graph");
     *out = view; return true;
 }
+static bool view_retain(void *context, uint64_t id, qa_vfs **out, qa_error *error)
+{ return qa_application_content_retain_view(context, id, out, error); }
 static bool resource_encode(void *context, const qa_resource *resource, uint64_t *pool,
     uint64_t *version, qa_error *error)
 {
@@ -34,5 +36,6 @@ static bool resource_decode(void *context, uint64_t pool, uint64_t version,
 qa_audio_bank_checkpoint_refs frontend_audio_content_refs(qa_application_content_graph *graph)
 {
     return (qa_audio_bank_checkpoint_refs){.context = graph, .view_encode = view_encode,
-        .view_decode = view_decode, .resource_encode = resource_encode, .resource_decode = resource_decode};
+        .view_decode = view_decode, .view_retain = view_retain,
+        .resource_encode = resource_encode, .resource_decode = resource_decode};
 }

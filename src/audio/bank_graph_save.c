@@ -166,7 +166,7 @@ bool qa_audio_bank_graph_checkpoint(const qa_audio_asset_inventory *inventory,
 bool qa_audio_bank_graph_restore(qa_audio_bank *const *banks, size_t count,
     const qa_audio_bank_checkpoint_refs *refs, qa_bytes bytes, qa_audio_asset_inventory **out, qa_error *error)
 {
-    if (!refs || !refs->view_decode || !refs->resource_decode || !out || *out || (bytes.size && !bytes.data))
+    if (!refs || !refs->view_decode || !refs->view_retain || !refs->resource_decode || !out || *out || (bytes.size && !bytes.data))
         return fail(error, QA_ERROR_ARGUMENT, "Audio graph restore requires content resolvers and empty output");
     qa_audio_asset_inventory *inventory = create(banks, count, true, error);
     if (!inventory) return false;
