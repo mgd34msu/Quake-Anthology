@@ -52,6 +52,9 @@ bool frontend_material_movies_cinematic_clock_read(const frontend_material_movie
 bool frontend_material_movies_cinematic_source_clock_read(const qa_frontend *,const qa_q3_cinematic_source *,double *,qa_error *);
 bool frontend_material_movies_library_owner(const qa_material_library *,
     frontend_material_movies **, qa_error *);
+/* Physical roster and child return proof remains valid after application fault.
+ * It does not dispatch provider-current callbacks or admit movie execution. */
+bool frontend_material_movies_roster_returned(const qa_frontend *);
 bool frontend_material_movies_roster_count(const qa_frontend *, size_t *, qa_error *);
 bool frontend_material_movies_roster_at(const qa_frontend *, size_t,
     frontend_material_movies **, qa_error *);

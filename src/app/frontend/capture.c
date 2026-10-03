@@ -170,16 +170,7 @@ static bool library_idle(const qa_material_library *library)
 static bool fonts_idle(const qa_font_library *fonts)
 { return !fonts || qa_font_library_idle(fonts); }
 static bool movies_idle(const qa_frontend *f)
-{
-    if(!f->application) return !f->material_movie_owners;
-    size_t count=0;
-    if(!frontend_material_movies_roster_count(f,&count,NULL)) return false;
-    for(size_t i=0;i<count;++i) {
-        frontend_material_movies *owner=NULL;
-        if(!frontend_material_movies_roster_at(f,i,&owner,NULL) || !frontend_material_movies_idle(owner)) return false;
-    }
-    return true;
-}
+{ return frontend_material_movies_roster_returned(f); }
 bool frontend_seat_callbacks_returned(const qa_frontend *f)
 {
     if (!f) return false;

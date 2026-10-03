@@ -194,6 +194,16 @@ bool frontend_material_movie_cinematic_receipt_make(const char *path,
 }
 void frontend_material_movie_cinematic_receipt_free(frontend_material_movie_cinematic_receipt *receipt)
 { if (receipt) { free(receipt->path); qa_scene_image_release(receipt->image); *receipt=(frontend_material_movie_cinematic_receipt){0}; } }
+bool frontend_material_movies_roster_returned(const qa_frontend *frontend)
+{
+    if (!frontend) return false;
+    if (!frontend->application) return !frontend->material_movie_owners;
+    for (const frontend_material_movies *owner = frontend->material_movie_owners; owner; owner = owner->next)
+        if (owner->source.frontend != frontend || !movie_structure(owner) ||
+            !frontend_material_movies_idle(owner) || !qa_material_library_idle(owner->source.materials) ||
+            !qa_material_movies_idle(owner->registry) || !qa_media_library_idle(owner->source.media)) return false;
+    return true;
+}
 bool frontend_material_movies_roster_count(const qa_frontend *frontend, size_t *out, qa_error *error)
 {
     if (!frontend || !frontend->application || !out)
