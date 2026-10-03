@@ -1,4 +1,5 @@
 #include "save_private.h"
+#include "startup_flow.h"
 #include "control_frame.h"
 #include "guest_qc_internal.h"
 #include "guest_native_q2_private.h"
@@ -1195,6 +1196,15 @@ static bool native_q3_restore(application_provider *provider, qa_bytes bytes, qa
         application_unified_q3_events_restore(provider,record.published_events,error);
     if (ok && record.ipfilters_initialized!=application_native_q3_ipfilters_initialized(provider))
         return application_fail(error,QA_ERROR_FORMAT,"Native Q3 filters differ from their imported source state");
+    if (ok && record.console_present) {
+        qa_console *console = NULL;
+        qa_cvars *cvars = NULL;
+        qa_command_context command;
+        if (!application_native_q3_console_at(provider, &console, &cvars, &command))
+            return application_fail(error, QA_ERROR_ARGUMENT,
+                "Restored native Q3 console lost its physical Source owner");
+        ok = application_startup_source_restore(provider, console, cvars, &command, error);
+    }
     return ok;
 }
 
