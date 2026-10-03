@@ -1839,7 +1839,10 @@ static bool persistence_providers_match(qa_application *app,
             continue;
         }
         qa_buffer encoded = {0};
+        application_operation previous_operation = app->operation;
+        app->operation = APPLICATION_PERSISTING;
         bool ok = provider_capture(provider, qa_save_image_metadata(image)->purpose, resources, &encoded, error);
+        app->operation = previous_operation;
         if (ok && (!record || encoded.size != record->payload.size ||
             memcmp(encoded.data, record->payload.data, encoded.size)))
             ok = application_fail(error, QA_ERROR_FORMAT,
