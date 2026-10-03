@@ -407,9 +407,25 @@ bool frontend_music_sources_restore_origin(frontend_music_sources *owner, const 
     owner->origin = *origin; owner->origin_metadata = metadata; owner->origin_bound = true;
     return frontend_music_sources_origin_checkpoint_current(owner) || fail(e, "Restored explicit music lost its actual constructed source");
 }
+static bool menu_catalog_adopt(frontend_music_sources *owner,qa_error *e) {
+    qa_catalog *published=qa_application_catalog(owner->application);
+    if (owner->menu_catalog==published) return true;
+    const qa_product *old=owner->menu_product?qa_catalog_product(owner->menu_catalog,owner->menu_product):NULL;
+    const qa_product *next=old?qa_catalog_find(published,old->key):NULL;
+    if (!published || !owner->menu_catalog || (owner->menu_product &&
+        (!old || !next || next->availability!=QA_CONTENT_INSTALLED || strcmp(old->identity,next->identity))) ||
+        (!!owner->policies[FRONTEND_MUSIC_MENU]!=(owner->engine && owner->menu_product)))
+        return fail(e,"Published music catalog lost its actual retained menu selection");
+    if (owner->policies[FRONTEND_MUSIC_MENU] && !frontend_music_policy_catalog_adopt(
+        owner->policies[FRONTEND_MUSIC_MENU],owner->menu_catalog,published,e)) return false;
+    qa_catalog_retain(published); qa_catalog_release(owner->menu_catalog);
+    owner->menu_catalog=published; owner->menu_product=next?next->id:0;
+    return true;
+}
 bool frontend_music_sources_world(frontend_music_sources *owner, qa_error *e) {
     if (!owner || !frontend_music_sources_idle(owner) || owner->restoring || owner->frontend->capture || owner->frontend->source_restoring)
         return fail(e, "WORLD soundtrack selection requires its genuine published source boundary");
+    if (!menu_catalog_adopt(owner,e)) return false;
     if (!owner->engine) return true;
     bool retained_world = owner->world.metadata && frontend_music_world_current(owner);
     if (retained_world && (owner->policies[FRONTEND_MUSIC_WORLD] || owner->has_origin)) return true;

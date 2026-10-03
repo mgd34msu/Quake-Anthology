@@ -44,6 +44,8 @@ bool frontend_music_policy_create(qa_frontend *, const frontend_music_policy_opt
 bool frontend_music_policy_idle(const frontend_music_policy *);
 bool frontend_music_policy_binding_is(const frontend_music_policy *, const qa_frontend *,
     const qa_audio_engine *, uint64_t bus, bool menu);
+bool frontend_music_policy_catalog_adopt(frontend_music_policy *,qa_catalog *previous,
+    qa_catalog *published,qa_error *);
 qa_audio_music *frontend_music_policy_player(const frontend_music_policy *);
 /* Genuine output/start boundary. Reattaches a retained stopped player after
  * engine stop-all; it never opens tracks or advances the playlist/RNG. */

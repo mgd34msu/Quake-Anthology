@@ -116,6 +116,33 @@ bool frontend_music_policy_binding_is(const frontend_music_policy *owner, const 
         engine == f->audio && owner->slot && *owner->slot == owner && owner->bus == bus && owner->menu == menu &&
         (owner->restoring ? f->source_restoring : parent_current(owner));
 }
+bool frontend_music_policy_catalog_adopt(frontend_music_policy *owner,qa_catalog *previous,
+    qa_catalog *published,qa_error *e) {
+    if (!owner || !owner->menu || !previous || !published || !frontend_music_policy_idle(owner) ||
+        published!=qa_application_catalog(owner->application))
+        return fail(e,"Menu music catalog adoption requires its returned published owner");
+    for (size_t i=0;i<owner->source_count;++i) {
+        const music_source *source=owner->sources+i;
+        const qa_product *old=qa_catalog_product(source->catalog,source->product);
+        const qa_product *next=old?qa_catalog_find(published,old->key):NULL;
+        const qa_product *other=source->fallback_product?qa_catalog_product(source->catalog,source->fallback_product):NULL;
+        const qa_product *alternate=other?qa_catalog_find(published,other->key):NULL;
+        if (source->catalog!=previous || !old || !next || strcmp(old->identity,next->identity) ||
+            !qa_catalog_product_view_current(published,next->id,source->files) ||
+            (source->fallback_product && (!other || !alternate || strcmp(other->identity,alternate->identity) ||
+                !counterpart(next,alternate) || !qa_catalog_product_view_current(published,alternate->id,source->fallback_files))))
+            return fail(e,"Published menu catalog changed its retained product or physical music files");
+    }
+    for (size_t i=0;i<owner->source_count;++i) {
+        music_source *source=owner->sources+i;
+        const qa_product *next=qa_catalog_find(published,qa_catalog_product(source->catalog,source->product)->key);
+        const qa_product *alternate=source->fallback_product?
+            qa_catalog_find(published,qa_catalog_product(source->catalog,source->fallback_product)->key):NULL;
+        qa_catalog_retain(published); qa_catalog_release(source->catalog);
+        source->catalog=published; source->product=next->id; source->fallback_product=alternate?alternate->id:0;
+    }
+    return true;
+}
 qa_audio_music *frontend_music_policy_player(const frontend_music_policy *owner) {
     if (!owner || !owner->slot || *owner->slot != owner || owner->frontend->application != owner->application ||
         owner->frontend->audio != owner->engine) return NULL;
