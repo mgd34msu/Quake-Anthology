@@ -111,6 +111,13 @@ bool qa_equipment_create(const qa_equipment_options *, qa_equipment **, qa_error
 void qa_equipment_destroy(qa_equipment *);
 bool qa_equipment_destroy_checked(qa_equipment *, qa_error *);
 bool qa_equipment_idle(const qa_equipment *);
+/* The canonical equipment codec owns its current on-disk version. */
+uint32_t qa_equipment_save_version(void);
+/* Borrow the source-topology prefix before constructing its runtime. Actor
+ * continuation remains subject to the subsequent full equipment restore.
+ * Failed calls leave both outputs unchanged. */
+bool qa_equipment_saved_source(qa_session *, qa_bytes, bool *present,
+    qa_bytes *source, qa_error *);
 bool qa_equipment_admit(qa_equipment *, qa_actor_id, const qa_equipment_selection *, qa_error *);
 bool qa_equipment_admit_sources(qa_equipment *, qa_actor_id, const qa_equipment_selection *,
     const qa_equipment_source_selection *, qa_error *);

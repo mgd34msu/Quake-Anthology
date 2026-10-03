@@ -1181,14 +1181,38 @@ static bool save_state(qa_source_save_io *io, qa_equipment_state *p) {
     if(p->weapon_slot_present&&!qa_weapon_slot_state_fields(io,&p->weapon_slot))return false;
     return true;
 }
+uint32_t qa_equipment_save_version(void) { return 5; }
 static bool save_header(qa_source_save_io *io) {
     uint8_t signature[8] = {'Q', 'A', 'E', 'Q', 'U', 'I', 'P', 0};
     static const uint8_t expected[8] = {'Q', 'A', 'E', 'Q', 'U', 'I', 'P', 0};
-    uint32_t version = 5;
+    uint32_t version = qa_equipment_save_version();
     if (!qa_source_save_bytes(io, signature, sizeof(signature)) ||
         memcmp(signature, expected, sizeof(signature))) return mode_fail(io->error, "invalid equipment save signature");
     EQUIP_FIELD(u32, version);
-    return version == 5 || mode_fail(io->error, "unsupported equipment save version");
+    return version == qa_equipment_save_version() || mode_fail(io->error, "unsupported equipment save version");
+}
+static bool save_source_fields(qa_source_save_io *io, bool *present, qa_bytes *source) {
+    size_t size = source->size;
+    if (!qa_source_save_bool(io, present) || !qa_source_save_count(io, &size, SIZE_MAX)) return false;
+    if (io->direction == QA_SOURCE_SAVE_WRITE) {
+        if (!qa_source_save_bytes(io, (void *)source->data, size)) return false;
+    } else {
+        if (io->offset > io->input.size || size > io->input.size - io->offset)
+            return mode_fail(io->error, "equipment source save exceeds its actual record");
+        *source = (qa_bytes){size ? io->input.data + io->offset : NULL, size};
+        io->offset += size;
+    }
+    return *present || !size || mode_fail(io->error, "equipment save has bytes for an absent source runtime");
+}
+bool qa_equipment_saved_source(qa_session *session, qa_bytes input, bool *present,
+    qa_bytes *source, qa_error *e) {
+    if (!present || !source) return mode_fail(e, "equipment source save requires outputs");
+    qa_source_save_io io = {0}; bool value_present = false; qa_bytes value = {0};
+    bool okay = qa_source_save_reader(&io, session, input, e) && save_header(&io) &&
+        save_source_fields(&io, &value_present, &value);
+    qa_source_save_dispose(&io);
+    if (okay) { *present = value_present; *source = value; }
+    return okay;
 }
 static bool save_boundary(qa_equipment *g, bool empty, qa_error *e) {
     if (!qa_equipment_idle(g) || !qa_session_safe(g->options.services.session) || !qa_world_idle(g->options.services.world))
@@ -1267,10 +1291,9 @@ bool qa_equipment_capture(qa_equipment *g, qa_buffer *out, qa_error *e) {
     for (uint32_t i = 0; i < g->capacity; ++i)
         if (equipment_get(g, g->actors[i].state.actor)) ++count;
     bool has_sources = g->options.source != NULL;
-    size_t source_size = source.size;
+    qa_bytes source_bytes = {source.data, source.size};
     bool okay = qa_source_save_writer(io, g->options.services.session, e) && save_header(io) &&
-        qa_source_save_bool(io, &has_sources) && qa_source_save_count(io, &source_size, SIZE_MAX) &&
-        qa_source_save_bytes(io, source.data, source_size) && qa_source_save_count(io, &count, g->capacity);
+        save_source_fields(io, &has_sources, &source_bytes) && qa_source_save_count(io, &count, g->capacity);
     for (uint32_t i = 0; okay && i < g->capacity; ++i) {
         equipment_actor *actor = equipment_get(g, g->actors[i].state.actor);
         if (!actor) continue;
@@ -1289,16 +1312,13 @@ bool qa_equipment_restore_bytes(qa_equipment *g, qa_bytes input, qa_error *e) {
     if (!candidate) { qa_error_set(e, QA_ERROR_MEMORY, 0, "allocating equipment restore"); return false; }
     qa_source_save_io storage = {0}, *io = &storage;
     size_t count = 0;
-    bool has_sources = false; size_t source_size = 0; qa_bytes source = {0};
+    bool has_sources = false; qa_bytes source = {0};
     bool okay = qa_source_save_reader(io, g->options.services.session, input, e) && save_header(io) &&
-        qa_source_save_bool(io, &has_sources) && has_sources == (g->options.source != NULL) &&
-        qa_source_save_count(io, &source_size, input.size);
-    if (okay && (io->offset > input.size || source_size > input.size - io->offset)) okay = false;
+        save_source_fields(io, &has_sources, &source) && has_sources == (g->options.source != NULL);
     if (!okay && (!e || e->code == QA_OK))
         mode_fail(e, "equipment source save envelope differs from its retained roster");
     if (okay) {
-        source = (qa_bytes){input.data + io->offset, source_size}; io->offset += source_size;
-        okay = has_sources ? g->options.source_restore(g->options.source_context, source, e) : !source_size;
+        okay = !has_sources || g->options.source_restore(g->options.source_context, source, e);
     }
     if (okay) okay = qa_source_save_count(io, &count, g->capacity);
     for (size_t i = 0; okay && i < count; ++i) {

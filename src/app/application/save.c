@@ -1354,7 +1354,7 @@ static bool persistence_inventory(application_persistence *operation, qa_applica
                                      provider->kind == APPLICATION_PROVIDER_NATIVE &&
                                      provider->state.native.q2_engine) ? 2 :
                                     owner->kind == QA_SAVE_CONTROLS ? 11 :
-                                    owner->kind == QA_SAVE_EQUIPMENT ? 5 :
+                                    owner->kind == QA_SAVE_EQUIPMENT ? qa_equipment_save_version() :
                                     owner->kind == QA_SAVE_EVENTS ? APPLICATION_EVENTS_SAVE_VERSION :
                                     owner->kind == QA_SAVE_INVENTORY || owner->kind == QA_SAVE_PROGRESSION ||
                                     owner->kind == QA_SAVE_TARGETS ? 2 : 1;
