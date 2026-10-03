@@ -3675,13 +3675,35 @@ static bool client_attempt_enqueue(qa_frontend_network *n, const char *server,
 static bool client_attempt_queue(qa_frontend_network *n, const qa_command_invocation *call, qa_error *error)
 {
     uint32_t physical;
-    if ((!n->q3_client_requested && !n->q1_client_owner) || call->context.origin == QA_COMMAND_REMOTE ||
+    bool q1=frontend_network_client_only(n->frontend) && q1_client_protocol(n->frontend->options.network_protocol);
+    if ((!n->q3_client_requested && !n->q1_client_owner && !q1) || call->context.origin == QA_COMMAND_REMOTE ||
         call->context.origin == QA_COMMAND_SERVER ||
         !frontend_command_seat_read(n->frontend, &call->context, &physical) || physical != 0)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Connection commands need the actual local remote-client owner");
     bool disconnect = !strcmp(call->argv[0], "disconnect"), reconnecting = !strcmp(call->argv[0], "reconnect");
     if (call->argc != (disconnect || reconnecting ? 1u : 2u))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "usage: connect server, reconnect, or disconnect");
+    if (!n->q3_client_requested && !n->q1_client_owner) {
+        qa_frontend *f=n->frontend;
+        qa_console *console=NULL; qa_cvars *cvars=NULL; qa_command_context recipient;
+        uint64_t lifetime=0; qa_command_handler handler=NULL; void *user=NULL;
+        if (!q1 || !disconnect || f->network!=n || n->busy || n->round || n->detached_transport ||
+            f->capture || f->resource_inventory || f->source_restoring || f->preparing ||
+            !qa_network_callbacks_idle(n->runtime) || !f->seats || physical>=f->options.seats ||
+            !qa_console_invocation_current(call->console,call) ||
+            !qa_input_seat_recipient_read(f->seats[physical].input,&console,&cvars,&recipient) ||
+            console!=qa_application_console(f->application) || call->console!=console ||
+            cvars!=qa_application_cvars(f->application) ||
+            !qa_application_capture_command_context(f->application,&recipient,&recipient,error) ||
+            call->context.session!=recipient.session || call->context.owner!=recipient.owner ||
+            call->context.client!=recipient.client || call->context.seat!=recipient.seat ||
+            call->context.registry!=recipient.registry || call->context.generation!=recipient.generation ||
+            call->context.dialect!=recipient.dialect || !qa_actor_id_equal(call->context.actor,recipient.actor) ||
+            !qa_console_registration_read(console,call->argv[0],0,&lifetime,&handler,&user) ||
+            lifetime!=NETWORK_OWNER || !handler || user!=n)
+            return frontend_fail(error,QA_ERROR_ARGUMENT,"Disconnected Q1 command lost its current local ENGINE recipient");
+        return true;
+    }
     if (!n->q3_client_requested) {
         frontend_network_q1_client_view view;
         if (!disconnect)
