@@ -425,8 +425,6 @@ static bool stop_server(qa_frontend *f, bool *complete, qa_error *error)
     bool traveling=qa_application_travel_read(f->application,&travel);
     bool direct_map=f->server_stop_follow_map && traveling && travel.target.kind==QA_TRAVEL_MAP;
     if (!direct_map && !frontend_config_store_park_server(f->config_store,&source,error)) return false;
-    if (traveling && (travel.target.kind==QA_TRAVEL_CINEMATIC || travel.target.kind==QA_TRAVEL_PICTURE) &&
-        !frontend_cinematic_travel(f,&travel,error)) return false;
     if (!frontend_network_stop_server(f,complete,error)) return false;
     if (!*complete) return true;
     if (direct_map) {
@@ -445,6 +443,8 @@ static bool stop_server(qa_frontend *f, bool *complete, qa_error *error)
         !qa_application_stop_server(f->application,f->server_stop_owner,error)) return false;
     f->server_stopped=true;
     if (!frontend_config_store_parked_finish(f->config_store,error)) return false;
+    if (traveling && (travel.target.kind==QA_TRAVEL_CINEMATIC || travel.target.kind==QA_TRAVEL_PICTURE) &&
+        !frontend_cinematic_travel(f,&travel,error)) return false;
     if (!traveling) {
         if (!f->options.dedicated && !frontend_menu_open(&f->seats[0],FRONTEND_LIBRARY,error)) return false;
     }
