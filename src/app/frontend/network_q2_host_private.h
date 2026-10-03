@@ -72,5 +72,7 @@ bool frontend_network_q2_host_bind_peer(q2_host_peer *,qa_application_network_q2
     qa_network_runtime *,qa_network_q2_server_hooks *,qa_error *);
 qa_q2_server_bootstrap_options frontend_network_q2_host_bootstrap_options(frontend_network_q2_host *);
 bool frontend_network_q2_host_local_retained(void *,qa_net_seat_id,qa_network_local_player *,qa_error *);
+bool frontend_network_q2_host_local_request(const frontend_network_q2_host *,const q2_local_peer *,
+    qa_net_connect *,qa_error *);
 
 #endif

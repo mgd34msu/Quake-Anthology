@@ -393,8 +393,8 @@ bool frontend_network_q2_host_create(const frontend_network_q2_host_options *opt
         *local=(q2_local_peer){.host=host,.player={actor,physical.source_owner,physical.source_slot},
             .binding={{QA_NETWORK_COMMAND_OWNER,64u+(uint32_t)i},0},.physical=(uint32_t)i,.authored=authored,.admitting=true,
             .map_revision=host->source.source.map_revision,.composition=options->composition};
-        qa_net_connect request={.attachment=QA_NET_LOCAL_SEAT,.endpoint={.kind=QA_NET_LOOPBACK,.port=(uint16_t)(i+1)},
-            .protocol=options->protocol,.seats=&local->binding,.seat_count=1,.composition=options->composition};
+        qa_net_connect request;
+        if(!frontend_network_q2_host_local_request(host,local,&request,error)) return false;
         qa_network_local_hooks hooks={.context=local,.player=local_player,.retained_player=frontend_network_q2_host_local_retained};
         if(!qa_network_attach_local(options->runtime,&request,&hooks,options->frontend->wall_time_ns,&local->client,error)) return false;
         local->admitting=false;
@@ -419,8 +419,10 @@ bool frontend_network_q2_host_admit(frontend_network_q2_host *host,const qa_net_
             if(!local->player.actor.registry || request->seat_count!=1 || !request->seats ||
                 request->seats[0].seat.owner!=local->binding.seat.owner ||
                 request->seats[0].seat.index!=local->binding.seat.index || request->seats[0].remote_index!=0 ||
-                request->endpoint.kind!=QA_NET_LOOPBACK || request->endpoint.port!=i+1 ||
                 !qa_sha256_equal(&request->composition,&host->options.composition)) continue;
+            qa_net_connect expected;
+            if(!frontend_network_q2_host_local_request(host,local,&expected,error)) return false;
+            if(!qa_net_address_equal(&request->endpoint,&expected.endpoint,true)) continue;
             qa_network_local_player actual;
             return local_player(local,local->binding.seat,&actual,error);
         }
@@ -446,6 +448,17 @@ bool frontend_network_q2_host_admit(frontend_network_q2_host *host,const qa_net_
         if(same) return true;
     }
     return frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 attach has no actual reserved Source claim");
+}
+bool frontend_network_q2_host_local_request(const frontend_network_q2_host *host,const q2_local_peer *local,
+    qa_net_connect *out,qa_error *error)
+{
+    char address[64];
+    snprintf(address,sizeof(address),"loopback:qa-q2-local-%u",local->physical);
+    qa_net_address endpoint;
+    if(!qa_net_address_parse(address,0,true,&endpoint,error)) return false;
+    *out=(qa_net_connect){.attachment=QA_NET_LOCAL_SEAT,.endpoint=endpoint,
+        .protocol=host->options.protocol,.seats=&local->binding,.seat_count=1,.composition=local->composition};
+    return true;
 }
 bool frontend_network_q2_host_receive(frontend_network_q2_host *host,const qa_net_datagram *packet,
     bool *recognized,qa_error *error)

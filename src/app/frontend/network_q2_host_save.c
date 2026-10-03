@@ -277,11 +277,6 @@ static bool request_equal(const qa_net_connect *a,const qa_net_connect *b)
         a->seats[i].seat.index!=b->seats[i].seat.index || a->seats[i].remote_index!=b->seats[i].remote_index) return false;
     return true;
 }
-static qa_net_connect local_request(const frontend_network_q2_host *host,const q2_local_peer *p)
-{
-    return (qa_net_connect){.attachment=QA_NET_LOCAL_SEAT,.endpoint={.kind=QA_NET_LOOPBACK,.port=(uint16_t)(p->physical+1)},
-        .protocol=host->options.protocol,.seats=&p->binding,.seat_count=1,.composition=p->composition};
-}
 static bool client_request(const qa_net_client *client,const qa_net_connect *saved,qa_net_client_id id)
 {
     qa_net_connect actual={.attachment=client->attachment,.endpoint=client->endpoint,.protocol=client->protocol,
@@ -446,7 +441,8 @@ bool frontend_network_q2_host_restore_admit(frontend_network_q2_host *h,const qa
     for(size_t i=0;i<h->capacity;++i) if(h->peers[i].reserved && h->peers[i].committed &&
         request_equal(request,&h->peers[i].admission.connection)) ++found;
     for(size_t i=0;i<h->local_count;++i) if(h->locals[i].client.owner) {
-        qa_net_connect local=local_request(h,&h->locals[i]);
+        qa_net_connect local;
+        if(!frontend_network_q2_host_local_request(h,&h->locals[i],&local,e)) return false;
         if(request_equal(request,&local)) ++found;
     }
     return found==1 || bad(e,"Imported Q2 connection differs from its one genuine retained Source claim");
@@ -514,7 +510,8 @@ bool frontend_network_q2_host_restore_local_hooks(frontend_network_q2_host *h,qa
 {
     if(!client || !hooks || !runtime_bind(h,runtime,e)) return false;
     for(size_t i=0;i<h->local_count;++i) {
-        q2_local_peer *local=&h->locals[i]; qa_net_connect request=local_request(h,local);
+        q2_local_peer *local=&h->locals[i]; qa_net_connect request;
+        if(!frontend_network_q2_host_local_request(h,local,&request,e)) return false;
         if(!local->client.owner || !client_request(client,&request,local->client)) continue;
         if(qa_network_epoch(runtime,client->id)!=local->import_epoch) return bad(e,"Imported LOCAL connection changed its genuine epoch");
         *hooks=(qa_network_local_hooks){.context=local,.player=restored_local_player,
@@ -549,7 +546,8 @@ bool frontend_network_q2_host_qualified(const frontend_network_q2_host *h,const 
             ++found;
         }
         for(size_t i=0;i<h->local_count;++i) {
-            const q2_local_peer *local=&h->locals[i]; qa_net_connect request=local_request(h,local);
+            const q2_local_peer *local=&h->locals[i]; qa_net_connect request;
+            if(!frontend_network_q2_host_local_request(h,local,&request,e)) return false;
             if(!local->client.owner || !client_request(client,&request,local->client)) continue;
             if(h->importing && (!local->import_bound || qa_network_epoch(runtime,client->id)!=local->import_epoch)) return false;
             qa_network_local_player actual;
