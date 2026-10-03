@@ -51,6 +51,12 @@ static bool binding_observable(const qa_q3_presentation *p)
     }
     return true;
 }
+bool qa_q3_presentation_options_read(const qa_q3_presentation *p,qa_q3_presentation_options *out,qa_error *error)
+{
+    if (!out || !binding_observable(p))
+        return q3p_fail(error,QA_ERROR_ARGUMENT,"Q3 options observation requires actual qualified idle owners");
+    *out=p->options; return true;
+}
 bool qa_q3_presentation_binding_read(const qa_q3_presentation *p,qa_q3_presentation_binding *out,qa_error *error)
 {
     if (!out || !binding_observable(p) || p->world!=p->options.assets->world ||

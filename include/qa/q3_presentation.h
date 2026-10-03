@@ -203,6 +203,7 @@ typedef struct qa_q3_presentation_options {
  * Resources may be shared by several seats. All calls are serialized; external
  * callbacks queue owner destruction rather than destroying an active call. */
 bool qa_q3_presentation_create(const qa_q3_presentation_options *, qa_q3_presentation **, qa_error *);
+bool qa_q3_presentation_options_read(const qa_q3_presentation *, qa_q3_presentation_options *, qa_error *);
 /* A failed retirement preserves the presentation for caller-owned retry. */
 bool qa_q3_presentation_destroy(qa_q3_presentation *, qa_error *);
 bool qa_q3_presentation_frontend_rebind_ready(const qa_q3_presentation *, const qa_scene_frame *,

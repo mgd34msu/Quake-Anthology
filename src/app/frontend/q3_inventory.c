@@ -288,7 +288,9 @@ static bool collect(qa_frontend *f,const frontend_q3_refs *refs,bool restoring,b
             qa_q3_assets_services(group->source.assets,&group->services,&world,&collision,error);
         if (ok && !assets_only(group->kind) && !parent_registry(group->kind)) ok=
             group->source.presentation && (group->kind==Q3_OWNER_EFFECTS?!group->source.movies:group->source.movies!=NULL) &&
-            qa_q3_presentation_binding_read(group->source.presentation,&group->binding,error) &&
+            (restoring?
+                qa_q3_presentation_options_read(group->source.presentation,&group->binding.options,error):
+                qa_q3_presentation_binding_read(group->source.presentation,&group->binding,error)) &&
             (group->kind==Q3_OWNER_SOURCE?
                 frontend_source_group_q3_ready(f,group->ordinal,&group->binding.options,&group->services,error):
                 group->kind==Q3_OWNER_NATIVE?
@@ -315,7 +317,7 @@ static bool collect(qa_frontend *f,const frontend_q3_refs *refs,bool restoring,b
         ok=group->mounts && group->source_view &&
             (assets_only(group->kind)?(group->kind==Q3_OWNER_GEAR?
                 qa_vfs_lookup_equal(group->source.mounts,group->source.source_files):group->mounts==group->source_view):
-            (group->mounts!=group->source_view && (parent_registry(group->kind) ||
+            (group->mounts!=group->source_view && (parent_registry(group->kind) || restoring ||
             (group->binding.world==world && group->binding.geometry==collision)) &&
             (group->kind==Q3_OWNER_EFFECTS || qa_media_library_resource_owner(group->source.movies)==group->source.images))) &&
             qa_vfs_resources(group->source.mounts)==qa_vfs_resources(group->source.source_files) &&
@@ -1063,7 +1065,8 @@ bool frontend_q3_restore(frontend_q3_inventory *inventory,double wall_millisecon
         q3_presentation *saved=inventory->presentations+i; q3_scope scope={.inventory=inventory,.group=saved->group}; qa_q3_movie_checkpoint_refs movies=movie_refs(&scope);
         q3_group *group=inventory->groups+saved->group;
         ok=qa_q3_presentation_scene_restore(group->source.presentation,saved->scene,error) &&
-            qa_q3_presentation_media_restore(group->source.presentation,&movies,group->source.identity,wall_milliseconds,saved->media,error);
+            qa_q3_presentation_media_restore(group->source.presentation,&movies,group->source.identity,wall_milliseconds,saved->media,error) &&
+            qa_q3_presentation_binding_read(group->source.presentation,&group->binding,error);
     }
     /* Effects cull rows and pools refer to the actual restored collecting
      * packet, so both its registry and backend state precede private import. */

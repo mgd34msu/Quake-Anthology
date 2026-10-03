@@ -180,7 +180,17 @@ static bool map_resolve(qa_frontend *f,frontend_q3_inventory *base,const registr
     }
     qa_bsp_view bsp;
     uint64_t key=((uint64_t)(row+1)<<32)|(uint64_t)(index+1);
-    if(!existing_geometry(base,rows,count,key,resource,created,error)) return false;
+    if(!existing_geometry(base,rows,count,key,resource,created,error)) { *created=NULL; return false; }
+    qa_collision_geometry *application_geometry=qa_world_geometry(qa_application_world(f->application));
+    if(out->world==f->scene_world && application_geometry &&
+        qa_collision_resource(application_geometry)==resource &&
+        qa_collision_geometry_family(application_geometry)==QA_COLLISION_Q3) {
+        if(*created && *created!=application_geometry) {
+            *created=NULL;
+            return frontend_fail(error,QA_ERROR_FORMAT,"Saved collision alias differs from its actual application map owner");
+        }
+        *created=application_geometry;
+    }
     if(*created) {
         if(!qa_collision_retain(*created,error)) { *created=NULL; return false; }
     } else if(!qa_bsp_open(qa_resource_bytes(resource),&bsp,error) ||
