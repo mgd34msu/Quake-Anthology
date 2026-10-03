@@ -422,7 +422,7 @@ typedef struct q1_player {
     float max_health, drown_damage;
     qa_vec3 punch;
     uint32_t client_slot;
-    bool active, continuous, arsenal, character, source_client;
+    bool active, continuous, primary_holstered, arsenal, character, source_client;
     qa_q1_game *inventory_game;
     qa_inventory_lease weapon_definitions;
     q1_source_info *source_info;

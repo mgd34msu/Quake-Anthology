@@ -136,6 +136,7 @@ bool q1_save_player(q1_save_io *io, q1_player *player) {
     Q1_SAVE(io, float, player->drown_damage);
     Q1_SAVE(io, vector, player->punch);
     Q1_SAVE(io, bool, player->continuous);
+    Q1_SAVE(io, bool, player->primary_holstered);
     Q1_SAVE(io, bool, player->arsenal);
     Q1_SAVE(io, u64, player->weapon_definitions.serial);
     if (player->weapon_definitions.serial) {

@@ -530,6 +530,46 @@ bool q1_player_select_read(qa_q1_game *g, qa_actor_id actor, q1_player *player,
         q1_weapon_event(g, player, 0, 0, error) &&
         best_player_current(g, actor, player, error);
 }
+bool qa_q1_primary_weapon_holster(qa_q1_game *g, qa_actor_id actor, qa_error *error) {
+    qa_q1_game_operation operation = {0};
+    if (!qa_q1_game_operation_begin(g, &operation, error)) return false;
+    q1_player *player = q1_player_get(g, actor);
+    bool okay = best_player_current(g, actor, player, error);
+    if (okay && !player->primary_holstered) {
+        if (player->weapon == QA_Q1_CTF_GRAPPLE)
+            okay = qa_q1_grapple_weapon_holster(g, actor, error);
+        if (okay && best_player_current(g, actor, player, error)) {
+            player->primary_holstered = true;
+            player->weapon_frame = 0;
+            player->continuous = false;
+            player->animation_at = -1;
+        } else okay = false;
+    }
+    qa_q1_game_operation_end(&operation);
+    return okay;
+}
+bool qa_q1_primary_weapon_resume(qa_q1_game *g, qa_actor_id actor, qa_error *error) {
+    qa_q1_game_operation operation = {0};
+    if (!qa_q1_game_operation_begin(g, &operation, error)) return false;
+    q1_player *player = q1_player_get(g, actor);
+    bool available = false;
+    bool okay = false;
+    if (!best_player_current(g, actor, player, error)) goto finish;
+    qa_q1_weapon weapon = player->weapon;
+    okay = q1_weapon_ui_available_read(g, actor, weapon, &available, error);
+    if (okay && !available)
+        okay = q1_best_weapon_before_read(g, actor, player, NULL, 0, &weapon, error);
+    if (okay) okay = q1_player_select_read(g, actor, player, weapon, error) &&
+        inventory_current(&operation, actor, player, error) &&
+        best_player_current(g, actor, player, error);
+    if (okay && weapon == QA_Q1_CTF_GRAPPLE)
+        okay = qa_q1_grapple_weapon_resume(g, actor, error) &&
+            best_player_current(g, actor, player, error);
+    if (okay) player->primary_holstered = false;
+finish:
+    qa_q1_game_operation_end(&operation);
+    return okay;
+}
 bool qa_q1_player_read(const qa_q1_game *g, qa_actor_id actor, qa_q1_player_view *out) {
     if (!g || !out || actor.slot >= g->capacity ||
         !qa_actors_get(qa_session_actors(g->services.session), actor))
@@ -542,7 +582,7 @@ bool qa_q1_player_read(const qa_q1_game *g, qa_actor_id actor, qa_q1_player_view
                                .weapon_frame = player->weapon_frame,
                                .punch_angles = player->punch,
                                .max_health = player->max_health,
-                               .holstered = player->input.holstered,
+                               .holstered = player->primary_holstered || player->input.holstered,
                                .attack_finished = player->attack_finished,
                                .source_weapon = player->weapon == QA_Q1_AXE ? 4096u :
                                    player->weapon > QA_Q1_AXE && player->weapon <= QA_Q1_LIGHTNING ?
@@ -582,7 +622,7 @@ double qa_q1_game_power_expires(const qa_q1_game *g, qa_actor_id actor, qa_q1_po
 }
 static bool player_weapon_frame(qa_q1_game *g, qa_actor_id actor, qa_error *error) {
     q1_player *player = q1_player_get(g, actor);
-    if (!player)
+    if (!player || player->primary_holstered)
         return true;
     if (player->weapon == QA_Q1_CTF_GRAPPLE)
         return q1_grapple_weapon_frame(g, player, error);
@@ -1231,7 +1271,7 @@ bool qa_q1_bot_weapon_read(qa_q1_game *g,qa_actor_id actor,qa_q1_weapon weapon,
 
 static bool fire_weapon(qa_q1_game *g, q1_player *player, bool *fired, qa_error *error) {
     *fired = false;
-    if (player->input.holstered || q1_health(g, player->id) <= 0 ||
+    if (player->primary_holstered || player->input.holstered || q1_health(g, player->id) <= 0 ||
         g->time < (player->continuous ? player->next_weapon_frame : player->attack_finished))
         return true;
     qa_q1_weapon weapon = player->weapon;

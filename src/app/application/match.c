@@ -307,7 +307,7 @@ static bool equipment_holster(void *opaque, qa_actor_id actor,
         return application_fail(error, QA_ERROR_NOT_FOUND,
                                 "actor has no selected arsenal owner");
     if (provider->kind == APPLICATION_PROVIDER_Q1)
-        return qa_q1_grapple_weapon_holster(provider->state.q1, actor, error);
+        return qa_q1_primary_weapon_holster(provider->state.q1, actor, error);
     if (provider->kind == APPLICATION_PROVIDER_Q2)
         return qa_q2_weapon_holster(provider->state.q2, actor, error);
     if (provider->kind == APPLICATION_PROVIDER_Q3)
@@ -364,7 +364,7 @@ static bool equipment_resume(void *opaque, qa_actor_id actor, qa_error *error)
         return application_fail(error, QA_ERROR_NOT_FOUND,
                                 "actor has no selected arsenal owner");
     if (provider->kind == APPLICATION_PROVIDER_Q1)
-        return qa_q1_grapple_weapon_resume(provider->state.q1, actor, error);
+        return qa_q1_primary_weapon_resume(provider->state.q1, actor, error);
     if (provider->kind == APPLICATION_PROVIDER_Q2) {
         qa_q2_weapon_state state;
         if (!qa_q2_weapon_read(provider->state.q2, actor, &state, error))

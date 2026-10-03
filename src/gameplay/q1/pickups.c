@@ -171,6 +171,7 @@ bool qa_q1_selected_arsenal_spawn(qa_q1_game *g, qa_actor_id actor, qa_q1_weapon
         player->animation_base = player->nail_side = 1;
         player->punch = qa_v3(0, 0, 0);
         player->input = (qa_q1_input){.view_angles = body.angles};
+        player->primary_holstered = false;
         player->hostile_until = player->drown_at = player->hazard_at = 0;
         player->mega_rot_at = -1;
         player->air_finished = g->time + 12;

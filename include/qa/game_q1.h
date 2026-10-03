@@ -378,6 +378,11 @@ bool qa_q1_player_inventory_reset(qa_q1_game *, qa_actor_id, qa_error *);
  * program's extension capacities. */
 bool qa_q1_player_inventory_initialize(qa_q1_game *, qa_actor_id, qa_error *);
 bool qa_q1_player_input(qa_q1_game *, qa_actor_id, const qa_q1_input *, qa_error *);
+/* Immediate primary handoff is retained independently of command input and
+ * the separate grapple equipment animation. Resume selects the current
+ * available weapon, otherwise the actual source best weapon. */
+bool qa_q1_primary_weapon_holster(qa_q1_game *, qa_actor_id, qa_error *);
+bool qa_q1_primary_weapon_resume(qa_q1_game *, qa_actor_id, qa_error *);
 /* Publish genuine source controls without requiring a selected native arsenal
  * or running weapon effects. The existing source clock remains unchanged. */
 bool qa_q1_player_source_input(qa_q1_game *, qa_actor_id, const qa_q1_input *, qa_error *);
