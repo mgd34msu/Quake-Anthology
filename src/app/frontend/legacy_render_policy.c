@@ -37,7 +37,8 @@ bool frontend_legacy_render_policy_read_registry(const qa_cvars *registry, const
     frontend_legacy_render_policy value = {.family = product->family == QA_GAME_Q1 ? QA_SCENE_Q1 :
         product->family == QA_GAME_Q2 ? QA_SCENE_Q2 : QA_SCENE_Q3, .mirror_alpha = 1};
     if (value.family != QA_SCENE_Q3) {
-        value.quakeworld = product->edition == QA_EDITION_QUAKEWORLD;
+        value.quakeworld = product->edition == QA_EDITION_QUAKEWORLD ||
+            (value.family == QA_SCENE_Q1 && qa_cvars_dialect(registry) == QA_CONSOLE_QW);
         float flash = 0, eyes = 1, shadows, mirror = 1, texture_sort = 0;
         if (!number(registry, value.family == QA_SCENE_Q1 ? "r_shadows" : "gl_shadows", &shadows, error)) return false;
         if (!number(registry, "gl_flashblend", &flash, error)) return false;
