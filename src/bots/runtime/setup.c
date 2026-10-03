@@ -64,7 +64,11 @@ static bool chat_reload_source(void *context) {
     return bot_reload_characters(((qa_bot_runtime *)context)->library);
 }
 static qa_bot_navigation *navigation(void *context, int32_t client) {
-    return qa_bot_runtime_navigation(context, client);
+    qa_bot_runtime *r=context;
+    if(!r->services.movement.navigation) return qa_bot_runtime_navigation(r,client);
+    bool previous=r->busy;r->busy=true;
+    qa_bot_navigation *result=r->services.movement.navigation(r->services.movement.context,client);
+    r->busy=previous;return result;
 }
 static qa_actor_id actor(void *context, int32_t entity) {
     qa_bot_runtime *r = context;

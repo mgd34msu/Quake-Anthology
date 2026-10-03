@@ -503,6 +503,28 @@ static qa_actor_id bot_source_actor(void *opaque,int32_t client) {
     }
     return (qa_actor_id){0};
 }
+static qa_bot_navigation *bot_source_navigation(void *opaque,int32_t client) {
+    application_bots *bots=opaque;application_provider *source=bot_source(bots);
+    if(client<0 || !source || !source->constructed || !source->attached || source->close_pending)
+        return NULL;
+    qa_actor_id actor=bot_source_actor(bots,client);
+    if(!actor.registry || !qa_actors_get(qa_session_actors(bots->application->session),actor) ||
+       !qa_world_body_storage_serial(bots->application->world,actor)) return NULL;
+    int32_t physical;
+    if(!bot_source_client(bots,actor,&physical,NULL) || physical!=client) return NULL;
+    uint32_t input=actor.slot;
+    for(uint32_t i=0;i<bots->capacity;++i) {
+        const application_bot_seat *seat=bots->seats+i;
+        if(!seat->retired && qa_actor_id_equal(seat->actor,actor)) {
+            input=seat->library_client;break;
+        }
+    }
+    if(input>INT32_MAX || !qa_actor_id_equal(application_bot_client_actor(bots,(int32_t)input),actor))
+        return NULL;
+    qa_bot_navigation *navigation=application_bot_navigation(bots,(int32_t)input);
+    return navigation && qa_actor_id_equal(qa_bot_navigation_actor(navigation),actor) &&
+        qa_bot_navigation_runtime(navigation)?navigation:NULL;
+}
 static bool bot_source_action_client(void *opaque,int32_t client,uint32_t *out,qa_error *error) {
     application_bots *bots=opaque;
     application_provider *source=bot_source(bots);
@@ -1006,11 +1028,12 @@ bool application_bots_runtime_create(application_bots *bots,const qa_bot_runtime
         .diagnostic=bot_diagnostic,.log=application_bots_log_services(bots),
         .goals={.context=bots,.navigation=application_bot_navigation,.pickups=pickup_list,.pickups_end=pickup_end,
             .pickup=pickup,.owns_item=owns_item},
-        .movement={.context=bots,.navigation=application_bot_navigation,.actor=application_bot_actor,
+        .movement={.context=bots,.navigation=bot_source_navigation,.actor=application_bot_actor,
             .source_action_client=bot_source_action_client,
             .entity_number=entity_number,.model=application_bot_travel_model,
             .travel_weapon=application_bot_travel_weapon,.grapple_state=application_bot_grapple_state,.random=random}};
     if(options.observations==QA_BOT_OBSERVATION_MODULE) {
+        services.movement.navigation=application_bot_navigation;
         services.movement.source_action_client=NULL;
         services.movement.travel_weapon=NULL;
         services.movement.grapple_state=NULL;
