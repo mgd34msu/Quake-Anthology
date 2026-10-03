@@ -541,7 +541,10 @@ static bool initialize(q3n_server_commands *o, const q3n_frame *f,
     if (ok) { load.build_script = build != 0; ok = loading(o, f, "sounds", -1, e); }
     if (ok && mission) ok = q3n_voice_load(o, f, e);
     if (ok) ok = q3n_media_load_sounds(o->options.media, &load, e) && q3nc_current(o, f, e) &&
-        loading(o, f, "graphics", -1, e) && q3n_media_load_graphics(o->options.media, &load, e) &&
+        loading(o, f, "graphics", -1, e) && qa_q3_presentation_clear(o->options.presentation, e) &&
+        q3nc_current(o, f, e) && loading(o, f, o->state.mapname, -1, e) &&
+        qa_q3_presentation_load_world(o->options.presentation, o->state.mapname, e) &&
+        q3nc_current(o, f, e) && q3n_media_load_graphics(o->options.media, &load, e) &&
         q3nc_current(o, f, e) && stage(o, f, Q3N_INIT_PARTICLES, &inline_models, e) &&
         loading(o, f, "clients", -1, e);
     q3n_client_settings client_settings;
