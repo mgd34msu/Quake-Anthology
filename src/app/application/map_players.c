@@ -50,6 +50,13 @@
 #include <stdlib.h>
 #include <string.h>
 
+bool application_player_qw_spectator(const application_provider *source,
+                                    const application_player_record *record)
+{
+    return source->kind == APPLICATION_PROVIDER_Q1 &&
+        source->component.clock.kind == QA_CLOCK_QUAKEWORLD && record->spectator;
+}
+
 static const qa_launch_role player_roles[] = {
     QA_ROLE_CHARACTER, QA_ROLE_MOVEMENT, QA_ROLE_ARSENAL, QA_ROLE_INVENTORY,
     QA_ROLE_COMBAT, QA_ROLE_EFFECTS, QA_ROLE_EQUIPMENT
@@ -2525,8 +2532,7 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
         record->actor = source_actor;
         qa_actor_id actor = record->actor;
         application_provider *map_source = application->players->map_provider;
-        bool qw_spectator = map_source->kind == APPLICATION_PROVIDER_Q1 &&
-            map_source->component.clock.kind == QA_CLOCK_QUAKEWORLD && record->spectator;
+        bool qw_spectator = application_player_qw_spectator(map_source, record);
         for (size_t i = 0; i < application->provider_count; ++i) {
             application_provider *provider = application->providers[i];
             if ((provider->kind != APPLICATION_PROVIDER_QC && provider->kind != APPLICATION_PROVIDER_Q1) ||
@@ -4655,7 +4661,7 @@ bool qa_application_remote_player_begin(qa_application *application, qa_net_clie
             .spectator = record->spectator};
         application_player_carry carry = {0};
         size_t index = (size_t)(record - application->players->records);
-        ok = record->spectator && application->players->map_provider->component.clock.kind == QA_CLOCK_QUAKEWORLD
+        ok = application_player_qw_spectator(application->players->map_provider, record)
             ? application_native_q1_spectator_begin(application->players->map_provider, actor, error)
             : publish_player(application, qa_launch_snapshot_choices(qa_application_launch(application)),
                 &launch_seat, record, &carry, index, false, false, NULL, false,

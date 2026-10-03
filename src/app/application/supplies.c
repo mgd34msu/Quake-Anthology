@@ -1074,6 +1074,24 @@ bool application_supplies_admit(application_supplies *owner, application_provide
     owner->admitting = false;
     --owner->calls; return ok;
 }
+bool application_supplies_reconnect(application_supplies *owner, qa_error *error) {
+    if (!owner || owner->admitting || !application_supplies_idle(owner))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Supply reconnect requires its returned publication owner");
+    const struct application_player_roster *roster = owner->application->players;
+    for (size_t i = 0; roster && i < roster->count; ++i) {
+        const application_player_record *record = roster->records + i;
+        if (!record->actor.registry || record->retiring ||
+            application_player_qw_spectator(roster->map_provider, record)) continue;
+        application_provider *arsenal = application_provider_for(owner->application,
+            record->actor, QA_ROLE_ARSENAL, "");
+        supply_pair *pair = pair_find(owner, roster->map_provider, arsenal);
+        if (pair && actor_find(owner, pair, record->actor)) {
+            if (!pair_current(pair, record->actor, error)) return false;
+        } else if (!application_supplies_admit(owner, roster->map_provider,
+            record->actor, error)) return false;
+    }
+    return true;
+}
 bool application_supplies_pickup_rule(application_supplies *owner,qa_actor_id actor,
     qa_actor_owner provider,uint64_t serial,uint32_t id,qa_pickup_rule *out,qa_error *error) {
     if (!owner || !out || !serial || !id || owner->application->operation != APPLICATION_PERSISTING ||

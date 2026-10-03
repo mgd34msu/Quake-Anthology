@@ -18,6 +18,7 @@
 #include "qa/native_process.h"
 #include "guest_checkpoint.h"
 #include "map_players_private.h"
+#include "supplies.h"
 #include "bots_save_private.h"
 #include "match_intents.h"
 #include "network_q1_signon.h"
@@ -1883,6 +1884,7 @@ static bool persistence_finish(void *opaque, void *value, const qa_save_image *i
     if (ok) ok = application_save_foundation_decode(image, &foundation, error) &&
         application_save_foundation_finish(candidate, &foundation, error);
     application_save_foundation_free(&foundation);
+    if (ok) ok = application_supplies_reconnect(candidate->supplies, error);
     for (size_t i = 0; ok && i < candidate->provider_count; ++i) {
         application_provider *provider = candidate->providers[i];
         if (provider->kind == APPLICATION_PROVIDER_Q3 && provider->state.q3)

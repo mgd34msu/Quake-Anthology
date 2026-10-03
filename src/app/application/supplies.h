@@ -15,6 +15,7 @@ bool application_supplies_prepare(application_supplies *, application_provider *
                                    application_provider *arsenal, qa_error *);
 bool application_supplies_admit(application_supplies *, application_provider *source,
                                  qa_actor_id, qa_error *);
+bool application_supplies_reconnect(application_supplies *, qa_error *);
 bool application_supplies_spawn(application_supplies *, application_provider *source,
                                  qa_actor_id, qa_error *);
 void application_supplies_actor_released(application_supplies *, qa_actor_record);
