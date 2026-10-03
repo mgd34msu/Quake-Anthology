@@ -285,6 +285,7 @@ bool frontend_seat_actor_read(const qa_frontend *,uint32_t ordinal,qa_actor_id *
 bool frontend_command_seat_read(const qa_frontend *,const qa_command_context *,uint32_t *);
 bool frontend_seat_context_ready(void *,uint32_t,const qa_command_context *,qa_error *);
 bool frontend_events(qa_frontend *, qa_error *);
+bool frontend_events_flush(qa_frontend *, qa_error *);
 bool frontend_map_events(qa_frontend *, qa_error *);
 bool frontend_event_world(qa_frontend *, unsigned, qa_scene_world_input *, qa_error *);
 bool frontend_event_sound(qa_frontend *, const qa_builtin_event *, qa_error *);

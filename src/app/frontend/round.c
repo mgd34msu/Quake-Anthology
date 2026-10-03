@@ -266,14 +266,17 @@ bool frontend_round_clear_events(qa_frontend *frontend, qa_error *error)
     return qa_application_q3_round_clear_events(cut->application, cut->source, error);
 }
 
-static bool deliver(qa_application_q3_round_cut *cut, qa_error *error)
+bool frontend_events_flush(qa_frontend *f, qa_error *error)
 {
-    if (!cut_ready(cut, error) || cut->phase == FRONTEND_ROUND_FINISHED) return false;
-    qa_frontend *f = cut->frontend;
     if (!frontend_network_publish(f, error)) return false;
     if (!f->options.dedicated && (!frontend_map_events(f, error) ||
         !frontend_particle_events(f, error) || !frontend_player_events(f, error))) return false;
     return frontend_events(f, error);
+}
+static bool deliver(qa_application_q3_round_cut *cut, qa_error *error)
+{
+    if (!cut_ready(cut, error) || cut->phase == FRONTEND_ROUND_FINISHED) return false;
+    return frontend_events_flush(cut->frontend, error);
 }
 static bool network_owned(qa_application_q3_round_cut *cut, bool *out, qa_error *error)
 {

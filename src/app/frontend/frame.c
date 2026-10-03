@@ -374,6 +374,11 @@ bool frontend_startup_advance(qa_frontend *frontend,bool *complete,qa_error *err
         if (!frontend_music_sources_queued(frontend->music_sources,&queued) ||
             (queued && !frontend_music_sources_flush(frontend->music_sources,error))) return false;
     }
+    if (qa_application_launch(frontend->application) &&
+        (qa_application_event_count(frontend->application) ||
+         qa_application_protocol_event_count(frontend->application) ||
+         qa_application_equipment_event_count(frontend->application)) &&
+        !frontend_events_flush(frontend,error)) return false;
     frontend->preparing=true;
     bool prepared=qa_application_startup_advance(frontend->application,complete,error);
     frontend->preparing=false;
