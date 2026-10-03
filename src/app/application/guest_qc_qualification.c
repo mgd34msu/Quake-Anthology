@@ -36,7 +36,7 @@ static bool input(const char *name, application_qc_input_id *out)
 {
     static const char *names[] = {"self", "other", "time", "elapsed", "view-angles", "attack", "jump", "impulse",
         "forward-move", "side-move", "up-move", "result", "activator",
-        "attacker", "inflictor", "amount", "knockback", "point"};
+        "attacker", "inflictor", "amount", "knockback", "point", "direction", "normal", "item"};
     for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); ++i)
         if (strcmp(name, names[i]) == 0) { *out = (application_qc_input_id)i; return true; }
     return false;
@@ -47,7 +47,9 @@ static qa_qc_value_type source_type(const application_qc_value *value)
         switch (value->source) {
         case QC_INPUT_SELF: case QC_INPUT_OTHER: case QC_INPUT_ACTIVATOR:
         case QC_INPUT_ATTACKER: case QC_INPUT_INFLICTOR: return QA_QC_ENTITY;
-        case QC_INPUT_ANGLES: case QC_INPUT_POINT: return QA_QC_VECTOR;
+        case QC_INPUT_ANGLES: case QC_INPUT_POINT:
+        case QC_INPUT_DIRECTION: case QC_INPUT_NORMAL: return QA_QC_VECTOR;
+        case QC_INPUT_ITEM: return QA_QC_STRING;
         default: return QA_QC_FLOAT;
         }
     }
@@ -550,36 +552,52 @@ bool application_qc_qualify(application_provider *provider, qa_error *error)
         profile->callback_count = qa_json_size(doc, callbacks);
         profile->callbacks = profile->callback_count ? calloc(profile->callback_count, sizeof(*profile->callbacks)) : NULL;
         if (profile->callback_count && !profile->callbacks)
-            ok = application_fail(error, QA_ERROR_MEMORY, "Allocating QC declared actor callbacks");
+            ok = application_fail(error, QA_ERROR_MEMORY, "Allocating QC declared callbacks");
     }
     for (size_t i = 0; ok && i < profile->callback_count; ++i) {
         qa_json_id row = qa_json_at(doc, callbacks, i);
         application_qc_callback *callback = profile->callbacks + i;
         qa_json_id operation = qa_json_get(doc, row, "operation"), stage = qa_json_get(doc, row, "stage");
-        if (qa_json_string_equal(doc, operation, "actor.think")) callback->operation = Q3_MOD_THINK;
+        if (qa_json_string_equal(doc, operation, "damage")) callback->operation = Q3_MOD_DAMAGE;
+        else if (qa_json_string_equal(doc, operation, "inventory.give")) callback->operation = Q3_MOD_GIVE;
+        else if (qa_json_string_equal(doc, operation, "inventory.consume")) callback->operation = Q3_MOD_CONSUME;
+        else if (qa_json_string_equal(doc, operation, "actor.think")) callback->operation = Q3_MOD_THINK;
         else if (qa_json_string_equal(doc, operation, "actor.touch")) callback->operation = Q3_MOD_TOUCH;
         else if (qa_json_string_equal(doc, operation, "actor.use")) callback->operation = Q3_MOD_USE;
         else if (qa_json_string_equal(doc, operation, "actor.pain")) callback->operation = Q3_MOD_PAIN;
         else if (qa_json_string_equal(doc, operation, "actor.die")) callback->operation = Q3_MOD_DIE;
         else { ok = application_fail(error, QA_ERROR_UNSUPPORTED, "QC callback operation has no declared application owner yet"); break; }
         uint64_t available = (UINT64_C(1) << QC_INPUT_SELF) | (UINT64_C(1) << QC_INPUT_TIME);
-        if (callback->operation == Q3_MOD_THINK) available |= UINT64_C(1) << QC_INPUT_ELAPSED;
+        if (callback->operation == Q3_MOD_GIVE || callback->operation == Q3_MOD_CONSUME)
+            available |= (UINT64_C(1) << QC_INPUT_AMOUNT) | (UINT64_C(1) << QC_INPUT_ITEM);
+        else if (callback->operation == Q3_MOD_THINK) available |= UINT64_C(1) << QC_INPUT_ELAPSED;
         else if (callback->operation == Q3_MOD_TOUCH || callback->operation == Q3_MOD_USE) {
             available |= UINT64_C(1) << QC_INPUT_OTHER;
             if (callback->operation == Q3_MOD_USE) available |= UINT64_C(1) << QC_INPUT_ACTIVATOR;
         } else {
             available |= (UINT64_C(1) << QC_INPUT_ATTACKER) | (UINT64_C(1) << QC_INPUT_AMOUNT) |
                 (UINT64_C(1) << QC_INPUT_KNOCKBACK);
-            if (callback->operation == Q3_MOD_DIE)
+            if (callback->operation == Q3_MOD_DAMAGE || callback->operation == Q3_MOD_DIE)
                 available |= (UINT64_C(1) << QC_INPUT_INFLICTOR) | (UINT64_C(1) << QC_INPUT_POINT);
+            if (callback->operation == Q3_MOD_DAMAGE)
+                available |= (UINT64_C(1) << QC_INPUT_DIRECTION) | (UINT64_C(1) << QC_INPUT_NORMAL);
         }
         if (qa_json_string_equal(doc, stage, "observe")) {
             callback->stage = QA_OPERATION_OBSERVE;
             available |= UINT64_C(1) << QC_INPUT_RESULT;
-        } else if (qa_json_string_equal(doc, stage, "replace") &&
+        } else if (qa_json_string_equal(doc, stage, "transform") && callback->operation <= Q3_MOD_CONSUME) {
+            qa_json_id result = qa_json_get(doc, row, "result");
+            callback->knockback = callback->operation == Q3_MOD_DAMAGE &&
+                qa_json_string_equal(doc, result, "knockback");
+            if (!callback->knockback && !qa_json_string_equal(doc, result, "amount")) {
+                ok = application_fail(error, QA_ERROR_FORMAT, "QC transform requires its canonical amount or knockback result");
+                break;
+            }
+            callback->stage = QA_OPERATION_TRANSFORM;
+        } else if (qa_json_string_equal(doc, stage, "replace") && callback->operation >= Q3_MOD_THINK &&
             qa_json_string_equal(doc, qa_json_get(doc, row, "result"), "boolean"))
             callback->stage = QA_OPERATION_REPLACE;
-        else { ok = application_fail(error, QA_ERROR_FORMAT, "QC actor callback stage differs from its canonical contract"); break; }
+        else { ok = application_fail(error, QA_ERROR_FORMAT, "QC callback stage differs from its canonical contract"); break; }
         char *id = string(doc, qa_json_get(doc, row, "id"), error);
         const char *colon = id ? strchr(id, ':') : NULL;
         ok = colon && colon != id && colon[1] &&

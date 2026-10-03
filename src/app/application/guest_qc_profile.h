@@ -8,7 +8,8 @@ typedef enum application_qc_input_id {
     QC_INPUT_SELF, QC_INPUT_OTHER, QC_INPUT_TIME, QC_INPUT_ELAPSED,
     QC_INPUT_ANGLES, QC_INPUT_ATTACK, QC_INPUT_JUMP, QC_INPUT_IMPULSE,
     QC_INPUT_FORWARD, QC_INPUT_SIDE, QC_INPUT_UP, QC_INPUT_RESULT, QC_INPUT_ACTIVATOR,
-    QC_INPUT_ATTACKER, QC_INPUT_INFLICTOR, QC_INPUT_AMOUNT, QC_INPUT_KNOCKBACK, QC_INPUT_POINT, QC_INPUT_COUNT
+    QC_INPUT_ATTACKER, QC_INPUT_INFLICTOR, QC_INPUT_AMOUNT, QC_INPUT_KNOCKBACK, QC_INPUT_POINT,
+    QC_INPUT_DIRECTION, QC_INPUT_NORMAL, QC_INPUT_ITEM, QC_INPUT_COUNT
 } application_qc_input_id;
 typedef enum application_qc_value_kind {
     QC_VALUE_CONSTANT, QC_VALUE_INPUT, QC_VALUE_ARGUMENT,
@@ -40,6 +41,7 @@ typedef struct application_qc_callback {
     qa_string_id id;
     application_q3_mod_operation operation;
     qa_operation_hook_kind stage;
+    bool knockback;
     application_qc_call call;
     struct application_qc_state *engine;
     application_q3_mod_operation_services services;
@@ -121,7 +123,8 @@ typedef struct application_qc_inputs {
     uint64_t time_ns, elapsed_ns;
     float result;
     float amount, knockback;
-    qa_vec3 point;
+    qa_vec3 point, direction, normal;
+    const char *item;
 } application_qc_inputs;
 bool application_qc_run_calls(struct application_qc_state *, const application_qc_calls *,
                                 const application_qc_inputs *, qa_error *);

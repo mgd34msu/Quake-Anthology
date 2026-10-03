@@ -37,6 +37,9 @@ static bool resolve(const application_qc_value *value, const application_qc_inpu
     case QC_INPUT_AMOUNT: out.value.number = inputs->amount; break;
     case QC_INPUT_KNOCKBACK: out.value.number = inputs->knockback; break;
     case QC_INPUT_POINT: out.kind = QA_QC_GAME_VECTOR; out.value.vector = inputs->point; break;
+    case QC_INPUT_DIRECTION: out.kind = QA_QC_GAME_VECTOR; out.value.vector = inputs->direction; break;
+    case QC_INPUT_NORMAL: out.kind = QA_QC_GAME_VECTOR; out.value.vector = inputs->normal; break;
+    case QC_INPUT_ITEM: out.kind = QA_QC_GAME_STRING; out.value.string = inputs->item; break;
     case QC_INPUT_TIME: out.value.number = (float)((double)inputs->time_ns / 1e9); break;
     case QC_INPUT_ELAPSED: out.value.number = (float)((double)inputs->elapsed_ns / 1e9); break;
     case QC_INPUT_RESULT: out.value.number = inputs->result; break;
@@ -137,6 +140,13 @@ static bool callback_inputs(application_qc_callback *callback, const void *reque
                 return application_fail(error, QA_ERROR_ARGUMENT, "QC use callback requires its actual activator actor");
             inputs->activator = activator->as.actor;
         }
+    } else if (callback->operation == Q3_MOD_GIVE || callback->operation == Q3_MOD_CONSUME) {
+        const application_q3_mod_value *amount = values.values + Q3_MOD_AMOUNT;
+        const application_q3_mod_value *item = values.values + Q3_MOD_ITEM;
+        if (amount->kind != Q3_MOD_VALUE_SCALAR || item->kind != Q3_MOD_VALUE_STRING)
+            return application_fail(error, QA_ERROR_ARGUMENT, "QC inventory callback requires its actual amount and item identity");
+        inputs->amount = (float)amount->as.scalar;
+        inputs->item = item->as.string;
     } else {
         const application_q3_mod_value *attacker = values.values + Q3_MOD_ATTACKER;
         const application_q3_mod_value *amount = values.values + Q3_MOD_AMOUNT;
@@ -147,13 +157,21 @@ static bool callback_inputs(application_qc_callback *callback, const void *reque
         inputs->attacker = attacker->as.actor;
         inputs->amount = (float)amount->as.scalar;
         inputs->knockback = (float)knockback->as.scalar;
-        if (callback->operation == Q3_MOD_DIE) {
+        if (callback->operation == Q3_MOD_DAMAGE || callback->operation == Q3_MOD_DIE) {
             const application_q3_mod_value *inflictor = values.values + Q3_MOD_INFLICTOR;
             const application_q3_mod_value *point = values.values + Q3_MOD_POINT;
             if (inflictor->kind != Q3_MOD_VALUE_ACTOR || point->kind != Q3_MOD_VALUE_VECTOR)
-                return application_fail(error, QA_ERROR_ARGUMENT, "QC death callback requires its actual source inflictor and point");
+                return application_fail(error, QA_ERROR_ARGUMENT, "QC callback requires its actual source inflictor and point");
             inputs->inflictor = inflictor->as.actor;
             inputs->point = point->as.vector;
+        }
+        if (callback->operation == Q3_MOD_DAMAGE) {
+            const application_q3_mod_value *direction = values.values + Q3_MOD_DIRECTION;
+            const application_q3_mod_value *normal = values.values + Q3_MOD_NORMAL;
+            if (direction->kind != Q3_MOD_VALUE_VECTOR || normal->kind != Q3_MOD_VALUE_VECTOR)
+                return application_fail(error, QA_ERROR_ARGUMENT, "QC damage callback requires its actual source geometry");
+            inputs->direction = direction->as.vector;
+            inputs->normal = normal->as.vector;
         }
     }
     if (result) {
@@ -184,6 +202,19 @@ static bool callback_replace(void *opaque, const void *request, qa_operation_nex
     memcpy(&value, returned, sizeof(value));
     return callback->services.replace(callback->services.context, result, value != 0, error);
 }
+static bool callback_transform(void *opaque, void *request, qa_error *error)
+{
+    application_qc_callback *callback = opaque;
+    application_qc_inputs inputs;
+    uint32_t returned[3];
+    if (!callback_inputs(callback, request, NULL, &inputs, error) ||
+        !run_call(callback->engine, &callback->call, &inputs, returned, error) ||
+        !callback_current(callback, error)) return false;
+    float value;
+    memcpy(&value, returned, sizeof(value));
+    return callback->services.transform(callback->services.context, request, callback->knockback,
+        value, error) && callback_current(callback, error);
+}
 bool application_qc_callbacks_register(application_provider *provider, qa_error *error)
 {
     struct application_qc_state *engine = provider && provider->kind == APPLICATION_PROVIDER_QC
@@ -201,7 +232,8 @@ bool application_qc_callbacks_register(application_provider *provider, qa_error 
         callback->services = services[callback->operation];
         qa_operation_hook hook = {.owner = provider->owner, .name = callback->id,
             .kind = callback->stage, .context = callback};
-        if (callback->stage == QA_OPERATION_OBSERVE) hook.call.observe = callback_observe;
+        if (callback->stage == QA_OPERATION_TRANSFORM) hook.call.transform = callback_transform;
+        else if (callback->stage == QA_OPERATION_OBSERVE) hook.call.observe = callback_observe;
         else hook.call.replace = callback_replace;
         if (!qa_operation_register(callback->services.operation, &hook, &callback->registration, error)) return false;
     }
