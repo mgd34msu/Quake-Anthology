@@ -160,6 +160,14 @@ static qa_command_result server_command(void *opaque, const qa_command_invocatio
     for (size_t i = 0; profile && i < profile->command_count; ++i)
         if (command->argc && application_qc_command_name_equal(profile->commands[i].name, command->argv[0]))
             return application_qc_declared_command(engine, command, error) ? QA_COMMAND_HANDLED : QA_COMMAND_FAILED;
+    qa_command_result common = application_startup_common_command(engine->provider,
+        engine->console, engine->cvars, command, error);
+    if (common != QA_COMMAND_UNHANDLED) return common;
+    if (!command->argc ||
+        (!application_qc_command_name_equal(command->argv[0], "map") &&
+         !application_qc_command_name_equal(command->argv[0], "gamemap") &&
+         !application_qc_command_name_equal(command->argv[0], "changelevel")))
+        return QA_COMMAND_UNHANDLED;
     qa_string_id text;
     if (!qa_strings_intern_cstr(qa_session_strings(engine->services.session), command->raw, &text, error) ||
         !application_map_server_command(engine->provider, text, error)) return QA_COMMAND_FAILED;

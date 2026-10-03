@@ -6,6 +6,12 @@ The original audit authority is dependency plan revision 7, tasks B01–B05. Its
 
 The user's latest correction forbids review gates and test infrastructure in front of implementation. Audit continues alongside production installation, without new manifests, hashes or freeze requirements. The later implementation assignment supersedes the initial document-only edit scope for the concrete owners below. Historical snapshot/peer evidence below records work already performed; none of it imposes a prerequisite on current implementation. Concrete defects go directly to the author. Current owner/build files can change as genuine callers are installed.
 
+## Authorized B22 QC startup command dispatch, 2026-10-03
+
+The genuine installed qualified authored-map run on SAVE9 artifact `1e38b090` now passes `qa_application_apply` after the shared seat-capture fix. Its first subsequent frame failed while the actual startup candidate drained `default.cfg`'s `viewsize 100`: the QC fallback sent every undeclared token to the live map-command producer, although this candidate was correctly not constructed or attached yet. A bounded private GDB run confirmed that exact owner and caller chain.
+
+The QC fallback now keeps declared command priority, invokes the existing shared Source startup command adapter, and returns undeclared non-map commands to normal console dispatch. Only actual `map`, `gamemap` and `changelevel` requests reach the existing map continuation, whose live producer checks remain unchanged. The changed production translation unit passed both actual GCC and Clang optimized `-O2/-Werror` commands privately in `qc-source-fallback-objects`. Runtime qualification of this fix awaits Root's coherent artifact. SAVE9 did not reach qualified map/player inspection, SAVE, LOAD or travel.
+
 ## Authorized B22 declared QC think/touch callbacks, 2026-10-03
 
 External `actor.think` and `actor.touch` observe/replace declarations now qualify against their actual compiled QC functions, parameter widths and global types through the existing source-call parser. Available inputs follow the declaration contract: actual self/time, think elapsed or touch other, and observer-only canonical result. Callback identities retain their exact namespace and duplicate checks. The new result input cannot become a client input or consumed movement field.
