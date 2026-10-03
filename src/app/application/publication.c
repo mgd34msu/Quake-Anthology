@@ -2,6 +2,7 @@
 #include "save_content.h"
 #include "guest_native_q2_private.h"
 #include "map_private.h"
+#include "map_players_private.h"
 #include "save_private.h"
 #include "bots_save_private.h"
 #include "network_q1_signon.h"
@@ -1554,7 +1555,8 @@ void application_publication_publish(qa_application *application,
         if(ok) {
             publish_roster(application, publication);
             ok=application_q3_components_initialize(application->components,&error) &&
-                register_qc_callbacks(application,false,&error);
+                register_qc_callbacks(application,false,&error) &&
+                application_players_declared_clients_admit(application,&error);
             if (ok) ok = qc_objectives(application, true, &error);
             if(ok) ++application->publication_generation;
         }

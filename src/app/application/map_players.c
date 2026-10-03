@@ -52,33 +52,69 @@ static const qa_launch_role player_roles[] = {
     QA_ROLE_COMBAT, QA_ROLE_EFFECTS, QA_ROLE_EQUIPMENT
 };
 
+static const application_player_record *component_player(qa_application *app,
+    const struct application_player_roster *roster, qa_actor_id actor, qa_error *error)
+{
+    if (!roster || app->players != roster ||
+        !qa_actors_get(qa_session_actors(app->session), actor)) {
+        application_fail(error, QA_ERROR_ARGUMENT, "Component admission lost its physical player");
+        return NULL;
+    }
+    const application_player_record *actual = NULL;
+    for (size_t i = 0; i < roster->count; ++i) {
+        const application_player_record *row = roster->records + i;
+        if (!qa_actor_id_equal(row->actor, actor) || row->retiring ||
+            row->deferred || row->source_begin_pending) continue;
+        if (actual) {
+            application_fail(error, QA_ERROR_ARGUMENT, "Component admission has duplicate physical players");
+            return NULL;
+        }
+        actual = row;
+    }
+    if (!actual)
+        application_fail(error, QA_ERROR_ARGUMENT, "Component admission precedes actual player Begin");
+    return actual;
+}
+
 static bool admit_components(qa_application *app, qa_actor_id actor, qa_error *error)
 {
-    if (!app->components) return true;
     application_q3_components *components = app->components;
     struct application_player_roster *roster = app->players;
-    if (!roster || !qa_actors_get(qa_session_actors(app->session), actor))
-        return application_fail(error, QA_ERROR_ARGUMENT, "Component admission lost its physical player");
-    size_t matches = 0;
+    const application_player_record *actual = component_player(app, roster, actor, error);
+    if (!actual) return false;
+    for (size_t i = 0; i < app->provider_count; ++i) {
+        application_provider *provider = app->providers[i];
+        const struct application_qc_profile *profile = provider->kind == APPLICATION_PROVIDER_QC
+            ? provider->state.qc.qualified : NULL;
+        if (!profile || !profile->clients) continue;
+        if (!application_qc_bind_player(provider, actual->client_slot + 1, actual->seat,
+            actor, actual->name, actual->spectator, true, provider == actual->character, error))
+            return false;
+        actual = component_player(app, roster, actor, error);
+        if (!actual || app->components != components)
+            return actual ? application_fail(error, QA_ERROR_ARGUMENT,
+                "QC component admission changed its physical component owner") : false;
+    }
+    if (components && !application_q3_components_admit(components, actor, error)) return false;
+    return component_player(app, roster, actor, error) &&
+        (app->components == components || application_fail(error, QA_ERROR_ARGUMENT,
+            "Component admission changed its physical component owner"));
+}
+
+bool application_players_declared_clients_admit(qa_application *app, qa_error *error)
+{
+    if (!app || !app->session)
+        return application_fail(error, QA_ERROR_ARGUMENT,
+            "Declared client admission requires its actual application");
+    if (!app->players || app->operation == APPLICATION_PERSISTING) return true;
+    struct application_player_roster *roster = app->players;
     for (size_t i = 0; i < roster->count; ++i) {
         const application_player_record *row = roster->records + i;
-        if (qa_actor_id_equal(row->actor, actor) && !row->retiring &&
-            !row->deferred && !row->source_begin_pending) ++matches;
+        if (row->retiring || row->deferred || row->source_begin_pending ||
+            !qa_actors_get(qa_session_actors(app->session), row->actor)) continue;
+        if (!admit_components(app, row->actor, error)) return false;
     }
-    if (matches != 1)
-        return application_fail(error, QA_ERROR_ARGUMENT, "Component admission precedes actual player Begin");
-    if (!application_q3_components_admit(components, actor, error)) return false;
-    if (app->components != components || app->players != roster ||
-        !qa_actors_get(qa_session_actors(app->session), actor))
-        return application_fail(error, QA_ERROR_ARGUMENT, "Component admission changed its physical player owner");
-    matches = 0;
-    for (size_t i = 0; i < roster->count; ++i) {
-        const application_player_record *row = roster->records + i;
-        if (qa_actor_id_equal(row->actor, actor) && !row->retiring &&
-            !row->deferred && !row->source_begin_pending) ++matches;
-    }
-    return matches == 1 || application_fail(error, QA_ERROR_ARGUMENT,
-        "Component admission retired its physical player");
+    return true;
 }
 
 static bool admit_control(qa_application *application, qa_actor_id actor,
