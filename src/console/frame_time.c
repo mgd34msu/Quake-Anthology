@@ -34,7 +34,9 @@ bool qa_source_frame_time_register(qa_cvars *cvars, uint64_t owner, qa_error *er
     if (!cvars || !known_dialect(qa_cvars_dialect(cvars)))
         return frame_time_fail(error, QA_ERROR_ARGUMENT, "frame time requires an actual source registry");
     qa_console_dialect dialect = qa_cvars_dialect(cvars);
-    uint32_t cheat = q1_dialect(dialect) ? 0 : q2_dialect(dialect) ? QA_Q2_CVAR_CHEAT : QA_CVAR_CHEAT;
+    uint32_t cheat = 0;
+    if (q2_dialect(dialect)) cheat = QA_Q2_CVAR_CHEAT;
+    else if (dialect == QA_CONSOLE_Q3) cheat = QA_CVAR_CHEAT;
     if (!register_control(cvars, "timescale", "1",
             cheat | (dialect == QA_CONSOLE_Q3 ? QA_CVAR_SYSTEMINFO : 0), owner, error)) return false;
     if (q1_dialect(dialect)) return register_control(cvars, "host_framerate", "0", 0, owner, error);
