@@ -24,7 +24,7 @@ struct frontend_music_sources {
     qa_product_id menu_product;
     frontend_music_sources **slot;
     frontend_music_policy *policies[2];
-    uint64_t buses[2], seed;
+    uint64_t buses[2], seed, command_registry;
     frontend_music_world world;
     frontend_music_origin origin;
     qa_launch_instance_lease *origin_metadata;

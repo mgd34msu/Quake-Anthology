@@ -165,6 +165,7 @@ bool frontend_music_sources_create(qa_frontend *f, frontend_music_sources **out,
     /* Fresh native seed for this independent owner, sampled once. Playback
      * and source clocks never seed or advance this retained shuffle stream. */
     owner->seed = SDL_GetPerformanceCounter();
+    owner->command_registry = qa_actors_identity(qa_session_actors(qa_application_session(f->application)));
     return !owner->engine || menu_create(owner, e);
 }
 static const qa_product *fallback(const qa_catalog *catalog, const qa_product *source) {

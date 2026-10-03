@@ -79,7 +79,10 @@ static bool bus_fields(qa_source_save_io *io, const qa_audio_checkpoint_refs *re
 }
 static bool command_fields(qa_source_save_io *io, frontend_music_command *command, uint64_t registry) {
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
-    qa_command_context *context = &command->context;
+    qa_command_context saved_context = command->context;
+    qa_command_context *context = reading ? &command->context : &saved_context;
+    if (!reading && context->registry == qa_actors_identity(qa_session_actors(io->session)))
+        context->registry = registry;
     uint32_t dialect = context->dialect, origin = context->origin;
     bool ok = qa_source_save_u64(io, &context->session) && qa_source_save_u64(io, &context->owner) &&
         qa_source_save_u64(io, &context->client) && qa_source_save_u32(io, &context->seat) &&
@@ -162,10 +165,11 @@ static bool fields(qa_source_save_io *io, qa_application_content_graph *graph, c
     uint32_t output = owner->output;
     if (ok) ok = qa_source_save_u32(io, &output) && output <= FRONTEND_MUSIC_WORLD;
     if (reading && ok) owner->output = (frontend_music_slot)output;
-    uint64_t registry = qa_actors_identity(qa_session_actors(io->session)); size_t count = 0;
+    uint64_t registry = owner->command_registry; size_t count = 0;
     if (!reading) for (const frontend_music_command *command = owner->commands; command; command = command->next) ++count;
     if (ok) ok = qa_source_save_u64(io, &registry) && registry &&
         qa_source_save_count(io, &count, reading ? io->input.size - io->offset : SIZE_MAX);
+    if (reading && ok) owner->command_registry = registry;
     frontend_music_command *command = owner->commands;
     for (size_t i = 0; ok && i < count; ++i) {
         if (reading) {
