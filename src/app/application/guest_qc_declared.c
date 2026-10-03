@@ -57,8 +57,6 @@ static bool run_call(struct application_qc_state *engine, const application_qc_c
                      const application_qc_inputs *inputs, uint32_t result[3], qa_error *error)
 {
     qa_qc_game_value arguments[8];
-    if (inputs->self.registry && !qa_actors_get(qa_session_actors(engine->services.session), inputs->self))
-        return application_fail(error, QA_ERROR_NOT_FOUND, "QC qualified callback lost its actor generation");
     for (size_t j = 0; j < call->argument_count; ++j)
         if (!resolve(&call->arguments[j], inputs, &arguments[j], error)) return false;
     qa_qc_game_global local[16];

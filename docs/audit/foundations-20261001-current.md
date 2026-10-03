@@ -6,6 +6,12 @@ The original audit authority is dependency plan revision 7, tasks B01–B05. Its
 
 The user's latest correction forbids review gates and test infrastructure in front of implementation. Audit continues alongside production installation, without new manifests, hashes or freeze requirements. The later implementation assignment supersedes the initial document-only edit scope for the concrete owners below. Historical snapshot/peer evidence below records work already performed; none of it imposes a prerequisite on current implementation. Concrete defects go directly to the author. Current owner/build files can change as genuine callers are installed.
 
+## Reached qualified QC declared-input callback lifetime, 2026-10-03
+
+The real Copper `skill_set` function uses only its string parameter and its cvar/global skill values. Its compiled statements 20254–20260 contain no actor or time read. The original private declaration also requested `self`; a function-entry trace captured native Q1 think removing actor registry 1, generation 1, slot 160 before observation. Translating that declared stale actor must fail, as it does in the TypeScript provider.
+
+A separate complete content copy declares only the actual `skill_set` parameter, preserving the real program and digest. On `030fdbc1` it still fails because native `run_call` rejects the operation's `self` before inspecting the declared arguments/globals. The caller now stages exactly the declared inputs through the existing typed call kernel. Each declared actor still passes through `qa_qc_actor_reference`, which rejects stale actors; unused operation values do not create extra lifetime requirements. There is no actor alias, skipped observer, state cache or saved layout change. Runtime continuation requires the next coherent rebuilt artifact.
+
 ## Reached qualified QC static-entity protocol default, 2026-10-03
 
 The actual installed authored-map and userinfo workflows on coherent `030fdbc1` pass the earlier constructor/body checks and reach compiled `light_flame_large_yellow`. A private trace captured its real `QA_NQ_STATIC` message: model 28, frame 1, origin `(126, 526, 12)`, scale 0. The QC producer initialized that protocol value with a zero literal, while NetQuake 15 requires its native scale default of 16. Static creation now calls the existing `qa_q1_entity_init` before copying the genuine QC fields; the protocol codec and range checks remain intact. This requires a coherent rebuilt runtime before map, userinfo, SAVE/LOAD or travel acceptance.
