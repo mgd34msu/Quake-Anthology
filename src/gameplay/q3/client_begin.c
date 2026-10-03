@@ -334,7 +334,10 @@ bool qa_q3_client_connect(qa_q3_game *game, qa_actor_id actor, bool bot, qa_erro
     }
     if (!q3_source_movement_write(game, actor, QA_Q3_SOURCE_PM_ALL, error)) return false;
     uint32_t actual_slot;
+    /* A new human's ClientConnect clears PS before G_InitGentity makes its
+     * Source row live. ClientBegin publishes that clear after activation. */
     return !qa_q3_native_client_slot(game, actor, &actual_slot, NULL) ||
+        !game->source_entities[actual_slot].in_use ||
         !game->options.hooks.source_flags_cleared ||
         game->options.hooks.source_flags_cleared(game->options.hooks.context, actor, error);
 }
