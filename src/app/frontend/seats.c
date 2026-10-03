@@ -205,6 +205,8 @@ static bool menu_action(void *context, uint32_t id, qa_ui_id control, const qa_u
     if (!qa_ui_state_read(seat->ui, &state, error)) return false;
     if (state.menu == FRONTEND_PLAYER_SOURCES) {
         if (action->kind!=QA_UI_SELECT) return true;
+        if (frontend->player_source_draft || qa_application_startup_pending(frontend->application))
+            return true;
         if (!control || control>QA_INPUT_LOCAL_SEATS*3 || action->value.row>=seat->player_source_count)
             return frontend_fail(error,QA_ERROR_ARGUMENT,"Player source choice is no longer available");
         static const qa_launch_role roles[]={QA_ROLE_MOVEMENT,QA_ROLE_CHARACTER,QA_ROLE_ARSENAL};
@@ -345,9 +347,10 @@ static bool player_sources(void *context,uint32_t id,qa_ui_menu *out,qa_error *e
         const qa_launch_seat *player=choices->seats+physical;
         if (!player->local || player->bot) continue;
         uint32_t logical; qa_actor_id actor;
-        bool enabled=!f->player_source_draft && !frontend_network_remote(f) && !qa_application_startup_pending(f->application) &&
-            frontend_seat_launch_id_read(f,physical,&logical) && logical==player->id &&
-            qa_application_player_actor(f->application,logical,&actor);
+        bool pending=f->player_source_draft || qa_application_startup_pending(f->application);
+        bool enabled=!frontend_network_remote(f) && (pending ||
+            (frontend_seat_launch_id_read(f,physical,&logical) && logical==player->id &&
+             qa_application_player_actor(f->application,logical,&actor)));
         for (size_t role=0;role<3;++role) {
             const qa_launch_binding *binding=qa_launch_binding_for(choices,
                 (qa_launch_scope){.kind=QA_SCOPE_SEAT,.seat=player->id},roles[role],"");
