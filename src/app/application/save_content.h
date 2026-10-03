@@ -14,6 +14,9 @@ typedef struct application_saved_instance_content {
 bool application_save_content_collect(const qa_application *,
     qa_application_content_visit_fn, void *, qa_application_content_graph **,
     qa_error *);
+/* QACG4 retains mounted archives through exact native package receipts and
+ * embeds unmounted package custody. Pending legacy QACG3 admission keeps its
+ * original bytes until publication; later captures use the current graph. */
 bool application_save_content_encode(const qa_application_content_graph *,
     qa_buffer *, qa_error *);
 bool application_save_content_prepare(qa_bytes, const qa_vfs_checkpoint_refs *,
