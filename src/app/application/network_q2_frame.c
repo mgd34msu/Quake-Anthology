@@ -130,6 +130,7 @@ static bool builtin_entity(qa_application_network_q2 *owner, uint32_t slot,
         }
     }
     if (!application_network_q2_resource(owner, 1, text(owner, source.loop_sound), &value.sound, error)) return false;
+    if (value.alpha == 1) value.alpha = 0;
     if (value.scale == 1) value.scale = 0;
     if (source.solid == QA_PHYSICS_BRUSH) value.solid = 31;
     else if (source.solid == QA_PHYSICS_BOX && !(source.server_flags & 2))
