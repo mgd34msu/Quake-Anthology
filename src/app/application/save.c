@@ -2001,7 +2001,12 @@ bool qa_application_persistence_restore(qa_application **active,
     if (!persistence_lease(&operation, error)) return false;
     const qa_save_restore_ops restore = {.create = persistence_create, .restore = persistence_restore_owner,
         .finish = persistence_finish, .publish = persistence_publish, .discard = persistence_discard};
-    bool ok = qa_save_restore(&operation, &restore, image, error);
+    bool ok = application_save_content_collect(operation.active, ops->visit_content,
+        ops->context, &operation.content_graph, error);
+    if (ok) {
+        operation.active->capture_content_graph = operation.content_graph;
+        ok = qa_save_restore(&operation, &restore, image, error);
+    }
     persistence_end(&operation);
     if (ok) *displaced = operation.displaced;
     else if (operation.retained) *retained_on_failure = operation.retained;
