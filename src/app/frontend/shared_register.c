@@ -296,6 +296,45 @@ bool frontend_source_color_clamp(qa_frontend *f,const qa_cvars_edit *edit,qa_err
     }
     return true;
 }
+typedef enum q2_client_group {
+    Q2_CLIENT_LAYOUT, Q2_CLIENT_EFFECTS, Q2_CLIENT_FOOTSTEPS, Q2_CLIENT_HAND
+} q2_client_group;
+static const struct {
+    const char *name, *value;
+    uint32_t flags;
+    q2_client_group group;
+} q2_client_declarations[] = {
+    {"ch_alpha", "1", 0, Q2_CLIENT_LAYOUT}, {"ch_scale", "1", 0, Q2_CLIENT_LAYOUT},
+    {"ch_x", "0", 0, Q2_CLIENT_LAYOUT}, {"ch_y", "0", 0, Q2_CLIENT_LAYOUT},
+    {"cl_smooth_explosions", "1", 0, Q2_CLIENT_EFFECTS},
+    {"cl_disable_particles", "0", 0, Q2_CLIENT_EFFECTS},
+    {"cl_disable_explosions", "0", 0, Q2_CLIENT_EFFECTS},
+    {"cl_dlight_hacks", "0", 0, Q2_CLIENT_EFFECTS},
+    {"cl_rerelease_effects", "1", 0, Q2_CLIENT_EFFECTS},
+    {"cl_muzzlelight_time", "100", 0, Q2_CLIENT_EFFECTS},
+    {"cl_muzzleflashes", "1", 0, Q2_CLIENT_EFFECTS},
+    {"cl_gun", "1", 0, Q2_CLIENT_EFFECTS}, {"cl_gunfov", "90", 0, Q2_CLIENT_EFFECTS},
+    {"cl_railtrail_type", "0", 0, Q2_CLIENT_EFFECTS},
+    {"cl_railtrail_time", "1.0", 0, Q2_CLIENT_EFFECTS},
+    {"cl_railcore_color", "red", 0, Q2_CLIENT_EFFECTS},
+    {"cl_railcore_width", "2", 0, Q2_CLIENT_EFFECTS},
+    {"cl_railspiral_color", "blue", 0, Q2_CLIENT_EFFECTS},
+    {"cl_railspiral_radius", "3", 0, Q2_CLIENT_EFFECTS},
+    {"cl_footsteps", "1", 0, Q2_CLIENT_FOOTSTEPS},
+    {"hand", "0", QA_CVAR_ARCHIVE | QA_CVAR_USERINFO, Q2_CLIENT_HAND}
+};
+static bool q2_client_register(qa_cvars *registry, const qa_command_context *command,
+    q2_client_group first, q2_client_group last, bool preserve_authored, qa_error *error)
+{
+    for (size_t i = 0; i < sizeof(q2_client_declarations) / sizeof(*q2_client_declarations); ++i) {
+        if (q2_client_declarations[i].group < first || q2_client_declarations[i].group > last) continue;
+        const qa_cvar_view *existing = qa_cvars_find(registry, q2_client_declarations[i].name);
+        if (preserve_authored && existing && !existing->console_created) continue;
+        if (!qa_cvars_register(registry, q2_client_declarations[i].name, q2_client_declarations[i].value,
+            q2_client_declarations[i].flags, command->owner, "", error)) return false;
+    }
+    return true;
+}
 bool frontend_source_q2_effects_register(qa_cvars *registry, const qa_command_context *command,
     frontend_remote_q2_effects_profile profile, qa_error *error)
 {
@@ -303,22 +342,7 @@ bool frontend_source_q2_effects_register(qa_cvars *registry, const qa_command_co
         qa_cvars_dialect(registry) != command->dialect || !qa_cvars_observer_idle(registry) ||
         (profile != FRONTEND_REMOTE_Q2_EFFECTS_CLASSIC && profile != FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Q2 effects declarations require their reached Source profile and physical CLIENT heap");
-    static const struct { const char *name, *value; uint32_t flags; } rows[] = {
-        {"cl_smooth_explosions", "1", 0}, {"cl_disable_particles", "0", 0},
-        {"cl_disable_explosions", "0", 0}, {"cl_dlight_hacks", "0", 0},
-        {"cl_rerelease_effects", "1", 0}, {"cl_muzzlelight_time", "100", 0},
-        {"cl_muzzleflashes", "1", 0}, {"cl_gun", "1", 0}, {"cl_gunfov", "90", 0},
-        {"cl_railtrail_type", "0", 0}, {"cl_railtrail_time", "1.0", 0},
-        {"cl_railcore_color", "red", 0}, {"cl_railcore_width", "2", 0},
-        {"cl_railspiral_color", "blue", 0}, {"cl_railspiral_radius", "3", 0},
-        {"cl_footsteps", "1", 0}, {"hand", "0", QA_CVAR_ARCHIVE | QA_CVAR_USERINFO}
-    };
-    for (size_t i = 0; i < sizeof(rows) / sizeof(*rows); ++i) {
-        const qa_cvar_view *existing = qa_cvars_find(registry, rows[i].name);
-        if (existing && !existing->console_created) continue;
-        if (!qa_cvars_register(registry, rows[i].name, rows[i].value, rows[i].flags, command->owner, "", error)) return false;
-    }
-    return true;
+    return q2_client_register(registry, command, Q2_CLIENT_EFFECTS, Q2_CLIENT_HAND, true, error);
 }
 bool frontend_source_q2_settings_register(const qa_launch_instance *descriptor,qa_cvars *registry,
     const qa_command_context *command,qa_error *error)
@@ -326,27 +350,19 @@ bool frontend_source_q2_settings_register(const qa_launch_instance *descriptor,q
     qa_catalog *catalog=descriptor?qa_launch_instance_catalog(descriptor):NULL;
     const qa_product *profile=descriptor?qa_catalog_product(catalog,descriptor->selection.product):NULL;
     if (!profile || profile->family!=QA_GAME_Q2 || !profile->builtin ||
-        descriptor->selection.runtime!=QA_PROGRAM_BUILTIN || !descriptor->storage || !descriptor->content ||
+        profile->program_kind!=QA_PROGRAM_BUILTIN ||
+        (descriptor->selection.runtime!=QA_PROGRAM_BUILTIN &&
+         (descriptor->selection.runtime!=QA_PROGRAM_NATIVE || !descriptor->artifact)) ||
+        !descriptor->storage || !descriptor->content ||
         !registry || !command || !command->owner || command->origin!=QA_COMMAND_SEAT ||
         (profile->edition!=QA_EDITION_CLASSIC && profile->edition!=QA_EDITION_RERELEASE) ||
         command->dialect!=(profile->edition==QA_EDITION_RERELEASE?QA_CONSOLE_Q2_RERELEASE:QA_CONSOLE_Q2) ||
         qa_cvars_dialect(registry)!=command->dialect || !qa_cvars_observer_idle(registry))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 CLIENT declarations require their actual normalized profile and new private heap");
-    static const struct { const char *name,*value; } rows[]={
-        {"ch_alpha","1"},{"ch_scale","1"},{"ch_x","0"},{"ch_y","0"},
-        {"cl_smooth_explosions","1"},{"cl_disable_particles","0"},
-        {"cl_disable_explosions","0"},{"cl_dlight_hacks","0"},
-        {"cl_rerelease_effects","1"},{"cl_muzzlelight_time","100"},
-        {"cl_muzzleflashes","1"},{"cl_gun","1"},{"cl_gunfov","90"},
-        {"cl_railtrail_type","0"},{"cl_railtrail_time","1.0"},
-        {"cl_railcore_color","red"},{"cl_railcore_width","2"},
-        {"cl_railspiral_color","blue"},{"cl_railspiral_radius","3"}
-    };
-    for (size_t i=0;i<sizeof(rows)/sizeof(*rows);++i)
-        if (!qa_cvars_register(registry,rows[i].name,rows[i].value,0,command->owner,"",error)) return false;
-    return frontend_legacy_source_register(registry,command->dialect,command->owner,error) &&
-        qa_cvars_register(registry,"hand","0",QA_CVAR_ARCHIVE|QA_CVAR_USERINFO,command->owner,"",error) &&
-        qa_cvars_register(registry,"cl_footsteps","1",0,command->owner,"",error) &&
+    return q2_client_register(registry,command,Q2_CLIENT_LAYOUT,Q2_CLIENT_EFFECTS,false,error) &&
+        frontend_legacy_source_register(registry,command->dialect,command->owner,error) &&
+        q2_client_register(registry,command,Q2_CLIENT_HAND,Q2_CLIENT_HAND,false,error) &&
+        q2_client_register(registry,command,Q2_CLIENT_FOOTSTEPS,Q2_CLIENT_FOOTSTEPS,false,error) &&
         qa_cvars_register(registry,"crosshair",profile->edition==QA_EDITION_RERELEASE?"3":"0",
         QA_CVAR_ARCHIVE,command->owner,"",error);
 }
