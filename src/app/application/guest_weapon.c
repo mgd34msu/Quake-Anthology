@@ -2,6 +2,9 @@
 #include "guest_qc_profile.h"
 #include "guest_q3_weapons.h"
 #include "guest_q3_catalog.h"
+#include "guest_native_q2_private.h"
+#include "guest_native_q2_attack.h"
+#include "native_q2_inventory_source.h"
 #include "qa/qc_observation.h"
 
 static bool canonical(application_provider *provider, qa_actor_id actor,
@@ -23,6 +26,19 @@ bool application_guest_weapon_read(application_provider *provider, qa_actor_id a
     if (!provider || !provider->application || !out || !provider->constructed ||
         !qa_actors_get(qa_session_actors(provider->application->session), actor))
         return application_fail(error, QA_ERROR_ARGUMENT, "Source selected weapon requires a live canonical actor");
+    if (provider->kind == APPLICATION_PROVIDER_NATIVE && provider->state.native.q2_engine) {
+        if (!provider->product || provider->product->family != QA_GAME_Q2 ||
+            application_provider_for(provider->application, actor, QA_ROLE_ARSENAL, "") != provider)
+            return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 selected weapon requires its actual selected arsenal");
+        struct application_native_q2 *engine = provider->state.native.q2_engine;
+        application_native_q2_inventory_source source;
+        qa_item_id weapon;
+        if (!application_native_q2_inventory_source_read(engine, actor, &source, error) ||
+            !application_native_q2_attack_weapon_read(engine, source.slot, actor, &weapon, error) ||
+            !application_native_q2_inventory_source_current(engine, &source, error)) return false;
+        *out = weapon;
+        return true;
+    }
     if (provider->kind == APPLICATION_PROVIDER_QC) {
         struct application_qc_state *engine = provider->state.qc.engine;
         if (!engine) return application_fail(error, QA_ERROR_NOT_FOUND, "QuakeC weapon owner is absent");
