@@ -131,6 +131,10 @@ static bool envelope(void *context, const qa_qvm_call *call, int32_t *result, qa
     bool present;
     if (!slot_player(input, slot, &scope, &present, error)) return false;
     if (!present) return qa_qvm_proceed(call, result, error);
+    for (guest_client_scope *parent = input->scope; parent; parent = parent->previous)
+        if (parent->spawning && parent->slot == scope.slot &&
+            qa_actor_id_equal(parent->actor, scope.actor))
+            return qa_qvm_proceed(call, result, error);
     input->scope = &scope;
     bool ok = qa_qvm_proceed(call, result, error);
     if (ok && !current(input, &scope, call)) ok = cancel_client(call, call, error);
