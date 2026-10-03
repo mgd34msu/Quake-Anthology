@@ -146,7 +146,9 @@ void frontend_startup_config_script_complete(frontend_startup_config *owner,
         }
         qa_console_dialect dialect=owner->options.command.dialect;
         if (owner->failure.code==QA_OK && direct &&
-            ((dialect==QA_CONSOLE_Q3 && !strcmp(name,"autoexec.cfg")) ||
+            (((dialect==QA_CONSOLE_Q1 || dialect==QA_CONSOLE_QW) &&
+              (!strcmp(name,"quake.rc") || !strcmp(name,"server.cfg"))) ||
+             (dialect==QA_CONSOLE_Q3 && !strcmp(name,"autoexec.cfg")) ||
              ((dialect==QA_CONSOLE_Q2 || dialect==QA_CONSOLE_Q2_RERELEASE) && !strcmp(name,"config.cfg"))))
             apply(owner,owner->options.replay_startup_variables);
     }

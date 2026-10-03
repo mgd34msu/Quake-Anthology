@@ -207,7 +207,7 @@ bool application_startup_seed_console(application_provider *provider,const qa_ap
             actual.descriptor->storage!=source->descriptor->storage)
             return application_fail(error,QA_ERROR_ARGUMENT,"Startup CLIENT replay lost its actual physical configuration slot");
     }
-    if (!app->startup || app->operation==APPLICATION_PERSISTING || (!client && provider->product->family==QA_GAME_Q1)) return true;
+    if (!app->startup || app->operation==APPLICATION_PERSISTING) return true;
     bool primary=!client && startup_primary(provider);
     if (app->startup_hooks && app->startup_hooks->startup_source) {
         const qa_launch_snapshot *snapshot=app->routing_snapshot?app->routing_snapshot:qa_application_launch(app);
