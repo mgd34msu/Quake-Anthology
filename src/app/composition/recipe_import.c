@@ -66,7 +66,8 @@ static bool view_read(qa_executable_recipe *r, const qa_json_document *json, qa_
         if (!selected) { ok = recipe_fail(error, "Offered mount is not present in the installed catalog"); break; }
         physical_used[i] = selected->id;
         ok = qa_vfs_mount_retained(files, qa_catalog_files(r->catalog), selected->id, comparison, false, &ids[i], error) &&
-            qa_vfs_set_mount_q3_demo(files, ids[i], demo, error) && qa_vfs_set_user_overlay(files, ids[i], overlay, error);
+            qa_vfs_set_mount_q3_demo(files, ids[i], demo, error) &&
+            (!overlay || qa_vfs_set_user_overlay(files, ids[i], true, error));
     }
     qa_json_id pure = qa_json_get(json, root, "pure"); size_t pure_count = 0; bool demo = false;
     qa_sha256_digest *digests = NULL;
