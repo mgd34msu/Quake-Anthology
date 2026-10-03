@@ -1031,10 +1031,12 @@ bool application_bots_runtime_create(application_bots *bots,const qa_bot_runtime
         .movement={.context=bots,.navigation=bot_source_navigation,.actor=application_bot_actor,
             .source_action_client=bot_source_action_client,
             .entity_number=entity_number,.model=application_bot_travel_model,
+            .static_ground=application_bot_static_ground,
             .travel_weapon=application_bot_travel_weapon,.grapple_state=application_bot_grapple_state,.random=random}};
     if(options.observations==QA_BOT_OBSERVATION_MODULE) {
         services.movement.navigation=application_bot_navigation;
         services.movement.source_action_client=NULL;
+        services.movement.static_ground=NULL;
         services.movement.travel_weapon=NULL;
         services.movement.grapple_state=NULL;
         services.goals.pickups=NULL;

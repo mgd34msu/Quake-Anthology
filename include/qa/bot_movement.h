@@ -98,6 +98,8 @@ typedef struct qa_bot_move_services {
     int32_t (*entity_number)(void *, qa_actor_id);
     bool (*model)(void *, int32_t model, qa_bot_travel_model *, bool *, qa_error *);
     int32_t (*entity_model)(void *, int32_t entity);
+    /* Reads the contacted entity's actual stationary solid-ground behavior. */
+    bool (*static_ground)(void *, int32_t entity, bool *, qa_error *);
     int32_t (*next_entity)(void *, int32_t after);
     int32_t (*entity_type)(void *, int32_t entity);
     int32_t (*entity_weapon)(void *, int32_t entity);

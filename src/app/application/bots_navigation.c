@@ -113,6 +113,28 @@ static bool native_mover(application_bots *bots,qa_actor_id actor,application_bo
     }
     return true;
 }
+bool application_bot_static_ground(void *opaque,int32_t entity,bool *out,qa_error *error) {
+    application_bots *bots=opaque;*out=false;
+    application_provider *source=application_bot_source(bots);
+    if(!source || !source->constructed || !source->attached || source->close_pending || bots->restoring)
+        return application_fail(error,QA_ERROR_NOT_FOUND,"bot static ground lost its actual Source owner");
+    qa_actor_id actor=application_bot_actor(bots,entity);
+    if(!actor.registry) return true;
+    qa_application *application=bots->application;
+    qa_physics *physics=application->physics;
+    if(!physics || !physics->services.read)
+        return application_fail(error,QA_ERROR_NOT_FOUND,"bot static ground has no actual physics observation");
+    qa_physics_properties state;
+    bool found=physics->services.read(physics->services.context,actor,&state);
+    if(source!=application_bot_source(bots) || !source->constructed || !source->attached ||
+       source->close_pending || bots->restoring)
+        return application_fail(error,QA_ERROR_NOT_FOUND,"bot static ground Source owner retired during observation");
+    if(!found || !qa_actors_get(qa_session_actors(application->session),actor)) return true;
+    *out=state.motion==QA_PHYSICS_STATIONARY &&
+        (state.solid==QA_PHYSICS_BOX || state.solid==QA_PHYSICS_BRUSH) &&
+        !(state.flags&(QA_PHYSICS_PLAYER|QA_PHYSICS_MONSTER|QA_PHYSICS_DEAD));
+    return true;
+}
 bool application_bot_travel_model(void *opaque,int32_t model,qa_bot_travel_model *out,bool *found,qa_error *error) {
     application_bots *bots=opaque;*found=false;
     const qa_actor_registry *actors=qa_session_actors(bots->application->session);

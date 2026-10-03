@@ -117,6 +117,10 @@ static bool standing_entity(bot_travel *t, const qa_bot_move_result_io *out, boo
     bool found;
     if (!bot_model(t, model_number, &model, &found, e))
         return false;
+    bool static_ground = false;
+    if ((!found || model.kind == QA_BOT_MODEL_STATIC) && t->moves->services.static_ground &&
+        !t->moves->services.static_ground(t->moves->services.context, entity, &static_ground, e))
+        return false;
     if (found && (model.kind == QA_BOT_MODEL_ELEVATOR || model.kind == QA_BOT_MODEL_BOBBING)) {
         uint32_t type = model.kind == QA_BOT_MODEL_ELEVATOR ? BOT_ELEVATOR : BOT_BOBBING;
         bot_reach prior;
@@ -145,7 +149,7 @@ static bool standing_entity(bot_travel *t, const qa_bot_move_result_io *out, boo
         }
         if (!*stop && !bot_result_flags(out, model.kind == QA_BOT_MODEL_ELEVATOR ?
             QA_BOT_MOVE_ON_ELEVATOR : QA_BOT_MOVE_ON_BOBBING, e)) return false;
-    } else if (found && (model.kind == QA_BOT_MODEL_DOOR || model.kind == QA_BOT_MODEL_TRAIN)) {
+    } else if (static_ground || (found && (model.kind == QA_BOT_MODEL_DOOR || model.kind == QA_BOT_MODEL_TRAIN))) {
         uint32_t observed_area;
         if (!qa_bot_navigation_fuzzy(t->navigation, bot_move_vector(s,BM_ORIGIN), &observed_area, e))
             return false;

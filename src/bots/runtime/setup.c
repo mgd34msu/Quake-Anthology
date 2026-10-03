@@ -151,6 +151,13 @@ static bool model(void *context, int32_t id, qa_bot_travel_model *out, bool *fou
     *found = false;
     return true;
 }
+static bool static_ground(void *context, int32_t entity, bool *out, qa_error *e) {
+    qa_bot_runtime *r = context;
+    bool previous = r->busy; r->busy = true;
+    bool ok = r->services.movement.static_ground(r->services.movement.context, entity, out, e);
+    r->busy = previous;
+    return ok;
+}
 static bool selected_client(qa_bot_runtime *r, int32_t client, int32_t *out, qa_error *e) {
     if (!r->services.movement.source_action_client) {
         *out = client;
@@ -214,6 +221,7 @@ static qa_bot_move_services movement_services(qa_bot_runtime *r) {
     return (qa_bot_move_services){.context = r, .navigation = navigation,
         .source_action_client=r->services.movement.source_action_client?movement_action_client:NULL,
         .actor = actor, .entity_number = entity_number, .model = model, .entity_model = entity_model,
+        .static_ground = r->services.movement.static_ground ? static_ground : NULL,
         .next_entity = next_entity, .entity_type = entity_type, .entity_weapon = entity_weapon,
         .travel_weapon = travel_weapon,
         .grapple_state = r->services.movement.grapple_state || r->options.observations == QA_BOT_OBSERVATION_MODULE ?
