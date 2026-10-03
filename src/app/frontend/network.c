@@ -4196,9 +4196,10 @@ bool frontend_network_prepare_restored(qa_frontend *f, qa_bytes bytes, qa_error 
     if (!qa_network_create(transport, &options, &n->runtime, error)) { qa_net_transport_close(transport); goto failed; }
     if (!qa_net_interfaces_capture(&n->interfaces,error)) goto failed;
     qa_browser_hooks browser = saved_browser_hooks(n); qa_admin_options admin;
-    if (!admin_options(n,&admin,error)) goto failed;
+    if (!f->options.network_host &&
+        (!admin_options(n,&admin,error) || !qa_server_admin_create(&admin,&n->admin,error))) goto failed;
     if (!qa_server_browser_create(frontend_tools_http(f), 16384, &browser, &n->browser, error) ||
-        !qa_server_admin_create(&admin, &n->admin, error) || !qa_fs_root_open(f->options.application.user_root, &n->preferences, error)) goto failed;
+        !qa_fs_root_open(f->options.application.user_root, &n->preferences, error)) goto failed;
     frontend_q3_browser_options ui_browser = browser_options(n);
     if (!frontend_q3_browser_create(&ui_browser, &n->q3_browser, error)) goto failed;
     qa_cvars *cvars = qa_application_cvars(f->application);
@@ -5215,6 +5216,10 @@ bool frontend_network_restore_connections(qa_frontend *f, qa_bytes bytes, qa_err
         qa_source_save_finish(&io, NULL);
     if (ok && (unsigned)hosting + (unsigned)nq + (unsigned)qw + (unsigned)unified + (unsigned)q2 > 1)
         ok = frontend_fail(error, QA_ERROR_FORMAT, "Network continuation declares two native host owners");
+    if (ok && !n->admin) {
+        qa_admin_options options;
+        ok=admin_options(n,&options,error) && qa_server_admin_create(&options,&n->admin,error);
+    }
     if(ok && kex) {
         qa_kex_transport_hooks hooks={n,kex_connectionless};
         ok=f->options.network_protocol.kind==QA_NET_Q2KEX_2023 &&
