@@ -145,6 +145,16 @@ bool application_native_q1_wire_cache_flush(application_provider *provider,qa_er
     qa_resource_pool_trim(qa_vfs_resources(content));
     return true;
 }
+static bool wire_registration_required(application_provider *p,
+    const application_provider *map_owner, bool *required, qa_error *error) {
+    uint64_t generation; bool loading;
+    if (!qa_q1_wire_registration_state(p->state.q1, &generation, &loading)) {
+        application_fail(error, QA_ERROR_ARGUMENT, "Q1 wire lost its actual registration state");
+        return false;
+    }
+    *required = !loading || p == map_owner;
+    return true;
+}
 bool application_native_q1_wire_resources_prepare(application_provider *p, qa_error *error) {
     if (!p || !qa_q1_wire_enabled(p->state.q1)) return true;
     application_native_q1_wire *owner = p->native_q1_wire;
@@ -281,6 +291,9 @@ bool application_native_q1_wire_language_prepare(qa_application *app, qa_actor_i
     *out = NULL;
     application_provider *primary = app ? application_provider_for(app, actor, QA_ROLE_CHARACTER, "") : NULL;
     if (!primary || primary->kind != APPLICATION_PROVIDER_Q1 || !qa_q1_wire_enabled(primary->state.q1)) return true;
+    bool required;
+    if (!wire_registration_required(primary, application_world_provider(app, QA_ROLE_ENTITIES, ""), &required, error)) return false;
+    if (!required) return true;
     uint32_t slot;
     if (!language || !*language || !qa_q1_native_client_slot(primary->state.q1, actor, &slot, error))
         return application_fail(error, QA_ERROR_ARGUMENT, "Q1 text admission requires its actual recipient language");
@@ -1228,10 +1241,9 @@ bool application_native_q1_wire_reconnect(qa_application *app, qa_error *error) 
     for (size_t i = 0; i < app->provider_count; ++i) {
         application_provider *p = app->providers[i];
         if (p->kind != APPLICATION_PROVIDER_Q1 || !qa_q1_wire_enabled(p->state.q1)) continue;
-        uint64_t generation; bool loading;
-        if (!qa_q1_wire_registration_state(p->state.q1, &generation, &loading))
-            return application_fail(error, QA_ERROR_ARGUMENT, "Q1 wire reconnect lost its actual registration state");
-        if (loading && p != primary) continue;
+        bool required;
+        if (!wire_registration_required(p, primary, &required, error)) return false;
+        if (!required) continue;
         if (!application_native_q1_wire_resources_prepare(p, error)) return false;
     }
     application_provider *p = primary;
