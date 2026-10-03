@@ -565,7 +565,8 @@ static bool level_frame_current(qa_q1_game *game, const q1_map_runtime *maps,
     return q1_map_fail(error, "Q1 source limit check lost its actual level/world owner");
 }
 bool q1_map_level_frame(qa_q1_game *game, const qa_source_frame *frame, qa_error *error) {
-    if (!game->maps || !game->options.deathmatch) return true;
+    if (!game->maps || !game->options.deathmatch || !game->maps->world_actor.registry)
+        return true;
     q1_map_runtime *maps = game->maps;
     qa_q1_level *level = maps->options.level;
     if (!level || !frame || !game->services.cvar ||
