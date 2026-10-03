@@ -1,4 +1,6 @@
 #include "chat.h"
+#include "network_recipient.h"
+#include "qa/q1_chat_commands.h"
 #include <stdio.h>
 
 bool frontend_chat_send(frontend_seat *seat, const char *text, bool team,
@@ -10,9 +12,21 @@ bool frontend_chat_send(frontend_seat *seat, const char *text, bool team,
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Chat requires its admitted physical seat");
     qa_frontend *frontend = seat->frontend;
     bool remote = frontend_network_remote(frontend);
+    frontend_network_client_recipient recipient;
+    bool client_source = false;
+    if (!remote && !frontend_network_client_recipient_read(frontend,seat->id,
+        &recipient,&client_source,error)) return false;
     qa_console_dialect dialect = QA_CONSOLE_Q3;
     qa_command_context context = {.seat = seat->id, .origin = QA_COMMAND_SEAT, .direct = true};
-    if (remote) {
+    if (client_source) {
+        const qa_net_client *client=qa_net_connections_get(qa_network_connections(recipient.source.runtime),
+            recipient.source.client);
+        if (!recipient.ready || !client || client->phase!=QA_NET_ACTIVE ||
+            !frontend_network_client_recipient_current(frontend,seat->id,&recipient))
+            return frontend_fail(error,QA_ERROR_ARGUMENT,"Chat requires its current active CLIENT recipient");
+        context=recipient.source.context.command;
+        dialect=context.dialect;
+    } else if (remote) {
         if (seat->id != 0 || frontend->options.seats != 1 || !frontend_network_client_ready(frontend))
             return frontend_fail(error, QA_ERROR_ARGUMENT, "Chat requires the admitted remote Q3 client seat");
     } else {
@@ -31,7 +45,9 @@ bool frontend_chat_send(frontend_seat *seat, const char *text, bool team,
     }
     if (targeted && dialect != QA_CONSOLE_Q3)
         return frontend_fail(error, QA_ERROR_UNSUPPORTED, "Selected source has no numeric client tell command");
-    const char *name = targeted ? "tell" : team ? "say_team" : "say";
+    const char *name = dialect==QA_CONSOLE_Q1 || dialect==QA_CONSOLE_QW ?
+        qa_q1_chat_command_name(dialect,team?QA_Q1_CHAT_TEAM:QA_Q1_CHAT_ALL) :
+        targeted ? "tell" : team ? "say_team" : "say";
     char target_text[16];
     snprintf(target_text, sizeof(target_text), "%d", target);
     size_t prefix = strlen(name) + 1 + (targeted ? strlen(target_text) + 1 : 0), size = strlen(text);
@@ -42,13 +58,17 @@ bool frontend_chat_send(frontend_seat *seat, const char *text, bool team,
     if (targeted) snprintf(raw, prefix + size + 1, "%s %s %s", name, target_text, text);
     else snprintf(raw, prefix + size + 1, "%s %s", name, text);
     const char *argv[] = {name, targeted ? target_text : text, text};
-    qa_command_invocation command = {.console = qa_application_console(frontend->application),
+    qa_command_invocation command = {.console = client_source ? recipient.source.context.console :
+            qa_application_console(frontend->application),
         .context = context, .argc = targeted ? 3 : 2, .argv = argv,
         .args_text = raw + strlen(name) + 1, .raw = raw};
     /* This is one source invocation. Engine separators in chat text are never
      * replayed through the local engine command buffer. Source GAME owns the
      * audience, team restrictions, flood control and delivered notification. */
-    bool ok = remote ? frontend_network_client_command_seat(frontend, seat->id, raw, error) :
+    bool ok = client_source ? qa_console_execute_now(command.console,&context,raw,error) :
+        remote ? frontend_network_client_command_seat(frontend, seat->id, raw, error) :
         qa_application_source_command(frontend->application, &command, error);
+    if (ok && client_source && !frontend_network_client_recipient_current(frontend,seat->id,&recipient))
+        ok=frontend_fail(error,QA_ERROR_ARGUMENT,"Chat changed its actual CLIENT recipient");
     free(raw); return ok;
 }

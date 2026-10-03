@@ -33,6 +33,15 @@ static const qa_scene_image *hud_video_frame(void *context, uint64_t initial, do
 static bool connected(void *context)
 {
     frontend_seat *seat = context;
+    frontend_network_client_recipient recipient;
+    bool present=false;
+    if (!frontend_network_client_recipient_read(seat->frontend,seat->id,&recipient,&present,NULL)) return false;
+    if (present) {
+        const qa_net_client *client=qa_net_connections_get(qa_network_connections(recipient.source.runtime),
+            recipient.source.client);
+        return recipient.ready && client && client->phase==QA_NET_ACTIVE &&
+            frontend_network_client_recipient_current(seat->frontend,seat->id,&recipient);
+    }
     uint32_t launch_seat;
     return frontend_network_remote(seat->frontend) ? seat->id == 0 && frontend_network_client_ready(seat->frontend) :
         frontend_seat_launch_id_read(seat->frontend,seat->id,&launch_seat) &&
