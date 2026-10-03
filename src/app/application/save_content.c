@@ -216,7 +216,7 @@ static bool instance_collect(qa_application_content_graph *g, const qa_launch_in
     return true;
 }
 
-bool application_save_content_collect(const qa_application *app, qa_application_content_visit_fn visit,
+bool application_save_content_collect(qa_application *app, qa_application_content_visit_fn visit,
     void *context, qa_application_content_graph **out, qa_error *error)
 {
     const qa_launch_snapshot *launch = app ? qa_application_launch(app) : NULL;
@@ -314,7 +314,12 @@ bool application_save_content_collect(const qa_application *app, qa_application_
         if (!ok && (!error || error->code == QA_OK))
             fail(error, QA_ERROR_FORMAT, "Gear artifact leaves its genuine retained content owner");
     }
-    if (ok && visit) ok = visit(context, app, &visitor, error);
+    if (ok && visit) {
+        qa_application_content_graph *previous = app->capture_content_graph;
+        app->capture_content_graph = g;
+        ok = visit(context, app, &visitor, error);
+        app->capture_content_graph = previous;
+    }
     /* Preserve portable native admission only for the very same installed
      * view. Every encoding still checks its complete current native snapshot
      * against that admission baseline before emitting its original record. */

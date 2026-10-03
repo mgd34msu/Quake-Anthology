@@ -11,7 +11,7 @@ typedef struct application_saved_instance_content {
     uint64_t view;
 } application_saved_instance_content;
 
-bool application_save_content_collect(const qa_application *,
+bool application_save_content_collect(qa_application *,
     qa_application_content_visit_fn, void *, qa_application_content_graph **,
     qa_error *);
 /* QACG5 additionally retains explicit Source filesystem opening authorities.
