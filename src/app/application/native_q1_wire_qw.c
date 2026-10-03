@@ -251,7 +251,7 @@ bool application_native_q1_qw_entity_next(qa_application *app,uint32_t *cursor,b
         if (!qa_q1_wire_actor_at(&source.receipt,slot,&candidate)) continue;
         qa_application_network_qw_entity value;
         if (!entity(&source,candidate,&value,error)) {okay=false;break;}
-        if (!value.model) continue;
+        if (value.model == 0) continue;
         *actor=candidate;*out=value;*present=true;break;
     }
     application_native_q1_wire_end(&source);return okay;
@@ -604,7 +604,7 @@ bool application_native_q1_qw_flush(qa_application *app,qa_error *error) {
         if (!qa_q1_wire_feedback_consume(&source.receipt,actor,&feedback)) {
             okay=application_fail(error,QA_ERROR_ARGUMENT,"Native QuakeWorld damage lost its held source client");break;
         }
-        if (!feedback.armor && !feedback.blood) continue;
+        if (feedback.armor == 0 && feedback.blood == 0) continue;
         uint8_t bytes[32];qa_net_writer writer;qa_net_writer_init(&writer,bytes,sizeof(bytes),error);
         /* svc_damage and its fixed-coordinate layout are shared by NQ15/QW28.
          * Preserve the source's binary64 center until coordinate conversion. */

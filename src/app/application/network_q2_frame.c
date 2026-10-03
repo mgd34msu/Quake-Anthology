@@ -336,14 +336,14 @@ bool qa_application_network_q2_motion(qa_application_network_q2 *owner,
         if (!row.actor.registry || !qa_actors_get(qa_session_actors(owner->app->session), row.actor) ||
             !qa_vec_finite(row.origin) || !qa_vec_finite(row.creation_origin) ||
             (row.creation_present && (!row.link_count || row.creation_frame > motion.source_frame)) ||
-            (!row.creation_present && (row.creation_frame || row.creation_origin.x || row.creation_origin.y || row.creation_origin.z)))
+            (!row.creation_present && (row.creation_frame || row.creation_origin.x != 0 || row.creation_origin.y != 0 || row.creation_origin.z != 0)))
             return application_fail(error, QA_ERROR_FORMAT, "Q2 motion lost its actual Source generation or creation clock");
         for (size_t i = 0; i < 8; ++i) {
             const qa_q2_source_origin *origin = &row.origins[i];
             if (!qa_vec_finite(origin->origin) || (origin->present ? (!row.creation_present ||
                 origin->source_frame < row.creation_frame || origin->source_frame > motion.source_frame ||
                 (origin->source_frame & 7u) != i) :
-                (origin->source_frame || origin->origin.x || origin->origin.y || origin->origin.z)))
+                (origin->source_frame || origin->origin.x != 0 || origin->origin.y != 0 || origin->origin.z != 0)))
                 return application_fail(error, QA_ERROR_FORMAT, "Q2 motion history is not an actual Source link receipt");
         }
         owner->motion_rows[motion.count++] = row;

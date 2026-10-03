@@ -612,7 +612,7 @@ bool qa_application_network_qw_entity_next(qa_application *app, uint32_t *cursor
         if (!qa_qc_slot_reference(vm, slot, &reference, error) ||
             !qw_scalar(engine, reference, "modelindex", &model, error) ||
             !qw_string(engine, reference, "model", &name, error)) return false;
-        if (!model || !*name) continue;
+        if (model == 0 || !*name) continue;
         if (!qw_entity(engine, slot, reference, out, error)) return false;
         *actor = binding.actor; *present = true;
         return true;

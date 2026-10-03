@@ -196,7 +196,7 @@ bool application_unified_inputs_flush(application_unified_inputs *owner, qa_erro
         qa_unified_input selected = owner->commands[owner->cursor].value;
         for (size_t i = owner->cursor + 1; i < owner->count; ++i) {
             qa_unified_input next = owner->commands[i].value;
-            if (!next.command.data.nq.impulse)
+            if (next.command.data.nq.impulse == 0)
                 next.command.data.nq.impulse = selected.command.data.nq.impulse;
             if (selected.has_arsenal && (!next.has_arsenal ||
                 same_bytes(next.arsenal.provider, selected.arsenal.provider))) {
