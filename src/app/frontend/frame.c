@@ -467,24 +467,26 @@ bool qa_frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *erro
         return true;
     }
     qa_console *console = qa_application_console(frontend->application);
-    qa_console *terminal_console=console;
-    qa_command_context terminal_context={.origin=QA_COMMAND_LOCAL,.dialect=QA_CONSOLE_Q1,.direct=true};
-    if (ok && frontend->terminal) {
+    qa_console *source_console=console;
+    qa_command_context source_context={.origin=QA_COMMAND_LOCAL,.dialect=QA_CONSOLE_Q1,.direct=true};
+    if (ok) {
         qa_application_startup_source source; bool present=false;
         ok=frontend_config_store_primary_server_read(frontend->config_store,&source,&present,error);
         if (ok && present && (source.scope.kind==QA_APPLICATION_CONSOLE_Q1_GAME ||
             source.scope.kind==QA_APPLICATION_CONSOLE_Q2_GAME ||
             source.scope.kind==QA_APPLICATION_CONSOLE_Q3_GAME)) {
-            terminal_console=source.console; terminal_context=source.command;
+            source_console=source.console; source_context=source.command;
         }
+    }
+    if (ok && frontend->terminal) {
         size_t lines;
         if (ok) ok = qa_dedicated_console_poll(frontend->terminal, 0, 65536, error) &&
-             qa_dedicated_console_drain(frontend->terminal, terminal_console, &terminal_context, &lines, error);
+             qa_dedicated_console_drain(frontend->terminal, source_console, &source_context, &lines, error);
     }
     size_t executed;
-    if (ok && terminal_console!=console &&
-        !qa_application_startup_console_queued(frontend->application,terminal_console))
-        ok=qa_console_drain(terminal_console,4096,&executed,error);
+    if (ok && source_console!=console &&
+        !qa_application_startup_console_queued(frontend->application,source_console))
+        ok=qa_console_drain(source_console,4096,&executed,error);
     if (ok) ok = qa_application_startup_console_queued(frontend->application,console) ||
         qa_console_drain(console, 4096, &executed, error);
     if (ok && qa_application_should_stop(frontend->application)) {
