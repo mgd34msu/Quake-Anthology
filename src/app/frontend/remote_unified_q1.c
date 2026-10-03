@@ -948,7 +948,7 @@ bool frontend_unified_q1_world_blend(frontend_unified_q1 *o,const qa_scene_world
     bool ok=true;
     if(ok && !view->mirror && o->groups && (!world->legacy_policy.present || world->legacy_policy.polyblend)){
         const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(o->replica);qa_ui_preferences preferences;
-        ok=qa_ui_preferences_read(domain->cvars,domain->physical_seat,&preferences,e);
+        ok=qa_ui_preferences_read(qa_application_cvars(domain->application),domain->physical_seat,&preferences,e);
         if(ok){if(preferences.reduced_flashes)overlay=(qa_scene_vec4){0};
             float bonus=(float)fmin(50,fmax(0,(o->bonus_until-world->seconds)*100))/255;
             if(bonus>0){float alpha=overlay.w+(1-overlay.w)*bonus,weight=bonus/alpha;
