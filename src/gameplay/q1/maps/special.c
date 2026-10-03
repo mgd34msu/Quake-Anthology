@@ -37,8 +37,8 @@ static bool ambient(qa_q1_game *g, q1_actor *entity, qa_vec3 origin, qa_error *e
         if (!qa_world_body_read(g->services.world, id, &body, error)) return false;
         entity = q1_entity(g, id);
         if (!entity || !entity->map) return true;
-        float volume = entity->map->volume ? entity->map->volume : .5f;
-        float attenuation = entity->delay ? entity->delay : 3;
+        float volume = entity->map->volume != 0 ? entity->map->volume : .5f;
+        float attenuation = entity->delay != 0 ? entity->delay : 3;
         if (!g->maps->options.ambient(g->maps->options.context, body.origin, sound, volume,
                                     attenuation, error))
             return false;
@@ -206,14 +206,14 @@ bool q1_map_special_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         state->use_enabled = true;
         body.angles = qa_v3(0, 0, 0);
         if (!q1_classnamed(g, entity->id, "trap_spikeshooter")) {
-            entity->wait = entity->wait ? entity->wait : 1;
+            entity->wait = entity->wait != 0 ? entity->wait : 1;
             if (!q1_map_schedule(g, entity, state->initial_think + entity->wait,
                                  Q1_MAP_SHOOTER_FIRE, error))
                 return false;
         }
         break;
     case Q1_MAP_FIREBALL_SOURCE:
-        entity->speed = entity->speed ? entity->speed : 1000;
+        entity->speed = entity->speed != 0 ? entity->speed : 1000;
         return qa_builtin_resource(&g->services, "fireball", &entity->classname, error) &&
                q1_map_schedule(g, entity, q1_random(g) * 5, Q1_MAP_FIREBALL_FLY, error);
     case Q1_MAP_BUBBLES:

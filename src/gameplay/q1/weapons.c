@@ -340,7 +340,7 @@ static bool reset_inventory(qa_q1_game_operation *operation, qa_actor_id actor,
     q1_player *player = q1_player_get(g, actor);
     if (!inventory_current(operation, actor, player, error))
         return false;
-    qa_inventory_entry entries[QA_Q1_WEAPON_COUNT + QA_Q1_AMMO_COUNT];
+    qa_inventory_entry entries[(size_t)QA_Q1_WEAPON_COUNT + (size_t)QA_Q1_AMMO_COUNT];
     size_t weapons = extensions ? QA_Q1_WEAPON_COUNT : QA_Q1_LIGHTNING + 1;
     size_t ammo = extensions ? QA_Q1_AMMO_COUNT : QA_Q1_CELLS + 1;
     for (size_t i = 0; i < weapons; ++i)
@@ -886,10 +886,10 @@ static bool qw_bullets(qa_q1_game *g,qa_actor_id actor,qa_vec3 source,qa_vec3 di
         } else g->qw_puff_count+=1;
     }
     if (!qw_apply_multi_damage(g,actor,weapon,error)) return false;
-    if (g->qw_puff_count && !qw_multi_impact(g,actor,g->qw_puff_origin,g->qw_puff_count,2,error)) return false;
+    if (g->qw_puff_count != 0 && !qw_multi_impact(g,actor,g->qw_puff_origin,g->qw_puff_count,2,error)) return false;
     /* Multi_Finish deliberately routes blood through puff_org, even when
      * blood_org is a different payload point. */
-    return !g->qw_blood_count || qw_multi_impact(g,actor,g->qw_blood_origin,g->qw_blood_count,1,error);
+    return g->qw_blood_count == 0 || qw_multi_impact(g,actor,g->qw_blood_origin,g->qw_blood_count,1,error);
 }
 bool q1_bullets(qa_q1_game *g, qa_actor_id actor, qa_vec3 direction, qa_vec3 angles, unsigned count,
                 float spread_x, float spread_y, qa_q1_weapon weapon, qa_error *error) {
@@ -1081,7 +1081,7 @@ static bool weapon_observe(qa_q1_game *g, qa_actor_id actor, qa_q1_weapon weapon
     view.ready_at = player->weapon == weapon && player->continuous
                         ? player->next_weapon_frame : player->attack_finished;
     view.attack_interval = parameters.interval;
-    if (!view.fire_interval)
+    if (view.fire_interval == 0)
         view.fire_interval = parameters.interval;
     if (view.thrown) {
         const qa_q1_weapon_view *launch=q1_weapon_shape(QA_Q1_GRENADE);

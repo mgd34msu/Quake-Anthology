@@ -110,7 +110,7 @@ bool q1_save_wire(q1_save_io *io, qa_q1_game *g) {
             Q1_SAVE(io, float, wire->edicts[slot].freetime);
             if (!isfinite(wire->edicts[slot].freetime) || wire->edicts[slot].freetime < 0 ||
                 (slot && slot <= g->options.max_clients &&
-                    (wire->edicts[slot].free || wire->edicts[slot].freetime)))
+                    (wire->edicts[slot].free || wire->edicts[slot].freetime != 0)))
                 return q1_save_fail(io, "Invalid Q1 physical Source edict free continuation");
         }
     if (!table(io, &wire->models) || !table(io, &wire->sounds)) return false;
@@ -170,7 +170,7 @@ bool q1_save_wire(q1_save_io *io, qa_q1_game *g) {
         Q1_SAVE(io, float, row->frags);
         Q1_SAVE(io, u8, row->colors);
         if (row->present != (row->actor.registry != 0) ||
-            (!row->present && (row->name || row->frags || row->colors)) ||
+            (!row->present && (row->name || row->frags != 0 || row->colors)) ||
             (row->present && (!row->name || !qa_strings_cstr(qa_session_strings(g->services.session), row->name))))
             return q1_save_fail(io, "Invalid retained Q1 source client observation");
     }

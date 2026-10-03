@@ -24,7 +24,7 @@ enum {
 static bool mg3_special(const q1_pickup *item) {
     return item->kind >= Q1_ITEM_MG3_SHARD || item->weapon == QA_Q1_MG3_LASER ||
            item->weapon == QA_Q1_MG3_MJOLNIR ||
-           (item->kind == Q1_ITEM_POWER && item->count == QA_Q1_LAVA_SUIT);
+           (item->kind == Q1_ITEM_POWER && item->count == (float)QA_Q1_LAVA_SUIT);
 }
 
 int q1_weapon_rank(const qa_q1_game *g, qa_q1_weapon weapon) {
@@ -1520,7 +1520,7 @@ static bool pickup_preview(qa_q1_game *g, qa_actor_id actor, const q1_pickup *it
         *accepted = *utility > 0;
         return true;
     case Q1_ITEM_POWER: {
-        if (!isfinite(item->count) || item->count < 0 || item->count >= QA_Q1_POWER_COUNT ||
+        if (!isfinite(item->count) || item->count < 0 || item->count >= (float)QA_Q1_POWER_COUNT ||
             floorf(item->count) != item->count) {
             qa_error_set(error, QA_ERROR_FORMAT, actor.slot, "Invalid observed Q1 power identity");
             return false;

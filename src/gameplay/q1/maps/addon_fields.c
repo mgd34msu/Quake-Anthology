@@ -81,10 +81,10 @@ bool q1_map_addon_field_spawn(qa_q1_game *g, q1_actor *e, qa_error *error) {
         if (!e)
             return true;
         qa_vec3 direction = e->map->movedir;
-        if (!qa_vec_dot(body.angles, body.angles) && !qa_vec_dot(direction, direction)) {
+        if (qa_vec_dot(body.angles, body.angles) == 0 && qa_vec_dot(direction, direction) == 0) {
             e->map->movedir = qa_v3(1, 0, 0);
             e->map->has_movedir = true;
-        } else if (qa_vec_dot(direction, direction)) {
+        } else if (qa_vec_dot(direction, direction) != 0) {
             e->map->movedir = qa_vec_normalize(direction);
             e->map->has_movedir = true;
         }
@@ -97,14 +97,14 @@ bool q1_map_addon_field_spawn(qa_q1_game *g, q1_actor *e, qa_error *error) {
     e->map->touch_enabled = true;
     e->map->use_enabled = kind != Q1_MAP_SHELTER;
     if (kind == Q1_MAP_HURT) {
-        e->damage = e->damage ? e->damage : 5;
-        e->wait = e->wait ? e->wait : 1;
+        e->damage = e->damage != 0 ? e->damage : 5;
+        e->wait = e->wait != 0 ? e->wait : 1;
         if (e->spawnflags & 1)
             e->map->field_state = 1;
         if (!qa_builtin_resource(&g->services, "trigger_hurt", &e->map->netname, error))
             return false;
     } else if (kind == Q1_MAP_PUSH) {
-        e->speed = e->speed ? e->speed : 1000;
+        e->speed = e->speed != 0 ? e->speed : 1000;
         if (e->spawnflags & 4)
             e->physics.solid = QA_PHYSICS_NOT_SOLID;
         if (!qa_builtin_resource(&g->services, "trigger_push", &e->map->netname, error))

@@ -466,17 +466,17 @@ bool q1_map_hip_hazard_spawn(qa_q1_game *g, q1_actor *e, qa_error *error) {
         /* fall through */
     case Q1_MAP_HIP_LIGHTNING_TRIGGERED:
     case Q1_MAP_HIP_LIGHTNING_SWITCHED:
-        e->wait = e->wait ? e->wait : 1;
-        e->damage = e->damage ? e->damage : 30;
-        s->duration = s->duration ? s->duration : .1f;
+        e->wait = e->wait != 0 ? e->wait : 1;
+        e->damage = e->damage != 0 ? e->damage : 30;
+        s->duration = s->duration != 0 ? s->duration : .1f;
         return q1_map_schedule(g, e, .25, Q1_MAP_HIP_LIGHTNING_FIRST, error);
     case Q1_MAP_TESLA:
     case Q1_MAP_GODS_WRATH:
-        e->wait = e->wait ? e->wait : 2;
-        e->damage = e->damage ? e->damage : 2.0f + 5.0f * (float)g->options.skill;
-        s->duration = s->duration ? s->duration : -1;
-        s->distance = s->distance ? s->distance : 600;
-        e->delay = e->delay ? e->delay : s->kind == Q1_MAP_GODS_WRATH ? 5 : -1;
+        e->wait = e->wait != 0 ? e->wait : 2;
+        e->damage = e->damage != 0 ? e->damage : 2.0f + 5.0f * (float)g->options.skill;
+        s->duration = s->duration != 0 ? s->duration : -1;
+        s->distance = s->distance != 0 ? s->distance : 600;
+        e->delay = e->delay != 0 ? e->delay : s->kind == Q1_MAP_GODS_WRATH ? 5 : -1;
         float initial_delay = q1_random(g);
         s->pending.hazard.switch_due = 0;
         if (s->kind == Q1_MAP_GODS_WRATH) {
@@ -489,9 +489,9 @@ bool q1_map_hip_hazard_spawn(qa_q1_game *g, q1_actor *e, qa_error *error) {
         s->use_enabled = false;
         s->touch_enabled = true;
         e->physics.solid = QA_PHYSICS_TRIGGER;
-        e->damage = e->damage ? e->damage : 10000;
-        e->speed = e->speed ? e->speed : 210;
-        s->distance = s->distance ? s->distance : 600;
+        e->damage = e->damage != 0 ? e->damage : 10000;
+        e->speed = e->speed != 0 ? e->speed : 210;
+        s->distance = s->distance != 0 ? s->distance : 600;
         body.bounds = (qa_bounds){{-16, -16, -16}, {16, 16, 16}};
         if (!qa_world_body_write(g->services.world, id, &body, error))
             return false;

@@ -165,17 +165,17 @@ bool q1_map_addon_trigger_spawn(qa_q1_game *g, q1_actor *e, qa_error *error) {
     switch (kind) {
     case Q1_MAP_ADDON_COUNTER:
     case Q1_MAP_ADDON_SACRIFICE_COUNTER:
-        if (!e->count) e->count = 2;
-        if (!e->wait) e->wait = e->count;
+        if (e->count == 0) e->count = 2;
+        if (e->wait == 0) e->wait = e->count;
         return true;
     case Q1_MAP_ADDON_COUNTER_TIMED:
         e->wait = -1;
-        if (!e->count) e->count = 2;
-        if (!e->delay) e->delay = 2;
+        if (e->count == 0) e->count = 2;
+        if (e->delay == 0) e->delay = 2;
         e->map->counter_value = e->count;
         return true;
     case Q1_MAP_ADDON_REPEATER:
-        if (!e->wait) e->wait = 1;
+        if (e->wait == 0) e->wait = 1;
         return !(e->spawnflags & 1) || repeat(g, e, error);
     case Q1_MAP_ADDON_MULTITOUCH:
     case Q1_MAP_ADDON_CHECK_SACRIFICES:
@@ -197,7 +197,7 @@ bool q1_map_addon_trigger_spawn(qa_q1_game *g, q1_actor *e, qa_error *error) {
         e->map->use_enabled = false;
         return q1_map_schedule(g, e, .1, Q1_MAP_ADDON_TARGETS, error);
     case Q1_MAP_ADDON_RUNE_COUNTER:
-        if (!e->count) e->count = 2;
+        if (e->count == 0) e->count = 2;
         return true;
     case Q1_MAP_ADDON_KILL_MONSTER:
         return q1_map_text(g, e->target) && q1_map_text(g, e->targetname)
@@ -246,7 +246,7 @@ bool q1_map_addon_trigger_use(qa_q1_game *g, q1_actor *e, qa_actor_id activator,
         return q1_map_schedule(g, e, .1, Q1_MAP_ADDON_TARGETS, error);
     }
     case Q1_MAP_ADDON_RUNE_COUNTER:
-        return qa_q1_mg3_rune_count(*g->maps->options.server_flags) < e->count ||
+        return (float)qa_q1_mg3_rune_count(*g->maps->options.server_flags) < e->count ||
                targets(g, e, activator, error);
     case Q1_MAP_ADDON_BN_RELAY: {
         static const uint32_t bits[] = {QA_Q1_BLOODY_NIGHTMARE_ACTIVE,

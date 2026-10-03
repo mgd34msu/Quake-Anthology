@@ -264,13 +264,13 @@ bool q1_map_rotation_use(qa_q1_game *g, q1_actor *e, qa_error *error) {
         qa_body_state body;
         if (!qa_world_body_read(g->services.world, id, &body, error))
             return false;
-        return !rotation(g, id) || body.velocity.x || body.velocity.y || body.velocity.z ||
+        return !rotation(g, id) || body.velocity.x != 0 || body.velocity.y != 0 || body.velocity.z != 0 ||
                train_action(g, id, error);
     }
     if (e->map->kind == Q1_MAP_ROTATE_ENTITY) {
         e->frame = 1 - e->frame;
         if (r->phase == 0 && (e->spawnflags & 1)) {
-            if (e->speed) {
+            if (e->speed != 0) {
                 e->count = 1;
                 r->phase = 3;
             } else {
@@ -280,7 +280,7 @@ bool q1_map_rotation_use(qa_q1_game *g, q1_actor *e, qa_error *error) {
         } else if (r->phase == 1) {
             r->last_time = g->time;
             e->count = 0;
-            r->phase = e->speed ? 2 : 0;
+            r->phase = e->speed != 0 ? 2 : 0;
             return q1_map_schedule(g, e, .02, Q1_MAP_ROTATE_TICK, error);
         } else if (r->phase == 2) {
             if (e->spawnflags & 1)
@@ -317,7 +317,7 @@ bool q1_map_rotation_touch(qa_q1_game *g, q1_actor *e, qa_actor_id other, bool b
     q1_actor *owner = rotation(g, owner_id);
     if (!owner || g->time < owner->map->cooldown)
         return true;
-    float damage = e->damage ? e->damage : owner->damage;
+    float damage = e->damage != 0 ? e->damage : owner->damage;
     if (blocked) {
         owner->map->cooldown = g->time + .5;
         if (owner->map->kind == Q1_MAP_ROTATE_DOOR && !reverse_group(g, owner_id, error))
@@ -325,10 +325,10 @@ bool q1_map_rotation_touch(qa_q1_game *g, q1_actor *e, qa_actor_id other, bool b
     }
     if (!q1_alive(g, id) || !q1_alive(g, owner_id))
         return true;
-    if (damage && !q1_damage(g, other, id, owner_id, damage, QA_Q1_WEAPON_COUNT, error))
+    if (damage != 0 && !q1_damage(g, other, id, owner_id, damage, QA_Q1_WEAPON_COUNT, error))
         return false;
     owner = rotation(g, owner_id);
-    if (damage && owner)
+    if (damage != 0 && owner)
         owner->map->cooldown = g->time + .5;
     return true;
 }
@@ -457,7 +457,7 @@ bool q1_map_rotation_spawn(qa_q1_game *g, q1_actor *e, qa_error *error) {
     q1_map_action action = Q1_MAP_IDLE;
     double delay = .1;
     if (kind == Q1_MAP_ROTATE_ENTITY) {
-        if (e->speed)
+        if (e->speed != 0)
             s->counter_value = 1 / e->speed;
         if (!isfinite(s->counter_value))
             return q1_map_fail(error, "Hipnotic rotation acceleration is too small");
@@ -467,8 +467,8 @@ bool q1_map_rotation_spawn(qa_q1_game *g, q1_actor *e, qa_error *error) {
             return q1_map_fail(error, "Hipnotic rotating door has no target");
         r->dest2 = body.angles;
         body.angles = qa_v3(0, 0, 0);
-        e->speed = e->speed ? e->speed : 2;
-        e->damage = e->damage ? fmaxf(0, e->damage) : 2;
+        e->speed = e->speed != 0 ? e->speed : 2;
+        e->damage = e->damage != 0 ? fmaxf(0, e->damage) : 2;
         r->phase = 4;
         s->use_enabled = true;
         s->sounds = s->sounds ? s->sounds : 1;
@@ -492,13 +492,13 @@ bool q1_map_rotation_spawn(qa_q1_game *g, q1_actor *e, qa_error *error) {
         qa_vec3 direction = q1_map_direction(body.angles);
         s->movedir = qa_v3(-direction.y, -direction.z, -direction.x);
         body.angles = qa_v3(0, 0, 0);
-        e->count = e->count ? e->count : 60;
+        e->count = e->count != 0 ? e->count : 60;
         s->counter_value = s->counter_value * e->count / 12;
         action = Q1_MAP_CLOCK_FIRST;
     } else if (kind == Q1_MAP_ROTATE_TRAIN) {
         if (!q1_map_text(g, e->target))
             return q1_map_fail(error, "Hipnotic rotating train has no target");
-        e->speed = e->speed ? e->speed : 100;
+        e->speed = e->speed != 0 ? e->speed : 100;
         e->physics.motion = QA_PHYSICS_STEP;
         s->use_enabled = true;
         const char *resources[] = {s->sounds == 1 ? "plats/train2.wav" : "misc/null.wav",

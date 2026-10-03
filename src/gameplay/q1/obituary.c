@@ -310,7 +310,7 @@ static bool pack_obituary(qa_q1_game *g, const qa_q1_obituary_input *input, floa
                     (classic ? roll > .4f : roll != 0) ? "$qc_suicide_bored" : "$qc_suicide_loaded";
             else if (!classic && roll < .5f)
                 key = "$qc_suicide_bored";
-            else if (input->teamplay && victim->team != input->victim_saved_team)
+            else if (input->teamplay != 0 && victim->team != input->victim_saved_team)
                 key = input->gamecfg & 16 ? "$qc_changed_teams" : "$qc_tried_change_teams";
             else
                 key = classic ? "$qc_suicide_bored" : "$qc_suicide_loaded";

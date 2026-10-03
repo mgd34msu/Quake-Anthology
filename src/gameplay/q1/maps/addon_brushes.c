@@ -277,10 +277,10 @@ bool q1_map_addon_brush_think(qa_q1_game *g, q1_actor *e, q1_map_action action,
         if (e->frame == INT32_MAX)
             return q1_map_fail(error,"Addon model animation exceeds native frame range");
         ++e->frame;
-        if (action == Q1_MAP_ADDON_MODEL_LOOP && e->frame == e->map->counter_value &&
+    if (action == Q1_MAP_ADDON_MODEL_LOOP && (float)e->frame == e->map->counter_value &&
             !model_first(e,error))
             return false;
-        return action == Q1_MAP_ADDON_MODEL_ONCE && e->frame >= e->map->counter_value
+    return action == Q1_MAP_ADDON_MODEL_ONCE && (float)e->frame >= e->map->counter_value
                    ? true : q1_map_schedule(g,e,.1,action,error);
     }
     if (action == Q1_MAP_ADDON_TOSS_CASCADE) {
@@ -455,8 +455,8 @@ bool q1_map_addon_brush_spawn(qa_q1_game *g, q1_actor *e, qa_error *error) {
     case Q1_MAP_ADDON_BOB:
         if (qa_vec_length(e->map->dest) == 0)
             e->map->dest = qa_v3(0,0,64);
-        if (!e->wait) e->wait = 10;
-        if (!e->damage) e->damage = 1;
+        if (e->wait == 0) e->wait = 10;
+        if (e->damage == 0) e->damage = 1;
         e->physics.angular_velocity = qa_v3(360/e->wait,0,0);
         e->count = 360*e->delay;
         if (!qa_vec_finite(e->physics.angular_velocity) || !isfinite(e->count))
@@ -472,7 +472,7 @@ bool q1_map_addon_brush_spawn(qa_q1_game *g, q1_actor *e, qa_error *error) {
         if (qa_vec_length(e->map->dest) != 0)
             e->map->movedir = qa_vec_add(e->map->movedir,random_vector(g,e->map->dest));
         if (e->spawnflags & 1) {
-            if (!e->speed) e->speed = 200;
+            if (e->speed == 0) e->speed = 200;
             if (!qa_builtin_resource(&g->services,"_toss_origin",&e->map->netname,error))
                 return false;
         }
@@ -486,15 +486,15 @@ bool q1_map_addon_brush_spawn(qa_q1_game *g, q1_actor *e, qa_error *error) {
         float length = qa_vec_length(delta);
         if (length == 0)
             return q1_map_fail(error,"Addon shatter origin equals its destination");
-        e->speed = (e->speed ? e->speed : 200)*10000/(length*length);
-        if (!e->wait) e->wait = 10;
+        e->speed = (e->speed != 0 ? e->speed : 200)*10000/(length*length);
+        if (e->wait == 0) e->wait = 10;
         e->map->movedir = qa_vec_add(qa_vec_scale(qa_vec_normalize(delta),e->speed),
                                      random_vector(g,qa_v3(e->wait,e->wait,e->wait)));
         break;
     }
     case Q1_MAP_ADDON_DEBRIS:
-        if (!e->delay) e->delay = 1.5f;
-        if (!e->wait) e->wait = .1f;
+        if (e->delay == 0) e->delay = 1.5f;
+        if (e->wait == 0) e->wait = .1f;
         e->map->movedir = qa_v3(0,0,200);
         e->alpha = 1;
         break;
@@ -518,8 +518,8 @@ bool q1_map_addon_brush_spawn(qa_q1_game *g, q1_actor *e, qa_error *error) {
             return true;
         break;
     case Q1_MAP_ADDON_HURT:
-        if (!e->damage) e->damage = 10;
-        if (!e->wait) e->wait = .2f;
+        if (e->damage == 0) e->damage = 10;
+        if (e->wait == 0) e->wait = .2f;
         e->map->pending.brush.phase = (e->spawnflags & 1) != 0;
         e->map->touch_enabled = true;
         break;
@@ -533,7 +533,7 @@ bool q1_map_addon_brush_spawn(qa_q1_game *g, q1_actor *e, qa_error *error) {
         e->map->use_enabled = (e->spawnflags & 7) != 0;
         if (!e->spawnflags)
             break;
-        if (e->spawnflags && (e->map->counter_value < e->frame || !e->targetname))
+        if (e->spawnflags && (e->map->counter_value < (float)e->frame || !e->targetname))
             return q1_map_fail(error,"Addon misc_model requires a valid range and targetname");
         e->count = (float)e->frame;
         if (e->count >= (double)INT32_MAX+1 || e->count < (double)INT32_MIN)

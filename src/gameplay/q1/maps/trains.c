@@ -25,8 +25,8 @@ bool q1_map_train_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         return q1_map_fail(error, "Q1 train has no target");
     if (!teleport && !entity->map->has_inline_model)
         return q1_map_fail(error, "Q1 train has no brush model");
-    entity->speed = entity->speed ? entity->speed : 100;
-    entity->damage = entity->damage ? entity->damage : 2;
+    entity->speed = entity->speed != 0 ? entity->speed : 100;
+    entity->damage = entity->damage != 0 ? entity->damage : 2;
     entity->physics.motion = QA_PHYSICS_PUSH;
     entity->physics.solid = teleport ? QA_PHYSICS_NOT_SOLID : QA_PHYSICS_BRUSH;
     entity->map->use_enabled = true;
@@ -117,7 +117,7 @@ bool q1_map_train_use(qa_q1_game *g, q1_actor *entity, qa_actor_id activator, qa
         if (!qa_world_body_read(g->services.world, id, &body, error))
             return false;
         entity = train(g, id);
-        if (!entity || body.velocity.x || body.velocity.y || body.velocity.z)
+        if (!entity || body.velocity.x != 0 || body.velocity.y != 0 || body.velocity.z != 0)
             return true;
         entity->activator = activator;
     }
@@ -127,12 +127,12 @@ bool q1_map_train_think(qa_q1_game *g, q1_actor *entity, q1_map_action action, q
     qa_actor_id id = entity->id;
     bool hipnotic = entity->map->kind == Q1_MAP_TRAIN2;
     if (action == Q1_MAP_TRAIN_WAIT) {
-        if (entity->wait && !train_sound(g, entity, false, error))
+        if (entity->wait != 0 && !train_sound(g, entity, false, error))
             return false;
         entity = train(g, id);
         if (!entity || (hipnotic && entity->wait == -1))
             return true;
-        double delay = entity->wait ? entity->wait : .1;
+        double delay = entity->wait != 0 ? entity->wait : .1;
         if (hipnotic)
             entity->wait = 0;
         return q1_map_schedule(g, entity, delay, Q1_MAP_TRAIN_NEXT, error);
@@ -174,7 +174,7 @@ bool q1_map_train_think(qa_q1_game *g, q1_actor *entity, q1_map_action action, q
     }
     if (hipnotic)
         entity->map->pending.mover.goal = node_id;
-    q1_map_action done = hipnotic && !entity->wait ? Q1_MAP_TRAIN_NEXT : Q1_MAP_TRAIN_WAIT;
+    q1_map_action done = hipnotic && entity->wait == 0 ? Q1_MAP_TRAIN_NEXT : Q1_MAP_TRAIN_WAIT;
     qa_body_state node, body;
     if (!qa_world_body_read(g->services.world, node_id, &node, error))
         return false;

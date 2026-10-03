@@ -414,7 +414,7 @@ bool q1_drop_touch(qa_q1_game *g, q1_actor *item, qa_actor_id actor, qa_error *e
     if (ammo) {
         for (unsigned i = 0; i < 4; ++i) {
             double given;
-            if (item->state.pickup.ammo[i] &&
+            if (item->state.pickup.ammo[i] != 0 &&
                 !qa_inventory_give(g->services.inventory, actor, g->ammo[i],
                                    item->state.pickup.ammo[i], &given, error))
                 return false;

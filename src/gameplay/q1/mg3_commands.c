@@ -153,7 +153,7 @@ bool q1_mg3_impulse(qa_q1_game *g, q1_player *player, uint8_t impulse, bool *han
                 (g->services.cvar && !g->services.cvar(q1_cvar_context(g), name, &enabled, error)))
                 return false;
             if (!current(g, player->id, player, error)) return false;
-            if (!enabled)
+            if (enabled == 0)
                 return true;
         }
         if (!restock(g, player, error))

@@ -4,9 +4,9 @@ static bool addon(const qa_q1_game *g) {
     return g->options.program >= QA_Q1_DOPA && g->options.program <= QA_Q1_MG3;
 }
 qa_vec3 q1_map_direction(qa_vec3 angles) {
-    if (!angles.x && !angles.z && angles.y == -1)
+    if (angles.x == 0 && angles.z == 0 && angles.y == -1)
         return qa_v3(0, 0, 1);
-    if (!angles.x && !angles.z && angles.y == -2)
+    if (angles.x == 0 && angles.z == 0 && angles.y == -2)
         return qa_v3(0, 0, -1);
     qa_vec3 forward;
     qa_builtin_angle_vectors(angles, &forward, NULL, NULL);
@@ -24,7 +24,7 @@ bool q1_map_trigger_init(qa_q1_game *g, q1_actor *entity, bool zero_direction, q
     bool authored =
         addon(g) && (state->has_movedir || qa_vec_dot(state->movedir, state->movedir) != 0);
     if (!authored)
-        state->movedir = zero_direction && !body.angles.x && !body.angles.y && !body.angles.z
+        state->movedir = zero_direction && body.angles.x == 0 && body.angles.y == 0 && body.angles.z == 0
                              ? qa_v3(0, 0, 0)
                              : q1_map_direction(body.angles);
     body.angles = qa_v3(0, 0, 0);
@@ -52,7 +52,7 @@ static bool remove_addon_trigger(qa_q1_game *g, q1_actor *entity) {
 static bool multi_enable(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     qa_actor_id id = entity->id;
     q1_map_state *state = entity->map;
-    if (!entity->wait)
+    if (entity->wait == 0)
         entity->wait = .2f;
     if (!q1_map_trigger_init(g, entity, true, error))
         return false;
@@ -107,7 +107,7 @@ bool q1_map_trigger_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     }
     case Q1_MAP_COUNTER:
         entity->model = QA_STRING_NONE;
-        if (!entity->count)
+        if (entity->count == 0)
             entity->count = 2;
         state->use_enabled = true;
         return true;
@@ -146,21 +146,21 @@ bool q1_map_trigger_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         qa_body_state body;
         if (!qa_world_body_read(g->services.world, entity->id, &body, error))
             return false;
-        if (!body.angles.y) {
+        if (body.angles.y == 0) {
             body.angles = qa_v3(0, 360, 0);
             if (!qa_world_body_write(g->services.world, entity->id, &body, error))
                 return false;
         }
-        if (!entity->speed)
+        if (entity->speed == 0)
             entity->speed = 200;
         break;
     }
     case Q1_MAP_PUSH:
-        if (!entity->speed)
+        if (entity->speed == 0)
             entity->speed = 1000;
         break;
     case Q1_MAP_HURT:
-        if (!entity->damage)
+        if (entity->damage == 0)
             entity->damage = 5;
         break;
     case Q1_MAP_SETSKILL:
@@ -381,7 +381,7 @@ static bool changelevel(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_e
     if ((entity->spawnflags & 1u) && !g->options.deathmatch &&
         (!addon(g) || !q1_map_text(g, entity->map->endtext)))
         return qa_q1_level_travel(
-            options->level, same_level ? options->current_map : entity->map->map, other, error);
+            options->level, same_level != 0 ? options->current_map : entity->map->map, other, error);
     entity->map->touch_enabled = false;
     entity->activator = other;
     return q1_map_schedule(g, entity, .1, Q1_MAP_BEGIN_LEVEL, error);
@@ -531,7 +531,7 @@ bool q1_map_trigger_touch(qa_q1_game *g, q1_actor *entity, const qa_touch_contac
         body.velocity.x = state->movedir.x * entity->speed;
         body.velocity.y = state->movedir.y * entity->speed;
         if (body.ground.registry) {
-            body.velocity.z = state->height ? state->height : 200;
+            body.velocity.z = state->height != 0 ? state->height : 200;
             props.flags &= ~(uint32_t)QA_PHYSICS_ONGROUND;
         }
         body.ground = (qa_actor_id){0};

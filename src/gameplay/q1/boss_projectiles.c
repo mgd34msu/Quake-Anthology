@@ -228,7 +228,7 @@ bool q1_boss_sphere_think(qa_q1_game *g, q1_actor *e, qa_error *error) {
             !q1_schedule(g, e, e->delay, Q1_THINK_BOSS_CHILD, error))
             return false;
     }
-    if (++e->count > state->maximum) {
+    if (++e->count > (float)state->maximum) {
         q1_actor *owner = q1_entity(g, e->owner);
         if (!chunk && owner && owner->kind == Q1_MONSTER)
             owner->state.monster.source.boss.immune = false;

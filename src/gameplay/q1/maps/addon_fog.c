@@ -96,7 +96,7 @@ bool q1_map_addon_fog_spawn(qa_q1_game *g, q1_actor *e, qa_error *error) {
         return q1_map_fail(error, "Invalid style for trigger_fog_transition");
     qa_actor_id id = e->id;
     if (!transition)
-        e->delay = e->delay ? e->delay : .5f;
+        e->delay = e->delay != 0 ? e->delay : .5f;
     if (!q1_map_trigger_init(g, e, true, error))
         return false;
     e = fog_actor(g, id);
@@ -157,7 +157,7 @@ bool q1_map_addon_fog_activate(qa_q1_game *g, q1_actor *e, qa_actor_id player,
     float delay = e->delay;
     fog_value value;
     if (!fog_info(g, name, &value) ||
-        (!value.density && !qa_vec_dot(value.color, value.color) && !(value.flags & 1u)))
+        (value.density == 0 && qa_vec_dot(value.color, value.color) == 0 && !(value.flags & 1u)))
         return true;
     return set_fog(g, id, player, value, delay, error);
 }

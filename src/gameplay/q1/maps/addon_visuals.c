@@ -152,7 +152,7 @@ static bool rope_tick(qa_q1_game *g, q1_actor *e, qa_error *error) {
     int32_t models = segments / 4;
     if (models > 32)
         models = 32;
-    while (e->count > models) {
+    while (e->count > (float)models) {
         qa_actor_id first_id = e->map->pending.addon.chain;
         q1_actor *first = visual(g, first_id);
         qa_actor_id following = first ? first->map->pending.addon.chain : (qa_actor_id){0};
@@ -164,7 +164,7 @@ static bool rope_tick(qa_q1_game *g, q1_actor *e, qa_error *error) {
         e->map->pending.addon.chain = following;
         --e->count;
     }
-    while (e->count < models) {
+    while (e->count < (float)models) {
         bool published;
         if (!rope_segment(g, id, &published, error))
             return false;
@@ -341,7 +341,7 @@ bool q1_map_addon_visual_spawn(qa_q1_game *g, q1_actor *e, qa_error *error) {
     if (kind == Q1_MAP_DYNAMIC_LIGHT)
         return !(g->options.coop && (e->spawnflags & 1)) || q1_remove(g, e, error);
     if (kind == Q1_MAP_LIGHT_RAMP) {
-        e->delay = 1 / (e->delay ? e->delay : 1);
+        e->delay = 1 / (e->delay != 0 ? e->delay : 1);
         if (!isfinite(e->delay))
             return q1_map_fail(error, "Q1 light ramp period is too small");
         return q1_map_schedule(g, e, .1, Q1_MAP_LIGHT_RAMP_INIT, error);

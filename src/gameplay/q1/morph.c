@@ -11,7 +11,7 @@ static bool setup(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     entity->physics.solid = QA_PHYSICS_BOX;
     entity->physics.flags |= QA_PHYSICS_MONSTER;
     entity->physics.ideal_yaw = body.angles.y;
-    if (!entity->physics.yaw_speed)
+    if (entity->physics.yaw_speed == 0)
         entity->physics.yaw_speed = 20;
     entity->frame = q1_frames[q1_frame_index("morph_wake1")].frame;
     entity->skin = 2;

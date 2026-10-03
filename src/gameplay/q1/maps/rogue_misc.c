@@ -15,7 +15,7 @@ bool q1_map_rogue_misc_spawn(qa_q1_game *g, q1_actor *e, qa_error *error) {
     case Q1_MAP_ROGUE_RUBBLE_SOURCE:
         if (!q1_map_text(g, e->target))
             return q1_map_fail(error, "rubble_generator has no target");
-        e->delay = e->delay ? e->delay : 5;
+        e->delay = e->delay != 0 ? e->delay : 5;
         e->physics.solid = QA_PHYSICS_NOT_SOLID;
         e->map->use_enabled = true;
         return !(e->spawnflags & 2) || q1_map_rogue_misc_use(g, e, error);
@@ -26,7 +26,7 @@ bool q1_map_rogue_misc_spawn(qa_q1_game *g, q1_actor *e, qa_error *error) {
         if (!e)
             return true;
         e->max_health = q1_health(g, id);
-        if (!e->max_health)
+        if (e->max_health == 0)
             e->max_health = 20;
         float health = e->max_health;
         if (!qa_combat_set_health(g->services.combat, id, health, error))

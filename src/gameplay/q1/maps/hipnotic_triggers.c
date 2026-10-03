@@ -110,7 +110,7 @@ bool q1_map_hip_trigger_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error) 
     qa_actor_id id = entity->id;
     q1_map_kind kind = entity->map->kind;
     if (kind == Q1_MAP_HIP_COUNTER) {
-        entity->wait = entity->wait ? entity->wait : 1;
+        entity->wait = entity->wait != 0 ? entity->wait : 1;
         entity->count = floorf(entity->count);
         if (entity->count <= 0)
             entity->count = 10;
@@ -153,7 +153,7 @@ bool q1_map_hip_trigger_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error) 
         else {
             if (entity->spawnflags & 2)
                 entity->model = QA_STRING_NONE;
-            if (!entity->max_health)
+            if (entity->max_health == 0)
                 entity->max_health = 60;
             float health = entity->max_health;
             if (!qa_combat_set_health(g->services.combat, id, health, error))
@@ -177,9 +177,9 @@ bool q1_map_hip_trigger_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error) 
             entity->map->gravity =
                 entity->map->gravity == 0 ? -1 : (entity->map->gravity - 1) / 100;
         else if (kind == Q1_MAP_WATERFALL) {
-            entity->count = entity->count ? entity->count : 100;
+            entity->count = entity->count != 0 ? entity->count : 100;
             entity->map->movedir =
-                qa_vec_scale(entity->map->movedir, entity->speed ? entity->speed : 50);
+                qa_vec_scale(entity->map->movedir, entity->speed != 0 ? entity->speed : 50);
         }
     }
     entity = trigger(g, id);

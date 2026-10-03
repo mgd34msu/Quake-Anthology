@@ -168,7 +168,7 @@ static bool lightning_damage(qa_q1_game *g, qa_actor_id id, qa_vec3 start, qa_ve
         if (!effect(g, id))
             return true;
         if (damageable && q1_alive(g, trace.actor)) {
-            if (!isfinite(damage * 4) || damage * 4 < INT32_MIN || damage * 4 >= INT32_MAX)
+            if (!isfinite(damage * 4) || damage * 4 < (float)INT32_MIN || damage * 4 >= (float)INT32_MAX)
                 return q1_map_fail(error, "Q1 addon lightning particle count exceeds native range");
             if (!particles(g, id, trace.end, qa_v3(0, 0, 100), 225, (int32_t)(damage * 4), error))
                 return false;
@@ -217,7 +217,7 @@ static bool lightning(qa_q1_game *g, q1_actor *e, qa_actor_id activator, qa_erro
                                   .origin = start, .end = trace.end,
                                   .code = style == 1 ? 1 : style == 2 ? 2 : 3};
         ok = emit(g, &event, "lightning", error);
-        if (ok && damage && effect(g, id))
+        if (ok && damage != 0 && effect(g, id))
             ok = lightning_damage(g, id, start, trace.end, damage, error);
         qa_authored_target fields;
         if (!ok || !effect(g, id) || !q1_alive(g, target) || (flags & 4) ||
@@ -324,8 +324,8 @@ bool q1_map_addon_effect_spawn(qa_q1_game *g, q1_actor *e, qa_error *error) {
         return q1_remove(g, e, error);
     e->map->use_enabled = true;
     if (kind == Q1_MAP_ADDON_SHAKE) {
-        e->wait = e->wait ? e->wait : 2;
-        e->damage = e->damage ? e->damage : 3;
+        e->wait = e->wait != 0 ? e->wait : 2;
+        e->damage = e->damage != 0 ? e->damage : 3;
         return qa_builtin_resource(&g->services, "misc/quake.wav", &e->map->noise[0], error) &&
                qa_builtin_resource(&g->services, "misc/quakeend.wav", &e->map->noise[1], error);
     }
@@ -335,25 +335,25 @@ bool q1_map_addon_effect_spawn(qa_q1_game *g, q1_actor *e, qa_error *error) {
         if (!q1_map_text(g, e->map->noise[0]) &&
             !qa_builtin_resource(&g->services, "misc/power.wav", &e->map->noise[0], error))
             return false;
-        e->map->volume = e->map->volume ? e->map->volume : 1;
+        e->map->volume = e->map->volume != 0 ? e->map->volume : 1;
         if (g->options.program == QA_Q1_MG3 && (e->spawnflags & 16))
             e->map->volume = 0;
         return true;
     }
     if (kind == Q1_MAP_ADDON_FADE_TRIGGER) {
-        e->delay = e->delay ? e->delay : 1;
+        e->delay = e->delay != 0 ? e->delay : 1;
         return true;
     }
     if (kind == Q1_MAP_ADDON_FREEZE || kind == Q1_MAP_ADDON_FADE_MANAGER)
         return true;
     e->map->use_enabled = kind == Q1_MAP_ADDON_FOUNTAIN && (e->spawnflags & 1);
-    e->delay = e->delay ? e->delay : .1f;
+    e->delay = e->delay != 0 ? e->delay : .1f;
     if (kind == Q1_MAP_ADDON_PARTICLE_TELE)
-        e->map->distance = e->map->distance ? e->map->distance : 64;
+        e->map->distance = e->map->distance != 0 ? e->map->distance : 64;
     else {
-        e->wait = e->wait ? e->wait : .05f;
+        e->wait = e->wait != 0 ? e->wait : .05f;
         bool tall = kind == Q1_MAP_ADDON_EMBERS_TALL;
-        if (!qa_vec_dot(e->map->particle_size, e->map->particle_size))
+        if (qa_vec_dot(e->map->particle_size, e->map->particle_size) == 0)
             e->map->particle_size = tall ? qa_v3(40, 40, 0) : qa_v3(128, 128, 0);
         qa_body_state body;
         if (!qa_world_body_read(g->services.world, id, &body, error))
@@ -361,7 +361,7 @@ bool q1_map_addon_effect_spawn(qa_q1_game *g, q1_actor *e, qa_error *error) {
         e = effect(g, id);
         if (!e)
             return true;
-        if (!qa_vec_dot(body.velocity, body.velocity)) {
+        if (qa_vec_dot(body.velocity, body.velocity) == 0) {
             body.velocity = qa_v3(1, 1, kind == Q1_MAP_ADDON_FOUNTAIN ? 6 : tall ? 2 : 1);
             if (!qa_world_body_write(g->services.world, id, &body, error))
                 return false;

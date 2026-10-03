@@ -66,7 +66,7 @@ bool q1_map_hip_misc_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error) {
             qa_strings_cstr(qa_session_strings(g->services.session), entity->classname);
         bool thunder = !strncmp(name, "random_thunder", 14);
         bool periodic = !strstr(name, "_triggered");
-        state->volume = state->volume ? state->volume : 1;
+        state->volume = state->volume != 0 ? state->volume : 1;
         entity->speed = entity->speed == 0 ? 1 : entity->speed == -1 ? 0 : entity->speed;
         if ((entity->spawnflags & 1) && !state->impulse)
             state->impulse = 7;
@@ -76,8 +76,8 @@ bool q1_map_hip_misc_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error) {
             return false;
         state->use_enabled = true;
         if (periodic) {
-            entity->wait = entity->wait ? entity->wait : 20;
-            entity->delay = entity->delay ? entity->delay : 2;
+            entity->wait = entity->wait != 0 ? entity->wait : 20;
+            entity->delay = entity->delay != 0 ? entity->delay : 2;
             if (!q1_map_schedule(g, entity, fmax(entity->delay, entity->wait * q1_random(g)),
                                  Q1_MAP_SOUND_REPEAT, error))
                 return false;
@@ -101,7 +101,7 @@ bool q1_map_hip_misc_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         for (size_t i = 0; i < sizeof(sounds) / sizeof(*sounds); ++i)
             if (q1_classnamed(g, entity->id, sounds[i].name))
                 return q1_map_ambient(g, body.origin, sounds[i].path,
-                                      state->volume ? state->volume : .5f, error);
+                                      state->volume != 0 ? state->volume : .5f, error);
         return q1_map_fail(error, "unknown Hipnotic ambient source");
     }
     case Q1_MAP_COMMAND:
@@ -111,16 +111,16 @@ bool q1_map_hip_misc_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error) {
             return q1_map_fail(error, "Q1 authored command has no command owner");
         return g->maps->options.server_command(g->maps->options.context, entity->message, error);
     case Q1_MAP_EXPLODER:
-        entity->damage = entity->damage ? fmaxf(0, entity->damage) : 120;
-        entity->speed = entity->speed ? entity->speed : 1;
+        entity->damage = entity->damage != 0 ? fmaxf(0, entity->damage) : 120;
+        entity->speed = entity->speed != 0 ? entity->speed : 1;
         if (q1_classnamed(g, entity->id, "func_multi_exploder")) {
             entity->model = QA_STRING_NONE;
             entity->physics.motion = QA_PHYSICS_STATIONARY;
-            entity->wait = entity->wait ? entity->wait : .25f;
-            state->duration = state->duration ? state->duration : 1;
-            state->volume = state->volume ? state->volume : .5f;
+            entity->wait = entity->wait != 0 ? entity->wait : .25f;
+            state->duration = state->duration != 0 ? state->duration : 1;
+            state->volume = state->volume != 0 ? state->volume : .5f;
         } else
-            state->volume = state->volume ? state->volume : 1;
+            state->volume = state->volume != 0 ? state->volume : 1;
         state->use_enabled = true;
         return true;
     case Q1_MAP_RUBBLE_SOURCE:
@@ -131,7 +131,7 @@ bool q1_map_hip_misc_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         state->use_enabled = true;
         return true;
     case Q1_MAP_EARTHQUAKE:
-        entity->damage = entity->damage ? entity->damage : .8f;
+        entity->damage = entity->damage != 0 ? entity->damage : .8f;
         g->maps->quake_active = false;
         state->use_enabled = true;
         return true;
@@ -262,7 +262,7 @@ bool q1_map_hip_misc_use(qa_q1_game *g, q1_actor *entity, qa_actor_id activator,
         return play_sound(g, entity, error);
     case Q1_MAP_EXPLODER: {
         entity->activator = activator;
-        if (!entity->delay)
+        if (entity->delay == 0)
             return explode(g, entity, error);
         float delay = entity->delay;
         entity->delay = 0;

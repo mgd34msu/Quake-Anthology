@@ -405,7 +405,7 @@ bool q1_dragon_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, q
         entity->aimed_damage = true;
         entity->physics.ideal_yaw = body.angles.y;
         entity->physics.flags |= QA_PHYSICS_FLYING | QA_PHYSICS_MONSTER;
-        if (!entity->physics.yaw_speed)
+        if (entity->physics.yaw_speed == 0)
             entity->physics.yaw_speed = 10;
         if (!qa_combat_set_traits(g->services.combat, entity->id, &combat, error) ||
             !qa_physics_walk_move(g->services.physics, entity->id, 0, 0, (float)g->elapsed, true,

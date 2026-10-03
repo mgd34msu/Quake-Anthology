@@ -95,8 +95,8 @@ bool q1_map_rogue_plat_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error) {
             entity->map->touch_enabled = true;
         state = entity->map;
         motion = &state->pending.mover;
-        entity->speed = entity->speed ? entity->speed : 40;
-        entity->wait = entity->wait ? entity->wait : 1;
+        entity->speed = entity->speed != 0 ? entity->speed : 40;
+        entity->wait = entity->wait != 0 ? entity->wait : 1;
         if (!qa_world_body_read(g->services.world, id, &body, error))
             return false;
         entity = platform(g, id);
@@ -111,9 +111,9 @@ bool q1_map_rogue_plat_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error) {
             qa_vec_scale(
                 state->movedir,
                 fabsf(qa_vec_dot(state->movedir, qa_vec_sub(body.bounds.maxs, body.bounds.mins))) -
-                    (state->lip ? state->lip : 4)));
+                    (state->lip != 0 ? state->lip : 4)));
     } else {
-        entity->speed = entity->speed ? entity->speed : 150;
+        entity->speed = entity->speed != 0 ? entity->speed : 150;
         state->sounds = state->sounds ? state->sounds : 2;
         if (state->sounds == 1 || state->sounds == 2) {
             if (!qa_builtin_resource(&g->services,
@@ -182,7 +182,7 @@ bool q1_map_rogue_plat_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error) {
             state = entity->map;
             motion = &state->pending.mover;
             motion->rogue = (q1_map_rogue_platform){0};
-            entity->delay = entity->delay ? entity->delay : 3;
+            entity->delay = entity->delay != 0 ? entity->delay : 3;
             if (negative) {
                 motion->position = Q1_MAP_BOTTOM;
                 entity->spawnflags = 16;

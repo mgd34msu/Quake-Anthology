@@ -64,7 +64,7 @@ bool q1_enable_combos(qa_q1_game *g, q1_player *player, qa_error *error) {
             return false;
         if (!q1_alive(g, player->id))
             return true;
-        if (given && !q1_message(g, player->id, combos[i].message, error))
+        if (given != 0 && !q1_message(g, player->id, combos[i].message, error))
             return false;
         if (!q1_alive(g, player->id))
             return true;
@@ -381,7 +381,7 @@ bool q1_sphere_pickup(qa_q1_game *g, q1_actor *item, qa_actor_id actor, bool *ta
     double given;
     if (!qa_inventory_give(g->services.inventory, actor, g->vengeance_item, 1, &given, error))
         return false;
-    if (!given)
+    if (given == 0)
         return true;
     q1_actor *sphere;
     if (!q1_create(g, "Vengeance", Q1_PROJECTILE, actor, &sphere, error) ||

@@ -351,9 +351,9 @@ bool q1_map_rogue_hazard_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error)
     qa_actor_id id = entity->id;
     q1_map_state *state = entity->map;
     if (state->kind == Q1_MAP_ROGUE_QUAKE) {
-        entity->delay = entity->delay ? entity->delay : 20;
-        entity->wait = entity->wait ? entity->wait : 60;
-        state->weapon = state->weapon ? state->weapon : 40;
+        entity->delay = entity->delay != 0 ? entity->delay : 20;
+        entity->wait = entity->wait != 0 ? entity->wait : 60;
+        state->weapon = state->weapon != 0 ? state->weapon : 40;
         if (q1_alive(g, g->maps->world_actor)) {
             g->maps->rogue_quake_active = false;
             g->maps->rogue_quake_intensity = state->weapon * .5f;
@@ -374,7 +374,7 @@ bool q1_map_rogue_hazard_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error)
     }
     if (state->kind == Q1_MAP_ROGUE_QUAKE_FIELD || state->kind == Q1_MAP_ROGUE_QUAKE_KILL) {
         if (state->kind == Q1_MAP_ROGUE_QUAKE_FIELD) {
-            state->weapon = (state->weapon ? state->weapon : 40) * .5f;
+            state->weapon = (state->weapon != 0 ? state->weapon : 40) * .5f;
             state->use_enabled = q1_map_text(g, entity->targetname);
             entity->delay = state->use_enabled ? 0 : 1;
         }
@@ -415,8 +415,8 @@ bool q1_map_rogue_hazard_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error)
         if (!entity)
             return true;
         state = entity->map;
-        entity->speed = entity->speed ? entity->speed : 10;
-        state->current_ammo = state->current_ammo ? state->current_ammo : 10;
+        entity->speed = entity->speed != 0 ? entity->speed : 10;
+        state->current_ammo = state->current_ammo != 0 ? state->current_ammo : 10;
         state->cooldown = g->time + q1_random(g) * 2;
         state->use_enabled = q1_map_text(g, entity->targetname);
         return state->use_enabled || q1_map_schedule(g, entity, .2, Q1_MAP_SAW_START, error);
@@ -424,9 +424,9 @@ bool q1_map_rogue_hazard_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error)
     entity->physics.motion = QA_PHYSICS_STATIONARY;
     entity->physics.solid = QA_PHYSICS_BOX;
     state->use_enabled = true;
-    state->current_ammo = state->current_ammo ? state->current_ammo : 25;
-    state->weapon = state->weapon ? state->weapon : .3f;
-    state->frags = state->frags ? state->frags : .3f;
+    state->current_ammo = state->current_ammo != 0 ? state->current_ammo : 25;
+    state->weapon = state->weapon != 0 ? state->weapon : .3f;
+    state->frags = state->frags != 0 ? state->frags : .3f;
     if (state->kind == Q1_MAP_LTRAIL_START) {
         state->cooldown = g->time;
         if (entity->spawnflags & 2) {

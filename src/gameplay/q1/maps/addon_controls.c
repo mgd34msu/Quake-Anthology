@@ -237,7 +237,7 @@ bool q1_map_addon_control_spawn(qa_q1_game *g, q1_actor *e, qa_error *error) {
         e->map->use_enabled = true;
         return true;
     case Q1_MAP_ADDON_EXPLOSION_REPEATER:
-        e->wait = e->wait ? e->wait : .8f;
+        e->wait = e->wait != 0 ? e->wait : .8f;
         e->map->use_enabled = true;
         return true;
     case Q1_MAP_ADDON_LORE: {
@@ -261,11 +261,11 @@ bool q1_map_addon_control_spawn(qa_q1_game *g, q1_actor *e, qa_error *error) {
         break;
     }
     case Q1_MAP_ADDON_HEAL:
-        e->damage = e->damage ? e->damage : 1;
-        e->wait = e->wait ? e->wait : .1f;
+        e->damage = e->damage != 0 ? e->damage : 1;
+        e->wait = e->wait != 0 ? e->wait : .1f;
         break;
     case Q1_MAP_ADDON_SILENT_TELEPORT:
-        e->map->height = e->map->height ? e->map->height : -2048;
+        e->map->height = e->map->height != 0 ? e->map->height : -2048;
         break;
     default:
         break;

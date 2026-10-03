@@ -90,7 +90,7 @@ static bool cast_lightning(qa_q1_game *g, q1_actor *e, qa_error *error) {
 }
 static bool attack_check(qa_q1_game *g, q1_actor *e) {
     int cap = 3 + (int)floorf(q1_random(g) * 2 + .5f) - (bloody(g) ? 1 : 0);
-    return ++e->count > cap;
+    return ++e->count > (float)cap;
 }
 static float vertical_offset(qa_q1_game *g, q1_actor *e, qa_vec3 origin) {
     qa_vec3 delta = qa_vec_sub(target(g, e), origin);

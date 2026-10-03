@@ -36,7 +36,7 @@ bool q1_map_hip_particles_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error
         state->pending.particles.start = start;
         state->pending.particles.end = end;
         entity->model = QA_STRING_NONE;
-        if (!entity->count)
+        if (entity->count == 0)
             entity->count = 2;
         if (!state->particle_color)
             state->particle_color = 192;
@@ -74,7 +74,7 @@ bool q1_map_hip_particles_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error
         if (!qa_world_body_read(g->services.world, id, &body, error)) return false;
         entity = q1_entity(g, id);
         if (!entity || !entity->map) return true;
-        if (!body.angles.x && !body.angles.z) {
+        if (body.angles.x == 0 && body.angles.z == 0) {
             if (body.angles.y == -1)
                 body.angles = qa_v3(-90, 0, 0);
             else if (body.angles.y == -2)
@@ -168,7 +168,7 @@ bool q1_map_hip_particles_use(qa_q1_game *g, q1_actor *entity, qa_actor_id other
 bool q1_map_hip_particles_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id other,
                                 qa_error *error) {
     q1_map_state *state = entity->map;
-    if (!entity->damage || g->time < state->cooldown ||
+    if (entity->damage == 0 || g->time < state->cooldown ||
         (state->kind == Q1_MAP_PARTICLE_FIELD && g->time > state->active_until))
         return true;
     state->cooldown = g->time + .5;

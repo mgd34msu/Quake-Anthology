@@ -220,8 +220,8 @@ static bool secret_fire(qa_q1_game *g, q1_actor *entity, qa_actor_id activator, 
     qa_vec3 forward, right, up, size = qa_vec_sub(body.bounds.maxs, body.bounds.mins);
     qa_builtin_angle_vectors(state->mangle, &forward, &right, &up);
     float width =
-        state->width ? state->width : fabsf(qa_vec_dot(entity->spawnflags & 4 ? up : right, size));
-    float length = state->length ? state->length : fabsf(qa_vec_dot(forward, size));
+        state->width != 0 ? state->width : fabsf(qa_vec_dot(entity->spawnflags & 4 ? up : right, size));
+    float length = state->length != 0 ? state->length : fabsf(qa_vec_dot(forward, size));
     qa_vec3 side = entity->spawnflags & 4
                        ? qa_vec_scale(up, -width)
                        : qa_vec_scale(right, width * (float)(1 - (int)(entity->spawnflags & 2)));
@@ -330,16 +330,16 @@ bool q1_map_mover_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     body.angles = qa_v3(0, 0, 0);
     switch (state->kind) {
     case Q1_MAP_DOOR: {
-        entity->speed = entity->speed ? entity->speed : 100;
-        entity->wait = entity->spawnflags & 24 ? -1 : entity->wait ? entity->wait : 3;
-        entity->damage = entity->damage ? entity->damage : 2;
+        entity->speed = entity->speed != 0 ? entity->speed : 100;
+        entity->wait = entity->spawnflags & 24 ? -1 : entity->wait != 0 ? entity->wait : 3;
+        entity->damage = entity->damage != 0 ? entity->damage : 2;
         qa_vec3 absolute =
             qa_v3(fabsf(state->movedir.x), fabsf(state->movedir.y), fabsf(state->movedir.z));
         float distance = g->options.edition == QA_Q1_RERELEASE
                              ? qa_vec_dot(absolute, size)
                              : fabsf(qa_vec_dot(state->movedir, size));
         move->pos2 = qa_vec_add(
-            move->pos1, qa_vec_scale(state->movedir, distance - (state->lip ? state->lip : 8)));
+            move->pos1, qa_vec_scale(state->movedir, distance - (state->lip != 0 ? state->lip : 8)));
         if (entity->spawnflags & 1) {
             qa_vec3 closed = move->pos1;
             move->pos1 = move->pos2;
@@ -352,19 +352,19 @@ bool q1_map_mover_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         break;
     }
     case Q1_MAP_BUTTON:
-        entity->speed = entity->speed ? entity->speed : 40;
-        entity->wait = entity->wait ? entity->wait : 1;
+        entity->speed = entity->speed != 0 ? entity->speed : 40;
+        entity->wait = entity->wait != 0 ? entity->wait : 1;
         move->pos2 = qa_vec_add(
             move->pos1, qa_vec_scale(state->movedir, fabsf(qa_vec_dot(state->movedir, size)) -
-                                                         (state->lip ? state->lip : 4)));
+                                                         (state->lip != 0 ? state->lip : 4)));
         state->touch_enabled = entity->max_health <= 0;
         if (entity->max_health > 0 && !q1_map_damageable(g, entity, true, error))
             return false;
         break;
     case Q1_MAP_SECRET_DOOR:
         entity->speed = 50;
-        entity->wait = entity->wait ? entity->wait : 5;
-        entity->damage = entity->damage ? entity->damage : 2;
+        entity->wait = entity->wait != 0 ? entity->wait : 5;
+        entity->damage = entity->damage != 0 ? entity->damage : 2;
         state->sounds = state->sounds ? state->sounds : 3;
         state->touch_enabled = true;
         if (!q1_map_damageable(g, entity, secret_shootable(g, entity), error) ||
@@ -372,9 +372,9 @@ bool q1_map_mover_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error) {
             return false;
         break;
     case Q1_MAP_PLAT: {
-        entity->speed = entity->speed ? entity->speed : 150;
+        entity->speed = entity->speed != 0 ? entity->speed : 150;
         move->pos2 =
-            qa_vec_add(move->pos1, qa_v3(0, 0, -(state->height ? state->height : size.z - 8)));
+            qa_vec_add(move->pos1, qa_v3(0, 0, -(state->height != 0 ? state->height : size.z - 8)));
         move->activated = !q1_map_text(g, entity->targetname);
         move->position = move->activated ? Q1_MAP_BOTTOM : Q1_MAP_UP;
         if (move->activated)
@@ -467,7 +467,7 @@ bool qa_q1_game_maps_finish(qa_q1_game *g, qa_error *error) {
             }
             if (q1_map_text(g, candidate->message))
                 master->message = candidate->message;
-            if (candidate->max_health) {
+            if (candidate->max_health != 0) {
                 master->max_health = candidate->max_health;
                 if (!(ok = qa_combat_set_health(g->services.combat, master->id,
                                                 candidate->max_health, error)))

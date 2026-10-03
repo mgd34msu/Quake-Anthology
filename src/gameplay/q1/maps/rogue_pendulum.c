@@ -35,8 +35,8 @@ bool q1_map_pendulum_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     entity = pendulum(g, id);
     if (!entity)
         return true;
-    entity->map->current_ammo = entity->map->current_ammo ? entity->map->current_ammo : 5;
-    entity->delay = entity->delay ? entity->delay : 1;
+    entity->map->current_ammo = entity->map->current_ammo != 0 ? entity->map->current_ammo : 5;
+    entity->delay = entity->delay != 0 ? entity->delay : 1;
     entity->physics.solid = QA_PHYSICS_TRIGGER;
     if (!q1_map_damageable(g, entity, false, error))
         return false;

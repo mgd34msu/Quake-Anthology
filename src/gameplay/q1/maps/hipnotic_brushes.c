@@ -20,7 +20,7 @@ bool q1_map_hip_brush_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         entity->physics.solid = QA_PHYSICS_NOT_SOLID;
         entity->physics.motion = QA_PHYSICS_STEP;
         entity->count = 0;
-        entity->speed = 360 / (entity->speed ? entity->speed : 4);
+        entity->speed = 360 / (entity->speed != 0 ? entity->speed : 4);
         if (!isfinite(entity->speed))
             return q1_map_fail(error, "Hipnotic bobbing water period is too small");
         entity->map->pending.bob.amplitude = (body.bounds.maxs.z - body.bounds.mins.z) * .5f;
