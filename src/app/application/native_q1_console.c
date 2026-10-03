@@ -5,6 +5,7 @@
 #include "qa/console_cvars_prepare.h"
 #include "qa/source_number.h"
 #include "qa/network_q1_qw.h"
+#include "qa/game_q1_source_obituary.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -38,6 +39,64 @@ bool application_native_q1_console_idle(const application_provider *provider)
 static qa_console_dialect dialect(const application_provider *provider)
 {
     return provider->launch->selection.clock.kind == QA_CLOCK_QUAKEWORLD ? QA_CONSOLE_QW : QA_CONSOLE_Q1;
+}
+
+bool application_native_q1_chat(application_provider *provider,
+    const qa_command_invocation *command, bool team_only, qa_error *error)
+{
+    struct application_native_q1_console *owner = provider ? provider->native_q1_console : NULL;
+    if (!owner || !command || provider->kind != APPLICATION_PROVIDER_Q1 ||
+        !provider->constructed || !provider->attached || provider->close_pending ||
+        !provider->launch || provider->launch->selection.clock.kind != QA_CLOCK_NETQUAKE ||
+        command->context.dialect != QA_CONSOLE_Q1 ||
+        (command->context.owner && command->context.owner != provider->owner) ||
+        !command->context.actor.registry ||
+        !qa_application_command_context_active(provider->application, &command->context))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Native Q1 chat lost its actual Source sender");
+    if (command->argc < 2) return true;
+    if (!command->args_text)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Native Q1 chat lost its Source command arguments");
+    qa_q1_game_operation operation = {0};
+    if (!qa_q1_game_operation_begin(provider->state.q1, &operation, error)) return false;
+    ++owner->calls;
+    qa_actor_id recipients[255]; size_t count = 0; const char *name = NULL;
+    bool okay = application_native_q1_wire_chat(provider->application, command->context.actor,
+        team_only, &name, recipients, &count, error);
+    char line[64]; size_t prefix = 0;
+    if (okay) {
+        int written = snprintf(line, sizeof(line), "\001%s: ", name);
+        if (written < 0 || (size_t)written > sizeof(line) - 2)
+            okay = application_fail(error, QA_ERROR_FORMAT, "Native Q1 chat sender exceeds the Source line extent");
+        else prefix = (size_t)written;
+    }
+    qa_builtin_event event = {.kind = QA_BUILTIN_MESSAGE, .family = QA_GAME_Q1,
+        .provider = provider->owner, .flags = 2u | QA_Q1_SOURCE_MESSAGE_LITERAL, .code = 3};
+    if (okay) {
+        const char *body = command->args_text; size_t length = strlen(body);
+        if (*body == '"') { ++body; --length; if (length) --length; }
+        if (length > sizeof(line) - 2 - prefix) length = sizeof(line) - 2 - prefix;
+        memcpy(line + prefix, body, length); line[prefix + length] = '\n'; line[prefix + length + 1] = 0;
+        double seconds;
+        okay = qa_q1_game_clock_read(provider->state.q1, &event.time_ns, &seconds) &&
+            qa_strings_intern(qa_session_strings(provider->application->session),
+                (qa_bytes){(const uint8_t *)line, prefix + length + 1}, &event.text, error);
+        if (!okay && error && error->code == QA_OK)
+            application_fail(error, QA_ERROR_ARGUMENT, "Native Q1 chat lost its actual Source clock");
+    }
+    for (size_t i = 0; okay && i < count; ++i) {
+        event.actor = recipients[i];
+        okay = application_emit(provider->application, &event, error);
+    }
+    if (okay) {
+        qa_command_context context = command->context;
+        context.owner = provider->owner; context.origin = QA_COMMAND_SERVER; context.actor = (qa_actor_id){0};
+        application_console_print(provider->application, &context, line + 1);
+        if (!qa_q1_game_operation_live(&operation))
+            okay = application_fail(error, QA_ERROR_ARGUMENT, "Native Q1 chat Source retired during delivery");
+    }
+    --owner->calls;
+    qa_q1_game_operation_end(&operation);
+    return okay;
 }
 
 static bool capture(void *opaque, const qa_command_context *source,

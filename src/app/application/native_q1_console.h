@@ -11,6 +11,7 @@ bool application_native_q1_console_restore(application_provider *, qa_bytes, qa_
 bool application_native_q1_console_at(application_provider *, qa_console **, qa_cvars **,
                                       qa_command_context *);
 qa_cvars *application_native_q1_console_registry(const application_provider *);
+bool application_native_q1_chat(application_provider *, const qa_command_invocation *, bool, qa_error *);
 void application_native_q1_source_console_print(void *, const char *);
 void application_native_q1_source_logfrag_write(void *, const char *);
 bool application_native_q1_source_logfrag_enabled(application_provider *,bool *,qa_error *);

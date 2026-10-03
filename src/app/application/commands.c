@@ -4,6 +4,7 @@
 #include "native_q3_clients.h"
 #include "native_q3_ipfilters.h"
 #include "native_q3_postgame.h"
+#include "native_q1_console.h"
 #include "startup_flow.h"
 #include "bots_catalog.h"
 #include "qa/application_players.h"
@@ -361,6 +362,14 @@ qa_command_result application_command_fallback(void *opaque,
     }
     qa_actor_id actor = command.context.actor;
     application_provider *game = application_world_provider(application, QA_ROLE_ENTITIES, "");
+    if (actor.registry && game && game->kind == APPLICATION_PROVIDER_Q1 &&
+        command.context.dialect == QA_CONSOLE_Q1 &&
+        (!command.context.owner || command.context.owner == game->owner) &&
+        (q3_command_named(command.argv[0], "say") || q3_command_named(command.argv[0], "say_team"))) {
+        return application_native_q1_chat(game, &command,
+            q3_command_named(command.argv[0], "say_team"), error)
+            ? QA_COMMAND_HANDLED : QA_COMMAND_FAILED;
+    }
     uint32_t source_slot;
     if (!actor.registry && game && game->kind == APPLICATION_PROVIDER_Q3 &&
         command.context.dialect == QA_CONSOLE_Q3 &&
