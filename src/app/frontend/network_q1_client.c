@@ -5,6 +5,7 @@
 #include "neutral_config.h"
 #include "qa/input_command_save.h"
 #include "qa/application_network.h"
+#include "qa/ui_language.h"
 #include <math.h>
 #include <limits.h>
 #include <stdio.h>
@@ -385,6 +386,27 @@ static frontend_remote_q1_source_options receiver_options(frontend_network_q1_cl
 { return (frontend_remote_q1_source_options){.physical=o->physical,.protocol=o->options.protocol,.context=o,
     .load_content=load_content,.service=received,.disconnected=disconnected,
     .skin_bindings=qa_q1_is_qw(o->options.protocol)?&o->skins:NULL}; }
+static bool current_userinfo(frontend_network_q1_client *o,
+    const frontend_client_source_view *physical,qa_buffer *out,qa_error *error)
+{
+    const size_t capacity=512;
+    const char *language=NULL;
+    qa_buffer info={0};
+    if (!qa_cvars_info(physical->source.context.cvars,QA_CVAR_USERINFO,capacity,&info,error)) return false;
+    if (!qa_ui_language_read(qa_application_cvars(o->options.frontend->application),
+        physical->source.context.physical_seat,&language,error)) { qa_buffer_free(&info); return false; }
+    uint8_t *data=realloc(info.data,capacity);
+    if (!data) {
+        qa_buffer_free(&info);
+        return frontend_fail(error,QA_ERROR_MEMORY,"Retaining actual QW userinfo language");
+    }
+    info.data=data;
+    if (!qa_q3_info_set((char *)info.data,capacity,"language",language,error)) {
+        qa_buffer_free(&info); return false;
+    }
+    info.size=strlen((char *)info.data);
+    *out=info; return true;
+}
 static bool complete_configuration(frontend_network_q1_client *o,qa_error *error)
 {
     bool ready=false;
@@ -403,7 +425,7 @@ static bool complete_configuration(frontend_network_q1_client *o,qa_error *error
     if(!frontend_remote_q1_source_create(o->options.frontend,&receiver,&o->source,error)) return false;
     if(qa_q1_is_qw(o->options.protocol)) {
         qa_buffer info={0};
-        bool ok=qa_cvars_info(physical.source.context.cvars,QA_CVAR_USERINFO,512,&info,error);
+        bool ok=current_userinfo(o,&physical,&info,error);
         if(ok) {
             o->userinfo=(char *)info.data; info=(qa_buffer){0};
             ok=qa_qw_connect_create(o->options.qport,o->userinfo,&o->qw,error);
@@ -455,7 +477,7 @@ static bool userinfo_sync(frontend_network_q1_client *o,qa_error *error)
     if(!o->userinfo_pending) {
         frontend_client_source_view physical; qa_buffer info={0};
         if(!frontend_client_source_read(o->physical,&physical,error) ||
-            !qa_cvars_info(physical.source.context.cvars,QA_CVAR_USERINFO,512,&info,error)) return false;
+            !current_userinfo(o,&physical,&info,error)) return false;
         if(strpbrk((char *)info.data,"\"\r\n")) {
             qa_buffer_free(&info); return frontend_fail(error,QA_ERROR_FORMAT,"Invalid QW userinfo");
         }
