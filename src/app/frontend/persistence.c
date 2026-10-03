@@ -1594,6 +1594,7 @@ static bool publish_ready(void *context,qa_application *active,qa_application *c
         !frontend_native_q3_rebind_ready(f,operation->active,error) ||
         !frontend_tools_rebind_ready(f,operation->active,error) ||
         !qa_http_handoff_ready(frontend_tools_http(native_source),frontend_tools_http(f),error) ||
+        !frontend_network_rebind_prepare(f,native_source,error) ||
         !(operation->fresh_original?frontend_network_fresh_ready(f,operation->active,operation->constructor,error):
             frontend_network_rebind_ready(f,operation->active,error)) ||
         (operation->input_guard && !qa_input_platform_handoff_ready(operation->input_guard,error))) return false;

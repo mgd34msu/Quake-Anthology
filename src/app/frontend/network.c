@@ -5457,6 +5457,30 @@ static bool network_host_cut(qa_frontend_network *n, qa_buffer *out, qa_error *e
     if (ok) ok = qa_source_save_finish(&io, out);
     qa_source_save_dispose(&io); qa_buffer_free(&admission); qa_buffer_free(&authorization); free(copy); return ok;
 }
+bool frontend_network_rebind_prepare(qa_frontend *candidate, const qa_frontend *published, qa_error *error)
+{
+    if (!candidate || !published || candidate == published)
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Network handoff requires its distinct frontend owners");
+    qa_frontend_network *next = candidate->network, *active = published->network;
+    if (!next || !active || qa_net_address_equal(qa_network_local_address(next->runtime),
+        qa_network_local_address(active->runtime), true)) return true;
+    const qa_frontend *frontends[2] = {candidate, published};
+    for (size_t i = 0; i < 2; ++i) {
+        const qa_frontend *f = frontends[i]; const qa_frontend_network *n = f->network;
+        if (f->stepping || f->options.network_host || f->options.network_connect ||
+            n->frontend != f || n->round || n->busy || n->q3_client_requested || n->q3_admission ||
+            n->nq_host || n->qw_host || n->unified || n->q1_client_owner || n->q2_client_owner ||
+            n->unified_client_service || n->kex_transport || n->kex_browser ||
+            (n->q2_host && !frontend_network_q2_host_local_only(n->q2_host))) return true;
+    }
+    if (!next->detached_transport || active->detached_transport ||
+        !network_runtime_valid(next, true, error) || !network_runtime_valid(active, true, error)) return false;
+    qa_net_transport *replacement = NULL;
+    if (!detached_transport(qa_network_local_address(active->runtime), &replacement, error)) return false;
+    bool ok = qa_network_transport_replace_local(next->runtime, active->runtime, &replacement, error);
+    qa_net_transport_close(replacement);
+    return ok;
+}
 bool frontend_network_rebind_ready(const qa_frontend *candidate, const qa_frontend *published, qa_error *error)
 {
     if (!candidate || !published || candidate == published || candidate->stepping || published->stepping ||

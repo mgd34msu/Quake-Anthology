@@ -355,6 +355,7 @@ bool frontend_network_checkpoint(qa_frontend *, qa_buffer *, qa_buffer *, qa_err
 bool frontend_network_restore_connections(qa_frontend *, qa_bytes, qa_error *);
 bool frontend_network_restore_prediction(qa_frontend *, qa_bytes, qa_error *);
 bool frontend_network_rebind_ready(const qa_frontend *, const qa_frontend *, qa_error *);
+bool frontend_network_rebind_prepare(qa_frontend *, const qa_frontend *, qa_error *);
 bool frontend_network_fresh_ready(const qa_frontend *,const qa_frontend *,const qa_frontend *,qa_error *);
 void frontend_network_publish_fresh(qa_frontend *,qa_frontend *,qa_frontend *);
 void frontend_network_rebind(qa_frontend *, qa_frontend *);

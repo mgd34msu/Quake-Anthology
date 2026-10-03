@@ -66,6 +66,10 @@ bool qa_network_prediction_restore(qa_network_runtime *, const qa_network_checkp
 /* No-fail final exchange after both owners have passed their idle/identity
  * admission. Keeps the live local socket endpoint and its sole receive owner. */
 void qa_network_transport_exchange(qa_network_runtime *, qa_network_runtime *);
+/* Consumes a separately owned detached transport only for empty or all-LOCAL
+ * returned runtimes, using the retained published transport's actual address. */
+bool qa_network_transport_replace_local(qa_network_runtime *, const qa_network_runtime *,
+    qa_net_transport **, qa_error *);
 /* Wrappers which already moved their actual native socket retain their
  * installed transport containers while publishing the same Source custody. */
 void qa_network_transport_publish_retained(qa_network_runtime *,qa_network_runtime *);
