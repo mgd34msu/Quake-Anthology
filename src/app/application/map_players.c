@@ -2434,24 +2434,6 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
                  actor, false, &ordinal, error) ||
              !qa_combat_read_traits(application->combat, actor, &combat, error))) return false;
         if (!reserved_player && !bind_q3_player_roles(application, record, arsenal, error)) return false;
-        if (!reserved_player && map_source->kind == APPLICATION_PROVIDER_Q2 && map_source != character) {
-            char userinfo[2304];
-            if (!application_character_userinfo(application->catalog, choices, seat, QA_GAME_Q2,
-                    false, userinfo, sizeof(userinfo), error)) return false;
-            const char *info = "";
-            qa_q2_connection_result connection;
-            if (phase != PLAYER_ADMISSION_RESERVE) {
-                if (!qa_q2_player_connect(map_source->state.q2,
-                        record->userinfo ? record->userinfo : userinfo, seat->bot, &connection, error)) return false;
-                if (!connection.allowed) return application_fail(error, QA_ERROR_ARGUMENT, connection.reason);
-                info = connection.userinfo;
-            }
-            if (!qa_q2_player_admit(map_source->state.q2, actor, &(qa_q2_player_admission){
-                    .slot = record->client_slot, .seat = seat->id, .userinfo = info,
-                    .initialize_inventory = true, .use_q2_weapons = arsenal == map_source,
-                    .use_q2_inventory = arsenal == map_source,
-                    .bot = phase == PLAYER_ADMISSION_RESERVE ? false : seat->bot}, error)) return false;
-        }
         for (size_t j = 0; j < application->provider_count; ++j) {
             application_provider *provider = application->providers[j];
             if (provider->kind <= APPLICATION_PROVIDER_Q3 ||
@@ -2489,6 +2471,24 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
                 !qa_modes_team(application->modes, application->primary_mode, actor, &combat.team, error))
                 return false;
             if (!qa_combat_set_traits(application->combat, actor, &combat, error)) return false;
+        }
+        if (!reserved_player && map_source->kind == APPLICATION_PROVIDER_Q2 && map_source != character) {
+            char userinfo[2304];
+            if (!application_character_userinfo(application->catalog, choices, seat, QA_GAME_Q2,
+                    false, userinfo, sizeof(userinfo), error)) return false;
+            const char *info = "";
+            qa_q2_connection_result connection;
+            if (phase != PLAYER_ADMISSION_RESERVE) {
+                if (!qa_q2_player_connect(map_source->state.q2,
+                        record->userinfo ? record->userinfo : userinfo, seat->bot, &connection, error)) return false;
+                if (!connection.allowed) return application_fail(error, QA_ERROR_ARGUMENT, connection.reason);
+                info = connection.userinfo;
+            }
+            if (!qa_q2_player_admit(map_source->state.q2, actor, &(qa_q2_player_admission){
+                    .slot = record->client_slot, .seat = seat->id, .userinfo = info,
+                    .initialize_inventory = true, .use_q2_weapons = arsenal == map_source,
+                    .use_q2_inventory = arsenal == map_source,
+                    .bot = phase == PLAYER_ADMISSION_RESERVE ? false : seat->bot}, error)) return false;
         }
         if (phase == PLAYER_ADMISSION_RESERVE || qw_spectator) {
             if (!qw_spectator && character->kind == APPLICATION_PROVIDER_Q1 &&
