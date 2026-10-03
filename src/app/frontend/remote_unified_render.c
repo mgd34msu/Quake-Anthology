@@ -243,7 +243,7 @@ static bool model_read(frontend_unified_render *r, qa_json_id id, unified_render
         m->path=(char *)path.data; path=(qa_buffer){0};
         m->input.family=kind; m->input.skin=skin<0?0:(uint32_t)skin;
         m->input.flags=flags<0?(uint32_t)(int32_t)flags:(uint32_t)flags;
-        m->input.entity=m->actor.slot; m->input.material_library=materials; m->input.source_path=m->path;
+        m->input.entity=m->actor.slot; m->input.material_library=frontend_unified_model_materials(m->media.scene); m->input.source_path=m->path;
         m->input.color=(qa_scene_vec4){1,1,1,1}; m->input.seconds=r->seconds;
         m->input.has_milliseconds=true; m->input.milliseconds=(int64_t)(r->seconds*1000);
         qa_json_id alpha=field(j,id,"alpha");
@@ -642,7 +642,7 @@ static bool render_model_fields(frontend_unified_render *r,unified_render_model 
             if (okay) { m->media=(frontend_unified_model){.resource=row.resource,.opening=row.opening,.model=row.model,.scene=row.scene,.brush_world=row.world}; m->input.family=row.family; }
         }
         if (okay && material) okay=frontend_scene_material_decode(refs->scene,material,&m->input.custom_material,io->error);
-        if (okay) { m->product=bank.product; m->input.material_library=bank.materials;
+        if (okay) { m->product=bank.product; m->input.material_library=frontend_unified_model_materials(m->media.scene);
             m->input.entity=m->actor.slot; m->input.source_path=m->path; }
         if (okay) okay=isfinite(m->scale) && qa_vec_finite(m->origin) && qa_vec_finite(m->angles) &&
             qa_vec_finite(m->previous_origin) && isfinite(m->input.back_lerp) &&
@@ -744,7 +744,8 @@ bool frontend_unified_render_equipment_read(const frontend_unified_render *r,qa_
         if (model.resource==selected->media.resource && model.opening==selected->media.opening &&
             model.model==selected->media.model && model.scene==selected->media.scene &&
             model.world==selected->media.brush_world && model.family==selected->input.family &&
-            bank.product==selected->product && bank.materials==selected->input.material_library &&
+            bank.product==selected->product && bank.materials==(selected->media.scene?
+                qa_scene_model_material_owner(selected->media.scene):qa_scene_world_material_owner(selected->media.brush_world)) &&
             !strcmp(model.path,selected->path)) { registered=true; break; }
     }
     if (!registered)

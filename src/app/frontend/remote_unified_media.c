@@ -164,6 +164,11 @@ static bool same_options(const qa_scene_image_options *a, const qa_scene_image_o
         a->transparent_index == b->transparent_index && same_bytes(a->translation, b->translation) &&
         same_bytes(a->palette_rgb, b->palette_rgb) && !a->source_q3 && !b->source_q3;
 }
+qa_material_library *frontend_unified_model_materials(const qa_scene_model *model)
+{
+    const qa_scene_image_options *options = qa_scene_model_image_options(model);
+    return options && options->family == QA_SCENE_Q3 ? qa_scene_model_material_owner(model) : NULL;
+}
 bool frontend_unified_media_model(frontend_unified_media *owner, const char *content,
     const char *path, qa_scene_family family, const qa_scene_image_options *options,
     frontend_unified_model *out, qa_error *error)

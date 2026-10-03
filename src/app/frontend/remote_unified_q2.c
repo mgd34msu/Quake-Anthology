@@ -1891,7 +1891,7 @@ bool frontend_unified_q2_model_after(frontend_unified_q2 *o,qa_actor_id a,const 
             if (b->effects && o->view_content && o->view_provider &&
                 !strcmp(o->view_content,content) && !strcmp(b->content,content) &&
                 b->source_provider && !strcmp(b->source_provider,o->view_provider) &&
-                b->profile==o->view_profile && b->activation==o->view_owner && b->materials==input->material_library)
+                b->profile==o->view_profile && b->activation==o->view_owner)
                 okay=frontend_remote_q2_effects_weapon_draw(b->effects,viewer_actor,input,frame,e);
         --o->busy; return okay;
     }
@@ -1906,6 +1906,7 @@ bool frontend_unified_q2_model_after(frontend_unified_q2 *o,qa_actor_id a,const 
         if (okay && scene) { qa_scene_model_input child=*input;
             for (q2_model *m=b->models;m;m=m->next) if (!strcmp(m->path,(const char *)name.data)) { child.source_path=m->path; break; }
             child.attachments=NULL; child.attachment_count=0; child.skin=0;
+            child.material_library=frontend_unified_model_materials(scene);
             okay=qa_scene_model_submit(scene,&child,frame,e); }
         qa_buffer_free(&name); if (!okay) return false;
     }

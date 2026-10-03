@@ -870,7 +870,7 @@ bool frontend_unified_q1_world_models(frontend_unified_q1 *o,const qa_scene_worl
     for(q1_group *g=o->groups;ok && g;g=g->next) {
         for(q1_static *s=g->statics;ok && s;s=s->next) {
             qa_scene_model_input input={.view=*view,.family=QA_SCENE_Q1,.frame=s->frame,.old_frame=s->frame,.skin=s->skin,.color={1,1,1,1},
-                .source_path=s->path,.material_library=g->materials,.seconds=world->seconds,.identity_light=world->identity_light,.ambient={1,1,1},
+                .source_path=s->path,.material_library=frontend_unified_model_materials(s->model.scene),.seconds=world->seconds,.identity_light=world->identity_light,.ambient={1,1,1},
                 .video_frame=world->video_frame,.video_context=world->video_context};
             transform(&input.transform,s->origin,s->angles);
             if(s->model.brush_world)ok=qa_scene_world_submit_model(s->model.brush_world,s->model.inline_model,&input.transform,world,0,input.color,frame,e);
@@ -884,7 +884,7 @@ bool frontend_unified_q1_world_models(frontend_unified_q1 *o,const qa_scene_worl
             qa_vec3 direction=qa_vec_sub(b->end,b->start);float length=qa_vec_length(direction);if(length<=0)continue;direction=qa_vec_scale(direction,1/length);
             qa_vec3 angles=qa_v3(-atan2f(direction.z,hypotf(direction.x,direction.y))*57.29577951308232f,atan2f(direction.y,direction.x)*57.29577951308232f,0);
             qa_builtin_random roll;qa_builtin_random_seed(&roll,b->roll_seed);
-            for(float step=0;ok && step<length;step+=30) {qa_scene_model_input input={.view=*view,.family=QA_SCENE_Q1,.source_path=models[b->kind],.material_library=g->materials,
+            for(float step=0;ok && step<length;step+=30) {qa_scene_model_input input={.view=*view,.family=QA_SCENE_Q1,.source_path=models[b->kind],.material_library=frontend_unified_model_materials(model.scene),
                     .seconds=world->seconds,.identity_light=world->identity_light,.color={1,1,1,1},.ambient={1,1,1},.entity=actual.slot,
                     .video_frame=world->video_frame,.video_context=world->video_context};
                 angles.z=(float)(qa_builtin_random_integer(&roll)%360);transform(&input.transform,qa_vec_add(b->start,qa_vec_scale(direction,step)),angles);
