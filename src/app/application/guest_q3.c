@@ -10,6 +10,7 @@
 #include "guest_q3_weapons_services.h"
 #include "guest_q3_combat.h"
 #include "guest_q3_pickups.h"
+#include "qa/game_q3_source_types.h"
 
 struct application_q3_guest *q3g_engine(application_provider *provider)
 {
@@ -394,6 +395,28 @@ bool application_q3_guest_client_sources_rebuild(application_provider *provider,
     return true;
 }
 
+bool q3g_world_begin(struct application_q3_guest *engine, qa_error *error)
+{
+    application_provider *provider = engine ? engine->provider : NULL;
+    qa_application *application = provider ? provider->application : NULL;
+    if (!application || !engine->game || !engine->game->primary ||
+        engine->game->kind != QA_QVM_GAME || engine->restore_pending ||
+        application->operation == APPLICATION_PERSISTING ||
+        engine->world != application->world || !application->physics ||
+        application->physics->world != engine->world ||
+        application->physics->world_actor.registry)
+        return application_fail(error, QA_ERROR_ARGUMENT,
+                                "Original Q3 world admission requires its fresh primary map owner");
+    qa_string_id definition;
+    if (!qa_strings_intern_cstr(qa_session_strings(application->session),
+            "worldspawn", &definition, error) ||
+        !qa_session_allocate(application->session, provider->owner, definition,
+            true, QA_Q3_SOURCE_WORLD, &application->physics->world_actor, error))
+        return false;
+    return qa_world_body_create(engine->world, application->physics->world_actor,
+                                &(qa_body_state){0}, error);
+}
+
 bool application_q3_guest_spawn_map(application_provider *provider, const qa_bsp_view *map,
                                       const qa_entities *entities, qa_string_id map_name,
                                       qa_string_id spawn_point, qa_error *error)
@@ -438,6 +461,7 @@ bool application_q3_guest_spawn_map(application_provider *provider, const qa_bsp
     engine->map_ready = true;
     engine->loaded_compatibility = false;
     engine->loaded_game_type = engine->loaded_max_clients = 0;
+    if (!q3g_world_begin(engine, error)) return false;
     int32_t arguments[] = {engine->milliseconds, engine->random_seed, engine->startup_restart ? 1 : 0}, result;
     bool ok = q3g_call(engine->game, 0, arguments, 3, &result, error);
     if (ok) { engine->game->initialized = true; engine->startup_restart = false; }

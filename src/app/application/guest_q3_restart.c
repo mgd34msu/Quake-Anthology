@@ -486,6 +486,7 @@ bool application_q3_guest_round_reset(application_provider *provider, qa_error *
         (qa_bytes){game->artifact->primary.data, game->artifact->primary.size} :
         qa_native_declaration_primary(game->artifact->declaration);
     if (!application_guest_input_attach(game, primary, error)) return q3g_round_fail(engine, error, error);
+    if (!q3g_world_begin(engine, error)) return q3g_round_fail(engine, error, error);
     if (game->native) {
         game->init_succeeded = false;
         ++engine->calls;

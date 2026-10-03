@@ -180,6 +180,7 @@ struct application_q3_guest {
 };
 
 struct application_q3_guest *q3g_engine(application_provider *);
+bool q3g_world_begin(struct application_q3_guest *, qa_error *);
 qa_qvm_role q3g_primary_role(const char *);
 bool q3g_call(q3g_role *, int32_t command, const int32_t *, size_t, int32_t *, qa_error *);
 bool q3g_role_create(struct application_q3_guest *, qa_qvm_role, uint32_t seat,
