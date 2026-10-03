@@ -1,4 +1,5 @@
 #include "recipe_private.h"
+#include "qa/launch_identity_fields.h"
 #include <float.h>
 #include <math.h>
 
@@ -145,20 +146,15 @@ static qa_clock_config clock_read(recipe_reader *r)
 static qa_mode_rules rules_read(recipe_reader *r)
 {
     recipe_reader s = *r; qa_mode_rules v = {0};
-    if (!recipe_record(&s, recipe_take(r), 38)) { r->failed = true; return v; }
-#define U(member) v.member = recipe_unsigned(&s)
-#define I(member) v.member = recipe_signed(&s)
-#define F(member) v.member = recipe_float(&s)
-#define B(member) v.member = recipe_boolean(&s)
-#define W(member) v.member = recipe_word(&s)
-    U(source); U(kind); U(teams[0]); U(teams[1]); U(teams[2]); U(forced_team);
-    I(frag_limit); I(capture_limit); I(warmup_seconds); I(competition); I(setup_seconds);
-    I(countdown_seconds); I(match_seconds); I(max_game_players); I(election_percent);
-    I(teamplay); I(rune_mask); I(vote_limit); U(flags); U(referee_flags);
-    F(time_limit_minutes); F(obelisk_health); F(obelisk_regen); W(obelisk_regen_ns); W(obelisk_respawn_ns);
-    B(enabled); B(friendly_fire); B(force_join); B(match_lock); B(paused); B(auto_lock);
-    B(relics); B(single_player_active); B(tournament_restart); B(q2_rerelease); B(start_map);
-    B(force_balance); B(voting_disabled); B(rogue_deathmatch);
+    if (!recipe_record(&s, recipe_take(r), QA_LAUNCH_MODE_RULE_FIELD_COUNT)) { r->failed = true; return v; }
+#define U(member) v.member = recipe_unsigned(&s);
+#define I(member) v.member = recipe_signed(&s);
+#define F(member) v.member = recipe_float(&s);
+#define B(member) v.member = recipe_boolean(&s);
+#define W(member) v.member = recipe_word(&s);
+#define FIELD(kind, member) kind(member)
+    QA_LAUNCH_MODE_RULE_FIELDS(FIELD)
+#undef FIELD
 #undef U
 #undef I
 #undef F
