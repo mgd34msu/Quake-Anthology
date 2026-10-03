@@ -18,6 +18,11 @@ typedef struct qa_console_save_resolvers {
      * Callbacks prepare private candidate identity, never dispatch commands. */
     bool (*command_context)(void *, uint64_t captured_registry, const qa_command_context *saved,
                             qa_command_context *restored, qa_error *);
+    /* Reconstruct a missing saved callback from its real Source declaration.
+     * The factory must leave the candidate console and registration program
+     * unchanged, and reject unknown names or different lifetime semantics. */
+    bool (*command_binding)(void *, const qa_console *, const qa_console_entry *,
+                            uint64_t registration_owner, qa_command_handler *, void **, qa_error *);
 } qa_console_save_resolvers;
 
 bool qa_console_save_capture(const qa_console *, qa_session *, qa_buffer *, qa_error *);

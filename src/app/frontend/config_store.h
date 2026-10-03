@@ -39,6 +39,9 @@ bool frontend_config_store_retired_ready(const frontend_config_store *,qa_error 
 bool frontend_config_store_restore_abort_unbound(frontend_config_store *,qa_application *,qa_error *);
 const qa_application_startup_hooks *frontend_config_store_hooks(frontend_config_store *);
 frontend_config_source *frontend_config_store_source(const frontend_config_store *,const qa_console *);
+bool frontend_config_store_restore_command_binding(frontend_config_store *,qa_application *,const qa_console *,
+    const qa_console_entry *,uint64_t registration_owner,qa_command_handler *,void **,qa_error *);
+bool frontend_config_store_commands_restored(frontend_config_store *,qa_application *,qa_console *,qa_error *);
 frontend_remote_config *frontend_config_store_client(const frontend_config_store *,const qa_console *);
 /* Qualifies the actual retained pending tuple without executing commands or
  * borrowing a published owner as an isolated configuration source. */

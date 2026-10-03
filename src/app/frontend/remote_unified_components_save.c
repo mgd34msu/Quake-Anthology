@@ -456,7 +456,7 @@ bool frontend_unified_components_restore_prepare(qa_frontend *frontend,frontend_
         if(ok) ok=qa_cvars_save_prepare(row->cvars,(qa_bytes){row->saved_cvars.data,row->saved_cvars.size},&cvars,e)&&qa_cvars_save_validate(cvars,e);
         if(ok) { ok=qa_cvars_save_commit(cvars,e); if(ok) cvars=NULL; }
         qa_cvars_save_abort(cvars);
-        qa_console_save_resolvers console={row,console_identity,console_context};
+        qa_console_save_resolvers console={.context=row,.identity=console_identity,.command_context=console_context};
         if(ok) ok=qa_console_save_restore(row->console,row->host.session,&console,(qa_bytes){row->saved_console.data,row->saved_console.size},e);
         if(ok) row->restore_consoles=true;
     }

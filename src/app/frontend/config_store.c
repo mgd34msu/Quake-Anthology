@@ -1060,12 +1060,22 @@ static bool source_command_realtime(void *context,qa_application *app,
         source->scope.provider,call->context.actor,out,error);
     *out=manager->frontend->wall_time_ns; return true;
 }
+static const qa_console_entry fraglog_declaration={.name="fraglogfile",
+    .description="Toggle the actual QuakeWorld frag file",.engine_command=true};
 static bool fraglog_command(void *context,const qa_command_invocation *call,qa_error *error)
 {
     frontend_config_source *source=context; qa_settings_store store={0}; qa_fs_root *root=NULL;
     if (source->console!=call->console ||
         !frontend_config_store_server_write_root(source->manager,call,&store,&root,error)) return false;
     return frontend_qw_logfile_toggle(store,call->console,&call->context,&source->manager->qw_logfile,error);
+}
+static bool source_callback_binding(frontend_config_source *source,const char *name,
+    qa_command_handler *handler,void **user)
+{
+    if (source->command.dialect==QA_CONSOLE_QW && !strcmp(name,fraglog_declaration.name)) {
+        *handler=fraglog_command; *user=source; return true;
+    }
+    return frontend_network_source_admin_binding(source->manager->frontend,source->console,name,handler,user);
 }
 bool frontend_config_store_primary_server_read(frontend_config_store *manager,
     qa_application_startup_source *out,bool *present,qa_error *error)
@@ -1857,7 +1867,7 @@ static bool source_destroy(frontend_config_source *source,qa_error *error)
     source->admin_registered=0;
     if (source->write_registered) qa_console_unregister(source->console,"writeconfig",source->command.owner);
     if (source->dump_registered) qa_console_unregister(source->console,"condump",source->command.owner);
-    if (source->frag_registered) qa_console_unregister(source->console,"fraglogfile",source->command.owner);
+    if (source->frag_registered) qa_console_unregister(source->console,fraglog_declaration.name,source->command.owner);
     source->write_registered=source->dump_registered=source->frag_registered=false;
     if (source->keys) {
         qa_cvars *bound=frontend_key_profile_registry(source->keys);
@@ -1893,9 +1903,12 @@ static bool source_destroy(frontend_config_source *source,qa_error *error)
 static bool install_commands(frontend_config_source *source,qa_error *error)
 {
     if (source->primary && source->command.dialect==QA_CONSOLE_QW && !source->frag_registered) {
-        source->frag_registered=qa_console_register_owned(source->console,"fraglogfile",
-            "Toggle the actual QuakeWorld frag file",source->command.owner,source->command.owner,
-            true,fraglog_command,source,error);
+        qa_command_handler handler=NULL; void *user=NULL;
+        if (!source_callback_binding(source,fraglog_declaration.name,&handler,&user))
+            return fail(error,QA_ERROR_ARGUMENT,"QuakeWorld frag declaration lost its actual Source callback");
+        source->frag_registered=qa_console_register_owned(source->console,fraglog_declaration.name,
+            fraglog_declaration.description,source->command.owner,source->command.owner,
+            fraglog_declaration.engine_command,handler,user,error);
         if (!source->frag_registered) return false;
     }
     if (source->primary && !source->imported &&
@@ -3378,9 +3391,17 @@ bool frontend_config_store_save(frontend_config_store *manager,qa_error *error)
     if (!manager || manager->running || manager->shared)
         return fail(error,QA_ERROR_ARGUMENT,"Configuration archive requires its returned published source owners");
     for (frontend_config_source *source=manager->sources;source;source=source->next) if (source->published && source->primary) {
-        qa_command_context command;
-        if (!current_command(source,&command,error)) return false;
         const qa_launch_instance *selected=instance(source);
+        qa_application_console_scope scope={0};
+        if (!manager->frontend || source->manager!=manager ||
+            source->application!=manager->frontend->application || !selected ||
+            !source->console || !source->cvars || qa_console_cvars(source->console)!=source->cvars ||
+            !qa_console_idle(source->console) || !qa_cvars_observer_idle(source->cvars) ||
+            !qa_cvars_observer_idle(source->movement) || !qa_cvars_observer_idle(source->fallback) ||
+            !(manager->parked==source?parked_parent(manager):
+                qa_application_console_scope_read(source->application,source->console,&scope) &&
+                    same_scope(scope,source->scope)))
+            return fail(error,QA_ERROR_ARGUMENT,"Configuration archive lost its returned physical registry owners");
         const qa_product *product=qa_catalog_product(frontend_config_files_catalog(source->files),
             frontend_config_files_product(source->files));
         const char *owner[3]={"source",product->key,selected->selection.implementation};
@@ -4068,6 +4089,42 @@ static bool restored_qualify(void *context,const qa_application_console_scope *r
     return (registry && registry->provider==scope->command->owner &&
         registry->kind==QA_APPLICATION_CONSOLE_Q3_GAME && !registry->seat && cvars==scope->cvars) ||
         fail(error,QA_ERROR_FORMAT,"Restored key registry differs from its canonical decoded GAME owner");
+}
+bool frontend_config_store_restore_command_binding(frontend_config_store *manager,
+    qa_application *application,const qa_console *console,const qa_console_entry *saved,
+    uint64_t registration_owner,qa_command_handler *handler,void **user,qa_error *error)
+{
+    frontend_config_source *source=manager?frontend_config_store_source(manager,console):NULL;
+    const qa_launch_instance *selected=source?instance(source):NULL;
+    const qa_launch_instance *actual=selected && application?
+        qa_launch_snapshot_find(qa_application_launch(application),selected->selection.instance):NULL;
+    if (!manager || !manager->restoring || !source || source->application!=application || source->imported ||
+        !selected || !actual || actual->state!=selected->state || actual->storage!=selected->storage ||
+        !saved || !saved->name || !handler || !user || !saved->engine_command || saved->alias_text ||
+        saved->owner!=source->command.owner || registration_owner!=source->command.owner ||
+        source->scope.provider!=source->command.owner || qa_console_cvars(console)!=source->cvars ||
+        qa_cvars_dialect(source->cvars)!=source->command.dialect ||
+        !source_callback_binding(source,saved->name,handler,user))
+        return fail(error,QA_ERROR_FORMAT,"Saved command callback has no matching physical Source declaration");
+    return true;
+}
+bool frontend_config_store_commands_restored(frontend_config_store *manager,
+    qa_application *application,qa_console *console,qa_error *error)
+{
+    frontend_config_source *source=manager?frontend_config_store_source(manager,console):NULL;
+    if (!source) return true;
+    if (!manager->restoring || source->application!=application || source->imported ||
+        source->scope.provider!=source->command.owner || qa_console_cvars(console)!=source->cvars)
+        return fail(error,QA_ERROR_ARGUMENT,"Restored callbacks lost their physical Source custody");
+    uint64_t lifetime=0; qa_command_handler actual=NULL,expected=NULL; void *user=NULL,*binding=NULL;
+    bool frag=qa_console_registration_read(console,fraglog_declaration.name,source->command.owner,
+        &lifetime,&actual,&user);
+    if (frag && (!source_callback_binding(source,fraglog_declaration.name,&expected,&binding) ||
+        lifetime!=source->command.owner || actual!=expected || user!=binding))
+        return fail(error,QA_ERROR_FORMAT,"Restored frag callback has another Source lifetime");
+    if (!frontend_network_source_admin_adopt(manager->frontend,console,source->command.owner,
+        &source->admin_registered,error)) return false;
+    source->frag_registered=frag; return true;
 }
 static bool restore_source(void *context,qa_application *application,const qa_launch_snapshot *candidate,
     const qa_application_startup_source *authority,qa_error *error)

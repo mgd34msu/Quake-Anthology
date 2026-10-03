@@ -518,7 +518,7 @@ bool application_q3_components_scenes_restore_prepare(qa_application *app,qa_err
         bool ok=qa_cvars_save_prepare(row->cvars,(qa_bytes){row->saved_cvars.data,row->saved_cvars.size},&cvars,e)&&qa_cvars_save_validate(cvars,e);
         if(ok) { ok=qa_cvars_save_commit(cvars,e); if(ok) cvars=NULL; }
         qa_cvars_save_abort(cvars);
-        qa_console_save_resolvers console={row,restored_identity,restored_command};
+        qa_console_save_resolvers console={.context=row,.identity=restored_identity,.command_context=restored_command};
         if(!ok||!qa_console_save_restore(row->console,app->session,&console,(qa_bytes){row->saved_console.data,row->saved_console.size},e)) return false;
         row->restore_consoles=true;
     }

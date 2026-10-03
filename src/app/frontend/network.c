@@ -2446,13 +2446,14 @@ static bool client_attempts_drain(qa_frontend_network *n, qa_error *error)
 {
     if (n->q3_attempts && !n->q3_client_requested) {
         qa_frontend *f=n->frontend;
-        if (f->stepping) return true;
+        if (f->stepping || frontend_config_store_client_preparation(f->config_store)) return true;
         if (!frontend_network_client_only(f) || !q1_client_protocol(f->options.network_protocol) ||
             f->options.dedicated || f->options.seats!=1 || n->busy || n->detached_transport ||
             f->capture || f->resource_inventory || f->source_restoring || f->preparing ||
             !qa_network_callbacks_idle(n->runtime) || !frontend_network_q1_client_idle(n->q1_client_owner))
             return frontend_fail(error,QA_ERROR_ARGUMENT,"Queued connection lost its returned Q1 CLIENT constructor");
         while (n->q3_attempts) {
+            if (frontend_config_store_client_preparation(f->config_store)) return true;
             frontend_q3_attempt *request=n->q3_attempts;
             if (request->disconnect ? *request->server!=0 : *request->server==0)
                 return frontend_fail(error,QA_ERROR_ARGUMENT,"Q1 CLIENT connection changed its retained request");
@@ -3945,31 +3946,63 @@ static bool source_admin_command(void *context,const qa_command_invocation *call
     } else if (!frontend_config_store_admin_dispatch(f->config_store,call,skip,&handled,error)) return false;
     return handled || qa_application_source_command(f->application,call,error);
 }
-bool frontend_network_source_admin_bind(qa_frontend *f,qa_console *console,uint64_t owner,
-    size_t *registered,qa_error *error)
+static void source_admin_span(const qa_console *console,size_t *first,size_t *count)
+{
+    qa_console_dialect dialect=qa_cvars_dialect(qa_console_cvars(console));
+    bool q2=dialect==QA_CONSOLE_Q2 || dialect==QA_CONSOLE_Q2_RERELEASE;
+    *first=dialect==QA_CONSOLE_Q3?6:q2?0:1;
+    *count=dialect==QA_CONSOLE_Q1?0:dialect==QA_CONSOLE_Q3?1:q2?12:8;
+}
+bool frontend_network_source_admin_binding(qa_frontend *f,const qa_console *console,
+    const char *name,qa_command_handler *handler,void **user)
+{
+    if (!f || !console || !name || !handler || !user) return false;
+    size_t first,count; source_admin_span(console,&first,&count);
+    for (size_t i=0;i<count;++i) if (!strcmp(name,source_admin_names[first+i])) {
+        *handler=source_admin_command; *user=f; return true;
+    }
+    return false;
+}
+static bool source_admin_custody(qa_frontend *f,qa_console *console,uint64_t owner,
+    size_t *registered,bool install,qa_error *error)
 {
     if (!f || !console || !owner || !registered)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Source administration handlers require their physical lifetime");
-    qa_console_dialect dialect=qa_cvars_dialect(qa_console_cvars(console));
-    if (dialect==QA_CONSOLE_Q1) return *registered==0;
-    bool q2=dialect==QA_CONSOLE_Q2 || dialect==QA_CONSOLE_Q2_RERELEASE;
-    size_t first=dialect==QA_CONSOLE_Q3?6:q2?0:1,count=dialect==QA_CONSOLE_Q3?1:q2?12:8;
-    if (*registered>count) return frontend_fail(error,QA_ERROR_ARGUMENT,"Source administration registration extent differs");
-    while (*registered<count) {
-        if (!qa_console_register_owned(console,source_admin_names[first+*registered],
-            "Operate the actual Source network service",owner,owner,true,source_admin_command,f,error)) return false;
+    size_t first,count; source_admin_span(console,&first,&count);
+    *registered=0;
+    for (size_t i=0;i<count;++i) {
+        const char *name=source_admin_names[first+i];
+        qa_command_handler expected=NULL,actual=NULL; void *binding=NULL,*user=NULL; uint64_t lifetime=0;
+        if (!frontend_network_source_admin_binding(f,console,name,&expected,&binding))
+            return frontend_fail(error,QA_ERROR_ARGUMENT,"Source administration declaration disappeared");
+        if (qa_console_registration_read(console,name,owner,&lifetime,&actual,&user)) {
+            if (lifetime!=owner || actual!=expected || user!=binding)
+                return frontend_fail(error,QA_ERROR_FORMAT,"Source administration callback has another physical owner");
+        } else if (install) {
+            if (!qa_console_register_owned(console,name,"Operate the actual Source network service",
+                owner,owner,true,expected,binding,error)) return false;
+        } else continue;
         ++*registered;
     }
     return true;
 }
+bool frontend_network_source_admin_bind(qa_frontend *f,qa_console *console,uint64_t owner,
+    size_t *registered,qa_error *error)
+{ return source_admin_custody(f,console,owner,registered,true,error); }
+bool frontend_network_source_admin_adopt(qa_frontend *f,qa_console *console,uint64_t owner,
+    size_t *registered,qa_error *error)
+{ return source_admin_custody(f,console,owner,registered,false,error); }
 void frontend_network_source_admin_unbind(qa_console *console,uint64_t owner,size_t registered)
 {
-    if (!console) return;
-    qa_console_dialect dialect=qa_cvars_dialect(qa_console_cvars(console));
-    bool q2=dialect==QA_CONSOLE_Q2 || dialect==QA_CONSOLE_Q2_RERELEASE;
-    size_t first=dialect==QA_CONSOLE_Q3?6:q2?0:1,count=dialect==QA_CONSOLE_Q3?1:q2?12:8;
-    if (dialect==QA_CONSOLE_Q1 || registered>count) return;
-    for (size_t i=0;i<registered;++i) qa_console_unregister(console,source_admin_names[first+i],owner);
+    if (!console || !registered) return;
+    size_t first,count; source_admin_span(console,&first,&count);
+    if (registered>count) return;
+    for (size_t i=0;i<count;++i) {
+        uint64_t lifetime=0; qa_command_handler handler=NULL; void *user=NULL;
+        if (qa_console_registration_read(console,source_admin_names[first+i],owner,&lifetime,&handler,&user) &&
+            lifetime==owner && handler==source_admin_command)
+            qa_console_unregister(console,source_admin_names[first+i],owner);
+    }
 }
 static bool command(void *context, const qa_command_invocation *call, qa_error *error)
 {

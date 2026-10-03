@@ -145,12 +145,20 @@ static bool commands_fields(qa_source_save_io *io, qa_console *state, qa_console
             (handler && !entry->ordinary_registration)) return invalid(io->error, "Invalid command callback lifetime");
         if (reading) {
             command_entry *actual = find_command(candidate, entry->view.owner, entry->view.name);
-            if (handler && (!actual || !actual->handler || !actual->ordinary_registration ||
-                actual->registration_owner != entry->registration_owner || actual->view.engine_command != entry->view.engine_command))
-                return invalid(io->error, "Saved command callback has no matching candidate source registration");
-            if (!handler && actual && actual->handler)
-                return invalid(io->error, "Saved command differs from an installed candidate callback");
-            if (handler) { entry->handler = actual->handler; entry->user = actual->user; }
+            if (handler && !actual && resolve && resolve->command_binding) {
+                if (!resolve->command_binding(resolve->context, candidate, &entry->view,
+                    entry->registration_owner, &entry->handler, &entry->user, io->error))
+                    return false;
+                if (!entry->handler)
+                    return invalid(io->error, "Saved command factory has no actual Source callback");
+            } else {
+                if (handler && (!actual || !actual->handler || !actual->ordinary_registration ||
+                    actual->registration_owner != entry->registration_owner || actual->view.engine_command != entry->view.engine_command))
+                    return invalid(io->error, "Saved command callback has no matching candidate source registration");
+                if (!handler && actual && actual->handler)
+                    return invalid(io->error, "Saved command differs from an installed candidate callback");
+                if (handler) { entry->handler = actual->handler; entry->user = actual->user; }
+            }
         }
         tail = &entry->next;
     }

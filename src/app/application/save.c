@@ -136,7 +136,7 @@ bool application_save_console_context_from_image(qa_application *app, const qa_s
             application_fail(error, QA_ERROR_FORMAT, "Saved command generation or complete scope inventory differs from its foundation");
         return false;
     }
-    *out = (application_save_console_context){app, generation}; return true;
+    *out = (application_save_console_context){.application=app, .saved_command_generation=generation}; return true;
 }
 
 static bool application_commands_capture(qa_application *app,
@@ -175,7 +175,7 @@ static bool application_commands_restore(qa_application *app,
     qa_source_save_io io = {0}; size_t count = 0; uint64_t generation = 0;
     bool ok = qa_source_save_reader(&io, app->session, bytes, error) &&
         commands_header(&io, &generation, &count, expected) && count == expected;
-    application_save_console_context context = {app, generation};
+    application_save_console_context context = {.application=app, .saved_command_generation=generation, .ops=ops};
     qa_console_save_resolvers resolve = {0};
     if (ok) ok = application_save_console_resolvers(&context, &resolve, error);
     for (size_t i = 0; ok && i < count; ++i) {
@@ -191,7 +191,11 @@ static bool application_commands_restore(qa_application *app,
                         "Physical CLIENT commands require their imported frontend queue owner");
                 else ok = ops->client_commands_restore(ops->context, app, &values[i].scope,
                     values[i].console, payload, error);
-            } else ok = qa_console_save_restore(values[i].console, app->session, &resolve, payload, error);
+            } else {
+                ok = qa_console_save_restore(values[i].console, app->session, &resolve, payload, error);
+                if (ok && ops && ops->commands_restored)
+                    ok = ops->commands_restored(ops->context, app, values[i].console, error);
+            }
         }
     }
     if (ok) ok = qa_source_save_finish(&io, NULL);

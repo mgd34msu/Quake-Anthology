@@ -9,6 +9,7 @@
 typedef struct application_save_console_context {
     qa_application *application;
     uint64_t saved_command_generation;
+    const qa_application_persistence_ops *ops;
 } application_save_console_context;
 bool application_save_console_resolvers(const application_save_console_context *,
                                         qa_console_save_resolvers *, qa_error *);

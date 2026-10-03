@@ -119,6 +119,9 @@ typedef struct qa_application_persistence_ops {
         const qa_application_console_scope *, qa_console *, qa_buffer *, qa_error *);
     bool (*client_commands_restore)(void *, qa_application *,
         const qa_application_console_scope *, qa_console *, qa_bytes, qa_error *);
+    bool (*command_binding)(void *, qa_application *, const qa_console *,
+        const qa_console_entry *, uint64_t registration_owner, qa_command_handler *, void **, qa_error *);
+    bool (*commands_restored)(void *, qa_application *, qa_console *, qa_error *);
 } qa_application_persistence_ops;
 
 bool qa_application_persistence_capture(qa_application *,

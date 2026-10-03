@@ -83,7 +83,7 @@ bool q3components_saved_import(component_game_row *row,qa_error *e)
     for(size_t i=0;i<owner->saved_count;++i) {
         component_saved_row *saved=owner->saved+i;
         if(saved->owner!=row->publication.owner) continue;
-        qa_console_save_resolvers resolver={row,identity,command_context};
+        qa_console_save_resolvers resolver={.context=row,.identity=identity,.command_context=command_context};
         bool ok=application_q3_component_restore(row->publication.game,(qa_bytes){saved->game.data,saved->game.size},&resolver,e)&&
             q3components_scenes_saved_read(row,(qa_bytes){saved->scenes.data,saved->scenes.size},e);
         if(ok) row->initialized=true;

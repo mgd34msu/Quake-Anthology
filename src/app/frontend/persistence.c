@@ -1398,6 +1398,22 @@ static bool client_commands_restore(void *context,qa_application *application,
     return generic?frontend_client_source_commands_restore(f,application,scope,console,bytes,error):
         frontend_network_client_commands_restore(f,application,scope,console,bytes,error);
 }
+static bool command_binding(void *context,qa_application *application,const qa_console *console,
+    const qa_console_entry *saved,uint64_t registration_owner,qa_command_handler *handler,void **user,qa_error *error)
+{
+    frontend_persistence *operation=context; qa_frontend *f=operation->candidate;
+    if (!f || f->application!=application)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Command binding has no actual isolated frontend owner");
+    return frontend_config_store_restore_command_binding(f->config_store,application,console,
+        saved,registration_owner,handler,user,error);
+}
+static bool commands_restored(void *context,qa_application *application,qa_console *console,qa_error *error)
+{
+    frontend_persistence *operation=context; qa_frontend *f=operation->candidate;
+    if (!f || f->application!=application)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Command custody has no actual isolated frontend owner");
+    return frontend_config_store_commands_restored(f->config_store,application,console,error);
+}
 static bool ranking_resolve(void *context,qa_bytes bytes,qa_application_ranking_effect_fn *installed,
     void **binding,qa_error *error)
 {
@@ -1758,6 +1774,7 @@ static bool operation_init(frontend_persistence *operation,qa_frontend *active,
         .rankings_handoff=services && services->rankings_handoff?ranking_handoff:NULL,
         .prepare_services=prepare_services,.prepare_native_baseline=native_baseline,.prepare_content=prepare_content,
         .client_commands_capture=client_commands_capture,.client_commands_restore=client_commands_restore,
+        .command_binding=command_binding,.commands_restored=commands_restored,
         .reconnect=reconnect,.validate=validate,.publish_ready=publish_ready,.publish=publish,.discard_services=discard_services};
     return true;
 }
