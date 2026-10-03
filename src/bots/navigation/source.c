@@ -29,6 +29,17 @@ bool qa_bot_navigation_fuzzy_from(qa_bot_navigation *n, const qa_bot_vector_sour
                                   uint32_t *out, qa_error *e) {
     if (!n || !origin || (!origin->value && !origin->read) || !out)
         return bot_nav_fail(e, "invalid bot fuzzy-area request");
+    const qa_nav_graph_view *graph = qa_navigation_graph(n->runtime);
+    if (graph->node_count && graph->nodes[0].source.kind == QA_NAV_ORIGIN_CONSTRUCTED) {
+        qa_vec3 point;
+        uint32_t node;
+        bool found;
+        if (!qa_bot_vector_read(origin, &point, e) ||
+            !qa_navigation_nearest(n->runtime, n->actor, point, 512, &node, &found, e))
+            return false;
+        *out = found ? qa_bot_navigation_source_area(n, node) : 0;
+        return true;
+    }
     uint32_t first;
     qa_vec3 point;
     if (!qa_bot_vector_read(origin, &point, e) ||
