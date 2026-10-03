@@ -929,10 +929,16 @@ bool application_qc_combat_saved_binding(struct application_qc_state *engine, qa
         return reject(error, "Saved QC combat has no actual declared primary");
     application_qc_combat *owner = engine->combat;
     if (find(owner, id)) return reject(error, "Saved QC combat duplicates its actual callback context");
+    uint32_t physical; int32_t reference; qa_qc_slot_binding slot;
+    qa_qc_instance *vm = engine->provider->state.qc.instance;
+    if (!held(owner, error) || !qa_qc_actor_observation_slot(vm, id, &physical, error) ||
+        !qa_qc_slot(vm, physical, &slot) || !eligible(owner, slot) ||
+        !qa_qc_slot_reference(vm, physical, &reference, error))
+        return reject(error, "Saved QC combat lost its actual restored full-actor Source row");
     combat_actor *actor = calloc(1, sizeof(*actor));
     if (!actor) return application_fail(error, QA_ERROR_MEMORY, "Restoring QC combat callback context");
     *actor = (combat_actor){.next = owner->actors, .owner = owner, .actor = id,
-        .serial = serial, .bound = true, .restoring = true}; owner->actors = actor;
+        .slot = physical, .reference = reference, .serial = serial, .bound = true, .restoring = true}; owner->actors = actor;
     *out = binding(actor); return true;
 }
 bool application_qc_combat_restore_attach(struct application_qc_state *engine, qa_error *error)
