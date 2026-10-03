@@ -243,6 +243,12 @@ bool frontend_shared_publication_prepare(frontend_shared_settings *owner,
         char *name=malloc(strlen(preferences.language)+1);
         if (!name) return frontend_fail(e,QA_ERROR_MEMORY,"Retaining actual source language recipient");
         strcpy(name,preferences.language); ticket->language_name[i]=name; ticket->actors[i]=actor;
+        const qa_launch_instance *prior=qa_application_selected_instance(owner->application,
+            qa_application_launch(owner->application),actor,QA_ROLE_CHARACTER,"");
+        const qa_launch_instance *selected=qa_application_selected_instance(owner->application,
+            owner->candidate,actor,QA_ROLE_CHARACTER,"");
+        if (owner->candidate && (!prior || !selected || prior->state!=selected->state ||
+            prior->storage!=selected->storage)) continue;
         if (!qa_application_language_prepare(owner->application,actor,name,ticket->language+i,e)) return false;
         if (ticket->language[i]) ticket->language_view[ticket->language_count++]=ticket->language[i];
     }

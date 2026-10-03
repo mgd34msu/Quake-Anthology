@@ -488,6 +488,11 @@ bool qa_application_console_scope_read(const qa_application *, const qa_console 
                                         qa_application_console_scope *);
 /* Instance text is borrowed until its attached provider retires. */
 const char *qa_application_provider_instance(const qa_application *, qa_actor_owner);
+/* Resolve the actual actor/configured actor/seat/default selection in this
+ * snapshot using the application's live roster. The result borrows snapshot
+ * custody; this query never constructs, attaches or enters its execution. */
+const qa_launch_instance *qa_application_selected_instance(qa_application *,
+    const qa_launch_snapshot *, qa_actor_id, qa_launch_role, const char *selector);
 bool qa_application_provider_owner(const qa_application *, const char *, qa_actor_owner *);
 bool qa_application_provider_gravity(const qa_application *, qa_actor_owner, float *);
 bool qa_application_q1_fog_read(qa_application *, qa_actor_id, qa_q1_fog_state *);

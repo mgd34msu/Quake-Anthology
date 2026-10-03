@@ -163,20 +163,15 @@ application_provider *application_world_provider(qa_application *application,
     return binding == NULL ? NULL : provider_named(application, binding->instance);
 }
 
-application_provider *application_provider_for(qa_application *application,
-                                               qa_actor_id actor,
-                                               qa_launch_role role,
-                                               const char *selector)
+static const qa_launch_binding *selected_binding(qa_application *application,
+    const qa_launch_choices *choices, qa_actor_id actor, qa_launch_role role, const char *selector)
 {
-    if (application == NULL || (unsigned)role >= QA_ROLE_COUNT)
-        return NULL;
-    const qa_launch_choices *choices = active_choices(application);
     const qa_launch_binding *binding =
         exact_binding(choices, (qa_launch_scope){.kind = QA_SCOPE_ACTOR,
                                                  .actor = actor},
                       role, selector);
     if (binding != NULL)
-        return provider_named(application, binding->instance);
+        return binding;
 
     qa_actor_id configured;
     if (application_player_source_actor(application, actor, &configured)) {
@@ -185,7 +180,7 @@ application_provider *application_provider_for(qa_application *application,
                                                   .actor = configured},
                                 role, selector);
         if (binding != NULL)
-            return provider_named(application, binding->instance);
+            return binding;
     }
 
     uint32_t live_seat;
@@ -193,7 +188,7 @@ application_provider *application_provider_for(qa_application *application,
         binding = exact_binding(choices,
             (qa_launch_scope){.kind = QA_SCOPE_SEAT, .seat = live_seat}, role, selector);
         if (binding != NULL)
-            return provider_named(application, binding->instance);
+            return binding;
     }
 
     if (choices != NULL)
@@ -209,7 +204,7 @@ application_provider *application_provider_for(qa_application *application,
                                   .seat = choices->seats[index].id},
                 role, selector);
             if (binding != NULL)
-                return provider_named(application, binding->instance);
+                return binding;
         }
 
     if (actor_is_player(application, actor, choices)) {
@@ -217,12 +212,42 @@ application_provider *application_provider_for(qa_application *application,
             choices, (qa_launch_scope){.kind = QA_SCOPE_DEFAULT_PLAYER}, role,
             selector);
         if (binding != NULL)
-            return provider_named(application, binding->instance);
+            return binding;
     }
 
+    return NULL;
+}
+
+static application_provider *actor_source_provider(qa_application *application, qa_actor_id actor)
+{
     const qa_actor_record *record =
         qa_actors_get(qa_session_actors(application->session), actor);
     return record == NULL ? NULL : provider_owned(application, record->owner);
+}
+
+const qa_launch_instance *qa_application_selected_instance(qa_application *application,
+    const qa_launch_snapshot *snapshot, qa_actor_id actor, qa_launch_role role, const char *selector)
+{
+    if (!application || !snapshot || (unsigned)role >= QA_ROLE_COUNT) return NULL;
+    const qa_launch_binding *binding = selected_binding(application,
+        qa_launch_snapshot_choices(snapshot), actor, role, selector);
+    if (binding) return qa_launch_snapshot_find(snapshot, binding->instance);
+    application_provider *source = actor_source_provider(application, actor);
+    return source && source->launch ?
+        qa_launch_snapshot_find(snapshot, source->launch->selection.instance) : NULL;
+}
+
+application_provider *application_provider_for(qa_application *application,
+                                               qa_actor_id actor,
+                                               qa_launch_role role,
+                                               const char *selector)
+{
+    if (application == NULL || (unsigned)role >= QA_ROLE_COUNT)
+        return NULL;
+    const qa_launch_binding *binding = selected_binding(application,
+        active_choices(application), actor, role, selector);
+    return binding ? provider_named(application, binding->instance) :
+        actor_source_provider(application, actor);
 }
 
 static void remember_failure(bool result, const qa_error *current,
