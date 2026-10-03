@@ -65,6 +65,19 @@ typedef struct cpu_fragment {
   cpu_derivative derivative[2];
   qa_vec3 world_position, world_normal;
 } cpu_fragment;
+static inline bool cpu_depth_passes(qa_scene_depth test, double depth,
+                                    double old_depth) {
+  return test == QA_DEPTH_ALWAYS || test == QA_DEPTH_DISABLED ||
+         (test == QA_DEPTH_LEQUAL && depth <= old_depth) ||
+         (test == QA_DEPTH_EQUAL && depth == old_depth) ||
+         (test == QA_DEPTH_LESS && depth < old_depth) ||
+         (test == QA_DEPTH_GEQUAL && depth >= old_depth);
+}
+static inline bool cpu_stencil_active(const qa_cpu_renderer *renderer,
+                                      const qa_scene_state *state) {
+  return (state->stencil_enabled || renderer->overdraw) &&
+         renderer->current->stencil;
+}
 static inline double cpu_clamp(double value) { return fmin(1, fmax(0, value)); }
 static inline uint8_t cpu_byte(double value) {
   return (uint8_t)floor(cpu_clamp(value) * 255 + 0.5);

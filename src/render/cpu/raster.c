@@ -477,6 +477,11 @@ static void triangle(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
           cpu_clamp((constant_depth ? vertices[0].z : z) * 0.5 + 0.5) *
               (far_depth - near_depth) +
           near_depth + offset);
+      if (!cpu_stencil_active(renderer, &draw->state) &&
+          !cpu_depth_passes(draw->state.depth_test, fragment.depth,
+              renderer->current->depth[(size_t)fragment.y *
+                  renderer->current->width + fragment.x]))
+        continue;
       for (size_t i = 0; i < 3; ++i)
         perspective[i] = vertices[i].q * weight[i] * reciprocal;
       for (size_t channel = 0; channel < 4; ++channel) {

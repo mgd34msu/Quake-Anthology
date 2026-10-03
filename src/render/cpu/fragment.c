@@ -230,14 +230,8 @@ void cpu_write_fragment(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
   const qa_scene_state *state = &draw->state;
   size_t index = (size_t)fragment->y * buffer->width + fragment->x;
   double old_depth = buffer->depth[index];
-  bool passed =
-      state->depth_test == QA_DEPTH_ALWAYS || state->depth_test == QA_DEPTH_DISABLED ||
-      (state->depth_test == QA_DEPTH_LEQUAL && fragment->depth <= old_depth) ||
-      (state->depth_test == QA_DEPTH_EQUAL && fragment->depth == old_depth) ||
-      (state->depth_test == QA_DEPTH_LESS && fragment->depth < old_depth) ||
-      (state->depth_test == QA_DEPTH_GEQUAL && fragment->depth >= old_depth);
-  bool stencil =
-      (state->stencil_enabled || renderer->overdraw) && buffer->stencil;
+  bool passed = cpu_depth_passes(state->depth_test, fragment->depth, old_depth);
+  bool stencil = cpu_stencil_active(renderer, state);
   if (!passed && !stencil)
     return;
   double texel[4] = {1, 1, 1, 1};
