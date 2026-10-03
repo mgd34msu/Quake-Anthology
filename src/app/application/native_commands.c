@@ -137,7 +137,7 @@ bool application_native_q3_award(void *opaque, qa_actor_id actor,
     if (application->modes == NULL || !application->primary_mode_ready)
         return application_fail(error, QA_ERROR_NOT_FOUND, "Q3 award requires an active mode");
     return qa_modes_source_award(application->modes, application->primary_mode,
-                                 actor, award, error);
+                                 actor, (int32_t)award, error);
 }
 
 bool application_native_suicide(void *opaque, qa_actor_id actor, qa_error *error)

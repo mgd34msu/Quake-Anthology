@@ -356,7 +356,7 @@ static bool event(q3g_role *role, const qa_input_event *input, bool *handled, qa
     } else if (input->kind == QA_INPUT_EVENT_WHEEL) {
         if (!isfinite(input->delta.y) || fabsf(input->delta.y) > UINT16_MAX)
             return application_fail(error, QA_ERROR_ARGUMENT, "Guest wheel delta exceeds source range");
-        if (!input->delta.y) return true;
+        if (input->delta.y == 0.0f) return true;
         int32_t code = input->delta.y > 0 ? QA_KEY_WHEEL_UP : QA_KEY_WHEEL_DOWN;
         *handled = true;
         unsigned count = (unsigned)ceilf(fabsf(input->delta.y));

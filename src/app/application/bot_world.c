@@ -163,7 +163,7 @@ static double inline_index(const char *name) {
     return (size_t)(end-start)==length?value:NAN;
 }
 static int32_t source_i32(double value) {
-    if(!isfinite(value) || !value) return 0;
+    if(!isfinite(value) || value==0.0) return 0;
     double reduced=fmod(trunc(value),4294967296.0);if(reduced<0) reduced+=4294967296.0;
     uint32_t bits=(uint32_t)reduced;int32_t result;memcpy(&result,&bits,sizeof(result));return result;
 }

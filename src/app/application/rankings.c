@@ -321,7 +321,7 @@ static bool game_over(qa_application *app, application_rankings *owner,
         double number=0;
         if (value && !cvar_number(value->value,&number,error)) return false;
         number=trunc(number);
-        if (!number || isnan(number)) number=0;
+        if (number == 0.0 || isnan(number)) number=0;
         if (!backend_result(app,owner,qa_rankings_report_integer(app->rankings,-1,-1,integers[i].key,number,false,error))) return false;
     }
     return true;

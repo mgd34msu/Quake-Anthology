@@ -286,7 +286,7 @@ static bool weapon_q3(json *j, application_provider *p, qa_actor_id id, qa_error
         qa_q3_player_state source;
         if (!qa_q3_player_read(p->state.q3, id, &source))
             return application_fail(e, QA_ERROR_NOT_FOUND, "Unified prediction lost its actual selected Q3 arsenal player");
-        v = (application_q3_weapon_prediction){source.weapon, source.weapon_phase, source.weapon_time_ms};
+        v = (application_q3_weapon_prediction){(int32_t)source.weapon, (int32_t)source.weapon_phase, source.weapon_time_ms};
     } else {
         struct application_q3_guest *engine = q3g_engine(p);
         if (!engine || !engine->game)

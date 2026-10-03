@@ -12,7 +12,7 @@
 #include <string.h>
 
 static int32_t quantity(float value) {
-    return !isfinite(value)?0:value>=INT32_MAX?INT32_MAX:value<=INT32_MIN?INT32_MIN:(int32_t)value;
+    return !isfinite(value)?0:value>=(float)INT32_MAX?INT32_MAX:value<=(float)INT32_MIN?INT32_MIN:(int32_t)value;
 }
 qa_actor_id application_bot_actor(void *opaque,int32_t number) {
     application_bots *bots=opaque;
@@ -59,7 +59,7 @@ bool application_bot_source_weapon(application_bots *bots,qa_actor_id actor,
             return application_fail(error,QA_ERROR_NOT_FOUND,"bot selected Q3 weapon continuation is absent");
         if((unsigned)player.weapon_phase>3)
             return application_fail(error,QA_ERROR_FORMAT,"bot selected Q3 weapon phase is outside its source states");
-        *weapon=(int32_t)player.weapon;*phase=player.weapon_phase;
+        *weapon=(int32_t)player.weapon;*phase=(int32_t)player.weapon_phase;
     } else return application_fail(error,QA_ERROR_UNSUPPORTED,"selected original arsenal has no native bot weapon observation");
     return true;
 }
@@ -216,7 +216,7 @@ bool application_bot_player(void *opaque,qa_actor_id actor,qa_bot_player *out,qa
     } else if(arsenal && arsenal->kind==APPLICATION_PROVIDER_Q2) {
         qa_q2_weapon_state player;
         if(!qa_q2_weapon_read(arsenal->state.q2,actor,&player,error)) return false;
-        out->current_weapon=player.weapon;out->weapon_state=player.phase==QA_Q2_ACTIVATING?1:
+        out->current_weapon=(int32_t)player.weapon;out->weapon_state=player.phase==QA_Q2_ACTIVATING?1:
             player.phase==QA_Q2_DROPPING?2:player.phase==QA_Q2_FIRING?3:0;
         uint64_t now=source_ns;
         out->weapon_time_ms=player.fire_finished_ns>now?quantity((float)(player.fire_finished_ns-now)/1e6f):0;
@@ -224,7 +224,7 @@ bool application_bot_player(void *opaque,qa_actor_id actor,qa_bot_player *out,qa
         qa_q3_player_state player;
         if(!qa_q3_player_read(arsenal->state.q3,actor,&player))
             return application_fail(error,QA_ERROR_NOT_FOUND,"bot selected Q3 arsenal actor is absent");
-        out->current_weapon=player.weapon;out->weapon_state=player.weapon_phase;out->weapon_time_ms=player.weapon_time_ms;
+        out->current_weapon=(int32_t)player.weapon;out->weapon_state=(int32_t)player.weapon_phase;out->weapon_time_ms=player.weapon_time_ms;
         out->deaths=player.deaths;out->spawn_sequence=player.spawn_count;out->grapple_pull=player.grapple_pull;
         out->teleported=player.teleport_lock_ms>0;
         out->air_time=(float)player.air_out_time/1000;
@@ -314,7 +314,7 @@ bool application_bot_entity(void *opaque,qa_actor_id actor,qa_bot_entity *out,qa
         if(!qa_q3_entity_read(provider->state.q3,actor,&view,error)) return false;
         out->hidden=view.kind==QA_Q3_ENTITY_HIDDEN;out->missile=view.kind==QA_Q3_ENTITY_MISSILE;
         out->grapple=view.kind==QA_Q3_ENTITY_GRAPPLE;
-        out->observation.weapon=view.weapon;out->observation.flags=(int32_t)view.flags;
+        out->observation.weapon=(int32_t)view.weapon;out->observation.flags=(int32_t)view.flags;
         out->observation.powerups=(int32_t)view.powerups;
         out->observation.legs_animation=view.legs_animation;out->observation.torso_animation=view.torso_animation;
         out->observation.type=view.kind==QA_Q3_ENTITY_PLAYER?1:view.kind==QA_Q3_ENTITY_ITEM?2:

@@ -90,7 +90,7 @@ static bool valid_event(qa_application *application,
          !qa_vec_finite(event->muzzle_angles) || !isfinite(event->muzzle_scale) || event->muzzle_scale <= 0))
         return application_fail(error, QA_ERROR_ARGUMENT, "Q2 muzzle pose has no genuine finite Source receipt");
     if (!event->has_muzzle_pose &&
-        (event->muzzle_scale || event->muzzle_angles.x || event->muzzle_angles.y || event->muzzle_angles.z))
+        (event->muzzle_scale != 0.0f || event->muzzle_angles.x != 0.0f || event->muzzle_angles.y != 0.0f || event->muzzle_angles.z != 0.0f))
         return application_fail(error, QA_ERROR_ARGUMENT, "Absent muzzle pose has retained Source fields");
     if (event->kind == QA_BUILTIN_CTF_STATUS &&
         (event->family != QA_GAME_Q1 || !event->provider ||

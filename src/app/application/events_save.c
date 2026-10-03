@@ -409,7 +409,7 @@ static bool builtin_field(qa_source_save_io *io, event_store *store, application
         return event_fail(io, QA_ERROR_FORMAT, "Non-Q2 muzzle has a Source pose receipt");
     if (!event->has_muzzle_pose) {
         if (io->direction == QA_SOURCE_SAVE_WRITE &&
-            (event->muzzle_scale || event->muzzle_angles.x || event->muzzle_angles.y || event->muzzle_angles.z))
+            (event->muzzle_scale != 0.0f || event->muzzle_angles.x != 0.0f || event->muzzle_angles.y != 0.0f || event->muzzle_angles.z != 0.0f))
             return event_fail(io, QA_ERROR_FORMAT, "Absent muzzle pose has retained Source fields");
         event->muzzle_angles = (qa_vec3){0}; event->muzzle_scale = 0;
     }
