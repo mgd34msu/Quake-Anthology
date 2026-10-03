@@ -1903,8 +1903,10 @@ static bool install_commands(frontend_config_source *source,qa_error *error)
     return source->dump_registered;
 }
 static bool registry_carry(frontend_config_source *source,const qa_cvars *previous,
-    qa_cvars **out,qa_error *error)
+    uint64_t declaration_owner,qa_cvars **out,qa_error *error)
 {
+    if (declaration_owner && !source->declaration_owner)
+        return fail(error,QA_ERROR_ARGUMENT,"Carried CLIENT declarations lost their actual new Source owner");
     qa_buffer bytes={0}; qa_cvars_restore *ticket=NULL;
     *out=registry(source,qa_cvars_dialect(previous),error);
     bool ok=*out && qa_cvars_save_capture(previous,&bytes,error) &&
@@ -1912,8 +1914,20 @@ static bool registry_carry(frontend_config_source *source,const qa_cvars *previo
         qa_cvars_save_commit(ticket,error);
     if (!ok) qa_cvars_save_abort(ticket);
     qa_buffer_free(&bytes);
-    /* The new physical registry owns carried scalar records. Role callbacks
-     * are rebuilt by its actual factory, never retained from the old host. */
+    if (ok && declaration_owner) {
+        size_t count=qa_cvars_count(*out);
+        qa_cvar_record_state *records=count && count<=SIZE_MAX/sizeof(*records)?malloc(count*sizeof(*records)):NULL;
+        if (count && !records) ok=fail(error,QA_ERROR_MEMORY,"Retaining carried CLIENT declaration identities");
+        qa_cvar_registry_state state;
+        if (ok) ok=qa_cvars_capture_metadata(*out,&state,records,count,error);
+        for (size_t i=0;ok && i<count;++i)
+            records[i].owner=records[i].owner==declaration_owner?source->declaration_owner:0;
+        if (ok) ok=qa_cvars_restore_metadata(*out,&state,records,count,error);
+        free(records);
+        return ok;
+    }
+    /* Callbacks stay with their old host. CLIENT declarations transfer to
+     * their actual new Source; other carried scalars use registry lifetime. */
     for (size_t i=0;ok && i<qa_cvars_count(*out);++i) {
         const qa_cvar_view *value=qa_cvars_at(*out,i);
         if (value->owner) ok=qa_cvars_retain_shared(*out,value->name,error);
@@ -2192,9 +2206,9 @@ static bool carry(frontend_config_store *manager,qa_application *application,
     source->movement_dialect=previous->movement_dialect; source->has_mod=previous->has_mod;
     bool ok=qa_launch_instance_retain_metadata(selected,&source->metadata,error) &&
         frontend_config_files_clone(previous->files,&source->files,error) &&
-        registry_carry(source,previous->movement,&source->movement,error);
+        registry_carry(source,previous->movement,0,&source->movement,error);
     if (ok && previous->fallback==previous->movement) source->fallback=source->movement;
-    else if (ok) ok=registry_carry(source,previous->fallback,&source->fallback,error);
+    else if (ok) ok=registry_carry(source,previous->fallback,0,&source->fallback,error);
     if (ok && previous->keys) {
         ok=frontend_keys_carry(manager->frontend->keys,previous->keys,source->files,cvars,&source->keys,error) &&
             frontend_key_profile_scope(source->keys,(qa_application_console_scope){(qa_actor_owner)command->owner,
@@ -2208,7 +2222,8 @@ static bool carry(frontend_config_store *manager,qa_application *application,
         const config_seat *old_seat=previous->seats+i;
         config_seat *seat=source->seats+source->seat_count++; seat->logical=old_seat->logical;
         if (!seat_movement(candidate,seat->logical,&seat->movement_dialect,error)) { ok=false; break; }
-        ok=registry_carry(source,old_seat->cvars,&seat->cvars,error) && registry_carry(source,old_seat->mouse,&seat->mouse,error) &&
+        ok=registry_carry(source,old_seat->cvars,previous->declaration_owner,&seat->cvars,error) &&
+            registry_carry(source,old_seat->mouse,0,&seat->mouse,error) &&
             frontend_authored_bindings_clone(old_seat->authored,&seat->authored,error);
         qa_input_seat *active=frontend_config_source_input(previous,seat->logical);
         qa_command_context seat_command=*command;
