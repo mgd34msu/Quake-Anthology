@@ -25,7 +25,8 @@ bool qa_input_platform_checkpoint(const qa_input_platform *, const qa_input_plat
     qa_buffer *, qa_error *);
 /* Decode only into a detached owner. The active platform keeps sole native
  * ownership; the guard borrows both heaps through the final publication cut.
- * Exact native endpoint identity, sensor state, and the actual issued
+ * The saved window route binds to the active owner's genuine native window.
+ * Exact physical endpoint identity, sensor state, and the actual issued
  * motor/sensor request provenance must match. Motor records qualify the live
  * owner; SDL provides no motor-state getter and this codec does not replay
  * native output. The initial MIDI capture byte and actual read-call progress

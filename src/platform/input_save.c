@@ -190,18 +190,19 @@ static bool native_matches(const qa_input_platform *active, qa_bytes expected, q
     qa_buffer_free(&current);
     return success || fail(error, QA_ERROR_UNSUPPORTED, "saved platform requires the same native endpoint and SDL cut");
 }
-/* Endpoint fields retain their exact byte identity. The one tail codec owns
- * the logical SDL modes which can be restored on that same native endpoint. */
-static bool native_modes_read(const qa_input_platform *active, qa_bytes saved,
-    qa_buffer *current, input_native_modes *desired, input_native_modes *previous, qa_error *error)
+/* Physical endpoint fields retain their exact byte identity. The one tail
+ * codec resolves the saved window route to the current native window. */
+static bool native_modes_read(const qa_input_platform *active, qa_buffer *saved,
+    uint32_t *window, qa_buffer *current, input_native_modes *desired,
+    input_native_modes *previous, qa_error *error)
 {
     size_t offset = 0;
     if (!native_capture(active, current, &offset, error)) return false;
-    if (saved.size != current->size || offset > saved.size ||
-        (offset && memcmp(saved.data, current->data, offset)))
+    if (saved->size != current->size || offset > saved->size ||
+        (offset && memcmp(saved->data, current->data, offset)))
         return fail(error, QA_ERROR_UNSUPPORTED, "saved platform requires the same native endpoint");
     qa_source_save_io io = {0};
-    bool success = qa_source_save_reader(&io, NULL, saved, error);
+    bool success = qa_source_save_reader(&io, NULL, (qa_bytes){saved->data,saved->size}, error);
     io.offset = offset;
     success = success && modes_fields(&io, desired) && qa_source_save_finish(&io, NULL);
     qa_source_save_dispose(&io);
@@ -211,9 +212,27 @@ static bool native_modes_read(const qa_input_platform *active, qa_bytes saved,
         success = success && modes_fields(&io, previous) && qa_source_save_finish(&io, NULL);
         qa_source_save_dispose(&io);
     }
-    return (success && desired->window == previous->window &&
-        desired->controllers == previous->controllers && desired->joysticks == previous->joysticks) ||
-        fail(error, QA_ERROR_UNSUPPORTED, "saved platform requires the same native window and event endpoints");
+    if (!success) return false;
+    if (*window != desired->window)
+        return fail(error, QA_ERROR_FORMAT, "saved platform window route disagrees with its native modes");
+    if ((desired->window != 0) != (previous->window != 0) ||
+        desired->controllers != previous->controllers || desired->joysticks != previous->joysticks)
+        return fail(error, QA_ERROR_UNSUPPORTED, "saved platform requires the same native window route and event endpoints");
+    if (desired->window != previous->window) {
+        input_native_modes rebound = *desired;
+        rebound.window = previous->window;
+        qa_buffer cut = {0};
+        success = qa_source_save_writer(&io, NULL, error) &&
+            qa_source_save_bytes(&io, saved->data, offset) && modes_fields(&io, &rebound) &&
+            qa_source_save_finish(&io, &cut);
+        qa_source_save_dispose(&io);
+        if (success && cut.size != saved->size)
+            success = fail(error, QA_ERROR_FORMAT, "restored platform native modes changed their field extent");
+        if (!success) { qa_buffer_free(&cut); return false; }
+        qa_buffer_free(saved); *saved = cut; *desired = rebound;
+    }
+    *window = previous->window;
+    return true;
 }
 static bool selection_fields(qa_source_save_io *io, qa_controller_selection *s)
 {
@@ -473,7 +492,7 @@ bool qa_input_platform_restore(qa_input_platform *p, const qa_input_platform *ac
     qa_source_save_io io = {0};
     bool success = candidate && guard && qa_source_save_reader(&io, NULL, bytes, error) &&
         envelope(&io, candidate, active, refs, &guard->native_cut, &haptic) && qa_source_save_finish(&io, NULL) &&
-        native_modes_read(active, (qa_bytes){guard->native_cut.data, guard->native_cut.size},
+        native_modes_read(active, &guard->native_cut, &candidate->window,
             &guard->active_cut, &guard->desired, &guard->previous, error);
     if ((!candidate || !guard) && error && error->code == QA_OK) fail(error, QA_ERROR_MEMORY, "allocating platform candidate");
     qa_haptic_player *players[4];
@@ -523,7 +542,8 @@ bool qa_input_platform_handoff_abort(qa_input_platform_restore_guard *g, qa_erro
     if (g->active_cut.data) {
         qa_buffer current = {0};
         input_native_modes desired = {0}, previous = {0};
-        bool success = native_modes_read(g->active, (qa_bytes){g->active_cut.data,g->active_cut.size},
+        uint32_t window = g->active->window;
+        bool success = native_modes_read(g->active, &g->active_cut, &window,
             &current, &desired, &previous, error);
         qa_buffer_free(&current);
         if (!success || !input_platform_modes_apply(
