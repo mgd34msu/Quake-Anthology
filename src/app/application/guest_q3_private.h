@@ -207,7 +207,6 @@ application_provider *q3g_game_source(qa_application *);
 bool q3g_selected_client_seat(const application_provider *, const qa_launch_choices *,
     qa_qvm_role, size_t);
 bool q3g_arguments(void *, qa_native_host_command_view *, qa_error *);
-bool q3g_acquisition_copy(const qa_vfs_acquisition *, qa_vfs_acquisition *, qa_error *);
 bool q3g_compatibility(const qa_launch_instance *, const char *, const qa_qvm_image *,
     qa_qvm_role, bool primary, qa_qvm_compatibility *, qa_error *);
 bool application_q3_guest_services_descriptor(qa_application *, application_provider *,

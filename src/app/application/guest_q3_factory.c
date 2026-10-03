@@ -10,21 +10,6 @@
 #include "q3_product.h"
 #include "qa/network_q3.h"
 
-bool q3g_acquisition_copy(const qa_vfs_acquisition *source, qa_vfs_acquisition *out, qa_error *error)
-{
-    if (!source || !source->mount || !source->resource_id || !source->path || !source->lookup_path ||
-        !out || out->resource_id)
-        return application_fail(error, QA_ERROR_ARGUMENT, "Artifact receipt requires its genuine acquisition");
-    qa_vfs_acquisition copy = {.mount = source->mount, .resource_id = source->resource_id};
-    copy.path = q3g_copy_text(source->path, error);
-    copy.lookup_path = q3g_copy_text(source->lookup_path, error);
-    if (source->link_source) copy.link_source = q3g_copy_text(source->link_source, error);
-    if (source->link_target) copy.link_target = q3g_copy_text(source->link_target, error);
-    if (!copy.path || !copy.lookup_path || (source->link_source && !copy.link_source) ||
-        (source->link_target && !copy.link_target)) { qa_vfs_acquisition_dispose(&copy); return false; }
-    *out = copy; return true;
-}
-
 bool q3g_compatibility(const qa_launch_instance *descriptor, const char *path,
     const qa_qvm_image *image, qa_qvm_role kind, bool primary,
     qa_qvm_compatibility *out, qa_error *error)

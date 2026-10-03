@@ -363,7 +363,7 @@ static bool role_create(struct application_q3_guest *engine, qa_qvm_role kind,
         if (primary) {
             shared->resource = (qa_resource *)descriptor->artifact;
             qa_resource_retain(shared->resource);
-            if (!shared->resource || !q3g_acquisition_copy(descriptor->artifact_acquisition,
+            if (!shared->resource || !qa_vfs_acquisition_copy(descriptor->artifact_acquisition,
                 &shared->acquisition, error)) goto failed;
         } else if (!qa_vfs_acquire_receipt(shared->view, path, &shared->resource,
             &shared->acquisition, error)) goto failed;
@@ -415,8 +415,6 @@ static bool role_create(struct application_q3_guest *engine, qa_qvm_role kind,
         }
         if (role->image && kind == QA_QVM_GAME && !application_q3_grapple_profile_create(role->image,
             kind, shared->abi, path, &shared->grapple_profile, error)) goto failed;
-        shared->image = role->image; qa_qvm_image_retain(shared->image);
-        shared->module = role->module; qa_native_module_retain(shared->module);
         shared->declaration = role->declaration;
         shared->primary = compatibility.primary; compatibility.primary = (qa_buffer){0};
         shared->equipment_presentation = compatibility.equipment_presentation;
@@ -446,6 +444,8 @@ static bool role_create(struct application_q3_guest *engine, qa_qvm_role kind,
                 goto failed;
             }
         }
+        shared->image = role->image; qa_qvm_image_retain(shared->image);
+        shared->module = role->module; qa_native_module_retain(shared->module);
     }
     q3g_server_bind(role, &options);
     if (!q3g_client_bind(role, &options, error)) goto failed;

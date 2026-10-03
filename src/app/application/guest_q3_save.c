@@ -1499,27 +1499,27 @@ static bool prepare_artifact(application_provider *provider, struct application_
     artifact->resource = (qa_resource *)qa_application_content_resource(
         qa_application_content_graph_read(provider->application), saved->pool, saved->resource);
     qa_resource_retain(artifact->resource);
-    if (!artifact->resource || !q3g_acquisition_copy(&saved->acquisition, &artifact->acquisition, error)) return false;
+    if (!artifact->resource || !qa_vfs_acquisition_copy(&saved->acquisition, &artifact->acquisition, error)) return false;
     if (saved->items_resource) {
         artifact->items_resource = (qa_resource *)qa_application_content_resource(
             qa_application_content_graph_read(provider->application), saved->items_pool, saved->items_resource);
         qa_resource_retain(artifact->items_resource);
         if (!artifact->items_resource ||
-            !q3g_acquisition_copy(&saved->items_acquisition, &artifact->items_acquisition, error)) return false;
+            !qa_vfs_acquisition_copy(&saved->items_acquisition, &artifact->items_acquisition, error)) return false;
     }
     if (saved->body_resource) {
         artifact->body_resource = (qa_resource *)qa_application_content_resource(
             qa_application_content_graph_read(provider->application), saved->body_pool, saved->body_resource);
         qa_resource_retain(artifact->body_resource);
         if (!artifact->body_resource ||
-            !q3g_acquisition_copy(&saved->body_acquisition, &artifact->body_acquisition, error)) return false;
+            !qa_vfs_acquisition_copy(&saved->body_acquisition, &artifact->body_acquisition, error)) return false;
     }
     if (saved->models_resource) {
         artifact->weapon_models_resource = (qa_resource *)qa_application_content_resource(
             qa_application_content_graph_read(provider->application), saved->models_pool, saved->models_resource);
         qa_resource_retain(artifact->weapon_models_resource);
         if (!artifact->weapon_models_resource ||
-            !q3g_acquisition_copy(&saved->models_acquisition, &artifact->weapon_models_acquisition, error)) return false;
+            !qa_vfs_acquisition_copy(&saved->models_acquisition, &artifact->weapon_models_acquisition, error)) return false;
     }
     if (!saved->qvm) {
         qa_sha256_digest empty;
