@@ -379,6 +379,9 @@ bool qa_native_host_client_userinfo(qa_native_host *, uint32_t slot, const char 
                                     qa_error *);
 bool qa_native_host_client_userinfo_result(qa_native_host *, uint32_t slot,
     const char *userinfo, qa_buffer *returned_userinfo, qa_error *);
+/* Executes the original callback while retaining the actual client slot.
+ * After reading and detaching final Source leases, the caller detaches that
+ * actor and reconciles the completed source changes. */
 bool qa_native_host_client_disconnect(qa_native_host *, uint32_t slot, qa_error *);
 bool qa_native_host_client_command(qa_native_host *, uint32_t slot, qa_error *);
 /* Synchronous continuation of an actual scanner region in this same instance.

@@ -2830,6 +2830,13 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
         bool source_combat = original_character && original_character->game &&
             original_character->game->combat &&
             application_q3_guest_actor_client(character, actor, &original_client_slot);
+        struct application_native_q2 *original_q2 = character->kind == APPLICATION_PROVIDER_NATIVE
+            ? character->state.native.q2_engine : NULL;
+        if (original_q2 && original_q2->source_combat && record->client_slot < 256 &&
+            application_provider_for(application, actor, QA_ROLE_COMBAT, NULL) == character) {
+            const application_native_q2_client *client = &original_q2->clients[record->client_slot + 1];
+            source_combat = client->connected && client->begun && qa_actor_id_equal(client->actor, actor);
+        }
         if (!source_combat) {
             traits.can_take_damage = !seat->spectator && found;
             if (!qa_combat_set_traits(application->combat, actor, &traits, error)) return false;

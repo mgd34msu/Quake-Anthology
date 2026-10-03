@@ -644,46 +644,44 @@ bool application_native_q2_client_disconnect(application_provider *provider, uin
     application_native_q2_client *client = &engine->clients[slot];
     if (!client->actor.registry) return true;
     qa_actor_id actor = client->actor;
+    engine->disconnect_client = slot;
     bool ok = true; qa_error first = {0};
     if (client->connected && !client->disconnect_started) {
         client->disconnect_started = true;
         if (!qa_native_terminal(qa_native_host_instance(provider->state.native.host))) {
-            engine->disconnect_client = slot;
             ++engine->calls;
             if(engine->callbacks) {
                 bool accepted;
                 ok=declared_client(engine,slot,"clients.disconnect",(qa_bytes){0},&accepted,&first);
-                qa_error release_error = {0};
-                if (!qa_native_host_client_retained_set(provider->state.native.host,slot,false,&release_error)) {
-                    if (ok) first = release_error;
-                    ok = false;
-                }
             } else {
                 application_native_q2_visibility_invalidate(engine);
                 ok = qa_native_host_client_disconnect(provider->state.native.host, slot, &first);
             }
             --engine->calls;
-            engine->disconnect_client = 0;
         }
     }
-    if (!qa_actor_id_equal(client->actor, actor))
+    if (!qa_actor_id_equal(client->actor, actor)) {
+        engine->disconnect_client = 0;
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 disconnect replaced its entered Source generation");
-    client->connected = client->begun = false;
-    if (engine->callbacks && !qa_native_terminal(qa_native_host_instance(provider->state.native.host)) &&
-        !qa_native_host_client_retained_set(provider->state.native.host, slot, false, error)) return false;
-    client->denied = false;
+    }
     application_native_q2_inventory_scanner_release(engine->inventory_scanner,actor);
     qa_error current = {0};
-    if (!application_native_q2_callbacks_release_actor(engine,actor,&current) ||
-        !application_native_q2_combat_detach(engine, actor, &current) ||
-        !application_native_q2_inventory_detach(engine, slot, &current)) {
+    if (!application_native_q2_combat_detach(engine, actor, &current) ||
+        !application_native_q2_inventory_detach(engine, slot, &current) ||
+        !application_native_q2_callbacks_release_actor(engine,actor,&current)) {
+        engine->disconnect_client = 0;
         if (error) *error = ok ? current : first;
         return false;
     }
-    if (!qa_native_host_detach_actor(provider->state.native.host, slot, actor, &current)) {
+    if (!qa_native_host_detach_actor(provider->state.native.host, slot, actor, &current) ||
+        !qa_native_host_source_reconcile(provider->state.native.host, &current)) {
+        engine->disconnect_client = 0;
         if (error) *error = ok ? current : first;
         return false;
     }
+    engine->disconnect_client = 0;
+    client->connected = client->begun = false;
+    client->denied = false;
     application_native_q2_visibility_released(engine, actor);
     client->actor = (qa_actor_id){0}; client->bot = false;
     client->protocol_fog = (qa_q2_wire_fog){0};

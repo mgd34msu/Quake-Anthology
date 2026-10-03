@@ -317,8 +317,15 @@ bool application_q2_combat_actor_valid(application_q2_combat_actor *a, qa_error 
     qa_native_address address; qa_native_slot_binding binding; int64_t inuse, generation;
     if (!qa_native_entity_address(native(p), a->slot, &address, error) || address != a->address ||
         !qa_native_slot(native(p), a->slot, &binding, error) ||
-        (!a->admitting && (binding.kind == QA_NATIVE_SLOT_FREE || !qa_actor_id_equal(binding.actor, a->actor))) ||
-        !integer_read(p, address + p->inuse, p->kex ? 1 : 4, &inuse, error) || !inuse ||
+        (!a->admitting && (binding.kind == QA_NATIVE_SLOT_FREE || !qa_actor_id_equal(binding.actor, a->actor))))
+        return application_fail(error, QA_ERROR_NOT_FOUND, "Native combat source address or generation changed");
+    struct application_native_q2 *engine = p->engine;
+    bool final_disconnect = !a->admitting && a->slot && a->slot < 257 &&
+        engine->disconnect_client == a->slot && engine->clients[a->slot].disconnect_started &&
+        engine->clients[a->slot].connected && qa_actor_id_equal(engine->clients[a->slot].actor, a->actor) &&
+        binding.kind == QA_NATIVE_SLOT_BORROWED && binding.owner == engine->provider->owner &&
+        binding.source_slot == a->slot && qa_native_host_destroy_ready(engine->provider->state.native.host);
+    if (!integer_read(p, address + p->inuse, p->kex ? 1 : 4, &inuse, error) || (!inuse && !final_disconnect) ||
         (p->kex && (!integer_read(p, address + p->generation, 4, &generation, error) || generation != a->generation)))
         return application_fail(error, QA_ERROR_NOT_FOUND, "Native combat source address or generation changed");
     return true;

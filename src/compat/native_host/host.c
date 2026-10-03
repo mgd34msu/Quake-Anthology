@@ -764,10 +764,7 @@ bool qa_native_host_client_userinfo(qa_native_host *host, uint32_t slot,
 
 bool qa_native_host_client_disconnect(qa_native_host *host, uint32_t slot, qa_error *error)
 {
-    bool ok = client_entity_call(host, "ClientDisconnect", slot, error);
-    if (ok)
-        ok = retain_client(host, slot, false, error) && native_host_reconcile(host, error);
-    return ok;
+    return client_entity_call(host, "ClientDisconnect", slot, error);
 }
 
 bool qa_native_host_client_command(qa_native_host *host, uint32_t slot, qa_error *error)
