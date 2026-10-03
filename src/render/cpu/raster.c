@@ -426,7 +426,9 @@ static void triangle(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
     slope_y += vertices[i].z * attributes[i].y;
     q_dx += vertices[i].q * attributes[i].x;
     q_dy += vertices[i].q * attributes[i].y;
-    for (size_t unit = 0; unit < 2; ++unit)
+    for (size_t unit = 0; unit < draw->texture_count; ++unit) {
+      if (!draw->textures[unit])
+        continue;
       for (size_t axis = 0; axis < 2; ++axis) {
         uv[unit][axis][i] = (vertices[i].vertex->uv[unit][axis] -
                              vertices[0].vertex->uv[unit][axis]) *
@@ -434,6 +436,7 @@ static void triangle(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
         uv_dx[unit][axis] += uv[unit][axis][i] * attributes[i].x;
         uv_dy[unit][axis] += uv[unit][axis][i] * attributes[i].y;
       }
+    }
   }
   double slope = fmax(fabs(slope_x), fabs(slope_y)) * fabs(inverse_area) * 0.5 *
                  fabs(far_depth - near_depth);
@@ -443,11 +446,14 @@ static void triangle(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
                       : 0;
   q_dx *= inverse_area;
   q_dy *= inverse_area;
-  for (size_t unit = 0; unit < 2; ++unit)
+  for (size_t unit = 0; unit < draw->texture_count; ++unit) {
+    if (!draw->textures[unit])
+      continue;
     for (size_t axis = 0; axis < 2; ++axis) {
       uv_dx[unit][axis] *= inverse_area;
       uv_dy[unit][axis] *= inverse_area;
     }
+  }
   bool constant_depth =
       vertices[0].z == vertices[1].z && vertices[1].z == vertices[2].z;
   for (int64_t y = (int64_t)min_y; y <= (int64_t)max_y; ++y) {
@@ -480,7 +486,9 @@ static void triangle(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
               vertices[i].vertex->color[channel] * vertices[i].q * weight[i];
         fragment.color[channel] = cpu_clamp(color * reciprocal);
       }
-      for (size_t unit = 0; unit < 2; ++unit) {
+      for (size_t unit = 0; unit < draw->texture_count; ++unit) {
+        if (!draw->textures[unit])
+          continue;
         double derivative_x[2], derivative_y[2];
         for (size_t axis = 0; axis < 2; ++axis) {
           double coordinate = 0;
@@ -646,7 +654,9 @@ static void line(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
         fragment.color[c] = cpu_clamp(
             (a.color[c] * (1 - t) * inverse_a + b.color[c] * t * inverse_b) *
             reciprocal);
-      for (size_t unit = 0; unit < 2; ++unit) {
+      for (size_t unit = 0; unit < draw->texture_count; ++unit) {
+        if (!draw->textures[unit])
+          continue;
         double derivative[2];
         for (size_t c = 0; c < 2; ++c) {
           double difference = b.uv[unit][c] - a.uv[unit][c];
