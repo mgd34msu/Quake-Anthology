@@ -58,14 +58,10 @@ static bool clone_decoder(const qc_recipient *,qc_decoder *,qa_error *);
 static bool row_get(frontend_qc_messages *owner,const qa_application_qc_message_source *source,
     qa_actor_id recipient,uint32_t slot,qc_recipient **out,qa_error *error)
 {
-    qc_recipient **link=&owner->recipients;
-    while(*link) {
-        qc_recipient *row=*link;
-        if(!recipient_current(owner,&row->camera)) { *link=row->next; row_free(row); continue; }
+    for(qc_recipient *row=owner->recipients;row;row=row->next) {
         if(row->camera.source.provider==source->provider && qa_actor_id_equal(row->camera.recipient,recipient)) {
             *out=row; return true;
         }
-        link=&row->next;
     }
     qc_recipient *row=calloc(1,sizeof(*row));
     if(!row) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining local QC full recipient decoder");
@@ -230,6 +226,12 @@ bool frontend_qc_messages_drain(frontend_qc_messages *owner,qa_error *error)
     if(!current(owner) || owner->busy || owner->frontend->capture || owner->frontend->resource_inventory ||
         owner->frontend->source_restoring) return false;
     owner->busy=true; bool okay=true;
+    qc_recipient **link=&owner->recipients;
+    while(*link) {
+        qc_recipient *row=*link;
+        if(!recipient_current(owner,&row->camera)) { *link=row->next; row_free(row); continue; }
+        link=&row->next;
+    }
     size_t sources=qa_application_qc_message_source_count(owner->application);
     for(size_t i=0;okay && i<sources;++i) {
         qa_application_qc_message_source source; bool found=false;
