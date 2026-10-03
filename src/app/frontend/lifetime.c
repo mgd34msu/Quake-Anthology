@@ -73,6 +73,16 @@ struct frontend_shutdown {
     qa_error failure;
     bool failure_reported, waiting, retry_cleanup;
 };
+static bool shutdown_connections(qa_frontend *f,qa_error *error)
+{
+    bool complete=false;
+    if(!frontend_network_retire_connections(f,&complete,error)) return false;
+    if(!complete) {
+        f->shutdown->waiting=true;
+        return false;
+    }
+    return true;
+}
 static bool shutdown_client_releases_ready(qa_frontend *f,qa_error *error)
 {
     if (f->input_settings || f->input_shutdown || f->engine_shutdown)
@@ -134,7 +144,8 @@ static bool shutdown_inputs(qa_frontend *f,qa_error *error)
             const qa_cvars_edit *values=shared?
                 frontend_shared_values_prepared(frontend_shared_settings_values(shared)):NULL;
             qa_error detached={0};
-            if(!values || !qa_application_engine_shutdown_begin_candidate(f->application,candidate,values,
+            if(!values || !shutdown_connections(f,&detached) ||
+                !qa_application_engine_shutdown_begin_candidate(f->application,candidate,values,
                 &f->engine_shutdown,&detached)) {
                 if(error) {
                     *error=fault;
@@ -233,7 +244,7 @@ static bool shutdown_inputs(qa_frontend *f,qa_error *error)
         owner->phase=SHUTDOWN_DETACH;
     }
     if(owner->phase==SHUTDOWN_DETACH) {
-        if(!shutdown_admitted(f,error) ||
+        if(!shutdown_admitted(f,error) || !shutdown_connections(f,error) ||
             !qa_application_engine_shutdown_begin(f->application,&f->engine_shutdown,error)) return false;
         owner->phase=SHUTDOWN_RETIRE_INPUT;
     }
@@ -678,12 +689,6 @@ bool qa_frontend_destroy(qa_frontend *frontend, qa_error *error)
     if (frontend->audio && !qa_audio_engine_acoustics_release(frontend->audio,error)) return false;
     if (!frontend_network_close_client(frontend,error) || !frontend_cinematic_destroy(frontend,error) || !frontend_save_commands_destroy(frontend,error) ||
         !frontend_campaign_destroy(frontend,error)) return false;
-    bool connections_complete=false;
-    if (!frontend_network_retire_connections(frontend,&connections_complete,error)) return false;
-    if (!connections_complete) {
-        frontend->shutdown->waiting=true;
-        return false;
-    }
     if (!frontend_selected_effects_retire(frontend,error)) return false;
     if (!frontend_remote_q3_destroy(frontend,error) ||
         !frontend_remote_q3_initial_destroy_all(frontend,error)) return false;
