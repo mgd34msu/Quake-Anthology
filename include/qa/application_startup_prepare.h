@@ -135,6 +135,9 @@ typedef struct qa_application_startup_hooks {
      * invocation after its GAME declined it. No text forwarding or reparse. */
     bool (*source_common_command)(void *, qa_application *, const qa_application_startup_source *,
         const qa_command_invocation *, bool *, qa_error *);
+    /* An entered ENGINE request may queue work on its genuine current Source
+     * console. The receiver owns capture, alias expansion and later dispatch. */
+    bool (*engine_source_command)(void *,qa_application *,const qa_command_invocation *,bool *,qa_error *);
     /* The actual Source file holder supplies media and changes COM_Gamedir.
      * NULL directory queries; a reached switch reports its literal effects. */
     bool (*source_files)(void *,qa_application *,const qa_application_startup_source *,

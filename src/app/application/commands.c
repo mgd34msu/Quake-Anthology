@@ -337,6 +337,14 @@ qa_command_result application_command_fallback(void *opaque,
     if (!qa_application_capture_command_context(application, &invocation->context,
                                                   &command.context, error))
         return QA_COMMAND_FAILED;
+    const qa_application_startup_hooks *hooks=application->startup_hooks;
+    if (invocation->console==application->console && !command.context.owner &&
+        hooks && hooks->engine_source_command) {
+        bool routed=false;
+        if (!hooks->engine_source_command(hooks->context,application,invocation,&routed,error))
+            return QA_COMMAND_FAILED;
+        if (routed) return QA_COMMAND_HANDLED;
+    }
     qa_command_result round = q3_round_command(application, &command, error);
     if (round != QA_COMMAND_UNHANDLED)
         return round;

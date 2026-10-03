@@ -1047,6 +1047,55 @@ bool frontend_config_store_primary_server_read(frontend_config_store *manager,
         .console=source->console,.cvars=source->cvars,.command=command,.declaration_owner=source->declaration_owner};
     *present=true; return true;
 }
+static bool engine_source_command(void *context,qa_application *application,
+    const qa_command_invocation *call,bool *handled,qa_error *error)
+{
+    frontend_config_store *manager=context;
+    if (!manager || manager->frontend->application!=application || !call || !handled ||
+        !call->argc || !call->raw || call->console!=qa_application_console(application) ||
+        call->context.owner || !qa_console_invocation_current(call->console,call))
+        return fail(error,QA_ERROR_ARGUMENT,"Source handoff requires its actual entered ENGINE request");
+    *handled=false;
+    if (call->context.origin==QA_COMMAND_REMOTE) return true;
+    for (size_t i=0;;++i) {
+        const qa_console_entry *alias=qa_console_alias_at(call->console,call->context.owner,i);
+        if (!alias) break;
+        if (equal(call->argv[0],alias->name)) return true;
+    }
+    qa_application_startup_source source; bool present=false;
+    if (!frontend_config_store_primary_server_read(manager,&source,&present,error)) return false;
+    if (!present || (source.scope.kind!=QA_APPLICATION_CONSOLE_Q2_GAME &&
+        source.scope.kind!=QA_APPLICATION_CONSOLE_NATIVE_Q2 &&
+        !frontend_config_store_parked_current(manager,&source))) return true;
+    if (source.console==call->console || !qa_console_idle(source.console))
+        return fail(error,QA_ERROR_ARGUMENT,"Source handoff lost its returned receiving console");
+    qa_command_context command=source.command;
+    command.origin=call->context.origin; command.seat=call->context.seat;
+    command.actor=call->context.actor; command.direct=call->context.direct;
+    command.script=call->context.script; command.console_text=call->context.console_text;
+    command.registry=command.generation=0;
+    frontend_config_source *physical=frontend_config_store_source(manager,source.console);
+    if (!physical || physical->application!=application ||
+        (command.origin==QA_COMMAND_SEAT && seat_index(physical,command.seat)>=physical->seat_count))
+        return fail(error,QA_ERROR_ARGUMENT,"Source handoff lost its actual authored recipient");
+    if (!(physical==manager->parked?parked_capture(manager,&command,&command,error):
+        qa_application_capture_command_context(application,&command,&command,error)) ||
+        !source_context(physical,&command)) return false;
+    const char *name=call->argv[0];
+    bool owned=equal(name,"killserver") || equal(name,"map") || equal(name,"gamemap");
+    for (size_t i=0;!owned;++i) {
+        const qa_console_entry *alias=qa_console_alias_at(source.console,command.owner,i);
+        if (!alias) break;
+        owned=equal(name,alias->name);
+    }
+    const qa_console_entry *entry=!owned?qa_console_find(source.console,&command,name):NULL;
+    if (entry && entry->engine_command) owned=true;
+    qa_cvars *registry=!owned?frontend_config_store_cvar_owner(manager,source.console,&command,name):NULL;
+    if (registry && qa_cvars_find(registry,name)) owned=true;
+    if (!owned) return true;
+    if (!qa_console_append(source.console,&command,call->raw,error)) return false;
+    *handled=true; return true;
+}
 bool frontend_config_store_admin_dispatch(frontend_config_store *manager,const qa_command_invocation *call,
     size_t skip,bool *handled,qa_error *error)
 {
@@ -3177,7 +3226,8 @@ frontend_config_store *frontend_config_store_create(qa_frontend *frontend,qa_err
         .ready_publication=ready_publication,.owned_publication_ready=owned_publication_ready,
         .consume_publication=consume_publication,.finish_publication=finish_publication,
         .abort_publication=abort_publication,.qw_logfrag_write=qw_log_write,.qw_logfrag_enabled=qw_log_enabled,
-        .source_common_command=source_common_command,.source_files=source_files,.source_gamedir=source_gamedir};
+        .source_common_command=source_common_command,.engine_source_command=engine_source_command,
+        .source_files=source_files,.source_gamedir=source_gamedir};
     return manager;
 }
 const qa_application_startup_hooks *frontend_config_store_hooks(frontend_config_store *manager)
