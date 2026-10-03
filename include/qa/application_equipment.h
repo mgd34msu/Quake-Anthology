@@ -56,6 +56,11 @@ bool qa_application_equipment_read(qa_application *, qa_actor_id,
 bool qa_application_equipment_source_read(qa_application *,qa_actor_id,
     qa_application_equipment_view *,bool *present,qa_error *);
 bool qa_application_equipment_current(qa_application *, const qa_application_equipment_view *);
+/* Requests a weapon from its actual admitted provider through the canonical
+ * slot handoff. Acceptance comes from that Source binding; declared item
+ * USE/DROP calls are independent and are not invoked here. */
+bool qa_application_equipment_request_weapon(qa_application *, qa_actor_id,
+    qa_actor_owner, qa_item_id, bool *accepted, qa_error *);
 /* Pure product qualification for an actual retained equipment registry during
  * capture/import. Reads its real constructed provider; no source call runs. */
 bool qa_application_equipment_q3_product_read(const qa_application *, qa_actor_owner,

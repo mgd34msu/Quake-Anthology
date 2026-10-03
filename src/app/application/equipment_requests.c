@@ -8,6 +8,7 @@
 #include "guest_qc_item_weapons.h"
 #include "native_maps.h"
 #include "qa/application_qc_presentation.h"
+#include "qa/application_equipment.h"
 #include <stdlib.h>
 
 static bool current(qa_application *app,application_provider *provider,qa_actor_id actor)
@@ -135,7 +136,7 @@ bool application_equipment_primary_select(void *context,qa_actor_id actor,qa_act
     if(!current(app,provider,actor)) return application_fail(e,QA_ERROR_NOT_FOUND,"Weapon selection retired its actual source or full actor");
     return true;
 }
-bool application_equipment_request_weapon(qa_application *app,qa_actor_id actor,qa_actor_owner owner,
+bool qa_application_equipment_request_weapon(qa_application *app,qa_actor_id actor,qa_actor_owner owner,
     qa_item_id item,bool *accepted,qa_error *e)
 {
     if(!app||!accepted||!owner||!item||!app->session||!qa_actors_get(qa_session_actors(app->session),actor))

@@ -4,7 +4,7 @@
 #include "guest_native_q2_attack.h"
 #include "map_players_private.h"
 #include "supplies.h"
-#include "equipment_requests.h"
+#include "qa/application_equipment.h"
 #include "qa/game_q2_items.h"
 #include "guest_q3_private.h"
 #include "guest_q3_catalog.h"
@@ -638,7 +638,7 @@ static bool use(void *context, qa_actor_id actor, qa_item_id item, qa_error *err
     if (okay) okay = player_current(owner, &source, arsenal, map_revision, config_revision, error);
     if (okay && weapon) {
         bool accepted = false;
-        okay = application_equipment_request_weapon(app, actor,
+        okay = qa_application_equipment_request_weapon(app, actor,
             has_component ? component_owner : arsenal->owner, item, &accepted, error);
     } else if (okay) okay = qa_inventory_item_action(app->inventory, actor, item, QA_ITEM_USE, error);
     if (okay) okay = player_current(owner, &source, arsenal, map_revision, config_revision, error);
