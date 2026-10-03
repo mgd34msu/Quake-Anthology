@@ -179,6 +179,52 @@ static bool command(nav_prediction *p, qa_vec3 target, qa_nav_travel mode, qa_er
                                                                                         : 0);
     return command_vector(p, move, 16, e);
 }
+static bool same_vector(qa_vec3 a, qa_vec3 b) {
+    return a.x == b.x && a.y == b.y && a.z == b.z;
+}
+static bool same_q2_prediction(const qa_movement_result *a, const qa_movement_result *b) {
+    if (a->state.kind != QA_MOVEMENT_Q2_CLASSIC || b->state.kind != QA_MOVEMENT_Q2_CLASSIC)
+        return false;
+    const qa_q2_movement_state *left = &a->state.data.q2, *right = &b->state.data.q2;
+    if (left->type != right->type || left->wide_coordinates != right->wide_coordinates ||
+        left->flags != right->flags || left->time_eight_ms != right->time_eight_ms ||
+        left->gravity != right->gravity ||
+        (left->wide_coordinates && left->wide.time_ms != right->wide.time_ms))
+        return false;
+    for (unsigned axis = 0; axis < 3; ++axis)
+        if (qa_q2_movement_coordinate(left, false, axis) !=
+                qa_q2_movement_coordinate(right, false, axis) ||
+            qa_q2_movement_coordinate(left, true, axis) !=
+                qa_q2_movement_coordinate(right, true, axis) ||
+            left->delta_angle_shorts[axis] != right->delta_angle_shorts[axis])
+            return false;
+    for (unsigned channel = 0; channel < 4; ++channel)
+        if (a->screen_blend[channel] != b->screen_blend[channel]) return false;
+    return a->state.kind == b->state.kind && qa_actor_id_equal(a->actor, b->actor) &&
+        same_vector(a->bounds.mins, b->bounds.mins) &&
+        same_vector(a->bounds.maxs, b->bounds.maxs) &&
+        same_vector(a->view_angles, b->view_angles) &&
+        same_vector(a->view_offset, b->view_offset) &&
+        a->view_height == b->view_height && a->horizontal_speed == b->horizontal_speed &&
+        a->ground.hit == b->ground.hit && a->ground.model == b->ground.model &&
+        qa_actor_id_equal(a->ground.actor, b->ground.actor) &&
+        a->water_level == b->water_level && a->water_type == b->water_type &&
+        a->contact_count == b->contact_count && a->effect_count == b->effect_count &&
+        a->render_flags == b->render_flags &&
+        a->impact_delta == b->impact_delta && a->step_clip == b->step_clip &&
+        a->jump_sound == b->jump_sound;
+}
+static bool same_q2_command(const qa_movement_command *a, const qa_movement_command *b) {
+    if (a->kind != b->kind || a->milliseconds != b->milliseconds ||
+        !same_vector(a->angles, b->angles) || a->forward_move != b->forward_move ||
+        a->side_move != b->side_move || a->up_move != b->up_move ||
+        a->buttons != b->buttons || a->impulse != b->impulse ||
+        a->light_level != b->light_level || a->weapon != b->weapon)
+        return false;
+    for (unsigned axis = 0; axis < 3; ++axis)
+        if (a->angle_words[axis] != b->angle_words[axis]) return false;
+    return true;
+}
 bool nav_predict(nav_prediction *p, qa_actor_id actor, qa_vec3 from, qa_vec3 to, qa_nav_travel mode,
                  qa_nav_route *route, bool *admitted, qa_error *e) {
     *admitted = false;
@@ -206,8 +252,15 @@ bool nav_predict(nav_prediction *p, qa_actor_id actor, qa_vec3 from, qa_vec3 to,
     }
     if (!p->initialized && !begin(p, actor, from, e))
         return false;
+    bool fixed_point = mode == QA_NAV_JUMP &&
+        p->input.profile.kind == QA_MOVEMENT_Q2_CLASSIC && !p->has_lease &&
+        p->supplied.trace == NULL && p->supplied.point_contents == NULL &&
+        p->supplied.phase == NULL && p->supplied.touch == NULL &&
+        p->supplied.effect == NULL && p->supplied.firing == NULL && p->supplied.is_bsp == NULL;
     float seconds = 0;
     for (unsigned index = 0; index < 512 && seconds < 8; ++index) {
+        qa_movement_result previous = p->result;
+        qa_movement_command previous_command = p->input.command;
         if (!command(p, to, mode, e))
             return false;
         qa_movement_result *result = &p->result;
@@ -233,6 +286,11 @@ bool nav_predict(nav_prediction *p, qa_actor_id actor, qa_vec3 from, qa_vec3 to,
             *admitted = true;
             return true;
         }
+        /* Classic PM has no clock input. With no deferred Source callbacks,
+         * an unchanged complete state under this command cannot launch again. */
+        if (fixed_point && index != 0 && same_q2_prediction(&previous, result) &&
+            same_q2_command(&previous_command, &p->input.command))
+            return true;
     }
     return true;
 }
