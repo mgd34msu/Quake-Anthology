@@ -8,6 +8,7 @@
 #include "native_q1_console.h"
 #include "qa/application_network_qw.h"
 #include "qa/application_network.h"
+#include "qa/application_qc_presentation.h"
 
 bool qa_application_network_qw_log_read(qa_application *app,
     qa_q1_qw_fraglog_view *out, bool *present, qa_error *error)
@@ -440,36 +441,10 @@ bool qa_application_network_qw_receives(qa_application *app, qa_actor_id actor,
     const qa_application_protocol_event *event, bool *out, qa_error *error)
 {
     if (application_native_q1_qw_selected(app)) return application_native_q1_qw_receives(app, actor, event, out, error);
-    if (!event || !out)
-        return application_fail(error, QA_ERROR_ARGUMENT, "Missing QuakeWorld source message routing output");
     struct application_qc_state *engine = qw_source(app, NULL, error);
-    uint32_t slot;
-    if (!engine || !qw_client_binding(engine, actor, &slot, error)) return false;
-    *out = false;
-    if (event->provider != engine->provider->owner || event->signon) return true;
-    if (event->dialect != QA_CLOCK_QUAKEWORLD)
-        return application_fail(error, QA_ERROR_FORMAT, "QuakeWorld source message changes its physical dialect");
-    if (!event->multicast) {
-        if (event->destination < 0 || event->destination > 3)
-            return application_fail(error, QA_ERROR_FORMAT, "QuakeWorld source message has an invalid destination");
-        *out = !event->recipient.registry || qa_actor_id_equal(event->recipient, actor);
-        return true;
-    }
-    if (event->destination < 0 || event->destination > 5 || !qa_vec_finite(event->origin))
-        return application_fail(error, QA_ERROR_FORMAT, "QuakeWorld source multicast has an invalid destination");
-    int32_t mode = event->destination % 3;
-    if (!mode) { *out = true; return true; }
-    int32_t reference; float origin[3];
-    if (!qa_qc_slot_reference(engine->provider->state.qc.instance, slot, &reference, error) ||
-        !qw_vector(engine, reference, "origin", origin, error)) return false;
-    qa_vec3 point = qa_v3(origin[0], origin[1], origin[2]);
-    qa_vec3 delta = qa_vec_sub(point, event->origin);
-    if (mode == 1 && qa_vec_dot(delta, delta) <= 1024.0f * 1024.0f) { *out = true; return true; }
-    qa_collision_leaf from, to;
-    qa_collision_geometry *geometry = qa_world_geometry(app->world);
-    return qa_collision_point_leaf(geometry, event->origin, &from, error) &&
-        qa_collision_point_leaf(geometry, point, &to, error) &&
-        qa_collision_cluster_visible(geometry, (int32_t)from.cluster, (int32_t)to.cluster, mode == 1, out, error);
+    qa_application_qc_message_source source; bool found=false;
+    return engine && qa_application_qc_message_source_read(app,engine->provider->owner,&source,&found,error) && found &&
+        qa_application_qc_message_receives(app,&source,actor,event,out,error);
 }
 
 bool qa_application_network_qw_flush(qa_application *app, qa_error *error)

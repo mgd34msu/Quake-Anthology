@@ -179,6 +179,38 @@ bool qa_application_qc_message_signon_at(qa_application *app,const qa_applicatio
     return qa_application_qc_message_source_current(app,view) &&
         application_q1_signon_at(app,view->provider,index,out,error);
 }
+bool qa_application_qc_message_receives(qa_application *app,const qa_application_qc_message_source *view,
+    qa_actor_id recipient,const qa_application_protocol_event *event,bool *out,qa_error *error)
+{
+    uint32_t slot;
+    if(!event || !out || !qa_application_qc_message_client(app,view,recipient,&slot,error))
+        return application_fail(error,QA_ERROR_ARGUMENT,"QC routing requires its actual admitted Source recipient");
+    *out=false;
+    if(event->provider!=view->provider || event->signon)return true;
+    bool qw=qa_q1_is_qw(view->protocol);
+    if(event->dialect!=(qw?QA_CLOCK_QUAKEWORLD:QA_CLOCK_NETQUAKE))
+        return application_fail(error,QA_ERROR_FORMAT,"QC source message changes its physical dialect");
+    if(!event->multicast) {
+        if(event->destination<0 || event->destination>3)
+            return application_fail(error,QA_ERROR_FORMAT,"QC source message has an invalid destination");
+        *out=!event->recipient.registry || qa_actor_id_equal(event->recipient,recipient); return true;
+    }
+    if(!qw || event->destination<0 || event->destination>5 || !qa_vec_finite(event->origin))
+        return application_fail(error,QA_ERROR_FORMAT,"QC source multicast has an invalid destination");
+    int32_t mode=event->destination%3;
+    if(!mode) { *out=true; return true; }
+    const qa_qc_definition *field=qa_qc_program_find_field(view->program,"origin"); qa_vec3 point;
+    if(!field || field->type!=QA_QC_VECTOR ||
+        !qa_qc_actor_observation_vector(view->instance,slot,recipient,field->offset,&point,error))return false;
+    if(!qa_vec_finite(point))return application_fail(error,QA_ERROR_FORMAT,"QC multicast recipient origin is nonfinite");
+    qa_vec3 delta=qa_vec_sub(point,event->origin);
+    if(mode==1 && qa_vec_dot(delta,delta)<=1024.0f*1024.0f) { *out=true; return true; }
+    qa_collision_leaf from,to; qa_collision_geometry *geometry=qa_world_geometry(app->world);
+    return qa_collision_point_leaf(geometry,event->origin,&from,error) &&
+        qa_collision_point_leaf(geometry,point,&to,error) &&
+        qa_collision_cluster_visible(geometry,(int32_t)from.cluster,(int32_t)to.cluster,mode==1,out,error) &&
+        qa_application_qc_message_source_current(app,view);
+}
 size_t qa_application_qc_message_source_count(const qa_application *app)
 { return app?app->provider_count:0; }
 bool qa_application_qc_message_source_at(qa_application *app,size_t ordinal,

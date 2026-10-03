@@ -52,6 +52,10 @@ bool qa_application_qc_message_signon_count(qa_application *,const qa_applicatio
     size_t *,qa_error *);
 bool qa_application_qc_message_signon_at(qa_application *,const qa_application_qc_message_source *,
     size_t,qa_application_protocol_event *,qa_error *);
+/* Route a genuine source packet to its admitted recipient, including QW's
+ * actual PVS/PHS multicast policy. No physical ENTITIES owner is substituted. */
+bool qa_application_qc_message_receives(qa_application *,const qa_application_qc_message_source *,
+    qa_actor_id,const qa_application_protocol_event *,bool *received,qa_error *);
 size_t qa_application_qc_message_source_count(const qa_application *);
 bool qa_application_qc_message_source_at(qa_application *,size_t,
     qa_application_qc_message_source *,bool *,qa_error *);

@@ -6,10 +6,11 @@
 #include <stdlib.h>
 #include <string.h>
 
+typedef union qc_decoder { qa_nq_decoder *nq; qa_qw_decoder *qw; } qc_decoder;
 typedef struct qc_recipient {
     struct qc_recipient *next;
     frontend_qc_camera_receipt camera;
-    qa_nq_decoder *decoder;
+    qc_decoder decoder;
     size_t signon_index,signon_offset,event_index,event_offset;
     uint64_t generation,next_sequence;
     int32_t stats[32];
@@ -25,8 +26,10 @@ bool frontend_qc_messages_idle(const frontend_qc_messages *owner)
 { return !owner || !owner->busy; }
 static bool current(const frontend_qc_messages *owner)
 { return owner && owner->frontend && owner->frontend->application==owner->application; }
+static void decoder_free(qa_net_protocol_id protocol,qc_decoder decoder)
+{ if(qa_q1_is_qw(protocol))qa_qw_decoder_destroy(decoder.qw); else qa_nq_decoder_destroy(decoder.nq); }
 static void row_free(qc_recipient *row)
-{ qa_nq_decoder_destroy(row->decoder); free(row); }
+{ decoder_free(row->camera.source.protocol,row->decoder); free(row); }
 bool frontend_qc_messages_destroy(frontend_qc_messages **out,qa_error *error)
 {
     if(!out || !*out) return true;
@@ -51,7 +54,7 @@ static bool recipient_current(const frontend_qc_messages *owner,const frontend_q
             qa_application_qc_message_client(owner->application,&view->source,view->recipient,&slot,NULL) && slot==view->source_slot:
             view->source_slot==0);
 }
-static bool clone_decoder(const qc_recipient *,qa_nq_decoder **,qa_error *);
+static bool clone_decoder(const qc_recipient *,qc_decoder *,qa_error *);
 static bool row_get(frontend_qc_messages *owner,const qa_application_qc_message_source *source,
     qa_actor_id recipient,uint32_t slot,qc_recipient **out,qa_error *error)
 {
@@ -77,21 +80,48 @@ static bool row_get(frontend_qc_messages *owner,const qa_application_qc_message_
         row->event_index=baseline->event_index; row->event_offset=baseline->event_offset; row->next_sequence=baseline->next_sequence;
         memcpy(row->stats,baseline->stats,sizeof(row->stats)); row->stat_present=baseline->stat_present;
     }
-    if(!(baseline?clone_decoder(baseline,&row->decoder,error):
-        qa_nq_decoder_create(source->protocol,source->options,&row->decoder,error))) { free(row); return false; }
+    bool okay;
+    if(baseline)okay=clone_decoder(baseline,&row->decoder,error);
+    else if(qa_q1_is_qw(source->protocol))okay=(row->decoder.qw=qa_qw_decoder_create(source->protocol,error))!=NULL;
+    else okay=qa_nq_decoder_create(source->protocol,source->options,&row->decoder.nq,error);
+    if(!okay) { free(row); return false; }
     row->next=owner->recipients; owner->recipients=row; *out=row; return true;
 }
-static bool clone_decoder(const qc_recipient *row,qa_nq_decoder **out,qa_error *error)
+static qa_net_protocol_id decoder_protocol(const qc_recipient *row)
+{ return qa_q1_is_qw(row->camera.source.protocol)?qa_qw_decoder_protocol(row->decoder.qw):qa_nq_decoder_protocol(row->decoder.nq); }
+static bool decoder_checkpoint(const qc_recipient *row,qa_net_protocol_id protocol,qa_buffer *out,qa_error *error)
+{ return qa_q1_is_qw(protocol)?qa_qw_decoder_checkpoint(row->decoder.qw,protocol,out,error):
+    qa_nq_decoder_checkpoint(row->decoder.nq,protocol,row->camera.source.options,out,error); }
+static bool decoder_restore(qa_net_protocol_id protocol,qa_nq_options options,qa_bytes bytes,qc_decoder *out,qa_error *error)
+{ return qa_q1_is_qw(protocol)?qa_qw_decoder_restore_checkpoint(bytes,protocol,&out->qw,error):
+    qa_nq_decoder_restore_checkpoint(bytes,protocol,options,&out->nq,error); }
+static bool clone_decoder(const qc_recipient *row,qc_decoder *out,qa_error *error)
 {
-    qa_buffer bytes={0}; qa_net_protocol_id protocol=qa_nq_decoder_protocol(row->decoder);
-    bool okay=qa_nq_decoder_checkpoint(row->decoder,protocol,row->camera.source.options,&bytes,error) &&
-        qa_nq_decoder_restore_checkpoint((qa_bytes){bytes.data,bytes.size},protocol,row->camera.source.options,out,error);
+    qa_buffer bytes={0}; qa_net_protocol_id protocol=decoder_protocol(row);
+    bool okay=decoder_checkpoint(row,protocol,&bytes,error) &&
+        decoder_restore(protocol,row->camera.source.options,(qa_bytes){bytes.data,bytes.size},out,error);
     qa_buffer_free(&bytes); return okay;
+}
+static bool read_message(qa_net_protocol_id protocol,qc_decoder decoder,qa_net_reader *reader,qa_nq_message *out)
+{
+    if(!qa_q1_is_qw(protocol))return qa_nq_read(decoder.nq,reader,out);
+    qa_qw_service source;
+    if(!qa_qw_service_read(reader,decoder.qw,0,&source))return false;
+    *out=(qa_nq_message){.op=QA_NQ_NOP};
+    switch(source.kind) {
+    case QA_QW_STAT:out->op=QA_NQ_STAT;out->data.indexed.index=source.data.stat.index;out->data.indexed.value=source.data.stat.value;break;
+    case QA_QW_SET_VIEW:out->op=QA_NQ_SETVIEW;out->data.value=source.data.entity;break;
+    case QA_QW_SET_ANGLE:out->op=QA_NQ_SETANGLE;memcpy(out->data.angles,source.data.angles,sizeof(out->data.angles));break;
+    case QA_QW_INTERMISSION:out->op=QA_NQ_INTERMISSION;break;
+    case QA_QW_FINALE:out->op=QA_NQ_FINALE;break;
+    default:break;
+    }
+    return true;
 }
 static bool captured_target(const qa_nq_message *message,const qa_application_protocol_event *event,
     size_t start,qa_actor_id *out,qa_error *error)
 {
-    qa_actor_id target={0}; bool captured=message->data.value==0;
+    qa_actor_id target={0}; bool captured=false;
     for(size_t i=0;i<event->reference_count;++i) {
         const qa_application_protocol_reference *reference=event->references+i;
         if(reference->offset!=start+1 || reference->packed_sound) continue;
@@ -99,7 +129,8 @@ static bool captured_target(const qa_nq_message *message,const qa_application_pr
             return frontend_fail(error,QA_ERROR_FORMAT,"QC SETVIEW repeats incompatible captured actor generations");
         target=reference->actor; captured=true;
     }
-    if(!captured) return frontend_fail(error,QA_ERROR_UNSUPPORTED,"QC SETVIEW has no captured full-generation source reference");
+    if(!captured && message->data.value!=0)
+        return frontend_fail(error,QA_ERROR_UNSUPPORTED,"QC SETVIEW has no captured full-generation source reference");
     *out=target; return true;
 }
 static bool project(frontend_qc_messages *owner,qc_recipient *row,const qa_nq_message *message,
@@ -136,28 +167,30 @@ static bool project(frontend_qc_messages *owner,qc_recipient *row,const qa_nq_me
 static bool packet(frontend_qc_messages *owner,qc_recipient *row,
     const qa_application_protocol_event *event,size_t *offset,qa_error *error)
 {
-    if(event->provider!=row->camera.source.provider || event->dialect!=QA_CLOCK_NETQUAKE || event->multicast ||
+    bool qw=qa_q1_is_qw(row->camera.source.protocol);
+    if(event->provider!=row->camera.source.provider || event->dialect!=(qw?QA_CLOCK_QUAKEWORLD:QA_CLOCK_NETQUAKE) ||
+        (event->multicast && !qw) ||
         (event->recipient.registry && !qa_actor_id_equal(event->recipient,row->camera.recipient)) || *offset>event->payload.size)
         return frontend_fail(error,QA_ERROR_FORMAT,"Local QC packet leaves its actual source and recipient");
-    qa_net_reader reader; qa_nq_decoder *validation=NULL;
+    qa_net_reader reader; qc_decoder validation={0};
     if(!clone_decoder(row,&validation,error)) return false;
     qa_bytes tail={event->payload.data?event->payload.data+*offset:NULL,event->payload.size-*offset};
     qa_net_reader_init(&reader,tail,error); qa_nq_message message;
     bool okay=true;
     while(okay && qa_net_reader_remaining(&reader)) {
         size_t message_start=*offset+reader.bit/8;
-        okay=qa_nq_read(validation,&reader,&message);
+        okay=read_message(row->camera.source.protocol,validation,&reader,&message);
         if(okay && message.op==QA_NQ_SETVIEW) {
             qa_actor_id target;
             okay=captured_target(&message,event,message_start,&target,error);
         }
     }
-    okay=okay && qa_net_reader_finish(&reader); qa_nq_decoder_destroy(validation);
+    okay=okay && qa_net_reader_finish(&reader); decoder_free(row->camera.source.protocol,validation);
     if(!okay) return false;
     qa_net_reader_init(&reader,tail,error); size_t start=*offset;
     while(qa_net_reader_remaining(&reader)) {
         size_t message_start=start+reader.bit/8;
-        if(!qa_nq_read(row->decoder,&reader,&message) || !project(owner,row,&message,event,message_start,error)) return false;
+        if(!read_message(row->camera.source.protocol,row->decoder,&reader,&message) || !project(owner,row,&message,event,message_start,error)) return false;
         *offset=start+reader.bit/8;
         if(!recipient_current(owner,&row->camera)) return frontend_fail(error,QA_ERROR_ARGUMENT,"QC recipient retired during decoded delivery");
     }
@@ -182,9 +215,13 @@ static bool event(frontend_qc_messages *owner,qc_recipient *row,size_t index,
     }
     if(index<row->event_index) return true;
     if(index!=row->event_index) return false;
-    if(event->provider==row->camera.source.provider && !event->signon &&
-        (!event->recipient.registry || qa_actor_id_equal(event->recipient,row->camera.recipient)))
-        if(!packet(owner,row,event,&row->event_offset,error)) return false;
+    if(event->provider==row->camera.source.provider && !event->signon) {
+        bool receives=!event->recipient.registry || qa_actor_id_equal(event->recipient,row->camera.recipient);
+        if(row->camera.recipient.registry) {
+            if(!qa_application_qc_message_receives(owner->application,&row->camera.source,row->camera.recipient,event,&receives,error))return false;
+        } else if(event->multicast)receives=event->destination==0 || event->destination==3;
+        if(receives && !packet(owner,row,event,&row->event_offset,error))return false;
+    }
     ++row->event_index; row->event_offset=0;
     return true;
 }
@@ -197,7 +234,7 @@ bool frontend_qc_messages_drain(frontend_qc_messages *owner,qa_error *error)
     for(size_t i=0;okay && i<sources;++i) {
         qa_application_qc_message_source source; bool found=false;
         okay=qa_application_qc_message_source_at(owner->application,i,&source,&found,error);
-        if(!okay || !found || qa_q1_is_qw(source.protocol)) continue;
+        if(!okay || !found) continue;
         qc_recipient *baseline=NULL;
         okay=row_get(owner,&source,(qa_actor_id){0},0,&baseline,error);
         for(uint32_t slot=1;okay && slot<=source.client_slots;++slot) {
@@ -211,7 +248,7 @@ bool frontend_qc_messages_drain(frontend_qc_messages *owner,qa_error *error)
     for(size_t i=0;okay && i<sources;++i) {
         qa_application_qc_message_source source; bool found=false; size_t count=0;
         okay=qa_application_qc_message_source_at(owner->application,i,&source,&found,error);
-        if(!okay || !found || qa_q1_is_qw(source.protocol)) continue;
+        if(!okay || !found) continue;
         okay=qa_application_qc_message_signon_count(owner->application,&source,&count,error);
         for(qc_recipient *row=owner->recipients;okay && row;row=row->next)
             if(row->camera.source.provider==source.provider && row->signon_index>count) okay=false;
@@ -411,7 +448,7 @@ static bool fields(qa_source_save_io *io,frontend_qc_messages *owner)
         if(reading) {
             bool found=false;
             if(!qa_application_qc_message_source_read(owner->application,camera->source.provider,&camera->source,&found,io->error) ||
-                !found || camera->source.map_revision!=map_revision || qa_q1_is_qw(camera->source.protocol) ||
+                !found || camera->source.map_revision!=map_revision ||
                 !recipient_current(owner,camera)) return false;
         }
         size_t signon_count=0;
@@ -427,12 +464,12 @@ static bool fields(qa_source_save_io *io,frontend_qc_messages *owner)
             row->signon_offset>=retained.payload.size)) return false;
         if(row->event_offset && (!qa_application_protocol_event_at(owner->application,row->event_index,&retained) ||
             row->event_offset>=retained.payload.size || retained.provider!=camera->source.provider || retained.signon)) return false;
-        qa_net_protocol_id protocol=reading?(qa_net_protocol_id){0}:qa_nq_decoder_protocol(row->decoder);
+        qa_net_protocol_id protocol=reading?(qa_net_protocol_id){0}:decoder_protocol(row);
         uint32_t kind=protocol.kind;
         if(!qa_source_save_u32(io,&kind) || !qa_source_save_u32(io,&protocol.flags) ||
             !qa_source_save_u32(io,&protocol.revision)) return false;
         if(reading) protocol.kind=(qa_net_protocol)kind;
-        bool okay=reading || qa_nq_decoder_checkpoint(row->decoder,protocol,camera->source.options,&decoder,io->error);
+        bool okay=reading || decoder_checkpoint(row,protocol,&decoder,io->error);
         if(!reading) bytes=(qa_bytes){decoder.data,decoder.size};
         okay=okay && bytes_field(io,&bytes) && bytes.size;
         if(reading && okay) {
@@ -442,8 +479,9 @@ static bool fields(qa_source_save_io *io,frontend_qc_messages *owner)
             qc_recipient *actual=okay?calloc(1,sizeof(*actual)):NULL;
             if(okay && !actual) okay=frontend_fail(io->error,QA_ERROR_MEMORY,"Restoring local QC decoder recipient");
             if(actual) {
-                *actual=saved; actual->decoder=NULL; actual->next=NULL; *link=actual; link=&actual->next;
-                okay=qa_nq_decoder_restore_checkpoint(bytes,protocol,camera->source.options,&actual->decoder,io->error);
+                *actual=saved; actual->decoder=(qc_decoder){0}; actual->next=NULL; *link=actual; link=&actual->next;
+                okay=qa_q1_is_qw(protocol)==qa_q1_is_qw(camera->source.protocol) &&
+                    decoder_restore(protocol,camera->source.options,bytes,&actual->decoder,io->error);
             }
         }
         qa_buffer_free(&decoder); if(!okay) return false;
