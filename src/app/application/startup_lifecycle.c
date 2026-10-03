@@ -52,6 +52,21 @@ static bool qualify_source(application_provider *provider, const qa_launch_snaps
     return true;
 }
 
+qa_command_result application_startup_common_command(application_provider *provider,
+    qa_console *console, qa_cvars *cvars, const qa_command_invocation *invocation, qa_error *error)
+{
+    const qa_application_startup_hooks *hooks = hooks_for(provider);
+    if (!hooks || !hooks->source_common_command) return QA_COMMAND_UNHANDLED;
+    qa_application_startup_source source, qualified;
+    if (!physical_source(provider, console, cvars, &invocation->context, &source, error) ||
+        !qualify_source(provider, source_snapshot(provider), &source, &qualified, error))
+        return QA_COMMAND_FAILED;
+    bool handled = false;
+    if (!hooks->source_common_command(hooks->context, provider->application,
+            &qualified, invocation, &handled, error)) return QA_COMMAND_FAILED;
+    return handled ? QA_COMMAND_HANDLED : QA_COMMAND_UNHANDLED;
+}
+
 bool qa_application_startup_source_engine_cvars(const qa_application *app,
     const qa_application_startup_source *source, qa_cvars **out, qa_error *error)
 {
