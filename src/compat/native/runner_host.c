@@ -1497,7 +1497,7 @@ static bool runner_address(qa_native_instance *instance, const char *name, qa_na
     bool received = false;
     bool ok = native_wire_put_string(&request, name, error);
     if (ok)
-        received = runner_request(instance, operation,
+        received = runner_request(instance, (uint16_t)operation,
                                   (qa_bytes){request.data, request.size}, &response, error);
     if (received) {
         native_wire_reader reader = {.bytes = {response.data, response.size}};

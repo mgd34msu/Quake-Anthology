@@ -56,7 +56,7 @@ static bool indirect(const guest_elf_binding *binding, relocation_value resolver
         return guest_fail(error, QA_ERROR_FORMAT, resolver.low, "ELF indirect relocation needs its actual resolver, return trap and execution capability");
     unsigned width = image->image.target.pointer_bytes;
     guest_abi_signature signature = {.abi = image->image.target.abi,
-        .result = {QA_NATIVE_ADDRESS, width, width, NULL, 0}};
+        .result = {.kind = QA_NATIVE_ADDRESS, .bytes = width, .alignment = width}};
     guest_abi_plan *plan = NULL;
     if (!guest_abi_plan_create(&signature, NULL, 0, &plan, error)) return false;
     qa_native_value result = {0};

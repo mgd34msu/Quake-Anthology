@@ -79,7 +79,8 @@ bool qa_qvm_image_load(qa_bytes bytes, qa_qvm_image **out, qa_error *error)
     size_t position = (size_t)code_offset, end = position + (size_t)code_length;
     for (size_t i = 0; i < (size_t)instruction_count; ++i) {
         if (position >= end) { qa_qvm_error(error,QA_ERROR_FORMAT,position,"QVM instructions exceed code section"); goto failed; }
-        qa_qvm_instruction instruction = {.byte_offset = (uint32_t)(position - (size_t)code_offset), .opcode = bytes.data[position++]};
+        qa_qvm_instruction instruction = {.byte_offset = (uint32_t)(position - (size_t)code_offset), .opcode = bytes.data[position]};
+        ++position;
         if (instruction.opcode > QA_QVM_CVFI) { qa_qvm_error(error,QA_ERROR_FORMAT,position - 1,"unknown QVM opcode"); goto failed; }
         instruction.operand_width = operand_width(instruction.opcode);
         if (instruction.operand_width > end - position) { qa_qvm_error(error,QA_ERROR_FORMAT,position,"truncated QVM operand"); goto failed; }

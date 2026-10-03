@@ -3,7 +3,7 @@
 #include <stdatomic.h>
 #include <string.h>
 
-static atomic_bool initialized = ATOMIC_VAR_INIT(false);
+static atomic_bool initialized = false;
 static atomic_flag initialization_lock = ATOMIC_FLAG_INIT;
 static float sine_table[1024], noise_values[256], fog_table[256];
 static uint8_t noise_permutation[256];

@@ -52,7 +52,7 @@ struct qa_actor_registry {
     void *context;
 };
 
-static atomic_uint_fast64_t next_identity = ATOMIC_VAR_INIT(1);
+static atomic_uint_fast64_t next_identity = 1;
 
 static bool fail(qa_error *error, qa_status code, const char *message)
 {

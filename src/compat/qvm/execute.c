@@ -95,7 +95,7 @@ typedef struct counter_evaluation {
     size_t count;
     uint32_t remaining;
 } counter_evaluation;
-static atomic_uint_fast64_t next_call_token = ATOMIC_VAR_INIT(1);
+static atomic_uint_fast64_t next_call_token = 1;
 
 static bool execute(qa_qvm *, uint32_t, uint32_t, operands *, source_call *,
                     const qa_qvm_region_evaluation *, const int32_t *, int32_t *, bool *, qa_error *);
