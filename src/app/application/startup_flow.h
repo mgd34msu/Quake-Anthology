@@ -53,6 +53,8 @@ void application_startup_flow_bound_client(qa_application *, application_provide
     const qa_application_startup_source *);
 bool application_provider_startup_source_at(application_provider *, size_t,
     qa_application_startup_source *, bool *found, qa_error *);
+qa_command_result application_startup_common_command(application_provider *, qa_console *,
+    qa_cvars *, const qa_command_invocation *, qa_error *);
 qa_cvars *application_startup_cvar_owner(application_provider *, qa_console *,
     const qa_command_context *, const char *);
 bool application_startup_console_cvar_edit(qa_application *, qa_console *,

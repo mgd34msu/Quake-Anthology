@@ -189,8 +189,11 @@ static qa_command_result command(void *context, const qa_command_invocation *inv
 {
     struct application_guest_q3_console *owner = context;
     ++owner->calls;
-    qa_command_result result = application_command_fallback(owner->engine->provider->application,
-        invocation, error);
+    application_provider *provider = owner->engine->provider;
+    qa_command_result result = application_startup_common_command(provider, owner->console,
+        owner->cvars, invocation, error);
+    if (result == QA_COMMAND_UNHANDLED)
+        result = application_command_fallback(provider->application, invocation, error);
     --owner->calls;
     return result;
 }

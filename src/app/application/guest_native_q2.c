@@ -233,6 +233,9 @@ static qa_command_result console_command(void *opaque, const qa_command_invocati
     if (application_startup_source_active(engine->provider))
         return application_command_fallback(engine->provider->application, command, error);
     if (!engine->initialized) return QA_COMMAND_UNHANDLED;
+    qa_command_result common = application_startup_common_command(engine->provider,
+        engine->console, engine->cvars, command, error);
+    if (common != QA_COMMAND_UNHANDLED) return common;
     bool ok = application_native_q2_game_command(engine->provider, command, &handled, error);
     if (!ok) return QA_COMMAND_FAILED;
     return handled ? QA_COMMAND_HANDLED : QA_COMMAND_UNHANDLED;

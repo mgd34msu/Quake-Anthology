@@ -46,6 +46,24 @@ struct application_startup_flow {
 
 static bool source_consoles_idle(const struct application_startup_flow *);
 
+qa_command_result application_startup_common_command(application_provider *provider,
+    qa_console *console, qa_cvars *cvars, const qa_command_invocation *invocation, qa_error *error)
+{
+    const qa_application_startup_hooks *hooks = provider->application->startup_hooks;
+    if (!hooks || !hooks->source_common_command) return QA_COMMAND_UNHANDLED;
+    qa_application_startup_source source;
+    bool found = false, handled = false;
+    if (!application_provider_startup_source_at(provider, 0, &source, &found, error))
+        return QA_COMMAND_FAILED;
+    if (!found || source.console != console || source.cvars != cvars) {
+        application_fail(error, QA_ERROR_ARGUMENT, "Common command lost its actual Source console");
+        return QA_COMMAND_FAILED;
+    }
+    if (!hooks->source_common_command(hooks->context, provider->application,
+            &source, invocation, &handled, error)) return QA_COMMAND_FAILED;
+    return handled ? QA_COMMAND_HANDLED : QA_COMMAND_UNHANDLED;
+}
+
 bool qa_application_startup_pending(const qa_application *app)
 { return app && app->startup_flow; }
 
