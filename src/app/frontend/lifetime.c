@@ -677,6 +677,12 @@ bool qa_frontend_destroy(qa_frontend *frontend, qa_error *error)
     if (frontend->audio && !qa_audio_engine_acoustics_release(frontend->audio,error)) return false;
     if (!frontend_network_close_client(frontend,error) || !frontend_cinematic_destroy(frontend,error) || !frontend_save_commands_destroy(frontend,error) ||
         !frontend_campaign_destroy(frontend,error)) return false;
+    bool connections_complete=false;
+    if (!frontend_network_retire_connections(frontend,&connections_complete,error)) return false;
+    if (!connections_complete) {
+        frontend->shutdown->waiting=true;
+        return false;
+    }
     if (!frontend_selected_effects_retire(frontend,error)) return false;
     if (!frontend_remote_q3_destroy(frontend,error) ||
         !frontend_remote_q3_initial_destroy_all(frontend,error)) return false;

@@ -6537,7 +6537,7 @@ bool frontend_network_retire_clients(qa_frontend *f,qa_error *error)
     if(n->unified_client_service && !frontend_network_unified_destroy(&n->unified,error)) return false;
     return frontend_network_unified_client_destroy(&n->unified_client_service,error);
 }
-bool frontend_network_stop_server(qa_frontend *f, bool *complete, qa_error *error)
+bool frontend_network_retire_connections(qa_frontend *f, bool *complete, qa_error *error)
 {
     qa_frontend_network *n=f?f->network:NULL;
     if (!f || !complete || f->stepping || f->preparing || f->capture || f->resource_inventory ||
@@ -6552,7 +6552,12 @@ bool frontend_network_stop_server(qa_frontend *f, bool *complete, qa_error *erro
         qa_net_client_id id=client->id;
         if (!qa_network_detach(n->runtime,id,"Server was killed.\n",error)) return false;
     }
-    return frontend_network_destroy(f,error);
+    return true;
+}
+bool frontend_network_stop_server(qa_frontend *f, bool *complete, qa_error *error)
+{
+    if (!frontend_network_retire_connections(f,complete,error)) return false;
+    return !*complete || frontend_network_destroy(f,error);
 }
 
 bool frontend_network_destroy(qa_frontend *f, qa_error *error)

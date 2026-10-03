@@ -341,6 +341,7 @@ bool frontend_network_client_command(qa_frontend *, const char *, qa_error *);
 bool frontend_network_create(qa_frontend *, qa_error *);
 bool frontend_network_destroy(qa_frontend *, qa_error *);
 bool frontend_network_stop_server(qa_frontend *, bool *, qa_error *);
+bool frontend_network_retire_connections(qa_frontend *, bool *, qa_error *);
 bool frontend_network_close_client(qa_frontend *,qa_error *);
 bool frontend_network_retire_clients(qa_frontend *,qa_error *);
 bool frontend_network_pump(qa_frontend *, qa_error *);
