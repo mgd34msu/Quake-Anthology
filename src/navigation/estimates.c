@@ -167,12 +167,13 @@ static bool graph_cache(qa_navigation *n, qa_nav_workspace *w, uint32_t goal, ui
         return true;
     }
     const qa_nav_graph *g = n->graph;
+    if (!nav_workspace_prepare(w, g, e))
+        return false;
     c = cache_new(ESTIMATE_GRAPH, 0, goal, flags, g->view.node_count, e);
     if (c == NULL)
         return false;
     uint32_t index = nav_node_index(g, goal);
     c->seconds[index] = 0;
-    nav_queue_clear(w);
     if (!nav_queue_push(w, (nav_queue_entry){index, 0}, e)) {
         cache_free(c);
         return false;
