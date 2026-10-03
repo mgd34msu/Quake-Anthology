@@ -250,7 +250,7 @@ static bool checkpoint_returned(void *context,const frontend_remote_unified *rep
 {
     const unified_presentation *p=context;
     if (!p || p->replica!=replica || p->busy || p->video || replica->busy ||
-        !frontend_unified_media_idle(p->media) || !frontend_unified_media_idle(p->candidate_media) ||
+        !frontend_unified_media_checkpoint_ready(p->media) || !frontend_unified_media_checkpoint_ready(p->candidate_media) ||
         !frontend_unified_render_idle(p->render) || !frontend_unified_render_idle(p->candidate_render) ||
         (p->candidate_render && !frontend_unified_render_pending_current(p->candidate_render)) ||
         (p->prediction && !frontend_remote_unified_prediction_idle(p->prediction)) ||

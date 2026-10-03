@@ -69,6 +69,7 @@ bool frontend_sources_idle(const qa_frontend *);
  * child root tokens, and closes every token in reverse order on all paths. */
 bool frontend_capture_begin(qa_frontend *, frontend_capture **, qa_error *);
 void frontend_capture_end(frontend_capture *);
+bool frontend_capture_holds(const frontend_capture *, const void *owner);
 const qa_scene_resources *frontend_capture_images_at(const frontend_capture *, size_t);
 const qa_material_library *frontend_capture_library_at(const frontend_capture *, size_t);
 const qa_font_library *frontend_capture_fonts_at(const frontend_capture *, size_t);

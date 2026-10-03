@@ -1252,6 +1252,13 @@ void frontend_capture_end(frontend_capture *capture)
     if (capture->frontend->capture==capture) capture->frontend->capture=NULL;
     free(capture->remote); free(capture->rows); free(capture);
 }
+bool frontend_capture_holds(const frontend_capture *capture, const void *owner)
+{
+    if (!capture || !owner || capture->frontend->capture!=capture) return false;
+    for (size_t i=0;i<capture->count;++i)
+        if (capture->rows[i].owner==owner && capture->rows[i].held) return true;
+    return false;
+}
 static const void *owner_at(const frontend_capture *capture, capture_kind kind, size_t ordinal)
 {
     if (!capture || capture->frontend->capture!=capture) return NULL;

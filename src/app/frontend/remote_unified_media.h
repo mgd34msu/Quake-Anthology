@@ -69,6 +69,7 @@ qa_scene_world *frontend_unified_media_world(const frontend_unified_media *);
 bool frontend_unified_media_current(const frontend_unified_media *);
 bool frontend_unified_media_ready(const frontend_unified_media *);
 bool frontend_unified_media_idle(const frontend_unified_media *);
+bool frontend_unified_media_checkpoint_ready(const frontend_unified_media *);
 bool frontend_unified_media_visit(const frontend_unified_media *,
     const qa_application_content_visitor *, qa_error *);
 bool frontend_unified_media_destroy(frontend_unified_media *, qa_error *);

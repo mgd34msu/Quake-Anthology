@@ -1,5 +1,6 @@
 #include "remote_unified_private.h"
 #include "remote_unified_media_private.h"
+#include "capture.h"
 #include "shared_resource_policy.h"
 #include "q3_render_policy.h"
 #include "visual_access.h"
@@ -293,21 +294,36 @@ bool frontend_unified_media_ready(const frontend_unified_media *owner)
     }
     return world;
 }
-bool frontend_unified_media_idle(const frontend_unified_media *owner)
+static bool world_returned(const qa_scene_world *world,const frontend_capture *capture)
+{
+    return qa_scene_world_idle(world) ||
+        (frontend_capture_holds(capture,world) && qa_scene_world_observation_ready(world));
+}
+static bool model_returned(const qa_scene_model *model,const frontend_capture *capture)
+{
+    return qa_scene_model_idle(model) ||
+        (frontend_capture_holds(capture,model) && qa_scene_model_observation_ready(model));
+}
+static bool media_returned(const frontend_unified_media *owner,const frontend_capture *capture)
 {
     if (!owner) return true;
     if (owner->busy || !frontend_unified_material_movies_idle(owner) ||
-        (owner->world && !qa_scene_world_idle(owner->world))) return false;
+        (owner->world && !world_returned(owner->world,capture))) return false;
     for (const unified_media_model *row=owner->models;row;row=row->next)
-        if ((row->world && !qa_scene_world_idle(row->world)) ||
-            (row->scene && !qa_scene_model_idle(row->scene))) return false;
+        if ((row->world && !world_returned(row->world,capture)) ||
+            (row->scene && !model_returned(row->scene,capture))) return false;
     for (const unified_media_bank *row=owner->banks;row;row=row->next)
-        if (row->constructing || (row->q3_assets && !qa_q3_assets_idle(row->q3_assets)) ||
-            (row->images && !qa_scene_resources_idle(row->images)) ||
-            (row->materials && !qa_material_library_idle(row->materials)) ||
-            (row->fonts && !qa_font_library_idle(row->fonts))) return false;
+        if (row->constructing || (row->q3_assets && !qa_q3_assets_idle(row->q3_assets) &&
+                !frontend_capture_holds(capture,row->q3_assets)) ||
+            (row->images && !qa_scene_resources_idle(row->images) && !frontend_capture_holds(capture,row->images)) ||
+            (row->materials && !qa_material_library_idle(row->materials) && !frontend_capture_holds(capture,row->materials)) ||
+            (row->fonts && !qa_font_library_idle(row->fonts) && !frontend_capture_holds(capture,row->fonts))) return false;
     return true;
 }
+bool frontend_unified_media_idle(const frontend_unified_media *owner)
+{ return media_returned(owner,NULL); }
+bool frontend_unified_media_checkpoint_ready(const frontend_unified_media *owner)
+{ return media_returned(owner,owner?owner->frontend->capture:NULL); }
 bool frontend_unified_media_visit(const frontend_unified_media *owner,
     const qa_application_content_visitor *visitor, qa_error *error)
 {
