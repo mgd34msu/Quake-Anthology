@@ -2446,6 +2446,7 @@ static bool client_attempts_drain(qa_frontend_network *n, qa_error *error)
 {
     if (n->q3_attempts && !n->q3_client_requested) {
         qa_frontend *f=n->frontend;
+        if (f->stepping) return true;
         if (!frontend_network_client_only(f) || !q1_client_protocol(f->options.network_protocol) ||
             f->options.dedicated || f->options.seats!=1 || n->busy || n->detached_transport ||
             f->capture || f->resource_inventory || f->source_restoring || f->preparing ||
@@ -2510,6 +2511,14 @@ static bool client_attempts_drain(qa_frontend_network *n, qa_error *error)
         qa_q3_client_admission_begin(&n->q3_client_admission, &address, qport);
     }
     return true;
+}
+bool frontend_network_client_attempts_advance(qa_frontend *f,qa_error *error)
+{
+    qa_frontend_network *n=f?f->network:NULL;
+    if (!n || n->q3_client_requested || !n->q3_attempts) return true;
+    if (!f || f->stepping || f->preparing || f->round || f->capture || f->resource_inventory || f->source_restoring)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"CLIENT commands require their returned frontend phase");
+    return n->frontend==f && client_attempts_drain(n,error);
 }
 static const qa_q3_snapshot *client_scene_snapshot(void *context, int32_t number)
 { return qa_q3_client_peer_presentation_snapshot_at(context, number); }

@@ -475,6 +475,7 @@ bool qa_frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *erro
         bool complete=false;
         return frontend_constructor_advance(frontend,elapsed_ns,&complete,error);
     }
+    if (!frontend_network_client_attempts_advance(frontend,error)) return false;
     qa_application_client_preparation *client=frontend_config_store_client_preparation(frontend->config_store);
     if (client) {
         if (!qa_application_client_prepare_associated(frontend->application,client) ||

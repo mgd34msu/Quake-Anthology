@@ -347,6 +347,7 @@ bool frontend_network_retire_connections(qa_frontend *, bool *, qa_error *);
 bool frontend_network_close_client(qa_frontend *,qa_error *);
 bool frontend_network_retire_clients(qa_frontend *,qa_error *);
 bool frontend_network_pump(qa_frontend *, qa_error *);
+bool frontend_network_client_attempts_advance(qa_frontend *, qa_error *);
 bool frontend_network_tick(qa_frontend *, uint64_t elapsed_ns, bool retiring_map, bool *source_ready, qa_error *);
 bool frontend_network_client_only(const qa_frontend *);
 bool frontend_network_command(qa_frontend *, uint32_t, qa_actor_id, const qa_movement_command *, qa_error *);
