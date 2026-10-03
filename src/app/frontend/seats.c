@@ -94,10 +94,12 @@ bool frontend_menu_open(frontend_seat *seat, qa_ui_id menu, qa_error *error)
         if (!qa_ui_mods_cancel(seat->mods, error)) return false;
     }
     if (menu==FRONTEND_PLAYER_SOURCES && !player_sources_register(seat,NULL,error)) return false;
-    return (!frontend_seat_launch_id_read(seat->frontend,seat->id,&launch_seat) ||
-        qa_application_guest_menu_set(seat->frontend->application, launch_seat,
-            QA_APPLICATION_GUEST_MENU_NONE, &handled, error)) &&
-        qa_ui_open(seat->ui, menu, now_ms(seat), error);
+    qa_application_presentation_view source;
+    if (frontend_seat_launch_id_read(seat->frontend,seat->id,&launch_seat) &&
+        !(qa_application_presentation_read(seat->frontend->application,launch_seat,&source) && !source.source_menu) &&
+        !qa_application_guest_menu_set(seat->frontend->application,launch_seat,
+            QA_APPLICATION_GUEST_MENU_NONE,&handled,error)) return false;
+    return qa_ui_open(seat->ui,menu,now_ms(seat),error);
 }
 bool frontend_game_menu(frontend_seat *seat, qa_error *error)
 {
