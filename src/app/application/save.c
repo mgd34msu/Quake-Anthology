@@ -1628,8 +1628,10 @@ static bool persistence_create(void *opaque, const qa_save_image *image, void **
     }
     if (ok) ok = persistence_inventory(operation, candidate, image, error);
     if (ok) ok = application_save_resolvers(candidate, &operation->resolvers, error);
-    candidate->native_restore_image = NULL;
-    candidate->native_restore_resources = NULL;
+    if (!ok) {
+        candidate->native_restore_image = NULL;
+        candidate->native_restore_resources = NULL;
+    }
     return ok;
 }
 
@@ -1892,7 +1894,12 @@ static bool persistence_finish(void *opaque, void *value, const qa_save_image *i
     qa_actor_checkpoint_free(&actor_state); qa_buffer_free(&actors); qa_buffer_free(&strings);
     if (ok && !persistence_safe(candidate))
         ok = application_fail(error, QA_ERROR_FORMAT, "restored candidate changed during final validation");
-    return ok && persistence_unchanged(operation, error);
+    if (ok) ok = persistence_unchanged(operation, error);
+    if (ok) {
+        candidate->native_restore_image = NULL;
+        candidate->native_restore_resources = NULL;
+    }
+    return ok;
 }
 
 static bool persistence_publish(void *opaque, void *value, qa_error *error)
@@ -1933,7 +1940,10 @@ static bool persistence_publish(void *opaque, void *value, qa_error *error)
 static void persistence_discard(void *opaque, void *value)
 {
     application_persistence *operation = opaque;
-    ((qa_application *)value)->operation = APPLICATION_IDLE;
+    qa_application *candidate = value;
+    candidate->native_restore_image = NULL;
+    candidate->native_restore_resources = NULL;
+    candidate->operation = APPLICATION_IDLE;
     if (operation->ops->discard_services &&
         !operation->ops->discard_services(operation->ops->context, value, NULL)) {
         operation->retained = value;

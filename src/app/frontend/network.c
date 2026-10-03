@@ -50,6 +50,7 @@
 #include "network_q2_host_save.h"
 #include "network_unified.h"
 #include "network_unified_save.h"
+#include "../application/unified_save_internal.h"
 #include "network_unified_client.h"
 #include "network_unified_restore.h"
 #include "network_player_drop.h"
@@ -5234,7 +5235,7 @@ bool frontend_network_restore_connections(qa_frontend *f, qa_bytes bytes, qa_err
         ok=frontend_network_unified_restore_prepare(&options,NETWORK_OWNER,unified_state,&state->unified,error);
         if(ok && options.server) {
             application_unified_source source;
-            ok=application_unified_source_read(f->application,&source,error);
+            ok=application_unified_save_source_read(f->application,&source,error);
             if(ok) state->unified_map_revision=source.map_revision;
         }
     }
