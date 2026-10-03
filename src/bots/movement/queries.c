@@ -286,7 +286,7 @@ qa_vec3 bot_vector_angles(qa_vec3 v) {
         yaw = 0;
         pitch = v.z > 0 ? 90 : 270;
     } else {
-        yaw = v.x ? atan2f(v.y, v.x) * (180.0f / 3.14159265358979323846f) : v.y > 0 ? 90 : 270;
+        yaw = v.x != 0.0f ? atan2f(v.y, v.x) * (180.0f / 3.14159265358979323846f) : v.y > 0 ? 90 : 270;
         if (yaw < 0)
             yaw += 360;
         pitch = atan2f(v.z, sqrtf(v.x * v.x + v.y * v.y)) * (180.0f / 3.14159265358979323846f);

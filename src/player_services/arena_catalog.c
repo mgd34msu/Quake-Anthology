@@ -209,7 +209,7 @@ static bool finish(qa_base_arena_catalog *catalog, qa_error *error)
         row->view.selection = equal(row->special, "training") ? -4 : equal(row->special, "final") ? regular : row->view.number;
         if (catalog->levels.training == -1 && equal(row->special, "training")) catalog->levels.training = row->view.number;
         if (catalog->levels.final == -1 && equal(row->special, "final")) catalog->levels.final = row->view.number;
-        if (!row->view.frag_limit && !row->view.time_limit) row->view.frag_limit = 10;
+        if (row->view.frag_limit == 0.0 && row->view.time_limit == 0.0) row->view.frag_limit = 10;
         if (!bots(row, error)) return false;
         if (!publish_text(&row->title, error) || !publish_text(&row->special, error)) return false;
         row->view.map = row->map; row->view.title = row->title; row->view.special = row->special;

@@ -90,7 +90,7 @@ bool bot_ai_order_goal(qa_bots *b, bot_ai_state *s, qa_bot_goal *goal, bool *fou
     }
     qa_vec3 toward = qa_vec_sub(bot_ai_origin(s), origin);
     float horizontal = hypotf(toward.x, toward.y);
-    float stand_off = follow && horizontal ? (clearance + own_radius * .5f) / horizontal : 0;
+    float stand_off = follow && horizontal != 0.0f ? (clearance + own_radius * .5f) / horizontal : 0;
     qa_vec3 destination = qa_v3(origin.x + toward.x * stand_off,
                                   origin.y + toward.y * stand_off, origin.z);
     uint32_t area;

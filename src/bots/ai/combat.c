@@ -462,8 +462,8 @@ static bool move_setup_vector(void *opaque,qa_bot_move_init_vector field,unsigne
     bot_move_setup_source *source=opaque;uint32_t offset;
     if(axis>2) return bot_ai_fail(e,"unknown bot movement setup component");
     switch(field) {
-        case QA_BOT_INIT_ORIGIN:offset=QA_BOT_SOURCE_PLAYER+BOT_PS_ORIGIN;break;
-        case QA_BOT_INIT_VELOCITY:offset=QA_BOT_SOURCE_PLAYER+BOT_PS_VELOCITY;break;
+        case QA_BOT_INIT_ORIGIN:offset=(uint32_t)QA_BOT_SOURCE_PLAYER+(uint32_t)BOT_PS_ORIGIN;break;
+        case QA_BOT_INIT_VELOCITY:offset=(uint32_t)QA_BOT_SOURCE_PLAYER+(uint32_t)BOT_PS_VELOCITY;break;
         case QA_BOT_INIT_VIEW_ANGLES:offset=QA_BOT_SOURCE_VIEW_ANGLES;break;
         case QA_BOT_INIT_VIEW_OFFSET:
             *out=axis==2?source->input.view_offset.z:0;return true;

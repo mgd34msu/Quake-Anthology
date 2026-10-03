@@ -304,7 +304,7 @@ static bool activation_enable(qa_bots *b,bot_ai_state *s,qa_bot_source_activatio
 }
 static bool activation_go(qa_bots *b,bot_ai_state *s,qa_bot_source_activation *row,qa_error *e) {
     row->inuse=true;
-    if(!row->time) row->time=b->time+10;
+    if(row->time==0.0f) row->time=b->time+10;
     row->start_time=b->time;
     qa_bot_entity_info info;bool found;
     DECISION_CALL(qa_bot_runtime_entity(b->runtime,row->goal.entity,&info,&found,e));
@@ -936,14 +936,14 @@ bool bot_ai_decide(qa_bots *b, bot_ai_state *s, qa_error *e) {
             }
             qa_bot_goal goal={0};bool goal_found=true;
             if(node==QA_BOT_CHASING) {
-                if(!source_combat && (!bot_ai_last_enemy_area(s) || !bot_ai_chase_time(s) || bot_ai_chase_time(s)<b->time-10)) {
+                if(!source_combat && (!bot_ai_last_enemy_area(s) || bot_ai_chase_time(s)==0.0f || bot_ai_chase_time(s)<b->time-10)) {
                     ENTER(QA_BOT_SEEK_LONG_TERM);continue;
                 }
                 goal=(qa_bot_goal){.origin=bot_ai_last_enemy_origin(s),.area=(int32_t)bot_ai_last_enemy_area(s),
                     .mins=qa_v3(-8,-8,-8),.maxs=qa_v3(8,8,8),
                     .entity=source_combat?bot_ai_enemy_number(s):-1};
                 if(qa_bot_goal_touching(bot_ai_origin(s),&goal)) bot_ai_chase_time_set(s,0);
-                if(!bot_ai_chase_time(s) || bot_ai_chase_time(s)<b->time-10) {ENTER(QA_BOT_SEEK_LONG_TERM);continue;}
+                if(bot_ai_chase_time(s)==0.0f || bot_ai_chase_time(s)<b->time-10) {ENTER(QA_BOT_SEEK_LONG_TERM);continue;}
             } else if(node==QA_BOT_BATTLE_NEARBY) {
                 bool done=false;
                 if(!qa_bot_goals_top(goals(b),s->goals,false,&goal,&goal_found,e)) return false;

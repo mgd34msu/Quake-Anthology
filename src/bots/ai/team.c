@@ -197,7 +197,7 @@ static bool ordered(qa_bots *b,bot_ai_state *s,int32_t client,bot_long_term_goal
     bot_ai_decisionmaker_set(s,client);bot_ai_ordered_set(s,true);bot_ai_order_time_set(s,b->time);
     float random;if(!bot_ai_random(b,&random,e)) return false;
     volatile float delay=2.0f*random;bot_ai_team_message_time_set(s,b->time+delay);
-    bot_ai_long_term_goal_set(s,goal);bot_ai_team_goal_time_set(s,b->time+duration);
+    bot_ai_long_term_goal_set(s,(int32_t)goal);bot_ai_team_goal_time_set(s,b->time+duration);
     return true;
 }
 static bool initial_chat(qa_bots *b,bot_ai_state *s,const char *type,

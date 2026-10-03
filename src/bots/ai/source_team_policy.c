@@ -539,7 +539,7 @@ static bool source_team(qa_bots *b, bot_ai_state *s, int32_t *team, qa_error *e)
 }
 static int32_t opposite(int32_t team) { return team==1?2:team==2?1:0; }
 static bool refuse_order(qa_bots *b, bot_ai_state *s, qa_error *e) {
-    if(!bot_ai_ordered(s) || !bot_ai_order_time(s) || !(bot_ai_order_time(s)>b->time-10.0f) || !alive(b,s)) return true;
+    if(!bot_ai_ordered(s) || bot_ai_order_time(s)==0.0f || !(bot_ai_order_time(s)>b->time-10.0f) || !alive(b,s)) return true;
     if(!bot_ai_source_action(b,s,QA_BOT_NEGATIVE,e)) return false;
     if(!alive(b,s)) return true;
     if(!bot_ai_source_voice(b,s,bot_ai_decisionmaker(s),"no",false,e)) return false;
@@ -650,20 +650,20 @@ bool bot_ai_source_team_policy(qa_bots *b, bot_ai_state *s, qa_error *e) {
         bool found;if(!human_leader(b,s,&found,e)) return false;
         if(!alive(b,s)) return true;
         if(!found) {
-            if(!bot_ai_ask_team_leader_time(s) && !bot_ai_become_team_leader_time(s)) {
+            if(bot_ai_ask_team_leader_time(s)==0.0f && bot_ai_become_team_leader_time(s)==0.0f) {
                 uint32_t offset=bot_ai_enter_time(s)+10.0f>b->time?QA_BOT_SOURCE_ASK_TEAM_LEADER_TIME:
                     QA_BOT_SOURCE_BECOME_TEAM_LEADER_TIME;
                 if(!random_deadline(b,s,5,offset,e)) return false;
             }
             if(!alive(b,s)) return true;
-            if(bot_ai_ask_team_leader_time(s) && bot_ai_ask_team_leader_time(s)<b->time) {
+            if(bot_ai_ask_team_leader_time(s)!=0.0f && bot_ai_ask_team_leader_time(s)<b->time) {
                 if(!leader_chat(b,s,"whoisteamleader",e)) return false;
                 if(!alive(b,s)) return true;
                 bot_ai_ask_team_leader_time_set(s,0);
                 if(!random_deadline(b,s,8,QA_BOT_SOURCE_BECOME_TEAM_LEADER_TIME,e)) return false;
             }
             if(!alive(b,s)) return true;
-            if(bot_ai_become_team_leader_time(s) && bot_ai_become_team_leader_time(s)<b->time) {
+            if(bot_ai_become_team_leader_time(s)!=0.0f && bot_ai_become_team_leader_time(s)<b->time) {
                 if(!leader_chat(b,s,"iamteamleader",e) || !bot_ai_source_voice(b,s,-1,"startleader",false,e)) return false;
                 if(!alive(b,s)) return true;
                 int32_t self;char name[36];
@@ -705,7 +705,7 @@ bool bot_ai_source_team_policy(qa_bots *b, bot_ai_state *s, qa_error *e) {
         }
     }
     float delay=type==4?3.0f:type==5?2.0f:5.0f;
-    if(!bot_ai_give_orders_time(s) || !(bot_ai_give_orders_time(s)<b->time-delay)) return true;
+    if(bot_ai_give_orders_time(s)==0.0f || !(bot_ai_give_orders_time(s)<b->time-delay)) return true;
     bool ok=type==3?orders_team(b,s,e):type==4?orders_ctf(b,s,e):type==5?orders_one_flag(b,s,e):
         type==6?orders_bases(b,s,"cmd_attackenemybase",e):type==7?orders_bases(b,s,"cmd_harvest",e):true;
     if(!ok) return false;
@@ -1144,7 +1144,7 @@ bool bot_ai_source_alternate_route(qa_bots *b, bot_ai_state *s, int32_t base, qa
     bot_ai_alternate_goal_reached_time_set(s,0);return true;
 }
 bool bot_ai_source_route_goal(qa_bots *b, bot_ai_state *s, qa_bot_goal *goal, qa_error *e) {
-    if(!alive(b,s) || !bot_ai_alternate_goal(s).area || bot_ai_alternate_goal_reached_time(s)) return true;
+    if(!alive(b,s) || !bot_ai_alternate_goal(s).area || bot_ai_alternate_goal_reached_time(s)!=0.0f) return true;
     uint32_t time;
     qa_bot_goal alternate=bot_ai_alternate_goal(s);
     if(!travel(b,s,bot_ai_origin(s),bot_ai_area(s),&alternate,bot_ai_travel_flags(s),&time,e)) return false;

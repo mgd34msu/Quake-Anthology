@@ -469,11 +469,11 @@ static bool help_accompany(qa_bots *b,bot_ai_state *s,const qa_bot_chat_match *m
     bot_ai_team_goal_time_set(s,deadline_value);
     if(m->type==MSG_HELP) {
         bot_ai_long_term_goal_set(s,BOT_LTG_TEAM_HELP);
-        if(!bot_ai_team_goal_time(s)) bot_ai_team_goal_time_set(s,b->time+60.0f);
+        if(bot_ai_team_goal_time(s)==0.0f) bot_ai_team_goal_time_set(s,b->time+60.0f);
         return true;
     }
     bot_ai_long_term_goal_set(s,BOT_LTG_TEAM_ACCOMPANY);
-    if(!bot_ai_team_goal_time(s)) bot_ai_team_goal_time_set(s,b->time+600.0f);
+    if(bot_ai_team_goal_time(s)==0.0f) bot_ai_team_goal_time_set(s,b->time+600.0f);
     bot_ai_formation_distance_set(s,112);bot_ai_arrive_time_set(s,0);return finish_order(b,s,true,e);
 }
 static bool named_goal_order(qa_bots *b,bot_ai_state *s,const qa_bot_chat_match *m,bool item,qa_error *e) {
@@ -494,7 +494,7 @@ static bool named_goal_order(qa_bots *b,bot_ai_state *s,const qa_bot_chat_match 
     else {
         float deadline_value;if(!deadline(b,m,&deadline_value,e)) return false;
     bot_ai_team_goal_time_set(s,deadline_value);
-        if(!bot_ai_team_goal_time(s)) bot_ai_team_goal_time_set(s,b->time+600.0f);
+        if(bot_ai_team_goal_time(s)==0.0f) bot_ai_team_goal_time_set(s,b->time+600.0f);
         bot_ai_defend_away_time_set(s,0);
     }
     return finish_order(b,s,!item,e);
@@ -526,7 +526,7 @@ static bool camp(qa_bots *b,bot_ai_state *s,const qa_bot_chat_match *m,qa_error 
     bot_ai_long_term_goal_set(s,BOT_LTG_CAMP_ORDER);
     float deadline_value;if(!deadline(b,m,&deadline_value,e)) return false;
     bot_ai_team_goal_time_set(s,deadline_value);
-    if(!bot_ai_team_goal_time(s)) bot_ai_team_goal_time_set(s,b->time+600.0f);
+    if(bot_ai_team_goal_time(s)==0.0f) bot_ai_team_goal_time_set(s,b->time+600.0f);
     bot_ai_arrive_time_set(s,0);return finish_order(b,s,true,e);
 }
 static bool patrol_points(qa_bots *b,bot_ai_state *s,const qa_bot_chat_match *m,bool *out,qa_error *e) {
@@ -573,7 +573,7 @@ static bool patrol(qa_bots *b,bot_ai_state *s,const qa_bot_chat_match *m,qa_erro
     bot_ai_long_term_goal_set(s,BOT_LTG_PATROL);
     float deadline_value;if(!deadline(b,m,&deadline_value,e)) return false;
     bot_ai_team_goal_time_set(s,deadline_value);
-    if(!bot_ai_team_goal_time(s)) bot_ai_team_goal_time_set(s,b->time+600.0f);
+    if(bot_ai_team_goal_time(s)==0.0f) bot_ai_team_goal_time_set(s,b->time+600.0f);
     return finish_order(b,s,true,e);
 }
 static bool checkpoint(qa_bots *b,bot_ai_state *s,const qa_bot_chat_match *m,qa_error *e) {
