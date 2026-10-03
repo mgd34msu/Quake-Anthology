@@ -33,6 +33,7 @@ bool qa_network_create(qa_net_transport *transport, const qa_network_options *op
     qa_network_runtime *runtime = calloc(1, sizeof(*runtime));
     if (!runtime) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating network runtime"); return false; }
     runtime->options = *options;
+    runtime->timeout_enabled = options->timeout_ns != 0;
     runtime->peers = calloc(options->clients, sizeof(*runtime->peers));
     if (!runtime->peers || !qa_net_connections_create(options->owner, options->clients,
         qa_network_admission, runtime, &runtime->connections, error)) {
@@ -198,8 +199,9 @@ bool qa_network_pump(qa_network_runtime *runtime, uint64_t now, qa_error *error)
         qa_network_peer *peer = &runtime->peers[i];
         const qa_net_client *client = peer->occupied ? qa_net_connections_get(runtime->connections, peer->id) : NULL;
         if (!client) continue;
-        if (!qa_unified_session_peer(peer) && !retirement_pending(peer) && runtime->options.timeout_ns &&
-            qa_net_client_expired(client, now, runtime->options.timeout_ns)) {
+        if (!qa_unified_session_peer(peer) && !retirement_pending(peer) && runtime->timeout_enabled &&
+            client->attachment != QA_NET_LOCAL_SEAT && (runtime->timeout_immediate ||
+            qa_net_client_expired(client, now, runtime->options.timeout_ns))) {
             bool native=qa_network_nq_peer(peer) || qa_network_qw_peer(peer) ||
                 qa_network_q1_client_peer(peer) || qa_network_q2_peer(peer);
             if(native) {

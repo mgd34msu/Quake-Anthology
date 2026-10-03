@@ -29,6 +29,7 @@ struct qa_network_runtime {
     qa_network_peer *peers;
     uint64_t now_ns;
     bool pumping, callback;
+    bool timeout_enabled, timeout_immediate;
 };
 qa_network_peer *qa_network_peer_get(qa_network_runtime *, qa_net_client_id, qa_error *);
 void qa_network_history_clear(qa_network_peer *);

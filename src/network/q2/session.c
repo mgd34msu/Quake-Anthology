@@ -1,4 +1,22 @@
 #include "session_internal.h"
+#include <math.h>
+
+bool qa_network_q2_server_timeout_policy(qa_network_runtime *runtime, double seconds, qa_error *error)
+{
+    if (!runtime || !qa_network_callbacks_idle(runtime) || !isfinite(seconds) ||
+        (seconds > 0 && seconds * 1000000000.0 >= 18446744073709551616.0))
+        return q2_fail(error, QA_ERROR_ARGUMENT, "Q2 timeout policy requires its returned runtime and finite Source duration");
+    for (uint32_t i = 0; i < runtime->options.clients; ++i) {
+        const qa_network_peer *peer = &runtime->peers[i];
+        if (!peer->occupied || qa_network_local_peer(peer)) continue;
+        if (!qa_network_q2_peer(peer) || !peer->state || !((const q2_session *)peer->state)->server)
+            return q2_fail(error, QA_ERROR_ARGUMENT, "Q2 server timeout policy cannot replace another transport owner");
+    }
+    runtime->options.timeout_ns = seconds > 0 ? (uint64_t)(seconds * 1000000000.0) : 0;
+    runtime->timeout_enabled = true;
+    runtime->timeout_immediate = seconds < 0;
+    return true;
+}
 
 bool qa_network_q2_peer(const qa_network_peer *peer)
 {

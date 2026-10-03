@@ -72,6 +72,7 @@ typedef struct q2_client {
     char *drop_reason;
     bool drop_canceled, drop_hook_done;
     bool drop_notice, drop_queued, drop_sent, drop_notify, drop_records_needed, drop_records_done;
+    uint8_t drop_transmissions;
     bool has_server_data, preparing_game_state, selecting_server_data, receive_held, acknowledgement_held, preparation_held;
 } q2_client;
 typedef struct q2_session {

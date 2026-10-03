@@ -54,7 +54,19 @@ static bool retire_client(q2_session *session, const char *reason, bool notice, 
         client->drop_notice = notice; client->drop_notify = notify; client->drop_records_needed = records;
         session->retiring = true; session->active = false;
     }
-    if (client->drop_notice && !client->drop_queued) {
+    bool classic = session->codec.protocol.kind == QA_NET_Q2_34;
+    if (client->drop_notice && classic && !client->drop_sent) {
+        uint8_t bytes[32];
+        qa_q2_client_event disconnect = {.kind = QA_Q2_CLC_COMMAND, .data.text = "disconnect"};
+        qa_net_writer writer; qa_net_writer_init(&writer, bytes, sizeof(bytes), error);
+        if (!qa_q2_client_event_write(&session->codec, &writer, &disconnect, 0)) return false;
+        while (client->drop_transmissions < 3) {
+            if (!q2_send(session, (qa_bytes){bytes, qa_net_writer_size(&writer)}, now, NULL, error)) return false;
+            ++client->drop_transmissions;
+        }
+        client->drop_sent = true;
+    }
+    if (client->drop_notice && !classic && !client->drop_queued) {
         uint8_t *bytes = malloc(session->channel->capacity);
         if (!bytes) return q2_fail(error, QA_ERROR_MEMORY, "Retaining Q2 CLIENT disconnect command");
         qa_q2_client_event disconnect = {.kind = QA_Q2_CLC_COMMAND, .data.text = "disconnect"};
@@ -64,7 +76,7 @@ static bool retire_client(q2_session *session, const char *reason, bool notice, 
         free(bytes); if (!ok) return false;
         client->drop_queued = true;
     }
-    if (client->drop_notice && !client->drop_sent) {
+    if (client->drop_notice && !classic && !client->drop_sent) {
         if (!q2_send(session, (qa_bytes){0}, now, NULL, error)) return false;
         if (session->channel->queued_size || session->channel->sending_size) return false;
         client->drop_sent = true;

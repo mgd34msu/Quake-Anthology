@@ -261,6 +261,21 @@ static bool q2_host_protocol(qa_net_protocol_id protocol)
 {
     return q2_raw_protocol(protocol) || protocol.kind==QA_NET_Q2KEX_2023;
 }
+static bool q2_timeout_sync(qa_frontend_network *n,qa_error *error)
+{
+    qa_frontend *f=n->frontend;
+    if(!f->options.network_host || !q2_host_protocol(f->options.network_protocol)) return true;
+    qa_application_startup_source source; bool present=false;
+    if(!frontend_config_store_primary_server_read(f->config_store,&source,&present,error)) return false;
+    if(!present)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 host timeout requires its actual primary Source registry");
+    qa_console_dialect dialect=qa_cvars_dialect(source.cvars);
+    if(dialect!=QA_CONSOLE_Q2 && dialect!=QA_CONSOLE_Q2_RERELEASE) return true;
+    const qa_cvar_view *timeout=qa_cvars_find(source.cvars,"timeout");
+    if(!timeout)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 host timeout lacks its Source declaration");
+    return qa_network_q2_server_timeout_policy(n->runtime,timeout->number,error);
+}
 static bool q2_host_current(void *context,const frontend_network_q2_host *host)
 {
     const qa_frontend_network *n=context;
@@ -4072,6 +4087,7 @@ bool frontend_network_create(qa_frontend *f, qa_error *error)
             .current=q2_host_current,.random=random_rotation,
             .lobby=n->kex_transport?qa_kex_transport_lobby(n->kex_transport):NULL,.transport=n->kex_transport};
         if(!frontend_network_q2_host_create(&host,&n->q2_host,error)) goto failed;
+        if(!q2_timeout_sync(n,error)) goto failed;
     }
     if(!q2_local_groups_prepare(n,error)) goto failed;
     if(f->options.network_host && f->options.network_protocol.kind==QA_NET_UNIFIED_1) {
@@ -6585,7 +6601,7 @@ bool frontend_network_pump(qa_frontend *f, qa_error *error)
     /* Console connection transitions retire their old wire owner before the
      * sole receiver can poll or flush another packet from that attempt. */
     if (!client_attempts_drain(n, error)) return false;
-    if(!q2_local_groups_prepare(n,error)) return false;
+    if(!q2_local_groups_prepare(n,error) || !q2_timeout_sync(n,error)) return false;
     if(!q2_client_tick_returned(n,error)) return false;
     if(!q1_client_tick_returned(n,error)) return false;
     if(n->q2_host && !frontend_network_q2_host_tick(n->q2_host,f->wall_time_ns,error)) return false;

@@ -248,13 +248,20 @@ static bool client_fields(qa_source_save_io *io, q2_session *session)
     if (!text(io, &client->drop_reason) || !qa_source_save_bool(io, &client->drop_canceled) ||
         !qa_source_save_bool(io, &client->drop_hook_done) ||
         !qa_source_save_bool(io, &client->drop_notice) || !qa_source_save_bool(io, &client->drop_queued) ||
-        !qa_source_save_bool(io, &client->drop_sent) || !qa_source_save_bool(io, &client->drop_notify) ||
+        !qa_source_save_bool(io, &client->drop_sent) || !qa_source_save_u8(io, &client->drop_transmissions) ||
+        !qa_source_save_bool(io, &client->drop_notify) ||
         !qa_source_save_bool(io, &client->drop_records_needed) || !qa_source_save_bool(io, &client->drop_records_done) ||
         (client->drop_reason && (!session->retiring || session->active)) ||
         (!client->drop_reason && (client->drop_canceled || client->drop_hook_done || client->drop_notice ||
-            client->drop_queued || client->drop_sent || client->drop_notify || client->drop_records_needed || client->drop_records_done)) ||
+            client->drop_queued || client->drop_sent || client->drop_transmissions || client->drop_notify ||
+            client->drop_records_needed || client->drop_records_done)) ||
         (!client->drop_notice && (client->drop_queued || client->drop_sent)) ||
-        (client->drop_sent && !client->drop_queued) || (client->drop_notice && client->drop_canceled && !client->drop_sent) ||
+        (session->codec.protocol.kind == QA_NET_Q2_34 ?
+            (client->drop_queued || client->drop_transmissions>3 ||
+             (!client->drop_notice && client->drop_transmissions) ||
+             client->drop_sent!=(client->drop_transmissions==3)) :
+            (client->drop_transmissions || (client->drop_sent && !client->drop_queued))) ||
+        (client->drop_notice && client->drop_canceled && !client->drop_sent) ||
         (!client->drop_records_needed && client->drop_records_done) ||
         (client->drop_records_done && !client->drop_canceled) ||
         (client->drop_hook_done && (!client->drop_canceled || (client->drop_records_needed && !client->drop_records_done))))

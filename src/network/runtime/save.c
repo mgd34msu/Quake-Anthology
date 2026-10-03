@@ -26,7 +26,7 @@ bool qa_network_connections_checkpoint(const qa_network_runtime *runtime, const 
         free(sources); free(kinds); qa_buffer_free(&table);
         qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining network source inventory"); return false;
     }
-    bool ok = true; size_t size = 40 + table.size; uint32_t count = 0;
+    bool ok = true; size_t size = 42 + table.size; uint32_t count = 0;
     for (uint32_t i = 0; ok && i < runtime->options.clients; ++i) {
         const qa_network_peer *peer = &runtime->peers[i];
         if (!peer->occupied) continue;
@@ -61,7 +61,9 @@ bool qa_network_connections_checkpoint(const qa_network_runtime *runtime, const 
     qa_buffer bytes = {0}; qa_net_writer w;
     if (ok) ok = writer_storage(size, &bytes, &w, error);
     if (ok) ok = qa_net_write_u32(&w, UINT32_C(0x434e4151)) &&
-        qa_net_write_u64(&w, runtime->options.timeout_ns) && qa_net_write_u32(&w, runtime->options.packets_per_pump) &&
+        qa_net_write_u64(&w, runtime->options.timeout_ns) &&
+        qa_net_write_u8(&w, runtime->timeout_enabled) && qa_net_write_u8(&w, runtime->timeout_immediate) &&
+        qa_net_write_u32(&w, runtime->options.packets_per_pump) &&
         qa_net_write_u64(&w, runtime->now_ns) && qa_net_write_u64(&w, table.size) &&
         qa_net_write_data(&w, table.data, table.size) && qa_net_write_u32(&w, count);
     for (uint32_t i = 0; ok && i < runtime->options.clients; ++i) {
@@ -89,16 +91,19 @@ bool qa_network_connections_saved_policy(qa_bytes bytes,qa_network_saved_policy 
     qa_net_reader reader; qa_net_reader_init(&reader,bytes,error);
     uint32_t tag=qa_net_read_u32(&reader);
     uint64_t timeout=qa_net_read_u64(&reader);
+    uint8_t enabled=qa_net_read_u8(&reader),immediate=qa_net_read_u8(&reader);
     uint32_t packets=qa_net_read_u32(&reader);
     (void)qa_net_read_u64(&reader);
     qa_bytes table;
-    if(tag!=UINT32_C(0x434e4151) || !packets || !read_blob(&reader,&table))
+    if(tag!=UINT32_C(0x434e4151) || enabled>1 || immediate>1 ||
+        (!enabled && (timeout || immediate)) || (immediate && timeout) || !packets || !read_blob(&reader,&table))
         return qa_net_reader_fail(&reader,"Captured Network constructor header is invalid");
     qa_net_reader slots; qa_net_reader_init(&slots,table,error);
     uint32_t clients=qa_net_read_u32(&slots);
     if(slots.failed || !clients || table.size<4 || clients>(table.size-4)/10)
         return qa_net_reader_fail(&slots,"Captured Network table policy exceeds its actual records");
-    *out=(qa_network_saved_policy){clients,packets,timeout}; return true;
+    *out=(qa_network_saved_policy){.clients=clients,.packets_per_pump=packets,.timeout_ns=timeout,
+        .timeout_enabled=enabled!=0,.timeout_immediate=immediate!=0}; return true;
 }
 bool qa_network_connections_restore(qa_bytes bytes, qa_net_transport *transport,
     const qa_network_options *options, const qa_network_checkpoint_refs *refs,
@@ -111,13 +116,17 @@ bool qa_network_connections_restore(qa_bytes bytes, qa_net_transport *transport,
         return qa_network_fail(error, "Network restore requires qualified candidate consumers");
     qa_net_reader r; qa_net_reader_init(&r, bytes, error);
     uint32_t tag = qa_net_read_u32(&r);
-    uint64_t timeout = qa_net_read_u64(&r); uint32_t packets = qa_net_read_u32(&r);
+    uint64_t timeout = qa_net_read_u64(&r);
+    uint8_t enabled=qa_net_read_u8(&r),immediate=qa_net_read_u8(&r);
+    uint32_t packets = qa_net_read_u32(&r);
     uint64_t now = qa_net_read_u64(&r); qa_bytes table_bytes;
-    if (tag != UINT32_C(0x434e4151) || timeout != options->timeout_ns ||
+    if (tag != UINT32_C(0x434e4151) || enabled>1 || immediate>1 ||
+        (!enabled && (timeout || immediate)) || (immediate && timeout) || timeout != options->timeout_ns ||
         packets != options->packets_per_pump) return qa_net_reader_fail(&r, "Network candidate policy differs from saved owner");
     if (!read_blob(&r, &table_bytes)) return false;
     qa_network_runtime *runtime = NULL;
     if (!qa_network_create(transport, options, &runtime, error)) return false;
+    runtime->timeout_enabled=enabled!=0; runtime->timeout_immediate=immediate!=0;
     *out=runtime;
     qa_net_reader table_reader; qa_net_reader_init(&table_reader, table_bytes, error);
     qa_net_connections *connections = NULL;
@@ -188,6 +197,8 @@ bool qa_network_connections_restore(qa_bytes bytes, qa_net_transport *transport,
             qa_net_reader_fail(&r, "Saved connection lacks an actual source continuation"); goto failure;
         }
     if (!qa_net_reader_finish(&r)) goto failure;
+    if (runtime->timeout_enabled && !runtime->options.timeout_ns &&
+        !qa_network_q2_server_timeout_policy(runtime,runtime->timeout_immediate?-1.0:0.0,error)) goto failure;
     *out = runtime; return true;
 failure:
     /* Physical Source factories may already borrow this exact runtime.

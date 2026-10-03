@@ -6,6 +6,8 @@
 #include "qa/vfs.h"
 #include "qa/console.h"
 
+bool qa_network_q2_server_timeout_policy(qa_network_runtime *, double source_seconds, qa_error *);
+
 typedef struct qa_q2_config_entry {
     uint16_t index;
     const char *value;

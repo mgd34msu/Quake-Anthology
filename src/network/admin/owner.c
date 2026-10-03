@@ -44,11 +44,11 @@ bool qa_server_admin_declarations(qa_cvars *cvars, uint64_t owner, qa_error *err
     qa_console_dialect dialect=qa_cvars_dialect(cvars);
     bool q2=dialect==QA_CONSOLE_Q2 || dialect==QA_CONSOLE_Q2_RERELEASE;
     const char *names[]={dialect==QA_CONSOLE_Q3?"rconPassword":"rcon_password",
-        "filterban","public","lrcon_password","sv_rcon_limit"};
-    const char *values[]={"","1","0","","1"};
+        "filterban","public","lrcon_password","sv_rcon_limit","timeout"};
+    const char *values[]={"","1","0","","1","125"};
     uint32_t flags[]={q2?QA_Q2_CVAR_PRIVATE:dialect==QA_CONSOLE_Q3?QA_CVAR_TEMPORARY:0,
-        0,QA_Q2_CVAR_LATCH,QA_Q2_CVAR_PRIVATE,0};
-    size_t count=q2?5:dialect==QA_CONSOLE_Q3?1:2;
+        0,QA_Q2_CVAR_LATCH,QA_Q2_CVAR_PRIVATE,0,0};
+    size_t count=q2?6:dialect==QA_CONSOLE_Q3?1:2;
     for (size_t i=0;i<count;++i) {
         const qa_cvar_view *v=qa_cvars_find(cvars,names[i]);
         if (v && !v->console_created) {

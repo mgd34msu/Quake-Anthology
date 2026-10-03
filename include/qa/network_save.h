@@ -42,6 +42,7 @@ typedef struct qa_network_checkpoint_refs {
 typedef struct qa_network_saved_policy {
     uint32_t clients,packets_per_pump;
     uint64_t timeout_ns;
+    bool timeout_enabled,timeout_immediate;
 } qa_network_saved_policy;
 /* Reads the actual captured constructor policy. Full connection/Source
  * admission remains the restore operation's responsibility. */
