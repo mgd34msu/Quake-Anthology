@@ -189,7 +189,7 @@ bool application_q3_scene_restore(application_q3_scene *s,qa_bytes bytes,qa_erro
         /* Binding admission proved the QAVM memory and host extents.
          * Validate the host stream before the actual VM import can reopen it. */
         size_t memory=qa_qvm_memory_size(s->vm);
-        ok=qa_q3_host_checkpoint_portable_state((qa_bytes){vm.data+156+memory,vm.size-156-memory},e);
+        ok=qa_q3_host_checkpoint_portable_state((qa_bytes){vm.data+156+memory,vm.size-156-memory},NULL,e);
     }
     if(ok) {
         if(s->body) application_q3_component_body_adopt(s->body,saved);

@@ -209,20 +209,21 @@ static bool take(checkpoint_reader *reader, size_t size, qa_bytes *out, qa_error
     reader->offset += size; return true;
 }
 
-bool qa_q3_host_checkpoint_portable_state(qa_bytes input, qa_error *error)
+bool qa_q3_host_checkpoint_portable_state(qa_bytes input, qa_bytes *entity_source, qa_error *error)
 {
+    if (entity_source) *entity_source = (qa_bytes){0};
     if (!input.data || input.size < 60 || memcmp(input.data, "Q3HC", 4) ||
         qa_load_u32le(input.data + 12) >= 64 ||
         qa_load_u32le(input.data + 16) >= 64)
         return q3_fail(error, QA_ERROR_FORMAT, 0, "Invalid portable Q3 host stream");
     checkpoint_reader reader = {input, 60};
-    qa_bytes bytes, entity;
+    qa_bytes bytes, entity, source_bytes;
     if (!take(&reader, 48, &bytes, error) || !take(&reader, 32, &entity, error)) return false;
     uint64_t source = qa_load_u64le(entity.data), game = qa_load_u64le(input.data + 20);
     if (source > SIZE_MAX || game > SIZE_MAX)
         return q3_fail(error, QA_ERROR_FORMAT, reader.offset, "Portable Q3 source extent exceeds native address space");
     uint64_t bindings_size=qa_load_u64le(input.data+52);
-    if (bindings_size>SIZE_MAX || !take(&reader, (size_t)source, &bytes, error) ||
+    if (bindings_size>SIZE_MAX || !take(&reader, (size_t)source, &source_bytes, error) ||
         !take(&reader, qa_load_u32le(entity.data + 16), &bytes, error) ||
         !take(&reader, qa_load_u32le(entity.data + 20), &bytes, error) ||
         !take(&reader, (size_t)game, &bytes, error) ||
@@ -261,6 +262,7 @@ bool qa_q3_host_checkpoint_portable_state(qa_bytes input, qa_error *error)
     if (ok && reader.offset != input.size)
         ok = q3_fail(error, QA_ERROR_FORMAT, reader.offset, "Trailing portable Q3 host stream bytes");
     for (size_t i = 1; i < 64; ++i) q3_file_close(&files[i]);
+    if (ok && entity_source) *entity_source = source_bytes;
     return ok;
 }
 

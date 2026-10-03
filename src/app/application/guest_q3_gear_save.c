@@ -178,7 +178,7 @@ bool application_q3_gear_restore(application_q3_gear *gear, qa_bytes bytes,
         size_t memory = qa_qvm_memory_size(gear->vm);
         okay = parts[3].size >= 156 && memory <= parts[3].size - 156 &&
             qa_q3_host_checkpoint_portable_state((qa_bytes){parts[3].data + 156 + memory,
-                parts[3].size - 156 - memory}, error);
+                parts[3].size - 156 - memory}, NULL, error);
     }
     if (okay) {
         okay = qa_cvars_save_commit(cvars, error); if (okay) cvars = NULL;

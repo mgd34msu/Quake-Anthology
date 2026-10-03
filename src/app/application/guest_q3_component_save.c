@@ -109,7 +109,7 @@ bool application_q3_component_restore(application_q3_component *c,qa_bytes bytes
          * Admit its host bytes before importing RAM or reopening streams. */
         size_t memory=qa_qvm_memory_size(c->vm);
         ok=qa_q3_host_checkpoint_portable_state((qa_bytes){children[5].data+156+memory,
-            children[5].size-156-memory},e);
+            children[5].size-156-memory},NULL,e);
     }
     if(ok) {
         for(size_t i=0;i<c->hook_count;++i) c->hooks[i].id=ids[i];

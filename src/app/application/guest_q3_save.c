@@ -708,14 +708,15 @@ static bool client_topology(const q3g_role *role, qa_error *error)
         application_fail(error, QA_ERROR_FORMAT, "Q3 role differs from its actual native GAME client topology");
 }
 
-static bool portable_executor(qa_bytes bytes, qa_error *error)
+static bool portable_executor(qa_bytes bytes, qa_bytes *entity_source, qa_error *error)
 {
     if (!bytes.data || bytes.size < 156 || memcmp(bytes.data, "QAVM", 4))
         return application_fail(error, QA_ERROR_FORMAT, "Q3 continuation has no complete original QVM executor");
     uint64_t memory = qa_load_u64le(bytes.data + 20), host = qa_load_u64le(bytes.data + 28);
     if (memory > bytes.size - 156 || host != bytes.size - 156 - (size_t)memory)
         return application_fail(error, QA_ERROR_FORMAT, "Q3 executor memory/host extents differ");
-    return qa_q3_host_checkpoint_portable_state((qa_bytes){bytes.data + 156 + (size_t)memory, (size_t)host}, error);
+    return qa_q3_host_checkpoint_portable_state((qa_bytes){bytes.data + 156 + (size_t)memory, (size_t)host},
+        entity_source, error);
 }
 
 static bool collision_fields(qa_source_save_io *io, qa_q3_host_collision_profile *profile)
@@ -902,7 +903,7 @@ static bool saved_fields(qa_source_save_io *io, q3g_restore *saved, const applic
                     return state_fail(io, QA_ERROR_FORMAT, "Duplicate Q3 source projection actor");
         }
         if (artifact->qvm) {
-            if (!blob(io, &role->executor, 156) || !portable_executor(role->executor, io->error)) return false;
+            if (!blob(io, &role->executor, 156) || !portable_executor(role->executor, NULL, io->error)) return false;
         } else {
             bool committed = (role->flags & ROLE_COMMITTED) != 0;
             if (!blob(io, &role->executor, committed ? 12 : 0) ||
@@ -1346,6 +1347,23 @@ bool application_guest_q3_save_capture(application_provider *provider,
 static bool equal_bytes(qa_bytes a, qa_bytes b)
 {
     return a.size == b.size && (!a.size || !memcmp(a.data, b.data, a.size));
+}
+
+static bool restore_entity_source(q3g_role *role, qa_bytes saved, qa_error *error)
+{
+    struct application_q3_guest *engine = role->engine;
+    qa_bytes text = engine->entity_text ?
+        (qa_bytes){(const uint8_t *)engine->entity_text, strlen(engine->entity_text)} : (qa_bytes){0};
+    if (equal_bytes(saved, text)) return qa_q3_host_set_entity_text(role->host, text, error);
+    const qa_bsp_view *map = qa_collision_bsp(qa_world_geometry(engine->world));
+    qa_bytes source = map ? map->lumps[QA_BSP_ENTITIES].bytes : (qa_bytes){0};
+    const uint8_t *end = source.size ? memchr(source.data, 0, source.size) : NULL;
+    size_t length = end ? (size_t)(end - source.data) : source.size;
+    if (!engine->entity_text || !map || !equal_bytes(saved, source) ||
+        !equal_bytes(text, (qa_bytes){source.data, length}))
+        return application_fail(error, QA_ERROR_FORMAT,
+            "Q3 role entity span differs from its retained source map or text");
+    return qa_q3_host_set_entity_text(role->host, source, error);
 }
 
 bool application_guest_q3_save_matches(application_provider *provider, qa_bytes bytes,
@@ -1865,7 +1883,9 @@ bool application_guest_q3_save_restore(application_provider *provider, qa_bytes 
         saved_role *row = saved->roles + i; q3g_role *role = row->actual;
         if (!client_topology(role, error)) return false;
         if (role->vm) {
-            if (!portable_executor(row->executor, error) ||
+            qa_bytes entity_source;
+            if (!portable_executor(row->executor, &entity_source, error) ||
+                !restore_entity_source(role, entity_source, error) ||
                 !application_guest_q3_functions_restore(role, row->input, row->executor, error) ||
                 !qa_qvm_restore_candidate(role->vm, row->executor, error) ||
                 !q3g_role_catalog_refresh(role, error)) return false;
