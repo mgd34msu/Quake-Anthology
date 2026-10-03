@@ -79,24 +79,9 @@ static bool bus_fields(qa_source_save_io *io, const qa_audio_checkpoint_refs *re
 }
 static bool command_fields(qa_source_save_io *io, frontend_music_command *command, uint64_t registry) {
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
-    qa_command_context saved_context = command->context;
-    qa_command_context *context = reading ? &command->context : &saved_context;
-    if (!reading && context->registry == qa_actors_identity(qa_session_actors(io->session)))
-        context->registry = registry;
-    uint32_t dialect = context->dialect, origin = context->origin;
-    bool ok = qa_source_save_u64(io, &context->session) && qa_source_save_u64(io, &context->owner) &&
-        qa_source_save_u64(io, &context->client) && qa_source_save_u32(io, &context->seat) &&
-        qa_source_save_u32(io, &dialect) && dialect <= QA_CONSOLE_Q3 &&
-        qa_source_save_u32(io, &origin) && origin <= QA_COMMAND_REMOTE &&
-        qa_source_save_bool(io, &context->direct) && qa_source_save_bool(io, &context->console_text) &&
-        qa_source_save_u64(io, &context->registry) && qa_source_save_u64(io, &context->generation) &&
-        qa_source_save_actor(io, &context->actor) && frontend_save_text(io, &command->script) &&
+    bool ok = frontend_save_command_context(io, &command->context, &command->script, registry) &&
         qa_source_save_count(io, &command->argc, 1024) && command->argc;
     if (reading && ok) {
-        context->dialect = (qa_console_dialect)dialect; context->origin = (qa_command_origin)origin;
-        context->script = command->script;
-        if (context->registry == registry) context->registry = qa_actors_identity(qa_session_actors(io->session));
-        else { context->registry = 0; if (!context->generation) context->generation = UINT64_MAX; }
         command->argv = calloc(command->argc, sizeof(*command->argv));
         if (!command->argv) { command->argc = 0; ok = frontend_fail(io->error, QA_ERROR_MEMORY, "Restoring queued music arguments"); }
     }

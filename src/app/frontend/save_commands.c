@@ -19,7 +19,7 @@ typedef struct save_command_request {
 } save_command_request;
 struct frontend_save_commands {
     qa_fs_root *root;
-    uint64_t next_nonce;
+    uint64_t next_nonce, command_registry;
     save_command_request request;
     qa_frontend_q1_restore *original;
     qa_frontend *retained[3];
@@ -65,6 +65,7 @@ bool frontend_save_commands_create(qa_frontend *f, qa_error *error)
     frontend_save_commands *owner = calloc(1, sizeof(*owner));
     if (!owner) return frontend_fail(error, QA_ERROR_MEMORY, "Creating save command owner");
     owner->next_nonce = 1;
+    owner->command_registry = qa_actors_identity(qa_session_actors(qa_application_session(f->application)));
     if (!qa_fs_root_open(path, &owner->root, error)) { free(owner); return false; }
     f->save_commands = owner; return true;
 }
@@ -228,34 +229,15 @@ static bool root_fields(qa_source_save_io *io, frontend_save_commands *owner)
     free(actual);
     return ok || frontend_fail(io->error, QA_ERROR_FORMAT, "Saved commands name another actual writable root");
 }
-static bool context_fields(qa_source_save_io *io, qa_command_context *context, char **script,
-    uint64_t captured_registry)
-{
-    uint32_t dialect = context->dialect, origin = context->origin;
-    bool ok = qa_source_save_u64(io, &context->session) && qa_source_save_u64(io, &context->owner)
-        && qa_source_save_u64(io, &context->client) && qa_source_save_u32(io, &context->seat)
-        && qa_source_save_u32(io, &dialect) && dialect <= QA_CONSOLE_Q3
-        && qa_source_save_u32(io, &origin) && origin <= QA_COMMAND_REMOTE
-        && qa_source_save_bool(io, &context->direct) && qa_source_save_bool(io, &context->console_text)
-        && qa_source_save_u64(io, &context->registry) && qa_source_save_u64(io, &context->generation)
-        && qa_source_save_actor(io, &context->actor) && frontend_save_text(io, script);
-    if (ok && io->direction == QA_SOURCE_SAVE_READ) {
-        context->dialect = (qa_console_dialect)dialect; context->origin = (qa_command_origin)origin;
-        context->script = *script;
-        if (context->registry == captured_registry)
-            context->registry = qa_actors_identity(qa_session_actors(io->session));
-        else { context->registry = 0; if (!context->generation) context->generation = UINT64_MAX; }
-    }
-    return ok;
-}
 static bool fields(qa_source_save_io *io, frontend_save_commands *owner)
 {
-    uint8_t magic[4] = {'Q','F','S','C'}; uint64_t registry = qa_actors_identity(qa_session_actors(io->session));
+    uint8_t magic[4] = {'Q','F','S','C'}; uint64_t registry = owner->command_registry;
     bool ok = qa_source_save_bytes(io, magic, 4) && !memcmp(magic, "QFSC", 4)
         && root_fields(io, owner)
         && qa_source_save_u64(io, &registry) && registry
         && qa_source_save_u64(io, &owner->next_nonce) && owner->next_nonce
         && qa_source_save_bool(io, &owner->pending);
+    if (ok && io->direction == QA_SOURCE_SAVE_READ) owner->command_registry = registry;
     if (!ok || !owner->pending) return ok;
     save_command_request *request = &owner->request;
     uint32_t format = request->format;
@@ -264,7 +246,7 @@ static bool fields(qa_source_save_io *io, frontend_save_commands *owner)
         && frontend_save_text(io, &request->name) && request->name && qa_save_slot_name(request->name, io->error)
         && !strncmp(request->name, "saves/", 6) && frontend_save_text(io, &request->product)
         && (!request->product || (request->load && *request->product))
-        && context_fields(io, &request->context, &request->script, registry);
+        && frontend_save_command_context(io, &request->context, &request->script, registry);
     if (ok) request->format = (save_command_format)format;
     return ok;
 }

@@ -1,5 +1,31 @@
 #include "save_private.h"
 #include "qa/application_equipment_content.h"
+bool frontend_save_command_context(qa_source_save_io *io, qa_command_context *context, char **script,
+    uint64_t captured_registry)
+{
+    qa_command_context saved_context = *context;
+    if (io->direction == QA_SOURCE_SAVE_WRITE) {
+        context = &saved_context;
+        if (context->registry == qa_actors_identity(qa_session_actors(io->session)))
+            context->registry = captured_registry;
+    }
+    uint32_t dialect = context->dialect, origin = context->origin;
+    bool ok = qa_source_save_u64(io, &context->session) && qa_source_save_u64(io, &context->owner)
+        && qa_source_save_u64(io, &context->client) && qa_source_save_u32(io, &context->seat)
+        && qa_source_save_u32(io, &dialect) && dialect <= QA_CONSOLE_Q3
+        && qa_source_save_u32(io, &origin) && origin <= QA_COMMAND_REMOTE
+        && qa_source_save_bool(io, &context->direct) && qa_source_save_bool(io, &context->console_text)
+        && qa_source_save_u64(io, &context->registry) && qa_source_save_u64(io, &context->generation)
+        && qa_source_save_actor(io, &context->actor) && frontend_save_text(io, script);
+    if (ok && io->direction == QA_SOURCE_SAVE_READ) {
+        context->dialect = (qa_console_dialect)dialect; context->origin = (qa_command_origin)origin;
+        context->script = *script;
+        if (context->registry == captured_registry)
+            context->registry = qa_actors_identity(qa_session_actors(io->session));
+        else { context->registry = 0; if (!context->generation) context->generation = UINT64_MAX; }
+    }
+    return ok;
+}
 bool frontend_save_provider(qa_source_save_io *io, qa_application *application, qa_actor_owner *owner)
 {
     const char *instance = io->direction == QA_SOURCE_SAVE_WRITE && *owner ?
