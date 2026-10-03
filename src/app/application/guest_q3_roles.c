@@ -692,7 +692,27 @@ bool q3g_role_activate(q3g_role *role, qa_error *error)
     qa_bot_runtime *bots = application_bots_guest_runtime(engine->provider->application, engine->provider);
     if (role->kind == QA_QVM_GAME && bots &&
         !application_bots_guest_bind(engine->provider->application,engine->provider,role->host,error)) return false;
-    if (role->vm) { role->committed = true; return true; }
+    if (role->vm) {
+        if (role->kind == QA_QVM_UI) {
+            qa_error failure = {0};
+            q3g_role *previous = engine->entered_role;
+            engine->entered_role = role;
+            ++engine->calls;
+            bool ok = qa_qvm_validate_ui(role->vm, NULL, &failure);
+            --engine->calls;
+            engine->entered_role = previous;
+            if (!ok) {
+                if (failure.code == QA_OK)
+                    qa_error_set(&failure, QA_ERROR_ARGUMENT, 0, "Q3 UI activation failed");
+                role->activation_error = failure;
+                role->activation_failed = true;
+                if (error) *error = failure;
+                return false;
+            }
+        }
+        role->committed = true;
+        return true;
+    }
     if (!role->module)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 native role has no staged module");
     qa_error failure = {0};
