@@ -52,6 +52,7 @@
 #include "network_unified_save.h"
 #include "../application/unified_save_internal.h"
 #include "network_unified_client.h"
+#include "qc_messages.h"
 #include "network_unified_restore.h"
 #include "network_player_drop.h"
 #include "remote_q2_client.h"
@@ -6893,6 +6894,7 @@ bool frontend_network_command(qa_frontend *f, uint32_t seat, qa_actor_id actor,
 }
 bool frontend_network_publish(qa_frontend *f, qa_error *error)
 {
+    if(f->qc_messages && !frontend_qc_messages_drain(f->qc_messages,error))return false;
     if (!f->network) return true;
     qa_frontend_network *n = f->network;
     if(n->unified) {
