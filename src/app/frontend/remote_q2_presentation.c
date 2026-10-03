@@ -444,6 +444,7 @@ static bool submit_model(frontend_remote_q2 *row, const char *path, const char *
             .wrap = QA_SCENE_REPEAT, .filter = QA_SCENE_LINEAR_MIPMAP_LINEAR, .mipmap = true, .transparent_index = 255};
         if (!qa_material_register(row->materials, skin_path, &options, false, &skin, error)) return false;
     }
+    const qa_scene_image_options *model_options = qa_scene_model_image_options(model->scene);
     qa_scene_model_input input = {.view = *view, .transform = transform,
         .previous_origin = current->renderfx & 64 ? vector(current->old_origin) : origin,
         .color = color, .family = QA_SCENE_Q2,
@@ -451,7 +452,8 @@ static bool submit_model(frontend_remote_q2 *row, const char *path, const char *
         .skin = current->modelindex == 255 ? 0 : current->skinnum, .flags = flags,
         .entity = current->number, .back_lerp = previous ? 1 - row->fraction : 0,
         .seconds = world->seconds, .view_model = view_model, .player = current->modelindex == 255,
-        .material_library = row->materials, .custom_material = skin, .source_path = path,
+        .material_library = model_options && model_options->family == QA_SCENE_Q3 ? row->materials : NULL,
+        .custom_material = skin, .source_path = path,
         .video_frame = frontend_material_movies_frontend_resolve, .video_context = row->frontend};
     const qa_cvar_view *hand = qa_cvars_find(row->options.domain.cvars, "hand");
     if (view_model && hand && isfinite(hand->number) && hand->number >= 0 && hand->number <= 2)
