@@ -155,74 +155,114 @@ static bool avoid_spots(const bot_move_record *state, const bot_reach *reach) {
     }
     return result != 0;
 }
-static int candidate_compare(const void *first, const void *second) {
-    const bot_move_candidate *a = first, *b = second;
-    if (a->time != b->time)
-        return a->time < b->time ? -1 : 1;
-    return a->order < b->order ? -1 : a->order != b->order;
+typedef struct route_filter {
+    bot_travel *travel;
+    uint32_t first, goal, travel_flags, move_flags;
+    uint32_t *result_flags;
+    qa_error *error;
+    bool ok;
+} route_filter;
+static bool reach_allowed(route_filter *filter,const qa_nav_edge *edge,bool first) {
+    bot_move_record *state=filter->travel->state;
+    bot_reach reach;
+    if(!bot_reach_describe(filter->travel,edge,&reach,filter->error)) {
+        filter->ok=false;return false;
+    }
+    uint32_t flag=qa_nav_aas_travel_flag(reach.type);
+    if(!(flag&filter->travel_flags)) return false;
+    if(!first) return true;
+    if(!(flag&filter->move_flags)) return false;
+    if(bot_move_word(state,BM_AVOID_REACHABILITY)==reach.number &&
+       bot_move_float(state,BM_AVOID_TIME)>=filter->travel->moves->time &&
+       bot_move_integer(state,BM_AVOID_TRIES)>4) return false;
+    if(bot_move_word(state,BM_LAST_GOAL_AREA)==filter->goal &&
+       reach.area==bot_move_word(state,BM_LAST_AREA)) return false;
+    if(avoid_spots(state,&reach)) {
+        *filter->result_flags|=QA_BOT_MOVE_AVOID_SPOT;return false;
+    }
+    return true;
 }
-bool bot_reach_select(bot_travel *t, const qa_bot_move_goal_source *goal, uint32_t travel_flags,
-                      uint32_t move_flags, uint32_t *number, uint32_t *result_flags, qa_error *e) {
-    bot_move_record *s = t->state;
-    qa_bot_moves *m = t->moves;
-    *number = *result_flags = 0;
+static bool route_edge(void *opaque,const qa_nav_edge *edge) {
+    route_filter *filter=opaque;
+    return reach_allowed(filter,edge,edge->from==filter->first);
+}
+static bool retained_route(bot_travel *travel,route_filter *filter,bool *valid,qa_error *e) {
+    bot_move_record *state=travel->state;
+    *valid=false;
+    if(!state->route.found || state->route_goal!=filter->goal ||
+       state->route_flags!=filter->travel_flags || state->route_move_flags!=filter->move_flags ||
+       !qa_actor_id_equal(state->route_actor,travel->actor) ||
+       state->route_map.format!=travel->graph->map.format ||
+       memcmp(state->route_map.digest,travel->graph->map.digest,sizeof(state->route_map.digest)) ||
+       (state->route.graph && qa_nav_graph_read(state->route.graph)!=travel->graph)) return true;
+    size_t cursor=state->route_cursor;
+    for(size_t i=cursor+1;i<state->route.node_count;++i)
+        if(state->route.nodes[i]==filter->first) {cursor=i;break;}
+    if(cursor>=state->route.edge_count || state->route.nodes[cursor]!=filter->first) return true;
+    for(size_t i=cursor;i<state->route.edge_count;++i) {
+        const qa_nav_edge *edge=qa_navigation_edge(travel->runtime,state->route.edges[i]);
+        bool allowed;
+        if(!edge || !reach_allowed(filter,edge,i==cursor)) return filter->ok;
+        if(!qa_navigation_edge_allowed(travel->runtime,travel->actor,edge->id,&allowed,e))
+            return false;
+        if(!allowed) return true;
+    }
+    state->route_cursor=cursor;*valid=true;return true;
+}
+bool bot_reach_select(bot_travel *t,const qa_bot_move_goal_source *goal,uint32_t travel_flags,
+                      uint32_t move_flags,uint32_t *number,uint32_t *result_flags,qa_error *e) {
+    bot_move_record *state=t->state;
+    qa_bot_moves *moves=t->moves;
+    *number=*result_flags=0;
     uint32_t goal_area;
-    if (qa_nav_asset_aas(t->graph->asset)) {
-        if (!bot_goal_area(goal, &goal_area, e)) return false;
-        if ((qa_bot_navigation_area(t->navigation, bot_move_word(s,BM_AREA)).contents |
-             qa_bot_navigation_area(t->navigation, goal_area).contents) & 256) {
-            travel_flags |= 0x800000;
-            move_flags |= 0x800000;
-        }
+    if(!bot_goal_area(goal,&goal_area,e)) return false;
+    if(qa_nav_asset_aas(t->graph->asset) &&
+       ((qa_bot_navigation_area(t->navigation,bot_move_word(state,BM_AREA)).contents |
+         qa_bot_navigation_area(t->navigation,goal_area).contents)&256)) {
+        travel_flags|=0x800000;move_flags|=0x800000;
     }
-    uint32_t node = qa_bot_navigation_node(t->navigation, bot_move_word(s,BM_AREA));
-    size_t count = qa_navigation_outgoing_count(t->runtime, node), candidates = 0;
-    if (!reserve((void **)&m->candidates, &m->candidate_capacity, count, sizeof(*m->candidates), e))
-        return false;
-    for (size_t i = 0; i < count; ++i) {
-        const qa_nav_edge *edge = qa_navigation_outgoing(t->runtime, node, i);
-        bot_reach reach;
-        if (!bot_reach_describe(t, edge, &reach, e))
-            return false;
-        uint32_t flag = qa_nav_aas_travel_flag(reach.type);
-        if (!(flag & travel_flags) || !(flag & move_flags))
-            continue;
-        if (bot_move_word(s,BM_AVOID_REACHABILITY) == reach.number && bot_move_float(s,BM_AVOID_TIME) >= m->time && bot_move_integer(s,BM_AVOID_TRIES) > 4)
-            continue;
-        if (!bot_goal_area(goal, &goal_area, e)) return false;
-        if (bot_move_word(s,BM_LAST_GOAL_AREA) == goal_area && reach.area == bot_move_word(s,BM_LAST_AREA))
-            continue;
-        if (!bot_goal_area(goal, &goal_area, e)) return false;
-        qa_bot_nav_route_query query = {.area = reach.area,
-                                        .goal_area = goal_area,
-                                        .travel_flags = travel_flags,
-                                        .origin = reach.end,
-                                        .has_origin = true};
-        qa_bot_nav_route route;
-        if (!qa_bot_navigation_route(t->navigation, &query, &route, e))
-            return false;
-        if (!route.found || !route.travel_time)
-            continue;
-        if (avoid_spots(s, &reach)) {
-            *result_flags |= QA_BOT_MOVE_AVOID_SPOT;
-            continue;
+    uint32_t node=qa_bot_navigation_node(t->navigation,bot_move_word(state,BM_AREA));
+    uint32_t target=qa_bot_navigation_node(t->navigation,goal_area);
+    const qa_nav_node *destination=qa_navigation_node(t->runtime,target);
+    if(!destination) {bot_move_route_clear(state);return true;}
+    route_filter filter={.travel=t,.first=node,.goal=goal_area,.travel_flags=travel_flags,
+        .move_flags=move_flags,.result_flags=result_flags,.error=e,.ok=true};
+    bool retained;
+    if(!retained_route(t,&filter,&retained,e)) return false;
+    for(unsigned attempt=0;attempt<2;++attempt) {
+        if(!retained) {
+            bot_move_route_clear(state);
+            qa_nav_route_query query={.actor=t->actor,.start=bot_move_vector(state,BM_ORIGIN),
+                .goal=destination->origin,.start_node=node,.goal_node=target,
+                .travel_flags=travel_flags,.has_travel_flags=true,
+                .context=&filter,.edge_filter=route_edge};
+            if(!qa_navigation_route(t->runtime,moves->workspace,&query,&state->route,e) ||
+               !filter.ok) return false;
+            if(!state->route.found || !state->route.edge_count) {
+                bot_move_route_clear(state);return true;
+            }
+            state->route_map=t->graph->map;state->route_actor=t->actor;
+            state->route_goal=goal_area;state->route_flags=travel_flags;
+            state->route_move_flags=move_flags;
+            free(state->route.points);state->route.points=NULL;
+            state->route.point_count=state->route.point_capacity=0;
         }
-        uint32_t time_word = route.travel_time + reach.time;
-        int32_t time;
-        memcpy(&time, &time_word, sizeof(time));
-        m->candidates[candidates++] = (bot_move_candidate){edge, time, i};
-    }
-    if (candidates > 1)
-        qsort(m->candidates, candidates, sizeof(*m->candidates), candidate_compare);
-    for (size_t i = 0; i < candidates; ++i) {
-        const qa_nav_edge *edge = m->candidates[i].edge;
-        if (!qa_navigation_admit_edge(t->runtime, t->actor, edge->id, bot_move_vector(s,BM_ORIGIN),
-                                      &m->trajectory, e))
-            return false;
-        if (m->trajectory.found) {
-            *number = qa_bot_navigation_source_area(t->navigation, edge->id);
-            break;
+        const qa_nav_edge *edge=qa_navigation_edge(t->runtime,
+            state->route.edges[state->route_cursor]);
+        if(!qa_navigation_admit_edge(t->runtime,t->actor,edge->id,
+                bot_move_vector(state,BM_ORIGIN),&moves->trajectory,e)) return false;
+        if(moves->trajectory.found) {
+            if(!state->route.graph) {
+                state->route.graph=moves->trajectory.graph;
+                qa_nav_graph_retain(state->route.graph);
+            }
+            if(retained && state->walk_edge==edge->id) state->walk_progress=true;
+            *number=qa_bot_navigation_source_area(t->navigation,edge->id);
+            return true;
         }
+        bot_move_route_clear(state);
+        if(!retained) return true;
+        retained=false;
     }
     return true;
 }

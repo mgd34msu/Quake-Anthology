@@ -2,6 +2,54 @@
 #include "../checkpoint_internal.h"
 #include <stdio.h>
 
+void bot_move_route_clear(bot_move_record *record) {
+    qa_nav_route_free(&record->route);
+    record->route_map=(qa_nav_map){0};record->route_actor=(qa_actor_id){0};
+    record->route_goal=record->route_flags=record->route_move_flags=0;
+    record->route_cursor=0;
+}
+bool bot_move_route_copy(bot_move_record *out,const bot_move_record *source,qa_error *e) {
+    qa_nav_route copy=source->route;
+    copy.graph=NULL;copy.nodes=NULL;copy.edges=NULL;copy.points=NULL;
+    copy.node_capacity=copy.node_count;copy.edge_capacity=copy.edge_count;
+    copy.point_capacity=0;copy.point_count=0;
+    if(copy.node_count) copy.nodes=malloc(copy.node_count*sizeof(*copy.nodes));
+    if(copy.edge_count) copy.edges=malloc(copy.edge_count*sizeof(*copy.edges));
+    if((copy.node_count && !copy.nodes) || (copy.edge_count && !copy.edges)) {
+        qa_nav_route_free(&copy);
+        qa_error_set(e,QA_ERROR_MEMORY,0,"Retaining actual bot route decisions");return false;
+    }
+    if(copy.node_count) memcpy(copy.nodes,source->route.nodes,copy.node_count*sizeof(*copy.nodes));
+    if(copy.edge_count) memcpy(copy.edges,source->route.edges,copy.edge_count*sizeof(*copy.edges));
+    copy.graph=source->route.graph;qa_nav_graph_retain(copy.graph);
+    out->route=copy;out->route_map=source->route_map;out->route_actor=source->route_actor;
+    out->route_goal=source->route_goal;out->route_flags=source->route_flags;
+    out->route_move_flags=source->route_move_flags;out->route_cursor=source->route_cursor;
+    return true;
+}
+bool bot_move_route_bind(bot_move_record *record,qa_bot_navigation *navigation,qa_error *e) {
+    if(!record->route.found) return true;
+    qa_navigation *runtime=qa_bot_navigation_runtime(navigation);
+    const qa_nav_graph_view *graph=qa_navigation_graph(runtime);
+    if(!graph || graph->map.format!=record->route_map.format ||
+       memcmp(graph->map.digest,record->route_map.digest,sizeof(graph->map.digest)) ||
+       !record->route.node_count || !record->route.edge_count ||
+       record->route.node_count!=record->route.edge_count+1 ||
+       record->route_cursor>record->route.edge_count ||
+       record->route.node_count>graph->node_count ||
+       record->route.nodes[record->route.node_count-1]!=
+           qa_bot_navigation_node(navigation,record->route_goal))
+        return bot_move_fail(e,"Retained bot route differs from its selected actual map");
+    for(size_t i=0;i<record->route.edge_count;++i) {
+        const qa_nav_edge *edge=qa_navigation_edge(runtime,record->route.edges[i]);
+        if(!edge || edge->from!=record->route.nodes[i] || edge->to!=record->route.nodes[i+1])
+            return bot_move_fail(e,"Retained bot route edge differs from its selected actual graph");
+    }
+    record->route_map=graph->map;
+    record->route_actor=qa_bot_navigation_actor(navigation);
+    return true;
+}
+
 bool bot_move_record_span(const bot_move_record *record, qa_bot_memory_span *out, qa_error *e) {
     qa_bot_memory_kind kind;
     if (!record || !record->owner ||
@@ -143,10 +191,10 @@ void qa_bot_moves_destroy(qa_bot_moves *m) {
     if (!m || m->busy)
         return;
     if (!qa_bot_memory_release(m->memory,NULL)) return;
+    for(uint32_t i=0;i<m->maximum;++i) bot_move_route_clear(&m->slots[i].state);
     qa_nav_prediction_result_free(&m->prediction);
     qa_nav_route_free(&m->trajectory);
     qa_nav_workspace_destroy(m->workspace);
-    free(m->candidates);
     free(m->points);
     free(m->visited);
     free(m->slots);
@@ -160,6 +208,7 @@ bool qa_bot_moves_shutdown(qa_bot_moves *m,qa_error *e) {
         bool ok=qa_bot_memory_free(m->memory,m->slots[i].state.allocation,e);
         m->busy=false;
         if(!ok) return false;
+        bot_move_route_clear(&m->slots[i].state);
         m->slots[i]=(bot_move_slot){0};
     }
     return true;
@@ -218,6 +267,7 @@ bool qa_bot_moves_free(qa_bot_moves *m, uint32_t id, qa_error *e) {
     bool ok=qa_bot_memory_free(m->memory,record->allocation,e);
     m->busy=false;
     if(!ok) return false;
+    bot_move_route_clear(record);
     m->slots[id - 1] = (bot_move_slot){0};
     return true;
 }
@@ -263,7 +313,9 @@ static bool initialize_from(qa_bot_moves *m,uint32_t id,const qa_bot_move_init_s
     m->busy=true;
     int32_t word;qa_vec3 vector;float think;
     if(!input_integer(source,QA_BOT_INIT_FLAGS,&word,e)) return false;
-    if((uint32_t)word&QA_BOT_MOVE_TELEPORTED) s->walk_progress=false;
+    if((uint32_t)word&QA_BOT_MOVE_TELEPORTED) {
+        s->walk_progress=false;bot_move_route_clear(s);
+    }
     if(!input_vector(source,QA_BOT_INIT_ORIGIN,&vector,e)) return false;
     bot_move_write_vector(s,BM_ORIGIN,vector);
     if(!input_vector(source,QA_BOT_INIT_VELOCITY,&vector,e)) return false;
@@ -295,6 +347,7 @@ static bool reset(qa_bot_moves *m,uint32_t id,qa_error *e) {
     if(!bot_move_mutable(m,e)) return false;
     bot_move_record *s=bot_move_source_state(m,id);
     if(!s) return true;
+    bot_move_route_clear(s);
     s->walk_progress=false;
     memset(record_bytes(s,0,BOT_MOVE_STATE_BYTES),0,BOT_MOVE_STATE_BYTES);
     return true;
@@ -415,6 +468,7 @@ static bool bot_move_restore_validate(qa_bot_moves *m,uint32_t id,const qa_bot_m
 }
 static void bot_move_restore_commit(qa_bot_moves *m,uint32_t id,const qa_bot_move_state *state) {
     bot_move_record *s=&m->slots[id-1].state;
+    bot_move_route_clear(s);
     bot_move_write_vector(s,BM_ORIGIN,state->input.origin);
     bot_move_write_vector(s,BM_VELOCITY,state->input.velocity);
     bot_move_write_vector(s,BM_VIEW_OFFSET,state->input.view_offset);
