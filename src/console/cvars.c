@@ -784,7 +784,7 @@ static bool register_variable(cvar_target target, const char *name, const char *
             propagate(target, entry, true);
             return true;
         }
-        uint32_t created = q2 ? QA_Q2_CVAR_CUSTOM : QA_CVAR_USER_CREATED;
+        uint32_t created = q2 ? (uint32_t)QA_Q2_CVAR_CUSTOM : QA_CVAR_USER_CREATED;
         bool promoted = q2 && (entry->view.flags & created) != 0 && (flags & created) == 0;
         if (((entry->view.flags & created) != 0 && (flags & created) == 0 &&
              (q2 || default_value[0] != '\0')) || entry->view.reset_value[0] == '\0') {
@@ -875,10 +875,10 @@ static bool set_variable(cvar_target target, const char *name, const char *value
     }
     if (!q2) target.values->changed_flags |= entry->view.flags;
     if (!force) {
-        uint32_t readonly = q2 ? QA_Q2_CVAR_READONLY : QA_CVAR_READONLY;
-        uint32_t init = q2 ? QA_Q2_CVAR_NOSET : QA_CVAR_INIT;
-        uint32_t cheat = q2 ? QA_Q2_CVAR_CHEAT : QA_CVAR_CHEAT;
-        uint32_t latch = q2 ? QA_Q2_CVAR_LATCH : QA_CVAR_LATCH;
+        uint32_t readonly = q2 ? (uint32_t)QA_Q2_CVAR_READONLY : QA_CVAR_READONLY;
+        uint32_t init = q2 ? (uint32_t)QA_Q2_CVAR_NOSET : QA_CVAR_INIT;
+        uint32_t cheat = q2 ? (uint32_t)QA_Q2_CVAR_CHEAT : QA_CVAR_CHEAT;
+        uint32_t latch = q2 ? (uint32_t)QA_Q2_CVAR_LATCH : QA_CVAR_LATCH;
         if ((entry->view.flags & readonly) != 0) {
             print_message(target, name, " is read only.\n");
             return true;

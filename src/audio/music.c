@@ -101,10 +101,10 @@ bool qa_audio_music_checkpoint(const qa_audio_music *music, qa_buffer *out, qa_e
         uint8_t *data = buffer.data;
         memcpy(data, "QAMU", 4);
         qa_store_u32le(data + 4, music->output_rate); qa_store_u32le(data + 8, music->family);
-        uint32_t flags = music->source_volume | music->paused << 1 |
+        uint32_t flags = (uint32_t)(music->source_volume | music->paused << 1 |
             (!music->external_controls && music->controls->enabled) << 2 |
             music->reset_pcm << 3 | (music->stream != NULL) << 4 | (music->loop != NULL) << 5 | same << 6 |
-            music->external_controls << 7;
+            music->external_controls << 7);
         qa_store_u32le(data + 12, flags);
         uint32_t bits; memcpy(&bits, &music->target_volume, sizeof(bits)); qa_store_u32le(data + 20, bits);
         memcpy(&bits, &music->smoothed_volume, sizeof(bits)); qa_store_u32le(data + 24, bits);
