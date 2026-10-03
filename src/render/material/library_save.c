@@ -333,14 +333,22 @@ static bool script_catalog(qa_source_save_io *io, qa_material_library *state, co
     }
     return true;
 }
-static bool builtin_image(const qa_scene_image *image, const char *name, uint32_t width, uint32_t height)
+static bool builtin_image(const qa_scene_image *image, const qa_scene_image *source,
+    const char *name, uint32_t width, uint32_t height, qa_source_save_io *io)
 {
-    return image && image->identity && image->revision && image->name && !strcmp(image->name, name) &&
-        image->kind == QA_SCENE_RGBA8 && image->wrap == QA_SCENE_CLAMP && image->filter == QA_SCENE_LINEAR &&
+    bool ok = image && image->identity && image->revision && image->name && !strcmp(image->name, name) &&
+        (image->source_q3 ? image == source : image->kind == QA_SCENE_RGBA8) &&
+        image->wrap == QA_SCENE_CLAMP && image->filter == QA_SCENE_LINEAR &&
         image->level_count == 1 && image->levels && image->logical_width == width && image->logical_height == height &&
         (image->source_q3 || (image->levels[0].width == width && image->levels[0].height == height)) &&
         image->levels[0].bytes == (size_t)image->levels[0].width * image->levels[0].height * 4 &&
         image->levels[0].pixels && !image->animation_count;
+    if (!ok && (!io->error || io->error->code == QA_OK))
+        qa_error_set(io->error, QA_ERROR_FORMAT, io->offset,
+            "Material builtin '%s' kind %u Source Q3 %u format %u canonical Source %u",
+            name, image ? (unsigned)image->kind : UINT32_MAX, image ? (unsigned)image->source_q3 : 0,
+            image ? (unsigned)image->source_format : UINT32_MAX, (unsigned)(image && image == source));
+    return ok;
 }
 static bool builtin_fields(qa_source_save_io *io, qa_material_library *library,
     const qa_material_library *qualified, const qa_material_library_checkpoint_refs *refs)
@@ -351,11 +359,11 @@ static bool builtin_fields(qa_source_save_io *io, qa_material_library *library,
     const qa_scene_image *fog = library->fog_image, *dlight = library->dlight_image;
     bool ok = qa_material_saved_image(io, refs, &fog);
     if (reading) library->fog_image = (qa_scene_image *)fog;
-    if (!ok || !builtin_image(fog, "*fog", 256, 32) ||
+    if (!ok || !builtin_image(fog, qa_scene_source_q3_fog(library->resources), "*fog", 256, 32, io) ||
         !qa_scene_image_owner_index(owners, 1, fog, &owner_index)) return false;
     ok = qa_material_saved_image(io, refs, &dlight);
     if (reading) library->dlight_image = (qa_scene_image *)dlight;
-    return ok && builtin_image(dlight, "*dlight", 16, 16) &&
+    return ok && builtin_image(dlight, qa_scene_source_q3_dlight(library->resources), "*dlight", 16, 16, io) &&
         qa_scene_image_owner_index(owners, 1, dlight, &owner_index) &&
         (!reading || !qualified || (fog == qualified->fog_image && dlight == qualified->dlight_image));
 }

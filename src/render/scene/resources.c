@@ -28,6 +28,11 @@ struct qa_scene_resources_capture {
     const qa_scene_image **images;
     size_t count;
 };
+qa_scene_image_kind scene_resource_q3_image_kind(qa_q3_texture_format format)
+{
+    return format == QA_Q3_TEXTURE_RGBA || format == QA_Q3_TEXTURE_RGBA4 || format == QA_Q3_TEXTURE_RGBA8
+        ? QA_SCENE_RGBA8 : QA_SCENE_RGB8;
+}
 bool qa_scene_resources_idle(const qa_scene_resources *owner)
 { return owner && !owner->capture && !owner->continuation_active && !owner->policy_pending; }
 static bool admission_ready(const qa_scene_resources *owner, qa_error *error)
@@ -1458,8 +1463,7 @@ static bool image_from_rgba_complete(qa_scene_resources *resources, const char *
             const qa_image *image = uploaded.levels + i;
             levels[i] = (qa_scene_image_level){image->width, image->height, image->rgba.data, image->rgba.size};
         }
-        qa_scene_image_kind kind = format == QA_Q3_TEXTURE_RGBA || format == QA_Q3_TEXTURE_RGBA4 ||
-            format == QA_Q3_TEXTURE_RGBA8 ? QA_SCENE_RGBA8 : QA_SCENE_RGB8;
+        qa_scene_image_kind kind = scene_resource_q3_image_kind(format);
         bool ok = qa_scene_image_create(resources, name, kind, levels, uploaded.count,
             options->wrap, options->filter, (qa_scene_vec4){0}, out, error);
         if (ok) {

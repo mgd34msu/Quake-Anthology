@@ -107,8 +107,7 @@ static bool source_builtin_image(const qa_scene_image *image, const qa_q3_image_
     qa_mip_chain expected = {0};
     qa_q3_texture_format format;
     if (!qa_q3_image_upload_format(&original, &upload, &expected, &format, error)) return false;
-    qa_scene_image_kind kind = format == QA_Q3_TEXTURE_RGBA || format == QA_Q3_TEXTURE_RGBA4 ||
-        format == QA_Q3_TEXTURE_RGBA8 ? QA_SCENE_RGBA8 : QA_SCENE_RGB8;
+    qa_scene_image_kind kind = scene_resource_q3_image_kind(format);
     bool ok = image->level_count == expected.count && image->source_q3 && image->source_format == format && image->kind == kind;
     for (size_t i = 0; ok && i < expected.count; ++i) {
         const qa_image *level = expected.levels + i;
@@ -155,8 +154,7 @@ static bool source_generated_image(const qa_scene_image *image, const qa_q3_imag
     qa_mip_chain expected = {0};
     qa_q3_texture_format format;
     if (!qa_q3_image_upload_format(&original, &upload, &expected, &format, error)) return false;
-    qa_scene_image_kind kind = format == QA_Q3_TEXTURE_RGBA || format == QA_Q3_TEXTURE_RGBA4 ||
-        format == QA_Q3_TEXTURE_RGBA8 ? QA_SCENE_RGBA8 : QA_SCENE_RGB8;
+    qa_scene_image_kind kind = scene_resource_q3_image_kind(format);
     bool ok = image->level_count == expected.count && image->source_q3 && image->source_format == format && image->kind == kind;
     for (size_t i = 0; ok && i < expected.count; ++i)
         ok = image->levels[i].width == expected.levels[i].width && image->levels[i].height == expected.levels[i].height &&
@@ -719,8 +717,21 @@ static bool resource_fields(qa_source_save_io *io, qa_scene_resources *owner, qa
             (!cache_receipts_fields(io, owner, entry, refs)) ||
             !image_field(io, refs, owner, &entry->image)) return false;
         const char *cache_name=qa_strings_cstr(reading?state->names->strings:owner->names->strings,entry->name);
-        if (!cache_name || strcmp(entry->image->name,cache_name) || entry->image->kind!=QA_SCENE_RGBA8 ||
-            entry->image->wrap!=entry->options.wrap || entry->image->filter!=entry->options.filter) return false;
+        bool source_rgb = entry->options.family == QA_SCENE_Q3 && entry->options.source_q3 &&
+            entry->image->source_q3 && entry->image->kind == QA_SCENE_RGB8 &&
+            (unsigned)entry->image->source_format <= QA_Q3_TEXTURE_RGB4_S3TC &&
+            scene_resource_q3_image_kind(entry->image->source_format) == QA_SCENE_RGB8;
+        if (!cache_name || strcmp(entry->image->name,cache_name) ||
+            (entry->image->kind != QA_SCENE_RGBA8 && !source_rgb) ||
+            entry->image->wrap!=entry->options.wrap || entry->image->filter!=entry->options.filter) {
+            qa_error_set(io->error, QA_ERROR_FORMAT, io->offset,
+                "Resource cache row %zu '%s' image '%s' kind %u Source Q3 %u format %u recipe Q3 %u wrap %u/%u filter %u/%u",
+                i, cache_name ? cache_name : "", entry->image->name, (unsigned)entry->image->kind,
+                (unsigned)entry->image->source_q3, (unsigned)entry->image->source_format,
+                (unsigned)entry->options.source_q3, (unsigned)entry->image->wrap, (unsigned)entry->options.wrap,
+                (unsigned)entry->image->filter, (unsigned)entry->options.filter);
+            return false;
+        }
         if (reading) entry->source = qa_resource_id(entry->source_record), entry->logical_source = qa_resource_id(entry->logical_record);
         else if (entry->source != qa_resource_id(entry->source_record) || entry->logical_source != qa_resource_id(entry->logical_record)) return false;
         for (size_t j = 0; j < i; ++j) if (same_cache_key(entry, &state->cache[j])) return false;

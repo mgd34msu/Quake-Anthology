@@ -87,4 +87,5 @@ bool scene_resource_variant_parent_retain(qa_scene_resources *, const qa_scene_i
                                           qa_scene_resources **, qa_error *);
 void scene_resource_alias_free(image_alias *);
 qa_scene_image_alias_source scene_resource_alias_source(const image_alias *);
+qa_scene_image_kind scene_resource_q3_image_kind(qa_q3_texture_format);
 #endif
