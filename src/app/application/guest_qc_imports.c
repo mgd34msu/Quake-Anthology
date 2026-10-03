@@ -267,9 +267,11 @@ static bool static_entity(struct application_qc_state *engine, qa_qc_instance *v
         !isfinite(color) || color < 0 || color > 255 || !isfinite(skin) || skin < 0 || skin > 255)
         return application_fail(error, QA_ERROR_FORMAT, "QuakeC static model exceeds source protocol range");
     uint8_t bytes[64]; qa_net_writer writer; qa_net_writer_init(&writer, bytes, sizeof(bytes), error);
-    qa_q1_entity entity = {.model = (uint32_t)model, .frame = (uint32_t)frame,
-        .colormap = (uint32_t)color, .skin = (uint32_t)skin,
-        .origin = {origin.x, origin.y, origin.z}, .angles = {angles.x, angles.y, angles.z}};
+    qa_q1_entity entity; qa_q1_entity_init(&entity);
+    entity.model = (uint32_t)model; entity.frame = (uint32_t)frame;
+    entity.colormap = (uint32_t)color; entity.skin = (uint32_t)skin;
+    entity.origin[0] = origin.x; entity.origin[1] = origin.y; entity.origin[2] = origin.z;
+    entity.angles[0] = angles.x; entity.angles[1] = angles.y; entity.angles[2] = angles.z;
     bool ok;
     if (engine->profile == QA_QC_QUAKEWORLD) {
         qa_qw_service service = {.kind = QA_QW_STATIC, .data.baseline = entity};
