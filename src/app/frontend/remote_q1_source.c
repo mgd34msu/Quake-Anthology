@@ -27,7 +27,8 @@ bool frontend_remote_q1_source_defaults(qa_cvars *cvars,uint64_t owner,uint32_t 
         {"name","unnamed",QA_CVAR_ARCHIVE|QA_CVAR_USERINFO},{"team","",QA_CVAR_ARCHIVE|QA_CVAR_USERINFO},
         {"skin","",QA_CVAR_ARCHIVE|QA_CVAR_USERINFO},{"topcolor","0",QA_CVAR_ARCHIVE|QA_CVAR_USERINFO},
         {"bottomcolor","0",QA_CVAR_ARCHIVE|QA_CVAR_USERINFO},{"noaim","0",QA_CVAR_ARCHIVE|QA_CVAR_USERINFO},
-        {"msg","1",QA_CVAR_ARCHIVE|QA_CVAR_USERINFO},{"password","",QA_CVAR_USERINFO}};
+        {"msg","1",QA_CVAR_ARCHIVE|QA_CVAR_USERINFO},{"password","",QA_CVAR_USERINFO},
+        {"spectator","",QA_CVAR_USERINFO}};
     for (size_t i=0;i<sizeof(settings)/sizeof(*settings);++i)
         if (!qa_cvars_register(cvars,settings[i].name,settings[i].value,settings[i].flags,owner,"",error)) return false;
     return qa_input_settings_register(cvars,QA_MOVEMENT_QUAKEWORLD,error);

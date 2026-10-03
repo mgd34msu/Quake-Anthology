@@ -57,8 +57,7 @@ static bool console_tuple(const qa_command_context *command,const qa_command_con
     qa_command_context expected=*physical;
     if(command->origin==QA_COMMAND_REMOTE) {
         expected.origin=QA_COMMAND_REMOTE; expected.direct=false; expected.console_text=true;
-    } else if(command->origin==QA_COMMAND_SEAT&&command->script&&
-        !strcmp(command->script,"key-binding")) {
+    } else if(command->origin==QA_COMMAND_SEAT&&command->script) {
         expected.direct=false;
     }
     return tuple(command,&expected,false);
