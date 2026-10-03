@@ -186,7 +186,7 @@ static bool handles_fields(qa_source_save_io *io, qa_bot_runtime *runtime, const
     if(ok) ok=bot_runtime_weapon_diagnostics_fields(io,runtime);
     size_t count = runtime->options.maximum_states;
     if (ok) ok = qa_source_save_count(io, &count, runtime->options.maximum_states) && count == runtime->options.maximum_states;
-    if (ok && reading && count > (io->input.size - io->offset) / 5)
+    if (ok && reading && count > (io->input.size - io->offset) / 2)
         ok = bot_save_fail(io, QA_ERROR_FORMAT, "Truncated bot runtime physical handles");
     for (size_t i = 0; ok && i < count; ++i) {
         object = runtime->characters[i];
