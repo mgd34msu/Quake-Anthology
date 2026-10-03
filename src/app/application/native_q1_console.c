@@ -799,17 +799,23 @@ bool application_native_q1_console_create_restored(application_provider *provide
         return false;
     }
     provider->native_q1_console = owner;
-    if (dialect(provider) == QA_CONSOLE_QW &&
-        (!qa_console_register(owner->console, "serverinfo", NULL, provider->owner,
-            false, info_command, owner, error) ||
-         !qa_console_register(owner->console, "localinfo", NULL, provider->owner,
-            false, info_command, owner, error) ||
-         !qa_console_register(owner->console, "sv_gamedir", NULL, provider->owner,
-            false, visible_gamedir_command, owner, error) ||
-         !qa_console_register(owner->console, "gamedir", NULL, provider->owner,
-            false, physical_gamedir_command, owner, error) ||
-         !qa_console_register(owner->console,"floodprot",NULL,provider->owner,false,flood_command,owner,error) ||
-         !qa_console_register(owner->console,"floodprotmsg",NULL,provider->owner,false,flood_command,owner,error))) {
+    qa_application *application = provider->application;
+    application_provider *prior = application->startup_preinit_provider;
+    if (application->operation == APPLICATION_PERSISTING)
+        application->startup_preinit_provider = provider;
+    bool registered = dialect(provider) != QA_CONSOLE_QW ||
+        (qa_console_register(owner->console, "serverinfo", NULL, provider->owner,
+            false, info_command, owner, error) &&
+         qa_console_register(owner->console, "localinfo", NULL, provider->owner,
+            false, info_command, owner, error) &&
+         qa_console_register(owner->console, "sv_gamedir", NULL, provider->owner,
+            false, visible_gamedir_command, owner, error) &&
+         qa_console_register(owner->console, "gamedir", NULL, provider->owner,
+            false, physical_gamedir_command, owner, error) &&
+         qa_console_register(owner->console,"floodprot",NULL,provider->owner,false,flood_command,owner,error) &&
+         qa_console_register(owner->console,"floodprotmsg",NULL,provider->owner,false,flood_command,owner,error));
+    application->startup_preinit_provider = prior;
+    if (!registered) {
         qa_console_destroy(owner->console); qa_cvars_destroy(owner->cvars);
         free(owner); provider->native_q1_console = NULL; return false;
     }
