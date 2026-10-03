@@ -758,7 +758,6 @@ static bool reaction_replace(application_qc_combat *owner, qa_qc_instance *vm,
         (callee->parameter_count > 1 && callee->parameter_sizes[1] != 1))))
         return reject(error, "QC Source pain callback does not retain its actual actor/amount signature");
     *handled = true; frame->result->reaction = reaction;
-    if (!qa_damage_before_reaction(frame->observer, frame->result, error)) return false;
     reaction_call call = {.frame = frame, .next = next}; ++frame->reaction_depth;
     bool ok = qa_damage_dispatch_source_reaction(frame->observer, frame->result,
         frame->request->knockback, frame->request->point, owner->engine->provider->owner,
