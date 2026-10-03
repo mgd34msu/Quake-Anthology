@@ -218,13 +218,25 @@ static bool seat_movement(const qa_launch_snapshot *snapshot,uint32_t logical,
         return fail(error,QA_ERROR_ARGUMENT,"Input configuration lacks its actual selected seat movement source");
     *dialect=(qa_console_dialect)selected->selection.clock.kind; return true;
 }
+static bool same_command(const qa_command_context *,const qa_command_context *);
 static bool input_context(void *context,uint32_t ordinal,const qa_command_context *command,qa_error *error)
 {
     frontend_config_source *source=context;
-    if (!source || ordinal>=source->seat_count || command->origin!=QA_COMMAND_SEAT ||
-        command->seat!=source->seats[ordinal].logical || !source_context(source,command))
+    if (!source || !command || ordinal>=source->seat_count || command->origin!=QA_COMMAND_SEAT ||
+        command->seat!=source->seats[ordinal].logical)
         return fail(error,QA_ERROR_ARGUMENT,"Prepared input context leaves its actual source and authored seat");
-    return true;
+    if (source_context(source,command)) return true;
+    const config_seat *seat=source->seats+ordinal;
+    if (seat->input && qa_input_seat_ordinal(seat->input)==ordinal &&
+        command->dialect==seat->movement_dialect && command->owner==source->command.owner &&
+        command->session==source->command.session && command->client==source->command.client &&
+        command->direct==source->command.direct && !command->script && !command->console_text &&
+        command->registry==source->command.registry && command->generation==source->command.generation &&
+        qa_application_command_context_active(source->application,command)) {
+        qa_command_context actual=qa_input_seat_context(seat->input);
+        if (same_command(command,&actual)) return true;
+    }
+    return fail(error,QA_ERROR_ARGUMENT,"Prepared input context leaves its actual source and authored seat");
 }
 frontend_config_source *frontend_config_store_source(const frontend_config_store *owner,const qa_console *console)
 {
@@ -624,7 +636,6 @@ const qa_cvar_view *frontend_config_store_engine_value(const frontend_config_sto
     }
     return engine?qa_cvars_find(engine,name):NULL;
 }
-static bool same_command(const qa_command_context *,const qa_command_context *);
 bool frontend_config_store_cvar_edit(frontend_config_store *manager,qa_application *application,
     const qa_console *console,const qa_command_context *command,qa_cvars *registry,qa_cvars_edit **out,qa_error *error)
 {
