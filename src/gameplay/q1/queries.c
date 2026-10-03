@@ -61,9 +61,11 @@ bool qa_q1_game_check_client(qa_q1_game *g, qa_actor_id observer,
     *out = (qa_actor_id){0};
     qa_q1_game_operation operation = {0};
     if (!qa_q1_game_operation_begin(g, &operation, error)) return false;
-    bool okay = g->wire && g->wire->board && g->options.max_clients != 0;
-    if (!okay) qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q1 check-client requires its reserved physical Source clients");
-    if (okay && g->time - g->check_client_time >= 0.1) {
+    qa_clock_state clock;
+    bool okay = g->wire && g->wire->board && g->options.max_clients != 0 &&
+        qa_session_clock(g->services.session, g->options.provider, &clock);
+    if (!okay) qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q1 check-client requires its physical clients and Source server clock");
+    if (okay && (double)clock.frame.time_ns / 1000000000.0 - g->check_client_time >= 0.1) {
         uint32_t previous = g->check_client_slot;
         if (previous < 1) previous = 1;
         if (previous > g->options.max_clients) previous = g->options.max_clients;
@@ -83,7 +85,7 @@ bool qa_q1_game_check_client(qa_q1_game *g, qa_actor_id observer,
         }
         if (okay) {
             g->check_client_slot = slot;
-            g->check_client_time = g->time;
+            g->check_client_time = (double)clock.frame.time_ns / 1000000000.0;
             qa_vec3 eye;
             if (qa_q1_source_client_actor(g, slot - 1, &candidate))
                 okay = read(context, candidate, &eye, error) &&
