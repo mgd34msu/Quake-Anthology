@@ -2,8 +2,8 @@
 #include "qa/game_q3_bots.h"
 
 bool qa_q3_bot_arsenal_product_read(const qa_q3_game *game,qa_q3_product *out,qa_error *error) {
-    if(!game || !out || game->source_restored)
-        return q3_fail(error,"Q3 arsenal product requires its live GAME owner and output");
+    if(!game || !out)
+        return q3_fail(error,"Q3 arsenal product requires its GAME owner and output");
     *out=game->options.product;return true;
 }
 
