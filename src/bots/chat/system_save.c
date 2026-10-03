@@ -80,7 +80,7 @@ static bool walk(const qa_bot_chat_system *system,uint32_t pointer,size_t *out,
     }
     *out=count;return true;
 }
-static bool topology_valid(qa_bot_chat_system *system,qa_error *error) {
+static bool topology_valid(const qa_bot_chat_system *system,size_t *console_count,qa_error *error) {
     if(!system->memory || system->console_capacity>=UINT32_MAX ||
        (system->console_capacity && !system->console)) goto invalid;
     uint8_t *seen=system->console_capacity?calloc(system->console_capacity,1):NULL;
@@ -120,7 +120,7 @@ static bool topology_valid(qa_bot_chat_system *system,qa_error *error) {
             if(a.owner==b.owner && a.slot==b.slot && a.generation==b.generation) ok=false;
         }
     }
-    free(seen);if(ok) {system->console_count=total;return true;}
+    free(seen);if(ok) {if(console_count) *console_count=total;return true;}
 invalid:
     if(!error || error->code==QA_OK) qa_error_set(error,QA_ERROR_FORMAT,0,"Invalid source chat allocation/link topology");
     return false;
@@ -149,7 +149,8 @@ bool qa_bot_chat_system_capture(const qa_bot_chat_system *system,const qa_bot_ch
     if(!system || !out || !refs || !refs->encode || system->retired || qa_bot_chat_system_active(system)) {
         qa_error_set(error,QA_ERROR_ARGUMENT,0,"Bot chat capture requires its idle actual owner");return false;
     }
-    qa_bot_chat_system view=*system;if(!topology_valid(&view,error)) return false;
+    size_t console_count=0;if(!topology_valid(system,&console_count,error)) return false;
+    qa_bot_chat_system view=*system;view.console_count=console_count;
     size_t count=0;for(const qa_bot_chat *state=system->states;state;state=state->next) ++count;
     qa_source_save_io io={0};bool ok=qa_source_save_writer(&io,NULL,error) && bot_save_signature(&io,magic) && system_fields(&io,&view,refs,&count);
     for(size_t index=0;ok && index<system->console_capacity;++index) {
@@ -184,7 +185,7 @@ bool qa_bot_chat_system_restore_bytes(qa_bot_chat_system *system,qa_bytes bytes,
         state->system=&scratch;state->references=1;state->previous=previous;*tail=state;tail=&state->next;previous=state;
         states.states[index]=state;++scratch.references;ok=state_fields(&io,state,refs);
     }
-    if(ok) ok=qa_source_save_finish(&io,NULL) && topology_valid(&scratch,error);
+    if(ok) ok=qa_source_save_finish(&io,NULL) && topology_valid(&scratch,&scratch.console_count,error);
     if(ok) {
         qa_bot_chat_asset_release(system->options.synonyms);qa_bot_chat_asset_release(system->options.randoms);
         qa_bot_chat_asset_release(system->options.matches);qa_bot_chat_asset_release(system->options.replies);
