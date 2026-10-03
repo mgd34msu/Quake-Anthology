@@ -313,6 +313,7 @@ bool qa_q3_set_rules(qa_q3_game *, const qa_q3_rules *, qa_error *);
 bool qa_q3_set_source_rules(qa_q3_game *, const qa_q3_rules *, qa_error *);
 bool qa_q3_game_console_command(qa_q3_game *, qa_actor_id, const qa_command_invocation *,
                                 bool *handled, qa_error *);
+bool qa_q3_player_noclip(qa_q3_game *, qa_actor_id, bool *enabled, qa_error *);
 qa_item_id qa_q3_weapon_item(const qa_q3_game *, qa_q3_weapon, bool ammo);
 qa_item_id qa_q3_item_identity(const qa_q3_game *, uint32_t item_index);
 /* Immutable item declarations for this actual GAME's admitted product. */

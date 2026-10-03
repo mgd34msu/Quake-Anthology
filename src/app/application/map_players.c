@@ -1584,6 +1584,8 @@ static bool q2_source_motion(void *context, qa_actor_id actor,
         !application_record_motion_change(application, actor, &change, error))
         return false;
     application->controls[actor.slot].command_angles = motion->command_angles;
+    if (motion->kind == QA_Q2_PLAYER_SPAWN)
+        return application_control_spawn_reset(application, actor, motion->spectator, error);
     return application_control_player_mode(application, actor,
         motion->kind == QA_Q2_PLAYER_FREEZE ? QA_MOVEMENT_MODE_FREEZE
             : motion->spectator ? QA_MOVEMENT_MODE_NOCLIP : QA_MOVEMENT_MODE_NORMAL,

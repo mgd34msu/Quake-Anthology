@@ -303,6 +303,7 @@ bool qa_q2_player_respawn(qa_q2_game *, qa_actor_id, qa_error *);
 bool qa_q2_player_after_movement(qa_q2_game *, qa_actor_id, qa_error *);
 bool qa_q2_player_end_frame(qa_q2_game *, qa_actor_id, qa_error *);
 bool qa_q2_player_disconnect(qa_q2_game *, qa_actor_id, qa_error *);
+bool qa_q2_player_cheats_allowed(const qa_q2_game *);
 bool qa_q2_player_command(qa_q2_game *, qa_actor_id, const char *, size_t, const char *const *,
                           qa_error *);
 bool qa_q2_player_teleport(qa_q2_game *, qa_actor_id, qa_vec3, qa_vec3, qa_error *);

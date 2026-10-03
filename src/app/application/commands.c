@@ -334,6 +334,9 @@ static qa_command_result command_dispatch(qa_application *application,
     if (!qa_application_capture_command_context(application, &invocation->context,
                                                   &command.context, error))
         return QA_COMMAND_FAILED;
+    qa_command_result flight = application_native_engine_fly(application, invocation,
+        &command.context, error);
+    if (flight != QA_COMMAND_UNHANDLED) return flight;
     const qa_application_startup_hooks *hooks=application->startup_hooks;
     if (invocation->console==application->console && !command.context.owner &&
         qa_console_invocation_current(invocation->console,invocation) &&

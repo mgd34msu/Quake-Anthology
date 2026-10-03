@@ -632,10 +632,7 @@ static bool client_spawn(application_provider *provider, qa_actor_id actor,
         !application_supplies_spawn(app->supplies, provider, actor, error) ||
         !qa_q3_client_ready(provider->state.q3, actor, false, error) ||
         !source(provider, actor, &slot, error)) return false;
-    application_control_body_reset(app, actor);
-    if (!application_control_player_mode(app, actor,
-            spectator ? QA_MOVEMENT_MODE_NOCLIP : QA_MOVEMENT_MODE_NORMAL,
-            spectator, error)) return false;
+    if (!application_control_spawn_reset(app, actor, spectator, error)) return false;
     int32_t inactivity, now;
     if (!qa_q3_source_clock(provider->state.q3, &now, error) ||
         !application_native_q3_settings_integer(provider, "g_inactivity", &inactivity, error)) return false;

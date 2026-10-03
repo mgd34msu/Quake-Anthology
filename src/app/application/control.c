@@ -3599,6 +3599,7 @@ static bool player_mode(qa_application *application, qa_actor_id actor,
     default:
         return application_fail(error, QA_ERROR_ARGUMENT, "Unknown selected movement dialect");
     }
+    if (mode != QA_MOVEMENT_MODE_NORMAL) record->flight = false;
     set_state_mode(&record->state, encoded);
     record->player_mode = mode == QA_MOVEMENT_MODE_NORMAL && spectator
                               ? QA_MOVEMENT_MODE_NOCLIP : mode;
@@ -3627,6 +3628,32 @@ bool application_control_player_mode(qa_application *application, qa_actor_id ac
         !application_control_ensure(application, actor, body.angles, &record, error))
         return false;
     return player_mode(application, actor, record, mode, spectator, error);
+}
+
+bool application_control_spawn_reset(qa_application *application, qa_actor_id actor,
+    bool spectator, qa_error *error)
+{
+    qa_body_state body;
+    application_control_record *record;
+    if (!qa_world_body_read(application->world, actor, &body, error) ||
+        !application_control_ensure(application, actor, body.angles, &record, error)) return false;
+    record->flight = record->cutscene = false;
+    record->cutscene_character = NULL;
+    record->saved_mode_valid = false;
+    application_control_body_reset(application, actor);
+    return player_mode(application, actor, record, QA_MOVEMENT_MODE_NORMAL, spectator, error);
+}
+
+bool application_control_death(qa_application *application, qa_actor_id actor, qa_error *error)
+{
+    if (actor.slot >= application->control_capacity ||
+        !qa_actors_get(qa_session_actors(application->session), actor)) return true;
+    application_control_record *record = application->controls + actor.slot;
+    if (!record->active || record->retired || !qa_actor_id_equal(record->actor, actor)) return true;
+    qa_combat_state combat;
+    if (!qa_combat_read(application->combat, actor, &combat, error)) return false;
+    if (combat.health <= 0) record->flight = false;
+    return true;
 }
 
 bool application_control_toggle_motion(qa_application *application, qa_actor_id actor,
@@ -3990,13 +4017,7 @@ bool application_control_source_spawn(qa_application *application,
     record->view_angles = view_angles;
     record->view_height = postures.standing.view_height;
     record->view_offset = qa_v3(0, 0, record->view_height);
-    record->flight = record->cutscene = false;
-    record->cutscene_character = NULL;
-    record->saved_mode_valid = false;
-    record->player_mode = QA_MOVEMENT_MODE_NORMAL;
-    record->player_mode_set = true;
-    application_control_body_reset(application, actor);
-    return true;
+    return application_control_spawn_reset(application, actor, false, error);
 }
 
 bool application_controlled(const qa_application *application,

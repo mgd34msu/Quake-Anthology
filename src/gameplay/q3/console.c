@@ -9,6 +9,23 @@ static bool named(const char *left, const char *right) {
             return false;
     return *left == *right;
 }
+bool qa_q3_player_noclip(qa_q3_game *game, qa_actor_id actor, bool *enabled, qa_error *error) {
+    q3_actor *entry = game ? q3_actor_get(game, actor) : NULL;
+    if (!entry || entry->kind != Q3_ACTOR_PLAYER || !enabled || game->source_restored ||
+        game->observation_depth == SIZE_MAX)
+        return q3_fail(error, "Q3 noclip requires an actual player");
+    if (!game->options.hooks.console_motion)
+        return q3_fail(error, "Q3 noclip requires the selected movement provider");
+    *enabled = !entry->state.player.noclip;
+    ++game->observation_depth;
+    bool okay = game->options.hooks.console_motion(game->options.hooks.context, actor, *enabled, error);
+    if (okay) {
+        entry = q3_actor_get(game, actor);
+        if (entry && entry->kind == Q3_ACTOR_PLAYER) entry->state.player.noclip = *enabled;
+    }
+    --game->observation_depth;
+    return okay;
+}
 static void integer_text(int32_t value, char text[12]) {
     unsigned char reversed[11];
     size_t count = 0;
@@ -338,15 +355,10 @@ static bool dispatch(qa_q3_game *game, qa_actor_id actor, const qa_command_invoc
         if (!qa_q3_player_notarget(game, actor, &enabled, error))
             return false;
     } else {
-        enabled = !entry->state.player.noclip;
-        if (!game->options.hooks.console_motion)
-            return q3_fail(error, "Q3 noclip requires the selected movement provider");
-        if (!game->options.hooks.console_motion(game->options.hooks.context, actor, enabled, error))
-            return false;
+        if (!qa_q3_player_noclip(game, actor, &enabled, error)) return false;
         entry = q3_actor_get(game, actor);
         if (!entry || entry->kind != Q3_ACTOR_PLAYER)
             return true;
-        entry->state.player.noclip = enabled;
     }
     char text[64];
     snprintf(text, sizeof(text), "%s %s\n", named(name, "god") ? "godmode" : name,

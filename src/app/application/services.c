@@ -578,7 +578,8 @@ static bool death_cleanup(qa_application *application,
 {
     if (outcome->stale)
         return true;
-    if (outcome->result.reaction == QA_REACTION_DEATH)
+    if (outcome->result.reaction == QA_REACTION_DEATH) {
+        if (!application_control_death(application, outcome->request.target, error)) return false;
         for (size_t index = 0; index < application->provider_count; ++index) {
             application_provider *provider = application->providers[index];
             if (provider != NULL && provider->attached && provider->constructed &&
@@ -587,6 +588,7 @@ static bool death_cleanup(qa_application *application,
                                             outcome->request.target, error))
                 return false;
         }
+    }
     return true;
 }
 

@@ -7,6 +7,7 @@
 #include "native_q1_wire.h"
 #include "native_q1_powers.h"
 #include "qa/game_q1_bots.h"
+#include "qa/game_q3_clients.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -86,6 +87,123 @@ bool application_native_console_motion(void *opaque, qa_actor_id actor,
     if (!selected_spectator(application, actor, &spectator, error)) return false;
     return application_control_player_mode(application, actor,
         noclip ? QA_MOVEMENT_MODE_NOCLIP : QA_MOVEMENT_MODE_NORMAL, spectator, error);
+}
+
+typedef struct engine_fly_call {
+    qa_application *application;
+    application_provider *source;
+    const qa_command_invocation *invocation;
+    const qa_command_context *context;
+    void *game;
+    application_provider_kind kind;
+} engine_fly_call;
+
+static bool engine_fly_client(const engine_fly_call *call, qa_actor_id actor,
+    bool *spectator, bool *noclip, qa_error *error)
+{
+    qa_application *app = call->application;
+    application_provider *source = call->source;
+    if (app->destroy_requested || app->finalizing || !app->players ||
+        !qa_actor_id_equal(actor, call->context->actor) ||
+        !qa_console_invocation_current(app->console, call->invocation) ||
+        !qa_application_command_context_active(app, call->context) ||
+        source->application != app || source->kind != call->kind ||
+        !source->constructed || !source->attached || source->close_pending ||
+        application_provider_for(app, actor, QA_ROLE_CHARACTER, "") != source)
+        return application_fail(error, QA_ERROR_ARGUMENT, "ENGINE fly lost its selected Source client");
+    uint32_t slot;
+    if (call->kind == APPLICATION_PROVIDER_Q2) {
+        qa_q2_player_info client;
+        if (source->state.q2 != call->game ||
+            !qa_actor_id_equal(qa_q2_current_actor(source->state.q2), actor) ||
+            !qa_q2_player_read(source->state.q2, actor, &client) || !client.connected)
+            return application_fail(error, QA_ERROR_ARGUMENT, "ENGINE fly requires its actual Q2 client operation");
+        slot = client.slot;
+        *spectator = client.spectator;
+        *noclip = client.noclip;
+    } else {
+        qa_q3_native_client client;
+        qa_q3_player_state player;
+        if (source->state.q3 != call->game ||
+            !qa_q3_native_client_slot(source->state.q3, actor, &slot, error) ||
+            !qa_q3_client_read(source->state.q3, actor, &client, error) ||
+            client.connected != QA_Q3_CLIENT_CONNECTED ||
+            !qa_q3_player_read(source->state.q3, actor, &player))
+            return application_fail(error, QA_ERROR_ARGUMENT, "ENGINE fly requires its actual Q3 client");
+        *spectator = player.spectator;
+        *noclip = player.noclip;
+    }
+    for (size_t i = 0; i < app->players->count; ++i) {
+        const application_player_record *row = app->players->records + i;
+        if (!row->retiring && !row->source_begin_pending && row->character == source &&
+            qa_actor_id_equal(row->actor, actor) && row->client_slot == slot) return true;
+    }
+    return application_fail(error, QA_ERROR_ARGUMENT, "ENGINE fly differs from its full physical Source roster");
+}
+
+static bool engine_fly(void *opaque, qa_actor_id actor, qa_error *error)
+{
+    const engine_fly_call *call = opaque;
+    application_provider *source = call->source;
+    bool spectator, noclip;
+    if (!engine_fly_client(call, actor, &spectator, &noclip, error)) return false;
+    const char *text = NULL;
+    if (call->kind == APPLICATION_PROVIDER_Q2) {
+        if (!qa_q2_player_cheats_allowed(source->state.q2))
+            text = "You must run the server with '+set cheats 1' to enable this command.\n";
+    } else {
+        if (!application_native_cheats_enabled(source))
+            text = "Cheats are not enabled on this server.\n";
+        else {
+            qa_combat_state combat;
+            if (!qa_combat_read(call->application->combat, actor, &combat, error)) return false;
+            if (combat.health <= 0) text = "You must be alive to use this command.\n";
+        }
+    }
+    if (!text) {
+        if (noclip) {
+            if (call->kind == APPLICATION_PROVIDER_Q2) {
+                if (!qa_q2_player_command(source->state.q2, actor, "noclip", 0, NULL, error)) return false;
+            } else {
+                bool enabled;
+                if (!qa_q3_player_noclip(source->state.q3, actor, &enabled, error)) return false;
+            }
+        }
+        if (!engine_fly_client(call, actor, &spectator, &noclip, error) ||
+            !selected_spectator(call->application, actor, &spectator, error)) return false;
+        bool enabled;
+        if (!application_control_toggle_motion(call->application, actor, QA_PHYSICS_FLY,
+                spectator, &enabled, error)) return false;
+        text = enabled ? "fly ON\n" : "fly OFF\n";
+    }
+    if (!engine_fly_client(call, actor, &spectator, &noclip, error)) return false;
+    application_console_print(call->application, call->context, text);
+    return engine_fly_client(call, actor, &spectator, &noclip, error);
+}
+
+qa_command_result application_native_engine_fly(qa_application *application,
+    const qa_command_invocation *invocation, const qa_command_context *context, qa_error *error)
+{
+    if (invocation->console != application->console || context->owner ||
+        strcmp(invocation->argv[0], "fly") || !context->actor.registry ||
+        !qa_console_invocation_current(application->console, invocation)) return QA_COMMAND_UNHANDLED;
+    application_provider *source = application_provider_for(application, context->actor,
+        QA_ROLE_CHARACTER, "");
+    if (!source || (source->kind != APPLICATION_PROVIDER_Q2 &&
+                   source->kind != APPLICATION_PROVIDER_Q3)) return QA_COMMAND_UNHANDLED;
+    engine_fly_call call = {.application = application, .source = source,
+        .invocation = invocation, .context = context, .kind = source->kind,
+        .game = source->kind == APPLICATION_PROVIDER_Q2 ? (void *)source->state.q2
+                                                       : (void *)source->state.q3};
+    bool okay;
+    if (source->kind == APPLICATION_PROVIDER_Q2)
+        okay = qa_q2_run_actor(source->state.q2, context->actor, engine_fly, &call, error);
+    else {
+        if (!application_native_q3_console_borrow(source, error)) return QA_COMMAND_FAILED;
+        okay = engine_fly(&call, context->actor, error);
+        application_native_q3_console_release(source);
+    }
+    return okay ? QA_COMMAND_HANDLED : QA_COMMAND_FAILED;
 }
 
 static bool q1_cheat_current(application_provider *source, qa_application *application,

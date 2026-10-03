@@ -391,6 +391,8 @@ bool application_source_force_death(qa_application *, const qa_damage_request *,
     int32_t final_health, qa_error *);
 bool application_native_cheats_enabled(void *);
 bool application_native_console_motion(void *, qa_actor_id, bool, qa_error *);
+qa_command_result application_native_engine_fly(qa_application *, const qa_command_invocation *,
+    const qa_command_context *, qa_error *);
 bool application_native_q1_console_cheat(void *, qa_actor_id, const char *, bool *, qa_error *);
 bool application_native_q3_console_print(void *, const char *, qa_error *);
 bool application_native_grant_arsenal(void *, qa_actor_id, bool, bool *, qa_error *);
@@ -609,6 +611,8 @@ bool application_control_motion_changed(qa_application *, qa_actor_id,
                                         qa_error *);
 bool application_control_source_spawn(qa_application *, qa_actor_id,
                                       qa_vec3 view_angles, qa_error *);
+bool application_control_spawn_reset(qa_application *, qa_actor_id, bool spectator, qa_error *);
+bool application_control_death(qa_application *, qa_actor_id, qa_error *);
 bool application_control_gravity(qa_application *, qa_actor_id, float scale, qa_error *);
 bool application_control_water_read(const qa_application *, qa_actor_id,
     int32_t *water_type, int32_t *water_level, qa_error *);

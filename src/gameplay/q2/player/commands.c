@@ -1,5 +1,12 @@
 #include "internal.h"
 
+bool qa_q2_player_cheats_allowed(const qa_q2_game *game) {
+    const q2_players *players = game ? game->player_runtime : NULL;
+    return players && (!(game->options.edition == QA_Q2_RERELEASE
+                            ? players->rules.max_clients > 1 : game->options.deathmatch) ||
+                       players->rules.cheats);
+}
+
 static bool equal_name(const char *a, const char *b) {
     while (*a && *b) {
         if (tolower((unsigned char)*a++) != tolower((unsigned char)*b++))
@@ -622,9 +629,7 @@ bool q2_player_command(qa_q2_game *g, qa_actor_id id, const char *command, size_
         if (equal_name(command, "use") || equal_name(command, "drop"))
             return item_command(g, a, text, equal_name(command, "use"), e);
         if (equal_name(command, "give")) {
-            if ((g->options.edition == QA_Q2_RERELEASE ? p->rules.max_clients > 1
-                                                       : g->options.deathmatch) &&
-                !p->rules.cheats)
+            if (!qa_q2_player_cheats_allowed(g))
                 return q2_player_print(g, id, 2,
                                       "You must run the server with '+set cheats 1' to "
                                       "enable this command.\n", e);
@@ -724,7 +729,8 @@ bool q2_player_command(qa_q2_game *g, qa_actor_id id, const char *command, size_
             return false;
         if (!q2_actor_live(g, id)) return true;
         qa_damage_request suicide = {.target = id, .amount = 100000,
-            .attack = {.attacker = id, .inflictor = id, .combat_provider = g->options.owner,
+            .attack = {.attacker = id, .inflictor = id, .weapon_provider = g->options.owner,
+                .combat_provider = g->options.owner,
                 .time_ns = g->now_ns,
                 .cause = qa_q2_damage_cause(g->options.edition, g->options.product, 23, 0)}};
         if (!qa_attack_next(&g->sequence, &suicide.attack, e)) return false;
@@ -779,9 +785,7 @@ bool q2_player_command(qa_q2_game *g, qa_actor_id id, const char *command, size_
         equal_name(command, "notarget") ||
         equal_name(command, "noclip") || equal_name(command, "give") ||
         equal_name(command, "target")) {
-        if ((g->options.edition == QA_Q2_RERELEASE ? p->rules.max_clients > 1
-                                                   : g->options.deathmatch) &&
-            !p->rules.cheats)
+        if (!qa_q2_player_cheats_allowed(g))
             return q2_player_print(g, id, 2,
                                    "You must run the server with '+set cheats 1' to "
                                    "enable this command.\n",
