@@ -1007,16 +1007,6 @@ bool application_network_q2_materials_required(const qa_application_network_q2 *
     return false;
 }
 
-static bool text_field(qa_source_save_io *io, char **field)
-{
-    const char *text = *field;
-    if (!qa_source_save_text(io, &text)) return false;
-    if (io->direction == QA_SOURCE_SAVE_READ && text) {
-        *field = application_network_q2_copy(text, io->error); return *field != NULL;
-    }
-    return true;
-}
-
 static bool buffer_field(qa_source_save_io *io, qa_buffer *buffer, size_t maximum)
 {
     if (!qa_source_save_count(io, &buffer->size, maximum)) return false;
@@ -1088,8 +1078,8 @@ static bool alias_fields(qa_source_save_io *io, application_q2_held_resource *he
     uint64_t logical = io->direction == QA_SOURCE_SAVE_WRITE && held->image_logical_dependency != SIZE_MAX ?
         (uint64_t)held->image_logical_dependency + 1 : 0;
     uint32_t rejection = (uint32_t)held->image_rejection, palette_error = (uint32_t)held->image_palette_error;
-    if (!text_field(io, &held->image_request) || !held->image_request || !*held->image_request ||
-        !text_field(io, &held->image_logical_path) ||
+    if (!qa_source_save_owned_text(io, &held->image_request) || !held->image_request || !*held->image_request ||
+        !qa_source_save_owned_text(io, &held->image_logical_path) ||
         !qa_source_save_u64(io, &logical) || logical > UINT32_MAX ||
         !qa_source_save_bytes(io, held->image_logical_source.bytes, sizeof(held->image_logical_source.bytes)) ||
         !qa_source_save_bool(io, &held->image_palette_attempted) ||
@@ -1274,7 +1264,7 @@ static bool holder_fields(qa_application_network_q2 *owner, qa_source_save_io *i
     if (!qa_source_save_bool(io, &held->model_scope) ||
         (held->model_scope && (held->kind != APPLICATION_Q2_HELD_MODEL || held->missing))) return false;
     if (!qa_source_save_bool(io, &memory) || (memory && (held->kind != APPLICATION_Q2_HELD_MATERIAL || held->missing))) return false;
-    if (!text_field(io, &held->instance) || !text_field(io, &held->path) || !text_field(io, &held->wire_path) ||
+    if (!qa_source_save_owned_text(io, &held->instance) || !qa_source_save_owned_text(io, &held->path) || !qa_source_save_owned_text(io, &held->wire_path) ||
         !qa_source_save_bytes(io, held->identity.bytes, 32) || !qa_source_save_bytes(io, held->authority.bytes, 32) ||
         !qa_source_save_u64(io, &view) ||
         !qa_source_save_u64(io, &pool) || !qa_source_save_u64(io, &resource)) return false;
@@ -1301,12 +1291,12 @@ static bool holder_fields(qa_application_network_q2 *owner, qa_source_save_io *i
     }
     qa_vfs_acquisition *opening = &held->opening;
     if (!held->missing && !memory && (!qa_source_save_u64(io, &opening->mount) || !qa_source_save_u64(io, &opening->resource_id) ||
-        !text_field(io, &opening->path) || !text_field(io, &opening->lookup_path) ||
-        !text_field(io, &opening->link_source) || !text_field(io, &opening->link_target) ||
+        !qa_source_save_owned_text(io, &opening->path) || !qa_source_save_owned_text(io, &opening->lookup_path) ||
+        !qa_source_save_owned_text(io, &opening->link_source) || !qa_source_save_owned_text(io, &opening->link_target) ||
         !qa_vfs_acquisition_opening_codec(io, held->view, opening) ||
         opening->resource_id != qa_resource_id(held->resource) ||
         !qa_vfs_acquisition_retained(held->view, opening, io->error))) return false;
-    if (!text_field(io, &held->script_name) || !text_field(io, &held->sky_base) ||
+    if (!qa_source_save_owned_text(io, &held->script_name) || !qa_source_save_owned_text(io, &held->sky_base) ||
         !qa_source_save_bytes(io, held->sky_group.bytes, sizeof(held->sky_group.bytes)) ||
         !qa_source_save_u8(io, &held->sky_face) || held->sky_face > 6 ||
         !qa_source_save_count(io, &held->source_offset, INT32_MAX) ||
@@ -1324,7 +1314,7 @@ static bool holder_fields(qa_application_network_q2 *owner, qa_source_save_io *i
     if ((held->model_scope || held->kind == APPLICATION_Q2_HELD_IMAGE || held->kind == APPLICATION_Q2_HELD_MATERIAL ||
         held->kind == APPLICATION_Q2_HELD_ALIAS) &&
         !image_fields(io, held)) return false;
-    if (held->model_scope && (!text_field(io, &held->model_scope_path) || !held->model_scope_path ||
+    if (held->model_scope && (!qa_source_save_owned_text(io, &held->model_scope_path) || !held->model_scope_path ||
         !buffer_field(io, &held->model_scope_bytes, INT32_MAX) || !held->model_scope_bytes.size)) return false;
     if (held->kind == APPLICATION_Q2_HELD_ALIAS && !alias_fields(io, held)) return false;
     size_t maximum = held->kind == APPLICATION_Q2_HELD_MATERIAL || held->kind == APPLICATION_Q2_HELD_IMAGE ||

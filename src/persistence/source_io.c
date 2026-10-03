@@ -57,6 +57,26 @@ bool qa_source_save_text(qa_source_save_io *io, const char **value)
     }
     return true;
 }
+bool qa_source_save_owned_text(qa_source_save_io *io, char **value)
+{
+    if (!io || !value) return io_fail(io, QA_ERROR_ARGUMENT, "missing owned source text");
+    bool present = io->direction == QA_SOURCE_SAVE_WRITE && *value != NULL;
+    qa_bytes bytes = present ? (qa_bytes){(const uint8_t *)*value, strlen(*value)} : (qa_bytes){0};
+    if (!string_value(io, &present, &bytes)) return false;
+    if (io->direction == QA_SOURCE_SAVE_READ) {
+        char *text = NULL;
+        if (present) {
+            if (memchr(bytes.data, 0, bytes.size)) return io_fail(io, QA_ERROR_FORMAT, "source text contains embedded NUL");
+            text = malloc(bytes.size + 1);
+            if (!text) return io_fail(io, QA_ERROR_MEMORY, "retaining owned source text");
+            if (bytes.size) memcpy(text, bytes.data, bytes.size);
+            text[bytes.size] = 0;
+        }
+        free(*value);
+        *value = text;
+    }
+    return true;
+}
 bool qa_source_save_actor(qa_source_save_io *io, qa_actor_id *value)
 {
     if (!io || !value || !io->session) return io_fail(io, QA_ERROR_ARGUMENT, "missing source actor owner");

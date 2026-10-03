@@ -14,8 +14,8 @@ typedef struct qa_source_save_io {
     bool failed;
 } qa_source_save_io;
 /* Owned output, borrowed input. Session is optional for primitive-only owners;
- * actor/string/text operations require its actual table. Read-side interning changes only an isolated
- * candidate's table. Native owners define/version every field and validate
+ * actor/string/borrowed-text operations require its actual table. Read-side interning changes only an isolated
+ * candidate's table. Native owners define every field and validate
  * semantics. Exact floating bits include valid source infinity sentinels. */
 bool qa_source_save_writer(qa_source_save_io *, qa_session *, qa_error *);
 bool qa_source_save_reader(qa_source_save_io *, qa_session *, qa_bytes, qa_error *);
@@ -37,6 +37,9 @@ bool qa_source_save_count(qa_source_save_io *, size_t *, size_t maximum);
  * the restored session table and rejects embedded NUL; IDs allow counted bytes. */
 bool qa_source_save_string(qa_source_save_io *, qa_string_id *);
 bool qa_source_save_text(qa_source_save_io *, const char **);
+/* Same counted text representation; READ replaces a separately malloc-owned
+ * value after successful decoding without changing the session string table. */
+bool qa_source_save_owned_text(qa_source_save_io *, char **);
 /* Explicit presence + original generation/slot; retired provenance survives.
  * Live-use authority must be validated by the source field's actual owner. */
 bool qa_source_save_actor(qa_source_save_io *, qa_actor_id *);

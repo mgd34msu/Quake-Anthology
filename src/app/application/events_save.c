@@ -63,19 +63,6 @@ static bool event_fail(qa_source_save_io *io, qa_status status, const char *text
     return false;
 }
 
-static bool acquisition_text(qa_source_save_io *io, char **value)
-{
-    const char *text = *value;
-    if (!qa_source_save_text(io, &text)) return false;
-    if (io->direction == QA_SOURCE_SAVE_READ && text) {
-        size_t size = strlen(text) + 1;
-        *value = malloc(size);
-        if (!*value) return event_fail(io, QA_ERROR_MEMORY, "Retaining Source dictionary opening text");
-        memcpy(*value, text, size);
-    }
-    return true;
-}
-
 static bool signature(qa_source_save_io *io)
 {
     uint8_t magic[sizeof(event_magic)];
@@ -1089,8 +1076,8 @@ static bool custody_field(qa_source_save_io *io, const qa_application_content_gr
         qa_application_content_view(graph, held->saved_view) : held->view;
     qa_vfs_acquisition *opening = &held->opening;
     return files && qa_source_save_u64(io, &opening->mount) && qa_source_save_u64(io, &opening->resource_id) &&
-        acquisition_text(io, &opening->path) && acquisition_text(io, &opening->lookup_path) &&
-        acquisition_text(io, &opening->link_source) && acquisition_text(io, &opening->link_target) &&
+        qa_source_save_owned_text(io, &opening->path) && qa_source_save_owned_text(io, &opening->lookup_path) &&
+        qa_source_save_owned_text(io, &opening->link_source) && qa_source_save_owned_text(io, &opening->link_target) &&
         qa_vfs_acquisition_opening_codec(io, files, opening) && opening->opening_present &&
         qa_vfs_acquisition_retained(files, opening, io->error);
 }
@@ -1150,8 +1137,8 @@ static bool normalized_rows(qa_source_save_io *io, event_store *store)
         qa_vfs_acquisition *opening = &row->opening;
         if (!files || !qa_source_save_u64(io, &opening->mount) ||
             !qa_source_save_u64(io, &opening->resource_id) ||
-            !acquisition_text(io, &opening->path) || !acquisition_text(io, &opening->lookup_path) ||
-            !acquisition_text(io, &opening->link_source) || !acquisition_text(io, &opening->link_target) ||
+            !qa_source_save_owned_text(io, &opening->path) || !qa_source_save_owned_text(io, &opening->lookup_path) ||
+            !qa_source_save_owned_text(io, &opening->link_source) || !qa_source_save_owned_text(io, &opening->link_target) ||
             !qa_vfs_acquisition_opening_codec(io, files, opening) || !opening->opening_present ||
             !qa_vfs_acquisition_retained(files, opening, io->error))
             return event_fail(io, QA_ERROR_FORMAT, "Source dictionary lost its actual acquisition opening");

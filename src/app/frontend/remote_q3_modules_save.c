@@ -34,17 +34,6 @@ static bool blob(qa_source_save_io *io, qa_buffer *value)
     }
     return qa_source_save_bytes(io, value->data, size);
 }
-static bool text(qa_source_save_io *io, char **value)
-{
-    const char *borrowed = *value;
-    if (!qa_source_save_text(io, &borrowed)) return false;
-    if (io->direction == QA_SOURCE_SAVE_READ && borrowed) {
-        size_t size = strlen(borrowed) + 1; *value = malloc(size);
-        if (!*value) return frontend_fail(io->error, QA_ERROR_MEMORY, "Retaining saved music selection");
-        memcpy(*value, borrowed, size);
-    }
-    return true;
-}
 static bool fields(qa_source_save_io *io, wrapper_saved *saved)
 {
     uint8_t signature[8] = {'Q','R','M','W',0,0,0,0};
@@ -70,8 +59,8 @@ static bool fields(qa_source_save_io *io, wrapper_saved *saved)
             !blob(io, &role->equipment) ||
             (role->role == QA_QVM_CGAME ? !role->equipment.size : role->equipment.size != 0) ||
             !qa_source_save_bool(io, &role->has_music) || !qa_source_save_bool(io, &role->music_attached) ||
-            !qa_source_save_bool(io, &role->music_looping) || !text(io, &role->music_intro) ||
-            !text(io, &role->music_loop) || !blob(io, &role->music) ||
+            !qa_source_save_bool(io, &role->music_looping) || !qa_source_save_owned_text(io, &role->music_intro) ||
+            !qa_source_save_owned_text(io, &role->music_loop) || !blob(io, &role->music) ||
             (role->music_attached && (!role->has_music || role->music.size)) ||
             (role->has_music && !role->music_attached && !role->music.size) ||
             (!role->has_music && (role->music.size || role->music_intro || role->music_loop || role->music_looping)) ||

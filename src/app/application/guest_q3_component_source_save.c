@@ -31,14 +31,8 @@ static bool actor(qa_source_save_io *io,application_q3_scene_actor *row)
 { return qa_source_save_u32(io,&row->slot)&&row->slot<1022&&qa_source_save_actor(io,&row->actor)&&row->actor.registry&&qa_source_save_bool(io,&row->owned); }
 static bool command(qa_source_save_io *io,component_source_command *row)
 {
-    const char *text=row->text;
-    if(!qa_source_save_i32(io,&row->sequence)||row->sequence<=0||!qa_source_save_actor(io,&row->recipient)||!qa_source_save_text(io,&text)||!text) return false;
-    if(io->direction==QA_SOURCE_SAVE_READ) {
-        size_t size=strlen(text)+1; row->text=malloc(size);
-        if(!row->text) return fail(io,"Retaining saved component command text");
-        memcpy(row->text,text,size);
-    }
-    return true;
+    return qa_source_save_i32(io,&row->sequence)&&row->sequence>0&&
+        qa_source_save_actor(io,&row->recipient)&&qa_source_save_owned_text(io,&row->text)&&row->text;
 }
 static bool entity(qa_source_save_io *io,qa_qvm_abi abi,component_source_entity *row)
 {
