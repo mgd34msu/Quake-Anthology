@@ -205,7 +205,7 @@ static bool capture_checkpoint(qa_native_host *host, qa_buffer *out, qa_error *e
             if (!qa_vec_finite(origin.origin) || (origin.present ? (!present ||
                 origin.source_frame < lifetime->creation_frame || (origin.source_frame & 7u) != i ||
                 (host->engine.source_frame && origin.source_frame > host->engine.source_frame(host->engine.context))) :
-                (origin.source_frame || origin.origin.x || origin.origin.y || origin.origin.z))) {
+                (origin.source_frame || origin.origin.x != 0 || origin.origin.y != 0 || origin.origin.z != 0))) {
                 free(data); qa_buffer_free(&engine); qa_buffer_free(&bridge);
                 return native_host_fail(error, QA_ERROR_FORMAT, slot, "Native Q2 origin history lost its real Source link frame");
             }
@@ -359,13 +359,13 @@ static bool restore_checkpoint(qa_native_host *host, qa_bytes state, bool cvars_
             cursor += 12;
             if (present > 1 || !qa_vec_finite(origin->origin) || (present ? (!creation ||
                 origin->source_frame < slots[index].creation_frame || (origin->source_frame & 7u) != i) :
-                (origin->source_frame || origin->origin.x || origin->origin.y || origin->origin.z))) history_valid = false;
+                (origin->source_frame || origin->origin.x != 0 || origin->origin.y != 0 || origin->origin.z != 0))) history_valid = false;
         }
         if (slots[index].kind == QA_NATIVE_SLOT_FREE ||
             slots[index].kind > QA_NATIVE_SLOT_BORROWED ||
             lifetime_flags > 3 || !history_valid || !qa_vec_finite(slots[index].creation_origin) ||
-            (!creation && (slots[index].creation_frame || slots[index].creation_origin.x ||
-                slots[index].creation_origin.y || slots[index].creation_origin.z)) ||
+            (!creation && (slots[index].creation_frame || slots[index].creation_origin.x != 0 ||
+                slots[index].creation_origin.y != 0 || slots[index].creation_origin.z != 0)) ||
             ((creation || slots[index].linked) && (host->kind != NATIVE_HOST_Q2_GAME || !slots[index].slot)) ||
             (index && slots[index].slot <= slots[index - 1].slot) ||
             (!cvars_only && slots[index].slot >= table.capacity)) {

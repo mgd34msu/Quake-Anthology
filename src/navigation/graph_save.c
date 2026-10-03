@@ -117,7 +117,7 @@ static bool source_identity(qa_source_save_io *io, const qa_nav_graph *g) {
             if(memcmp(&n->origin,&actual_origin,sizeof(actual_origin)) || memcmp(&n->bounds,&bounds,sizeof(bounds)) ||
                 n->presence || n->source_cluster!=-1)
                 return fail(io,"Native navigation node differs from actual hull admission");
-        } else if(aas && n->radius) return fail(io,"AAS navigation radius differs from actual source");
+        } else if(aas && n->radius != 0) return fail(io,"AAS navigation radius differs from actual source");
     }
     for (size_t i=0;i<g->view.edge_count;++i) {
         const qa_nav_edge *e=g->edges+i;
