@@ -90,6 +90,21 @@ static bool publish(qa_q1_game *game,q1_player *player,qa_error *error) {
     }
     return game->source_client_publish(game->source_client_context,&view,error);
 }
+bool qa_q1_source_client_toggle_notarget(qa_q1_game *game,qa_actor_id actor,
+    bool *enabled,qa_error *error) {
+    if(!enabled) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,actor.slot,"Q1 notarget requires its enabled output");return false;
+    }
+    qa_q1_game_operation operation={0};
+    if(!qa_q1_game_operation_begin(game,&operation,error)) return false;
+    q1_player *player=(q1_player *)client_const(game,actor);bool okay=false;
+    if(!player) qa_error_set(error,QA_ERROR_NOT_FOUND,actor.slot,"Q1 notarget source client is absent");
+    else {
+        *enabled=player->source_no_target=!player->source_no_target;
+        okay=publish(game,player,error);
+    }
+    qa_q1_game_operation_end(&operation);return okay;
+}
 bool qa_q1_source_clients_configure(qa_q1_game *game,const qa_q1_source_client_services *services,qa_error *error) {
     if(!game || !services || !services->publish || !services->observer || game->destroy_pending || game->observation_depth) {
         qa_error_set(error,QA_ERROR_ARGUMENT,0,"Q1 source clients require their actual publication and observer owners");return false;

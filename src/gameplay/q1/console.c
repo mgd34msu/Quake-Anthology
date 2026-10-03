@@ -1,4 +1,5 @@
 #include "maps/internal.h"
+#include "qa/game_q1_bots.h"
 #include <ctype.h>
 #include <limits.h>
 #include <stdio.h>
@@ -478,11 +479,16 @@ static bool dispatch(qa_q1_game *g, qa_actor_id actor, const qa_command_invocati
             return true;
     }
     if (cheat) {
-        if (!g->host.console_cheat)
-            return q1_map_fail(error, "Q1 cheat requires the selected state owner");
         bool enabled;
-        if (!g->host.console_cheat(g->host.context, actor, name, &enabled, error))
-            return false;
+        if (!strcmp(name, "notarget")) {
+            if (!qa_q1_source_client_toggle_notarget(g, actor, &enabled, error))
+                return false;
+        } else {
+            if (!g->host.console_cheat)
+                return q1_map_fail(error, "Q1 cheat requires the selected state owner");
+            if (!g->host.console_cheat(g->host.context, actor, name, &enabled, error))
+                return false;
+        }
         char message[64];
         snprintf(message, sizeof(message), "%s %s\n", !strcmp(name, "god") ? "godmode" : name,
                  enabled ? "ON" : "OFF");

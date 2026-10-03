@@ -322,6 +322,7 @@ bool q1_target(qa_q1_game *g, qa_actor_id actor, qa_q1_target *target) {
         return false;
     *target = (qa_q1_target){
         .player = player && (player->source_client || player->arsenal || player->character),
+        .notarget = player && player->source_client && player->source_no_target,
         .aimed_damage = entity && entity->aimed_damage,
         .view_height = player ? 22
                        : entity && entity->kind == Q1_MONSTER &&
@@ -1706,6 +1707,7 @@ bool qa_q1_game_actor_traits(const qa_q1_game *g, qa_actor_id actor, qa_builtin_
         .dead = player && player->character ? player->character_state.life != QA_Q1_ALIVE
                 : entity && entity->kind == Q1_MONSTER && entity->state.monster.dead,
         .monster = entity && (entity->physics.flags & QA_PHYSICS_MONSTER),
+        .no_target = player && player->source_client && player->source_no_target,
         .aimed_damage = entity && entity->aimed_damage,
         .grounded = entity && (entity->physics.flags & QA_PHYSICS_ONGROUND),
         .max_health = entity ? entity->max_health : player->max_health,
