@@ -2019,7 +2019,11 @@ invalid:
     qa_error_set(error, QA_ERROR_FORMAT, 0, "VFS read recipe differs from its actual mounted resource"); return false;
 }
 bool vfs_read_valid(const qa_vfs *vfs, const qa_vfs_read_reference *entry, qa_error *error)
-{ return read_recipe_valid(vfs, entry, true, error); }
+{
+    mount *source = find_mount(vfs, entry->mount);
+    /* A saved writable read owns its captured bytes, not the later replacement. */
+    return read_recipe_valid(vfs, entry, !source || !source->writable, error);
+}
 static bool acquisition_valid(const qa_vfs *vfs, const qa_vfs_acquisition *receipt, bool native_identity, qa_error *error)
 {
     if (vfs && receipt && receipt->mount && receipt->resource_id && receipt->path &&
