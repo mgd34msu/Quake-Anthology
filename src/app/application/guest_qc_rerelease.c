@@ -237,7 +237,7 @@ static bool prompt_import(struct application_qc_state *engine,qa_qc_instance *vm
     if (builtin==QA_QC_BUILTIN_EX_PROMPT) {
         float count=0;
         if ((argc>=3 && !qa_qc_arg_float(vm,2,&count,error)) || !isfinite(count) || count<0 || (double)count>UINT32_MAX ||
-            trunc((double)count)>SIZE_MAX/sizeof(qc_prompt_choice)) {
+            trunc((double)count)>(double)(SIZE_MAX/sizeof(qc_prompt_choice))) {
             free(copy); return application_fail(error,QA_ERROR_ARGUMENT,"Source prompt reservation exceeds actual choices");
         }
         size_t capacity=(size_t)count;
@@ -321,7 +321,7 @@ void application_qc_rerelease_released(struct application_qc_state *engine,qa_ac
 static bool debug_draw(struct application_qc_state *engine,qa_qc_instance *vm,qa_qc_builtin builtin,qa_error *error)
 {
     qa_builtin_event event={.kind=QA_BUILTIN_EFFECT,.family=QA_GAME_Q1,.provider=engine->provider->owner,
-        .time_ns=engine->source_time_ns,.code=builtin};
+        .time_ns=engine->source_time_ns,.code=(int32_t)builtin};
     uint32_t color_arg=0,lifetime_arg=0,depth_arg=0; uint8_t color=0; float lifetime,depth;
     bool ok=false;
     switch (builtin) {
@@ -503,7 +503,7 @@ static bool fields(qa_source_save_io *io,struct application_qc_state *engine,
     if (!qa_source_save_bool(io,&owner->has_poll) || !qa_source_save_bool(io,&owner->acknowledged) ||
         !qa_source_save_f64(io,&owner->last_poll) || !isfinite(owner->last_poll) ||
         !qa_source_save_count(io,&owner->count,engine->max_clients) ||
-        (!owner->has_poll && (owner->last_poll || owner->acknowledged || owner->count))) return false;
+        (!owner->has_poll && (owner->last_poll != 0.0 || owner->acknowledged || owner->count))) return false;
     if (reading && owner->count) {
         owner->held=calloc(owner->count,sizeof(*owner->held));
         if (!owner->held) return application_fail(io->error,QA_ERROR_MEMORY,"Restoring actual QC finale held actors");
