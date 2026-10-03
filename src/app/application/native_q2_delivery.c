@@ -63,8 +63,8 @@ static bool capture(application_provider *source, qa_vec3 origin,
     application_provider *physical=application_world_provider(app,QA_ROLE_ENTITIES,"");
     qa_collision_geometry *geometry=qa_world_geometry(world);
     uint64_t publication=app->publication_generation,revision=app->map_revision;
-    const qa_launch_snapshot *routing=original?app->routing_snapshot:NULL;
-    bool preparing=original && routing && app->frame_preparing;
+    const qa_launch_snapshot *routing=app->routing_snapshot;
+    bool preparing=app->frame_preparing;
     qa_clock_state clock;
     qa_q2_combat_rules rules;
     uint64_t now=0,started; bool intermission;
