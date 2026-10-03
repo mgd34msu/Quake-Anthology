@@ -1640,7 +1640,8 @@ static bool content_directory_open(void *context,const char *mount_path,const ch
         bool same=!strcmp(path,retained_path); free(path);
         if (same) {
             if (!qa_fs_root_status(profile,"",&kind,&actual,error)) return false;
-            if (kind!=QA_FS_DIRECTORY || !qa_fs_identity_equal(&actual,identity))
+            if (kind!=QA_FS_DIRECTORY || !qa_fs_root_identity_is(profile,&actual) ||
+                !qa_fs_root_identity_is(profile,identity))
                 return frontend_fail(error,QA_ERROR_FORMAT,"Saved input profile directory differs from its retained native object");
             qa_fs_root_retain(profile); *out=profile; return true;
         }
@@ -1651,7 +1652,8 @@ static bool content_directory_open(void *context,const char *mount_path,const ch
     if (!qa_fs_root_open(retained_path,out,error)) return false;
     qa_fs_entry_kind kind; qa_fs_identity actual;
     return qa_fs_root_status(*out,"",&kind,&actual,error) &&
-        ((kind==QA_FS_DIRECTORY && qa_fs_identity_equal(&actual,identity)) ||
+        ((kind==QA_FS_DIRECTORY && qa_fs_root_identity_is(*out,&actual) &&
+            qa_fs_root_identity_is(*out,identity)) ||
          frontend_fail(error,QA_ERROR_FORMAT,"Saved content directory differs from its actual native object"));
 }
 static bool operation_init(frontend_persistence *operation,qa_frontend *active,

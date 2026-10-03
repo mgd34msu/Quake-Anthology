@@ -21,6 +21,16 @@ bool qa_fs_identity_equal(const qa_fs_identity *left,
         && memcmp(left->words, right->words, sizeof(left->words)) == 0;
 }
 
+bool qa_fs_root_identity_is(const qa_fs_root *root, const qa_fs_identity *identity)
+{
+    qa_fs_object_reference actual;
+    return identity && qa_fs_root_reference_read(root, &actual)
+        && actual.words[0] == identity->words[0]
+        && actual.words[1] == identity->words[1]
+        && ((actual.platform == 1 && actual.words[2] == 0)
+            || (actual.platform == 2 && actual.words[2] == identity->words[5]));
+}
+
 uint64_t qa_fs_identity_size(const qa_fs_identity *identity)
 {
     return identity != NULL ? identity->words[2] : 0;

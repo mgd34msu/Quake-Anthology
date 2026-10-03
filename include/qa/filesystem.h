@@ -56,6 +56,9 @@ void qa_fs_root_close(qa_fs_root *root);
 /* Compares the native directory identity retained at admission, without I/O.
  * Both roots must be non-NULL and remain retained by their callers. */
 bool qa_fs_root_same_object(const qa_fs_root *left, const qa_fs_root *right);
+/* Matches saved directory metadata to the stable object held by this root;
+ * directory contents, size and modification times may change. */
+bool qa_fs_root_identity_is(const qa_fs_root *, const qa_fs_identity *);
 /* Creates an actual directory below the held writable root. Existing ordinary
  * directories are accepted; child links and non-directory leaves are rejected. */
 bool qa_fs_root_create_directory(qa_fs_root *root, const char *relative,
