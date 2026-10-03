@@ -435,7 +435,8 @@ bool qa_application_unified_offer(qa_application *app, uint32_t epoch, const cha
     if (ok) ok = qa_json_writer_finish(&w, &body, error) && qa_unified_composition_create((qa_bytes){body.data, body.size}, &canonical, error);
     if (ok) {
         qa_json_document *composition = NULL; ok = qa_json_parse((qa_bytes){canonical.canonical.data, canonical.canonical.size}, &composition, error);
-        qa_json_writer_object(&offer); qa_json_writer_key(&offer, "schema"); qa_json_writer_string(&offer, "qts-control1"); qa_json_writer_key(&offer, "value"); qa_json_writer_object(&offer);
+        qa_json_writer_object(&offer); qa_json_writer_key(&offer, "schema"); qa_json_writer_string(&offer, "qts-control");
+        qa_json_writer_key(&offer, "version"); qa_json_writer_number(&offer, 1); qa_json_writer_key(&offer, "value"); qa_json_writer_object(&offer);
         qa_json_writer_key(&offer, "kind"); qa_json_writer_string(&offer, "offer"); qa_json_writer_key(&offer, "epoch"); qa_json_writer_number(&offer, epoch);
         qa_json_writer_key(&offer, "composition"); qa_json_writer_object(&offer); qa_json_writer_key(&offer, "composition");
         if (ok) ok = recipe_copy_json(&offer, composition, qa_json_root(composition), error);

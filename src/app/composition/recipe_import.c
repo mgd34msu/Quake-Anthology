@@ -499,7 +499,7 @@ bool qa_executable_recipe_prepare(const qa_unified_document *offer, qa_catalog *
     const qa_json_document *json = qa_unified_document_json(offer); qa_json_id root = qa_unified_document_root(offer);
     qa_json_id value = qa_json_get(json, root, "value"), identity = qa_json_get(json, value, "composition"), composition = qa_json_get(json, identity, "composition");
     qa_json_id recipe = qa_json_get(json, composition, "recipe"); uint32_t version;
-    if (qa_json_type(json, root) != QA_JSON_OBJECT || qa_json_size(json, root) != 2 || !qa_json_string_equal(json, qa_json_get(json, root, "schema"), "qts-control1") ||
+    if (qa_unified_document_type(offer) != QA_UNIFIED_CONTROL_DOCUMENT ||
         qa_json_type(json, value) != QA_JSON_OBJECT || qa_json_size(json, value) != 5 || !qa_json_string_equal(json, qa_json_get(json, value, "kind"), "offer") ||
         qa_json_type(json, identity) != QA_JSON_OBJECT || qa_json_size(json, identity) != 2 ||
         qa_json_type(json, composition) != QA_JSON_OBJECT || qa_json_size(json, composition) != 5 ||
