@@ -122,7 +122,7 @@ bool mode_set_phase(qa_modes *m, mode_instance *v, qa_mode_phase phase, uint64_t
     v->value.deadline_ns = deadline;
     v->countdown_announced = false;
     return mode_event(m, v, QA_MODE_PHASE, (qa_actor_id){0}, (qa_actor_id){0}, (qa_actor_id){0}, 0,
-                      phase, 0, e);
+                      (int32_t)phase, 0, e);
 }
 bool qa_modes_q3_source_phase(qa_modes *m, qa_mode_id id, qa_mode_phase phase,
                              uint64_t source_time_ns, uint64_t deadline_ns, qa_error *e) {

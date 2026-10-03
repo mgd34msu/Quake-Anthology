@@ -32,7 +32,7 @@ bool mode_object_bind_objective(qa_modes *m, mode_object *o, qa_error *e) {
 }
 bool mode_object_notify(qa_modes *m, mode_instance *v, mode_object *o, qa_error *e) {
     return mode_event(m, v, QA_MODE_OBJECTIVE_CHANGED, o->value.carrier, (qa_actor_id){0}, o->actor,
-                      o->spec.team, o->value.phase, 0, e);
+                      o->spec.team, (int32_t)o->value.phase, 0, e);
 }
 bool mode_object_count(qa_modes *m, mode_instance *v, mode_object *o, qa_actor_id actor,
                        double count, qa_error *e) {

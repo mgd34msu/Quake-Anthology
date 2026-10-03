@@ -143,7 +143,7 @@ bool qa_modes_vote_start(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_team_
         vote->yes = 1;
     }
     return mode_event(m, v, QA_MODE_VOTE_STARTED, actor, (qa_actor_id){0}, (qa_actor_id){0}, team,
-                      needed, intent->kind, e);
+                      needed, (int32_t)intent->kind, e);
 }
 bool qa_modes_vote_cast(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_team_id team, bool yes,
                         qa_error *e) {

@@ -369,6 +369,6 @@ bool qa_modes_admin(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_mode_admin
     case QA_MODE_ADMIN_MATCH_MAP:
         break;
     }
-    return mode_event(m, v, QA_MODE_ROSTER, actor, (qa_actor_id){0}, (qa_actor_id){0}, 0, action,
+    return mode_event(m, v, QA_MODE_ROSTER, actor, (qa_actor_id){0}, (qa_actor_id){0}, 0, (int32_t)action,
                       QA_MATCH_ADMIN, e);
 }

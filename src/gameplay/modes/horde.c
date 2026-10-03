@@ -944,7 +944,7 @@ static bool loot_touch(qa_modes *m, qa_actor_id item_actor, qa_actor_id actor, b
         *accepted = true;
         loot->actor = (qa_actor_id){0};
         if (!mode_event(m, v, QA_MODE_LOOT, actor, (qa_actor_id){0}, item_actor, 0,
-                        (int32_t)loot->amount, loot->kind, e))
+                        (int32_t)loot->amount, (int32_t)loot->kind, e))
             return false;
         return !mode_live(m, item_actor) ||
                qa_session_release(m->options.services.session, item_actor, e);

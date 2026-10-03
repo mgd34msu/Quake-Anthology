@@ -280,7 +280,7 @@ bool mode_relic_touch(qa_modes *m, mode_instance *v, mode_object *o, qa_actor_id
         return false;
     *accepted = true;
     return mode_event(m, v, QA_MODE_RELIC_TAKEN, actor, (qa_actor_id){0}, o->actor, p->last_team,
-                      o->spec.relic, 0, e);
+                      (int32_t)o->spec.relic, 0, e);
 }
 bool qa_modes_tech_sound(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_relic_kind kind,
                          bool quad, bool silenced, bool *handled, qa_error *e) {

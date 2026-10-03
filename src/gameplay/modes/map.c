@@ -302,7 +302,7 @@ bool qa_modes_plan_map(qa_modes *m, qa_mode_id id, const qa_mode_map_admission *
             *missing &= ~(uint32_t)QA_MODE_MAP_BALL_SPAWN;
         }
         for (unsigned i = 0; i < 2; ++i)
-            if (separated && (*missing & (QA_MODE_MAP_RED_GOAL << i))) {
+            if (separated && (*missing & ((uint32_t)QA_MODE_MAP_RED_GOAL << i))) {
                 qa_mode_map_admission generated = {
                     .role = QA_MODE_MAP_OBJECT,
                     .object = {.kind = QA_MODE_OBJECT_GOAL,
