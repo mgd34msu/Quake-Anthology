@@ -1439,12 +1439,26 @@ static bool owners_match(frontend_persistence *operation,const qa_save_image *im
                 if(decoded) decoded=qa_source_save_reader(&io,NULL,(qa_bytes){actual.data,actual.size},&probe) &&
                     owner_envelope(&io,kind,&restored) && qa_source_save_finish(&io,NULL);
                 qa_source_save_dispose(&io);
+                bool route_semantics=decoded && kind==QA_SAVE_INPUT && operation->restored_from;
                 for(size_t j=0;decoded && j<SECTION_COUNT;++j) {
                     qa_bytes old=saved.bytes[j],current=restored.bytes[j];
                     size_t count=old.size<current.size?old.size:current.size,k=0;
                     while(k<count && old.data[k]==current.data[k]) ++k;
-                    if(k<count || old.size!=current.size) { section_id=(uint32_t)j; section_offset=k; break; }
+                    if(k<count || old.size!=current.size) {
+                        if(route_semantics && j==SECTION_PLATFORM) {
+                            qa_bytes saved_platform={0},current_platform={0};
+                            bool present=f->input!=NULL;
+                            bool qualified=optional_decode("QFIP",present,old,&saved_platform,error) &&
+                                optional_decode("QFIP",present,current,&current_platform,error) &&
+                                (!present || qa_input_platform_restore_checkpoint_matches(
+                                    operation->restored_from->input_guard,saved_platform,current_platform,error));
+                            if(!qualified) { qa_buffer_free(&actual); return false; }
+                            continue;
+                        }
+                        section_id=(uint32_t)j; section_offset=k; break;
+                    }
                 }
+                if(route_semantics && section_id==UINT32_MAX) { qa_buffer_free(&actual); continue; }
             }
             qa_error_set(error,QA_ERROR_FORMAT,offset,
                 "Restored frontend owner %u differs: sizes %zu/%zu, byte %zu, section %u byte %zu, saved/actual %u/%u",

@@ -46,6 +46,10 @@ bool qa_input_platform_handoff_ready(const qa_input_platform_restore_guard *, qa
  * encoded alongside the candidate's actual private state and haptic holders. */
 bool qa_input_platform_restore_checkpoint(const qa_input_platform_restore_guard *,
     const qa_input_platform_checkpoint_refs *, qa_buffer *, qa_error *);
+/* Qualify decoded and recaptured records through the genuine current native
+ * window route. All other logical and physical continuation fields are exact. */
+bool qa_input_platform_restore_checkpoint_matches(const qa_input_platform_restore_guard *,
+    qa_bytes saved, qa_bytes current, qa_error *);
 void qa_input_platform_handoff(qa_input_platform_restore_guard *);
 void qa_input_platform_restore_guard_destroy(qa_input_platform_restore_guard *);
 bool qa_input_platform_context_rebind_ready(const qa_input_platform *, const void *current, qa_error *);

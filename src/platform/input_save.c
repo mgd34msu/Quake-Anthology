@@ -16,6 +16,7 @@ struct qa_input_platform_restore_guard {
     const qa_input_platform *active;
     qa_buffer native_cut, active_cut;
     input_native_modes desired, previous;
+    size_t native_window_offset, logical_window_offset, record_extent;
     bool prepared, applied;
 };
 static bool fail(qa_error *error, qa_status status, const char *text)
@@ -194,10 +195,11 @@ static bool native_matches(const qa_input_platform *active, qa_bytes expected, q
  * codec resolves the saved window route to the current native window. */
 static bool native_modes_read(const qa_input_platform *active, qa_buffer *saved,
     uint32_t *window, qa_buffer *current, input_native_modes *desired,
-    input_native_modes *previous, qa_error *error)
+    input_native_modes *previous, size_t *window_offset, qa_error *error)
 {
     size_t offset = 0;
     if (!native_capture(active, current, &offset, error)) return false;
+    if (window_offset) *window_offset += offset;
     if (saved->size != current->size || offset > saved->size ||
         (offset && memcmp(saved->data, current->data, offset)))
         return fail(error, QA_ERROR_UNSUPPORTED, "saved platform requires the same native endpoint");
@@ -271,7 +273,7 @@ static bool route_instance_valid(const qa_input_platform *p, unsigned slot)
     return false;
 }
 static bool state_fields(qa_source_save_io *io, qa_input_platform *p, const qa_input_platform *native,
-                          const qa_input_platform_checkpoint_refs *refs)
+                          const qa_input_platform_checkpoint_refs *refs, size_t *window_offset)
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
     size_t devices = p->device_count, capacity = p->device_capacity;
@@ -318,6 +320,7 @@ static bool state_fields(qa_source_save_io *io, qa_input_platform *p, const qa_i
     }
     if (!integer(io, &p->keyboard)) return false;
     for (unsigned i = 0; i < SDL_NUM_SCANCODES; ++i) if (!qa_source_save_i32(io, &p->keys[i])) return false;
+    if (window_offset) *window_offset = io->offset;
     if (!qa_source_save_u32(io, &p->window) || !qa_source_save_bool(io, &p->old_relative) ||
         !qa_source_save_bool(io, &p->old_text) || !qa_source_save_bool(io, &p->old_grab) ||
         !qa_source_save_bool(io, &p->capture) || !integer(io, &p->old_controller_events) ||
@@ -378,14 +381,19 @@ static bool state_fields(qa_source_save_io *io, qa_input_platform *p, const qa_i
 static uint32_t services(const qa_input_platform_options *o)
 { return (o->print ? 1u : 0u) | (o->device_changed ? 2u : 0u) | (o->assignment_changed ? 4u : 0u); }
 static bool envelope(qa_source_save_io *io, qa_input_platform *p, const qa_input_platform *native,
-    const qa_input_platform_checkpoint_refs *refs, qa_buffer *native_cut, qa_buffer *haptic)
+    const qa_input_platform_checkpoint_refs *refs, qa_buffer *native_cut, qa_buffer *haptic,
+    qa_input_platform_restore_guard *routes)
 {
     uint8_t magic[4] = {'Q','I','P','L'};
     uint32_t callbacks = services(&p->options);
-    return qa_source_save_bytes(io, magic, sizeof(magic)) && !memcmp(magic, "QIPL", sizeof(magic)) &&
+    bool success = qa_source_save_bytes(io, magic, sizeof(magic)) && !memcmp(magic, "QIPL", sizeof(magic)) &&
         qa_source_save_u32(io, &callbacks) &&
-        callbacks == services(&p->options) && blob(io, native_cut) &&
-        state_fields(io, p, native, refs) && blob(io, haptic);
+        callbacks == services(&p->options) && blob(io, native_cut);
+    if (success && routes) routes->native_window_offset = io->offset - native_cut->size;
+    success = success && state_fields(io, p, native, refs,
+        routes ? &routes->logical_window_offset : NULL) && blob(io, haptic);
+    if (success && routes) routes->record_extent = io->offset;
+    return success;
 }
 bool qa_input_platform_checkpoint(const qa_input_platform *p, const qa_input_platform_checkpoint_refs *refs,
     qa_buffer *out, qa_error *error)
@@ -399,7 +407,7 @@ bool qa_input_platform_checkpoint(const qa_input_platform *p, const qa_input_pla
     qa_source_save_io io = {0};
     bool success = native_capture(p, &native_cut, NULL, error) &&
         qa_haptic_checkpoint(p->haptics, players, 4, &refs->haptics, &haptic, error) &&
-        qa_source_save_writer(&io, NULL, error) && envelope(&io, (qa_input_platform *)p, NULL, refs, &native_cut, &haptic) &&
+        qa_source_save_writer(&io, NULL, error) && envelope(&io, (qa_input_platform *)p, NULL, refs, &native_cut, &haptic, NULL) &&
         qa_source_save_finish(&io, out);
     qa_buffer_free(&native_cut); qa_buffer_free(&haptic); qa_source_save_dispose(&io);
     if (!success && error && error->code == QA_OK) fail(error, QA_ERROR_FORMAT, "invalid installed platform continuation");
@@ -491,9 +499,9 @@ bool qa_input_platform_restore(qa_input_platform *p, const qa_input_platform *ac
     qa_buffer haptic = {0};
     qa_source_save_io io = {0};
     bool success = candidate && guard && qa_source_save_reader(&io, NULL, bytes, error) &&
-        envelope(&io, candidate, active, refs, &guard->native_cut, &haptic) && qa_source_save_finish(&io, NULL) &&
+        envelope(&io, candidate, active, refs, &guard->native_cut, &haptic, guard) && qa_source_save_finish(&io, NULL) &&
         native_modes_read(active, &guard->native_cut, &candidate->window,
-            &guard->active_cut, &guard->desired, &guard->previous, error);
+            &guard->active_cut, &guard->desired, &guard->previous, &guard->native_window_offset, error);
     if ((!candidate || !guard) && error && error->code == QA_OK) fail(error, QA_ERROR_MEMORY, "allocating platform candidate");
     qa_haptic_player *players[4];
     if (success) {
@@ -544,7 +552,7 @@ bool qa_input_platform_handoff_abort(qa_input_platform_restore_guard *g, qa_erro
         input_native_modes desired = {0}, previous = {0};
         uint32_t window = g->active->window;
         bool success = native_modes_read(g->active, &g->active_cut, &window,
-            &current, &desired, &previous, error);
+            &current, &desired, &previous, NULL, error);
         qa_buffer_free(&current);
         if (!success || !input_platform_modes_apply(
                 g->previous.window ? SDL_GetWindowFromID(g->previous.window) : NULL,
@@ -567,12 +575,46 @@ bool qa_input_platform_restore_checkpoint(const qa_input_platform_restore_guard 
     qa_source_save_io io = {0};
     bool success = qa_haptic_checkpoint(p->haptics, players, 4, &refs->haptics, &haptic, error) &&
         qa_source_save_writer(&io, NULL, error) &&
-        envelope(&io, (qa_input_platform *)p, NULL, refs, &native_cut, &haptic) &&
+        envelope(&io, (qa_input_platform *)p, NULL, refs, &native_cut, &haptic, NULL) &&
         qa_source_save_finish(&io, out);
     qa_buffer_free(&haptic); qa_source_save_dispose(&io);
     if (!success && error && error->code == QA_OK)
         fail(error, QA_ERROR_FORMAT, "invalid detached platform continuation");
     return success;
+}
+bool qa_input_platform_restore_checkpoint_matches(const qa_input_platform_restore_guard *g,
+    qa_bytes saved, qa_bytes current, qa_error *error)
+{
+    if (!qa_input_platform_handoff_ready(g, error)) return false;
+    size_t first = g->native_window_offset, second = g->logical_window_offset;
+    if (!saved.data || !current.data || !g->record_extent || saved.size != g->record_extent || current.size != saved.size ||
+        second < first || second - first < sizeof(uint32_t) || second > saved.size ||
+        sizeof(uint32_t) > saved.size - second)
+        return fail(error, QA_ERROR_FORMAT, "platform continuation leaves its decoded window-route fields");
+    qa_bytes images[2] = {saved, current};
+    size_t offsets[2] = {first, second};
+    uint32_t windows[2][2] = {{0}};
+    for (size_t i = 0; i < 2; ++i) for (size_t j = 0; j < 2; ++j) {
+        qa_source_save_io io = {0};
+        bool success = qa_source_save_reader(&io, NULL,
+            (qa_bytes){images[i].data + offsets[j], sizeof(uint32_t)}, error) &&
+            qa_source_save_u32(&io, &windows[i][j]) && qa_source_save_finish(&io, NULL);
+        qa_source_save_dispose(&io);
+        if (!success) return false;
+    }
+    if (windows[0][0] != windows[0][1] ||
+        (windows[0][0] != 0) != (g->active->window != 0) ||
+        windows[1][0] != g->active->window || windows[1][1] != g->candidate->window)
+        return fail(error, QA_ERROR_FORMAT, "platform continuation differs from its qualified current window route");
+    for (size_t i = 0; i < saved.size;) {
+        if (i == first || i == second) { i += sizeof(uint32_t); continue; }
+        if (saved.data[i] != current.data[i]) {
+            qa_error_set(error, QA_ERROR_FORMAT, i, "platform continuation differs outside its qualified window route");
+            return false;
+        }
+        ++i;
+    }
+    return true;
 }
 void qa_input_platform_handoff(qa_input_platform_restore_guard *g)
 {
