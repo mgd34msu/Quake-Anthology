@@ -116,7 +116,11 @@ static bool traverse(qa_navigation *n, nav_prediction *prediction, qa_actor_id a
         *admitted = true;
         return true;
     }
-    if (nav_distance(cursor(route), edge->start) > 1) {
+    bool constructed_walk = edge->source.kind == QA_NAV_ORIGIN_CONSTRUCTED &&
+        edge->mode == QA_NAV_WALK && !edge->has_hint && !edge->has_entity;
+    /* Constructed walk centroids need not coincide with a platform's real surface.
+     * The complete physical prediction to the destination admits this edge. */
+    if (!constructed_walk && nav_distance(cursor(route), edge->start) > 1) {
         bool approach;
         if (!nav_predict(prediction, actor, cursor(route), edge->start,
                          edge->mode == QA_NAV_CROUCH ? QA_NAV_CROUCH : QA_NAV_WALK, route,
