@@ -1014,7 +1014,7 @@ bool application_native_q1_wire_emit(qa_application *app, const qa_builtin_event
             event->kind == QA_BUILTIN_MESSAGE ? QA_NQ_PRINT : QA_NQ_CENTERPRINT, error);
     case QA_BUILTIN_SOUND:
         if (event->provider != p->owner)
-            return application_fail(error, QA_ERROR_UNSUPPORTED, "Native Q1 sound belongs to another source content owner");
+            return true;
         if (!qa_q1_wire_emission_index(p->state.q1, false, event->resource, &index)) return true;
         message.op = event->flags & 1 ? QA_NQ_STATICSOUND : QA_NQ_SOUND;
         message.data.sound = (qa_q1_sound){.index = index, .channel = (uint32_t)event->channel,
