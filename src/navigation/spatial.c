@@ -1,7 +1,7 @@
 #include "internal.h"
 
-bool qa_navigation_nearest(qa_navigation *n, qa_actor_id actor, qa_vec3 point, float radius,
-                           uint32_t *out, bool *found, qa_error *e) {
+static bool nearest(qa_navigation *n, qa_actor_id actor, qa_vec3 point, float radius,
+                    bool geographic, uint32_t *out, bool *found, qa_error *e) {
     if (n == NULL || out == NULL || found == NULL || !qa_vec_finite(point) || !isfinite(radius) ||
         radius < 0) {
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Invalid navigation nearest-area query");
@@ -17,11 +17,17 @@ bool qa_navigation_nearest(qa_navigation *n, qa_actor_id actor, qa_vec3 point, f
         if (distance > best || !nav_node_profile(&n->graph->view.profile, node, &p))
             continue;
         bool allowed, clear;
-        if (!nav_node_allowed(n, actor, i, NULL, false, &allowed, e))
+        if (geographic)
+            allowed = nav_static_node(n, i, NULL);
+        else if (!nav_node_allowed(n, actor, i, NULL, false, &allowed, e))
             return false;
         if (!allowed)
             continue;
-        if (!nav_clear(&n->services, &p, actor, point, node->origin, false, &clear, e))
+        if (geographic) {
+            p.shape = (qa_trace_shape){.kind = QA_SHAPE_POINT};
+            p.policy.q1_hull = 0;
+        }
+        if (!nav_clear(&n->services, &p, actor, point, node->origin, geographic, &clear, e))
             return false;
         if (clear) {
             best = distance;
@@ -31,6 +37,10 @@ bool qa_navigation_nearest(qa_navigation *n, qa_actor_id actor, qa_vec3 point, f
     }
     return true;
 }
+bool qa_navigation_nearest(qa_navigation *n, qa_actor_id actor, qa_vec3 point, float radius,
+                           uint32_t *out, bool *found, qa_error *e) {
+    return nearest(n, actor, point, radius, false, out, found, e);
+}
 bool qa_navigation_area(qa_navigation *n, qa_actor_id actor, qa_vec3 point, uint32_t *out,
                         bool *found, qa_error *e) {
     if (n == NULL || out == NULL || found == NULL || !qa_vec_finite(point)) {
@@ -39,7 +49,7 @@ bool qa_navigation_area(qa_navigation *n, qa_actor_id actor, qa_vec3 point, uint
     }
     const qa_aas_view *aas = qa_nav_asset_aas(n->graph->view.asset);
     if (aas == NULL)
-        return qa_navigation_nearest(n, actor, point, 512, out, found, e);
+        return nearest(n, actor, point, 512, true, out, found, e);
     if (!qa_aas_point_area(aas, point, out, e))
         return false;
     *found = nav_node_index(n->graph, *out) != QA_NAV_NO_INDEX;
