@@ -468,7 +468,8 @@ bool application_network_q2_player_state(qa_application_network_q2 *owner, qa_ac
         value.gunframe = (uint32_t)entity.weapon.frame; value.gunskin = (uint32_t)entity.weapon.view_skin;
         if (!isfinite(entity.weapon.gun_rate) || entity.weapon.gun_rate < 0 || (double)entity.weapon.gun_rate > UINT32_MAX)
             return application_fail(error, QA_ERROR_FORMAT, "Q2 Source gun rate exceeds its wire field");
-        value.gunrate = (uint32_t)entity.weapon.gun_rate;
+        value.gunrate = owner->host.source.edition == QA_Q2_CLASSIC && entity.weapon.gun_rate == 10 ?
+            0 : (uint32_t)entity.weapon.gun_rate;
     }
     uint32_t health_icon, ammo_icon, armor_icon;
     if (!application_network_q2_resource(owner, 2, "i_health", &health_icon, error) || health_icon > INT16_MAX ||
