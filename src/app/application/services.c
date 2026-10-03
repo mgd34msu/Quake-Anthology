@@ -1092,8 +1092,11 @@ static bool physics_write(void *opaque, qa_actor_id actor,
             return qa_q1_game_physics_write(provider->state.q1, actor, value,
                                             error);
     }
-    if (provider != NULL && provider->kind == APPLICATION_PROVIDER_Q2)
-        return qa_q2_physics_write(provider->state.q2, actor, value, error);
+    if (provider != NULL && provider->kind == APPLICATION_PROVIDER_Q2) {
+        qa_physics_properties owned;
+        if (qa_q2_physics_read(provider->state.q2, actor, &owned))
+            return qa_q2_physics_write(provider->state.q2, actor, value, error);
+    }
     if (provider != NULL && provider->kind == APPLICATION_PROVIDER_QC)
         return application_qc_physics_write(provider, actor, value, error);
     if (actor.slot < application->control_capacity) {
