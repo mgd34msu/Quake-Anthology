@@ -4078,7 +4078,7 @@ static bool restore_source(void *context,qa_application *application,const qa_la
         source->primary!=(entities && !strcmp(entities->instance,selected->selection.instance)))
         return fail(error,QA_ERROR_FORMAT,"Decoded configuration product or primary role differs from its actual source");
     const qa_launch_choices *choices=qa_launch_snapshot_choices(candidate);
-    size_t physical_seats=source->primary && !manager->frontend->options.dedicated?
+    size_t physical_seats=(source->primary || source->seat_count) && !manager->frontend->options.dedicated?
         manager->frontend->options.seats:0;
     if (source->seat_count!=physical_seats || !choices || choices->seat_count<source->seat_count)
         return fail(error,QA_ERROR_FORMAT,"Decoded configuration lacks its actual authored seat roster");
