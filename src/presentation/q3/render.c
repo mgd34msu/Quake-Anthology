@@ -826,6 +826,34 @@ static bool selected_effect_ready(qa_q3_presentation *p, const qa_q3_presentatio
     return true;
 }
 
+static qa_vec3 weapon_vector(const qa_q3_scene_options *options,qa_vec3 value)
+{
+    const qa_q3_refdef *source=options->weapon_camera;
+    qa_vec3 local=qa_v3(qa_vec_dot(value,source->axis[0]),qa_vec_dot(value,source->axis[1]),
+        qa_vec_dot(value,source->axis[2]));
+    return qa_vec_add(qa_vec_add(qa_vec_scale(options->world.view.axis[0],local.x),
+        qa_vec_scale(options->world.view.axis[1],local.y)),qa_vec_scale(options->world.view.axis[2],local.z));
+}
+static qa_vec3 weapon_point(const qa_q3_scene_options *options,qa_vec3 value)
+{
+    return qa_vec_add(options->world.view.origin,weapon_vector(options,qa_vec_sub(value,options->weapon_camera->origin)));
+}
+static void place_view_weapon(const qa_q3_scene_options *options,qa_q3_ref_entity *entity)
+{
+    if(options->world.no_world || !(entity->flags&4))return;
+    if(options->weapon_camera) {
+        float previous_z=entity->origin.z;
+        entity->origin=weapon_point(options,entity->origin);
+        entity->old_origin=weapon_point(options,entity->old_origin);
+        entity->lighting_origin=weapon_point(options,entity->lighting_origin);
+        for(size_t i=0;i<3;++i)entity->axis[i]=weapon_vector(options,entity->axis[i]);
+        entity->shadow_plane+=entity->origin.z-previous_z;
+    }
+    entity->origin=qa_vec_add(entity->origin,options->weapon_offset);
+    entity->old_origin=qa_vec_add(entity->old_origin,options->weapon_offset);
+    entity->lighting_origin=qa_vec_add(entity->lighting_origin,options->weapon_offset);
+    entity->shadow_plane+=options->weapon_offset.z;
+}
 bool qa_q3_presentation_selected_effect(qa_q3_presentation *p,
     const qa_q3_presentation_assets *assets, const qa_q3_ref_entity *entity,
     int32_t source_time_ms, const qa_q3_scene_options *options, uint32_t order, qa_scene_frame *frame, qa_error *error)
@@ -838,12 +866,7 @@ bool qa_q3_presentation_selected_effect(qa_q3_presentation *p,
     qa_q3_ref_entity placed = *entity;
     if ((placed.flags & 4) && (options->world.view.clip_enabled ||
         (!options->world.no_world && options->supplemental_weapon))) return true;
-    if (!options->world.no_world && (placed.flags & 4)) {
-        placed.origin = qa_vec_add(placed.origin, options->weapon_offset);
-        placed.old_origin = qa_vec_add(placed.old_origin, options->weapon_offset);
-        placed.lighting_origin = qa_vec_add(placed.lighting_origin, options->weapon_offset);
-        placed.shadow_plane += options->weapon_offset.z;
-    }
+    place_view_weapon(options,&placed);
     if (placed.kind == QA_Q3_REF_MODEL) {
         const q3p_model *model;
         if (!q3p_model_get(assets, placed.model, &model, error)) return false;
@@ -1052,12 +1075,7 @@ static bool submit_queued_surfaces(qa_q3_presentation *p, const qa_q3_scene_opti
         if (entity.kind == QA_Q3_REF_PORTAL ||
             ((entity.flags & 4) && (options->world.view.clip_enabled ||
                 (!options->world.no_world && options->supplemental_weapon)))) continue;
-        if (!options->world.no_world && (entity.flags & 4)) {
-            entity.origin = qa_vec_add(entity.origin, options->weapon_offset);
-            entity.old_origin = qa_vec_add(entity.old_origin, options->weapon_offset);
-            entity.lighting_origin = qa_vec_add(entity.lighting_origin, options->weapon_offset);
-            entity.shadow_plane += options->weapon_offset.z;
-        }
+        place_view_weapon(options,&entity);
         uint32_t order = options->first_entity + (uint32_t)i;
         const qa_q3_presentation_assets *assets = p->source_entity_assets ? p->source_entity_assets[i] : p->options.assets;
         if (entity.kind == QA_Q3_REF_MODEL) {
@@ -1229,10 +1247,7 @@ bool qa_q3_presentation_supplement_draw(const qa_q3_supplement *r,const qa_q3_sc
         if(entity.kind==QA_Q3_REF_POLY){okay=q3p_fail(error,QA_ERROR_FORMAT,"R_AddEntitySurfaces: Bad reType");break;}
         if(entity.kind==QA_Q3_REF_PORTAL || ((entity.flags&4) &&
             (options->world.view.clip_enabled || (!options->world.no_world && options->supplemental_weapon))))continue;
-        if(!options->world.no_world && (entity.flags&4)){
-            entity.origin=qa_vec_add(entity.origin,options->weapon_offset);entity.old_origin=qa_vec_add(entity.old_origin,options->weapon_offset);
-            entity.lighting_origin=qa_vec_add(entity.lighting_origin,options->weapon_offset);entity.shadow_plane+=options->weapon_offset.z;
-        }
+        place_view_weapon(options,&entity);
         if(entity.kind==QA_Q3_REF_MODEL)okay=submit_model(p,cell.assets,cell.assets,cell.assets,
             &admitted_options,&entity,ordinal,NULL,true,error);
         else if(!(entity.flags&2) || options->world.view.clip_enabled)

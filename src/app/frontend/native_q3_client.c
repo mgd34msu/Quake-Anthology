@@ -21,6 +21,7 @@
 #include "source_restore.h"
 #include "visual_access.h"
 #include "selected_effects.h"
+#include "qc_messages.h"
 #include "qa/application_q3_asset_selection.h"
 #include "qa/q3_presentation_save.h"
 #include "qa/q3_assets_save.h"
@@ -457,6 +458,11 @@ static bool frame_settings(void *context,const q3n_native *core,
     if(!application_native_q3_client_frame_settings(row->view.client,commands->dm_flags,ragepro(row),
         (size_t)memory_remaining(row),false,false,0,out,e))return false;
     if(!status_visible(row))out->hud.draw_2d=false;
+    if(row->frontend->qc_messages) {
+        qa_application_qc_client_presentation qc; bool found=false;
+        if(!frontend_qc_messages_client_vitals(row->frontend->qc_messages,row->view.actor,&qc,&found,e))return false;
+        if(found)out->hud.draw_status=false;
+    }
     return frontend_native_q3_current(row);
 }
 static bool client_settings(void *context,const q3n_frame *f,bool loading,q3n_client_settings *out,qa_error *e)
@@ -727,6 +733,15 @@ static void end_frame(void *context)
 }
 static bool camera_ready(void *context,const q3n_frame *frame,qa_error *error)
 { return frontend_native_components_prepare(context,frame,error); }
+static bool camera_override(void *context,const q3n_frame *frame,
+    qa_application_camera_view *out,bool *found,qa_error *error)
+{
+    frontend_native_q3 *row=context;
+    if(!frontend_native_q3_cut(row,frame,error))return false;
+    *found=false;
+    return (!row->frontend->qc_messages || frontend_qc_messages_client_camera(row->frontend->qc_messages,
+        frame->viewing_actor,out,found,error)) && frontend_native_q3_cut(row,frame,error);
+}
 static bool before_render(void *context,const q3n_frame *f,qa_error *e)
 {
     frontend_native_q3 *row=context;
@@ -751,7 +766,8 @@ bool frontend_native_q3_core_options(frontend_native_q3 *row,q3n_native_options 
             .point_contents=point_contents,.mark_fragments=mark_fragments,.event_replacement=event},
         .weapons={.context=row,.view_replacement=view_weapon,.held_replacement=held_weapon},
         .view={.context=row->view.client,.set_view_size=application_native_q3_client_set_view_size,
-            .set_third_person_angle_value=application_native_q3_client_set_orbit_angle,.print=print_client},
+            .set_third_person_angle_value=application_native_q3_client_set_orbit_angle,.print=print_client,
+            .camera_context=row,.camera_override=camera_override},
         .player_state={.context=row,.print=print_row},
         .hud={.context=row,.ui=row->frontend->seats[row->view.seat].ui,.presentation_seat=row->view.seat,
             .milliseconds=milliseconds,.load_deferred=load_deferred,.client_command=hud_command},

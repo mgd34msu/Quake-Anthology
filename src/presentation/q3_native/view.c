@@ -222,6 +222,14 @@ bool q3n_view_frame(q3n_view *o,q3n_frame *f,const q3n_view_settings *s,const q3
         else if(ok)first_person(o,f,s,g);
         if(f->compiled?f->compiled->hyperspace:f->remote?f->remote->prediction.hyperspace:v->hyperspace)r->flags|=1|4;
     }
+    if(ok && o->options.camera_override) {
+        qa_application_camera_view camera; bool found=false;
+        ok=o->options.camera_override(o->options.camera_context,f,&camera,&found,e) && q3ne_current(f,e);
+        if(ok && found) {
+            r->origin=qa_vec_add(camera.origin,camera.view_offset);
+            f->view_angles=camera.angles;
+        }
+    }
     q3nh_axis(f->view_angles,r->axis);
     if(ok)ok=fov(o,f,s,in_water,e) && q3ne_current(f,e);
     o->busy=false; return ok;

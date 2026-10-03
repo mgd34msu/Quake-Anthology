@@ -136,6 +136,7 @@ typedef struct qa_q3_scene_options {
     float lod_scale, lod_bias, ambient_scale, directed_scale, near_clip;
     qa_scene_rail_options rail;
     qa_vec3 weapon_offset;
+    const qa_q3_refdef *weapon_camera; /* Original source camera, borrowed during this submission only. */
     bool split_screen, supplemental_weapon;
     bool no_entities, no_portals, portal_only, no_refresh;
 } qa_q3_scene_options;

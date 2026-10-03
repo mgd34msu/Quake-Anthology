@@ -24,6 +24,8 @@ typedef struct q3n_view_options {
     bool (*set_view_size)(void *, int32_t, qa_error *);
     bool (*set_third_person_angle_value)(void *, float, qa_error *);
     void (*print)(void *, const char *);
+    void *camera_context;
+    bool (*camera_override)(void *, const q3n_frame *, qa_application_camera_view *, bool *, qa_error *);
 } q3n_view_options;
 typedef struct q3n_view_state {
     /* Prediction error/hyperspace belong to this owner for local GAME only.

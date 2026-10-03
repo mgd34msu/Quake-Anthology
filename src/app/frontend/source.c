@@ -24,6 +24,7 @@
 #include "campaign.h"
 #include "campaign_cinematic.h"
 #include "qc_rerelease_events.h"
+#include "qc_messages.h"
 #include "qa/q3_assets_save.h"
 #include "qa/q3_assets_custody.h"
 #include "qa/material_library_save.h"
@@ -237,7 +238,15 @@ static bool status_visible(void *context,const qa_q3_host *host,bool *out,qa_err
     if (!linked || (lease->status_host ? lease->status_host!=host || !lease->source->role_operations :
         !qa_application_q3_configuration_host_entered(lease->source->application,&lease->namespaces.source,host)))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Status permission lacks its retained Draw or entered source scope");
-    *out=lease->status_visible; return true;
+    *out=lease->status_visible;
+    qa_actor_id actor;
+    if(*out && lease->source->frontend->qc_messages &&
+        frontend_seat_actor_read(lease->source->frontend,lease->source->seat,&actor)) {
+        qa_application_qc_client_presentation qc; bool found=false;
+        if(!frontend_qc_messages_client_vitals(lease->source->frontend->qc_messages,actor,&qc,&found,error))return false;
+        if(found)*out=false;
+    }
+    return true;
 }
 static bool lease_dispose(frontend_source_lease *lease)
 {
@@ -887,6 +896,17 @@ static bool prepare_view(void *context,const qa_q3_refdef *definition,qa_q3_scen
     source_render_scope *scope=source->render_scope;
     if (!render_current(source,scope) || scope->definition!=definition)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Source view preparation requires its live application lease");
+    qa_actor_id viewer;
+    if(!options->world.no_world && !(source->companion && source->companion->entered) &&
+        source->frontend->qc_messages && frontend_seat_actor_read(source->frontend,source->seat,&viewer)) {
+        qa_application_camera_view camera; bool found=false;
+        if(!frontend_qc_messages_client_camera(source->frontend->qc_messages,viewer,&camera,&found,error))return false;
+        if(found) {
+            options->weapon_camera=definition;
+            options->world.view.origin=qa_vec_add(camera.origin,camera.view_offset);
+            frontend_camera_axes(camera.angles,options->world.view.axis);
+        }
+    }
     if (!frontend_source_prepare_scene(source->frontend,source->application,source->seat,definition,options,error)) return false;
     if (scope->effects && !frontend_source_effects_prepare(scope->effects,definition,options,error)) return false;
     if (scope->lease->equipment &&

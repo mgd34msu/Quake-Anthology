@@ -531,6 +531,7 @@ static bool client_presentation(const qa_json_document *doc, qa_json_id node,
     const qa_qc_program *program, struct application_qc_profile *profile, qa_error *error)
 {
     if (node == QA_JSON_NONE) return true;
+    if (qa_json_type(doc, node) == QA_JSON_ARRAY && !qa_json_size(doc, node)) return true;
     if (qa_json_type(doc, node) != QA_JSON_OBJECT || !profile->clients)
         return application_fail(error, QA_ERROR_FORMAT, "QC client presentation requires declared clients");
     application_qc_client_presentation *out = &profile->presentation;
