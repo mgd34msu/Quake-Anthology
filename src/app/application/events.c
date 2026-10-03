@@ -10,7 +10,7 @@
 #include "unified_q2_native_events.h"
 #include "guest_q3_weapons_services.h"
 #include "guest_native_q2_private.h"
-#include "qa/application_network_q2.h"
+#include "network_q2_private.h"
 
 #include <inttypes.h>
 #include <math.h>
@@ -589,11 +589,11 @@ bool application_emit_q2_player(application_provider *provider,
     if (!storage) return false;
     application->q2_player_events = storage;
     if (!application_event_journal_reserve(application,error)) return false;
-    qa_application_network_q2_recipient_view recipient = {0};
-    bool has_connection = false;
+    const qa_application_network_q2_recipient_view *recipients = NULL;
+    size_t recipient_count = 0;
     if (event->kind == QA_Q2_PLAYER_PRINT && provider->q2_recipient_binding &&
-        !qa_application_network_q2_recipient(application, provider->owner, event->actor,
-            &recipient, &has_connection, error)) return false;
+        !application_network_q2_print_recipients(provider, event->actor, &application->event_arena,
+            &recipients, &recipient_count, error)) return false;
     if (!application_unified_q2_native_player(provider, event, error)) return false;
     qa_q2_player_event copied = *event;
     if (!event_text(application, event->text, &copied.text, error) ||
@@ -620,9 +620,7 @@ bool application_emit_q2_player(application_provider *provider,
     }
     storage[application->q2_player_event_count] = (qa_application_q2_player_event){
         .provider = provider->owner, .time_ns = qa_session_elapsed(application->session),
-        .event = copied, .connection = recipient.client, .connection_seat = recipient.seat,
-        .connection_epoch = recipient.connection_epoch, .remote_index = recipient.remote_index,
-        .has_connection = has_connection};
+        .event = copied, .recipients = recipients, .recipient_count = recipient_count};
     application_event_journal_append(application, APPLICATION_EVENT_Q2_PLAYER,
         application->q2_player_event_count++, provider->owner);
     return true;

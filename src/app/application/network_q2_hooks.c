@@ -1,6 +1,7 @@
 #include "network_q2_private.h"
 #include "native_q2_visibility.h"
 #include "qa/application_network.h"
+#include "qa/network_local.h"
 #include "qa/text.h"
 #include "native_q2_wire_engine.h"
 
@@ -340,6 +341,7 @@ bool qa_application_network_q2_recipient(qa_application *app, qa_actor_owner sou
     if (provider->kind == APPLICATION_PROVIDER_Q2) {
         if (!provider->state.q2 || !qa_q2_player_read(provider->state.q2, actor, &player))
             return application_fail(error, QA_ERROR_ARGUMENT, "Q2 recipient has no physical Source player");
+        if (!player.connected) return true;
     } else {
         if (!engine || engine->provider != provider || !engine->initialized || !engine->map_ready ||
             engine->world != app->world || !provider->state.native.host ||
@@ -381,6 +383,69 @@ bool qa_application_network_q2_recipient(qa_application *app, qa_actor_owner sou
         !qa_actors_get(qa_session_actors(app->session), actor))
         return application_fail(error, QA_ERROR_ARGUMENT, "Q2 recipient changed its authentic connection group");
     *out = value; *present = true;
+    return true;
+}
+
+bool application_network_q2_print_recipients(application_provider *provider, qa_actor_id actor,
+    qa_arena *arena, const qa_application_network_q2_recipient_view **out, size_t *count, qa_error *error)
+{
+    struct application_q2_recipient_binding *binding = provider ? provider->q2_recipient_binding : NULL;
+    if (!provider || !arena || !out || !count || !provider->constructed || !provider->attached ||
+        provider->close_pending ||
+        !binding || binding->provider != provider)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q2 print lost its actual Source recipient lifetime");
+    *out = NULL; *count = 0;
+    if (!binding->users) return true;
+    if (actor.registry) {
+        qa_application_network_q2_recipient_view recipient;
+        bool present;
+        if (!qa_application_network_q2_recipient(provider->application, provider->owner,
+            actor, &recipient, &present, error)) return false;
+        if (!present) return true;
+        qa_application_network_q2_recipient_view *copy = qa_arena_alloc(arena, sizeof(*copy), _Alignof(qa_application_network_q2_recipient_view), error);
+        if (!copy) return false;
+        *copy = recipient; *out = copy; *count = 1; return true;
+    }
+    if (!qa_actor_id_equal(actor, (qa_actor_id){0}))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q2 broadcast print has invalid actor provenance");
+    const qa_net_connections *connections = qa_network_connections(binding->bindings.runtime);
+    uint32_t cursor = 0; const qa_net_client *client;
+    size_t capacity = 0;
+    while (qa_net_connections_next(connections, &cursor, &client)) {
+        if (client->phase != QA_NET_ACTIVE) continue;
+        if (client->seat_count > SIZE_MAX / sizeof(qa_application_network_q2_recipient_view) - capacity)
+            return application_fail(error, QA_ERROR_MEMORY, "Q2 broadcast recipient extent overflows");
+        capacity += client->seat_count;
+    }
+    if (!capacity) return true;
+    qa_application_network_q2_recipient_view *copies = qa_arena_alloc(arena,
+        capacity * sizeof(*copies), _Alignof(qa_application_network_q2_recipient_view), error);
+    if (!copies) return false;
+    cursor = 0;
+    while (qa_net_connections_next(connections, &cursor, &client)) {
+        if (client->phase != QA_NET_ACTIVE) continue;
+        for (size_t i = 0; i < client->seat_count; ++i) {
+            qa_actor_id player;
+            bool found = qa_application_remote_player_actor(provider->application, client->id, client->seats[i].seat, &player);
+            if (!found && client->attachment == QA_NET_LOCAL_SEAT) {
+                qa_network_local_player local;
+                if (!qa_network_local_player_read(binding->bindings.runtime, client->id, &local, error)) return false;
+                player = local.actor; found = true;
+            }
+            if (!found) continue;
+            qa_application_network_q2_recipient_view recipient;
+            bool present;
+            if (!qa_application_network_q2_recipient(provider->application, provider->owner,
+                player, &recipient, &present, error)) return false;
+            if (!present) continue;
+            if (*count == capacity || !qa_net_client_id_equal(recipient.client, client->id) ||
+                recipient.seat.owner != client->seats[i].seat.owner || recipient.seat.index != client->seats[i].seat.index ||
+                recipient.remote_index != client->seats[i].remote_index)
+                return application_fail(error, QA_ERROR_ARGUMENT, "Q2 broadcast changed its authentic recipient group");
+            copies[(*count)++] = recipient;
+        }
+    }
+    if (*count) *out = copies;
     return true;
 }
 

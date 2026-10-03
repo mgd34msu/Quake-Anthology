@@ -5,6 +5,7 @@
 #include "unified_output.h"
 #include "save_content.h"
 #include "qa/json.h"
+#include "qa/application_network_q2.h"
 
 #include <limits.h>
 #include <math.h>
@@ -666,21 +667,40 @@ static bool q2_player_field(qa_source_save_io *io, event_store *store,
         !qa_source_save_bool(io, &event->shield) || !qa_source_save_bool(io, &event->first)) return false;
     event->respawn_status = (qa_q2_respawn_status)status;
     event->hand = (qa_q2_hand)hand;
-    if (!qa_source_save_bool(io, &record->has_connection) ||
-        !qa_source_save_u64(io, &record->connection.owner) ||
-        !qa_source_save_u64(io, &record->connection.generation) ||
-        !qa_source_save_u32(io, &record->connection.slot) ||
-        !qa_source_save_u64(io, &record->connection_seat.owner) ||
-        !qa_source_save_u32(io, &record->connection_seat.index) ||
-        !qa_source_save_u64(io, &record->connection_epoch) ||
-        !qa_source_save_u8(io, &record->remote_index)) return false;
-    if (record->has_connection ? (event->kind != QA_Q2_PLAYER_PRINT || !event->actor.registry ||
-            !record->connection.owner || !record->connection.generation ||
-            !record->connection_seat.owner || !record->connection_epoch || record->remote_index >= QA_Q2_MAX_SEATS) :
-        (record->connection.owner || record->connection.generation || record->connection.slot ||
-            record->connection_seat.owner || record->connection_seat.index ||
-            record->connection_epoch || record->remote_index))
-        return event_fail(io, QA_ERROR_FORMAT, "Q2 player print lost its historical transport admission");
+    if (!qa_source_save_count(io, &record->recipient_count,
+        SIZE_MAX / sizeof(qa_application_network_q2_recipient_view))) return false;
+    if (record->recipient_count && event->kind != QA_Q2_PLAYER_PRINT)
+        return event_fail(io, QA_ERROR_FORMAT, "Non-print Q2 player event has transport recipients");
+    if (event->actor.registry && record->recipient_count > 1)
+        return event_fail(io, QA_ERROR_FORMAT, "Unicast Q2 print has multiple recipients");
+    qa_application_network_q2_recipient_view *decoded = NULL;
+    if (io->direction == QA_SOURCE_SAVE_READ) {
+        if (record->recipient_count > (io->input.size - io->offset) / 41)
+            return event_fail(io, QA_ERROR_FORMAT, "Truncated Q2 print recipient receipts");
+        decoded = arena_array(io, store, record->recipient_count, sizeof(*decoded), _Alignof(qa_application_network_q2_recipient_view));
+        if (record->recipient_count && !decoded) return false;
+        record->recipients = decoded;
+    } else if (record->recipient_count && !record->recipients)
+        return event_fail(io, QA_ERROR_FORMAT, "Q2 print has no retained recipient storage");
+    for (size_t i = 0; i < record->recipient_count; ++i) {
+        qa_application_network_q2_recipient_view value = decoded ?
+            (qa_application_network_q2_recipient_view){0} : record->recipients[i];
+        if (!actor_field(io, &value.actor) || !qa_source_save_u64(io, &value.client.owner) ||
+            !qa_source_save_u64(io, &value.client.generation) || !qa_source_save_u32(io, &value.client.slot) ||
+            !qa_source_save_u64(io, &value.seat.owner) || !qa_source_save_u32(io, &value.seat.index) ||
+            !qa_source_save_u64(io, &value.connection_epoch) || !qa_source_save_u8(io, &value.remote_index)) return false;
+        if (!value.actor.registry || !value.client.owner || !value.client.generation || !value.seat.owner ||
+            !value.connection_epoch || value.remote_index >= QA_Q2_MAX_SEATS ||
+            (event->actor.registry && !qa_actor_id_equal(event->actor, value.actor)))
+            return event_fail(io, QA_ERROR_FORMAT, "Q2 print lost its historical transport admission");
+        for (size_t j = 0; j < i; ++j)
+            if (qa_actor_id_equal(record->recipients[j].actor, value.actor) ||
+                (qa_net_client_id_equal(record->recipients[j].client, value.client) &&
+                    (record->recipients[j].remote_index == value.remote_index ||
+                        (record->recipients[j].seat.owner == value.seat.owner && record->recipients[j].seat.index == value.seat.index))))
+                return event_fail(io, QA_ERROR_FORMAT, "Q2 print repeats its captured recipient");
+        if (decoded) decoded[i] = value;
+    }
     return true;
 }
 

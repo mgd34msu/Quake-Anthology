@@ -232,33 +232,45 @@ bool frontend_network_q2_print_packet(const qa_application_q2_player_event *sour
     if (!source || !client || !codec || !out || out->data || out->size || !capacity || !epoch ||
         source->event.kind != QA_Q2_PLAYER_PRINT || !source->event.text ||
         source->event.level < 0 || source->event.level > UINT8_MAX ||
+        (source->recipient_count && !source->recipients) ||
         !client->seats || !client->seat_count || client->seat_count > QA_Q2_MAX_SEATS ||
         client->protocol.kind != codec->protocol.kind || client->protocol.revision != codec->protocol.revision)
         return fail(error, QA_ERROR_ARGUMENT, "Q2 print requires its copied Source text and admitted codec");
-    if (!source->has_connection || !qa_net_client_id_equal(source->connection, client->id) ||
-        source->connection_epoch != epoch) return true;
-    size_t seat = client->seat_count;
-    for (size_t i = 0; i < client->seat_count; ++i)
-        if (client->seats[i].seat.owner == source->connection_seat.owner &&
-            client->seats[i].seat.index == source->connection_seat.index &&
-            client->seats[i].remote_index == source->remote_index) {
-            if (seat != client->seat_count)
-                return fail(error, QA_ERROR_FORMAT, "Q2 print repeats its admitted recipient seat");
-            seat = i;
+    bool seats[QA_Q2_MAX_SEATS] = {0}; size_t eligible = 0;
+    for (size_t i = 0; i < client->seat_count; ++i) {
+        const qa_net_seat_binding *seat = client->seats + i;
+        if (seat->remote_index >= QA_Q2_MAX_SEATS)
+            return fail(error, QA_ERROR_FORMAT, "Q2 print lost its actual recipient wire seat");
+        for (size_t r = 0; r < source->recipient_count; ++r) {
+            const qa_application_network_q2_recipient_view *recipient = source->recipients + r;
+            if (!qa_net_client_id_equal(recipient->client, client->id) || recipient->connection_epoch != epoch ||
+                recipient->seat.owner != seat->seat.owner || recipient->seat.index != seat->seat.index ||
+                recipient->remote_index != seat->remote_index) continue;
+            if (seats[i]) return fail(error, QA_ERROR_FORMAT, "Q2 print repeats its admitted recipient seat");
+            seats[i] = true; ++eligible;
         }
-    if (seat == client->seat_count) return true;
+    }
+    if (!eligible) return true;
     bool kex = codec->protocol.kind == QA_NET_Q2KEX_2023;
-    if ((!kex && client->seat_count != 1) || source->remote_index >= QA_Q2_MAX_SEATS)
-        return fail(error, QA_ERROR_FORMAT, "Q2 print lost its actual recipient wire seat");
+    if (!kex && client->seat_count != 1)
+        return fail(error, QA_ERROR_FORMAT, "Q2 print needs its genuine single-seat wire");
     qa_buffer bytes = {.data = malloc(capacity)};
     if (!bytes.data) return fail(error, QA_ERROR_MEMORY, "Allocating admitted Q2 Source print packet");
     q2_event_packet packet = {.codec = *codec};
     qa_net_writer_init(&packet.writer, bytes.data, capacity, error);
     qa_q2_server_event event = {.kind = QA_Q2_SVC_PRINT,
         .data.print = {(uint8_t)source->event.level, source->event.text}};
-    bool ok = (!kex || marker(&packet, (uint8_t)(source->remote_index + 1u))) &&
-        qa_q2_server_event_write(&packet.codec, &packet.writer, &event) &&
-        (!kex || marker(&packet, 1));
+    bool ok;
+    if (!kex) ok = qa_q2_server_event_write(&packet.codec, &packet.writer, &event);
+    else if (eligible == client->seat_count)
+        ok = marker(&packet, 0) && qa_q2_server_event_write(&packet.codec, &packet.writer, &event) && marker(&packet, 1);
+    else {
+        ok = true;
+        for (size_t i = 0; ok && i < client->seat_count; ++i)
+            if (seats[i]) ok = marker(&packet, (uint8_t)(client->seats[i].remote_index + 1u)) &&
+                qa_q2_server_event_write(&packet.codec, &packet.writer, &event);
+        if (ok) ok = marker(&packet, 1);
+    }
     if (!ok) { qa_buffer_free(&bytes); return false; }
     bytes.size = qa_net_writer_size(&packet.writer); *out = bytes;
     return true;
