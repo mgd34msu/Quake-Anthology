@@ -2495,7 +2495,7 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
                 !qa_q1_character_attach(character->state.q1, actor, error)) return false;
             if (!qw_spectator && arsenal->kind == APPLICATION_PROVIDER_Q1 &&
                 !qa_q1_player_attach(arsenal->state.q1, actor,
-                    map_source->product->family != QA_GAME_Q1,
+                    map_source->kind != APPLICATION_PROVIDER_Q1,
                     error)) return false;
             if (!qw_spectator && character->kind == APPLICATION_PROVIDER_Q2 &&
                 !qa_q2_player_admit(character->state.q2, actor, &(qa_q2_player_admission){
@@ -2549,7 +2549,7 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
             return false;
         if (!reserved_player && arsenal->kind == APPLICATION_PROVIDER_Q1 &&
             !qa_q1_player_attach(arsenal->state.q1, actor,
-                map_source->product->family != QA_GAME_Q1,
+                map_source->kind != APPLICATION_PROVIDER_Q1,
                 error))
             return false;
         if (!reserved_player && arsenal->kind == APPLICATION_PROVIDER_Q2 && arsenal != character && arsenal != map_source &&
