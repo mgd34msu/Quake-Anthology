@@ -35,7 +35,8 @@ bool application_native_q1_wire_world(qa_application *, qa_actor_owner,
 bool application_native_q1_wire_clientdata(qa_application *, qa_actor_id, qa_q1_clientdata *, qa_error *);
 bool application_native_q1_wire_status(qa_application *, qa_actor_owner,
     qa_application_network_q1_status_player [255], size_t *, qa_error *);
-bool application_native_q1_wire_chat(qa_application *, qa_actor_id, bool,
+/* The caller holds this receipt through every use of the borrowed Source name. */
+bool application_native_q1_wire_chat(application_native_q1_wire_source *, qa_actor_id, bool,
     const char **, qa_actor_id [255], size_t *, qa_error *);
 bool application_native_q1_wire_pause(qa_application *, qa_actor_id, qa_buffer *, bool *, qa_error *);
 bool application_native_q1_wire_name(qa_application *, qa_actor_id, const char *, qa_error *);

@@ -385,7 +385,13 @@ bool qa_application_network_q1_status(qa_application *app, qa_actor_owner owner,
 bool qa_application_network_q1_chat_recipients(qa_application *app, qa_actor_id sender,
     bool team_only, const char **name, qa_actor_id recipients[255], size_t *count, qa_error *error)
 {
-    if (q1_native(app)) return application_native_q1_wire_chat(app, sender, team_only, name, recipients, count, error);
+    if (q1_native(app)) {
+        application_native_q1_wire_source source = {0};
+        if (!application_native_q1_wire_begin(app, 0, &source, error)) return false;
+        bool okay = application_native_q1_wire_chat(&source, sender, team_only, name, recipients, count, error);
+        application_native_q1_wire_end(&source);
+        return okay;
+    }
     if (!name || !recipients || !count)
         return application_fail(error, QA_ERROR_ARGUMENT, "Missing Q1 source chat outputs");
     uint32_t slot; struct application_qc_state *engine = q1_source(app, sender, &slot, error);

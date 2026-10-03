@@ -56,11 +56,11 @@ bool application_native_q1_chat(application_provider *provider,
     if (command->argc < 2) return true;
     if (!command->args_text)
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q1 chat lost its Source command arguments");
-    qa_q1_game_operation operation = {0};
-    if (!qa_q1_game_operation_begin(provider->state.q1, &operation, error)) return false;
+    application_native_q1_wire_source source = {0};
+    if (!application_native_q1_wire_retain(provider, &source, error)) return false;
     ++owner->calls;
     qa_actor_id recipients[255]; size_t count = 0; const char *name = NULL;
-    bool okay = application_native_q1_wire_chat(provider->application, command->context.actor,
+    bool okay = application_native_q1_wire_chat(&source, command->context.actor,
         team_only, &name, recipients, &count, error);
     char line[64]; size_t prefix = 0;
     if (okay) {
@@ -91,11 +91,12 @@ bool application_native_q1_chat(application_provider *provider,
         qa_command_context context = command->context;
         context.owner = provider->owner; context.origin = QA_COMMAND_SERVER; context.actor = (qa_actor_id){0};
         application_console_print(provider->application, &context, line + 1);
-        if (!qa_q1_game_operation_live(&operation))
+        if (!qa_q1_wire_receipt_current(&source.receipt) || provider->close_pending ||
+            application_world_provider(provider->application, QA_ROLE_ENTITIES, "") != provider)
             okay = application_fail(error, QA_ERROR_ARGUMENT, "Native Q1 chat Source retired during delivery");
     }
     --owner->calls;
-    qa_q1_game_operation_end(&operation);
+    application_native_q1_wire_end(&source);
     return okay;
 }
 

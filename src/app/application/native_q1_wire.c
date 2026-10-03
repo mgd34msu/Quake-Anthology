@@ -436,38 +436,46 @@ static qa_net_protocol_id protocol(void) { return (qa_net_protocol_id){.kind = Q
 static const char *text(qa_application *app, qa_string_id id) {
     return id ? qa_strings_cstr(qa_session_strings(app->session), id) : "";
 }
+static bool source_current(application_native_q1_wire_source *source, qa_clock_kind dialect,
+    qa_error *error) {
+    application_provider *p = source ? source->provider : NULL;
+    qa_application *app = p ? p->application : NULL;
+    if (!app || app->destroy_requested || app->state != QA_APPLICATION_RUNNING ||
+        p->kind != APPLICATION_PROVIDER_Q1 || !p->constructed || !p->attached ||
+        p->close_pending || !p->launch || p->launch->selection.clock.kind != dialect ||
+        application_world_provider(app, QA_ROLE_ENTITIES, "") != p ||
+        !qa_session_safe(app->session) || qa_session_faulted(app->session) || !qa_world_idle(app->world) ||
+        !qa_q1_wire_receipt_current(&source->receipt) || source->receipt.operation.game != p->state.q1)
+        return application_fail(error, QA_ERROR_UNSUPPORTED,
+                                "Original native Q1 wire requires its installed primary source owner");
+    if (source->receipt.owner != p->owner || !source->receipt.client_slots || source->receipt.client_slots > 255 ||
+        source->receipt.entity_slots <= source->receipt.client_slots ||
+        source->receipt.entity_slots > UINT16_MAX + 1u ||
+        source->receipt.model_count > 256 || source->receipt.sound_count > 256)
+        return application_fail(error, QA_ERROR_UNSUPPORTED,
+                                "Native Q1 source exceeds the original protocol extent");
+    if (!p->native_q1_wire || !p->native_q1_wire->readers ||
+        p->native_q1_wire->generation != source->receipt.generation ||
+        p->native_q1_wire->model_count != source->receipt.model_count ||
+        p->native_q1_wire->sound_count != source->receipt.sound_count)
+        return application_fail(error, QA_ERROR_UNSUPPORTED,
+                                "Native Q1 wire resources are not admitted for this source generation");
+    return true;
+}
 static bool source_begin(qa_application *app, qa_actor_owner owner, qa_clock_kind dialect,
     application_native_q1_wire_source *out, qa_error *error) {
     application_provider *p = app ? application_world_provider(app, QA_ROLE_ENTITIES, "") : NULL;
-    if (!out || !app || app->destroy_requested || app->state != QA_APPLICATION_RUNNING ||
-        !p || p->kind != APPLICATION_PROVIDER_Q1 || !p->constructed || !p->attached ||
-        p->close_pending || !p->launch || p->launch->selection.clock.kind != dialect ||
-        (owner && p->owner != owner) || !qa_session_safe(app->session) ||
-        qa_session_faulted(app->session) || !qa_world_idle(app->world) ||
+    if (!out || !p || !p->native_q1_wire || (owner && p->owner != owner) ||
         !application_native_q1_console_idle(p))
         return application_fail(error, QA_ERROR_UNSUPPORTED,
                                 "Original native Q1 wire requires its installed primary source owner");
-    qa_q1_wire_receipt receipt = {0};
-    if (!qa_q1_wire_read_begin(p->state.q1, &receipt, error)) return false;
-    if (receipt.owner != p->owner || !receipt.client_slots || receipt.client_slots > 255 ||
-        receipt.entity_slots <= receipt.client_slots || receipt.entity_slots > UINT16_MAX + 1u ||
-        receipt.model_count > 256 || receipt.sound_count > 256) {
-        qa_q1_wire_read_end(&receipt);
-        return application_fail(error, QA_ERROR_UNSUPPORTED,
-                                "Native Q1 source exceeds the original protocol extent");
-    }
-    if (!p->native_q1_wire || p->native_q1_wire->generation != receipt.generation ||
-        p->native_q1_wire->model_count != receipt.model_count ||
-        p->native_q1_wire->sound_count != receipt.sound_count) {
-        qa_q1_wire_read_end(&receipt);
-        return application_fail(error, QA_ERROR_UNSUPPORTED, "Native Q1 wire resources are not admitted for this source generation");
-    }
-    if (p->native_q1_wire->readers == SIZE_MAX) {
-        qa_q1_wire_read_end(&receipt);
+    if (p->native_q1_wire->readers == SIZE_MAX)
         return application_fail(error, QA_ERROR_MEMORY, "Q1 source reader extent exhausted");
+    if (!application_native_q1_wire_retain(p, out, error)) return false;
+    if (!source_current(out, dialect, error)) {
+        application_native_q1_wire_end(out);
+        return false;
     }
-    ++p->native_q1_wire->readers;
-    *out = (application_native_q1_wire_source){.provider = p, .receipt = receipt};
     return true;
 }
 bool application_native_q1_wire_begin(qa_application *app, qa_actor_owner owner,
@@ -1310,23 +1318,22 @@ bool application_native_q1_wire_bounds(qa_application *app, qa_actor_id recipien
     else if (error && error->code == QA_OK) application_fail(error, QA_ERROR_NOT_FOUND, "Native Q1 source body is not linked");
     application_native_q1_wire_end(&source); return okay;
 }
-bool application_native_q1_wire_chat(qa_application *app, qa_actor_id sender, bool team_only,
+bool application_native_q1_wire_chat(application_native_q1_wire_source *source, qa_actor_id sender, bool team_only,
     const char **name, qa_actor_id recipients[255], size_t *out_count, qa_error *error) {
     if (!name || !recipients || !out_count)
         return application_fail(error, QA_ERROR_ARGUMENT, "Missing native Q1 source chat outputs");
-    application_native_q1_wire_source source = {0};
-    if (!application_native_q1_wire_begin(app, 0, &source, error)) return false;
+    if (!source_current(source, QA_CLOCK_NETQUAKE, error)) return false;
     uint32_t slot; qa_q1_source_client_view from;
-    bool okay = client(&source, sender, &slot, error) &&
-        qa_q1_source_client_read(source.provider->state.q1, sender, &from);
-    qa_cvars *cvars = application_native_q1_console_registry(source.provider);
+    bool okay = client(source, sender, &slot, error) &&
+        qa_q1_source_client_read(source->provider->state.q1, sender, &from);
+    qa_cvars *cvars = application_native_q1_console_registry(source->provider);
     const qa_cvar_view *teamplay = cvars ? qa_cvars_find(cvars, "teamplay") : NULL;
     bool filtered = team_only && teamplay && teamplay->number != 0;
     qa_actor_id values[255]; size_t count = 0;
-    for (uint32_t i = 0; okay && i < source.receipt.client_slots; ++i) {
+    for (uint32_t i = 0; okay && i < source->receipt.client_slots; ++i) {
         qa_actor_id actor; qa_q1_source_client_view view;
-        if (!qa_q1_source_client_actor(source.provider->state.q1, i, &actor)) continue;
-        if (!qa_q1_source_client_read(source.provider->state.q1, actor, &view)) {
+        if (!qa_q1_source_client_actor(source->provider->state.q1, i, &actor)) continue;
+        if (!qa_q1_source_client_read(source->provider->state.q1, actor, &view)) {
             okay = application_fail(error, QA_ERROR_NOT_FOUND, "Native Q1 chat lost its physical source recipient"); break;
         }
         if (!filtered || view.team == from.team) values[count++] = actor;
@@ -1334,7 +1341,7 @@ bool application_native_q1_wire_chat(qa_application *app, qa_actor_id sender, bo
     if (okay) { memcpy(recipients, values, count * sizeof(*values)); *out_count = count; *name = from.name; }
     else if (error && error->code == QA_OK)
         application_fail(error, QA_ERROR_NOT_FOUND, "Native Q1 chat lost its actual source sender");
-    application_native_q1_wire_end(&source); return okay;
+    return okay;
 }
 bool application_native_q1_wire_pause(qa_application *app, qa_actor_id actor,
     qa_buffer *out, bool *changed, qa_error *error) {
