@@ -2424,10 +2424,6 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
             !qa_q3_source_bind_client(map_source->state.q3,
                 record->client_slot, actor, error))
             return false;
-        if (map_source->kind == APPLICATION_PROVIDER_Q1 &&
-            !qa_q1_source_bind_client(map_source->state.q1,
-                record->client_slot, actor, error))
-            return false;
         if (map_source->kind == APPLICATION_PROVIDER_Q3 && record->bot &&
             phase == PLAYER_ADMISSION_COMPLETE) {
             uint32_t flags;
@@ -2485,11 +2481,19 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
         if (original_q3_body &&
             (!application_q3_guest_client_reserve(character, record->client_slot, actor, error) ||
              !qa_world_body_write(application->world, actor, &body, error))) return false;
-        if (!reserved_player && !qw_spectator && map_source->kind == APPLICATION_PROVIDER_Q1 &&
-            !qa_q1_source_inventory_initialize(map_source->state.q1, actor, error)) return false;
+        application_provider *q1_sources[] = {map_source, character};
+        for (size_t i = 0; i < sizeof(q1_sources) / sizeof(*q1_sources); ++i) {
+            application_provider *source = q1_sources[i];
+            if (source->kind != APPLICATION_PROVIDER_Q1 ||
+                (i && source == q1_sources[0])) continue;
+            if (!qa_q1_source_bind_client(source->state.q1, record->client_slot, actor, error) ||
+                (!reserved_player && source == map_source && !qw_spectator &&
+                 !qa_q1_source_inventory_initialize(source->state.q1, actor, error)) ||
+                (!reserved_player &&
+                 !application_native_q1_wire_client_userinfo(source, actor, error))) return false;
+        }
         if (!reserved_player && map_source->kind == APPLICATION_PROVIDER_Q1 &&
-            (!application_native_q1_wire_client_userinfo(map_source, actor, error) ||
-             !q1_player_current(application, map_source, character, arsenal,
+            (!q1_player_current(application, map_source, character, arsenal,
                  actor, false, &ordinal, error) ||
              !qa_combat_read_traits(application->combat, actor, &combat, error))) return false;
         if (!reserved_player && !bind_q3_player_roles(application, record, arsenal, error)) return false;
