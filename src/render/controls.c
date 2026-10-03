@@ -225,7 +225,7 @@ static bool current(const qa_render_controls *controls)
     }
     return false;
 }
-static bool callback_owner(const qa_render_controls *controls)
+static bool idle_owner(const qa_render_controls *controls)
 {
     return current(controls) || (controls && controls->backend == QA_RENDER_CONTROLS_GL &&
         qa_gl_render_controls_callback_candidate(controls));
@@ -308,7 +308,7 @@ bool qa_material_source_material_metadata(const qa_material_source_scratch *sour
     const qa_material **out, qa_error *error)
 {
     const qa_render_controls *owner = source ? source->owner : NULL;
-    if (!out || !current(owner) || &owner->source != source || source->entered)
+    if (!out || !idle_owner(owner) || &owner->source != source || source->entered)
         return fail(error, "Source shader metadata requires its actual non-entered allocation");
     *out = source->material;
     return true;
@@ -324,7 +324,7 @@ bool qa_material_source_lightmap_read(const qa_material_source_scratch *source,
 }
 bool qa_render_controls_source_images_metadata(const qa_render_controls *owner,size_t *out,qa_error *error)
 {
-    if (!out || !current(owner) || owner->source.entered)
+    if (!out || !idle_owner(owner) || owner->source.entered)
         return fail(error,"Source image metadata requires its actual non-entered renderer allocation");
     *out=owner->backend==QA_RENDER_CONTROLS_GL?qa_gl_source_images_metadata_count(owner):qa_cpu_source_images_metadata_count(owner);
     return true;
@@ -344,14 +344,14 @@ bool qa_material_source_lightmap_metadata(const qa_material_source_scratch *sour
     const qa_scene_image **out, qa_error *error)
 {
     const qa_render_controls *owner = source ? source->owner : NULL;
-    if (!out || !current(owner) || &owner->source != source || source->entered)
+    if (!out || !idle_owner(owner) || &owner->source != source || source->entered)
         return fail(error, "Source lightmap metadata requires its actual non-entered allocation");
     *out = source->lightmap;
     return true;
 }
 bool qa_render_controls_source_texture_metadata(const qa_render_controls *owner,size_t *out,qa_error *error)
 {
-    if (!out || !current(owner) || owner->source.entered)
+    if (!out || !idle_owner(owner) || owner->source.entered)
         return fail(error,"Source texture metadata lost its actual non-entered renderer");
     *out=owner->backend==QA_RENDER_CONTROLS_GL?qa_gl_source_texture_metadata_count(owner):
         qa_cpu_source_texture_metadata_count(owner);
@@ -371,7 +371,7 @@ bool qa_material_source_world_metadata(const qa_material_source_scratch *source,
     const qa_scene_world **out, qa_error *error)
 {
     const qa_render_controls *owner = source ? source->owner : NULL;
-    if (!out || !current(owner) || &owner->source != source || source->entered)
+    if (!out || !idle_owner(owner) || &owner->source != source || source->entered)
         return fail(error, "Source world metadata requires its actual non-entered allocation");
     *out = source->world;
     return true;
@@ -399,7 +399,7 @@ bool qa_render_controls_source_runtime_bind(qa_render_controls *owner,
     bool (*diagnostics)(void *, qa_scene_source_diagnostics *, qa_error *), void *diagnostics_context,
     bool (*frame_policy)(void *, qa_scene_frame *, qa_error *), void *frame_context, qa_error *error)
 {
-    if (!callback_owner(owner) || owner->ticket || owner->image_ticket || owner->source.entered || !diagnostics || !frame_policy ||
+    if (!idle_owner(owner) || owner->ticket || owner->image_ticket || owner->source.entered || !diagnostics || !frame_policy ||
         (owner->source.runtime_diagnostics && (owner->source.runtime_diagnostics != diagnostics ||
             owner->source.runtime_diagnostics_context != diagnostics_context ||
             owner->source.runtime_video_frame != video_frame || owner->source.runtime_video_context != video_context ||
@@ -414,7 +414,7 @@ bool qa_material_source_scene_bank_metadata(const qa_material_source_scratch *so
     const qa_q3_source_scene_bank **out, qa_error *error)
 {
     const qa_render_controls *owner = source ? source->owner : NULL;
-    if (!out || !current(owner) || &owner->source != source || source->entered)
+    if (!out || !idle_owner(owner) || &owner->source != source || source->entered)
         return fail(error, "Source bank metadata requires its actual non-entered allocation");
     *out = source->scene_bank; return true;
 }
@@ -951,7 +951,7 @@ qa_material_source_scratch *qa_render_controls_source_scratch(qa_render_controls
 const qa_material_source_scratch *qa_render_controls_source_metadata(const qa_render_controls *controls,
     qa_error *error)
 {
-    if (!current(controls) || controls->source.owner != controls || controls->source.entered) {
+    if (!idle_owner(controls) || controls->source.owner != controls || controls->source.entered) {
         fail(error, "Source metadata requires its actual non-entered renderer owner"); return NULL;
     }
     return &controls->source;
@@ -1230,7 +1230,7 @@ uint32_t qa_render_strip_vertex(const qa_render_strip *strip, size_t ordinal)
 bool qa_render_controls_source_print_bind(qa_render_controls *controls,void (*print)(void *,const char *),
     void *context,qa_error *error)
 {
-    if (!callback_owner(controls) || controls->ticket || controls->image_ticket || controls->source.entered || !print)
+    if (!idle_owner(controls) || controls->ticket || controls->image_ticket || controls->source.entered || !print)
         return fail(error,"Source renderer printing requires its actual idle physical owner");
     controls->source_print=print; controls->source_print_context=context; return true;
 }

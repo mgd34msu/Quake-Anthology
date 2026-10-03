@@ -382,8 +382,8 @@ bool frontend_startup_advance(qa_frontend *frontend,bool *complete,qa_error *err
             *complete=!qa_application_startup_pending(frontend->application);
             if (!*complete) return true;
         } else {
-            return frontend_network_create(frontend,error) &&
-                (frontend->options.dedicated || frontend_game_menu(&frontend->seats[0],error));
+            if (!frontend->options.network_host && !frontend_network_create(frontend,error)) return false;
+            return frontend->options.dedicated || frontend_game_menu(&frontend->seats[0],error);
         }
     }
     if (!frontend_campaign_sync(frontend,error) || !frontend_view_bindings_apply_restored(frontend,error)) return false;
