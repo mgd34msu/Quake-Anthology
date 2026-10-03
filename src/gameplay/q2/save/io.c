@@ -128,7 +128,7 @@ bool q2_save_ref(q2_save_io *io, qa_q2_saved_reference *s) {
     Q2B(present);
     if (!s->present) { if (io->reading) s->actor = (qa_saved_actor_id){0}; return true; }
     Q2S(u32, actor.slot); Q2T(actor.generation);
-    return (s->actor.generation && s->actor.slot < io->game->capacity) ||
+    return s->actor.slot < io->game->capacity ||
            q2_save_fail(io, "Invalid Q2 saved actor identity");
 }
 bool q2_save_count(q2_save_io *io, size_t *count, size_t minimum, size_t element_size, void **data) {
