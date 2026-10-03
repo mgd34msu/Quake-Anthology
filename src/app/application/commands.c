@@ -340,6 +340,7 @@ qa_command_result application_command_fallback(void *opaque,
         return QA_COMMAND_FAILED;
     const qa_application_startup_hooks *hooks=application->startup_hooks;
     if (invocation->console==application->console && !command.context.owner &&
+        qa_console_invocation_current(invocation->console,invocation) &&
         hooks && hooks->engine_source_command) {
         bool routed=false;
         if (!hooks->engine_source_command(hooks->context,application,invocation,&routed,error))
