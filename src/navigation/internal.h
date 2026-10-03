@@ -38,6 +38,7 @@ struct qa_nav_workspace {
     qa_aas_query *aas;
     float *costs;
     uint32_t *parents, *path, *repair;
+    size_t *queue_positions;
     int8_t *grounded, *waiting;
     uint8_t *rejected;
     nav_queue_entry *queue;
@@ -61,6 +62,8 @@ bool nav_workspace_prepare(qa_nav_workspace *, const qa_nav_graph *, qa_error *)
 bool nav_reserve(void **, size_t *, size_t, size_t, qa_error *);
 bool nav_queue_push(qa_nav_workspace *, nav_queue_entry, qa_error *);
 bool nav_queue_pop(qa_nav_workspace *, nav_queue_entry *);
+void nav_queue_clear(qa_nav_workspace *);
+void nav_queue_remove(qa_nav_workspace *, uint32_t);
 void nav_refresh(qa_navigation *);
 void nav_estimates_free(qa_navigation *);
 bool nav_aas_estimate_topology(qa_nav_graph *, qa_error *);

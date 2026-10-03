@@ -172,7 +172,7 @@ static bool graph_cache(qa_navigation *n, qa_nav_workspace *w, uint32_t goal, ui
         return false;
     uint32_t index = nav_node_index(g, goal);
     c->seconds[index] = 0;
-    w->queue_count = 0;
+    nav_queue_clear(w);
     if (!nav_queue_push(w, (nav_queue_entry){index, 0}, e)) {
         cache_free(c);
         return false;

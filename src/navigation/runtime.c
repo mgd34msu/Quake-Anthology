@@ -206,6 +206,7 @@ void qa_nav_workspace_destroy(qa_nav_workspace *w) {
     free(w->parents);
     free(w->path);
     free(w->repair);
+    free(w->queue_positions);
     free(w->grounded);
     free(w->waiting);
     free(w->rejected);
@@ -216,18 +217,21 @@ void qa_nav_workspace_destroy(qa_nav_workspace *w) {
 bool nav_workspace_prepare(qa_nav_workspace *w, const qa_nav_graph *g, qa_error *e) {
     size_t n = g->view.node_count, m = g->view.edge_count;
     if (w->node_capacity < n) {
-        if (n > SIZE_MAX / sizeof(float) || n > SIZE_MAX / sizeof(uint32_t))
+        if (n > SIZE_MAX / sizeof(float) || n > SIZE_MAX / sizeof(uint32_t) ||
+            n > SIZE_MAX / sizeof(size_t))
             goto memory;
         float *costs = malloc(n * sizeof(*costs));
         uint32_t *parents = malloc(n * sizeof(*parents)), *path = malloc(n * sizeof(*path)),
                  *repair = malloc(n * sizeof(*repair));
+        size_t *positions = malloc(n * sizeof(*positions));
         int8_t *grounded = malloc(n), *waiting = malloc(n);
-        if (costs == NULL || parents == NULL || path == NULL || repair == NULL || grounded == NULL ||
-            waiting == NULL) {
+        if (costs == NULL || parents == NULL || path == NULL || repair == NULL || positions == NULL ||
+            grounded == NULL || waiting == NULL) {
             free(costs);
             free(parents);
             free(path);
             free(repair);
+            free(positions);
             free(grounded);
             free(waiting);
             goto memory;
@@ -236,12 +240,14 @@ bool nav_workspace_prepare(qa_nav_workspace *w, const qa_nav_graph *g, qa_error 
         free(w->parents);
         free(w->path);
         free(w->repair);
+        free(w->queue_positions);
         free(w->grounded);
         free(w->waiting);
         w->costs = costs;
         w->parents = parents;
         w->path = path;
         w->repair = repair;
+        w->queue_positions = positions;
         w->grounded = grounded;
         w->waiting = waiting;
         w->node_capacity = n;
@@ -259,45 +265,57 @@ bool nav_workspace_prepare(qa_nav_workspace *w, const qa_nav_graph *g, qa_error 
     }
     if (m != 0)
         memset(w->rejected, 0, m);
-    w->queue_count = 0;
+    nav_queue_clear(w);
     return true;
 memory:
     qa_error_set(e, QA_ERROR_MEMORY, 0, "Allocating retained navigation search state");
     return false;
 }
-bool nav_queue_push(qa_nav_workspace *w, nav_queue_entry entry, qa_error *e) {
-    if (!nav_reserve((void **)&w->queue, &w->queue_capacity, w->queue_count + 1, sizeof(*w->queue),
-                     e))
-        return false;
-    size_t index = w->queue_count++;
-    while (index != 0) {
+void nav_queue_clear(qa_nav_workspace *w) {
+    for(size_t i=0;i<w->node_capacity;++i) w->queue_positions[i]=SIZE_MAX;
+    w->queue_count=0;
+}
+static void queue_assign(qa_nav_workspace *w,size_t index,nav_queue_entry entry) {
+    bool upward=index!=0 && entry.cost<w->queue[(index-1)/2].cost;
+    while(upward && index!=0) {
         size_t parent = (index - 1) / 2;
         if (w->queue[parent].cost <= entry.cost)
             break;
         w->queue[index] = w->queue[parent];
+        w->queue_positions[w->queue[index].node]=index;
         index = parent;
     }
-    w->queue[index] = entry;
-    return true;
-}
-bool nav_queue_pop(qa_nav_workspace *w, nav_queue_entry *out) {
-    if (w->queue_count == 0)
-        return false;
-    *out = w->queue[0];
-    nav_queue_entry tail = w->queue[--w->queue_count];
-    if (w->queue_count == 0)
-        return true;
-    size_t index = 0;
-    while (index < w->queue_count / 2) {
+    while(!upward && index<w->queue_count/2) {
         size_t child = index * 2 + 1;
         if (child + 1 < w->queue_count && w->queue[child + 1].cost < w->queue[child].cost)
             ++child;
-        if (tail.cost <= w->queue[child].cost)
+        if (entry.cost <= w->queue[child].cost)
             break;
         w->queue[index] = w->queue[child];
+        w->queue_positions[w->queue[index].node]=index;
         index = child;
     }
-    w->queue[index] = tail;
+    w->queue[index]=entry;w->queue_positions[entry.node]=index;
+}
+bool nav_queue_push(qa_nav_workspace *w, nav_queue_entry entry, qa_error *e) {
+    size_t index=w->queue_positions[entry.node];
+    if(index==SIZE_MAX) {
+        if(!nav_reserve((void **)&w->queue,&w->queue_capacity,w->queue_count+1,sizeof(*w->queue),e))
+            return false;
+        index=w->queue_count++;
+    }
+    queue_assign(w,index,entry);return true;
+}
+void nav_queue_remove(qa_nav_workspace *w,uint32_t node) {
+    size_t index=w->queue_positions[node];
+    if(index==SIZE_MAX) return;
+    w->queue_positions[node]=SIZE_MAX;
+    nav_queue_entry tail=w->queue[--w->queue_count];
+    if(index<w->queue_count) queue_assign(w,index,tail);
+}
+bool nav_queue_pop(qa_nav_workspace *w, nav_queue_entry *out) {
+    if(!w->queue_count) return false;
+    *out=w->queue[0];nav_queue_remove(w,out->node);
     return true;
 }
 bool nav_route_point(qa_nav_route *route, qa_vec3 point, qa_error *e) {

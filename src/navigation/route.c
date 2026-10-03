@@ -30,6 +30,7 @@ static bool repair_edge(qa_navigation *n, qa_nav_workspace *w, const qa_nav_rout
         return relax_edge(n, w, q, index, e);
     size_t count = 1;
     w->repair[0] = to;
+    nav_queue_remove(w,to);
     w->costs[to] = INFINITY;
     w->parents[to] = QA_NAV_NO_INDEX;
     for (size_t node = 0; node < count; ++node) {
@@ -38,6 +39,7 @@ static bool repair_edge(qa_navigation *n, qa_nav_workspace *w, const qa_nav_rout
             uint32_t child_edge = g->outgoing[i], child = nav_node_index(g, g->edges[child_edge].to);
             if (w->parents[child] != child_edge) continue;
             w->repair[count++] = child;
+            nav_queue_remove(w,child);
             w->costs[child] = INFINITY;
             w->parents[child] = QA_NAV_NO_INDEX;
         }
