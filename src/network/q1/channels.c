@@ -145,7 +145,7 @@ bool qa_qw_channel_create(qa_q1_channel_side side, uint16_t qport, size_t messag
     if (!channel) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Cannot allocate QuakeWorld channel"); return false; }
     channel->wire = malloc(message_bytes + 10);
     if (!channel->wire) { free(channel); qa_error_set(error, QA_ERROR_MEMORY, 0, "Cannot allocate QuakeWorld wire buffer"); return false; }
-    if (!qa_net_toggle_create(message_bytes, 0, &channel->reliable, error)) {
+    if (!qa_net_toggle_create(message_bytes, 1, &channel->reliable, error)) {
         free(channel->wire); free(channel); return false;
     }
     channel->capacity = message_bytes; channel->side = side; channel->qport = qport;
