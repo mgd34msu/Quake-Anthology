@@ -49,6 +49,7 @@
 #include "campaign.h"
 #include "campaign_cinematic.h"
 #include "ui_features.h"
+#include "source_prompt.h"
 #include "qc_rerelease_events.h"
 #include "equipment_media_save.h"
 #include "equipment_q3_save.h"
@@ -1540,6 +1541,10 @@ static bool discard_services(void *context,qa_application *candidate,qa_error *e
     for (unsigned i=0;i<f->options.seats;++i)
         if (f->seats[i].input && !qa_input_seat_release(f->seats[i].input,
             (double)f->wall_time_ns/1000000.0,error)) return false;
+    /* The application is destroyed after this callback returns. Retire its
+     * prompt callbacks while the physical UI and input parents still exist. */
+    for (unsigned i=0;i<f->options.seats;++i)
+        if (!frontend_source_prompt_destroy(&f->seats[i].source_prompt,error)) return false;
     qa_input_platform_destroy(f->input); f->input=NULL;
     qa_input_console_destroy(f->input_commands); f->input_commands=NULL;
     for (unsigned i=0;i<f->options.seats;++i) {
