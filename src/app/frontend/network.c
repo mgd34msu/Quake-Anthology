@@ -489,7 +489,8 @@ bool frontend_network_client_configuration_primary(const qa_frontend *f,const qa
         if(!frontend_network_unified_client_metadata_read(n->unified_client_service,&view,NULL)) return false;
         held=view.physical;
     } else return false;
-    return source->descriptor==held.source.descriptor && source->context.receiver==held.source.context.receiver &&
+    return frontend_client_source_descriptor_equal(source->descriptor,held.source.descriptor) &&
+        source->context.receiver==held.source.context.receiver &&
         source->context.entity_owner==held.source.context.entity_owner && source->context.lifetime==held.source.context.lifetime &&
         source->context.seat==held.source.context.seat &&
         source->context.physical_seat==held.source.context.physical_seat &&

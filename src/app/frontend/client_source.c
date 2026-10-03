@@ -37,6 +37,11 @@ static bool linked(const frontend_client_source *s)
 }
 static const qa_launch_instance *descriptor(const frontend_client_source *s)
 { return s ? qa_launch_instance_lease_view(s->metadata) : NULL; }
+bool frontend_client_source_descriptor_equal(const qa_launch_instance *a, const qa_launch_instance *b)
+{
+    return a && b && a->storage == b->storage && a->state == b->state &&
+        a->content == b->content && a->roles == b->roles && qa_sha256_equal(&a->identity, &b->identity);
+}
 static qa_cvars *registry(const frontend_client_source *s)
 { return s && s->registry ? frontend_client_registry_cvars(s->registry) : s ? s->pending_cvars : NULL; }
 static bool tuple(const qa_command_context *a, const qa_command_context *b, bool script)

@@ -9,6 +9,7 @@
 #include "qa/persistence_content.h"
 
 typedef struct frontend_client_source frontend_client_source;
+bool frontend_client_source_descriptor_equal(const qa_launch_instance *, const qa_launch_instance *);
 typedef struct frontend_client_source_options {
     qa_launch_client_metadata metadata;
     qa_network_runtime *runtime;

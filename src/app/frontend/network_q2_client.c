@@ -519,7 +519,8 @@ bool frontend_network_q2_client_configuration_primary(const frontend_network_q2_
     const qa_application_client_source *source)
 {
     const qa_application_client_source *held=owner?&owner->application_source:NULL;
-    return source && owner && !owner->closing && owner->app_created && source->descriptor==held->descriptor &&
+    return source && owner && !owner->closing && owner->app_created &&
+        frontend_client_source_descriptor_equal(source->descriptor,held->descriptor) &&
         source->runtime==owner->options.runtime && source->context.receiver==held->context.receiver &&
         source->context.seat==held->context.seat && source->context.physical_seat==owner->options.physical_seat &&
         source->context.console==held->context.console && source->context.cvars==held->context.cvars &&
