@@ -279,7 +279,7 @@ bool application_native_q1_wire_language_prepare(qa_application *app, qa_actor_i
     const char *language, application_native_q1_wire_language_ticket **out, qa_error *error) {
     if (!out) return application_fail(error, QA_ERROR_ARGUMENT, "Missing Q1 language admission ticket");
     *out = NULL;
-    application_provider *primary = app ? application_world_provider(app, QA_ROLE_ENTITIES, "") : NULL;
+    application_provider *primary = app ? application_provider_for(app, actor, QA_ROLE_CHARACTER, "") : NULL;
     if (!primary || primary->kind != APPLICATION_PROVIDER_Q1 || !qa_q1_wire_enabled(primary->state.q1)) return true;
     uint32_t slot;
     if (!language || !*language || !qa_q1_native_client_slot(primary->state.q1, actor, &slot, error))
@@ -300,7 +300,7 @@ bool application_native_q1_wire_language_prepare(qa_application *app, qa_actor_i
     }
     uint32_t current_slot;
     if (app->destroy_requested || primary->close_pending ||
-        application_world_provider(app, QA_ROLE_ENTITIES, "") != primary ||
+        application_provider_for(app, actor, QA_ROLE_CHARACTER, "") != primary ||
         !qa_q1_native_client_slot(primary->state.q1, actor, &current_slot, error) || current_slot != slot) {
         application_native_q1_wire_language_abort(ticket);
         return application_fail(error, QA_ERROR_ARGUMENT, "Q1 language recipient changed during catalog admission");
@@ -379,7 +379,7 @@ bool qa_application_language_ready_is(const qa_application_language_ticket *held
     if (!ticket || !app || ticket->application!=app || app->destroy_requested || !app->session ||
         !language || !ticket->language || strcmp(ticket->language,language) ||
         !qa_actor_id_equal(ticket->actor,actor) || !qa_actors_get(qa_session_actors(app->session),actor) ||
-        !ticket->pending || application_world_provider(ticket->application,QA_ROLE_ENTITIES,"")!=ticket->primary)
+        !ticket->pending || application_provider_for(ticket->application,actor,QA_ROLE_CHARACTER,"")!=ticket->primary)
         return false;
     uint32_t slot;
     if (!ticket->primary || ticket->primary->kind!=APPLICATION_PROVIDER_Q1 ||
