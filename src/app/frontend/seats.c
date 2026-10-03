@@ -76,6 +76,16 @@ static bool source_input(void *context, qa_input_seat *input, const qa_input_eve
     return !frontend_seat_launch_id_read(seat->frontend,seat->id,&launch_seat) ||
         qa_application_guest_input(seat->frontend->application, launch_seat, event, consumed, error);
 }
+static bool player_sources(void *,uint32_t,qa_ui_menu *,qa_error *);
+static bool player_sources_register(frontend_seat *seat,const size_t *saved_ordinal,qa_error *error)
+{
+    if (seat->player_sources_registered) return true;
+    qa_ui_menu_registration registration={.id=FRONTEND_PLAYER_SOURCES,.context=seat,.factory=player_sources};
+    bool ok=saved_ordinal?qa_ui_restore_menu_register(seat->ui,&registration,*saved_ordinal,error):
+        qa_ui_register(seat->ui,&registration,error);
+    if (ok) seat->player_sources_registered=true;
+    return ok;
+}
 bool frontend_menu_open(frontend_seat *seat, qa_ui_id menu, qa_error *error)
 {
     bool handled; uint32_t launch_seat;
@@ -83,6 +93,7 @@ bool frontend_menu_open(frontend_seat *seat, qa_ui_id menu, qa_error *error)
         if (!seat->mods && !qa_ui_mods_create(seat->ui, seat->frontend->application, FRONTEND_MODS, &seat->mods, error)) return false;
         if (!qa_ui_mods_cancel(seat->mods, error)) return false;
     }
+    if (menu==FRONTEND_PLAYER_SOURCES && !player_sources_register(seat,NULL,error)) return false;
     return (!frontend_seat_launch_id_read(seat->frontend,seat->id,&launch_seat) ||
         qa_application_guest_menu_set(seat->frontend->application, launch_seat,
             QA_APPLICATION_GUEST_MENU_NONE, &handled, error)) &&
@@ -332,7 +343,7 @@ static bool player_sources(void *context,uint32_t id,qa_ui_menu *out,qa_error *e
         const qa_launch_seat *player=choices->seats+physical;
         if (!player->local || player->bot) continue;
         uint32_t logical; qa_actor_id actor;
-        bool enabled=!frontend_network_remote(f) && !qa_application_startup_pending(f->application) &&
+        bool enabled=!f->player_source_draft && !frontend_network_remote(f) && !qa_application_startup_pending(f->application) &&
             frontend_seat_launch_id_read(f,physical,&logical) && logical==player->id &&
             qa_application_player_actor(f->application,logical,&actor);
         for (size_t role=0;role<3;++role) {
@@ -486,11 +497,11 @@ bool frontend_seats_prepare_restored(qa_frontend *frontend, qa_error *error)
     }
     return true;
 }
-static bool seats_create(qa_frontend *frontend, const bool *mods, bool restoring, qa_error *error)
+static bool seats_create(qa_frontend *frontend, const bool *mods, const qa_bytes *saved_ui, bool restoring, qa_error *error)
 {
     if (!frontend || !frontend->application || !frontend->seats || !frontend->classic ||
         !frontend->primary || !frontend->ui_images || frontend->stepping ||
-        (restoring && !mods))
+        (restoring && (!mods || !saved_ui)))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "seat construction requires actual restored resource owners");
     for (unsigned i = 0; i < frontend->options.seats; ++i)
         if (frontend->seats[i].ui || (restoring ?
@@ -519,9 +530,7 @@ static bool seats_create(qa_frontend *frontend, const bool *mods, bool restoring
         if (!qa_ui_create(&ui, &seat->ui, error) || !qa_ui_register(seat->ui,
             &(qa_ui_menu_registration){.id = FRONTEND_HOME, .context = seat, .factory = home}, error) ||
             !qa_ui_register(seat->ui, &(qa_ui_menu_registration){.id = FRONTEND_SETTINGS,
-                .context = seat, .factory = settings, .open = settings_open}, error) ||
-            !qa_ui_register(seat->ui, &(qa_ui_menu_registration){.id=FRONTEND_PLAYER_SOURCES,
-                .context=seat,.factory=player_sources},error)) return false;
+                .context = seat, .factory = settings, .open = settings_open}, error)) return false;
         frontend_startup_server_browser_menus browser={200,201,202};
         if (!frontend_startup_server_browser_create(seat,&browser,&seat->server_browser,error) ||
             !frontend_startup_downloads_create(seat,203,204,&seat->downloads_menu,error) ||
@@ -542,13 +551,22 @@ static bool seats_create(qa_frontend *frontend, const bool *mods, bool restoring
             FRONTEND_ASSISTANCE, &seat->assistance, error)) return false;
         if (restoring && mods[i] && !qa_ui_mods_create_restored(seat->ui, frontend->application,
             FRONTEND_MODS, &seat->mods, error)) return false;
+        if (restoring) {
+            bool present; size_t ordinal;
+            if (!qa_ui_checkpoint_menu_read(saved_ui[i],i,FRONTEND_PLAYER_SOURCES,&present,&ordinal,error) ||
+                (present && !player_sources_register(seat,&ordinal,error))) return false;
+        }
     }
     return true;
 }
 bool frontend_seats_create(qa_frontend *frontend, qa_error *error)
-{ return seats_create(frontend, NULL, false, error); }
-bool frontend_seats_create_restored(qa_frontend *frontend, const bool *mods, qa_error *error)
-{ return seats_create(frontend, mods, true, error); }
+{ return seats_create(frontend, NULL, NULL, false, error); }
+bool frontend_seats_create_restored(qa_frontend *frontend, const bool *mods, qa_bytes presentation, qa_error *error)
+{
+    qa_bytes saved_ui[QA_INPUT_LOCAL_SEATS]={0};
+    return frontend_seats_saved_ui(frontend,presentation,saved_ui,error) &&
+        seats_create(frontend,mods,saved_ui,true,error);
+}
 bool frontend_seats_destroy(qa_frontend *frontend, qa_error *error)
 {
     for (unsigned i = 0; i < frontend->options.seats; ++i) {
@@ -569,6 +587,7 @@ bool frontend_seats_destroy(qa_frontend *frontend, qa_error *error)
         seat->rankings = NULL;
         if (!qa_ui_destroy(seat->ui, 0, error)) return false;
         seat->ui = NULL;
+        seat->player_sources_registered=false;
         qa_seat_console_destroy(seat->console); seat->console = NULL;
         qa_input_seat_destroy(seat->input); seat->input = NULL;
         frontend_player_retire(seat);

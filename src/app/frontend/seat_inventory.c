@@ -123,6 +123,20 @@ static bool fields(qa_source_save_io *io,qa_frontend *f,bool input,seat_record *
     }
     return true;
 }
+bool frontend_seats_saved_ui(qa_frontend *f,qa_bytes bytes,qa_bytes *out,qa_error *error)
+{
+    if (!f || !f->source_restoring || f->capture || f->stepping || !out ||
+        !f->options.seats || f->options.seats>QA_INPUT_LOCAL_SEATS)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Saved UI topology requires the actual restoring seat owner");
+    seat_record records[QA_INPUT_LOCAL_SEATS]={0}; qa_source_save_io io;
+    if (!qa_source_save_reader(&io,NULL,bytes,error)) return false;
+    bool ok=fields(&io,f,false,records) && qa_source_save_finish(&io,NULL);
+    if (ok) for (unsigned i=0;i<f->options.seats;++i) out[i]=records[i].components[SEAT_UI];
+    qa_source_save_dispose(&io);
+    if (!ok && error && error->code==QA_OK)
+        frontend_fail(error,QA_ERROR_FORMAT,"Saved seat presentation topology is inconsistent");
+    return ok;
+}
 static bool catalog_encode(void *context,const qa_catalog *catalog,uint64_t *out,qa_error *error)
 {
     qa_application_content_graph *graph=qa_application_content_graph_read(((frontend_seat *)context)->frontend->application);

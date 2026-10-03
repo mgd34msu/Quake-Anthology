@@ -1194,6 +1194,7 @@ bool frontend_capture_begin(qa_frontend *f, frontend_capture **out, qa_error *er
 {
     if(f && (!frontend_cinematic_roles_prune(f,error) || !frontend_renderer_worlds_prune(f,error) || !frontend_renderer_materials_prune(f,error))) return false;
     if (!f || !out || *out || f->stepping || f->preparing || f->round || f->shutdown || f->source_restoring ||
+        f->player_source_draft ||
         !f->application || qa_application_client_prepare_active(f->application) ||
         !frontend_owners_checkpoint_ready(f) || !frontend_seat_callbacks_checkpoint_ready(f,error) ||
         !frontend_save_commands_capture_ready(f) || !frontend_cinematic_capture_ready(f))

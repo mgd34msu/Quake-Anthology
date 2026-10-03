@@ -1244,7 +1244,8 @@ static bool import_components(frontend_persistence *operation, qa_error *error)
     ok=ok && frontend_event_restore(f,operation->audio,&events,section(set,SECTION_EVENTS),error) &&
         frontend_tools_checkpoint_resolvers(f,&tools,&llm,error) && frontend_tools_restore(f,&tools,&llm,section(set,SECTION_TOOLS),error) &&
         frontend_save_commands_restore(f,section(set,SECTION_SAVE_COMMANDS),error) &&
-        (f->options.dedicated || frontend_seats_create_restored(f,frontend_topology_mods(operation->topology),error)) &&
+        (f->options.dedicated || frontend_seats_create_restored(f,frontend_topology_mods(operation->topology),
+            section(set,SECTION_SEATS_PRESENTATION),error)) &&
         frontend_material_movie_inventory_restore_unified(f,operation->space,&frame,&audio,operation->q3,section(set,SECTION_MATERIAL_MOVIES),error) &&
         frontend_unified_graph_audio_prefix(operation->unified_graph,&unified,error) &&
         optional_decode("QFQK",!f->options.dedicated,section(set,SECTION_Q1_SKY),&sky,error) &&

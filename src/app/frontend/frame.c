@@ -403,7 +403,8 @@ bool qa_frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *erro
         frontend->frame_number == UINT64_MAX ||
         elapsed_ns > UINT64_MAX - frontend->wall_time_ns)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "invalid frontend frame duration or reentry");
-    if (!frontend_shared_resource_policy_live_retire(frontend,error)) return false;
+    if (!frontend_shared_resource_policy_live_retire(frontend,error) ||
+        !frontend_player_sources_drain(frontend,error)) return false;
     if (frontend_constructor_pending(frontend)) {
         bool complete=false;
         return frontend_constructor_advance(frontend,elapsed_ns,&complete,error);

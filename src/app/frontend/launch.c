@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "capture.h"
 #include "music_sources.h"
 #include "view_bindings.h"
 #include "qa/application_character_selection.h"
@@ -177,7 +178,7 @@ bool frontend_player_source_select(qa_frontend *frontend,uint32_t physical,qa_la
 {
     if (!frontend || !frontend->application || !frontend->seats || physical>=frontend->options.seats ||
         frontend->options.dedicated || frontend_network_remote(frontend) ||
-        qa_application_startup_pending(frontend->application))
+        frontend->player_source_draft || qa_application_startup_pending(frontend->application))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Player source selection requires its published local seat");
     const qa_launch_snapshot *publication=qa_application_launch(frontend->application);
     const qa_launch_choices *choices=qa_launch_snapshot_choices(publication);
@@ -213,8 +214,42 @@ bool frontend_player_source_select(qa_frontend *frontend,uint32_t physical,qa_la
             ok=qa_launch_set_seat(draft,&seat,error);
         }
     }
-    if (ok) ok=qa_application_apply(frontend->application,draft,error);
-    qa_launch_draft_destroy(draft);
+    if (!ok) { qa_launch_draft_destroy(draft); return false; }
+    frontend->player_source_draft=draft;
+    frontend->player_source_publication=publication;
+    frontend->player_source_generation=qa_application_configuration_generation(frontend->application);
+    frontend->player_source_actor=actor;
+    frontend->player_source_physical=physical;
+    frontend->player_source_logical=logical;
+    return true;
+}
+void frontend_player_sources_discard(qa_frontend *frontend)
+{
+    if (!frontend) return;
+    qa_launch_draft_destroy(frontend->player_source_draft);
+    frontend->player_source_draft=NULL;
+    frontend->player_source_publication=NULL;
+    frontend->player_source_generation=0;
+    frontend->player_source_actor=(qa_actor_id){0};
+    frontend->player_source_physical=frontend->player_source_logical=0;
+}
+bool frontend_player_sources_drain(qa_frontend *frontend,qa_error *error)
+{
+    if (!frontend || !frontend->player_source_draft) return true;
+    uint32_t logical; qa_actor_id actor;
+    if (frontend->stepping || frontend->preparing || frontend->round || frontend->capture ||
+        frontend->resource_inventory || frontend->shutdown || frontend->source_restoring ||
+        !frontend_owners_idle(frontend) || !frontend_seat_callbacks_idle(frontend) ||
+        qa_application_startup_pending(frontend->application) ||
+        qa_application_configuration_generation(frontend->application)!=frontend->player_source_generation ||
+        qa_application_launch(frontend->application)!=frontend->player_source_publication ||
+        !frontend_seat_launch_id_read(frontend,frontend->player_source_physical,&logical) ||
+        logical!=frontend->player_source_logical ||
+        !qa_application_player_actor(frontend->application,logical,&actor) ||
+        !qa_actor_id_equal(actor,frontend->player_source_actor))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Player source draft lost its returned published seat");
+    bool ok=qa_application_apply(frontend->application,frontend->player_source_draft,error);
+    frontend_player_sources_discard(frontend);
     return ok;
 }
 static char *launch_map_path(const char *input, qa_error *error)

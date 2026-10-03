@@ -41,19 +41,54 @@ static bool topology(const qa_ui *saved, const qa_ui *qualified, qa_error *error
     for (size_t i=1;i<saved->field_count;++i) if (!field_compare(&fields[i-1],&fields[i])) ok=false;
     free(menus); free(stack); free(fields); return ok;
 }
+static bool registration_prefix(qa_source_save_io *io, const qa_ui *qualified,
+    uint32_t expected_seat, qa_ui_id menu, bool *present, size_t *ordinal)
+{
+    uint8_t magic[4]={'Q','A','U','I'}; uint32_t seat=expected_seat;
+    bool input_clock=qualified && qualified->options.input_now_ms!=NULL;
+    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QAUI",4) ||
+        !qa_source_save_u32(io,&seat) || seat!=expected_seat) return false;
+    if (!qa_source_save_bool(io,&input_clock) ||
+        (qualified && input_clock!=(qualified->options.input_now_ms!=NULL))) return false;
+    size_t menus=qualified?qualified->menu_count:0;
+    size_t maximum=io->direction==QA_SOURCE_SAVE_READ?(io->input.size-io->offset)/8:SIZE_MAX;
+    if (!qa_source_save_count(io,&menus,maximum) || (qualified && menus!=qualified->menu_count)) return false;
+    for (size_t i=0;i<menus;++i) {
+        uint64_t id=qualified?qualified->menus[i].id:0;
+        if (!qa_source_save_u64(io,&id) || !id || (qualified && id!=qualified->menus[i].id)) return false;
+        if (present && id==menu) {
+            if (*present) return false;
+            *present=true; *ordinal=i;
+        }
+    }
+    return true;
+}
+bool qa_ui_checkpoint_menu_read(qa_bytes bytes, uint32_t seat, qa_ui_id menu,
+    bool *present, size_t *ordinal, qa_error *error)
+{
+    if (!menu || !present || !ordinal) return ui_fail(error,"UI menu prefix query requires an actual menu identity");
+    *present=false; *ordinal=0;
+    qa_source_save_io io;
+    if (!qa_source_save_reader(&io,NULL,bytes,error)) return false;
+    bool ok=registration_prefix(&io,NULL,seat,menu,present,ordinal);
+    qa_source_save_dispose(&io);
+    if (!ok && error && error->code==QA_OK) ui_fail(error,"Saved UI menu registration prefix is inconsistent");
+    return ok;
+}
+bool qa_ui_restore_menu_register(qa_ui *ui, const qa_ui_menu_registration *registration,
+    size_t ordinal, qa_error *error)
+{
+    if (!qa_ui_presentation_idle(ui) || ui->depth || ui->field_count || ui->input_token || ordinal>ui->menu_count)
+        return ui_fail(error,"UI registration restore requires an empty idle controller and saved position");
+    size_t count=ui->menu_count;
+    if (!qa_ui_register(ui,registration,error)) return false;
+    qa_ui_menu_registration added=ui->menus[count];
+    memmove(ui->menus+ordinal+1,ui->menus+ordinal,(count-ordinal)*sizeof(*ui->menus));
+    ui->menus[ordinal]=added; return true;
+}
 static bool fields(qa_source_save_io *io, qa_ui *saved, const qa_ui *qualified)
 {
-    uint8_t magic[4]={'Q','A','U','I'}; uint32_t seat=qualified->options.seat;
-    bool input_clock=qualified->options.input_now_ms!=NULL;
-    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QAUI",4) ||
-        !qa_source_save_u32(io,&seat) || seat!=qualified->options.seat) return false;
-    if (!qa_source_save_bool(io,&input_clock) || input_clock!=(qualified->options.input_now_ms!=NULL)) return false;
-    size_t menus=qualified->menu_count;
-    if (!qa_source_save_count(io,&menus,SIZE_MAX) || menus!=qualified->menu_count) return false;
-    for (size_t i=0;i<menus;++i) {
-        uint64_t id=qualified->menus[i].id;
-        if (!qa_source_save_u64(io,&id) || id!=qualified->menus[i].id) return false;
-    }
+    if (!registration_prefix(io,qualified,qualified->options.seat,0,NULL,NULL)) return false;
     size_t maximum=io->direction==QA_SOURCE_SAVE_READ?io->input.size:SIZE_MAX;
     if (!qa_source_save_count(io,&saved->depth,qualified->menu_count) ||
         !qa_source_save_count(io,&saved->field_count,maximum/34)) return false;

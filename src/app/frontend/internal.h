@@ -82,6 +82,7 @@ typedef struct frontend_seat {
     qa_input_seat *input;
     qa_seat_console *console;
     qa_ui *ui;
+    bool player_sources_registered;
     qa_hud *hud;
     qa_hud_wheel *wheel;
     qa_hud_wheel_item *wheel_items;
@@ -184,6 +185,11 @@ struct qa_frontend {
     frontend_input_shutdown *input_shutdown;
     frontend_shutdown *shutdown;
     struct frontend_constructor *constructor;
+    qa_launch_draft *player_source_draft;
+    const qa_launch_snapshot *player_source_publication;
+    uint64_t player_source_generation;
+    qa_actor_id player_source_actor;
+    uint32_t player_source_physical, player_source_logical;
     qa_application_engine_shutdown *engine_shutdown;
     frontend_equipment *equipment;
     frontend_equipment_q3 *equipment_q3;
@@ -247,6 +253,8 @@ bool frontend_protocol(const char *, qa_net_protocol_id *, qa_error *);
 bool frontend_launch(qa_frontend *, qa_error *);
 bool frontend_player_source_select(qa_frontend *, uint32_t physical_seat,
     qa_launch_role, const qa_product *, qa_error *);
+bool frontend_player_sources_drain(qa_frontend *, qa_error *);
+void frontend_player_sources_discard(qa_frontend *);
 const qa_product *frontend_product_selection(qa_catalog *,const char *);
 bool frontend_present(qa_frontend *, qa_error *);
 bool frontend_scene_sync(qa_frontend *, qa_error *);
@@ -262,7 +270,7 @@ bool frontend_seats_create(qa_frontend *, qa_error *);
 /* Early stable input/console bindings precede provider factories. */
 bool frontend_seats_prepare_restored(qa_frontend *, qa_error *);
 /* Late completion requires restored fonts/images and exact mods presence. */
-bool frontend_seats_create_restored(qa_frontend *, const bool *mods, qa_error *);
+bool frontend_seats_create_restored(qa_frontend *, const bool *mods, qa_bytes presentation, qa_error *);
 bool frontend_seats_destroy(qa_frontend *, qa_error *);
 void frontend_seats_rebind(qa_frontend *, qa_frontend *);
 bool frontend_commands(qa_frontend *, qa_error *);

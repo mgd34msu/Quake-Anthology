@@ -663,6 +663,7 @@ bool qa_frontend_destroy(qa_frontend *frontend, qa_error *error)
             !frontend_restart_binding_destroy(frontend,error)) return false;
     }
     if (!shutdown_admitted(frontend,error)) return false;
+    frontend_player_sources_discard(frontend);
     if (!qa_save_image_destroy_checked(&frontend->save_image_pending,error)) return false;
     if (!qa_native_resource_inventory_release(&frontend->native_resource_inventory_pending,error)) return false;
     if (frontend->archive_enabled && !frontend->archive_saved && frontend->application &&

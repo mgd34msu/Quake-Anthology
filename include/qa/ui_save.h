@@ -21,6 +21,11 @@ typedef struct qa_ui_input_binding {
     qa_input_ui_token token;
 } qa_ui_input_binding;
 bool qa_ui_input_binding_read(const qa_ui *, qa_ui_input_binding *);
+/* Reads the canonical registration prefix without restoring controller state.
+ * The ordinal preserves the saved position of an optional real menu owner. */
+bool qa_ui_checkpoint_menu_read(qa_bytes, uint32_t seat, qa_ui_id menu,
+    bool *present, size_t *ordinal, qa_error *);
+bool qa_ui_restore_menu_register(qa_ui *, const qa_ui_menu_registration *, size_t ordinal, qa_error *);
 /* Preserves controller state with the actual existing menu registrations and
  * borrowed font/image/service owners. Menu adapter drafts and input routing
  * have separate producers. No factory/lifecycle/action/sound callback runs. */
