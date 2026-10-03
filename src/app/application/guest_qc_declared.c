@@ -1,11 +1,32 @@
 #include "guest_qc_profile.h"
 #include <stdio.h>
 #include <float.h>
+#include "qa/text.h"
 
-static qa_qc_game_value resolve(const application_qc_value *value, const application_qc_inputs *inputs)
+static bool resolve(const application_qc_value *value, const application_qc_inputs *inputs,
+                    qa_qc_game_value *result, qa_error *error)
 {
-    if (!value->input) return value->constant;
+    if (value->kind == QC_VALUE_CONSTANT) { *result = value->constant; return true; }
     qa_qc_game_value out = {.kind = QA_QC_GAME_FLOAT};
+    if (value->kind != QC_VALUE_INPUT) {
+        const qa_command_invocation *console = inputs->console;
+        if (!console || !qa_console_invocation_current(console->console, console))
+            return application_fail(error, QA_ERROR_ARGUMENT, "QC console value requires its entered command");
+        if (value->kind == QC_VALUE_ARGUMENT_COUNT) out.value.number = (float)console->argc;
+        else if (value->kind == QC_VALUE_ARGUMENTS_TEXT) {
+            out.kind = QA_QC_GAME_STRING; out.value.string = console->args_text;
+        } else {
+            const char *text = value->argument < console->argc ? console->argv[value->argument] : "";
+            out.kind = value->constant.kind;
+            if (out.kind == QA_QC_GAME_STRING) out.value.string = text;
+            else {
+                double number;
+                if (!qa_parse_atof(text, &number, error)) return false;
+                out.value.number = (float)number;
+            }
+        }
+        *result = out; return true;
+    }
     const qa_movement_command *command = inputs->command;
     switch (value->source) {
     case QC_INPUT_SELF: out.kind = QA_QC_GAME_ACTOR; out.value.actor = inputs->self; break;
@@ -19,7 +40,7 @@ static qa_qc_game_value resolve(const application_qc_value *value, const applica
         break;
     case QC_INPUT_COUNT: break;
     }
-    return out;
+    *result = out; return true;
 }
 bool application_qc_run_calls(struct application_qc_state *engine, const application_qc_calls *calls,
                                 const application_qc_inputs *inputs, qa_error *error)
@@ -28,18 +49,47 @@ bool application_qc_run_calls(struct application_qc_state *engine, const applica
         const application_qc_call *call = &calls->values[i]; qa_qc_game_value arguments[8];
         if (inputs->self.registry && !qa_actors_get(qa_session_actors(engine->services.session), inputs->self))
             return application_fail(error, QA_ERROR_NOT_FOUND, "QC qualified callback lost its actor generation");
-        for (size_t j = 0; j < call->argument_count; ++j) arguments[j] = resolve(&call->arguments[j], inputs);
+        for (size_t j = 0; j < call->argument_count; ++j)
+            if (!resolve(&call->arguments[j], inputs, &arguments[j], error)) return false;
         qa_qc_game_global local[16];
         qa_qc_game_global *globals = call->global_count <= 16 ? local : calloc(call->global_count, sizeof(*globals));
         if (!globals) return application_fail(error, QA_ERROR_MEMORY, "Allocating qualified QC globals");
-        for (size_t j = 0; j < call->global_count; ++j)
-            globals[j] = (qa_qc_game_global){call->globals[j].definition->name, resolve(&call->globals[j].value, inputs)};
-        bool ok = qa_qc_game_call_index(engine->provider->state.qc.game, call->function, arguments,
+        bool ok = true;
+        for (size_t j = 0; ok && j < call->global_count; ++j) {
+            globals[j].name = call->globals[j].definition->name;
+            ok = resolve(&call->globals[j].value, inputs, &globals[j].value, error);
+        }
+        if (ok) ok = qa_qc_game_call_index(engine->provider->state.qc.game, call->function, arguments,
             call->argument_count, globals, call->global_count, NULL, error);
         if (globals != local) free(globals);
         if (!ok || !application_qc_publish_client_outputs(engine, error)) return false;
     }
     return true;
+}
+bool application_qc_command_name_equal(const char *left, const char *right)
+{
+    while (*left && *right) {
+        unsigned char a = (unsigned char)*left++, b = (unsigned char)*right++;
+        if (a >= 'A' && a <= 'Z') a += 'a' - 'A';
+        if (b >= 'A' && b <= 'Z') b += 'a' - 'A';
+        if (a != b) return false;
+    }
+    return *left == *right;
+}
+bool application_qc_declared_command(void *opaque, const qa_command_invocation *command, qa_error *error)
+{
+    struct application_qc_state *engine = opaque;
+    const struct application_qc_profile *profile = engine->provider->state.qc.qualified;
+    if (!profile || !engine->provider->state.qc.game || !command->argc ||
+        !qa_console_invocation_current(command->console, command))
+        return application_fail(error, QA_ERROR_ARGUMENT, "QC declared command requires its live source console");
+    for (size_t i = 0; i < profile->command_count; ++i) {
+        if (!application_qc_command_name_equal(profile->commands[i].name, command->argv[0])) continue;
+        application_qc_calls calls = {.values = &profile->commands[i].call, .count = 1};
+        application_qc_inputs inputs = {.console = command};
+        return application_qc_run_calls(engine, &calls, &inputs, error);
+    }
+    return application_fail(error, QA_ERROR_NOT_FOUND, "QC declared command lost its compiled declaration");
 }
 static bool project_value(qa_qc_instance *vm, int32_t reference, const qa_qc_definition *field,
                             qa_qc_game_value value, qa_error *error)

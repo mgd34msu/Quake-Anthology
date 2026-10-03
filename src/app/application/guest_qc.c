@@ -156,6 +156,10 @@ bool application_qc_resource_lookup(void *opaque, qa_qc_resource_kind kind,
 static qa_command_result server_command(void *opaque, const qa_command_invocation *command, qa_error *error)
 {
     struct application_qc_state *engine = opaque;
+    const struct application_qc_profile *profile = engine->provider->state.qc.qualified;
+    for (size_t i = 0; profile && i < profile->command_count; ++i)
+        if (command->argc && application_qc_command_name_equal(profile->commands[i].name, command->argv[0]))
+            return application_qc_declared_command(engine, command, error) ? QA_COMMAND_HANDLED : QA_COMMAND_FAILED;
     qa_string_id text;
     if (!qa_strings_intern_cstr(qa_session_strings(engine->services.session), command->raw, &text, error) ||
         !application_map_server_command(engine->provider, text, error)) return QA_COMMAND_FAILED;
@@ -229,7 +233,14 @@ qa_console *application_qc_create_console(struct application_qc_state *engine, q
         .release_script = release_script, .script_complete = script_complete, .allow_command = allow_command,
         .cvar_owner = cvar_owner, .visible_cvars = visible_cvars,
         .capture_context = capture_context, .context_active = context_active};
-    return qa_console_create(&options, error);
+    qa_console *console = qa_console_create(&options, error);
+    const struct application_qc_profile *profile = engine->provider->state.qc.qualified;
+    for (size_t i = 0; console && profile && i < profile->command_count; ++i)
+        if (!qa_console_register(console, profile->commands[i].name, "Declared QuakeC command",
+            engine->provider->owner, false, application_qc_declared_command, engine, error)) {
+            qa_console_destroy(console); return NULL;
+        }
+    return console;
 }
 static bool source_callback(struct application_qc_state *engine, qa_actor_id actor,
                              qa_actor_id other, const char *name, double time_seconds, qa_error *error)

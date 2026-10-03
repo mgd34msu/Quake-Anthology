@@ -8,9 +8,14 @@ typedef enum application_qc_input_id {
     QC_INPUT_ANGLES, QC_INPUT_ATTACK, QC_INPUT_JUMP, QC_INPUT_IMPULSE,
     QC_INPUT_FORWARD, QC_INPUT_SIDE, QC_INPUT_UP, QC_INPUT_COUNT
 } application_qc_input_id;
+typedef enum application_qc_value_kind {
+    QC_VALUE_CONSTANT, QC_VALUE_INPUT, QC_VALUE_ARGUMENT,
+    QC_VALUE_ARGUMENTS_TEXT, QC_VALUE_ARGUMENT_COUNT
+} application_qc_value_kind;
 typedef struct application_qc_value {
-    bool input;
+    application_qc_value_kind kind;
     application_qc_input_id source;
+    size_t argument;
     qa_qc_game_value constant;
 } application_qc_value;
 typedef struct application_qc_global {
@@ -25,6 +30,10 @@ typedef struct application_qc_call {
     size_t global_count;
 } application_qc_call;
 typedef struct application_qc_calls { application_qc_call *values; size_t count; } application_qc_calls;
+typedef struct application_qc_command {
+    char *name;
+    application_qc_call call;
+} application_qc_command;
 typedef enum application_qc_field_kind {
     QC_FIELD_PRIVATE, QC_FIELD_CONSTANT, QC_FIELD_HEALTH, QC_FIELD_ORIGIN,
     QC_FIELD_VELOCITY, QC_FIELD_ANGLES, QC_FIELD_MIN, QC_FIELD_MAX,
@@ -86,6 +95,8 @@ struct application_qc_profile {
     uint8_t client_output_channels;
     application_qc_cvar *cvars;
     size_t cvar_count;
+    application_qc_command *commands;
+    size_t command_count;
     const qa_qc_definition *weapon_field;
     application_qc_weapon_value *weapon_values;
     size_t weapon_count;
@@ -93,10 +104,13 @@ struct application_qc_profile {
 typedef struct application_qc_inputs {
     qa_actor_id self, other;
     const qa_movement_command *command;
+    const qa_command_invocation *console;
     uint64_t time_ns, elapsed_ns;
 } application_qc_inputs;
 bool application_qc_run_calls(struct application_qc_state *, const application_qc_calls *,
                                 const application_qc_inputs *, qa_error *);
+bool application_qc_command_name_equal(const char *, const char *);
+bool application_qc_declared_command(void *, const qa_command_invocation *, qa_error *);
 bool application_qc_project_declared(struct application_qc_state *, qa_qc_instance *,
                                       const qa_qc_entity_access *, qa_error *);
 bool application_qc_store_declared(struct application_qc_state *, qa_qc_instance *,
