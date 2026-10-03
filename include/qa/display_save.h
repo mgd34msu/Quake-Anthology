@@ -3,8 +3,8 @@
 #include "qa/display.h"
 typedef struct qa_display_restore_guard qa_display_restore_guard;
 bool qa_display_checkpoint(qa_display *,qa_buffer *,qa_error *);
-/* Distinct heap owner borrowing the same qualified native window/context.
- * Saved presentation storage stays detached until final native preparation. */
+/* Distinct heap owner borrowing the qualified current native window/context.
+ * Its saved geometry is staged separately from the retained current baseline. */
 bool qa_display_restore(qa_bytes,const qa_display *,qa_display **,qa_display_restore_guard **,qa_error *);
 /* Fresh frontend construction retains the actual completed native display cut
  * and window lease without creating another window or publishing a frame. */
@@ -14,6 +14,11 @@ bool qa_display_restore_checkpoint(const qa_display_restore_guard *,qa_buffer *,
 bool qa_display_restore_info(const qa_display_restore_guard *,const qa_display *,qa_display_info *);
 bool qa_display_handoff_prepare(qa_display_restore_guard *,qa_error *);
 bool qa_display_handoff_ready(const qa_display_restore_guard *,qa_error *);
+/* A failed import returns the original native settings and presentation before
+ * releasing either retained display owner. Failure requires a cleanup retry. */
+bool qa_display_handoff_abort(qa_display_restore_guard *,qa_error *);
+/* Retry a refused import rollback retained by this actual display owner. */
+bool qa_display_restore_cleanup(qa_display *,qa_error *);
 /* Moves ownership of the qualified native window/context without allocation.
  * CPU presentation is already copied to the native backbuffer by prepare. */
 void qa_display_handoff(qa_display_restore_guard *);

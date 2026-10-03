@@ -40,6 +40,7 @@ struct qa_display {
     bool native_borrowed, capturing;
     display_native_lease *lease;
     qa_display_surface_ticket *surface_ticket;
+    qa_display_restore_guard *pending_restore;
     const qa_display_surface_ticket *ready_surface;
     qa_display_endpoint ready_endpoint;
     uint64_t revision;
@@ -559,7 +560,7 @@ void qa_display_destroy(qa_display *display)
 {
     if (display == NULL) return;
     display_changed(display);
-    if (display->surface_ticket || display->gamma) { display->destroy_pending = true; return; }
+    if (display->surface_ticket || display->pending_restore || display->gamma) { display->destroy_pending = true; return; }
     if (display->lease) {
         if (display->backend==QA_DISPLAY_CPU && display->native.cpu.texture)
             SDL_DestroyTexture(display->native.cpu.texture);
@@ -1186,8 +1187,8 @@ struct qa_display_restore_guard {
     SDL_Window *window;
     SDL_GLContext context;
     SDL_Renderer *renderer;
-    display_saved saved;
-    bool prepared,transferred;
+    display_saved saved,baseline,staged;
+    bool attempted,prepared,transferred;
 };
 static bool display_save_error(qa_error *error,qa_status status,const char *message)
 { qa_error_set(error,status,0,"%s",message); return false; }
@@ -1270,6 +1271,33 @@ static bool display_current_equal(const display_saved *a,const display_saved *b)
         a->info.maximized==b->info.maximized && a->x==b->x && a->y==b->y && a->swap_interval==b->swap_interval &&
         !strcmp(a->title,b->title);
 }
+static bool window_settings_stage(qa_display *display,const qa_display_settings *settings,
+    bool visible,bool focused,qa_error *error)
+{
+    if (!qa_display_set_fullscreen(display,settings->fullscreen,error)) return false;
+    if (settings->fullscreen==QA_DISPLAY_WINDOWED) {
+        int width=0,height=0; SDL_GetWindowSize(display->window,&width,&height);
+        if (width!=(int)settings->width || height!=(int)settings->height) {
+            SDL_RestoreWindow(display->window);
+            if (!qa_display_set_size(display,settings->width,settings->height,error)) return false;
+        }
+    }
+    if (!qa_display_set_visible(display,visible,error)) return false;
+    if (focused && SDL_SetWindowInputFocus(display->window)<0)
+        return display_error(error,QA_ERROR_IO,"Preparing candidate native focus");
+    if (display->backend==QA_DISPLAY_OPENGL &&
+        (!qa_display_set_swap_interval(display,settings->swap_interval,error) ||
+        SDL_GL_GetSwapInterval()!=settings->swap_interval))
+        return display_save_error(error,QA_ERROR_IO,"SDL did not enter the requested candidate swap interval");
+    SDL_PumpEvents();
+    if (display->backend==QA_DISPLAY_CPU &&
+        (SDL_RenderSetViewport(display->native.cpu.renderer,NULL)<0 ||
+        SDL_RenderFlush(display->native.cpu.renderer)<0 ||
+        SDL_RenderSetViewport(display->native.cpu.renderer,NULL)<0 ||
+        SDL_RenderFlush(display->native.cpu.renderer)<0))
+        return display_error(error,QA_ERROR_IO,"Completing the actual resized CPU presentation surface");
+    return true;
+}
 bool qa_display_checkpoint(qa_display *display,qa_buffer *out,qa_error *error)
 {
     if (display && display->surface_ticket)
@@ -1298,14 +1326,15 @@ bool qa_display_create_detached(qa_display *active,qa_display **out,
 }
 bool qa_display_restore(qa_bytes bytes,const qa_display *active,qa_display **out,qa_display_restore_guard **guard_out,qa_error *error)
 {
-    if (!active || active->surface_ticket || active->destroy_pending || active->native_borrowed ||
+    if (!active || active->surface_ticket || active->pending_restore || active->destroy_pending || active->native_borrowed ||
         !active->lease || active->lease->references==SIZE_MAX || !out || *out || !guard_out || *guard_out)
         return display_save_error(error,QA_ERROR_ARGUMENT,"Display restore requires separate active and detached native owners");
     qa_display_restore_guard *guard=calloc(1,sizeof(*guard)); qa_display *candidate=calloc(1,sizeof(*candidate));
     if (!guard || !candidate) { free(guard); free(candidate); return display_save_error(error,QA_ERROR_MEMORY,"Allocating detached display continuation"); }
-    qa_source_save_io io={0}; display_saved current={0};
+    qa_source_save_io io={0};
     bool ok=qa_source_save_reader(&io,NULL,bytes,error) && display_save_fields(&io,&guard->saved) && qa_source_save_finish(&io,NULL) &&
-        display_observe((qa_display *)active,&current,false,error) && display_current_equal(&guard->saved,&current);
+        display_observe((qa_display *)active,&guard->baseline,true,error) &&
+        guard->saved.info.backend==guard->baseline.info.backend;
     if (ok) {
         candidate->backend=active->backend; candidate->window=active->window; candidate->native_borrowed=true;
         candidate->revision=1;
@@ -1318,14 +1347,15 @@ bool qa_display_restore(qa_bytes bytes,const qa_display *active,qa_display **out
         else guard->context=active->native.gl.context;
         *out=candidate; *guard_out=guard; candidate=NULL; guard=NULL;
     }
-    qa_source_save_dispose(&io); display_saved_free(&current); qa_display_destroy(candidate);
+    qa_source_save_dispose(&io); qa_display_destroy(candidate);
     qa_display_restore_guard_destroy(guard);
     if (!ok && (!error || error->code==QA_OK)) display_save_error(error,QA_ERROR_FORMAT,"Saved display differs from its current qualified native window");
     return ok;
 }
-static bool display_guard_ready(const qa_display_restore_guard *guard,qa_error *error)
+static bool display_guard_owned(const qa_display_restore_guard *guard,bool retiring,qa_error *error)
 {
     if (!guard || guard->transferred || !guard->active || !guard->candidate || guard->active==guard->candidate ||
+        (!retiring && (guard->active->destroy_pending || guard->candidate->destroy_pending)) ||
         guard->active->native_borrowed || !guard->candidate->native_borrowed || guard->active->capturing || guard->candidate->capturing ||
         guard->active->window!=guard->window || guard->candidate->window!=guard->window ||
         !guard->active->lease || guard->active->lease!=guard->candidate->lease ||
@@ -1334,7 +1364,14 @@ static bool display_guard_ready(const qa_display_restore_guard *guard,qa_error *
             guard->candidate->native.cpu.renderer!=guard->renderer : guard->active->native.gl.context!=guard->context ||
             guard->candidate->native.gl.context!=guard->context))
         return display_save_error(error,QA_ERROR_ARGUMENT,"Display handoff lost its genuine native window/context owner");
-    display_saved current={0}; bool ok=display_observe(guard->active,&current,false,error) && display_current_equal(&guard->saved,&current);
+    return true;
+}
+static bool display_guard_ready(const qa_display_restore_guard *guard,qa_error *error)
+{
+    if (!display_guard_owned(guard,false,error)) return false;
+    display_saved current={0};
+    const display_saved *expected=guard->prepared?&guard->staged:&guard->baseline;
+    bool ok=display_observe(guard->active,&current,false,error) && display_current_equal(expected,&current);
     display_saved_free(&current);
     if (!ok && (!error || error->code==QA_OK)) display_save_error(error,QA_ERROR_ARGUMENT,"Display native state changed after saved-cut qualification");
     return ok;
@@ -1343,6 +1380,20 @@ bool qa_display_handoff_prepare(qa_display_restore_guard *guard,qa_error *error)
 {
     if (!display_guard_ready(guard,error)) return false;
     if (guard->prepared) return true;
+    if (guard->attempted)
+        return display_save_error(error,QA_ERROR_ARGUMENT,"Failed display preparation requires checked native rollback");
+    guard->attempted=true;
+    display_changed(guard->active);
+    qa_display_settings settings={.width=guard->saved.info.logical_width,.height=guard->saved.info.logical_height,
+        .fullscreen=guard->saved.info.fullscreen,.swap_interval=guard->saved.swap_interval};
+    if (!window_settings_stage(guard->candidate,&settings,guard->baseline.info.visible,
+            guard->baseline.info.focused,error) ||
+        !display_observe(guard->candidate,&guard->staged,false,error)) return false;
+    if (guard->staged.info.backend!=guard->saved.info.backend ||
+        guard->staged.info.fullscreen!=guard->saved.info.fullscreen ||
+        guard->staged.info.drawable_width!=guard->saved.info.drawable_width ||
+        guard->staged.info.drawable_height!=guard->saved.info.drawable_height)
+        return display_save_error(error,QA_ERROR_UNSUPPORTED,"Saved renderer extent differs from its actual staged native drawable");
     if (guard->candidate->backend==QA_DISPLAY_CPU && guard->saved.texture) {
         if (!resize_cpu_texture(guard->candidate,guard->saved.texture_width,guard->saved.texture_height,error)) return false;
         if (guard->saved.frame && (SDL_UpdateTexture(guard->candidate->native.cpu.texture,NULL,guard->saved.pixels.data,
@@ -1352,6 +1403,38 @@ bool qa_display_handoff_prepare(qa_display_restore_guard *guard,qa_error *error)
         guard->candidate->native.cpu.has_frame=guard->saved.frame;
     }
     guard->prepared=true; return true;
+}
+bool qa_display_handoff_abort(qa_display_restore_guard *guard,qa_error *error)
+{
+    if (!guard || guard->transferred || !guard->attempted) return true;
+    if (!display_guard_owned(guard,true,error)) return false;
+    qa_display_settings settings={.width=guard->baseline.info.logical_width,.height=guard->baseline.info.logical_height,
+        .fullscreen=guard->baseline.info.fullscreen,.swap_interval=guard->baseline.swap_interval};
+    if (!window_settings_stage(guard->active,&settings,guard->baseline.info.visible,
+            guard->baseline.info.focused,error)) return false;
+    SDL_SetWindowPosition(guard->window,guard->baseline.x,guard->baseline.y);
+    if (guard->baseline.info.minimized) SDL_MinimizeWindow(guard->window);
+    else if (guard->baseline.info.maximized) SDL_MaximizeWindow(guard->window);
+    else SDL_RestoreWindow(guard->window);
+    display_saved current={0};
+    bool ok=display_observe(guard->active,&current,false,error) && display_current_equal(&guard->baseline,&current);
+    display_saved_free(&current);
+    if (!ok) return display_save_error(error,QA_ERROR_IO,"The original native display has not recovered; retain its restore guard");
+    if (guard->active->backend==QA_DISPLAY_CPU && guard->baseline.frame) {
+        if (!guard->active->native.cpu.texture ||
+            guard->active->native.cpu.width!=guard->baseline.texture_width ||
+            guard->active->native.cpu.height!=guard->baseline.texture_height ||
+            SDL_UpdateTexture(guard->active->native.cpu.texture,NULL,guard->baseline.pixels.data,
+                (int)(guard->baseline.texture_width*4))<0 ||
+            SDL_RenderCopy(guard->renderer,guard->active->native.cpu.texture,NULL,NULL)<0)
+            return display_error(error,QA_ERROR_IO,"Restoring original display presentation texture");
+        SDL_RenderPresent(guard->renderer);
+    }
+    display_changed(guard->active); display_changed(guard->candidate);
+    memcpy(guard->active->fullscreen_failure,guard->baseline.fullscreen_failure,sizeof(guard->baseline.fullscreen_failure));
+    display_saved_free(&guard->staged); guard->staged=(display_saved){0};
+    guard->attempted=guard->prepared=false;
+    return true;
 }
 bool qa_display_handoff_ready(const qa_display_restore_guard *guard,qa_error *error)
 {
@@ -1385,7 +1468,23 @@ void qa_display_handoff(qa_display_restore_guard *guard)
     guard->transferred=true;
 }
 void qa_display_restore_guard_destroy(qa_display_restore_guard *guard)
-{ if (guard) { display_saved_free(&guard->saved); free(guard); } }
+{
+    if (!guard) return;
+    if (!qa_display_handoff_abort(guard,NULL)) {
+        guard->active->pending_restore=guard; guard->candidate->pending_restore=guard;
+        return;
+    }
+    if (guard->active && guard->active->pending_restore==guard) guard->active->pending_restore=NULL;
+    if (guard->candidate && guard->candidate->pending_restore==guard) guard->candidate->pending_restore=NULL;
+    display_saved_free(&guard->saved); display_saved_free(&guard->baseline); display_saved_free(&guard->staged); free(guard);
+}
+bool qa_display_restore_cleanup(qa_display *display,qa_error *error)
+{
+    qa_display_restore_guard *guard=display?display->pending_restore:NULL;
+    if (!guard) return true;
+    if (!qa_display_handoff_abort(guard,error)) return false;
+    qa_display_restore_guard_destroy(guard); return true;
+}
 
 static bool surface_owned(const qa_display_surface_ticket *ticket)
 {
@@ -1652,19 +1751,12 @@ bool qa_display_surface_stage(qa_display_surface_ticket *ticket, qa_error *error
     display_changed(ticket->active); display_changed(ticket->candidate);
     ticket->entered = true;
     qa_display *candidate = ticket->candidate;
-    if (!qa_display_set_fullscreen(candidate, ticket->settings.fullscreen, error)) return false;
-    if (ticket->original.visible) SDL_ShowWindow(candidate->window);
-    else SDL_HideWindow(candidate->window);
-    if (ticket->original.focused && SDL_SetWindowInputFocus(candidate->window) < 0)
-        return display_error(error, QA_ERROR_IO, "Preparing candidate surface focus");
+    if (!window_settings_stage(candidate,&ticket->settings,ticket->original.visible,
+            ticket->original.focused,error)) return false;
     if (candidate->backend == QA_DISPLAY_OPENGL) {
-        if (!qa_display_set_swap_interval(candidate, ticket->settings.swap_interval, error) ||
-            SDL_GL_GetSwapInterval() != ticket->settings.swap_interval)
-            return display_save_error(error, QA_ERROR_IO,
-                "SDL did not enter the requested candidate swap interval");
         if (!surface_gl_visual_equal(ticket, error)) return false;
     }
-    if (!qa_display_info_get(candidate, &ticket->staged, error)) return false;
+    if (!qa_display_info_get(candidate,&ticket->staged,error)) return false;
     if (ticket->staged.fullscreen != ticket->settings.fullscreen ||
         ticket->staged.visible != ticket->original.visible ||
         (ticket->original.focused && !ticket->staged.focused) ||

@@ -795,7 +795,8 @@ static bool renderer_restore(frontend_persistence *operation,qa_error *error)
         qa_source_save_reader(&io,NULL,section(&operation->sections,SECTION_RENDERER),error) &&
         renderer_fields(&io,kind,&display,&renderer) && qa_source_save_finish(&io,NULL);
     qa_source_save_dispose(&io);
-    if (ok && kind) ok=qa_display_restore(display,operation->active->display,&f->display,&operation->display_guard,error);
+    if (ok && kind) ok=qa_display_restore(display,operation->active->display,&f->display,&operation->display_guard,error) &&
+        qa_display_handoff_prepare(operation->display_guard,error);
     qa_render_checkpoint_refs refs=renderer_refs(operation);
     if (ok && kind==1) {
         qa_cpu_options options; qa_cpu_options_default(&options);
@@ -811,7 +812,8 @@ static bool renderer_restore(frontend_persistence *operation,qa_error *error)
             qa_gl_checkpoint_resources(f->gl,renderer_resource_qualify,operation->space,error) &&
             qa_gl_checkpoint_meshes(f->gl,renderer_mesh_qualify,operation->space,error);
     }
-    return ok || frontend_fail(error,QA_ERROR_FORMAT,"Saved renderer lacks its complete genuine candidate display/resource graph");
+    return ok || (error && error->code!=QA_OK ? false :
+        frontend_fail(error,QA_ERROR_FORMAT,"Saved renderer lacks its complete genuine candidate display/resource graph"));
 }
 static bool aliases_fields(qa_source_save_io *io, qa_frontend *f, frontend_scene_namespace *space)
 {
@@ -1424,8 +1426,33 @@ static bool owners_match(frontend_persistence *operation,const qa_save_image *im
         const qa_save_record *record=qa_save_image_find(image,operation->bindings[i].kind,"");
         qa_buffer actual={0};
         bool ok=record && capture_owner(operation->bindings+i,f->application,&actual,error);
-        if (ok && (actual.size!=record->payload.size || memcmp(actual.data,record->payload.data,actual.size)))
-            ok=frontend_fail(error,QA_ERROR_FORMAT,"Restored frontend owner differs from its saved physical continuation");
+        if (ok && (actual.size!=record->payload.size || memcmp(actual.data,record->payload.data,actual.size))) {
+            size_t extent=actual.size<record->payload.size?actual.size:record->payload.size,offset=0;
+            while(offset<extent && actual.data[offset]==record->payload.data[offset]) ++offset;
+            uint32_t section_id=UINT32_MAX; size_t section_offset=0;
+            qa_save_owner_kind kind=operation->bindings[i].kind;
+            if(kind==QA_SAVE_PRESENTATION || kind==QA_SAVE_AUDIO || kind==QA_SAVE_INPUT || kind==QA_SAVE_MEDIA) {
+                frontend_section_set saved={0},restored={0}; qa_source_save_io io={0}; qa_error probe={0};
+                bool decoded=qa_source_save_reader(&io,NULL,record->payload,&probe) &&
+                    owner_envelope(&io,kind,&saved) && qa_source_save_finish(&io,NULL);
+                qa_source_save_dispose(&io);
+                if(decoded) decoded=qa_source_save_reader(&io,NULL,(qa_bytes){actual.data,actual.size},&probe) &&
+                    owner_envelope(&io,kind,&restored) && qa_source_save_finish(&io,NULL);
+                qa_source_save_dispose(&io);
+                for(size_t j=0;decoded && j<SECTION_COUNT;++j) {
+                    qa_bytes old=saved.bytes[j],current=restored.bytes[j];
+                    size_t count=old.size<current.size?old.size:current.size,k=0;
+                    while(k<count && old.data[k]==current.data[k]) ++k;
+                    if(k<count || old.size!=current.size) { section_id=(uint32_t)j; section_offset=k; break; }
+                }
+            }
+            qa_error_set(error,QA_ERROR_FORMAT,offset,
+                "Restored frontend owner %u differs: sizes %zu/%zu, byte %zu, section %u byte %zu, saved/actual %u/%u",
+                (unsigned)kind,record->payload.size,actual.size,offset,section_id,section_offset,
+                offset<record->payload.size?(unsigned)record->payload.data[offset]:UINT32_MAX,
+                offset<actual.size?(unsigned)actual.data[offset]:UINT32_MAX);
+            ok=false;
+        }
         qa_buffer_free(&actual);
         if (!ok) return false;
     }
@@ -1523,7 +1550,8 @@ static bool discard_services(void *context,qa_application *candidate,qa_error *e
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Failed application belongs to another frontend graph");
     if (!f->application) f->application=candidate;
     if (!qa_input_platform_handoff_abort(operation->input_guard,error) ||
-        !frontend_q3_source_color_abort(&operation->color_ticket,error)) return false;
+        !frontend_q3_source_color_abort(&operation->color_ticket,error) ||
+        !qa_display_handoff_abort(operation->display_guard,error)) return false;
     if (f->input && !qa_input_platform_settings_idle(f->input))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Failed candidate retains its native input settings preparation");
     if (!frontend_seat_callbacks_idle(f))

@@ -13,6 +13,7 @@
 #include "source_renderer_runtime.h"
 #include "remote_unified.h"
 #include "qa/audio_acoustics_prepare.h"
+#include "qa/display_save.h"
 #include "qc_messages.h"
 #include "remote_q1_client.h"
 #include "q3_color_policy.h"
@@ -775,6 +776,7 @@ bool qa_frontend_destroy(qa_frontend *frontend, qa_error *error)
         !frontend_renderer_materials_destroy(&frontend->renderer_materials,error)) return false;
     if (!frontend_source_cinematics_destroy(frontend,error)) return false;
     qa_audio_engine_destroy(frontend->audio); frontend->audio=NULL;
+    if (!qa_display_restore_cleanup(frontend->display,error)) return false;
     qa_display_destroy(frontend->display); frontend->display=NULL;
     if (frontend->sdl_subsystems) SDL_QuitSubSystem(frontend->sdl_subsystems);
     free(frontend->constructor); free(frontend->map_name); free(frontend->audio_ids); free(frontend->seats); free(frontend->shutdown); free(frontend);
