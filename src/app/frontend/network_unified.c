@@ -111,9 +111,19 @@ bool frontend_network_unified_admit(frontend_network_unified *owner,
             }
             return qa_unified_session_restart_admit(peer->session, owner->options.runtime, request, offer, error);
         }
-        if (request != &peer->request) continue;
+        const qa_net_connect *pending = &peer->request;
+        if (request->attachment != pending->attachment ||
+            !qa_net_address_equal(&request->endpoint, &pending->endpoint, true) ||
+            request->protocol.kind != pending->protocol.kind ||
+            request->protocol.revision != pending->protocol.revision ||
+            request->protocol.flags != pending->protocol.flags ||
+            !qa_sha256_equal(&request->composition, &pending->composition) ||
+            request->seat_count != 1 || request->seat_count != pending->seat_count || !request->seats ||
+            request->seats[0].seat.owner != peer->binding.seat.owner ||
+            request->seats[0].seat.index != peer->binding.seat.index ||
+            request->seats[0].remote_index != peer->binding.remote_index) continue;
         if (request->protocol.revision || request->protocol.flags || request->attachment != QA_NET_REMOTE ||
-            request->seat_count != 1 || request->seats != &peer->binding || peer->binding.remote_index ||
+            pending->seats != &peer->binding || peer->binding.remote_index ||
             peer->binding.seat.owner != owner->options.seat_owner)
             return fail(error, "Unified admission changed its staged canonical transport seat");
         if (owner->options.server) {
