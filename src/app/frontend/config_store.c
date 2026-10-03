@@ -875,6 +875,8 @@ bool frontend_config_source_acquire_seat_registry(frontend_config_source *source
         }
         seat->cvars=frontend_client_registry_cvars(seat->registry); seat->cvars_transferred=true;
         seat->registry_bound=!restored;
+        if (restored && !frontend_config_source_restore_seat_registry(source,logical,
+            seat->registry,NULL,error)) return false;
     }
     if (!frontend_client_registry_matches(seat->registry,selected,logical) ||
         frontend_client_registry_cvars(seat->registry)!=seat->cvars)
