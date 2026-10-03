@@ -330,7 +330,7 @@ bool q1_rogue_fire(qa_q1_game *g, q1_player *player, qa_error *error) {
             return false;
         projectile->physics.motion = QA_PHYSICS_BOUNCE;
         projectile->physics.angular_velocity = qa_v3(300, 300, 300);
-        if (!q1_schedule(g, projectile, 1, Q1_THINK_MULTI_SPLIT, error) ||
+        if (!q1_schedule(g, projectile, q1_weapon_shape(QA_Q1_MULTI_GRENADE)->lifetime, Q1_THINK_MULTI_SPLIT, error) ||
             !q1_launch_behavior(g, projectile, QA_BUILTIN_GRENADE, error) ||
             !q1_sound(g, player->id, "weapons/grenade.wav", 1, 1, error))
             return false;
@@ -340,6 +340,7 @@ bool q1_rogue_fire(qa_q1_game *g, q1_player *player, qa_error *error) {
         if (!q1_consume(g, player->id, QA_Q1_MULTI_ROCKETS, 1, error))
             return false;
         bool multiplayer = g->options.coop || g->options.deathmatch;
+        const qa_q1_weapon_view *shape=q1_weapon_shape(QA_Q1_MULTI_ROCKET);
         static const float offsets[] = {-10, -5, 5, 10};
         static const int frames[] = {2, 3, 0, 1};
         for (unsigned i = 0; i < 4; ++i) {
@@ -353,15 +354,15 @@ bool q1_rogue_fire(qa_q1_game *g, q1_player *player, qa_error *error) {
             if (multiplayer) {
                 if (!q1_aim(g, player->id, g->forward, &direction, error))
                     return false;
-                velocity = qa_vec_scale(direction, 1000);
+                velocity = qa_vec_scale(direction, shape->speed);
             } else
-                velocity = qa_vec_sub(qa_vec_scale(g->forward, 1000),
+                velocity = qa_vec_sub(qa_vec_scale(g->forward, shape->speed),
                                       qa_vec_scale(g->right, offsets[i] * 8));
             if (!q1_projectile_spawn(g, player->id, QA_Q1_MULTI_ROCKET, Q1_MULTI_ROCKET, origin,
                                      velocity, &projectile, error))
                 return false;
             projectile->frame = frames[i];
-            projectile->state.projectile.expires = g->time + 4;
+            projectile->state.projectile.expires = g->time + shape->lifetime;
             projectile->state.projectile.launch_angles = player->input.view_angles;
             if (multiplayer && !q1_model(g, projectile, "progs/rockup_d.mdl", error))
                 return false;
@@ -370,7 +371,7 @@ bool q1_rogue_fire(qa_q1_game *g, q1_player *player, qa_error *error) {
             if (!q1_alive(g, projectile->id))
                 continue;
             if (multiplayer) {
-                if (!q1_schedule(g, projectile, 4, Q1_THINK_MULTI_EXPLODE, error))
+                if (!q1_schedule(g, projectile, shape->lifetime, Q1_THINK_MULTI_EXPLODE, error))
                     return false;
             } else {
                 qa_trace_result trace;

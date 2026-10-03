@@ -1,12 +1,41 @@
 #include "internal.h"
 
+float q2_launch_pitch(float pitch) { return fmaxf(-62.5f, pitch); }
+uint64_t q2_throw_cook_ns(void) { return 3200 * Q2_MS; }
+
+void q2_throw_spec(const q2_weapon_call *c, float fuse, bool alive, q2_shot_spec *out) {
+    bool hand = c->definition->weapon == QA_Q2_GRENADES;
+    bool trap = c->definition->weapon == QA_Q2_TRAP;
+    float duration = c->rerelease && trap ? 5 : 3;
+    float minimum = c->rerelease && trap ? 300 : 400;
+    float maximum = c->rerelease && trap ? 700 : 800;
+    float speed = hand ? 400 + (3 - fuse) * (400.0f / 3)
+                       : minimum + (duration - fuse) * (maximum - minimum) / duration;
+    if (c->rerelease)
+        speed = alive ? fminf(maximum, speed) : minimum;
+    else if (!hand && !trap)
+        speed = fminf(maximum, speed);
+    *out = (q2_shot_spec){
+        .kind = hand ? Q2_GRENADE : trap ? Q2_TRAP : Q2_TESLA,
+        .offset = c->rerelease ? (hand ? qa_v3(2, 0, -14) : trap ? qa_v3(8, 0, -8) : qa_v3(0, 0, -22)) : qa_v3(8, 8, -8),
+        .speed = truncf(speed), .damage = hand || trap ? 125 : 3,
+        .radius = hand || trap ? 165 : 128, .splash = hand || trap ? 125 : 0,
+        .fuse = hand ? fuse : trap ? (c->rerelease ? 1 : fuse) : 30,
+        .mod = hand ? 15 : trap ? 39 : 45, .splash_mod = hand ? 16 : trap ? 39 : 45,
+        .shots = 1, .ballistic = true, .deployable = !hand, .conditional = true};
+}
+
 bool q2_hand_calculate(q2_weapon_call *c, uint64_t expires, bool alive, bool held,
                        qa_q2_hand_projection_fn project, void *project_context, q2_hand_spec *out,
                        qa_error *e) {
     qa_vec3 angles = c->input.angles;
     if (c->rerelease)
-        angles.x = fmaxf(-62.5f, angles.x);
-    qa_vec3 offset = c->rerelease ? qa_v3(2, 0, -14) : qa_v3(8, 8, -8);
+        angles.x = q2_launch_pitch(angles.x);
+    float fuse = expires >= c->now_ns ? (float)((double)(expires - c->now_ns) / 1e9)
+                                     : -(float)((double)(c->now_ns - expires) / 1e9);
+    q2_shot_spec spec;
+    q2_throw_spec(c, fuse, alive, &spec);
+    qa_vec3 offset = spec.offset;
     if (project != NULL) {
         if (!project(project_context, c->actor->id, angles, offset, &out->start, &out->direction,
                      e))
@@ -17,10 +46,8 @@ bool q2_hand_calculate(q2_weapon_call *c, uint64_t expires, bool alive, bool hel
         }
     } else if (!q2_project(c, angles, offset, &out->start, &out->direction, e))
         return false;
-    out->fuse = expires >= c->now_ns ? (float)((double)(expires - c->now_ns) / 1e9)
-                                     : -(float)((double)(c->now_ns - expires) / 1e9);
-    float speed = 400 + (3 - out->fuse) * (400.0f / 3);
-    out->speed = truncf(c->rerelease ? alive ? fminf(800, speed) : 400 : speed);
+    out->fuse = fuse;
+    out->speed = spec.speed;
     out->held = held;
     return true;
 }
@@ -36,8 +63,7 @@ static bool reserve(q2_weapon_call *c, bool *reserved, qa_error *e) {
     }
     if (c->state->hand_reservation != QA_Q2_HAND_UNRESERVED)
         return true;
-    bool infinite =
-        c->rerelease ? c->input.infinite_ammo : (c->game->options.deathmatch_flags & 8192u) != 0;
+    bool infinite = q2_infinite_ammo(c);
     if (infinite) {
         c->state->hand_reservation = QA_Q2_HAND_INFINITE;
         *reserved = true;
@@ -71,22 +97,12 @@ bool q2_throw(q2_weapon_call *c, bool held, qa_error *e) {
     if (!qa_combat_read(c->game->services.combat, c->actor->id, &combat, e))
         return false;
     double fuse = ((double)s->grenade_ns - (double)c->now_ns) / 1e9;
-    float duration = c->rerelease && trap ? 5 : 3;
-    float minimum = c->rerelease && trap ? 300 : 400;
-    float maximum = c->rerelease && trap ? 700 : 800;
-    float speed = minimum + (duration - (float)fuse) * (maximum - minimum) / duration;
-    if (c->rerelease)
-        speed = combat.health > 0 ? fminf(maximum, speed) : minimum;
-    else if (!hand && !trap)
-        speed = fminf(maximum, speed);
-    speed = truncf(speed);
+    q2_shot_spec recipe;
+    q2_throw_spec(c, (float)fuse, combat.health > 0, &recipe);
+    float speed = recipe.speed;
     qa_vec3 angles = c->input.angles, start, dir;
-    if (c->rerelease)
-        angles.x = fmaxf(-62.5f, angles.x);
-    qa_vec3 offset = c->rerelease ? (hand   ? qa_v3(2, 0, -14)
-                                     : trap ? qa_v3(8, 0, -8)
-                                            : qa_v3(0, 0, -22))
-                                  : qa_v3(8, 8, -8);
+    if (c->rerelease) angles.x = q2_launch_pitch(angles.x);
+    qa_vec3 offset = recipe.offset;
     float multiplier;
     if (hand) {
         if (!q2_multiplier(c, &multiplier, e)) return false;
@@ -100,16 +116,7 @@ bool q2_throw(q2_weapon_call *c, bool held, qa_error *e) {
     } else if (!q2_project(c, angles, offset, &start, &dir, e))
         return false;
     if (!c->rerelease && !hand && !trap) {
-        qa_body_state body;
-        qa_vec3 right, up;
-        if (!qa_world_body_read(c->game->services.world, c->actor->id, &body, e))
-            return false;
-        qa_builtin_angle_vectors(angles, &dir, &right, &up);
-        float side = c->input.hand == QA_Q2_LEFT_HAND     ? 4
-                     : c->input.hand == QA_Q2_CENTER_HAND ? 0
-                                                          : -4;
-        start = qa_vec_add(qa_vec_add(body.origin, qa_vec_scale(right, side)),
-                           qa_vec_scale(up, c->input.view_height - 22));
+        if (!q2_weapon_muzzle(c, &recipe, angles, &start, &dir, e)) return false;
     }
     if (hand)
         s->hand_reservation = QA_Q2_HAND_UNRESERVED;
@@ -120,23 +127,10 @@ bool q2_throw(q2_weapon_call *c, bool held, qa_error *e) {
         s->grenade_ns = q2_deadline(c->now_ns, recovery);
     }
     if (!hand && !q2_multiplier(c, &multiplier, e)) return false;
-    float damage = 125 * multiplier, projectile_damage = hand || trap ? damage : 3 * multiplier;
-    if (!q2_projectile_spawn(c,
-                             hand   ? Q2_GRENADE
-                             : trap ? Q2_TRAP
-                                    : Q2_TESLA,
-                             start, dir, projectile_damage, 0, speed,
-                             hand || trap ? 165 : 128, hand || trap ? damage : 0,
-                             hand   ? (float)fuse
-                             : trap ? (c->rerelease ? 1 : (float)fuse)
-                                    : 30,
-                             hand   ? 15
-                             : trap ? 39
-                                    : 45,
-                             hand   ? (held ? 24 : 16)
-                             : trap ? 39
-                                    : 45,
-                             hand, held, e))
+    if (!q2_projectile_spawn(c, recipe.kind, start, dir, recipe.damage * multiplier, 0, speed,
+                             recipe.radius, recipe.splash * multiplier,
+                             hand ? (float)fuse : recipe.fuse, recipe.mod,
+                             hand && held ? 24 : recipe.splash_mod, hand, held, e))
         return false;
     if (!hand && !q2_consume(c, 1, !c->rerelease && !trap, e))
         return false;
@@ -232,7 +226,7 @@ bool q2_throw_frame(q2_weapon_call *c, qa_error *e) {
         (c->rerelease && c->input.quad_fire_until_ns > now ? 2u : 1u), &wait, e)) return false;
     if (s->frame == hold_frame) {
         if (s->grenade_ns == 0 && (!c->rerelease || s->grenade_finished_ns == 0))
-            s->grenade_ns = q2_deadline(now, 3200 * Q2_MS);
+            s->grenade_ns = q2_deadline(now, q2_throw_cook_ns());
         if ((!c->rerelease || !s->grenade_blew_up) && !q2_loop(c, loop, e))
             return false;
         if (explodes && !s->grenade_blew_up && now >= s->grenade_ns) {

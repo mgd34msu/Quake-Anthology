@@ -29,19 +29,31 @@ typedef struct qa_bot_weapon_knowledge {
     qa_bot_weapon_info weapon;
     qa_bot_projectile_info projectile;
     double selected_projectile_damage; /* Selected source means may be fractional. */
+    double selected_splash_damage, effect_damage;
+    float effect_radius;
     float maximum_range;
     uint32_t travel_modes; /* Actual selected weapon travel, not its learned role. */
     int32_t personality_role; /* -1 derives a learned role from ballistics. */
     bool ranged_limit, melee;
-    bool has_supply, owned;
+    bool has_supply, owned, available;
     qa_item_id supply_weapon, supply_ammo; /* Ammo 0 denotes no consumable. */
     double ammo_per_shot;
     /* Native source muzzle vectors are relative to canonical actor origin;
      * a zero count preserves library eye-relative weapon offsets. */
     qa_vec3 muzzle_offsets[2];
     uint8_t muzzle_count;
-    float launch_delay, gravity_acceleration;
+    float launch_delay, gravity_acceleration, launch_yaw_offset;
+    bool discharge, grapple, deployable, homing;
+    bool conditional_strike, conditional_trajectory, thrown, has_cycle;
+    bool timed_detonation, requires_release, ammo_reserved, pitch_clamped, range_from_bounds;
+    /* Pure nominal law shared with the selected source's actual firing. The
+     * copied observation owns every input; this callback retains no GAME state. */
+    qa_vec3 (*launch_velocity)(const struct qa_bot_weapon_knowledge *,qa_vec3 angles);
 } qa_bot_weapon_knowledge;
+/* Low nominal arc before collision/bounce or an authored later phase. Uses
+ * the selected firing law; it never simulates RNG, homing or a delegated shot. */
+bool qa_bot_weapon_launch_aim(const qa_bot_weapon_knowledge *,qa_vec3 origin,
+                              qa_vec3 target,qa_vec3 *angles,float *flight);
 typedef struct qa_bot_weapon_tactics {
     bool melee, ranged_limit, predict_occluded_splash;
     float maximum_range, weakness;

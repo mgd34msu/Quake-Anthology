@@ -669,6 +669,8 @@ bool q1_rogue_think(qa_q1_game *, q1_actor *, q1_think_kind, qa_error *);
 bool q1_launch_behavior(qa_q1_game *, q1_actor *, qa_builtin_projectile_role, qa_error *);
 bool q1_native_trajectory(qa_q1_game *, qa_actor_id);
 bool q1_missile_velocity(qa_q1_game *, q1_actor *, qa_vec3, qa_error *);
+qa_vec3 q1_grenade_launch_velocity(const qa_q1_weapon_view *,bool level,qa_vec3 aim,
+    qa_vec3 forward,qa_vec3 right,qa_vec3 up,float side,float vertical);
 bool q1_grenade_velocity(qa_q1_game *, q1_player *, qa_vec3 *, qa_error *);
 bool q1_bullets(qa_q1_game *, qa_actor_id, qa_vec3, qa_vec3, unsigned, float, float, qa_q1_weapon,
                 qa_error *);

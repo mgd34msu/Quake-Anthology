@@ -17,7 +17,6 @@
 #include "native_q2_console.h"
 #include "native_q2_arsenal.h"
 #include "native_q2_combat_policy.h"
-#include "bots_q1_rules.h"
 #include "bots_npc.h"
 #include "startup_flow.h"
 #include "engine_shutdown.h"
@@ -520,7 +519,6 @@ static bool construct_q1(qa_application *application,
                        .weapon_observation = application_q1_weapon_observation,
                        .before_fire = application_q1_before_fire,
                        .attack_delay = q1_selected_attack_delay,
-                       .bot_nail_speed = application_bot_q1_nail_speed,
                        .nail_fire = application_q1_nail_fire,
                        .monster_path = application_bots_npc_walk,
                        .horde = application_bots_npc_horde,

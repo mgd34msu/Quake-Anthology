@@ -18,7 +18,8 @@ const qa_q1_weapon_view *q1_weapon_shape(qa_q1_weapon weapon) {
                                  .damage = 18, .shots = 1, .ammo_per_shot = 2, .lifetime = 6},
         [QA_Q1_GRENADE] = {.attack_interval = .6f, .speed = 600, .range = 1500, .damage = 120,
                            .blast_damage = 120, .blast_radius = 160, .shots = 1, .ammo_per_shot = 1,
-                           .gravity = 1, .extra_z_velocity = 200, .lifetime = 2.5f},
+                           .gravity = 1, .extra_z_velocity = 200, .lifetime = 2.5f, .thrown = true,
+                           .velocity_spread = 10, .timed_detonation = true},
         [QA_Q1_ROCKET] = {.attack_interval = .8f, .speed = 1000, .range = 5000, .damage = 110,
                           .blast_damage = 120, .blast_radius = 160, .shots = 1, .ammo_per_shot = 1, .lifetime = 5},
         [QA_Q1_LIGHTNING] = {.attack_interval = .1f, .fire_interval = .1f, .range = 600, .damage = 30,
@@ -29,14 +30,14 @@ const qa_q1_weapon_view *q1_weapon_shape(qa_q1_weapon weapon) {
                            .conditional_strike = true, .launch_delay = .3f},
         [QA_Q1_PROXIMITY] = {.attack_interval = .6f, .speed = 600, .range = 9000, .damage = 95,
                              .blast_damage = 95, .blast_radius = 135, .shots = 1, .ammo_per_shot = 1,
-                             .gravity = 1, .extra_z_velocity = 200, .lifetime = 15},
+                             .gravity = 1, .extra_z_velocity = 200, .lifetime = 15, .thrown = true, .deployable = true, .lifetime_variation = 10},
         [QA_Q1_LAVA_NAILGUN] = {.attack_interval = .2f, .fire_interval = .1f, .speed = 1000, .range = 6000,
                                 .damage = 9, .shots = 1, .ammo_per_shot = 1, .lifetime = 6},
         [QA_Q1_LAVA_SUPER_NAILGUN] = {.attack_interval = .2f, .fire_interval = .1f, .speed = 1000,
                                       .range = 6000, .damage = 18, .shots = 1, .ammo_per_shot = 2, .lifetime = 6},
         [QA_Q1_MULTI_GRENADE] = {.attack_interval = .6f, .speed = 600, .range = 600, .damage = 120,
                                  .blast_damage = 120, .blast_radius = 160, .shots = 1, .ammo_per_shot = 1,
-                                 .gravity = 1, .extra_z_velocity = 200, .lifetime = 1,
+                                 .gravity = 1, .extra_z_velocity = 200, .lifetime = 1, .thrown = true,
                                  .conditional_strike = true},
         [QA_Q1_MULTI_ROCKET] = {.attack_interval = .8f, .speed = 1000, .range = 4000, .damage = 67.5f,
                                 .blast_damage = 75, .blast_radius = 115, .shots = 4, .ammo_per_shot = 1, .lifetime = 4},
@@ -51,6 +52,23 @@ const qa_q1_weapon_view *q1_weapon_shape(qa_q1_weapon weapon) {
         [QA_Q1_CTF_GRAPPLE] = {.attack_interval = .1f, .speed = 800, .range = 4000, .shots = 1,
                                .grapple = true, .lifetime = 5}};
     return &shapes[weapon];
+}
+qa_vec3 q1_grenade_launch_velocity(const qa_q1_weapon_view *shape,bool level,
+    qa_vec3 aim,qa_vec3 forward,qa_vec3 right,qa_vec3 up,float side,float vertical) {
+    if (level) {
+        qa_vec3 velocity=qa_vec_scale(aim,shape->speed);
+        velocity.z=shape->extra_z_velocity;
+        return velocity;
+    }
+    return qa_vec_add(qa_vec_add(qa_vec_scale(forward,shape->speed),
+        qa_vec_scale(up,shape->extra_z_velocity)),
+        qa_vec_add(qa_vec_scale(right,side),qa_vec_scale(up,vertical)));
+}
+qa_vec3 qa_q1_weapon_launch_velocity(const qa_q1_weapon_view *view,qa_vec3 angles) {
+    qa_vec3 forward,right,up;
+    qa_builtin_angle_vectors(angles,&forward,&right,&up);
+    return view->thrown ? q1_grenade_launch_velocity(view,angles.x==0,forward,
+        forward,right,up,0,0) : qa_vec_scale(forward,view->speed);
 }
 float q1_weapon_interval(qa_q1_weapon weapon) {
     return q1_weapon_shape(weapon)->attack_interval;
@@ -1065,8 +1083,16 @@ static bool weapon_observe(qa_q1_game *g, qa_actor_id actor, qa_q1_weapon weapon
     view.attack_interval = parameters.interval;
     if (!view.fire_interval)
         view.fire_interval = parameters.interval;
+    if (view.thrown) {
+        const qa_q1_weapon_view *launch=q1_weapon_shape(QA_Q1_GRENADE);
+        view.speed=launch->speed;
+        view.extra_z_velocity=launch->extra_z_velocity;
+        view.velocity_spread=launch->velocity_spread;
+    }
     view.gravity_acceleration = view.gravity *
         (g->services.physics ? g->services.physics->gravity : g->options.gravity);
+    view.homes_monsters=weapon==QA_Q1_MULTI_ROCKET && !g->options.coop && !g->options.deathmatch;
+    view.conditional_trajectory=view.speed>0 && !view.grapple && g->services.weapon_launch;
     view.launch_angles = player->input.view_angles;
     qa_vec3 forward, right, up;
     qa_builtin_angle_vectors(view.launch_angles, &forward, &right, &up);
@@ -1156,9 +1182,6 @@ bool qa_q1_player_weapon_read(qa_q1_game *g, qa_actor_id actor, qa_q1_weapon wea
     return result;
 }
 
-static bool bot_weapon(qa_q1_weapon weapon) {
-    return (unsigned)weapon <= QA_Q1_LIGHTNING && weapon != QA_Q1_GRENADE;
-}
 bool qa_q1_bot_weapon_items(const qa_q1_game *g,qa_q1_weapon weapon,qa_item_id *item,
                             qa_item_id *ammunition,bool *covered,qa_error *error) {
     if (!g || !item || !ammunition || !covered || (unsigned)weapon>=QA_Q1_WEAPON_COUNT ||
@@ -1166,8 +1189,7 @@ bool qa_q1_bot_weapon_items(const qa_q1_game *g,qa_q1_weapon weapon,qa_item_id *
         qa_error_set(error,QA_ERROR_ARGUMENT,0,"Q1 bot weapon items require their source registry");
         return false;
     }
-    *covered=bot_weapon(weapon);*item=0;*ammunition=0;
-    if (!*covered) return true;
+    *covered=true;
     *item=g->weapons[weapon];
     int ammo=q1_weapon_ammo(weapon);
     *ammunition=ammo<0?0:g->ammo[ammo];return true;
@@ -1179,17 +1201,13 @@ bool qa_q1_bot_weapon_usable(qa_q1_game *g,qa_actor_id actor,qa_q1_weapon weapon
         qa_error_set(error,QA_ERROR_ARGUMENT,0,"Q1 bot weapon usability requires its source owner");
         return false;
     }
-    *out=false;
-    q1_player *player=q1_player_get(g,actor);
-    if (!bot_weapon(weapon) || !player || !player->arsenal) return true;
-    qa_inventory_entry entry;
-    double owned=qa_inventory_entry_read(g->services.inventory,actor,g->weapons[weapon],&entry,NULL)?entry.count:0;
-    int ammo=q1_weapon_ammo(weapon);
-    unsigned needed=weapon==QA_Q1_SUPER_SHOTGUN || weapon==QA_Q1_SUPER_NAILGUN?2:1;
-    *out=owned!=0 && (ammo<0 || q1_ammo_count(g,actor,(qa_q1_ammo)ammo)>=needed) &&
-        (weapon!=QA_Q1_LIGHTNING || player->input.water_level<=1);
+    qa_q1_weapon_view view;
+    bool found;
+    if (!qa_q1_player_weapon_read(g,actor,weapon,&view,&found,error)) return false;
+    *out=found && view.available && !view.discharge;
     return true;
 }
+
 bool qa_q1_bot_weapon_state_read(const qa_q1_game *g,qa_actor_id actor,qa_q1_weapon *weapon,
                                  double *attack_finished,double *time,bool *present,qa_error *error) {
     if (!g || !weapon || !attack_finished || !time || !present || g->destroy_pending ||
@@ -1207,69 +1225,8 @@ bool qa_q1_bot_weapon_state_read(const qa_q1_game *g,qa_actor_id actor,qa_q1_wea
     return true;
 }
 bool qa_q1_bot_weapon_read(qa_q1_game *g,qa_actor_id actor,qa_q1_weapon weapon,
-                           qa_q1_bot_weapon_fact *out,bool *covered,qa_error *error) {
-    if (!out || !covered || (unsigned)weapon >= QA_Q1_WEAPON_COUNT) {
-        qa_error_set(error,QA_ERROR_ARGUMENT,0,"Invalid Q1 bot weapon fact request");
-        return false;
-    }
-    *out = (qa_q1_bot_weapon_fact){0};
-    *covered = false;
-    qa_q1_game_operation operation = {0};
-    if (!qa_q1_game_operation_begin(g,&operation,error)) return false;
-    if (!bot_weapon(weapon)) {qa_q1_game_operation_end(&operation);return true;}
-    q1_player *player = q1_player_get(g,actor);
-    if (player && !player->arsenal) player = NULL;
-    double nails = player ? q1_ammo_count(g,actor,QA_Q1_NAILS) : 2;
-    double shells = player ? q1_ammo_count(g,actor,QA_Q1_SHELLS) : 2;
-    float nail_speed = 1000;
-    bool okay = !player || !g->host.bot_nail_speed ||
-        g->host.bot_nail_speed(g->host.context,actor,1000,&nail_speed,error);
-    if (okay && (!qa_q1_game_operation_live(&operation) || !isfinite(nail_speed) || nail_speed < 0)) {
-        qa_error_set(error,QA_ERROR_ARGUMENT,0,"Q1 bot nail speed lost its source operation");
-        okay = false;
-    }
-    if (!okay) {qa_q1_game_operation_end(&operation);return false;}
-    /* The callback may retire a player while retaining the GAME allocation. */
-    player = q1_player_get(g,actor);
-    if (player && !player->arsenal) player = NULL;
-    qa_q1_bot_weapon_fact value = {.item=g->weapons[weapon],.shots=1,.offset={0,0,-6}};
-    int ammo = q1_weapon_ammo(weapon);
-    value.ammo = ammo < 0 ? 0 : g->ammo[ammo];
-    switch (weapon) {
-    case QA_Q1_AXE: value.damage=20;value.cycle=.5;value.range=64;break;
-    case QA_Q1_SHOTGUN:
-    case QA_Q1_SUPER_SHOTGUN: {
-        bool super = weapon==QA_Q1_SUPER_SHOTGUN && shells>1;
-        value.damage=4;value.shots=super?14:6;value.cycle=weapon==QA_Q1_SHOTGUN?.5:.7;
-        value.ammo_per_shot=super?2:1;value.range=2048;
-        value.spread_x=super?.14:.04;value.spread_y=super?.08:.04;
-        qa_body_state body;
-        double height=15.2;
-        if (qa_world_body_read(g->services.world,actor,&body,NULL))
-            height=body.bounds.mins.z+((double)body.bounds.maxs.z-body.bounds.mins.z)*.7;
-        value.offset=qa_v3(10,0,(float)(height-22));break;
-    }
-    case QA_Q1_NAILGUN:
-    case QA_Q1_SUPER_NAILGUN: {
-        bool super=weapon==QA_Q1_SUPER_NAILGUN && nails>=2;
-        value.damage=super?18:9;value.cycle=.1;value.ammo_per_shot=super?2:1;
-        value.speed=nail_speed;value.range=(double)nail_speed*6;
-        value.offset.y=super?0:(float)(player?player->nail_side:1)*4;break;
-    }
-    case QA_Q1_ROCKET:
-        value.damage=110;value.cycle=.8;value.ammo_per_shot=1;
-        value.speed=1000;value.range=5000;value.radius=160;value.offset.x=8;break;
-    case QA_Q1_LIGHTNING:
-        value.damage=30;value.cycle=.1;value.ammo_per_shot=1;value.range=600;break;
-    default: break;
-    }
-    qa_inventory_entry inventory;
-    double owned=qa_inventory_entry_read(g->services.inventory,actor,value.item,&inventory,NULL)?inventory.count:0;
-    value.owned=owned>0;
-    okay=qa_q1_bot_weapon_usable(g,actor,weapon,&value.usable,error);
-    if (!okay) {qa_q1_game_operation_end(&operation);return false;}
-    *out=value;*covered=true;
-    qa_q1_game_operation_end(&operation);return true;
+                           qa_q1_weapon_view *out,bool *covered,qa_error *error) {
+    return qa_q1_player_weapon_read(g,actor,weapon,out,covered,error);
 }
 
 static bool fire_weapon(qa_q1_game *g, q1_player *player, bool *fired, qa_error *error) {
@@ -1364,13 +1321,13 @@ static bool fire_weapon(qa_q1_game *g, q1_player *player, bool *fired, qa_error 
         if (player->input.view_angles.x == 0) {
             if (!q1_aim(g, player->id, forward, &direction, error))
                 return false;
-            velocity = qa_vec_scale(direction, q1_weapon_shape(weapon)->speed);
-            velocity.z = q1_weapon_shape(weapon)->extra_z_velocity;
+            velocity = q1_grenade_launch_velocity(q1_weapon_shape(weapon),true,
+                direction,forward,right,up,0,0);
         } else {
-            float x = (q1_random(g) * 2 - 1) * 10, y = (q1_random(g) * 2 - 1) * 10;
-            velocity = qa_vec_add(qa_vec_add(qa_vec_scale(forward, q1_weapon_shape(weapon)->speed),
-                                             qa_vec_scale(up, q1_weapon_shape(weapon)->extra_z_velocity)),
-                                  qa_vec_add(qa_vec_scale(right, x), qa_vec_scale(up, y)));
+            float x = (q1_random(g) * 2 - 1) * q1_weapon_shape(weapon)->velocity_spread;
+            float y = (q1_random(g) * 2 - 1) * q1_weapon_shape(weapon)->velocity_spread;
+            velocity = q1_grenade_launch_velocity(q1_weapon_shape(weapon),false,
+                forward,forward,right,up,x,y);
         }
         if (!q1_consume(g, player->id, QA_Q1_ROCKETS, 1, error) ||
             !q1_sound(g, player->id, "weapons/grenade.wav", 1, 1, error) ||

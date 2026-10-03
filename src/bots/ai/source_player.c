@@ -89,6 +89,26 @@ static bool word_field(bot_source_player_word field)
     }
     return false;
 }
+static bool selected_weapon_word(qa_bots *bots,bot_ai_state *state,int32_t value,
+                                  bool *accepted,qa_error *error)
+{
+    *accepted=false;
+    if(value<0) return true;
+    if(value<=13) {*accepted=true;return true;}
+    const qa_bot_weapon_knowledge *weapons=NULL;size_t count=0;void *lease=NULL;
+    if(!bots->services.arsenal(bots->services.context,state->view.actor,&weapons,&count,&lease,error)) return false;
+    if(count && !weapons) {
+        bots->services.arsenal_end(bots->services.context,lease);
+        return bot_ai_fail(error,"Selected weapon namespace has no retained arsenal observation");
+    }
+    if(state->retired || !bot_ai_live(bots,state->view.actor)) *accepted=true;
+    else for(size_t i=0;i<count;++i)
+        if(weapons[i].personality_role<0 && weapons[i].launch_velocity && weapons[i].weapon.valid &&
+           weapons[i].weapon.number==value) {*accepted=true;break;}
+    bots->services.arsenal_end(bots->services.context,lease);
+    if(!bot_ai_live(bots,state->view.actor)) state->retired=true;
+    return true;
+}
 
 bool bot_ai_source_player_word(qa_bots *bots,bot_ai_state *state,
     bot_source_player_word field,int32_t *out,qa_error *error)
@@ -96,8 +116,9 @@ bool bot_ai_source_player_word(qa_bots *bots,bot_ai_state *state,
     if(!out || !word_field(field)) return bot_ai_fail(error,"Invalid source player scalar field");
     int32_t value;
     if(!bot_ai_storage_i32(bots,state,QA_BOT_SOURCE_PLAYER+(uint32_t)field,&value,false,error)) return false;
-    if((field==BOT_PS_MOVE_TYPE && (value<0 || value>6)) ||
-       (field==BOT_PS_WEAPON && (value<0 || value>13)) ||
+    bool weapon_accepted=true;
+    if(field==BOT_PS_WEAPON && !selected_weapon_word(bots,state,value,&weapon_accepted,error)) return false;
+    if((field==BOT_PS_MOVE_TYPE && (value<0 || value>6)) || !weapon_accepted ||
        (field==BOT_PS_WEAPON_STATE && (value<0 || value>3))) {
         qa_error_set(error,QA_ERROR_FORMAT,0,"Unsupported enum in the actual bot player source field");
         return false;

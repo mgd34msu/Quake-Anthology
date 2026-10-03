@@ -1,5 +1,12 @@
 #include "internal.h"
 
+void q2_lmctf_plasma_spec(bool bounce, q2_shot_spec *out) {
+    *out = (q2_shot_spec){.kind = bounce ? Q2_LMCTF_PLASMA_BOUNCE : Q2_LMCTF_PLASMA_SPREAD,
+        .offset = {8, 8, -8}, .damage = bounce ? 39 : 28, .speed = 1200,
+        .splash = bounce ? 39 : 28, .radius = (bounce ? 39 : 28) + 70,
+        .fuse = bounce ? 1.5f : 3, .shots = bounce ? 1 : 3, .spread_degrees_x = bounce ? 0 : 10};
+}
+
 bool qa_q2_lmctf_plasma_mode(qa_q2_game *g, qa_actor_id id, bool *bounce, qa_error *e) {
     if (g == NULL || bounce == NULL) {
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Missing LMCTF plasma mode output");
@@ -40,7 +47,9 @@ bool q2_lmctf_plasma_weapon(q2_weapon_call *c, qa_error *e) {
 }
 static bool launch(q2_weapon_call *c, qa_vec3 start, qa_vec3 direction, bool bounce, qa_error *e) {
     qa_q2_game *g = c->game;
-    const float yaw_offsets[] = {0, 10, -10};
+    q2_shot_spec spec;
+    q2_lmctf_plasma_spec(bounce, &spec);
+    const float yaw_offsets[] = {0, spec.spread_degrees_x, -spec.spread_degrees_x};
     qa_vec3 angles =
         qa_v3(-atan2f(direction.z, hypotf(direction.x, direction.y)) * 57.29577951308232f,
               atan2f(direction.y, direction.x) * 57.29577951308232f, 0);
@@ -49,7 +58,7 @@ static bool launch(q2_weapon_call *c, qa_vec3 start, qa_vec3 direction, bool bou
         !qa_builtin_resource(&g->services, "sprites/s_plasma1.sp2", &model, e) ||
         !qa_builtin_resource(&g->services, "weapons/plasma/flyby.wav", &sound, e))
         return false;
-    for (unsigned i = 0; i < (bounce ? 1u : 3u); ++i) {
+    for (unsigned i = 0; i < spec.shots; ++i) {
         if (!q2_actor_live(g, c->actor->id))
             return true;
         qa_vec3 forward = direction;
@@ -58,7 +67,7 @@ static bool launch(q2_weapon_call *c, qa_vec3 start, qa_vec3 direction, bool bou
             shot.y += yaw_offsets[i];
             qa_builtin_angle_vectors(shot, &forward, NULL, NULL);
         }
-        qa_vec3 velocity = qa_vec_scale(forward, 1200);
+        qa_vec3 velocity = qa_vec_scale(forward, spec.speed);
         qa_actor_collision collision = {.family = QA_COLLISION_Q2,
                                         .shape = QA_SHAPE_BOX,
                                         .contents = 2,
@@ -83,9 +92,9 @@ static bool launch(q2_weapon_call *c, qa_vec3 start, qa_vec3 direction, bool bou
                             .attack = q2_attack(c, 34, 0),
                             .owner = c->actor->id,
                             .damage = bounce ? 39 : 1,
-                            .speed = 1200,
+                            .speed = spec.speed,
                             .born_ns = c->now_ns,
-                            .expire_ns = q2_deadline(c->now_ns, bounce ? 1500 * Q2_MS : 3 * Q2_NS),
+                            .expire_ns = q2_deadline(c->now_ns, (uint64_t)((double)spec.fuse * (double)Q2_NS)),
                             .classname = classname,
                             .model = model,
                             .loop_sound = sound,
@@ -218,7 +227,9 @@ bool q2_lmctf_plasma_touch(qa_q2_game *g, const qa_touch_contact *contact, qa_er
     if (!qa_world_body_read(g->services.world, a->id, &body, e))
         return false;
     qa_vec3 normal = contact->has_plane ? contact->plane.normal : qa_v3(0, 0, 0);
-    float damage = (bounce ? 39.0f : 28.0f) * (g->lmctf_plasma_quad ? 4.0f : 1.0f);
+    q2_shot_spec spec;
+    q2_lmctf_plasma_spec(bounce, &spec);
+    float damage = spec.damage * (g->lmctf_plasma_quad ? 4.0f : 1.0f);
     bool hurt = q2_target_damageable(g, contact->other), player = false;
     if (!q2_target_creature(g, p.owner, NULL, &player, e))
         return false;

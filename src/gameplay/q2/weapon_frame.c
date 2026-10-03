@@ -13,8 +13,8 @@ bool q2_interval(q2_weapon_call *c, uint64_t native, uint64_t *out, qa_error *e)
     }
     return true;
 }
-bool q2_animation_time(q2_weapon_call *c, uint64_t *out, qa_error *e) {
-    qa_q2_weapon_state *s = c->state;
+static unsigned animation_rate(const q2_weapon_call *c) {
+    const qa_q2_weapon_state *s = c->state;
     unsigned rate = c->input.quick_switch && c->frame_ns <= 50 * Q2_MS &&
                             (s->phase == QA_Q2_ACTIVATING || s->phase == QA_Q2_DROPPING)
                         ? 20
@@ -25,7 +25,15 @@ bool q2_animation_time(q2_weapon_call *c, uint64_t *out, qa_error *e) {
         if (c->input.haste)
             rate *= 2;
     }
-    uint64_t native = (1000 / rate) * Q2_MS;
+    return rate;
+}
+uint64_t q2_animation_native(const q2_weapon_call *c) {
+    return (1000 / animation_rate(c)) * Q2_MS;
+}
+bool q2_animation_time(q2_weapon_call *c, uint64_t *out, qa_error *e) {
+    qa_q2_weapon_state *s = c->state;
+    unsigned rate = animation_rate(c);
+    uint64_t native = q2_animation_native(c);
     uint64_t interval = native;
     if (!c->equipment && s->phase == QA_Q2_FIRING && !q2_interval(c, native, &interval, e)) return false;
     s->gun_rate = interval == native ? (float)rate : interval ?

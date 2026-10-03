@@ -1132,7 +1132,6 @@ add_library(qa_application STATIC
     src/app/application/bots_log.c
     src/app/application/bots_guests.c
     src/app/application/bots_knowledge.c
-    src/app/application/bots_q1_rules.c
     src/app/application/bot_world_bind.c
     src/app/application/bots_transport.c
     src/app/application/q3_campaign_source.c

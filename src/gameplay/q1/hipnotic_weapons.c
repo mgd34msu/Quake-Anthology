@@ -57,7 +57,8 @@ bool q1_hipnotic_launch_proximity(qa_q1_game *g, qa_actor_id owner, qa_vec3 orig
         return false;
     mine->physics.motion = QA_PHYSICS_TOSS;
     mine->physics.angular_velocity = qa_v3(100, 600, 100);
-    mine->state.projectile.expires = g->time + 15 + 10 * q1_random(g);
+    const qa_q1_weapon_view *shape=q1_weapon_shape(QA_Q1_PROXIMITY);
+    mine->state.projectile.expires = g->time + shape->lifetime + shape->lifetime_variation * q1_random(g);
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, mine->id, &body, error))
         return false;

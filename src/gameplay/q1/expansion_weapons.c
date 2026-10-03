@@ -52,14 +52,12 @@ bool q1_grenade_velocity(qa_q1_game *g, q1_player *player, qa_vec3 *out, qa_erro
     if (!q1_aim(g, player->id, g->forward, &direction, error))
         return false;
     if (player->input.view_angles.x == 0) {
-        *out = qa_vec_scale(direction, shape->speed);
-        out->z = shape->extra_z_velocity;
+        *out = q1_grenade_launch_velocity(shape,true,direction,g->forward,g->right,g->up,0,0);
         return true;
     }
-    float x = (q1_random(g) * 2 - 1) * 10, y = (q1_random(g) * 2 - 1) * 10;
-    *out = qa_vec_add(qa_vec_add(qa_vec_scale(g->forward, shape->speed),
-                                qa_vec_scale(g->up, shape->extra_z_velocity)),
-                      qa_vec_add(qa_vec_scale(g->right, x), qa_vec_scale(g->up, y)));
+    float x = (q1_random(g) * 2 - 1) * shape->velocity_spread;
+    float y = (q1_random(g) * 2 - 1) * shape->velocity_spread;
+    *out = q1_grenade_launch_velocity(shape,false,direction,g->forward,g->right,g->up,x,y);
     return true;
 }
 bool q1_expansion_fire(qa_q1_game *g, q1_player *player, qa_error *error) {

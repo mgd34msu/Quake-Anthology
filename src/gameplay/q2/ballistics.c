@@ -1,6 +1,14 @@
 #include "internal.h"
 #include "qa/game_q2_source.h"
 
+float q2_hitscan_range(void) { return 8192; }
+void q2_chainfist_spec(const qa_q2_game *g, q2_shot_spec *out) {
+    bool rr = g->options.edition == QA_Q2_RERELEASE;
+    *out = (q2_shot_spec){.offset = {0, rr ? 0 : 8, -4},
+        .damage = g->options.deathmatch ? (rr ? 15 : 30) : (rr ? 7 : 15),
+        .kick = 50, .range = rr ? 24 : 64, .shots = 1, .melee = true};
+}
+
 static bool sky(const qa_trace_result *t) {
     return (t->surface_flags & 4) != 0 ||
            (t->has_surface &&
@@ -109,7 +117,7 @@ static qa_vec3 spread(q2_weapon_call *c, qa_vec3 origin, qa_vec3 direction, floa
     qa_vec3 f, r, u;
     qa_builtin_angle_vectors(angles, &f, &r, &u);
     float x = q2_crandom(c->game) * hs, y = q2_crandom(c->game) * vs;
-    return qa_vec_add(qa_vec_add(qa_vec_add(origin, qa_vec_scale(f, 8192)), qa_vec_scale(r, x)),
+    return qa_vec_add(qa_vec_add(qa_vec_add(origin, qa_vec_scale(f, q2_hitscan_range())), qa_vec_scale(r, x)),
                       qa_vec_scale(u, y));
 }
 static bool contents(q2_weapon_call *c, qa_vec3 origin, int32_t *out, qa_error *e) {
@@ -256,7 +264,7 @@ bool q2_bullet(q2_weapon_call *c, qa_vec3 start, qa_vec3 direction, float damage
 static bool rail_run(q2_weapon_call *c, qa_vec3 start, qa_vec3 direction, float damage, float kick,
                      int mod, uint32_t flags, qa_actor_id *excluded, qa_error *e) {
     qa_trace_query query = {.start = start,
-                            .end = qa_vec_add(start, qa_vec_scale(direction, 8192)),
+                            .end = qa_vec_add(start, qa_vec_scale(direction, q2_hitscan_range())),
                             .pass_actor = c->actor->id,
                             .policy = qa_collision_default_policy(QA_COLLISION_Q2)};
     query.policy.contents_mask =
@@ -388,7 +396,7 @@ bool q2_heatbeam(q2_weapon_call *c, qa_vec3 start, qa_vec3 direction, float dama
     bool underwater = ((uint32_t)content & Q2_WATER_MASK) != 0, water = false;
     qa_vec3 water_start = start;
     qa_trace_query query = {.start = start,
-                            .end = qa_vec_add(start, qa_vec_scale(direction, 8192)),
+                            .end = qa_vec_add(start, qa_vec_scale(direction, q2_hitscan_range())),
                             .pass_actor = c->actor->id,
                             .policy = qa_collision_default_policy(QA_COLLISION_Q2)};
     uint32_t mask = c->rerelease
@@ -458,8 +466,10 @@ static bool chainfist_run(q2_weapon_call *c, qa_builtin_actor_snapshot *snapshot
         s->frame = 33;
         return true;
     }
+    q2_shot_spec spec;
+    q2_chainfist_spec(c->game, &spec);
     qa_vec3 start, dir;
-    if (!q2_project(c, c->input.angles, qa_v3(0, c->rerelease ? 0 : 8, -4), &start, &dir, e))
+    if (!q2_project(c, c->input.angles, spec.offset, &start, &dir, e))
         return false;
     qa_body_state own;
     if (!qa_world_body_read(c->game->services.world, c->actor->id, &own, e))
@@ -469,7 +479,7 @@ static bool chainfist_run(q2_weapon_call *c, qa_builtin_actor_snapshot *snapshot
         qa_builtin_angle_vectors(c->input.angles, &f, NULL, &u);
         q2_kick(c, qa_vec_scale(f, -2), qa_v3(-1, 0, 0), 0);
         qa_trace_query query = {.start = start,
-                                .end = qa_vec_add(start, qa_vec_scale(dir, 64)),
+                                .end = qa_vec_add(start, qa_vec_scale(dir, spec.range)),
                                 .pass_actor = c->actor->id,
                                 .policy = qa_collision_default_policy(QA_COLLISION_Q2)};
         query.policy.contents_mask = Q2_SHOT_MASK;
@@ -489,7 +499,7 @@ static bool chainfist_run(q2_weapon_call *c, qa_builtin_actor_snapshot *snapshot
             if (!q2_multiplier(c, &multiplier, e) ||
                 !qa_world_body_read(c->game->services.world, trace.actor, &target, e) ||
                 !q2_damage(c->game, &attack, trace.actor,
-                           (c->game->options.deathmatch ? 30 : 15) * multiplier, 50, qa_v3(0, 0, 0),
+                           spec.damage * multiplier, spec.kick, qa_v3(0, 0, 0),
                            target.origin, qa_v3(0, 0, 0), false, e))
                 return false;
         } else if (trace.fraction < 1 &&
@@ -524,7 +534,7 @@ static bool chainfist_run(q2_weapon_call *c, qa_builtin_actor_snapshot *snapshot
         if (!qa_bounds_overlap(bounds, search))
             continue;
         qa_vec3 point = closest(start, bounds), near = closest(point, own_bounds);
-        if (qa_vec_length(qa_vec_sub(point, near)) > 24)
+        if (qa_vec_length(qa_vec_sub(point, near)) > spec.range)
             continue;
         qa_bounds a = bounds, b = own_bounds;
         a.mins = qa_vec_add(a.mins, qa_v3(2, 2, 2));
@@ -557,7 +567,7 @@ static bool chainfist_run(q2_weapon_call *c, qa_builtin_actor_snapshot *snapshot
         qa_attack attack = q2_attack(c, 40, 72);
         float multiplier;
         if (!q2_multiplier(c, &multiplier, e) || !q2_damage(c->game, &attack, target,
-                       (c->game->options.deathmatch ? 15 : 7) * multiplier, 50, dir, point,
+                       spec.damage * multiplier, spec.kick, dir, point,
                        qa_vec_scale(dir, -1), false, e))
             return false;
         hit = true;

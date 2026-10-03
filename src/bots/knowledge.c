@@ -12,6 +12,76 @@ static const role_profile *profile(int32_t role)
 {
     return role>0 && (size_t)role<sizeof(profiles)/sizeof(*profiles) ? profiles+role : NULL;
 }
+static bool launch_height(const qa_bot_weapon_knowledge *c,qa_vec3 angles,
+                           qa_vec3 horizontal,double distance,double *height,double *flight)
+{
+    qa_vec3 velocity=c->launch_velocity(c,angles);
+    if(!qa_vec_finite(velocity)) return false;
+    double speed=(double)velocity.x*horizontal.x+(double)velocity.y*horizontal.y;
+    if(!(speed>0)) return false;
+    *flight=distance/speed;
+    double time=*flight;
+    *height=(double)velocity.z*time-.5*(double)c->gravity_acceleration*time*time;
+    return isfinite(*height) && isfinite(*flight);
+}
+bool qa_bot_weapon_launch_aim(const qa_bot_weapon_knowledge *c,qa_vec3 origin,
+                              qa_vec3 target,qa_vec3 *angles,float *flight)
+{
+    if(!c || !angles || !flight || !c->launch_velocity || c->weapon.speed<=0 ||
+       c->discharge || c->grapple || c->homing || c->conditional_trajectory ||
+       !qa_vec_finite(origin) || !qa_vec_finite(target) || !isfinite(c->gravity_acceleration)) return false;
+    qa_vec3 delta=qa_vec_sub(target,origin);
+    double horizontal=hypot((double)delta.x,(double)delta.y),height=delta.z;
+    qa_vec3 initial=c->launch_velocity(c,qa_v3(0,0,0));
+    if(!qa_vec_finite(initial)) return false;
+    double deflection=atan2((double)initial.y,(double)initial.x);
+    float yaw=(float)((atan2((double)delta.y,(double)delta.x)-deflection)*57.29577951308232);
+    qa_vec3 level=c->launch_velocity(c,qa_v3(0,yaw,0));
+    if(!qa_vec_finite(level)) return false;
+    double horizontal_speed=hypot((double)level.x,(double)level.y);
+    double speed_squared=horizontal_speed*horizontal_speed+(double)level.z*level.z;
+    double distance_squared=horizontal*horizontal+height*height;
+    if(!(speed_squared>0) || distance_squared==0) return false;
+    double gravity=c->gravity_acceleration,time;
+    if(gravity==0) time=sqrt(distance_squared/speed_squared);
+    else {
+        double energy=speed_squared-gravity*height;
+        double discriminant=energy*energy-gravity*gravity*distance_squared;
+        if(discriminant<0 || energy+sqrt(discriminant)<=0) return false;
+        time=sqrt(2*distance_squared/(energy+sqrt(discriminant)));
+    }
+    double inclination=atan2(height+.5*gravity*time*time,horizontal);
+    double boost=atan2((double)level.z,horizontal_speed);
+    qa_vec3 result=qa_v3((float)((boost-inclination)*57.29577951308232),yaw,0);
+    if(!qa_vec_finite(result) || result.x < -90 || result.x > 90) return false;
+    if(horizontal>0) {
+        qa_vec3 direction=qa_v3((float)(delta.x/horizontal),(float)(delta.y/horizontal),0);
+        /* Refine against the real float launch law, including its pitch clamp. */
+        double reached=0;
+        for(unsigned iteration=0;iteration<8;++iteration) {
+            if(!launch_height(c,result,direction,horizontal,&reached,&time)) return false;
+            if(fabs(reached-height)<=fmax(.05,horizontal*.00001)) break;
+            qa_vec3 nearby=result;nearby.x+=.05f;
+            double next_height,next_time;
+            if(!launch_height(c,nearby,direction,horizontal,&next_height,&next_time)) return false;
+            double derivative=(next_height-reached)/.05;
+            if(fabs(derivative)<.000001) return false;
+            result.x-=(float)((reached-height)/derivative);
+            if(!qa_vec_finite(result) || result.x < -90 || result.x > 90) return false;
+        }
+        if(!launch_height(c,result,direction,horizontal,&reached,&time) ||
+           fabs(reached-height)>fmax(.05,horizontal*.00001)) return false;
+    } else {
+        qa_vec3 velocity=c->launch_velocity(c,result);
+        if(!qa_vec_finite(velocity) || hypot((double)velocity.x,(double)velocity.y)*time>.05 ||
+           fabs((double)velocity.z*time-.5*gravity*time*time-height)>.05) return false;
+    }
+    if(!(time>0) || time>2147483.0 ||
+       (c->timed_detonation && time>c->projectile.detonation) ||
+       (c->conditional_strike && c->thrown && !c->deployable &&
+        c->projectile.detonation>0 && time>c->projectile.detonation)) return false;
+    *angles=result;*flight=(float)time;return true;
+}
 int32_t qa_bot_weapon_role(const qa_bot_weapon_knowledge *c)
 {
     if (!c) return 0;
@@ -29,7 +99,8 @@ qa_bot_weapon_tactics qa_bot_weapon_tactics_for(const qa_bot_weapon_knowledge *c
     const role_profile *p=profile(role);
     return (qa_bot_weapon_tactics){.melee=c && c->melee,.ranged_limit=c && c->ranged_limit,
         .maximum_range=c ? c->maximum_range : 0,.weakness=role==2 ? 90 : 0,
-        .predict_occluded_splash=role==4 || role==5 || role==9,
+        .predict_occluded_splash=(role==4 || role==5 || role==9) &&
+            (!c || !c->launch_velocity || (!c->deployable && !c->homing && !c->conditional_trajectory)),
         .accuracy_characteristic=p ? p->accuracy : -1,.skill_characteristic=p ? p->skill : -1};
 }
 static int32_t inventory_value(qa_bot_inventory_bytes inventory,int32_t index)
@@ -44,8 +115,11 @@ static bool owned(const qa_bot_weapon_knowledge *c,qa_bot_inventory_bytes invent
 }
 static int32_t ammunition(const qa_bot_weapon_knowledge *c,qa_bot_inventory_bytes inventory)
 {
-    if(c->personality_role<0)
+    if(c->personality_role<0) {
+        if(c->launch_velocity && c->has_supply && c->supply_ammo)
+            return inventory_value(inventory,c->weapon.ammo_inventory);
         return c->weapon.ammo_amount==0 ? 999 : inventory_value(inventory,c->weapon.ammo_inventory);
+    }
     const role_profile *p=profile(c->personality_role);
     return !p?0:p->ammo<0?999:inventory_value(inventory,p->ammo);
 }
@@ -72,7 +146,11 @@ bool qa_bot_knowledge_choose(qa_bot_runtime *runtime,uint32_t handle,
         const qa_bot_weapon_knowledge *c=candidates+i;
         int32_t role=qa_bot_weapon_role(c);
         qa_bot_inventory_view observed={.count=inventory.count,.context=&inventory,.read=source_inventory_read};
-        if (!c->weapon.valid) continue;
+        if (!c->weapon.valid || (c->launch_velocity && (!c->available || c->discharge || c->grapple))) continue;
+        /* An actual charged hand reservation survives its last inventory
+         * grenade. Complete that release; do not manufacture fuzzy ammo. */
+        if(c->launch_velocity && c->requires_release && c->has_supply && c->supply_ammo &&
+           c->ammo_reserved) {*out=c->weapon.number;return true;}
         const role_profile *p=profile(role);
         if (!p) continue;
         bool projection=c->personality_role<0;
@@ -92,7 +170,15 @@ bool qa_bot_knowledge_choose(qa_bot_runtime *runtime,uint32_t handle,
                                               &weight,&found,e);
         if (!ok) return false;
         if (!found) continue;
-        double rate=c->weapon.reload>0 ? c->selected_projectile_damage*c->weapon.projectile_count/c->weapon.reload : 0;
+        double damage=c->selected_projectile_damage;
+        if(c->launch_velocity) {
+            damage=fmax(damage,c->selected_splash_damage);
+            double distance=hypot((double)inventory_value(inventory,QA_BOT_INV_ENEMY_DISTANCE),
+                (double)inventory_value(inventory,QA_BOT_INV_ENEMY_HEIGHT));
+            if(c->effect_damage>0 && distance<c->effect_radius) damage=fmax(damage,c->effect_damage);
+        }
+        double rate=c->weapon.reload>0 && (!c->launch_velocity || c->has_cycle) ?
+            damage*c->weapon.projectile_count/c->weapon.reload : 0;
         if (weight>best || (weight>0 && weight==best && role==best_role && rate>best_rate)) {
             best=weight; choice=c->weapon.number; best_role=role; best_rate=rate;
         }
@@ -110,6 +196,7 @@ int32_t qa_bot_knowledge_activation(const qa_bot_weapon_knowledge *candidates,si
         for (size_t i=0;i<count;++i) {
             const qa_bot_weapon_knowledge *c=candidates+i;
             if (!c->weapon.valid || c->melee || c->projectile.gravity!=0 ||
+                (c->launch_velocity && (!c->available || c->discharge || c->grapple || c->deployable || c->homing)) ||
                 !owned(c,inventory) || qa_bot_weapon_role(c)!=roles[r]) continue;
             if (c->personality_role<0?ammunition(c,inventory)>=c->weapon.ammo_amount:
                 ammunition(c,inventory)>0)
@@ -125,7 +212,8 @@ int32_t qa_bot_knowledge_travel(const qa_bot_weapon_knowledge *candidates,size_t
         return -1;
     for (size_t i=0;i<count;++i) {
         const qa_bot_weapon_knowledge *c=candidates+i;
-        if (c->weapon.valid && (c->travel_modes&QA_NAV_CAPABILITY(mode)) && owned(c,inventory) &&
+        if (c->weapon.valid && (!c->launch_velocity || c->available) &&
+            (c->travel_modes&QA_NAV_CAPABILITY(mode)) && owned(c,inventory) &&
             ammunition(c,inventory)>=c->weapon.ammo_amount)
             return c->weapon.number;
     }
@@ -146,6 +234,7 @@ float qa_bot_knowledge_aggression(const qa_bot_weapon_knowledge *candidates,size
     for (size_t r=0;r<sizeof(ranks)/sizeof(*ranks);++r)
         for (size_t i=0;i<count;++i)
             if (qa_bot_weapon_role(candidates+i)==ranks[r].role && owned(candidates+i,inventory) &&
+                (!candidates[i].launch_velocity || (candidates[i].available && !candidates[i].discharge)) &&
                 ammunition(candidates+i,inventory)>ranks[r].ammo) return ranks[r].value;
     return 0;
 }

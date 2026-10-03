@@ -420,6 +420,14 @@ static bool draw_lm(qa_q2_game *g, qa_actor_id owner, qa_vec3 start, qa_vec3 end
     return qa_vec_length(qa_vec_sub(end, start)) <= 64 ||
            cable(g, owner, start, end, qa_v3(0, 0, 0), true, e);
 }
+void q2_grapple_spec(const qa_q2_game *g, bool lm, q2_shot_spec *out) {
+    bool rr = !lm && g->options.edition == QA_Q2_RERELEASE;
+    *out = (q2_shot_spec){.offset = lm ? qa_v3(8, 8, -8) : qa_v3(24, 8, -6),
+        .damage = lm ? 2 : rr ? g->grapple_options.damage : 10,
+        .speed = lm ? 800 : rr ? g->grapple_options.fly_speed : 650,
+        .shots = 1, .grapple = true, .conditional = true};
+}
+
 static bool launch(qa_q2_game *g, q2_actor *owner, qa_q2_grapple_kind kind, qa_vec3 start,
                    qa_vec3 direction, bool *launched, qa_error *e) {
     *launched = false;
@@ -431,7 +439,9 @@ static bool launch(qa_q2_game *g, q2_actor *owner, qa_q2_grapple_kind kind, qa_v
     if (s->hook.registry != 0)
         return true;
     bool lm = kind == QA_Q2_LMCTF_GRAPPLE, rr = !lm && g->options.edition == QA_Q2_RERELEASE;
-    float speed = lm ? 800 : rr ? g->grapple_options.fly_speed : 650;
+    q2_shot_spec spec;
+    q2_grapple_spec(g, lm, &spec);
+    float speed = spec.speed;
     qa_actor_definition definition;
     if (!qa_builtin_resource(&g->services, lm ? "noclass" : "grapple", &definition, e))
         return false;
@@ -472,9 +482,7 @@ static bool launch(qa_q2_game *g, q2_actor *owner, qa_q2_grapple_kind kind, qa_v
     hook->projectile = (q2_projectile){.kind = lm ? Q2_LMCTF_HOOK : Q2_CTF_HOOK,
                                        .owner = owner->id,
                                        .attack = q2_attack(&call, lm ? 60 : 56, lm ? 4 : 0),
-                                       .damage = lm   ? 2
-                                                 : rr ? g->grapple_options.damage
-                                                      : 10,
+                                       .damage = spec.damage,
                                        .speed = speed,
                                        .visible = true,
                                        .scale = 1,
@@ -542,6 +550,33 @@ static bool launch(qa_q2_game *g, q2_actor *owner, qa_q2_grapple_kind kind, qa_v
     return (!rr || loop(g, hook, "weapons/grapple/grfly.wav", e)) &&
            q2_weapon_fired(g, owner->id, weapon, e);
 }
+static bool project_pose(q2_weapon_call *call, bool lm, const qa_q2_grapple_pose *p,
+                          qa_vec3 *start, qa_vec3 *direction, qa_error *error) {
+    q2_shot_spec spec;
+    q2_grapple_spec(call->game, lm, &spec);
+    call->input.hand = p->hand;
+    call->input.view_height = p->view_height;
+    call->input.players_collide = call->game->grapple_options.players_collide;
+    if (!lm) return q2_project(call, p->angles, spec.offset, start, direction, error);
+    qa_body_state body;
+    qa_vec3 right;
+    if (!qa_world_body_read(call->game->services.world, call->actor->id, &body, error)) return false;
+    qa_builtin_angle_vectors(p->angles, direction, &right, NULL);
+    float side = p->hand == QA_Q2_LEFT_HAND ? -spec.offset.y :
+        p->hand == QA_Q2_CENTER_HAND ? 0 : spec.offset.y;
+    *start = qa_vec_add(qa_vec_add(qa_vec_add(body.origin, qa_vec_scale(*direction, spec.offset.x)),
+                                   qa_vec_scale(right, side)), qa_v3(0, 0, p->view_height + spec.offset.z));
+    return true;
+}
+bool q2_grapple_project(q2_weapon_call *call, bool lm, qa_vec3 *start,
+                         qa_vec3 *direction, qa_error *error) {
+    qa_q2_grapple_pose p;
+    qa_actor_id id = call->actor->id;
+    if (!pose(call->game, call->actor, lm ? QA_Q2_LMCTF_GRAPPLE : QA_Q2_CTF_GRAPPLE, &p, error)) return false;
+    if (q2_actor_get(call->game, id, false, error) != call->actor) return false;
+    return project_pose(call, lm, &p, start, direction, error);
+}
+
 static bool fire_ctf(qa_q2_game *g, q2_actor *a, qa_error *e) {
     if (a->grapples[QA_Q2_CTF_GRAPPLE].phase != QA_Q2_GRAPPLE_FLY)
         return true;
@@ -553,11 +588,8 @@ static bool fire_ctf(qa_q2_game *g, q2_actor *a, qa_error *e) {
                            .state = &a->weapon,
                            .input = a->input,
                            .rerelease = g->options.edition == QA_Q2_RERELEASE};
-    call.input.hand = p.hand;
-    call.input.view_height = p.view_height;
-    call.input.players_collide = g->grapple_options.players_collide;
     qa_vec3 start, direction;
-    if (!q2_project(&call, p.angles, qa_v3(24, 8, -6), &start, &direction, e))
+    if (!project_pose(&call, false, &p, &start, &direction, e))
         return false;
     if (!call.rerelease && !sound(g, a->id, a->id, "weapons/grapple/grfire.wav", 1, -1, true, e))
         return false;
@@ -577,16 +609,10 @@ static bool fire_ctf(qa_q2_game *g, q2_actor *a, qa_error *e) {
 static bool fire_lm(qa_q2_game *g, q2_actor *a, qa_error *e) {
     qa_q2_grapple_state *s = &a->grapples[QA_Q2_LMCTF_GRAPPLE];
     qa_q2_grapple_pose p;
-    qa_body_state body;
-    if (!pose(g, a, QA_Q2_LMCTF_GRAPPLE, &p, e) ||
-        !qa_world_body_read(g->services.world, a->id, &body, e))
-        return false;
-    qa_vec3 forward, right;
-    qa_builtin_angle_vectors(p.angles, &forward, &right, NULL);
-    float side = p.hand == QA_Q2_LEFT_HAND ? -8 : p.hand == QA_Q2_CENTER_HAND ? 0 : 8;
-    qa_vec3 start = qa_vec_add(
-        qa_vec_add(qa_vec_add(body.origin, qa_vec_scale(forward, 8)), qa_vec_scale(right, side)),
-        qa_v3(0, 0, p.view_height - 8));
+    if (!pose(g, a, QA_Q2_LMCTF_GRAPPLE, &p, e)) return false;
+    q2_weapon_call call = {.game = g, .actor = a, .state = &a->weapon, .input = a->input};
+    qa_vec3 start, forward;
+    if (!project_pose(&call, true, &p, &start, &forward, e)) return false;
     bool created = s->hook_state == 0;
     if (created) {
         s->hook_state = 1;

@@ -507,14 +507,17 @@ bool q2_count(qa_q2_game *g, qa_actor_id actor, qa_item_id item, int *out, qa_er
 bool q2_ammo(q2_weapon_call *c, int *out, qa_error *e) {
     return q2_count(c->game, c->actor->id, c->game->ammo[c->definition->weapon], out, e);
 }
+bool q2_infinite_ammo(const q2_weapon_call *c) {
+    return c->rerelease ? c->input.infinite_ammo :
+        (c->game->options.deathmatch_flags & 8192u) != 0;
+}
 bool q2_consume(q2_weapon_call *c, int quantity, bool honor_infinite, qa_error *e) {
     qa_q2_game *g = c->game;
     if (!q2_actor_live(g, c->actor->id))
         return true;
     qa_item_id ammo = g->ammo[c->definition->weapon];
     if (ammo == 0 ||
-        (honor_infinite &&
-         (c->rerelease ? c->input.infinite_ammo : (g->options.deathmatch_flags & 8192u) != 0)))
+        (honor_infinite && q2_infinite_ammo(c)))
         return true;
     int before, after;
     bool consumed;

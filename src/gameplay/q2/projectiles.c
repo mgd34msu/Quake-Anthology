@@ -731,7 +731,7 @@ static bool touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *e) {
     if (p.kind == Q2_ION && !hurt)
         return true;
     if (hurt) {
-        float damage = p.kind == Q2_BFG_BALL ? 200 : p.damage;
+        float damage = p.kind == Q2_BFG_BALL ? q2_bfg_impact_damage() : p.damage;
         qa_attack attack = q2_projectile_attack(
             g, id, &p, p.direct_mod,
             p.kind == Q2_FLECHETTE ? 128u
@@ -765,7 +765,7 @@ static bool touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *e) {
         return !live(g, id) || qa_session_release(g->services.session, id, e);
     }
     if (p.kind == Q2_BFG_BALL) {
-        if (!q2_projectile_radius(g, id, &p, body.origin, contact->other, 200, 100, 13,
+        if (!q2_projectile_radius(g, id, &p, body.origin, contact->other, q2_bfg_impact_damage(), q2_bfg_impact_radius(), 13,
                                   g->options.edition == QA_Q2_RERELEASE ? 4u : 0u, e))
             return false;
         if (!live(g, id))
@@ -928,6 +928,24 @@ bool q2_launch_behavior(qa_q2_game *g, q2_actor *a, qa_builtin_projectile_role r
         return true;
     return !updated || trajectory_changed(g, a, e);
 }
+float q2_bfg_impact_damage(void) { return 200; }
+float q2_bfg_impact_radius(void) { return 100; }
+qa_vec3 q2_launch_velocity(qa_vec3 direction, float speed, float lift, float side) {
+    float horizontal = sqrtf(direction.x * direction.x + direction.y * direction.y);
+    qa_vec3 angles = qa_v3(-atan2f(direction.z, horizontal) * 57.29577951308232f,
+                           atan2f(direction.y, direction.x) * 57.29577951308232f, 0), right, up;
+    qa_builtin_angle_vectors(angles, NULL, &right, &up);
+    return qa_vec_add(qa_vec_add(qa_vec_scale(direction, speed), qa_vec_scale(up, lift)),
+                      qa_vec_scale(right, side));
+}
+
+float q2_grenade_gravity_scale(bool rerelease, float gravity) {
+    return rerelease ? gravity / 800 : 1;
+}
+float q2_grenade_lift(bool rerelease, float gravity, float noise) {
+    return (200 + noise * 10) * q2_grenade_gravity_scale(rerelease, gravity);
+}
+
 bool q2_projectile_spawn(q2_weapon_call *c, q2_projectile_kind kind, qa_vec3 start,
                          qa_vec3 direction, float damage, float kick, float speed, float range,
                          float splash, float fuse, int direct_mod, int splash_mod, bool hand,
@@ -1080,26 +1098,22 @@ bool q2_projectile_spawn(q2_weapon_call *c, q2_projectile_kind kind, qa_vec3 sta
         }
     }
     if (kind == Q2_GRENADE) {
-        float horizontal = sqrtf(direction.x * direction.x + direction.y * direction.y);
-        qa_vec3 angles = qa_v3(-atan2f(direction.z, horizontal) * 57.29577951308232f,
-                               atan2f(direction.y, direction.x) * 57.29577951308232f, 0),
-                r, u;
-        qa_builtin_angle_vectors(angles, NULL, &r, &u);
+
         float up, side;
         if (c->has_grenade_impulse) {
             side = c->grenade_right;
             up = c->grenade_up;
         } else if (c->rerelease && !hand && !monster) {
             side = q2_crandom(g) * 10;
-            up = 200 + q2_crandom(g) * 10;
+            up = q2_grenade_lift(false, 0, q2_crandom(g));
         } else {
-            up = 200 + q2_crandom(g) * 10;
+            up = q2_grenade_lift(false, 0, q2_crandom(g));
             side = q2_crandom(g) * 10;
         }
         float gravity = c->has_grenade_impulse ? c->grenade_gravity : c->input.gravity;
-        up *= c->rerelease ? gravity / 800 : 1;
+        up *= q2_grenade_gravity_scale(c->rerelease, gravity);
         spawn.body.velocity =
-            qa_vec_add(qa_vec_add(spawn.body.velocity, qa_vec_scale(u, up)), qa_vec_scale(r, side));
+            q2_launch_velocity(direction, speed, up, side);
         if (!qa_world_body_write(g->services.world, id, &spawn.body, e))
             return false;
         if (c->rerelease && (hand || monster)) {

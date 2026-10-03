@@ -596,7 +596,7 @@ static bool trap_think(qa_q2_game *g, q2_actor *a, qa_builtin_actor_snapshot *sn
                 (!disarm(g, id, e) || !qa_world_set_collision(g->services.world, id, NULL, e)))
                 return false;
             qa_attack attack = q2_projectile_attack(g, id, p, 39, 0);
-            if (!q2_damage(g, &attack, best, 100000, 1, qa_v3(0, 0, 0), target.origin,
+            if (!q2_damage(g, &attack, best, q2_trap_capture_damage(), 1, qa_v3(0, 0, 0), target.origin,
                            qa_v3(0, 0, 0), false, e))
                 return false;
             if (!q2_actor_live(g, id))
@@ -800,6 +800,23 @@ bool q2_mine_touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *e) 
         p->dodgeable = false;
     return true;
 }
+qa_vec3 q2_mine_velocity(qa_vec3 direction, float speed, float lift, float side) {
+    qa_vec3 angles = qa_v3(-atan2f(direction.z, hypotf(direction.x, direction.y)) * 57.29577951308232f,
+                           atan2f(direction.y, direction.x) * 57.29577951308232f, 0), right, up;
+    qa_builtin_angle_vectors(angles, NULL, &right, &up);
+    return qa_vec_add(qa_vec_add(qa_vec_scale(direction, speed), qa_vec_scale(up, lift)),
+                      qa_vec_scale(right, side));
+}
+
+float q2_trap_capture_damage(void) { return 100000; }
+
+float q2_mine_lift(q2_projectile_kind kind, bool rerelease, float gravity, float noise) {
+    float lift = q2_grenade_lift(rerelease, gravity, noise);
+    if (kind == Q2_TRAP && rerelease)
+        lift *= q2_grenade_gravity_scale(rerelease, gravity);
+    return lift;
+}
+
 bool q2_mine_spawn(q2_weapon_call *c, q2_projectile_kind kind, qa_vec3 start, qa_vec3 direction,
                    float damage, float speed, float range, float splash, float fuse, bool held,
                    qa_error *e) {
@@ -815,18 +832,13 @@ bool q2_mine_spawn(q2_weapon_call *c, q2_projectile_kind kind, qa_vec3 start, qa
         return false;
     float horizontal = hypotf(direction.x, direction.y);
     qa_vec3 angles = qa_v3(-atan2f(direction.z, horizontal) * 57.29577951308232f,
-                           atan2f(direction.y, direction.x) * 57.29577951308232f, 0),
-            right, up;
-    qa_builtin_angle_vectors(angles, NULL, &right, &up);
-    float gravity = c->rerelease ? c->input.gravity / 800 : 1;
-    float lift = (200 + q2_crandom(g) * 10) * gravity, side = q2_crandom(g) * 10;
-    if (kind == Q2_TRAP && c->rerelease)
-        lift *= gravity;
+                           atan2f(direction.y, direction.x) * 57.29577951308232f, 0);
+    float lift = q2_mine_lift(kind, c->rerelease, c->input.gravity, q2_crandom(g));
+    float side = q2_crandom(g) * 10;
     qa_body_state body = {
         .origin = start,
         .angles = kind == Q2_PROX ? qa_vec_add(angles, qa_v3(-90, 0, 0)) : qa_v3(0, 0, 0),
-        .velocity = qa_vec_add(qa_vec_add(qa_vec_scale(direction, speed), qa_vec_scale(up, lift)),
-                               qa_vec_scale(right, side)),
+        .velocity = q2_mine_velocity(direction, speed, lift, side),
         .bounds = kind == Q2_PROX    ? (qa_bounds){qa_v3(-6, -6, -6), qa_v3(6, 6, 6)}
                   : kind == Q2_TESLA ? (qa_bounds){qa_v3(-12, -12, 0), qa_v3(12, 12, 20)}
                                      : (qa_bounds){qa_v3(-4, -4, 0), qa_v3(4, 4, 8)}};

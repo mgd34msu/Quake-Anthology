@@ -211,8 +211,9 @@ bool qa_q1_grapple_fire(qa_q1_game *g, qa_actor_id actor, bool ctf, const qa_q1_
     player->hook = hook->id;
     hook->state.projectile.kind = ctf ? Q1_CTF_HOOK : Q1_ROGUE_HOOK;
     hook->state.projectile.weapon = ctf ? QA_Q1_CTF_GRAPPLE : QA_Q1_ROGUE_GRAPPLE;
+    const qa_q1_weapon_view *shape=q1_weapon_shape(hook->state.projectile.weapon);
     hook->state.projectile.activator = actor;
-    hook->state.projectile.expires = g->time + (ctf ? 5 : 2);
+    hook->state.projectile.expires = g->time + shape->lifetime;
     hook->state.projectile.attack = q1_attack(g, actor, hook->id, hook->state.projectile.weapon);
     hook->state.projectile.attack.projectile = hook->id;
     if (ctf &&
@@ -227,10 +228,10 @@ bool qa_q1_grapple_fire(qa_q1_game *g, qa_actor_id actor, bool ctf, const qa_q1_
     body = (qa_body_state){
         .origin = qa_vec_add(body.origin, qa_vec_add(qa_vec_scale(forward, 16), qa_v3(0, 0, 16)))};
     if (!qa_world_body_write(g->services.world, hook->id, &body, error) ||
-        !q1_missile_velocity(g, hook, qa_vec_scale(direction, 800), error) ||
+        !q1_missile_velocity(g, hook, qa_vec_scale(direction, shape->speed), error) ||
         !q1_model(g, hook, ctf ? "progs/star.mdl" : "progs/hook.mdl", error) ||
         !q1_link(g, hook, error) ||
-        !q1_schedule(g, hook, ctf ? 0.1 : 2, ctf ? Q1_THINK_HOOK_FLY : Q1_THINK_HOOK_RESET,
+        !q1_schedule(g, hook, ctf ? 0.1 : shape->lifetime, ctf ? Q1_THINK_HOOK_FLY : Q1_THINK_HOOK_RESET,
                      error) ||
         !q1_sound(g, actor, "weapons/chain1.wav", 1, 1, error))
         return false;

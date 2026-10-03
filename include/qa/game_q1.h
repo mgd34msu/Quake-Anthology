@@ -188,7 +188,6 @@ typedef struct qa_q1_host {
     bool (*before_fire)(void *, qa_actor_id, qa_q1_weapon, qa_error *);
     bool (*attack_delay)(void *, qa_actor_id, qa_q1_weapon, float *delay, qa_error *);
     bool (*nail_fire)(void *, qa_actor_id, qa_q1_weapon, qa_error *);
-    bool (*bot_nail_speed)(void *,qa_actor_id,float base,float *speed,qa_error *);
     bool (*cheat_arsenal)(void *, qa_actor_id, qa_q1_cheat_grant, bool *handled, qa_error *);
     bool (*horde)(void *);
     bool (*monster_path)(void *, qa_actor_id, qa_vec3 goal, float distance, qa_q1_path_result *,
@@ -420,12 +419,13 @@ typedef struct qa_q1_weapon_view {
     float attack_interval, fire_interval;
     float speed, range, damage, blast_damage, blast_radius;
     float horizontal_spread, vertical_spread, gravity, gravity_acceleration;
-    float extra_z_velocity, lifetime, launch_delay;
+    float extra_z_velocity, lifetime, launch_delay, velocity_spread, lifetime_variation;
     qa_vec3 launch_angles;
     qa_vec3 muzzle_offsets[2];
     uint32_t shots;
     uint8_t muzzle_count;
-    bool owned, available, melee, grapple, discharge, conditional_strike;
+    bool owned, available, melee, grapple, discharge, conditional_strike, thrown;
+    bool deployable, homes_monsters, conditional_trajectory, timed_detonation;
 } qa_q1_weapon_view;
 /* Detached source facts for the next shot, without consuming ammo or RNG.
  * Muzzle offsets are world-space vectors relative to the actor origin.
@@ -433,6 +433,10 @@ typedef struct qa_q1_weapon_view {
  * delayed hammer effects and selected projectile replacement remain conditional. */
 bool qa_q1_player_weapon_read(qa_q1_game *, qa_actor_id, qa_q1_weapon,
                               qa_q1_weapon_view *, bool *found, qa_error *);
+/* Nominal moving-stage velocity for these command angles, after launch_delay,
+ * using the same Source throw recipe as firing. Autoaim, random variation and
+ * delegated trajectory replacement stay in their reached fire stages. */
+qa_vec3 qa_q1_weapon_launch_velocity(const qa_q1_weapon_view *,qa_vec3 angles);
 /* Native travel fields only; shared health/armor/inventory are applied by the
  * campaign owner before selecting the carried weapon and extension state. */
 bool qa_q1_player_travel_reset(qa_q1_game *, qa_actor_id, float max_health, qa_error *);
