@@ -1,6 +1,7 @@
 #include "guest_qc_profile.h"
 #include "guest_qc_items.h"
 #include "guest_qc_pickups.h"
+#include "guest_qc_combat.h"
 #include "guest_qc_protection.h"
 #include "qa/application_network_qw.h"
 #include "guest_qc_rerelease.h"
@@ -541,7 +542,8 @@ bool application_qc_disconnect_player(application_provider *provider, qa_actor_i
             client->spectator ? application_qc_spectator_callback(engine, "SpectatorDisconnect", actor, error) :
             application_qc_named(engine, "ClientDisconnect", actor, error);
         if (ok) ok = application_qc_pickups_release(engine,actor,error) &&
-            application_qc_items_release(engine,actor,error) && application_qc_protection_release(engine,actor,error);
+            application_qc_items_release(engine,actor,error) && application_qc_protection_release(engine,actor,error) &&
+            application_qc_combat_release(engine,actor,error);
         if (ok && qa_actor_id_equal(client->actor, actor)) {
             client->spawned = false;
             client->prepared = false;

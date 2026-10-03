@@ -1,4 +1,5 @@
 #include "guest_qc_profile.h"
+#include "guest_qc_combat.h"
 
 static bool controls_body(struct application_qc_state *engine, qa_actor_id actor)
 {
@@ -63,7 +64,8 @@ bool application_qc_prepare_entity(void *opaque, qa_qc_instance *vm,
             row->collision_bound = true;
         }
     }
-    return application_qc_project_declared(engine, vm, access, error);
+    return application_qc_combat_prepare(engine, vm, access, error) &&
+        application_qc_project_declared(engine, vm, access, error);
 }
 bool application_qc_project_body_store(struct application_qc_state *engine, qa_qc_instance *vm,
                                          const qa_qc_store_event *event, qa_error *error)

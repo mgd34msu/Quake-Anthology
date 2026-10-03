@@ -2,6 +2,7 @@
 #include "guest_qc_items.h"
 #include "guest_qc_pickups.h"
 #include "guest_qc_item_weapons.h"
+#include "guest_qc_combat.h"
 #include "guest_qc_protection.h"
 #include "guest_qc_objectives.h"
 #include "guest_qc_original_save.h"
@@ -368,6 +369,7 @@ static bool schedule_think(struct application_qc_state *engine, qa_actor_id acto
 static bool stored(void *opaque, qa_qc_instance *vm, const qa_qc_store_event *event, qa_error *error)
 {
     struct application_qc_state *engine = opaque;
+    if (!application_qc_combat_source_stored(engine, vm, event, error)) return false;
     if (!application_qc_store_declared(engine, vm, event, error)) return false;
     if (!engine->provider->state.qc.qualified && !application_qc_project_body_store(engine, vm, event, error)) return false;
     if (event->kind != QA_QC_STORE_ENTITY || event->entity_reference == 0) return true;
@@ -1100,29 +1102,6 @@ static uint32_t source_random(void *context)
     struct application_qc_state *engine = context;
     return qa_builtin_random_integer(&engine->random);
 }
-static size_t selected_client_count(const qa_launch_choices *choices, const char *instance)
-{
-    static const qa_launch_role roles[] = {QA_ROLE_CHARACTER, QA_ROLE_MOVEMENT, QA_ROLE_ARSENAL,
-        QA_ROLE_INVENTORY, QA_ROLE_COMBAT, QA_ROLE_EFFECTS, QA_ROLE_EQUIPMENT};
-    size_t count = 0;
-    for (size_t i = 0; i < choices->seat_count; ++i) {
-        const qa_launch_seat *seat = &choices->seats[i]; bool selected = false;
-        for (size_t j = 0; j < sizeof(roles) / sizeof(roles[0]) && !selected; ++j) {
-            const qa_launch_binding *binding = NULL;
-            for (size_t k = 0; k < choices->binding_count; ++k) {
-                const qa_launch_binding *candidate = &choices->bindings[k];
-                if (candidate->role == roles[j] && candidate->selector[0] == 0 &&
-                    candidate->scope.kind == QA_SCOPE_ACTOR && seat->actor.registry &&
-                    qa_actor_id_equal(candidate->scope.actor, seat->actor)) { binding = candidate; break; }
-            }
-            if (!binding) binding = qa_launch_binding_for(choices,
-                (qa_launch_scope){.kind = QA_SCOPE_SEAT, .seat = seat->id}, roles[j], "");
-            selected = binding && strcmp(binding->instance, instance) == 0;
-        }
-        if (selected) ++count;
-    }
-    return count;
-}
 bool application_qc_player_roster_ready(application_provider *provider,
                                          const qa_launch_choices *choices, qa_error *error)
 {
@@ -1131,7 +1110,7 @@ bool application_qc_player_roster_ready(application_provider *provider,
     if (!application_qc_input_idle(provider))
         return application_fail(error, QA_ERROR_ARGUMENT, "QC client roster has unfinished input");
     const struct application_qc_profile *profile = provider->state.qc.qualified;
-    size_t count = profile ? selected_client_count(choices, provider->launch->selection.instance) : choices->seat_count;
+    size_t count = choices->seat_count;
     uint32_t maximum = profile && profile->clients ? profile->maximum_clients :
         provider->state.qc.engine ? provider->state.qc.engine->max_clients : UINT32_MAX;
     return count <= maximum ||
@@ -1157,6 +1136,8 @@ static bool declared_replace(void *opaque,qa_qc_instance *vm,const qa_qc_call_ev
 {
     struct application_qc_state *engine=opaque;bool handled=false;
     if(!application_qc_item_weapons_replace(engine,vm,event,next,&handled,error))return false;
+    if(handled)return true;
+    if(!application_qc_combat_replace(engine,vm,event,next,&handled,error))return false;
     return handled||application_qc_spawn_call(opaque,vm,event,next,error);
 }
 static bool declared_inline(void *opaque,qa_qc_instance *vm,const qa_qc_inline_event *event,
@@ -1164,6 +1145,8 @@ static bool declared_inline(void *opaque,qa_qc_instance *vm,const qa_qc_inline_e
 {
     struct application_qc_state *engine=opaque;bool handled=false;
     if(!application_qc_item_weapons_inline(engine,vm,event,next,&handled,error))return false;
+    if(handled)return true;
+    if(!application_qc_combat_inline(engine,vm,event,next,&handled,error))return false;
     return handled||qa_qc_inline_continue(next,error);
 }
 static bool declared_left(void *opaque,qa_qc_instance *vm,const qa_qc_call_event *event,qa_error *error)
@@ -1172,15 +1155,35 @@ static bool declared_left(void *opaque,qa_qc_instance *vm,const qa_qc_call_event
 }
 static bool declared_regions(application_provider *provider,qa_qc_inline_region **out,size_t *count,qa_error *error)
 {
-    size_t weapon_count=0,protection_count=0;
-    const qa_qc_inline_region *weapons=application_qc_item_weapons_regions(provider,&weapon_count);
-    const qa_qc_inline_region *protection=application_qc_protection_regions(provider->state.qc.qualified?provider->state.qc.qualified->protection:NULL,&protection_count);
-    if(weapon_count>SIZE_MAX-protection_count||weapon_count+protection_count>SIZE_MAX/sizeof(**out))
+    const struct application_qc_profile *profile=provider->state.qc.qualified;
+    size_t sizes[3]={0},total=0;
+    const qa_qc_inline_region *parts[]={
+        application_qc_item_weapons_regions(provider,&sizes[0]),
+        application_qc_protection_regions(profile?profile->protection:NULL,&sizes[1]),
+        application_qc_combat_regions(profile?profile->combat:NULL,&sizes[2])};
+    for(size_t i=0;i<sizeof(parts)/sizeof(parts[0]);++i){
+        if(sizes[i]>SIZE_MAX-total)return application_fail(error,QA_ERROR_MEMORY,"QC admitted Source region count overflows");
+        total+=sizes[i];
+    }
+    if(total>SIZE_MAX/sizeof(**out))
         return application_fail(error,QA_ERROR_MEMORY,"QC admitted Source region count overflows");
-    *count=weapon_count+protection_count;*out=*count?malloc(*count*sizeof(**out)):NULL;
-    if(*count&&!*out)return application_fail(error,QA_ERROR_MEMORY,"Composing QC admitted Source regions");
-    if(weapon_count)memcpy(*out,weapons,weapon_count*sizeof(**out));
-    if(protection_count)memcpy(*out+weapon_count,protection,protection_count*sizeof(**out));
+    *count=0;*out=total?malloc(total*sizeof(**out)):NULL;
+    if(total&&!*out)return application_fail(error,QA_ERROR_MEMORY,"Composing QC admitted Source regions");
+    for(size_t i=0;i<sizeof(parts)/sizeof(parts[0]);++i){
+        for(size_t j=0;j<sizes[i];++j){
+            const qa_qc_inline_region *region=parts[i]+j;
+            size_t existing=0;
+            while(existing<*count && ((*out)[existing].function!=region->function ||
+                (*out)[existing].entry!=region->entry))++existing;
+            if(existing==*count){(*out)[(*count)++]=*region;continue;}
+            const qa_qc_inline_region *admitted=*out+existing;
+            if(admitted->exit!=region->exit || admitted->replaceable!=region->replaceable ||
+                admitted->saved_scope!=region->saved_scope || admitted->saved_word!=region->saved_word){
+                free(*out);*out=NULL;*count=0;
+                return application_fail(error,QA_ERROR_FORMAT,"QC declarations disagree at one actual Source region entry");
+            }
+        }
+    }
     return true;
 }
 bool application_construct_qc(qa_application *app, application_provider *provider, qa_world *world,
@@ -1248,7 +1251,7 @@ bool application_construct_qc(qa_application *app, application_provider *provide
     bool created=qa_qc_game_create(provider->state.qc.program,&options,&provider->state.qc.game,error);
     free(regions);if(!created)return false;
     provider->state.qc.instance = qa_qc_game_instance(provider->state.qc.game);
-    if(!application_qc_protection_create(engine,error))return false;
+    if(!application_qc_combat_create(engine,error) || !application_qc_protection_create(engine,error))return false;
     provider->component = (qa_component){.owner = provider->owner, .clock = provider->launch->selection.clock,
         .state = engine, .prepare_frame = prepare_frame, .begin_frame = begin_frame,
         .actor_frame = actor_frame, .end_frame = end_frame, .command_actor = command_actor};
@@ -1270,7 +1273,8 @@ static bool load_map(application_provider *provider, const qa_bsp_view *bsp,
     if (!application_qc_callbacks_suspend(provider, error) ||
         !application_qc_objectives_suspend(engine,error) ||
         !application_qc_pickups_close(engine,error) || !application_qc_items_close(engine,error) ||
-        !application_qc_protection_suspend(engine,error)) return false;
+        !application_qc_protection_suspend(engine,error) ||
+        !application_qc_combat_suspend(engine,error)) return false;
     application_bots_npc_destroy(provider);
     if (provider->state.qc.qualified && !authored_entities)
         return application_qc_load_declared_map(engine, bsp, entities, map_id, spawn_id, error) &&
@@ -1389,7 +1393,8 @@ bool application_qc_deconstruct(application_provider *provider, qa_error *error)
     if (engine == NULL) return true;
     if (application_qc_has_source_admission(engine) || engine->input_scope || engine->parked_inputs ||
         engine->client_think_time || !qa_world_idle(engine->world) ||
-        !application_qc_protection_idle(engine) || !qa_inventory_idle(engine->services.inventory) ||
+        !application_qc_combat_idle(engine) || !application_qc_protection_idle(engine) ||
+        !qa_inventory_idle(engine->services.inventory) ||
         !qa_pickups_idle(engine->services.pickups) ||
         (engine->console && !qa_console_idle(engine->console)) ||
         (engine->cvars && !qa_cvars_observer_idle(engine->cvars)) ||
@@ -1400,7 +1405,8 @@ bool application_qc_deconstruct(application_provider *provider, qa_error *error)
     if (!application_qc_callbacks_suspend(provider, error) ||
         !application_qc_objectives_suspend(engine,error) ||
         !application_qc_pickups_close(engine,error) || !application_qc_items_close(engine,error) ||
-        !application_qc_protection_destroy(engine,error)) return false;
+        !application_qc_protection_destroy(engine,error) ||
+        !application_qc_combat_destroy(engine,error)) return false;
     for (uint32_t i = 0; engine->actors && i < engine->actor_capacity; ++i) {
         if (!engine->actors[i].collision_bound) continue;
         if (!qa_world_collision_unbind(engine->world, engine->actors[i].actor, &engine->actors[i], error)) return false;
@@ -1436,6 +1442,7 @@ bool application_qc_actor_released(application_provider *provider, qa_actor_reco
     if (!application_qc_pickups_release(engine,record.id,error) ||
         !application_qc_items_release(engine,record.id,error) ||
         !application_qc_protection_release(engine,record.id,error) ||
+        !application_qc_combat_release(engine,record.id,error) ||
         !application_qc_source_client_released(engine, record, error)) return false;
     application_qc_rerelease_released(engine,record.id);
     application_bots_npc_released(provider,record.id);

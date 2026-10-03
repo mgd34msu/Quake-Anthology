@@ -20,5 +20,7 @@ bool application_qc_armor_parse(const qa_qc_program *, const qa_json_document *,
 bool application_qc_armor_inputs(const qa_qc_program *, const application_qc_call *,
     const application_qc_armor_stage *, bool standalone, qa_error *);
 void application_qc_armor_free(application_qc_armor_stage *);
+bool application_qc_region_private_writes_dead(const qa_qc_program *, const qa_qc_inline_region *,
+    uint32_t damage_word, const uint32_t *scratch_words, size_t count, qa_error *);
 
 #endif

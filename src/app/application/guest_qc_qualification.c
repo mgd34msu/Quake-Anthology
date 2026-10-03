@@ -1,6 +1,7 @@
 #include "guest_qc_profile.h"
 #include "guest_qc_items.h"
 #include "guest_qc_pickups.h"
+#include "guest_qc_combat.h"
 #include "guest_qc_protection.h"
 #include "guest_qc_objectives.h"
 #include "qa/json.h"
@@ -20,11 +21,6 @@ bool application_qc_declaration_array(const qa_json_document *doc, qa_json_id no
 {
     return (optional && node == QA_JSON_NONE) || qa_json_type(doc, node) == QA_JSON_ARRAY ||
         application_fail(error, QA_ERROR_FORMAT, "QC declaration requires an array");
-}
-static bool empty(const qa_json_document *doc, qa_json_id node, qa_error *error)
-{
-    return node == QA_JSON_NONE || (qa_json_type(doc, node) == QA_JSON_ARRAY && qa_json_size(doc, node) == 0) ||
-        application_fail(error, QA_ERROR_UNSUPPORTED, "QC declaration capability has no application owner yet");
 }
 bool application_qc_declaration_number(const qa_json_document *doc, qa_json_id node, float *out, qa_error *error)
 {
@@ -169,6 +165,7 @@ void application_qc_release_qualification(application_provider *provider)
         free(profile->weapon_values[i].label);
     application_qc_items_profile_free(profile->items);
     application_qc_pickups_profile_free(profile->pickups);
+    application_qc_combat_profile_free(profile->combat);
     application_qc_protection_profile_free(profile->protection);
     application_qc_objectives_release(profile);
     free(profile->weapon_values); free(profile); provider->state.qc.qualified = NULL;
@@ -604,9 +601,6 @@ bool application_qc_qualify(application_provider *provider, qa_error *error)
     if (!ok && error && error->code == QA_OK) application_fail(error, QA_ERROR_FORMAT, "QC declaration artifact identity differs");
     if (ok && (provider->launch->roles & QA_ROLE_BIT(QA_ROLE_ENTITIES)))
         ok = application_qc_authored_map_ready(provider, error);
-    static const char *pending[] = {"combat"};
-    for (size_t i = 0; ok && i < sizeof(pending) / sizeof(pending[0]); ++i)
-        ok = empty(doc, qa_json_get(doc, root, pending[i]), error);
     if (ok) ok = fields(doc, qa_json_get(doc, root, "actorFields"), provider, profile, error);
     qa_json_id callbacks = qa_json_get(doc, root, "callbacks");
     if (ok) ok = application_qc_declaration_array(doc, callbacks, false, error);
@@ -717,7 +711,8 @@ bool application_qc_qualify(application_provider *provider, qa_error *error)
         if (profile->fields[i].kind == QC_FIELD_USERINFO && !profile->clients)
             ok = application_fail(error, QA_ERROR_FORMAT, "QC userinfo fields require declared client services");
     }
-    if (ok) ok = application_qc_protection_qualify(provider,doc,qa_json_get(doc,root,"protection"),error);
+    if (ok) ok = application_qc_combat_qualify(provider,doc,qa_json_get(doc,root,"combat"),error) &&
+        application_qc_protection_qualify(provider,doc,qa_json_get(doc,root,"protection"),error);
     if (ok) ok = application_qc_items_qualify(provider,doc,qa_json_get(doc,root,"items"),error) &&
         application_qc_pickups_qualify(provider,doc,qa_json_get(doc,root,"pickups"),error) &&
         application_qc_objectives_qualify(provider,doc,qa_json_get(doc,root,"objectives"),error);

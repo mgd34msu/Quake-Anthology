@@ -53,6 +53,7 @@ typedef struct application_qc_actor {
     bool collision_bound;
 } application_qc_actor;
 struct application_qc_state {
+    struct application_qc_combat *combat;
     struct application_qc_protection *protection;
     struct application_qc_item_weapon_actor *item_weapon_actors;
     struct application_qc_item_actor *item_actors;

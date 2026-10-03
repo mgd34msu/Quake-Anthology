@@ -1,6 +1,7 @@
 #include "save_private.h"
 #include "guest_qc_items.h"
 #include "guest_qc_pickups.h"
+#include "guest_qc_combat.h"
 #include "guest_qc_protection.h"
 #include "guest_projection_private.h"
 #include "guest_native_q2_private.h"
@@ -33,10 +34,15 @@ static bool combat_binding(void *opaque, qa_actor_id actor, uint64_t serial,
                             qa_combat_binding *out, qa_error *error)
 {
     qa_application *app = opaque;
+    application_provider *combat = application_provider_for(app, actor, QA_ROLE_COMBAT, "");
+    if (combat && combat->kind == APPLICATION_PROVIDER_QC)
+        return application_qc_combat_saved_binding(combat->state.qc.engine,actor,serial,out,error);
     application_q3_component *component=application_q3_components_actor_owner(app,actor);
     if(component) return application_q3_component_combat_binding(component,actor,serial,out,error);
     const qa_actor_record *record = qa_actors_get(qa_session_actors(app->session), actor);
     application_provider *provider = record ? source_owner(app, record->owner) : NULL;
+    if (provider && provider->kind == APPLICATION_PROVIDER_QC)
+        return application_qc_combat_saved_binding(provider->state.qc.engine,actor,serial,out,error);
     application_provider *character = application_provider_for(app, actor, QA_ROLE_CHARACTER, "");
     struct application_q3_guest *source = character ? q3g_engine(character) : NULL;
     if (source && source->game && source->game->combat)

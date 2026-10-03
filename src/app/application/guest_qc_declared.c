@@ -1,5 +1,6 @@
 #include "guest_qc_profile.h"
 #include "guest_qc_items.h"
+#include "guest_qc_combat.h"
 #include "guest_qc_protection.h"
 #include "guest_qc_objectives.h"
 #include "guest_q3_component_clients.h"
@@ -287,7 +288,8 @@ bool application_qc_callbacks_ready(const struct application_qc_state *engine, q
              !qa_operation_destroy_validate(callback->services.operation, error))))
             return application_fail(error, QA_ERROR_FORMAT, "QC callback continuation differs from its actual hooks");
     }
-    return application_qc_objectives_ready(engine,error) && application_qc_protection_ready(engine,error);
+    return application_qc_objectives_ready(engine,error) && application_qc_combat_ready(engine,error) &&
+        application_qc_protection_ready(engine,error);
 }
 static bool project_value(qa_qc_instance *vm, int32_t reference, const qa_qc_definition *field,
                             qa_qc_game_value value, qa_error *error)
@@ -508,6 +510,7 @@ bool application_qc_store_declared(struct application_qc_state *engine, qa_qc_in
         case QC_FIELD_CLASSNAME:
             ok = application_fail(error, QA_ERROR_ARGUMENT, "QC store requires a declared canonical output owner"); break;
         case QC_FIELD_HEALTH:
+            if (application_qc_combat_health_owned(engine,actor,def)) break;
             ok = qa_qc_entity_float(vm, event->entity_reference, def->offset, &scalar, error) &&
                 qa_combat_set_health(engine->services.combat, actor, scalar, error); break;
         case QC_FIELD_INVENTORY: {

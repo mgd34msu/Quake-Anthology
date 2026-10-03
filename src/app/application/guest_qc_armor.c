@@ -20,17 +20,20 @@ static uint32_t end_of(const qa_qc_program *program, const qa_qc_function *funct
     }
     return end;
 }
-static bool typed_local(const qa_qc_program *program, const qa_qc_function *function,
-    uint32_t offset, qa_qc_value_type type)
+static bool typed_word(const qa_qc_program *program, uint32_t offset, qa_qc_value_type type)
 {
-    if (offset < function->parameter_start || offset - function->parameter_start >= function->local_words)
-        return false;
     qa_qc_program_info info = qa_qc_program_describe(program);
     for (uint32_t i = 0; i < info.global_count; ++i) {
         const qa_qc_definition *definition = qa_qc_program_global(program, i);
         if (definition->offset == offset && definition->type == type) return true;
     }
     return false;
+}
+static bool typed_local(const qa_qc_program *program, const qa_qc_function *function,
+    uint32_t offset, qa_qc_value_type type)
+{
+    return offset >= function->parameter_start && offset - function->parameter_start < function->local_words &&
+        typed_word(program, offset, type);
 }
 typedef struct armor_analysis {
     const qa_qc_program *program;
@@ -415,5 +418,32 @@ bool application_qc_armor_parse(const qa_qc_program *program, const qa_json_docu
         if (standalone_safe(&analysis, stage, function, dirty, width, &proof)) stage->region.saved_scope = QA_QC_INLINE_FRAME;
         else if (proof.code == QA_ERROR_MEMORY) { if (error) *error = proof; ok = false; }
     }
+    free(dirty); free(analysis.written); free(analysis.named); free(analysis.visiting); return ok;
+}
+bool application_qc_region_private_writes_dead(const qa_qc_program *program,
+    const qa_qc_inline_region *region, uint32_t damage_word, const uint32_t *scratch_words,
+    size_t count, qa_error *error)
+{
+    const qa_qc_function *function = program && region ? qa_qc_program_function(program, region->function) : NULL;
+    if (!function || function->first_statement <= 0 || function->named_builtin || (count && !scratch_words) ||
+        region->entry < (uint32_t)function->first_statement || region->exit <= region->entry ||
+        region->exit >= end_of(program, function) || (!typed_local(program, function, damage_word, QA_QC_FLOAT) &&
+        !(region->saved_scope == QA_QC_INLINE_GLOBAL && region->saved_word == damage_word && damage_word >= 28 &&
+          (damage_word < function->parameter_start || damage_word - function->parameter_start >= function->local_words) &&
+          typed_word(program, damage_word, QA_QC_FLOAT))))
+        return reject(error, "QC private-write proof requires its actual typed source continuation");
+    armor_analysis analysis = {0};
+    bool ok = analysis_create(program, &analysis, error);
+    size_t width = ((size_t)analysis.info.global_words + 7) / 8;
+    uint8_t *dirty = ok ? calloc(width, 1) : NULL;
+    if (ok && !dirty) ok = application_fail(error, QA_ERROR_MEMORY, "Owning QC private continuation proof");
+    for (size_t i = 0; ok && i < count; ++i) {
+        uint32_t offset = scratch_words[i];
+        if (offset >= analysis.info.global_words || offset == damage_word || (offset >= 28 && analysis.named[offset] &&
+            (offset < function->parameter_start || offset - function->parameter_start >= function->local_words)))
+            ok = reject(error, "QC scratch write is not private to its actual source frame");
+        else mark(dirty, offset, true);
+    }
+    if (ok) ok = flow_safe(&analysis, region->exit, end_of(program, function), dirty, false, 0, error);
     free(dirty); free(analysis.written); free(analysis.named); free(analysis.visiting); return ok;
 }

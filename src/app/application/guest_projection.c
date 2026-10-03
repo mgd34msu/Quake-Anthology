@@ -1,6 +1,7 @@
 #include "guest_projection_private.h"
 #include "guest_qc_items.h"
 #include "guest_qc_pickups.h"
+#include "guest_qc_combat.h"
 #include "guest_qc_protection.h"
 #include "guest_native_q2_private.h"
 
@@ -547,7 +548,8 @@ bool application_guest_projection_inventory_binding(q3g_role *role,
 bool application_guest_inventory_restore_finish(application_provider *provider, qa_error *error)
 {
     if(provider->kind==APPLICATION_PROVIDER_QC)
-        return application_qc_protection_restore_attach(provider->state.qc.engine,error) &&
+        return application_qc_combat_restore_attach(provider->state.qc.engine,error) &&
+            application_qc_protection_restore_attach(provider->state.qc.engine,error) &&
             application_qc_items_restore_finish(provider,error) &&
             application_qc_pickups_ready(provider->state.qc.engine,error);
     if (provider->kind == APPLICATION_PROVIDER_NATIVE && provider->state.native.q2_engine)

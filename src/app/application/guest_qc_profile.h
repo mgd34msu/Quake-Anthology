@@ -104,6 +104,7 @@ typedef struct application_qc_client_presentation {
 } application_qc_client_presentation;
 struct application_qc_profile {
     struct application_qc_objectives *objectives;
+    struct application_qc_combat_profile *combat;
     struct application_qc_protection_profile *protection;
     struct application_qc_items *items;
     struct application_qc_pickups *pickups;
