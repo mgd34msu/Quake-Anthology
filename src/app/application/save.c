@@ -666,7 +666,7 @@ typedef struct application_persistence {
     uint64_t configuration_generation, publication_generation, actor_revision;
     uint64_t restored_command_generation;
     qa_save_purpose purpose;
-    bool leased;
+    bool leased, provider_clocks_restored;
 } application_persistence;
 
 static bool persistence_safe(qa_application *app)
@@ -1635,6 +1635,37 @@ static bool persistence_create(void *opaque, const qa_save_image *image, void **
     return ok;
 }
 
+static bool persistence_restore_provider_clocks(application_persistence *operation,
+    qa_application *candidate, qa_error *error)
+{
+    const qa_save_record *record = foundation_record(operation->image, QA_SAVE_SESSION, "qa.session", error);
+    qa_session_checkpoint saved = {0};
+    bool ok = record && candidate->operation == APPLICATION_PERSISTING &&
+        candidate->native_restore_image == operation->image &&
+        qa_save_session_decode(record->payload, &saved, error);
+    for (size_t i = 0; ok && i < candidate->provider_count; ++i) {
+        application_provider *provider = candidate->providers[i];
+        if (!provider->component_attached) continue;
+        const qa_session_component_checkpoint *clock = NULL;
+        for (size_t j = 0; j < saved.component_count; ++j) {
+            if (saved.components[j].owner != provider->owner) continue;
+            if (clock) { ok = false; break; }
+            clock = saved.components + j;
+        }
+        if (!ok || !provider->constructed || !provider->attached || provider->application != candidate ||
+            !clock) {
+            ok = application_fail(error, QA_ERROR_FORMAT, "Saved Source clock has no unique constructed provider owner");
+            break;
+        }
+        ok = qa_session_restore_clock(candidate->session, provider->owner, &clock->state, error);
+    }
+    qa_session_checkpoint_free(&saved);
+    if (ok) operation->provider_clocks_restored = true;
+    else if (!error || error->code == QA_OK)
+        application_fail(error, QA_ERROR_FORMAT, "Source clock import requires its actual candidate save image");
+    return ok;
+}
+
 static bool persistence_restore_owner(void *opaque, void *value,
     const qa_save_record *record, qa_error *error)
 {
@@ -1693,6 +1724,8 @@ static bool persistence_restore_owner(void *opaque, void *value,
         return binding && binding->restore(binding->context, candidate, record->payload, error);
     }
     default: {
+        if (record->owner.kind == QA_SAVE_CONNECTIONS && !operation->provider_clocks_restored &&
+            !persistence_restore_provider_clocks(operation, candidate, error)) return false;
         const qa_application_persistence_owner *binding = external_owner(operation->ops, &record->owner);
         return binding && binding->restore(binding->context, candidate, record->payload, error);
     }
