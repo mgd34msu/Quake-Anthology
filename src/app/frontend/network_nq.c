@@ -3,6 +3,7 @@
 #include "qa/collision.h"
 #include "qa/launch_identity.h"
 #include "qa/network_save.h"
+#include "qa/q1_chat_commands.h"
 #include <limits.h>
 #include <math.h>
 #include <stdlib.h>
@@ -379,8 +380,9 @@ static bool source_command(void *context, qa_net_client_id id, const char *text,
     if (!present) return true;
     if (!strcmp(command, "ping")) return source_ping(peer, error);
     if (!strcmp(command, "status")) return source_status(peer, error);
-    if (!strcmp(command, "say") || !strcmp(command, "say_team"))
-        return source_chat(peer, actor, !strcmp(command, "say_team"), cursor, error);
+    qa_q1_chat_mode chat = qa_q1_chat_command_read(QA_CONSOLE_Q1, command, false);
+    if (chat == QA_Q1_CHAT_ALL || chat == QA_Q1_CHAT_TEAM)
+        return source_chat(peer, actor, chat == QA_Q1_CHAT_TEAM, cursor, error);
     if (!strcmp(command, "kill"))
         return qa_application_network_q1_kill(peer->host->frontend->application, actor, error);
     if (!strcmp(command, "pause")) {

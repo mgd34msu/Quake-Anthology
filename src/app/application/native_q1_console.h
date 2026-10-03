@@ -1,6 +1,7 @@
 #ifndef QA_APPLICATION_NATIVE_Q1_CONSOLE_H
 #define QA_APPLICATION_NATIVE_Q1_CONSOLE_H
 #include "internal.h"
+#include "qa/q1_chat_commands.h"
 
 bool application_native_q1_console_create(application_provider *, const qa_q1_options *, qa_error *);
 bool application_native_q1_console_create_restored(application_provider *, qa_error *);
@@ -11,13 +12,8 @@ bool application_native_q1_console_restore(application_provider *, qa_bytes, qa_
 bool application_native_q1_console_at(application_provider *, qa_console **, qa_cvars **,
                                       qa_command_context *);
 qa_cvars *application_native_q1_console_registry(const application_provider *);
-typedef enum application_native_q1_chat_mode {
-    APPLICATION_NATIVE_Q1_CHAT_ALL,
-    APPLICATION_NATIVE_Q1_CHAT_TEAM,
-    APPLICATION_NATIVE_Q1_CHAT_TELL
-} application_native_q1_chat_mode;
 bool application_native_q1_chat(application_provider *, const qa_command_invocation *,
-    application_native_q1_chat_mode, qa_error *);
+    qa_q1_chat_mode, qa_error *);
 void application_native_q1_source_console_print(void *, const char *);
 void application_native_q1_source_logfrag_write(void *, const char *);
 bool application_native_q1_source_logfrag_enabled(application_provider *,bool *,qa_error *);

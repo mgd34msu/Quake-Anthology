@@ -3,6 +3,7 @@
 #include "qa/application_language.h"
 #include "qa/launch_identity.h"
 #include "qa/localization.h"
+#include "qa/q1_chat_commands.h"
 #include <inttypes.h>
 #include <math.h>
 #include <stdlib.h>
@@ -367,7 +368,7 @@ static bool source_command(void *context, qa_net_client_id id, const char *text,
         const char *status = NULL;
         return source_status(host, &status, error) && print_text(peer, status, error);
     }
-    if (!strcmp(name, "say") || !strcmp(name, "say_team"))
+    if (qa_q1_chat_command_read(QA_CONSOLE_QW, name, false) != QA_Q1_CHAT_UNKNOWN)
         return qa_application_actor_command(host->frontend->application,actor,text,error);
     frontend_print(host->frontend, text); return true;
 }

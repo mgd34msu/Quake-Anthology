@@ -104,7 +104,7 @@ static qa_console_dialect dialect(const application_provider *provider)
 }
 
 bool application_native_q1_chat(application_provider *provider,
-    const qa_command_invocation *command, application_native_q1_chat_mode mode, qa_error *error)
+    const qa_command_invocation *command, qa_q1_chat_mode mode, qa_error *error)
 {
     struct application_native_q1_console *owner = provider ? provider->native_q1_console : NULL;
     bool qw=provider && provider->launch && provider->launch->selection.clock.kind==QA_CLOCK_QUAKEWORLD;
@@ -113,16 +113,16 @@ bool application_native_q1_chat(application_provider *provider,
         !provider->launch || (provider->launch->selection.clock.kind != QA_CLOCK_NETQUAKE && !qw) ||
         command->context.dialect != dialect(provider) ||
         (command->context.owner && command->context.owner != provider->owner) ||
-        (mode != APPLICATION_NATIVE_Q1_CHAT_ALL && mode != APPLICATION_NATIVE_Q1_CHAT_TEAM &&
-         mode != APPLICATION_NATIVE_Q1_CHAT_TELL) || (qw && mode==APPLICATION_NATIVE_Q1_CHAT_TELL) ||
-        (!command->context.actor.registry && (mode == APPLICATION_NATIVE_Q1_CHAT_TELL ||
-         (qw && mode!=APPLICATION_NATIVE_Q1_CHAT_ALL) ||
+        (mode != QA_Q1_CHAT_ALL && mode != QA_Q1_CHAT_TEAM &&
+         mode != QA_Q1_CHAT_TELL) || (qw && mode==QA_Q1_CHAT_TELL) ||
+        (!command->context.actor.registry && (mode == QA_Q1_CHAT_TELL ||
+         (qw && mode!=QA_Q1_CHAT_ALL) ||
          command->context.owner != provider->owner || command->context.origin != QA_COMMAND_SERVER ||
          command->console != owner->console)) ||
         !qa_application_command_context_active(provider->application, &command->context))
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q1 chat lost its actual Source sender");
-    if (command->argc < (mode == APPLICATION_NATIVE_Q1_CHAT_TELL ? 3u : 2u)) return true;
-    if (!command->args_text || (mode == APPLICATION_NATIVE_Q1_CHAT_TELL &&
+    if (command->argc < (mode == QA_Q1_CHAT_TELL ? 3u : 2u)) return true;
+    if (!command->args_text || (mode == QA_Q1_CHAT_TELL &&
         (!command->argv || !command->argv[1])))
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q1 chat lost its Source command arguments");
     application_native_q1_wire_source source = {0};
@@ -131,7 +131,7 @@ bool application_native_q1_chat(application_provider *provider,
     qa_actor_id recipients[255]; size_t count = 0;
     application_native_q1_chat_sender sender={0};
     bool okay = application_native_q1_wire_chat(&source, command->context.actor,
-        mode == APPLICATION_NATIVE_Q1_CHAT_TEAM, mode == APPLICATION_NATIVE_Q1_CHAT_TELL ? command->argv[1] : NULL,
+        mode == QA_Q1_CHAT_TEAM, mode == QA_Q1_CHAT_TELL ? command->argv[1] : NULL,
         &sender, recipients, &count, error);
     char line[2048], denial[320]={0};
     if (okay && qw && sender.player) okay=chat_flood(owner,command,&sender,denial,error);
@@ -142,8 +142,8 @@ bool application_native_q1_chat(application_provider *provider,
         recipients[0]=command->context.actor; count=1;
     } else if (okay) {
         const char *format=qw?(sender.spectator_only?"[SPEC] %.31s: ":
-            mode==APPLICATION_NATIVE_Q1_CHAT_TEAM?"(%.31s): ":"%.31s: "):
-            mode==APPLICATION_NATIVE_Q1_CHAT_TELL?"%s: ":sender.player?"\001%s: ":"\001<%s> ";
+            mode==QA_Q1_CHAT_TEAM?"(%.31s): ":"%.31s: "):
+            mode==QA_Q1_CHAT_TELL?"%s: ":sender.player?"\001%s: ":"\001<%s> ";
         int written=snprintf(line,capacity,format,sender.name);
         if (written<0 || (size_t)written>capacity-2)
             okay=application_fail(error,QA_ERROR_FORMAT,"Native Q1 chat sender exceeds the Source line extent");
@@ -174,7 +174,7 @@ bool application_native_q1_chat(application_provider *provider,
         event.actor = recipients[i];
         okay = application_emit(provider->application, &event, error);
     }
-    if (okay && !denied && mode != APPLICATION_NATIVE_Q1_CHAT_TELL && (!qw || sender.player)) {
+    if (okay && !denied && mode != QA_Q1_CHAT_TELL && (!qw || sender.player)) {
         qa_command_context context = command->context;
         context.owner = provider->owner; context.origin = QA_COMMAND_SERVER; context.actor = (qa_actor_id){0};
         application_console_print(provider->application, &context, qw?line:line+1);

@@ -6,6 +6,7 @@
 #include "qa/input_command_save.h"
 #include "qa/application_network.h"
 #include "qa/ui_language.h"
+#include "qa/q1_chat_commands.h"
 #include <math.h>
 #include <limits.h>
 #include <stdio.h>
@@ -283,6 +284,15 @@ static bool center_command(void *context,const qa_command_invocation *call,qa_er
         !frontend_remote_q1_player_read(source.receiver,&player,&present,error) || !present) return false;
     o->input_center=true; return pending_invocation(o,call,error);
 }
+static bool chat_command(void *context,const qa_command_invocation *call,qa_error *error)
+{
+    frontend_network_q1_client *o=context;
+    if (!parent(o) || !call || !call->argc || !call->argv || !o->client.owner ||
+        qa_q1_chat_command_read(call->context.dialect,call->argv[0],true)==QA_Q1_CHAT_UNKNOWN ||
+        !pending_invocation(o,call,error))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Chat requires its actual admitted Q1 CLIENT command");
+    return forward(o,call,error)==QA_COMMAND_HANDLED && pending_invocation(o,call,error);
+}
 static bool install(void *context,const qa_application_client_source *source,bool restoring,qa_error *error)
 {
     frontend_network_q1_client *o=context;
@@ -290,6 +300,11 @@ static bool install(void *context,const qa_application_client_source *source,boo
         source->context.receiver,source->context.receiver,true,center_command,o,error)) return false;
     if(o->options.configuration.install && !o->options.configuration.install(
         o->options.configuration.context,source,restoring,error)) return false;
+    for (qa_q1_chat_mode mode=QA_Q1_CHAT_ALL;mode<QA_Q1_CHAT_UNKNOWN;++mode) {
+        const char *name=qa_q1_chat_command_name(source->context.command.dialect,mode);
+        if (name && !qa_console_register_owned(source->context.console,name,NULL,
+            source->context.receiver,source->context.receiver,false,chat_command,o,error)) return false;
+    }
     if(!qa_q1_is_qw(o->options.protocol)) return true;
     static const char *const names[]={"skins","allskins","stopdownload","retrydownload"};
     for(size_t i=0;i<sizeof(names)/sizeof(*names);++i)
