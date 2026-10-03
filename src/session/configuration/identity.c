@@ -340,7 +340,7 @@ static qa_clock_config read_clock(identity_reader *r)
 static qa_mode_rules read_rules(identity_reader *r)
 {
     identity_reader s = *r; qa_mode_rules v = {0};
-    if (!record(&s, take(r), 38)) { r->failed = true; return v; }
+    if (!record(&s, take(r), 39)) { r->failed = true; return v; }
 #define U(member) v.member = read_unsigned(&s)
 #define I(member) v.member = read_signed(&s)
 #define F(member) v.member = read_float(&s)
