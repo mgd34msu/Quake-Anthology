@@ -112,6 +112,12 @@ To use Quake III movement while playing Quake II:
 
 `--movement` accepts `q1`, `qw`, `q2`, `q3` or a discovered product ID. `--character` accepts `q1`, `q2`, `q3` or a product ID. `--map-game PRODUCT` selects map content independently. Add `--mod PRODUCT/COMPONENT` for an independent mod component; repeat the option to combine components.
 
+The game library's **Gameplay** choice selects **Anthology** or **Original**. Anthology is the default. Original uses the gameplay module from that game's installation; the module must be present and supported. You can also request it with `--original`:
+
+```sh
+./build/quake-anthology --game q1-classic-id1 --map start --original
+```
+
 ## Display, controls and configuration
 
 Use the in-game options for input bindings and other preferences. Startup options include:

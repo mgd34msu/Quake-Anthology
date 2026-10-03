@@ -83,6 +83,7 @@ static void usage(FILE *stream)
           "  --list-content           List discovered products\n"
           "  --menu                   Open the startup menu, default without --game\n"
           "  --game PRODUCT           Select installed native or external game\n"
+          "  --original               Use the selected game's installed original module\n"
           "  --map-game PRODUCT       Select map content independently\n"
           "  --map NAME               Select map or authored start\n"
           "  --movement q1|qw|q2|q3|PRODUCT\n"
