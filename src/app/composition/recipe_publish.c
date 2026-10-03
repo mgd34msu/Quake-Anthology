@@ -268,10 +268,11 @@ static bool execution_write(qa_json_writer *w, qa_executable_recipe *r, const qa
     qa_json_writer_number(w, s->runtime); qa_json_writer_string(w, s->implementation); qa_json_writer_string(w, s->artifact);
     qa_clock_config clock; uint64_t order;
     bool registered = qa_session_component_recipe(provider->application->session, provider->owner, &clock, &order);
-    if (registered != provider->component_attached || (registered && (clock.kind != s->clock.kind ||
-        clock.initial_time_ns != s->clock.initial_time_ns || clock.interval_ns != s->clock.interval_ns ||
-        clock.minimum_frame_ns != s->clock.minimum_frame_ns || clock.maximum_frame_ns != s->clock.maximum_frame_ns ||
-        clock.initial_lead_ns != s->clock.initial_lead_ns || clock.maximum_steps != s->clock.maximum_steps)))
+    const qa_clock_config *component_clock = &provider->component.clock;
+    if (registered != provider->component_attached || (registered && (clock.kind != component_clock->kind ||
+        clock.initial_time_ns != component_clock->initial_time_ns || clock.interval_ns != component_clock->interval_ns ||
+        clock.minimum_frame_ns != component_clock->minimum_frame_ns || clock.maximum_frame_ns != component_clock->maximum_frame_ns ||
+        clock.initial_lead_ns != component_clock->initial_lead_ns || clock.maximum_steps != component_clock->maximum_steps)))
         return recipe_fail(error, "Source clock descriptor differs from actual registered component");
     qa_json_writer_string(w, s->component); clock_write(w, s->clock); bytes_write(w, s->options); qa_json_writer_number(w, provider->owner);
     word_write(w, instance->roles); qa_json_writer_bool(w, registered);
