@@ -87,7 +87,7 @@ static bool model_submit(frontend_remote_q1 *row, const frontend_remote_q1_entit
         .color = color, .family = QA_SCENE_Q1, .frame = entity->entity.frame, .old_frame = entity->entity.frame,
         .skin = entity->entity.skin, .entity = entity->entity.number, .seconds = world->seconds,
         .view_model = entity->view_weapon, .player = entity->has_colors,
-        .material_library = row->materials, .source_path = model->path, .identity_light = 1};
+        .source_path = model->path, .identity_light = 1};
     qa_scene_model_indexed_skin indexed = {0};
     if (row->skins && !strcmp(model->path, "progs/player.mdl") &&
         entity->entity.number >= 1 && entity->entity.number <= 32) {
