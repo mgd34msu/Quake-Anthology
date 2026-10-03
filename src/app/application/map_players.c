@@ -678,7 +678,7 @@ bool application_players_prepare(qa_application *application,
                 .remote = true, .dynamic = true, .spectator = old->spectator, .bot = old->bot,
                 .source_begin_pending = old->source_begin_pending ||
                     (!old->bot && (publication->map_provider->kind == APPLICATION_PROVIDER_QC ||
-                     (publication->map_provider->component.clock.kind == QA_CLOCK_Q3 &&
+                     (publication->map_provider->launch->selection.clock.kind == QA_CLOCK_Q3 &&
                       (publication->map_provider->kind == APPLICATION_PROVIDER_QVM ||
                        publication->map_provider->kind == APPLICATION_PROVIDER_NATIVE))))};
             if (!record_text(record, old->name, old->team, old->skin, old->userinfo, error)) {
@@ -760,7 +760,7 @@ bool application_players_prepare(qa_application *application,
         } else {
             if (i < local_count) travel->roster->records[i].client_slot = (uint32_t)i;
             travel->roster->records[i].source_slot = travel->roster->records[i].client_slot +
-                (character->component.clock.kind == QA_CLOCK_Q3 ? 0u : 1u);
+                (character->launch->selection.clock.kind == QA_CLOCK_Q3 ? 0u : 1u);
         }
         if (i < local_count && had_player &&
             application->players->map_provider->kind == APPLICATION_PROVIDER_Q1 &&
@@ -819,8 +819,8 @@ bool application_players_prepare(qa_application *application,
             application_players_dispose(travel);
             return false;
         }
-        if ((character->component.clock.kind == QA_CLOCK_Q3 ||
-             publication->map_provider->component.clock.kind == QA_CLOCK_Q3) &&
+        if ((character->launch->selection.clock.kind == QA_CLOCK_Q3 ||
+             publication->map_provider->launch->selection.clock.kind == QA_CLOCK_Q3) &&
             !q3_initial_userinfo(qa_launch_snapshot_catalog(publication->candidate), choices,
                 &travel->roster->records[i], seat, error)) {
             application_players_dispose(travel);
