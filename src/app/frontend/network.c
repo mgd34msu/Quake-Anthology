@@ -7301,6 +7301,15 @@ static bool server_drop_client(void *context, uint32_t slot, const char *reason,
         "Source remote DROP has no matched transport owner");
 }
 
+bool frontend_network_qw_command_realtime(const qa_frontend *f,qa_actor_owner owner,
+    qa_actor_id actor,uint64_t *out,qa_error *error)
+{
+    const qa_frontend_network *network=f?f->network:NULL;
+    return network && network->frontend==f && network->qw_host?
+        frontend_qw_command_realtime(network->qw_host,owner,actor,out,error):
+        frontend_fail(error,QA_ERROR_ARGUMENT,"Remote QW chat has no actual action owner");
+}
+
 bool frontend_network_source_services(qa_frontend *f, qa_q3_host_options *host, qa_error *error)
 {
     server_lease *lease = malloc(sizeof(*lease));

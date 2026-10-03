@@ -1370,21 +1370,40 @@ bool application_native_q1_wire_bounds(qa_application *app, qa_actor_id recipien
     application_native_q1_wire_end(&source); return okay;
 }
 bool application_native_q1_wire_chat(application_native_q1_wire_source *source, qa_actor_id sender, bool team_only,
-    const char *target, const char **name, qa_actor_id recipients[255], size_t *out_count, qa_error *error) {
-    if (!name || !recipients || !out_count)
+    const char *target, application_native_q1_chat_sender *out, qa_actor_id recipients[255], size_t *out_count, qa_error *error) {
+    if (!out || !recipients || !out_count)
         return application_fail(error, QA_ERROR_ARGUMENT, "Missing native Q1 source chat outputs");
-    if (!source_current(source, QA_CLOCK_NETQUAKE, error)) return false;
+    bool qw = source && source->provider && source->provider->launch &&
+        source->provider->launch->selection.clock.kind == QA_CLOCK_QUAKEWORLD;
+    if (!source_current(source, qw ? QA_CLOCK_QUAKEWORLD : QA_CLOCK_NETQUAKE, error)) return false;
+    if (qw && (target || source->receipt.client_slots != 32 || (!sender.registry && team_only)))
+        return application_fail(error, QA_ERROR_ARGUMENT, "QuakeWorld chat changes its actual Source audience");
     if (!sender.registry && target)
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q1 tell requires its Source player sender");
-    uint32_t slot; qa_q1_source_client_view from = {0};
+    uint32_t slot = 0; qa_q1_source_client_view from = {0};
     bool okay = !sender.registry || (client(source, sender, &slot, error) &&
         qa_q1_source_client_read(source->provider->state.q1, sender, &from));
     qa_cvars *cvars = application_native_q1_console_registry(source->provider);
     const qa_cvar_view *hostname = !sender.registry && cvars ? qa_cvars_find(cvars, "hostname") : NULL;
-    if (okay && !sender.registry && !hostname)
+    const application_player_record *player = sender.registry ? roster(source->provider->application, sender) : NULL;
+    if (okay && sender.registry && (!player || player->deferred || player->source_begin_pending ||
+        (qw && !player->userinfo)))
+        okay = application_fail(error, QA_ERROR_ARGUMENT, "Chat lost its admitted Source player");
+    if (okay && !qw && !sender.registry && !hostname)
         okay = application_fail(error, QA_ERROR_NOT_FOUND, "Native Q1 server chat lost its Source hostname");
     const qa_cvar_view *teamplay = cvars ? qa_cvars_find(cvars, "teamplay") : NULL;
     bool filtered = sender.registry && team_only && teamplay && teamplay->number != 0;
+    const qa_cvar_view *spectalk = qw && cvars ? qa_cvars_find(cvars, "sv_spectalk") : NULL;
+    if (okay && qw && !spectalk)
+        okay = application_fail(error, QA_ERROR_NOT_FOUND, "QuakeWorld chat lost its Source spectator policy");
+    bool spectator_only = qw && player && player->spectator && (team_only || (spectalk && spectalk->number == 0));
+    char sender_team[32] = {0};
+    if (okay && qw && sender.registry && team_only && !player->spectator) {
+        const char *team = NULL;
+        if (!qa_q1_source_client_info(source->provider->state.q1, sender, "team", &team))
+            okay = application_fail(error, QA_ERROR_NOT_FOUND, "QuakeWorld chat lost its Source team userinfo");
+        else snprintf(sender_team, sizeof(sender_team), "%.31s", team ? team : "");
+    }
     qa_actor_id values[255]; size_t count = 0;
     for (uint32_t i = 0; okay && i < source->receipt.client_slots; ++i) {
         qa_actor_id actor; qa_q1_source_client_view view;
@@ -1407,11 +1426,25 @@ bool application_native_q1_wire_chat(application_native_q1_wire_source *source, 
             values[count++] = actor;
             break;
         }
-        if (!filtered || view.team == from.team) values[count++] = actor;
+        if (qw) {
+            if (!recipient->userinfo) {
+                okay = application_fail(error, QA_ERROR_NOT_FOUND, "QuakeWorld chat lost its recipient userinfo"); break;
+            }
+            if (spectator_only && !recipient->spectator) continue;
+            if (sender.registry && team_only && !player->spectator) {
+                const char *team = NULL;
+                if (!qa_q1_source_client_info(source->provider->state.q1, actor, "team", &team)) {
+                    okay = application_fail(error, QA_ERROR_NOT_FOUND, "QuakeWorld chat lost its recipient team"); break;
+                }
+                if (recipient->spectator || strcmp(sender_team, team ? team : "")) continue;
+            }
+            values[count++] = actor;
+        } else if (!filtered || view.team == from.team) values[count++] = actor;
     }
     if (okay) {
         memcpy(recipients, values, count * sizeof(*values)); *out_count = count;
-        *name = sender.registry ? from.name : hostname->value;
+        *out = (application_native_q1_chat_sender){.name = sender.registry ? from.name : qw ? "console" : hostname->value,
+            .player = player, .client_slot = sender.registry ? slot - 1 : 0, .spectator_only = spectator_only};
     }
     else if (error && error->code == QA_OK)
         application_fail(error, QA_ERROR_NOT_FOUND, "Native Q1 chat lost its actual source sender");

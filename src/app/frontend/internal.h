@@ -361,6 +361,7 @@ void frontend_network_publish_fresh(qa_frontend *,qa_frontend *,qa_frontend *);
 void frontend_network_rebind(qa_frontend *, qa_frontend *);
 void frontend_network_transport_exchange(qa_frontend *, qa_frontend *);
 bool frontend_network_source_services(qa_frontend *, qa_q3_host_options *, qa_error *);
+bool frontend_network_qw_command_realtime(const qa_frontend *,qa_actor_owner,qa_actor_id,uint64_t *,qa_error *);
 typedef struct frontend_source_group_view {
     qa_actor_owner owner;
     uint32_t seat,launch_seat;

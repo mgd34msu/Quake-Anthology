@@ -10,6 +10,7 @@
 #include "neutral_config.h"
 #include "legacy_render_policy.h"
 #include "qa/source_frame_time.h"
+#include "qa/application_players.h"
 #include "network_config.h"
 #include "network_admin.h"
 #include "source_admin.h"
@@ -1031,6 +1032,24 @@ static bool source_gamedir(void *context,qa_application *app,const qa_applicatio
         !qa_console_invocation_current(call->console,call))
         return fail(error,QA_ERROR_ARGUMENT,"Source gamedir lost its current local operator invocation");
     return frontend_config_files_source_gamedir(owner->files,directory,changed,error);
+}
+static bool source_command_realtime(void *context,qa_application *app,
+    const qa_application_startup_source *source,const qa_command_invocation *call,
+    bool remote,uint64_t *out,qa_error *error)
+{
+    frontend_config_store *manager=context;
+    frontend_config_source *physical=manager?source_files_owner(manager,app,source):NULL;
+    uint32_t seat;
+    if (!physical || !call || !out || manager->frontend->application!=app ||
+        physical!=published_primary(manager,app) || source->scope.kind!=QA_APPLICATION_CONSOLE_Q1_GAME ||
+        !call->context.actor.registry || call->context.dialect!=QA_CONSOLE_QW ||
+        !qa_application_player_seat(app,call->context.actor,&seat) || seat!=call->context.seat ||
+        (remote && !qa_console_invocation_current(call->console,call)) ||
+        !qa_application_command_context_active(app,&call->context))
+        return fail(error,QA_ERROR_ARGUMENT,"QW chat realtime lost its entered Source tuple");
+    if (remote) return frontend_network_qw_command_realtime(manager->frontend,
+        source->scope.provider,call->context.actor,out,error);
+    *out=manager->frontend->wall_time_ns; return true;
 }
 static bool fraglog_command(void *context,const qa_command_invocation *call,qa_error *error)
 {
@@ -3254,6 +3273,7 @@ frontend_config_store *frontend_config_store_create(qa_frontend *frontend,qa_err
         .consume_publication=consume_publication,.finish_publication=finish_publication,
         .abort_publication=abort_publication,.qw_logfrag_write=qw_log_write,.qw_logfrag_enabled=qw_log_enabled,
         .source_common_command=source_common_command,.engine_source_command=engine_source_command,
+        .source_command_realtime=source_command_realtime,
         .source_files=source_files,.source_gamedir=source_gamedir};
     return manager;
 }

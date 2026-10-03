@@ -24,8 +24,6 @@ typedef struct qw_frontend_peer {
     qa_qw_command command;
     float frags;
     char *userinfo;
-    uint64_t chat_times[10], chat_locked_until_ns;
-    size_t chat_head;
     struct { uint32_t sequence; uint64_t sent_ns; double ping_ms; bool present; } pings[64];
     int32_t message_level;
     bool occupied, retiring, spectator, begun;
@@ -45,6 +43,7 @@ struct frontend_qw_host {
     qa_actor_owner owner;
     uint64_t generation, event_cursor, reliable_cursor, event_generation, reliable_generation, published_time_ns;
     uint64_t action_time_ns;
+    qa_actor_id action_actor;
     uint32_t random, checksum, player_model, nail_model, supernail_model, active_limit;
     int32_t server_count;
     qa_sha256_digest composition;

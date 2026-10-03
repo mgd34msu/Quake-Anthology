@@ -254,6 +254,15 @@ static int32_t source_integer(const char *text)
     }
     return negative ? value == UINT32_C(2147483648) ? INT32_MIN : -(int32_t)value : (int32_t)value;
 }
+bool frontend_qw_command_realtime(const frontend_qw_host *host,qa_actor_owner owner,
+    qa_actor_id actor,uint64_t *out,qa_error *error)
+{
+    if (!host || !host->frontend || !host->runtime || !out || !owner || host->owner!=owner ||
+        !actor.registry || !host->action_active || !qa_actor_id_equal(actor,host->action_actor) ||
+        host->generation!=qa_application_configuration_generation(host->frontend->application))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"QW chat lost its current full-actor action receipt");
+    *out=host->action_time_ns; return true;
+}
 static bool source_command(void *context, qa_net_client_id id, const char *text, qa_error *error)
 {
     qw_frontend_peer *peer = context; frontend_qw_host *host = peer->host; qa_actor_id actor;
@@ -342,43 +351,8 @@ static bool source_command(void *context, qa_net_client_id id, const char *text,
         const char *status = NULL;
         return source_status(host, &status, error) && print_text(peer, status, error);
     }
-    if (!strcmp(name, "say") || !strcmp(name, "say_team")) {
-        while (*cursor == ' ' || *cursor == '\t' || *cursor == '\r' || *cursor == '\n') ++cursor;
-        if (!*cursor) return true;
-        bool paused = qa_application_q1_paused(host->frontend->application);
-        uint64_t now = host->action_time_ns, previous = peer->chat_times[(peer->chat_head + 7) % 10];
-        bool locked = !paused && now < peer->chat_locked_until_ns;
-        bool flood = !paused && previous && now >= previous && now - previous < UINT64_C(4000000000);
-        if (locked || flood) {
-            if (flood && !locked) peer->chat_locked_until_ns = now > UINT64_MAX - UINT64_C(10000000000) ? UINT64_MAX : now + UINT64_C(10000000000);
-            uint64_t seconds = locked ? (peer->chat_locked_until_ns - now) / UINT64_C(1000000000) : 10;
-            char line[128]; snprintf(line, sizeof(line), locked ? "You can't talk for %" PRIu64 " more seconds\n" : "FloodProt: You can't talk for %" PRIu64 " seconds.\n", seconds);
-            return reliable(peer, &(qa_qw_service){.kind = QA_QW_PRINT, .data.text = {3, line}}, error);
-        }
-        peer->chat_head = (peer->chat_head + 1) % 10; peer->chat_times[peer->chat_head] = now;
-        qa_qw_info info = {0}; if (!qa_qw_info_parse(peer->userinfo, &info, error)) return false;
-        const char *sender = qa_qw_info_get(&info, "name"), *team = qa_qw_info_get(&info, "team");
-        char sender_team[32]; snprintf(sender_team, sizeof(sender_team), "%.31s", team ? team : "");
-        bool team_only = !strcmp(name, "say_team"); size_t length = strlen(cursor);
-        if (*cursor == '"') { ++cursor; if (length >= 2) length -= 2; else length = 0; }
-        char message[1400]; int prefix = snprintf(message, sizeof(message), team_only ? "(%.31s): " : "%.31s: ", sender ? sender : "unnamed");
-        qa_qw_info_free(&info);
-        if (prefix < 0 || (size_t)prefix + length + 2 >= sizeof(message)) return frontend_fail(error, QA_ERROR_FORMAT, "QuakeWorld chat exceeds source message extent");
-        size_t prefix_size=(size_t)prefix;
-        memcpy(message + prefix_size, cursor, length); message[prefix_size + length] = '\n'; message[prefix_size + length + 1] = 0;
-        frontend_print(host->frontend, message);
-        for (size_t i = 0; i < QW_CLIENTS; ++i) {
-            qw_frontend_peer *recipient = host->peers + i;
-            if (!recipient->occupied || recipient->retiring || !recipient->begun) continue;
-            qa_qw_info receiver = {0}; if (!qa_qw_info_parse(recipient->userinfo, &receiver, error)) return false;
-            const char *receiver_team = qa_qw_info_get(&receiver, "team");
-            bool receives = !team_only || !strcmp(receiver_team ? receiver_team : "", sender_team);
-            qa_qw_info_free(&receiver);
-            if (receives && recipient->message_level <= 3 && !reliable(recipient,
-                &(qa_qw_service){.kind = QA_QW_PRINT, .data.text = {3, message}}, error)) return false;
-        }
-        return true;
-    }
+    if (!strcmp(name, "say") || !strcmp(name, "say_team"))
+        return qa_application_actor_command(host->frontend->application,actor,text,error);
     frontend_print(host->frontend, text); return true;
 }
 qa_network_qw_server_hooks frontend_qw_peer_hooks(qw_frontend_peer *peer)
@@ -851,10 +825,10 @@ static bool source_actions(frontend_qw_host *host, qa_error *error)
             flush_events(host, NULL, NULL, error));
         if (ok && current) {
             host->reliable_cursor = qa_application_protocol_event_count(host->frontend->application);
-            host->action_active = true; host->action_time_ns = action->received_ns;
+            host->action_active = true; host->action_time_ns = action->received_ns; host->action_actor = actor;
             ok = qa_network_qw_server_command(host->runtime, peer->client, action->text, error) &&
                 qa_application_network_qw_flush(host->frontend->application, error) && flush_events(host, NULL, NULL, error);
-            host->action_active = false; host->action_time_ns = 0;
+            host->action_active = false; host->action_time_ns = 0; host->action_actor = (qa_actor_id){0};
             if (ok) host->reliable_cursor = qa_application_protocol_event_count(host->frontend->application);
         }
         free(action->text); free(action);

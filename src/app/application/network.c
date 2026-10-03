@@ -386,9 +386,12 @@ bool qa_application_network_q1_chat_recipients(qa_application *app, qa_actor_id 
     bool team_only, const char **name, qa_actor_id recipients[255], size_t *count, qa_error *error)
 {
     if (q1_native(app)) {
+        if (!name) return application_fail(error, QA_ERROR_ARGUMENT, "Missing Q1 source chat sender output");
         application_native_q1_wire_source source = {0};
         if (!application_native_q1_wire_begin(app, 0, &source, error)) return false;
-        bool okay = application_native_q1_wire_chat(&source, sender, team_only, NULL, name, recipients, count, error);
+        application_native_q1_chat_sender actual;
+        bool okay = application_native_q1_wire_chat(&source, sender, team_only, NULL, &actual, recipients, count, error);
+        if (okay) *name = actual.name;
         application_native_q1_wire_end(&source);
         return okay;
     }

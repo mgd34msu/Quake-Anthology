@@ -64,12 +64,10 @@ static bool client_fields(qa_source_save_io *io, qw_frontend_peer *peer, fronten
         !qa_source_save_u16(io, &peer->qport) || !qa_source_save_u32(io, &peer->rate) || !qa_source_save_u16(io, &peer->stat_mask) ||
         !command_fields(io, &peer->command) || !qa_source_save_f32(io, &peer->frags) || !isfinite(peer->frags) ||
         !frontend_save_text(io, &peer->userinfo) || !qa_source_save_i32(io, &peer->message_level) ||
-        !qa_source_save_u64(io, &peer->chat_locked_until_ns) || !qa_source_save_count(io, &peer->chat_head, 9) ||
         !qa_source_save_bytes(io, peer->reason, sizeof(peer->reason)) || !memchr(peer->reason, 0, sizeof(peer->reason))) return false;
     if (io->direction == QA_SOURCE_SAVE_READ) peer->host = bound ? host : NULL;
     for (size_t i = 0; i < 16; ++i)
         if (!qa_source_save_f64(io, peer->stats + i) || !isfinite(peer->stats[i]) || trunc(peer->stats[i]) != peer->stats[i]) return false;
-    for (size_t i = 0; i < 10; ++i) if (!qa_source_save_u64(io, peer->chat_times + i)) return false;
     for (size_t i = 0; i < 64; ++i)
         if (!qa_source_save_bool(io, &peer->pings[i].present) || !qa_source_save_u32(io, &peer->pings[i].sequence) ||
             !qa_source_save_u64(io, &peer->pings[i].sent_ns) || !qa_source_save_f64(io, &peer->pings[i].ping_ms) ||
@@ -181,6 +179,7 @@ bool frontend_qw_source_hooks(frontend_qw_host *host, const qa_net_client *clien
 bool frontend_qw_qualified(const frontend_qw_host *host, bool complete, qa_error *error)
 {
     if (!host || !host->frontend || !host->runtime || !host->admin || !frontend_qw_idle(host) || host->action_active || host->action_time_ns ||
+        host->action_actor.registry || host->action_actor.generation || host->action_actor.slot ||
         host->generation != qa_application_configuration_generation(host->frontend->application) || !host->owner ||
         !host->active_limit || host->active_limit > 32 || host->server_count < 1 ||
         host->baseline_count < 32 || host->baseline_count > 511 || host->pending_count > QW_PENDING || host->action_count > QW_ACTIONS ||
@@ -235,7 +234,7 @@ bool frontend_qw_qualified(const frontend_qw_host *host, bool complete, qa_error
         ++occupied;
         if (peer->host != host || !peer->client.generation || peer->client.owner != QA_NETWORK_COMMAND_OWNER ||
             peer->seat.owner != QA_NETWORK_COMMAND_OWNER || peer->seat.index != 256u + i || !peer->userinfo ||
-            peer->rate < 500 || peer->rate > 10000 || peer->input_sequence > INT32_MAX || peer->chat_head > 9)
+            peer->rate < 500 || peer->rate > 10000 || peer->input_sequence > INT32_MAX)
             return frontend_fail(error, QA_ERROR_FORMAT, "QuakeWorld retained peer has invalid full source admission");
         if (complete) {
             const qa_net_client *client = qa_net_connections_get(qa_network_connections(host->runtime), peer->client);

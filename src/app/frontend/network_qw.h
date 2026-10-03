@@ -14,6 +14,7 @@ bool frontend_qw_prepare(frontend_qw_host *, qa_error *);
 bool frontend_qw_pump(frontend_qw_host *, qa_error *);
 bool frontend_qw_publish(frontend_qw_host *, qa_error *);
 bool frontend_qw_idle(const frontend_qw_host *);
+bool frontend_qw_command_realtime(const frontend_qw_host *,qa_actor_owner,qa_actor_id,uint64_t *,qa_error *);
 bool frontend_qw_qualified(const frontend_qw_host *, bool complete, qa_error *);
 bool frontend_qw_checkpoint(frontend_qw_host *, qa_buffer *, qa_error *);
 bool frontend_qw_restore(qa_frontend *, qa_network_runtime *, qa_server_admin *,

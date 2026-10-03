@@ -138,6 +138,10 @@ typedef struct qa_application_startup_hooks {
     /* An entered ENGINE request may queue work on its genuine current Source
      * console. The receiver owns capture, alias expansion and later dispatch. */
     bool (*engine_source_command)(void *,qa_application *,const qa_command_invocation *,bool *,qa_error *);
+    /* Flood policy reads local wall time or the entered remote action receipt,
+     * independently of the paused/scaled GAME clock. */
+    bool (*source_command_realtime)(void *,qa_application *,const qa_application_startup_source *,
+        const qa_command_invocation *,bool remote,uint64_t *,qa_error *);
     /* The actual Source file holder supplies media and changes COM_Gamedir.
      * NULL directory queries; a reached switch reports its literal effects. */
     bool (*source_files)(void *,qa_application *,const qa_application_startup_source *,

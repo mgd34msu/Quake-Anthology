@@ -37,9 +37,15 @@ bool application_native_q1_wire_world(qa_application *, qa_actor_owner,
 bool application_native_q1_wire_clientdata(qa_application *, qa_actor_id, qa_q1_clientdata *, qa_error *);
 bool application_native_q1_wire_status(qa_application *, qa_actor_owner,
     qa_application_network_q1_status_player [255], size_t *, qa_error *);
-/* The caller holds this receipt through every use of the borrowed Source name. */
+typedef struct application_native_q1_chat_sender {
+    const char *name;
+    const struct application_player_record *player;
+    uint32_t client_slot;
+    bool spectator_only;
+} application_native_q1_chat_sender;
+/* The caller holds this receipt through every use of the borrowed Source data. */
 bool application_native_q1_wire_chat(application_native_q1_wire_source *, qa_actor_id, bool, const char *,
-    const char **, qa_actor_id [255], size_t *, qa_error *);
+    application_native_q1_chat_sender *, qa_actor_id [255], size_t *, qa_error *);
 bool application_native_q1_wire_pause(qa_application *, qa_actor_id, qa_buffer *, bool *, qa_error *);
 bool application_native_q1_wire_name(qa_application *, qa_actor_id, const char *, qa_error *);
 bool application_native_q1_wire_colors(qa_application *, qa_actor_id, int32_t, int32_t, qa_error *);

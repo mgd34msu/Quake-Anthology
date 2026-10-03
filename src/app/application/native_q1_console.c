@@ -1,14 +1,32 @@
 #include "native_q1_console.h"
 #include "native_q1_wire.h"
 #include "startup_flow.h"
+#include "map_players_private.h"
 #include "qa/cvars_save.h"
 #include "qa/console_cvars_prepare.h"
 #include "qa/source_number.h"
 #include "qa/network_q1_qw.h"
+#include "qa/source_save.h"
 #include "qa/game_q1_source_obituary.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <inttypes.h>
+#include <errno.h>
+
+typedef struct native_q1_chat_client {
+    bool occupied, remote;
+    uint32_t local_seat;
+    qa_net_client_id client;
+    qa_net_seat_id seat;
+    uint64_t times[10], locked_until_ns;
+    uint8_t head;
+} native_q1_chat_client;
+typedef struct native_q1_chat_policy {
+    uint32_t messages, persecond, secondsdead;
+    char message[255];
+    native_q1_chat_client clients[32];
+} native_q1_chat_policy;
 
 struct application_native_q1_console {
     application_provider *provider;
@@ -22,7 +40,51 @@ struct application_native_q1_console {
     bool info_initialized;
     qa_error info_error;
     const qa_command_context *info_context;
+    native_q1_chat_policy chat;
 };
+
+static bool files_source(application_provider *,const qa_command_context *,qa_application_startup_source *,qa_error *);
+
+static bool chat_flood(struct application_native_q1_console *owner,const qa_command_invocation *command,
+    const application_native_q1_chat_sender *sender,char denial[320],qa_error *error)
+{
+    const application_player_record *player=sender->player;
+    if (!player || sender->client_slot>=32)
+        return application_fail(error,QA_ERROR_ARGUMENT,"QW flood policy lost its physical Source client");
+    denial[0]=0;
+    if (!owner->chat.messages) return true;
+    const qa_application_startup_hooks *hooks=owner->provider->application->startup_hooks;
+    qa_command_context context=command->context; context.owner=owner->provider->owner;
+    qa_application_startup_source source; uint64_t now;
+    if (!hooks || !hooks->source_command_realtime || !files_source(owner->provider,&context,&source,error) ||
+        !hooks->source_command_realtime(hooks->context,owner->provider->application,&source,command,
+            player->remote,&now,error))
+        return error && error->code!=QA_OK?false:
+            application_fail(error,QA_ERROR_ARGUMENT,"QW flood policy has no reached realtime owner");
+    native_q1_chat_client *row=owner->chat.clients+sender->client_slot;
+    bool same=row->occupied && row->remote==player->remote && (player->remote?
+        qa_net_client_id_equal(row->client,player->remote_client) &&
+        row->seat.owner==player->remote_seat.owner && row->seat.index==player->remote_seat.index:
+        row->local_seat==player->seat);
+    if (!same) *row=(native_q1_chat_client){.occupied=true,.remote=player->remote,
+        .local_seat=player->remote?0:player->seat,.client=player->remote?player->remote_client:(qa_net_client_id){0},
+        .seat=player->remote?player->remote_seat:(qa_net_seat_id){0}};
+    bool paused=qa_application_q1_paused(owner->provider->application);
+    if (!paused && now<row->locked_until_ns) {
+        snprintf(denial,320,"You can't talk for %" PRIu64 " more seconds\n",
+            (row->locked_until_ns-now)/UINT64_C(1000000000)); return true;
+    }
+    uint64_t previous=row->times[(row->head+11u-owner->chat.messages)%10u];
+    if (!paused && previous && (now<previous || now-previous<(uint64_t)owner->chat.persecond*UINT64_C(1000000000))) {
+        uint64_t duration=(uint64_t)owner->chat.secondsdead*UINT64_C(1000000000);
+        row->locked_until_ns=now>UINT64_MAX-duration?UINT64_MAX:now+duration;
+        if (owner->chat.message[0]) snprintf(denial,320,"FloodProt: %s\n",owner->chat.message);
+        else snprintf(denial,320,"FloodProt: You can't talk for %u seconds.\n",owner->chat.secondsdead);
+        return true;
+    }
+    row->head=(uint8_t)((row->head+1u)%10u); row->times[row->head]=now;
+    return true;
+}
 
 qa_cvars *application_native_q1_console_registry(const application_provider *provider)
 {
@@ -45,14 +107,16 @@ bool application_native_q1_chat(application_provider *provider,
     const qa_command_invocation *command, application_native_q1_chat_mode mode, qa_error *error)
 {
     struct application_native_q1_console *owner = provider ? provider->native_q1_console : NULL;
+    bool qw=provider && provider->launch && provider->launch->selection.clock.kind==QA_CLOCK_QUAKEWORLD;
     if (!owner || !command || provider->kind != APPLICATION_PROVIDER_Q1 ||
         !provider->constructed || !provider->attached || provider->close_pending ||
-        !provider->launch || provider->launch->selection.clock.kind != QA_CLOCK_NETQUAKE ||
-        command->context.dialect != QA_CONSOLE_Q1 ||
+        !provider->launch || (provider->launch->selection.clock.kind != QA_CLOCK_NETQUAKE && !qw) ||
+        command->context.dialect != dialect(provider) ||
         (command->context.owner && command->context.owner != provider->owner) ||
         (mode != APPLICATION_NATIVE_Q1_CHAT_ALL && mode != APPLICATION_NATIVE_Q1_CHAT_TEAM &&
-         mode != APPLICATION_NATIVE_Q1_CHAT_TELL) ||
+         mode != APPLICATION_NATIVE_Q1_CHAT_TELL) || (qw && mode==APPLICATION_NATIVE_Q1_CHAT_TELL) ||
         (!command->context.actor.registry && (mode == APPLICATION_NATIVE_Q1_CHAT_TELL ||
+         (qw && mode!=APPLICATION_NATIVE_Q1_CHAT_ALL) ||
          command->context.owner != provider->owner || command->context.origin != QA_COMMAND_SERVER ||
          command->console != owner->console)) ||
         !qa_application_command_context_active(provider->application, &command->context))
@@ -64,29 +128,45 @@ bool application_native_q1_chat(application_provider *provider,
     application_native_q1_wire_source source = {0};
     if (!application_native_q1_wire_retain(provider, &source, error)) return false;
     ++owner->calls;
-    qa_actor_id recipients[255]; size_t count = 0; const char *name = NULL;
+    qa_actor_id recipients[255]; size_t count = 0;
+    application_native_q1_chat_sender sender={0};
     bool okay = application_native_q1_wire_chat(&source, command->context.actor,
         mode == APPLICATION_NATIVE_Q1_CHAT_TEAM, mode == APPLICATION_NATIVE_Q1_CHAT_TELL ? command->argv[1] : NULL,
-        &name, recipients, &count, error);
-    char line[64]; size_t prefix = 0;
-    if (okay) {
-        int written = snprintf(line, sizeof(line), mode == APPLICATION_NATIVE_Q1_CHAT_TELL ? "%s: " :
-            command->context.actor.registry ? "\001%s: " : "\001<%s> ", name);
-        if (written < 0 || (size_t)written > sizeof(line) - 2)
-            okay = application_fail(error, QA_ERROR_FORMAT, "Native Q1 chat sender exceeds the Source line extent");
-        else prefix = (size_t)written;
+        &sender, recipients, &count, error);
+    char line[2048], denial[320]={0};
+    if (okay && qw && sender.player) okay=chat_flood(owner,command,&sender,denial,error);
+    bool denied=denial[0]!=0;
+    size_t capacity=qw?(sender.player?sizeof(line):1024u):64u, length=0;
+    if (okay && denied) {
+        length=strlen(denial); memcpy(line,denial,length+1);
+        recipients[0]=command->context.actor; count=1;
+    } else if (okay) {
+        const char *format=qw?(sender.spectator_only?"[SPEC] %.31s: ":
+            mode==APPLICATION_NATIVE_Q1_CHAT_TEAM?"(%.31s): ":"%.31s: "):
+            mode==APPLICATION_NATIVE_Q1_CHAT_TELL?"%s: ":sender.player?"\001%s: ":"\001<%s> ";
+        int written=snprintf(line,capacity,format,sender.name);
+        if (written<0 || (size_t)written>capacity-2)
+            okay=application_fail(error,QA_ERROR_FORMAT,"Native Q1 chat sender exceeds the Source line extent");
+        else {
+            size_t prefix=(size_t)written;
+            const char *body=command->args_text; size_t body_size=strlen(body);
+            if (*body=='"') { ++body; --body_size; if (body_size) --body_size; }
+            if (qw && body_size>capacity-2-prefix)
+                okay=application_fail(error,QA_ERROR_FORMAT,"QuakeWorld chat exceeds its Source line extent");
+            else {
+                if (body_size>capacity-2-prefix) body_size=capacity-2-prefix;
+                memcpy(line+prefix,body,body_size); length=prefix+body_size;
+                line[length++]='\n'; line[length]=0;
+            }
+        }
     }
     qa_builtin_event event = {.kind = QA_BUILTIN_MESSAGE, .family = QA_GAME_Q1,
         .provider = provider->owner, .flags = 2u | QA_Q1_SOURCE_MESSAGE_LITERAL, .code = 3};
     if (okay) {
-        const char *body = command->args_text; size_t length = strlen(body);
-        if (*body == '"') { ++body; --length; if (length) --length; }
-        if (length > sizeof(line) - 2 - prefix) length = sizeof(line) - 2 - prefix;
-        memcpy(line + prefix, body, length); line[prefix + length] = '\n'; line[prefix + length + 1] = 0;
         double seconds;
         okay = qa_q1_game_clock_read(provider->state.q1, &event.time_ns, &seconds) &&
             qa_strings_intern(qa_session_strings(provider->application->session),
-                (qa_bytes){(const uint8_t *)line, prefix + length + 1}, &event.text, error);
+                (qa_bytes){(const uint8_t *)line, length}, &event.text, error);
         if (!okay && error && error->code == QA_OK)
             application_fail(error, QA_ERROR_ARGUMENT, "Native Q1 chat lost its actual Source clock");
     }
@@ -94,10 +174,10 @@ bool application_native_q1_chat(application_provider *provider,
         event.actor = recipients[i];
         okay = application_emit(provider->application, &event, error);
     }
-    if (okay && mode != APPLICATION_NATIVE_Q1_CHAT_TELL) {
+    if (okay && !denied && mode != APPLICATION_NATIVE_Q1_CHAT_TELL && (!qw || sender.player)) {
         qa_command_context context = command->context;
         context.owner = provider->owner; context.origin = QA_COMMAND_SERVER; context.actor = (qa_actor_id){0};
-        application_console_print(provider->application, &context, line + 1);
+        application_console_print(provider->application, &context, qw?line:line+1);
     }
     if (okay && (!qa_q1_wire_receipt_current(&source.receipt) || provider->close_pending ||
         application_world_provider(provider->application, QA_ROLE_ENTITIES, "") != provider))
@@ -351,6 +431,52 @@ static void info_list(struct application_native_q1_console *owner, const char *i
         if (*cursor) ++cursor;
     }
 }
+static bool flood_command(void *opaque,const qa_command_invocation *invocation,qa_error *error)
+{
+    struct application_native_q1_console *owner=opaque;
+    if (!owner || !invocation || invocation->console!=owner->console ||
+        !qa_console_invocation_current(owner->console,invocation) ||
+        invocation->context.owner!=owner->provider->owner || invocation->context.dialect!=QA_CONSOLE_QW ||
+        invocation->context.origin==QA_COMMAND_REMOTE ||
+        !qa_application_command_context_active(owner->provider->application,&invocation->context))
+        return application_fail(error,QA_ERROR_ARGUMENT,"QW flood policy lost its local Source operator");
+    ++owner->calls; owner->info_context=&invocation->context;
+    bool okay=true;
+    if (!strcmp(invocation->argv[0],"floodprotmsg")) {
+        if (invocation->argc==1) {
+            char text[288]; snprintf(text,sizeof(text),"Current msg: %s\n",owner->chat.message); info_print(owner,text);
+        } else if (invocation->argc!=2) info_print(owner,"Usage: floodprotmsg \"<message>\"\n");
+        else if (strlen(invocation->argv[1])>=sizeof(owner->chat.message))
+            okay=application_fail(error,QA_ERROR_FORMAT,"QW flood message exceeds its Source extent");
+        else memcpy(owner->chat.message,invocation->argv[1],strlen(invocation->argv[1])+1);
+    } else {
+        if (invocation->argc==1) {
+            if (owner->chat.messages) {
+                char text[160]; snprintf(text,sizeof(text),
+                    "Current floodprot settings: \nAfter %u msgs per %u seconds, silence for %u seconds\n",
+                    owner->chat.messages,owner->chat.persecond,owner->chat.secondsdead); info_print(owner,text);
+            } else info_print(owner,"No floodprots enabled.\n");
+        }
+        if (invocation->argc!=4) {
+            if (invocation->argc!=1 || !owner->chat.messages) {
+                info_print(owner,"Usage: floodprot <# of messages> <per # of seconds> <seconds to silence>\n");
+                info_print(owner,"Use floodprotmsg to set a custom message to say to the flooder.\n");
+            }
+        } else {
+            uint32_t values[3]={0};
+            for (size_t i=0;i<3;++i) {
+                char *end; errno=0; long value=strtol(invocation->argv[i+1],&end,10);
+                if (end!=invocation->argv[i+1] && errno!=ERANGE && value>0 && value<=INT32_MAX)
+                    values[i]=(uint32_t)value;
+            }
+            if (!values[0] || !values[1] || !values[2]) info_print(owner,"All values must be positive numbers\n");
+            else if (values[0]>10) info_print(owner,"Can only track up to 10 messages.\n");
+            else { owner->chat.messages=values[0]; owner->chat.persecond=values[1]; owner->chat.secondsdead=values[2]; }
+        }
+    }
+    owner->info_context=NULL; --owner->calls; return okay;
+}
+
 static bool info_command(void *opaque, const qa_command_invocation *invocation, qa_error *error)
 {
     struct application_native_q1_console *owner = opaque;
@@ -607,6 +733,7 @@ bool application_native_q1_console_create_restored(application_provider *provide
     struct application_native_q1_console *owner = calloc(1, sizeof(*owner));
     if (!owner) return application_fail(error, QA_ERROR_MEMORY, "allocating native Q1 source console");
     owner->provider = provider;
+    owner->chat=(native_q1_chat_policy){.messages=4,.persecond=4,.secondsdead=10};
     qa_cvar_options cvars = {.dialect = dialect(provider), .user = owner, .print = cvar_print, .effect = cvar_effect};
     owner->cvars = qa_cvars_create(&cvars, error);
     qa_console_options options = {.context = {.owner = provider->owner, .dialect = dialect(provider),
@@ -631,7 +758,9 @@ bool application_native_q1_console_create_restored(application_provider *provide
          !qa_console_register(owner->console, "sv_gamedir", NULL, provider->owner,
             false, visible_gamedir_command, owner, error) ||
          !qa_console_register(owner->console, "gamedir", NULL, provider->owner,
-            false, physical_gamedir_command, owner, error))) {
+            false, physical_gamedir_command, owner, error) ||
+         !qa_console_register(owner->console,"floodprot",NULL,provider->owner,false,flood_command,owner,error) ||
+         !qa_console_register(owner->console,"floodprotmsg",NULL,provider->owner,false,flood_command,owner,error))) {
         qa_console_destroy(owner->console); qa_cvars_destroy(owner->cvars);
         free(owner); provider->native_q1_console = NULL; return false;
     }
@@ -655,6 +784,7 @@ static bool clone_source(application_provider *provider, qa_cvars *destination,
         memcpy(owner->serverinfo, previous->native_q1_console->serverinfo, sizeof(owner->serverinfo));
         memcpy(owner->localinfo, previous->native_q1_console->localinfo, sizeof(owner->localinfo));
         owner->info_initialized = previous->native_q1_console->info_initialized;
+        owner->chat=previous->native_q1_console->chat;
         break;
     }
     if (provider->application->startup_hooks) {
@@ -803,6 +933,35 @@ bool application_native_q1_console_at(application_provider *provider, qa_console
     return true;
 }
 
+enum { QW_CHAT_SAVE_SIZE=12+255+32*(2+4+20+12+1+80+8) };
+static bool chat_fields(qa_source_save_io *io,native_q1_chat_policy *policy)
+{
+    if (!qa_source_save_u32(io,&policy->messages) || !qa_source_save_u32(io,&policy->persecond) ||
+        !qa_source_save_u32(io,&policy->secondsdead) || !qa_source_save_bytes(io,policy->message,sizeof(policy->message))) return false;
+    if (policy->messages>10 || !policy->persecond || policy->persecond>INT32_MAX ||
+        !policy->secondsdead || policy->secondsdead>INT32_MAX || !memchr(policy->message,0,sizeof(policy->message)))
+        return application_fail(io->error,QA_ERROR_FORMAT,"QW checkpoint changes its Source flood policy");
+    for (size_t i=0;i<32;++i) {
+        native_q1_chat_client *row=policy->clients+i;
+        if (!qa_source_save_bool(io,&row->occupied) || !qa_source_save_bool(io,&row->remote) ||
+            !qa_source_save_u32(io,&row->local_seat) || !qa_source_save_u64(io,&row->client.owner) ||
+            !qa_source_save_u64(io,&row->client.generation) || !qa_source_save_u32(io,&row->client.slot) ||
+            !qa_source_save_u64(io,&row->seat.owner) || !qa_source_save_u32(io,&row->seat.index) ||
+            !qa_source_save_u8(io,&row->head)) return false;
+        bool times=false;
+        for (size_t j=0;j<10;++j) {
+            if (!qa_source_save_u64(io,row->times+j)) return false;
+            times=times || row->times[j]!=0;
+        }
+        if (!qa_source_save_u64(io,&row->locked_until_ns)) return false;
+        if (row->head>9 || (!row->occupied && (row->remote || row->local_seat || row->head || times || row->locked_until_ns)) ||
+            (row->remote && (!row->occupied || row->local_seat || !row->client.owner || !row->seat.owner)) ||
+            (!row->remote && (row->client.owner || row->client.generation || row->client.slot || row->seat.owner || row->seat.index)))
+            return application_fail(io->error,QA_ERROR_FORMAT,"QW checkpoint changes its retained Source chat client");
+    }
+    return true;
+}
+
 bool application_native_q1_console_capture(application_provider *provider, qa_buffer *out, qa_error *error)
 {
     qa_cvars *cvars = application_native_q1_console_registry(provider);
@@ -811,14 +970,26 @@ bool application_native_q1_console_capture(application_provider *provider, qa_bu
         return application_fail(error, QA_ERROR_ARGUMENT, "native Q1 console capture requires its idle Source owner");
     qa_buffer registry = {0};
     if (!qa_cvars_save_capture(cvars, &registry, error)) return false;
+    qa_buffer chat={0};
+    if (dialect(provider)==QA_CONSOLE_QW) {
+        native_q1_chat_policy policy=owner->chat;
+        qa_source_save_io io={0};
+        bool okay=qa_source_save_writer(&io,NULL,error) && chat_fields(&io,&policy) && qa_source_save_finish(&io,&chat);
+        qa_source_save_dispose(&io);
+        if (!okay) { qa_buffer_free(&registry); return false; }
+        if (chat.size!=QW_CHAT_SAVE_SIZE) {
+            qa_buffer_free(&registry); qa_buffer_free(&chat);
+            return application_fail(error,QA_ERROR_FORMAT,"QW checkpoint lost its Source chat extent");
+        }
+    }
     size_t server_size = strlen(owner->serverinfo), local_size = strlen(owner->localinfo);
-    if (registry.size > UINT32_MAX || registry.size > SIZE_MAX - 22 - server_size - local_size - owner->reliable_info_size) {
-        qa_buffer_free(&registry);
+    if (registry.size > UINT32_MAX || registry.size > SIZE_MAX - 22 - server_size - local_size - owner->reliable_info_size - chat.size) {
+        qa_buffer_free(&registry); qa_buffer_free(&chat);
         return application_fail(error, QA_ERROR_MEMORY, "native Q1 console checkpoint exceeds its extent");
     }
-    qa_buffer bytes = {.size = 22 + registry.size + server_size + local_size + owner->reliable_info_size};
+    qa_buffer bytes = {.size = 22 + registry.size + server_size + local_size + owner->reliable_info_size + chat.size};
     bytes.data = malloc(bytes.size);
-    if (!bytes.data) { qa_buffer_free(&registry); return application_fail(error, QA_ERROR_MEMORY, "allocating Source console checkpoint"); }
+    if (!bytes.data) { qa_buffer_free(&registry); qa_buffer_free(&chat); return application_fail(error, QA_ERROR_MEMORY, "allocating Source console checkpoint"); }
     qa_net_writer writer; qa_net_writer_init(&writer, bytes.data, bytes.size, error);
     bool okay = qa_net_write_u32(&writer, UINT32_C(0x3149514e)) &&
         qa_net_write_u8(&writer, (uint8_t)dialect(provider)) &&
@@ -828,8 +999,9 @@ bool application_native_q1_console_capture(application_provider *provider, qa_bu
         qa_net_write_data(&writer, registry.data, registry.size) &&
         qa_net_write_data(&writer, owner->serverinfo, server_size) &&
         qa_net_write_data(&writer, owner->localinfo, local_size) &&
-        qa_net_write_data(&writer, owner->reliable_info, owner->reliable_info_size);
-    qa_buffer_free(&registry);
+        qa_net_write_data(&writer, owner->reliable_info, owner->reliable_info_size) &&
+        qa_net_write_data(&writer,chat.data,chat.size);
+    qa_buffer_free(&registry); qa_buffer_free(&chat);
     if (!okay) { qa_buffer_free(&bytes); return false; }
     *out = bytes; return true;
 }
@@ -872,8 +1044,16 @@ bool application_native_q1_console_restore(application_provider *provider, qa_by
         return application_fail(error, QA_ERROR_FORMAT, "native Q1 console checkpoint changes its Source recipe");
     qa_bytes registry, server, local, reliable;
     if (!qa_net_read_bytes(&reader, registry_size, &registry) || !qa_net_read_bytes(&reader, server_size, &server) ||
-        !qa_net_read_bytes(&reader, local_size, &local) || !qa_net_read_bytes(&reader, reliable_size, &reliable) ||
-        !qa_net_reader_finish(&reader)) return false;
+        !qa_net_read_bytes(&reader, local_size, &local) || !qa_net_read_bytes(&reader, reliable_size, &reliable)) return false;
+    native_q1_chat_policy chat={0};
+    if (source_dialect==QA_CONSOLE_QW) {
+        qa_bytes saved; qa_source_save_io io={0};
+        if (!qa_net_read_bytes(&reader,QW_CHAT_SAVE_SIZE,&saved)) return false;
+        bool okay=qa_source_save_reader(&io,NULL,saved,error) && chat_fields(&io,&chat) && qa_source_save_finish(&io,NULL);
+        qa_source_save_dispose(&io);
+        if (!okay) return false;
+    }
+    if (!qa_net_reader_finish(&reader)) return false;
     if (!saved_info(server) || !saved_info(local) || !saved_info_messages(reliable))
         return application_fail(error, QA_ERROR_FORMAT, "native Q1 console checkpoint has invalid Source info bytes");
     qa_cvars_restore *ticket = NULL;
@@ -884,6 +1064,7 @@ bool application_native_q1_console_restore(application_provider *provider, qa_by
     memcpy(owner->localinfo, local.data, local.size); owner->localinfo[local.size] = 0;
     memcpy(owner->reliable_info, reliable.data, reliable.size); owner->reliable_info_size = reliable.size;
     owner->info_initialized = initialized != 0; owner->info_error = (qa_error){0};
+    if (source_dialect==QA_CONSOLE_QW) owner->chat=chat;
     if (provider->application->operation == APPLICATION_PERSISTING) {
         qa_console *console = NULL;
         qa_command_context context;
