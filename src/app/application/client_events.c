@@ -1,6 +1,6 @@
 #include "client_events.h"
 #include "map_players_private.h"
-#include "guest_qc_internal.h"
+#include "guest_qc_profile.h"
 #include "guest_q3_private.h"
 #include "guest_native_q2_private.h"
 #include "guest_q3_components.h"
@@ -69,18 +69,22 @@ static bool provider_current(const qa_application *app, const client_listener *r
     return false;
 }
 
+static bool qc_binding_current(const client_listener *row, qa_actor_id actor, bool spawned)
+{
+    application_provider *p = row->provider;
+    struct application_qc_state *engine = p->state.qc.engine;
+    if (engine != row->engine || !engine || engine->provider != p || !engine->initialized ||
+        !row->slot || row->slot > engine->max_clients ||
+        !qa_qc_idle(p->state.qc.instance)) return false;
+    const application_qc_client *client = engine->clients + row->slot;
+    return client->connected && client->spawned == spawned &&
+        qa_actor_id_equal(client->actor, actor);
+}
+
 static bool binding_current(const client_listener *row, qa_actor_id actor)
 {
     application_provider *p = row->provider;
-    if (row->kind == CLIENT_LISTENER_QC) {
-        struct application_qc_state *engine = p->state.qc.engine;
-        if (engine != row->engine || !engine || engine->provider != p || !engine->initialized ||
-            !row->slot || row->slot > engine->max_clients ||
-            !qa_qc_idle(p->state.qc.instance)) return false;
-        const application_qc_client *client = engine->clients + row->slot;
-        return client->connected && client->spawned &&
-            qa_actor_id_equal(client->actor, actor);
-    }
+    if (row->kind == CLIENT_LISTENER_QC) return qc_binding_current(row, actor, true);
     if (row->kind == CLIENT_LISTENER_NATIVE_Q2) {
         struct application_native_q2 *engine = p->state.native.q2_engine;
         if (engine != row->engine || !engine || engine->provider != p || !engine->initialized ||
@@ -238,4 +242,57 @@ bool application_client_userinfo_changed(qa_application *app, qa_actor_id actor,
     }
     qa_launch_snapshot_release(launch);
     free(rows); return ok;
+}
+
+bool application_client_declared_disconnect(qa_application *app, qa_actor_id actor, qa_error *error)
+{
+    if (!app || !app->session)
+        return application_fail(error, QA_ERROR_ARGUMENT,
+            "Declared disconnect requires its actual application");
+    if (!qa_actors_get(qa_session_actors(app->session), actor)) return true;
+    if (app->provider_count > SIZE_MAX / sizeof(client_listener))
+        return application_fail(error, QA_ERROR_MEMORY,
+            "Declared disconnect listener snapshot exceeds its extent");
+    client_listener *rows = app->provider_count ? calloc(app->provider_count, sizeof(*rows)) : NULL;
+    if (app->provider_count && !rows)
+        return application_fail(error, QA_ERROR_MEMORY, "Retaining declared disconnect listener order");
+    size_t count = 0;
+    bool ok = true;
+    for (size_t i = 0; ok && i < app->provider_count; ++i) {
+        application_provider *provider = app->providers[i];
+        const struct application_qc_profile *profile = provider->kind == APPLICATION_PROVIDER_QC
+            ? provider->state.qc.qualified : NULL;
+        if (!profile || !profile->clients || !provider->constructed ||
+            !provider->attached || provider->close_pending) continue;
+        bool member = false;
+        ok = application_qc_control_source_client(provider, actor, &member, error);
+        if (!ok || !member) continue;
+        bool found = false;
+        ok = provider_listener(provider, actor, rows + count, &found, error);
+        if (ok && found) ++count;
+    }
+    if (!ok || !count) { free(rows); return ok; }
+    const qa_launch_snapshot *launch = qa_application_launch(app);
+    const uint64_t generation = app->publication_generation;
+    application_provider *source = app->players ? app->players->map_provider : NULL;
+    qa_launch_snapshot_retain(launch);
+    for (size_t i = 0; ok && i < count; ++i) {
+        const client_listener *row = rows + i;
+        if (!player(app, actor) || !source || qa_application_launch(app) != launch ||
+            app->publication_generation != generation || app->players->map_provider != source ||
+            !provider_current(app, row) || !binding_current(row, actor)) {
+            ok = application_fail(error, QA_ERROR_ARGUMENT,
+                "Declared disconnect changed its actual client or Source publication");
+            break;
+        }
+        ok = application_qc_disconnect_player(row->provider, actor, error);
+        if (ok && (!player(app, actor) || qa_application_launch(app) != launch ||
+            app->publication_generation != generation || app->players->map_provider != source ||
+            !provider_current(app, row) || !qc_binding_current(row, actor, false)))
+            ok = application_fail(error, QA_ERROR_ARGUMENT,
+                "Declared disconnect replaced its full client or provider identity");
+    }
+    qa_launch_snapshot_release(launch);
+    free(rows);
+    return ok;
 }

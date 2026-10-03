@@ -1,5 +1,6 @@
 #include "guest_projection_private.h"
 #include "guest_input_private.h"
+#include "client_events.h"
 
 bool application_guest_actor_admit(application_provider *provider, qa_actor_id actor,
                                    qa_error *error)
@@ -77,6 +78,13 @@ bool application_guest_clients_drain(application_provider *provider, qa_error *e
             !application_guest_input_actor_idle(provider->application, client->actor)) continue;
         qa_actor_id actor = client->actor;
         if (client->roster_attached) {
+            const qa_actor_record *retiring = qa_actors_get(
+                qa_session_actors(provider->application->session), actor);
+            if (retiring && retiring->owner == provider->owner &&
+                !application_client_declared_disconnect(provider->application, actor, &current)) {
+                if (ok) { ok = false; first = current; }
+                continue;
+            }
             if (!application_players_guest_detach(provider->application, provider, slot, actor, &current)) {
                 if (ok) { ok = false; first = current; }
                 continue;

@@ -1,4 +1,5 @@
 #include "map_players_private.h"
+#include "client_events.h"
 #include "qa/source_number.h"
 #include "guest_projection_private.h"
 #include "guest_q3_combat.h"
@@ -52,19 +53,18 @@ static const qa_launch_role player_roles[] = {
     QA_ROLE_COMBAT, QA_ROLE_EFFECTS, QA_ROLE_EQUIPMENT
 };
 
-static const application_player_record *component_player(qa_application *app,
-    const struct application_player_roster *roster, qa_actor_id actor, qa_error *error)
+static application_player_record *physical_player(qa_application *app,
+    struct application_player_roster *roster, qa_actor_id actor, qa_error *error)
 {
     if (!roster || app->players != roster ||
         !qa_actors_get(qa_session_actors(app->session), actor)) {
         application_fail(error, QA_ERROR_ARGUMENT, "Component admission lost its physical player");
         return NULL;
     }
-    const application_player_record *actual = NULL;
+    application_player_record *actual = NULL;
     for (size_t i = 0; i < roster->count; ++i) {
-        const application_player_record *row = roster->records + i;
-        if (!qa_actor_id_equal(row->actor, actor) || row->retiring ||
-            row->deferred || row->source_begin_pending) continue;
+        application_player_record *row = roster->records + i;
+        if (!qa_actor_id_equal(row->actor, actor) || row->retiring) continue;
         if (actual) {
             application_fail(error, QA_ERROR_ARGUMENT, "Component admission has duplicate physical players");
             return NULL;
@@ -72,7 +72,18 @@ static const application_player_record *component_player(qa_application *app,
         actual = row;
     }
     if (!actual)
+        application_fail(error, QA_ERROR_ARGUMENT, "Component lost its physical player roster row");
+    return actual;
+}
+
+static const application_player_record *component_player(qa_application *app,
+    struct application_player_roster *roster, qa_actor_id actor, qa_error *error)
+{
+    const application_player_record *actual = physical_player(app, roster, actor, error);
+    if (actual && (actual->deferred || actual->source_begin_pending)) {
         application_fail(error, QA_ERROR_ARGUMENT, "Component admission precedes actual player Begin");
+        return NULL;
+    }
     return actual;
 }
 
@@ -3359,6 +3370,9 @@ bool application_players_component_retire(qa_application *app,application_provid
     }
     if(!found) return !qa_actors_get(qa_session_actors(app->session),actor)||
         application_fail(error,QA_ERROR_NOT_FOUND,"Component drop lost its live source roster row");
+    if(!application_client_declared_disconnect(app,actor,error)) return false;
+    found=physical_player(app,app->players,actor,error);
+    if(!found) return false;
     found->retiring=true;
     if(qa_actors_get(qa_session_actors(app->session),actor)&&!qa_session_release(app->session,actor,error)) return false;
     /* Release callbacks can grow or consume the real roster. */
@@ -3397,7 +3411,10 @@ bool application_players_native_q3_retire(qa_application *app,
     while (index < app->players->count && !qa_actor_id_equal(app->players->records[index].actor, actor)) ++index;
     if (index == app->players->count)
         return application_fail(error, QA_ERROR_NOT_FOUND, "native Q3 retiring client has no canonical roster row");
-    app->players->records[index].retiring = true;
+    if (!application_client_declared_disconnect(app, actor, error)) return false;
+    application_player_record *actual = physical_player(app, app->players, actor, error);
+    if (!actual) return false;
+    actual->retiring = true;
     if (qa_actors_get(qa_session_actors(app->session), actor) &&
         !qa_session_release(app->session, actor, error)) return false;
     for (index = 0; index < app->players->count; ++index) {
@@ -3852,12 +3869,17 @@ bool qa_application_remote_player_detach(qa_application *application,
         ok = qa_q2_player_disconnect(character->state.q2, actor, error);
     if (ok && character->kind == APPLICATION_PROVIDER_NATIVE && character->state.native.q2_engine && character != source)
         ok = application_native_q2_actor_disconnect(character, actor, error);
+    if (ok) ok = application_client_declared_disconnect(application, actor, error);
     if (ok && source && source->kind==APPLICATION_PROVIDER_Q1)
         ok=application_native_q1_check_client_retire(source,actor,error);
     if (ok && source && source->kind==APPLICATION_PROVIDER_Q1 &&
         source->component.clock.kind==QA_CLOCK_QUAKEWORLD)
         ok=application_native_q1_qw_retire_capture(source,actor,error);
-    if (ok) record->retiring = true;
+    if (ok) {
+        record = physical_player(application, application->players, actor, error);
+        ok = record != NULL;
+        if (ok) record->retiring = true;
+    }
     if (ok && qa_actors_get(qa_session_actors(application->session), actor))
         ok = qa_session_release(application->session, actor, error);
     application->operation = APPLICATION_IDLE;
@@ -3904,6 +3926,11 @@ bool application_players_bot_detach(qa_application *application,qa_actor_id acto
         okay=qa_q2_player_disconnect(source->state.q2,actor,error);
     if(okay && character->kind==APPLICATION_PROVIDER_Q2 && character!=source)
         okay=qa_q2_player_disconnect(character->state.q2,actor,error);
+    if(okay) okay=application_client_declared_disconnect(application,actor,error);
+    if(okay) {
+        record=physical_player(application,application->players,actor,error);
+        okay=record!=NULL;
+    }
     if(okay && source->kind==APPLICATION_PROVIDER_Q1)
         okay=application_native_q1_check_client_retire(source,actor,error);
     if(okay && source->kind==APPLICATION_PROVIDER_Q1 &&
