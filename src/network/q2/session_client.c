@@ -219,7 +219,7 @@ static bool server_command(q2_session *session, uint8_t source_seat, const char 
             if (!client->has_server_data || !valid || *tail || errno == ERANGE || count < INT32_MIN ||
                 count > INT32_MAX || count != client->server_data.servercount)
                 ok = q2_fail(error, QA_ERROR_FORMAT, "Q2 precache refers to another physical server generation");
-            else ok = cancel(session, error) && retain_game_state(session, error) && prepare(session, waiting, error);
+            else ok = retain_game_state(session, error) && prepare(session, waiting, error);
         } else if (ok && !strcmp(name, "changing")) ok = cancel(session, error) && loading(session, error);
         else if (ok && tokens.count) ok = current(session, error) &&
             client->hooks.server_command(client->hooks.context, session->id, source_seat, line, error) && current(session, error);
