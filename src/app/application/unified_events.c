@@ -128,9 +128,8 @@ bool application_unified_event_owner_prepare(qa_application *app, application_pr
         return application_fail(error, QA_ERROR_ARGUMENT, "Source activation replacement lost its actual provider pair");
     bool published = false;
     for (size_t i = 0; i < app->provider_count; ++i) published |= app->providers[i] == previous;
-    if (!published || provider->launch->selection.runtime != QA_PROGRAM_BUILTIN ||
-        previous->launch->selection.runtime != QA_PROGRAM_BUILTIN)
-        return application_fail(error, QA_ERROR_UNSUPPORTED, "Deferred Source activation requires an actual builtin replacement");
+    if (!published)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Source activation replacement lost its actual published provider");
     const qa_product *product = qa_catalog_product(qa_launch_instance_catalog(provider->launch),
         provider->launch->selection.product);
     const application_unified_event_owner *activation = NULL;
