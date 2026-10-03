@@ -476,6 +476,8 @@ bool application_qc_combat_prepare(struct application_qc_state *engine, qa_qc_in
 {
     if (!engine->combat || engine->projecting || !access->binding.actor.registry) return true;
     if (vm != engine->provider->state.qc.instance || !held(engine->combat, error)) return false;
+    qa_application *application = engine->provider->application;
+    if (application->operation == APPLICATION_PERSISTING && application->native_restore_image) return true;
     return admit(engine->combat, access->binding, access->reference, error);
 }
 bool application_qc_combat_health_owned(const struct application_qc_state *engine,
