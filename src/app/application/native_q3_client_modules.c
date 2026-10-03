@@ -429,7 +429,7 @@ bool native_client_module_construct(native_client_module *role, bool restoring, 
         if (!application_native_process_prepare(owner->app, actual.descriptor,
             actual.receiver.receiver, role->service_owner, &artifact, 1, 0, &module.image,
             native.instance.observe || qa_native_declaration_region_count(role->native_declaration) != 0,
-            process_current, role, &role->process, error)) {
+            process_current, role, NULL, (qa_bytes){0}, &role->process, error)) {
             role->native_load_failed = true;
             return false;
         }

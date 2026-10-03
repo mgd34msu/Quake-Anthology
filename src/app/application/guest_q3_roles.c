@@ -573,18 +573,15 @@ static bool role_create(struct application_q3_guest *engine, qa_qvm_role kind,
         qa_native_module_info module = qa_native_module_describe(role->module);
         qa_native_process_resource_artifact artifact = {.resource = role->artifact->resource,
             .acquisition = &role->artifact->acquisition, .path = role->path};
-        qa_bytes restored_executor = {0};
+        qa_bytes restored_executor = {0}, recipe = {0};
+        const qa_native_process_resources *capture = NULL;
         if (engine->restore_pending) {
-            const qa_native_process_resources *capture = NULL;
-            qa_bytes recipe = {0};
-            if (!application_guest_q3_native_restore_recipe(role, &capture, &recipe, &restored_executor, error) ||
-                !application_native_process_rebind(descriptor, provider->owner, role->service_owner,
-                    process_current, role, capture, recipe, &role->process, error)) goto failed;
+            if (!application_guest_q3_native_restore_recipe(role, &capture, &recipe, &restored_executor, error)) goto failed;
         }
         if (!application_native_process_prepare(app, descriptor, provider->owner,
             role->service_owner, &artifact, 1, 0, &module.image,
             native.instance.observe || qa_native_declaration_region_count(role->declaration) != 0,
-            process_current, role, &role->process, error)) goto failed;
+            process_current, role, capture, recipe, &role->process, error)) goto failed;
         if (restored_executor.size) {
             if (!qa_native_process_resources_restore_read(role->process.resources,
                 restored_executor, NULL, &role->process.process, error)) goto failed;

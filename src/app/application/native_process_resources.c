@@ -59,7 +59,7 @@ struct qa_native_process_resources {
     qa_native_sysv_program_aux *program_auxiliary;
     char *interpreter_path, *program_platform, *program_base_platform;
     uint8_t program_random[16];
-    bool closing, failed, captured, raw_program, has_interpreter;
+    bool closing, failed, captured, raw_program, has_interpreter, file_cold;
     size_t interpreter;
 };
 static _Thread_local const qa_native_process_resources *native_error_owner;
@@ -870,17 +870,76 @@ static bool match_bytes(qa_source_save_io *io, const void *bytes, size_t count)
         (count && memcmp(io->input.data + io->offset, bytes, count))) return false;
     io->offset += count; return true;
 }
-static bool match_text(qa_source_save_io *io, const char *text)
+static bool resource_text(qa_source_save_io *io,const char *expected,char **imported)
 {
-    return match_bool(io, text != NULL) && (!text ||
-        (match_u64(io, strlen(text)) && match_bytes(io, text, strlen(text))));
+    bool present=expected!=NULL;
+    if (imported) {
+        if (!qa_source_save_bool(io,&present)) return false;
+        if (!present) return true;
+        size_t size=0;
+        if (!qa_source_save_count(io,&size,SIZE_MAX-1) || io->offset>io->input.size ||
+            size>io->input.size-io->offset || memchr(io->input.data+io->offset,0,size)) return false;
+        char *text=malloc(size+1);
+        if (!text) return fail(io->error,QA_ERROR_MEMORY,"Importing named native resource");
+        memcpy(text,io->input.data+io->offset,size); text[size]=0; io->offset+=size;
+        *imported=text; return true;
+    }
+    return match_bool(io,present) && (!present ||
+        (match_u64(io,strlen(expected)) && match_bytes(io,expected,strlen(expected))));
 }
+static bool match_text(qa_source_save_io *io,const char *text)
+{ return resource_text(io,text,NULL); }
 static bool match_object(qa_source_save_io *io, const qa_fs_object_reference *reference)
 {
     return match_u32(io, reference->platform) && match_u64(io, reference->words[0]) &&
         match_u64(io, reference->words[1]) && match_u64(io, reference->words[2]);
 }
-static bool resource_fields(qa_source_save_io *io, const qa_native_process_resources *owner)
+static bool resource_file_fields(qa_source_save_io *io,const process_file *row,process_file *imported)
+{
+    if (!imported) return match_u64(io,row->id) && match_u64(io,row->root) && match_text(io,row->name) &&
+        match_bool(io,row->ready) && match_bool(io,row->closed) &&
+        match_u32(io,row->reference.mode) && match_u32(io,row->reference.creation) &&
+        (!row->ready || (match_object(io,&row->reference.root) && match_object(io,&row->reference.object)));
+    uint64_t root=0; bool closed=true;
+    if (!qa_source_save_u64(io,&imported->id) || !qa_source_save_u64(io,&root) || root>SIZE_MAX ||
+        !resource_text(io,NULL,&imported->name) || !qa_source_save_bool(io,&imported->ready) ||
+        !qa_source_save_bool(io,&closed) || !qa_source_save_u32(io,&imported->reference.mode) ||
+        !qa_source_save_u32(io,&imported->reference.creation)) return false;
+    imported->root=(size_t)root;
+    if (!imported->name || !*imported->name || root>=imported->owner->root_count ||
+        (imported->reference.mode & ~3u) || imported->reference.creation<1 || imported->reference.creation>5 ||
+        (!imported->ready && !closed)) return false;
+    if (imported->ready) {
+        qa_fs_object_reference *references[2]={&imported->reference.root,&imported->reference.object};
+        for (size_t i=0;i<2;++i)
+            if (!qa_source_save_u32(io,&references[i]->platform) ||
+                !qa_source_save_u64(io,&references[i]->words[0]) || !qa_source_save_u64(io,&references[i]->words[1]) ||
+                !qa_source_save_u64(io,&references[i]->words[2])) return false;
+        if (!object_equal(&imported->reference.root,&imported->owner->roots[imported->root].reference) ||
+            imported->reference.object.platform!=imported->reference.root.platform) return false;
+    }
+    if (!closed) {
+        const process_root *authority=&imported->owner->roots[imported->root];
+        size_t prefix=strlen(authority->prefix);
+        if (!authority->active || (imported->reference.mode & ~authority->mode) ||
+            strncmp(imported->name,authority->prefix,prefix)) return false;
+        char *path=text_copy(imported->name+prefix); bool opened=false;
+        if (!path) return fail(io->error,QA_ERROR_MEMORY,"Importing contained native file name");
+        bool windows=imported->owner->artifacts[imported->owner->options.primary].image.target.os==QA_NATIVE_OS_WINDOWS;
+        if (windows) for (char *at=path;*at;++at) if (*at=='\\') *at='/';
+        bool ok=qa_fs_root_opened_file(authority->root,path,imported->reference.mode,
+            QA_FS_OPEN_EXISTING,&imported->file,&opened,io->error);
+        free(path);
+        if (imported->file) imported->closed=false;
+        qa_fs_opened_reference actual={0};
+        if (!ok || !opened || !qa_fs_opened_file_reference_read(imported->file,&actual) ||
+            !object_equal(&actual.root,&imported->reference.root) ||
+            !object_equal(&actual.object,&imported->reference.object)) return false;
+        imported->reference.path=actual.path;
+    }
+    return true;
+}
+static bool resource_fields(qa_source_save_io *io, const qa_native_process_resources *owner, qa_native_process_resources *imported)
 {
     if (!match_bytes(io, "QNPR", 4) ||
         !match_bytes(io, &owner->descriptor->identity, sizeof(owner->descriptor->identity)) ||
@@ -917,7 +976,10 @@ static bool resource_fields(qa_source_save_io *io, const qa_native_process_resou
     for (size_t i = 0; i < owner->root_count; ++i) {
         const process_root *row = owner->roots + i;
         if (!match_text(io, row->prefix) || !match_object(io, &row->reference) ||
-            !match_u32(io, row->mode) || !match_bool(io, row->active)) return false;
+            !match_u32(io, row->mode)) return false;
+        if (imported) {
+            if (!qa_source_save_bool(io,&imported->roots[i].active)) return false;
+        } else if (!match_bool(io,row->active)) return false;
     }
     if (!match_u64(io, owner->options.argc)) return false;
     for (size_t i = 0; i < owner->options.argc; ++i) if (!match_text(io, owner->argv[i])) return false;
@@ -933,16 +995,30 @@ static bool resource_fields(qa_source_save_io *io, const qa_native_process_resou
         uint16_t value = owner->windows_environment[i];
         if (!qa_source_save_u16(io, &value) || value != owner->windows_environment[i]) return false;
     }
-    if (!match_u64(io, owner->next_file) || !match_u64(io, owner->file_count)) return false;
-    for (size_t i = 0; i < owner->file_count; ++i) {
-        const process_file *row = owner->files[i];
-        if (!match_u64(io, row->id) || !match_u64(io, row->root) || !match_text(io, row->name) ||
-            !match_bool(io, row->ready) || !match_bool(io, row->closed) ||
-            !match_u32(io, row->reference.mode) || !match_u32(io, row->reference.creation)) return false;
-        if (row->ready && (!match_object(io, &row->reference.root) || !match_object(io, &row->reference.object))) return false;
+    size_t count=owner->file_count;
+    if (imported) {
+        uint64_t first_file=owner->next_file;
+        if (!qa_source_save_u64(io,&imported->next_file) || imported->next_file<first_file ||
+            !qa_source_save_count(io,&count,SIZE_MAX/sizeof(*imported->files)) ||
+            io->offset>io->input.size || count>(io->input.size-io->offset)/35) return false;
+        imported->files=count?calloc(count,sizeof(*imported->files)):NULL;
+        if (count && !imported->files) return fail(io->error,QA_ERROR_MEMORY,"Importing native file inventory");
+        imported->file_capacity=count;
+        uint64_t previous=first_file-1;
+        for (size_t i=0;i<count;++i) {
+            process_file *row=calloc(1,sizeof(*row));
+            if (!row) return fail(io->error,QA_ERROR_MEMORY,"Importing native file capability row");
+            imported->files[i]=row; imported->file_count=i+1; row->owner=imported; row->closed=true;
+            if (!resource_file_fields(io,NULL,row) || row->id<=previous || row->id>=imported->next_file) return false;
+            previous=row->id;
+        }
+    } else {
+        if (!match_u64(io,owner->next_file) || !match_u64(io,count)) return false;
+        for (size_t i=0;i<count;++i) if (!resource_file_fields(io,owner->files[i],NULL)) return false;
     }
     return true;
 }
+
 bool qa_native_process_resources_checkpoint(const qa_native_process_resources *owner, qa_buffer *out, qa_error *error)
 {
     if (!out || out->data || out->size || !owner || owner->busy ||
@@ -953,19 +1029,41 @@ bool qa_native_process_resources_checkpoint(const qa_native_process_resources *o
     }
     qa_buffer platform = {0}; qa_source_save_io io = {0};
     bool okay = qa_native_process_platform_checkpoint(owner->options.platform, &platform, error) &&
-        qa_source_save_writer(&io, NULL, error) && resource_fields(&io, owner) &&
+        qa_source_save_writer(&io, NULL, error) && resource_fields(&io, owner, NULL) &&
         match_u64(&io, platform.size) && match_bytes(&io, platform.data, platform.size) && qa_source_save_finish(&io, out);
     qa_source_save_dispose(&io); qa_buffer_free(&platform); return okay;
 }
+static bool resource_recipe_read(qa_native_process_resources *imported,
+    const qa_native_process_resources *owner,qa_bytes bytes,qa_error *error)
+{
+    qa_source_save_io io={0}; size_t platform_size=0;
+    bool ok=qa_source_save_reader(&io,NULL,bytes,error) && resource_fields(&io,owner,imported) &&
+        qa_source_save_count(&io,&platform_size,SIZE_MAX) && io.offset<=io.input.size &&
+        platform_size<=io.input.size-io.offset;
+    if (ok) {
+        qa_bytes platform={io.input.data+io.offset,platform_size}; io.offset+=platform_size;
+        ok=imported?qa_native_process_platform_restore(imported->options.platform,platform,error):
+            qa_native_process_platform_validate(owner->options.platform,platform,
+                owner->file_cold && !owner->captured,error);
+    }
+    if (ok) ok=qa_source_save_finish(&io,NULL);
+    qa_source_save_dispose(&io);
+    if (!ok && (!error || error->code==QA_OK))
+        fail(error,QA_ERROR_FORMAT,"Native resource continuation differs from its prepared graph");
+    return ok;
+}
+bool qa_native_process_resources_restore(const qa_native_process_resources_options *options,
+    qa_bytes bytes,qa_native_process_resources **out,qa_error *error)
+{
+    if (!bytes.data || !bytes.size || !qa_native_process_resources_create(options,out,error)) return false;
+    (*out)->file_cold=true;
+    bool ok=resource_recipe_read(*out,*out,bytes,error);
+    if (!ok) (*out)->failed=true;
+    return ok;
+}
 bool qa_native_process_resources_validate(const qa_native_process_resources *owner, qa_bytes bytes, qa_error *error)
 {
-    if (!owner || owner->busy || !resources_retained(owner, error)) return false;
-    qa_buffer platform = {0}; qa_source_save_io io = {0};
-    bool okay = qa_native_process_platform_checkpoint(owner->options.platform, &platform, error) &&
-        qa_source_save_reader(&io, NULL, bytes, error) && resource_fields(&io, owner) &&
-        match_u64(&io, platform.size) && match_bytes(&io, platform.data, platform.size) && qa_source_save_finish(&io, NULL);
-    qa_source_save_dispose(&io); qa_buffer_free(&platform);
-    return okay || fail(error, QA_ERROR_FORMAT, "Native resource continuation differs from its retained graph");
+    return owner && !owner->busy && resources_retained(owner,error) && resource_recipe_read(NULL,owner,bytes,error);
 }
 static bool resource_copy(const qa_native_process_resources *source,
     qa_native_process_resources **out, qa_error *error)
@@ -979,6 +1077,7 @@ static bool resource_copy(const qa_native_process_resources *source,
     copy->next_file = source->next_file; copy->allocation_base = source->allocation_base;
     copy->trap_base = source->trap_base; copy->first_callback = source->first_callback; copy->guard = source->guard;
     copy->raw_program = source->raw_program; copy->has_interpreter = source->has_interpreter;
+    copy->file_cold = source->file_cold;
     copy->interpreter = source->interpreter;
     *out = copy;
     if (!qa_launch_instance_retain_metadata(source->descriptor, &copy->lease, error)) return false;
@@ -1097,7 +1196,7 @@ bool qa_native_process_resources_rebind(const qa_native_process_resources *captu
     qa_launch_instance_lease_release(copy->lease); copy->lease = lease;
     copy->descriptor = qa_launch_instance_lease_view(lease); copy->options.descriptor = copy->descriptor;
     copy->options.current = bindings->current; copy->options.context = bindings->context;
-    copy->captured = false;
+    copy->captured = false; copy->file_cold = false;
     copy->options.external_callback = bindings->external_callback; copy->options.external_context = bindings->external_context;
     copy->sysv_restore.external_callback = bindings->external_callback; copy->sysv_restore.external_context = bindings->external_context;
     copy->windows_restore.external_callback = bindings->external_callback; copy->windows_restore.external_context = bindings->external_context;

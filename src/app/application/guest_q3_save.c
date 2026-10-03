@@ -1423,8 +1423,8 @@ bool application_guest_q3_native_restore_recipe(q3g_role *role,
         return application_fail(error, QA_ERROR_FORMAT, "Native Q3 role leaves its decoded artifact and capability recipe");
     if (!refs->resolve(refs->context, provider->launch->selection.instance, found->owner,
         found->resources, capture, recipe, error)) return false;
-    if (!*capture || !recipe->data || !recipe->size)
-        return application_fail(error, QA_ERROR_FORMAT, "Native Q3 capability resolver returned no retained owner");
+    if (!recipe->data || !recipe->size)
+        return application_fail(error, QA_ERROR_FORMAT, "Native Q3 capability resolver returned no qualified recipe");
     found->lower_resources = *recipe;
     *executor = found->executor;
     return true;

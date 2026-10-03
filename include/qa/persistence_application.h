@@ -31,8 +31,10 @@ typedef struct qa_application_native_baseline_services {
 /* The external save graph holds captured native capability owners separately
  * from the running application. capture performs resources_capture and retains
  * its output even on a checked cleanup failure. resolve borrows that exact held
- * capture; it never opens a file or installs source services. Recipes contain
- * named identities, not pointers. The graph outlives every save image that uses
+ * capture for an in-memory image. A file image returns NULL capture and its
+ * qualified named recipe for reconstruction under the actual prepared source
+ * authority. Resolve itself never opens a file or installs source services.
+ * Recipes contain named identities, not pointers. The graph outlives every save image that uses
  * it and every candidate borrowing it during resources_rebind. */
 typedef struct qa_application_native_resource_refs {
     void *context;

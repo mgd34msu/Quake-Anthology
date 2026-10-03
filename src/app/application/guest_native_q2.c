@@ -450,25 +450,24 @@ static bool load_host(struct application_native_q2 *engine, qa_error *error)
     qa_native_module_info module = qa_native_module_describe(provider->state.native.module);
     qa_native_process_resource_artifact artifact = {.resource = provider->launch->artifact,
         .acquisition = provider->launch->artifact_acquisition, .path = provider->launch->selection.artifact};
+    const qa_native_process_resources *capture = NULL;
+    qa_bytes lower_recipe = {0};
     if (provider->application->native_restore_image && !engine->process.resources) {
         const qa_application_native_resource_refs *refs = provider->application->native_restore_resources;
         const qa_save_record *saved = qa_save_image_find(provider->application->native_restore_image,
             QA_SAVE_PROVIDER, provider->launch->selection.instance);
-        qa_bytes recipe = {0}, lower_recipe = {0};
-        const qa_native_process_resources *capture = NULL;
+        qa_bytes recipe = {0};
         if (!refs || !refs->resolve)
             return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 cold construction requires its retained external graph resolver");
         if (!saved || !qa_sha256_equal(&saved->owner.content, &provider->launch->identity) ||
             !application_native_q2_save_resource_recipe(saved, &recipe, error) ||
             !refs->resolve(refs->context, provider->launch->selection.instance,
                 qa_resource_id(provider->launch->artifact), recipe, &capture, &lower_recipe, error)) return false;
-        if (!application_native_process_rebind(provider->launch, provider->owner, provider->owner,
-                process_current, engine, capture, lower_recipe, &engine->process, error)) return false;
     }
     if (!application_native_process_prepare(provider->application, provider->launch,
         provider->owner, provider->owner, &artifact, 1, 0, &module.image,
         instance.observe || qa_native_declaration_region_count(engine->declaration) != 0,
-        process_current, engine, &engine->process, error)) return false;
+        process_current, engine, capture, lower_recipe, &engine->process, error)) return false;
     qa_native_checkpoint cold = {0};
     if (provider->application->native_restore_image && engine->profile != QA_NATIVE_Q2_CGAME_API2023) {
         const qa_save_record *saved = qa_save_image_find(provider->application->native_restore_image,

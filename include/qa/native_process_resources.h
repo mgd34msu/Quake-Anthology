@@ -65,6 +65,12 @@ typedef struct qa_native_process_resource_program {
 
 bool qa_native_process_resources_create(const qa_native_process_resources_options *,
     qa_native_process_resources **, qa_error *);
+/* Reconstruct a file-cold recipe against the genuinely prepared artifact/root
+ * authorities. Named objects are opened without creation or truncation and
+ * retain their saved identities. Standard roles use actual platform bindings.
+ * Failed import may return an owner which requires checked release. */
+bool qa_native_process_resources_restore(const qa_native_process_resources_options *,
+    qa_bytes, qa_native_process_resources **, qa_error *);
 /* Dedicated raw ELF PROGRAM graph: exactly the acquired executable and its
  * declared PT_INTERP artifact, if present. Scalar personality/auxiliary values
  * come from the actual kernel/source policy, not a host library lookup. */

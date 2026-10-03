@@ -928,7 +928,8 @@ bool qa_native_process_platform_program_files(qa_native_process_platform *owner,
     }
     return true;
 }
-static bool platform_fields(qa_source_save_io *io, const qa_native_process_platform *owner)
+static bool platform_fields(qa_source_save_io *io, const qa_native_process_platform *owner,
+    bool standard_roles,bool restored_closed[3])
 {
     uint8_t magic[4] = {'Q','N','P','L'};
     uint64_t id = owner->id; int64_t frequency = owner->frequency;
@@ -954,11 +955,13 @@ static bool platform_fields(qa_source_save_io *io, const qa_native_process_platf
         bool durable_object = row->durable_object;
         uint32_t mode = row->mode; bool closed = row->closed;
         if (!qa_source_save_u64(io, &saved_id) || saved_id != row->id ||
-            !qa_source_save_u64(io, &device) || device != row->device ||
-            !qa_source_save_bool(io, &durable_object) || durable_object != row->durable_object ||
-            !qa_source_save_u64(io, &object) || object != (row->durable_object ? row->object : 0) ||
+            !qa_source_save_u64(io, &device) || (!standard_roles && device != row->device) ||
+            !qa_source_save_bool(io, &durable_object) || (!standard_roles && durable_object != row->durable_object) ||
+            !qa_source_save_u64(io, &object) || (!durable_object && object) ||
+            (!standard_roles && object != (row->durable_object ? row->object : 0)) ||
             !qa_source_save_u32(io, &mode) || mode != row->mode ||
-            !qa_source_save_bool(io, &closed) || closed != row->closed) return false;
+            !qa_source_save_bool(io, &closed) || (!restored_closed && closed != row->closed)) return false;
+        if (restored_closed) restored_closed[i]=closed;
     }
     return true;
 }
@@ -967,16 +970,28 @@ bool qa_native_process_platform_checkpoint(const qa_native_process_platform *own
     if (!out || out->data || out->size || !owner || owner->busy ||
         !qa_native_process_platform_retained(owner, error)) return false;
     qa_source_save_io io = {0};
-    bool okay = qa_source_save_writer(&io, NULL, error) && platform_fields(&io, owner) && qa_source_save_finish(&io, out);
+    bool okay = qa_source_save_writer(&io, NULL, error) && platform_fields(&io, owner, false, NULL) && qa_source_save_finish(&io, out);
     qa_source_save_dispose(&io); return okay;
 }
-bool qa_native_process_platform_validate(const qa_native_process_platform *owner, qa_bytes bytes, qa_error *error)
+bool qa_native_process_platform_validate(const qa_native_process_platform *owner, qa_bytes bytes,
+    bool standard_roles, qa_error *error)
 {
     if (!qa_native_process_platform_retained(owner, error)) return false;
     qa_source_save_io io = {0};
-    bool okay = qa_source_save_reader(&io, NULL, bytes, error) && platform_fields(&io, owner) && qa_source_save_finish(&io, NULL);
+    bool okay = qa_source_save_reader(&io, NULL, bytes, error) && platform_fields(&io, owner, standard_roles, NULL) && qa_source_save_finish(&io, NULL);
     qa_source_save_dispose(&io);
     return okay || fail(error, QA_ERROR_FORMAT, "Native platform continuation differs from its retained resources");
+}
+bool qa_native_process_platform_restore(qa_native_process_platform *owner,qa_bytes bytes,qa_error *error)
+{
+    if (!qa_native_process_platform_retained(owner,error)) return false;
+    qa_source_save_io io={0}; bool closed[3]={false,false,false};
+    bool ok=qa_source_save_reader(&io,NULL,bytes,error) && platform_fields(&io,owner,true,closed) &&
+        qa_source_save_finish(&io,NULL);
+    qa_source_save_dispose(&io);
+    if (!ok) return fail(error,QA_ERROR_FORMAT,"Native standard roles differ from their actual platform bindings");
+    for (size_t i=0;i<3;++i) if (closed[i] && !stream_close(owner->streams+i,error)) return false;
+    return true;
 }
 void qa_native_process_platform_retain(qa_native_process_platform *owner)
 { if (owner) ++owner->references; }

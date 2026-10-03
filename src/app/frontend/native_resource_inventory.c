@@ -31,16 +31,37 @@ bool qa_native_resource_inventory_release(qa_native_resource_inventory **slot,qa
     }
     free(owner); *slot=NULL; return true;
 }
+typedef struct native_resource_recipe {
+    uint64_t ordinal,source;
+    qa_bytes instance,continuation;
+} native_resource_recipe;
+static bool recipe_bytes(qa_source_save_io *io,qa_bytes *bytes,size_t maximum)
+{
+    size_t size=bytes->size;
+    if (!qa_source_save_count(io,&size,maximum)) return false;
+    if (io->direction==QA_SOURCE_SAVE_READ) {
+        if (io->offset>io->input.size || size>io->input.size-io->offset) return false;
+        *bytes=(qa_bytes){io->input.data+io->offset,size}; io->offset+=size; return true;
+    }
+    return qa_source_save_bytes(io,(void *)bytes->data,size);
+}
+static bool recipe_fields(qa_source_save_io *io,native_resource_recipe *recipe)
+{
+    uint8_t magic[4]={'Q','F','N','R'};
+    return qa_source_save_bytes(io,magic,4) && !memcmp(magic,"QFNR",4) &&
+        qa_source_save_u64(io,&recipe->ordinal) && recipe->ordinal &&
+        qa_source_save_u64(io,&recipe->source) && recipe->source &&
+        recipe_bytes(io,&recipe->instance,QA_SAVE_NAME_LIMIT) && recipe->instance.size &&
+        !memchr(recipe->instance.data,0,recipe->instance.size) &&
+        recipe_bytes(io,&recipe->continuation,SIZE_MAX) && recipe->continuation.size;
+}
 static bool encode(native_resource_row *row,qa_buffer *out,qa_error *error)
 {
-    qa_source_save_io io={0}; uint8_t magic[4]={'Q','F','N','R'}; size_t name_size=strlen(row->instance),continuation_size=row->continuation.size;
-    bool ok=qa_source_save_writer(&io,NULL,error) && qa_source_save_bytes(&io,magic,4) &&
-        qa_source_save_u64(&io,&row->ordinal) &&
-        qa_source_save_u64(&io,&row->source) &&
-        qa_source_save_count(&io,&name_size,QA_SAVE_NAME_LIMIT) &&
-        qa_source_save_bytes(&io,row->instance,name_size) &&
-        qa_source_save_count(&io,&continuation_size,SIZE_MAX) &&
-        qa_source_save_bytes(&io,row->continuation.data,continuation_size) && qa_source_save_finish(&io,out);
+    native_resource_recipe recipe={.ordinal=row->ordinal,.source=row->source,
+        .instance={(const uint8_t *)row->instance,strlen(row->instance)},
+        .continuation={row->continuation.data,row->continuation.size}};
+    qa_source_save_io io={0};
+    bool ok=qa_source_save_writer(&io,NULL,error) && recipe_fields(&io,&recipe) && qa_source_save_finish(&io,out);
     qa_source_save_dispose(&io); return ok;
 }
 static bool capture(void *context,const char *instance,uint64_t source,
@@ -75,21 +96,31 @@ static bool resolve(void *context,const char *instance,uint64_t source,qa_bytes 
 {
     frontend_native_resource_context *cut=context;
     const qa_native_resource_inventory *owner=cut && cut->image?qa_save_image_native_read(cut->image):NULL;
-    if (!owner || owner->retiring || !instance || !source || !out || !lower_recipe || (bytes.size && !bytes.data))
-        return fail(error,QA_ERROR_FORMAT,"Saved native provider has no actual historical capability graph");
-    *out=NULL; *lower_recipe=(qa_bytes){0};
+    if (!cut || !cut->image || (owner && owner->retiring) || !instance || !source ||
+        !out || !lower_recipe || (bytes.size && !bytes.data))
+        return fail(error,QA_ERROR_ARGUMENT,"Native recipe resolution lacks its actual saved provider");
+    native_resource_recipe recipe={0}; qa_source_save_io io={0};
+    bool ok=qa_source_save_reader(&io,NULL,bytes,error) && recipe_fields(&io,&recipe) && qa_source_save_finish(&io,NULL);
+    qa_source_save_dispose(&io);
+    if (!ok || recipe.source!=source || recipe.instance.size!=strlen(instance) ||
+        memcmp(recipe.instance.data,instance,recipe.instance.size))
+        return fail(error,QA_ERROR_FORMAT,"Saved native capsule differs from its named provider");
+    /* A file image carries the named recipe, not native pointers. Its caller
+     * reconstructs those objects against the actual prepared content authority. */
+    if (!owner) { *out=NULL; *lower_recipe=recipe.continuation; return true; }
     for (native_resource_row *row=owner->first;row;row=row->next) {
         if (row->source!=source || strcmp(row->instance,instance)) continue;
-        qa_buffer expected={0}; bool ok=row->complete && row->resources && encode(row,&expected,error);
-        if (ok) ok=bytes.size==expected.size && (!bytes.size || !memcmp(bytes.data,expected.data,bytes.size));
-        qa_buffer_free(&expected);
-        if (!ok) return fail(error,QA_ERROR_FORMAT,"Saved native capsule differs from its captured provider row");
+        if (!row->complete || !row->resources || recipe.ordinal!=row->ordinal ||
+            recipe.continuation.size!=row->continuation.size ||
+            memcmp(recipe.continuation.data,row->continuation.data,row->continuation.size))
+            return fail(error,QA_ERROR_FORMAT,"Saved native capsule differs from its captured provider row");
         if (!qa_native_process_resources_validate(row->resources,
             (qa_bytes){row->continuation.data,row->continuation.size},error)) return false;
-        *out=row->resources; *lower_recipe=(qa_bytes){row->continuation.data,row->continuation.size}; return true;
+        *out=row->resources; *lower_recipe=recipe.continuation; return true;
     }
     return fail(error,QA_ERROR_FORMAT,"Saved native provider leaves its retained capability graph");
 }
+
 static bool attach(void *context,qa_save_image *image,qa_error *error)
 {
     frontend_native_resource_context *cut=context;

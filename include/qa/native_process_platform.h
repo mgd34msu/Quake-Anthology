@@ -69,7 +69,12 @@ bool qa_native_process_platform_program_files(qa_native_process_platform *,
  * identities before adoption; no descriptor duplication or clock/entropy/I/O
  * occurs on this path. */
 bool qa_native_process_platform_checkpoint(const qa_native_process_platform *, qa_buffer *, qa_error *);
-bool qa_native_process_platform_validate(const qa_native_process_platform *, qa_bytes, qa_error *);
+/* File-cold standard roles bind the genuine current stdin/stdout/stderr
+ * owners. Their saved OS objects are historical provenance, not source handles.
+ * Held-object restores continue to qualify exact native object identities. */
+bool qa_native_process_platform_restore(qa_native_process_platform *, qa_bytes, qa_error *);
+bool qa_native_process_platform_validate(const qa_native_process_platform *, qa_bytes,
+    bool standard_roles, qa_error *);
 void qa_native_process_platform_retain(qa_native_process_platform *);
 /* Actual descriptor close is checked. Successful closes remain consumed even
  * when another close fails; callback contexts survive for the retry. */

@@ -6,13 +6,20 @@ bool application_native_process_prepare(qa_application *application,
     const qa_native_process_resource_artifact *artifacts, size_t count, size_t primary,
     const qa_native_image_info *image, bool observe,
     bool (*current)(void *, const qa_launch_instance *, qa_actor_owner, uint64_t, qa_error *),
-    void *context, application_native_process_owner *owner, qa_error *error)
+    void *context, const qa_native_process_resources *capture, qa_bytes recipe,
+    application_native_process_owner *owner, qa_error *error)
 {
     if (!application || !descriptor || !receiver || !service_owner || !image ||
         !owner || !current || !artifacts || !count || primary >= count)
         return application_fail(error, QA_ERROR_ARGUMENT, "Native process requires its prepared source graph");
     if (owner->resources)
         return qa_native_process_resources_options_read(owner->resources, &owner->process, error);
+    if (capture) {
+        qa_native_process_resources_options bindings = {.descriptor = descriptor,
+            .receiver = receiver, .service_owner = service_owner, .current = current, .context = context};
+        return qa_native_process_resources_rebind(capture, &bindings, recipe, &owner->resources, error) &&
+            qa_native_process_resources_options_read(owner->resources, &owner->process, error);
+    }
     qa_native_process_resource_policy policy = application->native_process_policy;
     bool native_target = image->target.arch == QA_NATIVE_ARCH_X86_64 &&
         image->target.pointer_bytes == 8 &&
@@ -52,7 +59,9 @@ bool application_native_process_prepare(qa_application *application,
         roots[options.root_count++] = (qa_native_process_resource_root){"", writable,
             QA_FS_OPENED_READ | QA_FS_OPENED_WRITE};
     options.roots = roots;
-    bool created = qa_native_process_resources_create(&options, &owner->resources, error);
+    bool created = recipe.size ?
+        qa_native_process_resources_restore(&options, recipe, &owner->resources, error) :
+        qa_native_process_resources_create(&options, &owner->resources, error);
     free(roots);
     if (!created) return false;
     return qa_native_process_resources_options_read(owner->resources, &owner->process, error);
@@ -65,20 +74,4 @@ bool application_native_process_release(application_native_process_owner *owner,
     if (!qa_native_process_platform_release(&owner->platform, error)) return false;
     owner->process = (qa_native_process_options){0};
     return true;
-}
-
-bool application_native_process_rebind(const qa_launch_instance *descriptor,
-    qa_actor_owner receiver, uint64_t service_owner,
-    bool (*current)(void *, const qa_launch_instance *, qa_actor_owner, uint64_t, qa_error *),
-    void *context, const qa_native_process_resources *capture, qa_bytes recipe,
-    application_native_process_owner *owner, qa_error *error)
-{
-    if (!descriptor || !receiver || !service_owner || !current || !capture ||
-        !recipe.data || !recipe.size || !owner || owner->resources || owner->platform)
-        return application_fail(error, QA_ERROR_ARGUMENT, "Native rebind requires its held capture and empty candidate owner");
-    qa_native_process_resources_options bindings = {.descriptor = descriptor,
-        .receiver = receiver, .service_owner = service_owner,
-        .current = current, .context = context};
-    return qa_native_process_resources_rebind(capture, &bindings, recipe, &owner->resources, error) &&
-        qa_native_process_resources_options_read(owner->resources, &owner->process, error);
 }
