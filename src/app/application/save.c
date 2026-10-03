@@ -1578,14 +1578,21 @@ static bool persistence_create(void *opaque, const qa_save_image *image, void **
         return application_fail(error, QA_ERROR_FORMAT, "configuration continuation disagrees with save envelope");
     const qa_save_record *progression = foundation_record(image,
         QA_SAVE_PROGRESSION, "qa.progression.application", error);
-    qa_application_options construction;
-    if (!progression || !application_save_progression_prepare(operation->options,
-        operation->ops, progression->payload, &construction, error)) return false;
+    if (!progression) return false;
     qa_application *candidate = NULL;
     qa_application_content_graph *graph = NULL;
     const qa_save_record *resources = foundation_record(image, QA_SAVE_RESOURCES, "qa.content-graph", error);
     bool created = resources && application_save_content_prepare(resources->payload,
-        operation->ops->content_files, &graph, error) &&
+        operation->ops->content_files, &graph, error);
+    qa_application_options options = *operation->options, construction;
+    if (created && operation->ops->resolve_player_profile_root) {
+        qa_fs_root *profile = NULL;
+        created = operation->ops->resolve_player_profile_root(operation->ops->context,
+            image, graph, &profile, error);
+        if (created) options.player_profile_root = profile;
+    }
+    if (created) created = application_save_progression_prepare(&options,
+        operation->ops, progression->payload, &construction, error) &&
         application_create_restored(&construction, image, &graph, &candidate, error);
     application_save_content_destroy(graph);
     *out = candidate;

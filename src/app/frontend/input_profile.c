@@ -104,6 +104,45 @@ static bool input_profile_fields(qa_source_save_io *io,input_profile_state *stat
         (state->present?(state->product && state->catalog && state->view):(!state->product && !state->catalog && !state->view)) &&
         (!state->default_root || *state->default_root);
 }
+static bool input_profile_decode(qa_bytes bytes,input_profile_state *state,qa_error *error)
+{
+    qa_source_save_io io={0};
+    bool ok=qa_source_save_reader(&io,NULL,bytes,error) && input_profile_fields(&io,state) &&
+        qa_source_save_finish(&io,NULL);
+    qa_source_save_dispose(&io);
+    return ok;
+}
+static bool input_profile_default_root(const qa_frontend *f,const input_profile_state *state)
+{
+    return (!!state->default_root==!!f->default_user_root) &&
+        (!state->default_root || (f->options.application.user_root==f->default_user_root &&
+                                !strcmp(state->default_root,f->default_user_root)));
+}
+bool frontend_input_profile_resolve_root(const qa_frontend *f,const qa_application_content_graph *graph,
+    qa_bytes bytes,qa_fs_root **out,qa_error *error)
+{
+    if (!f || f->application || !graph || !out || *out || f->input_config || f->input_catalog || f->input_product)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Input profile root resolution requires its empty cold constructor");
+    input_profile_state state={0};
+    bool ok=input_profile_decode(bytes,&state,error) && input_profile_default_root(f,&state);
+    qa_fs_root *root=NULL;
+    if (ok && state.present) {
+        qa_vfs *view=qa_application_content_view(graph,state.view);
+        qa_catalog *catalog=qa_application_content_catalog(graph,state.catalog);
+        ok=view && catalog && qa_catalog_product(catalog,state.product) && qa_vfs_mount_count(view)==1;
+        qa_vfs_mount_info mount={0};
+        if (ok) ok=qa_vfs_mount_at(view,0,&mount) && mount.writable && !mount.is_archive &&
+            (root=qa_vfs_mount_root(view,mount.id))!=NULL;
+    }
+    free(state.default_root);
+    if (!ok) {
+        if (!error || error->code==QA_OK)
+            frontend_fail(error,QA_ERROR_FORMAT,"Saved input profile lacks its actual writable constructor view");
+        return false;
+    }
+    *out=root;
+    return true;
+}
 static bool input_profile_root(const qa_frontend *f,const qa_vfs *view,qa_error *error)
 {
     qa_fs_root *root=qa_application_player_profile_root(f->application);
@@ -142,13 +181,8 @@ bool frontend_input_profile_restore(qa_frontend *f,qa_application_content_graph 
 {
     if (!f || !f->application || !graph || f->stepping || f->input_config || f->input_product || f->input_catalog)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Input profile import requires its empty detached owner");
-    input_profile_state state={0}; qa_source_save_io io={0};
-    bool ok=qa_source_save_reader(&io,NULL,bytes,error) && input_profile_fields(&io,&state) &&
-        qa_source_save_finish(&io,NULL);
-    qa_source_save_dispose(&io);
-    if (ok) ok=(!!state.default_root==!!f->default_user_root) &&
-        (!state.default_root || (f->options.application.user_root==f->default_user_root &&
-                                !strcmp(state.default_root,f->default_user_root)));
+    input_profile_state state={0};
+    bool ok=input_profile_decode(bytes,&state,error) && input_profile_default_root(f,&state);
     qa_vfs *view=ok && state.present?qa_application_content_view(graph,state.view):NULL;
     qa_catalog *catalog=ok && state.present?qa_application_content_catalog(graph,state.catalog):NULL;
     if (ok && state.present) ok=view &&

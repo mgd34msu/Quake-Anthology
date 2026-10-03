@@ -10,5 +10,6 @@ const qa_vfs *frontend_input_profile_files(const qa_frontend *);
 qa_product_id frontend_input_profile_product(const qa_frontend *);
 void frontend_input_profile_destroy(qa_frontend *);
 bool frontend_input_profile_checkpoint(const qa_frontend *,const qa_application_content_graph *,qa_buffer *,qa_error *);
+bool frontend_input_profile_resolve_root(const qa_frontend *,const qa_application_content_graph *,qa_bytes,qa_fs_root **,qa_error *);
 bool frontend_input_profile_restore(qa_frontend *,qa_application_content_graph *,qa_bytes,qa_error *);
 #endif

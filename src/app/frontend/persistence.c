@@ -1084,6 +1084,16 @@ static bool read_saved_sections(frontend_persistence *operation, const qa_save_i
     }
     operation->sections_read=true; return true;
 }
+static bool resolve_player_profile_root(void *context,const qa_save_image *image,
+    const qa_application_content_graph *graph,qa_fs_root **out,qa_error *error)
+{
+    frontend_persistence *operation=context;
+    if (!operation->candidate || !read_saved_sections(operation,image,error)) return false;
+    if (!frontend_input_profile_resolve_root(operation->candidate,graph,
+        section(&operation->sections,SECTION_INPUT_PROFILE),out,error)) return false;
+    operation->candidate->options.application.player_profile_root=*out;
+    return true;
+}
 static bool prepare_services(void *context, qa_application *candidate, const qa_save_image *image, qa_error *error)
 {
     frontend_persistence *operation=context; qa_frontend *f=operation->candidate;
@@ -1695,6 +1705,7 @@ static bool operation_init(frontend_persistence *operation,qa_frontend *active,
         .owners=operation->producer_inventory,.owner_count=7+extra,.visit_content=content_visit,
         .content_files=&operation->content_files,.native_resources=services && services->native_resources?
             services->native_resources:&operation->native_resource_refs,
+        .resolve_player_profile_root=resolve_player_profile_root,
         .rankings=services?services->rankings:NULL,
         .progress=services?services->progress:NULL,.ranking_source=&operation->ranking,
         .rankings_handoff=services && services->rankings_handoff?ranking_handoff:NULL,

@@ -52,6 +52,12 @@ typedef struct qa_application_persistence_ops {
     qa_application_content_visit_fn visit_content;
     const qa_vfs_checkpoint_refs *content_files;
     const qa_application_native_resource_refs *native_resources;
+    /* Resolve the saved profile's actual writable view before progression and
+     * application construction. The output is borrowed from the prepared graph;
+     * NULL denotes an explicitly absent saved profile. No files are replayed or
+     * graph owners transferred. The graph holds the root through construction. */
+    bool (*resolve_player_profile_root)(void *, const qa_save_image *,
+        const qa_application_content_graph *, qa_fs_root **, qa_error *);
     /* Actual optional backend/native profile qualifications. Default rankings
      * are unconfigured; installed external providers require both readonly
      * binding/continuation refs and the final transactional handoff below. */
