@@ -59,21 +59,63 @@ static void clock_write(qa_json_writer *w, qa_clock_config v)
     word(w, v.minimum_frame_ns); word(w, v.maximum_frame_ns); word(w, v.initial_lead_ns);
     number(w, v.maximum_steps); qa_json_writer_end(w);
 }
+#define MODE_RULE_FIELDS(FIELD) \
+    FIELD(U, source) \
+    FIELD(U, kind) \
+    FIELD(U, teams[0]) \
+    FIELD(U, teams[1]) \
+    FIELD(U, teams[2]) \
+    FIELD(U, forced_team) \
+    FIELD(I, frag_limit) \
+    FIELD(I, capture_limit) \
+    FIELD(I, warmup_seconds) \
+    FIELD(I, competition) \
+    FIELD(I, setup_seconds) \
+    FIELD(I, countdown_seconds) \
+    FIELD(I, match_seconds) \
+    FIELD(I, max_game_players) \
+    FIELD(I, election_percent) \
+    FIELD(I, teamplay) \
+    FIELD(I, rune_mask) \
+    FIELD(I, vote_limit) \
+    FIELD(U, flags) \
+    FIELD(U, referee_flags) \
+    FIELD(F, time_limit_minutes) \
+    FIELD(F, obelisk_health) \
+    FIELD(F, obelisk_regen) \
+    FIELD(W, obelisk_regen_ns) \
+    FIELD(W, obelisk_respawn_ns) \
+    FIELD(B, enabled) \
+    FIELD(B, friendly_fire) \
+    FIELD(B, force_join) \
+    FIELD(B, match_lock) \
+    FIELD(B, paused) \
+    FIELD(B, auto_lock) \
+    FIELD(B, relics) \
+    FIELD(B, single_player_active) \
+    FIELD(B, tournament_restart) \
+    FIELD(B, q2_rerelease) \
+    FIELD(B, start_map) \
+    FIELD(B, force_balance) \
+    FIELD(B, voting_disabled) \
+    FIELD(B, rogue_deathmatch)
+#define MODE_RULE_COUNT(kind, member) + 1
+enum { MODE_RULE_FIELD_COUNT = 0 MODE_RULE_FIELDS(MODE_RULE_COUNT) };
+#undef MODE_RULE_COUNT
 static void rules_write(qa_json_writer *w, const qa_mode_rules *v)
 {
     qa_json_writer_array(w);
-#define N(member) number(w, v->member)
-#define B(member) boolean(w, v->member)
-#define W(member) word(w, v->member)
-    N(source); N(kind); N(teams[0]); N(teams[1]); N(teams[2]); N(forced_team);
-    N(frag_limit); N(capture_limit); N(warmup_seconds); N(competition); N(setup_seconds);
-    N(countdown_seconds); N(match_seconds); N(max_game_players); N(election_percent);
-    N(teamplay); N(rune_mask); N(vote_limit); N(flags); N(referee_flags);
-    N(time_limit_minutes); N(obelisk_health); N(obelisk_regen); W(obelisk_regen_ns); W(obelisk_respawn_ns);
-    B(enabled); B(friendly_fire); B(force_join); B(match_lock); B(paused); B(auto_lock);
-    B(relics); B(single_player_active); B(tournament_restart); B(q2_rerelease); B(start_map);
-    B(force_balance); B(voting_disabled); B(rogue_deathmatch);
-#undef N
+#define U(member) number(w, v->member);
+#define I(member) number(w, v->member);
+#define F(member) number(w, v->member);
+#define B(member) boolean(w, v->member);
+#define W(member) word(w, v->member);
+#define FIELD(kind, member) kind(member)
+    MODE_RULE_FIELDS(FIELD)
+#undef FIELD
+#undef U
+#undef I
+#undef F
 #undef B
 #undef W
     qa_json_writer_end(w);
@@ -340,20 +382,15 @@ static qa_clock_config read_clock(identity_reader *r)
 static qa_mode_rules read_rules(identity_reader *r)
 {
     identity_reader s = *r; qa_mode_rules v = {0};
-    if (!record(&s, take(r), 39)) { r->failed = true; return v; }
-#define U(member) v.member = read_unsigned(&s)
-#define I(member) v.member = read_signed(&s)
-#define F(member) v.member = read_float(&s)
-#define B(member) v.member = read_bool(&s)
-#define W(member) v.member = read_word(&s)
-    U(source); U(kind); U(teams[0]); U(teams[1]); U(teams[2]); U(forced_team);
-    I(frag_limit); I(capture_limit); I(warmup_seconds); I(competition); I(setup_seconds);
-    I(countdown_seconds); I(match_seconds); I(max_game_players); I(election_percent);
-    I(teamplay); I(rune_mask); I(vote_limit); U(flags); U(referee_flags);
-    F(time_limit_minutes); F(obelisk_health); F(obelisk_regen); W(obelisk_regen_ns); W(obelisk_respawn_ns);
-    B(enabled); B(friendly_fire); B(force_join); B(match_lock); B(paused); B(auto_lock);
-    B(relics); B(single_player_active); B(tournament_restart); B(q2_rerelease); B(start_map);
-    B(force_balance); B(voting_disabled); B(rogue_deathmatch);
+    if (!record(&s, take(r), MODE_RULE_FIELD_COUNT)) { r->failed = true; return v; }
+#define U(member) v.member = read_unsigned(&s);
+#define I(member) v.member = read_signed(&s);
+#define F(member) v.member = read_float(&s);
+#define B(member) v.member = read_bool(&s);
+#define W(member) v.member = read_word(&s);
+#define FIELD(kind, member) kind(member)
+    MODE_RULE_FIELDS(FIELD)
+#undef FIELD
 #undef U
 #undef I
 #undef F
