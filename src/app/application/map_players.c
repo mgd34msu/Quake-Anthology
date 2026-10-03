@@ -6,6 +6,7 @@
 #include "guest_q3_weapons_services.h"
 #include "guest_native_q2_private.h"
 #include "guest_qc_profile.h"
+#include "guest_qc_item_weapons.h"
 #include "guest_q3_restart.h"
 #include "guest_q3_components.h"
 #include "q3_round.h"
@@ -1926,12 +1927,22 @@ static bool admit_equipment(qa_application *application, const qa_launch_choices
     bool ok = qa_equipment_read(application->equipment, actor, &current)
         ? qa_equipment_configure_sources(application->equipment, actor, &selection, &sources, error)
         : qa_equipment_admit_sources(application->equipment, actor, &selection, &sources, error);
-    if (!ok || !sources.items) return ok;
-    for (size_t i = 0; i < application->provider_count; ++i)
-        if (application->providers[i]->owner == sources.items)
-            return application->providers[i]->kind != APPLICATION_PROVIDER_Q3 ||
-                qa_equipment_publish_q3_items(application->equipment, actor, error);
-    return application_fail(error, QA_ERROR_NOT_FOUND, "Admitted equipment items lost their selected provider");
+    if (!ok) return false;
+    if (sources.items) {
+        application_provider *source = NULL;
+        for (size_t i = 0; i < application->provider_count; ++i)
+            if (application->providers[i]->owner == sources.items) source = application->providers[i];
+        if (!source)
+            return application_fail(error, QA_ERROR_NOT_FOUND, "Admitted equipment items lost their selected provider");
+        if (source->kind == APPLICATION_PROVIDER_Q3 &&
+            !qa_equipment_publish_q3_items(application->equipment, actor, error)) return false;
+    }
+    for (size_t i = 0; i < application->provider_count; ++i) {
+        application_provider *provider = application->providers[i];
+        if (provider->kind == APPLICATION_PROVIDER_QC && provider->state.qc.engine &&
+            !application_qc_item_weapons_finish(provider->state.qc.engine, actor, error)) return false;
+    }
+    return true;
 }
 
 typedef enum player_admission_phase {

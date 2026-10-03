@@ -5,7 +5,9 @@ struct application_qc_item_weapons;
 
 bool application_qc_item_weapons_qualify(application_provider *, const qa_json_document *, qa_json_id, qa_error *);
 void application_qc_item_weapons_profile_free(struct application_qc_item_weapons *);
+bool application_qc_item_weapons_reserve(struct application_qc_state *, qa_actor_id, qa_error *);
 bool application_qc_item_weapons_admit(struct application_qc_state *, qa_actor_id, qa_error *);
+bool application_qc_item_weapons_finish(struct application_qc_state *, qa_actor_id, qa_error *);
 bool application_qc_item_weapons_release(struct application_qc_state *, qa_actor_id, qa_error *);
 bool application_qc_item_weapons_close(struct application_qc_state *, qa_error *);
 const qa_qc_inline_region *application_qc_item_weapons_regions(const application_provider *, size_t *);

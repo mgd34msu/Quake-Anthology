@@ -383,20 +383,28 @@ static bool presentation(void *context,qa_actor_id actor,qa_weapon_presentation 
         !application_qc_item_weapons_model_read(a->engine,actor,&resource,&frame,e))return false;
     *out=(qa_weapon_presentation){.provider=a->engine->provider->owner,.active=active,.context=a};return true;
 }
-bool application_qc_item_weapons_admit(struct application_qc_state *engine,qa_actor_id actor,qa_error *e)
+bool application_qc_item_weapons_reserve(struct application_qc_state *engine,qa_actor_id actor,qa_error *e)
 {
     if(!profile(engine->provider))return true;
     struct application_qc_item_weapon_actor *a=actor_for(engine,actor);
-    if(a && !current(a,e))return false;
-    if(a && a->bound)return qa_equipment_weapon_binding_is(engine->provider->application->equipment,actor,engine->provider->owner,a);
-    if(!engine->provider->application->equipment || !application_qc_items_actor_current(engine,actor,e))
+    if(a)return current(a,e);
+    if(!application_qc_items_actor_current(engine,actor,e))return false;
+    a=calloc(1,sizeof(*a));if(!a)return application_fail(e,QA_ERROR_MEMORY,"Retaining QC weapon actor binding");
+    a->engine=engine;a->actor=actor;
+    if(!application_qc_reference(engine,actor,&a->reference,e)) { free(a);return false; }
+    a->next=engine->item_weapon_actors;engine->item_weapon_actors=a;
+    return current(a,e);
+}
+bool application_qc_item_weapons_admit(struct application_qc_state *engine,qa_actor_id actor,qa_error *e)
+{
+    if(!profile(engine->provider))return true;
+    if(!application_qc_item_weapons_reserve(engine,actor,e))return false;
+    struct application_qc_item_weapon_actor *a=actor_for(engine,actor);
+    if(a->bound)return qa_equipment_weapon_binding_is(engine->provider->application->equipment,actor,engine->provider->owner,a);
+    qa_equipment_state state;
+    if(!engine->provider->application->equipment ||
+        !qa_equipment_read(engine->provider->application->equipment,actor,&state))
         return application_fail(e,QA_ERROR_ARGUMENT,"QC weapon items require their real destination weapon slot");
-    if(!a) {
-        a=calloc(1,sizeof(*a));if(!a)return application_fail(e,QA_ERROR_MEMORY,"Retaining QC weapon actor binding");
-        a->engine=engine;a->actor=actor;
-        if(!application_qc_reference(engine,actor,&a->reference,e)) { free(a);return false; }
-        a->next=engine->item_weapon_actors;engine->item_weapon_actors=a;
-    }
     if(application_provider_for(engine->provider->application,actor,QA_ROLE_ARSENAL,"")==engine->provider)
         return true;
     qa_equipment_weapon_binding binding={.provider=engine->provider->owner,.context=a,
@@ -404,6 +412,11 @@ bool application_qc_item_weapons_admit(struct application_qc_state *engine,qa_ac
         .holster=holster,.holstered=holstered,.resume=resume};
     if(!qa_equipment_weapon_bind(engine->provider->application->equipment,actor,&binding,e))return false;
     a->bound=true;return true;
+}
+bool application_qc_item_weapons_finish(struct application_qc_state *engine,qa_actor_id actor,qa_error *e)
+{
+    if(!actor_for(engine,actor))return true;
+    return application_qc_item_weapons_admit(engine,actor,e);
 }
 bool application_qc_item_weapons_release(struct application_qc_state *engine,qa_actor_id actor,qa_error *e)
 {

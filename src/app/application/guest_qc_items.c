@@ -223,11 +223,17 @@ bool application_qc_items_admit(struct application_qc_state *engine,qa_actor_id 
 {
     if(!engine->provider->state.qc.qualified||!engine->provider->state.qc.qualified->items)return true;
     struct application_qc_item_actor *a=actor_find(engine,actor);
-    if(a)return physical_current(a,e)&&qa_inventory_lease_current(engine->services.inventory,a->lease)&&
+    if(a){
+        if(!physical_current(a,e)||!qa_inventory_lease_current(engine->services.inventory,a->lease))return false;
+    }else{
+        a=actor_create(engine,actor,e);if(!a)return false;
+        qa_inventory_items source;binding(a,&source);
+        if(!qa_inventory_bind_items(engine->services.inventory,actor,&source,&a->lease,e))return false;
+    }
+    if(!application_qc_item_weapons_reserve(engine,actor,e))return false;
+    qa_equipment_state equipment;
+    return !qa_equipment_read(engine->provider->application->equipment,actor,&equipment) ||
         application_qc_item_weapons_admit(engine,actor,e);
-    a=actor_create(engine,actor,e);if(!a)return false;
-    qa_inventory_items source;binding(a,&source);
-    return qa_inventory_bind_items(engine->services.inventory,actor,&source,&a->lease,e)&&application_qc_item_weapons_admit(engine,actor,e);
 }
 bool application_qc_items_release(struct application_qc_state *engine,qa_actor_id actor,qa_error *e)
 {
