@@ -153,18 +153,6 @@ static bool copy_host(qa_qc_instance *instance, qa_error *error)
     return true;
 }
 
-static uint32_t function_end(const qa_qc_program *program,
-                             const qa_qc_function *function)
-{
-    uint32_t end = program->info.statement_count;
-    for (uint32_t i = 1; i < program->info.function_count; ++i) {
-        const qa_qc_function *candidate = &program->functions[i];
-        if (candidate->first_statement > function->first_statement
-            && (uint32_t)candidate->first_statement < end)
-            end = (uint32_t)candidate->first_statement;
-    }
-    return end;
-}
 
 static bool copy_inline_regions(qa_qc_instance *instance, qa_error *error)
 {
@@ -188,7 +176,7 @@ static bool copy_inline_regions(qa_qc_instance *instance, qa_error *error)
                          "inline region requires an interpreted QuakeC function");
             return false;
         }
-        uint32_t end = function_end(instance->program, function);
+        uint32_t end = qa_qc_program_function_end(instance->program, function);
         if (region.entry < (uint32_t)function->first_statement
             || region.exit <= region.entry || region.exit >= end
             || region.saved_scope < QA_QC_INLINE_NOT_STANDALONE

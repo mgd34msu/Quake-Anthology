@@ -168,7 +168,8 @@ bool qa_qc_program_initial_int(const qa_qc_program *, uint32_t word,
 const qa_qc_definition *qa_qc_program_field(const qa_qc_program *program,
                                              uint32_t index);
 const qa_qc_function *qa_qc_program_function(const qa_qc_program *program,
-                                              uint32_t index);
+                                             uint32_t index);
+uint32_t qa_qc_program_function_end(const qa_qc_program *, const qa_qc_function *);
 const qa_qc_definition *qa_qc_program_find_global(const qa_qc_program *program,
                                                    const char *name);
 const qa_qc_definition *qa_qc_program_find_field(const qa_qc_program *program,

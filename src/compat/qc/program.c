@@ -449,6 +449,20 @@ const qa_qc_function *qa_qc_program_function(const qa_qc_program *program,
          ? &program->functions[index] : NULL;
 }
 
+uint32_t qa_qc_program_function_end(const qa_qc_program *program,
+                                    const qa_qc_function *function)
+{
+    if (!program || !function) return 0;
+    uint32_t end = program->info.statement_count;
+    for (uint32_t i = 1; i < program->info.function_count; ++i) {
+        const qa_qc_function *candidate = &program->functions[i];
+        if (candidate->first_statement > function->first_statement
+            && (uint32_t)candidate->first_statement < end)
+            end = (uint32_t)candidate->first_statement;
+    }
+    return end;
+}
+
 const qa_qc_definition *qa_qc_program_find_global(const qa_qc_program *program,
                                                    const char *name)
 {

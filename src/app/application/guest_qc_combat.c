@@ -76,17 +76,6 @@ static bool reject(qa_error *error, const char *message)
 { return application_fail(error, QA_ERROR_FORMAT, message); }
 static bool called(qa_qc_opcode opcode)
 { return opcode >= QA_QC_CALL0 && opcode <= QA_QC_CALL8; }
-static uint32_t function_end(const qa_qc_program *program, const qa_qc_function *function)
-{
-    qa_qc_program_info info = qa_qc_program_describe(program);
-    uint32_t end = info.statement_count;
-    for (uint32_t i = 0; i < info.function_count; ++i) {
-        const qa_qc_function *other = qa_qc_program_function(program, i);
-        if (other->first_statement > function->first_statement && (uint32_t)other->first_statement < end)
-            end = (uint32_t)other->first_statement;
-    }
-    return end;
-}
 static bool role(application_qc_input_id id)
 { return id == QC_INPUT_SELF || id == QC_INPUT_ATTACKER || id == QC_INPUT_INFLICTOR || id == QC_INPUT_AMOUNT; }
 static const qa_qc_definition *definition_at(const qa_qc_program *program, uint32_t word, qa_qc_value_type type)
@@ -195,7 +184,7 @@ static bool immutable_layout(application_provider *provider, application_qc_comb
     for (uint32_t i = 0; ok && i < info.function_count; ++i) {
         const qa_qc_function *function = qa_qc_program_function(program, i);
         if (function->first_statement <= 0 || function->named_builtin) continue;
-        uint32_t start = (uint32_t)function->first_statement, end = function_end(program, function);
+        uint32_t start = (uint32_t)function->first_statement, end = qa_qc_program_function_end(program, function);
         for (uint32_t pc = start; pc < end; ++pc) {
             const qa_qc_statement *call = qa_qc_program_statement(program, pc);
             if (!called(call->opcode)) continue;
@@ -1136,7 +1125,7 @@ static bool scale_parse(application_qc_combat_profile *profile, const qa_json_do
         !scale_number(doc, qa_json_get(doc, node, "exit"), &scale->region.exit, error) ||
         !scale_number(doc, qa_json_get(doc, node, "damage"), &analysis.damage, error) ||
         scale->region.entry < (uint32_t)analysis.function->first_statement || scale->region.exit <= scale->region.entry ||
-        scale->region.exit >= function_end(profile->program, analysis.function))
+        scale->region.exit >= qa_qc_program_function_end(profile->program, analysis.function))
         return reject(error, "QC damage scale differs from its actual compiled damage function");
     const damage_location *amount = NULL;
     for (size_t i = 0; i < profile->location_count; ++i) if (profile->locations[i].role == QC_INPUT_AMOUNT) {
@@ -1226,7 +1215,7 @@ static bool scale_parse(application_qc_combat_profile *profile, const qa_json_do
     }
     if (ok && (!joined || (!analysis.transform && !analysis.identity && !analysis.multiplied)))
         ok = reject(error, "QC damage scale has no actual original amount result");
-    uint32_t end = function_end(profile->program, analysis.function);
+    uint32_t end = qa_qc_program_function_end(profile->program, analysis.function);
     for (uint32_t pc = (uint32_t)analysis.function->first_statement; ok && pc < end; ++pc) {
         if (pc >= scale->region.entry && pc < scale->region.exit) continue;
         const qa_qc_statement *statement = qa_qc_program_statement(profile->program, pc);

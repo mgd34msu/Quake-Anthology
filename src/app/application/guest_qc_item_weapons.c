@@ -51,24 +51,13 @@ static bool number(const qa_json_document *d, qa_json_id id, uint32_t maximum,
     }
     *out=(uint32_t)value; return true;
 }
-static uint32_t function_end(const qa_qc_program *program,const qa_qc_function *fn)
-{
-    qa_qc_program_info info=qa_qc_program_describe(program);
-    uint32_t end=info.statement_count;
-    for(uint32_t i=0;i<info.function_count;++i) {
-        const qa_qc_function *next=qa_qc_program_function(program,i);
-        if(next->first_statement>fn->first_statement && (uint32_t)next->first_statement<end)
-            end=(uint32_t)next->first_statement;
-    }
-    return end;
-}
 static const qa_qc_function *source_function(const qa_qc_program *program,uint32_t index,qa_error *e)
 {
     const qa_qc_function *fn=qa_qc_program_function(program,index);
     if(!index || !fn || fn->first_statement<=0 || fn->named_builtin || fn->parameter_count) {
         application_fail(e,QA_ERROR_FORMAT,"QC weapon stage requires an original parameterless Source function"); return NULL;
     }
-    for(uint32_t i=(uint32_t)fn->first_statement,end=function_end(program,fn);i<end;++i) {
+    for(uint32_t i=(uint32_t)fn->first_statement,end=qa_qc_program_function_end(program,fn);i<end;++i) {
         const qa_qc_statement *s=qa_qc_program_statement(program,i);
         if((s->opcode==QA_QC_RETURN || s->opcode==QA_QC_DONE) && s->a) {
             application_fail(e,QA_ERROR_FORMAT,"QC weapon stage must return void"); return NULL;
@@ -169,7 +158,7 @@ static bool stage(application_provider *provider,const qa_json_document *d,qa_js
             !number(d,qa_json_get(d,result,"value"),1,&value,e))return false;
         bool continuation=false;
         for(size_t j=0;j<p->continuation_count;++j)continuation|=p->continuations[j]==r->function;
-        uint32_t end=function_end(program,fn);
+        uint32_t end=qa_qc_program_function_end(program,fn);
         if(!continuation || r->entry<(uint32_t)fn->first_statement || r->exit<=r->entry ||
             r->exit>=end || end-r->exit<=2 || !temporary(program,fn,p->released[i]))
             return application_fail(e,QA_ERROR_FORMAT,"QC weapon repeat is outside its original continuation");

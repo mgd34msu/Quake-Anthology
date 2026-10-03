@@ -9,17 +9,6 @@ static bool word(const qa_json_document *doc, qa_json_id node, uint32_t *out, qa
         return reject(error, "QC armor declaration word exceeds its actual source extent");
     *out = (uint32_t)value; return true;
 }
-static uint32_t end_of(const qa_qc_program *program, const qa_qc_function *function)
-{
-    qa_qc_program_info info = qa_qc_program_describe(program);
-    uint32_t end = info.statement_count;
-    for (uint32_t i = 0; i < info.function_count; ++i) {
-        const qa_qc_function *other = qa_qc_program_function(program, i);
-        if (other->first_statement > function->first_statement && (uint32_t)other->first_statement < end)
-            end = (uint32_t)other->first_statement;
-    }
-    return end;
-}
 static bool typed_word(const qa_qc_program *program, uint32_t offset, qa_qc_value_type type)
 {
     qa_qc_program_info info = qa_qc_program_describe(program);
@@ -123,7 +112,7 @@ static bool collect_writes(armor_analysis *analysis, uint32_t start, uint32_t en
         if (analysis->visiting[index]) return reject(error, "QC armor region contains a recursive source call");
         analysis->visiting[index] = 1;
         bool ok = collect_writes(analysis, (uint32_t)function->first_statement,
-            end_of(analysis->program, function), function->parameter_start, function->local_words, writes, error);
+            qa_qc_program_function_end(analysis->program, function), function->parameter_start, function->local_words, writes, error);
         analysis->visiting[index] = 0;
         if (!ok) return false;
     }
@@ -213,7 +202,7 @@ static bool flow_safe(const armor_analysis *analysis, uint32_t start, uint32_t l
                 uint32_t parameters = 0;
                 for (uint32_t i = 0; i < entered->parameter_count; ++i) parameters += entered->parameter_sizes[i];
                 for (uint32_t i = 0; i < parameters; ++i) mark(next, entered->parameter_start + i, false);
-                ok = enqueue(&flow, entered->first_statement, end_of(analysis->program, entered), true,
+                ok = enqueue(&flow, entered->first_statement, qa_qc_program_function_end(analysis->program, entered), true,
                     entered->parameter_start, entered->local_words, next, error);
                 memcpy(next, current, flow.width);
             }
@@ -262,7 +251,7 @@ static bool scales_parse(const qa_qc_program *program, const qa_json_document *d
             !word(doc, qa_json_get(doc, row, "statement"), &site->statement, error) ||
             !application_qc_declaration_number(doc, qa_json_get(doc, row, "scale"), &site->scale, error) ||
             site->scale < 0 || site->statement < (uint32_t)caller->first_statement ||
-            site->statement >= end_of(program, caller) || !global || global->type != QA_QC_FUNCTION)
+            site->statement >= qa_qc_program_function_end(program, caller) || !global || global->type != QA_QC_FUNCTION)
             return reject(error, "QC armor scale lacks its actual interpreted call site");
         const qa_qc_statement *statement = qa_qc_program_statement(program, site->statement);
         int32_t function;
@@ -333,7 +322,7 @@ static bool replacement_safe(armor_analysis *analysis, const application_qc_armo
         if (bit(dirty, i) && analysis->named[i] &&
             (i < function->parameter_start || i - function->parameter_start >= function->local_words))
             return reject(error, "QC armor replacement changes a live declared global outside its frame");
-    return flow_safe(analysis, stage->region.exit, end_of(analysis->program, function), dirty, false, 0, error);
+    return flow_safe(analysis, stage->region.exit, qa_qc_program_function_end(analysis->program, function), dirty, false, 0, error);
 }
 static bool standalone_safe(const armor_analysis *analysis, const application_qc_armor_stage *stage,
     const qa_qc_function *function, uint8_t *dirty, size_t width, qa_error *error)
@@ -371,7 +360,7 @@ bool application_qc_armor_parse(const qa_qc_program *program, const qa_json_docu
         !word(doc, qa_json_get(doc, node, "damage"), &stage->damage, error) ||
         !word(doc, qa_json_get(doc, node, "saved"), &stage->region.saved_word, error) ||
         stage->region.entry < (uint32_t)function->first_statement || stage->region.exit <= stage->region.entry ||
-        stage->region.exit >= end_of(program, function) ||
+        stage->region.exit >= qa_qc_program_function_end(program, function) ||
         !typed_local(program, function, stage->target, QA_QC_ENTITY) ||
         !typed_local(program, function, stage->damage, QA_QC_FLOAT) ||
         !typed_local(program, function, stage->region.saved_word, QA_QC_FLOAT) ||
@@ -427,7 +416,7 @@ bool application_qc_region_private_writes_dead(const qa_qc_program *program,
     const qa_qc_function *function = program && region ? qa_qc_program_function(program, region->function) : NULL;
     if (!function || function->first_statement <= 0 || function->named_builtin || (count && !scratch_words) ||
         region->entry < (uint32_t)function->first_statement || region->exit <= region->entry ||
-        region->exit >= end_of(program, function) || (!typed_local(program, function, damage_word, QA_QC_FLOAT) &&
+        region->exit >= qa_qc_program_function_end(program, function) || (!typed_local(program, function, damage_word, QA_QC_FLOAT) &&
         !(region->saved_scope == QA_QC_INLINE_GLOBAL && region->saved_word == damage_word && damage_word >= 28 &&
           (damage_word < function->parameter_start || damage_word - function->parameter_start >= function->local_words) &&
           typed_word(program, damage_word, QA_QC_FLOAT))))
@@ -444,6 +433,6 @@ bool application_qc_region_private_writes_dead(const qa_qc_program *program,
             ok = reject(error, "QC scratch write is not private to its actual source frame");
         else mark(dirty, offset, true);
     }
-    if (ok) ok = flow_safe(&analysis, region->exit, end_of(program, function), dirty, false, 0, error);
+    if (ok) ok = flow_safe(&analysis, region->exit, qa_qc_program_function_end(program, function), dirty, false, 0, error);
     free(dirty); free(analysis.written); free(analysis.named); free(analysis.visiting); return ok;
 }
