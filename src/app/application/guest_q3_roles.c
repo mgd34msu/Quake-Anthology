@@ -257,6 +257,26 @@ static bool role_create(struct application_q3_guest *engine, qa_qvm_role kind,
             goto failed;
         }
     }
+    if (kind == QA_QVM_GAME && !engine->game) {
+        qa_application_startup_source source;
+        bool found = false, carried = false;
+        engine->constructing_role = role;
+        bool prepared = application_provider_startup_source_at(provider, 0, &source, &found, error);
+        if (prepared && !found)
+            prepared = application_fail(error, QA_ERROR_ARGUMENT,
+                "GAME construction lost its physical configuration source");
+        if (prepared) {
+            if (saved_owner)
+                prepared = application_startup_tuple_restore(provider, &source, error);
+            else
+                prepared = (provider->attached || application_startup_source_carry(provider, &source, &carried, error)) &&
+                    application_q3_world_restart_cvars(provider->application, provider, source.cvars, error) &&
+                    application_q3_campaign_launch_cvars(provider, source.cvars, role->service_owner, error) &&
+                    application_guest_q3_console_startup(provider, error);
+        }
+        engine->constructing_role = NULL;
+        if (!prepared) goto failed;
+    }
     ++engine->calls;
     engine->constructing_role = role;
     engine->constructing_equipment_services = &equipment_services;
@@ -323,20 +343,6 @@ static bool role_create(struct application_q3_guest *engine, qa_qvm_role kind,
                 goto failed;
             }
         }
-    }
-    if (kind == QA_QVM_GAME && !saved_owner && !engine->game) {
-        qa_application_startup_source source = {.descriptor = descriptor,
-            .scope = {.provider = provider->owner, .kind = QA_APPLICATION_CONSOLE_Q3_GAME},
-            .console = options.console, .cvars = options.cvars,
-            .command = options.command_context, .declaration_owner = role->service_owner};
-        bool carried = false;
-        engine->constructing_role = role;
-        bool prepared = (provider->attached || application_startup_source_carry(provider, &source, &carried, error)) &&
-            application_q3_world_restart_cvars(provider->application, provider, options.cvars, error) &&
-            application_q3_campaign_launch_cvars(provider, options.cvars, role->service_owner, error) &&
-            application_guest_q3_console_startup(provider, error);
-        engine->constructing_role = NULL;
-        if (!prepared) goto failed;
     }
     options.world = engine->world;
     options.service_owner = role->service_owner;

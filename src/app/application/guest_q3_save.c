@@ -1768,10 +1768,6 @@ bool application_guest_q3_save_prepare(application_provider *provider, qa_world 
         if (!qa_cvars_save_commit(ticket, error)) { qa_cvars_save_abort(ticket); return false; }
         if (qa_cvars_find(cvars, "sv_cheats"))
             return application_fail(error, QA_ERROR_FORMAT, "Restored original GAME shadows shared engine sv_cheats");
-        qa_command_context command = {.owner = provider->owner, .dialect = QA_CONSOLE_Q3,
-            .origin = QA_COMMAND_SERVER};
-        if (!application_startup_source_restore(provider,
-            application_guest_q3_console_owner(provider), cvars, &command, error)) return false;
     }
     /* Retargeting preserves each physical console's birth scope and order. */
     for (size_t i = 0; i < saved->globals_count; ++i) {
