@@ -293,6 +293,22 @@ static bool chat_command(void *context,const qa_command_invocation *call,qa_erro
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Chat requires its actual admitted Q1 CLIENT command");
     return forward(o,call,error)==QA_COMMAND_HANDLED && pending_invocation(o,call,error);
 }
+static bool network_command(void *context,const qa_command_invocation *call,qa_error *error)
+{
+    frontend_network_q1_client *o=context;
+    if (!parent(o) || !call || !call->argc || !call->argv ||
+        !qa_console_invocation_current(call->console,call) || !pending_invocation(o,call,error))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"NETWORK command lost its actual Q1 CLIENT invocation");
+    qa_console *engine=qa_application_console(o->options.frontend->application);
+    qa_command_context lookup={.origin=QA_COMMAND_LOCAL,.dialect=call->context.dialect,.direct=true};
+    const qa_console_entry *entry=qa_console_find(engine,&lookup,call->argv[0]);
+    uint64_t lifetime=0; qa_command_handler handler=NULL; void *user=NULL;
+    if (!entry || !entry->engine_command ||
+        !qa_console_registration_read(engine,entry->name,entry->owner,&lifetime,&handler,&user) ||
+        lifetime!=QA_NETWORK_COMMAND_OWNER || !handler)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Q1 CLIENT lost its declared NETWORK registration");
+    return handler(user,call,error) && parent(o) && pending_invocation(o,call,error);
+}
 static bool install(void *context,const qa_application_client_source *source,bool restoring,qa_error *error)
 {
     frontend_network_q1_client *o=context;
@@ -304,6 +320,16 @@ static bool install(void *context,const qa_application_client_source *source,boo
         const char *name=qa_q1_chat_command_name(source->context.command.dialect,mode);
         if (name && !qa_console_register_owned(source->context.console,name,NULL,
             source->context.receiver,source->context.receiver,false,chat_command,o,error)) return false;
+    }
+    qa_console *engine=qa_application_console(o->options.frontend->application);
+    for (size_t i=0;;++i) {
+        const qa_console_entry *entry=qa_console_entry_at(engine,i);
+        if (!entry) break;
+        uint64_t lifetime=0; qa_command_handler handler=NULL; void *user=NULL;
+        if (!entry->engine_command || !qa_console_registration_read(engine,entry->name,entry->owner,
+            &lifetime,&handler,&user) || lifetime!=QA_NETWORK_COMMAND_OWNER || !handler) continue;
+        if (!qa_console_register_owned(source->context.console,entry->name,entry->description,
+            source->context.receiver,source->context.receiver,true,network_command,o,error)) return false;
     }
     if(!qa_q1_is_qw(o->options.protocol)) return true;
     static const char *const names[]={"skins","allskins","stopdownload","retrydownload"};
@@ -641,6 +667,21 @@ bool frontend_network_q1_client_tick(frontend_network_q1_client *o,uint64_t now,
     if(!parent(o) || o->calls || o->importing || o->options.frontend->capture || o->options.frontend->resource_inventory ||
         o->options.frontend->source_restoring || !qa_network_callbacks_idle(o->options.runtime)) return false;
     ++o->calls; bool ok=tick(o,now,error); --o->calls; return ok;
+}
+bool frontend_network_q1_client_disconnect(frontend_network_q1_client *o,const char *reason,qa_error *error)
+{
+    if (!parent(o) || !reason || o->importing || o->options.frontend->capture ||
+        o->options.frontend->resource_inventory || o->options.frontend->source_restoring ||
+        !frontend_network_q1_client_idle(o) || !qa_network_callbacks_idle(o->options.runtime))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Q1 disconnect requires its returned current CLIENT owner");
+    if (o->retired) return true;
+    frontend_client_source_view physical;
+    if (!frontend_client_source_read(o->physical,&physical,error)) return false;
+    if (o->client.owner)
+        return qa_network_q1_client_disconnect(o->options.runtime,o->client,reason,error);
+    snprintf(o->reason,sizeof(o->reason),"%s",reason);
+    o->retired=true;
+    return true;
 }
 void frontend_network_q1_client_disconnected(frontend_network_q1_client *o,qa_net_client_id client)
 { if(o && qa_net_client_id_equal(o->client,client)) o->retired=true; }

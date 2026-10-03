@@ -35,6 +35,7 @@ bool frontend_network_q1_client_create(const frontend_network_q1_client_options 
 bool frontend_network_q1_client_receive(frontend_network_q1_client *, const qa_net_datagram *,
     bool *recognized, qa_error *);
 bool frontend_network_q1_client_tick(frontend_network_q1_client *, uint64_t now_ns, qa_error *);
+bool frontend_network_q1_client_disconnect(frontend_network_q1_client *, const char *reason, qa_error *);
 /* Physical ownership is also returned while connecting/loading. Only a real
  * active received player produces a command; no local GAME actor is read. */
 bool frontend_network_q1_client_input(frontend_network_q1_client *,uint32_t physical_seat,

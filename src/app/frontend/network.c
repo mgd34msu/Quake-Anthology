@@ -2404,6 +2404,25 @@ static bool client_bind_attempt(qa_frontend_network *n, qa_error *error)
 }
 static bool client_attempts_drain(qa_frontend_network *n, qa_error *error)
 {
+    if (n->q3_attempts && !n->q3_client_requested) {
+        frontend_network_q1_client_view view;
+        if (!n->q1_client_owner || n->busy || !qa_network_callbacks_idle(n->runtime) ||
+            !frontend_network_q1_client_idle(n->q1_client_owner) ||
+            !frontend_network_q1_client_metadata_read(n->q1_client_owner,&view,error) ||
+            view.physical.source.configuration_generation!=qa_application_configuration_generation(n->frontend->application) ||
+            !frontend_client_source_current(&view.physical))
+            return frontend_fail(error,QA_ERROR_ARGUMENT,"Queued disconnect lost its returned Q1 CLIENT owner");
+        while (n->q3_attempts) {
+            frontend_q3_attempt *request=n->q3_attempts;
+            if (!request->disconnect || *request->server)
+                return frontend_fail(error,QA_ERROR_ARGUMENT,"Q1 CLIENT disconnect changed its retained request");
+            if (!frontend_network_q1_client_disconnect(n->q1_client_owner,"disconnected",error)) return false;
+            n->q3_attempts=request->next; --n->q3_attempt_count;
+            if (!n->q3_attempts) n->q3_attempt_tail=NULL;
+            free(request);
+        }
+        return true;
+    }
     if (n->q3_attempts && n->q3_client_generation != qa_application_configuration_generation(n->frontend->application))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Queued connection command lost its retained source launch lifetime");
     while (n->q3_attempts) {
@@ -3656,13 +3675,31 @@ static bool client_attempt_enqueue(qa_frontend_network *n, const char *server,
 static bool client_attempt_queue(qa_frontend_network *n, const qa_command_invocation *call, qa_error *error)
 {
     uint32_t physical;
-    if (!n->q3_client_requested || call->context.origin == QA_COMMAND_REMOTE ||
+    if ((!n->q3_client_requested && !n->q1_client_owner) || call->context.origin == QA_COMMAND_REMOTE ||
         call->context.origin == QA_COMMAND_SERVER ||
         !frontend_command_seat_read(n->frontend, &call->context, &physical) || physical != 0)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Connection commands need the actual local remote-client owner");
     bool disconnect = !strcmp(call->argv[0], "disconnect"), reconnecting = !strcmp(call->argv[0], "reconnect");
     if (call->argc != (disconnect || reconnecting ? 1u : 2u))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "usage: connect server, reconnect, or disconnect");
+    if (!n->q3_client_requested) {
+        frontend_network_q1_client_view view;
+        if (!disconnect)
+            return frontend_fail(error,QA_ERROR_UNSUPPORTED,"Q1 connection replacement requires its retained physical CLIENT");
+        if (!qa_console_invocation_current(call->console,call) ||
+            !frontend_network_q1_client_metadata_read(n->q1_client_owner,&view,error) ||
+            call->console!=view.physical.source.context.console ||
+            call->context.owner!=view.physical.source.context.command.owner ||
+            call->context.client!=view.physical.source.context.command.client ||
+            call->context.seat!=view.physical.source.context.command.seat ||
+            call->context.registry!=view.physical.source.context.command.registry ||
+            call->context.generation!=view.physical.source.context.command.generation ||
+            call->context.dialect!=view.physical.source.context.command.dialect ||
+            !qa_actor_id_equal(call->context.actor,view.physical.source.context.command.actor) ||
+            !frontend_client_source_current(&view.physical))
+            return frontend_fail(error,QA_ERROR_ARGUMENT,"Disconnect lost its actual Q1 CLIENT command namespace");
+        return client_attempt_enqueue(n,"",true,error);
+    }
     const char *server = reconnecting ? n->q3_client_server : disconnect ? "" : call->argv[1];
     if (reconnecting) for (const frontend_q3_attempt *queued = n->q3_attempts; queued; queued = queued->next)
         if (!queued->disconnect) server = queued->server;
@@ -4566,6 +4603,14 @@ static bool network_metadata_check(qa_frontend_network *n, bool hosting, bool fi
         }
     } else if (n->q3_packages || n->q3_pending_count || n->q3_generation || n->q3_server_id || n->q3_restarted_server_id || n->q3_checksum_feed || n->q3_server_bit)
         return frontend_fail(error, QA_ERROR_FORMAT, "absent hosting owner retains source state");
+    if (n->q3_attempt_count && !n->q3_client_requested) {
+        if (!n->frontend->options.network_connect || !q1_client_protocol(n->frontend->options.network_protocol) ||
+            n->frontend->options.dedicated || n->frontend->options.seats!=1)
+            return frontend_fail(error,QA_ERROR_FORMAT,"Queued disconnect has no selected Q1 CLIENT constructor");
+        for (const frontend_q3_attempt *request=n->q3_attempts;request;request=request->next)
+            if (!request->disconnect || *request->server)
+                return frontend_fail(error,QA_ERROR_FORMAT,"Saved Q1 disconnect changed its canonical queued request");
+    }
     if (n->q3_client_requested) {
         qa_actor_id actor; qa_actor_owner owner; qa_q3_product product; uint32_t seat;
         qa_application_q3_remote_source retained_source;
@@ -4607,7 +4652,7 @@ static bool network_metadata_check(qa_frontend_network *n, bool hosting, bool fi
     } else if (n->q3_client_attach || n->q3_client_attached || n->q3_client_gamestate || n->q3_client_active || n->q3_projection.owner ||
         n->q3_client_epoch || n->q3_client_restart_generation || n->q3_client_decoded ||
         n->q3_client_previous.generation || n->q3_client_previous_epoch || n->q3_client_rebind ||
-        n->q3_client_closed || n->q3_attempt_count || *n->q3_client_server || *n->q3_client_message || n->q3_ui_client_number ||
+        n->q3_client_closed || *n->q3_client_server || *n->q3_client_message || n->q3_ui_client_number ||
         n->q3_scene_frame_valid || n->q3_scene_frame || n->q3_previous_presentation_time ||
         n->q3_initial_tuple || n->q3_initial_message || n->q3_initial_command ||
         n->q3_reliable_receipt || n->q3_reliable_receipt_sequence ||
