@@ -1,4 +1,5 @@
 #include "q1_client_internal.h"
+#include "../connections_internal.h"
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -390,7 +391,7 @@ static bool source_loading(q1_runtime_client *c, qa_error *e)
     qa_network_peer *peer = qa_network_peer_get(c->runtime, c->id, e);
     if (!client || !peer) return false;
     qa_sha256_digest composition = client->composition;
-    if (!qa_net_connections_restart(c->runtime->connections, c->id, &composition, e)) return false;
+    qa_net_connections_restart_commit(c->runtime->connections, c->id, &composition);
     qa_network_history_clear(peer); queue_clear(c); c->command_count = c->moves = 0;
     c->active = c->has_delta = c->waiting_skins = false; c->signon.stage = 0;
     qa_qw_history_init(&c->history); return true;
