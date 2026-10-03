@@ -79,7 +79,7 @@ static void q3_direction(qa_q3_step *step) {
     qa_q3_movement_state *state = q3_state(step);
     float forward = step->context->command.forward_move;
     float right = step->context->command.side_move;
-    if (forward || right)
+    if (forward != 0 || right != 0)
         state->movement_direction = forward > 0 ? (right < 0 ? 1 : right > 0 ? 7 : 0) :
             forward < 0 ? (right < 0 ? 3 : right > 0 ? 5 : 4) : right < 0 ? 2 : 6;
     else if (state->movement_direction == 2) state->movement_direction = 1;
@@ -219,7 +219,7 @@ static void q3_walk_move(qa_q3_step *step) {
     if (sliding) state->velocity.z -= q3_gravity(step) * step->dt;
     float speed = qa_vec_length(state->velocity);
     state->velocity = qa_vec_scale(qa_vec_normalize(q3_clip(state->velocity, normal)), speed);
-    if (state->velocity.x || state->velocity.y) q3_step_slide(step, false);
+    if (state->velocity.x != 0 || state->velocity.y != 0) q3_step_slide(step, false);
 }
 
 static void q3_noclip_move(qa_q3_step *step) {
@@ -433,7 +433,7 @@ static void q3_footsteps(qa_q3_step *step) {
         if (q3_active(step) && step->water_level > 1) q3_legs(step, Q3_LEGS_SWIM, false);
         return;
     }
-    if (!command->forward_move && !command->side_move) {
+    if (command->forward_move == 0 && command->side_move == 0) {
         if (step->horizontal_speed < 5) {
             state->bob_cycle = 0;
             q3_legs(step, state->movement_flags & Q3_DUCKED ? Q3_LEGS_IDLECR : Q3_LEGS_IDLE, false);
@@ -513,7 +513,7 @@ static void q3_run_step(qa_q3_step *step) {
     qa_move_angles(state->view_angles, &step->forward, &step->right, NULL);
     if (command->up_move < 10) state->movement_flags &= ~(uint32_t)Q3_JUMP_HELD;
     if (command->forward_move < 0) state->movement_flags |= Q3_BACKWARDS_RUN;
-    else if (command->forward_move > 0 || (!command->forward_move && command->side_move))
+    else if (command->forward_move > 0 || (command->forward_move == 0 && command->side_move != 0))
         state->movement_flags &= ~(uint32_t)Q3_BACKWARDS_RUN;
     if (q3_type(step) >= Q3_DEAD) command->forward_move = command->side_move = command->up_move = 0;
     if (q3_type(step) == Q3_SPECTATOR) {

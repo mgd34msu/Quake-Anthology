@@ -106,7 +106,7 @@ bool q1_move_sound(q1_move *m, const char *sound) {
 }
 
 bool q1_action(q1_move *m, qa_movement_locomotion action) {
-    return q1_effect(m, (qa_movement_effect){ .kind = QA_MOVE_EFFECT_PLAYER_ACTION, .value = action });
+    return q1_effect(m, (qa_movement_effect){ .kind = QA_MOVE_EFFECT_PLAYER_ACTION, .value = (int32_t)action });
 }
 
 qa_trace_shape q1_shape(const q1_move *m) {
@@ -262,5 +262,5 @@ bool q1_finish(q1_move *m, qa_movement_ground ground, int32_t water_level, int32
         c->result->ground.hit == QA_TRACE_HIT_NONE ? QA_MOVE_JUMP :
         c->result->horizontal_speed > 0 ? (backwards ? QA_MOVE_BACKWARD : QA_MOVE_RUN) : QA_MOVE_IDLE;
     if (m->crouch_animation) locomotion = QA_MOVE_CROUCH;
-    return qa_move_animation(c, QA_MOVE_ANIMATION_LOCOMOTION, locomotion, false, backwards);
+    return qa_move_animation(c, QA_MOVE_ANIMATION_LOCOMOTION, (int32_t)locomotion, false, backwards);
 }

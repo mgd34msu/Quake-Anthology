@@ -245,7 +245,7 @@ static qa_vec3 q2_wish_velocity(const q2_classic_move *pm)
 static bool q2_water_move(q2_classic_move *pm)
 {
     qa_vec3 wish = q2_wish_velocity(pm);
-    if (!pm->command.forward_move && !pm->command.side_move && !pm->command.up_move)
+    if (pm->command.forward_move == 0 && pm->command.side_move == 0 && pm->command.up_move == 0)
         wish.z -= 60.0f;
     else
         wish.z += (float)pm->command.up_move * pm->speed_multiplier;

@@ -380,7 +380,7 @@ static void rr_water_move(rr_move *p)
 {
     qa_vec3 wish = rr_wish(p);
     const qa_movement_command *cmd = &p->command;
-    if (!cmd->forward_move && !cmd->side_move && !(cmd->buttons & (RR_JUMP_BUTTON | RR_CROUCH_BUTTON))) {
+    if (cmd->forward_move == 0 && cmd->side_move == 0 && !(cmd->buttons & (RR_JUMP_BUTTON | RR_CROUCH_BUTTON))) {
         if (!rr_grounded(p)) wish.z -= 60.0f;
     } else if (cmd->buttons & RR_CROUCH_BUTTON) wish.z -= 200.0f * p->speed;
     else if (cmd->buttons & RR_JUMP_BUTTON) wish.z += 200.0f * p->speed;
