@@ -123,6 +123,9 @@ typedef struct qa_cvar_binding {
 qa_cvars *qa_cvars_create(const qa_cvar_options *options, qa_error *error);
 void qa_cvars_destroy(qa_cvars *registry);
 qa_console_dialect qa_cvars_dialect(const qa_cvars *registry);
+/* Validates a retained physical name under its registry's dialect. Q3
+ * mutation APIs remap forbidden names to BADNAME before admission. */
+bool qa_cvars_name_valid(qa_console_dialect dialect, const char *name);
 /* Views and strings remain valid until that registry is next mutated.
  * Output/effect callbacks may inspect state but must not mutate or destroy the
  * registry during notification. Host work can be queued through the console. */

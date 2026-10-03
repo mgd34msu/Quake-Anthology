@@ -377,8 +377,10 @@ static bool valid_info(const char *text)
     return strpbrk(text, "\\\";") == NULL;
 }
 
-static bool valid_name(const char *text)
+bool qa_cvars_name_valid(qa_console_dialect dialect, const char *text)
 {
+    if (!text) return false;
+    if (dialect == QA_CONSOLE_Q3) return valid_info(text);
     if (*text == '\0') return false;
     for (; *text != '\0'; ++text)
         if ((unsigned char)*text <= 32 || *text == '"' || *text == ';') return false;
@@ -387,7 +389,8 @@ static bool valid_name(const char *text)
 
 static const char *source_name(const qa_cvars *registry, const char *name)
 {
-    return registry->options.dialect == QA_CONSOLE_Q3 && !valid_info(name) ? "BADNAME" : name;
+    return registry->options.dialect == QA_CONSOLE_Q3 &&
+        !qa_cvars_name_valid(registry->options.dialect, name) ? "BADNAME" : name;
 }
 
 void qac_cvars_entry_free(cvar *entry)
@@ -423,7 +426,9 @@ bool qa_cvars_alias_register(qa_cvars *registry,const char *name,const char *tar
     qa_cvar_alias_conversion conversion,const char *description,
     const qa_console_documentation *documentation,qa_error *error)
 {
-    if (!qa_cvars_observer_idle(registry) || !name || !target || !valid_name(name) || !valid_name(target) ||
+    if (!qa_cvars_observer_idle(registry) ||
+        !qa_cvars_name_valid(registry->options.dialect, name) ||
+        !qa_cvars_name_valid(registry->options.dialect, target) ||
         conversion>QA_CVAR_ALIAS_KILOHERTZ || conversion<QA_CVAR_ALIAS_IDENTITY ||
         name_equal(registry,name,target) || find_variable(registry,name) ||
         find_alias(registry,&registry->values,name) || find_alias(registry,&registry->values,target))
@@ -750,7 +755,8 @@ static bool register_variable(cvar_target target, const char *name, const char *
     if (registry == NULL || name == NULL || default_value == NULL)
         return qac_fail(error, QA_ERROR_ARGUMENT, "cvar registration requires name and default");
     name = source_name(registry, name);
-    if (!valid_name(name)) return qac_fail(error, QA_ERROR_ARGUMENT, "invalid cvar name");
+    if (!qa_cvars_name_valid(registry->options.dialect, name))
+        return qac_fail(error, QA_ERROR_ARGUMENT, "invalid cvar name");
     if (find_alias(registry,target.values,name)) {
         if (alias_info_flags(registry,flags))
             return qac_fail(error,QA_ERROR_ARGUMENT,"cvar alias requires an explicit protocol info-key mapping");

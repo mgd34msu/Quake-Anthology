@@ -49,12 +49,11 @@ static bool binding_fields(qa_source_save_io *io,q3_cvar_binding *binding)
     }
     if (!ok) return false;
     if (reference<QA_Q3_HOST_CVAR_ENGINE || reference>QA_Q3_HOST_CVAR_SELECTED_VIEW ||
-        dialect>QA_CONSOLE_Q3 || !binding->name || !*binding->name ||
+        dialect>QA_CONSOLE_Q3 ||
         (binding->read?!binding->revision:binding->revision!=0))
         return q3_fail(io->error,QA_ERROR_FORMAT,0,"Invalid Q3 cvar namespace or mirror identity");
-    for (const unsigned char *p=(const unsigned char *)binding->name;*p;++p)
-        if (*p<=32 || *p=='"' || *p==';')
-            return q3_fail(io->error,QA_ERROR_FORMAT,0,"Invalid authored Q3 cvar binding name");
+    if (!qa_cvars_name_valid(binding->dialect,binding->name))
+        return q3_fail(io->error,QA_ERROR_FORMAT,0,"Invalid authored Q3 cvar binding name");
     return !binding->read || (qa_source_save_bool(io,&binding->previous_current) &&
         binding_text(io,&binding->previous_value) &&
         qa_source_save_u64(io,&binding->previous_modification) &&

@@ -163,12 +163,11 @@ static bool same_name(qa_console_dialect dialect, const char *a, const char *b)
 static bool valid_entry(const qa_cvars_restore *state, const cvar *entry, qa_error *error)
 {
     const qa_cvar_view *v = &entry->view;
-    if (!v->name || !*v->name || !v->value || !v->reset_value || !v->description || v->handle >= state->next_handle ||
+    if (!v->value || !v->reset_value || !v->description || v->handle >= state->next_handle ||
         (!entry->bound && entry->binding.owner))
         return qac_fail(error, QA_ERROR_FORMAT, "invalid saved cvar identity or value");
-    for (const unsigned char *p = (const unsigned char *)v->name; *p; ++p)
-        if (*p <= 32 || *p == '"' || *p == ';')
-            return qac_fail(error, QA_ERROR_FORMAT, "invalid saved cvar name");
+    if (!qa_cvars_name_valid(state->registry->options.dialect, v->name))
+        return qac_fail(error, QA_ERROR_FORMAT, "invalid saved cvar name");
     for (const cvar *prior = state->first; prior != entry; prior = prior->next)
         if (prior->view.handle == v->handle || same_name(state->registry->options.dialect, prior->view.name, v->name))
             return qac_fail(error, QA_ERROR_FORMAT, "duplicate saved cvar name or handle");
