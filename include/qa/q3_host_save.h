@@ -16,6 +16,8 @@ bool qa_q3_host_checkpoint_portable_ready(const qa_q3_host *, qa_error *);
  * optional output borrows the exact entity source span after full validation;
  * the caller must qualify it against its retained source before binding it. */
 bool qa_q3_host_checkpoint_portable_state(qa_bytes, qa_bytes *entity_source, qa_error *);
+/* True only while this actual host retains its imported, unpublished state. */
+bool qa_q3_host_restore_pending(const qa_q3_host *);
 /* Source admission retained by an idle pending client disconnect. */
 bool qa_q3_host_checkpoint_input_retired(const qa_q3_host *, uint32_t, bool *, qa_error *);
 

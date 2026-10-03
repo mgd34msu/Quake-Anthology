@@ -1,6 +1,7 @@
 #include "control_frame.h"
 #include "guest_input_private.h"
 #include "guest_q3_components.h"
+#include "guest_q3_save.h"
 #include "guest_qc_internal.h"
 #include "bots_round.h"
 #include "native_q3_clients.h"
@@ -462,7 +463,8 @@ static bool saved_source_client(application_provider *map, qa_actor_id actor, qa
         }
         else if (map->kind == APPLICATION_PROVIDER_QVM ||
             (map->kind == APPLICATION_PROVIDER_NATIVE && map->component.clock.kind == QA_CLOCK_Q3))
-            member = application_q3_guest_actor_client(map, actor, &slot);
+            member = application_q3_guest_actor_client(map, actor, &slot) ||
+                application_guest_q3_save_actor_client(map, actor, &slot);
         else if (map->kind == APPLICATION_PROVIDER_QC && !map->state.qc.qualified) {
             if (!application_qc_control_source_client(map, actor, &member, error)) return false;
         }

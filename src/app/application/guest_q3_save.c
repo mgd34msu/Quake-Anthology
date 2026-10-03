@@ -1366,6 +1366,39 @@ static bool restore_entity_source(q3g_role *role, qa_bytes saved, qa_error *erro
     return qa_q3_host_set_entity_text(role->host, source, error);
 }
 
+bool application_guest_q3_save_actor_client(application_provider *provider,
+    qa_actor_id actor, uint32_t *slot)
+{
+    struct application_q3_guest *engine = q3g_engine(provider);
+    const q3g_restore *saved = engine ? engine->restoration : NULL;
+    if (!slot || !saved || !saved->imported || !engine->restore_pending ||
+        !provider->constructed || !provider->attached || provider->close_pending ||
+        provider->application->operation != APPLICATION_PERSISTING || engine->calls ||
+        engine->draining_clients || !engine->game || !engine->game->host ||
+        !qa_q3_host_restore_pending(engine->game->host) ||
+        !qa_q3_host_checkpoint_portable_ready(engine->game->host, NULL)) return false;
+    const saved_role *game = NULL;
+    for (size_t i = 0; i < saved->role_count; ++i)
+        if (saved->roles[i].actual == engine->game) {
+            if (game) return false;
+            game = saved->roles + i;
+        }
+    uint32_t required = ROLE_READY | ROLE_PRIMARY | ROLE_COMMITTED |
+        ROLE_INITIALIZED | ROLE_INIT_SUCCEEDED;
+    if (!game || (game->flags & required) != required || (game->flags & ROLE_RETIRED) ||
+        game->owner != engine->game->service_owner || game->sequence != engine->game->service_sequence ||
+        game->artifact >= saved->artifact_count ||
+        saved->artifacts[game->artifact].actual != engine->game->artifact ||
+        saved->artifacts[game->artifact].kind != QA_QVM_GAME) return false;
+    uint32_t actual;
+    if (!qa_q3_host_actor_slot(engine->game->host, actor, &actual, NULL) || actual >= 64) return false;
+    const q3g_client *client = engine->clients + actual;
+    if (!client->allocated || !client->connected || !client->begun || client->pending_retirement ||
+        !qa_actor_id_equal(client->actor, actor)) return false;
+    *slot = actual;
+    return true;
+}
+
 bool application_guest_q3_save_matches(application_provider *provider, qa_bytes bytes,
     const qa_application_native_resource_refs *resources, qa_error *error)
 {

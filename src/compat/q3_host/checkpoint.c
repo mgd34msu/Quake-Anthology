@@ -603,6 +603,11 @@ bool qa_q3_host_restore(qa_q3_host *host, qa_bytes input, qa_error *error)
     return ok;
 }
 
+bool qa_q3_host_restore_pending(const qa_q3_host *host)
+{
+    return host && !host->retired && host->restore_pending;
+}
+
 bool qa_q3_host_finish_restore(qa_q3_host *host, qa_error *error)
 {
     if (!host || host->retired || host->calls)
