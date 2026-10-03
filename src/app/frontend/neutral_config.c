@@ -174,8 +174,7 @@ static bool active(const frontend_neutral_config *row,const qa_command_context *
     if (!row || !row->attached || row->retiring || row->imported || !command ||
         !physical_read(row,&actual,false)) return false;
     qa_command_context expected=actual.context.command;
-    if (command->origin==QA_COMMAND_SEAT && command->script &&
-        !strcmp(command->script,"key-binding") && !command->direct)
+    if (command->origin==QA_COMMAND_SEAT && command->script)
         expected.direct=false;
     if (command->origin==QA_COMMAND_REMOTE) {
         expected.origin=QA_COMMAND_REMOTE; expected.direct=false; expected.console_text=true;
