@@ -387,6 +387,10 @@ const char *qa_localization_language(const char *locale) {
             return names[i];
     return names[0];
 }
+bool qa_localization_language_valid(const char *language) {
+    return language && *language &&
+        strspn(language,"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-")==strlen(language);
+}
 qa_localization_pool *qa_localization_pool_create(qa_error *error) {
     qa_localization_pool *pool = calloc(1, sizeof(*pool));
     if (!pool)
@@ -421,11 +425,9 @@ bool qa_localization_acquire(qa_localization_pool *pool, qa_vfs *view, const cha
     qa_localization_options defaults = {0};
     if (!options)
         options = &defaults;
-    if (!pool || !view || !language || !*language || !out ||
+    if (!pool || !view || !qa_localization_language_valid(language) || !out ||
         (options->profile != QA_LOCALIZATION_Q1_RERELEASE &&
-         options->profile != QA_LOCALIZATION_Q2_RERELEASE) ||
-        strspn(language, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-") !=
-            strlen(language)) {
+         options->profile != QA_LOCALIZATION_Q2_RERELEASE)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid localization resource language");
         return false;
     }

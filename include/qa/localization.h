@@ -48,6 +48,7 @@ size_t qa_localize_presentation(const qa_localization *, const char *base,
     const char *const *arguments, size_t argument_count, bool allow_in_place,
     char *out, size_t capacity);
 const char *qa_localization_language(const char *locale);
+bool qa_localization_language_valid(const char *language);
 
 qa_localization_pool *qa_localization_pool_create(qa_error *error);
 /* Read-only retained cache count; no trim, loading or reference changes. */
