@@ -105,9 +105,13 @@ bool qa_q1_wire_begin_world(qa_q1_game *g, const char *path, uint32_t inline_mod
                             uint32_t authored_entities, qa_error *error) {
     if (!g || !path || !*path || !authored_entities || g->destroy_pending ||
         g->observation_depth || !qa_session_safe(g->services.session) ||
-        qa_actors_count(qa_session_actors(g->services.session)) ||
         g->options.max_clients == UINT32_MAX)
         return fail(error, "Q1 wire world requires an idle actual native map load");
+    uint32_t cursor = 0;
+    const qa_actor_record *actor;
+    while (qa_actors_next(qa_session_actors(g->services.session), &cursor, &actor))
+        if (actor->owner == g->options.provider)
+            return fail(error, "Q1 wire world requires an idle actual native map load");
     uint64_t generation = g->wire ? g->wire->generation : 0;
     if (generation == UINT64_MAX) return fail(error, "Q1 wire map generation exhausted");
     q1_wire_state *wire = calloc(1, sizeof(*wire));
