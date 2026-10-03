@@ -681,7 +681,7 @@ static bool fields(qa_source_save_io *io,frontend_unified_events *o,const fronte
         !qa_source_save_u64(io,&audio_owner) || audio_owner!=o->options.audio_owner ||
         !qa_source_save_bool(io,&o->has_frame) || !qa_source_save_u64(io,&o->frame) ||
         !qa_source_save_f64(io,&o->seconds) || !isfinite(o->seconds) ||
-        (!o->has_frame && (o->frame || o->seconds)) ||
+        (!o->has_frame && (o->frame || o->seconds != 0.0)) ||
         !qa_source_save_f64(io,&o->presentation_sequence) || !sequence_value(o->presentation_sequence,-1) ||
         !qa_source_save_f64(io,&o->simulation_sequence) || !sequence_value(o->simulation_sequence,-1) ||
         !qa_source_save_bool(io,&o->failed)) return false;

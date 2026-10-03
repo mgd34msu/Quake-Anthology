@@ -1398,9 +1398,9 @@ static bool q1_fog_fields(qa_source_save_io *io, qa_frontend *frontend, unsigned
         !qa_source_save_u64(io, &fog->time) ||
         !qa_source_save_f64(io, &fog->duration) || !isfinite(fog->duration) || fog->duration < 0) return false;
     if (!fog->owner)
-        return !fog->recipient.registry && !fog->time && !fog->duration && !fog->start_density && !fog->target_density && !fog->sky_factor &&
-            !fog->start_color.x && !fog->start_color.y && !fog->start_color.z &&
-            !fog->target_color.x && !fog->target_color.y && !fog->target_color.z;
+        return !fog->recipient.registry && !fog->time && fog->duration == 0.0 && fog->start_density == 0.0f && fog->target_density == 0.0f && fog->sky_factor == 0.0f &&
+            fog->start_color.x == 0.0f && fog->start_color.y == 0.0f && fog->start_color.z == 0.0f &&
+            fog->target_color.x == 0.0f && fog->target_color.y == 0.0f && fog->target_color.z == 0.0f;
     qa_actor_owner selected; qa_actor_id recipient; qa_clock_state clock;
     return qa_application_q1_fog_owner(frontend->application, &selected) && selected == fog->owner &&
         frontend_seat_actor_read(frontend,seat,&recipient) && qa_actor_id_equal(recipient, fog->recipient) &&
@@ -1515,12 +1515,12 @@ static bool light_fields(qa_source_save_io *io, frontend_scene_identity_scope *s
     if (!qa_source_save_u32(io, &family) || family > QA_SCENE_Q3) return false;
     light->family = (qa_scene_family)family;
     if (io->direction==QA_SOURCE_SAVE_READ) light->identity=identity;
-    if (light->direction.x || light->direction.y || light->direction.z || light->cos_half_angle ||
+    if (light->direction.x != 0.0f || light->direction.y != 0.0f || light->direction.z != 0.0f || light->cos_half_angle != 0.0f ||
         light->additive || light->spot || light->casts_shadow || light->shadow_resolution) return false;
     if (!entry->actor.registry)
-        return !entry->die && !light->identity && !light->revision && !light->family && !light->scale &&
-            !light->origin.x && !light->origin.y && !light->origin.z &&
-            !light->color.x && !light->color.y && !light->color.z && !light->radius && !light->minimum;
+        return entry->die == 0.0 && !light->identity && !light->revision && !light->family && light->scale == 0.0f &&
+            light->origin.x == 0.0f && light->origin.y == 0.0f && light->origin.z == 0.0f &&
+            light->color.x == 0.0f && light->color.y == 0.0f && light->color.z == 0.0f && light->radius == 0.0f && light->minimum == 0.0f;
     if (!light->identity || light->revision != 1 || light->family != QA_SCENE_Q1 || light->scale != 1 ||
         light->color.x != 1 || light->color.y != 1 || light->color.z != 1) return false;
     if (io->direction == QA_SOURCE_SAVE_READ &&

@@ -431,7 +431,7 @@ static bool beam(frontend_remote_q1 *row,const remote_beam *value,const qa_scene
     qa_vec3 start=value->start,end=value->end;
     if(value->entity==row->view_entity) start=viewer_origin;
     qa_vec3 delta=qa_vec_sub(end,start); float distance=qa_vec_length(delta);
-    qa_vec3 direction=distance?qa_vec_scale(delta,1/distance):qa_v3(0,0,0);
+    qa_vec3 direction=distance!=0.0f?qa_vec_scale(delta,1/distance):qa_v3(0,0,0);
     qa_vec3 angles=qa_v3((float)(atan2(delta.z,sqrt(delta.x*delta.x+delta.y*delta.y))*180/3.141592653589793),
         (float)(atan2(delta.y,delta.x)*180/3.141592653589793),0);
     while(distance>0) {

@@ -2712,7 +2712,7 @@ bool frontend_source_group_q3_ready(const qa_frontend *f,size_t index,
         source->frontend!=f || source->application!=f->application || !source->leases || !p || !a ||
         p->assets!=source->assets || p->audio!=f->audio || p->clock.context!=source || p->clock.sample!=milliseconds ||
         p->seat!=source->seat || p->owner!=source->identity || p->context!=source || p->source_state!=source_state ||
-        p->far_clip!=16384 || p->lod_scale!=5 || p->lod_bias ||
+        p->far_clip!=16384 || p->lod_scale!=5 || p->lod_bias != 0.0f ||
         p->rail_core_width!=6 || p->rail_ring_width!=16 || p->rail_segment_length!=32 ||
         p->audio_actor!=source_actor || p->listener!=listener || p->music!=music ||
         p->frame_number!=frame_number || p->milliseconds!=source_milliseconds || p->audio_bus!=audio_bus ||

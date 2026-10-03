@@ -1388,7 +1388,7 @@ bool frontend_native_q3_q3_ready(const qa_frontend *f,size_t index,const qa_q3_p
         p->assets!=expected.assets || p->audio!=expected.audio || p->clock.context!=expected.clock.context ||
         p->clock.sample!=expected.clock.sample || p->seat!=expected.seat || p->owner!=expected.owner || p->context!=row ||
         p->far_clip!=expected.far_clip || p->lod_scale!=5 ||
-        p->lod_bias || p->rail_core_width!=6 || p->rail_ring_width!=16 || p->rail_segment_length!=32 ||
+        p->lod_bias != 0.0f || p->rail_core_width!=6 || p->rail_ring_width!=16 || p->rail_segment_length!=32 ||
         p->audio_actor!=audio_actor || p->listener!=listener || p->music!=music || p->frame_number!=frame_number ||
         p->milliseconds!=milliseconds || p->audio_bus!=audio_bus || p->prepare_view!=prepare_view ||
         p->submit_view!=submit_view || p->remap!=remap || p->print!=print_row || p->system_movie ||

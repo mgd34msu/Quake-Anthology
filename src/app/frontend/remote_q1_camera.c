@@ -260,7 +260,7 @@ bool remote_q1_camera_contents_blend(frontend_remote_q1 *row,const qa_scene_view
     if (!scale || !isfinite(scale->number) || (quakeworld && (!enabled || !isfinite(enabled->number))))
         return remote_q1_fail(error,QA_ERROR_ARGUMENT,"Q1 camera blend lost its actual Source controls");
     *out=(qa_scene_vec4){0};
-    if ((quakeworld && !enabled->number) || contents==-1 || (!quakeworld && contents==-2)) return true;
+    if ((quakeworld && enabled->number==0.0f) || contents==-1 || (!quakeworld && contents==-2)) return true;
     float percent;
     if (contents==-5) { *out=(qa_scene_vec4){1,80.0f/255,0,0}; percent=150; }
     else if (contents==-4 || (quakeworld && contents==-2)) {

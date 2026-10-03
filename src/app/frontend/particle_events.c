@@ -418,10 +418,10 @@ static bool source_sample_fields(qa_frontend *frontend,qa_source_save_io *io,fro
             !qa_source_save_vec3(io,&client->player.view_angles) || !qa_vec_finite(client->player.view_angles) ||
             !qa_source_save_vec3(io,&client->player.view_offset) || !qa_vec_finite(client->player.view_offset) ||
             !qa_source_save_vec3(io,&client->player.gun_offset) || !qa_vec_finite(client->player.gun_offset) ||
-            (!client->player.present && (client->player.origin.x || client->player.origin.y || client->player.origin.z ||
-                client->player.view_angles.x || client->player.view_angles.y || client->player.view_angles.z ||
-                client->player.view_offset.x || client->player.view_offset.y || client->player.view_offset.z ||
-                client->player.gun_offset.x || client->player.gun_offset.y || client->player.gun_offset.z))) return false;
+            (!client->player.present && (client->player.origin.x != 0.0f || client->player.origin.y != 0.0f || client->player.origin.z != 0.0f ||
+                client->player.view_angles.x != 0.0f || client->player.view_angles.y != 0.0f || client->player.view_angles.z != 0.0f ||
+                client->player.view_offset.x != 0.0f || client->player.view_offset.y != 0.0f || client->player.view_offset.z != 0.0f ||
+                client->player.gun_offset.x != 0.0f || client->player.gun_offset.y != 0.0f || client->player.gun_offset.z != 0.0f))) return false;
     }
     return true;
 }
@@ -509,21 +509,21 @@ static bool particle_fields(qa_source_save_io *io, frontend_particle_owner *owne
             !qa_source_save_bool(io,&impact->light_only) || !qa_source_save_bool(io,&impact->no_light) ||
             ((impact->light_only || impact->no_light) && impact->kind!=3)) return false;
         if (impact->kind==10) {
-            if (impact->frames!=2 || impact->base_frame || impact->pitch || impact->yaw ||
+            if (impact->frames!=2 || impact->base_frame || impact->pitch != 0.0f || impact->yaw != 0.0f ||
                 impact->light_radius<100 || impact->light_radius>174 ||
                 impact->light_radius!=truncf(impact->light_radius)) return false;
-        } else if (impact->light_radius && (impact->kind!=3 || impact->light_radius!=200)) return false;
+        } else if (impact->light_radius != 0.0f && (impact->kind!=3 || impact->light_radius!=200)) return false;
         else if (impact->kind>=6) {
             if (impact->frames!=4 || impact->base_frame || impact->pitch<0 || impact->pitch>180 ||
                 impact->yaw < -180 || impact->yaw>270) return false;
         } else {
-            if (impact->pitch) return false;
+            if (impact->pitch != 0.0f) return false;
             if (impact->kind>=3 ?
-                (impact->kind==4 ? (impact->frames!=4 || impact->base_frame || impact->yaw) :
+                (impact->kind==4 ? (impact->frames!=4 || impact->base_frame || impact->yaw != 0.0f) :
                     ((impact->frames!=15 && impact->frames!=19) ||
                      (impact->frames==19 ? impact->base_frame!=30 :
                         (impact->base_frame!=0 && impact->base_frame!=15)) || impact->yaw<0 || impact->yaw>=360)) :
-                (impact->frames || impact->base_frame || impact->yaw)) return false;
+                (impact->frames || impact->base_frame || impact->yaw != 0.0f)) return false;
             if (impact->kind==5 && impact->frames!=15) return false;
         }
     }
@@ -550,7 +550,7 @@ static bool particle_fields(qa_source_save_io *io, frontend_particle_owner *owne
                 light->end_milliseconds!=light->birth_milliseconds+100)) ||
             (!light->active && (light->kind || light->actor.registry || light->source_entity ||
                 light->birth_milliseconds || light->end_milliseconds ||
-                light->origin.x || light->origin.y || light->origin.z))) return false;
+                light->origin.x != 0.0f || light->origin.y != 0.0f || light->origin.z != 0.0f))) return false;
     }
     if (!qa_source_save_count(io, &owner->steam_count, FRONTEND_STEAM_CAPACITY) ||
         (owner->q1 && owner->steam_count)) return false;
@@ -559,9 +559,9 @@ static bool particle_fields(qa_source_save_io *io, frontend_particle_owner *owne
         if (!qa_source_save_bool(io,&steam->expired) || !frontend_save_q2_event(io, &steam->event) || steam->event.kind != QA_Q2_MAP_STEAM ||
             !qa_source_save_u64(io, &steam->end_ns) || !qa_source_save_u64(io, &steam->next_ns) ||
             !qa_source_save_u8(io,&steam->kind) || steam->kind>2 || !steam->event.slot ||
-            (steam->kind && (steam->expired || steam->event.count || steam->event.style || steam->event.value ||
-                steam->event.duration || steam->event.direction.x || steam->event.direction.y ||
-                steam->event.direction.z || (steam->kind==2 && steam->event.slot!=21000) ||
+            (steam->kind && (steam->expired || steam->event.count || steam->event.style || steam->event.value != 0.0f ||
+                steam->event.duration != 0.0f || steam->event.direction.x != 0.0f || steam->event.direction.y != 0.0f ||
+                steam->event.direction.z != 0.0f || (steam->kind==2 && steam->event.slot!=21000) ||
                 steam->end_ns<steam->next_ns || steam->end_ns-steam->next_ns!=
                     (steam->kind==1?UINT64_C(2100000000):UINT64_C(1000000000))))) return false;
     }
@@ -1441,7 +1441,7 @@ bool frontend_particle_q2_temporary(qa_frontend *frontend,
             if (!impact_model(frontend,owner,kind,true,&model,error)) return false;
             if (berserk) q2_berserk_particles(owner,effect.origin,effect.direction,birth);
             else q2_blaster_particles(owner,&effect,birth,temporary->type);
-            float yaw=effect.direction.x ? (float)(atan2(effect.direction.y,effect.direction.x)*180/3.14159265358979323846) :
+            float yaw=effect.direction.x != 0.0f ? (float)(atan2(effect.direction.y,effect.direction.x)*180/3.14159265358979323846) :
                 effect.direction.y>0 ? 90 : effect.direction.y<0 ? 270 : 0;
             *impact_allocate(owner,(int64_t)(sample/UINT64_C(1000000)))=(frontend_q2_impact){
                 .kind=kind,.frames=4,.origin=effect.origin,
@@ -1654,7 +1654,7 @@ bool frontend_particle_world(qa_frontend *frontend, uint32_t seat,
             if (impact->kind<3 || impact->no_light) continue;
             double fraction=impact_fraction(impact,&sample);
             if (floor(fraction)>=(double)(impact_frames(impact)-1)) continue;
-            float radius=(impact->light_radius ? impact->light_radius : impact->kind==11 ? 550.f : impact->kind>=6 ?
+            float radius=(impact->light_radius != 0.0f ? impact->light_radius : impact->kind==11 ? 550.f : impact->kind>=6 ?
                 (impact->kind==6 && owner->q2_edition==QA_Q2_RERELEASE ? 200.f : 150.f) : 350.f)*impact_alpha(owner,impact,&sample,fraction,controls.smooth);
             if (radius<=0) continue;
             pending[count++]=(qa_scene_light){.origin=impact->origin,
@@ -1759,7 +1759,7 @@ bool frontend_particle_draw(qa_frontend *frontend, uint32_t seat, const qa_scene
         }
         for (size_t i = 0; owner->q2 && i < FRONTEND_Q2_LASER_CAPACITY; ++i) {
             const frontend_q2_laser *laser = &owner->lasers[i];
-            if (!laser->active || laser->end_milliseconds < sample.milliseconds) continue;
+            if (!laser->active || (double)laser->end_milliseconds < sample.milliseconds) continue;
             qa_scene_vec4 color = {palette.data[laser->color * 3] / 255.0f,
                 palette.data[laser->color * 3 + 1] / 255.0f,
                 palette.data[laser->color * 3 + 2] / 255.0f, .3f};

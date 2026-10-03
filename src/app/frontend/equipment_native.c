@@ -43,7 +43,7 @@ static bool warning(void *context, const q3n_frame *frame, q3n_weapon_hud *out, 
     if (!out || !current(owner, frame) ||
         !owner->services.current(owner->services.context, &owner->draw))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Native weapon HUD lost its real admitted frame and receiver");
-    *out = (q3n_weapon_hud){.selected = owner->draw.selected, .warning = owner->draw.warning};
+    *out = (q3n_weapon_hud){.selected = owner->draw.selected, .warning = (int32_t)owner->draw.warning};
     return true;
 }
 static bool begin(void *context, const q3n_frame *frame, qa_error *error)

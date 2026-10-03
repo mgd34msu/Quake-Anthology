@@ -142,8 +142,8 @@ bool frontend_shared_settings_constructor_settings(frontend_shared_settings *own
         row[i]=qa_cvars_edit_find(edit,names[i]);
         if (!row[i] || !row[i]->value) return fail(error,"Native constructors lost a canonical setting");
     }
-    double width=row[0]->number?(double)row[0]->number:(double)display->width;
-    double height=row[1]->number?(double)row[1]->number:(double)display->height;
+    double width=row[0]->number!=0.0f?(double)row[0]->number:(double)display->width;
+    double height=row[1]->number!=0.0f?(double)row[1]->number:(double)display->height;
     double fullscreen=row[2]->number,swap=row[3]->number,brightness=0;
     if (!isfinite(width) || !isfinite(height) || floor(width)!=width || floor(height)!=height ||
         width<64 || width>16384 || height<64 || height>16384 ||
@@ -157,7 +157,7 @@ bool frontend_shared_settings_constructor_settings(frontend_shared_settings *own
         !project(owner,&prepared_input,error)) return false;
     qa_display_options prepared_display=*display;
     prepared_display.width=(uint32_t)width; prepared_display.height=(uint32_t)height;
-    prepared_display.fullscreen=fullscreen?QA_DISPLAY_DESKTOP:QA_DISPLAY_WINDOWED;
+    prepared_display.fullscreen=fullscreen!=0.0?QA_DISPLAY_DESKTOP:QA_DISPLAY_WINDOWED;
     *display=prepared_display; *swap_interval=(int)swap; *gamma=(float)brightness;
     *output=prepared_output; *effects=prepared_effects; *music=prepared_music; *input=prepared_input;
     return true;

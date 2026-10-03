@@ -68,7 +68,7 @@ static bool row_valid(const frontend_material_movies *owner, const frontend_mate
         initial->level_count != 1 || !initial->levels || initial->wrap != QA_SCENE_CLAMP ||
         initial->filter != QA_SCENE_LINEAR || initial->levels[0].width != width ||
         initial->levels[0].height != height || initial->levels[0].bytes != (size_t)width * height * 4 ||
-        !initial->levels[0].pixels || initial->border.x || initial->border.y || initial->border.z || initial->border.w != 1)
+        !initial->levels[0].pixels || initial->border.x != 0.0f || initial->border.y != 0.0f || initial->border.z != 0.0f || initial->border.w != 1)
         return false;
     const uint8_t *pixels = initial->levels[0].pixels;
     for (size_t i = 0; i < initial->levels[0].bytes; ++i) if (pixels[i]) return false;

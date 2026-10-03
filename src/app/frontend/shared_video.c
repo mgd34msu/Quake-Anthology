@@ -32,8 +32,8 @@ bool frontend_shared_video_settings(qa_frontend *f,const qa_cvars_edit *edit,
     }
     qa_display_info info;
     if (!qa_display_info_get(f->display,&info,error)) return false;
-    double width=rows[0]->number?(double)rows[0]->number:(double)info.logical_width;
-    double height=rows[1]->number?(double)rows[1]->number:(double)info.logical_height;
+    double width=rows[0]->number!=0.0f?(double)rows[0]->number:(double)info.logical_width;
+    double height=rows[1]->number!=0.0f?(double)rows[1]->number:(double)info.logical_height;
     double fullscreen=rows[2]->number,swap=rows[3]->number;
     if (!isfinite(width) || !isfinite(height) || floor(width)!=width || floor(height)!=height ||
         width<64 || width>16384 || height<64 || height>16384 ||

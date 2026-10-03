@@ -991,7 +991,8 @@ bool frontend_unified_q1_hud(frontend_unified_q1 *o,qa_ui *ui,qa_scene_rect view
         qa_scene_rect rectangle={.x=viewport.x+(int32_t)(((int64_t)viewport.width-width)/2),.y=viewport.y+(int32_t)(16*scale),.width=width,.height=height};
         ok=qa_scene_frame_picture(frame,o->finale_image,rectangle,viewport,(qa_scene_vec4){0,0,1,1},(qa_scene_vec4){1,1,1,1},e);}
     if(ok)ok=qa_hud_draw(o->hud,&(qa_hud_frame){.seat=d->physical_seat,.actor=player,.time_ns=ns(o->seconds),
-        .viewport=viewport,.safe_area=viewport,.scale=1,.visible=true,.show_scores=o->frontend->seats[d->physical_seat].scores},frame,e);o->busy=false;return ok && mutable(o,e);
+        .viewport=viewport,.safe_area=viewport,.scale=1,.visible=true,.show_scores=o->frontend->seats[d->physical_seat].scores},frame,e);
+    o->busy=false;return ok && mutable(o,e);
 }
 bool frontend_unified_q1_checkpoint_ready(const frontend_unified_q1 *o)
 {
