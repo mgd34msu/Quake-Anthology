@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "qa/source_save.h"
 
 #define SAVE_HEADER 88u
 #define SAVE_RECORD_HEADER 52u
@@ -177,9 +178,108 @@ static bool size_add(size_t *size, size_t add, qa_error *error)
     return true;
 }
 
+static bool codec_fail(qa_source_save_io *io, qa_status code, const char *message)
+{
+    io->failed = true;
+    return persistence_fail(io->error, code, message);
+}
+
+static bool record_text(qa_source_save_io *io, uint16_t length, const char **value)
+{
+    if (length > QA_SAVE_NAME_LIMIT)
+        return codec_fail(io, QA_ERROR_FORMAT, "Save owner name exceeds record");
+    if (io->direction == QA_SOURCE_SAVE_WRITE)
+        return qa_source_save_bytes(io, (void *)*value, length);
+    if (io->offset > io->input.size || length > io->input.size - io->offset)
+        return codec_fail(io, QA_ERROR_FORMAT, "Save owner name exceeds record");
+    char *text = malloc((size_t)length + 1);
+    if (!text) return codec_fail(io, QA_ERROR_MEMORY, "Allocating save owner name");
+    if (!qa_source_save_bytes(io, text, length)) { free(text); return false; }
+    text[length] = 0;
+    if (memchr(text, 0, length)) {
+        free(text);
+        return codec_fail(io, QA_ERROR_FORMAT, "NUL in save owner name");
+    }
+    *value = text;
+    return true;
+}
+
+static bool record_fields(qa_source_save_io *io, qa_save_record *record)
+{
+    bool reading = io->direction == QA_SOURCE_SAVE_READ;
+    uint32_t kind = reading ? 0 : (uint32_t)record->owner.kind;
+    uint16_t instance_size = reading ? 0 : (uint16_t)strlen(record->owner.instance);
+    uint16_t schema_size = reading ? 0 : (uint16_t)strlen(record->owner.schema);
+    uint16_t backend_size = reading ? 0 : (uint16_t)strlen(record->owner.backend);
+    uint16_t flags = 0;
+    uint64_t payload_size = reading ? 0 : record->payload.size;
+    if (!qa_source_save_u32(io, &kind) ||
+        !qa_source_save_u16(io, &instance_size) ||
+        !qa_source_save_u16(io, &schema_size) ||
+        !qa_source_save_u16(io, &backend_size) ||
+        !qa_source_save_u16(io, &flags) ||
+        !qa_source_save_u64(io, &payload_size) ||
+        !qa_source_save_bytes(io, record->owner.content.bytes, 32)) return false;
+    if (flags || !payload_size || payload_size > SIZE_MAX)
+        return codec_fail(io, QA_ERROR_FORMAT, "Invalid saved owner payload extent");
+    record->owner.kind = (qa_save_owner_kind)kind;
+    if (!record_text(io, instance_size, &record->owner.instance) ||
+        !record_text(io, schema_size, &record->owner.schema) ||
+        !record_text(io, backend_size, &record->owner.backend)) return false;
+    if (reading) {
+        if (io->offset > io->input.size || payload_size > io->input.size - io->offset)
+            return codec_fail(io, QA_ERROR_FORMAT, "Invalid saved owner payload extent");
+        uint8_t *payload = malloc((size_t)payload_size);
+        if (!payload) return codec_fail(io, QA_ERROR_MEMORY, "Allocating saved owner payload");
+        record->payload = (qa_bytes){payload, (size_t)payload_size};
+    }
+    return qa_source_save_bytes(io, (void *)record->payload.data, (size_t)payload_size);
+}
+
+static bool image_fields(qa_source_save_io *io, qa_save_image *image, uint64_t extent)
+{
+    bool reading = io->direction == QA_SOURCE_SAVE_READ;
+    uint8_t magic[8] = {'Q','A','S','V','\r','\n',26,'\n'};
+    uint32_t reserved = 0, header_size = SAVE_HEADER;
+    uint64_t saved_extent = extent;
+    uint32_t purpose = reading ? 0 : (uint32_t)image->metadata.purpose;
+    uint32_t count = reading ? 0 : (uint32_t)image->count;
+    if (!qa_source_save_bytes(io, magic, sizeof(magic)) ||
+        !qa_source_save_u32(io, &reserved) ||
+        !qa_source_save_u32(io, &header_size) ||
+        !qa_source_save_u64(io, &saved_extent) ||
+        !qa_source_save_u32(io, &purpose) ||
+        !qa_source_save_u32(io, &count) ||
+        !qa_source_save_u64(io, &image->metadata.elapsed_ns) ||
+        !qa_source_save_u64(io, &image->metadata.configuration_generation) ||
+        !qa_source_save_u64(io, &image->metadata.world_generation) ||
+        !qa_source_save_bytes(io, image->metadata.composition.bytes, 32)) return false;
+    if (memcmp(magic, "QASV\r\n\032\n", sizeof(magic)))
+        return codec_fail(io, QA_ERROR_FORMAT, "Invalid shared save signature");
+    if (header_size != SAVE_HEADER || saved_extent != extent)
+        return codec_fail(io, QA_ERROR_FORMAT, "Invalid save image extent");
+    if (purpose > QA_SAVE_DEMO_KEYFRAME || count < QA_SAVE_PROVIDER - 1u ||
+        count > QA_SAVE_OWNER_LIMIT || (reading &&
+        count > (io->input.size - io->offset) / SAVE_RECORD_HEADER))
+        return codec_fail(io, QA_ERROR_FORMAT, "Invalid save record inventory");
+    image->metadata.purpose = (qa_save_purpose)purpose;
+    if (reading) {
+        image->records = calloc(count, sizeof(*image->records));
+        if (!image->records)
+            return codec_fail(io, QA_ERROR_MEMORY, "Allocating decoded save records");
+        image->count = count;
+    }
+    for (size_t i = 0; i < image->count; ++i) {
+        qa_save_record copy = image->records[i];
+        if (!record_fields(io, reading ? image->records + i : &copy)) return false;
+    }
+    return true;
+}
+
 bool qa_save_image_encode(const qa_save_image *image, qa_buffer *out, qa_error *error)
 {
-    if (!image || image->retiring || !out) return persistence_fail(error, QA_ERROR_ARGUMENT, "Invalid or retiring save encode owner");
+    if (!image || image->retiring || !out)
+        return persistence_fail(error, QA_ERROR_ARGUMENT, "Invalid or retiring save encode owner");
     size_t size = SAVE_HEADER + SAVE_DIGEST;
     for (size_t i = 0; i < image->count; ++i) {
         const qa_save_record *record = image->records + i;
@@ -189,59 +289,23 @@ bool qa_save_image_encode(const qa_save_image *image, qa_buffer *out, qa_error *
             !size_add(&size, strlen(record->owner.backend), error) ||
             !size_add(&size, record->payload.size, error)) return false;
     }
-    qa_buffer buffer = {malloc(size), size};
-    if (!buffer.data) return persistence_fail(error, QA_ERROR_MEMORY, "Allocating encoded save image");
-    qa_net_writer writer;
-    qa_net_writer_init(&writer, buffer.data, size - SAVE_DIGEST, error);
-    qa_net_write_data(&writer, "QASV\r\n\032\n", 8);
-    qa_net_write_u32(&writer, QA_SAVE_VERSION);
-    qa_net_write_u32(&writer, SAVE_HEADER);
-    qa_net_write_u64(&writer, size);
-    qa_net_write_u32(&writer, (uint32_t)image->metadata.purpose);
-    qa_net_write_u32(&writer, (uint32_t)image->count);
-    qa_net_write_u64(&writer, image->metadata.elapsed_ns);
-    qa_net_write_u64(&writer, image->metadata.configuration_generation);
-    qa_net_write_u64(&writer, image->metadata.world_generation);
-    qa_net_write_data(&writer, image->metadata.composition.bytes, 32);
-    for (size_t i = 0; i < image->count; ++i) {
-        const qa_save_record *record = image->records + i;
-        qa_net_write_u32(&writer, record->owner.kind);
-        qa_net_write_u16(&writer, (uint16_t)strlen(record->owner.instance));
-        qa_net_write_u16(&writer, (uint16_t)strlen(record->owner.schema));
-        qa_net_write_u16(&writer, (uint16_t)strlen(record->owner.backend));
-        qa_net_write_u16(&writer, 0);
-        qa_net_write_u64(&writer, record->payload.size);
-        qa_net_write_data(&writer, record->owner.content.bytes, 32);
-        qa_net_write_data(&writer, record->owner.instance, strlen(record->owner.instance));
-        qa_net_write_data(&writer, record->owner.schema, strlen(record->owner.schema));
-        qa_net_write_data(&writer, record->owner.backend, strlen(record->owner.backend));
-        qa_net_write_data(&writer, record->payload.data, record->payload.size);
-    }
-    if (writer.failed || qa_net_writer_size(&writer) != size - SAVE_DIGEST) {
-        qa_buffer_free(&buffer);
-        return persistence_fail(error, QA_ERROR_FORMAT, "Save image size disagrees with codec");
-    }
+    qa_source_save_io io = {0};
+    if (!qa_source_save_writer(&io, NULL, error)) return false;
+    io.output.data = malloc(size); io.capacity = size;
+    if (!io.output.data) return persistence_fail(error, QA_ERROR_MEMORY, "Allocating encoded save image");
+    qa_save_image view = *image;
+    qa_buffer buffer = {0};
+    bool ok = image_fields(&io, &view, size);
+    if (ok && io.offset != size - SAVE_DIGEST)
+        ok = codec_fail(&io, QA_ERROR_FORMAT, "Save image size disagrees with codec");
+    if (ok) ok = qa_source_save_finish(&io, &buffer);
+    qa_source_save_dispose(&io);
+    if (!ok) return false;
     qa_sha256_digest digest;
-    qa_sha256((qa_bytes){buffer.data, size - SAVE_DIGEST}, &digest);
-    memcpy(buffer.data + size - SAVE_DIGEST, digest.bytes, 32);
+    qa_sha256((qa_bytes){buffer.data, buffer.size}, &digest);
+    memcpy(buffer.data + buffer.size, digest.bytes, SAVE_DIGEST);
+    buffer.size = size;
     *out = buffer;
-    return true;
-}
-
-static bool read_text(qa_net_reader *reader, uint16_t size, char **out)
-{
-    if (size > QA_SAVE_NAME_LIMIT || size > qa_net_reader_remaining(reader))
-        return qa_net_reader_fail(reader, "Save owner name exceeds record");
-    char *text = malloc((size_t)size + 1);
-    if (!text) {
-        qa_error_set(reader->error, QA_ERROR_MEMORY, reader->bit / 8, "Allocating save owner name");
-        reader->failed = true;
-        return false;
-    }
-    if (!qa_net_read_data(reader, text, size)) { free(text); return false; }
-    text[size] = 0;
-    if (memchr(text, 0, size)) { free(text); return qa_net_reader_fail(reader, "NUL in save owner name"); }
-    *out = text;
     return true;
 }
 
@@ -249,74 +313,20 @@ bool qa_save_image_decode(qa_bytes bytes, qa_save_image **out, qa_error *error)
 {
     if (!out || !bytes.data || bytes.size < SAVE_HEADER + SAVE_DIGEST)
         return persistence_fail(error, QA_ERROR_FORMAT, "Truncated save image");
-    if (memcmp(bytes.data, "QASV\r\n\032\n", 8))
-        return persistence_fail(error, QA_ERROR_FORMAT, "Invalid shared save signature");
-    if (qa_load_u32le(bytes.data + 8) != QA_SAVE_VERSION)
-        return persistence_fail(error, QA_ERROR_UNSUPPORTED, "Save version requires an explicit migration codec");
-    if (qa_load_u32le(bytes.data + 12) != SAVE_HEADER || qa_load_u64le(bytes.data + 16) != bytes.size)
-        return persistence_fail(error, QA_ERROR_FORMAT, "Invalid save image extent");
     qa_sha256_digest actual, saved;
     qa_sha256((qa_bytes){bytes.data, bytes.size - SAVE_DIGEST}, &actual);
-    memcpy(saved.bytes, bytes.data + bytes.size - SAVE_DIGEST, 32);
+    memcpy(saved.bytes, bytes.data + bytes.size - SAVE_DIGEST, SAVE_DIGEST);
     if (!qa_sha256_equal(&actual, &saved))
         return persistence_fail(error, QA_ERROR_FORMAT, "Save image digest mismatch");
-    qa_net_reader reader;
-    qa_net_reader_init(&reader, (qa_bytes){bytes.data, bytes.size - SAVE_DIGEST}, error);
-    reader.bit = 24u * 8u;
-    qa_save_metadata metadata = {0};
-    metadata.purpose = (qa_save_purpose)qa_net_read_u32(&reader);
-    uint32_t count = qa_net_read_u32(&reader);
-    metadata.elapsed_ns = qa_net_read_u64(&reader);
-    metadata.configuration_generation = qa_net_read_u64(&reader);
-    metadata.world_generation = qa_net_read_u64(&reader);
-    qa_net_read_data(&reader, metadata.composition.bytes, 32);
-    if (reader.failed || (unsigned)metadata.purpose > QA_SAVE_DEMO_KEYFRAME ||
-        count < QA_SAVE_PROVIDER - 1u || count > QA_SAVE_OWNER_LIMIT ||
-        count > qa_net_reader_remaining(&reader) / SAVE_RECORD_HEADER)
-        return persistence_fail(error, QA_ERROR_FORMAT, "Invalid save record inventory");
+    qa_source_save_io io = {0};
+    if (!qa_source_save_reader(&io, NULL,
+        (qa_bytes){bytes.data, bytes.size - SAVE_DIGEST}, error)) return false;
     qa_save_image *image = calloc(1, sizeof(*image));
     if (!image) return persistence_fail(error, QA_ERROR_MEMORY, "Allocating decoded save image");
-    image->records = calloc(count, sizeof(*image->records));
-    if (!image->records) {
-        image_free(image);
-        return persistence_fail(error, QA_ERROR_MEMORY, "Allocating decoded save records");
-    }
-    image->metadata = metadata;
-    image->count = count;
-    for (size_t i = 0; i < count && !reader.failed; ++i) {
-        qa_save_record *record = image->records + i;
-        record->owner.kind = (qa_save_owner_kind)qa_net_read_u32(&reader);
-        uint16_t instance_size = qa_net_read_u16(&reader);
-        uint16_t schema_size = qa_net_read_u16(&reader);
-        uint16_t backend_size = qa_net_read_u16(&reader);
-        uint16_t flags = qa_net_read_u16(&reader);
-        uint64_t payload_size = qa_net_read_u64(&reader);
-        qa_net_read_data(&reader, record->owner.content.bytes, 32);
-        char *instance = NULL, *schema = NULL, *backend = NULL;
-        bool names = !reader.failed && !flags &&
-            read_text(&reader, instance_size, &instance) &&
-            read_text(&reader, schema_size, &schema) &&
-            read_text(&reader, backend_size, &backend);
-        record->owner.instance = instance;
-        record->owner.schema = schema;
-        record->owner.backend = backend;
-        if (!names || !payload_size || payload_size > qa_net_reader_remaining(&reader)) {
-            if (!reader.failed) qa_net_reader_fail(&reader, "Invalid saved owner payload extent");
-            break;
-        }
-        uint8_t *payload = malloc((size_t)payload_size);
-        if (!payload) {
-            qa_error_set(error, QA_ERROR_MEMORY, reader.bit / 8, "Allocating saved owner payload");
-            reader.failed = true;
-            break;
-        }
-        record->payload = (qa_bytes){payload, (size_t)payload_size};
-        qa_net_read_data(&reader, payload, (size_t)payload_size);
-    }
-    if (!qa_net_reader_finish(&reader) || !persistence_owner_set(image->records, count, error)) {
-        image_free(image);
-        return false;
-    }
+    bool ok = image_fields(&io, image, bytes.size) && qa_source_save_finish(&io, NULL) &&
+        persistence_owner_set(image->records, image->count, error);
+    qa_source_save_dispose(&io);
+    if (!ok) { image_free(image); return false; }
     *out = image;
     return true;
 }
