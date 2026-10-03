@@ -504,6 +504,7 @@ bool qa_frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *erro
         if (!complete && resource_wait(frontend)) return resource_returned(frontend,error);
         if (!frontend_owners_idle(frontend) || !frontend_seat_callbacks_idle(frontend))
             return frontend_fail(error,QA_ERROR_ARGUMENT,"Candidate settings have not completed their physical release");
+        if (!complete) return true;
     }
     if (!frontend_q3_source_color_publication_finish(frontend,error) ||
         !frontend_source_publish_music(frontend,error) ||
