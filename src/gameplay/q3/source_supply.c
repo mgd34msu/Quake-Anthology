@@ -1,6 +1,12 @@
 #include "internal.h"
 #include "qa/game_q3_bots.h"
 
+bool qa_q3_bot_arsenal_product_read(const qa_q3_game *game,qa_q3_product *out,qa_error *error) {
+    if(!game || !out || game->source_restored)
+        return q3_fail(error,"Q3 arsenal product requires its live GAME owner and output");
+    *out=game->options.product;return true;
+}
+
 bool qa_q3_bot_supply_preview(qa_q3_game *game,qa_actor_id pickup,qa_actor_id recipient,
     const qa_q3_supply_services *services,qa_supply_preview_result *out,
     bool *eligible,bool *found,qa_error *error) {
