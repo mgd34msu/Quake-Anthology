@@ -99,11 +99,13 @@ static bool app_release(void *context, qa_error *error)
     if (!release(s, error)) return false;
     s->app_attached = false; return true;
 }
-bool frontend_client_source_idle(const frontend_client_source *s)
+static bool children_idle(const frontend_client_source *s)
 {
-    return linked(s) && !s->calls && !s->constructing && qa_console_idle(s->console) &&
+    return linked(s) && !s->constructing && qa_console_idle(s->console) &&
         (!registry(s) || qa_cvars_observer_idle(registry(s)));
 }
+bool frontend_client_source_idle(const frontend_client_source *s)
+{ return s && !s->calls && children_idle(s); }
 static bool physical_current(void *context, const qa_launch_instance *d, qa_console *console,
     qa_cvars *cvars, const qa_command_context *command)
 {
@@ -599,12 +601,33 @@ bool frontend_client_source_destroy(frontend_client_source **owned, qa_error *er
     while (*link != s) link = &(*link)->next;
     *link = s->next; free(s); *owned = NULL; return true;
 }
-bool frontend_client_sources_idle(const qa_frontend *f)
+static bool sources_returned(const qa_frontend *f,const qa_application_client_preparation *client)
 {
-    for (const frontend_client_source *s = f ? f->client_sources : NULL; s; s = s->next)
-        if (!frontend_client_source_idle(s)) return false;
-    return true;
+    const qa_application_client_source *held=NULL;
+    if (client) {
+        if (!f || qa_application_client_prepare_application(client)!=f->application ||
+            !qa_application_client_prepare_entered(client,QA_CLIENT_PREPARE_RESOURCES) ||
+            !(held=qa_application_client_prepare_source(client))) return false;
+    }
+    bool found=!client;
+    for (const frontend_client_source *s=f?f->client_sources:NULL;s;s=s->next) {
+        if (held && s->application.context.lifetime==held->context.lifetime) {
+            if (found || s->calls!=1 || s->closing || s->retiring || !s->app_attached ||
+                !children_idle(s) ||
+                !physical_current((void *)s,held->descriptor,held->context.console,
+                    held->context.cvars,&held->context.command) ||
+                !qa_application_client_current(f->application,&s->application) ||
+                !qa_application_client_current(f->application,held)) return false;
+            found=true;
+        } else if (!frontend_client_source_idle(s)) return false;
+    }
+    return found;
 }
+bool frontend_client_sources_idle(const qa_frontend *f)
+{ return sources_returned(f,NULL); }
+bool frontend_client_sources_resources_returned(const qa_frontend *f,
+    const qa_application_client_preparation *client)
+{ return client && sources_returned(f,client); }
 bool frontend_client_sources_destroy(qa_frontend *f, qa_error *error)
 {
     if (!f) return true;

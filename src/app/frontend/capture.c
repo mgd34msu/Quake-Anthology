@@ -202,7 +202,8 @@ bool frontend_seat_callbacks_checkpoint_ready(const qa_frontend *f,qa_error *err
     }
     return true;
 }
-static bool owners_returned(const qa_frontend *f,const frontend_video_guests *video,bool checkpoint)
+static bool owners_returned(const qa_frontend *f,const frontend_video_guests *video,
+    const qa_application_client_preparation *client,bool checkpoint)
 {
     if(video && !frontend_video_guests_resources_returned(f,video,NULL)) return false;
     if (!f || f->capture || f->resource_inventory || f->root_resources_pending ||
@@ -211,7 +212,7 @@ static bool owners_returned(const qa_frontend *f,const frontend_video_guests *vi
         !frontend_remote_q2_idle(f) || (video?
             !frontend_remote_unified_presentation_video_returned(f,video,NULL):
             checkpoint?!frontend_remote_unified_checkpoint_returned(f):!frontend_remote_unified_idle(f)) ||
-        !frontend_client_sources_idle(f) ||
+        !(client?frontend_client_sources_resources_returned(f,client):frontend_client_sources_idle(f)) ||
         (!video && !frontend_component_scenes_idle(f)) ||
         !frontend_remote_q3_initial_idle_all(f) || !frontend_ui_features_idle(f) ||
         !frontend_equipment_idle(f) || !frontend_equipment_q3_idle(f) || !frontend_equipment_gear_idle(f) ||
@@ -239,13 +240,15 @@ static bool owners_returned(const qa_frontend *f,const frontend_video_guests *vi
     return true;
 }
 bool frontend_owners_returned(const qa_frontend *f)
-{ return owners_returned(f,NULL,false); }
-bool frontend_owners_idle(const qa_frontend *f)
+{ return owners_returned(f,NULL,NULL,false); }
+static bool owners_idle(const qa_frontend *f,const qa_application_client_preparation *client)
 {
-    return frontend_owners_returned(f) && (!f->input || qa_input_platform_settings_idle(f->input));
+    return owners_returned(f,NULL,client,false) && (!f->input || qa_input_platform_settings_idle(f->input));
 }
+bool frontend_owners_idle(const qa_frontend *f)
+{ return owners_idle(f,NULL); }
 bool frontend_owners_checkpoint_ready(const qa_frontend *f)
-{ return f && !f->server_stop_owner && owners_returned(f,NULL,true)&&
+{ return f && !f->server_stop_owner && owners_returned(f,NULL,NULL,true)&&
     (!f->input||qa_input_platform_settings_idle(f->input)); }
 static bool add(frontend_capture *capture, capture_kind kind, const void *owner, qa_error *error)
 {
@@ -1033,7 +1036,7 @@ static bool resource_inventory_collect(qa_frontend *f,qa_application *app,const 
         video ? !frontend_video_guests_resources_associated(f,video) :
         candidate ? (qa_application_startup_candidate(app)!=candidate ||
             !qa_application_startup_resource_phase(app,candidate)) : (!engine_only && f->preparing)) ||
-        !(video?owners_returned(f,video,false):frontend_owners_idle(f)) || !frontend_seat_callbacks_idle(f))
+        !(video?owners_returned(f,video,NULL,false):owners_idle(f,client)) || !frontend_seat_callbacks_idle(f))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Resource metadata requires the actual idle parent or resource-phase candidate");
     frontend_resource_inventory *inventory=calloc(1,sizeof(*inventory));
     if (!inventory) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining the structural resource roster");

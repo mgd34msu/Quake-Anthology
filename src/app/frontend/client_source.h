@@ -82,6 +82,8 @@ bool frontend_client_source_checkpoint_retain(frontend_client_source *,
 bool frontend_client_source_release(frontend_client_source *, qa_error *);
 bool frontend_client_source_destroy(frontend_client_source **, qa_error *);
 bool frontend_client_sources_idle(const qa_frontend *);
+bool frontend_client_sources_resources_returned(const qa_frontend *,
+    const qa_application_client_preparation *);
 bool frontend_client_sources_destroy(qa_frontend *, qa_error *);
 size_t frontend_client_source_count(const qa_frontend *);
 frontend_client_source *frontend_client_source_at(const qa_frontend *, size_t);
