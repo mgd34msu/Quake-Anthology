@@ -71,7 +71,7 @@ static inline qa_vec3 q3ne_difference(qa_vec3 a, qa_vec3 b) { return q3ne_sum(a,
 static inline float q3ne_dot(qa_vec3 a, qa_vec3 b) { return q3ne_add(q3ne_add(q3ne_mul(a.x,b.x),q3ne_mul(a.y,b.y)),q3ne_mul(a.z,b.z)); }
 static inline qa_vec3 q3ne_cross(qa_vec3 a, qa_vec3 b) { return qa_v3(q3ne_add(q3ne_mul(a.y,b.z),-q3ne_mul(a.z,b.y)),q3ne_add(q3ne_mul(a.z,b.x),-q3ne_mul(a.x,b.z)),q3ne_add(q3ne_mul(a.x,b.y),-q3ne_mul(a.y,b.x))); }
 static inline float q3ne_length(qa_vec3 v) { return q3ne_f(sqrtf(q3ne_dot(v,v))); }
-static inline qa_vec3 q3ne_normalize(qa_vec3 v) { float n=q3ne_length(v); return n? q3ne_scale(v,q3ne_div(1,n)):v; }
+static inline qa_vec3 q3ne_normalize(qa_vec3 v) { float n=q3ne_length(v); return n!=0.0f? q3ne_scale(v,q3ne_div(1,n)):v; }
 static inline bool q3ne_fail(qa_error *e, qa_status status, const char *s) { qa_error_set(e,status,0,"%s",s); return false; }
 static inline float q3ne_life(int32_t start, int32_t end) { return q3ne_div(1,(float)q3ne_sub(end,start)); }
 static inline float q3ne_remaining(const q3n_local_entity *v, int32_t time) { return q3ne_mul((float)q3ne_sub(v->end_time,time),v->life_rate); }

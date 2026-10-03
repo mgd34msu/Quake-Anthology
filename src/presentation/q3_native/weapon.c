@@ -23,7 +23,7 @@ static qa_vec3 ma(qa_vec3 a,float x,qa_vec3 b) { return plus(a,scale(b,x)); }
 static qa_vec3 minus(qa_vec3 a,qa_vec3 b) { return plus(a,scale(b,-1)); }
 static float dot(qa_vec3 a,qa_vec3 b) { return add(add(mul(a.x,b.x),mul(a.y,b.y)),mul(a.z,b.z)); }
 static float length(qa_vec3 a) { return sqrtf(dot(a,a)); }
-static qa_vec3 normalized(qa_vec3 a) { float size=length(a); return size?scale(a,divide(1,size)):a; }
+static qa_vec3 normalized(qa_vec3 a) { float size=length(a); return size!=0.0f?scale(a,divide(1,size)):a; }
 static qa_vec3 transform(qa_vec3 v,const qa_vec3 axis[3]) { return plus(plus(scale(axis[0],v.x),scale(axis[1],v.y)),scale(axis[2],v.z)); }
 static void vector(float out[3],qa_vec3 value) { out[0]=value.x; out[1]=value.y; out[2]=value.z; }
 static qa_vec3 from(const float value[3]) { return qa_v3(value[0],value[1],value[2]); }
@@ -308,7 +308,7 @@ static bool player_weapon(const q3n_frame *f,const qa_q3_presentation_assets *pa
             if (!q3n_weapons_rail(f,state->clientNum,&flash.origin,cent->rail_impact,e)) return false;
         }
         qa_vec3 color=w->flash_light_color;
-        if (color.x || color.y || color.z) {
+        if (color.x != 0.0f || color.y != 0.0f || color.z != 0.0f) {
             float radius=(float)(300+(q3n_events_rand(f->events)&31));
             if (!f->preferences.reduced_flashes && (!qa_q3_presentation_light(f->presentation,flash.origin,radius,color,false,e) || !frame_valid(f,e))) return false;
         }

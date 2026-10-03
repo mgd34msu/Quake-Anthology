@@ -233,7 +233,7 @@ bool q3n_view_damage_blob(q3n_view *o,const q3n_frame *f,const q3n_view_settings
        ps->options.remote_client!=o->options.remote_client || ps->options.compiled_source!=o->options.compiled_source)return false;
     const q3n_player_feedback *g=q3n_player_state_feedback(ps);
     int32_t elapsed=q3ne_int(q3ne_add((float)f->time,-g->damage_time));
-    if(!g->damage_value || s->ragepro || elapsed<=0 || elapsed>=500 || f->third_person)return true;
+    if(g->damage_value==0.0f || s->ragepro || elapsed<=0 || elapsed>=500 || f->third_person)return true;
     qa_q3_ref_entity r={.kind=QA_Q3_REF_SPRITE,.flags=4,.custom_shader=q3n_media_read(f->media)->graphics[Q3N_G_VIEW_BLOOD]};
     r.origin=q3ne_sum(f->refdef.origin,q3ne_scale(f->refdef.axis[0],8));
     r.origin=q3ne_sum(r.origin,q3ne_scale(f->refdef.axis[1],q3ne_mul(g->damage_x,-8)));

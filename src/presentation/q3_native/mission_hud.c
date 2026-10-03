@@ -81,8 +81,12 @@ qa_cvars *q3nm_registry(const q3n_mission_hud *o)
 const qa_q3_player *q3nm_player(const q3n_mission_hud *o)
 { return q3n_frame_snapshot_player(o->frame); }
 const qa_q3_player *q3nm_require_player(q3n_mission_hud *o)
-{ const qa_q3_player *p=q3nm_player(o); if(!p)q3nm_result(q3ne_fail(o->menus->error,QA_ERROR_ARGUMENT,
-    "Mission HUD player operation requires its actual reached snapshot")); return p; }
+{
+    const qa_q3_player *p=q3nm_player(o);
+    if(!p) q3nm_result(q3ne_fail(o->menus->error,QA_ERROR_ARGUMENT,
+        "Mission HUD player operation requires its actual reached snapshot"));
+    return p;
+}
 int32_t q3nm_integer(q3n_mission_hud *o, const char *symbol)
 { qa_native_q3_client_cvar v = {0}; q3nm_result(q3nm_cvar(o,symbol,&v,o->menus->error)); return v.integer; }
 float q3nm_number(q3n_mission_hud *o, const char *symbol)

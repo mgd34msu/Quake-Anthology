@@ -45,7 +45,7 @@ static bool entity(const q3n_frame *f, const qa_q3_ref_entity *ref, qa_error *er
 }
 static bool light(const q3n_frame *f, const q3n_local_entity *v, qa_error *error)
 {
-    if(!v->light || f->preferences.reduced_flashes)return true;
+    if(v->light==0.0f || f->preferences.reduced_flashes)return true;
     float c=q3ne_div((float)q3ne_sub(f->time,v->start_time),(float)q3ne_sub(v->end_time,v->start_time));
     c=c<0.5f?1:q3ne_add(1,-q3ne_mul(q3ne_add(c,-0.5f),2));
     return qa_q3_presentation_light(f->presentation,v->ref.origin,q3ne_mul(v->light,c),v->light_color,false,error) && q3ne_current(f,error);

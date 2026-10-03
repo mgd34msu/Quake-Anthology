@@ -27,7 +27,7 @@ static bool team_overlay(q3n_hud_draw *d,float *y,bool right,bool upper)
         const q3n_client_info *ci=q3n_clients_get(d->frame->clients,(uint32_t)c->sorted_team_players[i]);
         if(!ci || !ci->info_valid || ci->team!=team)continue;
         if(!q3nh_text(d,x+cell,*y,ci->name,8,8,q3nh_white,false,false,12))return false;
-        if(location_width) { const char *location; if(!q3nh_location(d,ci->dynamic.location,&location))return false;
+        if(location_width!=0.0f) { const char *location; if(!q3nh_location(d,ci->dynamic.location,&location))return false;
             if(!*location)location="unknown";
             if(!q3nh_text(d,x+2*cell+player_width,*y,location,8,8,q3nh_white,false,false,16))return false; }
         float color[4]; q3nh_health(ci->dynamic.health,ci->dynamic.armor,color); char text[32];

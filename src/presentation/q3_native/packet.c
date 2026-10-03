@@ -207,7 +207,7 @@ static bool missile(const q3n_frame *f,const packet_source *source,q3n_entity *e
     const q3n_weapon_media *weapon=&media->weapons[weapon_index]; entity->lerp_angles=vector(s->angles);
     if((grapple || weapon->trail!=Q3N_TRAIL_NONE) &&
         !trail(f,source,entity,imports,weapon,grapple,error)) return false;
-    if(!grapple && weapon->missile_light && (!qa_q3_presentation_light(f->presentation,
+    if(!grapple && weapon->missile_light != 0.0f && (!qa_q3_presentation_light(f->presentation,
         entity->lerp_origin,weapon->missile_light,weapon->missile_light_color,false,error) || !current(f,source,error))) return false;
     if(!grapple && weapon->missile_sound) {
         qa_vec3 velocity; if(!q3n_trajectory_delta(&s->pos,f->time,&velocity,error) ||

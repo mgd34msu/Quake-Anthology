@@ -90,7 +90,7 @@ void UI_InitMemory( void ) {
 }
 
 qboolean UI_OutOfMemory(void) {
-	return outOfMemory;
+	return (qboolean)outOfMemory;
 }
 
 
@@ -1903,7 +1903,7 @@ qboolean Item_YesNo_HandleKey(itemDef_t *item, int key) {
 
   if (Rect_ContainsPoint(&item->window.rect, (float)DC->cursorx, (float)DC->cursory) && item->window.flags & WINDOW_HASFOCUS && item->cvar) {
 		if (key == K_MOUSE1 || key == K_ENTER || key == K_MOUSE2 || key == K_MOUSE3) {
-	    DC->setCVar(item->cvar, va("%i", !DC->getCVarValue(item->cvar)));
+	    DC->setCVar(item->cvar, va("%i", DC->getCVarValue(item->cvar) == 0.0f));
 		  return qtrue;
 		}
   }
@@ -2170,7 +2170,7 @@ static void Scroll_ListBox_ThumbFunc(void *p) {
 
 	listBoxDef_t *listPtr = (listBoxDef_t*)si->item->typeData;
 	if (si->item->window.flags & WINDOW_HORIZONTAL) {
-		if (DC->cursorx == si->xStart) {
+		if ((float)DC->cursorx == si->xStart) {
 			return;
 		}
 		r.x = si->item->window.rect.x + SCROLLBAR_SIZE + 1;
@@ -2189,7 +2189,7 @@ static void Scroll_ListBox_ThumbFunc(void *p) {
 		listPtr->startPos = pos;
 		si->xStart = (float)DC->cursorx;
 	}
-	else if (DC->cursory != si->yStart) {
+	else if ((float)DC->cursory != si->yStart) {
 
 		r.x = si->item->window.rect.x + si->item->window.rect.w - SCROLLBAR_SIZE - 1;
 		r.y = si->item->window.rect.y + SCROLLBAR_SIZE + 1;
@@ -2575,7 +2575,7 @@ static rectDef_t *Item_CorrectedTextRect(itemDef_t *item) {
 	memset(&rect, 0, sizeof(rectDef_t));
 	if (item) {
 		rect = item->textRect;
-		if (rect.w) {
+		if (rect.w != 0.0f) {
 			rect.y -= rect.h;
 		}
 	}
@@ -2656,13 +2656,13 @@ void Menu_HandleKey(menuDef_t *menu, int key, qboolean down) {
 	switch ( key ) {
 
 		case K_F11:
-			if (DC->getCVarValue("developer")) {
+			if (DC->getCVarValue("developer") != 0.0f) {
 				debugMode ^= 1;
 			}
 			break;
 
 		case K_F12:
-			if (DC->getCVarValue("developer")) {
+			if (DC->getCVarValue("developer") != 0.0f) {
 				if (!DC->executeText) { q3menu_error(0,"executeText is unavailable in the CGAME menu context"); return; }
 				DC->executeText(EXEC_APPEND, "screenshot\n");
 			}
@@ -3597,8 +3597,8 @@ void Item_Model_Paint(itemDef_t *item) {
 	} else {
 		origin[0] = item->textscale;
 	}
-	refdef.fov_x = (modelPtr->fov_x) ? modelPtr->fov_x : w;
-	refdef.fov_y = (modelPtr->fov_y) ? modelPtr->fov_y : h;
+	refdef.fov_x = (modelPtr->fov_x != 0.0f) ? modelPtr->fov_x : w;
+	refdef.fov_y = (modelPtr->fov_y != 0.0f) ? modelPtr->fov_y : h;
 
 	//refdef.fov_x = (int)((float)refdef.width / 640.0f * 90.0f);
 	//xx = refdef.width / tan( refdef.fov_x / 360 * M_PI );
@@ -4086,7 +4086,7 @@ void Menu_ScrollFeeder(menuDef_t *menu, int feeder, qboolean down) {
 	if (menu) {
 		int i;
     for (i = 0; i < menu->itemCount; i++) {
-			if (menu->items[i]->special == feeder) {
+			if (menu->items[i]->special == (float)feeder) {
 				Item_ListBox_HandleKey(menu->items[i], (down) ? K_DOWNARROW : K_UPARROW, qtrue, qtrue);
 				return;
 			}
@@ -4108,7 +4108,7 @@ void Menu_SetFeederSelection(menuDef_t *menu, int feeder, int index, const char 
 	if (menu) {
 		int i;
     for (i = 0; i < menu->itemCount; i++) {
-			if (menu->items[i]->special == feeder) {
+			if (menu->items[i]->special == (float)feeder) {
 				if (index == 0) {
 					listBoxDef_t *listPtr = (listBoxDef_t*)menu->items[i]->typeData;
 					listPtr->cursorPos = 0;

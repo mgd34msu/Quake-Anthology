@@ -153,7 +153,7 @@ static bool list_for_client(q3n_server_commands *o, const q3n_frame *f,
             break;
         }
     }
-    int32_t gender = ci->animations.gender;
+    int32_t gender = (int32_t)ci->animations.gender;
     for (unsigned pass = 0; pass < 2; ++pass) {
         for (int32_t i = 0; i < 8; ++i) if (o->voice.lists[i].name[0] && o->voice.lists[i].gender == gender) {
             *out = remember(o, head, i); return true;

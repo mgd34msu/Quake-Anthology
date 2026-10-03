@@ -142,7 +142,7 @@ static bool status_head(q3n_hud_draw *d,float x)
 {
     q3n_hud_state *s=&d->owner->state; const q3n_player_feedback *g=q3n_player_state_feedback(d->player);
     int32_t time=d->frame->time; float size=60;
-    if(g->damage_time && q3ne_add((float)time,-g->damage_time)<500) {
+    if(g->damage_time!=0.0f && q3ne_add((float)time,-g->damage_time)<500) {
         float fraction=q3ne_div(q3ne_add((float)time,-g->damage_time),500);
         size=q3ne_mul(60,q3ne_add(1.5f,-q3ne_mul(fraction,0.5f))); float stretch=q3ne_add(size,-60);
         x=q3ne_add(x,-q3ne_add(q3ne_mul(stretch,0.5f),q3ne_mul(q3ne_mul(g->damage_x,stretch),0.5f)));
@@ -376,7 +376,7 @@ static bool lagometer(q3n_hud_draw *d)
     float range=q3ne_div(ah,3),mid=q3ne_add(ay,range),scale=q3ne_div(range,300);
     for(int32_t a=0;(float)a<aw;++a) {
         float value=q3ne_mul((float)o->frame_samples[(uint32_t)q3ne_sub(q3ne_sub(o->frame_count,1),a)&127u],scale);
-        if(!value)continue;
+        if(value==0.0f)continue;
         float h=fminf(fabsf(value),range);
         if(!q3nh_color(d,value>0?yellow:blue) || !q3nh_pixels(d,ax+aw-(float)a,value>0?mid-h:mid,1,h,shader,(qa_scene_vec4){0}))return false;
     }
