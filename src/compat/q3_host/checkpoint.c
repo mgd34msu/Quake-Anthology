@@ -209,21 +209,20 @@ static bool take(checkpoint_reader *reader, size_t size, qa_bytes *out, qa_error
     reader->offset += size; return true;
 }
 
-bool qa_q3_host_checkpoint_portable_state(qa_bytes input, qa_bytes *entity_source, qa_error *error)
+bool qa_q3_host_checkpoint_portable_state(qa_bytes input, qa_error *error)
 {
-    if (entity_source) *entity_source = (qa_bytes){0};
     if (!input.data || input.size < 60 || memcmp(input.data, "Q3HC", 4) ||
         qa_load_u32le(input.data + 12) >= 64 ||
         qa_load_u32le(input.data + 16) >= 64)
         return q3_fail(error, QA_ERROR_FORMAT, 0, "Invalid portable Q3 host stream");
     checkpoint_reader reader = {input, 60};
-    qa_bytes bytes, entity, source_bytes;
+    qa_bytes bytes, entity;
     if (!take(&reader, 48, &bytes, error) || !take(&reader, 32, &entity, error)) return false;
     uint64_t source = qa_load_u64le(entity.data), game = qa_load_u64le(input.data + 20);
     if (source > SIZE_MAX || game > SIZE_MAX)
         return q3_fail(error, QA_ERROR_FORMAT, reader.offset, "Portable Q3 source extent exceeds native address space");
     uint64_t bindings_size=qa_load_u64le(input.data+52);
-    if (bindings_size>SIZE_MAX || !take(&reader, (size_t)source, &source_bytes, error) ||
+    if (bindings_size>SIZE_MAX || !take(&reader, (size_t)source, &bytes, error) ||
         !take(&reader, qa_load_u32le(entity.data + 16), &bytes, error) ||
         !take(&reader, qa_load_u32le(entity.data + 20), &bytes, error) ||
         !take(&reader, (size_t)game, &bytes, error) ||
@@ -262,7 +261,6 @@ bool qa_q3_host_checkpoint_portable_state(qa_bytes input, qa_bytes *entity_sourc
     if (ok && reader.offset != input.size)
         ok = q3_fail(error, QA_ERROR_FORMAT, reader.offset, "Trailing portable Q3 host stream bytes");
     for (size_t i = 1; i < 64; ++i) q3_file_close(&files[i]);
-    if (ok && entity_source) *entity_source = source_bytes;
     return ok;
 }
 
@@ -512,10 +510,23 @@ bool qa_q3_host_restore(qa_q3_host *host, qa_bytes input, qa_error *error)
         !take(&reader, name_size, &name, error) || !take(&reader, (size_t)game_size, &game_bytes, error) ||
         !take(&reader,(size_t)bindings_size,&bindings_bytes,error))
         return q3_fail(error, QA_ERROR_FORMAT, reader.offset, "invalid Q3 entity parser checkpoint");
-    if (source.size != host->entity_cursor.source.size ||
-        (source.size && memcmp(source.data, host->entity_cursor.source.data, source.size)))
-        return q3_fail(error, QA_ERROR_FORMAT, reader.offset, "Q3 entity text checkpoint belongs to another source");
     qa_common_cursor restored_cursor = host->entity_cursor;
+    if (source.size != restored_cursor.source.size ||
+        (source.size && memcmp(source.data, restored_cursor.source.data, source.size))) {
+        /* A role constructor binds normalized text; GAME entity loading can
+         * retain the entire BSP lump, including its terminator and tail. */
+        const qa_bsp_view *map = host->options.world ?
+            qa_collision_bsp(qa_world_geometry(host->options.world)) : NULL;
+        qa_bytes authored = map ? map->lumps[QA_BSP_ENTITIES].bytes : (qa_bytes){0};
+        const uint8_t *end = authored.size ? memchr(authored.data, 0, authored.size) : NULL;
+        size_t length = end ? (size_t)(end - authored.data) : authored.size;
+        if (!restored_cursor.source.data || !map || source.size != authored.size ||
+            (source.size && memcmp(source.data, authored.data, source.size)) ||
+            restored_cursor.source.size != length ||
+            (length && memcmp(restored_cursor.source.data, authored.data, length)))
+            return q3_fail(error, QA_ERROR_FORMAT, reader.offset, "Q3 entity text checkpoint belongs to another source");
+        if (!qa_common_cursor_init(&restored_cursor, authored, QA_COMMON_TERMINATED, error)) return false;
+    }
     qa_common_parser restored_parser;
     qa_common_parser_state parser = {.token = token, .name = name, .line = qa_load_i32le(entity.data + 24)};
     if (!qa_common_cursor_restore(&restored_cursor, (qa_common_cursor_state){(size_t)offset, ended != 0}, error) ||
