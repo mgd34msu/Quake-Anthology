@@ -10,7 +10,7 @@
 #include <stdio.h>
 
 static const char *const client_menus[]={"toggleconsole","menu","messagemode","messagemode2",
-    "menu_anthology","library","mods","settings","rankings","assistance","controls"};
+    "menu_anthology","library","mods","settings","rankings","assistance","controls","quit"};
 struct frontend_client_commands {
     qa_frontend *frontend;
     qa_console *console;
@@ -129,6 +129,7 @@ static bool client_menu_command(void *context,const qa_command_invocation *comma
     if (command->context.origin==QA_COMMAND_REMOTE) {
         frontend_console_print(f,&command->context,"Menu commands require the local client.\n"); return true;
     }
+    if (client_name(command->argv[0],"quit")) { qa_application_request_stop(f->application); return true; }
     frontend_seat *seat=f->seats+owner->physical;
     size_t kind=0;
     while (kind<sizeof(client_menus)/sizeof(*client_menus) && !client_name(command->argv[0],client_menus[kind])) ++kind;
