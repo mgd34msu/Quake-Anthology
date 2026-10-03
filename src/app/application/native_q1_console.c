@@ -817,6 +817,13 @@ bool application_native_q1_console_restore(application_provider *provider, qa_by
     memcpy(owner->localinfo, local.data, local.size); owner->localinfo[local.size] = 0;
     memcpy(owner->reliable_info, reliable.data, reliable.size); owner->reliable_info_size = reliable.size;
     owner->info_initialized = initialized != 0; owner->info_error = (qa_error){0};
+    if (provider->application->operation == APPLICATION_PERSISTING) {
+        qa_console *console = NULL;
+        qa_command_context context;
+        if (!application_native_q1_console_at(provider, &console, NULL, &context))
+            return application_fail(error, QA_ERROR_ARGUMENT, "Restored native Q1 console lost its physical Source owner");
+        return application_startup_source_restore(provider, console, cvars, &context, error);
+    }
     return true;
 }
 
