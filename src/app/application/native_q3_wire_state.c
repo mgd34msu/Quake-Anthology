@@ -1598,6 +1598,14 @@ bool qa_native_q3_wire_reader_acquire(qa_application *app, qa_actor_owner receiv
     lease->publication_generation = app->publication_generation;
     lease->map_revision = app->map_revision;
     *out = lease;
+    /* This new local reader requests the real GAME publication. Receive it
+     * before CG preparation reads SystemInfo, using the same completed-source
+     * producer as ordinary frames. Retain the lease for cleanup on failure. */
+    if (!wire->clients[slot].gamestate &&
+        !application_q3_publish_local_snapshots(app, error)) return false;
+    if (!qa_native_q3_wire_reader_current(lease))
+        return application_fail(error, QA_ERROR_ARGUMENT,
+            "Native reader acquisition lost its source during initial publication");
     return true;
 }
 
