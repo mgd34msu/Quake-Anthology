@@ -59,6 +59,19 @@ static bool cut(frontend_unified_q3_runtime_factory *o,const q3n_frame *f,qa_err
     return f && f->compiled==entered(o) && f->compiled && q3n_frame_current(f) &&
         frontend_unified_q3_runtime_factory_current(o)?true:fail(e,"Compiled CG factory lost its entered Source frame");
 }
+static bool frame_settings(void *context,const q3n_compiled_frame *frame,bool loading,uint32_t stereo,
+    q3n_native_frame_options *out,qa_error *e)
+{
+    frontend_unified_q3_runtime_factory *o=context;(void)loading;(void)stereo;
+    if(!out || !frame || frame!=entered(o) || !q3n_compiled_frame_current(frame) ||
+        !frontend_unified_q3_runtime_factory_current(o))return fail(e,"CG status requires its entered received Source frame");
+    bool replacement=false;
+    if(o->options.primary_view && o->options.status_replacement &&
+        !o->options.status_replacement(o->options.context,frame,&replacement,e))return false;
+    if(replacement)out->hud.draw_status=false;
+    return q3n_compiled_frame_current(frame) && frontend_unified_q3_runtime_factory_current(o);
+}
+
 static bool command_current(void *context,const frontend_unified_q3_commands_options *options,bool checkpoint)
 {
     frontend_unified_q3_runtime_factory *o=context;
@@ -384,9 +397,11 @@ static bool create(const frontend_unified_q3_runtime_factory_options *options,bo
     if(!o->sounds || !o->movies || !o->cinematics)return fail(e,"Compiled factory requires its already imported Source sound/movie and numeric role bank");
     frontend_unified_q3_runtime_options operations={.frontend=options->frontend,.replica=options->replica,.client=options->client,
         .scene_only=!options->primary_view,
-        .context=o,.current=operation_current,.trace_number=trace_number,.command_values=command_values,.timescale=timescale,
+        .context=o,.current=operation_current,.frame_settings=frame_settings,.trace_number=trace_number,.command_values=command_values,.timescale=timescale,
         .backend_checkpoint=backend_checkpoint,.backend_restore=backend_restore,.video_shutdown=video_shutdown,.player_fx=options->composition};
     operations.weapons.context=options->context;operations.weapons.view_replacement=options->view_replacement;
+    operations.view.camera_context=options->context;
+    operations.view.camera_override=options->primary_view?options->camera_override:NULL;
     operations.presentation.context=o;operations.presentation.music=music;operations.presentation.listener=listener;
     operations.presentation.system_movie=system_movie;
     operations.presentation.cinematics=o->cinematics;

@@ -20,10 +20,13 @@ typedef struct frontend_qc_unified_player_receipt {
     qa_unified_session_player player;
     frontend_qc_camera_receipt camera;
     application_unified_player_camera player_camera;
+    qa_application_qc_client_presentation declared_vitals, declared_view;
+    frontend_qc_camera_receipt declared_receipt;
+    qa_application_camera_view declared_camera;
     application_unified_player_external external;
 } frontend_qc_unified_player_receipt;
 /* The output owner retains this receipt through synchronous player/output
- * capture. A non-QC physical Source has present=false, without an override. */
+ * capture. present=false means no actual QC decoder or declared output. */
 bool frontend_qc_messages_unified_player_read(const frontend_qc_messages *,qa_application *,
     const application_unified_source *,qa_net_client_id,const qa_unified_session_player *,
     frontend_qc_unified_player_receipt *,bool *present,qa_error *);

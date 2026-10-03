@@ -1,7 +1,7 @@
 #ifndef QA_FRONTEND_REMOTE_UNIFIED_RENDER_H
 #define QA_FRONTEND_REMOTE_UNIFIED_RENDER_H
 #include "remote_unified_media.h"
-#include "qa/ui.h"
+#include "qa/hud.h"
 #include "remote_unified_prediction.h"
 typedef struct frontend_unified_render frontend_unified_render;
 typedef struct frontend_unified_render_equipment {
@@ -20,6 +20,7 @@ bool frontend_unified_render_equipment_read(const frontend_unified_render *,qa_a
 typedef struct frontend_unified_render_children {
     void *context;
     bool (*camera)(void *,qa_scene_view *,float *source_fov,bool *owned,qa_error *);
+    bool (*status_replacement)(void *,bool *,qa_error *);
     bool (*source_model)(void *,qa_actor_id,uint32_t provider,const char *instance,bool *owned,qa_error *);
     bool (*equipment_model)(void *,qa_actor_id,uint32_t provider,const char *instance,bool slot,bool *owned,qa_error *);
     bool (*view_origin)(void *,qa_actor_id,qa_vec3,float player_fov,qa_error *);
@@ -44,6 +45,9 @@ typedef struct frontend_unified_render_children {
  * bindings. No local application world or player state is observed. */
 bool frontend_unified_render_create(qa_frontend *, frontend_remote_unified *,
     frontend_unified_media *, const qa_unified_document *, frontend_unified_render **, qa_error *);
+/* Reads declared QC values from the existing received FRAME for its full player. */
+bool frontend_unified_render_client_presentation_read(const frontend_unified_render *,qa_actor_id,
+    qa_application_camera_view *,qa_hud_value vitals[2],bool *has_view,bool *has_vitals,qa_error *);
 bool frontend_unified_render_draw(frontend_unified_render *,
     const frontend_unified_prediction_view *, const frontend_unified_render_children *,
     float stereo, qa_audio_listener *, qa_error *);

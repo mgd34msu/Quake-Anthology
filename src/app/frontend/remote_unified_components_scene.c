@@ -332,6 +332,18 @@ bool frontend_unified_components_world(frontend_unified_components *o,const qa_s
     }
     return true;
 }
+bool frontend_unified_components_status_replacement(const frontend_unified_components *o,bool *out,qa_error *e)
+{
+    if(!out || !frontend_unified_components_current(o) || !frontend_unified_components_idle(o))
+        return q3remote_component_fail(e,QA_ERROR_ARGUMENT,"Component status requires its actual returned owners");
+    *out=false;
+    for(size_t i=0;i<o->count;++i) {
+        const remote_component *r=o->rows[i];
+        if(r->scene && r->frame && r->profile->has_hud && r->profile->replace_status)*out=true;
+    }
+    return true;
+}
+
 bool frontend_unified_components_hud(frontend_unified_components *o,qa_ui *ui,qa_scene_rect viewport,qa_scene_frame *frame,qa_error *e)
 {
     (void)ui; (void)viewport;

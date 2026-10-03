@@ -57,6 +57,7 @@ bool frontend_unified_components_assets_decode(const frontend_unified_components
     qa_q3_presentation_assets **,qa_error *);
 bool frontend_unified_components_world(frontend_unified_components *,const qa_scene_view *,
     const qa_scene_world_input *,qa_scene_frame *,qa_error *);
+bool frontend_unified_components_status_replacement(const frontend_unified_components *,bool *,qa_error *);
 bool frontend_unified_components_hud(frontend_unified_components *,qa_ui *,qa_scene_rect,qa_scene_frame *,qa_error *);
 bool frontend_unified_components_pictures(frontend_unified_components *,qa_q3_presentation *,qa_scene_frame *,qa_error *);
 bool frontend_unified_components_current(const frontend_unified_components *);

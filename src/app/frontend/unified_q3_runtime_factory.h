@@ -35,6 +35,8 @@ typedef struct frontend_unified_q3_runtime_factory_options {
      * equipment output. These callbacks never infer ownership from a bank. */
     q3n_player_fx_compiled_backend composition;
     bool (*view_replacement)(void *,const q3n_frame *,const qa_q3_player *,bool *,qa_error *);
+    bool (*camera_override)(void *,const q3n_frame *,qa_application_camera_view *,bool *,qa_error *);
+    bool (*status_replacement)(void *,const q3n_compiled_frame *,bool *,qa_error *);
 } frontend_unified_q3_runtime_factory_options;
 
 bool frontend_unified_q3_runtime_factory_create(const frontend_unified_q3_runtime_factory_options *,

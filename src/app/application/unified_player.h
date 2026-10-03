@@ -14,12 +14,16 @@ typedef struct application_unified_player_camera {
 
 /* The actual recipient decoder supplies its full-generation camera and optional
  * received STAT3 ammo override. current proves that retained decoder receipt;
- * declared weapons and timers are read from the physical Source below. */
+ * declared weapons and timers are read from the physical Source below.
+ * Declared client presentation borrows the first actual configured QC output,
+ * independently of the physical Source family. */
 typedef struct application_unified_player_external {
     void *context;
     bool (*current)(void *, qa_application *, const application_unified_source *,
         qa_net_client_id, const qa_unified_session_player *);
     const application_unified_player_camera *camera;
+    const qa_application_qc_client_presentation *declared_vitals, *declared_view;
+    const qa_application_camera_view *declared_camera;
     int32_t qc_ammo;
     bool has_qc_ammo;
 } application_unified_player_external;

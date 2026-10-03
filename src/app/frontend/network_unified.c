@@ -304,17 +304,14 @@ bool frontend_network_unified_publish(frontend_network_unified *owner,
             application_unified_output_external observed = external ? *external : (application_unified_output_external){0};
             const application_unified_output_external *actual_external = external;
             if (peer->server->admitted && peer->server->preparing_frame && !peer->server->pending_capture) {
-                qa_application_qc_message_source qc; bool found = false;
-                okay = qa_application_qc_message_source_read(owner->options.frontend->application,
-                    source.owner, &qc, &found, error);
-                if (okay && found) {
-                    qa_unified_session_player player; bool present = false;
-                    okay = application_unified_player_read(owner->options.frontend->application,
-                        peer->client, peer->binding.seat, &player, error) &&
-                        frontend_qc_messages_unified_player_read(owner->options.frontend->qc_messages,
-                            owner->options.frontend->application, &source, peer->client, &player,
-                            &receipt, &present, error) && present;
-                    if (okay && external && external->player)
+                qa_unified_session_player player; bool present = false;
+                okay = application_unified_player_read(owner->options.frontend->application,
+                    peer->client, peer->binding.seat, &player, error) &&
+                    frontend_qc_messages_unified_player_read(owner->options.frontend->qc_messages,
+                        owner->options.frontend->application, &source, peer->client, &player,
+                        &receipt, &present, error);
+                if (okay && present) {
+                    if (external && external->player)
                         okay = fail(error, "Unified output has competing actual QC decoder receipts");
                     if (okay) {
                         observed.context = &receipts; observed.current = output_receipts_current;

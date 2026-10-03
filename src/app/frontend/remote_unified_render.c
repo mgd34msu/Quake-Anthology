@@ -76,14 +76,76 @@ static bool word(const qa_unified_document *d, qa_json_id id, uint32_t *out, qa_
         return frontend_unified_fail(e, QA_ERROR_FORMAT, "Unified render index exceeds its native domain");
     *out=(uint32_t)v; return true;
 }
+static bool render_frame_current(const frontend_unified_render *);
+static bool presentation_source(const frontend_unified_render *r,qa_json_id value,qa_error *e)
+{
+    const qa_json_document *j=qa_unified_document_json(r->frame);
+    qa_json_id source=field(j,value,"source"); uint32_t provider;
+    if(qa_json_type(j,value)!=QA_JSON_OBJECT || qa_json_type(j,source)!=QA_JSON_OBJECT ||
+        !word(r->frame,field(j,source,"provider"),&provider,e) || !provider)return false;
+    const qa_executable_recipe *recipe=frontend_remote_unified_recipe(r->replica);
+    for(size_t i=0;i<qa_executable_recipe_provider_count(recipe);++i) {
+        const qa_recipe_provider *row=qa_executable_recipe_provider(recipe,i);
+        if(row->source_owner==provider && row->selection.runtime==QA_PROGRAM_QUAKEC && row->declaration &&
+            qa_json_string_equal(j,field(j,source,"instance"),row->selection.instance))return true;
+    }
+    return frontend_unified_fail(e,QA_ERROR_FORMAT,"Declared QC output lacks its admitted Source identity");
+}
+static bool client_presentation_read(const frontend_unified_render *r,qa_actor_id actor,
+    qa_application_camera_view *camera,qa_hud_value vitals[2],bool *has_view,bool *has_vitals,qa_error *e)
+{
+    if(!r || !r->frame || !camera || !vitals || !has_view || !has_vitals)return false;
+    *has_view=*has_vitals=false;
+    const qa_json_document *j=qa_unified_document_json(r->frame);
+    qa_json_id value=field(j,field(j,qa_unified_document_root(r->frame),"player"),"clientPresentation");
+    if(value==QA_JSON_NONE)return true;
+    qa_json_id recipient=field(j,value,"recipient");uint64_t slot,generation;qa_actor_id actual;
+    if(qa_json_type(j,value)!=QA_JSON_OBJECT || qa_json_type(j,recipient)!=QA_JSON_OBJECT ||
+        !qa_json_u64(j,field(j,recipient,"slot"),&slot,e) || slot>UINT32_MAX ||
+        !qa_json_u64(j,field(j,recipient,"generation"),&generation,e) ||
+        !frontend_remote_unified_actor(r->replica,(uint32_t)slot,generation,&actual,e) ||
+        !qa_actor_id_equal(actual,actor))
+        return frontend_unified_fail(e,QA_ERROR_FORMAT,"Declared QC output changed its full received player");
+    qa_json_id hud=field(j,value,"hud"),view=field(j,value,"view");
+    if(hud==QA_JSON_NONE || view==QA_JSON_NONE)
+        return frontend_unified_fail(e,QA_ERROR_FORMAT,"Declared QC output omits its HUD or view admission");
+    if(qa_json_type(j,hud)!=QA_JSON_NULL) {
+        double health,armor;
+        if(!presentation_source(r,hud,e) || !scalar(r->frame,field(j,hud,"health"),&health,e) ||
+            !scalar(r->frame,field(j,hud,"armor"),&armor,e))return false;
+        vitals[0]=(qa_hud_value){.label="Health",.value=health,.warning=health<=25};
+        vitals[1]=(qa_hud_value){.label="Armor",.value=armor}; *has_vitals=true;
+    }
+    if(qa_json_type(j,view)!=QA_JSON_NULL) {
+        qa_application_camera_view v={.actor=actor,.cutscene=true};
+        if(!presentation_source(r,view,e) || !vector(r->frame,field(j,view,"origin"),&v.origin,e) ||
+            !vector(r->frame,field(j,view,"angles"),&v.angles,e) ||
+            !real(r->frame,field(j,view,"viewHeight"),&v.view_offset.z,e))return false;
+        v.view_height=v.view_offset.z; *camera=v; *has_view=true;
+    }
+    return true;
+}
+bool frontend_unified_render_client_presentation_read(const frontend_unified_render *r,qa_actor_id actor,
+    qa_application_camera_view *camera,qa_hud_value vitals[2],bool *has_view,bool *has_vitals,qa_error *e)
+{
+    qa_actor_id player;uint32_t slot;
+    return r && frontend_remote_unified_current(r->replica,e) && render_frame_current(r) &&
+        frontend_remote_unified_player(r->replica,&player,&slot) && qa_actor_id_equal(actor,player) &&
+        client_presentation_read(r,actor,camera,vitals,has_view,has_vitals,e);
+}
+
 static bool hud_read(void *context, const qa_hud_frame *frame, qa_hud_data *out, qa_error *error)
 {
     frontend_unified_render *r=context;
     const frontend_remote_unified_domain *d=frontend_remote_unified_domain_read(r->replica);
     if (!r->busy || !d || frame->seat!=d->physical_seat)
         return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Unified HUD changed its received physical seat");
-    *out=(qa_hud_data){.vitals=r->vitals,.vital_count=r->ammo_label?3:2,.source_vitals=true,
+    *out=(qa_hud_data){.vitals=r->vitals,.vital_count=frame->source_status_native?0:r->ammo_label?3:2,.source_vitals=true,
         .crosshair_visible=true,.crosshair_color={1,1,1,1}};
+    qa_application_camera_view camera;bool has_view=false,has_vitals=false;
+    if(!frontend_unified_render_client_presentation_read(r,frame->actor,&camera,out->source_values,
+        &has_view,&has_vitals,error))return false;
+    if(has_vitals && !frame->source_status_native) {out->vitals=out->source_values;out->vital_count=2;}
     return true;
 }
 static bool model_source_read(frontend_unified_render *r,qa_json_id id,unified_render_model *m,qa_error *e)
@@ -226,6 +288,12 @@ bool frontend_unified_render_create(qa_frontend *f,frontend_remote_unified *repl
     if (okay && kick!=QA_JSON_NONE) okay=vector(frame,kick,&r->kick,e);
     if (okay && fov!=QA_JSON_NONE) { okay=scalar(frame,fov,&r->field_of_view,e); r->explicit_fov=true; }
     if (okay) okay=player_blend_read(r,e);
+    if (okay) {
+        qa_actor_id viewer;uint32_t slot;qa_application_camera_view camera;
+        qa_hud_value vitals[2];bool has_view=false,has_vitals=false;
+        okay=frontend_remote_unified_player(replica,&viewer,&slot) &&
+            client_presentation_read(r,viewer,&camera,vitals,&has_view,&has_vitals,e);
+    }
     if (okay) okay=scalar(frame,field(j,ui,"health"),&r->vitals[0].value,e);
     r->vitals[0].label="Health"; r->vitals[0].warning=r->vitals[0].value<=25;
     r->vitals[1].label="Armor";
@@ -259,7 +327,6 @@ typedef struct unified_scene_context {
     qa_actor_id player;
     bool predicting;
 } unified_scene_context;
-static bool render_frame_current(const frontend_unified_render *);
 static bool unified_scene_current(void *context)
 {
     unified_scene_context *c=context; frontend_unified_render *r=c->renderer;
@@ -409,9 +476,12 @@ bool frontend_unified_render_draw(frontend_unified_render *r,const frontend_unif
     qa_scene_view view={.viewport=frontend_viewport(r->frontend,d->physical_seat),.origin=r->origin,
         .clear_depth=true,.depth=1,.seat=d->physical_seat};
     qa_vec3 angles=r->angles; float height=r->height;
+    qa_application_camera_view declared;qa_hud_value vitals[2];bool has_view=false,has_vitals=false;
+    if(!frontend_unified_render_client_presentation_read(r,player,&declared,vitals,&has_view,&has_vitals,e))return false;
     bool predicting=predicted && (predicted->status==FRONTEND_UNIFIED_PREDICTION_ACTIVE ||
         predicted->status==FRONTEND_UNIFIED_PREDICTION_DISABLED);
-    if (predicting) {
+    if (has_view) {view.origin=declared.origin;angles=declared.angles;height=declared.view_offset.z;}
+    if (predicting && !has_view) {
         if (!qa_actor_id_equal(predicted->actor,player)) return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Unified predicted camera changed player");
         view.origin=qa_vec_add(view.origin,predicted->origin_shift); angles=predicted->view_angles;
         if (!r->source_view_offset) height=predicted->view_height;
@@ -422,7 +492,7 @@ bool frontend_unified_render_draw(frontend_unified_render *r,const frontend_unif
         !children->view_origin(children->context,player,view.origin,(float)fov,e)) return false;
     view.origin.z+=height;
     frontend_camera_axes(angles,view.axis); qa_vec3 local[3],basis[3]; memcpy(basis,view.axis,sizeof(basis));
-    frontend_camera_axes(r->kick,local);
+    frontend_camera_axes(has_view?qa_v3(0,0,0):r->kick,local);
     for (unsigned i=0;i<3;++i) view.axis[i]=qa_vec_add(qa_vec_add(qa_vec_scale(basis[0],local[i].x),
         qa_vec_scale(basis[1],local[i].y)),qa_vec_scale(basis[2],local[i].z));
     if (!(fov>0 && fov<180) || !view.viewport.width || !view.viewport.height)
@@ -481,8 +551,12 @@ bool frontend_unified_render_draw(frontend_unified_render *r,const frontend_unif
         okay=children->player_blend(children->context,player,r->has_blend,&r->blend,
             r->has_damage_blend,&r->damage_blend,view.viewport,&r->frontend->frame,e) &&
             unified_scene_current(&context);
+    bool source_status=false;
+    if(okay && children && children->status_replacement)
+        okay=children->status_replacement(children->context,&source_status,e);
     if (okay) okay=qa_hud_draw(r->hud,&(qa_hud_frame){.seat=d->physical_seat,.actor=player,
-        .time_ns=(uint64_t)(r->seconds*1e9),.viewport=view.viewport,.safe_area=view.viewport,.scale=1,.visible=true},&r->frontend->frame,e);
+        .time_ns=(uint64_t)(r->seconds*1e9),.viewport=view.viewport,.safe_area=view.viewport,.scale=1,.visible=true,
+        .source_status_native=source_status},&r->frontend->frame,e);
     if (okay && children && children->hud)
         okay=children->hud(children->context,r->frontend->seats[d->physical_seat].ui,view.viewport,&r->frontend->frame,e);
     if (okay) { *listener=(qa_audio_listener){.seat=d->physical_seat,.actor=player.slot,.origin=view.origin,.gain=1};

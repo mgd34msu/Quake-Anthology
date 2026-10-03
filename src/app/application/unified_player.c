@@ -583,6 +583,40 @@ static bool view(application_unified_json *j, player_observation *o, qa_error *e
     return text(j, "}", e) && current(o, e);
 }
 
+static bool presentation_owner(application_unified_json *j,
+    const qa_application_qc_client_presentation *frame,qa_error *e)
+{
+    return text(j,"{\"provider\":",e) && application_unified_json_natural(j,frame->source.provider,e) &&
+        text(j,",\"instance\":",e) && string(j,frame->source.descriptor->selection.instance,e) && text(j,"}",e);
+}
+static bool client_presentation(application_unified_json *j,player_observation *o,qa_error *e)
+{
+    const application_unified_player_external *external=o->external;
+    if(!external || (!external->declared_vitals && !external->declared_camera))return true;
+    if(!text(j,",\"clientPresentation\":{\"recipient\":",e) ||
+        !application_unified_json_actor(j,o->player->actor,e) || !text(j,",\"hud\":",e))return false;
+    const qa_application_qc_client_presentation *v=external->declared_vitals;
+    if(v) {
+        if(!qa_actor_id_equal(v->recipient,o->player->actor) || !v->vitals ||
+            !qa_application_qc_client_presentation_current(o->app,v) || !text(j,"{\"source\":",e) ||
+            !presentation_owner(j,v,e) || !text(j,",\"health\":",e) || !number(j,v->health,e) ||
+            !text(j,",\"armor\":",e) || !number(j,v->armor,e) || !text(j,"}",e))return false;
+    } else if(!text(j,"null",e))return false;
+    if(!text(j,",\"view\":",e))return false;
+    const qa_application_camera_view *camera=external->declared_camera;
+    if(camera) {
+        const qa_application_qc_client_presentation *source=external->declared_view;
+        if(!source || !source->view || !qa_actor_id_equal(camera->actor,o->player->actor) ||
+            !qa_actor_id_equal(source->recipient,o->player->actor) ||
+            !qa_application_qc_client_presentation_current(o->app,source))return false;
+        qa_vec3 origin=qa_vec_add(camera->origin,qa_v3(camera->view_offset.x,camera->view_offset.y,0));
+        if(!text(j,"{\"source\":",e) || !presentation_owner(j,source,e) || !text(j,",\"origin\":",e) ||
+            !vector(j,origin,e) || !text(j,",\"angles\":",e) || !vector(j,camera->angles,e) ||
+            !text(j,",\"viewHeight\":",e) || !number(j,camera->view_offset.z,e) || !text(j,"}",e))return false;
+    } else if(!text(j,"null",e))return false;
+    return text(j,"}",e) && current(o,e);
+}
+
 static bool native_inventory_presentation(application_unified_json *j,player_observation *o,
     const application_native_q2_inventory_presentation *p,qa_error *e)
 {
@@ -1048,7 +1082,7 @@ bool application_unified_player_values(qa_application *app, const application_un
         }
     }
     if (ok) ok = text(&json, "{\"view\":", error) && view(&json, &o, error) && text(&json, ",\"ui\":", error) &&
-        ui(&json, &o, error) && text(&json, "}", error) && current(&o, error);
+        ui(&json, &o, error) && client_presentation(&json, &o, error) && text(&json, "}", error) && current(&o, error);
     qa_unified_document *document = NULL;
     if (ok) ok = qa_unified_document_create(QA_UNIFIED_CHECKPOINT,
         (qa_bytes){json.bytes.data, json.bytes.size}, &document, error) && current(&o, error);

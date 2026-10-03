@@ -456,6 +456,8 @@ static bool frame_settings(void *context,const q3n_compiled_frame *f,bool loadin
     if(!cvar(o,"cg_animSpeed",&cache,e) || !info_settings(o,loading,&v.clients,e) ||
         !frontend_unified_q3_client_local_server_read(o->options.client,&v.hud.local_server,e))return false;
     v.animations_disabled=cache.number==0;v.player_fx.animations_disabled=v.animations_disabled;
+    if(o->options.operations.frame_settings &&
+        !o->options.operations.frame_settings(o->options.operations.context,f,loading,stereo,&v,e))return false;
     if(!q3n_compiled_frame_current(f) || !frontend_unified_q3_runtime_services_current(o))return false;
     *out=v;return true;
 }
