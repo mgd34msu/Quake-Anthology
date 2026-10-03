@@ -102,7 +102,7 @@ bool qa_scene_world_options_read(const qa_scene_world *world, qa_scene_world_opt
 struct qa_scene_world_capture { qa_scene_world *world; };
 bool qa_scene_world_capture_begin(const qa_scene_world *world, qa_scene_world_capture **out, qa_error *error)
 {
-    if (!out || *out || !qa_scene_world_idle(world))
+    if (!out || *out || !qa_scene_world_idle(world) || world->restore_pending)
         return world_error(error,QA_ERROR_ARGUMENT,"World aggregate capture requires an idle actual owner and empty token");
     qa_scene_world_capture *capture=malloc(sizeof(*capture));
     if (!capture) return world_error(error,QA_ERROR_MEMORY,"Retaining the world owner capture lease");
@@ -695,7 +695,7 @@ bool qa_scene_world_q1_contents(const qa_scene_world *world,qa_vec3 origin,int32
 bool qa_scene_world_source_begin_scene(qa_scene_world *world,
     const qa_scene_world_input *input, qa_error *error)
 {
-    if (!qa_scene_world_idle(world) || !input || !input->source_order ||
+    if (!qa_scene_world_idle(world) || world->restore_pending || !input || !input->source_order ||
         (input->visible_area_bytes && !input->visible_areas) ||
         input->visible_area_bytes > sizeof(world->source_area_mask))
         return world_error(error, QA_ERROR_ARGUMENT, "Source scene area mask requires its idle actual world");
@@ -915,7 +915,7 @@ static bool source_view_current(const qa_scene_source_world_view *view,
 bool qa_scene_world_source_prepare_view(qa_scene_world *world, qa_scene_world_input *input,
     qa_scene_frame *frame, qa_error *error)
 {
-    if (!qa_scene_world_idle(world) || !input || !frame || !input->source_order)
+    if (!qa_scene_world_idle(world) || world->restore_pending || !input || !frame || !input->source_order)
         return world_error(error, QA_ERROR_ARGUMENT, "Source visibility preparation requires its actual idle world and frame");
     if (!valid_input(world, input, error)) return false;
     qa_scene_source_world_view *view = qa_arena_alloc(&frame->storage, sizeof(*view),
@@ -994,7 +994,7 @@ static bool valid_input(const qa_scene_world *world, const qa_scene_world_input 
 {
     if (world == NULL || input == NULL)
         return world_error(error, QA_ERROR_ARGUMENT, "world submission requires world and input");
-    if (world->checkpoint_active || world->capture || world->image_policy)
+    if (world->restore_pending || world->checkpoint_active || world->capture || world->image_policy)
         return world_error(error, QA_ERROR_ARGUMENT, "world continuation callback is active");
     if (!qa_vec_finite(input->view.origin) || !isfinite(input->seconds)
         || input->legacy_phase < QA_LEGACY_WORLD_ALL || input->legacy_phase > QA_LEGACY_WORLD_WATER
@@ -1563,7 +1563,7 @@ static bool transaction_end(qa_scene_world *world, qa_scene_frame *frame,
 bool qa_scene_world_submit(qa_scene_world *world, const qa_scene_world_input *input,
                            qa_scene_frame *frame, qa_error *error)
 {
-    if (world == NULL || frame == NULL || world->checkpoint_active || world->capture || world->image_policy)
+    if (world == NULL || frame == NULL || world->restore_pending || world->checkpoint_active || world->capture || world->image_policy)
         return world_error(error, QA_ERROR_ARGUMENT, "world submission requires world and frame");
     world_transaction start = transaction_begin(world, frame);
     return transaction_end(world, frame, &start, world_submit(world, input, frame, error));
@@ -1628,7 +1628,7 @@ bool qa_scene_world_submit_model(qa_scene_world *world, uint32_t model,
                                  const qa_model_transform *transform, const qa_scene_world_input *input,
                                  uint32_t entity, qa_scene_vec4 color, qa_scene_frame *frame, qa_error *error)
 {
-    if (world == NULL || frame == NULL || world->checkpoint_active || world->capture || world->image_policy)
+    if (world == NULL || frame == NULL || world->restore_pending || world->checkpoint_active || world->capture || world->image_policy)
         return world_error(error, QA_ERROR_ARGUMENT, "inline model submission requires world and frame");
     world_transaction start = transaction_begin(world, frame);
     return transaction_end(world, frame, &start,
@@ -1696,7 +1696,7 @@ bool qa_scene_world_shadow_caster(qa_scene_world *world, uint32_t model_index,
                                   const qa_scene_world_input *input, qa_scene_frame *frame,
                                   qa_scene_shadow_caster *out, qa_error *error)
 {
-    if (!world || !frame || world->checkpoint_active || world->capture || world->image_policy)
+    if (!world || !frame || world->restore_pending || world->checkpoint_active || world->capture || world->image_policy)
         return world_error(error, QA_ERROR_ARGUMENT, "brush shadow submission requires idle continuation owners");
     world_transaction start = transaction_begin(world, frame);
     return transaction_end(world, frame, &start,

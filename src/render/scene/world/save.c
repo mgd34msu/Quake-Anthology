@@ -246,6 +246,15 @@ static bool same_lightmap(const qa_scene_image *current, const qa_scene_image *s
     }
     return true;
 }
+static bool admission_ready(const qa_scene_world *world)
+{
+    if (world->admission_frame && world->admission_sequence==world->admission_frame->sequence) {
+        size_t count=world->admission_frame->command_count;
+        if (world->admission_view>count || (world->admission_view &&
+            world->admission_frame->commands[world->admission_view-1].kind!=QA_SCENE_COMMAND_VIEW)) return false;
+    }
+    return true;
+}
 static bool fields(qa_source_save_io *io, const qa_scene_world *world, qa_scene_world *saved,
     q3_data *q3, const qa_scene_world_checkpoint_refs *refs, qa_bytes *lighting)
 {
@@ -287,11 +296,7 @@ static bool fields(qa_source_save_io *io, const qa_scene_world *world, qa_scene_
     }
     if (!qa_source_save_count(io,&saved->pvs_size,world->pvs_capacity) || !qa_source_save_count(io,&saved->visible_count,world->surface_count) ||
         !qa_source_save_bytes(io,saved->pvs,world->pvs_capacity) || !qa_source_save_bytes(io,saved->secondary_pvs,world->pvs_capacity)) return false;
-    if (saved->admission_frame && saved->admission_sequence==saved->admission_frame->sequence) {
-        size_t count=saved->admission_frame->command_count;
-        if (saved->admission_view>count || (saved->admission_view &&
-            saved->admission_frame->commands[saved->admission_view-1].kind!=QA_SCENE_COMMAND_VIEW)) return false;
-    }
+    if (!reading && !admission_ready(saved)) return false;
     for (size_t i=0;i<world->surface_count;++i) {
         if (!qa_source_save_u32(io,&saved->surface_marks[i]) || saved->surface_marks[i]>saved->visibility_generation ||
             !qa_source_save_u32(io,&saved->surface_lights[i]) || !qa_source_save_u64(io,&saved->admitted_surfaces[i]) ||
@@ -321,7 +326,7 @@ static bool fields(qa_source_save_io *io, const qa_scene_world *world, qa_scene_
 }
 static bool ready(const qa_scene_world *world, const qa_scene_world_checkpoint_refs *refs, bool leased, qa_error *error)
 {
-    return (world && !world->transaction_depth && !world->admission_change_count && world->checkpoint_active==leased &&
+    return (world && !world->restore_pending && !world->transaction_depth && !world->admission_change_count && world->checkpoint_active==leased &&
         refs && refs->images.encode && refs->images.decode &&
         refs->material_encode && refs->material_decode && refs->frame_encode && refs->frame_decode &&
         world->resources==qa_material_library_resource_owner(world->materials) && qa_material_library_order_ready(world->materials) &&
@@ -415,8 +420,20 @@ bool qa_scene_world_restore(qa_scene_world *world, qa_bytes bytes, const qa_scen
     world->checkpoint_active=true;
     bool ok=fields(&io,world,&saved,&q3,refs,&lighting) && qa_source_save_finish(&io,NULL);
     if (ok && world->bsp.family!=QA_BSP_Q3) ok=qaw_lighting_restore_locked(world,lighting,&refs->images,error);
-    if (ok) publish(world,&saved,&q3);
+    if (ok) {
+        publish(world,&saved,&q3);
+        world->restore_pending=world->admission_frame!=NULL;
+    }
     else if (error && error->code==QA_OK) failure(error,QA_ERROR_FORMAT,"Saved scene world differs from its qualified geometry or owners");
     discard(world,&saved,&q3); qa_source_save_dispose(&io); world->checkpoint_active=false; return ok;
+}
+bool qa_scene_world_restore_finish(qa_scene_world *world, qa_error *error)
+{
+    if (!qa_scene_world_idle(world))
+        return failure(error,QA_ERROR_ARGUMENT,"World restore finish requires its uncaptured returned owner");
+    if (!admission_ready(world))
+        return failure(error,QA_ERROR_FORMAT,"Saved world admission cursor differs from its restored frame");
+    world->restore_pending=false;
+    return true;
 }
 #undef FIELD

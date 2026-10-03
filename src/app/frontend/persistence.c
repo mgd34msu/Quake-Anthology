@@ -1302,6 +1302,7 @@ static bool import_components(frontend_persistence *operation, qa_error *error)
         frontend_remote_q3_graph_restore_children(operation->remote_graph,error) &&
         frontend_remote_q3_graph_restore_modules(operation->remote_graph,&modules,error) &&
         frontend_remote_q3_graph_restore_frames(operation->remote_graph,error) &&
+        frontend_world_inventory_finish_restore(operation->roots,error) &&
         frontend_remote_q3_graph_finish_modules(operation->remote_graph,&modules,error) &&
         frontend_remote_q3_graph_finish_sources(operation->remote_graph,error) &&
         frontend_source_worlds_rebind_restored(f,error) &&

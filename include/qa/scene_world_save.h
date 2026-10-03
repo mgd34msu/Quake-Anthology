@@ -31,6 +31,10 @@ typedef struct qa_scene_world_checkpoint_refs {
  * geometry and are mapped by the enclosing frame/content dictionary. */
 bool qa_scene_world_checkpoint(const qa_scene_world *, const qa_scene_world_checkpoint_refs *, qa_buffer *, qa_error *);
 bool qa_scene_world_restore(qa_scene_world *, qa_bytes, const qa_scene_world_checkpoint_refs *, qa_error *);
+/* Referenced frame allocations may precede their command imports. Complete
+ * those imports before finishing the world's saved admission cursor. Pending
+ * worlds permit dictionary metadata reads, but no submission or capture. */
+bool qa_scene_world_restore_finish(qa_scene_world *, qa_error *);
 typedef enum qa_scene_world_identity_kind {
     QA_SCENE_WORLD_IDENTITY_WORLD,
     QA_SCENE_WORLD_IDENTITY_MODEL,

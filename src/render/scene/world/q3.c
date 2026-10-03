@@ -397,7 +397,8 @@ static bool source_sky_end(void *context, const qa_material *original, const qa_
 bool qa_scene_world_source_sky_context(const qa_scene_world *world, qa_material_library *materials,
     const qa_scene_world_input *input, qa_scene_frame *frame, qa_material_context *context, qa_error *error)
 {
-    if (!input || !frame || !context || !materials || (world && !qa_scene_world_idle(world))) {
+    if (!input || !frame || !context || !materials ||
+        (world && (!qa_scene_world_idle(world) || world->restore_pending))) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Source sky requires its retained world/material and actual frame"); return false;
     }
     qaw_source_sky *sky = qa_arena_alloc(&frame->storage, sizeof(*sky), _Alignof(qaw_source_sky), error);
@@ -523,7 +524,7 @@ bool qa_scene_world_source_sky_submit(const qa_scene_world *world, const qa_mate
     float far_clip, qa_scene_frame *frame, qa_error *error)
 {
     if (!material || !material->library || !context || !context->source_scratch ||
-        (world && !qa_scene_world_observation_ready(world))) {
+        (world && (!qa_scene_world_observation_ready(world) || world->restore_pending))) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Source sky lost its actual world or registered shader owner");
         return false;
     }

@@ -54,7 +54,7 @@ struct frontend_world_inventory {
     world_row *worlds;
     model_row *models_roots;
     size_t world_count, model_count;
-    bool restoring;
+    bool restoring, frames_restored;
 };
 typedef struct world_scope {
     frontend_world_inventory *inventory;
@@ -842,12 +842,22 @@ void frontend_scene_root_adopt(void *context,uint64_t key)
 }
 bool frontend_world_inventory_ready(const frontend_world_inventory *inventory,qa_error *error)
 {
-    if (!inventory || !inventory->restoring)
+    if (!inventory || !inventory->restoring || !inventory->frames_restored)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Scene adoption readiness requires its actual imported root inventory");
     for (size_t i=0;i<inventory->world_count;++i)
         if (!inventory->worlds[i].adopted) return frontend_fail(error,QA_ERROR_FORMAT,"Imported world lacks its actual destructor consumer");
     for (size_t i=0;i<inventory->model_count;++i)
         if (!inventory->models_roots[i].adopted) return frontend_fail(error,QA_ERROR_FORMAT,"Imported scene model lacks its actual destructor consumer");
+    return true;
+}
+bool frontend_world_inventory_finish_restore(frontend_world_inventory *inventory,qa_error *error)
+{
+    if (!inventory || !inventory->restoring || !inventory->frontend->source_restoring ||
+        inventory->frontend->stepping || inventory->frontend->capture)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"World frame completion requires its actual isolated root inventory");
+    for (size_t i=0;i<inventory->world_count;++i)
+        if (!qa_scene_world_restore_finish((qa_scene_world *)inventory->worlds[i].source.world,error)) return false;
+    inventory->frames_restored=true;
     return true;
 }
 bool frontend_source_roots_attach_restored(qa_frontend *f,frontend_world_inventory *inventory,qa_error *error)

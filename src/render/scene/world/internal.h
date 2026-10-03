@@ -84,6 +84,7 @@ struct qa_scene_world {
     uint32_t cluster_count;
     bool sky_drawn;
     bool checkpoint_active;
+    bool restore_pending;
     struct qa_scene_world_capture *capture;
     qa_scene_world_image_policy *image_policy;
 };

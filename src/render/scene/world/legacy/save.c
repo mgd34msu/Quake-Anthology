@@ -278,6 +278,8 @@ bool qaw_lighting_checkpoint_locked(const qa_scene_world *world, const qa_scene_
 bool qa_scene_world_lighting_checkpoint(const qa_scene_world *world, const qa_scene_world_image_refs *refs, qa_buffer *out, qa_error *error)
 {
     if (!out || !ready(world,refs,error)) return false;
+    if (world->restore_pending)
+        return failure(error,QA_ERROR_ARGUMENT,"Lighting capture requires completed world frame restoration");
     qa_scene_world *owner=(qa_scene_world *)world;
     owner->checkpoint_active=true;
     bool ok=qaw_lighting_checkpoint_locked(world,refs,out,error);

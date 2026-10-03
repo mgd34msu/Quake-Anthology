@@ -75,6 +75,7 @@ bool frontend_world_inventory_checkpoint(const frontend_world_inventory *, qa_bu
  * images, materials and the stable frame address outlive every root. */
 bool frontend_world_inventory_restore(qa_frontend *, frontend_model_inventory *,
     frontend_scene_namespace *, qa_bytes, frontend_world_inventory **, qa_error *);
+bool frontend_world_inventory_finish_restore(frontend_world_inventory *, qa_error *);
 void frontend_world_inventory_destroy(frontend_world_inventory *);
 size_t frontend_world_inventory_world_count(const frontend_world_inventory *);
 size_t frontend_world_inventory_model_count(const frontend_world_inventory *);
