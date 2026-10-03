@@ -382,7 +382,8 @@ static bool ordinary_model_fields(qa_source_save_io *io, q3p_model *m,
         !qa_source_save_bool(io, &m->has_lods) || !qa_source_save_bool(io, &m->owns_world) ||
         !qa_source_save_u32(io, &m->inline_model) ||
         !qa_source_save_vec3(io, &m->bounds.mins) || !qa_source_save_vec3(io, &m->bounds.maxs) ||
-        !world_fields(io, &m->world, &m->world_ordinal, r)) return false;
+        !world_fields(io, &m->world, &m->world_ordinal, r))
+        return asset_failure(io, "model header", m->inline_model, m->first_requested_path);
     if (!m->has_lods) for (unsigned i = 0; i < 3; ++i)
         if (m->lod_resources[i] || !opening_empty(&m->lod_openings[i],
             m->lod_opening_ranks[i], &m->lod_opening_orders[i])) return false;
@@ -391,9 +392,23 @@ static bool ordinary_model_fields(qa_source_save_io *io, q3p_model *m,
         if (m->has_lods || (m->owns_world != (m->resource != NULL)) ||
             qa_scene_world_resource_owner(m->world) != m->provider.images ||
             qa_scene_world_material_owner(m->world) != m->provider.materials ||
-            m->inline_model >= qa_scene_world_model_count(m->world)) return false;
+            m->inline_model >= qa_scene_world_model_count(m->world)) {
+            qa_error_set(io->error, QA_ERROR_FORMAT, io->offset,
+                "Q3 world model '%s' index %u/%zu owns %u resource %u LODs %u image owner %u material owner %u",
+                m->first_requested_path, m->inline_model, qa_scene_world_model_count(m->world),
+                m->owns_world, m->resource != NULL, m->has_lods,
+                qa_scene_world_resource_owner(m->world) == m->provider.images,
+                qa_scene_world_material_owner(m->world) == m->provider.materials);
+            return false;
+        }
         if (!m->owns_world && (m->world != a->world || !a->geometry ||
-            m->inline_model >= qa_collision_model_count(a->geometry))) return false;
+            m->inline_model >= qa_collision_model_count(a->geometry))) {
+            qa_error_set(io->error, QA_ERROR_FORMAT, io->offset,
+                "Q3 inline model '%s' index %u/%zu current world %u geometry %u",
+                m->first_requested_path, m->inline_model, qa_collision_model_count(a->geometry),
+                m->world == a->world, a->geometry != NULL);
+            return false;
+        }
     } else {
         if (!m->resource || m->owns_world || m->inline_model) return false;
         if (m->has_lods) { if (!lod_fields(io, m, r)) return false; }
