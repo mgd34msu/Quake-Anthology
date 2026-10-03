@@ -1181,15 +1181,15 @@ static bool save_state(qa_source_save_io *io, qa_equipment_state *p) {
     if(p->weapon_slot_present&&!qa_weapon_slot_state_fields(io,&p->weapon_slot))return false;
     return true;
 }
-uint32_t qa_equipment_save_version(void) { return 5; }
+static const uint32_t save_version = 5;
 static bool save_header(qa_source_save_io *io) {
     uint8_t signature[8] = {'Q', 'A', 'E', 'Q', 'U', 'I', 'P', 0};
     static const uint8_t expected[8] = {'Q', 'A', 'E', 'Q', 'U', 'I', 'P', 0};
-    uint32_t version = qa_equipment_save_version();
+    uint32_t version = save_version;
     if (!qa_source_save_bytes(io, signature, sizeof(signature)) ||
         memcmp(signature, expected, sizeof(signature))) return mode_fail(io->error, "invalid equipment save signature");
     EQUIP_FIELD(u32, version);
-    return version == qa_equipment_save_version() || mode_fail(io->error, "unsupported equipment save version");
+    return version == save_version || mode_fail(io->error, "unsupported equipment save version");
 }
 static bool save_source_fields(qa_source_save_io *io, bool *present, qa_bytes *source) {
     size_t size = source->size;

@@ -1070,7 +1070,7 @@ static bool read_saved_sections(frontend_persistence *operation, const qa_save_i
     for (size_t i=0;i<7;++i) {
         const qa_save_record *record=qa_save_image_find(image,operation->bindings[i].kind,"");
         const qa_save_owner *identity=&operation->owners[i].identity;
-        if (!record || strcmp(record->owner.schema,identity->schema) || record->owner.schema_version!=identity->schema_version ||
+        if (!record || strcmp(record->owner.schema,identity->schema) ||
             strcmp(record->owner.backend,identity->backend) || !qa_sha256_equal(&record->owner.content,&identity->content))
             return frontend_fail(error,QA_ERROR_FORMAT,"Saved external owner schema differs from its concrete frontend producer");
         if (!copy_bytes(record->payload,operation->external+i,error)) return false;
@@ -1671,9 +1671,7 @@ static bool operation_init(frontend_persistence *operation,qa_frontend *active,
     for (size_t i=0;i<7;++i) {
         operation->bindings[i]=(frontend_owner_binding){operation,kinds[i],i};
         operation->owners[i]=(qa_application_persistence_owner){
-            .identity={.kind=kinds[i],.instance="",.schema=schemas[i],.schema_version=kinds[i]==QA_SAVE_CAMPAIGN?3:
-                kinds[i]==QA_SAVE_PRESENTATION?24:
-                kinds[i]==QA_SAVE_AUDIO?10:kinds[i]==QA_SAVE_INPUT?5:kinds[i]==QA_SAVE_MEDIA?2:1,.backend=""},
+            .identity={.kind=kinds[i],.instance="",.schema=schemas[i],.backend=""},
             .context=operation->bindings+i,.capture=capture_owner,.restore=restore_owner};
     }
     size_t extra=services?services->owner_count:0;

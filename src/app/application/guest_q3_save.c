@@ -1657,7 +1657,7 @@ bool application_guest_q3_save_prepare(application_provider *provider, qa_world 
         !qa_sha256_equal(&record->owner.content, &provider->launch->identity) ||
         !record->owner.schema || strcmp(record->owner.schema,
             provider->kind == APPLICATION_PROVIDER_QVM ? "qa.q3.qvm" : "qa.q3.external-native") ||
-        record->owner.schema_version != 1 || !record->owner.backend || strcmp(record->owner.backend,
+        !record->owner.backend || strcmp(record->owner.backend,
             provider->kind == APPLICATION_PROVIDER_QVM ? "qvm" : "native-owned"))
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 restored construction requires its qualified provider record");
     qa_bytes payload = record->payload, body;

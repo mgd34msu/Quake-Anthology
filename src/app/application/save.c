@@ -387,7 +387,7 @@ static const qa_save_record *foundation_record(const qa_save_image *image,
 {
     const qa_save_record *record = qa_save_image_find(image, kind, "");
     if (record == NULL || strcmp(record->owner.schema, schema) ||
-        record->owner.schema_version != (kind == QA_SAVE_PROGRESSION ? 2u : 1u) || record->owner.backend[0] != '\0') {
+        record->owner.backend[0] != '\0') {
         application_fail(error, QA_ERROR_FORMAT, "foundation record schema or backend disagrees");
         return NULL;
     }
@@ -785,7 +785,7 @@ static application_provider *saved_provider(qa_application *app, const char *ins
 
 static bool same_owner(const qa_save_owner *a, const qa_save_owner *b)
 {
-    return a->kind == b->kind && a->schema_version == b->schema_version &&
+    return a->kind == b->kind &&
         a->instance && b->instance && !strcmp(a->instance, b->instance) &&
         a->schema && b->schema && !strcmp(a->schema, b->schema) &&
         a->backend && b->backend && !strcmp(a->backend, b->backend) &&
@@ -930,7 +930,7 @@ bool application_save_q3_product_decode(const qa_save_image *image,
     const qa_save_record *record = qa_save_image_find(image, QA_SAVE_APPLICATION, "");
     qa_bytes parts[10];
     if (!record || strcmp(record->owner.schema, "qa.application") ||
-        record->owner.schema_version != 8 || record->owner.backend[0] ||
+        record->owner.backend[0] ||
         !application_parts(record->payload, parts, error))
         return application_fail(error, QA_ERROR_FORMAT, "Saved Q3 product policy has no qualified application owner");
     return q3_product_decode(parts[6], policy, error);
@@ -941,7 +941,7 @@ bool application_save_startup_decode(const qa_save_image *image,
 {
     const qa_save_record *record = qa_save_image_find(image, QA_SAVE_APPLICATION, "");
     qa_bytes parts[10];
-    if (!record || record->owner.schema_version != 8 ||
+    if (!record ||
         !application_parts(record->payload, parts, error)) return false;
     qa_source_save_io io;
     bool okay = qa_source_save_reader(&io, NULL, parts[7], error) &&
@@ -956,7 +956,7 @@ bool application_save_sidecars_decode(const qa_save_image *image,
     const qa_save_record *record = qa_save_image_find(image, QA_SAVE_APPLICATION, "");
     qa_bytes parts[10];
     if (!app || app->map_sidecars || !record || strcmp(record->owner.schema, "qa.application") ||
-        record->owner.schema_version != 8 || record->owner.backend[0] ||
+        record->owner.backend[0] ||
         !application_parts(record->payload, parts, error))
         return application_fail(error, QA_ERROR_FORMAT, "Saved map sidecars have no genuine application owner");
     return qa_map_sidecars_create_restored(qa_application_content_graph_read(app), parts[8], &app->map_sidecars, error);
@@ -968,7 +968,7 @@ bool application_save_components_decode(const qa_save_image *image,
     const qa_save_record *record = qa_save_image_find(image, QA_SAVE_APPLICATION, "");
     qa_bytes parts[10];
     if (!out || !record || strcmp(record->owner.schema, "qa.application") ||
-        record->owner.schema_version != 8 || record->owner.backend[0] ||
+        record->owner.backend[0] ||
         !application_parts(record->payload, parts, error))
         return application_fail(error, QA_ERROR_FORMAT, "Saved components have no genuine application owner");
     *out = parts[9];
@@ -982,7 +982,7 @@ static bool application_metadata_prepare(qa_application *app,
     const qa_save_record *record = qa_save_image_find(image, QA_SAVE_APPLICATION, "");
     qa_bytes parts[10];
     if (!record || strcmp(record->owner.schema, "qa.application") ||
-        record->owner.schema_version != 8 || record->owner.backend[0] ||
+        record->owner.backend[0] ||
         !application_parts(record->payload, parts, error))
         return application_fail(error, QA_ERROR_FORMAT, "Saved application metadata has no qualified owner");
     return application_save_metadata_restore(app, parts[0], error);
@@ -1064,7 +1064,7 @@ static bool native_q3_saved_record(application_provider *provider,
     const qa_save_record *saved=qa_save_image_find(image,QA_SAVE_PROVIDER,
         provider->launch->selection.instance);
     qa_bytes bytes=saved ? saved->payload : (qa_bytes){0};
-    if (!saved || strcmp(saved->owner.schema,"qa.q3.native") || saved->owner.schema_version!=7 ||
+    if (!saved || strcmp(saved->owner.schema,"qa.q3.native") ||
         saved->owner.backend[0] || !qa_sha256_equal(&saved->owner.content,&provider->launch->identity) ||
         !bytes.data || bytes.size<32 || memcmp(bytes.data,"QAPV",4) ||
         qa_load_u32le(bytes.data+4)!=1 || qa_load_u32le(bytes.data+8)!=APPLICATION_PROVIDER_Q3 ||
@@ -1082,7 +1082,7 @@ bool application_native_q3_checkpoint_prepare(application_provider *provider,
         provider->application->operation!=APPLICATION_PERSISTING || !saved ||
         saved->owner.kind!=QA_SAVE_PROVIDER || !saved->owner.instance ||
         strcmp(saved->owner.instance,provider->launch->selection.instance) ||
-        strcmp(saved->owner.schema,"qa.q3.native") || saved->owner.schema_version!=7 ||
+        strcmp(saved->owner.schema,"qa.q3.native") ||
         saved->owner.backend[0] || !qa_sha256_equal(&saved->owner.content,&provider->launch->identity) ||
         !bytes.data || bytes.size<32 || memcmp(bytes.data,"QAPV",4) ||
         qa_load_u32le(bytes.data+4)!=1 || qa_load_u32le(bytes.data+8)!=APPLICATION_PROVIDER_Q3 ||
@@ -1345,19 +1345,6 @@ static bool persistence_inventory(application_persistence *operation, qa_applica
         }
         if (schema) {
             owner->schema = schema;
-            owner->schema_version = owner->kind == QA_SAVE_APPLICATION ? 8 :
-                                    (owner->kind == QA_SAVE_PROVIDER &&
-                                     provider->kind == APPLICATION_PROVIDER_Q1) ? 2 :
-                                    (owner->kind == QA_SAVE_PROVIDER &&
-                                     provider->kind == APPLICATION_PROVIDER_Q3) ? 7 :
-                                    (owner->kind == QA_SAVE_PROVIDER &&
-                                     provider->kind == APPLICATION_PROVIDER_NATIVE &&
-                                     provider->state.native.q2_engine) ? 2 :
-                                    owner->kind == QA_SAVE_CONTROLS ? 11 :
-                                    owner->kind == QA_SAVE_EQUIPMENT ? qa_equipment_save_version() :
-                                    owner->kind == QA_SAVE_EVENTS ? APPLICATION_EVENTS_SAVE_VERSION :
-                                    owner->kind == QA_SAVE_INVENTORY || owner->kind == QA_SAVE_PROGRESSION ||
-                                    owner->kind == QA_SAVE_TARGETS ? 2 : 1;
             if (!owner->backend) owner->backend = "";
         } else {
             const qa_application_persistence_owner *binding = NULL;

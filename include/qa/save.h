@@ -7,7 +7,7 @@
 #include "qa/world.h"
 #include "qa/session.h"
 
-#define QA_SAVE_VERSION 1u
+#define QA_SAVE_VERSION 2u
 #define QA_SAVE_OWNER_LIMIT 65536u
 #define QA_SAVE_NAME_LIMIT 255u
 
@@ -34,7 +34,6 @@ typedef struct qa_save_owner {
     qa_save_owner_kind kind;
     const char *instance;       /* Empty for shared owners. */
     const char *schema;         /* Explicit field codec, never a struct dump. */
-    uint32_t schema_version;
     const char *backend;        /* ABI/execution identity, empty when portable. */
     qa_sha256_digest content;  /* Exact external program/content identity. */
 } qa_save_owner;

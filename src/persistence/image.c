@@ -1,7 +1,7 @@
 #include "internal.h"
 
 #define SAVE_HEADER 88u
-#define SAVE_RECORD_HEADER 56u
+#define SAVE_RECORD_HEADER 52u
 #define SAVE_DIGEST 32u
 
 static bool text_valid(const char *text, bool empty)
@@ -18,7 +18,7 @@ static bool text_valid(const char *text, bool empty)
 bool persistence_owner_valid(const qa_save_owner *owner, qa_error *error)
 {
     if (!owner || owner->kind < QA_SAVE_STRINGS || owner->kind > QA_SAVE_PROVIDER ||
-        !owner->schema_version || !text_valid(owner->instance, owner->kind != QA_SAVE_PROVIDER) ||
+        !text_valid(owner->instance, owner->kind != QA_SAVE_PROVIDER) ||
         !text_valid(owner->schema, false) || !text_valid(owner->backend, true) ||
         (owner->kind != QA_SAVE_PROVIDER && owner->instance[0]))
         return persistence_fail(error, QA_ERROR_FORMAT, "Invalid save owner identity");
@@ -206,7 +206,6 @@ bool qa_save_image_encode(const qa_save_image *image, qa_buffer *out, qa_error *
     for (size_t i = 0; i < image->count; ++i) {
         const qa_save_record *record = image->records + i;
         qa_net_write_u32(&writer, record->owner.kind);
-        qa_net_write_u32(&writer, record->owner.schema_version);
         qa_net_write_u16(&writer, (uint16_t)strlen(record->owner.instance));
         qa_net_write_u16(&writer, (uint16_t)strlen(record->owner.schema));
         qa_net_write_u16(&writer, (uint16_t)strlen(record->owner.backend));
@@ -287,7 +286,6 @@ bool qa_save_image_decode(qa_bytes bytes, qa_save_image **out, qa_error *error)
     for (size_t i = 0; i < count && !reader.failed; ++i) {
         qa_save_record *record = image->records + i;
         record->owner.kind = (qa_save_owner_kind)qa_net_read_u32(&reader);
-        record->owner.schema_version = qa_net_read_u32(&reader);
         uint16_t instance_size = qa_net_read_u16(&reader);
         uint16_t schema_size = qa_net_read_u16(&reader);
         uint16_t backend_size = qa_net_read_u16(&reader);

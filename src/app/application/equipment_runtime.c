@@ -500,7 +500,6 @@ bool application_equipment_runtime_saved(qa_session *session, const qa_save_imag
 {
     const qa_save_record *record = image ? qa_save_image_find(image, QA_SAVE_EQUIPMENT, "") : NULL;
     if (!session || !record || !out || record->owner.kind != QA_SAVE_EQUIPMENT ||
-        record->owner.schema_version != qa_equipment_save_version() ||
         !record->owner.schema || strcmp(record->owner.schema, "qa.equipment"))
         return application_fail(error, QA_ERROR_FORMAT, "Equipment topology requires its actual save record");
     bool present = false; qa_bytes source = {0};
