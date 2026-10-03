@@ -267,7 +267,7 @@ static qa_command_result forward(void *context, const qa_command_invocation *inv
     uint32_t remote_index;
     if (!frontend_remote_q2_wire_seat(source->receiver, &remote_index, error)) return QA_COMMAND_FAILED;
     return qa_network_q2_client_command(source->domain.runtime, source->domain.client, invocation->raw,
-        (uint8_t)(remote_index + 1), error) ? QA_COMMAND_HANDLED : QA_COMMAND_FAILED;
+        (uint8_t)remote_index, error) ? QA_COMMAND_HANDLED : QA_COMMAND_FAILED;
 }
 static bool allowed(void *context, const char *path, bool *result, qa_error *error)
 { frontend_remote_q2_source *source = context; return source->options.client.download_allowed(source->options.client.context, path, result, error); }
