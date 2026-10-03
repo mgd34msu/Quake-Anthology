@@ -211,7 +211,7 @@ struct qa_frontend_network {
     bool q3_client_gamestate, q3_client_active, q3_client_retiring, q3_command_present, q3_client_entered;
     char q3_client_reason[256];
     char q3_client_userinfo[1024];
-    char q3_client_server[1024];
+    char client_server[1024];
     char q3_client_message[1024], q3_client_update_info[1024];
     int32_t q3_ui_client_number;
     frontend_q3_attempt *q3_attempts, *q3_attempt_tail;
@@ -943,7 +943,7 @@ bool frontend_network_ui_client_state(frontend_network_browser_binding *binding,
     }
     uint32_t packets = n->q3_client_admission.connect_packets;
     memcpy(&state.connect_packet_count, &packets, sizeof(packets));
-    memcpy(state.server_name, n->q3_client_server, sizeof(state.server_name));
+    memcpy(state.server_name, n->client_server, sizeof(state.server_name));
     memcpy(state.update_info, n->q3_client_update_info, sizeof(state.update_info));
     memcpy(state.message, n->q3_client_message, sizeof(state.message));
     if (!browser_binding_current(binding, error) || !host_current(context, host, &binding->ui, error)) return false;
@@ -2402,21 +2402,82 @@ static bool client_bind_attempt(qa_frontend_network *n, qa_error *error)
     n->q3_client_rebind = false;
     return true;
 }
+static bool client_transport_family(qa_frontend_network *n,const qa_net_address *address,qa_error *error)
+{
+    const qa_net_address *local=qa_network_local_address(n->runtime);
+    if ((address->kind!=QA_NET_IPV4 && address->kind!=QA_NET_IPV6) || !local)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Remote connection requires its actual UDP address family");
+    if (address->kind==local->kind) return true;
+    qa_net_udp_options udp={.bind={.kind=address->kind},.limits={65507,256},
+        .broadcast=address->kind==QA_NET_IPV4,.ipv6_only=false};
+    qa_net_transport *transport=NULL; qa_network_runtime *replacement=NULL;
+    qa_network_options options={.owner=NETWORK_OWNER,.clients=64,.packets_per_pump=256,
+        .timeout_ns=UINT64_C(120000000000),.hooks={.context=n,.admit=admit,.controlled=controlled,
+        .command=remote_command,.disconnected=disconnected,.connectionless=connectionless,
+        .reconnect=reconnect,.q3_source_command=remote_q3_command,.nq_source_command=remote_nq_command,
+        .commands=remote_qw_commands}};
+    if (!qa_net_udp_open(&udp,&transport,error)) return false;
+    if (!qa_network_create(transport,&options,&replacement,error)) { qa_net_transport_close(transport); return false; }
+    qa_network_transport_exchange(n->runtime,replacement); qa_network_destroy(replacement);
+    return true;
+}
+static bool q1_client_create(qa_frontend_network *n,const qa_net_address *remote,qa_error *error)
+{
+    qa_frontend *f=n->frontend;
+    if (f->network!=n || n->q1_client_owner || !f->options.network_connect ||
+        !q1_client_protocol(f->options.network_protocol) || f->options.dedicated || f->options.seats!=1 ||
+        n->busy || n->detached_transport || !qa_network_callbacks_idle(n->runtime))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Q1 connection requires its returned selected CLIENT constructor");
+    frontend_network_q1_client_options client={.frontend=f,.runtime=n->runtime,.remote=*remote,
+        .protocol=f->options.network_protocol,.physical_seat=0,.qport=(uint16_t)n->rotation_random,
+        .context=n,.current=q1_client_current,.download_nonce=q2_download_nonce,.downloads=q1_downloads,.service=q1_service};
+    bool qw=qa_q1_is_qw(client.protocol);
+    client.policy=(qa_network_q1_client_policy){.message_bytes=qw?1450u:64000u,.fragment_bytes=1024,
+        .queued_bytes=1024u*1024u,.service_limit=qw?1450u:64000u,.pending_commands=64,
+        .bytes_per_second=2500,.nq_options={.standard_quake=true},.nq_identity={.name="",.spawn_parameters=""}};
+    if (!frontend_config_store_client_profile(f->config_store,QA_GAME_Q1,&client.profile,error) ||
+        !frontend_config_store_neutral_pending_options(f->config_store,0,&client.configuration,error)) return false;
+    if (frontend_network_q1_client_create(&client,&n->q1_client_owner,error)) return true;
+    if (!n->q1_client_owner)
+        (void)frontend_config_store_neutral_options_cancel(f->config_store,&client.configuration,NULL);
+    return false;
+}
 static bool client_attempts_drain(qa_frontend_network *n, qa_error *error)
 {
     if (n->q3_attempts && !n->q3_client_requested) {
-        frontend_network_q1_client_view view;
-        if (!n->q1_client_owner || n->busy || !qa_network_callbacks_idle(n->runtime) ||
-            !frontend_network_q1_client_idle(n->q1_client_owner) ||
-            !frontend_network_q1_client_metadata_read(n->q1_client_owner,&view,error) ||
-            view.physical.source.configuration_generation!=qa_application_configuration_generation(n->frontend->application) ||
-            !frontend_client_source_current(&view.physical))
-            return frontend_fail(error,QA_ERROR_ARGUMENT,"Queued disconnect lost its returned Q1 CLIENT owner");
+        qa_frontend *f=n->frontend;
+        if (!frontend_network_client_only(f) || !q1_client_protocol(f->options.network_protocol) ||
+            f->options.dedicated || f->options.seats!=1 || n->busy || n->detached_transport ||
+            f->capture || f->resource_inventory || f->source_restoring || f->preparing ||
+            !qa_network_callbacks_idle(n->runtime) || !frontend_network_q1_client_idle(n->q1_client_owner))
+            return frontend_fail(error,QA_ERROR_ARGUMENT,"Queued connection lost its returned Q1 CLIENT constructor");
         while (n->q3_attempts) {
             frontend_q3_attempt *request=n->q3_attempts;
-            if (!request->disconnect || *request->server)
-                return frontend_fail(error,QA_ERROR_ARGUMENT,"Q1 CLIENT disconnect changed its retained request");
-            if (!frontend_network_q1_client_disconnect(n->q1_client_owner,"disconnected",error)) return false;
+            if (request->disconnect ? *request->server!=0 : *request->server==0)
+                return frontend_fail(error,QA_ERROR_ARGUMENT,"Q1 CLIENT connection changed its retained request");
+            if (n->q1_client_owner) {
+                frontend_network_q1_client_view view;
+                if (!frontend_network_q1_client_metadata_read(n->q1_client_owner,&view,error) ||
+                    view.physical.source.configuration_generation!=qa_application_configuration_generation(f->application) ||
+                    (view.retired ? !qa_application_client_retirement_current(f->application,&view.physical.source) :
+                        !frontend_client_source_current(&view.physical)))
+                    return frontend_fail(error,QA_ERROR_ARGUMENT,"Queued connection lost its actual Q1 CLIENT namespace");
+                if (!frontend_network_q1_client_disconnect(n->q1_client_owner,"disconnected",error)) return false;
+                if (!request->disconnect) {
+                    qa_error retirement={0};
+                    if (!frontend_network_q1_client_destroy(&n->q1_client_owner,&retirement)) {
+                        if (retirement.code==QA_OK) return true;
+                        if (error) *error=retirement;
+                        return false;
+                    }
+                }
+            }
+            if (!request->disconnect) {
+                qa_net_address address;
+                if (!qa_net_address_resolve(request->server,f->options.network_port,0,&address,error) ||
+                    !client_transport_family(n,&address,error) || !q1_client_create(n,&address,error)) return false;
+                memcpy(n->client_server,request->server,sizeof(n->client_server));
+            }
             n->q3_attempts=request->next; --n->q3_attempt_count;
             if (!n->q3_attempts) n->q3_attempt_tail=NULL;
             free(request);
@@ -2435,26 +2496,11 @@ static bool client_attempts_drain(qa_frontend_network *n, qa_error *error)
         if (!n->q3_attempts) n->q3_attempt_tail = NULL;
         free(entered);
         if (request.disconnect) continue;
-        memcpy(n->q3_client_server, request.server, sizeof(n->q3_client_server));
+        memcpy(n->client_server, request.server, sizeof(n->client_server));
         memset(n->q3_client_message, 0, sizeof(n->q3_client_message)); n->q3_ui_client_number = 0;
         qa_net_address address;
         if (!qa_net_address_resolve(request.server, n->frontend->options.network_port, 0, &address, error)) return false;
-        const qa_net_address *local = qa_network_local_address(n->runtime);
-        if ((address.kind != QA_NET_IPV4 && address.kind != QA_NET_IPV6) || !local)
-            return frontend_fail(error, QA_ERROR_ARGUMENT, "Remote Q3 connection requires its actual UDP address family");
-        if (address.kind != local->kind) {
-            qa_net_udp_options udp = {.bind = {.kind = address.kind}, .limits = {65507, 256},
-                .broadcast = address.kind == QA_NET_IPV4, .ipv6_only = false};
-            qa_net_transport *transport = NULL; qa_network_runtime *replacement = NULL;
-            qa_network_options options = {.owner = NETWORK_OWNER, .clients = 64, .packets_per_pump = 256,
-                .timeout_ns = UINT64_C(120000000000), .hooks = {.context = n, .admit = admit, .controlled = controlled,
-                .command = remote_command, .disconnected = disconnected, .connectionless = connectionless,
-                .reconnect = reconnect, .q3_source_command = remote_q3_command, .nq_source_command = remote_nq_command,
-                .commands = remote_qw_commands}};
-            if (!qa_net_udp_open(&udp, &transport, error)) return false;
-            if (!qa_network_create(transport, &options, &replacement, error)) { qa_net_transport_close(transport); return false; }
-            qa_network_transport_exchange(n->runtime, replacement); qa_network_destroy(replacement);
-        }
+        if (!client_transport_family(n,&address,error)) return false;
         if (!n->q3_client_rebind) n->q3_client_previous_epoch = n->q3_client_epoch;
         if (n->q3_client.generation) n->q3_client_previous = n->q3_client;
         ++n->q3_client_epoch; n->q3_client = (qa_net_client_id){0};
@@ -3659,7 +3705,7 @@ static void emit(const qa_command_invocation *command, const char *text)
 static bool client_attempt_enqueue(qa_frontend_network *n, const char *server,
     bool disconnect, qa_error *error)
 {
-    if(!disconnect && (!server || !*server || strlen(server)>=sizeof(n->q3_client_server)))
+    if(!disconnect && (!server || !*server || strlen(server)>=sizeof(n->client_server)))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Connection command lacks its retained native server name");
     if(n->q3_attempt_count==SIZE_MAX)
         return frontend_fail(error,QA_ERROR_MEMORY,"Remote connection command queue is exhausted");
@@ -3687,7 +3733,7 @@ static bool client_attempt_queue(qa_frontend_network *n, const qa_command_invoca
         qa_frontend *f=n->frontend;
         qa_console *console=NULL; qa_cvars *cvars=NULL; qa_command_context recipient;
         uint64_t lifetime=0; qa_command_handler handler=NULL; void *user=NULL;
-        if (!q1 || !disconnect || f->network!=n || n->busy || n->round || n->detached_transport ||
+        if (!q1 || f->network!=n || n->busy || n->round || n->detached_transport ||
             f->capture || f->resource_inventory || f->source_restoring || f->preparing ||
             !qa_network_callbacks_idle(n->runtime) || !f->seats || physical>=f->options.seats ||
             !qa_console_invocation_current(call->console,call) ||
@@ -3702,12 +3748,10 @@ static bool client_attempt_queue(qa_frontend_network *n, const qa_command_invoca
             !qa_console_registration_read(console,call->argv[0],0,&lifetime,&handler,&user) ||
             lifetime!=NETWORK_OWNER || !handler || user!=n)
             return frontend_fail(error,QA_ERROR_ARGUMENT,"Disconnected Q1 command lost its current local ENGINE recipient");
-        return true;
+        if (disconnect) return true;
     }
-    if (!n->q3_client_requested) {
+    if (!n->q3_client_requested && n->q1_client_owner) {
         frontend_network_q1_client_view view;
-        if (!disconnect)
-            return frontend_fail(error,QA_ERROR_UNSUPPORTED,"Q1 connection replacement requires its retained physical CLIENT");
         if (!qa_console_invocation_current(call->console,call) ||
             !frontend_network_q1_client_metadata_read(n->q1_client_owner,&view,error) ||
             call->console!=view.physical.source.context.console ||
@@ -3719,10 +3763,9 @@ static bool client_attempt_queue(qa_frontend_network *n, const qa_command_invoca
             call->context.dialect!=view.physical.source.context.command.dialect ||
             !qa_actor_id_equal(call->context.actor,view.physical.source.context.command.actor) ||
             !frontend_client_source_current(&view.physical))
-            return frontend_fail(error,QA_ERROR_ARGUMENT,"Disconnect lost its actual Q1 CLIENT command namespace");
-        return client_attempt_enqueue(n,"",true,error);
+            return frontend_fail(error,QA_ERROR_ARGUMENT,"Connection command lost its actual Q1 CLIENT command namespace");
     }
-    const char *server = reconnecting ? n->q3_client_server : disconnect ? "" : call->argv[1];
+    const char *server = reconnecting ? n->client_server : disconnect ? "" : call->argv[1];
     if (reconnecting) for (const frontend_q3_attempt *queued = n->q3_attempts; queued; queued = queued->next)
         if (!queued->disconnect) server = queued->server;
     return client_attempt_enqueue(n,server,disconnect,error);
@@ -3769,7 +3812,7 @@ static bool q3_browser_command(qa_frontend_network *n, const qa_command_invocati
         if (call->argc != 2) { emit(call, "usage: ping [server]\n"); return true; }
         return frontend_q3_browser_ping(&access, call->argv[1], error);
     }
-    const char *server = call->argc == 2 ? call->argv[1] : n->q3_client_active ? n->q3_client_server : NULL;
+    const char *server = call->argc == 2 ? call->argv[1] : n->q3_client_active ? n->client_server : NULL;
     if (!server) { emit(call, "Not connected to a server.\nUsage: serverstatus [server]\n"); return true; }
     return frontend_q3_browser_status_command(&access, server, error);
 }
@@ -3997,6 +4040,12 @@ bool frontend_network_create(qa_frontend *f, qa_error *error)
     n->frontend = f; n->nonce = SDL_GetPerformanceCounter();
     n->rotation_random = (uint32_t)n->nonce ^ (uint32_t)(n->nonce >> 32); f->network = n;
     n->q3_client_requested = frontend_network_remote(f); n->q3_sensitivity = 1;
+    if (n->q3_client_requested || (f->options.network_connect && q1_client_protocol(f->options.network_protocol))) {
+        if (strlen(f->options.network_connect)>=sizeof(n->client_server)) {
+            frontend_fail(error,QA_ERROR_ARGUMENT,"Remote server name exceeds its actual constructor storage"); goto failed;
+        }
+        memcpy(n->client_server,f->options.network_connect,strlen(f->options.network_connect)+1);
+    }
     qa_net_udp_options udp = {.bind = {.kind = QA_NET_IPV4}, .limits = {65507, 256}, .broadcast = true};
     qa_net_address q2_remote={0};
     if(f->options.network_connect && (q2_host_protocol(f->options.network_protocol) || q1_client_protocol(f->options.network_protocol) ||
@@ -4013,10 +4062,6 @@ bool frontend_network_create(qa_frontend *f, qa_error *error)
         if (f->options.dedicated || f->options.seats != 1) {
             frontend_fail(error, QA_ERROR_UNSUPPORTED, "Original Q3 remote client requires one presentation seat"); goto failed;
         }
-        if (strlen(f->options.network_connect) >= sizeof(n->q3_client_server)) {
-            frontend_fail(error, QA_ERROR_ARGUMENT, "Remote Q3 server name exceeds its actual constructor storage"); goto failed;
-        }
-        memcpy(n->q3_client_server, f->options.network_connect, strlen(f->options.network_connect) + 1);
         if (!remote_player(f->application, &actor, error) ||
             !qa_application_network_q3_client_source(f->application, actor, &n->q3_cgame_owner, &n->q3_client_product, &n->q3_client_launch_seat, error) ||
             !qa_net_address_resolve(f->options.network_connect, f->options.network_port, 0, &address, error)) goto failed;
@@ -4165,22 +4210,8 @@ bool frontend_network_create(qa_frontend *f, qa_error *error)
             .lobby=n->kex_transport?qa_kex_transport_lobby(n->kex_transport):NULL};
         if(!frontend_network_q2_client_create(&client,&n->q2_client_owner,error)) goto failed;
     }
-    if(f->options.network_connect && q1_client_protocol(f->options.network_protocol)) {
-        frontend_network_q1_client_options client={.frontend=f,.runtime=n->runtime,.remote=q2_remote,
-            .protocol=f->options.network_protocol,.physical_seat=0,.qport=(uint16_t)n->rotation_random,
-            .context=n,.current=q1_client_current,.download_nonce=q2_download_nonce,.downloads=q1_downloads,.service=q1_service};
-        bool qw=qa_q1_is_qw(client.protocol);
-        client.policy=(qa_network_q1_client_policy){.message_bytes=qw?1450u:64000u,.fragment_bytes=1024,
-            .queued_bytes=1024u*1024u,.service_limit=qw?1450u:64000u,.pending_commands=64,
-            .bytes_per_second=2500,.nq_options={.standard_quake=true},.nq_identity={.name="",.spawn_parameters=""}};
-        if(!frontend_config_store_client_profile(f->config_store,QA_GAME_Q1,&client.profile,error) ||
-            !frontend_config_store_neutral_pending_options(f->config_store,0,&client.configuration,error)) goto failed;
-        if(!frontend_network_q1_client_create(&client,&n->q1_client_owner,error)) {
-            if(!n->q1_client_owner)
-                (void)frontend_config_store_neutral_options_cancel(f->config_store,&client.configuration,NULL);
-            goto failed;
-        }
-    }
+    if(f->options.network_connect && q1_client_protocol(f->options.network_protocol) &&
+        !q1_client_create(n,&q2_remote,error)) goto failed;
     if(f->options.network_connect && f->options.network_protocol.kind==QA_NET_UNIFIED_1) {
         const qa_product *selected=frontend_product_selection(qa_application_catalog(f->application),f->options.game);
         frontend_network_unified_client_options client_options={.frontend=f,.runtime=n->runtime,.remote=q2_remote,
@@ -4476,8 +4507,8 @@ static bool network_frontend_fields(qa_source_save_io *io, qa_frontend_network *
         !memchr(n->q3_client_reason, 0, sizeof(n->q3_client_reason)) ||
         !qa_source_save_bytes(io, n->q3_client_userinfo, sizeof(n->q3_client_userinfo)) ||
         !memchr(n->q3_client_userinfo, 0, sizeof(n->q3_client_userinfo)) ||
-        !qa_source_save_bytes(io, n->q3_client_server, sizeof(n->q3_client_server)) ||
-        !memchr(n->q3_client_server, 0, sizeof(n->q3_client_server)) ||
+        !qa_source_save_bytes(io, n->client_server, sizeof(n->client_server)) ||
+        !memchr(n->client_server, 0, sizeof(n->client_server)) ||
         !qa_source_save_bytes(io, n->q3_client_message, sizeof(n->q3_client_message)) ||
         !memchr(n->q3_client_message, 0, sizeof(n->q3_client_message)) ||
         !qa_source_save_bytes(io, n->q3_client_update_info, sizeof(n->q3_client_update_info)) ||
@@ -4628,11 +4659,15 @@ static bool network_metadata_check(qa_frontend_network *n, bool hosting, bool fi
     if (n->q3_attempt_count && !n->q3_client_requested) {
         if (!n->frontend->options.network_connect || !q1_client_protocol(n->frontend->options.network_protocol) ||
             n->frontend->options.dedicated || n->frontend->options.seats!=1)
-            return frontend_fail(error,QA_ERROR_FORMAT,"Queued disconnect has no selected Q1 CLIENT constructor");
+            return frontend_fail(error,QA_ERROR_FORMAT,"Queued connection has no selected Q1 CLIENT constructor");
         for (const frontend_q3_attempt *request=n->q3_attempts;request;request=request->next)
-            if (!request->disconnect || *request->server)
-                return frontend_fail(error,QA_ERROR_FORMAT,"Saved Q1 disconnect changed its canonical queued request");
+            if (request->disconnect ? *request->server!=0 : *request->server==0)
+                return frontend_fail(error,QA_ERROR_FORMAT,"Saved Q1 connection changed its canonical queued request");
     }
+    bool q1_target=n->frontend->options.network_connect && q1_client_protocol(n->frontend->options.network_protocol) &&
+        !n->frontend->options.dedicated && n->frontend->options.seats==1;
+    if (n->q3_client_requested ? !*n->client_server : *n->client_server && !q1_target)
+        return frontend_fail(error,QA_ERROR_FORMAT,"Remote target differs from its selected native CLIENT constructor");
     if (n->q3_client_requested) {
         qa_actor_id actor; qa_actor_owner owner; qa_q3_product product; uint32_t seat;
         qa_application_q3_remote_source retained_source;
@@ -4657,7 +4692,7 @@ static bool network_metadata_check(qa_frontend_network *n, bool hosting, bool fi
             (n->q3_client_rebind && (!n->q3_client_previous_epoch || n->q3_client_previous_epoch >= n->q3_client_epoch || n->q3_client_decoded)) ||
             (n->q3_client_closed && (!n->q3_client_retiring || n->q3_client_attached ||
                 n->q3_client_admission.phase != QA_Q3_DISCONNECTED || n->q3_client_decoded)) ||
-            !*n->q3_client_server || n->q3_client_previous.slot >= 64 ||
+            n->q3_client_previous.slot >= 64 ||
             (n->q3_client_previous_epoch && n->q3_client_previous_epoch >= n->q3_client_epoch) ||
             (n->q3_client_previous.generation && (!n->q3_client_previous_epoch ||
                 (n->q3_client_attached && qa_net_client_id_equal(n->q3_client_previous, n->q3_client)))) ||
@@ -4674,7 +4709,7 @@ static bool network_metadata_check(qa_frontend_network *n, bool hosting, bool fi
     } else if (n->q3_client_attach || n->q3_client_attached || n->q3_client_gamestate || n->q3_client_active || n->q3_projection.owner ||
         n->q3_client_epoch || n->q3_client_restart_generation || n->q3_client_decoded ||
         n->q3_client_previous.generation || n->q3_client_previous_epoch || n->q3_client_rebind ||
-        n->q3_client_closed || *n->q3_client_server || *n->q3_client_message || n->q3_ui_client_number ||
+        n->q3_client_closed || *n->q3_client_message || n->q3_ui_client_number ||
         n->q3_scene_frame_valid || n->q3_scene_frame || n->q3_previous_presentation_time ||
         n->q3_initial_tuple || n->q3_initial_message || n->q3_initial_command ||
         n->q3_reliable_receipt || n->q3_reliable_receipt_sequence ||
@@ -5352,6 +5387,15 @@ bool frontend_network_restore_connections(qa_frontend *f, qa_bytes bytes, qa_err
         qa_q3_server_authorization_bindings bindings = q3_authorization_bindings(state);
         if (ok) ok = qa_q3_server_authorization_restore(authorization, &bindings, &state->q3_authorization, error);
     }
+    if (ok && !*state->client_server && !state->q3_client_requested && n->q1_import_pending) {
+        const frontend_network_q1_client_recipe *recipe=&n->q1_import_recipe;
+        ok=recipe->protocol.kind==f->options.network_protocol.kind &&
+            recipe->protocol.revision==f->options.network_protocol.revision &&
+            recipe->protocol.flags==f->options.network_protocol.flags &&
+            q1_client_protocol(recipe->protocol) && recipe->physical_seat==0 &&
+            qa_net_address_format(&recipe->remote,state->client_server,sizeof(state->client_server),error);
+        if (!ok) frontend_fail(error,QA_ERROR_FORMAT,"Q1 reconnect target lost its saved CLIENT constructor endpoint");
+    }
     if (ok) ok = network_metadata_valid(state, hosting, error);
     if (ok) {
         qa_network_runtime *previous = n->runtime; qa_server_browser *old_browser = n->browser; qa_server_admin *old_admin = n->admin;
@@ -5733,10 +5777,12 @@ bool frontend_network_local_groups_retire(qa_frontend *f,qa_error *error)
     qa_frontend_network *n=f?f->network:NULL;
     if(!f) return frontend_fail(error,QA_ERROR_ARGUMENT,"Local group retirement requires its physical frontend");
     if(!n || !frontend_network_q2_host_local_only(n->q2_host)) return true;
-    if(n->busy || n->detached_transport || !qa_network_callbacks_idle(n->runtime) ||
-        !frontend_network_q2_host_idle(n->q2_host))
+    bool importing=n->detached_transport && frontend_network_q2_host_importing(n->q2_host);
+    if(n->busy || (n->detached_transport && !importing) || !qa_network_callbacks_idle(n->runtime) ||
+        (importing ? !frontend_network_q2_host_import_retirement_idle(n->q2_host) :
+            !frontend_network_q2_host_idle(n->q2_host)))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Local human groups retain entered Source or transport work");
-    return frontend_network_q2_host_destroy(&n->q2_host,error);
+    return importing || frontend_network_q2_host_destroy(&n->q2_host,error);
 }
 bool frontend_network_component_drop(void *context,qa_actor_owner component,
     qa_actor_id actor,const char *reason,qa_error *error)
