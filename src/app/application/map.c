@@ -2313,7 +2313,8 @@ bool application_map_publish(qa_application *application,
         if (instance == NULL || instance->state != provider)
             return application_fail(error, QA_ERROR_NOT_FOUND,
                                     "map provider has no current launch instance");
-        if (instance->roles == 0)
+        if (instance->roles == 0 &&
+            !(provider->kind == APPLICATION_PROVIDER_QC && provider->state.qc.qualified))
             continue;
         if (provider->kind == APPLICATION_PROVIDER_QC &&
             !application_qc_initialize_map(provider, &publication->map,

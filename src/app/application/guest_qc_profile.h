@@ -135,6 +135,7 @@ bool application_qc_seed_fields(struct application_qc_state *, qa_actor_id, qa_e
 bool application_qc_prepare_markers(struct application_qc_state *, qa_error *);
 bool application_qc_authored_map_ready(const application_provider *, qa_error *);
 bool application_qc_initialize_declared(struct application_qc_state *, qa_error *);
+bool application_qc_initialize_addition(application_provider *, qa_error *);
 bool application_qc_entered(void *, qa_qc_instance *, const qa_qc_call_event *, qa_error *);
 float application_qc_input_scalar(const qa_movement_command *, application_qc_input_id);
 bool application_qc_load_declared_map(struct application_qc_state *, const qa_bsp_view *,

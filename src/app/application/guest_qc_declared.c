@@ -443,12 +443,9 @@ bool application_qc_initialize_declared(struct application_qc_state *engine, qa_
     return true;
 }
 
-bool application_qc_load_declared_map(struct application_qc_state *engine, const qa_bsp_view *bsp,
-                                        const qa_entities *entities, qa_string_id map, qa_string_id spawn, qa_error *error)
+static bool initialize_declared_map_context(struct application_qc_state *engine,
+                                              qa_string_id map, qa_error *error)
 {
-    (void)spawn;
-    if (!engine || !bsp || !entities || !entities->count || engine->has_frame)
-        return application_fail(error, QA_ERROR_ARGUMENT, "QC component map initialization requires an idle shared map");
     const struct application_qc_profile *profile = engine->provider->state.qc.qualified;
     const char *path = qa_strings_cstr(qa_session_strings(engine->services.session), map);
     if (!profile || !path || !qa_qc_game_loading(engine->provider->state.qc.game, true, error)) return false;
@@ -478,6 +475,29 @@ bool application_qc_load_declared_map(struct application_qc_state *engine, const
     if (!application_qc_initialize_declared(engine, error)) return false;
     if (!application_qc_flush(engine, error) || !qa_qc_game_loading(engine->provider->state.qc.game, false, error)) return false;
     engine->loading = false; qa_cvars_set_server_active(engine->cvars, true); return true;
+}
+bool application_qc_load_declared_map(struct application_qc_state *engine, const qa_bsp_view *bsp,
+                                        const qa_entities *entities, qa_string_id map, qa_string_id spawn, qa_error *error)
+{
+    (void)spawn;
+    if (!engine || !bsp || !entities || !entities->count || engine->has_frame)
+        return application_fail(error, QA_ERROR_ARGUMENT, "QC component map initialization requires an idle shared map");
+    return initialize_declared_map_context(engine, map, error);
+}
+bool application_qc_initialize_addition(application_provider *provider, qa_error *error)
+{
+    struct application_qc_state *engine = provider && provider->kind == APPLICATION_PROVIDER_QC
+        ? provider->state.qc.engine : NULL;
+    qa_application *app = provider ? provider->application : NULL;
+    if (!engine || !provider->state.qc.qualified || !provider->state.qc.game ||
+        !provider->state.qc.instance || !provider->constructed || !provider->attached ||
+        provider->close_pending || !app || app->destroy_requested || !app->map_view_ready ||
+        !app->map_resource || !app->geometry || !app->current_map ||
+        engine->world != app->world || engine->services.session != app->session || engine->has_frame)
+        return application_fail(error, QA_ERROR_ARGUMENT,
+                                "QC addition initialization requires its actual published map owner");
+    return (engine->initialized && !engine->loading) ||
+        initialize_declared_map_context(engine, app->current_map, error);
 }
 bool application_qc_client_think(struct application_qc_state *engine, qa_actor_id actor,
                                   const qa_source_frame *frame, qa_error *error)

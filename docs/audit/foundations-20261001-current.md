@@ -6,6 +6,12 @@ The original audit authority is dependency plan revision 7, tasks B01–B05. Its
 
 The user's latest correction forbids review gates and test infrastructure in front of implementation. Audit continues alongside production installation, without new manifests, hashes or freeze requirements. The later implementation assignment supersedes the initial document-only edit scope for the concrete owners below. Historical snapshot/peer evidence below records work already performed; none of it imposes a prerequisite on current implementation. Concrete defects go directly to the author. Current owner/build files can change as genuine callers are installed.
 
+## Authorized B22 qualified QC addition initialization, 2026-10-03
+
+Qualified QC additions now initialize through the existing declared map-context body even when their launch instance has no assigned gameplay role. The secondary map loop admits those genuine qualified owners on fresh loads and travel; original raw QC's role check is preserved. Enabling an addition on an existing map uses that same body after the real roster and component publication, with the actual retained map identity, world, geometry, resource and session. Declared initialization runs once; map globals, loading state and checked flush remain the existing continuation. A partially completed flush can retry through those actual state fields.
+
+Cold content publication explicitly skips initialization and binds the saved state through the existing QC restore. Registration follows successful initialization. No synthetic role, duplicate entity parser, checkpoint version or initialization shadow state was added. The three changed production translation units passed their actual optimized GCC and Clang commands privately in `qc-addition-init-objects`; the final retry-continuation amendment passed both compilers too. Scoped whitespace checks passed. Runtime execution still requires Root's coherent artifact.
+
 ## Authorized B22 QC startup command dispatch, 2026-10-03
 
 The genuine installed qualified authored-map run on SAVE9 artifact `1e38b090` now passes `qa_application_apply` after the shared seat-capture fix. Its first subsequent frame failed while the actual startup candidate drained `default.cfg`'s `viewsize 100`: the QC fallback sent every undeclared token to the live map-command producer, although this candidate was correctly not constructed or attached yet. A bounded private GDB run confirmed that exact owner and caller chain.

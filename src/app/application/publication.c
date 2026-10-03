@@ -1078,12 +1078,15 @@ static void publish_roster(qa_application *application,
     application->routing_provider_count = application->provider_count;
 }
 
-static bool register_qc_callbacks(qa_application *application, qa_error *error)
+static bool register_qc_callbacks(qa_application *application, bool restoring, qa_error *error)
 {
     for (size_t i = 0; i < application->provider_count; ++i) {
         application_provider *provider = application->providers[i];
-        if (provider->kind == APPLICATION_PROVIDER_QC && provider->constructed && provider->attached &&
-            !application_qc_callbacks_register(provider, error)) return false;
+        if (provider->kind != APPLICATION_PROVIDER_QC || !provider->constructed || !provider->attached)
+            continue;
+        if (!restoring && application->map_view_ready && provider->state.qc.qualified &&
+            !application_qc_initialize_addition(provider, error)) return false;
+        if (!application_qc_callbacks_register(provider, error)) return false;
     }
     return true;
 }
@@ -1173,7 +1176,7 @@ bool application_save_prepare_content(qa_application *candidate,
     if (ok) {
         ok = commit_admissions(publication, error);
         publish_roster(candidate, publication);
-        if (ok) ok = register_qc_callbacks(candidate, error);
+        if (ok) ok = register_qc_callbacks(candidate, true, error);
         candidate->supplies = publication->supplies;
         publication->supplies = NULL;
         publication->published = true;
@@ -1375,7 +1378,7 @@ static bool publish_travel(qa_application *application,
     qa_mode_id *old_mode_ids = application->mode_ids;
 
     publish_roster(application, publication);
-    if (ok && !register_qc_callbacks(application, &current))
+    if (ok && !register_qc_callbacks(application, false, &current))
         remember_failure(false, &current, "QC callback publication failed", &ok, &first);
     application->supplies = publication->supplies;
     publication->supplies = NULL;
@@ -1530,8 +1533,8 @@ void application_publication_publish(qa_application *application,
             application_q3_components_adopt(application,&publication->components,&error);
         if(ok) {
             publish_roster(application, publication);
-            ok=register_qc_callbacks(application,&error) &&
-                application_q3_components_initialize(application->components,&error);
+            ok=application_q3_components_initialize(application->components,&error) &&
+                register_qc_callbacks(application,false,&error);
             if(ok) ++application->publication_generation;
         }
     } else if (ok) {
