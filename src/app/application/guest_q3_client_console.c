@@ -63,6 +63,15 @@ static qa_cvars *visible_cvars(void *context, const qa_command_context *command,
     return index == 0 ? row->cvars : index == 1 ?
         application_engine_shutdown_cvars(row->engine->provider) : NULL;
 }
+static bool cvar_edit(void *context, const qa_command_context *command,
+    qa_cvars *registry, qa_cvars_edit **out, qa_error *error)
+{
+    struct application_guest_q3_client_console *row = context;
+    if (!available(row))
+        return application_fail(error, QA_ERROR_ARGUMENT, "CLIENT prepared cvars lost their actual receiver");
+    return application_startup_cvar_edit(row->engine->provider, row->console,
+        command, registry, out, error);
+}
 static bool capture(void *context, const qa_command_context *source, qa_command_context *out, qa_error *error)
 {
     struct application_guest_q3_client_console *row = context;
@@ -162,6 +171,7 @@ bool application_guest_q3_client_console_prepare(struct application_q3_guest *en
     qa_console_options options = {.context = {.owner = engine->provider->owner, .seat = seat,
         .dialect = QA_CONSOLE_Q3, .origin = QA_COMMAND_SEAT}, .cvars = row->cvars,
         .user = row, .print = print, .cvar_owner = cvar_owner, .visible_cvars = visible_cvars,
+        .cvar_edit = cvar_edit,
         .capture_context = capture, .context_active = active, .read_script = read_script,
         .release_script = release_script, .script_complete = complete, .allow_command = allowed,
         .source_command = dispatch};
