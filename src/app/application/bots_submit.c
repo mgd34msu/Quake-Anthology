@@ -68,7 +68,7 @@ bool application_bot_submit(void *opaque,qa_actor_id actor,const qa_bot_input *i
     command.server_time_ms=source->server_time_ms;
     command.weapon=source->weapon;
     if(view.state.kind!=QA_MOVEMENT_Q3) {
-        float scale=view.state.kind==QA_MOVEMENT_NETQUAKE || view.state.kind==QA_MOVEMENT_QUAKEWORLD?320.0f:200.0f;
+        float scale=view.state.kind==QA_MOVEMENT_NETQUAKE || view.state.kind==QA_MOVEMENT_QUAKEWORLD?320.0f:400.0f;
         command.forward_move=(float)((double)source->forward_move*(double)scale/127.0);
         command.side_move=(float)((double)source->side_move*(double)scale/127.0);
         command.up_move=(float)((double)source->up_move*(double)scale/127.0);
