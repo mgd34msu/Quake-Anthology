@@ -15,6 +15,7 @@ typedef struct frontend_cinematic_view {
 } frontend_cinematic_view;
 
 bool frontend_cinematic_command(qa_frontend *,const qa_command_invocation *,qa_error *);
+bool frontend_cinematic_travel(qa_frontend *,const qa_application_travel_view *,qa_error *);
 /* Call after command, input and playback callbacks have returned. Preparation
  * owns its real decoder and PCM privately until activation. */
 bool frontend_cinematic_drain(qa_frontend *,qa_error *);

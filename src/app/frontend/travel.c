@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "capture.h"
+#include "campaign_cinematic.h"
 #include "qa/scene_world_save.h"
 #include "qa/application_startup_prepare.h"
 
@@ -25,7 +26,10 @@ bool frontend_travel(qa_frontend *frontend, qa_error *error)
         qa_application_q2_map_event_count(frontend->application) || qa_application_q3_map_event_count(frontend->application) ||
         qa_application_q2_player_event_count(frontend->application) || qa_application_protocol_event_count(frontend->application))
         return true;
-    if (!qa_application_travel_read(frontend->application, &travel) || travel.target.kind != QA_TRAVEL_MAP) return true;
+    if (!qa_application_travel_read(frontend->application, &travel)) return true;
+    if (travel.target.kind==QA_TRAVEL_CINEMATIC || travel.target.kind==QA_TRAVEL_PICTURE)
+        return frontend_cinematic_travel(frontend,&travel,error);
+    if (travel.target.kind!=QA_TRAVEL_MAP) return true;
     if (!frontend_source_rebind_ready(frontend, frontend, error) ||
         !frontend_world_change_ready(frontend, frontend->application, error)) return false;
     if (!qa_application_commit_travel(frontend->application,travel.revision,error)) return false;

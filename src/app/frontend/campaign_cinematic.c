@@ -15,6 +15,7 @@ typedef struct cinematic_request {
     qa_vfs *files;
     char *path, *script;
     uint32_t seat;
+    uint64_t travel_revision;
     bool loop, hold;
 } cinematic_request;
 struct frontend_cinematic {
@@ -76,9 +77,16 @@ static void request_free(cinematic_request *request)
 static bool current(const frontend_cinematic *owner)
 {
     uint32_t ordinal;
-    return owner && owner->frontend && owner->frontend->application &&
+    bool valid=owner && owner->frontend && owner->frontend->application &&
         qa_application_command_context_active(owner->frontend->application,&owner->request.command) &&
         frontend_command_seat_read(owner->frontend,&owner->request.command,&ordinal) && ordinal==owner->request.seat;
+    if (valid && owner->request.travel_revision) {
+        qa_application_travel_view travel;
+        valid=qa_application_travel_read(owner->frontend->application,&travel) &&
+            travel.revision==owner->request.travel_revision && travel.provider==owner->request.command.owner &&
+            (travel.target.kind==QA_TRAVEL_CINEMATIC || travel.target.kind==QA_TRAVEL_PICTURE);
+    }
+    return valid;
 }
 static void release_playback(frontend_cinematic *owner)
 {
@@ -113,6 +121,50 @@ bool frontend_cinematic_destroy(qa_frontend *f,qa_error *error)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Cinematic cleanup requires completed playback and audio callbacks");
     release_playback(owner); request_free(&owner->request); request_free(&owner->pending_request);
     f->cinematic=NULL; free(owner); return true;
+}
+static bool queue_request(qa_frontend *f,cinematic_request *request,qa_error *error)
+{
+    frontend_cinematic *owner=f->cinematic;
+    if (!owner) {
+        owner=calloc(1,sizeof(*owner));
+        if (!owner) { request_free(request); return frontend_fail(error,QA_ERROR_MEMORY,"Allocating fullscreen cinematic owner"); }
+        owner->frontend=f; f->cinematic=owner;
+    }
+    if (owner->pending) request_free(&owner->pending_request);
+    owner->pending_request=*request; *request=(cinematic_request){0};
+    owner->pending=true; owner->stopping=false;
+    return true;
+}
+bool frontend_cinematic_travel(qa_frontend *f,const qa_application_travel_view *travel,qa_error *error)
+{
+    qa_application_travel_view actual;
+    if (!f || !travel || !travel->revision || f->options.dedicated || f->capture || f->source_restoring ||
+        !f->ui_images || !f->display || !frontend_cinematic_idle(f) ||
+        (travel->target.kind!=QA_TRAVEL_CINEMATIC && travel->target.kind!=QA_TRAVEL_PICTURE) ||
+        !qa_application_travel_read(f->application,&actual) || actual.revision!=travel->revision ||
+        actual.provider!=travel->provider || actual.target.kind!=travel->target.kind ||
+        strcmp(actual.target.name,travel->target.name))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Cinematic travel requires its actual returned media route");
+    frontend_cinematic *owner=f->cinematic;
+    if (owner && ((owner->pending && owner->pending_request.travel_revision==travel->revision) ||
+        (owner->request.travel_revision==travel->revision && current(owner)))) return true;
+    qa_application_startup_source authority; bool present=false;
+    if (!frontend_config_store_primary_server_read(f->config_store,&authority,&present,error)) return false;
+    if (!present || authority.scope.provider!=travel->provider ||
+        (authority.scope.kind!=QA_APPLICATION_CONSOLE_Q2_GAME && authority.scope.kind!=QA_APPLICATION_CONSOLE_NATIVE_Q2))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Cinematic travel lost its actual Q2 GAME authority");
+    cinematic_request request={.command=authority.command,.travel_revision=travel->revision};
+    if (!frontend_command_seat_read(f,&request.command,&request.seat))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Cinematic travel has no physical local recipient");
+    if (request.command.script) {
+        request.script=copy_text(request.command.script,error);
+        if (!request.script) return false;
+        request.command.script=request.script;
+    }
+    request.path=resource_path(travel->target.name,error);
+    qa_vfs *files=qa_application_context_files(f->application,&request.command,NULL);
+    if (!request.path || !files || !(request.files=qa_vfs_clone(files,error))) { request_free(&request); return false; }
+    return queue_request(f,&request,error);
 }
 bool frontend_cinematic_command(qa_frontend *f,const qa_command_invocation *command,qa_error *error)
 {
@@ -149,14 +201,7 @@ bool frontend_cinematic_command(qa_frontend *f,const qa_command_invocation *comm
     request.loop=mode[0]=='2' || !strcmp(mode,"loop");
     const char *leaf=strrchr(request.path,'/'); leaf=leaf?leaf+1:request.path;
     request.hold=mode[0]=='1' || !strcmp(mode,"hold") || equal_folded(leaf,"end.roq") || equal_folded(leaf,"demoend.roq");
-    if (!owner) {
-        owner=calloc(1,sizeof(*owner));
-        if (!owner) { request_free(&request); return frontend_fail(error,QA_ERROR_MEMORY,"Allocating fullscreen cinematic owner"); }
-        owner->frontend=f; f->cinematic=owner;
-    }
-    if (owner->pending) request_free(&owner->pending_request);
-    owner->pending_request=request; owner->pending=true; owner->stopping=false;
-    return true;
+    return queue_request(f,&request,error);
 }
 static bool prepare(frontend_cinematic *owner,qa_error *error)
 {
@@ -213,6 +258,10 @@ static bool prepare(frontend_cinematic *owner,qa_error *error)
 static bool finish(frontend_cinematic *owner,qa_error *error)
 {
     if (!owner->complete || !current(owner)) return true;
+    if (owner->request.travel_revision) {
+        if (!qa_application_complete_travel(owner->frontend->application,owner->request.travel_revision,error)) return false;
+        owner->complete=false; return true;
+    }
     owner->complete=false;
     qa_frontend *f=owner->frontend;
     if (frontend_network_remote(f)) return true;
