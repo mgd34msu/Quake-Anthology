@@ -227,29 +227,34 @@ static bool orders_ctf(qa_bots *b, bot_ai_state *s, qa_error *e) {
     if(!sorted_team_mates(b,s,teammates,&count,e)) return false;
     if(!alive(b,s)) return true;
     bool aggressive=(bot_ai_ctf_strategy(s)&1)!=0;
-    int32_t carrier=bot_ai_flag_carrier(s),client,first,last,defenders,attackers;
+    int32_t client,first,last,defenders,attackers;
     char name[36];
     if(status==3) {
         if(bot_ai_num_teammates(s)==1) return true;
         if(bot_ai_num_teammates(s)==2) {
             if(!at(teammates,count,0,&first,e)) return false;
-            return issue_at(b,s,teammates,count,first!=carrier?0:1,"cmd_getflag","getflag",first!=carrier?0:1,false,e);
+            int32_t index=first!=bot_ai_flag_carrier(s)?0:1;
+            return issue_at(b,s,teammates,count,index,"cmd_getflag","getflag",index,false,e);
         }
         if(bot_ai_num_teammates(s)==3) {
-            if(!at(teammates,count,0,&first,e) || !at(teammates,count,first!=carrier?0:1,&client,e)) return false;
-            if(!carrier_name(b,s,false,name,e) || !follow_or_get(b,s,client,name,carrier!=-1,true,e)) return false;
+            if(!at(teammates,count,0,&first,e) ||
+               !at(teammates,count,first!=bot_ai_flag_carrier(s)?0:1,&client,e)) return false;
+            bool follow=bot_ai_flag_carrier(s)!=-1;
+            if(!carrier_name(b,s,false,name,e) || !follow_or_get(b,s,client,name,follow,true,e)) return false;
             if(!alive(b,s)) return true;
             if(!at(teammates,count,2,&last,e)) return false;
-            return issue_at(b,s,teammates,count,last!=carrier?2:1,"cmd_getflag","returnflag",last!=carrier?2:1,false,e);
+            int32_t index=last!=bot_ai_flag_carrier(s)?2:1;
+            return issue_at(b,s,teammates,count,index,"cmd_getflag","returnflag",index,false,e);
         }
         defenders=role_count(count,.4,4);attackers=role_count(count,.5,5);
+        bool follow=bot_ai_flag_carrier(s)!=-1;
         if(!carrier_name(b,s,false,name,e)) return false;
         for(int32_t i=0;i<defenders && alive(b,s);++i) {
-            client=teammates[i];if(client==carrier) continue;
-            if(!follow_or_get(b,s,client,name,carrier!=-1,true,e)) return false;
+            client=teammates[i];if(client==bot_ai_flag_carrier(s)) continue;
+            if(!follow_or_get(b,s,client,name,follow,true,e)) return false;
         }
         for(int32_t i=0;i<attackers && alive(b,s);++i) {
-            client=teammates[count-i-1];if(client==carrier) continue;
+            client=teammates[count-i-1];if(client==bot_ai_flag_carrier(s)) continue;
             if(!issue(b,s,client,"cmd_getflag","returnflag",client,false,e)) return false;
         }
         return true;
@@ -275,21 +280,23 @@ static bool orders_ctf(qa_bots *b, bot_ai_state *s, qa_error *e) {
         if(count==1) return true;
         if(count==2 || count==3) {
             if(!at(teammates,count,0,&first,e)) return false;
-            int32_t index=first==carrier?1:0;
+            int32_t index=first==bot_ai_flag_carrier(s)?1:0;
             if(!issue_at(b,s,teammates,count,index,"cmd_defendbase","defend",index,false,e)) return false;
             if(count!=3 || !alive(b,s)) return true;
-            index=teammates[2]!=carrier?2:1;
+            index=teammates[2]!=bot_ai_flag_carrier(s)?2:1;
             return issue_at(b,s,teammates,count,index,"cmd_defendbase","defend",index,false,e);
         }
         defenders=role_count(count,.6,6);attackers=role_count(count,.3,3);
         for(int32_t i=0;i<defenders && alive(b,s);++i) {
-            client=teammates[i];if(client==carrier) continue;
+            client=teammates[i];if(client==bot_ai_flag_carrier(s)) continue;
             if(!issue(b,s,client,"cmd_defendbase","defend",client,false,e)) return false;
         }
+        if(!alive(b,s)) return true;
+        bool follow=bot_ai_flag_carrier(s)!=-1;
         if(!carrier_name(b,s,false,name,e)) return false;
         for(int32_t i=0;i<attackers && alive(b,s);++i) {
-            client=teammates[count-i-1];if(client==carrier) continue;
-            if(!follow_or_get(b,s,client,name,carrier!=-1,true,e)) return false;
+            client=teammates[count-i-1];if(client==bot_ai_flag_carrier(s)) continue;
+            if(!follow_or_get(b,s,client,name,follow,true,e)) return false;
         }
         return true;
     }
@@ -315,19 +322,19 @@ static bool orders_one_flag(qa_bots *b, bot_ai_state *s, qa_error *e) {
     if(!sorted_team_mates(b,s,teammates,&count,e)) return false;
     if(!alive(b,s) || count==1) return true;
     bool aggressive=(bot_ai_ctf_strategy(s)&1)!=0;
-    int32_t carrier=bot_ai_flag_carrier(s),client,first,defenders,attackers;
+    int32_t client,first,defenders,attackers;
     if(status==1) {
         if(count==2) {
-            int32_t index=teammates[0]==carrier?1:0;
+            int32_t index=teammates[0]==bot_ai_flag_carrier(s)?1:0;
             return issue_at(b,s,teammates,count,index,aggressive?"cmd_defendbase":"cmd_attackenemybase",
                 aggressive?"defend":"offense",index,false,e);
         }
         if(count==3) {
-            int32_t index=teammates[0]!=carrier?0:1;
+            int32_t index=teammates[0]!=bot_ai_flag_carrier(s)?0:1;
             if(!issue_at(b,s,teammates,count,index,"cmd_defendbase","defend",index,false,e)) return false;
             if(!alive(b,s)) return true;
-            client=teammates[teammates[2]!=carrier?2:1];char name[36];
-            if(aggressive || carrier!=-1) {
+            client=teammates[teammates[2]!=bot_ai_flag_carrier(s)?2:1];char name[36];
+            if(aggressive || bot_ai_flag_carrier(s)!=-1) {
                 if(!carrier_name(b,s,true,name,e)) return false;
                 return follow_carrier(b,s,client,name,e);
             }
@@ -336,13 +343,15 @@ static bool orders_one_flag(qa_bots *b, bot_ai_state *s, qa_error *e) {
         defenders=role_count(count,aggressive?.2:.3,aggressive?2:3);
         attackers=role_count(count,aggressive?.8:.7,aggressive?8:7);
         for(int32_t i=0;i<defenders && alive(b,s);++i) {
-            client=teammates[i];if(client==carrier) continue;
+            client=teammates[i];if(client==bot_ai_flag_carrier(s)) continue;
             if(!issue(b,s,client,"cmd_defendbase","defend",client,false,e)) return false;
         }
+        if(!alive(b,s)) return true;
+        bool follow=aggressive || bot_ai_flag_carrier(s)!=-1;
         char name[36];if(!carrier_name(b,s,aggressive,name,e)) return false;
         for(int32_t i=0;i<attackers && alive(b,s);++i) {
-            client=teammates[count-i-1];if(client==carrier) continue;
-            if(!follow_or_get(b,s,client,name,aggressive || carrier!=-1,false,e)) return false;
+            client=teammates[count-i-1];if(client==bot_ai_flag_carrier(s)) continue;
+            if(!follow_or_get(b,s,client,name,follow,false,e)) return false;
         }
         return true;
     }
