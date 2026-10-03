@@ -576,9 +576,10 @@ static bool weapon_owner(qa_application *app, qa_actor_id actor, qa_actor_owner 
 {
     if (!owner && !item) return true;
     application_provider *arsenal = application_provider_for(app, actor, QA_ROLE_ARSENAL, "");
-    qa_actor_owner actual;
+    qa_item_definition definition;
     return owner && item && arsenal && arsenal->owner == owner &&
-        qa_inventory_item_owner(app->inventory, actor, item, &actual, NULL) && actual == owner;
+        qa_inventory_source_definition_read(app->inventory, actor, owner, item, &definition, NULL) &&
+        definition.weapon && (definition.actions & QA_ITEM_USE) != 0;
 }
 
 bool application_control_frames_create(qa_application *app, qa_error *error)
@@ -1073,9 +1074,8 @@ bool qa_application_control_unified_command(qa_application *app, qa_actor_id act
             (raw->arsenal.weapon.size && !receipt.weapon))
             return application_fail(error, QA_ERROR_ARGUMENT, "Unified arsenal intent is not declared by its selected owner");
         if (receipt.weapon) {
-            qa_actor_owner owner;
-            if (!qa_inventory_item_owner(app->inventory, actor, receipt.weapon, &owner, NULL) || owner != arsenal->owner)
-                return application_fail(error, QA_ERROR_ARGUMENT, "Unified weapon is absent from its selected inventory owner");
+            if (!weapon_owner(app, actor, receipt.arsenal, receipt.weapon))
+                return application_fail(error, QA_ERROR_ARGUMENT, "Unified weapon has no usable declaration from its selected arsenal");
         }
     }
     bool seen = false; uint64_t previous = 0;
@@ -2405,9 +2405,8 @@ static bool unified_owner(qa_application *app, qa_actor_id actor, const control_
         marker->sequence != receipt->sequence || marker->kind != receipt->movement.kind) return false;
     if (!receipt->has_arsenal) return true;
     application_provider *arsenal = application_provider_for(app, actor, QA_ROLE_ARSENAL, "");
-    qa_actor_owner owner;
     return arsenal && arsenal->owner == receipt->arsenal && (!receipt->weapon ||
-        (qa_inventory_item_owner(app->inventory, actor, receipt->weapon, &owner, NULL) && owner == receipt->arsenal));
+        weapon_owner(app, actor, receipt->arsenal, receipt->weapon));
 }
 
 bool application_control_frames_fields(qa_source_save_io *io, qa_application *app,
