@@ -4,7 +4,7 @@
 #include "qa/inventory.h"
 
 typedef struct frontend_config_weapon_catalog {
-    qa_item_definition items[QA_Q1_WEAPON_COUNT + QA_Q2_WEAPON_COUNT + QA_Q3_WEAPON_COUNT];
+    qa_item_definition items[(size_t)QA_Q1_WEAPON_COUNT + (size_t)QA_Q2_WEAPON_COUNT + (size_t)QA_Q3_WEAPON_COUNT];
     size_t count;
 } frontend_config_weapon_catalog;
 

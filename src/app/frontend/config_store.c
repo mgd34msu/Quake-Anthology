@@ -2200,6 +2200,8 @@ static bool carry(frontend_config_store *manager,qa_application *application,
             frontend_authored_bindings_clone(old_seat->authored,&seat->authored,error);
         qa_input_seat *active=frontend_config_source_input(previous,seat->logical);
         qa_command_context seat_command=*command; seat_command.origin=QA_COMMAND_SEAT; seat_command.seat=seat->logical;
+        seat_command.actor=(qa_actor_id){0};
+        (void)qa_application_player_actor(application,seat->logical,&seat_command.actor);
         ok=ok && active && qa_application_capture_command_context(application,&seat_command,&seat_command,error);
         qa_input_seat_options options={.context=seat_command,.console=console,.cvars=seat->mouse,
             .gamepad=active?*qa_input_seat_gamepad_tuning(active):qa_gamepad_defaults(),
@@ -2583,6 +2585,8 @@ static bool prepare(void *context,qa_application *application,const qa_launch_sn
                 fail(error,QA_ERROR_ARGUMENT,"Prepared client lost its resolved immutable Q3 product policy");
         }
         qa_command_context seat_command=*command; seat_command.origin=QA_COMMAND_SEAT; seat_command.seat=seat->logical;
+        seat_command.actor=(qa_actor_id){0};
+        (void)qa_application_player_actor(application,seat->logical,&seat_command.actor);
         ok=ok && qa_application_capture_command_context(application,&seat_command,&seat_command,error);
         qa_input_seat_options options={.context=seat_command,.console=console,.cvars=seat->mouse,.gamepad=qa_gamepad_defaults(),
             .seat=i,.context_ready=input_context,.context_user=source};
