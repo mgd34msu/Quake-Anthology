@@ -509,7 +509,7 @@ static qa_bot_navigation *bot_source_navigation(void *opaque,int32_t client) {
         return NULL;
     qa_actor_id actor=bot_source_actor(bots,client);
     if(!actor.registry || !qa_actors_get(qa_session_actors(bots->application->session),actor) ||
-       !qa_world_body_storage_serial(bots->application->world,actor)) return NULL;
+       (!bots->restoring && !qa_world_body_storage_serial(bots->application->world,actor))) return NULL;
     int32_t physical;
     if(!bot_source_client(bots,actor,&physical,NULL) || physical!=client) return NULL;
     uint32_t input=actor.slot;
