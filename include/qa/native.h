@@ -498,6 +498,12 @@ bool qa_native_checkpoint_decode(qa_bytes encoded, qa_native_checkpoint *out, qa
 bool qa_native_declaration_load(qa_bytes json, const char *artifact_path,
                                 const qa_native_module *module, qa_native_declaration **out,
                                 qa_error *error);
+/* Resolve an authored first-party profile against the acquired module's exact
+ * digest and target through the same declaration parser. A successful lookup
+ * with no supported profile leaves the empty output unchanged. Installed
+ * content declarations take precedence at the construction caller. */
+bool qa_native_declaration_builtin_load(const char *artifact_path,
+    const qa_native_module *module, qa_native_declaration **out, qa_error *error);
 void qa_native_declaration_destroy(qa_native_declaration *declaration);
 const qa_sha256_digest *qa_native_declaration_digest(const qa_native_declaration *declaration);
 qa_bytes qa_native_declaration_primary(const qa_native_declaration *declaration);

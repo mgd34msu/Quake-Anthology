@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "xatrix_primary.h"
 
 static bool json_object(const qa_json_document *document, qa_json_id id, const char *name,
                         qa_error *error) {
@@ -502,6 +503,60 @@ bool qa_native_declaration_load(qa_bytes json, const char *artifact_path,
     }
     *out = declaration;
     return true;
+}
+
+bool qa_native_declaration_builtin_load(const char *artifact_path,
+    const qa_native_module *module, qa_native_declaration **out, qa_error *error)
+{
+    if (!artifact_path || !module || !out || *out)
+        return native_fail(error, QA_ERROR_ARGUMENT, 0,
+                           "native builtin declaration requires an acquired module and empty output");
+    qa_sha256_digest digest;
+    if (!qa_sha256_parse(xatrix_primary_digest, &digest, error)) return false;
+    const qa_native_image_info *image = &module->info.image;
+    if (module->info.profile != QA_NATIVE_Q2_GAME_API3 ||
+        image->format != QA_NATIVE_IMAGE_PE32 || image->target.os != QA_NATIVE_OS_WINDOWS ||
+        image->target.arch != QA_NATIVE_ARCH_I386 || image->target.abi != QA_NATIVE_ABI_CDECL_I386 ||
+        image->target.pointer_bytes != 4 || !qa_sha256_equal(&digest, &image->digest)) return true;
+
+    qa_buffer path = {0};
+    if (!qa_json_quote((qa_bytes){(const uint8_t *)artifact_path, strlen(artifact_path)},
+                       &path, error)) return false;
+    /* This is the existing authored native-compatibility.json envelope, not a
+     * private continuation format. Its module identity is the actual caller. */
+    static const char prefix[] = "{\"version\":1,\"modules\":[{\"artifactPath\":";
+    static const char middle[] = ",\"artifactDigest\":\"";
+    static const char primary[] = "\",\"apiVersion\":3,\"primary\":";
+    static const char suffix[] = "}]}";
+    size_t size = sizeof(prefix) - 1 + sizeof(middle) - 1 + sizeof(primary) - 1 +
+        strlen(xatrix_primary_digest) + sizeof(suffix) - 1;
+    bool valid = native_size_add(size, path.size, &size);
+    for (size_t i = 0; valid && i < sizeof(xatrix_primary_parts) / sizeof(*xatrix_primary_parts); ++i)
+        valid = native_size_add(size, strlen(xatrix_primary_parts[i]), &size);
+    if (!valid) {
+        qa_buffer_free(&path);
+        return native_fail(error, QA_ERROR_MEMORY, 0, "native builtin declaration extent overflows");
+    }
+    qa_buffer source = {.data = malloc(size), .size = size};
+    if (!source.data) {
+        qa_buffer_free(&path);
+        return native_fail(error, QA_ERROR_MEMORY, 0, "retaining native builtin declaration");
+    }
+    size_t at = 0;
+#define APPEND(bytes, count) do { memcpy(source.data + at, bytes, count); at += count; } while (0)
+    APPEND(prefix, sizeof(prefix) - 1);
+    APPEND(path.data, path.size);
+    APPEND(middle, sizeof(middle) - 1);
+    APPEND(xatrix_primary_digest, strlen(xatrix_primary_digest));
+    APPEND(primary, sizeof(primary) - 1);
+    for (size_t i = 0; i < sizeof(xatrix_primary_parts) / sizeof(*xatrix_primary_parts); ++i)
+        APPEND(xatrix_primary_parts[i], strlen(xatrix_primary_parts[i]));
+    APPEND(suffix, sizeof(suffix) - 1);
+#undef APPEND
+    bool ok = qa_native_declaration_load((qa_bytes){source.data, source.size}, artifact_path,
+                                         module, out, error);
+    qa_buffer_free(&source); qa_buffer_free(&path);
+    return ok;
 }
 
 void qa_native_declaration_destroy(qa_native_declaration *declaration) {
