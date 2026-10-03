@@ -1224,11 +1224,17 @@ bool application_native_q1_wire_client_publish(void *opaque,
 }
 bool application_native_q1_wire_reconnect(qa_application *app, qa_error *error) {
     if (!app) return application_fail(error, QA_ERROR_ARGUMENT, "Q1 wire reconnect lost its actual application");
+    application_provider *primary = application_world_provider(app, QA_ROLE_ENTITIES, "");
     for (size_t i = 0; i < app->provider_count; ++i) {
         application_provider *p = app->providers[i];
-        if (p->kind == APPLICATION_PROVIDER_Q1 && !application_native_q1_wire_resources_prepare(p, error)) return false;
+        if (p->kind != APPLICATION_PROVIDER_Q1 || !qa_q1_wire_enabled(p->state.q1)) continue;
+        uint64_t generation; bool loading;
+        if (!qa_q1_wire_registration_state(p->state.q1, &generation, &loading))
+            return application_fail(error, QA_ERROR_ARGUMENT, "Q1 wire reconnect lost its actual registration state");
+        if (loading && p != primary) continue;
+        if (!application_native_q1_wire_resources_prepare(p, error)) return false;
     }
-    application_provider *p = application_world_provider(app, QA_ROLE_ENTITIES, "");
+    application_provider *p = primary;
     if (!p || p->kind != APPLICATION_PROVIDER_Q1 || !qa_q1_wire_enabled(p->state.q1)) return true;
     uint32_t clients;
     if (!qa_q1_bot_max_clients(p->state.q1, &clients, error)) return false;
