@@ -160,6 +160,13 @@ static bool mounts(vfs_save_io *io, qa_vfs *vfs, mount_binding **bindings_out)
                     return false;
                 if (kind != QA_FS_DIRECTORY)
                     return vfs_save_fail(io, QA_ERROR_FORMAT, "VFS retained root is not a directory");
+                if (!qa_fs_root_identity_is(m->root, &bindings[i].root_identity))
+                    return vfs_save_fail(io, QA_ERROR_FORMAT, "VFS retained root object differs from its metadata");
+                const qa_fs_object_reference *reference = &bindings[i].root_reference;
+                bindings[i].root_identity = (qa_fs_identity){{
+                    reference->words[0], reference->words[1], 0, 0, 0,
+                    reference->platform == 2 ? reference->words[2] : 0, 0
+                }};
             }
             if (!vfs_save_text(io, &bindings[i].root_path) || !bindings[i].root_path[0] ||
                 !vfs_save_identity(io, &bindings[i].root_identity) ||
