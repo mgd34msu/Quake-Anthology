@@ -1,6 +1,21 @@
 #include "internal.h"
 
-bool mode_damage(qa_modes *m, qa_game_family family, qa_damage_request *request, qa_error *e) {
+bool mode_damage_prepare(qa_modes *m, mode_instance *v, qa_damage_request *request,
+                         qa_error *e) {
+    if (!v || !v->active || !request || !m->options.hooks.damage_prepare)
+        return mode_fail(e, "mode damage needs its actual Source owner and clock");
+    qa_mode_id id = v->id;
+    uint64_t serial = v->serial;
+    if (!MODE_CALLBACK(m, m->options.hooks.damage_prepare(
+            m->options.hooks.context, id, request, e)))
+        return false;
+    return (mode_get(m, id) == v && v->serial == serial) ||
+        mode_fail(e, "mode damage source changed during preparation");
+}
+bool mode_damage(qa_modes *m, mode_instance *v, qa_game_family family,
+                 qa_damage_request *request, qa_error *e) {
+    if (!mode_damage_prepare(m, v, request, e))
+        return false;
     if (!m->options.hooks.combat_provider)
         return mode_fail(e, "mode damage needs selected target combat policy");
     request->attack.combat_provider =
@@ -103,10 +118,8 @@ bool qa_modes_damage_effect(qa_modes *m, qa_mode_id id, qa_damage_effect_stage s
                     .amount = effect->amount,
                     .attack = {.attacker = attacker->actor,
                                .inflictor = request->attack.inflictor,
-                               .weapon_provider = m->options.owner,
-                               .time_ns = v->value.time_ns,
                                .cause = {.kind = QA_CAUSE_Q1, .source.q1 = {.death_type = type}}}};
-                if (!mode_damage(m, QA_GAME_Q1, &reflected, e))
+                if (!mode_damage(m, v, QA_GAME_Q1, &reflected, e))
                     return false;
             }
             if (flags & 1)

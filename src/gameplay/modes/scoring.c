@@ -126,10 +126,8 @@ bool qa_modes_player_death_component(qa_modes *m, qa_mode_id id, const qa_damage
                 .amount = 1000,
                 .attack = {.attacker = attacker,
                            .inflictor = attacker,
-                           .weapon_provider = m->options.owner,
-                           .time_ns = v->value.time_ns,
                            .cause = {.kind = QA_CAUSE_Q1, .source.q1 = {.death_type = type}}}};
-            if (!mode_damage(m, QA_GAME_Q1, &punishment, e) ||
+            if (!mode_damage(m, v, QA_GAME_Q1, &punishment, e) ||
                 !qa_modes_add_score(m, id, attacker, 1, e))
                 return false;
         }

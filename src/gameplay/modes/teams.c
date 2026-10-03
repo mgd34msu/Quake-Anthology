@@ -13,9 +13,7 @@ static bool team_death(qa_modes *m, mode_instance *v, qa_actor_id actor, bool cl
     qa_damage_request request = {.target = actor,
                                  .amount = 1000,
                                  .attack = {.attacker = actor,
-                                            .inflictor = actor,
-                                            .weapon_provider = m->options.owner,
-                                            .time_ns = v->value.time_ns}};
+                                            .inflictor = actor}};
     qa_game_family family = v->value.rules.source <= QA_MODE_Q1_HORDE ? QA_GAME_Q1
                             : v->value.rules.source >= QA_MODE_Q3     ? QA_GAME_Q3
                                                                       : QA_GAME_Q2;
@@ -37,10 +35,12 @@ static bool team_death(qa_modes *m, mode_instance *v, qa_actor_id actor, bool cl
         request.attack.cause.source.q3.flags = 32;
         if (!m->options.hooks.force_death)
             return mode_fail(e, "team change needs the selected direct death provider");
+        if (!mode_damage_prepare(m, v, &request, e))
+            return false;
         return MODE_CALLBACK(m,
                              m->options.hooks.force_death(m->options.hooks.context, &request, e));
     }
-    return mode_damage(m, family, &request, e);
+    return mode_damage(m, v, family, &request, e);
 }
 static bool request_team(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_team_id team,
                          bool observer, bool automatic, bool command, bool *accepted,

@@ -323,6 +323,8 @@ typedef struct qa_modes_hooks {
     bool (*restore_player_binding)(void *, qa_mode_id, qa_actor_id, qa_actor_owner,
                                    qa_match_binding *, qa_error *);
     bool (*visible)(void *, qa_actor_id from, qa_actor_id to, bool pvs_only);
+    /* Mode-originated damage borrows the actual content owner and its Source clock. */
+    bool (*damage_prepare)(void *, qa_mode_id, qa_damage_request *, qa_error *);
     qa_actor_owner (*combat_provider)(void *, qa_actor_id, qa_game_family);
     bool (*grapple_pulling)(void *, qa_actor_id);
     bool (*character_frame)(void *, qa_actor_id, int32_t *);

@@ -457,13 +457,11 @@ static bool lmctf_frame(qa_modes *m, mode_instance *v, qa_error *e) {
                     .amount = 100000,
                     .attack = {.attacker = actor,
                                .inflictor = actor,
-                               .weapon_provider = m->options.owner,
-                               .time_ns = v->value.time_ns,
                                .cause = {.kind = QA_CAUSE_Q2,
                                          .source.q2 = {.means_of_death = 23,
                                                        .flags = 32,
                                                        .native = QA_Q2_CAUSE_CLASSIC}}}};
-                if (!mode_damage(m, QA_GAME_Q2, &request, e))
+                if (!mode_damage(m, v, QA_GAME_Q2, &request, e))
                     return false;
                 p = mode_member_get(m, v, actor);
                 if (!p)

@@ -40,12 +40,9 @@ bool mode_ball_touch(qa_modes *m, mode_instance *v, mode_object *o, qa_actor_id 
             .attack = {
                 .attacker = o->actor,
                 .inflictor = o->actor,
-                .combat_provider = m->options.owner,
-                .weapon_provider = m->options.owner,
-                .time_ns = v->value.time_ns,
                 .cause = {.kind = QA_CAUSE_Q2,
                           .source.q2 = {.means_of_death = 52, .native = QA_Q2_CAUSE_CLASSIC}}}};
-        return mode_damage(m, QA_GAME_Q2, &request, e);
+        return mode_damage(m, v, QA_GAME_Q2, &request, e);
     }
     if (!qa_actor_id_equal(actor, v->ball))
         return true;
@@ -155,14 +152,11 @@ bool mode_ball_frame(qa_modes *m, mode_instance *v, mode_object *o, qa_error *e)
             .point = body.origin,
             .attack = {.attacker = o->actor,
                        .inflictor = o->actor,
-                       .combat_provider = m->options.owner,
-                       .weapon_provider = m->options.owner,
-                       .time_ns = v->value.time_ns,
                        .cause = {.kind = QA_CAUSE_Q2,
                                  .source.q2 = {.means_of_death = 21,
                                                .flags = 32,
                                                .native = QA_Q2_CAUSE_CLASSIC}}}};
-        if (!mode_damage(m, QA_GAME_Q2, &request, e))
+        if (!mode_damage(m, v, QA_GAME_Q2, &request, e))
             return false;
     }
     return mode_object_sync(m, o, e) && mode_event(m, v, QA_MODE_BALL_GOAL, (qa_actor_id){0},

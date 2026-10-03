@@ -13,6 +13,8 @@
 #include "guest_q3_private.h"
 #include "guest_q3_weapons_services.h"
 #include "qa/application_qc_presentation.h"
+#include "qa/game_q2_bots.h"
+#include "qa/game_q2_combat.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -83,6 +85,50 @@ static bool mode_intent(void *opaque, const qa_match_intent *intent,
                             .channel = (int32_t)intent->team,
                             .frame = (int32_t)intent->game_type},
         error);
+}
+
+static bool mode_damage_prepare(void *opaque, qa_mode_id mode,
+                                qa_damage_request *request, qa_error *error)
+{
+    qa_application *app = opaque;
+    application_provider *source = app ? application_mode_provider(app, mode) : NULL;
+    qa_clock_state clock;
+    if (!request || !app || !app->session || app->destroy_requested || app->finalizing ||
+        !source || source->application != app || !source->constructed || !source->attached ||
+        source->close_pending || !source->launch ||
+        !qa_session_clock(app->session, source->owner, &clock) ||
+        clock.frame.provider != source->owner ||
+        clock.frame.kind != source->launch->selection.clock.kind)
+        return application_fail(error, QA_ERROR_ARGUMENT,
+            "Mode damage lost its actual content provider or Source clock");
+    if (request->attack.weapon)
+        return application_fail(error, QA_ERROR_ARGUMENT,
+            "Mode damage requires its actual weaponless Source operation");
+    if (request->attack.cause.kind == QA_CAUSE_Q2) {
+        qa_q2_combat_rules rules;
+        uint64_t now, started;
+        bool intermission;
+        if (source->kind != APPLICATION_PROVIDER_Q2 || !source->state.q2)
+            return application_fail(error, QA_ERROR_UNSUPPORTED,
+                "Mode damage has no actual Q2 cause profile producer");
+        if (!qa_q2_combat_rules_read(source->state.q2, &rules) ||
+            rules.owner != source->owner ||
+            clock.frame.kind != (rules.edition == QA_Q2_CLASSIC
+                ? QA_CLOCK_Q2_CLASSIC : QA_CLOCK_Q2_RERELEASE))
+            return application_fail(error, QA_ERROR_ARGUMENT,
+                "Mode damage lost its actual Q2 GAME rules");
+        if (!qa_q2_bot_clock_read(source->state.q2, &now, &intermission, &started, error))
+            return false;
+        if (now != clock.frame.time_ns)
+            return application_fail(error, QA_ERROR_ARGUMENT,
+                "Mode damage lost its actual Q2 GAME clock");
+        request->attack.cause = qa_q2_damage_cause(rules.edition, rules.product,
+            request->attack.cause.source.q2.means_of_death,
+            request->attack.cause.source.q2.flags);
+    }
+    request->attack.weapon_provider = source->owner;
+    request->attack.time_ns = clock.frame.time_ns;
+    return true;
 }
 
 static qa_actor_owner mode_combat_provider(void *opaque, qa_actor_id actor,
@@ -196,6 +242,7 @@ static qa_modes_hooks mode_hooks(qa_application *application)
                             .q1_source_add_score = application_native_q1_mode_add_score,
                             .q1_ctf_suicide_notice = application_native_q1_ctf_suicide_notice,
                             .release_grapple = application_native_mode_release_grapple,
+                            .damage_prepare = mode_damage_prepare,
                             .combat_provider = mode_combat_provider,
                             .force_death = application_force_death,
                             .visible = application_native_mode_visible,

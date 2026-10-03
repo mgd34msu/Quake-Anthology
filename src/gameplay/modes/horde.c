@@ -973,10 +973,8 @@ bool mode_horde_frame(qa_modes *m, mode_instance *v, uint64_t elapsed, qa_error 
                                          .amount = 10000,
                                          .attack = {.attacker = h->options.manager,
                                                     .inflictor = h->options.manager,
-                                                    .weapon_provider = m->options.owner,
-                                                    .time_ns = v->value.time_ns,
                                                     .cause = {.kind = QA_CAUSE_Q1}}};
-            if (!mode_damage(m, QA_GAME_Q1, &request, e))
+            if (!mode_damage(m, v, QA_GAME_Q1, &request, e))
                 return false;
         }
         return true;
