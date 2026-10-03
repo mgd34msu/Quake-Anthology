@@ -140,7 +140,7 @@ bool qa_audio_bank_graph_checkpoint(const qa_audio_asset_inventory *inventory,
         ok = qa_bank_asset_valid(inventory->assets[i].asset, error) &&
             qa_bank_add_sample(&samples, &sample_count, inventory->assets[i].asset->sample, error);
     qa_ac_writer w = {.error = error};
-    ok = ok && qa_ac_write(&w, "QABG", 4) && qa_ac_u32(&w, 1) && qa_ac_u64(&w, inventory->bank_count) &&
+    ok = ok && qa_ac_write(&w, "QABG", 4) && qa_ac_u64(&w, inventory->bank_count) &&
         qa_ac_u64(&w, sample_count) && qa_ac_u64(&w, inventory->asset_count);
     for (size_t i = 0; ok && i < sample_count; ++i) {
         qa_buffer saved = {0}; ok = qa_audio_sample_checkpoint(samples[i].sample, &saved, error) &&
@@ -173,10 +173,10 @@ bool qa_audio_bank_graph_restore(qa_audio_bank *const *banks, size_t count,
     inventory->owns_assets = true;
     qa_audio_bank *decoded = NULL; struct sample_row *samples = NULL;
     qa_ac_reader r = {.bytes = bytes, .error = error}; qa_bytes magic;
-    bool ok = qa_ac_read(&r, 4, &magic) && !memcmp(magic.data, "QABG", 4) && qa_ac_get32(&r) == 1;
+    bool ok = qa_ac_read(&r, 4, &magic) && !memcmp(magic.data, "QABG", 4);
     uint64_t bank_count = qa_ac_get64(&r), sample_count = qa_ac_get64(&r), asset_count = qa_ac_get64(&r);
     ok = ok && !r.failed && bank_count == count && count <= bytes.size / 32 &&
-        sample_count <= SIZE_MAX / sizeof(*samples) && sample_count <= bytes.size / 56 &&
+        sample_count <= SIZE_MAX / sizeof(*samples) && sample_count <= bytes.size / 52 &&
         asset_count <= SIZE_MAX / sizeof(*inventory->assets) && asset_count <= bytes.size / 88;
     if (ok) {
         decoded = calloc(count ? count : 1, sizeof(*decoded));

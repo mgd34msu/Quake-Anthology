@@ -500,7 +500,7 @@ bool qa_audio_environment_definition_checkpoint(const qa_audio_environment *envi
         return false;
     }
     qa_ac_writer w = {.error = error};
-    qa_ac_write(&w, "QAED", 4); qa_ac_u32(&w, 1);
+    qa_ac_write(&w, "QAED", 4);
     qa_ac_u64(&w, environment->table->count);
     for (size_t i = 0; !w.failed && i < environment->table->count; ++i) {
         const environment_group *g = &environment->table->groups[i];
@@ -547,7 +547,7 @@ bool qa_audio_environments_restore(qa_bytes bytes, qa_audio_environments **out, 
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid sound environment definition destination"); return false;
     }
     qa_ac_reader r = {.bytes = bytes, .error = error}; qa_bytes magic;
-    if (!qa_ac_read(&r, 4, &magic) || memcmp(magic.data, "QAED", 4) || qa_ac_get32(&r) != 1)
+    if (!qa_ac_read(&r, 4, &magic) || memcmp(magic.data, "QAED", 4))
         return qa_ac_bad(&r, "Invalid sound environment definition header");
     qa_audio_environments *definitions = calloc(1, sizeof(*definitions));
     environment_table *table = calloc(1, sizeof(*table));
@@ -604,7 +604,7 @@ bool qa_audio_environment_checkpoint(const qa_audio_environment *v, qa_buffer *o
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Sound environment checkpoint requires its owner"); return false;
     }
     qa_ac_writer w = {.error = error};
-    qa_ac_write(&w, "QAES", 4); qa_ac_u32(&w, 1); qa_ac_u32(&w, v->trace != NULL);
+    qa_ac_write(&w, "QAES", 4); qa_ac_u32(&w, v->trace != NULL);
     qa_ac_u64(&w, v->group); qa_ac_u64(&w, v->preset); qa_ac_u32(&w, v->probe);
     for (size_t i = 0; i < PROBE_COUNT; ++i) qa_ac_vec(&w, v->results[i]);
     qa_ac_double(&w, v->probe_time); qa_ac_double(&w, v->lerp_start); qa_ac_double(&w, v->lerp_end);
@@ -621,7 +621,7 @@ bool qa_audio_environment_restore(qa_bytes bytes, const qa_audio_environments *d
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid candidate sound environment"); return false;
     }
     qa_ac_reader r = {.bytes = bytes, .error = error}; qa_bytes magic;
-    if (!qa_ac_read(&r, 4, &magic) || memcmp(magic.data, "QAES", 4) || qa_ac_get32(&r) != 1 ||
+    if (!qa_ac_read(&r, 4, &magic) || memcmp(magic.data, "QAES", 4) ||
         qa_ac_bool(&r) != (trace != NULL)) return qa_ac_bad(&r, "Sound environment trace admission differs");
     qa_audio_environment *v = NULL;
     if (r.failed || !qa_audio_environment_create(definitions, trace, user, &v, error)) return false;

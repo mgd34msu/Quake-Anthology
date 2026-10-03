@@ -31,6 +31,8 @@ struct qa_audio_engine {
     size_t position_count, position_capacity;
     audio_bus *buses;
     size_t bus_count, bus_capacity;
+    qa_audio_q3_operation *q3_operations;
+    size_t q3_first, q3_count, q3_capacity;
     float *sum, *seat_scratch;
     int16_t *pcm_scratch;
     uint64_t clock, next_voice;
@@ -51,4 +53,5 @@ void qa_audio_engine_discard(qa_audio_engine *engine);
 bool qa_audio_engine_acoustics_transmit(void *, const qa_audio_listener *, qa_vec3,
     float *, qa_error *);
 void qa_audio_engine_acoustics_rebind(qa_audio_engine *);
+bool qa_audio_q3_operation_valid(const qa_audio_q3_operation *);
 #endif

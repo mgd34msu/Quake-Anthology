@@ -30,6 +30,74 @@ static void nested(qa_ac_writer *w, bool success, qa_buffer *bytes) {
     else qa_ac_blob(w, (qa_bytes){bytes->data, bytes->size});
     qa_buffer_free(bytes);
 }
+static bool put_q3_operation(qa_ac_writer *w, const qa_audio_checkpoint_refs *refs,
+    const qa_audio_q3_operation *operation)
+{
+    if (!qa_audio_q3_operation_valid(operation)) {
+        qa_error_set(w->error, QA_ERROR_FORMAT, 0, "Pending Q3 audio has no genuine source policy");
+        w->failed = true; return false;
+    }
+    if (!qa_ac_u32(w, (uint32_t)operation->kind)) return false;
+    if (operation->kind == QA_AUDIO_Q3_PLAY || operation->kind == QA_AUDIO_Q3_LOOP) {
+        qa_buffer asset = {0};
+        bool okay = refs && refs->asset_encode &&
+            refs->asset_encode(refs->context, operation->sound.asset, &asset, w->error);
+        if (!okay || (asset.size && !asset.data)) {
+            if (!w->error || w->error->code == QA_OK)
+                qa_error_set(w->error, QA_ERROR_ARGUMENT, 0, "Pending Q3 sound requires its actual asset encoder");
+            w->failed = true;
+        }
+        okay = okay && !w->failed && qa_ac_blob(w, (qa_bytes){asset.data, asset.size}) &&
+            qa_ac_put_play(w, refs, &operation->sound);
+        qa_buffer_free(&asset);
+        if (!okay) return false;
+        return operation->kind == QA_AUDIO_Q3_PLAY ?
+            qa_ac_u32(w, (uint32_t)operation->milliseconds) :
+            qa_ac_vec(w, operation->velocity) && qa_ac_u32(w, (uint32_t)operation->frame_number) &&
+                qa_ac_u32(w, operation->persistent);
+    }
+    if (!qa_ac_ref(w, refs, QA_AUDIO_REFERENCE_OWNER, operation->sound.owner) ||
+        !qa_ac_u32(w, operation->sound.audience)) return false;
+    if (operation->kind == QA_AUDIO_Q3_CLEAR) return qa_ac_u32(w, operation->all);
+    return qa_ac_ref(w, refs, QA_AUDIO_REFERENCE_ACTOR, operation->sound.actor) &&
+        (operation->kind != QA_AUDIO_Q3_POSITION || qa_ac_vec(w, operation->sound.origin));
+}
+static void get_q3_operation(qa_ac_reader *r, const qa_audio_checkpoint_refs *refs,
+    qa_audio_q3_operation *operation)
+{
+    operation->kind = (qa_audio_q3_operation_kind)qa_ac_get32(r);
+    if ((unsigned)operation->kind > QA_AUDIO_Q3_POSITION) {
+        qa_ac_bad(r, "Unknown pending Q3 audio operation"); return;
+    }
+    if (operation->kind == QA_AUDIO_Q3_PLAY || operation->kind == QA_AUDIO_Q3_LOOP) {
+        qa_bytes descriptor;
+        if (!qa_ac_getblob(r, &descriptor)) return;
+        if (!refs || !refs->asset_decode ||
+            !refs->asset_decode(refs->context, descriptor, &operation->sound.asset, r->error)) {
+            if (!r->error || r->error->code == QA_OK)
+                qa_error_set(r->error, QA_ERROR_ARGUMENT, r->offset, "Pending Q3 sound requires its actual asset decoder");
+            r->failed = true; return;
+        }
+        qa_ac_get_play(r, refs, &operation->sound);
+        operation->sound.sample = qa_audio_asset_sample(operation->sound.asset);
+        operation->sound.name = qa_audio_asset_name(operation->sound.asset);
+        if (operation->kind == QA_AUDIO_Q3_PLAY) operation->milliseconds = qa_ac_geti32(r);
+        else {
+            operation->velocity = qa_ac_getvec(r); operation->frame_number = qa_ac_geti32(r);
+            operation->persistent = qa_ac_bool(r);
+        }
+    } else {
+        operation->sound.family = QA_AUDIO_Q3;
+        operation->sound.owner = qa_ac_getref(r, refs, QA_AUDIO_REFERENCE_OWNER);
+        operation->sound.audience = qa_ac_get32(r);
+        operation->sound.actor = operation->kind == QA_AUDIO_Q3_CLEAR ? QA_AUDIO_NO_ACTOR :
+            qa_ac_getref(r, refs, QA_AUDIO_REFERENCE_ACTOR);
+        if (operation->kind == QA_AUDIO_Q3_CLEAR) operation->all = qa_ac_bool(r);
+        else if (operation->kind == QA_AUDIO_Q3_POSITION) operation->sound.origin = qa_ac_getvec(r);
+    }
+    if (!r->failed && !qa_audio_q3_operation_valid(operation))
+        qa_ac_bad(r, "Pending Q3 audio differs from its actual candidate source policy");
+}
 static const qa_audio_mixer *owned_mixer(const qa_audio_engine *engine, size_t index)
 {
     return index < engine->seat_count ?
@@ -57,7 +125,9 @@ bool qa_audio_engine_assets_read(const qa_audio_engine *engine, qa_audio_asset *
     if (!engine || !out || *out || !out_count || engine->operation_depth || engine->callback_depth ||
         engine->destroy_pending || engine->destroying || (engine->seat_count && !engine->seats) ||
         (engine->round_mixer_count && !engine->round_mixers) ||
-        engine->round_mixer_count > SIZE_MAX - engine->seat_count) {
+        engine->round_mixer_count > SIZE_MAX - engine->seat_count ||
+        engine->q3_first > engine->q3_capacity || engine->q3_count > engine->q3_capacity - engine->q3_first ||
+        (engine->q3_capacity && !engine->q3_operations)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Audio asset inventory requires an idle engine and empty output");
         return false;
     }
@@ -86,6 +156,18 @@ bool qa_audio_engine_assets_read(const qa_audio_engine *engine, qa_audio_asset *
             }
         }
     }
+    for (size_t i = 0; i < engine->q3_count; ++i) {
+        const qa_audio_q3_operation *operation = engine->q3_operations + engine->q3_first + i;
+        if (!qa_audio_q3_operation_valid(operation)) {
+            qa_error_set(error, QA_ERROR_FORMAT, 0, "Pending Q3 sound lost its real source holder"); return false;
+        }
+        if (operation->sound.asset) {
+            if (count == SIZE_MAX / sizeof(qa_audio_asset *)) {
+                qa_error_set(error, QA_ERROR_MEMORY, 0, "Pending audio asset inventory overflows"); return false;
+            }
+            ++count;
+        }
+    }
     qa_audio_asset **assets = count ? malloc(count * sizeof(*assets)) : NULL;
     if (count && !assets) {
         qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating borrowed engine asset inventory"); return false;
@@ -95,6 +177,10 @@ bool qa_audio_engine_assets_read(const qa_audio_engine *engine, qa_audio_asset *
         const qa_audio_mixer *mixer = owned_mixer(engine, i);
         for (size_t j = 0; j < mixer->prepared_count; ++j)
             if (mixer->prepared[j] && mixer->prepared[j]->asset) assets[used++] = mixer->prepared[j]->asset;
+    }
+    for (size_t i = 0; i < engine->q3_count; ++i) {
+        qa_audio_asset *asset = engine->q3_operations[engine->q3_first + i].sound.asset;
+        if (asset) assets[used++] = asset;
     }
     *out = assets; *out_count = count; return true;
 }
@@ -126,7 +212,7 @@ bool qa_audio_engine_checkpoint(const qa_audio_engine *engine, const qa_audio_ch
         else qa_buffer_free(&bytes);
         selection[i] = j;
     }
-    qa_ac_write(&w, "QAEN", 4); qa_ac_u32(&w, 5); qa_ac_u32(&w, engine->options.sample_rate);
+    qa_ac_write(&w, "QAEN", 4); qa_ac_u32(&w, engine->options.sample_rate);
     qa_ac_u32(&w, engine->options.output_channels); qa_ac_u64(&w, engine->options.mix_frames);
     qa_ac_u64(&w, engine->options.initial_voices); qa_ac_u32(&w, callback_mask(&engine->options));
     qa_ac_u32(&w, engine->geometry != NULL);
@@ -178,6 +264,9 @@ bool qa_audio_engine_checkpoint(const qa_audio_engine *engine, const qa_audio_ch
         qa_ac_u32(&w, retained->seat);
         nested(&w, qa_audio_mixer_checkpoint(retained->mixer, refs, &bytes, error), &bytes);
     }
+    qa_ac_u64(&w, engine->q3_count);
+    for (size_t i = 0; !w.failed && i < engine->q3_count; ++i)
+        put_q3_operation(&w, refs, engine->q3_operations + engine->q3_first + i);
     for (size_t i = 0; i < definition_count; ++i) qa_buffer_free(&definitions[i]);
     free(definitions); free(selection); return qa_ac_finish(&w, out);
 }
@@ -202,7 +291,7 @@ bool qa_audio_engine_restore(qa_bytes bytes, const qa_audio_engine_options *opti
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid isolated audio engine destination"); return false;
     }
     qa_ac_reader r = {.bytes = bytes, .error = error}; qa_bytes magic;
-    if (!qa_ac_read(&r, 4, &magic) || memcmp(magic.data, "QAEN", 4) || qa_ac_get32(&r) != 5 ||
+    if (!qa_ac_read(&r, 4, &magic) || memcmp(magic.data, "QAEN", 4) ||
         qa_ac_get32(&r) != options->sample_rate || qa_ac_get32(&r) != options->output_channels ||
         qa_ac_get64(&r) != (options->mix_frames ? options->mix_frames : 4096) ||
         qa_ac_get64(&r) != (options->initial_voices ? options->initial_voices : 96) ||
@@ -343,6 +432,13 @@ bool qa_audio_engine_restore(qa_bytes bytes, const qa_audio_engine_options *opti
             if (held->mixer->voices[j].state != QA_MIXER_FREE)
                 qa_ac_bad(&r, "Retained round mixer contains an active source voice");
     }
+    size_t pending = get_count(&r, sizeof(*engine->q3_operations));
+    engine->q3_operations = get_array(&r, pending, sizeof(*engine->q3_operations));
+    if (!r.failed) engine->q3_capacity = pending;
+    for (size_t i = 0; !r.failed && i < pending; ++i) {
+        ++engine->q3_count;
+        get_q3_operation(&r, refs, engine->q3_operations + i);
+    }
     if (!r.failed && r.offset != bytes.size) qa_ac_bad(&r, "Engine checkpoint has trailing fields");
     if (definitions) for (size_t i = 0; i < definition_count; ++i) qa_audio_environments_destroy(definitions[i]);
     free(definitions); free(definition_uses);
@@ -355,7 +451,7 @@ bool qa_audio_engine_restore_into(qa_audio_engine *engine, qa_bytes bytes,
     if (!engine || engine->round_resetting || engine->operation_depth || engine->callback_depth ||
         engine->acoustics_readers || engine->destroy_pending ||
         engine->destroying || engine->seat_count || engine->round_mixer_count || engine->position_count || engine->bus_count ||
-        engine->clock || engine->next_voice) {
+        engine->clock || engine->next_voice || engine->q3_count) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Audio import requires an empty idle candidate engine");
         return false;
     }

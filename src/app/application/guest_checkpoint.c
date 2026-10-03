@@ -3,18 +3,18 @@
 #include "guest_q3_save.h"
 #include "qa/binary.h"
 
-enum { GUEST_CHECKPOINT_HEADER = 120 };
+enum { GUEST_CHECKPOINT_IDENTITY = 108,
+       GUEST_CHECKPOINT_HEADER = GUEST_CHECKPOINT_IDENTITY + sizeof(uint64_t) };
 
 static void identity(const application_provider *provider, uint8_t *out)
 {
     memcpy(out, "QAGC", 4);
-    qa_store_u32le(out + 4, 1);
-    qa_store_u32le(out + 8, provider->kind);
-    memcpy(out + 16, provider->launch->identity.bytes, 32);
+    qa_store_u32le(out + 4, provider->kind);
+    memcpy(out + 12, provider->launch->identity.bytes, 32);
     const qa_sha256_digest *artifact = qa_resource_digest(provider->launch->artifact);
     const qa_sha256_digest *declaration = qa_resource_digest(provider->launch->declaration);
-    if (artifact) memcpy(out + 48, artifact->bytes, 32);
-    if (declaration) memcpy(out + 80, declaration->bytes, 32);
+    if (artifact) memcpy(out + 44, artifact->bytes, 32);
+    if (declaration) memcpy(out + 76, declaration->bytes, 32);
 }
 
 static bool checkpoint_owner(application_provider *provider, qa_error *error)
@@ -56,7 +56,7 @@ bool application_guest_checkpoint_capture(application_provider *provider,
         return application_fail(error, QA_ERROR_MEMORY, "Allocating guest continuation");
     }
     identity(provider, bytes.data);
-    qa_store_u64le(bytes.data + 112, encoded.size);
+    qa_store_u64le(bytes.data + GUEST_CHECKPOINT_IDENTITY, encoded.size);
     if (encoded.size) memcpy(bytes.data + GUEST_CHECKPOINT_HEADER, encoded.data, encoded.size);
     qa_buffer_free(&encoded);
     *out = bytes;
@@ -71,8 +71,8 @@ bool application_guest_checkpoint_body(const application_provider *provider,
     uint8_t expected[GUEST_CHECKPOINT_HEADER] = {0};
     identity(provider, expected);
     if (!bytes.data || bytes.size < GUEST_CHECKPOINT_HEADER ||
-        memcmp(bytes.data, expected, 112) ||
-        qa_load_u64le(bytes.data + 112) != bytes.size - GUEST_CHECKPOINT_HEADER)
+        memcmp(bytes.data, expected, GUEST_CHECKPOINT_IDENTITY) ||
+        qa_load_u64le(bytes.data + GUEST_CHECKPOINT_IDENTITY) != bytes.size - GUEST_CHECKPOINT_HEADER)
         return application_fail(error, QA_ERROR_FORMAT, "Guest backend/content checkpoint identity differs");
     *out = (qa_bytes){bytes.data + GUEST_CHECKPOINT_HEADER, bytes.size - GUEST_CHECKPOINT_HEADER};
     return true;

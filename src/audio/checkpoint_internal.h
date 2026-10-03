@@ -129,6 +129,27 @@ static inline uint64_t qa_ac_getref(qa_ac_reader *r, const qa_audio_checkpoint_r
     if (!id || id == UINT64_MAX) qa_ac_bad(r, "Audio portable reference resolved to an empty identity");
     return id;
 }
+static inline bool qa_ac_put_play(qa_ac_writer *w, const qa_audio_checkpoint_refs *refs, const qa_audio_play *v) {
+    return qa_ac_u32(w, v->family) && qa_ac_ref(w, refs, QA_AUDIO_REFERENCE_ACTOR, v->actor) &&
+        qa_ac_ref(w, refs, QA_AUDIO_REFERENCE_OWNER, v->owner) &&
+        qa_ac_ref(w, refs, QA_AUDIO_REFERENCE_RESOURCE, v->resource_id) && qa_ac_u32(w, v->audience) &&
+        qa_ac_u32(w, v->origin_kind) && qa_ac_ref(w, refs, QA_AUDIO_REFERENCE_ACTOR, v->origin_actor) &&
+        qa_ac_vec(w, v->origin) && qa_ac_u32(w, (uint32_t)v->channel) && qa_ac_float(w, v->volume) &&
+        qa_ac_float(w, v->attenuation) && qa_ac_double(w, v->delay_seconds) &&
+        qa_ac_double(w, v->server_milliseconds) && qa_ac_u32(w, v->has_server_time);
+}
+static inline void qa_ac_get_play(qa_ac_reader *r, const qa_audio_checkpoint_refs *refs, qa_audio_play *v) {
+    v->family = (qa_audio_family)qa_ac_get32(r); v->actor = qa_ac_getref(r, refs, QA_AUDIO_REFERENCE_ACTOR);
+    v->owner = qa_ac_getref(r, refs, QA_AUDIO_REFERENCE_OWNER);
+    v->resource_id = qa_ac_getref(r, refs, QA_AUDIO_REFERENCE_RESOURCE); v->audience = qa_ac_get32(r);
+    v->origin_kind = (qa_audio_origin_kind)qa_ac_get32(r);
+    v->origin_actor = qa_ac_getref(r, refs, QA_AUDIO_REFERENCE_ACTOR); v->origin = qa_ac_getvec(r);
+    v->channel = qa_ac_geti32(r); v->volume = qa_ac_getfloat(r); v->attenuation = qa_ac_getfloat(r);
+    v->delay_seconds = qa_ac_getdouble(r); v->server_milliseconds = qa_ac_getdouble(r); v->has_server_time = qa_ac_bool(r);
+    if ((unsigned)v->family > QA_AUDIO_Q3 || (unsigned)v->origin_kind > QA_AUDIO_ACTOR ||
+        v->volume < 0 || v->volume > 1 || v->attenuation < 0 ||
+        (v->channel < 0 && !(v->family == QA_AUDIO_Q1 && v->channel == -1))) qa_ac_bad(r, "Invalid saved audio play policy");
+}
 static inline bool qa_ac_finish(qa_ac_writer *writer, qa_buffer *out) {
     if (writer->failed) { qa_buffer_free(&writer->buffer); return false; }
     *out = writer->buffer; return true;

@@ -566,39 +566,39 @@ bool qa_audio_sample_checkpoint(const qa_audio_sample *sample, qa_buffer *out, q
     size_t bytes;
     if (!out || !sample_valid(sample, error) ||
         !qa_audio_pcm_size(sample->frame_count, sample->channels, &bytes, error)) return false;
-    if (bytes > SIZE_MAX - 48)
+    if (bytes > SIZE_MAX - 44)
         return qa_audio_codec_fail(error, QA_ERROR_MEMORY, 0, "PCM checkpoint extent overflows storage");
-    qa_buffer buffer = {.data = calloc(1, 48 + bytes), .size = 48 + bytes};
+    qa_buffer buffer = {.data = calloc(1, 44 + bytes), .size = 44 + bytes};
     if (!buffer.data)
         return qa_audio_codec_fail(error, QA_ERROR_MEMORY, 0, "Retaining PCM checkpoint");
     uint8_t *data = buffer.data;
-    memcpy(data, "QASP", 4); qa_store_u32le(data + 4, 1);
-    qa_store_u32le(data + 8, sample->sample_rate); qa_store_u32le(data + 12, sample->channels);
-    qa_store_u32le(data + 16, sample->source_bytes_per_sample);
-    qa_store_u64le(data + 24, sample->frame_count); qa_store_u64le(data + 32, sample->loop_start);
-    qa_store_u64le(data + 40, bytes);
+    memcpy(data, "QASP", 4);
+    qa_store_u32le(data + 4, sample->sample_rate); qa_store_u32le(data + 8, sample->channels);
+    qa_store_u32le(data + 12, sample->source_bytes_per_sample);
+    qa_store_u64le(data + 20, sample->frame_count); qa_store_u64le(data + 28, sample->loop_start);
+    qa_store_u64le(data + 36, bytes);
     for (size_t i = 0; i < bytes / 2; ++i)
-        qa_store_u16le(data + 48 + i * 2, (uint16_t)sample->samples[i]);
+        qa_store_u16le(data + 44 + i * 2, (uint16_t)sample->samples[i]);
     *out = buffer; return true;
 }
 
 bool qa_audio_sample_restore(qa_bytes bytes, qa_audio_sample **out, qa_error *error) {
-    if (!out || !bytes.data || bytes.size < 48 || memcmp(bytes.data, "QASP", 4) ||
-        qa_load_u32le(bytes.data + 4) != 1 || qa_load_u32le(bytes.data + 20))
+    if (!out || !bytes.data || bytes.size < 44 || memcmp(bytes.data, "QASP", 4) ||
+        qa_load_u32le(bytes.data + 16))
         return qa_audio_codec_fail(error, QA_ERROR_FORMAT, 0, "Invalid PCM checkpoint header");
     const uint8_t *data = bytes.data;
-    uint32_t rate = qa_load_u32le(data + 8), channels = qa_load_u32le(data + 12);
-    uint32_t width = qa_load_u32le(data + 16);
-    uint64_t frames = qa_load_u64le(data + 24), loop = qa_load_u64le(data + 32);
+    uint32_t rate = qa_load_u32le(data + 4), channels = qa_load_u32le(data + 8);
+    uint32_t width = qa_load_u32le(data + 12);
+    uint64_t frames = qa_load_u64le(data + 20), loop = qa_load_u64le(data + 28);
     size_t extent;
     if (!rate || width < 1 || width > 3 || (loop != QA_AUDIO_NO_LOOP && loop >= frames) ||
-        !qa_audio_pcm_size(frames, channels, &extent, error) || extent != bytes.size - 48 ||
-        qa_load_u64le(data + 40) != extent)
-        return qa_audio_codec_fail(error, QA_ERROR_FORMAT, 8, "Invalid PCM checkpoint extent or format");
+        !qa_audio_pcm_size(frames, channels, &extent, error) || extent != bytes.size - 44 ||
+        qa_load_u64le(data + 36) != extent)
+        return qa_audio_codec_fail(error, QA_ERROR_FORMAT, 4, "Invalid PCM checkpoint extent or format");
     qa_audio_sample *sample = sample_allocate(frames, channels, rate, width, loop, error);
     if (!sample) return false;
     int16_t *pcm = (int16_t *)(sample + 1);
-    for (size_t i = 0; i < extent / 2; ++i) pcm[i] = qa_load_i16le(data + 48 + i * 2);
+    for (size_t i = 0; i < extent / 2; ++i) pcm[i] = qa_load_i16le(data + 44 + i * 2);
     *out = sample; return true;
 }
 
@@ -609,40 +609,40 @@ bool qa_audio_stream_checkpoint(const qa_audio_stream *stream, qa_buffer *out, q
     if (stream->kind == STREAM_SAMPLE && !qa_audio_sample_checkpoint(stream->source.sample, &sample, error))
         return false;
     qa_bytes source = stream->kind == STREAM_SAMPLE ? (qa_bytes){sample.data, sample.size} : stream->original;
-    if ((!source.data && source.size) || source.size > SIZE_MAX - 48) {
+    if ((!source.data && source.size) || source.size > SIZE_MAX - 44) {
         qa_buffer_free(&sample);
         return qa_audio_codec_fail(error, QA_ERROR_MEMORY, 0, "Stream checkpoint extent overflows storage");
     }
-    qa_buffer buffer = {.data = calloc(1, 48 + source.size), .size = 48 + source.size};
+    qa_buffer buffer = {.data = calloc(1, 44 + source.size), .size = 44 + source.size};
     if (!buffer.data) {
         qa_buffer_free(&sample);
         return qa_audio_codec_fail(error, QA_ERROR_MEMORY, 0, "Retaining stream checkpoint");
     }
     uint8_t *data = buffer.data;
-    memcpy(data, "QAST", 4); qa_store_u32le(data + 4, 1);
-    qa_store_u32le(data + 8, stream->kind); qa_store_u32le(data + 12, stream->policy);
-    qa_store_u32le(data + 16, stream->kind == STREAM_VORBIS && stream->source.vorbis.failed);
-    qa_store_u64le(data + 24, stream->frames); qa_store_u64le(data + 32, stream->position);
-    qa_store_u64le(data + 40, source.size);
-    if (source.size) memcpy(data + 48, source.data, source.size);
+    memcpy(data, "QAST", 4);
+    qa_store_u32le(data + 4, stream->kind); qa_store_u32le(data + 8, stream->policy);
+    qa_store_u32le(data + 12, stream->kind == STREAM_VORBIS && stream->source.vorbis.failed);
+    qa_store_u64le(data + 20, stream->frames); qa_store_u64le(data + 28, stream->position);
+    qa_store_u64le(data + 36, source.size);
+    if (source.size) memcpy(data + 44, source.data, source.size);
     qa_buffer_free(&sample); *out = buffer; return true;
 }
 
 static void release_checkpoint_bytes(void *owner) { free(owner); }
 
 bool qa_audio_stream_restore(qa_bytes bytes, qa_audio_stream **out, qa_error *error) {
-    if (!out || !bytes.data || bytes.size < 48 || memcmp(bytes.data, "QAST", 4) ||
-        qa_load_u32le(bytes.data + 4) != 1 || qa_load_u32le(bytes.data + 20))
+    if (!out || !bytes.data || bytes.size < 44 || memcmp(bytes.data, "QAST", 4) ||
+        qa_load_u32le(bytes.data + 16))
         return qa_audio_codec_fail(error, QA_ERROR_FORMAT, 0, "Invalid stream checkpoint header");
     const uint8_t *data = bytes.data;
-    uint32_t kind = qa_load_u32le(data + 8), policy = qa_load_u32le(data + 12);
-    uint32_t failed = qa_load_u32le(data + 16);
-    uint64_t frames = qa_load_u64le(data + 24), position = qa_load_u64le(data + 32);
+    uint32_t kind = qa_load_u32le(data + 4), policy = qa_load_u32le(data + 8);
+    uint32_t failed = qa_load_u32le(data + 12);
+    uint64_t frames = qa_load_u64le(data + 20), position = qa_load_u64le(data + 28);
     if (kind > STREAM_VORBIS || policy > QA_WAV_Q3 || failed > 1 ||
         (failed && kind != STREAM_VORBIS) || position > frames ||
-        qa_load_u64le(data + 40) != bytes.size - 48)
-        return qa_audio_codec_fail(error, QA_ERROR_FORMAT, 8, "Invalid stream checkpoint format or cursor");
-    qa_bytes source = {data + 48, bytes.size - 48};
+        qa_load_u64le(data + 36) != bytes.size - 44)
+        return qa_audio_codec_fail(error, QA_ERROR_FORMAT, 4, "Invalid stream checkpoint format or cursor");
+    qa_bytes source = {data + 44, bytes.size - 44};
     qa_audio_stream *stream = NULL;
     if (kind == STREAM_SAMPLE) {
         qa_audio_sample *sample = NULL;
@@ -659,7 +659,7 @@ bool qa_audio_stream_restore(qa_bytes bytes, qa_audio_stream **out, qa_error *er
     }
     if (stream->kind != (stream_kind)kind || stream->frames != frames) {
         qa_audio_stream_close(stream);
-        return qa_audio_codec_fail(error, QA_ERROR_FORMAT, 24, "Stream checkpoint source format differs");
+        return qa_audio_codec_fail(error, QA_ERROR_FORMAT, 20, "Stream checkpoint source format differs");
     }
     if (!qa_audio_stream_seek(stream, position, error)) { qa_audio_stream_close(stream); return false; }
     if (kind == STREAM_VORBIS) stream->source.vorbis.failed = failed != 0;

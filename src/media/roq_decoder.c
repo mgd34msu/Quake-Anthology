@@ -52,15 +52,14 @@ void qa_roq_scratch_clear(qa_roq_scratch *scratch, bool books) {
 bool qa_roq_scratch_capture(const qa_roq_scratch *scratch, qa_buffer *out, qa_error *error) {
     if (!scratch || !scratch->references || !out || out->data || out->size)
         return roq_fail(error, "Missing retained RoQ scratch checkpoint owner");
-    qa_buffer saved = {.size = ROQ_SAVED_BYTES + 8u};
+    qa_buffer saved = {.size = ROQ_SAVED_BYTES + 4u};
     saved.data = malloc(saved.size);
     if (!saved.data) {
         qa_error_set(error, QA_ERROR_MEMORY, 0, "Saving shared RoQ physical buffers");
         return false;
     }
     memcpy(saved.data, "QRSB", 4);
-    qa_store_u32le(saved.data + 4, 1);
-    uint8_t *bytes = saved.data + 8;
+    uint8_t *bytes = saved.data + 4;
     memcpy(bytes, scratch->file, ROQ_FILE_BYTES);
     bytes += ROQ_FILE_BYTES;
     memcpy(bytes, &scratch->books, sizeof(scratch->books));
@@ -70,10 +69,10 @@ bool qa_roq_scratch_capture(const qa_roq_scratch *scratch, qa_buffer *out, qa_er
     return true;
 }
 bool qa_roq_scratch_restore(qa_roq_scratch *scratch, qa_bytes saved, qa_error *error) {
-    if (!scratch || !scratch->references || !saved.data || saved.size != ROQ_SAVED_BYTES + 8u ||
-        memcmp(saved.data, "QRSB", 4) || qa_load_u32le(saved.data + 4) != 1)
+    if (!scratch || !scratch->references || !saved.data || saved.size != ROQ_SAVED_BYTES + 4u ||
+        memcmp(saved.data, "QRSB", 4))
         return roq_fail(error, "Invalid shared RoQ physical-buffer checkpoint");
-    const uint8_t *bytes = saved.data + 8;
+    const uint8_t *bytes = saved.data + 4;
     memcpy(scratch->file, bytes, ROQ_FILE_BYTES);
     bytes += ROQ_FILE_BYTES;
     memcpy(&scratch->books, bytes, sizeof(scratch->books));

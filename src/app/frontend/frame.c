@@ -571,7 +571,8 @@ bool qa_frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *erro
                 ok=frontend_acoustics_source_sync(frontend,error);
                 if (ok) ok=frontend_music_sources_update(frontend->music_sources,error);
                 if (ok) qa_audio_engine_update(frontend->audio, (double)frontend->time_ns / 1000000);
-                if (ok) ok = audio_positions(frontend, error) && frontend_event_audio(frontend, error) && qa_audio_engine_end_loop_frame(frontend->audio, error) &&
+                if (ok) ok = audio_positions(frontend, error) && frontend_event_audio(frontend, error) &&
+                     qa_audio_engine_q3_publish(frontend->audio, error) && qa_audio_engine_end_loop_frame(frontend->audio, error) &&
                      audio_output(frontend, elapsed_ns, error);
                 ok = phase_end(profiler, ok, error);
             }

@@ -130,7 +130,7 @@ bool qa_audio_bank_checkpoint(const qa_audio_bank *bank, qa_audio_asset *const *
     }
     ok = ok && refs->view_encode(refs->context, bank->view, &view, error);
     qa_ac_writer w = {.error = error};
-    ok = ok && qa_ac_write(&w, "QABK", 4) && qa_ac_u32(&w, 2) && qa_ac_u64(&w, view) &&
+    ok = ok && qa_ac_write(&w, "QABK", 4) && qa_ac_u64(&w, view) &&
         qa_ac_u64(&w, bank->registration) && qa_ac_u64(&w, bank->capacity) && qa_ac_u64(&w, bank->count) &&
         qa_ac_u64(&w, count) && qa_ac_u64(&w, sample_count) && qa_ac_u64(&w, asset_count) &&
         qa_bank_write_extent(&w, bank->capacity, bank->count);
@@ -187,13 +187,13 @@ bool qa_audio_bank_restore(qa_audio_bank *bank, qa_audio_asset **external, size_
         return fail(error, QA_ERROR_ARGUMENT, "Audio bank restore requires an empty candidate and content resolvers");
     for (size_t i = 0; i < count; ++i) if (external[i]) return fail(error, QA_ERROR_ARGUMENT, "Audio external holder destination is occupied");
     qa_ac_reader r = {.bytes = bytes, .error = error}; qa_bytes magic;
-    bool ok = qa_ac_read(&r, 4, &magic) && !memcmp(magic.data, "QABK", 4) && qa_ac_get32(&r) == 2;
+    bool ok = qa_ac_read(&r, 4, &magic) && !memcmp(magic.data, "QABK", 4);
     uint64_t view = qa_ac_get64(&r), registration = qa_ac_get64(&r), capacity = qa_ac_get64(&r), entries = qa_ac_get64(&r);
     uint64_t slots = qa_ac_get64(&r), sample_count = qa_ac_get64(&r), asset_count = qa_ac_get64(&r);
     const qa_vfs *resolved = NULL;
     ok = ok && !r.failed && slots == count && entries <= capacity && capacity <= SIZE_MAX / sizeof(bank_entry) &&
         sample_count <= SIZE_MAX / sizeof(struct sample_row) && asset_count <= SIZE_MAX / sizeof(struct asset_row) &&
-        sample_count <= bytes.size / 56 && asset_count <= bytes.size / 80 && entries <= bytes.size / 16 && count <= bytes.size / 8 &&
+        sample_count <= bytes.size / 52 && asset_count <= bytes.size / 80 && entries <= bytes.size / 16 && count <= bytes.size / 8 &&
         refs->view_decode(refs->context, view, &resolved, error) && resolved == bank->view &&
         qa_bank_read_extent(&r, capacity, entries);
     struct sample_row *samples = NULL; struct asset_row *assets = NULL; qa_audio_asset **holders = NULL;

@@ -12,27 +12,6 @@ static void get_listener(qa_ac_reader *r, const qa_audio_checkpoint_refs *refs, 
     v->gain = qa_ac_getfloat(r); v->underwater = qa_ac_bool(r);
     if (v->seat == QA_AUDIO_WORLD || v->gain < 0) qa_ac_bad(r, "Invalid saved audio listener");
 }
-static bool put_play(qa_ac_writer *w, const qa_audio_checkpoint_refs *refs, const qa_audio_play *v) {
-    return qa_ac_u32(w, v->family) && qa_ac_ref(w, refs, QA_AUDIO_REFERENCE_ACTOR, v->actor) &&
-        qa_ac_ref(w, refs, QA_AUDIO_REFERENCE_OWNER, v->owner) &&
-        qa_ac_ref(w, refs, QA_AUDIO_REFERENCE_RESOURCE, v->resource_id) && qa_ac_u32(w, v->audience) &&
-        qa_ac_u32(w, v->origin_kind) && qa_ac_ref(w, refs, QA_AUDIO_REFERENCE_ACTOR, v->origin_actor) &&
-        qa_ac_vec(w, v->origin) && qa_ac_u32(w, (uint32_t)v->channel) && qa_ac_float(w, v->volume) &&
-        qa_ac_float(w, v->attenuation) && qa_ac_double(w, v->delay_seconds) &&
-        qa_ac_double(w, v->server_milliseconds) && qa_ac_u32(w, v->has_server_time);
-}
-static void get_play(qa_ac_reader *r, const qa_audio_checkpoint_refs *refs, qa_audio_play *v) {
-    v->family = (qa_audio_family)qa_ac_get32(r); v->actor = qa_ac_getref(r, refs, QA_AUDIO_REFERENCE_ACTOR);
-    v->owner = qa_ac_getref(r, refs, QA_AUDIO_REFERENCE_OWNER);
-    v->resource_id = qa_ac_getref(r, refs, QA_AUDIO_REFERENCE_RESOURCE); v->audience = qa_ac_get32(r);
-    v->origin_kind = (qa_audio_origin_kind)qa_ac_get32(r);
-    v->origin_actor = qa_ac_getref(r, refs, QA_AUDIO_REFERENCE_ACTOR); v->origin = qa_ac_getvec(r);
-    v->channel = qa_ac_geti32(r); v->volume = qa_ac_getfloat(r); v->attenuation = qa_ac_getfloat(r);
-    v->delay_seconds = qa_ac_getdouble(r); v->server_milliseconds = qa_ac_getdouble(r); v->has_server_time = qa_ac_bool(r);
-    if ((unsigned)v->family > QA_AUDIO_Q3 || (unsigned)v->origin_kind > QA_AUDIO_ACTOR ||
-        v->volume < 0 || v->volume > 1 || v->attenuation < 0 ||
-        (v->channel < 0 && !(v->family == QA_AUDIO_Q1 && v->channel == -1))) qa_ac_bad(r, "Invalid saved audio play policy");
-}
 static bool put_gain(qa_ac_writer *w, qa_mixer_gain v) {
     return qa_ac_double(w, v.left) && qa_ac_double(w, v.right);
 }
@@ -155,7 +134,7 @@ bool qa_audio_mixer_checkpoint(const qa_audio_mixer *m, const qa_audio_checkpoin
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Mixer checkpoint requires drained callbacks and notifications"); return false;
     }
     qa_ac_writer w = {.error = error};
-    qa_ac_write(&w, "QAMX", 4); qa_ac_u32(&w, 3); qa_ac_u32(&w, m->options.sample_rate);
+    qa_ac_write(&w, "QAMX", 4); qa_ac_u32(&w, m->options.sample_rate);
     qa_ac_u32(&w, m->options.output_channels); qa_ac_u32(&w, m->options.observer != NULL);
     qa_ac_u32(&w, m->transmission_checked ? 2 : m->transmission ? 1 : 0);
     put_listener(&w, refs, &m->listener);
@@ -170,7 +149,7 @@ bool qa_audio_mixer_checkpoint(const qa_audio_mixer *m, const qa_audio_checkpoin
     for (size_t i = 0; !w.failed && i < m->voice_count; ++i) {
         const qa_mixer_voice *v = &m->voices[i]; qa_ac_u32(&w, v->state); put_index(&w, v->next_free);
         if (v->state == QA_MIXER_FREE) continue;
-        put_index(&w, v->prepared->slot); qa_ac_u32(&w, v->role); qa_ac_u32(&w, v->notification); put_play(&w, refs, &v->sound);
+        put_index(&w, v->prepared->slot); qa_ac_u32(&w, v->role); qa_ac_u32(&w, v->notification); qa_ac_put_play(&w, refs, &v->sound);
         qa_ac_u64(&w, v->id); qa_ac_u64(&w, v->channel); qa_ac_ref(&w, refs, QA_AUDIO_REFERENCE_KEY, v->key);
         qa_ac_u64(&w, v->order); qa_ac_u64(&w, v->loop_start); qa_ac_u64(&w, (uint64_t)v->start);
         qa_ac_u32(&w, (uint32_t)v->allocated_at); qa_ac_double(&w, v->volume); qa_ac_double(&w, v->attenuation);
@@ -178,7 +157,7 @@ bool qa_audio_mixer_checkpoint(const qa_audio_mixer *m, const qa_audio_checkpoin
         put_gain(&w, v->gain); put_index(&w, v->start_event); put_index(&w, v->stop_event);
     }
     for (size_t i = 0; !w.failed && i < m->loop_count; ++i) {
-        const qa_mixer_loop *v = &m->loops[i]; put_index(&w, v->prepared->slot); put_play(&w, refs, &v->request.sound);
+        const qa_mixer_loop *v = &m->loops[i]; put_index(&w, v->prepared->slot); qa_ac_put_play(&w, refs, &v->request.sound);
         qa_ac_vec(&w, v->request.velocity); qa_ac_u32(&w, (uint32_t)v->request.frame_number); qa_ac_u32(&w, v->request.persistent);
         qa_ac_u32(&w, v->active); qa_ac_u32(&w, v->doppler); qa_ac_u32(&w, v->merged); put_gain(&w, v->gain);
         qa_ac_float(&w, v->doppler_scale); qa_ac_float(&w, v->old_doppler_scale);
@@ -272,11 +251,11 @@ static bool validate_free_lists(qa_audio_mixer *m, qa_ac_reader *r) {
 
 bool qa_audio_mixer_restore(qa_bytes bytes, const qa_audio_mixer_options *options,
     const qa_audio_checkpoint_refs *refs, qa_audio_mixer **out, qa_error *error) {
-    if (!options || !out || !bytes.data || bytes.size < 24 || memcmp(bytes.data, "QAMX", 4)) {
+    if (!options || !out || !bytes.data || bytes.size < 20 || memcmp(bytes.data, "QAMX", 4)) {
         qa_error_set(error, QA_ERROR_FORMAT, 0, "Invalid mixer checkpoint arguments or header"); return false;
     }
     qa_ac_reader r = {.bytes = bytes, .offset = 4, .error = error};
-    if (qa_ac_get32(&r) != 3 || qa_ac_get32(&r) != options->sample_rate ||
+    if (qa_ac_get32(&r) != options->sample_rate ||
         qa_ac_get32(&r) != options->output_channels || qa_ac_bool(&r) != (options->observer != NULL) ||
         qa_ac_get32(&r) != (refs && refs->geometry_checked ? 2u : refs && refs->geometry ? 1u : 0u))
         return qa_ac_bad(&r, "Saved mixer format or observer admission differs");
@@ -311,7 +290,7 @@ bool qa_audio_mixer_restore(qa_bytes bytes, const qa_audio_mixer_options *option
         if ((unsigned)v->state > QA_MIXER_STARTED) { qa_ac_bad(&r, "Invalid saved voice phase"); break; }
         if (v->state == QA_MIXER_FREE) continue;
         v->prepared = get_prepared_ref(&r, m); v->role = (qa_mixer_role)qa_ac_get32(&r);
-        v->notification = (qa_mixer_notification)qa_ac_get32(&r); get_play(&r, refs, &v->sound); get_sound_resource(&v->sound, v->prepared);
+        v->notification = (qa_mixer_notification)qa_ac_get32(&r); qa_ac_get_play(&r, refs, &v->sound); get_sound_resource(&v->sound, v->prepared);
         v->id = qa_ac_get64(&r); v->channel = qa_ac_get64(&r); v->key = qa_ac_getref(&r, refs, QA_AUDIO_REFERENCE_KEY);
         v->order = qa_ac_get64(&r); v->loop_start = qa_ac_get64(&r); v->start = qa_ac_geti64(&r); v->allocated_at = qa_ac_geti32(&r);
         v->volume = qa_ac_getdouble(&r); v->attenuation = qa_ac_getdouble(&r); v->distance_offset = qa_ac_getdouble(&r);
@@ -324,7 +303,7 @@ bool qa_audio_mixer_restore(qa_bytes bytes, const qa_audio_mixer_options *option
             qa_ac_bad(&r, "Invalid saved voice continuation");
     }
     for (size_t i = 0; !r.failed && i < m->loop_count; ++i) {
-        qa_mixer_loop *v = &m->loops[i]; v->prepared = get_prepared_ref(&r, m); get_play(&r, refs, &v->request.sound);
+        qa_mixer_loop *v = &m->loops[i]; v->prepared = get_prepared_ref(&r, m); qa_ac_get_play(&r, refs, &v->request.sound);
         get_sound_resource(&v->request.sound, v->prepared); v->request.velocity = qa_ac_getvec(&r);
         v->request.frame_number = qa_ac_geti32(&r); v->request.persistent = qa_ac_bool(&r);
         v->active = qa_ac_bool(&r); v->doppler = qa_ac_bool(&r); v->merged = qa_ac_bool(&r); v->gain = get_gain(&r);
