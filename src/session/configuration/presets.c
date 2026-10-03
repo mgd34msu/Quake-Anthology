@@ -40,6 +40,30 @@ bool qa_launch_select_original(qa_launch_draft *d, const char *instance, qa_erro
     return qa_launch_set_provider(d, &provider, error);
 }
 
+static qa_clock_kind product_clock(const qa_product *p)
+{
+    return p->family == QA_GAME_Q3 ? QA_CLOCK_Q3 : p->family == QA_GAME_Q2
+        ? (p->edition == QA_EDITION_RERELEASE ? QA_CLOCK_Q2_RERELEASE : QA_CLOCK_Q2_CLASSIC)
+        : (p->edition == QA_EDITION_QUAKEWORLD ? QA_CLOCK_QUAKEWORLD : QA_CLOCK_NETQUAKE);
+}
+
+bool qa_launch_select_game_type(qa_launch_draft *d, const char *component, qa_error *error)
+{
+    const qa_catalog_mod *mod = d ? qa_catalog_mod_find(d->catalog, component) : NULL;
+    const qa_product *product = mod ? qa_catalog_product(d->catalog, mod->product) : NULL;
+    if (!mod || mod->purpose != QA_MOD_GAME_TYPE || mod->unavailable || !product ||
+        product->availability != QA_CONTENT_INSTALLED) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "game-type selection requires an available installed component");
+        return false;
+    }
+    qa_launch_provider provider = {.instance = "game-type:primary", .product = product->id,
+        .runtime = mod->runtime, .implementation = product->key, .artifact = mod->program_path,
+        .component = mod->key, .clock = qa_clock_defaults(product_clock(product))};
+    return qa_launch_set_provider(d, &provider, error) &&
+        qa_launch_bind(d, &(qa_launch_binding){.scope = {.kind = QA_SCOPE_WORLD},
+            .role = QA_ROLE_ENTITIES, .instance = provider.instance}, error);
+}
+
 bool launch_defaults(qa_launch_draft *d, qa_product_id product, const char *map, qa_error *error)
 {
     const qa_product *p = qa_catalog_product(d->catalog, product);
@@ -60,9 +84,7 @@ bool launch_defaults(qa_launch_draft *d, qa_product_id product, const char *map,
         if (episode && *episode->command) world.start_command = episode->command;
     }
     if (!qa_launch_set_world(d, &world, error)) return false;
-    qa_clock_kind clock = p->family == QA_GAME_Q3 ? QA_CLOCK_Q3 : p->family == QA_GAME_Q2
-        ? (p->edition == QA_EDITION_RERELEASE ? QA_CLOCK_Q2_RERELEASE : QA_CLOCK_Q2_CLASSIC)
-        : (p->edition == QA_EDITION_QUAKEWORLD ? QA_CLOCK_QUAKEWORLD : QA_CLOCK_NETQUAKE);
+    qa_clock_kind clock = product_clock(p);
     qa_launch_provider provider = {.instance = "native:primary", .product = product,
         .runtime = p->program_kind, .implementation = program->key,
         .artifact = p->program_kind == QA_PROGRAM_BUILTIN ? NULL : p->program,

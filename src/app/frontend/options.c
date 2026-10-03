@@ -137,6 +137,10 @@ bool qa_frontend_options_parse(int argc, char *const argv[], qa_frontend_options
             else policy->runtime_trap_bytes = (size_t)number;
         }
         else if (!strcmp(arg, "--game")) options->game = value;
+        else if (!strcmp(arg, "--game-type")) {
+            if (!qa_catalog_mod_key(value)) { frontend_fail(error, QA_ERROR_ARGUMENT, "--game-type needs PRODUCT/COMPONENT"); goto fail; }
+            options->game_type = value;
+        }
         else if (!strcmp(arg, "--map-game")) options->map_game = value;
         else if (!strcmp(arg, "--map")) options->map = value;
         else if (!strcmp(arg, "--movement")) options->movement = value;
@@ -184,7 +188,10 @@ bool qa_frontend_options_parse(int argc, char *const argv[], qa_frontend_options
             else options->frame_limit = number;
         }
     }
-    if (!options->game && (options->original || options->map || options->map_game || options->movement || options->character || options->character_model || options->mod_count)) {
+    if (options->original && options->game_type) {
+        frontend_fail(error, QA_ERROR_ARGUMENT, "select --original or --game-type"); goto fail;
+    }
+    if (!options->game && (options->original || options->game_type || options->map || options->map_game || options->movement || options->character || options->character_model || options->mod_count)) {
         frontend_fail(error, QA_ERROR_ARGUMENT, "explicit source selections require --game"); goto fail;
     }
     if (options->dedicated && !options->game) { frontend_fail(error, QA_ERROR_ARGUMENT, "dedicated startup requires --game"); goto fail; }

@@ -311,6 +311,10 @@ bool frontend_launch(qa_frontend *frontend, qa_error *error)
         qa_launch_draft_destroy(draft);
         return false;
     }
+    if (frontend->options.game_type && !qa_launch_select_game_type(draft, frontend->options.game_type, error)) {
+        qa_launch_draft_destroy(draft);
+        return false;
+    }
     if ((product->family == QA_GAME_Q1 || product->family == QA_GAME_Q2) && frontend->options.seats > 1 &&
         !frontend->options.dedicated) {
         const qa_launch_choices *choices = qa_launch_draft_choices(draft);

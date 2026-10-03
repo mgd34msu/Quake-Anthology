@@ -130,6 +130,12 @@ typedef struct qa_application_q2_player_event {
     qa_actor_owner provider;
     uint64_t time_ns;
     qa_q2_player_event event;
+    /* Historical transport admission captured at the actual PRINT emission. */
+    qa_net_client_id connection;
+    qa_net_seat_id connection_seat;
+    uint64_t connection_epoch;
+    uint8_t remote_index;
+    bool has_connection;
 } qa_application_q2_player_event;
 typedef struct qa_application_protocol_reference {
     size_t offset;

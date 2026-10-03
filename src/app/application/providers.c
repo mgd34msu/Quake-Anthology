@@ -1,6 +1,7 @@
 #include "internal.h"
 #include "q3_campaign_launch.h"
 #include "network_q1_signon.h"
+#include "network_q2_private.h"
 #include "guest_native_q2_private.h"
 #include "q1_weapon_rules.h"
 #include "native_q3_console.h"
@@ -1539,6 +1540,7 @@ bool application_provider_deconstruct(application_provider *provider, qa_error *
         application_unified_event_owner_bound_is(app, provider))
         provider->event_activation_bound = true;
     bool ok = deconstruct_provider(provider, error);
+    if (ok) application_network_q2_retire_source_bindings(provider);
     if(ok && provider && provider->event_activation_bound)
         ok=application_unified_event_registration_clear(app,provider->owner,error);
     if(ok && provider && provider->event_activation_bound) {

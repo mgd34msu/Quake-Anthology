@@ -137,6 +137,7 @@ bool application_network_q2_player_state(qa_application_network_q2 *, qa_actor_i
 char *application_network_q2_copy(const char *, qa_error *);
 void application_network_q2_unbind(qa_application_network_q2 *);
 void application_network_q2_retire_bindings(struct application_native_q2 *);
+void application_network_q2_retire_source_bindings(application_provider *);
 bool application_network_q2_visual_resource(qa_application_network_q2 *,
     const qa_application_visual_view *, unsigned, uint32_t *, qa_error *);
 bool application_network_q2_download_resource(void *, const char *, const qa_vfs **,

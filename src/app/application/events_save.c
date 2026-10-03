@@ -666,6 +666,21 @@ static bool q2_player_field(qa_source_save_io *io, event_store *store,
         !qa_source_save_bool(io, &event->shield) || !qa_source_save_bool(io, &event->first)) return false;
     event->respawn_status = (qa_q2_respawn_status)status;
     event->hand = (qa_q2_hand)hand;
+    if (!qa_source_save_bool(io, &record->has_connection) ||
+        !qa_source_save_u64(io, &record->connection.owner) ||
+        !qa_source_save_u64(io, &record->connection.generation) ||
+        !qa_source_save_u32(io, &record->connection.slot) ||
+        !qa_source_save_u64(io, &record->connection_seat.owner) ||
+        !qa_source_save_u32(io, &record->connection_seat.index) ||
+        !qa_source_save_u64(io, &record->connection_epoch) ||
+        !qa_source_save_u8(io, &record->remote_index)) return false;
+    if (record->has_connection ? (event->kind != QA_Q2_PLAYER_PRINT || !event->actor.registry ||
+            !record->connection.owner || !record->connection.generation ||
+            !record->connection_seat.owner || !record->connection_epoch || record->remote_index >= QA_Q2_MAX_SEATS) :
+        (record->connection.owner || record->connection.generation || record->connection.slot ||
+            record->connection_seat.owner || record->connection_seat.index ||
+            record->connection_epoch || record->remote_index))
+        return event_fail(io, QA_ERROR_FORMAT, "Q2 player print lost its historical transport admission");
     return true;
 }
 

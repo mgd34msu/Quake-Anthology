@@ -35,7 +35,7 @@ static bool number(const qa_json_document *doc, qa_json_id node, float *out, qa_
 static bool input(const char *name, application_qc_input_id *out)
 {
     static const char *names[] = {"self", "other", "time", "elapsed", "view-angles", "attack", "jump", "impulse",
-        "forward-move", "side-move", "up-move"};
+        "forward-move", "side-move", "up-move", "result"};
     for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); ++i)
         if (strcmp(name, names[i]) == 0) { *out = (application_qc_input_id)i; return true; }
     return false;
@@ -129,6 +129,9 @@ void application_qc_release_qualification(application_provider *provider)
         free(profile->commands[i].name); free_call(&profile->commands[i].call);
     }
     free(profile->commands);
+    for (size_t i = 0; profile->callbacks && i < profile->callback_count; ++i)
+        free_call(&profile->callbacks[i].call);
+    free(profile->callbacks);
     for (size_t i = 0; profile->weapon_values && i < profile->weapon_count; ++i)
         free(profile->weapon_values[i].label);
     free(profile->weapon_values); free(profile); provider->state.qc.qualified = NULL;
@@ -212,7 +215,8 @@ static bool fields(const qa_json_document *doc, qa_json_id node, application_pro
         if (field->kind == QC_FIELD_NEXTTHINK) ++deadlines;
         if (field->kind == QC_FIELD_INPUT) {
             name = string(doc, qa_json_get(doc, row, "input"), error);
-            bool ok = name && input(name, &field->input) && field->input >= QC_INPUT_ANGLES; free(name);
+            bool ok = name && input(name, &field->input) && field->input >= QC_INPUT_ANGLES &&
+                field->input <= QC_INPUT_UP; free(name);
             if (!ok) return application_fail(error, QA_ERROR_FORMAT, "QC field names an invalid client input");
             type = field->input == QC_INPUT_ANGLES ? QA_QC_VECTOR : QA_QC_FLOAT;
             qa_json_id update = qa_json_get(doc, row, "update");
@@ -254,7 +258,7 @@ static bool bindings(const qa_json_document *doc, qa_json_id node, const qa_qc_p
     profile->input_count = qa_json_size(doc, node);
     profile->input = profile->input_count ? calloc(profile->input_count, sizeof(*profile->input)) : NULL;
     if (profile->input_count && !profile->input) return application_fail(error, QA_ERROR_MEMORY, "Allocating QC client input bindings");
-    uint64_t available = (UINT64_C(1) << QC_INPUT_COUNT) - 1;
+    uint64_t available = (UINT64_C(1) << (QC_INPUT_UP + 1)) - 1;
     for (size_t i = 0; i < profile->input_count; ++i) {
         application_qc_input_binding *binding = &profile->input[i]; qa_json_id row = qa_json_at(doc, node, i);
         qa_json_id scope = qa_json_get(doc, row, "scope"), phase = qa_json_get(doc, row, "phase");
@@ -287,7 +291,8 @@ static bool bindings(const qa_json_document *doc, qa_json_id node, const qa_qc_p
                     return application_fail(error, QA_ERROR_FORMAT, "QC consume output has no original source handler");
                 for (size_t k = 0; k < qa_json_size(doc, inputs); ++k) {
                     application_qc_input_id id; name = string(doc, qa_json_at(doc, inputs, k), error);
-                    bool ok = name && input(name, &id) && id > QC_INPUT_ANGLES && !(output->consume & (UINT64_C(1) << id)); free(name);
+                    bool ok = name && input(name, &id) && id > QC_INPUT_ANGLES && id <= QC_INPUT_UP &&
+                        !(output->consume & (UINT64_C(1) << id)); free(name);
                     if (!ok) return application_fail(error, QA_ERROR_FORMAT, "QC handler consumption inputs are invalid");
                     output->consume |= UINT64_C(1) << id;
                 }
@@ -528,10 +533,46 @@ bool application_qc_qualify(application_provider *provider, qa_error *error)
     if (!ok && error && error->code == QA_OK) application_fail(error, QA_ERROR_FORMAT, "QC declaration artifact identity differs");
     if (ok && (provider->launch->roles & QA_ROLE_BIT(QA_ROLE_ENTITIES)))
         ok = application_qc_authored_map_ready(provider, error);
-    static const char *pending[] = {"callbacks", "combat", "protection", "items", "pickups", "objectives", "clientPresentation"};
+    static const char *pending[] = {"combat", "protection", "items", "pickups", "objectives", "clientPresentation"};
     for (size_t i = 0; ok && i < sizeof(pending) / sizeof(pending[0]); ++i)
         ok = empty(doc, qa_json_get(doc, root, pending[i]), error);
     if (ok) ok = fields(doc, qa_json_get(doc, root, "actorFields"), provider, profile, error);
+    qa_json_id callbacks = qa_json_get(doc, root, "callbacks");
+    if (ok) ok = array(doc, callbacks, false, error);
+    if (ok) {
+        profile->callback_count = qa_json_size(doc, callbacks);
+        profile->callbacks = profile->callback_count ? calloc(profile->callback_count, sizeof(*profile->callbacks)) : NULL;
+        if (profile->callback_count && !profile->callbacks)
+            ok = application_fail(error, QA_ERROR_MEMORY, "Allocating QC declared actor callbacks");
+    }
+    for (size_t i = 0; ok && i < profile->callback_count; ++i) {
+        qa_json_id row = qa_json_at(doc, callbacks, i);
+        application_qc_callback *callback = profile->callbacks + i;
+        qa_json_id operation = qa_json_get(doc, row, "operation"), stage = qa_json_get(doc, row, "stage");
+        if (qa_json_string_equal(doc, operation, "actor.think")) callback->operation = Q3_MOD_THINK;
+        else if (qa_json_string_equal(doc, operation, "actor.touch")) callback->operation = Q3_MOD_TOUCH;
+        else { ok = application_fail(error, QA_ERROR_UNSUPPORTED, "QC callback operation has no declared application owner yet"); break; }
+        uint64_t available = (UINT64_C(1) << QC_INPUT_SELF) | (UINT64_C(1) << QC_INPUT_TIME) |
+            (UINT64_C(1) << (callback->operation == Q3_MOD_THINK ? QC_INPUT_ELAPSED : QC_INPUT_OTHER));
+        if (qa_json_string_equal(doc, stage, "observe")) {
+            callback->stage = QA_OPERATION_OBSERVE;
+            available |= UINT64_C(1) << QC_INPUT_RESULT;
+        } else if (qa_json_string_equal(doc, stage, "replace") &&
+            qa_json_string_equal(doc, qa_json_get(doc, row, "result"), "boolean"))
+            callback->stage = QA_OPERATION_REPLACE;
+        else { ok = application_fail(error, QA_ERROR_FORMAT, "QC actor callback stage differs from its canonical contract"); break; }
+        char *id = string(doc, qa_json_get(doc, row, "id"), error);
+        const char *colon = id ? strchr(id, ':') : NULL;
+        ok = colon && colon != id && colon[1] &&
+            qa_strings_intern_cstr(qa_session_strings(provider->application->session), id, &callback->id, error);
+        free(id);
+        if (!ok && error && error->code == QA_OK)
+            application_fail(error, QA_ERROR_FORMAT, "QC callback requires a namespaced identity");
+        for (size_t j = 0; ok && j < i; ++j)
+            if (profile->callbacks[j].id == callback->id)
+                ok = application_fail(error, QA_ERROR_FORMAT, "Duplicate QC declared callback identity");
+        if (ok) ok = call(doc, row, provider->state.qc.program, available, false, &callback->call, error);
+    }
     qa_json_id commands = qa_json_get(doc, root, "commands");
     if (ok) ok = array(doc, commands, true, error);
     if (ok) {

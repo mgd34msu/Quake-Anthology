@@ -18,8 +18,9 @@ typedef struct q2_host_peer {
     size_t signon_config_count;
     uint64_t event_generation;
     size_t event_cursor;
+    size_t player_event_cursor;
     qa_buffer event_packet;
-    bool event_pending,event_reliable;
+    bool event_pending,event_reliable,event_player;
     bool reserved,committed,retiring;
     bool material_scripts;
     qa_application_network_q2 *travel_source;

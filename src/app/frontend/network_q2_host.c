@@ -343,6 +343,7 @@ static bool committed(void *context,const qa_q2_server_admission *claim,qa_net_c
     peer->client=id; peer->committed=true;
     peer->event_generation=qa_application_protocol_events_generation(host->options.frontend->application);
     peer->event_cursor=qa_application_protocol_event_count(host->options.frontend->application);
+    peer->player_event_cursor=qa_application_q2_player_event_count(host->options.frontend->application);
     for(size_t i=0;i<peer->admission.connection.seat_count;++i) {
         char name[256];
         if(!qa_q3_info_value(peer->userinfo,"name",name,sizeof(name),error)) return false;
@@ -571,9 +572,10 @@ static bool refresh_source(frontend_network_q2_host *host,qa_error *error)
         peer->admission.policy.server_count=transport.server_count+1;
         peer->admission.policy.source_interval_ns=actual.source.clock_config.interval_ns;
         peer->admission.connection.composition=host->options.composition;
-        configs_free(peer); qa_buffer_free(&peer->event_packet); peer->event_pending=false;
+        configs_free(peer); qa_buffer_free(&peer->event_packet); peer->event_pending=false; peer->event_player=false;
         peer->event_generation=qa_application_protocol_events_generation(host->options.frontend->application);
         peer->event_cursor=qa_application_protocol_event_count(host->options.frontend->application);
+        peer->player_event_cursor=qa_application_q2_player_event_count(host->options.frontend->application);
         peer->travel_installed=false;
     }
     for(size_t i=0;i<host->local_count;++i) host->locals[i].travel_restarted=false;
@@ -622,7 +624,9 @@ static bool publish_event_packet(q2_host_peer *peer,qa_error *error)
     if(!publish_configs(peer,error) ||
         !qa_network_q2_server_bytes(peer->host->options.runtime,peer->client,
             (qa_bytes){peer->event_packet.data,peer->event_packet.size},0,peer->event_reliable,error)) return false;
-    qa_buffer_free(&peer->event_packet); peer->event_pending=false; ++peer->event_cursor;
+    qa_buffer_free(&peer->event_packet); peer->event_pending=false;
+    if(peer->event_player) ++peer->player_event_cursor; else ++peer->event_cursor;
+    peer->event_player=false;
     return true;
 }
 static bool publish_events(q2_host_peer *peer,const qa_net_client *client,size_t capacity,qa_error *error)
@@ -632,7 +636,7 @@ static bool publish_events(q2_host_peer *peer,const qa_net_client *client,size_t
     uint64_t generation=qa_application_protocol_events_generation(app);
     size_t count=qa_application_protocol_event_count(app);
     if(peer->event_generation!=generation) {
-        peer->event_generation=generation; peer->event_cursor=0;
+        peer->event_generation=generation; peer->event_cursor=0; peer->player_event_cursor=0;
     }
     if(peer->event_cursor>count)
         return frontend_fail(error,QA_ERROR_FORMAT,"Q2 event cursor exceeds its retained Source generation");
@@ -650,6 +654,20 @@ static bool publish_events(q2_host_peer *peer,const qa_net_client *client,size_t
             capacity,&peer->event_packet,error)) return false;
         if(!peer->event_packet.size) { ++peer->event_cursor; continue; }
         peer->event_reliable=event.reliable; peer->event_pending=true;
+        if(!publish_event_packet(peer,error)) return false;
+    }
+    size_t player_count=qa_application_q2_player_event_count(app);
+    if(peer->player_event_cursor>player_count)
+        return frontend_fail(error,QA_ERROR_FORMAT,"Q2 print cursor exceeds its retained Source generation");
+    while(peer->player_event_cursor<player_count) {
+        qa_application_q2_player_event event;
+        if(!qa_application_q2_player_event_at(app,peer->player_event_cursor,&event))
+            return frontend_fail(error,QA_ERROR_FORMAT,"Q2 Source print disappeared before publication");
+        if(event.event.kind!=QA_Q2_PLAYER_PRINT) { ++peer->player_event_cursor; continue; }
+        if(!frontend_network_q2_print_packet(&event,client,
+            qa_network_epoch(peer->host->options.runtime,peer->client),codec,capacity,&peer->event_packet,error)) return false;
+        if(!peer->event_packet.size) { ++peer->player_event_cursor; continue; }
+        peer->event_reliable=true; peer->event_pending=true; peer->event_player=true;
         if(!publish_event_packet(peer,error)) return false;
     }
     return generation==qa_application_protocol_events_generation(app) ||

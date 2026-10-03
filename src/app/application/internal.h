@@ -50,6 +50,7 @@ typedef enum application_provider_kind {
 } application_provider_kind;
 
 typedef struct application_provider {
+    struct application_q2_recipient_binding *q2_recipient_binding;
     struct application_bots_npc *bots_npc;
     struct application_unified_q3_events *unified_q3_events;
     struct application_native_client_role *native_client_roles;

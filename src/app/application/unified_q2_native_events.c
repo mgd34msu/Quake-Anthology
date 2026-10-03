@@ -116,13 +116,13 @@ bool application_unified_q2_native_player(application_provider *p, const qa_q2_p
     case QA_Q2_PLAYER_ALPHA: kind = "alpha"; family = "q2-rerelease"; break;
     }
     if (!kind) return application_fail(e, QA_ERROR_ARGUMENT, "Unknown Q2 player Source event");
-    qa_actor_id recipient = v->kind == QA_Q2_PLAYER_PRINT ? v->target : v->actor;
+    qa_actor_id recipient = v->actor;
     bool ok = begin(&j, family, kind, e);
     if (ok && v->kind != QA_Q2_PLAYER_PRINT && v->kind != QA_Q2_PLAYER_RESTART)
         ok = actor(&j, ",\"actor\":", v->actor, e);
     switch (v->kind) {
     case QA_Q2_PLAYER_PRINT:
-        ok = ok && actor(&j, ",\"target\":", v->target, e) && string(&j, ",\"level\":", level(v->level), e) &&
+        ok = ok && actor(&j, ",\"target\":", v->actor, e) && string(&j, ",\"level\":", level(v->level), e) &&
             string(&j, ",\"text\":", v->text, e); break;
     case QA_Q2_PLAYER_USERINFO:
         ok = ok && number(&j, ",\"slot\":", v->slot, e) && string(&j, ",\"name\":", v->text, e) &&

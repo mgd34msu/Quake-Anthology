@@ -224,3 +224,42 @@ bool frontend_network_q2_event_packet(qa_application_network_q2 *publisher, qa_a
     if (!bytes.size) qa_buffer_free(&bytes);
     *out = bytes; return true;
 }
+
+bool frontend_network_q2_print_packet(const qa_application_q2_player_event *source,
+    const qa_net_client *client, uint64_t epoch, const qa_q2_codec *codec, size_t capacity,
+    qa_buffer *out, qa_error *error)
+{
+    if (!source || !client || !codec || !out || out->data || out->size || !capacity || !epoch ||
+        source->event.kind != QA_Q2_PLAYER_PRINT || !source->event.text ||
+        source->event.level < 0 || source->event.level > UINT8_MAX ||
+        !client->seats || !client->seat_count || client->seat_count > QA_Q2_MAX_SEATS ||
+        client->protocol.kind != codec->protocol.kind || client->protocol.revision != codec->protocol.revision)
+        return fail(error, QA_ERROR_ARGUMENT, "Q2 print requires its copied Source text and admitted codec");
+    if (!source->has_connection || !qa_net_client_id_equal(source->connection, client->id) ||
+        source->connection_epoch != epoch) return true;
+    size_t seat = client->seat_count;
+    for (size_t i = 0; i < client->seat_count; ++i)
+        if (client->seats[i].seat.owner == source->connection_seat.owner &&
+            client->seats[i].seat.index == source->connection_seat.index &&
+            client->seats[i].remote_index == source->remote_index) {
+            if (seat != client->seat_count)
+                return fail(error, QA_ERROR_FORMAT, "Q2 print repeats its admitted recipient seat");
+            seat = i;
+        }
+    if (seat == client->seat_count) return true;
+    bool kex = codec->protocol.kind == QA_NET_Q2KEX_2023;
+    if ((!kex && client->seat_count != 1) || source->remote_index >= QA_Q2_MAX_SEATS)
+        return fail(error, QA_ERROR_FORMAT, "Q2 print lost its actual recipient wire seat");
+    qa_buffer bytes = {.data = malloc(capacity)};
+    if (!bytes.data) return fail(error, QA_ERROR_MEMORY, "Allocating admitted Q2 Source print packet");
+    q2_event_packet packet = {.codec = *codec};
+    qa_net_writer_init(&packet.writer, bytes.data, capacity, error);
+    qa_q2_server_event event = {.kind = QA_Q2_SVC_PRINT,
+        .data.print = {(uint8_t)source->event.level, source->event.text}};
+    bool ok = (!kex || marker(&packet, (uint8_t)(source->remote_index + 1u))) &&
+        qa_q2_server_event_write(&packet.codec, &packet.writer, &event) &&
+        (!kex || marker(&packet, 1));
+    if (!ok) { qa_buffer_free(&bytes); return false; }
+    bytes.size = qa_net_writer_size(&packet.writer); *out = bytes;
+    return true;
+}

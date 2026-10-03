@@ -9,6 +9,7 @@ static void select_product(qa_ui_library *menu, qa_product_id product) {
     menu->skill = selected && selected->family == QA_GAME_Q3 ? 2 : 1;
     menu->selected_map = 0;
     menu->original = false;
+    free(menu->game_type); menu->game_type = NULL;
     menu->dirty = true;
 }
 bool qa_ui_library_refresh(qa_ui_library *menu, qa_error *error) {
@@ -21,6 +22,10 @@ bool qa_ui_library_refresh(qa_ui_library *menu, qa_error *error) {
     qa_catalog_release(menu->catalog);
     menu->catalog = catalog;
     menu->product = next ? next->id : 0;
+    const qa_catalog_mod *mod = qa_catalog_mod_find(catalog, menu->game_type);
+    if (menu->game_type && (!mod || mod->product != menu->product || mod->unavailable)) {
+        free(menu->game_type); menu->game_type = NULL;
+    }
     menu->dirty = true; menu->selected_map = 0;
     snprintf(menu->status, sizeof(menu->status), "Content refreshed");
     return true;
@@ -70,6 +75,32 @@ static bool rows(qa_ui_library *menu, qa_error *error) {
     menu->dirty = false;
     return true;
 }
+static bool gameplay_rows(qa_ui_library *menu, size_t *selected, qa_error *error) {
+    const qa_product *product = qa_catalog_product(menu->catalog, menu->product);
+    size_t maximum = qa_catalog_mod_count(menu->catalog) + 2;
+    if (!ui_reserve((void **)&menu->gameplay, &menu->gameplay_capacity, maximum, sizeof(*menu->gameplay), error) ||
+        !ui_reserve((void **)&menu->gameplay_labels, &menu->gameplay_label_capacity, maximum, sizeof(*menu->gameplay_labels), error)) return false;
+    menu->gameplay_count = 0; *selected = 0;
+    if (!product) return true;
+    bool external = product->program_kind != QA_PROGRAM_BUILTIN;
+    menu->gameplay[0] = (library_gameplay){.original = external};
+    menu->gameplay_labels[0] = external ? "Original" : "Anthology";
+    menu->gameplay_count = 1;
+    if (!external && product->program && *product->program) {
+        menu->gameplay[1] = (library_gameplay){.original = true};
+        menu->gameplay_labels[1] = "Original"; menu->gameplay_count = 2;
+        if (menu->original) *selected = 1;
+    }
+    for (size_t i = 0; i < qa_catalog_mod_count(menu->catalog); ++i) {
+        const qa_catalog_mod *mod = qa_catalog_mod_at(menu->catalog, i);
+        if (mod->product != product->id || mod->purpose != QA_MOD_GAME_TYPE || mod->unavailable) continue;
+        size_t row = menu->gameplay_count++;
+        menu->gameplay[row] = (library_gameplay){.component = mod->key};
+        menu->gameplay_labels[row] = mod->title;
+        if (menu->game_type && !strcmp(menu->game_type, mod->key)) *selected = row;
+    }
+    return true;
+}
 static bool launch_seat(qa_launch_draft *draft, const qa_launch_seat *input, qa_error *error) {
     qa_launch_seat seat = *input;
     if (seat.local && !seat.character_model && !seat.character_skin &&
@@ -99,6 +130,9 @@ static bool launch(qa_ui_library *menu, qa_error *error) {
     if (menu->original && !qa_launch_select_original(draft, "native:primary", error)) {
         qa_launch_draft_destroy(draft);
         return false;
+    }
+    if (menu->game_type && !qa_launch_select_game_type(draft, menu->game_type, error)) {
+        qa_launch_draft_destroy(draft); return false;
     }
     qa_launch_world world = qa_launch_draft_choices(draft)->world;
     world.skill = menu->skill;
@@ -159,10 +193,19 @@ static bool action(void *context, uint32_t seat, qa_ui_id control,
         return true;
     }
     if (control == LIB_EXECUTION && event->kind == QA_UI_SELECT) {
-        const qa_product *product = qa_catalog_product(menu->catalog, menu->product);
-        if (event->value.row > 1 || !product || !product->builtin || !product->program || !*product->program)
-            return ui_fail(error, "Original execution requires an installed original module");
-        menu->original = event->value.row != 0;
+        size_t selected;
+        if (!gameplay_rows(menu, &selected, error)) return false;
+        if (event->value.row >= menu->gameplay_count) return ui_fail(error, "Gameplay selection is unavailable");
+        library_gameplay choice = menu->gameplay[event->value.row];
+        char *component = NULL;
+        if (choice.component) {
+            component = malloc(strlen(choice.component) + 1);
+            if (!component) { qa_error_set(error, QA_ERROR_MEMORY, 0, "retaining selected game type"); return false; }
+            strcpy(component, choice.component);
+        }
+        free(menu->game_type); menu->game_type = component;
+        menu->original = choice.original;
+        snprintf(menu->status, sizeof(menu->status), "%s", component ? "Map entities; preset players" : "");
         return true;
     }
     if (event->kind == QA_UI_ACTIVATE && control == LIB_LAUNCH) return launch(menu, error);
@@ -172,7 +215,8 @@ static bool action(void *context, uint32_t seat, qa_ui_id control,
 static bool factory(void *context, uint32_t seat, qa_ui_menu *out, qa_error *error) {
     qa_ui_library *menu = context;
     (void)seat;
-    if (!rows(menu, error)) return false;
+    size_t selected_gameplay;
+    if (!rows(menu, error) || !gameplay_rows(menu, &selected_gameplay, error)) return false;
     for (size_t i = 0; i < 9; ++i)
         menu->controls[i] = (qa_ui_control){.id = i + 1, .kind = QA_UI_BUTTON,
             .enabled = true, .visible = true, .context = menu, .action = action};
@@ -181,7 +225,7 @@ static bool factory(void *context, uint32_t seat, qa_ui_menu *out, qa_error *err
     menu->controls[0].value.field.text = menu->query; menu->controls[0].value.field.maximum = 80;
     for (size_t i = 0; i < 2; ++i) {
         qa_ui_control *control = &menu->controls[i + 1];
-        control->kind = QA_UI_LIST; control->rect = (qa_scene_rect_f){40 + (float)i * 284, 124, 276, 220};
+        control->kind = QA_UI_LIST; control->rect = (qa_scene_rect_f){40 + (float)i * 284, 124, 276, 180};
         control->value.list.rows = i ? menu->maps : menu->products;
         control->value.list.count = i ? menu->map_count : menu->product_count;
         control->value.list.selected = i ? menu->selected_map : menu->selected_product;
@@ -190,28 +234,27 @@ static bool factory(void *context, uint32_t seat, qa_ui_menu *out, qa_error *err
         control->enabled = control->value.list.count != 0;
     }
     menu->controls[3].kind = QA_UI_TOGGLE; menu->controls[3].label = "Authored campaign starts";
-    menu->controls[3].rect = (qa_scene_rect_f){40, 352, 350, 28}; menu->controls[3].value.checked = menu->starts;
+    menu->controls[3].rect = (qa_scene_rect_f){40, 312, 350, 28}; menu->controls[3].value.checked = menu->starts;
     const qa_product *product = qa_catalog_product(menu->catalog, menu->product);
     static const char *q3_skills[] = {"1", "2", "3", "4", "5"};
     static const char *classic_skills[] = {"Easy", "Normal", "Hard", "Nightmare"};
     bool q3 = product && product->family == QA_GAME_Q3;
     menu->controls[4].kind = QA_UI_CHOICE; menu->controls[4].label = "Skill";
-    menu->controls[4].rect = (qa_scene_rect_f){400, 352, 200, 28};
+    menu->controls[4].rect = (qa_scene_rect_f){400, 312, 200, 28};
     menu->controls[4].value.choice.labels = q3 ? q3_skills : classic_skills;
     menu->controls[4].value.choice.count = q3 ? 5 : 4;
     menu->controls[4].value.choice.selected = (size_t)(menu->skill - (q3 ? 1 : 0));
     menu->controls[5].label = "Start game"; menu->controls[5].enabled = menu->map_count != 0;
-    menu->controls[5].rect = (qa_scene_rect_f){230, 392, 160, 28};
+    menu->controls[5].rect = (qa_scene_rect_f){40, 392, 160, 28};
     menu->controls[6].label = "Refresh content"; menu->controls[6].rect = (qa_scene_rect_f){400, 392, 200, 28};
     menu->controls[7].label = menu->status; menu->controls[7].enabled = false;
     menu->controls[7].rect = (qa_scene_rect_f){40, 432, 560, 32};
-    static const char *execution[] = {"Anthology", "Original"};
-    menu->controls[8].kind = QA_UI_CHOICE; menu->controls[8].label = "Gameplay";
-    menu->controls[8].rect = (qa_scene_rect_f){40, 392, 180, 28};
-    menu->controls[8].value.choice.labels = execution;
-    menu->controls[8].value.choice.count = 2;
-    menu->controls[8].value.choice.selected = menu->original || (product && product->program_kind != QA_PROGRAM_BUILTIN) ? 1 : 0;
-    menu->controls[8].enabled = product && product->builtin && product->program && *product->program;
+    menu->controls[8].kind = QA_UI_CHOICE; menu->controls[8].label = "Map gameplay";
+    menu->controls[8].rect = (qa_scene_rect_f){40, 352, 560, 28};
+    menu->controls[8].value.choice.labels = menu->gameplay_labels;
+    menu->controls[8].value.choice.count = menu->gameplay_count;
+    menu->controls[8].value.choice.selected = selected_gameplay;
+    menu->controls[8].enabled = menu->gameplay_count > 1;
     *out = (qa_ui_menu){.id = menu->menu, .title = "Games and maps", .controls = menu->controls,
                         .count = 9, .fullscreen = true};
     return true;
@@ -228,6 +271,7 @@ void ui_library_clear(qa_ui_library *menu) {
     qa_catalog_release(menu->catalog); qa_buffer_free(&menu->query_lower);
     release_profiles(menu);
     free(menu->products); free(menu->product_ids); free(menu->maps); free(menu->map_indices);
+    free(menu->game_type); free(menu->gameplay); free(menu->gameplay_labels);
 }
 const qa_catalog *qa_ui_library_catalog(const qa_ui_library *menu) { return menu ? menu->catalog : NULL; }
 bool qa_ui_library_create_restored(qa_ui *ui, qa_application *application, qa_ui_id id,

@@ -231,8 +231,11 @@ static bool peer_fields(qa_source_save_io *io,frontend_network_q2_host *host,q2_
     if(!configs_fields(io,&p->configs,&p->config_count,request->protocol) ||
         !configs_fields(io,&p->signon_configs,&p->signon_config_count,request->protocol)) return false;
     if(!qa_source_save_u64(io,&p->event_generation) || !qa_source_save_count(io,&p->event_cursor,SIZE_MAX) ||
-        !qa_source_save_bool(io,&p->event_pending) || !qa_source_save_bool(io,&p->event_reliable) || !blob(io,&p->event_packet)) return false;
-    return p->event_pending==(p->event_packet.size!=0) && (!p->event_pending || p->committed);
+        !qa_source_save_count(io,&p->player_event_cursor,SIZE_MAX) ||
+        !qa_source_save_bool(io,&p->event_pending) || !qa_source_save_bool(io,&p->event_reliable) ||
+        !qa_source_save_bool(io,&p->event_player) || !blob(io,&p->event_packet)) return false;
+    return p->event_pending==(p->event_packet.size!=0) && (!p->event_pending || p->committed) &&
+        (!p->event_player || (p->event_pending && p->event_reliable));
 }
 static bool local_fields(qa_source_save_io *io,frontend_network_q2_host *host,q2_local_peer *p,size_t index)
 {
@@ -541,7 +544,8 @@ bool frontend_network_q2_host_qualified(const frontend_network_q2_host *h,const 
                 return bad(e,"Q2 issued config beforeimages differ from the actual negotiated namespace");
             uint64_t generation=qa_application_protocol_events_generation(h->options.frontend->application);
             if(peer->event_generation>generation || (peer->event_generation==generation &&
-                peer->event_cursor>qa_application_protocol_event_count(h->options.frontend->application)))
+                (peer->event_cursor>qa_application_protocol_event_count(h->options.frontend->application) ||
+                    peer->player_event_cursor>qa_application_q2_player_event_count(h->options.frontend->application))))
                 return bad(e,"Q2 event cursor exceeds its real retained journal generation");
             ++found;
         }

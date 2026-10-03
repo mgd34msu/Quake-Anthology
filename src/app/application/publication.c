@@ -27,6 +27,7 @@
 #include "native_q2_wire_engine.h"
 #include "qa/map_sidecars.h"
 #include "unified_events.h"
+#include "guest_qc_profile.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -943,6 +944,11 @@ static bool detach_removed(qa_application *application,
     for (size_t index = 0; index < publication->removed_count; ++index) {
         application_provider *provider = publication->removed[index];
         qa_error current = {0};
+        if (provider->kind == APPLICATION_PROVIDER_QC &&
+            !application_qc_callbacks_suspend(provider, &current)) {
+            remember_failure(false, &current, "QC callback retirement failed", &ok, &first);
+            continue;
+        }
         if (provider->policy_attached) {
             bool removed = qa_combat_unregister_policy(application->combat,
                                                        provider->owner,
@@ -1072,6 +1078,16 @@ static void publish_roster(qa_application *application,
     application->routing_provider_count = application->provider_count;
 }
 
+static bool register_qc_callbacks(qa_application *application, qa_error *error)
+{
+    for (size_t i = 0; i < application->provider_count; ++i) {
+        application_provider *provider = application->providers[i];
+        if (provider->kind == APPLICATION_PROVIDER_QC && provider->constructed && provider->attached &&
+            !application_qc_callbacks_register(provider, error)) return false;
+    }
+    return true;
+}
+
 bool application_save_prepare_content(qa_application *candidate,
                                         const qa_launch_snapshot *snapshot,
                                         const qa_save_image *image,
@@ -1157,6 +1173,7 @@ bool application_save_prepare_content(qa_application *candidate,
     if (ok) {
         ok = commit_admissions(publication, error);
         publish_roster(candidate, publication);
+        if (ok) ok = register_qc_callbacks(candidate, error);
         candidate->supplies = publication->supplies;
         publication->supplies = NULL;
         publication->published = true;
@@ -1358,6 +1375,8 @@ static bool publish_travel(qa_application *application,
     qa_mode_id *old_mode_ids = application->mode_ids;
 
     publish_roster(application, publication);
+    if (ok && !register_qc_callbacks(application, &current))
+        remember_failure(false, &current, "QC callback publication failed", &ok, &first);
     application->supplies = publication->supplies;
     publication->supplies = NULL;
     application->equipment = publication->equipment;
@@ -1511,7 +1530,8 @@ void application_publication_publish(qa_application *application,
             application_q3_components_adopt(application,&publication->components,&error);
         if(ok) {
             publish_roster(application, publication);
-            ok=application_q3_components_initialize(application->components,&error);
+            ok=register_qc_callbacks(application,&error) &&
+                application_q3_components_initialize(application->components,&error);
             if(ok) ++application->publication_generation;
         }
     } else if (ok) {

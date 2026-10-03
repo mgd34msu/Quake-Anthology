@@ -1195,9 +1195,11 @@ static bool load_map(application_provider *provider, const qa_bsp_view *bsp,
         return application_fail(error, QA_ERROR_ARGUMENT, "QC map has unfinished input");
     if(!application_bots_npc_idle(provider))
         return application_fail(error,QA_ERROR_ARGUMENT,"QC map retains an active monster path");
+    if (!application_qc_callbacks_suspend(provider, error)) return false;
     application_bots_npc_destroy(provider);
     if (provider->state.qc.qualified && !authored_entities)
-        return application_qc_load_declared_map(engine, bsp, entities, map_id, spawn_id, error);
+        return application_qc_load_declared_map(engine, bsp, entities, map_id, spawn_id, error) &&
+            application_qc_callbacks_register(provider, error);
     const char *map = qa_strings_cstr(qa_session_strings(provider->application->session), map_id);
     (void)bsp; (void)spawn_id;
     if (engine != NULL && !engine->loading) {
@@ -1283,7 +1285,7 @@ static bool load_map(application_provider *provider, const qa_bsp_view *bsp,
     if (!application_qc_flush(engine, error) || !qa_qc_game_loading(provider->state.qc.game, false, error)) return false;
     engine->loading = false; engine->initialized = true; engine->source_time_ns = initial_ns;
     qa_cvars_set_server_active(engine->cvars, true);
-    return true;
+    return application_qc_callbacks_register(provider, error);
 }
 bool application_qc_spawn_map(application_provider *provider, const qa_bsp_view *bsp,
                                const qa_entities *entities, qa_string_id map,
@@ -1311,6 +1313,7 @@ bool application_qc_deconstruct(application_provider *provider, qa_error *error)
         return application_fail(error, QA_ERROR_ARGUMENT, "QuakeC collision contexts are borrowed by the world");
     if (!application_bots_npc_idle(provider))
         return application_fail(error, QA_ERROR_ARGUMENT, "QC teardown retains an active monster path");
+    if (!application_qc_callbacks_suspend(provider, error)) return false;
     for (uint32_t i = 0; engine->actors && i < engine->actor_capacity; ++i) {
         if (!engine->actors[i].collision_bound) continue;
         if (!qa_world_collision_unbind(engine->world, engine->actors[i].actor, &engine->actors[i], error)) return false;

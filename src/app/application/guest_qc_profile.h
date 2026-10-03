@@ -2,11 +2,12 @@
 #define APPLICATION_QC_PROFILE_H
 #include "guest_qc_internal.h"
 #include "client_outputs.h"
+#include "guest_q3_mod_operations.h"
 
 typedef enum application_qc_input_id {
     QC_INPUT_SELF, QC_INPUT_OTHER, QC_INPUT_TIME, QC_INPUT_ELAPSED,
     QC_INPUT_ANGLES, QC_INPUT_ATTACK, QC_INPUT_JUMP, QC_INPUT_IMPULSE,
-    QC_INPUT_FORWARD, QC_INPUT_SIDE, QC_INPUT_UP, QC_INPUT_COUNT
+    QC_INPUT_FORWARD, QC_INPUT_SIDE, QC_INPUT_UP, QC_INPUT_RESULT, QC_INPUT_COUNT
 } application_qc_input_id;
 typedef enum application_qc_value_kind {
     QC_VALUE_CONSTANT, QC_VALUE_INPUT, QC_VALUE_ARGUMENT,
@@ -34,6 +35,15 @@ typedef struct application_qc_command {
     char *name;
     application_qc_call call;
 } application_qc_command;
+typedef struct application_qc_callback {
+    qa_string_id id;
+    application_q3_mod_operation operation;
+    qa_operation_hook_kind stage;
+    application_qc_call call;
+    struct application_qc_state *engine;
+    application_q3_mod_operation_services services;
+    qa_operation_registration registration;
+} application_qc_callback;
 typedef enum application_qc_field_kind {
     QC_FIELD_PRIVATE, QC_FIELD_CONSTANT, QC_FIELD_HEALTH, QC_FIELD_ORIGIN,
     QC_FIELD_VELOCITY, QC_FIELD_ANGLES, QC_FIELD_MIN, QC_FIELD_MAX,
@@ -97,6 +107,8 @@ struct application_qc_profile {
     size_t cvar_count;
     application_qc_command *commands;
     size_t command_count;
+    application_qc_callback *callbacks;
+    size_t callback_count;
     const qa_qc_definition *weapon_field;
     application_qc_weapon_value *weapon_values;
     size_t weapon_count;
@@ -106,11 +118,15 @@ typedef struct application_qc_inputs {
     const qa_movement_command *command;
     const qa_command_invocation *console;
     uint64_t time_ns, elapsed_ns;
+    float result;
 } application_qc_inputs;
 bool application_qc_run_calls(struct application_qc_state *, const application_qc_calls *,
                                 const application_qc_inputs *, qa_error *);
 bool application_qc_command_name_equal(const char *, const char *);
 bool application_qc_declared_command(void *, const qa_command_invocation *, qa_error *);
+bool application_qc_callbacks_register(application_provider *, qa_error *);
+bool application_qc_callbacks_suspend(application_provider *, qa_error *);
+bool application_qc_callbacks_ready(const struct application_qc_state *, qa_error *);
 bool application_qc_project_declared(struct application_qc_state *, qa_qc_instance *,
                                       const qa_qc_entity_access *, qa_error *);
 bool application_qc_store_declared(struct application_qc_state *, qa_qc_instance *,

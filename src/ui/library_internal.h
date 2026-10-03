@@ -6,6 +6,10 @@ typedef struct library_profile {
     char *name, *team;
     char *character_model, *character_skin, *character_head_model, *character_head_skin;
 } library_profile;
+typedef struct library_gameplay {
+    const char *component;
+    bool original;
+} library_gameplay;
 struct qa_ui_library {
     qa_ui *ui;
     qa_application *application;
@@ -19,6 +23,10 @@ struct qa_ui_library {
     size_t selected_product, selected_map;
     int32_t skill;
     bool starts, dirty, original;
+    char *game_type;
+    library_gameplay *gameplay;
+    const char **gameplay_labels;
+    size_t gameplay_count, gameplay_capacity, gameplay_label_capacity;
     uint64_t revision;
     char query[321], status[256];
     qa_buffer query_lower;

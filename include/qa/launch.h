@@ -151,6 +151,9 @@ bool qa_launch_set_provider(qa_launch_draft *, const qa_launch_provider *, qa_er
 /* Select this provider's installed original artifact while retaining its
  * instance, content, clock and bindings. Missing stock originals fail. */
 bool qa_launch_select_original(qa_launch_draft *, const char *instance, qa_error *);
+/* Select an installed game-type component as WORLD ENTITIES owner while
+ * retaining the preset's independent player and other world providers. */
+bool qa_launch_select_game_type(qa_launch_draft *, const char *component, qa_error *);
 bool qa_launch_remove_provider(qa_launch_draft *, const char *instance, qa_error *);
 bool qa_launch_bind(qa_launch_draft *, const qa_launch_binding *, qa_error *);
 bool qa_launch_unbind(qa_launch_draft *, qa_launch_scope, qa_launch_role,

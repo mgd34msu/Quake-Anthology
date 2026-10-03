@@ -14,7 +14,7 @@ struct qa_application_persistence_ops;
 typedef struct qa_frontend_options {
     qa_application_options application;
     qa_display_options display;
-    const char *game, *map_game, *map;
+    const char *game, *map_game, *map, *game_type;
     const char *movement, *character, *character_model;
     const char *font_directory, *font_file;
     const char *network_host, *network_connect;

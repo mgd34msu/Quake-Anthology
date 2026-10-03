@@ -243,7 +243,8 @@ bool application_qc_capture_engine(void *opaque, qa_buffer *out, qa_error *error
         engine->input_scope || engine->parked_inputs || engine->client_think_time)
         return application_fail(error, QA_ERROR_ARGUMENT, "QuakeC engine checkpoint requires an idle frame");
     if (!engine_console_safe(engine, error)) return false;
-    if (!application_qc_capture_client_outputs(engine, error)) return false;
+    if (!application_qc_capture_client_outputs(engine, error) ||
+        !application_qc_callbacks_ready(engine, error)) return false;
     for (uint32_t i = 1; i <= engine->max_clients; ++i) {
         const application_qc_client *client = &engine->clients[i];
         if (!client_binding_matches(engine, i, client, error)) return false;
@@ -327,6 +328,7 @@ bool application_qc_capture_engine(void *opaque, qa_buffer *out, qa_error *error
         qa_net_write_u64(&writer, engine->source_time_ns) &&
         qa_net_write_f32(&writer, engine->serverflags) && qa_net_write_u8(&writer, engine->loading) &&
         qa_net_write_u8(&writer, engine->initialized) &&
+        qa_net_write_u8(&writer, engine->callbacks_active) &&
         qa_net_write_u8(&writer, engine->output_channels) &&
         qa_net_write_u32(&writer, engine->check_slot) && qa_net_write_f32(&writer, engine->check_time) &&
         qa_net_write_i32(&writer, engine->check_cluster) &&
@@ -405,7 +407,7 @@ bool application_qc_restore_engine(void *opaque, qa_bytes bytes, qa_error *error
     if (bytes.size > QC_ENGINE_LIMIT || engine->has_frame || application_qc_has_source_admission(engine) ||
         engine->input_scope || engine->parked_inputs || engine->client_think_time)
         return application_fail(error, QA_ERROR_ARGUMENT, "QuakeC engine restore requires an idle frame");
-    if (!engine_console_safe(engine, error)) return false;
+    if (!engine_console_safe(engine, error) || !application_qc_callbacks_ready(engine, error)) return false;
     qa_net_reader reader; qa_net_reader_init(&reader, bytes, error);
     uint8_t saved_declaration[32], empty_digest[32] = {0};
     const qa_sha256_digest *declaration = qa_resource_digest(engine->provider->launch->declaration);
@@ -421,13 +423,17 @@ bool application_qc_restore_engine(void *opaque, qa_bytes bytes, qa_error *error
     candidate.source_time_ns = qa_net_read_u64(&reader); candidate.serverflags = qa_net_read_f32(&reader);
     uint8_t loading = qa_net_read_u8(&reader);
     uint8_t initialized = qa_net_read_u8(&reader); candidate.initialized = initialized != 0;
+    uint8_t callbacks_active = qa_net_read_u8(&reader);
     candidate.output_channels = qa_net_read_u8(&reader);
     candidate.check_slot = qa_net_read_u32(&reader); candidate.check_time = qa_net_read_f32(&reader);
     candidate.check_cluster = qa_net_read_i32(&reader);
     candidate.random.front = qa_net_read_u8(&reader); candidate.random.rear = qa_net_read_u8(&reader);
     candidate.random.draws = qa_net_read_u64(&reader);
     for (size_t i = 0; i < 31; ++i) candidate.random.words[i] = qa_net_read_u32(&reader);
-    bool ok = !reader.failed && loading <= 1 && initialized <= 1 && candidate.check_slot <= candidate.max_clients &&
+    const struct application_qc_profile *profile = engine->provider->state.qc.qualified;
+    bool ok = !reader.failed && loading <= 1 && initialized <= 1 && callbacks_active <= 1 &&
+        (!callbacks_active || (initialized && !loading && profile && profile->callback_count)) &&
+        candidate.check_slot <= candidate.max_clients &&
         isfinite(candidate.check_time) && candidate.check_time >= 0 && candidate.check_cluster >= -1 &&
         candidate.random.front < 31 && candidate.random.rear < 31 &&
         (candidate.random.front + 31u - candidate.random.rear) % 31u == 3;
@@ -593,8 +599,17 @@ bool application_qc_restore_engine(void *opaque, qa_bytes bytes, qa_error *error
         ok = qa_net_reader_fail(&reader, "Missing QuakeWorld engine PHS cvar");
     if (ok) {
         candidate.console = application_qc_create_console(engine, candidate.cvars, error);
-        ok = candidate.console != NULL && qa_qc_game_rebind_console(engine->provider->state.qc.game,
+        ok = candidate.console != NULL;
+    }
+    if (ok) {
+        bool previously_active = engine->callbacks_active;
+        if (!callbacks_active) ok = application_qc_callbacks_suspend(engine->provider, error);
+        if (ok) ok = qa_qc_game_rebind_console(engine->provider->state.qc.game,
                     candidate.cvars, candidate.console, error);
+        if (!ok && previously_active && !callbacks_active) {
+            qa_error resume = {0};
+            if (!application_qc_callbacks_register(engine->provider, &resume) && error) *error = resume;
+        }
     }
     if (ok) {
         qa_console_destroy(engine->console); qa_cvars_destroy(engine->cvars);
@@ -627,6 +642,7 @@ bool application_qc_restore_engine(void *opaque, qa_bytes bytes, qa_error *error
         if (engine->provider->application->operation == APPLICATION_PERSISTING)
             ok = application_startup_source_restore(engine->provider, engine->console, engine->cvars,
                 &engine->command_context, error);
+        if (ok && callbacks_active) ok = application_qc_callbacks_register(engine->provider, error);
     }
     dispose_candidate(&candidate);
     if (!ok && error && error->code == QA_OK) application_fail(error, QA_ERROR_FORMAT, "Invalid QuakeC engine checkpoint");

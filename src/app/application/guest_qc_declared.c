@@ -33,6 +33,7 @@ static bool resolve(const application_qc_value *value, const application_qc_inpu
     case QC_INPUT_OTHER: out.kind = QA_QC_GAME_ACTOR; out.value.actor = inputs->other; break;
     case QC_INPUT_TIME: out.value.number = (float)((double)inputs->time_ns / 1e9); break;
     case QC_INPUT_ELAPSED: out.value.number = (float)((double)inputs->elapsed_ns / 1e9); break;
+    case QC_INPUT_RESULT: out.value.number = inputs->result; break;
     case QC_INPUT_ANGLES: out.kind = QA_QC_GAME_VECTOR; if (command) out.value.vector = command->angles; break;
     case QC_INPUT_ATTACK: case QC_INPUT_JUMP: case QC_INPUT_IMPULSE:
     case QC_INPUT_FORWARD: case QC_INPUT_SIDE: case QC_INPUT_UP:
@@ -42,28 +43,32 @@ static bool resolve(const application_qc_value *value, const application_qc_inpu
     }
     *result = out; return true;
 }
+static bool run_call(struct application_qc_state *engine, const application_qc_call *call,
+                     const application_qc_inputs *inputs, uint32_t result[3], qa_error *error)
+{
+    qa_qc_game_value arguments[8];
+    if (inputs->self.registry && !qa_actors_get(qa_session_actors(engine->services.session), inputs->self))
+        return application_fail(error, QA_ERROR_NOT_FOUND, "QC qualified callback lost its actor generation");
+    for (size_t j = 0; j < call->argument_count; ++j)
+        if (!resolve(&call->arguments[j], inputs, &arguments[j], error)) return false;
+    qa_qc_game_global local[16];
+    qa_qc_game_global *globals = call->global_count <= 16 ? local : calloc(call->global_count, sizeof(*globals));
+    if (!globals) return application_fail(error, QA_ERROR_MEMORY, "Allocating qualified QC globals");
+    bool ok = true;
+    for (size_t j = 0; ok && j < call->global_count; ++j) {
+        globals[j].name = call->globals[j].definition->name;
+        ok = resolve(&call->globals[j].value, inputs, &globals[j].value, error);
+    }
+    if (ok) ok = qa_qc_game_call_index(engine->provider->state.qc.game, call->function, arguments,
+        call->argument_count, globals, call->global_count, result, error);
+    if (globals != local) free(globals);
+    return ok && application_qc_publish_client_outputs(engine, error);
+}
 bool application_qc_run_calls(struct application_qc_state *engine, const application_qc_calls *calls,
                                 const application_qc_inputs *inputs, qa_error *error)
 {
-    for (size_t i = 0; i < calls->count; ++i) {
-        const application_qc_call *call = &calls->values[i]; qa_qc_game_value arguments[8];
-        if (inputs->self.registry && !qa_actors_get(qa_session_actors(engine->services.session), inputs->self))
-            return application_fail(error, QA_ERROR_NOT_FOUND, "QC qualified callback lost its actor generation");
-        for (size_t j = 0; j < call->argument_count; ++j)
-            if (!resolve(&call->arguments[j], inputs, &arguments[j], error)) return false;
-        qa_qc_game_global local[16];
-        qa_qc_game_global *globals = call->global_count <= 16 ? local : calloc(call->global_count, sizeof(*globals));
-        if (!globals) return application_fail(error, QA_ERROR_MEMORY, "Allocating qualified QC globals");
-        bool ok = true;
-        for (size_t j = 0; ok && j < call->global_count; ++j) {
-            globals[j].name = call->globals[j].definition->name;
-            ok = resolve(&call->globals[j].value, inputs, &globals[j].value, error);
-        }
-        if (ok) ok = qa_qc_game_call_index(engine->provider->state.qc.game, call->function, arguments,
-            call->argument_count, globals, call->global_count, NULL, error);
-        if (globals != local) free(globals);
-        if (!ok || !application_qc_publish_client_outputs(engine, error)) return false;
-    }
+    for (size_t i = 0; i < calls->count; ++i)
+        if (!run_call(engine, calls->values + i, inputs, NULL, error)) return false;
     return true;
 }
 bool application_qc_command_name_equal(const char *left, const char *right)
@@ -90,6 +95,120 @@ bool application_qc_declared_command(void *opaque, const qa_command_invocation *
         return application_qc_run_calls(engine, &calls, &inputs, error);
     }
     return application_fail(error, QA_ERROR_NOT_FOUND, "QC declared command lost its compiled declaration");
+}
+static bool callback_current(const application_qc_callback *callback, qa_error *error)
+{
+    const struct application_qc_state *engine = callback->engine;
+    const application_provider *provider = engine ? engine->provider : NULL;
+    return (provider && provider->state.qc.engine == engine && provider->state.qc.game &&
+        provider->constructed && provider->attached && !provider->close_pending &&
+        !provider->application->destroy_requested && engine->initialized && !engine->loading) ||
+        application_fail(error, QA_ERROR_ARGUMENT, "QC callback lost its admitted source owner");
+}
+static bool callback_inputs(application_qc_callback *callback, const void *request, const void *result,
+                            application_qc_inputs *inputs, qa_error *error)
+{
+    application_q3_mod_inputs values;
+    if (!callback_current(callback, error) ||
+        !callback->services.inputs(callback->services.context, request, result, &values, error) ||
+        !callback_current(callback, error)) return false;
+    const application_q3_mod_value *self = values.values + Q3_MOD_SELF;
+    if (self->kind != Q3_MOD_VALUE_ACTOR)
+        return application_fail(error, QA_ERROR_ARGUMENT, "QC callback requires its actual canonical actor");
+    *inputs = (application_qc_inputs){.self = self->as.actor, .time_ns = callback->engine->source_time_ns};
+    if (callback->operation == Q3_MOD_THINK) {
+        const application_q3_mod_actor_request *actor = request;
+        inputs->time_ns = actor->source.think.time_ns;
+        inputs->elapsed_ns = actor->source.think.elapsed_ns;
+    } else {
+        const application_q3_mod_value *other = values.values + Q3_MOD_OTHER;
+        if (other->kind != Q3_MOD_VALUE_ACTOR)
+            return application_fail(error, QA_ERROR_ARGUMENT, "QC touch callback requires its actual other actor");
+        inputs->other = other->as.actor;
+    }
+    if (result) {
+        const application_q3_mod_value *observed = values.values + Q3_MOD_RESULT;
+        if (observed->kind != Q3_MOD_VALUE_SCALAR)
+            return application_fail(error, QA_ERROR_ARGUMENT, "QC observer requires its actual canonical result");
+        inputs->result = (float)observed->as.scalar;
+    }
+    return true;
+}
+static bool callback_observe(void *opaque, const void *request, const void *result, qa_error *error)
+{
+    application_qc_callback *callback = opaque;
+    application_qc_inputs inputs;
+    return callback_inputs(callback, request, result, &inputs, error) &&
+        run_call(callback->engine, &callback->call, &inputs, NULL, error) && callback_current(callback, error);
+}
+static bool callback_replace(void *opaque, const void *request, qa_operation_next next, void *result, qa_error *error)
+{
+    (void)next;
+    application_qc_callback *callback = opaque;
+    application_qc_inputs inputs;
+    uint32_t returned[3];
+    if (!callback_inputs(callback, request, NULL, &inputs, error) ||
+        !run_call(callback->engine, &callback->call, &inputs, returned, error) ||
+        !callback_current(callback, error)) return false;
+    float value;
+    memcpy(&value, returned, sizeof(value));
+    return callback->services.replace(callback->services.context, result, value != 0, error);
+}
+bool application_qc_callbacks_register(application_provider *provider, qa_error *error)
+{
+    struct application_qc_state *engine = provider && provider->kind == APPLICATION_PROVIDER_QC
+        ? provider->state.qc.engine : NULL;
+    struct application_qc_profile *profile = provider && provider->kind == APPLICATION_PROVIDER_QC
+        ? provider->state.qc.qualified : NULL;
+    if (!profile || !profile->callback_count || !engine || !engine->initialized || engine->loading) return true;
+    application_q3_mod_operation_services services[Q3_MOD_OPERATION_COUNT];
+    if (!application_q3_mod_operations_read(provider->application->mod_operations, services, error)) return false;
+    for (size_t i = 0; i < profile->callback_count; ++i) {
+        application_qc_callback *callback = profile->callbacks + i;
+        callback->engine = engine;
+        if (!callback_current(callback, error)) return false;
+        if (callback->registration) continue;
+        callback->services = services[callback->operation];
+        qa_operation_hook hook = {.owner = provider->owner, .name = callback->id,
+            .kind = callback->stage, .context = callback};
+        if (callback->stage == QA_OPERATION_OBSERVE) hook.call.observe = callback_observe;
+        else hook.call.replace = callback_replace;
+        if (!qa_operation_register(callback->services.operation, &hook, &callback->registration, error)) return false;
+    }
+    engine->callbacks_active = true;
+    return true;
+}
+bool application_qc_callbacks_suspend(application_provider *provider, qa_error *error)
+{
+    struct application_qc_profile *profile = provider && provider->kind == APPLICATION_PROVIDER_QC
+        ? provider->state.qc.qualified : NULL;
+    if (!profile) return true;
+    for (size_t i = 0; i < profile->callback_count; ++i) {
+        const application_qc_callback *callback = profile->callbacks + i;
+        if (callback->registration && !qa_operation_destroy_validate(callback->services.operation, error)) return false;
+    }
+    for (size_t i = 0; i < profile->callback_count; ++i) {
+        application_qc_callback *callback = profile->callbacks + i;
+        if (callback->registration && !qa_operation_unregister(callback->services.operation, callback->registration))
+            return application_fail(error, QA_ERROR_ARGUMENT, "QC callback lost its actual operation registration");
+        callback->registration = 0;
+    }
+    if (provider->state.qc.engine) provider->state.qc.engine->callbacks_active = false;
+    return true;
+}
+bool application_qc_callbacks_ready(const struct application_qc_state *engine, qa_error *error)
+{
+    const struct application_qc_profile *profile = engine->provider->state.qc.qualified;
+    if (engine->callbacks_active && (!profile || !profile->callback_count))
+        return application_fail(error, QA_ERROR_FORMAT, "QC callback continuation has no declared hooks");
+    for (size_t i = 0; profile && i < profile->callback_count; ++i) {
+        const application_qc_callback *callback = profile->callbacks + i;
+        if ((callback->registration != 0) != engine->callbacks_active ||
+            (callback->registration && (callback->engine != engine ||
+             !qa_operation_destroy_validate(callback->services.operation, error))))
+            return application_fail(error, QA_ERROR_FORMAT, "QC callback continuation differs from its actual hooks");
+    }
+    return true;
 }
 static bool project_value(qa_qc_instance *vm, int32_t reference, const qa_qc_definition *field,
                             qa_qc_game_value value, qa_error *error)
