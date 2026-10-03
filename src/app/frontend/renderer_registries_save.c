@@ -143,8 +143,13 @@ static bool existing_geometry(frontend_q3_inventory *base,const registry_prefix 
         qa_q3_presentation_assets *assets=NULL; qa_q3_presentation_asset_options options;
         qa_scene_world *world=NULL; qa_collision_geometry *geometry=NULL;
         if(!frontend_q3_assets_decode(base,row->alias,&assets,error) || !assets ||
-            !qa_q3_assets_services(assets,&options,&world,&geometry,error) || !world || !geometry ||
-            qa_collision_resource(geometry)!=resource || qa_scene_world_source_resource_read(world)!=resource ||
+            !qa_q3_assets_services(assets,&options,&world,&geometry,error)) {
+            if(!error || error->code==QA_OK)
+                frontend_fail(error,QA_ERROR_FORMAT,"Saved collision alias lacks its actual constructor owner");
+            return false;
+        }
+        if(!world && !geometry) continue;
+        if(!world || !geometry || qa_collision_resource(geometry)!=resource || qa_scene_world_source_resource_read(world)!=resource ||
             (*out && *out!=geometry))
             return frontend_fail(error,QA_ERROR_FORMAT,"Saved collision alias changes its actual constructor identity");
         *out=geometry;
@@ -251,7 +256,7 @@ bool frontend_renderer_registries_prepare_restored(qa_frontend *f,frontend_q3_in
         if(row->map_count && (!maps || !created)) okay=frontend_fail(error,QA_ERROR_MEMORY,"Retaining exact registry map chronology");
         for(size_t j=0;okay && j<row->map_count;++j)
             okay=map_resolve(f,base,rows,count,roots,row->maps+j,i,j,maps,maps+j,created+j,error);
-        if(okay && !row->alias && row->map)
+        if(okay && row->map)
             okay=qa_q3_assets_prepare_restored_map(assets,maps[row->map-1].world,maps[row->map-1].geometry,error);
         if(okay) okay=qa_q3_assets_prepare_restored_custody_maps(assets,maps,row->map_count,
             row->map?maps[row->map-1].world:NULL,row->map?maps[row->map-1].geometry:NULL,error);

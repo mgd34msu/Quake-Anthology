@@ -1,6 +1,8 @@
 #include "internal.h"
 #include "qa/scene_world_save.h"
+#include "qa/scene_resource_save.h"
 #include "qa/binary.h"
+#include "qa/q3_assets_custody.h"
 
 void q3p_model_free(q3p_model *model)
 {
@@ -367,8 +369,17 @@ bool qa_q3_register_model(qa_q3_presentation_assets *a, const char *path,
             ok = q3p_fail(error, QA_ERROR_ARGUMENT, "invalid Q3 inline model name");
         if (ok) {
             model->inline_model = (uint32_t)index; model->world = a->world;
-            model->provider = a->options.provider;
             ok = qa_collision_model_bounds(a->geometry, model->inline_model, &model->bounds, error);
+            qa_scene_world_options options;
+            if (ok && !qa_scene_world_options_read(model->world, &options))
+                ok = q3p_fail(error, QA_ERROR_ARGUMENT, "Q3 inline model requires its actual observed map owner");
+            if (ok) {
+                model->provider.images = qa_scene_world_resource_owner(model->world);
+                model->provider.materials = qa_scene_world_material_owner(model->world);
+                model->provider.mounts = qa_scene_resources_files(model->provider.images);
+                model->provider.family = options.images.family;
+                ok = qa_q3_assets_provider_hold(a, &model->provider, error);
+            }
         }
         if (ok && !source_model) for (size_t i = 0; i < a->model_count; ++i) {
             const q3p_model *existing = a->models[i];
