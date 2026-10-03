@@ -19,6 +19,7 @@
 #include "qa/game_q3_source.h"
 #include "qa/game_q3_wire.h"
 #include "guest_q3_mod_operations.h"
+#include "guest_qc_combat.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -808,6 +809,31 @@ static bool combat_inflictor_center(void *opaque, const qa_damage_request *reque
     return application_native_q1_wire_inflictor_center(opaque, request, center, found, error);
 }
 
+static bool combat_source_amount(void *opaque, qa_actor_id actor, float amount,
+                                  float *out, qa_error *error)
+{
+    bool available = false;
+    return application_qc_combat_damage_amount(opaque,actor,amount,out,&available,error) &&
+        (available || application_fail(error,QA_ERROR_ARGUMENT,"Physical QC Source lost its declared damage scale"));
+}
+
+static bool combat_prepare_request(void *opaque, qa_damage_request *request, qa_error *error)
+{
+    qa_application *application = opaque;
+    application_provider *physical = application_world_provider(application,QA_ROLE_ENTITIES,"");
+    if (!physical || physical->kind != APPLICATION_PROVIDER_QC || !request->attack.weapon ||
+        !request->attack.weapon_provider || request->attack.weapon_provider == physical->owner ||
+        !application_qc_combat_damage_scale_declared(physical->state.qc.engine)) return true;
+    qa_damage_modifier modifier = {.owner=physical->owner,.context=physical->state.qc.engine,
+        .transform=combat_source_amount};
+    if (!qa_damage_apply_modifier(qa_session_actors(application->session),request,&modifier,request,error))
+        return false;
+    return (application_world_provider(application,QA_ROLE_ENTITIES,"")==physical &&
+        physical->constructed && physical->attached && !physical->close_pending &&
+        application_qc_combat_damage_scale_declared(physical->state.qc.engine)) ||
+        application_fail(error,QA_ERROR_ARGUMENT,"Damage preparation replaced its actual physical QC Source");
+}
+
 qa_combat_hooks application_combat_hooks(qa_application *application)
 {
     return (qa_combat_hooks){.context = application,
@@ -822,7 +848,8 @@ qa_combat_hooks application_combat_hooks(qa_application *application)
                              .confirmed = confirmed_damage,
                              .invulnerable = combat_invulnerable,
                              .effect = combat_effect,
-                             .armor_context = application_native_q2_armor_context};
+                             .armor_context = application_native_q2_armor_context,
+                             .prepare_request = combat_prepare_request};
 }
 
 static bool builtin_players(void *opaque, qa_actor_id *actors, size_t capacity,

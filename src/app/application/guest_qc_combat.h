@@ -31,5 +31,6 @@ bool application_qc_combat_saved_binding(struct application_qc_state *, qa_actor
 bool application_qc_combat_restore_attach(struct application_qc_state *, qa_error *);
 bool application_qc_combat_damage_amount(struct application_qc_state *, qa_actor_id,
     float amount, float *out, bool *available, qa_error *);
+bool application_qc_combat_damage_scale_declared(const struct application_qc_state *);
 
 #endif

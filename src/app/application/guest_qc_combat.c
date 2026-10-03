@@ -448,7 +448,7 @@ bool application_qc_combat_create(struct application_qc_state *engine, qa_error 
 }
 static bool eligible(application_qc_combat *owner, qa_qc_slot_binding slot)
 {
-    if (!slot.actor.registry || (slot.kind != QA_QC_SLOT_OWNED && slot.kind != QA_QC_SLOT_BORROWED)) return false;
+    if (!slot.slot || !slot.actor.registry || (slot.kind != QA_QC_SLOT_OWNED && slot.kind != QA_QC_SLOT_BORROWED)) return false;
     if (slot.kind == QA_QC_SLOT_OWNED) return slot.owner == owner->engine->provider->owner;
     return application_provider_for(owner->engine->provider->application, slot.actor, QA_ROLE_COMBAT, "") == owner->engine->provider;
 }
@@ -1277,8 +1277,20 @@ bool application_qc_combat_damage_amount(struct application_qc_state *engine, qa
     if (!*available) { *out = amount; return true; }
     if (!held(owner, error)) return false;
     const damage_scale *scale = &owner->profile->scale; qa_qc_instance *vm = engine->provider->state.qc.instance;
-    uint32_t slot;
-    if (!qa_qc_actor_observation_slot(vm, actor, &slot, error)) return false;
+    uint32_t slot = 0; qa_actor_id source_actor = actor;
+    if (actor.registry) {
+        if (!qa_qc_actor_observation_slot(vm, actor, &slot, error)) return false;
+        if (!slot) source_actor = (qa_actor_id){0};
+    } else {
+        qa_qc_slot_binding world; int32_t reference;
+        if (!qa_qc_slot(vm, 0, &world) ||
+            (world.kind != QA_QC_SLOT_WORLD && world.kind != QA_QC_SLOT_OWNED) ||
+            !qa_qc_slot_reference(vm, 0, &reference, error) || reference != 0)
+            return reject(error, "QC amount query lost its actual Source world reference");
+        if (world.kind == QA_QC_SLOT_OWNED &&
+            (!qa_qc_actor_observation_slot(vm, world.actor, &slot, error) || slot != 0))
+            return reject(error, "QC amount query lost its actual owned Source world actor");
+    }
     for (size_t i = 0; i < scale->constant_count; ++i) {
         int32_t actual;
         if (!qa_qc_global_int(vm, scale->constants[i], &actual, error) || (uint32_t)actual != scale->initial[i])
@@ -1292,7 +1304,7 @@ bool application_qc_combat_damage_amount(struct application_qc_state *engine, qa
         ok = qa_qc_global_int(vm, scale->scratch[i], &actual, error);
         if (ok) { saved[i] = (uint32_t)actual; ++staged; }
     }
-    application_qc_inputs inputs = {.self = actor, .attacker = actor, .inflictor = actor,
+    application_qc_inputs inputs = {.self = source_actor, .attacker = source_actor, .inflictor = source_actor,
         .amount = amount, .time_ns = engine->source_time_ns}; uint32_t result[3];
     if (ok) {
         ++owner->calls;
@@ -1312,4 +1324,12 @@ bool application_qc_combat_damage_amount(struct application_qc_state *engine, qa
         }
     }
     free(saved); if (!ok && error) *error = first; return ok;
+}
+bool application_qc_combat_damage_scale_declared(const struct application_qc_state *engine)
+{
+    const application_qc_combat *owner = engine ? engine->combat : NULL;
+    return owner && owner->engine == engine && owner->profile->scale.declared &&
+        engine->provider->state.qc.engine == engine && engine->provider->state.qc.instance &&
+        engine->provider->state.qc.program == owner->profile->program &&
+        engine->provider->state.qc.qualified && engine->provider->state.qc.qualified->combat == owner->profile;
 }

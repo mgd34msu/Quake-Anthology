@@ -993,7 +993,17 @@ static bool dispatch_damage(qa_combat *combat, const qa_damage_request *request,
     damage_dispatch dispatch = {combat, source, context};
     qa_damage_outcome result = {0};
     ++combat->active_hits;
-    bool ok = qa_operation_dispatch(combat->damage, request, &result, damage_canonical, &dispatch, NULL, NULL, error);
+    bool ok = true;
+    qa_damage_request prepared;
+    if (combat->hooks.prepare_request) {
+        prepared = *request;
+        ++combat->active_calls;
+        ok = combat->hooks.prepare_request(combat->hooks.context, &prepared, error);
+        --combat->active_calls;
+        if (ok) ok = qa_damage_request_validate(&prepared, error);
+        request = &prepared;
+    }
+    if (ok) ok = qa_operation_dispatch(combat->damage, request, &result, damage_canonical, &dispatch, NULL, NULL, error);
     --combat->active_hits;
     if (!ok) { qa_damage_outcome_free(&result); return false; }
     *out = result; return true;

@@ -225,6 +225,9 @@ typedef struct qa_combat_hooks {
                     const qa_damage_request *, qa_damage_effect *, qa_error *);
     bool (*armor_context)(void *, const qa_damage_request *, const qa_combat_state *,
                             const qa_damage_geometry *, qa_armor_context *, qa_error *);
+    /* Prepare the reached request before operation callbacks and the selected
+     * damage executor, retaining the weapon's original kick and provenance. */
+    bool (*prepare_request)(void *, qa_damage_request *, qa_error *);
 } qa_combat_hooks;
 typedef enum qa_protection_admission { QA_PROTECTION_CLAIM, QA_PROTECTION_REPLACE_PRIMARY, QA_PROTECTION_REPLACE_CURRENT } qa_protection_admission;
 typedef struct qa_protection_claim {
