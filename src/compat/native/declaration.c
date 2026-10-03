@@ -443,8 +443,12 @@ bool qa_native_declaration_load(qa_bytes json, const char *artifact_path,
                                error) &&
                 qa_json_i64(document, qa_json_get(document, entry, "apiVersion"), &api_version,
                             error) &&
-                normalize_path((qa_bytes){path_text.data, path_text.size}, &paths[index], error) &&
-                required_primary(document, primary, error);
+                normalize_path((qa_bytes){path_text.data, path_text.size}, &paths[index], error);
+        if (valid && api_version != 3 && api_version != 2023) {
+            qa_error_set(error, QA_ERROR_FORMAT, index,
+                         "native declaration module API must be 3 or 2023");
+            valid = false;
+        }
         for (size_t previous = 0; valid && previous < index; ++previous) {
             if (!strcmp(paths[previous], paths[index])) {
                 qa_error_set(error, QA_ERROR_FORMAT, index,
@@ -466,7 +470,9 @@ bool qa_native_declaration_load(qa_bytes json, const char *artifact_path,
                              "native declaration digest does not match its selected module");
                 valid = false;
             } else {
-                selected_primary = primary;
+                valid = required_primary(document, primary, error);
+                if (valid)
+                    selected_primary = primary;
             }
         }
         qa_buffer_free(&path_text);
