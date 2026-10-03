@@ -17,9 +17,8 @@ bool q2fx_actor_fields(qa_source_save_io *io, qa_actor_id *id, const frontend_re
     if (!reading && present && (!refs->actor_encode || !refs->actor_encode(refs->context,*id,&saved,io->error))) return false;
     if (!qa_source_save_bool(io,&present) || !qa_source_save_u64(io,&saved.generation) || !qa_source_save_u32(io,&saved.slot)) return false;
     if (!present) { if (saved.generation || saved.slot) return false; if (reading) *id=(qa_actor_id){0}; return true; }
-    if (!saved.generation) return false;
     if (reading && (!refs->actor_decode || !refs->actor_decode(refs->context,saved,id,io->error))) return false;
-    return id->registry && id->generation;
+    return id->registry;
 }
 bool q2fx_light_identity_fields(qa_source_save_io *io, uint64_t *identity, const frontend_remote_q2_effects_refs *refs)
 {

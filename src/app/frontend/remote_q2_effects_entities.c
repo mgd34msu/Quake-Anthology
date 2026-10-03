@@ -39,7 +39,7 @@ bool frontend_remote_q2_effects_frame(frontend_remote_q2_effects *o,
         return !o->event_failed;
     }
     for (size_t i=0;i<s->entity_count;++i)
-        if (!s->entities[i].actor.registry || !s->entities[i].actor.generation || !qa_vec_finite(s->entities[i].origin)) return false;
+        if (!s->entities[i].actor.registry || !qa_vec_finite(s->entities[i].origin)) return false;
     o->event_received=true; o->event_sequence=s->frame_sequence; o->event_failed=false; o->event_error=(qa_error){0};
     ++o->busy; bool ok=true;
     double seconds=s->milliseconds*.001;

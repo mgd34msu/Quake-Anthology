@@ -5,7 +5,7 @@
 
 static bool live(frontend_remote_q2_effects *o, qa_actor_id actor, bool *out, qa_error *e)
 {
-    return actor.registry && actor.generation && o->source.actor_live &&
+    return actor.registry && o->source.actor_live &&
         o->source.actor_live(o->source.context,actor,out,e) && q2fx_source_current(o,e);
 }
 static bool intake(frontend_remote_q2_effects *o, qa_actor_id actor, qa_error *e)
@@ -68,7 +68,7 @@ bool frontend_remote_q2_effects_monster_beam(frontend_remote_q2_effects *o, qa_a
 }
 static bool light_valid(const frontend_remote_q2_effects_shadow_light *v)
 {
-    return v && v->actor.registry && v->actor.generation && qa_vec_finite(v->origin) && qa_vec_finite(v->color) &&
+    return v && v->actor.registry && qa_vec_finite(v->origin) && qa_vec_finite(v->color) &&
         qa_vec_finite(v->direction) && isfinite(v->radius) && isfinite(v->intensity) &&
         isfinite(v->fade_start) && isfinite(v->fade_end) && isfinite(v->cos_half_angle) &&
         v->resolution>=0 && v->lightstyle>=-1 && v->cos_half_angle>=-1 && v->cos_half_angle<=1;
@@ -138,7 +138,7 @@ bool frontend_remote_q2_effects_retire_presentation(frontend_remote_q2_effects *
 bool frontend_remote_q2_effects_remove_actor_presentation(frontend_remote_q2_effects *o, qa_actor_id actor,
     frontend_remote_q2_effects_presentation_kind kind, qa_error *e)
 {
-    if (!o || !frontend_remote_q2_effects_idle(o) || !actor.registry || !actor.generation ||
+    if (!o || !frontend_remote_q2_effects_idle(o) || !actor.registry ||
         (uint32_t)kind>FRONTEND_REMOTE_Q2_FLASHLIGHT || !q2fx_source_current(o,e)) return false;
     bool changed=false;
     if (kind<=FRONTEND_REMOTE_Q2_ALL_BEAMS) for (size_t i=0;i<o->source_beam_count;) {

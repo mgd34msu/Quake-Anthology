@@ -209,10 +209,10 @@ static bool field_actor(frontend_remote_q2_effects *o, const qa_q2_temp_entity *
     const qa_q2_temp_field *f = field(t, name);
     if (!f || f->kind != QA_Q2_TEMP_INTEGER || f->value.integer <= 0)
         return q2fx_fail(e, QA_ERROR_FORMAT, "Q2 beam lacks its actual received entity");
-    if (actors) { *out = actors[(size_t)(f - t->fields)]; return out->registry && out->generation; }
+    if (actors) { *out = actors[(size_t)(f - t->fields)]; return out->registry; }
     frontend_remote_q2_effects_pose pose;
     if (!o->source.actor(o->source.context, (uint32_t)f->value.integer, &pose, e) || !q2fx_source_current(o, e)) return false;
-    *out = pose.actor; return out->registry && out->generation;
+    *out = pose.actor; return out->registry;
 }
 static q2fx_beam *beam(frontend_remote_q2_effects *o, qa_actor_id actor, qa_actor_id destination,
     qa_vec3 start, qa_vec3 end, qa_vec3 offset, double time, q2fx_model model, bool player, bool monster)
@@ -519,7 +519,7 @@ bool frontend_remote_q2_effects_named_beam(frontend_remote_q2_effects *o,
                 .start=start,.end=end,.die=die}; break;
         }
     } else if (!strcmp(name,"heatbeam") || !strcmp(name,"monster-heatbeam")) {
-        if (!actor_id.registry || !actor_id.generation) ok=q2fx_fail(e,QA_ERROR_FORMAT,"Q2 normalized player beam lost its full actor");
+        if (!actor_id.registry) ok=q2fx_fail(e,QA_ERROR_FORMAT,"Q2 normalized player beam lost its full actor");
         else {
             bool monster=!strcmp(name,"monster-heatbeam");
             beam(o,actor_id,(qa_actor_id){0},start,end,monster?qa_v3(0,0,0):qa_v3(2,7,-3),time,Q2FX_HEAT,true,monster);
@@ -754,7 +754,7 @@ bool frontend_remote_q2_effects_muzzle(frontend_remote_q2_effects *o,
     if (!o || !frontend_remote_q2_effects_idle(o) || !isfinite(time) || !isfinite(server) || !entity || !q2fx_source_current(o,e)) return false;
     frontend_remote_q2_effects_pose pose;
     ++o->busy;
-    bool ok=o->source.actor(o->source.context,entity,&pose,e) && q2fx_source_current(o,e) && pose.actor.registry && pose.actor.generation &&
+    bool ok=o->source.actor(o->source.context,entity,&pose,e) && q2fx_source_current(o,e) && pose.actor.registry &&
         qa_vec_finite(pose.origin) && qa_vec_finite(pose.angles) &&
         (monster?monster_muzzle(o,pose,flash,time,server,e):player_muzzle(o,pose,flash,silenced,time,server,e));
     o->dirty=true; --o->busy; return ok && q2fx_source_current(o,e);
@@ -762,7 +762,7 @@ bool frontend_remote_q2_effects_muzzle(frontend_remote_q2_effects *o,
 bool frontend_remote_q2_effects_actor_muzzle(frontend_remote_q2_effects *o,
     qa_actor_id actor_id,uint32_t flash,bool monster,bool silenced,double time,double server,qa_error *e)
 {
-    if (!o || !frontend_remote_q2_effects_idle(o) || !o->source.actor_pose || !actor_id.registry || !actor_id.generation ||
+    if (!o || !frontend_remote_q2_effects_idle(o) || !o->source.actor_pose || !actor_id.registry ||
         !isfinite(time) || !isfinite(server) || !q2fx_source_current(o,e)) return false;
     frontend_remote_q2_effects_pose pose;
     ++o->busy;
@@ -775,7 +775,7 @@ bool frontend_remote_q2_effects_monster_muzzle(frontend_remote_q2_effects *o,
     qa_actor_id actor_id, uint32_t flash, qa_vec3 origin, qa_vec3 direction,
     double time, double server, qa_error *e)
 {
-    if (!o || !frontend_remote_q2_effects_idle(o) || !actor_id.registry || !actor_id.generation ||
+    if (!o || !frontend_remote_q2_effects_idle(o) || !actor_id.registry ||
         !isfinite(time) || !isfinite(server) || !qa_vec_finite(origin) || !qa_vec_finite(direction) ||
         !q2fx_source_current(o,e)) return false;
     ++o->busy;
@@ -786,7 +786,7 @@ bool frontend_remote_q2_effects_monster_muzzle_pose(frontend_remote_q2_effects *
     qa_actor_id actor_id,uint32_t flash,qa_vec3 origin,qa_vec3 angles,float scale,
     double time,double server,qa_error *e)
 {
-    if (!o || !frontend_remote_q2_effects_idle(o) || !actor_id.registry || !actor_id.generation ||
+    if (!o || !frontend_remote_q2_effects_idle(o) || !actor_id.registry ||
         !isfinite(time) || !isfinite(server) || !qa_vec_finite(origin) || !qa_vec_finite(angles) ||
         !isfinite(scale) || scale<0 || !q2fx_source_current(o,e)) return false;
     ++o->busy;
@@ -1035,7 +1035,7 @@ bool frontend_remote_q2_effects_prepare(frontend_remote_q2_effects *o,
     uint64_t render_wall, render_frame;
     if (!o->source.render_clock(o->source.context,&render_wall,&render_frame,e) || !q2fx_source_current(o,e)) return false;
     for (size_t i=0;i<s->entity_count;++i) {
-        if (!s->entities[i].actor.registry || !s->entities[i].actor.generation || !qa_vec_finite(s->entities[i].origin) || !qa_vec_finite(s->entities[i].angles)) return false;
+        if (!s->entities[i].actor.registry || !qa_vec_finite(s->entities[i].origin) || !qa_vec_finite(s->entities[i].angles)) return false;
         for (size_t j=0;j<i;++j) if (qa_actor_id_equal(s->entities[i].actor,s->entities[j].actor)) return false;
     }
     bool advance=!o->sampled || s->milliseconds>o->time, events=!o->sampled || s->frame_sequence!=o->frame_sequence;
