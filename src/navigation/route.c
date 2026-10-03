@@ -1,23 +1,63 @@
 #include "internal.h"
 
+static float edge_seconds(const qa_navigation *n, uint32_t index) {
+    return isnan(n->admission_seconds[index]) ? n->graph->edges[index].travel_seconds
+                                             : n->admission_seconds[index];
+}
+static bool relax_edge(qa_navigation *n, qa_nav_workspace *w, const qa_nav_route_query *q,
+                       uint32_t index, qa_error *e) {
+    if (w->rejected[index]) return true;
+    const qa_nav_edge *edge = n->graph->edges + index;
+    uint32_t from = nav_node_index(n->graph, edge->from),
+             to = nav_node_index(n->graph, edge->to);
+    if (!isfinite(w->costs[from])) return true;
+    bool allowed;
+    if (!nav_edge_allowed(n, w, q->actor, index, q, &allowed, e)) return false;
+    if (!allowed) return true;
+    float cost = w->costs[from] + edge_seconds(n, index);
+    if (cost >= w->costs[to]) return true;
+    w->costs[to] = cost;
+    w->parents[to] = index;
+    return nav_queue_push(w, (nav_queue_entry){to, cost}, e);
+}
+static bool repair_edge(qa_navigation *n, qa_nav_workspace *w, const qa_nav_route_query *q,
+                        uint32_t index, qa_error *e) {
+    const qa_nav_graph *g = n->graph;
+    const qa_nav_edge *edge = g->edges + index;
+    uint32_t from = nav_node_index(g, edge->from), to = nav_node_index(g, edge->to);
+    float cost = w->costs[from] + edge_seconds(n, index);
+    if (w->parents[to] != index || (!w->rejected[index] && cost <= w->costs[to]))
+        return relax_edge(n, w, q, index, e);
+    size_t count = 1;
+    w->repair[0] = to;
+    w->costs[to] = INFINITY;
+    w->parents[to] = QA_NAV_NO_INDEX;
+    for (size_t node = 0; node < count; ++node) {
+        uint32_t current = w->repair[node];
+        for (uint32_t i = g->first_out[current]; i < g->first_out[current + 1]; ++i) {
+            uint32_t child_edge = g->outgoing[i], child = nav_node_index(g, g->edges[child_edge].to);
+            if (w->parents[child] != child_edge) continue;
+            w->repair[count++] = child;
+            w->costs[child] = INFINITY;
+            w->parents[child] = QA_NAV_NO_INDEX;
+        }
+    }
+    for (size_t node = 0; node < count; ++node) {
+        uint32_t current = w->repair[node];
+        for (uint32_t i = g->first_in[current]; i < g->first_in[current + 1]; ++i)
+            if (!relax_edge(n, w, q, g->incoming[i], e)) return false;
+    }
+    return true;
+}
 static bool candidate(qa_navigation *n, qa_nav_workspace *w, const qa_nav_route_query *q,
                       uint32_t start, uint32_t goal, size_t *count, bool *found, qa_error *e) {
     const qa_nav_graph *g = n->graph;
-    for (size_t i = 0; i < g->view.node_count; ++i) {
-        w->costs[i] = INFINITY;
-        w->parents[i] = QA_NAV_NO_INDEX;
-    }
-    w->queue_count = 0;
-    w->costs[start] = 0;
     *found = false;
     *count = 0;
-    if (!nav_queue_push(w, (nav_queue_entry){start, 0}, e))
-        return false;
     nav_queue_entry current;
-    while (nav_queue_pop(w, &current)) {
-        if (current.cost != w->costs[current.node])
-            continue;
-        if (current.node == goal) {
+    for (;;) {
+        if (isfinite(w->costs[goal]) &&
+            (w->queue_count == 0 || w->queue[0].cost >= w->costs[goal])) {
             uint32_t node = goal;
             while (node != start) {
                 uint32_t edge = w->parents[node];
@@ -37,29 +77,11 @@ static bool candidate(qa_navigation *n, qa_nav_workspace *w, const qa_nav_route_
             *found = true;
             return true;
         }
-        for (uint32_t i = g->first_out[current.node]; i < g->first_out[current.node + 1]; ++i) {
-            uint32_t index = g->outgoing[i];
-            if (w->rejected[index])
-                continue;
-            bool allowed;
-            if (!nav_edge_allowed(n, w, q->actor, index, q, &allowed, e))
-                return false;
-            if (!allowed)
-                continue;
-            const qa_nav_edge *edge = g->edges + index;
-            uint32_t to = nav_node_index(g, edge->to);
-            float seconds = isnan(n->admission_seconds[index]) ? edge->travel_seconds
-                                                               : n->admission_seconds[index],
-                  cost = current.cost + seconds;
-            if (cost >= w->costs[to])
-                continue;
-            w->costs[to] = cost;
-            w->parents[to] = index;
-            if (!nav_queue_push(w, (nav_queue_entry){to, cost}, e))
-                return false;
-        }
+        if (!nav_queue_pop(w, &current)) return true;
+        if (current.cost != w->costs[current.node]) continue;
+        for (uint32_t i = g->first_out[current.node]; i < g->first_out[current.node + 1]; ++i)
+            if (!relax_edge(n, w, q, g->outgoing[i], e)) return false;
     }
-    return true;
 }
 static qa_vec3 cursor(const qa_nav_route *route) { return route->points[route->point_count - 1]; }
 static bool traverse(qa_navigation *n, nav_prediction *prediction, qa_actor_id actor,
@@ -204,6 +226,12 @@ bool qa_navigation_route(qa_navigation *n, qa_nav_workspace *w, const qa_nav_rou
         return true;
     if (!nav_workspace_prepare(w, n->graph, e))
         return false;
+    for (size_t i = 0; i < n->graph->view.node_count; ++i) {
+        w->costs[i] = INFINITY;
+        w->parents[i] = QA_NAV_NO_INDEX;
+    }
+    w->costs[first] = 0;
+    if (!nav_queue_push(w, (nav_queue_entry){first, 0}, e)) return false;
     for (;;) {
         size_t count;
         if (!candidate(n, w, q, first, last, &count, &found, e))
@@ -222,6 +250,8 @@ bool qa_navigation_route(qa_navigation *n, qa_nav_workspace *w, const qa_nav_rou
             if (!ok || !admitted) {
                 if (ok)
                     w->rejected[w->path[i]] = 1;
+                for (size_t changed = 0; ok && changed <= i; ++changed)
+                    ok = repair_edge(n, w, q, w->path[changed], e);
                 failed = true;
                 break;
             }

@@ -37,7 +37,7 @@ struct qa_navigation {
 struct qa_nav_workspace {
     qa_aas_query *aas;
     float *costs;
-    uint32_t *parents, *path;
+    uint32_t *parents, *path, *repair;
     int8_t *grounded, *waiting;
     uint8_t *rejected;
     nav_queue_entry *queue;

@@ -205,6 +205,7 @@ void qa_nav_workspace_destroy(qa_nav_workspace *w) {
     free(w->costs);
     free(w->parents);
     free(w->path);
+    free(w->repair);
     free(w->grounded);
     free(w->waiting);
     free(w->rejected);
@@ -218,13 +219,15 @@ bool nav_workspace_prepare(qa_nav_workspace *w, const qa_nav_graph *g, qa_error 
         if (n > SIZE_MAX / sizeof(float) || n > SIZE_MAX / sizeof(uint32_t))
             goto memory;
         float *costs = malloc(n * sizeof(*costs));
-        uint32_t *parents = malloc(n * sizeof(*parents)), *path = malloc(n * sizeof(*path));
+        uint32_t *parents = malloc(n * sizeof(*parents)), *path = malloc(n * sizeof(*path)),
+                 *repair = malloc(n * sizeof(*repair));
         int8_t *grounded = malloc(n), *waiting = malloc(n);
-        if (costs == NULL || parents == NULL || path == NULL || grounded == NULL ||
+        if (costs == NULL || parents == NULL || path == NULL || repair == NULL || grounded == NULL ||
             waiting == NULL) {
             free(costs);
             free(parents);
             free(path);
+            free(repair);
             free(grounded);
             free(waiting);
             goto memory;
@@ -232,11 +235,13 @@ bool nav_workspace_prepare(qa_nav_workspace *w, const qa_nav_graph *g, qa_error 
         free(w->costs);
         free(w->parents);
         free(w->path);
+        free(w->repair);
         free(w->grounded);
         free(w->waiting);
         w->costs = costs;
         w->parents = parents;
         w->path = path;
+        w->repair = repair;
         w->grounded = grounded;
         w->waiting = waiting;
         w->node_capacity = n;
