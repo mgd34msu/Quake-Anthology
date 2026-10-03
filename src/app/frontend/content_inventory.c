@@ -2,6 +2,7 @@
 #include "component_scene.h"
 #include "equipment_media.h"
 #include "content_inventory.h"
+#include "audio_restore.h"
 #include "qa/scene_resource_save.h"
 #include "qa/vfs_view_save.h"
 #include "qa/ui_menu_save.h"
@@ -149,5 +150,5 @@ bool frontend_content_visit(void *context, const qa_application *application,
         if (!visit_catalog(visitor, qa_ui_library_catalog(seat->library), error) ||
             !visit_catalog(visitor, qa_ui_mods_catalog(seat->mods), error)) return false;
     }
-    return true;
+    return frontend_audio_content_visit(frontend, visitor, error);
 }

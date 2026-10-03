@@ -1,6 +1,8 @@
 #ifndef QA_FRONTEND_AUDIO_RESTORE_H
 #define QA_FRONTEND_AUDIO_RESTORE_H
 #include "audio_inventory.h"
+#include "qa/persistence_content.h"
+bool frontend_audio_content_visit(const qa_frontend *, const qa_application_content_visitor *, qa_error *);
 /* Complete real bank roster plus outside asset holders. Capture returns a
  * borrowed cut for subsequent asset descriptor writers. Restore returns owned
  * construction refs for exact downstream engine/event/source handle imports.

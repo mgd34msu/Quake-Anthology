@@ -43,7 +43,7 @@ static bool add(bank_inventory *inventory, qa_application_content_graph *graph,
     if (!banks) return frontend_fail(error, QA_ERROR_MEMORY, "Allocating actual audio bank owner array");
     inventory->banks = banks; rows[inventory->count] = row; banks[inventory->count++] = bank; return true;
 }
-static bool collect(qa_frontend *f, bank_inventory *inventory, qa_error *error)
+static bool collect(const qa_frontend *f, bank_inventory *inventory, qa_error *error)
 {
     if (!f || !f->application || f->stepping || !frontend_native_q2_callbacks_idle(f))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Audio graph requires actual idle frontend owners");
@@ -137,7 +137,7 @@ static bool append(qa_audio_asset ***all, size_t *count, qa_audio_asset **part, 
     if (!grown) return frontend_fail(error, QA_ERROR_MEMORY, "Allocating actual audio holders");
     memcpy(grown + *count, part, size * sizeof(*part)); *all = grown; *count += size; return true;
 }
-static bool holders(qa_frontend *f, qa_audio_asset ***out, size_t *count, qa_error *error)
+static bool holders(const qa_frontend *f, qa_audio_asset ***out, size_t *count, qa_error *error)
 {
     qa_audio_asset **part = NULL; size_t size = 0;
     bool ok = !f->audio || qa_audio_engine_assets_read(f->audio, &part, &size, error);
@@ -217,6 +217,27 @@ static bool holders(qa_frontend *f, qa_audio_asset ***out, size_t *count, qa_err
     }
     ok=ok && frontend_ui_features_assets_read(f,&part,&size,error) && append(out,count,part,size,error);
     free(part); return ok;
+}
+bool frontend_audio_content_visit(const qa_frontend *f,
+    const qa_application_content_visitor *visitor, qa_error *error)
+{
+    if (!visitor || !visitor->pool || !visitor->view)
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Audio content requires the actual content visitor");
+    bank_inventory banks = {0}; qa_audio_asset **assets = NULL; size_t count = 0;
+    qa_audio_asset_inventory *inventory = NULL;
+    bool ok = collect(f, &banks, error) && holders(f, &assets, &count, error) &&
+        qa_audio_asset_inventory_capture(banks.banks, banks.count, assets, count, &inventory, error);
+    for (uint64_t i = 0; ok; ++i) {
+        const qa_audio_asset *asset = qa_audio_asset_inventory_at(inventory, i);
+        if (!asset) break;
+        const qa_vfs *view = qa_audio_asset_files(asset);
+        qa_resource_pool *pool = view ? qa_vfs_resources(view) : NULL;
+        ok = pool ? visitor->pool(visitor->context, pool, error) &&
+            visitor->view(visitor->context, view, error) :
+            frontend_fail(error, QA_ERROR_FORMAT, "Retained audio asset has no actual content pool");
+    }
+    qa_audio_asset_inventory_destroy(inventory); free(assets); dispose(&banks);
+    return ok;
 }
 static bool header(qa_source_save_io *io, const bank_inventory *inventory)
 {
