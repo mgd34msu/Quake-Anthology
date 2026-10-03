@@ -469,6 +469,42 @@ static bool q1_selected_attack_delay(void *context, qa_actor_id actor, qa_q1_wea
     if (handled) *seconds = (float)((double)delay / 1e9);
     return true;
 }
+static bool q1_character_drop_inventory(void *context, qa_actor_id actor, qa_error *error)
+{
+    application_provider *character = context;
+    qa_application *app = character ? character->application : NULL;
+    uint32_t seat;
+    if (!app || app->destroy_requested || app->finalizing || !app->session || !app->world ||
+        !character->constructed || !character->attached || character->close_pending ||
+        character->kind != APPLICATION_PROVIDER_Q1 || !character->state.q1 ||
+        !qa_actors_get(qa_session_actors(app->session), actor) ||
+        !qa_application_player_seat(app, actor, &seat) ||
+        application_provider_for(app, actor, QA_ROLE_CHARACTER, "") != character)
+        return application_fail(error, QA_ERROR_ARGUMENT,
+            "Q1 death inventory lost its actual character and player");
+    application_provider *source = application_world_provider(app, QA_ROLE_ENTITIES, "");
+    if (!source || source->application != app || !source->constructed ||
+        !source->attached || source->close_pending)
+        return application_fail(error, QA_ERROR_ARGUMENT,
+            "Q1 death inventory lost its published game source");
+    if (source->kind != APPLICATION_PROVIDER_Q1) return true;
+    qa_q1_game_operation operation = {0};
+    if (!qa_q1_game_operation_begin(source->state.q1, &operation, error)) return false;
+    qa_item_id weapon;
+    qa_actor_id dropped;
+    bool okay = qa_application_weapon_read(app, actor, &weapon, error);
+    if (okay && (!qa_q1_game_operation_live(&operation) ||
+        application_world_provider(app, QA_ROLE_ENTITIES, "") != source ||
+        application_provider_for(app, actor, QA_ROLE_CHARACTER, "") != character))
+        okay = application_fail(error, QA_ERROR_ARGUMENT,
+            "Q1 death inventory replaced its actual source owners");
+    if (okay) okay = qa_q1_drop_backpack(operation.game, actor, weapon, &dropped, error);
+    if (okay && !qa_q1_game_operation_live(&operation))
+        okay = application_fail(error, QA_ERROR_ARGUMENT,
+            "Q1 death inventory retired its actual game source");
+    qa_q1_game_operation_end(&operation);
+    return okay;
+}
 static bool construct_q1(qa_application *application,
                          application_provider *provider, qa_world *world,
                          const qa_product *product,
@@ -502,6 +538,7 @@ static bool construct_q1(qa_application *application,
                        .find_targets = q1_find_targets,
                        .combat_provider = q1_combat_provider,
                        .supply = application_supplies_source_for,
+                       .drop_inventory = q1_character_drop_inventory,
                        .request_respawn = application_native_q1_request_respawn,
                        .console_suicide = application_native_q1_suicide,
                        .powerup = application_native_q1_powerup,
