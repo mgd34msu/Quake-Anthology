@@ -395,7 +395,9 @@ bool frontend_remote_q2_input(qa_frontend *f, uint32_t seat, const qa_seat_input
         .delta_angles = delta, .sensitivity = 1, .attack_allowed = true};
     qa_movement_command command;
     if (!qa_input_command_build(&row->input, &tuning, sample, &basis, sample->frame_ms, &command, error)) return false;
-    *out = (qa_q2_usercmd){.server_frame = row->frame.server_frame,
+    bool kex = row->options.domain.protocol.kind == QA_NET_Q2KEX_2023 ||
+        row->options.domain.protocol.kind == QA_NET_Q2KEX_DEMO_2022;
+    *out = (qa_q2_usercmd){.server_frame = kex ? row->frame.server_frame : 0,
         .msec = command.milliseconds > 255 ? 255 : (uint8_t)command.milliseconds,
         .buttons = (uint8_t)command.buttons, .impulse = command.impulse, .lightlevel = command.light_level,
         .forwardmove = command.forward_move, .sidemove = command.side_move, .upmove = command.up_move};
