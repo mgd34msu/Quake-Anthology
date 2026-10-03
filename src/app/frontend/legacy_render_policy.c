@@ -12,7 +12,8 @@ static bool number(const qa_cvars *registry, const char *name, float *out, qa_er
 {
     const qa_cvar_view *row = qa_cvars_find(registry, name);
     if (!row || !isfinite(row->number)) {
-        frontend_fail(error, QA_ERROR_ARGUMENT, "Legacy renderer lost its canonical setting");
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Legacy renderer setting %s is absent or nonfinite in dialect %u",
+            name, (unsigned)qa_cvars_dialect(registry));
         return false;
     }
     *out = row->number;
