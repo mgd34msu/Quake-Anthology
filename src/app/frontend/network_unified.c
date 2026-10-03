@@ -38,7 +38,7 @@ static bool output_receipts_current(void *context, qa_application *app,
         (!receipts->base || (receipts->base->current &&
             receipts->base->current(receipts->base->context, app, source, client, player)));
 }
-bool frontend_network_unified_idle(const frontend_network_unified *owner)
+static bool unified_returned(const frontend_network_unified *owner,bool checkpoint)
 {
     if (!owner) return true;
     if (owner->restore_pending) return owner->calls == 0;
@@ -53,8 +53,13 @@ bool frontend_network_unified_idle(const frontend_network_unified *owner)
                 installed != peer->session || !qa_unified_session_idle(installed)) return false;
         }
     }
-    return frontend_remote_unified_idle(owner->options.frontend);
+    return checkpoint ? frontend_remote_unified_checkpoint_returned(owner->options.frontend) :
+        frontend_remote_unified_idle(owner->options.frontend);
 }
+bool frontend_network_unified_idle(const frontend_network_unified *owner)
+{ return unified_returned(owner,false); }
+bool frontend_network_unified_checkpoint_returned(const frontend_network_unified *owner)
+{ return unified_returned(owner,true); }
 
 static bool release_peer(unified_peer *peer, qa_error *error)
 {

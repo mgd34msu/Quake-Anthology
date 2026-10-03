@@ -477,7 +477,9 @@ bool frontend_network_unified_qualified(const frontend_network_unified *owner,
                 frontend_network_unified_client_retirement_options_read(owner->options.client_service, &client, e) :
                 frontend_network_unified_client_options_read(owner->options.client_service, &client, e)) ||
             client.domain.runtime != runtime || client.domain.application != owner->options.frontend->application ||
-            !frontend_network_unified_idle(owner) || !inventory(owner, runtime, true, e) ||
+            !(owner->options.frontend->capture || owner->options.frontend->source_restoring ?
+                frontend_network_unified_checkpoint_returned(owner) : frontend_network_unified_idle(owner)) ||
+            !inventory(owner, runtime, true, e) ||
             !qa_unified_bootstrap_domain(owner->bootstrap, &server, &maximum, &remote, e) ||
             server || maximum != 1 || !qa_net_address_equal(&remote, &owner->options.remote, true))
             return bad(e, "Unified CLIENT controller lost its actual programme or handshake");
