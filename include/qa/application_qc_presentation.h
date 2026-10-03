@@ -61,6 +61,24 @@ bool qa_application_qc_message_angles(qa_application *,const qa_application_qc_m
     qa_actor_id,qa_vec3,qa_error *);
 bool qa_application_qc_message_view_offset(qa_application *,const qa_application_qc_message_source *,
     qa_actor_id,qa_vec3 *,qa_error *);
+typedef struct qa_application_qc_client_presentation {
+    qa_application_qc_message_source source;
+    qa_actor_id recipient;
+    uint32_t source_slot;
+    double health, armor;
+    bool vitals, view;
+} qa_application_qc_client_presentation;
+/* Declared client output observes the admitted recipient's raw source words.
+ * It neither projects canonical health/body values nor creates a client. */
+bool qa_application_qc_client_presentation_read(qa_application *,qa_actor_owner,qa_actor_id,
+    qa_application_qc_client_presentation *,bool *found,qa_error *);
+bool qa_application_qc_client_presentation_current(qa_application *,
+    const qa_application_qc_client_presentation *);
+/* The message owner supplies its already captured full-generation camera
+ * target and optional SETANGLE. No encoded edict index is translated here. */
+bool qa_application_qc_client_presentation_camera(qa_application *,
+    const qa_application_qc_client_presentation *,qa_actor_id viewed,bool intermission,
+    const qa_vec3 *angles,qa_application_camera_view *,bool *found,qa_error *);
 typedef struct qa_application_qc_weapon_ui_binding {
     qa_item_id item;
     const char *label;

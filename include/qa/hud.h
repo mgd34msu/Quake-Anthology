@@ -43,6 +43,7 @@ typedef struct qa_hud_weapon {
  * Q1/Q2/Q3 and rerelease stat/layout behavior alongside shared overlays. */
 typedef struct qa_hud_data {
     const qa_hud_value *vitals, *bars;
+    qa_hud_value source_values[2];
     size_t vital_count, bar_count;
     const qa_hud_timer *timers;
     size_t timer_count;

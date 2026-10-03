@@ -34,6 +34,12 @@ bool frontend_qc_messages_drain(frontend_qc_messages *,qa_error *);
 bool frontend_qc_messages_camera_read(const frontend_qc_messages *,qa_actor_owner,qa_actor_id,
     frontend_qc_camera_receipt *,qa_error *);
 bool frontend_qc_messages_camera_current(const frontend_qc_messages *,const frontend_qc_camera_receipt *);
+/* First admitted declared output in the actual configured Source order.
+ * These reads borrow existing decoded messages and raw QC fields only. */
+bool frontend_qc_messages_client_vitals(const frontend_qc_messages *,qa_actor_id,
+    qa_application_qc_client_presentation *,bool *found,qa_error *);
+bool frontend_qc_messages_client_camera(const frontend_qc_messages *,qa_actor_id,
+    qa_application_camera_view *,bool *found,qa_error *);
 bool frontend_qc_messages_stat_read(const frontend_qc_messages *,qa_actor_owner,qa_actor_id,
     uint32_t index,int32_t *value,bool *present,qa_error *);
 bool frontend_qc_messages_checkpoint(const frontend_qc_messages *,qa_buffer *,qa_error *);

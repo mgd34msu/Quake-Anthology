@@ -20,6 +20,7 @@
 #include "network_recipient.h"
 #include "equipment_media.h"
 #include "material_movies.h"
+#include "qc_messages.h"
 #include <stdio.h>
 
 static double now_ms(void *context) { frontend_seat *seat = context; return (double)seat->frontend->time_ns / 1000000.0; }
@@ -173,6 +174,15 @@ static bool hud_data(void *context, const qa_hud_frame *frame, qa_hud_data *out,
         if (seat->q2_help) { out->help_title = "Objectives"; out->help_lines = seat->q2_help_lines; out->help_count = 2; }
     }
     if (!frame->actor.registry) return true;
+    if (seat->frontend->qc_messages && !frame->source_status_native) {
+        qa_application_qc_client_presentation qc; bool found=false;
+        if (!frontend_qc_messages_client_vitals(seat->frontend->qc_messages,frame->actor,&qc,&found,error)) return false;
+        if (found) {
+            out->source_values[0]=(qa_hud_value){.label="Health",.value=qc.health,.warning=qc.health<=25};
+            out->source_values[1]=(qa_hud_value){.label="Armor",.value=qc.armor};
+            out->vitals=out->source_values; out->vital_count=2; out->source_vitals=true;
+        }
+    }
     bool source_slot = false;
     if (!hud_weapon_data(seat,frame,out,source.source_hud || out->source_vitals,
         !source.source_hud,&source_slot,error)) return false;

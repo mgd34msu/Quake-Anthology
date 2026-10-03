@@ -96,6 +96,10 @@ typedef struct application_qc_client_output {
     application_qc_client_output_value *values;
     size_t value_count;
 } application_qc_client_output;
+typedef struct application_qc_client_presentation {
+    bool declared, vitals, view;
+    const qa_qc_definition *health, *armor, *origin, *angles, *offset;
+} application_qc_client_presentation;
 struct application_qc_profile {
     application_qc_bound_field *fields;
     size_t field_count;
@@ -107,6 +111,7 @@ struct application_qc_profile {
     application_qc_client_output client_outputs[APPLICATION_CLIENT_OUTPUT_COUNT];
     size_t client_output_count;
     uint8_t client_output_channels;
+    application_qc_client_presentation presentation;
     application_qc_cvar *cvars;
     size_t cvar_count;
     application_qc_command *commands;

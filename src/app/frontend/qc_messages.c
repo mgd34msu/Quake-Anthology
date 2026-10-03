@@ -261,6 +261,37 @@ bool frontend_qc_messages_camera_current(const frontend_qc_messages *owner,const
         qa_actor_id_equal(actual.view_entity,view->view_entity) && actual.view_sequence==view->view_sequence &&
         actual.angle_sequence==view->angle_sequence && !memcmp(actual.angles,view->angles,sizeof(actual.angles));
 }
+static bool declared_client_frame(const frontend_qc_messages *owner,qa_actor_id actor,bool camera,
+    qa_application_qc_client_presentation *vitals,qa_application_camera_view *view,bool *found,qa_error *error)
+{
+    if(!current(owner) || owner->busy || !found || (camera?!view:!vitals))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Declared QC client output requires its returned message owner");
+    *found=false;
+    size_t count=qa_application_qc_message_source_count(owner->application);
+    for(size_t i=0;i<count;++i) {
+        qa_application_qc_message_source source; bool qc=false;
+        if(!qa_application_qc_message_source_at(owner->application,i,&source,&qc,error)) return false;
+        if(!qc) continue;
+        qa_application_qc_client_presentation frame; bool admitted=false;
+        if(!qa_application_qc_client_presentation_read(owner->application,source.provider,actor,&frame,&admitted,error)) return false;
+        if(!admitted || !(camera?frame.view:frame.vitals)) continue;
+        if(!camera) { *vitals=frame; *found=true; return true; }
+        frontend_qc_camera_receipt receipt;
+        if(!frontend_qc_messages_camera_read(owner,source.provider,actor,&receipt,error)) return false;
+        qa_vec3 angles=qa_v3(receipt.angles[0],receipt.angles[1],receipt.angles[2]);
+        if(!qa_application_qc_client_presentation_camera(owner->application,&frame,receipt.view_entity,
+            receipt.intermission!=0,receipt.has_angles?&angles:NULL,view,found,error) ||
+            !frontend_qc_messages_camera_current(owner,&receipt)) return false;
+        if(*found) return true;
+    }
+    return true;
+}
+bool frontend_qc_messages_client_vitals(const frontend_qc_messages *owner,qa_actor_id actor,
+    qa_application_qc_client_presentation *out,bool *found,qa_error *error)
+{ return declared_client_frame(owner,actor,false,out,NULL,found,error); }
+bool frontend_qc_messages_client_camera(const frontend_qc_messages *owner,qa_actor_id actor,
+    qa_application_camera_view *out,bool *found,qa_error *error)
+{ return declared_client_frame(owner,actor,true,NULL,out,found,error); }
 bool frontend_qc_messages_stat_read(const frontend_qc_messages *owner,qa_actor_owner provider,
     qa_actor_id recipient,uint32_t index,int32_t *value,bool *present,qa_error *error)
 {

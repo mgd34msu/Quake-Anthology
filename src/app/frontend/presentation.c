@@ -26,6 +26,7 @@
 #include "shared_render_controls.h"
 #include "legacy_render_policy.h"
 #include "particle_delivery.h"
+#include "qc_messages.h"
 #include <stdio.h>
 
 static bool source_status_native(const qa_frontend *f,uint32_t physical,qa_actor_id viewer,bool *out,qa_error *error)
@@ -159,6 +160,13 @@ bool frontend_present(qa_frontend *frontend, qa_error *error)
         uint32_t launch_seat;
         bool published=frontend_seat_launch_id_read(frontend,i,&launch_seat);
         bool live = published && qa_application_player_actor(frontend->application, launch_seat, &actor) && qa_application_control_camera(frontend->application, actor, &camera);
+        bool qc_status=false;
+        if (live && frontend->qc_messages) {
+            qa_application_qc_client_presentation qc;
+            bool override=false;
+            if (!frontend_qc_messages_client_vitals(frontend->qc_messages,actor,&qc,&qc_status,error) ||
+                !frontend_qc_messages_client_camera(frontend->qc_messages,actor,&camera,&override,error)) return false;
+        }
         qa_application_presentation_view source = {0};
         if (published) (void)qa_application_presentation_read(frontend->application, launch_seat, &source);
         bool source_weapon_status=false;
@@ -282,8 +290,8 @@ bool frontend_present(qa_frontend *frontend, qa_error *error)
         if (!frontend_q3_generic_overlay_begin(frontend,rect,error)) return false;
         bool component_status=false;
         if (live && !source_status_native(frontend,i,actor,&component_status,error)) return false;
-        if (live && !common_hud_drawn && (!native_rendered || source_weapon_status) && !qa_hud_draw(seat->hud, &(qa_hud_frame){.seat = i, .actor = actor,
-            .weapon_only=native_rendered,.source_status_native=component_status,
+        if (live && !common_hud_drawn && (!native_rendered || source_weapon_status || qc_status) && !qa_hud_draw(seat->hud, &(qa_hud_frame){.seat = i, .actor = actor,
+            .weapon_only=native_rendered && !qc_status,.source_status_native=component_status,
             .time_ns = frontend->time_ns, .viewport = rect, .safe_area = rect,
             .scale = preferences.hud_scale, .show_scores = seat->scores || (seat->q2_view_ready && !seat->q2_help && (seat->q2_view.layouts & 1)),
             .show_inventory = seat->q2_inventory, .visible = !ui.fullscreen}, &frontend->frame, error)) return false;

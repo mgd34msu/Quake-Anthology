@@ -24,6 +24,14 @@ static application_provider *owner(qa_application *app,qa_actor_owner id)
     }
     return found;
 }
+static bool raw_scalar(application_provider *p,uint32_t slot,qa_actor_id actor,
+    const qa_qc_definition *field,double *out,qa_error *error)
+{
+    float value;
+    if(!qa_qc_actor_observation_float(p->state.qc.instance,slot,actor,field->offset,&value,error)) return false;
+    if(!isfinite(value)) return application_fail(error,QA_ERROR_FORMAT,"QC presentation scalar is nonfinite");
+    *out=(double)value; return true;
+}
 static bool scalar(application_provider *p,uint32_t slot,qa_actor_id actor,const char *name,
     const qa_qc_definition *explicit_field,double *out,qa_error *error)
 {
@@ -33,10 +41,7 @@ static bool scalar(application_provider *p,uint32_t slot,qa_actor_id actor,const
     for(size_t i=0;profile && i<profile->field_count;++i) declared|=profile->fields[i].definition==field;
     if(!field || field->type!=QA_QC_FLOAT || !declared)
         return application_fail(error,QA_ERROR_UNSUPPORTED,"QC animation continuation has no actual declared scalar field");
-    float value;
-    if(!qa_qc_actor_observation_float(p->state.qc.instance,slot,actor,field->offset,&value,error)) return false;
-    if(!isfinite(value)) return application_fail(error,QA_ERROR_FORMAT,"QC animation continuation is nonfinite");
-    *out=(double)value; return true;
+    return raw_scalar(p,slot,actor,field,out,error);
 }
 bool qa_application_qc_animation_read(qa_application *app,qa_actor_id actor,qa_launch_role role,
     qa_application_qc_animation *out,qa_error *error)
@@ -217,6 +222,75 @@ bool qa_application_qc_message_view_offset(qa_application *app,const qa_applicat
         value=qa_v3(0,0,value.z!=-24?8:health<=0?-16:22);
     }
     *out=value; return true;
+}
+
+bool qa_application_qc_client_presentation_read(qa_application *app,qa_actor_owner id,qa_actor_id actor,
+    qa_application_qc_client_presentation *out,bool *found,qa_error *error)
+{
+    if(!app || !id || !out || !found || !qa_actors_get(qa_session_actors(app->session),actor))
+        return application_fail(error,QA_ERROR_ARGUMENT,"QC client presentation requires its actual recipient");
+    *found=false;
+    application_provider *p=owner(app,id);
+    if(!p) return application_fail(error,QA_ERROR_ARGUMENT,"QC client presentation owner is no longer installed");
+    const struct application_qc_profile *profile=p->kind==APPLICATION_PROVIDER_QC?p->state.qc.qualified:NULL;
+    if(!profile || !profile->presentation.declared) return true;
+    if(!source_ready(p) || !p->state.qc.engine->clients)
+        return application_fail(error,QA_ERROR_ARGUMENT,"Declared QC client presentation Source is not returned");
+    const struct application_qc_state *engine=p->state.qc.engine;
+    bool admitted=false;
+    for(uint32_t slot=1;slot<=engine->max_clients;++slot)
+        admitted|=engine->clients[slot].connected && engine->clients[slot].spawned &&
+            qa_actor_id_equal(engine->clients[slot].actor,actor);
+    if(!admitted) return true;
+    qa_application_qc_client_presentation value={.recipient=actor,
+        .vitals=profile->presentation.vitals,.view=profile->presentation.view};
+    bool qc=false;
+    if(!qa_application_qc_message_source_read(app,id,&value.source,&qc,error) || !qc ||
+        !qa_application_qc_message_client(app,&value.source,actor,&value.source_slot,error)) return false;
+    if(value.vitals && (!raw_scalar(p,value.source_slot,actor,profile->presentation.health,&value.health,error) ||
+        !raw_scalar(p,value.source_slot,actor,profile->presentation.armor,&value.armor,error))) return false;
+    if(!qa_application_qc_message_source_current(app,&value.source))
+        return application_fail(error,QA_ERROR_ARGUMENT,"QC client presentation changed its actual Source");
+    *out=value; *found=true; return true;
+}
+bool qa_application_qc_client_presentation_current(qa_application *app,
+    const qa_application_qc_client_presentation *view)
+{
+    qa_application_qc_client_presentation actual; bool found=false;
+    return view && qa_application_qc_message_source_current(app,&view->source) &&
+        qa_application_qc_client_presentation_read(app,view->source.provider,view->recipient,&actual,&found,NULL) && found &&
+        actual.source.descriptor==view->source.descriptor && actual.source.program==view->source.program &&
+        actual.source.instance==view->source.instance && actual.source.map_revision==view->source.map_revision &&
+        actual.source_slot==view->source_slot && actual.vitals==view->vitals && actual.view==view->view &&
+        actual.health==view->health && actual.armor==view->armor;
+}
+bool qa_application_qc_client_presentation_camera(qa_application *app,
+    const qa_application_qc_client_presentation *view,qa_actor_id target,bool intermission,
+    const qa_vec3 *angles,qa_application_camera_view *out,bool *found,qa_error *error)
+{
+    if(!out || !found || !qa_application_qc_client_presentation_current(app,view) ||
+        (angles && !qa_vec_finite(*angles)))
+        return application_fail(error,QA_ERROR_ARGUMENT,"QC declared camera requires its returned client frame");
+    *found=false;
+    if(!view->view || (!intermission && (!target.registry || qa_actor_id_equal(target,view->recipient)))) return true;
+    if(!target.registry) target=view->recipient;
+    if(!qa_actors_get(qa_session_actors(app->session),target)) return true;
+    application_provider *p=owner(app,view->source.provider);
+    const application_qc_client_presentation *declaration=&p->state.qc.qualified->presentation;
+    uint32_t target_slot;
+    if(!qa_qc_actor_observation_slot(p->state.qc.instance,target,&target_slot,NULL)) return true;
+    qa_application_camera_view value={.actor=view->recipient,.cutscene=true};
+    if(!qa_qc_actor_observation_vector(p->state.qc.instance,target_slot,target,declaration->origin->offset,&value.origin,error) ||
+        !qa_qc_actor_observation_vector(p->state.qc.instance,target_slot,target,declaration->angles->offset,&value.angles,error) ||
+        (!intermission && !qa_qc_actor_observation_vector(p->state.qc.instance,view->source_slot,view->recipient,
+            declaration->offset->offset,&value.view_offset,error))) return false;
+    if(angles) value.angles=*angles;
+    value.view_height=value.view_offset.z;
+    if(!qa_vec_finite(value.origin) || !qa_vec_finite(value.angles) || !qa_vec_finite(value.view_offset))
+        return application_fail(error,QA_ERROR_FORMAT,"QC declared camera contains a nonfinite source vector");
+    if(!qa_application_qc_client_presentation_current(app,view))
+        return application_fail(error,QA_ERROR_ARGUMENT,"QC declared camera changed its actual recipient");
+    *out=value; *found=true; return true;
 }
 
 static bool source_word(double value,uint32_t *out,qa_error *error)

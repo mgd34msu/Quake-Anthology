@@ -527,6 +527,34 @@ bool application_qc_authored_map_ready(const application_provider *provider, qa_
     return true;
 }
 
+static bool client_presentation(const qa_json_document *doc, qa_json_id node,
+    const qa_qc_program *program, struct application_qc_profile *profile, qa_error *error)
+{
+    if (node == QA_JSON_NONE) return true;
+    if (qa_json_type(doc, node) != QA_JSON_OBJECT || !profile->clients)
+        return application_fail(error, QA_ERROR_FORMAT, "QC client presentation requires declared clients");
+    application_qc_client_presentation *out = &profile->presentation;
+    out->declared = true;
+    qa_json_id hud = qa_json_get(doc, node, "hud"), view = qa_json_get(doc, node, "view");
+    out->vitals = qa_json_string_equal(doc, hud, "replace-vitals");
+    out->view = qa_json_string_equal(doc, view, "set-view");
+    if ((!out->vitals && !qa_json_string_equal(doc, hud, "none")) ||
+        (!out->view && !qa_json_string_equal(doc, view, "none")))
+        return application_fail(error, QA_ERROR_FORMAT, "QC client presentation mode is undeclared");
+    static const char *const names[] = {"health", "armorvalue", "origin", "angles", "view_ofs"};
+    const qa_qc_definition **fields[] = {&out->health, &out->armor, &out->origin, &out->angles, &out->offset};
+    for (size_t i = 0; i < sizeof(names) / sizeof(*names); ++i) {
+        if (!(i < 2 ? out->vitals : out->view)) continue;
+        const qa_qc_definition *field = qa_qc_program_find_field(program, names[i]);
+        if (!field || field->type != (i < 2 ? QA_QC_FLOAT : QA_QC_VECTOR)) {
+            qa_error_set(error, QA_ERROR_FORMAT, i, "QC client presentation field %s is missing or has a different type", names[i]);
+            return false;
+        }
+        *fields[i] = field;
+    }
+    return true;
+}
+
 bool application_qc_qualify(application_provider *provider, qa_error *error)
 {
     if (!provider || !provider->state.qc.program || provider->state.qc.qualified || !provider->launch->selection.artifact)
@@ -549,7 +577,7 @@ bool application_qc_qualify(application_provider *provider, qa_error *error)
     if (!ok && error && error->code == QA_OK) application_fail(error, QA_ERROR_FORMAT, "QC declaration artifact identity differs");
     if (ok && (provider->launch->roles & QA_ROLE_BIT(QA_ROLE_ENTITIES)))
         ok = application_qc_authored_map_ready(provider, error);
-    static const char *pending[] = {"combat", "protection", "items", "pickups", "objectives", "clientPresentation"};
+    static const char *pending[] = {"combat", "protection", "items", "pickups", "objectives"};
     for (size_t i = 0; ok && i < sizeof(pending) / sizeof(pending[0]); ++i)
         ok = empty(doc, qa_json_get(doc, root, pending[i]), error);
     if (ok) ok = fields(doc, qa_json_get(doc, root, "actorFields"), provider, profile, error);
@@ -654,6 +682,8 @@ bool application_qc_qualify(application_provider *provider, qa_error *error)
             calls(doc, qa_json_get(doc, clients, "frame"), true, provider->state.qc.program, lifecycle | (UINT64_C(1) << QC_INPUT_ELAPSED), &profile->client_frame, error) &&
             bindings(doc, qa_json_get(doc, clients, "input"), provider->state.qc.program, profile, error);
     }
+    if (ok) ok = client_presentation(doc, qa_json_get(doc, root, "clientPresentation"),
+        provider->state.qc.program, profile, error);
     for (size_t i = 0; ok && i < profile->field_count; ++i) {
         if (profile->fields[i].kind == QC_FIELD_INPUT && (!profile->clients || !profile->input_count))
             ok = application_fail(error, QA_ERROR_FORMAT, "QC client input fields require declared input applications");
