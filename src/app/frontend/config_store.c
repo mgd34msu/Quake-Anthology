@@ -225,6 +225,14 @@ static bool current_command(const frontend_config_source *source,qa_command_cont
         qa_application_capture_command_context(source->application,command,command,error)) &&
         source_context(source,command);
 }
+static bool capture_seat_command(qa_application *application,const qa_command_context *parent,
+    uint32_t logical,qa_command_context *out,qa_error *error)
+{
+    qa_command_context command=*parent;
+    command.origin=QA_COMMAND_SEAT; command.seat=logical; command.actor=(qa_actor_id){0};
+    (void)qa_application_player_actor(application,logical,&command.actor);
+    return qa_application_capture_command_context(application,&command,out,error);
+}
 static size_t seat_index(const frontend_config_source *source,uint32_t logical)
 {
     for (size_t i=0;i<source->seat_count;++i) if (source->seats[i].logical==logical) return i;
@@ -1685,16 +1693,20 @@ static bool launch(void *context,qa_error *error)
 static bool replay(void *context,qa_error *error)
 {
     frontend_config_source *source=context;
-    qa_command_context command=source->command;
-    if (source->seat_count) { command.origin=QA_COMMAND_SEAT; command.seat=source->seats[0].logical; }
-    return source->seat_index || (qa_application_capture_command_context(source->application,&command,&command,error) &&
-        qa_application_startup_replay_variables(source->application,source->console,&command,error));
+    if (source->seat_index) return true;
+    qa_command_context command;
+    bool captured=source->seat_count?
+        capture_seat_command(source->application,&source->command,source->seats[0].logical,&command,error):
+        qa_application_capture_command_context(source->application,&source->command,&command,error);
+    return captured && qa_application_startup_replay_variables(source->application,source->console,&command,error);
 }
 static bool phase_create(frontend_config_source *source,qa_error *error)
 {
-    qa_command_context command=source->command;
-    if (source->seat_count) { command.origin=QA_COMMAND_SEAT; command.seat=source->seats[source->seat_index].logical; }
-    if (!qa_application_capture_command_context(source->application,&command,&command,error)) return false;
+    qa_command_context command;
+    bool captured=source->seat_count?
+        capture_seat_command(source->application,&source->command,source->seats[source->seat_index].logical,&command,error):
+        qa_application_capture_command_context(source->application,&source->command,&command,error);
+    if (!captured) return false;
     bool safe=false;
     if (command.dialect==QA_CONSOLE_Q3) {
         const qa_launch_instance *selected=qa_launch_snapshot_find(source->candidate,instance(source)->selection.instance);
@@ -2199,10 +2211,8 @@ static bool carry(frontend_config_store *manager,qa_application *application,
         ok=registry_carry(source,old_seat->cvars,&seat->cvars,error) && registry_carry(source,old_seat->mouse,&seat->mouse,error) &&
             frontend_authored_bindings_clone(old_seat->authored,&seat->authored,error);
         qa_input_seat *active=frontend_config_source_input(previous,seat->logical);
-        qa_command_context seat_command=*command; seat_command.origin=QA_COMMAND_SEAT; seat_command.seat=seat->logical;
-        seat_command.actor=(qa_actor_id){0};
-        (void)qa_application_player_actor(application,seat->logical,&seat_command.actor);
-        ok=ok && active && qa_application_capture_command_context(application,&seat_command,&seat_command,error);
+        qa_command_context seat_command=*command;
+        ok=ok && active && capture_seat_command(application,command,seat->logical,&seat_command,error);
         qa_input_seat_options options={.context=seat_command,.console=console,.cvars=seat->mouse,
             .gamepad=active?*qa_input_seat_gamepad_tuning(active):qa_gamepad_defaults(),
             .seat=(uint32_t)i,.context_ready=input_context,.context_user=source};
@@ -2584,10 +2594,8 @@ static bool prepare(void *context,qa_application *application,const qa_launch_sn
             if (!ok && (!error || error->code==QA_OK))
                 fail(error,QA_ERROR_ARGUMENT,"Prepared client lost its resolved immutable Q3 product policy");
         }
-        qa_command_context seat_command=*command; seat_command.origin=QA_COMMAND_SEAT; seat_command.seat=seat->logical;
-        seat_command.actor=(qa_actor_id){0};
-        (void)qa_application_player_actor(application,seat->logical,&seat_command.actor);
-        ok=ok && qa_application_capture_command_context(application,&seat_command,&seat_command,error);
+        qa_command_context seat_command=*command;
+        ok=ok && capture_seat_command(application,command,seat->logical,&seat_command,error);
         qa_input_seat_options options={.context=seat_command,.console=console,.cvars=seat->mouse,.gamepad=qa_gamepad_defaults(),
             .seat=i,.context_ready=input_context,.context_user=source};
         if (ok && seat->cvars && seat->mouse) seat->input=qa_input_seat_create(&options,error);
