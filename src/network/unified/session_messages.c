@@ -127,7 +127,7 @@ bool qa_unified_session_frame(qa_unified_session *s, const qa_unified_document *
     double acknowledged;
     if (!qa_unified_document_number(d, qa_json_get(qa_unified_document_json(d),
         qa_unified_document_root(d), "acknowledgedInput"), &acknowledged, e)) return false;
-    if (acknowledged < s->acknowledged)
+    if (acknowledged < (double)s->acknowledged)
         return qa_unified_session_fail(e, QA_ERROR_ARGUMENT, "Production frame acknowledgement regressed");
     qa_buffer encoded = {0};
     if (!qa_unified_document_encode(d, &encoded, e)) return false;
@@ -262,7 +262,7 @@ static bool process_frame(qa_unified_session *s, qa_unified_held *held, bool *wa
     double wire_ack;
     if (!qa_unified_document_number(d, qa_json_get(qa_unified_document_json(d),
         qa_unified_document_root(d), "acknowledgedInput"), &wire_ack, e)) return false;
-    if (!held->source_finished && wire_ack < s->acknowledged) return true;
+    if (!held->source_finished && wire_ack < (double)s->acknowledged) return true;
     if (!held->source_finished) {
         qa_unified_session_commit commit = {.acknowledged_input = -1};
         bool ok = s->hooks.frame(s->hooks.context, s->runtime, s->id, d, &commit, e);

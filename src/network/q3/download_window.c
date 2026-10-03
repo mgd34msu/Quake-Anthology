@@ -104,11 +104,11 @@ static bool open_file(qa_q3_download_window *window, bool enabled, bool pure, qa
 static int32_t allowed_blocks(const qa_q3_server_rate *settings)
 {
     double selected_rate = settings->bytes_per_second;
-    if (settings->maximum_rate) {
+    if (settings->maximum_rate != 0) {
         double maximum = settings->maximum_rate < 1000 ? 1000 : settings->maximum_rate;
         if (selected_rate > maximum) selected_rate = maximum;
     }
-    if (!selected_rate) return 1;
+    if (selected_rate == 0) return 1;
     /* Math.imul converts the selected positive finite rate to Uint32 here. */
     uint32_t rate = (uint32_t)selected_rate;
     int32_t product = signed_word(rate * settings->snapshot_ms);

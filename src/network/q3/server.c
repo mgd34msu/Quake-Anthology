@@ -150,11 +150,11 @@ bool qa_q3_server_peer_fragment(qa_q3_server_peer *p, bool *sent, qa_error *e) {
 static bool rate_interval(size_t size, const qa_q3_server_rate *rate, int64_t *interval, qa_error *e) {
     if (!isfinite(rate->maximum_rate)) return fail(e, QA_ERROR_ARGUMENT, "Q3 maximum rate must retain a finite source number");
     double speed = rate->bytes_per_second;
-    if (rate->maximum_rate) {
+    if (rate->maximum_rate != 0) {
         double maximum = rate->maximum_rate < 1000 ? 1000 : rate->maximum_rate;
         if (speed > maximum) speed = maximum;
     }
-    if (!speed) return fail(e, QA_ERROR_ARGUMENT, "Q3 rate must be nonzero");
+    if (speed == 0) return fail(e, QA_ERROR_ARGUMENT, "Q3 rate must be nonzero");
     if (size > 1500) size = 1500;
     *interval = (int64_t)((double)(size + 48) * 1000 / speed); return true;
 }
