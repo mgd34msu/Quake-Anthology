@@ -6,6 +6,12 @@ The original audit authority is dependency plan revision 7, tasks B01–B05. Its
 
 The user's latest correction forbids review gates and test infrastructure in front of implementation. Audit continues alongside production installation, without new manifests, hashes or freeze requirements. The later implementation assignment supersedes the initial document-only edit scope for the concrete owners below. Historical snapshot/peer evidence below records work already performed; none of it imposes a prerequisite on current implementation. Concrete defects go directly to the author. Current owner/build files can change as genuine callers are installed.
 
+## Authorized Source startup candidate command lookup, 2026-10-03
+
+A bounded private runtime trace on `4bf16a92` captured qualified QC `default.cfg` draining `viewsize 100` into the shared common-command adapter. The receiver was an actual retained startup candidate: its provider and storage matched the candidate roster, while routing was empty and the current roster contained only the prior native instance. The shared snapshot selector omitted the candidate and rejected that genuine receiver.
+
+The shared selector now searches retained routing, the existing startup candidate and current publication, returning only a snapshot whose selected instance matches both the actual provider pointer and storage identity. The existing physical tuple, command owner, scope and declaration checks remain unchanged. The production translation unit passed its actual optimized GCC and Clang commands privately in `qc-source-candidate-objects`. Runtime continuation still awaits a coherent rebuilt artifact; the failing older run did not establish map or callback acceptance.
+
 ## Authorized B22 declared QC pain/death callbacks, 2026-10-03
 
 External `actor.pain` and `actor.die` observe/replace declarations now receive their actual canonical Source reaction values through the same operation owner. Both stages preserve full self/attacker identities and real damage/kick; death also preserves the genuine inflictor and impact point. Compiled argument/global admission allows each input only at its declared stage, using QC entity, scalar or vector types. Calls, boolean replacement, observer result, registration lifetime and cold rebind use the existing kernel.

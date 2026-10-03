@@ -13,7 +13,15 @@ static const qa_application_startup_hooks *hooks_for(const application_provider 
 static const qa_launch_snapshot *source_snapshot(application_provider *provider)
 {
     qa_application *app = provider->application;
-    return app->routing_snapshot ? app->routing_snapshot : qa_application_launch(app);
+    const qa_launch_snapshot *snapshots[] = {app->routing_snapshot,
+        qa_application_startup_candidate(app), qa_application_launch(app)};
+    for (size_t i = 0; i < sizeof(snapshots) / sizeof(*snapshots); ++i) {
+        const qa_launch_instance *selected = provider->launch && snapshots[i]
+            ? qa_launch_snapshot_find(snapshots[i], provider->launch->selection.instance) : NULL;
+        if (selected && selected->state == provider && selected->storage == provider->launch->storage)
+            return snapshots[i];
+    }
+    return NULL;
 }
 
 static bool physical_source(application_provider *provider, qa_console *console, qa_cvars *cvars,
