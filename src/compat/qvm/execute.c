@@ -1772,10 +1772,19 @@ bool qa_qvm_evaluate_counter(qa_qvm *vm, qa_qvm_source_word *words, size_t word_
     if (ok && !admitted) ok = error_at(error, instruction, "QVM counter entry is not admitted");
     counter_evaluation counter = {floor, top, values, word_count, functions, ends, function_count, 100000};
     if (ok) {
-        exec->counter = &counter;
-        int32_t result;
-        ok = invoke(vm, instruction, arguments, argument_count, NULL, NULL, floor, &result, NULL, error);
-        exec->counter = NULL;
+        size_t stack_size = top > floor ? (size_t)(top - floor) : 0;
+        uint8_t *saved_stack = stack_size ? malloc(stack_size) : NULL;
+        if (stack_size && !saved_stack) {
+            ok = qa_qvm_error(error, QA_ERROR_MEMORY, 0, "Retaining isolated QVM counter stack bytes");
+        } else {
+            if (stack_size) memcpy(saved_stack, vm->data + floor, stack_size);
+            exec->counter = &counter;
+            int32_t result;
+            ok = invoke(vm, instruction, arguments, argument_count, NULL, NULL, floor, &result, NULL, error);
+            exec->counter = NULL;
+            if (stack_size) memcpy(vm->data + floor, saved_stack, stack_size);
+            free(saved_stack);
+        }
     }
     free(ends);
     if (ok) memcpy(words, values, word_count * sizeof(*words));
