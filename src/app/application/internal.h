@@ -72,6 +72,7 @@ typedef struct application_provider {
     qa_actor_owner owner;
     qa_source_frame event_retirement_frame;
     bool event_retirement_frame_present;
+    bool event_activation_deferred, event_activation_bound;
     qa_component component;
     qa_combat_policy policy;
     qa_q1_game_operation q1_lifetime;
@@ -118,6 +119,7 @@ typedef struct application_provider {
 
 typedef struct application_provider_admission {
     application_provider *provider;
+    application_provider *previous_activation;
     qa_component_admission *component;
     qa_combat_policy_admission *policy;
     bool constructed;

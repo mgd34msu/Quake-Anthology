@@ -1475,14 +1475,20 @@ bool application_provider_deconstruct(application_provider *provider, qa_error *
     qa_application *app = provider ? provider->application : NULL;
     application_provider *previous = app ? app->engine_shutdown_provider : NULL;
     if (app && app->engine_shutdown) app->engine_shutdown_provider = provider;
+    if (provider && !provider->event_activation_bound &&
+        application_unified_event_owner_bound_is(app, provider))
+        provider->event_activation_bound = true;
     bool ok = deconstruct_provider(provider, error);
-    if(ok && provider)
+    if(ok && provider && provider->event_activation_bound)
         ok=application_unified_event_registration_clear(app,provider->owner,error);
-    if(ok && provider) {
+    if(ok && provider && provider->event_activation_bound) {
         ok = provider->event_retirement_frame_present ?
             application_unified_event_owner_retire(app, provider->owner, &provider->event_retirement_frame, error) :
             application_unified_persistent_retire(app,provider->owner,(qa_actor_id){0},error);
-        if (ok) provider->event_retirement_frame_present = false;
+        if (ok) {
+            provider->event_retirement_frame_present = false;
+            provider->event_activation_bound = false;
+        }
     }
     if (app) app->engine_shutdown_provider = previous;
     return ok;

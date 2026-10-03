@@ -116,7 +116,11 @@ bool application_provider_close(qa_application *application,
                                 "cannot close an attached provider");
     if (!application_provider_deconstruct(provider, error))
         return false;
-    if (!application_portals_close(application, provider->owner, error))
+    bool published = false;
+    for (size_t i = 0; i < application->provider_count; ++i)
+        published |= application->providers[i] == provider;
+    if (published && !provider->event_activation_deferred &&
+        !application_portals_close(application, provider->owner, error))
         return false;
 
     if (provider->kind == APPLICATION_PROVIDER_QC) {

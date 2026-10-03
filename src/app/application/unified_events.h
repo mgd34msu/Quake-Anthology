@@ -50,6 +50,11 @@ typedef struct application_unified_event_owner {
 struct application_provider;
 bool application_unified_event_owner_bind(qa_application *, struct application_provider *,
     bool restoring, qa_error *);
+bool application_unified_event_owner_bound_is(const qa_application *, const struct application_provider *);
+bool application_unified_event_owner_prepare(qa_application *, struct application_provider *,
+    struct application_provider *previous, qa_error *);
+bool application_unified_event_owner_publish(qa_application *, struct application_provider *,
+    struct application_provider *previous, qa_error *);
 bool application_unified_event_component_owner_bind(qa_application *, qa_actor_owner,
     bool restoring, qa_error *);
 

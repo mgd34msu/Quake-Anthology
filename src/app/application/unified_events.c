@@ -16,6 +16,14 @@ static bool payload_actor_read(qa_application *, qa_bytes, bool,
 
 static application_provider *source_provider(qa_application *app, qa_actor_owner owner)
 {
+    for (size_t i = 0; app && i < app->routing_provider_count; ++i) {
+        application_provider *p = app->routing_providers[i];
+        if (p->owner == owner) return p->close_pending ? NULL : p;
+    }
+    for (size_t i = 0; app && i < app->provider_count; ++i) {
+        application_provider *p = app->providers[i];
+        if (p->owner == owner) return p->close_pending ? NULL : p;
+    }
     for (application_provider *p = app ? app->live_providers : NULL; p; p = p->next_live)
         if (p->owner == owner && !p->close_pending) return p;
     return NULL;
@@ -84,7 +92,72 @@ bool application_unified_event_owner_bind(qa_application *app, application_provi
     if (!product && catalog) product = qa_catalog_product(catalog, provider->launch->selection.product);
     /* Ordinary selected gameplay emits through the shared Source stream.
      * Only the actual component constructor creates a PresentationOwner. */
-    return bind_owner(app, provider->owner, product, true, error);
+    if (!bind_owner(app, provider->owner, product, true, error)) return false;
+    provider->event_activation_bound = true;
+    return true;
+}
+
+bool application_unified_event_owner_bound_is(const qa_application *app, const application_provider *provider)
+{
+    if (!app || !provider || provider->application != app || !provider->product || !provider->product->identity ||
+        provider->event_activation_deferred) return false;
+    bool published = false;
+    for (size_t i = 0; i < app->provider_count; ++i) published |= app->providers[i] == provider;
+    if (!published) return false;
+    for (size_t i = 0; i < app->unified_event_owner_count; ++i) {
+        const application_unified_event_owner *activation = app->unified_event_owners + i;
+        if (activation->provider != provider->owner || !activation->active || activation->generation) continue;
+        const char *content = qa_strings_cstr(qa_session_strings(app->session), activation->content);
+        return content && !strcmp(content, provider->product->identity);
+    }
+    return false;
+}
+
+bool application_unified_event_owner_prepare(qa_application *app, application_provider *provider,
+    application_provider *previous, qa_error *error)
+{
+    if (!previous) return application_unified_event_owner_bind(app, provider, false, error);
+    if (!previous->event_activation_bound && application_unified_event_owner_bound_is(app, previous))
+        previous->event_activation_bound = true;
+    if (!app || !provider || provider == previous || provider->application != app ||
+        previous->application != app || !provider->owner || provider->owner != previous->owner ||
+        !provider->launch || !previous->launch || provider->constructed || previous->close_pending ||
+        !previous->constructed || !previous->attached || !previous->event_activation_bound ||
+        provider->event_activation_deferred || provider->event_activation_bound ||
+        source_provider(app, provider->owner) != provider)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Source activation replacement lost its actual provider pair");
+    bool published = false;
+    for (size_t i = 0; i < app->provider_count; ++i) published |= app->providers[i] == previous;
+    if (!published || provider->launch->selection.runtime != QA_PROGRAM_BUILTIN ||
+        previous->launch->selection.runtime != QA_PROGRAM_BUILTIN)
+        return application_fail(error, QA_ERROR_UNSUPPORTED, "Deferred Source activation requires an actual builtin replacement");
+    const qa_product *product = qa_catalog_product(qa_launch_instance_catalog(provider->launch),
+        provider->launch->selection.product);
+    const application_unified_event_owner *activation = NULL;
+    for (size_t i = 0; i < app->unified_event_owner_count; ++i)
+        if (app->unified_event_owners[i].provider == previous->owner && app->unified_event_owners[i].active)
+            activation = app->unified_event_owners + i;
+    const char *content = activation ? qa_strings_cstr(qa_session_strings(app->session), activation->content) : NULL;
+    qa_string_id next_content;
+    if (!product || !product->identity || !previous->product || !content || activation->generation ||
+        strcmp(content, previous->product->identity) || app->unified_persistent_revision == UINT64_MAX)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Source activation replacement lost its published content receipt");
+    if (!qa_strings_intern_cstr(qa_session_strings(app->session), product->identity, &next_content, error)) return false;
+    provider->event_activation_deferred = true;
+    return true;
+}
+
+bool application_unified_event_owner_publish(qa_application *app, application_provider *provider,
+    application_provider *previous, qa_error *error)
+{
+    if (!app || !provider || !previous || !provider->event_activation_deferred ||
+        provider->application != app || previous->application != app || provider->owner != previous->owner ||
+        !provider->constructed || previous->constructed || previous->attached || previous->component_attached ||
+        previous->policy_attached || previous->event_activation_bound)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Source activation handoff requires its genuinely retired previous provider");
+    if (!application_unified_event_owner_bind(app, provider, false, error)) return false;
+    provider->event_activation_deferred = false;
+    return true;
 }
 
 bool application_unified_event_component_owner_bind(qa_application *app, qa_actor_owner owner,
@@ -758,6 +831,9 @@ bool application_unified_event_emit(qa_application *app, qa_actor_owner owner,
         (presentation.size && app->presentation_event_sequence >= QA_UNIFIED_SAFE_INTEGER) ||
         (simulation.size && app->simulation_event_sequence >= QA_UNIFIED_SAFE_INTEGER))
         return application_fail(error, QA_ERROR_ARGUMENT, "Source emission lost its actual owner, payload or sequence domain");
+    application_provider *provider = source_provider(app, owner);
+    if (provider && provider->event_activation_deferred)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Source emission awaits its prepared activation handoff");
     application_unified_event_record record = {.recipient = recipient,
         .simulation_recipient = simulation_recipient, .provider = owner,
         .clock = source.clock, .time_ns = time_ns,

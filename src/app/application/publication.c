@@ -403,8 +403,15 @@ static bool construct_and_reserve(qa_application *application,
                 product = saved.product;
             }
             bool constructed = false;
-            if (product != NULL && !application_unified_event_owner_bind(application,
-                provider, image != NULL, error)) {
+            if (!image)
+                for (size_t old = 0; old < publication->removed_count; ++old)
+                    if (publication->removed[old]->owner == provider->owner) {
+                        admission->previous_activation = publication->removed[old];
+                        break;
+                    }
+            bool activation = product && (image ? application_unified_event_owner_bind(application, provider, true, error) :
+                application_unified_event_owner_prepare(application, provider, admission->previous_activation, error));
+            if (product != NULL && !activation) {
                 okay = false;
                 break;
             }
@@ -980,6 +987,28 @@ static bool deconstruct_removed(application_publication *publication, qa_error *
     return true;
 }
 
+static bool publish_activations(qa_application *app, application_publication *publication, qa_error *error)
+{
+    const qa_launch_snapshot *snapshot = app->routing_snapshot;
+    application_provider **providers = app->routing_providers;
+    size_t count = app->routing_provider_count;
+    app->routing_snapshot = publication->candidate;
+    app->routing_providers = publication->next;
+    app->routing_provider_count = publication->next_count;
+    bool okay = true;
+    for (size_t i = 0; okay && i < publication->admission_count; ++i) {
+        application_provider_admission *admission = publication->admissions + i;
+        if (admission->previous_activation)
+            okay = application_unified_event_owner_publish(app, admission->provider,
+                admission->previous_activation, error);
+        if (okay) admission->previous_activation = NULL;
+    }
+    app->routing_snapshot = snapshot;
+    app->routing_providers = providers;
+    app->routing_provider_count = count;
+    return okay;
+}
+
 static bool commit_admissions(application_publication *publication,
                               qa_error *error)
 {
@@ -1297,6 +1326,7 @@ static bool publish_travel(qa_application *application,
             if (!removed) consumed = application_q3_guest_retire_executors(provider, &current);
         }
         if (consumed) consumed = deconstruct_removed(publication, &current);
+        if (consumed) consumed = publish_activations(application, publication, &current);
         bool retain_bots = false;
         if (consumed) consumed = application_q3_world_restart_retired(application, publication, &retain_bots, &current);
         if (consumed && !retain_bots) consumed = application_bots_destroy(application, &current);
