@@ -565,7 +565,7 @@ static bool create_gear(equipment_source *source, const saved_source *saved, qa_
         artifact->path, &profile, error)) return false;
     if (!profile) return application_fail(error, QA_ERROR_UNSUPPORTED, "Selected GAME artifact declares no supported grapple profile");
     bool okay = (!saved || (saved->gear && qa_sha256_equal(&saved->image, qa_qvm_image_digest(artifact->image)))) &&
-        names(source, saved, error) && q3g_acquisition_copy(&artifact->acquisition, &source->acquisition, error);
+        names(source, saved, error) && qa_vfs_acquisition_copy(&artifact->acquisition, &source->acquisition, error);
     if (okay) {
         source->artifact = artifact->resource; source->view.artifact = artifact->resource; qa_resource_retain(artifact->resource);
         source->view.acquisition = &source->acquisition; source->view.content = artifact->view;
