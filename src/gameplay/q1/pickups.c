@@ -653,6 +653,21 @@ typedef struct item_touch {
     bool original_ran, leave, external;
 } item_touch;
 
+static size_t backpack_cargo(const qa_q1_game *g, const q1_pickup *item,
+                             qa_pickup_cargo cargo[QA_Q1_AMMO_COUNT + 1]) {
+    size_t count = 0;
+    for (unsigned i = 0; i < QA_Q1_AMMO_COUNT; ++i) {
+        /* Stock backpacks have four ammo fields. Keep Rogue's declared fields,
+           and any actual extra cargo supplied by a foreign source. */
+        if (i >= QA_Q1_LAVA_NAILS && g->options.program != QA_Q1_ROGUE && item->ammo[i] == 0)
+            continue;
+        cargo[count++] = (qa_pickup_cargo){g->ammo[i], item->ammo[i], false};
+    }
+    if (item->weapon < QA_Q1_WEAPON_COUNT)
+        cargo[count++] = (qa_pickup_cargo){g->weapons[item->weapon], 1, true};
+    return count;
+}
+
 static bool touch_live(const item_touch *touch) {
     return q1_alive(touch->game, touch->entity->id) && q1_alive(touch->game, touch->recipient);
 }
@@ -986,12 +1001,8 @@ static bool pickup_grant(qa_q1_game *g, q1_actor *entity, qa_actor_id recipient,
         return true;
     q1_pickup *item = &entity->state.pickup;
     item_touch touch = {.game = g, .entity = entity, .recipient = recipient, .external = external};
-    if (item->kind == Q1_ITEM_BACKPACK) {
-        for (unsigned i = 0; i < QA_Q1_AMMO_COUNT; ++i)
-            touch.cargo[touch.cargo_count++] = (qa_pickup_cargo){g->ammo[i], item->ammo[i], false};
-        if (item->weapon < QA_Q1_WEAPON_COUNT)
-            touch.cargo[touch.cargo_count++] = (qa_pickup_cargo){g->weapons[item->weapon], 1, true};
-    }
+    if (item->kind == Q1_ITEM_BACKPACK)
+        touch.cargo_count = backpack_cargo(g, item, touch.cargo);
     qa_pickup_offer offer = {.recipient = recipient,
                              .pickup = entity->id,
                              .source = g->options.provider,
@@ -1535,11 +1546,7 @@ static bool pickup_preview(qa_q1_game *g, qa_actor_id actor, const q1_pickup *it
     bool ok;
     if (item->kind == Q1_ITEM_BACKPACK) {
         qa_pickup_cargo cargo[QA_Q1_AMMO_COUNT + 1];
-        size_t count = 0;
-        for (unsigned i = 0; i < QA_Q1_AMMO_COUNT; ++i)
-            cargo[count++] = (qa_pickup_cargo){g->ammo[i], item->ammo[i], false};
-        if (item->weapon < QA_Q1_WEAPON_COUNT)
-            cargo[count++] = (qa_pickup_cargo){g->weapons[item->weapon], 1, true};
+        size_t count = backpack_cargo(g, item, cargo);
         ok = qa_supply_cargo_preview(selected, actor, cargo, count, false, &preview, error);
     } else if (item->kind == Q1_ITEM_AMMO || item->kind == Q1_ITEM_WEAPON) {
         int ammo = item->kind == Q1_ITEM_WEAPON ? q1_weapon_ammo(item->weapon) : -1;
@@ -1589,10 +1596,7 @@ static bool pickup_inspect(void *context, qa_actor_id pickup, qa_actor_id actor,
                                .time_ns = g->time_ns};
     qa_pickup_cargo cargo[QA_Q1_AMMO_COUNT + 1];
     if (item.kind == Q1_ITEM_BACKPACK)
-        for (unsigned i = 0; i < QA_Q1_AMMO_COUNT; ++i)
-            cargo[offer->cargo_count++] = (qa_pickup_cargo){g->ammo[i], item.ammo[i], false};
-    if (item.kind == Q1_ITEM_BACKPACK && item.weapon < QA_Q1_WEAPON_COUNT)
-        cargo[offer->cargo_count++] = (qa_pickup_cargo){g->weapons[item.weapon], 1, true};
+        offer->cargo_count = backpack_cargo(g, &item, cargo);
     offer->cargo = offer->cargo_count ? cargo : NULL;
     if (item.kind == Q1_ITEM_AMMO || item.kind == Q1_ITEM_WEAPON || item.kind == Q1_ITEM_KEY)
         offer->default_resource = (qa_pickup_resource){.kind = QA_PICKUP_INVENTORY, .item = item.item};
