@@ -2353,7 +2353,7 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
             map_source->component.clock.kind == QA_CLOCK_QUAKEWORLD && record->spectator;
         for (size_t i = 0; i < application->provider_count; ++i) {
             application_provider *provider = application->providers[i];
-            if (provider->kind != APPLICATION_PROVIDER_QC ||
+            if ((provider->kind != APPLICATION_PROVIDER_QC && provider->kind != APPLICATION_PROVIDER_Q1) ||
                 provider->component.clock.kind != QA_CLOCK_QUAKEWORLD) continue;
             bool selected = provider == map_source;
             for (size_t j = 0; !selected && j < sizeof(player_roles) / sizeof(player_roles[0]); ++j)
