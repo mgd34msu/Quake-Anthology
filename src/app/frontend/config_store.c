@@ -1903,7 +1903,7 @@ static bool install_commands(frontend_config_source *source,qa_error *error)
     }
     if (source->primary && !frontend_network_source_admin_bind(source->manager->frontend,source->console,
         source->command.owner,&source->admin_registered,error)) return false;
-    if (source->primary && source->seat_count) {
+    if (source->seat_count) {
         qa_input_console_options input={.console=source->console,.owner=source->command.owner,
             .user=source,.seat=binding_seat,.print=print};
         source->bindings=qa_input_console_create(&input,error);
