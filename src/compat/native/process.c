@@ -607,6 +607,7 @@ bool native_process_restore(qa_native_instance *instance, const qa_native_proces
         instance->import_table_bytes, INT32_C(0x4e494d50), error)) return false;
     for (native_allocation *a = instance->allocations; a; a = a->next)
         if (!retained_allocation(instance, a->guest_address, a->size, a->tag, error)) return false;
+    if (!native_profile_restore_tables(instance, error)) return false;
     if (instance->region_count && !qa_native_guest_instructions(instance->guest,
         native_process_region_instruction, instance, error)) return false;
     if (instance->options.observe && qa_native_guest_execution(instance->guest) == QA_NATIVE_GUEST_EMULATED) {

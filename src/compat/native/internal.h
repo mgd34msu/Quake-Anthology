@@ -277,6 +277,7 @@ const native_profile_spec *native_profile(qa_native_profile profile);
 bool native_profile_accepts(const native_profile_spec *profile, const qa_native_image_info *image,
                             qa_error *error);
 bool native_profile_bind(qa_native_instance *instance, qa_error *error);
+bool native_profile_restore_tables(qa_native_instance *instance, qa_error *error);
 bool native_profile_prepare_remote(qa_native_instance *instance, qa_error *error);
 void native_profile_unbind(qa_native_instance *instance);
 bool native_profile_refresh_entities(qa_native_instance *instance, qa_error *error);

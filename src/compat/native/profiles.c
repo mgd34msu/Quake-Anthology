@@ -743,6 +743,58 @@ static bool publish_import_table(qa_native_instance *instance, qa_error *error)
             (qa_bytes){instance->import_table, instance->import_table_bytes}, error);
 }
 
+bool native_profile_restore_tables(qa_native_instance *instance, qa_error *error)
+{
+    const native_profile_spec *profile = native_profile(instance->module->info.profile);
+    if (!profile->q2_table) return true;
+    int32_t api;
+    if (!qa_native_read(instance, instance->export_table, &api, sizeof(api), error)) return false;
+    if (api != (int32_t)profile->api_version)
+        return native_fail(error, QA_ERROR_FORMAT, instance->export_table,
+                           "restored native Q2 SDK API differs from its actual profile");
+    if (profile->import_prefix) {
+        uint8_t actual[16], expected[16] = {0};
+        qa_store_u32le(expected, instance->options.tick_rate);
+        qa_store_f32le(expected + 4, instance->options.frame_seconds);
+        qa_store_u32le(expected + 8, instance->options.frame_milliseconds);
+        if (profile->import_prefix != sizeof(actual) ||
+            !qa_native_read(instance, instance->import_table_address, actual, sizeof(actual), error))
+            return false;
+        if (memcmp(actual, expected, sizeof(actual)))
+            return native_fail(error, QA_ERROR_FORMAT, instance->import_table_address,
+                               "restored native Q2 SDK clock differs from its actual declaration");
+    }
+    size_t width = instance->module->info.image.target.pointer_bytes;
+    for (size_t i = 0; i < instance->import_count; ++i) {
+        size_t offset = profile->import_prefix + i * width;
+        qa_native_address address;
+        if (offset > UINT64_MAX - instance->import_table_address)
+            return native_fail(error, QA_ERROR_FORMAT, i, "restored native SDK import address overflows");
+        if (!read_pointer(instance, instance->import_table_address + offset, &address, error)) return false;
+        if (address != instance->imports[i].guest_address)
+            return native_fail(error, QA_ERROR_FORMAT, i,
+                               "restored native Q2 SDK import lost its retained callback");
+    }
+    for (size_t i = 0; i < instance->entry_count; ++i) {
+        const native_entry_binding *entry = instance->entries + i;
+        size_t offset = q2_entry_offset(instance, entry->spec.slot);
+        qa_native_address address;
+        if (offset > UINT64_MAX - instance->export_table)
+            return native_fail(error, QA_ERROR_FORMAT, i, "restored native SDK export address overflows");
+        if (!read_pointer(instance, instance->export_table + offset, &address, error)) return false;
+        if (address != entry->address)
+            return native_fail(error, QA_ERROR_FORMAT, entry->spec.slot,
+                               "restored native Q2 SDK entry differs from its retained source table");
+    }
+    qa_native_entity_table saved = instance->entities;
+    if (!native_profile_refresh_entities(instance, error)) return false;
+    if (saved.base != instance->entities.base || saved.stride != instance->entities.stride ||
+        saved.count != instance->entities.count || saved.capacity != instance->entities.capacity)
+        return native_fail(error, QA_ERROR_FORMAT, instance->export_table,
+                           "restored native Q2 entity extent differs from its retained SDK table");
+    return true;
+}
+
 static bool bind_q2_table(qa_native_instance *instance, const native_profile_spec *profile,
                           qa_error *error) {
     size_t pointer_bytes = instance->module->info.image.target.pointer_bytes;
