@@ -4061,6 +4061,9 @@ bool frontend_network_create(qa_frontend *f, qa_error *error)
         frontend_fail(error,QA_ERROR_ARGUMENT,"Network fields were not declared before the actual ENGINE edit"); goto failed;
     }
     n->registered = true;
+    for (size_t i = 0; i < sizeof(names) / sizeof(*names); ++i)
+        if (!qa_console_register_owned(qa_application_console(f->application), names[i], "Shared network service", 0,
+            NETWORK_OWNER, true, command, n, error)) goto failed;
     if (f->options.network_host && f->options.network_protocol.kind == QA_NET_QW28 &&
         !frontend_qw_create(f, n->runtime, n->admin, &n->composition, &n->qw_host, error)) goto failed;
     if(f->options.network_host && q2_host_protocol(f->options.network_protocol)) {
@@ -4113,9 +4116,6 @@ bool frontend_network_create(qa_frontend *f, qa_error *error)
         }
         if(!unified_tick(n,error)) goto failed;
     }
-    for (size_t i = 0; i < sizeof(names) / sizeof(*names); ++i)
-        if (!qa_console_register_owned(qa_application_console(f->application), names[i], "Shared network service", 0,
-            NETWORK_OWNER, true, command, n, error)) goto failed;
     if (!client_drain(n, false, error)) goto failed;
     if (!frontend_config_store_admin_adopt(f->config_store,error)) goto failed;
     return true;
