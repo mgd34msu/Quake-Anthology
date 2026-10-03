@@ -396,6 +396,8 @@ static bool initialize(void *context,const qa_launch_instance *selected,qa_cvars
     qa_catalog *catalog=qa_launch_instance_catalog(selected);
     const qa_product *product=qa_catalog_product(catalog,selected->selection.product);
     if (!product) return fail(e,QA_ERROR_ARGUMENT,"Neutral CLIENT lost its actual catalog profile");
+    if (product->family==QA_GAME_Q1 &&
+        !frontend_legacy_source_register(client,command->dialect,command->owner,e)) return false;
     if (product->family==QA_GAME_Q2 && !frontend_source_q2_settings_register(selected,client,command,e)) return false;
     if (row->dialect==QA_CONSOLE_Q3) {
         qa_q3_product_policy policy;
