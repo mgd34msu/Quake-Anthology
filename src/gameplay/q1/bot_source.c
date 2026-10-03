@@ -6,11 +6,12 @@ bool qa_q1_bot_entity_read(const qa_q1_game *game,qa_actor_id actor,qa_q1_bot_en
     const q1_actor *source=q1_entity_const(game,actor);
     *out=(qa_q1_bot_entity){0};if(!source) return true;
     qa_q1_player_view player;
-    const char *classname=qa_strings_cstr(qa_session_strings(game->services.session),source->classname);
-    if(!classname) {qa_error_set(error,QA_ERROR_FORMAT,0,"Q1 bot entity lost its source classname");return false;}
+    const char *classname=source->classname
+        ? qa_strings_cstr(qa_session_strings(game->services.session),source->classname) : NULL;
+    if(source->classname && !classname) {qa_error_set(error,QA_ERROR_FORMAT,0,"Q1 bot entity lost its source classname");return false;}
     *out=(qa_q1_bot_entity){.present=true,.model=source->model,.classname=source->classname,.frame=source->frame,
         .max_health=qa_q1_player_read(game,actor,&player)?player.max_health:source->max_health,
-        .worldspawn=!strcmp(classname,"worldspawn")};return true;
+        .worldspawn=classname && !strcmp(classname,"worldspawn")};return true;
 }
 bool qa_q1_bot_clock_read(const qa_q1_game *game,double *time,bool *intermission,double *exit_after,qa_error *error) {
     if(!game || !time || !intermission || !exit_after) {qa_error_set(error,QA_ERROR_ARGUMENT,0,"Q1 bot clock requires its actual source owner");return false;}
