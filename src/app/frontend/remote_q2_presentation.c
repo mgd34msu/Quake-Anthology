@@ -163,7 +163,7 @@ static bool damage_blend_draw(frontend_remote_q2 *row, qa_scene_rect viewport,
     if (!setting || !isfinite(setting->number))
         return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 damage blend has no actual CLIENT fraction control");
     float fraction = (float)fmin(.5, fmax(0, setting->number));
-    if (!fraction) return qa_scene_frame_picture(&row->frontend->frame, row->white, viewport, viewport,
+    if (fraction == 0) return qa_scene_frame_picture(&row->frontend->frame, row->white, viewport, viewport,
         (qa_scene_vec4){0, 0, 1, 1}, color, error);
     qa_scene_frame *frame = &row->frontend->frame;
     qa_scene_vertex *vertices = qa_arena_alloc(&frame->storage, 8 * sizeof(*vertices), _Alignof(qa_scene_vertex), error);
@@ -223,7 +223,7 @@ static bool flare_draw(frontend_remote_q2 *row, const qa_q2_entity *packet,
     }
     if (!image) return true;
     uint32_t color = packet->skinnum;
-    qa_scene_flare_options options = {.scale = packet->scale ? packet->scale : 1,
+    qa_scene_flare_options options = {.scale = packet->scale != 0 ? packet->scale : 1,
         .fade_start = (float)packet->modelindex2, .fade_end = (float)packet->modelindex3,
         .color = color ? qa_v3((float)(color >> 24) / 255, (float)((color >> 16) & 255u) / 255,
             (float)((color >> 8) & 255u) / 255) : qa_v3(1, 1, 1),
@@ -239,7 +239,7 @@ static bool hit_marker_draw(frontend_remote_q2 *row, const qa_q2_player *player,
 {
     if (!row->hit_marker_count) return true;
     const qa_cvar_view *crosshair = qa_cvars_find(row->options.domain.cvars, "crosshair");
-    if (!crosshair || !crosshair->number || (player->stats[13] & (4 | 32))) return true;
+    if (!crosshair || crosshair->number == 0 || (player->stats[13] & (4 | 32))) return true;
     const qa_cvar_view *duration = qa_cvars_find(row->options.domain.cvars, "scr_hit_marker_time");
     const qa_scene_image *image = NULL;
     for (remote_q2_picture *picture = row->pictures; picture; picture = picture->next)
@@ -327,7 +327,7 @@ static bool loops(frontend_remote_q2 *row, qa_error *error)
 {
     if (!row->frontend->audio || !row->media_ready || !row->frame.valid) return true;
     const qa_cvar_view *paused = qa_cvars_find(row->options.domain.cvars, "paused");
-    if (paused && paused->number) return true;
+    if (paused && paused->number != 0) return true;
     for (size_t i = 0; i < row->frame.entity_count; ++i) {
         const qa_q2_entity *entity = row->frame.entities + i;
         if (!entity->sound) continue;
@@ -341,8 +341,8 @@ static bool loops(frontend_remote_q2 *row, qa_error *error)
             .resource_id = qa_resource_id(qa_audio_asset_resource(asset)), .name = name, .family = QA_AUDIO_Q2,
             .actor = entity->number, .owner = row->identity, .audience = row->options.domain.physical_seat,
             .origin_kind = QA_AUDIO_FIXED, .origin = vector(entity->origin), .channel = 0,
-            .volume = entity->loop_volume ? entity->loop_volume : 1,
-            .attenuation = entity->loop_attenuation == -1 ? 0 : entity->loop_attenuation ? entity->loop_attenuation : 1},
+            .volume = entity->loop_volume != 0 ? entity->loop_volume : 1,
+            .attenuation = entity->loop_attenuation == -1 ? 0 : entity->loop_attenuation != 0 ? entity->loop_attenuation : 1},
             .frame_number = row->frame.server_frame};
         bool ok = qa_audio_engine_loop(row->frontend->audio, &loop, error);
         qa_audio_asset_release(asset);
@@ -420,12 +420,12 @@ static bool submit_model(frontend_remote_q2 *row, const char *path, const char *
     transform.origin[0] = origin.x; transform.origin[1] = origin.y; transform.origin[2] = origin.z;
     for (size_t i = 0; i < 3; ++i) {
         transform.axes[i][0] = basis[i].x; transform.axes[i][1] = basis[i].y; transform.axes[i][2] = basis[i].z;
-        transform.scale[i] = current->scale ? current->scale : 1;
+        transform.scale[i] = current->scale != 0 ? current->scale : 1;
     }
     qa_scene_vec4 color = {1, 1, 1, current->renderfx & 32 ? 0.30f : 1};
     uint32_t flags = current->renderfx;
-    if (current->alpha) {
-        color.w = previous && previous->alpha ? previous->alpha + row->fraction * (current->alpha - previous->alpha) : current->alpha;
+    if (current->alpha != 0) {
+        color.w = previous && previous->alpha != 0 ? previous->alpha + row->fraction * (current->alpha - previous->alpha) : current->alpha;
         if (color.w != 1) flags |= 32;
         else flags &= ~UINT32_C(32);
     }
@@ -642,7 +642,7 @@ bool frontend_remote_q2_draw(qa_frontend *f, uint32_t seat, float stereo,
         if (current->effects & (UINT64_C(1) << 30)) { shell = true; shell_flags |= 131072; }
         if (remote_q2_rerelease_presentation(row) && (current->effects & (UINT64_C(1) << 32))) { shell = true; shell_flags |= 524288; }
         if (shell) packet.renderfx = 0;
-        if (!packet.alpha) {
+        if (packet.alpha == 0) {
             if (current->renderfx == 32) packet.alpha = .7f;
             if (current->effects & 128) { packet.renderfx |= 32; packet.alpha = .3f; }
             if (current->effects & (UINT64_C(1) << 24)) { packet.renderfx |= 32; packet.alpha = .6f; }
@@ -671,7 +671,7 @@ bool frontend_remote_q2_draw(qa_frontend *f, uint32_t seat, float stereo,
                     }
                 }
             }
-            packet.renderfx = shell_flags | 32; packet.alpha = current->alpha ? current->alpha : .3f;
+            packet.renderfx = shell_flags | 32; packet.alpha = current->alpha != 0 ? current->alpha : .3f;
             ok = submit_model(row, path, skin, &view, &world, &packet, prior, false, position, direction, error);
         }
         uint32_t linked[] = {current->modelindex2, current->modelindex3, current->modelindex4};

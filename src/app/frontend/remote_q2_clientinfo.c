@@ -40,8 +40,8 @@ static void appearance(frontend_remote_q2 *row, const char *text, char model[64]
         if (noskins == 2 || !component(skin)) {
             if (equal(model, "female")) { strcpy(model, "female"); strcpy(skin, "athena"); }
             else { strcpy(model, "male"); strcpy(skin, "grunt"); }
-        } else if (noskins || !component(model)) { strcpy(model, "male"); strcpy(skin, "grunt"); }
-    } else if (noskins || !component(model) || !component(skin)) {
+        } else if (noskins != 0 || !component(model)) { strcpy(model, "male"); strcpy(skin, "grunt"); }
+    } else if (noskins != 0 || !component(model) || !component(skin)) {
         strcpy(model, "male"); strcpy(skin, "grunt");
     }
 }
@@ -100,7 +100,7 @@ static bool load(frontend_remote_q2 *row, const char *text, uint32_t weapon,
         if (!skin_admit(row, out->skin, &has_skin, error)) return false;
     }
     const qa_cvar_view *vwep = qa_cvars_find(row->options.domain.cvars, "cl_vwep");
-    if ((vwep && !vwep->number) || weapon >= 32) weapon = 0;
+    if ((vwep && vwep->number == 0) || weapon >= 32) weapon = 0;
     const char *name = weapon_name(row, weapon);
     if (name && *name) {
         if (strlen(name) > 127) return remote_q2_fail(error, QA_ERROR_FORMAT, "Q2 player weapon exceeds its native client-info path extent");

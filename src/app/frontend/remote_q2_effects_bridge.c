@@ -77,7 +77,7 @@ static bool actor(void *context, uint32_t number, frontend_remote_q2_effects_pos
         pose.origin = vector(entity->origin); pose.angles = vector(entity->angles);
         pose.frame = (int32_t)entity->frame; pose.effects = entity->effects; pose.event = entity->event;
         pose.model_index = entity->modelindex;
-        pose.scale = entity->scale ? entity->scale : 1;
+        pose.scale = entity->scale != 0 ? entity->scale : 1;
         pose.bounds_present = true;
         if (entity->solid && entity->solid != 31) {
             pose.bounds = remote_q2_solid_bounds(row, entity->solid);

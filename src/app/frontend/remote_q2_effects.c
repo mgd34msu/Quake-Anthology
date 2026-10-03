@@ -373,9 +373,12 @@ static bool temporary(frontend_remote_q2_effects *o, const qa_q2_temp_entity *t,
         } break;
     case QA_Q2_TE_WIDOWBEAMOUT: case QA_Q2_TE_NUKEBLAST:
         if (t->type == QA_Q2_TE_WIDOWBEAMOUT && !integer_field(t,QA_Q2_TEMP_ENTITY1,&id,e)) return false;
-        for (size_t i=0;i<Q2FX_POOL;++i) if (!o->sustains[i].active) {
-            bool nuke=t->type==QA_Q2_TE_NUKEBLAST; o->sustains[i]=(q2fx_sustain){true,nuke?2:1,nuke?21000:id,0,0,0,pos,{0,0,0},time+(nuke?1000:2100),time}; break;
-        } break;
+        for (size_t i=0;i<Q2FX_POOL;++i) {
+            if (!o->sustains[i].active) {
+                bool nuke=t->type==QA_Q2_TE_NUKEBLAST; o->sustains[i]=(q2fx_sustain){true,nuke?2:1,nuke?21000:id,0,0,0,pos,{0,0,0},time+(nuke?1000:2100),time}; break;
+            }
+        }
+        break;
     case QA_Q2_TE_WIDOWSPLASH: radial_particles(o,pos,time,256,45,40,0,false); break;
     case QA_Q2_TE_BERSERK_SLAM:
         frontend_fx_q2_berserk(p,r,pos,dir,seconds); explosion(o,1,Q2FX_EXPLODE,pos,server-interval,4,0,8|32,2,550,qa_v3(.19f,.41f,.75f),direction_angles(dir),3); break;
@@ -1097,7 +1100,7 @@ bool frontend_remote_q2_effects_prepare(frontend_remote_q2_effects *o,
                 }
                 skin=frame<10?frame>>1:frame<13?5:6; if (frame>=10) flags|=32;
             }
-            if (row->light) q2fx_sampled_light(o,row->origin,row->light*alpha,row->light_color,0);
+            if (row->light != 0) q2fx_sampled_light(o,row->origin,row->light*alpha,row->light_color,0);
             if (!(flags&128) && row->kind!=5) ok=model_draw(o,(q2fx_model)row->model,row->origin,row->angles,row->base+frame+1,row->base+frame,
                 o->source.profile==FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE?(float)(1-(fraction-frame)):1-s->fraction,skin,flags,alpha,row->scale,e);
         }

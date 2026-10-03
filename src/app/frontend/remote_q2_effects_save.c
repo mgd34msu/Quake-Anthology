@@ -52,7 +52,7 @@ bool q2fx_state_fields(qa_source_save_io *io, frontend_remote_q2_effects *o, con
         !qa_source_save_count(io,&o->sampled_particle_count,FRONTEND_FX_PARTICLE_CAPACITY) ||
         !number(io,&o->time) || !number(io,&o->server_time) || !qa_source_save_u64(io,&o->frame_sequence) ||
         !qa_source_save_bool(io,&o->sampled) || !qa_source_save_bool(io,&o->dirty) || o->sampled_particle_count>o->particles.count ||
-        (!o->sampled && (o->sampled_particle_count || o->frame_sequence || o->time || o->server_time))) return false;
+        (!o->sampled && (o->sampled_particle_count || o->frame_sequence || o->time != 0 || o->server_time != 0))) return false;
     for (size_t i=0;i<Q2FX_POOL;++i) {
         q2fx_explosion *x=&o->explosions[i];
         if (!qa_source_save_bool(io,&x->active) || !qa_source_save_u8(io,&x->kind) || !qa_source_save_u8(io,&x->model) ||
@@ -136,7 +136,7 @@ bool q2fx_state_fields(qa_source_save_io *io, frontend_remote_q2_effects *o, con
     q2fx_weapon_muzzle *m=&o->weapon_muzzle;
     if (!qa_source_save_u32(io,&o->sampled_dlight_hacks) || !qa_source_save_u32(io,&o->sampled_disable_particles) ||
         !qa_source_save_i32(io,&o->sampled_gun) || !scalar(io,&o->sampled_gun_fov) ||
-        (!o->sampled && (o->sampled_dlight_hacks || o->sampled_disable_particles || o->sampled_gun || o->sampled_gun_fov))) return false;
+        (!o->sampled && (o->sampled_dlight_hacks || o->sampled_disable_particles || o->sampled_gun || o->sampled_gun_fov != 0))) return false;
     if (!qa_source_save_bool(io,&m->active) || !qa_source_save_u8(io,&m->model) || !q2fx_actor_fields(io,&m->actor,refs) ||
         !vector(io,&m->offset) || !scalar(io,&m->scale) || !scalar(io,&m->roll) || !number(io,&m->start) ||
         (m->active && (o->source.profile!=FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE || !m->actor.registry ||

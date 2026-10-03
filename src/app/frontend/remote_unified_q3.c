@@ -950,7 +950,7 @@ static bool ballistic_draw(frontend_unified_q3 *o,unified_q3_bank *b,qa_error *e
             if(v->weapon==8){ref.radius=16;ref.custom_shader=m->graphics[Q3N_G_PLASMA_BALL];}
             else ballistic_axis(q3ne_array(v->trajectory.delta),v->trajectory.type?(float)(o->time/4):0,ref.axis);
             if(!qa_q3_presentation_entity(b->backend,&ref,e))return false;
-            if(w->missile_light && !qa_q3_presentation_light(b->backend,v->end,w->missile_light,w->missile_light_color,false,e))return false;
+            if(w->missile_light != 0 && !qa_q3_presentation_light(b->backend,v->end,w->missile_light,w->missile_light_color,false,e))return false;
             qa_vec3 velocity;if(!q3n_trajectory_delta(&v->trajectory,o->time,&velocity,e) || !ballistic_loop(o,b,w->missile_sound,v->actor,v->end,velocity,e))return false;
         }
         if(v->flash){
@@ -1177,7 +1177,7 @@ bool frontend_unified_q3_world(frontend_unified_q3 *o,const qa_scene_view *view,
         o->sampled_view.origin.z!=view->origin.z || !enter(o,(qa_actor_id){0},e)) return false;
     qa_collision_family family=qa_collision_geometry_family(frontend_remote_unified_geometry(o->replica));
     qa_q3_scene_options options={.world=*world,.world_family=family==QA_COLLISION_Q1?QA_SCENE_Q1:family==QA_COLLISION_Q2?QA_SCENE_Q2:QA_SCENE_Q3,.lod_scale=5,
-        .ambient_scale=.6f,.directed_scale=1,.near_clip=4,.rail={6,16,32}};
+        .ambient_scale=.6f,.directed_scale=1,.near_clip=4,.rail={.core_width=6,.ring_width=16,.segment_length=32}};
     qa_scene_state_default(&options.state); bool okay=true;
     for (unified_q3_bank *b=o->banks;okay && b;b=b->next)
         if(!b->retired)okay=qa_q3_presentation_supplement_prepare(b->backend,o->scene_bank,scene,&b->supplement,e) && current(o,e);
@@ -1194,7 +1194,7 @@ bool frontend_unified_q3_reflected_world(frontend_unified_q3 *o,const qa_scene_w
         !qa_scene_world_q1_mirror_scope(frontend_unified_media_world(o->media),world,scene) ||
         !enter(o,(qa_actor_id){0},e))return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Q3 reflection requires its real mirror scope and sampled frame");
     qa_q3_scene_options options={.world=*world,.world_family=QA_SCENE_Q1,.lod_scale=5,
-        .ambient_scale=.6f,.directed_scale=1,.near_clip=4,.rail={6,16,32}};
+        .ambient_scale=.6f,.directed_scale=1,.near_clip=4,.rail={.core_width=6,.ring_width=16,.segment_length=32}};
     qa_scene_state_default(&options.state);bool okay=true;
     for(unified_q3_bank *b=o->banks;okay && b;b=b->next)if(!b->retired)
         okay=qa_q3_presentation_supplement_prepare(b->backend,o->scene_bank,scene,&b->supplement,e) && current(o,e);

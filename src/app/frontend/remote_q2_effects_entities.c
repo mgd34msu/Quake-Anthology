@@ -60,7 +60,7 @@ bool frontend_remote_q2_effects_frame(frontend_remote_q2_effects *o,
             if (ok) frontend_fx_q2_teleport(&o->particles,&o->random,p->origin,seconds);
             break;
         case 2: case 8: case 9:
-            if (!s->footsteps || (p->event!=2 && !rerelease(o))) break;
+            if (s->footsteps == 0 || (p->event!=2 && !rerelease(o))) break;
             if (rerelease(o)) {
                 ok=o->source.footstep && o->source.footstep(o->source.context,p,p->event,s->milliseconds,&o->random,e) && q2fx_source_current(o,e);
                 if (!ok && (!e || e->code==QA_OK)) q2fx_fail(e,QA_ERROR_ARGUMENT,"Q2 rerelease footstep has no actual material sound owner");

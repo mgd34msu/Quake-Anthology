@@ -353,8 +353,8 @@ bool q2fx_semantic_fields(qa_source_save_io *io, frontend_remote_q2_effects *o,
             !qa_source_save_bool(io,&b->persistent) || !qa_source_save_f64(io,&b->beam.die) || !isfinite(b->beam.die) ||
             !qa_source_save_u8(io,&b->beam.model) || !semantic_scalar(io,&b->width) ||
             !qa_source_save_u32(io,&b->color) || b->color>255 ||
-            (b->persistent && (b->beam.model || b->beam.die)) ||
-            (!b->persistent && (b->beam.model!=Q2FX_PARASITE || b->width || b->color || !o->model_admitted[Q2FX_PARASITE]))) return false;
+            (b->persistent && (b->beam.model || b->beam.die != 0)) ||
+            (!b->persistent && (b->beam.model!=Q2FX_PARASITE || b->width != 0 || b->color || !o->model_admitted[Q2FX_PARASITE]))) return false;
         for (size_t j=0;j<i;++j) if (b->persistent==o->source_beams[j].persistent &&
             qa_actor_id_equal(b->beam.actor,o->source_beams[j].beam.actor)) return false;
         if (reading) b->beam.active=true;
@@ -369,7 +369,7 @@ bool q2fx_semantic_fields(qa_source_save_io *io, frontend_remote_q2_effects *o,
             !qa_source_save_bool(io,&row->shadow) || !q2fx_light_identity_fields(io,&row->identity,refs) || !qa_source_save_u64(io,&row->revision) ||
             !row->identity || !light_valid(v) ||
             (!row->shadow && (!v->visible || v->intensity!=1 || v->resolution || v->lightstyle!=-1 || v->cone ||
-                v->fade_start || v->fade_end || v->cos_half_angle || qa_vec_length(v->direction)!=0))) return false;
+                v->fade_start != 0 || v->fade_end != 0 || v->cos_half_angle != 0 || qa_vec_length(v->direction)!=0))) return false;
         for (size_t j=0;j<i;++j) if (o->source_lights[j].identity==row->identity ||
             (o->source_lights[j].shadow==row->shadow && qa_actor_id_equal(o->source_lights[j].light.actor,v->actor))) return false;
     }

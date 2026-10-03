@@ -177,7 +177,7 @@ bool frontend_q2_footsteps_emit(frontend_q2_footsteps *owner, const frontend_q2_
         !isfinite(sample->milliseconds) || !isfinite(sample->bottom) || !isfinite(sample->footsteps) ||
         !qa_vec_finite(sample->pose.origin) || !qa_vec_finite(sample->trace_bounds.mins) || !qa_vec_finite(sample->trace_bounds.maxs) ||
         !frontend_q2_footsteps_current(owner, source, error)) return false;
-    if (!sample->footsteps) return true;
+    if (sample->footsteps == 0) return true;
     char material[16] = {0};
     ++owner->calls;
     bool ok = true;
