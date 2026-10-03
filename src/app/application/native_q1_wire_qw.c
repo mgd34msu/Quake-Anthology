@@ -339,7 +339,7 @@ bool application_native_q1_qw_precache(qa_application *app,bool models,const cha
 qa_vfs *application_native_q1_qw_content(qa_application *app,qa_error *error) {
     application_native_q1_wire_source source={0};
     if (!application_native_q1_wire_qw_begin(app,&source,error)) return NULL;
-    qa_vfs *content=source.provider->launch->content;
+    qa_vfs *content=application_native_q1_wire_content(source.provider,error);
     application_native_q1_wire_end(&source);
     if (!content) application_fail(error,QA_ERROR_NOT_FOUND,"Native QuakeWorld source content owner is absent");
     return content;

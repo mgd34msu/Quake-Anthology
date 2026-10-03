@@ -14,6 +14,8 @@ bool application_native_q1_wire_begin(qa_application *, qa_actor_owner,
     application_native_q1_wire_source *, qa_error *);
 void application_native_q1_wire_end(application_native_q1_wire_source *);
 bool application_native_q1_wire_qw_begin(qa_application *, application_native_q1_wire_source *, qa_error *);
+qa_vfs *application_native_q1_wire_content(application_provider *,qa_error *);
+bool application_native_q1_wire_cache_flush(application_provider *,qa_error *);
 bool application_native_q1_wire_retain(application_provider *, application_native_q1_wire_source *, qa_error *);
 bool application_native_q1_wire_host(qa_application *, qa_application_network_q1_host *, qa_error *);
 bool application_native_q1_wire_source_player(qa_application *, qa_actor_id,

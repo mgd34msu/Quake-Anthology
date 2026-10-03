@@ -1555,6 +1555,7 @@ static bool discard_services(void *context,qa_application *candidate,qa_error *e
         (!f->audio || qa_audio_engine_acoustics_release(f->audio,error)) &&
         frontend_client_sources_destroy(f,error) &&
         qa_application_retire_sources(candidate,error) &&
+        frontend_config_store_restore_abort_unbound(f->config_store,candidate,error) &&
         frontend_root_resources_destroy(f,error) &&
         frontend_network_destroy(f,error) && frontend_tools_destroy(f,error);
 }

@@ -20,6 +20,9 @@ typedef struct content_resource {
     uint64_t pool, resource, origin_view;
     qa_product_id origin_product;
     qa_mount_id catalog_mount;
+    qa_launch_resource_origin_kind origin_kind;
+    qa_launch_source_files source;
+    uint64_t source_base, source_authority;
     qa_vfs_acquisition acquisition;
     bool retained;
 } content_resource;
@@ -254,6 +257,24 @@ bool application_save_content_collect(const qa_application *app, qa_application_
         if (ok) {
             row->origin_view = qa_application_content_view_id(g, origin.content);
             row->origin_product = origin.product; row->catalog_mount = origin.catalog_mount;
+            row->origin_kind = origin.kind;
+            if (origin.kind == QA_LAUNCH_ORIGIN_SOURCE_QW) {
+                ok = origin.source.catalog == origin.catalog && origin.source.content == origin.content &&
+                    origin.source.product == row->value.product && origin.product == row->value.product &&
+                    !origin.catalog_mount && qa_launch_source_files_current(&origin.source, error) &&
+                    add_view(g, origin.source.base, error) && add_view(g, origin.source.authority, error);
+                if (ok) {
+                    row->source = origin.source;
+                    row->source.directory = row->source.home_prefix = NULL;
+                    row->source_base = qa_application_content_view_id(g, origin.source.base);
+                    row->source_authority = qa_application_content_view_id(g, origin.source.authority);
+                    row->source.directory = copy_text(origin.source.directory, error);
+                    row->source.home_prefix = copy_text(origin.source.home_prefix, error);
+                    ok = row->source.directory && row->source.home_prefix;
+                }
+            } else if (origin.kind != QA_LAUNCH_ORIGIN_CATALOG) {
+                ok = fail(error, QA_ERROR_FORMAT, "Launch opening has an unknown physical origin domain");
+            }
         }
     }
     const qa_application_content_visitor visitor = {.context = g, .pool = add_pool, .catalog = add_catalog, .view = add_view};
@@ -347,6 +368,8 @@ void application_save_content_destroy(qa_application_content_graph *g)
     }
     for (size_t i = 0; g->resources && i < g->resource_count; ++i) {
         free((void *)g->resources[i].value.path);
+        free((void *)g->resources[i].source.directory);
+        free((void *)g->resources[i].source.home_prefix);
         qa_vfs_acquisition_dispose(&g->resources[i].acquisition);
         if (g->resources[i].retained) qa_resource_release((qa_resource *)g->resources[i].value.resource);
     }
@@ -414,7 +437,7 @@ void application_save_content_publish(qa_application_content_graph *g)
 {
     if (!g) return;
     g->pending = false;
-    g->schema = 4;
+    g->schema = 5;
     for (size_t i = 0; i < g->view_count; ++i) g->views[i].qualified = false;
 }
 uint64_t application_save_content_application_pool(const qa_application_content_graph *g) { return g ? g->application_pool : 0; }
@@ -467,8 +490,26 @@ bool application_save_content_launch_resource_origin(const qa_application_conten
     const content_resource *row = &g->resources[i];
     *out = (qa_launch_resource_origin){.catalog = qa_application_content_catalog(g, g->launch_catalog),
         .content = qa_application_content_view(g, row->origin_view), .product = row->origin_product,
-        .catalog_mount = row->catalog_mount, .acquisition = &row->acquisition};
+        .catalog_mount = row->catalog_mount, .acquisition = &row->acquisition,
+        .kind = row->origin_kind, .source = row->source};
     return true;
+}
+bool application_save_content_launch_source_claim(qa_application_content_graph *g, size_t i,
+    qa_launch_resource_origin *out, qa_error *error)
+{
+    if (!g || i >= g->resource_count || !out || !g->pending)
+        return fail(error, QA_ERROR_ARGUMENT, "Source opening claim requires its actual pending graph");
+    const content_resource *row = g->resources + i;
+    if (row->origin_kind == QA_LAUNCH_ORIGIN_CATALOG) return out->kind == row->origin_kind;
+    if (out->kind != row->origin_kind || out->source.base != row->source.base ||
+        out->source.authority != row->source.authority || out->content != row->source.content)
+        return fail(error, QA_ERROR_ARGUMENT, "Source opening claim selected another physical owner");
+    out->content = out->source.content = NULL;
+    out->source.base = out->source.authority = NULL;
+    if (!qa_application_content_retain_view(g, row->origin_view, &out->content, error)) return false;
+    out->source.content = out->content;
+    return qa_application_content_retain_view(g, row->source_base, &out->source.base, error) &&
+        qa_application_content_retain_view(g, row->source_authority, &out->source.authority, error);
 }
 bool application_save_content_launch_resource(const qa_application_content_graph *g, qa_product_id product,
     const char *path, const qa_resource **out, qa_error *error)
@@ -610,10 +651,10 @@ static bool instance_fields(qa_source_save_io *io, content_instance *row)
 }
 static bool graph_fields(qa_source_save_io *io, qa_application_content_graph *g)
 {
-    uint8_t magic[8] = {'Q','A','C','G',0,0,0,0}; uint32_t version = g->schema ? g->schema : 4;
+    uint8_t magic[8] = {'Q','A','C','G',0,0,0,0}; uint32_t version = g->schema ? g->schema : 5;
     const uint8_t expected[8] = {'Q','A','C','G',0,0,0,0};
     if (!qa_source_save_bytes(io, magic, sizeof(magic)) || memcmp(magic, expected, sizeof(magic)) ||
-        !qa_source_save_u32(io, &version) || (version != 3 && version != 4)) return false;
+        !qa_source_save_u32(io, &version) || (version < 3 || version > 5)) return false;
     g->schema = version;
     FIELD(u64, g, application_pool); FIELD(u64, g, application_catalog); FIELD(u64, g, launch_catalog); FIELD(u64, g, launch_view);
     if (!table_field(io, (void **)&g->pools, &g->pool_count, sizeof(*g->pools), 8)) return false;
@@ -633,6 +674,17 @@ static bool graph_fields(qa_source_save_io *io, qa_application_content_graph *g)
         content_resource *row = &g->resources[i];
         if (!resource_fields(io, row)) return false;
         FIELD(u64, row, origin_view); FIELD(u32, row, origin_product); FIELD(u64, row, catalog_mount);
+        if (version >= 5) {
+            uint32_t kind = row->origin_kind;
+            if (!qa_source_save_u32(io, &kind) || kind > QA_LAUNCH_ORIGIN_SOURCE_QW) return false;
+            row->origin_kind = (qa_launch_resource_origin_kind)kind;
+            if (kind == QA_LAUNCH_ORIGIN_SOURCE_QW) {
+                FIELD(u64, row, source_base); FIELD(u64, row, source_authority);
+                FIELD(u32, &row->source, base_product); FIELD(u64, &row->source, family);
+                FIELD(u64, &row->source, home); FIELD(bool, &row->source, changed);
+                if (!text_field(io, &row->source.directory) || !text_field(io, &row->source.home_prefix)) return false;
+            }
+        } else if (row->origin_kind != QA_LAUNCH_ORIGIN_CATALOG) return false;
         if (!receipt_fields(io, &row->acquisition, row->resource) || !row->acquisition.opening_present) return false;
     }
     return true;
@@ -697,14 +749,46 @@ static bool structure(const qa_application_content_graph *g, qa_error *error)
             r->pool != g->views[g->launch_view - 1].pool || !r->origin_view || r->origin_view > g->view_count ||
             r->origin_view == g->launch_view ||
             g->views[r->origin_view - 1].catalog || g->views[r->origin_view - 1].pool != r->pool ||
-            !r->origin_product || !r->catalog_mount || r->acquisition.resource_id != r->resource ||
+            !r->origin_product || r->origin_kind > QA_LAUNCH_ORIGIN_SOURCE_QW ||
+            r->acquisition.resource_id != r->resource ||
             !r->acquisition.opening_present)
             return fail(error, QA_ERROR_FORMAT, "Saved launch resource has invalid actual root ownership");
+        if (r->origin_kind == QA_LAUNCH_ORIGIN_CATALOG) {
+            if (!r->catalog_mount || r->source_base || r->source_authority ||
+                r->source.directory || r->source.home_prefix)
+                return fail(error, QA_ERROR_FORMAT, "Catalog opening carries a foreign Source filesystem domain");
+        } else {
+            if (r->catalog_mount || r->origin_product != r->value.product ||
+                !r->source_base || r->source_base > g->view_count ||
+                !r->source_authority || r->source_authority > g->view_count ||
+                r->source_base == r->source_authority || r->source_base == r->origin_view ||
+                r->source_authority == r->origin_view || r->source_base == g->launch_view ||
+                r->source_authority == g->launch_view ||
+                g->views[r->source_base - 1].catalog || g->views[r->source_authority - 1].catalog ||
+                g->views[r->source_base - 1].pool != r->pool ||
+                g->views[r->source_authority - 1].pool != r->pool || !r->source.base_product ||
+                !r->source.family || !r->source.home || r->source.family == r->source.home ||
+                !r->source.directory || !*r->source.directory || !r->source.home_prefix)
+                return fail(error, QA_ERROR_FORMAT, "Source filesystem opening has invalid retained authority roots");
+            for (size_t j = 0; j < g->instance_count; ++j)
+                if (r->source_base == g->instances[j].value.view ||
+                    r->source_authority == g->instances[j].value.view)
+                    return fail(error, QA_ERROR_FORMAT, "Source filesystem authority aliases a private provider view");
+            for (size_t j = 0; j < i; ++j) {
+                const content_resource *prior = g->resources + j;
+                if (r->source_base == prior->origin_view || r->source_authority == prior->origin_view ||
+                    r->origin_view == prior->source_base || r->origin_view == prior->source_authority ||
+                    r->source_base == prior->source_base || r->source_base == prior->source_authority ||
+                    r->source_authority == prior->source_base || r->source_authority == prior->source_authority)
+                    return fail(error, QA_ERROR_FORMAT, "Source filesystem opening aliases independent acquisition custody");
+            }
+        }
         for (size_t j = 0; j < g->instance_count; ++j)
             if (r->origin_view == g->instances[j].value.view)
                 return fail(error, QA_ERROR_FORMAT, "Saved resource opening aliases a private provider view");
         for (size_t j = 0; j < i; ++j)
-            if (r->origin_view == g->resources[j].origin_view)
+            if (r->origin_view == g->resources[j].origin_view ||
+                r->origin_view == g->resources[j].source_base || r->origin_view == g->resources[j].source_authority)
                 return fail(error, QA_ERROR_FORMAT, "Saved launch openings alias separate acquisition owners");
         for (size_t j = 0; j < i; ++j) if (r->value.product == g->resources[j].value.product &&
             !strcmp(r->value.path, g->resources[j].value.path))
@@ -764,10 +848,19 @@ static bool resolve(qa_application_content_graph *g, qa_error *error)
         content_resource *r = &g->resources[i];
         qa_vfs *view = qa_application_content_view(g, r->origin_view);
         qa_product_id content = 0; qa_mount_id physical = 0;
-        if (!qa_catalog_product(launch, r->value.product) || !resource_resolve(g, r, error) ||
-            !qa_catalog_product_acquisition_origin(launch, r->value.product, view, &r->acquisition, &content, &physical, error) ||
-            content != r->origin_product || physical != r->catalog_mount)
-            return fail(error, QA_ERROR_FORMAT, "Saved launch resource origin leaves its actual catalog opening");
+        if (!qa_catalog_product(launch, r->value.product) || !resource_resolve(g, r, error)) return false;
+        if (r->origin_kind == QA_LAUNCH_ORIGIN_CATALOG) {
+            if (!qa_catalog_product_acquisition_origin(launch, r->value.product, view, &r->acquisition, &content, &physical, error) ||
+                content != r->origin_product || physical != r->catalog_mount)
+                return fail(error, QA_ERROR_FORMAT, "Saved launch resource origin leaves its actual catalog opening");
+        } else {
+            r->source.catalog = launch; r->source.product = r->value.product; r->source.content = view;
+            r->source.base = qa_application_content_view(g, r->source_base);
+            r->source.authority = qa_application_content_view(g, r->source_authority);
+            if (!qa_launch_source_files_current(&r->source, error) ||
+                !qa_vfs_acquisition_retained(view, &r->acquisition, error))
+                return fail(error, QA_ERROR_FORMAT, "Saved Source filesystem opening leaves its declared retained authority");
+        }
         char *requested = qa_vfs_normalize_path(r->value.path, error);
         bool same = requested && !strcmp(requested, r->acquisition.path);
         free(requested);

@@ -27,6 +27,12 @@ qa_fs_root *frontend_config_files_shared_root(const frontend_config_files *);
 qa_fs_root *frontend_config_files_root(const frontend_config_files *, bool base);
 qa_fs_root *frontend_config_files_loose_root(const frontend_config_files *, bool base);
 const char *frontend_config_files_game_directory(const frontend_config_files *);
+/* Genuine QW COM_Gamedir state belongs to this existing script/media owner.
+ * The read search and reached write destination have independent lifetimes. */
+qa_vfs *frontend_config_files_source_content(const frontend_config_files *);
+const char *frontend_config_files_source_directory(const frontend_config_files *);
+bool frontend_config_files_source_gamedir(frontend_config_files *,const char *,bool *changed,qa_error *);
+bool frontend_config_files_source_read(const frontend_config_files *,qa_launch_source_files *,qa_error *);
 bool frontend_config_files_read(void *, frontend_script_scope, const char *,
                                 const qa_command_context *, qa_bytes *, void **lease, qa_error *);
 void frontend_config_files_release(void *, void *lease);

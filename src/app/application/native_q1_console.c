@@ -1,4 +1,5 @@
 #include "native_q1_console.h"
+#include "native_q1_wire.h"
 #include "startup_flow.h"
 #include "qa/cvars_save.h"
 #include "qa/console_cvars_prepare.h"
@@ -92,6 +93,28 @@ static const qa_launch_instance *source_descriptor(application_provider *provide
             return instance;
     }
     return NULL;
+}
+static bool files_source(application_provider *provider,const qa_command_context *command,
+    qa_application_startup_source *out,qa_error *error)
+{
+    struct application_native_q1_console *owner=provider?provider->native_q1_console:NULL;
+    const qa_launch_instance *descriptor=source_descriptor(provider);
+    if (!owner || !descriptor || dialect(provider)!=QA_CONSOLE_QW)
+        return application_fail(error,QA_ERROR_ARGUMENT,"Native Source filesystem lost its actual QW descriptor");
+    *out=(qa_application_startup_source){.descriptor=descriptor,
+        .scope={.provider=provider->owner,.kind=QA_APPLICATION_CONSOLE_Q1_GAME},
+        .console=owner->console,.cvars=owner->cvars,.declaration_owner=provider->owner,
+        .command=command?*command:(qa_command_context){.owner=provider->owner,.dialect=QA_CONSOLE_QW,.origin=QA_COMMAND_SERVER}};
+    return true;
+}
+bool application_native_q1_source_files(application_provider *provider,qa_launch_source_files *out,
+    const char **directory,qa_error *error)
+{
+    qa_application_startup_source source;
+    const qa_application_startup_hooks *hooks=provider && provider->application?provider->application->startup_hooks:NULL;
+    return (hooks && hooks->source_files && files_source(provider,NULL,&source,error))?
+        hooks->source_files(hooks->context,provider->application,&source,out,directory,error):
+        application_fail(error,QA_ERROR_ARGUMENT,"Native Source filesystem has no actual retained service owner");
 }
 static bool log_source(application_provider *provider,qa_application_startup_source *out)
 {
@@ -325,6 +348,38 @@ static bool visible_gamedir_command(void *opaque, const qa_command_invocation *i
     --owner->calls;
     return true;
 }
+static bool physical_gamedir_command(void *opaque,const qa_command_invocation *invocation,qa_error *error)
+{
+    struct application_native_q1_console *owner=opaque;
+    application_provider *provider=owner->provider;
+    ++owner->calls; owner->info_context=&invocation->context;
+    bool okay=true;
+    if (invocation->argc==1) {
+        qa_launch_source_files files; const char *directory=NULL;
+        okay=application_native_q1_source_files(provider,&files,&directory,error);
+        if (okay) { info_print(owner,"Current gamedir: "); info_print(owner,directory); info_print(owner,"\n"); }
+    } else if (invocation->argc!=2) info_print(owner,"Usage: gamedir <newdir>\n");
+    else if (strstr(invocation->argv[1],"..") || strpbrk(invocation->argv[1],"/\\:"))
+        info_print(owner,"Gamedir should be a single filename, not a path\n");
+    else {
+        const qa_application_startup_hooks *hooks=provider->application->startup_hooks;
+        qa_application_startup_source source;
+        bool changed=false;
+        okay=hooks && hooks->source_gamedir && files_source(provider,&invocation->context,&source,error);
+        if (!okay && (!error || error->code==QA_OK))
+            application_fail(error,QA_ERROR_ARGUMENT,"Native gamedir has no reached Source filesystem service");
+        if (okay) okay=application_native_q1_wire_idle(provider) ||
+            application_fail(error,QA_ERROR_ARGUMENT,"Native gamedir entered an active Source resource receipt");
+        if (okay) okay=hooks->source_gamedir(hooks->context,provider->application,&source,
+            invocation,invocation->argv[1],&changed,error);
+        if (changed) {
+            qa_error flush={0}; bool flushed=application_native_q1_wire_cache_flush(provider,&flush);
+            if (okay && !flushed) { okay=false; if(error)*error=flush; }
+        }
+        if (okay) info_set(owner,owner->serverinfo,512,"*gamedir",invocation->argv[1],true);
+    }
+    owner->info_context=NULL; --owner->calls; return okay;
+}
 bool application_native_q1_source_info(application_provider *provider, bool local,
     const char **out, qa_error *error)
 {
@@ -445,7 +500,8 @@ static bool read_script(void *opaque, const qa_command_context *command,
         return application_startup_source_script_read(owner->provider, owner->console,
             command, path, out, lease, error);
     qa_resource *resource = NULL;
-    if (!qa_vfs_acquire(owner->provider->launch->content, path, &resource, NULL, error)) return false;
+    qa_vfs *content=application_native_q1_wire_content(owner->provider,error);
+    if (!content || !qa_vfs_acquire(content, path, &resource, NULL, error)) return false;
     *out = qa_resource_bytes(resource);
     *lease = resource;
     return true;
@@ -506,7 +562,9 @@ bool application_native_q1_console_create_restored(application_provider *provide
          !qa_console_register(owner->console, "localinfo", NULL, provider->owner,
             false, info_command, owner, error) ||
          !qa_console_register(owner->console, "sv_gamedir", NULL, provider->owner,
-            false, visible_gamedir_command, owner, error))) {
+            false, visible_gamedir_command, owner, error) ||
+         !qa_console_register(owner->console, "gamedir", NULL, provider->owner,
+            false, physical_gamedir_command, owner, error))) {
         qa_console_destroy(owner->console); qa_cvars_destroy(owner->cvars);
         free(owner); provider->native_q1_console = NULL; return false;
     }

@@ -332,6 +332,30 @@ const qa_product *qa_catalog_product(const qa_catalog *c, qa_product_id id)
 { return id ? qa_catalog_at(c, (size_t)id - 1) : NULL; }
 qa_product_id qa_catalog_configuration_base(const qa_catalog *c, qa_product_id id)
 { return qa_catalog_product(c, id) ? c->products[id - 1].configuration_base : QA_PRODUCT_NONE; }
+const qa_catalog_mount *qa_catalog_product_family_mount(const qa_catalog *catalog, qa_product_id id)
+{
+    const qa_product *product = qa_catalog_product(catalog, id);
+    if (!product || product->family != QA_GAME_Q1) return NULL;
+    const qa_catalog_mount *mount = catalog_mount(catalog, catalog->products[id - 1].family_mount);
+    const char *path = mount ? qa_vfs_mount_path(catalog->mounts, mount->id) : NULL;
+    const char *prefix = mount ? qa_vfs_mount_root_prefix(catalog->mounts, mount->id) : NULL;
+    return mount && mount->format == QA_ARCHIVE_AUTO && !mount->writable && path &&
+        prefix && !*prefix && !strcmp(path, mount->path) &&
+        qa_vfs_mount_root(catalog->mounts, mount->id) ? mount : NULL;
+}
+qa_fs_root *qa_catalog_product_family_root(const qa_catalog *catalog, qa_product_id id)
+{
+    const qa_catalog_mount *mount = qa_catalog_product_family_mount(catalog, id);
+    return mount ? qa_vfs_mount_root(catalog->mounts, mount->id) : NULL;
+}
+qa_fs_root *qa_catalog_corpus_root(const qa_catalog *catalog)
+{
+    const qa_catalog_mount *mount = catalog ? catalog_mount(catalog, catalog->corpus_mount) : NULL;
+    const char *path = mount ? qa_vfs_mount_path(catalog->mounts, mount->id) : NULL;
+    const char *prefix = mount ? qa_vfs_mount_root_prefix(catalog->mounts, mount->id) : NULL;
+    return mount && mount->format == QA_ARCHIVE_AUTO && !mount->writable && path &&
+        prefix && !*prefix && !strcmp(path, mount->path) ? qa_vfs_mount_root(catalog->mounts, mount->id) : NULL;
+}
 const qa_catalog_mount *qa_catalog_product_write_mount(const qa_catalog *c, qa_product_id id)
 {
     if (!qa_catalog_product(c, id)) return NULL;

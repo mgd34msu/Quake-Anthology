@@ -1,5 +1,6 @@
 #include "native_q1_wire.h"
 #include "native_q1_console.h"
+#include "qa/application_startup_prepare.h"
 #include "native_q1_wire_qw.h"
 #include "map_players_private.h"
 #include "qa/game_q1_bots.h"
@@ -114,12 +115,43 @@ bool application_native_q1_wire_create(application_provider *p, qa_error *error)
     }
     return true;
 }
+qa_vfs *application_native_q1_wire_content(application_provider *provider,qa_error *error)
+{
+    if (!provider || !provider->launch)
+        return application_fail(error,QA_ERROR_ARGUMENT,"Q1 source media lost its actual provider"),NULL;
+    const qa_application_startup_hooks *hooks=provider->application?provider->application->startup_hooks:NULL;
+    if (provider->launch->selection.clock.kind==QA_CLOCK_QUAKEWORLD && hooks && hooks->source_files) {
+        qa_launch_source_files source; const char *directory=NULL;
+        return application_native_q1_source_files(provider,&source,&directory,error)?source.content:NULL;
+    }
+    return provider->launch->content;
+}
+bool application_native_q1_wire_cache_flush(application_provider *provider,qa_error *error)
+{
+    application_native_q1_wire *owner=provider?provider->native_q1_wire:NULL;
+    if (!owner) return true;
+    if (!application_native_q1_wire_idle(provider))
+        return application_fail(error,QA_ERROR_ARGUMENT,"Source cache flush entered a retained resource receipt");
+    qa_vfs *content=application_native_q1_wire_content(provider,error);
+    if (!content) return false;
+    /* Live SV model/sound precaches retain their actual receipts until Spawn.
+     * Cache_Flush retires unreferenced cache entries, not those server holders. */
+    while (owner->languages) {
+        native_q1_wire_language *next=owner->languages->next;
+        qa_localization_release(owner->languages->catalog);
+        free(owner->languages->language); free(owner->languages); owner->languages=next;
+    }
+    qa_localization_pool_trim(owner->catalogs);
+    qa_resource_pool_trim(qa_vfs_resources(content));
+    return true;
+}
 bool application_native_q1_wire_resources_prepare(application_provider *p, qa_error *error) {
     if (!p || !qa_q1_wire_enabled(p->state.q1)) return true;
     application_native_q1_wire *owner = p->native_q1_wire;
     const qa_launch_instance *source = owner ? qa_launch_instance_lease_view(owner->source) : NULL;
     qa_q1_wire_receipt receipt = {0};
-    if (!source || !source->content || !qa_q1_wire_read_begin(p->state.q1, &receipt, error))
+    qa_vfs *content=application_native_q1_wire_content(p,error);
+    if (!source || !content || !qa_q1_wire_read_begin(p->state.q1, &receipt, error))
         return application_fail(error, QA_ERROR_ARGUMENT, "Q1 wire resource admission lost its held source");
     if (owner->readers == SIZE_MAX) {
         qa_q1_wire_read_end(&receipt);
@@ -134,7 +166,7 @@ bool application_native_q1_wire_resources_prepare(application_provider *p, qa_er
     for (size_t i = 1; okay && i < receipt.model_count; ++i) {
         const char *path = qa_strings_cstr(strings, receipt.models[i]);
         if (!path) { okay = application_fail(error, QA_ERROR_FORMAT, "Q1 model declaration lost its source path"); break; }
-        if (*path != '*') okay = qa_vfs_acquire(source->content, path, &models[i], NULL, error);
+        if (*path != '*') okay = qa_vfs_acquire(content, path, &models[i], NULL, error);
     }
     for (size_t i = 1; okay && i < receipt.sound_count; ++i) {
         const char *path = qa_strings_cstr(strings, receipt.sounds[i]);
@@ -143,7 +175,7 @@ bool application_native_q1_wire_resources_prepare(application_provider *p, qa_er
         char *full = malloc(length + 7);
         if (!full) { okay = application_fail(error, QA_ERROR_MEMORY, "Admitting Q1 source sound path"); break; }
         memcpy(full, "sound/", 6); memcpy(full + 6, path, length + 1);
-        okay = qa_vfs_acquire(source->content, full, &sounds[i], NULL, error); free(full);
+        okay = qa_vfs_acquire(content, full, &sounds[i], NULL, error); free(full);
         if (okay) {
             char id[QA_APPLICATION_RESOURCE_KEY_CAPACITY];
             okay = application_unified_event_resource_register(p->application, p->owner,
@@ -209,7 +241,8 @@ static bool language_prepare(application_provider *p, qa_actor_id actor,
     const char *language, application_native_q1_wire_language_ticket *ticket, qa_error *error) {
     application_native_q1_wire *owner = p->native_q1_wire;
     const qa_launch_instance *source = owner ? qa_launch_instance_lease_view(owner->source) : NULL;
-    if (!source || !source->content) return application_fail(error, QA_ERROR_ARGUMENT, "Q1 text has no held content owner");
+    qa_vfs *content=application_native_q1_wire_content(p,error);
+    if (!source || !content) return application_fail(error, QA_ERROR_ARGUMENT, "Q1 text has no held content owner");
     if (owner->language_admissions == SIZE_MAX)
         return application_fail(error, QA_ERROR_MEMORY, "Q1 catalog admission extent exhausted");
     native_q1_wire_language_pending *pending = calloc(1, sizeof(*pending));
@@ -231,7 +264,7 @@ static bool language_prepare(application_provider *p, qa_actor_id actor,
     if (row && !strcmp(row->language, copy)) {
         catalog = row->catalog;
         qa_localization_retain(catalog);
-    } else if (!qa_localization_acquire(owner->catalogs, source->content, copy,
+    } else if (!qa_localization_acquire(owner->catalogs, content, copy,
             &(qa_localization_options){.profile = QA_LOCALIZATION_Q1_RERELEASE}, &catalog, error)) {
         --owner->language_admissions;
         qa_q1_game_operation_end(&pending->operation);

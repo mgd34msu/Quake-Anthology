@@ -40,6 +40,7 @@ typedef struct mount {
     package *archive;
     qa_fs_file *archive_file;
     qa_fs_root *root;
+    char *root_prefix;
     qa_fs_object_reference *root_references;
     size_t root_reference_count;
     qa_fs_identity identity;

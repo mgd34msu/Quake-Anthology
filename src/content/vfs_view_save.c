@@ -2,7 +2,7 @@
 #include "vfs_private.h"
 #include "vfs_save_io.h"
 
-static const uint8_t view_magic[8] = {'Q','A','V','F',7,0,0,0};
+static const uint8_t view_magic[8] = {'Q','A','V','F',8,0,0,0};
 typedef struct mount_binding {
     char *root_path;
     qa_fs_identity root_identity;
@@ -96,7 +96,7 @@ static bool normalized_prefix(vfs_save_io *io, const char *text,
     return matches || vfs_save_fail(io, QA_ERROR_FORMAT, "unnormalized VFS rule prefix");
 }
 
-static bool mounts(vfs_save_io *io, qa_vfs *vfs, mount_binding **bindings_out)
+static bool mounts(vfs_save_io *io, qa_vfs *vfs, mount_binding **bindings_out, uint8_t version)
 {
     size_t count = vfs->count;
     if (!vfs_save_count(io, &count, 92, sizeof(mount *)) ||
@@ -128,12 +128,18 @@ static bool mounts(vfs_save_io *io, qa_vfs *vfs, mount_binding **bindings_out)
             !vfs_save_identity(io, &m->identity) ||
             !vfs_save_u64(io, &origin)) return false;
         m->comparison = (qa_archive_comparison)comparison;
+        if (version >= 8) {
+            bool child = m->root_prefix != NULL;
+            if (!vfs_save_bool(io, &child)) return false;
+            if (child && (!vfs_save_text(io, &m->root_prefix) ||
+                !normalized_prefix(io, m->root_prefix, false, false))) return false;
+        }
         for (size_t j = 0; j < i; ++j)
             if (vfs->mounts[j]->id == m->id)
                 return vfs_save_fail(io, QA_ERROR_FORMAT, "duplicate VFS mount identity");
         if (origin != UINT64_MAX) {
             package *p = package_at(vfs->pool, origin);
-            if (!p || m->writable || m->user_overlay || m->root ||
+            if (!p || m->writable || m->user_overlay || m->root || m->root_prefix ||
                 m->root_references || m->root_reference_count)
                 return vfs_save_fail(io, QA_ERROR_FORMAT, "invalid VFS archive mount");
             uint64_t kind = io->reading ? 0 : qa_archive_get_kind(p->archive);
@@ -461,9 +467,9 @@ static bool view_fields(vfs_save_io *io, qa_vfs *vfs, mount_binding **bindings)
 {
     uint8_t magic[8]; memcpy(magic, view_magic, sizeof(magic));
     bool header = vfs_save_bytes(io, magic, sizeof(magic)) && !memcmp(magic, "QAVF", 4) &&
-        (magic[4] >= 5 && magic[4] <= 7) && !magic[5] && !magic[6] && !magic[7];
+        (magic[4] >= 5 && magic[4] <= 8) && !magic[5] && !magic[6] && !magic[7];
     bool success = header && vfs_save_u64(io, &vfs->next_mount) &&
-        vfs_save_u64(io, &vfs->next_temporary) && mounts(io, vfs, bindings) &&
+        vfs_save_u64(io, &vfs->next_temporary) && mounts(io, vfs, bindings, magic[4]) &&
         prefixes(io, vfs) && links(io, vfs) && restrictions(io, vfs) && reads(io, vfs) &&
         (magic[4] < 6 || origins(io, vfs)) && (magic[4] < 7 || historical_reads(io, vfs)) && vfs_save_finish(io);
     if (!success && io->error && io->error->code == QA_OK)

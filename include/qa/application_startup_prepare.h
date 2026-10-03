@@ -131,6 +131,12 @@ typedef struct qa_application_startup_hooks {
      * invocation after its GAME declined it. No text forwarding or reparse. */
     bool (*source_common_command)(void *, qa_application *, const qa_application_startup_source *,
         const qa_command_invocation *, bool *, qa_error *);
+    /* The actual Source file holder supplies media and changes COM_Gamedir.
+     * NULL directory queries; a reached switch reports its literal effects. */
+    bool (*source_files)(void *,qa_application *,const qa_application_startup_source *,
+        qa_launch_source_files *,const char **native_directory,qa_error *);
+    bool (*source_gamedir)(void *,qa_application *,const qa_application_startup_source *,
+        const qa_command_invocation *,const char *,bool *changed,qa_error *);
 } qa_application_startup_hooks;
 
 /* READY remains READY across a source wait. No GAME Init or world publication

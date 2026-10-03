@@ -15,6 +15,8 @@
 #include "startup_flow.h"
 #include "startup_program.h"
 #include "native_q2_checkpoint.h"
+#include "native_q1_console.h"
+#include "qa/application_startup_prepare.h"
 #include "native_q3_checkpoint.h"
 #include "supplies.h"
 #include "equipment_runtime.h"
@@ -611,6 +613,22 @@ static bool prepare_world(qa_application *application,
                           application_publication *publication,
                           qa_error *error)
 {
+    if (!publication->restoring && application->startup_hooks && application->startup_hooks->source_files) {
+        const qa_launch_choices *choices=qa_launch_snapshot_choices(publication->candidate);
+        const qa_launch_binding *binding=qa_launch_binding_for(choices,(qa_launch_scope){.kind=QA_SCOPE_WORLD},QA_ROLE_ENTITIES,"");
+        const qa_launch_instance *instance=binding?qa_launch_snapshot_find(publication->candidate,binding->instance):NULL;
+        application_provider *provider=instance?instance->state:NULL;
+        if (provider && provider->kind==APPLICATION_PROVIDER_Q1 && provider->native_q1_console &&
+            instance->selection.clock.kind==QA_CLOCK_QUAKEWORLD && instance->selection.product==choices->world.geometry) {
+            const qa_launch_snapshot *routing=application->routing_snapshot;
+            application->routing_snapshot=publication->candidate;
+            qa_launch_source_files files; const char *directory=NULL;
+            bool okay=application_native_q1_source_files(provider,&files,&directory,error) &&
+                qa_configuration_source_map(application->configuration,publication->candidate,&files,error);
+            application->routing_snapshot=routing;
+            if (!okay) return false;
+        }
+    }
     const qa_launch_resource *selected = map_resource(publication->candidate);
     if (selected == NULL)
         return application_fail(error, QA_ERROR_NOT_FOUND,

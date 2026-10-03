@@ -117,6 +117,7 @@ static bool products(qa_source_save_io *io, qa_catalog *catalog, uint32_t schema
             FIELD(u32, product, configuration_base); FIELD(u64, product, write_mount);
         } else if (io->direction == QA_SOURCE_SAVE_READ) product->configuration_base = view->base;
         if (schema >= 5) { FIELD(u64, product, loose_mount); }
+        if (schema >= 8) { FIELD(u64, product, family_mount); FIELD(u32, product, family_product); }
         if (product->configuration_base >= view->id || product->write_mount > catalog->physical_count ||
             product->loose_mount > catalog->physical_count) return false;
         if (view->id != i + 1 || view->base >= view->id ||
@@ -194,6 +195,19 @@ static bool products(qa_source_save_io *io, qa_catalog *catalog, uint32_t schema
         if (configuration_base && configuration_base->family != product->view.family) return false;
         if ((!catalog->q3_demo_restricted || product->view.family != QA_GAME_Q3) &&
             product->configuration_base != product->view.base) return false;
+        if (product->family_mount || product->family_product) {
+            if (product->view.family != QA_GAME_Q1 || !product->family_mount || !product->family_product) return false;
+            const catalog_product *installed = product; size_t depth = 0;
+            while (!installed->installed_directory && installed->view.base) {
+                if (++depth > catalog->product_count) return false;
+                installed = catalog->products + installed->view.base - 1;
+            }
+            const qa_catalog_mount *family = catalog_mount(catalog, product->family_mount);
+            if (!family || family->format != QA_ARCHIVE_AUTO || family->writable ||
+                !installed->installed_directory || installed->view.id != product->family_product) return false;
+            const char *parent = catalog_native_parent(catalog, installed->installed_directory, io->error);
+            if (!parent || strcmp(parent, family->path)) return false;
+        }
         if (product->loose_mount) {
             const qa_catalog_mount *loose = catalog_mount(catalog, product->loose_mount);
             const qa_catalog_mount *corpus = catalog_mount(catalog, catalog->corpus_mount);
@@ -290,9 +304,9 @@ static bool behaviors(qa_source_save_io *io, qa_catalog *catalog)
 }
 static bool fields(qa_source_save_io *io, qa_catalog *catalog, qa_buffer *files)
 {
-    uint8_t magic[4] = {'Q','C','A','T'}; uint32_t schema = 7;
+    uint8_t magic[4] = {'Q','C','A','T'}; uint32_t schema = 8;
     if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "QCAT", 4) ||
-        !qa_source_save_u32(io, &schema) || (schema < 2 || schema > 7)) return false;
+        !qa_source_save_u32(io, &schema) || (schema < 2 || schema > 8)) return false;
     FIELD(u64, catalog, generation);
     FIELD(bool, catalog, q3_demo_restricted);
     if (schema >= 3) { FIELD(u64, catalog, q3_download_mount); }
@@ -426,6 +440,7 @@ bool qa_catalog_restore(qa_resource_pool *resources, const qa_catalog_checkpoint
     for (size_t i = 0; ok && i < catalog->product_count; ++i) {
         if (catalog->products[i].write_mount && !qa_catalog_product_write_root(catalog, (qa_product_id)i + 1)) ok = false;
         if (catalog->products[i].loose_mount && !qa_catalog_product_loose_root(catalog, (qa_product_id)i + 1)) ok = false;
+        if (catalog->products[i].family_mount && !qa_catalog_product_family_root(catalog, (qa_product_id)i + 1)) ok = false;
     }
     qa_buffer_free(&files);
     if (!ok) {

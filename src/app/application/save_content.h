@@ -14,8 +14,9 @@ typedef struct application_saved_instance_content {
 bool application_save_content_collect(const qa_application *,
     qa_application_content_visit_fn, void *, qa_application_content_graph **,
     qa_error *);
-/* QACG4 retains mounted archives through exact native package receipts and
- * embeds unmounted package custody. Pending legacy QACG3 admission keeps its
+/* QACG5 additionally retains explicit Source filesystem opening authorities.
+ * Mounted archives use exact native package receipts; unmounted custody stays
+ * embedded. Pending legacy QACG3/4 admission keeps its
  * original bytes until publication; later captures use the current graph. */
 bool application_save_content_encode(const qa_application_content_graph *,
     qa_buffer *, qa_error *);
@@ -41,6 +42,10 @@ size_t application_save_content_launch_resource_count(const qa_application_conte
 bool application_save_content_launch_resource_at(const qa_application_content_graph *,
     size_t, qa_launch_resource *, qa_error *);
 bool application_save_content_launch_resource_origin(const qa_application_content_graph *,
+    size_t, qa_launch_resource_origin *, qa_error *);
+/* Take the independent Source content/base/authority views. On failure, out
+ * preserves all actually transferred partial custody and clears borrowed views. */
+bool application_save_content_launch_source_claim(qa_application_content_graph *,
     size_t, qa_launch_resource_origin *, qa_error *);
 /* Transfer a restored pool's unclaimed graph reference, or retain the already
  * adopted physical pool. Each event resource owns the returned reference. */

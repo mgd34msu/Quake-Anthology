@@ -607,6 +607,11 @@ bool qa_application_map_origin_read(const qa_application *app, qa_launch_resourc
             if (!qa_launch_snapshot_resource_origin(snapshot, i, &origin) || !origin.acquisition ||
                 origin.acquisition->resource_id != qa_resource_id(app->map_resource) ||
                 !qa_vfs_acquisition_retained(origin.content, origin.acquisition, NULL)) return false;
+            if (origin.kind==QA_LAUNCH_ORIGIN_SOURCE_QW &&
+                (origin.catalog_mount || origin.product!=resource->product ||
+                 origin.source.catalog!=origin.catalog || origin.source.content!=origin.content ||
+                 origin.source.product!=resource->product || !qa_launch_source_files_current(&origin.source,NULL))) return false;
+            if (origin.kind!=QA_LAUNCH_ORIGIN_CATALOG && origin.kind!=QA_LAUNCH_ORIGIN_SOURCE_QW) return false;
             *out = origin; return true;
         }
     }

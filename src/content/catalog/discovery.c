@@ -620,6 +620,42 @@ bool catalog_scan(qa_catalog *c, bool mods, const char *remote_base,
     }
     if (mods && !quakeworld_variants(c, error)) return false;
     for (size_t i = 0; i < c->product_count; ++i) if (!finalize_product(c, &c->products[i], 0, error)) return false;
+    for (size_t i = 0; i < c->product_count; ++i) {
+        catalog_product *product = c->products + i;
+        if (product->view.family != QA_GAME_Q1) continue;
+        catalog_product *installed = product;
+        size_t depth = 0;
+        while (!installed->installed_directory && installed->view.base) {
+            if (++depth > c->product_count) {
+                qa_error_set(error, QA_ERROR_FORMAT, 0, "Q1 install family has cyclic ancestry"); return false;
+            }
+            installed = c->products + installed->view.base - 1;
+        }
+        if (!installed->installed_directory) continue;
+        const char *family = catalog_native_parent(c, installed->installed_directory, error);
+        if (!family) return false;
+        bool retained = false;
+        for (size_t j = 0; j < c->physical_count; ++j)
+            if (c->physical[j].view.format == QA_ARCHIVE_AUTO && !c->physical[j].view.writable &&
+                !strcmp(c->physical[j].view.path, family)) retained = true;
+        if (!retained) {
+            qa_mount_id id;
+            if (!qa_vfs_mount_directory(c->mounts, family, QA_ARCHIVE_CASE_INSENSITIVE, false, &id, error) ||
+                !catalog_grow((void **)&c->physical, &c->physical_capacity,
+                    c->physical_count + 1, sizeof(*c->physical), error)) return false;
+            c->physical[c->physical_count++] = (catalog_physical){.view = {id, family, QA_ARCHIVE_AUTO, false, NULL}};
+            for (size_t j = 0; j < c->physical_count; ++j)
+                c->physical[j].view.digest = c->physical[j].view.format == QA_ARCHIVE_AUTO ? NULL : &c->physical[j].digest;
+        }
+        for (size_t j = 0; j < c->physical_count; ++j) {
+            const qa_catalog_mount *mount = &c->physical[j].view;
+            if (mount->format == QA_ARCHIVE_AUTO && !mount->writable && !strcmp(mount->path, family)) {
+                product->family_mount = mount->id;
+                product->family_product = installed->view.id;
+                break;
+            }
+        }
+    }
     const char *installed_q3=NULL;
     const qa_product *q3_base=qa_catalog_find(c,"q3-baseq3");
     const char *q3_data=q3_base?c->products[q3_base->id-1].installed_directory:NULL;

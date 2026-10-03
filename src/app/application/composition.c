@@ -1,4 +1,6 @@
 #include "internal.h"
+#include "native_q1_console.h"
+#include "qa/application_startup_prepare.h"
 #include "q3_product.h"
 #include "startup_flow.h"
 
@@ -17,6 +19,30 @@ static bool configuration_safe(void *opaque)
            application->combat != NULL && qa_combat_idle(application->combat);
 }
 
+static bool resource_files(void *opaque,const qa_launch_choices *choices,qa_product_id product,
+    const char *path,qa_launch_source_files *out,bool *provided,qa_error *error)
+{
+    qa_application *app=opaque; *provided=false;
+    application_provider *provider=application_world_provider(app,QA_ROLE_ENTITIES,"");
+    if (!provider || provider->kind!=APPLICATION_PROVIDER_Q1 || !provider->launch ||
+        provider->launch->selection.clock.kind!=QA_CLOCK_QUAKEWORLD || !app->startup_hooks ||
+        !app->startup_hooks->source_files || product!=provider->launch->selection.product ||
+        choices->world.geometry!=product || strcmp(choices->world.map,path)) return true;
+    const qa_launch_provider *selected=NULL;
+    for (size_t i=0;i<choices->binding_count;++i) {
+        const qa_launch_binding *binding=choices->bindings+i;
+        if (binding->scope.kind!=QA_SCOPE_WORLD || binding->role!=QA_ROLE_ENTITIES ||
+            (binding->selector && *binding->selector)) continue;
+        for (size_t j=0;j<choices->provider_count;++j)
+            if (!strcmp(choices->providers[j].instance,binding->instance)) selected=choices->providers+j;
+    }
+    if (!selected || strcmp(selected->instance,provider->launch->selection.instance) ||
+        selected->product!=product || selected->runtime!=QA_PROGRAM_BUILTIN) return true;
+    const char *directory=NULL;
+    if (!application_native_q1_source_files(provider,out,&directory,error)) return false;
+    *provided=out->changed;
+    return true;
+}
 static bool prepare_instance(void *opaque, const qa_launch_instance *launch,
                              void **state, qa_error *error)
 {
@@ -96,6 +122,7 @@ bool application_composition_create(qa_application *application,
         .context = application,
         .safe = configuration_safe,
         .instance_configuration = application_instance_configuration,
+        .resource_files=resource_files,
         .prepare_instance = prepare_instance,
         .close_instance = close_instance,
         .prepare_publication = prepare_publication,

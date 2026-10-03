@@ -188,6 +188,19 @@ typedef struct qa_launch_resource {
     const char *path;
     const qa_resource *resource;
 } qa_launch_resource;
+typedef struct qa_launch_source_files {
+    qa_catalog *catalog;
+    qa_product_id product, base_product;
+    qa_vfs *content, *base, *authority;
+    qa_mount_id family, home;
+    const char *directory, *home_prefix;
+    bool changed;
+} qa_launch_source_files;
+/* Pure qualification of the retained physical QW search recipe. */
+bool qa_launch_source_files_current(const qa_launch_source_files *,qa_error *);
+typedef enum qa_launch_resource_origin_kind {
+    QA_LAUNCH_ORIGIN_CATALOG, QA_LAUNCH_ORIGIN_SOURCE_QW
+} qa_launch_resource_origin_kind;
 typedef struct qa_launch_resource_origin {
     qa_catalog *catalog;
     qa_vfs *content;
@@ -196,6 +209,8 @@ typedef struct qa_launch_resource_origin {
     qa_product_id product;
     qa_mount_id catalog_mount;
     const qa_vfs_acquisition *acquisition;
+    qa_launch_resource_origin_kind kind;
+    qa_launch_source_files source;
 } qa_launch_resource_origin;
 
 /* Retains the immutable descriptor/resources without retaining execution or
@@ -264,6 +279,10 @@ typedef struct qa_configuration_hooks {
      * participate in identity. Routing roles alone must not reset state. */
     bool (*instance_configuration)(void *, const qa_launch_instance *,
                                     const qa_launch_choices *, qa_sha256_digest *, qa_error *);
+    /* Borrow an actual Source filesystem before world resource acquisition.
+     * No provider construction or publication runs through this callback. */
+    bool (*resource_files)(void *,const qa_launch_choices *,qa_product_id,const char *,
+        qa_launch_source_files *,bool *provided,qa_error *);
     bool (*prepare_instance)(void *, const qa_launch_instance *, void **state, qa_error *);
     void (*close_instance)(void *, void *state);
     bool (*prepare_publication)(void *, const qa_launch_snapshot *previous,
@@ -295,6 +314,10 @@ bool qa_configuration_validate(qa_configuration_transaction *, qa_error *);
 bool qa_configuration_commit(qa_configuration_transaction *, qa_error *);
 bool qa_configuration_abort(qa_configuration_transaction *, qa_error *);
 const qa_launch_snapshot *qa_configuration_candidate(const qa_configuration_transaction *);
+/* Before world admission, refresh only this manager's pending map resource
+ * from the reached Source file holder. Published snapshots stay immutable. */
+bool qa_configuration_source_map(qa_configuration *,const qa_launch_snapshot *,
+    const qa_launch_source_files *,qa_error *);
 void qa_launch_snapshot_retain(const qa_launch_snapshot *);
 void qa_launch_snapshot_release(const qa_launch_snapshot *);
 const qa_launch_choices *qa_launch_snapshot_choices(const qa_launch_snapshot *);

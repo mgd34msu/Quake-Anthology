@@ -79,6 +79,9 @@ const char *qa_vfs_mount_path(const qa_vfs *, qa_mount_id);
  * and absent mount IDs return NULL. The view retains it until unmount/destroy;
  * consumers that outlive that association must retain the root themselves. */
 qa_fs_root *qa_vfs_mount_root(const qa_vfs *, qa_mount_id);
+/* A loose child mount retains its parent's real authority. The normalized
+ * prefix is borrowed until unmount; ordinary loose mounts return "". */
+const char *qa_vfs_mount_root_prefix(const qa_vfs *, qa_mount_id);
 /* Genuine native roots admitted for this same loose mount across physical
  * restore mappings. Pure borrowed inventory, preserved by retained mounts and
  * clones; valid until unmount/import/destruction. Archives return false. */
@@ -140,6 +143,14 @@ bool qa_vfs_mount_archive(qa_vfs *vfs, const char *path, qa_archive_kind kind,
 bool qa_vfs_mount_directory(qa_vfs *vfs, const char *path,
                             qa_archive_comparison comparison, bool writable,
                             qa_mount_id *out, qa_error *error);
+/* Admit a loose search directory below an existing held parent without
+ * opening or creating the child. Reads observe its actual later existence;
+ * writes retain ordinary nofollow traversal and operation-specific creation. */
+/* Admit a package through the actual contained file of a held parent root. */
+bool qa_vfs_mount_archive_from(qa_vfs *,qa_fs_root *,const char *relative,
+    qa_archive_kind,qa_archive_comparison,qa_mount_id *,qa_error *);
+bool qa_vfs_mount_child(qa_vfs *,qa_fs_root *parent,const char *relative,
+    qa_archive_comparison,bool writable,qa_mount_id *,qa_error *);
 /* Build a normal new scoped mount from retained native authority. Archives
  * require the same pool and must match their complete immutable snapshot;
  * loose directories retain their actual root across resource pools.
@@ -155,6 +166,9 @@ bool qa_vfs_mount_retained(qa_vfs *, const qa_vfs *, qa_mount_id,
 bool qa_vfs_retained_recipe_matches(const qa_vfs *view, const qa_vfs *retained,
     const qa_mount_id *ordered_ids, size_t count, qa_archive_comparison comparison,
     bool force_mount_q3_demo);
+/* Pure proof that a Source search path still ends in its retained fixed base.
+ * Added game mounts precede the base; existing base IDs and policy survive. */
+bool qa_vfs_retained_base_matches(const qa_vfs *,const qa_vfs *base);
 bool qa_vfs_unmount(qa_vfs *vfs, qa_mount_id mount, qa_error *error);
 /* Orders include every current mount exactly once, highest priority first.
  * A prefix is a relative directory without its trailing separator. The first

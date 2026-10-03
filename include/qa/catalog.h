@@ -137,6 +137,11 @@ qa_fs_root *qa_catalog_product_write_root(const qa_catalog *, qa_product_id);
  * NULL means discovery admitted no loose directory for this product. */
 const qa_catalog_mount *qa_catalog_product_loose_mount(const qa_catalog *, qa_product_id);
 qa_fs_root *qa_catalog_product_loose_root(const qa_catalog *, qa_product_id);
+/* Actual discovery-owned install family of this Q1 product (or its reached
+ * installed base). The family never enters the ordinary product search path. */
+const qa_catalog_mount *qa_catalog_product_family_mount(const qa_catalog *,qa_product_id);
+qa_fs_root *qa_catalog_product_family_root(const qa_catalog *,qa_product_id);
+qa_fs_root *qa_catalog_corpus_root(const qa_catalog *);
 /* Accepts the product key or its persistent family:edition:package identity. */
 const qa_product *qa_catalog_find(const qa_catalog *, const char *);
 const qa_catalog_mount *qa_catalog_mount_at(const qa_catalog *, size_t);

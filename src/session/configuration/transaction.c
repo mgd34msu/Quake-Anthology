@@ -3,6 +3,8 @@
 #include "qa/vfs_view_save.h"
 #include "qa/launch_q2_client.h"
 #include "qa/launch_client.h"
+#include "qa/catalog_save.h"
+#include <stdio.h>
 
 typedef struct qa_launch_instance_storage {
     size_t references, leases;
@@ -26,9 +28,12 @@ typedef struct resource_binding {
     qa_product_id origin_product;
     qa_mount_id catalog_mount;
     qa_vfs_acquisition acquisition;
+    qa_launch_resource_origin_kind kind;
+    qa_launch_source_files source;
 } resource_binding;
 struct qa_launch_snapshot {
     size_t references;
+    qa_configuration *pending_owner;
     qa_launch_draft *draft;
     qa_vfs *mounts;
     instance_binding *instances;
@@ -131,6 +136,7 @@ void qa_launch_snapshot_release(const qa_launch_snapshot *snapshot)
         qa_resource_release((qa_resource *)s->resources[i].view.resource);
         qa_vfs_acquisition_dispose(&s->resources[i].acquisition);
         qa_vfs_destroy(s->resources[i].content);
+        qa_vfs_destroy(s->resources[i].source.base); qa_vfs_destroy(s->resources[i].source.authority);
     }
     free(s->instances); free(s->resources); qa_vfs_destroy(s->mounts);
     qa_launch_draft_destroy(s->draft); free(s);
@@ -164,8 +170,92 @@ bool qa_launch_snapshot_resource_origin(const qa_launch_snapshot *s, size_t i, q
     if (!s || !out || i >= s->resource_count) return false;
     const resource_binding *row = &s->resources[i];
     *out = (qa_launch_resource_origin){.catalog = s->draft->catalog, .content = row->content,
-        .product = row->origin_product, .catalog_mount = row->catalog_mount, .acquisition = &row->acquisition};
+        .product = row->origin_product, .catalog_mount = row->catalog_mount, .acquisition = &row->acquisition,
+        .kind=row->kind,.source=row->source};
     return true;
+}
+
+static bool source_mount(const qa_vfs *view,qa_mount_id id,bool writable,qa_fs_root **root)
+{
+    qa_vfs_mount_info info;
+    for (size_t i=0;i<qa_vfs_mount_count(view);++i)
+        if (qa_vfs_mount_at(view,i,&info) && info.id==id && !info.is_archive &&
+            info.comparison==QA_ARCHIVE_CASE_INSENSITIVE && info.writable==writable && !info.user_overlay && !info.q3_demo) {
+            *root=qa_vfs_mount_root(view,id); return *root!=NULL;
+        }
+    return false;
+}
+bool qa_launch_source_files_current(const qa_launch_source_files *files,qa_error *error)
+{
+    const qa_product *product=files?qa_catalog_product(files->catalog,files->product):NULL;
+    const qa_product *base=files?qa_catalog_product(files->catalog,files->base_product):NULL;
+    if (!files || !product || !base || product->edition!=QA_EDITION_QUAKEWORLD || product->family!=QA_GAME_Q1 ||
+        base->edition!=QA_EDITION_QUAKEWORLD || !files->directory || !files->home_prefix ||
+        strstr(files->directory,"..") || strpbrk(files->directory,"/\\:") ||
+        !qa_catalog_product_view_current(files->catalog,files->base_product,files->base) ||
+        qa_vfs_resources(files->content)!=qa_catalog_resources(files->catalog) ||
+        qa_vfs_resources(files->authority)!=qa_catalog_resources(files->catalog))
+        return error_message(error,"Source filesystem leaves its actual QW product and retained base");
+    const qa_product *ancestor=product; size_t depth=0;
+    while (ancestor->base) {
+        const qa_product *next=qa_catalog_product(files->catalog,ancestor->base);
+        if (!next || ++depth>qa_catalog_count(files->catalog))
+            return error_message(error,"Source filesystem has invalid retained ancestry");
+        if (next->edition!=QA_EDITION_QUAKEWORLD) break;
+        ancestor=next;
+    }
+    const char *leaf=strrchr(product->directory,'/');
+    if (ancestor->id!=base->id || !leaf || strlen(files->home_prefix)!=(size_t)(leaf-product->directory) ||
+        strncmp(files->home_prefix,product->directory,(size_t)(leaf-product->directory)))
+        return error_message(error,"Source filesystem changed its configured family namespace");
+    qa_fs_root *family=NULL,*home=NULL;
+    const char *family_prefix=qa_vfs_mount_root_prefix(files->authority,files->family);
+    const char *home_prefix=qa_vfs_mount_root_prefix(files->authority,files->home);
+    if (!source_mount(files->authority,files->family,false,&family) || !family_prefix || *family_prefix ||
+        !qa_fs_root_same_object(family,qa_catalog_product_family_root(files->catalog,files->product)) ||
+        !source_mount(files->authority,files->home,true,&home) || !home_prefix || *home_prefix)
+        return error_message(error,"Source filesystem lost its genuine physical family or writable home authority");
+    if (!files->changed)
+        return (!strcmp(files->directory,leaf+1) && qa_catalog_product_view_current(files->catalog,files->product,files->content)) ||
+            error_message(error,"Initial Source filesystem differs from its actual selected recipe");
+    if (!qa_vfs_retained_base_matches(files->content,files->base))
+        return error_message(error,"Source filesystem lost its pinned base search path");
+    size_t extra=qa_vfs_mount_count(files->content)-qa_vfs_mount_count(files->base);
+    if (!strcmp(files->directory,"id1") || !strcmp(files->directory,"qw"))
+        return !extra || error_message(error,"Base Source gamedir retained an addon search path");
+    if (extra<2) return error_message(error,"Addon Source gamedir lacks its actual loose owners");
+    qa_vfs_mount_info physical,user;
+    if (!qa_vfs_mount_at(files->content,extra-1,&physical) || !qa_vfs_mount_at(files->content,extra-2,&user))
+        return error_message(error,"Addon Source gamedir lacks its reached loose search rows");
+    const char *relative=qa_vfs_mount_root_prefix(files->content,physical.id);
+    const char *destination=qa_vfs_mount_root_prefix(files->content,user.id);
+    const char *directory=!strcmp(files->directory,".")?"":files->directory;
+    size_t a=strlen(files->home_prefix),b=strlen(directory);
+    bool valid=!physical.is_archive && !physical.writable && !physical.user_overlay && !physical.q3_demo &&
+        physical.comparison==QA_ARCHIVE_CASE_INSENSITIVE && !user.is_archive && user.writable &&
+        !user.user_overlay && !user.q3_demo && user.comparison==QA_ARCHIVE_CASE_INSENSITIVE &&
+        relative && !strcmp(relative,directory) && destination && strlen(destination)==a+b+(b?1:0) &&
+        !strncmp(destination,files->home_prefix,a) && (!b || (destination[a]=='/' && !strcmp(destination+a+1,directory))) &&
+        qa_fs_root_same_object(qa_vfs_mount_root(files->content,physical.id),family) &&
+        qa_fs_root_same_object(qa_vfs_mount_root(files->content,user.id),home);
+    const char *native=qa_vfs_mount_path(files->authority,files->family);
+    size_t length=native?strlen(native):0;
+    if (!valid || !native || length>SIZE_MAX-b-80) return error_message(error,"Addon Source gamedir lost its retained loose authorities");
+    char *expected=malloc(length+b+80);
+    if (!expected) { qa_error_set(error,QA_ERROR_MEMORY,0,"Qualifying retained Source package paths"); return false; }
+    for (size_t i=0;valid && i<extra-2;++i) {
+        qa_vfs_mount_info archive;
+        valid=qa_vfs_mount_at(files->content,i,&archive) && archive.is_archive && archive.format==QA_ARCHIVE_PAK &&
+            !archive.writable && !archive.user_overlay && !archive.q3_demo && archive.comparison==QA_ARCHIVE_CASE_INSENSITIVE;
+        if (valid) {
+            int written=snprintf(expected,length+b+80,"%s/%s%spak%zu.pak",native,directory,b?"/":"",extra-i-3);
+            const char *actual=qa_vfs_mount_path(files->content,archive.id);
+            valid=written>=0 && (size_t)written<length+b+80 && actual &&
+                qa_archive_paths_equal(actual,expected,QA_ARCHIVE_CASE_INSENSITIVE);
+        }
+    }
+    free(expected);
+    return valid || error_message(error,"Addon Source packages differ from the actual contiguous pakN recipe");
 }
 
 static void hash_u64(qa_sha256_context *h, uint64_t value)
@@ -804,16 +894,31 @@ bool qa_launch_instance_restore_client_profile(const qa_launch_client_metadata *
     owner_release(owner); return ok;
 }
 
-static bool resource_add(qa_launch_snapshot *s, qa_product_id product, const char *path, qa_error *error)
+static bool resource_add(qa_launch_snapshot *s,const qa_configuration_hooks *hooks,
+    qa_product_id product,const char *path,qa_error *error)
 {
     for (size_t i = 0; i < s->resource_count; ++i)
         if (s->resources[i].view.product == product && !strcmp(s->resources[i].view.path, path)) return true;
     resource_binding row = {0};
-    if (!qa_catalog_open(s->draft->catalog, product, &row.content, error)) return false;
+    bool supplied=false; qa_launch_source_files files={0};
+    if (hooks->resource_files && !hooks->resource_files(hooks->context,&s->draft->choices,product,path,&files,&supplied,error)) return false;
+    if (supplied) {
+        if (files.catalog!=s->draft->catalog || files.product!=product || !qa_launch_source_files_current(&files,error))
+            return error_message(error,"Source world resource changed its retained catalog/product authority");
+        row.kind=QA_LAUNCH_ORIGIN_SOURCE_QW; row.source=files;
+        row.content=qa_vfs_clone(files.content,error); row.source.content=row.content;
+        row.source.base=qa_vfs_clone(files.base,error); row.source.authority=qa_vfs_clone(files.authority,error);
+        row.source.directory=launch_text(s->draft,files.directory,error);
+        row.source.home_prefix=launch_text(s->draft,files.home_prefix,error);
+        if (!row.content || !row.source.base || !row.source.authority || !row.source.directory || !row.source.home_prefix) {
+            qa_vfs_destroy(row.content); qa_vfs_destroy(row.source.base); qa_vfs_destroy(row.source.authority); return false;
+        }
+        row.origin_product=product;
+    } else if (!qa_catalog_open(s->draft->catalog, product, &row.content, error)) return false;
     qa_resource *resource = NULL;
     if (!qa_vfs_acquire_receipt(row.content, path, &resource, &row.acquisition, error)) goto fail;
     row.view = (qa_launch_resource){product, NULL, resource};
-    if (!qa_catalog_product_acquisition_origin(s->draft->catalog, product, row.content,
+    if (!supplied && !qa_catalog_product_acquisition_origin(s->draft->catalog, product, row.content,
         &row.acquisition, &row.origin_product, &row.catalog_mount, error)) {
         error_message(error, "Acquired launch resource has no actual catalog mount owner"); goto fail;
     }
@@ -824,11 +929,48 @@ static bool resource_add(qa_launch_snapshot *s, qa_product_id product, const cha
     return true;
 fail:
     qa_resource_release(resource); qa_vfs_acquisition_dispose(&row.acquisition); qa_vfs_destroy(row.content);
+    qa_vfs_destroy(row.source.base); qa_vfs_destroy(row.source.authority);
     return false;
 }
 
+bool qa_configuration_source_map(qa_configuration *manager,const qa_launch_snapshot *candidate,
+    const qa_launch_source_files *files,qa_error *error)
+{
+    if (!manager || !candidate || candidate->pending_owner!=manager || candidate==manager->current || !manager->transactions ||
+        !files || files->catalog!=candidate->draft->catalog || files->product!=candidate->draft->choices.world.geometry ||
+        !qa_launch_source_files_current(files,error))
+        return error_message(error,"Source map refresh requires its actual pending candidate and retained file holder");
+    if (!files->changed) return true;
+    qa_launch_snapshot *pending=(qa_launch_snapshot *)candidate;
+    size_t index=0;
+    const qa_launch_world *world=&candidate->draft->choices.world;
+    while (index<pending->resource_count && (pending->resources[index].view.product!=world->geometry ||
+        strcmp(pending->resources[index].view.path,world->map))) ++index;
+    if (index==pending->resource_count) return error_message(error,"Pending Source map has no actual resource row");
+    resource_binding *old=pending->resources+index;
+    if (old->kind==QA_LAUNCH_ORIGIN_SOURCE_QW && qa_vfs_lookup_equal(old->content,files->content)) return true;
+    resource_binding replacement={.kind=QA_LAUNCH_ORIGIN_SOURCE_QW,.origin_product=world->geometry,.source=*files};
+    replacement.content=qa_vfs_clone(files->content,error); replacement.source.content=replacement.content;
+    replacement.source.base=qa_vfs_clone(files->base,error); replacement.source.authority=qa_vfs_clone(files->authority,error);
+    replacement.source.directory=launch_text(pending->draft,files->directory,error);
+    replacement.source.home_prefix=launch_text(pending->draft,files->home_prefix,error);
+    qa_resource *resource=NULL;
+    bool okay=replacement.content && replacement.source.base && replacement.source.authority &&
+        replacement.source.directory && replacement.source.home_prefix &&
+        qa_vfs_acquire_receipt(replacement.content,world->map,&resource,&replacement.acquisition,error);
+    if (!okay) {
+        qa_vfs_destroy(replacement.content); qa_vfs_destroy(replacement.source.base); qa_vfs_destroy(replacement.source.authority);
+        qa_vfs_acquisition_dispose(&replacement.acquisition); qa_resource_release(resource); return false;
+    }
+    replacement.view=(qa_launch_resource){world->geometry,old->view.path,resource};
+    resource_binding retired=*old; *old=replacement;
+    qa_resource_release((qa_resource *)retired.view.resource); qa_vfs_acquisition_dispose(&retired.acquisition);
+    qa_vfs_destroy(retired.content); qa_vfs_destroy(retired.source.base); qa_vfs_destroy(retired.source.authority);
+    return true;
+}
+
 static bool prepare_mounts(qa_launch_snapshot *candidate,
-    const qa_launch_restore_content *content, qa_error *error)
+    const qa_launch_restore_content *content,const qa_configuration_hooks *hooks,qa_error *error)
 {
     const qa_launch_choices *v = &candidate->draft->choices;
     if (content) {
@@ -859,20 +1001,28 @@ static bool prepare_mounts(qa_launch_snapshot *candidate,
             qa_resource_retain((qa_resource *)value.resource);
             qa_launch_resource_origin origin = {0};
             bool admitted = content->resource_origin(content->context, i, &origin, error);
-            row->content = origin.content;
+            row->content = origin.content; row->kind=origin.kind; row->source=origin.source;
             if (!admitted) return false;
             qa_product_id product = 0; qa_mount_id physical = 0;
             if (origin.catalog != candidate->draft->catalog || !origin.acquisition ||
                 origin.acquisition->resource_id != qa_resource_id(value.resource) ||
-                !qa_catalog_product_acquisition_origin(origin.catalog, value.product, origin.content,
-                    origin.acquisition, &product, &physical, error) ||
-                product != origin.product || physical != origin.catalog_mount)
+                (origin.kind==QA_LAUNCH_ORIGIN_SOURCE_QW?
+                    origin.catalog_mount || origin.product!=value.product || origin.source.catalog!=origin.catalog ||
+                    origin.source.product!=value.product || origin.source.content!=origin.content ||
+                    !qa_launch_source_files_current(&origin.source,error) || !qa_vfs_acquisition_retained(origin.content,origin.acquisition,error):
+                    origin.kind!=QA_LAUNCH_ORIGIN_CATALOG || !qa_catalog_product_acquisition_origin(origin.catalog,value.product,origin.content,
+                        origin.acquisition,&product,&physical,error) || product!=origin.product || physical!=origin.catalog_mount))
                 return error_message(error, "saved launch resource origin disagrees with its actual retained opening");
             char *lookup = qa_vfs_normalize_path(value.path, error);
             bool same = lookup && !strcmp(lookup, origin.acquisition->path);
             free(lookup);
             if (!same) return error_message(error, "saved launch resource opening differs from its requested path");
             row->origin_product = origin.product; row->catalog_mount = origin.catalog_mount;
+            if (row->kind==QA_LAUNCH_ORIGIN_SOURCE_QW) {
+                row->source.directory=launch_text(candidate->draft,origin.source.directory,error);
+                row->source.home_prefix=launch_text(candidate->draft,origin.source.home_prefix,error);
+                if (!row->source.directory || !row->source.home_prefix) return false;
+            }
             if (!retain_acquisition(origin.acquisition, &row->acquisition, error)) return false;
             if (value.product == v->world.geometry && !strcmp(value.path, v->world.map)) map = true;
             if (v->world.environment == QA_ENVIRONMENT_SELECTED &&
@@ -896,9 +1046,9 @@ static bool prepare_mounts(qa_launch_snapshot *candidate,
         .additional = products, .additional_count = count};
     bool ok = qa_catalog_mount_plan(candidate->draft->catalog, &mounts, &candidate->mounts, error);
     free(products);
-    if (!ok || !resource_add(candidate, v->world.geometry, v->world.map, error)) return false;
+    if (!ok || !resource_add(candidate,hooks, v->world.geometry, v->world.map, error)) return false;
     if (v->world.environment == QA_ENVIRONMENT_SELECTED &&
-        !resource_add(candidate, v->world.environment_product, v->world.environment_path, error)) return false;
+        !resource_add(candidate,hooks, v->world.environment_product, v->world.environment_path, error)) return false;
     return true;
 }
 
@@ -971,7 +1121,7 @@ static bool configuration_prepare(qa_configuration *manager, const qa_launch_dra
     qa_configuration_transaction *t = calloc(1, sizeof(*t));
     qa_launch_snapshot *s = calloc(1, sizeof(*s));
     if (!t || !s) { free(t); free(s); qa_error_set(error, QA_ERROR_MEMORY, 0, "cannot allocate configuration transaction"); return false; }
-    s->references = 1; t->manager = manager; t->candidate = s; t->generation = manager->generation;
+    s->references = 1; s->pending_owner=manager; t->manager = manager; t->candidate = s; t->generation = manager->generation;
     t->content = content;
     t->replacing = replacing;
     t->previous = manager->current; qa_launch_snapshot_retain(t->previous); ++manager->transactions;
@@ -983,7 +1133,7 @@ static bool configuration_prepare(qa_configuration *manager, const qa_launch_dra
     for (size_t i = 0; i < v->mod_count; ++i) count += v->mods[i].enabled;
     s->instances = calloc(count ? count : 1, sizeof(*s->instances));
     if (!s->instances) { qa_error_set(error, QA_ERROR_MEMORY, 0, "cannot retain provider instances"); goto fail; }
-    if (!prepare_mounts(s, content, error)) goto fail;
+    if (!prepare_mounts(s, content,&manager->hooks,error)) goto fail;
     for (size_t i = 0; i < v->provider_count; ++i)
         if (!prepare_instance(t, &v->providers[i], instance_roles(v, v->providers[i].instance), error)) goto fail;
     for (size_t i = 0; i < v->mod_count; ++i) {
@@ -1044,7 +1194,7 @@ bool qa_configuration_commit(qa_configuration_transaction *t, qa_error *error)
         return error_message(error, "configuration commit requires a safe point");
     }
     qa_launch_snapshot *previous = manager->current;
-    manager->current = t->candidate; t->candidate = NULL; ++manager->generation;
+    manager->current = t->candidate; manager->current->pending_owner=NULL; t->candidate = NULL; ++manager->generation;
     manager->hooks.publish(manager->hooks.context, previous, manager->current, t->ticket);
     t->ticket = NULL; t->validated = false;
     qa_launch_snapshot_release(previous);
@@ -1095,7 +1245,7 @@ bool qa_configuration_commit_restored(qa_configuration_transaction *t, qa_error 
     if (manager->busy || manager->current || manager->generation || manager->transactions != 1 ||
         !manager->hooks.safe(manager->hooks.context))
         return error_message(error, "isolated configuration candidate is stale or busy");
-    manager->current = t->candidate; t->candidate = NULL;
+    manager->current = t->candidate; manager->current->pending_owner=NULL; t->candidate = NULL;
     manager->generation = t->restored_generation;
     qa_launch_snapshot_release(t->previous);
     --manager->transactions;

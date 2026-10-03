@@ -962,6 +962,35 @@ static bool source_common_command(void *context,qa_application *app,
         return fail(error,QA_ERROR_ARGUMENT,"Common command lost its actual primary Source");
     return frontend_commands_source(manager->frontend,&actual,call,handled,error);
 }
+static frontend_config_source *source_files_owner(frontend_config_store *manager,qa_application *app,
+    const qa_application_startup_source *source)
+{
+    frontend_config_source *physical=source?frontend_config_store_source(manager,source->console):NULL;
+    const qa_launch_instance *descriptor=physical?instance(physical):NULL;
+    return physical && physical->application==app && source->descriptor && descriptor &&
+        descriptor->storage==source->descriptor->storage && descriptor->state==source->descriptor->state &&
+        physical->cvars==source->cvars && physical->scope.kind==source->scope.kind &&
+        physical->scope.provider==source->scope.provider && physical->declaration_owner==source->declaration_owner &&
+        physical->command.owner==source->command.owner && source->command.dialect==QA_CONSOLE_QW?physical:NULL;
+}
+static bool source_files(void *context,qa_application *app,const qa_application_startup_source *source,
+    qa_launch_source_files *out,const char **directory,qa_error *error)
+{
+    frontend_config_source *owner=source_files_owner(context,app,source);
+    if (!owner || !out || !directory || !frontend_config_files_source_read(owner->files,out,error))
+        return fail(error,QA_ERROR_ARGUMENT,"Source filesystem lost its actual retained configuration tuple");
+    *directory=frontend_config_files_source_directory(owner->files);
+    return *directory!=NULL || fail(error,QA_ERROR_ARGUMENT,"Source filesystem has no reached native write directory");
+}
+static bool source_gamedir(void *context,qa_application *app,const qa_application_startup_source *source,
+    const qa_command_invocation *call,const char *directory,bool *changed,qa_error *error)
+{
+    frontend_config_source *owner=source_files_owner(context,app,source);
+    if (!owner || !call || call->console!=source->console || call->context.origin==QA_COMMAND_REMOTE ||
+        !qa_console_invocation_current(call->console,call))
+        return fail(error,QA_ERROR_ARGUMENT,"Source gamedir lost its current local operator invocation");
+    return frontend_config_files_source_gamedir(owner->files,directory,changed,error);
+}
 static bool fraglog_command(void *context,const qa_command_invocation *call,qa_error *error)
 {
     frontend_config_source *source=context; qa_settings_store store={0}; qa_fs_root *root=NULL;
@@ -2770,7 +2799,7 @@ frontend_config_store *frontend_config_store_create(qa_frontend *frontend,qa_err
         .ready_publication=ready_publication,.owned_publication_ready=owned_publication_ready,
         .consume_publication=consume_publication,.finish_publication=finish_publication,
         .abort_publication=abort_publication,.qw_logfrag_write=qw_log_write,.qw_logfrag_enabled=qw_log_enabled,
-        .source_common_command=source_common_command};
+        .source_common_command=source_common_command,.source_files=source_files,.source_gamedir=source_gamedir};
     return manager;
 }
 const qa_application_startup_hooks *frontend_config_store_hooks(frontend_config_store *manager)
@@ -2781,6 +2810,34 @@ bool frontend_config_store_retired_ready(const frontend_config_store *manager,qa
         !manager->sources && !manager->variable_carries && frontend_remote_configs_empty(manager->clients) &&
         frontend_neutral_configs_empty(manager->neutral)) ||
         fail(error,QA_ERROR_ARGUMENT,"Application callback context still retains actual configuration source owners");
+}
+bool frontend_config_store_restore_abort_unbound(frontend_config_store *manager,
+    qa_application *application,qa_error *error)
+{
+    if (!manager) return true;
+    bool pending=false;
+    for (frontend_config_source *source=manager->sources;source;source=source->next)
+        if (source->imported && !source->console && !source->cvars && !source->metadata) pending=true;
+    if (!pending) return true;
+    if (!manager->restoring || !application || manager->frontend->application!=application ||
+        qa_application_get_state(application)!=QA_APPLICATION_STOPPING || manager->running ||
+        manager->prepared || manager->shared || manager->publication || manager->key_publication.owner)
+        return fail(error,QA_ERROR_ARGUMENT,"Unbound configuration import disposal requires its returned retired application");
+    frontend_config_source **at=&manager->sources;
+    while (*at) {
+        frontend_config_source *source=*at;
+        if (!source->imported || source->console || source->cvars || source->metadata) {
+            at=&source->next; continue;
+        }
+        if (source->application!=application || !source->saved_instance || !*source->saved_instance ||
+            source->candidate || source->running || source->phase || source->bindings ||
+            source->admin_registered || source->write_registered || source->dump_registered || source->frag_registered)
+            return fail(error,QA_ERROR_ARGUMENT,"Imported configuration row retains a genuine bound callback owner");
+        frontend_config_source *next=source->next;
+        if (!source_destroy(source,error)) return false;
+        *at=next;
+    }
+    return true;
 }
 bool frontend_config_store_destroy(frontend_config_store *manager,qa_error *error)
 {

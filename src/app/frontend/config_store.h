@@ -31,6 +31,7 @@ typedef struct frontend_config_host_cvars {
 frontend_config_store *frontend_config_store_create(qa_frontend *,qa_error *);
 bool frontend_config_store_destroy(frontend_config_store *,qa_error *);
 bool frontend_config_store_retired_ready(const frontend_config_store *,qa_error *);
+bool frontend_config_store_restore_abort_unbound(frontend_config_store *,qa_application *,qa_error *);
 const qa_application_startup_hooks *frontend_config_store_hooks(frontend_config_store *);
 frontend_config_source *frontend_config_store_source(const frontend_config_store *,const qa_console *);
 frontend_remote_config *frontend_config_store_client(const frontend_config_store *,const qa_console *);

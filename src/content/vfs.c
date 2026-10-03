@@ -592,7 +592,10 @@ qa_vfs *qa_vfs_clone(const qa_vfs *vfs, qa_error *error)
         *source = *vfs->mounts[i];
         if (!root_references_copy(source, vfs->mounts[i], error)) { free(source); goto memory_failure; }
         source->path = copy_string(vfs->mounts[i]->path);
-        if (source->path == NULL) { free(source->root_references); free(source); goto memory_failure; }
+        source->root_prefix = vfs->mounts[i]->root_prefix ? copy_string(vfs->mounts[i]->root_prefix) : NULL;
+        if (!source->path || (vfs->mounts[i]->root_prefix && !source->root_prefix)) {
+            free(source->path); free(source->root_prefix); free(source->root_references); free(source); goto memory_failure;
+        }
         qa_fs_file_retain(source->archive_file);
         qa_fs_root_retain(source->root);
         source->referenced = false;
@@ -656,7 +659,8 @@ bool qa_vfs_lookup_equal(const qa_vfs *left, const qa_vfs *right)
         const mount *a = left->mounts[i], *b = right->mounts[i];
         if (a->id != b->id || a->archive != b->archive || a->archive_file != b->archive_file ||
             a->root != b->root || !qa_fs_identity_equal(&a->identity, &b->identity) ||
-            strcmp(a->path, b->path) || a->comparison != b->comparison ||
+            strcmp(a->path, b->path) || strcmp(a->root_prefix ? a->root_prefix : "", b->root_prefix ? b->root_prefix : "") ||
+            a->comparison != b->comparison ||
             a->writable != b->writable || a->user_overlay != b->user_overlay ||
             a->q3_demo != b->q3_demo) return false;
     }
@@ -679,6 +683,7 @@ void vfs_mount_free(mount *source)
     qa_fs_root_close(source->root);
     free(source->root_references);
     free(source->path);
+    free(source->root_prefix);
     free(source);
 }
 
@@ -725,14 +730,14 @@ void qa_vfs_destroy(qa_vfs *vfs)
     free(vfs);
 }
 
-static package *package_open(qa_resource_pool *pool, const char *path,
-                              qa_archive_kind kind, qa_fs_file **out_file,
+static package *package_open(qa_resource_pool *pool, const char *path, qa_fs_root *parent,
+                              const char *relative, qa_archive_kind kind, qa_fs_file **out_file,
                               qa_fs_identity *out_identity, qa_error *error)
 {
     qa_fs_file *file = NULL;
     qa_fs_identity identity;
-    if (!qa_fs_file_open(path, &file, &identity, error))
-        return NULL;
+    if (!(parent ? qa_fs_root_file_open(parent, relative, &file, &identity, error) :
+        qa_fs_file_open(path, &file, &identity, error))) return NULL;
     qa_archive_kind extension_kind = kind == QA_ARCHIVE_AUTO ? qa_archive_kind_for_path(path) : kind;
     for (package *archive = pool->packages; archive != NULL; archive = archive->next) {
         qa_archive_kind existing_kind = qa_archive_get_kind(archive->archive);
@@ -871,14 +876,15 @@ bool qa_vfs_mount_retained(qa_vfs *vfs, const qa_vfs *retained, qa_mount_id id,
     }
     mount *copy = malloc(sizeof(*copy));
     char *path = copy_string(source->path);
-    if (!copy || !path) {
-        free(copy); free(path);
+    char *root_prefix = source->root_prefix ? copy_string(source->root_prefix) : NULL;
+    if (!copy || !path || (source->root_prefix && !root_prefix)) {
+        free(copy); free(path); free(root_prefix);
         qa_error_set(error, QA_ERROR_MEMORY, 0, "Cannot retain scoped mount authority");
         return false;
     }
     *copy = *source;
-    if (!root_references_copy(copy, source, error)) { free(copy); free(path); return false; }
-    copy->path = path; copy->comparison = comparison;
+    if (!root_references_copy(copy, source, error)) { free(copy); free(path); free(root_prefix); return false; }
+    copy->path = path; copy->root_prefix = root_prefix; copy->comparison = comparison;
     copy->writable = writable; copy->user_overlay = false; copy->referenced = false;
     qa_fs_file_retain(copy->archive_file);
     qa_fs_root_retain(copy->root);
@@ -887,9 +893,9 @@ bool qa_vfs_mount_retained(qa_vfs *vfs, const qa_vfs *retained, qa_mount_id id,
     return true;
 }
 
-bool qa_vfs_mount_archive(qa_vfs *vfs, const char *path, qa_archive_kind kind,
-                          qa_archive_comparison comparison, qa_mount_id *out,
-                          qa_error *error)
+static bool mount_archive(qa_vfs *vfs, const char *path, qa_fs_root *parent,
+    const char *relative, qa_archive_kind kind, qa_archive_comparison comparison,
+    qa_mount_id *out, qa_error *error)
 {
     if (vfs == NULL || path == NULL || path[0] == '\0' || out == NULL ||
         !valid_comparison(comparison) || kind < QA_ARCHIVE_AUTO || kind > QA_ARCHIVE_KPF) {
@@ -901,7 +907,7 @@ bool qa_vfs_mount_archive(qa_vfs *vfs, const char *path, qa_archive_kind kind,
         qa_error_set(error, QA_ERROR_MEMORY, 0, "cannot allocate mount");
         return false;
     }
-    source->archive = package_open(vfs->pool, path, kind,
+    source->archive = package_open(vfs->pool, path, parent, relative, kind,
                                    &source->archive_file,
                                    &source->identity, error);
     if (source->archive == NULL) {
@@ -923,6 +929,21 @@ bool qa_vfs_mount_archive(qa_vfs *vfs, const char *path, qa_archive_kind kind,
         return false;
     }
     return true;
+}
+
+bool qa_vfs_mount_archive(qa_vfs *vfs, const char *path, qa_archive_kind kind,
+    qa_archive_comparison comparison, qa_mount_id *out, qa_error *error)
+{
+    return mount_archive(vfs, path, NULL, NULL, kind, comparison, out, error);
+}
+bool qa_vfs_mount_archive_from(qa_vfs *vfs, qa_fs_root *parent, const char *relative,
+    qa_archive_kind kind, qa_archive_comparison comparison, qa_mount_id *out, qa_error *error)
+{
+    if (!parent) { qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Archive requires its retained directory authority"); return false; }
+    char *normalized = qa_vfs_normalize_path(relative, error), *path = NULL;
+    bool okay = normalized && qa_fs_root_join(parent, normalized, &path, error) &&
+        mount_archive(vfs, path, parent, normalized, kind, comparison, out, error);
+    free(normalized); free(path); return okay;
 }
 
 bool qa_vfs_mount_directory(qa_vfs *vfs, const char *path,
@@ -970,6 +991,29 @@ static mount *find_mount(const qa_vfs *vfs, qa_mount_id id)
     return NULL;
 }
 
+bool qa_vfs_mount_child(qa_vfs *vfs, qa_fs_root *parent, const char *relative,
+    qa_archive_comparison comparison, bool writable, qa_mount_id *out, qa_error *error)
+{
+    if (!vfs || !parent || !relative || !out || !valid_comparison(comparison)) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid retained child directory mount"); return false;
+    }
+    char *prefix = qa_vfs_normalize_path(relative, error), *path = NULL;
+    if (!prefix) return false;
+    if (!qa_fs_root_join(parent, prefix, &path, error)) { free(prefix); return false; }
+    mount *source = calloc(1, sizeof(*source));
+    if (!source) {
+        free(prefix); free(path);
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining child directory search authority"); return false;
+    }
+    source->root = parent; qa_fs_root_retain(parent);
+    source->root_prefix = prefix; source->path = path;
+    source->comparison = comparison; source->writable = writable;
+    qa_fs_object_reference reference;
+    if (!qa_fs_root_reference_read(parent, &reference) || !vfs_root_reference_add(source, &reference, error) ||
+        !add_mount(vfs, source, out, error)) { vfs_mount_free(source); return false; }
+    return true;
+}
+
 bool qa_vfs_retained_recipe_matches(const qa_vfs *view, const qa_vfs *retained,
     const qa_mount_id *ordered_ids, size_t count, qa_archive_comparison comparison,
     bool force_mount_q3_demo)
@@ -983,7 +1027,9 @@ bool qa_vfs_retained_recipe_matches(const qa_vfs *view, const qa_vfs *retained,
         const mount *source = find_mount(retained, ordered_ids[i]);
         if (!source || actual->id != (qa_mount_id)i + 1 || actual->archive != source->archive ||
             !qa_fs_identity_equal(&actual->identity, &source->identity) ||
-            strcmp(actual->path, source->path) || actual->comparison != comparison ||
+            strcmp(actual->path, source->path) ||
+            strcmp(actual->root_prefix ? actual->root_prefix : "", source->root_prefix ? source->root_prefix : "") ||
+            actual->comparison != comparison ||
             actual->writable != source->writable || actual->user_overlay ||
             actual->q3_demo != (source->q3_demo || force_mount_q3_demo))
             return false;
@@ -995,6 +1041,28 @@ bool qa_vfs_retained_recipe_matches(const qa_vfs *view, const qa_vfs *retained,
         } else if (actual->archive_file || source->archive_file ||
             !qa_fs_root_same_object(actual->root, source->root))
             return false;
+    }
+    return true;
+}
+
+bool qa_vfs_retained_base_matches(const qa_vfs *view, const qa_vfs *base)
+{
+    if (!view || !base || view->pool != base->pool || view->count < base->count ||
+        view->prefixes || base->prefixes || view->links || base->links ||
+        view->pure_count || base->pure_count || view->q3_demo || base->q3_demo) return false;
+    size_t first = view->count - base->count;
+    for (size_t i = 0; i < base->count; ++i) {
+        const mount *actual = view->mounts[first + i], *source = base->mounts[i];
+        if (actual->id != source->id || actual->archive != source->archive ||
+            !qa_fs_identity_equal(&actual->identity, &source->identity) ||
+            strcmp(actual->path, source->path) ||
+            strcmp(actual->root_prefix ? actual->root_prefix : "", source->root_prefix ? source->root_prefix : "") ||
+            actual->comparison != source->comparison || actual->writable != source->writable ||
+            actual->user_overlay != source->user_overlay || actual->q3_demo != source->q3_demo) return false;
+        if (source->archive) {
+            if (!actual->archive_file || !source->archive_file || actual->root || source->root) return false;
+        } else if (actual->archive_file || source->archive_file ||
+            !qa_fs_root_same_object(actual->root, source->root)) return false;
     }
     return true;
 }
@@ -1450,14 +1518,37 @@ static bool loose_name_equal(const char *left, const char *right,
     return qa_archive_paths_equal(left, right, *comparison);
 }
 
+static char *mount_relative(const mount *source, const char *path, qa_error *error)
+{
+    if (!source->root_prefix) {
+        char *copy = copy_string(path);
+        if (!copy) qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating directory lookup");
+        return copy;
+    }
+    size_t prefix = strlen(source->root_prefix), length = strlen(path);
+    if (prefix > SIZE_MAX - length - 2) {
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "Child directory lookup extent overflow"); return NULL;
+    }
+    char *joined = malloc(prefix + length + 2);
+    if (!joined) {
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating child directory lookup"); return NULL;
+    }
+    memcpy(joined, source->root_prefix, prefix);
+    if (length) joined[prefix++] = '/';
+    memcpy(joined + prefix, path, length + 1);
+    return joined;
+}
 static char *resolve_spelling(const mount *source, const char *path,
                               qa_error *error)
 {
     qa_archive_comparison comparison = source->comparison;
     char *resolved = NULL;
-    if (!qa_fs_root_resolve(source->root, path, loose_name_equal,
-                            &comparison, true, &resolved, error))
-        return NULL;
+    char *relative = mount_relative(source, path, error);
+    if (!relative) return NULL;
+    bool okay = qa_fs_root_resolve(source->root, relative, loose_name_equal,
+        &comparison, true, &resolved, error);
+    free(relative);
+    if (!okay) return NULL;
     return resolved;
 }
 
@@ -1569,7 +1660,7 @@ static bool acquire_loose(qa_resource_pool *pool, const mount *source,
         *out = cached;
         return true;
     }
-    qa_resource *resource = new_resource(pool, resolved, error);
+    qa_resource *resource = new_resource(pool, source->root_prefix ? path : resolved, error);
     free(resolved);
     if (resource == NULL) {
         qa_fs_file_close(file);
@@ -2226,9 +2317,11 @@ static bool write_publish(qa_vfs *vfs, qa_mount_id id, const char *path,
     char *normalized = qa_vfs_normalize_path(path, error);
     if (normalized == NULL) return false;
     uint64_t nonce = vfs->next_temporary++;
-    bool success = qa_fs_root_publish(source->root, normalized, bytes,
+    char *relative = mount_relative(source, normalized, error);
+    if (!relative) { free(normalized); return false; }
+    bool success = qa_fs_root_publish(source->root, relative, bytes,
                                       nonce, exclusive, private_file, created, error);
-    free(normalized);
+    free(relative); free(normalized);
     return success;
 }
 
@@ -2255,8 +2348,10 @@ bool qa_vfs_remove(qa_vfs *vfs, qa_mount_id id, const char *path, qa_error *erro
     if (source == NULL) return false;
     char *normalized = qa_vfs_normalize_path(path, error);
     if (normalized == NULL) return false;
-    bool success = qa_fs_root_remove(source->root, normalized, error);
-    free(normalized);
+    char *relative = mount_relative(source, normalized, error);
+    if (!relative) { free(normalized); return false; }
+    bool success = qa_fs_root_remove(source->root, relative, error);
+    free(relative); free(normalized);
     return success;
 }
 
@@ -2286,8 +2381,11 @@ static bool open_stream(qa_vfs *vfs, qa_mount_id id, const char *path,
                                 : QA_FS_STREAM_APPEND_SYNC;
     qa_fs_stream *stream = NULL;
     uint64_t initial_size = 0;
-    if (!qa_fs_root_stream_open(source->root, normalized, fs_mode, resume,
-                                &stream, &initial_size, error)) {
+    char *relative = mount_relative(source, normalized, error);
+    bool opened = relative && qa_fs_root_stream_open(source->root, relative, fs_mode, resume,
+        &stream, &initial_size, error);
+    free(relative);
+    if (!opened) {
         free(file);
         free(normalized);
         return false;
@@ -2385,6 +2483,10 @@ const char *qa_vfs_mount_path(const qa_vfs *vfs, qa_mount_id id) {
 qa_fs_root *qa_vfs_mount_root(const qa_vfs *vfs, qa_mount_id id) {
     const mount *source = vfs ? find_mount(vfs, id) : NULL;
     return source && !source->archive ? source->root : NULL;
+}
+const char *qa_vfs_mount_root_prefix(const qa_vfs *vfs, qa_mount_id id) {
+    const mount *source = vfs ? find_mount(vfs, id) : NULL;
+    return source && !source->archive ? (source->root_prefix ? source->root_prefix : "") : NULL;
 }
 size_t qa_vfs_link_count(const qa_vfs *vfs) {
     size_t count = 0;

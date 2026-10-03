@@ -667,7 +667,8 @@ bool qa_frontend_destroy(qa_frontend *frontend, qa_error *error)
     if (!frontend_component_scene_restores_destroy(frontend,error)) return false;
     if (frontend->application &&
         (!frontend_tools_before_world_change(frontend, error) ||
-         !qa_application_retire_sources(frontend->application, error))) return false;
+         !qa_application_retire_sources(frontend->application, error) ||
+         !frontend_config_store_restore_abort_unbound(frontend->config_store,frontend->application,error))) return false;
     if (!frontend_network_destroy(frontend, error) || !frontend_tools_destroy(frontend, error)) return false;
     frontend_qc_rerelease_destroy(frontend);
     if (frontend->config_store && !frontend_config_store_retired_ready(frontend->config_store,error)) return false;

@@ -18,6 +18,7 @@ bool application_native_q1_source_logfrag_enabled(application_provider *,bool *,
 bool application_native_q1_source_info(application_provider *,bool local,const char **,qa_error *);
 /* SV_New reads only svs.info; an absent or empty *gamedir means qw. */
 bool application_native_q1_source_visible_gamedir(application_provider *,const char **,qa_error *);
+bool application_native_q1_source_files(application_provider *,qa_launch_source_files *,const char **,qa_error *);
 bool application_native_q1_world_info(void *,const char *,qa_string_id *,qa_error *);
 void application_native_q1_source_info_map_reset(void *);
 bool application_native_q1_source_info_flush(application_provider *,qa_error *);

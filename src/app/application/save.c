@@ -1560,6 +1560,8 @@ static bool content_resource_origin(void *opaque, size_t index, qa_launch_resour
 {
     qa_application_content_graph *graph = opaque;
     if (!application_save_content_launch_resource_origin(graph, index, out, error)) return false;
+    if (out->kind == QA_LAUNCH_ORIGIN_SOURCE_QW)
+        return application_save_content_launch_source_claim(graph, index, out, error);
     uint64_t view = qa_application_content_view_id(graph, out->content);
     out->content = NULL;
     return qa_application_content_retain_view(graph, view, &out->content, error);
