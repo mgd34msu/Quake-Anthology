@@ -14,7 +14,6 @@ struct qa_qc_game {
     size_t binding_count;
     size_t calls;
     bool loading;
-    bool restoring;
 };
 bool qc_game_fail(qa_error *, qa_status, const char *);
 bool qc_game_builtin(void *, qa_qc_instance *, qa_qc_builtin, const char *, qa_error *);

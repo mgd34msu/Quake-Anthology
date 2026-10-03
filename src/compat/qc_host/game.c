@@ -52,10 +52,8 @@ static bool restore_host(void *context, qa_bytes bytes, qa_error *error) {
     if (!bytes.data || bytes.size < 8 || qa_load_u32le(bytes.data) != game->options.max_clients ||
         qa_load_u32le(bytes.data + 4) > 1)
         return qc_game_fail(error, QA_ERROR_FORMAT, "QC host checkpoint identity differs");
-    game->restoring = true;
     bool ok = game->options.restore(game->options.context,
         (qa_bytes){bytes.data + 8, bytes.size - 8}, error);
-    game->restoring = false;
     if (!ok) return false;
     game->loading = qa_load_u32le(bytes.data + 4) != 0; return true;
 }
@@ -125,11 +123,6 @@ bool qa_qc_game_destroy(qa_qc_game *game, qa_error *error) {
 }
 bool qa_qc_game_idle(const qa_qc_game *game) { return game && !game->calls && qa_qc_idle(game->vm); }
 qa_qc_instance *qa_qc_game_instance(qa_qc_game *game) { return game ? game->vm : NULL; }
-bool qa_qc_game_rebind_console(qa_qc_game *game, qa_cvars *cvars, qa_console *console, qa_error *error) {
-    if (!game || !cvars || !console || (!game->restoring && (game->calls || !qa_qc_idle(game->vm))))
-        return qc_game_fail(error, QA_ERROR_ARGUMENT, "Cannot replace active QC console services");
-    game->options.cvars = cvars; game->options.console = console; return true;
-}
 bool qa_qc_game_bind_client(qa_qc_game *game, uint32_t client, qa_actor_id actor, qa_error *error) {
     if (!game || !client || client > game->options.max_clients)
         return qc_game_fail(error, QA_ERROR_ARGUMENT, "QC client slot is outside reservation");

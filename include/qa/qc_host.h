@@ -53,8 +53,6 @@ bool qa_qc_game_loading(qa_qc_game *, bool loading, qa_error *);
 /* Called only after retiring all old actor bindings. Retains engine-owned
  * continuations, recreates level-private globals/entities and VM strings. */
 bool qa_qc_game_reset_level(qa_qc_game *, qa_error *);
-/* Rebind only at an idle boundary or within the host restore callback. */
-bool qa_qc_game_rebind_console(qa_qc_game *, qa_cvars *, qa_console *, qa_error *);
 /* A call saves reserved ABI and supplied globals, stages typed arguments, and
  * restores every staged word on success or guest failure, including reentry.
  * Result is three raw words; integer bits preserve entity/string/function ABI. */

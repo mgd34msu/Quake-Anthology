@@ -1,6 +1,7 @@
 #include "guest_qc_profile.h"
 #include "qa/vfs_view_save.h"
 #include "qa/source_save.h"
+#include "qa/cvars_save.h"
 #include "guest_qc_rerelease.h"
 #include "control_frame.h"
 #include "startup_flow.h"
@@ -288,14 +289,8 @@ bool application_qc_capture_engine(void *opaque, qa_buffer *out, qa_error *error
     }
     for (size_t i = 0; i < 64; ++i)
         if (!add_size(&capacity, (engine->lightstyles[i] ? strlen(engine->lightstyles[i]) : 0) + 4, error)) return false;
-    size_t cvar_count = qa_cvars_count(engine->cvars);
-    if (cvar_count > UINT32_MAX || engine->resource_count > UINT32_MAX || engine->message_count > UINT32_MAX)
+    if (engine->resource_count > UINT32_MAX || engine->message_count > UINT32_MAX)
         return application_fail(error, QA_ERROR_MEMORY, "QuakeC engine checkpoint record count overflow");
-    for (size_t i = 0; i < cvar_count; ++i) {
-        const qa_cvar_view *cvar = qa_cvars_at(engine->cvars, i);
-        if (!add_size(&capacity, strlen(cvar->name) + strlen(cvar->value) + strlen(cvar->reset_value) +
-            (cvar->latched_value ? strlen(cvar->latched_value) : 0) + 64, error)) return false;
-    }
     qa_buffer rerelease={0};
     if (!application_qc_rerelease_checkpoint(engine,&rerelease,error)) return false;
     if (rerelease.size>UINT32_MAX || !add_size(&capacity,rerelease.size+4,error)) {
@@ -311,12 +306,17 @@ bool application_qc_capture_engine(void *opaque, qa_buffer *out, qa_error *error
             openings[i].size>UINT32_MAX || !add_size(&capacity,openings[i].size+4,error)) {
             openings_free(openings,engine->resource_count); qa_buffer_free(&rerelease); return false;
         }
-    qa_cvar_registry_state registry;
-    qa_cvar_record_state *metadata = cvar_count ? calloc(cvar_count, sizeof(*metadata)) : NULL;
-    if (cvar_count && metadata == NULL) { openings_free(openings,engine->resource_count); qa_buffer_free(&rerelease); return application_fail(error, QA_ERROR_MEMORY, "Allocating QuakeC cvar metadata"); }
-    if (!qa_cvars_capture_metadata(engine->cvars, &registry, metadata, cvar_count, error)) { openings_free(openings,engine->resource_count); qa_buffer_free(&rerelease); free(metadata); return false; }
+    qa_buffer registry = {0};
+    bool registry_ok = qa_cvars_save_capture(engine->cvars, &registry, error);
+    if (registry_ok && registry.size > QC_ENGINE_LIMIT - 4)
+        registry_ok = application_fail(error, QA_ERROR_MEMORY, "QuakeC cvar registry exceeds its checkpoint limit");
+    if (registry_ok) registry_ok = add_size(&capacity, registry.size + 4, error);
+    if (!registry_ok) {
+        openings_free(openings,engine->resource_count); qa_buffer_free(&rerelease);
+        qa_buffer_free(&registry); return false;
+    }
     uint8_t *data = malloc(capacity);
-    if (data == NULL) { openings_free(openings,engine->resource_count); qa_buffer_free(&rerelease); free(metadata); return application_fail(error, QA_ERROR_MEMORY, "Allocating QuakeC engine checkpoint"); }
+    if (data == NULL) { openings_free(openings,engine->resource_count); qa_buffer_free(&rerelease); qa_buffer_free(&registry); return application_fail(error, QA_ERROR_MEMORY, "Allocating QuakeC engine checkpoint"); }
     qa_net_writer writer; qa_net_writer_init(&writer, data, capacity, error);
     const qa_actor_registry *actors = qa_session_actors(engine->services.session);
     const qa_sha256_digest *declaration = qa_resource_digest(engine->provider->launch->declaration);
@@ -352,19 +352,8 @@ bool application_qc_capture_engine(void *opaque, qa_buffer *out, qa_error *error
     }
     if (ok) ok = qa_net_write_u32(&writer, (uint32_t)engine->resource_count);
     for (size_t i = 0; ok && i < engine->resource_count; ++i) ok=write_resource(&writer,engine->resources+i,openings+i);
-    if (ok) ok = qa_net_write_u64(&writer, registry.next_handle) && qa_net_write_u32(&writer, registry.modified_flags) &&
-        qa_net_write_u8(&writer, registry.userinfo_modified) && qa_net_write_u8(&writer, registry.server_active) &&
-        qa_net_write_u8(&writer, registry.high_characters) && qa_net_write_u8(&writer, registry.cheats) &&
-        qa_net_write_u32(&writer, (uint32_t)cvar_count);
-    for (size_t i = 0; ok && i < cvar_count; ++i) {
-        const qa_cvar_view *cvar = qa_cvars_at(engine->cvars, i);
-        ok = write_text(&writer, cvar->name) && write_text(&writer, cvar->value) &&
-             write_text(&writer, cvar->reset_value) && qa_net_write_u8(&writer, cvar->latched_value != NULL) &&
-             write_text(&writer, cvar->latched_value) && qa_net_write_u32(&writer, cvar->flags) &&
-             qa_net_write_u64(&writer, metadata[i].handle) && qa_net_write_u64(&writer, metadata[i].owner) &&
-             qa_net_write_u64(&writer, metadata[i].modification_count) &&
-             qa_net_write_u8(&writer, metadata[i].modified) && qa_net_write_u8(&writer, metadata[i].console_created);
-    }
+    if (ok) ok = qa_net_write_u32(&writer, (uint32_t)registry.size) &&
+        qa_net_write_data(&writer, registry.data, registry.size);
     for (size_t i = 0; ok && i < 64; ++i) ok = write_text(&writer, engine->lightstyles[i]);
     if (ok) ok=qa_net_write_u32(&writer,(uint32_t)engine->original_extension.size) &&
         qa_net_write_data(&writer,engine->original_extension.data,engine->original_extension.size);
@@ -382,7 +371,7 @@ bool application_qc_capture_engine(void *opaque, qa_buffer *out, qa_error *error
                 write_actor(&writer, actors, reference->actor) && qa_net_write_u8(&writer, reference->packed_sound);
         }
     }
-    free(metadata); qa_buffer_free(&rerelease); openings_free(openings,engine->resource_count);
+    qa_buffer_free(&registry); qa_buffer_free(&rerelease); openings_free(openings,engine->resource_count);
     if (!ok) { free(data); return false; }
     *out = (qa_buffer){data, qa_net_writer_size(&writer)}; return true;
 }
@@ -398,7 +387,6 @@ static void dispose_candidate(struct application_qc_state *candidate)
     for (size_t i = 0; i < 64; ++i) free(candidate->lightstyles[i]);
     qa_buffer_free(&candidate->original_extension);
     application_qc_rerelease_destroy(candidate);
-    qa_console_destroy(candidate->console); qa_cvars_destroy(candidate->cvars);
     free(candidate->resources); free(candidate->messages); free(candidate->clients);
 }
 bool application_qc_restore_engine(void *opaque, qa_bytes bytes, qa_error *error)
@@ -499,36 +487,9 @@ bool application_qc_restore_engine(void *opaque, qa_bytes bytes, qa_error *error
             if (entry->kind==candidate.resources[j].kind && !strcmp(entry->name,candidate.resources[j].name))
                 ok=qa_net_reader_fail(&reader,"Duplicate saved source precache name");
     }
-    qa_cvar_options options = {.dialect = qa_cvars_dialect(engine->cvars)};
-    if (ok) { candidate.cvars = qa_cvars_create(&options, error); ok = candidate.cvars != NULL; }
-    qa_cvar_registry_state registry = {0};
-    uint64_t next_handle = ok ? qa_net_read_u64(&reader) : 0;
-    registry.modified_flags = ok ? qa_net_read_u32(&reader) : 0;
-    uint8_t userinfo = ok ? qa_net_read_u8(&reader) : 0, active = ok ? qa_net_read_u8(&reader) : 0;
-    uint8_t high = ok ? qa_net_read_u8(&reader) : 0, cheats = ok ? qa_net_read_u8(&reader) : 0;
-    registry.next_handle = (size_t)next_handle; registry.userinfo_modified = userinfo != 0;
-    registry.server_active = active != 0; registry.high_characters = high != 0; registry.cheats = cheats != 0;
-    ok = ok && next_handle <= SIZE_MAX && userinfo <= 1 && active <= 1 && high <= 1 && cheats <= 1;
-    uint32_t cvars = ok ? qa_net_read_u32(&reader) : 0;
-    if (cvars > bytes.size / 17) ok = qa_net_reader_fail(&reader, "QuakeC saved cvar count exceeds checkpoint");
-    qa_cvar_record_state *metadata = ok && cvars ? calloc(cvars, sizeof(*metadata)) : NULL;
-    if (ok && cvars && metadata == NULL) ok = application_fail(error, QA_ERROR_MEMORY, "Allocating restored QuakeC cvar metadata");
-    for (uint32_t i = 0; ok && i < cvars; ++i) {
-        char *name = read_text(&reader), *value = read_text(&reader), *reset = read_text(&reader);
-        uint8_t latched = qa_net_read_u8(&reader); char *latch = read_text(&reader); uint32_t flags = qa_net_read_u32(&reader);
-        uint64_t handle = qa_net_read_u64(&reader), owner = qa_net_read_u64(&reader), modifications = qa_net_read_u64(&reader);
-        uint8_t modified = qa_net_read_u8(&reader), console_created = qa_net_read_u8(&reader);
-        ok = name && *name && value && reset && latch && latched <= 1 && (!latched ? !*latch : true) &&
-            handle <= SIZE_MAX && modified <= 1 && console_created <= 1 &&
-            qa_cvars_find(candidate.cvars, name) == NULL && qa_cvars_register(candidate.cvars, name, reset, flags, engine->provider->owner, NULL, error) &&
-            qa_cvars_set(candidate.cvars, name, value, true, error);
-        if (ok && latched) ok = qa_cvars_stage(candidate.cvars, name, latch, error);
-        if (ok) metadata[i] = (qa_cvar_record_state){qa_cvars_find(candidate.cvars, name)->name,
-            (size_t)handle, owner, modifications, modified != 0, console_created != 0};
-        free(name); free(value); free(reset); free(latch);
-    }
-    if (ok) ok = qa_cvars_restore_metadata(candidate.cvars, &registry, metadata, cvars, error);
-    free(metadata);
+    qa_bytes registry = {0};
+    uint32_t registry_size = ok ? qa_net_read_u32(&reader) : 0;
+    if (ok) ok = registry_size && qa_net_read_bytes(&reader, registry_size, &registry);
     for (size_t i = 0; ok && i < 64; ++i) { candidate.lightstyles[i] = read_text(&reader); ok = candidate.lightstyles[i] != NULL; }
     uint32_t extension=ok?qa_net_read_u32(&reader):0;
     if (ok && (reader.failed || extension>qa_net_reader_remaining(&reader)))
@@ -591,29 +552,27 @@ bool application_qc_restore_engine(void *opaque, qa_bytes bytes, qa_error *error
                 ok = qa_net_reader_fail(&reader, "Duplicate QuakeC saved message destination");
     }
     if (ok) ok = qa_net_reader_finish(&reader);
+    qa_cvars_restore *cvars = NULL;
+    if (ok) ok = qa_cvars_save_prepare(engine->cvars, registry, &cvars, error) &&
+        qa_cvars_save_validate(cvars, error);
     static const char *required[] = {"skill", "deathmatch", "coop", "teamplay", "sv_gravity", "sv_aim", "sv_maxspeed",
         "maxclients", "registered", "developer", "sv_cheats", "samelevel", "timelimit", "fraglimit", "gamecfg"};
     for (size_t i = 0; ok && i < sizeof(required) / sizeof(required[0]); ++i)
-        if (qa_cvars_find(candidate.cvars, required[i]) == NULL) ok = qa_net_reader_fail(&reader, "Missing QuakeC engine cvar");
-    if (ok && engine->profile == QA_QC_QUAKEWORLD && qa_cvars_find(candidate.cvars, "sv_phs") == NULL)
+        if (qa_cvars_save_find(cvars, required[i]) == NULL) ok = qa_net_reader_fail(&reader, "Missing QuakeC engine cvar");
+    if (ok && engine->profile == QA_QC_QUAKEWORLD && qa_cvars_save_find(cvars, "sv_phs") == NULL)
         ok = qa_net_reader_fail(&reader, "Missing QuakeWorld engine PHS cvar");
-    if (ok) {
-        ok = application_qc_create_console(engine, candidate.cvars, &candidate.console, error);
-    }
     if (ok) {
         bool previously_active = engine->callbacks_active;
         if (!callbacks_active) ok = application_qc_callbacks_suspend(engine->provider, error);
-        if (ok) ok = qa_qc_game_rebind_console(engine->provider->state.qc.game,
-                    candidate.cvars, candidate.console, error);
+        if (ok) ok = qa_cvars_save_commit(cvars, error);
+        if (ok) cvars = NULL;
         if (!ok && previously_active && !callbacks_active) {
             qa_error resume = {0};
             if (!application_qc_callbacks_register(engine->provider, &resume) && error) *error = resume;
         }
     }
+    qa_cvars_save_abort(cvars);
     if (ok) {
-        qa_console_destroy(engine->console); qa_cvars_destroy(engine->cvars);
-        engine->console = candidate.console; engine->cvars = candidate.cvars;
-        candidate.console = NULL; candidate.cvars = NULL;
         for (size_t i = 0; i < engine->resource_count; ++i) {
             qa_vfs_acquisition_dispose(&engine->resources[i].acquisition);
             free(engine->resources[i].name); qa_resource_release(engine->resources[i].source);

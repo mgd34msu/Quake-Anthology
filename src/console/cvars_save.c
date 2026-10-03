@@ -266,6 +266,14 @@ bool qa_cvars_save_validate(const qa_cvars_restore *state, qa_error *error)
         return qac_fail(error, QA_ERROR_ARGUMENT, "cvar restore ticket is stale");
     return true;
 }
+const qa_cvar_view *qa_cvars_save_find(const qa_cvars_restore *state, const char *name)
+{
+    if (!state || !name) return NULL;
+    for (const cvar *entry = state->first; entry; entry = entry->next)
+        if (same_name(state->registry->options.dialect, entry->view.name, name))
+            return &entry->view;
+    return NULL;
+}
 bool qa_cvars_save_commit(qa_cvars_restore *state, qa_error *error)
 {
     if (!qa_cvars_save_validate(state, error)) return false;
