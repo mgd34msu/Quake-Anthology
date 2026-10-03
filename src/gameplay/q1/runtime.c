@@ -682,6 +682,14 @@ bool qa_q1_game_retouch_actor(qa_q1_game *g, qa_actor_id actor,
         return false;
     bool ok = true;
     if (g->force_retouch && q1_alive(g, actor)) {
+        uint32_t source_slot;
+        const q1_actor *entity = q1_entity_const(g, actor);
+        bool source_actor = g->wire
+            ? qa_q1_wire_emission_slot(g, actor, &source_slot)
+            : qa_q1_native_client_slot(g, actor, &source_slot, NULL) ||
+                (entity && entity->native);
+        if (!source_actor)
+            return operation_finish(&operation, true, error);
         if (!g->services.physics) {
             qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot, "Q1 retouch lost its source physics service");
             ok = false;
@@ -1527,7 +1535,7 @@ static bool use_inner(qa_q1_game *g, qa_actor_id actor, qa_actor_id other, qa_ac
     if (entity && entity->kind == Q1_MONSTER &&
         entity->state.monster.species->species == QA_Q1_MORPH) {
         entity->state.monster.next_frame = q1_frame_index("morph_wake");
-        return q1_schedule(g, entity, entity->delay ? entity->delay : 0.1, Q1_THINK_MONSTER_FRAME,
+        return q1_schedule(g, entity, entity->delay != 0 ? entity->delay : 0.1, Q1_THINK_MONSTER_FRAME,
                            error);
     }
     return !entity || entity->kind != Q1_MONSTER || q1_monster_use(g, entity, activator, error);
