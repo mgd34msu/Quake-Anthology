@@ -352,6 +352,7 @@ bool frontend_startup_replay(qa_frontend *frontend,qa_error *error)
             for (size_t i=0;publication && i<qa_application_console_count(application);++i) {
                 qa_console *candidate=qa_application_console_at(application,i,NULL);
                 if (candidate==qa_application_console(application)) continue;
+                if (neutral_primary && candidate==console) continue;
                 bool primary=false;
                 if (!qa_application_startup_console_primary(application,candidate,&primary,error)) return false;
                 if (!primary) continue;

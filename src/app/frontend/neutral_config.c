@@ -495,9 +495,7 @@ static bool install(void *context,const qa_application_client_source *source,boo
     row->dump_registered=qa_console_register_owned(source->context.console,"condump","Save the actual seat console log",
         source->context.receiver,source->context.receiver,true,config_command,row,e);
     if (!row->dump_registered || restoring) return row->dump_registered;
-    row->startup_owned=frontend_network_client_configuration_primary(f,source);
     return qa_application_client_prepare_begin(f->application,source,&row->preparation,e) &&
-        (!row->startup_owned || qa_application_client_prepare_startup_claim(row->preparation,f,startup_current,e)) &&
         frontend_config_store_client_settings_begin(row->owner->manager,row->preparation,e);
 }
 static bool advance_preparation(void *context,qa_application_client_preparation *preparation,bool *complete,qa_error *e)
@@ -603,6 +601,12 @@ static bool configure(void *context,const qa_application_client_source *source,b
     *complete=row->ready;
     if (row->ready) return true;
     if (!row->preparation) return fail(e,QA_ERROR_ARGUMENT,"Neutral programme has no retained CLIENT preparation");
+    if (!row->startup_owned && !row->variables_seeded &&
+        qa_application_client_prepare_phase_is(row->preparation,QA_CLIENT_PREPARE_CONFIGURATION) &&
+        frontend_network_client_configuration_primary(f,source)) {
+        if (!qa_application_client_prepare_startup_claim(row->preparation,f,startup_current,e)) return false;
+        row->startup_owned=true;
+    }
     if (!qa_application_client_prepare_phase_is(row->preparation,QA_CLIENT_PREPARE_CLEANUP)) {
         if (qa_application_client_prepare_phase_is(row->preparation,QA_CLIENT_PREPARE_RESOURCES)) {
             bool done=false;
