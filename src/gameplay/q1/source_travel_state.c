@@ -187,7 +187,7 @@ bool qa_q1_travel_capture(qa_q1_game *game, qa_actor_id actor, qa_item_id select
     qa_q1_travel_state *state = ok ? allocate(game->services.session, error) : NULL;
     qa_combat_state combat;
     qa_q1_travel_ctf ctf = {0};
-    if (ok) ok = state && qa_combat_read(game->services.combat, actor, &combat, error) &&
+    if (ok) ok = state && qa_combat_read_traits(game->services.combat, actor, &combat, error) &&
         current(&call, error);
     bool mission = ok && (game->options.program == QA_Q1_HIPNOTIC || game->options.program == QA_Q1_ROGUE);
     bool addon = ok && (game->options.program == QA_Q1_DOPA || game->options.program == QA_Q1_MG1 ||
