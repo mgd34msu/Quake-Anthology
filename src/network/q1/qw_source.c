@@ -219,7 +219,7 @@ static bool delta_entity(qa_net_writer *writer, const qa_qw_source_entity *from,
     unsigned bits = 0;
     for (size_t i = 0; i < 3; ++i) {
         double difference = (double)to->origin[i] - (double)from->origin[i];
-        if (difference < -0.1 || difference > 0.1) bits |= U_ORIGIN1 << i;
+        if (difference < -0.1 || difference > 0.1) bits |= (unsigned)U_ORIGIN1 << i;
         if (to->angles[i] != from->angles[i]) bits |= angle_bits[i];
     }
     if (to->model != from->model) bits |= U_MODEL;
@@ -238,7 +238,7 @@ static bool delta_entity(qa_net_writer *writer, const qa_qw_source_entity *from,
     if (bits & U_SKIN) byte(writer, to->skin);
     if (bits & U_EFFECTS) byte(writer, to->effects);
     for (size_t i = 0; i < 3; ++i) {
-        if (bits & (U_ORIGIN1 << i)) coord(writer, to->origin[i]);
+        if (bits & ((unsigned)U_ORIGIN1 << i)) coord(writer, to->origin[i]);
         if (bits & angle_bits[i]) angle(writer, to->angles[i]);
     }
     return !writer->failed;

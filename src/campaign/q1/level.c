@@ -122,7 +122,7 @@ bool qa_q1_level_note_attack(qa_q1_level *level, qa_actor_id actor, bool axe_onl
 bool qa_q1_level_note_damage(qa_q1_level *level, qa_actor_id actor, float amount, qa_error *error) {
     if (!isfinite(amount))
         return fail(error, "Nonfinite campaign damage");
-    if (!amount)
+    if (amount == 0)
         return true;
     qa_q1_level_player *entry = player(level, actor, error);
     if (!entry)

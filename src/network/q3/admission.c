@@ -375,11 +375,11 @@ static bool server_connect(qa_q3_server_admission *s, const qa_q3_admission_opti
         if (!qa_net_address_format(from, value, sizeof(value), e) || !server_userinfo_ip(s, request.userinfo, value, e)) return false;
         float ping = (float)elapsed_word(now, challenge->ping_time); challenge->connected = true;
         if (!qa_q3_is_lan(from)) {
-            if (o->minimum_ping && ping < o->minimum_ping) {
+            if (o->minimum_ping != 0 && ping < o->minimum_ping) {
                 if (!server_reply(s, from, "print\nServer is for high pings only\n", e)) return false;
                 challenge->address.port = 0; return true;
             }
-            if (o->maximum_ping && ping > o->maximum_ping) return server_reply(s, from, "print\nServer is for low pings only\n", e);
+            if (o->maximum_ping != 0 && ping > o->maximum_ping) return server_reply(s, from, "print\nServer is for low pings only\n", e);
         }
     } else if (!server_userinfo_ip(s, request.userinfo, "localhost", e)) return false;
     if (!qa_q3_info_value(input, "password", value, sizeof(value), e)) return false;

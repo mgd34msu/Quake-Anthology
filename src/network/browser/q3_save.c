@@ -144,10 +144,10 @@ bool qa_browser_q3_save(qa_net_writer *w, const qa_server_browser *b)
         if (!qa_net_write_u64(w, request->id)) return false;
         if (!request->id) continue;
         const qa_browser_q3_result *v = &request->result;
-        if (!q3_save_address(w, &v->address) || !qa_net_write_u8(w, v->kind) ||
+        if (!q3_save_address(w, &v->address) || !qa_net_write_u8(w, (uint8_t)v->kind) ||
             !qa_net_write_u64(w, v->sent_ns) || !qa_net_write_u8(w, v->completed)) return false;
         if (v->completed) {
-            if (!qa_net_write_u64(w, v->completed_ns) || !qa_net_write_u8(w, v->response_kind) ||
+            if (!qa_net_write_u64(w, v->completed_ns) || !qa_net_write_u8(w, (uint8_t)v->response_kind) ||
                 !entry_write(w, &v->entry) || !service_save_text(w, v->status, sizeof(v->status)) ||
                 !qa_net_write_u32(w, v->player_count)) return false;
             for (uint32_t j = 0; j < v->player_count; ++j) if (!qa_net_write_i32(w, v->players[j].score) ||
