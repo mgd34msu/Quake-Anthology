@@ -318,7 +318,9 @@ bool application_bot_entity(void *opaque,qa_actor_id actor,qa_bot_entity *out,qa
         out->observation.powerups=(int32_t)view.powerups;
         out->observation.legs_animation=view.legs_animation;out->observation.torso_animation=view.torso_animation;
         out->observation.type=view.kind==QA_Q3_ENTITY_PLAYER?1:view.kind==QA_Q3_ENTITY_ITEM?2:
-            view.kind==QA_Q3_ENTITY_MISSILE?3:view.kind==QA_Q3_ENTITY_MOVER?4:view.kind==QA_Q3_ENTITY_GRAPPLE?11:0;
+            view.kind==QA_Q3_ENTITY_MISSILE?3:view.kind==QA_Q3_ENTITY_MOVER?4:
+            view.kind==QA_Q3_ENTITY_BEAM?5:view.kind==QA_Q3_ENTITY_SPEAKER?7:
+            view.kind==QA_Q3_ENTITY_GRAPPLE?11:0;
         break;
     }
     qa_builtin_services services=application_builtin_services(application,application->world,application->physics);

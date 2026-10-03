@@ -662,7 +662,10 @@ typedef enum qa_q3_entity_kind {
     QA_Q3_ENTITY_PORTAL,
     QA_Q3_ENTITY_CORPSE,
     QA_Q3_ENTITY_KAMIKAZE,
-    QA_Q3_ENTITY_TEAM
+    QA_Q3_ENTITY_TEAM,
+    QA_Q3_ENTITY_GENERAL,
+    QA_Q3_ENTITY_BEAM,
+    QA_Q3_ENTITY_SPEAKER
 } qa_q3_entity_kind;
 typedef struct qa_q3_entity_view {
     qa_actor_id actor, owner, attachment;

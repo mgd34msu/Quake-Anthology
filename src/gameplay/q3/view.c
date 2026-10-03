@@ -7,6 +7,58 @@ static qa_trajectory source_trajectory(const qa_q3_trajectory *source) {
         .delta = qa_v3(source->delta[0], source->delta[1], source->delta[2])};
 }
 
+static bool source_model(const qa_q3_game *game, int32_t index, const char **out,
+                           qa_error *error) {
+    if (index < 0 || index >= 256)
+        return q3_fail(error, "Q3 Source presentation model index is out of range");
+    *out = index ? game->configstrings[32 + index] : NULL;
+    return true;
+}
+
+static bool source_only_view(const qa_q3_game *game, uint32_t slot,
+                               const qa_q3_map_actor_state *map,
+                               qa_q3_entity_view *view, qa_error *error) {
+    qa_q3_source_binding binding;
+    if (!qa_q3_source_binding_read(game, slot, &binding, error)) return false;
+    if (!binding.in_use || !binding.body_attached ||
+        !qa_actor_id_equal(binding.actor, view->actor))
+        return q3_fail(error, "Q3 presentation lost its actual Source owner");
+    const qa_q3_entity *s = &view->source_entity;
+    if (s->eType >= 13) {
+        /* CG_AddCEntity leaves freestanding events to the event consumer. */
+        view->kind = QA_Q3_ENTITY_HIDDEN;
+    } else {
+        switch (s->eType) {
+        case 0:
+            view->kind = s->modelindex ? QA_Q3_ENTITY_GENERAL : QA_Q3_ENTITY_HIDDEN;
+            if (!source_model(game, s->modelindex, &view->model, error)) return false;
+            break;
+        case 4:
+            view->kind = QA_Q3_ENTITY_MOVER;
+            /* SOLID_BMODEL uses the actual inline-model collision owner, not
+             * the CS_MODELS namespace. The complete ES retains its index. */
+            if (s->solid != 0xffffff &&
+                !source_model(game, s->modelindex, &view->model, error)) return false;
+            if (!source_model(game, s->modelindex2, &view->secondary_model, error)) return false;
+            break;
+        case 5: view->kind = QA_Q3_ENTITY_BEAM; break;
+        case 6: view->kind = QA_Q3_ENTITY_PORTAL; break;
+        case 7: view->kind = QA_Q3_ENTITY_SPEAKER; break;
+        case 8: case 9: case 10: view->kind = QA_Q3_ENTITY_HIDDEN; break;
+        default:
+            return q3_fail(error, "Q3 Source presentation lacks its typed gameplay owner");
+        }
+    }
+    view->alpha = map ? map->alpha : 1;
+    view->flags = (uint32_t)s->eFlags;
+    view->constant_light = (uint32_t)s->constantLight;
+    view->position = source_trajectory(&s->pos);
+    view->angular = source_trajectory(&s->apos);
+    /* Beam/portal endpoints and speaker scheduling/sound indices remain in
+     * the raw ES, consumed by the existing native packet renderer/audio owner. */
+    return true;
+}
+
 static bool entity_read(const qa_q3_game *game, qa_actor_id actor, qa_q3_entity_view *out,
                          qa_error *error) {
     const q3_actor *entry = q3_actor_const(game, actor);
@@ -49,21 +101,8 @@ static bool entity_read(const qa_q3_game *game, qa_actor_id actor, qa_q3_entity_
         *out = view;
         return true;
     }
-    if (!entry && !native_owner && !mover_owner && view.has_source_entity &&
-        view.source_entity.eType == 0 && !view.source_entity.modelindex) {
-        qa_q3_source_binding binding;
-        if (!qa_q3_source_binding_read(game, source_slot, &binding, error)) return false;
-        if (!binding.in_use || !binding.body_attached || !qa_actor_id_equal(binding.actor, actor))
-            return q3_fail(error, "Q3 general presentation lost its actual Source owner");
-        /* CG_General emits no model for modelindex zero, including the actual
-         * worldspawn row. Its complete Source state still belongs to this view. */
-        const qa_q3_entity *s = &view.source_entity;
-        view.kind = QA_Q3_ENTITY_HIDDEN;
-        view.alpha = map ? map->alpha : 1;
-        view.flags = (uint32_t)s->eFlags;
-        view.constant_light = (uint32_t)s->constantLight;
-        view.position = source_trajectory(&s->pos);
-        view.angular = source_trajectory(&s->apos);
+    if (!entry && !native_owner && !mover_owner && view.has_source_entity) {
+        if (!source_only_view(game, source_slot, map, &view, error)) return false;
         *out = view;
         return true;
     }
