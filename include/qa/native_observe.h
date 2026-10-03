@@ -42,6 +42,9 @@ bool qa_native_observe_entry(qa_native_instance *instance, qa_native_address ent
                              const qa_native_signature *signature,
                              qa_native_entry_observer_fn callback, void *context,
                              qa_native_entry_observer **out, qa_error *error);
+/* Cold execution requires all saved Source entries to be claimed by their
+ * actual upper callback owners. */
+bool qa_native_observers_restore_ready(const qa_native_instance *, qa_error *);
 bool qa_native_unobserve_entry(qa_native_entry_observer *binding, qa_error *error);
 bool qa_native_invoke_original(qa_native_entry_observer *binding,
                                const qa_native_value *arguments, size_t count,

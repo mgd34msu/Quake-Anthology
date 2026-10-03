@@ -26,6 +26,8 @@ bool application_native_q1_wire_entity(qa_application *, qa_actor_id, qa_actor_i
 bool application_native_q1_wire_entity_next(qa_application *, qa_actor_id, uint32_t *, bool *,
     qa_actor_id *, qa_q1_entity *, qa_error *);
 bool application_native_q1_wire_eye(qa_application *, qa_actor_id, qa_vec3 *, qa_error *);
+bool application_native_q1_check_client(void *, qa_actor_id, qa_actor_id *);
+bool application_native_q1_check_client_retire(application_provider *, qa_actor_id, qa_error *);
 bool application_native_q1_wire_bounds(qa_application *, qa_actor_id, qa_actor_id,
     qa_bounds *, bool *, qa_error *);
 bool application_native_q1_wire_precache(qa_application *, qa_actor_owner, bool,
@@ -36,7 +38,7 @@ bool application_native_q1_wire_clientdata(qa_application *, qa_actor_id, qa_q1_
 bool application_native_q1_wire_status(qa_application *, qa_actor_owner,
     qa_application_network_q1_status_player [255], size_t *, qa_error *);
 /* The caller holds this receipt through every use of the borrowed Source name. */
-bool application_native_q1_wire_chat(application_native_q1_wire_source *, qa_actor_id, bool,
+bool application_native_q1_wire_chat(application_native_q1_wire_source *, qa_actor_id, bool, const char *,
     const char **, qa_actor_id [255], size_t *, qa_error *);
 bool application_native_q1_wire_pause(qa_application *, qa_actor_id, qa_buffer *, bool *, qa_error *);
 bool application_native_q1_wire_name(qa_application *, qa_actor_id, const char *, qa_error *);

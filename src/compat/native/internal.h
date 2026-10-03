@@ -148,6 +148,7 @@ struct qa_native_instance {
     size_t region_count;
     qa_native_region_scope *region_scopes;
     qa_native_entry_observer *entry_observers;
+    qa_native_entry_observer *pending_entry_observers;
     qa_native_write_observer *write_observers;
     uint64_t next_observer_id;
     uint32_t active_depth, callback_depth, region_depth, region_service_depth, write_depth;
@@ -362,6 +363,10 @@ bool native_runner_observer_original(qa_native_entry_observer *binding,
                                      qa_native_value *result, qa_error *error);
 bool native_runner_observer_control(qa_native_instance *instance, native_hook_control control,
                                     qa_error *error);
+struct qa_source_save_io;
+bool native_observers_fields(struct qa_source_save_io *, qa_native_instance *);
+bool native_observers_resolve(qa_native_instance *, uint64_t, uint64_t,
+    qa_native_guest_callback *, qa_error *);
 void native_observers_destroy(qa_native_instance *instance);
 bool native_process_write_commit(void *, qa_native_guest *, const qa_native_guest_commit *, qa_error *);
 

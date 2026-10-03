@@ -19,6 +19,7 @@ typedef struct q1_wire_client {
     float frags;
     uint8_t colors;
     bool present;
+    qa_vec3 eye;
 } q1_wire_client;
 typedef struct q1_wire_edict {
     float freetime;

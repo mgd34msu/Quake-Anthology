@@ -4,6 +4,7 @@
 #include "guest_native_q2_attack.h"
 #include "guest_native_q2_combat_kex.h"
 #include "qa/native_observe.h"
+#include "qa/source_save.h"
 #include <math.h>
 
 typedef struct combat_record {
@@ -310,8 +311,12 @@ static bool ensure_reaction(struct application_native_q2_combat *p, qa_native_ad
 {
     if (!address) return true;
     for (combat_reaction *hook = p->reactions; hook; hook = hook->next)
-        if (hook->address == address) return hook->operation == operation ||
-            application_fail(error, QA_ERROR_UNSUPPORTED, "Native reaction entry is shared by incompatible original call contracts");
+        if (hook->address == address) {
+            if (hook->operation != operation)
+                return application_fail(error, QA_ERROR_UNSUPPORTED, "Native reaction entry is shared by incompatible original call contracts");
+            return hook->binding || qa_native_observe_entry(native(p), address,
+                &p->profile.calls[operation].signature, reaction_entry, hook, &hook->binding, error);
+        }
     combat_reaction *hook = calloc(1, sizeof(*hook));
     if (!hook) return application_fail(error, QA_ERROR_MEMORY, "Retaining native reaction entry ownership");
     hook->owner = p; hook->address = address; hook->operation = operation;
@@ -628,6 +633,8 @@ bool application_native_q2_combat_activate(struct application_native_q2 *engine,
                 armor_entry, hook, &hook->binding, error)) return false;
     }
     if (!application_q2_kex_damage_activate(p->kex, error)) return false;
+    for (combat_reaction *hook=p->reactions; hook; hook=hook->next)
+        if (!ensure_reaction(p,hook->address,hook->operation,error)) return false;
     p->active = true; return true;
 }
 bool application_native_q2_combat_admit(struct application_native_q2 *engine, uint32_t slot,
@@ -821,12 +828,62 @@ bool application_native_q2_combat_deferred(struct application_native_q2 *engine,
     bool ok = qa_combat_run_source_reaction(shared(p), request, result, execute_deferred, &frame, error);
     --engine->calls; p->deferred = frame.previous; return ok;
 }
+struct application_native_q2_combat_restore {
+    combat_reaction *reactions;
+    struct application_q2_kex_restore *kex;
+};
+static bool combat_fields(qa_source_save_io *io, struct application_native_q2_combat *p,
+    combat_reaction **reactions, qa_bytes *kex)
+{
+    bool reading=io->direction==QA_SOURCE_SAVE_READ;
+    size_t count=0;
+    if (!reading) for (combat_reaction *hook=*reactions;hook;hook=hook->next) ++count;
+    if (!qa_source_save_count(io,&count,SIZE_MAX)) return false;
+    if (reading && (io->offset>io->input.size || count>(io->input.size-io->offset)/12))
+        return application_fail(io->error,QA_ERROR_FORMAT,"Native reaction count exceeds its actual saved fields");
+    combat_reaction **tail=reactions;
+    for (size_t i=0;i<count;++i) {
+        if (reading) {
+            *tail=calloc(1,sizeof(**tail));
+            if (!*tail) return application_fail(io->error,QA_ERROR_MEMORY,"Owning restored native reaction topology");
+            (*tail)->owner=p;
+        }
+        combat_reaction *hook=*tail;
+        uint32_t operation=(uint32_t)hook->operation;
+        if (!qa_source_save_u64(io,&hook->address) || !qa_source_save_u32(io,&operation)) return false;
+        if (!hook->address || (operation!=APPLICATION_Q2_PAIN && operation!=APPLICATION_Q2_DEATH) ||
+            (!reading && !hook->binding))
+            return application_fail(io->error,QA_ERROR_FORMAT,"Native reaction lacks its actual Source entry and call operation");
+        hook->operation=(application_q2_call_operation)operation;
+        for (combat_reaction *prior=*reactions;prior!=hook;prior=prior->next)
+            if (prior->address==hook->address)
+                return application_fail(io->error,QA_ERROR_FORMAT,"Native saved reaction entry repeats");
+        if (reading) {
+            uint8_t byte;
+            if (!qa_native_read(native(p),hook->address,&byte,1,io->error)) return false;
+        }
+        tail=&hook->next;
+    }
+    size_t extent=kex->size;
+    if (!qa_source_save_count(io,&extent,SIZE_MAX)) return false;
+    if (reading) {
+        if (io->offset>io->input.size || extent>io->input.size-io->offset)
+            return application_fail(io->error,QA_ERROR_FORMAT,"Native combat child leaves its saved extent");
+        *kex=(qa_bytes){io->input.data+io->offset,extent}; io->offset+=extent; return true;
+    }
+    return qa_source_save_bytes(io,(void *)kex->data,extent);
+}
 bool application_native_q2_combat_capture(struct application_native_q2 *engine, qa_buffer *out, qa_error *error)
 {
     struct application_native_q2_combat *p = engine->source_combat;
     if (p && (p->current || p->incoming || p->retained || p->deferred))
         return application_fail(error, QA_ERROR_ARGUMENT, "Native deferred capture requires drained damage frames");
-    return application_q2_kex_damage_capture(p ? p->kex : NULL, out, error);
+    if (!p) return application_q2_kex_damage_capture(NULL,out,error);
+    qa_buffer child={0}; qa_source_save_io io={0};
+    bool ok=application_q2_kex_damage_capture(p->kex,&child,error) && qa_source_save_writer(&io,NULL,error);
+    qa_bytes bytes={child.data,child.size};
+    if (ok) ok=combat_fields(&io,p,&p->reactions,&bytes) && qa_source_save_finish(&io,out);
+    qa_source_save_dispose(&io); qa_buffer_free(&child); return ok;
 }
 bool application_native_q2_combat_restore_ready(const struct application_native_q2 *engine, qa_error *error)
 {
@@ -839,19 +896,37 @@ bool application_native_q2_combat_restore_ready(const struct application_native_
             return application_fail(error, QA_ERROR_ARGUMENT, "Native private continuation precedes combat primary preparation");
     return true;
 }
+void application_native_q2_combat_restore_abort(struct application_native_q2_combat_restore *token)
+{
+    if (!token) return;
+    while (token->reactions) {
+        combat_reaction *hook=token->reactions; token->reactions=hook->next; free(hook);
+    }
+    application_q2_kex_damage_restore_abort(token->kex); free(token);
+}
 bool application_native_q2_combat_restore_prepare(struct application_native_q2 *engine, qa_bytes bytes,
-    struct application_q2_kex_restore **out, qa_error *error)
+    struct application_native_q2_combat_restore **out, qa_error *error)
 {
     struct application_native_q2_combat *p = engine->source_combat;
-    if (p && (p->active || p->current || p->incoming || p->retained || p->damage || p->deferred))
+    if (!out || *out) return application_fail(error,QA_ERROR_ARGUMENT,"Native combat restore token requires empty actual custody");
+    if (!p) return !bytes.size || application_fail(error,QA_ERROR_FORMAT,"Native combat continuation has no actual source owner");
+    if (p->active || p->current || p->incoming || p->retained || p->damage || p->deferred || p->reactions)
         return application_fail(error, QA_ERROR_ARGUMENT, "Native deferred restore requires suspended damage observers");
-    return application_q2_kex_damage_restore_prepare(p ? p->kex : NULL, bytes, out, error);
+    struct application_native_q2_combat_restore *token=calloc(1,sizeof(*token));
+    if (!token) return application_fail(error,QA_ERROR_MEMORY,"Owning native combat restore preparation");
+    qa_source_save_io io={0}; qa_bytes child={0};
+    bool ok=qa_source_save_reader(&io,NULL,bytes,error) && combat_fields(&io,p,&token->reactions,&child) &&
+        qa_source_save_finish(&io,NULL) && application_q2_kex_damage_restore_prepare(p->kex,child,&token->kex,error);
+    qa_source_save_dispose(&io);
+    if (!ok) { application_native_q2_combat_restore_abort(token); return false; }
+    *out=token; return true;
 }
 void application_native_q2_combat_restore_commit(struct application_native_q2 *engine,
-    struct application_q2_kex_restore *token)
+    struct application_native_q2_combat_restore *token)
 {
+    if (!token) return;
     struct application_native_q2_combat *p = engine->source_combat;
-    application_q2_kex_damage_restore_commit(p ? p->kex : NULL, token);
+    p->reactions=token->reactions; token->reactions=NULL;
+    application_q2_kex_damage_restore_commit(p->kex,token->kex); token->kex=NULL;
+    free(token);
 }
-void application_native_q2_combat_restore_abort(struct application_q2_kex_restore *token)
-{ application_q2_kex_damage_restore_abort(token); }

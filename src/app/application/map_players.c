@@ -3816,6 +3816,8 @@ bool qa_application_remote_player_detach(qa_application *application,
         ok = qa_q2_player_disconnect(character->state.q2, actor, error);
     if (ok && character->kind == APPLICATION_PROVIDER_NATIVE && character->state.native.q2_engine && character != source)
         ok = application_native_q2_actor_disconnect(character, actor, error);
+    if (ok && source && source->kind==APPLICATION_PROVIDER_Q1)
+        ok=application_native_q1_check_client_retire(source,actor,error);
     if (ok && source && source->kind==APPLICATION_PROVIDER_Q1 &&
         source->component.clock.kind==QA_CLOCK_QUAKEWORLD)
         ok=application_native_q1_qw_retire_capture(source,actor,error);
@@ -3866,6 +3868,8 @@ bool application_players_bot_detach(qa_application *application,qa_actor_id acto
         okay=qa_q2_player_disconnect(source->state.q2,actor,error);
     if(okay && character->kind==APPLICATION_PROVIDER_Q2 && character!=source)
         okay=qa_q2_player_disconnect(character->state.q2,actor,error);
+    if(okay && source->kind==APPLICATION_PROVIDER_Q1)
+        okay=application_native_q1_check_client_retire(source,actor,error);
     if(okay && source->kind==APPLICATION_PROVIDER_Q1 &&
        source->component.clock.kind==QA_CLOCK_QUAKEWORLD && !record->source_begin_pending)
         okay=application_native_q1_qw_retire_capture(source,actor,error);

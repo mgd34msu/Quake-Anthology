@@ -476,6 +476,9 @@ struct qa_q1_game {
     bool finale_polled, finale_acknowledged;
     uint64_t time_ns, attack_sequence;
     uint32_t force_retouch;
+    uint32_t check_client_slot;
+    double check_client_time;
+    int32_t check_client_cluster;
     qa_vec3 forward, right, up;
     qa_actor_id qw_multi_entity;
     float qw_multi_damage, qw_blood_count, qw_puff_count;

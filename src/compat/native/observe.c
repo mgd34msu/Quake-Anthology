@@ -1,5 +1,6 @@
 #include "protocol.h"
 #include "guest/internal.h"
+#include "qa/source_save.h"
 
 #if defined(_WIN32)
 __declspec(dllexport) __declspec(noinline)
@@ -60,7 +61,8 @@ static bool copy_signature(const qa_native_signature *signature, qa_native_signa
 static bool process_entry(void *context, qa_native_guest *guest, uint64_t id, qa_error *error) {
     qa_native_entry_observer *binding = context;
     qa_native_instance *instance = binding->instance;
-    if (instance->guest != guest || binding->guest_id != id || native_active_instance != instance)
+    if (instance->guest != guest || binding->guest_id != id || native_active_instance != instance ||
+        !binding->callback || instance->pending_entry_observers)
         return native_fail(error, QA_ERROR_ARGUMENT, id, "observed entry lost its actual source owner");
     size_t count = binding->signature.parameter_count;
     if (count > NATIVE_MAX_ARGUMENTS) return native_fail(error, QA_ERROR_ARGUMENT, count, "observed source ABI exceeds its argument limit");
@@ -83,6 +85,85 @@ static bool process_entry(void *context, qa_native_guest *guest, uint64_t id, qa
     qa_buffer_free(&storage); qa_buffer_free(&output); return okay;
 }
 
+static bool signature_equal(const qa_native_signature *a,const qa_native_signature *b,qa_error *error)
+{
+    native_wire_buffer left={0},right={0};
+    bool ok=native_wire_put_signature(&left,a,error) && native_wire_put_signature(&right,b,error) &&
+        left.size==right.size && !memcmp(left.data,right.data,left.size);
+    native_wire_buffer_free(&left); native_wire_buffer_free(&right); return ok;
+}
+static bool observer_signature_fields(qa_source_save_io *io,qa_native_signature *signature)
+{
+    native_wire_buffer wire={0}; size_t count=0;
+    bool reading=io->direction==QA_SOURCE_SAVE_READ;
+    bool ok=reading || native_wire_put_signature(&wire,signature,io->error);
+    if (!reading) count=wire.size;
+    if (ok) ok=qa_source_save_count(io,&count,SIZE_MAX);
+    if (ok && reading) {
+        ok=io->offset<=io->input.size && count<=io->input.size-io->offset;
+        if (!ok) native_fail(io->error,QA_ERROR_FORMAT,io->offset,"Saved Source signature leaves its counted extent");
+        if (ok) {
+            native_wire_reader reader={.bytes={io->input.data+io->offset,count}};
+            ok=native_wire_get_signature(&reader,signature,io->error) && native_wire_end(&reader,io->error);
+            if (ok) io->offset+=count;
+        }
+    } else if (ok) ok=qa_source_save_bytes(io,wire.data,count);
+    native_wire_buffer_free(&wire); return ok;
+}
+bool native_observers_fields(qa_source_save_io *io,qa_native_instance *instance)
+{
+    bool reading=io->direction==QA_SOURCE_SAVE_READ;
+    size_t count=0;
+    if (instance->pending_entry_observers || (reading && instance->entry_observers))
+        return native_fail(io->error,QA_ERROR_ARGUMENT,0,"Native observer recipe requires its actual isolated custody");
+    if (!reading) for (qa_native_entry_observer *row=instance->entry_observers;row;row=row->next) ++count;
+    if (!qa_source_save_u64(io,&instance->next_observer_id) || !qa_source_save_count(io,&count,SIZE_MAX)) return false;
+    if (reading && (io->offset>io->input.size || count>(io->input.size-io->offset)/24))
+        return native_fail(io->error,QA_ERROR_FORMAT,io->offset,"Saved Source observer count exceeds its stored rows");
+    qa_native_entry_observer *row=instance->entry_observers;
+    for (size_t i=0;i<count;++i) {
+        if (reading) {
+            row=calloc(1,sizeof(*row));
+            if (!row) return native_fail(io->error,QA_ERROR_MEMORY,i,"Owning saved Source entry observer");
+            row->instance=instance; row->next=instance->pending_entry_observers; instance->pending_entry_observers=row;
+        }
+        if (!qa_source_save_u64(io,&row->id) || !qa_source_save_u64(io,&row->address) ||
+            !observer_signature_fields(io,&row->signature) || !row->id || row->id>instance->next_observer_id ||
+            row->address<instance->image_base || row->address-instance->image_base>=instance->image_bytes ||
+            row->signature.abi!=instance->module->info.image.target.abi || row->signature.variadic || row->active_calls ||
+            (!reading && !row->callback))
+            return native_fail(io->error,QA_ERROR_FORMAT,i,"Saved Source observer leaves its actual image or signature");
+        if (reading) {
+            const native_profile_spec *profile=native_profile(instance->module->info.profile);
+            uint64_t slots=profile->q3_vm?1:profile->import_count;
+            if (slots>UINT64_MAX-instance->first_callback || row->id>UINT64_MAX-instance->first_callback-slots)
+                return native_fail(io->error,QA_ERROR_FORMAT,row->id,"Saved Source observer namespace overflows");
+            row->guest_id=instance->first_callback+slots+row->id;
+            if (instance->process_kind==QA_NATIVE_PROCESS_WINDOWS && row->guest_id>=qa_native_windows_process_callback_minimum())
+                return native_fail(io->error,QA_ERROR_FORMAT,row->id,"Saved Source observer overlaps its Windows runtime");
+            for (qa_native_entry_observer *other=row->next;other;other=other->next)
+                if (other->id==row->id || other->address==row->address)
+                    return native_fail(io->error,QA_ERROR_FORMAT,row->id,"Saved Source observer identity repeats");
+            if (!guest_abi_plan_native(&row->signature,NULL,0,&row->guest_plan,io->error)) return false;
+        } else row=row->next;
+    }
+    return true;
+}
+bool native_observers_resolve(qa_native_instance *instance,uint64_t id,uint64_t address,
+    qa_native_guest_callback *out,qa_error *error)
+{
+    for (qa_native_entry_observer *row=instance->pending_entry_observers;row;row=row->next)
+        if (row->guest_id==id) {
+            if (row->address!=address) return native_fail(error,QA_ERROR_FORMAT,id,"Saved Source observer address differs");
+            *out=(qa_native_guest_callback){id,address,process_entry,row}; return true;
+        }
+    return native_fail(error,QA_ERROR_NOT_FOUND,id,"Native restored callback has no actual SDK or Source observer identity");
+}
+bool qa_native_observers_restore_ready(const qa_native_instance *instance,qa_error *error)
+{
+    return (instance && !instance->pending_entry_observers) ||
+        native_fail(error,QA_ERROR_ARGUMENT,0,"Native Source observers still require their actual restored owners");
+}
 static bool stopped_write_subscription(const qa_native_instance *instance)
 {
     return instance->backend==QA_NATIVE_BACKEND_OWNED_PROCESS&&instance->guest&&
@@ -128,6 +209,24 @@ bool qa_native_observe_entry(qa_native_instance *instance, qa_native_address ent
     for (qa_native_entry_observer *other = instance->entry_observers; other; other = other->next)
         if (other->address == entry)
             return native_fail(error, QA_ERROR_ARGUMENT, 0, "native entry is already intercepted");
+    qa_native_entry_observer **pending=&instance->pending_entry_observers;
+    while (*pending && (*pending)->address!=entry) pending=&(*pending)->next;
+    if (*pending) {
+        qa_native_entry_observer *binding=*pending;
+        if (!signature_equal(signature,&binding->signature,error))
+            return native_fail(error,QA_ERROR_FORMAT,binding->id,"Restored Source observer changes its exact signature");
+        bool retained=false;
+        for (size_t i=0;i<instance->guest->callback_count;++i) {
+            const qa_native_guest_callback *actual=instance->guest->callbacks+i;
+            if (actual->id==binding->guest_id && actual->address==entry &&
+                actual->invoke==process_entry && actual->context==binding) retained=true;
+        }
+        if (!retained) return native_fail(error,QA_ERROR_FORMAT,binding->id,
+            "Restored Source observer lacks its actual guest callback custody");
+        *pending=binding->next; binding->callback=callback; binding->context=context;
+        binding->next=instance->entry_observers; instance->entry_observers=binding; *out=binding;
+        return true;
+    }
     qa_native_entry_observer *binding = calloc(1, sizeof(*binding));
     if (!binding)
         return native_fail(error, QA_ERROR_MEMORY, 0, "allocating native entry observer");
@@ -475,6 +574,12 @@ bool qa_native_unobserve_writes(qa_native_write_observer *binding, qa_error *err
 }
 
 void native_observers_destroy(qa_native_instance *instance) {
+    while (instance->pending_entry_observers) {
+        qa_native_entry_observer *binding=instance->pending_entry_observers;
+        instance->pending_entry_observers=binding->next;
+        native_wire_signature_free(&binding->signature);
+        guest_abi_plan_destroy(binding->guest_plan); free(binding);
+    }
     while (instance->entry_observers) {
         qa_native_entry_observer *binding = instance->entry_observers;
         instance->entry_observers = binding->next;

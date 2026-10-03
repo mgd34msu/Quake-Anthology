@@ -169,6 +169,7 @@ bool q1_save_wire(q1_save_io *io, qa_q1_game *g) {
         Q1_SAVE(io, string, row->name);
         Q1_SAVE(io, float, row->frags);
         Q1_SAVE(io, u8, row->colors);
+        Q1_SAVE(io, vector, row->eye);
         if (row->present != (row->actor.registry != 0) ||
             (!row->present && (row->name || row->frags != 0 || row->colors)) ||
             (row->present && (!row->name || !qa_strings_cstr(qa_session_strings(g->services.session), row->name))))

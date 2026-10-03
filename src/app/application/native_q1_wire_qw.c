@@ -354,7 +354,8 @@ bool application_native_q1_qw_prepare(qa_application *app,qa_actor_id actor,qa_e
     if (okay) {
         /* SV_Spawn clears this actual physical edict before genuine Begin. */
         double cleared[16]={0};
-        okay=qa_q1_wire_qw_stats_store(&source.receipt,slot,cleared,error) &&
+        okay=qa_q1_check_client_eye_clear(source.provider->state.q1,actor,error) &&
+            qa_q1_wire_qw_stats_store(&source.receipt,slot,cleared,error) &&
             application_native_q1_wire_client_userinfo(source.provider,actor,error);
     }
     application_native_q1_wire_end(&source);return okay;

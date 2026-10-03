@@ -42,7 +42,7 @@ static qa_console_dialect dialect(const application_provider *provider)
 }
 
 bool application_native_q1_chat(application_provider *provider,
-    const qa_command_invocation *command, bool team_only, qa_error *error)
+    const qa_command_invocation *command, application_native_q1_chat_mode mode, qa_error *error)
 {
     struct application_native_q1_console *owner = provider ? provider->native_q1_console : NULL;
     if (!owner || !command || provider->kind != APPLICATION_PROVIDER_Q1 ||
@@ -50,21 +50,28 @@ bool application_native_q1_chat(application_provider *provider,
         !provider->launch || provider->launch->selection.clock.kind != QA_CLOCK_NETQUAKE ||
         command->context.dialect != QA_CONSOLE_Q1 ||
         (command->context.owner && command->context.owner != provider->owner) ||
-        !command->context.actor.registry ||
+        (mode != APPLICATION_NATIVE_Q1_CHAT_ALL && mode != APPLICATION_NATIVE_Q1_CHAT_TEAM &&
+         mode != APPLICATION_NATIVE_Q1_CHAT_TELL) ||
+        (!command->context.actor.registry && (mode == APPLICATION_NATIVE_Q1_CHAT_TELL ||
+         command->context.owner != provider->owner || command->context.origin != QA_COMMAND_SERVER ||
+         command->console != owner->console)) ||
         !qa_application_command_context_active(provider->application, &command->context))
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q1 chat lost its actual Source sender");
-    if (command->argc < 2) return true;
-    if (!command->args_text)
+    if (command->argc < (mode == APPLICATION_NATIVE_Q1_CHAT_TELL ? 3u : 2u)) return true;
+    if (!command->args_text || (mode == APPLICATION_NATIVE_Q1_CHAT_TELL &&
+        (!command->argv || !command->argv[1])))
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q1 chat lost its Source command arguments");
     application_native_q1_wire_source source = {0};
     if (!application_native_q1_wire_retain(provider, &source, error)) return false;
     ++owner->calls;
     qa_actor_id recipients[255]; size_t count = 0; const char *name = NULL;
     bool okay = application_native_q1_wire_chat(&source, command->context.actor,
-        team_only, &name, recipients, &count, error);
+        mode == APPLICATION_NATIVE_Q1_CHAT_TEAM, mode == APPLICATION_NATIVE_Q1_CHAT_TELL ? command->argv[1] : NULL,
+        &name, recipients, &count, error);
     char line[64]; size_t prefix = 0;
     if (okay) {
-        int written = snprintf(line, sizeof(line), "\001%s: ", name);
+        int written = snprintf(line, sizeof(line), mode == APPLICATION_NATIVE_Q1_CHAT_TELL ? "%s: " :
+            command->context.actor.registry ? "\001%s: " : "\001<%s> ", name);
         if (written < 0 || (size_t)written > sizeof(line) - 2)
             okay = application_fail(error, QA_ERROR_FORMAT, "Native Q1 chat sender exceeds the Source line extent");
         else prefix = (size_t)written;
@@ -87,14 +94,14 @@ bool application_native_q1_chat(application_provider *provider,
         event.actor = recipients[i];
         okay = application_emit(provider->application, &event, error);
     }
-    if (okay) {
+    if (okay && mode != APPLICATION_NATIVE_Q1_CHAT_TELL) {
         qa_command_context context = command->context;
         context.owner = provider->owner; context.origin = QA_COMMAND_SERVER; context.actor = (qa_actor_id){0};
         application_console_print(provider->application, &context, line + 1);
-        if (!qa_q1_wire_receipt_current(&source.receipt) || provider->close_pending ||
-            application_world_provider(provider->application, QA_ROLE_ENTITIES, "") != provider)
-            okay = application_fail(error, QA_ERROR_ARGUMENT, "Native Q1 chat Source retired during delivery");
     }
+    if (okay && (!qa_q1_wire_receipt_current(&source.receipt) || provider->close_pending ||
+        application_world_provider(provider->application, QA_ROLE_ENTITIES, "") != provider))
+        okay = application_fail(error, QA_ERROR_ARGUMENT, "Native Q1 chat Source retired during delivery");
     --owner->calls;
     application_native_q1_wire_end(&source);
     return okay;
@@ -698,7 +705,7 @@ bool application_native_q1_console_create(application_provider *provider,
     }
     static const char *const names[] = {"skill", "deathmatch", "coop", "teamplay", "sv_gravity",
         "sv_maxspeed", "samelevel", "timelimit", "fraglimit", "gamecfg", "sv_cheats", "footsteps",
-        "maxclients", "registered", "developer", "sv_aim"};
+        "maxclients", "registered", "developer", "sv_aim", "hostname"};
     char skill[16], deathmatch[16], coop[2], teamplay[16], gravity[32], gamecfg[16], maximum[16], aim[32];
     snprintf(skill, sizeof(skill), "%u", rules->skill);
     snprintf(deathmatch, sizeof(deathmatch), "%d", rules->deathmatch);
@@ -709,7 +716,7 @@ bool application_native_q1_console_create(application_provider *provider,
     snprintf(maximum, sizeof(maximum), "%u", rules->quakeworld ? 8u : rules->max_clients);
     snprintf(aim, sizeof(aim), "%.9g", (double)rules->aim_threshold);
     const char *values[] = {skill, deathmatch, coop, teamplay, gravity, "320", "0", "0", "0", gamecfg,
-        "0", "1", maximum, "1", "0", aim};
+        "0", "1", maximum, "1", "0", aim, rules->quakeworld ? "unnamed" : "UNNAMED"};
     for (size_t i = 0; okay && i < sizeof(names) / sizeof(*names); ++i) {
         if (!qa_cvars_find(cvars, names[i]))
             okay = qa_cvars_register(cvars, names[i], values[i], 0, provider->owner, NULL, error);
@@ -723,9 +730,9 @@ bool application_native_q1_console_create(application_provider *provider,
             "sv_spectatormaxspeed", "sv_accelerate", "sv_airaccelerate",
             "sv_wateraccelerate", "sv_friction", "sv_waterfriction",
             "maxspectators", "pausable", "sv_spectalk", "sv_mapcheck",
-            "hostname", "spawn", "watervis", "sv_phs", "password", "spectator_password", "sv_highchars"};
+            "spawn", "watervis", "sv_phs", "password", "spectator_password", "sv_highchars"};
         static const char *const qw_values[] = {"2000", "100", "500", "10", "0.7",
-            "10", "4", "4", "8", "1", "1", "1", "unnamed", "0", "0", "1", "", "", "1"};
+            "10", "4", "4", "8", "1", "1", "1", "0", "0", "1", "", "", "1"};
         for (size_t i = 0; okay && i < sizeof(qw_names) / sizeof(*qw_names); ++i) {
             if (!qa_cvars_find(cvars, qw_names[i]))
                 okay = qa_cvars_register(cvars, qw_names[i], qw_values[i], 0,

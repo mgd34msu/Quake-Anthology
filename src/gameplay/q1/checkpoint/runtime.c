@@ -74,6 +74,13 @@ bool q1_save_runtime(q1_save_io *io, qa_q1_game *g) {
     Q1_SAVE(io, u64, g->time_ns);
     Q1_SAVE(io, u64, g->attack_sequence);
     Q1_SAVE(io, u32, g->force_retouch);
+    Q1_SAVE(io, u32, g->check_client_slot);
+    Q1_SAVE(io, double, g->check_client_time);
+    Q1_SAVE(io, i32, g->check_client_cluster);
+    if (g->check_client_slot > g->options.max_clients || g->check_client_time < 0 ||
+        g->check_client_time > g->time || g->check_client_cluster < -1 ||
+        (!g->check_client_slot && (g->check_client_time != 0 || g->check_client_cluster != 0)))
+        return q1_save_fail(io, "Invalid Q1 check-client Source continuation");
     Q1_SAVE(io, vector, g->forward);
     Q1_SAVE(io, vector, g->right);
     Q1_SAVE(io, vector, g->up);

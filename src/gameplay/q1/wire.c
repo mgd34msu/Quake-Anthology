@@ -120,6 +120,9 @@ bool qa_q1_wire_begin_world(qa_q1_game *g, const char *path, uint32_t inline_mod
         return false;
     }
     wire->generation = generation + 1;
+    g->check_client_slot = 0;
+    g->check_client_time = 0;
+    g->check_client_cluster = 0;
     if (g->options.quakeworld) {
         if (g->wire) wire->qw_fraglog = g->wire->qw_fraglog;
         else wire->qw_fraglog.sequence = 1;
@@ -484,7 +487,8 @@ bool qa_q1_wire_board_commit(const qa_q1_wire_receipt *receipt, const qa_q1_wire
     if (!change || !qa_q1_wire_receipt_current(receipt) || change->slot >= receipt->client_slots) return false;
     q1_wire_state *wire = receipt->operation.game->wire;
     wire->board[change->slot] = (q1_wire_client){.actor = change->present ? change->actor : (qa_actor_id){0},
-        .name = change->name, .frags = change->frags, .colors = change->colors, .present = change->present};
+        .name = change->name, .frags = change->frags, .colors = change->colors, .present = change->present,
+        .eye = wire->board[change->slot].eye};
     if (change->name_changed || change->frags_changed || change->colors_changed) q1_wire_changed(wire);
     return true;
 }

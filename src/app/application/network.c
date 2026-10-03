@@ -388,7 +388,7 @@ bool qa_application_network_q1_chat_recipients(qa_application *app, qa_actor_id 
     if (q1_native(app)) {
         application_native_q1_wire_source source = {0};
         if (!application_native_q1_wire_begin(app, 0, &source, error)) return false;
-        bool okay = application_native_q1_wire_chat(&source, sender, team_only, name, recipients, count, error);
+        bool okay = application_native_q1_wire_chat(&source, sender, team_only, NULL, name, recipients, count, error);
         application_native_q1_wire_end(&source);
         return okay;
     }

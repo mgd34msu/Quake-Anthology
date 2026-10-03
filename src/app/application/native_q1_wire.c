@@ -1290,6 +1290,57 @@ bool application_native_q1_wire_entity_next(qa_application *app, qa_actor_id rec
     }
     application_native_q1_wire_end(&source); return okay;
 }
+static bool check_client_source(application_provider *p, qa_error *error) {
+    qa_application *app = p ? p->application : NULL;
+    return (app && !app->destroy_requested && !app->finalizing && app->session && app->world &&
+        p->kind == APPLICATION_PROVIDER_Q1 && p->constructed && p->attached &&
+        !p->close_pending && p->state.q1 && app->players && app->players->map_provider == p &&
+        application_world_provider(app, QA_ROLE_ENTITIES, "") == p) ||
+        application_fail(error, QA_ERROR_ARGUMENT, "Check-client lost its actual native Q1 Source owner");
+}
+static bool check_client_eye(void *context, qa_actor_id actor, qa_vec3 *out, qa_error *error) {
+    application_provider *p = context;
+    if (!out || !check_client_source(p, error)) return false;
+    qa_application *app = p->application;
+    uint32_t slot;
+    if (!qa_q1_native_client_slot(p->state.q1, actor, &slot, error)) return false;
+    const application_player_record *row = NULL;
+    for (size_t i = 0; i < app->players->count; ++i)
+        if (!app->players->records[i].retiring &&
+            qa_actor_id_equal(app->players->records[i].actor, actor)) {
+            row = app->players->records + i;
+            break;
+        }
+    if (!row || row->client_slot != slot || row->source_slot != slot + 1)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Check-client eye lost its physical Source roster binding");
+    if (row->source_begin_pending || row->deferred)
+        return qa_q1_check_client_eye_read(p->state.q1, slot, out, error);
+    qa_application_control_view movement;
+    qa_body_state body;
+    uint64_t serial = qa_world_body_storage_serial(app->world, actor);
+    if (!qa_application_control_read(app, actor, &movement) || !serial ||
+        !qa_world_body_read(app->world, actor, &body, error) ||
+        !check_client_source(p, error) || qa_world_body_storage_serial(app->world, actor) != serial ||
+        !qa_q1_native_client_slot(p->state.q1, actor, &slot, error) ||
+        !qa_application_control_read(app, actor, &movement))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Check-client eye lost its actual selected movement and body");
+    *out = qa_vec_add(body.origin, movement.view_offset);
+    return true;
+}
+bool application_native_q1_check_client(void *context, qa_actor_id observer, qa_actor_id *out) {
+    application_provider *p = context;
+    qa_error error = {0};
+    bool okay = out && check_client_source(p, &error) &&
+        qa_q1_game_check_client(p->state.q1, observer, check_client_eye, p, out, &error);
+    if (!okay && p && p->application) application_fault(p->application, &error);
+    return okay;
+}
+bool application_native_q1_check_client_retire(application_provider *p, qa_actor_id actor,
+    qa_error *error) {
+    qa_vec3 eye;
+    return check_client_eye(p, actor, &eye, error) &&
+        qa_q1_check_client_eye_store(p->state.q1, actor, eye, error);
+}
 bool application_native_q1_wire_eye(qa_application *app, qa_actor_id recipient, qa_vec3 *out, qa_error *error) {
     if (!out) return application_fail(error, QA_ERROR_ARGUMENT, "Missing native Q1 eye observation");
     application_native_q1_wire_source source = {0};
@@ -1319,26 +1370,49 @@ bool application_native_q1_wire_bounds(qa_application *app, qa_actor_id recipien
     application_native_q1_wire_end(&source); return okay;
 }
 bool application_native_q1_wire_chat(application_native_q1_wire_source *source, qa_actor_id sender, bool team_only,
-    const char **name, qa_actor_id recipients[255], size_t *out_count, qa_error *error) {
+    const char *target, const char **name, qa_actor_id recipients[255], size_t *out_count, qa_error *error) {
     if (!name || !recipients || !out_count)
         return application_fail(error, QA_ERROR_ARGUMENT, "Missing native Q1 source chat outputs");
     if (!source_current(source, QA_CLOCK_NETQUAKE, error)) return false;
-    uint32_t slot; qa_q1_source_client_view from;
-    bool okay = client(source, sender, &slot, error) &&
-        qa_q1_source_client_read(source->provider->state.q1, sender, &from);
+    if (!sender.registry && target)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Native Q1 tell requires its Source player sender");
+    uint32_t slot; qa_q1_source_client_view from = {0};
+    bool okay = !sender.registry || (client(source, sender, &slot, error) &&
+        qa_q1_source_client_read(source->provider->state.q1, sender, &from));
     qa_cvars *cvars = application_native_q1_console_registry(source->provider);
+    const qa_cvar_view *hostname = !sender.registry && cvars ? qa_cvars_find(cvars, "hostname") : NULL;
+    if (okay && !sender.registry && !hostname)
+        okay = application_fail(error, QA_ERROR_NOT_FOUND, "Native Q1 server chat lost its Source hostname");
     const qa_cvar_view *teamplay = cvars ? qa_cvars_find(cvars, "teamplay") : NULL;
-    bool filtered = team_only && teamplay && teamplay->number != 0;
+    bool filtered = sender.registry && team_only && teamplay && teamplay->number != 0;
     qa_actor_id values[255]; size_t count = 0;
     for (uint32_t i = 0; okay && i < source->receipt.client_slots; ++i) {
         qa_actor_id actor; qa_q1_source_client_view view;
         if (!qa_q1_source_client_actor(source->provider->state.q1, i, &actor)) continue;
+        const application_player_record *recipient = roster(source->provider->application, actor);
+        if (!recipient || recipient->deferred || recipient->source_begin_pending) continue;
         if (!qa_q1_source_client_read(source->provider->state.q1, actor, &view)) {
             okay = application_fail(error, QA_ERROR_NOT_FOUND, "Native Q1 chat lost its physical source recipient"); break;
         }
+        if (target) {
+            const unsigned char *left = (const unsigned char *)target, *right = (const unsigned char *)view.name;
+            while (*left && *right) {
+                unsigned char a = *left, b = *right;
+                if (a >= 'A' && a <= 'Z') a += 'a' - 'A';
+                if (b >= 'A' && b <= 'Z') b += 'a' - 'A';
+                if (a != b) break;
+                ++left; ++right;
+            }
+            if (*left || *right) continue;
+            values[count++] = actor;
+            break;
+        }
         if (!filtered || view.team == from.team) values[count++] = actor;
     }
-    if (okay) { memcpy(recipients, values, count * sizeof(*values)); *out_count = count; *name = from.name; }
+    if (okay) {
+        memcpy(recipients, values, count * sizeof(*values)); *out_count = count;
+        *name = sender.registry ? from.name : hostname->value;
+    }
     else if (error && error->code == QA_OK)
         application_fail(error, QA_ERROR_NOT_FOUND, "Native Q1 chat lost its actual source sender");
     return okay;

@@ -388,7 +388,7 @@ bool qa_native_destroy_owned(qa_native_instance **owner, qa_error *error) {
                            "active native instance cannot be destroyed");
     bool completed = true;
     qa_error first = {0}, current = {0};
-    if (instance->lifecycle == QA_NATIVE_INITIALIZED && !instance->process_host_pending && !qa_native_terminal(instance) && !qa_native_shutdown(instance, &current)) {
+    if (instance->lifecycle == QA_NATIVE_INITIALIZED && !instance->process_host_pending && !instance->pending_entry_observers && !qa_native_terminal(instance) && !qa_native_shutdown(instance, &current)) {
         completed = false; first = current;
     }
     instance->destroying = true;
@@ -467,7 +467,8 @@ const qa_native_signature *qa_native_entry_signature(const qa_native_instance *i
 bool native_call_binding(qa_native_instance *instance, const native_entry_binding *binding,
                          const qa_native_value *arguments, size_t count, qa_native_value *result,
                          qa_error *error) {
-    if (!instance || !binding || !binding->address || instance->process_host_pending)
+    if (!instance || !binding || !binding->address || instance->process_host_pending ||
+        instance->pending_entry_observers)
         return native_fail(error, QA_ERROR_ARGUMENT, 0, "live native entry binding is required");
     bool outer = instance->active_depth == 0;
     if (outer) {

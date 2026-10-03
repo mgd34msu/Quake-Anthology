@@ -362,12 +362,17 @@ qa_command_result application_command_fallback(void *opaque,
     }
     qa_actor_id actor = command.context.actor;
     application_provider *game = application_world_provider(application, QA_ROLE_ENTITIES, "");
-    if (actor.registry && game && game->kind == APPLICATION_PROVIDER_Q1 &&
+    if (game && game->kind == APPLICATION_PROVIDER_Q1 &&
         command.context.dialect == QA_CONSOLE_Q1 &&
         (!command.context.owner || command.context.owner == game->owner) &&
-        (q3_command_named(command.argv[0], "say") || q3_command_named(command.argv[0], "say_team"))) {
+        (actor.registry || (command.context.owner == game->owner &&
+         command.context.origin == QA_COMMAND_SERVER)) &&
+        (q3_command_named(command.argv[0], "say") || q3_command_named(command.argv[0], "say_team") ||
+         q3_command_named(command.argv[0], "tell"))) {
         return application_native_q1_chat(game, &command,
-            q3_command_named(command.argv[0], "say_team"), error)
+            q3_command_named(command.argv[0], "tell") ? APPLICATION_NATIVE_Q1_CHAT_TELL :
+            q3_command_named(command.argv[0], "say_team") ? APPLICATION_NATIVE_Q1_CHAT_TEAM :
+            APPLICATION_NATIVE_Q1_CHAT_ALL, error)
             ? QA_COMMAND_HANDLED : QA_COMMAND_FAILED;
     }
     uint32_t source_slot;

@@ -3,6 +3,7 @@
 #include "guest_native_q2_combat.h"
 #include "guest_q2_control.h"
 #include "qa/network.h"
+#include "qa/native_observe.h"
 #include "native_q2_publication.h"
 #include "native_q2_wire_engine.h"
 #include "native_q2_visibility.h"
@@ -103,6 +104,7 @@ bool application_native_q2_restore_finish(application_provider *provider, qa_err
         application_native_q2_stages_prepare(engine,error) &&
         application_native_q2_client_outputs_finish_restore(engine,error) &&
         application_native_q2_callbacks_register(engine,error)));
+    if(ok)ok=qa_native_observers_restore_ready(qa_native_host_instance(provider->state.native.host),error);
     if(ok)engine->restore_record=(qa_bytes){0};
     return ok;
 }
@@ -316,7 +318,7 @@ bool application_native_q2_restore_engine(void *opaque, qa_bytes bytes, qa_error
         ok = !reader.failed && qa_net_read_bytes(&reader, extent, &state) &&
             application_native_q2_attack_restore_prepare(engine, state, &attack, error);
     }
-    struct application_q2_kex_restore *combat = NULL; qa_bytes combat_state = {0};
+    struct application_native_q2_combat_restore *combat = NULL; qa_bytes combat_state = {0};
     if (ok) {
         uint32_t extent = qa_net_read_u32(&reader);
         ok = !reader.failed && qa_net_read_bytes(&reader, extent, &combat_state);

@@ -110,7 +110,7 @@ bool native_process_close(qa_native_instance *instance, qa_error *error)
 {
     bool idle = instance->process_kind == QA_NATIVE_PROCESS_SYSV ?
         qa_native_sysv_process_idle(instance->sysv_process) : qa_native_windows_process_idle(instance->windows_process);
-    if (idle && !instance->process_host_pending && !qa_native_terminal(instance)) {
+    if (idle && !instance->process_host_pending && !instance->pending_entry_observers && !qa_native_terminal(instance)) {
         qa_native_instance *previous = native_active_instance;
         unsigned active = instance->active_depth;
         bool unloading = instance->unloading;
@@ -378,7 +378,7 @@ bool native_process_checkpoint_host(qa_native_instance *instance, qa_bytes actua
         instance->active_depth || instance->callback_depth || instance->region_depth ||
         instance->region_service_depth || instance->write_depth || instance->region_scopes ||
         instance->write_scope || instance->call_scope || instance->destroying ||
-        qa_native_terminal(instance) || !qa_native_guest_idle(instance->guest))
+        qa_native_terminal(instance) || instance->pending_entry_observers || !qa_native_guest_idle(instance->guest))
         return native_fail(error, QA_ERROR_ARGUMENT, 0, "native process capture requires its idle complete source owner");
     qa_buffer process = {0};
     bool okay = instance->process_kind == QA_NATIVE_PROCESS_SYSV ?
@@ -398,7 +398,7 @@ bool native_process_checkpoint_host(qa_native_instance *instance, qa_bytes actua
         for (native_allocation *a = instance->allocations; okay && a; a = a->next)
             okay = qa_source_save_u64(&io, &a->guest_address) && qa_source_save_count(&io, &a->size, SIZE_MAX) &&
                 qa_source_save_i32(&io, &a->tag);
-        if (okay) okay = qa_source_save_finish(&io, out);
+        if (okay) okay = native_observers_fields(&io, instance) && qa_source_save_finish(&io, out);
         qa_source_save_dispose(&io);
     } else okay = false;
     qa_buffer_free(&process); return okay;
@@ -475,7 +475,7 @@ static bool restored_callback(void *context, uint64_t id, uint64_t address,
             *out = (qa_native_guest_callback){id, address, import_entry, binding}; return true;
         }
     }
-    return native_fail(error, QA_ERROR_NOT_FOUND, id, "native SDK callback identity is absent");
+    return native_observers_resolve(instance, id, address, out, error);
 }
 
 static bool retained_allocation(qa_native_instance *instance, uint64_t address,
@@ -549,7 +549,7 @@ bool native_process_restore(qa_native_instance *instance, const qa_native_proces
             if (prior->guest_address == allocation->guest_address)
                 okay = native_fail(error, QA_ERROR_FORMAT, i, "native tagged allocation identity repeats");
     }
-    if (okay) okay = qa_source_save_finish(&io, NULL);
+    if (okay) okay = native_observers_fields(&io, instance) && qa_source_save_finish(&io, NULL);
     qa_source_save_dispose(&io);
     if (!okay) return false;
     if (!native_copy_bytes(host, &instance->process_host, error)) return false;
