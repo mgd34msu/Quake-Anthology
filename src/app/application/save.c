@@ -651,6 +651,7 @@ bool application_save_configuration_validate(qa_application *candidate, qa_bytes
 
 typedef struct application_persistence {
     qa_application *active;
+    qa_world *world;
     qa_application **slot;
     qa_application *displaced;
     qa_application *retained;
@@ -673,12 +674,12 @@ typedef struct application_persistence {
 static bool persistence_restore_provider_clocks(application_persistence *,
     qa_application *, qa_error *);
 
-static bool persistence_safe(qa_application *app)
+static bool persistence_idle(qa_application *app, application_operation expected)
 {
-    return app && app->operation == APPLICATION_IDLE && !app->client_preparation &&
-        !app->q3_round_active && !app->frame_preparing && app->session && app->world &&
-        app->configuration && qa_application_launch(app) && qa_session_safe(app->session) &&
-        qa_world_idle(app->world) && qa_combat_idle(app->combat) &&
+    return app && app->operation == expected && !app->client_preparation &&
+        !app->q3_round_active && !app->frame_preparing && app->session &&
+        app->configuration && qa_session_safe(app->session) &&
+        (!app->world || qa_world_idle(app->world)) && qa_combat_idle(app->combat) &&
         application_guests_idle(app) && application_bots_can_destroy(app) &&
         application_rankings_idle(app) &&
         !app->publication_started && !app->destroy_requested && !app->finalizing &&
@@ -687,13 +688,22 @@ static bool persistence_safe(qa_application *app)
         (app->state == QA_APPLICATION_READY || app->state == QA_APPLICATION_RUNNING);
 }
 
+static bool persistence_safe(qa_application *app)
+{
+    return persistence_idle(app, APPLICATION_IDLE) && app->world && qa_application_launch(app);
+}
+
 static bool persistence_lease(application_persistence *operation, qa_error *error)
 {
-    if (!persistence_safe(operation->active))
-        return application_fail(error, QA_ERROR_ARGUMENT, "application persistence requires a committed idle session");
+    bool restoring = operation->image != NULL;
+    if (!(restoring ? persistence_idle(operation->active, APPLICATION_IDLE) : persistence_safe(operation->active)))
+        return application_fail(error, QA_ERROR_ARGUMENT, restoring
+            ? "application restore requires an idle engine session"
+            : "application persistence requires a committed idle session");
     operation->configuration_generation = qa_configuration_generation(operation->active->configuration);
     operation->publication_generation = operation->active->publication_generation;
     operation->actor_revision = qa_actors_revision(qa_session_actors(operation->active->session));
+    operation->world = operation->active->world;
     operation->active->operation = APPLICATION_PERSISTING;
     operation->leased = true;
     return true;
@@ -702,14 +712,11 @@ static bool persistence_lease(application_persistence *operation, qa_error *erro
 static bool persistence_unchanged(application_persistence *operation, qa_error *error)
 {
     qa_application *app = operation->active;
-    if (!operation->leased || app->operation != APPLICATION_PERSISTING || app->q3_round_active || app->frame_preparing ||
-        app->destroy_requested || app->publication_started ||
-        app->state == QA_APPLICATION_FAULTED || app->state == QA_APPLICATION_STOPPING ||
+    if (!operation->leased || !persistence_idle(app, APPLICATION_PERSISTING) || app->world != operation->world ||
+        (!operation->image && (!app->world || !qa_application_launch(app))) ||
         qa_configuration_generation(app->configuration) != operation->configuration_generation ||
         app->publication_generation != operation->publication_generation ||
-        qa_actors_revision(qa_session_actors(app->session)) != operation->actor_revision ||
-        !qa_session_safe(app->session) || !qa_world_idle(app->world) ||
-        !qa_combat_idle(app->combat) || !application_guests_idle(app) || !application_rankings_idle(app))
+        qa_actors_revision(qa_session_actors(app->session)) != operation->actor_revision)
         return application_fail(error, QA_ERROR_ARGUMENT, "application changed during persistence operation");
     return true;
 }
@@ -2005,8 +2012,9 @@ bool qa_application_persistence_restore(qa_application **active,
     if (!persistence_lease(&operation, error)) return false;
     const qa_save_restore_ops restore = {.create = persistence_create, .restore = persistence_restore_owner,
         .finish = persistence_finish, .publish = persistence_publish, .discard = persistence_discard};
-    bool ok = application_save_content_collect(operation.active, ops->visit_content,
-        ops->context, &operation.content_graph, error);
+    bool ok = !qa_application_launch(operation.active) ||
+        application_save_content_collect(operation.active, ops->visit_content,
+            ops->context, &operation.content_graph, error);
     if (ok) {
         operation.active->capture_content_graph = operation.content_graph;
         ok = qa_save_restore(&operation, &restore, image, error);
