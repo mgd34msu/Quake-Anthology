@@ -17,6 +17,7 @@
 #include "native_q3_client.h"
 #include "selected_effects.h"
 #include "shared_settings.h"
+#include "shared_register.h"
 #include "shared_publication.h"
 #include "shared_storage.h"
 #include "view_settings.h"
@@ -2552,7 +2553,10 @@ static bool prepare(void *context,qa_application *application,const qa_launch_sn
             qa_settings_load_cvars(store,client_owner,4,command->dialect,&seat->client_archive,error) &&
             qa_settings_load_cvars(input_store(source),mouse_owner,3,command->dialect,&seat->mouse_archive,error);
         if (ok && product->builtin && product->program_kind==QA_PROGRAM_BUILTIN &&
-            (product->family==QA_GAME_Q1 || product->family==QA_GAME_Q2))
+            product->family==QA_GAME_Q2)
+            ok=frontend_source_q2_settings_register(selected,seat->cvars,&seat_command,error);
+        else if (ok && product->builtin && product->program_kind==QA_PROGRAM_BUILTIN &&
+            product->family==QA_GAME_Q1)
             ok=frontend_legacy_source_register(seat->cvars,command->dialect,source->declaration_owner,error);
     }
     if (ok) ok=install_commands(source,error);
