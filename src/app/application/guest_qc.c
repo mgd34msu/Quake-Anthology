@@ -241,21 +241,32 @@ static void console_print(void *opaque, const qa_command_context *context, const
     struct application_qc_state *engine = opaque;
     application_console_print(engine->provider->application, context, text);
 }
-qa_console *application_qc_create_console(struct application_qc_state *engine, qa_cvars *cvars, qa_error *error)
+bool application_qc_create_console(struct application_qc_state *engine, qa_cvars *cvars,
+    qa_console **out, qa_error *error)
 {
+    if (!engine || !engine->provider || !cvars || !out || *out)
+        return application_fail(error, QA_ERROR_ARGUMENT, "QC console construction requires its owner, registry and empty output");
+    qa_console *previous_console = engine->console;
+    qa_cvars *previous_cvars = engine->cvars;
     qa_console_options options = {.context = engine->command_context, .cvars = cvars,
         .user = engine, .print = console_print, .source_command = server_command, .read_script = read_script,
         .release_script = release_script, .script_complete = script_complete, .allow_command = allow_command,
         .cvar_owner = cvar_owner, .visible_cvars = visible_cvars, .cvar_edit = cvar_edit,
         .capture_context = capture_context, .context_active = context_active};
     qa_console *console = qa_console_create(&options, error);
+    if (!console) return false;
+    engine->console = console; engine->cvars = cvars;
     const struct application_qc_profile *profile = engine->provider->state.qc.qualified;
-    for (size_t i = 0; console && profile && i < profile->command_count; ++i)
+    bool ok = true;
+    for (size_t i = 0; ok && profile && i < profile->command_count; ++i)
         if (!qa_console_register(console, profile->commands[i].name, "Declared QuakeC command",
             engine->provider->owner, false, application_qc_declared_command, engine, error)) {
-            qa_console_destroy(console); return NULL;
+            ok = false;
         }
-    return console;
+    engine->console = previous_console; engine->cvars = previous_cvars;
+    if (!ok && qa_console_destroy_ready(console)) { qa_console_destroy(console); console = NULL; }
+    *out = console;
+    return ok;
 }
 static bool source_callback(struct application_qc_state *engine, qa_actor_id actor,
                              qa_actor_id other, const char *name, double time_seconds, qa_error *error)

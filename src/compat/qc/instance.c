@@ -1071,12 +1071,20 @@ bool qc_sync_body_from_fields(qa_qc_instance *instance, uint32_t slot,
         return qc_fail(error, QA_ERROR_NOT_FOUND, slot,
                        "QuakeC body source is unavailable");
     qa_actor_id actor = instance->slots[slot].actor;
+    qa_world *world = instance->options.host.world;
+    bool initial_body = qa_world_body_storage_serial(world, actor) == 0;
+    if (initial_body && instance->entity_access_depth == UINT32_MAX)
+        return qc_fail(error, QA_ERROR_ARGUMENT, slot,
+                       "QuakeC initial body field access depth exhausted");
     qa_body_state state;
-    if (!body_read(&instance->bodies[slot], &state, error)) return false;
+    /* Initial owned fields supply the body that host projection will bind. */
+    if (initial_body) ++instance->entity_access_depth;
+    bool read = body_read(&instance->bodies[slot], &state, error);
+    if (initial_body) --instance->entity_access_depth;
+    if (!read) return false;
     if (!slot_matches(instance, slot, QA_QC_SLOT_OWNED, actor))
         return qc_fail(error, QA_ERROR_NOT_FOUND, slot,
                        "QuakeC body source changed during synchronization");
-    qa_world *world = instance->options.host.world;
     qa_body_state existing;
     bool has_body;
     if (!read_body_optional(world, actor, &existing, &has_body, error)) return false;
@@ -1087,7 +1095,9 @@ bool qc_sync_body_from_fields(qa_qc_instance *instance, uint32_t slot,
     qa_body_binding binding = {
         &instance->bodies[slot], body_read, body_write, body_linked
     };
-    return qa_world_body_bind(world, actor, &binding, true, error);
+    if (!qa_world_body_bind(world, actor, &binding, true, error)) return false;
+    return !initial_body || qc_prepare_entity_access(instance, slot, 0,
+        instance->layout.field_words, QA_QC_ENTITY_READ, error);
 }
 
 bool qc_host_spawn(qa_qc_instance *instance, int32_t *reference,

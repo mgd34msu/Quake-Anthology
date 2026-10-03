@@ -46,7 +46,7 @@ bool application_qc_console_prepare(qa_application *app, application_provider *p
     engine->cvars = qa_cvars_create(&options, error);
     engine->command_context = (qa_command_context){.owner = provider->owner, .dialect = dialect, .origin = QA_COMMAND_SERVER};
     if (!engine->cvars ||
-        !(engine->console = application_qc_create_console(engine, engine->cvars, error))) return false;
+        !application_qc_create_console(engine, engine->cvars, &engine->console, error)) return false;
     qa_application_startup_source source = {.descriptor = provider->launch,
         .scope = {.provider = provider->owner, .kind = QA_APPLICATION_CONSOLE_QC},
         .console = engine->console, .cvars = engine->cvars,

@@ -598,8 +598,7 @@ bool application_qc_restore_engine(void *opaque, qa_bytes bytes, qa_error *error
     if (ok && engine->profile == QA_QC_QUAKEWORLD && qa_cvars_find(candidate.cvars, "sv_phs") == NULL)
         ok = qa_net_reader_fail(&reader, "Missing QuakeWorld engine PHS cvar");
     if (ok) {
-        candidate.console = application_qc_create_console(engine, candidate.cvars, error);
-        ok = candidate.console != NULL;
+        ok = application_qc_create_console(engine, candidate.cvars, &candidate.console, error);
     }
     if (ok) {
         bool previously_active = engine->callbacks_active;

@@ -111,7 +111,7 @@ bool application_qc_reference(struct application_qc_state *, qa_actor_id, int32_
 bool application_qc_named(struct application_qc_state *, const char *, qa_actor_id, qa_error *);
 bool application_qc_water_transition(application_provider *, qa_actor_id, qa_error *);
 bool application_qc_spectator_callback(struct application_qc_state *, const char *, qa_actor_id, qa_error *);
-qa_console *application_qc_create_console(struct application_qc_state *, qa_cvars *, qa_error *);
+bool application_qc_create_console(struct application_qc_state *, qa_cvars *, qa_console **, qa_error *);
 bool application_qc_prepare_entity(void *, qa_qc_instance *, const qa_qc_entity_access *, qa_error *);
 bool application_qc_may_move(void *, qa_actor_id);
 bool application_qc_input_idle(const application_provider *);
