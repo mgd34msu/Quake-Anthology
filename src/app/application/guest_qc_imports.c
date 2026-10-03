@@ -81,16 +81,13 @@ static uint32_t source_flags(float value)
     if (bits < 0) bits += 4294967296.0;
     return (uint32_t)bits;
 }
-static bool eye_cluster(struct application_qc_state *engine, int32_t reference,
-                         int32_t *out, qa_error *error)
-{
-    qa_vec3 origin, offset; qa_collision_leaf leaf;
+static bool check_client_eye_reference(struct application_qc_state *engine, int32_t reference,
+    qa_vec3 *out, qa_error *error) {
+    qa_vec3 origin, offset;
     if (!vector_field(engine, reference, "origin", &origin, error) ||
-        !vector_field(engine, reference, "view_ofs", &offset, error) ||
-        !qa_collision_point_leaf(qa_world_geometry(engine->world), qa_vec_add(origin, offset), &leaf, error)) return false;
-    if (leaf.cluster < INT32_MIN || leaf.cluster > INT32_MAX)
-        return application_fail(error, QA_ERROR_FORMAT, "QuakeC eye cluster exceeds its source index");
-    *out = (int32_t)leaf.cluster; return true;
+        !vector_field(engine, reference, "view_ofs", &offset, error)) return false;
+    *out = qa_vec_add(origin, offset);
+    return true;
 }
 static bool check_client_reference(struct application_qc_state *engine, uint32_t slot,
     int32_t *reference, bool *alive, qa_error *error)
@@ -117,39 +114,53 @@ static bool check_client_reference(struct application_qc_state *engine, uint32_t
     }
     application_qc_client *client = &engine->clients[slot];
     *alive = client->connected && qa_actors_get(qa_session_actors(engine->services.session), client->actor) != NULL;
-    return !*alive || application_qc_reference(engine, client->actor, reference, error);
+    return *alive ? application_qc_reference(engine, client->actor, reference, error) :
+        qa_qc_slot_reference(vm, slot, reference, error);
+}
+static bool check_client_row(void *opaque, uint32_t slot, bool selection,
+    qa_builtin_check_client_row *out, qa_error *error) {
+    struct application_qc_state *engine = opaque;
+    int32_t reference;
+    *out = (qa_builtin_check_client_row){0};
+    if (!check_client_reference(engine, slot, &reference, &out->present, error)) return false;
+    if (!out->present) return true;
+    if (!application_qc_float(engine, reference, "health", &out->health, error)) return false;
+    if (selection && !(out->health <= 0)) {
+        float flags;
+        if (!application_qc_float(engine, reference, "flags", &flags, error)) return false;
+        out->no_target = (source_flags(flags) & 128u) != 0;
+    }
+    return true;
+}
+static bool check_client_eye(void *opaque, uint32_t slot, qa_vec3 *out, qa_error *error) {
+    struct application_qc_state *engine = opaque;
+    int32_t reference;
+    bool present;
+    return check_client_reference(engine, slot, &reference, &present, error) &&
+        check_client_eye_reference(engine, reference, out, error);
+}
+static bool check_client_observer_eye(void *opaque, qa_vec3 *out, qa_error *error) {
+    struct application_qc_state *engine = opaque;
+    int32_t reference;
+    return global_reference(engine, "self", &reference, error) &&
+        check_client_eye_reference(engine, reference, out, error);
 }
 static bool check_client(struct application_qc_state *engine, qa_qc_instance *vm, qa_error *error)
 {
-    const qa_qc_definition *time = qa_qc_program_find_global(engine->provider->state.qc.program, "time");
-    float now;
-    if (time == NULL || time->type != QA_QC_FLOAT || !qa_qc_global_float(vm, time->offset, &now, error)) return false;
-    if (!isfinite(now)) return application_fail(error, QA_ERROR_FORMAT, "Invalid QuakeC checkclient clock");
-    if ((double)now - engine->check_time >= 0.1) {
-        uint32_t previous = engine->check_slot ? engine->check_slot : 1;
-        uint32_t slot = previous == engine->max_clients ? 1 : previous + 1;
-        for (;;) {
-            int32_t reference; float health = 0, flags = 0; bool alive;
-            if (!check_client_reference(engine, slot, &reference, &alive, error)) return false;
-            if (alive && (!application_qc_float(engine, reference, "health", &health, error) ||
-                !application_qc_float(engine, reference, "flags", &flags, error))) return false;
-            if (slot == previous || (alive && !(health <= 0) && !(source_flags(flags) & 128u))) break;
-            slot = slot == engine->max_clients ? 1 : slot + 1;
-        }
-        engine->check_slot = slot; engine->check_time = now; engine->check_cluster = -1;
-        int32_t reference; bool alive;
-        if (!check_client_reference(engine, slot, &reference, &alive, error) ||
-            ((alive || (!engine->provider->state.qc.qualified && engine->profile == QA_QC_QUAKEWORLD)) &&
-             !eye_cluster(engine, reference, &engine->check_cluster, error))) return false;
-    }
-    if (engine->check_slot == 0 || engine->check_cluster < 0) return qa_qc_return_int(vm, 0, error);
-    int32_t reference, observer, cluster; float health; bool visible, alive;
-    if (!check_client_reference(engine, engine->check_slot, &reference, &alive, error)) return false;
-    if (!alive) return qa_qc_return_int(vm, 0, error);
-    if (!application_qc_float(engine, reference, "health", &health, error) ||
-        !global_reference(engine, "self", &observer, error) || !eye_cluster(engine, observer, &cluster, error) ||
-        !qa_collision_cluster_visible(qa_world_geometry(engine->world), engine->check_cluster, cluster, false, &visible, error)) return false;
-    return qa_qc_return_int(vm, !(health <= 0) && visible ? reference : 0, error);
+    qa_builtin_check_client_query query = {.session = engine->services.session,
+        .provider = engine->provider->owner, .world = engine->world,
+        .capacity = engine->max_clients, .slot = &engine->check_slot,
+        .time = &engine->check_time, .cluster = &engine->check_cluster,
+        .context = engine, .client = check_client_row, .client_eye = check_client_eye,
+        .observer_eye = check_client_observer_eye};
+    uint32_t slot;
+    if (!qa_builtin_check_client(&query, &slot, error)) return false;
+    if (!slot) return qa_qc_return_int(vm, 0, error);
+    int32_t reference;
+    bool present;
+    if (!check_client_reference(engine, slot, &reference, &present, error)) return false;
+    if (!present) return application_fail(error, QA_ERROR_ARGUMENT, "QuakeC checkclient lost its returned physical Source player");
+    return qa_qc_return_int(vm, reference, error);
 }
 static bool aim_eligible(struct application_qc_state *engine, int32_t source, qa_actor_id shooter,
                           qa_actor_id actor, float teamplay, bool *eligible, qa_error *error)

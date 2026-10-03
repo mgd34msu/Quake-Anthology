@@ -66,7 +66,7 @@ struct application_qc_state {
     size_t resource_count, resource_capacity;
     application_qc_client *clients;
     uint32_t max_clients, check_slot;
-    float check_time;
+    double check_time;
     int32_t check_cluster;
     uint64_t source_time_ns;
     qa_source_frame frame;

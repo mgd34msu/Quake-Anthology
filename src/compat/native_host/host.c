@@ -218,18 +218,8 @@ bool qa_native_host_create_q3(qa_native_module *module,
 
 static void free_records(qa_native_host *host)
 {
-    while (host->strings) {
-        native_host_string *next = host->strings->next;
-        free(host->strings->text);
-        free(host->strings);
-        host->strings = next;
-    }
-    while (host->cvar_shadows) {
-        native_host_cvar_record *next = host->cvar_shadows->next;
-        free(host->cvar_shadows->name);
-        free(host->cvar_shadows);
-        host->cvar_shadows = next;
-    }
+    native_host_memory_state memory={host->strings,host->cvar_shadows};
+    native_host_memory_dispose(&memory); host->strings=NULL; host->cvar_shadows=NULL;
     while (host->surfaces) {
         native_host_surface *next = host->surfaces->next;
         free(host->surfaces);

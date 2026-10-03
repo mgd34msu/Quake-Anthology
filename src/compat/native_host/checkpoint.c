@@ -1,7 +1,8 @@
 #include "internal.h"
 #include <math.h>
+#include "qa/cvars_save.h"
 
-#define HOST_CHECKPOINT_HEADER 68u
+#define HOST_CHECKPOINT_HEADER 80u
 #define HOST_CHECKPOINT_SLOT 248u
 
 typedef struct saved_slot {
@@ -13,11 +14,6 @@ typedef struct saved_slot {
     qa_native_host_q2_origin origins[8];
     bool creation_present, linked;
 } saved_slot;
-
-typedef struct saved_cvar {
-    char *name, *value;
-    uint32_t flags;
-} saved_cvar;
 
 static bool add_size(size_t *total, size_t amount, qa_error *error)
 {
@@ -62,17 +58,6 @@ static uint64_t take_u64(const uint8_t **cursor)
     return value;
 }
 
-static void free_saved_cvars(saved_cvar *cvars, size_t count)
-{
-    if (!cvars)
-        return;
-    for (size_t index = 0; index < count; ++index) {
-        free(cvars[index].name);
-        free(cvars[index].value);
-    }
-    free(cvars);
-}
-
 static bool capture_checkpoint(qa_native_host *host, qa_buffer *out, qa_error *error)
 {
     if (!host || !host->instance || !out || host->destroying || host->restoring || host->reconstruction ||
@@ -84,7 +69,7 @@ static bool capture_checkpoint(qa_native_host *host, qa_buffer *out, qa_error *e
         (host->q3.checkpoint == NULL) != (host->q3.restore == NULL))
         return native_host_fail(error, QA_ERROR_ARGUMENT, 0,
                                 "native host checkpoint services must be paired");
-    qa_buffer engine = {0}, bridge = {0};
+    qa_buffer engine = {0}, bridge = {0}, registry = {0}, memory = {0};
     if (host->engine.checkpoint &&
         !host->engine.checkpoint(host->engine.context, &engine, error))
         return false;
@@ -96,7 +81,7 @@ static bool capture_checkpoint(qa_native_host *host, qa_buffer *out, qa_error *e
     if ((host->kind == NATIVE_HOST_Q2_GAME || host->kind == NATIVE_HOST_Q3) &&
         !qa_native_entity_table_get(host->instance, &table, error)) {
         qa_buffer_free(&engine);
-        qa_buffer_free(&bridge);
+        qa_buffer_free(&bridge); qa_buffer_free(&registry); qa_buffer_free(&memory);
         return false;
     }
     uint32_t slot_count = 0, retained_count = 0;
@@ -104,7 +89,7 @@ static bool capture_checkpoint(qa_native_host *host, qa_buffer *out, qa_error *e
         qa_native_slot_binding binding;
         if (!qa_native_slot(host->instance, slot, &binding, error)) {
             qa_buffer_free(&engine);
-            qa_buffer_free(&bridge);
+            qa_buffer_free(&bridge); qa_buffer_free(&registry); qa_buffer_free(&memory);
             return false;
         }
         if (binding.kind != QA_NATIVE_SLOT_FREE)
@@ -112,38 +97,31 @@ static bool capture_checkpoint(qa_native_host *host, qa_buffer *out, qa_error *e
         if (slot < host->retained_capacity && host->retained_clients[slot])
             ++retained_count;
     }
-    size_t cvar_count = host->cvars ? qa_cvars_count(host->cvars) : 0;
-    if (cvar_count > UINT32_MAX) {
-        qa_buffer_free(&engine);
-        qa_buffer_free(&bridge);
-        return native_host_fail(error, QA_ERROR_MEMORY, cvar_count,
-                                "native host has too many cvars to checkpoint");
+    native_host_memory_state objects={host->strings,host->cvar_shadows};
+    qa_source_save_io io={0};
+    bool captured=(!host->cvars || qa_cvars_save_capture(host->cvars,&registry,error)) &&
+        qa_source_save_writer(&io,NULL,error) && native_host_memory_fields(&io,host,&objects,true) &&
+        qa_source_save_finish(&io,&memory);
+    qa_source_save_dispose(&io);
+    if (!captured) {
+        qa_buffer_free(&engine); qa_buffer_free(&bridge); qa_buffer_free(&registry); qa_buffer_free(&memory); return false;
     }
     size_t total = HOST_CHECKPOINT_HEADER;
     bool sized = add_records(&total, slot_count, HOST_CHECKPOINT_SLOT, error) &&
                  add_records(&total, retained_count, 4u, error) &&
                  add_records(&total, host->message_reference_count, 24u, error) &&
                  add_size(&total, host->message_size, error) &&
-                 add_size(&total, engine.size, error) && add_size(&total, bridge.size, error);
-    for (size_t index = 0; sized && index < cvar_count; ++index) {
-        const qa_cvar_view *view = qa_cvars_at(host->cvars, index);
-        size_t name = strlen(view->name), value = strlen(view->value);
-        if (name > UINT32_MAX || value > UINT32_MAX)
-            sized = native_host_fail(error, QA_ERROR_MEMORY, index,
-                                     "native cvar text exceeds checkpoint limits");
-        else
-            sized = add_size(&total, 12u, error) && add_size(&total, name, error) &&
-                    add_size(&total, value, error);
-    }
+                 add_size(&total, engine.size, error) && add_size(&total, bridge.size, error) &&
+                 add_size(&total, registry.size,error) && add_size(&total,memory.size,error);
     if (!sized) {
         qa_buffer_free(&engine);
-        qa_buffer_free(&bridge);
+        qa_buffer_free(&bridge); qa_buffer_free(&registry); qa_buffer_free(&memory);
         return false;
     }
     uint8_t *data = malloc(total);
     if (!data) {
         qa_buffer_free(&engine);
-        qa_buffer_free(&bridge);
+        qa_buffer_free(&bridge); qa_buffer_free(&registry); qa_buffer_free(&memory);
         return native_host_fail(error, QA_ERROR_MEMORY, total,
                                 "allocating native host checkpoint");
     }
@@ -154,13 +132,14 @@ static bool capture_checkpoint(qa_native_host *host, qa_buffer *out, qa_error *e
     put_u32(&cursor, host->world.owner);
     put_u32(&cursor, slot_count);
     put_u32(&cursor, retained_count);
-    put_u32(&cursor, (uint32_t)cvar_count);
+    put_u64(&cursor, registry.size);
     put_u64(&cursor, host->message_size);
     put_u64(&cursor, engine.size);
     put_u64(&cursor, bridge.size);
     put_u32(&cursor, (uint32_t)host->q3_role);
     put_u32(&cursor, (uint32_t)host->q3_abi);
     put_u64(&cursor, host->message_reference_count);
+    put_u64(&cursor, memory.size);
     const qa_actor_registry *actors = host->world.session
                                          ? qa_session_actors(host->world.session)
                                          : NULL;
@@ -173,7 +152,7 @@ static bool capture_checkpoint(qa_native_host *host, qa_buffer *out, qa_error *e
         if (actors && !qa_actors_save_reference(actors, binding.actor, &saved, error)) {
             free(data);
             qa_buffer_free(&engine);
-            qa_buffer_free(&bridge);
+            qa_buffer_free(&bridge); qa_buffer_free(&registry); qa_buffer_free(&memory);
             return false;
         }
         put_u32(&cursor, (uint32_t)binding.kind);
@@ -190,7 +169,7 @@ static bool capture_checkpoint(qa_native_host *host, qa_buffer *out, qa_error *e
         if ((present || linked) && (!qa_actor_id_equal(lifetime->actor, binding.actor) ||
             !qa_vec_finite(lifetime->creation_origin) || (host->engine.source_frame &&
                 lifetime->creation_frame > host->engine.source_frame(host->engine.context)))) {
-            free(data); qa_buffer_free(&engine); qa_buffer_free(&bridge);
+            free(data); qa_buffer_free(&engine); qa_buffer_free(&bridge); qa_buffer_free(&registry); qa_buffer_free(&memory);
             return native_host_fail(error, QA_ERROR_FORMAT, slot, "Native Q2 creation continuation lost its Source actor");
         }
         put_u32(&cursor, (present ? 1u : 0u) | (linked ? 2u : 0u));
@@ -206,7 +185,7 @@ static bool capture_checkpoint(qa_native_host *host, qa_buffer *out, qa_error *e
                 origin.source_frame < lifetime->creation_frame || (origin.source_frame & 7u) != i ||
                 (host->engine.source_frame && origin.source_frame > host->engine.source_frame(host->engine.context))) :
                 (origin.source_frame || origin.origin.x != 0 || origin.origin.y != 0 || origin.origin.z != 0))) {
-                free(data); qa_buffer_free(&engine); qa_buffer_free(&bridge);
+                free(data); qa_buffer_free(&engine); qa_buffer_free(&bridge); qa_buffer_free(&registry); qa_buffer_free(&memory);
                 return native_host_fail(error, QA_ERROR_FORMAT, slot, "Native Q2 origin history lost its real Source link frame");
             }
             put_u32(&cursor, origin.present ? 1u : 0u);
@@ -220,18 +199,8 @@ static bool capture_checkpoint(qa_native_host *host, qa_buffer *out, qa_error *e
     for (uint32_t slot = 0; slot < table.capacity && slot < host->retained_capacity; ++slot)
         if (host->retained_clients[slot])
             put_u32(&cursor, slot);
-    for (size_t index = 0; index < cvar_count; ++index) {
-        const qa_cvar_view *view = qa_cvars_at(host->cvars, index);
-        uint32_t name = (uint32_t)strlen(view->name);
-        uint32_t value = (uint32_t)strlen(view->value);
-        put_u32(&cursor, name);
-        put_u32(&cursor, value);
-        put_u32(&cursor, view->flags);
-        memcpy(cursor, view->name, name);
-        cursor += name;
-        memcpy(cursor, view->value, value);
-        cursor += value;
-    }
+    if (registry.size) { memcpy(cursor,registry.data,registry.size); cursor+=registry.size; }
+    if (memory.size) { memcpy(cursor,memory.data,memory.size); cursor+=memory.size; }
     if (host->message_size) {
         memcpy(cursor, host->message, host->message_size);
         cursor += host->message_size;
@@ -242,7 +211,7 @@ static bool capture_checkpoint(qa_native_host *host, qa_buffer *out, qa_error *e
         if (!actors || reference->offset > host->message_size || host->message_size - reference->offset < 2 ||
             (i && reference->offset < host->message_references[i - 1].offset + 2) ||
             !qa_actors_save_reference(actors, reference->actor, &saved, error)) {
-            free(data); qa_buffer_free(&engine); qa_buffer_free(&bridge);
+            free(data); qa_buffer_free(&engine); qa_buffer_free(&bridge); qa_buffer_free(&registry); qa_buffer_free(&memory);
             if (!error || error->code == QA_OK)
                 native_host_fail(error, QA_ERROR_FORMAT, i, "Native Q2 message lost its written Source entity reference");
             return false;
@@ -259,7 +228,7 @@ static bool capture_checkpoint(qa_native_host *host, qa_buffer *out, qa_error *e
     if (bridge.size)
         memcpy(cursor, bridge.data, bridge.size);
     qa_buffer_free(&engine);
-    qa_buffer_free(&bridge);
+    qa_buffer_free(&bridge); qa_buffer_free(&registry); qa_buffer_free(&memory);
     *out = (qa_buffer){data, total};
     return true;
 }
@@ -279,19 +248,6 @@ static bool span(const uint8_t *cursor, const uint8_t *end, size_t size)
     return size <= (size_t)(end - cursor);
 }
 
-static bool apply_saved_cvars(qa_native_host *host, const saved_cvar *cvars,
-                              uint32_t count, qa_error *error)
-{
-    for (uint32_t index = 0; index < count; ++index) {
-        const qa_cvar_view *existing = qa_cvars_find(host->cvars, cvars[index].name);
-        if (!existing && !qa_cvars_register(host->cvars, cvars[index].name, cvars[index].value,
-            cvars[index].flags, host->world.owner, NULL, error)) return false;
-        if (!qa_cvars_full_set(host->cvars, cvars[index].name, cvars[index].value,
-            cvars[index].flags, error)) return false;
-    }
-    return native_host_refresh_cvars(host, error);
-}
-
 static bool restore_checkpoint(qa_native_host *host, qa_bytes state, bool cvars_only,
                                 qa_error *error)
 {
@@ -308,17 +264,19 @@ static bool restore_checkpoint(qa_native_host *host, qa_bytes state, bool cvars_
     uint32_t owner = take_u32(&cursor);
     uint32_t slot_count = take_u32(&cursor);
     uint32_t retained_count = take_u32(&cursor);
-    uint32_t cvar_count = take_u32(&cursor);
+    uint64_t registry_size = take_u64(&cursor);
     uint64_t message_size = take_u64(&cursor);
     uint64_t engine_size = take_u64(&cursor);
     uint64_t bridge_size = take_u64(&cursor);
     uint32_t q3_role = take_u32(&cursor);
     uint32_t q3_abi = take_u32(&cursor);
     uint64_t reference_count = take_u64(&cursor);
+    uint64_t memory_size = take_u64(&cursor);
     if (profile != (uint32_t)host->profile ||
         q3_role != (uint32_t)host->q3_role || q3_abi != (uint32_t)host->q3_abi ||
         owner != host->world.owner || message_size > host->message_capacity ||
-        engine_size > SIZE_MAX || bridge_size > SIZE_MAX ||
+        engine_size > SIZE_MAX || bridge_size > SIZE_MAX || registry_size > SIZE_MAX || memory_size > SIZE_MAX ||
+        ((registry_size!=0)!=(host->cvars!=NULL)) ||
         reference_count > message_size / 2 || reference_count > SIZE_MAX / sizeof(qa_native_host_message_reference))
         return native_host_fail(error, QA_ERROR_FORMAT, 0,
                                 "native host checkpoint identity or sizes are invalid");
@@ -394,46 +352,22 @@ static bool restore_checkpoint(qa_native_host *host, qa_bytes state, bool cvars_
                                     "native host retained-client slot is invalid");
         }
     }
-    if (cvar_count > (size_t)(end - cursor) / 12u) {
-        free(slots);
-        free(retained);
-        return native_host_fail(error, QA_ERROR_FORMAT, 0,
-                                "native host cvar records are truncated");
-    }
-    saved_cvar *cvars = cvar_count ? calloc(cvar_count, sizeof(*cvars)) : NULL;
-    if (cvar_count && !cvars) {
-        free(slots);
-        free(retained);
-        return native_host_fail(error, QA_ERROR_MEMORY, 0,
-                                "allocating restored native cvars");
-    }
-    qa_native_host_message_reference *references = NULL;
-    for (uint32_t index = 0; index < cvar_count; ++index) {
-        if (!span(cursor, end, 12))
-            goto truncated;
-        uint32_t name = take_u32(&cursor), value = take_u32(&cursor);
-        cvars[index].flags = take_u32(&cursor);
-        size_t remaining = (size_t)(end - cursor);
-        size_t name_size = (size_t)name + 1u, value_size = (size_t)value + 1u;
-        if (!name || name > remaining || value > remaining - name ||
-            name_size <= name || value_size <= value ||
-            memchr(cursor, 0, name) || memchr(cursor + name, 0, value))
-            goto truncated;
-        cvars[index].name = malloc(name_size);
-        cvars[index].value = malloc(value_size);
-        if (!cvars[index].name || !cvars[index].value) {
-            free(slots);
-            free(retained);
-            free_saved_cvars(cvars, cvar_count);
-            return native_host_fail(error, QA_ERROR_MEMORY, index,
-                                    "allocating restored native cvar text");
-        }
-        memcpy(cvars[index].name, cursor, name);
-        cvars[index].name[name] = 0;
-        cursor += name;
-        memcpy(cvars[index].value, cursor, value);
-        cvars[index].value[value] = 0;
-        cursor += value;
+    qa_cvars_restore *cvars=NULL;
+    native_host_memory_state memory={0};
+    qa_native_host_message_reference *references=NULL;
+    size_t registry_extent=(size_t)registry_size,memory_extent=(size_t)memory_size;
+    if (!span(cursor,end,registry_extent)) goto truncated;
+    qa_bytes registry={cursor,registry_extent}; cursor+=registry_extent;
+    if (!span(cursor,end,memory_extent)) goto truncated;
+    qa_bytes objects={cursor,memory_extent}; cursor+=memory_extent;
+    bool bind_memory=!cvars_only && qa_native_get_backend(host->instance)==QA_NATIVE_BACKEND_OWNED_PROCESS;
+    qa_source_save_io io={0};
+    bool prepared=qa_source_save_reader(&io,NULL,objects,error) &&
+        native_host_memory_fields(&io,host,&memory,bind_memory) && qa_source_save_finish(&io,NULL);
+    qa_source_save_dispose(&io);
+    if (prepared && registry.size) prepared=qa_cvars_save_prepare(host->cvars,registry,&cvars,error);
+    if (!prepared) {
+        free(slots); free(retained); native_host_memory_dispose(&memory); return false;
     }
     size_t remaining = (size_t)(end - cursor);
     if (message_size > remaining)
@@ -451,7 +385,7 @@ static bool restore_checkpoint(qa_native_host *host, qa_bytes state, bool cvars_
     if (!cvars_only && reference_count) {
         references = calloc((size_t)reference_count, sizeof(*references));
         if (!references) {
-            free(slots); free(retained); free_saved_cvars(cvars, cvar_count);
+            free(slots); free(retained); qa_cvars_save_abort(cvars); native_host_memory_dispose(&memory);
             return native_host_fail(error, QA_ERROR_MEMORY, 0, "Restoring written native Q2 message entity references");
         }
     }
@@ -468,7 +402,7 @@ static bool restore_checkpoint(qa_native_host *host, qa_bytes state, bool cvars_
         if (!cvars_only) {
             references[i].offset = (size_t)offset;
             if (!actors || !qa_actors_reference_saved(actors, saved, true, &references[i].actor, error)) {
-                free(slots); free(retained); free(references); free_saved_cvars(cvars, cvar_count);
+                free(slots); free(retained); free(references); qa_cvars_save_abort(cvars); native_host_memory_dispose(&memory);
                 return false;
             }
         }
@@ -478,11 +412,12 @@ static bool restore_checkpoint(qa_native_host *host, qa_bytes state, bool cvars_
     qa_bytes bridge = {cursor, (size_t)bridge_size};
     host->restoring = true;
     if (cvars_only) {
-        bool ok = apply_saved_cvars(host, cvars, cvar_count, error);
+        bool ok=!cvars || qa_cvars_save_commit(cvars,error);
+        if (ok) { cvars=NULL; ok=native_host_refresh_cvars(host,error); }
         host->restoring = false;
         free(slots);
         free(retained);
-        free_saved_cvars(cvars, cvar_count);
+        qa_cvars_save_abort(cvars); native_host_memory_dispose(&memory);
         return ok;
     }
     bool ok = true;
@@ -537,7 +472,16 @@ static bool restore_checkpoint(qa_native_host *host, qa_bytes state, bool cvars_
             free(host->q2_lifetimes); host->q2_lifetimes = values; host->q2_lifetime_capacity = table.capacity;
         } else free(values);
     }
-    if (ok) ok = apply_saved_cvars(host, cvars, cvar_count, error);
+    if (ok && cvars) {
+        ok=qa_cvars_save_commit(cvars,error);
+        if (ok) cvars=NULL;
+    }
+    if (ok && bind_memory) {
+        native_host_memory_state previous={host->strings,host->cvar_shadows};
+        host->strings=memory.strings; host->cvar_shadows=memory.cvar_shadows;
+        memory=(native_host_memory_state){0}; native_host_memory_dispose(&previous);
+    }
+    if (ok && !bind_memory && host->cvars) ok=native_host_refresh_cvars(host,error);
     if (ok) {
         memcpy(host->message, message.data, message.size);
         host->message_size = message.size;
@@ -575,14 +519,14 @@ static bool restore_checkpoint(qa_native_host *host, qa_bytes state, bool cvars_
     free(slots);
     free(retained);
     free(references);
-    free_saved_cvars(cvars, cvar_count);
+    qa_cvars_save_abort(cvars); native_host_memory_dispose(&memory);
     return ok;
 
 truncated:
     free(slots);
     free(retained);
     free(references);
-    free_saved_cvars(cvars, cvar_count);
+    qa_cvars_save_abort(cvars); native_host_memory_dispose(&memory);
     return native_host_fail(error, QA_ERROR_FORMAT, (size_t)(cursor - state.data),
                             "native host checkpoint payload is truncated");
 }

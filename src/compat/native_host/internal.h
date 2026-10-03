@@ -5,6 +5,7 @@
 #include "qa/native_host.h"
 #include "qa/native_host_q2_wire.h"
 #include "qa/network.h"
+#include "qa/source_save.h"
 
 #include <limits.h>
 #include <stdlib.h>
@@ -29,6 +30,14 @@ typedef struct native_host_cvar_record {
     uint64_t modification;
     struct native_host_cvar_record *next;
 } native_host_cvar_record;
+
+typedef struct native_host_memory_state {
+    native_host_string *strings;
+    native_host_cvar_record *cvar_shadows;
+} native_host_memory_state;
+bool native_host_memory_fields(qa_source_save_io *, qa_native_host *,
+    native_host_memory_state *, bool qualify_addresses);
+void native_host_memory_dispose(native_host_memory_state *);
 
 typedef struct native_host_surface {
     qa_collision_surface surface;

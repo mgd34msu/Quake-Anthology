@@ -13,6 +13,59 @@ bool qa_builtin_services_validate(const qa_builtin_services *s, qa_error *error)
     return true;
 }
 
+static bool check_client_cluster(qa_world *world, qa_vec3 eye, int32_t *out, qa_error *error) {
+    qa_collision_leaf leaf;
+    if (!qa_collision_point_leaf(qa_world_geometry(world), eye, &leaf, error)) return false;
+    if (leaf.cluster < -1 || leaf.cluster > INT32_MAX) {
+        qa_error_set(error, QA_ERROR_FORMAT, 0, "Check-client eye exceeds its Source leaf index");
+        return false;
+    }
+    *out = (int32_t)leaf.cluster;
+    return true;
+}
+bool qa_builtin_check_client(const qa_builtin_check_client_query *q, uint32_t *out,
+    qa_error *error) {
+    qa_clock_state clock;
+    if (!q || !out || !q->world || !q->capacity || !q->slot || !q->time || !q->cluster ||
+        !q->client || !q->client_eye || !q->observer_eye ||
+        !qa_session_clock(q->session, q->provider, &clock)) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Check-client requires its physical readers and Source server clock");
+        return false;
+    }
+    *out = 0;
+    double now = (double)clock.frame.time_ns / 1000000000.0;
+    if (now - *q->time >= 0.1) {
+        uint32_t previous = *q->slot;
+        if (previous < 1) previous = 1;
+        if (previous > q->capacity) previous = q->capacity;
+        uint32_t slot = previous == q->capacity ? 1 : previous + 1;
+        while (slot != previous) {
+            qa_builtin_check_client_row row;
+            if (!q->client(q->context, slot, true, &row, error)) return false;
+            if (row.present && !(row.health <= 0) && !row.no_target) break;
+            slot = slot == q->capacity ? 1 : slot + 1;
+        }
+        *q->slot = slot;
+        *q->time = now;
+        qa_vec3 eye;
+        if (!q->client_eye(q->context, slot, &eye, error) ||
+            !check_client_cluster(q->world, eye, q->cluster, error)) return false;
+    }
+    if (!*q->slot) return true;
+    qa_builtin_check_client_row row;
+    if (!q->client(q->context, *q->slot, false, &row, error)) return false;
+    if (!row.present || row.health <= 0) return true;
+    qa_vec3 eye;
+    int32_t cluster;
+    bool visible;
+    if (!q->observer_eye(q->context, &eye, error) ||
+        !check_client_cluster(q->world, eye, &cluster, error) ||
+        !qa_collision_cluster_visible(qa_world_geometry(q->world), *q->cluster,
+            cluster, false, &visible, error)) return false;
+    if (visible) *out = *q->slot;
+    return true;
+}
+
 bool qa_builtin_spawn_actor(const qa_builtin_services *s, const qa_builtin_spawn *spawn,
                             qa_actor_id *out, qa_error *error) {
     if (!s || !spawn || !out || (spawn->inventory_count && !spawn->inventory)) {

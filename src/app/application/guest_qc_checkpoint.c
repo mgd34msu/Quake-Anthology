@@ -330,7 +330,7 @@ bool application_qc_capture_engine(void *opaque, qa_buffer *out, qa_error *error
         qa_net_write_u8(&writer, engine->initialized) &&
         qa_net_write_u8(&writer, engine->callbacks_active) &&
         qa_net_write_u8(&writer, engine->output_channels) &&
-        qa_net_write_u32(&writer, engine->check_slot) && qa_net_write_f32(&writer, engine->check_time) &&
+        qa_net_write_u32(&writer, engine->check_slot) && qa_net_write_f64(&writer, engine->check_time) &&
         qa_net_write_i32(&writer, engine->check_cluster) &&
         qa_net_write_u8(&writer, engine->random.front) && qa_net_write_u8(&writer, engine->random.rear) &&
         qa_net_write_u64(&writer, engine->random.draws);
@@ -425,7 +425,7 @@ bool application_qc_restore_engine(void *opaque, qa_bytes bytes, qa_error *error
     uint8_t initialized = qa_net_read_u8(&reader); candidate.initialized = initialized != 0;
     uint8_t callbacks_active = qa_net_read_u8(&reader);
     candidate.output_channels = qa_net_read_u8(&reader);
-    candidate.check_slot = qa_net_read_u32(&reader); candidate.check_time = qa_net_read_f32(&reader);
+    candidate.check_slot = qa_net_read_u32(&reader); candidate.check_time = qa_net_read_f64(&reader);
     candidate.check_cluster = qa_net_read_i32(&reader);
     candidate.random.front = qa_net_read_u8(&reader); candidate.random.rear = qa_net_read_u8(&reader);
     candidate.random.draws = qa_net_read_u64(&reader);

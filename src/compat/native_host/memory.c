@@ -310,3 +310,112 @@ bool native_host_cvar(qa_native_host *host, const char *name, const char *value,
     *out = record->address;
     return true;
 }
+
+/* These are the actual host-created guest objects. Import owns metadata only;
+ * the restored Source process already owns every tagged allocation and byte. */
+void native_host_memory_dispose(native_host_memory_state *state)
+{
+    while (state->strings) {
+        native_host_string *row=state->strings; state->strings=row->next;
+        free(row->text); free(row);
+    }
+    while (state->cvar_shadows) {
+        native_host_cvar_record *row=state->cvar_shadows; state->cvar_shadows=row->next;
+        free(row->name); free(row);
+    }
+}
+static bool memory_text(qa_source_save_io *io, char **text, size_t *bytes, size_t maximum)
+{
+    bool reading=io->direction==QA_SOURCE_SAVE_READ;
+    if (!reading) *bytes=strlen(*text)+1;
+    if (!qa_source_save_count(io,bytes,maximum) || !*bytes)
+        return native_host_fail(io->error,QA_ERROR_FORMAT,io->offset,"Native host text lacks its bounded terminator");
+    if (reading) {
+        if (io->offset>io->input.size || *bytes>io->input.size-io->offset)
+            return native_host_fail(io->error,QA_ERROR_FORMAT,io->offset,"Native host text leaves its saved extent");
+        *text=malloc(*bytes);
+        if (!*text) return native_host_fail(io->error,QA_ERROR_MEMORY,io->offset,"Owning restored native host text");
+    }
+    if (!qa_source_save_bytes(io,*text,*bytes)) return false;
+    return (!(*text)[*bytes-1] && !memchr(*text,0,*bytes-1)) ||
+        native_host_fail(io->error,QA_ERROR_FORMAT,io->offset,"Native host text has an invalid terminator");
+}
+static bool memory_allocation(qa_native_host *host,qa_native_address address,size_t bytes,int32_t tag,
+    bool qualify,qa_error *error)
+{
+    if (!address || (host->pointer_bytes==4 && address>UINT32_MAX))
+        return native_host_fail(error,QA_ERROR_FORMAT,0,"Native host allocation leaves its actual pointer width");
+    if (!qualify) return true;
+    qa_native_allocation_info actual;
+    if (!qa_native_allocation_query(host->instance,address,&actual,error)) return false;
+    if (actual.base!=address || actual.bytes!=bytes || actual.tag!=tag)
+        return native_host_fail(error,QA_ERROR_FORMAT,0,"Native host cache differs from its actual tagged Source object");
+    return qa_native_range_check(host->instance,address,bytes,QA_NATIVE_MEMORY_READ|QA_NATIVE_MEMORY_WRITE,error);
+}
+bool native_host_memory_fields(qa_source_save_io *io,qa_native_host *host,
+    native_host_memory_state *state,bool qualify_addresses)
+{
+    bool reading=io->direction==QA_SOURCE_SAVE_READ;
+    if (reading && (state->strings || state->cvar_shadows))
+        return native_host_fail(io->error,QA_ERROR_ARGUMENT,io->offset,"Native memory import requires empty metadata custody");
+    size_t count=0;
+    if (!reading) for (native_host_string *row=state->strings;row;row=row->next) ++count;
+    if (!qa_source_save_count(io,&count,SIZE_MAX)) return false;
+    if (reading && (io->offset>io->input.size || count>(io->input.size-io->offset)/17))
+        return native_host_fail(io->error,QA_ERROR_FORMAT,io->offset,"Native string count exceeds its saved objects");
+    native_host_string **strings=&state->strings;
+    for (size_t i=0;i<count;++i) {
+        if (reading) {
+            *strings=calloc(1,sizeof(**strings));
+            if (!*strings) return native_host_fail(io->error,QA_ERROR_MEMORY,i,"Owning restored native string custody");
+        }
+        native_host_string *row=*strings;
+        if (!reading && row->bytes!=strlen(row->text)+1)
+            return native_host_fail(io->error,QA_ERROR_FORMAT,i,"Native string custody changes its actual allocation extent");
+        if (!qa_source_save_u64(io,&row->address) || !memory_text(io,&row->text,&row->bytes,host->maximum_string_bytes) ||
+            !memory_allocation(host,row->address,row->bytes,INT32_MIN+1,qualify_addresses,io->error)) return false;
+        for (native_host_string *prior=state->strings;prior!=row;prior=prior->next)
+            if (prior->address==row->address || !strcmp(prior->text,row->text))
+                return native_host_fail(io->error,QA_ERROR_FORMAT,i,"Native string custody repeats a Source object");
+        if (qualify_addresses) {
+            qa_buffer actual={0};
+            bool ok=qa_native_read_string(host->instance,row->address,row->bytes,&actual,io->error);
+            if (ok && (actual.size!=row->bytes-1 || memcmp(actual.data,row->text,actual.size)))
+                ok=native_host_fail(io->error,QA_ERROR_FORMAT,i,"Native string bytes differ from their restored Source RAM");
+            qa_buffer_free(&actual); if (!ok) return false;
+        }
+        strings=&row->next;
+    }
+    count=0;
+    if (!reading) for (native_host_cvar_record *row=state->cvar_shadows;row;row=row->next) ++count;
+    if (!qa_source_save_count(io,&count,SIZE_MAX)) return false;
+    if (reading && (io->offset>io->input.size || count>(io->input.size-io->offset)/26))
+        return native_host_fail(io->error,QA_ERROR_FORMAT,io->offset,"Native cvar-shadow count exceeds its saved objects");
+    native_host_cvar_record **cvars=&state->cvar_shadows;
+    for (size_t i=0;i<count;++i) {
+        if (reading) {
+            *cvars=calloc(1,sizeof(**cvars));
+            if (!*cvars) return native_host_fail(io->error,QA_ERROR_MEMORY,i,"Owning restored native cvar-shadow custody");
+        }
+        native_host_cvar_record *row=*cvars; size_t bytes=0;
+        if (!qa_source_save_u64(io,&row->address) || !qa_source_save_u64(io,&row->modification) ||
+            !memory_text(io,&row->name,&bytes,host->maximum_string_bytes) ||
+            !memory_allocation(host,row->address,host->classic?host->classic->cvar.bytes:56u,
+                INT32_MIN+3,qualify_addresses,io->error)) return false;
+        if (!row->name[0]) return native_host_fail(io->error,QA_ERROR_FORMAT,i,"Native cvar-shadow name is empty");
+        if (qualify_addresses) {
+            uint8_t pointer[8];
+            if (!qa_native_read(host->instance,row->address,pointer,host->pointer_bytes,io->error)) return false;
+            qa_native_address name=host->pointer_bytes==4?qa_load_u32le(pointer):qa_load_u64le(pointer);
+            native_host_string *source=state->strings;
+            while (source && (source->address!=name || strcmp(source->text,row->name))) source=source->next;
+            if (!source) return native_host_fail(io->error,QA_ERROR_FORMAT,i,
+                "Native cvar-shadow name lacks its literal Source string object");
+        }
+        for (native_host_cvar_record *prior=state->cvar_shadows;prior!=row;prior=prior->next)
+            if (prior->address==row->address || !strcmp(prior->name,row->name))
+                return native_host_fail(io->error,QA_ERROR_FORMAT,i,"Native cvar-shadow custody repeats a Source object");
+        cvars=&row->next;
+    }
+    return true;
+}

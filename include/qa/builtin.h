@@ -243,6 +243,29 @@ typedef struct qa_builtin_spawn {
 } qa_builtin_spawn;
 
 bool qa_builtin_services_validate(const qa_builtin_services *, qa_error *);
+
+typedef struct qa_builtin_check_client_row {
+    bool present, no_target;
+    float health;
+} qa_builtin_check_client_row;
+/* Client slots are physical Source indices 1..capacity. A selection read
+ * requires no_target; a return read needs only presence and health. The eye
+ * reader also reads inactive reserved rows. Cache fields remain host-owned,
+ * and result slot zero denotes the Source world. */
+typedef struct qa_builtin_check_client_query {
+    qa_session *session;
+    qa_actor_owner provider;
+    qa_world *world;
+    uint32_t capacity;
+    uint32_t *slot;
+    double *time;
+    int32_t *cluster;
+    void *context;
+    bool (*client)(void *, uint32_t, bool selection, qa_builtin_check_client_row *, qa_error *);
+    bool (*client_eye)(void *, uint32_t, qa_vec3 *, qa_error *);
+    bool (*observer_eye)(void *, qa_vec3 *, qa_error *);
+} qa_builtin_check_client_query;
+bool qa_builtin_check_client(const qa_builtin_check_client_query *, uint32_t *, qa_error *);
 bool qa_builtin_spawn_actor(const qa_builtin_services *, const qa_builtin_spawn *, qa_actor_id *,
                             qa_error *);
 bool qa_builtin_emit(const qa_builtin_services *, const qa_builtin_event *, qa_error *);
