@@ -52,10 +52,9 @@ bool nav_boarding(qa_navigation *n, uint32_t id, bool train, const qa_nav_edge *
     uint32_t index = nav_node_index(n->graph, id);
     if (index == QA_NAV_NO_INDEX)
         return true;
-    for (uint32_t i = n->graph->first_out[index]; i < n->graph->first_out[index + 1]; ++i) {
-        const qa_nav_edge *candidate = n->graph->edges + n->graph->outgoing[i];
-        if (candidate->mode != QA_NAV_MOVER || !candidate->has_entity)
-            continue;
+    for (uint32_t i = n->graph->first_mover_out[index];
+         i < n->graph->first_mover_out[index + 1]; ++i) {
+        const qa_nav_edge *candidate = n->graph->edges + n->graph->mover_outgoing[i];
         if (!train && ((candidate->source.kind != QA_NAV_ORIGIN_NAV2 &&
                         candidate->source.kind != QA_NAV_ORIGIN_NAV3) ||
                        candidate->source_travel_type != 6))

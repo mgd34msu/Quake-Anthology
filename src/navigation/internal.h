@@ -14,6 +14,7 @@ struct qa_nav_graph {
     size_t node_lookup_count, edge_lookup_count;
     qa_nav_rejection *rejected;
     uint16_t *portal_maxima;
+    uint32_t *mover_outgoing, *first_mover_out;
 };
 typedef struct nav_queue_entry {
     uint32_t node;

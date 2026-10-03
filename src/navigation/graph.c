@@ -65,9 +65,12 @@ static uint32_t *indices(size_t count, bool clear) {
     return clear ? calloc(count == 0 ? 1 : count, sizeof(uint32_t))
                  : malloc((count == 0 ? 1 : count) * sizeof(uint32_t));
 }
+static bool mover_edge(const qa_nav_edge *edge) {
+    return edge->mode == QA_NAV_MOVER && edge->has_entity;
+}
 bool nav_graph_finish(qa_nav_graph *g, qa_error *e) {
     const size_t n = g->view.node_count, m = g->view.edge_count;
-    size_t max_node = 0, max_edge = 0;
+    size_t max_node = 0, max_edge = 0, mover_count = 0;
     for (size_t i = 0; i < n; ++i) {
         if (g->nodes[i].id == QA_NAV_NO_INDEX || !qa_vec_finite(g->nodes[i].origin) ||
             !nav_bounds_valid(g->nodes[i].bounds) || !isfinite(g->nodes[i].radius) ||
@@ -83,14 +86,19 @@ bool nav_graph_finish(qa_nav_graph *g, qa_error *e) {
             goto invalid;
         if ((size_t)g->edges[i].id + 1 > max_edge)
             max_edge = (size_t)g->edges[i].id + 1;
+        if (mover_edge(g->edges + i))
+            ++mover_count;
     }
     g->node_lookup = indices(max_node, false);
     g->edge_lookup = indices(max_edge, false);
     g->first_out = indices(n + 1, true);
     g->outgoing = indices(m, false);
+    g->first_mover_out = indices(n + 1, false);
+    g->mover_outgoing = indices(mover_count, false);
     g->clusters = indices(n, false);
     if (g->node_lookup == NULL || g->edge_lookup == NULL || g->first_out == NULL ||
-        g->outgoing == NULL || g->clusters == NULL)
+        g->outgoing == NULL || g->first_mover_out == NULL || g->mover_outgoing == NULL ||
+        g->clusters == NULL)
         goto memory;
     g->node_lookup_count = max_node;
     g->edge_lookup_count = max_edge;
@@ -137,6 +145,16 @@ bool nav_graph_finish(qa_nav_graph *g, qa_error *e) {
     memcpy(cursor, g->first_out, n * sizeof(*cursor));
     for (size_t i = 0; i < m; ++i)
         g->outgoing[cursor[nav_node_index(g, g->edges[i].from)]++] = (uint32_t)i;
+    uint32_t mover = 0;
+    for (size_t node = 0; node < n; ++node) {
+        g->first_mover_out[node] = mover;
+        for (uint32_t i = g->first_out[node]; i < g->first_out[node + 1]; ++i) {
+            uint32_t edge = g->outgoing[i];
+            if (mover_edge(g->edges + edge))
+                g->mover_outgoing[mover++] = edge;
+        }
+    }
+    g->first_mover_out[n] = mover;
     memcpy(cursor, first_in, n * sizeof(*cursor));
     for (size_t i = 0; i < m; ++i)
         incoming[cursor[nav_node_index(g, g->edges[i].to)]++] = (uint32_t)i;
@@ -218,6 +236,8 @@ void qa_nav_graph_release(qa_nav_graph *g) {
         free(g->edge_lookup);
         free(g->outgoing);
         free(g->first_out);
+        free(g->mover_outgoing);
+        free(g->first_mover_out);
         free(g->incoming);
         free(g->first_in);
         free(g->clusters);
