@@ -450,6 +450,15 @@ bool frontend_tools_world_change_ready(qa_frontend *f, qa_error *error) {
     return (qa_tools_callbacks_idle(services->owner) && qa_llm_callbacks_idle(services->llm) &&
             qa_http_callbacks_idle(services->http)) || frontend_fail(error, QA_ERROR_ARGUMENT, "tool callbacks must return before world retirement");
 }
+bool frontend_tools_console_retire(qa_frontend *f, qa_console *console, qa_error *error) {
+    if (!f || (f->tools && f->tools->frontend != f))
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "tool console retirement lost its actual frontend owner");
+    if (!f->tools || !console) return true;
+    if (!qa_console_idle(console) || !frontend_tools_world_change_ready(f, error)) return false;
+    qa_frontend_tools *services = f->tools;
+    return (!services->llm || qa_llm_detach_console(services->llm, console, error)) &&
+        (!services->owner || qa_tools_detach_console(services->owner, console, error));
+}
 bool frontend_tools_sync(qa_frontend *f, qa_error *error) {
     if (!f || !f->tools) return true;
     qa_frontend_tools *services = f->tools;

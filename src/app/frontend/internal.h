@@ -317,6 +317,7 @@ uint64_t frontend_audio_retained_q2_actor(qa_frontend *, const qa_builtin_event 
 bool frontend_tools_create(qa_frontend *, qa_error *);
 bool frontend_tools_before_world_change(qa_frontend *, qa_error *);
 bool frontend_tools_world_change_ready(qa_frontend *, qa_error *);
+bool frontend_tools_console_retire(qa_frontend *, qa_console *, qa_error *);
 bool frontend_tools_sync(qa_frontend *, qa_error *);
 bool frontend_tools_capture_clock(qa_frontend *,const qa_cvars *,uint64_t,uint64_t *,qa_error *);
 bool frontend_tools_pump(qa_frontend *, qa_error *);

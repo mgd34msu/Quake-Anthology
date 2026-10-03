@@ -587,6 +587,7 @@ bool frontend_client_source_destroy(frontend_client_source **owned, qa_error *er
     }
     if (!qa_console_destroy_ready(s->console) || !frontend_client_registry_release_ready(s->registry, error))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "CLIENT programme retains a physical console or registry lease");
+    if (!frontend_tools_console_retire(s->frontend, s->console, error)) return false;
     s->closing = true;
     if (s->app_attached && !qa_application_client_retire(s->frontend->application, &s->application, error)) return false;
     qa_console_destroy(s->console); s->console = NULL;

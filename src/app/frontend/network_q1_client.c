@@ -99,8 +99,10 @@ static bool retirement(void *context,const qa_application_client_source *source)
     frontend_client_source_view held;
     if (!o || o->closing || !o->retired || !o->physical || !source ||
         source->runtime!=o->options.runtime || !qa_net_client_id_equal(source->client,o->client) ||
-        source->connection_epoch!=o->epoch || source->network_seat.owner!=o->binding.seat.owner ||
-        source->network_seat.index!=o->binding.seat.index) return false;
+        source->connection_epoch!=o->epoch ||
+        (!o->client.owner && (o->client.generation || o->client.slot || o->epoch))) return false;
+    const qa_net_seat_id binding=o->client.owner?o->binding.seat:(qa_net_seat_id){0};
+    if (source->network_seat.owner!=binding.owner || source->network_seat.index!=binding.index) return false;
     if (frontend_client_source_preinstall_current(o->physical,source,NULL)) return true;
     if (!frontend_client_source_metadata_read(o->physical,&held,NULL) ||
         !qa_application_client_associated(o->options.frontend->application,source)) return false;
@@ -108,8 +110,7 @@ static bool retirement(void *context,const qa_application_client_source *source)
     return source->descriptor==actual->descriptor && source->runtime==o->options.runtime &&
         source->runtime==actual->runtime && qa_net_client_id_equal(source->client,o->client) &&
         qa_net_client_id_equal(source->client,actual->client) && source->connection_epoch==o->epoch &&
-        source->connection_epoch==actual->connection_epoch && source->network_seat.owner==o->binding.seat.owner &&
-        source->network_seat.index==o->binding.seat.index &&
+        source->connection_epoch==actual->connection_epoch &&
         source->network_seat.owner==actual->network_seat.owner && source->network_seat.index==actual->network_seat.index &&
         source->configuration_generation==actual->configuration_generation &&
         source->context.session==actual->context.session && source->context.receiver==actual->context.receiver &&
@@ -650,6 +651,8 @@ static bool tick(frontend_network_q1_client *o,uint64_t now,qa_error *error)
         return qa_network_q1_client_continue(o->options.runtime,o->client,error) &&
             frontend_client_source_drain(o->physical,1024,&executed,error);
     }
+    size_t executed=0;
+    if(!frontend_client_source_drain(o->physical,1024,&executed,error)) return false;
     if(handshake(o).phase==QA_Q1_CONNECT_CONNECTED) return attach(o,error);
     uint8_t data[65535]; qa_net_writer writer; qa_net_writer_init(&writer,data,sizeof(data),error);
     bool present=false;
