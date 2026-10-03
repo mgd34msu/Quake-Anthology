@@ -252,8 +252,7 @@ bool nav_predict(nav_prediction *p, qa_actor_id actor, qa_vec3 from, qa_vec3 to,
     }
     if (!p->initialized && !begin(p, actor, from, e))
         return false;
-    bool fixed_point = mode == QA_NAV_JUMP &&
-        p->input.profile.kind == QA_MOVEMENT_Q2_CLASSIC && !p->has_lease &&
+    bool fixed_point = p->input.profile.kind == QA_MOVEMENT_Q2_CLASSIC && !p->has_lease &&
         p->supplied.trace == NULL && p->supplied.point_contents == NULL &&
         p->supplied.phase == NULL && p->supplied.touch == NULL &&
         p->supplied.effect == NULL && p->supplied.firing == NULL && p->supplied.is_bsp == NULL;
