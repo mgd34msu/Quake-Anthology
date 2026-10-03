@@ -6474,6 +6474,20 @@ bool frontend_network_client_draw(qa_frontend *f,uint32_t physical,uint32_t ster
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Initial source UI lost its returned module and attempt receipt");
     *rendered=true; return true;
 }
+bool frontend_network_retire_clients(qa_frontend *f,qa_error *error)
+{
+    qa_frontend_network *n=f?f->network:NULL;
+    if(!f || f->stepping || f->preparing || f->capture || f->resource_inventory ||
+        (n && (n->frontend!=f || n->round || n->busy || !qa_network_callbacks_idle(n->runtime))) ||
+        !qa_http_callbacks_idle(frontend_tools_http(f)))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"CLIENT retirement requires its returned frontend and Network callbacks");
+    if(!n) return true;
+    if(!frontend_network_close_client(f,error) ||
+        !frontend_network_q2_client_destroy(&n->q2_client_owner,error) ||
+        !frontend_network_q1_client_destroy(&n->q1_client_owner,error)) return false;
+    if(n->unified_client_service && !frontend_network_unified_destroy(&n->unified,error)) return false;
+    return frontend_network_unified_client_destroy(&n->unified_client_service,error);
+}
 bool frontend_network_destroy(qa_frontend *f, qa_error *error)
 {
     qa_frontend_network *n = f->network; if (!n) return true;

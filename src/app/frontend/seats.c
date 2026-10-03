@@ -190,7 +190,19 @@ static bool menu_action(void *context, uint32_t id, qa_ui_id control, const qa_u
     qa_frontend *frontend = seat->frontend;
     qa_ui_state state;
     if (!qa_ui_state_read(seat->ui, &state, error)) return false;
+    if (state.menu == FRONTEND_PLAYER_SOURCES) {
+        if (action->kind!=QA_UI_SELECT) return true;
+        if (!control || control>QA_INPUT_LOCAL_SEATS*3 || action->value.row>=seat->player_source_count)
+            return frontend_fail(error,QA_ERROR_ARGUMENT,"Player source choice is no longer available");
+        static const qa_launch_role roles[]={QA_ROLE_MOVEMENT,QA_ROLE_CHARACTER,QA_ROLE_ARSENAL};
+        uint32_t physical=(uint32_t)((control-1)/3);
+        const qa_product *product=qa_catalog_product(qa_application_catalog(frontend->application),
+            seat->player_source_products[action->value.row]);
+        return frontend_player_source_select(frontend,physical,roles[(control-1)%3],product,error);
+    }
     if (state.menu == FRONTEND_SETTINGS) {
+        if (control==5 && action->kind==QA_UI_ACTIVATE)
+            return frontend_menu_open(seat,FRONTEND_PLAYER_SOURCES,error);
         qa_cvars *cvars = qa_application_cvars(frontend->application);
         if (control == 1 && (action->kind == QA_UI_SELECT || action->kind == QA_UI_ROW_ACTIVATE)) {
             seat->selected_setting = action->value.row;
@@ -279,7 +291,70 @@ static bool settings(void *context, uint32_t id, qa_ui_menu *out, qa_error *erro
     seat->controls[2].label = "Apply"; seat->controls[2].rect = (qa_scene_rect_f){480, 340, 120, 30};
     seat->controls[3].label = selected && selected->description ? selected->description : "Select a setting to inspect or edit";
     seat->controls[3].rect = (qa_scene_rect_f){40, 392, 560, 60}; seat->controls[3].enabled = false;
-    *out = (qa_ui_menu){.id = FRONTEND_SETTINGS, .title = "Engine settings", .controls = seat->controls, .count = 4, .fullscreen = true};
+    seat->controls[4]=button(seat,5,"Player sources",432);
+    seat->controls[4].enabled=qa_application_launch(seat->frontend->application)!=NULL &&
+        !frontend_network_remote(seat->frontend);
+    *out = (qa_ui_menu){.id = FRONTEND_SETTINGS, .title = "Settings", .controls = seat->controls, .count = 5, .fullscreen = true};
+    return true;
+}
+static bool player_sources(void *context,uint32_t id,qa_ui_menu *out,qa_error *error)
+{
+    frontend_seat *seat=context; (void)id;
+    qa_frontend *f=seat->frontend;
+    const qa_launch_snapshot *publication=qa_application_launch(f->application);
+    const qa_launch_choices *choices=qa_launch_snapshot_choices(publication);
+    qa_catalog *catalog=qa_application_catalog(f->application);
+    size_t capacity=qa_catalog_count(catalog);
+    if (capacity>seat->player_source_capacity) {
+        if (capacity>SIZE_MAX/sizeof(*seat->player_source_titles) ||
+            capacity>SIZE_MAX/sizeof(*seat->player_source_products))
+            return frontend_fail(error,QA_ERROR_MEMORY,"Player source list is too large");
+        const char **titles=malloc(capacity*sizeof(*titles));
+        qa_product_id *products=malloc(capacity*sizeof(*products));
+        if (!titles || !products) { free(titles); free(products);
+            return frontend_fail(error,QA_ERROR_MEMORY,"Allocating player source choices"); }
+        free(seat->player_source_titles); free(seat->player_source_products);
+        seat->player_source_titles=titles; seat->player_source_products=products;
+        seat->player_source_capacity=capacity;
+    }
+    seat->player_source_count=0;
+    for (size_t i=0;i<capacity;++i) {
+        const qa_product *product=qa_catalog_at(catalog,i);
+        if (!product->builtin || product->program_kind!=QA_PROGRAM_BUILTIN ||
+            product->availability!=QA_CONTENT_INSTALLED) continue;
+        size_t row=seat->player_source_count++;
+        seat->player_source_titles[row]=product->title; seat->player_source_products[row]=product->id;
+    }
+    static const qa_launch_role roles[]={QA_ROLE_MOVEMENT,QA_ROLE_CHARACTER,QA_ROLE_ARSENAL};
+    static const char *const names[]={"movement","character","arsenal"};
+    size_t count=0;
+    for (uint32_t physical=0;choices && physical<f->options.seats && physical<choices->seat_count;++physical) {
+        const qa_launch_seat *player=choices->seats+physical;
+        if (!player->local || player->bot) continue;
+        uint32_t logical; qa_actor_id actor;
+        bool enabled=!frontend_network_remote(f) && !qa_application_startup_pending(f->application) &&
+            frontend_seat_launch_id_read(f,physical,&logical) && logical==player->id &&
+            qa_application_player_actor(f->application,logical,&actor);
+        for (size_t role=0;role<3;++role) {
+            const qa_launch_binding *binding=qa_launch_binding_for(choices,
+                (qa_launch_scope){.kind=QA_SCOPE_SEAT,.seat=player->id},roles[role],"");
+            const qa_launch_instance *selected=binding?qa_launch_snapshot_find(publication,binding->instance):NULL;
+            size_t index=SIZE_MAX;
+            for (size_t i=0;selected && i<seat->player_source_count;++i)
+                if (seat->player_source_products[i]==selected->selection.product) index=i;
+            char *label=seat->player_source_labels[physical][role];
+            snprintf(label,sizeof(seat->player_source_labels[physical][role]),"Player %u %s",physical+1,names[role]);
+            qa_ui_control *control=seat->controls+count;
+            *control=button(seat,(qa_ui_id)physical*3+role+1,label,54+(float)count*32);
+            control->kind=QA_UI_CHOICE; control->rect.x=32; control->rect.width=576;
+            control->enabled=enabled && seat->player_source_count!=0;
+            control->value.choice.labels=seat->player_source_titles;
+            control->value.choice.count=seat->player_source_count; control->value.choice.selected=index;
+            ++count;
+        }
+    }
+    *out=(qa_ui_menu){.id=FRONTEND_PLAYER_SOURCES,.title="Player sources",.controls=seat->controls,
+        .count=count,.fullscreen=true};
     return true;
 }
 static bool seat_services_create(frontend_seat *seat, bool restoring, qa_error *error)
@@ -444,7 +519,9 @@ static bool seats_create(qa_frontend *frontend, const bool *mods, bool restoring
         if (!qa_ui_create(&ui, &seat->ui, error) || !qa_ui_register(seat->ui,
             &(qa_ui_menu_registration){.id = FRONTEND_HOME, .context = seat, .factory = home}, error) ||
             !qa_ui_register(seat->ui, &(qa_ui_menu_registration){.id = FRONTEND_SETTINGS,
-                .context = seat, .factory = settings, .open = settings_open}, error)) return false;
+                .context = seat, .factory = settings, .open = settings_open}, error) ||
+            !qa_ui_register(seat->ui, &(qa_ui_menu_registration){.id=FRONTEND_PLAYER_SOURCES,
+                .context=seat,.factory=player_sources},error)) return false;
         frontend_startup_server_browser_menus browser={200,201,202};
         if (!frontend_startup_server_browser_create(seat,&browser,&seat->server_browser,error) ||
             !frontend_startup_downloads_create(seat,203,204,&seat->downloads_menu,error) ||
@@ -497,6 +574,8 @@ bool frontend_seats_destroy(qa_frontend *frontend, qa_error *error)
         frontend_player_retire(seat);
         frontend_bindings_destroy(seat);
         free(seat->settings_rows); seat->settings_rows = NULL;
+        free(seat->player_source_titles); free(seat->player_source_products);
+        seat->player_source_titles=NULL; seat->player_source_products=NULL;
         SDL_free(seat->clipboard); seat->clipboard = NULL;
         free(seat->wheel_items); free(seat->wheel_definitions); free(seat->wheel_labels);
         seat->wheel_items = NULL; seat->wheel_definitions = NULL; seat->wheel_labels = NULL;

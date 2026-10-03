@@ -57,13 +57,14 @@
 #include "constructor.h"
 #include "qc_rerelease_events.h"
 #include "qa/application_startup_prepare.h"
+#include "qa/input_release.h"
 #include <signal.h>
 #include <stdio.h>
 
 static volatile sig_atomic_t interrupted;
 typedef enum frontend_shutdown_phase {
     SHUTDOWN_CANDIDATE, SHUTDOWN_RETIRE_CANDIDATE, SHUTDOWN_ABORT_CANDIDATE,
-    SHUTDOWN_PREPARE, SHUTDOWN_FAILED_PREPARE, SHUTDOWN_RELEASE,
+    SHUTDOWN_CLIENTS, SHUTDOWN_PREPARE, SHUTDOWN_FAILED_PREPARE, SHUTDOWN_RELEASE,
     SHUTDOWN_DETACH, SHUTDOWN_RETIRE_INPUT, SHUTDOWN_READY
 } frontend_shutdown_phase;
 struct frontend_shutdown {
@@ -72,6 +73,18 @@ struct frontend_shutdown {
     qa_error failure;
     bool failure_reported, waiting, retry_cleanup;
 };
+static bool shutdown_client_releases_ready(qa_frontend *f,qa_error *error)
+{
+    if (f->input_settings || f->input_shutdown || f->engine_shutdown)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"CLIENT retirement retains another physical release owner");
+    if (f->seats) for (unsigned i=0;i<f->options.seats;++i) {
+        qa_input_seat *input=f->seats[i].input;
+        qa_input_release *release=qa_input_seat_release_read(input);
+        if (release && !frontend_config_store_neutral_retirement_release_ready(f->config_store,input,release,error))
+            return false;
+    }
+    return true;
+}
 static bool shutdown_admitted(qa_frontend *f,qa_error *error)
 {
     if(f->stepping || f->preparing || f->round || !frontend_save_commands_idle(f) ||
@@ -83,6 +96,8 @@ static bool shutdown_admitted(qa_frontend *f,qa_error *error)
     if(f->input_settings) return frontend_input_settings_shutdown_ready(f->input_settings,f,error);
     if(f->input && !qa_input_platform_settings_idle(f->input))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Frontend shutdown has an unrelated native settings ticket");
+    if (f->shutdown && f->shutdown->phase==SHUTDOWN_CLIENTS)
+        return shutdown_client_releases_ready(f,error);
     return f->input_shutdown?frontend_input_shutdown_ready(f->input_shutdown,f,error):
         frontend_seat_callbacks_idle(f) || frontend_fail(error,QA_ERROR_ARGUMENT,"Frontend shutdown has an unrelated physical release");
 }
@@ -112,7 +127,7 @@ static bool shutdown_inputs(qa_frontend *f,qa_error *error)
         }
         qa_error fault={0};
         if(!qa_application_startup_pending(f->application) || qa_application_startup_abort(f->application,&fault))
-            owner->phase=SHUTDOWN_PREPARE;
+            owner->phase=SHUTDOWN_CLIENTS;
         else {
             const qa_launch_snapshot *candidate=qa_application_startup_candidate(f->application);
             frontend_shared_settings *shared=frontend_config_store_shared(f->config_store,f->application,candidate);
@@ -149,6 +164,26 @@ static bool shutdown_inputs(qa_frontend *f,qa_error *error)
             !frontend_seat_callbacks_idle(f) || (f->input && !qa_input_platform_settings_idle(f->input)))
             return frontend_fail(error,QA_ERROR_ARGUMENT,"Candidate shutdown still retains physical input or startup parents");
         owner->phase=SHUTDOWN_READY;
+    }
+    if(owner->phase==SHUTDOWN_CLIENTS) {
+        if(!shutdown_client_releases_ready(f,error)) return false;
+        qa_error fault={0};
+        if(!frontend_network_retire_clients(f,&fault)) {
+            if(fault.code!=QA_OK) { if(error) *error=fault; return false; }
+            if(!shutdown_client_releases_ready(f,error)) return false;
+            bool waiting=false;
+            if(f->seats) for(unsigned i=0;i<f->options.seats;++i) {
+                qa_input_seat *input=f->seats[i].input;
+                qa_input_release *release=qa_input_seat_release_read(input);
+                waiting|=release && qa_input_release_waiting_is(release,input);
+            }
+            if(!waiting) return frontend_fail(error,QA_ERROR_ARGUMENT,"CLIENT shutdown refused without an actual waiting input programme");
+            owner->waiting=true;
+            return frontend_fail(error,QA_ERROR_ARGUMENT,"CLIENT shutdown awaits its retained input programme");
+        }
+        if(!frontend_seat_callbacks_idle(f))
+            return frontend_fail(error,QA_ERROR_ARGUMENT,"CLIENT shutdown retains an unrelated physical release");
+        owner->phase=SHUTDOWN_PREPARE;
     }
     if(owner->phase==SHUTDOWN_FAILED_PREPARE) {
         if(!frontend_input_shutdown_abort(f->input_shutdown,error) ||

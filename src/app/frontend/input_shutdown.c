@@ -58,10 +58,15 @@ bool frontend_input_shutdown_prepare(qa_frontend *f,double now,
     qa_console *console=qa_application_console(f->application);
     if (!console || !qa_console_idle(console))
         return fail(error,"Input shutdown requires the published physical ENGINE console");
-    if (f->seats) for (unsigned slot=0;slot<f->options.seats;++slot)
-        if (f->seats[slot].input && (f->seats[slot].frontend!=f || f->seats[slot].id!=slot ||
-            qa_input_seat_ordinal(f->seats[slot].input)!=slot))
+    if (f->seats) for (unsigned slot=0;slot<f->options.seats;++slot) {
+        qa_input_seat *input=f->seats[slot].input;
+        if (!input) continue;
+        if (f->seats[slot].frontend!=f || f->seats[slot].id!=slot || qa_input_seat_ordinal(input)!=slot)
             return fail(error,"Final input preparation has an unqualified constructed physical seat");
+        qa_console *recipient=NULL; qa_cvars *cvars=NULL; qa_command_context command;
+        if (!qa_input_seat_recipient_read(input,&recipient,&cvars,&command) || recipient!=console)
+            return fail(error,"Final input preparation requires the actual completed ENGINE handoff");
+    }
     frontend_input_shutdown *owner=calloc(1,sizeof(*owner));
     if (!owner) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining final physical input release");
     owner->frontend=f; owner->application=f->application; owner->seats=f->seats;

@@ -1,4 +1,5 @@
 #include "neutral_config.h"
+#include "capture.h"
 #include "internal.h"
 #include "authored_bindings.h"
 #include "global_settings_storage.h"
@@ -901,6 +902,21 @@ bool frontend_neutral_config_current(const frontend_neutral_config_view *view)
         actual.namespace_revision==view->namespace_revision &&
         actual.ready==view->ready && actual.published==view->published &&
         qa_application_client_current(view->owner->owner->frontend->application,&view->source);
+}
+bool frontend_neutral_config_retirement_release_ready(const frontend_neutral_configs *owner,
+    const qa_input_seat *input,const qa_input_release *release,qa_error *e)
+{
+    qa_frontend *f=owner?owner->frontend:NULL;
+    if (!f || !input || !release || f->stepping || f->preparing || f->capture || f->resource_inventory ||
+        qa_application_get_state(f->application)!=QA_APPLICATION_STOPPING || !frontend_seat_callbacks_returned(f))
+        return fail(e,QA_ERROR_ARGUMENT,"CLIENT shutdown requires its returned actual retirement parents");
+    for (const frontend_neutral_config *row=owner->rows;row;row=row->next) {
+        if (row->retirement_input!=input || row->retirement_release!=release) continue;
+        if (!row->retirement_started || row->recipient_returned || row->retiring)
+            return fail(e,QA_ERROR_ARGUMENT,"CLIENT shutdown lost its exact retained ALL retirement owner");
+        return checkpoint_ready(row,e);
+    }
+    return fail(e,QA_ERROR_NOT_FOUND,"No CLIENT retirement owner holds this actual ALL ticket");
 }
 bool frontend_neutral_config_checkpoint_read(const frontend_neutral_configs *owner,const qa_console *console,
     frontend_neutral_config_view *out,qa_error *e)

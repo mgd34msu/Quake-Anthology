@@ -5,6 +5,7 @@
 #include "qa/application_startup_prepare.h"
 #include "qa/application_client.h"
 #include "qa/input_release.h"
+#include <inttypes.h>
 bool frontend_seat_launch_id_read(const qa_frontend *f,uint32_t ordinal,uint32_t *out)
 {
     if (!f || !f->application || !out || ordinal>=f->options.seats) return false;
@@ -144,7 +145,8 @@ const qa_product *frontend_product_selection(qa_catalog *catalog, const char *na
     }
     return NULL;
 }
-static bool overlay(qa_launch_draft *draft, const char *name, uint64_t roles, const char *instance, qa_error *error)
+static bool overlay(qa_launch_draft *draft, const char *name, uint64_t roles, const char *instance,
+    qa_launch_scope scope, qa_error *error)
 {
     qa_catalog *catalog = qa_launch_draft_catalog(draft);
     const qa_product *product = frontend_product_selection(catalog, name);
@@ -155,7 +157,7 @@ static bool overlay(qa_launch_draft *draft, const char *name, uint64_t roles, co
     bool ok = true;
     for (size_t i = 0; i < choices->binding_count && ok; ++i) {
         const qa_launch_binding *binding = &choices->bindings[i];
-        if (!(roles & QA_ROLE_BIT(binding->role))) continue;
+        if (binding->scope.kind!=QA_SCOPE_DEFAULT_PLAYER || !(roles & QA_ROLE_BIT(binding->role))) continue;
         const qa_launch_provider *provider = NULL;
         for (size_t j = 0; j < choices->provider_count; ++j)
             if (!strcmp(choices->providers[j].instance, binding->instance)) provider = &choices->providers[j];
@@ -164,9 +166,55 @@ static bool overlay(qa_launch_draft *draft, const char *name, uint64_t roles, co
         selected.instance = instance;
         qa_launch_binding route = *binding;
         route.instance = instance;
+        route.scope = scope;
         ok = qa_launch_set_provider(draft, &selected, error) && qa_launch_bind(draft, &route, error);
     }
     qa_launch_draft_destroy(source);
+    return ok;
+}
+bool frontend_player_source_select(qa_frontend *frontend,uint32_t physical,qa_launch_role role,
+    const qa_product *product,qa_error *error)
+{
+    if (!frontend || !frontend->application || !frontend->seats || physical>=frontend->options.seats ||
+        frontend->options.dedicated || frontend_network_remote(frontend) ||
+        qa_application_startup_pending(frontend->application))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Player source selection requires its published local seat");
+    const qa_launch_snapshot *publication=qa_application_launch(frontend->application);
+    const qa_launch_choices *choices=qa_launch_snapshot_choices(publication);
+    qa_actor_id actor; uint32_t logical;
+    qa_catalog *catalog=qa_application_catalog(frontend->application);
+    if (!choices || physical>=choices->seat_count || !choices->seats[physical].local || choices->seats[physical].bot ||
+        !frontend_seat_launch_id_read(frontend,physical,&logical) || logical!=choices->seats[physical].id ||
+        !qa_application_player_actor(frontend->application,logical,&actor) ||
+        !product || qa_catalog_product(catalog,product->id)!=product || !product->builtin ||
+        product->program_kind!=QA_PROGRAM_BUILTIN || product->availability!=QA_CONTENT_INSTALLED ||
+        (role!=QA_ROLE_MOVEMENT && role!=QA_ROLE_CHARACTER && role!=QA_ROLE_ARSENAL))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Player source selection lacks its actual actor and installed native product");
+    qa_launch_scope scope={.kind=QA_SCOPE_SEAT,.seat=logical};
+    const qa_launch_binding *binding=qa_launch_binding_for(choices,scope,role,"");
+    const qa_launch_instance *current=binding?qa_launch_snapshot_find(publication,binding->instance):NULL;
+    if (current && current->selection.product==product->id) return true;
+    qa_launch_draft *draft=NULL;
+    if (!qa_launch_snapshot_draft_copy(publication,&draft,error)) return false;
+    const char *name=role==QA_ROLE_MOVEMENT?"movement":role==QA_ROLE_CHARACTER?"character":"arsenal";
+    char instance_name[64];
+    snprintf(instance_name,sizeof(instance_name),"frontend:seat:%" PRIu32 ":%s",logical,name);
+    uint64_t roles=QA_ROLE_BIT(role);
+    if (role==QA_ROLE_CHARACTER)
+        roles|=QA_ROLE_BIT(QA_ROLE_BODY)|QA_ROLE_BIT(QA_ROLE_SKIN)|QA_ROLE_BIT(QA_ROLE_VOICE);
+    bool ok=overlay(draft,product->key,roles,instance_name,scope,error);
+    if (ok && role==QA_ROLE_CHARACTER) {
+        qa_native_q3_character_declaration declaration;
+        ok=qa_native_q3_character_default_declaration(product->family,&declaration,error);
+        if (ok) {
+            qa_launch_seat seat=choices->seats[physical];
+            seat.character_model=declaration.model; seat.character_skin=declaration.skin;
+            seat.character_head_model=declaration.head_model; seat.character_head_skin=declaration.head_skin;
+            ok=qa_launch_set_seat(draft,&seat,error);
+        }
+    }
+    if (ok) ok=qa_application_apply(frontend->application,draft,error);
+    qa_launch_draft_destroy(draft);
     return ok;
 }
 static char *launch_map_path(const char *input, qa_error *error)
@@ -234,9 +282,10 @@ bool frontend_launch(qa_frontend *frontend, qa_error *error)
     }
     if (ok) ok = qa_launch_set_world(draft, &world, error);
     if (ok && frontend->options.movement) ok = overlay(draft, frontend->options.movement,
-        QA_ROLE_BIT(QA_ROLE_MOVEMENT), "frontend:movement", error);
+        QA_ROLE_BIT(QA_ROLE_MOVEMENT), "frontend:movement", (qa_launch_scope){.kind=QA_SCOPE_DEFAULT_PLAYER}, error);
     if (ok && frontend->options.character) ok = overlay(draft, frontend->options.character,
-        QA_ROLE_BIT(QA_ROLE_CHARACTER) | QA_ROLE_BIT(QA_ROLE_BODY) | QA_ROLE_BIT(QA_ROLE_SKIN) | QA_ROLE_BIT(QA_ROLE_VOICE), "frontend:character", error);
+        QA_ROLE_BIT(QA_ROLE_CHARACTER) | QA_ROLE_BIT(QA_ROLE_BODY) | QA_ROLE_BIT(QA_ROLE_SKIN) | QA_ROLE_BIT(QA_ROLE_VOICE), "frontend:character",
+        (qa_launch_scope){.kind=QA_SCOPE_DEFAULT_PLAYER}, error);
     for (size_t i = 0; i < frontend->options.mod_count && ok; ++i) {
         char instance[64];
         snprintf(instance, sizeof(instance), "frontend:addon:%zu", i);

@@ -2082,11 +2082,7 @@ static bool carry(frontend_config_store *manager,qa_application *application,
         }
         const config_seat *old_seat=previous->seats+i;
         config_seat *seat=source->seats+source->seat_count++; seat->logical=old_seat->logical;
-        seat->movement_dialect=old_seat->movement_dialect;
-        qa_console_dialect next_movement;
-        if (!seat_movement(candidate,seat->logical,&next_movement,error) || next_movement!=seat->movement_dialect) {
-            ok=fail(error,QA_ERROR_ARGUMENT,"Direct source carry changed its selected seat movement profile"); break;
-        }
+        if (!seat_movement(candidate,seat->logical,&seat->movement_dialect,error)) { ok=false; break; }
         ok=registry_carry(source,old_seat->cvars,&seat->cvars,error) && registry_carry(source,old_seat->mouse,&seat->mouse,error) &&
             frontend_authored_bindings_clone(old_seat->authored,&seat->authored,error);
         qa_input_seat *active=frontend_config_source_input(previous,seat->logical);
@@ -2096,6 +2092,8 @@ static bool carry(frontend_config_store *manager,qa_application *application,
             .gamepad=active?*qa_input_seat_gamepad_tuning(active):qa_gamepad_defaults(),
             .seat=(uint32_t)i,.context_ready=input_context,.context_user=source};
         if (ok) { seat->input=qa_input_seat_create(&options,error); ok=seat->input!=NULL; }
+        if (ok) ok=qa_input_seat_profile(seat->input,seat->movement_dialect,error) &&
+            qa_input_settings_register(seat->mouse,(qa_movement_kind)seat->movement_dialect,error);
         size_t count=active?qa_input_seat_binding_count(active):0;
         qa_input_binding *bindings=ok && count<=SIZE_MAX/sizeof(*bindings)?malloc(count?count*sizeof(*bindings):1):NULL;
         if (ok && !bindings) ok=fail(error,QA_ERROR_MEMORY,"Retaining actual carried logical bindings");
@@ -2106,6 +2104,7 @@ static bool carry(frontend_config_store *manager,qa_application *application,
         if (ok && old_seat->found) ok=qa_seat_settings_encode(&old_seat->settings,&settings,error) &&
             qa_seat_settings_parse((qa_bytes){settings.data,settings.size},&seat->settings,error);
         qa_buffer_free(&settings); seat->found=old_seat->found;
+        if (ok) ok=selected_defaults(source,seat,false,error);
     }
     if (ok && previous->dedicated_bindings)
         ok=frontend_config_bindings_clone(previous->dedicated_bindings,&source->dedicated_bindings,error);
@@ -3006,6 +3005,12 @@ bool frontend_config_store_neutral_read(const frontend_config_store *manager,con
     frontend_neutral_config_view *out,qa_error *error)
 {
     return manager && frontend_neutral_config_read(manager->neutral,console,out,error);
+}
+bool frontend_config_store_neutral_retirement_release_ready(const frontend_config_store *manager,
+    const qa_input_seat *input,const qa_input_release *release,qa_error *error)
+{
+    return manager?frontend_neutral_config_retirement_release_ready(manager->neutral,input,release,error):
+        fail(error,QA_ERROR_ARGUMENT,"CLIENT retirement requires its retained configuration manager");
 }
 bool frontend_config_store_neutral_checkpoint_read(const frontend_config_store *manager,const qa_console *console,
     frontend_neutral_config_view *out,qa_error *error)

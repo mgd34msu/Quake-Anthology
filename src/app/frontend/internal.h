@@ -25,7 +25,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-enum { FRONTEND_HOME = 1, FRONTEND_LIBRARY, FRONTEND_MODS, FRONTEND_SETTINGS, FRONTEND_RANKINGS, FRONTEND_ASSISTANCE, FRONTEND_BINDINGS };
+enum { FRONTEND_HOME = 1, FRONTEND_LIBRARY, FRONTEND_MODS, FRONTEND_SETTINGS, FRONTEND_RANKINGS, FRONTEND_ASSISTANCE, FRONTEND_BINDINGS, FRONTEND_PLAYER_SOURCES };
 typedef struct qa_frontend_tools qa_frontend_tools;
 typedef struct qa_frontend_network qa_frontend_network;
 bool frontend_network_content_visit(const qa_frontend *,const qa_application *,const qa_application_content_visitor *,qa_error *);
@@ -111,6 +111,10 @@ typedef struct frontend_seat {
     char binding_status[256];
     qa_ui_row *settings_rows;
     size_t settings_capacity, selected_setting;
+    const char **player_source_titles;
+    qa_product_id *player_source_products;
+    size_t player_source_capacity, player_source_count;
+    char player_source_labels[QA_INPUT_LOCAL_SEATS][3][32];
     char setting_value[1024];
     uint64_t settings_revision;
     qa_actor_id q2_actor;
@@ -241,6 +245,8 @@ bool frontend_clipboard_write(qa_frontend *, const char *, qa_error *);
 bool frontend_tools_create_diagnostics(qa_frontend *, qa_vfs *, qa_error *);
 bool frontend_protocol(const char *, qa_net_protocol_id *, qa_error *);
 bool frontend_launch(qa_frontend *, qa_error *);
+bool frontend_player_source_select(qa_frontend *, uint32_t physical_seat,
+    qa_launch_role, const qa_product *, qa_error *);
 const qa_product *frontend_product_selection(qa_catalog *,const char *);
 bool frontend_present(qa_frontend *, qa_error *);
 bool frontend_scene_sync(qa_frontend *, qa_error *);
@@ -324,6 +330,7 @@ bool frontend_network_client_command(qa_frontend *, const char *, qa_error *);
 bool frontend_network_create(qa_frontend *, qa_error *);
 bool frontend_network_destroy(qa_frontend *, qa_error *);
 bool frontend_network_close_client(qa_frontend *,qa_error *);
+bool frontend_network_retire_clients(qa_frontend *,qa_error *);
 bool frontend_network_pump(qa_frontend *, qa_error *);
 bool frontend_network_tick(qa_frontend *, uint64_t elapsed_ns, bool retiring_map, bool *source_ready, qa_error *);
 bool frontend_network_client_only(const qa_frontend *);

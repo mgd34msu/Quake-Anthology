@@ -3,6 +3,7 @@
 #include "client_source.h"
 #include "config_scripts.h"
 #include "qa/input.h"
+#include "qa/input_release.h"
 #include "qa/inventory.h"
 #include "qa/application_client_prepare.h"
 #include "view_settings.h"
@@ -36,6 +37,11 @@ bool frontend_neutral_config_current(const frontend_neutral_config_view *);
 /* Returned capture/import namespace custody only; this does not admit live input. */
 bool frontend_neutral_config_checkpoint_read(const frontend_neutral_configs *,const qa_console *,
     frontend_neutral_config_view *,qa_error *);
+/* Normal shutdown borrows only the exact returned CLIENT-owned ALL ticket. */
+bool frontend_neutral_config_retirement_release_ready(const frontend_neutral_configs *,
+    const qa_input_seat *,const qa_input_release *,qa_error *);
+bool frontend_config_store_neutral_retirement_release_ready(const frontend_config_store *,
+    const qa_input_seat *,const qa_input_release *,qa_error *);
 bool frontend_neutral_config_checkpoint_current(const frontend_neutral_config_view *,qa_error *);
 bool frontend_neutral_config_retired_recipient(const frontend_neutral_configs *,
     const qa_application_client_source *,bool *,qa_error *);
