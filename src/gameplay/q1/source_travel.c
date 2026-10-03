@@ -92,29 +92,26 @@ bool qa_q1_source_inventory_initialize(qa_q1_game *game, qa_actor_id actor, qa_e
     qa_q1_game_operation_end(&operation);
     return ok;
 }
-bool qa_q1_source_telefrag_attack(qa_q1_game *game, qa_actor_id actor,
-    qa_attack *out, qa_error *error) {
+bool qa_q1_source_spawn_teledeath(qa_q1_game *game, qa_actor_id actor,
+    qa_actor_id *out, qa_error *error) {
     if (!out) {
         qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot,
-            "Q1 spawn overlap requires its actual attack output");
+            "Q1 spawn overlap requires its actual teledeath output");
         return false;
     }
     qa_q1_game_operation operation = {0};
     if (!qa_q1_game_operation_begin(game, &operation, error)) return false;
     q1_player *player = q1_player_get(game, actor);
     uint32_t slot;
-    qa_string_id cause;
+    qa_body_state body;
     bool ok = qa_q1_native_client_slot(game, actor, &slot, error) &&
         source_current(&operation, actor, player, error) &&
-        qa_builtin_resource(&game->services, "telefrag", &cause, error) &&
+        qa_world_body_read(game->services.world, actor, &body, error) &&
         source_current(&operation, actor, player, error);
-    qa_attack attack = {0};
-    if (ok) {
-        attack = q1_attack(game, actor, actor, QA_Q1_WEAPON_COUNT);
-        attack.cause.source.q1.death_type = cause;
-        ok = qa_attack_next(&game->attack_sequence, &attack, error);
-    }
-    if (ok) *out = attack;
+    qa_actor_id death = {0};
+    if (ok) ok = q1_spawn_teledeath(game, body.origin, actor, 0.2, false, &death, error) &&
+        source_current(&operation, actor, player, error);
+    if (ok) *out = death;
     qa_q1_game_operation_end(&operation);
     return ok;
 }

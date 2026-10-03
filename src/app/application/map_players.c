@@ -2129,8 +2129,11 @@ static bool q1_spawn_overlap(qa_application *app, application_provider *source,
 {
     size_t ordinal;
     qa_body_state body;
+    qa_actor_id death;
     if (!q1_player_current(app, source, character, arsenal, actor, begun, &ordinal, error) ||
-        !qa_world_body_read(app->world, actor, &body, error)) return false;
+        !qa_q1_source_spawn_teledeath(source->state.q1, actor, &death, error) ||
+        !q1_player_current(app, source, character, arsenal, actor, begun, &ordinal, error) ||
+        !qa_world_body_read(app->world, death, &body, error)) return false;
     qa_bounds bounds = qa_bounds_translate(body.bounds, body.origin);
     size_t count = qa_actors_count(qa_session_actors(app->session));
     if (count > SIZE_MAX / sizeof(qa_actor_id))
@@ -2171,25 +2174,8 @@ static bool q1_spawn_overlap(qa_application *app, application_provider *source,
             okay = false; break;
         }
         if (!qa_bounds_overlap(bounds, qa_bounds_translate(target_body.bounds, target_body.origin))) continue;
-        qa_damage_request request = {.target = target, .amount = 100000, .point = body.origin};
-        if (!qa_q1_source_telefrag_attack(source->state.q1, actor, &request.attack, error) ||
-            !q1_player_current(app, source, character, arsenal, actor, begun, &ordinal, error)) {
-            okay = false; break;
-        }
-        application_provider *combat = application_provider_for(app, actor, QA_ROLE_COMBAT, "");
-        application_provider *inventory = application_provider_for(app, actor, QA_ROLE_INVENTORY, "");
-        application_provider *movement = application_provider_for(app, actor, QA_ROLE_MOVEMENT, "");
-        if (!combat || !inventory || !movement) {
-            okay = application_fail(error, QA_ERROR_ARGUMENT, "Q1 spawn overlap lost selected attack owners");
-            break;
-        }
-        request.attack.weapon_provider = arsenal->owner;
-        request.attack.combat_provider = combat->owner;
-        request.attack.inventory_provider = inventory->owner;
-        request.attack.movement_provider = movement->owner;
-        qa_damage_outcome outcome = {0};
-        okay = qa_combat_apply(app->combat, &request, &outcome, error);
-        qa_damage_outcome_free(&outcome);
+        okay = qa_q1_game_touch(source->state.q1,
+            &(qa_touch_contact){.self = death, .other = target}, error);
         if (okay) okay = q1_player_current(app, source, character, arsenal, actor, begun, &ordinal, error);
     }
     free(targets);
@@ -2418,14 +2404,18 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
         if (classic_mission) maximum_health = 100;
         if (keep && q1_carry)
             combat.health = fminf(maximum_health, fmaxf(maximum_health / 2, combat.health));
+        bool original_q3_body = !reserved_player && q3g_engine(character) != NULL;
         if (reserved_player) {
             if (!qa_world_body_read(application->world, actor, &body, error) ||
                 !qa_combat_read_traits(application->combat, actor, &combat, error)) return false;
-        } else if (!(reserved_qc_actor ? qa_world_body_write : qa_world_body_create)
-                (application->world, actor, &body, error) ||
+        } else if ((!original_q3_body && !(reserved_qc_actor ? qa_world_body_write : qa_world_body_create)
+                (application->world, actor, &body, error)) ||
             !qa_combat_create_actor(application->combat, actor, &combat, error) ||
             !qa_inventory_create_actor(application->inventory, actor, NULL, 0, error))
             return false;
+        if (original_q3_body &&
+            (!application_q3_guest_client_reserve(character, record->client_slot, actor, error) ||
+             !qa_world_body_write(application->world, actor, &body, error))) return false;
         if (!reserved_player && !qw_spectator && map_source->kind == APPLICATION_PROVIDER_Q1 &&
             !qa_q1_source_inventory_initialize(map_source->state.q1, actor, error)) return false;
         if (!reserved_player && map_source->kind == APPLICATION_PROVIDER_Q1 &&
@@ -2439,6 +2429,7 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
             if (provider->kind <= APPLICATION_PROVIDER_Q3 ||
                 provider->kind == APPLICATION_PROVIDER_QC ||
                 provider->component.clock.kind != QA_CLOCK_Q3) continue;
+            if (original_q3_body && provider == character) continue;
             bool selected = provider == map_source;
             for (size_t k = 0; !selected && k < sizeof(player_roles) / sizeof(player_roles[0]); ++k)
                 selected = application_provider_for(application, actor, player_roles[k], "") == provider;

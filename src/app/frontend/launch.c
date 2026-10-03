@@ -272,6 +272,20 @@ bool frontend_launch(qa_frontend *frontend, qa_error *error)
     bool created = qa_launch_draft_create(catalog, product->id, map, &draft, error);
     free(selected_map);
     if (!created) return false;
+    if (product->family == QA_GAME_Q1 && frontend->options.seats > 1 &&
+        !frontend->options.dedicated) {
+        const qa_launch_choices *choices = qa_launch_draft_choices(draft);
+        for (size_t i = 0; i < choices->mode_count; ++i) {
+            qa_launch_mode mode = choices->modes[i];
+            if (mode.rules.kind != QA_MODE_SINGLE_PLAYER) continue;
+            mode.rules.kind = QA_MODE_COOPERATIVE;
+            if (!qa_launch_set_mode(draft, &mode, error)) {
+                qa_launch_draft_destroy(draft);
+                return false;
+            }
+            choices = qa_launch_draft_choices(draft);
+        }
+    }
     qa_launch_world world = qa_launch_draft_choices(draft)->world;
     if (starts && count) world.start_command = episode && episode->command && *episode->command ? episode->command : starts[0].bsp;
     bool ok = true;

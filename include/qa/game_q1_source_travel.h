@@ -6,8 +6,7 @@
  * before the selected arsenal replaces source supplies. No arsenal, movement
  * or character ownership changes here. */
 bool qa_q1_source_inventory_initialize(qa_q1_game *, qa_actor_id, qa_error *);
-/* Prepare the physical source's real clock, cause and next attack ordinal for
- * a spawn overlap. The caller supplies the admitted selected role providers
- * and actual target/body geometry before submitting the direct damage. */
-bool qa_q1_source_telefrag_attack(qa_q1_game *, qa_actor_id, qa_attack *, qa_error *);
+/* Create the admitted client's actual timed teledeath trigger. The caller
+ * delivers initial overlapping contacts to that entity through Source touch. */
+bool qa_q1_source_spawn_teledeath(qa_q1_game *, qa_actor_id, qa_actor_id *, qa_error *);
 #endif
