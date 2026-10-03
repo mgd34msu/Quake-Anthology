@@ -256,6 +256,16 @@ static bool prepare(void *context, qa_application *app, qa_actor_owner source,
     if (!ok) { dispose(cut); return false; }
     *out = cut; return true;
 }
+bool frontend_round_clear_events(qa_frontend *frontend, qa_error *error)
+{
+    qa_application_q3_round_cut *cut = frontend ? frontend->round : NULL;
+    if (!cut || cut->frontend != frontend || cut->phase == FRONTEND_ROUND_FINISHED)
+        return frontend_fail(error, QA_ERROR_ARGUMENT,
+                             "Q3 event consumption requires its actual retained frontend round");
+    if (!cut_ready(cut, error)) return false;
+    return qa_application_q3_round_clear_events(cut->application, cut->source, error);
+}
+
 static bool deliver(qa_application_q3_round_cut *cut, qa_error *error)
 {
     if (!cut_ready(cut, error) || cut->phase == FRONTEND_ROUND_FINISHED) return false;

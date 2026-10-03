@@ -11,6 +11,7 @@
 #include "guest_q3_weapons_services.h"
 #include "guest_native_q2_private.h"
 #include "network_q2_private.h"
+#include "qa/application_q3_round.h"
 
 #include <inttypes.h>
 #include <math.h>
@@ -839,14 +840,8 @@ bool qa_application_q3_map_event_at(const qa_application *application,
     return true;
 }
 
-bool qa_application_clear_events(qa_application *application, qa_error *error)
+static bool clear_events(qa_application *application, qa_error *error)
 {
-    if (application == NULL || application->operation != APPLICATION_IDLE ||
-        application->destroy_requested || application->finalizing ||
-        application->q3_round_active || application->frame_preparing ||
-        application->publication_started)
-        return application_fail(error, QA_ERROR_ARGUMENT,
-                                "event consumption requires an idle application");
     if (application->protocol_events_generation == UINT64_MAX)
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "protocol event generation is exhausted");
@@ -866,4 +861,25 @@ bool qa_application_clear_events(qa_application *application, qa_error *error)
     qa_arena_reset(&application->event_arena);
     application_equipment_events_clear(gear);
     return true;
+}
+
+bool qa_application_clear_events(qa_application *application, qa_error *error)
+{
+    if (application == NULL || application->operation != APPLICATION_IDLE ||
+        application->destroy_requested || application->finalizing ||
+        application->q3_round_active || application->frame_preparing ||
+        application->publication_started)
+        return application_fail(error, QA_ERROR_ARGUMENT,
+                                "event consumption requires an idle application");
+    return clear_events(application, error);
+}
+
+bool qa_application_q3_round_clear_events(qa_application *application,
+    qa_actor_owner source, qa_error *error)
+{
+    if (!application || !application->q3_round_active || !application->frame_preparing)
+        return application_fail(error, QA_ERROR_ARGUMENT,
+                                "Q3 round event consumption requires its retained driver cut");
+    return qa_application_q3_round_callback_ready(application, source, error) &&
+        clear_events(application, error);
 }

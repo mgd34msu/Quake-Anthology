@@ -5,6 +5,7 @@
 
 const qa_application_q3_round_services *frontend_q3_round_services(void);
 bool frontend_round_audio_pending(const qa_frontend *);
+bool frontend_round_clear_events(qa_frontend *, qa_error *);
 bool frontend_source_round_ready(const qa_frontend *, qa_actor_owner, qa_error *);
 bool frontend_source_reset_round(qa_frontend *, qa_actor_owner, qa_error *);
 void frontend_particle_reset_round(qa_frontend *);

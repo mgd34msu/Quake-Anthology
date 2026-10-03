@@ -27,6 +27,7 @@
 #include "network_config.h"
 #include "equipment_events.h"
 #include "particle_clock.h"
+#include "round.h"
 #include "qa/source_frame_time.h"
 #include "qa/application_startup_prepare.h"
 #include <stdio.h>
@@ -303,7 +304,8 @@ bool frontend_events(qa_frontend *frontend, qa_error *error)
      * must drain its projections before this shared queue is released. */
     return (!frontend->qc_messages || frontend_qc_messages_drain(frontend->qc_messages,error)) &&
         frontend_equipment_events_drain(frontend->gear_events,error) &&
-        qa_application_clear_events(frontend->application, error);
+        (frontend->round ? frontend_round_clear_events(frontend,error) :
+         qa_application_clear_events(frontend->application, error));
 }
 static bool phase_end(qa_profiler *profiler, bool ok, qa_error *error)
 {

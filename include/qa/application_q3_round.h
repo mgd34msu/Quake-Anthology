@@ -49,6 +49,10 @@ typedef struct qa_application_q3_round_services {
  * boundary. An authorized round may be between completed settlement frames. */
 bool qa_application_q3_round_callback_ready(qa_application *, qa_actor_owner,
     qa_error *);
+/* Consume delivered events at the returned callback boundary of the active
+ * round driver, using its actual primary Source owner. */
+bool qa_application_q3_round_clear_events(qa_application *, qa_actor_owner,
+    qa_error *);
 /* Read the real full-generation physical GAME client binding independently of
  * which provider owns the canonical character. This performs no admission. */
 bool qa_application_q3_source_client_slot(qa_application *, qa_actor_owner,
