@@ -418,7 +418,8 @@ static bool capture_player(qa_application *application, qa_actor_id actor,
     }
     if (arsenal != NULL && arsenal->kind == APPLICATION_PROVIDER_Q1) {
         carry->has_q1 = qa_q1_player_read(arsenal->state.q1, actor, &carry->q1);
-        carry->has_mg3 = qa_q1_mg3_progress_read(arsenal->state.q1, actor, &carry->mg3);
+        carry->has_mg3 = application_q1_program(arsenal->launch->selection.implementation) == QA_Q1_MG3 &&
+            qa_q1_mg3_progress_read(arsenal->state.q1, actor, &carry->mg3);
         if (qa_q1_game_map_new_game_travel(arsenal->state.q1)) {
             carry->combat.health = 50;
             carry->q1.max_health = 50;
