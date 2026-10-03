@@ -62,6 +62,10 @@ typedef struct qa_application_startup_hooks {
      * cfg prefix. No command capture, effects or registry transfer occurs. */
     bool (*program_source)(void *, qa_application *, const qa_launch_snapshot *,
         const qa_application_startup_source *, qa_application_startup_source *, bool *found, qa_error *);
+    /* Qualify an actual ENGINE-owned Source configuration programme after
+     * GAME shutdown. Its metadata never supplies a retired GAME callback. */
+    bool (*parked_program_source_current)(void *,qa_application *,const qa_application_startup_source *,
+        qa_application_console_scope *origin_scope,uint64_t *origin_generation,qa_error *);
     bool (*startup_source)(void *, qa_application *, const qa_launch_snapshot *,
         const qa_application_startup_source *, bool *primary, qa_error *);
     /* Advance real retained input/settings releases before final candidate

@@ -16,6 +16,7 @@ typedef struct cinematic_request {
     char *path, *script;
     uint32_t seat;
     uint64_t travel_revision;
+    qa_actor_owner travel_provider;
     bool loop, hold;
 } cinematic_request;
 struct frontend_cinematic {
@@ -77,16 +78,22 @@ static void request_free(cinematic_request *request)
 static bool current(const frontend_cinematic *owner)
 {
     uint32_t ordinal;
-    bool valid=owner && owner->frontend && owner->frontend->application &&
-        qa_application_command_context_active(owner->frontend->application,&owner->request.command) &&
-        frontend_command_seat_read(owner->frontend,&owner->request.command,&ordinal) && ordinal==owner->request.seat;
-    if (valid && owner->request.travel_revision) {
+    if (!owner || !owner->frontend || !owner->frontend->application) return false;
+    if (owner->request.travel_revision) {
+        qa_frontend *f=owner->frontend;
         qa_application_travel_view travel;
-        valid=qa_application_travel_read(owner->frontend->application,&travel) &&
-            travel.revision==owner->request.travel_revision && travel.provider==owner->request.command.owner &&
+        /* The returned Source route transfers its presentation to this actual
+         * ENGINE child and its cloned media view. GAME can then shut down
+         * without lending a retired command context to the decoder. */
+        return !f->options.dedicated && owner->request.seat<f->options.seats &&
+            f->seats && f->seats[owner->request.seat].ui && owner->request.files &&
+            qa_application_travel_read(f->application,&travel) &&
+            travel.revision==owner->request.travel_revision && travel.provider==owner->request.travel_provider &&
             (travel.target.kind==QA_TRAVEL_CINEMATIC || travel.target.kind==QA_TRAVEL_PICTURE);
     }
-    return valid;
+    return
+        qa_application_command_context_active(owner->frontend->application,&owner->request.command) &&
+        frontend_command_seat_read(owner->frontend,&owner->request.command,&ordinal) && ordinal==owner->request.seat;
 }
 static void release_playback(frontend_cinematic *owner)
 {
@@ -150,11 +157,14 @@ bool frontend_cinematic_travel(qa_frontend *f,const qa_application_travel_view *
         (owner->request.travel_revision==travel->revision && current(owner)))) return true;
     qa_application_startup_source authority; bool present=false;
     if (!frontend_config_store_primary_server_read(f->config_store,&authority,&present,error)) return false;
+    bool parked=present && frontend_config_store_parked_current(f->config_store,&authority);
     if (!present || authority.scope.provider!=travel->provider ||
-        (authority.scope.kind!=QA_APPLICATION_CONSOLE_Q2_GAME && authority.scope.kind!=QA_APPLICATION_CONSOLE_NATIVE_Q2))
+        (!parked && authority.scope.kind!=QA_APPLICATION_CONSOLE_Q2_GAME && authority.scope.kind!=QA_APPLICATION_CONSOLE_NATIVE_Q2))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Cinematic travel lost its actual Q2 GAME authority");
-    cinematic_request request={.command=authority.command,.travel_revision=travel->revision};
-    if (!frontend_command_seat_read(f,&request.command,&request.seat))
+    cinematic_request request={.command=authority.command,.travel_revision=travel->revision,
+        .travel_provider=travel->provider};
+    if (!(parked?frontend_config_store_parked_recipient(f->config_store,&authority,&request.seat):
+        frontend_command_seat_read(f,&request.command,&request.seat)))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Cinematic travel has no physical local recipient");
     if (request.command.script) {
         request.script=copy_text(request.command.script,error);
@@ -162,7 +172,8 @@ bool frontend_cinematic_travel(qa_frontend *f,const qa_application_travel_view *
         request.command.script=request.script;
     }
     request.path=resource_path(travel->target.name,error);
-    qa_vfs *files=qa_application_context_files(f->application,&request.command,NULL);
+    qa_vfs *files=parked?authority.descriptor->content:
+        qa_application_context_files(f->application,&request.command,NULL);
     if (!request.path || !files || !(request.files=qa_vfs_clone(files,error))) { request_free(&request); return false; }
     return queue_request(f,&request,error);
 }

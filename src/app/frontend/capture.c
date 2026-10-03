@@ -245,7 +245,8 @@ bool frontend_owners_idle(const qa_frontend *f)
     return frontend_owners_returned(f) && (!f->input || qa_input_platform_settings_idle(f->input));
 }
 bool frontend_owners_checkpoint_ready(const qa_frontend *f)
-{ return owners_returned(f,NULL,true)&&(!f->input||qa_input_platform_settings_idle(f->input)); }
+{ return f && !f->server_stop_owner && owners_returned(f,NULL,true)&&
+    (!f->input||qa_input_platform_settings_idle(f->input)); }
 static bool add(frontend_capture *capture, capture_kind kind, const void *owner, qa_error *error)
 {
     if (!owner) return true;

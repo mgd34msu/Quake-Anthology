@@ -2,6 +2,7 @@
 #include "commands.h"
 #include "save_commands.h"
 #include "campaign_cinematic.h"
+#include "config_store.h"
 #include "system_cinematic.h"
 #include "music_sources.h"
 #include "q1_sky.h"
@@ -42,9 +43,31 @@ bool frontend_commands_source(qa_frontend *f,const qa_application_startup_source
         if (!alias) break;
         if (client_name(name,alias->name)) return true;
     }
-    bool q2=source->scope.kind==QA_APPLICATION_CONSOLE_Q2_GAME ||
+    bool parked=frontend_config_store_parked_current(f->config_store,source);
+    bool q2=parked || source->scope.kind==QA_APPLICATION_CONSOLE_Q2_GAME ||
         source->scope.kind==QA_APPLICATION_CONSOLE_NATIVE_Q2;
     bool map=client_name(name,"map"),gamemap=client_name(name,"gamemap");
+    if (q2 && client_name(name,"killserver")) {
+        if (!source->scope.provider || source->scope.provider!=call->context.owner ||
+            source->command.owner!=source->scope.provider)
+            return frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 server shutdown lost its actual Source provider");
+        *handled=true;
+        const qa_launch_snapshot *published=qa_application_launch(f->application);
+        const qa_launch_instance *live=published && source->descriptor?
+            qa_launch_snapshot_find(published,source->descriptor->selection.instance):NULL;
+        if (!live || live->storage!=source->descriptor->storage || live->state!=source->descriptor->state) {
+            if (call->context.dialect==QA_CONSOLE_Q2_RERELEASE)
+                frontend_console_print(f,&call->context,"No server running.\n");
+            return true;
+        }
+        uint64_t generation=qa_application_configuration_generation(f->application);
+        if (f->server_stop_owner && (f->server_stop_owner!=source->scope.provider ||
+            f->server_stop_generation!=generation || f->server_stopped))
+            return frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 shutdown already retains another actual server");
+        f->server_stop_owner=source->scope.provider;
+        f->server_stop_generation=generation;
+        return true;
+    }
     if (q2 && (map || gamemap)) {
         if (!source->scope.provider || source->scope.provider!=call->context.owner ||
             source->command.owner!=source->scope.provider)
@@ -54,7 +77,8 @@ bool frontend_commands_source(qa_frontend *f,const qa_application_startup_source
         if (map && !strchr(destination,'.')) {
             char expanded[64];
             snprintf(expanded,sizeof(expanded),"maps/%s.bsp",destination);
-            qa_vfs *files=qa_application_context_files(f->application,&call->context,NULL);
+            qa_vfs *files=parked?source->descriptor->content:
+                qa_application_context_files(f->application,&call->context,NULL);
             bool found=false; uint64_t size=0;
             if (!files) return frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 map command lost its Source filesystem");
             if (!qa_vfs_probe(files,expanded,&found,&size,error)) return false;
@@ -69,9 +93,12 @@ bool frontend_commands_source(qa_frontend *f,const qa_application_startup_source
             frontend_console_print(f,&call->context,"USAGE: gamemap <map>\n");
             return true;
         }
-        return qa_application_queue_travel(f->application,&(qa_application_travel_request){
+        bool stopping=f->server_stop_owner==source->scope.provider && !f->server_stopped;
+        bool queued=qa_application_queue_travel(f->application,&(qa_application_travel_request){
             .provider=source->scope.provider,.cause=call->context.actor,.expression=destination,
-            .new_unit=map,.carry_players=!map},error);
+            .new_unit=map,.carry_players=!map && !stopping && !parked},error);
+        if (queued && stopping) f->server_stop_follow_map=true;
+        return queued;
     }
     qa_console *engine=qa_application_console(f->application);
     qa_command_context context={.origin=QA_COMMAND_LOCAL,.dialect=call->context.dialect,.direct=true};

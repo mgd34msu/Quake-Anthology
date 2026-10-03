@@ -390,6 +390,12 @@ bool qa_application_destroy(qa_application *, qa_error *);
  * Success retains the shared authorities and console for platform teardown.
  * Failure retains this application; retry after outstanding owners release. */
 bool qa_application_retire_sources(qa_application *, qa_error *);
+/* Retire the actual Q2 primary server at a returned source boundary, retaining
+ * the engine, configuration owner and frontend services for another launch. */
+bool qa_application_stop_server(qa_application *, qa_actor_owner, qa_error *);
+/* A queued post-shutdown route retains its original selected launch until
+ * the existing map owner has consumed that transient restart continuation. */
+bool qa_application_server_restart_pending(const qa_application *);
 
 qa_application_state qa_application_get_state(const qa_application *);
 /* Borrowed fault detail. NULL means the application has not faulted. */

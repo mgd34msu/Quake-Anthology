@@ -3,6 +3,7 @@
 #include "map_private.h"
 
 struct application_map_state {
+    qa_launch_draft *restart_draft;
     qa_travel_route route;
     size_t cursor;
     uint64_t revision;
@@ -18,6 +19,7 @@ struct application_map_state {
     qa_string_id load_nextserver;
 };
 void application_map_load_finish(qa_application *, bool published);
+bool application_map_stop_prepare(qa_application *, qa_error *);
 bool application_map_checkpoint_capture(qa_application *, qa_buffer *, qa_error *);
 bool application_map_checkpoint_restore(qa_application *candidate, qa_bytes, qa_error *);
 bool application_source_queue_map_travel(qa_application *,

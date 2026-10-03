@@ -1061,11 +1061,14 @@ bool qa_configuration_create(const qa_configuration_hooks *hooks, qa_configurati
     if (!manager) { qa_error_set(error, QA_ERROR_MEMORY, 0, "cannot allocate configuration owner"); return false; }
     manager->hooks = *hooks; *out = manager; return true;
 }
-bool qa_configuration_destroy(qa_configuration *manager, qa_error *error)
+static bool retire_configuration(qa_configuration *manager, bool destroy, qa_error *error)
 {
     if (!manager) return true;
     if (manager->busy || manager->transactions)
         return error_message(error, "configuration destruction requires a safe point and no open transactions");
+    if (!destroy && !manager->current) return true;
+    if (!destroy && manager->generation == UINT64_MAX)
+        return error_message(error, "configuration retirement identity is exhausted");
     manager->busy = true;
     if (!manager->hooks.safe(manager->hooks.context)) {
         manager->busy = false;
@@ -1079,8 +1082,15 @@ bool qa_configuration_destroy(qa_configuration *manager, qa_error *error)
     }
     manager->current = NULL;
     manager->hooks.publish(manager->hooks.context, previous, NULL, NULL);
-    qa_launch_snapshot_release(previous); free(manager); return true;
+    qa_launch_snapshot_release(previous);
+    if (destroy) free(manager);
+    else { ++manager->generation; manager->busy = false; }
+    return true;
 }
+bool qa_configuration_destroy(qa_configuration *manager, qa_error *error)
+{ return retire_configuration(manager, true, error); }
+bool qa_configuration_clear(qa_configuration *manager, qa_error *error)
+{ return retire_configuration(manager, false, error); }
 uint64_t qa_configuration_generation(const qa_configuration *manager) { return manager ? manager->generation : 0; }
 const qa_launch_snapshot *qa_configuration_current(const qa_configuration *manager) { return manager ? manager->current : NULL; }
 

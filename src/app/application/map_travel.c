@@ -131,9 +131,11 @@ bool qa_application_load_map(qa_application *application,
     qa_launch_draft *draft = NULL;
     bool ok = current != NULL
                   ? qa_launch_snapshot_draft_copy(current, &draft, error)
-                  : request->geometry != 0 && qa_launch_draft_create(
-                        application->catalog, request->geometry, path, &draft, error);
-    if (!ok && current == NULL && request->geometry == 0)
+                  : state->restart_draft != NULL
+                        ? qa_launch_draft_copy(state->restart_draft, &draft, error)
+                        : request->geometry != 0 && qa_launch_draft_create(
+                            application->catalog, request->geometry, path, &draft, error);
+    if (!ok && current == NULL && !state->restart_draft && request->geometry == 0)
         application_fail(error, QA_ERROR_ARGUMENT,
                          "initial map load requires a content preset");
     if (ok) {
@@ -154,6 +156,10 @@ bool qa_application_load_map(qa_application *application,
         state->load_new_unit = request->new_unit;
         application->map_force_reload = true;
         ok = qa_application_apply(application, draft, error);
+        if (ok) {
+            qa_launch_draft_destroy(state->restart_draft);
+            state->restart_draft = NULL;
+        }
         application->map_force_reload = previous_force;
         if (!ok || !qa_application_startup_pending(application))
             application_map_load_finish(application, ok);
@@ -366,7 +372,12 @@ bool qa_application_commit_travel(qa_application *application,
 void application_map_load_finish(qa_application *application, bool published)
 {
     struct application_map_state *state = application ? application->map_state : NULL;
-    if (!state || !state->loading) return;
+    if (!state) return;
+    if (published && qa_application_launch(application)) {
+        qa_launch_draft_destroy(state->restart_draft);
+        state->restart_draft=NULL;
+    }
+    if (!state->loading) return;
     state->loading = false;
     if (published && state->revision == state->load_revision) {
         if (state->busy) {
@@ -464,12 +475,25 @@ void application_map_publication_dispose(application_publication *publication)
     publication->players = NULL;
 }
 
+bool application_map_stop_prepare(qa_application *application, qa_error *error)
+{
+    struct application_map_state *state = application->map_state;
+    if (!state) state=map_state(application,error);
+    if (!state) return false;
+    if (state->restart_draft) return true;
+    return qa_launch_snapshot_draft_copy(qa_application_launch(application), &state->restart_draft, error);
+}
+
+bool qa_application_server_restart_pending(const qa_application *application)
+{ return application && application->map_state && application->map_state->restart_draft; }
+
 void application_map_dispose(qa_application *application)
 {
     if (application == NULL)
         return;
     application_players_close(application);
     if (application->map_state == NULL) return;
+    qa_launch_draft_destroy(application->map_state->restart_draft);
     qa_travel_route_free(&application->map_state->route);
     free(application->map_state);
     application->map_state = NULL;
@@ -590,7 +614,7 @@ bool application_map_checkpoint_capture(qa_application *application, qa_buffer *
                                          qa_error *error)
 {
     if (!application || !out || !application->session || !qa_session_safe(application->session) ||
-        application->publication_started || (application->map_state &&
+        application->publication_started || qa_application_server_restart_pending(application) || (application->map_state &&
             (application->map_state->busy || application->map_state->loading)))
         return application_fail(error, QA_ERROR_ARGUMENT, "map continuation capture requires a committed safe point");
     qa_source_save_io io;

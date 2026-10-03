@@ -19,11 +19,12 @@ struct application_startup_program {
     const qa_launch_snapshot *previous, *candidate;
     qa_launch_instance_lease *previous_lease, *candidate_lease;
     qa_application_startup_source source, target;
+    qa_application_console_scope origin_scope;
     application_provider *source_provider, *target_provider;
     qa_console_program *program;
     program_actor *actors;
     uint64_t previous_generation;
-    bool retained;
+    bool retained, parked;
 };
 
 struct application_startup_program_roster {
@@ -64,9 +65,13 @@ static bool current(void *context, const qa_console *source, const qa_console *t
     if (qa_configuration_current(owner->application->configuration) != owner->previous ||
         !candidate ||
         source != owner->source.console || target != owner->target.console ||
-        !owner->source_provider->attached || owner->target_provider->attached != owner->retained)
+        (!owner->parked && !owner->source_provider->attached) || owner->target_provider->attached != owner->retained)
         return application_fail(error, QA_ERROR_ARGUMENT, "Command program changed its actual publication plan");
-    return physical(owner->source_provider, &owner->source, error) &&
+    const qa_application_startup_hooks *hooks=owner->application->startup_hooks;
+    bool source_current=owner->parked?hooks && hooks->parked_program_source_current &&
+        hooks->parked_program_source_current(hooks->context,owner->application,&owner->source,NULL,NULL,error):
+        physical(owner->source_provider, &owner->source, error);
+    return source_current &&
         physical(owner->target_provider, &owner->target, error);
 }
 
@@ -82,7 +87,7 @@ static bool identity(void *context, qa_console_program_identity kind, uint64_t s
         *out = owner->target.scope.provider; return true;
     }
     bool handled = false;
-    if (!application_guest_q3_program_identity(owner->source_provider, owner->target_provider,
+    if (!owner->parked && !application_guest_q3_program_identity(owner->source_provider, owner->target_provider,
         &owner->source, &owner->target, kind, source, out, &handled, error)) return false;
     if (handled) return true;
     if (kind == QA_CONSOLE_PROGRAM_OWNER && source == owner->source.declaration_owner) {
@@ -213,26 +218,32 @@ static bool prepare_program(qa_application *app, const qa_launch_snapshot *candi
     const qa_application_startup_source *source, const qa_application_startup_source *target,
     application_publication *publication, application_startup_program **out, qa_error *error)
 {
+    const qa_application_startup_hooks *hooks=app?app->startup_hooks:NULL;
+    qa_application_console_scope origin=source?source->scope:(qa_application_console_scope){0};
+    uint64_t generation=app?app->command_generation:0;
+    bool parked=source && source->scope.kind==QA_APPLICATION_CONSOLE_ENGINE && hooks &&
+        hooks->parked_program_source_current &&
+        hooks->parked_program_source_current(hooks->context,app,source,&origin,&generation,error);
     if (!app || !candidate || !source || !target || !out || !source->descriptor || !target->descriptor ||
         !source->console || !target->console ||
-        source->scope.kind != target->scope.kind || source->scope.seat != target->scope.seat)
+        (!parked && source->scope.kind != target->scope.kind) || source->scope.seat != target->scope.seat)
         return application_fail(error, QA_ERROR_ARGUMENT, "Command program needs its compatible physical source pair");
     *out = NULL;
     application_startup_program *owner = calloc(1, sizeof(*owner));
     if (!owner) return application_fail(error, QA_ERROR_MEMORY, "Retaining source command continuation");
     owner->application = app; owner->candidate = candidate;
-    owner->publication = publication;
-    owner->previous_generation = app->command_generation;
+    owner->publication = publication; owner->parked=parked;
+    owner->previous_generation = generation; owner->origin_scope=origin;
     owner->previous = qa_configuration_current(app->configuration);
     qa_launch_snapshot_retain(owner->previous); qa_launch_snapshot_retain(candidate);
     const qa_launch_instance *old = owner->previous
-        ? qa_launch_snapshot_find(owner->previous, source->descriptor->selection.instance) : NULL;
+        ? qa_launch_snapshot_find(owner->previous, source->descriptor->selection.instance) : parked?source->descriptor:NULL;
     const qa_launch_instance *selected = qa_launch_snapshot_find(candidate, target->descriptor->selection.instance);
     bool ok = old && selected && old->storage == source->descriptor->storage &&
-        selected->storage == target->descriptor->storage && old->state && selected->state;
+        selected->storage == target->descriptor->storage && (parked || old->state) && selected->state;
     if (!ok) application_fail(error, QA_ERROR_ARGUMENT, "Command continuation lost its retained actual descriptors");
     if (ok) {
-        owner->source_provider = old->state; owner->target_provider = selected->state;
+        owner->source_provider = parked?NULL:old->state; owner->target_provider = selected->state;
         owner->retained = source->console == target->console;
         if (owner->retained && (owner->source_provider != owner->target_provider ||
             source->cvars != target->cvars || !same_scope(source->scope, target->scope))) {
@@ -308,9 +319,13 @@ bool application_startup_program_adopt(application_startup_program **slot, qa_er
 {
     application_startup_program *owner = slot ? *slot : NULL;
     if (!owner) return true;
-    if (!application_startup_program_queue_ready(owner->application, &owner->source, &owner->target,
+    /* Startup ordinals identify the admitted programme's original Source
+     * receipt. This historical scope never grants a live GAME callback. */
+    qa_application_startup_source ordinal_source=owner->source;
+    ordinal_source.scope=owner->origin_scope;
+    if (!application_startup_program_queue_ready(owner->application, &ordinal_source, &owner->target,
         owner->previous_generation, error) || !qa_console_program_adopt(owner->program, error)) return false;
-    application_startup_program_queue_publish(owner->application, &owner->source, &owner->target,
+    application_startup_program_queue_publish(owner->application, &ordinal_source, &owner->target,
         owner->previous_generation);
     *slot = NULL; dispose(owner); return true;
 }

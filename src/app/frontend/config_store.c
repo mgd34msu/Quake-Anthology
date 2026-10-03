@@ -26,6 +26,7 @@
 #include "qa/cvars_save.h"
 #include "qa/console_cvar_observer.h"
 #include "qa/console_save.h"
+#include "qa/console_program.h"
 #include "qa/catalog_save.h"
 #include "qa/text.h"
 #include "qa/server_admin.h"
@@ -85,6 +86,13 @@ struct frontend_config_store {
     qa_frontend *frontend;
     qa_application_startup_hooks hooks;
     frontend_config_source *sources;
+    frontend_config_source *parked, *parked_from;
+    qa_console *parked_console, *parked_root;
+    qa_cvars *parked_cvars;
+    qa_console_program *parked_program;
+    qa_application_startup_source parked_basis;
+    uint32_t parked_physical;
+    bool parked_live, parked_local, parked_sealed;
     frontend_remote_configs *clients;
     frontend_neutral_configs *neutral;
     frontend_source_admin *admin;
@@ -143,6 +151,9 @@ static bool equal(const char *left,const char *right)
         if (!a) return true;
     }
 }
+static bool parked_capture(void *,const qa_command_context *,qa_command_context *,qa_error *);
+static bool parked_active(void *,const qa_command_context *);
+static bool parked_seal(frontend_config_store *,frontend_config_source *,qa_error *);
 static const qa_launch_instance *instance(const frontend_config_source *source)
 { return qa_launch_instance_lease_view(source->metadata); }
 static bool game_scope(qa_application_console_scope scope)
@@ -191,7 +202,8 @@ static bool source_context(const frontend_config_source *source,const qa_command
     return source && command && command->origin!=QA_COMMAND_REMOTE &&
         command->owner==source->command.owner && command->session==source->command.session &&
         command->dialect==source->command.dialect &&
-        qa_application_command_context_active(source->application,command);
+        (source->manager->parked==source?parked_active(source->manager,command):
+            qa_application_command_context_active(source->application,command));
 }
 static bool source_cvar_context(const frontend_config_source *source,const qa_command_context *command)
 {
@@ -208,7 +220,8 @@ static bool current_command(const frontend_config_source *source,qa_command_cont
 {
     *command=source->command;
     command->registry=0; command->generation=0; command->actor=(qa_actor_id){0};
-    return qa_application_capture_command_context(source->application,command,command,error) &&
+    return (source->manager->parked==source?parked_capture(source->manager,command,command,error):
+        qa_application_capture_command_context(source->application,command,command,error)) &&
         source_context(source,command);
 }
 static size_t seat_index(const frontend_config_source *source,uint32_t logical)
@@ -1023,6 +1036,8 @@ bool frontend_config_store_primary_server_read(frontend_config_store *manager,
     if (!manager || !out || !present) return fail(error,QA_ERROR_ARGUMENT,"Server console read requires its actual configuration owner");
     *out=(qa_application_startup_source){0}; *present=false;
     frontend_config_source *source=published_primary(manager,manager->frontend->application);
+    if (!source && manager->parked_live && !qa_application_launch(manager->frontend->application))
+        source=manager->parked;
     if (!source) return true;
     qa_command_context command;
     if (!source->configured || !source->console || !source->cvars ||
@@ -1714,6 +1729,15 @@ bool frontend_config_store_write_source_text(frontend_config_store *manager,
 }
 static bool source_destroy(frontend_config_source *source,qa_error *error)
 {
+    frontend_config_store *manager=source->manager;
+    bool parked=manager->parked==source;
+    if (!parked && manager->parked_from==source && !parked_seal(manager,source,error)) return false;
+    if (parked && manager->parked_program) {
+        if (!qa_console_program_abort(manager->parked_program,error)) return false;
+        manager->parked_program=NULL;
+    }
+    if (parked && !qa_console_destroy_ready(source->console))
+        return fail(error,QA_ERROR_ARGUMENT,"Stopped ENGINE configuration retains its real command programme borrower");
     if (source->manager->input_source==source)
         return fail(error,QA_ERROR_ARGUMENT,"Configuration source retains its actual staged input candidate");
     size_t contexts=0;
@@ -1765,7 +1789,16 @@ static bool source_destroy(frontend_config_source *source,qa_error *error)
     if (source->fallback!=source->movement) qa_cvars_destroy(source->fallback);
     qa_cvars_destroy(source->movement);
     qa_cvar_archive_free(&source->source_archive); qa_cvar_archive_free(&source->movement_archive); qa_cvar_archive_free(&source->fallback_archive);
-    qa_launch_instance_lease_release(source->metadata); free(source->saved_instance); free(source); return true;
+    qa_launch_instance_lease_release(source->metadata); free(source->saved_instance);
+    if (manager->parked_from==source) manager->parked_from=NULL;
+    if (parked) {
+        qa_console_destroy(source->console); qa_cvars_destroy(source->cvars);
+        manager->parked=NULL; manager->parked_console=NULL; manager->parked_cvars=NULL;
+        manager->parked_from=NULL;
+        manager->parked_root=NULL; manager->parked_live=false; manager->parked_sealed=false;
+        manager->parked_basis=(qa_application_startup_source){0}; manager->parked_local=false;
+    }
+    free(source); return true;
 }
 static bool install_commands(frontend_config_source *source,qa_error *error)
 {
@@ -1906,10 +1939,13 @@ static frontend_config_source *previous_source(frontend_config_store *manager,qa
 {
     const qa_launch_snapshot *published=qa_application_launch(application);
     const qa_launch_instance *old=published?qa_launch_snapshot_find(published,selected->selection.instance):NULL;
+    if (!old && manager->parked_live && !published && manager->parked &&
+        manager->parked->application==application) old=instance(manager->parked);
     if (!old || !same_profile(old,selected)) return NULL;
     for (frontend_config_source *source=manager->sources;source;source=source->next) {
         const qa_launch_instance *retained=instance(source);
-        if (source->application!=application || !source->published || source->imported ||
+        if (source->application!=application || (!source->published &&
+            (source!=manager->parked || !manager->parked_live || published)) || source->imported ||
             !source->configured || !source->released || source->running || source->phase || !retained ||
             retained->storage!=old->storage || retained->state!=old->state ||
             source->primary!=primary_source(candidate,selected)) continue;
@@ -1987,9 +2023,10 @@ bool frontend_config_store_carry_variables(frontend_config_store *manager,qa_app
     frontend_config_source *previous=previous_source(manager,application,candidate,selected);
     if (!previous) return true;
     qa_application_console_scope old_scope;
-    if (!qa_application_console_scope_read(application,previous->console,&old_scope) ||
+    bool parked=previous==manager->parked;
+    if (!parked && (!qa_application_console_scope_read(application,previous->console,&old_scope) ||
         old_scope.kind!=authority->scope.kind || old_scope.seat!=authority->scope.seat ||
-        old_scope.provider!=authority->scope.provider)
+        old_scope.provider!=authority->scope.provider))
         return fail(error,QA_ERROR_ARGUMENT,"GAME variable carry changed its actual physical source scope");
     if (!previous->cvars || cvars==previous->cvars ||
         qa_cvars_dialect(cvars)!=qa_cvars_dialect(previous->cvars) ||
@@ -2005,7 +2042,7 @@ bool frontend_config_store_carry_variables(frontend_config_store *manager,qa_app
         const qa_cvar_view *value=qa_cvars_at(previous->cvars,i);
         if (equal(value->name,"mapname") || equal(value->name,"sv_mapname") ||
             (q3 && ((value->flags&QA_CVAR_INIT) || equal(value->name,"sv_cheats")))) continue;
-        uint64_t owner=value->owner==previous->command.owner?previous->command.owner:
+        uint64_t owner=value->owner==previous->command.owner?authority->command.owner:
             value->owner?cvar_owner:0;
         if (!qa_cvars_register(cvars,value->name,value->reset_value,value->flags,owner,value->description,error) ||
             !qa_cvars_set(cvars,value->name,value->latched_value?value->latched_value:value->value,true,error)) {
@@ -2037,13 +2074,17 @@ static bool program_source(void *context,qa_application *application,const qa_la
     frontend_config_source *previous=previous_source(manager,application,candidate,fresh->descriptor);
     if (!previous) return true;
     qa_application_console_scope scope;
-    if (!qa_application_console_scope_read(application,previous->console,&scope) ||
+    bool parked=previous==manager->parked;
+    if (parked) scope=previous->scope;
+    if ((!parked && (!qa_application_console_scope_read(application,previous->console,&scope) ||
         !same_scope(scope,fresh->scope) || !same_scope(scope,previous->scope) ||
+        scope.kind!=fresh->scope.kind)) ||
         !previous->cvars || qa_console_cvars(previous->console)!=previous->cvars ||
         !qa_console_idle(previous->console) || !qa_cvars_observer_idle(previous->cvars))
         return fail(error,QA_ERROR_ARGUMENT,"Program continuation lost its true published physical source");
     qa_command_context command=previous->command;
     command.registry=command.generation=0; command.actor=(qa_actor_id){0};
+    if (parked && !parked_capture(manager,&command,&command,error)) return false;
     *out=(qa_application_startup_source){.descriptor=instance(previous),.scope=scope,
         .console=previous->console,.cvars=previous->cvars,.command=command,
         .declaration_owner=previous->declaration_owner};
@@ -2133,6 +2174,201 @@ static bool carry(frontend_config_store *manager,qa_application *application,
     if (ok) ok=install_commands(source,error);
     if (!ok) { qa_error cleanup={0}; if (!source_destroy(source,&cleanup) && error) *error=cleanup; return false; }
     source->next=manager->sources; manager->sources=source; *out=source; return true;
+}
+static bool parked_parent(const frontend_config_store *manager)
+{
+    qa_frontend *f=manager?manager->frontend:NULL;
+    return f && f->application && manager->parked_console && manager->parked_cvars &&
+        manager->parked_root==qa_application_console(f->application) &&
+        qa_console_cvars(manager->parked_console)==manager->parked_cvars;
+}
+static bool parked_capture(void *context,const qa_command_context *source,
+    qa_command_context *out,qa_error *error)
+{
+    frontend_config_store *manager=context;
+    if (!source || !out || !parked_parent(manager) ||
+        source->owner!=manager->parked_basis.scope.provider || source->origin==QA_COMMAND_REMOTE ||
+        source->dialect!=manager->parked_basis.command.dialect)
+        return fail(error,QA_ERROR_ARGUMENT,"Stopped Source command lost its actual ENGINE configuration namespace");
+    qa_command_context engine=*source;
+    engine.owner=0; engine.registry=engine.generation=0; engine.actor=(qa_actor_id){0};
+    if (!qa_application_capture_command_context(manager->frontend->application,&engine,&engine,error)) return false;
+    engine.owner=source->owner;
+    *out=engine; return true;
+}
+static bool parked_active(void *context,const qa_command_context *command)
+{
+    frontend_config_store *manager=context;
+    if (!command || !parked_parent(manager) || command->actor.registry ||
+        command->owner!=manager->parked_basis.scope.provider || command->origin==QA_COMMAND_REMOTE ||
+        command->dialect!=manager->parked_basis.command.dialect) return false;
+    qa_command_context engine=*command; engine.owner=0;
+    return qa_application_command_context_active(manager->frontend->application,&engine);
+}
+bool frontend_config_store_parked_current(const frontend_config_store *manager,
+    const qa_application_startup_source *source)
+{
+    const frontend_config_source *parked=manager?manager->parked:NULL;
+    return parked && source && manager->parked_live && parked_parent(manager) &&
+        !qa_application_launch(manager->frontend->application) && source->scope.kind==QA_APPLICATION_CONSOLE_ENGINE &&
+        source->console==parked->console && source->cvars==parked->cvars && source->descriptor &&
+        source->descriptor->storage==instance(parked)->storage && same_scope(source->scope,parked->scope) &&
+        parked_active((void *)manager,&source->command);
+}
+bool frontend_config_store_parked_recipient(const frontend_config_store *manager,
+    const qa_application_startup_source *source,uint32_t *physical)
+{
+    if (!physical || !frontend_config_store_parked_current(manager,source) || !manager->parked_local ||
+        manager->parked_physical>=manager->frontend->options.seats) return false;
+    *physical=manager->parked_physical; return true;
+}
+static bool parked_program_current(void *context,qa_application *application,
+    const qa_application_startup_source *source,qa_application_console_scope *origin,
+    uint64_t *generation,qa_error *error)
+{
+    frontend_config_store *manager=context;
+    if (!manager || manager->frontend->application!=application ||
+        !frontend_config_store_parked_current(manager,source))
+        return fail(error,QA_ERROR_ARGUMENT,"Command programme lost its actual parked ENGINE owner");
+    if (origin) *origin=manager->parked_basis.scope;
+    if (generation) *generation=manager->parked_basis.command.generation;
+    return true;
+}
+static void parked_print(void *context,const qa_command_context *command,const char *text)
+{ frontend_console_print(((frontend_config_store *)context)->frontend,command,text); }
+static bool parked_read(void *context,const qa_command_context *command,const char *path,
+    qa_bytes *bytes,void **lease,qa_error *error)
+{
+    frontend_config_store *manager=context;
+    return manager->parked && parked_active(manager,command) &&
+        frontend_config_files_console_read(manager->parked->files,path,command,bytes,lease,error);
+}
+static void parked_release(void *context,void *lease)
+{
+    frontend_config_store *manager=context;
+    if (manager->parked) frontend_config_files_release(manager->parked->files,lease);
+}
+static qa_command_result parked_command(void *context,const qa_command_invocation *call,qa_error *error)
+{
+    frontend_config_store *manager=context;
+    qa_application_startup_source source; bool present=false,handled=false;
+    if (!frontend_config_store_primary_server_read(manager,&source,&present,error) || !present ||
+        !frontend_config_store_parked_current(manager,&source) || call->console!=source.console ||
+        !frontend_commands_source(manager->frontend,&source,call,&handled,error)) return QA_COMMAND_FAILED;
+    return handled?QA_COMMAND_HANDLED:QA_COMMAND_UNHANDLED;
+}
+static bool park_identity(void *context,qa_console_program_identity kind,uint64_t source,
+    uint64_t *target,qa_error *error)
+{ (void)context; (void)kind; (void)error; *target=source; return true; }
+static bool park_context(void *context,const qa_command_context *source,qa_command_context *target,qa_error *error)
+{ return parked_capture(context,source,target,error); }
+static bool park_published_context(void *context,const qa_command_context *source,
+    const qa_command_context *prepared,qa_command_context *target,qa_error *error)
+{ (void)source; return parked_capture(context,prepared,target,error); }
+static bool park_current(void *context,const qa_console *source,const qa_console *target,qa_error *error)
+{
+    frontend_config_store *manager=context;
+    return (parked_parent(manager) && manager->parked_from &&
+        source==manager->parked_from->console && target==manager->parked_console) ||
+        fail(error,QA_ERROR_ARGUMENT,"Source programme transfer lost its physical returned console pair");
+}
+static bool park_published(void *context,const qa_command_context *basis,
+    const qa_console *target,qa_error *error)
+{
+    frontend_config_store *manager=context;
+    return (basis && parked_parent(manager) && target==manager->parked_console &&
+        !qa_application_launch(manager->frontend->application)) ||
+        fail(error,QA_ERROR_ARGUMENT,"Parked ENGINE programme requires completed server retirement");
+}
+static bool parked_seal(frontend_config_store *manager,frontend_config_source *source,qa_error *error)
+{
+    if (manager->parked_program) {
+        if (manager->parked_sealed) return true;
+        if (!qa_console_program_abort(manager->parked_program,error)) return false;
+        manager->parked_program=NULL;
+    }
+    qa_buffer bytes={0}; qa_cvars_restore *values=NULL;
+    bool ok=qa_cvars_save_capture(source->cvars,&bytes,error) &&
+        qa_cvars_save_prepare(manager->parked_cvars,(qa_bytes){bytes.data,bytes.size},&values,error);
+    if (ok) ok=qa_cvars_save_commit(values,error);
+    if (!ok) qa_cvars_save_abort(values);
+    qa_buffer_free(&bytes);
+    if (!ok) return false;
+    qa_console_program_resolvers resolve={.context=manager,.identity=park_identity,
+        .command_context=park_context,.published_context=park_published_context,
+        .published_candidate_context=park_context,.current=park_current,.published=park_published};
+    manager->parked_program=qa_console_program_prepare(source->console,manager->parked_console,&resolve,error);
+    if (!manager->parked_program) return false;
+    bool transferred=qa_console_program_preflight(manager->parked_program,error) &&
+        qa_console_program_seal(manager->parked_program,error);
+    manager->parked_sealed=transferred;
+    if (!transferred) {
+        qa_error issue=error?*error:(qa_error){0};
+        if (!qa_console_program_abort(manager->parked_program,error)) return false;
+        manager->parked_program=NULL;
+        if (error) *error=issue;
+    }
+    return transferred;
+}
+bool frontend_config_store_park_server(frontend_config_store *manager,
+    const qa_application_startup_source *authority,qa_error *error)
+{
+    if (!manager || !authority || !manager->frontend->server_stop_owner ||
+        manager->frontend->server_stop_owner!=authority->scope.provider ||
+        !qa_console_idle(authority->console) || qa_console_pending(authority->console))
+        return fail(error,QA_ERROR_ARGUMENT,"ENGINE profile adoption requires its returned Source stop request");
+    if (manager->parked) return manager->parked_from && manager->parked_from->console==authority->console;
+    frontend_config_source *source=frontend_config_store_source(manager,authority->console);
+    if (!source || !source->primary || !source->published || source->cvars!=authority->cvars ||
+        !instance(source) || instance(source)->storage!=authority->descriptor->storage)
+        return fail(error,QA_ERROR_ARGUMENT,"ENGINE profile adoption lost its actual published Source configuration");
+    manager->parked_basis=*authority;
+    manager->parked_basis.command.script=NULL;
+    manager->parked_root=qa_application_console(source->application);
+    manager->parked_from=source;
+    manager->parked_local=frontend_command_seat_read(manager->frontend,&authority->command,&manager->parked_physical);
+    qa_cvar_options variables={.dialect=qa_cvars_dialect(authority->cvars)};
+    manager->parked_cvars=qa_cvars_create(&variables,error);
+    qa_console_options options={.context=manager->parked_basis.command,.cvars=manager->parked_cvars,
+        .user=manager,.print=parked_print,.source_command=parked_command,.read_script=parked_read,
+        .release_script=parked_release,.capture_context=parked_capture,.context_active=parked_active};
+    if (manager->parked_cvars) manager->parked_console=qa_console_create(&options,error);
+    qa_application_startup_source target=*authority;
+    target.console=manager->parked_console; target.cvars=manager->parked_cvars;
+    bool ok=target.console && carry(manager,source->application,qa_application_launch(source->application),
+        &target,&manager->parked,error);
+    if (!ok) {
+        qa_console_destroy(manager->parked_console); qa_cvars_destroy(manager->parked_cvars);
+        manager->parked_console=NULL; manager->parked_cvars=NULL; manager->parked_root=NULL; manager->parked_from=NULL;
+        return false;
+    }
+    manager->parked->scope.kind=QA_APPLICATION_CONSOLE_ENGINE;
+    manager->parked->candidate=NULL;
+    manager->parked_basis.descriptor=instance(manager->parked);
+    return true;
+}
+bool frontend_config_store_parked_finish(frontend_config_store *manager,qa_error *error)
+{
+    if (!manager || !manager->parked) return true;
+    if (!qa_application_launch(manager->frontend->application)) {
+        if (manager->parked_live) return true;
+        if (!manager->parked_program || !qa_console_program_adopt(manager->parked_program,error)) return false;
+        manager->parked_program=NULL; manager->parked_live=true;
+        qa_cvars_set_server_active(manager->parked_cvars,false);
+        return true;
+    }
+    return frontend_config_store_parked_release(manager,error);
+}
+bool frontend_config_store_parked_release(frontend_config_store *manager,qa_error *error)
+{
+    if (!manager || !manager->parked) return true;
+    frontend_config_source *source=manager->parked;
+    frontend_config_source *next=source->next;
+    frontend_config_source **at=&manager->sources;
+    while (*at && *at!=source) at=&(*at)->next;
+    if (*at!=source || !source_destroy(source,error)) return false;
+    *at=next;
+    return true;
 }
 static void discard_retained_input(frontend_config_store *manager)
 {
@@ -2927,6 +3163,7 @@ frontend_config_store *frontend_config_store_create(qa_frontend *frontend,qa_err
         .preinit_source=preinit,.restore_source=restore_source,.retire_source=retire,.cvar_owner=cvar_owner,.visible_cvars=visible_cvars,
         .read_source_script=source_read,.release_source_script=source_release,.begin_retire_source=begin_retire,
         .carry_source_variables=carry_variables,.configuration_store=configuration_store,.program_source=program_source,
+        .parked_program_source_current=parked_program_current,
         .startup_source=startup_source,.retire_hosted_configuration=retire_hosted,
         .bind_hosted_configuration=bind_hosted,.publish_hosted_configuration=publish_hosted,
         .candidate_values=candidate_values,.prepare_root=prepare_root,.advance_images=advance_images,.advance_candidate=advance_candidate,

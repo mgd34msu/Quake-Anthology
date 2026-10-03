@@ -6504,6 +6504,24 @@ bool frontend_network_retire_clients(qa_frontend *f,qa_error *error)
     if(n->unified_client_service && !frontend_network_unified_destroy(&n->unified,error)) return false;
     return frontend_network_unified_client_destroy(&n->unified_client_service,error);
 }
+bool frontend_network_stop_server(qa_frontend *f, bool *complete, qa_error *error)
+{
+    qa_frontend_network *n=f?f->network:NULL;
+    if (!f || !complete || f->stepping || f->preparing || f->capture || f->resource_inventory ||
+        (n && (n->frontend!=f || n->round || n->busy ||
+            !qa_network_callbacks_idle(n->runtime))))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Server transport shutdown requires returned Source callbacks");
+    *complete=true;
+    if (n && !frontend_network_q2_host_stop(n->q2_host,f->wall_time_ns,complete,error)) return false;
+    if (!*complete) return true;
+    uint32_t cursor=0; const qa_net_client *client;
+    while (n && qa_net_connections_next(qa_network_connections(n->runtime),&cursor,&client)) {
+        qa_net_client_id id=client->id;
+        if (!qa_network_detach(n->runtime,id,"Server was killed.\n",error)) return false;
+    }
+    return frontend_network_destroy(f,error);
+}
+
 bool frontend_network_destroy(qa_frontend *f, qa_error *error)
 {
     qa_frontend_network *n = f->network; if (!n) return true;

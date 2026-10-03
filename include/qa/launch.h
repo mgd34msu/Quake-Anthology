@@ -301,6 +301,9 @@ typedef struct qa_configuration_hooks {
 bool qa_configuration_create(const qa_configuration_hooks *, qa_configuration **, qa_error *);
 /* Destroy is permitted only at a safe point and with no open transactions. */
 bool qa_configuration_destroy(qa_configuration *, qa_error *);
+/* Retire the current source through the same lifecycle, retaining this
+ * configuration owner and its hooks for a later genuine launch. */
+bool qa_configuration_clear(qa_configuration *, qa_error *);
 uint64_t qa_configuration_generation(const qa_configuration *);
 const qa_launch_snapshot *qa_configuration_current(const qa_configuration *);
 bool qa_configuration_prepare(qa_configuration *, const qa_launch_draft *,

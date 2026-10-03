@@ -396,6 +396,61 @@ bool frontend_startup_advance(qa_frontend *frontend,bool *complete,qa_error *err
         qa_application_rankings_start(frontend->application,error)) &&
         frontend_network_create(frontend,error);
 }
+static bool stop_server(qa_frontend *f, bool *complete, qa_error *error)
+{
+    *complete=true;
+    if (!f->server_stop_owner) return true;
+    if (f->server_stopped) {
+        if (qa_application_startup_pending(f->application)) return true;
+        if (!frontend_config_store_parked_finish(f->config_store,error)) return false;
+        if (!qa_application_server_restart_pending(f->application)) {
+            f->server_stop_owner=0; f->server_stop_generation=0;
+            f->server_stopped=false; f->server_stop_follow_map=false;
+        }
+        return true;
+    }
+    qa_application_startup_source source; bool present=false;
+    if (f->stepping || f->preparing || f->capture || f->resource_inventory || f->source_restoring ||
+        !frontend_owners_idle(f) || !frontend_seat_callbacks_idle(f) ||
+        qa_application_startup_pending(f->application) ||
+        qa_application_configuration_generation(f->application)!=f->server_stop_generation ||
+        !frontend_config_store_primary_server_read(f->config_store,&source,&present,error))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 server shutdown requires its returned Source owners");
+    if (!present || source.scope.provider!=f->server_stop_owner ||
+        (source.scope.kind!=QA_APPLICATION_CONSOLE_Q2_GAME &&
+         source.scope.kind!=QA_APPLICATION_CONSOLE_NATIVE_Q2) || !qa_console_idle(source.console))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 server shutdown lost its actual primary invocation parent");
+    if (qa_console_pending(source.console)) { *complete=false; return true; }
+    qa_application_travel_view travel;
+    bool traveling=qa_application_travel_read(f->application,&travel);
+    bool direct_map=f->server_stop_follow_map && traveling && travel.target.kind==QA_TRAVEL_MAP;
+    if (!direct_map && !frontend_config_store_park_server(f->config_store,&source,error)) return false;
+    if (traveling && (travel.target.kind==QA_TRAVEL_CINEMATIC || travel.target.kind==QA_TRAVEL_PICTURE) &&
+        !frontend_cinematic_travel(f,&travel,error)) return false;
+    if (!frontend_network_stop_server(f,complete,error)) return false;
+    if (!*complete) return true;
+    if (direct_map) {
+        if (travel.provider!=f->server_stop_owner ||
+            !frontend_events(f,error) || !frontend_travel(f,error)) return false;
+        if (!qa_application_startup_pending(f->application) &&
+            qa_application_configuration_generation(f->application)==f->server_stop_generation) {
+            *complete=false;
+            return true;
+        }
+        f->server_stop_owner=0; f->server_stop_generation=0;
+        f->server_stop_follow_map=false;
+        return true;
+    }
+    if (!frontend_events(f,error) ||
+        !qa_application_stop_server(f->application,f->server_stop_owner,error)) return false;
+    f->server_stopped=true;
+    if (!frontend_config_store_parked_finish(f->config_store,error)) return false;
+    if (!traveling) {
+        if (!f->options.dedicated && !frontend_menu_open(&f->seats[0],FRONTEND_LIBRARY,error)) return false;
+    }
+    return true;
+}
+
 bool qa_frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *error)
 {
     if (!frontend || frontend->shutdown || frontend->stepping || frontend->preparing || frontend->round || !frontend_save_commands_idle(frontend) ||
@@ -405,6 +460,10 @@ bool qa_frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *erro
         return frontend_fail(error, QA_ERROR_ARGUMENT, "invalid frontend frame duration or reentry");
     if (!frontend_shared_resource_policy_live_retire(frontend,error) ||
         !frontend_player_sources_drain(frontend,error)) return false;
+    if (frontend->server_stopped) {
+        bool complete;
+        if (!stop_server(frontend,&complete,error)) return false;
+    }
     if (frontend_constructor_pending(frontend)) {
         bool complete=false;
         return frontend_constructor_advance(frontend,elapsed_ns,&complete,error);
@@ -475,7 +534,8 @@ bool qa_frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *erro
         ok=frontend_config_store_primary_server_read(frontend->config_store,&source,&present,error);
         if (ok && present && (source.scope.kind==QA_APPLICATION_CONSOLE_Q1_GAME ||
             source.scope.kind==QA_APPLICATION_CONSOLE_Q2_GAME ||
-            source.scope.kind==QA_APPLICATION_CONSOLE_Q3_GAME)) {
+            source.scope.kind==QA_APPLICATION_CONSOLE_Q3_GAME ||
+            frontend_config_store_parked_current(frontend->config_store,&source))) {
             source_console=source.console; source_context=source.command;
         }
     }
@@ -490,6 +550,14 @@ bool qa_frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *erro
         ok=qa_console_drain(source_console,4096,&executed,error);
     if (ok) ok = qa_application_startup_console_queued(frontend->application,console) ||
         qa_console_drain(console, 4096, &executed, error);
+    if (ok && !qa_application_should_stop(frontend->application) &&
+        frontend->server_stop_owner && !frontend->server_stopped) {
+        bool complete=false;
+        frontend->stepping=false;
+        if (!stop_server(frontend,&complete,error)) return false;
+        ++frontend->frame_number;
+        return !complete || frontend_travel(frontend,error);
+    }
     if (ok && qa_application_should_stop(frontend->application)) {
         frontend->stepping=false;
         return true;

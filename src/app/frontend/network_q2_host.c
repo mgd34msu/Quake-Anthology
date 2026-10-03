@@ -783,6 +783,38 @@ bool frontend_network_q2_host_local_hooks(frontend_network_q2_host *host,const q
     }
     return frontend_fail(error,QA_ERROR_FORMAT,"Restored local connection has no actual human Source owner");
 }
+bool frontend_network_q2_host_stop(frontend_network_q2_host *host,uint64_t now,
+    bool *complete,qa_error *error)
+{
+    if(!complete || (host && (host->calls || !current(host,error) ||
+        !qa_network_callbacks_idle(host->options.runtime))))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 final message requires its returned server peer owners");
+    *complete=true;
+    if(!host) return true;
+    bool remote=false;
+    for(size_t i=0;i<host->capacity;++i) {
+        q2_host_peer *peer=&host->peers[i];
+        if(!peer->committed || !qa_net_connections_get(qa_network_connections(host->options.runtime),peer->client)) continue;
+        if(!qa_network_q2_server_request_drop(host->options.runtime,peer->client,"Server was killed.",error)) return false;
+        remote=true;
+    }
+    /* The retiring channels consume their actual acknowledgements without
+     * dispatching new gameplay input. Their Source publisher stays retained
+     * until both the final delivery and its drop callback have returned. */
+    if(remote && !qa_network_pump(host->options.runtime,now,error)) return false;
+    for(size_t i=0;i<host->capacity;++i) {
+        q2_host_peer *peer=&host->peers[i];
+        if(!peer->committed || !qa_net_connections_get(qa_network_connections(host->options.runtime),peer->client)) continue;
+        qa_error issue={0};
+        if(!qa_network_q2_server_drop(host->options.runtime,peer->client,"Server was killed.",now,&issue)) {
+            if(issue.code!=QA_OK) { if(error) *error=issue; return false; }
+            *complete=false;
+            continue;
+        }
+        if(!qa_network_detach(host->options.runtime,peer->client,"Server was killed.\n",error)) return false;
+    }
+    return true;
+}
 bool frontend_network_q2_host_destroy(frontend_network_q2_host **owned,qa_error *error)
 {
     frontend_network_q2_host *host=owned?*owned:NULL;

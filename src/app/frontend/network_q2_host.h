@@ -35,5 +35,6 @@ void frontend_network_q2_host_admin_rebind(frontend_network_q2_host *,qa_server_
 bool frontend_network_q2_host_content_visit(const frontend_network_q2_host *,
     const qa_application_content_visitor *,qa_error *);
 bool frontend_network_q2_host_destroy(frontend_network_q2_host **,qa_error *);
+bool frontend_network_q2_host_stop(frontend_network_q2_host *,uint64_t,bool *,qa_error *);
 bool frontend_network_q2_host_local_hooks(frontend_network_q2_host *,const qa_net_client *,qa_network_local_hooks *,qa_error *);
 #endif

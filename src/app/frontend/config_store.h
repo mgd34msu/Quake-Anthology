@@ -30,6 +30,11 @@ typedef struct frontend_config_host_cvars {
  * during preparation. Its hooks and context outlive the application. */
 frontend_config_store *frontend_config_store_create(qa_frontend *,qa_error *);
 bool frontend_config_store_destroy(frontend_config_store *,qa_error *);
+bool frontend_config_store_park_server(frontend_config_store *,const qa_application_startup_source *,qa_error *);
+bool frontend_config_store_parked_finish(frontend_config_store *,qa_error *);
+bool frontend_config_store_parked_release(frontend_config_store *,qa_error *);
+bool frontend_config_store_parked_current(const frontend_config_store *,const qa_application_startup_source *);
+bool frontend_config_store_parked_recipient(const frontend_config_store *,const qa_application_startup_source *,uint32_t *);
 bool frontend_config_store_retired_ready(const frontend_config_store *,qa_error *);
 bool frontend_config_store_restore_abort_unbound(frontend_config_store *,qa_application *,qa_error *);
 const qa_application_startup_hooks *frontend_config_store_hooks(frontend_config_store *);

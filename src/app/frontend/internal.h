@@ -190,6 +190,9 @@ struct qa_frontend {
     uint64_t player_source_generation;
     qa_actor_id player_source_actor;
     uint32_t player_source_physical, player_source_logical;
+    qa_actor_owner server_stop_owner;
+    uint64_t server_stop_generation;
+    bool server_stopped, server_stop_follow_map;
     qa_application_engine_shutdown *engine_shutdown;
     frontend_equipment *equipment;
     frontend_equipment_q3 *equipment_q3;
@@ -337,6 +340,7 @@ bool frontend_network_client_services(qa_frontend *, qa_application *, qa_actor_
 bool frontend_network_client_command(qa_frontend *, const char *, qa_error *);
 bool frontend_network_create(qa_frontend *, qa_error *);
 bool frontend_network_destroy(qa_frontend *, qa_error *);
+bool frontend_network_stop_server(qa_frontend *, bool *, qa_error *);
 bool frontend_network_close_client(qa_frontend *,qa_error *);
 bool frontend_network_retire_clients(qa_frontend *,qa_error *);
 bool frontend_network_pump(qa_frontend *, qa_error *);
