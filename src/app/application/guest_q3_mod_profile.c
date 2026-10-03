@@ -1,4 +1,5 @@
 #include "guest_q3_mod_private.h"
+#include "guest_mod_item_definition.h"
 #include "qa/vfs.h"
 
 static const char *const input_names[Q3_MOD_VALUE_COUNT] = {
@@ -316,34 +317,17 @@ static bool pickups(const qa_json_document *d,qa_json_id root,application_q3_mod
         (UINT32_C(1)<<Q3_MOD_TIME)|(UINT32_C(1)<<Q3_MOD_PICKUP_COUNT)|(UINT32_C(1)<<Q3_MOD_PICKUP_HAS_COUNT)|(UINT32_C(1)<<Q3_MOD_PICKUP_DROPPED);
     for(size_t i=0;i<p->pickup_count;++i) {
         mod_pickup *v=p->pickups+i; qa_json_id at=qa_json_at(d,rows,i),operation=qa_json_get(d,at,"operation");
-        char *id=NULL;
-        if(!text(d,qa_json_get(d,at,"id"),&id,e)) return false;
-        bool valid=*id&&qa_strings_intern_cstr(strings,id,&v->id,e); free(id);
-        if(!valid||!array(d,qa_json_get(d,at,"offered"),sizeof(*v->offered),(void **)&v->offered,&v->offered_count,false,e)||!v->offered_count||
-            !array(d,qa_json_get(d,at,"writes"),sizeof(*v->writes),(void **)&v->writes,&v->write_count,false,e)||!v->write_count) return false;
-        for(size_t j=0;j<i;++j) if(p->pickups[j].id==v->id) return q3mod_fail(e,QA_ERROR_FORMAT,"Duplicate original pickup rule");
-        for(size_t j=0;j<v->offered_count;++j) {
-            if(!intern(d,qa_json_at(d,qa_json_get(d,at,"offered"),j),strings,v->offered+j,false,e)) return false;
-            for(size_t k=0;k<=i;++k) for(size_t l=0;l<(k==i?j:p->pickups[k].offered_count);++l)
-                if(p->pickups[k].offered[l]==v->offered[j]) return q3mod_fail(e,QA_ERROR_FORMAT,"Ambiguous original pickup item");
-        }
-        for(size_t j=0;j<v->write_count;++j) {
-            qa_pickup_write *w=v->writes+j; qa_json_id row=qa_json_at(d,qa_json_get(d,at,"writes"),j),kind=qa_json_get(d,row,"kind");
-            if(qa_json_string_equal(d,kind,"protection")) {
-                qa_json_id channel=qa_json_get(d,row,"channel"); w->resource.kind=QA_PICKUP_PROTECTION;
-                if(qa_json_string_equal(d,channel,"regular")) w->resource.channel=QA_PROTECTION_REGULAR;
-                else if(qa_json_string_equal(d,channel,"powered")) w->resource.channel=QA_PROTECTION_POWERED;
-                else return q3mod_fail(e,QA_ERROR_FORMAT,"Unknown original pickup protection channel");
-                bool found=false; for(size_t k=0;k<p->protection_count;++k) found|=p->protection[k].channel==w->resource.channel;
-                if(!found) return q3mod_fail(e,QA_ERROR_FORMAT,"Original pickup has no declared protection owner");
-            } else if(qa_json_string_equal(d,kind,"inventory")) {
-                w->resource.kind=QA_PICKUP_INVENTORY; qa_json_id fields=qa_json_get(d,row,"fields");
-                if(qa_json_string_equal(d,fields,"count")) w->fields=QA_PICKUP_COUNT;
-                else if(qa_json_string_equal(d,fields,"capacity")) w->fields=QA_PICKUP_CAPACITY;
-                else if(qa_json_string_equal(d,fields,"count-and-capacity")) w->fields=QA_PICKUP_COUNT_CAPACITY;
-                else return q3mod_fail(e,QA_ERROR_FORMAT,"Unknown original pickup inventory dimensions");
-                if(!intern(d,qa_json_get(d,row,"item"),strings,&w->resource.item,false,e)||!pickup_inventory(d,root,w,strings,e)) return false;
-            } else return q3mod_fail(e,QA_ERROR_FORMAT,"Unknown original pickup resource");
+        if(!application_mod_pickup_definition(d,at,strings,&v->id,&v->offered,&v->offered_count,
+            &v->writes,&v->write_count,e))return false;
+        for(size_t j=0;j<i;++j)if(p->pickups[j].id==v->id)return q3mod_fail(e,QA_ERROR_FORMAT,"Duplicate original pickup rule");
+        for(size_t j=0;j<v->offered_count;++j)
+            for(size_t k=0;k<=i;++k)for(size_t l=0;l<(k==i?j:p->pickups[k].offered_count);++l)
+                if(p->pickups[k].offered[l]==v->offered[j])return q3mod_fail(e,QA_ERROR_FORMAT,"Ambiguous original pickup item");
+        for(size_t j=0;j<v->write_count;++j){const qa_pickup_write *w=v->writes+j;
+            if(w->resource.kind==QA_PICKUP_PROTECTION){
+                bool found=false;for(size_t k=0;k<p->protection_count;++k)found|=p->protection[k].channel==w->resource.channel;
+                if(!found)return q3mod_fail(e,QA_ERROR_FORMAT,"Original pickup has no declared protection owner");
+            }else if(!pickup_inventory(d,root,w,strings,e))return false;
         }
         v->gated=qa_json_string_equal(d,qa_json_get(d,operation,"kind"),"gate-then-grant");
         if(!v->gated&&!qa_json_string_equal(d,qa_json_get(d,operation,"kind"),"boolean-grant")) return false;

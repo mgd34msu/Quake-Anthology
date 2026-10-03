@@ -1,5 +1,5 @@
 #include "guest_q3_mod_items_private.h"
-#include "qa/text.h"
+#include "guest_mod_item_definition.h"
 
 static bool word(const qa_json_document *d,qa_json_id id,uint32_t *out,qa_error *e)
 {
@@ -12,14 +12,6 @@ static bool word(const qa_json_document *d,qa_json_id id,uint32_t *out,qa_error 
 }
 static bool integer(const qa_json_document *d,qa_json_id id,int32_t *out,qa_error *e)
 { int64_t n; if(!qa_json_i64(d,id,&n,e)||n<INT32_MIN||n>INT32_MAX) return q3mod_fail(e,QA_ERROR_FORMAT,"Item value exceeds signed source storage"); *out=(int32_t)n; return true; }
-static bool text(const qa_json_document *d,qa_json_id id,char **out,qa_error *e)
-{ qa_buffer b={0}; if(!qa_json_string(d,id,&b,e)) return false; if(memchr(b.data,0,b.size)) {qa_buffer_free(&b);return q3mod_fail(e,QA_ERROR_FORMAT,"Item declaration contains NUL");} *out=(char *)b.data; return true; }
-static bool identity(const qa_json_document *d,qa_json_id id,qa_strings *s,qa_item_id *out,qa_error *e)
-{
-    char *name=NULL; if(!text(d,id,&name,e)) return false;
-    char *colon=strchr(name,':'); bool ok=colon&&colon!=name&&colon[1]&&qa_strings_intern_cstr(s,name,out,e);
-    free(name); return ok||q3mod_fail(e,QA_ERROR_FORMAT,"Item identity requires its declared namespace");
-}
 static bool list(const qa_json_document *d,qa_json_id id,size_t stride,void **out,size_t *count,qa_error *e)
 {
     if(qa_json_type(d,id)!=QA_JSON_ARRAY) return q3mod_fail(e,QA_ERROR_FORMAT,"Item declaration requires an array");
@@ -37,7 +29,7 @@ bool q3items_field_parse(application_q3_mod_items_profile *p,const qa_json_docum
 {
     (void)storage; (void)capacity;
     char *name=NULL; uint32_t offset;
-    if(!text(d,qa_json_get(d,id,"record"),&name,e)||!word(d,qa_json_get(d,id,"offset"),&offset,e)) {free(name);return false;}
+    if(!application_mod_item_text(d,qa_json_get(d,id,"record"),&name,e)||!word(d,qa_json_get(d,id,"offset"),&offset,e)) {free(name);return false;}
     size_t index=0; while(index<p->source->record_count&&strcmp(name,p->source->records[index].id)) ++index;
     free(name);
     if(index==p->source->record_count||!p->source->records[index].client||offset%4||
@@ -78,85 +70,7 @@ static bool capacity_parse(application_q3_mod_items_profile *p,const qa_json_doc
     }
     return true;
 }
-static bool raw_optional(const qa_json_document *d,qa_json_id id,qa_buffer *out,qa_error *e)
-{
-    if(id==QA_JSON_NONE) return true;
-    qa_bytes bytes=qa_json_source(d,id); out->data=malloc(bytes.size); out->size=bytes.size;
-    if(bytes.size&&!out->data) return q3mod_fail(e,QA_ERROR_MEMORY,"Retaining item presentation declaration");
-    if(bytes.size) memcpy(out->data,bytes.data,bytes.size);
-    return true;
-}
 static bool same_field(item_field a,item_field b) { return a.record==b.record&&a.offset==b.offset; }
-static bool resource_path(const qa_json_document *d,qa_json_id id,qa_error *e)
-{
-    char *path=NULL;if(!text(d,id,&path,e))return false;
-    size_t size=strlen(path);bool ok=size!=0;
-    if(size>=2&&((path[0]>='A'&&path[0]<='Z')||(path[0]>='a'&&path[0]<='z'))&&path[1]==':')ok=false;
-    size_t start=0;
-    for(size_t i=0;ok&&i<=size;++i)if(i==size||path[i]=='/'||path[i]=='\\'){
-        size_t length=i-start;
-        if(!length||(length==1&&path[start]=='.')||(length==2&&path[start]=='.'&&path[start+1]=='.'))ok=false;
-        start=i+1;
-    }
-    free(path);return ok||q3mod_fail(e,QA_ERROR_FORMAT,"Item media path is not a relative source resource");
-}
-static bool digest(const qa_json_document *d,qa_json_id id,qa_error *e)
-{
-    char *value=NULL;if(!text(d,id,&value,e))return false;
-    bool ok=strlen(value)==71&&!memcmp(value,"sha256:",7);
-    for(size_t i=7;ok&&i<71;++i)ok=(value[i]>='0'&&value[i]<='9')||(value[i]>='a'&&value[i]<='f');
-    free(value);return ok||q3mod_fail(e,QA_ERROR_FORMAT,"Held item model digest is not a source SHA256 identity");
-}
-static bool vector(const qa_json_document *d,qa_json_id id,double out[3],qa_error *e)
-{
-    const char *names[]={"x","y","z"};
-    for(size_t i=0;i<3;++i)if(!qa_json_number(d,qa_json_get(d,id,names[i]),out+i,e)||!isfinite(out[i]))return false;
-    return true;
-}
-static double dot(const double a[3],const double b[3])
-{return a[0]*b[0]+a[1]*b[1]+a[2]*b[2];}
-static bool held(const qa_json_document *d,qa_json_id id,qa_error *e)
-{
-    if(id==QA_JSON_NONE)return true;
-    qa_json_id kind=qa_json_get(d,id,"kind");
-    if(qa_json_string_equal(d,kind,"none"))return true;
-    if(!qa_json_string_equal(d,kind,"model"))return false;
-    qa_json_id model=qa_json_get(d,id,"model"),grip=qa_json_get(d,model,"grip"),
-        axes=qa_json_get(d,grip,"axis"),scale=qa_json_get(d,grip,"scale"),
-        part=qa_json_get(d,model,"part"),hash=qa_json_get(d,model,"digest"),fallback=qa_json_get(d,model,"fallback");
-    uint64_t frame;double origin[3],axis[3][3],sizes[3]={1,1,1};
-    if(!resource_path(d,qa_json_get(d,model,"path"),e)||
-        !qa_json_u64(d,qa_json_get(d,model,"referenceFrame"),&frame,e)||frame>UINT64_C(9007199254740991)||
-        !vector(d,qa_json_get(d,grip,"origin"),origin,e)||qa_json_type(d,axes)!=QA_JSON_ARRAY||qa_json_size(d,axes)!=3||
-        (scale!=QA_JSON_NONE&&!vector(d,scale,sizes,e))||sizes[0]==0||sizes[1]==0||sizes[2]==0||
-        (hash!=QA_JSON_NONE&&!digest(d,hash,e))||(fallback!=QA_JSON_NONE&&!resource_path(d,fallback,e)))return false;
-    for(size_t i=0;i<3;++i)if(!vector(d,qa_json_at(d,axes,i),axis[i],e)||fabs(dot(axis[i],axis[i])-1)>0.001)return false;
-    double cross[3]={axis[0][1]*axis[1][2]-axis[0][2]*axis[1][1],
-        axis[0][2]*axis[1][0]-axis[0][0]*axis[1][2],axis[0][0]*axis[1][1]-axis[0][1]*axis[1][0]};
-    if(fabs(dot(axis[0],axis[1]))>0.001||fabs(dot(axis[0],axis[2]))>0.001||fabs(dot(axis[1],axis[2]))>0.001||dot(cross,axis[2])<0.999)return false;
-    if(part!=QA_JSON_NONE){qa_json_id hashes=qa_json_get(d,part,"digests"),vertices=qa_json_get(d,part,"vertices");
-        if(qa_json_type(d,hashes)!=QA_JSON_ARRAY||!qa_json_size(d,hashes)||
-            qa_json_type(d,vertices)!=QA_JSON_ARRAY||!qa_json_size(d,vertices))return false;
-        for(size_t i=0;i<qa_json_size(d,hashes);++i)if(!digest(d,qa_json_at(d,hashes,i),e))return false;
-        for(size_t i=0;i<qa_json_size(d,vertices);++i){uint64_t vertex;
-            if(!qa_json_u64(d,qa_json_at(d,vertices,i),&vertex,e)||vertex>UINT64_C(9007199254740991))return false;
-            for(size_t j=0;j<i;++j){uint64_t prior;if(!qa_json_u64(d,qa_json_at(d,vertices,j),&prior,e)||prior==vertex)return false;}
-        }
-    }
-    return true;
-}
-static bool icon(const qa_json_document *d,qa_json_id id,qa_error *e)
-{
-    if(id==QA_JSON_NONE||qa_json_type(d,id)==QA_JSON_NULL)return true;
-    qa_json_id kind=qa_json_get(d,id,"kind");bool shader=qa_json_string_equal(d,kind,"shader"),wad=qa_json_string_equal(d,kind,"wad-picture");
-    if((!shader&&!wad&&!qa_json_string_equal(d,kind,"image"))||!resource_path(d,qa_json_get(d,id,shader?"name":"path"),e))return false;
-    if(wad){char *lump=NULL;if(!text(d,qa_json_get(d,id,"lump"),&lump,e))return false;
-        size_t cursor=0,units=0;uint32_t scalar;qa_bytes bytes={(const uint8_t *)lump,strlen(lump)};
-        while(qa_utf8_next(bytes,&cursor,&scalar))units+=scalar>0xffff?2u:1u;
-        free(lump);if(!units||units>16)return false;
-    }
-    return true;
-}
 static bool parse(application_q3_mod_items_profile *p,const qa_json_document *d,qa_json_id root,qa_strings *strings,qa_error *e)
 {
     qa_json_id definitions=qa_json_get(d,root,"definitions"),storage=qa_json_get(d,root,"storage");
@@ -165,26 +79,13 @@ static bool parse(application_q3_mod_items_profile *p,const qa_json_document *d,
     size_t weapon_count=0;
     for(size_t i=0;i<p->definition_count;++i) {
         item_definition *v=p->definitions+i; qa_item_definition *definition=&v->admission.definition;
-        qa_json_id at=qa_json_at(d,definitions,i),kind=qa_json_get(d,at,"kind"),admission=qa_json_get(d,at,"admission"),actions=qa_json_get(d,at,"actions");
-        definition->weapon=qa_json_string_equal(d,kind,"weapon");
-        v->admission.replace_primary=qa_json_string_equal(d,admission,"replace-primary");
-        if((!definition->weapon&&!qa_json_string_equal(d,kind,"counter"))||
-            (!v->admission.replace_primary&&!qa_json_string_equal(d,admission,"add"))||
-            !identity(d,qa_json_get(d,at,"item"),strings,&definition->item,e)||
-            !text(d,qa_json_get(d,at,"label"),(char **)&definition->label,e)||
-            !icon(d,qa_json_get(d,at,"icon"),e)||(definition->weapon&&!held(d,qa_json_get(d,at,"held"),e))||
-            !raw_optional(d,qa_json_get(d,at,"icon"),&v->icon,e)||!raw_optional(d,qa_json_get(d,at,"held"),&v->held,e)) return false;
-        if(definition->weapon) {
-            ++weapon_count; qa_json_id ammo=qa_json_get(d,at,"ammo");
-            if(qa_json_type(d,ammo)!=QA_JSON_NULL&&!identity(d,ammo,strings,&definition->ammo,e)) return false;
-        }
+        qa_json_id at=qa_json_at(d,definitions,i),actions[2];
+        if(!application_mod_item_definition(d,at,strings,&v->admission,&v->icon,&v->held,actions,e)) return false;
+        if(definition->weapon) ++weapon_count;
         for(size_t j=0;j<i;++j) if(p->definitions[j].admission.definition.item==definition->item)
             return q3mod_fail(e,QA_ERROR_FORMAT,"Duplicate source item definition");
-        const char *names[]={"use","drop"};
-        for(size_t j=0;j<2;++j) { qa_json_id call=qa_json_get(d,actions,names[j]); if(call!=QA_JSON_NONE) {
-            if(!q3items_call_parse(p,d,call,&v->actions[j],e)) return false;
-            definition->actions|=UINT32_C(1)<<j;
-        } }
+        for(size_t j=0;j<2;++j) if(actions[j]!=QA_JSON_NONE&&
+            !q3items_call_parse(p,d,actions[j],&v->actions[j],e)) return false;
     }
     qa_item_id *bound=calloc(p->definition_count,sizeof(*bound)); size_t bound_count=0;
     if(!bound) return q3mod_fail(e,QA_ERROR_MEMORY,"Qualifying item storage identities");
@@ -200,11 +101,11 @@ static bool parse(application_q3_mod_items_profile *p,const qa_json_document *d,
             uint32_t mask=v->private_mask;
             for(size_t j=0;ok&&j<v->count;++j) {
                 qa_json_id bit=qa_json_at(d,bits,j); item_bit *b=v->items+j;
-                ok=identity(d,qa_json_get(d,bit,"item"),strings,&b->item,e)&&word(d,qa_json_get(d,bit,"mask"),&b->mask,e)&&
+                ok=application_mod_item_identity(d,qa_json_get(d,bit,"item"),strings,&b->item,e)&&word(d,qa_json_get(d,bit,"mask"),&b->mask,e)&&
                     b->mask&&b->mask<=UINT32_C(0x80000000)&&!(b->mask&(b->mask-1))&&!(mask&b->mask);
                 mask|=b->mask;
             }
-        } else ok=identity(d,qa_json_get(d,at,"item"),strings,&v->item,e)&&capacity_parse(p,d,qa_json_get(d,at,"capacity"),&v->capacity,e);
+        } else ok=application_mod_item_identity(d,qa_json_get(d,at,"item"),strings,&v->item,e)&&capacity_parse(p,d,qa_json_get(d,at,"capacity"),&v->capacity,e);
         for(size_t j=0;ok&&j<i;++j) {
             const item_storage *prior=p->storage+j;
             if(same_field(prior->field,v->field)||(!prior->bits&&prior->capacity.kind==ITEM_CAPACITY_FIELD&&same_field(prior->capacity.field,v->field))||

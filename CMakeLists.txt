@@ -1447,6 +1447,7 @@ add_library(qa_application STATIC
     src/app/application/native_q2_records_save.c
     src/app/application/network_q2_materials.c
     src/app/application/guest_qc_weapon.c
+    src/app/application/guest_mod_item_definition.c
     src/app/application/guest_q3_mod_items_profile.c
     src/app/application/equipment_requests.c
     src/app/application/guest_q3_mod_items.c
