@@ -480,6 +480,7 @@ bool application_q3_guest_spawn_map(application_provider *provider, const qa_bsp
             qa_cvars_clear_modified(cvars, "g_gametype");
             qa_cvars_clear_modified(cvars, "sv_maxclients");
         }
+        provider->map_bound = true;
     }
     return ok;
 }
