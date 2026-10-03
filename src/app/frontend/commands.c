@@ -42,6 +42,37 @@ bool frontend_commands_source(qa_frontend *f,const qa_application_startup_source
         if (!alias) break;
         if (client_name(name,alias->name)) return true;
     }
+    bool q2=source->scope.kind==QA_APPLICATION_CONSOLE_Q2_GAME ||
+        source->scope.kind==QA_APPLICATION_CONSOLE_NATIVE_Q2;
+    bool map=client_name(name,"map"),gamemap=client_name(name,"gamemap");
+    if (q2 && (map || gamemap)) {
+        if (!source->scope.provider || source->scope.provider!=call->context.owner ||
+            source->command.owner!=source->scope.provider)
+            return frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 map command lost its actual Source provider");
+        *handled=true;
+        const char *destination=call->argc>1?call->argv[1]:"";
+        if (map && !strchr(destination,'.')) {
+            char expanded[64];
+            snprintf(expanded,sizeof(expanded),"maps/%s.bsp",destination);
+            qa_vfs *files=qa_application_context_files(f->application,&call->context,NULL);
+            bool found=false; uint64_t size=0;
+            if (!files) return frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 map command lost its Source filesystem");
+            if (!qa_vfs_probe(files,expanded,&found,&size,error)) return false;
+            if (!found) {
+                char message[96];
+                snprintf(message,sizeof(message),"Can't find %s\n",expanded);
+                frontend_console_print(f,&call->context,message);
+                return true;
+            }
+        }
+        if (call->argc!=2) {
+            frontend_console_print(f,&call->context,"USAGE: gamemap <map>\n");
+            return true;
+        }
+        return qa_application_queue_travel(f->application,&(qa_application_travel_request){
+            .provider=source->scope.provider,.cause=call->context.actor,.expression=destination,
+            .new_unit=map,.carry_players=!map},error);
+    }
     qa_console *engine=qa_application_console(f->application);
     qa_command_context context={.origin=QA_COMMAND_LOCAL,.dialect=call->context.dialect,.direct=true};
     const qa_console_entry *entry=qa_console_find(engine,&context,name);
