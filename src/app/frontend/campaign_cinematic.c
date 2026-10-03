@@ -4,6 +4,7 @@
 #include "system_cinematic.h"
 #include "qa/audio_save.h"
 #include "campaign.h"
+#include "config_store.h"
 #include "cinematic_captions.h"
 #include "ui_features.h"
 #include "shared_render_controls.h"
@@ -224,14 +225,14 @@ static bool finish(frontend_cinematic *owner,qa_error *error)
     if (!product || product->family!=QA_GAME_Q3) return true;
     qa_application_q3_campaign source;
     if (!qa_application_q3_campaign_read(f->application,0,&source,error)) return false;
-    qa_command_context command=owner->request.command;
-    command.owner=source.source_owner; command.origin=QA_COMMAND_SEAT;
-    command.dialect=QA_CONSOLE_Q3; command.direct=false; command.script="cinematic";
-    if (!frontend_seat_launch_id_read(f,owner->request.seat,&command.seat))
-        return frontend_fail(error,QA_ERROR_ARGUMENT,"Cinematic completion lost its actual local launch seat");
-    command.actor=(qa_actor_id){0};
-    (void)qa_application_player_actor(f->application,command.seat,&command.actor);
-    if (!qa_application_capture_command_context(f->application,&command,&command,error)) return false;
+    qa_application_startup_source authority; bool present=false;
+    if (!frontend_config_store_primary_server_read(f->config_store,&authority,&present,error)) return false;
+    if (!present || authority.scope.kind!=QA_APPLICATION_CONSOLE_Q3_GAME ||
+        authority.scope.provider!=source.source_owner || authority.console!=source.console ||
+        authority.cvars!=source.cvars)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Cinematic completion lost its actual GAME command authority");
+    qa_command_context command=authority.command;
+    command.script="cinematic";
     const qa_cvar_view *next=qa_cvars_find(source.cvars,"nextmap");
     if (!next || !next->value || !*next->value) return true;
     size_t size=strlen(next->value); char *text=size<=SIZE_MAX-2?malloc(size+2):NULL;
