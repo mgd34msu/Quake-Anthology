@@ -5457,6 +5457,15 @@ static bool network_host_cut(qa_frontend_network *n, qa_buffer *out, qa_error *e
     if (ok) ok = qa_source_save_finish(&io, out);
     qa_source_save_dispose(&io); qa_buffer_free(&admission); qa_buffer_free(&authorization); free(copy); return ok;
 }
+static bool network_offline_local(const qa_frontend *f)
+{
+    const qa_frontend_network *n = f ? f->network : NULL;
+    return n && !f->stepping && !f->options.network_host && !f->options.network_connect &&
+        n->frontend == f && !n->round && !n->busy && !n->q3_client_requested && !n->q3_admission &&
+        !n->nq_host && !n->qw_host && !n->unified && !n->q1_client_owner && !n->q2_client_owner &&
+        !n->unified_client_service && !n->kex_transport && !n->kex_browser &&
+        (!n->q2_host || frontend_network_q2_host_local_only(n->q2_host)) && qa_network_local_only(n->runtime);
+}
 bool frontend_network_rebind_prepare(qa_frontend *candidate, const qa_frontend *published, qa_error *error)
 {
     if (!candidate || !published || candidate == published)
@@ -5464,15 +5473,7 @@ bool frontend_network_rebind_prepare(qa_frontend *candidate, const qa_frontend *
     qa_frontend_network *next = candidate->network, *active = published->network;
     if (!next || !active || qa_net_address_equal(qa_network_local_address(next->runtime),
         qa_network_local_address(active->runtime), true)) return true;
-    const qa_frontend *frontends[2] = {candidate, published};
-    for (size_t i = 0; i < 2; ++i) {
-        const qa_frontend *f = frontends[i]; const qa_frontend_network *n = f->network;
-        if (f->stepping || f->options.network_host || f->options.network_connect ||
-            n->frontend != f || n->round || n->busy || n->q3_client_requested || n->q3_admission ||
-            n->nq_host || n->qw_host || n->unified || n->q1_client_owner || n->q2_client_owner ||
-            n->unified_client_service || n->kex_transport || n->kex_browser ||
-            (n->q2_host && !frontend_network_q2_host_local_only(n->q2_host))) return true;
-    }
+    if (!network_offline_local(candidate) || !network_offline_local(published)) return true;
     if (!next->detached_transport || active->detached_transport ||
         !network_runtime_valid(next, true, error) || !network_runtime_valid(active, true, error)) return false;
     qa_net_transport *replacement = NULL;
@@ -5500,6 +5501,7 @@ bool frontend_network_rebind_ready(const qa_frontend *candidate, const qa_fronte
     }
     if (!candidate->network) return true;
     qa_frontend_network *next = candidate->network, *active = published->network;
+    bool offline_local = network_offline_local(candidate) && network_offline_local(published);
     if (!next->detached_transport || active->detached_transport || next->frontend != candidate || active->frontend != published ||
         next->busy || active->busy || !qa_network_callbacks_idle(next->runtime) || !qa_network_callbacks_idle(active->runtime) ||
         !qa_http_callbacks_idle(frontend_tools_http((qa_frontend *)candidate)) || !qa_http_callbacks_idle(frontend_tools_http((qa_frontend *)published)) ||
@@ -5507,7 +5509,7 @@ bool frontend_network_rebind_ready(const qa_frontend *candidate, const qa_fronte
         (next->q3_admission != NULL) != (active->q3_admission != NULL) ||
         (next->nq_host != NULL) != (active->nq_host != NULL) ||
         (next->qw_host != NULL) != (active->qw_host != NULL) ||
-        (next->q2_host != NULL) != (active->q2_host != NULL) ||
+        (!offline_local && (next->q2_host != NULL) != (active->q2_host != NULL)) ||
         (next->unified != NULL) != (active->unified != NULL) ||
         (next->kex_transport != NULL) != (active->kex_transport != NULL) ||
         (next->kex_browser != NULL) != (active->kex_browser != NULL) ||
@@ -5549,6 +5551,9 @@ bool frontend_network_rebind_ready(const qa_frontend *candidate, const qa_fronte
         qa_buffer_free(&current_host); qa_buffer_free(&restored_host);
         if (!ok) return false;
     }
+    /* LOCAL Source players belong to the application state being published;
+     * an offline load may replace their roster without a wire continuation. */
+    if (offline_local) return true;
     /* A live original peer has no checkpoint barrier. Refuse to rewind its
      * wire state after the captured cut; remote coordination is external. */
     uint32_t cursor = 0; const qa_net_client *client = NULL;

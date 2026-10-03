@@ -66,6 +66,9 @@ bool qa_network_prediction_restore(qa_network_runtime *, const qa_network_checkp
 /* No-fail final exchange after both owners have passed their idle/identity
  * admission. Keeps the live local socket endpoint and its sole receive owner. */
 void qa_network_transport_exchange(qa_network_runtime *, qa_network_runtime *);
+/* Returned canonical inventory is empty or consists solely of actual LOCAL
+ * Source peers, with no wire continuation to coordinate across publication. */
+bool qa_network_local_only(const qa_network_runtime *);
 /* Consumes a separately owned detached transport only for empty or all-LOCAL
  * returned runtimes, using the retained published transport's actual address. */
 bool qa_network_transport_replace_local(qa_network_runtime *, const qa_network_runtime *,

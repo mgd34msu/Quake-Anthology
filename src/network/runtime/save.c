@@ -232,33 +232,31 @@ void qa_network_transport_publish_retained(qa_network_runtime *active,qa_network
             qa_network_q1_client_transport_rebind(&candidate->peers[i],candidate->transport);
         }
 }
+bool qa_network_local_only(const qa_network_runtime *runtime)
+{
+    if (!runtime || !qa_network_callbacks_idle(runtime)) return false;
+    uint32_t cursor = 0, count = 0, occupied = 0;
+    const qa_net_client *client;
+    while (qa_net_connections_next(runtime->connections, &cursor, &client)) {
+        if (client->attachment != QA_NET_LOCAL_SEAT || client->endpoint.kind != QA_NET_LOOPBACK ||
+            client->id.slot >= runtime->options.clients ||
+            !qa_network_local_peer(&runtime->peers[client->id.slot]) ||
+            !qa_net_client_id_equal(runtime->peers[client->id.slot].id, client->id)) return false;
+        ++count;
+    }
+    for (uint32_t j = 0; j < runtime->options.clients; ++j)
+        if (runtime->peers[j].occupied) ++occupied;
+    return count == occupied;
+}
 bool qa_network_transport_replace_local(qa_network_runtime *candidate, const qa_network_runtime *published,
     qa_net_transport **replacement, qa_error *error)
 {
     if (!candidate || !published || candidate == published || !replacement || !*replacement ||
         *replacement == candidate->transport || *replacement == published->transport ||
-        !qa_network_callbacks_idle(candidate) || !qa_network_callbacks_idle(published) ||
+        !qa_network_local_only(candidate) || !qa_network_local_only(published) ||
         !qa_net_address_equal(qa_net_transport_address(*replacement),
             qa_network_local_address(published), true))
-        return qa_network_fail(error, "Offline transport replacement lost its returned runtime owners");
-    const qa_network_runtime *runtimes[2] = {candidate, published};
-    for (size_t i = 0; i < 2; ++i) {
-        const qa_network_runtime *runtime = runtimes[i];
-        uint32_t cursor = 0, count = 0, occupied = 0;
-        const qa_net_client *client;
-        while (qa_net_connections_next(runtime->connections, &cursor, &client)) {
-            if (client->attachment != QA_NET_LOCAL_SEAT || client->endpoint.kind != QA_NET_LOOPBACK ||
-                client->id.slot >= runtime->options.clients ||
-                !qa_network_local_peer(&runtime->peers[client->id.slot]) ||
-                !qa_net_client_id_equal(runtime->peers[client->id.slot].id, client->id))
-                return qa_network_fail(error, "Offline transport replacement carries a nonlocal peer");
-            ++count;
-        }
-        for (uint32_t j = 0; j < runtime->options.clients; ++j)
-            if (runtime->peers[j].occupied) ++occupied;
-        if (count != occupied)
-            return qa_network_fail(error, "Offline transport replacement lost its canonical peer inventory");
-    }
+        return qa_network_fail(error, "Offline transport replacement lost its returned LOCAL runtime owners");
     qa_net_transport *previous = candidate->transport;
     candidate->transport = *replacement; *replacement = NULL;
     qa_net_transport_close(previous);
