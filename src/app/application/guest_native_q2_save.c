@@ -356,9 +356,14 @@ bool application_native_q2_restore_engine(void *opaque, qa_bytes bytes, qa_error
                 map_ready != 0, &visibility, error);
     }
     qa_string_id map_id = 0, spawn_id = 0;
-    if (ok) ok = qa_net_reader_finish(&reader) &&
-        qa_strings_intern_cstr(qa_session_strings(engine->provider->application->session), map, &map_id, error) &&
-        qa_strings_intern_cstr(qa_session_strings(engine->provider->application->session), spawn, &spawn_id, error);
+    if (ok) ok = qa_net_reader_finish(&reader);
+    if (ok) {
+        const qa_strings *strings=qa_session_strings(engine->provider->application->session);
+        if (*map) map_id=qa_strings_find(strings,(qa_bytes){(const uint8_t *)map,strlen(map)});
+        if (*spawn) spawn_id=qa_strings_find(strings,(qa_bytes){(const uint8_t *)spawn,strlen(spawn)});
+        if ((*map && !map_id) || (*spawn && !spawn_id))
+            ok=application_fail(error,QA_ERROR_FORMAT,"Native saved map or spawn leaves its restored string identities");
+    }
     /* Deferred preparation writes only the isolated source candidate, after
      * every engine field and owned allocation has been validated. */
     if (ok) ok = application_native_q2_combat_restore_prepare(engine, combat_state, &combat, error);
