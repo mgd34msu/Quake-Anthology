@@ -1816,8 +1816,11 @@ qa_save_authority frontend_network_save_authority(const qa_frontend *f)
 {
     const qa_frontend_network *n = f ? f->network : NULL;
     if (!n) return QA_SAVE_OFFLINE;
-    if (n->q3_client_requested) return QA_SAVE_REMOTE;
-    return n->q3_admission || n->nq_host || n->qw_host ? QA_SAVE_SERVER : QA_SAVE_OFFLINE;
+    bool unified_server = frontend_network_unified_server(n->unified);
+    if (n->q3_client_requested || frontend_network_client_only(f) || n->q1_client_owner ||
+        n->q2_client_owner || n->unified_client_service || (n->unified && !unified_server)) return QA_SAVE_REMOTE;
+    return n->q3_admission || n->nq_host || n->qw_host || unified_server ||
+        (n->q2_host && !frontend_network_q2_host_local_only(n->q2_host)) ? QA_SAVE_SERVER : QA_SAVE_OFFLINE;
 }
 bool frontend_network_remote(const qa_frontend *f)
 { return f && f->options.network_connect && f->options.network_protocol.kind == QA_NET_Q3_68; }

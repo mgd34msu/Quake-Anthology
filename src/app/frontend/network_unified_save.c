@@ -16,6 +16,8 @@
 
 static bool bad(qa_error *e, const char *message)
 { return frontend_fail(e, QA_ERROR_FORMAT, message); }
+bool frontend_network_unified_server(const frontend_network_unified *owner)
+{ return owner && owner->options.server; }
 static bool address(qa_source_save_io *io, qa_net_address *a)
 {
     uint32_t kind = (uint32_t)a->kind;
@@ -143,9 +145,12 @@ static bool fields(qa_source_save_io *io, frontend_network_unified *owner,
     bool server = owner->options.server;
     uint64_t seat_owner = owner->options.seat_owner;
     uint32_t seat_base = owner->options.remote_seat_base;
-    char magic[4] = {'Q','U','F','H'}; if (!qa_source_save_bytes(io, magic, sizeof(magic)) || memcmp(magic, "QUFH", sizeof(magic)) ||
-        !qa_source_save_bool(io, &server) || server != owner->options.server ||
-        !qa_source_save_u64(io, &seat_owner) || seat_owner != owner->options.seat_owner ||
+    char magic[4] = {'Q','U','F','H'};
+    if (!qa_source_save_bytes(io, magic, sizeof(magic)) || memcmp(magic, "QUFH", sizeof(magic)) ||
+        !qa_source_save_bool(io, &server)) return false;
+    if (server != owner->options.server)
+        return bad(io->error, "Unified continuation changes its actual HOST or CLIENT role");
+    if (!qa_source_save_u64(io, &seat_owner) || seat_owner != owner->options.seat_owner ||
         !qa_source_save_u32(io, &seat_base) || seat_base > UINT32_MAX - (UNIFIED_PEERS - 1) ||
         (server && seat_base != owner->options.remote_seat_base)) return false;
     if (!writing && !server) owner->options.remote_seat_base = seat_base;

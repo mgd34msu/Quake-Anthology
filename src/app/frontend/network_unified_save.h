@@ -3,6 +3,7 @@
 
 #include "network_unified.h"
 
+bool frontend_network_unified_server(const frontend_network_unified *);
 bool frontend_network_unified_checkpoint(const frontend_network_unified *, qa_buffer *, qa_error *);
 bool frontend_network_unified_restore_prepare(const frontend_network_unified_options *, uint64_t connection_owner,
     qa_bytes, frontend_network_unified **, qa_error *);
