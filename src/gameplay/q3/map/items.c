@@ -192,7 +192,7 @@ static bool respawn_item(qa_q3_game *game, qa_q3_map_actor_state *state,
     if (index == 0 || index >= count)
         return q3_map_fail(error, "invalid Q3 item team member definition");
     const qa_q3_item *item = &items[index];
-    int32_t channel = selected->speed ? 3 : 0;
+    int32_t channel = selected->speed != 0 ? 3 : 0;
     const char *path = item->kind == QA_Q3_ITEM_POWERUP
         ? "sound/items/poweruprespawn.wav"
         : item->kind == QA_Q3_ITEM_HOLDABLE && item->tag == QA_Q3_H_KAMIKAZE

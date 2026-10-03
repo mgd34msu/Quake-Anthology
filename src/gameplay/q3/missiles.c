@@ -375,7 +375,7 @@ bool q3_missile_explode(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
     if (!qa_world_set_collision(game->options.services.world, actor, NULL, error))
         return false;
     bool accuracy = false;
-    if (missile.splash &&
+    if (missile.splash != 0 &&
         !q3_radius(game, actor, missile.owner, missile.weapon, missile.splash_method, origin,
                    missile.splash, missile.radius, actor, &accuracy, error))
         return false;
@@ -636,7 +636,7 @@ static bool missile_impact(qa_q3_game *game, qa_actor_id actor, const qa_trace_r
         return true;
     }
     bool direct_accuracy = false;
-    if (damageable && missile.damage) {
+    if (damageable && missile.damage != 0) {
         direct_accuracy = q3_accuracy(game, trace->actor, missile.owner);
         if (direct_accuracy)
             q3_credit_accuracy(game, missile.owner);
@@ -673,7 +673,7 @@ static bool missile_impact(qa_q3_game *game, qa_actor_id actor, const qa_trace_r
         !qa_world_set_collision(game->options.services.world, actor, NULL, error))
         return false;
     bool accuracy = false;
-    if (missile.splash &&
+    if (missile.splash != 0 &&
         !q3_radius(game, actor, missile.owner, missile.weapon, missile.splash_method, origin,
                    missile.splash, missile.radius, trace->actor, &accuracy, error))
         return false;

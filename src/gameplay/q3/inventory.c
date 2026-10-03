@@ -128,9 +128,9 @@ static bool equipment_write(void *opaque, const qa_inventory_entry *entry, qa_er
             if (item->kind == QA_Q3_ITEM_PERSISTENT)
                 return entry->count == ((int32_t)player->persistent == item->tag ? 1 : 0) ||
                     q3_fail(error, "Q3 persistent item changes require their actual pickup owner");
-            if (entry->count && player->holdable != QA_Q3_H_NONE && (int32_t)player->holdable != item->tag)
+            if (entry->count != 0 && player->holdable != QA_Q3_H_NONE && (int32_t)player->holdable != item->tag)
                 return q3_fail(error, "Q3 already holds another holdable");
-            if (entry->count)
+            if (entry->count != 0)
                 player->holdable = (qa_q3_holdable)item->tag;
             else if ((int32_t)player->holdable == item->tag)
                 player->holdable = QA_Q3_H_NONE;

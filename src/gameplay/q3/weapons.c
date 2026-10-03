@@ -84,8 +84,8 @@ bool q3_invulnerability(qa_q3_game *game, qa_actor_id actor, qa_vec3 direction, 
     if (!event) return q3_fail(error, "Q3 invulnerability impact lost its temporary entity");
     qa_vec3 offset_angles = qa_vec_sub(*impact, body.origin);
     float yaw = 0, pitch = offset_angles.z > 0 ? 90 : 270;
-    if (offset_angles.x || offset_angles.y) {
-        yaw = offset_angles.x ? q3_source_float_divide(q3_source_float_multiply(
+    if (offset_angles.x != 0 || offset_angles.y != 0) {
+        yaw = offset_angles.x != 0 ? q3_source_float_divide(q3_source_float_multiply(
             (float)atan2((double)offset_angles.y, (double)offset_angles.x), 180), Q3_PI)
             : offset_angles.y > 0 ? 90 : 270;
         if (yaw < 0) yaw = q3_source_float_add(yaw, 360);
@@ -153,7 +153,7 @@ static bool impact_event(qa_q3_game *game, qa_actor_id shooter, qa_q3_weapon wea
     if (!event) return q3_fail(error, "Q3 weapon impact lost its temporary entity");
     event->eventParm = bullet && flesh ? target_number : normal;
     if (bullet) event->otherEntityNum = shooter_number;
-    else if (flesh) { event->otherEntityNum = target_number; event->weapon = weapon; }
+    else if (flesh) { event->otherEntityNum = target_number; event->weapon = (int32_t)weapon; }
     return q3_event(game, shooter, trace->actor, QA_BUILTIN_IMPACT, code,
                     flesh ? q3_entity_number(game, trace->actor) : (int32_t)normal, point,
                     qa_v3((float)weapon, 0, 0), trace->contact_plane.normal, error);

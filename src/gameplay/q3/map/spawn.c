@@ -764,7 +764,7 @@ static bool maps_post_spawn(qa_q3_game *game, qa_error *error) {
                                  .actor = point.actor,
                                  .origin = point.origin,
                                  .angles = point.angles,
-                                 .index = point.kind,
+                                 .index = (int32_t)point.kind,
                                  .flags = point.flags,
                                  .no_bots = point.no_bots,
                                  .no_humans = point.no_humans};

@@ -504,7 +504,7 @@ bool q3_copy_corpse(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
         *source = (q3_wire_entity_source){
             .type = 1,
             .client = entry->state.player.client_number,
-            .weapon = entry->state.player.weapon,
+            .weapon = (int32_t)entry->state.player.weapon,
             .legs = entry->state.player.legs_animation,
             .angular = {.type = QA_TRAJECTORY_STATIONARY, .base = body.angles}};
     }

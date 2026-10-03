@@ -22,8 +22,8 @@ bool qa_q3_source_postgame_client_state(const qa_q3_game *game, uint32_t slot,
 static float source_yaw(qa_vec3 direction)
 {
     float yaw;
-    if (!direction.x && !direction.y) return 0;
-    if (direction.x) {
+    if (direction.x == 0 && direction.y == 0) return 0;
+    if (direction.x != 0) {
         float radians = (float)atan2((double)direction.y, (double)direction.x);
         yaw = q3_source_float_divide(q3_source_float_multiply(radians, 180), Q3_PI);
     } else yaw = direction.y > 0 ? 90 : 270;

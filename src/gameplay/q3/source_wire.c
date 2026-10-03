@@ -555,7 +555,7 @@ static bool player_read(const qa_q3_game *game, uint32_t slot, qa_q3_player *out
         .eventSequence = word(source.event_sequence), .externalEvent = source.external_event,
         .externalEventParm = source.external_event_parameter,
         .externalEventTime = source.external_event_time, .clientNum = source.client_number,
-        .weapon = source.weapon, .weaponState = source.weapon_phase,
+        .weapon = (int32_t)source.weapon, .weaponState = (int32_t)source.weapon_phase,
         .viewheight = q3_source_float_to_int(source.view_height),
         .damageEvent = source.damage_event, .damageYaw = source.damage_yaw,
         .damagePitch = source.damage_pitch, .damageCount = source.damage_count,
@@ -570,8 +570,8 @@ static bool player_read(const qa_q3_game *game, uint32_t slot, qa_q3_player *out
     memcpy(value.events, source.events, sizeof(value.events));
     memcpy(value.eventParms, source.event_parameters, sizeof(value.eventParms));
     unsigned shift = game->options.product == QA_Q3_TEAM_ARENA ? 1u : 0u;
-    value.stats[1] = item_index(game, QA_Q3_ITEM_HOLDABLE, source.holdable);
-    if (shift) value.stats[2] = item_index(game, QA_Q3_ITEM_PERSISTENT, source.persistent);
+    value.stats[1] = item_index(game, QA_Q3_ITEM_HOLDABLE, (int32_t)source.holdable);
+    if (shift) value.stats[2] = item_index(game, QA_Q3_ITEM_PERSISTENT, (int32_t)source.persistent);
     value.stats[4 + shift] = source.dead_yaw;
     value.stats[5 + shift] = game->wire->clients[slot].clients_ready;
     value.stats[6 + shift] = source.max_health;
@@ -682,7 +682,7 @@ bool qa_q3_wire_player_publication_read(const qa_q3_game *game, qa_actor_id acto
 }
 
 static void trajectory(qa_q3_trajectory *out, const qa_trajectory *source) {
-    *out = (qa_q3_trajectory){.type = source->type, .time = source->time_ms,
+    *out = (qa_q3_trajectory){.type = (int32_t)source->type, .time = source->time_ms,
                              .duration = source->duration_ms};
     vector(out->base, source->base); vector(out->delta, source->delta);
 }
@@ -803,7 +803,7 @@ bool qa_q3_wire_link(qa_q3_game *game, qa_actor_id actor,
             game->clients[slot].source_model_shape = collision.shape == QA_SHAPE_CAPSULE
                 ? QA_SHAPE_CAPSULE : QA_SHAPE_BOX;
         qa_bounds local = body.bounds;
-        if (collision.inline_model && (body.angles.x || body.angles.y || body.angles.z)) {
+        if (collision.inline_model && (body.angles.x != 0 || body.angles.y != 0 || body.angles.z != 0)) {
             qa_vec3 extent = qa_v3(fmaxf(fabsf(local.mins.x), fabsf(local.maxs.x)),
                 fmaxf(fabsf(local.mins.y), fabsf(local.maxs.y)),
                 fmaxf(fabsf(local.mins.z), fabsf(local.maxs.z)));
@@ -965,7 +965,7 @@ static bool entity_read(const qa_q3_game *game, uint32_t slot, qa_q3_entity *out
     case Q3_ACTOR_MISSILE:
         trajectory(&value.pos, &entry->state.missile.trajectory);
         value.eFlags = word(entry->state.missile.flags);
-        value.weapon = entry->state.missile.weapon;
+        value.weapon = (int32_t)entry->state.missile.weapon;
         value.generic1 = word(entry->state.missile.team);
         break;
     case Q3_ACTOR_ITEM:
@@ -1392,7 +1392,7 @@ bool q3_wire_damage(qa_q3_game *game, const qa_damage_outcome *outcome, qa_error
             if (before->regular.kind != QA_ARMOR_NONE && after->regular.kind != QA_ARMOR_NONE)
                 armor_saved += (float)before->regular.points - (float)after->regular.points;
         }
-    if (!outcome->result.applied_damage && !armor_mutation) return true;
+    if (outcome->result.applied_damage == 0 && !armor_mutation) return true;
     uint32_t target_slot, attacker_slot;
     qa_error ignored = {0};
     qa_actor_id target = outcome->request.target, attacker = outcome->request.attack.attacker;
