@@ -2506,6 +2506,8 @@ static bool control_move(qa_application *application,
         return guest_ok;
     }
     qa_movement_profile profile = selected_profile(application, movement);
+    if (profile.kind == QA_MOVEMENT_NETQUAKE && record->profile.kind == QA_MOVEMENT_NETQUAKE)
+        profile.data.nq.no_clip_angle_hack = record->profile.data.nq.no_clip_angle_hack;
     application_provider *execution = control_execution(application, actor);
     application_provider *source = application_world_provider(application, QA_ROLE_ENTITIES, "");
     if (context->source_qwcmd || context->source_nqcmd || context->source_q2cmd || context->source_usercmd || context->source_guestcmd) {
@@ -3519,16 +3521,9 @@ static int32_t freeze_mode(qa_movement_kind kind)
                                               : 0;
 }
 
-bool application_control_player_mode(qa_application *application, qa_actor_id actor,
-                                      qa_movement_mode mode, bool spectator, qa_error *error)
+static bool player_mode(qa_application *application, qa_actor_id actor,
+    application_control_record *record, qa_movement_mode mode, bool spectator, qa_error *error)
 {
-    if (application == NULL || (unsigned)mode > QA_MOVEMENT_MODE_FREEZE)
-        return application_fail(error, QA_ERROR_ARGUMENT, "Invalid selected player movement mode");
-    qa_body_state body;
-    application_control_record *record;
-    if (!qa_world_body_read(application->world, actor, &body, error) ||
-        !application_control_ensure(application, actor, body.angles, &record, error))
-        return false;
     int32_t encoded;
     switch (record->state.kind) {
     case QA_MOVEMENT_NETQUAKE:
@@ -3568,6 +3563,47 @@ bool application_control_player_mode(qa_application *application, qa_actor_id ac
             return false;
     }
     return true;
+}
+
+bool application_control_player_mode(qa_application *application, qa_actor_id actor,
+                                      qa_movement_mode mode, bool spectator, qa_error *error)
+{
+    if (application == NULL || (unsigned)mode > QA_MOVEMENT_MODE_FREEZE)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Invalid selected player movement mode");
+    qa_body_state body;
+    application_control_record *record;
+    if (!qa_world_body_read(application->world, actor, &body, error) ||
+        !application_control_ensure(application, actor, body.angles, &record, error))
+        return false;
+    return player_mode(application, actor, record, mode, spectator, error);
+}
+
+bool application_control_toggle_motion(qa_application *application, qa_actor_id actor,
+    qa_physics_motion motion, bool spectator, bool *enabled, qa_error *error)
+{
+    if (!application || !enabled ||
+        (motion != QA_PHYSICS_NOCLIP && motion != QA_PHYSICS_FLY))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Motion cheat requires its selected mode and output");
+    qa_body_state body;
+    application_control_record *record;
+    if (!qa_world_body_read(application->world, actor, &body, error) ||
+        !application_control_ensure(application, actor, body.angles, &record, error))
+        return false;
+    bool flying = motion == QA_PHYSICS_FLY;
+    if (flying && record->state.kind == QA_MOVEMENT_QUAKEWORLD)
+        return application_fail(error, QA_ERROR_UNSUPPORTED, "QuakeWorld movement has no fly mode");
+    bool noclip = record->player_mode_set && record->player_mode == QA_MOVEMENT_MODE_NOCLIP;
+    if (!record->player_mode_set && record->state.kind == QA_MOVEMENT_NETQUAKE)
+        noclip = record->state.data.nq.move_type == 8;
+    bool flight = record->flight;
+    if (!record->player_mode_set && record->state.kind == QA_MOVEMENT_NETQUAKE)
+        flight = flight || record->state.data.nq.move_type == 5;
+    *enabled = flying ? !(flight && !noclip) : !noclip;
+    record->flight = flying && *enabled;
+    if (!flying && record->state.kind == QA_MOVEMENT_NETQUAKE)
+        record->profile.data.nq.no_clip_angle_hack = *enabled;
+    return player_mode(application, actor, record,
+        !flying && *enabled ? QA_MOVEMENT_MODE_NOCLIP : QA_MOVEMENT_MODE_NORMAL, spectator, error);
 }
 
 static bool character_cutscene(qa_application *application, qa_actor_id actor,

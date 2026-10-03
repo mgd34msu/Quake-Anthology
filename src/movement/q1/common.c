@@ -28,7 +28,7 @@ void q1_init(q1_move *m, qa_move_context *c, bool qw) {
         c->result->bounds = e->pose.bounds;
         c->result->view_height = e->pose.view_height;
     }
-    if (!qw) { q1_flight(m); q1_project(m); }
+    if (!qw) { q1_project(m); q1_flight(m); }
 }
 
 void q1_restore_mode(q1_move *m) {

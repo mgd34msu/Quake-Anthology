@@ -41,6 +41,7 @@ typedef struct qa_q1_source_client_services {
 bool qa_q1_source_clients_configure(qa_q1_game *,const qa_q1_source_client_services *,qa_error *);
 bool qa_q1_source_client_read(const qa_q1_game *,qa_actor_id,qa_q1_source_client_view *);
 bool qa_q1_source_client_toggle_notarget(qa_q1_game *,qa_actor_id,bool *,qa_error *);
+bool qa_q1_source_client_toggle_god(qa_q1_game *,qa_actor_id,bool *,qa_error *);
 bool qa_q1_source_client_userinfo(qa_q1_game *,qa_actor_id,const char *,qa_error *);
 bool qa_q1_source_client_userinfo_storage(qa_q1_game *,qa_actor_id,const char *,qa_error *);
 /* The separately admitted name is used only when received userinfo has no name

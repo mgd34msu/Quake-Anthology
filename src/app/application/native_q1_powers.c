@@ -71,6 +71,12 @@ bool application_native_q1_powerup(void *opaque, qa_actor_id actor, qa_q1_power 
             return application_fail(error, QA_ERROR_ARGUMENT,
                 "Q1 timed power lost its actual physical God mode owner");
         god = client.god_mode;
+    } else if (binding.primary->kind == APPLICATION_PROVIDER_QC) {
+        application_provider *character = application_provider_for(app, actor, QA_ROLE_CHARACTER, "");
+        qa_q1_source_client_view client;
+        if (character && character->kind == APPLICATION_PROVIDER_Q1 &&
+            qa_q1_source_client_read(character->state.q1, actor, &client))
+            god = client.god_mode;
     }
     qa_combat_state traits;
     if (!qa_combat_read_traits(app->combat, actor, &traits, error) ||

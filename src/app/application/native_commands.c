@@ -2,6 +2,11 @@
 #include "native_q3_console.h"
 #include "engine_shutdown.h"
 #include "unified_q3_events.h"
+#include "map_players_private.h"
+#include "native_q1_console.h"
+#include "native_q1_wire.h"
+#include "native_q1_powers.h"
+#include "qa/game_q1_bots.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -59,21 +64,82 @@ bool application_native_q3_console_print(void *opaque, const char *text,
         "Q3 print callback retired or replaced its source publication"));
 }
 
+static bool selected_spectator(qa_application *application, qa_actor_id actor,
+    bool *spectator, qa_error *error)
+{
+    if (application->modes != NULL && application->primary_mode_ready) {
+        qa_mode_player_view player;
+        if (!qa_modes_player_read(application->modes, application->primary_mode,
+                                   actor, &player, error))
+            return false;
+        *spectator = *spectator || player.state.spectator;
+    }
+    return true;
+}
+
 bool application_native_console_motion(void *opaque, qa_actor_id actor,
                                        bool noclip, qa_error *error)
 {
     application_provider *source = opaque;
     qa_application *application = source->application;
     bool spectator = false;
-    if (application->modes != NULL && application->primary_mode_ready) {
-        qa_mode_player_view player;
-        if (!qa_modes_player_read(application->modes, application->primary_mode,
-                                   actor, &player, error))
-            return false;
-        spectator = player.state.spectator;
-    }
+    if (!selected_spectator(application, actor, &spectator, error)) return false;
     return application_control_player_mode(application, actor,
         noclip ? QA_MOVEMENT_MODE_NOCLIP : QA_MOVEMENT_MODE_NORMAL, spectator, error);
+}
+
+static bool q1_cheat_current(application_provider *source, qa_application *application,
+    qa_q1_game_operation *operation, qa_actor_id actor, qa_q1_source_client_view *client,
+    qa_error *error)
+{
+    if (!source || !application || application->destroy_requested || application->finalizing ||
+        !application->session || !application->players || source->application != application ||
+        source->kind != APPLICATION_PROVIDER_Q1 || !source->constructed || !source->attached ||
+        source->close_pending || source->state.q1 != operation->game ||
+        !qa_q1_game_operation_live(operation) ||
+        (application_world_provider(application, QA_ROLE_ENTITIES, "") != source &&
+         application_provider_for(application, actor, QA_ROLE_CHARACTER, "") != source) ||
+        !qa_q1_source_client_read(operation->game, actor, client))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q1 cheat lost its actual published Source client");
+    for (size_t i = 0; i < application->players->count; ++i) {
+        const application_player_record *record = application->players->records + i;
+        if (!record->retiring && qa_actor_id_equal(record->actor, actor) &&
+            record->client_slot == client->slot) return true;
+    }
+    return application_fail(error, QA_ERROR_ARGUMENT, "Q1 cheat actor differs from its physical Source roster");
+}
+
+bool application_native_q1_console_cheat(void *opaque, qa_actor_id actor,
+    const char *name, bool *enabled, qa_error *error)
+{
+    application_provider *source = opaque;
+    qa_application *application = source ? source->application : NULL;
+    if (!source || !application || source->kind != APPLICATION_PROVIDER_Q1 ||
+        !source->state.q1 || !name || !enabled ||
+        (strcmp(name, "god") && strcmp(name, "noclip") && strcmp(name, "fly")))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q1 cheat requires its actual Source and toggle");
+    if (application->operation == APPLICATION_IDLE && qa_console_idle(application->console) &&
+        application_native_q1_console_idle(source) && application_native_q1_wire_idle(source))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q1 cheat requires an entered Source command");
+    qa_q1_game_operation operation = {0};
+    if (!qa_q1_game_operation_begin(source->state.q1, &operation, error)) return false;
+    qa_q1_source_client_view client;
+    bool okay = q1_cheat_current(source, application, &operation, actor, &client, error);
+    if (okay && !strcmp(name, "god")) {
+        okay = qa_q1_source_client_toggle_god(operation.game, actor, enabled, error) &&
+            q1_cheat_current(source, application, &operation, actor, &client, error) &&
+            application_native_q1_powerup(source, actor, QA_Q1_INVULNERABILITY,
+                qa_q1_game_power_expires(operation.game, actor, QA_Q1_INVULNERABILITY), error);
+    } else if (okay) {
+        bool spectator = client.observer;
+        okay = selected_spectator(application, actor, &spectator, error) &&
+            q1_cheat_current(source, application, &operation, actor, &client, error);
+        if (okay) okay = application_control_toggle_motion(application, actor,
+            !strcmp(name, "fly") ? QA_PHYSICS_FLY : QA_PHYSICS_NOCLIP, spectator, enabled, error);
+    }
+    if (okay) okay = q1_cheat_current(source, application, &operation, actor, &client, error);
+    qa_q1_game_operation_end(&operation);
+    return okay;
 }
 
 bool application_native_grant_arsenal(void *opaque, qa_actor_id actor,

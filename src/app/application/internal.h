@@ -391,6 +391,7 @@ bool application_source_force_death(qa_application *, const qa_damage_request *,
     int32_t final_health, qa_error *);
 bool application_native_cheats_enabled(void *);
 bool application_native_console_motion(void *, qa_actor_id, bool, qa_error *);
+bool application_native_q1_console_cheat(void *, qa_actor_id, const char *, bool *, qa_error *);
 bool application_native_q3_console_print(void *, const char *, qa_error *);
 bool application_native_grant_arsenal(void *, qa_actor_id, bool, bool *, qa_error *);
 bool application_native_give_item(void *, qa_actor_id, size_t, const char *const *,
@@ -618,6 +619,8 @@ bool application_control_prediction_numeric_current(qa_application *, qa_actor_i
 bool application_controlled(const qa_application *, qa_actor_id);
 bool application_control_player_mode(qa_application *, qa_actor_id,
                                       qa_movement_mode, bool spectator, qa_error *);
+bool application_control_toggle_motion(qa_application *, qa_actor_id,
+    qa_physics_motion, bool spectator, bool *enabled, qa_error *);
 bool application_arsenal_source_actor(void *, qa_session *, qa_actor_id,
                                       const qa_source_frame *, qa_error *);
 bool application_q2_weapon_input(void *, qa_actor_id,

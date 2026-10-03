@@ -90,20 +90,30 @@ static bool publish(qa_q1_game *game,q1_player *player,qa_error *error) {
     }
     return game->source_client_publish(game->source_client_context,&view,error);
 }
-bool qa_q1_source_client_toggle_notarget(qa_q1_game *game,qa_actor_id actor,
+static bool toggle_flag(qa_q1_game *game,qa_actor_id actor,bool god,
     bool *enabled,qa_error *error) {
+    const char *name=god?"God mode":"notarget";
     if(!enabled) {
-        qa_error_set(error,QA_ERROR_ARGUMENT,actor.slot,"Q1 notarget requires its enabled output");return false;
+        qa_error_set(error,QA_ERROR_ARGUMENT,actor.slot,"Q1 %s requires its enabled output",name);return false;
     }
     qa_q1_game_operation operation={0};
     if(!qa_q1_game_operation_begin(game,&operation,error)) return false;
     q1_player *player=(q1_player *)client_const(game,actor);bool okay=false;
-    if(!player) qa_error_set(error,QA_ERROR_NOT_FOUND,actor.slot,"Q1 notarget source client is absent");
+    if(!player) qa_error_set(error,QA_ERROR_NOT_FOUND,actor.slot,"Q1 %s source client is absent",name);
     else {
-        *enabled=player->source_no_target=!player->source_no_target;
+        bool *flag=god?&player->source_god_mode:&player->source_no_target;
+        *enabled=*flag=!*flag;
         okay=publish(game,player,error);
     }
     qa_q1_game_operation_end(&operation);return okay;
+}
+bool qa_q1_source_client_toggle_notarget(qa_q1_game *game,qa_actor_id actor,
+    bool *enabled,qa_error *error) {
+    return toggle_flag(game,actor,false,enabled,error);
+}
+bool qa_q1_source_client_toggle_god(qa_q1_game *game,qa_actor_id actor,
+    bool *enabled,qa_error *error) {
+    return toggle_flag(game,actor,true,enabled,error);
 }
 bool qa_q1_source_clients_configure(qa_q1_game *game,const qa_q1_source_client_services *services,qa_error *error) {
     if(!game || !services || !services->publish || !services->observer || game->destroy_pending || game->observation_depth) {
