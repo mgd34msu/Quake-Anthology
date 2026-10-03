@@ -6,6 +6,7 @@
 #include "guest_q3_weapons_services.h"
 #include "guest_native_q2_private.h"
 #include "guest_qc_profile.h"
+#include "guest_qc_combat.h"
 #include "guest_qc_item_weapons.h"
 #include "guest_q3_restart.h"
 #include "guest_q3_components.h"
@@ -810,9 +811,7 @@ bool application_players_prepare(qa_application *application,
             travel->roster->records[i].source_slot = travel->roster->records[i].client_slot +
                 (character->launch->selection.clock.kind == QA_CLOCK_Q3 ? 0u : 1u);
         }
-        if (i < local_count && had_player &&
-            application->players->map_provider->kind == APPLICATION_PROVIDER_Q1 &&
-            publication->map_provider->kind == APPLICATION_PROVIDER_Q1) {
+        if (i < local_count && had_player && !q3_replacement) {
             for (size_t j = 0; j < application->players->count; ++j) {
                 const application_player_record *candidate = &application->players->records[j];
                 if (!candidate->remote && !candidate->retiring && candidate->seat == seat->id &&
@@ -821,22 +820,25 @@ bool application_players_prepare(qa_application *application,
                     break;
                 }
             }
-            uint32_t source_slot;
             const qa_launch_choices *previous_choices = qa_launch_snapshot_choices(publication->previous);
             if (!old || !previous_choices) {
                 application_players_dispose(travel);
                 return application_fail(error, QA_ERROR_ARGUMENT,
-                    "Q1 local travel lost its actual source client");
+                    "Local travel lost its actual source client");
             }
-            if (!qa_q1_native_client_slot(application->players->map_provider->state.q1,
-                    previous, &source_slot, error)) {
-                application_players_dispose(travel);
-                return false;
-            }
-            if (source_slot != old->client_slot) {
-                application_players_dispose(travel);
-                return application_fail(error, QA_ERROR_ARGUMENT,
-                    "Q1 local travel source slot differs from its roster");
+            if (application->players->map_provider->kind == APPLICATION_PROVIDER_Q1 &&
+                publication->map_provider->kind == APPLICATION_PROVIDER_Q1) {
+                uint32_t source_slot;
+                if (!qa_q1_native_client_slot(application->players->map_provider->state.q1,
+                        previous, &source_slot, error)) {
+                    application_players_dispose(travel);
+                    return false;
+                }
+                if (source_slot != old->client_slot) {
+                    application_players_dispose(travel);
+                    return application_fail(error, QA_ERROR_ARGUMENT,
+                        "Q1 local travel source slot differs from its roster");
+                }
             }
             if (!record_text(&travel->roster->records[i],
                     roster_name(previous_choices, old, false),
@@ -2894,6 +2896,11 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
             application_provider_for(application, actor, QA_ROLE_COMBAT, NULL) == character) {
             const application_native_q2_client *client = &original_q2->clients[record->client_slot + 1];
             source_combat = client->connected && client->begun && qa_actor_id_equal(client->actor, actor);
+        }
+        application_provider *combat_provider = application_provider_for(application, actor, QA_ROLE_COMBAT, "");
+        if (combat_provider && combat_provider->kind == APPLICATION_PROVIDER_QC) {
+            const qa_qc_definition *health = qa_qc_program_find_field(combat_provider->state.qc.program, "health");
+            source_combat |= application_qc_combat_health_owned(combat_provider->state.qc.engine, actor, health);
         }
         if (!source_combat) {
             traits.can_take_damage = !seat->spectator && found;

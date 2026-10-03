@@ -904,19 +904,25 @@ qa_cvars *frontend_config_store_primary_mouse_cvars(const frontend_config_store 
     }
     return NULL;
 }
+static frontend_config_source *published_source(const frontend_config_store *manager,qa_application *application,
+    const qa_launch_instance *selected)
+{
+    if (!selected) return NULL;
+    for (frontend_config_source *source=manager->sources;source;source=source->next) {
+        const qa_launch_instance *retained=instance(source);
+        if (source->application==application && source->published && !source->imported &&
+            retained && retained->storage==selected->storage && retained->state==selected->state) return source;
+    }
+    return NULL;
+}
 static frontend_config_source *published_primary(const frontend_config_store *manager,qa_application *application)
 {
     const qa_launch_snapshot *published=qa_application_launch(application);
     const qa_launch_binding *entities=qa_launch_binding_for(qa_launch_snapshot_choices(published),
         (qa_launch_scope){.kind=QA_SCOPE_WORLD},QA_ROLE_ENTITIES,"");
     const qa_launch_instance *selected=entities?qa_launch_snapshot_find(published,entities->instance):NULL;
-    if (!selected) return NULL;
-    for (frontend_config_source *source=manager->sources;source;source=source->next) {
-        const qa_launch_instance *retained=instance(source);
-        if (source->application==application && source->published && source->primary && !source->imported &&
-            retained && retained->storage==selected->storage && retained->state==selected->state) return source;
-    }
-    return NULL;
+    frontend_config_source *source=published_source(manager,application,selected);
+    return source && source->primary?source:NULL;
 }
 bool frontend_config_store_server_invocation_read(frontend_config_store *manager,
     const qa_command_invocation *call,qa_application_startup_source *out,qa_error *error)
@@ -1235,7 +1241,7 @@ qa_input_seat *frontend_config_store_candidate_input(const frontend_config_store
         !choices || ordinal>=choices->seat_count) return NULL;
     if (manager->input_prepared && manager->input_application==application &&
         manager->input_candidate==candidate && ordinal<manager->input_count &&
-        manager->input_source && manager->input_source->published && manager->input_source->primary) {
+        manager->input_source && manager->input_source->published) {
         const qa_launch_instance *held=instance(manager->input_source);
         const config_seat *seat=manager->input_seats+ordinal;
         qa_console_dialect movement;
@@ -2499,12 +2505,11 @@ static bool prepare_retained_input(frontend_config_store *manager,qa_application
     const qa_launch_binding *entities=qa_launch_binding_for(choices,
         (qa_launch_scope){.kind=QA_SCOPE_WORLD},QA_ROLE_ENTITIES,"");
     const qa_launch_instance *selected=entities?qa_launch_snapshot_find(candidate,entities->instance):NULL;
-    frontend_config_source *source=published_primary(manager,application);
-    const qa_launch_instance *held=source?instance(source):NULL;
-    if (!selected || !held || selected->storage!=held->storage || selected->state!=held->state) return true;
+    frontend_config_source *source=published_source(manager,application,selected);
+    if (!source) return true;
     qa_frontend *f=manager->frontend;
     const qa_launch_snapshot *previous=qa_application_launch(application);
-    bool changed=false;
+    bool changed=source!=published_primary(manager,application);
     for (size_t i=0;i<source->seat_count;++i) {
         uint32_t logical=source->seats[i].logical;
         if (!same_input_role(previous,candidate,logical,QA_ROLE_MOVEMENT) ||
