@@ -65,7 +65,7 @@ bool application_control_guest_complete(qa_application *, qa_actor_id,
                                          const qa_movement_command *, const qa_q3_player *,
                                          qa_error *);
 typedef struct application_source_input_scope {
-    application_provider *owners[7];
+    application_provider **owners;
     size_t count;
     qa_actor_id actor;
     bool slice;

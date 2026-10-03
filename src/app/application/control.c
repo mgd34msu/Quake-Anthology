@@ -6,6 +6,7 @@
 #include "control_frame.h"
 #include "client_outputs.h"
 #include "guest_q2_control.h"
+#include "guest_qc_profile.h"
 #include "native_q3_settings.h"
 #include "native_q1_composition_rogue.h"
 #include "native_q1_composition_birth.h"
@@ -59,8 +60,8 @@ typedef struct application_move_call {
 struct application_control_turn {
     application_move_call move;
     qa_movement_input input;
-    application_provider *parked_owners[14];
-    struct application_qc_parked_input *parked[14];
+    application_provider **parked_owners;
+    struct application_qc_parked_input **parked;
     size_t parked_count;
 };
 static bool guest_complete(qa_application *, qa_actor_id, const qa_movement_command *,
@@ -1052,16 +1053,49 @@ static bool qc_input_body(application_move_call *move, qa_movement_state *state,
 {
     static const qa_launch_role roles[] = {QA_ROLE_MOVEMENT, QA_ROLE_CHARACTER, QA_ROLE_ARSENAL,
         QA_ROLE_INVENTORY, QA_ROLE_COMBAT, QA_ROLE_EFFECTS, QA_ROLE_EQUIPMENT};
-    application_provider *owners[sizeof(roles) / sizeof(roles[0])];
-    if (before && scope->count)
+    if (before && (scope->owners || scope->count))
         return application_fail(error, QA_ERROR_ARGUMENT, "Source input scope is already open");
-    for (size_t i = 0; i < sizeof(roles) / sizeof(roles[0]); ++i)
-        owners[i] = before ? application_provider_for(move->application, move->control->actor, roles[i], "")
-                          : i < scope->count ? scope->owners[i] : NULL;
-    bool has_qc = false;
-    for (size_t i = 0; i < sizeof(owners) / sizeof(owners[0]); ++i)
-        has_qc |= owners[i] && owners[i]->kind == APPLICATION_PROVIDER_QC;
-    if (!has_qc) return true;
+    size_t owner_count = scope->count;
+    if (before) {
+        bool has_qc = false;
+        for (size_t i = 0; i < move->application->provider_count; ++i)
+            has_qc |= move->application->providers[i] &&
+                move->application->providers[i]->kind == APPLICATION_PROVIDER_QC;
+        if (!has_qc) return true;
+        size_t role_count = sizeof(roles) / sizeof(roles[0]);
+        if (move->application->provider_count > SIZE_MAX / sizeof(*scope->owners) - role_count)
+            return application_fail(error, QA_ERROR_MEMORY, "Source input owner inventory is too large");
+        size_t capacity = move->application->provider_count + role_count;
+        scope->owners = calloc(capacity, sizeof(*scope->owners));
+        if (!scope->owners)
+            return application_fail(error, QA_ERROR_MEMORY, "Allocating Source input owner inventory");
+        for (size_t i = 0; i < role_count; ++i) {
+            application_provider *owner = application_provider_for(move->application, move->control->actor, roles[i], "");
+            if (!owner || owner->kind != APPLICATION_PROVIDER_QC) continue;
+            bool duplicate = false;
+            for (size_t j = 0; j < owner_count; ++j) duplicate |= scope->owners[j] == owner;
+            if (!duplicate) scope->owners[owner_count++] = owner;
+        }
+        for (size_t i = 0; i < move->application->provider_count; ++i) {
+            application_provider *owner = move->application->providers[i];
+            if (!owner || owner->kind != APPLICATION_PROVIDER_QC || !owner->constructed ||
+                !owner->attached || owner->close_pending || !owner->state.qc.qualified) continue;
+            bool duplicate = false, subscribed = false;
+            for (size_t j = 0; j < owner_count; ++j) duplicate |= scope->owners[j] == owner;
+            if (duplicate) continue;
+            const struct application_qc_profile *profile = owner->state.qc.qualified;
+            for (size_t j = 0; j < profile->input_count; ++j)
+                subscribed |= profile->input[j].movement_slice == slice;
+            if (!subscribed) continue;
+            bool member = false;
+            if (!application_qc_control_source_client(owner, move->control->actor, &member, error)) {
+                free(scope->owners); scope->owners = NULL;
+                return false;
+            }
+            if (member) scope->owners[owner_count++] = owner;
+        }
+    }
+    if (!owner_count) { free(scope->owners); scope->owners = NULL; return true; }
     if (before) { scope->actor = move->control->actor; scope->slice = slice; }
     move->qc_input_active = true;
     qa_movement_command semantic = *command;
@@ -1079,8 +1113,8 @@ static bool qc_input_body(application_move_call *move, qa_movement_state *state,
     } else if (command->kind == state->kind && state->kind == QA_MOVEMENT_Q2_RERELEASE)
         semantic.angles = qa_vec_add(command->angles, state->data.q2r.delta_angles);
     qa_vec3 original_aim = semantic.angles;
-    for (size_t i = 0; i < sizeof(owners) / sizeof(owners[0]); ++i) {
-        application_provider *owner = owners[i];
+    for (size_t i = 0; i < owner_count; ++i) {
+        application_provider *owner = scope->owners[i];
         if (!owner || owner->kind != APPLICATION_PROVIDER_QC) continue;
         if (!owner->state.qc.qualified && move->context.source_nqcmd && owner == move->execution)
             continue;
@@ -1089,9 +1123,6 @@ static bool qc_input_body(application_move_call *move, qa_movement_state *state,
         if (!owner->state.qc.qualified && move->context.path == APPLICATION_CONTROL_NQ_TURN &&
             owner == move->execution && (!before || slice || move->context.stage != APPLICATION_CONTROL_PREPARE))
             continue;
-        bool duplicate = false;
-        for (size_t j = 0; j < i; ++j) duplicate |= owners[j] == owner;
-        if (duplicate) continue;
         move->committed = true;
         if (!before) scope->owners[i] = NULL;
         if (!application_qc_input(owner, move->control->actor, &semantic,
@@ -1105,7 +1136,10 @@ static bool qc_input_body(application_move_call *move, qa_movement_state *state,
             return application_control_source_abort(scope, error);
         }
     }
-    if (!before) { scope->count = 0; scope->actor = (qa_actor_id){0}; scope->slice = false; }
+    if (!before) {
+        free(scope->owners); scope->owners = NULL;
+        scope->count = 0; scope->actor = (qa_actor_id){0}; scope->slice = false;
+    }
     bool changed_aim = !same_vector(original_aim, semantic.angles);
     if (changed_aim && command->kind == state->kind &&
         (state->kind == QA_MOVEMENT_Q3 || state->kind == QA_MOVEMENT_Q2_CLASSIC)) {
@@ -1182,6 +1216,7 @@ bool application_control_source_abort(application_source_input_scope *scope, qa_
             ok = false; first = current;
         }
     }
+    free(scope->owners); scope->owners = NULL;
     scope->actor = (qa_actor_id){0}; scope->slice = false;
     if (!ok && error) *error = first;
     return ok;
@@ -2813,6 +2848,17 @@ static bool control_move(qa_application *application,
         component_input_retarget(&prepared->move.qc_command, &prepared->input.state, &prepared->input.command, true);
         component_input_retarget(&prepared->move.qc_slice, &prepared->input.state, &prepared->input.command, true);
         application_source_input_scope *scopes[] = {&prepared->move.qc_command, &prepared->move.qc_slice};
+        size_t parked_capacity = scopes[0]->count;
+        if (scopes[1]->count > SIZE_MAX - parked_capacity) ok = false;
+        else parked_capacity += scopes[1]->count;
+        if (ok && (parked_capacity > SIZE_MAX / sizeof(*prepared->parked_owners) ||
+                   parked_capacity > SIZE_MAX / sizeof(*prepared->parked))) ok = false;
+        if (ok && parked_capacity) {
+            prepared->parked_owners = calloc(parked_capacity, sizeof(*prepared->parked_owners));
+            prepared->parked = calloc(parked_capacity, sizeof(*prepared->parked));
+            ok = prepared->parked_owners && prepared->parked;
+        }
+        if (!ok) application_fail(error, QA_ERROR_MEMORY, "Allocating parked Source input inventory");
         for (size_t s = 0; ok && s < 2; ++s) for (size_t i = 0; ok && i < scopes[s]->count; ++i) {
             application_provider *provider = scopes[s]->owners[i];
             if (!provider || !provider->state.qc.qualified) continue;
@@ -2995,6 +3041,7 @@ bool application_control_turn_abort(struct application_control_turn *turn, qa_er
         ok = false;
     }
     if (!ok && error) *error = first;
+    free(turn->parked_owners); free(turn->parked);
     free(turn);
     return ok;
 }
@@ -3006,6 +3053,9 @@ bool application_control_turn_resume(struct application_control_turn *turn, qa_e
         if (!application_qc_input_resume(turn->parked_owners[i], turn->parked[i], error)) return false;
         turn->parked[i] = NULL;
     }
+    free(turn->parked_owners); turn->parked_owners = NULL;
+    free(turn->parked); turn->parked = NULL;
+    turn->parked_count = 0;
     return true;
 }
 
