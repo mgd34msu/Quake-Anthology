@@ -442,8 +442,7 @@ static bool beam(frontend_remote_q1 *row,const remote_beam *value,const qa_scene
         for(unsigned i=0;i<3;++i) { transform.axes[i][0]=axes[i].x; transform.axes[i][1]=axes[i].y; transform.axes[i][2]=axes[i].z; }
         qa_scene_model_input input={.view=*view,.transform=transform,.previous_origin=start,.color={1,1,1,1},
             .family=QA_SCENE_Q1,.seconds=world->seconds,.source_path=path,.entity=value->entity,.identity_light=1};
-        const qa_product *product=qa_catalog_product(row->content.catalog,row->content.product);
-        if(!frontend_legacy_model_input_product(row->frontend,product,row->world,world,&input,error) ||
+        if(!frontend_legacy_model_input(row->world,world,&input,error) ||
             !remote_q1_model_lighting(row,world,&input,error) ||
             !qa_scene_model_submit(model->scene,&input,&row->frontend->frame,error)) return false;
         start=qa_vec_add(start,qa_vec_scale(direction,30)); distance-=30;

@@ -22,9 +22,7 @@ bool frontend_legacy_source_owns(const qa_cvars *, const char *name);
 bool frontend_remote_q1_initial_clear(qa_frontend *, uint32_t seat, bool *active, bool *clear, qa_error *);
 bool frontend_remote_q2_initial_clear(qa_frontend *, uint32_t seat, bool *active, bool *clear, qa_error *);
 bool frontend_remote_unified_initial_clear(qa_frontend *, uint32_t seat, bool *active, bool *clear, qa_error *);
-bool frontend_legacy_model_input(const qa_frontend *, qa_product_id, const qa_scene_world *,
-    const qa_scene_world_input *, qa_scene_model_input *, qa_error *);
-bool frontend_legacy_model_input_product(const qa_frontend *, const qa_product *, const qa_scene_world *,
+bool frontend_legacy_model_input(const qa_scene_world *,
     const qa_scene_world_input *, qa_scene_model_input *, qa_error *);
 typedef struct frontend_legacy_scene_services {
     void *context;

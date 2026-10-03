@@ -875,7 +875,7 @@ bool frontend_unified_q1_world_models(frontend_unified_q1 *o,const qa_scene_worl
             transform(&input.transform,s->origin,s->angles);
             if(s->model.brush_world)ok=qa_scene_world_submit_model(s->model.brush_world,s->model.inline_model,&input.transform,world,0,input.color,frame,e);
             else {ok=qa_scene_world_sample_light_input(frontend_unified_media_world(o->media),world,s->origin,&input.ambient,&input.directed,&input.light_direction,e) &&
-                frontend_legacy_model_input_product(o->frontend,g->product,frontend_unified_media_world(o->media),world,&input,e) && qa_scene_model_submit(s->model.scene,&input,frame,e);}
+                frontend_legacy_model_input(frontend_unified_media_world(o->media),world,&input,e) && qa_scene_model_submit(s->model.scene,&input,frame,e);}
         }
         static const char *const models[]={"progs/bolt.mdl","progs/bolt2.mdl","progs/bolt3.mdl","progs/beam.mdl"};
         for(size_t i=0;ok && i<Q1_BEAMS;++i) {q1_beam *b=g->beams+i;if(b->until<=world->seconds)continue;qa_actor_id actual;
@@ -888,7 +888,7 @@ bool frontend_unified_q1_world_models(frontend_unified_q1 *o,const qa_scene_worl
                     .seconds=world->seconds,.identity_light=world->identity_light,.color={1,1,1,1},.ambient={1,1,1},.entity=actual.slot,
                     .video_frame=world->video_frame,.video_context=world->video_context};
                 angles.z=(float)(qa_builtin_random_integer(&roll)%360);transform(&input.transform,qa_vec_add(b->start,qa_vec_scale(direction,step)),angles);
-                ok=frontend_legacy_model_input_product(o->frontend,g->product,frontend_unified_media_world(o->media),world,&input,e) && qa_scene_model_submit(model.scene,&input,frame,e);}
+                ok=frontend_legacy_model_input(frontend_unified_media_world(o->media),world,&input,e) && qa_scene_model_submit(model.scene,&input,frame,e);}
         }
     }
     o->busy=false;return ok && mutable(o,e);

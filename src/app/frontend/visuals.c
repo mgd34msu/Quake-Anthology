@@ -1373,7 +1373,7 @@ static bool local_q2_view_weapon(qa_frontend *frontend, uint32_t seat, qa_actor_
     if (!frontend_config_store_primary_legacy_current(frontend->config_store, &source) ||
         !qa_application_equipment_current(frontend->application, &weapon))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Q2 view weapon changed its retained player or CLIENT settings");
-    return frontend_legacy_model_input_product(frontend, source.product, frontend->scene_world, world, &input, error) &&
+    return frontend_legacy_model_input(frontend->scene_world, world, &input, error) &&
         qa_scene_model_submit(model.scene, &input, frame, error);
 }
 
@@ -1437,7 +1437,7 @@ bool frontend_visuals_submit(qa_frontend *frontend, uint32_t seat, qa_actor_owne
                 .video_frame = frontend_material_movies_frontend_resolve, .video_context = frontend};
             if (!qa_scene_world_sample_light_input(frontend->scene_world, world, view.body.origin,
                 &input.ambient, &input.directed, &input.light_direction, error)) return false;
-            if (!frontend_legacy_model_input(frontend, view.content, frontend->scene_world, world, &input, error)) return false;
+            if (!frontend_legacy_model_input(frontend->scene_world, world, &input, error)) return false;
             if (!qa_scene_model_submit(model->scene, &input, frame, error)) return false;
         }
     }

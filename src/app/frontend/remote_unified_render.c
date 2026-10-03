@@ -379,7 +379,7 @@ static bool unified_scene_visuals(void *context,const qa_scene_world_input *worl
         else {
             okay=qa_scene_world_sample_light_input(frontend_unified_media_world(r->media),world,position,
                 &input.ambient,&input.directed,&input.light_direction,e) &&
-                frontend_legacy_model_input_product(r->frontend,m->product,frontend_unified_media_world(r->media),world,&input,e);
+                frontend_legacy_model_input(frontend_unified_media_world(r->media),world,&input,e);
             if (okay && children && children->model)
                 okay=children->model(children->context,m->actor,m->product->identity,m->path,&input,e);
             if (okay) okay=qa_scene_model_submit(m->media.scene,&input,&r->frontend->frame,e);

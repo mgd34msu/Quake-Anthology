@@ -103,8 +103,7 @@ static bool model_submit(frontend_remote_q1 *row, const frontend_remote_q1_entit
             input.indexed_skin = &indexed;
         }
     }
-    const qa_product *product=qa_catalog_product(row->content.catalog,row->content.product);
-    return frontend_legacy_model_input_product(row->frontend,product,row->world,world,&input,error) &&
+    return frontend_legacy_model_input(row->world,world,&input,error) &&
         remote_q1_model_lighting(row, world, &input, error) &&
         qa_scene_model_submit(model->scene, &input, &row->frontend->frame, error);
 }

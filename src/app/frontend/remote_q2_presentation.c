@@ -474,9 +474,7 @@ static bool submit_model(frontend_remote_q2 *row, const char *path, const char *
         ambient = qa_vec_add(ambient, directed);
     }
     input.ambient = ambient; input.light_direction = direction;
-    const qa_product *product = qa_catalog_product(row->content.catalog, row->content.selected);
-    if (!remote_q2_live(row, error) || !frontend_legacy_model_input_product(row->frontend,
-        product, row->world, world, &input, error) || !remote_q2_live(row, error)) return false;
+    if (!remote_q2_live(row, error) || !frontend_legacy_model_input(row->world, world, &input, error) || !remote_q2_live(row, error)) return false;
     if (!qa_scene_model_submit(model->scene, &input, &row->frontend->frame, error)) return false;
     if (view_model && row->effects && remote_q2_rerelease_presentation(row)) {
         qa_actor_id viewer;

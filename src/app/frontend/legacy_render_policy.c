@@ -143,48 +143,27 @@ bool frontend_legacy_source_owns(const qa_cvars *registry, const char *name)
     return false;
 }
 
-bool frontend_legacy_model_input(const qa_frontend *frontend, qa_product_id content,
-    const qa_scene_world *actual_world,
+bool frontend_legacy_model_input(const qa_scene_world *actual_world,
     const qa_scene_world_input *world, qa_scene_model_input *input, qa_error *error)
 {
-    if (!frontend || !frontend->application)
-        return frontend_fail(error, QA_ERROR_ARGUMENT, "Legacy model has no actual catalog");
-    return frontend_legacy_model_input_product(frontend,
-        qa_catalog_product(qa_application_catalog(frontend->application), content),
-        actual_world, world, input, error);
-}
-
-bool frontend_legacy_model_input_product(const qa_frontend *frontend, const qa_product *product,
-    const qa_scene_world *actual_world, const qa_scene_world_input *world,
-    qa_scene_model_input *input, qa_error *error)
-{
-    if (!frontend || !frontend->application || !actual_world || !world || !input)
+    if (!actual_world || !world || !input)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Legacy model has no real world input");
-    frontend_legacy_render_policy policy;
-    if (!frontend_legacy_render_policy_read(frontend, product, &policy, error)) return false;
-    if (world->legacy_policy.present) {
-        if (policy.family == world->legacy_policy.source_family) {
-            policy.lighting = world->legacy_policy;
-            policy.planar_shadows = world->legacy_policy.planar_shadows;
-            policy.double_eyes = policy.quakeworld || world->legacy_policy.double_eyes;
-        }
-        policy.lighting.cull = world->legacy_policy.cull;
+    const qa_scene_legacy_policy *policy = &world->legacy_policy;
+    input->q1_double_eyes = input->family == QA_SCENE_Q1 && policy->present && policy->double_eyes;
+    if (policy->present) {
+        input->no_cull = input->no_cull || !policy->cull;
+        if (input->family == QA_SCENE_Q2) input->monochrome = policy->monolightmap != '0';
     }
-    input->q1_double_eyes = policy.double_eyes;
-    if (policy.lighting.present) {
-        input->no_cull = input->no_cull || !policy.lighting.cull;
-        if (policy.family == QA_SCENE_Q2) input->monochrome = policy.lighting.monolightmap != '0';
-    }
-    if (policy.family != QA_SCENE_Q3) {
+    if (input->family != QA_SCENE_Q3) {
         qa_vec3 origin = qa_v3(input->transform.origin[0], input->transform.origin[1], input->transform.origin[2]);
         for (size_t i = 0; i < world->light_count; ++i) {
             const qa_scene_light *light = &world->lights[i];
             float amount = (light->radius - qa_vec_length(qa_vec_sub(origin, light->origin))) / 256;
             if (amount > 0) input->ambient = qa_vec_add(input->ambient, qa_vec_scale(light->color,
-                amount * (policy.family == QA_SCENE_Q2 ? policy.lighting.modulate : 1)));
+                amount * (input->family == QA_SCENE_Q2 && policy->present ? policy->modulate : 1)));
         }
     }
-    if (policy.planar_shadows && policy.family != QA_SCENE_Q3 && !input->view_model) {
+    if (policy->present && policy->planar_shadows && input->family != QA_SCENE_Q3 && !input->view_model) {
         qa_vec3 point;
         bool found = false;
         if (!qa_scene_world_sample_floor(actual_world,
@@ -271,25 +250,17 @@ static bool local_policy(const qa_frontend *frontend, const qa_product *product,
     const frontend_config_legacy_view *actual_source, frontend_legacy_render_policy *out, qa_error *error)
 {
     if (actual_source) {
-        frontend_legacy_render_policy source;
         if (!frontend_config_store_primary_legacy_current(frontend->config_store, actual_source) ||
-            !frontend_legacy_render_policy_read(frontend, product, out, error) ||
-            !frontend_legacy_render_policy_read_registry(actual_source->registry, actual_source->product, &source, error)) return false;
+            !product || !frontend_legacy_render_policy_read_registry(actual_source->registry,
+                actual_source->product, out, error)) return false;
         /* The explicit WORLD presentation selects the sky/water traversal;
          * the entered Source owns its scalar renderer settings. */
-        qa_scene_legacy_policy geometry = out->lighting;
-        out->lighting = source.lighting;
-        if (out->family == QA_SCENE_Q2 && source.family != QA_SCENE_Q2) {
-            out->lighting.modulate = geometry.modulate;
-            out->lighting.monolightmap = geometry.monolightmap;
-            out->lighting.saturate = geometry.saturate;
-            out->lighting.flares = geometry.flares;
-        }
-        if (out->family == source.family) {
-            out->flashblend = source.flashblend;
-            out->texture_sort = source.texture_sort;
-            out->mirror_alpha = out->quakeworld ? 1 : source.mirror_alpha;
-        }
+        out->family = product->family == QA_GAME_Q1 ? QA_SCENE_Q1 :
+            product->family == QA_GAME_Q2 ? QA_SCENE_Q2 : QA_SCENE_Q3;
+        out->quakeworld = out->family == QA_SCENE_Q1 &&
+            (product->edition == QA_EDITION_QUAKEWORLD || qa_cvars_dialect(actual_source->registry) == QA_CONSOLE_QW);
+        if (out->family != QA_SCENE_Q1 || out->lighting.source_family != QA_SCENE_Q1) out->texture_sort = false;
+        if (!out->texture_sort || out->quakeworld) out->mirror_alpha = 1;
         if (out->quakeworld) out->lighting.fullbright = out->lighting.lightmap = false;
         return frontend_config_store_primary_legacy_current(frontend->config_store, actual_source);
     }
