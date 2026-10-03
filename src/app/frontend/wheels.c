@@ -46,7 +46,8 @@ static bool items(void *context, uint32_t id, qa_hud_wheel_mode mode,
     }
     for (size_t i = 0; i < total; ++i) {
         qa_item_definition definition = seat->wheel_definitions[i];
-        if (definition.weapon != (mode == QA_HUD_WHEEL_WEAPONS) || !(definition.actions & QA_ITEM_USE)) continue;
+        if (definition.weapon != (mode == QA_HUD_WHEEL_WEAPONS) ||
+            (mode == QA_HUD_WHEEL_POWERUPS && !(definition.actions & QA_ITEM_USE))) continue;
         double owned;
         if (!qa_inventory_count_read(inventory, actor, definition.item, &owned, error)) return false;
         bool ammunition = owned > 0;
@@ -98,7 +99,7 @@ static bool select_item(void *context, uint32_t id, qa_hud_wheel_mode mode,
             qa_actor_owner owner=seat->wheel_definitions[(size_t)rows[i].identity.source_ordinal].owner;
             if(!qa_inventory_source_definition_read(qa_application_inventory(seat->frontend->application),
                 actor,owner,identity.item,&definition,error))return false;
-            if(!definition.weapon || !(definition.actions&QA_ITEM_USE))
+            if(!definition.weapon)
                 return frontend_fail(error,QA_ERROR_ARGUMENT,"wheel weapon lost its actual admitted Source definition");
             bool accepted;
             return qa_application_equipment_request_weapon(seat->frontend->application,actor,
