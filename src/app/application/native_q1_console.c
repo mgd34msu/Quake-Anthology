@@ -8,6 +8,7 @@
 #include "qa/network_q1_qw.h"
 #include "qa/source_save.h"
 #include "qa/game_q1_source_obituary.h"
+#include "qa/game_q1_bots.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -241,6 +242,54 @@ static const qa_launch_instance *source_descriptor(application_provider *provide
     }
     return NULL;
 }
+bool application_native_q1_console_engine_borrow(qa_application *app,
+    const qa_command_invocation *command, struct application_native_q1_console **out,
+    qa_error *error)
+{
+    if (!app || !command || !out)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q1 engine command needs its actual invocation");
+    *out = NULL;
+    if (command->console != app->console || !command->context.actor.registry ||
+        (command->context.dialect != QA_CONSOLE_Q1 && command->context.dialect != QA_CONSOLE_QW))
+        return true;
+    if (!qa_console_invocation_current(app->console, command) ||
+        !qa_application_command_context_active(app, &command->context))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q1 engine command has no entered invocation");
+    qa_actor_id actor = command->context.actor;
+    application_provider *candidates[] = {
+        application_world_provider(app, QA_ROLE_ENTITIES, ""),
+        application_provider_for(app, actor, QA_ROLE_CHARACTER, "")};
+    for (size_t i = 0; i < sizeof(candidates) / sizeof(*candidates); ++i) {
+        application_provider *source = candidates[i];
+        qa_q1_source_client_view client;
+        if (!source || source->kind != APPLICATION_PROVIDER_Q1 || !source->state.q1 ||
+            !qa_q1_source_client_read(source->state.q1, actor, &client)) continue;
+        struct application_native_q1_console *owner = source->native_q1_console;
+        if (app->destroy_requested || app->finalizing || !app->players ||
+            source->application != app || !source->constructed || !source->attached ||
+            source->close_pending || !source_descriptor(source) || !owner ||
+            owner->provider != source || command->context.dialect != dialect(source) ||
+            (command->context.owner && command->context.owner != source->owner))
+            return application_fail(error, QA_ERROR_ARGUMENT, "Q1 engine command lost its published Source");
+        for (size_t j = 0; j < app->players->count; ++j) {
+            const application_player_record *player = app->players->records + j;
+            if (!player->retiring && qa_actor_id_equal(player->actor, actor) &&
+                player->client_slot == client.slot) {
+                ++owner->calls;
+                *out = owner;
+                return true;
+            }
+        }
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q1 engine command differs from its Source roster");
+    }
+    return true;
+}
+
+void application_native_q1_console_engine_release(struct application_native_q1_console *owner)
+{
+    if (owner) --owner->calls;
+}
+
 static bool files_source(application_provider *provider,const qa_command_context *command,
     qa_application_startup_source *out,qa_error *error)
 {

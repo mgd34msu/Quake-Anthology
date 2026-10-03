@@ -327,13 +327,9 @@ static bool provider_command(application_provider *provider, const qa_command_in
     return application_fail(error, QA_ERROR_ARGUMENT, "unknown source command provider");
 }
 
-qa_command_result application_command_fallback(void *opaque,
-                                                 const qa_command_invocation *invocation,
-                                                 qa_error *error)
+static qa_command_result command_dispatch(qa_application *application,
+    const qa_command_invocation *invocation, qa_error *error)
 {
-    qa_application *application = opaque;
-    if (invocation == NULL || invocation->argc == 0 || invocation->argv == NULL)
-        return QA_COMMAND_UNHANDLED;
     qa_command_invocation command = *invocation;
     if (!qa_application_capture_command_context(application, &invocation->context,
                                                   &command.context, error))
@@ -405,6 +401,20 @@ qa_command_result application_command_fallback(void *opaque,
     if (!provider_command(provider, &command, &handled, error))
         return QA_COMMAND_FAILED;
     return handled ? QA_COMMAND_HANDLED : QA_COMMAND_UNHANDLED;
+}
+
+qa_command_result application_command_fallback(void *opaque,
+    const qa_command_invocation *invocation, qa_error *error)
+{
+    if (!invocation || !invocation->argc || !invocation->argv)
+        return QA_COMMAND_UNHANDLED;
+    qa_application *application = opaque;
+    struct application_native_q1_console *source = NULL;
+    if (!application_native_q1_console_engine_borrow(application, invocation, &source, error))
+        return QA_COMMAND_FAILED;
+    qa_command_result result = command_dispatch(application, invocation, error);
+    application_native_q1_console_engine_release(source);
+    return result;
 }
 
 bool qa_application_source_command(qa_application *application,

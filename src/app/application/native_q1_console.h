@@ -7,6 +7,9 @@ bool application_native_q1_console_create(application_provider *, const qa_q1_op
 bool application_native_q1_console_create_restored(application_provider *, qa_error *);
 bool application_native_q1_console_destroy(application_provider *, qa_error *);
 bool application_native_q1_console_idle(const application_provider *);
+bool application_native_q1_console_engine_borrow(qa_application *,
+    const qa_command_invocation *, struct application_native_q1_console **, qa_error *);
+void application_native_q1_console_engine_release(struct application_native_q1_console *);
 bool application_native_q1_console_capture(application_provider *, qa_buffer *, qa_error *);
 bool application_native_q1_console_restore(application_provider *, qa_bytes, qa_error *);
 bool application_native_q1_console_at(application_provider *, qa_console **, qa_cvars **,
