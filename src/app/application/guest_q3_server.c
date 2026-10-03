@@ -255,7 +255,15 @@ static bool admit_actor(void *context, qa_actor_id actor, qa_error *error)
     q3g_role *role = context;
     bool admitted = role->server.admit_actor ? role->server.admit_actor(role->server.context, actor, error) :
         application_guest_actor_admit(role->engine->provider, actor, error);
-    return admitted && (!role->combat || application_q3_combat_admit(role->combat, actor, error));
+    if (!admitted) return false;
+    if (!role->combat) return true;
+    uint32_t slot;
+    qa_q3_host_game_data table;
+    if (!qa_q3_host_actor_slot(role->host, actor, &slot, error)) return false;
+    if (!qa_q3_host_game_data_read(role->host, &table))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Original combat admission requires its located Source records");
+    if (slot < table.client_count && !role->engine->clients[slot].begun) return true;
+    return application_q3_combat_admit(role->combat, actor, error);
 }
 static bool player_velocity(void *context, qa_actor_id actor, qa_vec3 velocity, qa_error *error)
 {

@@ -1060,6 +1060,15 @@ static bool spawn_pose(qa_application *application, size_t ordinal, bool force,
     struct application_player_roster *roster = application->players;
     *found = false;
     if (source_point) *source_point = (qa_actor_id){0};
+    application_provider *character = roster->records[ordinal].character;
+    if (roster->map_provider->kind == APPLICATION_PROVIDER_Q2 && character &&
+        character->kind <= APPLICATION_PROVIDER_Q3 && character->kind != APPLICATION_PROVIDER_Q2) {
+        qa_body_state selected;
+        if (!qa_q2_player_map_spawn_pose(roster->map_provider->state.q2,
+                roster->records[ordinal].actor, &body->bounds, NULL, &selected, found, error)) return false;
+        if (*found) *body = selected;
+        return true;
+    }
     if (roster->q1_selector != NULL && roster->spawn_point == QA_STRING_NONE) {
         qa_q1_options source_options;
         double source_seconds;
@@ -2513,7 +2522,14 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
         }
         bool found = true;
         qa_actor_id source_point = {0};
-        if (character->kind <= APPLICATION_PROVIDER_Q3 &&
+        bool q2_map_spawn = map_source->kind == APPLICATION_PROVIDER_Q2 &&
+            character->kind <= APPLICATION_PROVIDER_Q3 && character->kind != APPLICATION_PROVIDER_Q2;
+        if (q2_map_spawn) {
+            qa_body_state selected;
+            if (!qa_q2_player_map_spawn_pose(map_source->state.q2, actor, &body.bounds,
+                    landmark, &selected, &found, error)) return false;
+            if (found) body = selected;
+        } else if (character->kind <= APPLICATION_PROVIDER_Q3 &&
             (map_source->kind == APPLICATION_PROVIDER_Q1 || character->kind != APPLICATION_PROVIDER_Q2 ||
              (reserved_player && map_source->kind == APPLICATION_PROVIDER_Q3)) &&
             !spawn_pose(application, ordinal, false, &body, &found, &source_point, error))
@@ -2809,8 +2825,17 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
         }
         qa_combat_state traits;
         if (!qa_combat_read_traits(application->combat, actor, &traits, error)) return false;
-        traits.can_take_damage = !seat->spectator && found;
-        if (!qa_combat_set_traits(application->combat, actor, &traits, error)) return false;
+        struct application_q3_guest *original_character = q3g_engine(character);
+        uint32_t original_client_slot;
+        bool source_combat = original_character && original_character->game &&
+            original_character->game->combat &&
+            application_q3_guest_actor_client(character, actor, &original_client_slot);
+        if (!source_combat) {
+            traits.can_take_damage = !seat->spectator && found;
+            if (!qa_combat_set_traits(application->combat, actor, &traits, error)) return false;
+        }
+        if (found && q2_map_spawn && !seat->spectator &&
+            !qa_q2_player_map_spawn_complete(map_source->state.q2, actor, error)) return false;
         if (!found) {
             if (!application_control_player_mode(application, actor, QA_MOVEMENT_MODE_FREEZE,
                                                    seat->spectator, error)) return false;
@@ -3225,6 +3250,9 @@ bool application_players_advance(qa_application *application, qa_error *error)
             !qa_world_set_collision(application->world, actor, spectator ? NULL : &collision, error) ||
             (source->kind == APPLICATION_PROVIDER_Q1 &&
              !q1_player_current(application, source, character, arsenal, actor, true, &ordinal, error)) ||
+            (source->kind == APPLICATION_PROVIDER_Q2 && character &&
+             character->kind <= APPLICATION_PROVIDER_Q3 && character->kind != APPLICATION_PROVIDER_Q2 &&
+             !spectator && !qa_q2_player_map_spawn_complete(source->state.q2, actor, error)) ||
             !application_control_player_mode(application, actor,
                 spectator ? QA_MOVEMENT_MODE_NOCLIP : QA_MOVEMENT_MODE_NORMAL, spectator, error) ||
             (source->kind == APPLICATION_PROVIDER_Q1 &&

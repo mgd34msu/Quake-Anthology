@@ -307,7 +307,7 @@ bool frontend_launch(qa_frontend *frontend, qa_error *error)
     bool created = qa_launch_draft_create(catalog, product->id, map, &draft, error);
     free(selected_map);
     if (!created) return false;
-    if (product->family == QA_GAME_Q1 && frontend->options.seats > 1 &&
+    if ((product->family == QA_GAME_Q1 || product->family == QA_GAME_Q2) && frontend->options.seats > 1 &&
         !frontend->options.dedicated) {
         const qa_launch_choices *choices = qa_launch_draft_choices(draft);
         for (size_t i = 0; i < choices->mode_count; ++i) {

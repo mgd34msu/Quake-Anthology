@@ -293,6 +293,11 @@ bool qa_q2_player_projection(qa_q2_game *, qa_actor_id, qa_builtin_player_info *
 bool qa_q2_player_score(qa_q2_game *, qa_actor_id, int score, int ping, qa_error *);
 bool qa_q2_player_spawn(qa_q2_game *, qa_actor_id, bool restore_loadout, const qa_q2_landmark *,
                         qa_error *);
+/* The Q2 map places an admitted player with its source slot/start-point rules,
+ * even when CHARACTER and MOVEMENT belong to another provider. */
+bool qa_q2_player_map_spawn_pose(qa_q2_game *, qa_actor_id, const qa_bounds *,
+    const qa_q2_landmark *, qa_body_state *, bool *found, qa_error *);
+bool qa_q2_player_map_spawn_complete(qa_q2_game *, qa_actor_id, qa_error *);
 bool qa_q2_player_start_items(qa_q2_game *, qa_actor_id, qa_error *);
 bool qa_q2_player_respawn(qa_q2_game *, qa_actor_id, qa_error *);
 bool qa_q2_player_after_movement(qa_q2_game *, qa_actor_id, qa_error *);

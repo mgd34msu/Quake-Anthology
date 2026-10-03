@@ -352,6 +352,47 @@ bool qa_q2_player_spawn(qa_q2_game *g, qa_actor_id id, bool restore,
     const qa_q2_landmark *landmark, qa_error *e) {
     return player_spawn(g, id, restore, landmark, true, e);
 }
+bool qa_q2_player_map_spawn_pose(qa_q2_game *g, qa_actor_id id, const qa_bounds *bounds,
+    const qa_q2_landmark *landmark, qa_body_state *out, bool *found, qa_error *e) {
+    if (!bounds || !out || !found) {
+        qa_error_set(e, QA_ERROR_ARGUMENT, id.slot, "Q2 map spawn requires selected standing bounds");
+        return false;
+    }
+    q2_actor *a = q2_client(g, id, e);
+    if (!a) return false;
+    q2_client_state *s = a->client;
+    if (landmark) {
+        s->pending_landmark = *landmark;
+        s->has_pending_landmark = true;
+    }
+    qa_q2_player_movement movement = {.standing_bounds = *bounds};
+    if (!q2_player_spawn_select(g, a, &movement,
+            s->has_pending_landmark ? &s->pending_landmark : NULL, out, found, e)) return false;
+    if (!q2_actor_live(g, id)) return true;
+    if (!*found) {
+        if (!s->awaiting_respawn) s->respawn_timeout_ns = q2_deadline(g->now_ns, 3 * Q2_NS);
+        s->awaiting_respawn = true;
+        s->spawned = false;
+    } else {
+        s->awaiting_respawn = false;
+        s->respawn_timeout_ns = 0;
+        s->has_pending_landmark = false;
+    }
+    return true;
+}
+bool qa_q2_player_map_spawn_complete(qa_q2_game *g, qa_actor_id id, qa_error *e) {
+    q2_actor *a = q2_client(g, id, e);
+    if (!a) return false;
+    if (!a->client->info.spectator) {
+        bool clear;
+        if (!q2_killbox(g, id, id, true, false, &clear, e)) return false;
+    }
+    if (!q2_actor_live(g, id)) return true;
+    a = q2_client(g, id, e);
+    if (!a) return false;
+    a->client->spawned = true;
+    return true;
+}
 bool qa_q2_player_respawn(qa_q2_game *g, qa_actor_id id, qa_error *e) {
     q2_actor *a = q2_client(g, id, e);
     if (!a)
