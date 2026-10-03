@@ -32,10 +32,11 @@ qa_resource_pool *qa_vfs_resources(const qa_vfs *vfs);
 /* Copies mount/order/policy state while sharing immutable resources. Neither
  * view depends on the other's lifetime or subsequent configuration changes. */
 qa_vfs *qa_vfs_clone(const qa_vfs *vfs, qa_error *error);
-/* Pure conservative comparison of retained lookup authorities and complete
- * search policy. Clones qualify; independently reopened native authorities
- * may differ. Read journals, reference flags and allocation counters do not
- * affect this comparison. No native I/O, loading or mutation occurs. */
+/* Pure comparison of retained native lookup authorities and complete search
+ * policy. Reopened handles qualify only for the same admitted directory object
+ * or shared archive package and file identity. Read journals, reference flags
+ * and allocation counters do not affect this comparison. No native I/O,
+ * loading or mutation occurs. */
 bool qa_vfs_lookup_equal(const qa_vfs *, const qa_vfs *);
 void qa_vfs_destroy(qa_vfs *vfs);
 bool qa_vfs_retain(qa_vfs *vfs, qa_error *error);

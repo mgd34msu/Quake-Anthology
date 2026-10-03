@@ -651,14 +651,22 @@ memory_failure:
     return NULL;
 }
 
+static bool mount_authority_equal(const mount *left, const mount *right)
+{
+    if (left->archive != right->archive || !qa_fs_identity_equal(&left->identity, &right->identity))
+        return false;
+    if (left->archive)
+        return left->archive_file && right->archive_file && !left->root && !right->root;
+    return !left->archive_file && !right->archive_file && qa_fs_root_same_object(left->root, right->root);
+}
+
 bool qa_vfs_lookup_equal(const qa_vfs *left, const qa_vfs *right)
 {
     if (!left || !right || left->pool != right->pool || left->count != right->count ||
         left->pure_count != right->pure_count || left->q3_demo != right->q3_demo) return false;
     for (size_t i = 0; i < left->count; ++i) {
         const mount *a = left->mounts[i], *b = right->mounts[i];
-        if (a->id != b->id || a->archive != b->archive || a->archive_file != b->archive_file ||
-            a->root != b->root || !qa_fs_identity_equal(&a->identity, &b->identity) ||
+        if (a->id != b->id || !mount_authority_equal(a, b) ||
             strcmp(a->path, b->path) || strcmp(a->root_prefix ? a->root_prefix : "", b->root_prefix ? b->root_prefix : "") ||
             a->comparison != b->comparison ||
             a->writable != b->writable || a->user_overlay != b->user_overlay ||
@@ -1025,8 +1033,7 @@ bool qa_vfs_retained_recipe_matches(const qa_vfs *view, const qa_vfs *retained,
     for (size_t i = 0; i < count; ++i) {
         const mount *actual = view->mounts[i];
         const mount *source = find_mount(retained, ordered_ids[i]);
-        if (!source || actual->id != (qa_mount_id)i + 1 || actual->archive != source->archive ||
-            !qa_fs_identity_equal(&actual->identity, &source->identity) ||
+        if (!source || actual->id != (qa_mount_id)i + 1 || !mount_authority_equal(actual, source) ||
             strcmp(actual->path, source->path) ||
             strcmp(actual->root_prefix ? actual->root_prefix : "", source->root_prefix ? source->root_prefix : "") ||
             actual->comparison != comparison ||
@@ -1035,12 +1042,6 @@ bool qa_vfs_retained_recipe_matches(const qa_vfs *view, const qa_vfs *retained,
             return false;
         for (size_t j = 0; j < i; ++j)
             if (ordered_ids[j] == ordered_ids[i]) return false;
-        if (source->archive) {
-            if (!actual->archive_file || !source->archive_file || actual->root || source->root)
-                return false;
-        } else if (actual->archive_file || source->archive_file ||
-            !qa_fs_root_same_object(actual->root, source->root))
-            return false;
     }
     return true;
 }
@@ -1053,16 +1054,11 @@ bool qa_vfs_retained_base_matches(const qa_vfs *view, const qa_vfs *base)
     size_t first = view->count - base->count;
     for (size_t i = 0; i < base->count; ++i) {
         const mount *actual = view->mounts[first + i], *source = base->mounts[i];
-        if (actual->id != source->id || actual->archive != source->archive ||
-            !qa_fs_identity_equal(&actual->identity, &source->identity) ||
+        if (actual->id != source->id || !mount_authority_equal(actual, source) ||
             strcmp(actual->path, source->path) ||
             strcmp(actual->root_prefix ? actual->root_prefix : "", source->root_prefix ? source->root_prefix : "") ||
             actual->comparison != source->comparison || actual->writable != source->writable ||
             actual->user_overlay != source->user_overlay || actual->q3_demo != source->q3_demo) return false;
-        if (source->archive) {
-            if (!actual->archive_file || !source->archive_file || actual->root || source->root) return false;
-        } else if (actual->archive_file || source->archive_file ||
-            !qa_fs_root_same_object(actual->root, source->root)) return false;
     }
     return true;
 }
