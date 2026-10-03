@@ -222,7 +222,6 @@ bool frontend_topology_prepare(qa_frontend *f, const frontend_restore_topology *
     if (p->order && !(f->order = qa_material_order_create(error))) return false;
     if (p->images && !(f->images = qa_scene_resources_create_detached(f->mounts, error))) return false;
     if (p->materials && !(f->materials = qa_material_library_create_detached(f->images, error))) return false;
-    if (p->materials && !frontend_root_resources_prepare_restored(f,error)) return false;
     if (p->sounds && !qa_audio_bank_create(f->mounts, &f->sounds, error)) return false;
     if (p->audio) {
         qa_audio_engine_options audio;
@@ -230,5 +229,6 @@ bool frontend_topology_prepare(qa_frontend *f, const frontend_restore_topology *
         if (!qa_audio_engine_create(&audio,&f->audio,error)) return false;
     }
     if (!p->dedicated && !frontend_seats_prepare_restored(f, error)) return false;
-    return frontend_source_prepare_groups(f, p->next_source_id, p->groups, p->group_count, error);
+    return frontend_source_prepare_groups(f, p->next_source_id, p->groups, p->group_count, error) &&
+        (!p->materials || frontend_root_resources_prepare_restored(f,error));
 }

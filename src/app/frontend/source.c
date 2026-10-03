@@ -2545,7 +2545,8 @@ bool frontend_world_retired(void *context, qa_application *application, qa_error
     if (!frontend_native_q3_retire_world(frontend,error)) return false;
     frontend_native_q2_retire_world(frontend);
     for (unsigned i = 0; i < frontend->options.seats && !frontend->options.dedicated; ++i) {
-        if (!qa_ui_rankings_reset_binding(frontend->seats[i].rankings, error)) return false;
+        if (frontend->seats[i].rankings &&
+            !qa_ui_rankings_reset_binding(frontend->seats[i].rankings, error)) return false;
         frontend_player_retire(&frontend->seats[i]);
     }
     if (!frontend_shader_retire(frontend, error)) return false;
