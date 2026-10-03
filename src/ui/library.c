@@ -2,12 +2,13 @@
 #include "qa/ui_menu_save.h"
 #include "qa/application_character_selection.h"
 #include <stdio.h>
-enum { LIB_SEARCH = 1, LIB_PRODUCTS, LIB_MAPS, LIB_STARTS, LIB_SKILL, LIB_LAUNCH, LIB_REFRESH, LIB_STATUS };
+enum { LIB_SEARCH = 1, LIB_PRODUCTS, LIB_MAPS, LIB_STARTS, LIB_SKILL, LIB_LAUNCH, LIB_REFRESH, LIB_STATUS, LIB_EXECUTION };
 static void select_product(qa_ui_library *menu, qa_product_id product) {
     menu->product = product;
     const qa_product *selected = qa_catalog_product(menu->catalog, product);
     menu->skill = selected && selected->family == QA_GAME_Q3 ? 2 : 1;
     menu->selected_map = 0;
+    menu->original = false;
     menu->dirty = true;
 }
 bool qa_ui_library_refresh(qa_ui_library *menu, qa_error *error) {
@@ -95,6 +96,10 @@ static bool launch(qa_ui_library *menu, qa_error *error) {
     qa_launch_draft *draft = NULL;
     const char *map = menu->maps[menu->selected_map].key;
     if (!qa_launch_draft_create(menu->catalog, menu->product, map, &draft, error)) return false;
+    if (menu->original && !qa_launch_select_original(draft, "native:primary", error)) {
+        qa_launch_draft_destroy(draft);
+        return false;
+    }
     qa_launch_world world = qa_launch_draft_choices(draft)->world;
     world.skill = menu->skill;
     if (menu->starts) {
@@ -153,6 +158,13 @@ static bool action(void *context, uint32_t seat, qa_ui_id control,
         menu->skill = (int32_t)event->value.row + (product && product->family == QA_GAME_Q3 ? 1 : 0);
         return true;
     }
+    if (control == LIB_EXECUTION && event->kind == QA_UI_SELECT) {
+        const qa_product *product = qa_catalog_product(menu->catalog, menu->product);
+        if (event->value.row > 1 || !product || !product->builtin || !product->program || !*product->program)
+            return ui_fail(error, "Original execution requires an installed original module");
+        menu->original = event->value.row != 0;
+        return true;
+    }
     if (event->kind == QA_UI_ACTIVATE && control == LIB_LAUNCH) return launch(menu, error);
     if (event->kind == QA_UI_ACTIVATE && control == LIB_REFRESH) return qa_ui_library_refresh(menu, error);
     return true;
@@ -161,7 +173,7 @@ static bool factory(void *context, uint32_t seat, qa_ui_menu *out, qa_error *err
     qa_ui_library *menu = context;
     (void)seat;
     if (!rows(menu, error)) return false;
-    for (size_t i = 0; i < 8; ++i)
+    for (size_t i = 0; i < 9; ++i)
         menu->controls[i] = (qa_ui_control){.id = i + 1, .kind = QA_UI_BUTTON,
             .enabled = true, .visible = true, .context = menu, .action = action};
     menu->controls[0].kind = QA_UI_FIELD; menu->controls[0].label = "Search games";
@@ -188,13 +200,20 @@ static bool factory(void *context, uint32_t seat, qa_ui_menu *out, qa_error *err
     menu->controls[4].value.choice.labels = q3 ? q3_skills : classic_skills;
     menu->controls[4].value.choice.count = q3 ? 5 : 4;
     menu->controls[4].value.choice.selected = (size_t)(menu->skill - (q3 ? 1 : 0));
-    menu->controls[5].label = "Start selected game"; menu->controls[5].enabled = menu->map_count != 0;
-    menu->controls[5].rect = (qa_scene_rect_f){40, 392, 350, 28};
+    menu->controls[5].label = "Start game"; menu->controls[5].enabled = menu->map_count != 0;
+    menu->controls[5].rect = (qa_scene_rect_f){230, 392, 160, 28};
     menu->controls[6].label = "Refresh content"; menu->controls[6].rect = (qa_scene_rect_f){400, 392, 200, 28};
     menu->controls[7].label = menu->status; menu->controls[7].enabled = false;
     menu->controls[7].rect = (qa_scene_rect_f){40, 432, 560, 32};
+    static const char *execution[] = {"Anthology", "Original"};
+    menu->controls[8].kind = QA_UI_CHOICE; menu->controls[8].label = "Gameplay";
+    menu->controls[8].rect = (qa_scene_rect_f){40, 392, 180, 28};
+    menu->controls[8].value.choice.labels = execution;
+    menu->controls[8].value.choice.count = 2;
+    menu->controls[8].value.choice.selected = menu->original || (product && product->program_kind != QA_PROGRAM_BUILTIN) ? 1 : 0;
+    menu->controls[8].enabled = product && product->builtin && product->program && *product->program;
     *out = (qa_ui_menu){.id = menu->menu, .title = "Games and maps", .controls = menu->controls,
-                        .count = 8, .fullscreen = true};
+                        .count = 9, .fullscreen = true};
     return true;
 }
 static void release_profiles(qa_ui_library *menu) {

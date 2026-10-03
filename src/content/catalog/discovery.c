@@ -756,7 +756,6 @@ bool catalog_has_path(qa_catalog *c, const catalog_product *p, const char *path,
 
 static bool program_metadata(qa_catalog *c, catalog_product *p, qa_error *error)
 {
-    if (p->view.builtin) return true;
     const char *paths[10]; size_t count = 0;
     if (p->view.family == QA_GAME_Q1) paths[count++] = p->view.edition == QA_EDITION_QUAKEWORLD ? "qwprogs.dat" : "progs.dat";
     else if (p->view.family == QA_GAME_Q3) paths[count++] = "vm/qagame.qvm";
@@ -770,10 +769,12 @@ static bool program_metadata(qa_catalog *c, catalog_product *p, qa_error *error)
         if (!catalog_has_path(c, p, paths[i], true, &found, error)) return false;
         if (!found) continue;
         p->view.program = catalog_string(c, paths[i], error);
-        p->view.program_kind = p->view.family == QA_GAME_Q1 ? QA_PROGRAM_QUAKEC : p->view.family == QA_GAME_Q3 ? QA_PROGRAM_QVM : QA_PROGRAM_NATIVE;
+        if (!p->view.builtin)
+            p->view.program_kind = p->view.family == QA_GAME_Q1 ? QA_PROGRAM_QUAKEC : p->view.family == QA_GAME_Q3 ? QA_PROGRAM_QVM : QA_PROGRAM_NATIVE;
         p->view.program_product = p->view.id;
         return p->view.program != NULL;
     }
+    if (p->view.builtin) return true;
     const qa_product *base = qa_catalog_product(c, p->view.base);
     if (base) {
         p->view.program = base->program; p->view.program_kind = base->program_kind;

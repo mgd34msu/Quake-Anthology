@@ -763,7 +763,7 @@ static bool q2_client_selection(const qa_launch_q2_client_metadata *request,
     if (!request || !request->instance || !*request->instance || !profile || !selected || !program ||
         profile->family != QA_GAME_Q2 || selected->family != QA_GAME_Q2 || program->family != QA_GAME_Q2 ||
         !profile->builtin || !program->builtin || profile->program_kind != QA_PROGRAM_BUILTIN ||
-        program->program_kind != QA_PROGRAM_BUILTIN || (profile->program && *profile->program) ||
+        program->program_kind != QA_PROGRAM_BUILTIN ||
         (profile->edition != QA_EDITION_CLASSIC && profile->edition != QA_EDITION_RERELEASE) ||
         profile->edition != selected->edition || profile->edition != program->edition ||
         !request->prepared || !qa_catalog_product_view_current(request->catalog, request->selected, request->prepared))
@@ -835,7 +835,7 @@ static bool client_profile_selection(const qa_launch_client_metadata *request,
         (profile->family == QA_GAME_Q3 && request->clock == QA_CLOCK_Q3));
     if (!request || !request->instance || !*request->instance || !profile || !selected || !program || !clock ||
         !profile->builtin || !program->builtin || profile->program_kind != QA_PROGRAM_BUILTIN ||
-        program->program_kind != QA_PROGRAM_BUILTIN || (profile->program && *profile->program) ||
+        program->program_kind != QA_PROGRAM_BUILTIN ||
         selected->family != profile->family || program->family != profile->family ||
         (profile->family == QA_GAME_Q2 && (selected->edition != profile->edition || program->edition != profile->edition)) ||
         !request->prepared || !qa_catalog_product_view_current(request->catalog, request->selected, request->prepared))

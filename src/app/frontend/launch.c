@@ -307,6 +307,10 @@ bool frontend_launch(qa_frontend *frontend, qa_error *error)
     bool created = qa_launch_draft_create(catalog, product->id, map, &draft, error);
     free(selected_map);
     if (!created) return false;
+    if (frontend->options.original && !qa_launch_select_original(draft, "native:primary", error)) {
+        qa_launch_draft_destroy(draft);
+        return false;
+    }
     if ((product->family == QA_GAME_Q1 || product->family == QA_GAME_Q2) && frontend->options.seats > 1 &&
         !frontend->options.dedicated) {
         const qa_launch_choices *choices = qa_launch_draft_choices(draft);

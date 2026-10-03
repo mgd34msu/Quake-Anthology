@@ -202,6 +202,7 @@ static bool fields(qa_source_save_io *io, qa_ui_library *saved,
         !qa_source_save_count(io, &saved->selected_product, SIZE_MAX) ||
         !qa_source_save_count(io, &saved->selected_map, SIZE_MAX) ||
         !qa_source_save_i32(io, &saved->skill) || !qa_source_save_bool(io, &saved->starts) ||
+        !qa_source_save_bool(io, &saved->original) ||
         !qa_source_save_bool(io, &saved->dirty) || !qa_source_save_u64(io, &saved->revision) ||
         !qa_source_save_bytes(io, saved->query, sizeof(saved->query)) || !memchr(saved->query, 0, sizeof(saved->query)) ||
         !qa_source_save_bytes(io, saved->status, sizeof(saved->status)) || !memchr(saved->status, 0, sizeof(saved->status)) ||

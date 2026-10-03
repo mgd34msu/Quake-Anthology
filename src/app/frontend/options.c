@@ -97,6 +97,7 @@ bool qa_frontend_options_parse(int argc, char *const argv[], qa_frontend_options
         if (*arg == '+') { if (!startup(argc, argv, &i, options, error)) goto fail; continue; }
         if (!strcmp(arg, "--menu")) { options->menu = true; continue; }
         if (!strcmp(arg, "--dedicated")) { options->dedicated = true; continue; }
+        if (!strcmp(arg, "--original")) { options->original = true; continue; }
         if (!strcmp(arg, "--hidden")) { options->display.hidden = true; continue; }
         if (!strcmp(arg, "--no-audio")) { options->audio = false; continue; }
         if (!strcmp(arg, "--list-content")) continue;
@@ -183,7 +184,7 @@ bool qa_frontend_options_parse(int argc, char *const argv[], qa_frontend_options
             else options->frame_limit = number;
         }
     }
-    if (!options->game && (options->map || options->map_game || options->movement || options->character || options->character_model || options->mod_count)) {
+    if (!options->game && (options->original || options->map || options->map_game || options->movement || options->character || options->character_model || options->mod_count)) {
         frontend_fail(error, QA_ERROR_ARGUMENT, "explicit source selections require --game"); goto fail;
     }
     if (options->dedicated && !options->game) { frontend_fail(error, QA_ERROR_ARGUMENT, "dedicated startup requires --game"); goto fail; }

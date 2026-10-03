@@ -14,6 +14,32 @@ static const char *start_map(const qa_product *p)
     return "maps/base1.bsp";
 }
 
+bool qa_launch_select_original(qa_launch_draft *d, const char *instance, qa_error *error)
+{
+    const qa_launch_provider *selected = d && instance ? launch_provider(&d->choices, instance) : NULL;
+    const qa_product *product = selected ? qa_catalog_product(d->catalog, selected->product) : NULL;
+    const qa_product *program = product ? qa_catalog_product(d->catalog, product->program_product) : NULL;
+    if (!selected || !product || *selected->component) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Original selection requires a selected primary provider");
+        return false;
+    }
+    if (!product->program || !*product->program) {
+        qa_error_set(error, QA_ERROR_NOT_FOUND, 0, "%s has no installed original module", product->key);
+        return false;
+    }
+    if (!program) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Original module lost its installed product");
+        return false;
+    }
+    qa_launch_provider provider = *selected;
+    provider.runtime = product->program_kind != QA_PROGRAM_BUILTIN ? product->program_kind :
+        product->family == QA_GAME_Q1 ? QA_PROGRAM_QUAKEC :
+        product->family == QA_GAME_Q2 ? QA_PROGRAM_NATIVE : QA_PROGRAM_QVM;
+    provider.implementation = program->key;
+    provider.artifact = product->program;
+    return qa_launch_set_provider(d, &provider, error);
+}
+
 bool launch_defaults(qa_launch_draft *d, qa_product_id product, const char *map, qa_error *error)
 {
     const qa_product *p = qa_catalog_product(d->catalog, product);
@@ -38,7 +64,8 @@ bool launch_defaults(qa_launch_draft *d, qa_product_id product, const char *map,
         ? (p->edition == QA_EDITION_RERELEASE ? QA_CLOCK_Q2_RERELEASE : QA_CLOCK_Q2_CLASSIC)
         : (p->edition == QA_EDITION_QUAKEWORLD ? QA_CLOCK_QUAKEWORLD : QA_CLOCK_NETQUAKE);
     qa_launch_provider provider = {.instance = "native:primary", .product = product,
-        .runtime = p->program_kind, .implementation = program->key, .artifact = p->program,
+        .runtime = p->program_kind, .implementation = program->key,
+        .artifact = p->program_kind == QA_PROGRAM_BUILTIN ? NULL : p->program,
         .clock = qa_clock_defaults(clock)};
     if (!qa_launch_set_provider(d, &provider, error)) return false;
     static const qa_launch_role world_roles[] = {QA_ROLE_ENTITIES, QA_ROLE_CAMPAIGN, QA_ROLE_TRANSITION,

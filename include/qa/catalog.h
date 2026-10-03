@@ -28,7 +28,8 @@ typedef struct qa_product {
     bool builtin;
     const char *const *requirements;
     size_t requirement_count;
-    /* External programs describe a package, never select built-in execution. */
+    /* Installed original artifact, independent of the default execution kind.
+     * Stock products default to built-in execution even when this is present. */
     const char *program;
     qa_program_kind program_kind;
     qa_product_id program_product;

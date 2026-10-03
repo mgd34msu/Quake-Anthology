@@ -32,7 +32,7 @@ typedef struct qa_frontend_options {
     unsigned seats;
     uint64_t frame_limit;
     float gamma;
-    bool dedicated, menu, audio;
+    bool dedicated, menu, audio, original;
     /* Actual installed backend/file resolver capabilities stay borrowed for
      * the frontend lifetime and any retained restore operation. */
     const struct qa_application_persistence_ops *persistence_services;

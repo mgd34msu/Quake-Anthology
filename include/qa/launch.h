@@ -148,6 +148,9 @@ const qa_launch_choices *qa_launch_draft_choices(const qa_launch_draft *);
 qa_catalog *qa_launch_draft_catalog(const qa_launch_draft *);
 bool qa_launch_set_world(qa_launch_draft *, const qa_launch_world *, qa_error *);
 bool qa_launch_set_provider(qa_launch_draft *, const qa_launch_provider *, qa_error *);
+/* Select this provider's installed original artifact while retaining its
+ * instance, content, clock and bindings. Missing stock originals fail. */
+bool qa_launch_select_original(qa_launch_draft *, const char *instance, qa_error *);
 bool qa_launch_remove_provider(qa_launch_draft *, const char *instance, qa_error *);
 bool qa_launch_bind(qa_launch_draft *, const qa_launch_binding *, qa_error *);
 bool qa_launch_unbind(qa_launch_draft *, qa_launch_scope, qa_launch_role,
