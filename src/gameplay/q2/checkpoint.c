@@ -41,8 +41,7 @@ bool q2_checkpoint_idle(qa_q2_game *g, qa_error *e) {
 bool qa_q2_runtime_capture(qa_q2_game *g, qa_q2_runtime_checkpoint *out, qa_error *e) {
     if (g == NULL || out == NULL || !q2_checkpoint_idle(g, e))
         return false;
-    *out = (qa_q2_runtime_checkpoint){.version = 5,
-                                      .edition = g->options.edition,
+    *out = (qa_q2_runtime_checkpoint){.edition = g->options.edition,
                                       .product = g->options.product,
                                       .definition_count = g->definition_count,
                                       .arsenal_rules = g->arsenal_rules,
@@ -68,7 +67,8 @@ bool qa_q2_runtime_capture(qa_q2_game *g, qa_q2_runtime_checkpoint *out, qa_erro
     return true;
 }
 bool qa_q2_runtime_restore(qa_q2_game *g, const qa_q2_runtime_checkpoint *state, qa_error *e) {
-    if (g == NULL || state == NULL || state->version != 5 || state->edition != g->options.edition ||
+    if (g == NULL || state == NULL ||
+        state->edition != g->options.edition ||
         state->product != g->options.product || state->widow_shot_phase >= 4 ||
         state->definition_count != g->definition_count ||
         state->definition_count >= QA_Q2_WEAPON_COUNT ||
@@ -111,8 +111,7 @@ bool qa_q2_actor_capture(qa_q2_game *g, qa_actor_id id, qa_q2_actor_checkpoint *
     if (a == NULL)
         return false;
     const q2_projectile *p = &a->projectile;
-    qa_q2_actor_checkpoint snapshot = {.version = 7,
-                                       .source_order = a->source_order,
+    qa_q2_actor_checkpoint snapshot = {.source_order = a->source_order,
                                        .extra_effects = a->extra_effects,
                                        .combat_surprise_ns = a->combat_surprise_ns,
                                        .character_birth_epoch = a->character_birth_epoch,
@@ -207,7 +206,8 @@ static bool valid_resource(qa_q2_game *g, qa_string_id id) {
 }
 bool qa_q2_actor_restore(qa_q2_game *g, qa_actor_id id, const qa_q2_actor_checkpoint *s,
                          qa_error *e) {
-    if (g == NULL || s == NULL || s->version != 7 || s->source_order == 0 || s->silencer < 0 ||
+    if (g == NULL || s == NULL ||
+        s->source_order == 0 || s->silencer < 0 ||
         (!s->weapon_bound && (s->weapon_turn.attack || s->weapon_turn.latched_attack ||
                              s->weapon_turn.weapon_thunk || s->weapon_turn.firing_weapon != QA_Q2_WEAPON_NONE)) ||
         !isfinite(s->weapon_turn.firing_credit) || s->weapon_turn.firing_credit < 0 ||

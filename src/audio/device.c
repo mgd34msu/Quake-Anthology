@@ -1126,10 +1126,10 @@ static bool saved_device_fields(qa_source_save_io *io,qa_audio_device *device,
     bool *attached,bool *current_engine,qa_bytes *conversion)
 {
     bool reading=io->direction==QA_SOURCE_SAVE_READ;
-    uint8_t magic[4]={'Q','A','D','V'}; uint32_t version=2,channels=device->options.format.channels,
+    uint8_t magic[4]={'Q','A','D','V'}; uint32_t channels=device->options.format.channels,
         bits=device->options.format.sample_bits,buffer=device->options.buffer_frames;
     if (!qa_source_save_bytes(io,magic,sizeof(magic)) || memcmp(magic,"QADV",4) ||
-        !qa_source_save_u32(io,&version) || version!=2 || !qa_source_save_bool(io,attached) ||
+        !qa_source_save_bool(io,attached) ||
         !qa_source_save_u32(io,&device->options.format.sample_rate) || !qa_source_save_u32(io,&channels) ||
         !qa_source_save_u32(io,&bits) || !qa_source_save_u32(io,&buffer) ||
         !qa_source_save_count(io,&device->options.maximum_queued_frames,SIZE_MAX) ||

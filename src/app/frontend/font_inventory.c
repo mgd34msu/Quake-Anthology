@@ -198,9 +198,8 @@ static bool fields(qa_source_save_io *io, qa_frontend *frontend, frontend_scene_
     const font_owner *owners, size_t count)
 {
     bool reading=io->direction==QA_SOURCE_SAVE_READ;
-    uint8_t magic[4]={'Q','F','F','O'}; uint32_t schema=6; size_t saved_count=count;
-    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QFFO",4) || !qa_source_save_u32(io,&schema) || schema!=6 ||
-        !qa_source_save_count(io,&saved_count,SIZE_MAX) || saved_count!=count) return false;
+    uint8_t magic[4]={'Q','F','F','O'}; size_t saved_count=count;
+    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QFFO",4) || !qa_source_save_count(io,&saved_count,SIZE_MAX) || saved_count!=count) return false;
     qa_application_content_graph *graph=qa_application_content_graph_read(frontend->application);
     for (size_t i=0;i<count;++i) {
         if (!metadata(io,owners+i)) return false;

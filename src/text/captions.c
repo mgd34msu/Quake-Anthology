@@ -697,7 +697,7 @@ static bool timeline_fields(qa_source_save_io *io, qa_captions *timeline,
     const qa_caption_library *library, const qa_localization_pool *pool)
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ; uint32_t seat = timeline->seat; uint64_t catalog = 0;
-    if (!qa_text_save_header_version(io, "QCTM",2) || !qa_source_save_u32(io, &seat) || seat != timeline->seat) return false;
+    if (!qa_text_save_header(io, "QCTM") || !qa_source_save_u32(io, &seat) || seat != timeline->seat) return false;
     if (!reading && !qa_localization_pool_catalog_key(pool, timeline->localization, &catalog)) return false;
     if (!qa_source_save_u64(io, &catalog)) return false;
     if (reading) {

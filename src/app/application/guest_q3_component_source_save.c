@@ -104,9 +104,9 @@ static bool publication(qa_source_save_io *io,application_q3_component_source *s
 }
 static bool fields(qa_source_save_io *io,application_q3_component_source *s)
 {
-    uint8_t magic[4]={'Q','G','C','S'},expected[4]={'Q','G','C','S'}; uint32_t version=1;
+    uint8_t magic[4]={'Q','G','C','S'},expected[4]={'Q','G','C','S'};
     uint64_t owner=s->options.owner,generation=s->options.generation;
-    if(!qa_source_save_bytes(io,magic,4)||memcmp(magic,expected,4)||!qa_source_save_u32(io,&version)||version!=1||
+    if(!qa_source_save_bytes(io,magic,4)||memcmp(magic,expected,4)||
         !qa_source_save_u64(io,&owner)||owner!=s->options.owner||!qa_source_save_u64(io,&generation)||generation!=s->options.generation||
         !qa_source_save_i64(io,&s->revision)||s->revision<0||!qa_source_save_i64(io,&s->game_state_revision)||s->game_state_revision<0||
         !qa_source_save_i32(io,&s->time_ms)||s->time_ms<0||!qa_source_save_i32(io,&s->command_sequence)||s->command_sequence<0||

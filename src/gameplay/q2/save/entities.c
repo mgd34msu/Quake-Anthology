@@ -67,7 +67,7 @@ static bool state(q2_save_io *io, qa_q2_entity_state *s) {
     Q2I(animation_first); Q2I(animation_end); Q2I(clock_value); Q2U(scenery); return true;
 }
 bool q2_save_entity(q2_save_io *io, qa_q2_entity_checkpoint *s) {
-    Q2U(version); Q2B(present);
+    Q2B(present);
     if (s->present && !state(io, &s->value)) return false;
     Q2R(activator); Q2R(owner); Q2R(enemy); Q2R(goal); Q2R(collision_owner);
     Q2R(master); Q2R(next); Q2R(destination); Q2R(turret_breach); return true;
@@ -78,7 +78,7 @@ static bool campaign_level(q2_save_io *io, qa_q2_campaign_level *s) {
     return true;
 }
 bool q2_save_entities(q2_save_io *io, qa_q2_entities_checkpoint *s) {
-    Q2U(version); Q2R(poi); Q2R(poi_dynamic); Q2N(poi_image); Q2N(story);
+    Q2R(poi); Q2R(poi_dynamic); Q2N(poi_image); Q2N(story);
     Q2I(poi_stage); Q2I(steam_id); Q2I(total_secrets); Q2I(found_secrets);
     Q2I(total_goals); Q2I(found_goals); Q2T(last_autosave_ns);
     for (size_t i = 0; i < 2; ++i) {

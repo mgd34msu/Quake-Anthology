@@ -70,9 +70,8 @@ static bool blob(qa_source_save_io *io,qa_buffer *b)
 static bool fields(qa_source_save_io *io,q3n_mission_hud *o)
 {
     const char *signature=o->options.compiled_source?"Q3HC":o->options.remote_client?"Q3HU":"Q3MH";
-    uint8_t magic[4]; memcpy(magic,signature,4); uint32_t version=2,seat=o->options.seat;
-    if(!qa_source_save_bytes(io,magic,4)||memcmp(magic,signature,4)||!qa_source_save_u32(io,&version)||version!=2||
-        !qa_source_save_u32(io,&seat)||seat!=o->options.seat||
+    uint8_t magic[4]; memcpy(magic,signature,4); uint32_t seat=o->options.seat;
+    if(!qa_source_save_bytes(io,magic,4)||memcmp(magic,signature,4)||!qa_source_save_u32(io,&seat)||seat!=o->options.seat||
         !q3nh_remote_basis_fields(io,o->options.remote_client)||
         (o->options.compiled_source&&!q3n_compiled_source_fields(io,o->options.compiled_source)))return false;
     qa_buffer menus={0}; bool ok=true;

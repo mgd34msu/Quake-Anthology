@@ -297,7 +297,6 @@ typedef struct qa_script_condition_state {
     uint8_t bytes[16];
 } qa_script_condition_state;
 typedef struct qa_script_checkpoint {
-    uint32_t version;
     qa_script_options options; /* globals is always NULL; macros are captured. */
     const char *date, *time;
     const qa_script_macro_state *macros;
@@ -328,7 +327,7 @@ bool qa_script_restore(const qa_script_services *, const qa_script_checkpoint *,
 bool qa_script_restore_detached(const qa_script_services *, const qa_script_checkpoint *,
                                 qa_script **, qa_error *);
 void qa_script_checkpoint_free(qa_script_checkpoint *);
-/* Canonical, versioned little-endian encoding. Both leave output unchanged on
+/* Canonical little-endian encoding. Both leave output unchanged on
  * failure. Release existing output before success replaces it. Decoded spans
  * belong to the checkpoint, independently of the encoded input. */
 bool qa_script_checkpoint_encode(const qa_script_checkpoint *, qa_buffer *, qa_error *);

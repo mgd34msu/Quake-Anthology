@@ -201,7 +201,6 @@ bool qa_q2_monsters_capture(qa_q2_game *game,
 
   q2_monsters_runtime *runtime = game->monster_runtime;
   qa_q2_monsters_checkpoint saved = {
-      .version = 1,
       .sight_time_ns = runtime->sight_time_ns,
       .last_frame_ns = runtime->last_frame_ns,
       .began_frame = runtime->began_frame,
@@ -281,7 +280,6 @@ bool qa_q2_monsters_restore(qa_q2_game *game,
                             const qa_q2_monsters_checkpoint *saved,
                             qa_error *error) {
   if (game == NULL || saved == NULL || game->monster_runtime == NULL ||
-      saved->version != 1 ||
       (saved->trail_count != 0 && saved->trails == NULL) ||
       (saved->alert_count != 0 && saved->alerts == NULL) ||
       saved->trail_count > SIZE_MAX / sizeof(q2m_player_trail) ||

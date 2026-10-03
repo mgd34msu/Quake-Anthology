@@ -160,7 +160,7 @@ bool qa_network_q1_client_checkpoint_peer(const qa_network_peer *peer, qa_buffer
         if (!bytes.data) { qa_error_set(e, QA_ERROR_MEMORY, 0, "Encoding Q1 CLIENT continuation"); ok = false; }
         else qa_net_writer_init(&w,bytes.data,capacity,e);
     }
-    if (ok) ok = qa_net_write_u32(&w,UINT32_C(0x4c314151)) && qa_net_write_u32(&w,2) &&
+    if (ok) ok = qa_net_write_u32(&w,UINT32_C(0x4c314151)) &&
         write_policy(&w,&c->policy) && write_protocol(&w,c->protocol) && write_protocol(&w,c->before_protocol) &&
         qa_net_write_u8(&w,c->started) && qa_net_write_u8(&w,c->held) &&
         qa_net_write_u8(&w,c->active) && qa_net_write_u8(&w,c->retiring) && qa_net_write_u8(&w,c->has_delta) &&
@@ -184,7 +184,7 @@ bool qa_network_q1_client_restore_peer(qa_network_runtime *runtime, const qa_net
     if (!runtime || !client || !policy || !hooks || !out || out->state || !bytes.data)
         return qa_network_fail(e, "Q1 CLIENT restore requires actual empty candidate source admission");
     qa_net_reader r; qa_net_reader_init(&r,bytes,e);
-    if (qa_net_read_u32(&r) != UINT32_C(0x4c314151) || qa_net_read_u32(&r) != 2 || !read_policy(&r,policy))
+    if (qa_net_read_u32(&r) != UINT32_C(0x4c314151) || !read_policy(&r,policy))
         return qa_net_reader_fail(&r,"Invalid Q1 CLIENT continuation schema or policy");
     qa_net_protocol_id protocol=read_protocol(&r), before=read_protocol(&r);
     uint8_t started=qa_net_read_u8(&r), held=qa_net_read_u8(&r), active=qa_net_read_u8(&r), retiring=qa_net_read_u8(&r), delta=qa_net_read_u8(&r);

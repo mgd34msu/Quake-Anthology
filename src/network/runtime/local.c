@@ -107,7 +107,7 @@ bool qa_network_local_checkpoint_peer(const qa_network_peer *peer,const qa_netwo
     if(!refs->save_actor(refs->context,local->player.actor,&actor,error)) return false;
     uint8_t *bytes=malloc(32); if(!bytes) { qa_error_set(error,QA_ERROR_MEMORY,0,"Saving local Source connection"); return false; }
     qa_net_writer writer; qa_net_writer_init(&writer,bytes,32,error);
-    bool ok=qa_net_write_u32(&writer,UINT32_C(0x4c4e4151)) && qa_net_write_u32(&writer,1) &&
+    bool ok=qa_net_write_u32(&writer,UINT32_C(0x4c4e4151)) &&
         qa_net_write_u64(&writer,actor.generation) && qa_net_write_u32(&writer,actor.slot) &&
         qa_net_write_u32(&writer,local->player.source_slot);
     if(!ok) { free(bytes); return false; }
@@ -119,7 +119,7 @@ bool qa_network_local_restore_peer(qa_network_runtime *runtime,const qa_net_clie
     if(!runtime || !client || client->attachment!=QA_NET_LOCAL_SEAT || client->seat_count!=1 || !refs ||
         !refs->source_local || !refs->restore_actor) return false;
     qa_net_reader reader; qa_net_reader_init(&reader,bytes,error);
-    if(qa_net_read_u32(&reader)!=UINT32_C(0x4c4e4151) || qa_net_read_u32(&reader)!=1) return false;
+    if(qa_net_read_u32(&reader)!=UINT32_C(0x4c4e4151)) return false;
     qa_saved_actor_id saved={.generation=qa_net_read_u64(&reader),.slot=qa_net_read_u32(&reader)};
     uint32_t slot=qa_net_read_u32(&reader); qa_actor_id actor; qa_network_local_hooks hooks;
     if(reader.failed || qa_net_reader_remaining(&reader) || !refs->restore_actor(refs->context,saved,&actor,error) ||

@@ -419,9 +419,8 @@ static bool equal_count(qa_source_save_io *io,size_t expected)
 }
 static bool header(qa_source_save_io *io,const frontend_q3_inventory *inventory)
 {
-    uint8_t magic[4]={'Q','F','Q','3'}; uint32_t version=10;
-    return qa_source_save_bytes(io,magic,4) && !memcmp(magic,"QFQ3",4) &&
-        qa_source_save_u32(io,&version) && version==10 && equal_count(io,inventory->group_count) &&
+    uint8_t magic[4]={'Q','F','Q','3'}; return qa_source_save_bytes(io,magic,4) && !memcmp(magic,"QFQ3",4) &&
+        equal_count(io,inventory->group_count) &&
         equal_count(io,inventory->registry_count) && equal_count(io,inventory->presentation_count) &&
         equal_count(io,inventory->media_count);
 }

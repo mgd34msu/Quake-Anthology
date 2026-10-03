@@ -331,7 +331,7 @@ static bool gl_saved_surface_fields(qa_source_save_io *io,gl_saved_surface *surf
         (!(expected&4) && surface->stencil.size))) return false;
     return true;
 }
-static bool gl_saved_caps(qa_source_save_io *io,qa_gl_capabilities *caps,uint32_t version)
+static bool gl_saved_caps(qa_source_save_io *io,qa_gl_capabilities *caps)
 {
     uint32_t color=caps->color_bits,alpha=caps->alpha_bits,depth=caps->depth_bits,stencil=caps->stencil_bits;
     if (!qa_source_save_u32(io,&color) || color>128 || !qa_source_save_u32(io,&alpha) || alpha>32 ||
@@ -341,7 +341,7 @@ static bool gl_saved_caps(qa_source_save_io *io,qa_gl_capabilities *caps,uint32_
         !qa_source_save_u32(io,&caps->vertex_attributes) || caps->vertex_attributes<5 ||
         !qa_source_save_bool(io,&caps->stereo) || !qa_source_save_bool(io,&caps->floating_depth) ||
         !qa_source_save_bool(io,&caps->compiled_vertex_arrays)) return false;
-    if (version>=17 && !qa_source_save_bool(io,&caps->s3tc)) return false;
+    if (!qa_source_save_bool(io,&caps->s3tc)) return false;
     caps->color_bits=color; caps->alpha_bits=alpha; caps->depth_bits=depth; caps->stencil_bits=stencil;
     char *strings[4]={caps->vendor,caps->renderer,caps->version,caps->shading_language};
     for (size_t i=0;i<4;++i)
@@ -417,11 +417,10 @@ static bool gl_saved_private_fields(qa_source_save_io *io,qa_gl_renderer *render
     const qa_render_checkpoint_refs *refs,const qa_gl_options *installed,const qa_gl_renderer *active)
 {
     bool reading=io->direction==QA_SOURCE_SAVE_READ;
-    uint8_t magic[4]={'Q','G','L','R'}; uint32_t version=21,draw=renderer->draw_buffer;
-    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QGLR",4) || !qa_source_save_u32(io,&version) || version<4 || version>21 ||
-        !qa_render_controls_saved_fields(io,&renderer->controls,version,refs) ||
+    uint8_t magic[4]={'Q','G','L','R'}; uint32_t draw=renderer->draw_buffer;
+    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QGLR",4) || !qa_render_controls_saved_fields(io,&renderer->controls,refs) ||
         !qa_source_save_u64(io,&renderer->options.owner) || !qa_source_save_u32(io,&saved->width) ||
-        !qa_source_save_u32(io,&saved->height) || !gl_saved_caps(io,&renderer->capabilities,version) ||
+        !qa_source_save_u32(io,&saved->height) || !gl_saved_caps(io,&renderer->capabilities) ||
         !qa_source_save_u32(io,&draw) || draw>QA_DRAW_BACK_RIGHT ||
         (draw==QA_DRAW_BACK_RIGHT && !renderer->capabilities.stereo) ||
         !qa_source_save_f32(io,&renderer->gamma) || !isfinite(renderer->gamma) || renderer->gamma<=0 ||
@@ -432,24 +431,19 @@ static bool gl_saved_private_fields(qa_source_save_io *io,qa_gl_renderer *render
     if (!gl_save_extent(saved->width,saved->height,&size,io->error) ||
         (renderer->presented && (renderer->presented_width!=saved->width || renderer->presented_height!=saved->height))) return false;
     renderer->draw_buffer=(qa_scene_draw_buffer)draw;
-    if (version>=5 && !qa_output_domains_codec(io,&renderer->output_domains,saved->width,saved->height)) return false;
-    if (version>=6) {
+    if (!qa_output_domains_codec(io,&renderer->output_domains,saved->width,saved->height)) return false;
+    {
         if (!render_save_pipeline(io,&renderer->pipeline)) return false;
-    } else if (reading) qa_scene_state_default(&renderer->pipeline);
-    if (version>=13) {
+    } {
         if (!qa_source_save_f32(io,&renderer->clear_depth) || !isfinite(renderer->clear_depth) ||
             renderer->clear_depth<0 || renderer->clear_depth>1) return false;
-    } else if (reading) renderer->clear_depth=1;
-    if (version>=11) {
+    } {
         if (!qa_source_save_bool(io,&renderer->preblend_gamma)) return false;
-    } else if (reading) renderer->preblend_gamma=false;
-    if (version>=14) {
+    } {
         if (!qa_source_save_bool(io,&renderer->source_frame)) return false;
-    } else if (reading) renderer->source_frame=false;
-    if (version>=12 && (!qa_source_save_u32(io,&renderer->source_image_count) ||
+    } if ((!qa_source_save_u32(io,&renderer->source_image_count) ||
         renderer->source_image_count>GL_SOURCE_IMAGES_QA)) return false;
     if (reading) {
-        if (version<17 && active) renderer->capabilities.s3tc=active->capabilities.s3tc;
         if (!installed || !active || installed->owner!=renderer->options.owner || !installed->display ||
             !gl_caps_equal(&renderer->capabilities,&active->capabilities)) return false;
         renderer->options.display=installed->display;
@@ -513,7 +507,7 @@ static bool gl_saved_private_fields(qa_source_save_io *io,qa_gl_renderer *render
             *texture_tail=texture; texture_tail=&texture->next; *entry_tail=entry; entry_tail=&entry->next; texture->entry=entry;
         }
         if (!texture || !render_save_image(io,refs,&texture->entry->image) || !texture->entry->image) return false;
-        if (version>=12) {
+        {
             gl_texture_entry *entry=texture->entry;
             if (!qa_source_save_bool(io,&entry->source_admitted) ||
                 !qa_source_save_u32(io,&entry->source_ordinal)) return false;
@@ -529,46 +523,41 @@ static bool gl_saved_private_fields(qa_source_save_io *io,qa_gl_renderer *render
                     entry->source_owner!=qa_scene_image_resource_owner(entry->image)) return false;
             } else if (entry->source_ordinal) return false;
         }
-        if (version>=17 && texture->entry->source_admitted &&
-            !qa_render_source_texture_saved_fields(io,&texture->entry->source_texture,version,refs)) return false;
-        size_t expected_count=version>=17 && texture->entry->source_admitted?
+        if (texture->entry->source_admitted && !qa_render_source_texture_saved_fields(io,&texture->entry->source_texture,refs)) return false;
+        size_t expected_count=texture->entry->source_admitted?
             texture->entry->source_texture.count:texture->entry->image->level_count;
         if (!qa_source_save_count(io,&texture->count,(size_t)INT_MAX) || texture->count!=expected_count ||
-            (!texture->count && (version<17 || !texture->entry->source_admitted)) ||
+            (!texture->count && (!texture->entry->source_admitted)) ||
             texture->count>SIZE_MAX/sizeof(gl_saved_level)) return false;
         if (reading) {
             texture->levels=texture->count?calloc(texture->count,sizeof(*texture->levels)):NULL;
             if (texture->count && !texture->levels) return gl_save_error(io->error,QA_ERROR_MEMORY,"Restoring GPU image mip-level continuation");
         }
         for (size_t j=0;j<texture->count;++j) {
-            const qa_scene_image *descriptor=version>=17 && texture->entry->source_admitted?
+            const qa_scene_image *descriptor=texture->entry->source_admitted?
                 texture->entry->source_texture.images[j]:texture->entry->image;
-            const qa_scene_image_level *image=version>=17 && texture->entry->source_admitted?
+            const qa_scene_image_level *image=texture->entry->source_admitted?
                 texture->entry->source_texture.levels+j:descriptor->levels+j;
             if (!gl_saved_level_fields(io,texture->levels+j) || texture->levels[j].width!=image->width ||
                 texture->levels[j].height!=image->height || texture->levels[j].depth!=
-                    ((version>=17 && texture->entry->source_admitted?texture->entry->source_texture.kinds[j]:
+                    ((texture->entry->source_admitted?texture->entry->source_texture.kinds[j]:
                         descriptor->kind)==QA_SCENE_DEPTH32F)) return false;
         }
         for (size_t j=0;j<6;++j) if (!qa_source_save_i32(io,texture->parameters+j)) return false;
         qa_scene_filter actual_filter; bool linear_magnification;
         if (!gl_saved_filter(texture->parameters[0],texture->parameters[1],&actual_filter,&linear_magnification)) return false;
         if (reading) texture->entry->source_filter=actual_filter;
-        if (version>=17 && texture->entry->source_admitted) {
+        if (texture->entry->source_admitted) {
             qa_render_source_texture *actual=&texture->entry->source_texture;
-            if (actual->filter!=actual_filter || (version>=19 && actual->magnification_linear!=linear_magnification)) return false;
-            if (reading && version<19) actual->magnification_linear=linear_magnification;
-        }
-        if (reading && version<17 && texture->entry->source_admitted &&
-            !qa_render_source_texture_upload(&texture->entry->source_texture,texture->entry->image,
-                texture->entry->source_owner,texture->entry->source_filter,io->error)) return false;
+            if (actual->filter!=actual_filter || (actual->magnification_linear!=linear_magnification)) return false;
+            }
         for (gl_saved_texture *prior=saved->textures;prior!=texture;prior=prior->next)
             if (prior->entry->image==texture->entry->image ||
                 (prior->entry->image->identity==texture->entry->image->identity && prior->entry->image->revision==texture->entry->image->revision)) return false;
         texture=texture->next;
     }
     for (uint32_t i=0;i<renderer->source_image_count;++i) if (!renderer->source_images[i]) return false;
-    if (version>=17) {
+    {
         gl_saved_texture *zero=&saved->zero_texture;
         if (!qa_source_save_count(io,&zero->count,QA_SOURCE_TEXTURE_LEVELS) ||
             zero->count!=renderer->controls.zero_texture.count) return false;
@@ -586,13 +575,10 @@ static bool gl_saved_private_fields(qa_source_save_io *io,qa_gl_renderer *render
         qa_scene_filter actual_filter; bool linear_magnification;
         if (!gl_saved_filter(zero->parameters[0],zero->parameters[1],&actual_filter,&linear_magnification) ||
             actual_filter!=renderer->controls.zero_texture.filter ||
-            (version>=19 && linear_magnification!=renderer->controls.zero_texture.magnification_linear) ||
+            (linear_magnification!=renderer->controls.zero_texture.magnification_linear) ||
             zero->parameters[2]!=(renderer->controls.zero_texture.wrap==QA_SCENE_REPEAT?GL_REPEAT:GL_CLAMP) ||
             zero->parameters[3]!=zero->parameters[2] || zero->parameters[4]!=1000 || zero->parameters[5]!=GL_NONE) return false;
-        if (reading && version<19) renderer->controls.zero_texture.magnification_linear=linear_magnification;
-    } else if (reading) {
-        gl_saved_zero_defaults(&saved->zero_texture);
-    }
+        }
     count=0; gl_saved_mesh *mesh=saved->meshes,**mesh_tail=&saved->meshes;
     if (!reading) for (;mesh;mesh=mesh->next) ++count;
     if (!qa_source_save_count(io,&count,SIZE_MAX/sizeof(gl_saved_mesh))) return false;

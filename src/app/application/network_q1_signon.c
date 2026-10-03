@@ -176,9 +176,8 @@ bool application_q1_signon_capture(qa_application *app, qa_buffer *out, qa_error
     if (!app || !app->session || !out || !qa_session_safe(app->session))
         return application_fail(error, QA_ERROR_ARGUMENT, "Q1 signon capture requires its idle application");
     qa_source_save_io io; if (!qa_source_save_writer(&io, app->session, error)) return false;
-    uint32_t version = 1; size_t count = app->q1_signon ? app->q1_signon->count : 0;
-    bool ok = qa_source_save_bytes(&io, "QAQS", 4) && qa_source_save_u32(&io, &version) &&
-        qa_source_save_count(&io, &count, SIZE_MAX);
+    size_t count = app->q1_signon ? app->q1_signon->count : 0;
+    bool ok = qa_source_save_bytes(&io, "QAQS", 4) && qa_source_save_count(&io, &count, SIZE_MAX);
     for (size_t i = 0; ok && i < count; ++i)
         ok = record_valid(app, &app->q1_signon->records[i], error) && record_fields(&io, &app->q1_signon->records[i]);
     if (ok) ok = qa_source_save_finish(&io, out);
@@ -189,11 +188,10 @@ bool application_q1_signon_restore(qa_application *app, qa_bytes bytes, qa_error
     if (!app || !app->session || !qa_session_safe(app->session) || app->q1_signon)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q1 signon restore requires an empty isolated application owner");
     qa_source_save_io io; if (!qa_source_save_reader(&io, app->session, bytes, error)) return false;
-    uint8_t magic[4]; uint32_t version = 0; size_t count = 0;
-    size_t maximum = bytes.size >= 16 ? (bytes.size - 16) / 104 : 0;
+    uint8_t magic[4]; size_t count = 0;
+    size_t maximum = bytes.size >= 12 ? (bytes.size - 12) / 104 : 0;
     if (maximum > SIZE_MAX / sizeof(application_q1_signon_record)) maximum = SIZE_MAX / sizeof(application_q1_signon_record);
     bool ok = qa_source_save_bytes(&io, magic, 4) && !memcmp(magic, "QAQS", 4) &&
-        qa_source_save_u32(&io, &version) && version == 1 &&
         qa_source_save_count(&io, &count, maximum);
     struct application_q1_signon *owner = NULL;
     if (ok && count) {

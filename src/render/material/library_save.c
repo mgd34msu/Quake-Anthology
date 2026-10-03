@@ -84,7 +84,7 @@ static bool catalog_source_index(const qa_material_library *library, const qa_ma
     return false;
 }
 static bool catalog_sources(qa_source_save_io *io, qa_material_library *library,
-    const qa_material_library_checkpoint_refs *refs, uint32_t schema)
+    const qa_material_library_checkpoint_refs *refs)
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
     size_t count = 0;
@@ -101,7 +101,7 @@ static bool catalog_sources(qa_source_save_io *io, qa_material_library *library,
             library->catalog_tail = entry;
         }
         bool external = entry->resource != NULL;
-        if (schema >= 2) {
+        {
             uint32_t family = entry->dependency_family;
             if (!qa_source_save_bool(io, &entry->dependency_scope) ||
                 !qa_source_save_u32(io, &family) || family > QA_SCENE_Q3 ||
@@ -368,11 +368,10 @@ bool qa_material_library_catalog_checkpoint(const qa_material_library *source,
     qa_source_save_io io = {0};
     qa_material_library state = *source;
     uint8_t magic[4] = {'Q', 'A', 'M', 'C'};
-    uint32_t version = 2;
     bool video = source->video_required;
     bool ok = qa_source_save_writer(&io, NULL, error) && qa_source_save_bytes(&io, magic, sizeof(magic)) &&
-        qa_source_save_u32(&io, &version) && qa_source_save_bool(&io, &video) &&
-        builtin_fields(&io, &state, NULL, refs) && catalog_sources(&io, &state, refs, version) &&
+        qa_source_save_bool(&io, &video) &&
+        builtin_fields(&io, &state, NULL, refs) && catalog_sources(&io, &state, refs) &&
         script_catalog(&io, &state, NULL) && qa_source_save_finish(&io, out);
     qa_source_save_dispose(&io);
     qa_material_library_capture_end(source);
@@ -387,11 +386,9 @@ bool qa_material_library_catalog_restore(qa_scene_resources *resources, qa_bytes
     qa_material_library *library = qa_material_library_create_detached(resources, error);
     if (!library) return false;
     qa_source_save_io io = {0};
-    uint8_t magic[4] = {0}; uint32_t version = 0;
-    bool ok = qa_source_save_reader(&io, NULL, bytes, error) && qa_source_save_bytes(&io, magic, sizeof(magic)) &&
-        !memcmp(magic, "QAMC", sizeof(magic)) && qa_source_save_u32(&io, &version) && version >= 1 && version <= 2 &&
-        qa_source_save_bool(&io, &library->video_required) && builtin_fields(&io, library, NULL, refs) &&
-        catalog_sources(&io, library, refs, version) && script_catalog(&io, library, NULL) && qa_source_save_finish(&io, NULL);
+    uint8_t magic[4] = {0}; bool ok = qa_source_save_reader(&io, NULL, bytes, error) && qa_source_save_bytes(&io, magic, sizeof(magic)) &&
+        !memcmp(magic, "QAMC", sizeof(magic)) && qa_source_save_bool(&io, &library->video_required) && builtin_fields(&io, library, NULL, refs) &&
+        catalog_sources(&io, library, refs) && script_catalog(&io, library, NULL) && qa_source_save_finish(&io, NULL);
     qa_source_save_dispose(&io);
     if (ok) { library->catalog_ready = true; *out = library; }
     else {
@@ -401,18 +398,14 @@ bool qa_material_library_catalog_restore(qa_scene_resources *resources, qa_bytes
     return ok;
 }
 static bool library_header(qa_source_save_io *io, qa_material_library *library, const qa_material_library *qualified,
-    const qa_material_library_checkpoint_refs *refs, uint32_t *schema)
+    const qa_material_library_checkpoint_refs *refs)
 {
-    uint8_t magic[4] = {'Q', 'A', 'M', 'L'}; uint32_t version = 10;
-    bool reading = io->direction == QA_SOURCE_SAVE_READ, video = library->video_required;
+    uint8_t magic[4] = {'Q', 'A', 'M', 'L'}; bool reading = io->direction == QA_SOURCE_SAVE_READ, video = library->video_required;
     if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "QAML", 4) ||
-        !qa_source_save_u32(io, &version) || (version < 3 || version > 10) || !qa_source_save_bool(io, &video) ||
+        !qa_source_save_bool(io, &video) ||
         (reading && video != qualified->video_required)) return false;
-    *schema = version;
     if (reading) library->video_required = video;
-    if (version >= 6) {
-        if (!qa_source_save_bool(io, &library->source_profile)) return false;
-    } else if (reading) library->source_profile = false;
+    if (!qa_source_save_bool(io, &library->source_profile)) return false;
     qa_material_profile *p = &library->profile;
     if (!qa_source_save_bool(io, &p->detail_textures) || !qa_source_save_bool(io, &p->vertex_lighting) ||
         !qa_source_save_bool(io, &p->ui_fullscreen) || !qa_source_save_bool(io, &p->permedia2) ||
@@ -568,9 +561,8 @@ bool qa_material_library_checkpoint(const qa_material_library *source, const qa_
         return error && error->code != QA_OK ? false : fail(error, QA_ERROR_FORMAT, "invalid material library ownership graph");
     }
     qa_source_save_io io = {0}; qa_material_library library = *source;
-    uint32_t schema = 0;
     size_t count = source->count, capacity = source->capacity;
-    bool ok = qa_source_save_writer(&io, NULL, error) && library_header(&io, &library, source, refs, &schema) &&
+    bool ok = qa_source_save_writer(&io, NULL, error) && library_header(&io, &library, source, refs) &&
         qa_source_save_count(&io, &count, QA_MATERIAL_MAX_REGISTERED) &&
         qa_source_save_count(&io, &capacity, QA_MATERIAL_MAX_REGISTERED);
     for (size_t i = 0; ok && i < count; ++i) {
@@ -578,7 +570,7 @@ bool qa_material_library_checkpoint(const qa_material_library *source, const qa_
         ok = copy.material.sorted_index == i && copy.material.registration < count &&
             copy.material.fog_image == source->fog_image && copy.material.dlight_image == source->dlight_image &&
             qa_material_order_has_record(source->order, &source->ordered[i]->material) &&
-            qa_material_saved_record(&io, refs, schema, &copy) && videos(&io, source, &copy, refs) &&
+            qa_material_saved_record(&io, refs, &copy) && videos(&io, source, &copy, refs) &&
             material_index(source, copy.material.remapped, &remapped) &&
             qa_source_save_u64(&io, &remapped);
         if (ok) ok = material_index(source, copy.source_variant_parent ? &copy.source_variant_parent->material : NULL, &parent) &&
@@ -600,9 +592,8 @@ bool qa_material_library_restore(const qa_material_library *qualified, qa_bytes 
     if (!qa_material_library_capture_begin(qualified, error)) return false;
     qa_material_library *library = qa_material_library_create_detached(qualified->resources, error);
     if (!library) { qa_material_library_capture_end(qualified); return false; }
-    qa_source_save_io io = {0}; size_t count = 0, capacity = 0; uint32_t schema = 0;
-    bool ok = catalog_copy_sources(library, qualified, error) &&
-        qa_source_save_reader(&io, NULL, bytes, error) && library_header(&io, library, qualified, refs, &schema) &&
+    qa_source_save_io io = {0}; size_t count = 0, capacity = 0; bool ok = catalog_copy_sources(library, qualified, error) &&
+        qa_source_save_reader(&io, NULL, bytes, error) && library_header(&io, library, qualified, refs) &&
         qa_source_save_count(&io, &count, QA_MATERIAL_MAX_REGISTERED) &&
         qa_source_save_count(&io, &capacity, QA_MATERIAL_MAX_REGISTERED) &&
         registration_capacity(count, capacity) && count <= bytes.size / 100;
@@ -615,16 +606,15 @@ bool qa_material_library_restore(const qa_material_library *qualified, qa_bytes 
     for (size_t i = 0; ok && i < count; ++i) {
         qa_material_record *record = calloc(1, sizeof(*record));
         if (!record) { ok = fail(error, QA_ERROR_MEMORY, "allocating restored material record"); break; }
-        ok = qa_material_saved_record(&io, refs, schema, record) &&
-            (schema < 4 || videos(&io, library, record, refs)) &&
+        ok = qa_material_saved_record(&io, refs, record) &&
+            (videos(&io, library, record, refs)) &&
             record->material.registration < count && record->material.sorted_index == i &&
             qa_source_save_u64(&io, &remapped[i]) && (remapped[i] == UINT64_MAX || remapped[i] < count);
         parents[i] = UINT64_MAX;
-        if (ok && schema >= 8) ok = qa_source_save_u64(&io, &parents[i]) &&
+        if (ok) ok = qa_source_save_u64(&io, &parents[i]) &&
             (parents[i] == UINT64_MAX || (parents[i] < count && parents[i] != i &&
                 qa_source_save_u64(&io, &record->source_variant_revision) && record->source_variant_revision &&
-                (schema >= 10 ? qa_q3_image_upload_options_precision_codec(&io, &record->source_variant_upload) :
-                    qa_q3_image_upload_options_codec(&io, &record->source_variant_upload))));
+                qa_q3_image_upload_options_precision_codec(&io, &record->source_variant_upload)));
         if (ok && i && library->ordered[i - 1]->material.sort > record->material.sort) ok = false;
         if (ok) {
             record->material.identity = qa_scene_identity();
@@ -633,12 +623,6 @@ bool qa_material_library_restore(const qa_material_library *qualified, qa_bytes 
         if (!ok) { record_free(record); break; }
         record->material.fog_image = library->fog_image; record->material.dlight_image = library->dlight_image;
         record->material.library = library;
-        if (schema < 8 && library->source_profile && record->material.lightmap_index >= 0) {
-            bool lightmap = false;
-            for (size_t stage = 0; stage < record->material.stage_count; ++stage)
-                if (record->material.stages[stage].is_lightmap) lightmap = true;
-            if (!lightmap) record->material.lightmap_index = -1;
-        }
         unsigned bucket = qa_material_hash(record->material.name);
         record->next = library->records[bucket]; library->records[bucket] = record;
         library->ordered[library->count++] = record;

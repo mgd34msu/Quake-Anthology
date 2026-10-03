@@ -15,11 +15,11 @@ static bool value_fields(qa_source_save_io *io, qa_native_q3_client_cvar *value)
 }
 static bool fields(qa_source_save_io *io, qa_native_q3_remote_client_service *service)
 {
-    uint8_t magic[4] = {'Q','N','R','C'}; uint32_t version = 1, product = service->services.basis.product;
+    uint8_t magic[4] = {'Q','N','R','C'}; uint32_t product = service->services.basis.product;
     uint32_t physical = service->services.basis.physical_client;
     int32_t initial_message = service->services.basis.initial_message, initial_command = service->services.basis.initial_command;
     size_t count = native_client_definition_count;
-    if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "QNRC", 4) || !qa_source_save_u32(io, &version) || version != 1 ||
+    if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "QNRC", 4) ||
         !qa_source_save_u32(io, &product) || product != (uint32_t)service->services.basis.product ||
         !qa_source_save_u32(io, &physical) || physical != service->services.basis.physical_client ||
         !qa_source_save_i32(io, &initial_message) || initial_message != service->services.basis.initial_message ||

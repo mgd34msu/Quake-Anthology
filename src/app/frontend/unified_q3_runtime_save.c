@@ -43,11 +43,11 @@ static uint32_t child_presence(const frontend_unified_q3_runtime *o)
 }
 static bool fields(frontend_unified_q3_runtime *o,qa_source_save_io *io,uint32_t *presence)
 {
-    uint8_t magic[4]={'U','Q','3','R'}; uint32_t version=4;bool scene_only=o->options.scene_only;
+    uint8_t magic[4]={'U','Q','3','R'}; bool scene_only=o->options.scene_only;
     bool pending=io->direction==QA_SOURCE_SAVE_WRITE?o->rebind!=NULL:false;
     q3n_compiled_source_view source;
     if(!qa_source_save_bytes(io,magic,4) || memcmp(magic,"UQ3R",4) ||
-       !qa_source_save_u32(io,&version) || version!=4 || !qa_source_save_bool(io,&pending))return false;
+       !qa_source_save_bool(io,&pending))return false;
     if(io->direction==QA_SOURCE_SAVE_READ)o->restored_rebind_expected=pending;
     return qa_source_save_bool(io,&scene_only) && scene_only==o->options.scene_only &&
         q3n_compiled_source_fields(io,frontend_unified_q3_client_source(o->options.client)) &&

@@ -112,9 +112,7 @@ static bool system_movie(qa_source_save_io *io,q3cin_movie *movie,const qa_q3_ci
 static bool fields(qa_source_save_io *io,qa_q3_cinematic_handles *owner,
     const qa_q3_cinematic_handles_refs *refs,double anchor,qa_q3_cinematic_handles *actual)
 {
-    uint8_t magic[4]={'Q','3','C','H'}; uint32_t version=3;
-    if (!refs || !qa_source_save_bytes(io,magic,4) || memcmp(magic,"Q3CH",4) ||
-        !qa_source_save_u32(io,&version) || version!=3) return false;
+    uint8_t magic[4]={'Q','3','C','H'}; if (!refs || !qa_source_save_bytes(io,magic,4) || memcmp(magic,"Q3CH",4)) return false;
     if (!qa_source_save_i32(io,&owner->selected_handle) || !qa_source_save_i32(io,&owner->decoder_handle) ||
         owner->selected_handle < -1 || owner->selected_handle>=16 ||
         owner->decoder_handle < -1 || owner->decoder_handle>=16) return false;

@@ -122,11 +122,10 @@ static bool campaign_fields(qa_source_save_io *io,qa_frontend *f,frontend_ui_sea
 static bool fields(qa_source_save_io *io, qa_frontend *f, const qa_audio_asset_inventory *assets)
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ, dedicated = f->options.dedicated;
-    uint8_t magic[4] = {'Q','F','U','F'}; uint32_t version = 5, seats = f->options.seats;
+    uint8_t magic[4] = {'Q','F','U','F'}; uint32_t seats = f->options.seats;
     frontend_ui_features *owner = f->ui_features;
     uint32_t profile=owner->ui_profile;
-    if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "QFUF", 4) || !qa_source_save_u32(io, &version) || version != 5 ||
-        !qa_source_save_u32(io, &seats) || seats != f->options.seats || !qa_source_save_bool(io, &dedicated) || dedicated != f->options.dedicated ||
+    if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "QFUF", 4) || !qa_source_save_u32(io, &seats) || seats != f->options.seats || !qa_source_save_bool(io, &dedicated) || dedicated != f->options.dedicated ||
         !error_fields(io, &owner->audio_error) || !qa_source_save_u32(io,&profile) || profile>QA_LOCALIZATION_Q2_RERELEASE) return false;
     if (reading) owner->ui_profile=(qa_localization_profile)profile;
     qa_buffer compiled = {0}; qa_bytes input = {0};

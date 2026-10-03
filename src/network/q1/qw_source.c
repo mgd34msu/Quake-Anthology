@@ -304,7 +304,7 @@ bool qa_qw_source_history_checkpoint(const qa_qw_source_history *history, uint32
     uint16_t baselines = 0;
     for (size_t i = 1; i < 512; ++i)
         if (history->baselines[i].present) ++baselines;
-    qa_net_write_u32(&writer, UINT32_C(0x48535751)); qa_net_write_u32(&writer, 1);
+    qa_net_write_u32(&writer, UINT32_C(0x48535751));
     qa_net_write_u16(&writer, baselines);
     for (size_t i = 1; i < 512; ++i)
         if (history->baselines[i].present) save_entity(&writer, &history->baselines[i].value);
@@ -327,9 +327,9 @@ bool qa_qw_source_history_restore(qa_bytes bytes, uint32_t outgoing,
     qa_qw_source_history *history = qa_qw_source_history_create(error);
     if (!history) return false;
     qa_net_reader reader; qa_net_reader_init(&reader, bytes, error);
-    uint32_t magic = qa_net_read_u32(&reader), version = qa_net_read_u32(&reader);
+    uint32_t magic = qa_net_read_u32(&reader);
     uint16_t count = qa_net_read_u16(&reader); uint32_t previous = 0;
-    bool ok = !reader.failed && magic == UINT32_C(0x48535751) && version == 1 && count <= 511;
+    bool ok = !reader.failed && magic == UINT32_C(0x48535751) && count <= 511;
     for (size_t i = 0; ok && i < count; ++i) {
         qa_qw_source_entity entity;
         ok = restore_entity(&reader, &entity) && entity.number > previous;

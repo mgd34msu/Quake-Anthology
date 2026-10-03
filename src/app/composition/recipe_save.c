@@ -84,11 +84,11 @@ static bool graph_fields(qa_source_save_io *io, qa_executable_recipe *recipe,
     qa_application_content_graph *graph, qa_collision_portal_checkpoint *portals)
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
-    uint8_t magic[4] = {'Q','E','R','C'}; uint32_t version = 1;
+    uint8_t magic[4] = {'Q','E','R','C'};
     uint64_t catalog = reading ? 0 : qa_application_content_catalog_id(graph, recipe->catalog);
     uint64_t pool = reading ? 0 : qa_application_content_pool_id(graph, recipe->pool);
     if (!qa_source_save_bytes(io, magic, sizeof(magic)) || memcmp(magic, "QERC", sizeof(magic)) ||
-        !qa_source_save_u32(io, &version) || version != 1 || !qa_source_save_u64(io, &catalog) || !catalog ||
+        !qa_source_save_u64(io, &catalog) || !catalog ||
         !qa_source_save_u64(io, &pool) || !pool || !qa_source_save_u64(io, &recipe->catalog_generation)) return false;
     if (reading && (!qa_application_content_retain_catalog(graph, catalog, &recipe->catalog, io->error) ||
         !qa_application_content_retain_pool(graph, pool, &recipe->pool, io->error))) return false;

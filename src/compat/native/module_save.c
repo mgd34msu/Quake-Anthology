@@ -13,10 +13,9 @@ static bool image_equal(const qa_native_image_info *left, const qa_native_image_
 static bool metadata(qa_source_save_io *io, qa_native_module_info *info)
 {
     uint8_t magic[4] = {'Q','A','N','M'};
-    uint32_t version = 1, profile = info->profile, format = info->image.format;
+    uint32_t profile = info->profile, format = info->image.format;
     uint32_t os = info->image.target.os, arch = info->image.target.arch, abi = info->image.target.abi;
     if (!qa_source_save_bytes(io, magic, sizeof(magic)) || memcmp(magic, "QANM", 4) ||
-        !qa_source_save_u32(io, &version) || version != 1 ||
         !qa_source_save_u32(io, &profile) || profile > QA_NATIVE_QUAKE_LIVE_GAME_API10 ||
         !qa_source_save_u32(io, &format) || format > QA_NATIVE_IMAGE_ELF64 ||
         !qa_source_save_u32(io, &os) || os > QA_NATIVE_OS_MACOS ||

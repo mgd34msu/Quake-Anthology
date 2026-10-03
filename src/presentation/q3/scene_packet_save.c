@@ -250,9 +250,8 @@ static bool options(qa_source_save_io *io,qa_q3_scene_packet_owner *owner,const 
 }
 static bool fields(qa_source_save_io *io,qa_q3_scene_packet_owner *owner,const qa_scene_frame_checkpoint_refs *refs)
 {
-    uint8_t magic[4]={'Q','3','P','K'}; uint32_t version=1; qa_q3_scene_packet_view *v=&owner->view;
-    if(!qa_source_save_bytes(io,magic,4) || memcmp(magic,"Q3PK",4) ||
-        !qa_source_save_u32(io,&version) || version!=1 || !definition(io,&v->definition) ||
+    uint8_t magic[4]={'Q','3','P','K'}; qa_q3_scene_packet_view *v=&owner->view;
+    if(!qa_source_save_bytes(io,magic,4) || memcmp(magic,"Q3PK",4) || !definition(io,&v->definition) ||
         !options(io,owner,refs) || !allocate(io,owner,&v->entity_count,sizeof(*v->entities),128,(const void **)&v->entities) ||
         !allocate(io,owner,&v->polygon_count,sizeof(*v->polygons),64,(const void **)&v->polygons) ||
         !vertices(io,owner,&v->vertex_count,&v->vertices) || !lights(io,owner,refs,&v->light_count,&v->lights)) return false;

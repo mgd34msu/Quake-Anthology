@@ -186,13 +186,10 @@ static bool profile_fields(qa_source_save_io *io, application_q3_weapon_models_p
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
     char magic[8] = "QAG3MP\0";
-    uint32_t version = 1, abi = profile->abi, game_abi = profile->game_abi;
+    uint32_t abi = profile->abi, game_abi = profile->game_abi;
     if (!qa_source_save_bytes(io, magic, sizeof(magic))) return false;
     if (memcmp(magic, "QAG3MP\0\0", sizeof(magic)))
         return application_fail(io->error, QA_ERROR_FORMAT, "Unknown CG weapon model profile signature");
-    if (!qa_source_save_u32(io, &version)) return false;
-    if (version != 1)
-        return application_fail(io->error, QA_ERROR_FORMAT, "Unknown CG weapon model profile version");
     if (!profile_text(io, &profile->artifact_path) ||
         !qa_source_save_bytes(io, profile->artifact.bytes, sizeof(profile->artifact.bytes)) ||
         !qa_source_save_u32(io, &abi) || !qa_source_save_bool(io, &profile->present)) return false;

@@ -421,10 +421,9 @@ bool frontend_restart_drain_frame(frontend_restart *owner,qa_error *error)
 { return !owner || drain(owner,true,error); }
 static bool fields(qa_source_save_io *io,frontend_restart *owner)
 {
-    uint8_t magic[4]={'Q','F','R','S'}; uint32_t version=2,backend=owner->backend;
+    uint8_t magic[4]={'Q','F','R','S'}; uint32_t backend=owner->backend;
     bool stage=owner->options.stage_input!=NULL;
-    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QFRS",4) || !qa_source_save_u32(io,&version) || version!=2 ||
-        !qa_source_save_bool(io,&stage) || stage!=(owner->options.stage_input!=NULL) ||
+    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QFRS",4) || !qa_source_save_bool(io,&stage) || stage!=(owner->options.stage_input!=NULL) ||
         !qa_source_save_u64(io,&owner->generation) || !qa_source_save_bool(io,&owner->video_requested)) return false;
     if (owner->video_requested) {
         if (!qa_source_save_u32(io,&backend) || backend>QA_DISPLAY_OPENGL ||

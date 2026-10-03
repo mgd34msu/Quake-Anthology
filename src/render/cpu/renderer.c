@@ -1276,7 +1276,7 @@ static bool cpu_saved_buffer(qa_source_save_io *io,qa_cpu_renderer *renderer,cpu
     if (!qa_source_save_u32(io,buffer->stencil+i) || buffer->stencil[i]>renderer->stencil_maximum) return false;
   return true;
 }
-static bool cpu_saved_source_images(qa_source_save_io *io,qa_cpu_renderer *renderer,const qa_render_checkpoint_refs *refs,uint32_t version)
+static bool cpu_saved_source_images(qa_source_save_io *io,qa_cpu_renderer *renderer,const qa_render_checkpoint_refs *refs)
 {
   bool reading=io->direction==QA_SOURCE_SAVE_READ;
   uint32_t count=renderer->source_image_count;
@@ -1296,21 +1296,18 @@ static bool cpu_saved_source_images(qa_source_save_io *io,qa_cpu_renderer *rende
       row->owner=owner; row->filter=(qa_scene_filter)filter;
       qa_render_source_texture_init(&row->texture);
     } else if (!owner || owner!=row->owner) return false;
-    if (version>=17) {
-      if (!qa_render_source_texture_saved_fields(io,&row->texture,version,refs)) return false;
-    } else if (reading && !qa_render_source_texture_upload(&row->texture,row->image,owner,row->filter,io->error)) return false;
-  }
+    {
+      if (!qa_render_source_texture_saved_fields(io,&row->texture,refs)) return false;
+    } }
   return true;
 }
 static bool cpu_saved_fields(qa_source_save_io *io,qa_cpu_renderer *renderer,const qa_render_checkpoint_refs *refs,
     const qa_cpu_options *installed)
 {
   bool reading=io->direction==QA_SOURCE_SAVE_READ;
-  uint8_t magic[4]={'Q','C','P','U'}; uint32_t version=21;
-  bool presenter=reading?false:renderer->options.present!=NULL;
+  uint8_t magic[4]={'Q','C','P','U'}; bool presenter=reading?false:renderer->options.present!=NULL;
   if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QCPU",4) ||
-      !qa_source_save_u32(io,&version) || version<4 || version>21 ||
-      !qa_render_controls_saved_fields(io,&renderer->controls,version,refs) ||
+      !qa_render_controls_saved_fields(io,&renderer->controls,refs) ||
       !qa_source_save_u32(io,&renderer->options.width) || !qa_source_save_u32(io,&renderer->options.height) ||
       !qa_source_save_u8(io,&renderer->options.subpixel_bits) || !qa_source_save_u8(io,&renderer->options.stencil_bits) ||
       !qa_source_save_u8(io,&renderer->options.alpha_bits) || !qa_source_save_u64(io,&renderer->options.owner) ||
@@ -1329,29 +1326,23 @@ static bool cpu_saved_fields(qa_source_save_io *io,qa_cpu_renderer *renderer,con
       renderer->display.alpha!=(renderer->options.alpha_bits!=0) ||
       renderer->display.width!=renderer->options.width || renderer->display.height!=renderer->options.height ||
       !cpu_saved_buffer(io,renderer,&renderer->opacity)) return false;
-  if (version>=5 && !qa_output_domains_codec(io,&renderer->output_domains,
+  if (!qa_output_domains_codec(io,&renderer->output_domains,
       renderer->display.width,renderer->display.height)) return false;
-  if (version>=6) {
+  {
     if (!render_save_pipeline(io,&renderer->pipeline) ||
         !qa_source_save_f32(io,&renderer->clear_depth) || !isfinite(renderer->clear_depth) ||
         renderer->clear_depth<0 || renderer->clear_depth>1) return false;
-  } else if (reading) {
-    qa_scene_state_default(&renderer->pipeline);
-    renderer->clear_depth=1;
-  }
-  if (version>=21) {
+  } {
     if (!qa_source_save_f32(io,&renderer->clear_color.x) || !qa_source_save_f32(io,&renderer->clear_color.y) ||
         !qa_source_save_f32(io,&renderer->clear_color.z) || !qa_source_save_f32(io,&renderer->clear_color.w) ||
         !isfinite(renderer->clear_color.x) || !isfinite(renderer->clear_color.y) ||
         !isfinite(renderer->clear_color.z) || !isfinite(renderer->clear_color.w)) return false;
   }
-  if (version>=11) {
+  {
     if (!qa_source_save_bool(io,&renderer->preblend_gamma)) return false;
-  } else if (reading) renderer->preblend_gamma=false;
-  if (version>=14) {
+  } {
     if (!qa_source_save_bool(io,&renderer->source_frame)) return false;
-  } else if (reading) renderer->source_frame=false;
-  size_t count=0; uint64_t current=0;
+  } size_t count=0; uint64_t current=0;
   if (!reading) {
     if (renderer->current==&renderer->display) current=1;
     for (cpu_target *target=renderer->targets;target;target=target->next) {
@@ -1387,7 +1378,7 @@ static bool cpu_saved_fields(qa_source_save_io *io,qa_cpu_renderer *renderer,con
       !qa_source_save_bool(io,&renderer->overdraw) || !qa_source_save_bytes(io,renderer->gamma,256) ||
       !qa_source_save_count(io,&renderer->vertex_capacity,SIZE_MAX/sizeof(cpu_vertex))) return false;
   for (size_t i=0;i<2;++i) if (!render_save_image(io,refs,renderer->bound+i)) return false;
-  if (version>=15 && !cpu_saved_source_images(io,renderer,refs,version)) return false;
+  if (!cpu_saved_source_images(io,renderer,refs)) return false;
   if (reading) {
     size_t pixels=(size_t)renderer->options.width*renderer->options.height;
     renderer->output=malloc(pixels*4);

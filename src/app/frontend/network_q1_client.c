@@ -736,16 +736,14 @@ static bool controller_fields(frontend_network_q1_client *o,const frontend_remot
     qa_source_save_io *io)
 {
     bool reading=io->direction==QA_SOURCE_SAVE_READ;
-    uint8_t magic[4]={'Q','1','N','C'}; uint32_t schema=2;
-    uint64_t catalog=0,files=0,skins=0;
+    uint8_t magic[4]={'Q','1','N','C'}; uint64_t catalog=0,files=0,skins=0;
     if(!reading) {
         if(o->content_catalog) catalog=qa_application_content_catalog_id(refs->content,o->content_catalog);
         if(o->content_files) files=qa_application_content_view_id(refs->content,o->content_files);
         if(o->skin_files) skins=qa_application_content_view_id(refs->content,o->skin_files);
         if((o->content_catalog && !catalog) || (o->content_files && !files) || (o->skin_files && !skins)) return false;
     }
-    if(!qa_source_save_bytes(io,magic,4) || memcmp(magic,"Q1NC",4) || !qa_source_save_u32(io,&schema) || schema!=2 ||
-        !qa_source_save_bool(io,&o->configured) || !qa_source_save_bool(io,&o->retired) ||
+    if(!qa_source_save_bytes(io,magic,4) || memcmp(magic,"Q1NC",4) || !qa_source_save_bool(io,&o->configured) || !qa_source_save_bool(io,&o->retired) ||
         !qa_source_save_u64(io,&o->client.owner) || !qa_source_save_u64(io,&o->client.generation) ||
         !qa_source_save_u32(io,&o->client.slot) || !qa_source_save_u64(io,&o->epoch) ||
         !qa_source_save_u64(io,&o->now_ns) || !address_fields(io,&o->attachment.endpoint) ||

@@ -725,7 +725,7 @@ static bool row_fields(qa_source_save_io *io,stage_request_row *row)
 bool application_native_q2_weapon_stage_capture(application_native_q2_weapon_stage *o,qa_buffer *out,qa_error *e)
 {
     if(!o||!out||!application_native_q2_weapon_stage_idle(o)) return fail(e,QA_ERROR_ARGUMENT,"Native weapon capture requires its returned source owner");
-    qa_source_save_io io={0}; uint8_t tag[8]={'Q','A','N','2','W','S',1,0}; size_t count=0;
+    qa_source_save_io io={0}; uint8_t tag[6]={'Q','A','N','2','W','S'}; size_t count=0;
     qa_actor_owner owner=o->options.owner; qa_sha256_digest definition;
     qa_sha256(qa_json_source(document(o),o->definition),&definition);
     for(stage_actor *a=o->actors;a;a=a->next) if(a->request) ++count;
@@ -741,7 +741,7 @@ bool application_native_q2_weapon_stage_capture(application_native_q2_weapon_sta
 bool application_native_q2_weapon_stage_restore(application_native_q2_weapon_stage *o,qa_bytes bytes,qa_error *e)
 {
     if(!o||!application_native_q2_weapon_stage_idle(o)||o->next_request) return fail(e,QA_ERROR_ARGUMENT,"Native weapon restore requires an isolated empty request owner");
-    qa_source_save_io io={0}; uint8_t tag[8]={0}; const uint8_t expected[8]={'Q','A','N','2','W','S',1,0}; uint64_t next=0; size_t count=0;
+    qa_source_save_io io={0}; uint8_t tag[6]={0}; const uint8_t expected[6]={'Q','A','N','2','W','S'}; uint64_t next=0; size_t count=0;
     qa_actor_owner owner=0; qa_sha256_digest definition={0},actual;
     qa_sha256(qa_json_source(document(o),o->definition),&actual);
     bool ok=qa_source_save_reader(&io,o->options.session,bytes,e)&&qa_source_save_bytes(&io,tag,sizeof(tag))&&!memcmp(tag,expected,sizeof(tag))&&

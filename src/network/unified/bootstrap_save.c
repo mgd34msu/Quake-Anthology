@@ -49,7 +49,7 @@ bool qa_unified_bootstrap_checkpoint(const qa_unified_bootstrap *b, qa_buffer *o
     uint8_t *data = malloc(65536);
     if (!data) return qa_unified_session_fail(e, QA_ERROR_MEMORY, "Capturing production handshake continuation");
     qa_net_writer w; qa_net_writer_init(&w, data, 65536, e);
-    bool ok = qa_net_write_data(&w, "QAUH1", 5) && qa_net_write_u8(&w, b->options.server) &&
+    bool ok = qa_net_write_data(&w, "QAUH", 4) && qa_net_write_u8(&w, b->options.server) &&
         qa_net_write_u32(&w, b->options.max_clients) &&
         (b->options.server || address_write(&w, &b->options.remote)) &&
         qa_net_write_data(&w, b->nonce.bytes, 16) && qa_net_write_data(&w, b->token.bytes, 16) &&
@@ -83,9 +83,9 @@ bool qa_unified_bootstrap_restore(qa_bytes bytes, qa_network_runtime *runtime, u
     if (!b) return qa_unified_session_fail(e, QA_ERROR_MEMORY, "Restoring production handshake continuation");
     b->runtime = runtime; b->options.hooks = *hooks;
     qa_net_reader r; qa_net_reader_init(&r, bytes, e);
-    char magic[5];
-    bool ok = qa_net_read_data(&r, magic, 5);
-    if (ok && memcmp(magic, "QAUH1", 5)) ok = qa_net_reader_fail(&r, "Unknown production handshake continuation");
+    char magic[4];
+    bool ok = qa_net_read_data(&r, magic, 4);
+    if (ok && memcmp(magic, "QAUH", 4)) ok = qa_net_reader_fail(&r, "Unknown production handshake continuation");
     ok = ok && flag(&r, &b->options.server);
     b->options.max_clients = qa_net_read_u32(&r);
     if (ok && !b->options.server) ok = address_read(&r, &b->options.remote);

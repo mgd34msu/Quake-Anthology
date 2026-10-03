@@ -612,9 +612,9 @@ typedef struct ranking_record {
 } ranking_record;
 static bool record_fields(qa_source_save_io *io, ranking_record *record)
 {
-    uint8_t magic[4]={'Q','A','R','S'}; uint32_t version=1;
+    uint8_t magic[4]={'Q','A','R','S'};
     return qa_source_save_bytes(io,magic,4) && !memcmp(magic,"QARS",4) &&
-        qa_source_save_u32(io,&version) && version==1 && text(io,&record->key) &&
+        text(io,&record->key) &&
         qa_source_save_bool(io,&record->effect) && span(io,&record->bridge) &&
         record->effect==(record->bridge.size!=0) && span(io,&record->owner) && record->owner.size;
 }

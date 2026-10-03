@@ -32,7 +32,7 @@ bool qa_input_seat_checkpoint_ready(const qa_input_seat *,const qa_input_checkpo
 /* Call outside input dispatch. Restore keeps the actual seat heap address,
  * reconstructs live/held binding aliases and private command-source IDs,
  * qualifies distinct physical ordinal/authored launch ID and retained former
- * recipient namespaces and retained release programmes (QINS schema 5),
+ * recipient namespaces and retained release programmes,
  * and replaces continuation only after full validation. No input, release,
  * UI, command, calibration or device callbacks execute. Inactive UI records'
  * expired handler/user pointers and command formatting scratch are unused. */

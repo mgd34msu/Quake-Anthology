@@ -378,9 +378,8 @@ void frontend_particle_reset_round(qa_frontend *frontend)
 }
 static bool particle_signature(qa_source_save_io *io)
 {
-    uint8_t magic[4] = {'Q', 'A', 'P', 'T'}; uint32_t version = 10;
-    return qa_source_save_bytes(io, magic, sizeof(magic)) && !memcmp(magic, "QAPT", 4) &&
-        qa_source_save_u32(io, &version) && version == 10;
+    uint8_t magic[4] = {'Q', 'A', 'P', 'T'}; return qa_source_save_bytes(io, magic, sizeof(magic)) && !memcmp(magic, "QAPT", 4) &&
+        true;
 }
 static bool source_sample_fields(qa_frontend *frontend,qa_source_save_io *io,frontend_particle_state *state)
 {

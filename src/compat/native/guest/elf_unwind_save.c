@@ -4,8 +4,8 @@
 static bool header(qa_source_save_io *io, const guest_elf *artifact)
 {
     const guest_elf_view *image = guest_elf_describe(artifact);
-    uint8_t magic[5] = {'Q','E','U','W',1};
-    const uint8_t expected[5] = {'Q','E','U','W',1};
+    uint8_t magic[4] = {'Q','E','U','W'};
+    const uint8_t expected[4] = {'Q','E','U','W'};
     qa_sha256_digest digest = image->image.digest;
     uint64_t bias = image->bias; uint32_t role = image->role;
     if (!qa_source_save_bytes(io, magic, sizeof(magic)) ||

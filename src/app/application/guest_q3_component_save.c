@@ -15,11 +15,11 @@ static bool blob(qa_source_save_io *io,qa_buffer *buffer)
 }
 static bool fields(application_q3_component *c,qa_source_save_io *io,qa_buffer children[9],qa_qvm_binding *ids,qa_qvm_binding *resolver)
 {
-    uint8_t magic[4]={'Q','G','C','M'},expected[4]={'Q','G','C','M'}; uint32_t version=5,abi=(uint32_t)c->options.abi;
+    uint8_t magic[4]={'Q','G','C','M'},expected[4]={'Q','G','C','M'}; uint32_t abi=(uint32_t)c->options.abi;
     uint8_t program[32],declaration[32]; memcpy(program,&c->options.program_digest,32); memcpy(declaration,&c->options.declaration_digest,32);
     uint64_t owner=c->options.host.owner,services=c->options.host.service_owner,generation=c->options.generation;
     const char *path=c->options.program_path; size_t count=c->hook_count;
-    if(!qa_source_save_bytes(io,magic,4)||memcmp(magic,expected,4)||!qa_source_save_u32(io,&version)||version!=5||
+    if(!qa_source_save_bytes(io,magic,4)||memcmp(magic,expected,4)||
         !qa_source_save_u32(io,&abi)||abi!=(uint32_t)c->options.abi||!qa_source_save_bytes(io,program,32)||memcmp(program,&c->options.program_digest,32)||
         !qa_source_save_bytes(io,declaration,32)||memcmp(declaration,&c->options.declaration_digest,32)||!qa_source_save_text(io,&path)||!path||strcmp(path,c->options.program_path)||
         !qa_source_save_u64(io,&owner)||owner!=c->options.host.owner||!qa_source_save_u64(io,&services)||services!=c->options.host.service_owner||
@@ -105,11 +105,11 @@ bool application_q3_component_restore(application_q3_component *c,qa_bytes bytes
         qa_qvm_restore_candidate_inventory(c->vm,(qa_bytes){children[5].data,children[5].size},descriptors,ids,c->hook_count,
             &resolver,saved_resolver,watches,watch_ids,watch_count,e);
     if(ok) {
-        /* Candidate inventory has qualified the complete QAVM2 envelope.
+        /* Candidate inventory has qualified the complete QAVM envelope.
          * Admit its host bytes before importing RAM or reopening streams. */
         size_t memory=qa_qvm_memory_size(c->vm);
-        ok=qa_q3_host_checkpoint_portable_state((qa_bytes){children[5].data+160+memory,
-            children[5].size-160-memory},e);
+        ok=qa_q3_host_checkpoint_portable_state((qa_bytes){children[5].data+156+memory,
+            children[5].size-156-memory},e);
     }
     if(ok) {
         for(size_t i=0;i<c->hook_count;++i) c->hooks[i].id=ids[i];

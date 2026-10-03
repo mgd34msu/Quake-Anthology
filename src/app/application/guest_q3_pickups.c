@@ -426,12 +426,12 @@ void application_q3_pickups_adopt(application_q3_pickups *o,const qa_qvm_binding
 bool application_q3_pickups_checkpoint(const application_q3_pickups *o,qa_buffer *out,qa_error *e)
 {
     if(!application_q3_pickups_idle(o)||!out||o->count!=o->capacity)return application_fail(e,QA_ERROR_ARGUMENT,"Pickup checkpoint requires its complete returned Source hook inventory");
-    uint8_t *bytes=malloc(9);if(!bytes)return application_fail(e,QA_ERROR_MEMORY,"Encoding original pickup continuation");
-    memcpy(bytes,"QAG3PU1",7);bytes[7]=o->closed;bytes[8]=o->own_free;*out=(qa_buffer){bytes,9};return true;
+    uint8_t *bytes=malloc(8);if(!bytes)return application_fail(e,QA_ERROR_MEMORY,"Encoding original pickup continuation");
+    memcpy(bytes,"QAG3PU",6);bytes[6]=o->closed;bytes[7]=o->own_free;*out=(qa_buffer){bytes,8};return true;
 }
 bool application_q3_pickups_restore(application_q3_pickups *o,qa_bytes bytes,qa_error *e)
 {
-    if(!application_q3_pickups_idle(o)||bytes.size!=9||memcmp(bytes.data,"QAG3PU1",7)||bytes.data[7]>1||bytes.data[8]!=(uint8_t)o->own_free)
+    if(!application_q3_pickups_idle(o)||bytes.size!=8||memcmp(bytes.data,"QAG3PU",6)||bytes.data[6]>1||bytes.data[7]!=(uint8_t)o->own_free)
         return application_fail(e,QA_ERROR_FORMAT,"Saved pickup continuation differs from its actual constructed free-hook owner");
-    o->closed=bytes.data[7]!=0;return true;
+    o->closed=bytes.data[6]!=0;return true;
 }

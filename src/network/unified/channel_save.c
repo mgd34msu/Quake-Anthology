@@ -78,7 +78,7 @@ bool qa_unified_channel_checkpoint(const qa_unified_channel *c, qa_buffer *out, 
     uint8_t *data = ok ? malloc(capacity) : NULL;
     if (ok && !data) { qa_error_set(e, QA_ERROR_MEMORY, 0, "Capturing complete unified channel"); return false; }
     qa_net_writer w; qa_net_writer_init(&w, data, ok ? capacity : 0, e);
-    ok = ok && qa_net_write_data(&w, "QAUC1", 5) && qa_net_write_data(&w, c->token.bytes, 16) && limits_write(&w, &c->limits) &&
+    ok = ok && qa_net_write_data(&w, "QAUC", 4) && qa_net_write_data(&w, c->token.bytes, 16) && limits_write(&w, &c->limits) &&
         qa_net_write_u64(&w, c->next_reliable) && qa_net_write_u64(&w, c->next_frame) &&
         qa_net_write_u32(&w, c->reliable_received) && qa_net_write_u32(&w, c->reliable_acknowledged) &&
         qa_net_write_u32(&w, c->frame_received) && qa_net_write_u32(&w, c->newest_frame) &&
@@ -158,10 +158,10 @@ static bool assembly_read(qa_net_reader *r, qa_unified_channel *c, bool reliable
 
 bool qa_unified_channel_restore(qa_bytes bytes, qa_unified_channel **out, qa_error *e)
 {
-    if (!out || !bytes.data || bytes.size < 5 || memcmp(bytes.data, "QAUC1", 5)) {
+    if (!out || !bytes.data || bytes.size < 4 || memcmp(bytes.data, "QAUC", 4)) {
         qa_error_set(e, QA_ERROR_FORMAT, 0, "Unknown unified channel continuation"); return false;
     }
-    qa_net_reader r; qa_net_reader_init(&r, bytes, e); r.bit = 40;
+    qa_net_reader r; qa_net_reader_init(&r, bytes, e); r.bit = 32;
     qa_unified_token token; qa_unified_limits limits = {0};
     if (!qa_net_read_data(&r, token.bytes, 16) || !limits_read(&r, &limits)) return false;
     qa_unified_channel *c = NULL;

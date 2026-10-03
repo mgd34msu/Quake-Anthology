@@ -78,7 +78,6 @@ typedef struct qa_q2_monster_alert_checkpoint {
 } qa_q2_monster_alert_checkpoint;
 
 typedef struct qa_q2_monsters_checkpoint {
-  uint32_t version;
   qa_q2_saved_reference sight_client, sight_observer;
   uint64_t sight_time_ns, last_frame_ns;
   bool began_frame;
@@ -89,7 +88,6 @@ typedef struct qa_q2_monsters_checkpoint {
 } qa_q2_monsters_checkpoint;
 
 typedef struct qa_q2_monster_checkpoint {
-  uint32_t version;
   char definition[QA_Q2_MONSTER_NAME_CAPACITY];
   char move[QA_Q2_MONSTER_MOVE_CAPACITY];
   char next_move[QA_Q2_MONSTER_MOVE_CAPACITY];

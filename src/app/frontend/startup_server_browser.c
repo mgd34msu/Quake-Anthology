@@ -189,10 +189,10 @@ static bool draft_text(qa_source_save_io *io,char *text,size_t capacity)
 }
 static bool draft_fields(qa_source_save_io *io,const frontend_startup_server_browser *o,browser_draft *draft)
 {
-    uint8_t magic[4]={'Q','S','B','R'}; uint32_t version=2,physical=o->seat->id;
+    uint8_t magic[4]={'Q','S','B','R'}; uint32_t physical=o->seat->id;
     uint64_t menus[3]={o->menus.browser,o->menus.options,o->menus.details};
     if(!qa_source_save_bytes(io,magic,sizeof(magic)) || memcmp(magic,"QSBR",sizeof(magic)) ||
-       !qa_source_save_u32(io,&version) || version!=2 || !qa_source_save_u32(io,&physical) || physical!=o->seat->id)return false;
+       !qa_source_save_u32(io,&physical) || physical!=o->seat->id)return false;
     const qa_ui_id ids[3]={o->menus.browser,o->menus.options,o->menus.details};
     for(unsigned i=0;i<3;++i)if(!qa_source_save_u64(io,menus+i) || menus[i]!=ids[i])return false;
     if(!qa_source_save_u32(io,&draft->family) || draft->family>=BROWSER_FAMILIES ||

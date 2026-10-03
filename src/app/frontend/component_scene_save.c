@@ -106,9 +106,8 @@ static bool row_fields(qa_source_save_io *io,component_saved *row)
 }
 static bool prefix(qa_source_save_io *io,size_t *count)
 {
-    uint8_t magic[4]={'Q','F','C','P'}; uint32_t version=2;
-    return qa_source_save_bytes(io,magic,4) && !memcmp(magic,"QFCP",4) &&
-        qa_source_save_u32(io,&version) && version==2 && qa_source_save_count(io,count,SIZE_MAX);
+    uint8_t magic[4]={'Q','F','C','P'}; return qa_source_save_bytes(io,magic,4) && !memcmp(magic,"QFCP",4) &&
+        qa_source_save_count(io,count,SIZE_MAX);
 }
 static void row_free(component_saved *row)
 { free(row->packets); free(row->pictures); free(row->picture_keys); free(row->picture_images); }

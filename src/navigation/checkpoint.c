@@ -22,7 +22,6 @@ bool qa_navigation_capture(const qa_navigation *n, qa_nav_checkpoint *out, qa_er
         !nav_reserve((void **)&out->admissions, &out->admission_capacity, admissions,
                      sizeof(*out->admissions), e))
         return false;
-    out->version = 1;
     out->map = n->graph->view.map;
     out->generation = n->generation;
     out->world_revision = n->world_revision;
@@ -43,7 +42,7 @@ bool qa_navigation_capture(const qa_navigation *n, qa_nav_checkpoint *out, qa_er
     return true;
 }
 bool qa_navigation_restore(qa_navigation *n, const qa_nav_checkpoint *state, qa_error *e) {
-    if (n == NULL || state == NULL || state->version != 1 ||
+    if (n == NULL || state == NULL ||
         state->map.name != n->graph->view.map.name ||
         state->map.format != n->graph->view.map.format ||
         memcmp(state->map.digest, n->graph->view.map.digest, sizeof(state->map.digest)) != 0 ||

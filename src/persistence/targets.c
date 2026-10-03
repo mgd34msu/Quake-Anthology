@@ -42,9 +42,7 @@ static bool signature(qa_source_save_io *io)
 {
     unsigned char actual[8] = {'Q','A','T','A','R','G','E','T'};
     static const unsigned char expected[8] = {'Q','A','T','A','R','G','E','T'};
-    uint32_t version = 2;
-    return qa_source_save_bytes(io, actual, sizeof(actual)) && !memcmp(actual, expected, sizeof(actual)) &&
-        qa_source_save_u32(io, &version) && version == 2;
+    return qa_source_save_bytes(io, actual, sizeof(actual)) && !memcmp(actual, expected, sizeof(actual));
 }
 
 static bool record(qa_source_save_io *io, qa_target_binding *binding, uint64_t *serial,

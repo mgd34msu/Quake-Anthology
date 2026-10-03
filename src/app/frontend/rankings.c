@@ -43,23 +43,23 @@ static bool capture(void *context, qa_application_ranking_effect_fn installed, v
     if (!scope_ready(frontend) || installed != frontend_ranking_effect || binding != frontend ||
         !out || out->data || out->size)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "ranking checkpoint requires its actual installed frontend bridge");
-    uint8_t *bytes = malloc(24);
+    uint8_t *bytes = malloc(20);
     if (!bytes) return frontend_fail(error, QA_ERROR_MEMORY, "retaining ranking frontend scope");
-    memcpy(bytes, "QFRK", 4); qa_store_u32le(bytes + 4, 1);
-    qa_store_u64le(bytes + 8, QA_FRONTEND_COMMAND_OWNER);
-    qa_store_u32le(bytes + 16, frontend->options.seats);
-    qa_store_u32le(bytes + 20, frontend->options.dedicated ? 1 : 0);
-    *out = (qa_buffer){bytes, 24}; return true;
+    memcpy(bytes, "QFRK", 4);
+    qa_store_u64le(bytes + 4, QA_FRONTEND_COMMAND_OWNER);
+    qa_store_u32le(bytes + 12, frontend->options.seats);
+    qa_store_u32le(bytes + 16, frontend->options.dedicated ? 1 : 0);
+    *out = (qa_buffer){bytes, 20}; return true;
 }
 static bool resolve(void *context, qa_bytes bytes, qa_application_ranking_effect_fn *installed,
     void **binding, qa_error *error)
 {
     qa_frontend *frontend = context;
-    if (!scope_ready(frontend) || !installed || !binding || !bytes.data || bytes.size != 24 ||
-        memcmp(bytes.data, "QFRK", 4) || qa_load_u32le(bytes.data + 4) != 1 ||
-        qa_load_u64le(bytes.data + 8) != QA_FRONTEND_COMMAND_OWNER ||
-        qa_load_u32le(bytes.data + 16) != frontend->options.seats ||
-        qa_load_u32le(bytes.data + 20) != (frontend->options.dedicated ? 1u : 0u))
+    if (!scope_ready(frontend) || !installed || !binding || !bytes.data || bytes.size != 20 ||
+        memcmp(bytes.data, "QFRK", 4) ||
+        qa_load_u64le(bytes.data + 4) != QA_FRONTEND_COMMAND_OWNER ||
+        qa_load_u32le(bytes.data + 12) != frontend->options.seats ||
+        qa_load_u32le(bytes.data + 16) != (frontend->options.dedicated ? 1u : 0u))
         return frontend_fail(error, QA_ERROR_FORMAT, "saved ranking bridge differs from its prepared frontend scope");
     *installed = frontend_ranking_effect; *binding = frontend; return true;
 }

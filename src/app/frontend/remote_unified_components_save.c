@@ -342,9 +342,8 @@ static bool row_fields(qa_source_save_io *io,remote_component *row,const fronten
 }
 static bool fields(qa_source_save_io *io,frontend_unified_components *owner,const frontend_unified_components_refs *refs)
 {
-    uint8_t magic[4]={'Q','U','C','P'}; uint32_t version=7,epoch=frontend_remote_unified_epoch(owner->replica);
-    if(!qa_source_save_bytes(io,magic,4)||memcmp(magic,"QUCP",4)||!qa_source_save_u32(io,&version)||version!=7||
-        !qa_source_save_u32(io,&epoch)||epoch!=frontend_remote_unified_epoch(owner->replica)||
+    uint8_t magic[4]={'Q','U','C','P'}; uint32_t epoch=frontend_remote_unified_epoch(owner->replica);
+    if(!qa_source_save_bytes(io,magic,4)||memcmp(magic,"QUCP",4)||!qa_source_save_u32(io,&epoch)||epoch!=frontend_remote_unified_epoch(owner->replica)||
         !qa_source_save_u64(io,&owner->revision)||owner->revision>QA_UNIFIED_SAFE_INTEGER||
         !qa_source_save_count(io,&owner->count,256)) return false;
     if(io->direction==QA_SOURCE_SAVE_READ) {

@@ -87,7 +87,7 @@ static bool builtin_image(const qa_scene_image *image, bool missing)
 }
 
 static bool source_builtin_image(const qa_scene_image *image, const qa_q3_image_upload_options *profile,
-    const char *name, uint32_t size, uint8_t value, bool missing, bool scratch, bool precision, qa_error *error)
+    const char *name, uint32_t size, uint8_t value, bool missing, bool scratch, qa_error *error)
 {
     if (!image || !image->name || strcmp(image->name, name) || image->kind == QA_SCENE_DEPTH32F ||
         image->wrap != (scratch ? QA_SCENE_CLAMP : QA_SCENE_REPEAT) ||
@@ -109,8 +109,7 @@ static bool source_builtin_image(const qa_scene_image *image, const qa_q3_image_
     if (!qa_q3_image_upload_format(&original, &upload, &expected, &format, error)) return false;
     qa_scene_image_kind kind = format == QA_Q3_TEXTURE_RGBA || format == QA_Q3_TEXTURE_RGBA4 ||
         format == QA_Q3_TEXTURE_RGBA8 ? QA_SCENE_RGBA8 : QA_SCENE_RGB8;
-    bool ok = image->level_count == expected.count && (!precision ||
-        (image->source_q3 && image->source_format == format && image->kind == kind));
+    bool ok = image->level_count == expected.count && image->source_q3 && image->source_format == format && image->kind == kind;
     for (size_t i = 0; ok && i < expected.count; ++i) {
         const qa_image *level = expected.levels + i;
         ok = image->levels[i].width == level->width && image->levels[i].height == level->height &&
@@ -120,30 +119,29 @@ static bool source_builtin_image(const qa_scene_image *image, const qa_q3_image_
     qa_mip_chain_free(&expected); return ok;
 }
 static bool source_builtins_fields(qa_source_save_io *io, qa_scene_resources *owner,
-    qa_scene_resources *state, const qa_scene_resource_checkpoint_refs *refs, uint32_t version)
+    qa_scene_resources *state, const qa_scene_resource_checkpoint_refs *refs)
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
     if (!qa_source_save_bool(io, &state->source_builtins)) return false;
     if (!state->source_builtins) return !state->source_white && !state->source_missing && !state->source_identity &&
         (!reading || owner->detached || !owner->source_builtins);
-    if (!(version >= 13 ? qa_q3_image_upload_options_precision_codec(io, &state->source_builtins_upload) :
-        qa_q3_image_upload_options_codec(io, &state->source_builtins_upload)) ||
+    if (!(qa_q3_image_upload_options_precision_codec(io, &state->source_builtins_upload)) ||
         !image_field(io, refs, owner, &state->source_white) || !image_field(io, refs, owner, &state->source_missing) ||
         !image_field(io, refs, owner, &state->source_identity)) return false;
     qa_q3_color_lighting lighting;
     if (!qa_q3_color_lighting_read(&state->source_builtins_upload.color.device,
         state->source_builtins_upload.color.requested_overbright_bits, &lighting, io->error) ||
-        !source_builtin_image(state->source_white, &state->source_builtins_upload, "*white", 8, 255, false, false, version >= 13, io->error) ||
-        !source_builtin_image(state->source_missing, &state->source_builtins_upload, "*default", 16, 32, true, false, version >= 13, io->error) ||
+        !source_builtin_image(state->source_white, &state->source_builtins_upload, "*white", 8, 255, false, false, io->error) ||
+        !source_builtin_image(state->source_missing, &state->source_builtins_upload, "*default", 16, 32, true, false, io->error) ||
         !source_builtin_image(state->source_identity, &state->source_builtins_upload, "*identityLight", 8,
-            lighting.identity_light_byte, false, false, version >= 13, io->error)) return false;
+            lighting.identity_light_byte, false, false, io->error)) return false;
     return !reading || owner->detached || (owner->source_builtins &&
         qa_q3_image_upload_options_equal(&owner->source_builtins_upload, &state->source_builtins_upload) &&
         same_image(owner->source_white, state->source_white) && same_image(owner->source_missing, state->source_missing) &&
         same_image(owner->source_identity, state->source_identity));
 }
 static bool source_generated_image(const qa_scene_image *image, const qa_q3_image_upload_options *profile,
-    const char *name, uint32_t width, uint32_t height, uint8_t *pixels, bool fog, bool precision, qa_error *error)
+    const char *name, uint32_t width, uint32_t height, uint8_t *pixels, bool fog, qa_error *error)
 {
     if (!image || !image->name || strcmp(image->name, name) || image->kind == QA_SCENE_DEPTH32F ||
         image->wrap != QA_SCENE_CLAMP || image->filter != QA_SCENE_LINEAR || image->animation_count ||
@@ -159,8 +157,7 @@ static bool source_generated_image(const qa_scene_image *image, const qa_q3_imag
     if (!qa_q3_image_upload_format(&original, &upload, &expected, &format, error)) return false;
     qa_scene_image_kind kind = format == QA_Q3_TEXTURE_RGBA || format == QA_Q3_TEXTURE_RGBA4 ||
         format == QA_Q3_TEXTURE_RGBA8 ? QA_SCENE_RGBA8 : QA_SCENE_RGB8;
-    bool ok = image->level_count == expected.count && (!precision ||
-        (image->source_q3 && image->source_format == format && image->kind == kind));
+    bool ok = image->level_count == expected.count && image->source_q3 && image->source_format == format && image->kind == kind;
     for (size_t i = 0; ok && i < expected.count; ++i)
         ok = image->levels[i].width == expected.levels[i].width && image->levels[i].height == expected.levels[i].height &&
             image->levels[i].bytes == expected.levels[i].rgba.size && image->levels[i].pixels &&
@@ -168,7 +165,7 @@ static bool source_generated_image(const qa_scene_image *image, const qa_q3_imag
     qa_mip_chain_free(&expected); return ok;
 }
 static bool source_extended_builtins_fields(qa_source_save_io *io, qa_scene_resources *owner,
-    qa_scene_resources *state, const qa_scene_resource_checkpoint_refs *refs, uint32_t version)
+    qa_scene_resources *state, const qa_scene_resource_checkpoint_refs *refs)
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
     bool present = state->source_fog != NULL;
@@ -189,7 +186,7 @@ static bool source_extended_builtins_fields(qa_source_save_io *io, qa_scene_reso
     for (unsigned i = 0; i < 32; ++i) {
         if (!image_field(io, refs, owner, &state->source_scratch[i]) ||
             !source_builtin_image(state->source_scratch[i], &state->source_builtins_upload, "*scratch", 16,
-                lighting.identity_light_byte, false, true, version >= 13, io->error)) return false;
+                lighting.identity_light_byte, false, true, io->error)) return false;
         for (unsigned j = 0; j < i; ++j)
             if (state->source_scratch[i] == state->source_scratch[j] ||
                 state->source_scratch[i]->identity == state->source_scratch[j]->identity) return false;
@@ -209,13 +206,12 @@ static bool source_extended_builtins_fields(qa_source_save_io *io, qa_scene_reso
         fog[at] = fog[at + 1] = fog[at + 2] = 255;
         fog[at + 3] = (uint8_t)(255 * qa_material_fog_factor(((float)x + .5f) / 256, ((float)y + .5f) / 32));
     }
-    return source_generated_image(state->source_dlight, &state->source_builtins_upload, "*dlight", 16, 16, light, false, version >= 13, io->error) &&
-        source_generated_image(state->source_fog, &state->source_builtins_upload, "*fog", 256, 32, fog, true, version >= 13, io->error) &&
+    return source_generated_image(state->source_dlight, &state->source_builtins_upload, "*dlight", 16, 16, light, false, io->error) &&
+        source_generated_image(state->source_fog, &state->source_builtins_upload, "*fog", 256, 32, fog, true, io->error) &&
         (!reading || owner->detached || (state->source_dlight == owner->source_dlight && state->source_fog == owner->source_fog));
 }
 static bool content_field(qa_source_save_io *io, qa_scene_resources *owner,
-    const qa_scene_resource_checkpoint_refs *refs, qa_resource **resource, qa_mount_id *mount,
-    uint32_t schema)
+    const qa_scene_resource_checkpoint_refs *refs, qa_resource **resource, qa_mount_id *mount)
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
     bool present = reading ? false : *resource != NULL;
@@ -226,15 +222,14 @@ static bool content_field(qa_source_save_io *io, qa_scene_resources *owner,
         !refs->resource_encode(refs->context, *resource, &pool, &version, io->error) || version != qa_resource_id(*resource))) return false;
     if (!qa_source_save_u64(io, &pool) || !pool || !qa_source_save_u64(io, &version) || !version) return false;
     const char *path = reading ? NULL : qa_resource_path(*resource); char *owned = NULL;
-    size_t scope = 0; qa_vfs_mount_info selected = {0}; bool found = reading;
+    qa_vfs_mount_info selected = {0}; bool found = reading;
     qa_mount_id historical = reading ? 0 : *mount;
     qa_vfs_resource_origin origin = {0};
-    if (!reading && schema >= 4) {
+    if (!reading) {
         found = qa_vfs_resource_origin_read(owner->vfs, historical, *resource, &origin);
         selected.id = historical; selected.is_archive = origin.archive;
         selected.digest = origin.archive ? &origin.archive_digest : NULL;
-    } else if (!reading) for (; scope < qa_vfs_mount_count(owner->vfs); ++scope)
-        if (qa_vfs_mount_at(owner->vfs, scope, &selected) && selected.id == *mount) { found = true; break; }
+    }
     qa_sha256_digest digest = {{0}}, archive_digest = {{0}};
     size_t ordinal = 0; bool archive = false;
     if (!reading && found) {
@@ -244,8 +239,7 @@ static bool content_field(qa_source_save_io *io, qa_scene_resources *owner,
         if (selected.is_archive != archive || (archive && (!selected.digest || !qa_sha256_equal(selected.digest, &archive_digest)))) return false;
     }
     bool ok = found && text_field(io, &path, &owned) &&
-        (schema >= 4 ? qa_source_save_u64(io, &historical) && historical != 0 :
-            qa_source_save_count(io, &scope, SIZE_MAX)) &&
+        qa_source_save_u64(io, &historical) && historical != 0 &&
         qa_source_save_bytes(io, digest.bytes, sizeof(digest.bytes)) && qa_source_save_bool(io, &archive);
     if (ok && archive) ok = qa_source_save_bytes(io, archive_digest.bytes, sizeof(archive_digest.bytes)) &&
         qa_source_save_count(io, &ordinal, SIZE_MAX);
@@ -255,13 +249,11 @@ static bool content_field(qa_source_save_io *io, qa_scene_resources *owner,
             qa_resource_id(decoded) == version &&
             qa_resource_pool_find(qa_vfs_resources(owner->vfs), qa_resource_id(decoded)) == decoded &&
             !strcmp(qa_resource_path(decoded), path);
-        if (ok && schema >= 4) {
+        if (ok) {
             ok = qa_vfs_resource_origin_read(owner->vfs, historical, decoded, &origin);
             selected.id = historical; selected.is_archive = origin.archive;
             selected.digest = origin.archive ? &origin.archive_digest : NULL;
-        } else if (ok) ok = scope < qa_vfs_mount_count(owner->vfs) &&
-            qa_vfs_mount_at(owner->vfs, scope, &selected);
-        ok = ok && selected.is_archive == archive &&
+        } ok = ok && selected.is_archive == archive &&
             (!archive || (selected.digest && qa_sha256_equal(selected.digest, &archive_digest)));
         if (ok) {
             const qa_sha256_digest *actual = qa_resource_digest(decoded);
@@ -299,12 +291,11 @@ static bool names_fields(qa_source_save_io *io, const qa_scene_resources *owner,
     return true;
 }
 static bool palette_source_fields(qa_source_save_io *io, qa_scene_resources *owner,
-    qa_scene_resources *state, unsigned family, const qa_scene_resource_checkpoint_refs *refs,
-    uint32_t version)
+    qa_scene_resources *state, unsigned family, const qa_scene_resource_checkpoint_refs *refs)
 {
     qa_resource **resource = &state->palette_resources[family];
     qa_vfs_acquisition *opening = &state->palette_openings[family];
-    if (!content_field(io, owner, refs, resource, &opening->mount, version)) return false;
+    if (!content_field(io, owner, refs, resource, &opening->mount)) return false;
     if (!*resource) return !opening->resource_id && !opening->path && !opening->opening_present;
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
     if (state->palettes[family].size != 768) return false;
@@ -329,7 +320,7 @@ static bool palette_source_fields(qa_source_save_io *io, qa_scene_resources *own
     qa_image_free(&image); return ok;
 }
 
-static bool cache_options(qa_source_save_io *io, image_cache *entry, uint32_t version)
+static bool cache_options(qa_source_save_io *io, image_cache *entry)
 {
     qa_scene_image_options *options = &entry->options;
     uint32_t family = options->family, wrap = options->wrap, filter = options->filter, usage = options->usage;
@@ -344,15 +335,14 @@ static bool cache_options(qa_source_save_io *io, image_cache *entry, uint32_t ve
         qa_source_save_count(io, &palette, 768) && (!palette || palette == 768) &&
         qa_source_save_count(io, &translation, 256) && (!translation || translation == 256) &&
         qa_source_save_bytes(io, entry->palette, palette) && qa_source_save_bytes(io, entry->translation, translation);
-    if (ok && version >= 5) ok = qa_source_save_bool(io, &entry->exact_file);
+    if (ok) ok = qa_source_save_bool(io, &entry->exact_file);
     if (ok) {
         options->family = (qa_scene_family)family; options->wrap = (qa_scene_wrap)wrap;
         options->filter = (qa_scene_filter)filter; options->usage = (qa_scene_image_usage)usage;
         options->transparent_index = transparent_index;
         options->palette_rgb = (qa_bytes){NULL, palette}; options->translation = (qa_bytes){NULL, translation};
     }
-    if (ok && version >= 6) ok = version >= 13 ? qa_scene_source_upload_precision_fields(io, options) :
-        qa_scene_source_upload_fields(io, options);
+    if (ok) ok = qa_scene_source_upload_precision_fields(io, options);
     return ok;
 }
 static bool acquisition_fields(qa_source_save_io *io, qa_scene_resources *owner,
@@ -378,13 +368,13 @@ static bool acquisition_fields(qa_source_save_io *io, qa_scene_resources *owner,
         qa_vfs_acquisition_retained(owner->vfs, opening, io->error);
 }
 static bool cache_receipts_fields(qa_source_save_io *io, qa_scene_resources *owner,
-    image_cache *entry, const qa_scene_resource_checkpoint_refs *refs, uint32_t version)
+    image_cache *entry, const qa_scene_resource_checkpoint_refs *refs)
 {
     uint32_t status = entry->palette_error;
     if (!acquisition_fields(io, owner, entry->source_record, entry->source_mount, &entry->source_opening) ||
         !acquisition_fields(io, owner, entry->logical_record, entry->logical_mount, &entry->logical_opening) ||
         !qa_source_save_bool(io, &entry->palette_attempted) || !qa_source_save_u32(io, &status) || status > QA_ERROR_NOT_FOUND ||
-        !content_field(io, owner, refs, &entry->palette_source, &entry->palette_opening.mount, version)) return false;
+        !content_field(io, owner, refs, &entry->palette_source, &entry->palette_opening.mount)) return false;
     entry->palette_error = (qa_status)status;
     bool logical_path = entry->logical_path != NULL;
     if (!qa_source_save_bool(io, &logical_path)) return false;
@@ -401,7 +391,7 @@ static bool cache_receipts_fields(qa_source_save_io *io, qa_scene_resources *own
     return entry->palette_source ? entry->palette_opening.opening_present : status != QA_OK && status != QA_ERROR_MEMORY;
 }
 static bool aliases_fields(qa_source_save_io *io, qa_scene_resources *owner,
-    qa_scene_resources *state, const qa_scene_resource_checkpoint_refs *refs, uint32_t version)
+    qa_scene_resources *state, const qa_scene_resource_checkpoint_refs *refs)
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
     size_t count = 0;
@@ -423,7 +413,7 @@ static bool aliases_fields(qa_source_save_io *io, qa_scene_resources *owner,
         qa_vfs_acquisition *receipts[] = {&alias->source_opening, &alias->logical_opening, &alias->palette_opening};
         for (unsigned j = 0; ok && j < 3; ++j) {
             qa_mount_id mount = receipts[j]->mount;
-            ok = content_field(io, owner, refs, objects[j], &mount, version) &&
+            ok = content_field(io, owner, refs, objects[j], &mount) &&
                 acquisition_fields(io, owner, *objects[j], mount, receipts[j]);
             if (ok && *objects[j] && !receipts[j]->opening_present) ok = false;
         }
@@ -436,7 +426,7 @@ static bool aliases_fields(qa_source_save_io *io, qa_scene_resources *owner,
         if (!reading) {
             memcpy(options.palette, alias->palette, 768); memcpy(options.translation, alias->translation, 256);
         }
-        if (ok) ok = cache_options(io, &options, version) && !options.exact_file;
+        if (ok) ok = cache_options(io, &options) && !options.exact_file;
         if (reading && ok) {
             alias->palette_error = (qa_status)status; alias->decode_options = options.options;
             alias->source_error = (qa_status)source_status;
@@ -581,7 +571,7 @@ static bool sampling_graph(const sampling_state *state, qa_error *error)
     free(visits); free(stack); return ok;
 }
 static bool sampling_fields(qa_source_save_io *io, qa_scene_resources *owner,
-    const qa_scene_resource_checkpoint_refs *refs, sampling_state *state, uint32_t version)
+    const qa_scene_resource_checkpoint_refs *refs, sampling_state *state)
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
     size_t count = 0;
@@ -619,15 +609,15 @@ static bool sampling_fields(qa_source_save_io *io, qa_scene_resources *owner,
         uint64_t source = 0;
         if (!reading && !refs->image_encode(refs->context, row->source, &source, io->error)) return false;
         if (!qa_source_save_u64(io, &source) || !qa_source_save_bool(io, &row->mipmap)) return false;
-        if (version >= 8) {
+        {
             if (!qa_source_save_bool(io, &row->source_variant)) return false;
-            if (version >= 12 && (!qa_source_save_bool(io, &row->generic_variant) ||
+            if ((!qa_source_save_bool(io, &row->generic_variant) ||
                 !qa_source_save_bool(io, &row->generic_variant_mipmap) ||
                 (!row->generic_variant && row->generic_variant_mipmap) ||
                 (row->generic_variant && !row->source_variant))) return false;
-            if (version >= 14 && (!qa_source_save_bool(io, &row->recipient_first_upload) ||
+            if ((!qa_source_save_bool(io, &row->recipient_first_upload) ||
                 (row->recipient_first_upload && (!row->source_variant || row->generic_variant)))) return false;
-            if (version >= 14) {
+            {
                 size_t bindings = 0;
                 if (!reading) for (const recipient_image_binding *binding = row->recipient_bindings;
                     binding; binding = binding->next) ++bindings;
@@ -657,9 +647,7 @@ static bool sampling_fields(qa_source_save_io *io, qa_scene_resources *owner,
                 }
             }
             if (row->source_variant && (row->mipmap ||
-                (!row->generic_variant && !(version >= 13 ?
-                    qa_q3_image_upload_options_precision_codec(io, &row->upload) :
-                    qa_q3_image_upload_options_codec(io, &row->upload))))) return false;
+                (!row->generic_variant && !(qa_q3_image_upload_options_precision_codec(io, &row->upload))))) return false;
         }
         if (reading) {
             const qa_scene_image *decoded = NULL;
@@ -678,16 +666,15 @@ static bool resource_fields(qa_source_save_io *io, qa_scene_resources *owner, qa
     const qa_scene_resource_checkpoint_refs *refs, sampling_state *sampling)
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
-    uint8_t magic[4] = {'Q', 'A', 'R', 'S'}; uint32_t version = 14, fullbright = state->fullbright_first;
-    if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "QARS", 4) ||
-        !qa_source_save_u32(io, &version) || (version < 2 || version > 14) || !names_fields(io, owner, state) ||
+    uint8_t magic[4] = {'Q', 'A', 'R', 'S'}; uint32_t fullbright = state->fullbright_first;
+    if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "QARS", 4) || !names_fields(io, owner, state) ||
         !qa_source_save_bool(io, &state->registrations_started) || !qa_source_save_u32(io, &fullbright) || fullbright > 256 ||
         !image_field(io, refs, owner, &state->white) || !image_field(io, refs, owner, &state->missing)) return false;
     if (!builtin_image(state->white, false) || !builtin_image(state->missing, true) ||
         (reading && !owner->detached &&
             (!same_image(owner->white, state->white) || !same_image(owner->missing, state->missing)))) return false;
-    if (version >= 7 && !source_builtins_fields(io, owner, state, refs, version)) return false;
-    if (version >= 11 && !source_extended_builtins_fields(io, owner, state, refs, version)) return false;
+    if (!source_builtins_fields(io, owner, state, refs)) return false;
+    if (!source_extended_builtins_fields(io, owner, state, refs)) return false;
     state->fullbright_first = fullbright;
     for (unsigned family = 0; family < 3; ++family) {
         qa_scene_image_policy *policy = &state->policies[family]; size_t palette = state->palettes[family].size;
@@ -706,9 +693,9 @@ static bool resource_fields(qa_source_save_io *io, qa_scene_resources *owner, qa
             if (!state->palettes[family].data) return fail(io->error, QA_ERROR_MEMORY, "allocating saved resource palette");
         }
         if (!qa_source_save_bytes(io, state->palettes[family].data, palette)) return false;
-        if (version >= 9 && !palette_source_fields(io, owner, state, family, refs, version)) return false;
+        if (!palette_source_fields(io, owner, state, family, refs)) return false;
     }
-    if (version >= 10 && !aliases_fields(io, owner, state, refs, version)) return false;
+    if (!aliases_fields(io, owner, state, refs)) return false;
     size_t count = state->cache_count, capacity = state->cache_capacity;
     if (!qa_source_save_count(io, &count, reading ? io->input.size / 43 : SIZE_MAX) ||
         !qa_source_save_count(io, &capacity, SIZE_MAX / sizeof(image_cache)) || capacity < count) return false;
@@ -726,10 +713,10 @@ static bool resource_fields(qa_source_save_io *io, qa_scene_resources *owner, qa
             ok = entry->name != 0;
         }
         free(owned);
-        if (!ok || !cache_options(io, entry, version) ||
-            !content_field(io, owner, refs, &entry->source_record, &entry->source_mount, version) || !entry->source_record ||
-            !content_field(io, owner, refs, &entry->logical_record, &entry->logical_mount, version) ||
-            (version >= 10 && !cache_receipts_fields(io, owner, entry, refs, version)) ||
+        if (!ok || !cache_options(io, entry) ||
+            !content_field(io, owner, refs, &entry->source_record, &entry->source_mount) || !entry->source_record ||
+            !content_field(io, owner, refs, &entry->logical_record, &entry->logical_mount) ||
+            (!cache_receipts_fields(io, owner, entry, refs)) ||
             !image_field(io, refs, owner, &entry->image)) return false;
         const char *cache_name=qa_strings_cstr(reading?state->names->strings:owner->names->strings,entry->name);
         if (!cache_name || strcmp(entry->image->name,cache_name) || entry->image->kind!=QA_SCENE_RGBA8 ||
@@ -738,7 +725,7 @@ static bool resource_fields(qa_source_save_io *io, qa_scene_resources *owner, qa
         else if (entry->source != qa_resource_id(entry->source_record) || entry->logical_source != qa_resource_id(entry->logical_record)) return false;
         for (size_t j = 0; j < i; ++j) if (same_cache_key(entry, &state->cache[j])) return false;
     }
-    return version < 3 || sampling_fields(io, owner, refs, sampling, version);
+    return sampling_fields(io, owner, refs, sampling);
 }
 
 static void state_clear(qa_scene_resources *state)

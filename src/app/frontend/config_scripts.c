@@ -647,9 +647,7 @@ static bool source_fields(qa_source_save_io *io,files_state *state)
 }
 static bool fields(qa_source_save_io *io,files_state *state)
 {
-    uint8_t magic[4]={'Q','F','C','F'}; uint32_t version=3;
-    return qa_source_save_bytes(io,magic,4) && !memcmp(magic,"QFCF",4) && qa_source_save_u32(io,&version) && (version==2 || version==3) &&
-        qa_source_save_u64(io,&state->catalog) && state->catalog && qa_source_save_u32(io,&state->product) && state->product &&
+    uint8_t magic[4]={'Q','F','C','F'}; return qa_source_save_bytes(io,magic,4) && !memcmp(magic,"QFCF",4) && qa_source_save_u64(io,&state->catalog) && state->catalog && qa_source_save_u32(io,&state->product) && state->product &&
         qa_source_save_u32(io,&state->base) && state->base && qa_source_save_u64(io,&state->selected) && state->selected &&
         qa_source_save_u64(io,&state->base_files) && state->base_files && qa_source_save_u64(io,&state->console) && state->console &&
         qa_source_save_u64(io,&state->writable) && state->writable && qa_source_save_u64(io,&state->base_writable) && state->base_writable &&
@@ -659,7 +657,7 @@ static bool fields(qa_source_save_io *io,files_state *state)
         qa_source_save_u64(io,&state->script_base_user) && state->script_base_user &&
         qa_source_save_u64(io,&state->script_base_loose) && qa_source_save_u64(io,&state->nonce) &&
         (state->selected==state->base_files)==(state->product==state->base) && state->console!=state->selected && state->console!=state->base_files &&
-        (version<3 || source_fields(io,state));
+        source_fields(io,state);
 }
 bool frontend_config_files_checkpoint(const frontend_config_files *owner,const qa_application_content_graph *graph,qa_buffer *out,qa_error *error)
 {

@@ -188,9 +188,8 @@ static bool reference_text(qa_source_save_io *io, const char *text) {
     io->offset += length; return true;
 }
 static bool reference_header(qa_source_save_io *io, size_t *count, uint32_t *feed, uint32_t *loose) {
-    uint32_t magic = UINT32_C(0x46525051), version = 1;
+    uint32_t magic = UINT32_C(0x46525051);
     return qa_source_save_u32(io, &magic) && magic == UINT32_C(0x46525051) &&
-        qa_source_save_u32(io, &version) && version == 1 &&
         qa_source_save_count(io, count, QA_Q3_SEARCH_PATHS) &&
         qa_source_save_u32(io, feed) && qa_source_save_u32(io, loose) && *loose <= 1;
 }

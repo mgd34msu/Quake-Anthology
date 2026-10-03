@@ -132,9 +132,9 @@ static bool legacy(hardware_codec *io, uint8_t *data)
 static bool encode(hardware_codec *io, guest_host_x86_64_state *state,
     const guest_host_x86_64_capabilities *capability)
 {
-    uint8_t magic[8] = {'Q','A','H','C',1,0,0,0};
+    uint8_t magic[4] = {'Q','A','H','C'};
     uint64_t active = io->reading ? 0 : qa_load_u64le(state->xsave.data + 512);
-    if (!span(io, magic, sizeof(magic)) || memcmp(magic, "QAHC\1\0\0", 8) ||
+    if (!span(io, magic, sizeof(magic)) || memcmp(magic, "QAHC", sizeof(magic)) ||
         !integer(io, &state->xfeatures) || !integer(io, &active))
         return fail(io, QA_ERROR_FORMAT, "hardware architectural checkpoint header is invalid");
     if ((state->xfeatures & 3) != 3 || (active & ~state->xfeatures) ||

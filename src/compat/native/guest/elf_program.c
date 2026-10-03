@@ -371,7 +371,7 @@ bool guest_elf_program_stack_changed(guest_elf_program *owner, uint64_t base, si
 bool guest_elf_program_stack_owned(const guest_elf_program *owner)
 { return owner && owner->complete && owner->stack_transferred; }
 
-enum { PROGRAM_RECORD = 208 };
+enum { PROGRAM_RECORD = 204 };
 
 static bool receipt_read(const guest_elf_program *owner, qa_error *error)
 {
@@ -400,19 +400,19 @@ static void record(uint8_t data[PROGRAM_RECORD], const guest_elf_program *owner)
 {
     const guest_elf_view *program = guest_elf_describe(owner->images.program.artifact);
     const guest_elf_view *interpreter = guest_elf_describe(owner->images.interpreter.artifact);
-    memset(data, 0, PROGRAM_RECORD); memcpy(data, "QEPG", 4); qa_store_u32le(data + 4, 2);
-    qa_store_u64le(data + 8, owner->view.program); qa_store_u64le(data + 16, owner->view.interpreter);
-    qa_store_u64le(data + 24, owner->view.stack); qa_store_u64le(data + 32, owner->view.stack_bytes);
-    qa_store_u64le(data + 40, owner->view.initial_stack); qa_store_u64le(data + 48, owner->view.entry);
-    qa_store_u64le(data + 56, owner->view.argc); qa_store_u64le(data + 64, owner->view.environment_count);
-    qa_store_u64le(data + 72, owner->phdr); qa_store_u64le(data + 80, owner->phent);
-    qa_store_u64le(data + 88, owner->phnum); qa_store_u64le(data + 96, owner->main_entry);
-    qa_store_u64le(data + 104, owner->interpreter_base); qa_store_u32le(data + 112, (uint32_t)owner->view.stack_tag);
-    qa_store_u32le(data + 116, program->image.target.arch); data[120] = program->image.target.pointer_bytes;
-    data[121] = owner->stack_transferred; data[122] = owner->stack_changed;
-    memcpy(data + 128, program->image.digest.bytes, 32);
-    if (interpreter) memcpy(data + 160, interpreter->image.digest.bytes, 32);
-    qa_store_u64le(data + 192, owner->stack_mapping); qa_store_u64le(data + 200, owner->stack_backing);
+    memset(data, 0, PROGRAM_RECORD); memcpy(data, "QEPG", 4);
+    qa_store_u64le(data + 4, owner->view.program); qa_store_u64le(data + 12, owner->view.interpreter);
+    qa_store_u64le(data + 20, owner->view.stack); qa_store_u64le(data + 28, owner->view.stack_bytes);
+    qa_store_u64le(data + 36, owner->view.initial_stack); qa_store_u64le(data + 44, owner->view.entry);
+    qa_store_u64le(data + 52, owner->view.argc); qa_store_u64le(data + 60, owner->view.environment_count);
+    qa_store_u64le(data + 68, owner->phdr); qa_store_u64le(data + 76, owner->phent);
+    qa_store_u64le(data + 84, owner->phnum); qa_store_u64le(data + 92, owner->main_entry);
+    qa_store_u64le(data + 100, owner->interpreter_base); qa_store_u32le(data + 108, (uint32_t)owner->view.stack_tag);
+    qa_store_u32le(data + 112, program->image.target.arch); data[116] = program->image.target.pointer_bytes;
+    data[117] = owner->stack_transferred; data[118] = owner->stack_changed;
+    memcpy(data + 124, program->image.digest.bytes, 32);
+    if (interpreter) memcpy(data + 156, interpreter->image.digest.bytes, 32);
+    qa_store_u64le(data + 188, owner->stack_mapping); qa_store_u64le(data + 196, owner->stack_backing);
 }
 
 bool guest_elf_program_checkpoint(const guest_elf_program *owner, qa_buffer *out, qa_error *error)
@@ -432,22 +432,22 @@ bool guest_elf_program_adopt(const guest_elf_program_images *images, qa_bytes en
     guest_elf_program **out, qa_error *error)
 {
     if (!images || !out || *out || !encoded.data || encoded.size != PROGRAM_RECORD ||
-        memcmp(encoded.data, "QEPG", 4) || qa_load_u32le(encoded.data + 4) != 2 ||
-        encoded.data[121] > 1 || encoded.data[122] > 1 ||
-        qa_load_u64le(encoded.data + 32) > SIZE_MAX || qa_load_u64le(encoded.data + 56) > SIZE_MAX ||
-        qa_load_u64le(encoded.data + 64) > SIZE_MAX)
+        memcmp(encoded.data, "QEPG", 4) ||
+        encoded.data[117] > 1 || encoded.data[118] > 1 ||
+        qa_load_u64le(encoded.data + 28) > SIZE_MAX || qa_load_u64le(encoded.data + 52) > SIZE_MAX ||
+        qa_load_u64le(encoded.data + 60) > SIZE_MAX)
         return guest_fail(error, QA_ERROR_FORMAT, 0, "ELF cold startup receipt has an invalid typed extent");
     guest_elf_program *owner = calloc(1, sizeof(*owner));
     if (!owner) return guest_fail(error, QA_ERROR_MEMORY, 0, "owning cold ELF startup receipt");
     owner->images = *images;
-    owner->view.stack = qa_load_u64le(encoded.data + 24);
-    owner->view.stack_bytes = (size_t)qa_load_u64le(encoded.data + 32);
-    owner->view.initial_stack = qa_load_u64le(encoded.data + 40);
-    owner->view.argc = (size_t)qa_load_u64le(encoded.data + 56);
-    owner->view.environment_count = (size_t)qa_load_u64le(encoded.data + 64);
-    owner->view.stack_tag = (int32_t)qa_load_u32le(encoded.data + 112);
-    owner->stack_transferred = encoded.data[121] != 0; owner->stack_changed = encoded.data[122] != 0;
-    owner->stack_mapping = qa_load_u64le(encoded.data + 192); owner->stack_backing = qa_load_u64le(encoded.data + 200);
+    owner->view.stack = qa_load_u64le(encoded.data + 20);
+    owner->view.stack_bytes = (size_t)qa_load_u64le(encoded.data + 28);
+    owner->view.initial_stack = qa_load_u64le(encoded.data + 36);
+    owner->view.argc = (size_t)qa_load_u64le(encoded.data + 52);
+    owner->view.environment_count = (size_t)qa_load_u64le(encoded.data + 60);
+    owner->view.stack_tag = (int32_t)qa_load_u32le(encoded.data + 108);
+    owner->stack_transferred = encoded.data[117] != 0; owner->stack_changed = encoded.data[118] != 0;
+    owner->stack_mapping = qa_load_u64le(encoded.data + 188); owner->stack_backing = qa_load_u64le(encoded.data + 196);
     bool okay = images_read(owner, false, error) && stack_read(owner, false, error);
     if (okay) okay = receipt_read(owner, error);
     uint8_t expected[PROGRAM_RECORD];

@@ -181,9 +181,8 @@ static bool event_topology_fields(qa_source_save_io *io, qa_application *applica
     bool *present, event_owner_plan **plans, size_t *count)
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
-    uint8_t magic[4] = {'Q','F','E','T'}; uint32_t version = 2;
-    if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "QFET", 4) ||
-        !qa_source_save_u32(io, &version) || version != 2 || !qa_source_save_bool(io, present) ||
+    uint8_t magic[4] = {'Q','F','E','T'}; if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "QFET", 4) ||
+        !qa_source_save_bool(io, present) ||
         !qa_source_save_count(io, count, reading ? io->input.size / 22 : SIZE_MAX / sizeof(**plans)) ||
         (!*present && *count)) return false;
     if (reading && *count) {
@@ -1225,12 +1224,10 @@ bool frontend_event_images(qa_frontend *frontend, qa_actor_owner owner, qa_game_
     if (!resources_read(frontend, owner, audio_family(family), &entry, error)) return false;
     *out = entry->images; return true;
 }
-static bool event_signature(qa_source_save_io *io, uint32_t *schema)
+static bool event_signature(qa_source_save_io *io)
 {
-    uint8_t magic[4] = {'Q','A','P','E'}; uint32_t version = 9;
-    if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "QAPE", 4) ||
-        !qa_source_save_u32(io, &version) || (version != 8 && version != 9)) return false;
-    *schema = version; return true;
+    uint8_t magic[4] = {'Q','A','P','E'};
+    return qa_source_save_bytes(io, magic, 4) && !memcmp(magic, "QAPE", 4);
 }
 static bool fog_fields(qa_source_save_io *io, qa_q2_fog *fog)
 {
@@ -1410,7 +1407,7 @@ static bool q1_fog_fields(qa_source_save_io *io, qa_frontend *frontend, unsigned
         qa_session_clock(qa_application_session(frontend->application), fog->owner, &clock) && fog->time <= clock.frame.time_ns;
 }
 static bool view_fields(qa_source_save_io *io, qa_frontend *frontend, frontend_scene_namespace *space,
-    unsigned seat, frontend_event_view *view, uint32_t schema)
+    unsigned seat, frontend_event_view *view)
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
     for (unsigned i = 0; i < FRONTEND_STYLES; ++i)
@@ -1425,7 +1422,7 @@ static bool view_fields(qa_source_save_io *io, qa_frontend *frontend, frontend_s
         !qa_source_save_vec3(io, &view->sky_axis) || !qa_vec_finite(view->sky_axis) ||
         !qa_source_save_f32(io, &view->sky_rotation) || !isfinite(view->sky_rotation) || !qa_source_save_bool(io, &view->sky_auto)) return false;
     if (view->sky_received && !view->sky_owner) return false;
-    if (schema >= 9 && (!frontend_save_text(io, &view->sky_name) ||
+    if ((!frontend_save_text(io, &view->sky_name) ||
         (!view->sky_received && view->sky_name))) return false;
     for (unsigned i = 0; i < 6; ++i) {
         uint64_t reference = 0;
@@ -1617,8 +1614,7 @@ bool frontend_event_checkpoint(qa_frontend *frontend, const qa_audio_asset_inven
     if (!frontend || !frontend->application || !frontend->capture || !scope || !scope->space || !scope->owner ||
         !out || out->data || out->size || !qa_source_save_writer(&io, qa_application_session(frontend->application), error)) return false;
     bool present = frontend->events != NULL; uint32_t seats = frontend->options.seats;
-    uint32_t schema = 0;
-    bool ok = event_signature(&io, &schema) && qa_source_save_u32(&io, &seats) && qa_source_save_bool(&io, &present);
+    bool ok = event_signature(&io) && qa_source_save_u32(&io, &seats) && qa_source_save_bool(&io, &present);
     frontend_event_state *state = frontend->events;
     if (ok && present) {
         qa_builtin_random random = state->light_random;
@@ -1634,7 +1630,7 @@ bool frontend_event_checkpoint(qa_frontend *frontend, const qa_audio_asset_inven
         for (frontend_audio_projection *entry = state->audio_head; ok && entry; entry = entry->next) {
             frontend_audio_projection copy = *entry; ok = audio_projection_fields(&io, frontend, inventory, &copy);
         }
-        for (unsigned i = 0; ok && i < seats; ++i) { frontend_event_view copy = state->views[i]; ok = view_fields(&io, frontend, scope->space, i, &copy, schema); }
+        for (unsigned i = 0; ok && i < seats; ++i) { frontend_event_view copy = state->views[i]; ok = view_fields(&io, frontend, scope->space, i, &copy); }
         for (unsigned i = 0; ok && i < 32; ++i) { frontend_q1_light copy = state->q1_lights[i]; ok = light_fields(&io, scope, i, &copy); }
         size_t count = 0;
         for (frontend_retained_sound *entry = state->sounds; entry; entry = entry->next) ++count;
@@ -1681,8 +1677,8 @@ bool frontend_event_restore(qa_frontend *frontend, const qa_audio_asset_inventor
     if (!frontend || !frontend->application || !frontend->source_restoring || frontend->capture ||
         !scope || !scope->space || !scope->owner || !event_empty(frontend->events))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Event restore requires its empty prepared candidate and genuine shared namespace");
-    qa_source_save_io io = {0}; bool present = false; uint32_t seats = 0, schema = 0;
-    bool ok = qa_source_save_reader(&io, qa_application_session(frontend->application), bytes, error) && event_signature(&io, &schema) &&
+    qa_source_save_io io = {0}; bool present = false; uint32_t seats = 0;
+    bool ok = qa_source_save_reader(&io, qa_application_session(frontend->application), bytes, error) && event_signature(&io) &&
         qa_source_save_u32(&io, &seats) && seats == frontend->options.seats && qa_source_save_bool(&io, &present) &&
         present == (frontend->events != NULL);
     frontend_event_state *state = frontend->events;
@@ -1702,7 +1698,7 @@ bool frontend_event_restore(qa_frontend *frontend, const qa_audio_asset_inventor
             state->audio_tail = entry;
             ok = audio_projection_fields(&io, frontend, inventory, entry);
         }
-        for (unsigned i = 0; ok && i < seats; ++i) ok = view_fields(&io, frontend, scope->space, i, &state->views[i], schema);
+        for (unsigned i = 0; ok && i < seats; ++i) ok = view_fields(&io, frontend, scope->space, i, &state->views[i]);
         for (unsigned i = 0; ok && i < 32; ++i) ok = light_fields(&io, scope, i, &state->q1_lights[i]);
         size_t count = 0; frontend_retained_sound **sounds = &state->sounds;
         size_t ordinal = 0;

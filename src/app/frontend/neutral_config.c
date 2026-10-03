@@ -1199,9 +1199,8 @@ static bool row_fields(frontend_neutral_config *row,qa_source_save_io *io,
 }
 static bool header(qa_source_save_io *io,size_t *count)
 {
-    uint8_t magic[4]={'Q','F','N','C'}; uint32_t schema=4;
-    return qa_source_save_bytes(io,magic,4) && !memcmp(magic,"QFNC",4) &&
-        qa_source_save_u32(io,&schema) && schema==4 && qa_source_save_count(io,count,
+    uint8_t magic[4]={'Q','F','N','C'}; return qa_source_save_bytes(io,magic,4) && !memcmp(magic,"QFNC",4) &&
+        qa_source_save_count(io,count,
             io->direction==QA_SOURCE_SAVE_READ?io->input.size-io->offset:SIZE_MAX);
 }
 bool frontend_neutral_configs_checkpoint(const frontend_neutral_configs *owner,

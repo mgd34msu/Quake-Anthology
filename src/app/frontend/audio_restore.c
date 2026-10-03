@@ -220,9 +220,8 @@ static bool holders(qa_frontend *f, qa_audio_asset ***out, size_t *count, qa_err
 }
 static bool header(qa_source_save_io *io, const bank_inventory *inventory)
 {
-    uint8_t magic[4] = {'Q','F','A','G'}; uint32_t version = 7; size_t count = inventory->count;
+    uint8_t magic[4] = {'Q','F','A','G'}; size_t count = inventory->count;
     if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "QFAG", 4) ||
-        !qa_source_save_u32(io, &version) || version != 7 ||
         !qa_source_save_count(io, &count, SIZE_MAX / sizeof(bank_owner)) || count != inventory->count) return false;
     for (size_t i = 0; i < count; ++i) {
         bank_owner row = inventory->rows[i];

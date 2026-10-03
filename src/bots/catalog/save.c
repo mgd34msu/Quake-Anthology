@@ -2,9 +2,9 @@
 
 static bool signature(qa_source_save_io *io) {
     static const uint8_t expected[8]={'Q','A','B','C','A','T',0,0};
-    uint8_t magic[8];memcpy(magic,expected,sizeof(magic));uint32_t version=1;
-    return qa_source_save_bytes(io,magic,sizeof(magic)) && qa_source_save_u32(io,&version) &&
-        (!memcmp(magic,expected,sizeof(magic)) && version==1?true:
+    uint8_t magic[8];memcpy(magic,expected,sizeof(magic));
+    return qa_source_save_bytes(io,magic,sizeof(magic)) &&
+        (!memcmp(magic,expected,sizeof(magic))?true:
             bot_catalog_fail(io->error,QA_ERROR_FORMAT,"unsupported source game bot catalogue continuation"));
 }
 static bool infos_fields(qa_source_save_io *io,bot_catalog_infos *infos) {

@@ -1935,8 +1935,8 @@ static bool timers_valid(supply_actor *row, qa_error *error) {
     return true;
 }
 static bool supply_signature(qa_source_save_io *io, qa_error *error) {
-    static const uint8_t expected[8] = {'Q','A','S','P',1,0,0,0};
-    uint8_t magic[8]; memcpy(magic, expected, sizeof(magic));
+    static const uint8_t expected[4] = {'Q','A','S','P'};
+    uint8_t magic[sizeof(expected)]; memcpy(magic, expected, sizeof(magic));
     return qa_source_save_bytes(io, magic, sizeof(magic)) &&
         (!memcmp(magic, expected, sizeof(magic)) ||
          application_fail(error, QA_ERROR_FORMAT, "Unsupported application supplies continuation schema"));

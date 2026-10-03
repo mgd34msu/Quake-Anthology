@@ -121,17 +121,16 @@ static bool object_fields(qa_source_save_io *io, qa_fs_object_reference *object)
 }
 static bool fields(qa_source_save_io *io, frontend_qw_logfile *owner, uint64_t *view)
 {
-    uint8_t magic[4] = {'Q','W','L','F'}; uint32_t version = 2, mode = owner->saved.mode;
+    uint8_t magic[4] = {'Q','W','L','F'}; uint32_t mode = owner->saved.mode;
     size_t size = owner->saved_path ? strlen(owner->saved_path) : 0;
     if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "QWLF", 4) ||
-        !qa_source_save_u32(io, &version) || (version != 1 && version != 2) || !qa_source_save_u64(io, view) || !*view ||
+        !qa_source_save_u64(io, view) || !*view ||
         !qa_source_save_u64(io, &owner->mount) || !owner->mount ||
         !qa_source_save_u64(io, &owner->position) || owner->position > INT64_MAX ||
         !qa_source_save_bool(io, &owner->sync_pending) ||
         !object_fields(io, &owner->saved.root) || !object_fields(io, &owner->saved.object) ||
         !qa_source_save_u32(io, &mode) || mode != QA_FS_STREAM_WRITE ||
-        !qa_source_save_count(io, &size, version==1?12:
-            io->direction==QA_SOURCE_SAVE_READ?io->input.size-io->offset:SIZE_MAX-1) || size < 10) return false;
+        !qa_source_save_count(io, &size, io->direction==QA_SOURCE_SAVE_READ?io->input.size-io->offset:SIZE_MAX-1) || size < 10) return false;
     if (io->direction == QA_SOURCE_SAVE_READ) {
         owner->saved_path = calloc(size + 1, 1);
         if (!owner->saved_path) return fail(io->error, QA_ERROR_MEMORY, "Restoring QuakeWorld frag filename");
@@ -139,7 +138,6 @@ static bool fields(qa_source_save_io *io, frontend_qw_logfile *owner, uint64_t *
     if (!qa_source_save_bytes(io, owner->saved_path, size) || memchr(owner->saved_path, 0, size)) return false;
     owner->saved.path = owner->saved_path; owner->saved.mode = (qa_fs_stream_mode)mode;
     const char *leaf=strrchr(owner->saved_path,'/'); leaf=leaf?leaf+1:owner->saved_path;
-    if (version==1 && leaf!=owner->saved_path) return false;
     unsigned number = 1000; char extra = 0;
     if (sscanf(leaf, "frag_%u.log%c", &number, &extra) != 1 || number >= 1000) return false;
     char canonical[32]; snprintf(canonical, sizeof(canonical), "frag_%u.log", number);

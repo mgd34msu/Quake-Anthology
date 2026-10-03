@@ -11,7 +11,6 @@ typedef struct q2_save_io {
     qa_bytes input;
     qa_buffer output;
     size_t offset, capacity;
-    uint32_t schema;
     qa_error *error;
     bool reading;
 } q2_save_io;

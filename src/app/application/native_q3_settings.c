@@ -579,10 +579,10 @@ static bool snapshot_fields(qa_source_save_io *io, application_native_q3_cvar_sn
 static bool cache_header(qa_source_save_io *io, const struct application_native_q3_settings *owner)
 {
     uint8_t magic[4] = {'Q', 'A', 'G', 'C'};
-    uint32_t version = 2, product = owner->product;
+    uint32_t product = owner->product;
     size_t count = definition_count(owner);
     return qa_source_save_bytes(io, magic, sizeof(magic)) && !memcmp(magic, "QAGC", 4) &&
-        qa_source_save_u32(io, &version) && version == 2 && qa_source_save_u32(io, &product) &&
+        qa_source_save_u32(io, &product) &&
         product == (uint32_t)owner->product && qa_source_save_count(io, &count, definition_count(owner)) &&
         count == definition_count(owner);
 }

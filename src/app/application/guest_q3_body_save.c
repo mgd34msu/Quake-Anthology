@@ -9,10 +9,7 @@
 static bool signature(qa_source_save_io *io, const char expected[8])
 {
     char magic[8]; memcpy(magic, expected, 8);
-    uint32_t version = 1;
-    return qa_source_save_bytes(io, magic, 8) && !memcmp(magic, expected, 8) &&
-        qa_source_save_u32(io, &version) && (version == 1 ||
-            application_fail(io->error, QA_ERROR_FORMAT, "Unknown CGAME body continuation version"));
+    return qa_source_save_bytes(io, magic, 8) && !memcmp(magic, expected, 8);
 }
 static bool text(qa_source_save_io *io, char **out)
 {

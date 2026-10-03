@@ -244,8 +244,6 @@ static bool object(qa_source_save_io *io, qa_mode_object_checkpoint *p) {
     FIELD(bool, p->global_animation); FIELD(bool, p->q3_source_owned); return true;
 }
 static bool checkpoint(qa_source_save_io *io, qa_modes *m, qa_modes_checkpoint *p) {
-    FIELD(u32, p->version);
-    if (p->version != 16) return save_fail(io, "unsupported typed mode checkpoint version");
     FIELD(u64, p->random); FIELD(u64, p->attack_sequence);
     ARRAY(p->mode_generations, p->generation_count, m->mode_capacity);
     if (p->generation_count != m->mode_capacity) return save_fail(io, "mode save capacity changed");
@@ -272,11 +270,9 @@ static bool checkpoint(qa_source_save_io *io, qa_modes *m, qa_modes_checkpoint *
 static bool header(qa_source_save_io *io) {
     static const uint8_t expected[8] = {'Q', 'A', 'M', 'O', 'D', 'E', 'S', 0};
     uint8_t signature[8] = {'Q', 'A', 'M', 'O', 'D', 'E', 'S', 0};
-    uint32_t version = 14;
     if (!qa_source_save_bytes(io, signature, sizeof(signature)) || memcmp(signature, expected, sizeof(signature)))
         return save_fail(io, "invalid mode save signature");
-    FIELD(u32, version);
-    return version == 14 || save_fail(io, "unsupported mode save version");
+    return true;
 }
 static bool boundary(qa_modes *m, qa_error *e) {
     if (!m || m->callback_depth || !qa_session_safe(m->options.services.session) ||

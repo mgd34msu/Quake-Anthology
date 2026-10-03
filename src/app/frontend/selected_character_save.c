@@ -27,10 +27,9 @@ bool frontend_selected_character_topology_checkpoint(const qa_frontend *frontend
 {
     if (!frontend || !frontend->application || frontend->stepping || !out || out->data || out->size)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Selected character topology requires its actual inactive frontend");
-    qa_source_save_io io = {0}; uint8_t magic[4] = {'Q','F','C','T'}; uint32_t version = 1;
-    size_t count = frontend_selected_character_count(frontend);
+    qa_source_save_io io = {0}; uint8_t magic[4] = {'Q','F','C','T'}; size_t count = frontend_selected_character_count(frontend);
     bool okay = qa_source_save_writer(&io, qa_application_session(frontend->application), error) &&
-        qa_source_save_bytes(&io, magic, 4) && qa_source_save_u32(&io, &version) && qa_source_save_count(&io, &count, SIZE_MAX);
+        qa_source_save_bytes(&io, magic, 4) && qa_source_save_count(&io, &count, SIZE_MAX);
     for (const frontend_selected_character *owner = frontend->selected_characters; okay && owner; owner = owner->next) {
         size_t visual = 0; frontend_visual_owner_view media;
         for (; visual < frontend_visual_owner_count(frontend); ++visual) {
@@ -53,11 +52,10 @@ bool frontend_selected_character_prepare_restored(qa_frontend *frontend, qa_byte
 {
     if (!frontend || !frontend->application || frontend->stepping || frontend->selected_characters)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Selected character topology requires an empty candidate");
-    qa_source_save_io io = {0}; uint8_t magic[4]; uint32_t version = 0; size_t count = 0;
+    qa_source_save_io io = {0}; uint8_t magic[4]; size_t count = 0;
     frontend_selected_character *head = NULL, *tail = NULL;
     bool okay = qa_source_save_reader(&io, qa_application_session(frontend->application), bytes, error) &&
-        qa_source_save_bytes(&io, magic, 4) && !memcmp(magic, "QFCT", 4) && qa_source_save_u32(&io, &version) && version == 1 &&
-        qa_source_save_count(&io, &count, bytes.size / 16);
+        qa_source_save_bytes(&io, magic, 4) && !memcmp(magic, "QFCT", 4) && qa_source_save_count(&io, &count, bytes.size / 16);
     for (size_t i = 0; okay && i < count; ++i) {
         frontend_selected_character *owner = calloc(1, sizeof(*owner));
         if (!owner) { okay = frontend_fail(error, QA_ERROR_MEMORY, "Preparing actual selected character registry"); break; }
@@ -189,12 +187,10 @@ bool frontend_selected_character_checkpoint(const qa_frontend *frontend, size_t 
         !owner->view.selection.current(owner->view.selection.lifetime, &owner->view.selection))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Selected character checkpoint requires its real registry lease and retained declaration");
     frontend_selected_character copy = *owner;
-    qa_source_save_io io = {0}; uint8_t magic[4] = {'Q','F','C','P'}; uint32_t version = 1;
-    size_t count = 0;
+    qa_source_save_io io = {0}; uint8_t magic[4] = {'Q','F','C','P'}; size_t count = 0;
     for (const frontend_selected_character_pose *pose = owner->poses; pose; pose = pose->next) ++count;
     bool okay = qa_source_save_writer(&io, qa_application_session(frontend->application), error) &&
-        qa_source_save_bytes(&io, magic, 4) && qa_source_save_u32(&io, &version) &&
-        selection_fields(&io, graph, &owner->view.selection, &owner->view.appearance);
+        qa_source_save_bytes(&io, magic, 4) && selection_fields(&io, graph, &owner->view.selection, &owner->view.appearance);
     for (unsigned i = 0; okay && i < 8; ++i) okay = resource_fields(&io, graph, &copy, i);
     okay = okay && animation_fields(&io, &copy.animation);
     for (unsigned i = 0; okay && i < 3; ++i)
@@ -229,10 +225,9 @@ bool frontend_selected_character_restore(qa_frontend *frontend, size_t ordinal, 
         candidate->view.appearance.provider == target->view.appearance.provider &&
         qa_launch_instance_retain_metadata(candidate->view.appearance.launch, &candidate->appearance_lease, error);
     if (okay) candidate->view.appearance_launch = qa_launch_instance_lease_view(candidate->appearance_lease);
-    qa_source_save_io io = {0}; uint8_t magic[4]; uint32_t version = 0; size_t count = 0;
+    qa_source_save_io io = {0}; uint8_t magic[4]; size_t count = 0;
     okay = okay && qa_source_save_reader(&io, qa_application_session(frontend->application), bytes, error) &&
-        qa_source_save_bytes(&io, magic, 4) && !memcmp(magic, "QFCP", 4) && qa_source_save_u32(&io, &version) && version == 1 &&
-        selection_fields(&io, graph, &candidate->view.selection, &candidate->view.appearance);
+        qa_source_save_bytes(&io, magic, 4) && !memcmp(magic, "QFCP", 4) && selection_fields(&io, graph, &candidate->view.selection, &candidate->view.appearance);
     for (unsigned i = 0; okay && i < 8; ++i) okay = resource_fields(&io, graph, candidate, i);
     okay = okay && animation_fields(&io, &candidate->animation);
     for (unsigned i = 0; okay && i < 3; ++i)

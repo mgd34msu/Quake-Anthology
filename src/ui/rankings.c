@@ -173,10 +173,9 @@ bool qa_ui_rankings_destroy(qa_ui_rankings *menu, double time, qa_error *error) 
 static bool checkpoint_fields(qa_source_save_io *io, qa_ui_rankings *saved,
                                const qa_ui_rankings *qualified) {
     uint8_t magic[4] = {'Q','R','U','I'};
-    uint32_t schema = 1, seat = qualified->ui->options.seat;
+    uint32_t seat = qualified->ui->options.seat;
     uint64_t menu = qualified->menu;
     if (!qa_source_save_bytes(io, magic, sizeof(magic)) || memcmp(magic, "QRUI", sizeof(magic)) ||
-        !qa_source_save_u32(io, &schema) || schema != 1 ||
         !qa_source_save_u32(io, &seat) || seat != qualified->ui->options.seat ||
         !qa_source_save_u64(io, &menu) || menu != qualified->menu ||
         !qa_source_save_i32(io, &saved->slot) || saved->slot < -1 ||

@@ -28,9 +28,8 @@ static bool topology(const q3n_particles *o)
 bool q3np_codec_fields(qa_source_save_io *io, q3n_particles *o)
 {
     const char *signature=o->compiled_source?"Q3CA":o->remote_source?"Q3RA":"Q3PA";
-    uint8_t magic[4]; memcpy(magic,signature,4); uint32_t schema=1,product=o->product;
-    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,signature,4) ||
-        !qa_source_save_u32(io,&schema) || schema!=1 || !qa_source_save_u32(io,&product) ||
+    uint8_t magic[4]; memcpy(magic,signature,4); uint32_t product=o->product;
+    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,signature,4) || !qa_source_save_u32(io,&product) ||
         product!=(uint32_t)o->product ||
         !q3nh_remote_basis_fields(io,q3n_remote_source_client(o->remote_source)) ||
         (o->compiled_source && !q3n_compiled_source_fields(io,o->compiled_source)) || !qa_source_save_bool(io,&o->initialized) ||

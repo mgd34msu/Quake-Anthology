@@ -6,15 +6,14 @@ bool qa_save_actors_encode(const qa_actor_checkpoint *value, qa_buffer *out, qa_
 {
     if (!value || !out || !value->capacity || value->count > value->capacity ||
         (value->count && !value->slots) ||
-        (value->count && (SIZE_MAX - 16u) / value->count < ACTOR_RECORD_BYTES))
+        (value->count && (SIZE_MAX - 12u) / value->count < ACTOR_RECORD_BYTES))
         return persistence_fail(error, QA_ERROR_ARGUMENT, "Invalid actor checkpoint encoding");
-    size_t size = 16u + (size_t)value->count * ACTOR_RECORD_BYTES;
+    size_t size = 12u + (size_t)value->count * ACTOR_RECORD_BYTES;
     qa_buffer buffer = {malloc(size), size};
     if (!buffer.data) return persistence_fail(error, QA_ERROR_MEMORY, "Allocating actor checkpoint codec");
     qa_net_writer writer;
     qa_net_writer_init(&writer, buffer.data, size, error);
     qa_net_write_data(&writer, "QAAR", 4);
-    qa_net_write_u32(&writer, 1);
     qa_net_write_u32(&writer, value->count);
     qa_net_write_u32(&writer, value->capacity);
     for (uint32_t i = 0; i < value->count; ++i) {
@@ -34,16 +33,15 @@ bool qa_save_actors_encode(const qa_actor_checkpoint *value, qa_buffer *out, qa_
 
 bool qa_save_actors_decode(qa_bytes bytes, qa_actor_checkpoint *out, qa_error *error)
 {
-    if (!out || !bytes.data || bytes.size < 16 || memcmp(bytes.data, "QAAR", 4))
+    if (!out || !bytes.data || bytes.size < 12 || memcmp(bytes.data, "QAAR", 4))
         return persistence_fail(error, QA_ERROR_FORMAT, "Invalid actor checkpoint signature");
     qa_net_reader reader;
     qa_net_reader_init(&reader, bytes, error);
     reader.bit = 32;
-    uint32_t version = qa_net_read_u32(&reader);
     qa_actor_checkpoint value = {0};
     value.count = qa_net_read_u32(&reader);
     value.capacity = qa_net_read_u32(&reader);
-    if (version != 1 || !value.capacity || value.count > value.capacity ||
+    if (!value.capacity || value.count > value.capacity ||
         value.count > qa_net_reader_remaining(&reader) / ACTOR_RECORD_BYTES ||
         qa_net_reader_remaining(&reader) != (size_t)value.count * ACTOR_RECORD_BYTES)
         return persistence_fail(error, QA_ERROR_FORMAT, "Invalid actor checkpoint extent");

@@ -69,7 +69,7 @@ bool qa_q3_host_checkpoint_services(const qa_q3_host *host, qa_buffer *out, qa_e
         return q3_fail(error, QA_ERROR_UNSUPPORTED, 0, "Q3 retained command context requires its qualified source registry owner");
     qa_source_save_io io = {0};
     uint8_t magic[8] = {'Q','A','G','3','S','V',0,0};
-    uint32_t version = 18, role = o->role, abi = o->abi, owner = o->owner;
+    uint32_t role = o->role, abi = o->abi, owner = o->owner;
     bool write_present=o->write_view.root!=NULL;
     bool write_context=o->write_view.resolver.context!=NULL;
     bool write_resolver=o->write_view.resolver.root!=NULL;
@@ -100,7 +100,7 @@ bool qa_q3_host_checkpoint_services(const qa_q3_host *host, qa_buffer *out, qa_e
     bool globals_alias=globals && o->bots && o->script_globals==qa_bot_runtime_global_defines(o->bots);
     uint64_t globals_owner = o->script_globals_owner;
     bool ok = qa_source_save_writer(&io, NULL, error) &&
-        qa_source_save_bytes(&io, magic, sizeof(magic)) && qa_source_save_u32(&io, &version) &&
+        qa_source_save_bytes(&io, magic, sizeof(magic)) &&
         qa_source_save_u32(&io, &role) && qa_source_save_u32(&io, &abi) && qa_source_save_u32(&io, &owner) &&
         qa_source_save_bool(&io, &engine_present) && qa_source_save_bool(&io, &engine_alias) &&
         qa_source_save_u32(&io, &engine_dialect) &&
@@ -211,17 +211,17 @@ static bool take(checkpoint_reader *reader, size_t size, qa_bytes *out, qa_error
 
 bool qa_q3_host_checkpoint_portable_state(qa_bytes input, qa_error *error)
 {
-    if (!input.data || input.size < 64 || memcmp(input.data, "Q3HC", 4) ||
-        qa_load_u32le(input.data + 4) != 6 || qa_load_u32le(input.data + 16) >= 64 ||
-        qa_load_u32le(input.data + 20) >= 64)
+    if (!input.data || input.size < 60 || memcmp(input.data, "Q3HC", 4) ||
+        qa_load_u32le(input.data + 12) >= 64 ||
+        qa_load_u32le(input.data + 16) >= 64)
         return q3_fail(error, QA_ERROR_FORMAT, 0, "Invalid portable Q3 host stream");
-    checkpoint_reader reader = {input, 64};
+    checkpoint_reader reader = {input, 60};
     qa_bytes bytes, entity;
     if (!take(&reader, 48, &bytes, error) || !take(&reader, 32, &entity, error)) return false;
-    uint64_t source = qa_load_u64le(entity.data), game = qa_load_u64le(input.data + 24);
+    uint64_t source = qa_load_u64le(entity.data), game = qa_load_u64le(input.data + 20);
     if (source > SIZE_MAX || game > SIZE_MAX)
         return q3_fail(error, QA_ERROR_FORMAT, reader.offset, "Portable Q3 source extent exceeds native address space");
-    uint64_t bindings_size=qa_load_u64le(input.data+56);
+    uint64_t bindings_size=qa_load_u64le(input.data+52);
     if (bindings_size>SIZE_MAX || !take(&reader, (size_t)source, &bytes, error) ||
         !take(&reader, qa_load_u32le(entity.data + 16), &bytes, error) ||
         !take(&reader, qa_load_u32le(entity.data + 20), &bytes, error) ||
@@ -231,7 +231,7 @@ bool qa_q3_host_checkpoint_portable_state(qa_bytes input, qa_error *error)
     q3_cvar_cache *caches=NULL; size_t cache_count=0;
     q3_cvar_status status={0};
     if (!q3_cvars_bindings_decode(bytes,&bindings,&binding_count,&caches,&cache_count,&status,error)) return false;
-    bool cgame=qa_load_u32le(input.data+8)==QA_QVM_CGAME;
+    bool cgame=qa_load_u32le(input.data+4)==QA_QVM_CGAME;
     bool valid=cgame || (!cache_count && !status.read);
     q3_cvars_bindings_free(bindings,binding_count);
     free(caches);
@@ -239,12 +239,12 @@ bool qa_q3_host_checkpoint_portable_state(qa_bytes input, qa_error *error)
     if (!valid) return q3_fail(error,QA_ERROR_FORMAT,0,"Portable cvar status continuation has no CGAME owner");
     q3_file files[64] = {0};
     q3_write_file_state writable[64] = {0};
-    uint64_t file_serial = qa_load_u64le(input.data + 32);
+    uint64_t file_serial = qa_load_u64le(input.data + 28);
     bool ok = true;
-    for (uint32_t i = 0; ok && i < qa_load_u32le(input.data + 16); ++i)
+    for (uint32_t i = 0; ok && i < qa_load_u32le(input.data + 12); ++i)
         ok = decode_file(&reader, files, writable, file_serial, error);
     bool scripts[64] = {0};
-    for (uint32_t i = 0; ok && i < qa_load_u32le(input.data + 20); ++i) {
+    for (uint32_t i = 0; ok && i < qa_load_u32le(input.data + 16); ++i) {
         qa_bytes row;
         if (!take(&reader, 16, &row, error)) { ok = false; break; }
         uint32_t slot = qa_load_u32le(row.data);
@@ -335,15 +335,15 @@ bool qa_q3_host_checkpoint(qa_q3_host *host, qa_buffer *out, qa_error *error)
         files += host->files[i].kind != Q3_FILE_CLOSED; scripts += q3_script_member(host, i);
     }
     checkpoint_writer writer = {0};
-    uint8_t header[64] = {'Q','3','H','C'};
-    qa_store_u32le(header + 4, 6); qa_store_u32le(header + 8, host->options.role);
-    qa_store_u32le(header + 12, host->options.abi); qa_store_u32le(header + 16, files);
-    qa_store_u32le(header + 20, scripts);
-    qa_store_u64le(header + 24, game.size);
-    qa_store_u64le(header + 32, host->file_serial);
-    qa_store_u64le(header + 40, host->script_namespace->generation);
-    qa_store_u32le(header + 48, host->bots_shutdown);
-    qa_store_u64le(header+56,bindings.size);
+    uint8_t header[60] = {'Q','3','H','C'};
+    qa_store_u32le(header + 4, host->options.role);
+    qa_store_u32le(header + 8, host->options.abi); qa_store_u32le(header + 12, files);
+    qa_store_u32le(header + 16, scripts);
+    qa_store_u64le(header + 20, game.size);
+    qa_store_u64le(header + 28, host->file_serial);
+    qa_store_u64le(header + 36, host->script_namespace->generation);
+    qa_store_u32le(header + 44, host->bots_shutdown);
+    qa_store_u64le(header+52,bindings.size);
     for (size_t i = 1; i < 64; ++i)
         if (host->files[i].kind != Q3_FILE_CLOSED) {
             if (!host->files[i].serial || host->files[i].serial > host->file_serial) {
@@ -477,22 +477,22 @@ bool qa_q3_host_restore(qa_q3_host *host, qa_bytes input, qa_error *error)
     for (size_t i = 1; i < 64; ++i)
         if (host->files[i].kind != Q3_FILE_CLOSED || q3_script_member(host, i))
             return q3_fail(error, QA_ERROR_ARGUMENT, i, "Q3 restore requires an unpublished empty host");
-    if (!input.data || input.size < 64 || memcmp(input.data, "Q3HC", 4) ||
-        qa_load_u32le(input.data + 4) != 6 || qa_load_u32le(input.data + 8) != (uint32_t)host->options.role ||
-        qa_load_u32le(input.data + 12) != (uint32_t)host->options.abi)
+    if (!input.data || input.size < 60 || memcmp(input.data, "Q3HC", 4) ||
+        qa_load_u32le(input.data + 4) != (uint32_t)host->options.role ||
+        qa_load_u32le(input.data + 8) != (uint32_t)host->options.abi)
         return q3_fail(error, QA_ERROR_FORMAT, 0, "Q3 host checkpoint identity mismatch");
-    uint32_t file_count = qa_load_u32le(input.data + 16), script_count = qa_load_u32le(input.data + 20);
-    uint64_t game_size = qa_load_u64le(input.data + 24);
-    uint64_t file_serial = qa_load_u64le(input.data + 32);
-    uint64_t script_generation = qa_load_u64le(input.data + 40);
+    uint32_t file_count = qa_load_u32le(input.data + 12), script_count = qa_load_u32le(input.data + 16);
+    uint64_t game_size = qa_load_u64le(input.data + 20);
+    uint64_t file_serial = qa_load_u64le(input.data + 28);
+    uint64_t script_generation = qa_load_u64le(input.data + 36);
     for (size_t i=1;i<64;++i)
         if (host->script_namespace->scripts[i] && host->script_namespace->generation != script_generation)
             return q3_fail(error,QA_ERROR_FORMAT,i,"Restored PC namespace lifetime differs from its live peer");
-    uint64_t bindings_size=qa_load_u64le(input.data+56);
-    uint32_t bots_shutdown = qa_load_u32le(input.data + 48);
-    if (file_count >= 64 || script_count >= 64 || bots_shutdown > 1 || qa_load_u32le(input.data + 52))
+    uint64_t bindings_size=qa_load_u64le(input.data+52);
+    uint32_t bots_shutdown = qa_load_u32le(input.data + 44);
+    if (file_count >= 64 || script_count >= 64 || bots_shutdown > 1 || qa_load_u32le(input.data + 48))
         return q3_fail(error, QA_ERROR_FORMAT, 0, "Q3 checkpoint handle count exceeds source capacity");
-    checkpoint_reader reader = {input, 64};
+    checkpoint_reader reader = {input, 60};
     qa_bytes clipping;
     if (!take(&reader, 48, &clipping, error)) return false;
     qa_bounds clip_bounds = {load_vector(clipping.data), load_vector(clipping.data + 12)};

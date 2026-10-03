@@ -2840,9 +2840,9 @@ bool frontend_source_role_geometry_read(const qa_frontend *frontend,qa_actor_own
 static bool source_geometry_fields(qa_source_save_io *io,qa_collision_portal_checkpoint *saved)
 {
     bool reading=io->direction==QA_SOURCE_SAVE_READ;
-    uint8_t magic[4]={'Q','F','C','G'}; uint32_t version=1,family=saved->family,format=saved->format;
+    uint8_t magic[4]={'Q','F','C','G'}; uint32_t family=saved->family,format=saved->format;
     if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QFCG",4) ||
-        !qa_source_save_u32(io,&version) || version!=1 || !qa_source_save_u32(io,&family) ||
+        !qa_source_save_u32(io,&family) ||
         family!=QA_COLLISION_Q3 || !qa_source_save_u32(io,&format) ||
         !qa_source_save_u64(io,&saved->map_identity) || !qa_source_save_u32(io,&saved->area_count) ||
         !qa_source_save_bool(io,&saved->no_areas) ||
@@ -3151,9 +3151,7 @@ static bool source_saved_fields(qa_source_save_io *io,qa_frontend *f,source_grou
 }
 static bool source_header(qa_source_save_io *io,size_t *count)
 {
-    uint8_t magic[4]={'Q','F','S','O'}; uint32_t version=6;
-    return qa_source_save_bytes(io,magic,sizeof(magic)) && !memcmp(magic,"QFSO",4) &&
-        qa_source_save_u32(io,&version) && version==6 &&
+    uint8_t magic[4]={'Q','F','S','O'}; return qa_source_save_bytes(io,magic,sizeof(magic)) && !memcmp(magic,"QFSO",4) &&
         qa_source_save_count(io,count,SIZE_MAX/sizeof(source_group_saved));
 }
 bool frontend_source_checkpoint(qa_frontend *f,qa_buffer *out,qa_error *error)

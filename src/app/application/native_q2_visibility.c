@@ -268,15 +268,15 @@ bool application_native_q2_visibility_capture(struct application_native_q2 *engi
     if (!owner) return true;
     if (engine->profile != QA_NATIVE_Q2_GAME_API2023 || !engine->map_ready ||
         owner->frame != engine->frame.number || owner->time_ns != engine->frame.time_ns ||
-        owner->count > (SIZE_MAX - 36 - 256 * 16) / 48)
+        owner->count > (SIZE_MAX - 32 - 256 * 16) / 48)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q2 visibility continuation lost its completed Source frame");
-    qa_buffer buffer = {.data = malloc(36 + 256 * 16 + owner->count * 48)};
+    qa_buffer buffer = {.data = malloc(32 + 256 * 16 + owner->count * 48)};
     if (!buffer.data) return application_fail(error, QA_ERROR_MEMORY, "Saving actual Q2 visibility decisions");
-    qa_net_writer writer; qa_net_writer_init(&writer, buffer.data, 36 + 256 * 16 + owner->count * 48, error);
+    qa_net_writer writer; qa_net_writer_init(&writer, buffer.data, 32 + 256 * 16 + owner->count * 48, error);
     const qa_actor_registry *registry = qa_session_actors(engine->provider->application->session);
     uint32_t viewers = 0;
     for (uint32_t slot = 1; slot <= owner->clients; ++slot) viewers += owner->viewers[slot].registry != 0;
-    bool ok = qa_net_write_u32(&writer, 1) && qa_net_write_u64(&writer, owner->frame) &&
+    bool ok = qa_net_write_u64(&writer, owner->frame) &&
         qa_net_write_u64(&writer, owner->time_ns) && qa_net_write_u32(&writer, owner->source_capacity) &&
         qa_net_write_u32(&writer, owner->clients) && qa_net_write_u32(&writer, viewers);
     for (uint32_t slot = 1; ok && slot <= owner->clients; ++slot) if (owner->viewers[slot].registry)
@@ -303,11 +303,10 @@ bool application_native_q2_visibility_restore(struct application_native_q2 *engi
     application_native_q2_visibility *candidate = calloc(1, sizeof(*candidate));
     if (!candidate) return application_fail(error, QA_ERROR_MEMORY, "Restoring actual Q2 visibility decisions");
     qa_net_reader reader; qa_net_reader_init(&reader, bytes, error);
-    uint32_t version = qa_net_read_u32(&reader);
     candidate->frame = qa_net_read_u64(&reader); candidate->time_ns = qa_net_read_u64(&reader);
     candidate->source_capacity = qa_net_read_u32(&reader); candidate->clients = qa_net_read_u32(&reader);
     uint32_t viewers = qa_net_read_u32(&reader);
-    bool ok = !reader.failed && version == 1 && candidate->frame == frame->number && candidate->time_ns == frame->time_ns &&
+    bool ok = !reader.failed && candidate->frame == frame->number && candidate->time_ns == frame->time_ns &&
         candidate->clients && candidate->clients <= 256 && candidate->source_capacity > candidate->clients &&
         candidate->source_capacity <= 65536 && viewers <= candidate->clients;
     const qa_actor_registry *registry = qa_session_actors(engine->provider->application->session);

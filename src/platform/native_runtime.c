@@ -329,10 +329,9 @@ static bool text(qa_source_save_io *io, const char *actual)
 static bool fields(qa_source_save_io *io, const qa_native_runtime *runtime)
 {
     uint8_t magic[4] = {'Q','N','R','T'};
-    uint32_t version = 3, count = RUNTIME_FILES;
+    uint32_t count = RUNTIME_FILES;
     uint64_t maximum = runtime->config.maximum_frame_bytes;
     if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "QNRT", 4) ||
-        !qa_source_save_u32(io, &version) || version != 3 ||
         !qa_source_save_u32(io, &count) || count != RUNTIME_FILES ||
         !qa_source_save_u64(io, &maximum) || maximum != runtime->config.maximum_frame_bytes ||
         !text(io, runtime->wine_drive)) return false;

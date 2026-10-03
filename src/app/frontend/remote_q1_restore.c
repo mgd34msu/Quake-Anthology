@@ -178,9 +178,7 @@ static bool fields(qa_source_save_io *io, frontend_remote_q1 *row,
     const frontend_remote_q1_restore_refs *refs, saved_q1 *saved)
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
-    uint8_t magic[4] = {'Q','1','R','C'}, kick = (uint8_t)row->qw_kick; uint32_t schema = 6;
-    if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "Q1RC", 4) || !qa_source_save_u32(io, &schema) || schema != 6 ||
-        !domain(io, &saved->domain) || !protocol(io, &row->protocol) ||
+    uint8_t magic[4] = {'Q','1','R','C'}, kick = (uint8_t)row->qw_kick; if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "Q1RC", 4) || !domain(io, &saved->domain) || !protocol(io, &row->protocol) ||
         qa_q1_is_qw(row->protocol) != qa_q1_is_qw(saved->domain.protocol) || !qa_source_save_u64(io, &saved->domain_catalog) ||
         !qa_source_save_bool(io, &row->bound) || !qa_source_save_bool(io, &saved->loaded) ||
         !qa_source_save_bool(io, &row->retired) || !qa_source_save_bool(io, &row->has_data) ||

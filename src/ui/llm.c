@@ -206,10 +206,9 @@ static bool checkpoint_fields(qa_source_save_io *io, qa_ui_llm *saved,
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
     uint8_t magic[4] = {'Q','L','U','I'};
-    uint32_t schema = 1, seat = qualified->ui->options.seat;
+    uint32_t seat = qualified->ui->options.seat;
     uint64_t menu = qualified->menu, service = 0;
     if (!qa_source_save_bytes(io, magic, sizeof(magic)) || memcmp(magic, "QLUI", sizeof(magic)) ||
-        !qa_source_save_u32(io, &schema) || schema != 1 ||
         !qa_source_save_u32(io, &seat) || seat != qualified->ui->options.seat ||
         !qa_source_save_u64(io, &menu) || menu != qualified->menu) return false;
     if (!reading && !refs->service_encode(refs->context, saved->llm, &service, io->error)) return false;

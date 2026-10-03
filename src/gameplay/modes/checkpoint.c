@@ -118,7 +118,7 @@ static bool checkpoint_capture(qa_modes *m, qa_modes_checkpoint *out, qa_error *
     for (uint32_t i = 0; i < m->mode_capacity; ++i)
         if (m->instances[i].active && !mode_relic_source_current(m, &m->instances[i], e)) return false;
     qa_modes_checkpoint saved = {
-        .version = 16, .random = m->random, .attack_sequence = m->attack_sequence};
+        .random = m->random, .attack_sequence = m->attack_sequence};
     saved.players = calloc(m->actor_capacity, sizeof(*saved.players));
     saved.modes = calloc(m->mode_capacity, sizeof(*saved.modes));
     saved.objects = calloc(m->actor_capacity, sizeof(*saved.objects));
@@ -462,7 +462,7 @@ static bool restore_instance(qa_modes *m, const qa_mode_checkpoint *saved, qa_er
 }
 static bool checkpoint_restore(qa_modes *m, const qa_modes_checkpoint *saved,
                                 bool reconnect, qa_error *e) {
-    if (!m || m->callback_depth || !saved || saved->version != 16 ||
+    if (!m || m->callback_depth || !saved ||
         saved->player_count > m->actor_capacity || saved->mode_count > m->mode_capacity ||
         saved->object_count > m->actor_capacity ||
         saved->external_objective_count > m->objective_capacity ||

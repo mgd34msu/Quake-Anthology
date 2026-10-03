@@ -244,10 +244,10 @@ static uint32_t capabilities(const qa_seat_console_options *options) {
 }
 static bool continuation(seat_io *io, qa_seat_console *seat, const qa_seat_console_options *candidate,
                           const qa_seat_console_save_resolvers *resolve, qa_bytes identity) {
-    uint32_t magic = 0x43534151u, version = 2, cap = capabilities(candidate), physical = candidate->seat;
-    if (!u32(io, &magic) || magic != 0x43534151u || !u32(io, &version) || version != 2 ||
+    uint32_t magic = 0x43534151u, cap = capabilities(candidate), physical = candidate->seat;
+    if (!u32(io, &magic) || magic != 0x43534151u ||
         !u32(io, &cap) || cap != capabilities(candidate))
-        return invalid(io, "seat console continuation owner or version changed");
+        return invalid(io, "seat console continuation owner changed");
     if (!u32(io, &physical) || physical >= 4 || physical != candidate->seat)
         return invalid(io, "seat console continuation names another physical route");
     qa_command_context *command = &seat->options.command;

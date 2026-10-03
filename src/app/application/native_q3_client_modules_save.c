@@ -34,9 +34,8 @@ static bool signature(qa_source_save_io *io)
 {
     uint8_t value[8] = {'Q','A','N','C','M',0,0,0};
     const uint8_t expected[8] = {'Q','A','N','C','M',0,0,0};
-    uint32_t version = 3;
-    return qa_source_save_bytes(io, value, sizeof(value)) && qa_source_save_u32(io, &version) &&
-        ((!memcmp(value, expected, sizeof(value)) && version == 3) ||
+    return qa_source_save_bytes(io, value, sizeof(value)) &&
+        (!memcmp(value, expected, sizeof(value)) ||
             application_fail(io->error, QA_ERROR_FORMAT, "Invalid acquired CLIENT module continuation"));
 }
 

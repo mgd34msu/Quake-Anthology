@@ -23,7 +23,7 @@ bool frontend_kex_browser_checkpoint(const frontend_kex_browser *b, qa_buffer *o
     }
     qa_buffer discovery = {0};
     if (!qa_kex_mdns_owner_checkpoint(b->discovery, &discovery, e)) return false;
-    size_t capacity = 16 + discovery.size + b->query_count * 31;
+    size_t capacity = 12 + discovery.size + b->query_count * 31;
     uint8_t *bytes = malloc(capacity);
     if (!bytes) {
         qa_buffer_free(&discovery);
@@ -31,7 +31,7 @@ bool frontend_kex_browser_checkpoint(const frontend_kex_browser *b, qa_buffer *o
     }
     qa_net_writer w;
     qa_net_writer_init(&w, bytes, capacity, e);
-    bool ok = qa_net_write_data(&w, "QAKB", 4) && qa_net_write_u32(&w, 1) &&
+    bool ok = qa_net_write_data(&w, "QAKB", 4) &&
         qa_net_write_u32(&w, (uint32_t)discovery.size) &&
         qa_net_write_data(&w, discovery.data, discovery.size) &&
         qa_net_write_u16(&w, (uint16_t)b->query_count);
@@ -52,7 +52,7 @@ bool frontend_kex_browser_checkpoint(const frontend_kex_browser *b, qa_buffer *o
 bool frontend_kex_browser_restore(qa_bytes bytes, qa_server_browser *browser,
     const frontend_kex_browser_hooks *hooks, frontend_kex_browser **out, qa_error *e)
 {
-    if (!browser || !hooks || !hooks->send || !out || !bytes.data || bytes.size < 14 ||
+    if (!browser || !hooks || !hooks->send || !out || !bytes.data || bytes.size < 10 ||
         bytes.size > 48 + 256u * (10u + QA_KEX_DNS_NAME_BYTES + QA_KEX_DNS_FOLDED_BYTES +
             25u + QA_KEX_DNS_FOLDED_BYTES + 31u) || memcmp(bytes.data, "QAKB", 4)) {
         qa_error_set(e, QA_ERROR_FORMAT, 0, "Invalid retail browser continuation envelope"); return false;
@@ -64,7 +64,7 @@ bool frontend_kex_browser_restore(qa_bytes bytes, qa_server_browser *browser,
     qa_net_reader r;
     qa_net_reader_init(&r, bytes, e);
     r.bit = 32;
-    bool ok = qa_net_read_u32(&r) == 1;
+    bool ok = true;
     uint32_t extent = qa_net_read_u32(&r);
     qa_bytes discovery;
     const qa_kex_mdns_hooks mdns = frontend_kex_browser_mdns_hooks(b);

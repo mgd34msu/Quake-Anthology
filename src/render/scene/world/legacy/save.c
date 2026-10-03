@@ -143,11 +143,9 @@ static bool allocate(qa_source_save_io *io, void **out, size_t count, size_t str
 static bool fields(qa_source_save_io *io, const qa_scene_world *world,
     const qa_scene_world_image_refs *refs, lighting_state *saved)
 {
-    uint8_t magic[4]={'Q','W','L','S'}; uint32_t schema=3;
-    bool reading=io->direction==QA_SOURCE_SAVE_READ, q1=world->bsp.family==QA_BSP_Q1;
+    uint8_t magic[4]={'Q','W','L','S'}; bool reading=io->direction==QA_SOURCE_SAVE_READ, q1=world->bsp.family==QA_BSP_Q1;
     const qawl_world *data=world->legacy_data;
-    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QWLS",4) ||
-        !qa_source_save_u32(io,&schema) || schema!=3 || !qualify(io,world)) return false;
+    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QWLS",4) || !qualify(io,world)) return false;
     if (!reading) saved->style_count=data->style_count;
     if (!qa_source_save_count(io,&saved->style_count,reading?io->input.size/(q1?4:12):SIZE_MAX)) return false;
     if (reading) {

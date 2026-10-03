@@ -279,11 +279,10 @@ static bool fields(qa_source_save_io *io, qa_console *state, qa_console *candida
                      const qa_console_save_resolvers *resolve)
 {
     char magic[8] = {'Q','A','C','O','N','S','L',0};
-    uint32_t version = 1, callbacks = capabilities(&state->options);
+    uint32_t callbacks = capabilities(&state->options);
     uint32_t expected = capabilities(&candidate->options);
     uint64_t captured_registry = qa_actors_identity(qa_session_actors(io->session));
     if (!qa_source_save_bytes(io, magic, sizeof(magic)) || memcmp(magic, "QACONSL", 8) ||
-        !qa_source_save_u32(io, &version) || version != 1 ||
         !qa_source_save_u64(io, &captured_registry) || !captured_registry ||
         !qa_source_save_u32(io, &callbacks) || callbacks != expected ||
         !context_fields(io, &state->options.context, resolve, captured_registry) ||
@@ -450,9 +449,9 @@ bool qa_console_release_save_capture(const qa_console *console,qa_session *sessi
         console->release_advancing || console->program_leases || console->program_unpublished || console->pending_program)
         return qac_fail(error,QA_ERROR_ARGUMENT,"Release capture requires the returned actual programme roster");
     qa_source_save_io io={0}; qa_console copy=*console;
-    char magic[4]={'Q','A','C','R'}; uint32_t version=1;
+    char magic[4]={'Q','A','C','R'};
     bool ok=qa_source_save_writer(&io,session,error) && qa_source_save_bytes(&io,magic,4) &&
-        qa_source_save_u32(&io,&version) && fields(&io,&copy,(qa_console *)console,NULL) &&
+        fields(&io,&copy,(qa_console *)console,NULL) &&
         qa_source_save_bool(&io,&copy.drain_yielded) &&
         releases_fields(&io,&copy,NULL) && qa_source_save_finish(&io,out);
     qa_source_save_dispose(&io);
@@ -473,9 +472,9 @@ bool qa_console_release_save_restore(qa_console *console,qa_session *session,
     if (!scratch) { qa_buffer_free(&before); return qac_fail(error,QA_ERROR_MEMORY,"Allocating release import"); }
     scratch->options=console->options; scratch->options.context=(qa_command_context){0};
     scratch->options.startup_commands=NULL;
-    qa_source_save_io io={0}; char magic[4]; uint32_t version=0;
+    qa_source_save_io io={0}; char magic[4];
     bool ok=qa_source_save_reader(&io,session,bytes,error) && qa_source_save_bytes(&io,magic,4) &&
-        !memcmp(magic,"QACR",4) && qa_source_save_u32(&io,&version) && version==1 &&
+        !memcmp(magic,"QACR",4) &&
         fields(&io,scratch,console,resolve) && qa_source_save_bool(&io,&scratch->drain_yielded) &&
         releases_fields(&io,scratch,resolve) &&
         qa_source_save_finish(&io,NULL) && qa_console_save_capture(console,session,&after,error);

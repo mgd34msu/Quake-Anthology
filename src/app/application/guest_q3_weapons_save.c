@@ -6,9 +6,7 @@ static bool fields(qa_source_save_io *io, application_q3_weapons_saved *state)
 {
     uint8_t magic[8] = {'Q','A','G','3','W','P',0,0};
     const uint8_t expected[8] = {'Q','A','G','3','W','P',0,0};
-    uint32_t version = 1;
-    if (!qa_source_save_bytes(io, magic, sizeof(magic)) || !qa_source_save_u32(io, &version) ||
-        memcmp(magic, expected, sizeof(magic)) || version != 1)
+    if (!qa_source_save_bytes(io, magic, sizeof(magic)) || memcmp(magic, expected, sizeof(magic)))
         return application_fail(io->error, QA_ERROR_FORMAT, "Invalid original weapon callback continuation");
     if (!qa_source_save_bool(io, &state->present) || !qa_source_save_count(io, &state->count, 6)) return false;
     for (size_t i = 0; i < 6; ++i) if (!qa_source_save_u64(io, state->bindings + i)) return false;

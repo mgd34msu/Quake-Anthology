@@ -355,9 +355,8 @@ static bool context_fields(qa_source_save_io *io, qa_command_context *context) {
         context->registry && context->generation;
 }
 static bool stream(qa_source_save_io *io, application_match_intents *state) {
-    char magic[4] = {'Q','A','M','I'}; uint32_t version = 5, stage = state->stage;
+    char magic[4] = {'Q','A','M','I'}; uint32_t stage = state->stage;
     if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "QAMI", 4) ||
-        !qa_source_save_u32(io, &version) || version != 5 ||
         !application_q3_restart_stream(io, state->restart) ||
         !qa_source_save_u32(io, &stage) || stage > MATCH_MAP_AFTER) return false;
     state->stage = (match_map_stage)stage;

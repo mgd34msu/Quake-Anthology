@@ -355,9 +355,9 @@ static bool wheel_key(qa_source_save_io *io, const qa_hud_wheel_checkpoint_refs 
 static bool wheel_fields(qa_source_save_io *io, qa_hud_wheel *saved, const qa_hud_wheel *qualified,
     const qa_hud_wheel_checkpoint_refs *refs)
 {
-    uint8_t magic[4]={'Q','A','W','H'}; uint32_t schema=1,seat=qualified->options.seat;
+    uint8_t magic[4]={'Q','A','W','H'}; uint32_t seat=qualified->options.seat;
     uint32_t mode=saved->mode,carousel=saved->carousel;
-    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QAWH",4) || !qa_source_save_u32(io,&schema) || schema!=1 ||
+    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QAWH",4) ||
         !qa_source_save_u32(io,&seat) || seat!=qualified->options.seat) return false;
     float radius=qualified->options.radius,distance=qualified->options.selection_distance,fade=qualified->options.fade_per_second;
     uint64_t timeout=qualified->options.carousel_timeout_ns,lock=qualified->options.carousel_lock_ns;

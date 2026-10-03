@@ -170,9 +170,9 @@ bool qa_native_guest_checkpoint(qa_native_guest *guest, qa_buffer *out, qa_error
     } else if (!qa_native_guest_cpu_read(guest, &state, error)) return false;
     guest_codec io = {.error = error};
     uint8_t magic[4] = {'Q','A','N','G'};
-    uint32_t version = 5, backend = guest->options.backend;
+    uint32_t backend = guest->options.backend;
     qa_native_image_info saved_image = guest->options.image;
-    bool okay = bytes(&io, magic, sizeof(magic)) && u32(&io, &version) && u32(&io, &backend) && image(&io, &saved_image) &&
+    bool okay = bytes(&io, magic, sizeof(magic)) && u32(&io, &backend) && image(&io, &saved_image) &&
         u64(&io, &guest->options.allocation_base) && u64(&io, &guest->allocation_cursor) &&
         u64(&io, &guest->next_mapping) && u64(&io, &guest->next_backing);
     if (okay && backend == QA_NATIVE_GUEST_HOST_X86_64) {
@@ -323,13 +323,12 @@ bool qa_native_guest_restore(qa_bytes encoded, const qa_native_guest_options *op
     if (!options || !out || *out || (!encoded.data && encoded.size))
         return guest_fail(error, QA_ERROR_ARGUMENT, 0, "native guest restore requires an inert output and actual artifact identity");
     guest_codec io = {.input = encoded, .reading = true, .error = error};
-    uint8_t magic[4]; uint32_t version = 0, backend = QA_NATIVE_GUEST_EMULATED;
+    uint8_t magic[4]; uint32_t backend = 0;
     qa_native_image_info saved_image = {0};
     uint64_t allocation_base = 0, cursor = 0, next_mapping = 0, next_backing = 0;
     qa_native_guest_cpu state = {0};
     bool okay = bytes(&io, magic, sizeof(magic)) && !memcmp(magic, "QANG", sizeof(magic)) &&
-        u32(&io, &version) && (version == 3 || version == 4 || version == 5);
-    if (okay && version >= 4) okay = u32(&io, &backend);
+        u32(&io, &backend);
     okay = okay && backend == (uint32_t)options->backend && image(&io, &saved_image) &&
         same_image(&saved_image, &options->image) && u64(&io, &allocation_base) &&
         allocation_base == options->allocation_base && u64(&io, &cursor) &&
@@ -342,7 +341,7 @@ bool qa_native_guest_restore(qa_bytes encoded, const qa_native_guest_options *op
         uint64_t length = 0;
         /* Unguarded hardware capsules have no actual monitor/domain witness.
          * They cannot be upgraded by inventing one during cold construction. */
-        okay = version == 5 && source_profile(&io, &profile, &domain) &&
+        okay = source_profile(&io, &profile, &domain) &&
             u64(&io, &length) && length <= io.input.size - io.offset;
         if (okay) { hardware = (qa_bytes){io.input.data + io.offset, (size_t)length}; io.offset += (size_t)length; }
     } else if (okay) okay = cpu(&io, &state);

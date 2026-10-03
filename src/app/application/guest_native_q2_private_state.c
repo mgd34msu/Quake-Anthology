@@ -569,8 +569,8 @@ static bool capture_records(struct application_native_q2 *engine, struct applica
 }
 static bool state_io(qa_source_save_io *io, struct application_q2_private_state *state)
 {
-    uint32_t version = 1; size_t count = state->count;
-    if (!qa_source_save_u32(io, &version) || version != 1 || !qa_source_save_count(io, &count, PRIVATE_RECORDS)) return false;
+    size_t count = state->count;
+    if (!qa_source_save_count(io, &count, PRIVATE_RECORDS)) return false;
     if (io->direction == QA_SOURCE_SAVE_READ) {
         for (size_t i = 0; i < count; ++i) {
             uint32_t layout, source; uint64_t rows;

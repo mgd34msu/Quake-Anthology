@@ -80,11 +80,10 @@ bool qa_dedicated_console_drain(qa_dedicated_console *console, qa_console *comma
 }
 static bool dedicated_fields(qa_source_save_io *io, qa_dedicated_console *console)
 {
-    uint8_t magic[4]={'Q','D','C','N'}; uint32_t version=1;
+    uint8_t magic[4]={'Q','D','C','N'};
     size_t size=console->pending.size, capacity=console->pending.capacity, consumed=console->consumed;
     bool reading=io->direction==QA_SOURCE_SAVE_READ;
     if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QDCN",4) ||
-        !qa_source_save_u32(io,&version) || version!=1 ||
         !qa_source_save_count(io,&size,reading?io->input.size-io->offset:SIZE_MAX-1) ||
         !qa_source_save_count(io,&capacity,SIZE_MAX) || !qa_source_save_count(io,&consumed,size) || consumed>size ||
         (capacity?size>=capacity:size!=0) || !qa_source_save_bool(io,&console->ended)) return false;

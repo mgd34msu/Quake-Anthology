@@ -483,7 +483,7 @@ bool qa_network_qw_checkpoint_peer(const qa_network_peer *owner, qa_buffer *out,
         if (!bytes.data) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Encoding QuakeWorld source continuation"); ok = false; }
         else qa_net_writer_init(&writer, bytes.data, capacity, error);
     }
-    if (ok) ok = qa_net_write_u32(&writer, UINT32_C(0x53574151)) && qa_net_write_u32(&writer, 3) &&
+    if (ok) ok = qa_net_write_u32(&writer, UINT32_C(0x53574151)) &&
         qa_net_write_u16(&writer, peer->policy.qport) && qa_net_write_u32(&writer, peer->policy.bytes_per_second) &&
         qa_net_write_u64(&writer, peer->policy.message_bytes) && qa_net_write_u64(&writer, peer->policy.queued_messages) &&
         qa_net_write_u32(&writer, peer->input_sequence) && qa_net_write_u32(&writer, peer->choked) &&
@@ -509,7 +509,7 @@ bool qa_network_qw_restore_peer(qa_network_runtime *runtime, const qa_net_client
     if (!runtime || !client || !refs || !refs->source_qw || !owner || !bytes.data || !runtime->options.hooks.commands)
         return qa_network_fail(error, "QuakeWorld restore lacks its actual candidate source consumers");
     qa_net_reader reader; qa_net_reader_init(&reader, bytes, error);
-    if (qa_net_read_u32(&reader) != UINT32_C(0x53574151) || qa_net_read_u32(&reader) != 3)
+    if (qa_net_read_u32(&reader) != UINT32_C(0x53574151))
         return qa_net_reader_fail(&reader, "Invalid QuakeWorld source continuation schema");
     qw_server *peer = calloc(1, sizeof(*peer));
     if (!peer) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Restoring QuakeWorld source peer"); return false; }

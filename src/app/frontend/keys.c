@@ -292,9 +292,7 @@ static bool blob(qa_source_save_io *io,qa_bytes *bytes)
 }
 static bool header(qa_source_save_io *io,uint64_t *next,uint64_t *active,size_t *count)
 {
-    uint8_t magic[4]={'Q','F','K','P'}; uint32_t version=3;
-    return qa_source_save_bytes(io,magic,4) && !memcmp(magic,"QFKP",4) && qa_source_save_u32(io,&version) && version==3 &&
-        qa_source_save_u64(io,next) && qa_source_save_u64(io,active) && *active<=*next &&
+    uint8_t magic[4]={'Q','F','K','P'}; return qa_source_save_bytes(io,magic,4) && !memcmp(magic,"QFKP",4) && qa_source_save_u64(io,next) && qa_source_save_u64(io,active) && *active<=*next &&
         qa_source_save_count(io,count,io->direction==QA_SOURCE_SAVE_READ?io->input.size-io->offset:SIZE_MAX);
 }
 static bool source_name(qa_source_save_io *io,char **name)

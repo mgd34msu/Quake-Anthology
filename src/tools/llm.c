@@ -131,8 +131,7 @@ static void llm_saved_private_free(qa_llm *s) {
     for (size_t i = 0; i < 3; ++i) qa_arena_destroy(&s->catalogs[i].storage);
 }
 static bool llm_saved_fields(qa_source_save_io *io, qa_llm *s, const qa_llm *installed, const qa_llm_checkpoint_refs *refs) {
-    uint32_t version = 1, provider = (uint32_t)s->preferences.provider; uint64_t service = 0;
-    if (!qa_source_save_u32(io, &version) || version != 1) return tool_save_fail(io, "unsupported LLM continuation version");
+    uint32_t provider = (uint32_t)s->preferences.provider; uint64_t service = 0;
     if (io->direction == QA_SOURCE_SAVE_WRITE && !refs->services_encode(refs->context, &s->options, &service, io->error)) return false;
     if (!qa_source_save_u64(io, &service)) return false;
     if (io->direction == QA_SOURCE_SAVE_READ && (!refs->services_decode(refs->context, service, &s->options, io->error) ||

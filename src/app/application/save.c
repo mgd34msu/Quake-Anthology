@@ -88,9 +88,9 @@ static bool console_inventory(qa_application *app, application_saved_console **o
 
 static bool commands_header(qa_source_save_io *io, uint64_t *generation, size_t *count, size_t maximum)
 {
-    char magic[4] = {'Q','A','C','M'}; uint32_t version = 1;
+    char magic[4] = {'Q','A','C','M'};
     return qa_source_save_bytes(io, magic, sizeof(magic)) && !memcmp(magic, "QACM", 4) &&
-        qa_source_save_u32(io, &version) && version == 1 && qa_source_save_u64(io, generation) && *generation &&
+        qa_source_save_u64(io, generation) && *generation &&
         qa_source_save_count(io, count, maximum);
 }
 
@@ -274,9 +274,7 @@ static bool controls_signature(qa_source_save_io *io)
 {
     unsigned char actual[8] = {'Q','A','C','T','R','L','S',0};
     static const unsigned char expected[8] = {'Q','A','C','T','R','L','S',0};
-    uint32_t version = 11;
-    return qa_source_save_bytes(io, actual, sizeof(actual)) && !memcmp(actual, expected, sizeof(actual)) &&
-        qa_source_save_u32(io, &version) && version == 11;
+    return qa_source_save_bytes(io, actual, sizeof(actual)) && !memcmp(actual, expected, sizeof(actual));
 }
 
 static bool application_controls_capture(qa_application *app, qa_buffer *out, qa_error *error)
@@ -468,7 +466,7 @@ bool application_save_foundation_finish(qa_application *candidate,
     return true;
 }
 
-#define APPLICATION_CHECKPOINT_HEADER 220u
+#define APPLICATION_CHECKPOINT_HEADER 216u
 
 static const char *saved_product(qa_application *application, qa_product_id id, qa_error *error)
 {
@@ -508,7 +506,7 @@ bool application_save_metadata_capture(qa_application *application, qa_buffer *o
     if (!buffer.data) return application_fail(error, QA_ERROR_MEMORY, "cannot encode application metadata");
     qa_net_writer writer;
     qa_net_writer_init(&writer, buffer.data, size, error);
-    qa_net_write_data(&writer, "QAAP", 4); qa_net_write_u32(&writer, 3);
+    qa_net_write_data(&writer, "QAAP", 4);
     qa_net_write_u64(&writer, application->catalog_generation);
     qa_net_write_u64(&writer, application->publication_generation);
     qa_net_write_u64(&writer, application->command_generation); qa_net_write_u64(&writer, application->map_revision);
@@ -566,7 +564,6 @@ bool application_save_metadata_restore(qa_application *candidate, qa_bytes bytes
         return application_fail(error, QA_ERROR_ARGUMENT, "metadata restore requires an isolated prepared candidate");
     qa_net_reader reader;
     qa_net_reader_init(&reader, bytes, error); reader.bit = 32;
-    uint32_t version = qa_net_read_u32(&reader);
     uint64_t catalog = qa_net_read_u64(&reader), publication = qa_net_read_u64(&reader);
     uint64_t commands = qa_net_read_u64(&reader), revision = qa_net_read_u64(&reader);
     uint64_t frame_revision = qa_net_read_u64(&reader);
@@ -582,7 +579,7 @@ bool application_save_metadata_restore(qa_application *candidate, qa_bytes bytes
     uint16_t reserved = qa_net_read_u16(&reader); random.draws = qa_net_read_u64(&reader);
     uint32_t geometry_length = qa_net_read_u32(&reader), presentation_length = qa_net_read_u32(&reader);
     size_t remaining = qa_net_reader_remaining(&reader);
-    if (reader.failed || version != 3 || reserved || (flags & ~63u) || !commands ||
+    if (reader.failed || reserved || (flags & ~63u) || !commands ||
         (state != QA_APPLICATION_READY && state != QA_APPLICATION_RUNNING) ||
         random.front >= 31 || random.rear >= 31 ||
         (map && !qa_strings_text(qa_session_strings(candidate->session), map).data) ||
@@ -803,12 +800,12 @@ static const qa_application_persistence_owner *external_owner(
 static bool configuration_fields(qa_bytes bytes, qa_configuration_checkpoint *state,
     qa_bytes *identity, qa_error *error)
 {
-    if (!bytes.data || bytes.size < 24 || memcmp(bytes.data, "QACF", 4) ||
-        qa_load_u32le(bytes.data + 4) != 1 || !qa_load_u64le(bytes.data + 8) ||
-        qa_load_u64le(bytes.data + 16) != bytes.size - 24)
+    if (!bytes.data || bytes.size < 20 || memcmp(bytes.data, "QACF", 4) ||
+        !qa_load_u64le(bytes.data + 4) ||
+        qa_load_u64le(bytes.data + 12) != bytes.size - 20)
         return application_fail(error, QA_ERROR_FORMAT, "invalid application configuration continuation");
-    *state = (qa_configuration_checkpoint){.generation = qa_load_u64le(bytes.data + 8), .has_current = true};
-    *identity = (qa_bytes){bytes.data + 24, bytes.size - 24};
+    *state = (qa_configuration_checkpoint){.generation = qa_load_u64le(bytes.data + 4), .has_current = true};
+    *identity = (qa_bytes){bytes.data + 20, bytes.size - 20};
     return true;
 }
 
@@ -820,26 +817,25 @@ static bool configuration_capture(qa_application *app, qa_buffer *out, qa_error 
         !checkpoint.has_current || !checkpoint.generation)
         return application_fail(error, QA_ERROR_ARGUMENT, "application save requires a committed configuration");
     if (!application_save_configuration_capture(app, &identity, error)) return false;
-    if (identity.size > SIZE_MAX - 24) {
+    if (identity.size > SIZE_MAX - 20) {
         qa_buffer_free(&identity);
         return application_fail(error, QA_ERROR_MEMORY, "configuration continuation extent overflow");
     }
-    qa_buffer bytes = {.data = malloc(identity.size + 24), .size = identity.size + 24};
+    qa_buffer bytes = {.data = malloc(identity.size + 20), .size = identity.size + 20};
     if (!bytes.data) {
         qa_buffer_free(&identity);
         return application_fail(error, QA_ERROR_MEMORY, "allocating configuration continuation");
     }
-    memcpy(bytes.data, "QACF", 4); qa_store_u32le(bytes.data + 4, 1);
-    qa_store_u64le(bytes.data + 8, checkpoint.generation);
-    qa_store_u64le(bytes.data + 16, identity.size);
-    memcpy(bytes.data + 24, identity.data, identity.size); qa_buffer_free(&identity);
+    memcpy(bytes.data, "QACF", 4); qa_store_u64le(bytes.data + 4, checkpoint.generation);
+    qa_store_u64le(bytes.data + 12, identity.size);
+    memcpy(bytes.data + 20, identity.data, identity.size); qa_buffer_free(&identity);
     *out = bytes;
     return true;
 }
 
 static bool application_capture(qa_application *app, qa_buffer *out, qa_error *error)
 {
-    enum { PART_COUNT = 10, HEADER_SIZE = 88 };
+    enum { PART_COUNT = 10, HEADER_SIZE = 84 };
     qa_buffer parts[PART_COUNT] = {0};
     application_match_intents *empty = NULL;
     application_match_intents *intents = app->match_intents;
@@ -881,10 +877,9 @@ static bool application_capture(qa_application *app, qa_buffer *out, qa_error *e
         if (!bytes.data) ok = application_fail(error, QA_ERROR_MEMORY, "allocating application continuation");
     }
     if (ok) {
-        memcpy(bytes.data, "QAAO", 4); qa_store_u32le(bytes.data + 4, 8);
-        size_t offset = HEADER_SIZE;
+        memcpy(bytes.data, "QAAO", 4); size_t offset = HEADER_SIZE;
         for (size_t i = 0; i < PART_COUNT; ++i) {
-            qa_store_u64le(bytes.data + 8 + i * 8, parts[i].size);
+            qa_store_u64le(bytes.data + 4 + i * 8, parts[i].size);
             memcpy(bytes.data + offset, parts[i].data, parts[i].size);
             offset += parts[i].size;
         }
@@ -898,13 +893,12 @@ static bool application_capture(qa_application *app, qa_buffer *out, qa_error *e
 
 static bool application_parts(qa_bytes bytes, qa_bytes parts[10], qa_error *error)
 {
-    enum { PART_COUNT = 10, HEADER_SIZE = 88 };
-    if (!bytes.data || bytes.size < HEADER_SIZE || memcmp(bytes.data, "QAAO", 4) ||
-        qa_load_u32le(bytes.data + 4) != 8)
+    enum { PART_COUNT = 10, HEADER_SIZE = 84 };
+    if (!bytes.data || bytes.size < HEADER_SIZE || memcmp(bytes.data, "QAAO", 4))
         return application_fail(error, QA_ERROR_FORMAT, "invalid application continuation header");
     size_t offset = HEADER_SIZE;
     for (size_t i = 0; i < PART_COUNT; ++i) {
-        uint64_t length = qa_load_u64le(bytes.data + 8 + i * 8);
+        uint64_t length = qa_load_u64le(bytes.data + 4 + i * 8);
         if (!length || length > bytes.size - offset)
             return application_fail(error, QA_ERROR_FORMAT, "invalid application continuation extents");
         parts[i] = (qa_bytes){bytes.data + offset, (size_t)length};
@@ -1024,16 +1018,16 @@ typedef struct native_q3_record {
 
 static bool native_q3_record_read(qa_bytes bytes, native_q3_record *out, qa_error *error)
 {
-    if (!bytes.data || bytes.size<72 || memcmp(bytes.data,"QAN3",4) ||
-        qa_load_u32le(bytes.data+4)!=4 || qa_load_u32le(bytes.data+8)>2047 ||
-        qa_load_u32le(bytes.data+12))
+    if (!bytes.data || bytes.size<68 || memcmp(bytes.data,"QAN3",4) ||
+        qa_load_u32le(bytes.data+4)>2047 ||
+        qa_load_u32le(bytes.data+8))
         return application_fail(error,QA_ERROR_FORMAT,"Invalid native Q3 owner bundle");
-    uint32_t flags=qa_load_u32le(bytes.data+8);
+    uint32_t flags=qa_load_u32le(bytes.data+4);
     native_q3_record value={0};
     qa_bytes *parts[]={&value.game,&value.wire,&value.settings,&value.ipfilters,&value.votes,&value.clients,&value.published_events};
-    size_t offset=72;
+    size_t offset=68;
     for (size_t i=0;i<7;++i) {
-        uint64_t length=qa_load_u64le(bytes.data+16+i*8);
+        uint64_t length=qa_load_u64le(bytes.data+12+i*8);
         if (length>bytes.size-offset)
             return application_fail(error,QA_ERROR_FORMAT,"Native Q3 owner extent exceeds its actual record");
         *parts[i]=(qa_bytes){length ? bytes.data+offset : NULL,(size_t)length}; offset+=(size_t)length;
@@ -1066,11 +1060,11 @@ static bool native_q3_saved_record(application_provider *provider,
     qa_bytes bytes=saved ? saved->payload : (qa_bytes){0};
     if (!saved || strcmp(saved->owner.schema,"qa.q3.native") ||
         saved->owner.backend[0] || !qa_sha256_equal(&saved->owner.content,&provider->launch->identity) ||
-        !bytes.data || bytes.size<32 || memcmp(bytes.data,"QAPV",4) ||
-        qa_load_u32le(bytes.data+4)!=1 || qa_load_u32le(bytes.data+8)!=APPLICATION_PROVIDER_Q3 ||
-        qa_load_u64le(bytes.data+24)!=bytes.size-32)
+        !bytes.data || bytes.size<28 || memcmp(bytes.data,"QAPV",4) ||
+        qa_load_u32le(bytes.data+4)!=APPLICATION_PROVIDER_Q3 ||
+        qa_load_u64le(bytes.data+20)!=bytes.size-28)
         return application_fail(error,QA_ERROR_FORMAT,"Missing actual native Q3 provider record");
-    return native_q3_record_read((qa_bytes){bytes.data+32,bytes.size-32},out,error);
+    return native_q3_record_read((qa_bytes){bytes.data+28,bytes.size-28},out,error);
 }
 
 bool application_native_q3_checkpoint_prepare(application_provider *provider,
@@ -1084,12 +1078,12 @@ bool application_native_q3_checkpoint_prepare(application_provider *provider,
         strcmp(saved->owner.instance,provider->launch->selection.instance) ||
         strcmp(saved->owner.schema,"qa.q3.native") ||
         saved->owner.backend[0] || !qa_sha256_equal(&saved->owner.content,&provider->launch->identity) ||
-        !bytes.data || bytes.size<32 || memcmp(bytes.data,"QAPV",4) ||
-        qa_load_u32le(bytes.data+4)!=1 || qa_load_u32le(bytes.data+8)!=APPLICATION_PROVIDER_Q3 ||
-        qa_load_u32le(bytes.data+12)>1 || qa_load_u64le(bytes.data+24)!=bytes.size-32)
+        !bytes.data || bytes.size<28 || memcmp(bytes.data,"QAPV",4) ||
+        qa_load_u32le(bytes.data+4)!=APPLICATION_PROVIDER_Q3 ||
+        qa_load_u32le(bytes.data+8)>1 || qa_load_u64le(bytes.data+20)!=bytes.size-28)
         return application_fail(error,QA_ERROR_FORMAT,"Missing actual native Q3 physical CLIENT prefix");
     native_q3_record record={0};
-    if (!native_q3_record_read((qa_bytes){bytes.data+32,bytes.size-32},&record,error)) return false;
+    if (!native_q3_record_read((qa_bytes){bytes.data+28,bytes.size-28},&record,error)) return false;
     if (record.game_present!=(provider->state.q3!=NULL))
         return application_fail(error,QA_ERROR_FORMAT,"Saved Q3 GAME presence differs from its selected compiled roles");
     return application_native_q3_remote_roles_restore_prepare(provider,record.clients,error);
@@ -1127,31 +1121,30 @@ static bool native_q3_capture(application_provider *provider, qa_buffer *out, qa
         (voting && !console) || (team && !console) || (team_bound && (!team || !bound)) ||
         (bound && !initialized) || (initialized && !cached) ||
         (filters_initialized && (!filters || !initialized)) ||
-        game.size>SIZE_MAX-72 || wire.size>SIZE_MAX-72-game.size ||
-        settings.size>SIZE_MAX-72-game.size-wire.size ||
-        ipfilters.size>SIZE_MAX-72-game.size-wire.size-settings.size ||
-        votes.size>SIZE_MAX-72-game.size-wire.size-settings.size-ipfilters.size ||
-        clients.size>SIZE_MAX-72-game.size-wire.size-settings.size-ipfilters.size-votes.size ||
-        published_events.size>SIZE_MAX-72-game.size-wire.size-settings.size-ipfilters.size-votes.size-clients.size))
+        game.size>SIZE_MAX-68 || wire.size>SIZE_MAX-68-game.size ||
+        settings.size>SIZE_MAX-68-game.size-wire.size ||
+        ipfilters.size>SIZE_MAX-68-game.size-wire.size-settings.size ||
+        votes.size>SIZE_MAX-68-game.size-wire.size-settings.size-ipfilters.size ||
+        clients.size>SIZE_MAX-68-game.size-wire.size-settings.size-ipfilters.size-votes.size ||
+        published_events.size>SIZE_MAX-68-game.size-wire.size-settings.size-ipfilters.size-votes.size-clients.size))
         ok=application_fail(error,QA_ERROR_FORMAT,"Unqualified native Q3 source, settings and wire owners");
     if (ok) {
-        out->size=72+game.size+wire.size+settings.size+ipfilters.size+votes.size+clients.size+published_events.size;
+        out->size=68+game.size+wire.size+settings.size+ipfilters.size+votes.size+clients.size+published_events.size;
         out->data=calloc(1,out->size);
         if (!out->data) { out->size=0; ok=application_fail(error,QA_ERROR_MEMORY,"Retaining native Q3 owner bundle"); }
     }
     if (ok) {
-        memcpy(out->data,"QAN3",4); qa_store_u32le(out->data+4,4);
-        qa_store_u32le(out->data+8,(console ? 1u : 0u)|(present ? 2u : 0u)|(bound ? 4u : 0u)|
+        memcpy(out->data,"QAN3",4); qa_store_u32le(out->data+4,(console ? 1u : 0u)|(present ? 2u : 0u)|(bound ? 4u : 0u)|
             (cached ? 8u : 0u)|(initialized ? 16u : 0u)|(filters ? 32u : 0u)|
             (filters_initialized ? 64u : 0u)|(voting ? 128u : 0u)|
             (team ? 256u : 0u)|(team_bound ? 512u : 0u)|(game_present ? 1024u : 0u));
-        qa_store_u64le(out->data+16,game.size); qa_store_u64le(out->data+24,wire.size);
-        qa_store_u64le(out->data+32,settings.size);
-        qa_store_u64le(out->data+40,ipfilters.size);
-        qa_store_u64le(out->data+48,votes.size);
-        qa_store_u64le(out->data+56,clients.size);
-        qa_store_u64le(out->data+64,published_events.size);
-        size_t offset=72;
+        qa_store_u64le(out->data+12,game.size); qa_store_u64le(out->data+20,wire.size);
+        qa_store_u64le(out->data+28,settings.size);
+        qa_store_u64le(out->data+36,ipfilters.size);
+        qa_store_u64le(out->data+44,votes.size);
+        qa_store_u64le(out->data+52,clients.size);
+        qa_store_u64le(out->data+60,published_events.size);
+        size_t offset=68;
         qa_buffer *parts[]={&game,&wire,&settings,&ipfilters,&votes,&clients,&published_events};
         for (size_t i=0;i<7;++i) {
             if (parts[i]->size) memcpy(out->data+offset,parts[i]->data,parts[i]->size);
@@ -1200,11 +1193,11 @@ static bool native_q1_capture(application_provider *provider, qa_buffer *out, qa
     bool ok = qa_q1_game_capture(provider->state.q1, &game, error) &&
         application_native_q1_console_capture(provider, &cvars, error) &&
         application_bots_npc_capture(provider, &npc, error);
-    if (ok && (!game.size || !cvars.size || !npc.size || game.size > SIZE_MAX - 32 ||
-        cvars.size > SIZE_MAX - 32 - game.size || npc.size > SIZE_MAX - 32 - game.size - cvars.size))
+    if (ok && (!game.size || !cvars.size || !npc.size || game.size > SIZE_MAX - 28 ||
+        cvars.size > SIZE_MAX - 28 - game.size || npc.size > SIZE_MAX - 28 - game.size - cvars.size))
         ok = application_fail(error, QA_ERROR_FORMAT, "Invalid native Q1 source owner extent");
     if (ok) {
-        out->size = 32 + game.size + cvars.size + npc.size;
+        out->size = 28 + game.size + cvars.size + npc.size;
         out->data = malloc(out->size);
         if (!out->data) {
             out->size = 0;
@@ -1212,12 +1205,11 @@ static bool native_q1_capture(application_provider *provider, qa_buffer *out, qa
         }
     }
     if (ok) {
-        memcpy(out->data, "QAN1", 4); qa_store_u32le(out->data + 4, 2);
-        qa_store_u64le(out->data + 8, game.size); qa_store_u64le(out->data + 16, cvars.size);
-        qa_store_u64le(out->data + 24, npc.size);
-        memcpy(out->data + 32, game.data, game.size);
-        memcpy(out->data + 32 + game.size, cvars.data, cvars.size);
-        memcpy(out->data + 32 + game.size + cvars.size, npc.data, npc.size);
+        memcpy(out->data, "QAN1", 4); qa_store_u64le(out->data + 4, game.size); qa_store_u64le(out->data + 12, cvars.size);
+        qa_store_u64le(out->data + 20, npc.size);
+        memcpy(out->data + 28, game.data, game.size);
+        memcpy(out->data + 28 + game.size, cvars.data, cvars.size);
+        memcpy(out->data + 28 + game.size + cvars.size, npc.data, npc.size);
     }
     qa_buffer_free(&game); qa_buffer_free(&cvars); qa_buffer_free(&npc);
     return ok;
@@ -1225,24 +1217,23 @@ static bool native_q1_capture(application_provider *provider, qa_buffer *out, qa
 
 static bool native_q1_restore(application_provider *provider, qa_bytes bytes, qa_error *error)
 {
-    if (!bytes.data || bytes.size < 32 || memcmp(bytes.data, "QAN1", 4) ||
-        qa_load_u32le(bytes.data + 4) != 2)
+    if (!bytes.data || bytes.size < 28 || memcmp(bytes.data, "QAN1", 4))
         return application_fail(error, QA_ERROR_FORMAT, "Invalid native Q1 source owner bundle");
-    uint64_t game_size = qa_load_u64le(bytes.data + 8), cvars_size = qa_load_u64le(bytes.data + 16);
-    uint64_t npc_size = qa_load_u64le(bytes.data + 24);
-    if (!game_size || game_size > bytes.size - 32 || !cvars_size ||
-        cvars_size > bytes.size - 32 - (size_t)game_size || !npc_size ||
-        npc_size != bytes.size - 32 - (size_t)game_size - (size_t)cvars_size)
+    uint64_t game_size = qa_load_u64le(bytes.data + 4), cvars_size = qa_load_u64le(bytes.data + 12);
+    uint64_t npc_size = qa_load_u64le(bytes.data + 20);
+    if (!game_size || game_size > bytes.size - 28 || !cvars_size ||
+        cvars_size > bytes.size - 28 - (size_t)game_size || !npc_size ||
+        npc_size != bytes.size - 28 - (size_t)game_size - (size_t)cvars_size)
         return application_fail(error, QA_ERROR_FORMAT, "Invalid native Q1 source owner lengths");
     qa_q1_restore *ticket = NULL;
     bool ok = application_native_q1_console_restore(provider,
-        (qa_bytes){bytes.data + 32 + (size_t)game_size, (size_t)cvars_size}, error) &&
+        (qa_bytes){bytes.data + 28 + (size_t)game_size, (size_t)cvars_size}, error) &&
         qa_q1_game_restore_prepare_source(provider->state.q1,
-            (qa_bytes){bytes.data + 32, (size_t)game_size}, &ticket, error) &&
+            (qa_bytes){bytes.data + 28, (size_t)game_size}, &ticket, error) &&
         qa_q1_game_restore_commit(ticket, error);
     if (!ok) qa_q1_game_restore_abort(ticket);
     if (ok) ok = application_bots_npc_restore(provider,
-        (qa_bytes){bytes.data + 32 + (size_t)game_size + (size_t)cvars_size, (size_t)npc_size}, error);
+        (qa_bytes){bytes.data + 28 + (size_t)game_size + (size_t)cvars_size, (size_t)npc_size}, error);
     return ok;
 }
 
@@ -1262,22 +1253,21 @@ static bool provider_capture(application_provider *provider, qa_save_purpose pur
         ok = application_native_q2_save_capture(provider, purpose, resources, &state, error);
     else ok = application_guest_checkpoint_capture(provider, resources, &state, error);
     if (!ok) return false;
-    if (state.size > SIZE_MAX - 32) {
+    if (state.size > SIZE_MAX - 28) {
         qa_buffer_free(&state);
         return application_fail(error, QA_ERROR_MEMORY, "provider continuation extent overflow");
     }
-    qa_buffer bytes = {.size = state.size + 32}; bytes.data = calloc(1, bytes.size);
+    qa_buffer bytes = {.size = state.size + 28}; bytes.data = calloc(1, bytes.size);
     if (!bytes.data) {
         qa_buffer_free(&state);
         return application_fail(error, QA_ERROR_MEMORY, "allocating provider continuation");
     }
-    memcpy(bytes.data, "QAPV", 4); qa_store_u32le(bytes.data + 4, 1);
-    qa_store_u32le(bytes.data + 8, provider->kind);
-    qa_store_u32le(bytes.data + 12, provider->map_bound ? 1u : 0u);
-    qa_store_u32le(bytes.data + 16, provider->q1_server_flags);
-    qa_store_u32le(bytes.data + 20, provider->q2_server_flags);
-    qa_store_u64le(bytes.data + 24, state.size);
-    memcpy(bytes.data + 32, state.data, state.size); qa_buffer_free(&state);
+    memcpy(bytes.data, "QAPV", 4); qa_store_u32le(bytes.data + 4, provider->kind);
+    qa_store_u32le(bytes.data + 8, provider->map_bound ? 1u : 0u);
+    qa_store_u32le(bytes.data + 12, provider->q1_server_flags);
+    qa_store_u32le(bytes.data + 16, provider->q2_server_flags);
+    qa_store_u64le(bytes.data + 20, state.size);
+    memcpy(bytes.data + 28, state.data, state.size); qa_buffer_free(&state);
     *out = bytes;
     return true;
 }
@@ -1285,14 +1275,14 @@ static bool provider_capture(application_provider *provider, qa_save_purpose pur
 static bool provider_restore(application_persistence *operation,
                               application_provider *provider, qa_bytes bytes, qa_error *error)
 {
-    if (!bytes.data || bytes.size < 32 || memcmp(bytes.data, "QAPV", 4) ||
-        qa_load_u32le(bytes.data + 4) != 1 || qa_load_u32le(bytes.data + 8) != (uint32_t)provider->kind ||
-        qa_load_u32le(bytes.data + 12) > 1 || qa_load_u64le(bytes.data + 24) != bytes.size - 32)
+    if (!bytes.data || bytes.size < 28 || memcmp(bytes.data, "QAPV", 4) ||
+        qa_load_u32le(bytes.data + 4) != (uint32_t)provider->kind ||
+        qa_load_u32le(bytes.data + 8) > 1 || qa_load_u64le(bytes.data + 20) != bytes.size - 28)
         return application_fail(error, QA_ERROR_FORMAT, "invalid provider continuation header or extent");
     if (provider->kind == APPLICATION_PROVIDER_NATIVE && provider->state.native.q2_engine &&
-        qa_load_u32le(bytes.data + 12) != 1)
+        qa_load_u32le(bytes.data + 8) != 1)
         return application_fail(error, QA_ERROR_FORMAT, "native Q2 provider wrapper requires its actual ready map owner");
-    qa_bytes state = {bytes.data + 32, bytes.size - 32};
+    qa_bytes state = {bytes.data + 28, bytes.size - 28};
     bool ok;
     if (provider->kind == APPLICATION_PROVIDER_Q1) {
         ok = native_q1_restore(provider, state, error);
@@ -1304,9 +1294,9 @@ static bool provider_restore(application_persistence *operation,
         ok = application_native_q2_save_restore(provider, state, operation->options, operation->ops, error);
     else ok = application_guest_checkpoint_restore(provider, state, error);
     if (!ok) return false;
-    provider->map_bound = qa_load_u32le(bytes.data + 12) != 0;
-    provider->q1_server_flags = qa_load_u32le(bytes.data + 16);
-    provider->q2_server_flags = qa_load_u32le(bytes.data + 20);
+    provider->map_bound = qa_load_u32le(bytes.data + 8) != 0;
+    provider->q1_server_flags = qa_load_u32le(bytes.data + 12);
+    provider->q2_server_flags = qa_load_u32le(bytes.data + 16);
     return true;
 }
 
@@ -1752,33 +1742,31 @@ static bool persistence_providers_match(qa_application *app,
             provider->launch->selection.instance);
         if (provider->kind == APPLICATION_PROVIDER_NATIVE && provider->state.native.q2_engine) {
             qa_bytes bytes = record ? record->payload : (qa_bytes){0};
-            if (!bytes.data || bytes.size < 32 || memcmp(bytes.data, "QAPV", 4) ||
-                qa_load_u32le(bytes.data + 4) != 1 ||
-                qa_load_u32le(bytes.data + 8) != (uint32_t)provider->kind ||
-                qa_load_u32le(bytes.data + 12) != (provider->map_bound ? 1u : 0u) ||
-                qa_load_u32le(bytes.data + 16) != provider->q1_server_flags ||
-                qa_load_u32le(bytes.data + 20) != provider->q2_server_flags ||
-                qa_load_u64le(bytes.data + 24) != bytes.size - 32)
+            if (!bytes.data || bytes.size < 28 || memcmp(bytes.data, "QAPV", 4) ||
+                qa_load_u32le(bytes.data + 4) != (uint32_t)provider->kind ||
+                qa_load_u32le(bytes.data + 8) != (provider->map_bound ? 1u : 0u) ||
+                qa_load_u32le(bytes.data + 12) != provider->q1_server_flags ||
+                qa_load_u32le(bytes.data + 16) != provider->q2_server_flags ||
+                qa_load_u64le(bytes.data + 20) != bytes.size - 28)
                 return application_fail(error, QA_ERROR_FORMAT, "Native Q2 provider wrapper changed after restoration");
             if (!application_native_q2_save_matches(provider,
-                (qa_bytes){bytes.data + 32, bytes.size - 32}, error))
+                (qa_bytes){bytes.data + 28, bytes.size - 28}, error))
                 return false;
             continue;
         }
         if (provider->kind == APPLICATION_PROVIDER_QVM ||
             (provider->kind == APPLICATION_PROVIDER_NATIVE && provider->state.native.engine)) {
             qa_bytes bytes = record ? record->payload : (qa_bytes){0};
-            if (!bytes.data || bytes.size < 32 || memcmp(bytes.data, "QAPV", 4) ||
-                qa_load_u32le(bytes.data + 4) != 1 ||
-                qa_load_u32le(bytes.data + 8) != (uint32_t)provider->kind ||
-                qa_load_u32le(bytes.data + 12) != (provider->map_bound ? 1u : 0u) ||
-                qa_load_u32le(bytes.data + 16) != provider->q1_server_flags ||
-                qa_load_u32le(bytes.data + 20) != provider->q2_server_flags ||
-                qa_load_u64le(bytes.data + 24) != bytes.size - 32)
+            if (!bytes.data || bytes.size < 28 || memcmp(bytes.data, "QAPV", 4) ||
+                qa_load_u32le(bytes.data + 4) != (uint32_t)provider->kind ||
+                qa_load_u32le(bytes.data + 8) != (provider->map_bound ? 1u : 0u) ||
+                qa_load_u32le(bytes.data + 12) != provider->q1_server_flags ||
+                qa_load_u32le(bytes.data + 16) != provider->q2_server_flags ||
+                qa_load_u64le(bytes.data + 20) != bytes.size - 28)
                 return application_fail(error, QA_ERROR_FORMAT,
                                         "Q3 guest provider wrapper changed after restoration");
             if (!application_guest_q3_save_matches(provider,
-                (qa_bytes){bytes.data + 32, bytes.size - 32}, resources, error))
+                (qa_bytes){bytes.data + 28, bytes.size - 28}, resources, error))
                 return false;
             continue;
         }

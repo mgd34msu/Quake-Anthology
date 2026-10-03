@@ -3,12 +3,12 @@
 static bool prefix(application_q3_mod_items *o,qa_source_save_io *io)
 {
     uint8_t magic[4]={'Q','G','I','T'},expected[4];memcpy(expected,magic,4);
-    uint32_t version=1,abi=(uint32_t)o->profile->source->abi;
+    uint32_t abi=(uint32_t)o->profile->source->abi;
     uint8_t digest[32],original[32];
     memcpy(digest,qa_qvm_image_digest(o->profile->source->image),32);memcpy(original,digest,32);
     size_t bytes=o->profile->source->declaration.size;
     if(!qa_source_save_bytes(io,magic,4)||memcmp(magic,expected,4)||
-        !qa_source_save_u32(io,&version)||version!=1||!qa_source_save_u32(io,&abi)||abi!=(uint32_t)o->profile->source->abi||
+        !qa_source_save_u32(io,&abi)||abi!=(uint32_t)o->profile->source->abi||
         !qa_source_save_bytes(io,digest,32)||memcmp(digest,original,32)||
         !qa_source_save_count(io,&bytes,o->profile->source->declaration.size)||bytes!=o->profile->source->declaration.size)
         return q3mod_fail(io->error,QA_ERROR_FORMAT,"Saved items differ from their genuine source profile");

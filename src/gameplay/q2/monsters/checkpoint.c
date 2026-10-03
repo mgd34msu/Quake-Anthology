@@ -162,7 +162,6 @@ bool qa_q2_monster_capture(qa_q2_game *game, qa_actor_id id,
   }
   const struct qa_q2_monster *monster = actor->monster;
   qa_q2_monster_checkpoint saved = {
-      .version = 11,
       .start_phase = (uint32_t)monster->start_phase,
       .combat_target = monster->combat_target,
       .weapon_sound = monster->weapon_sound,
@@ -432,7 +431,7 @@ bool qa_q2_monster_restore(qa_q2_game *game, qa_actor_id id,
   if (!callback_boundary(game, error))
     return false;
   bool controller = saved->controller_kind != Q2M_CONTROLLER_NONE;
-  if (saved->version != 11 || saved->start_phase > Q2M_START_MANUAL ||
+  if (saved->start_phase > Q2M_START_MANUAL ||
       saved->reinforcement_count > UINT32_MAX ||
       saved->reinforcement_count > SIZE_MAX / sizeof(q2m_reinforcement) ||
       (saved->reinforcement_count && !saved->reinforcements) ||

@@ -116,9 +116,9 @@ static bool target(qa_source_save_io *io, const qa_media_checkpoint_refs *refs, 
 }
 static bool fields(qa_source_save_io *io, const qa_media_checkpoint_refs *refs, qa_cinematic_checkpoint *value)
 {
-    uint8_t signature[4] = {'Q','A','M','C'}; uint32_t version = 2, format = value->format, audience = value->audio_audience.kind;
+    uint8_t signature[4] = {'Q','A','M','C'}; uint32_t format = value->format, audience = value->audio_audience.kind;
     bool ok = qa_source_save_bytes(io, signature, sizeof(signature)) && !memcmp(signature, "QAMC", 4) &&
-        qa_source_save_u32(io, &version) && version == 2 && qa_source_save_u32(io, &format) && format <= QA_CINEMATIC_IMAGE;
+        qa_source_save_u32(io, &format) && format <= QA_CINEMATIC_IMAGE;
     if (!ok) return false;
     value->format = (qa_cinematic_format)format;
     ok = source_text(io, &value->source) && target(io, refs, &value->target) &&

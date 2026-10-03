@@ -291,10 +291,9 @@ bool frontend_native_q3_commands_destroy(frontend_native_q3_commands *o,qa_error
 }
 static bool fields(qa_source_save_io *io,frontend_native_q3_commands *o)
 {
-    uint8_t magic[4]={'Q','N','C','C'}; uint32_t version=1,product=o->dispatch->product;
+    uint8_t magic[4]={'Q','N','C','C'}; uint32_t product=o->dispatch->product;
     uint64_t identity=o->row->view.identity; size_t contributed=o->contributed;
-    if(!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QNCC",4) || !qa_source_save_u32(io,&version) || version!=1 ||
-        !qa_source_save_u32(io,&product) || product!=(uint32_t)o->dispatch->product ||
+    if(!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QNCC",4) || !qa_source_save_u32(io,&product) || product!=(uint32_t)o->dispatch->product ||
         !qa_source_save_u64(io,&identity) || identity!=o->row->view.identity ||
         !qa_source_save_i32(io,&o->scores_request_time) || !qa_source_save_bool(io,&o->registered) ||
         !qa_source_save_bool(io,&o->closed) || (o->closed && !o->registered) ||

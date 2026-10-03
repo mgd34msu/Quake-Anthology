@@ -367,8 +367,7 @@ bool application_q2_kex_damage_capture(struct application_q2_kex_damage *p, qa_b
     size_t count = 0;
     for (kex_pending *record = p->records; record; record = record->next)
         if (record->active && record->pending) ++count;
-    uint32_t version = 1;
-    bool ok = qa_source_save_u32(&io, &version) && qa_source_save_count(&io, &count, 65536);
+    bool ok = qa_source_save_count(&io, &count, 65536);
     for (kex_pending *record = p->records; ok && record; record = record->next) {
         if (!record->active || !record->pending) continue;
         kex_saved saved = {.record = *record}; uint8_t bytes[4];
@@ -411,9 +410,9 @@ bool application_q2_kex_damage_restore_prepare(struct application_q2_kex_damage 
             return application_fail(error, QA_ERROR_ARGUMENT, "KEX deferred restore retains a failed source observer removal");
     struct application_q2_kex_restore *prepared = calloc(1, sizeof(*prepared));
     if (!prepared) return application_fail(error, QA_ERROR_MEMORY, "Preparing KEX deferred continuation");
-    qa_source_save_io io = {0}; size_t count = 0; uint32_t version = 0;
+    qa_source_save_io io = {0}; size_t count = 0;
     bool ok = qa_source_save_reader(&io, p->profile->engine->provider->application->session, bytes, error) &&
-        qa_source_save_u32(&io, &version) && version == 1 && qa_source_save_count(&io, &count, 65536);
+        qa_source_save_count(&io, &count, 65536);
     qa_native_entity_table table;
     if (ok) ok = qa_native_entity_table_get(native(p), &table, error);
     for (size_t i = 0; ok && i < count; ++i) {

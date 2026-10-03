@@ -38,8 +38,8 @@ static bool profile(qa_source_save_io *io,qa_arena *arena,const char **value)
 }
 static bool signature(qa_source_save_io *io)
 {
-    static const uint8_t expected[8]={'Q','A','S','D','E','F','S',0};uint8_t bytes[8];memcpy(bytes,expected,8);uint32_t version=3;
-    return qa_source_save_bytes(io,bytes,8) && !memcmp(bytes,expected,8) && qa_source_save_u32(io,&version) && version==3;
+    static const uint8_t expected[8]={'Q','A','S','D','E','F','S',0};uint8_t bytes[8];memcpy(bytes,expected,8);
+    return qa_source_save_bytes(io,bytes,8) && !memcmp(bytes,expected,8);
 }
 static bool fields(qa_source_save_io *io,qa_script_checkpoint *saved,qa_arena *arena)
 {

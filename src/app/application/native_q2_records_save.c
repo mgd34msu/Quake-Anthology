@@ -34,12 +34,12 @@ bool application_native_q2_records_validate(application_native_q2_records *o,qa_
 }
 static bool fields(application_native_q2_records *o,qa_source_save_io *io,nqr_actor **candidate)
 {
-    uint8_t magic[4]={'Q','N','R','B'}; uint32_t version=1;
+    uint8_t magic[4]={'Q','N','R','B'};
     qa_native_module_info info=qa_native_module_describe(qa_native_get_module(o->options.instance));
     uint8_t digest[32]; memcpy(digest,info.image.digest.bytes,32);
     uint32_t profile=info.profile,abi=info.image.target.abi;
     uint8_t pointer_bytes=info.image.target.pointer_bytes;
-    if(!qa_source_save_bytes(io,magic,4)||memcmp(magic,"QNRB",4)||!qa_source_save_u32(io,&version)||version!=1||
+    if(!qa_source_save_bytes(io,magic,4)||memcmp(magic,"QNRB",4)||
         !qa_source_save_bytes(io,digest,32)||memcmp(digest,info.image.digest.bytes,32)||
         !qa_source_save_u32(io,&profile)||profile!=(uint32_t)info.profile||!qa_source_save_u32(io,&abi)||abi!=(uint32_t)info.image.target.abi||
         !qa_source_save_u8(io,&pointer_bytes)||pointer_bytes!=info.image.target.pointer_bytes)

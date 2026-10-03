@@ -3,8 +3,8 @@
 static bool fields(qa_source_save_io *io,q3n_hud *o)
 {
     const char *signature=o->options.compiled_source?"Q3HC":o->options.remote_client?"Q3HR":"Q3HD";
-    uint8_t magic[4]; memcpy(magic,signature,4); uint32_t version=1,product=(uint32_t)o->product,seat=o->options.seat;
-    if(!qa_source_save_bytes(io,magic,4) || memcmp(magic,signature,4) || !qa_source_save_u32(io,&version) || version!=1 ||
+    uint8_t magic[4]; memcpy(magic,signature,4); uint32_t product=(uint32_t)o->product,seat=o->options.seat;
+    if(!qa_source_save_bytes(io,magic,4) || memcmp(magic,signature,4) ||
        !qa_source_save_u32(io,&product) || product!=(uint32_t)o->product || !qa_source_save_u32(io,&seat) || seat!=o->options.seat ||
        !q3nh_remote_basis_fields(io,o->options.remote_client) ||
        (o->options.compiled_source && !q3n_compiled_source_fields(io,o->options.compiled_source)))return false;

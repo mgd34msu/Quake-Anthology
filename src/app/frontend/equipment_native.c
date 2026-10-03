@@ -211,12 +211,10 @@ static bool checkpoint(const void *context, qa_buffer *out, qa_error *error)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Native equipment capture requires its actual returned owner");
     qa_buffer source = {0};
     if (!frontend_equipment_source_checkpoint(owner->source, &source, error)) return false;
-    qa_source_save_io io = {0}; uint8_t magic[4] = {'Q','F','E','N'}; uint32_t version = 1;
-    bool hud = owner->hud_requested, view = owner->view_requested;
+    qa_source_save_io io = {0}; uint8_t magic[4] = {'Q','F','E','N'}; bool hud = owner->hud_requested, view = owner->view_requested;
     qa_bytes bytes = {source.data, source.size};
     bool okay = qa_source_save_writer(&io, qa_application_session(owner->frontend->application), error) &&
-        qa_source_save_bytes(&io, magic, sizeof(magic)) && qa_source_save_u32(&io, &version) &&
-        qa_source_save_bool(&io, &hud) && qa_source_save_bool(&io, &view) &&
+        qa_source_save_bytes(&io, magic, sizeof(magic)) && qa_source_save_bool(&io, &hud) && qa_source_save_bool(&io, &view) &&
         blob(&io, &bytes) && qa_source_save_finish(&io, out);
     qa_source_save_dispose(&io); qa_buffer_free(&source); return okay;
 }
@@ -225,11 +223,10 @@ static bool restore(void *context, const qa_application_q3_client_context *clien
 {
     equipment_native *owner = context;
     if (!idle(owner)) return frontend_fail(error, QA_ERROR_ARGUMENT, "Native equipment import requires its fresh empty owner");
-    qa_source_save_io io = {0}; uint8_t magic[4]; uint32_t version;
-    bool hud = false, view = false; qa_bytes source = {0};
+    qa_source_save_io io = {0}; uint8_t magic[4]; bool hud = false, view = false; qa_bytes source = {0};
     bool okay = qa_source_save_reader(&io, qa_application_session(owner->frontend->application), bytes, error) &&
         qa_source_save_bytes(&io, magic, sizeof(magic)) && !memcmp(magic, "QFEN", 4) &&
-        qa_source_save_u32(&io, &version) && version == 1 && qa_source_save_bool(&io, &hud) &&
+        qa_source_save_bool(&io, &hud) &&
         qa_source_save_bool(&io, &view) && blob(&io, &source) && qa_source_save_finish(&io, NULL);
     if (okay) okay = frontend_equipment_source_restore(owner->source, client, source, error);
     if (okay) { owner->hud_requested = hud; owner->view_requested = view; }

@@ -718,10 +718,8 @@ static bool rows_fields(qa_source_save_io *io,frontend_world_inventory *inventor
 }
 static bool header(qa_source_save_io *io,size_t *worlds,size_t *models)
 {
-    uint8_t magic[4]={'Q','F','W','R'}; uint32_t version=12;
-    size_t maximum=io->direction==QA_SOURCE_SAVE_READ?io->input.size-io->offset:SIZE_MAX;
-    return qa_source_save_bytes(io,magic,4) && !memcmp(magic,"QFWR",4) && qa_source_save_u32(io,&version) && version==12 &&
-        qa_source_save_count(io,worlds,maximum) && qa_source_save_count(io,models,maximum);
+    uint8_t magic[4]={'Q','F','W','R'}; size_t maximum=io->direction==QA_SOURCE_SAVE_READ?io->input.size-io->offset:SIZE_MAX;
+    return qa_source_save_bytes(io,magic,4) && !memcmp(magic,"QFWR",4) && qa_source_save_count(io,worlds,maximum) && qa_source_save_count(io,models,maximum);
 }
 bool frontend_world_inventory_checkpoint(const frontend_world_inventory *inventory,qa_buffer *out,qa_error *error)
 {

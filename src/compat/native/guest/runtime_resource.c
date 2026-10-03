@@ -209,12 +209,12 @@ bool guest_runtime_resources_destroy(guest_runtime_resources **owner, qa_error *
     guest_runtime_resources_abandon(owner); return true;
 }
 
-/* QGRF1 is detached metadata only. It contains no host pointer or file bytes. */
+/* QGRF is detached metadata only. It contains no host pointer or file bytes. */
 bool guest_runtime_resources_checkpoint(const guest_runtime_resources *o, qa_buffer *out, qa_error *e)
 {
     if (!guest_runtime_resources_idle(o) || !out || out->data || out->size)
         return fail(e, QA_ERROR_ARGUMENT, 0, "resource checkpoint requires idle ownership and empty output");
-    size_t bytes = 16;
+    size_t bytes = 12;
     for (size_t i = 0; i < o->count; ++i) {
         size_t length = strlen(o->files[i].view.name);
         if (bytes > SIZE_MAX - 48 || length > SIZE_MAX - bytes - 48)
@@ -223,8 +223,8 @@ bool guest_runtime_resources_checkpoint(const guest_runtime_resources *o, qa_buf
     }
     uint8_t *data = calloc(1, bytes);
     if (!data) return fail(e, QA_ERROR_MEMORY, 0, "owning resource checkpoint");
-    memcpy(data, "QGRF", 4); qa_store_u32le(data + 4, 1); qa_store_u64le(data + 8, o->count);
-    size_t at = 16;
+    memcpy(data, "QGRF", 4); qa_store_u64le(data + 4, o->count);
+    size_t at = 12;
     for (size_t i = 0; i < o->count; ++i) {
         const guest_runtime_file_view *v = &o->files[i].view;
         size_t length = strlen(v->name);
@@ -238,19 +238,18 @@ bool guest_runtime_resources_checkpoint(const guest_runtime_resources *o, qa_buf
 
 bool guest_runtime_resources_decode(qa_bytes bytes, guest_runtime_resources **out, qa_error *e)
 {
-    if (!out || *out || !bytes.data || bytes.size < 16 || memcmp(bytes.data, "QGRF", 4) ||
-        qa_load_u32le(bytes.data + 4) != 1)
+    if (!out || *out || !bytes.data || bytes.size < 12 || memcmp(bytes.data, "QGRF", 4))
         return fail(e, QA_ERROR_FORMAT, 0, "resource checkpoint header is invalid");
-    uint64_t count = qa_load_u64le(bytes.data + 8);
-    if (count > (bytes.size - 16) / 48 || count > SIZE_MAX / sizeof(runtime_file))
-        return fail(e, QA_ERROR_FORMAT, 8, "resource checkpoint row extent is invalid");
+    uint64_t count = qa_load_u64le(bytes.data + 4);
+    if (count > (bytes.size - 12) / 48 || count > SIZE_MAX / sizeof(runtime_file))
+        return fail(e, QA_ERROR_FORMAT, 4, "resource checkpoint row extent is invalid");
     guest_runtime_resources *o = calloc(1, sizeof(*o));
     if (!o) return fail(e, QA_ERROR_MEMORY, 0, "owning detached resource candidate");
     o->detached = true;
     o->files = count ? calloc((size_t)count, sizeof(*o->files)) : NULL;
     if (count && !o->files) { free(o); return fail(e, QA_ERROR_MEMORY, 0, "owning detached resource rows"); }
     o->capacity = (size_t)count;
-    size_t at = 16; bool okay = true;
+    size_t at = 12; bool okay = true;
     for (size_t i = 0; okay && i < count; ++i) {
         if (bytes.size - at < 48) { okay = false; break; }
         guest_runtime_file_view v = {qa_load_u64le(bytes.data + at), qa_load_u64le(bytes.data + at + 8),

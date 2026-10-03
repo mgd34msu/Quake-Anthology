@@ -134,7 +134,7 @@ bool qa_gl_source_texture_filter_apply(qa_render_controls *,bool no_bind,qa_erro
 void qa_cpu_render_controls_close(qa_render_controls *);
 void qa_gl_render_controls_close(qa_render_controls *);
 typedef struct qa_render_checkpoint_refs qa_render_checkpoint_refs;
-bool qa_render_controls_saved_fields(qa_source_save_io *, qa_render_controls *, uint32_t version,
+bool qa_render_controls_saved_fields(qa_source_save_io *, qa_render_controls *,
     const qa_render_checkpoint_refs *);
 qa_render_primitive_mode qa_render_primitives_mode(int32_t, bool indexed_arrays);
 qa_scene_filter qa_render_controls_image_filter(const qa_render_controls *,const qa_scene_image *);
@@ -149,7 +149,7 @@ bool qa_render_source_texture_subimage(qa_render_source_texture *,const qa_scene
 const qa_scene_image *qa_render_source_texture_view(qa_render_source_texture *);
 double qa_render_source_texture_component(qa_q3_texture_format, uint8_t);
 bool qa_render_source_texture_alpha(const qa_scene_image *);
-bool qa_render_source_texture_saved_fields(qa_source_save_io *,qa_render_source_texture *,uint32_t,const qa_render_checkpoint_refs *);
+bool qa_render_source_texture_saved_fields(qa_source_save_io *,qa_render_source_texture *,const qa_render_checkpoint_refs *);
 const qa_scene_image *qa_cpu_source_texture_image(qa_render_controls *,uint32_t,const qa_scene_image *);
 const qa_scene_image *qa_gl_source_texture_image(qa_render_controls *,uint32_t,const qa_scene_image *);
 bool qa_cpu_source_texture_upload(qa_render_controls *,const qa_scene_image *,const qa_scene_image *,

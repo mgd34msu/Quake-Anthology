@@ -80,9 +80,8 @@ static bool client_fields(qa_source_save_io *io, qw_frontend_peer *peer, fronten
 static bool fields(qa_source_save_io *io, frontend_qw_host *host)
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
-    uint32_t magic = UINT32_C(0x48574151), version = 2;
-    if (!qa_source_save_u32(io, &magic) || magic != UINT32_C(0x48574151) || !qa_source_save_u32(io, &version) || (version != 1 && version != 2) ||
-        !frontend_save_provider(io, host->frontend->application, &host->owner) || !host->owner ||
+    uint32_t magic = UINT32_C(0x48574151);
+    if (!qa_source_save_u32(io, &magic) || magic != UINT32_C(0x48574151) || !frontend_save_provider(io, host->frontend->application, &host->owner) || !host->owner ||
         !qa_source_save_u64(io, &host->generation) || !qa_source_save_u64(io, &host->event_cursor) || !qa_source_save_u64(io, &host->reliable_cursor) ||
         !qa_source_save_u64(io, &host->event_generation) || !qa_source_save_u64(io, &host->reliable_generation) ||
         !qa_source_save_u64(io, &host->published_time_ns) || !qa_source_save_bool(io, &host->previous_pause) ||
@@ -124,7 +123,7 @@ static bool fields(qa_source_save_io *io, frontend_qw_host *host)
         qw_pending_control *pending = host->pending + i;
         if (!address_fields(io, &pending->address) || !qa_source_save_u64(io, &pending->time_ns) ||
             !qa_source_save_count(io, &pending->size, QW_MESSAGE) || !qa_source_save_bytes(io, pending->bytes, pending->size)) return false;
-        if (version >= 2 && (!blob_fields(io, &pending->reply, 65535) ||
+        if ((!blob_fields(io, &pending->reply, 65535) ||
             (pending->reply.size && (i >= host->pending_count || pending->size < 4 ||
                 qa_load_u32le(pending->bytes) != UINT32_MAX)))) return false;
     }

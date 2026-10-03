@@ -23,15 +23,15 @@ static const uint8_t bots_magic[8]={'Q','A','B','A','P','P',0,0};
 static const uint8_t nav_magic[8]={'Q','A','N','A','P','P',0,0};
 
 static bool app_signature(qa_source_save_io *io) {
-    uint8_t magic[8];memcpy(magic,bots_magic,sizeof(magic));uint32_t version=11;
-    return qa_source_save_bytes(io,magic,sizeof(magic)) && qa_source_save_u32(io,&version) &&
-        (!memcmp(magic,bots_magic,sizeof(magic)) && version==11?true:
+    uint8_t magic[8];memcpy(magic,bots_magic,sizeof(magic));
+    return qa_source_save_bytes(io,magic,sizeof(magic)) &&
+        (!memcmp(magic,bots_magic,sizeof(magic))?true:
             bot_save_fail(io,QA_ERROR_FORMAT,"Unsupported application bot continuation schema"));
 }
 static bool nav_signature(qa_source_save_io *io) {
-    uint8_t magic[8];memcpy(magic,nav_magic,sizeof(magic));uint32_t version=2;
-    return qa_source_save_bytes(io,magic,sizeof(magic)) && qa_source_save_u32(io,&version) &&
-        (!memcmp(magic,nav_magic,sizeof(magic)) && version==2?true:
+    uint8_t magic[8];memcpy(magic,nav_magic,sizeof(magic));
+    return qa_source_save_bytes(io,magic,sizeof(magic)) &&
+        (!memcmp(magic,nav_magic,sizeof(magic))?true:
             bot_save_fail(io,QA_ERROR_FORMAT,"Unsupported application navigation continuation schema"));
 }
 

@@ -53,11 +53,11 @@ static bool refdef(qa_source_save_io *io,qa_q3_refdef *r)
 }
 static bool fields(qa_source_save_io *io,q3n_native *o)
 {
-    uint8_t magic[4]={'Q','3','N','C'}; uint32_t version=1,product=(uint32_t)o->product,seat=o->seat,physical=o->physical_client;
+    uint8_t magic[4]={'Q','3','N','C'}; uint32_t product=(uint32_t)o->product,seat=o->seat,physical=o->physical_client;
     uint32_t presentation_seat=o->physical_presentation_seat;
     uint64_t owner=o->source_owner,map=o->map_revision;
     qa_actor_id actor=o->viewing_actor;
-    if(!qa_source_save_bytes(io,magic,4) || memcmp(magic,"Q3NC",4) || !qa_source_save_u32(io,&version) || version!=1 ||
+    if(!qa_source_save_bytes(io,magic,4) || memcmp(magic,"Q3NC",4) ||
         !qa_source_save_u32(io,&product) || product!=(uint32_t)o->product || !qa_source_save_u64(io,&owner) || owner!=o->source_owner ||
         !qa_source_save_u64(io,&map) || map!=o->map_revision || !qa_source_save_u32(io,&seat) || seat!=o->seat ||
         !qa_source_save_u32(io,&presentation_seat) || presentation_seat!=o->physical_presentation_seat ||

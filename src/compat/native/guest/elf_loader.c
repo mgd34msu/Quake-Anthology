@@ -180,7 +180,7 @@ static bool provider_retained(const guest_elf_loaded *owner, qa_error *error)
         guest_fail(error, QA_ERROR_FORMAT, row, "ELF loaded provider invents an export declaration");
 }
 
-enum { ELF_LOADED_HEADER = 40 };
+enum { ELF_LOADED_HEADER = 36 };
 
 bool guest_elf_loaded_checkpoint(const guest_elf_loaded *owner,
     qa_buffer *out, qa_error *error)
@@ -206,10 +206,10 @@ bool guest_elf_loaded_checkpoint(const guest_elf_loaded *owner,
         qa_buffer_free(&memory); qa_buffer_free(&unwind);
         return guest_fail(error, QA_ERROR_MEMORY, 0, "owning ELF loaded checkpoint");
     }
-    memcpy(data, "QALL", 4); qa_store_u32le(data + 4, 2);
-    qa_store_u64le(data + 8, owner->provider); qa_store_u32le(data + 16, 1);
-    qa_store_u64le(data + 24, memory.size);
-    qa_store_u64le(data + 32, unwind.size);
+    memcpy(data, "QALL", 4);
+    qa_store_u64le(data + 4, owner->provider); qa_store_u32le(data + 12, 1);
+    qa_store_u64le(data + 20, memory.size);
+    qa_store_u64le(data + 28, unwind.size);
     memcpy(data + ELF_LOADED_HEADER, memory.data, memory.size);
     memcpy(data + ELF_LOADED_HEADER + memory.size, unwind.data, unwind.size);
     qa_buffer_free(&memory); qa_buffer_free(&unwind);
@@ -221,16 +221,16 @@ bool guest_elf_loaded_adopt(const guest_elf *artifact, guest_sysv_runtime *runti
 {
     if (!guest_elf_describe(artifact) || !guest_sysv_idle(runtime) || !out || *out ||
         !encoded.data || encoded.size < ELF_LOADED_HEADER || memcmp(encoded.data, "QALL", 4) ||
-        qa_load_u32le(encoded.data + 4) != 2 || !qa_load_u64le(encoded.data + 8) ||
-        qa_load_u32le(encoded.data + 16) != 1 || qa_load_u32le(encoded.data + 20) ||
-        qa_load_u64le(encoded.data + 24) > encoded.size - ELF_LOADED_HEADER ||
-        qa_load_u64le(encoded.data + 32) != encoded.size - ELF_LOADED_HEADER - qa_load_u64le(encoded.data + 24))
+        !qa_load_u64le(encoded.data + 4) ||
+        qa_load_u32le(encoded.data + 12) != 1 || qa_load_u32le(encoded.data + 16) ||
+        qa_load_u64le(encoded.data + 20) > encoded.size - ELF_LOADED_HEADER ||
+        qa_load_u64le(encoded.data + 28) != encoded.size - ELF_LOADED_HEADER - qa_load_u64le(encoded.data + 20))
         return guest_fail(error, QA_ERROR_FORMAT, 0, "ELF cold loaded adoption requires its exact committed record and attached runtime");
     guest_elf_loaded *owner = calloc(1, sizeof(*owner));
     if (!owner) return guest_fail(error, QA_ERROR_MEMORY, 0, "owning ELF cold loaded image");
-    owner->image = artifact; owner->runtime = runtime; owner->provider = qa_load_u64le(encoded.data + 8);
-    size_t memory_bytes = (size_t)qa_load_u64le(encoded.data + 24);
-    size_t unwind_bytes = (size_t)qa_load_u64le(encoded.data + 32);
+    owner->image = artifact; owner->runtime = runtime; owner->provider = qa_load_u64le(encoded.data + 4);
+    size_t memory_bytes = (size_t)qa_load_u64le(encoded.data + 20);
+    size_t unwind_bytes = (size_t)qa_load_u64le(encoded.data + 28);
     bool okay = provider_retained(owner, error) && guest_elf_memory_adopt(artifact,
         guest_sysv_guest(runtime), (qa_bytes){encoded.data + ELF_LOADED_HEADER,
             memory_bytes}, &owner->memory, error) &&

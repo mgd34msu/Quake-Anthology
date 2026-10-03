@@ -116,7 +116,6 @@ typedef struct qa_mode_objective_checkpoint {
     bool campaign_gate, bot_goal;
 } qa_mode_objective_checkpoint;
 typedef struct qa_modes_checkpoint {
-    uint32_t version;
     uint64_t random, attack_sequence;
     uint64_t *mode_generations;
     size_t generation_count;

@@ -89,9 +89,8 @@ static bool root_matches(const qa_vfs *files,qa_mount_id mount,const qa_fs_objec
 }
 static bool fields(qa_source_save_io *io,storage_state *state)
 {
-    uint8_t magic[4]={'Q','F','G','S'}; uint32_t version=1;
-    return qa_source_save_bytes(io,magic,4) && !memcmp(magic,"QFGS",4) &&
-        qa_source_save_u32(io,&version) && version==1 && qa_source_save_u64(io,&state->pool) &&
+    uint8_t magic[4]={'Q','F','G','S'}; return qa_source_save_bytes(io,magic,4) && !memcmp(magic,"QFGS",4) &&
+        qa_source_save_u64(io,&state->pool) &&
         qa_source_save_u64(io,&state->view) &&
         qa_source_save_u64(io,&state->user) && qa_source_save_u64(io,&state->devices) &&
         root_fields(io,&state->user_root) && root_fields(io,&state->device_root) &&

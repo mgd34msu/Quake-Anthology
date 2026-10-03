@@ -256,7 +256,7 @@ bool qa_q3_server_admission_checkpoint(const qa_q3_server_admission *s, qa_buffe
     size_t capacity = 8 + 1024 * 180; uint8_t *data = malloc(capacity);
     if (!data) return fail(error, QA_ERROR_MEMORY, "Encoding Q3 admission continuation");
     qa_net_writer w; qa_net_writer_init(&w, data, capacity, error);
-    bool ok = qa_net_write_u32(&w, UINT32_C(0x44415151)) && qa_net_write_u32(&w, 1);
+    bool ok = qa_net_write_u32(&w, UINT32_C(0x44415151));
     for (size_t i = 0; ok && i < 1024; ++i) {
         const qa_q3_challenge *c = &s->challenges[i]; ok = qa_net_write_u8(&w, c->present);
         if (!ok || !c->present) continue;
@@ -274,7 +274,7 @@ bool qa_q3_server_admission_restore_checkpoint(qa_bytes bytes, const qa_q3_admis
     if (!out || *out || bytes.size > 8 + 1024 * 180 || (bytes.size && !bytes.data))
         return fail(error, QA_ERROR_ARGUMENT, "Invalid Q3 admission continuation extent/output");
     qa_net_reader r; qa_net_reader_init(&r, bytes, error);
-    if (qa_net_read_u32(&r) != UINT32_C(0x44415151) || qa_net_read_u32(&r) != 1)
+    if (qa_net_read_u32(&r) != UINT32_C(0x44415151))
         return fail(error, QA_ERROR_FORMAT, "Q3 admission continuation schema differs");
     qa_q3_server_admission *s = NULL; if (!qa_q3_server_admission_create(hooks, &s, error)) return false;
     bool ok = true;

@@ -84,7 +84,7 @@ static bool fog(qa_source_save_io *io, qa_scene_fog *f)
     FLOAT(f->height_start); FLOAT(f->height_end); FLOAT(f->height_falloff); FLOAT(f->far_depth);
     BOOL(f->sky_drawn); return true;
 }
-static bool stage(qa_source_save_io *io, const qa_material_library_checkpoint_refs *refs, qa_material_stage *s, uint32_t schema)
+static bool stage(qa_source_save_io *io, const qa_material_library_checkpoint_refs *refs, qa_material_stage *s)
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ, bundle = s->images != NULL;
     if (!state(io, &s->state) || !qa_source_save_count(io, &s->image_count, QA_MATERIAL_MAX_ANIMATION) ||
@@ -108,8 +108,7 @@ static bool stage(qa_source_save_io *io, const qa_material_library_checkpoint_re
     FLOAT(s->animation_frequency);
     if (!qa_material_saved_text(io, &s->video_name) || !qa_material_saved_identity(io, refs, &s->video_identity, false)) return false;
     BOOL(s->lightmap); BOOL(s->is_lightmap); BOOL(s->clamp); BOOL(s->detail); BOOL(s->video); BOOL(s->retain_texture); BOOL(s->invalid_blend);
-    if (schema >= 9) { BOOL(s->vertex_lightmap); }
-    else if (reading) s->vertex_lightmap = false;
+    { BOOL(s->vertex_lightmap); }
     ENUM(s->fog_adjustment, qa_scene_fog_effect, QA_FOG_NO_EFFECT);
     ENUM(s->rgb, qa_material_color_kind, QA_COLOR_BAD); ENUM(s->alpha, qa_material_color_kind, QA_COLOR_BAD);
     FLOAT(s->constant.x); FLOAT(s->constant.y); FLOAT(s->constant.z); FLOAT(s->constant.w);
@@ -130,7 +129,7 @@ static bool stage(qa_source_save_io *io, const qa_material_library_checkpoint_re
     }
     return true;
 }
-static bool options(qa_source_save_io *io, qa_material_record *record, uint32_t schema)
+static bool options(qa_source_save_io *io, qa_material_record *record)
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ; qa_scene_image_options *o = &record->options;
     ENUM(o->family, qa_scene_family, QA_SCENE_Q3); ENUM(o->wrap, qa_scene_wrap, QA_SCENE_CLAMP);
@@ -151,17 +150,16 @@ static bool options(qa_source_save_io *io, qa_material_record *record, uint32_t 
     }
     return (!palette || o->palette_rgb.data) && (!translation || o->translation.data) &&
         qa_source_save_bytes(io, (void *)o->palette_rgb.data, palette) && qa_source_save_bytes(io, (void *)o->translation.data, translation) &&
-        (schema >= 10 ? qa_scene_source_upload_precision_fields(io, o) :
-            (schema < 7 || qa_scene_source_upload_fields(io, o)));
+        qa_scene_source_upload_precision_fields(io, o);
 }
 bool qa_material_saved_record(qa_source_save_io *io, const qa_material_library_checkpoint_refs *refs,
-    uint32_t schema, qa_material_record *record)
+    qa_material_record *record)
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ; qa_material *m = &record->material;
     if (!qa_material_saved_text(io, &m->name) || !m->name || !*m->name ||
         !qa_source_save_u64(io, &m->revision) || !m->revision ||
         !qa_source_save_u32(io, &m->registration) || !qa_source_save_u32(io, &m->sorted_index) ||
-        (schema >= 8 && !qa_source_save_i32(io, &m->lightmap_index))) return false;
+        (!qa_source_save_i32(io, &m->lightmap_index))) return false;
     ENUM(m->family, qa_scene_family, QA_SCENE_Q3); BOOL(m->default_shader);
     if (!profile(io, &m->profile)) return false;
     FLOAT(m->sort); FLOAT(m->clamp_time); FLOAT(m->portal_range); ENUM(m->cull, qa_scene_cull, QA_CULL_BACK);
@@ -179,7 +177,7 @@ bool qa_material_saved_record(qa_source_save_io *io, const qa_material_library_c
         if (!m->stages) { qa_error_set(io->error, QA_ERROR_MEMORY, io->offset, "allocating retained material stages"); return false; }
     }
     if (reading) m->stage_count = count;
-    for (size_t i = 0; i < count; ++i) if (!stage(io, refs, &m->stages[i], schema)) return false;
+    for (size_t i = 0; i < count; ++i) if (!stage(io, refs, &m->stages[i])) return false;
     count = m->deform_count;
     if (!qa_source_save_count(io, &count, QA_MATERIAL_MAX_DEFORMS)) return false;
     if (reading && count) {
@@ -194,13 +192,11 @@ bool qa_material_saved_record(qa_source_save_io *io, const qa_material_library_c
         if (!qa_source_save_u32(io, &d->text_index)) return false;
     }
     FLOAT(m->remap_time_offset);
-    if (schema >= 5) { FLOAT(m->source_time_offset); BOOL(m->source_remap); }
-    else if (reading) { m->source_time_offset = 0; m->source_remap = false; }
-    if (!options(io, record, schema)) return false;
+    { FLOAT(m->source_time_offset); BOOL(m->source_remap); }
+    if (!options(io, record)) return false;
     ENUM(record->kind, qa_material_registration_kind, QA_MATERIAL_STENCIL_SHADOW);
     bool ok = qa_material_saved_identity(io, refs, &record->world_identity, true) &&
         qa_source_save_i32(io, &record->lightmap_index) && qa_material_saved_text(io, &record->base_name) &&
         qa_material_saved_image(io, refs, &record->base_image);
-    if (ok && reading && schema < 8) m->lightmap_index = record->lightmap_index;
     return ok;
 }

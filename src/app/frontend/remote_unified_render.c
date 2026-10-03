@@ -582,12 +582,12 @@ static bool render_fields(frontend_unified_render *r,const frontend_unified_rend
     qa_source_save_io *io,qa_buffer *hud)
 {
     bool reading=io->direction==QA_SOURCE_SAVE_READ;
-    uint32_t version=1; qa_buffer document={0};
+    qa_buffer document={0};
     if (!reading) {
         qa_bytes bytes=qa_json_source(qa_unified_document_json(r->frame),qa_unified_document_root(r->frame));
         document=(qa_buffer){.data=(unsigned char *)bytes.data,.size=bytes.size};
     }
-    bool okay=qa_source_save_u32(io,&version) && version==1 && render_blob(io,&document);
+    bool okay=render_blob(io,&document);
     if (okay && reading) okay=qa_unified_document_create(QA_UNIFIED_FRAME_DOCUMENT,
         (qa_bytes){document.data,document.size},&r->frame,io->error);
     if (reading) qa_buffer_free(&document);

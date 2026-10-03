@@ -220,13 +220,6 @@ static bool codec_frame(script_codec *c, qa_script_frame_state *value) {
 /* A single field walk defines both directions; no structure bytes, pointer
  * values, native padding, or size_t widths enter the format. */
 static bool codec_checkpoint(script_codec *c, qa_script_checkpoint *value) {
-    if (!codec_u32(c, &value->version))
-        return false;
-    if (value->version != SCRIPT_CHECKPOINT_VERSION) {
-        qa_error_set(c->error, QA_ERROR_UNSUPPORTED, c->offset - 4,
-                     "Unsupported script checkpoint version");
-        return false;
-    }
     if (!codec_options(c, &value->options) || !codec_string(c, &value->date) ||
         !codec_string(c, &value->time) || !codec_size(c, &value->expansions) ||
         !codec_size(c, &value->outputs) || !codec_u32(c, &value->next_condition_pointer) || !codec_u32(c,&value->next_token_pointer) || !codec_u32(c,&value->next_define_pointer) ||
@@ -353,7 +346,7 @@ bool qa_script_checkpoint_encode(const qa_script_checkpoint *checkpoint, qa_buff
     return true;
 }
 bool qa_script_checkpoint_decode(qa_bytes encoded, qa_script_checkpoint *out, qa_error *error) {
-    if (!out || !encoded.data || encoded.size < 12 || memcmp(encoded.data, "QASCP\0\0\0", 8)) {
+    if (!out || !encoded.data || encoded.size < 8 || memcmp(encoded.data, "QASCP\0\0\0", 8)) {
         qa_error_set(error, QA_ERROR_FORMAT, 0, "Invalid script checkpoint encoding header");
         return false;
     }

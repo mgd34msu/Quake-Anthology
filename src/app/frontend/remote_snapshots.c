@@ -511,7 +511,7 @@ static bool codec(qa_source_save_io *io,frontend_remote_snapshots *s)
     uint8_t magic[4]={'Q','R','S','P'};
     const qa_native_q3_remote_client_basis *source=&s->source.basis;
     if(!qa_source_save_bytes(io,magic,sizeof(magic)) || memcmp(magic,"QRSP",sizeof(magic)) ||
-        !same_u32(io,2) || !same_u32(io,(uint32_t)s->options.product) ||
+        !same_u32(io,(uint32_t)s->options.product) ||
         !same_u64(io,source->connection.owner) || !same_u64(io,source->connection.generation) ||
         !same_u32(io,source->connection.slot) || !same_u64(io,source->epoch) ||
         !same_u64(io,source->restart_generation) || !same_u64(io,source->client.receiver) ||

@@ -713,7 +713,7 @@ bool qa_nq_connect_checkpoint(const qa_nq_connect_client *client, qa_buffer *out
     uint8_t *data = malloc(size);
     if (!data) return fail(error, QA_ERROR_MEMORY, "Encoding NetQuake connection continuation");
     qa_net_writer writer; qa_net_writer_init(&writer, data, size, error);
-    bool ok = qa_net_write_u32(&writer, UINT32_C(0x4e434151)) && qa_net_write_u32(&writer, 1) &&
+    bool ok = qa_net_write_u32(&writer, UINT32_C(0x4e434151)) &&
         connect_state_write(&writer, &client->state, client->sent_ns, client->sent, client->owned_reason);
     if (!ok || writer.failed) { free(data); return false; }
     *out = (qa_buffer){data, qa_net_writer_size(&writer)}; return true;
@@ -722,7 +722,7 @@ bool qa_nq_connect_restore_checkpoint(qa_bytes bytes, qa_nq_connect_client **out
 {
     if (!out || *out || (bytes.size && !bytes.data)) return fail(error, QA_ERROR_ARGUMENT, "NetQuake connect restore requires empty output");
     qa_net_reader reader; qa_net_reader_init(&reader, bytes, error);
-    if (qa_net_read_u32(&reader) != UINT32_C(0x4e434151) || qa_net_read_u32(&reader) != 1)
+    if (qa_net_read_u32(&reader) != UINT32_C(0x4e434151))
         return fail(error, QA_ERROR_FORMAT, "Invalid NetQuake connect continuation schema");
     qa_nq_connect_client *client = NULL;
     if (!qa_nq_connect_create(&client, error)) return false;
@@ -747,7 +747,7 @@ bool qa_qw_connect_checkpoint(const qa_qw_connect_client *client, qa_buffer *out
     uint8_t *data = malloc(size);
     if (!data) return fail(error, QA_ERROR_MEMORY, "Encoding QuakeWorld connection continuation");
     qa_net_writer writer; qa_net_writer_init(&writer, data, size, error);
-    bool ok = qa_net_write_u32(&writer, UINT32_C(0x57434151)) && qa_net_write_u32(&writer, 1) &&
+    bool ok = qa_net_write_u32(&writer, UINT32_C(0x57434151)) &&
         qa_net_write_u16(&writer, client->qport) && qa_net_write_string(&writer, client->userinfo) &&
         connect_state_write(&writer, &client->state, client->sent_ns, client->sent, client->owned_reason);
     if (!ok || writer.failed) { free(data); return false; }
@@ -760,7 +760,7 @@ bool qa_qw_connect_restore_checkpoint(qa_bytes bytes, uint16_t qport, const char
         return fail(error, QA_ERROR_ARGUMENT, "QuakeWorld connect restore requires qualified identity and empty output");
     qa_net_reader reader; qa_net_reader_init(&reader, bytes, error);
     const char *saved_info;
-    if (qa_net_read_u32(&reader) != UINT32_C(0x57434151) || qa_net_read_u32(&reader) != 1 ||
+    if (qa_net_read_u32(&reader) != UINT32_C(0x57434151) ||
         qa_net_read_u16(&reader) != qport || !qa_q1_read_cstring(&reader, &saved_info) || strcmp(saved_info, userinfo))
         return fail(error, QA_ERROR_FORMAT, "QuakeWorld connect continuation identity differs");
     qa_qw_connect_client *client = NULL;
@@ -798,7 +798,7 @@ bool qa_qw_challenges_checkpoint(const qa_qw_challenges *challenges, qa_buffer *
     uint8_t *data = malloc(capacity);
     if (!data) return fail(error, QA_ERROR_MEMORY, "Encoding QuakeWorld challenges");
     qa_net_writer writer; qa_net_writer_init(&writer, data, capacity, error);
-    bool ok = qa_net_write_u32(&writer, UINT32_C(0x48434151)) && qa_net_write_u32(&writer, 1) &&
+    bool ok = qa_net_write_u32(&writer, UINT32_C(0x48434151)) &&
         qa_net_write_u64(&writer, challenges->capacity) && qa_net_write_u64(&writer, challenges->count);
     for (size_t i = 0; ok && i < challenges->capacity; ++i) {
         const qw_challenge_record *record = &challenges->records[i];
@@ -814,7 +814,7 @@ bool qa_qw_challenges_restore_checkpoint(qa_bytes bytes, size_t capacity, qa_qw_
     if (!out || *out || !random || (bytes.size && !bytes.data))
         return fail(error, QA_ERROR_ARGUMENT, "QuakeWorld challenges restore requires candidate binding and empty output");
     qa_net_reader reader; qa_net_reader_init(&reader, bytes, error);
-    if (qa_net_read_u32(&reader) != UINT32_C(0x48434151) || qa_net_read_u32(&reader) != 1 ||
+    if (qa_net_read_u32(&reader) != UINT32_C(0x48434151) ||
         qa_net_read_u64(&reader) != capacity)
         return fail(error, QA_ERROR_FORMAT, "QuakeWorld challenge continuation capacity differs");
     uint64_t count = qa_net_read_u64(&reader);

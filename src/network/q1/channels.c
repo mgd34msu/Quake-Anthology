@@ -263,7 +263,7 @@ bool qa_nq_channel_checkpoint(const qa_nq_channel *channel, qa_buffer *out, qa_e
     uint8_t *data = malloc(44 + reliable.size);
     if (!data) { qa_buffer_free(&reliable); qa_error_set(error, QA_ERROR_MEMORY, 0, "Encoding NetQuake continuation"); return false; }
     qa_net_writer w; qa_net_writer_init(&w, data, 44 + reliable.size, error);
-    bool ok = qa_net_write_u32(&w, UINT32_C(0x434e4151)) && qa_net_write_u32(&w, 1) &&
+    bool ok = qa_net_write_u32(&w, UINT32_C(0x434e4151)) &&
         qa_net_write_u64(&w, message) && qa_net_write_u64(&w, fragment) &&
         qa_net_write_u32(&w, channel->unreliable_send) && qa_net_write_u64(&w, channel->unreliable_receive) &&
         qa_net_write_u64(&w, reliable.size) && qa_net_write_data(&w, reliable.data, reliable.size);
@@ -275,7 +275,7 @@ bool qa_nq_channel_restore_checkpoint(qa_bytes bytes, size_t message, size_t fra
 {
     if (!out || *out || (bytes.size && !bytes.data)) return invalid(error, "NetQuake restore requires an empty candidate output");
     qa_net_reader r; qa_net_reader_init(&r, bytes, error);
-    if (qa_net_read_u32(&r) != UINT32_C(0x434e4151) || qa_net_read_u32(&r) != 1 ||
+    if (qa_net_read_u32(&r) != UINT32_C(0x434e4151) ||
         qa_net_read_u64(&r) != message || qa_net_read_u64(&r) != fragment)
         return invalid(error, "NetQuake continuation schema/policy differs");
     uint32_t send = qa_net_read_u32(&r); uint64_t received = qa_net_read_u64(&r), size = qa_net_read_u64(&r);
@@ -305,7 +305,7 @@ bool qa_qw_channel_checkpoint(const qa_qw_channel *channel, qa_buffer *out, qa_e
     uint8_t *data = malloc(70 + reliable.size);
     if (!data) { qa_buffer_free(&reliable); qa_error_set(error, QA_ERROR_MEMORY, 0, "Encoding QuakeWorld continuation"); return false; }
     qa_net_writer w; qa_net_writer_init(&w, data, 70 + reliable.size, error);
-    bool ok = qa_net_write_u32(&w, UINT32_C(0x43574151)) && qa_net_write_u32(&w, 1) &&
+    bool ok = qa_net_write_u32(&w, UINT32_C(0x43574151)) &&
         qa_net_write_u32(&w, channel->side) && qa_net_write_u16(&w, channel->qport) &&
         qa_net_write_u64(&w, channel->capacity) && qa_net_write_f64(&w, channel->rate.clear_ns) &&
         qa_net_write_u32(&w, channel->rate.bytes_per_second) && qa_net_write_u32(&w, channel->rate.backup_bytes) &&
@@ -321,7 +321,7 @@ bool qa_qw_channel_restore_checkpoint(qa_bytes bytes, qa_q1_channel_side side, u
 {
     if (!out || *out || (bytes.size && !bytes.data)) return invalid(error, "QuakeWorld restore requires an empty candidate output");
     qa_net_reader r; qa_net_reader_init(&r, bytes, error);
-    if (qa_net_read_u32(&r) != UINT32_C(0x43574151) || qa_net_read_u32(&r) != 1 ||
+    if (qa_net_read_u32(&r) != UINT32_C(0x43574151) ||
         qa_net_read_u32(&r) != (uint32_t)side || qa_net_read_u16(&r) != qport || qa_net_read_u64(&r) != message)
         return invalid(error, "QuakeWorld continuation schema/connection policy differs");
     qa_net_rate rate; rate.clear_ns = qa_net_read_f64(&r); rate.bytes_per_second = qa_net_read_u32(&r);

@@ -72,7 +72,7 @@ bool qa_q1_peer_checkpoint(const qa_q1_peer *peer, const qa_q1_peer_save_admissi
     uint8_t *data = malloc(capacity);
     if (!data) { qa_buffer_free(&channel); return fail(error, QA_ERROR_MEMORY, "Encoding Q1 peer continuation"); }
     qa_net_writer writer; qa_net_writer_init(&writer, data, capacity, error);
-    bool ok = qa_net_write_u32(&writer, UINT32_C(0x50514151)) && qa_net_write_u32(&writer, 1) &&
+    bool ok = qa_net_write_u32(&writer, UINT32_C(0x50514151)) &&
         qa_net_write_u32(&writer, admission->protocol.kind) &&
         qa_net_write_u32(&writer, admission->protocol.revision) && qa_net_write_u32(&writer, admission->protocol.flags) &&
         q3_save_address(&writer, qa_net_transport_address(peer->transport)) && q3_save_address(&writer, &peer->remote) &&
@@ -95,7 +95,7 @@ bool qa_q1_peer_restore_checkpoint(qa_bytes bytes, const qa_q1_peer_save_admissi
         return fail(error, QA_ERROR_ARGUMENT, "Q1 peer restore requires an empty candidate output");
     if (!admission_valid(admission, error)) return false;
     qa_net_reader reader; qa_net_reader_init(&reader, bytes, error);
-    if (qa_net_read_u32(&reader) != UINT32_C(0x50514151) || qa_net_read_u32(&reader) != 1 ||
+    if (qa_net_read_u32(&reader) != UINT32_C(0x50514151) ||
         qa_net_read_u32(&reader) != (uint32_t)admission->protocol.kind ||
         qa_net_read_u32(&reader) != admission->protocol.revision || qa_net_read_u32(&reader) != admission->protocol.flags)
         return fail(error, QA_ERROR_FORMAT, "Q1 peer continuation source dialect differs");

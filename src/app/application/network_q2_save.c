@@ -5,7 +5,7 @@ static bool header_write(qa_application_network_q2 *owner, bool archival, qa_net
     const qa_application_native_q2_presentation *source = &owner->host.source;
     if (!owner->source_map || !owner->source_instance)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q2 wire continuation lost its actual source names");
-    return qa_net_write_data(writer, "QAQ2WIRE", 8) && qa_net_write_u32(writer, 7) &&
+    return qa_net_write_data(writer, "QAQ2WIRE", 8) &&
         qa_net_write_u8(writer, archival ? 1 : 0) &&
         qa_net_write_u32(writer, owner->host.protocol.kind) && qa_net_write_u32(writer, owner->host.protocol.revision) &&
         qa_net_write_u32(writer, owner->host.protocol.flags) && qa_net_write_i32(writer, owner->server_count) &&
@@ -37,7 +37,7 @@ static bool capture(qa_application_network_q2 *owner, bool retained, qa_buffer *
 {
     if (!owner || !owner->app || !owner->app->session || !out || out->data || out->size ||
         (!retained && (!application_network_q2_current(owner, error) || !application_network_q2_observe(owner, error)))) return false;
-    size_t capacity = 448;
+    size_t capacity = 444;
     const char *instance = owner->source_instance, *map = owner->source_map;
     if (!instance || !map || strlen(instance) > 1023 || strlen(map) > 1023)
         return application_fail(error, QA_ERROR_FORMAT, "Q2 wire continuation source name exceeds its record bound");
@@ -128,7 +128,7 @@ bool qa_application_network_q2_capture_retained(qa_application_network_q2 *owner
 static bool header_read(qa_application_network_q2 *owner, qa_net_reader *reader, qa_error *error)
 {
     uint8_t magic[8];
-    uint32_t version, kind, revision, flags, source_kind, edition, clients, entities;
+    uint32_t kind, revision, flags, source_kind, edition, clients, entities;
     uint64_t frame, time, interval;
     qa_actor_owner source_owner;
     uint64_t publication_generation, map_revision;
@@ -138,7 +138,6 @@ static bool header_read(qa_application_network_q2 *owner, qa_net_reader *reader,
     qa_sha256_digest identity, saved_map, actual_map;
     char instance[1024], map[1024];
     if (!qa_net_read_data(reader, magic, sizeof(magic))) return false;
-    version = qa_net_read_u32(reader);
     uint8_t archival = qa_net_read_u8(reader);
     kind = qa_net_read_u32(reader);
     revision = qa_net_read_u32(reader); flags = qa_net_read_u32(reader);
@@ -163,7 +162,7 @@ static bool header_read(qa_application_network_q2 *owner, qa_net_reader *reader,
     if (!qa_net_read_data(reader, identity.bytes, sizeof(identity.bytes)) ||
         !qa_net_read_data(reader, saved_map.bytes, sizeof(saved_map.bytes)) ||
         !qa_net_read_string(reader, instance, sizeof(instance)) || !qa_net_read_string(reader, map, sizeof(map))) return false;
-    if (reader->failed || memcmp(magic, "QAQ2WIRE", 8) || version != 7 || archival > 1 || paused > 1 ||
+    if (reader->failed || memcmp(magic, "QAQ2WIRE", 8) || archival > 1 || paused > 1 ||
         !source_owner || (uint32_t)clock.frame.kind > QA_CLOCK_Q3 || (uint32_t)clock.frame.phase > QA_FRAME_EXIT ||
         (uint32_t)policy.kind > QA_CLOCK_Q3 ||
         owner->archival != (archival != 0) || materials_bound > 1 || materials_capability > 1 ||

@@ -8,10 +8,8 @@ static bool fields(qa_source_save_io *io, qa_application *app,
                     qa_physics *physics)
 {
     uint8_t magic[4] = {'Q', 'A', 'P', 'H'};
-    uint32_t version = 1;
     if (!qa_source_save_bytes(io, magic, sizeof(magic)) ||
         memcmp(magic, "QAPH", sizeof(magic)) ||
-        !qa_source_save_u32(io, &version) || version != 1 ||
         !qa_source_save_actor(io, &physics->world_actor) ||
         !qa_source_save_f32(io, &physics->gravity) ||
         !qa_source_save_f32(io, &physics->max_velocity) ||

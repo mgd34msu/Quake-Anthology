@@ -417,9 +417,8 @@ bool application_equipment_runtime_destroy(application_equipment_runtime *runtim
 
 static bool runtime_header(qa_source_save_io *io)
 {
-    uint8_t magic[4] = {'Q','E','R','T'}; uint32_t version = 3;
-    return qa_source_save_bytes(io, magic, sizeof(magic)) && !memcmp(magic, "QERT", sizeof(magic)) &&
-        qa_source_save_u32(io, &version) && version == 3;
+    uint8_t magic[4] = {'Q','E','R','T'};
+    return qa_source_save_bytes(io, magic, sizeof(magic)) && !memcmp(magic, "QERT", sizeof(magic));
 }
 static bool saved_blob(qa_source_save_io *io, qa_bytes *bytes)
 {

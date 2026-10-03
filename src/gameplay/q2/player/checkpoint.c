@@ -36,7 +36,7 @@ bool qa_q2_player_capture(qa_q2_game *g, qa_actor_id id, qa_q2_player_checkpoint
     }
     if (!q2_checkpoint_idle(g, e))
         return false;
-    qa_q2_player_checkpoint saved = {.version = 6};
+    qa_q2_player_checkpoint saved = {0};
     q2_actor *a = q2_actor_get(g, id, false, NULL);
     if (!a || !a->client) {
         *out = saved;
@@ -137,7 +137,7 @@ static bool valid_state(qa_q2_game *g, const qa_q2_player_state *s, qa_error *e)
 }
 bool qa_q2_player_restore(qa_q2_game *g, qa_actor_id id, const qa_q2_player_checkpoint *saved,
                           qa_error *e) {
-    if (!g || !saved || saved->version != 6 || !q2_actor_live(g, id) ||
+    if (!g || !saved || !q2_actor_live(g, id) ||
         (saved->present && !valid_state(g, &saved->value, e))) {
         qa_error_set(e, QA_ERROR_FORMAT, 0, "Invalid Q2 player checkpoint");
         return false;
@@ -180,8 +180,7 @@ bool qa_q2_players_capture(qa_q2_game *g, qa_q2_players_checkpoint *out, qa_erro
     if (!q2_checkpoint_idle(g, e))
         return false;
     q2_players *p = g->player_runtime;
-    qa_q2_players_checkpoint s = {.version = 2,
-                                  .corpse_index = p->corpse_index,
+    qa_q2_players_checkpoint s = {.corpse_index = p->corpse_index,
                                   .death_animation = p->death_animation,
                                   .pain_animation = p->pain_animation,
                                   .intermission = p->intermission,
@@ -220,7 +219,7 @@ bool qa_q2_players_capture(qa_q2_game *g, qa_q2_players_checkpoint *out, qa_erro
     return true;
 }
 bool qa_q2_players_restore(qa_q2_game *g, const qa_q2_players_checkpoint *s, qa_error *e) {
-    if (!g || !s || s->version != 2 || s->corpse_index >= 8 || s->death_animation >= 3 ||
+    if (!g || !s || s->corpse_index >= 8 || s->death_animation >= 3 ||
         s->pain_animation >= 3 || !q2_saved_resource(g, s->next_map) ||
         !q2_saved_landmark(g, &s->landmark) || !qa_vec_finite(s->camera_origin) ||
         !qa_vec_finite(s->camera_angles) || !q2_saved_resource(g,s->next_map_rule) ||

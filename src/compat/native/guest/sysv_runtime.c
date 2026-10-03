@@ -924,7 +924,7 @@ static bool codec_layout(qa_source_save_io *io,guest_sysv_runtime *r,guest_abi_l
 static bool runtime_fields(qa_source_save_io *io,guest_sysv_runtime *r)
 {
     bool read = io->direction == QA_SOURCE_SAVE_READ;
-    uint8_t magic[] = {'Q','S','V','R',3};
+    uint8_t magic[] = {'Q','S','V','R'};
     uint8_t expected[sizeof(magic)]; memcpy(expected,magic,sizeof(magic));
     if (!qa_source_save_bytes(io,magic,sizeof(magic)) || memcmp(magic,expected,sizeof(magic)) ||
         !codec_target(io,&r->target)) return false;

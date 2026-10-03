@@ -17,12 +17,9 @@ static inline bool qa_text_save_owned(qa_source_save_io *io, char **text)
     if (!qa_source_save_bytes(io, value, size)) { free(value); return false; }
     value[size] = 0; *text = value; return true;
 }
-static inline bool qa_text_save_header_version(qa_source_save_io *io, const char name[4], uint32_t expected)
-{
-    uint8_t magic[4]; memcpy(magic, name, 4); uint32_t version = expected;
-    return qa_source_save_bytes(io, magic, 4) && !memcmp(magic, name, 4) &&
-        qa_source_save_u32(io, &version) && version == expected;
-}
 static inline bool qa_text_save_header(qa_source_save_io *io, const char name[4])
-{ return qa_text_save_header_version(io,name,1); }
+{
+    uint8_t magic[4]; memcpy(magic, name, 4);
+    return qa_source_save_bytes(io, magic, 4) && !memcmp(magic, name, 4);
+}
 #endif

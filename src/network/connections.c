@@ -253,7 +253,7 @@ bool qa_net_client_expired(const qa_net_client *client, uint64_t now_ns, uint64_
 bool qa_net_connections_checkpoint(const qa_net_connections *table, qa_net_writer *w)
 {
     if (!table || table->admitting) return qa_net_writer_fail(w, "Connection checkpoint requires idle admission");
-    if (!qa_net_write_u32(w, 1) || !qa_net_write_u32(w, table->capacity)) return false;
+    if (!qa_net_write_u32(w, table->capacity)) return false;
     for (uint32_t i = 0; i < table->capacity; ++i) {
         const client_slot *slot = &table->slots[i]; const qa_net_client *c = &slot->client;
         if (!qa_net_write_u64(w, slot->generation) || !qa_net_write_u8(w, slot->occupied) ||
@@ -277,8 +277,8 @@ bool qa_net_connections_restore(qa_net_reader *r, uint64_t owner, uint32_t capac
     qa_net_admit_fn admit, void *context, qa_net_connections **out)
 {
     if (!r || !out) return r && qa_net_reader_fail(r, "Missing candidate connection table");
-    uint32_t version = qa_net_read_u32(r), saved_capacity = qa_net_read_u32(r);
-    if (version != 1 || saved_capacity != capacity)
+    uint32_t saved_capacity = qa_net_read_u32(r);
+    if (saved_capacity != capacity)
         return qa_net_reader_fail(r, "Candidate connection table capacity differs");
     qa_net_connections *table = NULL;
     if (r->failed || !qa_net_connections_create(owner, capacity, admit, context, &table, r->error)) return false;

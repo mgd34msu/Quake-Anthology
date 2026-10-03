@@ -127,11 +127,10 @@ static bool holder_fields(qa_source_save_io *io, q3n_clients *owner,
 }
 static bool fields(qa_source_save_io *io, q3n_clients *owner, const q3n_client_refs *refs)
 {
-    uint8_t magic[4] = {'Q', '3', 'C', 'I'}; uint32_t schema = 1, product = owner->options.product;
+    uint8_t magic[4] = {'Q', '3', 'C', 'I'}; uint32_t product = owner->options.product;
     const char *expected = owner->options.compiled_source ? "Q3CC" : owner->options.remote_source ? "Q3CR" : "Q3CI";
     memcpy(magic, expected, 4);
-    if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, expected, 4) ||
-        !qa_source_save_u32(io, &schema) || schema != 1 || !qa_source_save_u32(io, &product) ||
+    if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, expected, 4) || !qa_source_save_u32(io, &product) ||
         product != (uint32_t)owner->options.product) return false;
     if (owner->options.compiled_source && !q3n_compiled_source_fields(io,owner->options.compiled_source)) return false;
     if (owner->options.remote_source) {

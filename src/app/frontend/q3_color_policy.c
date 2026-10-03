@@ -493,11 +493,9 @@ bool frontend_q3_source_color_publication_finish(qa_frontend *f,qa_error *error)
 
 static bool saved_fields(qa_source_save_io *io, bool *present, qa_q3_image_upload_options *upload)
 {
-    uint8_t magic[4]={'Q','F','C','G'}; uint32_t version=2;
-    return qa_source_save_bytes(io,magic,4) && !memcmp(magic,"QFCG",4) &&
-        qa_source_save_u32(io,&version) && version>=1 && version<=2 && qa_source_save_bool(io,present) &&
-        (!*present || (version>=2?qa_q3_image_upload_options_precision_codec(io,upload):
-            qa_q3_image_upload_options_codec(io,upload))) && (!*present || !upload->lightmap);
+    uint8_t magic[4]={'Q','F','C','G'}; return qa_source_save_bytes(io,magic,4) && !memcmp(magic,"QFCG",4) &&
+        qa_source_save_bool(io,present) &&
+        (!*present || qa_q3_image_upload_options_precision_codec(io,upload)) && (!*present || !upload->lightmap);
 }
 bool frontend_q3_source_color_checkpoint(const qa_frontend *f,qa_buffer *out,qa_error *error)
 {

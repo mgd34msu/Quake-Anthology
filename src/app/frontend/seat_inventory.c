@@ -86,19 +86,17 @@ static bool builder_fields(qa_source_save_io *io,qa_input_command_builder *build
         (builder->pending_impulse && kind!=QA_MOVEMENT_NETQUAKE && kind!=QA_MOVEMENT_QUAKEWORLD)) return false;
     builder->kind=(qa_movement_kind)kind; return true;
 }
-static bool header(qa_source_save_io *io,qa_frontend *f,bool input,uint32_t *version)
+static bool header(qa_source_save_io *io,qa_frontend *f,bool input)
 {
     uint8_t magic[4]={'Q','F','S',input?'U':'V'};
     uint32_t seats=f->options.seats; bool dedicated=f->options.dedicated;
-    *version=input?2:5;
     return qa_source_save_bytes(io,magic,4) && !memcmp(magic,input?"QFSU":"QFSV",4) &&
-        qa_source_save_u32(io,version) && (input?*version==2u:(*version==4u || *version==5u)) && qa_source_save_u32(io,&seats) && seats==f->options.seats &&
+        qa_source_save_u32(io,&seats) && seats==f->options.seats &&
         qa_source_save_bool(io,&dedicated) && dedicated==f->options.dedicated;
 }
 static bool fields(qa_source_save_io *io,qa_frontend *f,bool input,seat_record *records)
 {
-    uint32_t version;
-    if (!header(io,f,input,&version)) return false;
+    if (!header(io,f,input)) return false;
     if (f->options.dedicated) return true;
     for (unsigned i=0;i<f->options.seats;++i) {
         seat_record *row=records+i; uint32_t seat=i;
@@ -119,7 +117,6 @@ static bool fields(qa_source_save_io *io,qa_frontend *f,bool input,seat_record *
                 !reservation(io,row->wheel_capacity,sizeof(qa_item_definition)) ||
                 !qa_source_save_count(io,&row->wheel_labels,SIZE_MAX) || !reservation(io,row->wheel_labels,1)) return false;
             for (unsigned j=SEAT_UI;j<SEAT_COMPONENTS;++j) {
-                if(version==4 && j==SEAT_DOWNLOADS)continue;
                 if (!blob(io,row->components+j) || (j!=SEAT_MODS && !row->components[j].size)) return false;
             }
         }

@@ -162,7 +162,7 @@ bool qa_unified_session_checkpoint(const qa_unified_session *s, qa_buffer *out, 
     uint8_t *data = ok ? malloc(capacity) : NULL;
     if (ok && !data) ok = qa_unified_session_fail(e, QA_ERROR_MEMORY, "Capturing complete production session");
     qa_net_writer w; qa_net_writer_init(&w, data, ok ? capacity : 0, e);
-    ok = ok && qa_net_write_data(&w, "QAUS4", 5) && qa_net_write_u8(&w, s->server) &&
+    ok = ok && qa_net_write_data(&w, "QAUS", 4) && qa_net_write_u8(&w, s->server) &&
         qa_net_write_u32(&w, s->epoch) && qa_net_write_u32(&w, s->required) && qa_net_write_u64(&w, (uint64_t)s->acknowledged) &&
         qa_net_write_u64(&w, s->now_ns) && qa_net_write_u64(&w, s->closing_ns) &&
         qa_net_write_u8(&w, s->admitted) && qa_net_write_u8(&w, s->disconnected) && qa_net_write_u8(&w, s->closing) &&
@@ -229,8 +229,8 @@ bool qa_unified_session_restore(qa_bytes bytes, qa_network_runtime *runtime, con
     if (!s) return qa_unified_session_fail(e, QA_ERROR_MEMORY, "Restoring complete production session");
     s->runtime = runtime; s->id = client->id; s->seat = client->seats[0].seat; s->hooks = *hooks;
     qa_net_reader r; qa_net_reader_init(&r, bytes, e);
-    char magic[5]; bool ok = qa_net_read_data(&r, magic, 5);
-    if (ok && memcmp(magic, "QAUS4", 5)) ok = qa_net_reader_fail(&r, "Unknown production session continuation");
+    char magic[4]; bool ok = qa_net_read_data(&r, magic, 4);
+    if (ok && memcmp(magic, "QAUS", 4)) ok = qa_net_reader_fail(&r, "Unknown production session continuation");
     ok = ok && flag(&r, &s->server);
     s->epoch = qa_net_read_u32(&r); s->required = qa_net_read_u32(&r);
     uint64_t acknowledged = qa_net_read_u64(&r);

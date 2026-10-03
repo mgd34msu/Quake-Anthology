@@ -106,10 +106,9 @@ static bool application_fields(qa_source_save_io *io,qa_application_client_state
 }
 static bool fields(qa_source_save_io *io,frontend_q2_client_graph *graph)
 {
-    uint8_t magic[4]={'Q','F','2','C'}; uint32_t version=2;
-    frontend_remote_q2_domain *domain=&graph->state.source.domain;
+    uint8_t magic[4]={'Q','F','2','C'}; frontend_remote_q2_domain *domain=&graph->state.source.domain;
     if(!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QF2C",4) ||
-        !qa_source_save_u32(io,&version) || version!=2 || !qa_source_save_bool(io,&graph->present)) return false;
+        !qa_source_save_bool(io,&graph->present)) return false;
     if(!graph->present) return true;
     if(!span(io,&graph->recipe) || !graph->recipe.size || !descriptor_fields(io,graph->descriptors) ||
         !qa_source_save_bool(io,&graph->distinct) ||

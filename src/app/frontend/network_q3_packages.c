@@ -260,11 +260,10 @@ static bool receipt_path(qa_source_save_io *io, char **path)
 }
 static bool package_fields_save(qa_source_save_io *io, const frontend_q3_packages *packages, qa_vfs_acquisition *receipt)
 {
-    uint32_t magic = UINT32_C(0x50473351), version = 1;
+    uint32_t magic = UINT32_C(0x50473351);
     uint64_t owner = packages->owner, source = packages->source_generation, reads = packages->read_generation;
     size_t count = packages->read_count; uint32_t feed = qa_q3_pak_checksum_feed(packages->references);
     if (!qa_source_save_u32(io, &magic) || magic != UINT32_C(0x50473351) ||
-        !qa_source_save_u32(io, &version) || version != 1 ||
         !qa_source_save_u64(io, &owner) || owner != packages->owner ||
         !qa_source_save_u64(io, &source) || source != packages->source_generation ||
         !qa_source_save_u64(io, &reads) || reads != packages->read_generation ||

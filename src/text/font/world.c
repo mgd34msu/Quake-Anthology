@@ -60,11 +60,11 @@ static bool world_save_fields(qa_source_save_io *io, stored_text *entry,
 }
 static bool world_save_header(qa_source_save_io *io, size_t *count)
 {
-    uint8_t magic[4] = {'Q','W','T','X'}; uint32_t version = 1;
+    uint8_t magic[4] = {'Q','W','T','X'};
     size_t maximum = SIZE_MAX / sizeof(stored_text);
     if (io->direction == QA_SOURCE_SAVE_READ && io->input.size / 91 < maximum) maximum = io->input.size / 91;
     return qa_source_save_bytes(io, magic, 4) && !memcmp(magic, "QWTX", 4) &&
-        qa_source_save_u32(io, &version) && version == 1 && qa_source_save_count(io, count, maximum);
+        qa_source_save_count(io, count, maximum);
 }
 bool qa_font_world_store_checkpoint(const qa_font_world_store *store,
     const qa_font_world_checkpoint_refs *refs, qa_buffer *out, qa_error *error)

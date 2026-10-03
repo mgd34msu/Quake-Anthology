@@ -188,8 +188,7 @@ static void saved_private_free(qa_tools *tools) {
     reset_camera(tools); (void)qa_profiler_destroy(tools->profiler, NULL); qa_debug_store_destroy(tools->debug);
 }
 static bool saved_tools_fields(qa_source_save_io *io, qa_tools *tools, const qa_tools *installed, const qa_tools_checkpoint_refs *refs) {
-    uint32_t version = 2; uint64_t services = 0;
-    if (!qa_source_save_u32(io, &version) || version != 2) return tool_save_fail(io, "unsupported tools continuation version");
+    uint64_t services = 0;
     if (io->direction == QA_SOURCE_SAVE_WRITE && !refs->services_encode(refs->context, &tools->options, &services, io->error)) return false;
     if (!qa_source_save_u64(io, &services)) return false;
     if (io->direction == QA_SOURCE_SAVE_READ && (!refs->services_decode(refs->context, services, &tools->options, io->error) ||

@@ -528,7 +528,7 @@ bool qa_qc_checkpoint_encode(const qa_qc_checkpoint *checkpoint,
         return qc_fail(error, QA_ERROR_ARGUMENT, 0, "Invalid QuakeC checkpoint output");
     qc_writer writer = {0};
 #define W32(value_) do { if (!write_u32(&writer, (uint32_t)(value_), error)) goto failed; } while (0)
-    W32(QC_CHECKPOINT_MAGIC); W32(QC_CHECKPOINT_VERSION);
+    W32(QC_CHECKPOINT_MAGIC);
     if (!write_bytes(&writer, checkpoint->program.bytes,
                      sizeof(checkpoint->program.bytes), error)) goto failed;
     W32(checkpoint->profile); W32(checkpoint->layout.stride_bytes);
@@ -608,13 +608,13 @@ bool qa_qc_checkpoint_decode(qa_bytes bytes, qa_qc_checkpoint **out,
     if (out == NULL || (bytes.size != 0 && bytes.data == NULL))
         return qc_fail(error, QA_ERROR_ARGUMENT, 0, "Invalid QuakeC checkpoint input");
     qc_reader reader = {bytes, 0};
-    uint32_t magic, version, profile, trace, host_size;
+    uint32_t magic, profile, trace, host_size;
     qa_qc_checkpoint *checkpoint = calloc(1, sizeof(*checkpoint));
     if (checkpoint == NULL)
         return qc_fail(error, QA_ERROR_MEMORY, 0, "Cannot allocate QuakeC checkpoint");
 #define R32(target_) do { if (!read_u32(&reader, &(target_), error)) goto failed; } while (0)
-    R32(magic); R32(version);
-    if (magic != QC_CHECKPOINT_MAGIC || version != QC_CHECKPOINT_VERSION) {
+    R32(magic);
+    if (magic != QC_CHECKPOINT_MAGIC) {
         qc_fail(error, QA_ERROR_FORMAT, 0, "Unsupported QuakeC checkpoint header"); goto failed;
     }
     if (!copy_reader(&reader, checkpoint->program.bytes,

@@ -929,10 +929,10 @@ static bool weapon_fields(qa_source_save_io *io,q3n_media *m,q3n_weapon_media *w
 }
 static bool media_fields(qa_source_save_io *io,q3n_media *m)
 {
-    uint8_t magic[4]={'Q','3','M','D'}; uint32_t schema=3,product=m->options.product;
+    uint8_t magic[4]={'Q','3','M','D'}; uint32_t product=m->options.product;
     const char *expected=m->options.compiled_source?"Q3MC":m->options.remote_source?"Q3MR":"Q3MD";
     memcpy(magic,expected,4);
-    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,expected,4) || !qa_source_save_u32(io,&schema) || schema!=3 ||
+    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,expected,4) ||
         !qa_source_save_u32(io,&product) || product!=(uint32_t)m->options.product) return false;
     if (m->options.compiled_source && !q3n_compiled_source_fields(io,m->options.compiled_source)) return false;
     if (m->options.remote_source) {

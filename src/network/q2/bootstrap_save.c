@@ -87,10 +87,9 @@ static bool fields(qa_source_save_io *io, qa_network_q2_bootstrap *owner,
     const qa_q2_server_bootstrap_options *server, const qa_q2_client_bootstrap_options *client)
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ, role = owner->server;
-    uint32_t tag = UINT32_C(0x3242514e), version = 1;
+    uint32_t tag = UINT32_C(0x3242514e);
     size_t count = owner->protocol_count;
-    if (!qa_source_save_u32(io, &tag) || !qa_source_save_u32(io, &version) ||
-        !qa_source_save_bool(io, &role) || tag != UINT32_C(0x3242514e) || version != 1 || role != owner->server ||
+    if (!qa_source_save_u32(io, &tag) || !qa_source_save_bool(io, &role) || tag != UINT32_C(0x3242514e) || role != owner->server ||
         !qa_source_save_count(io, &count, 8) || count != owner->protocol_count ||
         !qa_source_save_bool(io, &owner->canceled)) return invalid(io, "Q2 bootstrap candidate role or offers differ");
     for (size_t i = 0; i < count; ++i) {

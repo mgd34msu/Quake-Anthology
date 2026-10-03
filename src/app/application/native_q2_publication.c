@@ -233,52 +233,52 @@ bool application_native_q2_publication_capture(struct application_native_q2 *n, 
         return application_fail(e, QA_ERROR_ARGUMENT, "Native publication lost its actual namespace string");
     size_t length = name ? strlen(name) : 0;
     if (length > 65535) return application_fail(e, QA_ERROR_FORMAT, "Native registration namespace is too long");
-    qa_buffer bytes = {.data = calloc(1, 96 + length), .size = 96 + length};
+    qa_buffer bytes = {.data = calloc(1, 92 + length), .size = 92 + length};
     if (!bytes.data) return application_fail(e, QA_ERROR_MEMORY, "Retaining native publication continuation");
-    memcpy(bytes.data, "NQ2P", 4); qa_store_u32le(bytes.data + 4, 1); bytes.data[8] = p != NULL;
-    bytes.data[9] = p && p->active;
+    memcpy(bytes.data, "NQ2P", 4); bytes.data[4] = p != NULL;
+    bytes.data[5] = p && p->active;
     if (p) {
-        qa_store_u64le(bytes.data + 12, p->activation_generation); qa_store_u64le(bytes.data + 20, p->generation);
-        memcpy(bytes.data + 28, p->identity_digest.bytes, 32);
-        memcpy(bytes.data + 60, qa_launch_instance_lease_view(p->lease)->identity.bytes, 32);
+        qa_store_u64le(bytes.data + 8, p->activation_generation); qa_store_u64le(bytes.data + 16, p->generation);
+        memcpy(bytes.data + 24, p->identity_digest.bytes, 32);
+        memcpy(bytes.data + 56, qa_launch_instance_lease_view(p->lease)->identity.bytes, 32);
     }
-    qa_store_u32le(bytes.data + 92, (uint32_t)length); if (length) memcpy(bytes.data + 96, name, length);
+    qa_store_u32le(bytes.data + 88, (uint32_t)length); if (length) memcpy(bytes.data + 92, name, length);
     *out = bytes;
     return true;
 }
 bool application_native_q2_publication_restore_prepare(struct application_native_q2 *n, qa_bytes bytes, bool map_ready,
     application_native_q2_publication_restore **out, qa_error *e)
 {
-    if (!n || !out || *out || !bytes.data || bytes.size < 96 || memcmp(bytes.data, "NQ2P", 4) ||
-        qa_load_u32le(bytes.data + 4) != 1 || bytes.data[8] > 1 || bytes.data[9] > 1 ||
-        bytes.data[10] || bytes.data[11] || qa_load_u32le(bytes.data + 92) != bytes.size - 96 ||
-        bytes.size - 96 > 65535 || memchr(bytes.data + 96, 0, bytes.size - 96) ||
-        (bytes.data[8] != 0) != (n->publication != NULL))
+    if (!n || !out || *out || !bytes.data || bytes.size < 92 || memcmp(bytes.data, "NQ2P", 4) ||
+        bytes.data[4] > 1 || bytes.data[5] > 1 ||
+        bytes.data[6] || bytes.data[7] || qa_load_u32le(bytes.data + 88) != bytes.size - 92 ||
+        bytes.size - 92 > 65535 || memchr(bytes.data + 92, 0, bytes.size - 92) ||
+        (bytes.data[4] != 0) != (n->publication != NULL))
         return application_fail(e, QA_ERROR_FORMAT, "Native publication continuation differs from its declared owner");
     application_native_q2_publication *p = n->publication;
-    if (p && (bytes.data[9] != 0) != map_ready)
+    if (p && (bytes.data[5] != 0) != map_ready)
         return application_fail(e, QA_ERROR_FORMAT, "Native publication activation differs from its saved GAME lifecycle");
-    uint64_t activation = qa_load_u64le(bytes.data + 12), generation = qa_load_u64le(bytes.data + 20);
+    uint64_t activation = qa_load_u64le(bytes.data + 8), generation = qa_load_u64le(bytes.data + 16);
     qa_actor_owner namespace = 0;
     if (p) {
         application_unified_json expected = {0};
         bool ok = activation && activation <= QA_UNIFIED_SAFE_INTEGER && generation <= QA_UNIFIED_SAFE_INTEGER && storage(p) &&
-            !memcmp(bytes.data + 28, p->identity_digest.bytes, 32) &&
-            !memcmp(bytes.data + 60, qa_launch_instance_lease_view(p->lease)->identity.bytes, 32) &&
-            namespace_text(p, activation, &expected, e) && expected.bytes.size == bytes.size - 96 &&
-            !memcmp(expected.bytes.data, bytes.data + 96, expected.bytes.size);
+            !memcmp(bytes.data + 24, p->identity_digest.bytes, 32) &&
+            !memcmp(bytes.data + 56, qa_launch_instance_lease_view(p->lease)->identity.bytes, 32) &&
+            namespace_text(p, activation, &expected, e) && expected.bytes.size == bytes.size - 92 &&
+            !memcmp(expected.bytes.data, bytes.data + 92, expected.bytes.size);
         if (ok) namespace = qa_strings_find(qa_session_strings(n->provider->application->session),
-            (qa_bytes){bytes.data + 96, bytes.size - 96});
+            (qa_bytes){bytes.data + 92, bytes.size - 92});
         application_unified_json_dispose(&expected);
         if (!ok || !namespace) return application_fail(e, QA_ERROR_FORMAT, "Native publication lost its saved registration namespace");
     } else {
-        for (size_t i = 9; i < bytes.size; ++i)
+        for (size_t i = 5; i < bytes.size; ++i)
             if (bytes.data[i]) return application_fail(e, QA_ERROR_FORMAT, "Absent native publication contains state");
     }
     application_native_q2_publication_restore *r = calloc(1, sizeof(*r));
     if (!r) return application_fail(e, QA_ERROR_MEMORY, "Preparing native publication continuation");
     *r = (application_native_q2_publication_restore){.owner = p, .namespace = namespace,
-        .activation_generation = activation, .generation = generation, .active = bytes.data[9] != 0};
+        .activation_generation = activation, .generation = generation, .active = bytes.data[5] != 0};
     *out = r;
     return true;
 }

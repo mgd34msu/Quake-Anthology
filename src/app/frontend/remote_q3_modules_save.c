@@ -48,9 +48,7 @@ static bool text(qa_source_save_io *io, char **value)
 static bool fields(qa_source_save_io *io, wrapper_saved *saved)
 {
     uint8_t signature[8] = {'Q','R','M','W',0,0,0,0};
-    const uint8_t expected[8] = {'Q','R','M','W',0,0,0,0}; uint32_t version = 1;
-    if (!qa_source_save_bytes(io, signature, 8) || memcmp(signature, expected, 8) ||
-        !qa_source_save_u32(io, &version) || version != 1 ||
+    const uint8_t expected[8] = {'Q','R','M','W',0,0,0,0}; if (!qa_source_save_bytes(io, signature, 8) || memcmp(signature, expected, 8) ||
         !qa_source_save_u32(io, &saved->kind) || saved->kind > REMOTE_MODULE_INITIAL ||
         !qa_source_save_u64(io, &saved->identity) || !saved->identity ||
         !qa_source_save_u32(io, &saved->physical) || !qa_source_save_u32(io, &saved->receiver) ||
@@ -136,7 +134,6 @@ bool frontend_remote_q3_modules_checkpoint(const frontend_remote_q3_modules *own
         role->music_looping = lease->music_looping; role->has_listener = lease->has_listener; role->listener = lease->listener;
         if (role->has_listener && role->listener.actor != QA_AUDIO_NO_ACTOR &&
             !frontend_audio_id_read(owner->frontend, role->listener.actor, NULL, NULL)) { ok = false; break; }
-        uint32_t media_schema = 3;
         if (owner->restoring) {
             const remote_module_saved *previous = NULL;
             for (size_t j = 0; j < owner->saved_count; ++j)
@@ -147,8 +144,8 @@ bool frontend_remote_q3_modules_checkpoint(const frontend_remote_q3_modules *own
                 ok = frontend_fail(error, QA_ERROR_FORMAT, "Restored role witness lacks its completed original media binding");
                 break;
             }
-            if (!qa_q3_presentation_media_binding_version_read(
-                (qa_bytes){previous->media.data, previous->media.size}, &media_schema, &shared, error)) { ok = false; break; }
+            if (!qa_q3_presentation_media_binding_read(
+                (qa_bytes){previous->media.data, previous->media.size}, &shared, error)) { ok = false; break; }
             if (shared != (lease->cinematics != NULL)) {
                 ok = frontend_fail(error, QA_ERROR_FORMAT, "Restored role witness changed its original media binding");
                 break;
@@ -156,7 +153,7 @@ bool frontend_remote_q3_modules_checkpoint(const frontend_remote_q3_modules *own
         }
         ok = copy_text(lease->music_intro, &role->music_intro, error) && copy_text(lease->music_loop, &role->music_loop, error) &&
             qa_q3_presentation_scene_checkpoint(lease->presentation, &role->scene, error) &&
-            qa_q3_presentation_media_checkpoint_schema(lease->presentation, &movies, media_schema, &role->media, error) &&
+            qa_q3_presentation_media_checkpoint(lease->presentation, &movies, &role->media, error) &&
             (!lease->equipment || frontend_equipment_source_checkpoint(lease->equipment, &role->equipment, error));
         if (ok && role->music_attached)
             ok = qa_audio_engine_bus_music(owner->frontend->audio, lease->service_owner) == lease->music &&

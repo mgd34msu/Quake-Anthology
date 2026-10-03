@@ -1450,9 +1450,8 @@ static bool state_fields(qa_source_save_io *io, prediction_state *state,
     qa_application_control_prediction_configuration *configuration, prediction_player *initial)
 {
     uint8_t magic[4] = {'Q','R','P','D'};
-    uint32_t version = 4;
     if (!qa_source_save_bytes(io, magic, sizeof(magic)) || memcmp(magic, "QRPD", sizeof(magic)) ||
-        !qa_source_save_u32(io, &version) || version != 4 || !configuration_fields(io, configuration) ||
+        !configuration_fields(io, configuration) ||
         !qa_source_save_bool(io, &state->initialized) ||
         !qa_source_save_bool(io, &state->valid_pps) || (state->valid_pps && !state->initialized)) return false;
     if (io->direction == QA_SOURCE_SAVE_READ) *initial = initial_player(configuration);

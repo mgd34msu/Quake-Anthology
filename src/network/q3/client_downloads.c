@@ -465,9 +465,9 @@ static bool valid(qa_q3_client_downloads *owner, bool staged, qa_error *error)
 }
 static bool fields(qa_source_save_io *io, qa_q3_client_downloads *owner, bool *staged)
 {
-    uint32_t magic = UINT32_C(0x44433351), version = 2;
+    uint32_t magic = UINT32_C(0x44433351);
     if (!qa_source_save_u32(io, &magic) || magic != UINT32_C(0x44433351) ||
-        !qa_source_save_u32(io, &version) || (version != 1 && version != 2) || !qa_source_save_u64(io, &owner->generation) ||
+        !qa_source_save_u64(io, &owner->generation) ||
         !qa_source_save_count(io, &owner->count, QA_Q3_SEARCH_PATHS) || !qa_source_save_count(io, &owner->next, owner->count) ||
         !qa_source_save_bool(io, &owner->active) || !qa_source_save_bool(io, &owner->paused) ||
         !qa_source_save_bool(io, &owner->reload_pending) ||
@@ -484,7 +484,6 @@ static bool fields(qa_source_save_io *io, qa_q3_client_downloads *owner, bool *s
     }
     if (!qa_source_save_bool(io, staged) || !qa_source_save_u64(io, &owner->stage_nonce) ||
         !saved_text(io, &owner->stage_path, 4095, true)) return false;
-    if(version==1) return true;
     int32_t block=owner->pending.block; uint32_t status=(uint32_t)owner->failure.code;
     uint64_t offset=owner->failure.offset;
     if (!qa_source_save_bool(io,&owner->request_pending) || !qa_source_save_bool(io,&owner->block_pending) ||

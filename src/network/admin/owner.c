@@ -629,7 +629,7 @@ bool qa_server_admin_checkpoint(const qa_server_admin *a, qa_buffer *out, qa_err
     uint8_t *data = malloc(capacity);
     if (!data) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Encoding administration continuation"); return false; }
     qa_net_writer w; qa_net_writer_init(&w, data, capacity, error);
-    bool ok = qa_net_write_u32(&w, UINT32_C(0x41534151)) && qa_net_write_u32(&w, 3) &&
+    bool ok = qa_net_write_u32(&w, UINT32_C(0x41534151)) &&
         qa_net_write_u32(&w, a->options.dialect) && qa_net_write_u32(&w, a->options.filters) &&
         qa_net_write_u32(&w, a->options.rate_entries) && qa_net_write_u32(&w, a->options.burst) &&
         qa_net_write_u64(&w, a->options.rate_interval_ns) && qa_net_write_u64(&w, a->options.heartbeat_interval_ns) &&
@@ -666,8 +666,8 @@ bool qa_server_admin_restore_checkpoint(qa_bytes bytes, const qa_admin_options *
     if (!out || *out || !options || bytes.size > 2 * 1048576 || (bytes.size && !bytes.data))
         return fail(error, "Invalid administration continuation extent/output");
     qa_net_reader r; qa_net_reader_init(&r, bytes, error);
-    uint32_t magic=qa_net_read_u32(&r),version=qa_net_read_u32(&r);
-    if (magic != UINT32_C(0x41534151) || (version<1 || version>3) ||
+    uint32_t magic=qa_net_read_u32(&r);
+    if (magic != UINT32_C(0x41534151) ||
         qa_net_read_u32(&r) != (uint32_t)options->dialect || qa_net_read_u32(&r) != options->filters ||
         qa_net_read_u32(&r) != options->rate_entries || qa_net_read_u32(&r) != options->burst ||
         qa_net_read_u64(&r) != options->rate_interval_ns || qa_net_read_u64(&r) != options->heartbeat_interval_ns)
@@ -694,9 +694,7 @@ bool qa_server_admin_restore_checkpoint(qa_bytes bytes, const qa_admin_options *
     if (ok && a->rotation_count) { a->rotation = calloc(a->rotation_count, sizeof(*a->rotation)); if (!a->rotation) ok = false; }
     if (!a->rotation) a->rotation_count = 0;
     for (size_t i = 0; ok && i < a->rotation_count; ++i) ok = service_restore_text(&r, &a->rotation[i], 127);
-    size_t groups=version>=3?4:1;
-    for (size_t n=0;ok && n<groups;++n) {
-        size_t group=version>=3?n:master_group(options->dialect);
+    for (size_t group=0;ok && group<4;++group) {
         size_t count=qa_net_read_u32(&r);
         if (r.failed || count>32) { ok=false; break; }
         if (count) {
@@ -706,7 +704,7 @@ bool qa_server_admin_restore_checkpoint(qa_bytes bytes, const qa_admin_options *
         a->master_count[group]=count;
         for (size_t i=0;ok && i<count;++i) ok=q3_restore_address(&r,&a->masters[group][i]);
     }
-    if (ok && version>=3) {
+    if (ok) {
         size_t size=qa_net_read_u32(&r);
         if (r.failed || size>65536) ok=false;
         else if (size) {
@@ -715,7 +713,7 @@ bool qa_server_admin_restore_checkpoint(qa_bytes bytes, const qa_admin_options *
             else ok=qa_net_read_data(&r,a->master_names.data,size);
         }
     }
-    if (ok && version>=2) {
+    if (ok) {
         bool has_registry=q3_save_bool(&r),has_rate=q3_save_bool(&r);
         ok=!r.failed && has_registry==(options->hooks.rate_registry!=NULL) && (!has_rate || has_registry);
         if (ok && has_rate) {

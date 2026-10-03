@@ -467,18 +467,12 @@ bool qa_q1_travel_admit(qa_q1_game *game, qa_actor_id actor, qa_q1_travel_state 
     qa_q1_travel_destroy(state);
     return ok;
 }
-static bool armor_number(qa_source_save_io *io, double *value, uint8_t schema) {
-    if (schema >= 4) return qa_source_save_f64(io, value);
-    float legacy = (float)*value;
-    if (!qa_source_save_f32(io, &legacy)) return false;
-    if (io->direction == QA_SOURCE_SAVE_READ) *value = legacy;
-    return true;
-}
-static bool armor_fields(qa_source_save_io *io, qa_armor *value, uint8_t schema) {
+
+static bool armor_fields(qa_source_save_io *io, qa_armor *value) {
     uint32_t regular = value->regular.kind, powered = value->powered.kind,
         edition = value->powered.source_edition, source_kind = value->powered.source_kind;
     if (!qa_source_save_u32(io, &regular) || regular > QA_ARMOR_SOURCE ||
-        !armor_number(io, &value->regular.points, schema) ||
+        !qa_source_save_f64(io, &value->regular.points) ||
         !qa_source_save_string(io, &value->regular.item)) return false;
     value->regular.kind = (qa_regular_armor_kind)regular;
     switch (value->regular.kind) {
@@ -486,8 +480,8 @@ static bool armor_fields(qa_source_save_io *io, qa_armor *value, uint8_t schema)
         if (!qa_source_save_f32(io, &value->regular.protection.q1_absorption)) return false;
         break;
     case QA_ARMOR_Q2:
-        if (!armor_number(io, &value->regular.protection.q2.normal, schema) ||
-            !armor_number(io, &value->regular.protection.q2.energy, schema)) return false;
+        if (!qa_source_save_f64(io, &value->regular.protection.q2.normal) ||
+            !qa_source_save_f64(io, &value->regular.protection.q2.energy)) return false;
         break;
     case QA_ARMOR_Q3:
         if (!qa_source_save_f32(io, &value->regular.protection.q3_protection)) return false;
@@ -495,7 +489,7 @@ static bool armor_fields(qa_source_save_io *io, qa_armor *value, uint8_t schema)
     case QA_ARMOR_NONE: case QA_ARMOR_SOURCE: break;
     }
     if (!qa_source_save_u32(io, &powered) || powered > QA_POWER_SHIELD ||
-        !armor_number(io, &value->powered.cells, schema) ||
+        !qa_source_save_f64(io, &value->powered.cells) ||
         !qa_source_save_string(io, &value->powered.source_owner) ||
         !qa_source_save_u32(io, &edition) || edition > QA_Q2_POWER_ARMOR_RERELEASE ||
         !qa_source_save_u32(io, &source_kind) || source_kind > QA_POWER_SOURCE_GENERIC) return false;
@@ -505,13 +499,13 @@ static bool armor_fields(qa_source_save_io *io, qa_armor *value, uint8_t schema)
     return true;
 }
 static bool state_fields(qa_source_save_io *io, qa_q1_travel_state *state) {
-    const uint8_t expected[] = {'Q','1','T','R',4};
+    const uint8_t expected[] = {'Q','1','T','R'};
     uint8_t magic[sizeof(expected)];
     memcpy(magic, expected, sizeof(magic));
     uint32_t weapon = state->weapon, extension = state->extension;
-    if (!qa_source_save_bytes(io, magic, sizeof(magic)) || memcmp(magic, expected, 4) || magic[4] < 3 || magic[4] > 4 ||
+    if (!qa_source_save_bytes(io, magic, sizeof(magic)) || memcmp(magic, expected, sizeof(expected)) ||
         !qa_source_save_f32(io, &state->health) || !qa_source_save_f32(io, &state->max_health) ||
-        !armor_fields(io, &state->armor, magic[4]) || !qa_source_save_u32(io, &weapon) ||
+        !armor_fields(io, &state->armor) || !qa_source_save_u32(io, &weapon) ||
         weapon >= QA_Q1_WEAPON_COUNT || !qa_source_save_u32(io, &extension) || extension > TRAVEL_CTF ||
         !qa_source_save_count(io, &state->count, SIZE_MAX / sizeof(*state->inventory))) return false;
     state->weapon = (qa_q1_weapon)weapon;

@@ -15,10 +15,10 @@ static bool value_fields(qa_source_save_io *io,qa_native_q3_client_cvar *value)
 }
 static bool configuration_fields(qa_source_save_io *io,qa_native_q3_client_service *service)
 {
-    uint8_t magic[4]={'Q','N','C','G'}; uint32_t version=1,product=service->product;
+    uint8_t magic[4]={'Q','N','C','G'}; uint32_t product=service->product;
     size_t count=service->count;
     if (!qa_source_save_bytes(io,magic,sizeof(magic)) || memcmp(magic,"QNCG",sizeof(magic)) ||
-        !qa_source_save_u32(io,&version) || version!=1 || !qa_source_save_u32(io,&product) ||
+        !qa_source_save_u32(io,&product) ||
         product!=(uint32_t)service->product || !qa_source_save_count(io,&count,QA_NATIVE_CLIENT_CVARS) ||
         count!=service->count || !qa_source_save_bool(io,&service->registered) ||
         !qa_source_save_bool(io,&service->services.client.initialized) ||

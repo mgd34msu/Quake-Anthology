@@ -1,7 +1,6 @@
 #include "internal.h"
 
 #define Q2_SAVE_MAGIC UINT32_C(0x32514151)
-#define Q2_SAVE_VERSION UINT32_C(26)
 
 typedef struct actor_save {
     qa_q2_saved_reference id;
@@ -56,11 +55,11 @@ static bool actor_capture(qa_q2_game *g, q2_actor *a, actor_save *s, qa_error *e
                                     &s->hand_ammo, e));
 }
 static bool header(q2_save_io *io) {
-    uint32_t magic = Q2_SAVE_MAGIC, version = Q2_SAVE_VERSION;
-    if (!q2_save_u32(io, &magic) || !q2_save_u32(io, &version)) return false;
-    if (magic != Q2_SAVE_MAGIC || version < 24 || version > Q2_SAVE_VERSION)
-        return q2_save_fail(io, "Unsupported Q2 continuation schema");
-    io->schema = version; return true;
+    uint32_t magic = Q2_SAVE_MAGIC;
+    if (!q2_save_u32(io, &magic)) return false;
+    if (magic != Q2_SAVE_MAGIC)
+        return q2_save_fail(io, "Invalid Q2 continuation signature");
+    return true;
 }
 bool qa_q2_game_capture(qa_q2_game *g, qa_buffer *out, qa_error *e) {
     if (!g || !out || g->continuation_pending || g->continuation_failed || !q2_checkpoint_idle(g, e)) {
@@ -86,7 +85,7 @@ bool qa_q2_game_capture(qa_q2_game *g, qa_buffer *out, qa_error *e) {
         actor_free(&saved);
     }
     ok = ok && qa_q2_items_capture(g, &items, e) &&
-         q2_save_u32(&io, &items.version) && q2_save_u32(&io, &items.cubes) &&
+         q2_save_u32(&io, &items.cubes) &&
          qa_q2_players_capture(g, &players, e) && q2_save_players(&io, &players) &&
          qa_q2_entities_capture(g, &entities, e) && q2_save_entities(&io, &entities) &&
          qa_q2_monsters_capture(g, &monsters, e) && q2_save_monsters(&io, &monsters) &&
@@ -162,7 +161,7 @@ bool qa_q2_game_restore(qa_q2_game *g, qa_bytes data, qa_error *e) {
              actor_restore(&io, &saved, runtime.actor_sequence, &previous_order);
         actor_free(&saved);
     }
-    ok = ok && q2_save_u32(&io, &items.version) && q2_save_u32(&io, &items.cubes) &&
+    ok = ok && q2_save_u32(&io, &items.cubes) &&
          qa_q2_items_restore(g, &items, e) &&
          q2_save_players(&io, &players) && qa_q2_players_restore(g, &players, e) &&
          q2_save_entities(&io, &entities) && qa_q2_entities_restore(g, &entities, e) &&

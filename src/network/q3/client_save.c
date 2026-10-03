@@ -68,7 +68,7 @@ bool qa_q3_client_peer_checkpoint(const qa_q3_client_peer *p, qa_buffer *out, qa
     }
     qa_net_writer w;
     qa_net_writer_init(&w, bytes.data, capacity, error);
-    bool ok = qa_net_write_u32(&w, Q3_CLIENT_CHECKPOINT_TAG) && qa_net_write_u32(&w, 3) &&
+    bool ok = qa_net_write_u32(&w, Q3_CLIENT_CHECKPOINT_TAG) &&
         qa_net_write_u32(&w, p->product) && qa_net_write_u8(&w, p->demo) &&
         q3_save_address(&w, &p->remote) && qa_net_write_i32(&w, p->challenge) &&
         (p->demo || qa_q3_channel_checkpoint(p->channel, &w)) &&
@@ -108,11 +108,11 @@ bool qa_q3_client_peer_restore(qa_bytes bytes, qa_q3_identity identity,
     }
     qa_net_reader r;
     qa_net_reader_init(&r, bytes, error);
-    uint32_t tag = qa_net_read_u32(&r), version = qa_net_read_u32(&r);
+    uint32_t tag = qa_net_read_u32(&r);
     qa_q3_product product = (qa_q3_product)qa_net_read_u32(&r);
     bool demo = q3_save_bool(&r);
     qa_net_address remote = {0};
-    if (tag != Q3_CLIENT_CHECKPOINT_TAG || version != 3 ||
+    if (tag != Q3_CLIENT_CHECKPOINT_TAG ||
         (product != QA_Q3_ARENA && product != QA_Q3_TEAM_ARENA))
         return qa_net_reader_fail(&r, "Unsupported Q3 client checkpoint schema");
     if (!q3_restore_address(&r, &remote)) return false;

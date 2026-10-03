@@ -131,9 +131,8 @@ static bool collect(qa_frontend *f, image_inventory *inventory, qa_error *error)
 }
 static bool header(qa_source_save_io *io, const image_inventory *inventory)
 {
-    uint8_t magic[4] = {'Q','F','I','M'}; uint32_t version = 6; size_t count = inventory->count;
+    uint8_t magic[4] = {'Q','F','I','M'}; size_t count = inventory->count;
     if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "QFIM", 4) ||
-        !qa_source_save_u32(io, &version) || version != 6 ||
         !qa_source_save_count(io, &count, SIZE_MAX / sizeof(image_owner)) || count != inventory->count) return false;
     for (size_t i = 0; i < count; ++i) {
         image_owner saved = inventory->entries[i];
@@ -217,9 +216,8 @@ static qa_scene_resource_checkpoint_refs state_refs(image_state_scope *scope)
 }
 static bool owners_header(qa_source_save_io *io,const image_inventory *inventory)
 {
-    uint8_t magic[4]={'Q','F','I','S'}; uint32_t version=1;
-    return qa_source_save_bytes(io,magic,4) && !memcmp(magic,"QFIS",4) &&
-        qa_source_save_u32(io,&version) && version==1 && header(io,inventory);
+    uint8_t magic[4]={'Q','F','I','S'}; return qa_source_save_bytes(io,magic,4) && !memcmp(magic,"QFIS",4) &&
+        header(io,inventory);
 }
 bool frontend_image_owners_checkpoint(qa_frontend *f,frontend_scene_namespace *space,qa_buffer *out,qa_error *error)
 {

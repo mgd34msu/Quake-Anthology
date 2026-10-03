@@ -882,7 +882,7 @@ static bool match_object(qa_source_save_io *io, const qa_fs_object_reference *re
 }
 static bool resource_fields(qa_source_save_io *io, const qa_native_process_resources *owner)
 {
-    if (!match_bytes(io, "QNPR", 4) || !match_u32(io, 3) ||
+    if (!match_bytes(io, "QNPR", 4) ||
         !match_bytes(io, &owner->descriptor->identity, sizeof(owner->descriptor->identity)) ||
         !match_u32(io, owner->options.receiver) || !match_u64(io, owner->options.service_owner) ||
         !match_u32(io, owner->options.policy.backend) ||

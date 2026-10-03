@@ -159,7 +159,6 @@ typedef struct qa_q3_map_actor_checkpoint {
     qa_saved_actor_id actor, activator, enemy, team_master, team_next, parent, path_next;
 } qa_q3_map_actor_checkpoint;
 typedef struct qa_q3_map_checkpoint {
-    uint32_t version;
     uint64_t registered_items;
     qa_string_id motd;
     uint32_t random_seed;

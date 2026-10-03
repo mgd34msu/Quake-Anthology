@@ -106,9 +106,9 @@ static bool tokens(qa_source_save_io *io,qa_command_tokens *t)
 }
 static bool fields(qa_source_save_io *io,application_q3_scene *s,qa_buffer *vm,qa_buffer *body,qa_buffer *services,qa_qvm_binding *event)
 {
-    uint8_t magic[8]={'Q','A','G','3','S','C',0,0}; uint32_t version=5;
+    uint8_t magic[8]={'Q','A','G','3','S','C',0,0};
     qa_sha256_digest declaration=s->options.profile->declaration_digest;
-    if(!qa_source_save_bytes(io,magic,8)||memcmp(magic,"QAG3SC\0\0",8)||!qa_source_save_u32(io,&version)||version!=5||
+    if(!qa_source_save_bytes(io,magic,8)||memcmp(magic,"QAG3SC\0\0",8)||
         !qa_source_save_bytes(io,declaration.bytes,32)||!qa_sha256_equal(&declaration,&s->options.profile->declaration_digest)||
         !qa_source_save_u64(io,event)||(!s->options.profile->player_events&&!*event)||(s->options.profile->player_events&&*event)||!blob(io,body,SIZE_MAX)||!blob(io,vm,SIZE_MAX)||!blob(io,services,SIZE_MAX)||
         !qa_source_save_u64(io,&s->context.generation)||!qa_source_save_i64(io,&s->revision)||s->revision<0||
@@ -186,10 +186,10 @@ bool application_q3_scene_restore(application_q3_scene *s,qa_bytes bytes,qa_erro
     if(ok) ok=(s->options.profile->player_events?body.size==0:application_q3_component_body_saved_read(&s->options.profile->body,(qa_bytes){body.data,body.size},saved,e))&&
         q3scene_descriptors(s,descriptors,e)&&qa_qvm_restore_candidate_bindings(s->vm,(qa_bytes){vm.data,vm.size},descriptors,saved,s->options.profile->player_events?0:3,e);
     if(ok) {
-        /* Binding admission proved the QAVM2 memory and host extents.
+        /* Binding admission proved the QAVM memory and host extents.
          * Validate the host stream before the actual VM import can reopen it. */
         size_t memory=qa_qvm_memory_size(s->vm);
-        ok=qa_q3_host_checkpoint_portable_state((qa_bytes){vm.data+160+memory,vm.size-160-memory},e);
+        ok=qa_q3_host_checkpoint_portable_state((qa_bytes){vm.data+156+memory,vm.size-156-memory},e);
     }
     if(ok) {
         if(s->body) application_q3_component_body_adopt(s->body,saved);

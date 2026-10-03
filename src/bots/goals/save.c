@@ -5,10 +5,9 @@
 
 static const uint8_t magic[8] = {'Q', 'A', 'B', 'G', 'O', 'A', 'L', 0};
 static bool signature(qa_source_save_io *io) {
-    uint8_t bytes[8];memcpy(bytes,magic,sizeof(bytes));uint32_t version=4;
-    return qa_source_save_bytes(io,bytes,sizeof(bytes)) && !memcmp(bytes,magic,sizeof(bytes)) &&
-        qa_source_save_u32(io,&version) && version==4 ? true :
-        bot_save_fail(io,QA_ERROR_FORMAT,"Unsupported goal allocation continuation schema");
+    uint8_t bytes[8];memcpy(bytes,magic,sizeof(bytes));
+    return qa_source_save_bytes(io,bytes,sizeof(bytes)) && !memcmp(bytes,magic,sizeof(bytes)) ? true :
+        bot_save_fail(io,QA_ERROR_FORMAT,"Invalid goal allocation continuation signature");
 }
 
 static bool goal_fields(qa_source_save_io *io, qa_bot_goal *goal)

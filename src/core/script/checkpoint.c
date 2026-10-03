@@ -68,8 +68,7 @@ bool qa_script_capture(const qa_script *s, qa_script_checkpoint *out, qa_error *
         qa_error_set(e, QA_ERROR_MEMORY, 0, "Allocating script checkpoint");
         return false;
     }
-    qa_script_checkpoint result = {.version = SCRIPT_CHECKPOINT_VERSION,
-                                   .storage = storage,
+    qa_script_checkpoint result = {.storage = storage,
                                    .frame_count = s->frame_count,
                                    .stack_count = s->stack_count,
                                    .queue_count = s->macros.queue_count,
@@ -195,7 +194,7 @@ static bool raw_token_valid(const qa_script_token *t, size_t limit) {
            (t->leading_whitespace.size == 0 || t->leading_whitespace.data != NULL);
 }
 bool script_checkpoint_valid(const qa_script_checkpoint *c, qa_error *e) {
-    if (c == NULL || c->version != SCRIPT_CHECKPOINT_VERSION || c->options.globals != NULL ||
+    if (c == NULL || c->options.globals != NULL ||
         c->options.token_limit < 4 || c->options.token_limit > UINT32_MAX ||
         c->options.maximum_include_depth == 0 || c->options.maximum_expansions == 0 ||
         c->options.maximum_queued_tokens == 0 || c->options.maximum_output_tokens == 0 ||

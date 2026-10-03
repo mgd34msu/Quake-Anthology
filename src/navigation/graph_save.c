@@ -8,9 +8,9 @@ static bool fail(qa_source_save_io *io, const char *message) {
 }
 static bool signature(qa_source_save_io *io) {
     static const uint8_t expected[8]={'Q','A','N','G','R','A','P',0};
-    uint8_t magic[8]; memcpy(magic,expected,8); uint32_t version=1;
-    return qa_source_save_bytes(io,magic,8) && qa_source_save_u32(io,&version) &&
-        ((!memcmp(magic,expected,8) && version==1) || fail(io,"Unsupported immutable navigation graph"));
+    uint8_t magic[8]; memcpy(magic,expected,8);
+    return qa_source_save_bytes(io,magic,8) &&
+        (!memcmp(magic,expected,8) || fail(io,"Invalid immutable navigation graph signature"));
 }
 static bool shape(qa_source_save_io *io, qa_trace_shape *shape) {
     uint32_t kind=shape->kind;

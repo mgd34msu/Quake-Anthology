@@ -1,7 +1,7 @@
 #include "internal.h"
 #include "qa/q3_host_save.h"
 
-enum { GAME_HEADER = 64, ACTOR_BYTES = 104, PORTAL_BYTES = 12 };
+enum { GAME_HEADER = 60, ACTOR_BYTES = 104, PORTAL_BYTES = 12 };
 
 bool qa_q3_host_checkpoint_input_retired(const qa_q3_host *host, uint32_t slot, bool *out, qa_error *error)
 {
@@ -48,14 +48,14 @@ bool q3_game_checkpoint_capture(qa_q3_host *host, qa_buffer *out, qa_error *erro
     qa_buffer bytes = {.data = calloc(1, size), .size = size};
     if (!bytes.data) return q3_fail(error, QA_ERROR_MEMORY, 0, "Capturing Q3 game host");
     uint8_t *header = bytes.data;
-    memcpy(header, "Q3GD", 4); qa_store_u32le(header + 4, 3);
-    qa_store_u32le(header + 8, game->entity_count); qa_store_u32le(header + 12, game->entity_stride);
-    qa_store_u32le(header + 16, game->client_stride);
-    qa_store_u32le(header + 20, host->options.server.maximum_clients);
-    qa_store_u64le(header + 24, game->entities); qa_store_u64le(header + 32, game->clients);
-    qa_store_u64le(header + 40, qa_collision_map_identity(qa_world_geometry(host->options.world)));
-    qa_store_u32le(header + 48, actors); qa_store_u32le(header + 52, (uint32_t)game->portal_count);
-    qa_store_u64le(header + 56, game->portal_capacity);
+    memcpy(header, "Q3GD", 4);
+    qa_store_u32le(header + 4, game->entity_count); qa_store_u32le(header + 8, game->entity_stride);
+    qa_store_u32le(header + 12, game->client_stride);
+    qa_store_u32le(header + 16, host->options.server.maximum_clients);
+    qa_store_u64le(header + 20, game->entities); qa_store_u64le(header + 28, game->clients);
+    qa_store_u64le(header + 36, qa_collision_map_identity(qa_world_geometry(host->options.world)));
+    qa_store_u32le(header + 44, actors); qa_store_u32le(header + 48, (uint32_t)game->portal_count);
+    qa_store_u64le(header + 52, game->portal_capacity);
     uint8_t *row = header + GAME_HEADER;
     for (uint32_t i = 0; i < 1022; ++i) {
         q3_entity_slot *slot = game->slots + i;
@@ -112,12 +112,12 @@ bool q3_game_checkpoint_decode(qa_q3_host *host, qa_bytes bytes, q3_game_data **
         if (bytes.size) return q3_fail(error, QA_ERROR_FORMAT, 0, "Q3 client host checkpoint contains server records");
         *out = NULL; return true;
     }
-    if (bytes.size < GAME_HEADER || memcmp(bytes.data, "Q3GD", 4) || qa_load_u32le(bytes.data + 4) != 3 ||
-        qa_load_u32le(bytes.data + 20) != host->options.server.maximum_clients ||
-        qa_load_u64le(bytes.data + 40) != qa_collision_map_identity(qa_world_geometry(host->options.world)))
+    if (bytes.size < GAME_HEADER || memcmp(bytes.data, "Q3GD", 4) ||
+        qa_load_u32le(bytes.data + 16) != host->options.server.maximum_clients ||
+        qa_load_u64le(bytes.data + 36) != qa_collision_map_identity(qa_world_geometry(host->options.world)))
         return q3_fail(error, QA_ERROR_FORMAT, 0, "Q3 game checkpoint map or source identity mismatch");
-    uint32_t actors = qa_load_u32le(bytes.data + 48), portals = qa_load_u32le(bytes.data + 52);
-    uint64_t portal_capacity = qa_load_u64le(bytes.data + 56);
+    uint32_t actors = qa_load_u32le(bytes.data + 44), portals = qa_load_u32le(bytes.data + 48);
+    uint64_t portal_capacity = qa_load_u64le(bytes.data + 52);
     if (portal_capacity > SIZE_MAX || !portal_extent(portals, (size_t)portal_capacity))
         return q3_fail(error, QA_ERROR_FORMAT, 0, "Q3 checkpoint portal allocation is invalid");
     size_t remaining = bytes.size - GAME_HEADER;
@@ -128,9 +128,9 @@ bool q3_game_checkpoint_decode(qa_q3_host *host, qa_bytes bytes, q3_game_data **
         return q3_fail(error, QA_ERROR_FORMAT, 0, "Q3 game checkpoint portal table is invalid");
     q3_game_data *game = calloc(1, sizeof(*game));
     if (!game) return q3_fail(error, QA_ERROR_MEMORY, 0, "Restoring Q3 game bindings");
-    game->entity_count = qa_load_u32le(bytes.data + 8); game->entity_stride = qa_load_u32le(bytes.data + 12);
-    game->client_stride = qa_load_u32le(bytes.data + 16); game->entities = qa_load_u64le(bytes.data + 24);
-    game->clients = qa_load_u64le(bytes.data + 32);
+    game->entity_count = qa_load_u32le(bytes.data + 4); game->entity_stride = qa_load_u32le(bytes.data + 8);
+    game->client_stride = qa_load_u32le(bytes.data + 12); game->entities = qa_load_u64le(bytes.data + 20);
+    game->clients = qa_load_u64le(bytes.data + 28);
     bool ok = descriptor(host, game, error);
     for (uint32_t i = 0; i < 1024; ++i) game->slots[i] = (q3_entity_slot){.host = host, .number = i};
     const uint8_t *row = bytes.data + GAME_HEADER;

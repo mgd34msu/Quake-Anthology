@@ -620,7 +620,6 @@ bool qa_nq_decoder_save(qa_net_writer *w, const qa_nq_decoder *d)
 {
     if (!d || !nq_profile(d->protocol) || !isfinite(d->time)) return qa_net_writer_fail(w,"Invalid NetQuake decoder checkpoint");
     qa_net_write_u32(w,UINT32_C(0x4443514e)); /* NQCD */
-    qa_net_write_u32(w,1);
     qa_q1_write_protocol(w,d->protocol);
     qa_net_write_u8(w,(uint8_t)((d->options.standard_quake?1:0)|(d->options.private_rerelease?2:0)));
     qa_net_write_f32(w,d->time);
@@ -642,8 +641,8 @@ bool qa_nq_decoder_save(qa_net_writer *w, const qa_nq_decoder *d)
 bool qa_nq_decoder_restore(qa_net_reader *r, qa_nq_decoder *d)
 {
     if (!d) return qa_net_reader_fail(r,"Missing NetQuake decoder for checkpoint");
-    uint32_t magic=qa_net_read_u32(r), version=qa_net_read_u32(r);
-    if (magic!=UINT32_C(0x4443514e) || version!=1) return qa_net_reader_fail(r,"Unknown NetQuake decoder checkpoint");
+    uint32_t magic=qa_net_read_u32(r);
+    if (magic!=UINT32_C(0x4443514e)) return qa_net_reader_fail(r,"Unknown NetQuake decoder checkpoint");
     qa_net_protocol_id profile;
     if (!qa_q1_read_protocol(r,false,&profile)) return false;
     uint8_t options=qa_net_read_u8(r);
@@ -704,7 +703,7 @@ bool qa_nq_decoder_restore_checkpoint(qa_bytes bytes, qa_net_protocol_id protoco
     }
     qa_net_reader reader; qa_net_reader_init(&reader,bytes,error);
     qa_net_protocol_id saved;
-    if (qa_net_read_u32(&reader)!=UINT32_C(0x4443514e) || qa_net_read_u32(&reader)!=1 ||
+    if (qa_net_read_u32(&reader)!=UINT32_C(0x4443514e) ||
         !qa_q1_read_protocol(&reader,false,&saved)) return qa_net_reader_fail(&reader,"Invalid NetQuake decoder continuation schema");
     uint8_t flags=qa_net_read_u8(&reader);
     if (reader.failed || saved.kind!=protocol.kind || saved.revision!=protocol.revision || saved.flags!=protocol.flags ||

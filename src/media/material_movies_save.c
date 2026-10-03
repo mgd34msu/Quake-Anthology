@@ -19,9 +19,8 @@ bool qa_material_movies_read(const qa_material_movies *movies, size_t index, qa_
 }
 static bool header(qa_source_save_io *io, size_t *count, size_t *capacity)
 {
-    uint8_t magic[4] = {'Q','M','M','R'}; uint32_t schema = 1;
+    uint8_t magic[4] = {'Q','M','M','R'};
     return qa_source_save_bytes(io, magic, 4) && !memcmp(magic, "QMMR", 4) &&
-        qa_source_save_u32(io, &schema) && schema == 1 &&
         qa_source_save_count(io, count, SIZE_MAX / sizeof(material_movie)) &&
         qa_source_save_count(io, capacity, SIZE_MAX / sizeof(material_movie)) && *count <= *capacity;
 }

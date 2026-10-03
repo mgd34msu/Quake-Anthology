@@ -12,7 +12,6 @@
 #include <string.h>
 
 typedef struct event_store {
-    uint32_t payload_version;
     application_event_record *builtin;
     application_q2_map_event_record *q2_map;
     qa_application_q3_map_event *q3_map;
@@ -76,23 +75,18 @@ static bool acquisition_text(qa_source_save_io *io, char **value)
     return true;
 }
 
-static bool signature(qa_source_save_io *io, uint32_t *payload_version)
+static bool signature(qa_source_save_io *io)
 {
     uint8_t magic[sizeof(event_magic)];
     memcpy(magic, event_magic, sizeof(magic));
-    uint32_t version = APPLICATION_EVENTS_SAVE_VERSION;
-    if (!qa_source_save_bytes(io, magic, sizeof(magic)) ||
-        !qa_source_save_u32(io, &version)) return false;
-    if (memcmp(magic, event_magic, sizeof(magic)) ||
-        (version != APPLICATION_EVENTS_SAVE_VERSION && version != 20 && version != 21))
-        return event_fail(io, QA_ERROR_FORMAT, "Unsupported application event schema");
-    *payload_version = version;
-    return true;
+    return qa_source_save_bytes(io, magic, sizeof(magic)) &&
+        (!memcmp(magic, event_magic, sizeof(magic)) ||
+         event_fail(io, QA_ERROR_FORMAT, "Invalid application event signature"));
 }
 
 static bool prefix(qa_source_save_io *io, event_store *store)
 {
-    if (!signature(io, &store->payload_version) ||
+    if (!signature(io) ||
         !qa_source_save_u64(io, &store->protocol_generation) ||
         !qa_source_save_count(io, &store->arena_block_size, SIZE_MAX)) return false;
     for (size_t i = 0; i < 5; ++i) {
@@ -569,31 +563,22 @@ static bool q3_map_field(qa_source_save_io *io, qa_application_q3_map_event *rec
     return true;
 }
 
-static bool resource_key_field(qa_source_save_io *io, uint32_t version,
+static bool resource_key_field(qa_source_save_io *io,
                                char key[QA_APPLICATION_RESOURCE_KEY_CAPACITY])
 {
-    size_t size = version < 22 ? 81 : QA_APPLICATION_RESOURCE_KEY_CAPACITY;
+    size_t size = QA_APPLICATION_RESOURCE_KEY_CAPACITY;
     return qa_source_save_bytes(io, key, size) &&
         (!key[size - 1] || event_fail(io, QA_ERROR_FORMAT, "Unterminated Source resource key"));
 }
 
-static bool armor_field(qa_source_save_io *io, uint32_t version, double *armor)
-{
-    if (version != 20) return qa_source_save_f64(io, armor);
-    float legacy = 0;
-    if (!qa_source_save_f32(io, &legacy)) return false;
-    *armor = legacy;
-    return true;
-}
-
-static bool view_field(qa_source_save_io *io, uint32_t version, qa_q2_player_view *view)
+static bool view_field(qa_source_save_io *io, qa_q2_player_view *view)
 {
     return qa_source_save_vec3(io, &view->angles) && qa_source_save_vec3(io, &view->offset) &&
         qa_source_save_vec3(io, &view->kick_angles) && qa_source_save_vec3(io, &view->gun_angles) &&
         qa_source_save_vec3(io, &view->gun_offset) && qa_source_save_f32(io, &view->blend.x) &&
         qa_source_save_f32(io, &view->blend.y) && qa_source_save_f32(io, &view->blend.z) &&
         qa_source_save_f32(io, &view->blend.w) && qa_source_save_f32(io, &view->fov) &&
-        qa_source_save_f32(io, &view->health) && armor_field(io, version, &view->armor) &&
+        qa_source_save_f32(io, &view->health) && qa_source_save_f64(io, &view->armor) &&
         qa_source_save_f32(io, &view->ammo) &&
         qa_source_save_string(io, &view->ammo_icon) && qa_source_save_string(io, &view->armor_icon) &&
         qa_source_save_i32(io, &view->ammo_count) && int_field(io, &view->score) &&
@@ -668,7 +653,7 @@ static bool q2_player_field(qa_source_save_io *io, event_store *store,
     if (!provider_field(io, &record->provider, true) || !qa_source_save_u64(io, &record->time_ns) ||
         !enum_field(io, &kind, QA_Q2_PLAYER_ALPHA) || !actor_field(io, &event->actor) ||
         !actor_field(io, &event->target) || !text_field(io, store, &event->text) ||
-        !text_field(io, store, &event->skin) || !view_field(io, store->payload_version, &event->view)) return false;
+        !text_field(io, store, &event->skin) || !view_field(io, &event->view)) return false;
     event->kind = (qa_q2_player_event_kind)kind;
     if (!player_arrays(io, store, event) || !vector_field(io, &event->origin) ||
         !vector_field(io, &event->direction) || !qa_source_save_u64(io, &event->time_ns) ||
@@ -744,7 +729,7 @@ static bool protocol_field(qa_source_save_io *io, event_store *store,
         if (!qa_source_save_count(io, &resource.record_ordinal, SIZE_MAX) ||
             !enum_field(io, &kind, QA_NATIVE_HOST_IMAGE) || !qa_source_save_u32(io, &resource.source_index) ||
             !text_field(io, store, &resource.name) ||
-            !resource_key_field(io, store->payload_version, resource.resource_key) ||
+            !resource_key_field(io, resource.resource_key) ||
             !qa_source_save_u64(io, &resource.resource_custody)) return false;
         resource.kind = (qa_native_host_resource_kind)kind;
         if (!resource.name || resource.record_ordinal >= size || resource.resource_key[QA_APPLICATION_RESOURCE_KEY_CAPACITY - 1] ||
@@ -1122,7 +1107,7 @@ static bool normalized_rows(qa_source_save_io *io, event_store *store)
             !qa_source_save_string(io, &row->path) || !qa_source_save_u64(io, &pool) ||
             !qa_source_save_u64(io, &resource) || !qa_source_save_u64(io, &view) ||
             !pool || !resource || !view || !row->content || !row->path ||
-            !resource_key_field(io, store->payload_version, row->id) || row->id[QA_APPLICATION_RESOURCE_KEY_CAPACITY - 1] ||
+            !resource_key_field(io, row->id) || row->id[QA_APPLICATION_RESOURCE_KEY_CAPACITY - 1] ||
             strncmp(row->id, "resource:unified:", sizeof("resource:unified:") - 1))
             return event_fail(io, QA_ERROR_FORMAT, "Source resource dictionary has invalid ownership");
         const qa_vfs *files = io->direction == QA_SOURCE_SAVE_READ ?

@@ -187,7 +187,7 @@ bool qa_kex_lan_checkpoint(const qa_kex_lan *l, qa_buffer *out, qa_error *e)
     if (ok && !bytes) { qa_error_set(e, QA_ERROR_MEMORY, 0, "Encoding KEX LAN continuation"); ok = false; }
     qa_net_writer w;
     qa_net_writer_init(&w, bytes, ok ? capacity : 0, e);
-    ok = ok && qa_net_write_data(&w, "QAKL", 4) && qa_net_write_u32(&w, 1) &&
+    ok = ok && qa_net_write_data(&w, "QAKL", 4) &&
         qa_kex_save_address_write(&w, &l->local_address) && qa_net_write_u8(&w, l->options.host) &&
         qa_net_write_u8(&w, l->options.max_players) && qa_net_write_u8(&w, l->options.local_players) &&
         qa_net_write_string(&w, l->name) && qa_kex_save_address_write(&w, &l->options.server) &&
@@ -216,7 +216,7 @@ bool qa_kex_lan_checkpoint(const qa_kex_lan *l, qa_buffer *out, qa_error *e)
 
 bool qa_kex_lan_restore(qa_bytes bytes, qa_kex_lan **out, qa_error *e)
 {
-    if (!out || !bytes.data || bytes.size < 32 || memcmp(bytes.data, "QAKL", 4)) {
+    if (!out || !bytes.data || bytes.size < 28 || memcmp(bytes.data, "QAKL", 4)) {
         qa_error_set(e, QA_ERROR_FORMAT, 0, "Invalid KEX LAN continuation envelope"); return false;
     }
     qa_kex_lan *l = calloc(1, sizeof(*l));
@@ -225,7 +225,7 @@ bool qa_kex_lan_restore(qa_bytes bytes, qa_kex_lan **out, qa_error *e)
     qa_net_reader r;
     qa_net_reader_init(&r, bytes, e);
     r.bit = 32;
-    bool ok = qa_net_read_u32(&r) == 1 && qa_kex_save_address_read(&r, &l->local_address);
+    bool ok = qa_kex_save_address_read(&r, &l->local_address);
     uint8_t host = qa_net_read_u8(&r);
     l->options.host = host != 0;
     l->options.max_players = qa_net_read_u8(&r);

@@ -44,10 +44,9 @@ bool frontend_equipment_q3_topology_checkpoint(const qa_frontend *frontend, qa_b
     if (!frontend || !frontend->application || frontend->stepping || !out || out->data || out->size ||
         (frontend->equipment_q3 && frontend->equipment_q3->admitting))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Selected Q3 topology requires its idle actual frontend capture");
-    qa_source_save_io io = {0}; uint8_t magic[4] = {'Q','F','Q','T'}; uint32_t schema = 1;
-    size_t count = frontend_equipment_q3_count(frontend);
+    qa_source_save_io io = {0}; uint8_t magic[4] = {'Q','F','Q','T'}; size_t count = frontend_equipment_q3_count(frontend);
     bool ok = qa_source_save_writer(&io, qa_application_session(frontend->application), error) &&
-        qa_source_save_bytes(&io, magic, 4) && qa_source_save_u32(&io, &schema) && qa_source_save_count(&io, &count, SIZE_MAX);
+        qa_source_save_bytes(&io, magic, 4) && qa_source_save_count(&io, &count, SIZE_MAX);
     for (const equipment_q3_content *owner = frontend->equipment_q3 ? frontend->equipment_q3->contents : NULL;
         ok && owner; owner = owner->next) {
         size_t visual = 0; frontend_visual_owner_view actual;
@@ -71,10 +70,10 @@ bool frontend_equipment_q3_prepare_restored(qa_frontend *frontend, qa_bytes byte
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Selected Q3 topology import requires an empty candidate owner");
     frontend_equipment_q3 *equipment = calloc(1, sizeof(*equipment));
     if (!equipment) return frontend_fail(error, QA_ERROR_MEMORY, "Preparing selected Q3 topology owner");
-    qa_source_save_io io = {0}; uint8_t magic[4]; uint32_t schema = 0; size_t count = 0;
+    qa_source_save_io io = {0}; uint8_t magic[4]; size_t count = 0;
     bool ok = qa_source_save_reader(&io, qa_application_session(frontend->application), bytes, error) &&
         qa_source_save_bytes(&io, magic, 4) && !memcmp(magic, "QFQT", 4) &&
-        qa_source_save_u32(&io, &schema) && schema == 1 && qa_source_save_count(&io, &count, bytes.size / 14);
+        qa_source_save_count(&io, &count, bytes.size / 14);
     for (size_t i = 0; ok && i < count; ++i) {
         equipment_q3_content *owner = calloc(1, sizeof(*owner));
         if (!owner) { ok = frontend_fail(error, QA_ERROR_MEMORY, "Preparing actual selected Q3 registry row"); break; }
@@ -154,11 +153,10 @@ bool frontend_equipment_q3_checkpoint(const qa_frontend *frontend, size_t ordina
     q3n_selected_media_refs refs = media_refs(graph); qa_buffer media = {0}, weapons = {0};
     bool ok = q3n_selected_media_checkpoint(owner->view.media, &refs, &media, error) &&
         q3n_weapons_checkpoint(owner->weapons, &weapons, error);
-    qa_source_save_io io = {0}; uint8_t magic[4] = {'Q','F','Q','S'}; uint32_t schema = 1;
-    qa_actor_owner provider = owner->view.provider; uint32_t product = owner->view.product; size_t count = 0;
+    qa_source_save_io io = {0}; uint8_t magic[4] = {'Q','F','Q','S'}; qa_actor_owner provider = owner->view.provider; uint32_t product = owner->view.product; size_t count = 0;
     for (const frontend_equipment_q3_presenter *row = owner->presenters; row; row = row->next) ++count;
     ok = ok && qa_source_save_writer(&io, qa_application_session(frontend->application), error) &&
-        qa_source_save_bytes(&io, magic, 4) && qa_source_save_u32(&io, &schema) && provider_fields(&io, &provider) &&
+        qa_source_save_bytes(&io, magic, 4) && provider_fields(&io, &provider) &&
         qa_source_save_u32(&io, &product) && blob(&io, &media, NULL) && blob(&io, &weapons, NULL) &&
         qa_source_save_count(&io, &count, SIZE_MAX);
     for (const frontend_equipment_q3_presenter *row = owner->presenters; ok && row; row = row->next) {
@@ -174,11 +172,10 @@ bool frontend_equipment_q3_restore(qa_frontend *frontend, size_t ordinal, qa_byt
     qa_application_content_graph *graph = frontend ? qa_application_content_graph_read(frontend->application) : NULL;
     if (!quiet(owner) || !owner->restoring || owner->presenters || !graph)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Selected Q3 continuation import requires its empty actual row");
-    qa_source_save_io io = {0}; uint8_t magic[4]; uint32_t schema = 0, product = 0;
+    qa_source_save_io io = {0}; uint8_t magic[4]; uint32_t product = 0;
     qa_actor_owner provider = 0; qa_bytes media = {0}, weapons = {0}; size_t count = 0;
     bool ok = qa_source_save_reader(&io, qa_application_session(frontend->application), bytes, error) &&
-        qa_source_save_bytes(&io, magic, 4) && !memcmp(magic, "QFQS", 4) && qa_source_save_u32(&io, &schema) && schema == 1 &&
-        provider_fields(&io, &provider) && provider == owner->view.provider &&
+        qa_source_save_bytes(&io, magic, 4) && !memcmp(magic, "QFQS", 4) && provider_fields(&io, &provider) && provider == owner->view.provider &&
         qa_source_save_u32(&io, &product) && product == (uint32_t)owner->view.product &&
         blob(&io, NULL, &media) && blob(&io, NULL, &weapons) && qa_source_save_count(&io, &count, bytes.size / 64);
     frontend_equipment_q3_presenter *head = NULL, *tail = NULL;

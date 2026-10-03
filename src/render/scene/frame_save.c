@@ -196,9 +196,9 @@ static bool mesh(qa_source_save_io *io, qa_scene_frame *frame, const qa_scene_fr
     return true;
 }
 static bool draw(qa_source_save_io *io, qa_scene_frame *frame, const qa_scene_frame_checkpoint_refs *refs,
-    uint32_t schema, qa_scene_draw *value)
+    qa_scene_draw *value)
 {
-    if (schema>=10) {
+    {
         FIELD(u32,value,source_vertex_storage);
         if (value->source_vertex_storage && value->source_vertex_storage!=1000) return false;
     }
@@ -225,28 +225,25 @@ static bool draw(qa_source_save_io *io, qa_scene_frame *frame, const qa_scene_fr
     }
     if (!image(io,frame,&value->shadow_atlas)) return false;
     FIELD(f32,value,shadow_near); FIELD(f32,value,shade_scale); FIELD(bool,value,model_shade_scale); FIELD(bool,value,luminance_alpha);
-    if (schema>=3) { FIELD(bool,value,source_primitives); }
-    if (schema>=5) {
+    { FIELD(bool,value,source_primitives); }
+    {
         ENUM(qa_scene_source_direct,value,source_direct,QA_SOURCE_DIRECT_IMAGE_GRID);
         FIELD(bool,value,source_retain_depth_range);
     }
-    if (schema>=6) {
+    {
         FIELD(bool,value,source_retain_polygon_offset);
         FIELD(bool,value,source_stage_state);
     }
-    if (schema>=8) { FIELD(bool,value,source_arrays); }
+    { FIELD(bool,value,source_arrays); }
     if (value->source_vertex_storage && !value->source_arrays) return false;
     FIELD(u64,value,sort_key); FIELD(u32,value,entity); FIELD(u32,value,fog_index); FIELD(u32,value,light_mask); return true;
 }
-static bool command(qa_source_save_io *io, qa_scene_frame *frame, const qa_scene_frame_checkpoint_refs *refs,
-    uint32_t schema,qa_scene_command *value)
+static bool command(qa_source_save_io *io, qa_scene_frame *frame, const qa_scene_frame_checkpoint_refs *refs,qa_scene_command *value)
 {
     ENUM(qa_scene_command_kind,value,kind,QA_SCENE_COMMAND_PREBLEND_GAMMA);
-    if (schema<4 && value->kind==QA_SCENE_COMMAND_OUTPUT_DOMAIN) return false;
-    if (schema<9 && value->kind==QA_SCENE_COMMAND_PREBLEND_GAMMA) return false;
     switch (value->kind) {
     case QA_SCENE_COMMAND_VIEW: return view(io,&value->data.view);
-    case QA_SCENE_COMMAND_DRAW: return draw(io,frame,refs,schema,&value->data.draw);
+    case QA_SCENE_COMMAND_DRAW: return draw(io,frame,refs,&value->data.draw);
     case QA_SCENE_COMMAND_TARGET:
         return image(io,frame,&value->data.target.image) && (!value->data.target.image || value->data.target.image->kind==QA_SCENE_DEPTH32F);
     case QA_SCENE_COMMAND_OPACITY_BEGIN: return qa_source_save_f32(io,&value->data.opacity.value);
@@ -297,27 +294,21 @@ static bool groups(qa_source_save_io *io, qa_scene_frame *frame, const qa_scene_
 }
 static bool fields(qa_source_save_io *io, qa_scene_frame *frame, uint64_t qualified_owner, const qa_scene_frame_checkpoint_refs *refs)
 {
-    uint8_t magic[4]={'Q','F','R','M'}; uint32_t schema=11;
-    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QFRM",4) || !qa_source_save_u32(io,&schema) ||
-        (schema<2 || schema>11)) return false;
+    uint8_t magic[4]={'Q','F','R','M'}; if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QFRM",4)) return false;
     FIELD(u64,frame,owner); FIELD(u64,frame,sequence);
-    if (schema>=3) {
+    {
         FIELD(bool,frame,source_backend); FIELD(bool,frame,source_skip_backend);
         FIELD(bool,frame,source_clear_draw_buffer);
         if (!frame->source_backend && (frame->source_skip_backend || frame->source_clear_draw_buffer)) return false;
-    } else {
-        frame->source_backend=false; frame->source_skip_backend=false; frame->source_clear_draw_buffer=false;
-    }
-    if (schema>=7) {
+    } {
         FIELD(bool,frame,source_begin_frame); FIELD(i32,frame,source_stereo_frame);
         if (frame->source_stereo_frame<0 || frame->source_stereo_frame>2 ||
             (frame->source_begin_frame ? !frame->source_backend : frame->source_stereo_frame!=0)) return false;
     }
-    if (schema>=11) {
+    {
         FIELD(bool,frame,source_front_buffer);
         if (frame->source_front_buffer && !frame->source_backend) return false;
-    } else frame->source_front_buffer=false;
-    if (frame->owner!=qualified_owner || !owners(io,frame,refs)) return false;
+    } if (frame->owner!=qualified_owner || !owners(io,frame,refs)) return false;
     bool reading=io->direction==QA_SOURCE_SAVE_READ; size_t count=frame->command_count;
     if (!qa_source_save_count(io,&count,reading?io->input.size/4:SIZE_MAX)) return false;
     if (reading) {
@@ -326,7 +317,7 @@ static bool fields(qa_source_save_io *io, qa_scene_frame *frame, uint64_t qualif
     }
     for (size_t i=0;i<count;++i) {
         qa_scene_command value=reading?(qa_scene_command){0}:frame->commands[i];
-        if (!command(io,frame,refs,schema,&value)) return false;
+        if (!command(io,frame,refs,&value)) return false;
         if (reading) frame->commands[i]=value;
     }
     return groups(io,frame,refs);

@@ -75,9 +75,9 @@ done:
 }
 static bool fields(qa_source_save_io *io, bool *resolved, qa_net_address *address)
 {
-    uint32_t magic = UINT32_C(0x41433351), version = 1;
+    uint32_t magic = UINT32_C(0x41433351);
     if (!qa_source_save_u32(io, &magic) || magic != UINT32_C(0x41433351) ||
-        !qa_source_save_u32(io, &version) || version != 1 || !qa_source_save_bool(io, resolved)) return false;
+        !qa_source_save_bool(io, resolved)) return false;
     if (!*resolved) return true;
     address->kind = QA_NET_IPV4;
     if (!qa_source_save_u16(io, &address->port)) return false;

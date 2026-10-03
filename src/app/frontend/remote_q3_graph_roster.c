@@ -40,9 +40,7 @@ static bool blob(qa_source_save_io *io,qa_bytes *value)
 }
 static bool header(qa_source_save_io *io,size_t *decoded,bool *initial)
 {
-    uint8_t magic[4]={'Q','R','G','O'}; uint32_t version=1;
-    return qa_source_save_bytes(io,magic,4) && !memcmp(magic,"QRGO",4) &&
-        qa_source_save_u32(io,&version) && version==1 &&
+    uint8_t magic[4]={'Q','R','G','O'}; return qa_source_save_bytes(io,magic,4) && !memcmp(magic,"QRGO",4) &&
         qa_source_save_count(io,decoded,SIZE_MAX/sizeof(graph_parent)-1) && qa_source_save_bool(io,initial);
 }
 static bool shape(const graph_parent *parent,bool decoded)

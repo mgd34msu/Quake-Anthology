@@ -45,11 +45,10 @@ static bool fields(qa_source_save_io *io,frontend_system_cinematic *row,uint32_t
     const frontend_system_cinematic_refs *refs)
 {
     bool reading=io->direction==QA_SOURCE_SAVE_READ;
-    uint8_t magic[4]={'Q','S','C','N'}; uint32_t schema=2,phase=row->phase,reason=row->ending_reason;
+    uint8_t magic[4]={'Q','S','C','N'}; uint32_t phase=row->phase,reason=row->ending_reason;
     frontend_system_cinematic_identity id=row->source.identity;
     bool numeric=row->numeric_source!=NULL;
-    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QSCN",4) || !qa_source_save_u32(io,&schema) || schema!=2 ||
-        !qa_source_save_bool(io,&numeric) || !qa_source_save_i32(io,&row->numeric_handle) ||
+    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QSCN",4) || !qa_source_save_bool(io,&numeric) || !qa_source_save_i32(io,&row->numeric_handle) ||
         (numeric?(row->numeric_handle<0 || row->numeric_handle>=16):row->numeric_handle!=-1) ||
         !identity(io,&id) || !qa_source_save_u32(io,&phase) || phase>SYSTEM_STOPPED ||
         !qa_source_save_bool(io,&row->screen) || !qa_source_save_bool(io,&row->loop) ||

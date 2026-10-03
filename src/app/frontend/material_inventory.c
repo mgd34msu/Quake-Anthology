@@ -408,9 +408,8 @@ static bool metadata(qa_source_save_io *io,qa_frontend *f,const material_owner *
 }
 static bool header(qa_source_save_io *io,size_t count,bool *order)
 {
-    uint8_t magic[4]={'Q','F','M','A'}; uint32_t version=5; size_t saved=count;
-    return qa_source_save_bytes(io,magic,4) && !memcmp(magic,"QFMA",4) && qa_source_save_u32(io,&version) && version==5 &&
-        qa_source_save_count(io,&saved,SIZE_MAX) && saved==count && qa_source_save_bool(io,order) && (!count || *order);
+    uint8_t magic[4]={'Q','F','M','A'}; size_t saved=count;
+    return qa_source_save_bytes(io,magic,4) && !memcmp(magic,"QFMA",4) && qa_source_save_count(io,&saved,SIZE_MAX) && saved==count && qa_source_save_bool(io,order) && (!count || *order);
 }
 static bool write_blob(qa_source_save_io *io,const qa_buffer *buffer)
 {

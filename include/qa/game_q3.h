@@ -606,7 +606,7 @@ typedef struct qa_q3_saved_configstring {
 } qa_q3_saved_configstring;
 typedef struct qa_q3_checkpoint {
     qa_q3_source_memory memory;
-    uint32_t version, random_state, death_animation, body_queue_index;
+    uint32_t random_state, death_animation, body_queue_index;
     uint32_t max_clients;
     uint32_t source_count;
     bool new_session;

@@ -199,10 +199,8 @@ bool frontend_equipment_topology_checkpoint(const qa_frontend *frontend, qa_buff
     qa_application_content_graph *graph = qa_application_content_graph_read(frontend->application);
     if (!graph) return frontend_fail(error, QA_ERROR_ARGUMENT, "Equipment capture requires the leased actual content graph");
     qa_source_save_io io = {0}; size_t count = frontend_equipment_media_count(frontend);
-    uint8_t magic[4] = {'Q','F','E','T'}; uint32_t schema = 5;
-    bool ok = qa_source_save_writer(&io, qa_application_session(frontend->application), error) &&
-        qa_source_save_bytes(&io, magic, sizeof(magic)) && qa_source_save_u32(&io, &schema) &&
-        qa_source_save_count(&io, &count, SIZE_MAX);
+    uint8_t magic[4] = {'Q','F','E','T'}; bool ok = qa_source_save_writer(&io, qa_application_session(frontend->application), error) &&
+        qa_source_save_bytes(&io, magic, sizeof(magic)) && qa_source_save_count(&io, &count, SIZE_MAX);
     for (const frontend_equipment_media *row = frontend->equipment ? frontend->equipment->media : NULL;
             ok && row; row = row->next) {
         frontend_equipment_media saved = *row;
@@ -226,10 +224,9 @@ bool frontend_equipment_prepare_restored(qa_frontend *frontend, qa_bytes bytes, 
     if (!graph) return frontend_fail(error, QA_ERROR_ARGUMENT, "Equipment import requires the restored content graph");
     frontend_equipment *owner = calloc(1, sizeof(*owner));
     if (!owner) return frontend_fail(error, QA_ERROR_MEMORY, "Preparing actual equipment media owner");
-    qa_source_save_io io = {0}; size_t count = 0; uint8_t magic[4]; uint32_t schema = 0;
-    bool ok = qa_source_save_reader(&io, qa_application_session(frontend->application), bytes, error) &&
+    qa_source_save_io io = {0}; size_t count = 0; uint8_t magic[4]; bool ok = qa_source_save_reader(&io, qa_application_session(frontend->application), bytes, error) &&
         qa_source_save_bytes(&io, magic, sizeof(magic)) && !memcmp(magic, "QFET", sizeof(magic)) &&
-        qa_source_save_u32(&io, &schema) && schema == 5 && qa_source_save_count(&io, &count, bytes.size / 32);
+        qa_source_save_count(&io, &count, bytes.size / 32);
     for (size_t i = 0; ok && i < count; ++i) {
         frontend_equipment_media *row = calloc(1, sizeof(*row));
         if (!row) { ok = frontend_fail(error, QA_ERROR_MEMORY, "Preparing restored physical equipment media row"); break; }

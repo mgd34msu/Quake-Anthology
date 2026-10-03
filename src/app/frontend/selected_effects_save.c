@@ -71,12 +71,10 @@ bool frontend_selected_effects_topology_checkpoint(const qa_frontend *frontend, 
     if (!frontend || frontend->stepping || !graph || !out || out->data || out->size ||
         (frontend->selected_effects && frontend->selected_effects->busy))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Selected effect topology requires its actual retained graph");
-    qa_source_save_io io = {0}; uint8_t magic[4] = {'Q','F','E','X'}; uint32_t schema = 1;
-    bool present = frontend->selected_effects != NULL;
+    qa_source_save_io io = {0}; uint8_t magic[4] = {'Q','F','E','X'}; bool present = frontend->selected_effects != NULL;
     size_t count = frontend_selected_effects_count(frontend);
     bool okay = qa_source_save_writer(&io, qa_application_session(frontend->application), error) &&
-        qa_source_save_bytes(&io, magic, 4) && qa_source_save_u32(&io, &schema) &&
-        qa_source_save_bool(&io, &present) && qa_source_save_count(&io, &count, SIZE_MAX);
+        qa_source_save_bytes(&io, magic, 4) && qa_source_save_bool(&io, &present) && qa_source_save_count(&io, &count, SIZE_MAX);
     size_t ordinal = 0;
     for (const frontend_selected_effects_group *group = frontend->selected_effects ? frontend->selected_effects->groups : NULL;
         okay && group; group = group->next, ++ordinal) {
@@ -108,11 +106,10 @@ bool frontend_selected_effects_prepare_restored(qa_frontend *frontend, qa_bytes 
     qa_application_content_graph *graph = frontend ? qa_application_content_graph_read(frontend->application) : NULL;
     if (!frontend || frontend->stepping || frontend->selected_effects || !frontend->source_restoring || !graph)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Selected effect topology needs its empty detached frontend");
-    qa_source_save_io io = {0}; uint8_t magic[4]; uint32_t schema = 0; bool present = false; size_t count = 0;
+    qa_source_save_io io = {0}; uint8_t magic[4]; bool present = false; size_t count = 0;
     effects_plan *plans = NULL;
     bool okay = qa_source_save_reader(&io, qa_application_session(frontend->application), bytes, error) &&
-        qa_source_save_bytes(&io, magic, 4) && !memcmp(magic, "QFEX", 4) && qa_source_save_u32(&io, &schema) && schema == 1 &&
-        qa_source_save_bool(&io, &present) && qa_source_save_count(&io, &count, bytes.size / 64) && (present || !count);
+        qa_source_save_bytes(&io, magic, 4) && !memcmp(magic, "QFEX", 4) && qa_source_save_bool(&io, &present) && qa_source_save_count(&io, &count, bytes.size / 64) && (present || !count);
     if (okay && count) {
         plans = calloc(count, sizeof(*plans));
         if (!plans) okay = frontend_fail(error, QA_ERROR_MEMORY, "Decoding actual selected effect owner topology");
@@ -195,10 +192,8 @@ static bool same_ref(const qa_q3_ref_entity *left, const qa_q3_ref_entity *right
 }
 static bool private_fields(qa_source_save_io *io, frontend_selected_effects_group *group)
 {
-    uint8_t magic[4] = {'Q','F','E','P'}; uint32_t schema = 1;
-    uint64_t identity = group->view.identity, publication = group->publication_generation, map = group->map_revision;
-    if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "QFEP", 4) || !qa_source_save_u32(io, &schema) || schema != 1 ||
-        !qa_source_save_u64(io, &identity) || identity != group->view.identity ||
+    uint8_t magic[4] = {'Q','F','E','P'}; uint64_t identity = group->view.identity, publication = group->publication_generation, map = group->map_revision;
+    if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "QFEP", 4) || !qa_source_save_u64(io, &identity) || identity != group->view.identity ||
         !qa_source_save_u64(io, &publication) || publication != group->publication_generation ||
         !qa_source_save_u64(io, &map) || map != group->map_revision ||
         !qa_source_save_i32(io, &group->time) || !qa_source_save_i32(io, &group->previous_time) ||

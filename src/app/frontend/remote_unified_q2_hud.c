@@ -941,9 +941,8 @@ static bool record_fields(qa_source_save_io *io, frontend_unified_q2_rr_hud *o,
 }
 static bool fields(qa_source_save_io *io, frontend_unified_q2_rr_hud *o, const frontend_unified_q2_refs *refs)
 {
-    bool read=io->direction==QA_SOURCE_SAVE_READ; uint8_t magic[4]={'Q','U','R','H'}; uint32_t version=2;
-    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QURH",4) ||
-        !qa_source_save_u32(io,&version) || version!=2 || !qa_source_save_f64(io,&o->seconds) ||
+    bool read=io->direction==QA_SOURCE_SAVE_READ; uint8_t magic[4]={'Q','U','R','H'}; if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QURH",4) ||
+        !qa_source_save_f64(io,&o->seconds) ||
         !isfinite(o->seconds) || o->seconds<0 || !document_fields(io,&o->frame,QA_UNIFIED_FRAME_DOCUMENT)) return false;
     if (o->frame) { double actual_seconds;
         if (!frame_clock(o->frame,&actual_seconds,io->error) || actual_seconds!=o->seconds) return false;

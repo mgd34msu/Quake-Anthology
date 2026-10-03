@@ -26,9 +26,7 @@ static bool blob(qa_source_save_io *io, qa_bytes *value) {
 }
 static bool fields(qa_source_save_io *io, progression_record *record) {
     uint8_t magic[4] = {'Q','A','P','R'};
-    uint32_t version = 2;
     return qa_source_save_bytes(io, magic, sizeof(magic)) && !memcmp(magic, "QAPR", 4) &&
-           qa_source_save_u32(io, &version) && version == 2 &&
            qa_source_save_bool(io, &record->rankings_present) && record->rankings_present &&
            qa_source_save_bool(io, &record->progress_present) &&
            qa_source_save_bool(io, &record->configured) &&

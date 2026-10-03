@@ -237,9 +237,8 @@ static bool text_fields(qa_source_save_io *io,char *text,size_t capacity)
 }
 static bool fields(qa_source_save_io *io,const frontend_startup_rotation *o,size_t *selected,char draft[512],char status[512])
 {
-    uint8_t magic[4]={'Q','R','O','M'}; uint32_t version=1,physical=o->seat->id; uint64_t menu=o->menu;
-    return qa_source_save_bytes(io,magic,4) && !memcmp(magic,"QROM",4) && qa_source_save_u32(io,&version) && version==1 &&
-        qa_source_save_u32(io,&physical) && physical==o->seat->id && qa_source_save_u64(io,&menu) && menu==o->menu &&
+    uint8_t magic[4]={'Q','R','O','M'}; uint32_t physical=o->seat->id; uint64_t menu=o->menu;
+    return qa_source_save_bytes(io,magic,4) && !memcmp(magic,"QROM",4) && qa_source_save_u32(io,&physical) && physical==o->seat->id && qa_source_save_u64(io,&menu) && menu==o->menu &&
         qa_source_save_count(io,selected,SIZE_MAX) && text_fields(io,draft,512) && text_fields(io,status,512);
 }
 bool frontend_startup_rotation_checkpoint(const frontend_startup_rotation *o,qa_buffer *out,qa_error *e)

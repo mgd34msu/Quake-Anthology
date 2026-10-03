@@ -250,10 +250,9 @@ static bool context_fields(qa_source_save_io *io, qa_command_context *context, c
 }
 static bool fields(qa_source_save_io *io, frontend_save_commands *owner)
 {
-    uint8_t magic[4] = {'Q','F','S','C'}; uint32_t version = 1;
-    uint64_t registry = qa_actors_identity(qa_session_actors(io->session));
+    uint8_t magic[4] = {'Q','F','S','C'}; uint64_t registry = qa_actors_identity(qa_session_actors(io->session));
     bool ok = qa_source_save_bytes(io, magic, 4) && !memcmp(magic, "QFSC", 4)
-        && qa_source_save_u32(io, &version) && version == 1 && root_fields(io, owner)
+        && root_fields(io, owner)
         && qa_source_save_u64(io, &registry) && registry
         && qa_source_save_u64(io, &owner->next_nonce) && owner->next_nonce
         && qa_source_save_bool(io, &owner->pending);

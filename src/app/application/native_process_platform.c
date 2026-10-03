@@ -931,10 +931,9 @@ bool qa_native_process_platform_program_files(qa_native_process_platform *owner,
 static bool platform_fields(qa_source_save_io *io, const qa_native_process_platform *owner)
 {
     uint8_t magic[4] = {'Q','N','P','L'};
-    uint32_t version = 4; uint64_t id = owner->id; int64_t frequency = owner->frequency;
+    uint64_t id = owner->id; int64_t frequency = owner->frequency;
     bool terminal = owner->terminal;
     if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "QNPL", 4) ||
-        !qa_source_save_u32(io, &version) || version != 4 ||
         !qa_source_save_u64(io, &id) || id != owner->id ||
         !qa_source_save_i64(io, &frequency) || frequency != owner->frequency ||
         !qa_source_save_bool(io, &terminal) || terminal != owner->terminal) return false;

@@ -446,9 +446,9 @@ bool q3components_scenes_checkpoint(component_game_row *game,qa_buffer *out,qa_e
         return application_fail(e,QA_ERROR_ARGUMENT,"Component scene capture requires returned physical children");
     size_t count=0;
     for(component_scene_row *row=game->scenes;row;row=row->next) ++count;
-    qa_source_save_io io={0}; uint8_t magic[4]={'Q','G','C','S'}; uint32_t version=2;
+    qa_source_save_io io={0}; uint8_t magic[4]={'Q','G','C','S'};
     bool ok=qa_source_save_writer(&io,game->roster->options.application->session,e)&&qa_source_save_bytes(&io,magic,4)&&
-        qa_source_save_u32(&io,&version)&&qa_source_save_count(&io,&count,UINT32_MAX);
+        qa_source_save_count(&io,&count,UINT32_MAX);
     for(component_scene_row *row=game->scenes;ok&&row;row=row->next) {
         component_scene_row saved=*row; saved.saved_scene=saved.saved_cvars=saved.saved_console=(qa_buffer){0};
         ok=row->initialized&&!row->restore_pending&&application_q3_scene_checkpoint(row->scene,&saved.saved_scene,e)&&
@@ -462,9 +462,9 @@ bool q3components_scenes_checkpoint(component_game_row *game,qa_buffer *out,qa_e
 bool q3components_scenes_saved_read(component_game_row *game,qa_bytes bytes,qa_error *e)
 {
     if(!game||game->scenes) return application_fail(e,QA_ERROR_ARGUMENT,"Component scene topology requires an empty actual roster");
-    qa_source_save_io io={0}; uint8_t magic[4]={0}; uint32_t version=0; size_t count=0;
+    qa_source_save_io io={0}; uint8_t magic[4]={0}; size_t count=0;
     bool ok=qa_source_save_reader(&io,game->roster->options.application->session,bytes,e)&&qa_source_save_bytes(&io,magic,4)&&
-        !memcmp(magic,"QGCS",4)&&qa_source_save_u32(&io,&version)&&version==2&&qa_source_save_count(&io,&count,UINT32_MAX);
+        !memcmp(magic,"QGCS",4)&&qa_source_save_count(&io,&count,UINT32_MAX);
     component_scene_row **tail=&game->scenes;
     for(size_t i=0;ok&&i<count;++i) {
         component_scene_row *row=calloc(1,sizeof(*row));

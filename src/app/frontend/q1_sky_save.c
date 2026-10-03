@@ -91,9 +91,7 @@ static bool selection_fields(qa_source_save_io *io, frontend_q1_sky *owner, fron
 static bool fields(qa_source_save_io *io, frontend_q1_sky *owner, frontend_scene_namespace *space)
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ, map = owner->map != NULL;
-    uint8_t magic[4] = {'Q','F','Q','S'}; uint32_t schema = 1;
-    if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "QFQS", 4) || !qa_source_save_u32(io, &schema) || schema != 1 ||
-        !qa_source_save_bool(io, &map) || !qa_source_save_u64(io, &owner->next_sequence) ||
+    uint8_t magic[4] = {'Q','F','Q','S'}; if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "QFQS", 4) || !qa_source_save_bool(io, &map) || !qa_source_save_u64(io, &owner->next_sequence) ||
         !qa_source_save_u64(io, &owner->fog_modification) || !qa_source_save_f32(io, &owner->fog) || !isfinite(owner->fog) ||
         !qa_source_save_bool(io, &owner->map_fog) || !qa_source_save_bool(io, &owner->q1_map) ||
         !qa_source_save_u64(io, &owner->map_revision)) return false;

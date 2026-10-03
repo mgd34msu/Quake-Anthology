@@ -227,9 +227,9 @@ static bool choices(qa_source_save_io *io, qa_launch_draft *draft, const qa_acto
 bool qa_launch_draft_checkpoint(const qa_launch_draft *draft, const qa_actor_registry *registry, qa_buffer *out, qa_error *error)
 {
     if (!draft || !draft->catalog || !out) return fail(error,"Draft capture requires its actual private owner");
-    qa_source_save_io io; uint8_t magic[4]={'Q','L','D','R'}; uint32_t schema=3; qa_launch_draft saved=*draft;
+    qa_source_save_io io; uint8_t magic[4]={'Q','L','D','R'}; qa_launch_draft saved=*draft;
     if (!qa_source_save_writer(&io,NULL,error)) return false;
-    bool ok=qa_source_save_bytes(&io,magic,4) && qa_source_save_u32(&io,&schema) && dictionary(&io,&saved) &&
+    bool ok=qa_source_save_bytes(&io,magic,4) && dictionary(&io,&saved) &&
         choices(&io,&saved,registry) && qa_source_save_finish(&io,out);
     if (!ok && error && error->code==QA_OK) fail(error,"Unqualified private draft state");
     qa_source_save_dispose(&io); return ok;
@@ -239,9 +239,9 @@ bool qa_launch_draft_restore(qa_catalog *catalog, const qa_actor_registry *regis
     if (!catalog || !out || *out) return fail(error,"Draft restore requires a qualified catalog and empty output");
     qa_launch_draft *draft=NULL;
     if (!launch_empty(catalog,&draft,error)) return false;
-    qa_source_save_io io; uint8_t magic[4]; uint32_t schema=0;
+    qa_source_save_io io; uint8_t magic[4];
     if (!qa_source_save_reader(&io,NULL,bytes,error)) { qa_launch_draft_destroy(draft); return false; }
-    bool ok=qa_source_save_bytes(&io,magic,4) && !memcmp(magic,"QLDR",4) && qa_source_save_u32(&io,&schema) && schema==3 &&
+    bool ok=qa_source_save_bytes(&io,magic,4) && !memcmp(magic,"QLDR",4) &&
         dictionary(&io,draft) && choices(&io,draft,registry) && qa_source_save_finish(&io,NULL);
     if (ok) *out=draft;
     else { qa_launch_draft_destroy(draft); if (error && error->code==QA_OK) fail(error,"Invalid or unqualified private draft continuation"); }

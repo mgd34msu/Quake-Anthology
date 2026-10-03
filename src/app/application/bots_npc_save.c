@@ -161,9 +161,8 @@ static bool actor_fields(qa_source_save_io *io,application_bots_npc *owner,npc_a
 }
 static bool fields(qa_source_save_io *io,application_provider *source,application_bots_npc **value)
 {
-    uint8_t magic[8]={'Q','A','N','P','C',0,0,0};uint32_t version=2;
-    if(!qa_source_save_bytes(io,magic,8) || memcmp(magic,"QANPC\0\0\0",8) ||
-       !qa_source_save_u32(io,&version) || version!=2) return fail(io,"Invalid monster navigation owner");
+    uint8_t magic[8]={'Q','A','N','P','C',0,0,0};
+    if(!qa_source_save_bytes(io,magic,8) || memcmp(magic,"QANPC\0\0\0",8)) return fail(io,"Invalid monster navigation owner");
     bool present=*value!=NULL;
     if(!qa_source_save_bool(io,&present)) return false;
     if(!present) return true;

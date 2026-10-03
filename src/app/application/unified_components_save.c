@@ -45,9 +45,8 @@ static bool source_fields(qa_source_save_io *io, qa_application *app, const appl
 }
 static bool magic(qa_source_save_io *io, const char expected[4])
 {
-    char value[4]; memcpy(value, expected, sizeof(value)); uint32_t version = 2;
-    return qa_source_save_bytes(io, value, sizeof(value)) && !memcmp(value, expected, sizeof(value)) &&
-        qa_source_save_u32(io, &version) && version == 2;
+    char value[4]; memcpy(value, expected, sizeof(value));
+    return qa_source_save_bytes(io, value, sizeof(value)) && !memcmp(value, expected, sizeof(value));
 }
 
 static bool cursor_fields(qa_source_save_io *io, component_cursor *row)

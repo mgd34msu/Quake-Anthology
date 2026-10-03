@@ -210,7 +210,6 @@ struct qa_script {
 typedef struct script_checkpoint_storage {
     qa_arena arena;
 } script_checkpoint_storage;
-enum { SCRIPT_CHECKPOINT_VERSION = 8 };
 bool script_source_create(qa_script *,qa_error *);
 void script_source_stack(qa_script *);
 bool script_source_capture(const qa_script *,qa_script_checkpoint *,qa_arena *,qa_error *);

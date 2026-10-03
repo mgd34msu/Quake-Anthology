@@ -323,11 +323,11 @@ static bool client_fields(qa_source_save_io *io, q2_session *session)
 static bool fields(qa_source_save_io *io, q2_session *session, const qa_net_client *client,
     const qa_network_q2_checkpoint_refs *refs)
 {
-    uint32_t tag = UINT32_C(0x32534e51), version = 14, slot = session->id.slot;
+    uint32_t tag = UINT32_C(0x32534e51), slot = session->id.slot;
     uint64_t generation = session->id.generation; bool server = session->server; size_t seats = session->seats;
-    if (!qa_source_save_u32(io, &tag) || !qa_source_save_u32(io, &version) || !qa_source_save_bool(io, &server) ||
+    if (!qa_source_save_u32(io, &tag) || !qa_source_save_bool(io, &server) ||
         !qa_source_save_u32(io, &slot) || !qa_source_save_u64(io, &generation) || !qa_source_save_count(io, &seats, QA_NETWORK_MAX_SEATS)) return false;
-    if (tag != UINT32_C(0x32534e51) || version != 14 || server != session->server || !seats ||
+    if (tag != UINT32_C(0x32534e51) || server != session->server || !seats ||
         slot != client->id.slot || generation != client->id.generation || seats != client->seat_count)
         return invalid(io, "Saved Q2 session does not belong to its actual candidate connection");
     session->seats = seats;

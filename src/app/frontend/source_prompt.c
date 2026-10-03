@@ -233,10 +233,9 @@ static bool saved_text(qa_source_save_io *io,char **text)
 }
 static bool fields(qa_source_save_io *io,frontend_source_prompt *o)
 {
-    uint8_t magic[4]={'Q','S','P','M'}; uint32_t version=1,physical=o->seat->id; uint64_t menu=o->menu;
+    uint8_t magic[4]={'Q','S','P','M'}; uint32_t physical=o->seat->id; uint64_t menu=o->menu;
     bool pending=io->direction==QA_SOURCE_SAVE_WRITE && o->provider!=0;
     if(!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QSPM",4) ||
-        !qa_source_save_u32(io,&version) || version!=1 ||
         !qa_source_save_u32(io,&physical) || physical!=o->seat->id ||
         !qa_source_save_u64(io,&menu) || menu!=o->menu || !qa_source_save_bool(io,&pending))return false;
     if(!pending)return true;

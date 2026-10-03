@@ -8,9 +8,9 @@ static bool fail(qa_error *error,qa_status status,const char *text)
 static bool geometry_fields(qa_source_save_io *io,qa_collision_portal_checkpoint *state)
 {
     bool reading=io->direction==QA_SOURCE_SAVE_READ;
-    uint8_t magic[4]={'Q','R','C','G'}; uint32_t version=1,family=state->family,format=state->format;
+    uint8_t magic[4]={'Q','R','C','G'}; uint32_t family=state->family,format=state->format;
     if (!qa_source_save_bytes(io,magic,sizeof(magic)) || memcmp(magic,"QRCG",sizeof(magic)) ||
-        !qa_source_save_u32(io,&version) || version!=1 || !qa_source_save_u32(io,&family) ||
+        !qa_source_save_u32(io,&family) ||
         family!=QA_COLLISION_Q3 || !qa_source_save_u32(io,&format) ||
         !qa_source_save_u64(io,&state->map_identity) || !qa_source_save_u32(io,&state->area_count) ||
         !qa_source_save_bool(io,&state->no_areas) ||

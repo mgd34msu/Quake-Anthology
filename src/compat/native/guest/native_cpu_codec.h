@@ -3,7 +3,7 @@
 
 #include "host_x86_64.h"
 
-/* QAHC1 records architectural fields, never an XSAVE/ucontext byte image.
+/* QAHC records architectural fields, never an XSAVE/ucontext byte image.
  * The destination's actual CPUID layout constructs a new aligned transient
  * transfer. Unsupported enabled user components require a different genuine
  * execution profile; they cannot be silently dropped, even when inactive.

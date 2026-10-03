@@ -596,10 +596,9 @@ bool application_map_checkpoint_capture(qa_application *application, qa_buffer *
     qa_source_save_io io;
     if (!qa_source_save_writer(&io, application->session, error)) return false;
     uint8_t signature[] = {'Q','A','M','T'};
-    uint32_t version = 2;
     bool present = application->map_state != NULL;
     bool ok = qa_source_save_bytes(&io, signature, sizeof(signature)) &&
-        qa_source_save_u32(&io, &version) && qa_source_save_bool(&io, &present);
+        qa_source_save_bool(&io, &present);
     if (ok && present) {
         const struct application_map_state *live = application->map_state;
         if (live->route.count && !live->route.targets)
@@ -649,9 +648,9 @@ bool application_map_checkpoint_restore(qa_application *candidate, qa_bytes byte
         return application_fail(error, QA_ERROR_ARGUMENT, "map continuation restore requires an isolated empty candidate");
     qa_source_save_io io;
     if (!qa_source_save_reader(&io, candidate->session, bytes, error)) return false;
-    uint8_t signature[4]; uint32_t version = 0; bool present = false;
+    uint8_t signature[4]; bool present = false;
     bool ok = qa_source_save_bytes(&io, signature, sizeof(signature)) && !memcmp(signature, "QAMT", 4) &&
-        qa_source_save_u32(&io, &version) && version == 2 && qa_source_save_bool(&io, &present);
+        qa_source_save_bool(&io, &present);
     struct application_map_state *state = NULL;
     if (ok && present) {
         state = calloc(1, sizeof(*state));

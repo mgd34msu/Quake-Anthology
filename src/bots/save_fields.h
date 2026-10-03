@@ -19,11 +19,10 @@ static inline bool bot_save_signature(qa_source_save_io *io, const uint8_t expec
 {
     uint8_t magic[8];
     memcpy(magic, expected, sizeof(magic));
-    uint32_t version = 1;
-    if (!qa_source_save_bytes(io, magic, sizeof(magic)) || !qa_source_save_u32(io, &version))
+    if (!qa_source_save_bytes(io, magic, sizeof(magic)))
         return false;
-    return !memcmp(magic, expected, sizeof(magic)) && version == 1 ? true :
-        bot_save_fail(io, QA_ERROR_FORMAT, "Unsupported bot continuation schema");
+    return !memcmp(magic, expected, sizeof(magic)) ? true :
+        bot_save_fail(io, QA_ERROR_FORMAT, "Invalid bot continuation signature");
 }
 
 /* These strings belong to bot assets and never enter the canonical table. */

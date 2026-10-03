@@ -1,6 +1,6 @@
 #include "internal.h"
 
-#define SESSION_HEADER_BYTES 64u
+#define SESSION_HEADER_BYTES 60u
 #define SESSION_COMPONENT_BYTES 140u
 #define SESSION_EXECUTION_BYTES 16u
 #define SESSION_PROVIDER_BYTES 16u
@@ -41,7 +41,7 @@ bool qa_save_session_encode(const qa_session_checkpoint *v, qa_buffer *out, qa_e
     if (!buffer.data) return persistence_fail(error, QA_ERROR_MEMORY, "Allocating session checkpoint codec");
     qa_net_writer w;
     qa_net_writer_init(&w, buffer.data, size, error);
-    qa_net_write_data(&w, "QASS", 4); qa_net_write_u32(&w, 1);
+    qa_net_write_data(&w, "QASS", 4);
     qa_net_write_u32(&w, (uint32_t)v->component_count); qa_net_write_u32(&w, (uint32_t)v->execution_count);
     qa_net_write_u32(&w, (uint32_t)v->scheduler.provider_count); qa_net_write_u32(&w, (uint32_t)v->scheduler.think_count);
     qa_net_write_u32(&w, v->actor_capacity); qa_net_write_u32(&w, v->component_capacity);
@@ -86,7 +86,6 @@ bool qa_save_session_decode(qa_bytes bytes, qa_session_checkpoint *out, qa_error
         return persistence_fail(error, QA_ERROR_FORMAT, "Invalid session checkpoint signature");
     qa_net_reader r;
     qa_net_reader_init(&r, bytes, error); r.bit = 32;
-    uint32_t version = qa_net_read_u32(&r);
     qa_session_checkpoint v = {0};
     v.component_count = qa_net_read_u32(&r); v.execution_count = qa_net_read_u32(&r);
     v.scheduler.provider_count = qa_net_read_u32(&r); v.scheduler.think_count = qa_net_read_u32(&r);
@@ -95,7 +94,7 @@ bool qa_save_session_decode(qa_bytes bytes, qa_session_checkpoint *out, qa_error
     uint32_t flags = qa_net_read_u32(&r), reserved = qa_net_read_u32(&r);
     v.mixed_order = (flags & 1) != 0; v.scheduler.mixed_order = (flags & 2) != 0;
     size_t expected = SESSION_HEADER_BYTES;
-    if (version != 1 || reserved || (flags & ~3u) || !v.actor_capacity || !v.component_capacity ||
+    if (reserved || (flags & ~3u) || !v.actor_capacity || !v.component_capacity ||
         v.component_count > v.component_capacity || v.execution_count > v.actor_capacity ||
         v.scheduler.provider_count != v.component_count || v.scheduler.think_count > v.execution_count ||
         v.scheduler.next_order != v.next_order || v.scheduler.mixed_order != v.mixed_order ||

@@ -38,7 +38,7 @@ bool qa_kex_channel_checkpoint(const qa_kex_channel *c, qa_buffer *out, qa_error
     if (!bytes) { qa_error_set(e, QA_ERROR_MEMORY, 0, "Encoding KEX channel continuation"); return false; }
     qa_net_writer w;
     qa_net_writer_init(&w, bytes, capacity, e);
-    bool ok = qa_net_write_data(&w, "QAKC", 4) && qa_net_write_u32(&w, 1) &&
+    bool ok = qa_net_write_data(&w, "QAKC", 4) &&
         qa_net_write_u16(&w, c->sequence) && qa_net_write_u16(&w, c->reliable) &&
         qa_net_write_u16(&w, c->incoming_sequence) && qa_net_write_u16(&w, c->incoming_reliable) &&
         qa_net_write_u16(&w, c->fragment_sequence) && qa_net_write_u8(&w, c->fragment_kind) &&
@@ -60,7 +60,7 @@ bool qa_kex_channel_checkpoint(const qa_kex_channel *c, qa_buffer *out, qa_error
 bool qa_kex_channel_restore(qa_bytes bytes, qa_kex_emit_fn emit, void *user,
                             qa_kex_channel **out, qa_error *e)
 {
-    if (!out || !emit || !bytes.data || bytes.size < 65 ||
+    if (!out || !emit || !bytes.data || bytes.size < 61 ||
         bytes.size > 96u + 32767u * 7u + QA_KEX_MESSAGE_BYTES * 4u || memcmp(bytes.data, "QAKC", 4)) {
         qa_error_set(e, QA_ERROR_FORMAT, 0, "Invalid KEX channel continuation envelope"); return false;
     }
@@ -71,7 +71,7 @@ bool qa_kex_channel_restore(qa_bytes bytes, qa_kex_emit_fn emit, void *user,
     qa_net_reader r;
     qa_net_reader_init(&r, bytes, e);
     r.bit = 32;
-    bool ok = qa_net_read_u32(&r) == 1;
+    bool ok = true;
     c->sequence = qa_net_read_u16(&r);
     c->reliable = qa_net_read_u16(&r);
     c->incoming_sequence = qa_net_read_u16(&r);

@@ -654,11 +654,11 @@ bool application_native_q2_attack_capture(struct application_native_q2 *engine, 
         return application_fail(error, QA_ERROR_ARGUMENT, "Native attack continuation requires drained firing calls");
     qa_source_save_io io = {0};
     if (!qa_source_save_writer(&io, engine->provider->application->session, error)) return false;
-    uint32_t version = 1; size_t factors = 0, projectiles = 0;
+    size_t factors = 0, projectiles = 0;
     for (attack_factor *row = p->factors; row; row = row->next) ++factors;
     for (attack_projectile *row = p->projectiles; row; row = row->next) ++projectiles;
     uint64_t sequence = p->sequence;
-    bool ok = qa_source_save_u32(&io, &version) && qa_source_save_u64(&io, &sequence) &&
+    bool ok = qa_source_save_u64(&io, &sequence) &&
         qa_source_save_count(&io, &factors, 65536);
     for (attack_factor *row = p->factors; ok && row; row = row->next) {
         qa_actor_id actor = row->actor; double factor = row->factor; bool available = row->available;
@@ -700,9 +700,8 @@ bool application_native_q2_attack_restore_prepare(struct application_native_q2 *
     if (!prepared) return application_fail(error, QA_ERROR_MEMORY, "Preparing native attack continuation");
     qa_source_save_io io = {0};
     bool ok = qa_source_save_reader(&io, engine->provider->application->session, bytes, error);
-    uint32_t version = 0; size_t count = 0;
-    if (ok) ok = qa_source_save_u32(&io, &version) && version == 1 &&
-        qa_source_save_u64(&io, &prepared->sequence) && qa_source_save_count(&io, &count, 65536);
+    size_t count = 0;
+    if (ok) ok = qa_source_save_u64(&io, &prepared->sequence) && qa_source_save_count(&io, &count, 65536);
     for (size_t i = 0; ok && i < count; ++i) {
         attack_factor *row = calloc(1, sizeof(*row));
         if (!row) { ok = application_fail(error, QA_ERROR_MEMORY, "Preparing native modifier continuation"); break; }

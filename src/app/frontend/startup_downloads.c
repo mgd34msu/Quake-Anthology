@@ -276,9 +276,8 @@ static bool text_field(qa_source_save_io *io,char *text,size_t capacity)
 }
 static bool fields(qa_source_save_io *io,const frontend_startup_downloads *o,download_draft *draft)
 {
-    uint8_t magic[4]={'Q','D','M','N'}; uint32_t version=1,physical=o->seat->id;
-    if(!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QDMN",4) || !qa_source_save_u32(io,&version) || version!=1 ||
-       !qa_source_save_u32(io,&physical) || physical!=o->seat->id)return false;
+    uint8_t magic[4]={'Q','D','M','N'}; uint32_t physical=o->seat->id;
+    if(!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QDMN",4) || !qa_source_save_u32(io,&physical) || physical!=o->seat->id)return false;
     for(unsigned i=0;i<2;++i) { uint64_t menu=o->contexts[i].menu; if(!qa_source_save_u64(io,&menu) || menu!=o->contexts[i].menu)return false; }
     return qa_source_save_count(io,&draft->selected,SIZE_MAX) && text_field(io,draft->path,sizeof(draft->path)) &&
         text_field(io,draft->url,sizeof(draft->url)) && text_field(io,draft->digest,sizeof(draft->digest)) &&

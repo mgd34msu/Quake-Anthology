@@ -714,10 +714,8 @@ static bool row_valid(const scene_row *row)
 static bool prefix(qa_source_save_io *io, frontend_scene_namespace *space, const qa_scene_image_set *images)
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
-    uint8_t magic[4] = {'Q','F','S','I'}; uint32_t version = 5;
-    size_t count = space->count, image_count = space->image_count;
+    uint8_t magic[4] = {'Q','F','S','I'}; size_t count = space->count, image_count = space->image_count;
     if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "QFSI", 4) ||
-        !qa_source_save_u32(io, &version) || version != 5 ||
         !qa_source_save_count(io, &count, reading ? io->input.size / 48 : SIZE_MAX / sizeof(scene_row)) ||
         !qa_source_save_count(io, &image_count, count) || (reading && image_count != qa_scene_image_set_count(images))) return false;
     if (reading) { space->image_count = image_count; space->images_captured = true; }

@@ -264,11 +264,11 @@ bool qa_font_library_checkpoint(const qa_font_library *library, const qa_font_ch
 {
     if (!library || library->policy || library->codec_active || library->callbacks || !out || !refs_ready(refs))
         return qa_font_fail(error,QA_ERROR_ARGUMENT,0,"Font capture requires a quiet real owner and resolvers");
-    qa_source_save_io io; uint8_t magic[4]={'Q','F','N','T'}; uint32_t schema=3;
+    qa_source_save_io io; uint8_t magic[4]={'Q','F','N','T'};
     size_t count=library->font_count, capacity=library->font_capacity;
     if (!qa_source_save_writer(&io,NULL,error)) return false;
     ((qa_font_library *)library)->codec_active=true;
-    bool ok=qa_source_save_bytes(&io,magic,4) && qa_source_save_u32(&io,&schema) && qa_source_save_count(&io,&count,SIZE_MAX) &&
+    bool ok=qa_source_save_bytes(&io,magic,4) && qa_source_save_count(&io,&count,SIZE_MAX) &&
         qa_source_save_count(&io,&capacity,SIZE_MAX/sizeof(*library->fonts)) && capacity_matches(count,capacity) && (!count || library->fonts);
     for (size_t i=0;ok && i<count;++i) {
         qa_font saved=*library->fonts[i];
@@ -285,10 +285,10 @@ bool qa_font_library_checkpoint(const qa_font_library *library, const qa_font_ch
 bool qa_font_library_restore(qa_font_library *library, qa_bytes bytes, const qa_font_checkpoint_refs *refs, qa_error *error)
 {
     if (!qa_font_library_idle(library) || !refs_ready(refs)) return qa_font_fail(error,QA_ERROR_ARGUMENT,0,"Font restore requires an idle candidate owner and resolvers");
-    qa_source_save_io io; uint8_t magic[4]; uint32_t schema=0; size_t count=0, capacity=0; qa_font **fonts=NULL;
+    qa_source_save_io io; uint8_t magic[4]; size_t count=0, capacity=0; qa_font **fonts=NULL;
     if (!qa_source_save_reader(&io,NULL,bytes,error)) return false;
     library->codec_active=true;
-    bool ok=qa_source_save_bytes(&io,magic,4) && !memcmp(magic,"QFNT",4) && qa_source_save_u32(&io,&schema) && schema==3 &&
+    bool ok=qa_source_save_bytes(&io,magic,4) && !memcmp(magic,"QFNT",4) &&
         qa_source_save_count(&io,&count,bytes.size/64) && count>=library->font_count &&
         qa_source_save_count(&io,&capacity,SIZE_MAX/sizeof(*fonts)) && capacity_matches(count,capacity) && allocate(&io,(void **)&fonts,capacity,sizeof(*fonts));
     for (size_t i=0;ok && i<count;++i) {

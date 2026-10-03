@@ -76,9 +76,8 @@ static bool exact_text(qa_source_save_io *io, const char *expected)
 static bool fields(qa_source_save_io *io, q3n_selected_authored_media *owner,
     const q3n_selected_media_refs *refs)
 {
-    uint8_t magic[4] = {'Q','3','S','A'}; uint32_t version = 1; uint64_t view = 0;
+    uint8_t magic[4] = {'Q','3','S','A'}; uint64_t view = 0;
     if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "Q3SA", 4) ||
-        !qa_source_save_u32(io, &version) || version != 1 ||
         (io->direction == QA_SOURCE_SAVE_WRITE && !refs->view_encode(refs->context, owner->options.content, &view, io->error)) ||
         !qa_source_save_u64(io, &view) || !view) return false;
     if (io->direction == QA_SOURCE_SAVE_READ) {

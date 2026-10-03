@@ -262,10 +262,8 @@ static bool fields(qa_source_save_io *io, frontend_remote_unified *owner,
     uint64_t pool = qa_application_content_pool_id(graph, domain->resources);
     uint32_t physical = domain->physical_seat, capacity = owner->options.identity_capacity;
     qa_net_seat_id seat = domain->seat;
-    char magic[4] = {'Q','U','R','P'}; uint32_t version = 2;
-    if (!catalog || !pool || !qa_source_save_bytes(io, magic, sizeof(magic)) ||
-        memcmp(magic, "QURP", sizeof(magic)) || !qa_source_save_u32(io, &version) || version != 2 ||
-        !application_unified_save_client(io, domain->client) ||
+    char magic[4] = {'Q','U','R','P'}; if (!catalog || !pool || !qa_source_save_bytes(io, magic, sizeof(magic)) ||
+        memcmp(magic, "QURP", sizeof(magic)) || !application_unified_save_client(io, domain->client) ||
         !qa_source_save_u64(io, &seat.owner) || seat.owner != domain->seat.owner ||
         !qa_source_save_u32(io, &seat.index) || seat.index != domain->seat.index ||
         !qa_source_save_u32(io, &physical) || physical != domain->physical_seat ||

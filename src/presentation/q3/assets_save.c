@@ -97,30 +97,22 @@ static bool resource_owned(const qa_q3_presentation_provider *provider, const qa
         qa_resource_id(resource)) == resource;
 }
 static bool reading(const qa_source_save_io *io) { return io->direction == QA_SOURCE_SAVE_READ; }
-static bool signature(qa_source_save_io *io, uint32_t *schema)
+static bool signature(qa_source_save_io *io)
 {
-    uint8_t magic[4] = {'Q','3','A','S'}; uint32_t version = 6;
-    if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "Q3AS", 4) ||
-        !qa_source_save_u32(io, &version) || version < 3 || version > 6) return false;
-    *schema = version; return true;
+    uint8_t magic[4] = {'Q','3','A','S'}; return qa_source_save_bytes(io, magic, 4) && !memcmp(magic, "Q3AS", 4);
 }
 bool qa_q3_assets_owner_parent_key(qa_bytes bytes, uint64_t *out, qa_error *error)
 {
     if (!out) return q3p_fail(error, QA_ERROR_ARGUMENT, "Q3 parent key requires an output");
-    qa_bytes header;
-    if (!qa_bytes_slice(bytes, 0, 8, &header, error)) return false;
-    uint32_t schema = qa_load_u32le(header.data + 4);
-    if (memcmp(header.data, "Q3AS", 4) || schema < 3 || schema > 6)
-        return q3p_fail(error, QA_ERROR_FORMAT, "Unsupported Q3 asset parent prefix");
-    uint64_t key = 0;
-    if (schema >= 5) {
-        qa_bytes parent;
-        if (!qa_bytes_slice(bytes, 8, 9, &parent, error)) return false;
+    qa_bytes header, parent;
+    if (!qa_bytes_slice(bytes, 0, 4, &header, error)) return false;
+    if (memcmp(header.data, "Q3AS", 4))
+        return q3p_fail(error, QA_ERROR_FORMAT, "Invalid Q3 asset parent prefix");
+    if (!qa_bytes_slice(bytes, 4, 9, &parent, error)) return false;
         if (parent.data[8] > 1)
             return q3p_fail(error, QA_ERROR_FORMAT, "Invalid Q3 asset retired flag");
-        key = qa_load_u64le(parent.data);
-    }
-    *out = key; return true;
+        *out = qa_load_u64le(parent.data);
+    return true;
 }
 static bool refs_ready(const qa_q3_asset_owner_refs *r)
 {
@@ -259,7 +251,7 @@ static bool opening_empty(const qa_vfs_acquisition *opening, int64_t rank,
 }
 static bool opening_fields(qa_source_save_io *io, qa_vfs_acquisition *opening,
     int64_t *rank, q3p_opening_order *order, const qa_resource *resource,
-    const qa_q3_presentation_provider *provider, const char *path, uint32_t schema)
+    const qa_q3_presentation_provider *provider, const char *path)
 {
     if (!resource) return opening_empty(opening, *rank, order);
     if (!qa_source_save_u64(io, &opening->mount) || !qa_source_save_u64(io, &opening->resource_id) ||
@@ -300,7 +292,6 @@ static bool opening_fields(qa_source_save_io *io, qa_vfs_acquisition *opening,
     bool matches = normalized && !strcmp(normalized, opening->path); free(normalized);
     if (!matches || opening->resource_id != qa_resource_id(resource) || !resource_owned(provider, resource) ||
         !qa_vfs_acquisition_retained(provider->mounts, opening, io->error)) return false;
-    if (schema < 6) return true;
     if (!qa_vfs_acquisition_opening_codec(io, provider->mounts, opening)) return false;
     if (!opening->opening_present) return true;
     const qa_vfs_read_opening *snapshot = &opening->opening;
@@ -310,7 +301,7 @@ static bool opening_fields(qa_source_save_io *io, qa_vfs_acquisition *opening,
     for (size_t i = 0; i < order->count; ++i) if (snapshot->order[i] != order->mounts[i]) return false;
     return true;
 }
-static bool lod_fields(qa_source_save_io *io, q3p_model *m, const qa_q3_asset_owner_refs *r, uint32_t schema)
+static bool lod_fields(qa_source_save_io *io, q3p_model *m, const qa_q3_asset_owner_refs *r)
 {
     if (!qa_source_save_u32(io, &m->lods.load_count) || m->lods.load_count > 3 ||
         !qa_source_save_u32(io, &m->lods.lod_count) || m->lods.lod_count > 3 ||
@@ -325,7 +316,7 @@ static bool lod_fields(qa_source_save_io *io, q3p_model *m, const qa_q3_asset_ow
             !resource_fields(io, &m->lod_resources[i], r) ||
             !resource_owned(&m->provider, m->lod_resources[i]) ||
             !opening_fields(io, &m->lod_openings[i], &m->lod_opening_ranks[i],
-                &m->lod_opening_orders[i], m->lod_resources[i], &m->provider, m->lods.paths[i], schema)) return false;
+                &m->lod_opening_orders[i], m->lod_resources[i], &m->provider, m->lods.paths[i])) return false;
         const char *base = m->opening.path, *dot = strrchr(base, '.');
         size_t stem = dot ? (size_t)(dot - base) : strlen(base);
         if (!i) { if (strcmp(m->lods.paths[i], base)) return false; }
@@ -374,13 +365,13 @@ static bool lod_fields(qa_source_save_io *io, q3p_model *m, const qa_q3_asset_ow
     return true;
 }
 static bool ordinary_model_fields(qa_source_save_io *io, q3p_model *m,
-    qa_q3_presentation_assets *a, const qa_q3_asset_owner_refs *r, uint32_t schema)
+    qa_q3_presentation_assets *a, const qa_q3_asset_owner_refs *r)
 {
     if (!provider_fields(io, &m->provider, r) || !resource_fields(io, &m->resource, r) ||
         !resource_owned(&m->provider, m->resource) ||
         !private_text(io, &m->first_requested_path) || !m->first_requested_path || !*m->first_requested_path ||
         !opening_fields(io, &m->opening, &m->opening_rank, &m->opening_order,
-            m->resource, &m->provider, m->first_requested_path, schema) ||
+            m->resource, &m->provider, m->first_requested_path) ||
         !qa_source_save_bool(io, &m->has_lods) || !qa_source_save_bool(io, &m->owns_world) ||
         !qa_source_save_u32(io, &m->inline_model) ||
         !qa_source_save_vec3(io, &m->bounds.mins) || !qa_source_save_vec3(io, &m->bounds.maxs) ||
@@ -398,7 +389,7 @@ static bool ordinary_model_fields(qa_source_save_io *io, q3p_model *m,
             m->inline_model >= qa_collision_model_count(a->geometry))) return false;
     } else {
         if (!m->resource || m->owns_world || m->inline_model) return false;
-        if (m->has_lods) { if (!lod_fields(io, m, r, schema)) return false; }
+        if (m->has_lods) { if (!lod_fields(io, m, r)) return false; }
         else {
             const qa_model *source = reading(io) ? NULL : q3p_model_source(m, 0);
             if (!source_fields(io, &source, m->resource, r) || !source) return false;
@@ -447,7 +438,7 @@ static bool source_model_fields(qa_source_save_io *io, q3p_model *m,
         !private_text(io, &m->first_requested_path) || !m->first_requested_path ||
         !*m->first_requested_path || strlen(m->first_requested_path) >= 64 ||
         !opening_fields(io, &m->opening, &m->opening_rank, &m->opening_order,
-            m->resource, &m->provider, m->opening.path, 6) || (m->resource && !m->opening.opening_present) ||
+            m->resource, &m->provider, m->opening.path) || (m->resource && !m->opening.opening_present) ||
         !qa_source_save_vec3(io, &m->bounds.mins) || !qa_source_save_vec3(io, &m->bounds.maxs) ||
         !qa_source_save_u32(io, &m->lods.load_count) || m->lods.load_count > 3 ||
         !qa_source_save_u32(io, &m->lods.lod_count) || m->lods.lod_count > 3 ||
@@ -465,7 +456,7 @@ static bool source_model_fields(qa_source_save_io *io, q3p_model *m,
             !resource_fields(io, &m->lod_resources[i], r) ||
             !resource_owned(&m->provider, m->lod_resources[i]) ||
             !opening_fields(io, &m->lod_openings[i], &m->lod_opening_ranks[i],
-                &m->lod_opening_orders[i], m->lod_resources[i], &m->provider, m->lods.paths[i], 6) ||
+                &m->lod_opening_orders[i], m->lod_resources[i], &m->provider, m->lods.paths[i]) ||
             (m->lod_resources[i] && !m->lod_openings[i].opening_present)) return false;
         if (reading(io)) m->lods.states[i] = (qa_model_lod_state)state;
         if (i < m->lods.load_count) {
@@ -552,7 +543,7 @@ static bool source_model_fields(qa_source_save_io *io, q3p_model *m,
         !resource_owned(&m->provider, m->source_md4_resource) ||
         m->source_md4_resource != (md4_slot < 3 ? m->lod_resources[md4_slot] : NULL) ||
         !opening_fields(io, &m->source_md4_opening, &m->source_md4_rank, &m->source_md4_order,
-            m->source_md4_resource, &m->provider, md4_slot < 3 ? m->lods.paths[md4_slot] : NULL, 6) ||
+            m->source_md4_resource, &m->provider, md4_slot < 3 ? m->lods.paths[md4_slot] : NULL) ||
         (m->source_md4_resource && !m->source_md4_opening.opening_present)) return false;
     const qa_model *md4 = reading(io) ? NULL : (m->borrowed_models ? m->source_md4 :
         (m->source_md4_resource ? &m->source_md4_model : NULL));
@@ -577,20 +568,19 @@ static bool source_model_fields(qa_source_save_io *io, q3p_model *m,
     return true;
 }
 static bool model_fields(qa_source_save_io *io, q3p_model *m,
-    qa_q3_presentation_assets *a, const qa_q3_asset_owner_refs *r, uint32_t schema)
+    qa_q3_presentation_assets *a, const qa_q3_asset_owner_refs *r)
 {
-    if (schema >= 6 && !qa_source_save_bool(io, &m->source_registration)) return false;
+    if (!qa_source_save_bool(io, &m->source_registration)) return false;
     if (m->source_registration) return
         qa_material_library_has_source_profile(a->options.provider.materials) && source_model_fields(io, m, r);
-    return ordinary_model_fields(io, m, a, r, schema);
+    return ordinary_model_fields(io, m, a, r);
 }
-static bool skin_fields(qa_source_save_io *io, q3p_skin *skin, const qa_q3_asset_owner_refs *r, uint32_t schema)
+static bool skin_fields(qa_source_save_io *io, q3p_skin *skin, const qa_q3_asset_owner_refs *r)
 {
     size_t count = skin->map.count, capacity = skin->map.capacity;
-    if (schema >= 4) {
+    {
         if (!qa_source_save_bool(io, &skin->source_registration)) return false;
-    } else if (reading(io)) skin->source_registration = false;
-    if (!provider_fields(io, &skin->provider, r) || !resource_fields(io, &skin->resource, r) ||
+    } if (!provider_fields(io, &skin->provider, r) || !resource_fields(io, &skin->resource, r) ||
         (!skin->resource && !skin->source_registration) ||
         !resource_owned(&skin->provider, skin->resource) ||
         !qa_source_save_count(io, &count, reading(io) ? io->input.size / 68 : SIZE_MAX) ||
@@ -635,7 +625,7 @@ static bool skin_fields(qa_source_save_io *io, q3p_skin *skin, const qa_q3_asset
     }
     return true;
 }
-static bool handles(qa_source_save_io *io, qa_q3_presentation_assets *a, const qa_q3_asset_owner_refs *r, uint32_t schema)
+static bool handles(qa_source_save_io *io, qa_q3_presentation_assets *a, const qa_q3_asset_owner_refs *r)
 {
     if (!allocation_fields(io, (void **)&a->models, &a->model_count, &a->model_capacity, sizeof(*a->models)) ||
         !allocation_fields(io, (void **)&a->skins, &a->skin_count, &a->skin_capacity, sizeof(*a->skins)) ||
@@ -648,7 +638,7 @@ static bool handles(qa_source_save_io *io, qa_q3_presentation_assets *a, const q
         if (!qa_source_save_bool(io, &present)) return false;
         if (!present) continue;
         bool shared = !reading(io) && q3p_model_shared(a, a->models[i]);
-        if (schema >= 5 && !qa_source_save_bool(io, &shared)) return false;
+        if (!qa_source_save_bool(io, &shared)) return false;
         if (shared) {
             if (!a->parent || i >= a->parent->model_count || !a->parent->models[i] ||
                 (!reading(io) && a->models[i] != a->parent->models[i])) return false;
@@ -658,7 +648,7 @@ static bool handles(qa_source_save_io *io, qa_q3_presentation_assets *a, const q
             if (!a->models[i]) return q3p_fail(io->error, QA_ERROR_MEMORY, "Allocating restored Q3 model holder");
             a->models[i]->borrowed_models = a->models[i]->borrowed_scenes = a->models[i]->borrowed_world = true;
         }
-        if (!shared && !model_fields(io, a->models[i], a, r, schema)) return false;
+        if (!shared && !model_fields(io, a->models[i], a, r)) return false;
         for (size_t j = 0; j < i; ++j) if (a->models[j]) {
             q3p_model *prior = a->models[j], *current = a->models[i];
             if (current->owns_world && prior->owns_world && current->world == prior->world) return false;
@@ -672,7 +662,7 @@ static bool handles(qa_source_save_io *io, qa_q3_presentation_assets *a, const q
     }
     for (size_t i = 0; i < a->skin_count; ++i) {
         bool shared = !reading(io) && q3p_skin_shared(a, a->skins[i]);
-        if (schema >= 5 && !qa_source_save_bool(io, &shared)) return false;
+        if (!qa_source_save_bool(io, &shared)) return false;
         if (shared) {
             if (!a->parent || i >= a->parent->skin_count || !a->parent->skins[i] ||
                 (!reading(io) && a->skins[i] != a->parent->skins[i])) return false;
@@ -681,7 +671,7 @@ static bool handles(qa_source_save_io *io, qa_q3_presentation_assets *a, const q
             a->skins[i] = calloc(1, sizeof(*a->skins[i]));
             if (!a->skins[i]) return q3p_fail(io->error, QA_ERROR_MEMORY, "Allocating restored Q3 skin holder");
         }
-        if (!a->skins[i] || (!shared && !skin_fields(io, a->skins[i], r, schema)) ||
+        if (!a->skins[i] || (!shared && !skin_fields(io, a->skins[i], r)) ||
             (a->skins[i]->source_registration && !qa_material_library_has_source_profile(a->options.provider.materials))) return false;
     }
     for (size_t i = 0; i < a->shader_count; ++i) {
@@ -794,9 +784,8 @@ static bool names(qa_source_save_io *io, qa_q3_presentation_assets *a)
     return true;
 }
 static bool parent_fields(qa_source_save_io *io, qa_q3_presentation_assets *a,
-    const qa_q3_asset_owner_refs *r, uint32_t schema)
+    const qa_q3_asset_owner_refs *r)
 {
-    if (schema < 5) return !a->parent && !a->retired;
     uint64_t key = 0;
     if ((!reading(io) && a->parent && (!r->registry_encode ||
         !r->registry_encode(r->context, a->parent, &key, io->error) || !key)) ||
@@ -820,8 +809,7 @@ static bool parent_fields(qa_source_save_io *io, qa_q3_presentation_assets *a,
 static bool asset_fields(qa_source_save_io *io, qa_q3_presentation_assets *a, const qa_q3_asset_owner_refs *r)
 {
     uint64_t services = 0; qa_q3_presentation_provider provider = a->options.provider;
-    uint32_t schema = 0;
-    if (!signature(io, &schema) || !parent_fields(io, a, r, schema) ||
+    if (!signature(io) || !parent_fields(io, a, r) ||
         (!reading(io) && !r->services_encode(r->context, &a->options, &services, io->error)) ||
         !qa_source_save_u64(io, &services) ||
         (reading(io) && !r->services_qualify(r->context, services, &a->options, io->error)) ||
@@ -838,7 +826,7 @@ static bool asset_fields(qa_source_save_io *io, qa_q3_presentation_assets *a, co
             !qa_source_save_u64(io, &geometry) || (reading(io) &&
             (!r->collision_decode(r->context, geometry, &candidate, io->error) || candidate != a->geometry))) return false;
     }
-    return handles(io, a, r, schema) && names(io, a);
+    return handles(io, a, r) && names(io, a);
 }
 static bool codec_begin(qa_q3_presentation_assets *a, bool *own_lease, qa_error *error)
 {

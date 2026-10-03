@@ -40,7 +40,6 @@ typedef struct content_instance {
 } content_instance;
 struct qa_application_content_graph {
     bool restored, pending;
-    uint32_t schema;
     content_pool *pools; size_t pool_count;
     content_catalog *catalogs; size_t catalog_count;
     content_view *views; size_t view_count;
@@ -321,7 +320,6 @@ bool application_save_content_collect(const qa_application *app, qa_application_
      * against that admission baseline before emitting its original record. */
     const qa_application_content_graph *prepared = app->content_graph;
     if (ok && prepared && prepared->pending) {
-        g->schema = prepared->schema;
         ok = application_save_content_ready(prepared, error);
         if (ok && (g->pool_count != prepared->pool_count || g->catalog_count != prepared->catalog_count || g->view_count != prepared->view_count))
             ok = fail(error, QA_ERROR_FORMAT, "Actual candidate content inventory differs from its prepared graph");
@@ -437,7 +435,6 @@ void application_save_content_publish(qa_application_content_graph *g)
 {
     if (!g) return;
     g->pending = false;
-    g->schema = 5;
     for (size_t i = 0; i < g->view_count; ++i) g->views[i].qualified = false;
 }
 uint64_t application_save_content_application_pool(const qa_application_content_graph *g) { return g ? g->application_pool : 0; }
@@ -651,11 +648,9 @@ static bool instance_fields(qa_source_save_io *io, content_instance *row)
 }
 static bool graph_fields(qa_source_save_io *io, qa_application_content_graph *g)
 {
-    uint8_t magic[8] = {'Q','A','C','G',0,0,0,0}; uint32_t version = g->schema ? g->schema : 5;
+    uint8_t magic[8] = {'Q','A','C','G',0,0,0,0};
     const uint8_t expected[8] = {'Q','A','C','G',0,0,0,0};
-    if (!qa_source_save_bytes(io, magic, sizeof(magic)) || memcmp(magic, expected, sizeof(magic)) ||
-        !qa_source_save_u32(io, &version) || (version < 3 || version > 5)) return false;
-    g->schema = version;
+    if (!qa_source_save_bytes(io, magic, sizeof(magic)) || memcmp(magic, expected, sizeof(magic))) return false;
     FIELD(u64, g, application_pool); FIELD(u64, g, application_catalog); FIELD(u64, g, launch_catalog); FIELD(u64, g, launch_view);
     if (!table_field(io, (void **)&g->pools, &g->pool_count, sizeof(*g->pools), 8)) return false;
     for (size_t i = 0; i < g->pool_count; ++i) if (!blob_field(io, &g->pools[i].bytes)) return false;
@@ -674,7 +669,7 @@ static bool graph_fields(qa_source_save_io *io, qa_application_content_graph *g)
         content_resource *row = &g->resources[i];
         if (!resource_fields(io, row)) return false;
         FIELD(u64, row, origin_view); FIELD(u32, row, origin_product); FIELD(u64, row, catalog_mount);
-        if (version >= 5) {
+        {
             uint32_t kind = row->origin_kind;
             if (!qa_source_save_u32(io, &kind) || kind > QA_LAUNCH_ORIGIN_SOURCE_QW) return false;
             row->origin_kind = (qa_launch_resource_origin_kind)kind;
@@ -684,7 +679,7 @@ static bool graph_fields(qa_source_save_io *io, qa_application_content_graph *g)
                 FIELD(u64, &row->source, home); FIELD(bool, &row->source, changed);
                 if (!text_field(io, &row->source.directory) || !text_field(io, &row->source.home_prefix)) return false;
             }
-        } else if (row->origin_kind != QA_LAUNCH_ORIGIN_CATALOG) return false;
+        }
         if (!receipt_fields(io, &row->acquisition, row->resource) || !row->acquisition.opening_present) return false;
     }
     return true;
@@ -891,8 +886,7 @@ static bool refresh(qa_application_content_graph *g, qa_error *error)
     for (size_t i = 0; i < g->view_count; ++i) views[i] = g->views[i].value;
     for (size_t i = 0; i < g->pool_count; ++i) {
         qa_buffer bytes = {0};
-        bool ok = g->schema == 3 ? qa_resource_pool_checkpoint(g->pools[i].value, &bytes, error) :
-            qa_resource_pool_checkpoint_linked(g->pools[i].value, views, g->view_count, &bytes, error);
+        bool ok = qa_resource_pool_checkpoint_linked(g->pools[i].value, views, g->view_count, &bytes, error);
         if (!ok) { free(views); return false; }
         qa_buffer_free(&g->pools[i].bytes); g->pools[i].bytes = bytes;
     }
@@ -978,8 +972,6 @@ bool application_save_content_prepare(qa_bytes bytes, const qa_vfs_checkpoint_re
     for (size_t i = 0; ok && i < g->pool_count; ++i) {
         const qa_buffer *pool_bytes = &g->pools[i].bytes;
         ok = qa_resource_pool_checkpoint_validate((qa_bytes){pool_bytes->data, pool_bytes->size}, error);
-        if (ok && g->schema == 3 && pool_bytes->data[4] != 1)
-            ok = fail(error, QA_ERROR_FORMAT, "Legacy content graph contains a linked package recipe");
     }
     for (size_t i = 0; ok && i < g->pool_count; ++i) {
         content_pool *p = &g->pools[i]; p->value = qa_resource_pool_create(error); p->owned = p->value != NULL;

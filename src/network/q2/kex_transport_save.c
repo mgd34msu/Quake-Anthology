@@ -21,7 +21,7 @@ bool qa_kex_transport_checkpoint(const qa_kex_transport *o, qa_buffer *out, qa_e
     if (ok && !bytes) { qa_error_set(e, QA_ERROR_MEMORY, 0, "Encoding KEX transport continuation"); ok = false; }
     qa_net_writer w;
     qa_net_writer_init(&w, bytes, ok ? capacity : 0, e);
-    ok = ok && qa_net_write_data(&w, "QAKT", 4) && qa_net_write_u32(&w, 1) &&
+    ok = ok && qa_net_write_data(&w, "QAKT", 4) &&
         qa_net_write_u32(&w, (uint32_t)o->raw_limit) && qa_net_write_u32(&w, (uint32_t)lan.size) &&
         qa_net_write_data(&w, lan.data, lan.size) && qa_net_write_u32(&w, (uint32_t)mdns.size) &&
         qa_net_write_data(&w, mdns.data, mdns.size);
@@ -35,7 +35,7 @@ bool qa_kex_transport_checkpoint(const qa_kex_transport *o, qa_buffer *out, qa_e
 bool qa_kex_transport_restore(qa_bytes bytes, const qa_kex_transport_hooks *hooks,
     qa_net_transport **out, qa_kex_transport **control, qa_error *e)
 {
-    if (!hooks || !out || !bytes.data || bytes.size < 20 || bytes.size > SIZE_MAX / 8 || memcmp(bytes.data, "QAKT", 4)) {
+    if (!hooks || !out || !bytes.data || bytes.size < 16 || bytes.size > SIZE_MAX / 8 || memcmp(bytes.data, "QAKT", 4)) {
         qa_error_set(e, QA_ERROR_FORMAT, 0, "Invalid KEX transport continuation envelope"); return false;
     }
     qa_kex_transport *o = calloc(1, sizeof(*o));
@@ -44,7 +44,7 @@ bool qa_kex_transport_restore(qa_bytes bytes, const qa_kex_transport_hooks *hook
     qa_net_reader r;
     qa_net_reader_init(&r, bytes, e);
     r.bit = 32;
-    bool ok = qa_net_read_u32(&r) == 1;
+    bool ok = true;
     o->raw_limit = qa_net_read_u32(&r);
     uint32_t extent = qa_net_read_u32(&r);
     qa_bytes nested;

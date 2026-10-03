@@ -143,9 +143,7 @@ static bool fields(qa_source_save_io *io, frontend_network_unified *owner,
     bool server = owner->options.server;
     uint64_t seat_owner = owner->options.seat_owner;
     uint32_t seat_base = owner->options.remote_seat_base;
-    char magic[4] = {'Q','U','F','H'}; uint32_t version = 3;
-    if (!qa_source_save_bytes(io, magic, sizeof(magic)) || memcmp(magic, "QUFH", sizeof(magic)) ||
-        !qa_source_save_u32(io, &version) || version != 3 ||
+    char magic[4] = {'Q','U','F','H'}; if (!qa_source_save_bytes(io, magic, sizeof(magic)) || memcmp(magic, "QUFH", sizeof(magic)) ||
         !qa_source_save_bool(io, &server) || server != owner->options.server ||
         !qa_source_save_u64(io, &seat_owner) || seat_owner != owner->options.seat_owner ||
         !qa_source_save_u32(io, &seat_base) || seat_base > UINT32_MAX - (UNIFIED_PEERS - 1) ||

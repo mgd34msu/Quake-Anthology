@@ -1,8 +1,7 @@
 #include "internal.h"
 #include <math.h>
 
-#define HOST_CHECKPOINT_VERSION 6u
-#define HOST_CHECKPOINT_HEADER 72u
+#define HOST_CHECKPOINT_HEADER 68u
 #define HOST_CHECKPOINT_SLOT 248u
 
 typedef struct saved_slot {
@@ -151,7 +150,6 @@ static bool capture_checkpoint(qa_native_host *host, qa_buffer *out, qa_error *e
     uint8_t *cursor = data;
     memcpy(cursor, "QANHST\0\0", 8);
     cursor += 8;
-    put_u32(&cursor, HOST_CHECKPOINT_VERSION);
     put_u32(&cursor, (uint32_t)host->profile);
     put_u32(&cursor, host->world.owner);
     put_u32(&cursor, slot_count);
@@ -306,7 +304,6 @@ static bool restore_checkpoint(qa_native_host *host, qa_bytes state, bool cvars_
         return native_host_fail(error, QA_ERROR_FORMAT, 0,
                                 "native host checkpoint magic is invalid");
     cursor += 8;
-    uint32_t version = take_u32(&cursor);
     uint32_t profile = take_u32(&cursor);
     uint32_t owner = take_u32(&cursor);
     uint32_t slot_count = take_u32(&cursor);
@@ -318,7 +315,7 @@ static bool restore_checkpoint(qa_native_host *host, qa_bytes state, bool cvars_
     uint32_t q3_role = take_u32(&cursor);
     uint32_t q3_abi = take_u32(&cursor);
     uint64_t reference_count = take_u64(&cursor);
-    if (version != HOST_CHECKPOINT_VERSION || profile != (uint32_t)host->profile ||
+    if (profile != (uint32_t)host->profile ||
         q3_role != (uint32_t)host->q3_role || q3_abi != (uint32_t)host->q3_abi ||
         owner != host->world.owner || message_size > host->message_capacity ||
         engine_size > SIZE_MAX || bridge_size > SIZE_MAX ||

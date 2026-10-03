@@ -185,10 +185,9 @@ static bool fields(qa_source_save_io *io, qa_ui_library *saved,
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
     uint8_t magic[4] = {'Q','L','I','B'};
-    uint32_t schema = 2, seat = qualified->ui->options.seat;
+    uint32_t seat = qualified->ui->options.seat;
     uint64_t menu = qualified->menu, catalog = 0;
     if (!qa_source_save_bytes(io, magic, sizeof(magic)) || memcmp(magic, "QLIB", 4) ||
-        !qa_source_save_u32(io, &schema) || schema != 2 ||
         !qa_source_save_u32(io, &seat) || seat != qualified->ui->options.seat ||
         !qa_source_save_u64(io, &menu) || menu != qualified->menu) return false;
     if (!reading && !refs->catalog_encode(refs->context, saved->catalog, &catalog, io->error)) return false;

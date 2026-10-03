@@ -97,9 +97,8 @@ typedef struct input_profile_state {
 } input_profile_state;
 static bool input_profile_fields(qa_source_save_io *io,input_profile_state *state)
 {
-    uint8_t magic[4]={'Q','F','I','P'}; uint32_t version=2;
-    return qa_source_save_bytes(io,magic,sizeof(magic)) && !memcmp(magic,"QFIP",sizeof(magic)) &&
-        qa_source_save_u32(io,&version) && version==2 && qa_source_save_bool(io,&state->present) &&
+    uint8_t magic[4]={'Q','F','I','P'}; return qa_source_save_bytes(io,magic,sizeof(magic)) && !memcmp(magic,"QFIP",sizeof(magic)) &&
+        qa_source_save_bool(io,&state->present) &&
         qa_source_save_u32(io,&state->product) && qa_source_save_u64(io,&state->catalog) && qa_source_save_u64(io,&state->view) &&
         frontend_save_text(io,&state->default_root) &&
         (state->present?(state->product && state->catalog && state->view):(!state->product && !state->catalog && !state->view)) &&

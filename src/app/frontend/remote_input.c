@@ -92,11 +92,10 @@ bool frontend_remote_input_checkpoint(const frontend_remote_input *input, qa_buf
     if (!qa_input_command_checkpoint(&input->builder, &builder, error)) return false;
     qa_source_save_io io = {0};
     uint8_t magic[4] = {'Q','R','I','N'};
-    uint32_t version = 1;
     bool ready = input->angles_ready;
     size_t size = builder.size;
     bool ok = qa_source_save_writer(&io, NULL, error) && qa_source_save_bytes(&io, magic, sizeof(magic)) &&
-        qa_source_save_u32(&io, &version) && qa_source_save_bool(&io, &ready) &&
+        qa_source_save_bool(&io, &ready) &&
         qa_source_save_count(&io, &size, SIZE_MAX) && qa_source_save_bytes(&io, builder.data, size) &&
         qa_source_save_finish(&io, out);
     qa_buffer_free(&builder);
@@ -108,13 +107,12 @@ bool frontend_remote_input_restore(frontend_remote_input *input, qa_bytes bytes,
     if (!input) return fail(error, QA_ERROR_ARGUMENT, "Remote Q3 builder restore needs its actual candidate owner");
     qa_source_save_io io = {0};
     uint8_t magic[4];
-    uint32_t version = 0;
     bool ready = false;
     size_t size = 0;
     qa_input_command_builder builder = {0};
     bool ok = qa_source_save_reader(&io, NULL, bytes, error) &&
         qa_source_save_bytes(&io, magic, sizeof(magic)) && !memcmp(magic, "QRIN", sizeof(magic)) &&
-        qa_source_save_u32(&io, &version) && version == 1 && qa_source_save_bool(&io, &ready) &&
+        qa_source_save_bool(&io, &ready) &&
         qa_source_save_count(&io, &size, bytes.size) && size <= io.input.size - io.offset;
     if (ok) {
         qa_bytes cut = {io.input.data + io.offset, size};

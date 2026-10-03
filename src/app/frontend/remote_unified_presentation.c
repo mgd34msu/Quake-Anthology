@@ -1617,11 +1617,11 @@ static bool presentation_fields(unified_presentation *p,unified_presentation_imp
     const frontend_unified_presentation_refs *refs,qa_source_save_io *io)
 {
     bool reading=io->direction==QA_SOURCE_SAVE_READ;
-    char magic[4]={'Q','U','P','C'}; uint32_t version=7,epoch=p->replica->epoch;
+    char magic[4]={'Q','U','P','C'}; uint32_t epoch=p->replica->epoch;
     uint32_t physical=p->replica->options.domain.physical_seat;
     uint64_t frame_number=p->replica->frame_number;
     if (!qa_source_save_bytes(io,magic,sizeof(magic)) || memcmp(magic,"QUPC",sizeof(magic)) ||
-        !qa_source_save_u32(io,&version) || (version!=6 && version!=7) || !qa_source_save_u32(io,&epoch) || epoch!=p->replica->epoch ||
+        !qa_source_save_u32(io,&epoch) || epoch!=p->replica->epoch ||
         !qa_source_save_u32(io,&physical) || physical!=p->replica->options.domain.physical_seat ||
         !qa_source_save_u64(io,&frame_number) || frame_number!=p->replica->frame_number ||
         !qa_source_save_bool(io,&p->clock_started) ||
@@ -1638,7 +1638,7 @@ static bool presentation_fields(unified_presentation *p,unified_presentation_imp
         !isfinite(p->pending_angles.x) || !isfinite(p->pending_angles.y) || !isfinite(p->pending_angles.z) ||
         (p->pending_view && (!saved_actor(p,io,&p->pending_view_actor) ||
             !qa_actor_id_equal(p->pending_view_actor,p->replica->player))) || !saved_routes(p,io)) return false;
-    if (version>=7 && (!qa_source_save_bool(io,&saved->frame_prepared) ||
+    if ((!qa_source_save_bool(io,&saved->frame_prepared) ||
         !qa_source_save_bool(io,&saved->component_prepared) ||
         !qa_source_save_bool(io,&saved->source_prepared) ||
         !application_unified_save_document(io,&p->candidate_prediction,QA_UNIFIED_PREDICTION_DOCUMENT))) return false;
@@ -1650,12 +1650,12 @@ static bool presentation_fields(unified_presentation *p,unified_presentation_imp
         qa_bytes retained=qa_json_source(qa_unified_document_json(p->candidate_prediction),qa_unified_document_root(p->candidate_prediction));
         if (actual.size!=retained.size || (actual.size && memcmp(actual.data,retained.data,actual.size))) return false;
     }
-    size_t child_count=version>=7?UNIFIED_CHILD_COUNT:UNIFIED_PENDING_RENDER;
+    size_t child_count=UNIFIED_CHILD_COUNT;
     for (size_t i=0;i<child_count;++i) {
         if ((!reading && !child_capture(p,(unified_child_kind)i,refs,saved->child+i,io->error)) ||
             !saved_blob(io,saved->child+i)) return false;
     }
-    if (version>=7 && ((!reading && p->q3_source_frame &&
+    if (((!reading && p->q3_source_frame &&
             !frontend_unified_q3_source_frame_checkpoint(p->q3_source_frame,&saved->source_frame,io->error)) ||
         !saved_blob(io,&saved->source_frame) || saved->source_prepared!=(saved->source_frame.size!=0))) return false;
     bool media=saved->child[UNIFIED_MEDIA].size!=0;
@@ -1732,12 +1732,10 @@ static bool presentation_fields(unified_presentation *p,unified_presentation_imp
                     !frontend_unified_q3_runtime_factory_checkpoint(row->factory,&actual,&client->factory,io->error)) return false;
             }
         }
-        if (version>=7) {
-            if (!qa_source_save_bool(io,&client->archived) || !qa_source_save_bool(io,&client->born) ||
-                !qa_source_save_bool(io,&client->selected) || !qa_source_save_bool(io,&client->source_staged) ||
-                !qa_source_save_count(io,&client->candidate_source,SIZE_MAX) ||
-                !saved_blob(io,&client->frame)) return false;
-        }
+        if (!qa_source_save_bool(io,&client->archived) || !qa_source_save_bool(io,&client->born) ||
+            !qa_source_save_bool(io,&client->selected) || !qa_source_save_bool(io,&client->source_staged) ||
+            !qa_source_save_count(io,&client->candidate_source,SIZE_MAX) ||
+            !saved_blob(io,&client->frame)) return false;
         if (!qa_source_save_bool(io,&client->retired) || !saved_blob(io,&client->retirement) ||
             (client->retired!=(client->retirement.size!=0)) ||
             !qa_source_save_count(io,&client->source,SIZE_MAX) || (client->retired && client->source) ||
@@ -1746,7 +1744,6 @@ static bool presentation_fields(unified_presentation *p,unified_presentation_imp
             client->audio_owner==client->receiver || client->audio_owner==p->audio_owner ||
             !saved_identity(p->frontend,client->receiver) || client->receiver==p->audio_owner ||
             !saved_blob(io,&client->bytes) || !client->bytes.size) return false;
-        if (version==6) client->archived=client->retired;
         if ((client->archived && (!client->retired || client->born || client->selected || client->frame.size)) ||
             (client->born && (!client->selected || !client->source_staged || client->frame.size || client->retired)) ||
             ((client->selected || (client->retired && !client->archived)) && !saved->source_prepared) ||

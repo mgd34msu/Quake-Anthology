@@ -35,10 +35,8 @@ static bool state_signature(qa_source_save_io *io)
 {
     uint8_t magic[8] = {'Q','A','G','3','S','T',0,0};
     const uint8_t expected[8] = {'Q','A','G','3','S','T',0,0};
-    uint32_t version = 5;
     return qa_source_save_bytes(io, magic, sizeof(magic)) &&
-        qa_source_save_u32(io, &version) &&
-        ((!memcmp(magic, expected, sizeof(magic)) && version == 5) ||
+        ((!memcmp(magic, expected, sizeof(magic))) ||
          state_fail(io, QA_ERROR_FORMAT, "Invalid application Q3 state signature"));
 }
 
@@ -709,13 +707,12 @@ static bool client_topology(const q3g_role *role, qa_error *error)
 
 static bool portable_executor(qa_bytes bytes, qa_error *error)
 {
-    if (!bytes.data || bytes.size < 160 || memcmp(bytes.data, "QAVM", 4) ||
-        qa_load_u32le(bytes.data + 4) != 2)
+    if (!bytes.data || bytes.size < 156 || memcmp(bytes.data, "QAVM", 4))
         return application_fail(error, QA_ERROR_FORMAT, "Q3 continuation has no complete original QVM executor");
-    uint64_t memory = qa_load_u64le(bytes.data + 24), host = qa_load_u64le(bytes.data + 32);
-    if (memory > bytes.size - 160 || host != bytes.size - 160 - (size_t)memory)
+    uint64_t memory = qa_load_u64le(bytes.data + 20), host = qa_load_u64le(bytes.data + 28);
+    if (memory > bytes.size - 156 || host != bytes.size - 156 - (size_t)memory)
         return application_fail(error, QA_ERROR_FORMAT, "Q3 executor memory/host extents differ");
-    return qa_q3_host_checkpoint_portable_state((qa_bytes){bytes.data + 160 + (size_t)memory, (size_t)host}, error);
+    return qa_q3_host_checkpoint_portable_state((qa_bytes){bytes.data + 156 + (size_t)memory, (size_t)host}, error);
 }
 
 static bool collision_fields(qa_source_save_io *io, qa_q3_host_collision_profile *profile)
@@ -736,12 +733,11 @@ static bool saved_fields(qa_source_save_io *io, q3g_restore *saved)
 {
     uint8_t magic[8] = {'Q','A','G','3','P','V',0,0};
     const uint8_t expected[8] = {'Q','A','G','3','P','V',0,0};
-    uint32_t version = 15;
-    if (!qa_source_save_bytes(io, magic, sizeof(magic)) || !qa_source_save_u32(io, &version) ||
-        memcmp(magic, expected, sizeof(magic)) || version != 15 ||
+    if (!qa_source_save_bytes(io, magic, sizeof(magic)) ||
+        memcmp(magic, expected, sizeof(magic)) ||
         !qa_source_save_u32(io, &saved->product) || saved->product > QA_Q3_TEAM_ARENA ||
         !qa_source_save_u64(io, &saved->sequence) || !owned_text(io, &saved->entity_text) ||
-        !blob(io, &saved->state, 12))
+        !blob(io, &saved->state, 8))
         return state_fail(io, QA_ERROR_FORMAT, "Invalid coupled Q3 provider envelope");
     bool console = saved->cvars.size != 0;
     if (!qa_source_save_bool(io, &console) || (console && !blob(io, &saved->cvars, 12)) ||
@@ -898,7 +894,7 @@ static bool saved_fields(qa_source_save_io *io, q3g_restore *saved)
                     return state_fail(io, QA_ERROR_FORMAT, "Duplicate Q3 source projection actor");
         }
         if (artifact->qvm) {
-            if (!blob(io, &role->executor, 160) || !portable_executor(role->executor, io->error)) return false;
+            if (!blob(io, &role->executor, 156) || !portable_executor(role->executor, io->error)) return false;
         } else {
             bool committed = (role->flags & ROLE_COMMITTED) != 0;
             if (!blob(io, &role->executor, committed ? 12 : 0) ||
@@ -1661,10 +1657,10 @@ bool application_guest_q3_save_prepare(application_provider *provider, qa_world 
             provider->kind == APPLICATION_PROVIDER_QVM ? "qvm" : "native-owned"))
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 restored construction requires its qualified provider record");
     qa_bytes payload = record->payload, body;
-    if (!payload.data || payload.size < 32 || memcmp(payload.data, "QAPV", 4) ||
-        qa_load_u32le(payload.data + 4) != 1 || qa_load_u32le(payload.data + 8) != (uint32_t)provider->kind ||
-        qa_load_u32le(payload.data + 12) > 1 || qa_load_u64le(payload.data + 24) != payload.size - 32 ||
-        !application_guest_checkpoint_body(provider, (qa_bytes){payload.data + 32, payload.size - 32}, &body, error))
+    if (!payload.data || payload.size < 28 || memcmp(payload.data, "QAPV", 4) ||
+        qa_load_u32le(payload.data + 4) != (uint32_t)provider->kind ||
+        qa_load_u32le(payload.data + 8) > 1 || qa_load_u64le(payload.data + 20) != payload.size - 28 ||
+        !application_guest_checkpoint_body(provider, (qa_bytes){payload.data + 28, payload.size - 28}, &body, error))
         return application_fail(error, QA_ERROR_FORMAT, "Q3 restored provider wrapper differs from its actual source");
     q3g_restore *saved = calloc(1, sizeof(*saved));
     if (!saved) return application_fail(error, QA_ERROR_MEMORY, "Retaining Q3 provider constructor state");

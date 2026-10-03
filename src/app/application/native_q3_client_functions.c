@@ -36,9 +36,8 @@ static bool signature(qa_source_save_io *io)
 {
     char magic[8] = {'Q','A','N','3','F','N',0,0};
     const char expected[8] = {'Q','A','N','3','F','N',0,0};
-    uint32_t version = 1;
-    return qa_source_save_bytes(io, magic, sizeof(magic)) && qa_source_save_u32(io, &version) &&
-        ((!memcmp(magic, expected, sizeof(magic)) && version == 1) ||
+    return qa_source_save_bytes(io, magic, sizeof(magic)) &&
+        (!memcmp(magic, expected, sizeof(magic)) ||
             application_fail(io->error, QA_ERROR_FORMAT, "Invalid complete acquired CGAME callback continuation"));
 }
 

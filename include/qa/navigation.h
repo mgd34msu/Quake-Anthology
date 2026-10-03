@@ -296,7 +296,6 @@ typedef struct qa_nav_saved_admission {
     float seconds;
 } qa_nav_saved_admission;
 typedef struct qa_nav_checkpoint {
-    uint32_t version;
     qa_nav_map map;
     uint64_t generation, world_revision;
     qa_nav_saved_area *enabled;

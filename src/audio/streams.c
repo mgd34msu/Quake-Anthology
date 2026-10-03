@@ -285,7 +285,7 @@ size_t qa_audio_raw_mix(qa_audio_raw_stream *stream, float *stereo, size_t frame
     return mixed;
 }
 
-enum { RAW_CHECKPOINT_HEADER = 72, RAW_CHECKPOINT_VERSION = 1 };
+enum { RAW_CHECKPOINT_HEADER = 68 };
 
 bool qa_audio_raw_checkpoint(const qa_audio_raw_stream *stream, qa_buffer *out, qa_error *error) {
     if (stream == NULL || out == NULL) {
@@ -303,19 +303,18 @@ bool qa_audio_raw_checkpoint(const qa_audio_raw_stream *stream, qa_buffer *out, 
         return false;
     }
     memcpy(data, "QARS", 4);
-    qa_store_u32le(data + 4, RAW_CHECKPOINT_VERSION);
-    qa_store_u32le(data + 8, stream->output_rate);
-    qa_store_u32le(data + 12, stream->input_rate);
-    qa_store_u32le(data + 16, stream->channels);
-    qa_store_u32le(data + 20, stream->paused ? 1 : 0);
-    qa_store_u64le(data + 24, stream->position);
+    qa_store_u32le(data + 4, stream->output_rate);
+    qa_store_u32le(data + 8, stream->input_rate);
+    qa_store_u32le(data + 12, stream->channels);
+    qa_store_u32le(data + 16, stream->paused ? 1 : 0);
+    qa_store_u64le(data + 20, stream->position);
     uint64_t fraction_bits;
     memcpy(&fraction_bits, &stream->fraction, sizeof(fraction_bits));
-    qa_store_u64le(data + 32, fraction_bits);
-    qa_store_u32le(data + 40, stream->remainder);
-    qa_store_u64le(data + 48, stream->begin);
-    qa_store_u64le(data + 56, stream->end);
-    qa_store_u64le(data + 64, stream->count);
+    qa_store_u64le(data + 28, fraction_bits);
+    qa_store_u32le(data + 36, stream->remainder);
+    qa_store_u64le(data + 44, stream->begin);
+    qa_store_u64le(data + 52, stream->end);
+    qa_store_u64le(data + 60, stream->count);
     size_t capacity = stream->capacity_samples / stream->channels;
     size_t frame = stream->head;
     for (size_t i = 0; i < stream->count; ++i) {
@@ -335,31 +334,30 @@ bool qa_audio_raw_restore(qa_bytes checkpoint, uint32_t output_rate, qa_audio_ra
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "invalid PCM checkpoint arguments");
         return false;
     }
-    if (checkpoint.size < RAW_CHECKPOINT_HEADER || memcmp(checkpoint.data, "QARS", 4) != 0 ||
-        qa_load_u32le(checkpoint.data + 4) != RAW_CHECKPOINT_VERSION) {
+    if (checkpoint.size < RAW_CHECKPOINT_HEADER || memcmp(checkpoint.data, "QARS", 4) != 0) {
         qa_error_set(error, QA_ERROR_FORMAT, 0, "invalid PCM checkpoint header");
         return false;
     }
     const uint8_t *data = checkpoint.data;
     qa_audio_raw_stream saved = {0};
-    saved.output_rate = qa_load_u32le(data + 8);
-    saved.input_rate = qa_load_u32le(data + 12);
-    saved.channels = qa_load_u32le(data + 16);
-    uint32_t flags = qa_load_u32le(data + 20);
+    saved.output_rate = qa_load_u32le(data + 4);
+    saved.input_rate = qa_load_u32le(data + 8);
+    saved.channels = qa_load_u32le(data + 12);
+    uint32_t flags = qa_load_u32le(data + 16);
     saved.paused = (flags & 1) != 0;
-    saved.position = qa_load_u64le(data + 24);
-    uint64_t fraction_bits = qa_load_u64le(data + 32);
+    saved.position = qa_load_u64le(data + 20);
+    uint64_t fraction_bits = qa_load_u64le(data + 28);
     memcpy(&saved.fraction, &fraction_bits, sizeof(saved.fraction));
-    saved.remainder = qa_load_u32le(data + 40);
-    saved.begin = qa_load_u64le(data + 48);
-    saved.end = qa_load_u64le(data + 56);
-    uint64_t count = qa_load_u64le(data + 64);
+    saved.remainder = qa_load_u32le(data + 36);
+    saved.begin = qa_load_u64le(data + 44);
+    saved.end = qa_load_u64le(data + 52);
+    uint64_t count = qa_load_u64le(data + 60);
     if (saved.output_rate == 0 || (saved.channels != 1 && saved.channels != 2) || flags > 1 ||
-        qa_load_u32le(data + 44) != 0 || !isfinite(saved.fraction) || saved.fraction < 0 ||
+        qa_load_u32le(data + 40) != 0 || !isfinite(saved.fraction) || saved.fraction < 0 ||
         saved.fraction >= 1 || saved.remainder >= saved.output_rate || saved.end < saved.begin ||
         count != saved.end - saved.begin ||
         count > (SIZE_MAX - RAW_CHECKPOINT_HEADER) / 2 / saved.channels) {
-        qa_error_set(error, QA_ERROR_FORMAT, 8, "invalid PCM checkpoint state");
+        qa_error_set(error, QA_ERROR_FORMAT, 4, "invalid PCM checkpoint state");
         return false;
     }
     saved.count = (size_t)count;

@@ -3,7 +3,7 @@
 #include "qa/game_q2.h"
 #include "qa/targets.h"
 
-/* qa.native-q2-continuation, version 1. Native continuation uses explicit
+/* qa.native-q2-continuation. Native continuation uses explicit
  * fields, string values and saved actor generations. Shared stores retain
  * body, combat, inventory, pickup, target and scheduler authority. */
 bool qa_q2_game_capture(qa_q2_game *, qa_buffer *, qa_error *);

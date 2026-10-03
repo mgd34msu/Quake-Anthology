@@ -93,15 +93,14 @@ static bool field_entry(qa_source_save_io *io, cvar *entry)
 static bool header(qa_source_save_io *io, uint32_t *dialect, qa_cvars_restore *state)
 {
     char magic[4] = {'Q','A','C','V'};
-    uint32_t version = 2;
-    bool ok = qa_source_save_bytes(io, magic, sizeof(magic)) && qa_source_save_u32(io, &version) &&
+    bool ok = qa_source_save_bytes(io, magic, sizeof(magic)) &&
         qa_source_save_u32(io, dialect) && qa_source_save_count(io, &state->count, SIZE_MAX / sizeof(cvar)) &&
         qa_source_save_count(io, &state->next_handle, SIZE_MAX) && qa_source_save_u32(io, &state->changed_flags) &&
         qa_source_save_bool(io, &state->userinfo_modified) && qa_source_save_bool(io, &state->server_active) &&
         qa_source_save_bool(io, &state->high_characters) && qa_source_save_bool(io, &state->cheats) &&
         qa_source_save_count(io,&state->alias_count,SIZE_MAX/sizeof(cvar_alias));
     if (!ok) return false;
-    if (memcmp(magic, "QACV", 4) || version != 2 || !qac_dialect_valid((qa_console_dialect)*dialect))
+    if (memcmp(magic, "QACV", 4) || !qac_dialect_valid((qa_console_dialect)*dialect))
         return qac_fail(io->error, QA_ERROR_FORMAT, "unsupported cvar continuation schema");
     return true;
 }

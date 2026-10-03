@@ -1,6 +1,6 @@
 #include "internal.h"
 
-#define WORLD_HEADER_BYTES 32u
+#define WORLD_HEADER_BYTES 28u
 #define WORLD_BODY_BYTES 439u
 #define WORLD_SPATIAL_BYTES 16u
 
@@ -59,7 +59,7 @@ bool qa_save_world_encode(const qa_world_checkpoint *value, qa_buffer *out, qa_e
     if (!buffer.data) return persistence_fail(error, QA_ERROR_MEMORY, "Allocating world checkpoint codec");
     qa_net_writer w;
     qa_net_writer_init(&w, buffer.data, size, error);
-    qa_net_write_data(&w, "QAWD", 4); qa_net_write_u32(&w, 1);
+    qa_net_write_data(&w, "QAWD", 4);
     qa_net_write_u32(&w, (uint32_t)value->body_count); qa_net_write_u32(&w, (uint32_t)value->spatial_count);
     qa_net_write_u64(&w, value->attachment_order); qa_net_write_u64(&w, value->body_serial);
     for (size_t i = 0; i < value->body_count; ++i) {
@@ -94,12 +94,11 @@ bool qa_save_world_decode(qa_bytes bytes, qa_world_checkpoint *out, qa_error *er
         return persistence_fail(error, QA_ERROR_FORMAT, "Invalid world checkpoint signature");
     qa_net_reader r;
     qa_net_reader_init(&r, bytes, error); r.bit = 32;
-    uint32_t version = qa_net_read_u32(&r);
     qa_world_checkpoint value = {0};
     value.body_count = qa_net_read_u32(&r); value.spatial_count = qa_net_read_u32(&r);
     value.attachment_order = qa_net_read_u64(&r); value.body_serial = qa_net_read_u64(&r);
     size_t remaining = qa_net_reader_remaining(&r);
-    if (version != 1 || value.spatial_count > value.body_count ||
+    if (value.spatial_count > value.body_count ||
         value.body_count > remaining / WORLD_BODY_BYTES)
         return persistence_fail(error, QA_ERROR_FORMAT, "Invalid world checkpoint body extent");
     remaining -= value.body_count * WORLD_BODY_BYTES;

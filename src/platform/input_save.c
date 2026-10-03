@@ -324,9 +324,9 @@ static bool envelope(qa_source_save_io *io, qa_input_platform *p, const qa_input
     const qa_input_platform_checkpoint_refs *refs, qa_buffer *native_cut, qa_buffer *haptic)
 {
     uint8_t magic[4] = {'Q','I','P','L'};
-    uint32_t version = 5, callbacks = services(&p->options);
+    uint32_t callbacks = services(&p->options);
     return qa_source_save_bytes(io, magic, sizeof(magic)) && !memcmp(magic, "QIPL", sizeof(magic)) &&
-        qa_source_save_u32(io, &version) && version == 5 && qa_source_save_u32(io, &callbacks) &&
+        qa_source_save_u32(io, &callbacks) &&
         callbacks == services(&p->options) && blob(io, native_cut) &&
         state_fields(io, p, native, refs) && blob(io, haptic);
 }

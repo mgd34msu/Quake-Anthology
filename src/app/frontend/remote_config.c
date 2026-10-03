@@ -1166,9 +1166,7 @@ static bool fields(frontend_remote_config *row,qa_source_save_io *io,frontend_ke
 }
 static bool header(qa_source_save_io *io,size_t *count)
 {
-    uint8_t magic[4]={'Q','F','R','C'}; uint32_t version=3;
-    return qa_source_save_bytes(io,magic,4) && !memcmp(magic,"QFRC",4) && qa_source_save_u32(io,&version) && version==3 &&
-        qa_source_save_count(io,count,io->direction==QA_SOURCE_SAVE_READ?io->input.size-io->offset:SIZE_MAX);
+    uint8_t magic[4]={'Q','F','R','C'}; return qa_source_save_bytes(io,magic,4) && !memcmp(magic,"QFRC",4) && qa_source_save_count(io,count,io->direction==QA_SOURCE_SAVE_READ?io->input.size-io->offset:SIZE_MAX);
 }
 bool frontend_remote_configs_checkpoint(const frontend_remote_configs *owner,const qa_application_content_graph *graph,
     qa_buffer *out,qa_error *error)

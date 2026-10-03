@@ -14,8 +14,7 @@ static bool coordinates_fields(qa_source_save_io *io, qa_scene_vec2 *uv)
 {
     return qa_source_save_f32(io, &uv->x) && qa_source_save_f32(io, &uv->y);
 }
-bool qa_render_source_texture_saved_fields(qa_source_save_io *io,qa_render_source_texture *texture,
-    uint32_t version,const qa_render_checkpoint_refs *refs)
+bool qa_render_source_texture_saved_fields(qa_source_save_io *io,qa_render_source_texture *texture,const qa_render_checkpoint_refs *refs)
 {
     bool reading=io->direction==QA_SOURCE_SAVE_READ;
     uint32_t count=texture->count,filter=texture->filter,wrap=texture->wrap;
@@ -25,12 +24,7 @@ bool qa_render_source_texture_saved_fields(qa_source_save_io *io,qa_render_sourc
         !isfinite(texture->border.x) || !isfinite(texture->border.y) ||
         !isfinite(texture->border.z) || !isfinite(texture->border.w)) return false;
     texture->filter=(qa_scene_filter)filter; texture->wrap=(qa_scene_wrap)wrap;
-    if (version>=19) {
-        if (!qa_source_save_bool(io,&texture->magnification_linear)) return false;
-    } else if (reading) {
-        texture->magnification_linear=filter==QA_SCENE_LINEAR || filter==QA_SCENE_LINEAR_MIPMAP_NEAREST ||
-            filter==QA_SCENE_LINEAR_MIPMAP_LINEAR;
-    }
+    if (!qa_source_save_bool(io,&texture->magnification_linear)) return false;
     for (uint32_t i=0;i<count;++i) {
         uint32_t kind=texture->kinds[i];
         uint32_t format=texture->formats[i];
@@ -50,7 +44,7 @@ bool qa_render_source_texture_saved_fields(qa_source_save_io *io,qa_render_sourc
             texture->levels[i].height!=texture->images[i]->levels[i].height ||
             texture->levels[i].bytes!=texture->images[i]->levels[i].bytes ||
             texture->levels[i].pixels!=(texture->pixels[i]?texture->pixels[i]:texture->images[i]->levels[i].pixels)) return false;
-        if (version>=18) {
+        {
             bool modified=texture->pixels[i]!=NULL;
             if (!qa_source_save_bool(io,&modified)) return false;
             if (modified) {
@@ -63,8 +57,7 @@ bool qa_render_source_texture_saved_fields(qa_source_save_io *io,qa_render_sourc
                 }
                 if (!qa_source_save_bytes(io,texture->pixels[i],texture->levels[i].bytes)) return false;
             }
-        } else if (!reading && texture->pixels[i]) return false;
-    }
+        } }
     return true;
 }
 static bool entity_fields(qa_source_save_io *io, material_source_entity *entity)
@@ -80,7 +73,7 @@ static bool entity_fields(qa_source_save_io *io, material_source_entity *entity)
     return true;
 }
 static bool retained_fields(qa_source_save_io *io, qa_material_source_scratch *source,
-    uint32_t version, const qa_render_checkpoint_refs *refs)
+    const qa_render_checkpoint_refs *refs)
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
     uint64_t key = 0;
@@ -124,7 +117,7 @@ static bool retained_fields(qa_source_save_io *io, qa_material_source_scratch *s
      * by AddRefEntity before another sorted entity is selected. */
     for (size_t i = 0; i < 1023; ++i)
         if (!entity_fields(io, source->entities + i)) return false;
-    if (version>=7 && (!qa_source_save_u32(io, &source->submitted_light_count) || source->submitted_light_count > 32 ||
+    if ((!qa_source_save_u32(io, &source->submitted_light_count) || source->submitted_light_count > 32 ||
         !qa_source_save_u32(io, &source->first_scene_light) ||
         source->first_scene_light > source->submitted_light_count)) return false;
     if (!qa_source_save_u32(io, &source->light_mask) ||
@@ -144,11 +137,10 @@ static bool retained_fields(qa_source_save_io *io, qa_material_source_scratch *s
     }
     return true;
 }
-static bool source_fields(qa_source_save_io *io, qa_material_source_scratch *source, uint32_t version,
-    const qa_render_checkpoint_refs *refs)
+static bool source_fields(qa_source_save_io *io, qa_material_source_scratch *source, const qa_render_checkpoint_refs *refs)
 {
     if (source->entered) return false;
-    if (version >= 9) {
+    {
         bool present = source->scene_bank != NULL;
         if (!qa_source_save_bool(io, &present)) return false;
         if (present) {
@@ -173,11 +165,11 @@ static bool source_fields(qa_source_save_io *io, qa_material_source_scratch *sou
             if (!ok) return false;
         }
     }
-    if (version >= 6 && !retained_fields(io, source, version, refs)) return false;
-    if (version >= 12 && !qa_source_save_f32(io, &source->identity_light)) return false;
-    for (size_t i = 0; version >= 12 && i < 8; ++i)
+    if (!retained_fields(io, source, refs)) return false;
+    if (!qa_source_save_f32(io, &source->identity_light)) return false;
+    for (size_t i = 0; i < 8; ++i)
         if (!qa_source_save_bytes(io, source->texts[i], sizeof(source->texts[i])) || source->texts[i][32] != 0) return false;
-    if (version >= 7) {
+    {
         uint64_t key = 0;
         bool reading = io->direction == QA_SOURCE_SAVE_READ;
         if (!reading && source->world && (!refs || !refs->world_encode ||
@@ -190,15 +182,14 @@ static bool source_fields(qa_source_save_io *io, qa_material_source_scratch *sou
             source->world = (qa_scene_world *)world;
         }
     }
-    if (version >= 5 && (
-        !qa_source_save_vec3(io, &source->view_origin) ||
+    if ((!qa_source_save_vec3(io, &source->view_origin) ||
         !qa_source_save_vec3(io, &source->local_view_origin) ||
         !qa_source_save_bool(io, &source->view_mirror) ||
         !qa_source_save_bool(io, &source->projection_2d) ||
         !qa_source_save_i32(io, &source->picture_milliseconds))) return false;
     if (!qa_source_save_count(io, &source->vertex_count, QA_SOURCE_TESS_VERTICES) ||
         !qa_source_save_count(io, &source->index_count, QA_SOURCE_TESS_INDEXES)) return false;
-    for (unsigned axis = 0; version >= 5 && axis < 3; ++axis)
+    for (unsigned axis = 0; axis < 3; ++axis)
         if (!qa_source_save_vec3(io, &source->view_axis[axis])) return false;
     /* Inactive cells are real retained BSS, including writes preceding ERR_DROP. */
     for (size_t i = 0; i < QA_SOURCE_TESS_VERTICES; ++i) {
@@ -234,19 +225,13 @@ static bool diagnostics_fields(qa_source_save_io *io,qa_render_controls *control
         if (!qa_source_save_bool(io,controls->image_used+i)) return false;
     return true;
 }
-bool qa_render_controls_saved_fields(qa_source_save_io *io, qa_render_controls *controls, uint32_t version,
-    const qa_render_checkpoint_refs *refs)
+bool qa_render_controls_saved_fields(qa_source_save_io *io, qa_render_controls *controls, const qa_render_checkpoint_refs *refs)
 {
-    if (version>=21 && !diagnostics_fields(io,controls)) return false;
-    if (version<21 && io->direction==QA_SOURCE_SAVE_READ) {
-        controls->frame_values=(qa_render_source_frame_values){0};
-        controls->counters=(qa_render_source_counters){0}; controls->finish_called=false;
-        memset(controls->image_used,0,sizeof(controls->image_used));
-    }
-    if (version>=17 && !qa_render_source_texture_saved_fields(io,&controls->zero_texture,version,refs)) return false;
-    /* The enclosing CPU/GL codec owns the schema version and idle boundary. */
+    if (!diagnostics_fields(io,controls)) return false;
+    if (!qa_render_source_texture_saved_fields(io,&controls->zero_texture,refs)) return false;
+    /* The enclosing CPU/GL codec owns the idle boundary. */
     qa_render_source_attributes *attributes=&controls->attributes;
-    if (version>=10) {
+    {
         if (!color_fields(io,&attributes->color) || !qa_source_save_bool(io,&attributes->color_known) ||
             !qa_source_save_bool(io,&attributes->color_array) ||
             !qa_source_save_u32(io,&attributes->texture_unit) || attributes->texture_unit>1) return false;
@@ -264,23 +249,21 @@ bool qa_render_controls_saved_fields(qa_source_save_io *io, qa_render_controls *
                 attributes->environment[unit]=(qa_scene_texture_environment)environment;
                 attributes->coordinate_kind[unit]=(material_source_coordinate_kind)kind;
             }
-            if (version>=12 && !qa_source_save_bool(io,attributes->actual_empty+unit)) return false;
+            if (!qa_source_save_bool(io,attributes->actual_empty+unit)) return false;
         }
-    } else if (io->direction==QA_SOURCE_SAVE_READ) qa_render_source_attributes_init(attributes);
-    if (version>=16 && !color_fields(io,&attributes->zero_border)) return false;
-    if (version>=20) {
+    } if (!color_fields(io,&attributes->zero_border)) return false;
+    {
         uint32_t cull=controls->source_cull_type;
         if (!qa_source_save_u32(io,&cull) || cull>QA_CULL_BACK ||
             !qa_source_save_bool(io,&controls->source_cull_valid)) return false;
         if (io->direction==QA_SOURCE_SAVE_READ) controls->source_cull_type=(qa_scene_cull)cull;
-    } else if (io->direction==QA_SOURCE_SAVE_READ) controls->source_cull_valid=false;
-    if (version>=6) {
+    } {
         uint32_t filter=controls->source_filter;
         if (!qa_source_save_u32(io,&filter) || filter>QA_SCENE_LINEAR_MIPMAP_LINEAR ||
             !qa_source_save_bool(io,&controls->source_filter_initialized)) return false;
         if (io->direction==QA_SOURCE_SAVE_READ) controls->source_filter=(qa_scene_filter)filter;
     }
-    if (version>=8 && (!qa_source_save_bool(io,&controls->source_limits_initialized) ||
+    if ((!qa_source_save_bool(io,&controls->source_limits_initialized) ||
         !qa_source_save_u32(io,&controls->source_max_polys) ||
         !qa_source_save_u32(io,&controls->source_max_polyverts) ||
         (controls->source_limits_initialized ? controls->source_max_polys<600 || controls->source_max_polyverts<3000 ||
@@ -288,7 +271,7 @@ bool qa_render_controls_saved_fields(qa_source_save_io *io, qa_render_controls *
             controls->source_max_polys!=0 || controls->source_max_polyverts!=0))) return false;
     if (controls->ticket || controls->image_ticket || !qa_source_save_i32(io, &controls->values.primitives) ||
         !qa_source_save_bool(io, &controls->values.compiled_vertex_arrays) ||
-        !source_fields(io, &controls->source, version, refs)) return false;
+        !source_fields(io, &controls->source, refs)) return false;
     if (controls->source.scene_bank) {
         qa_q3_source_scene_membership membership;
         if (!controls->source_limits_initialized ||

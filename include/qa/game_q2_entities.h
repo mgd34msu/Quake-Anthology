@@ -350,7 +350,6 @@ typedef struct q2_wind_time {
     uint64_t until_ns;
 } q2_wind_time;
 typedef struct qa_q2_entity_checkpoint {
-    uint32_t version;
     bool present;
     qa_q2_entity_state value;
     qa_q2_saved_reference activator, owner, enemy, goal, collision_owner;
@@ -366,7 +365,6 @@ typedef struct qa_q2_healthbar_checkpoint {
     bool dying;
 } qa_q2_healthbar_checkpoint;
 typedef struct qa_q2_entities_checkpoint {
-    uint32_t version;
     qa_q2_saved_reference poi, poi_dynamic;
     qa_string_id poi_image, story;
     int poi_stage, steam_id, total_secrets, found_secrets, total_goals, found_goals;

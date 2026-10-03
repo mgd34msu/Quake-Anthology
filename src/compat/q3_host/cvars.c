@@ -107,10 +107,10 @@ static bool cache_fields(qa_source_save_io *io,q3_cvar_cache *cache)
 bool q3_cvars_bindings_capture(const qa_q3_host *host,qa_buffer *out,qa_error *error)
 {
     qa_source_save_io io={0};
-    uint8_t magic[4]={'Q','3','C','B'}; uint32_t version=4;
+    uint8_t magic[4]={'Q','3','C','B'};
     size_t count=host->cvar_binding_count;
     bool ok=qa_source_save_writer(&io,NULL,error) && qa_source_save_bytes(&io,magic,sizeof(magic)) &&
-        qa_source_save_u32(&io,&version) && qa_source_save_count(&io,&count,1024);
+        qa_source_save_count(&io,&count,1024);
     for (size_t i=0;ok && i<count;++i) {
         q3_cvar_binding copy=host->cvar_bindings[i]; qa_cvars *current=NULL;
         ok=binding_namespace(host,&copy,&current,error) && copy.handle<qa_cvars_handle_count(current);
@@ -139,14 +139,14 @@ bool q3_cvars_bindings_capture(const qa_q3_host *host,qa_buffer *out,qa_error *e
 bool q3_cvars_bindings_decode(qa_bytes bytes,q3_cvar_binding **out,size_t *out_count,
     q3_cvar_cache **out_caches,size_t *out_cache_count,q3_cvar_status *out_status,qa_error *error)
 {
-    qa_source_save_io io={0}; uint8_t magic[4]; uint32_t version=0; size_t count=0;
+    qa_source_save_io io={0}; uint8_t magic[4]; size_t count=0;
     if (!out || *out || !out_count || !out_caches || *out_caches || !out_cache_count ||
         !out_status || out_status->read || out_status->revision || out_status->previous_value ||
         !qa_source_save_reader(&io,NULL,bytes,error))
         return q3_fail(error,QA_ERROR_ARGUMENT,0,"Q3 cvar decode requires empty actual candidate output");
-    bool ok=qa_source_save_bytes(&io,magic,sizeof(magic)) && qa_source_save_u32(&io,&version) &&
+    bool ok=qa_source_save_bytes(&io,magic,sizeof(magic)) &&
         qa_source_save_count(&io,&count,1024);
-    if (ok && (memcmp(magic,"Q3CB",4) || version!=4 || count>bytes.size-io.offset))
+    if (ok && (memcmp(magic,"Q3CB",4) || count>bytes.size-io.offset))
         ok=q3_fail(error,QA_ERROR_FORMAT,0,"Unsupported Q3 cvar binding continuation");
     q3_cvar_binding *bindings=ok && count?calloc(count,sizeof(*bindings)):NULL;
     if (ok && count && !bindings) ok=q3_fail(error,QA_ERROR_MEMORY,0,"Restoring routed Q3 cvar bindings");

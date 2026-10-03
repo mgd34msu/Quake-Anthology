@@ -7,9 +7,8 @@ static bool fields(qa_source_save_io *io, const qa_cinematic *movie, const qa_sc
     const qa_cinematic_image_checkpoint_refs *refs, const qa_scene_image **out,
     bool *bound, uint64_t *revision, uint64_t *sequence)
 {
-    uint8_t magic[4]={'Q','A','C','P'}; uint32_t schema=1;
-    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QACP",4) ||
-        !qa_source_save_u32(io,&schema) || schema!=1) return false;
+    uint8_t magic[4]={'Q','A','C','P'};
+    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QACP",4)) return false;
     bool present=movie->image!=NULL;
     uint64_t key=0;
     if (io->direction==QA_SOURCE_SAVE_WRITE && present &&

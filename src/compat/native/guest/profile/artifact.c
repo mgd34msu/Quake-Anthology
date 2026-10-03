@@ -113,7 +113,7 @@ bool guest_profile_artifacts_checkpoint(const guest_profile_artifacts *owner,
 {
     if (!owner || !out || out->data || out->size)
         return fail(error, QA_ERROR_ARGUMENT, 0, "profile capture needs owner and empty output");
-    size_t bytes = 16;
+    size_t bytes = 12;
     for (size_t i = 0; i < owner->count; ++i) {
         const profile_image *row = owner->images + i;
         qa_bytes artifact = row->kind == GUEST_PROFILE_ELF ? guest_elf_describe(row->owner.elf)->artifact : guest_pe_describe(row->owner.pe)->artifact;
@@ -123,8 +123,8 @@ bool guest_profile_artifacts_checkpoint(const guest_profile_artifacts *owner,
     }
     uint8_t *data = malloc(bytes);
     if (!data) return fail(error, QA_ERROR_MEMORY, bytes, "capturing profile artifacts");
-    memcpy(data, "QAPA", 4); qa_store_u32le(data + 4, 1); qa_store_u64le(data + 8, owner->count);
-    size_t offset = 16;
+    memcpy(data, "QAPA", 4); qa_store_u64le(data + 4, owner->count);
+    size_t offset = 12;
     for (size_t i = 0; i < owner->count; ++i) {
         const profile_image *row = owner->images + i;
         qa_bytes artifact; uint64_t address; uint32_t role = 0;
@@ -146,17 +146,17 @@ bool guest_profile_artifacts_checkpoint(const guest_profile_artifacts *owner,
 bool guest_profile_artifacts_decode(qa_bytes encoded, size_t maximum_image_bytes,
     guest_profile_artifacts **out, qa_error *error)
 {
-    if (!out || *out || !maximum_image_bytes || !encoded.data || encoded.size < 16 ||
-        memcmp(encoded.data, "QAPA", 4) || qa_load_u32le(encoded.data + 4) != 1)
+    if (!out || *out || !maximum_image_bytes || !encoded.data || encoded.size < 12 ||
+        memcmp(encoded.data, "QAPA", 4))
         return fail(error, QA_ERROR_FORMAT, 0, "profile artifact record is invalid");
-    uint64_t count = qa_load_u64le(encoded.data + 8);
-    if (!count || count > (encoded.size - 16) / 32 || count > SIZE_MAX / sizeof(profile_image))
-        return fail(error, QA_ERROR_FORMAT, 8, "profile image count exceeds real record storage");
+    uint64_t count = qa_load_u64le(encoded.data + 4);
+    if (!count || count > (encoded.size - 12) / 32 || count > SIZE_MAX / sizeof(profile_image))
+        return fail(error, QA_ERROR_FORMAT, 4, "profile image count exceeds real record storage");
     guest_profile_artifacts *owner = calloc(1, sizeof(*owner));
     if (!owner) return fail(error, QA_ERROR_MEMORY, 0, "decoding profile owner");
     owner->images = calloc((size_t)count, sizeof(*owner->images));
     if (!owner->images) { free(owner); return fail(error, QA_ERROR_MEMORY, 0, "decoding profile dependency order"); }
-    size_t offset = 16; bool okay = true;
+    size_t offset = 12; bool okay = true;
     for (size_t i = 0; okay && i < (size_t)count; ++i) {
         if (offset > encoded.size || encoded.size - offset < 32) {
             okay = fail(error, QA_ERROR_FORMAT, offset, "profile image record is truncated"); break;

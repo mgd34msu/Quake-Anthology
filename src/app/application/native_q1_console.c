@@ -745,15 +745,15 @@ bool application_native_q1_console_capture(application_provider *provider, qa_bu
     qa_buffer registry = {0};
     if (!qa_cvars_save_capture(cvars, &registry, error)) return false;
     size_t server_size = strlen(owner->serverinfo), local_size = strlen(owner->localinfo);
-    if (registry.size > UINT32_MAX || registry.size > SIZE_MAX - 26 - server_size - local_size - owner->reliable_info_size) {
+    if (registry.size > UINT32_MAX || registry.size > SIZE_MAX - 22 - server_size - local_size - owner->reliable_info_size) {
         qa_buffer_free(&registry);
         return application_fail(error, QA_ERROR_MEMORY, "native Q1 console checkpoint exceeds its extent");
     }
-    qa_buffer bytes = {.size = 26 + registry.size + server_size + local_size + owner->reliable_info_size};
+    qa_buffer bytes = {.size = 22 + registry.size + server_size + local_size + owner->reliable_info_size};
     bytes.data = malloc(bytes.size);
     if (!bytes.data) { qa_buffer_free(&registry); return application_fail(error, QA_ERROR_MEMORY, "allocating Source console checkpoint"); }
     qa_net_writer writer; qa_net_writer_init(&writer, bytes.data, bytes.size, error);
-    bool okay = qa_net_write_u32(&writer, UINT32_C(0x3149514e)) && qa_net_write_u32(&writer, 1) &&
+    bool okay = qa_net_write_u32(&writer, UINT32_C(0x3149514e)) &&
         qa_net_write_u8(&writer, (uint8_t)dialect(provider)) &&
         qa_net_write_u8(&writer, owner->info_initialized ? 1 : 0) &&
         qa_net_write_u32(&writer, (uint32_t)registry.size) && qa_net_write_u32(&writer, (uint32_t)server_size) &&
@@ -794,12 +794,12 @@ bool application_native_q1_console_restore(application_provider *provider, qa_by
     if (!cvars || !application_native_q1_console_idle(provider))
         return application_fail(error, QA_ERROR_ARGUMENT, "native Q1 console restore requires its idle Source owner");
     qa_net_reader reader; qa_net_reader_init(&reader, bytes, error);
-    uint32_t magic = qa_net_read_u32(&reader), version = qa_net_read_u32(&reader);
+    uint32_t magic = qa_net_read_u32(&reader);
     uint8_t source_dialect = qa_net_read_u8(&reader), initialized = qa_net_read_u8(&reader);
     uint32_t registry_size = qa_net_read_u32(&reader), server_size = qa_net_read_u32(&reader),
         local_size = qa_net_read_u32(&reader), reliable_size = qa_net_read_u32(&reader);
     if (reader.failed) return false;
-    if (magic != UINT32_C(0x3149514e) || version != 1 || source_dialect != dialect(provider) ||
+    if (magic != UINT32_C(0x3149514e) || source_dialect != dialect(provider) ||
         initialized > 1 || server_size > 512 || local_size > 32768 || reliable_size > 1450 ||
         (source_dialect != QA_CONSOLE_QW && (initialized || server_size || local_size || reliable_size)))
         return application_fail(error, QA_ERROR_FORMAT, "native Q1 console checkpoint changes its Source recipe");

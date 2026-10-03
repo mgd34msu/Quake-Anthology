@@ -331,11 +331,9 @@ static bool fields(qa_source_save_io *io, frontend_material_movies *owner,
     const frontend_material_movies_refs *refs, qa_q3_cinematic_handles **decoded_pool)
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
-    uint8_t magic[4] = {'Q','F','M','M'}; uint32_t schema = 2;
-    size_t count = owner->count, capacity = owner->capacity;
+    uint8_t magic[4] = {'Q','F','M','M'}; size_t count = owner->count, capacity = owner->capacity;
     double anchor = (double)owner->source.frontend->wall_time_ns / 1000000.0;
     if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "QFMM", 4) ||
-        !qa_source_save_u32(io, &schema) || schema != 2 ||
         !cinematic_header(io,owner,refs,decoded_pool) ||
         !qa_source_save_count(io, &count, SIZE_MAX / sizeof(*owner->rows)) ||
         !qa_source_save_count(io, &capacity, SIZE_MAX / sizeof(*owner->rows)) || count > capacity ||

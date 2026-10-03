@@ -353,7 +353,7 @@ bool qa_net_toggle_checkpoint(const qa_net_toggle *channel, qa_buffer *out, qa_e
     size_t capacity = 51 + channel->pending_size + channel->reliable_size;
     uint8_t *data = malloc(capacity); if (!data) return exhausted(error);
     qa_net_writer w; qa_net_writer_init(&w, data, capacity, error);
-    bool ok = qa_net_write_u32(&w, UINT32_C(0x47544151)) && qa_net_write_u32(&w, 1) &&
+    bool ok = qa_net_write_u32(&w, UINT32_C(0x47544151)) &&
         qa_net_write_u64(&w, channel->capacity) && qa_net_write_u64(&w, channel->pending_size) &&
         qa_net_write_u64(&w, channel->reliable_size) && qa_net_write_u32(&w, channel->incoming) &&
         qa_net_write_u32(&w, channel->outgoing) && qa_net_write_u32(&w, channel->incoming_ack) &&
@@ -368,7 +368,7 @@ bool qa_net_toggle_restore_checkpoint(qa_bytes bytes, size_t capacity, qa_net_to
 {
     if (!out || *out || (bytes.size && !bytes.data)) return invalid(error, "Toggle restore requires an empty candidate output");
     qa_net_reader r; qa_net_reader_init(&r, bytes, error);
-    if (qa_net_read_u32(&r) != UINT32_C(0x47544151) || qa_net_read_u32(&r) != 1 ||
+    if (qa_net_read_u32(&r) != UINT32_C(0x47544151) ||
         qa_net_read_u64(&r) != capacity) return invalid(error, "Toggle continuation schema/capacity differs");
     uint64_t pending = qa_net_read_u64(&r), reliable = qa_net_read_u64(&r);
     if (r.failed || pending > capacity || reliable > capacity || pending > qa_net_reader_remaining(&r) ||
@@ -409,7 +409,7 @@ bool qa_net_stopwait_checkpoint(const qa_net_stopwait *channel, qa_buffer *out, 
     size_t capacity = 74 + channel->send_size + channel->receive_size;
     uint8_t *data = malloc(capacity); if (!data) return exhausted(error);
     qa_net_writer w; qa_net_writer_init(&w, data, capacity, error);
-    bool ok = qa_net_write_u32(&w, UINT32_C(0x57534151)) && qa_net_write_u32(&w, 1) &&
+    bool ok = qa_net_write_u32(&w, UINT32_C(0x57534151)) &&
         qa_net_write_u64(&w, channel->capacity) && qa_net_write_u64(&w, channel->fragment_bytes) &&
         qa_net_write_u64(&w, channel->retry_ns) && qa_net_write_u64(&w, channel->sent_ns) &&
         qa_net_write_u64(&w, channel->send_size) && qa_net_write_u64(&w, channel->send_offset) &&
@@ -425,7 +425,7 @@ bool qa_net_stopwait_restore_checkpoint(qa_bytes bytes, size_t capacity, size_t 
 {
     if (!out || *out || (bytes.size && !bytes.data)) return invalid(error, "Stop-and-wait restore requires an empty candidate output");
     qa_net_reader r; qa_net_reader_init(&r, bytes, error);
-    if (qa_net_read_u32(&r) != UINT32_C(0x57534151) || qa_net_read_u32(&r) != 1 ||
+    if (qa_net_read_u32(&r) != UINT32_C(0x57534151) ||
         qa_net_read_u64(&r) != capacity || qa_net_read_u64(&r) != fragment || qa_net_read_u64(&r) != retry)
         return invalid(error, "Stop-and-wait continuation schema/policy differs");
     uint64_t sent_ns = qa_net_read_u64(&r), send_size = qa_net_read_u64(&r), offset = qa_net_read_u64(&r), receive_size = qa_net_read_u64(&r);

@@ -155,9 +155,9 @@ bool frontend_renderer_worlds_checkpoint(qa_frontend *f,const frontend_world_inv
 {
     size_t count=0;
     if(!f || !f->capture || !roots || !frontend_renderer_worlds_count(f,&count,error)) return false;
-    uint8_t magic[4]={'Q','F','R','W'}; uint32_t version=2; uint64_t rows=count; qa_source_save_io io={0};
+    uint8_t magic[4]={'Q','F','R','W'}; uint64_t rows=count; qa_source_save_io io={0};
     bool ok=qa_source_save_writer(&io,NULL,error) && qa_source_save_bytes(&io,magic,4) &&
-        qa_source_save_u32(&io,&version) && qa_source_save_u64(&io,&rows);
+        qa_source_save_u64(&io,&rows);
     qa_application_content_graph *graph=qa_application_content_graph_read(f->application);
     for(size_t i=0;ok && i<count;++i) {
         frontend_renderer_worlds_view view={0}; frontend_scene_heap heap={0};
@@ -194,9 +194,9 @@ typedef struct saved_world_row { bool owned; uint64_t root,pool,resource; fronte
 bool frontend_renderer_worlds_prepare_restored(qa_frontend *f,qa_bytes bytes,qa_error *error)
 {
     if(!f || !f->source_restoring || f->capture || f->resource_inventory || f->renderer_worlds) return false;
-    uint8_t magic[4]={0}; uint32_t version=0; uint64_t count=0; qa_source_save_io io={0};
+    uint8_t magic[4]={0}; uint64_t count=0; qa_source_save_io io={0};
     bool ok=qa_source_save_reader(&io,NULL,bytes,error) && qa_source_save_bytes(&io,magic,4) &&
-        !memcmp(magic,"QFRW",4) && qa_source_save_u32(&io,&version) && version==2 && qa_source_save_u64(&io,&count) &&
+        !memcmp(magic,"QFRW",4) && qa_source_save_u64(&io,&count) &&
         count<=SIZE_MAX/sizeof(saved_world_row) && count<=bytes.size/45;
     saved_world_row *saved=ok && count?calloc((size_t)count,sizeof(*saved)):NULL;
     if(ok && count && !saved) ok=frontend_fail(error,QA_ERROR_MEMORY,"Decoding renderer world roster");

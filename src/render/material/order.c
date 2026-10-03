@@ -203,9 +203,7 @@ bool qa_material_order_snapshot(const qa_material_order *order, bool sorted, qa_
 
 static bool order_signature(qa_source_save_io *io)
 {
-    uint8_t magic[4] = {'Q', 'A', 'M', 'O'}; uint32_t version = 2;
-    return qa_source_save_bytes(io, magic, sizeof(magic)) && !memcmp(magic, "QAMO", 4) &&
-        qa_source_save_u32(io, &version) && version == 2;
+    uint8_t magic[4] = {'Q', 'A', 'M', 'O'}; return qa_source_save_bytes(io, magic, sizeof(magic)) && !memcmp(magic, "QAMO", 4);
 }
 static bool order_capacity(size_t count, size_t capacity, uint64_t ordinal, bool dirty)
 {

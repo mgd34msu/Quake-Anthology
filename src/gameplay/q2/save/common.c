@@ -101,7 +101,7 @@ static bool projectile(q2_save_io *io, qa_q2_projectile_checkpoint *s) {
     Q2B(dodgeable); return true;
 }
 bool q2_save_actor(q2_save_io *io, qa_q2_actor_checkpoint *s) {
-    Q2U(version); Q2T(source_order); Q2T(extra_effects); Q2F(alpha); Q2B(lmctf_plasma_bounce);
+    Q2T(source_order); Q2T(extra_effects); Q2F(alpha); Q2B(lmctf_plasma_bounce);
     Q2T(combat_surprise_ns);
     Q2T(character_birth_epoch); Q2N(combat_life_owner); Q2T(combat_life_birth_epoch);
     Q2B(character_immortal); Q2B(character_no_damage_effects);
@@ -126,7 +126,7 @@ bool q2_save_actor(q2_save_io *io, qa_q2_actor_checkpoint *s) {
     Q2B(hand_grenade_bound); return hand(io, &s->hand_grenade);
 }
 bool q2_save_runtime(q2_save_io *io, qa_q2_runtime_checkpoint *s) {
-    Q2U(version); Q2U(edition); Q2U(product);
+    Q2U(edition); Q2U(product);
     Q2U(arsenal_rules); Q2B(native_hook); Q2U(hook_edition); Q2U(definition_count);
     Q2U(equipment_hook_rules); Q2U(equipment_hook_edition);
     if (s->definition_count >= QA_Q2_WEAPON_COUNT)

@@ -2,21 +2,18 @@
 #include "qa/q3_presentation_media_save.h"
 #include "qa/cinematic_restore.h"
 
-bool qa_q3_presentation_media_binding_version_read(qa_bytes bytes,uint32_t *version,bool *shared,qa_error *error)
+bool qa_q3_presentation_media_binding_read(qa_bytes bytes,bool *shared,qa_error *error)
 {
-    if (!version || !shared) return q3p_fail(error,QA_ERROR_ARGUMENT,"Movie binding observation requires its actual output");
+    if (!shared) return q3p_fail(error,QA_ERROR_ARGUMENT,"Movie binding observation requires its actual output");
     qa_source_save_io io;
     if (!qa_source_save_reader(&io,NULL,bytes,error)) return false;
-    uint8_t magic[4]; uint32_t schema=0; bool value=false;
+    uint8_t magic[4]; bool value=false;
     bool ok=qa_source_save_bytes(&io,magic,4) && !memcmp(magic,"Q3MS",4) &&
-        qa_source_save_u32(&io,&schema) && (schema==2 || schema==3) &&
-        (schema==2 || qa_source_save_bool(&io,&value));
+        qa_source_save_bool(&io,&value);
     qa_source_save_dispose(&io);
     if (!ok) return q3p_fail(error,QA_ERROR_FORMAT,"Movie binding observation has an invalid actual codec header");
-    *version=schema; *shared=value; return true;
+    *shared=value; return true;
 }
-bool qa_q3_presentation_media_binding_read(qa_bytes bytes,bool *shared,qa_error *error)
-{ uint32_t schema=0; return qa_q3_presentation_media_binding_version_read(bytes,&schema,shared,error); }
 
 static bool text(qa_source_save_io *io, char **owned)
 {
@@ -153,14 +150,11 @@ static bool topology(const qa_q3_presentation *p, qa_error *error)
     return true;
 }
 static bool fields(qa_source_save_io *io, qa_q3_presentation *p, const qa_q3_movie_checkpoint_refs *refs,
-    uint64_t bus, double anchor,uint32_t write_schema)
+    uint64_t bus, double anchor)
 {
-    uint8_t magic[4]={'Q','3','M','S'}; uint32_t schema=write_schema;
-    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"Q3MS",4) || !qa_source_save_u32(io,&schema) ||
-        (schema!=2 && schema!=3)) return false;
+    uint8_t magic[4]={'Q','3','M','S'}; if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"Q3MS",4)) return false;
     bool shared=p->options.cinematics!=NULL,encoded_shared=shared;
-    if (schema==3) { if (!qa_source_save_bool(io,&encoded_shared) || encoded_shared!=shared) return false; }
-    else if (shared) return false;
+    if (!qa_source_save_bool(io,&encoded_shared) || encoded_shared!=shared) return false;
     if (shared) {
         if (p->movie_sources) return false;
         for (size_t i=0;i<16;++i) if (p->movies[i].kind!=Q3P_MOVIE_EMPTY) return false;
@@ -191,23 +185,19 @@ static void discard(qa_q3_presentation *p,const qa_q3_movie_checkpoint_refs *ref
         qa_cinematic_asset_release(source->asset); free(source->path); free(source);
     }
 }
-bool qa_q3_presentation_media_checkpoint_schema(const qa_q3_presentation *p,
-    const qa_q3_movie_checkpoint_refs *refs,uint32_t schema,qa_buffer *out,qa_error *error)
+bool qa_q3_presentation_media_checkpoint(const qa_q3_presentation *p,
+    const qa_q3_movie_checkpoint_refs *refs,qa_buffer *out,qa_error *error)
 {
-    if (!p || !out || out->data || out->size || (schema!=2 && schema!=3) ||
-        (schema==2 && p->options.cinematics))
+    if (!p || !out || out->data || out->size)
         return q3p_fail(error,QA_ERROR_ARGUMENT,"Q3 movie capture requires an empty output");
     bool owned_assets = false;
     if (!q3p_capture_begin((qa_q3_presentation *)p, &owned_assets, error)) return false;
     qa_source_save_io io; qa_q3_presentation saved=*p;
     if (!qa_source_save_writer(&io,NULL,error)) { q3p_capture_end((qa_q3_presentation *)p, owned_assets); return false; }
-    bool ok=fields(&io,&saved,refs,0,0,schema) && qa_source_save_finish(&io,out);
+    bool ok=fields(&io,&saved,refs,0,0) && qa_source_save_finish(&io,out);
     if (!ok && error && error->code==QA_OK) q3p_fail(error,QA_ERROR_FORMAT,"Q3 retained movie ownership is inconsistent");
     qa_source_save_dispose(&io); q3p_capture_end((qa_q3_presentation *)p, owned_assets); return ok;
 }
-bool qa_q3_presentation_media_checkpoint(const qa_q3_presentation *p,
-    const qa_q3_movie_checkpoint_refs *refs,qa_buffer *out,qa_error *error)
-{ return qa_q3_presentation_media_checkpoint_schema(p,refs,3,out,error); }
 bool qa_q3_presentation_media_restore(qa_q3_presentation *p,
     const qa_q3_movie_checkpoint_refs *refs, uint64_t bus, double anchor, qa_bytes bytes, qa_error *error)
 {
@@ -220,7 +210,7 @@ bool qa_q3_presentation_media_restore(qa_q3_presentation *p,
     qa_q3_presentation saved=*p; memset(saved.movies,0,sizeof(saved.movies)); saved.movie_sources=NULL;
     qa_source_save_io io;
     if (!qa_source_save_reader(&io,NULL,bytes,error)) { q3p_capture_end(p, owned_assets); return false; }
-    bool ok=fields(&io,&saved,refs,bus,anchor,3) && qa_source_save_finish(&io,NULL);
+    bool ok=fields(&io,&saved,refs,bus,anchor) && qa_source_save_finish(&io,NULL);
     if (ok) {
         for (size_t i=0;i<16;++i) if (saved.movies[i].kind==Q3P_MOVIE_LOCAL)
             qa_cinematic_restore_commit(saved.movies[i].local);

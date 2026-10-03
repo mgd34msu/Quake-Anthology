@@ -1832,14 +1832,13 @@ static bool reader_arguments_fields(qa_source_save_io *io,qa_command_tokens *arg
 static bool reader_fields(qa_source_save_io *io,const qa_native_q3_wire_basis *basis,
     qa_native_q3_wire_reader *continuation,const native_q3_wire_client *client)
 {
-    uint8_t magic[4]={'Q','3','W','R'}; uint32_t schema=1,product=basis->product;
+    uint8_t magic[4]={'Q','3','W','R'}; uint32_t product=basis->product;
     qa_actor_owner source=basis->source_owner;
     uint64_t receiver=basis->receiver;
     uint32_t seat=basis->seat,slot=basis->physical_client;
     uint64_t publication=basis->publication_generation,map=basis->map_revision;
     qa_actor_id actor=basis->actor;
     if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"Q3WR",4) ||
-        !qa_source_save_u32(io,&schema) || schema!=1 ||
         !qa_source_save_string(io,&source) || source!=basis->source_owner ||
         !qa_source_save_u64(io,&receiver) || receiver!=basis->receiver ||
         !qa_source_save_u32(io,&product) || product!=(uint32_t)basis->product ||
@@ -2174,16 +2173,15 @@ static bool wire_fields(qa_source_save_io *io, struct application_native_q3_wire
 {
     uint8_t magic[8] = {'Q','A','N','3','W','I','R',0};
     const uint8_t expected[8] = {'Q','A','N','3','W','I','R',0};
-    uint32_t version = 5, maximum = wire->max_clients;
+    uint32_t maximum = wire->max_clients;
     qa_actor_owner owner = source_owner;
     if (!qa_source_save_bytes(io, magic, sizeof(magic)) || memcmp(magic, expected, sizeof(magic)) ||
-        !qa_source_save_u32(io, &version) || version != 5 ||
         !qa_source_save_string(io, &owner) || owner != source_owner ||
         !qa_source_save_u32(io, &maximum) || maximum < 1 || maximum > QA_Q3_SOURCE_CLIENTS ||
         (io->direction == QA_SOURCE_SAVE_WRITE && maximum != wire->max_clients) ||
         !qa_source_save_u8(io, &wire->snapshot_bit) ||
         (wire->snapshot_bit != 0 && wire->snapshot_bit != 4))
-        return fields_failure(io, "Native Q3 private wire schema or source owner differs");
+        return fields_failure(io, "Native Q3 private wire record or source owner differs");
     if (io->direction == QA_SOURCE_SAVE_READ) wire->max_clients = maximum;
     for (uint32_t slot = 0; slot < QA_Q3_SOURCE_CLIENTS; ++slot) {
         if (!client_fields(io, &wire->clients[slot], checkpoint)) return false;

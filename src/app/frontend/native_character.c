@@ -213,11 +213,9 @@ bool frontend_native_character_checkpoint(const frontend_native_character *owner
 {
     if (!frontend_native_character_idle(owner) || !out || out->data || out->size)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Native character capture requires its actual returned frame");
-    qa_source_save_io io = {0}; uint8_t magic[4] = {'Q','F','N','C'}; uint32_t version = 1;
-    int32_t time = owner->previous_time;
+    qa_source_save_io io = {0}; uint8_t magic[4] = {'Q','F','N','C'}; int32_t time = owner->previous_time;
     bool okay = qa_source_save_writer(&io, qa_application_session(owner->frontend->application), error) &&
-        qa_source_save_bytes(&io, magic, 4) && qa_source_save_u32(&io, &version) &&
-        qa_source_save_i32(&io, &time) &&
+        qa_source_save_bytes(&io, magic, 4) && qa_source_save_i32(&io, &time) &&
         qa_source_save_finish(&io, out);
     qa_source_save_dispose(&io); return okay;
 }
@@ -225,10 +223,10 @@ bool frontend_native_character_restore(frontend_native_character *owner, qa_byte
 {
     if (!frontend_native_character_idle(owner))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Native character import requires its actual empty frame owner");
-    qa_source_save_io io = {0}; uint8_t magic[4]; uint32_t version; int32_t time;
+    qa_source_save_io io = {0}; uint8_t magic[4]; int32_t time;
     bool okay = qa_source_save_reader(&io, qa_application_session(owner->frontend->application), bytes, error) &&
         qa_source_save_bytes(&io, magic, 4) && !memcmp(magic, "QFNC", 4) &&
-        qa_source_save_u32(&io, &version) && version == 1 && qa_source_save_i32(&io, &time) &&
+        qa_source_save_i32(&io, &time) &&
         qa_source_save_finish(&io, NULL);
     if (okay) owner->previous_time = time;
     qa_source_save_dispose(&io);

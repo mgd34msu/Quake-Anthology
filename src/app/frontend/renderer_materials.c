@@ -506,12 +506,12 @@ static bool row_fields(qa_source_save_io *io,saved_row *row)
 bool frontend_renderer_materials_checkpoint(qa_frontend *f,qa_buffer *out,qa_error *error)
 {
     retained_rows rows={0}; qa_source_save_io io={0};
-    uint8_t magic[4]={'Q','F','R','M'}; uint32_t version=5; uint64_t count=0;
+    uint8_t magic[4]={'Q','F','R','M'}; uint64_t count=0;
     qa_application_content_graph *graph=f?qa_application_content_graph_read(f->application):NULL;
     bool okay=f && f->capture && graph && rows_read(f,&rows,error);
     count=rows.count;
     okay=okay && qa_source_save_writer(&io,NULL,error) && qa_source_save_bytes(&io,magic,4) &&
-        qa_source_save_u32(&io,&version) && qa_source_save_u64(&io,&count);
+        qa_source_save_u64(&io,&count);
     for(size_t i=0;okay && i<rows.count;++i) {
         const frontend_renderer_materials_view *v=&rows.rows[i];
         saved_row row={.shader=v->library!=NULL,.lightmap=v->lightmap_images!=NULL,.movies=v->media!=NULL,
@@ -558,12 +558,11 @@ static bool restore_bank(qa_frontend *f,qa_application_content_graph *graph,uint
 }
 bool frontend_renderer_materials_prepare_restored(qa_frontend *f,qa_bytes bytes,qa_error *error)
 {
-    qa_source_save_io io={0}; uint8_t magic[4]={0}; uint32_t version=0; uint64_t count=0;
+    qa_source_save_io io={0}; uint8_t magic[4]={0}; uint64_t count=0;
     if(!f || !f->source_restoring || f->capture || f->resource_inventory || f->renderer_materials) return false;
     qa_application_content_graph *graph=qa_application_content_graph_read(f->application);
     bool okay=graph && qa_source_save_reader(&io,NULL,bytes,error) && qa_source_save_bytes(&io,magic,4) &&
-        !memcmp(magic,"QFRM",4) && qa_source_save_u32(&io,&version) && version==5 &&
-        qa_source_save_u64(&io,&count) && count<=SIZE_MAX/sizeof(saved_row) && count<=bytes.size/40;
+        !memcmp(magic,"QFRM",4) && qa_source_save_u64(&io,&count) && count<=SIZE_MAX/sizeof(saved_row) && count<=bytes.size/40;
     saved_row *rows=okay && count?calloc((size_t)count,sizeof(*rows)):NULL;
     if(okay && count && !rows) okay=frontend_fail(error,QA_ERROR_MEMORY,"Decoding retained renderer parent roster");
     for(size_t i=0;okay && i<(size_t)count;++i) {

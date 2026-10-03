@@ -785,12 +785,10 @@ static bool native_q2_plan_fields(qa_source_save_io *io, qa_strings *strings, na
 static bool native_q2_plans(qa_source_save_io *io, qa_frontend *frontend,
     native_q2_plan **plans, size_t *count)
 {
-    uint8_t magic[4] = {'Q','N','F','T'}; uint32_t version = 1;
-    bool reading = io->direction == QA_SOURCE_SAVE_READ;
+    uint8_t magic[4] = {'Q','N','F','T'}; bool reading = io->direction == QA_SOURCE_SAVE_READ;
     size_t maximum = SIZE_MAX / sizeof(**plans);
     if (reading && io->input.size / 37 < maximum) maximum = io->input.size / 37;
     if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "QNFT", 4) ||
-        !qa_source_save_u32(io, &version) || version != 1 ||
         !qa_source_save_count(io, count, maximum)) return false;
     if (reading) {
         *plans = calloc(*count ? *count : 1, sizeof(**plans));
@@ -996,11 +994,10 @@ static bool native_q2_private_fields(qa_source_save_io *io, qa_frontend *fronten
 }
 static bool native_q2_private_header(qa_source_save_io *io, size_t *count)
 {
-    uint8_t magic[4] = {'Q','N','F','P'}; uint32_t version = 1;
-    size_t maximum = SIZE_MAX / sizeof(native_q2_private_record);
+    uint8_t magic[4] = {'Q','N','F','P'}; size_t maximum = SIZE_MAX / sizeof(native_q2_private_record);
     if (io->direction == QA_SOURCE_SAVE_READ && io->input.size / 100 < maximum) maximum = io->input.size / 100;
     return qa_source_save_bytes(io, magic, 4) && !memcmp(magic, "QNFP", 4) &&
-        qa_source_save_u32(io, &version) && version == 1 && qa_source_save_count(io, count, maximum);
+        qa_source_save_count(io, count, maximum);
 }
 bool frontend_native_q2_private_checkpoint(const qa_frontend *frontend, qa_buffer *out, qa_error *error)
 {

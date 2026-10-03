@@ -284,9 +284,8 @@ bool frontend_view_settings_abort(frontend_view_preparation **in,qa_error *e)
 }
 static bool fields(qa_source_save_io *io,bool *published,bool *explicit_override,double *value,uint64_t *revision)
 {
-    uint8_t magic[4]={'Q','F','V','S'}; uint32_t version=1;
-    return qa_source_save_bytes(io,magic,4) && !memcmp(magic,"QFVS",4) &&
-        qa_source_save_u32(io,&version) && version==1 && qa_source_save_bool(io,published) &&
+    uint8_t magic[4]={'Q','F','V','S'}; return qa_source_save_bytes(io,magic,4) && !memcmp(magic,"QFVS",4) &&
+        qa_source_save_bool(io,published) &&
         qa_source_save_bool(io,explicit_override) && qa_source_save_f64(io,value) &&
         qa_source_save_u64(io,revision) && isfinite(*value) && *value>=60 && *value<=160;
 }

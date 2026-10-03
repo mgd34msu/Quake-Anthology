@@ -26,9 +26,8 @@ struct qa_hud {
 bool qa_hud_idle(const qa_hud *hud) { return hud && !hud->drawing && !hud->checkpoint_active; }
 static uint64_t after(uint64_t now, uint64_t duration);
 static bool hud_signature(qa_source_save_io *io) {
-    uint8_t magic[4] = {'Q', 'A', 'H', 'D'}; uint32_t version = 5;
-    return qa_source_save_bytes(io, magic, 4) && !memcmp(magic, "QAHD", 4) &&
-        qa_source_save_u32(io, &version) && version == 5;
+    uint8_t magic[4] = {'Q', 'A', 'H', 'D'};
+    return qa_source_save_bytes(io, magic, 4) && !memcmp(magic, "QAHD", 4);
 }
 static bool ctf_fields(qa_source_save_io *io, qa_hud *hud) {
     if (!qa_source_save_bool(io, &hud->ctf_present)) return false;

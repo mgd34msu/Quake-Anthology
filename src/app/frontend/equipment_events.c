@@ -169,9 +169,8 @@ bool frontend_equipment_events_configstring(const frontend_equipment_events *own
 
 static bool header(qa_source_save_io *io, frontend_equipment_events *owner, size_t *count)
 {
-    uint8_t magic[4] = {'Q','F','G','E'}; uint32_t version = 1;
-    return qa_source_save_bytes(io, magic, 4) && !memcmp(magic, "QFGE", 4) &&
-        qa_source_save_u32(io, &version) && version == 1 && qa_source_save_string(io, &owner->queue_owner) &&
+    uint8_t magic[4] = {'Q','F','G','E'}; return qa_source_save_bytes(io, magic, 4) && !memcmp(magic, "QFGE", 4) &&
+        qa_source_save_string(io, &owner->queue_owner) &&
         qa_source_save_u64(io, &owner->generation) && qa_source_save_count(io, &owner->cursor, SIZE_MAX) &&
         qa_source_save_u32(io, &owner->hud_delivered) && qa_source_save_u32(io, &owner->console_delivered) &&
         qa_source_save_bool(io, &owner->printed) && qa_source_save_count(io, count, SIZE_MAX);

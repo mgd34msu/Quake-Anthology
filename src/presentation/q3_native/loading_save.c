@@ -9,11 +9,11 @@ bool q3nl_capture(q3n_loading *o,qa_error *e)
 }
 static bool fields(qa_source_save_io *io,q3n_loading *o,q3n_loading_state *s)
 {
-    uint8_t magic[4]={'Q','3','L','D'}; uint32_t version=1,product=(uint32_t)o->product;
+    uint8_t magic[4]={'Q','3','L','D'}; uint32_t product=(uint32_t)o->product;
     uint32_t seat=o->options.seat,physical=o->options.presentation_seat;
     const char *expected=o->options.compiled_source?"Q3LC":o->options.remote_source?"Q3LR":"Q3LD";
     memcpy(magic,expected,4);
-    if(!qa_source_save_bytes(io,magic,4) || memcmp(magic,expected,4) || !qa_source_save_u32(io,&version) || version!=1 ||
+    if(!qa_source_save_bytes(io,magic,4) || memcmp(magic,expected,4) ||
        !qa_source_save_u32(io,&product) || product!=(uint32_t)o->product ||
        !qa_source_save_u32(io,&seat) || seat!=o->options.seat ||
        !qa_source_save_u32(io,&physical) || physical!=o->options.presentation_seat)return false;

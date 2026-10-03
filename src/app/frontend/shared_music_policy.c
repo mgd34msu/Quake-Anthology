@@ -989,9 +989,8 @@ static bool state_valid(const frontend_music_policy *owner) {
 static bool fields(qa_source_save_io *io, qa_application_content_graph *graph, const qa_audio_checkpoint_refs *refs,
     frontend_music_policy *owner) {
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
-    uint8_t magic[4] = {'Q', 'F', 'M', 'P'}; uint32_t version = 3; qa_buffer encoded = {0}; qa_bytes bus = {0};
-    bool ok = qa_source_save_bytes(io, magic, 4) && !memcmp(magic, "QFMP", 4) && qa_source_save_u32(io, &version) && version == 3 &&
-        qa_source_save_bool(io, &owner->external_player) && qa_source_save_bool(io, &owner->menu) &&
+    uint8_t magic[4] = {'Q', 'F', 'M', 'P'}; qa_buffer encoded = {0}; qa_bytes bus = {0};
+    bool ok = qa_source_save_bytes(io, magic, 4) && !memcmp(magic, "QFMP", 4) && qa_source_save_bool(io, &owner->external_player) && qa_source_save_bool(io, &owner->menu) &&
         (!owner->external_player || !owner->menu) && qa_source_save_u32(io, &owner->audience) && qa_source_save_f32(io, &owner->bus_gain) &&
         isfinite(owner->bus_gain) && owner->bus_gain >= 0;
     if (ok && !reading) {

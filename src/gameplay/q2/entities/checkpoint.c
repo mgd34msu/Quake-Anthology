@@ -38,7 +38,7 @@ bool qa_q2_entity_capture(qa_q2_game *g, qa_actor_id id, qa_q2_entity_checkpoint
     }
     if (!q2_checkpoint_idle(g, e))
         return false;
-    qa_q2_entity_checkpoint saved = {.version = 2};
+    qa_q2_entity_checkpoint saved = {0};
     q2_actor *a = q2_ent(g, id);
     if (!a) {
         *out = saved;
@@ -168,7 +168,7 @@ static bool valid_state(qa_q2_game *g, const q2_entity_state *s, qa_error *e) {
 }
 bool qa_q2_entity_restore(qa_q2_game *g, qa_actor_id id, const qa_q2_entity_checkpoint *saved,
                           qa_error *e) {
-    if (!g || !saved || saved->version != 2 || !q2_actor_live(g, id) ||
+    if (!g || !saved || !q2_actor_live(g, id) ||
         (saved->present && !valid_state(g, &saved->value, e))) {
         qa_error_set(e, QA_ERROR_FORMAT, 0, "Invalid Q2 entity checkpoint");
         return false;
@@ -240,8 +240,7 @@ bool qa_q2_entities_capture(qa_q2_game *g, qa_q2_entities_checkpoint *out, qa_er
     if (!q2_checkpoint_idle(g, e))
         return false;
     q2_entities *r = g->entity_runtime;
-    qa_q2_entities_checkpoint s = {.version = 2,
-                                   .poi_image = r->poi_image,
+    qa_q2_entities_checkpoint s = {.poi_image = r->poi_image,
                                    .story = r->story,
                                    .poi_stage = r->poi_stage,
                                    .steam_id = r->steam_id,
@@ -309,7 +308,7 @@ bool qa_q2_entities_capture(qa_q2_game *g, qa_q2_entities_checkpoint *out, qa_er
     return true;
 }
 bool qa_q2_entities_restore(qa_q2_game *g, const qa_q2_entities_checkpoint *s, qa_error *e) {
-    if (!g || !s || s->version != 2 || !q2_saved_fog(&s->world_fog) ||
+    if (!g || !s || !q2_saved_fog(&s->world_fog) ||
         !qa_vec_finite(s->sky_axis) || !isfinite(s->sky_rotation) ||
         !q2_saved_resource(g, s->poi_image) || !q2_saved_resource(g, s->story) ||
         !q2_saved_resource(g, s->sky) || !q2_saved_resource(g, s->goals) ||

@@ -17,10 +17,8 @@ bool frontend_audio_id_read(const qa_frontend *f, uint64_t id, qa_actor_id *acto
 static bool fields(qa_source_save_io *io, qa_frontend *state)
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
-    uint8_t magic[4] = {'Q','F','A','I'}; uint32_t schema = 1;
-    size_t count = state->audio_id_count, capacity = state->audio_id_capacity;
+    uint8_t magic[4] = {'Q','F','A','I'}; size_t count = state->audio_id_count, capacity = state->audio_id_capacity;
     if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic,"QFAI",4) ||
-        !qa_source_save_u32(io, &schema) || schema != 1 ||
         !qa_source_save_u64(io, &state->next_audio_id) || state->next_audio_id >= UINT64_MAX ||
         !qa_source_save_count(io, &count, reading ? io->input.size / 22 : SIZE_MAX) ||
         !qa_source_save_count(io, &capacity, SIZE_MAX / sizeof(frontend_audio_identity)) || count > capacity ||

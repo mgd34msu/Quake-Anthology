@@ -20,9 +20,7 @@ bool application_unified_save_player_read(qa_application *app, qa_net_client_id 
 bool application_unified_save_magic(qa_source_save_io *io, const char expected[4])
 {
     char magic[4]; memcpy(magic, expected, sizeof(magic));
-    uint32_t version = 1;
-    return qa_source_save_bytes(io, magic, sizeof(magic)) && !memcmp(magic, expected, sizeof(magic)) &&
-        qa_source_save_u32(io, &version) && version == 1;
+    return qa_source_save_bytes(io, magic, sizeof(magic)) && !memcmp(magic, expected, sizeof(magic));
 }
 bool application_unified_save_blob(qa_source_save_io *io, qa_buffer *buffer)
 {

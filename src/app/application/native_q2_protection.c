@@ -477,8 +477,8 @@ bool application_native_q2_protection_restored_inventory(application_native_q2_p
 static bool codec_prefix(application_native_q2_protection *o,qa_source_save_io *io)
 {
     uint8_t magic[4]={'N','Q','P','R'},expected[4]={'N','Q','P','R'};
-    uint32_t version=1; size_t count=o->count;
-    if(!qa_source_save_bytes(io,magic,4)||memcmp(magic,expected,4)||!qa_source_save_u32(io,&version)||version!=1||
+    size_t count=o->count;
+    if(!qa_source_save_bytes(io,magic,4)||memcmp(magic,expected,4)||
         !qa_source_save_count(io,&count,o->count)||count!=o->count) return fail(io->error,"Native protection codec differs from its declaration");
     for(size_t i=0;i<count;++i) {
         qa_protection_claim expected_claim=o->definitions[i].claim,claim=expected_claim;

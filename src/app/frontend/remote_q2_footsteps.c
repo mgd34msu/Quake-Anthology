@@ -265,9 +265,9 @@ bool frontend_q2_footsteps_checkpoint(const frontend_q2_footsteps *owner, const 
 {
     if (!owner) return true;
     if (!frontend_q2_footsteps_current(owner, source, error)) return false;
-    qa_buffer sidecars = {0}; qa_source_save_io io = {0}; uint32_t schema = 1; size_t count = owner->count;
+    qa_buffer sidecars = {0}; qa_source_save_io io = {0}; size_t count = owner->count;
     bool ok = qa_map_sidecars_checkpoint(owner->sidecars, graph, &sidecars, error) &&
-        qa_source_save_writer(&io, NULL, error) && qa_source_save_u32(&io, &schema) && blob(&io, &sidecars) &&
+        qa_source_save_writer(&io, NULL, error) && blob(&io, &sidecars) &&
         qa_source_save_count(&io, &count, SIZE_MAX);
     for (size_t i = 0; ok && i < count; ++i) {
         footstep_table table = owner->tables[i];
@@ -298,9 +298,8 @@ bool frontend_q2_footsteps_restore(const frontend_q2_footstep_source *source, qa
     owner->map_name = malloc(strlen(source->map_name) + 1);
     if (!owner->map_name) return false;
     strcpy(owner->map_name, source->map_name); owner->source.map_name = owner->map_name;
-    qa_source_save_io io = {0}; qa_buffer sidecars = {0}; uint32_t schema = 0; size_t count = 0;
-    bool ok = qa_source_save_reader(&io, NULL, bytes, error) && qa_source_save_u32(&io, &schema) && schema == 1 &&
-        blob(&io, &sidecars) && qa_map_sidecars_create_restored(graph, (qa_bytes){sidecars.data,sidecars.size}, &owner->sidecars, error) &&
+    qa_source_save_io io = {0}; qa_buffer sidecars = {0}; size_t count = 0;
+    bool ok = qa_source_save_reader(&io, NULL, bytes, error) && blob(&io, &sidecars) && qa_map_sidecars_create_restored(graph, (qa_bytes){sidecars.data,sidecars.size}, &owner->sidecars, error) &&
         table_materials(owner, source, error) && qa_source_save_count(&io, &count, owner->count) && count == owner->count;
     for (size_t i = 0; ok && i < count; ++i) {
         footstep_table saved = {0};

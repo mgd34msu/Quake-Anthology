@@ -1078,8 +1078,8 @@ bool q3n_weapons_draw_selection(const q3n_frame *f,const q3n_weapon_drawing *dra
 }
 static bool weapon_fields(qa_source_save_io *io,q3n_weapons *w)
 {
-    uint8_t magic[4]={'Q','3','W','P'}; uint32_t schema=1,product=w->options.product;
-    return qa_source_save_bytes(io,magic,4) && !memcmp(magic,"Q3WP",4) && qa_source_save_u32(io,&schema) && schema==1 &&
+    uint8_t magic[4]={'Q','3','W','P'}; uint32_t product=w->options.product;
+    return qa_source_save_bytes(io,magic,4) && !memcmp(magic,"Q3WP",4) &&
         qa_source_save_u32(io,&product) && product==(uint32_t)w->options.product &&
         qa_source_save_i32(io,&w->selection.weapon) && w->selection.weapon>=0 && w->selection.weapon<16 &&
         qa_source_save_i32(io,&w->selection.time);

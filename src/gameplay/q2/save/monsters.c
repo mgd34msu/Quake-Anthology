@@ -1,7 +1,6 @@
 #include "internal.h"
 
 bool q2_save_monster(q2_save_io *io, qa_q2_monster_checkpoint *s) {
-    Q2U(version);
     if (!q2_save_text(io, s->definition, sizeof(s->definition)) ||
         !q2_save_text(io, s->move, sizeof(s->move)) ||
         !q2_save_text(io, s->next_move, sizeof(s->next_move))) return false;
@@ -10,12 +9,7 @@ bool q2_save_monster(q2_save_io *io, qa_q2_monster_checkpoint *s) {
     Q2I(frame); Q2I(next_frame); Q2I(old_frame); Q2I(skin); Q2I(style); Q2I(count);
     Q2U(render_flags); Q2F(entity_scale); Q2F(animation_scale); Q2F(base_health);
     Q2F(health_scaling); Q2F(max_health);
-    if (io->schema >= 26) { Q2S(f64, max_power_armor); }
-    else {
-        float legacy = io->reading ? 0 : (float)s->max_power_armor;
-        if (!q2_save_f32(io, &legacy)) return false;
-        if (io->reading) s->max_power_armor = legacy;
-    }
+    Q2S(f64, max_power_armor);
     Q2U(initial_power_armor);
     Q2U(medic_tries); Q2F(gib_health); Q2F(normal_height); Q2F(view_height);
     Q2F(ideal_yaw); Q2F(yaw_speed); Q2F(blind_fire_delay); Q2F(fly_min_distance);
@@ -71,7 +65,7 @@ bool q2_save_monster(q2_save_io *io, qa_q2_monster_checkpoint *s) {
     return true;
 }
 bool q2_save_monsters(q2_save_io *io, qa_q2_monsters_checkpoint *s) {
-    Q2U(version); Q2R(sight_client); Q2R(sight_observer); Q2T(sight_time_ns);
+    Q2R(sight_client); Q2R(sight_observer); Q2T(sight_time_ns);
     Q2T(last_frame_ns); Q2B(began_frame);
     void *trails = s->trails;
     if (!q2_save_count(io, &s->trail_count, 21, sizeof(*s->trails), &trails)) return false;

@@ -1735,7 +1735,7 @@ bool application_native_q2_callbacks_capture(struct application_native_q2 *n,qa_
         (!o->protection||application_native_q2_protection_checkpoint(o->protection,children+1,e))&&
         (!o->weapons||application_native_q2_weapon_stage_capture(o->weapons,children+2,e))&&
         (!o->pickups||application_native_q2_pickups_checkpoint(o->pickups,children+3,e));
-    uint8_t tag[8]={'N','Q','C','C',2,0,0,0};
+    uint8_t tag[4]={'N','Q','C','C'};
     if(ok) ok=qa_source_save_writer(&io,n->provider->application->session,e)&&qa_source_save_bytes(&io,tag,sizeof(tag));
     for(size_t i=0;ok&&i<4;++i) {
         size_t size=children[i].size;
@@ -1752,7 +1752,7 @@ bool application_native_q2_callbacks_restore(struct application_native_q2 *n,qa_
     application_native_q2_callbacks *o=n->callbacks;
     if(o->components_restoring||o->restored_weapons.data)
         return application_fail(e,QA_ERROR_ARGUMENT,"Native callback components already own a restore continuation");
-    qa_source_save_io io={0}; uint8_t tag[8]={0},expected[8]={'N','Q','C','C',2,0,0,0}; qa_bytes children[4]={{0}};
+    qa_source_save_io io={0}; uint8_t tag[4]={0},expected[4]={'N','Q','C','C'}; qa_bytes children[4]={{0}};
     bool ok=qa_source_save_reader(&io,n->provider->application->session,state,e)&&
         qa_source_save_bytes(&io,tag,sizeof(tag))&&!memcmp(tag,expected,sizeof(tag));
     for(size_t i=0;ok&&i<4;++i) {

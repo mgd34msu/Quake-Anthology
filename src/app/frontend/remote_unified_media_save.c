@@ -232,14 +232,13 @@ static bool fields(qa_source_save_io *io, frontend_unified_media *owner,
     const frontend_unified_media_refs *refs)
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
-    uint8_t magic[4] = {'Q','U','M','D'}; uint32_t version = 3;
-    uint32_t seat = owner->physical_seat;
+    uint8_t magic[4] = {'Q','U','M','D'}; uint32_t seat = owner->physical_seat;
     uint64_t physical = refs->owner, world = reading ? 0 : owner->saved_world;
     size_t banks = reading ? 0 : frontend_unified_media_bank_count(owner);
     size_t world_bank = reading ? 0 : bank_index(owner, owner->world_bank);
     if (!reading && !frontend_world_encode(refs->roots, owner->world, &world, io->error)) return false;
     if (!qa_source_save_bytes(io, magic, sizeof(magic)) || memcmp(magic, "QUMD", sizeof(magic)) ||
-        !qa_source_save_u32(io, &version) || version != 3 || !qa_source_save_u32(io, &seat) ||
+        !qa_source_save_u32(io, &seat) ||
         seat != owner->physical_seat || seat >= owner->frontend->options.seats || !qa_source_save_u64(io, &physical) ||
         physical != refs->owner || !physical || !qa_source_save_count(io, &banks, UINT32_MAX - 1) ||
         !banks || (reading && banks > (io->input.size - io->offset) / 22) ||

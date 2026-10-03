@@ -429,7 +429,7 @@ bool qa_downloads_checkpoint(const qa_downloads *owner, qa_buffer *out, qa_error
     uint8_t *data = malloc(capacity);
     if (!data) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Encoding native download continuation"); return false; }
     qa_net_writer w; qa_net_writer_init(&w, data, capacity, error);
-    bool ok = qa_net_write_u32(&w, UINT32_C(0x4a444151)) && qa_net_write_u32(&w, 4) &&
+    bool ok = qa_net_write_u32(&w, UINT32_C(0x4a444151)) &&
         qa_net_write_u32(&w, owner->options.jobs) && qa_net_write_u64(&w, owner->options.maximum_pending_bytes) &&
         qa_net_write_u64(&w, owner->next_id) && qa_net_write_u64(&w, owner->reserved);
     uint8_t scratch[65536];
@@ -456,7 +456,7 @@ bool qa_downloads_checkpoint(const qa_downloads *owner, qa_buffer *out, qa_error
     if (!ok || w.failed) { free(data); if (!error || !error->code) fail(error, "Native stage changed during continuation capture"); return false; }
     *out = (qa_buffer){data, qa_net_writer_size(&w)}; return true;
 }
-static bool download_restore_job(qa_net_reader *r, download_job *job,uint32_t version)
+static bool download_restore_job(qa_net_reader *r, download_job *job)
 {
     qa_download_request *request = &job->request; qa_download_view *view = &job->view;
     view->id = qa_net_read_u64(r); uint64_t length = qa_net_read_u64(r);
@@ -482,7 +482,7 @@ static bool download_restore_job(qa_net_reader *r, download_job *job,uint32_t ve
     bool has_url = q3_save_bool(r);
     if (has_url && !service_restore_text(r, &job->http_url, 65535)) return false;
     job->retained_stage = q3_save_bool(r);
-    if(version>=4) view->publication_pending=q3_save_bool(r);
+    view->publication_pending=q3_save_bool(r);
     return !r->failed;
 }
 static bool download_stage_matches(qa_fs_stage *stage, qa_bytes prefix, bool writable, qa_error *error)
@@ -504,8 +504,8 @@ bool qa_downloads_restore_checkpoint(qa_bytes bytes, qa_http *http, qa_fs_root *
     if (!out || *out || !options || !refs || !refs->resource || (bytes.size && !bytes.data))
         return fail(error, "Native download restore requires qualified candidate filesystem resources");
     qa_net_reader r; qa_net_reader_init(&r, bytes, error);
-    uint32_t magic=qa_net_read_u32(&r),version=qa_net_read_u32(&r);
-    if (magic != UINT32_C(0x4a444151) || (version!=3 && version!=4) ||
+    uint32_t magic=qa_net_read_u32(&r);
+    if (magic != UINT32_C(0x4a444151) ||
         qa_net_read_u32(&r) != options->jobs || qa_net_read_u64(&r) != options->maximum_pending_bytes)
         return fail(error, "Native download continuation schema/policy differs");
     uint64_t next = qa_net_read_u64(&r), reserved = qa_net_read_u64(&r);
@@ -520,7 +520,7 @@ bool qa_downloads_restore_checkpoint(qa_bytes bytes, qa_http *http, qa_fs_root *
     for (uint32_t i = 0; ok && !r.failed && i < options->jobs; ++i) {
         bool present = q3_save_bool(&r); if (!present) continue;
         download_job *job = &owner->jobs[i]; job->owner = owner;
-        ok = download_restore_job(&r, job,version); staged[i] = q3_save_bool(&r);
+        ok = download_restore_job(&r, job); staged[i] = q3_save_bool(&r);
         if (ok && (staged[i] || job->retained_stage)) {
             uint64_t size = qa_net_read_u64(&r);
             ok = size <= SIZE_MAX && (staged[i] ? size == job->view.received : size >= job->view.received) &&

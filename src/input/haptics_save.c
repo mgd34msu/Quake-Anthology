@@ -104,9 +104,7 @@ static bool player_fields(qa_source_save_io *io, qa_haptic_player *p, struct pat
 static bool header(qa_source_save_io *io, size_t *patterns, size_t *entries, size_t *players)
 {
     uint8_t magic[4] = {'Q','H','A','P'};
-    uint32_t schema = 1;
     return qa_source_save_bytes(io, magic, sizeof(magic)) && !memcmp(magic, "QHAP", sizeof(magic)) &&
-        qa_source_save_u32(io, &schema) && schema == 1 &&
         qa_source_save_count(io, patterns, SIZE_MAX / sizeof(struct pattern_row)) &&
         qa_source_save_count(io, entries, SIZE_MAX / sizeof(struct haptic_entry)) &&
         qa_source_save_count(io, players, SIZE_MAX / sizeof(qa_haptic_player));

@@ -198,9 +198,7 @@ static bool saved_fields(qa_source_save_io *io,client_registry_saved *row)
 }
 static bool saved_header(qa_source_save_io *io,size_t *count)
 {
-    uint8_t magic[4]={'Q','F','C','R'}; uint32_t version=1;
-    return qa_source_save_bytes(io,magic,4) && !memcmp(magic,"QFCR",4) &&
-        qa_source_save_u32(io,&version) && version==1 &&
+    uint8_t magic[4]={'Q','F','C','R'}; return qa_source_save_bytes(io,magic,4) && !memcmp(magic,"QFCR",4) &&
         qa_source_save_count(io,count,SIZE_MAX/sizeof(client_registry_saved));
 }
 bool frontend_client_registries_visit(const qa_frontend *f,

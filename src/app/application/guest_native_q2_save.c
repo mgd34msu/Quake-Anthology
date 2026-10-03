@@ -118,7 +118,7 @@ bool application_native_q2_capture_engine(void *opaque, qa_buffer *out, qa_error
     const char *map = engine->map_name ? qa_strings_cstr(qa_session_strings(app->session), engine->map_name) : "";
     const char *spawn = engine->spawn_point ? qa_strings_cstr(qa_session_strings(app->session), engine->spawn_point) : "";
     const char *entities = engine->entity_text ? engine->entity_text : "";
-    size_t size = 128u + 257u * 3680u + engine->configstring_count * 4u;
+    size_t size = 124u + 257u * 3680u + engine->configstring_count * 4u;
     const char *texts[] = {map, spawn, entities};
     for (size_t i = 0; i < 3; ++i) {
         if (!texts[i] || strlen(texts[i]) > 64u * 1024u * 1024u - size)
@@ -181,7 +181,7 @@ bool application_native_q2_capture_engine(void *opaque, qa_buffer *out, qa_error
     if (!buffer.data) { qa_buffer_free(&attack); qa_buffer_free(&combat); qa_buffer_free(&publication); qa_buffer_free(&wire); qa_buffer_free(&callbacks); qa_buffer_free(&scanner); qa_buffer_free(&stages); qa_buffer_free(&visibility); return application_fail(error, QA_ERROR_MEMORY, "Retaining native Q2 engine continuation"); }
     qa_net_writer writer; qa_net_writer_init(&writer, buffer.data, buffer.size, error);
     const qa_actor_registry *actors = qa_session_actors(app->session);
-    bool ok = qa_net_write_u32(&writer, UINT32_C(0x4532514e)) && qa_net_write_u32(&writer, 11) &&
+    bool ok = qa_net_write_u32(&writer, UINT32_C(0x4532514e)) &&
         qa_net_write_u32(&writer, (uint32_t)engine->profile) && qa_net_write_u32(&writer, engine->configstring_count) &&
         qa_net_write_u8(&writer, engine->initialized) && qa_net_write_u8(&writer, engine->map_ready) &&
         write_actor(&writer, actors, engine->world_actor, error) &&
@@ -241,7 +241,7 @@ bool application_native_q2_restore_engine(void *opaque, qa_bytes bytes, qa_error
         if (engine->clients[i].inventory_bound)
             return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 restore requires primary inventory retirement before source replacement");
     qa_net_reader reader; qa_net_reader_init(&reader, bytes, error);
-    if (qa_net_read_u32(&reader) != UINT32_C(0x4532514e) || qa_net_read_u32(&reader) != 11 ||
+    if (qa_net_read_u32(&reader) != UINT32_C(0x4532514e) ||
         qa_net_read_u32(&reader) != (uint32_t)engine->profile ||
         qa_net_read_u32(&reader) != engine->configstring_count)
         return application_fail(error, QA_ERROR_FORMAT, "Native Q2 continuation profile differs from its admitted owner");

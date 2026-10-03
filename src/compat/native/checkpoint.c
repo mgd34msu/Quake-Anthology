@@ -1,7 +1,6 @@
 #include "internal.h"
 
-#define CHECKPOINT_HEADER_BYTES 160u
-#define CHECKPOINT_LEGACY_HEADER_BYTES 152u
+#define CHECKPOINT_HEADER_BYTES 156u
 
 static bool checkpoint_kind_matches_profile(const qa_native_checkpoint *checkpoint) {
     if ((unsigned)checkpoint->q3_role > QA_QVM_UI ||
@@ -496,7 +495,6 @@ bool qa_native_checkpoint_encode(const qa_native_checkpoint *checkpoint, qa_buff
     uint8_t *cursor = data;
     memcpy(cursor, "QANCP\0\0\0", 8);
     cursor += 8;
-    store_u32(&cursor, NATIVE_CHECKPOINT_VERSION);
     store_u32(&cursor, (uint32_t)checkpoint->kind);
     store_u32(&cursor, (uint32_t)checkpoint->profile);
     store_u32(&cursor, (uint32_t)checkpoint->q3_role);
@@ -562,18 +560,12 @@ static bool decode_buffer(const uint8_t **cursor, size_t size, qa_buffer *out, q
 }
 
 bool qa_native_checkpoint_decode(qa_bytes encoded, qa_native_checkpoint *out, qa_error *error) {
-    if (!out || (!encoded.data && encoded.size) || encoded.size < CHECKPOINT_LEGACY_HEADER_BYTES)
+    if (!out || (!encoded.data && encoded.size) || encoded.size < CHECKPOINT_HEADER_BYTES)
         return native_fail(error, QA_ERROR_FORMAT, encoded.size,
                            "native checkpoint header is truncated");
     if (memcmp(encoded.data, "QANCP\0\0\0", 8))
         return native_fail(error, QA_ERROR_FORMAT, 0, "native checkpoint magic is invalid");
     const uint8_t *cursor = encoded.data + 8;
-    uint32_t version = load_u32(&cursor);
-    if (version != 2 && version != NATIVE_CHECKPOINT_VERSION)
-        return native_fail(error, QA_ERROR_UNSUPPORTED, 8,
-                           "native checkpoint version is unsupported");
-    size_t header = version == 2 ? CHECKPOINT_LEGACY_HEADER_BYTES : CHECKPOINT_HEADER_BYTES;
-    if (encoded.size < header) return native_fail(error, QA_ERROR_FORMAT, encoded.size, "native checkpoint header is truncated");
     qa_native_checkpoint checkpoint = {0};
     checkpoint.kind = (qa_native_checkpoint_kind)load_u32(&cursor);
     checkpoint.profile = (qa_native_profile)load_u32(&cursor);
@@ -584,7 +576,7 @@ bool qa_native_checkpoint_decode(qa_bytes encoded, qa_native_checkpoint *out, qa
     checkpoint.image.target.abi = (qa_native_abi)load_u32(&cursor);
     uint32_t pointer_bytes = load_u32(&cursor);
     if (pointer_bytes != 4 && pointer_bytes != 8)
-        return native_fail(error, QA_ERROR_FORMAT, 40,
+        return native_fail(error, QA_ERROR_FORMAT, 36,
                            "native checkpoint pointer width is invalid");
     checkpoint.image.target.pointer_bytes = (uint8_t)pointer_bytes;
     checkpoint.image.preferred_base = load_u64(&cursor);
@@ -597,7 +589,7 @@ bool qa_native_checkpoint_decode(qa_bytes encoded, qa_native_checkpoint *out, qa
     uint64_t game_size = load_u64(&cursor);
     uint64_t level_size = load_u64(&cursor);
     uint64_t host_size = load_u64(&cursor);
-    uint64_t process_size = version == 2 ? 0 : load_u64(&cursor);
+    uint64_t process_size = load_u64(&cursor);
     uint64_t payload = game_size;
     if (UINT64_MAX - payload < level_size) {
         return native_fail(error, QA_ERROR_FORMAT, CHECKPOINT_HEADER_BYTES,
@@ -609,14 +601,15 @@ bool qa_native_checkpoint_decode(qa_bytes encoded, qa_native_checkpoint *out, qa
                            "native checkpoint payload length overflows");
     payload += host_size;
     if (UINT64_MAX - payload < process_size)
-        return native_fail(error, QA_ERROR_FORMAT, header, "native process continuation length overflows");
+        return native_fail(error, QA_ERROR_FORMAT, CHECKPOINT_HEADER_BYTES,
+                           "native process continuation length overflows");
     payload += process_size;
 #if SIZE_MAX < UINT64_MAX
     if (payload > (uint64_t)SIZE_MAX)
         return native_fail(error, QA_ERROR_FORMAT, CHECKPOINT_HEADER_BYTES,
                            "native checkpoint payload exceeds the host");
 #endif
-    if ((size_t)payload != encoded.size - header)
+    if ((size_t)payload != encoded.size - CHECKPOINT_HEADER_BYTES)
         return native_fail(error, QA_ERROR_FORMAT, CHECKPOINT_HEADER_BYTES,
                            "native checkpoint payload length is invalid");
     if (checkpoint.kind > QA_NATIVE_CHECKPOINT_OWNED_PROCESS ||
@@ -624,10 +617,10 @@ bool qa_native_checkpoint_decode(qa_bytes encoded, qa_native_checkpoint *out, qa
         checkpoint.image.format > QA_NATIVE_IMAGE_ELF64 ||
         checkpoint.image.target.os > QA_NATIVE_OS_MACOS ||
         checkpoint.image.target.arch > QA_NATIVE_ARCH_AARCH64 ||
-        checkpoint.image.target.abi > QA_NATIVE_ABI_AAPCS64 || (flags & ~(version == 2 ? 63u : 127u)))
-        return native_fail(error, QA_ERROR_FORMAT, 12, "native checkpoint metadata is invalid");
+        checkpoint.image.target.abi > QA_NATIVE_ABI_AAPCS64 || (flags & ~127u))
+        return native_fail(error, QA_ERROR_FORMAT, 8, "native checkpoint metadata is invalid");
     if (!checkpoint_kind_matches_profile(&checkpoint))
-        return native_fail(error, QA_ERROR_FORMAT, 12,
+        return native_fail(error, QA_ERROR_FORMAT, 8,
                            "native checkpoint kind does not match its profile");
     checkpoint.has_declaration = (flags & 1u) != 0;
     checkpoint.autosave = (flags & 2u) != 0;
@@ -640,7 +633,7 @@ bool qa_native_checkpoint_decode(qa_bytes encoded, qa_native_checkpoint *out, qa
         (!checkpoint.has_host && host_size) || (!checkpoint.has_process && process_size) ||
         (checkpoint.has_process && (!process_size || !checkpoint.has_host)) ||
         (checkpoint.kind == QA_NATIVE_CHECKPOINT_OWNED_PROCESS && !checkpoint.has_process))
-        return native_fail(error, QA_ERROR_FORMAT, 124,
+        return native_fail(error, QA_ERROR_FORMAT, 120,
                            "native checkpoint contains an undeclared part");
     if (!decode_buffer(&cursor, (size_t)game_size, &checkpoint.game, error) ||
         !decode_buffer(&cursor, (size_t)level_size, &checkpoint.level, error) ||

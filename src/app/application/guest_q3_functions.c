@@ -57,9 +57,8 @@ static bool signature(qa_source_save_io *io)
 {
     uint8_t magic[8] = {'Q','A','G','3','F','N',0,0};
     const uint8_t expected[8] = {'Q','A','G','3','F','N',0,0};
-    uint32_t version = 6;
-    if (!qa_source_save_bytes(io, magic, sizeof(magic)) || !qa_source_save_u32(io, &version)) return false;
-    return (!memcmp(magic, expected, sizeof(magic)) && version == 6) ||
+    if (!qa_source_save_bytes(io, magic, sizeof(magic))) return false;
+    return !memcmp(magic, expected, sizeof(magic)) ||
         application_fail(io->error, QA_ERROR_FORMAT, "Invalid composed Q3 callback continuation");
 }
 

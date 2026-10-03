@@ -564,9 +564,8 @@ static bool same_player(const qa_q3_player *a,const qa_q3_player *b)
 }
 static bool fields(qa_source_save_io *io,frontend_remote_q3_frame *owner,qa_q3_product product)
 {
-    uint8_t magic[4]={'Q','R','F','G'}; uint32_t version=2;
-    return qa_source_save_bytes(io,magic,sizeof(magic)) && !memcmp(magic,"QRFG",sizeof(magic)) &&
-        qa_source_save_u32(io,&version) && version==2 && qa_source_save_u64(io,&owner->scope) &&
+    uint8_t magic[4]={'Q','R','F','G'}; return qa_source_save_bytes(io,magic,sizeof(magic)) && !memcmp(magic,"QRFG",sizeof(magic)) &&
+        qa_source_save_u64(io,&owner->scope) &&
         qa_source_save_bool(io,&owner->video_constructor) &&
         qa_source_save_bool(io,&owner->init_entered) && qa_source_save_bool(io,&owner->init_finished) &&
         (!owner->init_finished || owner->init_entered) && qa_source_save_bool(io,&owner->has_prediction) &&

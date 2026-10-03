@@ -337,11 +337,10 @@ static qa_q2_unicast_refs cache_refs(frontend_network_q2_host *h)
 static bool fields(qa_source_save_io *io,frontend_network_q2_host *h)
 {
     bool writing=io->direction==QA_SOURCE_SAVE_WRITE;
-    uint32_t tag=UINT32_C(0x48423251),version=5;
+    uint32_t tag=UINT32_C(0x48423251);
     qa_net_protocol_id protocol=h->options.protocol; bool local_only=h->options.local_only;
     qa_sha256_digest composition=h->options.composition;
-    if(!qa_source_save_u32(io,&tag) || tag!=UINT32_C(0x48423251) || !qa_source_save_u32(io,&version) || version!=5 ||
-        !qa_source_save_bool(io,&local_only) || local_only!=h->options.local_only || !qa_q2_save_protocol(io,&protocol) ||
+    if(!qa_source_save_u32(io,&tag) || tag!=UINT32_C(0x48423251) || !qa_source_save_bool(io,&local_only) || local_only!=h->options.local_only || !qa_q2_save_protocol(io,&protocol) ||
         (!local_only && !protocol_equal(protocol,h->options.protocol)) ||
         !qa_source_save_bytes(io,composition.bytes,sizeof(composition.bytes)) ||
         (!local_only && !qa_sha256_equal(&composition,&h->options.composition)) ||

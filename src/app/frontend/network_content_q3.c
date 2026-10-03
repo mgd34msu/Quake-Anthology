@@ -858,9 +858,7 @@ static bool saved_text(qa_source_save_io *io, char **text)
 #define CONTENT_FIELD(kind, name) do { if (!qa_source_save_##kind(io, &saved->name)) return false; } while (0)
 static bool saved_fields(qa_source_save_io *io, content_saved *saved)
 {
-    uint8_t magic[4] = {'Q','3','C','T'}; uint32_t schema = 3;
-    if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "Q3CT", 4) ||
-        !qa_source_save_u32(io, &schema) || schema != 3) return false;
+    uint8_t magic[4] = {'Q','3','C','T'}; if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "Q3CT", 4) ) return false;
     CONTENT_FIELD(u32, phase); CONTENT_FIELD(u32, selected); CONTENT_FIELD(u32, base); CONTENT_FIELD(u32, seat);
     CONTENT_FIELD(u64, generation); CONTENT_FIELD(u64, epoch); CONTENT_FIELD(u64, receiver); CONTENT_FIELD(u64, service_owner);
     CONTENT_FIELD(u64, catalog); CONTENT_FIELD(u64, view); CONTENT_FIELD(u64, descriptor_view);

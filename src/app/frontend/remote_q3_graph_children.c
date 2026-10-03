@@ -86,9 +86,7 @@ static bool blob(qa_source_save_io *io,qa_bytes *bytes)
 static bool fields(qa_source_save_io *io,frontend_remote_q3_graph_children *plan)
 {
     bool reading=io->direction==QA_SOURCE_SAVE_READ;
-    uint8_t magic[4]={'Q','R','C','H'}; uint32_t version=1;
-    if(!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QRCH",4) ||
-        !qa_source_save_u32(io,&version) || version!=1 ||
+    uint8_t magic[4]={'Q','R','C','H'}; if(!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QRCH",4) ||
         !qa_source_save_u64(io,&plan->identity) || !plan->identity ||
         !qa_source_save_u32(io,&plan->physical) ||
         !qa_source_save_string(io,&plan->receiver) || !plan->receiver ||

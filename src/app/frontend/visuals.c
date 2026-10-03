@@ -316,9 +316,7 @@ static void plans_free(visual_owner_plan *plans, size_t count)
 }
 static bool topology_fields(qa_source_save_io *io, qa_application *application, visual_owner_plan **plans, size_t *count)
 {
-    bool reading=io->direction==QA_SOURCE_SAVE_READ; uint8_t magic[4]={'Q','F','V','T'}; uint32_t schema=3;
-    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QFVT",4) || !qa_source_save_u32(io,&schema) || (schema<1 || schema>3) ||
-        !qa_source_save_count(io,count,reading?io->input.size/22:SIZE_MAX/sizeof(**plans))) return false;
+    bool reading=io->direction==QA_SOURCE_SAVE_READ; uint8_t magic[4]={'Q','F','V','T'}; if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QFVT",4) || !qa_source_save_count(io,count,reading?io->input.size/22:SIZE_MAX/sizeof(**plans))) return false;
     if (reading && *count) {
         *plans=calloc(*count,sizeof(**plans));
         if (!*plans) return frontend_fail(io->error,QA_ERROR_MEMORY,"Retaining actual appearance owner topology");
@@ -339,9 +337,8 @@ static bool topology_fields(qa_source_save_io *io, qa_application *application, 
             !qa_source_save_u64(io,&plan->view) || !plan->view) return false;
         plan->family=(qa_scene_family)family;
         for (size_t j=0;j<i;++j) if (plan->view==(*plans)[j].view) return false;
-        if (schema < 2) continue;
         plan->present = true;
-        for (unsigned kind=0;kind<(schema>=3?2u:1u);++kind) {
+        for (unsigned kind=0;kind<2u;++kind) {
             size_t *rows=kind?&plan->brush_count:&plan->count;
             visual_model_recipe **recipes=kind?&plan->brush_recipes:&plan->recipes;
             if (!qa_source_save_count(io, rows, reading ? io->input.size / 26 : SIZE_MAX / sizeof(**recipes))) return false;

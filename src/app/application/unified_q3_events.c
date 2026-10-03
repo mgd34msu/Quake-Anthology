@@ -324,9 +324,9 @@ bool application_unified_q3_events_capture(application_provider *p, qa_buffer *o
         if (!qa_actors_get(qa_session_actors(p->application->session), rows[i].actor) ||
             !qa_actor_id_equal(rows[i].actor, binding.actor)) rows[i] = (published_event){0};
     }
-    qa_source_save_io io = {0}; uint8_t magic[4] = {'Q','3','P','E'}; uint32_t version = 1;
+    qa_source_save_io io = {0}; uint8_t magic[4] = {'Q','3','P','E'};
     bool ok = bindings_ok && qa_source_save_writer(&io, p->application->session, e) &&
-        qa_source_save_bytes(&io, magic, sizeof(magic)) && qa_source_save_u32(&io, &version) &&
+        qa_source_save_bytes(&io, magic, sizeof(magic)) &&
         fields(&io, rows) && qa_source_save_finish(&io, out);
     qa_source_save_dispose(&io); free(rows);
     return ok;
@@ -341,10 +341,10 @@ bool application_unified_q3_events_restore(application_provider *p, qa_bytes byt
         return application_fail(e, QA_ERROR_FORMAT, "Saved Q3 published events require their actual GAME owner");
     struct application_unified_q3_events *owner = calloc(1, sizeof(*owner));
     if (!owner) return application_fail(e, QA_ERROR_MEMORY, "Restoring actual Q3 published events");
-    qa_source_save_io io = {0}; uint8_t magic[4]; uint32_t version;
+    qa_source_save_io io = {0}; uint8_t magic[4];
     bool ok = qa_source_save_reader(&io, p->application->session, bytes, e) &&
-        qa_source_save_bytes(&io, magic, sizeof(magic)) && qa_source_save_u32(&io, &version) &&
-        !memcmp(magic, "Q3PE", 4) && version == 1 && fields(&io, owner->rows) && qa_source_save_finish(&io, NULL);
+        qa_source_save_bytes(&io, magic, sizeof(magic)) &&
+        !memcmp(magic, "Q3PE", 4) && fields(&io, owner->rows) && qa_source_save_finish(&io, NULL);
     qa_source_save_dispose(&io);
     for (uint32_t i = 0; ok && i < QA_Q3_SOURCE_ENTITIES; ++i) {
         const published_event *row = owner->rows + i;

@@ -33,10 +33,9 @@ bool qa_native_resource_inventory_release(qa_native_resource_inventory **slot,qa
 }
 static bool encode(native_resource_row *row,qa_buffer *out,qa_error *error)
 {
-    qa_source_save_io io={0}; uint8_t magic[4]={'Q','F','N','R'}; uint32_t version=1;
-    size_t name_size=strlen(row->instance),continuation_size=row->continuation.size;
+    qa_source_save_io io={0}; uint8_t magic[4]={'Q','F','N','R'}; size_t name_size=strlen(row->instance),continuation_size=row->continuation.size;
     bool ok=qa_source_save_writer(&io,NULL,error) && qa_source_save_bytes(&io,magic,4) &&
-        qa_source_save_u32(&io,&version) && qa_source_save_u64(&io,&row->ordinal) &&
+        qa_source_save_u64(&io,&row->ordinal) &&
         qa_source_save_u64(&io,&row->source) &&
         qa_source_save_count(&io,&name_size,QA_SAVE_NAME_LIMIT) &&
         qa_source_save_bytes(&io,row->instance,name_size) &&

@@ -6,7 +6,6 @@
 #include "startup_flow.h"
 
 #define QC_ENGINE_LIMIT (64u * 1024u * 1024u)
-#define QC_ENGINE_VERSION 14u
 static bool add_size(size_t *total, size_t amount, qa_error *error)
 {
     if (amount > QC_ENGINE_LIMIT - *total)
@@ -321,7 +320,7 @@ bool application_qc_capture_engine(void *opaque, qa_buffer *out, qa_error *error
     const qa_actor_registry *actors = qa_session_actors(engine->services.session);
     const qa_sha256_digest *declaration = qa_resource_digest(engine->provider->launch->declaration);
     uint8_t empty_digest[32] = {0};
-    bool ok = qa_net_write_u32(&writer, QC_ENGINE_VERSION) && qa_net_write_u32(&writer, engine->max_clients) &&
+    bool ok = qa_net_write_u32(&writer, engine->max_clients) &&
         qa_net_write_u32(&writer, engine->profile) &&
         qa_net_write_data(&writer, declaration ? declaration->bytes : empty_digest, 32) &&
         qa_net_write_u64(&writer, qa_collision_map_identity(qa_world_geometry(engine->world))) &&
@@ -410,7 +409,7 @@ bool application_qc_restore_engine(void *opaque, qa_bytes bytes, qa_error *error
     qa_net_reader reader; qa_net_reader_init(&reader, bytes, error);
     uint8_t saved_declaration[32], empty_digest[32] = {0};
     const qa_sha256_digest *declaration = qa_resource_digest(engine->provider->launch->declaration);
-    if (qa_net_read_u32(&reader) != QC_ENGINE_VERSION || qa_net_read_u32(&reader) != engine->max_clients ||
+    if (qa_net_read_u32(&reader) != engine->max_clients ||
         qa_net_read_u32(&reader) != (uint32_t)engine->profile ||
         !qa_net_read_data(&reader, saved_declaration, sizeof(saved_declaration)) ||
         memcmp(saved_declaration, declaration ? declaration->bytes : empty_digest, sizeof(saved_declaration)) ||

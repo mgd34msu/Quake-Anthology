@@ -24,7 +24,7 @@ bool qa_net_interfaces_checkpoint(const qa_net_interfaces *o, qa_buffer *out, qa
     if (!out || !qa_net_interfaces_valid(o)) {
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Invalid native interface continuation owner"); return false;
     }
-    size_t capacity = 16;
+    size_t capacity = 12;
     for (size_t i = 0; i < o->count; ++i) {
         const qa_net_interface *a = &o->entries[i];
         size_t name = strlen(a->name);
@@ -38,7 +38,7 @@ bool qa_net_interfaces_checkpoint(const qa_net_interfaces *o, qa_buffer *out, qa
     if (!bytes) { qa_error_set(e, QA_ERROR_MEMORY, 0, "Encoding native interface continuation"); return false; }
     qa_net_writer w;
     qa_net_writer_init(&w, bytes, capacity, e);
-    bool ok = qa_net_write_data(&w, "QAIF", 4) && qa_net_write_u32(&w, 2) && qa_net_write_u64(&w, o->count);
+    bool ok = qa_net_write_data(&w, "QAIF", 4) && qa_net_write_u64(&w, o->count);
     for (size_t i = 0; ok && i < o->count; ++i) {
         const qa_net_interface *a = &o->entries[i];
         size_t name = strlen(a->name);
@@ -56,13 +56,13 @@ bool qa_net_interfaces_checkpoint(const qa_net_interfaces *o, qa_buffer *out, qa
 
 bool qa_net_interfaces_restore(qa_bytes bytes, qa_net_interfaces **out, qa_error *e)
 {
-    if (!out || !bytes.data || bytes.size < 16 || memcmp(bytes.data, "QAIF", 4)) {
+    if (!out || !bytes.data || bytes.size < 12 || memcmp(bytes.data, "QAIF", 4)) {
         qa_error_set(e, QA_ERROR_FORMAT, 0, "Invalid native interface continuation envelope"); return false;
     }
     qa_net_reader r;
     qa_net_reader_init(&r, bytes, e);
     r.bit = 32;
-    bool ok = qa_net_read_u32(&r) == 2;
+    bool ok = true;
     uint64_t count = qa_net_read_u64(&r);
     ok = ok && !r.failed && count <= SIZE_MAX / sizeof(qa_net_interface) &&
         count <= qa_net_reader_remaining(&r) / 15;

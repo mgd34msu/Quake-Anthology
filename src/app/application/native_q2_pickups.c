@@ -495,8 +495,8 @@ bool application_native_q2_pickups_saved_rule(application_native_q2_pickups *o,q
 }
 static bool codec(application_native_q2_pickups *o,qa_source_save_io *io,pickup_actor **decoded,bool *active,qa_error *e)
 {
-    bool reading=io->direction==QA_SOURCE_SAVE_READ; uint8_t tag[5]={'Q','N','P','K',1};
-    if(!qa_source_save_bytes(io,tag,sizeof(tag))||memcmp(tag,(uint8_t[]){'Q','N','P','K',1},sizeof(tag))||!qa_source_save_bool(io,active)) return false;
+    bool reading=io->direction==QA_SOURCE_SAVE_READ; uint8_t tag[4]={'Q','N','P','K'};
+    if(!qa_source_save_bytes(io,tag,sizeof(tag))||memcmp(tag,(uint8_t[]){'Q','N','P','K'},sizeof(tag))||!qa_source_save_bool(io,active)) return false;
     qa_string_id owner=o->options.owner;
     if(!qa_source_save_string(io,&owner)||owner!=o->options.owner) return fail(e,QA_ERROR_FORMAT,"Saved native pickup source owner changed");
     size_t count=o->count;

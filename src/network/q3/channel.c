@@ -60,7 +60,7 @@ bool qa_q3_channel_transmit_matches(const qa_q3_channel *c, qa_bytes packet, qa_
 bool qa_q3_channel_checkpoint(const qa_q3_channel *c, qa_net_writer *writer)
 {
     if (!c || !writer) return writer && qa_net_writer_fail(writer, "Missing Q3 channel checkpoint owner");
-    return qa_net_write_u32(writer, 1) && qa_net_write_u32(writer, c->role) &&
+    return qa_net_write_u32(writer, c->role) &&
         qa_net_write_u16(writer, c->qport) && qa_net_write_u32(writer, c->incoming) &&
         qa_net_write_u32(writer, c->outgoing) && qa_net_write_u32(writer, c->fragment_sequence) &&
         qa_net_write_u8(writer, c->pending) && qa_net_write_u8(writer, c->fragmented) &&
@@ -71,7 +71,7 @@ bool qa_q3_channel_checkpoint(const qa_q3_channel *c, qa_net_writer *writer)
 bool qa_q3_channel_restore(qa_net_reader *reader, qa_q3_channel **out)
 {
     if (!reader || !out) return reader && qa_net_reader_fail(reader, "Missing Q3 channel restore owner");
-    uint32_t version = qa_net_read_u32(reader), role = qa_net_read_u32(reader);
+    uint32_t role = qa_net_read_u32(reader);
     uint16_t qport = qa_net_read_u16(reader);
     uint32_t incoming = qa_net_read_u32(reader), outgoing = qa_net_read_u32(reader);
     uint32_t fragment = qa_net_read_u32(reader);
@@ -79,7 +79,7 @@ bool qa_q3_channel_restore(qa_net_reader *reader, qa_q3_channel **out)
     uint32_t send_size = qa_net_read_u32(reader), send_offset = qa_net_read_u32(reader);
     uint32_t receive_size = qa_net_read_u32(reader);
     if (reader->failed) return false;
-    if (version != 1 || role > QA_Q3_SERVER || incoming > UINT32_C(0x7fffffff) ||
+    if (role > QA_Q3_SERVER || incoming > UINT32_C(0x7fffffff) ||
         outgoing > UINT32_C(0x80000000) || fragment > UINT32_C(0x7fffffff) || pending > 1 || fragmented > 1 ||
         send_size > QA_Q3_MESSAGE_BYTES || receive_size > QA_Q3_MESSAGE_BYTES || send_offset > send_size ||
         (pending && outgoing > UINT32_C(0x7fffffff)) ||

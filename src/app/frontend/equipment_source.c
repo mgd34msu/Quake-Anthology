@@ -1190,9 +1190,8 @@ typedef struct equipment_source_saved {
 static bool saved_fields(qa_source_save_io *io, qa_application *application,
     equipment_source_saved *saved)
 {
-    uint8_t magic[4]={'Q','F','E','S'}; uint32_t schema=3;
-    if (!qa_source_save_bytes(io,magic,sizeof(magic)) || memcmp(magic,"QFES",sizeof(magic)) ||
-        !qa_source_save_u32(io,&schema) || schema!=3 || !qa_source_save_bool(io,&saved->present)) return false;
+    uint8_t magic[4]={'Q','F','E','S'}; if (!qa_source_save_bytes(io,magic,sizeof(magic)) || memcmp(magic,"QFES",sizeof(magic)) ||
+        !qa_source_save_bool(io,&saved->present)) return false;
     if (!saved->present) return true;
     uint32_t kind=saved->frame.kind,phase=saved->frame.phase;
     if (!frontend_save_provider(io,application,&saved->receiver) || !saved->receiver ||

@@ -624,9 +624,7 @@ static bool digest_fields(qa_source_save_io *io, const qa_resource *resource)
 }
 static bool inventory_fields(qa_source_save_io *io, frontend_model_inventory *inventory)
 {
-    bool reading = io->direction == QA_SOURCE_SAVE_READ; uint8_t magic[4] = {'Q','F','M','I'}; uint32_t version = 2;
-    if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "QFMI", 4) || !qa_source_save_u32(io, &version) || version != 2 ||
-        !qa_source_save_count(io, &inventory->model_count, reading ? io->input.size / 64 : SIZE_MAX / sizeof(model_holder)) ||
+    bool reading = io->direction == QA_SOURCE_SAVE_READ; uint8_t magic[4] = {'Q','F','M','I'}; if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "QFMI", 4) || !qa_source_save_count(io, &inventory->model_count, reading ? io->input.size / 64 : SIZE_MAX / sizeof(model_holder)) ||
         !qa_source_save_count(io, &inventory->animation_count, reading ? io->input.size / 64 : SIZE_MAX / sizeof(animation_holder)) ||
         inventory->model_count > SIZE_MAX / sizeof(model_holder) || inventory->animation_count > SIZE_MAX / sizeof(animation_holder)) return false;
     if (reading) {

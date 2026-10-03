@@ -8,11 +8,9 @@ static bool signature(qa_source_save_io *io)
     static const uint8_t expected[8] = {'Q', 'A', 'N', 'A', 'V', 0, 0, 0};
     uint8_t magic[8];
     memcpy(magic, expected, sizeof(magic));
-    uint32_t version = 1;
-    if (!qa_source_save_bytes(io, magic, sizeof(magic)) ||
-        !qa_source_save_u32(io, &version))
+    if (!qa_source_save_bytes(io, magic, sizeof(magic)))
         return false;
-    return !memcmp(magic, expected, sizeof(magic)) && version == 1 ? true :
+    return !memcmp(magic, expected, sizeof(magic)) ? true :
         persistence_fail(io->error, QA_ERROR_FORMAT, "Unsupported navigation continuation schema");
 }
 
@@ -76,7 +74,6 @@ static bool fields(qa_source_save_io *io, qa_nav_checkpoint *state,
         if (!isfinite(admission->seconds) || admission->seconds < 0)
             return persistence_fail(io->error, QA_ERROR_FORMAT, "Invalid navigation admission duration");
     }
-    state->version = 1;
     return true;
 }
 

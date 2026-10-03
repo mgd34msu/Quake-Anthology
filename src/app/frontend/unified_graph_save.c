@@ -45,9 +45,7 @@ static bool span(qa_source_save_io *io,qa_bytes *bytes)
 }
 static bool fields(qa_source_save_io *io,frontend_unified_graph *graph)
 {
-    char magic[4]={'Q','F','U','G'}; uint32_t version=1;
-    return qa_source_save_bytes(io,magic,4) && !memcmp(magic,"QFUG",4) &&
-        qa_source_save_u32(io,&version) && version==1 &&
+    char magic[4]={'Q','F','U','G'}; return qa_source_save_bytes(io,magic,4) && !memcmp(magic,"QFUG",4) &&
         qa_source_save_bool(io,&graph->service_present) && span(io,&graph->service) &&
         (graph->service_present==(graph->service.size!=0)) &&
         qa_source_save_bool(io,&graph->replica_present) && span(io,&graph->children) &&

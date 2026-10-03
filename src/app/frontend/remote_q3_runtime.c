@@ -1327,11 +1327,10 @@ static bool codec_refdef(qa_source_save_io *io,qa_q3_refdef *r)
 }
 static bool codec_fields(qa_source_save_io *io,frontend_remote_q3_runtime *o)
 {
-    uint8_t magic[4]={'Q','R','R','T'}; uint32_t version=1,physical=o->services.resources.physical_seat;
+    uint8_t magic[4]={'Q','R','R','T'}; uint32_t physical=o->services.resources.physical_seat;
     uint64_t identity=o->services.resources.identity;
     qa_native_q3_remote_client_basis basis;
-    if(!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QRRT",4) || !qa_source_save_u32(io,&version) || version!=1 ||
-       !qa_source_save_u64(io,&identity) || identity!=o->services.resources.identity ||
+    if(!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QRRT",4) || !qa_source_save_u64(io,&identity) || identity!=o->services.resources.identity ||
        !qa_source_save_u32(io,&physical) || physical!=o->services.resources.physical_seat ||
        !q3nh_remote_basis_fields(io,o->services.client) ||
        !qa_source_save_bool(io,&o->initialized) || !qa_source_save_bool(io,&o->faulted) ||

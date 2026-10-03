@@ -540,7 +540,7 @@ static bool fields(qa_source_save_io *io,qa_frontend *f,frontend_scene_namespace
     const qa_scene_frame_checkpoint_refs *frames,const qa_audio_checkpoint_refs *audio,frontend_q3_inventory *q3,movie_row *rows,size_t count,
     uint64_t *pool_image,qa_bytes *pool_state)
 {
-    uint8_t magic[4]={'Q','F','V','M'}; uint32_t version=8; size_t saved=count;
+    uint8_t magic[4]={'Q','F','V','M'}; size_t saved=count;
     bool reading=io->direction==QA_SOURCE_SAVE_READ;
     if(!reading && f->source_cinematics) {
         qa_q3_cinematic_handles_options options;
@@ -548,7 +548,7 @@ static bool fields(qa_source_save_io *io,qa_frontend *f,frontend_scene_namespace
             !frontend_scene_image_encode(space,qa_scene_source_q3_scratch(options.images,0),pool_image,io->error) || !*pool_image) return false;
     }
     if(!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QFVM",4) ||
-        !qa_source_save_u32(io,&version) || version!=8 || !qa_source_save_u64(io,pool_image) ||
+        !qa_source_save_u64(io,pool_image) ||
         !qa_source_save_count(io,&saved,count) || saved!=count || !role_prefix(io,f,rows,count)) return false;
     for(size_t i=0;i<count;++i) {
         movie_row *row=rows+i; uint32_t kind=row->kind; uint64_t ordinal=row->ordinal;

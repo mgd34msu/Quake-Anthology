@@ -240,20 +240,20 @@ void guest_pe_memory_abandon(guest_pe_memory **owner)
 bool guest_pe_memory_checkpoint(const guest_pe_memory *memory, qa_buffer *out, qa_error *error)
 {
     if (!memory || !memory->complete || !qa_native_guest_idle(memory->guest) || !out || out->data || out->size ||
-        memory->view.mapping_count > (SIZE_MAX - 112) / 32)
+        memory->view.mapping_count > (SIZE_MAX - 108) / 32)
         return fail(error, QA_ERROR_ARGUMENT, 0, "PE attachment checkpoint requires complete idle ownership and empty output");
-    size_t bytes = 112 + memory->view.mapping_count * 32;
+    size_t bytes = 108 + memory->view.mapping_count * 32;
     uint8_t *data = calloc(1, bytes);
     if (!data) return fail(error, QA_ERROR_MEMORY, 0, "owning PE attachment checkpoint");
     const qa_native_image_info *image = &memory->view.image;
-    memcpy(data, "QAPM", 4); qa_store_u32le(data + 4, 1);
-    qa_store_u32le(data + 8, image->format); qa_store_u32le(data + 12, image->target.os);
-    qa_store_u32le(data + 16, image->target.arch); qa_store_u32le(data + 20, image->target.abi);
-    data[24] = image->target.pointer_bytes; data[25] = memory->view.flat; data[26] = memory->borrowed;
-    qa_store_u64le(data + 32, image->preferred_base); qa_store_u64le(data + 40, image->image_bytes);
-    memcpy(data + 48, image->digest.bytes, sizeof(image->digest.bytes));
-    qa_store_u64le(data + 80, memory->view.base); qa_store_u64le(data + 88, memory->view.bytes);
-    qa_store_u64le(data + 96, memory->attached_bytes); qa_store_u64le(data + 104, memory->view.mapping_count);
+    memcpy(data, "QAPM", 4);
+    qa_store_u32le(data + 4, image->format); qa_store_u32le(data + 8, image->target.os);
+    qa_store_u32le(data + 12, image->target.arch); qa_store_u32le(data + 16, image->target.abi);
+    data[20] = image->target.pointer_bytes; data[21] = memory->view.flat; data[22] = memory->borrowed;
+    qa_store_u64le(data + 28, image->preferred_base); qa_store_u64le(data + 36, image->image_bytes);
+    memcpy(data + 44, image->digest.bytes, sizeof(image->digest.bytes));
+    qa_store_u64le(data + 76, memory->view.base); qa_store_u64le(data + 84, memory->view.bytes);
+    qa_store_u64le(data + 92, memory->attached_bytes); qa_store_u64le(data + 100, memory->view.mapping_count);
     uint64_t base = memory->view.base; bool okay = true;
     for (size_t i = 0; okay && i < memory->view.mapping_count; ++i) {
         qa_native_guest_mapping *mapping = guest_mapping(memory->guest, base);
@@ -263,7 +263,7 @@ bool guest_pe_memory_checkpoint(const guest_pe_memory *memory, qa_buffer *out, q
         }
         uint64_t id = memory->mappings[i], length = backing->bytes;
         okay = attachment(memory, id, base, mapping->backing, length, error);
-        uint8_t *record = data + 112 + i * 32;
+        uint8_t *record = data + 108 + i * 32;
         qa_store_u64le(record, id); qa_store_u64le(record + 8, base);
         qa_store_u64le(record + 16, mapping->backing); qa_store_u64le(record + 24, length);
         base += length;
@@ -279,41 +279,41 @@ bool guest_pe_memory_adopt(const guest_pe *pe, qa_native_guest *guest, qa_bytes 
 {
     const guest_pe_view *image = guest_pe_describe(pe);
     if (!image || !guest || !qa_native_guest_idle(guest) || !out || *out ||
-        !encoded.data || encoded.size < 112 || memcmp(encoded.data, "QAPM", 4) || qa_load_u32le(encoded.data + 4) != 1)
+        !encoded.data || encoded.size < 108 || memcmp(encoded.data, "QAPM", 4))
         return fail(error, QA_ERROR_ARGUMENT, 0, "PE cold attachment requires its actual image, idle lower guest and typed record");
     const uint8_t *data = encoded.data; qa_native_image_info saved = {0};
-    saved.format = (qa_native_image_format)qa_load_u32le(data + 8);
-    saved.target.os = (qa_native_os)qa_load_u32le(data + 12);
-    saved.target.arch = (qa_native_arch)qa_load_u32le(data + 16);
-    saved.target.abi = (qa_native_abi)qa_load_u32le(data + 20); saved.target.pointer_bytes = data[24];
-    saved.preferred_base = qa_load_u64le(data + 32); saved.image_bytes = qa_load_u64le(data + 40);
-    memcpy(saved.digest.bytes, data + 48, sizeof(saved.digest.bytes));
-    uint64_t base = qa_load_u64le(data + 80), bytes = qa_load_u64le(data + 88);
-    uint64_t attached = qa_load_u64le(data + 96), count = qa_load_u64le(data + 104);
+    saved.format = (qa_native_image_format)qa_load_u32le(data + 4);
+    saved.target.os = (qa_native_os)qa_load_u32le(data + 8);
+    saved.target.arch = (qa_native_arch)qa_load_u32le(data + 12);
+    saved.target.abi = (qa_native_abi)qa_load_u32le(data + 16); saved.target.pointer_bytes = data[20];
+    saved.preferred_base = qa_load_u64le(data + 28); saved.image_bytes = qa_load_u64le(data + 36);
+    memcpy(saved.digest.bytes, data + 44, sizeof(saved.digest.bytes));
+    uint64_t base = qa_load_u64le(data + 76), bytes = qa_load_u64le(data + 84);
+    uint64_t attached = qa_load_u64le(data + 92), count = qa_load_u64le(data + 100);
     size_t actual_bytes = 0;
     if (!image_equal(&saved, &image->image) || base != image->base ||
         !page_bytes(image->bytes.size, &actual_bytes, error) || bytes != actual_bytes || attached != bytes ||
-        data[25] != (image->section_alignment < QA_NATIVE_GUEST_PAGE) || data[26] != !primary ||
-        memcmp(data + 27, "\0\0\0\0\0", 5) ||
+        data[21] != (image->section_alignment < QA_NATIVE_GUEST_PAGE) || data[22] != !primary ||
+        memcmp(data + 23, "\0\0\0\0\0", 5) ||
         image->image.target.os != guest->options.image.target.os || image->image.target.arch != guest->options.image.target.arch ||
         image->image.target.abi != guest->options.image.target.abi || image->image.target.pointer_bytes != guest->options.image.target.pointer_bytes ||
         (primary && !image_equal(&image->image, &guest->options.image)) ||
-        !count || count > SIZE_MAX / sizeof(uint64_t) || count > (encoded.size - 112) / 32 ||
-        encoded.size - 112 != count * 32)
+        !count || count > SIZE_MAX / sizeof(uint64_t) || count > (encoded.size - 108) / 32 ||
+        encoded.size - 108 != count * 32)
         return fail(error, QA_ERROR_FORMAT, base, "PE cold attachment differs from its actual source identity or ownership");
     guest_pe_memory *owner = calloc(1, sizeof(*owner));
     if (!owner) return fail(error, QA_ERROR_MEMORY, base, "owning PE cold attachment");
     owner->mappings = malloc((size_t)count * sizeof(*owner->mappings));
     if (!owner->mappings) { free(owner); return fail(error, QA_ERROR_MEMORY, base, "owning PE cold attachment anchors"); }
     owner->guest = guest; owner->borrowed = !primary; owner->attached_bytes = actual_bytes;
-    owner->view = (guest_pe_memory_view){saved, base, actual_bytes, data[25] != 0, owner->mappings, (size_t)count};
+    owner->view = (guest_pe_memory_view){saved, base, actual_bytes, data[21] != 0, owner->mappings, (size_t)count};
     uint64_t address = base; bool okay = true;
     for (size_t i = 0; okay && i < (size_t)count; ++i) {
-        const uint8_t *record = data + 112 + i * 32;
+        const uint8_t *record = data + 108 + i * 32;
         uint64_t id = qa_load_u64le(record), start = qa_load_u64le(record + 8);
         uint64_t backing = qa_load_u64le(record + 16), length = qa_load_u64le(record + 24);
         for (size_t j = 0; okay && j < i; ++j)
-            if (owner->mappings[j] == id || qa_load_u64le(data + 112 + j * 32 + 16) == backing)
+            if (owner->mappings[j] == id || qa_load_u64le(data + 108 + j * 32 + 16) == backing)
                 okay = fail(error, QA_ERROR_FORMAT, start, "PE cold attachment repeats an original mapping or backing owner");
         if (!okay) break;
         if (start != address || length > bytes - (address - base))

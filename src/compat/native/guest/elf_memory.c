@@ -321,22 +321,22 @@ static bool retained(const guest_elf_memory *owner, const elf_extent *extent,
     return true;
 }
 
-enum { ELF_MEMORY_HEADER = 120, ELF_MEMORY_ROW = 40 };
+enum { ELF_MEMORY_HEADER = 116, ELF_MEMORY_ROW = 40 };
 
 static void identity_write(uint8_t *data, const guest_elf_memory *owner)
 {
     const qa_native_image_info *image = &owner->view.image;
-    memcpy(data, "QALM", 4); qa_store_u32le(data + 4, 2);
-    qa_store_u32le(data + 8, image->format); qa_store_u32le(data + 12, image->target.os);
-    qa_store_u32le(data + 16, image->target.arch); qa_store_u32le(data + 20, image->target.abi);
-    data[24] = image->target.pointer_bytes; data[25] = (uint8_t)owner->view.role;
-    data[26] = owner->options.read_implies_execute;
-    qa_store_u32le(data + 28, owner->options.anonymous_permissions);
-    qa_store_u64le(data + 32, image->preferred_base); qa_store_u64le(data + 40, image->image_bytes);
-    memcpy(data + 48, image->digest.bytes, 32);
-    qa_store_u64le(data + 80, owner->view.base); qa_store_u64le(data + 88, owner->view.bytes);
-    qa_store_u64le(data + 96, guest_elf_describe(owner->image)->bias);
-    qa_store_u64le(data + 104, owner->installed); qa_store_u64le(data + 112, owner->extent_count);
+    memcpy(data, "QALM", 4);
+    qa_store_u32le(data + 4, image->format); qa_store_u32le(data + 8, image->target.os);
+    qa_store_u32le(data + 12, image->target.arch); qa_store_u32le(data + 16, image->target.abi);
+    data[20] = image->target.pointer_bytes; data[21] = (uint8_t)owner->view.role;
+    data[22] = owner->options.read_implies_execute;
+    qa_store_u32le(data + 24, owner->options.anonymous_permissions);
+    qa_store_u64le(data + 28, image->preferred_base); qa_store_u64le(data + 36, image->image_bytes);
+    memcpy(data + 44, image->digest.bytes, 32);
+    qa_store_u64le(data + 76, owner->view.base); qa_store_u64le(data + 84, owner->view.bytes);
+    qa_store_u64le(data + 92, guest_elf_describe(owner->image)->bias);
+    qa_store_u64le(data + 100, owner->installed); qa_store_u64le(data + 108, owner->extent_count);
 }
 
 bool guest_elf_memory_checkpoint(const guest_elf_memory *owner, qa_buffer *out, qa_error *error)
@@ -369,9 +369,8 @@ bool guest_elf_memory_adopt(const guest_elf *elf, qa_native_guest *guest,
     const guest_elf_view *image = guest_elf_describe(elf);
     if (!image || !out || *out || !qa_native_guest_idle(guest) || !encoded.data ||
         encoded.size < ELF_MEMORY_HEADER || memcmp(encoded.data, "QALM", 4) ||
-        (qa_load_u32le(encoded.data + 4) != 1 && qa_load_u32le(encoded.data + 4) != 2) ||
-        encoded.data[26] > 1 || encoded.data[27] ||
-        qa_load_u32le(encoded.data + 28) > 7 ||
+        encoded.data[22] > 1 || encoded.data[23] ||
+        qa_load_u32le(encoded.data + 24) > 7 ||
         image->image.target.os != guest->options.image.target.os ||
         image->image.target.arch != guest->options.image.target.arch ||
         image->image.target.abi != guest->options.image.target.abi ||
@@ -380,10 +379,10 @@ bool guest_elf_memory_adopt(const guest_elf *elf, qa_native_guest *guest,
     guest_elf_memory *owner = calloc(1, sizeof(*owner));
     if (!owner) return guest_fail(error, QA_ERROR_MEMORY, 0, "owning ELF cold attachment");
     owner->image = elf; owner->guest = guest;
-    owner->options = (guest_elf_memory_options){qa_load_u32le(encoded.data + 28), encoded.data[26] != 0};
+    owner->options = (guest_elf_memory_options){qa_load_u32le(encoded.data + 24), encoded.data[22] != 0};
     bool okay = prepare(owner, &owner->options, false, error);
-    uint64_t rows = qa_load_u64le(encoded.data + 112);
-    size_t stride = qa_load_u32le(encoded.data + 4) == 1 ? 32 : ELF_MEMORY_ROW;
+    uint64_t rows = qa_load_u64le(encoded.data + 108);
+    size_t stride = ELF_MEMORY_ROW;
     if (okay && (rows > owner->page_count || rows > (encoded.size - ELF_MEMORY_HEADER) / stride ||
         encoded.size - ELF_MEMORY_HEADER != rows * stride))
         okay = guest_fail(error, QA_ERROR_FORMAT, 0, "ELF cold attachment has an invalid backing row extent");
@@ -396,8 +395,8 @@ bool guest_elf_memory_adopt(const guest_elf *elf, qa_native_guest *guest,
         if (row >= rows) { okay = guest_fail(error, QA_ERROR_FORMAT, page, "ELF cold attachment omits an actual image backing"); break; }
         const uint8_t *data = encoded.data + ELF_MEMORY_HEADER + row * stride;
         elf_extent extent = {qa_load_u64le(data), qa_load_u64le(data + 8),
-            qa_load_u64le(data + 16), count * QA_NATIVE_GUEST_PAGE, stride == ELF_MEMORY_ROW && data[32] != 0};
-        if (stride == ELF_MEMORY_ROW && (data[32] > 1 || data[33] || data[34] || data[35] || qa_load_u32le(data + 36)))
+            qa_load_u64le(data + 16), count * QA_NATIVE_GUEST_PAGE, data[32] != 0};
+        if (data[32] > 1 || data[33] || data[34] || data[35] || qa_load_u32le(data + 36))
             okay = guest_fail(error, QA_ERROR_FORMAT, extent.base, "ELF cold kernel mutation receipt is invalid");
         if (extent.base != owner->view.base + page * (uint64_t)QA_NATIVE_GUEST_PAGE ||
             qa_load_u64le(data + 24) != extent.bytes)
@@ -414,7 +413,6 @@ bool guest_elf_memory_adopt(const guest_elf *elf, qa_native_guest *guest,
     uint8_t expected[ELF_MEMORY_HEADER] = {0};
     if (okay) {
         identity_write(expected, owner);
-        qa_store_u32le(expected + 4, qa_load_u32le(encoded.data + 4));
         if (memcmp(expected, encoded.data, ELF_MEMORY_HEADER))
             okay = guest_fail(error, QA_ERROR_FORMAT, owner->view.base, "ELF cold attachment source identity or policy differs");
     }

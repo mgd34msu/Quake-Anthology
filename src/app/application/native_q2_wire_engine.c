@@ -341,8 +341,7 @@ bool application_native_q2_wire_capture(struct application_native_q2 *engine, qa
     qa_source_save_io io;
     if (!engine || !out || out->data || out->size || !qa_source_save_writer(&io, engine->provider->application->session, error)) return false;
     bool present = engine->wire_engine != NULL;
-    uint32_t version = 1;
-    bool ok = qa_source_save_u32(&io, &version) && qa_source_save_bool(&io, &present) &&
+    bool ok = qa_source_save_bool(&io, &present) &&
         (!present || fields(&io, engine->wire_engine));
     if (ok) ok = qa_source_save_finish(&io, out);
     qa_source_save_dispose(&io); return ok;
@@ -354,8 +353,8 @@ bool application_native_q2_wire_restore(struct application_native_q2 *engine, qa
     if (!engine || !out || *out) return application_fail(error, QA_ERROR_ARGUMENT, "Original Q2 Engine restore needs an empty candidate");
     qa_source_save_io io;
     if (!qa_source_save_reader(&io, engine->provider->application->session, bytes, error)) return false;
-    uint32_t version = 0; bool present = false;
-    bool ok = qa_source_save_u32(&io, &version) && version == 1 && qa_source_save_bool(&io, &present);
+    bool present = false;
+    bool ok = qa_source_save_bool(&io, &present);
     application_native_q2_wire_engine *wire = NULL;
     if (ok && present) {
         wire = calloc(1, sizeof(*wire));

@@ -8,7 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-enum { NATIVE_RECORD_HEADER = 88, NATIVE_RECORD_PARTS = 6 };
+enum { NATIVE_RECORD_HEADER = 84, NATIVE_RECORD_PARTS = 6 };
 
 static bool complete(const qa_native_checkpoint *state, bool callbacks, qa_error *error)
 {
@@ -32,20 +32,18 @@ bool application_native_q2_save_resource_recipe(const qa_save_record *record,
     qa_bytes *out, qa_error *error)
 {
     if (!record || !out || record->owner.kind != QA_SAVE_PROVIDER ||
-        !record->payload.data || record->payload.size < 32 ||
+        !record->payload.data || record->payload.size < 28 ||
         memcmp(record->payload.data, "QAPV", 4) ||
-        qa_load_u32le(record->payload.data + 4) != 1 ||
-        qa_load_u32le(record->payload.data + 8) != APPLICATION_PROVIDER_NATIVE ||
-        qa_load_u64le(record->payload.data + 24) != record->payload.size - 32)
+        qa_load_u32le(record->payload.data + 4) != APPLICATION_PROVIDER_NATIVE ||
+        qa_load_u64le(record->payload.data + 20) != record->payload.size - 28)
         return application_fail(error, QA_ERROR_FORMAT, "Native Q2 resource recipe lacks its actual provider envelope");
-    qa_bytes bytes = {record->payload.data + 32, record->payload.size - 32};
-    if (bytes.size < NATIVE_RECORD_HEADER || memcmp(bytes.data, "QAN2", 4) ||
-        (qa_load_u32le(bytes.data + 4) != 2 && qa_load_u32le(bytes.data + 4) != 3))
+    qa_bytes bytes = {record->payload.data + 28, record->payload.size - 28};
+    if (bytes.size < NATIVE_RECORD_HEADER || memcmp(bytes.data, "QAN2", 4))
         return application_fail(error, QA_ERROR_FORMAT, "Native Q2 resource recipe lacks its actual source envelope");
     size_t offset = NATIVE_RECORD_HEADER;
     qa_bytes recipe = {0};
     for (size_t i = 0; i < NATIVE_RECORD_PARTS; ++i) {
-        uint64_t bytes_count = qa_load_u64le(bytes.data + 40 + i * 8);
+        uint64_t bytes_count = qa_load_u64le(bytes.data + 36 + i * 8);
         if ((!bytes_count && i != 5) || bytes_count > bytes.size - offset)
             return application_fail(error, QA_ERROR_FORMAT, "Native Q2 resource recipe part is truncated");
         if (i == 5) recipe = (qa_bytes){bytes.data + offset, (size_t)bytes_count};
@@ -62,10 +60,8 @@ bool application_native_q2_save_process(const qa_save_record *record,
 {
     qa_bytes recipe;
     if (!out || !application_native_q2_save_resource_recipe(record, &recipe, error)) return false;
-    qa_bytes bytes = {record->payload.data + 32, record->payload.size - 32};
-    if (qa_load_u32le(bytes.data + 4) != 3)
-        return application_fail(error, QA_ERROR_FORMAT, "Callback cold construction requires its owned source record");
-    uint64_t length = qa_load_u64le(bytes.data + 40);
+    qa_bytes bytes = {record->payload.data + 28, record->payload.size - 28};
+    uint64_t length = qa_load_u64le(bytes.data + 36);
     if (!qa_native_checkpoint_decode((qa_bytes){bytes.data + NATIVE_RECORD_HEADER, (size_t)length}, out, error)) return false;
     if (complete(out, true, error)) return true;
     qa_native_checkpoint_free(out);
@@ -121,11 +117,10 @@ bool application_native_q2_save_capture(application_provider *provider, qa_save_
     }
     if (ok) {
         memcpy(bytes.data, "QAN2", 4);
-        qa_store_u32le(bytes.data + 4, engine->callbacks ? 3u : 2u);
-        memcpy(bytes.data + 8, qa_resource_digest(provider->application->map_resource)->bytes, 32);
+        memcpy(bytes.data + 4, qa_resource_digest(provider->application->map_resource)->bytes, 32);
         size_t offset = NATIVE_RECORD_HEADER;
         for (size_t i = 0; i < NATIVE_RECORD_PARTS; ++i) {
-            qa_store_u64le(bytes.data + 40 + i * 8, parts[i].size);
+            qa_store_u64le(bytes.data + 36 + i * 8, parts[i].size);
             if (parts[i].size) memcpy(bytes.data + offset, parts[i].data, parts[i].size);
             offset += parts[i].size;
         }
@@ -141,12 +136,12 @@ static bool record_parts(application_provider *provider, qa_bytes bytes,
     qa_bytes out[NATIVE_RECORD_PARTS], qa_error *error)
 {
     if (!bytes.data || bytes.size < NATIVE_RECORD_HEADER || memcmp(bytes.data, "QAN2", 4) ||
-        qa_load_u32le(bytes.data + 4) != (provider->state.native.q2_engine->callbacks ? 3u : 2u) || !provider->application->map_resource ||
-        memcmp(bytes.data + 8, qa_resource_digest(provider->application->map_resource)->bytes, 32))
+        !provider->application->map_resource ||
+        memcmp(bytes.data + 4, qa_resource_digest(provider->application->map_resource)->bytes, 32))
         return application_fail(error, QA_ERROR_FORMAT, "native Q2 continuation map identity differs");
     size_t offset = NATIVE_RECORD_HEADER;
     for (size_t i = 0; i < NATIVE_RECORD_PARTS; ++i) {
-        uint64_t length = qa_load_u64le(bytes.data + 40 + i * 8);
+        uint64_t length = qa_load_u64le(bytes.data + 36 + i * 8);
         if ((!length && i != 5) || length > bytes.size - offset)
             return application_fail(error, QA_ERROR_FORMAT, "native Q2 continuation part extent is invalid");
         out[i] = (qa_bytes){bytes.data + offset, (size_t)length};

@@ -156,9 +156,9 @@ bool qa_restart_pending(const qa_restart_controls *controls,qa_restart_kind kind
 }
 static bool pending_fields(qa_source_save_io *io,qa_restart_kind pending[3],size_t *count)
 {
-    uint8_t magic[4]={'Q','A','R','C'}; uint32_t version=1;
+    uint8_t magic[4]={'Q','A','R','C'};
     if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QARC",4) ||
-        !qa_source_save_u32(io,&version) || version!=1 || !qa_source_save_count(io,count,3)) return false;
+        !qa_source_save_count(io,count,3)) return false;
     for (size_t i=0;i<*count;++i) {
         uint32_t kind=pending[i];
         if (!qa_source_save_u32(io,&kind) || kind>QA_RESTART_AUDIO) return false;

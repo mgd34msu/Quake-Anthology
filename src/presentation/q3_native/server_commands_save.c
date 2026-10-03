@@ -120,13 +120,11 @@ static bool score(qa_source_save_io *io, q3n_command_score *s)
 static bool fields(qa_source_save_io *io, q3n_server_commands *o)
 {
     uint8_t magic[4] = {'Q', '3', 'S', 'C'};
-    uint32_t expected_version=o->options.compiled_source?2u:1u;
-    uint32_t version = expected_version, product = o->options.product;
+    uint32_t product = o->options.product;
     q3n_command_state *s = &o->state;
     const char *expected = o->options.compiled_source?"Q3SU":o->options.remote_source ? "Q3SR" : "Q3SC";
     memcpy(magic, expected, 4);
     if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, expected, 4) ||
-        !qa_source_save_u32(io, &version) || version != expected_version ||
         !qa_source_save_u32(io, &product) || product != (uint32_t)o->options.product ||
         !identity(io, &o->options) || !qa_source_save_bool(io, &o->initialized) || !qa_source_save_bool(io, &o->closed) ||
         !qa_source_save_i32(io, &s->server_command_sequence) || s->server_command_sequence < 0 ||

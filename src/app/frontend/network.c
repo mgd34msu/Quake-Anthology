@@ -3380,9 +3380,9 @@ static bool menu_preferences_same(const frontend_network_menu_preferences a[4],
 static bool menu_preferences_publish(qa_frontend_network *n,frontend_network_menu_preferences rows[4],qa_error *error)
 {
     if(n->nonce==UINT64_MAX) return frontend_fail(error,QA_ERROR_ARGUMENT,"Browser preference publication namespace exhausted");
-    qa_source_save_io io={0}; qa_buffer bytes={0}; uint32_t magic=UINT32_C(0x504d4e51),version=1; bool created;
+    qa_source_save_io io={0}; qa_buffer bytes={0}; uint32_t magic=UINT32_C(0x504d4e51); bool created;
     bool ok=qa_source_save_writer(&io,NULL,error) && qa_source_save_u32(&io,&magic) &&
-        qa_source_save_u32(&io,&version) && menu_preferences_fields(&io,rows) && qa_source_save_finish(&io,&bytes);
+        menu_preferences_fields(&io,rows) && qa_source_save_finish(&io,&bytes);
     if(ok) ok=qa_fs_root_publish(n->preferences,"network/menu-preferences.bin",(qa_bytes){bytes.data,bytes.size},
         ++n->nonce,false,true,&created,error);
     if(ok) memcpy(n->menu_preferences,rows,sizeof(n->menu_preferences));
@@ -3397,10 +3397,9 @@ static bool menu_preferences_load(qa_frontend_network *n,qa_error *error)
         return false;
     }
     bool ok=qa_fs_file_read_snapshot(file,&identity,&bytes,error); qa_fs_file_close(file);
-    frontend_network_menu_preferences rows[4]={0}; qa_source_save_io io={0}; uint32_t magic=0,version=0;
+    frontend_network_menu_preferences rows[4]={0}; qa_source_save_io io={0}; uint32_t magic=0;
     ok=ok && bytes.size<=65536 && qa_source_save_reader(&io,NULL,(qa_bytes){bytes.data,bytes.size},error) &&
-        qa_source_save_u32(&io,&magic) && magic==UINT32_C(0x504d4e51) && qa_source_save_u32(&io,&version) && version==1 &&
-        menu_preferences_fields(&io,rows) && qa_source_save_finish(&io,NULL);
+        qa_source_save_u32(&io,&magic) && magic==UINT32_C(0x504d4e51) && menu_preferences_fields(&io,rows) && qa_source_save_finish(&io,NULL);
     if(ok) {
         memcpy(n->menu_preferences,rows,sizeof(rows));
         const qa_net_protocol kinds[4]={QA_NET_NQ15,QA_NET_QW28,QA_NET_Q2_34,QA_NET_Q3_68};
@@ -4165,9 +4164,9 @@ static bool detached_transport(const qa_net_address *address, qa_net_transport *
 }
 static bool network_header(qa_source_save_io *io, bool *installed)
 {
-    uint32_t magic = UINT32_C(0x464e4151), version = 24;
+    uint32_t magic = UINT32_C(0x464e4151);
     return qa_source_save_u32(io, &magic) && magic == UINT32_C(0x464e4151) &&
-        qa_source_save_u32(io, &version) && version == 24 && qa_source_save_bool(io, installed);
+        qa_source_save_bool(io, installed);
 }
 bool frontend_network_prepare_restored(qa_frontend *f, qa_bytes bytes, qa_error *error)
 {

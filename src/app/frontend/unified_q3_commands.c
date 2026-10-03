@@ -449,15 +449,11 @@ bool frontend_unified_q3_commands_destroy(frontend_unified_q3_commands **owned,q
 }
 static bool fields(qa_source_save_io *io,frontend_unified_q3_commands *o)
 {
-    uint8_t magic[4]={'Q','U','C','C'}; uint32_t version=2;
-    if(!(qa_source_save_bytes(io,magic,sizeof(magic)) && !memcmp(magic,"QUCC",sizeof(magic)) &&
-        qa_source_save_u32(io,&version) && (version==1 || version==2) &&
+    uint8_t magic[4]={'Q','U','C','C'}; if(!(qa_source_save_bytes(io,magic,sizeof(magic)) && !memcmp(magic,"QUCC",sizeof(magic)) &&
         q3n_compiled_source_fields(io,frontend_unified_q3_client_source(o->options.client)) &&
         qa_source_save_bool(io,&o->registered) && qa_source_save_bool(io,&o->closed) && (!o->closed || o->registered) &&
         qa_source_save_count(io,&o->installed,command_count(o->product))))return false;
-    if(version>=2) {
-        if(!qa_source_save_bool(io,&o->retiring) || !qa_source_save_bool(io,&o->resetting))return false;
-    } else if(io->direction==QA_SOURCE_SAVE_READ) { o->retiring=false; o->resetting=false; }
+    if(!qa_source_save_bool(io,&o->retiring) || !qa_source_save_bool(io,&o->resetting))return false;
     return (o->retiring || o->resetting)?(o->registered || o->installed<command_count(o->product)):
         o->registered==(o->installed==command_count(o->product));
 }

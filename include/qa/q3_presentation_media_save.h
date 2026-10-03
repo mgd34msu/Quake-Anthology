@@ -26,13 +26,10 @@ typedef struct qa_q3_movie_checkpoint_refs {
  * success transfers normal movie/stream retirement to the presentation. */
 bool qa_q3_presentation_media_checkpoint(const qa_q3_presentation *,
     const qa_q3_movie_checkpoint_refs *, qa_buffer *, qa_error *);
-bool qa_q3_presentation_media_checkpoint_schema(const qa_q3_presentation *,
-    const qa_q3_movie_checkpoint_refs *,uint32_t schema,qa_buffer *,qa_error *);
 bool qa_q3_presentation_media_restore(qa_q3_presentation *,
     const qa_q3_movie_checkpoint_refs *, uint64_t audio_bus, double wall_milliseconds,
     qa_bytes, qa_error *);
 /* Reads only the actual codec header's source binding mode. Full slot/cache
  * admission remains the media restore owner's responsibility. */
 bool qa_q3_presentation_media_binding_read(qa_bytes,bool *shared,qa_error *);
-bool qa_q3_presentation_media_binding_version_read(qa_bytes,uint32_t *schema,bool *shared,qa_error *);
 #endif

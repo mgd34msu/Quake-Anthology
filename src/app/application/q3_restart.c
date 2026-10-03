@@ -252,9 +252,8 @@ static bool context_fields(qa_source_save_io *io, qa_command_context *context) {
         context->generation;
 }
 bool application_q3_restart_stream(qa_source_save_io *io, application_q3_restart *state) {
-    char magic[4] = {'Q','A','R','S'}; uint32_t version = 1;
+    char magic[4] = {'Q','A','R','S'};
     if (!state || state->busy || !qa_source_save_bytes(io, magic, 4) || memcmp(magic, "QARS", 4) ||
-        !qa_source_save_u32(io, &version) || version != 1 ||
         !qa_source_save_bool(io, &state->has_last_frame) || !qa_source_save_u64(io, &state->last_frame) ||
         (!state->has_last_frame && state->last_frame) || !qa_source_save_bool(io, &state->pending)) return false;
     if (!state->pending) return true;

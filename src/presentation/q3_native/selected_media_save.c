@@ -123,9 +123,8 @@ static bool view(qa_source_save_io *io, const q3n_selected_media_refs *refs, qa_
 }
 static bool fields(qa_source_save_io *io, q3n_selected_media *o, const q3n_selected_media_refs *refs)
 {
-    uint8_t magic[4] = {'Q','3','S','R'}; uint32_t schema = 1, product = o->options.product;
-    if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "Q3SR", 4) ||
-        !qa_source_save_u32(io, &schema) || schema != 1 || !qa_source_save_u32(io, &product) || product != (uint32_t)o->options.product ||
+    uint8_t magic[4] = {'Q','3','S','R'}; uint32_t product = o->options.product;
+    if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "Q3SR", 4) || !qa_source_save_u32(io, &product) || product != (uint32_t)o->options.product ||
         !view(io, refs, &o->options.content, true) || !qa_source_save_bool(io, &o->shaders_ready) ||
         !qa_source_save_i32(io, &o->invisibility) || !qa_source_save_i32(io, &o->battle_weapon) ||
         !qa_source_save_i32(io, &o->quad_weapon)) return false;

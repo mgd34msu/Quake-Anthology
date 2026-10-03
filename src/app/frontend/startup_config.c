@@ -239,12 +239,11 @@ static bool text_fields(qa_source_save_io *io,char **text)
 }
 static bool fields(qa_source_save_io *io,frontend_startup_config *owner)
 {
-    uint8_t magic[4]={'Q','F','S','C'}; uint32_t version=1,dialect=owner->options.command.dialect;
+    uint8_t magic[4]={'Q','F','S','C'}; uint32_t dialect=owner->options.command.dialect;
     bool mod=owner->options.has_mod,seat=owner->options.seat_scope,safe=owner->options.safe_mode;
     uint32_t failure=owner->failure.code;
     size_t offset=owner->failure.offset;
-    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QFSC",4) || !qa_source_save_u32(io,&version) || version!=1 ||
-        !qa_source_save_u32(io,&dialect) || dialect!=(uint32_t)owner->options.command.dialect ||
+    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QFSC",4) || !qa_source_save_u32(io,&dialect) || dialect!=(uint32_t)owner->options.command.dialect ||
         !qa_source_save_bool(io,&mod) || mod!=owner->options.has_mod || !qa_source_save_bool(io,&seat) || seat!=owner->options.seat_scope ||
         !qa_source_save_bool(io,&safe) || safe!=owner->options.safe_mode || !qa_source_save_count(io,&owner->index,owner->count) ||
         !qa_source_save_bool(io,&owner->active) || !qa_source_save_bool(io,&owner->completed) ||

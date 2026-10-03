@@ -290,9 +290,8 @@ static bool row_fields(qa_source_save_io *io, qa_application *app,
 static bool header(qa_source_save_io *io, bool *present, size_t *count, size_t *capacity)
 {
     uint8_t magic[4] = {'Q', 'A', 'P', 'O'};
-    uint32_t version = 1;
     return qa_source_save_bytes(io, magic, sizeof(magic)) && !memcmp(magic, "QAPO", 4) &&
-        qa_source_save_u32(io, &version) && version == 1 && qa_source_save_bool(io, present) &&
+        qa_source_save_bool(io, present) &&
         qa_source_save_count(io, count, SIZE_MAX / sizeof(application_portal_claim)) &&
         qa_source_save_count(io, capacity, SIZE_MAX / sizeof(application_portal_claim)) &&
         *count <= *capacity && (*present || (!*count && !*capacity));

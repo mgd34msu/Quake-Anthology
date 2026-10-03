@@ -361,11 +361,10 @@ bool qa_q1_game_capture(qa_q1_game *g, qa_buffer *out, qa_error *error) {
     if (ok) {
         uint8_t magic[sizeof(signature)];
         memcpy(magic, signature, sizeof(magic));
-        uint32_t version = Q1_SAVE_VERSION;
         size_t dictionary_count = qa_strings_count(body.dictionary);
         uint32_t count = (uint32_t)dictionary_count;
         ok = dictionary_count <= UINT32_MAX && q1_save_bytes(&file, magic, sizeof(magic)) &&
-             q1_save_u32(&file, &version) && q1_save_u32(&file, &count);
+             q1_save_u32(&file, &count);
         for (uint32_t i = 0; ok && i < count; ++i) {
             qa_bytes word = qa_strings_text(body.dictionary, i + 1);
             uint32_t size = (uint32_t)word.size;
@@ -426,9 +425,9 @@ bool qa_q1_game_restore_prepare(qa_q1_game *g, qa_bytes bytes, qa_q1_restore **o
         candidate->maps->options = g->maps->options;
     }
     uint8_t magic[sizeof(signature)];
-    uint32_t version = 0, count = 0;
+    uint32_t count = 0;
     if (!q1_save_bytes(&io, magic, sizeof(magic)) || memcmp(magic, signature, sizeof(magic)) ||
-        !q1_save_u32(&io, &version) || version != Q1_SAVE_VERSION || !q1_save_u32(&io, &count) ||
+        !q1_save_u32(&io, &count) ||
         count == UINT32_MAX || count > (bytes.size - io.offset) / 4) {
         q1_save_fail(&io, "Invalid Q1 checkpoint header or dictionary");
         goto fail;

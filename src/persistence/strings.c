@@ -3,7 +3,7 @@
 bool qa_save_strings_encode(const qa_strings *strings, qa_buffer *out, qa_error *error)
 {
     if (!strings || !out) return persistence_fail(error, QA_ERROR_ARGUMENT, "Invalid saved string table");
-    size_t count = qa_strings_count(strings), size = 12;
+    size_t count = qa_strings_count(strings), size = 8;
     if (count > UINT32_MAX) return persistence_fail(error, QA_ERROR_MEMORY, "Saved string table exceeds index space");
     for (size_t i = 0; i < count; ++i) {
         qa_bytes text = qa_strings_text(strings, (qa_string_id)(i + 1));
@@ -15,7 +15,7 @@ bool qa_save_strings_encode(const qa_strings *strings, qa_buffer *out, qa_error 
     if (!buffer.data) return persistence_fail(error, QA_ERROR_MEMORY, "Allocating saved string table codec");
     qa_net_writer w;
     qa_net_writer_init(&w, buffer.data, size, error);
-    qa_net_write_data(&w, "QAST", 4); qa_net_write_u32(&w, 1); qa_net_write_u32(&w, (uint32_t)count);
+    qa_net_write_data(&w, "QAST", 4); qa_net_write_u32(&w, (uint32_t)count);
     for (size_t i = 0; i < count; ++i) {
         qa_bytes text = qa_strings_text(strings, (qa_string_id)(i + 1));
         qa_net_write_u64(&w, text.size); qa_net_write_data(&w, text.data, text.size);
@@ -27,12 +27,12 @@ bool qa_save_strings_encode(const qa_strings *strings, qa_buffer *out, qa_error 
 
 bool qa_save_strings_decode(qa_bytes bytes, qa_strings **out, qa_error *error)
 {
-    if (!out || !bytes.data || bytes.size < 12 || memcmp(bytes.data, "QAST", 4))
+    if (!out || !bytes.data || bytes.size < 8 || memcmp(bytes.data, "QAST", 4))
         return persistence_fail(error, QA_ERROR_FORMAT, "Invalid saved string table signature");
     qa_net_reader r;
     qa_net_reader_init(&r, bytes, error); r.bit = 32;
-    uint32_t version = qa_net_read_u32(&r), count = qa_net_read_u32(&r);
-    if (version != 1 || count > qa_net_reader_remaining(&r) / 8)
+    uint32_t count = qa_net_read_u32(&r);
+    if (count > qa_net_reader_remaining(&r) / 8)
         return persistence_fail(error, QA_ERROR_FORMAT, "Invalid saved string table extent");
     qa_strings *strings = NULL;
     if (!qa_strings_create(&strings, error)) return false;

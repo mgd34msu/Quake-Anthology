@@ -646,7 +646,7 @@ bool application_native_q2_inventory_scanner_capture(application_native_q2_inven
 {
     if (!out || !current(o, e) || !application_native_q2_inventory_scanner_idle(o)) return false;
     qa_session *session = o->engine->provider->application->session;
-    size_t size = 12, count = 0;
+    size_t size = 8, count = 0;
     for (inventory_selection *s = o->selected; s; s = s->next) {
         const char *item = qa_strings_cstr(qa_session_strings(session), s->item);
         if (!item || strlen(item) > UINT32_MAX || strlen(item) > SIZE_MAX - size - 20 || count == UINT32_MAX)
@@ -656,7 +656,7 @@ bool application_native_q2_inventory_scanner_capture(application_native_q2_inven
     qa_buffer buffer = {.data = malloc(size), .size = size};
     if (!buffer.data) return application_fail(e, QA_ERROR_MEMORY, "Capturing actual native inventory selections");
     qa_net_writer w; qa_net_writer_init(&w, buffer.data, buffer.size, e);
-    bool ok = qa_net_write_data(&w, "NQIS", 4) && qa_net_write_u32(&w, 1) && qa_net_write_u32(&w, (uint32_t)count);
+    bool ok = qa_net_write_data(&w, "NQIS", 4) && qa_net_write_u32(&w, (uint32_t)count);
     for (inventory_selection *s = o->selected; ok && s; s = s->next) {
         qa_saved_actor_id actor; const char *item = qa_strings_cstr(qa_session_strings(session), s->item);
         ok = qa_actors_save_reference(qa_session_actors(session), s->actor, &actor, e) &&
@@ -672,10 +672,10 @@ bool application_native_q2_inventory_scanner_restore(application_native_q2_inven
     if (!current(o, e) || !application_native_q2_inventory_scanner_idle(o) || o->active)
         return application_fail(e, QA_ERROR_ARGUMENT, "Native inventory selection restore requires its detached real scanner");
     qa_net_reader r; qa_net_reader_init(&r, bytes, e); qa_bytes magic;
-    if (!qa_net_read_bytes(&r, 4, &magic) || memcmp(magic.data, "NQIS", 4) || qa_net_read_u32(&r) != 1)
+    if (!qa_net_read_bytes(&r, 4, &magic) || memcmp(magic.data, "NQIS", 4))
         return application_fail(e, QA_ERROR_FORMAT, "Invalid original inventory scanner continuation");
     uint32_t count = qa_net_read_u32(&r); inventory_selection *head = NULL;
-    qa_session *session = o->engine->provider->application->session; bool ok = !r.failed && bytes.size >= 12 && count <= (bytes.size - 12) / 20;
+    qa_session *session = o->engine->provider->application->session; bool ok = !r.failed && bytes.size >= 8 && count <= (bytes.size - 8) / 20;
     for (uint32_t i = 0; ok && i < count; ++i) {
         inventory_selection *s = calloc(1, sizeof(*s));
         if (!s) { ok = application_fail(e, QA_ERROR_MEMORY, "Decoding actual inventory selection mapping"); break; }

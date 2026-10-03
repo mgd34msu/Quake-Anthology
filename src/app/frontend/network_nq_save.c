@@ -47,9 +47,8 @@ static bool entity_fields(qa_source_save_io *io, qa_q1_entity *v)
 }
 static bool fields(qa_source_save_io *io, frontend_nq_host *host)
 {
-    uint32_t magic = UINT32_C(0x484e4151), version = 4;
-    if (!qa_source_save_u32(io, &magic) || magic != UINT32_C(0x484e4151) || !qa_source_save_u32(io, &version) || version != 4 ||
-        !frontend_save_provider(io, host->frontend->application, &host->owner) || !host->owner ||
+    uint32_t magic = UINT32_C(0x484e4151);
+    if (!qa_source_save_u32(io, &magic) || magic != UINT32_C(0x484e4151) || !frontend_save_provider(io, host->frontend->application, &host->owner) || !host->owner ||
         !qa_source_save_bytes(io, host->composition.bytes, sizeof(host->composition.bytes)) ||
         !qa_source_save_u64(io, &host->generation) || !qa_source_save_u64(io, &host->submillisecond_ns) ||
         !qa_source_save_bool(io, &host->previous_pause) ||

@@ -55,17 +55,17 @@ static bool callback_receipt(struct application_native_q2 *engine,
     const qa_native_checkpoint *snapshot, qa_buffer *out, qa_error *error)
 {
     if (!callback_identity(engine, snapshot, error)) return false;
-    qa_buffer bytes = {.data = calloc(1, 168), .size = 168};
+    qa_buffer bytes = {.data = calloc(1, 164), .size = 164};
     if (!bytes.data) return application_fail(error, QA_ERROR_MEMORY, "Retaining native callback process identity");
-    memcpy(bytes.data, "QNCB\1\0\0\0", 8);
-    memcpy(bytes.data + 8, snapshot->image.digest.bytes, 32);
-    memcpy(bytes.data + 40, snapshot->declaration.bytes, 32);
-    memcpy(bytes.data + 72, engine->provider->launch->identity.bytes, 32);
+    memcpy(bytes.data, "QNCB", 4);
+    memcpy(bytes.data + 4, snapshot->image.digest.bytes, 32);
+    memcpy(bytes.data + 36, snapshot->declaration.bytes, 32);
+    memcpy(bytes.data + 68, engine->provider->launch->identity.bytes, 32);
     qa_sha256_digest host, process;
     qa_sha256((qa_bytes){snapshot->host.data, snapshot->host.size}, &host);
     qa_sha256((qa_bytes){snapshot->process.data, snapshot->process.size}, &process);
-    memcpy(bytes.data + 104, host.bytes, 32);
-    memcpy(bytes.data + 136, process.bytes, 32);
+    memcpy(bytes.data + 100, host.bytes, 32);
+    memcpy(bytes.data + 132, process.bytes, 32);
     *out = bytes;
     return true;
 }
@@ -258,9 +258,8 @@ void application_native_q2_continuation_abort(struct application_native_q2_conti
 }
 static bool fields_io(qa_source_save_io *io, struct application_native_q2_continuation *state)
 {
-    uint32_t version = 2; size_t count = state->count;
-    if (!qa_source_save_u32(io, &version) || version != 2 ||
-        !qa_source_save_bytes(io, state->artifact.bytes, 32) ||
+    size_t count = state->count;
+    if (!qa_source_save_bytes(io, state->artifact.bytes, 32) ||
         !qa_source_save_bytes(io, state->declaration.bytes, 32) ||
         !qa_source_save_bytes(io, state->launch.bytes, 32) ||
         !qa_source_save_count(io, &count, CONTINUATION_FIELDS) || count != state->count) return false;

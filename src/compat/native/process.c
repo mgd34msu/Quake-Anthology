@@ -327,7 +327,7 @@ static bool capsule_blob(qa_source_save_io *io, qa_bytes *bytes)
 
 static bool capsule_fields(qa_source_save_io *io, qa_native_instance *instance)
 {
-    uint8_t magic[] = {'Q','N','P','R',1}, expected[] = {'Q','N','P','R',1};
+    uint8_t magic[] = {'Q','N','P','R'}, expected[] = {'Q','N','P','R'};
     uint32_t profile = instance->module->info.profile, role = instance->options.q3_role;
     uint32_t kind = instance->process_kind, lifecycle = instance->lifecycle;
     qa_sha256_digest image = instance->module->info.image.digest, declaration = instance->declaration;

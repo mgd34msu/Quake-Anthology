@@ -2,7 +2,7 @@
 #include "vfs_private.h"
 #include "vfs_save_io.h"
 
-static const uint8_t view_magic[8] = {'Q','A','V','F',8,0,0,0};
+static const uint8_t view_magic[4] = {'Q','A','V','F'};
 typedef struct mount_binding {
     char *root_path;
     qa_fs_identity root_identity;
@@ -96,7 +96,7 @@ static bool normalized_prefix(vfs_save_io *io, const char *text,
     return matches || vfs_save_fail(io, QA_ERROR_FORMAT, "unnormalized VFS rule prefix");
 }
 
-static bool mounts(vfs_save_io *io, qa_vfs *vfs, mount_binding **bindings_out, uint8_t version)
+static bool mounts(vfs_save_io *io, qa_vfs *vfs, mount_binding **bindings_out)
 {
     size_t count = vfs->count;
     if (!vfs_save_count(io, &count, 92, sizeof(mount *)) ||
@@ -128,12 +128,10 @@ static bool mounts(vfs_save_io *io, qa_vfs *vfs, mount_binding **bindings_out, u
             !vfs_save_identity(io, &m->identity) ||
             !vfs_save_u64(io, &origin)) return false;
         m->comparison = (qa_archive_comparison)comparison;
-        if (version >= 8) {
-            bool child = m->root_prefix != NULL;
-            if (!vfs_save_bool(io, &child)) return false;
-            if (child && (!vfs_save_text(io, &m->root_prefix) ||
-                !normalized_prefix(io, m->root_prefix, false, false))) return false;
-        }
+        bool child = m->root_prefix != NULL;
+        if (!vfs_save_bool(io, &child)) return false;
+        if (child && (!vfs_save_text(io, &m->root_prefix) ||
+            !normalized_prefix(io, m->root_prefix, false, false))) return false;
         for (size_t j = 0; j < i; ++j)
             if (vfs->mounts[j]->id == m->id)
                 return vfs_save_fail(io, QA_ERROR_FORMAT, "duplicate VFS mount identity");
@@ -465,13 +463,10 @@ static bool historical_reads(vfs_save_io *io, qa_vfs *vfs)
 }
 static bool view_fields(vfs_save_io *io, qa_vfs *vfs, mount_binding **bindings)
 {
-    uint8_t magic[8]; memcpy(magic, view_magic, sizeof(magic));
-    bool header = vfs_save_bytes(io, magic, sizeof(magic)) && !memcmp(magic, "QAVF", 4) &&
-        (magic[4] >= 5 && magic[4] <= 8) && !magic[5] && !magic[6] && !magic[7];
-    bool success = header && vfs_save_u64(io, &vfs->next_mount) &&
-        vfs_save_u64(io, &vfs->next_temporary) && mounts(io, vfs, bindings, magic[4]) &&
+    bool success = vfs_save_magic(io, view_magic) && vfs_save_u64(io, &vfs->next_mount) &&
+        vfs_save_u64(io, &vfs->next_temporary) && mounts(io, vfs, bindings) &&
         prefixes(io, vfs) && links(io, vfs) && restrictions(io, vfs) && reads(io, vfs) &&
-        (magic[4] < 6 || origins(io, vfs)) && (magic[4] < 7 || historical_reads(io, vfs)) && vfs_save_finish(io);
+        origins(io, vfs) && historical_reads(io, vfs) && vfs_save_finish(io);
     if (!success && io->error && io->error->code == QA_OK)
         vfs_save_fail(io, QA_ERROR_FORMAT, "invalid VFS view continuation");
     return success;
@@ -560,9 +555,14 @@ bool qa_vfs_create_restored(qa_resource_pool *pool, const qa_vfs_checkpoint_refs
     bool success = view_fields(&io, candidate, &bindings) && native_bind(&io, candidate, bindings, refs);
     for (size_t i = 0; success && i < candidate->read_count; ++i) {
         const qa_vfs_read_reference *read = candidate->reads + i;
+        qa_vfs_acquisition receipt = {
+            .mount = read->mount, .resource_id = qa_resource_id(read->resource),
+            .path = (char *)read->path, .lookup_path = (char *)read->lookup_path,
+            .link_source = (char *)read->link_source, .link_target = (char *)read->link_target,
+            .opening = read->opening, .opening_present = true
+        };
         success = vfs_read_valid(candidate, read, error) &&
-            vfs_origin_record(candidate, find_mount(candidate, read->mount), read->resource, error) &&
-            vfs_history_record(candidate, read, error);
+            qa_vfs_acquisition_retained(candidate, &receipt, error);
     }
     bindings_free(bindings, candidate->count);
     if (!success) {

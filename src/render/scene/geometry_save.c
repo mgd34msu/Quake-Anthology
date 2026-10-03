@@ -16,8 +16,8 @@ static bool failure(qa_error *error, qa_status status, const char *message)
 { qa_error_set(error,status,0,"%s",message); return false; }
 static bool fields(qa_source_save_io *io, qa_scene_geometry_view *saved)
 {
-    uint8_t magic[4]={'Q','G','E','O'}; uint32_t schema=1; bool reading=io->direction==QA_SOURCE_SAVE_READ;
-    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QGEO",4) || !qa_source_save_u32(io,&schema) || schema!=1 ||
+    uint8_t magic[4]={'Q','G','E','O'}; bool reading=io->direction==QA_SOURCE_SAVE_READ;
+    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QGEO",4) ||
         !qa_source_save_count(io,&saved->vertex_count,reading?io->input.size/56:SIZE_MAX/sizeof(*saved->vertices)) ||
         !qa_source_save_count(io,&saved->index_count,reading?io->input.size/4:SIZE_MAX/sizeof(*saved->indices))) return false;
     if (reading) {

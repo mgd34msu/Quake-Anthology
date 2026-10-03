@@ -109,8 +109,8 @@ bool qa_q2_unicast_capture(const qa_q2_unicast_cache *cache, const qa_q2_unicast
     }
     qa_source_save_io io = {0};
     if (ok) ok = qa_source_save_writer(&io, NULL, e);
-    uint32_t magic = UINT32_C(0x5532514e), version = 2;
-    if (ok) ok = qa_source_save_u32(&io, &magic) && qa_source_save_u32(&io, &version) &&
+    uint32_t magic = UINT32_C(0x5532514e);
+    if (ok) ok = qa_source_save_u32(&io, &magic) &&
         qa_source_save_count(&io, &count, SIZE_MAX / sizeof(*rows));
     for (size_t i = 0; ok && i < count; ++i) ok = row_codec(&io, refs, rows + i);
     free(rows);
@@ -123,10 +123,10 @@ bool qa_q2_unicast_restore(qa_bytes bytes, const qa_q2_unicast_refs *refs,
     if (!out || *out || !refs || !refs->current || !refs->client_decode || !refs->source_decode)
         return fail(e, QA_ERROR_ARGUMENT, "Q2 unicast restore requires its empty candidate HOST graph");
     qa_source_save_io io = {0};
-    uint32_t magic = 0, version = 0; size_t count = 0;
+    uint32_t magic = 0; size_t count = 0;
     bool ok = qa_source_save_reader(&io, NULL, bytes, e) &&
-        qa_source_save_u32(&io, &magic) && qa_source_save_u32(&io, &version) &&
-        magic == UINT32_C(0x5532514e) && version == 2 &&
+        qa_source_save_u32(&io, &magic) &&
+        magic == UINT32_C(0x5532514e) &&
         qa_source_save_count(&io, &count, SIZE_MAX / sizeof(qa_q2_unicast_claim)) &&
         count <= (io.input.size - io.offset) / 84;
     qa_q2_unicast_cache *cache = NULL;

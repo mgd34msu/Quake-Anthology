@@ -97,7 +97,7 @@ bool qa_qw_history_checkpoint(const qa_qw_history *history, qa_buffer *out, qa_e
         qa_error_set(error,QA_ERROR_MEMORY,0,"Encoding QuakeWorld command history"); return false;
     }
     qa_net_writer writer; qa_net_writer_init(&writer,data,capacity,error);
-    bool ok=qa_net_write_u32(&writer,UINT32_C(0x48574151)) && qa_net_write_u32(&writer,1) &&
+    bool ok=qa_net_write_u32(&writer,UINT32_C(0x48574151)) &&
         qa_net_write_f64(&writer,history->latency_seconds);
     for (size_t i=0;i<QA_QW_UPDATE_BACKUP && ok;++i) {
         const qa_qw_history_frame *frame=&history->frames[i]; const qa_qw_command *command=&frame->command;
@@ -117,7 +117,7 @@ bool qa_qw_history_restore_checkpoint(qa_bytes bytes, qa_qw_history *out, qa_err
         qa_error_set(error,QA_ERROR_ARGUMENT,0,"QuakeWorld history restore requires a candidate value"); return false;
     }
     qa_net_reader reader; qa_net_reader_init(&reader,bytes,error);
-    if (qa_net_read_u32(&reader)!=UINT32_C(0x48574151) || qa_net_read_u32(&reader)!=1)
+    if (qa_net_read_u32(&reader)!=UINT32_C(0x48574151))
         return qa_net_reader_fail(&reader,"Invalid QuakeWorld command history schema");
     qa_qw_history saved={0}; saved.latency_seconds=qa_net_read_f64(&reader);
     for (size_t i=0;i<QA_QW_UPDATE_BACKUP;++i) {

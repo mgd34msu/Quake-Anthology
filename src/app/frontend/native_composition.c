@@ -342,9 +342,8 @@ static bool checkpoint(const void *context, qa_buffer *out, qa_error *error)
     qa_buffer children[2] = {0};
     bool okay = owner->equipment.checkpoint(owner->equipment.context, children, error) &&
         frontend_native_character_checkpoint(owner->character, children + 1, error);
-    qa_source_save_io io = {0}; uint8_t magic[4] = {'Q','F','N','P'}; uint32_t version = 1;
-    okay = okay && qa_source_save_writer(&io, qa_application_session(owner->frontend->application), error) &&
-        qa_source_save_bytes(&io, magic, 4) && qa_source_save_u32(&io, &version);
+    qa_source_save_io io = {0}; uint8_t magic[4] = {'Q','F','N','P'}; okay = okay && qa_source_save_writer(&io, qa_application_session(owner->frontend->application), error) &&
+        qa_source_save_bytes(&io, magic, 4) ;
     for (unsigned i = 0; okay && i < 2; ++i) { qa_bytes bytes = {children[i].data, children[i].size}; okay = blob(&io, &bytes); }
     okay = okay && qa_source_save_finish(&io, out); qa_source_save_dispose(&io);
     for (unsigned i = 0; i < 2; ++i) qa_buffer_free(children + i);
@@ -354,9 +353,9 @@ static bool restore(void *context, const qa_application_q3_client_context *clien
 {
     native_composition *owner = context;
     if (!idle(owner)) return frontend_fail(error, QA_ERROR_ARGUMENT, "Native composition import requires its empty genuine children");
-    qa_source_save_io io = {0}; uint8_t magic[4]; uint32_t version; qa_bytes children[2] = {0};
+    qa_source_save_io io = {0}; uint8_t magic[4]; qa_bytes children[2] = {0};
     bool okay = qa_source_save_reader(&io, qa_application_session(owner->frontend->application), bytes, error) &&
-        qa_source_save_bytes(&io, magic, 4) && !memcmp(magic, "QFNP", 4) && qa_source_save_u32(&io, &version) && version == 1;
+        qa_source_save_bytes(&io, magic, 4) && !memcmp(magic, "QFNP", 4);
     for (unsigned i = 0; okay && i < 2; ++i) okay = blob(&io, children + i);
     okay = okay && qa_source_save_finish(&io, NULL);
     if (okay) okay = owner->equipment.restore(owner->equipment.context, client, children[0], error) &&

@@ -733,7 +733,7 @@ bool frontend_q3_browser_checkpoint(const frontend_q3_browser *owner, qa_buffer 
     size_t capacity = 1048576; uint8_t *data = malloc(capacity);
     if (!data) { qa_error_set(e, QA_ERROR_MEMORY, 0, "Encoding Q3 browser view"); return false; }
     qa_net_writer w; qa_net_writer_init(&w, data, capacity, e);
-    bool ok = qa_net_write_data(&w, "Q3BV", 4) && qa_net_write_u32(&w, 1);
+    bool ok = qa_net_write_data(&w, "Q3BV", 4);
     for (size_t s = 0; ok && s < 4; ++s) {
         const browser_list *list = &b->lists[s];
         ok = qa_net_write_u32(&w, list->count) && qa_net_write_u64(&w, list->generation) &&
@@ -762,7 +762,7 @@ bool frontend_q3_browser_restore(const frontend_q3_browser_options *options, qa_
 {
     if (!out || *out || !bytes.data || bytes.size > 1048576) return fail(e, "Invalid Q3 browser view import");
     qa_net_reader r; qa_net_reader_init(&r, bytes, e);
-    if (qa_net_read_u32(&r) != UINT32_C(0x56423351) || qa_net_read_u32(&r) != 1) return fail(e, "Q3 browser view schema differs");
+    if (qa_net_read_u32(&r) != UINT32_C(0x56423351)) return fail(e, "Q3 browser view schema differs");
     frontend_q3_browser *b = NULL;
     if (!frontend_q3_browser_create(options, &b, e)) return false;
     bool ok = true;
@@ -844,7 +844,7 @@ static bool cache_decode(qa_bytes bytes, cached_browser *cache, qa_error *e)
 {
     if (!bytes.data || bytes.size > 8388608) return fail(e, "Q3 browser cache exceeds source extent");
     qa_net_reader r; qa_net_reader_init(&r, bytes, e);
-    if (qa_net_read_u32(&r) != UINT32_C(0x43563351) || qa_net_read_u32(&r) != 2) return fail(e, "Q3 browser cache schema differs");
+    if (qa_net_read_u32(&r) != UINT32_C(0x43563351)) return fail(e, "Q3 browser cache schema differs");
     cache->count = qa_net_read_u32(&r);
     if (r.failed || cache->count > 16384 || cache->count > qa_net_reader_remaining(&r) / 40) {
         cache->count = 0; return qa_net_reader_fail(&r, "Cached Q3 entries exceed encoded extent");
@@ -904,7 +904,7 @@ static bool save_cache(void *ctx, qa_error *e)
         }
     }
     qa_net_writer w; qa_net_writer_init(&w, data, 8388608, e);
-    ok = ok && qa_net_write_data(&w, "Q3VC", 4) && qa_net_write_u32(&w, 2) && qa_net_write_u32(&w, count);
+    ok = ok && qa_net_write_data(&w, "Q3VC", 4) && qa_net_write_u32(&w, count);
     for (uint32_t i = 0; ok && i < count; ++i) {
         qa_browser_q3_cached_entry saved;
         ok = qa_server_browser_q3_cached_entry_read(b->options.browser, &addresses[i], &saved, e);

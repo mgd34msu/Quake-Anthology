@@ -29,12 +29,11 @@ static bool resource(qa_source_save_io *io, const qa_application_content_graph *
 static bool fields(qa_source_save_io *io, qa_application_content_graph *graph, qa_map_sidecars *owner)
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
-    uint32_t magic = UINT32_C(0x43534d51), version = 1;
+    uint32_t magic = UINT32_C(0x43534d51);
     uint64_t catalog = reading ? 0 : qa_application_content_catalog_id(graph, owner->catalog);
     uint64_t view = reading ? 0 : qa_application_content_view_id(graph, owner->view);
     uint64_t pool = reading ? 0 : qa_application_content_pool_id(graph, owner->map_pool);
     if (!qa_source_save_u32(io, &magic) || magic != UINT32_C(0x43534d51) ||
-        !qa_source_save_u32(io, &version) || version != 1 ||
         !qa_source_save_u64(io, &catalog) || !catalog || !qa_source_save_u64(io, &view) || !view ||
         !qa_source_save_u64(io, &pool) || !pool) return false;
     if (reading) {

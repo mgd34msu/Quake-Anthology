@@ -182,9 +182,9 @@ bool qa_q3_download_window_commit(qa_q3_download_window *window, const qa_q3_dow
 }
 static bool fields(qa_source_save_io *io, qa_q3_download_window *window, bool *opened)
 {
-    uint32_t magic = UINT32_C(0x57443351), version = 1;
+    uint32_t magic = UINT32_C(0x57443351);
     if (!qa_source_save_u32(io, &magic) || magic != UINT32_C(0x57443351) ||
-        !qa_source_save_u32(io, &version) || version != 1 || !qa_source_save_u64(io, &window->revision) ||
+        !qa_source_save_u64(io, &window->revision) ||
         !qa_source_save_bytes(io, window->name, sizeof(window->name)) || !memchr(window->name, 0, sizeof(window->name)) ||
         !qa_source_save_bytes(io, window->denial, sizeof(window->denial)) || !memchr(window->denial, 0, sizeof(window->denial)) ||
         !qa_source_save_bytes(io, window->digest.bytes, sizeof(window->digest.bytes)) ||

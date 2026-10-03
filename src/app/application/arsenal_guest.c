@@ -790,10 +790,8 @@ static bool input_fields(qa_source_save_io *io, application_guest_input *input)
 {
     uint8_t magic[8] = {'Q','A','G','3','I','N',0,0};
     const uint8_t expected[8] = {'Q','A','G','3','I','N',0,0};
-    uint32_t version = 3;
     bool present = input != NULL;
-    if (!qa_source_save_bytes(io, magic, sizeof(magic)) || !qa_source_save_u32(io, &version) ||
-        memcmp(magic, expected, sizeof(magic)) || version != 3 ||
+    if (!qa_source_save_bytes(io, magic, sizeof(magic)) || memcmp(magic, expected, sizeof(magic)) ||
         !qa_source_save_bool(io, &present) || present != (input != NULL))
         return application_fail(io->error, QA_ERROR_FORMAT, "Q3 input checkpoint declaration differs");
     if (!present) return true;

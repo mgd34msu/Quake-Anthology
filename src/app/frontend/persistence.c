@@ -261,11 +261,9 @@ static bool blob(qa_source_save_io *io, qa_bytes *bytes)
 static bool envelope(qa_source_save_io *io, qa_save_owner_kind expected,
     frontend_section_set *set, const frontend_section *ids, size_t count)
 {
-    uint8_t magic[4]={'Q','F','E','X'}; uint32_t required=expected==QA_SAVE_PRESENTATION?24:
-        expected==QA_SAVE_AUDIO?10:expected==QA_SAVE_INPUT?5:expected==QA_SAVE_MEDIA?2:1,
-        version=required,kind=expected; size_t saved=count;
+    uint8_t magic[4]={'Q','F','E','X'}; uint32_t kind=expected; size_t saved=count;
     if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QFEX",4) ||
-        !qa_source_save_u32(io,&version) || version!=required || !qa_source_save_u32(io,&kind) || kind!=(uint32_t)expected ||
+        !qa_source_save_u32(io,&kind) || kind!=(uint32_t)expected ||
         !qa_source_save_count(io,&saved,count) || saved!=count) return false;
     for (size_t i=0;i<count;++i) {
         uint32_t id=ids[i];
@@ -297,9 +295,9 @@ static bool owner_envelope(qa_source_save_io *io, qa_save_owner_kind kind, front
 }
 static bool optional_state(qa_source_save_io *io, const char magic[4], bool expected, qa_bytes *state)
 {
-    uint8_t saved[4]; memcpy(saved,magic,4); uint32_t version=1; bool present=expected;
+    uint8_t saved[4]; memcpy(saved,magic,4); bool present=expected;
     return qa_source_save_bytes(io,saved,4) && !memcmp(saved,magic,4) &&
-        qa_source_save_u32(io,&version) && version==1 && qa_source_save_bool(io,&present) && present==expected &&
+        qa_source_save_bool(io,&present) && present==expected &&
         blob(io,state) && (present?state->size!=0:state->size==0);
 }
 static bool optional_encode(const char magic[4], bool present, qa_bytes bytes, qa_buffer *out, qa_error *error)
@@ -328,11 +326,11 @@ static bool settings_storage_capture(qa_frontend *f,qa_buffer *out,qa_error *err
 static bool settings_storage_prepare(frontend_persistence *operation,qa_error *error)
 {
     qa_frontend *f=operation->candidate; qa_source_save_io io={0};
-    uint8_t magic[4]={0}; uint32_t version=0; bool present=false; qa_bytes state={0};
+    uint8_t magic[4]={0}; bool present=false; qa_bytes state={0};
     bool ok=f && !f->global_settings_storage && qa_source_save_reader(&io,NULL,
         section(&operation->sections,SECTION_GLOBAL_SETTINGS),error) &&
         qa_source_save_bytes(&io,magic,4) && !memcmp(magic,"QFGW",4) &&
-        qa_source_save_u32(&io,&version) && version==1 && qa_source_save_bool(&io,&present) &&
+        qa_source_save_bool(&io,&present) &&
         blob(&io,&state) && (present?state.size!=0:state.size==0) && qa_source_save_finish(&io,NULL);
     qa_source_save_dispose(&io);
     if(ok && present) ok=frontend_global_settings_storage_restore(
@@ -665,11 +663,11 @@ static bool music_sources_capture(frontend_persistence *operation,qa_buffer *out
 static bool music_sources_prepare(frontend_persistence *operation,qa_error *error)
 {
     qa_frontend *f=operation->candidate; qa_source_save_io io={0};
-    uint8_t magic[4]={0}; uint32_t version=0; bool present=false; qa_bytes state={0};
+    uint8_t magic[4]={0}; bool present=false; qa_bytes state={0};
     bool ok=f && !f->music_sources && qa_source_save_reader(&io,NULL,
         section(&operation->sections,SECTION_MUSIC_SOURCES),error) &&
         qa_source_save_bytes(&io,magic,4) && !memcmp(magic,"QFMW",4) &&
-        qa_source_save_u32(&io,&version) && version==1 && qa_source_save_bool(&io,&present) && present &&
+        qa_source_save_bool(&io,&present) && present &&
         blob(&io,&state) && state.size && qa_source_save_finish(&io,NULL);
     qa_source_save_dispose(&io); qa_audio_checkpoint_refs refs=audio_refs(operation);
     if(ok && present) ok=frontend_music_sources_restore_prepare(f,
@@ -738,9 +736,9 @@ static qa_render_checkpoint_refs renderer_refs(frontend_persistence *operation)
 }
 static bool renderer_fields(qa_source_save_io *io,uint32_t expected,qa_bytes *display,qa_bytes *renderer)
 {
-    uint8_t magic[4]={'Q','F','R','D'}; uint32_t version=1,kind=expected;
+    uint8_t magic[4]={'Q','F','R','D'}; uint32_t kind=expected;
     return qa_source_save_bytes(io,magic,4) && !memcmp(magic,"QFRD",4) &&
-        qa_source_save_u32(io,&version) && version==1 && qa_source_save_u32(io,&kind) && kind==expected &&
+        qa_source_save_u32(io,&kind) && kind==expected &&
         blob(io,display) && blob(io,renderer) &&
         (kind ? display->size!=0 && renderer->size!=0 : display->size==0 && renderer->size==0);
 }
@@ -816,12 +814,12 @@ static bool renderer_restore(frontend_persistence *operation,qa_error *error)
 }
 static bool aliases_fields(qa_source_save_io *io, qa_frontend *f, frontend_scene_namespace *space)
 {
-    uint8_t magic[4]={'Q','F','A','L'}; uint32_t version=1; uint64_t background=0;
+    uint8_t magic[4]={'Q','F','A','L'}; uint64_t background=0;
     bool reading=io->direction==QA_SOURCE_SAVE_READ, order=f->frame.material_order!=NULL;
     if (!reading && ((f->frame.material_order && f->frame.material_order!=f->order) ||
         (f->console_background && !frontend_scene_image_encode(space,f->console_background,&background,io->error)))) return false;
     if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QFAL",4) ||
-        !qa_source_save_u32(io,&version) || version!=1 || !qa_source_save_u64(io,&background) ||
+        !qa_source_save_u64(io,&background) ||
         !qa_source_save_bool(io,&order) || (order && !f->order) ||
         (f->options.dedicated?(background!=0 || order):background==0)) return false;
     if (reading) {

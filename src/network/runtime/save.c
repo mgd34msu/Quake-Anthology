@@ -60,7 +60,7 @@ bool qa_network_connections_checkpoint(const qa_network_runtime *runtime, const 
     }
     qa_buffer bytes = {0}; qa_net_writer w;
     if (ok) ok = writer_storage(size, &bytes, &w, error);
-    if (ok) ok = qa_net_write_u32(&w, UINT32_C(0x434e4151)) && qa_net_write_u32(&w, 1) &&
+    if (ok) ok = qa_net_write_u32(&w, UINT32_C(0x434e4151)) &&
         qa_net_write_u64(&w, runtime->options.timeout_ns) && qa_net_write_u32(&w, runtime->options.packets_per_pump) &&
         qa_net_write_u64(&w, runtime->now_ns) && qa_net_write_u64(&w, table.size) &&
         qa_net_write_data(&w, table.data, table.size) && qa_net_write_u32(&w, count);
@@ -87,16 +87,16 @@ bool qa_network_connections_saved_policy(qa_bytes bytes,qa_network_saved_policy 
 {
     if(!bytes.data || !out) return qa_network_fail(error,"Missing captured Network constructor policy");
     qa_net_reader reader; qa_net_reader_init(&reader,bytes,error);
-    uint32_t tag=qa_net_read_u32(&reader),version=qa_net_read_u32(&reader);
+    uint32_t tag=qa_net_read_u32(&reader);
     uint64_t timeout=qa_net_read_u64(&reader);
     uint32_t packets=qa_net_read_u32(&reader);
     (void)qa_net_read_u64(&reader);
     qa_bytes table;
-    if(tag!=UINT32_C(0x434e4151) || version!=1 || !packets || !read_blob(&reader,&table))
+    if(tag!=UINT32_C(0x434e4151) || !packets || !read_blob(&reader,&table))
         return qa_net_reader_fail(&reader,"Captured Network constructor header is invalid");
     qa_net_reader slots; qa_net_reader_init(&slots,table,error);
-    uint32_t table_version=qa_net_read_u32(&slots),clients=qa_net_read_u32(&slots);
-    if(slots.failed || table_version!=1 || !clients || table.size<8 || clients>(table.size-8)/10)
+    uint32_t clients=qa_net_read_u32(&slots);
+    if(slots.failed || !clients || table.size<4 || clients>(table.size-4)/10)
         return qa_net_reader_fail(&slots,"Captured Network table policy exceeds its actual records");
     *out=(qa_network_saved_policy){clients,packets,timeout}; return true;
 }
@@ -110,10 +110,10 @@ bool qa_network_connections_restore(qa_bytes bytes, qa_net_transport *transport,
          !refs->source_q1_client && !refs->source_local) || !bytes.data)
         return qa_network_fail(error, "Network restore requires qualified candidate consumers");
     qa_net_reader r; qa_net_reader_init(&r, bytes, error);
-    uint32_t tag = qa_net_read_u32(&r), version = qa_net_read_u32(&r);
+    uint32_t tag = qa_net_read_u32(&r);
     uint64_t timeout = qa_net_read_u64(&r); uint32_t packets = qa_net_read_u32(&r);
     uint64_t now = qa_net_read_u64(&r); qa_bytes table_bytes;
-    if (tag != UINT32_C(0x434e4151) || version != 1 || timeout != options->timeout_ns ||
+    if (tag != UINT32_C(0x434e4151) || timeout != options->timeout_ns ||
         packets != options->packets_per_pump) return qa_net_reader_fail(&r, "Network candidate policy differs from saved owner");
     if (!read_blob(&r, &table_bytes)) return false;
     qa_network_runtime *runtime = NULL;

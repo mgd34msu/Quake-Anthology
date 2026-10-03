@@ -85,7 +85,7 @@ bool qa_network_prediction_checkpoint(const qa_network_runtime *runtime, const q
     qa_buffer bytes = {malloc(size), 0};
     if (!bytes.data) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating prediction continuation"); return false; }
     qa_net_writer w; qa_net_writer_init(&w, bytes.data, size, error);
-    bool ok = qa_net_write_u32(&w, UINT32_C(0x504e4151)) && qa_net_write_u32(&w, 2) && qa_net_write_u32(&w, count);
+    bool ok = qa_net_write_u32(&w, UINT32_C(0x504e4151)) && qa_net_write_u32(&w, count);
     for (uint32_t i = 0; ok && i < runtime->options.clients; ++i) {
         const qa_network_peer *peer = &runtime->peers[i]; if (!peer->occupied) continue;
         ok = qa_net_write_u32(&w, i) && qa_net_write_u64(&w, peer->id.generation) &&
@@ -121,8 +121,8 @@ bool qa_network_prediction_restore(qa_network_runtime *runtime, const qa_network
     if (!runtime || !refs || !refs->restore_actor || !bytes.data || !qa_network_callbacks_idle(runtime))
         return qa_network_fail(error, "Prediction restore requires an isolated idle connection owner");
     qa_net_reader r; qa_net_reader_init(&r, bytes, error);
-    uint32_t tag = qa_net_read_u32(&r), version = qa_net_read_u32(&r), count = qa_net_read_u32(&r);
-    if (tag != UINT32_C(0x504e4151) || version != 2 || count > runtime->options.clients)
+    uint32_t tag = qa_net_read_u32(&r), count = qa_net_read_u32(&r);
+    if (tag != UINT32_C(0x504e4151) || count > runtime->options.clients)
         return qa_net_reader_fail(&r, "Invalid prediction continuation header");
     qa_network_seat **scratch = calloc(runtime->options.clients, sizeof(*scratch));
     if (!scratch) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating prediction owner inventory"); return false; }

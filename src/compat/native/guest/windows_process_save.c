@@ -43,7 +43,7 @@ static bool blob(qa_source_save_io *io, qa_bytes *bytes)
 }
 static bool process_fields(qa_source_save_io *io, qa_native_windows_process *owner)
 {
-    uint8_t magic[] = {'Q','W','P','R',4}, expected[] = {'Q','W','P','R',4};
+    uint8_t magic[] = {'Q','W','P','R'}, expected[] = {'Q','W','P','R'};
     qa_native_windows_process_options *o = &owner->options;
     qa_native_windows_capabilities *c = &o->capabilities;
     uint32_t backend = o->guest.backend;

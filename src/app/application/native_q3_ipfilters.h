@@ -19,7 +19,8 @@ bool application_native_q3_ipfilters_filter(application_provider *, const char *
 bool application_native_q3_ipfilters_console(application_provider *,
     const qa_command_invocation *, bool *handled, qa_error *);
 
-/* QAGI1 includes the initialized bit, high-water rows including removal holes,
+/* The QAGI continuation includes the initialized bit, high-water rows including
+ * removal holes,
  * and the separately mutated ban VM string with its modification count.
  * Import targets an empty owner and invokes no source effects or parsers. */
 bool application_native_q3_ipfilters_capture(application_provider *, qa_buffer *, qa_error *);

@@ -549,9 +549,7 @@ static bool saved_blob(qa_source_save_io *io, qa_bytes *value)
 }
 static bool tools_saved_fields(qa_source_save_io *io, frontend_tools_saved *saved)
 {
-    uint8_t magic[4] = {'Q','F','T','L'}; uint32_t version = 1;
-    return qa_source_save_bytes(io, magic, 4) && !memcmp(magic, "QFTL", 4) &&
-        qa_source_save_u32(io, &version) && version == 1 &&
+    uint8_t magic[4] = {'Q','F','T','L'}; return qa_source_save_bytes(io, magic, 4) && !memcmp(magic, "QFTL", 4) &&
         qa_source_save_u64(io, &saved->pool) && saved->pool &&
         qa_source_save_u64(io, &saved->settings) && saved->settings &&
         qa_source_save_u64(io, &saved->files) && saved->files && saved->settings != saved->files &&

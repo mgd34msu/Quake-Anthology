@@ -4,8 +4,8 @@
 static bool fields(application_q3_component_records *r,qa_source_save_io *io)
 {
     uint8_t magic[4]={'Q','G','C','R'},expected[4]={'Q','G','C','R'};
-    uint32_t version=1; size_t count=r->record_count;
-    if(!qa_source_save_bytes(io,magic,4)||memcmp(magic,expected,4)||!qa_source_save_u32(io,&version)||version!=1||
+    size_t count=r->record_count;
+    if(!qa_source_save_bytes(io,magic,4)||memcmp(magic,expected,4)||
         !qa_source_save_bool(io,&r->defaults_ready)||!r->defaults_ready||
         !qa_source_save_count(io,&count,r->record_count)||count!=r->record_count)
         return q3records_fail(io->error,QA_ERROR_FORMAT,"Component record continuation differs from its actual roster");

@@ -324,7 +324,7 @@ bool qa_network_nq_checkpoint_peer(const qa_network_peer *owner, qa_buffer *out,
         qa_buffer_free(&native); qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining NetQuake runtime continuation"); return false;
     }
     qa_net_writer writer; qa_net_writer_init(&writer, bytes.data, extent + native.size, error);
-    bool ok = qa_net_write_u32(&writer, UINT32_C(0x534e4151)) && qa_net_write_u32(&writer, 2) &&
+    bool ok = qa_net_write_u32(&writer, UINT32_C(0x534e4151)) &&
         qa_net_write_u64(&writer, peer->policy.message_bytes) && qa_net_write_u64(&writer, peer->policy.fragment_bytes) &&
         qa_net_write_u64(&writer, peer->policy.queued_bytes) && qa_net_write_u64(&writer, peer->input_sequence) &&
         qa_net_write_u8(&writer, peer->stage) && qa_net_write_u8(&writer, peer->started) && qa_net_write_u8(&writer, peer->retiring) &&
@@ -344,7 +344,7 @@ bool qa_network_nq_restore_peer(qa_network_runtime *runtime, const qa_net_client
     if (!runtime || !client || !refs || !refs->source_nq || !owner || !bytes.data)
         return qa_network_fail(error, "NetQuake restore requires its actual candidate source bindings");
     qa_net_reader reader; qa_net_reader_init(&reader, bytes, error);
-    if (qa_net_read_u32(&reader) != UINT32_C(0x534e4151) || qa_net_read_u32(&reader) != 2)
+    if (qa_net_read_u32(&reader) != UINT32_C(0x534e4151))
         return qa_net_reader_fail(&reader, "Invalid NetQuake runtime continuation schema");
     uint64_t message = qa_net_read_u64(&reader), fragment = qa_net_read_u64(&reader), maximum = qa_net_read_u64(&reader);
     nq_server *peer = calloc(1, sizeof(*peer));

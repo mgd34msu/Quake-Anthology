@@ -176,9 +176,7 @@ static bool row_fields(qa_source_save_io *io,native_plan *row)
 static bool fields(qa_source_save_io *io,frontend_native_q3_topology *topology)
 {
     bool reading=io->direction==QA_SOURCE_SAVE_READ;
-    uint8_t magic[4]={'Q','F','N','T'}; uint32_t version=1;
-    if(!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QFNT",4) ||
-        !qa_source_save_u32(io,&version) || version!=1 ||
+    uint8_t magic[4]={'Q','F','N','T'}; if(!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QFNT",4) ||
         !qa_source_save_count(io,&topology->count,reading?(io->input.size-io->offset)/128:
             SIZE_MAX/sizeof(*topology->rows))) return false;
     if(reading && topology->count) {

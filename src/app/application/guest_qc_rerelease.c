@@ -490,9 +490,9 @@ static bool fields(qa_source_save_io *io,struct application_qc_state *engine,
     struct application_qc_rerelease **out)
 {
     bool reading=io->direction==QA_SOURCE_SAVE_READ,present=!reading && *out;
-    uint8_t magic[4]={'Q','Q','E','X'}; uint32_t version=3;
+    uint8_t magic[4]={'Q','Q','E','X'};
     if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QQEX",4) ||
-        !qa_source_save_u32(io,&version) || version!=3 || !qa_source_save_bool(io,&present)) return false;
+        !qa_source_save_bool(io,&present)) return false;
     if (!present) return true;
     if (engine->profile!=QA_QC_RERELEASE) return false;
     if (reading) {

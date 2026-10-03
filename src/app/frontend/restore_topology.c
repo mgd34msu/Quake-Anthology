@@ -77,9 +77,8 @@ static bool portals_fields(qa_source_save_io *io,frontend_source_group_plan *gro
 static bool fields(qa_source_save_io *io, qa_application *app, struct frontend_restore_topology *p)
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
-    uint8_t magic[4] = {'Q','F','T','P'}; uint32_t version = 6;
-    if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "QFTP", 4) ||
-        !qa_source_save_u32(io, &version) || version != 6 || !flags(io, p)) return false;
+    uint8_t magic[4] = {'Q','F','T','P'}; if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "QFTP", 4) ||
+        !flags(io, p)) return false;
     for (size_t i = 0; i < p->seats; ++i)
         if (!qa_source_save_bool(io, &p->mods[i]) || (p->dedicated && p->mods[i])) return false;
     if (!qa_source_save_count(io, &p->group_count, reading ? io->input.size / 48 : SIZE_MAX / sizeof(*p->groups))) return false;

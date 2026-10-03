@@ -149,7 +149,7 @@ bool qa_server_browser_checkpoint(const qa_server_browser *b, qa_buffer *out, qa
     uint8_t *data = malloc(capacity);
     if (!data) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Encoding browser continuation"); return false; }
     qa_net_writer w; qa_net_writer_init(&w, data, capacity, error);
-    bool ok = qa_net_write_u32(&w, UINT32_C(0x42534151)) && qa_net_write_u32(&w, 5) &&
+    bool ok = qa_net_write_u32(&w, UINT32_C(0x42534151)) &&
         qa_net_write_u32(&w, b->capacity) && qa_net_write_u64(&w, b->next_query) &&
         q3_save_address(&w, &b->broadcast) && q3_save_address(&w, &b->master) &&
         service_save_protocol(&w, b->broadcast_protocol) && service_save_protocol(&w, b->master_protocol) &&
@@ -183,7 +183,7 @@ static bool browser_restore_checkpoint(qa_bytes bytes, qa_http *http, uint32_t c
     if (!out || *out || bytes.size > SIZE_MAX / 8 || (bytes.size && !bytes.data))
         return qa_browser_fail(error, "Invalid browser continuation output or extent");
     qa_net_reader r; qa_net_reader_init(&r, bytes, error);
-    if (qa_net_read_u32(&r) != UINT32_C(0x42534151) || qa_net_read_u32(&r) != 5 || qa_net_read_u32(&r) != capacity)
+    if (qa_net_read_u32(&r) != UINT32_C(0x42534151) || qa_net_read_u32(&r) != capacity)
         return qa_browser_fail(error, "Browser continuation schema or capacity differs");
     qa_server_browser *b = NULL;
     if (!qa_server_browser_create(http, capacity, hooks, &b, error)) return false;

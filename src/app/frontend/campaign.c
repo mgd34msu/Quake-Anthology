@@ -500,9 +500,9 @@ static bool campaign_score_fields(qa_source_save_io *io,qa_team_arena_score *sco
 }
 static bool campaign_fields(qa_source_save_io *io,qa_frontend *f,campaign_saved *saved)
 {
-    uint8_t magic[4]={'Q','F','C','A'}; uint32_t version=3,kind=saved->state.kind;
+    uint8_t magic[4]={'Q','F','C','A'}; uint32_t kind=saved->state.kind;
     if (!qa_source_save_bytes(io,magic,sizeof(magic)) || memcmp(magic,"QFCA",sizeof(magic)) ||
-        !qa_source_save_u32(io,&version) || version!=3 || !qa_source_save_bool(io,&saved->installed)) return false;
+        !qa_source_save_bool(io,&saved->installed)) return false;
     if (!saved->installed) return true;
     frontend_campaign *state=&saved->state;
     if (!qa_source_save_u32(io,&kind) || kind>CAMPAIGN_TEAM ||

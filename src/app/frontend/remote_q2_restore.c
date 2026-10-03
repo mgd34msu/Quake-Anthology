@@ -241,10 +241,9 @@ static bool fields(qa_source_save_io *io, frontend_remote_q2 *row,
     const frontend_remote_q2_restore_refs *refs, saved_q2 *saved)
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
-    uint8_t magic[4] = {'Q','2','R','C'}; uint32_t schema = 14;
-    bool material_scripts = row->options.material_scripts;
+    uint8_t magic[4] = {'Q','2','R','C'}; bool material_scripts = row->options.material_scripts;
     if (!qa_source_save_bytes(io, magic, sizeof(magic)) || memcmp(magic, "Q2RC", 4) ||
-        !qa_source_save_u32(io, &schema) || schema != 14 || !domain(io, &saved->domain) ||
+        !domain(io, &saved->domain) ||
         !qa_source_save_bool(io, &material_scripts) || material_scripts != row->options.material_scripts ||
         !qa_source_save_bool(io, &saved->bound) || !qa_source_save_bool(io, &saved->selected) ||
         !qa_source_save_bool(io, &row->content_admitted) ||

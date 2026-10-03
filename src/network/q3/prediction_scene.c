@@ -525,7 +525,7 @@ bool qa_q3_prediction_scene_checkpoint(const qa_q3_prediction_scene *s, qa_buffe
     qa_buffer bytes = {malloc(capacity), 0};
     if (!bytes.data) return fail(error, QA_ERROR_MEMORY, "Capturing Q3 prediction scene");
     qa_net_writer w; qa_net_writer_init(&w, bytes.data, capacity, error);
-    bool ok = qa_net_write_data(&w, "QPSC", 4) && qa_net_write_u32(&w, 3) &&
+    bool ok = qa_net_write_data(&w, "QPSC", 4) &&
         qa_net_write_u32(&w, s->product) && qa_net_write_u64(&w, s->revision) &&
         qa_net_write_i32(&w, s->processed) && qa_net_write_i32(&w, s->latest) &&
         qa_net_write_i32(&w, s->time) && qa_net_write_i32(&w, s->physics_time) &&
@@ -557,7 +557,7 @@ bool qa_q3_prediction_scene_restore(qa_bytes bytes, qa_q3_product product,
         return fail(error, QA_ERROR_ARGUMENT, "Invalid Q3 prediction scene import");
     qa_net_reader r; qa_net_reader_init(&r, bytes, error); char magic[4];
     if (!qa_net_read_data(&r, magic, sizeof(magic)) || memcmp(magic, "QPSC", 4) ||
-        qa_net_read_u32(&r) != 3 || qa_net_read_u32(&r) != (uint32_t)product)
+        qa_net_read_u32(&r) != (uint32_t)product)
         return qa_net_reader_fail(&r, "Q3 prediction scene schema or actual product differs");
     qa_q3_prediction_scene *s = NULL;
     if (!qa_q3_prediction_scene_create(product, &s, error)) return false;

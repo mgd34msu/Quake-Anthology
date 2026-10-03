@@ -1205,9 +1205,9 @@ static void display_saved_free(display_saved *saved)
 static bool display_save_fields(qa_source_save_io *io,display_saved *saved)
 {
     bool reading=io->direction==QA_SOURCE_SAVE_READ;
-    uint8_t magic[4]={'Q','D','S','P'}; uint32_t version=1,backend=saved->info.backend,fullscreen=saved->info.fullscreen;
+    uint8_t magic[4]={'Q','D','S','P'}; uint32_t backend=saved->info.backend,fullscreen=saved->info.fullscreen;
     int32_t index=saved->info.display_index,refresh=saved->info.refresh_rate;
-    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QDSP",4) || !qa_source_save_u32(io,&version) || version!=1 ||
+    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QDSP",4) ||
         !qa_source_save_u32(io,&backend) || backend>QA_DISPLAY_OPENGL ||
         !qa_source_save_u32(io,&fullscreen) || fullscreen>QA_DISPLAY_EXCLUSIVE ||
         !qa_source_save_u32(io,&saved->info.logical_width) || !qa_source_save_u32(io,&saved->info.logical_height) ||

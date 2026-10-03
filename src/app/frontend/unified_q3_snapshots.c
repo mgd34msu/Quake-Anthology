@@ -520,9 +520,7 @@ static bool fields(frontend_unified_q3_snapshots *s,qa_source_save_io *io)
 {
     q3n_compiled_source_view source;
     if (!q3n_compiled_source_checkpoint_read(frontend_unified_q3_client_source(s->options.client),&source,io->error)) return false;
-    char magic[4] = {'Q','3','C','G'}; uint32_t version = 3;
-    bool ok = qa_source_save_bytes(io,magic,4) && !memcmp(magic,"Q3CG",4) && qa_source_save_u32(io,&version) && version == 3 &&
-        q3n_compiled_source_fields(io,source.owner) && qa_source_save_u64(io,&s->revision) && s->revision &&
+    char magic[4] = {'Q','3','C','G'}; bool ok = qa_source_save_bytes(io,magic,4) && !memcmp(magic,"Q3CG",4) && q3n_compiled_source_fields(io,source.owner) && qa_source_save_u64(io,&s->revision) && s->revision &&
         qa_source_save_i32(io,&s->constructor_message) && s->constructor_message >= 0 &&
         qa_source_save_i32(io,&s->constructor_command) && s->constructor_command >= source.basis.initial_command &&
         qa_source_save_u64(io,&s->scope) && qa_source_save_i32(io,&s->time) && qa_source_save_i32(io,&s->processed) && s->processed >= 0 &&

@@ -112,9 +112,8 @@ static bool argument_fields(qa_source_save_io *io, qa_command_tokens *arguments)
 }
 static bool fields(qa_source_save_io *io, saved_roles *saved)
 {
-    uint8_t magic[4] = {'Q','N','R','S'}; uint32_t version = 5;
+    uint8_t magic[4] = {'Q','N','R','S'};
     if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "QNRS", 4) ||
-        !qa_source_save_u32(io, &version) || version != 5 ||
         !qa_source_save_u32(io, &saved->product) || saved->product > QA_Q3_TEAM_ARENA ||
         !qa_source_save_count(io, &saved->descriptor_count, 64) ||
         !qa_source_save_count(io, &saved->count, 64)) return false;

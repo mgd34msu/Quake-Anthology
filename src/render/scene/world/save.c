@@ -250,9 +250,7 @@ static bool fields(qa_source_save_io *io, const qa_scene_world *world, qa_scene_
     q3_data *q3, const qa_scene_world_checkpoint_refs *refs, qa_bytes *lighting)
 {
     bool reading=io->direction==QA_SOURCE_SAVE_READ, is_q3=world->bsp.family==QA_BSP_Q3;
-    uint8_t magic[4]={'Q','W','S','T'}; uint32_t schema=4;
-    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QWST",4) ||
-        !qa_source_save_u32(io,&schema) || schema!=4 || !qualify(io,world)) return false;
+    uint8_t magic[4]={'Q','W','S','T'}; if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QWST",4) || !qualify(io,world)) return false;
     if (reading) {
         if (!allocate(io,(void **)&saved->surfaces,world->surface_count,sizeof(*saved->surfaces)) ||
             !allocate(io,(void **)&saved->surface_marks,world->surface_count,sizeof(*saved->surface_marks)) ||
@@ -271,7 +269,7 @@ static bool fields(qa_source_save_io *io, const qa_scene_world *world, qa_scene_
     if (saved->admission_frame && !saved->admission_generation) return false;
     FIELD(u32,saved,visibility_generation); FIELD(bool,saved,sky_drawn); FIELD(bool,saved,pvs_cached); FIELD(bool,saved,pvs_all);
     FIELD(i32,saved,pvs_selector); FIELD(i32,saved,pvs_secondary);
-    if (is_q3 && schema>=3) {
+    if (is_q3) {
         FIELD(u32,saved,source_vis_generation); FIELD(i32,saved,source_view_cluster);
         FIELD(bool,saved,source_area_mask_modified);
         if ((saved->source_view_cluster < -1 || (saved->source_view_cluster > 0 &&

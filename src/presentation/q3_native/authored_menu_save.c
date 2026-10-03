@@ -112,9 +112,7 @@ static bool blob(qa_source_save_io *io,qa_buffer *b,size_t max)
 static bool fields(qa_source_save_io *io,q3menu_context *c)
 {
     q3n_mission_hud *owner=c->owner; const qa_q3_presentation_assets *a=owner->options.assets;
-    uint8_t magic[4]={'Q','3','M','N'}; uint32_t version=1;
-    if(!qa_source_save_bytes(io,magic,4)||memcmp(magic,"Q3MN",4)||!qa_source_save_u32(io,&version)||version!=1||
-        !integer(io,&c->alloc_point)||c->alloc_point<0||c->alloc_point>128*1024||!integer(io,&c->out_of_memory)||
+    uint8_t magic[4]={'Q','3','M','N'}; if(!qa_source_save_bytes(io,magic,4)||memcmp(magic,"Q3MN",4)||!integer(io,&c->alloc_point)||c->alloc_point<0||c->alloc_point>128*1024||!integer(io,&c->out_of_memory)||
         !integer(io,&c->string_pool_index)||c->string_pool_index<0||c->string_pool_index>128*1024||
         !integer(io,&c->string_handle_count)||!qa_source_save_bytes(io,c->string_pool,sizeof(c->string_pool)))return false;
     uint32_t count=c->allocation_count; if(!qa_source_save_u32(io,&count)||count>8192)return false;

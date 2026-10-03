@@ -61,12 +61,12 @@ static bool image_owner(const qa_media_library *library, const qa_scene_image *i
     return image && qa_scene_image_owner_index(owners,1,image,&owner);
 }
 static bool record(qa_source_save_io *io, qa_media_library *library, qa_cinematic_asset *asset,
-                   const qa_media_library_checkpoint_refs *refs, uint32_t schema)
+                   const qa_media_library_checkpoint_refs *refs)
 {
     bool reading=io->direction==QA_SOURCE_SAVE_READ;
     uint32_t kind=asset->source.format;
     if (!qa_source_save_u32(io,&kind) || kind>QA_CINEMATIC_IMAGE || !text(io,&asset->name)) return false;
-    if (schema>=2 && !qa_source_save_bool(io,&asset->source_roq)) return false;
+    if (!qa_source_save_bool(io,&asset->source_roq)) return false;
     if (asset->source_roq && kind!=QA_CINEMATIC_ROQ) return false;
     if (kind!=QA_CINEMATIC_ROQ) {
         qa_cinematic_format extension;
@@ -117,10 +117,10 @@ bool qa_media_library_checkpoint(const qa_media_library *library, const qa_media
                                  qa_buffer *out, qa_error *error)
 {
     if (!qa_media_library_idle(library) || !out || !refs_ready(refs)) return cinematic_fail(error,"Media capture requires an idle owner and resolvers");
-    qa_source_save_io io; uint8_t magic[4]={'Q','M','L','B'}; uint32_t schema=2;
+    qa_source_save_io io; uint8_t magic[4]={'Q','M','L','B'};
     size_t count=qa_media_library_record_count(library);
     if (!qa_source_save_writer(&io,NULL,error)) return false;
-    bool ok=qa_source_save_bytes(&io,magic,4) && qa_source_save_u32(&io,&schema) && qa_source_save_count(&io,&count,SIZE_MAX);
+    bool ok=qa_source_save_bytes(&io,magic,4) && qa_source_save_count(&io,&count,SIZE_MAX);
     for (const qa_cinematic_asset *asset=library->assets;ok && asset;asset=asset->next) {
         for (const qa_cinematic_asset *prior=library->assets;prior!=asset;prior=prior->next)
             if (same_identity(prior,asset)) { ok=false; break; }
@@ -128,7 +128,7 @@ bool qa_media_library_checkpoint(const qa_media_library *library, const qa_media
             qa_cinematic_asset saved=*asset;
             /* record checks the real asset self-pointer before writing fields. */
             saved.source.asset=&saved;
-            ok=asset->source.asset==asset && record(&io,(qa_media_library *)library,&saved,refs,schema);
+            ok=asset->source.asset==asset && record(&io,(qa_media_library *)library,&saved,refs);
         }
     }
     if (ok) ok=qa_source_save_finish(&io,out);
@@ -139,10 +139,10 @@ bool qa_media_library_restore(qa_media_library *library, qa_bytes bytes, const q
                               qa_error *error)
 {
     if (!qa_media_library_idle(library) || !refs_ready(refs)) return cinematic_fail(error,"Media restore requires an idle candidate owner and resolvers");
-    qa_source_save_io io; uint8_t magic[4]; uint32_t schema=0; size_t count=0;
+    qa_source_save_io io; uint8_t magic[4]; size_t count=0;
     qa_cinematic_asset **saved=NULL, **installed=NULL;
     if (!qa_source_save_reader(&io,NULL,bytes,error)) return false;
-    bool ok=qa_source_save_bytes(&io,magic,4) && !memcmp(magic,"QMLB",4) && qa_source_save_u32(&io,&schema) && (schema==1 || schema==2) &&
+    bool ok=qa_source_save_bytes(&io,magic,4) && !memcmp(magic,"QMLB",4) &&
         qa_source_save_count(&io,&count,bytes.size/60) && count<=SIZE_MAX/sizeof(*saved);
     if (ok && count) {
         saved=calloc(count,sizeof(*saved)); installed=calloc(count,sizeof(*installed));
@@ -152,7 +152,7 @@ bool qa_media_library_restore(qa_media_library *library, qa_bytes bytes, const q
         saved[i]=calloc(1,sizeof(*saved[i]));
         if (!saved[i]) { qa_error_set(error,QA_ERROR_MEMORY,i,"Allocating restored media asset"); ok=false; break; }
         saved[i]->references=1;
-        ok=record(&io,library,saved[i],refs,schema);
+        ok=record(&io,library,saved[i],refs);
         for (size_t j=0;ok && j<i;++j) if (same_identity(saved[j],saved[i])) ok=false;
     }
     for (qa_cinematic_asset *current=library->assets;ok && current;current=current->next) {

@@ -8,10 +8,10 @@
 static const uint8_t magic[8] = {'Q', 'A', 'B', 'P', 'O', 'P', 'U', 0};
 static bool signature(qa_source_save_io *io)
 {
-    uint8_t actual[8];memcpy(actual,magic,sizeof(actual));uint32_t version=33;
-    return qa_source_save_bytes(io,actual,sizeof(actual)) && qa_source_save_u32(io,&version) &&
-        (!memcmp(actual,magic,sizeof(actual)) && version==33?true:
-            bot_save_fail(io,QA_ERROR_FORMAT,"Unsupported native bot population continuation schema"));
+    uint8_t actual[8];memcpy(actual,magic,sizeof(actual));
+    return qa_source_save_bytes(io,actual,sizeof(actual)) &&
+        (!memcmp(actual,magic,sizeof(actual))?true:
+            bot_save_fail(io,QA_ERROR_FORMAT,"Invalid native bot population continuation signature"));
 }
 #define FIELD(kind, value) do { if (!qa_source_save_##kind(io, &(value))) return false; } while (0)
 #define A(value) FIELD(actor, value)

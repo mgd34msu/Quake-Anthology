@@ -350,10 +350,8 @@ static bool state_valid(const storage_state *state)
 }
 static bool fields(qa_source_save_io *io,storage_state *state)
 {
-    uint8_t magic[4]={'Q','F','S','H'}; uint32_t version=4;
-    uint32_t rate=state->audio.format.sample_rate,bits=state->audio.format.sample_bits,channels=state->audio.format.channels;
-    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QFSH",4) || !qa_source_save_u32(io,&version) || version!=4 ||
-        !qa_source_save_u64(io,&state->user) || !qa_source_save_u64(io,&state->devices) || !qa_source_save_u64(io,&state->input) ||
+    uint8_t magic[4]={'Q','F','S','H'}; uint32_t rate=state->audio.format.sample_rate,bits=state->audio.format.sample_bits,channels=state->audio.format.channels;
+    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QFSH",4) || !qa_source_save_u64(io,&state->user) || !qa_source_save_u64(io,&state->devices) || !qa_source_save_u64(io,&state->input) ||
         !qa_source_save_u64(io,&state->user_mount) || !qa_source_save_u64(io,&state->devices_mount) ||
         !qa_source_save_u64(io,&state->input_mount) || !qa_source_save_bool(io,&state->graphical) ||
         !qa_source_save_u64(io,&state->image_pool) || !qa_source_save_u64(io,&state->image) ||

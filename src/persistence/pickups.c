@@ -11,9 +11,7 @@ static bool signature(qa_source_save_io *io)
 {
     unsigned char actual[8] = {'Q','A','P','I','C','K','U','P'};
     static const unsigned char expected[8] = {'Q','A','P','I','C','K','U','P'};
-    uint32_t version = 1;
-    return qa_source_save_bytes(io, actual, sizeof(actual)) && !memcmp(actual, expected, sizeof(actual)) &&
-        qa_source_save_u32(io, &version) && version == 1;
+    return qa_source_save_bytes(io, actual, sizeof(actual)) && !memcmp(actual, expected, sizeof(actual));
 }
 
 static bool write_fields(qa_source_save_io *io, qa_pickup_write *write)

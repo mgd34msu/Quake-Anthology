@@ -23,9 +23,8 @@ static bool namespace_fields(qa_source_save_io *io, qa_actor_owner *owner)
 }
 static bool header(qa_source_save_io *io, const char expected[4])
 {
-    uint8_t magic[4]; memcpy(magic, expected, 4); uint32_t version = 1;
-    return qa_source_save_bytes(io, magic, 4) && !memcmp(magic, expected, 4) &&
-        qa_source_save_u32(io, &version) && version == 1;
+    uint8_t magic[4]; memcpy(magic, expected, 4); return qa_source_save_bytes(io, magic, 4) && !memcmp(magic, expected, 4) &&
+        true;
 }
 static bool exact_profile(qa_source_save_io *io, const char *expected)
 {

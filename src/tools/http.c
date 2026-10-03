@@ -314,11 +314,11 @@ static bool transfer_fields(qa_source_save_io *io, http_transfer *t) {
 
 bool qa_http_checkpoint(const qa_http *owner, qa_buffer *out, qa_error *error) {
     if (!out || !qa_http_checkpoint_ready(owner, error)) return false;
-    qa_source_save_io io = {0}; uint32_t version = 2; uint64_t next = owner->next_id;
+    qa_source_save_io io = {0}; uint64_t next = owner->next_id;
     size_t count = 0;
     for (const http_transfer *t = owner->transfers; t; t = t->next) ++count;
     if (!qa_source_save_writer(&io, NULL, error)) return false;
-    bool ok = qa_source_save_u32(&io, &version) && qa_source_save_u64(&io, &next) &&
+    bool ok = qa_source_save_u64(&io, &next) &&
         qa_source_save_count(&io, &count, SIZE_MAX);
     for (http_transfer *t = owner->transfers; ok && t; t = t->next) ok = transfer_fields(&io, t);
     if (ok) ok = qa_source_save_finish(&io, out);
@@ -328,10 +328,9 @@ bool qa_http_checkpoint(const qa_http *owner, qa_buffer *out, qa_error *error) {
 bool qa_http_restore(qa_http *owner, qa_bytes bytes, qa_error *error) {
     if (!owner || owner->pumping || owner->transfers)
         return fail(error, QA_ERROR_ARGUMENT, "HTTP restoration requires an empty native transfer owner");
-    qa_source_save_io io = {0}; uint32_t version = 0; uint64_t next = 0; size_t count = 0;
+    qa_source_save_io io = {0}; uint64_t next = 0; size_t count = 0;
     if (!qa_source_save_reader(&io, NULL, bytes, error)) return false;
-    bool ok = qa_source_save_u32(&io, &version) && version == 2 &&
-        qa_source_save_u64(&io, &next) && qa_source_save_count(&io, &count, bytes.size / 96);
+    bool ok = qa_source_save_u64(&io, &next) && qa_source_save_count(&io, &count, bytes.size / 96);
     http_transfer *head = NULL, **tail = &head;
     for (size_t i = 0; ok && i < count; ++i) {
         http_transfer *t = calloc(1, sizeof(*t));
@@ -345,7 +344,7 @@ bool qa_http_restore(qa_http *owner, qa_bytes bytes, qa_error *error) {
     if (ok) { owner->transfers = head; owner->next_id = next; owner->pending_restore = false; owner->detached = head != NULL; }
     else {
         while (head) { http_transfer *t = head; head = t->next; transfer_free(t); }
-        if (!io.failed && (!error || error->code == QA_OK)) fail(error, QA_ERROR_FORMAT, "Invalid HTTP continuation schema or request identities");
+        if (!io.failed && (!error || error->code == QA_OK)) fail(error, QA_ERROR_FORMAT, "Invalid HTTP continuation or request identities");
     }
     qa_source_save_dispose(&io); return ok;
 }

@@ -11,7 +11,6 @@
 #define QC_RESERVED_WORDS 28u
 #define QC_RETURN_WORD 1u
 #define QC_ARGUMENT_WORD(n) (4u + (n) * 3u)
-#define QC_CHECKPOINT_VERSION 1u
 
 typedef struct qc_engine_string {
     char *name;

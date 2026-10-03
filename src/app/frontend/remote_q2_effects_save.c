@@ -147,12 +147,10 @@ bool q2fx_state_fields(qa_source_save_io *io, frontend_remote_q2_effects *o, con
 static bool fields(qa_source_save_io *io, frontend_remote_q2_effects *o,
     const frontend_remote_q2_effects_refs *refs)
 {
-    uint8_t magic[4]={'Q','2','F','X'}; uint32_t version=4;
-    uint64_t identity=o->source.identity, generation=o->source.content_generation, image=0;
+    uint8_t magic[4]={'Q','2','F','X'}; uint64_t identity=o->source.identity, generation=o->source.content_generation, image=0;
     uint32_t profile=o->source.profile,protocol=o->source.protocol.kind, revision=o->source.protocol.revision, flags=o->source.protocol.flags;
     bool reading=io->direction==QA_SOURCE_SAVE_READ;
-    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"Q2FX",4) || !qa_source_save_u32(io,&version) || version!=4 ||
-        !qa_source_save_u64(io,&identity) || identity!=o->source.identity || !qa_source_save_u64(io,&generation) || generation!=o->source.content_generation ||
+    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"Q2FX",4) || !qa_source_save_u64(io,&identity) || identity!=o->source.identity || !qa_source_save_u64(io,&generation) || generation!=o->source.content_generation ||
         !qa_source_save_u32(io,&profile) || profile!=(uint32_t)o->source.profile ||
         !qa_source_save_u32(io,&protocol) || protocol!=(uint32_t)o->source.protocol.kind ||
         !qa_source_save_u32(io,&revision) || revision!=o->source.protocol.revision || !qa_source_save_u32(io,&flags) || flags!=o->source.protocol.flags) return false;

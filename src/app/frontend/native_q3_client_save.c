@@ -15,9 +15,8 @@ static bool blob(qa_source_save_io *io,qa_bytes *bytes)
 }
 static bool envelope(qa_source_save_io *io,frontend_native_q3_import *state)
 {
-    uint8_t magic[4]={'Q','F','N','3'}; uint32_t version=1;
-    return qa_source_save_bytes(io,magic,4) && !memcmp(magic,"QFN3",4) &&
-        qa_source_save_u32(io,&version) && version==1 && blob(io,&state->reader) && blob(io,&state->client) &&
+    uint8_t magic[4]={'Q','F','N','3'}; return qa_source_save_bytes(io,magic,4) && !memcmp(magic,"QFN3",4) &&
+        blob(io,&state->reader) && blob(io,&state->client) &&
         blob(io,&state->core) && blob(io,&state->mission) && blob(io,&state->loading) &&
         blob(io,&state->commands) && blob(io,&state->music) && blob(io,&state->composition_state) && blob(io,&state->adapter);
 }
@@ -32,12 +31,11 @@ bool frontend_native_q3_split(qa_bytes bytes,frontend_native_q3_import *out,qa_e
 }
 static bool adapter_fields(qa_source_save_io *io,frontend_native_q3 *row)
 {
-    uint8_t magic[4]={'Q','F','N','A'}; uint32_t version=1,product=row->view.product;
+    uint8_t magic[4]={'Q','F','N','A'}; uint32_t product=row->view.product;
     uint64_t identity=row->view.identity; qa_string_id service=row->view.service_owner;
     qa_actor_owner source=row->view.source_owner; uint32_t seat=row->view.seat,launch=row->view.launch_seat,physical=row->view.physical_client;
     qa_actor_id actor=row->view.actor;
-    if(!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QFNA",4) || !qa_source_save_u32(io,&version) || version!=1 ||
-        !qa_source_save_u64(io,&identity) || identity!=row->view.identity ||
+    if(!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QFNA",4) || !qa_source_save_u64(io,&identity) || identity!=row->view.identity ||
         !qa_source_save_string(io,&service) || service!=row->view.service_owner ||
         !frontend_save_provider(io,row->frontend->application,&source) || source!=row->view.source_owner ||
         !qa_source_save_u32(io,&product) || product!=(uint32_t)row->view.product ||

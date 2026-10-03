@@ -179,9 +179,9 @@ bool application_bot_transport_fields(qa_source_save_io *io,application_bot_tran
     if(!io) return false;
     if(!transport || transport->calls)
         return bot_save_fail(io,QA_ERROR_ARGUMENT,"local bot transport codec requires its actual idle owner");
-    uint32_t version=1;double elapsed=transport->elapsed_ms;
+    double elapsed=transport->elapsed_ms;
     size_t count=transport->count;
-    if(!qa_source_save_u32(io,&version) || version!=1 || !qa_source_save_f64(io,&elapsed) ||
+    if(!qa_source_save_f64(io,&elapsed) ||
        !isfinite(elapsed) || elapsed<0 ||
        !qa_source_save_count(io,&count,application_bot_world_max_clients(transport->services.world)))
         return bot_save_fail(io,QA_ERROR_FORMAT,"invalid local bot transport continuation header");

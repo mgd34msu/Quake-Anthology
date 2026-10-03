@@ -337,10 +337,9 @@ static bool bytes_field(qa_source_save_io *io,qa_bytes *bytes)
 static bool fields(qa_source_save_io *io,frontend_qc_messages *owner)
 {
     bool reading=io->direction==QA_SOURCE_SAVE_READ;
-    uint8_t magic[4]={'Q','F','Q','L'}; uint32_t version=2; size_t count=0;
+    uint8_t magic[4]={'Q','F','Q','L'}; size_t count=0;
     if(!reading) for(qc_recipient *row=owner->recipients;row;row=row->next) if(recipient_current(owner,&row->camera)) ++count;
-    if(!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QFQL",4) || !qa_source_save_u32(io,&version) || version!=2 ||
-        !qa_source_save_count(io,&count,reading?io->input.size/8:SIZE_MAX/sizeof(qc_recipient))) return false;
+    if(!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QFQL",4) || !qa_source_save_count(io,&count,reading?io->input.size/8:SIZE_MAX/sizeof(qc_recipient))) return false;
     qc_recipient **link=&owner->recipients;
     for(size_t i=0;i<count;++i) {
         qc_recipient saved={0},*row=NULL; qa_buffer decoder={0}; qa_bytes bytes={0};

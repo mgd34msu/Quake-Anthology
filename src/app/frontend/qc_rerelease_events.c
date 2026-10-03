@@ -204,9 +204,9 @@ static bool text_content(void *context,uint64_t content,uint64_t *out,qa_error *
 static bool fields(qa_source_save_io *io,qa_frontend *f,frontend_qc_rerelease **owner)
 {
     bool reading=io->direction==QA_SOURCE_SAVE_READ,present=!reading && *owner;
-    uint8_t magic[4]={'Q','F','Q','D'}; uint32_t version=1; size_t count=0;
+    uint8_t magic[4]={'Q','F','Q','D'}; size_t count=0;
     if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QFQD",4) ||
-        !qa_source_save_u32(io,&version) || version!=1 || !qa_source_save_bool(io,&present)) return false;
+        !qa_source_save_bool(io,&present)) return false;
     if (!present) return true;
     if (!reading) for (qc_debug_source *source=(*owner)->sources;source;source=source->next) ++count;
     if (!qa_source_save_count(io,&count,reading?io->input.size-io->offset:SIZE_MAX)) return false;

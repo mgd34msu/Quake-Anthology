@@ -336,7 +336,7 @@ bool qa_nq_signon_checkpoint(const qa_nq_signon *state, qa_buffer *out, qa_error
     uint8_t *data = malloc(capacity);
     if (!data) return save_fail(error, QA_ERROR_MEMORY, "Encoding NetQuake signon continuation");
     qa_net_writer writer; qa_net_writer_init(&writer, data, capacity, error);
-    bool ok = qa_net_write_u32(&writer, UINT32_C(0x534e4151)) && qa_net_write_u32(&writer, 1) &&
+    bool ok = qa_net_write_u32(&writer, UINT32_C(0x534e4151)) &&
         qa_net_write_u8(&writer, state->stage) && qa_net_write_u8(&writer, state->color) &&
         qa_net_write_u8(&writer, state->has_extension_flags) && qa_net_write_u32(&writer, state->extension_flags) &&
         qa_net_write_string(&writer, state->name) && qa_net_write_string(&writer, state->spawn_parameters);
@@ -349,7 +349,7 @@ bool qa_nq_signon_restore_checkpoint(qa_bytes bytes, const qa_nq_signon *identit
     if (!out || out->stage || out->name || out->spawn_parameters || !nq_identity_valid(identity) ||
         (bytes.size && !bytes.data)) return save_fail(error, QA_ERROR_ARGUMENT, "NetQuake signon restore requires admitted identity and empty output");
     qa_net_reader reader; qa_net_reader_init(&reader, bytes, error);
-    if (qa_net_read_u32(&reader) != UINT32_C(0x534e4151) || qa_net_read_u32(&reader) != 1)
+    if (qa_net_read_u32(&reader) != UINT32_C(0x534e4151))
         return save_fail(error, QA_ERROR_FORMAT, "Invalid NetQuake signon continuation schema");
     uint8_t stage = qa_net_read_u8(&reader), color = qa_net_read_u8(&reader), flags = qa_net_read_u8(&reader);
     uint32_t extension = qa_net_read_u32(&reader); const char *name, *parameters;
@@ -374,7 +374,7 @@ bool qa_qw_signon_checkpoint(const qa_qw_signon *state, qa_buffer *out, qa_error
     uint8_t *data = malloc(capacity);
     if (!data) { qa_buffer_free(&download); return save_fail(error, QA_ERROR_MEMORY, "Encoding QuakeWorld signon continuation"); }
     qa_net_writer writer; qa_net_writer_init(&writer, data, capacity, error);
-    bool ok = qa_net_write_u32(&writer, UINT32_C(0x53574151)) && qa_net_write_u32(&writer, 2) &&
+    bool ok = qa_net_write_u32(&writer, UINT32_C(0x53574151)) &&
         qa_net_write_u8(&writer, state->donor_wide) && qa_net_write_u8(&writer, state->spawned) &&
         qa_net_write_u8(&writer, state->downloading) && qa_net_write_u64(&writer, state->offset) &&
         qa_net_write_u64(&writer, download.size) && qa_net_write_data(&writer, download.data, download.size);
@@ -387,7 +387,7 @@ bool qa_qw_signon_restore_checkpoint(qa_bytes bytes, const qa_qw_signon_host *ho
 {
     if (!out || *out || (bytes.size && !bytes.data)) return save_fail(error, QA_ERROR_ARGUMENT, "QuakeWorld signon restore requires empty output");
     qa_net_reader reader; qa_net_reader_init(&reader, bytes, error);
-    if (qa_net_read_u32(&reader) != UINT32_C(0x53574151) || qa_net_read_u32(&reader) != 2)
+    if (qa_net_read_u32(&reader) != UINT32_C(0x53574151))
         return save_fail(error, QA_ERROR_FORMAT, "Invalid QuakeWorld signon continuation schema");
     uint8_t saved_wide = qa_net_read_u8(&reader), spawned = qa_net_read_u8(&reader), downloading = qa_net_read_u8(&reader);
     uint64_t offset = qa_net_read_u64(&reader), size = qa_net_read_u64(&reader); qa_bytes download;
@@ -435,7 +435,7 @@ bool qa_qw_precache_checkpoint(const qa_qw_precache *state, qa_buffer *out, qa_e
     uint8_t *data = malloc(capacity);
     if (!data) return save_fail(error, QA_ERROR_MEMORY, "Encoding QuakeWorld precache continuation");
     qa_net_writer writer; qa_net_writer_init(&writer, data, capacity, error);
-    bool ok = qa_net_write_u32(&writer, UINT32_C(0x50574151)) && qa_net_write_u32(&writer, 1) &&
+    bool ok = qa_net_write_u32(&writer, UINT32_C(0x50574151)) &&
         qa_net_write_u32(&writer, state->protocol.kind) && qa_net_write_u32(&writer, state->protocol.revision) &&
         qa_net_write_u32(&writer, state->protocol.flags) && qa_net_write_i32(&writer, state->server_count) &&
         qa_net_write_u64(&writer, state->model_count) && qa_net_write_u64(&writer, state->sound_count);
@@ -465,7 +465,7 @@ bool qa_qw_precache_restore_checkpoint(qa_bytes bytes, qa_net_protocol_id protoc
     if (!out || *out || (bytes.size && !bytes.data) || !qa_q1_profile_valid(protocol, error) || !qa_q1_is_qw(protocol))
         return save_fail(error, QA_ERROR_ARGUMENT, "QuakeWorld precache restore requires admitted dialect and empty output");
     qa_net_reader reader; qa_net_reader_init(&reader, bytes, error);
-    if (qa_net_read_u32(&reader) != UINT32_C(0x50574151) || qa_net_read_u32(&reader) != 1 ||
+    if (qa_net_read_u32(&reader) != UINT32_C(0x50574151) ||
         qa_net_read_u32(&reader) != (uint32_t)protocol.kind || qa_net_read_u32(&reader) != protocol.revision ||
         qa_net_read_u32(&reader) != protocol.flags)
         return save_fail(error, QA_ERROR_FORMAT, "QuakeWorld precache continuation dialect differs");

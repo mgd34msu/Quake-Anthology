@@ -381,7 +381,6 @@ typedef struct qa_q2_saved_reference {
     bool present;
 } qa_q2_saved_reference;
 typedef struct qa_q2_runtime_checkpoint {
-    uint32_t version;
     qa_q2_edition edition;
     qa_q2_product product;
     qa_builtin_random random;
@@ -413,7 +412,6 @@ typedef struct qa_q2_projectile_checkpoint {
     bool hand, held, armed, visible, gekk, dodgeable;
 } qa_q2_projectile_checkpoint;
 typedef struct qa_q2_actor_checkpoint {
-    uint32_t version;
     uint64_t source_order;
     uint64_t extra_effects;
     uint64_t combat_surprise_ns;

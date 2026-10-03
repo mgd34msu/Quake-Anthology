@@ -714,12 +714,10 @@ static bool state_fields(qa_source_save_io *io, vote_state *state)
 static bool header(qa_source_save_io *io, const application_provider *provider)
 {
     uint8_t magic[4] = {'Q', 'A', 'G', 'V'};
-    uint32_t version = 1;
     uint32_t product = !strcmp(provider->product->campaign, "missionpack") ? QA_Q3_TEAM_ARENA : QA_Q3_ARENA;
     uint32_t expected_product = product;
     uint64_t owner = provider->owner;
     return qa_source_save_bytes(io, magic, sizeof(magic)) && !memcmp(magic, "QAGV", 4) &&
-        qa_source_save_u32(io, &version) && version == 1 &&
         qa_source_save_u32(io, &product) && product == expected_product &&
         qa_source_save_u64(io, &owner) && owner == provider->owner;
 }

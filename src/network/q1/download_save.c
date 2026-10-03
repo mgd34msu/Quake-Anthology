@@ -120,7 +120,7 @@ bool qa_qw_file_download_checkpoint(const qa_qw_download *download, qa_buffer *o
         qa_buffer bytes = {malloc(57 + length), 0};
         if (!bytes.data) return fail(error, QA_ERROR_MEMORY, "Capturing QW mounted download identity");
         qa_net_writer writer; qa_net_writer_init(&writer, bytes.data, 57 + length, error);
-        bool ok = qa_net_write_u32(&writer, UINT32_C(0x444d5751)) && qa_net_write_u32(&writer, 1) &&
+        bool ok = qa_net_write_u32(&writer, UINT32_C(0x444d5751)) &&
             qa_net_write_u64(&writer, mounted->maximum) && qa_net_write_u64(&writer, download->size) &&
             qa_net_write_data(&writer, digest->bytes, sizeof(digest->bytes)) && qa_net_write_string(&writer, mounted->name);
         if (!ok) { qa_buffer_free(&bytes); return false; }
@@ -136,7 +136,7 @@ bool qa_qw_file_download_checkpoint(const qa_qw_download *download, qa_buffer *o
     qa_buffer bytes = {malloc(57 + length), 0};
     if (!bytes.data) return fail(error, QA_ERROR_MEMORY, "Capturing QW hosted download identity");
     qa_net_writer writer; qa_net_writer_init(&writer, bytes.data, 57 + length, error);
-    bool ok = qa_net_write_u32(&writer, UINT32_C(0x44465751)) && qa_net_write_u32(&writer, 1) &&
+    bool ok = qa_net_write_u32(&writer, UINT32_C(0x44465751)) &&
         qa_net_write_u64(&writer, file->maximum) && qa_net_write_u64(&writer, download->size) &&
         qa_net_write_data(&writer, file->digest.bytes, sizeof(file->digest.bytes)) && qa_net_write_string(&writer, file->name);
     if (!ok) { qa_buffer_free(&bytes); return false; }
@@ -149,11 +149,11 @@ bool qa_qw_file_download_restore_checkpoint(qa_bytes bytes, const qa_qw_download
         !empty(out) || (bytes.size && !bytes.data))
         return fail(error, QA_ERROR_ARGUMENT, "QW file continuation requires an admitted empty resource owner");
     qa_net_reader reader; qa_net_reader_init(&reader, bytes, error);
-    uint32_t magic = qa_net_read_u32(&reader), schema = qa_net_read_u32(&reader);
+    uint32_t magic = qa_net_read_u32(&reader);
     uint64_t maximum = qa_net_read_u64(&reader), size = qa_net_read_u64(&reader);
     qa_bytes digest; const char *name;
     if (magic != (admission->content ? UINT32_C(0x444d5751) : UINT32_C(0x44465751)) ||
-        schema != 1 || maximum != admission->maximum_bytes || size > maximum ||
+        maximum != admission->maximum_bytes || size > maximum ||
         !qa_net_read_bytes(&reader, 32, &digest) || !qa_q1_read_cstring(&reader, &name) ||
         !qa_qw_download_path_valid(name) || !qa_net_reader_finish(&reader))
         return fail(error, QA_ERROR_FORMAT, "QW hosted download identity differs from candidate admission");

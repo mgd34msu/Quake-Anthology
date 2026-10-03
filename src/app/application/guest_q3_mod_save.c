@@ -2,13 +2,13 @@
 
 static bool prefix(application_q3_mod *o, qa_source_save_io *io)
 {
-    uint8_t magic[4]={'Q','G','M','D'}; uint32_t version=2,abi=(uint32_t)o->profile->abi;
+    uint8_t magic[4]={'Q','G','M','D'}; uint32_t abi=(uint32_t)o->profile->abi;
     uint8_t expected[4]; memcpy(expected,magic,4);
     uint8_t digest[32]; memcpy(digest,qa_qvm_image_digest(o->profile->image),sizeof(digest));
     uint8_t original_digest[32]; memcpy(original_digest,digest,sizeof(digest));
     size_t bytes=o->profile->declaration.size;
     if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,expected,4) ||
-        !qa_source_save_u32(io,&version) || version!=2 || !qa_source_save_u32(io,&abi) || abi!=(uint32_t)o->profile->abi ||
+        !qa_source_save_u32(io,&abi) || abi!=(uint32_t)o->profile->abi ||
         !qa_source_save_bytes(io,digest,sizeof(digest)) || memcmp(digest,original_digest,sizeof(digest)) ||
         !qa_source_save_count(io,&bytes,o->profile->declaration.size) || bytes!=o->profile->declaration.size)
         return q3mod_fail(io->error,QA_ERROR_FORMAT,"Generic source continuation header differs from its actual declaration");

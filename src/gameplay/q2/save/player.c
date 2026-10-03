@@ -1,28 +1,21 @@
 #include "internal.h"
 
-static bool armor_number(q2_save_io *io, double *value) {
-    if (io->schema >= 25) return q2_save_f64(io, value);
-    float legacy = (float)*value;
-    if (!q2_save_f32(io, &legacy)) return false;
-    if (io->reading) *value = legacy;
-    return true;
-}
 static bool carry(q2_save_io *io, qa_q2_player_carry *s) {
     Q2F(health); Q2F(maximum_health); Q2U(armor.regular.kind);
-    if (!armor_number(io, &s->armor.regular.points)) return false;
+    if (!q2_save_f64(io, &s->armor.regular.points)) return false;
     Q2N(armor.regular.item);
     switch (s->armor.regular.kind) {
     case QA_ARMOR_NONE: case QA_ARMOR_SOURCE: break;
     case QA_ARMOR_Q1: Q2F(armor.regular.protection.q1_absorption); break;
     case QA_ARMOR_Q2:
-        if (!armor_number(io, &s->armor.regular.protection.q2.normal) ||
-            !armor_number(io, &s->armor.regular.protection.q2.energy)) return false;
+        if (!q2_save_f64(io, &s->armor.regular.protection.q2.normal) ||
+            !q2_save_f64(io, &s->armor.regular.protection.q2.energy)) return false;
         break;
     case QA_ARMOR_Q3: Q2F(armor.regular.protection.q3_protection); break;
     default: return q2_save_fail(io, "Invalid Q2 carry armor kind");
     }
     Q2U(armor.powered.kind);
-    if (!armor_number(io, &s->armor.powered.cells)) return false;
+    if (!q2_save_f64(io, &s->armor.powered.cells)) return false;
     Q2N(armor.powered.source_owner); Q2U(armor.powered.source_edition);
     Q2U(armor.powered.source_kind);
     if (!qa_armor_validate(&s->armor, io->error)) return false;
@@ -79,13 +72,12 @@ static bool state(q2_save_io *io, qa_q2_player_state *s) {
     Q2V(squad_origin); Q2V(squad_angles); return true;
 }
 bool q2_save_player(q2_save_io *io, qa_q2_player_checkpoint *s) {
-    Q2U(version); Q2B(present);
+    Q2B(present);
     if (s->present && !state(io, &s->value)) return false;
     Q2R(chase_target); Q2R(noise[0]); Q2R(noise[1]); Q2R(sphere_camera); Q2R(landmark_player);
     return true;
 }
 bool q2_save_players(q2_save_io *io, qa_q2_players_checkpoint *s) {
-    Q2U(version);
     for (size_t i = 0; i < 8; ++i) Q2R(corpses[i]);
     Q2R(landmark_player); Q2R(noise_owner[0]); Q2R(noise_owner[1]);
     Q2U(corpse_index); Q2U(death_animation); Q2U(pain_animation);

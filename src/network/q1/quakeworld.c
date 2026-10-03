@@ -731,7 +731,7 @@ bool qa_qw_decoder_save(qa_net_writer *w, const qa_qw_decoder *d)
         if (d->frames[i].valid) ++frames;
         if (d->requests[i].valid) ++requests;
     }
-    qa_net_write_u32(w,UINT32_C(0x43445751)); qa_net_write_u32(w,1);
+    qa_net_write_u32(w,UINT32_C(0x43445751));
     qa_q1_write_protocol(w,d->protocol); qa_net_write_u32(w,d->player_model); qa_net_write_u32(w,baselines);
     for (size_t i=0;i<d->baseline_capacity && !w->failed;++i)
         if (d->baselines[i].valid) save_entity(w,&d->baselines[i].entity);
@@ -751,8 +751,8 @@ bool qa_qw_decoder_save(qa_net_writer *w, const qa_qw_decoder *d)
 bool qa_qw_decoder_restore(qa_net_reader *r, qa_qw_decoder *d)
 {
     if (!d || (r->bit&7)) return qa_net_reader_fail(r,"Invalid QuakeWorld checkpoint reader");
-    uint32_t magic=qa_net_read_u32(r),version=qa_net_read_u32(r);
-    if (magic!=UINT32_C(0x43445751) || version!=1) return qa_net_reader_fail(r,"Unsupported QuakeWorld checkpoint");
+    uint32_t magic=qa_net_read_u32(r);
+    if (magic!=UINT32_C(0x43445751)) return qa_net_reader_fail(r,"Unsupported QuakeWorld checkpoint");
     qa_net_protocol_id p;
     if (!qa_q1_read_protocol(r,true,&p)) return false;
     qa_qw_decoder *next=qa_qw_decoder_create(p,r->error);
@@ -844,7 +844,7 @@ bool qa_qw_decoder_restore_checkpoint(qa_bytes bytes, qa_net_protocol_id protoco
         return error(failure,QA_ERROR_ARGUMENT,"QuakeWorld decoder restore requires admitted source and empty output");
     qa_net_reader reader; qa_net_reader_init(&reader,bytes,failure);
     qa_net_protocol_id saved;
-    if (qa_net_read_u32(&reader)!=UINT32_C(0x43445751) || qa_net_read_u32(&reader)!=1 ||
+    if (qa_net_read_u32(&reader)!=UINT32_C(0x43445751) ||
         !qa_q1_read_protocol(&reader,true,&saved)) return qa_net_reader_fail(&reader,"Invalid QuakeWorld decoder continuation schema");
     if (saved.kind!=protocol.kind || saved.revision!=protocol.revision || saved.flags!=protocol.flags)
         return qa_net_reader_fail(&reader,"QuakeWorld decoder source admission differs");

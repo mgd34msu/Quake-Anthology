@@ -131,7 +131,6 @@ typedef struct qa_q2_companion_checkpoint {
     bool active, decoy, camera;
 } qa_q2_companion_checkpoint;
 typedef struct qa_q2_item_checkpoint {
-    uint32_t version;
     bool present, powers_present;
     qa_string_id definition;
     qa_q2_item_spawn spawn;
@@ -149,7 +148,7 @@ typedef struct qa_q2_item_checkpoint {
     bool definitions_bound, power_inventory_bound;
 } qa_q2_item_checkpoint;
 typedef struct qa_q2_items_checkpoint {
-    uint32_t version, cubes;
+    uint32_t cubes;
 } qa_q2_items_checkpoint;
 /* Shared inventory/combat and configured services precede restoration into a
  * prepared candidate. This state owns picked_slots; encode fields and remap

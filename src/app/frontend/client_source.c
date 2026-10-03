@@ -704,11 +704,9 @@ static bool buffer_fields(qa_source_save_io *io, qa_buffer *buffer)
 }
 static bool prefix_fields(qa_source_save_io *io, client_source_prefix *p)
 {
-    uint8_t magic[4] = {'Q','F','C','S'}; uint32_t version = 3;
-    bool reading = io->direction == QA_SOURCE_SAVE_READ;
+    uint8_t magic[4] = {'Q','F','C','S'}; bool reading = io->direction == QA_SOURCE_SAVE_READ;
     qa_application_client_state *a = &p->state.application;
     if (!qa_source_save_bytes(io, magic, sizeof(magic)) || memcmp(magic, "QFCS", sizeof(magic)) ||
-        !qa_source_save_u32(io, &version) || version != 3 ||
         !qa_source_save_u64(io, &p->catalog) || !p->catalog ||
         !qa_source_save_u64(io, &p->content) || !p->content ||
         !qa_source_save_u32(io, &p->profile) || !p->profile ||

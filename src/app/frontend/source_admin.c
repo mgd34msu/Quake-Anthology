@@ -260,9 +260,9 @@ static bool saved_blob(qa_source_save_io *io,qa_bytes *bytes)
 }
 static bool admin_fields(qa_source_save_io *io,frontend_source_admin *owner,qa_bytes *admin)
 {
-    uint8_t magic[4]={'Q','F','S','A'}; uint32_t version=1,dialect=owner->saved_dialect;
+    uint8_t magic[4]={'Q','F','S','A'}; uint32_t dialect=owner->saved_dialect;
     if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QFSA",4) ||
-        !qa_source_save_u32(io,&version) || version!=1 || !qa_source_save_u32(io,&dialect) || dialect>QA_CONSOLE_Q3 ||
+        !qa_source_save_u32(io,&dialect) || dialect>QA_CONSOLE_Q3 ||
         !qa_source_save_u64(io,&owner->nonce) || !qa_source_save_u32(io,&owner->random) ||
         !root_fields(io,&owner->saved_preferences) || !saved_blob(io,admin) || !admin->size) return false;
     owner->saved_dialect=(qa_console_dialect)dialect;

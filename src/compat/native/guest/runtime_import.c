@@ -559,9 +559,9 @@ bool guest_runtime_imports_checkpoint(const guest_runtime_imports *owner, qa_buf
     if (!guest_runtime_imports_idle(owner) || !out || out->data || out->size || !current(owner, owner->guest, e))
         return guest_fail(e, QA_ERROR_ARGUMENT, 0, "import checkpoint requires its idle current lower owner and empty output");
     guest_runtime_imports *o = (guest_runtime_imports *)owner;
-    codec c = {.e = e}; uint8_t magic[4] = {'Q','G','I','M'}; uint64_t version = 2;
+    codec c = {.e = e}; uint8_t magic[4] = {'Q','G','I','M'};
     unsigned os = o->target.os, arch = o->target.arch, abi = o->target.abi, word = o->target.pointer_bytes;
-    bool okay = blob(&c, magic, 4) && u64(&c, &version) && enumeration(&c, &os, QA_NATIVE_OS_LINUX) &&
+    bool okay = blob(&c, magic, 4) && enumeration(&c, &os, QA_NATIVE_OS_LINUX) &&
         enumeration(&c, &arch, QA_NATIVE_ARCH_AARCH64) && enumeration(&c, &abi, QA_NATIVE_ABI_AAPCS64) &&
         enumeration(&c, &word, 8) && size(&c, &o->trap_count, 48);
     for (size_t i = 0; okay && i < o->trap_count; ++i) okay = mapping(&c, &o->traps[i]);
@@ -594,9 +594,9 @@ bool guest_runtime_imports_decode(qa_bytes bytes, const qa_native_target *target
     guest_runtime_imports *o = calloc(1, sizeof(*o));
     if (!o) return guest_fail(e, QA_ERROR_MEMORY, 0, "owning detached import candidate");
     o->detached = true;
-    codec c = {.in = bytes, .read = true, .e = e}; uint8_t magic[4]; uint64_t version = 0;
+    codec c = {.in = bytes, .read = true, .e = e}; uint8_t magic[4];
     unsigned os = 0, arch = 0, abi = 0, word = 0;
-    bool okay = blob(&c, magic, 4) && !memcmp(magic, "QGIM", 4) && u64(&c, &version) && version == 2 &&
+    bool okay = blob(&c, magic, 4) && !memcmp(magic, "QGIM", 4) &&
         enumeration(&c, &os, QA_NATIVE_OS_LINUX) && enumeration(&c, &arch, QA_NATIVE_ARCH_AARCH64) &&
         enumeration(&c, &abi, QA_NATIVE_ABI_AAPCS64) && enumeration(&c, &word, 8);
     o->target = (qa_native_target){(qa_native_os)os, (qa_native_arch)arch, (qa_native_abi)abi, (uint8_t)word};

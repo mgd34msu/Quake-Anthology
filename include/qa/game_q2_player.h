@@ -240,13 +240,11 @@ typedef struct qa_q2_player_state {
     qa_vec3 squad_origin, squad_angles;
 } qa_q2_player_state;
 typedef struct qa_q2_player_checkpoint {
-    uint32_t version;
     bool present;
     qa_q2_player_state value;
     qa_q2_saved_reference chase_target, noise[2], sphere_camera, landmark_player;
 } qa_q2_player_checkpoint;
 typedef struct qa_q2_players_checkpoint {
-    uint32_t version;
     qa_q2_saved_reference corpses[8], landmark_player, noise_owner[2];
     unsigned corpse_index, death_animation, pain_animation;
     bool intermission, exit, camera_set, has_landmark, deadly_killbox;

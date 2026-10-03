@@ -7,10 +7,10 @@
 static const uint8_t source_magic[8]={'Q','A','E','A','S','R','C',0};
 static const uint8_t owner_magic[8]={'Q','A','B','A','C','T','N',0};
 static bool owner_signature(qa_source_save_io *io) {
-    uint8_t magic[8];memcpy(magic,owner_magic,8);uint32_t version=2;
-    if(!qa_source_save_bytes(io,magic,8) || !qa_source_save_u32(io,&version)) return false;
-    return !memcmp(magic,owner_magic,8) && version==2 ? true :
-        bot_save_fail(io,QA_ERROR_FORMAT,"Unsupported standalone action allocator schema");
+    uint8_t magic[8];memcpy(magic,owner_magic,8);
+    if(!qa_source_save_bytes(io,magic,8)) return false;
+    return !memcmp(magic,owner_magic,8) ? true :
+        bot_save_fail(io,QA_ERROR_FORMAT,"Invalid standalone action allocator signature");
 }
 
 static bool alias_fields(qa_source_save_io *io,qa_bot_actions *actions)

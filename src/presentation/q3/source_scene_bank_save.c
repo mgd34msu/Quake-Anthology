@@ -69,12 +69,9 @@ static bool membership(qa_source_save_io *io, qa_q3_source_scene_membership *m)
 }
 static bool header(qa_source_save_io *io, qa_q3_source_scene_membership *m, uint64_t *cycle)
 {
-    uint8_t magic[4] = {'Q','3','S','B'}; uint32_t version = 2;
-    if (!qa_source_save_bytes(io, magic, sizeof(magic)) || memcmp(magic, "Q3SB", sizeof(magic)) ||
-        !qa_source_save_u32(io, &version) || version < 1 || version > 2 || !membership(io, m)) return false;
-    if (version >= 2) {
-        if (!qa_source_save_u64(io, cycle)) return false;
-    } else *cycle = 1;
+    uint8_t magic[4] = {'Q','3','S','B'}; if (!qa_source_save_bytes(io, magic, sizeof(magic)) || memcmp(magic, "Q3SB", sizeof(magic)) ||
+        !membership(io, m)) return false;
+    if (!qa_source_save_u64(io, cycle)) return false;
     return *cycle || (!m->entities && !m->first_entity && !m->polygons && !m->first_polygon &&
         !m->vertices && !m->lights && !m->first_light);
 }

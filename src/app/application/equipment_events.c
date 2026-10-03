@@ -116,9 +116,9 @@ void application_equipment_events_clear(application_equipment_events *queue)
 
 static bool header(qa_source_save_io *io, uint64_t *generation, size_t *count)
 {
-    uint8_t magic[8] = {'Q','A','G','E','V','T',0,0}; uint32_t version = 1;
+    uint8_t magic[8] = {'Q','A','G','E','V','T',0,0};
     return qa_source_save_bytes(io, magic, sizeof(magic)) && !memcmp(magic, "QAGEVT\0", sizeof(magic)) &&
-        qa_source_save_u32(io, &version) && version == 1 && qa_source_save_u64(io, generation) &&
+        qa_source_save_u64(io, generation) &&
         qa_source_save_count(io, count, SIZE_MAX / sizeof(qa_application_equipment_event));
 }
 

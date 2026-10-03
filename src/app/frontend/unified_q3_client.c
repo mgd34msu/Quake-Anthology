@@ -817,12 +817,11 @@ static bool history_fields(frontend_unified_q3_client *c, qa_source_save_io *io,
 }
 static bool client_fields(frontend_unified_q3_client *c, qa_source_save_io *io)
 {
-    char magic[4] = {'Q','3','C','T'}; uint32_t version = 2, epoch = c->constructor.epoch;
+    char magic[4] = {'Q','3','C','T'}; uint32_t epoch = c->constructor.epoch;
     uint64_t publication = c->constructor.publication, map = c->constructor.map_revision, receiver = c->receiver;
     uint32_t client = c->constructor.client_number; qa_actor_id viewer = c->constructor.viewer;
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
-    bool ok = qa_source_save_bytes(io,magic,4) && !memcmp(magic,"Q3CT",4) && qa_source_save_u32(io,&version) && version == 2 &&
-        qa_source_save_u32(io,&epoch) && epoch == c->constructor.epoch && qa_source_save_u64(io,&publication) && publication == c->constructor.publication &&
+    bool ok = qa_source_save_bytes(io,magic,4) && !memcmp(magic,"Q3CT",4) && qa_source_save_u32(io,&epoch) && epoch == c->constructor.epoch && qa_source_save_u64(io,&publication) && publication == c->constructor.publication &&
         qa_source_save_u64(io,&map) && map == c->constructor.map_revision && qa_source_save_u64(io,&receiver) && receiver == c->receiver &&
         qa_source_save_u32(io,&client) && client == c->constructor.client_number &&
         frontend_unified_q3_client_actor_fields(c,io,&viewer) && qa_actor_id_equal(viewer,c->constructor.viewer) &&
@@ -899,13 +898,13 @@ qa_cvars *frontend_unified_q3_client_checkpoint_stage_cvars(
 static bool frame_fields(frontend_unified_q3_client_frame *t,qa_source_save_io *io)
 {
     frontend_unified_q3_client *c = t->owner;
-    char magic[4] = {'Q','3','C','F'}; uint32_t version = 1,epoch = t->source.epoch;
+    char magic[4] = {'Q','3','C','F'}; uint32_t epoch = t->source.epoch;
     uint64_t receiver = c->receiver,publication = t->source.publication,map = t->source.map_revision;
     uint64_t source_revision = t->source.revision,base_revision = c->revision;
     uint8_t bit = t->source.snapshot_bit; int32_t time = t->source.time; qa_actor_id viewer = t->source.viewer;
     bool round = t->source.snapshot_bit != c->constructor.snapshot_bit;
     bool ok = qa_source_save_bytes(io,magic,4) && !memcmp(magic,"Q3CF",4) &&
-        qa_source_save_u32(io,&version) && version == 1 && qa_source_save_u32(io,&epoch) && epoch == t->source.epoch &&
+        qa_source_save_u32(io,&epoch) && epoch == t->source.epoch &&
         qa_source_save_u64(io,&receiver) && receiver == c->receiver &&
         qa_source_save_u64(io,&publication) && publication == t->source.publication &&
         qa_source_save_u64(io,&map) && map == t->source.map_revision &&

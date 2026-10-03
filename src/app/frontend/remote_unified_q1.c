@@ -1093,9 +1093,8 @@ static bool saved_activation(frontend_unified_q1 *o,qa_source_save_io *io,q1_act
 }
 static bool fields(frontend_unified_q1 *o,qa_source_save_io *io,const frontend_unified_q1_refs *refs,qa_error *e)
 {
-    bool reading=io->direction==QA_SOURCE_SAVE_READ;uint32_t magic=UINT32_C(0x31554651),version=4,epoch=o->epoch;
-    if(!qa_source_save_u32(io,&magic) || magic!=UINT32_C(0x31554651) || !qa_source_save_u32(io,&version) || version!=4 ||
-        !qa_source_save_u32(io,&epoch) || epoch!=o->epoch || !qa_source_save_u64(io,&o->frame) || !finite_field(io,&o->seconds) ||
+    bool reading=io->direction==QA_SOURCE_SAVE_READ;uint32_t magic=UINT32_C(0x31554651),epoch=o->epoch;
+    if(!qa_source_save_u32(io,&magic) || magic!=UINT32_C(0x31554651) || !qa_source_save_u32(io,&epoch) || epoch!=o->epoch || !qa_source_save_u64(io,&o->frame) || !finite_field(io,&o->seconds) ||
         !qa_source_save_bool(io,&o->has_frame) || !finite_field(io,&o->bonus_until) || !finite_field(io,&o->capture_until) ||
         !qa_source_save_bool(io,&o->ctf_present))return false;
     if(!qa_source_save_bool(io,&o->prepared))return false;

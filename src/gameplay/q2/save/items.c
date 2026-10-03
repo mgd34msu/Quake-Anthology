@@ -10,7 +10,7 @@ static bool companion(q2_save_io *io, qa_q2_companion_checkpoint *s) {
     Q2I(frame); Q2N(loop_sound); Q2B(active); Q2B(decoy); Q2B(camera); return true;
 }
 bool q2_save_item(q2_save_io *io, qa_q2_item_checkpoint *s) {
-    Q2U(version); Q2B(present); Q2B(powers_present); Q2N(definition);
+    Q2B(present); Q2B(powers_present); Q2N(definition);
     if (!spawn(io, &s->spawn)) return false;
     Q2R(owner); Q2R(team_master); Q2R(team_next); Q2R(sphere);
     Q2T(due_ns); Q2T(expires_ns); Q2U(think); Q2B(targets_used); Q2B(retained);

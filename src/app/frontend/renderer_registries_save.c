@@ -123,9 +123,8 @@ bool frontend_renderer_registries_checkpoint(qa_frontend *f,frontend_q3_inventor
         }
         if(okay && ((world==NULL)!=(geometry==NULL) || (world && !row->map))) okay=false;
     }
-    qa_source_save_io io={0}; uint8_t magic[4]={'Q','F','R','G'}; uint32_t version=2;
-    okay=okay && qa_source_save_writer(&io,NULL,error) && qa_source_save_bytes(&io,magic,4) &&
-        qa_source_save_u32(&io,&version) && qa_source_save_count(&io,&count,SIZE_MAX);
+    qa_source_save_io io={0}; uint8_t magic[4]={'Q','F','R','G'}; okay=okay && qa_source_save_writer(&io,NULL,error) && qa_source_save_bytes(&io,magic,4) &&
+        qa_source_save_count(&io,&count,SIZE_MAX);
     for(size_t i=0;okay && i<count;++i) okay=row_fields(&io,rows+i);
     okay=okay && qa_source_save_finish(&io,out); qa_source_save_dispose(&io); dispose(rows,count,true);
     if(!okay && (!error || error->code==QA_OK)) frontend_fail(error,QA_ERROR_FORMAT,"Retained registry prefix lost its actual provider or Q3 map custody");
@@ -217,10 +216,9 @@ bool frontend_renderer_registries_prepare_restored(qa_frontend *f,frontend_q3_in
     frontend_world_inventory *roots,qa_bytes bytes,qa_error *error)
 {
     if(!f || !f->source_restoring || f->capture || f->resource_inventory || !base || !roots || f->renderer_registries) return false;
-    qa_source_save_io io={0}; uint8_t magic[4]={0}; uint32_t version=0; size_t count=0;
+    qa_source_save_io io={0}; uint8_t magic[4]={0}; size_t count=0;
     bool okay=qa_source_save_reader(&io,NULL,bytes,error) && qa_source_save_bytes(&io,magic,4) &&
-        !memcmp(magic,"QFRG",4) && qa_source_save_u32(&io,&version) && version==2 &&
-        qa_source_save_count(&io,&count,SIZE_MAX/sizeof(registry_prefix)) &&
+        !memcmp(magic,"QFRG",4) && qa_source_save_count(&io,&count,SIZE_MAX/sizeof(registry_prefix)) &&
         count<=UINT32_MAX && io.offset<=io.input.size && count<=(io.input.size-io.offset)/8;
     registry_prefix *rows=okay && count?calloc(count,sizeof(*rows)):NULL;
     okay=okay && (!count || rows);

@@ -5,9 +5,7 @@ static bool fields(qa_source_save_io *io, q3_weapon_request **requests, size_t *
 {
     uint8_t magic[8] = {'Q','A','G','3','W','R',0,0};
     const uint8_t expected[8] = {'Q','A','G','3','W','R',0,0};
-    uint32_t version = 1;
-    if (!qa_source_save_bytes(io, magic, sizeof(magic)) || !qa_source_save_u32(io, &version) ||
-        memcmp(magic, expected, sizeof(magic)) || version != 1)
+    if (!qa_source_save_bytes(io, magic, sizeof(magic)) || memcmp(magic, expected, sizeof(magic)))
         return application_fail(io->error, QA_ERROR_FORMAT, "Invalid original weapon request continuation");
     size_t maximum = qa_actors_capacity(qa_session_actors(io->session));
     if (!qa_source_save_count(io, count, maximum)) return false;

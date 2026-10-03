@@ -3263,11 +3263,11 @@ bool frontend_config_store_visit(const frontend_config_store *manager,
         (!manager->storage || (manager->storage_seeded && shared_storage_current(manager) &&
             frontend_shared_storage_visit(manager->storage,visitor,error)));
 }
-static bool config_header(qa_source_save_io *io,size_t *count,uint32_t *version)
+static bool config_header(qa_source_save_io *io,size_t *count)
 {
     uint8_t magic[4]={'Q','F','C','S'};
     return qa_source_save_bytes(io,magic,4) && !memcmp(magic,"QFCS",4) &&
-        qa_source_save_u32(io,version) && (*version==11 || *version==12 || *version==13) && qa_source_save_count(io,count,
+        qa_source_save_count(io,count,
             io->direction==QA_SOURCE_SAVE_READ?io->input.size-io->offset:SIZE_MAX);
 }
 static bool config_row(frontend_config_source *source,qa_source_save_io *io,
@@ -3373,8 +3373,8 @@ bool frontend_config_store_checkpoint(const frontend_config_store *manager,
             return fail(error,QA_ERROR_ARGUMENT,"Configuration key alias leaves its genuine physical GAME registry");
         ++count;
     }
-    qa_source_save_io io={0}; uint32_t version=13;
-    bool ok=qa_source_save_writer(&io,NULL,error) && config_header(&io,&count,&version);
+    qa_source_save_io io={0};
+    bool ok=qa_source_save_writer(&io,NULL,error) && config_header(&io,&count);
     for (frontend_config_source *source=manager->sources;ok && source;source=source->next)
         ok=config_row(source,&io,(qa_application_content_graph *)graph,NULL,refs);
     qa_buffer clients={0}; qa_bytes bytes={0};
@@ -3441,8 +3441,8 @@ bool frontend_config_store_restore(qa_frontend *frontend,qa_application *applica
     frontend_config_store *manager=frontend_config_store_create(frontend,error);
     if (!manager) return false;
     manager->restoring=true; manager->restore_refs=*refs;
-    qa_source_save_io io={0}; size_t count=0; uint32_t version=13;
-    bool ok=qa_source_save_reader(&io,NULL,bytes,error) && config_header(&io,&count,&version);
+    qa_source_save_io io={0}; size_t count=0;
+    bool ok=qa_source_save_reader(&io,NULL,bytes,error) && config_header(&io,&count);
     frontend_config_source **tail=&manager->sources;
     for (size_t i=0;ok && i<count;++i) {
         frontend_config_source *source=calloc(1,sizeof(*source));
@@ -3481,7 +3481,7 @@ bool frontend_config_store_restore(qa_frontend *frontend,qa_application *applica
         (!manager->image_fov_touched || shared) &&
         (!manager->sticky_seed_pending || (shared && !count && frontend_remote_configs_empty(manager->clients)));
     qa_bytes admin={0}; bool early=false;
-    if (ok && version>=12) ok=qa_source_save_bool(&io,&early);
+    if (ok) ok=qa_source_save_bool(&io,&early);
     if (ok && early) {
         ok=frontend_save_text(&io,&manager->admin_source) && manager->admin_source && *manager->admin_source &&
             qa_source_save_bytes(&io,&manager->admin_identity,sizeof(manager->admin_identity)) &&
@@ -3491,7 +3491,7 @@ bool frontend_config_store_restore(qa_frontend *frontend,qa_application *applica
         if (ok) ok=source && source->primary && qa_sha256_equal(&source->saved_identity,&manager->admin_identity);
     }
     bool logging=false; qa_bytes logfile={0};
-    if (ok && version>=13) ok=qa_source_save_bool(&io,&logging);
+    if (ok) ok=qa_source_save_bool(&io,&logging);
     if (ok && logging) ok=config_blob(&io,&logfile) && logfile.size &&
         frontend_qw_logfile_restore(graph,logfile,&manager->qw_logfile,error);
     if (ok) ok=qa_source_save_finish(&io,NULL);

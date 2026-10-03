@@ -46,8 +46,8 @@ static bool blob(qa_source_save_io *io, qa_bytes *bytes)
 
 static bool process_fields(qa_source_save_io *io, qa_native_sysv_process *owner)
 {
-    uint8_t magic[] = {'Q','S','V','P',3};
-    const uint8_t expected[] = {'Q','S','V','P',3};
+    uint8_t magic[] = {'Q','S','V','P'};
+    const uint8_t expected[] = {'Q','S','V','P'};
     qa_native_sysv_process_options *o = &owner->options;
     uint64_t *fields[] = {&o->guest.allocation_base, &o->scope, &o->first_function,
         &o->trap_base, &owner->stack, &owner->returned, &o->clock_id,

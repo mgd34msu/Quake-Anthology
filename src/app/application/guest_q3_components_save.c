@@ -5,9 +5,9 @@
 
 static bool prefix(application_q3_components *owner,qa_source_save_io *io,size_t *count)
 {
-    uint8_t magic[4]={'Q','G','C','P'}; uint32_t version=2;
+    uint8_t magic[4]={'Q','G','C','P'};
     uint64_t world=owner->options.world_source->owner;
-    if(!qa_source_save_bytes(io,magic,4)||memcmp(magic,"QGCP",4)||!qa_source_save_u32(io,&version)||version!=2||
+    if(!qa_source_save_bytes(io,magic,4)||memcmp(magic,"QGCP",4)||
         !qa_source_save_u64(io,&world)||world!=owner->options.world_source->owner||
         !qa_source_save_count(io,count,UINT32_MAX))
         return application_fail(io->error,QA_ERROR_FORMAT,"Component roster differs from its actual WORLD source");

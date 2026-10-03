@@ -431,10 +431,10 @@ bool frontend_remote_q3_commands_destroy(frontend_remote_q3_commands **owned,qa_
 }
 static bool fields(qa_source_save_io *io,frontend_remote_q3_commands *o,size_t *installed)
 {
-    uint8_t magic[4]={'Q','R','C','C'}; uint32_t version=1,product=o->dispatch->product;
+    uint8_t magic[4]={'Q','R','C','C'}; uint32_t product=o->dispatch->product;
     uint64_t identity=o->identity; uint32_t seat=o->seat;
     return qa_source_save_bytes(io,magic,sizeof(magic)) && !memcmp(magic,"QRCC",sizeof(magic)) &&
-        qa_source_save_u32(io,&version) && version==1 && qa_source_save_u32(io,&product) && product==(uint32_t)o->dispatch->product &&
+        qa_source_save_u32(io,&product) && product==(uint32_t)o->dispatch->product &&
         qa_source_save_u64(io,&identity) && identity==o->identity && qa_source_save_u32(io,&seat) && seat==o->seat &&
         qa_source_save_bool(io,&o->registered) && qa_source_save_bool(io,&o->closed) && (!o->closed || o->registered) &&
         qa_source_save_count(io,installed,command_count(o->dispatch->product)) &&

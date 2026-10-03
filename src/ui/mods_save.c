@@ -82,9 +82,9 @@ static bool cache_matches(const qa_ui_mods *mods, qa_error *error)
 static bool fields(qa_source_save_io *io, qa_ui_mods *saved, const qa_ui_mods *qualified,
     const qa_ui_menu_checkpoint_refs *refs)
 {
-    uint8_t magic[4] = {'Q','M','O','D'}; uint32_t schema = 1, seat = qualified->ui->options.seat;
+    uint8_t magic[4] = {'Q','M','O','D'}; uint32_t seat = qualified->ui->options.seat;
     uint64_t menu = qualified->menu, catalog = 0;
-    if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "QMOD", 4) || !qa_source_save_u32(io, &schema) || schema != 1 ||
+    if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "QMOD", 4) ||
         !qa_source_save_u32(io, &seat) || seat != qualified->ui->options.seat ||
         !qa_source_save_u64(io, &menu) || menu != qualified->menu) return false;
     if (io->direction == QA_SOURCE_SAVE_WRITE &&

@@ -75,13 +75,12 @@ void frontend_shader_destroy(qa_frontend *frontend)
 static bool remap_fields(qa_source_save_io *io,frontend_remap **head)
 {
     bool reading=io->direction==QA_SOURCE_SAVE_READ;
-    uint8_t magic[4]={'Q','F','R','M'}; uint32_t version=1; size_t count=0;
+    uint8_t magic[4]={'Q','F','R','M'}; size_t count=0;
     if (!reading) for (const frontend_remap *row=*head;row;row=row->next) {
         if (count==SIZE_MAX) return false;
         ++count;
     }
     if (!qa_source_save_bytes(io,magic,sizeof(magic)) || memcmp(magic,"QFRM",4) ||
-        !qa_source_save_u32(io,&version) || version!=1 ||
         !qa_source_save_count(io,&count,reading?io->input.size/14:SIZE_MAX)) return false;
     frontend_remap *row=*head,**tail=head;
     for (size_t i=0;i<count;++i) {

@@ -16,11 +16,10 @@ static bool fields(qa_source_save_io *io,frontend_remote_q3_graph_recipe *recipe
 {
     bool reading=io->direction==QA_SOURCE_SAVE_READ;
     frontend_remote_q3_graph_resources *v=&recipe->resources;
-    uint8_t magic[4]={'Q','R','G','T'}; uint32_t version=1;
-    uint64_t pool=0,resource=0;
+    uint8_t magic[4]={'Q','R','G','T'}; uint64_t pool=0,resource=0;
     if(!reading && v->map && !qa_application_content_resource_id(recipe->graph,v->map,&pool,&resource)) return false;
     if(!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QRGT",4) ||
-        !qa_source_save_u32(io,&version) || version!=1 || !qa_source_save_bool(io,&v->decoded) ||
+        !qa_source_save_bool(io,&v->decoded) ||
         !qa_source_save_u64(io,&v->identity) || v->identity<=QA_FRONTEND_COMMAND_OWNER ||
         !qa_source_save_u32(io,&v->physical_seat) || v->physical_seat>=recipe->frontend->options.seats ||
         !qa_source_save_string(io,&recipe->receiver) || !recipe->receiver ||

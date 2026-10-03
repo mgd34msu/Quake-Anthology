@@ -113,13 +113,13 @@ static inline bool vfs_save_identity(vfs_save_io *io, qa_fs_identity *identity)
         if (!vfs_save_u64(io, &identity->words[i])) return false;
     return true;
 }
-static inline bool vfs_save_magic(vfs_save_io *io, const uint8_t expected[8])
+static inline bool vfs_save_magic(vfs_save_io *io, const uint8_t expected[4])
 {
-    uint8_t bytes[8];
+    uint8_t bytes[4];
     if (!io->reading) memcpy(bytes, expected, sizeof(bytes));
     return vfs_save_bytes(io, bytes, sizeof(bytes)) &&
         (memcmp(bytes, expected, sizeof(bytes)) == 0 ||
-         vfs_save_fail(io, QA_ERROR_FORMAT, "unsupported VFS checkpoint schema"));
+         vfs_save_fail(io, QA_ERROR_FORMAT, "invalid VFS checkpoint magic"));
 }
 static inline bool vfs_save_finish(vfs_save_io *io)
 {

@@ -14,13 +14,12 @@ static bool blob(qa_source_save_io *io, qa_buffer *bytes)
 
 static bool header(qa_source_save_io *io, application_q3_gear *gear)
 {
-    uint8_t magic[4] = {'Q','A','G','E'}; uint32_t schema = 2;
+    uint8_t magic[4] = {'Q','A','G','E'};
     qa_sha256_digest digest = *qa_qvm_image_digest(gear->image);
     const char *profile = gear->definition->id, *path = gear->path;
     const char *owner = qa_strings_cstr(qa_session_strings(gear->options.host.session), gear->options.host.owner);
     uint64_t service_owner = gear->options.host.service_owner;
     bool okay = qa_source_save_bytes(io, magic, 4) && !memcmp(magic, "QAGE", 4) &&
-        qa_source_save_u32(io, &schema) && schema == 2 &&
         qa_source_save_bytes(io, digest.bytes, sizeof(digest.bytes)) &&
         qa_sha256_equal(&digest, qa_qvm_image_digest(gear->image)) &&
         qa_source_save_text(io, &profile) && profile && !strcmp(profile, gear->definition->id) &&
@@ -173,13 +172,13 @@ bool application_q3_gear_restore(application_q3_gear *gear, qa_bytes bytes,
     if (okay) okay = qa_qvm_restore_candidate_bindings(gear->vm, (qa_bytes){parts[3].data, parts[3].size}, constructed, saved, functions, error);
     if (okay) {
         gear->same_team = saved[0]; gear->damage = saved[1]; gear->pull = saved[2]; if (functions == 4) gear->mover = saved[3];
-        /* The real QAVM2 producer places its host stream after the 160-byte
+        /* The real QAVM producer places its host stream after the 156-byte
          * envelope and RAM. Binding qualification above validated that exact
          * envelope before this portable host admission can inspect files. */
         size_t memory = qa_qvm_memory_size(gear->vm);
-        okay = parts[3].size >= 160 && memory <= parts[3].size - 160 &&
-            qa_q3_host_checkpoint_portable_state((qa_bytes){parts[3].data + 160 + memory,
-                parts[3].size - 160 - memory}, error);
+        okay = parts[3].size >= 156 && memory <= parts[3].size - 156 &&
+            qa_q3_host_checkpoint_portable_state((qa_bytes){parts[3].data + 156 + memory,
+                parts[3].size - 156 - memory}, error);
     }
     if (okay) {
         okay = qa_cvars_save_commit(cvars, error); if (okay) cvars = NULL;

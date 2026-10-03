@@ -177,9 +177,8 @@ static bool fields(qa_source_save_io *io, application_unified_server *owner,
     bool player_present = owner->admitted_receipt || owner->inputs || owner->components || owner->pending_capture;
     uint64_t seat_owner = owner->seat.owner;
     uint32_t seat_index = owner->seat.index;
-    char magic[4] = {'Q','U','S','B'}; uint32_t version = 5;
+    char magic[4] = {'Q','U','S','B'};
     if (!qa_source_save_bytes(io, magic, sizeof(magic)) || memcmp(magic, "QUSB", sizeof(magic)) ||
-        !qa_source_save_u32(io, &version) || version != 5 ||
         !application_unified_save_source(io, owner->application, source, &current, false) ||
         !application_unified_save_retained_source(io, owner->application, source, &owner->offered) ||
         !application_unified_save_client(io, peer->id) ||

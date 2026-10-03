@@ -43,9 +43,9 @@ static bool topology(const qa_ui *saved, const qa_ui *qualified, qa_error *error
 }
 static bool fields(qa_source_save_io *io, qa_ui *saved, const qa_ui *qualified)
 {
-    uint8_t magic[4]={'Q','A','U','I'}; uint32_t schema=3,seat=qualified->options.seat;
+    uint8_t magic[4]={'Q','A','U','I'}; uint32_t seat=qualified->options.seat;
     bool input_clock=qualified->options.input_now_ms!=NULL;
-    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QAUI",4) || !qa_source_save_u32(io,&schema) || schema!=3 ||
+    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QAUI",4) ||
         !qa_source_save_u32(io,&seat) || seat!=qualified->options.seat) return false;
     if (!qa_source_save_bool(io,&input_clock) || input_clock!=(qualified->options.input_now_ms!=NULL)) return false;
     size_t menus=qualified->menu_count;

@@ -54,9 +54,8 @@ static bool state_blob(qa_source_save_io *io,qa_buffer *value)
 }
 static bool fields(qa_source_save_io *io,frontend_classic_client_graph *graph)
 {
-    uint8_t magic[4]={'Q','F','C','L'}; uint32_t version=1;
-    if(!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QFCL",4) ||
-        !qa_source_save_u32(io,&version) || version!=1 || !qa_source_save_bool(io,&graph->present)) return false;
+    uint8_t magic[4]={'Q','F','C','L'}; if(!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QFCL",4) ||
+        !qa_source_save_bool(io,&graph->present)) return false;
     if(!graph->present) return true;
     return span(io,&graph->encoded_recipe) && graph->encoded_recipe.size &&
         state_blob(io,&graph->state.physical) && graph->state.physical.size &&

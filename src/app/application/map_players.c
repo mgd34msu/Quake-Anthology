@@ -3997,7 +3997,7 @@ bool application_players_guest_detach(qa_application *application,
     return true;
 }
 
-#define PLAYER_CHECKPOINT_HEADER 52u
+#define PLAYER_CHECKPOINT_HEADER 48u
 #define PLAYER_CHECKPOINT_RECORD 120u
 #define PLAYER_CHECKPOINT_POINT 60u
 #define PLAYER_CHECKPOINT_Q1_POINT 16u
@@ -4144,7 +4144,7 @@ bool application_players_checkpoint_capture(qa_application *application, qa_buff
     }
     qa_net_writer writer;
     qa_net_writer_init(&writer, buffer.data, size, error);
-    qa_net_write_data(&writer, "QAPR", 4); qa_net_write_u32(&writer, 3);
+    qa_net_write_data(&writer, "QAPR", 4);
     uint32_t flags = (roster != NULL ? 1u : 0u) | (roster && roster->q1_selector ? 2u : 0u) |
                      (selector.last.registry ? 4u : 0u);
     qa_net_write_u32(&writer, flags);
@@ -4232,14 +4232,14 @@ bool application_players_checkpoint_restore(qa_application *candidate, qa_bytes 
     const qa_strings *strings = qa_session_strings(candidate->session);
     qa_net_reader reader;
     qa_net_reader_init(&reader, bytes, error); reader.bit = 32;
-    uint32_t version = qa_net_read_u32(&reader), flags = qa_net_read_u32(&reader);
+    uint32_t flags = qa_net_read_u32(&reader);
     qa_actor_owner map_owner = qa_net_read_u32(&reader);
     qa_bsp_family family = (qa_bsp_family)qa_net_read_u32(&reader);
     qa_string_id spawn_point = qa_net_read_u32(&reader);
     int32_t world_type = qa_net_read_i32(&reader);
     uint32_t count = qa_net_read_u32(&reader), points = qa_net_read_u32(&reader), q1_points = qa_net_read_u32(&reader);
     qa_saved_actor_id last = roster_read_saved(&reader);
-    if (reader.failed || version != 3 || (flags & ~7u) || ((flags & 4u) && !(flags & 2u)) ||
+    if (reader.failed || (flags & ~7u) || ((flags & 4u) && !(flags & 2u)) ||
         ((flags & 2u) && !(flags & 1u)))
         return application_fail(error, QA_ERROR_FORMAT, "invalid roster schema or presence flags");
     if (!(flags & 1u)) {

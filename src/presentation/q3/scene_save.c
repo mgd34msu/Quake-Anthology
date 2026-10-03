@@ -145,10 +145,8 @@ static bool arrays(qa_source_save_io *io, qa_q3_presentation *p)
 }
 static bool fields(qa_source_save_io *io, qa_q3_presentation *p)
 {
-    uint8_t magic[4]={'Q','3','P','S'}; uint32_t schema=3;
-    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"Q3PS",4) || !qa_source_save_u32(io,&schema) ||
-        (schema!=2 && schema!=3)) return false;
-    if (schema>=3 && (!qa_source_save_u32(io,&p->source_entity_first) || p->source_entity_first>1022)) return false;
+    uint8_t magic[4]={'Q','3','P','S'}; if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"Q3PS",4)) return false;
+    if ((!qa_source_save_u32(io,&p->source_entity_first) || p->source_entity_first>1022)) return false;
     FIELD(bool,p,world_loaded); FIELD(bool,p,material_view_valid);
     if (p->world_loaded && (!p->world || !p->geometry)) return false;
     FIELD(i32,p,render_milliseconds);

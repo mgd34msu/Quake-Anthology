@@ -92,7 +92,7 @@ bool qa_download_window_checkpoint(const qa_download_window *window, qa_buffer *
     if (!data) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Encoding download window continuation"); return false; }
     qa_sha256_digest digest; qa_sha256(window->content, &digest);
     qa_net_writer w; qa_net_writer_init(&w, data, capacity, error);
-    bool ok = qa_net_write_u32(&w, UINT32_C(0x57444151)) && qa_net_write_u32(&w, 1) &&
+    bool ok = qa_net_write_u32(&w, UINT32_C(0x57444151)) &&
         qa_net_write_u64(&w, window->content.size) && qa_net_write_data(&w, digest.bytes, sizeof(digest.bytes)) &&
         qa_net_write_u64(&w, window->block_bytes) && qa_net_write_u32(&w, window->capacity) &&
         qa_net_write_u64(&w, window->retry_ns) && qa_net_write_u64(&w, window->base) &&
@@ -110,7 +110,7 @@ bool qa_download_window_restore_checkpoint(qa_bytes record, qa_bytes content,
     if (!out || *out || (record.size && !record.data) || (content.size && !content.data))
         return fail(error, "Invalid reliable download window restore output/content");
     qa_net_reader r; qa_net_reader_init(&r, record, error);
-    if (qa_net_read_u32(&r) != UINT32_C(0x57444151) || qa_net_read_u32(&r) != 1 || qa_net_read_u64(&r) != content.size)
+    if (qa_net_read_u32(&r) != UINT32_C(0x57444151) || qa_net_read_u64(&r) != content.size)
         return fail(error, "Download window continuation schema/content size differs");
     qa_sha256_digest saved = {0}, actual; qa_sha256(content, &actual);
     if (!qa_net_read_data(&r, saved.bytes, sizeof(saved.bytes)) || !qa_sha256_equal(&saved, &actual))

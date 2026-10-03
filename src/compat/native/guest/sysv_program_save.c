@@ -29,10 +29,10 @@ static bool blob(qa_source_save_io *io, qa_bytes *bytes)
 }
 static bool fields(qa_source_save_io *io, qa_native_sysv_program *owner)
 {
-    uint8_t magic[5] = {'Q','S','P','G',3}; const uint8_t expected[5] = {'Q','S','P','G',3};
+    uint8_t magic[4] = {'Q','S','P','G'}; const uint8_t expected[4] = {'Q','S','P','G'};
     qa_native_sysv_program_options *o = &owner->options; uint32_t backend = o->guest.backend;
     bool opener = o->services.open_file != NULL;
-    if (!qa_source_save_bytes(io, magic, 5) || memcmp(magic, expected, 5) ||
+    if (!qa_source_save_bytes(io, magic, sizeof(magic)) || memcmp(magic, expected, sizeof(magic)) ||
         !image_fields(io, &o->guest.image) || !qa_source_save_u32(io, &backend) || backend > QA_NATIVE_GUEST_HOST_X86_64 ||
         !qa_source_save_u64(io, &o->guest.allocation_base) ||
         !qa_source_save_count(io, &o->guest.maximum_backing_bytes, SIZE_MAX) ||

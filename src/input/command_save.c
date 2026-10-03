@@ -5,9 +5,8 @@
 static bool fields(qa_source_save_io *io, qa_input_command_builder *saved)
 {
     uint8_t magic[4] = {'Q','I','C','B'};
-    uint32_t schema = 2, kind = saved->kind;
+    uint32_t kind = saved->kind;
     if (!qa_source_save_bytes(io, magic, sizeof(magic)) || memcmp(magic, "QICB", sizeof(magic)) ||
-        !qa_source_save_u32(io, &schema) || schema != 2 ||
         !qa_source_save_u32(io, &kind) || kind > QA_MOVEMENT_Q3 ||
         !qa_source_save_vec3(io, &saved->angles) || !qa_vec_finite(saved->angles) ||
         !qa_source_save_f32(io, &saved->mouse.previous.x) || !isfinite(saved->mouse.previous.x) ||

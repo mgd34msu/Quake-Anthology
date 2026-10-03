@@ -18,17 +18,17 @@ static bool record_read(application_provider *provider, qa_bytes bytes,
     if (!provider || provider->kind != APPLICATION_PROVIDER_Q2 || !provider->state.q2 ||
         !provider->constructed || !provider->application ||
         provider->application->operation != APPLICATION_PERSISTING ||
-        provider->close_pending || !bytes.data || bytes.size < 24 ||
-        memcmp(bytes.data, "QAN2", 4) || qa_load_u32le(bytes.data + 4) != 1)
+        provider->close_pending || !bytes.data || bytes.size < 20 ||
+        memcmp(bytes.data, "QAN2", 4))
         return application_fail(error, QA_ERROR_FORMAT, "Invalid Q2 physical source continuation");
-    uint64_t game_size = qa_load_u64le(bytes.data + 8);
-    uint64_t cvars_size = qa_load_u64le(bytes.data + 16);
-    if (!game_size || game_size > bytes.size - 24 || !cvars_size ||
-        cvars_size != bytes.size - 24 - (size_t)game_size)
+    uint64_t game_size = qa_load_u64le(bytes.data + 4);
+    uint64_t cvars_size = qa_load_u64le(bytes.data + 12);
+    if (!game_size || game_size > bytes.size - 20 || !cvars_size ||
+        cvars_size != bytes.size - 20 - (size_t)game_size)
         return application_fail(error, QA_ERROR_FORMAT, "Invalid Q2 source continuation lengths");
     *out = (q2_source_record){
-        .game = {bytes.data + 24, (size_t)game_size},
-        .cvars = {bytes.data + 24 + (size_t)game_size, (size_t)cvars_size},
+        .game = {bytes.data + 20, (size_t)game_size},
+        .cvars = {bytes.data + 20 + (size_t)game_size, (size_t)cvars_size},
     };
     return true;
 }
@@ -43,20 +43,19 @@ bool application_native_q2_checkpoint_capture(application_provider *provider,
     qa_buffer game = {0}, cvars = {0}, bundle = {0};
     bool okay = application_native_q2_console_capture(provider, &cvars, error) &&
         qa_q2_game_capture(provider->state.q2, &game, error);
-    if (okay && (game.size > SIZE_MAX - 24 || cvars.size > SIZE_MAX - 24 - game.size))
+    if (okay && (game.size > SIZE_MAX - 20 || cvars.size > SIZE_MAX - 20 - game.size))
         okay = application_fail(error, QA_ERROR_MEMORY, "Q2 source continuation extent overflow");
     if (okay) {
-        bundle.size = 24 + game.size + cvars.size;
+        bundle.size = 20 + game.size + cvars.size;
         bundle.data = malloc(bundle.size);
         if (!bundle.data) okay = application_fail(error, QA_ERROR_MEMORY, "Retaining the Q2 source continuation");
     }
     if (okay) {
         memcpy(bundle.data, "QAN2", 4);
-        qa_store_u32le(bundle.data + 4, 1);
-        qa_store_u64le(bundle.data + 8, game.size);
-        qa_store_u64le(bundle.data + 16, cvars.size);
-        memcpy(bundle.data + 24, game.data, game.size);
-        memcpy(bundle.data + 24 + game.size, cvars.data, cvars.size);
+        qa_store_u64le(bundle.data + 4, game.size);
+        qa_store_u64le(bundle.data + 12, cvars.size);
+        memcpy(bundle.data + 20, game.data, game.size);
+        memcpy(bundle.data + 20 + game.size, cvars.data, cvars.size);
         *out = bundle;
     } else qa_buffer_free(&bundle);
     qa_buffer_free(&game);
@@ -72,14 +71,13 @@ bool application_native_q2_checkpoint_prepare(application_provider *provider,
         saved->owner.kind != QA_SAVE_PROVIDER || !saved->owner.instance ||
         strcmp(saved->owner.instance, provider->launch->selection.instance) ||
         !qa_sha256_equal(&saved->owner.content, &provider->launch->identity) ||
-        !bytes.data || bytes.size < 32 || memcmp(bytes.data, "QAPV", 4) ||
-        qa_load_u32le(bytes.data + 4) != 1 ||
-        qa_load_u32le(bytes.data + 8) != APPLICATION_PROVIDER_Q2 ||
-        qa_load_u32le(bytes.data + 12) > 1 ||
-        qa_load_u64le(bytes.data + 24) != bytes.size - 32)
+        !bytes.data || bytes.size < 28 || memcmp(bytes.data, "QAPV", 4) ||
+        qa_load_u32le(bytes.data + 4) != APPLICATION_PROVIDER_Q2 ||
+        qa_load_u32le(bytes.data + 8) > 1 ||
+        qa_load_u64le(bytes.data + 20) != bytes.size - 28)
         return application_fail(error, QA_ERROR_FORMAT, "Missing actual Q2 provider source record");
     q2_source_record record;
-    if (!record_read(provider, (qa_bytes){bytes.data + 32, bytes.size - 32}, &record, error))
+    if (!record_read(provider, (qa_bytes){bytes.data + 28, bytes.size - 28}, &record, error))
         return false;
     qa_console *console = NULL;
     qa_cvars *cvars = NULL;

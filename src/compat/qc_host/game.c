@@ -37,28 +37,27 @@ static bool capture_host(void *context, qa_buffer *out, qa_error *error) {
     if (!game->options.checkpoint(game->options.context, &engine, error)) {
         qa_buffer_free(&engine); return false;
     }
-    if ((engine.size && !engine.data) || engine.size > SIZE_MAX - 12) {
+    if ((engine.size && !engine.data) || engine.size > SIZE_MAX - 8) {
         qa_buffer_free(&engine); return qc_game_fail(error, QA_ERROR_FORMAT, "Invalid QC engine checkpoint");
     }
-    uint8_t *bytes = malloc(engine.size + 12);
+    uint8_t *bytes = malloc(engine.size + 8);
     if (!bytes) { qa_buffer_free(&engine); return qc_game_fail(error, QA_ERROR_MEMORY, "Allocating QC host checkpoint"); }
-    qa_store_u32le(bytes, 1); qa_store_u32le(bytes + 4, game->options.max_clients);
-    qa_store_u32le(bytes + 8, game->loading ? 1u : 0u);
-    if (engine.size) memcpy(bytes + 12, engine.data, engine.size);
-    *out = (qa_buffer){bytes, engine.size + 12}; qa_buffer_free(&engine); return true;
+    qa_store_u32le(bytes, game->options.max_clients);
+    qa_store_u32le(bytes + 4, game->loading ? 1u : 0u);
+    if (engine.size) memcpy(bytes + 8, engine.data, engine.size);
+    *out = (qa_buffer){bytes, engine.size + 8}; qa_buffer_free(&engine); return true;
 }
 static bool restore_host(void *context, qa_bytes bytes, qa_error *error) {
     qa_qc_game *game = context;
-    if (!bytes.data || bytes.size < 12 || qa_load_u32le(bytes.data) != 1 ||
-        qa_load_u32le(bytes.data + 4) != game->options.max_clients ||
-        qa_load_u32le(bytes.data + 8) > 1)
+    if (!bytes.data || bytes.size < 8 || qa_load_u32le(bytes.data) != game->options.max_clients ||
+        qa_load_u32le(bytes.data + 4) > 1)
         return qc_game_fail(error, QA_ERROR_FORMAT, "QC host checkpoint identity differs");
     game->restoring = true;
     bool ok = game->options.restore(game->options.context,
-        (qa_bytes){bytes.data + 12, bytes.size - 12}, error);
+        (qa_bytes){bytes.data + 8, bytes.size - 8}, error);
     game->restoring = false;
     if (!ok) return false;
-    game->loading = qa_load_u32le(bytes.data + 8) != 0; return true;
+    game->loading = qa_load_u32le(bytes.data + 4) != 0; return true;
 }
 bool qa_qc_game_create(const qa_qc_program *program, const qa_qc_game_options *options,
                         qa_qc_game **out, qa_error *error) {

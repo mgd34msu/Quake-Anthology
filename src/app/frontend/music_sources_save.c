@@ -107,9 +107,8 @@ static bool command_fields(qa_source_save_io *io, frontend_music_command *comman
 static bool fields(qa_source_save_io *io, qa_application_content_graph *graph, const qa_audio_checkpoint_refs *refs,
     frontend_music_sources *owner) {
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
-    uint8_t magic[4] = {'Q','F','M','S'}; uint32_t version = 3;
-    bool ok = qa_source_save_bytes(io, magic, 4) && !memcmp(magic, "QFMS", 4) &&
-        qa_source_save_u32(io, &version) && version == 3 && qa_source_save_u64(io, &owner->seed);
+    uint8_t magic[4] = {'Q','F','M','S'}; bool ok = qa_source_save_bytes(io, magic, 4) && !memcmp(magic, "QFMS", 4) &&
+        qa_source_save_u64(io, &owner->seed);
     uint64_t catalog = reading ? 0 : qa_application_content_catalog_id(graph, owner->menu_catalog);
     const qa_product *selected = !reading && owner->menu_product ? qa_catalog_product(owner->menu_catalog, owner->menu_product) : NULL;
     char *key = selected ? (char *)selected->key : NULL;

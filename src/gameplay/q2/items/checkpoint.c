@@ -16,7 +16,7 @@ bool qa_q2_item_capture(qa_q2_game *g, qa_actor_id id, qa_q2_item_checkpoint *ou
     if (!q2_checkpoint_idle(g, e))
         return false;
     q2_actor *a = q2_actor_get(g, id, false, NULL);
-    qa_q2_item_checkpoint s = {.version = 1};
+    qa_q2_item_checkpoint s = {0};
     if (!a) {
         *out = s;
         return true;
@@ -112,7 +112,7 @@ static bool valid_item(qa_q2_game *g, const qa_q2_item_checkpoint *s, qa_error *
 }
 bool qa_q2_item_restore(qa_q2_game *g, qa_actor_id id, const qa_q2_item_checkpoint *s,
                         qa_error *e) {
-    if (!g || !s || s->version != 1 || !q2_actor_live(g, id) ||
+    if (!g || !s || !q2_actor_live(g, id) ||
         (s->present && !valid_item(g, s, e)) ||
         (s->powers_present && (!isfinite(s->maximum_health) || s->maximum_health <= 0)) ||
         (!s->powers_present && (s->definitions_bound || s->power_inventory_bound))) {
@@ -237,11 +237,11 @@ bool qa_q2_items_capture(qa_q2_game *g, qa_q2_items_checkpoint *out, qa_error *e
     }
     if (!q2_checkpoint_idle(g, e))
         return false;
-    *out = (qa_q2_items_checkpoint){.version = 1, .cubes = g->item_runtime->cubes};
+    *out = (qa_q2_items_checkpoint){.cubes = g->item_runtime->cubes};
     return true;
 }
 bool qa_q2_items_restore(qa_q2_game *g, const qa_q2_items_checkpoint *s, qa_error *e) {
-    if (!g || !s || s->version != 1) {
+    if (!g || !s) {
         qa_error_set(e, QA_ERROR_FORMAT, 0, "Invalid Q2 items checkpoint");
         return false;
     }

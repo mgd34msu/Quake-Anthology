@@ -919,7 +919,10 @@ typedef struct windows_codec {
 static bool codec_bytes(windows_codec *io, void *data, size_t count)
 {
     if (io->reading) {
-        if (count > io->input.size - io->offset) return guest_fail(io->error, QA_ERROR_FORMAT, io->offset, "Windows continuation is truncated");
+        if (count > io->input.size - io->offset) {
+            guest_fail(io->error, QA_ERROR_FORMAT, io->offset, "Windows continuation is truncated");
+            return false;
+        }
         if (count) memcpy(data, io->input.data + io->offset, count);
         io->offset += count; return true;
     }
@@ -1342,8 +1345,8 @@ bool guest_windows_checkpoint(const guest_windows *source, qa_buffer *out, qa_er
     if (!guest_windows_idle(source) || !out || out->data || out->size)
         return guest_fail(error,QA_ERROR_ARGUMENT,0,"Windows checkpoint requires idle real owner and empty output");
     windows_codec io = {.error=error}; guest_windows *owner = (guest_windows *)source;
-    char magic[] = "QAWN6"; qa_buffer imports = {0}, resources = {0};
-    bool okay = records_valid(owner,error) && windows_stdio_lower_valid(owner,error) && registry_valid(owner,error) && codec_bytes(&io,magic,5) && codec_owner(&io,owner,NULL,NULL) &&
+    char magic[4] = {'Q','A','W','N'}; qa_buffer imports = {0}, resources = {0};
+    bool okay = records_valid(owner,error) && windows_stdio_lower_valid(owner,error) && registry_valid(owner,error) && codec_bytes(&io,magic,sizeof(magic)) && codec_owner(&io,owner,NULL,NULL) &&
         guest_runtime_imports_checkpoint(owner->imports,&imports,error) &&
         guest_runtime_resources_checkpoint(owner->resources,&resources,error) && blob(&io,&imports) && blob(&io,&resources);
     qa_buffer_free(&imports); qa_buffer_free(&resources);
@@ -1359,8 +1362,8 @@ bool guest_windows_decode(qa_bytes bytes, guest_windows_image_resolve_fn resolve
     if (!owner) return guest_fail(error,QA_ERROR_MEMORY,0,"allocating detached Windows candidate");
     owner->detached = true; owner->kernel = calloc(1,sizeof(*owner->kernel)); owner->crt = calloc(1,sizeof(*owner->crt)); owner->msvc = calloc(1,sizeof(*owner->msvc));
     if (!owner->kernel || !owner->crt || !owner->msvc) { dispose(owner); return guest_fail(error,QA_ERROR_MEMORY,0,"allocating detached Windows services"); }
-    windows_codec io = {.input=bytes,.error=error,.reading=true}; char magic[5]; qa_buffer imports = {0}, resources = {0};
-    bool okay = codec_bytes(&io,magic,5) && !memcmp(magic,"QAWN6",5);
+    windows_codec io = {.input=bytes,.error=error,.reading=true}; char magic[4]; qa_buffer imports = {0}, resources = {0};
+    bool okay = codec_bytes(&io,magic,sizeof(magic)) && !memcmp(magic,"QAWN",sizeof(magic));
     if (!okay) guest_fail(error,QA_ERROR_FORMAT,0,"Windows continuation signature differs");
     if (okay) okay = codec_owner(&io,owner,resolve,context) && blob(&io,&imports) && blob(&io,&resources);
     if (okay && io.offset != bytes.size) okay = guest_fail(error,QA_ERROR_FORMAT,io.offset,"Windows continuation has trailing bytes");

@@ -75,9 +75,8 @@ done:
 }
 static bool fields(qa_source_save_io *io, bool *attempted, bool *resolved, qa_net_address *address)
 {
-    uint32_t magic = UINT32_C(0x41533351), version = 1;
+    uint32_t magic = UINT32_C(0x41533351);
     if (!qa_source_save_u32(io, &magic) || magic != UINT32_C(0x41533351) ||
-        !qa_source_save_u32(io, &version) || version != 1 ||
         !qa_source_save_bool(io, attempted) || !qa_source_save_bool(io, resolved)) return false;
     if (*resolved && !*attempted) return fail(io->error, QA_ERROR_FORMAT, "Q3 authority resolved without its actual lookup attempt");
     if (!*resolved) return true;
