@@ -355,8 +355,11 @@ bool application_unified_output_build(qa_application *app, const application_uni
         text(&j, ",\"worldText\":", error) && child_field(&j, children->presentation, p, "worldText", QA_JSON_ARRAY, error) &&
         text(&j, ",\"player\":{\"actor\":", error) && actor(&j, player->actor, error) &&
         text(&j, ",\"view\":", error) && child_field(&j, children->presentation, presented_player, "view", QA_JSON_OBJECT, error) &&
-        text(&j, ",\"ui\":", error) && child_field(&j, children->presentation, presented_player, "ui", QA_JSON_OBJECT, error) &&
-        text(&j, "}", error);
+        text(&j, ",\"ui\":", error) && child_field(&j, children->presentation, presented_player, "ui", QA_JSON_OBJECT, error);
+    if (ok && qa_json_get(presentation, presented_player, "clientPresentation") != QA_JSON_NONE)
+        ok = text(&j, ",\"clientPresentation\":", error) &&
+            child_field(&j, children->presentation, presented_player, "clientPresentation", QA_JSON_OBJECT, error);
+    if (ok) ok = text(&j, "}", error);
     static const char *const optional[] = {"nativeCamera", "components"};
     for (size_t i = 0; ok && i < sizeof(optional) / sizeof(optional[0]); ++i) {
         qa_json_id field = qa_json_get(presentation, p, optional[i]);
