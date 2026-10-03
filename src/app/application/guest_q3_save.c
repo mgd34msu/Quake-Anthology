@@ -559,23 +559,25 @@ static bool blob(qa_source_save_io *io, qa_bytes *bytes, size_t minimum)
     return qa_source_save_bytes(io, (void *)bytes->data, length);
 }
 
-static bool acquisition(qa_source_save_io *io, qa_vfs_acquisition *value)
+static bool acquisition(qa_source_save_io *io, const qa_vfs *view, qa_vfs_acquisition *value)
 {
     return (qa_source_save_u64(io, &value->mount) && value->mount &&
         qa_source_save_u64(io, &value->resource_id) && value->resource_id &&
         owned_text(io, &value->path) && value->path && *value->path &&
         owned_text(io, &value->lookup_path) && value->lookup_path && *value->lookup_path &&
         owned_text(io, &value->link_source) && owned_text(io, &value->link_target) &&
-        ((value->link_source != NULL) == (value->link_target != NULL))) ||
+        ((value->link_source != NULL) == (value->link_target != NULL)) &&
+        qa_vfs_acquisition_opening_codec(io, view, value)) ||
         state_fail(io, QA_ERROR_FORMAT, "Invalid Q3 actual opening acquisition");
 }
 
-static bool descriptor_fields(qa_source_save_io *io, q3g_restore *saved)
+static bool descriptor_fields(qa_source_save_io *io, q3g_restore *saved,
+    const qa_application_content_graph *graph)
 {
     if (!qa_source_save_count(io, &saved->descriptor_count, SIZE_MAX / sizeof(*saved->descriptors)) ||
         !qa_source_save_count(io, &saved->current_descriptor, saved->descriptor_count)) return false;
     if (io->direction == QA_SOURCE_SAVE_READ && saved->descriptor_count) {
-        if (saved->descriptor_count > (io->input.size - io->offset) / 128)
+        if (saved->descriptor_count > (io->input.size - io->offset) / 129)
             return state_fail(io, QA_ERROR_FORMAT, "Truncated Q3 private descriptor inventory");
         saved->descriptors = calloc(saved->descriptor_count, sizeof(*saved->descriptors));
         if (!saved->descriptors) return state_fail(io, QA_ERROR_MEMORY, "Restoring Q3 private descriptors");
@@ -595,7 +597,8 @@ static bool descriptor_fields(qa_source_save_io *io, q3g_restore *saved)
             !qa_source_save_u64(io, &d->declaration_pool) ||
             !qa_source_save_u64(io, &d->declaration) ||
             (!!d->declaration_pool != !!d->declaration) ||
-            !acquisition(io, &d->acquisition) || d->acquisition.resource_id != d->artifact ||
+            !acquisition(io, qa_application_content_view(graph, d->view), &d->acquisition) ||
+            d->acquisition.resource_id != d->artifact ||
             !qa_source_save_count(io, &d->interface_count, SIZE_MAX / sizeof(*d->interfaces)))
             return state_fail(io, QA_ERROR_FORMAT, "Invalid Q3 private source descriptor");
         for (size_t j = 0; j < i; ++j)
@@ -729,8 +732,10 @@ static bool collision_fields(qa_source_save_io *io, qa_q3_host_collision_profile
     return qa_source_save_f32(io, &profile->trajectory_gravity);
 }
 
-static bool saved_fields(qa_source_save_io *io, q3g_restore *saved)
+static bool saved_fields(qa_source_save_io *io, q3g_restore *saved, const application_provider *provider)
 {
+    const qa_application_content_graph *graph = qa_application_content_graph_read(provider->application);
+    if (!graph) return state_fail(io, QA_ERROR_FORMAT, "Q3 continuation lacks its actual content graph");
     uint8_t magic[8] = {'Q','A','G','3','P','V',0,0};
     const uint8_t expected[8] = {'Q','A','G','3','P','V',0,0};
     if (!qa_source_save_bytes(io, magic, sizeof(magic)) ||
@@ -741,11 +746,11 @@ static bool saved_fields(qa_source_save_io *io, q3g_restore *saved)
         return state_fail(io, QA_ERROR_FORMAT, "Invalid coupled Q3 provider envelope");
     bool console = saved->cvars.size != 0;
     if (!qa_source_save_bool(io, &console) || (console && !blob(io, &saved->cvars, 12)) ||
-        !descriptor_fields(io, saved) || !registry_fields(io, saved) || !client_globals_fields(io, saved) ||
+        !descriptor_fields(io, saved, graph) || !registry_fields(io, saved) || !client_globals_fields(io, saved) ||
         !qa_source_save_count(io, &saved->artifact_count, SIZE_MAX / sizeof(*saved->artifacts)))
         return state_fail(io, QA_ERROR_FORMAT, "Invalid original GAME console continuation");
     if (io->direction == QA_SOURCE_SAVE_READ) {
-        if (!saved->artifact_count || saved->artifact_count > (io->input.size - io->offset) / 114)
+        if (!saved->artifact_count || saved->artifact_count > (io->input.size - io->offset) / 115)
             return state_fail(io, QA_ERROR_FORMAT, "Invalid Q3 artifact inventory extent");
         saved->artifacts = calloc(saved->artifact_count, sizeof(*saved->artifacts));
         if (!saved->artifacts) return state_fail(io, QA_ERROR_MEMORY, "Restoring Q3 artifact inventory");
@@ -762,17 +767,20 @@ static bool saved_fields(qa_source_save_io *io, q3g_restore *saved)
             !qa_source_save_bytes(io, artifact->equipment_digest.bytes, 32) ||
             !qa_source_save_count(io, &artifact->descriptor, saved->descriptor_count) ||
             !qa_source_save_u64(io, &artifact->pool) || !artifact->pool ||
-            !qa_source_save_u64(io, &artifact->resource) || !artifact->resource ||
-            !acquisition(io, &artifact->acquisition) ||
-            artifact->resource != artifact->acquisition.resource_id)
+            !qa_source_save_u64(io, &artifact->resource) || !artifact->resource)
             return state_fail(io, QA_ERROR_FORMAT, "Invalid Q3 source artifact declaration");
+        const qa_vfs *view = artifact->descriptor ? qa_application_content_view(graph,
+            saved->descriptors[artifact->descriptor - 1].view) : provider->launch->content;
+        if (!acquisition(io, view, &artifact->acquisition) ||
+            artifact->resource != artifact->acquisition.resource_id)
+            return state_fail(io, QA_ERROR_FORMAT, "Invalid Q3 source artifact acquisition");
         bool items = artifact->items_resource != 0;
         if (!qa_source_save_bool(io, &items) || (items &&
             (artifact->kind != QA_QVM_GAME ||
              !qa_source_save_u64(io, &artifact->items_pool) || !artifact->items_pool ||
              !qa_source_save_u64(io, &artifact->items_resource) || !artifact->items_resource ||
              !qa_source_save_bytes(io, artifact->items_digest.bytes, 32) ||
-             !acquisition(io, &artifact->items_acquisition) ||
+             !acquisition(io, view, &artifact->items_acquisition) ||
              artifact->items_resource != artifact->items_acquisition.resource_id ||
              strcmp(artifact->items_acquisition.path, artifact->qvm ? "qvm-items.json" : "native-q3-items.json"))))
             return state_fail(io, QA_ERROR_FORMAT, "Invalid retained Q3 item catalog declaration");
@@ -782,7 +790,7 @@ static bool saved_fields(qa_source_save_io *io, q3g_restore *saved)
              !qa_source_save_u64(io, &artifact->body_pool) || !artifact->body_pool ||
              !qa_source_save_u64(io, &artifact->body_resource) || !artifact->body_resource ||
              !qa_source_save_bytes(io, artifact->body_digest.bytes, 32) ||
-             !acquisition(io, &artifact->body_acquisition) ||
+             !acquisition(io, view, &artifact->body_acquisition) ||
              artifact->body_resource != artifact->body_acquisition.resource_id ||
              strcmp(artifact->body_acquisition.path, "cgame-presentation.json"))))
             return state_fail(io, QA_ERROR_FORMAT, "Invalid retained CGAME body declaration");
@@ -796,7 +804,7 @@ static bool saved_fields(qa_source_save_io *io, q3g_restore *saved)
              !qa_source_save_u64(io, &artifact->models_pool) || !artifact->models_pool ||
              !qa_source_save_u64(io, &artifact->models_resource) || !artifact->models_resource ||
              !qa_source_save_bytes(io, artifact->models_digest.bytes, 32) ||
-             !acquisition(io, &artifact->models_acquisition) ||
+             !acquisition(io, view, &artifact->models_acquisition) ||
              artifact->models_resource != artifact->models_acquisition.resource_id ||
              strcmp(artifact->models_acquisition.path, "cgame-weapon-models.json"))))
             return state_fail(io, QA_ERROR_FORMAT, "Invalid actual CG weapon model declaration opening");
@@ -1321,7 +1329,7 @@ static bool capture_body(application_provider *provider,
     qa_source_save_io io = {0};
     bool ok = clients_agree(provider, error) && saved_collect(provider, resources, expected, &saved, error) &&
         qa_source_save_writer(&io, provider->application->session, error) &&
-        saved_fields(&io, saved) && qa_source_save_finish(&io, out);
+        saved_fields(&io, saved, provider) && qa_source_save_finish(&io, out);
     qa_source_save_dispose(&io); saved_free(saved);
     return ok;
 }
@@ -1351,7 +1359,7 @@ bool application_guest_q3_save_matches(application_provider *provider, qa_bytes 
     qa_source_save_io io = {0};
     qa_buffer actual = {0};
     bool ok = qa_source_save_reader(&io, provider->application->session, body, error) &&
-        saved_fields(&io, expected) && qa_source_save_finish(&io, NULL) &&
+        saved_fields(&io, expected, provider) && qa_source_save_finish(&io, NULL) &&
         capture_body(provider, resources, expected, &actual, error) &&
         equal_bytes(body, (qa_bytes){actual.data, actual.size});
     qa_source_save_dispose(&io);
@@ -1670,7 +1678,7 @@ bool application_guest_q3_save_prepare(application_provider *provider, qa_world 
     qa_source_save_io io = {0};
     bool ok = qa_source_save_reader(&io, provider->application->session,
         (qa_bytes){saved->storage.data, saved->storage.size}, error) &&
-        saved_fields(&io, saved) && qa_source_save_finish(&io, NULL) &&
+        saved_fields(&io, saved, provider) && qa_source_save_finish(&io, NULL) &&
         qualify_base(provider, world, saved, product, choices, error) &&
         qualify_content(provider, saved, error) && restore_descriptors(provider, saved, error);
     qa_source_save_dispose(&io);
