@@ -41,8 +41,8 @@ static const q2_source_cvar common[] = {
     {"sv_rollspeed", "200", 0}, {"sv_rollangle", "2", 0},
     {"sv_maxvelocity", "2000", 0}, {"sv_gravity", "800", 0},
     {"dedicated", "0", QA_Q2_CVAR_NOSET},
-    {"cheats", "0", QA_CVAR_SERVERINFO | QA_Q2_CVAR_LATCH},
-    {"maxclients", "4", QA_CVAR_SERVERINFO | QA_Q2_CVAR_LATCH},
+    {"cheats", "0", (uint32_t)QA_CVAR_SERVERINFO | (uint32_t)QA_Q2_CVAR_LATCH},
+    {"maxclients", "4", (uint32_t)QA_CVAR_SERVERINFO | (uint32_t)QA_Q2_CVAR_LATCH},
     {"maxspectators", "4", QA_CVAR_SERVERINFO},
     {"deathmatch", "0", QA_Q2_CVAR_LATCH}, {"coop", "0", QA_Q2_CVAR_LATCH},
     {"skill", "1", QA_Q2_CVAR_LATCH}, {"maxentities", "1024", QA_Q2_CVAR_LATCH},
@@ -56,7 +56,7 @@ static const q2_source_cvar common[] = {
 };
 static const q2_source_cvar rerelease[] = {
     {"sv_stopspeed", "100", 0},
-    {"teamplay", "0", QA_Q2_CVAR_LATCH}, {"huntercam", "1", QA_CVAR_SERVERINFO | QA_Q2_CVAR_LATCH},
+    {"teamplay", "0", QA_Q2_CVAR_LATCH}, {"huntercam", "1", (uint32_t)QA_CVAR_SERVERINFO | (uint32_t)QA_Q2_CVAR_LATCH},
     {"g_coop_player_collision", "0", QA_Q2_CVAR_LATCH},
     {"g_coop_squad_respawn", "1", QA_Q2_CVAR_LATCH},
     {"g_coop_enable_lives", "0", QA_Q2_CVAR_LATCH},
@@ -82,7 +82,7 @@ static const q2_source_cvar rerelease[] = {
     {"g_map_list_shuffle", "0", 0},
 };
 static const q2_source_cvar rogue[] = {
-    {"sv_stopspeed", "100", 0}, {"huntercam", "1", QA_CVAR_SERVERINFO | QA_Q2_CVAR_LATCH},
+    {"sv_stopspeed", "100", 0}, {"huntercam", "1", (uint32_t)QA_CVAR_SERVERINFO | (uint32_t)QA_Q2_CVAR_LATCH},
     {"strong_mines", "0", 0}, {"randomrespawn", "0", 0}, {"gamerules", "0", QA_Q2_CVAR_LATCH},
 };
 static const q2_source_cvar lmctf[] = {
@@ -545,7 +545,7 @@ bool application_native_q2_console_finalize(application_provider *provider, qa_q
         rules->deathmatch = qa_cvars_find(cvars, "deathmatch")->number != 0;
         rules->cooperative = qa_cvars_find(cvars, "coop")->number != 0;
         if (capacity <= 1) capacity = rules->deathmatch ? 8 : rules->cooperative ? 4 : 1;
-        if (capacity < choices->seat_count) capacity = (float)choices->seat_count;
+        if (capacity < (float)choices->seat_count) capacity = (float)choices->seat_count;
         if (!isfinite(capacity) || capacity < 1 || capacity > 64)
             okay = application_fail(error, QA_ERROR_FORMAT, "Q2 source capacity must be between 1 and 64");
         if (okay) okay = qa_cvars_set_number(cvars, "maxclients", truncf(capacity), error);

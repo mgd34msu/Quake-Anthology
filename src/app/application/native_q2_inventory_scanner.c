@@ -227,7 +227,7 @@ static void pending(application_native_q2_inventory_scanner *o, inventory_restor
     tail->next = o->pending; o->pending = *chain; *chain = NULL;
 }
 static double source_count(const application_native_q2_inventory_row *r)
-{ return r->presence_only ? r->count ? 1 : 0 : r->count; }
+{ return r->presence_only ? r->count != 0 ? 1 : 0 : r->count; }
 static int32_t count_word(const application_native_q2_inventory_row *r)
 {
     double n = source_count(r);
@@ -284,12 +284,12 @@ static bool navigate(application_native_q2_inventory_scanner *o, inventory_frame
         if (direction > 0) index = chosen == SIZE_MAX ? step - 1 : (chosen + step) % r->count;
         else index = chosen == SIZE_MAX ? (r->count - step) % r->count : (chosen + r->count - step) % r->count;
         const application_native_q2_inventory_row *row = r->rows + index;
-        if (!row->count) continue;
+        if (row->count == 0) continue;
         bool duplicate = false;
         for (size_t prior = 1; prior < step; ++prior) {
             size_t p = direction > 0 ? chosen == SIZE_MAX ? prior - 1 : (chosen + prior) % r->count :
                 chosen == SIZE_MAX ? (r->count - prior) % r->count : (chosen + r->count - prior) % r->count;
-            if (r->rows[p].count && r->rows[p].source_index == row->source_index && source_count(r->rows + p) == source_count(row)) { duplicate = true; break; }
+            if (r->rows[p].count != 0 && r->rows[p].source_index == row->source_index && source_count(r->rows + p) == source_count(row)) { duplicate = true; break; }
         }
         if (duplicate) continue;
         bool accepted;
@@ -605,7 +605,7 @@ bool application_native_q2_inventory_scanner_read(application_native_q2_inventor
         ok = copy_presentation(&r.rows[chosen].presentation, &r.selected_presentation, e);
     }
     if (ok) { size_t retained = 0;
-        for (size_t i = 0; i < r.count; ++i) if (r.rows[i].count) r.rows[retained++] = r.rows[i]; else {
+        for (size_t i = 0; i < r.count; ++i) if (r.rows[i].count != 0) r.rows[retained++] = r.rows[i]; else {
             free((void *)r.rows[i].label); free((void *)r.rows[i].presentation.icon); free((void *)r.rows[i].presentation.lump);
         }
         r.count = retained;

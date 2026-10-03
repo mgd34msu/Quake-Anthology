@@ -390,7 +390,7 @@ static bool source_feedback(void *opaque, qa_combat *combat,
         break;
     }
     case QA_DAMAGE_FEEDBACK_ARMOR:
-        if (!feedback->armor_saved) return true;
+        if (feedback->armor_saved == 0) return true;
         break;
     case QA_DAMAGE_FEEDBACK_HEALTH: {
         qa_builtin_actor_traits victim;
@@ -435,7 +435,7 @@ static bool source_feedback(void *opaque, qa_combat *combat,
                     !hit_marker_client(character, request->attack.attacker, damage, &found, error)) return false;
             }
         }
-        if (!feedback->blood) return true;
+        if (feedback->blood == 0) return true;
         bool mission_effects = rules.edition == QA_Q2_RERELEASE || rules.product == QA_Q2_ROGUE;
         if (mission_effects && victim_q2.mechanical) effect = QA_Q2_DAMAGE_ELECTRIC_SPARKS;
         else if (victim.player || victim.monster) {

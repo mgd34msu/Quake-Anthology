@@ -239,7 +239,7 @@ static bool write_binding(void *context,const qa_inventory_entry *entry,qa_error
         if(entry->capacity!=1||(count!=0&&count!=1)) return fail(e,"Native item requires its declared ownership bit");
         double before; if(!application_native_q2_field_read(o->options.callbacks,a->actor,&s->field,&before,e)) return false;
         uint32_t bits=(uint32_t)(int64_t)before;
-        bits=count?bits|s->bits[bit].mask:bits&~s->bits[bit].mask;
+        bits=count!=0?bits|s->bits[bit].mask:bits&~s->bits[bit].mask;
         size_t width=application_native_q2_field_size(s->field.encoding)*8;
         bool signed_value=s->field.encoding==QA_NATIVE_I8||s->field.encoding==QA_NATIVE_I16||s->field.encoding==QA_NATIVE_I32;
         if(signed_value) {

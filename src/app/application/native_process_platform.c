@@ -523,13 +523,13 @@ bool qa_native_process_platform_calendar(void *context, int64_t milliseconds, bo
         !(local ? localtime_r(&stamp, &date) : gmtime_r(&stamp, &date)))
         return fail(error, QA_ERROR_UNSUPPORTED, "Actual platform calendar cannot represent source time");
 #endif
-    int64_t timezone = (calendar_seconds(&utc) - calendar_seconds(&date)) / 60;
-    if (timezone < INT32_MIN || timezone > INT32_MAX || date.tm_year > INT32_MAX - 1900)
+    int64_t timezone_minutes = (calendar_seconds(&utc) - calendar_seconds(&date)) / 60;
+    if (timezone_minutes < INT32_MIN || timezone_minutes > INT32_MAX || date.tm_year > INT32_MAX - 1900)
         return fail(error, QA_ERROR_UNSUPPORTED, "Actual platform calendar exceeds native fields");
     int64_t fraction = milliseconds % 1000; if (fraction < 0) fraction += 1000;
     *out = (qa_native_windows_calendar){date.tm_year + 1900, date.tm_mon + 1,
         date.tm_wday, date.tm_mday, date.tm_hour, date.tm_min, date.tm_sec, (int32_t)fraction,
-        date.tm_yday, date.tm_isdst, (int32_t)timezone};
+        date.tm_yday, date.tm_isdst, (int32_t)timezone_minutes};
     return true;
 }
 bool qa_native_process_platform_linux_identity_read(qa_native_process_platform *owner,

@@ -309,15 +309,15 @@ static bool restored_current(struct application_native_q2 *engine,
             (motion->creation_present ? (!motion->link_count || motion->creation_frame > clock.frame.number ||
                 motion->source_frame < motion->creation_frame || motion->source_frame > clock.frame.number) :
                 (motion->creation_frame || motion->link_count || motion->source_frame ||
-                    motion->origin.x || motion->origin.y || motion->origin.z ||
-                    motion->creation_origin.x || motion->creation_origin.y || motion->creation_origin.z)))
+                    motion->origin.x != 0 || motion->origin.y != 0 || motion->origin.z != 0 ||
+                    motion->creation_origin.x != 0 || motion->creation_origin.y != 0 || motion->creation_origin.z != 0)))
             return application_fail(error, QA_ERROR_FORMAT, "Original Q2 Engine cold lifetime leaves its real Source clock");
         for (size_t j = 0; j < 8; ++j) {
             const qa_q2_source_origin *origin = &motion->origins[j];
             if (!qa_vec_finite(origin->origin) || (origin->present ? (!motion->creation_present ||
                 origin->source_frame < motion->creation_frame || origin->source_frame > clock.frame.number ||
                 (origin->source_frame & 7u) != j) :
-                (origin->source_frame || origin->origin.x || origin->origin.y || origin->origin.z)))
+                (origin->source_frame || origin->origin.x != 0 || origin->origin.y != 0 || origin->origin.z != 0)))
                 return application_fail(error, QA_ERROR_FORMAT, "Original Q2 Engine cold ring is not a genuine link receipt");
         }
         if (!row->occupied) continue;
