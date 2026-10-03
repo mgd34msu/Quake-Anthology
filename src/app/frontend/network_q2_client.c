@@ -496,7 +496,11 @@ static bool tick(frontend_network_q2_client *owner,uint64_t now,qa_error *error)
     if(!frontend_remote_q2_source_advance(owner->source,&ready,error)) return false;
     if(!ready) return true;
     if(!qa_network_q2_bootstrap_continue(owner->bootstrap,now,error)) return false;
-    if(owner->domain.client.owner && !qa_network_q2_client_continue(owner->options.runtime,owner->domain.client,error)) return false;
+    if(owner->domain.client.owner) {
+        if(!qa_network_q2_client_continue(owner->options.runtime,owner->domain.client,error)) return false;
+        if(owner->retired) return true;
+        if(!qa_network_q2_client_send(owner->options.runtime,owner->domain.client,now,error)) return false;
+    }
     size_t executed;
     return frontend_remote_q2_source_drain(owner->source,1024,&executed,error) &&
         qa_network_q2_bootstrap_tick(owner->bootstrap,now,error);
