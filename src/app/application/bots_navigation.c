@@ -36,7 +36,7 @@ bool application_bot_movement_input(void *opaque,qa_actor_id actor,qa_movement_i
         .standing={control->standing_bounds,view.view_height},
         .crouched={view.bounds,view.view_height},.dead={view.bounds,view.view_height},
         .time_ns=qa_session_elapsed(application->session),.prediction=true,.view_offset=view.view_offset,
-        .q2r_pml_origin=&control->q2r_pml_origin};
+        .q2r_pml_origin=&control->q2r_pml_origin,.environment=qa_movement_environment_default()};
     out->environment.health=combat.health;
     out->environment.flight=view.flight;
     out->environment.gravity_multiplier=view.gravity_multiplier;
