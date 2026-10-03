@@ -1254,25 +1254,16 @@ bool application_supplies_cheat_arsenal(void *context, qa_actor_id actor,
     size_t definition_count = 0, entry_count = 0, written = 0;
     qa_item_definition *definitions = NULL;
     qa_inventory_entry *entries = NULL;
-    bool okay = qa_inventory_item_definitions(owner->inventory, actor, NULL, 0,
-        &definition_count, error) && supply_current(pair, actor, error) &&
-        qa_inventory_entries(owner->inventory, actor, NULL, 0, &entry_count, error) &&
-        supply_current(pair, actor, error);
-    if (okay && (definition_count > SIZE_MAX / sizeof(*definitions) ||
+    bool okay = qa_inventory_entries(owner->inventory, actor, NULL, 0,
+        &entry_count, error) && supply_current(pair, actor, error);
+    if (okay && (entry_count > SIZE_MAX / sizeof(*definitions) ||
         entry_count > SIZE_MAX / sizeof(*entries)))
         okay = application_fail(error, QA_ERROR_MEMORY, "Selected grant exceeds native inventory extent");
     if (okay) {
-        definitions = definition_count ? malloc(definition_count * sizeof(*definitions)) : NULL;
+        definitions = entry_count ? malloc(entry_count * sizeof(*definitions)) : NULL;
         entries = entry_count ? malloc(entry_count * sizeof(*entries)) : NULL;
-        if ((definition_count && !definitions) || (entry_count && !entries))
+        if (entry_count && (!definitions || !entries))
             okay = application_fail(error, QA_ERROR_MEMORY, "Retaining actual selected arsenal grant");
-    }
-    if (okay) {
-        okay = qa_inventory_item_definitions(owner->inventory, actor, definitions,
-            definition_count, &written, error) && supply_current(pair, actor, error);
-        if (okay && written > definition_count)
-            okay = application_fail(error, QA_ERROR_ARGUMENT, "Selected grant definitions changed extent");
-        if (okay) definition_count = written;
     }
     if (okay) {
         okay = qa_inventory_entries(owner->inventory, actor, entries, entry_count,
@@ -1280,6 +1271,21 @@ bool application_supplies_cheat_arsenal(void *context, qa_actor_id actor,
         if (okay && written > entry_count)
             okay = application_fail(error, QA_ERROR_ARGUMENT, "Selected grant inventory changed extent");
         if (okay) entry_count = written;
+    }
+    for (size_t i = 0; okay && i < entry_count; ++i) {
+        qa_item_definition definition;
+        qa_error lookup = {0};
+        bool found = qa_inventory_source_definition_read(owner->inventory, actor,
+            arsenal->owner, entries[i].item, &definition, &lookup);
+        okay = supply_current(pair, actor, error);
+        if (!okay) break;
+        if (!found) {
+            if (lookup.code == QA_ERROR_NOT_FOUND) continue;
+            if (error) *error = lookup;
+            okay = false;
+            break;
+        }
+        definitions[definition_count++] = definition;
     }
     bool declared = false;
     for (size_t i = 0; okay && i < entry_count; ++i) {
