@@ -344,7 +344,9 @@ bool q2_client_send(q2_session *session, uint64_t now, qa_error *error)
 {
     q2_client *client = &session->state.client;
     if (!sent_continue(session, error)) return false;
-    if (client->receive_held || client->preparation_held) return true;
+    if (client->receive_held || client->preparation_held)
+        return !qa_q2_channel_should_update(session->channel, now) ||
+            q2_send(session, (qa_bytes){0}, now, NULL, error);
     if (client->command_count) {
         qa_q2_channel_status status; qa_q2_channel_get_status(session->channel, &status);
         uint8_t *bytes = malloc(status.capacity);
