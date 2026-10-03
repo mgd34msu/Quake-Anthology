@@ -31,8 +31,8 @@ typedef struct application_unified_event_record {
     int32_t source_entity;
     bool has_source_entity;
     bool link_presentation;
-    /* Native receipt: payload ActorIds use imported checkpoint history after
-     * decode. The original pair stays in the continuation until projection. */
+    /* Imported ActorIds retain checkpoint history through saved continuation
+     * validation, then restore finish rebinds them once to current actors. */
     bool payload_checkpoint;
     uint64_t owner_generation;
     /* Emission-time GAME rules receipt: 0 absent, 1 classic, 2 rerelease.
@@ -81,6 +81,7 @@ bool application_unified_persistent_retire(qa_application *, qa_actor_owner,
     qa_actor_id recipient, qa_error *);
 bool application_unified_event_owner_retire(qa_application *, qa_actor_owner,
     const qa_source_frame *actual_primary_clock, qa_error *);
+bool application_unified_events_restore_finish(qa_application *, qa_error *);
 
 typedef struct application_unified_event_resource_custody {
     qa_resource *resource;

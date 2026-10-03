@@ -1471,7 +1471,8 @@ bool qa_application_events_checkpoint(qa_application *app, qa_buffer *out, qa_er
 bool qa_application_events_restore(qa_application *app, qa_bytes bytes, qa_error *error)
 {
     if (!public_lease(app, error)) return false;
-    bool ok = application_events_save_restore(app, bytes, error);
+    bool ok = application_events_save_restore(app, bytes, error) &&
+        application_unified_events_restore_finish(app, error);
     app->operation = APPLICATION_IDLE;
     return ok;
 }

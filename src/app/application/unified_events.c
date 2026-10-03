@@ -629,23 +629,6 @@ bool application_unified_persistent_retire(qa_application *app, qa_actor_owner o
     return true;
 }
 
-static bool persistent_current_key(qa_application *app,
-    const application_unified_persistent_event *row, qa_buffer *key, qa_error *error)
-{
-    application_unified_event_record current = row->event;
-    application_unified_json payload = {0};
-    bool remove = false, ok = true;
-    if (current.payload_checkpoint) {
-        ok = payload_actor_read(app, current.presentation, true, &payload, error) &&
-            application_unified_event_recipient(app, &current, false, &current.recipient, error);
-        current.presentation = (qa_bytes){payload.bytes.data, payload.bytes.size};
-        current.payload_checkpoint = false;
-    }
-    if (ok) ok = application_unified_persistent_key(app, &current, key, &remove, error);
-    application_unified_json_dispose(&payload);
-    return ok;
-}
-
 static bool persistent_record(qa_application *app, const application_unified_event_record *event, qa_error *error)
 {
     qa_buffer key = {0}; bool remove = false;
@@ -653,14 +636,8 @@ static bool persistent_record(qa_application *app, const application_unified_eve
     if (!key.size) return true;
     size_t index = 0;
     while (index < app->unified_persistent_count) {
-        const application_unified_persistent_event *previous = app->unified_persistent + index;
-        qa_buffer current_key = {0};
-        bool ok = !previous->event.payload_checkpoint || persistent_current_key(app, previous, &current_key, error);
-        const qa_buffer *candidate = previous->event.payload_checkpoint ? &current_key : &previous->key;
-        bool same = ok && key.size == candidate->size && !memcmp(key.data, candidate->data, key.size);
-        qa_buffer_free(&current_key);
-        if (!ok) { qa_buffer_free(&key); return false; }
-        if (same) break;
+        const qa_buffer *candidate = &app->unified_persistent[index].key;
+        if (key.size == candidate->size && !memcmp(key.data, candidate->data, key.size)) break;
         ++index;
     }
     if (remove && index == app->unified_persistent_count) { qa_buffer_free(&key); return true; }
@@ -736,27 +713,23 @@ bool application_unified_event_owner_retire(qa_application *app, qa_actor_owner 
         return application_fail(error, QA_ERROR_ARGUMENT, "Presentation retirement requires the retained actual primary clock");
     size_t count = app->unified_persistent_count;
     size_t *winners = count ? malloc(count * sizeof(*winners)) : NULL;
-    qa_buffer *keys = count ? calloc(count, sizeof(*keys)) : NULL;
-    if (count && (!winners || !keys)) {
-        free(winners); free(keys);
+    if (count && !winners) {
         return application_fail(error, QA_ERROR_MEMORY, "Retaining actual presentation replacement slots");
     }
     size_t winner_count = 0;
     bool ok = true;
-    for (size_t i = 0; ok && i < count; ++i)
-        ok = persistent_current_key(app, app->unified_persistent + i, keys + i, error);
     for (size_t i = 0; ok && i < count; ++i) {
         const application_unified_persistent_event *row = app->unified_persistent + i;
         if (row->event.provider == owner) continue;
         bool affected = false;
         for (size_t n = 0; ok && !affected && n < count; ++n)
             if (app->unified_persistent[n].event.provider == owner)
-                ok = persistent_domain_equal(keys + i, keys + n, false, &affected, error);
+                ok = persistent_domain_equal(&row->key, &app->unified_persistent[n].key, false, &affected, error);
         if (!affected) continue;
         size_t match = 0;
         for (; ok && match < winner_count; ++match) {
             bool same;
-            ok = persistent_domain_equal(keys + i, keys + winners[match], true, &same, error);
+            ok = persistent_domain_equal(&row->key, &app->unified_persistent[winners[match]].key, true, &same, error);
             if (ok && same) break;
         }
         if (ok) {
@@ -810,8 +783,7 @@ bool application_unified_event_owner_retire(qa_application *app, qa_actor_owner 
         prepared[i].presentation_sequence = app->presentation_event_sequence++;
         app->unified_events[app->unified_event_count++] = prepared[i];
     }
-    for (size_t i = 0; i < count; ++i) qa_buffer_free(keys + i);
-    free(keys); free(prepared); free(winners); application_unified_json_dispose(&payload);
+    free(prepared); free(winners); application_unified_json_dispose(&payload);
     return ok;
 }
 
@@ -1175,6 +1147,84 @@ bool application_unified_event_recipient(qa_application *app, const application_
     if (!actor.registry || !row->payload_checkpoint) { *out = actor; return true; }
     return qa_actors_reference_saved(qa_session_actors(app->session), simulation ?
         row->simulation_recipient_saved : row->recipient_saved, true, out, error);
+}
+
+typedef struct event_rebind_stage {
+    application_unified_event_record current;
+    qa_buffer presentation, simulation, key;
+} event_rebind_stage;
+
+static bool stage_current_event(qa_application *app, const application_unified_event_record *row,
+    event_rebind_stage *stage, qa_error *error)
+{
+    stage->current = *row;
+    if (!row->payload_checkpoint) return true;
+    application_unified_json presentation = {0}, simulation = {0};
+    bool ok = payload_actor_read(app, row->presentation, true, &presentation, error) &&
+        payload_actor_read(app, row->simulation, true, &simulation, error) &&
+        application_unified_event_recipient(app, row, false, &stage->current.recipient, error) &&
+        application_unified_event_recipient(app, row, true, &stage->current.simulation_recipient, error);
+    if (ok) {
+        stage->presentation = presentation.bytes; presentation.bytes = (qa_buffer){0};
+        stage->simulation = simulation.bytes; simulation.bytes = (qa_buffer){0};
+        stage->current.presentation = (qa_bytes){stage->presentation.data, stage->presentation.size};
+        stage->current.simulation = (qa_bytes){stage->simulation.data, stage->simulation.size};
+        stage->current.recipient_saved = stage->current.simulation_recipient_saved = (qa_saved_actor_id){0};
+        stage->current.payload_checkpoint = false;
+    }
+    application_unified_json_dispose(&presentation); application_unified_json_dispose(&simulation);
+    return ok;
+}
+
+bool application_unified_events_restore_finish(qa_application *app, qa_error *error)
+{
+    if (!app || !app->session || app->unified_event_count > SIZE_MAX - app->unified_persistent_count)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Imported Source events lost their actual application owner");
+    size_t count = app->unified_event_count + app->unified_persistent_count;
+    if (!count) return true;
+    if (count > SIZE_MAX / sizeof(event_rebind_stage))
+        return application_fail(error, QA_ERROR_MEMORY, "Imported Source event extent overflows");
+    event_rebind_stage *staged = calloc(count, sizeof(*staged));
+    if (!staged) return application_fail(error, QA_ERROR_MEMORY, "Rebinding imported Source event actors");
+    bool ok = true;
+    for (size_t i = 0; ok && i < app->unified_event_count; ++i) {
+        const application_unified_event_record *row = app->unified_events + i;
+        event_rebind_stage *stage = staged + i;
+        ok = stage_current_event(app, row, stage, error);
+        if (ok && row->payload_checkpoint)
+            ok = retain_payload(app, stage->current.presentation, &stage->current.presentation, error) &&
+                retain_payload(app, stage->current.simulation, &stage->current.simulation, error);
+    }
+    for (size_t i = 0; ok && i < app->unified_persistent_count; ++i) {
+        const application_unified_event_record *row = &app->unified_persistent[i].event;
+        event_rebind_stage *stage = staged + app->unified_event_count + i;
+        ok = stage_current_event(app, row, stage, error);
+        if (ok && row->payload_checkpoint) {
+            bool remove = false;
+            ok = application_unified_persistent_key(app, &stage->current, &stage->key, &remove, error) &&
+                stage->key.size && !remove;
+            if (!ok && (!error || error->code == QA_OK))
+                application_fail(error, QA_ERROR_FORMAT, "Imported persistent presentation lost its actual current domain");
+        }
+    }
+    if (ok) {
+        for (size_t i = 0; i < app->unified_event_count; ++i)
+            if (app->unified_events[i].payload_checkpoint) app->unified_events[i] = staged[i].current;
+        for (size_t i = 0; i < app->unified_persistent_count; ++i) {
+            application_unified_persistent_event *row = app->unified_persistent + i;
+            event_rebind_stage *stage = staged + app->unified_event_count + i;
+            if (!row->event.payload_checkpoint) continue;
+            qa_buffer_free(&row->key); qa_buffer_free(&row->payload);
+            row->event = stage->current;
+            row->key = stage->key; stage->key = (qa_buffer){0};
+            row->payload = stage->presentation; stage->presentation = (qa_buffer){0};
+        }
+    }
+    for (size_t i = 0; i < count; ++i) {
+        qa_buffer_free(&staged[i].presentation); qa_buffer_free(&staged[i].simulation); qa_buffer_free(&staged[i].key);
+    }
+    free(staged);
+    return ok;
 }
 
 static bool payload_begin(application_unified_json *json, qa_bytes payload, qa_error *error)

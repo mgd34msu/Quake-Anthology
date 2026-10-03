@@ -1968,6 +1968,7 @@ static bool persistence_finish(void *opaque, void *value, const qa_save_image *i
     if (ok && !persistence_safe(candidate))
         ok = application_fail(error, QA_ERROR_FORMAT, "restored candidate changed during final validation");
     if (ok) ok = persistence_unchanged(operation, error);
+    if (ok) ok = application_unified_events_restore_finish(candidate, error);
     if (ok) {
         candidate->native_restore_image = NULL;
         candidate->native_restore_resources = NULL;
