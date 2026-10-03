@@ -107,8 +107,9 @@ bool application_native_q2_damage_prepare(void *opaque, qa_damage_request *reque
     application_provider *movement = application_provider_for(app, request->target, QA_ROLE_MOVEMENT, "");
     request->attack.combat_provider = combat ? combat->owner : provider->owner;
     request->attack.movement_provider = movement ? movement->owner : 0;
-    if (request->attack.weapon && !request->attack.weapon_provider) {
-        if (!qa_q2_combat_weapon_owned(provider->state.q2, request->attack.weapon))
+    if (!request->attack.weapon_provider) {
+        if (request->attack.weapon &&
+            !qa_q2_combat_weapon_owned(provider->state.q2, request->attack.weapon))
             return application_fail(error, QA_ERROR_ARGUMENT,
                 "Q2 damage weapon has no retained source item owner");
         request->attack.weapon_provider = provider->owner;
