@@ -2,6 +2,7 @@
 #include "guest_qc_profile.h"
 #include "guest_mod_item_definition.h"
 #include "guest_qc_armor.h"
+#include "qa/qc_observation.h"
 #include <float.h>
 #include <limits.h>
 
@@ -305,8 +306,14 @@ static bool scalar(protection_channel *row, int32_t reference, const qa_qc_defin
 {
     if (before && field->offset >= before->word && field->offset - before->word < before->count) {
         memcpy(out, before->before + (field->offset - before->word), sizeof(*out));
-    } else if (!qa_qc_entity_float(row->owner->engine->provider->state.qc.instance,
-        reference, field->offset, out, error)) return false;
+    } else {
+        qa_qc_instance *vm = row->owner->engine->provider->state.qc.instance;
+        qa_actor_id actual; uint32_t slot;
+        if (!qa_qc_reference_actor(vm, reference, &actual, error) ||
+            !qa_actor_id_equal(actual, row->actor) ||
+            !qa_qc_actor_observation_slot(vm, actual, &slot, error) ||
+            !qa_qc_actor_observation_float(vm, slot, actual, field->offset, out, error)) return false;
+    }
     return isfinite(*out) || fail(error, QA_ERROR_FORMAT, "QC protection source storage is nonfinite");
 }
 static bool read_at(protection_channel *row, int32_t reference, const qa_qc_store_event *before,
