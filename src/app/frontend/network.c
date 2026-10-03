@@ -6544,7 +6544,16 @@ bool frontend_network_destroy(qa_frontend *f, qa_error *error)
             return frontend_fail(error,QA_ERROR_ARGUMENT,"Network shutdown lost its retained ENGINE console and registry");
         if(!qa_application_engine_shutdown_read(f->engine_shutdown,&console,&cvars,error)) return false;
     }
-    if (n->registered && !qa_console_remove_owner(console, NETWORK_OWNER, error)) return false;
+    if (n->registered) {
+        if (f->engine_shutdown) {
+            if (!qa_console_remove_owner(console, NETWORK_OWNER, error)) return false;
+        } else for (size_t i=0;i<sizeof(names)/sizeof(*names);++i) {
+            uint64_t owner=0;
+            if (qa_console_registration_owner(console,names[i],0,&owner) && owner==NETWORK_OWNER &&
+                !qa_console_unregister(console,names[i],0))
+                return frontend_fail(error,QA_ERROR_ARGUMENT,"Network callback lost its actual ENGINE registration");
+        }
+    }
     if (f->engine_shutdown) qa_cvars_remove_owner(cvars, NETWORK_OWNER);
     qa_downloads_destroy(n->downloads); frontend_q3_browser_destroy(n->q3_browser);
     frontend_kex_browser_destroy(n->kex_browser);
