@@ -265,20 +265,7 @@ bool qa_application_q3_source_client_slot(qa_application *app, qa_actor_owner ow
         return application_fail(error, QA_ERROR_NOT_FOUND, "Q3 source client has no admitted GAME owner");
     if (provider->kind == APPLICATION_PROVIDER_Q3)
         return qa_q3_native_client_slot(provider->state.q3, actor, out, error);
-    for (uint32_t slot = 0; slot < 64; ++slot) {
-        qa_actor_id binding;
-        qa_q3_usercmd command;
-        bool bot;
-        uint64_t entered_ns;
-        qa_error current = {0};
-        if (!application_q3_guest_round_client_read(provider, slot, &binding, &command,
-                &bot, &entered_ns, &current)) {
-            if (current.code == QA_ERROR_NOT_FOUND) continue;
-            if (error) *error = current;
-            return false;
-        }
-        if (qa_actor_id_equal(actor, binding)) { *out = slot; return true; }
-    }
+    if (application_q3_guest_actor_client(provider, actor, out)) return true;
     return application_fail(error, QA_ERROR_NOT_FOUND, "Q3 GAME has no physical binding for this canonical generation");
 }
 
