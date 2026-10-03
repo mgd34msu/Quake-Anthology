@@ -218,6 +218,13 @@ static qa_cvars *visible_cvars(void *opaque, const qa_command_context *context, 
     if (application_startup_visible_cvars(engine->provider, engine->console, context, index, &routed)) return routed;
     return index == 0 ? engine->cvars : NULL;
 }
+static bool cvar_edit(void *opaque, const qa_command_context *context,
+                        qa_cvars *registry, qa_cvars_edit **out, qa_error *error)
+{
+    struct application_qc_state *engine = opaque;
+    return application_startup_cvar_edit(engine->provider, engine->console,
+        context, registry, out, error);
+}
 static bool capture_context(void *opaque, const qa_command_context *source,
                               qa_command_context *out, qa_error *error)
 {
@@ -239,7 +246,7 @@ qa_console *application_qc_create_console(struct application_qc_state *engine, q
     qa_console_options options = {.context = engine->command_context, .cvars = cvars,
         .user = engine, .print = console_print, .source_command = server_command, .read_script = read_script,
         .release_script = release_script, .script_complete = script_complete, .allow_command = allow_command,
-        .cvar_owner = cvar_owner, .visible_cvars = visible_cvars,
+        .cvar_owner = cvar_owner, .visible_cvars = visible_cvars, .cvar_edit = cvar_edit,
         .capture_context = capture_context, .context_active = context_active};
     qa_console *console = qa_console_create(&options, error);
     const struct application_qc_profile *profile = engine->provider->state.qc.qualified;

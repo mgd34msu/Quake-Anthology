@@ -6,6 +6,12 @@ The original audit authority is dependency plan revision 7, tasks B01–B05. Its
 
 The user's latest correction forbids review gates and test infrastructure in front of implementation. Audit continues alongside production installation, without new manifests, hashes or freeze requirements. The later implementation assignment supersedes the initial document-only edit scope for the concrete owners below. Historical snapshot/peer evidence below records work already performed; none of it imposes a prerequisite on current implementation. Concrete defects go directly to the author. Current owner/build files can change as genuine callers are installed.
 
+## Authorized B22 QC prepared cvar consumer, 2026-10-03
+
+The public qualified-primary CLI on SAVE10 artifact `5e0f013d` failed before startup scripts while replaying `r_customwidth=640`. A bounded private GDB run traced the actual ConfigStore replay through `application_startup_seed_console` and `qa_console_cvar_startup_set`: the canonical registry held its genuine prepared edit, but the QC console lacked the edit-consumer callback and attempted a direct live mutation.
+
+The existing QC console constructor now supplies the same thin `application_startup_cvar_edit` adapter as the other Source owners. Startup replay and ordinary console cvar consumers use the real retained edit; the registry availability, physical console and command-owner checks are preserved. Cold console reconstruction uses this same constructor. The changed production translation unit passed both actual optimized GCC and Clang commands privately in `qc-source-cvar-edit-objects`; scoped whitespace checks passed. Runtime replay awaits Root's next coherent artifact; the prior CLI run did not qualify gameplay.
+
 ## Authorized B22 qualified QC addition initialization, 2026-10-03
 
 Qualified QC additions now initialize through the existing declared map-context body even when their launch instance has no assigned gameplay role. The secondary map loop admits those genuine qualified owners on fresh loads and travel; original raw QC's role check is preserved. Enabling an addition on an existing map uses that same body after the real roster and component publication, with the actual retained map identity, world, geometry, resource and session. Declared initialization runs once; map globals, loading state and checked flush remain the existing continuation. A partially completed flush can retry through those actual state fields.
