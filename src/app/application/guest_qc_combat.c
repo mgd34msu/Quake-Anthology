@@ -753,8 +753,9 @@ static bool reaction_replace(application_qc_combat *owner, qa_qc_instance *vm,
         ((health <= 0) != (reaction == QA_REACTION_DEATH)))
         return reject(error, "QC Source reaction differs from its committed target health");
     const qa_qc_function *callee = qa_qc_program_function(owner->profile->program, event->function);
-    if (!callee || (reaction == QA_REACTION_PAIN && (event->argument_count != 2 || callee->parameter_count != 2 ||
-        callee->parameter_sizes[0] != 1 || callee->parameter_sizes[1] != 1)))
+    if (!callee || (reaction == QA_REACTION_PAIN && (event->argument_count != 2 || callee->parameter_count > 2 ||
+        (callee->parameter_count > 0 && callee->parameter_sizes[0] != 1) ||
+        (callee->parameter_count > 1 && callee->parameter_sizes[1] != 1))))
         return reject(error, "QC Source pain callback does not retain its actual actor/amount signature");
     *handled = true; frame->result->reaction = reaction;
     if (!qa_damage_before_reaction(frame->observer, frame->result, error)) return false;
