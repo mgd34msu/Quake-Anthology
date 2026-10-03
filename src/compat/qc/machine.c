@@ -241,6 +241,34 @@ static bool state_opcode(qa_qc_instance *instance,
     return true;
 }
 
+bool qa_qc_program_statement_access(const qa_qc_program *program, uint32_t index,
+    qa_qc_statement_access *out, qa_error *error)
+{
+    typedef struct operand_widths { uint8_t ra, rb, wb, wc, result, arguments; } operand_widths;
+    static const operand_widths effects[] = {
+#define QA_QC_OPCODE(name, number, ra, rb, wb, wc, result, arguments) [QA_QC_##name] = {ra, rb, wb, wc, result, arguments},
+QA_QC_OPCODE_LIST(QA_QC_OPCODE)
+#undef QA_QC_OPCODE
+    };
+    const qa_qc_statement *statement = qa_qc_program_statement(program, index);
+    if (!statement || !out || (uint32_t)statement->opcode >= sizeof(effects) / sizeof(*effects))
+        return qc_fail(error, QA_ERROR_ARGUMENT, index, "invalid compiled QuakeC statement effect request");
+    *out = (qa_qc_statement_access){0};
+    const operand_widths *effect = effects + statement->opcode;
+    for (uint32_t i = 0; i < effect->ra; ++i) out->read[out->read_count++] = (uint32_t)statement->a + i;
+    for (uint32_t i = 0; i < effect->rb; ++i) out->read[out->read_count++] = (uint32_t)statement->b + i;
+    for (uint32_t i = 0; i < (uint32_t)effect->arguments * 3; ++i) out->read[out->read_count++] = 4 + i;
+    for (uint32_t i = 0; i < effect->wb; ++i) out->write[out->write_count++] = (uint32_t)statement->b + i;
+    for (uint32_t i = 0; i < effect->wc; ++i) out->write[out->write_count++] = (uint32_t)statement->c + i;
+    for (uint32_t i = 0; i < effect->result; ++i) out->write[out->write_count++] = 1 + i;
+    uint32_t words = qa_qc_program_describe(program).global_words;
+    for (uint32_t i = 0; i < out->read_count; ++i)
+        if (out->read[i] >= words) return qc_fail(error, QA_ERROR_FORMAT, index, "QuakeC statement reads outside its authored globals");
+    for (uint32_t i = 0; i < out->write_count; ++i)
+        if (out->write[i] >= words) return qc_fail(error, QA_ERROR_FORMAT, index, "QuakeC statement writes outside its authored globals");
+    return true;
+}
+
 static bool execute_statement(qa_qc_instance *instance,
                               const qa_qc_statement *s, bool *returned,
                               bool *pc_set,

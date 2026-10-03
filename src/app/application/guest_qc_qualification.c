@@ -1,9 +1,13 @@
 #include "guest_qc_profile.h"
+#include "guest_qc_items.h"
+#include "guest_qc_pickups.h"
+#include "guest_qc_protection.h"
+#include "guest_qc_objectives.h"
 #include "qa/json.h"
 #include <float.h>
 #include <limits.h>
 
-static char *string(const qa_json_document *doc, qa_json_id node, qa_error *error)
+char *application_qc_declaration_string(const qa_json_document *doc, qa_json_id node, qa_error *error)
 {
     qa_buffer value = {0};
     if (!qa_json_string(doc, node, &value, error)) return NULL;
@@ -12,7 +16,7 @@ static char *string(const qa_json_document *doc, qa_json_id node, qa_error *erro
     }
     return (char *)value.data;
 }
-static bool array(const qa_json_document *doc, qa_json_id node, bool optional, qa_error *error)
+bool application_qc_declaration_array(const qa_json_document *doc, qa_json_id node, bool optional, qa_error *error)
 {
     return (optional && node == QA_JSON_NONE) || qa_json_type(doc, node) == QA_JSON_ARRAY ||
         application_fail(error, QA_ERROR_FORMAT, "QC declaration requires an array");
@@ -22,7 +26,7 @@ static bool empty(const qa_json_document *doc, qa_json_id node, qa_error *error)
     return node == QA_JSON_NONE || (qa_json_type(doc, node) == QA_JSON_ARRAY && qa_json_size(doc, node) == 0) ||
         application_fail(error, QA_ERROR_UNSUPPORTED, "QC declaration capability has no application owner yet");
 }
-static bool number(const qa_json_document *doc, qa_json_id node, float *out, qa_error *error)
+bool application_qc_declaration_number(const qa_json_document *doc, qa_json_id node, float *out, qa_error *error)
 {
     double value;
     if (!qa_json_number(doc, node, &value, error)) return false;
@@ -32,11 +36,29 @@ static bool number(const qa_json_document *doc, qa_json_id node, float *out, qa_
     }
     *out = (float)value; return true;
 }
+bool application_qc_statements_validate(const qa_json_document *doc,qa_json_id node,
+    const qa_qc_program *program,uint32_t entry,uint32_t exit,qa_error *error)
+{
+    if(entry>exit||!application_qc_declaration_array(doc,node,false,error)||
+        qa_json_size(doc,node)!=(uint64_t)exit-entry+1)
+        return application_fail(error,QA_ERROR_FORMAT,"QC region statement declaration differs from its compiled span");
+    static const char *names[]={"opcode","a","b","c"};
+    for(uint64_t i=entry;i<=(uint64_t)exit;++i){
+        const qa_qc_statement *statement=qa_qc_program_statement(program,(uint32_t)i);
+        if(!statement)return application_fail(error,QA_ERROR_FORMAT,"QC region leaves its compiled program");
+        uint64_t actual[]={(uint64_t)statement->opcode,statement->a,statement->b,statement->c};
+        qa_json_id row=qa_json_at(doc,node,(size_t)(i-entry));
+        for(size_t j=0;j<4;++j){uint64_t declared;
+            if(!qa_json_u64(doc,qa_json_get(doc,row,names[j]),&declared,error)||declared!=actual[j])
+                return application_fail(error,QA_ERROR_FORMAT,"QC region statement differs from its compiled Source");
+        }
+    }return true;
+}
 static bool input(const char *name, application_qc_input_id *out)
 {
     static const char *names[] = {"self", "other", "time", "elapsed", "view-angles", "attack", "jump", "impulse",
         "forward-move", "side-move", "up-move", "result", "activator",
-        "attacker", "inflictor", "amount", "knockback", "point", "direction", "normal", "item"};
+        "attacker", "inflictor", "amount", "knockback", "point", "direction", "normal", "item", "pickup-count", "pickup-has-count", "pickup-dropped", "damage-flags", "regular-protection-scale"};
     for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); ++i)
         if (strcmp(name, names[i]) == 0) { *out = (application_qc_input_id)i; return true; }
     return false;
@@ -67,7 +89,7 @@ static bool value(const qa_json_document *doc, qa_json_id node, uint64_t availab
 {
     qa_json_id kind = qa_json_get(doc, node, "kind"), data = qa_json_get(doc, node, "value");
     if (qa_json_string_equal(doc, kind, "input")) {
-        char *name = string(doc, qa_json_get(doc, node, "name"), error);
+        char *name = application_qc_declaration_string(doc, qa_json_get(doc, node, "name"), error);
         bool ok = name && input(name, &out->source) && (available & (UINT64_C(1) << out->source));
         free(name); out->kind = QC_VALUE_INPUT;
         return ok || application_fail(error, QA_ERROR_FORMAT, "QC source call reads an unavailable input");
@@ -91,22 +113,22 @@ static bool value(const qa_json_document *doc, qa_json_id node, uint64_t availab
     }
     if (qa_json_string_equal(doc, kind, "float")) {
         out->constant.kind = QA_QC_GAME_FLOAT;
-        return number(doc, data, &out->constant.value.number, error);
+        return application_qc_declaration_number(doc, data, &out->constant.value.number, error);
     }
     if (qa_json_string_equal(doc, kind, "string")) {
-        out->constant.kind = QA_QC_GAME_STRING; out->constant.value.string = string(doc, data, error);
+        out->constant.kind = QA_QC_GAME_STRING; out->constant.value.string = application_qc_declaration_string(doc, data, error);
         return out->constant.value.string != NULL;
     }
     if (qa_json_string_equal(doc, kind, "vector")) {
         float x, y, z; out->constant.kind = QA_QC_GAME_VECTOR;
-        if (!number(doc, qa_json_get(doc, data, "x"), &x, error) ||
-            !number(doc, qa_json_get(doc, data, "y"), &y, error) ||
-            !number(doc, qa_json_get(doc, data, "z"), &z, error)) return false;
+        if (!application_qc_declaration_number(doc, qa_json_get(doc, data, "x"), &x, error) ||
+            !application_qc_declaration_number(doc, qa_json_get(doc, data, "y"), &y, error) ||
+            !application_qc_declaration_number(doc, qa_json_get(doc, data, "z"), &z, error)) return false;
         out->constant.value.vector = qa_v3(x, y, z); return true;
     }
     return application_fail(error, QA_ERROR_FORMAT, "Unknown QC source value kind");
 }
-static void free_call(application_qc_call *call)
+void application_qc_call_free(application_qc_call *call)
 {
     for (size_t j = 0; j < call->argument_count; ++j) free_value(&call->arguments[j]);
     for (size_t j = 0; call->globals && j < call->global_count; ++j) free_value(&call->globals[j].value);
@@ -116,7 +138,7 @@ static void free_calls(application_qc_calls *calls)
 {
     if (!calls->values) return;
     for (size_t i = 0; i < calls->count; ++i) {
-        free_call(&calls->values[i]);
+        application_qc_call_free(&calls->values[i]);
     }
     free(calls->values);
 }
@@ -137,25 +159,29 @@ void application_qc_release_qualification(application_provider *provider)
     for (size_t i = 0; profile->cvars && i < profile->cvar_count; ++i) { free(profile->cvars[i].name); free(profile->cvars[i].value); }
     free(profile->cvars);
     for (size_t i = 0; profile->commands && i < profile->command_count; ++i) {
-        free(profile->commands[i].name); free_call(&profile->commands[i].call);
+        free(profile->commands[i].name); application_qc_call_free(&profile->commands[i].call);
     }
     free(profile->commands);
     for (size_t i = 0; profile->callbacks && i < profile->callback_count; ++i)
-        free_call(&profile->callbacks[i].call);
+        application_qc_call_free(&profile->callbacks[i].call);
     free(profile->callbacks);
     for (size_t i = 0; profile->weapon_values && i < profile->weapon_count; ++i)
         free(profile->weapon_values[i].label);
+    application_qc_items_profile_free(profile->items);
+    application_qc_pickups_profile_free(profile->pickups);
+    application_qc_protection_profile_free(profile->protection);
+    application_qc_objectives_release(profile);
     free(profile->weapon_values); free(profile); provider->state.qc.qualified = NULL;
 }
-static bool call(const qa_json_document *doc, qa_json_id node, const qa_qc_program *program,
+bool application_qc_call_parse(const qa_json_document *doc, qa_json_id node, const qa_qc_program *program,
                    uint64_t available, bool console, application_qc_call *out, qa_error *error)
 {
-    char *name = string(doc, qa_json_get(doc, node, "function"), error);
+    char *name = application_qc_declaration_string(doc, qa_json_get(doc, node, "function"), error);
     bool found = name && qa_qc_program_find_function(program, name, &out->function); free(name);
     const qa_qc_function *fn = found ? qa_qc_program_function(program, out->function) : NULL;
     qa_json_id args = qa_json_get(doc, node, "arguments"), globals = qa_json_get(doc, node, "globals");
     if (!fn || !out->function || fn->first_statement < 0 || fn->named_builtin ||
-        !array(doc, args, false, error) || !array(doc, globals, false, error) ||
+        !application_qc_declaration_array(doc, args, false, error) || !application_qc_declaration_array(doc, globals, false, error) ||
         qa_json_size(doc, args) > 8 || fn->parameter_count != qa_json_size(doc, args))
         return application_fail(error, QA_ERROR_FORMAT, "QC declaration callback signature differs from its compiled source");
     out->argument_count = qa_json_size(doc, args); out->global_count = qa_json_size(doc, globals);
@@ -168,7 +194,7 @@ static bool call(const qa_json_document *doc, qa_json_id node, const qa_qc_progr
     }
     for (size_t i = 0; i < out->global_count; ++i) {
         qa_json_id entry = qa_json_at(doc, globals, i);
-        name = string(doc, qa_json_get(doc, entry, "name"), error);
+        name = application_qc_declaration_string(doc, qa_json_get(doc, entry, "name"), error);
         const qa_qc_definition *def = name ? qa_qc_program_find_global(program, name) : NULL; free(name);
         if (!def || def->offset < 28 || !value(doc, qa_json_get(doc, entry, "value"), available, console, &out->globals[i].value, error) ||
             def->type != source_type(&out->globals[i].value))
@@ -186,18 +212,18 @@ static bool call(const qa_json_document *doc, qa_json_id node, const qa_qc_progr
 static bool calls(const qa_json_document *doc, qa_json_id node, bool optional, const qa_qc_program *program,
                     uint64_t available, application_qc_calls *out, qa_error *error)
 {
-    if (!array(doc, node, optional, error)) return false;
+    if (!application_qc_declaration_array(doc, node, optional, error)) return false;
     out->count = qa_json_size(doc, node);
     out->values = out->count ? calloc(out->count, sizeof(*out->values)) : NULL;
     if (out->count && !out->values) return application_fail(error, QA_ERROR_MEMORY, "Allocating QC source calls");
     for (size_t i = 0; i < out->count; ++i)
-        if (!call(doc, qa_json_at(doc, node, i), program, available, false, &out->values[i], error)) return false;
+        if (!application_qc_call_parse(doc, qa_json_at(doc, node, i), program, available, false, &out->values[i], error)) return false;
     return true;
 }
 static bool fields(const qa_json_document *doc, qa_json_id node, application_provider *provider,
                      struct application_qc_profile *profile, qa_error *error)
 {
-    if (!array(doc, node, false, error)) return false;
+    if (!application_qc_declaration_array(doc, node, false, error)) return false;
     profile->field_count = qa_json_size(doc, node);
     profile->fields = profile->field_count ? calloc(profile->field_count, sizeof(*profile->fields)) : NULL;
     if (profile->field_count && !profile->fields) return application_fail(error, QA_ERROR_MEMORY, "Allocating QC declared fields");
@@ -207,7 +233,7 @@ static bool fields(const qa_json_document *doc, qa_json_id node, application_pro
     for (size_t i = 0; i < profile->field_count; ++i) {
         qa_json_id row = qa_json_at(doc, node, i);
         application_qc_bound_field *field = &profile->fields[i]; field->scale = 1;
-        char *name = string(doc, qa_json_get(doc, row, "field"), error);
+        char *name = application_qc_declaration_string(doc, qa_json_get(doc, row, "field"), error);
         field->definition = name ? qa_qc_program_find_field(provider->state.qc.program, name) : NULL; free(name);
         size_t kind = 0;
         while (kind < sizeof(names) / sizeof(names[0]) && !qa_json_string_equal(doc, qa_json_get(doc, row, "binding"), names[kind])) ++kind;
@@ -225,7 +251,7 @@ static bool fields(const qa_json_document *doc, qa_json_id node, application_pro
         else if (field->kind != QC_FIELD_PRIVATE && field->kind != QC_FIELD_INPUT) type = QA_QC_VECTOR;
         if (field->kind == QC_FIELD_NEXTTHINK) ++deadlines;
         if (field->kind == QC_FIELD_INPUT) {
-            name = string(doc, qa_json_get(doc, row, "input"), error);
+            name = application_qc_declaration_string(doc, qa_json_get(doc, row, "input"), error);
             bool ok = name && input(name, &field->input) && field->input >= QC_INPUT_ANGLES &&
                 field->input <= QC_INPUT_UP; free(name);
             if (!ok) return application_fail(error, QA_ERROR_FORMAT, "QC field names an invalid client input");
@@ -235,7 +261,7 @@ static bool fields(const qa_json_document *doc, qa_json_id node, application_pro
             if ((!field->nonzero && !qa_json_string_equal(doc, update, "always")) || (field->nonzero && field->input == QC_INPUT_ANGLES))
                 return application_fail(error, QA_ERROR_FORMAT, "QC input update policy is invalid");
             qa_json_id scale = qa_json_get(doc, row, "scale");
-            if (scale != QA_JSON_NONE && (!number(doc, scale, &field->scale, error) || field->scale == 0 || field->input == QC_INPUT_ANGLES))
+            if (scale != QA_JSON_NONE && (!application_qc_declaration_number(doc, scale, &field->scale, error) || field->scale == 0 || field->input == QC_INPUT_ANGLES))
                 return application_fail(error, QA_ERROR_FORMAT, "QC input scalar scale is invalid");
         }
         if (field->kind == QC_FIELD_CLIENT_FLAGS) {
@@ -247,12 +273,12 @@ static bool fields(const qa_json_document *doc, qa_json_id node, application_pro
             field->private_mask = (uint32_t)bits;
         }
         if (field->kind == QC_FIELD_INVENTORY) {
-            name = string(doc, qa_json_get(doc, row, "item"), error);
+            name = application_qc_declaration_string(doc, qa_json_get(doc, row, "item"), error);
             bool ok = name && *name && qa_strings_intern_cstr(qa_session_strings(provider->application->session), name, &field->item, error);
             free(name); if (!ok) return false;
         }
         if (field->kind == QC_FIELD_USERINFO) {
-            field->key = string(doc, qa_json_get(doc, row, "key"), error);
+            field->key = application_qc_declaration_string(doc, qa_json_get(doc, row, "key"), error);
             if (!field->key || !*field->key || strchr(field->key, '\\'))
                 return application_fail(error, QA_ERROR_FORMAT, "QC userinfo field requires a valid info key");
         }
@@ -270,7 +296,7 @@ static bool fields(const qa_json_document *doc, qa_json_id node, application_pro
 static bool bindings(const qa_json_document *doc, qa_json_id node, const qa_qc_program *program,
                        struct application_qc_profile *profile, qa_error *error)
 {
-    if (!array(doc, node, true, error)) return false;
+    if (!application_qc_declaration_array(doc, node, true, error)) return false;
     profile->input_count = qa_json_size(doc, node);
     profile->input = profile->input_count ? calloc(profile->input_count, sizeof(*profile->input)) : NULL;
     if (profile->input_count && !profile->input) return application_fail(error, QA_ERROR_MEMORY, "Allocating QC client input bindings");
@@ -284,7 +310,7 @@ static bool bindings(const qa_json_document *doc, qa_json_id node, const qa_qc_p
             !calls(doc, qa_json_get(doc, row, "calls"), false, program, available & ~(UINT64_C(1) << QC_INPUT_OTHER), &binding->calls, error))
             return application_fail(error, QA_ERROR_FORMAT, "QC client input binding is invalid");
         qa_json_id outputs = qa_json_get(doc, row, "outputs");
-        if (!array(doc, outputs, true, error) || (!binding->before && qa_json_size(doc, outputs)))
+        if (!application_qc_declaration_array(doc, outputs, true, error) || (!binding->before && qa_json_size(doc, outputs)))
             return application_fail(error, QA_ERROR_FORMAT, "QC after-input binding cannot publish outputs");
         binding->output_count = qa_json_size(doc, outputs);
         binding->outputs = binding->output_count ? calloc(binding->output_count, sizeof(*binding->outputs)) : NULL;
@@ -292,21 +318,21 @@ static bool bindings(const qa_json_document *doc, qa_json_id node, const qa_qc_p
         for (size_t j = 0; j < binding->output_count; ++j) {
             application_qc_output *output = &binding->outputs[j]; qa_json_id out = qa_json_at(doc, outputs, j), kind = qa_json_get(doc, out, "kind");
             if (qa_json_string_equal(doc, kind, "field")) {
-                char *name = string(doc, qa_json_get(doc, out, "field"), error);
+                char *name = application_qc_declaration_string(doc, qa_json_get(doc, out, "field"), error);
                 for (size_t k = 0; name && k < profile->field_count; ++k)
                     if (profile->fields[k].kind == QC_FIELD_INPUT && strcmp(profile->fields[k].definition->name, name) == 0) output->field = &profile->fields[k];
                 free(name); if (!output->field) return application_fail(error, QA_ERROR_FORMAT, "QC input output lacks its declared source field");
             } else if (qa_json_string_equal(doc, kind, "handler")) {
-                char *name = string(doc, qa_json_get(doc, out, "function"), error);
+                char *name = application_qc_declaration_string(doc, qa_json_get(doc, out, "function"), error);
                 bool found = name && qa_qc_program_find_function(program, name, &output->function); free(name);
                 const qa_qc_function *fn = found ? qa_qc_program_function(program, output->function) : NULL;
                 const qa_qc_definition *self = qa_qc_program_find_global(program, "self");
                 qa_json_id inputs = qa_json_get(doc, out, "inputs");
                 if (!fn || !output->function || fn->first_statement < 0 || fn->named_builtin || !self || self->type != QA_QC_ENTITY ||
-                    !array(doc, inputs, false, error) || !qa_json_size(doc, inputs))
+                    !application_qc_declaration_array(doc, inputs, false, error) || !qa_json_size(doc, inputs))
                     return application_fail(error, QA_ERROR_FORMAT, "QC consume output has no original source handler");
                 for (size_t k = 0; k < qa_json_size(doc, inputs); ++k) {
-                    application_qc_input_id id; name = string(doc, qa_json_at(doc, inputs, k), error);
+                    application_qc_input_id id; name = application_qc_declaration_string(doc, qa_json_at(doc, inputs, k), error);
                     bool ok = name && input(name, &id) && id > QC_INPUT_ANGLES && id <= QC_INPUT_UP &&
                         !(output->consume & (UINT64_C(1) << id)); free(name);
                     if (!ok) return application_fail(error, QA_ERROR_FORMAT, "QC handler consumption inputs are invalid");
@@ -328,14 +354,14 @@ static bool selected_weapon(const qa_json_document *doc, qa_json_id node,
     if (node == QA_JSON_NONE) return true;
     if (qa_json_type(doc, node) != QA_JSON_OBJECT)
         return application_fail(error, QA_ERROR_FORMAT, "QC selected weapon requires a declared field/value mapping");
-    char *name = string(doc, qa_json_get(doc, node, "field"), error);
+    char *name = application_qc_declaration_string(doc, qa_json_get(doc, node, "field"), error);
     if (!name) return false;
     profile->weapon_field = qa_qc_program_find_field(provider->state.qc.program, name);
     free(name);
     if (!profile->weapon_field || profile->weapon_field->type != QA_QC_FLOAT)
         return application_fail(error, QA_ERROR_FORMAT, "QC selected weapon field is not an original source float");
     qa_json_id values = qa_json_get(doc, node, "values");
-    if (!array(doc, values, false, error)) return false;
+    if (!application_qc_declaration_array(doc, values, false, error)) return false;
     profile->weapon_count = qa_json_size(doc, values);
     if (!profile->weapon_count || profile->weapon_count > SIZE_MAX / sizeof(*profile->weapon_values))
         return application_fail(error, QA_ERROR_FORMAT, "QC selected weapon has no bounded source values");
@@ -344,8 +370,8 @@ static bool selected_weapon(const qa_json_document *doc, qa_json_id node,
     for (size_t i = 0; i < profile->weapon_count; ++i) {
         qa_json_id row = qa_json_at(doc, values, i);
         application_qc_weapon_value *value = profile->weapon_values + i;
-        if (!number(doc, qa_json_get(doc, row, "value"), &value->value, error)) return false;
-        char *item = string(doc, qa_json_get(doc, row, "item"), error);
+        if (!application_qc_declaration_number(doc, qa_json_get(doc, row, "value"), &value->value, error)) return false;
+        char *item = application_qc_declaration_string(doc, qa_json_get(doc, row, "item"), error);
         if (!item) return false;
         const char *colon = strchr(item, ':');
         bool ok = colon && colon != item && colon[1] &&
@@ -356,7 +382,7 @@ static bool selected_weapon(const qa_json_document *doc, qa_json_id node,
         if (ammo != QA_JSON_NONE) {
             value->ammo_declared = true;
             if (qa_json_type(doc, ammo) != QA_JSON_NULL) {
-                char *ammo_name = string(doc, ammo, error);
+                char *ammo_name = application_qc_declaration_string(doc, ammo, error);
                 if (!ammo_name) return false;
                 const char *separator = strchr(ammo_name, ':');
                 bool admitted = separator && separator != ammo_name && separator[1] &&
@@ -370,7 +396,7 @@ static bool selected_weapon(const qa_json_document *doc, qa_json_id node,
             impulse = qa_json_get(doc, row, "impulse");
         if (label != QA_JSON_NONE || bit != QA_JSON_NONE || impulse != QA_JSON_NONE) {
             uint64_t declared_bit = 0; double declared_impulse = 0;
-            value->label = string(doc, label, error);
+            value->label = application_qc_declaration_string(doc, label, error);
             if (!value->label || !*value->label || !qa_json_u64(doc, bit, &declared_bit, error) ||
                 !declared_bit || declared_bit > UINT32_MAX ||
                 !qa_json_number(doc, impulse, &declared_impulse, error) ||
@@ -400,7 +426,7 @@ static bool selected_weapon(const qa_json_document *doc, qa_json_id node,
 static const application_qc_bound_field *client_output_field(const qa_json_document *doc,
     qa_json_id node, const struct application_qc_profile *profile, bool vector, qa_error *error)
 {
-    char *name = string(doc, node, error);
+    char *name = application_qc_declaration_string(doc, node, error);
     if (!name) return NULL;
     const application_qc_bound_field *found = NULL;
     for (size_t i = 0; i < profile->field_count; ++i)
@@ -419,7 +445,7 @@ static const application_qc_bound_field *client_output_field(const qa_json_docum
 static bool client_outputs(const qa_json_document *doc, qa_json_id node,
     struct application_qc_profile *profile, qa_error *error)
 {
-    if (!array(doc, node, true, error)) return false;
+    if (!application_qc_declaration_array(doc, node, true, error)) return false;
     size_t count = qa_json_size(doc, node);
     if (count > APPLICATION_CLIENT_OUTPUT_COUNT)
         return application_fail(error, QA_ERROR_FORMAT, "QC client output channels are duplicated");
@@ -465,7 +491,7 @@ static bool client_outputs(const qa_json_document *doc, qa_json_id node,
             (!output->masked || (output->mask & ~output->field->private_mask)))
             return application_fail(error, QA_ERROR_FORMAT, "QC flag outputs require an explicit source-private mask");
         qa_json_id values = qa_json_get(doc, row, "values");
-        if (!array(doc, values, false, error)) return false;
+        if (!application_qc_declaration_array(doc, values, false, error)) return false;
         output->value_count = qa_json_size(doc, values);
         if (!output->value_count || output->value_count > SIZE_MAX / sizeof(*output->values))
             return application_fail(error, QA_ERROR_FORMAT, "QC client output needs a bounded source value mapping");
@@ -567,8 +593,8 @@ bool application_qc_qualify(application_provider *provider, qa_error *error)
     if (!profile) { qa_json_destroy(doc); return application_fail(error, QA_ERROR_MEMORY, "Allocating QC qualification"); }
     provider->state.qc.qualified = profile;
     qa_json_id root = qa_json_root(doc), artifact = qa_json_get(doc, root, "program"); uint64_t version = 0;
-    char *digest = string(doc, qa_json_get(doc, artifact, "digest"), error);
-    char *path = string(doc, qa_json_get(doc, artifact, "path"), error); qa_sha256_digest expected;
+    char *digest = application_qc_declaration_string(doc, qa_json_get(doc, artifact, "digest"), error);
+    char *path = application_qc_declaration_string(doc, qa_json_get(doc, artifact, "path"), error); qa_sha256_digest expected;
     qa_qc_program_info program = qa_qc_program_describe(provider->state.qc.program);
     bool ok = qa_json_type(doc, root) == QA_JSON_OBJECT && qa_json_u64(doc, qa_json_get(doc, root, "version"), &version, error) && version == 1 &&
         qa_json_string_equal(doc, qa_json_get(doc, root, "runtime"), "quakec") && digest && path &&
@@ -578,12 +604,12 @@ bool application_qc_qualify(application_provider *provider, qa_error *error)
     if (!ok && error && error->code == QA_OK) application_fail(error, QA_ERROR_FORMAT, "QC declaration artifact identity differs");
     if (ok && (provider->launch->roles & QA_ROLE_BIT(QA_ROLE_ENTITIES)))
         ok = application_qc_authored_map_ready(provider, error);
-    static const char *pending[] = {"combat", "protection", "items", "pickups", "objectives"};
+    static const char *pending[] = {"combat"};
     for (size_t i = 0; ok && i < sizeof(pending) / sizeof(pending[0]); ++i)
         ok = empty(doc, qa_json_get(doc, root, pending[i]), error);
     if (ok) ok = fields(doc, qa_json_get(doc, root, "actorFields"), provider, profile, error);
     qa_json_id callbacks = qa_json_get(doc, root, "callbacks");
-    if (ok) ok = array(doc, callbacks, false, error);
+    if (ok) ok = application_qc_declaration_array(doc, callbacks, false, error);
     if (ok) {
         profile->callback_count = qa_json_size(doc, callbacks);
         profile->callbacks = profile->callback_count ? calloc(profile->callback_count, sizeof(*profile->callbacks)) : NULL;
@@ -634,7 +660,7 @@ bool application_qc_qualify(application_provider *provider, qa_error *error)
             qa_json_string_equal(doc, qa_json_get(doc, row, "result"), "boolean"))
             callback->stage = QA_OPERATION_REPLACE;
         else { ok = application_fail(error, QA_ERROR_FORMAT, "QC callback stage differs from its canonical contract"); break; }
-        char *id = string(doc, qa_json_get(doc, row, "id"), error);
+        char *id = application_qc_declaration_string(doc, qa_json_get(doc, row, "id"), error);
         const char *colon = id ? strchr(id, ':') : NULL;
         ok = colon && colon != id && colon[1] &&
             qa_strings_intern_cstr(qa_session_strings(provider->application->session), id, &callback->id, error);
@@ -644,10 +670,10 @@ bool application_qc_qualify(application_provider *provider, qa_error *error)
         for (size_t j = 0; ok && j < i; ++j)
             if (profile->callbacks[j].id == callback->id)
                 ok = application_fail(error, QA_ERROR_FORMAT, "Duplicate QC declared callback identity");
-        if (ok) ok = call(doc, row, provider->state.qc.program, available, false, &callback->call, error);
+        if (ok) ok = application_qc_call_parse(doc, row, provider->state.qc.program, available, false, &callback->call, error);
     }
     qa_json_id commands = qa_json_get(doc, root, "commands");
-    if (ok) ok = array(doc, commands, true, error);
+    if (ok) ok = application_qc_declaration_array(doc, commands, true, error);
     if (ok) {
         profile->command_count = qa_json_size(doc, commands);
         profile->commands = profile->command_count ? calloc(profile->command_count, sizeof(*profile->commands)) : NULL;
@@ -656,9 +682,9 @@ bool application_qc_qualify(application_provider *provider, qa_error *error)
     for (size_t i = 0; ok && i < profile->command_count; ++i) {
         qa_json_id row = qa_json_at(doc, commands, i);
         application_qc_command *command = &profile->commands[i];
-        command->name = string(doc, qa_json_get(doc, row, "name"), error);
+        command->name = application_qc_declaration_string(doc, qa_json_get(doc, row, "name"), error);
         ok = command->name && *command->name &&
-            call(doc, row, provider->state.qc.program, 0, true, &command->call, error);
+            application_qc_call_parse(doc, row, provider->state.qc.program, 0, true, &command->call, error);
         for (size_t j = 0; ok && j < i; ++j)
             if (application_qc_command_name_equal(command->name, profile->commands[j].name))
                 ok = application_fail(error, QA_ERROR_FORMAT, "Duplicate QC declared command");
@@ -669,7 +695,7 @@ bool application_qc_qualify(application_provider *provider, qa_error *error)
     qa_json_id frame = qa_json_get(doc, root, "frame");
     if (ok && frame != QA_JSON_NONE) {
         profile->frame.count = 1; profile->frame.values = calloc(1, sizeof(*profile->frame.values));
-        ok = profile->frame.values && call(doc, frame, provider->state.qc.program, lifecycle | (UINT64_C(1) << QC_INPUT_ELAPSED), false, profile->frame.values, error);
+        ok = profile->frame.values && application_qc_call_parse(doc, frame, provider->state.qc.program, lifecycle | (UINT64_C(1) << QC_INPUT_ELAPSED), false, profile->frame.values, error);
     }
     qa_json_id clients = qa_json_get(doc, root, "clients");
     if (ok && clients != QA_JSON_NONE) {
@@ -691,16 +717,20 @@ bool application_qc_qualify(application_provider *provider, qa_error *error)
         if (profile->fields[i].kind == QC_FIELD_USERINFO && !profile->clients)
             ok = application_fail(error, QA_ERROR_FORMAT, "QC userinfo fields require declared client services");
     }
+    if (ok) ok = application_qc_protection_qualify(provider,doc,qa_json_get(doc,root,"protection"),error);
+    if (ok) ok = application_qc_items_qualify(provider,doc,qa_json_get(doc,root,"items"),error) &&
+        application_qc_pickups_qualify(provider,doc,qa_json_get(doc,root,"pickups"),error) &&
+        application_qc_objectives_qualify(provider,doc,qa_json_get(doc,root,"objectives"),error);
     qa_json_id cvars = qa_json_get(doc, root, "cvars");
-    if (ok) ok = array(doc, cvars, true, error);
+    if (ok) ok = application_qc_declaration_array(doc, cvars, true, error);
     if (ok) {
         profile->cvar_count = qa_json_size(doc, cvars); profile->cvars = profile->cvar_count ? calloc(profile->cvar_count, sizeof(*profile->cvars)) : NULL;
         if (profile->cvar_count && !profile->cvars) ok = application_fail(error, QA_ERROR_MEMORY, "Allocating QC declared cvars");
     }
     for (size_t i = 0; ok && i < profile->cvar_count; ++i) {
         qa_json_id row = qa_json_at(doc, cvars, i);
-        profile->cvars[i].name = string(doc, qa_json_get(doc, row, "name"), error);
-        profile->cvars[i].value = string(doc, qa_json_get(doc, row, "value"), error);
+        profile->cvars[i].name = application_qc_declaration_string(doc, qa_json_get(doc, row, "name"), error);
+        profile->cvars[i].value = application_qc_declaration_string(doc, qa_json_get(doc, row, "value"), error);
         ok = profile->cvars[i].name && *profile->cvars[i].name && profile->cvars[i].value;
         for (size_t j = 0; ok && j < i; ++j)
             if (strcmp(profile->cvars[j].name, profile->cvars[i].name) == 0) ok = application_fail(error, QA_ERROR_FORMAT, "Duplicate QC declared cvar");

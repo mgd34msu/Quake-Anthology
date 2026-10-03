@@ -1,6 +1,8 @@
 #include "internal.h"
 #include "guest_q3_private.h"
 #include "guest_qc_internal.h"
+#include "guest_qc_items.h"
+#include "guest_qc_item_weapons.h"
 #include "guest_native_q2_equipment.h"
 #include "guest_native_q2_private.h"
 #include "guest_q3_fire.h"
@@ -45,6 +47,16 @@ bool qa_application_equipment_q3_product_read(const qa_application *app,
     *out = engine->product; return true;
 }
 
+static application_provider *qc_item_provider(qa_application *app,qa_actor_owner owner)
+{
+    for(size_t i=0;i<app->provider_count;++i){application_provider *provider=app->providers[i];
+        if(provider&&provider->owner==owner&&provider->kind==APPLICATION_PROVIDER_QC&&
+            provider->constructed&&provider->attached&&!provider->close_pending&&provider->product&&
+            provider->launch&&provider->state.qc.engine&&provider->state.qc.qualified&&
+            provider->state.qc.qualified->items&&provider->state.qc.qualified->items->weapons)return provider;
+    }
+    return NULL;
+}
 bool qa_application_equipment_current(qa_application *app,
     const qa_application_equipment_view *view)
 {
@@ -57,17 +69,21 @@ bool qa_application_equipment_current(qa_application *app,
         if(!app->equipment||!qa_equipment_read(app->equipment,view->actor,&reached))return false;
         qa_item_id pending=reached.weapon_slot.phase==QA_WEAPON_SLOT_ACTIVE?view->source_binding.pending:reached.weapon_slot.next_item;
         qa_actor_owner pending_owner=pending?(reached.weapon_slot.phase==QA_WEAPON_SLOT_ACTIVE?view->provider:reached.weapon_slot.next_provider):0;
-        return app->equipment&&view->selected&&!view->equipment_slot&&!view->original_qvm&&
-            view->pending==pending&&view->pending_provider==pending_owner&&
-            !view->gear_namespace&&!view->gear_service_owner&&
-            qa_equipment_weapon_presented(app->equipment,view->actor,view->provider)&&
-            qa_equipment_weapon_presentation_current(app->equipment,&view->source_binding)&&
-            application_q3_components_event_source_read(app,view->provider,&component,NULL)&&
+        if(!view->selected||view->equipment_slot||view->original_qvm||
+            view->pending!=pending||view->pending_provider!=pending_owner||
+            view->gear_namespace||view->gear_service_owner||
+            !qa_equipment_weapon_presented(app->equipment,view->actor,view->provider)||
+            !qa_equipment_weapon_presentation_current(app->equipment,&view->source_binding)||
+            view->source_binding.provider!=view->provider||view->source_binding.active!=view->item||
+            !primary||!primary->constructed||!primary->attached||primary->close_pending||primary->owner!=view->primary)return false;
+        application_provider *qc=qc_item_provider(app,view->provider);
+        if(qc)return qc->product->family==view->family&&view->source_generation==0&&
+            view->view_content==qc->launch->content&&
+            application_qc_items_actor_current(qc->state.qc.engine,view->actor,NULL);
+        return application_q3_components_event_source_read(app,view->provider,&component,NULL)&&
             component.game&&component.product&&component.product->family==view->family&&
             component.generation==view->source_generation&&component.content==view->view_content&&
-            application_q3_component_items(component.game)==view->source_binding.context&&
-            view->source_binding.provider==view->provider&&view->source_binding.active==view->item&&
-            primary&&primary->constructed&&primary->attached&&!primary->close_pending&&primary->owner==view->primary;
+            application_q3_component_items(component.game)==view->source_binding.context;
     }
     qa_equipment_state slot;
     if(app->equipment&&qa_equipment_read(app->equipment,view->actor,&slot)&&slot.weapon_slot_present&&
@@ -354,6 +370,23 @@ static bool qc_model(application_provider *provider, qa_actor_id actor,
     struct application_qc_state *engine = provider->state.qc.engine;
     if (!engine || !application_qc_input_idle(provider))
         return application_fail(error, QA_ERROR_ARGUMENT, "QC equipment requires its actual idle source owner");
+    if(provider->state.qc.qualified && provider->state.qc.qualified->items &&
+        provider->state.qc.qualified->items->weapons) {
+        const application_qc_resource *resource;float source_frame;
+        if(!application_qc_item_weapons_model_read(engine,actor,&resource,&source_frame,error))return false;
+        double frame=trunc((double)source_frame);
+        if(!isfinite(frame) || frame<INT32_MIN || frame>INT32_MAX)
+            return application_fail(error,QA_ERROR_FORMAT,"Declared QC weapon frame exceeds its actual presentation extent");
+        out->has_frame=true;out->frame=(int32_t)frame;
+        if(resource) { out->view_model=resource->name;out->view_source=resource->source;out->visible=true; }
+        if(out->item) {
+            qa_item_admission admission;bool found;
+            if(!application_qc_items_item_read(provider,actor,out->item,&admission,
+                &out->source_icon,&out->source_held,&found,error))return false;
+            if(!found)return application_fail(error,QA_ERROR_FORMAT,"Declared QC weapon lost its actual item metadata");
+        }
+        return true;
+    }
     qa_qc_weapon_visual source = {0};
     bool found = false;
     for (uint32_t slot = 1; slot < qa_qc_entity_count(provider->state.qc.instance); ++slot) {
@@ -425,27 +458,32 @@ bool qa_application_equipment_source_read(qa_application *app,qa_actor_id actor,
         qa_weapon_presentation source;bool found=false;
         if(!qa_equipment_weapon_presentation_read(app->equipment,actor,i,&source,&found,error))return false;
         if(!found||!qa_equipment_weapon_presented(app->equipment,actor,source.provider))continue;
-        application_q3_component_publication component;bool component_found=false;
+        application_q3_component_publication component={0};bool component_found=false;
         size_t components=application_q3_components_publication_count(app->components);
         for(size_t j=0;j<components;++j) {
             application_q3_component_publication row;
             if(!application_q3_components_publication_at(app->components,j,&row,error))return false;
             if(row.owner==source.provider){component=row;component_found=true;break;}
         }
-        if(!component_found)continue;
-        if(!component.game||!component.product||application_q3_component_items(component.game)!=source.context)
+        application_provider *qc=qc_item_provider(app,source.provider);
+        if(!component_found&&!qc)continue;
+        if(component_found&&(!component.game||!component.product||application_q3_component_items(component.game)!=source.context))
             return application_fail(error,QA_ERROR_ARGUMENT,"Source weapon presentation changed its actual component item owner");
+        if(qc&&!application_qc_items_actor_current(qc->state.qc.engine,actor,error))return false;
         application_provider *primary=application_world_provider(app,QA_ROLE_ENTITIES,"");
         if(!primary||!primary->constructed||!primary->attached||primary->close_pending)
             return application_fail(error,QA_ERROR_NOT_FOUND,"Source weapon observation lost its actual primary world");
         qa_application_equipment_view view={.actor=actor,.provider=source.provider,.primary=primary->owner,
-            .family=component.product->family,.selected=true,.source_slot=true,.source_binding=source,
+            .family=qc?qc->product->family:component.product->family,.selected=true,.source_slot=true,.source_binding=source,
             .item=source.active,.pending=source.pending,.pending_provider=source.pending?source.provider:0,
-            .source_generation=component.generation,.view_content=component.content};
+            .source_generation=qc?0:component.generation,.view_content=qc?qc->launch->content:component.content};
         if(source.active) {
             qa_item_admission definition;bool declared=false;
-            if(!application_q3_mod_items_item_read(source.context,actor,source.active,&definition,
-                &view.source_icon,&view.source_held,&declared,error))return false;
+            bool read=qc?application_qc_items_item_read(qc,actor,source.active,&definition,
+                &view.source_icon,&view.source_held,&declared,error):
+                application_q3_mod_items_item_read(source.context,actor,source.active,&definition,
+                &view.source_icon,&view.source_held,&declared,error);
+            if(!read)return false;
             if(!declared||!definition.definition.weapon||definition.definition.owner!=source.provider)
                 return application_fail(error,QA_ERROR_FORMAT,"Active source weapon is outside its genuine admitted declaration");
             view.label=definition.definition.label;view.ammo=definition.definition.ammo;
@@ -456,6 +494,7 @@ bool qa_application_equipment_source_read(qa_application *app,qa_actor_id actor,
             }
             view.has_ammo_to_start=!view.finite_ammo||view.ammo_count>0;
         }
+        if(qc&&!qc_model(qc,actor,&view,error))return false;
         qa_equipment_state state;
         if(!qa_equipment_read(app->equipment,actor,&state))return false;
         if(state.weapon_slot.phase!=QA_WEAPON_SLOT_ACTIVE){view.pending=state.weapon_slot.next_item;view.pending_provider=state.weapon_slot.next_provider;}

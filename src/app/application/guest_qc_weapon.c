@@ -1,4 +1,6 @@
 #include "guest_qc_profile.h"
+#include "guest_qc_item_weapons.h"
+#include "guest_qc_items.h"
 #include "qa/application_qc_presentation.h"
 #include "qa/qc_observation.h"
 
@@ -65,6 +67,12 @@ bool qa_application_qc_weapon_request(qa_application *app,qa_actor_id actor,qa_i
 {
     if(!accepted || !item) return application_fail(error,QA_ERROR_ARGUMENT,"QC weapon request requires a canonical item");
     *accepted=false;
+    application_provider *declared=application_provider_for(app,actor,QA_ROLE_ARSENAL,"");
+    if(declared && declared->kind==APPLICATION_PROVIDER_QC && declared->state.qc.qualified &&
+        declared->state.qc.qualified->items && declared->state.qc.qualified->items->weapons) {
+        if(!declared->state.qc.engine)return application_fail(error,QA_ERROR_NOT_FOUND,"Declared QC weapon lost its actual Source owner");
+        return application_qc_item_weapons_select(declared->state.qc.engine,actor,item,accepted,error);
+    }
     qa_application_qc_player_ui view;
     if(!qa_application_qc_selected_player_ui_read(app,actor,QA_ROLE_ARSENAL,&view,error)) return false;
     application_provider *provider=application_provider_for(app,actor,QA_ROLE_ARSENAL,"");
@@ -137,6 +145,12 @@ bool application_qc_client_postthink(struct application_qc_state *engine,qa_acto
 bool qa_application_qc_weapon_settled(qa_application *app,qa_actor_id actor,bool *out,qa_error *error)
 {
     if(!out) return application_fail(error,QA_ERROR_ARGUMENT,"QC weapon stage requires its actual result slot");
+    application_provider *declared=application_provider_for(app,actor,QA_ROLE_ARSENAL,"");
+    if(declared && declared->kind==APPLICATION_PROVIDER_QC && declared->state.qc.qualified &&
+        declared->state.qc.qualified->items && declared->state.qc.qualified->items->weapons) {
+        if(!declared->state.qc.engine)return application_fail(error,QA_ERROR_NOT_FOUND,"Declared QC weapon lost its actual Source owner");
+        return application_qc_item_weapons_settled(declared->state.qc.engine,actor,out,error);
+    }
     qa_application_qc_player_ui view;
     if(!qa_application_qc_selected_player_ui_read(app,actor,QA_ROLE_ARSENAL,&view,error)) return false;
     application_provider *provider=application_provider_for(app,actor,QA_ROLE_ARSENAL,"");

@@ -1,4 +1,7 @@
 #include "guest_qc_profile.h"
+#include "guest_qc_items.h"
+#include "guest_qc_protection.h"
+#include "guest_qc_objectives.h"
 #include "guest_q3_component_clients.h"
 #include <stdio.h>
 #include <float.h>
@@ -41,6 +44,11 @@ static bool resolve(const application_qc_value *value, const application_qc_inpu
     case QC_INPUT_DIRECTION: out.kind = QA_QC_GAME_VECTOR; out.value.vector = inputs->direction; break;
     case QC_INPUT_NORMAL: out.kind = QA_QC_GAME_VECTOR; out.value.vector = inputs->normal; break;
     case QC_INPUT_ITEM: out.kind = QA_QC_GAME_STRING; out.value.string = inputs->item; break;
+    case QC_INPUT_DAMAGE_FLAGS: out.value.number = inputs->damage_flags; break;
+    case QC_INPUT_PROTECTION_SCALE: out.value.number = inputs->protection_scale; break;
+    case QC_INPUT_PICKUP_COUNT: out.value.number = inputs->pickup_count; break;
+    case QC_INPUT_PICKUP_HAS_COUNT: out.value.number = inputs->pickup_has_count ? 1 : 0; break;
+    case QC_INPUT_PICKUP_DROPPED: out.value.number = inputs->pickup_dropped ? 1 : 0; break;
     case QC_INPUT_TIME: out.value.number = (float)((double)inputs->time_ns / 1e9); break;
     case QC_INPUT_ELAPSED: out.value.number = (float)((double)inputs->elapsed_ns / 1e9); break;
     case QC_INPUT_RESULT: out.value.number = inputs->result; break;
@@ -53,9 +61,10 @@ static bool resolve(const application_qc_value *value, const application_qc_inpu
     }
     *result = out; return true;
 }
-static bool run_call(struct application_qc_state *engine, const application_qc_call *call,
-                     const application_qc_inputs *inputs, uint32_t result[3], qa_error *error)
+static bool run_call_staged(struct application_qc_state *engine, const application_qc_call *call,
+                     const qa_qc_inline_region *region, const application_qc_inputs *inputs, uint32_t result[3], qa_error *error)
 {
+    if (!application_qc_objectives_sync(engine,error)) return false;
     qa_qc_game_value arguments[8];
     for (size_t j = 0; j < call->argument_count; ++j)
         if (!resolve(&call->arguments[j], inputs, &arguments[j], error)) return false;
@@ -67,16 +76,25 @@ static bool run_call(struct application_qc_state *engine, const application_qc_c
         globals[j].name = call->globals[j].definition->name;
         ok = resolve(&call->globals[j].value, inputs, &globals[j].value, error);
     }
-    if (ok) ok = qa_qc_game_call_index(engine->provider->state.qc.game, call->function, arguments,
-        call->argument_count, globals, call->global_count, result, error);
+    if (ok) ok = region ? qa_qc_game_call_region(engine->provider->state.qc.game,region,arguments,
+        call->argument_count,globals,call->global_count,result,error) :
+        qa_qc_game_call_index(engine->provider->state.qc.game,call->function,arguments,
+        call->argument_count,globals,call->global_count,result,error);
     if (globals != local) free(globals);
-    return ok && application_qc_publish_client_outputs(engine, error);
+    return ok && application_qc_objectives_sync(engine,error) && application_qc_publish_client_outputs(engine, error);
 }
+bool application_qc_run_call(struct application_qc_state *engine,const application_qc_call *call,
+    const application_qc_inputs *inputs,uint32_t result[3],qa_error *error)
+{return run_call_staged(engine,call,NULL,inputs,result,error);}
+bool application_qc_run_call_region(struct application_qc_state *engine,const application_qc_call *call,
+    const qa_qc_inline_region *region,const application_qc_inputs *inputs,uint32_t result[3],qa_error *error)
+{return run_call_staged(engine,call,region,inputs,result,error);}
 bool application_qc_run_calls(struct application_qc_state *engine, const application_qc_calls *calls,
                                 const application_qc_inputs *inputs, qa_error *error)
 {
+    if (!calls->count) return application_qc_objectives_sync(engine,error);
     for (size_t i = 0; i < calls->count; ++i)
-        if (!run_call(engine, calls->values + i, inputs, NULL, error)) return false;
+        if (!application_qc_run_call(engine, calls->values + i, inputs, NULL, error)) return false;
     return true;
 }
 bool application_qc_command_name_equal(const char *left, const char *right)
@@ -186,7 +204,7 @@ static bool callback_observe(void *opaque, const void *request, const void *resu
     application_qc_callback *callback = opaque;
     application_qc_inputs inputs;
     return callback_inputs(callback, request, result, &inputs, error) &&
-        run_call(callback->engine, &callback->call, &inputs, NULL, error) && callback_current(callback, error);
+        application_qc_run_call(callback->engine, &callback->call, &inputs, NULL, error) && callback_current(callback, error);
 }
 static bool callback_replace(void *opaque, const void *request, qa_operation_next next, void *result, qa_error *error)
 {
@@ -195,7 +213,7 @@ static bool callback_replace(void *opaque, const void *request, qa_operation_nex
     application_qc_inputs inputs;
     uint32_t returned[3];
     if (!callback_inputs(callback, request, NULL, &inputs, error) ||
-        !run_call(callback->engine, &callback->call, &inputs, returned, error) ||
+        !application_qc_run_call(callback->engine, &callback->call, &inputs, returned, error) ||
         !callback_current(callback, error)) return false;
     float value;
     memcpy(&value, returned, sizeof(value));
@@ -207,7 +225,7 @@ static bool callback_transform(void *opaque, void *request, qa_error *error)
     application_qc_inputs inputs;
     uint32_t returned[3];
     if (!callback_inputs(callback, request, NULL, &inputs, error) ||
-        !run_call(callback->engine, &callback->call, &inputs, returned, error) ||
+        !application_qc_run_call(callback->engine, &callback->call, &inputs, returned, error) ||
         !callback_current(callback, error)) return false;
     float value;
     memcpy(&value, returned, sizeof(value));
@@ -269,7 +287,7 @@ bool application_qc_callbacks_ready(const struct application_qc_state *engine, q
              !qa_operation_destroy_validate(callback->services.operation, error))))
             return application_fail(error, QA_ERROR_FORMAT, "QC callback continuation differs from its actual hooks");
     }
-    return true;
+    return application_qc_objectives_ready(engine,error) && application_qc_protection_ready(engine,error);
 }
 static bool project_value(qa_qc_instance *vm, int32_t reference, const qa_qc_definition *field,
                             qa_qc_game_value value, qa_error *error)
@@ -457,6 +475,8 @@ bool application_qc_store_declared(struct application_qc_state *engine, qa_qc_in
     if (!qa_qc_reference_actor(vm, event->entity_reference, &actor, error) ||
         !qa_qc_slot(vm, (uint32_t)event->entity_reference / layout.stride_bytes, &binding)) return false;
     if (binding.kind != QA_QC_SLOT_BORROWED) return true;
+    if (!application_qc_items_source_stored(engine,vm,event,error) ||
+        !application_qc_protection_source_stored(engine,vm,event,error)) return false;
     engine->projecting = true; bool ok = true;
     for (size_t i = 0; ok && i < profile->field_count; ++i) {
         const application_qc_bound_field *field = &profile->fields[i]; const qa_qc_definition *def = field->definition;
@@ -494,6 +514,7 @@ bool application_qc_store_declared(struct application_qc_state *engine, qa_qc_in
             qa_inventory_entry entry;
             ok = qa_qc_entity_float(vm, event->entity_reference, def->offset, &scalar, error) &&
                 qa_inventory_entry_read(engine->services.inventory, actor, field->item, &entry, error);
+            if (ok) ok = application_qc_items_field_permission(engine,actor,field->item,entry.count!=scalar,false,error);
             if (ok) { entry.count = scalar; ok = qa_inventory_configure(engine->services.inventory, actor, &entry, NULL, NULL, error); }
             break;
         }
@@ -574,7 +595,8 @@ static bool initialize_declared_map_context(struct application_qc_state *engine,
     }
     if (!application_qc_initialize_declared(engine, error)) return false;
     if (!application_qc_flush(engine, error) || !qa_qc_game_loading(engine->provider->state.qc.game, false, error)) return false;
-    engine->loading = false; qa_cvars_set_server_active(engine->cvars, true); return true;
+    engine->loading = false; qa_cvars_set_server_active(engine->cvars, true);
+    return application_qc_objectives_activate(engine,error);
 }
 bool application_qc_load_declared_map(struct application_qc_state *engine, const qa_bsp_view *bsp,
                                         const qa_entities *entities, qa_string_id map, qa_string_id spawn, qa_error *error)

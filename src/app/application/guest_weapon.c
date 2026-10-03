@@ -1,5 +1,7 @@
 #include "guest_q3_private.h"
 #include "guest_qc_profile.h"
+#include "guest_qc_item_weapons.h"
+#include "guest_qc_items.h"
 #include "guest_q3_weapons.h"
 #include "guest_q3_catalog.h"
 #include "guest_native_q2_private.h"
@@ -42,6 +44,9 @@ bool application_guest_weapon_read(application_provider *provider, qa_actor_id a
     if (provider->kind == APPLICATION_PROVIDER_QC) {
         struct application_qc_state *engine = provider->state.qc.engine;
         if (!engine) return application_fail(error, QA_ERROR_NOT_FOUND, "QuakeC weapon owner is absent");
+        if(provider->state.qc.qualified && provider->state.qc.qualified->items &&
+            provider->state.qc.qualified->items->weapons)
+            return application_qc_item_weapons_selected_read(engine,actor,out,error);
         uint32_t slot;
         if (!qa_qc_actor_observation_slot(provider->state.qc.instance, actor, &slot, error)) return false;
         const struct application_qc_profile *profile = provider->state.qc.qualified;

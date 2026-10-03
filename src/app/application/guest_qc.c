@@ -1,4 +1,9 @@
 #include "guest_qc_profile.h"
+#include "guest_qc_items.h"
+#include "guest_qc_pickups.h"
+#include "guest_qc_item_weapons.h"
+#include "guest_qc_protection.h"
+#include "guest_qc_objectives.h"
 #include "guest_qc_original_save.h"
 #include "guest_qc_rerelease.h"
 #include "guest_qc_factory.h"
@@ -1147,6 +1152,37 @@ static double source_time_seconds(void *opaque)
     const struct application_qc_state *engine = opaque;
     return (double)engine->source_time_ns / 1e9;
 }
+static bool declared_replace(void *opaque,qa_qc_instance *vm,const qa_qc_call_event *event,
+    qa_qc_call_next next,qa_error *error)
+{
+    struct application_qc_state *engine=opaque;bool handled=false;
+    if(!application_qc_item_weapons_replace(engine,vm,event,next,&handled,error))return false;
+    return handled||application_qc_spawn_call(opaque,vm,event,next,error);
+}
+static bool declared_inline(void *opaque,qa_qc_instance *vm,const qa_qc_inline_event *event,
+    qa_qc_inline_next next,qa_error *error)
+{
+    struct application_qc_state *engine=opaque;bool handled=false;
+    if(!application_qc_item_weapons_inline(engine,vm,event,next,&handled,error))return false;
+    return handled||qa_qc_inline_continue(next,error);
+}
+static bool declared_left(void *opaque,qa_qc_instance *vm,const qa_qc_call_event *event,qa_error *error)
+{
+    (void)vm;return event->depth!=0||application_qc_objectives_sync(opaque,error);
+}
+static bool declared_regions(application_provider *provider,qa_qc_inline_region **out,size_t *count,qa_error *error)
+{
+    size_t weapon_count=0,protection_count=0;
+    const qa_qc_inline_region *weapons=application_qc_item_weapons_regions(provider,&weapon_count);
+    const qa_qc_inline_region *protection=application_qc_protection_regions(provider->state.qc.qualified?provider->state.qc.qualified->protection:NULL,&protection_count);
+    if(weapon_count>SIZE_MAX-protection_count||weapon_count+protection_count>SIZE_MAX/sizeof(**out))
+        return application_fail(error,QA_ERROR_MEMORY,"QC admitted Source region count overflows");
+    *count=weapon_count+protection_count;*out=*count?malloc(*count*sizeof(**out)):NULL;
+    if(*count&&!*out)return application_fail(error,QA_ERROR_MEMORY,"Composing QC admitted Source regions");
+    if(weapon_count)memcpy(*out,weapons,weapon_count*sizeof(**out));
+    if(protection_count)memcpy(*out+weapon_count,protection,protection_count*sizeof(**out));
+    return true;
+}
 bool application_construct_qc(qa_application *app, application_provider *provider, qa_world *world,
                                const qa_product *product, const qa_launch_choices *choices, qa_error *error)
 {
@@ -1192,10 +1228,13 @@ bool application_construct_qc(qa_application *app, application_provider *provide
             bindings[import_count++]=(qa_qc_builtin_binding){rerelease_imports[i],NULL,engine,application_qc_import};
     qa_actor_definition definition;
     if (!qa_strings_intern_cstr(qa_session_strings(app->session), "quakec:authored", &definition, error)) return false;
+    qa_qc_inline_region *regions=NULL;size_t region_count=0;
+    if(!declared_regions(provider,&regions,&region_count,error))return false;
     qa_qc_game_options options = {
         .vm = {.profile = engine->profile, .entity_capacity = engine->actor_capacity,
+            .inline_regions=regions,.inline_region_count=region_count,
             .observers = {.context = engine, .stored = stored, .entered = application_qc_entered,
-                .replace = application_qc_spawn_call},
+                .replace = declared_replace,.inline_boundary=declared_inline,.left=declared_left},
             .host = {.owner = provider->owner, .default_definition = definition, .vfs = provider->launch->content,
                      .context = engine, .random_u32 = source_random, .may_move = application_qc_may_move,
                      .declared_projection = profile != NULL, .prepare_entity = application_qc_prepare_entity,
@@ -1206,8 +1245,10 @@ bool application_construct_qc(qa_application *app, application_provider *provide
         .map_exclusion_flags = deathmatch->number != 0 ? 2048u : difficulty <= 0 ? 256u : difficulty == 1 ? 512u : 1024u,
         .context = engine, .resource = application_qc_resource_lookup,
         .checkpoint = application_qc_capture_engine, .restore = application_qc_restore_engine};
-    if (!qa_qc_game_create(provider->state.qc.program, &options, &provider->state.qc.game, error)) return false;
+    bool created=qa_qc_game_create(provider->state.qc.program,&options,&provider->state.qc.game,error);
+    free(regions);if(!created)return false;
     provider->state.qc.instance = qa_qc_game_instance(provider->state.qc.game);
+    if(!application_qc_protection_create(engine,error))return false;
     provider->component = (qa_component){.owner = provider->owner, .clock = provider->launch->selection.clock,
         .state = engine, .prepare_frame = prepare_frame, .begin_frame = begin_frame,
         .actor_frame = actor_frame, .end_frame = end_frame, .command_actor = command_actor};
@@ -1226,7 +1267,10 @@ static bool load_map(application_provider *provider, const qa_bsp_view *bsp,
         return application_fail(error, QA_ERROR_ARGUMENT, "QC map has unfinished input");
     if(!application_bots_npc_idle(provider))
         return application_fail(error,QA_ERROR_ARGUMENT,"QC map retains an active monster path");
-    if (!application_qc_callbacks_suspend(provider, error)) return false;
+    if (!application_qc_callbacks_suspend(provider, error) ||
+        !application_qc_objectives_suspend(engine,error) ||
+        !application_qc_pickups_close(engine,error) || !application_qc_items_close(engine,error) ||
+        !application_qc_protection_suspend(engine,error)) return false;
     application_bots_npc_destroy(provider);
     if (provider->state.qc.qualified && !authored_entities)
         return application_qc_load_declared_map(engine, bsp, entities, map_id, spawn_id, error) &&
@@ -1323,7 +1367,7 @@ static bool load_map(application_provider *provider, const qa_bsp_view *bsp,
     if (!application_qc_flush(engine, error) || !qa_qc_game_loading(provider->state.qc.game, false, error)) return false;
     engine->loading = false; engine->initialized = true; engine->source_time_ns = initial_ns;
     qa_cvars_set_server_active(engine->cvars, true);
-    return application_qc_callbacks_register(provider, error);
+    return application_qc_objectives_activate(engine,error) && application_qc_callbacks_register(provider, error);
 }
 bool application_qc_spawn_map(application_provider *provider, const qa_bsp_view *bsp,
                                const qa_entities *entities, qa_string_id map,
@@ -1345,13 +1389,18 @@ bool application_qc_deconstruct(application_provider *provider, qa_error *error)
     if (engine == NULL) return true;
     if (application_qc_has_source_admission(engine) || engine->input_scope || engine->parked_inputs ||
         engine->client_think_time || !qa_world_idle(engine->world) ||
+        !application_qc_protection_idle(engine) || !qa_inventory_idle(engine->services.inventory) ||
+        !qa_pickups_idle(engine->services.pickups) ||
         (engine->console && !qa_console_idle(engine->console)) ||
         (engine->cvars && !qa_cvars_observer_idle(engine->cvars)) ||
         (provider->state.qc.game && !qa_qc_game_idle(provider->state.qc.game)))
         return application_fail(error, QA_ERROR_ARGUMENT, "QuakeC collision contexts are borrowed by the world");
     if (!application_bots_npc_idle(provider))
         return application_fail(error, QA_ERROR_ARGUMENT, "QC teardown retains an active monster path");
-    if (!application_qc_callbacks_suspend(provider, error)) return false;
+    if (!application_qc_callbacks_suspend(provider, error) ||
+        !application_qc_objectives_suspend(engine,error) ||
+        !application_qc_pickups_close(engine,error) || !application_qc_items_close(engine,error) ||
+        !application_qc_protection_destroy(engine,error)) return false;
     for (uint32_t i = 0; engine->actors && i < engine->actor_capacity; ++i) {
         if (!engine->actors[i].collision_bound) continue;
         if (!qa_world_collision_unbind(engine->world, engine->actors[i].actor, &engine->actors[i], error)) return false;
@@ -1384,7 +1433,10 @@ bool application_qc_actor_released(application_provider *provider, qa_actor_reco
 {
     struct application_qc_state *engine = provider->state.qc.engine;
     if (engine == NULL) return true;
-    if (!application_qc_source_client_released(engine, record, error)) return false;
+    if (!application_qc_pickups_release(engine,record.id,error) ||
+        !application_qc_items_release(engine,record.id,error) ||
+        !application_qc_protection_release(engine,record.id,error) ||
+        !application_qc_source_client_released(engine, record, error)) return false;
     application_qc_rerelease_released(engine,record.id);
     application_bots_npc_released(provider,record.id);
     qa_qc_game_actor_released(provider->state.qc.game, record);

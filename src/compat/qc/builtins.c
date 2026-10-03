@@ -283,18 +283,23 @@ static bool find_entity(qa_qc_instance *instance, bool next_only, qa_error *erro
 static bool pure_builtin(qa_qc_instance *instance, int32_t number,
                          qa_error *error)
 {
+    /* A NULL instance queries the same dispatch cases for return-word-only effects. */
     float value;
     qa_vec3 vector;
     char text[128];
     int32_t id;
     switch (number) {
-    case 1: return makevectors(instance, error);
-    case 7: return qa_qc_return_float(instance,
+    case 1: return instance && makevectors(instance, error);
+    case 7:
+        if (!instance) return true;
+        return qa_qc_return_float(instance,
                     (float)(random_word(instance) & 0x7fffu) / 32767.0f, error);
     case 9:
+        if (!instance) return true;
         if (!qa_qc_arg_vector(instance, 0, &vector, error)) return false;
         return qa_qc_return_vector(instance, qa_vec_normalize(vector), error);
     case 10: {
+        if (!instance) return false;
         char *message;
         if (!var_string(instance, &message, error)) return false;
         qa_error_set(error, QA_ERROR_FORMAT, 0, "QuakeC error: %s", message);
@@ -302,42 +307,51 @@ static bool pure_builtin(qa_qc_instance *instance, int32_t number,
         return false;
     }
     case 12:
+        if (!instance) return true;
         return qa_qc_arg_vector(instance, 0, &vector, error)
             && qa_qc_return_float(instance, qa_vec_length(vector), error);
     case 13:
+        if (!instance) return true;
         if (!qa_qc_arg_vector(instance, 0, &vector, error)) return false;
         if (vector.x == 0 && vector.y == 0) value = 0;
         else { value = truncf(atan2f(vector.y, vector.x) * 57.29577951308232f); if (value < 0) value += 360; }
         return qa_qc_return_float(instance, value, error);
-    case 18: return find_entity(instance, false, error);
+    case 18: return instance && find_entity(instance, false, error);
     case 26:
+        if (!instance) return false;
         if (!qa_qc_arg_float(instance, 0, &value, error)) return false;
         if (value == truncf(value)) snprintf(text, sizeof(text), "%d", builtin_float_int(value));
         else snprintf(text, sizeof(text), "%5.1f", (double)value);
         return qa_qc_engine_string(instance, "pr_string_temp", text, 128, &id, error)
             && qa_qc_return_int(instance, id, error);
     case 27:
+        if (!instance) return false;
         if (!qa_qc_arg_vector(instance, 0, &vector, error)) return false;
         snprintf(text, sizeof(text), "'%5.1f %5.1f %5.1f'",
                  (double)vector.x, (double)vector.y, (double)vector.z);
         return qa_qc_engine_string(instance, "pr_string_temp", text, 128, &id, error)
             && qa_qc_return_int(instance, id, error);
-    case 29: instance->trace_enabled = true; return true;
-    case 30: instance->trace_enabled = false; return true;
+    case 29: if (!instance) return false; instance->trace_enabled = true; return true;
+    case 30: if (!instance) return false; instance->trace_enabled = false; return true;
     case 36:
+        if (!instance) return true;
         return qa_qc_arg_float(instance, 0, &value, error)
             && qa_qc_return_float(instance, truncf(value > 0 ? value + 0.5f : value - 0.5f), error);
     case 37:
+        if (!instance) return true;
         return qa_qc_arg_float(instance, 0, &value, error)
             && qa_qc_return_float(instance, floorf(value), error);
     case 38:
+        if (!instance) return true;
         return qa_qc_arg_float(instance, 0, &value, error)
             && qa_qc_return_float(instance, ceilf(value), error);
     case 43:
+        if (!instance) return true;
         return qa_qc_arg_float(instance, 0, &value, error)
             && qa_qc_return_float(instance, fabsf(value), error);
-    case 47: return find_entity(instance, true, error);
+    case 47: return instance && find_entity(instance, true, error);
     case 51: {
+        if (!instance) return true;
         if (!qa_qc_arg_vector(instance, 0, &vector, error)) return false;
         float yaw = 0, pitch;
         if (vector.x == 0 && vector.y == 0) pitch = vector.z > 0 ? 90 : 270;
@@ -350,6 +364,7 @@ static bool pure_builtin(qa_qc_instance *instance, int32_t number,
         return qa_qc_return_vector(instance, qa_v3(pitch, yaw, 0), error);
     }
     case 81: {
+        if (!instance) return true;
         const char *source;
         if (!qa_qc_arg_string(instance, 0, &source, error)) return false;
         char *end;
@@ -358,6 +373,7 @@ static bool pure_builtin(qa_qc_instance *instance, int32_t number,
         return qa_qc_return_float(instance, value, error);
     }
     case 99: {
+        if (!instance) return true;
         const char *extension;
         if (!qa_qc_arg_string(instance, 0, &extension, error)) return false;
         bool found = false;
@@ -365,8 +381,15 @@ static bool pure_builtin(qa_qc_instance *instance, int32_t number,
             if (strcmp(instance->extensions[i], extension) == 0) { found = true; break; }
         return qa_qc_return_float(instance, found ? 1.0f : 0.0f, error);
     }
-    default: return qc_fail(error, QA_ERROR_NOT_FOUND, 0, "unknown pure QuakeC builtin");
+    default: return instance && qc_fail(error, QA_ERROR_NOT_FOUND, 0, "unknown pure QuakeC builtin");
     }
+}
+
+bool qa_qc_program_function_returns_only(const qa_qc_program *program, uint32_t index)
+{
+    const qa_qc_function *function = qa_qc_program_function(program, index);
+    return function && !function->named_builtin && function->first_statement < 0 &&
+        function->first_statement != INT32_MIN && pure_builtin(NULL, -function->first_statement, NULL);
 }
 
 bool qc_builtin_call(qa_qc_instance *instance, int32_t number,

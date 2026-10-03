@@ -60,6 +60,9 @@ bool qa_qc_game_call(qa_qc_game *, const char *function, const qa_qc_game_value 
                       const qa_qc_game_global *, size_t, uint32_t result[3], qa_error *);
 bool qa_qc_game_call_index(qa_qc_game *, uint32_t function, const qa_qc_game_value *, size_t,
                             const qa_qc_game_global *, size_t, uint32_t result[3], qa_error *);
+bool qa_qc_game_call_region(qa_qc_game *, const qa_qc_inline_region *,
+    const qa_qc_game_value *, size_t, const qa_qc_game_global *, size_t,
+    uint32_t result[3], qa_error *);
 bool qa_qc_game_callback(qa_qc_game *, qa_actor_id self, qa_actor_id other,
                           const char *field, qa_error *);
 /* Source ED_ParseEdict conventions: angle/light aliases, escaped newlines,

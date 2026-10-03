@@ -12,6 +12,8 @@
 #include "native_q1_composition_death.h"
 #include "guest_q3_private.h"
 #include "guest_q3_weapons_services.h"
+#include "guest_qc_items.h"
+#include "guest_qc_item_weapons.h"
 #include "qa/application_qc_presentation.h"
 #include "qa/game_q2_bots.h"
 #include "qa/game_q2_combat.h"
@@ -375,8 +377,12 @@ static bool equipment_resume(void *opaque, qa_actor_id actor, qa_error *error)
         return qa_q3_set_weapon_slot(provider->state.q3, actor, false, error);
     if (provider->kind == APPLICATION_PROVIDER_QVM)
         return application_arsenal_guest_equipment_handoff_ready(provider, actor, error);
-    if(provider->kind==APPLICATION_PROVIDER_QC)
+    if(provider->kind==APPLICATION_PROVIDER_QC) {
+        if(provider->state.qc.qualified && provider->state.qc.qualified->items &&
+            provider->state.qc.qualified->items->weapons)
+            return application_qc_item_weapons_resume(provider->state.qc.engine,actor,error);
         return qa_actors_get(qa_session_actors(provider->application->session),actor)!=NULL;
+    }
     return application_fail(error, QA_ERROR_UNSUPPORTED,
                             "selected arsenal has no equipment resume adapter");
 }

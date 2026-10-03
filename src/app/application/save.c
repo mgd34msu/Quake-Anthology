@@ -2,6 +2,7 @@
 #include "startup_flow.h"
 #include "control_frame.h"
 #include "guest_qc_internal.h"
+#include "guest_qc_objectives.h"
 #include "guest_native_q2_private.h"
 #include "qa/game_q1_checkpoint.h"
 #include "qa/game_q2_checkpoint.h"
@@ -1864,7 +1865,8 @@ static bool persistence_finish(void *opaque, void *value, const qa_save_image *i
         else if (provider->kind == APPLICATION_PROVIDER_Q1)
             ok = qa_q1_game_restore_finish(provider->state.q1, error);
         else if (provider->kind == APPLICATION_PROVIDER_QC)
-            ok = application_qc_npc_restore_finish(provider, error);
+            ok = application_qc_npc_restore_finish(provider, error) &&
+                application_qc_objectives_restored(provider->state.qc.engine, error);
         if (ok)
             ok = application_guest_inventory_restore_finish(provider, error);
     }

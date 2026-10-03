@@ -426,6 +426,15 @@ const qa_qc_definition *qa_qc_program_global(const qa_qc_program *program,
          ? &program->globals[index] : NULL;
 }
 
+bool qa_qc_program_initial_int(const qa_qc_program *program, uint32_t word,
+                               int32_t *out, qa_error *error)
+{
+    if (program == NULL || out == NULL || word >= program->info.global_words)
+        return qc_fail(error, QA_ERROR_ARGUMENT, word, "initial global word is outside its program");
+    *out = qa_load_i32le(program->initial_globals + (size_t)word * 4u);
+    return true;
+}
+
 const qa_qc_definition *qa_qc_program_field(const qa_qc_program *program,
                                              uint32_t index)
 {

@@ -1,4 +1,5 @@
 #include "guest_qc_profile.h"
+#include "guest_qc_objectives.h"
 #include <float.h>
 
 typedef struct saved_input saved_input;
@@ -86,6 +87,7 @@ static bool set_input(qa_movement_command *command, application_qc_input_id inpu
 bool application_qc_entered(void *opaque, qa_qc_instance *vm, const qa_qc_call_event *event, qa_error *error)
 {
     struct application_qc_state *engine = opaque;
+    if (!application_qc_objectives_sync(engine, error)) return false;
     struct application_qc_input_scope *scope = engine->input_scope;
     if (!scope || !scope->binding) return true;
     const qa_qc_definition *self = qa_qc_program_find_global(engine->provider->state.qc.program, "self"); int32_t reference;

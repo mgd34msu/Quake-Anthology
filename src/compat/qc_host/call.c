@@ -66,7 +66,8 @@ static bool read_words(qa_qc_instance *vm, uint32_t offset, uint32_t count, uint
     }
     return true;
 }
-bool qa_qc_game_call_index(qa_qc_game *game, uint32_t index, const qa_qc_game_value *arguments,
+static bool staged_call(qa_qc_game *game, uint32_t index, const qa_qc_inline_region *region,
+                      const qa_qc_game_value *arguments,
                       size_t count, const qa_qc_game_global *globals, size_t global_count,
                       uint32_t result[3], qa_error *error) {
     if (!game || count > 8 || (count && !arguments) || (global_count && !globals) ||
@@ -108,9 +109,15 @@ bool qa_qc_game_call_index(qa_qc_game *game, uint32_t index, const qa_qc_game_va
             ok = qa_qc_stage_globals(game->vm, 4 + (uint32_t)i * 3, args[i], 3, error);
         for (size_t i = 0; ok && i < global_count; ++i)
             ok = qa_qc_stage_globals(game->vm, saved[i].definition->offset, saved[i].value, saved[i].count, error);
-        if (ok) ok = qa_qc_execute(game->vm, index, (uint32_t)count, error);
-        uint32_t returned[3];
-        if (ok) ok = read_words(game->vm, 1, 3, returned, error);
+        uint32_t returned[3] = {0};
+        if (ok && region) {
+            float value;
+            ok = qa_qc_execute_region(game->vm, region, (uint32_t)count, &value, error);
+            if (ok) memcpy(returned, &value, sizeof(value));
+        } else {
+            if (ok) ok = qa_qc_execute(game->vm, index, (uint32_t)count, error);
+            if (ok) ok = read_words(game->vm, 1, 3, returned, error);
+        }
         qa_error restore_error = {0};
         bool restored = qa_qc_stage_globals(game->vm, 1, reserved, 27, &restore_error);
         for (size_t i = 0; i < global_count; ++i)
@@ -120,6 +127,18 @@ bool qa_qc_game_call_index(qa_qc_game *game, uint32_t index, const qa_qc_game_va
     }
     if (saved != local) free(saved);
     --game->calls; return ok;
+}
+bool qa_qc_game_call_index(qa_qc_game *game, uint32_t index, const qa_qc_game_value *arguments,
+                      size_t count, const qa_qc_game_global *globals, size_t global_count,
+                      uint32_t result[3], qa_error *error) {
+    return staged_call(game, index, NULL, arguments, count, globals, global_count, result, error);
+}
+bool qa_qc_game_call_region(qa_qc_game *game, const qa_qc_inline_region *region,
+                      const qa_qc_game_value *arguments, size_t count,
+                      const qa_qc_game_global *globals, size_t global_count,
+                      uint32_t result[3], qa_error *error) {
+    if (!region) return qc_game_fail(error, QA_ERROR_ARGUMENT, "QC region call requires its admitted region");
+    return staged_call(game, region->function, region, arguments, count, globals, global_count, result, error);
 }
 bool qa_qc_game_call(qa_qc_game *game, const char *name, const qa_qc_game_value *arguments,
                       size_t count, const qa_qc_game_global *globals, size_t global_count,

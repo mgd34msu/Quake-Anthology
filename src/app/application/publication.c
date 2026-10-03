@@ -28,6 +28,7 @@
 #include "qa/map_sidecars.h"
 #include "unified_events.h"
 #include "guest_qc_profile.h"
+#include "guest_qc_objectives.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -1091,6 +1092,19 @@ static bool register_qc_callbacks(qa_application *application, bool restoring, q
     return true;
 }
 
+static bool qc_objectives(qa_application *application, bool activate, qa_error *error)
+{
+    for (size_t i = 0; i < application->provider_count; ++i) {
+        application_provider *provider = application->providers[i];
+        if (provider->kind != APPLICATION_PROVIDER_QC || !provider->state.qc.engine) continue;
+        struct application_qc_state *engine = provider->state.qc.engine;
+        if (activate && (!provider->constructed || !provider->attached || !engine->initialized || engine->loading)) continue;
+        if (!(activate ? application_qc_objectives_activate(engine, error) :
+                application_qc_objectives_suspend(engine, error))) return false;
+    }
+    return true;
+}
+
 bool application_save_prepare_content(qa_application *candidate,
                                         const qa_launch_snapshot *snapshot,
                                         const qa_save_image *image,
@@ -1298,6 +1312,7 @@ static bool publish_travel(qa_application *application,
     application->routing_provider_count = routing_count;
     if (!retired_services)
         return false;
+    if (!qc_objectives(application, false, error)) return false;
     if (!application_acoustics_idle(application))
         return application_fail(error, QA_ERROR_ARGUMENT,
             "World publication retained an acoustic receipt after source shutdown");
@@ -1448,6 +1463,11 @@ static bool publish_travel(qa_application *application,
                     "Q3 map wire publication failed", &ok, &first);
         }
     }
+    if (ok) {
+        current = (qa_error){0};
+        remember_failure(qc_objectives(application, true, &current), &current,
+            "QC objective publication failed", &ok, &first);
+    }
     ++application->publication_generation;
     if (!ok && error != NULL)
         *error = first;
@@ -1535,6 +1555,7 @@ void application_publication_publish(qa_application *application,
             publish_roster(application, publication);
             ok=application_q3_components_initialize(application->components,&error) &&
                 register_qc_callbacks(application,false,&error);
+            if (ok) ok = qc_objectives(application, true, &error);
             if(ok) ++application->publication_generation;
         }
     } else if (ok) {

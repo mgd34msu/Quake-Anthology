@@ -1,4 +1,7 @@
 #include "save_private.h"
+#include "guest_qc_items.h"
+#include "guest_qc_pickups.h"
+#include "guest_qc_protection.h"
 #include "guest_projection_private.h"
 #include "guest_native_q2_private.h"
 #include "guest_native_q2_combat.h"
@@ -71,6 +74,8 @@ static bool protection(void *opaque,qa_actor_id actor,qa_protection_channel chan
     qa_application *app=opaque;
     if(!claim) return application_fail(error,QA_ERROR_ARGUMENT,"Saved protection has no actual source claim");
     application_provider *provider=source_owner(app,claim->owner);
+    if(provider&&provider->kind==APPLICATION_PROVIDER_QC)
+        return application_qc_protection_saved_binding(provider->state.qc.engine,actor,channel,claim,out,error);
     if(provider&&provider->kind==APPLICATION_PROVIDER_NATIVE&&provider->state.native.q2_engine&&
         provider->state.native.q2_engine->callbacks)
         return application_native_q2_callbacks_protection_saved_binding(provider->state.native.q2_engine,
@@ -111,6 +116,8 @@ static bool inventory_group(void *opaque, qa_actor_id actor, uint64_t serial,
     if(found) return application_q3_component_inventory_group(component.game,actor,serial,saved,out,error);
     application_provider *provider = source_owner(app, saved->owner);
     if (provider) {
+        if (provider->kind == APPLICATION_PROVIDER_QC)
+            return application_qc_items_saved_group(provider,actor,serial,saved,out,error);
         if (provider->kind == APPLICATION_PROVIDER_Q1)
             return qa_q1_game_inventory_group(provider->state.q1, actor, serial, saved, out, error);
         if (provider->kind == APPLICATION_PROVIDER_Q2)
@@ -146,6 +153,8 @@ static bool pickup_rule(void *opaque,qa_actor_id actor,qa_actor_owner owner,
 {
     qa_application *app = opaque;
     application_provider *provider=source_owner(app,owner);
+    if(provider&&provider->kind==APPLICATION_PROVIDER_QC)
+        return application_qc_pickups_saved_rule(provider,actor,owner,serial,id,out,error);
     if(provider&&provider->kind==APPLICATION_PROVIDER_NATIVE&&provider->state.native.q2_engine&&
         provider->state.native.q2_engine->callbacks)
         return application_native_q2_callbacks_pickup_saved_rule(provider->state.native.q2_engine,

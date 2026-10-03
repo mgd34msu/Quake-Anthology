@@ -1,4 +1,7 @@
 #include "guest_qc_profile.h"
+#include "guest_qc_items.h"
+#include "guest_qc_pickups.h"
+#include "guest_qc_protection.h"
 #include "qa/application_network_qw.h"
 #include "guest_qc_rerelease.h"
 #include <stdio.h>
@@ -275,10 +278,13 @@ static bool bind_player(application_provider *provider, uint32_t slot, uint32_t 
         application_qc_inputs inputs = {.self = actor, .time_ns = engine->source_time_ns};
         if (!application_qc_seed_fields(engine, actor, error) || !application_qc_prepare_markers(engine, error)) return false;
         client->spawned = true;
+        if (!application_qc_protection_reserve(engine,actor,error)) return false;
         if (!application_qc_run_calls(engine, &qualified->admit, &inputs, error)) return false;
         if (!qa_actors_get(qa_session_actors(engine->services.session), actor))
             return application_fail(error, QA_ERROR_NOT_FOUND, "QC component removed its client during admission");
-        return application_qc_admit_client_outputs(engine, slot, error);
+        return application_qc_protection_activate(engine,actor,error) &&
+            application_qc_items_admit(engine,actor,error) && application_qc_pickups_admit(engine,actor,error) &&
+            application_qc_admit_client_outputs(engine, slot, error);
     }
     qa_qc_instance *vm = provider->state.qc.instance;
     int32_t reference;
@@ -534,6 +540,8 @@ bool application_qc_disconnect_player(application_provider *provider, qa_actor_i
         bool ok = profile ? application_qc_run_calls(engine, &profile->disconnect, &inputs, error) :
             client->spectator ? application_qc_spectator_callback(engine, "SpectatorDisconnect", actor, error) :
             application_qc_named(engine, "ClientDisconnect", actor, error);
+        if (ok) ok = application_qc_pickups_release(engine,actor,error) &&
+            application_qc_items_release(engine,actor,error) && application_qc_protection_release(engine,actor,error);
         if (ok && qa_actor_id_equal(client->actor, actor)) {
             client->spawned = false;
             client->prepared = false;

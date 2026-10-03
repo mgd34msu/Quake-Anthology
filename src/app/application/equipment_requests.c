@@ -4,6 +4,8 @@
 #include "guest_q3_weapons_services.h"
 #include "guest_q3_catalog.h"
 #include "guest_native_q2_private.h"
+#include "guest_qc_items.h"
+#include "guest_qc_item_weapons.h"
 #include "native_maps.h"
 #include "qa/application_qc_presentation.h"
 #include <stdlib.h>
@@ -45,6 +47,9 @@ bool application_equipment_primary_accepts(void *context,qa_actor_id actor,qa_ac
         if(!application_q3_catalog_weapons(engine->game->catalog,&weapons,&n,e)) return false;
         for(size_t i=0;i<n;++i) if(weapons[i].item==item) declared=true;
     } else if(provider->kind==APPLICATION_PROVIDER_QC) {
+        if(provider->state.qc.qualified && provider->state.qc.qualified->items &&
+            provider->state.qc.qualified->items->weapons)
+            return application_qc_item_weapons_accepts(provider->state.qc.engine,actor,item,accepted,e);
         qa_application_qc_player_ui view;
         if(!qa_application_qc_selected_player_ui_read(app,actor,QA_ROLE_ARSENAL,&view,e)) return false;
         for(size_t i=0;i<view.binding_count;++i) {

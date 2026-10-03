@@ -3,13 +3,15 @@
 #include "guest_qc_internal.h"
 #include "client_outputs.h"
 #include "guest_q3_mod_operations.h"
+#include "qa/json.h"
 
 typedef enum application_qc_input_id {
     QC_INPUT_SELF, QC_INPUT_OTHER, QC_INPUT_TIME, QC_INPUT_ELAPSED,
     QC_INPUT_ANGLES, QC_INPUT_ATTACK, QC_INPUT_JUMP, QC_INPUT_IMPULSE,
     QC_INPUT_FORWARD, QC_INPUT_SIDE, QC_INPUT_UP, QC_INPUT_RESULT, QC_INPUT_ACTIVATOR,
     QC_INPUT_ATTACKER, QC_INPUT_INFLICTOR, QC_INPUT_AMOUNT, QC_INPUT_KNOCKBACK, QC_INPUT_POINT,
-    QC_INPUT_DIRECTION, QC_INPUT_NORMAL, QC_INPUT_ITEM, QC_INPUT_COUNT
+    QC_INPUT_DIRECTION, QC_INPUT_NORMAL, QC_INPUT_ITEM, QC_INPUT_PICKUP_COUNT, QC_INPUT_PICKUP_HAS_COUNT,
+    QC_INPUT_PICKUP_DROPPED, QC_INPUT_DAMAGE_FLAGS, QC_INPUT_PROTECTION_SCALE, QC_INPUT_COUNT
 } application_qc_input_id;
 typedef enum application_qc_value_kind {
     QC_VALUE_CONSTANT, QC_VALUE_INPUT, QC_VALUE_ARGUMENT,
@@ -101,6 +103,10 @@ typedef struct application_qc_client_presentation {
     const qa_qc_definition *health, *armor, *origin, *angles, *offset;
 } application_qc_client_presentation;
 struct application_qc_profile {
+    struct application_qc_objectives *objectives;
+    struct application_qc_protection_profile *protection;
+    struct application_qc_items *items;
+    struct application_qc_pickups *pickups;
     application_qc_bound_field *fields;
     size_t field_count;
     uint32_t maximum_clients;
@@ -129,9 +135,24 @@ typedef struct application_qc_inputs {
     uint64_t time_ns, elapsed_ns;
     float result;
     float amount, knockback;
+    float damage_flags, protection_scale;
     qa_vec3 point, direction, normal;
     const char *item;
+    float pickup_count;
+    bool pickup_has_count, pickup_dropped;
 } application_qc_inputs;
+char *application_qc_declaration_string(const qa_json_document *, qa_json_id, qa_error *);
+bool application_qc_declaration_array(const qa_json_document *, qa_json_id, bool optional, qa_error *);
+bool application_qc_declaration_number(const qa_json_document *, qa_json_id, float *, qa_error *);
+bool application_qc_statements_validate(const qa_json_document *, qa_json_id, const qa_qc_program *,
+    uint32_t entry, uint32_t exit, qa_error *);
+void application_qc_call_free(application_qc_call *);
+bool application_qc_call_parse(const qa_json_document *, qa_json_id, const qa_qc_program *,
+    uint64_t available, bool console, application_qc_call *, qa_error *);
+bool application_qc_run_call_region(struct application_qc_state *, const application_qc_call *,
+    const qa_qc_inline_region *, const application_qc_inputs *, uint32_t result[3], qa_error *);
+bool application_qc_run_call(struct application_qc_state *, const application_qc_call *,
+    const application_qc_inputs *, uint32_t result[3], qa_error *);
 bool application_qc_run_calls(struct application_qc_state *, const application_qc_calls *,
                                 const application_qc_inputs *, qa_error *);
 bool application_qc_command_name_equal(const char *, const char *);

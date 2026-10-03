@@ -38,29 +38,89 @@ typedef enum qa_qc_value_type {
     QA_QC_OPAQUE
 } qa_qc_value_type;
 
+/* External version 6 opcode numbers and their global operand widths. */
+#define QA_QC_OPCODE_LIST(X) \
+X(DONE,0,      3,0,0,0,3,0) \
+X(MUL_F,1,     1,1,0,1,0,0) \
+X(MUL_V,2,     3,3,0,1,0,0) \
+X(MUL_FV,3,    1,3,0,3,0,0) \
+X(MUL_VF,4,    3,1,0,3,0,0) \
+X(DIV_F,5,     1,1,0,1,0,0) \
+X(ADD_F,6,     1,1,0,1,0,0) \
+X(ADD_V,7,     3,3,0,3,0,0) \
+X(SUB_F,8,     1,1,0,1,0,0) \
+X(SUB_V,9,     3,3,0,3,0,0) \
+X(EQ_F,10,      1,1,0,1,0,0) \
+X(EQ_V,11,      3,3,0,1,0,0) \
+X(EQ_S,12,      1,1,0,1,0,0) \
+X(EQ_E,13,      1,1,0,1,0,0) \
+X(EQ_FN,14,     1,1,0,1,0,0) \
+X(NE_F,15,      1,1,0,1,0,0) \
+X(NE_V,16,      3,3,0,1,0,0) \
+X(NE_S,17,      1,1,0,1,0,0) \
+X(NE_E,18,      1,1,0,1,0,0) \
+X(NE_FN,19,     1,1,0,1,0,0) \
+X(LE,20,        1,1,0,1,0,0) \
+X(GE,21,        1,1,0,1,0,0) \
+X(LT,22,        1,1,0,1,0,0) \
+X(GT,23,        1,1,0,1,0,0) \
+X(LOAD_F,24,    1,1,0,1,0,0) \
+X(LOAD_V,25,    1,1,0,3,0,0) \
+X(LOAD_S,26,    1,1,0,1,0,0) \
+X(LOAD_ENT,27,  1,1,0,1,0,0) \
+X(LOAD_FLD,28,  1,1,0,1,0,0) \
+X(LOAD_FN,29,   1,1,0,1,0,0) \
+X(ADDRESS,30,   1,1,0,1,0,0) \
+X(STORE_F,31,   1,0,1,0,0,0) \
+X(STORE_V,32,   3,0,3,0,0,0) \
+X(STORE_S,33,   1,0,1,0,0,0) \
+X(STORE_ENT,34, 1,0,1,0,0,0) \
+X(STORE_FLD,35, 1,0,1,0,0,0) \
+X(STORE_FN,36,  1,0,1,0,0,0) \
+X(STOREP_F,37,  1,1,0,0,0,0) \
+X(STOREP_V,38,  3,1,0,0,0,0) \
+X(STOREP_S,39,  1,1,0,0,0,0) \
+X(STOREP_ENT,40,1,1,0,0,0,0) \
+X(STOREP_FLD,41,1,1,0,0,0,0) \
+X(STOREP_FN,42, 1,1,0,0,0,0) \
+X(RETURN,43,    3,0,0,0,3,0) \
+X(NOT_F,44,     1,0,0,1,0,0) \
+X(NOT_V,45,     3,0,0,1,0,0) \
+X(NOT_S,46,     1,0,0,1,0,0) \
+X(NOT_ENT,47,   1,0,0,1,0,0) \
+X(NOT_FN,48,    1,0,0,1,0,0) \
+X(IF,49,        1,0,0,0,0,0) \
+X(IFNOT,50,     1,0,0,0,0,0) \
+X(CALL0,51,     1,0,0,0,3,0) \
+X(CALL1,52,     1,0,0,0,3,1) \
+X(CALL2,53,     1,0,0,0,3,2) \
+X(CALL3,54,     1,0,0,0,3,3) \
+X(CALL4,55,     1,0,0,0,3,4) \
+X(CALL5,56,     1,0,0,0,3,5) \
+X(CALL6,57,     1,0,0,0,3,6) \
+X(CALL7,58,     1,0,0,0,3,7) \
+X(CALL8,59,     1,0,0,0,3,8) \
+X(STATE,60,     1,1,0,0,0,0) \
+X(GOTO,61,      0,0,0,0,0,0) \
+X(AND,62,       1,1,0,1,0,0) \
+X(OR,63,        1,1,0,1,0,0) \
+X(BITAND,64,    1,1,0,1,0,0) \
+X(BITOR,65,     1,1,0,1,0,0)
+
 typedef enum qa_qc_opcode {
-    QA_QC_DONE, QA_QC_MUL_F, QA_QC_MUL_V, QA_QC_MUL_FV, QA_QC_MUL_VF,
-    QA_QC_DIV_F, QA_QC_ADD_F, QA_QC_ADD_V, QA_QC_SUB_F, QA_QC_SUB_V,
-    QA_QC_EQ_F, QA_QC_EQ_V, QA_QC_EQ_S, QA_QC_EQ_E, QA_QC_EQ_FN,
-    QA_QC_NE_F, QA_QC_NE_V, QA_QC_NE_S, QA_QC_NE_E, QA_QC_NE_FN,
-    QA_QC_LE, QA_QC_GE, QA_QC_LT, QA_QC_GT,
-    QA_QC_LOAD_F, QA_QC_LOAD_V, QA_QC_LOAD_S, QA_QC_LOAD_ENT,
-    QA_QC_LOAD_FLD, QA_QC_LOAD_FN, QA_QC_ADDRESS,
-    QA_QC_STORE_F, QA_QC_STORE_V, QA_QC_STORE_S, QA_QC_STORE_ENT,
-    QA_QC_STORE_FLD, QA_QC_STORE_FN, QA_QC_STOREP_F, QA_QC_STOREP_V,
-    QA_QC_STOREP_S, QA_QC_STOREP_ENT, QA_QC_STOREP_FLD, QA_QC_STOREP_FN,
-    QA_QC_RETURN, QA_QC_NOT_F, QA_QC_NOT_V, QA_QC_NOT_S, QA_QC_NOT_ENT,
-    QA_QC_NOT_FN, QA_QC_IF, QA_QC_IFNOT,
-    QA_QC_CALL0, QA_QC_CALL1, QA_QC_CALL2, QA_QC_CALL3, QA_QC_CALL4,
-    QA_QC_CALL5, QA_QC_CALL6, QA_QC_CALL7, QA_QC_CALL8,
-    QA_QC_STATE, QA_QC_GOTO, QA_QC_AND, QA_QC_OR, QA_QC_BITAND,
-    QA_QC_BITOR
+#define QA_QC_OPCODE(name, number, ra, rb, wb, wc, result, arguments) QA_QC_##name = number,
+QA_QC_OPCODE_LIST(QA_QC_OPCODE)
+#undef QA_QC_OPCODE
 } qa_qc_opcode;
 
 typedef struct qa_qc_statement {
     qa_qc_opcode opcode;
     uint16_t a, b, c;
 } qa_qc_statement;
+typedef struct qa_qc_statement_access {
+    uint32_t read[25], write[3];
+    uint32_t read_count, write_count;
+} qa_qc_statement_access;
 
 typedef struct qa_qc_definition {
     qa_qc_value_type type;
@@ -96,8 +156,15 @@ void qa_qc_program_destroy(qa_qc_program *program);
 qa_qc_program_info qa_qc_program_describe(const qa_qc_program *program);
 const qa_qc_statement *qa_qc_program_statement(const qa_qc_program *program,
                                                 uint32_t index);
+bool qa_qc_program_statement_access(const qa_qc_program *, uint32_t,
+    qa_qc_statement_access *, qa_error *);
+bool qa_qc_program_function_returns_only(const qa_qc_program *, uint32_t);
 const qa_qc_definition *qa_qc_program_global(const qa_qc_program *program,
                                               uint32_t index);
+/* Read the immutable authored initial word while qualifying a source ABI.
+ * This does not observe or copy a mutable instance's globals. */
+bool qa_qc_program_initial_int(const qa_qc_program *, uint32_t word,
+                               int32_t *out, qa_error *);
 const qa_qc_definition *qa_qc_program_field(const qa_qc_program *program,
                                              uint32_t index);
 const qa_qc_function *qa_qc_program_function(const qa_qc_program *program,
