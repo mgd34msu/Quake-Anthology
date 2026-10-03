@@ -1641,6 +1641,11 @@ static bool builtin_actor_callback(void *opaque, qa_builtin_actor_callback_kind 
     application_q3_mod_actor_request source = {.self = request->self};
     application_q3_mod_operation channel;
     switch (kind) {
+    case QA_BUILTIN_ACTOR_THINK:
+        channel = Q3_MOD_THINK;
+        source.source.think.time_ns = request->source.think.time_ns;
+        source.source.think.elapsed_ns = request->source.think.elapsed_ns;
+        break;
     case QA_BUILTIN_ACTOR_USE:
         channel = Q3_MOD_USE;
         source.source.use.other = request->source.use.other;

@@ -174,13 +174,15 @@ typedef struct qa_builtin_trajectory_update {
 } qa_builtin_trajectory_update;
 
 typedef enum qa_builtin_actor_callback_kind {
-    QA_BUILTIN_ACTOR_USE, QA_BUILTIN_ACTOR_PAIN, QA_BUILTIN_ACTOR_DIE
+    QA_BUILTIN_ACTOR_USE, QA_BUILTIN_ACTOR_PAIN, QA_BUILTIN_ACTOR_DIE,
+    QA_BUILTIN_ACTOR_THINK
 } qa_builtin_actor_callback_kind;
 typedef struct qa_builtin_actor_callback_request {
     qa_game_family family;
     qa_actor_owner provider;
     qa_actor_id self;
     union {
+        struct { uint64_t time_ns, elapsed_ns; } think;
         struct { qa_actor_id other, activator; } use;
         struct { qa_actor_id attacker; float damage, kick; } pain;
         struct { qa_actor_id attacker, inflictor; float damage, kick; qa_vec3 point; } die;

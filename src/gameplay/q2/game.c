@@ -227,7 +227,7 @@ static bool end_frame(void *context, qa_session *session, const qa_source_frame 
     return q2_player_end_server_frames(game, e) && q2_campaign_frame(game, e) &&
         qa_q2_monsters_end_frame(game, e);
 }
-bool q2_actor_think(qa_q2_game *g, q2_actor *a, qa_error *e) {
+static bool actor_think_original(qa_q2_game *g, q2_actor *a, qa_error *e) {
     qa_actor_id id = a->id;
     if (!q2_actor_live(g, id)) return true;
     if ((a->item != NULL || a->powers != NULL) && !q2_item_tick(g, a, e))
@@ -246,6 +246,36 @@ bool q2_actor_think(qa_q2_game *g, q2_actor *a, qa_error *e) {
         return false;
     return !q2_actor_live(g, id) || a->projectile.kind != Q2_PROJECTILE_NONE ||
            a->monster == NULL || q2_monster_tick(g, a, e);
+}
+typedef struct q2_actor_think_call {
+    qa_q2_game *game;
+    q2_actor *actor;
+} q2_actor_think_call;
+static bool actor_think_current(const q2_actor_think_call *call, qa_actor_id id,
+                                qa_error *e) {
+    if (q2_actor_get(call->game, id, false, NULL) == call->actor) return true;
+    qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Q2 think callback lost its actual source actor");
+    return false;
+}
+static bool actor_think_body(void *opaque, const qa_builtin_actor_callback_request *request,
+                             bool *result, qa_error *e) {
+    q2_actor_think_call *call = opaque;
+    if (!actor_think_current(call, request->self, e)) return false;
+    *result = actor_think_original(call->game, call->actor, e);
+    return *result;
+}
+bool q2_actor_think(qa_q2_game *g, q2_actor *a, qa_error *e) {
+    qa_actor_id id = a->id;
+    if (!q2_actor_live(g, id)) return true;
+    if (!g->services.actor_callback) return actor_think_original(g, a, e);
+    qa_builtin_actor_callback_request request = {.family = QA_GAME_Q2,
+        .provider = g->options.owner, .self = id,
+        .source.think = {.time_ns = g->now_ns, .elapsed_ns = g->frame_ns}};
+    q2_actor_think_call call = {g, a}; bool result = false;
+    bool ok = g->services.actor_callback(g->services.context, QA_BUILTIN_ACTOR_THINK,
+        &request, actor_think_body, &call, &result, e);
+    if (ok && q2_actor_live(g, id)) ok = actor_think_current(&call, id, e);
+    return ok;
 }
 static bool tick_actor(void *context, qa_actor_id id, qa_error *e) {
     qa_q2_game *g = context;
