@@ -3029,8 +3029,8 @@ bool application_control_group_post(qa_application *app, qa_actor_id actor, qa_e
         .execution = execution, .context = *context,
         .arsenal = application_provider_for(app, actor, QA_ROLE_ARSENAL, "")};
     qa_movement_call call = input_call(&move);
-    if (move_phase(&move, QA_MOVE_POSTTHINK, &call, error) == QA_MOVEMENT_ERROR) return false;
-    if (!live(app, actor)) return true;
+    bool ok = move_phase(&move, QA_MOVE_POSTTHINK, &call, error) != QA_MOVEMENT_ERROR;
+    if (!ok || !live(app, actor)) goto finished;
     qa_q1_input source_input = q1_input(&call);
     source_input.view_angles = call_view_angles(&move, &call);
     if (record->state.kind == QA_MOVEMENT_QUAKEWORLD && record->state.data.qw.spectator &&
@@ -3039,17 +3039,23 @@ bool application_control_group_post(qa_application *app, qa_actor_id actor, qa_e
         if (context->source_qwcmd) source_input.impulse = context->source_command.impulse;
         record->state = input.state;
         record->bounds = input.shape.bounds;
-        return application_native_q1_spectator_postthink(execution, actor, &source_input, error);
+        ok = application_native_q1_spectator_postthink(execution, actor, &source_input, error);
+        goto finished;
     }
-    if (!q1_source_weapon_impulse(app, actor, &input.command, &source_input, error)) return false;
-    if (!live(app, actor)) return true;
+    ok = q1_source_weapon_impulse(app, actor, &input.command, &source_input, error);
+    if (!ok || !live(app, actor)) goto finished;
     if (move.arsenal && move.arsenal->kind == APPLICATION_PROVIDER_Q1) {
         qa_q1_player_view view;
         if (qa_q1_player_read(move.arsenal->state.q1, actor, &view) &&
-            !qa_q1_player_postthink(move.arsenal->state.q1, actor, error)) return false;
+            !qa_q1_player_postthink(move.arsenal->state.q1, actor, error)) {
+            ok = false;
+            goto finished;
+        }
     }
     if (live(app, actor)) { record->state = input.state; record->bounds = input.shape.bounds; }
-    return true;
+finished:
+    application_control_frames_state(app, actor, NULL);
+    return ok;
 }
 
 bool qa_application_control_move(qa_application *application, qa_actor_id actor,
