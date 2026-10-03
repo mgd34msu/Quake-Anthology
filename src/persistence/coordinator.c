@@ -59,9 +59,8 @@ bool qa_save_restore(void *context, const qa_save_restore_ops *ops,
         QA_SAVE_PICKUPS, QA_SAVE_TARGETS, QA_SAVE_CAMPAIGN,
         QA_SAVE_PROGRESSION,
         QA_SAVE_CONTROLS, QA_SAVE_CVARS, QA_SAVE_CONNECTIONS, QA_SAVE_COMMANDS, QA_SAVE_EVENTS,
-        QA_SAVE_NAVIGATION, QA_SAVE_BOTS, QA_SAVE_PREDICTION,
-        QA_SAVE_PRESENTATION, QA_SAVE_AUDIO, QA_SAVE_INPUT, QA_SAVE_MEDIA,
-        QA_SAVE_APPLICATION
+        QA_SAVE_NAVIGATION, QA_SAVE_BOTS, QA_SAVE_PREDICTION, QA_SAVE_APPLICATION,
+        QA_SAVE_PRESENTATION, QA_SAVE_AUDIO, QA_SAVE_INPUT, QA_SAVE_MEDIA
     };
     bool ok = true;
     for (size_t stage = 0; ok && stage < sizeof(order) / sizeof(*order); ++stage)
