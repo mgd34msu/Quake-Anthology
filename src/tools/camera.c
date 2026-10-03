@@ -328,7 +328,7 @@ bool qa_camera_playback_create(qa_camera_document *document, double start, qa_ca
     }
     if (!isfinite(p->total) || !isfinite(start + p->total)) { camera_fail(error, "camera duration exceeds clock range"); goto failed; }
     path_start(&p->camera, start, d->seconds * 1000);
-    for (size_t i = 0; i < d->target_count; ++i) path_start(&p->targets[i], start, d->targets[i].time_ms ? d->targets[i].time_ms : p->total);
+    for (size_t i = 0; i < d->target_count; ++i) path_start(&p->targets[i], start, d->targets[i].time_ms != 0 ? d->targets[i].time_ms : p->total);
     double time_so_far = 0;
     for (size_t i = 0; i < d->event_count; ++i) if (d->events[i].type == 4) {
         double duration = p->total - time_so_far;

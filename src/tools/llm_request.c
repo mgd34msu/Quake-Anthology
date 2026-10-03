@@ -40,7 +40,7 @@ static bool job_checkpoint_ready(const llm_job *job) {
     return !job->active && !job->waiting_refresh && (!job->http_id || job->canceled || job->result) &&
         (job->http_id || !job->result || job->canceled || job->error.code != QA_OK) &&
         (job->http_id || job->result || job->canceled || (!job->retry && !job->status && !job->refresh_ticket && !job->rejected_token &&
-            !job->credential.access_token && !job->credential.refresh_token && !job->credential.token_type && !job->credential.expires_at &&
+            !job->credential.access_token && !job->credential.refresh_token && !job->credential.token_type && job->credential.expires_at == 0 &&
             !job->credential.scopes && !job->credential.scope_count && job->error.code == QA_OK)) &&
         (job->canceled || !job->result || job->retry || job->provider != QA_LLM_SUBSCRIPTION || (job->status != 401 && job->status != 403));
 }

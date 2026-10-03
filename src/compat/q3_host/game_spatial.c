@@ -164,7 +164,7 @@ bool qa_q3_host_link(qa_q3_host *host, uint32_t number, qa_error *error)
     if (!actor_word(&call, number, actor, record.address + 176, solid, error) ||
         !source_slot(&call, number, &record, &shared, error)) return q3_game_end(&call, false);
     qa_bounds bounds = shared.local_bounds;
-    if (shared.inline_model && (shared.angles.x || shared.angles.y || shared.angles.z)) {
+    if (shared.inline_model && (shared.angles.x != 0 || shared.angles.y != 0 || shared.angles.z != 0)) {
         qa_vec3 extent = qa_v3(fmaxf(fabsf(bounds.mins.x), fabsf(bounds.maxs.x)),
                                fmaxf(fabsf(bounds.mins.y), fabsf(bounds.maxs.y)),
                                fmaxf(fabsf(bounds.mins.z), fabsf(bounds.maxs.z)));
