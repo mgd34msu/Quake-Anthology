@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "../../console/internal.h"
 #include "native_q3_console.h"
 #include "engine_shutdown.h"
 #include "unified_q3_events.h"
@@ -185,7 +186,7 @@ qa_command_result application_native_engine_fly(qa_application *application,
     const qa_command_invocation *invocation, const qa_command_context *context, qa_error *error)
 {
     if (invocation->console != application->console || context->owner ||
-        strcmp(invocation->argv[0], "fly") || !context->actor.registry ||
+        !qac_equal(invocation->argv[0], "fly") || !context->actor.registry ||
         !qa_console_invocation_current(application->console, invocation)) return QA_COMMAND_UNHANDLED;
     application_provider *source = application_provider_for(application, context->actor,
         QA_ROLE_CHARACTER, "");
