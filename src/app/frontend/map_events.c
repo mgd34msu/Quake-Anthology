@@ -1076,6 +1076,10 @@ bool frontend_event_sound(qa_frontend *frontend, const qa_builtin_event *event, 
     frontend_event_state *state;
     if (!state_read(frontend, &state, error)) return false;
     uint64_t actor = frontend_audio_actor(frontend, event->actor, error);
+    if (event->actor.registry && actor == QA_AUDIO_NO_ACTOR && event->kind == QA_BUILTIN_SOUND &&
+        event->family == QA_GAME_Q2 && !(event->flags & 1u) &&
+        !qa_actors_get(qa_world_actors(qa_application_world(frontend->application)), event->actor))
+        actor = frontend_audio_retained_q2_actor(frontend, event, error);
     if (event->actor.registry && actor == QA_AUDIO_NO_ACTOR) return false;
     qa_audio_family family = audio_family(event->family);
     if (event->kind == QA_BUILTIN_STOP_SOUND) {
