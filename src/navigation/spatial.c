@@ -29,6 +29,17 @@ static bool nearest(qa_navigation *n, qa_actor_id actor, qa_vec3 point, float ra
         }
         if (!nav_clear(&n->services, &p, actor, point, node->origin, geographic, &clear, e))
             return false;
+        if (!clear && !geographic && actor.registry &&
+            node->source.kind == QA_NAV_ORIGIN_CONSTRUCTED &&
+            (n->services.movement_input || n->services.traversal_admit)) {
+            qa_nav_route approach = {0};
+            bool ok = qa_navigation_admit_movement(n, actor, point, node->origin,
+                                                    QA_NAV_WALK, &approach, e);
+            clear = ok && approach.found;
+            qa_nav_route_free(&approach);
+            if (!ok)
+                return false;
+        }
         if (clear) {
             best = distance;
             *out = node->id;
