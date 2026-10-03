@@ -247,7 +247,7 @@ static bool flush(void *context, qa_network_runtime *runtime, qa_net_client_id i
         c->command_count -= consumed;
         memmove(c->commands, c->commands + consumed, c->command_count * sizeof(*c->commands));
     }
-    if (ok && c->qw && !consumed && qa_qw_channel_pending(c->native.channel.qw) &&
+    if (ok && c->qw && !consumed && ((c->started && !c->active) || qa_qw_channel_pending(c->native.channel.qw)) &&
         qa_qw_channel_can_send(c->native.channel.qw, now)) ok = transmit(c, (qa_bytes){0}, now, e);
     return ok;
 }
