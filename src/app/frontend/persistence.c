@@ -1522,7 +1522,7 @@ static bool validate(void *context,qa_application *application,const qa_save_ima
             frontend_client_registries_finish_restore(f,error) && frontend_keys_finish_restore(f->keys,error) &&
             frontend_client_sources_finish_restore(f,error) && frontend_network_client_sources_finish_restore(f,error);
     }
-    if(ok) ok=frontend_root_sidecars_bind_restored(f,error);
+    if(ok && f->materials) ok=frontend_root_sidecars_bind_restored(f,error);
     if (ok) {
         frontend_native_q2_topology_finish(f);
         frontend_source_finish_groups(f);
