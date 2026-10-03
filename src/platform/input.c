@@ -974,7 +974,7 @@ bool qa_input_platform_event(qa_input_platform *p, const SDL_Event *event, doubl
     switch (event->type) {
     case SDL_KEYDOWN:
     case SDL_KEYUP: {
-        int scancode = event->key.keysym.scancode;
+        int scancode = (int)event->key.keysym.scancode;
         if (scancode < 0 || scancode >= SDL_NUM_SCANCODES)
             return true;
         int code = p->keys[scancode]

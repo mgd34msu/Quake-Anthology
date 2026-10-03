@@ -111,7 +111,7 @@ static bool binding(qa_source_save_io *io, qa_binding_record **out)
 {
     bool reading=io->direction==QA_SOURCE_SAVE_READ;
     qa_input_binding value=reading?(qa_input_binding){0}:(*out)->view;
-    uint32_t kind=value.kind; int32_t action=value.action;
+    uint32_t kind=value.kind; int32_t action=(int32_t)value.action;
     if (!physical(io,&value.input) || !qa_source_save_u32(io,&kind) || kind>QA_BIND_COMMAND ||
         !qa_source_save_i32(io,&action) || (kind==QA_BIND_ACTION && (action<0 || action>=QA_INPUT_ACTION_COUNT))) return false;
     size_t length=!reading && kind==QA_BIND_COMMAND?strlen(value.command):0;
