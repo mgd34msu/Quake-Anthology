@@ -163,7 +163,7 @@ bool q2_light_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
     }
     s->visual.visible = false;
     float radius = q2_field_float(g, s, "radius", 150);
-    s->visual.frame = (int32_t)bits(radius ? radius : 150);
+    s->visual.frame = (int32_t)bits(radius != 0 ? radius : 150);
     s->count = s->visual.skin;
     q2_entity_pick(g, s->target, &s->goal);
     if ((s->spawnflags & 1) && !q2_light_use(g, a, e))

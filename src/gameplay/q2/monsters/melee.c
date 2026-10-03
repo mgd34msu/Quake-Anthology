@@ -105,7 +105,7 @@ bool q2m_species_melee(q2m_context *context, const char *callback, bool *handled
         }
         if (rerelease && !strcmp(callback, "floater_wham"))
             damage += (float)q2_random_bounded(context->game, 6);
-        else if (random_damage)
+        else if (random_damage != 0)
             damage += floorf(q2m_random(context->game) * random_damage);
         float side = action->side == MELEE_LEFT ? context->body.bounds.mins.x
                    : action->side == MELEE_RIGHT ? context->body.bounds.maxs.x : 0;
@@ -116,7 +116,7 @@ bool q2m_species_melee(q2m_context *context, const char *callback, bool *handled
             return false;
         if (!q2m_alive(context))
             return true;
-        if (!hit && rerelease && miss_seconds)
+        if (!hit && rerelease && miss_seconds != 0)
             monster->melee_ns = q2m_after(context->game->now_ns, miss_seconds);
         const char *sound = hit ? action->connected : action->missed;
         if (hit && !strcmp(callback, "stalker_swing_attack"))

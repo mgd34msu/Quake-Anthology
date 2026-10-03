@@ -153,7 +153,7 @@ static bool changelevel(qa_q2_game *g, q2_actor *a, qa_actor_id other, qa_actor_
         if (g->services.actor_traits)
             g->services.actor_traits(g->services.context, other, &traits);
         return q2_entity_damage(g, a, other, a->id,
-                                10 * (traits.max_health ? traits.max_health : 100), 1000, 28, 0, e);
+                                10 * (traits.max_health != 0 ? traits.max_health : 100), 1000, 28, 0, e);
     }
     if (g->options.edition == QA_Q2_RERELEASE && g->options.deathmatch && g->now_ns < 10 * Q2_NS)
         return true;
@@ -274,7 +274,7 @@ bool q2_target_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
         s->wait = -1;
         return true;
     case Q2E_TIMER:
-        if (!s->wait)
+        if (s->wait == 0)
             s->wait = 1;
         s->random = fminf(q2_field_float(g, s, "random", 0), s->wait - (float)g->frame_ns / Q2_NS);
         if (s->spawnflags & 1) {
@@ -305,12 +305,12 @@ bool q2_target_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
                 return false;
         } else
             s->noise = q2_field_id(g, s, "noise");
-        if (!s->volume)
+        if (s->volume == 0)
             s->volume = 1;
         bool loop = g->options.edition == QA_Q2_RERELEASE && (s->spawnflags & 3);
         if (s->attenuation == -1)
             s->attenuation = loop ? -1 : 0;
-        else if (!s->attenuation)
+        else if (s->attenuation == 0)
             s->attenuation = loop ? 3 : 1;
         s->active = (s->spawnflags & 1) != 0;
         return !s->active || speaker(g, a, 1, e);
@@ -396,7 +396,7 @@ bool q2_target_use(qa_q2_game *g, q2_actor *a, qa_actor_id other, qa_actor_id ac
         s->activator = activator;
         if (s->think != Q2ET_NONE)
             return q2_entity_schedule(g, a, Q2ET_NONE, 0);
-        return s->delay ? q2_entity_schedule(g, a, Q2ET_TIMER, s->delay) : timer(g, a, e);
+        return s->delay != 0 ? q2_entity_schedule(g, a, Q2ET_TIMER, s->delay) : timer(g, a, e);
     case Q2E_LIGHT:
         s->spawnflags ^= 1;
         return style(g, a, (s->spawnflags & 1) ? "a" : "m", e);
@@ -455,7 +455,7 @@ bool q2_target_use(qa_q2_game *g, q2_actor *a, qa_actor_id other, qa_actor_id ac
         return changelevel(g, a, other, activator, e);
     case Q2E_EXPLOSION:
         s->activator = activator;
-        return s->delay ? q2_entity_schedule(g, a, Q2ET_EXPLOSION, s->delay) : explode(g, a, e);
+        return s->delay != 0 ? q2_entity_schedule(g, a, Q2ET_EXPLOSION, s->delay) : explode(g, a, e);
     case Q2E_SPLASH: {
         qa_body_state b;
         if (!qa_world_body_read(g->services.world, a->id, &b, e))
@@ -476,7 +476,7 @@ bool q2_target_use(qa_q2_game *g, q2_actor *a, qa_actor_id other, qa_actor_id ac
                                                  .time_ns = g->now_ns},
                              e))
             return false;
-        return !q2_actor_live(g, a->id) || !s->damage ||
+        return !q2_actor_live(g, a->id) || s->damage == 0 ||
                q2_entity_radius(g, a, activator, s->damage, s->damage + 40, 29, e);
     }
     default:

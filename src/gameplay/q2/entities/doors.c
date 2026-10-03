@@ -322,7 +322,7 @@ bool q2_door_spawn(qa_q2_game *g, q2_actor *a, qa_error *e) {
                          "func_door_rotating");
     m->safe_direction =
         m->angular && (s->spawnflags & 0x20000) ? q2_movedir(b.angles) : qa_v3(0, 0, 0);
-    m->water_divisor = s->accel ? s->accel : 20;
+    m->water_divisor = s->accel != 0 ? s->accel : 20;
     s->direction = m->angular ? (s->spawnflags & 64)    ? qa_v3(0, 0, 1)
                                 : (s->spawnflags & 128) ? qa_v3(1, 0, 0)
                                                         : qa_v3(0, 1, 0)
@@ -331,23 +331,23 @@ bool q2_door_spawn(qa_q2_game *g, q2_actor *a, qa_error *e) {
         s->direction = qa_vec_scale(s->direction, -1);
     b.angles = qa_v3(0, 0, 0);
     a->physics.motion = button ? QA_PHYSICS_STOP : QA_PHYSICS_PUSH;
-    if (!s->speed)
+    if (s->speed == 0)
         s->speed = button ? 40 : water ? 25 : 100;
     if (!button && !m->angular && !water && g->options.deathmatch)
         s->speed *= 2;
-    if (!s->accel)
+    if (s->accel == 0)
         s->accel = s->speed;
-    if (!s->decel)
+    if (s->decel == 0)
         s->decel = s->speed;
-    if (!s->wait)
+    if (s->wait == 0)
         s->wait = water ? -1 : 3;
-    if (!s->damage)
+    if (s->damage == 0)
         s->damage = 2;
     qa_vec3 size = qa_vec_sub(b.bounds.maxs, b.bounds.mins),
             absolute = qa_v3(fabsf(s->direction.x), fabsf(s->direction.y), fabsf(s->direction.z));
     float authored = q2_field_float(g, s, m->angular ? "distance" : "lip", 0);
-    m->distance = m->angular ? (authored ? authored : 90)
-                             : qa_vec_dot(absolute, size) - (authored ? authored
+    m->distance = m->angular ? (authored != 0 ? authored : 90)
+                             : qa_vec_dot(absolute, size) - (authored != 0 ? authored
                                                              : button ? 4
                                                              : water  ? 0
                                                                       : 8);

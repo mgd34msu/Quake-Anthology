@@ -47,7 +47,7 @@ static bool platform_trigger(qa_q2_game *g, q2_actor *a, qa_error *e) {
     if (!qa_world_body_read(g->services.world, a->id, &b, e))
         return false;
     float lip = q2_field_float(g, s, "lip", 0);
-    if (!second && !lip)
+    if (!second && lip == 0)
         lip = 8;
     qa_bounds box = {qa_vec_add(b.bounds.mins, qa_v3(25, 25, 0)),
                      qa_vec_sub(b.bounds.maxs, qa_v3(25, 25, 0))};
@@ -84,16 +84,16 @@ static bool platform_spawn(qa_q2_game *g, q2_actor *a, qa_error *e) {
     if (!qa_world_body_read(g->services.world, a->id, &b, e))
         return false;
     float multiple = second && g->options.deathmatch ? 2 : 1;
-    s->speed = (s->speed ? s->speed * .1f : 20) * multiple;
-    s->accel = (s->accel ? s->accel * .1f : 5) * multiple;
-    s->decel = (s->decel ? s->decel * .1f : 5) * multiple;
-    if (!s->damage)
+    s->speed = (s->speed != 0 ? s->speed * .1f : 20) * multiple;
+    s->accel = (s->accel != 0 ? s->accel * .1f : 5) * multiple;
+    s->decel = (s->decel != 0 ? s->decel * .1f : 5) * multiple;
+    if (s->damage == 0)
         s->damage = 2;
     float lip = q2_field_float(g, s, "lip", 0);
-    if (!second && !lip)
+    if (!second && lip == 0)
         lip = 8;
     float height = q2_field_float(g, s, "height", 0);
-    if (!height)
+    if (height == 0)
         height = b.bounds.maxs.z - b.bounds.mins.z - (second ? 0 : lip);
     m->end = b.origin;
     m->start = b.origin;
@@ -223,9 +223,9 @@ static bool secret_spawn(qa_q2_game *g, q2_actor *a, qa_error *e) {
     b.angles = qa_v3(0, 0, 0);
     a->physics.motion = QA_PHYSICS_PUSH;
     s->team_master = a->id;
-    if (!s->damage)
+    if (s->damage == 0)
         s->damage = 2;
-    if (!s->wait)
+    if (s->wait == 0)
         s->wait = 5;
     s->speed = s->accel = s->decel = 50;
     m->activated = !s->targetname || (s->spawnflags & (second ? 16u : 1u));
@@ -238,7 +238,7 @@ static bool secret_spawn(qa_q2_game *g, q2_actor *a, qa_error *e) {
             return false;
     }
     s->usable = true;
-    s->touchable = second || (!m->activated && !s->health && s->targetname && s->message);
+    s->touchable = second || (!m->activated && s->health == 0 && s->targetname && s->message);
     s->visual.visible = true;
     return q2_entity_body(g, a, &b, false, e) && q2_entity_solid(g, a, QA_PHYSICS_BRUSH, e) &&
            (!q2_actor_live(g, a->id) || q2_entity_show(g, a, e));
@@ -330,7 +330,7 @@ bool qa_q2_force_wall_multicast_origin(qa_q2_game *g, qa_actor_id id, qa_vec3 *o
 }
 static bool force_think(qa_q2_game *g, q2_actor *a, qa_error *e) {
     q2_entity_state *s = a->entity;
-    if (!s->wait && !q2_map_event(g,
+    if (s->wait == 0 && !q2_map_event(g,
                                   &(qa_q2_map_event){.kind = QA_Q2_MAP_FORCE_WALL,
                                                      .actor = a->id,
                                                      .origin = s->direction,
@@ -378,7 +378,7 @@ bool q2_brush_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
         return q2_entity_solid(g, a, QA_PHYSICS_NOT_SOLID, e);
     }
     if (s->kind == Q2E_CONVEYOR) {
-        if (!s->speed)
+        if (s->speed == 0)
             s->speed = 100;
         if (!(s->spawnflags & 1)) {
             s->count = (int)s->speed;
@@ -393,7 +393,7 @@ bool q2_brush_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
         return false;
     if (s->kind == Q2E_OBJECT) {
         a->physics.motion = QA_PHYSICS_PUSH;
-        if (!s->damage)
+        if (s->damage == 0)
             s->damage = 100;
         a->physics.clip_mask = 0x2010003;
         b.bounds.mins = qa_vec_add(b.bounds.mins, qa_v3(1, 1, 1));
@@ -506,7 +506,7 @@ bool q2_brush_use(qa_q2_game *g, q2_actor *a, qa_actor_id other, qa_actor_id act
         return true;
     }
     case Q2E_FORCEWALL:
-        if (!s->wait) {
+        if (s->wait == 0) {
             s->wait = 1;
             q2_entity_schedule(g, a, Q2ET_NONE, 0);
             return q2_entity_solid(g, a, QA_PHYSICS_NOT_SOLID, e);

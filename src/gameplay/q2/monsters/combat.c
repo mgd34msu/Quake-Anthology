@@ -935,7 +935,7 @@ bool q2m_attack(q2m_context *context, q2m_attack_kind kind, float damage,
     break;
   }
   return result && (!q2m_alive(context) ||
-                    muzzle(context, kind, start, direction, error));
+                    muzzle(context, (int)kind, start, direction, error));
 }
 
 static const char *pain_sound(q2m_species species) {

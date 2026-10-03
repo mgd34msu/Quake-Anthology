@@ -92,7 +92,7 @@ bool q2_player_environment(qa_q2_game *g, q2_actor *a, const qa_q2_player_moveme
         if (s->air_ns < now && s->drown_ns < now && combat.health > 0) {
             s->drown_ns = q2_deadline(now, Q2_NS);
             s->drown_damage = s->drown_damage + 2 > 15 ? 15 : s->drown_damage + 2;
-            const char *sound = combat.health <= s->drown_damage
+            const char *sound = combat.health <= (float)s->drown_damage
                                     ? (rr ? "*drown1.wav" : "player/drown1.wav")
                                 : q2_random(g) < .5f ? "*gurp2.wav"
                                                      : "*gurp1.wav";

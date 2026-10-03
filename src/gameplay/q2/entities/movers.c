@@ -48,9 +48,9 @@ bool q2_mover_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
                                              : qa_v3(0, 1, 0);
         if (s->spawnflags & 2)
             s->direction = qa_vec_scale(s->direction, -1);
-        if (!s->speed)
+        if (s->speed == 0)
             s->speed = 100;
-        if (!s->damage)
+        if (s->damage == 0)
             s->damage = 2;
         a->physics.motion = (s->spawnflags & 32) ? QA_PHYSICS_STOP : QA_PHYSICS_PUSH;
         s->usable = true;
@@ -153,7 +153,7 @@ bool q2_mover_blocked(qa_q2_game *g, q2_actor *a, qa_actor_id obstacle, qa_error
     case Q2E_BUTTON:
         return q2_door_blocked(g, a, obstacle, e);
     case Q2E_TRAIN:
-        if (!s->damage || s->debounce_ns > g->now_ns)
+        if (s->damage == 0 || s->debounce_ns > g->now_ns)
             return true;
         s->debounce_ns = q2_deadline(g->now_ns, 500 * Q2_MS);
         return !q2_target_damageable(g, obstacle) ||

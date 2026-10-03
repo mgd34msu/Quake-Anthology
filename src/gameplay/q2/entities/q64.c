@@ -251,7 +251,7 @@ static bool camera(qa_q2_game *g, q2_actor *a, qa_error *e) {
         s->goal = next;
         if (next.registry) {
             v->speed = q2_actor_field_float(g, next, "speed", 0);
-            if (!v->speed)
+            if (v->speed == 0)
                 v->speed = 55;
             if (!qa_world_body_read(g->services.world, next, &to, e))
                 return false;
@@ -448,16 +448,16 @@ bool q2_q64_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
     if (!q2_actor_live(g, a->id))
         return true;
     if (s->kind == Q2E_SPINNING) {
-        if (!s->speed)
+        if (s->speed == 0)
             s->speed = 100;
-        if (!s->damage)
+        if (s->damage == 0)
             s->damage = 2;
         return q2_entity_schedule(g, a, Q2ET_SPINNING, (float)g->frame_ns / Q2_NS);
     }
     s->random = q2_field_float(g, s, "radius", 512);
-    if (!s->random)
+    if (s->random == 0)
         s->random = 512;
-    s->speed = (s->speed ? s->speed : 45) * (float)g->frame_ns / Q2_NS;
+    s->speed = (s->speed != 0 ? s->speed : 45) * (float)g->frame_ns / Q2_NS;
     s->wait = 1;
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, a->id, &body, e))
@@ -466,7 +466,7 @@ bool q2_q64_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
     v->neutral = body.angles;
     v->eye_position = q2_field_vec(g, s, "eye_position", qa_v3(0, 0, 0));
     v->vision_cone = q2_field_float(g, s, "vision_cone", .5f);
-    if (!v->vision_cone)
+    if (v->vision_cone == 0)
         v->vision_cone = .5f;
     if (q2_field_id(g, s, "pathtarget"))
         return q2_entity_schedule(g, a, Q2ET_EYE_SETUP, .1f);

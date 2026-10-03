@@ -64,7 +64,7 @@ static bool break_apart(qa_q2_game *g, q2_actor *a, qa_actor_id inflictor, qa_ac
         return false;
     if (q2_target_damageable(g, a->id) && !damageable(g, a, false, e))
         return false;
-    if (s->damage && !q2_entity_radius(g, a, attacker, s->damage, s->damage + 40, 25, e))
+    if (s->damage != 0 && !q2_entity_radius(g, a, attacker, s->damage, s->damage + 40, 25, e))
         return false;
     if (!q2_actor_live(g, a->id))
         return true;
@@ -75,7 +75,7 @@ static bool break_apart(qa_q2_game *g, q2_actor *a, qa_actor_id inflictor, qa_ac
     if (!q2_entity_body(g, a, &body, false, e))
         return false;
     float mass = q2_field_float(g, s, "mass", 75);
-    if (!mass)
+    if (mass == 0)
         mass = 75;
     int large = (int)q2_clamp(truncf(mass / 100), 0, 8),
         small = (int)q2_clamp(truncf(mass / 25), 0, 16);
@@ -97,7 +97,7 @@ static bool break_apart(qa_q2_game *g, q2_actor *a, qa_actor_id inflictor, qa_ac
     if (!q2_entity_targets(g, a, attacker, false, e))
         return false;
     return !q2_actor_live(g, a->id) ||
-           (s->damage ? explode(g, a, 1, e) : qa_session_release(g->services.session, a->id, e));
+           (s->damage != 0 ? explode(g, a, 1, e) : qa_session_release(g->services.session, a->id, e));
 }
 static bool barrel_blast(qa_q2_game *g, q2_actor *a, qa_error *e) {
     q2_entity_state *s = a->entity;
@@ -210,8 +210,8 @@ static bool clock_tick(qa_q2_game *g, q2_actor *a, qa_error *e) {
     }
     if (!q2_actor_live(g, a->id))
         return true;
-    if (((s->spawnflags & 1) && s->clock_value > s->wait) ||
-        ((s->spawnflags & 2) && s->clock_value < s->wait)) {
+    if (((s->spawnflags & 1) && (float)s->clock_value > s->wait) ||
+        ((s->spawnflags & 2) && (float)s->clock_value < s->wait)) {
         qa_string_id path = q2_field_id(g, s, "pathtarget");
         if (path) {
             qa_string_id target = s->target, message = s->message;
@@ -388,10 +388,10 @@ bool q2_scenery_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
         } else
             s->usable = s->targetname != 0;
         if ((s->spawnflags & 1) || !s->targetname) {
-            if (!s->health)
+            if (s->health == 0)
                 s->health = 100;
             float mass = q2_field_float(g, s, "mass", 75);
-            if (!health(g, a, s->health, mass ? mass : 75, true, false, e))
+            if (!health(g, a, s->health, mass != 0 ? mass : 75, true, false, e))
                 return false;
         }
         return q2_entity_solid(g, a, s->visual.visible ? QA_PHYSICS_BRUSH : QA_PHYSICS_NOT_SOLID,
@@ -400,12 +400,12 @@ bool q2_scenery_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
     case Q2S_BARREL: {
         if (g->options.deathmatch)
             return qa_session_release(g->services.session, a->id, e);
-        if (!s->health)
+        if (s->health == 0)
             s->health = 10;
-        if (!s->damage)
+        if (s->damage == 0)
             s->damage = 150;
         float mass = q2_field_float(g, s, "mass", 400);
-        if (!health(g, a, s->health, mass ? mass : 400, true, false, e))
+        if (!health(g, a, s->health, mass != 0 ? mass : 400, true, false, e))
             return false;
         a->physics.motion = QA_PHYSICS_STEP;
         s->touchable = true;
@@ -496,7 +496,7 @@ bool q2_scenery_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
     case Q2S_BOMB:
     case Q2S_MISSILE:
         s->visual.visible = false;
-        if (!s->damage)
+        if (s->damage == 0)
             s->damage = s->scenery == Q2S_BOMB ? 1000 : 250;
         s->usable = true;
         return model(g, a, "models/objects/bomb/tris.md2", (qa_bounds){{-8, -8, -8}, {8, 8, 8}},
@@ -543,9 +543,9 @@ bool q2_scenery_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
         return q2_entity_solid(g, trigger, QA_PHYSICS_TRIGGER, e);
     }
     case Q2S_ROTATING_LIGHT:
-        if (!s->health)
+        if (s->health == 0)
             s->health = 10;
-        if (!s->speed)
+        if (s->speed == 0)
             s->speed = 32;
         s->usable = true;
         s->visual.effects = (s->spawnflags & 1) ? 0 : 0x800000;
@@ -559,7 +559,7 @@ bool q2_scenery_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
     case Q2S_REPAIR:
         if (!qa_builtin_resource(&g->services, "object_repair", &s->classname, e))
             return false;
-        if (!s->delay)
+        if (s->delay == 0)
             s->delay = 1;
         if (!health(g, a, 100, 0, false, false, e))
             return false;
@@ -578,11 +578,11 @@ bool q2_scenery_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
                                    : (s->spawnflags & 32) ? 0xe0e1e2e3u
                                                           : 0);
         s->direction = q2_movedir(body.angles);
-        if (!s->delay)
+        if (s->delay == 0)
             s->delay = .1f;
-        if (!s->wait)
+        if (s->wait == 0)
             s->wait = .1f;
-        if (!s->damage)
+        if (s->damage == 0)
             s->damage = 5;
         s->usable = true;
         body.angles = qa_v3(0, 0, 0);

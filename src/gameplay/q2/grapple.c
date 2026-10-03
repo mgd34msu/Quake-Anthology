@@ -655,7 +655,7 @@ static bool fire_lm(qa_q2_game *g, q2_actor *a, qa_error *e) {
         return true;
     qa_vec3 delta = qa_vec_sub(hook_body.origin, start);
     float distance = truncf(qa_vec_length(delta));
-    s->hook_length = distance >= INT_MAX ? INT_MAX : (int)distance;
+    s->hook_length = (double)distance >= INT_MAX ? INT_MAX : (int)distance;
     float speed = distance > 120   ? 800
                   : distance > 100 ? distance * 5
                   : distance > 80  ? distance * 4

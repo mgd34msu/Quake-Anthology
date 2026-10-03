@@ -117,7 +117,7 @@ static bool fog_touch(qa_q2_game *g, q2_actor *a, qa_actor_id id, qa_error *e) {
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, id, &body, e))
         return false;
-    float transition = (s->spawnflags & 4) ? 0 : values->delay ? values->delay : .5f;
+    float transition = (s->spawnflags & 4) ? 0 : values->delay != 0 ? values->delay : .5f;
     qa_q2_fog value;
     if (s->spawnflags & 16) {
         qa_body_state trigger;
@@ -545,13 +545,13 @@ bool q2_rerelease_entity_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_err
             return true;
         }
         if (s->kind == Q2E_FOG) {
-            if (!s->delay)
+            if (s->delay == 0)
                 s->delay = .5f;
             q2_entity_pick(g, s->target, &s->goal);
             return true;
         }
         s->touchable = false;
-        if (!s->wait)
+        if (s->wait == 0)
             s->wait = 1;
         if (!s->message &&
             !qa_builtin_resource(&g->services, "$g_coop_wait_for_players", &s->message, e))
@@ -567,7 +567,7 @@ bool q2_rerelease_entity_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_err
         return q2_entity_schedule(g, a, Q2ET_POI, .001f);
     case Q2E_CROSS_UNIT_TARGET:
         s->usable = false;
-        if (!s->delay)
+        if (s->delay == 0)
             s->delay = 1;
         return q2_entity_schedule(g, a, Q2ET_CROSS, s->delay);
     case Q2E_HEALTHBAR:
@@ -812,7 +812,7 @@ bool qa_q2_entities_player_frame(qa_q2_game *g, qa_actor_id id, qa_error *e) {
                          ? r->services.holds_healthbar(r->services.context, bar->target)
                          : qa_q2_monster_holds_healthbar(g, bar->target);
         if (!remove && health <= 0 && !bar->dying && !holds) {
-            if (!controller->entity->delay)
+            if (controller->entity->delay == 0)
                 remove = true;
             else {
                 bar->dying = true;

@@ -89,7 +89,7 @@ static bool lifetime_fields(q2_save_io *io, qa_q2_wire_lifetime *lifetime, uint6
         !q2_save_u64(io, &lifetime->creation_frame) || !q2_save_vec(io, &lifetime->creation_origin)) return false;
     if ((lifetime->present && (!lifetime->link_count || lifetime->creation_frame > frame)) ||
         (!lifetime->present && (lifetime->link_count || lifetime->creation_frame ||
-            lifetime->creation_origin.x || lifetime->creation_origin.y || lifetime->creation_origin.z)))
+            lifetime->creation_origin.x != 0 || lifetime->creation_origin.y != 0 || lifetime->creation_origin.z != 0)))
         return q2_save_fail(io, "Q2 Source creation exceeds its physical clock");
     for (size_t i = 0; i < 8; ++i) {
         qa_q2_wire_origin *origin = &lifetime->origins[i];
@@ -97,7 +97,7 @@ static bool lifetime_fields(q2_save_io *io, qa_q2_wire_lifetime *lifetime, uint6
             !q2_save_vec(io, &origin->origin)) return false;
         if (origin->present ? (!lifetime->present || origin->source_frame > frame ||
                 origin->source_frame < lifetime->creation_frame || (origin->source_frame & 7u) != i) :
-                (origin->source_frame || origin->origin.x || origin->origin.y || origin->origin.z))
+                (origin->source_frame || origin->origin.x != 0 || origin->origin.y != 0 || origin->origin.z != 0))
             return q2_save_fail(io, "Q2 Source origin history leaves its actual link frame");
     }
     return true;

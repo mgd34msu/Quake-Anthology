@@ -70,8 +70,8 @@ bool q2_train_next(qa_q2_game *g, q2_actor *a, qa_error *e) {
             s->speed = speed;
             float accel = target ? target->entity->accel : q2_actor_field_float(g, id, "accel", 0);
             float decel = target ? target->entity->decel : q2_actor_field_float(g, id, "decel", 0);
-            s->accel = accel ? accel : s->speed;
-            s->decel = decel ? decel : s->speed;
+            s->accel = accel != 0 ? accel : s->speed;
+            s->decel = decel != 0 ? decel : s->speed;
         }
         if (!q2_entity_sound(g, a, q2_field_text(g, s, "noise"), 2, 1, 3, 1, e))
             return false;
@@ -137,7 +137,7 @@ bool q2_train_wait(qa_q2_game *g, q2_actor *a, qa_error *e) {
     if (!q2_actor_live(g, destination))
         return true;
     float wait = target ? target->entity->wait : authored.wait_seconds;
-    if (!wait)
+    if (wait == 0)
         return q2_train_next(g, a, e);
     if (wait > 0)
         q2_entity_schedule(g, a, Q2ET_TRAIN_NEXT, wait);
@@ -243,10 +243,10 @@ bool q2_train_spawn(qa_q2_game *g, q2_actor *a, qa_error *e) {
     if (!crash)
         b.angles = qa_v3(0, 0, 0);
     a->physics.motion = QA_PHYSICS_PUSH;
-    if (!s->speed)
+    if (s->speed == 0)
         s->speed = s->mover->ship && !crash ? 300 : 100;
     s->accel = s->decel = s->speed;
-    s->damage = (s->spawnflags & 4) ? 0 : s->damage ? s->damage : 100;
+    s->damage = (s->spawnflags & 4) ? 0 : s->damage != 0 ? s->damage : 100;
     if (crash)
         s->damage = 0;
     if (!strcmp(name, "misc_transport"))

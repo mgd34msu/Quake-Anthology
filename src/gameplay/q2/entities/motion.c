@@ -81,7 +81,7 @@ static bool final(qa_q2_game *g, q2_actor *a, qa_error *e) {
     qa_vec3 delta;
     if (m->angular)
         delta = qa_vec_sub(m->destination, body.angles);
-    else if (!m->remaining)
+    else if (m->remaining == 0)
         return finish(g, a, e);
     else
         delta = g->options.edition == QA_Q2_RERELEASE ? qa_vec_sub(m->destination, body.origin)
@@ -122,7 +122,7 @@ static bool begin(qa_q2_game *g, q2_actor *a, qa_error *e) {
     return schedule_ns(g, a, Q2ET_MOVE_FINAL, q2_item_seconds(frames * frame));
 }
 static void curve_sample(q2_motion *m, q2_entity_state *s) {
-    if (!m->current_speed)
+    if (m->current_speed == 0)
         calculate(m, s);
     accelerate(m, s);
     m->curve_from = m->curve_to;
@@ -181,7 +181,7 @@ bool q2_move_start(qa_q2_game *g, q2_actor *a, qa_vec3 destination, bool angular
             delta = qa_vec_sub(destination, reference);
     float distance = qa_vec_length(delta);
     q2_motion *m = &s->mover->motion;
-    *m = (q2_motion){.direction = distance ? qa_vec_scale(delta, 1 / distance) : qa_v3(0, 0, 0),
+    *m = (q2_motion){.direction = distance != 0 ? qa_vec_scale(delta, 1 / distance) : qa_v3(0, 0, 0),
                      .destination = destination,
                      .reference = reference,
                      .remaining = distance,
@@ -229,7 +229,7 @@ bool q2_move_tick(qa_q2_game *g, q2_actor *a, q2_entity_think think, qa_error *e
         m->remaining = qa_vec_length(qa_vec_sub(m->destination, b.origin));
     } else
         m->remaining -= m->current_speed;
-    if (!m->current_speed)
+    if (m->current_speed == 0)
         calculate(m, s);
     accelerate(m, s);
     if (m->remaining <= m->current_speed)

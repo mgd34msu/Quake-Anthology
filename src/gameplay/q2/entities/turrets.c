@@ -232,9 +232,9 @@ bool q2_turret_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
     a->physics.motion = QA_PHYSICS_PUSH;
     s->visual.visible = true;
     if (s->kind == Q2E_TURRET_BREACH) {
-        if (!s->speed)
+        if (s->speed == 0)
             s->speed = 50;
-        if (!s->damage)
+        if (s->damage == 0)
             s->damage = 10;
         qa_body_state body;
         if (!qa_world_body_read(g->services.world, a->id, &body, e))
@@ -243,11 +243,11 @@ bool q2_turret_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
         t->goal = qa_v3(0, body.angles.y, 0);
         float minimum = q2_field_float(g, s, "minpitch", -30),
               maximum = q2_field_float(g, s, "maxpitch", 30);
-        t->pitch_max = -(minimum ? minimum : -30);
-        t->pitch_min = -(maximum ? maximum : 30);
+        t->pitch_max = -(minimum != 0 ? minimum : -30);
+        t->pitch_min = -(maximum != 0 ? maximum : 30);
         t->yaw_min = q2_field_float(g, s, "minyaw", 0);
         t->yaw_max = q2_field_float(g, s, "maxyaw", 360);
-        if (!t->yaw_max)
+        if (t->yaw_max == 0)
             t->yaw_max = 360;
         q2_entity_schedule(g, a, Q2ET_TURRET_INIT, (float)g->frame_ns / Q2_NS);
     }

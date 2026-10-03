@@ -99,7 +99,7 @@ bool q2_trigger_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
             if (s->spawnflags & 1)
                 s->spawnflags = (s->spawnflags & ~1u) | 4;
             s->wait = -1;
-        } else if (!s->wait)
+        } else if (s->wait == 0)
             s->wait = .2f;
         qa_body_state b;
         if (!qa_world_body_read(g->services.world, a->id, &b, e))
@@ -158,10 +158,10 @@ bool q2_trigger_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
     if (!q2_actor_live(g, a->id))
         return true;
     if (s->kind == Q2E_PUSH) {
-        if (!s->speed)
+        if (s->speed == 0)
             s->speed = 1000;
         if (rr && (s->spawnflags & 2)) {
-            if (!s->wait)
+            if (s->wait == 0)
                 s->wait = 10;
             s->expires_ns = q2_deadline(g->now_ns, q2_item_seconds(.1f + s->wait));
             q2_entity_schedule(g, a, Q2ET_PUSH, .1f);
@@ -177,14 +177,14 @@ bool q2_trigger_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
             return q2_entity_solid(g, a, QA_PHYSICS_BRUSH, e);
         }
     } else if (s->kind == Q2E_HURT) {
-        if (!s->damage)
+        if (s->damage == 0)
             s->damage = 5;
         s->usable = (s->spawnflags & 2) != 0;
         if (s->spawnflags & 1)
             return q2_entity_solid(g, a, QA_PHYSICS_NOT_SOLID, e);
     } else if (s->kind == Q2E_GRAVITY || s->kind == Q2E_MONSTERJUMP) {
         if (s->kind == Q2E_MONSTERJUMP) {
-            if (!s->speed)
+            if (s->speed == 0)
                 s->speed = 200;
             s->direction.z = q2_field_float(g, s, "height", 200);
         }
@@ -271,7 +271,7 @@ bool q2_trigger_touch(qa_q2_game *g, q2_actor *a, const qa_touch_contact *contac
     qa_q2_entity_services *services = &g->entity_runtime->services;
     q2_actor *native = q2_actor_get(g, id, false, NULL);
     if (s->kind == Q2E_TELEPORT) {
-        if (!traits.player || s->delay)
+        if (!traits.player || s->delay != 0)
             return true;
         qa_actor_id destination;
         qa_body_state to;

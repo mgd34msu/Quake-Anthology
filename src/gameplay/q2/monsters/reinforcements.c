@@ -162,7 +162,7 @@ bool q2m_medic_summon_initialize(q2m_context *context, q2m_summon_state *state, 
     double slots = context->actor->entity
                        ? q2_field_float(context->game, context->actor->entity, "monster_slots", 3)
                        : 3;
-    if (slots && entry_count(state))
+    if (slots != 0 && entry_count(state))
         slots += floor(slots * context->game->options.skill / 2.0);
     if (!isfinite(slots) || slots < -0x1p63 || slots >= 0x1p63 || trunc(slots) != slots) {
         qa_error_set(error, QA_ERROR_FORMAT, 0, "Invalid medic reinforcement slot count");

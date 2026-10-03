@@ -157,7 +157,7 @@ static bool laser_start(qa_q2_game *g, q2_actor *a, qa_error *e) {
             b.angles = qa_v3(0, 0, 0);
         }
     }
-    if (!s->damage)
+    if (s->damage == 0)
         s->damage = 1;
     b.bounds = (qa_bounds){{-8, -8, -8}, {8, 8, 8}};
     s->usable = true;
@@ -222,7 +222,7 @@ static bool quake(qa_q2_game *g, q2_actor *a, qa_error *e) {
         body.ground = (qa_actor_id){0};
         body.velocity.x += q2_crandom(g) * 150;
         body.velocity.y += q2_crandom(g) * 150;
-        body.velocity.z = s->speed * (100 / (health.mass ? health.mass : 200));
+        body.velocity.z = s->speed * (100 / (health.mass != 0 ? health.mass : 200));
         if (!qa_world_body_write(g->services.world, id, &body, e))
             goto out;
         if (!q2_actor_live(g, a->id)) {
@@ -250,7 +250,7 @@ static bool steam_start(qa_q2_game *g, q2_actor *a, qa_error *e) {
             return false;
     }
     s->count = (s->count ? s->count : 32) & 255;
-    if (!s->speed)
+    if (s->speed == 0)
         s->speed = 75;
     uint32_t color = q2_actor_field_flags(g, a->id, "sounds");
     s->style = (int)((color ? color : 8) & 255);
@@ -296,23 +296,23 @@ bool q2_target_extra_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *
         return false;
     switch (s->kind) {
     case Q2E_SPAWNER:
-        if (s->speed) {
+        if (s->speed != 0) {
             s->direction = qa_vec_scale(q2_movedir(b.angles), s->speed);
             b.angles = qa_v3(0, 0, 0);
             return q2_entity_body(g, a, &b, false, e);
         }
         return true;
     case Q2E_BLASTER:
-        if (!s->damage)
+        if (s->damage == 0)
             s->damage = 15;
-        if (!s->speed)
+        if (s->speed == 0)
             s->speed = 1000;
         s->direction = q2_movedir(b.angles);
         b.angles = qa_v3(0, 0, 0);
         return q2_entity_body(g, a, &b, false, e);
     case Q2E_CROSS_TARGET:
         s->usable = false;
-        if (!s->delay)
+        if (s->delay == 0)
             s->delay = 1;
         return q2_entity_schedule(g, a, Q2ET_CROSS, s->delay);
     case Q2E_LASER:
@@ -329,7 +329,7 @@ bool q2_target_extra_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *
     case Q2E_EARTHQUAKE:
         if (!s->count)
             s->count = 5;
-        if (!s->speed)
+        if (s->speed == 0)
             s->speed = 200;
         s->wait = 0;
         return true;
@@ -355,9 +355,9 @@ bool q2_target_extra_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *
             sound = "world/bigpump2.wav";
             break;
         }
-        if (!s->volume)
+        if (s->volume == 0)
             s->volume = 1;
-        s->attenuation = s->attenuation == -1 ? 0 : s->attenuation ? s->attenuation : 1;
+        s->attenuation = s->attenuation == -1 ? 0 : s->attenuation != 0 ? s->attenuation : 1;
         if (!sound) {
             s->usable = false;
             return true;
@@ -488,7 +488,7 @@ bool q2_target_extra_use(qa_q2_game *g, q2_actor *a, qa_actor_id other, qa_actor
             return true;
         if (!qa_world_link(g->services.world, spawned, NULL, e))
             return false;
-        if (s->speed && q2_actor_live(g, spawned)) {
+        if (s->speed != 0 && q2_actor_live(g, spawned)) {
             if (!qa_world_body_read(g->services.world, spawned, &b, e))
                 return false;
             b.velocity = s->direction;
@@ -537,7 +537,7 @@ bool q2_target_extra_use(qa_q2_game *g, q2_actor *a, qa_actor_id other, qa_actor
         if (r->steam_id > 20000)
             r->steam_id %= 20000;
         r->steam_id++;
-        if (!s->wait)
+        if (s->wait == 0)
             s->wait = other.registry ? q2_actor_field_float(g, other, "wait", 0) * 1000 : 1000;
         qa_body_state b;
         if (!qa_world_body_read(g->services.world, a->id, &b, e))
