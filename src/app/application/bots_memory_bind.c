@@ -6,7 +6,7 @@ bool application_bots_memory_span(void *context,uint32_t offset,uint32_t size,ui
 {
     application_bots *bots=context;
     application_provider *source=bots?application_bot_source(bots):NULL;
-    if(!bots || !out || bots->restoring || !source || !source->constructed || !source->attached ||
+    if(!bots || !out || !source || !source->constructed || !source->attached ||
        !source->map_bound || source->close_pending ||
        source!=application_world_provider(bots->application,QA_ROLE_ENTITIES,""))
         return application_fail(error,QA_ERROR_ARGUMENT,"BotState byte span has no actual mutable source module owner");
