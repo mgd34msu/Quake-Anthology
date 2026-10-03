@@ -1103,6 +1103,16 @@ bool application_native_q3_checkpoint_prepare(application_provider *provider,
     if (!native_q3_record_read((qa_bytes){bytes.data+28,bytes.size-28},&record,error)) return false;
     if (record.game_present!=(provider->state.q3!=NULL))
         return application_fail(error,QA_ERROR_FORMAT,"Saved Q3 GAME presence differs from its selected compiled roles");
+    if (record.console_present) {
+        qa_console *console = NULL;
+        qa_cvars *cvars = NULL;
+        qa_command_context command;
+        if (!application_native_q3_console_restore(provider,record.registry,error)) return false;
+        if (!application_native_q3_console_at(provider, &console, &cvars, &command))
+            return application_fail(error, QA_ERROR_ARGUMENT,
+                "Restored native Q3 console lost its physical Source owner");
+        if (!application_startup_source_restore(provider, console, cvars, &command, error)) return false;
+    }
     return application_native_q3_remote_roles_restore_prepare(provider,record.clients,error);
 }
 
@@ -1192,7 +1202,6 @@ static bool native_q3_restore(application_provider *provider, qa_bytes bytes, qa
         application_native_q3_team_status_bound(provider))
         return application_fail(error,QA_ERROR_FORMAT,"Native Q3 bundle differs from its actual empty candidate services");
     bool ok=application_native_q3_remote_roles_restore_match(provider,record.clients,error) &&
-        (!record.console_present || application_native_q3_console_restore(provider,record.registry,error)) &&
         (!record.game_present || qa_q3_game_restore(provider->state.q3,record.game,error)) &&
         (!record.settings_initialized || application_native_q3_settings_restore(provider,record.settings,error)) &&
         (!record.ipfilters_present || application_native_q3_ipfilters_restore(provider,record.ipfilters,error)) &&
@@ -1201,15 +1210,6 @@ static bool native_q3_restore(application_provider *provider, qa_bytes bytes, qa
         application_unified_q3_events_restore(provider,record.published_events,error);
     if (ok && record.ipfilters_initialized!=application_native_q3_ipfilters_initialized(provider))
         return application_fail(error,QA_ERROR_FORMAT,"Native Q3 filters differ from their imported source state");
-    if (ok && record.console_present) {
-        qa_console *console = NULL;
-        qa_cvars *cvars = NULL;
-        qa_command_context command;
-        if (!application_native_q3_console_at(provider, &console, &cvars, &command))
-            return application_fail(error, QA_ERROR_ARGUMENT,
-                "Restored native Q3 console lost its physical Source owner");
-        ok = application_startup_source_restore(provider, console, cvars, &command, error);
-    }
     return ok;
 }
 
