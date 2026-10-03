@@ -113,6 +113,8 @@ bool qa_qc_game_create(const qa_qc_program *program, const qa_qc_game_options *o
     if (!qa_qc_instance_create(program, &vm, &game->vm, error)) {
         free(game->bindings); free(game); return false;
     }
+    game->options.vm.inline_regions = NULL;
+    game->options.vm.inline_region_count = 0;
     *out = game; return true;
 }
 bool qa_qc_game_destroy(qa_qc_game *game, qa_error *error) {
@@ -145,6 +147,7 @@ bool qa_qc_game_reset_level(qa_qc_game *game, qa_error *error) {
             return qc_game_fail(error, QA_ERROR_ARGUMENT, "QC level still has actor bindings");
     }
     qa_qc_options vm = game->options.vm;
+    vm.inline_regions = qa_qc_instance_inline_regions(game->vm, &vm.inline_region_count);
     vm.first_dynamic_slot = game->options.max_clients + 1;
     vm.require_complete_host_profile = true;
     vm.host.session = game->options.services.session; vm.host.world = game->options.services.world;

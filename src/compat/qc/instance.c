@@ -386,6 +386,14 @@ bool qa_qc_instance_destroy(qa_qc_instance *instance, qa_error *error)
     return true;
 }
 
+const qa_qc_inline_region *qa_qc_instance_inline_regions(const qa_qc_instance *instance,
+    size_t *count)
+{
+    if (!count) return NULL;
+    *count = instance ? instance->options.inline_region_count : 0;
+    return instance ? instance->inline_regions : NULL;
+}
+
 const qa_qc_program *qa_qc_instance_program(const qa_qc_instance *instance)
 {
     return instance == NULL ? NULL : instance->program;

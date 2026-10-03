@@ -427,6 +427,10 @@ bool qa_qc_instance_destroy(qa_qc_instance *instance, qa_error *error);
 bool qa_qc_idle(const qa_qc_instance *instance);
 const qa_qc_program *qa_qc_instance_program(const qa_qc_instance *instance);
 qa_qc_profile qa_qc_instance_profile(const qa_qc_instance *instance);
+/* Borrows the existing immutable admitted region span until instance
+ * destruction. Reading it does not enter Source execution or projection. */
+const qa_qc_inline_region *qa_qc_instance_inline_regions(const qa_qc_instance *,
+    size_t *count);
 uint32_t qa_qc_entity_count(const qa_qc_instance *instance);
 uint32_t qa_qc_argument_count(const qa_qc_instance *instance);
 
