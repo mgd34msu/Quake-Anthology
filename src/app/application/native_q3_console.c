@@ -5,6 +5,7 @@
 #include "native_q3_wire_state.h"
 #include "qa/game_q3_clients.h"
 #include "qa/game_q3_source.h"
+#include "qa/cvars_save.h"
 
 #include <stdlib.h>
 #include <ctype.h>
@@ -69,6 +70,29 @@ qa_cvars *application_native_q3_console_registry(const application_provider *pro
 {
     return provider && provider->kind == APPLICATION_PROVIDER_Q3 && provider->native_q3_console
         ? provider->native_q3_console->cvars : NULL;
+}
+
+bool application_native_q3_console_capture(application_provider *provider,
+    qa_buffer *out, qa_error *error)
+{
+    qa_cvars *registry = application_native_q3_console_registry(provider);
+    if (!registry || !application_native_q3_console_idle(provider))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q3 registry capture requires its idle source owner");
+    return qa_cvars_save_capture(registry, out, error);
+}
+
+bool application_native_q3_console_restore(application_provider *provider,
+    qa_bytes bytes, qa_error *error)
+{
+    qa_cvars *registry = application_native_q3_console_registry(provider);
+    if (!registry || !application_native_q3_console_idle(provider) ||
+        provider->application->operation != APPLICATION_PERSISTING)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q3 registry import requires its idle candidate owner");
+    qa_cvars_restore *ticket = NULL;
+    bool okay = qa_cvars_save_prepare(registry, bytes, &ticket, error) &&
+        qa_cvars_save_commit(ticket, error);
+    if (!okay) qa_cvars_save_abort(ticket);
+    return okay;
 }
 
 qa_cvars *application_native_q3_cvar_owner(const application_provider *provider, const char *name)

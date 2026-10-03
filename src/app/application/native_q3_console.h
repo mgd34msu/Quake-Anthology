@@ -15,6 +15,8 @@ void application_native_q3_console_release(application_provider *);
 bool application_native_q3_console_at(application_provider *, qa_console **,
                                        qa_cvars **, qa_command_context *);
 qa_cvars *application_native_q3_console_registry(const application_provider *);
+bool application_native_q3_console_capture(application_provider *, qa_buffer *, qa_error *);
+bool application_native_q3_console_restore(application_provider *, qa_bytes, qa_error *);
 bool application_native_q3_console_settings_bound(const application_provider *);
 void application_native_q3_console_settings_commit(application_provider *);
 qa_cvars *application_native_q3_cvar_owner(const application_provider *, const char *);

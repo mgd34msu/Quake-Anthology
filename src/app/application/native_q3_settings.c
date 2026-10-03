@@ -630,6 +630,10 @@ bool application_native_q3_settings_restore(application_provider *provider, qa_b
             if (index == count || used[index])
                 okay = application_fail(error, QA_ERROR_FORMAT, "Q3 cached settings have invalid or duplicate source names");
         }
+        if (okay && !qa_cvars_find(application_native_q3_cvar_owner(provider,
+            definition_at(owner, index)->name), definition_at(owner, index)->name))
+            okay = application_fail(error, QA_ERROR_FORMAT,
+                "Q3 cached setting has no restored source registry row");
         if (okay) {
             restored[index] = snapshot;
             snapshot = (application_native_q3_cvar_snapshot){0};
