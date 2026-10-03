@@ -1,5 +1,15 @@
 #include "internal.h"
 
+typedef struct nearest_candidate {
+    uint32_t index;
+    float distance;
+} nearest_candidate;
+static int nearest_compare(const void *left, const void *right) {
+    const nearest_candidate *a = left, *b = right;
+    if (a->distance != b->distance)
+        return a->distance < b->distance ? -1 : 1;
+    return a->index < b->index ? -1 : a->index != b->index;
+}
 static bool nearest(qa_navigation *n, qa_actor_id actor, qa_vec3 point, float radius,
                     bool geographic, uint32_t *out, bool *found, qa_error *e) {
     if (n == NULL || out == NULL || found == NULL || !qa_vec_finite(point) || !isfinite(radius) ||
@@ -9,10 +19,30 @@ static bool nearest(qa_navigation *n, qa_actor_id actor, qa_vec3 point, float ra
     }
     *found = false;
     *out = QA_NAV_NO_INDEX;
+    nearest_candidate *candidates = NULL;
+    size_t capacity = 0, count = n->graph->view.node_count;
+    bool ordered = !geographic && count &&
+        n->graph->nodes[0].source.kind == QA_NAV_ORIGIN_CONSTRUCTED;
+    if (ordered) {
+        if (!nav_reserve((void **)&candidates, &capacity, count, sizeof(*candidates), e))
+            return false;
+        count = 0;
+        for (uint32_t i = 0; i < n->graph->view.node_count; ++i) {
+            float distance = nav_distance(point, n->graph->nodes[i].origin);
+            if (distance <= radius)
+                candidates[count++] = (nearest_candidate){i, distance};
+        }
+        if (count > 1)
+            qsort(candidates, count, sizeof(*candidates), nearest_compare);
+    }
+    bool ok = false;
     float best = radius;
-    for (uint32_t i = 0; i < n->graph->view.node_count; ++i) {
+    for (size_t cursor = 0; cursor < count; ++cursor) {
+        uint32_t i = ordered ? candidates[cursor].index : (uint32_t)cursor;
         const qa_nav_node *node = n->graph->nodes + i;
-        float distance = nav_distance(point, node->origin);
+        float distance = ordered ? candidates[cursor].distance : nav_distance(point, node->origin);
+        if (ordered && distance > best)
+            break;
         qa_nav_profile p;
         if (distance > best || !nav_node_profile(&n->graph->view.profile, node, &p))
             continue;
@@ -20,7 +50,7 @@ static bool nearest(qa_navigation *n, qa_actor_id actor, qa_vec3 point, float ra
         if (geographic)
             allowed = nav_static_node(n, i, NULL);
         else if (!nav_node_allowed(n, actor, i, NULL, false, &allowed, e))
-            return false;
+            goto done;
         if (!allowed)
             continue;
         if (geographic) {
@@ -28,17 +58,17 @@ static bool nearest(qa_navigation *n, qa_actor_id actor, qa_vec3 point, float ra
             p.policy.q1_hull = 0;
         }
         if (!nav_clear(&n->services, &p, actor, point, node->origin, geographic, &clear, e))
-            return false;
+            goto done;
         if (!clear && !geographic && actor.registry &&
             node->source.kind == QA_NAV_ORIGIN_CONSTRUCTED &&
             (n->services.movement_input || n->services.traversal_admit)) {
             qa_nav_route approach = {0};
-            bool ok = qa_navigation_admit_movement(n, actor, point, node->origin,
-                                                    QA_NAV_WALK, &approach, e);
-            clear = ok && approach.found;
+            bool predicted = qa_navigation_admit_movement(n, actor, point, node->origin,
+                                                          QA_NAV_WALK, &approach, e);
+            clear = predicted && approach.found;
             qa_nav_route_free(&approach);
-            if (!ok)
-                return false;
+            if (!predicted)
+                goto done;
         }
         if (clear) {
             best = distance;
@@ -46,7 +76,10 @@ static bool nearest(qa_navigation *n, qa_actor_id actor, qa_vec3 point, float ra
             *found = true;
         }
     }
-    return true;
+    ok = true;
+done:
+    free(candidates);
+    return ok;
 }
 bool qa_navigation_nearest(qa_navigation *n, qa_actor_id actor, qa_vec3 point, float radius,
                            uint32_t *out, bool *found, qa_error *e) {
