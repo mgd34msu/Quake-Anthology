@@ -1838,9 +1838,7 @@ static bool persistence_finish(void *opaque, void *value, const qa_save_image *i
         operation->ops->reconnect(operation->ops->context, candidate, image, error);
     for (size_t i = 0; ok && i < candidate->provider_count; ++i) {
         application_provider *provider = candidate->providers[i];
-        if (provider->kind == APPLICATION_PROVIDER_Q3 && provider->state.q3)
-            ok = qa_q3_game_reconnect(provider->state.q3, error);
-        else if (provider->kind == APPLICATION_PROVIDER_Q2)
+        if (provider->kind == APPLICATION_PROVIDER_Q2)
             ok = qa_q2_game_restore_finish(provider->state.q2, error);
         else if (provider->kind == APPLICATION_PROVIDER_Q1)
             ok = qa_q1_game_restore_finish(provider->state.q1, error);
@@ -1855,6 +1853,11 @@ static bool persistence_finish(void *opaque, void *value, const qa_save_image *i
     if (ok) ok = application_save_foundation_decode(image, &foundation, error) &&
         application_save_foundation_finish(candidate, &foundation, error);
     application_save_foundation_free(&foundation);
+    for (size_t i = 0; ok && i < candidate->provider_count; ++i) {
+        application_provider *provider = candidate->providers[i];
+        if (provider->kind == APPLICATION_PROVIDER_Q3 && provider->state.q3)
+            ok = qa_q3_game_reconnect(provider->state.q3, error);
+    }
     if (ok) ok = application_native_q1_wire_reconnect(candidate, error);
     if (ok) ok = application_portals_validate(candidate, error);
     if (ok) ok = application_bots_save_finish(candidate, error);

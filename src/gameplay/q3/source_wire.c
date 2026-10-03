@@ -1865,7 +1865,8 @@ bool q3_wire_validate(const qa_q3_game *game, const q3_wire_state *state, qa_err
 }
 
 bool q3_wire_validate_saved(const qa_q3_game *game, const q3_wire_state *state,
-                            const qa_q3_checkpoint *saved, qa_error *error) {
+                            const qa_q3_checkpoint *saved, bool world_links,
+                            qa_error *error) {
     if (!game || !state || !saved || !owner_valid(state, error) ||
         !special_ammo_valid(game, state, error)) return false;
     for (uint32_t i = 0; i < QA_Q3_SOURCE_ENTITIES; ++i) {
@@ -1879,7 +1880,7 @@ bool q3_wire_validate_saved(const qa_q3_game *game, const q3_wire_state *state,
             return q3_fail(error, "Q3 source wire continuation disagrees with saved physical GAME rows");
         if (saved->source_entities[i].in_use && !state->rows[i].initialized)
             return q3_fail(error, "Q3 source wire restore contains an unfinished native constructor");
-        if (!link_valid(game, &state->rows[i], error)) return false;
+        if (world_links && !link_valid(game, &state->rows[i], error)) return false;
         if (state->rows[i].player_published &&
             (i >= QA_Q3_SOURCE_CLIENTS || saved->source_clients[i].kind != Q3_ACTOR_PLAYER ||
              !qa_actor_id_equal(saved->source_clients[i].actor, actor)))

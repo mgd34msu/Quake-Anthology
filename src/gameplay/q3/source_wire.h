@@ -68,7 +68,7 @@ bool q3_wire_capture(const qa_q3_game *, qa_buffer *, qa_error *);
 bool q3_wire_prepare(qa_q3_game *, qa_bytes, q3_wire_state **, qa_error *);
 bool q3_wire_validate(const qa_q3_game *, const q3_wire_state *, qa_error *);
 bool q3_wire_validate_saved(const qa_q3_game *, const q3_wire_state *,
-                            const qa_q3_checkpoint *, qa_error *);
+                            const qa_q3_checkpoint *, bool world_links, qa_error *);
 void q3_wire_discard(q3_wire_state *);
 void q3_wire_commit(qa_q3_game *, q3_wire_state *);
 

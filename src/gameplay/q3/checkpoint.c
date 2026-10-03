@@ -288,7 +288,7 @@ static bool checkpoint_restore(qa_q3_game *game, const qa_q3_checkpoint *saved,
         goto invalid_strings;
     if (!q3_shader_remaps_prepare(&saved->shader_remaps, &shader_remaps, error) ||
         !q3_wire_prepare(game, (qa_bytes){saved->wire_state.data, saved->wire_state.size}, &wire, error) ||
-        !q3_wire_validate_saved(game, wire, saved, error)) {
+        !q3_wire_validate_saved(game, wire, saved, reconnect, error)) {
         q3_configstrings_discard(configstrings);
         q3_wire_discard(wire);
         goto invalid_strings;
