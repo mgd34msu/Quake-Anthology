@@ -25,16 +25,20 @@ bool qa_input_platform_checkpoint(const qa_input_platform *, const qa_input_plat
     qa_buffer *, qa_error *);
 /* Decode only into a detached owner. The active platform keeps sole native
  * ownership; the guard borrows both heaps through the final publication cut.
- * Exact native endpoint identity, SDL mode/sensor state, and the actual issued
+ * Exact native endpoint identity, sensor state, and the actual issued
  * motor/sensor request provenance must match. Motor records qualify the live
  * owner; SDL provides no motor-state getter and this codec does not replay
  * native output. The initial MIDI capture byte and actual read-call progress
  * qualify the same live stream; the retained reconnect clock is pure state.
+ * Saved logical SDL mouse/text/grab modes are staged until checked handoff
+ * preparation; abort restores the actual prior modes before releasing custody.
  * Pending settings preparations cannot be captured or imported.
  * No rescanning, MIDI reads, input release, routing or output callbacks run. */
 bool qa_input_platform_restore(qa_input_platform *detached, const qa_input_platform *active,
     const qa_input_platform_checkpoint_refs *, qa_bytes,
     qa_input_platform_restore_guard **, qa_error *);
+bool qa_input_platform_handoff_prepare(qa_input_platform_restore_guard *, qa_error *);
+bool qa_input_platform_handoff_abort(qa_input_platform_restore_guard *, qa_error *);
 bool qa_input_platform_handoff_ready(const qa_input_platform_restore_guard *, qa_error *);
 /* Recapture the genuine detached candidate before publication. Its guard must
  * still qualify the active native endpoints; only that retained native cut is

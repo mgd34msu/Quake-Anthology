@@ -65,7 +65,10 @@ struct qa_input_platform {
     input_native_startup native_startup;
     bool native_initializing;
     qa_input_platform_settings_ticket *settings_ticket;
+    struct qa_input_platform_restore_guard *restore_abort;
 };
+bool input_platform_restore_abort_pending(qa_input_platform *, qa_error *);
+bool input_platform_modes_apply(SDL_Window *, bool relative, bool grab, bool text, qa_error *);
 bool input_platform_haptic_bindings_ready(const qa_input_platform *);
 void input_platform_route_contexts_rebind(qa_input_platform *);
 bool input_platform_fresh_routes(qa_input_platform *, qa_input_seat *const [4],

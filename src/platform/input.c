@@ -20,7 +20,8 @@ static bool failed(qa_error *error, const char *operation) {
     return false;
 }
 static bool native_owner(qa_input_platform *p, qa_error *error) {
-    if (p && p->native_owned && !p->settings_ticket) return true;
+    if (p && p->native_owned && !p->settings_ticket)
+        return input_platform_restore_abort_pending(p, error);
     if (p && p->settings_ticket) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Native input is retained by its settings preparation");
         return false;
@@ -466,6 +467,7 @@ void qa_input_platform_destroy(qa_input_platform *p) {
     if (!p || p->settings_ticket)
         return;
     qa_error ignored = {0};
+    if (!input_platform_restore_abort_pending(p, &ignored)) return;
     if (p->native_owned) {
         (void)qa_input_platform_window(p, NULL, p->now, &ignored);
         (void)release_all(p, p->now, &ignored);
@@ -1491,7 +1493,7 @@ static bool settings_current(const qa_input_platform_settings_ticket *t, qa_erro
     }
     return true;
 }
-static bool settings_capture(SDL_Window *window, bool relative,
+bool input_platform_modes_apply(SDL_Window *window, bool relative,
     bool grab, bool text, qa_error *error) {
     bool success = true;
     if (SDL_GetRelativeMouseMode() != (relative ? SDL_TRUE : SDL_FALSE) &&
@@ -1706,7 +1708,7 @@ static bool settings_prepare(qa_input_platform *p, const qa_input_platform_setti
     t->text = t->focused && (t->focus == QA_INPUT_CONSOLE || t->focus == QA_INPUT_CHAT || t->focus == QA_INPUT_UI);
     if (t->window) {
         t->capture_attempted = true;
-        if (!settings_capture(t->window, t->relative, t->relative, t->text, error)) return false;
+        if (!input_platform_modes_apply(t->window, t->relative, t->relative, t->text, error)) return false;
     } else { t->relative = t->previous_relative; t->text = t->previous_text; }
     t->prepared = true; return settings_current(t, error);
 }
@@ -1753,7 +1755,7 @@ bool qa_input_platform_settings_requirements_read(const qa_input_platform_settin
     *out = t->requirements; return true;
 }
 bool qa_input_platform_settings_idle(const qa_input_platform *p) {
-    return p && !p->settings_ticket && !p->constructor_edit;
+    return p && !p->settings_ticket && !p->constructor_edit && !p->restore_abort;
 }
 bool qa_input_platform_settings_retained(const qa_input_platform *p,
     const qa_input_platform_settings_ticket *t, qa_error *error) {
@@ -2045,7 +2047,7 @@ bool qa_input_platform_settings_window_stage(qa_input_platform_settings_ticket *
      * no effective grab. SDL focus determines the candidate's effective grab. */
     t->capture_attempted = true;
     SDL_SetWindowGrab(t->window, t->platform->old_grab ? SDL_TRUE : SDL_FALSE);
-    if (!settings_capture(window, t->relative, t->relative, t->text, error)) return false;
+    if (!input_platform_modes_apply(window, t->relative, t->relative, t->text, error)) return false;
     t->window_prepared = true;
     return settings_current(t, error) && settings_endpoints_ready(t, error);
 }

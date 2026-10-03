@@ -6,11 +6,17 @@
 #include <string.h>
 #include <sys/stat.h>
 
+typedef struct input_native_modes {
+    uint32_t window;
+    bool relative, text, grab;
+    int controllers, joysticks;
+} input_native_modes;
 struct qa_input_platform_restore_guard {
     qa_input_platform *candidate;
     const qa_input_platform *active;
-    qa_buffer native_cut;
-    bool applied;
+    qa_buffer native_cut, active_cut;
+    input_native_modes desired, previous;
+    bool prepared, applied;
 };
 static bool fail(qa_error *error, qa_status status, const char *text)
 { qa_error_set(error, status, 0, "%s", text); return false; }
@@ -104,7 +110,13 @@ static bool info_fields(qa_source_save_io *io, qa_controller_info *info,
     if (reading) { free(name); free(serial); }
     return success;
 }
-static bool native_capture(const qa_input_platform *p, qa_buffer *out, qa_error *error)
+static bool modes_fields(qa_source_save_io *io, input_native_modes *m)
+{
+    return qa_source_save_u32(io, &m->window) && qa_source_save_bool(io, &m->relative) &&
+        qa_source_save_bool(io, &m->text) && qa_source_save_bool(io, &m->grab) &&
+        integer(io, &m->controllers) && integer(io, &m->joysticks);
+}
+static bool native_capture(const qa_input_platform *p, qa_buffer *out, size_t *modes_offset, qa_error *error)
 {
     if (!p || !p->native_owned || p->native_initializing || p->constructor_edit ||
         p->settings_ticket || !out || out->data || out->size)
@@ -156,14 +168,15 @@ static bool native_capture(const qa_input_platform *p, qa_buffer *out, qa_error 
             success = qa_source_save_u64(&io, &device) && qa_source_save_u64(&io, &file) && qa_source_save_u64(&io, &node);
         }
     }
-    uint32_t window = p->window;
-    SDL_Window *handle = window ? SDL_GetWindowFromID(window) : NULL;
-    bool relative = SDL_GetRelativeMouseMode() == SDL_TRUE, input = SDL_IsTextInputActive() == SDL_TRUE,
-        grab = handle && SDL_GetWindowGrab(handle) == SDL_TRUE;
-    int controllers = SDL_GameControllerEventState(SDL_QUERY), joysticks = SDL_JoystickEventState(SDL_QUERY);
-    success = success && (!window || handle) && qa_source_save_u32(&io, &window) &&
-        qa_source_save_bool(&io, &relative) && qa_source_save_bool(&io, &input) && qa_source_save_bool(&io, &grab) &&
-        integer(&io, &controllers) && integer(&io, &joysticks) && qa_source_save_finish(&io, out);
+    SDL_Window *handle = p->window ? SDL_GetWindowFromID(p->window) : NULL;
+    input_native_modes modes = {.window=p->window,
+        .relative=SDL_GetRelativeMouseMode() == SDL_TRUE,
+        .text=SDL_IsTextInputActive() == SDL_TRUE,
+        .grab=handle && SDL_GetWindowGrab(handle) == SDL_TRUE,
+        .controllers=SDL_GameControllerEventState(SDL_QUERY),
+        .joysticks=SDL_JoystickEventState(SDL_QUERY)};
+    if (modes_offset) *modes_offset = io.output.size;
+    success = success && (!p->window || handle) && modes_fields(&io, &modes) && qa_source_save_finish(&io, out);
     qa_source_save_dispose(&io);
     if (!success && error && error->code == QA_OK) fail(error, QA_ERROR_UNSUPPORTED, "platform native endpoint is not qualified");
     return success;
@@ -171,11 +184,36 @@ static bool native_capture(const qa_input_platform *p, qa_buffer *out, qa_error 
 static bool native_matches(const qa_input_platform *active, qa_bytes expected, qa_error *error)
 {
     qa_buffer current = {0};
-    if (!native_capture(active, &current, error)) return false;
+    if (!native_capture(active, &current, NULL, error)) return false;
     bool success = current.size == expected.size &&
         (!current.size || !memcmp(current.data, expected.data, current.size));
     qa_buffer_free(&current);
     return success || fail(error, QA_ERROR_UNSUPPORTED, "saved platform requires the same native endpoint and SDL cut");
+}
+/* Endpoint fields retain their exact byte identity. The one tail codec owns
+ * the logical SDL modes which can be restored on that same native endpoint. */
+static bool native_modes_read(const qa_input_platform *active, qa_bytes saved,
+    qa_buffer *current, input_native_modes *desired, input_native_modes *previous, qa_error *error)
+{
+    size_t offset = 0;
+    if (!native_capture(active, current, &offset, error)) return false;
+    if (saved.size != current->size || offset > saved.size ||
+        (offset && memcmp(saved.data, current->data, offset)))
+        return fail(error, QA_ERROR_UNSUPPORTED, "saved platform requires the same native endpoint");
+    qa_source_save_io io = {0};
+    bool success = qa_source_save_reader(&io, NULL, saved, error);
+    io.offset = offset;
+    success = success && modes_fields(&io, desired) && qa_source_save_finish(&io, NULL);
+    qa_source_save_dispose(&io);
+    if (success) {
+        success = qa_source_save_reader(&io, NULL, (qa_bytes){current->data,current->size}, error);
+        io.offset = offset;
+        success = success && modes_fields(&io, previous) && qa_source_save_finish(&io, NULL);
+        qa_source_save_dispose(&io);
+    }
+    return (success && desired->window == previous->window &&
+        desired->controllers == previous->controllers && desired->joysticks == previous->joysticks) ||
+        fail(error, QA_ERROR_UNSUPPORTED, "saved platform requires the same native window and event endpoints");
 }
 static bool selection_fields(qa_source_save_io *io, qa_controller_selection *s)
 {
@@ -333,14 +371,14 @@ static bool envelope(qa_source_save_io *io, qa_input_platform *p, const qa_input
 bool qa_input_platform_checkpoint(const qa_input_platform *p, const qa_input_platform_checkpoint_refs *refs,
     qa_buffer *out, qa_error *error)
 {
-    if (!p || !p->native_owned || !refs || !refs->seat_encode || !out || out->data || out->size ||
+    if (!p || !p->native_owned || p->restore_abort || !refs || !refs->seat_encode || !out || out->data || out->size ||
         !input_platform_haptic_bindings_ready(p))
         return fail(error, QA_ERROR_ARGUMENT, "platform capture requires actual idle holders and empty output");
     qa_buffer native_cut = {0}, haptic = {0};
     qa_haptic_player *players[4];
     for (unsigned i = 0; i < 4; ++i) players[i] = (qa_haptic_player *)&p->seats[i].haptic;
     qa_source_save_io io = {0};
-    bool success = native_capture(p, &native_cut, error) &&
+    bool success = native_capture(p, &native_cut, NULL, error) &&
         qa_haptic_checkpoint(p->haptics, players, 4, &refs->haptics, &haptic, error) &&
         qa_source_save_writer(&io, NULL, error) && envelope(&io, (qa_input_platform *)p, NULL, refs, &native_cut, &haptic) &&
         qa_source_save_finish(&io, out);
@@ -352,7 +390,7 @@ bool qa_input_platform_prepare_fresh(qa_input_platform *p, const qa_input_platfo
     qa_input_seat *const seats[4], const qa_controller_selection selections[4], int keyboard,
     const qa_display *display, double now, qa_input_platform_restore_guard **out, qa_error *error)
 {
-    if (!p || p->native_owned || p->settings_ticket || !active || !active->native_owned || active->native_initializing || active->settings_ticket ||
+    if (!p || p->native_owned || p->settings_ticket || !active || !active->native_owned || active->restore_abort || active->native_initializing || active->settings_ticket ||
         !out || *out || p->devices || p->joystick || p->midi_fd >= 0 ||
         !input_platform_haptic_bindings_ready(p) || !input_platform_haptic_bindings_ready(active) ||
         p->options.print != active->options.print || p->options.device_changed != active->options.device_changed ||
@@ -370,7 +408,7 @@ bool qa_input_platform_prepare_fresh(qa_input_platform *p, const qa_input_platfo
     qa_input_platform_restore_guard *guard = calloc(1, sizeof(*guard));
     bool success = candidate && guard;
     if (!success) fail(error, QA_ERROR_MEMORY, "allocating fresh native input guard");
-    if (success) success = native_capture(active, &guard->native_cut, error) &&
+    if (success) success = native_capture(active, &guard->native_cut, NULL, error) &&
         input_platform_fresh_routes(candidate, seats, selections, keyboard, now, error);
     if (success && active->device_capacity) {
         candidate->devices = calloc(active->device_capacity, sizeof(*candidate->devices));
@@ -424,7 +462,7 @@ bool qa_input_platform_restore(qa_input_platform *p, const qa_input_platform *ac
     const qa_input_platform_checkpoint_refs *refs, qa_bytes bytes,
     qa_input_platform_restore_guard **out, qa_error *error)
 {
-    if (!p || p->native_owned || p->settings_ticket || !active || !active->native_owned || active->settings_ticket || !refs || !refs->seat_decode || !out || *out ||
+    if (!p || p->native_owned || p->settings_ticket || !active || !active->native_owned || active->restore_abort || active->settings_ticket || !refs || !refs->seat_decode || !out || *out ||
         !input_platform_haptic_bindings_ready(p) || p->devices || p->joystick || p->midi_fd >= 0 ||
         p->options.print != active->options.print || p->options.device_changed != active->options.device_changed ||
         p->options.assignment_changed != active->options.assignment_changed)
@@ -435,7 +473,8 @@ bool qa_input_platform_restore(qa_input_platform *p, const qa_input_platform *ac
     qa_source_save_io io = {0};
     bool success = candidate && guard && qa_source_save_reader(&io, NULL, bytes, error) &&
         envelope(&io, candidate, active, refs, &guard->native_cut, &haptic) && qa_source_save_finish(&io, NULL) &&
-        native_matches(active, (qa_bytes){guard->native_cut.data, guard->native_cut.size}, error);
+        native_modes_read(active, (qa_bytes){guard->native_cut.data, guard->native_cut.size},
+            &guard->active_cut, &guard->desired, &guard->previous, error);
     if ((!candidate || !guard) && error && error->code == QA_OK) fail(error, QA_ERROR_MEMORY, "allocating platform candidate");
     qa_haptic_player *players[4];
     if (success) {
@@ -457,7 +496,7 @@ bool qa_input_platform_restore(qa_input_platform *p, const qa_input_platform *ac
 bool qa_input_platform_handoff_ready(const qa_input_platform_restore_guard *g, qa_error *error)
 {
     if (!g || g->applied || !g->candidate || g->candidate->native_owned || g->candidate->native_initializing || g->candidate->settings_ticket ||
-        !g->active || !g->active->native_owned || g->active->native_initializing || g->active->settings_ticket ||
+        !g->active || !g->active->native_owned || g->active->restore_abort || g->active->native_initializing || g->active->settings_ticket ||
         !input_platform_haptic_bindings_ready(g->candidate) || !input_platform_haptic_bindings_ready(g->active) ||
         g->candidate->device_count != g->active->device_count || g->candidate->joystick != g->active->joystick ||
         g->candidate->midi_fd != g->active->midi_fd || g->candidate->window != g->active->window)
@@ -465,7 +504,35 @@ bool qa_input_platform_handoff_ready(const qa_input_platform_restore_guard *g, q
     for (size_t i = 0; i < g->candidate->device_count; ++i)
         if (g->candidate->devices[i].handle != g->active->devices[i].handle)
             return fail(error, QA_ERROR_ARGUMENT, "platform native controller owner changed");
-    return native_matches(g->active, (qa_bytes){g->native_cut.data, g->native_cut.size}, error);
+    const qa_buffer *cut = !g->prepared && g->active_cut.data ? &g->active_cut : &g->native_cut;
+    return native_matches(g->active, (qa_bytes){cut->data, cut->size}, error);
+}
+bool qa_input_platform_handoff_prepare(qa_input_platform_restore_guard *g, qa_error *error)
+{
+    if (!qa_input_platform_handoff_ready(g, error)) return false;
+    if (g->prepared) return true;
+    g->prepared = true;
+    if (g->active_cut.data && !input_platform_modes_apply(
+            g->desired.window ? SDL_GetWindowFromID(g->desired.window) : NULL,
+            g->desired.relative, g->desired.grab, g->desired.text, error)) return false;
+    return qa_input_platform_handoff_ready(g, error);
+}
+bool qa_input_platform_handoff_abort(qa_input_platform_restore_guard *g, qa_error *error)
+{
+    if (!g || g->applied || !g->prepared) return true;
+    if (g->active_cut.data) {
+        qa_buffer current = {0};
+        input_native_modes desired = {0}, previous = {0};
+        bool success = native_modes_read(g->active, (qa_bytes){g->active_cut.data,g->active_cut.size},
+            &current, &desired, &previous, error);
+        qa_buffer_free(&current);
+        if (!success || !input_platform_modes_apply(
+                g->previous.window ? SDL_GetWindowFromID(g->previous.window) : NULL,
+                g->previous.relative, g->previous.grab, g->previous.text, error) ||
+            !native_matches(g->active, (qa_bytes){g->active_cut.data,g->active_cut.size}, error)) return false;
+    }
+    g->prepared = false;
+    return true;
 }
 bool qa_input_platform_restore_checkpoint(const qa_input_platform_restore_guard *g,
     const qa_input_platform_checkpoint_refs *refs, qa_buffer *out, qa_error *error)
@@ -493,7 +560,23 @@ void qa_input_platform_handoff(qa_input_platform_restore_guard *g)
     g->candidate->native_owned = true; g->applied = true;
 }
 void qa_input_platform_restore_guard_destroy(qa_input_platform_restore_guard *g)
-{ if (g) { qa_buffer_free(&g->native_cut); free(g); } }
+{
+    if (!g) return;
+    if (g->prepared && !g->applied) {
+        ((qa_input_platform *)g->active)->restore_abort = g;
+        return;
+    }
+    qa_buffer_free(&g->native_cut); qa_buffer_free(&g->active_cut); free(g);
+}
+bool input_platform_restore_abort_pending(qa_input_platform *p, qa_error *error)
+{
+    qa_input_platform_restore_guard *g = p->restore_abort;
+    if (!g) return true;
+    if (g->active != p || !qa_input_platform_handoff_abort(g, error)) return false;
+    p->restore_abort = NULL;
+    qa_input_platform_restore_guard_destroy(g);
+    return true;
+}
 bool qa_input_platform_context_rebind_ready(const qa_input_platform *p, const void *current, qa_error *error)
 {
     return (p && p->options.user == current && input_platform_haptic_bindings_ready(p)) ||

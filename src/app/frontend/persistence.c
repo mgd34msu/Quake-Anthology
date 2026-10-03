@@ -1521,7 +1521,8 @@ static bool discard_services(void *context,qa_application *candidate,qa_error *e
     if (!f || (f->application && f->application!=candidate))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Failed application belongs to another frontend graph");
     if (!f->application) f->application=candidate;
-    if (!frontend_q3_source_color_abort(&operation->color_ticket,error)) return false;
+    if (!qa_input_platform_handoff_abort(operation->input_guard,error) ||
+        !frontend_q3_source_color_abort(&operation->color_ticket,error)) return false;
     if (f->input && !qa_input_platform_settings_idle(f->input))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Failed candidate retains its native input settings preparation");
     if (!frontend_seat_callbacks_idle(f))
@@ -1600,14 +1601,16 @@ static bool publish_ready(void *context,qa_application *active,qa_application *c
         (operation->input_guard && !qa_input_platform_handoff_ready(operation->input_guard,error))) return false;
     if (operation->services && operation->services->publish_ready &&
         !operation->services->publish_ready(operation->services->context,active,candidate,error)) return false;
-    if ((operation->display_guard && !qa_display_handoff_prepare(operation->display_guard,error)) ||
+    if ((operation->input_guard && !qa_input_platform_handoff_prepare(operation->input_guard,error)) ||
+        (operation->display_guard && !qa_display_handoff_prepare(operation->display_guard,error)) ||
         (operation->gl_guard && !qa_gl_handoff_prepare(operation->gl_guard,error)) ||
         (operation->device_guard && !qa_audio_device_handoff_prepare(operation->device_guard,error))) return false;
     if (f->source_color &&
         (!(operation->color_ticket ? frontend_q3_source_color_ready(operation->color_ticket,error) :
             frontend_q3_source_color_restore_prepare(f,f->display,&operation->color_ticket,error)) ||
         !frontend_q3_source_color_ready_is(operation->color_ticket))) return false;
-    return (!operation->display_guard || qa_display_handoff_ready(operation->display_guard,error)) &&
+    return (!operation->input_guard || qa_input_platform_handoff_ready(operation->input_guard,error)) &&
+        (!operation->display_guard || qa_display_handoff_ready(operation->display_guard,error)) &&
         (!operation->gl_guard || qa_gl_handoff_ready(operation->gl_guard,error)) &&
         (!operation->device_guard || qa_audio_device_handoff_ready(operation->device_guard,error)) &&
         (!operation->color_ticket || frontend_q3_source_color_ready_is(operation->color_ticket));
