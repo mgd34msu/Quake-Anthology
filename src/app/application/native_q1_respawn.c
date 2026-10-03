@@ -19,13 +19,11 @@ typedef struct source_call {
     qa_actor_id actor;
 } source_call;
 
-static bool current(source_call *call, qa_error *error)
+static bool client_current(source_call *call, qa_error *error)
 {
     qa_application *app = call->application;
     application_provider *provider = call->provider;
     if (!app || app->destroy_requested || app->finalizing || !app->players ||
-        app->players->map_provider != provider ||
-        application_world_provider(app, QA_ROLE_ENTITIES, "") != provider ||
         !provider->constructed || !provider->attached || provider->close_pending ||
         provider->state.q1 != call->operation.game ||
         !qa_q1_game_operation_live(&call->operation) ||
@@ -44,7 +42,27 @@ static bool current(source_call *call, qa_error *error)
         "Q1 travel actor differs from its actual physical roster slot");
 }
 
-static bool begin(application_provider *provider, qa_actor_id actor,
+static bool current(source_call *call, qa_error *error)
+{
+    qa_application *app = call->application;
+    if (!app || !app->players || app->players->map_provider != call->provider ||
+        application_world_provider(app, QA_ROLE_ENTITIES, "") != call->provider)
+        return application_fail(error, QA_ERROR_ARGUMENT,
+            "Q1 travel lost its actual published source client");
+    return client_current(call, error);
+}
+
+static bool suicide_current(source_call *call, qa_error *error)
+{
+    if (application_world_provider(call->application, QA_ROLE_ENTITIES, "") == call->provider)
+        return current(call, error);
+    if (application_provider_for(call->application, call->actor, QA_ROLE_CHARACTER, "") != call->provider)
+        return application_fail(error, QA_ERROR_ARGUMENT,
+            "Q1 suicide lost its actual selected character Source");
+    return client_current(call, error);
+}
+
+static bool begin_client(application_provider *provider, qa_actor_id actor,
     source_call *call, qa_error *error)
 {
     if (!provider || provider->kind != APPLICATION_PROVIDER_Q1 || !provider->state.q1 ||
@@ -61,7 +79,13 @@ static bool begin(application_provider *provider, qa_actor_id actor,
             "Q1 travel requires an admitted application or source command operation");
     *call = (source_call){.application = app, .provider = provider, .actor = actor};
     return qa_q1_game_operation_begin(provider->state.q1, &call->operation, error) &&
-        current(call, error);
+        client_current(call, error);
+}
+
+static bool begin(application_provider *provider, qa_actor_id actor,
+    source_call *call, qa_error *error)
+{
+    return begin_client(provider, actor, call, error) && current(call, error);
 }
 
 static bool ctf_mode(source_call *call, qa_mode_id *out, qa_error *error)
@@ -342,7 +366,7 @@ bool application_native_q1_suicide(void *opaque, qa_actor_id actor, qa_error *er
 {
     application_provider *provider = opaque;
     source_call call = {0};
-    bool okay = begin(provider, actor, &call, error);
+    bool okay = begin_client(provider, actor, &call, error) && suicide_current(&call, error);
     qa_q1_options options;
     double source_seconds;
     if (okay) okay = qa_q1_source_respawn_options_read(provider->state.q1,
@@ -352,7 +376,7 @@ bool application_native_q1_suicide(void *opaque, qa_actor_id actor, qa_error *er
         bool handled;
         okay = ctf_mode(&call, &mode, error) &&
             qa_modes_suicide(call.application->modes, mode, actor, &handled, error) &&
-            current(&call, error);
+            suicide_current(&call, error);
         if (okay && !handled)
             okay = application_fail(error, QA_ERROR_ARGUMENT,
                 "Q1 CTF suicide lost its actual source policy");
@@ -365,19 +389,19 @@ bool application_native_q1_suicide(void *opaque, qa_actor_id actor, qa_error *er
         okay = qa_q1_source_client_read(provider->state.q1, actor, &client) && client.name;
         if (!okay) application_fail(error, QA_ERROR_ARGUMENT, "Q1 suicide lost its actual source name");
         if (okay) okay = qa_strings_intern_cstr(qa_session_strings(call.application->session),
-            client.name, &name, error) && current(&call, error) &&
+            client.name, &name, error) && suicide_current(&call, error) &&
             qa_q1_client_notice_result(provider->state.q1, actor, name,
-                QA_Q1_CLIENT_SUICIDE, 0, &notice, error) && current(&call, error);
+                QA_Q1_CLIENT_SUICIDE, 0, &notice, error) && suicide_current(&call, error);
         if (okay && !qa_q1_game_clock_read(provider->state.q1, &time_ns, &elapsed))
             okay = application_fail(error, QA_ERROR_ARGUMENT, "Q1 suicide lost its source clock");
         if (okay) okay = application_emit(call.application,
             &(qa_builtin_event){.kind = QA_BUILTIN_MESSAGE, .family = QA_GAME_Q1,
                 .provider = provider->owner, .time_ns = time_ns, .text = notice.text,
                 .arguments = notice.arguments, .argument_count = notice.argument_count,
-                .flags = 2u}, error) && current(&call, error) &&
+                .flags = 2u}, error) && suicide_current(&call, error) &&
             qa_q1_source_client_add_score(provider->state.q1, actor, notice.score_delta, error) &&
-            current(&call, error) && application_native_q1_request_respawn(provider, actor, error) &&
-            current(&call, error);
+            suicide_current(&call, error) && application_native_q1_request_respawn(provider, actor, error) &&
+            suicide_current(&call, error);
     }
     qa_q1_game_operation_end(&call.operation);
     return okay;

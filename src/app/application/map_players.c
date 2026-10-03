@@ -1685,6 +1685,21 @@ static bool q2_select_spawn(void *context, qa_actor_id actor, qa_vec3 *origin,
     return application_fail(error, QA_ERROR_NOT_FOUND, "Q2 spawn actor has no selected seat");
 }
 
+static bool native_q1_character_spawn(application_provider *character,
+    application_provider *source, qa_actor_id actor, const float *health,
+    float maximum, qa_error *error)
+{
+    return character->kind != APPLICATION_PROVIDER_Q1 ||
+        (qa_q1_character_attach(character->state.q1, actor, error) &&
+         qa_q1_character_respawn(character->state.q1, actor,
+             source->kind == APPLICATION_PROVIDER_Q1 ? NULL : health, error) &&
+         (source->kind == APPLICATION_PROVIDER_Q1 ||
+          qa_q1_player_travel_reset(character->state.q1, actor, maximum, error)));
+}
+
+static bool selected_qc_native_respawn(application_provider *, application_provider *,
+    qa_actor_id, qa_error *);
+
 bool application_players_selected_character_respawn(void *opaque, qa_actor_id actor,
     qa_error *error)
 {
@@ -1708,6 +1723,8 @@ bool application_players_selected_character_respawn(void *opaque, qa_actor_id ac
         return application_native_q3_client_respawn(source, actor, error);
     if (source->kind == APPLICATION_PROVIDER_Q2)
         return qa_q2_player_respawn(source->state.q2, actor, error);
+    if (source->kind == APPLICATION_PROVIDER_QC && character->kind == APPLICATION_PROVIDER_Q1)
+        return selected_qc_native_respawn(character, source, actor, error);
     return application_fail(error, QA_ERROR_UNSUPPORTED,
         "Selected character respawn requires its genuine original source continuation");
 }
@@ -2125,6 +2142,103 @@ static bool q1_source_control_spawn(qa_application *app, qa_actor_id actor,
     return application_record_motion_change(app, actor, &change, error);
 }
 
+static bool selected_qc_native_current(application_provider *character,
+    application_provider *source, qa_q1_game_operation *operation, qa_actor_id actor,
+    size_t *ordinal, qa_error *error)
+{
+    qa_application *app = character->application;
+    qa_q1_source_client_view client;
+    bool member;
+    if (!app || app->destroy_requested || app->finalizing || !app->players ||
+        app->players->map_provider != source || source->application != app ||
+        application_world_provider(app, QA_ROLE_ENTITIES, "") != source ||
+        application_provider_for(app, actor, QA_ROLE_CHARACTER, "") != character ||
+        !source->constructed || !source->attached || source->close_pending ||
+        !character->constructed || !character->attached || character->close_pending ||
+        !qa_q1_game_operation_live(operation) || operation->game != character->state.q1 ||
+        !qa_q1_source_client_read(operation->game, actor, &client))
+        return application_fail(error, QA_ERROR_ARGUMENT,
+            "Selected Native Q1 respawn lost its actual QC map and Source client");
+    if (!application_qc_control_source_client(source, actor, &member, error)) return false;
+    if (!member) return application_fail(error, QA_ERROR_ARGUMENT,
+        "Selected Native Q1 respawn lost its borrowed QC source client");
+    for (size_t i = 0; i < app->players->count; ++i) {
+        const application_player_record *record = app->players->records + i;
+        if (!record->retiring && !record->source_begin_pending &&
+            record->character == character && qa_actor_id_equal(record->actor, actor) &&
+            record->client_slot == client.slot) { *ordinal = i; return true; }
+    }
+    return application_fail(error, QA_ERROR_ARGUMENT,
+        "Selected Native Q1 respawn differs from its actual physical roster");
+}
+
+static bool selected_qc_native_respawn(application_provider *character,
+    application_provider *source, qa_actor_id actor, qa_error *error)
+{
+    qa_application *app = character->application;
+    qa_q1_game_operation operation = {0};
+    if (!qa_q1_game_operation_begin(character->state.q1, &operation, error)) return false;
+    size_t ordinal;
+    bool okay = selected_qc_native_current(character, source, &operation, actor, &ordinal, error);
+    qa_body_state body;
+    qa_q1_weapon weapon;
+    qa_q1_auto_switch preference;
+    float maximum;
+    bool found;
+    if (okay) okay = qa_world_body_read(app->world, actor, &body, error) &&
+        spawn_pose(app, ordinal, false, &body, &found, NULL, error) &&
+        selected_qc_native_current(character, source, &operation, actor, &ordinal, error);
+    if (okay && !found) goto finish;
+    if (okay) okay = qa_q1_source_arsenal_spawn_read(operation.game, actor,
+        &weapon, &maximum, &preference, error);
+    if (okay) {
+        body.velocity = qa_v3(0, 0, 0);
+        body.ground = (qa_actor_id){0};
+        okay = qa_world_body_write(app->world, actor, &body, error) &&
+            selected_qc_native_current(character, source, &operation, actor, &ordinal, error) &&
+            native_q1_character_spawn(character, source, actor, &maximum, maximum, error) &&
+            selected_qc_native_current(character, source, &operation, actor, &ordinal, error);
+    }
+    application_provider *arsenal = okay ? application_provider_for(app, actor, QA_ROLE_ARSENAL, "") : NULL;
+    if (okay && arsenal && arsenal->kind == APPLICATION_PROVIDER_Q1) {
+        okay = qa_q1_player_inventory_initialize(arsenal->state.q1, actor, error) &&
+            selected_qc_native_current(character, source, &operation, actor, &ordinal, error) &&
+            qa_q1_selected_arsenal_spawn(arsenal->state.q1, actor, QA_Q1_SHOTGUN,
+                maximum, &preference, error) &&
+            selected_qc_native_current(character, source, &operation, actor, &ordinal, error);
+    }
+    if (okay) {
+        const application_player_record *record = app->players->records + ordinal;
+        qa_launch_seat seat = {.id = record->seat, .actor = record->configured_actor,
+            .name = record->name, .team = record->team, .bot = record->bot,
+            .spectator = record->spectator};
+        okay = apply_loadout(app, qa_launch_snapshot_choices(qa_application_launch(app)), &seat, actor, error) &&
+            selected_qc_native_current(character, source, &operation, actor, &ordinal, error) &&
+            qa_equipment_respawn(app->equipment, actor, error) &&
+            selected_qc_native_current(character, source, &operation, actor, &ordinal, error) &&
+            qa_q1_source_client_spawned(operation.game, actor, error) &&
+            selected_qc_native_current(character, source, &operation, actor, &ordinal, error);
+    }
+    if (okay) {
+        qa_combat_state traits;
+        okay = qa_combat_read_traits(app->combat, actor, &traits, error);
+        if (okay) {
+            traits.invulnerable = false;
+            traits.can_take_damage = !app->players->records[ordinal].spectator;
+            traits.armor = (qa_armor){0};
+            okay = qa_combat_set_traits(app->combat, actor, &traits, error) &&
+                selected_qc_native_current(character, source, &operation, actor, &ordinal, error) &&
+                q1_source_control_spawn(app, actor, &body, error) &&
+                selected_qc_native_current(character, source, &operation, actor, &ordinal, error) &&
+                qa_world_link(app->world, actor, NULL, error) &&
+                selected_qc_native_current(character, source, &operation, actor, &ordinal, error);
+        }
+    }
+finish:
+    qa_q1_game_operation_end(&operation);
+    return okay;
+}
+
 static bool q1_selected_q3_respawn(qa_application *app, application_provider *source,
     qa_actor_id actor, qa_error *error)
 {
@@ -2346,8 +2460,7 @@ bool application_players_native_q1_respawn(qa_application *app,
         !q1_respawn_current(app, source, character, arsenal, actor, &ordinal, error)) return false;
     if (character->kind == APPLICATION_PROVIDER_Q2) {
         if (!qa_q2_character_respawned(character->state.q2, actor, error)) return false;
-    } else if (character->kind == APPLICATION_PROVIDER_Q1 &&
-        !qa_q1_character_respawn(character->state.q1, actor, NULL, error)) return false;
+    } else if (!native_q1_character_spawn(character, source, actor, NULL, 0, error)) return false;
     if (!q1_respawn_current(app, source, character, arsenal, actor, &ordinal, error)) return false;
     qa_collision_family family = app->controls[actor.slot].state.kind == QA_MOVEMENT_Q3
         ? QA_COLLISION_Q3 : app->controls[actor.slot].state.kind == QA_MOVEMENT_Q2_CLASSIC ||
@@ -2604,12 +2717,8 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
             return false;
         record->deferred = !found;
         if (!found) defer_player(application, record);
-        if (character->kind == APPLICATION_PROVIDER_Q1 &&
-            (!qa_q1_character_attach(character->state.q1, actor, error) ||
-             !qa_q1_character_respawn(character->state.q1, actor,
-                map_source->kind == APPLICATION_PROVIDER_Q1 ? NULL : &combat.health, error) ||
-             (map_source->kind != APPLICATION_PROVIDER_Q1 &&
-              !qa_q1_player_travel_reset(character->state.q1, actor, maximum_health, error))))
+        if (!native_q1_character_spawn(character, map_source, actor,
+                &combat.health, maximum_health, error))
             return false;
         if (!reserved_player && arsenal->kind == APPLICATION_PROVIDER_Q1 &&
             !qa_q1_player_attach(arsenal->state.q1, actor,

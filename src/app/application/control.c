@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "map_players_private.h"
 #include "guest_native_q2_private.h"
 #include "guest_native_q2_input.h"
 #include "native_q2_client_stages.h"
@@ -3898,6 +3899,9 @@ bool application_control_source_spawn(qa_application *application,
     application_control_record *record = &application->controls[actor.slot];
     application_provider *source = application_world_provider(application, QA_ROLE_ENTITIES, "");
     application_provider *character = application_provider_for(application, actor, QA_ROLE_CHARACTER, "");
+    application_provider *map_source = source;
+    if (map_source && map_source->kind == APPLICATION_PROVIDER_QC && character &&
+        character->kind == APPLICATION_PROVIDER_Q1) source = character;
     uint32_t slot;
     uint64_t source_time;
     double source_elapsed;
@@ -3908,6 +3912,20 @@ bool application_control_source_spawn(qa_application *application,
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "Source spawn lost its actual client or character owner");
     if (!qa_q1_native_client_slot(source->state.q1, actor, &slot, error)) return false;
+    if (source != map_source) {
+        const application_player_record *player = NULL;
+        if (!application->players || application->players->map_provider != map_source ||
+            !map_source->constructed || !map_source->attached || map_source->close_pending)
+            return application_fail(error, QA_ERROR_ARGUMENT,
+                "Selected Q1 Source spawn lost its actual QC map owner");
+        for (size_t i = 0; i < application->players->count; ++i) {
+            const application_player_record *row = application->players->records + i;
+            if (!row->retiring && !row->source_begin_pending && row->character == source &&
+                qa_actor_id_equal(row->actor, actor) && row->client_slot == slot) { player = row; break; }
+        }
+        if (!player) return application_fail(error, QA_ERROR_ARGUMENT,
+            "Selected Q1 Source spawn differs from its actual physical roster");
+    }
     if (!qa_q1_game_clock_read(source->state.q1, &source_time, &source_elapsed))
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "Source spawn has no admitted Q1 client clock");
