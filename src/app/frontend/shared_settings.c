@@ -200,6 +200,7 @@ bool frontend_shared_settings_advance(frontend_shared_settings *owner,bool valid
     if (validated) owner->after_started=true;
     qa_frontend *f=owner->frontend;
     if (f->options.dedicated) { *finished=true; *complete=true; return true; }
+    bool dictionaries_changed=false;
     if (!owner->input) {
         if (f->input_settings || !project(owner,&owner->projected,error))
             return fail(error,"Candidate input release has an unrelated physical settings owner");
@@ -216,6 +217,7 @@ bool frontend_shared_settings_advance(frontend_shared_settings *owner,bool valid
                 owner->client,slot,configuration+slot,error):
                 frontend_config_store_input_configuration(owner->manager,owner->application,
                     owner->candidate,slot,configuration+slot,error))) return false;
+            if (configuration[slot]!=f->seats[slot].input) dictionaries_changed=true;
             if (owner->client && !frontend_config_store_client_controller_selection(owner->manager,
                 owner->client,slot,selections+slot,error)) return false;
         }
@@ -227,7 +229,8 @@ bool frontend_shared_settings_advance(frontend_shared_settings *owner,bool valid
         if (!prepared) return false;
     }
     if (!frontend_input_settings_reserve_all(owner->input,error)) return false;
-    if ((owner->client || owner->projected_window) && !frontend_input_settings_release_all_prepare(owner->input,
+    if ((owner->client || owner->projected_window || dictionaries_changed) &&
+        !frontend_input_settings_release_all_prepare(owner->input,
         (double)f->wall_time_ns/1000000.0,error)) return false;
     bool released=false;
     if (!frontend_input_settings_release_advance(owner->input,&released,error)) return false;

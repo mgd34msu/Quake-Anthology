@@ -93,6 +93,12 @@ struct frontend_config_store {
     qa_sha256_digest admin_identity;
     config_variable_carry *variable_carries;
     frontend_config_source *prepared_primary;
+    frontend_config_source *input_source;
+    const qa_launch_snapshot *input_candidate;
+    qa_application *input_application;
+    config_seat input_seats[QA_INPUT_LOCAL_SEATS];
+    size_t input_count;
+    bool input_prepared;
     const qa_launch_snapshot *prepared;
     qa_application *prepared_application;
     frontend_keys_publication key_publication;
@@ -125,6 +131,8 @@ static bool startup_source(void *,qa_application *,const qa_launch_snapshot *,
 static bool shared_program_destroy(frontend_config_store *,qa_error *);
 static bool images_prepare(frontend_config_store *,const qa_application_startup_source *,qa_error *);
 static bool shared_storage_prepare(frontend_config_store *,qa_error *);
+static bool prepare_retained_input(frontend_config_store *,qa_application *,const qa_launch_snapshot *,qa_error *);
+static void discard_retained_input(frontend_config_store *);
 static bool equal(const char *left,const char *right)
 {
     for (;;++left,++right) {
@@ -1131,6 +1139,18 @@ qa_input_seat *frontend_config_store_candidate_input(const frontend_config_store
     const qa_launch_instance *selected=entities?qa_launch_snapshot_find(candidate,entities->instance):NULL;
     if (!manager || !application || !selected || ordinal>=manager->frontend->options.seats ||
         !choices || ordinal>=choices->seat_count) return NULL;
+    if (manager->input_prepared && manager->input_application==application &&
+        manager->input_candidate==candidate && ordinal<manager->input_count &&
+        manager->input_source && manager->input_source->published && manager->input_source->primary) {
+        const qa_launch_instance *held=instance(manager->input_source);
+        const config_seat *seat=manager->input_seats+ordinal;
+        qa_console_dialect movement;
+        if (held && held->storage==selected->storage && held->state==selected->state &&
+            seat->logical==choices->seats[ordinal].id && seat->input &&
+            seat_movement(candidate,seat->logical,&movement,NULL) && movement==seat->movement_dialect &&
+            qa_input_seat_context(seat->input).dialect==movement)
+            return seat->input;
+    }
     for (frontend_config_source *source=manager->sources;source;source=source->next) {
         const qa_launch_instance *retained=instance(source);
         if (source->application!=application || source->published || !source->primary ||
@@ -1694,6 +1714,8 @@ bool frontend_config_store_write_source_text(frontend_config_store *manager,
 }
 static bool source_destroy(frontend_config_source *source,qa_error *error)
 {
+    if (source->manager->input_source==source)
+        return fail(error,QA_ERROR_ARGUMENT,"Configuration source retains its actual staged input candidate");
     size_t contexts=0;
     for (size_t i=0;i<source->seat_count;++i) if (source->seats[i].registry) {
         if (!frontend_client_registry_release_ready(source->seats[i].registry,error)) return false;
@@ -2112,6 +2134,88 @@ static bool carry(frontend_config_store *manager,qa_application *application,
     if (!ok) { qa_error cleanup={0}; if (!source_destroy(source,&cleanup) && error) *error=cleanup; return false; }
     source->next=manager->sources; manager->sources=source; *out=source; return true;
 }
+static void discard_retained_input(frontend_config_store *manager)
+{
+    for (size_t i=0;i<manager->input_count;++i) {
+        config_seat *seat=manager->input_seats+i;
+        qa_input_seat_destroy(seat->input);
+        frontend_authored_bindings_destroy(seat->authored);
+        *seat=(config_seat){0};
+    }
+    manager->input_source=NULL; manager->input_candidate=NULL; manager->input_application=NULL;
+    manager->input_count=0; manager->input_prepared=false;
+}
+static bool same_input_role(const qa_launch_snapshot *previous,const qa_launch_snapshot *candidate,
+    uint32_t logical,qa_launch_role role)
+{
+    const qa_launch_binding *a=qa_launch_binding_for(qa_launch_snapshot_choices(previous),
+        (qa_launch_scope){.kind=QA_SCOPE_SEAT,.seat=logical},role,"");
+    const qa_launch_binding *b=qa_launch_binding_for(qa_launch_snapshot_choices(candidate),
+        (qa_launch_scope){.kind=QA_SCOPE_SEAT,.seat=logical},role,"");
+    if (!a || !b) return !a && !b;
+    const qa_launch_instance *old=qa_launch_snapshot_find(previous,a->instance);
+    const qa_launch_instance *next=qa_launch_snapshot_find(candidate,b->instance);
+    return old && next && old->storage==next->storage && old->state==next->state;
+}
+static bool prepare_retained_input(frontend_config_store *manager,qa_application *application,
+    const qa_launch_snapshot *candidate,qa_error *error)
+{
+    if (!candidate || manager->frontend->options.dedicated || frontend_network_remote(manager->frontend)) return true;
+    const qa_launch_choices *choices=qa_launch_snapshot_choices(candidate);
+    const qa_launch_binding *entities=qa_launch_binding_for(choices,
+        (qa_launch_scope){.kind=QA_SCOPE_WORLD},QA_ROLE_ENTITIES,"");
+    const qa_launch_instance *selected=entities?qa_launch_snapshot_find(candidate,entities->instance):NULL;
+    frontend_config_source *source=published_primary(manager,application);
+    const qa_launch_instance *held=source?instance(source):NULL;
+    if (!selected || !held || selected->storage!=held->storage || selected->state!=held->state) return true;
+    qa_frontend *f=manager->frontend;
+    const qa_launch_snapshot *previous=qa_application_launch(application);
+    bool changed=false;
+    for (size_t i=0;i<source->seat_count;++i) {
+        uint32_t logical=source->seats[i].logical;
+        if (!same_input_role(previous,candidate,logical,QA_ROLE_MOVEMENT) ||
+            !same_input_role(previous,candidate,logical,QA_ROLE_ARSENAL)) changed=true;
+    }
+    if (!changed && !manager->input_source) return true;
+    if (manager->input_source) {
+        return (manager->input_source==source && manager->input_candidate==candidate &&
+            manager->input_application==application && manager->input_prepared) ||
+            fail(error,QA_ERROR_ARGUMENT,"Retained input staging lost its completed actual candidate");
+    }
+    if (manager->restoring || manager->running || !source->configured || !source->released ||
+        source->imported || source->running || source->phase || !qa_console_idle(source->console) ||
+        !choices || choices->seat_count<source->seat_count || source->seat_count!=f->options.seats || !f->seats ||
+        qa_application_startup_candidate(application)!=candidate ||
+        !qa_application_startup_resource_phase(application,candidate))
+        return fail(error,QA_ERROR_ARGUMENT,"Retained input staging requires its actual reused primary source and release phase");
+    manager->input_source=source; manager->input_candidate=candidate; manager->input_application=application;
+    for (size_t i=0;i<source->seat_count;++i) {
+        const config_seat *old=source->seats+i;
+        config_seat *seat=manager->input_seats+manager->input_count++;
+        qa_input_seat *active=f->seats[i].input;
+        if (!choices->seats[i].local || choices->seats[i].bot || choices->seats[i].id!=old->logical ||
+            !active || qa_input_seat_ordinal(active)!=i)
+            return fail(error,QA_ERROR_ARGUMENT,"Retained input staging changed its actual authored physical seat");
+        seat->logical=old->logical;
+        if (!seat_movement(candidate,seat->logical,&seat->movement_dialect,error) ||
+            !qa_input_seat_configuration_clone(active,&seat->input,error) ||
+            !qa_input_seat_profile(seat->input,seat->movement_dialect,error) ||
+            !frontend_authored_bindings_clone(old->authored,&seat->authored,error)) return false;
+        qa_command_context command=qa_input_seat_context(active);
+        command.registry=command.generation=0; command.actor=(qa_actor_id){0};
+        command.dialect=seat->movement_dialect;
+        if (!qa_input_seat_context_ready(seat->input,&command,error)) return false;
+        qa_input_seat_context_publish(seat->input,&command);
+        frontend_config_weapon_catalog catalog;
+        qa_strings *strings=qa_session_strings(qa_application_session(application));
+        int32_t controller=f->input?qa_input_platform_controller(f->input,(unsigned)i):-1;
+        if (!frontend_config_weapon_defaults(application,candidate,
+            (qa_launch_scope){.kind=QA_SCOPE_SEAT,.seat=seat->logical},strings,&catalog,error) ||
+            !frontend_authored_bindings_select(seat->authored,seat->input,seat->movement_dialect,
+                strings,catalog.items,catalog.count,controller<0?0:controller,error)) return false;
+    }
+    manager->input_prepared=true; return true;
+}
 static bool prepare(void *context,qa_application *application,const qa_launch_snapshot *candidate,
     const qa_application_startup_source *authority,void **phase,qa_error *error)
 {
@@ -2328,6 +2432,23 @@ static bool phase_destroy(void *context,void *phase,qa_error *error)
     if (!frontend_startup_config_destroy(source->phase,error)) return false;
     source->phase=NULL; source->released=true; return true;
 }
+static bool prepare_input_publication(qa_frontend *f,config_seat *seat,size_t ordinal,qa_error *error)
+{
+    qa_input_seat *active=f->seats && ordinal<f->options.seats?f->seats[ordinal].input:NULL;
+    if (!active || !seat->input || qa_input_seat_has_held(seat->input))
+        return fail(error,QA_ERROR_ARGUMENT,"Configuration candidate requires an isolated staged input seat");
+    int32_t controller=f->input?qa_input_platform_controller(f->input,(unsigned)ordinal):-1;
+    if ((controller>=0 && !qa_input_seat_remap_controller(seat->input,controller,error)) ||
+        !qa_input_seat_configuration_ready(active,seat->input,error)) return false;
+    qa_command_context next=qa_input_seat_context(active);
+    next.registry=next.generation=0; next.actor=(qa_actor_id){0};
+    next.origin=QA_COMMAND_SEAT; next.seat=seat->logical; next.dialect=seat->movement_dialect;
+    qa_seat_console *console=f->seats[ordinal].console;
+    if (!console || !qa_input_seat_context_ready(active,&next,error) ||
+        !qa_seat_console_context_ready(console,&next,error)) return false;
+    seat->publication_command=next; seat->publication_input=active; seat->publication_console=console;
+    return true;
+}
 static bool prepare_candidate(void *context,qa_application *application,const qa_launch_snapshot *candidate,qa_error *error)
 {
     frontend_config_store *manager=context; qa_frontend *f=manager->frontend;
@@ -2377,23 +2498,14 @@ static bool prepare_candidate(void *context,qa_application *application,const qa
     if (!primary || primary->application!=application || primary->cvars!=primary_cvars ||
         !source_context(primary,&primary_command))
         return fail(error,QA_ERROR_ARGUMENT,"Configuration publication lost its exact physical primary source");
-    for (size_t i=0;!primary->published && i<primary->seat_count;++i) {
-        config_seat *seat=primary->seats+i;
-        qa_input_seat *active=f->seats && i<f->options.seats?f->seats[i].input:NULL;
-        if (!active || qa_input_seat_has_held(seat->input))
-            return fail(error,QA_ERROR_ARGUMENT,"Configuration candidate requires an isolated staged input seat");
-        int32_t controller=f->input?qa_input_platform_controller(f->input,(unsigned)i):-1;
-        if ((controller>=0 && !qa_input_seat_remap_controller(seat->input,controller,error)) ||
-            !qa_input_seat_configuration_ready(active,seat->input,error)) return false;
-        qa_command_context next=qa_input_seat_context(active);
-        next.registry=next.generation=0; next.actor=(qa_actor_id){0};
-        next.origin=QA_COMMAND_SEAT; next.seat=seat->logical; next.dialect=seat->movement_dialect;
-        qa_seat_console *seat_console=f->seats[i].console;
-        if (!seat_console || !qa_input_seat_context_ready(active,&next,error) ||
-            !qa_seat_console_context_ready(seat_console,&next,error)) return false;
-        seat->publication_command=next;
-        seat->publication_input=active;
-        seat->publication_console=seat_console;
+    for (size_t i=0;!primary->published && i<primary->seat_count;++i)
+        if (!prepare_input_publication(f,primary->seats+i,i,error)) return false;
+    if (manager->input_source) {
+        if (manager->input_source!=primary || manager->input_candidate!=candidate ||
+            manager->input_application!=application || !manager->input_prepared)
+            return fail(error,QA_ERROR_ARGUMENT,"Retained input preflight changed its actual primary source");
+        for (size_t i=0;i<manager->input_count;++i)
+            if (!prepare_input_publication(f,manager->input_seats+i,i,error)) return false;
     }
     if (f->keys && !frontend_keys_publication_ready(f->keys,primary->keys,
         primary->keys?primary->cvars:NULL,&manager->key_publication,error)) return false;
@@ -2513,19 +2625,32 @@ static void source_release(void *context,qa_application *application,qa_console 
     frontend_config_source *source=frontend_config_store_source(context,console);
     if (source && source->application==application) frontend_config_store_release(context,console,lease);
 }
+static void publish_input(config_seat *seat)
+{
+    qa_input_seat_context_publish(seat->publication_input,&seat->publication_command);
+    qa_seat_console_context_publish(seat->publication_console,&seat->publication_command);
+    qa_input_seat_configuration_publish(seat->publication_input,seat->input);
+}
 static void finish(void *context,qa_application *application,const qa_launch_snapshot *candidate,bool published)
 {
     frontend_config_store *manager=context;
     frontend_remote_configs_finish(manager->clients,application,published?manager->prepared:candidate,published);
     variable_carries_discard(manager,application,published?manager->prepared:candidate,NULL);
     if (published) {
+        if (manager->input_source) {
+            for (size_t i=0;i<manager->input_count;++i) {
+                config_seat *seat=manager->input_seats+i,*stable=manager->input_source->seats+i;
+                publish_input(seat);
+                frontend_authored_bindings *authored=stable->authored;
+                stable->authored=seat->authored; seat->authored=authored;
+                stable->movement_dialect=seat->movement_dialect;
+            }
+        }
         for (frontend_config_source *source=manager->sources;source;source=source->next) {
             if (source->application!=application || source->published || source->candidate!=manager->prepared) continue;
             for (size_t i=0;i<source->seat_count;++i) {
                 config_seat *seat=source->seats+i;
-                qa_input_seat_context_publish(seat->publication_input,&seat->publication_command);
-                qa_seat_console_context_publish(seat->publication_console,&seat->publication_command);
-                qa_input_seat_configuration_publish(seat->publication_input,seat->input);
+                publish_input(seat);
                 qa_input_seat_destroy(seat->input); seat->input=NULL;
                 seat->publication_input=NULL;
                 seat->publication_console=NULL;
@@ -2557,6 +2682,7 @@ static void finish(void *context,qa_application *application,const qa_launch_sna
                     source->seats[i].publication_input=NULL; source->seats[i].publication_console=NULL;
                 }
     }
+    discard_retained_input(manager);
     manager->prepared=NULL; manager->prepared_primary=NULL; manager->prepared_application=NULL;
 }
 static bool restore_source(void *,qa_application *,const qa_launch_snapshot *,
@@ -2727,6 +2853,7 @@ static bool advance_settings(frontend_config_store *manager,qa_application *appl
     if (!manager || !complete) return fail(error,QA_ERROR_ARGUMENT,"Candidate settings advancement lacks its owner");
     *complete=false;
     if (!manager->shared) { *complete=true; return true; }
+    if (!prepare_retained_input(manager,application,candidate,error)) return false;
     frontend_shared_settings *owner=frontend_config_store_shared(manager,application,candidate);
     return owner?frontend_shared_settings_advance(owner,validated,complete,error):
         fail(error,QA_ERROR_ARGUMENT,"Candidate settings advancement names another shared preparation");
@@ -2817,7 +2944,7 @@ const qa_application_startup_hooks *frontend_config_store_hooks(frontend_config_
 bool frontend_config_store_retired_ready(const frontend_config_store *manager,qa_error *error)
 {
     return (manager && !manager->running && !manager->prepared && !manager->shared && !manager->publication && !manager->key_publication.owner &&
-        !manager->sources && !manager->variable_carries && frontend_remote_configs_empty(manager->clients) &&
+        !manager->sources && !manager->input_source && !manager->variable_carries && frontend_remote_configs_empty(manager->clients) &&
         frontend_neutral_configs_empty(manager->neutral)) ||
         fail(error,QA_ERROR_ARGUMENT,"Application callback context still retains actual configuration source owners");
 }
@@ -2852,7 +2979,8 @@ bool frontend_config_store_restore_abort_unbound(frontend_config_store *manager,
 bool frontend_config_store_destroy(frontend_config_store *manager,qa_error *error)
 {
     if (!manager) return true;
-    if (manager->running || manager->prepared || manager->shared || manager->publication || manager->key_publication.owner)
+    if (manager->running || manager->prepared || manager->shared || manager->publication ||
+        manager->key_publication.owner || manager->input_source)
         return fail(error,QA_ERROR_ARGUMENT,"Configuration manager retains an executing or prepared candidate");
     if (!frontend_qw_logfile_close(&manager->qw_logfile,error)) return false;
     if (!shared_program_destroy(manager,error)) return false;

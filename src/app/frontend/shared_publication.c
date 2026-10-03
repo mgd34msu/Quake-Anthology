@@ -182,10 +182,12 @@ bool frontend_shared_publication_prepare(frontend_shared_settings *owner,
     if (!frontend_shared_video_settings(f,edit,&settings,&window,e)) return false;
     qa_input_seat *configuration[QA_INPUT_LOCAL_SEATS]={0};
     qa_controller_selection selections[QA_INPUT_LOCAL_SEATS]={0};
+    bool dictionaries_changed=false;
     for (unsigned i=0;i<f->options.seats;++i) {
         if (!(owner->client?frontend_config_store_client_input_configuration(owner->manager,
             owner->client,i,configuration+i,e):frontend_config_store_input_configuration(owner->manager,
             owner->application,owner->candidate,i,configuration+i,e))) return false;
+        if (configuration[i]!=f->seats[i].input) dictionaries_changed=true;
         if (owner->client && !frontend_config_store_client_controller_selection(owner->manager,
             owner->client,i,selections+i,e)) return false;
     }
@@ -194,7 +196,7 @@ bool frontend_shared_publication_prepare(frontend_shared_settings *owner,
         frontend_input_settings_prepare(f,&owner->projected,configuration,
             (double)f->wall_time_ns/1000000.0,&owner->input,e);
     if (owner->input) f->input_settings=owner->input;
-    if (!prepared || (window && !frontend_input_settings_release_all_prepare(owner->input,
+    if (!prepared || ((window || dictionaries_changed) && !frontend_input_settings_release_all_prepare(owner->input,
         (double)f->wall_time_ns/1000000.0,e))) return false;
     if (!frontend_input_settings_unentered_empty(owner->input,e))
         return fail(e,"Final resources cannot dispatch a newly captured physical release programme");
