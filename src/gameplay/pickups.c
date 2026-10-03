@@ -1117,21 +1117,26 @@ bool qa_supply_select_weapon(qa_supply *supply, qa_actor_id actor, qa_item_id it
 void qa_supply_preview_free(qa_supply_preview_result *result)
 { if (result) { free(result->weapons); free(result->ammo); *result = (qa_supply_preview_result){0}; } }
 
-static bool preview_grant(qa_inventory_entry *entries, size_t count, qa_pickup_grant grant,
-                           qa_pickup_receipt *receipt, qa_error *e)
+static bool preview_grant(qa_inventory *inventory, qa_actor_id actor,
+    qa_inventory_entry *entries, size_t count, qa_pickup_grant grant,
+    qa_pickup_receipt *receipt, qa_error *e)
 {
     for (size_t i = 0; i < count; ++i) if (entries[i].item == grant.item) {
         bool writes;
         qa_inventory_entry after;
         qa_pickup_receipt result = {.item = grant.item, .before = entries[i].count};
-        if (!qa_inventory_preview_give(&entries[i], grant.amount, &after, &result.given, &writes, e)) return false;
+        bool ok = inventory ? qa_inventory_preview_acquire(inventory, actor, &entries[i], grant.amount,
+            &after, &result.given, &writes, e) :
+            qa_inventory_preview_give(&entries[i], grant.amount, &after, &result.given, &writes, e);
+        if (!ok) return false;
         if (writes) entries[i] = after;
         *receipt = result; return true;
     }
     return fail(e, QA_ERROR_NOT_FOUND, "Pickup preview destination was not admitted");
 }
 
-bool qa_pickup_preview_grants(const qa_inventory_entry *inventory, size_t count,
+static bool preview_grants(qa_inventory *source, qa_actor_id actor,
+    const qa_inventory_entry *inventory, size_t count,
     const qa_pickup_grant_plan *plan, qa_supply_preview_result *out, qa_error *e)
 {
     if (!plan || !out || (count && !inventory) || (plan->weapon_count && !plan->weapons) ||
@@ -1167,10 +1172,10 @@ bool qa_pickup_preview_grants(const qa_inventory_entry *inventory, size_t count,
         }
     }
     if (plan->weapon_offer) for (size_t i = 0; ok && i < plan->weapon_count; ++i)
-        ok = preview_grant(entries, count, plan->weapons[i], &result.weapons[result.weapon_count++], e);
+        ok = preview_grant(source, actor, entries, count, plan->weapons[i], &result.weapons[result.weapon_count++], e);
     result.accepted = plan->weapon_offer;
     for (size_t i = 0; ok && i < plan->ammo_count; ++i) {
-        ok = preview_grant(entries, count, plan->ammo[i], &result.ammo[result.ammo_count++], e);
+        ok = preview_grant(source, actor, entries, count, plan->ammo[i], &result.ammo[result.ammo_count++], e);
         if (ok) result.accepted |= plan->accept_nonzero ? result.ammo[i].given != 0 : result.ammo[i].given > 0;
     }
     if (ok && !plan->weapon_offer && result.accepted) {
@@ -1183,7 +1188,7 @@ bool qa_pickup_preview_grants(const qa_inventory_entry *inventory, size_t count,
             for (size_t j = 0; j < result.ammo_count; ++j) if (result.ammo[j].item == plan->weapons[i].item) {
                 result.weapons[result.weapon_count++] = result.ammo[j]; shared = true; break;
             }
-            if (!shared) ok = preview_grant(entries, count, plan->weapons[i], &result.weapons[result.weapon_count++], e);
+            if (!shared) ok = preview_grant(source, actor, entries, count, plan->weapons[i], &result.weapons[result.weapon_count++], e);
         }
     }
 done:
@@ -1191,6 +1196,12 @@ done:
     if (ok) *out = result;
     else qa_supply_preview_free(&result);
     return ok;
+}
+
+bool qa_pickup_preview_grants(const qa_inventory_entry *inventory, size_t count,
+    const qa_pickup_grant_plan *plan, qa_supply_preview_result *out, qa_error *e)
+{
+    return preview_grants(NULL, (qa_actor_id){0}, inventory, count, plan, out, e);
 }
 
 static bool preview_resolved(qa_supply *supply, qa_actor_id actor, const supply_grants *grants,
@@ -1216,7 +1227,8 @@ static bool preview_resolved(qa_supply *supply, qa_actor_id actor, const supply_
     for (size_t i = 0; i < grants->weapon_count; ++i) weapons[i] = (qa_pickup_grant){grants->weapons[i], 1};
     qa_pickup_grant_plan plan = {.weapon_offer = weapon_offer, .weapons = weapons,
         .weapon_count = grants->weapon_count, .ammo = grants->ammo, .ammo_count = grants->ammo_count};
-    ok = qa_pickup_preview_grants(entries, count, &plan, &result, e);
+    ok = preview_grants(supply->inventory, actor, entries, count, &plan, &result, e) &&
+        supply_current(supply, actor, e);
 done:
     free(entries); free(weapons);
     if (ok) *out = result;

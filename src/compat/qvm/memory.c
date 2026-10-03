@@ -240,49 +240,60 @@ static void dispose_deliveries(qa_qvm *vm,write_delivery *head)
     --vm->publication_depth;
 }
 
-static bool capture_writes(qa_qvm *vm, uint32_t offset, size_t length, write_delivery **out, qa_error *error)
+static bool capture_writes(qa_qvm *vm, const qa_qvm_write_range *ranges,
+    size_t range_count, write_delivery **out, qa_error *error)
 {
     write_delivery *head = NULL, **tail = &head;
-    size_t end = (size_t)offset + length;
     for (qa_qvm_write_watch *watch = vm->watches; watch != NULL; watch = watch->next) {
         if (!watch->active) continue;
         size_t count = 0, bytes = 0;
-        for (size_t i = 0; i < watch->count; ++i) {
-            size_t start = offset > watch->ranges[i].offset ? offset : watch->ranges[i].offset;
-            size_t limit = (size_t)watch->ranges[i].offset + watch->ranges[i].length;
-            if (end < limit) limit = end;
-            if (start < limit) { ++count; bytes += limit - start; }
+        for (size_t r = 0; r < range_count; ++r) {
+            size_t end = (size_t)ranges[r].offset + ranges[r].length;
+            for (size_t i = 0; i < watch->count; ++i) {
+                size_t start = ranges[r].offset > watch->ranges[i].offset ? ranges[r].offset : watch->ranges[i].offset;
+                size_t limit = (size_t)watch->ranges[i].offset + watch->ranges[i].length;
+                if (end < limit) limit = end;
+                if (start < limit) {
+                    if (count == SIZE_MAX || bytes > SIZE_MAX - (limit - start)) {
+                        free_deliveries(head); return qa_qvm_error(error, QA_ERROR_MEMORY, ranges[r].offset, "QVM committed event is too large");
+                    }
+                    ++count; bytes += limit - start;
+                }
+            }
         }
         if (count == 0) continue;
         if (count > SIZE_MAX / sizeof(qa_qvm_committed_range) || bytes > SIZE_MAX / 2) {
-            free_deliveries(head); return qa_qvm_error(error,QA_ERROR_MEMORY,offset,"QVM committed event is too large");
+            free_deliveries(head); return qa_qvm_error(error,QA_ERROR_MEMORY,0,"QVM committed event is too large");
         }
         write_delivery *delivery = calloc(1,sizeof(*delivery));
-        if (delivery == NULL) { free_deliveries(head); return qa_qvm_error(error,QA_ERROR_MEMORY,offset,"allocating QVM committed event"); }
+        if (delivery == NULL) { free_deliveries(head); return qa_qvm_error(error,QA_ERROR_MEMORY,0,"allocating QVM committed event"); }
         *tail = delivery; tail = &delivery->next;
         delivery->ranges = calloc(count,sizeof(*delivery->ranges));
         delivery->bytes = malloc(bytes * 2);
         if (delivery->ranges == NULL || delivery->bytes == NULL) {
-            free_deliveries(head); return qa_qvm_error(error,QA_ERROR_MEMORY,offset,"allocating QVM committed bytes");
+            free_deliveries(head); return qa_qvm_error(error,QA_ERROR_MEMORY,0,"allocating QVM committed bytes");
         }
         delivery->watch = watch;
         delivery->event.ranges = delivery->ranges;
         size_t cursor = 0;
-        for (size_t i = 0; i < watch->count; ++i) {
-            size_t start = offset > watch->ranges[i].offset ? offset : watch->ranges[i].offset;
-            size_t limit = (size_t)watch->ranges[i].offset + watch->ranges[i].length;
-            if (end < limit) limit = end;
-            if (start >= limit) continue;
-            size_t size = limit - start;
-            qa_qvm_committed_range *range = &delivery->ranges[delivery->event.count++];
-            *range = (qa_qvm_committed_range){(uint32_t)start,{delivery->bytes + cursor,size},{delivery->bytes + bytes + cursor,size}};
-            memcpy(delivery->bytes + cursor,vm->data + start,size);
-            cursor += size;
+        for (size_t r = 0; r < range_count; ++r) {
+            size_t end = (size_t)ranges[r].offset + ranges[r].length;
+            for (size_t i = 0; i < watch->count; ++i) {
+                size_t start = ranges[r].offset > watch->ranges[i].offset ? ranges[r].offset : watch->ranges[i].offset;
+                size_t limit = (size_t)watch->ranges[i].offset + watch->ranges[i].length;
+                if (end < limit) limit = end;
+                if (start >= limit) continue;
+                size_t size = limit - start;
+                qa_qvm_committed_range *range = &delivery->ranges[delivery->event.count++];
+                *range = (qa_qvm_committed_range){(uint32_t)start,{delivery->bytes + cursor,size},{delivery->bytes + bytes + cursor,size}};
+                memcpy(delivery->bytes + cursor,vm->data + start,size);
+                cursor += size;
+            }
         }
     }
     if (head && vm->write_sequence == UINT64_MAX) {
         free_deliveries(head);
-        return qa_qvm_error(error,QA_ERROR_MEMORY,offset,"QVM observed write identity exhausted");
+        return qa_qvm_error(error,QA_ERROR_MEMORY,0,"QVM observed write identity exhausted");
     }
     *out = head;
     return true;
@@ -337,7 +348,8 @@ static bool mutate(qa_qvm *vm, uint32_t offset, size_t length, memory_operation 
 {
     if (!qa_qvm_mutable(vm,error) || !qa_qvm_raw_range(vm,offset,length,error)) return false;
     write_delivery *deliveries;
-    if (!capture_writes(vm,offset,length,&deliveries,error)) return false;
+    qa_qvm_write_range range = {offset, length};
+    if (!capture_writes(vm,&range,1,&deliveries,error)) return false;
     if (length > 0) {
         if (operation == MEMORY_FILL) memset(vm->data + offset,value,length);
         else memmove(vm->data + offset,source,length);
@@ -351,12 +363,49 @@ bool qa_qvm_write(qa_qvm *vm, uint32_t offset, qa_bytes bytes, qa_error *error)
     return mutate(vm,offset,bytes.size,MEMORY_WRITE,bytes.data,0,error);
 }
 
+bool qa_qvm_write_words(qa_qvm *vm, const qa_qvm_source_word *words,
+    size_t count, qa_error *error)
+{
+    if (!qa_qvm_mutable(vm, error)) return false;
+    if (!words || !count || count > SIZE_MAX / sizeof(*words) || count > SIZE_MAX / sizeof(qa_qvm_write_range))
+        return qa_qvm_error(error, QA_ERROR_ARGUMENT, 0, "QVM publication requires bounded Source words");
+    qa_qvm_source_word *copied = malloc(count * sizeof(*copied));
+    qa_qvm_write_range *ranges = malloc(count * sizeof(*ranges));
+    if (!copied || !ranges) {
+        free(copied); free(ranges);
+        return qa_qvm_error(error, QA_ERROR_MEMORY, 0, "Retaining QVM words before publication");
+    }
+    memcpy(copied, words, count * sizeof(*copied));
+    bool ok = true;
+    for (size_t i = 0; ok && i < count; ++i) {
+        if ((copied[i].offset & 3) || !qa_qvm_raw_range(vm, copied[i].offset, 4, error)) {
+            ok = qa_qvm_error(error, QA_ERROR_ARGUMENT, copied[i].offset, "QVM publication word leaves allocated Source data");
+            break;
+        }
+        for (size_t j = 0; j < i; ++j) if (copied[j].offset == copied[i].offset) {
+            ok = qa_qvm_error(error, QA_ERROR_ARGUMENT, copied[i].offset, "QVM publication words overlap");
+            break;
+        }
+        ranges[i] = (qa_qvm_write_range){copied[i].offset, 4};
+    }
+    write_delivery *deliveries = NULL;
+    if (ok) ok = capture_writes(vm, ranges, count, &deliveries, error);
+    if (ok) {
+        for (size_t i = 0; i < count; ++i)
+            qa_store_u32le(vm->data + copied[i].offset, (uint32_t)copied[i].value);
+        ok = publish_writes(vm, deliveries, error);
+    }
+    free(copied); free(ranges);
+    return ok;
+}
+
 bool qa_qvm_memory_restore_scratch(qa_qvm *vm, uint32_t offset, qa_bytes bytes, qa_error *error)
 {
     if ((bytes.size && !bytes.data) || !qa_qvm_mutable(vm, error) ||
         !qa_qvm_raw_range(vm, offset, bytes.size, error)) return false;
     write_delivery *deliveries = NULL;
-    bool captured = capture_writes(vm, offset, bytes.size, &deliveries, error);
+    qa_qvm_write_range range = {offset, bytes.size};
+    bool captured = capture_writes(vm, &range, 1, &deliveries, error);
     if (bytes.size) memmove(vm->data + offset, bytes.data, bytes.size);
     if (!captured) return false;
     return publish_writes(vm, deliveries, error);
@@ -403,7 +452,8 @@ bool qa_qvm_write_string(qa_qvm *vm, int32_t pointer, qa_bytes string, size_t ca
     const uint8_t *zero = copied > 0 ? memchr(string.data,0,copied) : NULL;
     if (zero != NULL) copied = (size_t)(zero - string.data);
     write_delivery *deliveries;
-    if (!capture_writes(vm,offset,capacity,&deliveries,error)) return false;
+    qa_qvm_write_range range = {offset, capacity};
+    if (!capture_writes(vm,&range,1,&deliveries,error)) return false;
     if (copied > 0) memmove(vm->data + offset,string.data,copied);
     memset(vm->data + offset + copied,0,capacity - copied);
     return publish_writes(vm,deliveries,error);

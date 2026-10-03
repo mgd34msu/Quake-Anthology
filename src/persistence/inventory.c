@@ -26,7 +26,7 @@ static uint32_t mask(const qa_inventory_binding *binding)
 {
     return (binding->count ? 1u : 0u) | (binding->at ? 2u : 0u) |
         (binding->write ? 4u : 0u) | (binding->mutable_capacity ? 8u : 0u) |
-        (binding->checked_count ? 16u : 0u);
+        (binding->checked_count ? 16u : 0u) | (binding->acquire ? 32u : 0u);
 }
 
 static bool binding_count(const qa_inventory_binding *binding, size_t *out, qa_error *error)

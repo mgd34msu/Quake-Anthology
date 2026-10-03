@@ -210,6 +210,53 @@ static bool source_threshold(const qa_qvm_image *image, uint32_t index,
     *limit = code[index + 3].operand; return true;
 }
 
+static bool acquisition(const qa_qvm_image *image, guest_public_inventory_profile *p,
+    qa_error *error)
+{
+    static const qa_qvm_opcode operations[] = {
+        QA_QVM_ENTER, QA_QVM_CONST, QA_QVM_LOAD4, QA_QVM_CONST, QA_QVM_EQ,
+        QA_QVM_CONST, QA_QVM_JUMP, QA_QVM_LOCAL, QA_QVM_LOCAL, QA_QVM_LOAD4,
+        QA_QVM_CONST, QA_QVM_LSH, QA_QVM_LOCAL, QA_QVM_LOAD4, QA_QVM_CONST,
+        QA_QVM_ADD, QA_QVM_LOAD4, QA_QVM_CONST, QA_QVM_ADD, QA_QVM_ADD,
+        QA_QVM_STORE4, QA_QVM_LOCAL, QA_QVM_LOAD4, QA_QVM_LOCAL, QA_QVM_LOAD4,
+        QA_QVM_LOAD4, QA_QVM_LOCAL, QA_QVM_LOAD4, QA_QVM_ADD, QA_QVM_STORE4,
+        QA_QVM_LOCAL, QA_QVM_LOAD4, QA_QVM_CONST, QA_QVM_ADD, QA_QVM_LOAD4,
+        QA_QVM_CONST, QA_QVM_ADD, QA_QVM_LOAD4, QA_QVM_CONST, QA_QVM_LEI,
+        QA_QVM_LOCAL, QA_QVM_LOCAL, QA_QVM_LOAD4, QA_QVM_CONST, QA_QVM_ADD,
+        QA_QVM_LOAD4, QA_QVM_STORE4, QA_QVM_LOCAL, QA_QVM_LOAD4, QA_QVM_CONST,
+        QA_QVM_ADD, QA_QVM_LOCAL, QA_QVM_LOAD4, QA_QVM_CONST, QA_QVM_ADD,
+        QA_QVM_LOAD4, QA_QVM_STORE4, QA_QVM_PUSH, QA_QVM_LEAVE
+    };
+    size_t count;
+    const qa_qvm_instruction *code = qa_qvm_image_instructions(image, &count);
+    uint32_t entry = 143211;
+    if ((uint64_t)entry + sizeof(operations) / sizeof(*operations) > count)
+        return fail(error, "Qualified original acquisition leaves its Source function");
+    for (size_t i = 0; i < sizeof(operations) / sizeof(*operations); ++i)
+        if (code[entry + i].opcode != operations[i])
+            return fail(error, "Qualified original acquisition lost its Source operation");
+    int32_t ammo, grenade, mirror, client;
+    if (!source_constant(image, 143228, &ammo, error) ||
+        !source_constant(image, 143246, &grenade, error) ||
+        !source_constant(image, 143260, &mirror, error) ||
+        !source_constant(image, 143225, &client, error)) return false;
+    if (ammo != (int32_t)p->ammo_offset || client != 516 ||
+        code[143243].operand != client || code[143254].operand != client ||
+        grenade != ammo + 4 * 4 || mirror != ammo + 11 * 4 || code[143264].operand != grenade ||
+        code[143211].operand != 16 || code[143269].operand != 16 ||
+        code[143212].operand != 111140 || code[143214].operand != 0 ||
+        code[143215].operand != 143218 || code[143216].operand != 143268 ||
+        code[143221].operand != 2 || code[143249].operand != 0 || code[143250].operand != 143268 ||
+        code[143219].operand != 28 || code[143223].operand != 24 ||
+        code[143237].operand != 32 || code[143241].operand != 24 || code[143252].operand != 24 ||
+        mirror < 0 || (uint32_t)mirror > qa_qvm_player_bytes(p->abi) - 4)
+        return fail(error, "Qualified original acquisition lost its actual arguments or counter effects");
+    p->acquisition_entry = entry;
+    p->acquisition_mirror = (uint32_t)mirror;
+    p->acquisition_client = (uint32_t)client;
+    return true;
+}
+
 static bool client_limits(const qa_qvm_image *image, guest_public_inventory_profile *p,
     qa_error *error)
 {
@@ -280,7 +327,7 @@ bool application_guest_public_inventory_profile_default(const qa_qvm_image *imag
         .capacity_kind = stock ? GUEST_PUBLIC_CONSTANT : threewave ? GUEST_PUBLIC_THREEWAVE : GUEST_PUBLIC_CLIENT_LIMITS};
     bool ok;
     if (stock) ok = source_limit(image, 103202, 103216, &p.constant, error);
-    else if (lrctf) ok = client_limits(image, &p, error);
+    else if (lrctf) ok = client_limits(image, &p, error) && acquisition(image, &p, error);
     else {
         int32_t game_type, lithium, last, jump_table;
         ok = source_limit(image, 166830, 166844, &p.constant, error) &&
@@ -380,8 +427,10 @@ bool application_guest_public_inventory_capacity(const guest_public_inventory_pr
         if (p->capacity_kind == GUEST_PUBLIC_COUNTER) {
             uint64_t address = (uint64_t)source->client + p->ammo_offset + source->weapon * 4;
             if (address > UINT32_MAX) return fail(error, "Original ammo counter address overflowed");
-            ok = qa_qvm_evaluate_counter(vm, (uint32_t)address, 0, p->functions, p->function_count,
-                p->function, arguments, count, stack, &value, error);
+            qa_qvm_source_word word = {(uint32_t)address, 0};
+            ok = qa_qvm_evaluate_counter(vm, &word, 1, p->functions, p->function_count,
+                p->function, arguments, count, stack, error);
+            if (ok) value = word.value;
         } else {
             int32_t *inputs = p->region.input_count ? malloc(p->region.input_count * sizeof(*inputs)) : NULL;
             if (p->region.input_count && !inputs) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating original capacity values"); return false; }
@@ -393,4 +442,32 @@ bool application_guest_public_inventory_capacity(const guest_public_inventory_pr
     if (!ok) return false;
     if (value < 0) return fail(error, "Original ammo capacity is negative");
     *out = value; return true;
+}
+
+bool application_guest_public_inventory_acquire(const guest_public_inventory_profile *p,
+    qa_qvm *vm, const guest_inventory_source *source, int32_t initial, int32_t amount,
+    qa_qvm_source_word words[2], size_t *word_count, qa_error *error)
+{
+    if (!p || !source || !words || !word_count || !p->acquisition_entry ||
+        vm != p->vm || qa_qvm_get_role(vm) != QA_QVM_GAME || qa_qvm_get_abi(vm) != p->abi ||
+        !qa_sha256_equal(qa_qvm_digest(vm), qa_qvm_image_digest(p->image)) ||
+        source->weapon < 1 || source->weapon > 15 || source->entity > INT32_MAX)
+        return fail(error, "Original acquisition lacks its actual GAME and counter");
+    uint64_t primary = (uint64_t)source->client + p->ammo_offset + source->weapon * 4;
+    uint64_t mirror = (uint64_t)source->client + p->acquisition_mirror;
+    if (primary > UINT32_MAX || mirror > UINT32_MAX)
+        return fail(error, "Original acquisition counter address overflowed");
+    qa_qvm_source_word values[2] = {{(uint32_t)primary, initial}};
+    size_t count = 1;
+    if (mirror != primary) {
+        uint8_t bytes[4];
+        if (!qa_qvm_read(vm, (uint32_t)mirror, bytes, sizeof(bytes), error)) return false;
+        values[count++] = (qa_qvm_source_word){(uint32_t)mirror, qa_load_i32le(bytes)};
+    }
+    int32_t arguments[] = {(int32_t)source->entity, (int32_t)source->weapon, amount};
+    if (!qa_qvm_evaluate_counter(vm, values, count, &p->acquisition_entry, 1,
+        p->acquisition_entry, arguments, 3, p->has_stack ? &p->stack : NULL, error)) return false;
+    memcpy(words, values, count * sizeof(*words));
+    *word_count = count;
+    return true;
 }

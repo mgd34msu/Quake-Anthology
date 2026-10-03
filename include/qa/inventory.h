@@ -14,6 +14,12 @@ typedef struct qa_inventory_binding {
     bool (*mutable_capacity)(void *, qa_item_id);
     /* Optional source reader; preferred over count when present. */
     bool (*checked_count)(void *, size_t *, qa_error *);
+    /* Optional original acquisition policy. Preview is pure; publish commits
+     * the actual Source result under this same binding. Unhandled entries use
+     * the ordinary capacity rule. writes includes genuine companion effects;
+     * item, capacity and count policy stay fixed. */
+    bool (*acquire)(void *, const qa_inventory_entry *, double amount, bool publish,
+                    qa_inventory_entry *, bool *handled, bool *writes, qa_error *);
 } qa_inventory_binding;
 typedef enum qa_item_action { QA_ITEM_USE = 1, QA_ITEM_DROP = 2 } qa_item_action;
 typedef struct qa_item_definition {
@@ -110,6 +116,9 @@ bool qa_inventory_adjust(qa_inventory *, qa_actor_id, qa_item_id, double, double
 qa_operation *qa_inventory_operation(qa_inventory *, qa_inventory_operation_kind);
 bool qa_inventory_validate_entry(const qa_inventory_entry *, qa_inventory_entry *normalized, qa_error *);
 bool qa_inventory_preview_give(const qa_inventory_entry *, double, qa_inventory_entry *, double *, bool *writes, qa_error *);
+/* Owner-qualified preview for a retained supply's simulated entry. */
+bool qa_inventory_preview_acquire(qa_inventory *, qa_actor_id, const qa_inventory_entry *,
+    double, qa_inventory_entry *, double *, bool *, qa_error *);
 typedef struct qa_inventory_source_group { qa_actor_owner owner; qa_item_admission *items; size_t count; bool definitions_only; } qa_inventory_source_group;
 typedef struct qa_inventory_source_snapshot {
     qa_inventory_entry *primary;

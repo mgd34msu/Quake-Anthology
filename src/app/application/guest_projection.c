@@ -247,6 +247,67 @@ static bool inventory_write(void *opaque, const qa_inventory_entry *entry, qa_er
     --role->engine->calls; return ok;
 }
 
+static bool inventory_acquire(void *opaque, const qa_inventory_entry *before,
+    double amount, bool publish, qa_inventory_entry *after, bool *handled, bool *writes, qa_error *error)
+{
+    guest_projection_actor *context = opaque;
+    application_guest_projection *p = context->projection;
+    q3g_role *role = p->role;
+    *handled = false; *writes = false;
+    if (!p->inventory_public || !p->public_inventory.acquisition_entry) return true;
+    ++role->engine->calls;
+    bool ok = inventory_refresh(p, error);
+    guest_inventory_field field = {0};
+    bool found = false;
+    for (size_t i = 0; ok && i < p->inventory_count; ++i)
+        if (p->inventory[i].item == before->item) { field = p->inventory[i]; found = true; break; }
+    if (!ok || !found || field.mask) { --role->engine->calls; return ok; }
+    *handled = true;
+    qa_inventory_entry actual, normalized;
+    uint32_t client = 0, entity = 0, pointer = 0;
+    qa_q3_host_game_data data;
+    size_t index = 0;
+    while (ok && index < p->inventory_count && p->inventory[index].item != before->item) ++index;
+    if (ok) ok = inventory_at_inner(context, index, &actual, error);
+    if (ok && (actual.policy != before->policy || actual.capacity != before->capacity ||
+        (publish && actual.count != before->count)))
+        ok = application_fail(error, QA_ERROR_NOT_FOUND, "Original acquisition entry changed before its Source grant");
+    normalized = *before; normalized.count = amount;
+    if (ok) ok = qa_inventory_validate_entry(&normalized, &normalized, error) && current(context, &data, error);
+    if (ok && (data.entity_stride < 4 || p->public_inventory.acquisition_client > data.entity_stride - 4 ||
+        data.client_stride < 4 || p->public_inventory.acquisition_mirror > data.client_stride - 4))
+        ok = application_fail(error, QA_ERROR_FORMAT, "Original acquisition fields leave their actual Source records");
+    if (ok) ok = address(context, (guest_field){GUEST_CLIENT_RECORD, 0}, &client, error) &&
+        address(context, (guest_field){GUEST_ENTITY_RECORD, 0}, &entity, error) &&
+        read_word(role, entity + p->public_inventory.acquisition_client, &pointer, error);
+    if (ok && pointer != client)
+        ok = application_fail(error, QA_ERROR_FORMAT, "Original acquisition entity does not own its located client");
+    qa_qvm_source_word words[2], original[2]; size_t count = 0;
+    guest_inventory_source source = {client, entity, context->slot, field.public_weapon};
+    if (ok) ok = application_guest_public_inventory_acquire(&p->public_inventory,
+        role->vm, &source, (int32_t)before->count, (int32_t)normalized.count, words, &count, error);
+    for (size_t i = 0; ok && i < count; ++i) {
+        uint32_t value;
+        ok = read_word(role, words[i].offset, &value, error);
+        if (ok) original[i] = (qa_qvm_source_word){words[i].offset, (int32_t)value};
+    }
+    if (ok) ok = current(context, &data, error);
+    uint32_t after_client, after_entity;
+    if (ok) ok = address(context, (guest_field){GUEST_CLIENT_RECORD, 0}, &after_client, error) &&
+        address(context, (guest_field){GUEST_ENTITY_RECORD, 0}, &after_entity, error);
+    if (ok && (client != after_client || entity != after_entity))
+        ok = application_fail(error, QA_ERROR_NOT_FOUND, "Original acquisition Source records changed during evaluation");
+    if (ok) {
+        original[0].value = (int32_t)before->count;
+        for (size_t i = 0; i < count; ++i) *writes |= original[i].value != words[i].value;
+        if (publish && *writes) ok = qa_qvm_write_words(role->vm, words, count, error);
+        if (ok && publish) ok = current(context, &data, error);
+    }
+    if (ok) { *after = *before; after->count = words[0].value; }
+    --role->engine->calls;
+    return ok;
+}
+
 static bool mutable_capacity(void *opaque, qa_item_id item)
 {
     application_guest_projection *p = ((guest_projection_actor *)opaque)->projection;
@@ -410,8 +471,10 @@ bool application_guest_projection_admit(q3g_role *role, qa_actor_id actor, qa_er
         p->actors = context;
     }
     if (!context->inventory_bound) {
-        qa_inventory_binding binding = {context, inventory_count, inventory_at, inventory_write,
-            mutable_capacity, inventory_checked_count};
+        qa_inventory_binding binding = {.context = context, .count = inventory_count,
+            .at = inventory_at, .write = inventory_write, .mutable_capacity = mutable_capacity,
+            .checked_count = inventory_checked_count,
+            .acquire = p->public_inventory.acquisition_entry ? inventory_acquire : NULL};
         if (!qa_inventory_adopt_primary(app->inventory, actor, &binding, &context->inventory_lease, error)) return false;
         context->inventory_bound = true;
         context->inventory_prepared = false;
@@ -471,8 +534,10 @@ bool application_guest_projection_inventory_binding(q3g_role *role,
     if (!context->inventory_bound)
         context->inventory_prepared = true;
     context->inventory_bound = true;
-    *out = (qa_inventory_binding){context, inventory_count, inventory_at,
-                                  inventory_write, mutable_capacity, inventory_checked_count};
+    *out = (qa_inventory_binding){.context = context, .count = inventory_count,
+        .at = inventory_at, .write = inventory_write, .mutable_capacity = mutable_capacity,
+        .checked_count = inventory_checked_count,
+        .acquire = projection->public_inventory.acquisition_entry ? inventory_acquire : NULL};
     return true;
 }
 

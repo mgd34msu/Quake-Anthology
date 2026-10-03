@@ -257,10 +257,15 @@ bool qa_qvm_evaluate_region(qa_qvm *, uint32_t owner, const int32_t *arguments, 
  * original caller frame and live argument aliases. */
 bool qa_qvm_evaluate_call_region(const qa_qvm_call *, const qa_qvm_region_evaluation *,
                                  const int32_t *inputs, int32_t *out, qa_error *);
-bool qa_qvm_evaluate_counter(qa_qvm *, uint32_t address, int32_t initial,
+/* Only these distinct whole Source words are virtualized. Results replace
+ * the caller's records together after successful bounded evaluation. */
+bool qa_qvm_evaluate_counter(qa_qvm *, qa_qvm_source_word *, size_t word_count,
                              const uint32_t *functions, size_t function_count,
                              uint32_t instruction, const int32_t *arguments, size_t argument_count,
-                             const qa_qvm_evaluation_stack *, int32_t *out, qa_error *);
+                             const qa_qvm_evaluation_stack *, qa_error *);
+/* Captures all observer deliveries before committing any of the exact words;
+ * every delivered event observes the complete resulting RAM state. */
+bool qa_qvm_write_words(qa_qvm *, const qa_qvm_source_word *, size_t, qa_error *);
 
 typedef struct qa_qvm_write_range { uint32_t offset; size_t length; } qa_qvm_write_range;
 typedef struct qa_qvm_committed_range { uint32_t offset; qa_bytes before, after; } qa_qvm_committed_range;

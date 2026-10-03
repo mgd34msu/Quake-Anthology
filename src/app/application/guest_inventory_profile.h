@@ -37,6 +37,7 @@ typedef struct guest_public_inventory_profile {
     qa_qvm_region_evaluation region;
     qa_qvm_evaluation_stack stack;
     bool has_stack;
+    uint32_t acquisition_entry, acquisition_mirror, acquisition_client;
 } guest_public_inventory_profile;
 typedef struct guest_inventory_source {
     uint32_t client, entity, client_number, weapon;
@@ -49,5 +50,10 @@ bool application_guest_public_inventory_profile_default(const qa_qvm_image *, qa
 void application_guest_public_inventory_profile_free(guest_public_inventory_profile *);
 bool application_guest_public_inventory_capacity(const guest_public_inventory_profile *,
     qa_qvm *, const guest_inventory_source *, int32_t *, qa_error *);
+
+/* Pure execution of the admitted Source acquisition on explicit virtual words. */
+bool application_guest_public_inventory_acquire(const guest_public_inventory_profile *,
+    qa_qvm *, const guest_inventory_source *, int32_t initial, int32_t amount,
+    qa_qvm_source_word words[2], size_t *, qa_error *);
 
 #endif

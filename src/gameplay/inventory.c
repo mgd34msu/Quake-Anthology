@@ -345,6 +345,67 @@ static bool write_entry(qa_inventory *table, inventory_store *store, item_group 
     return require_current(table, store, group, e);
 }
 
+static bool source_acquisition(qa_inventory *table, inventory_store *store, item_group *group,
+    const qa_inventory_entry *before, double amount, bool publish,
+    qa_inventory_entry *after, bool *handled, bool *writes, qa_error *e)
+{
+    *handled = false; *writes = false;
+    if (!require_current(table, store, group, e)) return false;
+    if (group_for(store, before->item) != group)
+        return fail(e, QA_ERROR_NOT_FOUND, "Inventory item owner changed before acquisition");
+    if (!group && (store->local || local_index(store, before->item) < store->count)) return true;
+    qa_inventory_binding binding = group ? group->binding : store->primary;
+    if (!binding.acquire) return true;
+    uint64_t revision = store->revision;
+    bool ok = binding.acquire(binding.context, before, amount, publish, after, handled, writes, e);
+    if (publish && *handled && *writes) store_changed(store);
+    if (!ok) return false;
+    if (!require_current(table, store, group, e)) return false;
+    if (group_for(store, before->item) != group)
+        return fail(e, QA_ERROR_NOT_FOUND, "Inventory item owner changed during acquisition");
+    if (!publish && store->revision != revision)
+        return fail(e, QA_ERROR_NOT_FOUND, "Inventory changed during acquisition preview");
+    if (!*handled) return !*writes || fail(e, QA_ERROR_ARGUMENT, "Unhandled Source acquisition reported writes");
+    qa_inventory_entry normalized;
+    if (!qa_inventory_validate_entry(after, &normalized, e)) return false;
+    if (normalized.item != before->item || normalized.policy != before->policy ||
+        normalized.capacity != before->capacity)
+        return fail(e, QA_ERROR_ARGUMENT, "Source acquisition changed its admitted entry identity");
+    if (!*writes && normalized.count != before->count)
+        return fail(e, QA_ERROR_ARGUMENT, "Source acquisition changed a counter without its write receipt");
+    *after = normalized;
+    if (publish) {
+        qa_inventory_entry actual; bool found;
+        if (!find_in(table, store, group, before->item, &actual, &found, e)) return false;
+        if (!found || actual.count != after->count || actual.capacity != after->capacity ||
+            actual.policy != after->policy)
+            return fail(e, QA_ERROR_NOT_FOUND, "Source acquisition result differs from its current storage");
+    }
+    return true;
+}
+
+bool qa_inventory_preview_acquire(qa_inventory *table, qa_actor_id actor,
+    const qa_inventory_entry *before, double amount, qa_inventory_entry *after,
+    double *given, bool *writes, qa_error *e)
+{
+    qa_inventory_entry normalized;
+    if (!after || !given || !writes)
+        return fail(e, QA_ERROR_ARGUMENT, "Missing acquisition preview output");
+    if (!qa_inventory_validate_entry(before, &normalized, e) || !quantity(amount, e)) return false;
+    inventory_store *store = acquire(table, actor);
+    if (!store) return fail(e, QA_ERROR_NOT_FOUND, "Acquisition preview requires its actual inventory actor");
+    item_group *group = group_for(store, normalized.item);
+    qa_inventory_entry actual; bool found, handled = false;
+    bool ok = find_in(table, store, group, normalized.item, &actual, &found, e);
+    if (ok && (!found || actual.policy != normalized.policy || actual.capacity != normalized.capacity))
+        ok = fail(e, QA_ERROR_NOT_FOUND, "Acquisition preview entry differs from its admitted Source");
+    if (ok) ok = source_acquisition(table, store, group, &normalized, amount, false, after, &handled, writes, e);
+    if (ok && handled) *given = after->count - normalized.count;
+    else if (ok) ok = qa_inventory_preview_give(&normalized, amount, after, given, writes, e);
+    release_store(table, store);
+    return ok;
+}
+
 static bool group_validate(qa_inventory *table, inventory_store *store, item_group *group, qa_error *e)
 {
     if (group->definitions_only)
@@ -481,7 +542,8 @@ bool qa_inventory_adopt_primary(qa_inventory *table, qa_actor_id actor,
         if (store->primary.context != binding->context || store->primary.count != binding->count ||
             store->primary.at != binding->at || store->primary.write != binding->write ||
             store->primary.mutable_capacity != binding->mutable_capacity ||
-            store->primary.checked_count != binding->checked_count) {
+            store->primary.checked_count != binding->checked_count ||
+            store->primary.acquire != binding->acquire) {
             fail(e, QA_ERROR_ARGUMENT, "Primary inventory already belongs to another source"); goto done;
         }
         *out = (qa_inventory_lease){actor, store->serial}; ok = true; goto done;
@@ -1014,9 +1076,13 @@ static bool canonical(void *context, const void *request, void *result, qa_error
         if (call->kind == QA_INVENTORY_CONSUME) output->consumed = input->amount == 0;
         if (call->kind == QA_INVENTORY_ADJUST) ok = fail(e, QA_ERROR_ARGUMENT, "Item is not a signed source counter");
     } else if (call->kind == QA_INVENTORY_GIVE) {
-        bool writes;
-        ok = qa_inventory_preview_give(&before, input->amount, &after, &output->amount, &writes, e);
-        if (ok && writes) ok = write_entry(call->table, store, group, &after, e);
+        bool writes, handled;
+        ok = source_acquisition(call->table, store, group, &before, input->amount, true, &after, &handled, &writes, e);
+        if (ok && handled) output->amount = after.count - before.count;
+        else if (ok) {
+            ok = qa_inventory_preview_give(&before, input->amount, &after, &output->amount, &writes, e);
+            if (ok && writes) ok = write_entry(call->table, store, group, &after, e);
+        }
     } else if (call->kind == QA_INVENTORY_CONSUME) {
         if (before.count >= input->amount) {
             double delta;

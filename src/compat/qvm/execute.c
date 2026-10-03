@@ -88,8 +88,9 @@ struct qa_qvm_word_projection {
 };
 typedef struct return_address { uint32_t stack; int32_t pc; } return_address;
 typedef struct counter_evaluation {
-    uint32_t address, floor, top;
-    int32_t value;
+    uint32_t floor, top;
+    qa_qvm_source_word *words;
+    size_t word_count;
     const uint32_t *functions;
     uint32_t *ends;
     size_t count;
@@ -135,10 +136,14 @@ static bool counter_access(qa_qvm *vm, uint32_t address, size_t size, bool writi
     counter_evaluation *counter = state(vm)->counter;
     *virtual_word = false;
     if (counter == NULL) return true;
-    if (address < (uint64_t)counter->address + 4 && (uint64_t)address + size > counter->address) {
-        if (address != counter->address || size != 4) return error_at(error, address, "QVM isolated counter requires a whole word access");
-        if (writing) counter->value = *word; else *word = counter->value;
-        *virtual_word = true; return true;
+    for (size_t i = 0; i < counter->word_count; ++i) {
+        qa_qvm_source_word *value = counter->words + i;
+        if (address < (uint64_t)value->offset + 4 && (uint64_t)address + size > value->offset) {
+            if (address != value->offset || size != 4)
+                return error_at(error, address, "QVM isolated counter requires a whole word access");
+            if (writing) value->value = *word; else *word = value->value;
+            *virtual_word = true; return true;
+        }
     }
     uint32_t floor = counter->floor;
     if (state(vm)->active != NULL && state(vm)->active->stack > floor) floor = state(vm)->active->stack;
@@ -1728,20 +1733,30 @@ bool qa_qvm_evaluate_call_region(const qa_qvm_call *call, const qa_qvm_region_ev
     if (!ok) { latch(vm, error); return false; }
     *out = result; return true;
 }
-bool qa_qvm_evaluate_counter(qa_qvm *vm, uint32_t address, int32_t initial,
+bool qa_qvm_evaluate_counter(qa_qvm *vm, qa_qvm_source_word *words, size_t word_count,
                              const uint32_t *functions, size_t function_count,
                              uint32_t instruction, const int32_t *arguments, size_t argument_count,
-                             const qa_qvm_evaluation_stack *requested, int32_t *out, qa_error *error)
+                             const qa_qvm_evaluation_stack *requested, qa_error *error)
 {
     uint32_t floor, top;
     if (!evaluation_stack(vm, requested, &floor, &top, error)) return false;
     execution *exec = state(vm);
     uint64_t source_end = (uint64_t)vm->image->data_length + vm->image->literal_length + vm->image->bss_length;
-    if (exec->counter != NULL || out == NULL || (address & 3) != 0 || (uint64_t)address + 4 > source_end
-        || (uint64_t)address + 4 > floor || functions == NULL || function_count == 0 || function_count > SIZE_MAX / (2 * sizeof(uint32_t)))
-        return error_at(error, address, "QVM counter needs one isolated word and distinct original functions");
+    if (exec->counter != NULL || !words || !word_count || word_count > SIZE_MAX / sizeof(*words) ||
+        functions == NULL || function_count == 0 || function_count > SIZE_MAX / (2 * sizeof(uint32_t)))
+        return error_at(error, 0, "QVM counter needs isolated words and distinct original functions");
+    for (size_t i = 0; i < word_count; ++i) {
+        if ((words[i].offset & 3) || (uint64_t)words[i].offset + 4 > source_end ||
+            (uint64_t)words[i].offset + 4 > floor)
+            return error_at(error, words[i].offset, "QVM counter word leaves original nonstack data");
+        for (size_t j = 0; j < i; ++j) if (words[j].offset == words[i].offset)
+            return error_at(error, words[i].offset, "QVM counter words overlap");
+    }
+    qa_qvm_source_word *values = malloc(word_count * sizeof(*values));
+    if (!values) return qa_qvm_error(error, QA_ERROR_MEMORY, 0, "Retaining isolated QVM counter values");
+    memcpy(values, words, word_count * sizeof(*values));
     uint32_t *ends = malloc(function_count * 2 * sizeof(*ends));
-    if (ends == NULL) return qa_qvm_error(error, QA_ERROR_MEMORY, 0, "Allocating QVM counter function bounds");
+    if (ends == NULL) { free(values); return qa_qvm_error(error, QA_ERROR_MEMORY, 0, "Allocating QVM counter function bounds"); }
     uint32_t *admitted_functions = ends + function_count;
     memcpy(admitted_functions, functions, function_count * sizeof(*functions));
     functions = admitted_functions;
@@ -1755,7 +1770,7 @@ bool qa_qvm_evaluate_counter(qa_qvm *vm, uint32_t address, int32_t initial,
         if (functions[i] == instruction) admitted = true;
     }
     if (ok && !admitted) ok = error_at(error, instruction, "QVM counter entry is not admitted");
-    counter_evaluation counter = {address, floor, top, initial, functions, ends, function_count, 100000};
+    counter_evaluation counter = {floor, top, values, word_count, functions, ends, function_count, 100000};
     if (ok) {
         exec->counter = &counter;
         int32_t result;
@@ -1763,6 +1778,7 @@ bool qa_qvm_evaluate_counter(qa_qvm *vm, uint32_t address, int32_t initial,
         exec->counter = NULL;
     }
     free(ends);
-    if (ok) *out = counter.value;
+    if (ok) memcpy(words, values, word_count * sizeof(*words));
+    free(values);
     return ok;
 }
