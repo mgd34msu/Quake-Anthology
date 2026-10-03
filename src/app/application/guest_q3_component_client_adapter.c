@@ -68,11 +68,11 @@ static application_player_record *player(application_q3_component_client_adapter
     application_player_record *p=retained_player(a,actor);
     return p&&!p->retiring&&!p->deferred&&qa_actors_get(qa_session_actors(a->application->session),actor)?p:NULL;
 }
-static bool current(void *context,qa_actor_id actor)
+static bool client_current(application_q3_component_client_adapter *a,qa_actor_id actor,bool begun)
 {
-    application_q3_component_client_adapter *a=context;
-    application_player_record *p=player(a,actor);
-    if(!p) return false;
+    application_player_record *p=retained_player(a,actor);
+    if(!p||p->retiring||(begun&&p->deferred)||
+        !qa_actors_get(qa_session_actors(a->application->session),actor)) return false;
     application_provider *source=a->source;
     qa_error e={0};
     if(source->kind==APPLICATION_PROVIDER_Q1) {
@@ -88,7 +88,7 @@ static bool current(void *context,qa_actor_id actor)
         uint32_t slot=p->client_slot+1;
         qa_qc_slot_binding binding;
         return engine&&engine->clients&&slot<=engine->max_clients&&
-            engine->clients[slot].connected&&engine->clients[slot].spawned&&
+            engine->clients[slot].connected&&(!begun||engine->clients[slot].spawned)&&
             qa_actor_id_equal(engine->clients[slot].actor,actor)&&
             qa_qc_slot(source->state.qc.instance,slot,&binding)&&
             binding.kind!=QA_QC_SLOT_FREE&&qa_actor_id_equal(binding.actor,actor);
@@ -96,14 +96,14 @@ static bool current(void *context,qa_actor_id actor)
     if(source->kind==APPLICATION_PROVIDER_Q3) {
         application_native_q3_wire_client_view v;bool present=false;
         return application_native_q3_wire_client_read(source,p->client_slot,&v,&present,&e)&&present&&
-            v.begun&&qa_actor_id_equal(v.actor,actor);
+            (!begun||v.begun)&&qa_actor_id_equal(v.actor,actor);
     }
     if(source->kind==APPLICATION_PROVIDER_NATIVE&&source->state.native.q2_engine) {
         struct application_native_q2 *engine=source->state.native.q2_engine;
         if(p->client_slot>=256) return false;
         uint32_t slot=p->client_slot+1;
         qa_native_slot_binding binding;
-        return slot<257&&engine->clients[slot].connected&&engine->clients[slot].begun&&
+        return slot<257&&engine->clients[slot].connected&&(!begun||engine->clients[slot].begun)&&
             !engine->clients[slot].disconnect_started&&qa_actor_id_equal(engine->clients[slot].actor,actor)&&
             source->state.native.host&&qa_native_slot(qa_native_host_instance(source->state.native.host),slot,&binding,&e)&&
             binding.kind!=QA_NATIVE_SLOT_FREE&&qa_actor_id_equal(binding.actor,actor);
@@ -111,11 +111,13 @@ static bool current(void *context,qa_actor_id actor)
     struct application_q3_guest *engine=q3g_engine(source);
     uint32_t slot=UINT32_MAX;
     return engine&&engine->game&&engine->game->host&&engine->game->ready&&!engine->game->retired&&
-        p->client_slot<64&&engine->clients[p->client_slot].connected&&engine->clients[p->client_slot].begun&&
+        p->client_slot<64&&engine->clients[p->client_slot].connected&&(!begun||engine->clients[p->client_slot].begun)&&
         !engine->clients[p->client_slot].pending_retirement&&!engine->clients[p->client_slot].disconnect_started&&
         qa_actor_id_equal(engine->clients[p->client_slot].actor,actor)&&
         qa_q3_host_actor_slot(engine->game->host,actor,&slot,&e)&&slot==p->client_slot;
 }
+static bool current(void *context,qa_actor_id actor)
+{ return client_current(context,actor,true); }
 static application_player_record *entered(application_q3_component_client_adapter *a,qa_actor_id actor,qa_error *e)
 {
     if(!current(a,actor)) {
@@ -149,35 +151,36 @@ static char *info_dictionary(const char *text,qa_error *e)
     }
     result[used]=0;free(pairs);return result;
 }
-static char *info_replace(const char *text,const char *key,const char *value,qa_error *e)
+static char *info_replace(const char *text,const char *key,const char *value,bool literal,qa_error *e)
 {
-    char *dictionary=info_dictionary(text,e);if(!dictionary) return NULL;
+    char *owned=literal?NULL:info_dictionary(text,e);if(!literal&&!owned) return NULL;
+    const char *dictionary=literal?text:owned;
     size_t length=strlen(dictionary),key_size=strlen(key),value_size=value?strlen(value):0;
     if(length>SIZE_MAX-3||key_size>SIZE_MAX-length-3||value_size>SIZE_MAX-length-key_size-3) {
-        free(dictionary);application_fail(e,QA_ERROR_MEMORY,"Component Source info edit exceeds its actual extent");return NULL;
+        free(owned);application_fail(e,QA_ERROR_MEMORY,"Component Source info edit exceeds its actual extent");return NULL;
     }
     char *result=malloc(length+key_size+value_size+3);
-    if(!result) {free(dictionary);application_fail(e,QA_ERROR_MEMORY,"Retaining physical Source info edit");return NULL;}
-    const char *cursor=dictionary;size_t used=0;bool replaced=false;
+    if(!result) {free(owned);application_fail(e,QA_ERROR_MEMORY,"Retaining physical Source info edit");return NULL;}
+    const char *cursor=dictionary+(*dictionary=='\\');size_t used=0;bool replaced=false;
     while(*cursor) {
-        const char *entry=cursor+1,*separator=strchr(entry,'\\');
-        const char *end=strchr(separator+1,'\\');size_t span=end?(size_t)(end-cursor):strlen(cursor);
+        const char *entry=cursor,*separator=strchr(entry,'\\');if(!separator) break;
+        const char *end=strchr(separator+1,'\\');size_t span=end?(size_t)(end-entry):strlen(entry);
         bool match=(size_t)(separator-entry)==key_size&&!memcmp(entry,key,key_size);
         if(match) {
             replaced=true;
-            if(value) {
+            if(value&&!literal) {
                 result[used++]='\\';memcpy(result+used,key,key_size);used+=key_size;
                 result[used++]='\\';memcpy(result+used,value,value_size);used+=value_size;
             }
-        } else {memcpy(result+used,cursor,span);used+=span;}
+        } else {result[used++]='\\';memcpy(result+used,entry,span);used+=span;}
         if(!end) break;
-        cursor=end;
+        cursor=end+1;
     }
-    if(value&&!replaced) {
+    if(value&&(!replaced||literal)) {
         result[used++]='\\';memcpy(result+used,key,key_size);used+=key_size;
         result[used++]='\\';memcpy(result+used,value,value_size);used+=value_size;
     }
-    result[used]=0;free(dictionary);return result;
+    result[used]=0;free(owned);return result;
 }
 static bool color_team(const char *text,int32_t *out,qa_error *e)
 {
@@ -191,8 +194,9 @@ static bool userinfo(void *context,qa_actor_id actor,const char **out,qa_error *
 {
     application_q3_component_client_adapter *a=context;
     if(!out) return application_fail(e,QA_ERROR_ARGUMENT,"Component userinfo needs its borrowed output");
-    application_player_record *p=entered(a,actor,e);
-    if(!p) return false;
+    if(!client_current(a,actor,false))
+        return application_fail(e,QA_ERROR_NOT_FOUND,"Component userinfo lost its physical connected client");
+    application_player_record *p=retained_player(a,actor);
     application_provider *source=a->source;bool ok;
     ++a->calls;
     if(source->kind==APPLICATION_PROVIDER_Q1) {
@@ -213,14 +217,15 @@ static bool userinfo(void *context,qa_actor_id actor,const char **out,qa_error *
         if(!*out) *out="";
         ok=true;}
     --a->calls;
-    return ok&&(current(a,actor)||application_fail(e,QA_ERROR_ARGUMENT,"Component userinfo changed its physical client"));
+    return ok&&(client_current(a,actor,false)||application_fail(e,QA_ERROR_ARGUMENT,"Component userinfo changed its physical client"));
 }
 static bool set_userinfo(void *context,qa_actor_id actor,const char *text,qa_error *e)
 {
     application_q3_component_client_adapter *a=context;
     if(!text) return application_fail(e,QA_ERROR_ARGUMENT,"Component stored userinfo is absent");
-    application_player_record *p=entered(a,actor,e);
-    if(!p) return false;
+    if(!client_current(a,actor,false))
+        return application_fail(e,QA_ERROR_NOT_FOUND,"Component userinfo storage lost its physical connected client");
+    application_player_record *p=retained_player(a,actor);
     application_provider *source=a->source;bool ok;
     ++a->calls;
     if(source->kind==APPLICATION_PROVIDER_Q1) ok=qa_q1_source_client_userinfo_storage(source->state.q1,actor,text,e);
@@ -238,7 +243,65 @@ static bool set_userinfo(void *context,qa_actor_id actor,const char *text,qa_err
         else if(ok) {q3g_client *client=q3g_engine(source)->clients+p->client_slot;free(client->userinfo);client->userinfo=copy;}
     }
     --a->calls;
-    return ok&&(current(a,actor)||application_fail(e,QA_ERROR_ARGUMENT,"Component storage changed its physical client"));
+    return ok&&(client_current(a,actor,false)||application_fail(e,QA_ERROR_ARGUMENT,"Component storage changed its physical client"));
+}
+static bool info_adapter(qa_application *app,qa_world *world,
+    application_q3_component_client_adapter **out,qa_error *e)
+{
+    if(!app||!app->players||app->world!=world)
+        return application_fail(e,QA_ERROR_ARGUMENT,"Client info requires its installed physical world roster");
+    return application_q3_component_client_adapter_create(app,app->players->map_provider,world,out,e);
+}
+bool application_client_userinfo_key_read(qa_application *app,qa_world *world,qa_actor_id actor,
+    const char *key,qa_buffer *out,qa_error *e)
+{
+    if(!key||!*key||strchr(key,'\\')||!out||out->data||out->size)
+        return application_fail(e,QA_ERROR_ARGUMENT,"Client info read requires a valid key and empty owned output");
+    application_q3_component_client_adapter *a=NULL;
+    if(!info_adapter(app,world,&a,e)) return false;
+    const char *text;
+    bool ok=userinfo(a,actor,&text,e);
+    if(ok) {
+        const char *cursor=text+(*text=='\\'),*value="";size_t length=0,key_size=strlen(key);
+        while(*cursor) {
+            const char *separator=strchr(cursor,'\\');if(!separator) break;
+            const char *entry=separator+1,*end=strchr(entry,'\\');
+            if((size_t)(separator-cursor)==key_size&&!memcmp(cursor,key,key_size)) {
+                value=entry;length=end?(size_t)(end-entry):strlen(entry);break;
+            }
+            if(!end) break;
+            cursor=end+1;
+        }
+        out->data=malloc(length+1);
+        if(!out->data) ok=application_fail(e,QA_ERROR_MEMORY,"Retaining physical client info value");
+        else {memcpy(out->data,value,length);out->data[length]=0;out->size=length;}
+    }
+    qa_error cleanup={0};
+    if(!application_q3_component_client_adapter_destroy(&a,&cleanup)) {
+        if(ok&&e) *e=cleanup;
+        ok=false;
+    }
+    if(!ok) qa_buffer_free(out);
+    return ok;
+}
+bool application_client_userinfo_key_write(qa_application *app,qa_world *world,qa_actor_id actor,
+    const char *key,const char *value,qa_error *e)
+{
+    if(!key||!*key||strchr(key,'\\')||!value||strchr(value,'\\'))
+        return application_fail(e,QA_ERROR_ARGUMENT,"Client info store has an invalid key or delimited value");
+    application_q3_component_client_adapter *a=NULL;
+    if(!info_adapter(app,world,&a,e)) return false;
+    const char *text;char *copy=NULL;
+    bool ok=userinfo(a,actor,&text,e);
+    if(ok) {copy=info_replace(text,key,*value?value:NULL,true,e);ok=copy!=NULL;}
+    if(ok) ok=set_userinfo(a,actor,copy,e);
+    free(copy);
+    qa_error cleanup={0};
+    if(!application_q3_component_client_adapter_destroy(&a,&cleanup)) {
+        if(ok&&e) *e=cleanup;
+        ok=false;
+    }
+    return ok;
 }
 static bool command(void *context,qa_actor_id actor,const qa_q3_player *state,qa_q3_usercmd *out,qa_error *e)
 {
@@ -375,12 +438,12 @@ static bool source_set_team(application_q3_component_client_adapter *a,qa_actor_
         if(qc->profile==QA_QC_QUAKEWORLD) {
             if(text&&strpbrk(text,"\\\"\n\r"))
                 return application_fail(e,QA_ERROR_ARGUMENT,"Component QW team has invalid Source info bytes");
-            info=info_replace(p->userinfo?p->userinfo:"","team",text,e);
+            info=info_replace(p->userinfo?p->userinfo:"","team",text,false,e);
         } else {
             int32_t color,reference;char value[12];
             if(!color_team(text,&color,e)||!application_qc_reference(qc,actor,&reference,e)) return false;
             snprintf(value,sizeof(value),"%d",color-1);
-            info=info_replace(p->userinfo?p->userinfo:"","bottomcolor",value,e);
+            info=info_replace(p->userinfo?p->userinfo:"","bottomcolor",value,false,e);
             if(!info) return false;
             if(!application_qc_set_float(qc,reference,"team",(float)color,e)) {free(info);return false;}
         }

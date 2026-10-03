@@ -1,4 +1,5 @@
 #include "guest_qc_profile.h"
+#include "guest_q3_component_clients.h"
 #include <stdio.h>
 #include <float.h>
 #include "qa/text.h"
@@ -341,6 +342,26 @@ static bool actor_current(struct application_qc_state *engine, qa_qc_instance *v
     return qa_qc_reference_actor(vm, reference, &actor, error) &&
         (qa_actor_id_equal(actor, expected) || application_fail(error, QA_ERROR_NOT_FOUND, "QC declared actor projection changed generation"));
 }
+static bool declared_client(const struct application_qc_state *engine,qa_actor_id actor)
+{
+    for(uint32_t slot=1;slot<=engine->max_clients;++slot)
+        if(engine->clients[slot].connected&&qa_actor_id_equal(engine->clients[slot].actor,actor)) return true;
+    return false;
+}
+static bool project_userinfo(qa_qc_instance *vm,int32_t reference,
+    const application_qc_bound_field *field,const qa_buffer *value,qa_error *error)
+{
+    size_t length=strlen(field->key);
+    if(length>SIZE_MAX-48) return application_fail(error,QA_ERROR_MEMORY,"QC userinfo buffer name overflows");
+    char *name=malloc(length+48);
+    if(!name) return application_fail(error,QA_ERROR_MEMORY,"Retaining QC userinfo buffer identity");
+    snprintf(name,length+48,"mod-userinfo:%d:%s",reference,field->key);
+    size_t capacity=value->size>=128?value->size+1:128;
+    int32_t string_id;
+    bool ok=qa_qc_engine_string(vm,name,(const char *)value->data,capacity,&string_id,error);
+    free(name);
+    return ok&&qa_qc_project_entity_int(vm,reference,field->definition->offset,string_id,error);
+}
 bool application_qc_project_declared(struct application_qc_state *engine, qa_qc_instance *vm,
                                       const qa_qc_entity_access *access, qa_error *error)
 {
@@ -354,6 +375,16 @@ bool application_qc_project_declared(struct application_qc_state *engine, qa_qc_
         qa_qc_game_value value = {.kind = QA_QC_GAME_FLOAT}; qa_body_state body;
         switch (field->kind) {
         case QC_FIELD_PRIVATE: case QC_FIELD_CONSTANT: case QC_FIELD_INPUT: case QC_FIELD_THINK: case QC_FIELD_NEXTTHINK: continue;
+        case QC_FIELD_USERINFO: {
+            if(!declared_client(engine,access->binding.actor)) continue;
+            qa_buffer text={0};
+            ok=application_client_userinfo_key_read(engine->provider->application,engine->world,
+                access->binding.actor,field->key,&text,error);
+            if(ok) ok=actor_current(engine,vm,access->reference,access->binding.actor,error)&&
+                project_userinfo(vm,access->reference,field,&text,error);
+            qa_buffer_free(&text);
+            continue;
+        }
         case QC_FIELD_HEALTH: {
             qa_combat_state combat;
             ok = qa_combat_read(engine->services.combat, access->binding.actor, &combat, error);
@@ -436,6 +467,15 @@ bool application_qc_store_declared(struct application_qc_state *engine, qa_qc_in
         float scalar; qa_vec3 vector; qa_body_state body;
         switch (field->kind) {
         case QC_FIELD_PRIVATE: case QC_FIELD_CONSTANT: case QC_FIELD_INPUT: case QC_FIELD_THINK: case QC_FIELD_NEXTTHINK: break;
+        case QC_FIELD_USERINFO: {
+            if(!declared_client(engine,actor)) break;
+            int32_t string_id;const char *text;
+            ok=qa_qc_entity_int(vm,event->entity_reference,def->offset,&string_id,error)&&
+                qa_qc_string(vm,string_id,&text,error)&&
+                application_client_userinfo_key_write(engine->provider->application,engine->world,
+                    actor,field->key,text,error);
+            break;
+        }
         case QC_FIELD_VIEW: {
             bool client = false, declared = false;
             for (uint32_t slot = 1; slot <= engine->max_clients; ++slot)

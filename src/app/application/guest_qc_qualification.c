@@ -124,7 +124,9 @@ void application_qc_release_qualification(application_provider *provider)
 {
     struct application_qc_profile *profile = provider->state.qc.qualified;
     if (!profile) return;
-    for (size_t i = 0; profile->fields && i < profile->field_count; ++i) free_value(&profile->fields[i].constant);
+    for (size_t i = 0; profile->fields && i < profile->field_count; ++i) {
+        free_value(&profile->fields[i].constant); free(profile->fields[i].key);
+    }
     free(profile->fields);
     application_qc_calls *lists[] = {&profile->initialize, &profile->admit, &profile->userinfo,
         &profile->disconnect, &profile->client_frame, &profile->frame};
@@ -200,7 +202,7 @@ static bool fields(const qa_json_document *doc, qa_json_id node, application_pro
     profile->fields = profile->field_count ? calloc(profile->field_count, sizeof(*profile->fields)) : NULL;
     if (profile->field_count && !profile->fields) return application_fail(error, QA_ERROR_MEMORY, "Allocating QC declared fields");
     static const char *names[] = {"private", "constant", "health", "origin", "velocity", "angles", "bounds-min", "bounds-max",
-        "think", "nextthink", "classname", "view-offset", "client-flags", "client-input", "inventory"};
+        "think", "nextthink", "classname", "view-offset", "client-flags", "client-input", "inventory", "userinfo"};
     unsigned thinkers = 0, deadlines = 0;
     for (size_t i = 0; i < profile->field_count; ++i) {
         qa_json_id row = qa_json_at(doc, node, i);
@@ -217,7 +219,7 @@ static bool fields(const qa_json_document *doc, qa_json_id node, application_pro
             if (!value(doc, qa_json_get(doc, row, "value"), 0, false, &field->constant, error)) return false;
             type = source_type(&field->constant);
         } else if (field->kind == QC_FIELD_THINK) { type = QA_QC_FUNCTION; ++thinkers; }
-        else if (field->kind == QC_FIELD_CLASSNAME) type = QA_QC_STRING;
+        else if (field->kind == QC_FIELD_CLASSNAME || field->kind == QC_FIELD_USERINFO) type = QA_QC_STRING;
         else if (field->kind == QC_FIELD_HEALTH || field->kind == QC_FIELD_NEXTTHINK ||
             field->kind == QC_FIELD_INVENTORY || field->kind == QC_FIELD_CLIENT_FLAGS) type = QA_QC_FLOAT;
         else if (field->kind != QC_FIELD_PRIVATE && field->kind != QC_FIELD_INPUT) type = QA_QC_VECTOR;
@@ -248,6 +250,11 @@ static bool fields(const qa_json_document *doc, qa_json_id node, application_pro
             name = string(doc, qa_json_get(doc, row, "item"), error);
             bool ok = name && *name && qa_strings_intern_cstr(qa_session_strings(provider->application->session), name, &field->item, error);
             free(name); if (!ok) return false;
+        }
+        if (field->kind == QC_FIELD_USERINFO) {
+            field->key = string(doc, qa_json_get(doc, row, "key"), error);
+            if (!field->key || !*field->key || strchr(field->key, '\\'))
+                return application_fail(error, QA_ERROR_FORMAT, "QC userinfo field requires a valid info key");
         }
         if (type != field->definition->type) return application_fail(error, QA_ERROR_FORMAT, "QC declared actor field type differs from source");
         uint32_t width = type == QA_QC_VECTOR ? 3u : 1u;
@@ -647,9 +654,12 @@ bool application_qc_qualify(application_provider *provider, qa_error *error)
             calls(doc, qa_json_get(doc, clients, "frame"), true, provider->state.qc.program, lifecycle | (UINT64_C(1) << QC_INPUT_ELAPSED), &profile->client_frame, error) &&
             bindings(doc, qa_json_get(doc, clients, "input"), provider->state.qc.program, profile, error);
     }
-    for (size_t i = 0; ok && i < profile->field_count; ++i)
+    for (size_t i = 0; ok && i < profile->field_count; ++i) {
         if (profile->fields[i].kind == QC_FIELD_INPUT && (!profile->clients || !profile->input_count))
             ok = application_fail(error, QA_ERROR_FORMAT, "QC client input fields require declared input applications");
+        if (profile->fields[i].kind == QC_FIELD_USERINFO && !profile->clients)
+            ok = application_fail(error, QA_ERROR_FORMAT, "QC userinfo fields require declared client services");
+    }
     qa_json_id cvars = qa_json_get(doc, root, "cvars");
     if (ok) ok = array(doc, cvars, true, error);
     if (ok) {

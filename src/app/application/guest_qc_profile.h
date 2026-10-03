@@ -51,7 +51,7 @@ typedef enum application_qc_field_kind {
     QC_FIELD_PRIVATE, QC_FIELD_CONSTANT, QC_FIELD_HEALTH, QC_FIELD_ORIGIN,
     QC_FIELD_VELOCITY, QC_FIELD_ANGLES, QC_FIELD_MIN, QC_FIELD_MAX,
     QC_FIELD_THINK, QC_FIELD_NEXTTHINK, QC_FIELD_CLASSNAME, QC_FIELD_VIEW,
-    QC_FIELD_CLIENT_FLAGS, QC_FIELD_INPUT, QC_FIELD_INVENTORY
+    QC_FIELD_CLIENT_FLAGS, QC_FIELD_INPUT, QC_FIELD_INVENTORY, QC_FIELD_USERINFO
 } application_qc_field_kind;
 typedef struct application_qc_bound_field {
     const qa_qc_definition *definition;
@@ -59,6 +59,7 @@ typedef struct application_qc_bound_field {
     application_qc_value constant;
     application_qc_input_id input;
     qa_item_id item;
+    char *key;
     float scale;
     uint32_t private_mask;
     bool nonzero, grounded;
