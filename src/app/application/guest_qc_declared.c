@@ -405,7 +405,7 @@ bool application_qc_project_declared(struct application_qc_state *engine, qa_qc_
         }
         case QC_FIELD_HEALTH: {
             qa_combat_state combat;
-            ok = qa_combat_read(engine->services.combat, access->binding.actor, &combat, error);
+            ok = qa_combat_read_traits(engine->services.combat, access->binding.actor, &combat, error);
             if (ok) value.value.number = combat.health;
             break;
         }
