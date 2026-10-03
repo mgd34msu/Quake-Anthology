@@ -447,6 +447,39 @@ static bool client_outputs(const qa_json_document *doc, qa_json_id node,
     return true;
 }
 
+bool application_qc_authored_map_ready(const application_provider *provider, qa_error *error)
+{
+    if (!provider || provider->kind != APPLICATION_PROVIDER_QC || !provider->state.qc.program)
+        return application_fail(error, QA_ERROR_ARGUMENT, "QC authored map has no compiled source owner");
+    static const struct { const char *name; qa_qc_value_type type; } fields[] = {
+        {"classname", QA_QC_STRING}, {"model", QA_QC_STRING},
+        {"modelindex", QA_QC_FLOAT}, {"solid", QA_QC_FLOAT},
+        {"movetype", QA_QC_FLOAT}, {"flags", QA_QC_FLOAT},
+        {"owner", QA_QC_ENTITY}, {"think", QA_QC_FUNCTION},
+        {"nextthink", QA_QC_FLOAT}
+    }, globals[] = {
+        {"self", QA_QC_ENTITY}, {"other", QA_QC_ENTITY},
+        {"mapname", QA_QC_STRING}, {"time", QA_QC_FLOAT}
+    };
+    for (size_t i = 0; i < sizeof(fields) / sizeof(*fields); ++i) {
+        const qa_qc_definition *field = qa_qc_program_find_field(provider->state.qc.program, fields[i].name);
+        if (!field || field->type != fields[i].type) {
+            qa_error_set(error, QA_ERROR_FORMAT, i,
+                "QC authored map field %s is missing or has a different type", fields[i].name);
+            return false;
+        }
+    }
+    for (size_t i = 0; i < sizeof(globals) / sizeof(*globals); ++i) {
+        const qa_qc_definition *global = qa_qc_program_find_global(provider->state.qc.program, globals[i].name);
+        if (!global || global->type != globals[i].type) {
+            qa_error_set(error, QA_ERROR_FORMAT, i,
+                "QC authored map global %s is missing or has a different type", globals[i].name);
+            return false;
+        }
+    }
+    return true;
+}
+
 bool application_qc_qualify(application_provider *provider, qa_error *error)
 {
     if (!provider || !provider->state.qc.program || provider->state.qc.qualified || !provider->launch->selection.artifact)
@@ -468,7 +501,7 @@ bool application_qc_qualify(application_provider *provider, qa_error *error)
     free(digest); free(path);
     if (!ok && error && error->code == QA_OK) application_fail(error, QA_ERROR_FORMAT, "QC declaration artifact identity differs");
     if (ok && (provider->launch->roles & QA_ROLE_BIT(QA_ROLE_ENTITIES)))
-        ok = application_fail(error, QA_ERROR_UNSUPPORTED, "Declared QC authored entity ownership still requires its source map adapter");
+        ok = application_qc_authored_map_ready(provider, error);
     static const char *pending[] = {"callbacks", "combat", "protection", "items", "pickups", "objectives", "commands", "clientPresentation"};
     for (size_t i = 0; ok && i < sizeof(pending) / sizeof(pending[0]); ++i)
         ok = empty(doc, qa_json_get(doc, root, pending[i]), error);

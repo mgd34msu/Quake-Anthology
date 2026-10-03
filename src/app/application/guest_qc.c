@@ -1185,12 +1185,13 @@ static bool load_map(application_provider *provider, const qa_bsp_view *bsp,
     if(!application_bots_npc_idle(provider))
         return application_fail(error,QA_ERROR_ARGUMENT,"QC map retains an active monster path");
     application_bots_npc_destroy(provider);
-    if (provider->state.qc.qualified)
+    if (provider->state.qc.qualified && !authored_entities)
         return application_qc_load_declared_map(engine, bsp, entities, map_id, spawn_id, error);
     const char *map = qa_strings_cstr(qa_session_strings(provider->application->session), map_id);
     (void)bsp; (void)spawn_id;
     if (engine != NULL && !engine->loading) {
         if (!qa_qc_game_reset_level(provider->state.qc.game, error)) return false;
+        engine->initialized = false;
         application_qc_rerelease_reset(engine);
         for (uint32_t slot = 1; slot <= engine->max_clients; ++slot) {
             engine->clients[slot].receipt_seen = false;
@@ -1260,6 +1261,7 @@ static bool load_map(application_provider *provider, const qa_bsp_view *bsp,
         !application_qc_set_float(engine, 0, "modelindex", 1, error) ||
         !application_qc_set_float(engine, 0, "solid", 4, error) ||
         !application_qc_set_float(engine, 0, "movetype", 7, error)) return false;
+    if (!application_qc_initialize_declared(engine, error)) return false;
     size_t count = authored_entities ? entities->count : 1;
     for (size_t i = 0; i < count; ++i) {
         qa_entity_record record = entities->records[i]; int32_t reference;
@@ -1276,8 +1278,8 @@ bool application_qc_spawn_map(application_provider *provider, const qa_bsp_view 
                                const qa_entities *entities, qa_string_id map,
                                qa_string_id spawn, qa_error *error)
 {
-    if (provider && provider->state.qc.qualified)
-        return application_fail(error, QA_ERROR_UNSUPPORTED, "Declared QC authored map spawning requires its source entity adapter");
+    if (provider && provider->state.qc.qualified &&
+        !application_qc_authored_map_ready(provider, error)) return false;
     return load_map(provider, bsp, entities, map, spawn, true, error);
 }
 bool application_qc_initialize_map(application_provider *provider, const qa_bsp_view *bsp,

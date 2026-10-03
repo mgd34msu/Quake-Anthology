@@ -261,6 +261,19 @@ bool application_qc_store_declared(struct application_qc_state *engine, qa_qc_in
     if (!ok && error && error->code == QA_OK) application_fail(error, QA_ERROR_FORMAT, "Invalid QC declared source store");
     return ok;
 }
+bool application_qc_initialize_declared(struct application_qc_state *engine, qa_error *error)
+{
+    const struct application_qc_profile *profile = engine->provider->state.qc.qualified;
+    if (!profile) return true;
+    if (!application_qc_prepare_markers(engine, error)) return false;
+    if (!engine->initialized) {
+        application_qc_inputs inputs = {.time_ns = engine->source_time_ns};
+        if (!application_qc_run_calls(engine, &profile->initialize, &inputs, error)) return false;
+        engine->initialized = true;
+    }
+    return true;
+}
+
 bool application_qc_load_declared_map(struct application_qc_state *engine, const qa_bsp_view *bsp,
                                         const qa_entities *entities, qa_string_id map, qa_string_id spawn, qa_error *error)
 {
@@ -293,12 +306,7 @@ bool application_qc_load_declared_map(struct application_qc_state *engine, const
             qa_qc_set_global_int(vm, mapname->offset, string, error);
         free(short_name); if (!ok) return false;
     }
-    if (!application_qc_prepare_markers(engine, error)) return false;
-    if (!engine->initialized) {
-        application_qc_inputs inputs = {.time_ns = engine->source_time_ns};
-        if (!application_qc_run_calls(engine, &profile->initialize, &inputs, error)) return false;
-        engine->initialized = true;
-    }
+    if (!application_qc_initialize_declared(engine, error)) return false;
     if (!application_qc_flush(engine, error) || !qa_qc_game_loading(engine->provider->state.qc.game, false, error)) return false;
     engine->loading = false; qa_cvars_set_server_active(engine->cvars, true); return true;
 }

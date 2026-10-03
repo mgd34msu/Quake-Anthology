@@ -4,7 +4,7 @@
 #include "guest_q3_combat.h"
 #include "guest_q3_weapons_services.h"
 #include "guest_native_q2_private.h"
-#include "guest_qc_internal.h"
+#include "guest_qc_profile.h"
 #include "guest_q3_restart.h"
 #include "guest_q3_components.h"
 #include "q3_round.h"
@@ -608,9 +608,9 @@ bool application_players_prepare(qa_application *application,
          publication->map_provider == application->players->map_provider &&
          publication->map_provider->kind == APPLICATION_PROVIDER_Q3);
     if (publication->map_provider->kind == APPLICATION_PROVIDER_QC &&
-        publication->map_provider->state.qc.qualified != NULL)
-        return application_fail(error, QA_ERROR_UNSUPPORTED,
-                                "qualified QC authored map ownership is not implemented");
+        publication->map_provider->state.qc.qualified != NULL &&
+        !application_qc_authored_map_ready(publication->map_provider, error))
+        return false;
     if (choices->seat_count > UINT32_MAX - 1 ||
         choices->seat_count > SIZE_MAX / sizeof(application_player_record) ||
         choices->seat_count > SIZE_MAX / sizeof(application_player_carry))
