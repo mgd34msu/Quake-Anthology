@@ -1681,6 +1681,17 @@ static bool qualify_base(application_provider *provider, qa_world *world, q3g_re
     return ok;
 }
 
+static bool restore_client_sources(application_provider *provider,
+    struct application_q3_guest *engine, qa_error *error)
+{
+    for (size_t index = 0;; ++index) {
+        qa_application_startup_source source;
+        if (!application_guest_q3_client_console_source(engine, index, &source)) break;
+        if (!application_startup_tuple_restore(provider, &source, error)) return false;
+    }
+    return true;
+}
+
 bool application_guest_q3_save_prepare(application_provider *provider, qa_world *world,
     const qa_product *product, const qa_launch_choices *choices, const qa_save_record *record, qa_error *error)
 {
@@ -1797,11 +1808,7 @@ bool application_guest_q3_save_prepare(application_provider *provider, qa_world 
                 row->owner,row->memory, row->definitions, error))
             return application_fail(error, QA_ERROR_FORMAT, "Restored CLIENT globals changed their actual slot ownership");
     }
-    for (size_t index = 0;; ++index) {
-        qa_application_startup_source source;
-        if (!application_guest_q3_client_console_source(engine, index, &source)) break;
-        if (!application_startup_tuple_restore(provider, &source, error)) return false;
-    }
+    if (!saved->game && !restore_client_sources(provider, engine, error)) return false;
     memcpy(engine->seats, saved->seats, sizeof(engine->seats));
     if (saved->entity_text && !(engine->entity_text = q3g_copy_text(saved->entity_text, error))) return false;
     for (size_t i = 0; i < saved->artifact_count; ++i)
@@ -1872,6 +1879,7 @@ bool application_guest_q3_save_prepare(application_provider *provider, qa_world 
         if (role->weapon_services && !application_q3_weapons_services_validate(role->weapon_services, error)) return false;
         if (artifact->kind == QA_QVM_GAME) {
             engine->game = role; q3g_game_aliases(engine, role);
+            if (!restore_client_sources(provider, engine, error)) return false;
             if ((next->flags & ROLE_COMMITTED) && application_bots_guest_runtime(provider->application, provider) &&
                 !application_bots_guest_bind(provider->application, provider, role->host, error)) return false;
         }
