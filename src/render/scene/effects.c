@@ -82,7 +82,7 @@ bool qa_scene_legacy_dlights(qa_scene_frame *frame, const qa_scene_view *view,
             qa_error_set(error, QA_ERROR_ARGUMENT, at, "Legacy light fan is nonfinite");
             return false;
         }
-        if (!light->radius) continue;
+        if (light->radius == 0.0f) continue;
         float radius = light->radius * .35f;
         if (family == QA_SCENE_Q1 && qa_vec_length(qa_vec_sub(light->origin, view->origin)) < radius) {
             float addition = light->radius * .0003f;

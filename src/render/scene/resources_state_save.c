@@ -93,9 +93,9 @@ static bool source_builtin_image(const qa_scene_image *image, const qa_q3_image_
         image->wrap != (scratch ? QA_SCENE_CLAMP : QA_SCENE_REPEAT) ||
         image->filter != (missing ? QA_SCENE_LINEAR_MIPMAP_NEAREST : QA_SCENE_LINEAR) ||
         image->logical_width != size || image->logical_height != size || image->animation_count || image->animation ||
-        image->revision != 1 || image->border.x || image->border.y || image->border.z || image->border.w ||
-        image->source_dlight || image->source_after_upload_border || image->source_upload_border.x ||
-        image->source_upload_border.y || image->source_upload_border.z || image->source_upload_border.w) return false;
+        image->revision != 1 || image->border.x != 0.0f || image->border.y != 0.0f || image->border.z != 0.0f || image->border.w != 0.0f ||
+        image->source_dlight || image->source_after_upload_border || image->source_upload_border.x != 0.0f ||
+        image->source_upload_border.y != 0.0f || image->source_upload_border.z != 0.0f || image->source_upload_border.w != 0.0f) return false;
     uint8_t pixels[16 * 16 * 4];
     for (uint32_t y = 0; y < size; ++y) for (uint32_t x = 0; x < size; ++x) {
         uint8_t pixel = missing ? (x == 0 || x == 15 || y == 0 || y == 15 ? 255 : 32) : value;
@@ -146,7 +146,7 @@ static bool source_generated_image(const qa_scene_image *image, const qa_q3_imag
     if (!image || !image->name || strcmp(image->name, name) || image->kind == QA_SCENE_DEPTH32F ||
         image->wrap != QA_SCENE_CLAMP || image->filter != QA_SCENE_LINEAR || image->animation_count ||
         image->revision != 1 || image->logical_width != width || image->logical_height != height ||
-        image->border.x || image->border.y || image->border.z || image->border.w) return false;
+        image->border.x != 0.0f || image->border.y != 0.0f || image->border.z != 0.0f || image->border.w != 0.0f) return false;
     if (image->source_dlight != !fog || image->source_after_upload_border != fog ||
         (fog && (image->source_upload_border.x != 1 || image->source_upload_border.y != 1 ||
          image->source_upload_border.z != 1 || image->source_upload_border.w != 1))) return false;

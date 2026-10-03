@@ -439,9 +439,9 @@ bool qa_scene_shadows_prepare_options(qa_scene_shadows *shadows, const qa_scene_
         if (!candidate->packed) continue;
         qa_scene_shadow_light *prepared = &lights[candidate->light_index];
         const qa_scene_light *light = &prepared->light;
-        prepared->atlas_rect = (qa_scene_vec4){(float)candidate->rect.x / SHADOW_ATLAS_SIZE,
-            (float)candidate->rect.y / SHADOW_ATLAS_SIZE, (float)candidate->rect.width / SHADOW_ATLAS_SIZE,
-            (float)candidate->rect.height / SHADOW_ATLAS_SIZE};
+        prepared->atlas_rect = (qa_scene_vec4){(float)candidate->rect.x / (float)SHADOW_ATLAS_SIZE,
+            (float)candidate->rect.y / (float)SHADOW_ATLAS_SIZE, (float)candidate->rect.width / (float)SHADOW_ATLAS_SIZE,
+            (float)candidate->rect.height / (float)SHADOW_ATLAS_SIZE};
         prepared->point_shadow = !light->spot;
         prepared->shadow_valid = true;
         qa_scene_matrix projection = perspective(light->spot ? cone_fov(light->cos_half_angle) : 90, light->radius);

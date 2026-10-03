@@ -79,8 +79,8 @@ static bool image_fields(qa_source_save_io *io, qa_scene_resources *owner, const
         isfinite(source_upload_border.x) && isfinite(source_upload_border.y) &&
         isfinite(source_upload_border.z) && isfinite(source_upload_border.w) &&
         (source_q3 || !source_after_upload_border) &&
-        (source_after_upload_border || (!source_upload_border.x && !source_upload_border.y &&
-         !source_upload_border.z && !source_upload_border.w));
+        (source_after_upload_border || (source_upload_border.x == 0.0f && source_upload_border.y == 0.0f &&
+         source_upload_border.z == 0.0f && source_upload_border.w == 0.0f));
     qa_scene_image_level *decoded = reading && ok ? calloc(levels, sizeof(*decoded)) : NULL;
     if (reading && ok && !decoded) { qa_error_set(io->error, QA_ERROR_MEMORY, io->offset, "Allocating saved mip levels"); ok = false; }
     for (size_t i = 0; ok && i < levels; ++i) {

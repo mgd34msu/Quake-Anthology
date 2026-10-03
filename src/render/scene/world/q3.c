@@ -504,7 +504,7 @@ static bool submit_material_sky(const qa_scene_world *world, qa_material_library
     if (geometry.clouds.index_count || context->source_scratch) {
         size_t first = frame->command_count;
         qa_scene_mesh clouds = geometry.clouds;
-        if (context->source_scratch && !material->sky_height) clouds = (qa_scene_mesh){.primitive = QA_SCENE_TRIANGLES};
+        if (context->source_scratch && material->sky_height == 0.0f) clouds = (qa_scene_mesh){.primitive = QA_SCENE_TRIANGLES};
         if (!qa_material_submit(original, &clouds, &sky_context, frame, error)) return false;
         for (size_t i = first; i < frame->command_count; ++i) if (frame->commands[i].kind == QA_SCENE_COMMAND_DRAW)
             frame->commands[i].data.draw.state.depth_near = frame->commands[i].data.draw.state.depth_far =

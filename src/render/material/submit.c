@@ -744,7 +744,7 @@ static bool source_decoded_entity(qa_material_source_scratch *source, qa_materia
         context->model.m[14] = entity->origin.z;
         qa_vec3 delta = qa_vec_sub(source->view_origin, entity->origin);
         float scale = 1;
-        if (entity->non_normalized_axes) { float length = qa_vec_length(entity->axis[0]); scale = length ? 1 / length : 0; }
+        if (entity->non_normalized_axes) { float length = qa_vec_length(entity->axis[0]); scale = length != 0.0f ? 1 / length : 0; }
         context->local_view_origin = qa_v3(qa_vec_dot(delta, entity->axis[0]) * scale,
             qa_vec_dot(delta, entity->axis[1]) * scale, qa_vec_dot(delta, entity->axis[2]) * scale);
     }
@@ -767,7 +767,7 @@ static bool source_begin_surface(qa_material_source_scratch *source,
     source->fog_surface = row->context.fog_surface; source->fog_volume_color = row->context.fog_volume_color;
     double seconds = source->pictures ? (float)row->context.seconds - material->source_time_offset :
         shader_seconds(row->original, material, &row->context);
-    if (material->clamp_time && seconds >= material->clamp_time) seconds = material->clamp_time;
+    if (material->clamp_time != 0.0f && seconds >= material->clamp_time) seconds = material->clamp_time;
     source->shader_time = (float)seconds;
     source->identity_light = row->context.identity_light;
     return true;
@@ -897,7 +897,7 @@ static bool submit_source(const qa_material *original, const qa_material *materi
             qa_error_set(error, QA_ERROR_FORMAT, 0, "Source tess sentinel was overwritten"); ok = false;
         }
         skipped = ok && context->source_diagnostics.debug_sort != 0 &&
-            context->source_diagnostics.debug_sort < material->sort;
+            (float)context->source_diagnostics.debug_sort < material->sort;
         qa_scene_mesh deformed;
         if (ok && !skipped) ok = qa_material_deform_mesh(material, &geometry, context, time, frame, &deformed, error);
         if (ok && !skipped && (grid ? deformed.vertex_count > QA_SOURCE_TESS_VERTICES || deformed.index_count > QA_SOURCE_TESS_INDEXES :
@@ -1266,7 +1266,7 @@ static bool source_flush(qa_material_source_scratch *source, const material_sour
         return source->issuing || qa_scene_frame_group(frame, first, QA_SCENE_GROUP_SEQUENCE, row->original,
             row->original->sort, context.entity, context.fog_index, 0, error);
     }
-    if (!context.source_diagnostics.debug_sort || context.source_diagnostics.debug_sort>=material->sort) {
+    if (!context.source_diagnostics.debug_sort || (float)context.source_diagnostics.debug_sort>=material->sort) {
         ++source->owner->counters.shaders;
         source->owner->counters.vertices+=source->vertex_count;
         source->owner->counters.indexes+=source->index_count;
@@ -1275,7 +1275,7 @@ static bool source_flush(qa_material_source_scratch *source, const material_sour
         if (source->indices[QA_SOURCE_TESS_INDEXES - 1] != 0 || source->vertices[QA_SOURCE_TESS_VERTICES - 1].position.x != 0) {
             qa_error_set(error, QA_ERROR_FORMAT, 0, "Source tess sentinel was overwritten"); return false;
         }
-        if (context.source_diagnostics.debug_sort != 0 && context.source_diagnostics.debug_sort < material->sort) return true;
+        if (context.source_diagnostics.debug_sort != 0 && (float)context.source_diagnostics.debug_sort < material->sort) return true;
         bool depth_changed = source->issuing && !context.source_diagnostics.fast_sky;
         if (depth_changed && !material_source_depth_range(source,
             context.source_diagnostics.show_sky ? 0 : 1, context.source_diagnostics.show_sky ? 0 : 1, error)) return false;
