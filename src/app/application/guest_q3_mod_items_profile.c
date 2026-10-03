@@ -128,7 +128,7 @@ static bool held(const qa_json_document *d,qa_json_id id,qa_error *e)
     if(!resource_path(d,qa_json_get(d,model,"path"),e)||
         !qa_json_u64(d,qa_json_get(d,model,"referenceFrame"),&frame,e)||frame>UINT64_C(9007199254740991)||
         !vector(d,qa_json_get(d,grip,"origin"),origin,e)||qa_json_type(d,axes)!=QA_JSON_ARRAY||qa_json_size(d,axes)!=3||
-        (scale!=QA_JSON_NONE&&!vector(d,scale,sizes,e))||!sizes[0]||!sizes[1]||!sizes[2]||
+        (scale!=QA_JSON_NONE&&!vector(d,scale,sizes,e))||sizes[0]==0||sizes[1]==0||sizes[2]==0||
         (hash!=QA_JSON_NONE&&!digest(d,hash,e))||(fallback!=QA_JSON_NONE&&!resource_path(d,fallback,e)))return false;
     for(size_t i=0;i<3;++i)if(!vector(d,qa_json_at(d,axes,i),axis[i],e)||fabs(dot(axis[i],axis[i])-1)>0.001)return false;
     double cross[3]={axis[0][1]*axis[1][2]-axis[0][2]*axis[1][1],

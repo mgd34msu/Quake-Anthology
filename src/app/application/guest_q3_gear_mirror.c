@@ -101,7 +101,7 @@ bool q3gear_mirror(application_q3_gear *gear, const application_q3_gear_target *
     } else {
         entity.eType = target.mover ? 4 : 0;
         qa_vec3 delta = {body->origin.x-binding.origin.x, body->origin.y-binding.origin.y, body->origin.z-binding.origin.z};
-        if (target.mover && gear->definition->callbacks.move_mover_hooks && (delta.x || delta.y || delta.z)) {
+        if (target.mover && gear->definition->callbacks.move_mover_hooks && (delta.x != 0 || delta.y != 0 || delta.z != 0)) {
             gear->translation = delta; gear->mover_pending = true;
             int32_t words[] = {(int32_t)binding.pointer, 0};
             bool okay = q3gear_call(gear, gear->definition->callbacks.move_mover_hooks, words, 2, &result, error);

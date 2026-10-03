@@ -52,7 +52,7 @@ static bool write(void *context,const qa_inventory_entry *value,qa_error *e)
     const item_storage *s=storage_for(a->owner->profile,value->item,&bit);
     if(!s)return false;
     if(s->bits){int32_t previous;if(value->capacity!=1||(value->count!=0&&value->count!=1)||!q3items_scalar(a,s->field,NULL,&previous,e))return false;
-        uint32_t bits=value->count?((uint32_t)previous|s->items[bit].mask):((uint32_t)previous&~s->items[bit].mask);int32_t word;memcpy(&word,&bits,4);
+        uint32_t bits=value->count!=0?((uint32_t)previous|s->items[bit].mask):((uint32_t)previous&~s->items[bit].mask);int32_t word;memcpy(&word,&bits,4);
         return write_word(a,s->field,word,e);
     }
     if(!isfinite(value->count)||trunc(value->count)!=value->count||value->count<INT32_MIN||value->count>INT32_MAX||

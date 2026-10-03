@@ -208,7 +208,7 @@ static bool inventory_write_inner(void *opaque, const qa_inventory_entry *entry,
         if (!read_word(p->role, at, &previous, error)) return false;
         if (previous & ~field->allowed_mask)
             return application_fail(error, QA_ERROR_FORMAT, "Guest inventory contains undeclared source bits");
-        return write_word(p->role, at, entry->count ? previous | field->mask : previous & ~field->mask, error);
+        return write_word(p->role, at, entry->count != 0 ? previous | field->mask : previous & ~field->mask, error);
     }
     if (entry->policy != QA_COUNT_SOURCE_INT32)
         return application_fail(error, QA_ERROR_ARGUMENT, "Guest counter requires its signed source policy");
