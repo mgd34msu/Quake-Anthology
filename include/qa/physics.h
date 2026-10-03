@@ -124,6 +124,10 @@ bool qa_physics_push_entity(qa_physics *, qa_actor_id, qa_vec3 displacement,
                             const qa_actor_id *excluded, size_t excluded_count,
                             qa_trace_result *, qa_error *);
 bool qa_physics_touch_triggers(qa_physics *, qa_actor_id, qa_error *);
+/* Source relinking uses its own trigger traversal even when the actor has a
+ * different selected movement family. */
+bool qa_physics_touch_triggers_source(qa_physics *, qa_actor_id,
+                                       qa_collision_family, qa_error *);
 bool qa_physics_impact(qa_physics *, qa_actor_id, const qa_trace_result *, qa_error *);
 bool qa_physics_water_transition(qa_physics *, qa_actor_id, qa_vec3 previous_origin,
                                  qa_error *);

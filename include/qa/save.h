@@ -7,7 +7,7 @@
 #include "qa/world.h"
 #include "qa/session.h"
 
-#define QA_SAVE_VERSION 8u
+#define QA_SAVE_VERSION 9u
 #define QA_SAVE_OWNER_LIMIT 65536u
 #define QA_SAVE_NAME_LIMIT 255u
 

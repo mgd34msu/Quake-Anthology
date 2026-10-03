@@ -342,6 +342,28 @@ static qa_actor_owner q1_combat_provider(void *opaque, qa_actor_id actor)
     return selected == NULL ? provider->owner : selected->owner;
 }
 
+static bool q1_source_damage(void *opaque, qa_damage_request *request,
+                              qa_error *error)
+{
+    application_provider *provider = opaque;
+    if (!application_q3_weapons_services_q1_damage(opaque, request, error))
+        return false;
+    application_provider *movement = application_provider_for(
+        provider->application, request->target, QA_ROLE_MOVEMENT, "");
+    request->attack.movement_provider = movement == NULL ? 0 : movement->owner;
+    return true;
+}
+
+static bool q1_force_retouch(void *opaque, uint32_t source_frames, qa_error *error)
+{
+    application_provider *provider = opaque;
+    if (!provider || provider->kind != APPLICATION_PROVIDER_Q1 ||
+        !provider->constructed || !provider->attached || provider->close_pending ||
+        !provider->state.q1)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q1 retouch lost its native Source owner");
+    return qa_q1_game_force_retouch(provider->state.q1, source_frames, error);
+}
+
 static bool q1_find_target(void *opaque, qa_string_id target,
                            qa_actor_id *out)
 {
@@ -551,7 +573,8 @@ static bool construct_q1(qa_application *application,
                        .sound_precache = application_unified_q1_sound_precache,
                        .precache_reset = application_unified_q1_precache_reset,
                        .grapple_weapon_frame = application_q3_weapons_services_grapple_frame,
-                       .source_damage = application_q3_weapons_services_q1_damage,
+                       .source_damage = q1_source_damage,
+                       .force_retouch = q1_force_retouch,
                        .weapon_parameters = application_q1_weapon_parameters,
                        .weapon_observation = application_q1_weapon_observation,
                        .before_fire = application_q1_before_fire,

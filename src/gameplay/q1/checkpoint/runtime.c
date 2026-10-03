@@ -73,6 +73,7 @@ bool q1_save_runtime(q1_save_io *io, qa_q1_game *g) {
         return q1_save_fail(io, "Q1 finale acknowledgement has no source poll");
     Q1_SAVE(io, u64, g->time_ns);
     Q1_SAVE(io, u64, g->attack_sequence);
+    Q1_SAVE(io, u32, g->force_retouch);
     Q1_SAVE(io, vector, g->forward);
     Q1_SAVE(io, vector, g->right);
     Q1_SAVE(io, vector, g->up);

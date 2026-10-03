@@ -337,6 +337,11 @@ bool qa_q1_game_command_begin(qa_q1_game *, uint64_t time_ns, uint64_t source_el
                               qa_q1_game_operation *, qa_error *);
 /* Read the retained source clock without admitting a command or world frame. */
 bool qa_q1_game_clock_read(const qa_q1_game *, uint64_t *time_ns, double *elapsed_seconds);
+/* Source force_retouch is assigned by gameplay, applied before each live
+ * actor's source physics turn, and decremented after the complete frame. */
+bool qa_q1_game_force_retouch(qa_q1_game *, uint32_t source_frames, qa_error *);
+bool qa_q1_game_retouch_actor(qa_q1_game *, qa_actor_id,
+                              const qa_source_frame *, qa_error *);
 /* Retain callback-owner storage without marking an operation active. Retire
  * all borrowed world/session/target contexts before ending this owner lease. */
 bool qa_q1_game_retain(qa_q1_game *, qa_q1_game_operation *, qa_error *);

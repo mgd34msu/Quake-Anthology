@@ -178,7 +178,9 @@ static void trigger_touch(void *context, qa_world *world, const qa_touch_contact
     call->ok = call->physics->services.touch(call->physics->services.context, contact, call->error);
 }
 
-bool qa_physics_touch_triggers(qa_physics *p, qa_actor_id actor, qa_error *error) {
+static bool touch_triggers(qa_physics *p, qa_actor_id actor,
+                           qa_collision_family family, bool source,
+                           qa_error *error) {
     qa_physics_properties props;
     if (!ph_live(p, actor)) return true;
     if (!p->services.read(p->services.context, actor, &props)) {
@@ -190,11 +192,25 @@ bool qa_physics_touch_triggers(qa_physics *p, qa_actor_id actor, qa_error *error
         }
         props = qa_physics_properties_default(collision.family);
     }
-    if (props.family != QA_COLLISION_Q1 && (props.flags & QA_PHYSICS_DEAD) &&
+    if (!source) family = props.family;
+    if (family != QA_COLLISION_Q1 && (props.flags & QA_PHYSICS_DEAD) &&
         (props.flags & (QA_PHYSICS_PLAYER | QA_PHYSICS_MONSTER))) return true;
     ph_trigger_context call = {.physics = p, .error = error, .ok = true};
-    return qa_world_touch_triggers(p->world, actor, props.family, trigger_active,
+    return qa_world_touch_triggers(p->world, actor, family, trigger_active,
                                   trigger_touch, &call, error) && call.ok;
+}
+
+bool qa_physics_touch_triggers(qa_physics *p, qa_actor_id actor, qa_error *error) {
+    return touch_triggers(p, actor, QA_COLLISION_Q1, false, error);
+}
+
+bool qa_physics_touch_triggers_source(qa_physics *p, qa_actor_id actor,
+                                       qa_collision_family family, qa_error *error) {
+    if (!p || family < QA_COLLISION_Q1 || family > QA_COLLISION_Q3) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid source trigger traversal");
+        return false;
+    }
+    return touch_triggers(p, actor, family, true, error);
 }
 
 bool qa_physics_impact(qa_physics *p, qa_actor_id actor,

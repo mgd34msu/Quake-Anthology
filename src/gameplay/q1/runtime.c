@@ -552,6 +552,18 @@ static bool actor_frame(void *context, qa_session *session, qa_actor_id actor,
     bool ok = actor_frame_inner(context, session, actor, frame, error);
     return operation_finish(&operation, ok, error);
 }
+static bool end_frame(void *context, qa_session *session, const qa_source_frame *frame,
+                       qa_error *error) {
+    (void)session;
+    (void)frame;
+    qa_q1_game *g = context;
+    qa_q1_game_operation operation = {0};
+    if (!qa_q1_game_operation_begin(g, &operation, error))
+        return false;
+    if (g->force_retouch)
+        --g->force_retouch;
+    return operation_finish(&operation, true, error);
+}
 static void released(void *context, qa_session *session, qa_actor_record actor) {
     (void)session;
     qa_q1_game_actor_released(context, actor);
@@ -646,6 +658,42 @@ bool qa_q1_game_clock_read(const qa_q1_game *g, uint64_t *time_ns, double *elaps
     *elapsed_seconds = g->elapsed;
     return true;
 }
+bool qa_q1_game_force_retouch(qa_q1_game *g, uint32_t source_frames, qa_error *error) {
+    qa_q1_game_operation operation = {0};
+    if (!qa_q1_game_operation_begin(g, &operation, error))
+        return false;
+    if (!g->services.physics) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q1 retouch has no source physics service");
+        return operation_finish(&operation, false, error);
+    }
+    g->force_retouch = source_frames;
+    return operation_finish(&operation, true, error);
+}
+bool qa_q1_game_retouch_actor(qa_q1_game *g, qa_actor_id actor,
+                              const qa_source_frame *frame, qa_error *error) {
+    if (!g || !frame || frame->provider != g->options.provider ||
+        frame->kind != (g->options.quakeworld ? QA_CLOCK_QUAKEWORLD : QA_CLOCK_NETQUAKE) ||
+        frame->phase != QA_ENTITY_PHYSICS) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot, "Q1 retouch belongs to another source turn");
+        return false;
+    }
+    qa_q1_game_operation operation = {0};
+    if (!qa_q1_game_operation_begin(g, &operation, error))
+        return false;
+    bool ok = true;
+    if (g->force_retouch && q1_alive(g, actor)) {
+        if (!g->services.physics) {
+            qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot, "Q1 retouch lost its source physics service");
+            ok = false;
+        } else {
+            ok = qa_world_link(g->services.world, actor, NULL, error);
+            if (ok && q1_alive(g, actor))
+                ok = qa_physics_touch_triggers_source(g->services.physics, actor,
+                                                       QA_COLLISION_Q1, error);
+        }
+    }
+    return operation_finish(&operation, ok, error);
+}
 bool qa_q1_game_operation_live(const qa_q1_game_operation *operation) {
     return operation && operation->game && !operation->game->destroy_pending;
 }
@@ -722,6 +770,7 @@ bool qa_q1_game_component(qa_q1_game *g, qa_component *out, qa_error *error) {
         .prepare_frame = prepare_frame,
         .begin_frame = begin_frame,
         .actor_frame = actor_frame,
+        .end_frame = end_frame,
         .command_actor = command_actor,
         .actor_released = released};
     out->clock.initial_time_ns = Q1_SOURCE_INITIAL_TIME_NS;

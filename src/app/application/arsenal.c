@@ -117,6 +117,10 @@ bool application_arsenal_source_actor(void *context, qa_session *session, qa_act
         application_provider *source = application->providers[i];
         if (source->owner != frame->provider ||
             !source->constructed || !source->attached || source->close_pending) continue;
+        if (source->kind == APPLICATION_PROVIDER_Q1) {
+            if (!qa_q1_game_retouch_actor(source->state.q1, actor, frame, error)) return false;
+            if (!qa_actors_get(qa_session_actors(session), actor)) return true;
+        }
         if (source->kind == APPLICATION_PROVIDER_Q3) {
             uint32_t slot;
             if (qa_q3_source_actor_slot(source->state.q3, actor, &slot, NULL) &&
