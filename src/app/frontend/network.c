@@ -3175,10 +3175,10 @@ bool frontend_network_prediction_input_current(const qa_frontend *f, const front
         source->media_owner!=now.media_owner) return false;
     const qa_input_command_frame *v=&source->frame;
     return v->kind==now.frame.kind && v->sequence==now.frame.sequence && v->server_time_ms==now.frame.server_time_ms &&
-        v->weapon==now.frame.weapon && !v->acknowledged_server_seconds && !v->server_frame && !v->light_level &&
-        !v->sensitivity && !v->attack_allowed && !v->has_pitch_drift && !v->grounded && !v->drift_disabled &&
-        !v->ideal_pitch && !v->delta_angles.x && !v->delta_angles.y && !v->delta_angles.z &&
-        !source->has_initial_angles && !source->initial_angles.x && !source->initial_angles.y && !source->initial_angles.z;
+        v->weapon==now.frame.weapon && v->acknowledged_server_seconds == 0 && !v->server_frame && !v->light_level &&
+        v->sensitivity == 0 && !v->attack_allowed && !v->has_pitch_drift && !v->grounded && !v->drift_disabled &&
+        v->ideal_pitch == 0 && v->delta_angles.x == 0 && v->delta_angles.y == 0 && v->delta_angles.z == 0 &&
+        !source->has_initial_angles && source->initial_angles.x == 0 && source->initial_angles.y == 0 && source->initial_angles.z == 0;
 }
 bool frontend_network_client_time_cvars_read(const qa_frontend *f,
     const qa_cvars **out, bool *present, qa_error *error)
@@ -7842,10 +7842,10 @@ bool frontend_network_restore_prediction_input_current(const qa_frontend *f,
     const qa_input_command_frame *v=&source->frame;
     return v->kind==actual.frame.kind && v->sequence==actual.frame.sequence &&
         v->server_time_ms==actual.frame.server_time_ms && v->weapon==actual.frame.weapon &&
-        !v->acknowledged_server_seconds && !v->server_frame && !v->light_level && !v->sensitivity &&
+        v->acknowledged_server_seconds == 0 && !v->server_frame && !v->light_level && v->sensitivity == 0 &&
         !v->attack_allowed && !v->has_pitch_drift && !v->grounded && !v->drift_disabled &&
-        !v->ideal_pitch && !v->delta_angles.x && !v->delta_angles.y && !v->delta_angles.z &&
-        !source->has_initial_angles && !source->initial_angles.x && !source->initial_angles.y && !source->initial_angles.z;
+        v->ideal_pitch == 0 && v->delta_angles.x == 0 && v->delta_angles.y == 0 && v->delta_angles.z == 0 &&
+        !source->has_initial_angles && source->initial_angles.x == 0 && source->initial_angles.y == 0 && source->initial_angles.z == 0;
 }
 
 bool frontend_network_menu_read(const qa_frontend *f, uint32_t physical,

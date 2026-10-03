@@ -164,7 +164,7 @@ static bool open_download(void *context, const char *name, bool *found, qa_qw_do
     if (!source_world(peer->host, &world, error)) return false;
     *found = false; *out = (qa_qw_download){0};
     const qa_cvar_view *allowed = qa_cvars_find(world.source.cvars, "allow_download");
-    if (!allowed || !allowed->number || !qa_qw_download_path_valid(name)) return true;
+    if (!allowed || allowed->number == 0 || !qa_qw_download_path_valid(name)) return true;
     size_t size = strlen(name); char *path = malloc(size + 1);
     if (!path) return frontend_fail(error, QA_ERROR_MEMORY, "Qualifying QuakeWorld mounted download path");
     for (size_t i = 0; i <= size; ++i) path[i] = name[i] >= 'A' && name[i] <= 'Z' ? (char)(name[i] + ('a' - 'A')) : name[i];

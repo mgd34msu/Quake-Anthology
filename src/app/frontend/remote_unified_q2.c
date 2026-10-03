@@ -449,7 +449,7 @@ static bool pose_actor(q2_bank *b,qa_actor_id id,frontend_remote_q2_effects_pose
             qa_json_id ev=get(vj,qa_unified_document_root(visual->model),"event");
             if (!real(visual->model,get(vj,ev,"scale"),&p.scale,e)) return false;
         }
-        if (!p.scale) p.scale=1;
+        if (p.scale == 0) p.scale=1;
         qa_buffer path={0},content={0};
         qa_scene_family family=qa_json_string_equal(j,get(j,row,"family"),"q1")?QA_SCENE_Q1:
             qa_json_string_equal(j,get(j,row,"family"),"q2")?QA_SCENE_Q2:QA_SCENE_Q3;
@@ -1873,7 +1873,7 @@ bool frontend_unified_q2_model(frontend_unified_q2 *o,qa_actor_id a,const char *
     if (!qa_json_u64(j,get(j,event,"renderFlags"),&word,e)) return false;
     input->flags=(uint32_t)word;
     if (!real(v->model,get(j,event,"scale"),&scale,e) || !real(v->model,get(j,event,"alpha"),&alpha,e)) return false;
-    input->color.w=alpha; if (!scale) scale=1;
+    input->color.w=alpha; if (scale == 0) scale=1;
     for (size_t i=0;i<3;++i) input->transform.scale[i]=scale;
     return true;
 }
@@ -2161,7 +2161,7 @@ static bool marker_draw(frontend_unified_q2 *o,qa_scene_rect viewport,qa_scene_f
         *x=qa_cvars_find(registry,"ch_x"),*y=qa_cvars_find(registry,"ch_y");
     if (!crosshair || !duration || !size || !alpha || !x || !y)
         return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Q2 marker draw has no admitted physical CLIENT crosshair controls");
-    if (!crosshair->number || (o->view_layouts&(4|32))) return true;
+    if (crosshair->number == 0 || (o->view_layouts&(4|32))) return true;
     double elapsed=o->frontend->wall_time_ns>=o->marker_wall_ns?
         (double)(o->frontend->wall_time_ns-o->marker_wall_ns)/1e6:0;
     if (!o->marker_image || duration->integer<=0 || elapsed>duration->integer) { o->marker_count=0; return true; }
@@ -2484,7 +2484,7 @@ static bool saved_visuals(qa_source_save_io *io,frontend_unified_q2 *o,const fro
             !qa_source_save_f32(io,&rgba->z) || !qa_source_save_f32(io,&rgba->w) ||
             !isfinite(rgba->x) || !isfinite(rgba->y) || !isfinite(rgba->z) || !isfinite(rgba->w)) return false;
         bool present=i?o->view_damage_present:o->view_blend_present;
-        if (!present && (rgba->x || rgba->y || rgba->z || rgba->w)) return false;
+        if (!present && (rgba->x != 0 || rgba->y != 0 || rgba->z != 0 || rgba->w != 0)) return false;
     }
     if (read) o->view_profile=(frontend_remote_q2_effects_profile)view_profile;
     if (o->view_provider && *o->view_provider) {
@@ -2542,7 +2542,7 @@ static bool q2_fields(qa_source_save_io *io,frontend_unified_q2 *o,const fronten
         !qa_source_save_vec3(io,&o->viewer_origin) || !qa_vec_finite(o->viewer_origin) ||
         !qa_source_save_f32(io,&o->player_fov) || !isfinite(o->player_fov) ||
         (o->viewer_origin_present?(o->player_fov<=0 || o->player_fov>=180):
-            (o->player_fov || o->viewer_origin_frame || o->viewer_origin.x || o->viewer_origin.y || o->viewer_origin.z))) return false;
+            (o->player_fov != 0 || o->viewer_origin_frame || o->viewer_origin.x != 0 || o->viewer_origin.y != 0 || o->viewer_origin.z != 0))) return false;
     bool frame=o->frame!=NULL;
     if (!qa_source_save_bool(io,&frame)) return false;
     if (frame) {
@@ -2558,7 +2558,7 @@ static bool q2_fields(qa_source_save_io *io,frontend_unified_q2 *o,const fronten
         if (qa_json_string_equal(j,get(j,t,"kind"),"milliseconds")) seconds/=1000;
         else if (!qa_json_string_equal(j,get(j,t,"kind"),"seconds")) return false;
         if (seconds!=o->seconds) return false;
-    } else if (o->seconds || o->frame_number) return false;
+    } else if (o->seconds != 0 || o->frame_number) return false;
     bool pending=o->prepared_frame!=NULL;
     if(!qa_source_save_bool(io,&pending))return false;
     if(pending){qa_buffer bytes={0};

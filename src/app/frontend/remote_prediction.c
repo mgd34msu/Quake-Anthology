@@ -959,11 +959,11 @@ bool frontend_remote_prediction_admit_initial(frontend_remote_prediction *owner,
     const qa_movement_command *command, qa_error *error)
 {
     if (!owner || owner->busy || owner->state.initialized || !command || command->kind != QA_MOVEMENT_Q3 ||
-        !command->sequence || command->server_time_ms || command->forward_move || command->side_move ||
-        command->up_move || command->buttons || command->weapon || command->impulse || command->milliseconds ||
+        !command->sequence || command->server_time_ms || command->forward_move != 0 || command->side_move != 0 ||
+        command->up_move != 0 || command->buttons || command->weapon || command->impulse || command->milliseconds ||
         command->angle_words[0] || command->angle_words[1] || command->angle_words[2] ||
-        command->server_frame || command->light_level || command->acknowledged_server_seconds ||
-        command->angles.x || command->angles.y || command->angles.z)
+        command->server_frame || command->light_level || command->acknowledged_server_seconds != 0 ||
+        command->angles.x != 0 || command->angles.y != 0 || command->angles.z != 0)
         return fail(error, QA_ERROR_ARGUMENT, "Prediction initial admission needs the genuine zero source receipt");
     frontend_remote_prediction_source source = {0}; bool present = false;
     if (!owner->options.source_read(owner->options.context, &source, &present, error)) return false;
@@ -1161,7 +1161,7 @@ static bool replay(frontend_remote_prediction *owner,
                         ok = adjust_mover(owner, &source, &next.predicted, source.previous_presentation_time, &adjusted, error);
                         if (!ok) break;
                         qa_vec3 delta = qa_vec_sub(qa_movement_origin(&old.view.movement), adjusted);
-                        if (delta.x || delta.y || delta.z) ok = warning(owner, &source, "prediction error\n", error);
+                        if (delta.x != 0 || delta.y != 0 || delta.z != 0) ok = warning(owner, &source, "prediction error\n", error);
                         float length = qa_vec_length(delta);
                         if (ok && length > 0.1f) {
                             if (source.settings.show_miss) {
@@ -1386,7 +1386,7 @@ static bool configuration_fields(qa_source_save_io *io, qa_application_control_p
         v->prediction_numeric.radix && v->prediction_numeric.scalar_mantissa_bits &&
         v->prediction_numeric.double_mantissa_bits && v->prediction_numeric.qw_origin_binary64 == (in->state.kind == QA_MOVEMENT_QUAKEWORLD) &&
         in->actor.registry && in->prediction && qa_vec_finite(v->client_view_offset) &&
-        (v->has_client_view_offset || (!v->client_view_offset.x && !v->client_view_offset.y && !v->client_view_offset.z)) &&
+        (v->has_client_view_offset || (v->client_view_offset.x == 0 && v->client_view_offset.y == 0 && v->client_view_offset.z == 0)) &&
         (v->numeric.native_c ? v->numeric.id && v->numeric.radix && v->numeric.scalar_mantissa_bits &&
             v->numeric.double_mantissa_bits && v->numeric.qw_origin_binary64 == (in->state.kind == QA_MOVEMENT_QUAKEWORLD) :
             !v->numeric.id && !v->numeric.radix && !v->numeric.scalar_mantissa_bits &&
@@ -1404,7 +1404,7 @@ static bool configuration_fields(qa_source_save_io *io, qa_application_control_p
         (!v->native_q3_character || v->q3_character) && (!v->native_q3_arsenal || v->q3_arsenal) &&
         isfinite(v->fractional_weapon_ms) && v->fractional_weapon_ms >= 0 && v->fractional_weapon_ms < 1 &&
         v->external_weapon_slot <= 4 && v->requested_weapon >= -1 && v->requested_weapon < QA_Q3_WEAPON_COUNT &&
-        (v->native_q3_arsenal || (!v->fractional_weapon_ms && !v->external_weapon_slot && v->requested_weapon == -1));
+        (v->native_q3_arsenal || (v->fractional_weapon_ms == 0 && !v->external_weapon_slot && v->requested_weapon == -1));
 }
 static bool player_fields(qa_source_save_io *io, prediction_player *v)
 {

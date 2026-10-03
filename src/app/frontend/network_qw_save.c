@@ -218,10 +218,10 @@ bool frontend_qw_qualified(const frontend_qw_host *host, bool complete, qa_error
     for (size_t i = 0; i < 64; ++i) if (!host->styles[i]) return frontend_fail(error, QA_ERROR_FORMAT, "QuakeWorld lightstyle cache owner is absent");
     for (size_t i = 0; i < host->baseline_count; ++i) {
         const qa_qw_source_entity *v = host->baselines + i;
-        if (!v->number || v->number > 511 || (i && host->baselines[i - 1].number >= v->number) || v->effects || v->solid)
+        if (!v->number || v->number > 511 || (i && host->baselines[i - 1].number >= v->number) || v->effects != 0 || v->solid)
             return frontend_fail(error, QA_ERROR_FORMAT, "QuakeWorld immutable baseline identity differs from its physical source factory");
-        if (i < 32 && (v->number != i + 1 || v->model != host->player_model || v->colormap != (double)i + 1 || v->frame || v->skin ||
-            v->origin[0] || v->origin[1] || v->origin[2] || v->angles[0] || v->angles[1] || v->angles[2]))
+        if (i < 32 && (v->number != i + 1 || v->model != host->player_model || v->colormap != (double)i + 1 || v->frame != 0 || v->skin != 0 ||
+            v->origin[0] != 0 || v->origin[1] != 0 || v->origin[2] != 0 || v->angles[0] != 0 || v->angles[1] != 0 || v->angles[2] != 0))
             return frontend_fail(error, QA_ERROR_FORMAT, "QuakeWorld reserved client baseline changes its true constructor fields");
     }
     size_t occupied = 0;
