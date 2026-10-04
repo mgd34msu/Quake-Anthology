@@ -351,6 +351,32 @@ bool application_equipment_runtime_source_at(const application_equipment_runtime
     out->weapon_item = runtime->sources[index].source.weapon_item;
     return true;
 }
+bool application_equipment_runtime_source_read(const application_equipment_runtime *runtime,
+    qa_actor_owner owner, application_equipment_runtime_source *out, qa_error *error)
+{
+    if (!runtime || !owner || !out || runtime->restoring)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Equipment source requires its completed retained owner");
+    for (size_t i = 0; i < runtime->count; ++i) {
+        application_equipment_runtime_source source;
+        if (!application_equipment_runtime_source_at(runtime, i, &source, error)) return false;
+        if (source.selected_owner != owner) continue;
+        if (!source_current(&runtime->sources[i]))
+            return application_fail(error, QA_ERROR_ARGUMENT, "Selected equipment source has retired");
+        *out = source; return true;
+    }
+    return application_fail(error, QA_ERROR_NOT_FOUND, "Selected equipment source is outside its retained roster");
+}
+bool application_equipment_runtime_source_current(const application_equipment_runtime *runtime,
+    const application_equipment_runtime_source *view)
+{
+    application_equipment_runtime_source source;
+    return view && application_equipment_runtime_source_read(runtime, view->selected_owner, &source, NULL) &&
+        source.gear == view->gear && source.gear_owner == view->gear_owner &&
+        source.weapon_item == view->weapon_item && source.service_owner == view->service_owner &&
+        source.descriptor == view->descriptor && source.definition == view->definition &&
+        source.artifact == view->artifact && source.content == view->content &&
+        source.acquisition == view->acquisition;
+}
 bool application_equipment_runtime_actor_released(application_equipment_runtime *runtime,
     qa_actor_record record, qa_error *error)
 {

@@ -66,6 +66,11 @@ bool application_equipment_runtime_component_at(const application_equipment_runt
 size_t application_equipment_runtime_source_count(const application_equipment_runtime *);
 bool application_equipment_runtime_source_at(const application_equipment_runtime *, size_t,
     application_equipment_runtime_source *, qa_error *);
+/* One retained source owner serves both native and authored gear views. */
+bool application_equipment_runtime_source_read(const application_equipment_runtime *, qa_actor_owner,
+    application_equipment_runtime_source *, qa_error *);
+bool application_equipment_runtime_source_current(const application_equipment_runtime *,
+    const application_equipment_runtime_source *);
 bool application_equipment_runtime_owner_current(const application_equipment_runtime *, qa_actor_owner);
 bool application_equipment_runtime_actor_released(application_equipment_runtime *,
     qa_actor_record, qa_error *);

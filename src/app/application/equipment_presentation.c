@@ -91,17 +91,9 @@ bool qa_application_equipment_current(qa_application *app,
     if (!view->equipment_slot && app->equipment &&
         qa_equipment_read(app->equipment, view->actor, &slot) && slot.slot_active &&
         slot.selection.grapple == QA_GRAPPLE_Q3 && slot.selection.binding == QA_EQUIPMENT_WEAPON_SLOT) {
-        if (!application_equipment_runtime_owner_current(app->equipment_runtime, slot.sources.grapple)) return false;
-        bool found = false;
-        for (size_t i = 0; i < application_equipment_runtime_source_count(app->equipment_runtime); ++i) {
-            application_equipment_runtime_source source;
-            if (!application_equipment_runtime_source_at(app->equipment_runtime, i, &source, NULL)) return false;
-            if (source.selected_owner == slot.sources.grapple) {
-                if (source.gear) return false;
-                found = true; break;
-            }
-        }
-        if (!found) return false;
+        application_equipment_runtime_source source;
+        if (!application_equipment_runtime_source_read(app->equipment_runtime, slot.sources.grapple,
+            &source, NULL) || source.gear) return false;
     }
     if (view->equipment_slot) {
         qa_equipment_state state;
@@ -111,16 +103,11 @@ bool qa_application_equipment_current(qa_application *app,
             !(state.weapon_slot_present?qa_equipment_weapon_presented(app->equipment,view->actor,view->provider):state.slot_active) || state.sources.grapple != view->provider || !view->selected ||
             view->family != QA_GAME_Q3 || !view->gear_namespace || !view->gear_service_owner ||
             !primary || !primary->constructed || !primary->attached || primary->close_pending ||
-            primary->owner != view->primary ||
-            !application_equipment_runtime_owner_current(app->equipment_runtime, view->provider)) return false;
-        for (size_t i = 0; i < application_equipment_runtime_source_count(app->equipment_runtime); ++i) {
-            application_equipment_runtime_source source;
-            if (!application_equipment_runtime_source_at(app->equipment_runtime, i, &source, NULL)) return false;
-            if (source.selected_owner == view->provider)
-                return source.gear && source.definition && source.gear_owner == view->gear_namespace &&
-                    source.service_owner == view->gear_service_owner && source.weapon_item == view->item;
-        }
-        return false;
+            primary->owner != view->primary) return false;
+        application_equipment_runtime_source source;
+        return application_equipment_runtime_source_read(app->equipment_runtime, view->provider, &source, NULL) &&
+            source.gear && source.definition && source.gear_owner == view->gear_namespace &&
+            source.service_owner == view->gear_service_owner && source.weapon_item == view->item;
     }
     if (view->gear_namespace || view->gear_service_owner) return false;
     application_provider *provider = application_provider_for(app, view->actor, QA_ROLE_ARSENAL, "");

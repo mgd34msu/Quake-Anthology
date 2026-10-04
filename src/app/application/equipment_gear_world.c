@@ -21,17 +21,8 @@ bool application_equipment_gear_world_current(qa_application *app,
     application_provider *primary = application_world_provider(app, QA_ROLE_ENTITIES, "");
     if (!tether || tether->owner != view->source.source.gear_owner || !primary || !primary->constructed ||
         !primary->attached || primary->close_pending || primary->owner != view->source.primary) return false;
-    for (size_t i = 0; i < application_equipment_runtime_source_count(app->equipment_runtime); ++i) {
-        application_equipment_runtime_source source;
-        if (!application_equipment_runtime_source_at(app->equipment_runtime, i, &source, NULL)) return false;
-        if (source.selected_owner == selected.sources.grapple)
-            return source.gear && source.gear == view->source.source.gear &&
-                source.gear_owner == view->source.source.gear_owner && source.service_owner == view->source.source.service_owner &&
-                source.definition == view->source.source.definition && source.descriptor == view->source.source.descriptor &&
-                source.artifact == view->source.source.artifact && source.acquisition == view->source.source.acquisition &&
-                source.content == view->source.source.content;
-    }
-    return false;
+    return view->source.source.gear &&
+        application_equipment_runtime_source_current(app->equipment_runtime, &view->source.source);
 }
 bool application_equipment_gear_world_read(qa_application *app, qa_actor_id actor,
     application_equipment_gear_world_view *out, bool *visible, qa_error *error)
@@ -51,11 +42,8 @@ bool application_equipment_gear_world_read(qa_application *app, qa_actor_id acto
     application_equipment_gear_world_view view = {.source = {.actor = actor,
         .publication_generation = app->publication_generation, .map_revision = app->map_revision},
         .offhand = selected.selection.binding == QA_EQUIPMENT_OFFHAND};
-    for (size_t i = 0; i < application_equipment_runtime_source_count(app->equipment_runtime); ++i) {
-        application_equipment_runtime_source source;
-        if (!application_equipment_runtime_source_at(app->equipment_runtime, i, &source, error)) return false;
-        if (source.selected_owner == selected.sources.grapple) { view.source.source = source; break; }
-    }
+    if (!application_equipment_runtime_source_read(app->equipment_runtime, selected.sources.grapple,
+        &view.source.source, error)) return false;
     /* Native gear retains its separate native world presentation producer. */
     if (!view.source.source.gear) return true;
     if (!application_q3_gear_read(view.source.source.gear, actor, &view.source.gear, error)) return false;

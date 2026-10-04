@@ -16,7 +16,6 @@ bool application_equipment_gear_presentation_current(qa_application *app,
 {
     qa_equipment_state state;
     if (!view || !selected_state(app, view->actor, &state) ||
-        !application_equipment_runtime_owner_current(app->equipment_runtime, state.sources.grapple) ||
         state.sources.grapple != view->source.selected_owner ||
         app->publication_generation != view->publication_generation ||
         app->map_revision != view->map_revision || !view->source.gear || !view->source.definition ||
@@ -25,17 +24,7 @@ bool application_equipment_gear_presentation_current(qa_application *app,
     application_provider *primary = application_world_provider(app, QA_ROLE_ENTITIES, "");
     if (!primary || !primary->constructed || !primary->attached || primary->close_pending ||
         primary->owner != view->primary) return false;
-    for (size_t i = 0; i < application_equipment_runtime_source_count(app->equipment_runtime); ++i) {
-        application_equipment_runtime_source source;
-        if (!application_equipment_runtime_source_at(app->equipment_runtime, i, &source, NULL)) return false;
-        if (source.selected_owner == state.sources.grapple)
-            return source.gear == view->source.gear && source.gear_owner == view->source.gear_owner &&
-                source.weapon_item == view->source.weapon_item &&
-                source.service_owner == view->source.service_owner && source.descriptor == view->source.descriptor &&
-                source.definition == view->source.definition && source.artifact == view->source.artifact &&
-                source.content == view->source.content && source.acquisition == view->source.acquisition;
-    }
-    return false;
+    return application_equipment_runtime_source_current(app->equipment_runtime, &view->source);
 }
 
 bool application_equipment_gear_presentation_read(qa_application *app, qa_actor_id actor,
@@ -51,15 +40,10 @@ bool application_equipment_gear_presentation_read(qa_application *app, qa_actor_
     *selected = false;
     qa_equipment_state state;
     if (!selected_state(app, actor, &state)) return true;
-    if (!application_equipment_runtime_owner_current(app->equipment_runtime, state.sources.grapple))
-        return application_fail(error, QA_ERROR_NOT_FOUND, "Active gear slot lost its actual retained source");
     application_equipment_gear_presentation view = {.actor = actor,
         .publication_generation = app->publication_generation, .map_revision = app->map_revision};
-    for (size_t i = 0; i < application_equipment_runtime_source_count(app->equipment_runtime); ++i) {
-        application_equipment_runtime_source source;
-        if (!application_equipment_runtime_source_at(app->equipment_runtime, i, &source, error)) return false;
-        if (source.selected_owner == state.sources.grapple) { view.source = source; break; }
-    }
+    if (!application_equipment_runtime_source_read(app->equipment_runtime, state.sources.grapple,
+        &view.source, error)) return false;
     /* Native Q3 owns its genuine native weapon state and has no QVM profile. */
     if (!view.source.gear) return true;
     application_provider *primary = application_world_provider(app, QA_ROLE_ENTITIES, "");
