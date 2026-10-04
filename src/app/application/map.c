@@ -2231,41 +2231,45 @@ bool application_map_publish(qa_application *application,
     const qa_q2_landmark *landmark;
     application_map_travel_options(application, &carry, &unit, &landmark);
     (void)carry; (void)landmark;
-    for (size_t index = 0; index < application->provider_count; ++index) {
-        application_provider *provider = application->providers[index];
-        if (provider == NULL || !provider->attached || !provider->constructed)
-            continue;
-        if (unit) {
-            provider->q1_server_flags = 0;
-            provider->q2_server_flags = 0;
-        }
-        const qa_product *product = qa_catalog_product(
-            catalog, provider->launch->selection.product);
-        if (product == NULL)
-            return application_fail(error, QA_ERROR_NOT_FOUND,
-                                    "provider product disappeared during map publication");
-        if (provider->kind == APPLICATION_PROVIDER_Q1) {
-            if (!q1_begin_map(provider, product, choices, current_map, error))
-                return false;
-        } else if (provider->kind == APPLICATION_PROVIDER_Q2) {
-            if (unit && !qa_q2_campaign_leave_unit(provider->state.q2, error))
-                return false;
-            if (!qa_q2_begin_map(provider->state.q2, current_map, spawn_point,
-                                 error))
-                return false;
-            qa_q2_entity_services services =
-                q2_entity_services(provider, choices);
-            services.spawn = q2_spawn;
-            if (!qa_q2_entities_configure(provider->state.q2, &services,
-                                          error))
-                return false;
-            provider->map_bound = true;
-        } else if (provider->kind == APPLICATION_PROVIDER_Q3) {
-            if (!q3_begin_map(provider, choices, error) ||
-                !application_native_q3_settings_source_init(provider, error) ||
-                !application_native_q3_ipfilters_init(provider, error) ||
-                !application_native_q3_settings_install(provider, error))
-                return false;
+    /* Reset retired source state before Q3 allocates its level actors. */
+    for (unsigned phase = 0; phase < 2; ++phase) {
+        for (size_t index = 0; index < application->provider_count; ++index) {
+            application_provider *provider = application->providers[index];
+            if (provider == NULL || !provider->attached || !provider->constructed ||
+                ((provider->kind == APPLICATION_PROVIDER_Q3) != (phase == 1)))
+                continue;
+            if (unit) {
+                provider->q1_server_flags = 0;
+                provider->q2_server_flags = 0;
+            }
+            const qa_product *product = qa_catalog_product(
+                catalog, provider->launch->selection.product);
+            if (product == NULL)
+                return application_fail(error, QA_ERROR_NOT_FOUND,
+                                        "provider product disappeared during map publication");
+            if (provider->kind == APPLICATION_PROVIDER_Q1) {
+                if (!q1_begin_map(provider, product, choices, current_map, error))
+                    return false;
+            } else if (provider->kind == APPLICATION_PROVIDER_Q2) {
+                if (unit && !qa_q2_campaign_leave_unit(provider->state.q2, error))
+                    return false;
+                if (!qa_q2_begin_map(provider->state.q2, current_map, spawn_point,
+                                     error))
+                    return false;
+                qa_q2_entity_services services =
+                    q2_entity_services(provider, choices);
+                services.spawn = q2_spawn;
+                if (!qa_q2_entities_configure(provider->state.q2, &services,
+                                              error))
+                    return false;
+                provider->map_bound = true;
+            } else if (provider->kind == APPLICATION_PROVIDER_Q3) {
+                if (!q3_begin_map(provider, choices, error) ||
+                    !application_native_q3_settings_source_init(provider, error) ||
+                    !application_native_q3_ipfilters_init(provider, error) ||
+                    !application_native_q3_settings_install(provider, error))
+                    return false;
+            }
         }
     }
 
