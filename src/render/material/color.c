@@ -1,12 +1,18 @@
 #include "internal.h"
+#include <fenv.h>
 #include <math.h>
 
-static bool byte_value(float value, float *out, qa_error *error)
+static bool byte_input_valid(float value, qa_error *error)
 {
     if (!isfinite(value) || (double)value < -2147483648.0 || (double)value >= 2147483648.0) {
         qa_error_set(error, QA_ERROR_FORMAT, 0, "Material color is outside source integer range");
         return false;
     }
+    return true;
+}
+static bool byte_value(float value, float *out, qa_error *error)
+{
+    if (!byte_input_valid(value, error)) return false;
     *out = (float)((uint32_t)(int32_t)value & 255u) / 255.0f;
     return true;
 }
@@ -27,12 +33,17 @@ static bool quantize(qa_scene_vec4 input, qa_scene_vec4 *out, qa_error *error)
     return normalized_byte(input.x, &out->x, error) && normalized_byte(input.y, &out->y, error) &&
            normalized_byte(input.z, &out->z, error) && normalized_byte(input.w, &out->w, error);
 }
+static bool source_component(float input, float *out, qa_error *error)
+{
+    float value = input * 255.0f;
+    return out ? byte_value(roundf(value), out, error) : byte_input_valid(value, error);
+}
 static bool source_color(qa_scene_vec4 input, qa_scene_vec4 *out, qa_error *error)
 {
-    return byte_value(roundf(input.x * 255.0f), &out->x, error) &&
-           byte_value(roundf(input.y * 255.0f), &out->y, error) &&
-           byte_value(roundf(input.z * 255.0f), &out->z, error) &&
-           byte_value(roundf(input.w * 255.0f), &out->w, error);
+    return source_component(input.x, out ? &out->x : NULL, error) &&
+           source_component(input.y, out ? &out->y : NULL, error) &&
+           source_component(input.z, out ? &out->z : NULL, error) &&
+           source_component(input.w, out ? &out->w : NULL, error);
 }
 static float specular(const qa_scene_vertex *vertex, const qa_material_context *context)
 {
@@ -59,6 +70,10 @@ bool material_color_prepare(const qa_material_stage *stage, const qa_material_co
     }
     if (stage->alpha == QA_COLOR_WAVE)
         state->alpha_wave = qa_material_wave_evaluate(&stage->alpha_wave, time);
+    state->validate_unused_color = stage->rgb != QA_COLOR_VERTEX && stage->rgb != QA_COLOR_EXACT_VERTEX &&
+        stage->rgb != QA_COLOR_ONE_MINUS_VERTEX && stage->alpha != QA_COLOR_VERTEX &&
+        stage->alpha != QA_COLOR_EXACT_VERTEX && stage->alpha != QA_COLOR_ONE_MINUS_VERTEX &&
+        (fetestexcept(FE_INEXACT) & FE_INEXACT) != 0;
     return true;
 }
 bool material_color_vertex(const qa_material_stage *stage, const qa_scene_vertex *vertex,
@@ -67,7 +82,7 @@ bool material_color_vertex(const qa_material_stage *stage, const qa_scene_vertex
 {
     qa_scene_vec4 result = {0, 0, 0, previous.w};
     qa_scene_vec4 entity = state->entity, color;
-    if (!source_color(vertex->color, &color, error)) return false;
+    if (!source_color(vertex->color, state->validate_unused_color ? NULL : &color, error)) return false;
     switch (stage->rgb) {
     case QA_COLOR_IDENTITY: result = (qa_scene_vec4){1, 1, 1, 1}; break;
     case QA_COLOR_IDENTITY_LIGHTING:

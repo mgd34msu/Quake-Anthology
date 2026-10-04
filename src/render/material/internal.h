@@ -11,6 +11,7 @@ qa_scene_vec2 qa_material_fog_coordinates(const qa_material_context *, qa_vec3 l
 typedef struct material_color_state {
     qa_scene_vec4 entity;
     float rgb_wave, alpha_wave;
+    bool validate_unused_color;
 } material_color_state;
 bool material_color_prepare(const qa_material_stage *, const qa_material_context *, float,
                             material_color_state *, qa_error *);
