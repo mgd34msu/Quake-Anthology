@@ -1,6 +1,6 @@
 # Native frame costs
 
-The latest measured Q3 CPU frame takes **25.855 ms**, including **16.790 ms**
+The latest measured Q3 CPU frame takes **25.669 ms**, including **16.638 ms**
 of raster execution; latest interval-1 GL takes **19.015 ms**. Removing a quadratic settings
 lookup cuts shared scene work. Replacing duplicate SDL texture layers reduces
 CPU presentation to about **0.3 ms**. Raster execution is now the largest CPU cost.
@@ -56,6 +56,8 @@ material totals include more observer overhead than the standard runs above.
 | `e22f4a54` | 27.269 | 18.167 | 147.397 |
 | `f630ea7b` | 26.875 | 17.766 | 146.278 |
 | `86d1f51c` | 25.855 | 16.790 | 153.053 |
+| `008d0701` | 25.993 | 16.706 | 153.770 |
+| `fc471593` | 25.669 | 16.638 | 151.515 |
 
 With the same subdivision, GL takes 31.411 ms on `e900075f` and 30.501 ms
 on `436272c5`. Material submission falls from 13.104 to 12.399 ms on CPU
@@ -93,6 +95,13 @@ CPU work for lower elapsed time. All 30 recorded states/counts, final engine and
 retained display RGBA, and actual native RGB match both preceding controls.
 The timed diagnostic source is unchanged.
 
+Reading prepared triangle attributes directly on `008d0701` removes stack
+copies and shrinks generated code, but establishes no frame latency gain.
+Sharing bilinear coordinate wrapping on `fc471593` reduces the next frame
+median from 25.993 to 25.669 ms; raster changes only from 16.706 to 16.638 ms.
+These are small changes on the shared machine, not a substantial speedup.
+Both preserve all 30 states/counts, engine/display RGBA and native RGB.
+
 On the same `86d1f51c` artifact, GL takes 19.015 ms with actual swap interval 1
 and 20.602 ms with actual interval 0. Swap itself takes 8.560 and 8.700 ms;
 disabling synchronization establishes no speed gain. GPU render elapsed is
@@ -115,17 +124,17 @@ it does not establish each worker's individual contribution.
 
 ## Current costs and optimization targets
 
-These are inclusive medians on `86d1f51c` CPU and interval-1 GL.
+These are inclusive medians on `fc471593` CPU and `86d1f51c` interval-1 GL.
 Both include the subdivision scopes.
 Nested durations overlap, so the rows must not be added together.
 
 | Scope | CPU ms | GL ms |
 | --- | ---: | ---: |
-| Scene construction | 6.032 | 5.858 |
-| Material submission, 554 calls | 4.367 | 4.268 |
-| World submission, including its materials | 4.271 | 4.184 |
-| Renderer execution / GL submission | 16.790 | 1.852 |
-| CPU native presentation / GL swap | 0.294 | 8.560 |
+| Scene construction | 6.019 | 5.858 |
+| Material submission, 554 calls | 4.328 | 4.268 |
+| World submission, including its materials | 4.256 | 4.184 |
+| Renderer execution / GL submission | 16.638 | 1.852 |
+| CPU native presentation / GL swap | 0.313 | 8.560 |
 
 The first GL baseline separately measured 3.596 ms median GPU elapsed time
 around renderer execution. GPU intervals overlap CPU work and presentation;
@@ -160,6 +169,14 @@ reuses the raster kernel's existing weighted sum for exact unit-color
 triangles. Both pass optimized GCC/Clang builds and focused old/new production
 comparisons. Their matched pair preserves all states and pixels while reducing
 the shared scene cost from about 17 ms to 6 ms.
+
+`8773a8f3` indexes names inside the existing canonical cvar value owner,
+covering live rows, aliases, prepared edits and restored values. The ordered
+enumeration and saved field order stay unchanged. Actual old/new production
+comparisons pass on GCC and Clang across 106,157 lookups, 77 lifecycle phases,
+6,103 mutations and 5,878,229 identical saved bytes. An isolated lookup with
+about 1,200 rows falls from roughly 3.5–3.8 microseconds to 13–21 nanoseconds;
+the integrated frame comparison is pending.
 
 Selecting SDL's default accelerated blitter did not materially improve
 presentation and changed readback alpha during genuine saved-image
