@@ -440,14 +440,20 @@ bool frontend_material_movies_restore(const frontend_material_movie_source *sour
     }
     *out = owner; return true;
 }
-bool frontend_material_movies_publish_ready(const frontend_material_movies *owner, qa_error *error)
+static bool returned(const frontend_material_movies *owner, bool cold, qa_error *error)
 {
-    if (!frontend_material_movies_idle(owner) || !owner->restore_pending || !owner_valid(owner,true) ||
+    if (!frontend_material_movies_idle(owner) || owner->restore_pending != cold || !owner_valid(owner,true) ||
         (owner->cinematic_source && !qa_q3_cinematic_handles_idle(qa_q3_cinematic_source_handles(owner->cinematic_source))) ||
-        !qa_material_movies_publish_ready(owner->registry, error))
-        return frontend_fail(error, QA_ERROR_FORMAT, "Cold shader movie graph lost a qualified actual owner");
+        !(cold ? qa_material_movies_publish_ready(owner->registry, error) :
+            qa_material_movies_completed_ready(owner->registry, error)))
+        return frontend_fail(error, QA_ERROR_FORMAT, cold ? "Cold shader movie graph lost a qualified actual owner" :
+            "Completed shader movie graph lost a qualified actual owner");
     return true;
 }
+bool frontend_material_movies_publish_ready(const frontend_material_movies *owner, qa_error *error)
+{ return returned(owner, true, error); }
+bool frontend_material_movies_completed_ready(const frontend_material_movies *owner, qa_error *error)
+{ return returned(owner, false, error); }
 void frontend_material_movies_publish(frontend_material_movies *owner)
 {
     if (!frontend_material_movies_idle(owner) || !owner->restore_pending) return;

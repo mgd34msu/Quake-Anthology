@@ -93,15 +93,21 @@ bool qa_material_movies_restore(qa_scene_resources *resources, qa_bytes bytes,
     }
     owner->restore_pending = true; *out = owner; return true;
 }
-bool qa_material_movies_publish_ready(const qa_material_movies *owner, qa_error *error)
+static bool returned(const qa_material_movies *owner, bool cold, qa_error *error)
 {
-    if (!qa_material_movies_idle(owner) || !owner->restore_pending)
-        return cinematic_fail(error, "Material movie publication requires its unadopted registry");
+    if (!qa_material_movies_idle(owner) || owner->restore_pending != cold)
+        return cinematic_fail(error, cold ? "Material movie publication requires its unadopted registry" :
+            "Material movie completion requires its adopted registry");
     for (size_t i = 0; i < owner->count; ++i)
-        if (!movie_valid(owner->movies[i].playback, true))
-            return cinematic_fail(error, "Cold material movie lost its qualified decoder");
+        if (!movie_valid(owner->movies[i].playback, cold))
+            return cinematic_fail(error, cold ? "Cold material movie lost its qualified decoder" :
+                "Completed material movie lost its qualified decoder");
     return true;
 }
+bool qa_material_movies_publish_ready(const qa_material_movies *owner, qa_error *error)
+{ return returned(owner, true, error); }
+bool qa_material_movies_completed_ready(const qa_material_movies *owner, qa_error *error)
+{ return returned(owner, false, error); }
 void qa_material_movies_publish(qa_material_movies *owner)
 {
     if (!qa_material_movies_idle(owner) || !owner->restore_pending) return;

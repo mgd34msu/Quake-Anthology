@@ -26,5 +26,6 @@ bool qa_material_movies_checkpoint(const qa_material_movies *,
 bool qa_material_movies_restore(qa_scene_resources *, qa_bytes,
     const qa_material_movies_checkpoint_refs *, qa_material_movies **, qa_error *);
 bool qa_material_movies_publish_ready(const qa_material_movies *, qa_error *);
+bool qa_material_movies_completed_ready(const qa_material_movies *, qa_error *);
 void qa_material_movies_publish(qa_material_movies *);
 #endif

@@ -119,7 +119,7 @@ bool frontend_unified_material_movies_restore_ready(frontend_unified_media *owne
             if (start || context) {
                 frontend_material_movies *retained = NULL;
                 if (!frontend_material_movies_library_owner(row->materials, &retained, error) ||
-                    !frontend_material_movies_publish_ready(retained, error)) return false;
+                    !frontend_material_movies_completed_ready(retained, error)) return false;
             } else for (size_t i = 0; i < qa_material_library_record_count(row->materials); ++i)
                 if (qa_material_library_video_receipt_count(row->materials, i))
                     return frontend_unified_fail(error, QA_ERROR_FORMAT, "Unified video receipts have no imported playback custodian");
@@ -138,7 +138,7 @@ bool frontend_unified_material_movies_restore_ready(frontend_unified_media *owne
                 &cinematic_seat, &cinematic_bus, &numeric, error) ||
             numeric != (row->product->family == QA_GAME_Q3) ||
             (numeric && (cinematic_seat != owner->physical_seat || cinematic_bus != row->cinematic_audio_owner)) ||
-            !frontend_material_movies_publish_ready(row->shader_movies, error))
+            !frontend_material_movies_completed_ready(row->shader_movies, error))
             return (error && error->code != QA_OK) ? false :
                 frontend_unified_fail(error, QA_ERROR_FORMAT, "Unified movie import leaves its retained cache, library or playback dictionary");
     }

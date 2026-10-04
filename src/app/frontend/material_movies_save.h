@@ -25,5 +25,6 @@ bool frontend_material_movies_checkpoint(const frontend_material_movies *,
 bool frontend_material_movies_restore(const frontend_material_movie_source *,
     const frontend_material_movies_refs *, qa_bytes, frontend_material_movies **, qa_error *);
 bool frontend_material_movies_publish_ready(const frontend_material_movies *, qa_error *);
+bool frontend_material_movies_completed_ready(const frontend_material_movies *, qa_error *);
 void frontend_material_movies_publish(frontend_material_movies *);
 #endif
