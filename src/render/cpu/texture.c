@@ -100,10 +100,11 @@ static void sample_level(const cpu_sampler *sampler, size_t index, double u,
 }
 bool cpu_sampler_prepare(const qa_cpu_renderer *renderer,
                           const qa_scene_image *image, cpu_sampler *sampler) {
-  *sampler = (cpu_sampler){.image = image};
+  *sampler = (cpu_sampler){.image = image,
+      .inexact = fetestexcept(FE_INEXACT) != 0};
   if (!image) return true;
   if (renderer->texture_components_ready && fegetround() == FE_TONEAREST &&
-      fetestexcept(FE_INEXACT) != 0) {
+      sampler->inexact) {
     size_t format = !image->source_q3 ? 0 :
         image->source_format == QA_Q3_TEXTURE_RGB5 ? 1 :
         image->source_format == QA_Q3_TEXTURE_RGBA4 ? 2 : 0;

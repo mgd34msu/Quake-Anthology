@@ -339,15 +339,22 @@ void cpu_write_fragment(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
       for (size_t c = 0; c < 3; ++c)
         color[c] = renderer->gamma[cpu_byte(color[c])] / 255.0;
     uint8_t *destination = buffer->color + index * 4;
-    double alpha = buffer->alpha ? destination[3] / 255.0 : 1;
-    for (size_t c = 0; c < 4; ++c) {
-      double old = destination[c] / 255.0;
-      double source_factor = blend_factor(state->blend_source, color[c], old,
-                                          color[3], alpha, c == 3);
-      double destination_factor = blend_factor(
-          state->blend_destination, color[c], old, color[3], alpha, c == 3);
-      destination[c] =
-          cpu_byte(color[c] * source_factor + old * destination_factor);
+    if (draw->texture_count && samplers[0].inexact &&
+        state->blend_source == QA_BLEND_ONE &&
+        state->blend_destination == QA_BLEND_ZERO) {
+      for (size_t c = 0; c < 4; ++c)
+        destination[c] = cpu_byte(color[c]);
+    } else {
+      double alpha = buffer->alpha ? destination[3] / 255.0 : 1;
+      for (size_t c = 0; c < 4; ++c) {
+        double old = destination[c] / 255.0;
+        double source_factor = blend_factor(state->blend_source, color[c], old,
+                                            color[3], alpha, c == 3);
+        double destination_factor = blend_factor(
+            state->blend_destination, color[c], old, color[3], alpha, c == 3);
+        destination[c] =
+            cpu_byte(color[c] * source_factor + old * destination_factor);
+      }
     }
     if (!buffer->alpha)
       destination[3] = 255;

@@ -66,7 +66,7 @@ typedef struct cpu_sampler {
   const cpu_framebuffer *target;
   const double *components, *target_components;
   size_t level_count;
-  bool linear, magnification_linear, blend, alpha;
+  bool linear, magnification_linear, blend, alpha, inexact;
   double magnification_limit;
 } cpu_sampler;
 typedef struct cpu_fragment {
