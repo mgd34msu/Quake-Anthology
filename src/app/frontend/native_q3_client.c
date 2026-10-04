@@ -1454,7 +1454,8 @@ bool frontend_native_q3_import_bind(frontend_native_q3 *row,const frontend_nativ
     QA_NATIVE_BIND(registry); QA_NATIVE_BIND(cvars); QA_NATIVE_BIND(input); QA_NATIVE_BIND(assets); QA_NATIVE_BIND(presentation);
 #undef QA_NATIVE_BIND
     const qa_launch_instance *retained=row->view.source_launch;
-    row->view=*view; row->view.source_launch=retained;
+    qa_audio_music *music=row->view.music;
+    row->view=*view; row->view.source_launch=retained; row->view.music=music;
     return true;
 }
 bool frontend_native_q3_prepare_media(frontend_native_q3 *row,qa_vfs **claimed_mounts,qa_error *e)
