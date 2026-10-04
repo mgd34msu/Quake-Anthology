@@ -474,7 +474,8 @@ static bool videos(qa_source_save_io *io, const qa_material_library *library, qa
     }
     return true;
 }
-static bool record_order(qa_source_save_io *io, qa_material_library *library)
+static bool record_order(qa_source_save_io *io, qa_material_library *library,
+    const qa_material_library *owner)
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
     size_t *rows = reading && library->count ? malloc(library->count * sizeof(*rows)) : NULL;
@@ -491,7 +492,7 @@ static bool record_order(qa_source_save_io *io, qa_material_library *library)
         const qa_material_record *record = reading ? NULL : library->records[bucket];
         for (size_t i = 0; ok && i < count; ++i) {
             uint64_t row = 0;
-            if (!reading) ok = record && material_index(library, &record->material, &row);
+            if (!reading) ok = record && material_index(owner, &record->material, &row);
             ok = ok && qa_source_save_u64(io, &row) && row < library->count;
             if (ok && reading) {
                 ok = !seen[row] && qa_material_hash(library->ordered[row]->material.name) == bucket;
@@ -534,7 +535,7 @@ static bool remaps(qa_source_save_io *io, qa_material_library *library)
     return true;
 }
 static bool generated(qa_source_save_io *io, qa_material_library *library,
-    const qa_material_library_checkpoint_refs *refs)
+    const qa_material_library *owner, const qa_material_library_checkpoint_refs *refs)
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ; size_t count = 0;
     if (!reading) for (const qa_material_generated *entry = library->generated; entry; entry = entry->next) ++count;
@@ -548,7 +549,7 @@ static bool generated(qa_source_save_io *io, qa_material_library *library,
         uint64_t picture = UINT64_MAX;
         if (!qa_material_saved_text(io, &entry->name) || !entry->name || !*entry->name ||
             !qa_material_saved_image(io, refs, &entry->image) || !entry->image ||
-            (!reading && !material_index(library, entry->picture, &picture)) ||
+            (!reading && !material_index(owner, entry->picture, &picture)) ||
             !qa_source_save_u64(io, &picture) || (picture != UINT64_MAX && picture >= library->count)) return false;
         if (reading) entry->picture = picture == UINT64_MAX ? NULL : &library->ordered[picture]->material;
         for (const qa_material_generated *prior = library->generated; reading && prior != entry; prior = prior->next)
@@ -591,9 +592,9 @@ bool qa_material_library_checkpoint(const qa_material_library *source, const qa_
                 (parent == UINT64_MAX || (qa_source_save_u64(&io, &copy.source_variant_revision) &&
                     qa_q3_image_upload_options_precision_codec(&io, &copy.source_variant_upload))); }
     }
-    if (ok) { record = NULL; stage = "bucket order"; ok = record_order(&io, &library); }
+    if (ok) { record = NULL; stage = "bucket order"; ok = record_order(&io, &library, source); }
     if (ok) { stage = "remap records"; ok = remaps(&io, &library); }
-    if (ok) { stage = "generated records"; ok = generated(&io, &library, refs); }
+    if (ok) { stage = "generated records"; ok = generated(&io, &library, source, refs); }
     if (ok) { stage = "finish"; ok = qa_source_save_finish(&io, out); }
     qa_source_save_dispose(&io);
     qa_material_library_capture_end(source);
@@ -658,7 +659,7 @@ bool qa_material_library_restore(const qa_material_library *qualified, qa_bytes 
             library->ordered[i]->material.remapped = remapped[i] == UINT64_MAX ? NULL : &library->ordered[remapped[i]]->material;
             library->ordered[i]->source_variant_parent = parents[i] == UINT64_MAX ? NULL : library->ordered[parents[i]];
         }
-        ok = record_order(&io, library) && remaps(&io, library) && generated(&io, library, refs) &&
+        ok = record_order(&io, library, library) && remaps(&io, library) && generated(&io, library, library, refs) &&
             qa_source_save_finish(&io, NULL) && library_valid(library, error);
     }
     free(remapped); free(parents); qa_source_save_dispose(&io);
