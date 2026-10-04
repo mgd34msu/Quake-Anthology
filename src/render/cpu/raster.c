@@ -11,6 +11,7 @@
 typedef struct screen_vertex {
   double x, y, z, q, scale;
   const cpu_vertex *vertex;
+  size_t source_index;
 } screen_vertex;
 typedef struct edge_equation {
   double x, y, c;
@@ -32,6 +33,8 @@ typedef struct cpu_triangle {
 static const double unit_color[4] = {1, 1, 1, 1};
 typedef struct cpu_triangle_output {
   struct cpu_raster_pool *pool;
+  size_t *projected;
+  size_t projected_count;
   bool failed;
 } cpu_triangle_output;
 typedef struct cpu_raster_command {
@@ -72,6 +75,8 @@ struct cpu_raster_pool {
   size_t triangle_count, triangle_capacity;
   cpu_raster_command *commands;
   size_t command_count, command_capacity;
+  size_t *projected;
+  size_t projected_capacity;
   cpu_raster_slice *slices;
   size_t slice_count, slice_capacity;
   atomic_size_t next_slice;
@@ -172,6 +177,7 @@ void cpu_raster_pool_destroy(qa_cpu_renderer *renderer) {
   }
   free(pool->triangles);
   free(pool->commands);
+  free(pool->projected);
   free(pool->slices);
   free(pool);
   renderer->raster_pool = NULL;
@@ -451,7 +457,8 @@ static cpu_vertex intersection(const cpu_vertex *a, const cpu_vertex *b,
   return out;
 }
 static size_t clip_polygon(const cpu_vertex input[3], const qa_scene_view *view,
-                           cpu_vertex result[32]) {
+                           cpu_vertex result[32], bool *clipped) {
+  *clipped = false;
   cpu_vertex work[2][32];
   memcpy(work[0], input, 3 * sizeof(*input));
   size_t count = 3;
@@ -485,6 +492,7 @@ static size_t clip_polygon(const cpu_vertex input[3], const qa_scene_view *view,
       previous_distance = current_distance;
     }
     if (changed) {
+      *clipped = true;
       count = produced;
       source = destination;
     }
@@ -504,17 +512,27 @@ static double snap(double value, double scale) {
          scale;
 }
 static screen_vertex project(const cpu_vertex *vertex,
-                             const qa_cpu_renderer *renderer, double scale) {
+                             const qa_cpu_renderer *renderer, double scale,
+                             cpu_triangle_output *output, size_t index) {
   qa_scene_rect view = renderer->view.viewport;
   double subpixel = (double)(UINT32_C(1) << renderer->options.subpixel_bits),
          w = vertex->clip[3];
+  bool retained = output && output->projected && index < output->projected_count;
+  if (retained && output->projected[index] != SIZE_MAX) {
+    size_t location = output->projected[index];
+    const screen_vertex *previous =
+        &output->pool->triangles[location / 3].vertices[location % 3];
+    return (screen_vertex){previous->x, previous->y, previous->z,
+        scale / w, scale, vertex, index};
+  }
   return (screen_vertex){
       snap(view.x + (vertex->clip[0] / w + 1) * view.width * 0.5, subpixel),
       snap(view.y + (1 - vertex->clip[1] / w) * view.height * 0.5, subpixel),
       vertex->clip[2] / w,
       scale / w,
       scale,
-      vertex};
+      vertex,
+      retained ? index : SIZE_MAX};
 }
 static edge_equation edge(screen_vertex a, screen_vertex b) {
   return (edge_equation){a.y - b.y, b.x - a.x, a.x * b.y - a.y * b.x,
@@ -781,7 +799,12 @@ static void triangle(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
     pool->triangles = triangles;
     pool->triangle_capacity = capacity;
   }
-  pool->triangles[pool->triangle_count++] = prepared;
+  size_t first = pool->triangle_count++;
+  pool->triangles[first] = prepared;
+  if (output->projected)
+    for (size_t i = 0; i < 3; ++i)
+      if (prepared.vertices[i].source_index != SIZE_MAX)
+        output->projected[prepared.vertices[i].source_index] = first * 3 + i;
 }
 static cpu_vertex interpolate_line(const cpu_vertex *a, const cpu_vertex *b,
                                    double t) {
@@ -961,17 +984,19 @@ static void line(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
 }
 static void draw_triangle(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
                           const cpu_sampler samplers[2],
-                          const cpu_vertex original[3], cpu_scissor bounds,
+                          const cpu_vertex original[3], const uint32_t indices[3],
+                          cpu_scissor bounds,
                           cpu_triangle_output *output) {
   cpu_vertex polygon[32];
-  size_t count = clip_polygon(original, &renderer->view, polygon);
+  bool clipped;
+  size_t count = clip_polygon(original, &renderer->view, polygon, &clipped);
   if (count < 3)
     return;
   if (draw->state.wireframe) {
     double area = 0;
-    screen_vertex previous = project(&polygon[count - 1], renderer, 1);
+    screen_vertex previous = project(&polygon[count - 1], renderer, 1, NULL, SIZE_MAX);
     for (size_t i = 0; i < count; ++i) {
-      screen_vertex current = project(&polygon[i], renderer, 1);
+      screen_vertex current = project(&polygon[i], renderer, 1, NULL, SIZE_MAX);
       area += previous.x * current.y - previous.y * current.x;
       previous = current;
     }
@@ -993,7 +1018,7 @@ static void draw_triangle(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
     double scale = fmin(original[0].clip[3],
                         fmin(original[1].clip[3], original[2].clip[3]));
     for (size_t i = 0; i < 3; ++i)
-      interpolation[i] = project(&original[i], renderer, scale);
+      interpolation[i] = project(&original[i], renderer, scale, NULL, SIZE_MAX);
     double area = evaluate(edge(interpolation[0], interpolation[1]),
                            interpolation[2].x, interpolation[2].y);
     if (isfinite(area)) {
@@ -1005,9 +1030,13 @@ static void draw_triangle(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
   for (size_t i = 1; i + 1 < count; ++i) {
     double scale = fmin(polygon[0].clip[3],
                         fmin(polygon[i].clip[3], polygon[i + 1].clip[3]));
-    triangle(renderer, draw, samplers, project(&polygon[0], renderer, scale),
-             project(&polygon[i], renderer, scale),
-             project(&polygon[i + 1], renderer, scale), attributes, bounds, output);
+    triangle(renderer, draw, samplers,
+             project(&polygon[0], renderer, scale, output,
+                     clipped ? SIZE_MAX : indices[0]),
+             project(&polygon[i], renderer, scale, output,
+                     clipped ? SIZE_MAX : indices[i]),
+             project(&polygon[i + 1], renderer, scale, output,
+                     clipped ? SIZE_MAX : indices[i + 1]), attributes, bounds, output);
     if (output && output->failed) return;
   }
 }
@@ -1030,20 +1059,47 @@ static void draw_source_strips(qa_cpu_renderer *renderer, const qa_scene_draw *d
   size_t cursor = 0;
   qa_render_strip strip;
   while (qa_render_strip_next(draw->mesh.indices, draw->mesh.index_count, &cursor, &strip)) {
-    cpu_vertex a = source_vertex(renderer, qa_render_strip_vertex(&strip, 0), discrete);
-    cpu_vertex b = source_vertex(renderer, qa_render_strip_vertex(&strip, 1), discrete);
+    uint32_t a_index = qa_render_strip_vertex(&strip, 0);
+    uint32_t b_index = qa_render_strip_vertex(&strip, 1);
+    cpu_vertex a = source_vertex(renderer, a_index, discrete);
+    cpu_vertex b = source_vertex(renderer, b_index, discrete);
     for (size_t ordinal = 2; ordinal < strip.triangles + 2; ++ordinal) {
-      cpu_vertex c = source_vertex(renderer, qa_render_strip_vertex(&strip, ordinal), discrete);
+      uint32_t c_index = qa_render_strip_vertex(&strip, ordinal);
+      cpu_vertex c = source_vertex(renderer, c_index, discrete);
       cpu_vertex vertices[3] = {ordinal & 1 ? b : a, ordinal & 1 ? a : b, c};
-      draw_triangle(renderer, draw, samplers, vertices, bounds, output);
+      uint32_t indices[3] = {ordinal & 1 ? b_index : a_index,
+                            ordinal & 1 ? a_index : b_index, c_index};
+      draw_triangle(renderer, draw, samplers, vertices, indices, bounds, output);
       if (output && output->failed) return;
       a = b; b = c;
+      a_index = b_index; b_index = c_index;
     }
   }
 }
 static void raster_geometry(const cpu_raster_job *job, cpu_triangle_output *output) {
   qa_cpu_renderer *renderer = job->renderer;
   const qa_scene_draw *draw = job->draw;
+  if (output) {
+    struct cpu_raster_pool *pool = output->pool;
+    size_t count = draw->source_vertex_storage
+        ? draw->source_vertex_storage : draw->mesh.vertex_count;
+    output->projected = NULL;
+    output->projected_count = 0;
+    if (count && count <= SIZE_MAX / sizeof(*pool->projected)) {
+      if (pool->projected_capacity < count) {
+        size_t *projected = realloc(pool->projected, count * sizeof(*projected));
+        if (projected) {
+          pool->projected = projected;
+          pool->projected_capacity = count;
+        }
+      }
+      if (pool->projected_capacity >= count) {
+        output->projected = pool->projected;
+        output->projected_count = count;
+        memset(output->projected, 0xff, count * sizeof(*output->projected));
+      }
+    }
+  }
   if (job->mode == QA_RENDER_PRIMITIVES_ARRAY_STRIPS ||
       job->mode == QA_RENDER_PRIMITIVES_DISCRETE_STRIPS) {
     draw_source_strips(renderer, draw, job->samplers,
@@ -1057,7 +1113,8 @@ static void raster_geometry(const cpu_raster_job *job, cpu_triangle_output *outp
       cpu_vertex vertices[3] = {renderer->vertices[draw->mesh.indices[i]],
                               renderer->vertices[draw->mesh.indices[i + 1]],
                               renderer->vertices[draw->mesh.indices[i + 2]]};
-      draw_triangle(renderer, draw, job->samplers, vertices, job->bounds, output);
+      draw_triangle(renderer, draw, job->samplers, vertices,
+                    &draw->mesh.indices[i], job->bounds, output);
       if (output && output->failed) return;
     }
   }
@@ -1100,7 +1157,7 @@ static unsigned raster_parallel(cpu_raster_job *job) {
     const cpu_vertex *vertex = &renderer->vertices[draw->mesh.indices[i]];
     if (!(vertex->clip[3] > 0))
       return raster_worker_count(pool, full_rows, full_rows);
-    screen_vertex v = project(vertex, renderer, 1);
+    screen_vertex v = project(vertex, renderer, 1, NULL, SIZE_MAX);
     if (!isfinite(v.x) || !isfinite(v.y))
       return raster_worker_count(pool, full_rows, full_rows);
     x0 = fmin(x0, v.x); y0 = fmin(y0, v.y);
