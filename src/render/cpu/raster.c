@@ -1143,50 +1143,37 @@ static unsigned raster_worker_count(const struct cpu_raster_pool *pool,
   if (active < 2) return 0;
   return (unsigned)(active < bands ? active : bands) - 1;
 }
-static unsigned raster_parallel(cpu_raster_job *job) {
+static unsigned raster_prepared_bounds(cpu_raster_job *job) {
+  struct cpu_raster_pool *pool = job->renderer->raster_pool;
+  int64_t full_rows = job->bounds.y1 - job->bounds.y0 + 1;
+  int64_t first = job->triangles[0].bounds.y0;
+  int64_t last = job->triangles[0].bounds.y1;
+  double area = 0;
+  for (size_t i = 0; i < job->triangle_count; ++i) {
+    const cpu_scissor *bounds = &job->triangles[i].bounds;
+    if (bounds->y0 < first) first = bounds->y0;
+    if (bounds->y1 > last) last = bounds->y1;
+    area += (double)(bounds->x1 - bounds->x0 + 1) *
+            (double)(bounds->y1 - bounds->y0 + 1);
+  }
+  job->bounds.y0 = first;
+  job->bounds.y1 = last;
+  return area < 128 * 128 ? 0 :
+      raster_worker_count(pool, full_rows, last - first + 1);
+}
+static void raster_draw(cpu_raster_job *job) {
   qa_cpu_renderer *renderer = job->renderer;
   const qa_scene_draw *draw = job->draw;
   struct cpu_raster_pool *pool = renderer->raster_pool;
-  if (!pool || draw->mesh.primitive != QA_SCENE_TRIANGLES ||
-      draw->state.wireframe || !draw->mesh.index_count ||
-      job->bounds.x0 > job->bounds.x1 ||
-      job->bounds.y1 <= job->bounds.y0)
-    return 0;
-  for (size_t i = 0; i < draw->texture_count; ++i)
+  bool prepare = pool && draw->mesh.primitive == QA_SCENE_TRIANGLES &&
+      !draw->state.wireframe;
+  for (size_t i = 0; prepare && i < draw->texture_count; ++i)
     if (draw->textures[i] && job->samplers[i].target == renderer->current)
-      return 0;
-  if (draw->shadow_atlas &&
+      prepare = false;
+  if (prepare && draw->shadow_atlas &&
       cpu_target_find(renderer, draw->shadow_atlas) == renderer->current)
-    return 0;
-  int64_t full_rows = job->bounds.y1 - job->bounds.y0 + 1;
-  double x0 = INFINITY, y0 = INFINITY, x1 = -INFINITY, y1 = -INFINITY;
-  for (size_t i = 0; i < draw->mesh.index_count; ++i) {
-    const cpu_vertex *vertex = &renderer->vertices[draw->mesh.indices[i]];
-    if (!(vertex->clip[3] > 0))
-      return raster_worker_count(pool, full_rows, full_rows);
-    screen_vertex v = project(vertex, renderer, 1, NULL, SIZE_MAX);
-    if (!isfinite(v.x) || !isfinite(v.y))
-      return raster_worker_count(pool, full_rows, full_rows);
-    x0 = fmin(x0, v.x); y0 = fmin(y0, v.y);
-    x1 = fmax(x1, v.x); y1 = fmax(y1, v.y);
-  }
-  double width = fmax(0, fmin(x1, (double)job->bounds.x1 + 1) -
-                        fmax(x0, (double)job->bounds.x0));
-  double height = fmax(0, fmin(y1, (double)job->bounds.y1 + 1) -
-                         fmax(y0, (double)job->bounds.y0));
-  if (width * height < 128 * 128) return 0;
-  double first_y = fmax((double)job->bounds.y0, ceil(y0 - 0.5));
-  double last_y = fmin((double)job->bounds.y1, floor(y1 - 0.5));
-  if (first_y > last_y) return 0;
-  job->bounds.y0 = (int64_t)first_y;
-  job->bounds.y1 = (int64_t)last_y;
-  return raster_worker_count(pool, full_rows,
-      job->bounds.y1 - job->bounds.y0 + 1);
-}
-static void raster_draw(cpu_raster_job *job) {
-  struct cpu_raster_pool *pool = job->renderer->raster_pool;
-  unsigned workers = raster_parallel(job);
-  if (!workers) {
+    prepare = false;
+  if (!prepare) {
     raster_prepared_draw(job);
     return;
   }
@@ -1201,6 +1188,11 @@ static void raster_draw(cpu_raster_job *job) {
   if (!pool->triangle_count) return;
   job->triangles = pool->triangles;
   job->triangle_count = pool->triangle_count;
+  unsigned workers = raster_prepared_bounds(job);
+  if (!workers) {
+    raster_prepared_draw(job);
+    return;
+  }
   if (fegetenv(&job->environment) != 0) {
     raster_prepared_draw(job);
     return;
@@ -1257,21 +1249,10 @@ void cpu_raster_flush(qa_cpu_renderer *renderer) {
   if (!pool || !pool->command_count) return;
   cpu_raster_job batch = {.renderer = renderer, .commands = pool->commands,
       .command_count = pool->command_count, .triangles = pool->triangles,
+      .triangle_count = pool->triangle_count,
       .bounds = pool->commands[0].bounds};
-  int64_t first = pool->triangles[0].bounds.y0;
-  int64_t last = pool->triangles[0].bounds.y1;
-  double area = 0;
-  for (size_t i = 0; i < pool->triangle_count; ++i) {
-    const cpu_scissor *bounds = &pool->triangles[i].bounds;
-    if (bounds->y0 < first) first = bounds->y0;
-    if (bounds->y1 > last) last = bounds->y1;
-    area += (double)(bounds->x1 - bounds->x0 + 1) *
-            (double)(bounds->y1 - bounds->y0 + 1);
-  }
-  unsigned workers = area < 128 * 128 ? 0 : raster_worker_count(pool,
-      batch.bounds.y1 - batch.bounds.y0 + 1, last - first + 1);
-  batch.bounds.y0 = first;
-  batch.bounds.y1 = last;
+  unsigned workers = raster_prepared_bounds(&batch);
+  int64_t first = batch.bounds.y0, last = batch.bounds.y1;
   int64_t rows = last - first + 1;
   unsigned bands = workers + 1;
   pool->slice_count = 0;
