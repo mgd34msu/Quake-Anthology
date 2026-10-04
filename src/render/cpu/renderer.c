@@ -1419,6 +1419,7 @@ bool qa_cpu_restore(qa_bytes bytes,const qa_cpu_options *options,const qa_render
     if (!error || error->code==QA_OK) qa_error_set(error,QA_ERROR_FORMAT,0,"Invalid saved CPU renderer continuation");
     return false;
   }
+  cpu_raster_pool_create(renderer);
   *out=renderer; return true;
 }
 
