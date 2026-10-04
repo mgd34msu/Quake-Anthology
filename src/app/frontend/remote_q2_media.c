@@ -185,10 +185,11 @@ const qa_scene_image *remote_q2_sprite_read(frontend_remote_q2 *row, const char 
     }
     size_t length = strlen(path);
     if (length > SIZE_MAX - 9) return NULL;
+    for (remote_q2_picture *p = row->pictures; p; p = p->next)
+        if (!strncmp(p->name, "#sprite:", 8) && !strcmp(p->name + 8, path)) return p->image;
     char *key = malloc(length + 9);
     if (!key) { remote_q2_fail(error, QA_ERROR_MEMORY, "Retaining Q2 sprite cache key"); return NULL; }
     memcpy(key, "#sprite:", 8); memcpy(key + 8, path, length + 1);
-    for (remote_q2_picture *p = row->pictures; p; p = p->next) if (!strcmp(p->name, key)) { free(key); return p->image; }
     remote_q2_picture *p = calloc(1, sizeof(*p));
     if (!p) { free(key); remote_q2_fail(error, QA_ERROR_MEMORY, "Retaining Q2 sprite"); return NULL; }
     qa_scene_image_options options = image_options(QA_IMAGE_USAGE_SPRITE);

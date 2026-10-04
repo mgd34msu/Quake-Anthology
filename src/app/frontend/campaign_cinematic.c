@@ -363,6 +363,23 @@ bool frontend_cinematic_view_read(qa_frontend *f,frontend_cinematic_view *out,bo
     if (!qa_cinematic_time(owner->movie,&view.elapsed_ms,&view.source_ms,&view.loop,error)) return false;
     *out=view; *found=true; return true;
 }
+bool frontend_cinematic_focus(qa_frontend *f,qa_cinematic *movie,bool *paused,bool *obscured,qa_error *error)
+{
+    *obscured=false;
+    for (uint32_t i=0;i<f->options.seats;++i) {
+        qa_ui_state ui;
+        if (!qa_ui_state_read(f->seats[i].ui,&ui,error)) return false;
+        *obscured|=qa_input_seat_focus(f->seats[i].input)==QA_INPUT_CONSOLE || ui.depth!=0;
+    }
+    if (*obscured && qa_cinematic_status(movie)==QA_MEDIA_PLAYING) {
+        if (!qa_cinematic_pause(movie,true,error)) return false;
+        *paused=true;
+    } else if (!*obscured && *paused) {
+        if (!qa_cinematic_pause(movie,false,error)) return false;
+        *paused=false;
+    }
+    return true;
+}
 bool frontend_cinematic_frame(qa_frontend *f,uint64_t elapsed_ns,bool *rendered,qa_error *error)
 {
     if (!f || !rendered) return frontend_fail(error,QA_ERROR_ARGUMENT,"Invalid cinematic frame");
@@ -375,27 +392,12 @@ bool frontend_cinematic_frame(qa_frontend *f,uint64_t elapsed_ns,bool *rendered,
     double duration=(double)elapsed_ns/1000000.0;
     if (!isfinite(owner->clock_ms+duration)) return frontend_fail(error,QA_ERROR_ARGUMENT,"Cinematic clock overflow");
     owner->clock_ms+=duration;
-    bool obscured=false;
-    for (uint32_t i=0;i<f->options.seats;++i) {
-        qa_ui_state ui;
-        if (!qa_ui_state_read(f->seats[i].ui,&ui,error)) return false;
-        obscured|=qa_input_seat_focus(f->seats[i].input)==QA_INPUT_CONSOLE || ui.depth!=0;
-    }
-    if (obscured && qa_cinematic_status(owner->movie)==QA_MEDIA_PLAYING) {
-        if (!qa_cinematic_pause(owner->movie,true,error)) return false;
-        owner->focus_paused=true;
-    } else if (!obscured && owner->focus_paused) {
-        if (!qa_cinematic_pause(owner->movie,false,error)) return false;
-        owner->focus_paused=false;
-    }
+    bool obscured;
+    if (!frontend_cinematic_focus(f,owner->movie,&owner->focus_paused,&obscured,error)) return false;
     if (obscured) return true;
-    qa_display_info display;
-    if (!qa_display_info_get(f->display,&display,error)) return false;
-    if (display.minimized || !display.drawable_width || !display.drawable_height) return true;
-    if (f->width!=display.drawable_width || f->height!=display.drawable_height) {
-        if (f->cpu && !qa_cpu_resize(f->cpu,display.drawable_width,display.drawable_height,error)) return false;
-        f->width=display.drawable_width; f->height=display.drawable_height;
-    }
+    bool ready;
+    if (!frontend_display_ready(f,&ready,error)) return false;
+    if (!ready) return true;
     qa_scene_frame_reset(&f->frame,f->frame_number);
     bool blank;
     if (!qa_scene_frame_material_order(&f->frame,f->order,error) ||
@@ -413,11 +415,7 @@ bool frontend_cinematic_frame(qa_frontend *f,uint64_t elapsed_ns,bool *rendered,
             !qa_material_source_frame_end(f->frame.source_pending,&f->frame,false,error)) return false;
         *rendered=true; return true;
     }
-    const qa_cvar_view *gamma=qa_cvars_find(qa_application_cvars(f->application),"r_gamma");
-    float brightness=gamma?fmaxf(.5f,fminf(3,gamma->number)):f->options.gamma;
-    bool ok=f->cpu?(qa_cpu_set_gamma(f->cpu,brightness,error) && qa_cpu_execute(f->cpu,&f->frame,error) &&
-        qa_cpu_present_frame(f->cpu,error)):(qa_gl_set_gamma(f->gl,brightness,error) && qa_gl_execute(f->gl,&f->frame,error) &&
-        qa_gl_finish(f->gl,error) && qa_gl_swap(f->gl,error));
+    bool ok=frontend_frame_present(f,true,error);
     if (ok) *rendered=true;
     return ok;
 }

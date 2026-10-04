@@ -27,4 +27,8 @@ bool frontend_source_color_clamp(qa_frontend *,const qa_cvars_edit *,qa_error *)
 /* The actual first/restarted physical Source color owner applies R_Register
  * latches before capability observation. Ordinary namespace reads do not. */
 bool frontend_source_color_register(qa_frontend *,const qa_cvars_edit *,qa_error *);
+/* Caller-qualified live registry or returned canonical edit initialization. */
+bool frontend_source_renderer_values_initialize(qa_cvars *,qa_cvars_edit *,qa_error *);
+bool frontend_source_color_values_register(qa_cvars *,qa_cvars_edit *,qa_error *);
+bool frontend_source_color_values_initialize(qa_cvars *,qa_cvars_edit *,qa_error *);
 #endif

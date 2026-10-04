@@ -355,27 +355,12 @@ bool frontend_system_cinematic_frame(qa_frontend *f,uint64_t elapsed_ns,bool *re
     double duration=(double)elapsed_ns/1000000.0;
     if (!isfinite(row->clock_ms+duration)) return frontend_fail(error,QA_ERROR_ARGUMENT,"System cinematic clock overflow");
     row->clock_ms+=duration;
-    bool obscured=false;
-    for (uint32_t i=0;i<f->options.seats;++i) {
-        qa_ui_state ui;
-        if (!qa_ui_state_read(f->seats[i].ui,&ui,error)) return false;
-        obscured|=qa_input_seat_focus(f->seats[i].input)==QA_INPUT_CONSOLE || ui.depth!=0;
-    }
-    if (obscured && qa_cinematic_status(row->movie)==QA_MEDIA_PLAYING) {
-        if (!qa_cinematic_pause(row->movie,true,error)) return false;
-        row->focus_paused=true;
-    } else if (!obscured && row->focus_paused) {
-        if (!qa_cinematic_pause(row->movie,false,error)) return false;
-        row->focus_paused=false;
-    }
+    bool obscured;
+    if (!frontend_cinematic_focus(f,row->movie,&row->focus_paused,&obscured,error)) return false;
     if (obscured) return true;
-    qa_display_info display;
-    if (!qa_display_info_get(f->display,&display,error)) return false;
-    if (display.minimized || !display.drawable_width || !display.drawable_height) return true;
-    if (f->width!=display.drawable_width || f->height!=display.drawable_height) {
-        if (f->cpu && !qa_cpu_resize(f->cpu,display.drawable_width,display.drawable_height,error)) return false;
-        f->width=display.drawable_width; f->height=display.drawable_height;
-    }
+    bool ready;
+    if (!frontend_display_ready(f,&ready,error)) return false;
+    if (!ready) return true;
     row->busy=true;
     qa_scene_frame_reset(&f->frame,f->frame_number); bool blank=false;
     bool ok=qa_scene_frame_material_order(&f->frame,f->order,error);
@@ -395,10 +380,7 @@ bool frontend_system_cinematic_frame(qa_frontend *f,uint64_t elapsed_ns,bool *re
         if (f->frame.source_pending)
             ok=qa_material_source_frame_end(f->frame.source_pending,&f->frame,false,error);
     } else if (ok) {
-        const qa_cvar_view *gamma=qa_cvars_find(qa_application_cvars(f->application),"r_gamma");
-        float brightness=gamma?fmaxf(.5f,fminf(3,gamma->number)):f->options.gamma;
-        ok=f->cpu?(qa_cpu_set_gamma(f->cpu,brightness,error) && qa_cpu_execute(f->cpu,&f->frame,error) && qa_cpu_present_frame(f->cpu,error)):
-            (qa_gl_set_gamma(f->gl,brightness,error) && qa_gl_execute(f->gl,&f->frame,error) && qa_gl_finish(f->gl,error) && qa_gl_swap(f->gl,error));
+        ok=frontend_frame_present(f,true,error);
     }
     row->busy=false;
     if (!ok) return false;

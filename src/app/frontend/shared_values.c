@@ -1,4 +1,5 @@
 #include "shared_values.h"
+#include "shared_register.h"
 #include "input_settings.h"
 #include "capture.h"
 #include "qa/application_engine_shutdown.h"
@@ -297,67 +298,21 @@ bool frontend_shared_values_q3_renderer_initialize(frontend_shared_values *owner
     if (!current(owner,error) || owner->published || owner->terminal ||
         !qa_cvars_edit_returned_is(owner->edit,owner->registry))
         return fail(error,"Source renderer initialization requires its returned mutable canonical edit");
-    const char *const latched[]={"r_allowExtensions","r_ext_compiled_vertex_array","r_detailtextures",
-        "r_vertexLight","r_fullbright","r_stereo","r_ignoreFastPath","r_ext_multitexture","r_ext_texture_env_add","r_subdivisions"};
-    for (size_t i=0;i<sizeof(latched)/sizeof(latched[0]);++i) {
-        const qa_cvar_view *setting=qa_cvars_edit_canonical_record(owner->edit,latched[i]);
-        if (!setting || setting->console_created) return fail(error,"Source renderer lost its physical initialization declaration");
-        if (!qa_cvars_edit_apply(owner->edit,&(qa_cvars_edit_command){
-            .kind=QA_CVARS_EDIT_APPLY_LATCHED,.name=latched[i]},error)) return false;
-    }
-    const qa_cvar_view *row=qa_cvars_edit_canonical_record(owner->edit,"r_znear");
-    if (!row || !isfinite(row->number)) return fail(error,"Source near clip requires its finite canonical scalar");
-    if ((double)row->number>=INT32_MIN && (double)row->number<=INT32_MAX &&
-        (int32_t)row->number!=row->integer) {
-        char text[32]; snprintf(text,sizeof(text),"%d",row->integer);
-        if (!qa_cvars_edit_apply(owner->edit,&(qa_cvars_edit_command){.kind=QA_CVARS_EDIT_SET,
-            .name="r_znear",.value=text,.force=true},error)) return false;
-        row=qa_cvars_edit_canonical_record(owner->edit,"r_znear");
-        if (!row) return fail(error,"Source initialization lost its actual near clip record");
-    }
-    const char *bounded=row->number<0.001f?"0.001000":row->number>200?"200.000000":NULL;
-    return !bounded || qa_cvars_edit_apply(owner->edit,&(qa_cvars_edit_command){
-        .kind=QA_CVARS_EDIT_SET,.name="r_znear",.value=bounded,.force=true},error);
+    return frontend_source_renderer_values_initialize(owner->registry,owner->edit,error);
 }
 bool frontend_shared_values_source_color_register(frontend_shared_values *owner,qa_error *error)
 {
     if (!current(owner,error) || owner->published || owner->terminal ||
         !qa_cvars_edit_returned_is(owner->edit,owner->registry))
         return fail(error,"Source color registration requires its owned returned canonical edit");
-    const char *const names[]={"r_intensity","r_ignorehwgamma","r_roundImagesDown",
-        "r_simpleMipMaps","r_colorMipLevels","r_picmip","r_texturebits","r_ext_compressed_textures",
-        "r_overBrightBits","r_mapOverBrightBits"};
-    for (size_t i=0;i<sizeof(names)/sizeof(names[0]);++i) {
-        const qa_cvar_view *row=qa_cvars_edit_canonical_record(owner->edit,names[i]);
-        if (!row || row->console_created) return fail(error,"Source color registration lost its physical declaration");
-        if (!qa_cvars_edit_apply(owner->edit,&(qa_cvars_edit_command){
-            .kind=QA_CVARS_EDIT_APPLY_LATCHED,.name=names[i]},error)) return false;
-    }
-    return true;
+    return frontend_source_color_values_register(owner->registry,owner->edit,error);
 }
 bool frontend_shared_values_source_color_initialize(frontend_shared_values *owner,qa_error *error)
 {
     if (!current(owner,error) || owner->published || owner->terminal ||
         !qa_cvars_edit_returned_is(owner->edit,owner->registry))
         return fail(error,"Source color initialization requires its owned returned mutable edit");
-    const char *const names[]={"r_intensity","r_gamma","r_picmip"};
-    for (unsigned i=0;i<3;++i) {
-        const qa_cvar_view *row=qa_cvars_edit_canonical_record(owner->edit,names[i]);
-        if (!row) return fail(error,"Source color requires its canonical initialization row");
-        float number=(float)row->number;
-        if (!isfinite(number)) return fail(error,"Source color requires its finite binary32 initialization value");
-        char integer[32]; const char *value=NULL;
-        if (!i) value=number<=1?"1":NULL;
-        else if (i==1) value=number<.5f?"0.500000":number>3?"3.000000":NULL;
-        else if (number<0) value="0.000000";
-        else if (number>16) value="16.000000";
-        else if ((int32_t)number!=row->integer) {
-            snprintf(integer,sizeof(integer),"%d",row->integer); value=integer;
-        }
-        if (value && !qa_cvars_edit_apply(owner->edit,&(qa_cvars_edit_command){
-            .kind=QA_CVARS_EDIT_SET,.name=names[i],.value=value,.force=true},error)) return false;
-    }
-    return true;
+    return frontend_source_color_values_initialize(owner->registry,owner->edit,error);
 }
 bool frontend_shared_values_native_initialize(frontend_shared_values *owner,qa_error *error)
 {

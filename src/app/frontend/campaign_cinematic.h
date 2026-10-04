@@ -20,6 +20,7 @@ bool frontend_cinematic_travel(qa_frontend *,const qa_application_travel_view *,
  * owns its real decoder and PCM privately until activation. */
 bool frontend_cinematic_drain(qa_frontend *,qa_error *);
 bool frontend_cinematic_frame(qa_frontend *,uint64_t elapsed_ns,bool *rendered,qa_error *);
+bool frontend_cinematic_focus(qa_frontend *,qa_cinematic *,bool *paused,bool *obscured,qa_error *);
 bool frontend_cinematic_input(qa_frontend *,uint32_t seat,qa_input_focus,const qa_input_event *,bool *,qa_error *);
 bool frontend_cinematic_view_read(qa_frontend *,frontend_cinematic_view *,bool *found,qa_error *);
 bool frontend_cinematic_view_current(const qa_frontend *,const qa_vfs *,const char *path,uint32_t physical_seat);

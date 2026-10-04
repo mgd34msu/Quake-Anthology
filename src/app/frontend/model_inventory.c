@@ -62,15 +62,15 @@ static bool array(qa_source_save_io *io, void **values, size_t count, size_t siz
 }
 static bool source_buffer(qa_source_save_io *io, qa_buffer *value, const qa_resource *resource)
 {
-    qa_bytes actual = qa_resource_bytes(resource); size_t count = value->size;
-    if (!resource || !qa_source_save_count(io, &count,
-        io->direction == QA_SOURCE_SAVE_READ ? io->input.size - io->offset : SIZE_MAX) || count != actual.size || count < 4) return false;
+    qa_bytes actual = qa_resource_bytes(resource);
+    if (!resource || !actual.data || actual.size < 4) return false;
     if (io->direction == QA_SOURCE_SAVE_READ) {
-        value->data = malloc(count); value->size = count;
+        value->data = malloc(actual.size); value->size = actual.size;
         if (!value->data) return fail(io->error, QA_ERROR_MEMORY, "Retaining immutable model source bytes");
+        memcpy(value->data, actual.data, actual.size);
+        return true;
     }
-    return value->data && qa_source_save_bytes(io, value->data, count) &&
-        same_bytes((qa_bytes){value->data, value->size}, actual);
+    return value->data && same_bytes((qa_bytes){value->data, value->size}, actual);
 }
 /* All borrowed strings, pixels and packed records retain their original offset
  * in the one owned source buffer. Zero-length present views remain present. */

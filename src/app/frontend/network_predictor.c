@@ -118,7 +118,8 @@ static bool native_children(frontend_network_predictor *owner, const frontend_ne
         return fail(error,"Prediction lacks its actual compiled CLIENT service and frame parents");
     *out=found; return true;
 }
-static bool source_read(void *context, frontend_remote_prediction_source *out, bool *present, qa_error *error)
+static bool source_observe(void *context, frontend_remote_prediction_source *out, bool *present,
+    frontend_network_prediction_source *observed, qa_error *error)
 {
     frontend_network_predictor *owner=context; frontend_network_prediction_source network;
     if(!owner || !out || !present || !owner->frontend || owner->application!=owner->frontend->application)
@@ -174,8 +175,11 @@ static bool source_read(void *context, frontend_remote_prediction_source *out, b
         (imported_frame && !frontend_remote_q3_frame_import_current(&imported)) ||
         (importing && !imported_frame && !frontend_remote_q3_frame_initialized_current(frame)))
         return fail(error,"Prediction source changed during its actual cache and transport observation");
+    if(observed) *observed=network;
     *present=true; return true;
 }
+static bool source_read(void *context, frontend_remote_prediction_source *out, bool *present, qa_error *error)
+{ return source_observe(context,out,present,NULL,error); }
 static bool settings_equal(const frontend_remote_prediction_settings *a, const frontend_remote_prediction_settings *b)
 {
     return a->game_type==b->game_type && a->dm_flags==b->dm_flags && a->pmove_msec==b->pmove_msec &&
@@ -184,10 +188,12 @@ static bool settings_equal(const frontend_remote_prediction_settings *a, const f
         a->no_predict==b->no_predict && a->synchronous_clients==b->synchronous_clients &&
         a->predict_items==b->predict_items && a->pmove_fixed==b->pmove_fixed;
 }
-static bool source_current(void *context, const frontend_remote_prediction_source *source)
+static bool source_current_observe(void *context, const frontend_remote_prediction_source *source,
+    frontend_network_prediction_source *observed)
 {
     frontend_network_predictor *owner=context; frontend_remote_prediction_source now; bool present=false; qa_error ignored={0};
-    if(!source || !source_read(context,&now,&present,&ignored) || !present ||
+    frontend_network_prediction_source network;
+    if(!source || !source_observe(context,&now,&present,&network,&ignored) || !present ||
         !(frontend_network_restore_prediction_pending(owner->frontend)?
           frontend_network_restore_prediction_input_current(owner->frontend,&source->input):
           frontend_network_prediction_input_current(owner->frontend,&source->input)) ||
@@ -213,7 +219,7 @@ static bool source_current(void *context, const frontend_remote_prediction_sourc
         source->configuration.input.trace_policy.q2_merged_contents!=now.configuration.input.trace_policy.q2_merged_contents ||
         source->configuration.input.trace_policy.curves!=now.configuration.input.trace_policy.curves ||
         source->configuration.input.trace_policy.player_curve_clip!=now.configuration.input.trace_policy.player_curve_clip) return false;
-    return source->settings_owner==now.settings_owner && source->geometry==now.geometry && source->scene.snapshot==now.scene.snapshot &&
+    bool current=source->settings_owner==now.settings_owner && source->geometry==now.geometry && source->scene.snapshot==now.scene.snapshot &&
         source->scene.next_snapshot==now.scene.next_snapshot && source->scene.prediction_snapshot==now.scene.prediction_snapshot &&
         source->scene.revision==now.scene.revision && source->scene.time==now.scene.time && source->scene.physics_time==now.scene.physics_time &&
         source->scene.processed_snapshot==now.scene.processed_snapshot && source->scene.this_frame_teleport==now.scene.this_frame_teleport &&
@@ -222,15 +228,11 @@ static bool source_current(void *context, const frontend_remote_prediction_sourc
         source->has_acknowledged_sequence==now.has_acknowledged_sequence &&
         source->acknowledged_sequence==now.acknowledged_sequence && source->history_unavailable==now.history_unavailable &&
         settings_equal(&source->settings,&now.settings);
+    if(current && observed) *observed=network;
+    return current;
 }
-static bool network_source(frontend_network_predictor *owner, const frontend_remote_prediction_source *source,
-    frontend_network_prediction_source *out, qa_error *error)
-{
-    bool present=false;
-    return source_current(owner,source) &&
-        frontend_network_prediction_source_read(owner->frontend,out,&present,error) && present &&
-        out->scene.revision==source->scene.revision && out->scene.prediction_snapshot==source->scene.prediction_snapshot;
-}
+static bool source_current(void *context, const frontend_remote_prediction_source *source)
+{ return source_current_observe(context,source,NULL); }
 static bool actor_at(void *context, uint32_t number, qa_actor_id *out, bool *present, qa_error *error)
 { return frontend_network_prediction_actor_at(((frontend_network_predictor *)context)->frontend,number,out,present,error); }
 static bool number_of(void *context, qa_actor_id actor, uint32_t *out, bool *present, qa_error *error)
@@ -239,64 +241,64 @@ static bool trace(void *context, const frontend_remote_prediction_source *source
     const qa_trace_query *query, qa_trace_result *out, qa_error *error)
 {
     frontend_network_predictor *owner=context; frontend_network_prediction_source network;
-    return network_source(owner,source,&network,error) && frontend_network_prediction_trace(owner->frontend,&network,query,out,error);
+    return source_current_observe(owner,source,&network) && frontend_network_prediction_trace(owner->frontend,&network,query,out,error);
 }
 static bool contents(void *context, const frontend_remote_prediction_source *source,
     const qa_point_query *query, qa_point_contents *out, qa_error *error)
 {
     frontend_network_predictor *owner=context; frontend_network_prediction_source network;
-    return network_source(owner,source,&network,error) && frontend_network_prediction_point_contents(owner->frontend,&network,query,out,error);
+    return source_current_observe(owner,source,&network) && frontend_network_prediction_point_contents(owner->frontend,&network,query,out,error);
 }
 static bool is_bsp(void *context, const frontend_remote_prediction_source *source,
     const qa_trace_result *hit, bool *out, qa_error *error)
 {
     frontend_network_predictor *owner=context; frontend_network_prediction_source network;
-    return network_source(owner,source,&network,error) && frontend_network_prediction_is_bsp(owner->frontend,&network,hit,out,error);
+    return source_current_observe(owner,source,&network) && frontend_network_prediction_is_bsp(owner->frontend,&network,hit,out,error);
 }
 static bool adjust_mover(void *context, const frontend_remote_prediction_source *source, qa_vec3 origin,
     int32_t number, int32_t from_time, int32_t to_time, qa_vec3 *out, qa_error *error)
 {
     frontend_network_predictor *owner=context; frontend_network_prediction_source network;
-    return network_source(owner,source,&network,error) &&
+    return source_current_observe(owner,source,&network) &&
         frontend_network_prediction_adjust_mover(owner->frontend,&network,origin,number,from_time,to_time,out,error);
 }
 static bool trigger_count(void *context, const frontend_remote_prediction_source *source, size_t *out, qa_error *error)
 {
     frontend_network_predictor *owner=context; frontend_network_prediction_source network;
-    return network_source(owner,source,&network,error) && frontend_network_prediction_trigger_count(owner->frontend,&network,out,error);
+    return source_current_observe(owner,source,&network) && frontend_network_prediction_trigger_count(owner->frontend,&network,out,error);
 }
 static bool trigger_at(void *context, const frontend_remote_prediction_source *source, size_t index,
     qa_q3_prediction_scene_entity_view *out, bool *present, qa_error *error)
 {
     frontend_network_predictor *owner=context; frontend_network_prediction_source network;
-    return network_source(owner,source,&network,error) && frontend_network_prediction_trigger_at(owner->frontend,&network,index,out,present,error);
+    return source_current_observe(owner,source,&network) && frontend_network_prediction_trigger_at(owner->frontend,&network,index,out,present,error);
 }
 static bool overlap(void *context, const frontend_remote_prediction_source *source,
     const qa_q3_prediction_scene_entity_view *entity, qa_vec3 origin, qa_bounds bounds, bool *out, qa_error *error)
 {
     frontend_network_predictor *owner=context; frontend_network_prediction_source network;
-    return network_source(owner,source,&network,error) &&
+    return source_current_observe(owner,source,&network) &&
         frontend_network_prediction_trigger_overlap(owner->frontend,&network,entity,origin,bounds,out,error);
 }
 static bool item_position(void *context, const frontend_remote_prediction_source *source,
     const qa_q3_prediction_scene_entity_view *entity, qa_vec3 *out, qa_error *error)
 {
     frontend_network_predictor *owner=context; frontend_network_prediction_source network;
-    return network_source(owner,source,&network,error) && frontend_network_prediction_item_position(owner->frontend,&network,entity,out,error);
+    return source_current_observe(owner,source,&network) && frontend_network_prediction_item_position(owner->frontend,&network,entity,out,error);
 }
 static bool item_misc_time(void *context, const frontend_remote_prediction_source *source,
     const qa_q3_prediction_scene_entity_view *entity, int32_t *out, qa_error *error)
 {
     frontend_network_predictor *owner=context; frontend_network_prediction_source network;
     frontend_remote_q3 *row=NULL; frontend_remote_q3_services_view services;
-    return network_source(owner,source,&network,error) && native_children(owner,&network,&row,&services,error) &&
+    return source_current_observe(owner,source,&network) && native_children(owner,&network,&row,&services,error) &&
         frontend_remote_snapshots_misc_time_read(frontend_remote_q3_frame_snapshots(frontend_remote_q3_frames_read(row)),
             &network,entity,out,error);
 }
 static bool set_pmove_msec(void *context, const frontend_remote_prediction_source *source, int32_t value, qa_error *error)
 {
     frontend_network_predictor *owner=context; frontend_network_prediction_source network;
-    if(!network_source(owner,source,&network,error)) return false;
+    if(!source_current_observe(owner,source,&network)) return false;
     char text[16]; snprintf(text,sizeof(text),"%d",value);
     if(!qa_cvars_set(network.receiver.cvars,"pmove_msec",text,true,error)) return false;
     const qa_cvar_view *actual=qa_cvars_find(network.receiver.cvars,"pmove_msec");

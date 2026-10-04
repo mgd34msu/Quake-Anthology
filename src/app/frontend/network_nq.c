@@ -497,15 +497,12 @@ static bool next_rule(void *context, const char *previous, bool *present, qa_qw_
     if (!host_source(host, error)) return false;
     qa_cvars *cvars = qa_application_network_q1_cvars(host->frontend->application, host->owner, error);
     if (!cvars) return false;
-    size_t start = 0;
+    const qa_cvar_view *value = NULL;
     if (*previous) {
-        bool found = false;
-        for (size_t i = 0; i < qa_cvars_count(cvars); ++i)
-            if (!strcmp(qa_cvars_at(cvars, i)->name, previous)) { start = i + 1; found = true; break; }
-        if (!found) { *present = false; return true; }
+        value = qa_cvars_find(cvars, previous);
+        if (!value || strcmp(value->name, previous)) { *present = false; return true; }
     }
-    for (size_t i = start; i < qa_cvars_count(cvars); ++i) {
-        const qa_cvar_view *value = qa_cvars_at(cvars, i);
+    while ((value = qa_cvars_next(cvars, value))) {
         if (!(value->flags & QA_CVAR_SERVERINFO)) continue;
         *out = (qa_qw_rule){value->name, value->value}; *present = true; return true;
     }

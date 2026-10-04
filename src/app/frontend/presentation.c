@@ -128,9 +128,9 @@ static bool remote_q1_present(qa_frontend *f,unsigned seat,const qa_scene_view *
         .scale=preferences->hud_scale,.show_scores=physical->scores,.visible=visible},&f->frame,error)) return false;
     *hud_drawn=true; return true;
 }
-static bool scene_build(qa_frontend *frontend, bool *render, qa_error *error)
+bool frontend_display_ready(qa_frontend *frontend, bool *ready, qa_error *error)
 {
-    *render = false;
+    *ready = false;
     qa_display_info display;
     if (!qa_display_info_get(frontend->display, &display, error)) return false;
     if (display.minimized || !display.drawable_width || !display.drawable_height) return true;
@@ -138,6 +138,25 @@ static bool scene_build(qa_frontend *frontend, bool *render, qa_error *error)
         if (frontend->cpu && !qa_cpu_resize(frontend->cpu, display.drawable_width, display.drawable_height, error)) return false;
         frontend->width = display.drawable_width; frontend->height = display.drawable_height;
     }
+    *ready = true;
+    return true;
+}
+bool frontend_frame_present(qa_frontend *frontend, bool finish_source, qa_error *error)
+{
+    const qa_cvar_view *gamma = qa_cvars_find(qa_application_cvars(frontend->application), "r_gamma");
+    float brightness = gamma ? fmaxf(.5f, fminf(3, gamma->number)) : frontend->options.gamma;
+    if (frontend->cpu) return qa_cpu_set_gamma(frontend->cpu, brightness, error) &&
+        qa_cpu_execute(frontend->cpu, &frontend->frame, error) && qa_cpu_present_frame(frontend->cpu, error);
+    return qa_gl_set_gamma(frontend->gl, brightness, error) && qa_gl_execute(frontend->gl, &frontend->frame, error) &&
+        ((!finish_source && frontend->frame.source_backend) || qa_gl_finish(frontend->gl, error)) &&
+        qa_gl_swap(frontend->gl, error);
+}
+static bool scene_build(qa_frontend *frontend, bool *render, qa_error *error)
+{
+    *render = false;
+    bool ready;
+    if (!frontend_display_ready(frontend, &ready, error)) return false;
+    if (!ready) return true;
     if (!frontend_equipment_media_prune(frontend,error) || !frontend_ui_features_sync(frontend, error) || !frontend_scene_sync(frontend, error) || !frontend_shader_sync(frontend, error)) return false;
     frontend_native_q3_factory native_factory = {.context = frontend,
         .compose = frontend_native_composition_create};
@@ -334,10 +353,5 @@ bool frontend_present(qa_frontend *frontend, qa_error *error)
     bool ok = scene_build(frontend, &render, error);
     if (profiling) ok = frontend_profiler_end(profiler, ok, error);
     if (!ok || !render) return ok;
-    const qa_cvar_view *gamma = qa_cvars_find(qa_application_cvars(frontend->application), "r_gamma");
-    float brightness = gamma ? fmaxf(.5f, fminf(3, gamma->number)) : frontend->options.gamma;
-    if (frontend->cpu) return qa_cpu_set_gamma(frontend->cpu, brightness, error) &&
-        qa_cpu_execute(frontend->cpu, &frontend->frame, error) && qa_cpu_present_frame(frontend->cpu, error);
-    return qa_gl_set_gamma(frontend->gl, brightness, error) && qa_gl_execute(frontend->gl, &frontend->frame, error) &&
-        (frontend->frame.source_backend || qa_gl_finish(frontend->gl, error)) && qa_gl_swap(frontend->gl, error);
+    return frontend_frame_present(frontend, false, error);
 }

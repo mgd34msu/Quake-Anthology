@@ -138,11 +138,15 @@ bool frontend_renderer_worlds_prune(qa_frontend *f,qa_error *error)
     frontend_renderer_worlds *owner=f->renderer_worlds;
     if(f->capture || f->resource_inventory || !frontend_renderer_worlds_idle(owner)) return false;
     for(size_t i=0;i<owner->count;) {
-        bool found=false; size_t count=0; const qa_scene_world *world=NULL;
-        if(!world_at(f,SIZE_MAX,&world,&count,error)) return false;
-        for(size_t j=0;j<count;++j) {
-            if(!world_at(f,j,&world,NULL,error)) return false;
-            if(world==owner->rows[i].view.world) { found=true; break; }
+        const qa_material_source_scratch *source=NULL;
+        if(!source_read(f,&source,error)) return false;
+        bool found=false;
+        for(size_t j=0;;++j) {
+            const qa_scene_world *world=NULL;
+            if(!occurrence(f,source,j,&world,error)) return false;
+            if(!world) break;
+            if(world==owner->rows[i].view.world) found=true;
+            if(j==SIZE_MAX) return false;
         }
         if(found) { ++i; continue; }
         dispose_row(&owner->rows[i]);

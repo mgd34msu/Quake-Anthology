@@ -205,6 +205,78 @@ static bool validate(void *user,const char *value,qa_error *error)
         (row->validation==CHANNELS && (number==1 || number==2));
     return valid || frontend_fail(error,QA_ERROR_ARGUMENT,row->description);
 }
+static const qa_cvar_view *initialization_row(qa_cvars *registry,qa_cvars_edit *edit,const char *name)
+{ return edit?qa_cvars_edit_canonical_record(edit,name):qa_cvars_find(registry,name); }
+static bool initialization_set(qa_cvars *registry,qa_cvars_edit *edit,
+    const char *name,const char *value,qa_error *error)
+{
+    return edit?qa_cvars_edit_apply(edit,&(qa_cvars_edit_command){
+        .kind=QA_CVARS_EDIT_SET,.name=name,.value=value,.force=true},error):
+        qa_cvars_set(registry,name,value,true,error);
+}
+static bool initialization_latches(qa_cvars *registry,qa_cvars_edit *edit,
+    const char *const *names,size_t count,const char *message,qa_error *error)
+{
+    for (size_t i=0;i<count;++i) {
+        const qa_cvar_view *row=initialization_row(registry,edit,names[i]);
+        if (!row || row->console_created) return frontend_fail(error,QA_ERROR_ARGUMENT,message);
+        if (!(edit?qa_cvars_edit_apply(edit,&(qa_cvars_edit_command){
+                .kind=QA_CVARS_EDIT_APPLY_LATCHED,.name=names[i]},error):
+                qa_cvars_apply_latched(registry,names[i],error))) return false;
+    }
+    return true;
+}
+bool frontend_source_renderer_values_initialize(qa_cvars *registry,qa_cvars_edit *edit,qa_error *error)
+{
+    const char *const latched[]={"r_allowExtensions","r_ext_compiled_vertex_array","r_detailtextures",
+        "r_vertexLight","r_fullbright","r_stereo","r_ignoreFastPath","r_ext_multitexture","r_ext_texture_env_add","r_subdivisions"};
+    if (!initialization_latches(registry,edit,latched,sizeof(latched)/sizeof(*latched),
+            "Source renderer lost its physical initialization declaration",error)) return false;
+    const qa_cvar_view *row=initialization_row(registry,edit,"r_znear");
+    if ((!edit && !qa_cvars_observer_idle(registry)) || !row || !isfinite(row->number))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,edit?"Source near clip requires its finite canonical scalar":
+            "Source near clip requires its returned finite canonical row");
+    if ((double)row->number>=INT32_MIN && (double)row->number<=INT32_MAX &&
+        (int32_t)row->number!=row->integer) {
+        char text[32]; snprintf(text,sizeof(text),"%d",row->integer);
+        if (!initialization_set(registry,edit,"r_znear",text,error)) return false;
+        row=initialization_row(registry,edit,"r_znear");
+        if (!row) return frontend_fail(error,QA_ERROR_ARGUMENT,"Source initialization lost its actual near clip record");
+    }
+    const char *bounded=row->number<0.001f?"0.001000":row->number>200?"200.000000":NULL;
+    return !bounded || initialization_set(registry,edit,"r_znear",bounded,error);
+}
+bool frontend_source_color_values_register(qa_cvars *registry,qa_cvars_edit *edit,qa_error *error)
+{
+    const char *const names[]={"r_intensity","r_ignorehwgamma","r_roundImagesDown",
+        "r_simpleMipMaps","r_colorMipLevels","r_picmip","r_texturebits","r_ext_compressed_textures",
+        "r_overBrightBits","r_mapOverBrightBits"};
+    return initialization_latches(registry,edit,names,sizeof(names)/sizeof(*names),
+        "Source color registration lost its physical declaration",error);
+}
+bool frontend_source_color_values_initialize(qa_cvars *registry,qa_cvars_edit *edit,qa_error *error)
+{
+    const char *const names[]={"r_intensity","r_gamma","r_picmip"};
+    for (unsigned i=0;i<3;++i) {
+        const qa_cvar_view *row=initialization_row(registry,edit,names[i]);
+        if (!row) return frontend_fail(error,QA_ERROR_ARGUMENT,edit?"Source color requires its canonical initialization row":
+            "Source color requires a canonical initialization row");
+        float number=(float)row->number;
+        if (!isfinite(number)) return frontend_fail(error,QA_ERROR_ARGUMENT,edit?
+            "Source color requires its finite binary32 initialization value":
+            "Source color requires a finite binary32 initialization value");
+        char integer[32]; const char *value=NULL;
+        if (!i) value=number<=1?"1":NULL;
+        else if (i==1) value=number<.5f?"0.500000":number>3?"3.000000":NULL;
+        else if (number<0) value="0.000000";
+        else if (number>16) value="16.000000";
+        else if ((int32_t)number!=row->integer) {
+            snprintf(integer,sizeof(integer),"%d",row->integer); value=integer;
+        }
+        if (value && !initialization_set(registry,edit,names[i],value,error)) return false;
+    }
+    return true;
+}
 bool frontend_shared_q3_renderer_initialize(qa_frontend *f,qa_error *error)
 {
     if (!f || !f->application || f->capture || f->source_restoring)
@@ -217,25 +289,7 @@ bool frontend_shared_q3_renderer_initialize(qa_frontend *f,qa_error *error)
     qa_cvars *registry=qa_application_cvars(f->application);
     if (!qa_cvars_observer_idle(registry))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Source renderer registration requires its returned canonical owner");
-    const char *const latched[]={"r_allowExtensions","r_ext_compiled_vertex_array","r_detailtextures",
-        "r_vertexLight","r_fullbright","r_stereo","r_ignoreFastPath","r_ext_multitexture","r_ext_texture_env_add","r_subdivisions"};
-    for (size_t i=0;i<sizeof(latched)/sizeof(latched[0]);++i) {
-        const qa_cvar_view *setting=qa_cvars_find(registry,latched[i]);
-        if (!setting || setting->console_created)
-            return frontend_fail(error,QA_ERROR_ARGUMENT,"Source renderer lost its physical initialization declaration");
-        if (!qa_cvars_apply_latched(registry,latched[i],error)) return false;
-    }
-    const qa_cvar_view *row=qa_cvars_find(registry,"r_znear");
-    if (!qa_cvars_observer_idle(registry) || !row || !isfinite(row->number))
-        return frontend_fail(error,QA_ERROR_ARGUMENT,"Source near clip requires its returned finite canonical row");
-    if ((double)row->number>=INT32_MIN && (double)row->number<=INT32_MAX &&
-        (int32_t)row->number!=row->integer) {
-        char text[32]; snprintf(text,sizeof(text),"%d",row->integer);
-        if (!qa_cvars_set(registry,"r_znear",text,true,error)) return false;
-        row=qa_cvars_find(registry,"r_znear");
-    }
-    const char *bounded=row->number<0.001f?"0.001000":row->number>200?"200.000000":NULL;
-    return !bounded || qa_cvars_set(registry,"r_znear",bounded,true,error);
+    return frontend_source_renderer_values_initialize(registry,NULL,error);
 }
 bool frontend_source_color_register(qa_frontend *f,const qa_cvars_edit *edit,qa_error *error)
 {
@@ -252,16 +306,7 @@ bool frontend_source_color_register(qa_frontend *f,const qa_cvars_edit *edit,qa_
     qa_cvars *registry=qa_application_cvars(f->application);
     if (edit || frontend_config_store_shared_pending(f->config_store) || !qa_cvars_observer_idle(registry))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Source color registration cannot replace a pending canonical owner");
-    const char *const names[]={"r_intensity","r_ignorehwgamma","r_roundImagesDown",
-        "r_simpleMipMaps","r_colorMipLevels","r_picmip","r_texturebits","r_ext_compressed_textures",
-        "r_overBrightBits","r_mapOverBrightBits"};
-    for (size_t i=0;i<sizeof(names)/sizeof(names[0]);++i) {
-        const qa_cvar_view *row=qa_cvars_find(registry,names[i]);
-        if (!row || row->console_created)
-            return frontend_fail(error,QA_ERROR_ARGUMENT,"Source color registration lost its physical declaration");
-        if (!qa_cvars_apply_latched(registry,names[i],error)) return false;
-    }
-    return true;
+    return frontend_source_color_values_register(registry,NULL,error);
 }
 bool frontend_source_color_clamp(qa_frontend *f,const qa_cvars_edit *edit,qa_error *error)
 {
@@ -278,23 +323,7 @@ bool frontend_source_color_clamp(qa_frontend *f,const qa_cvars_edit *edit,qa_err
     qa_cvars *registry=qa_application_cvars(f->application);
     if (edit || frontend_config_store_shared_pending(f->config_store) || !qa_cvars_observer_idle(registry))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Source color initialization cannot replace a pending canonical owner");
-    const char *const names[]={"r_intensity","r_gamma","r_picmip"};
-    for (unsigned i=0;i<3;++i) {
-        const qa_cvar_view *row=qa_cvars_find(registry,names[i]);
-        if (!row) return frontend_fail(error,QA_ERROR_ARGUMENT,"Source color requires a canonical initialization row");
-        float number=(float)row->number;
-        if (!isfinite(number)) return frontend_fail(error,QA_ERROR_ARGUMENT,"Source color requires a finite binary32 initialization value");
-        char integer[32]; const char *value=NULL;
-        if (!i) value=number<=1?"1":NULL;
-        else if (i==1) value=number<.5f?"0.500000":number>3?"3.000000":NULL;
-        else if (number<0) value="0.000000";
-        else if (number>16) value="16.000000";
-        else if ((int32_t)number!=row->integer) {
-            snprintf(integer,sizeof(integer),"%d",row->integer); value=integer;
-        }
-        if (value && !qa_cvars_set(registry,names[i],value,true,error)) return false;
-    }
-    return true;
+    return frontend_source_color_values_initialize(registry,NULL,error);
 }
 typedef enum q2_client_group {
     Q2_CLIENT_LAYOUT, Q2_CLIENT_EFFECTS, Q2_CLIENT_FOOTSTEPS, Q2_CLIENT_HAND
