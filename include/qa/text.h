@@ -27,6 +27,17 @@ bool qa_parse_atof(const char *text, double *out, qa_error *error);
 bool qa_parse_strtod(const char *, double *, size_t *consumed, bool *range_error, qa_error *);
 /* The same prefix conversion rounded directly to binary32. */
 bool qa_parse_atof_float(const char *text, float *out, qa_error *error);
+/* Quake-style prefix grammar: optional minus, hex or quoted byte, otherwise
+ * decimal digits scaled after the last dot. Whitespace, plus and exponents
+ * are not consumed. NULL or a missing numeric prefix produces zero.
+ * Accumulation/result stay binary64; callers retain their float conversion
+ * and admission bounds. Flags preserve reached arithmetic and quoted bytes. */
+typedef enum qa_quake_number_policy {
+    QA_QUAKE_NUMBER_ASCII_UNSIGNED = 0, /* value * 10 + ascii - '0' */
+    QA_QUAKE_NUMBER_DIGIT_FIRST = 1,    /* value * 10 + (ascii - '0') */
+    QA_QUAKE_NUMBER_SIGNED_QUOTE = 2    /* Interpret quoted bytes as int8. */
+} qa_quake_number_policy;
+double qa_parse_quake_number(const char *, qa_quake_number_policy);
 /* Truncate finite binary64 modulo 2^32 and reinterpret the resulting signed
  * word. Zero and nonfinite input produce zero. */
 int32_t qa_number_to_i32(double value);

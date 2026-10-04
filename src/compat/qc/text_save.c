@@ -151,31 +151,6 @@ bool qa_qc_text_capture(const qa_qc_instance *vm,qa_q1_save_record *globals,
     }
     *globals=saved_globals; *entities=saved_entities; *count=vm->entity_count; return true;
 }
-/* Q_atof deliberately has no whitespace, plus or exponent handling. */
-static double source_number(const char *text)
-{
-    size_t offset=0; double sign=1,value=0; int64_t decimal=-1,total=0;
-    if (text[offset]=='-') { sign=-1; ++offset; }
-    if (text[offset]=='0' && (text[offset+1]=='x' || text[offset+1]=='X')) {
-        offset+=2;
-        while (text[offset]) {
-            unsigned char c=(unsigned char)text[offset++];
-            int digit=c>='0' && c<='9'?c-'0':c>='a' && c<='f'?c-'a'+10:c>='A' && c<='F'?c-'A'+10:-1;
-            if (digit<0) break;
-            value=value*16+digit;
-        }
-        return value*sign;
-    }
-    if (text[offset]=='\'') return sign*(unsigned char)text[offset+1];
-    while (text[offset]) {
-        unsigned char c=(unsigned char)text[offset++];
-        if (c=='.') { decimal=total; continue; }
-        if (c<'0' || c>'9') break;
-        value=value*10+c-'0'; ++total;
-    }
-    if (decimal!=-1) while (total-->decimal) value/=10;
-    return value*sign;
-}
 static bool parse_value(qa_qc_instance *vm,uint8_t *words,
     const qa_qc_definition *d,const char *text,qa_error *error)
 {
@@ -194,7 +169,9 @@ static bool parse_value(qa_qc_instance *vm,uint8_t *words,
         if (!ok) return false;
         qc_store_word(words,offset,(uint32_t)id); break;
     }
-    case QA_QC_FLOAT: qc_store_float(words,offset,(float)source_number(text)); break;
+    case QA_QC_FLOAT:
+        qc_store_float(words,offset,(float)qa_parse_quake_number(text,
+            QA_QUAKE_NUMBER_ASCII_UNSIGNED)); break;
     case QA_QC_VECTOR: {
         const char *start=text;
         for (uint32_t i=0;i<3;++i) {
@@ -202,13 +179,14 @@ static bool parse_value(qa_qc_instance *vm,uint8_t *words,
             char *part=malloc(size+1);
             if (!part) return qc_fail(error,QA_ERROR_MEMORY,offset,"Decoding QC source vector");
             memcpy(part,start,size); part[size]=0;
-            qc_store_float(words,offset+i,(float)source_number(part)); free(part);
+            qc_store_float(words,offset+i,(float)qa_parse_quake_number(part,
+                QA_QUAKE_NUMBER_ASCII_UNSIGNED)); free(part);
             start=end?end+1:start+size;
         }
         break;
     }
     case QA_QC_ENTITY: {
-        double slot=trunc(source_number(text));
+        double slot=trunc(qa_parse_quake_number(text, QA_QUAKE_NUMBER_ASCII_UNSIGNED));
         if (!isfinite(slot) || slot<0 || slot>=vm->entity_count)
             return qc_fail(error,QA_ERROR_FORMAT,offset,"Saved entity reference exceeds source count");
         qc_store_word(words,offset,(uint32_t)((uint64_t)slot*vm->layout.stride_bytes)); break;

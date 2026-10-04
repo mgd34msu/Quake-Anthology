@@ -62,6 +62,56 @@ int32_t qa_number_to_i32(double value) {
     return result;
 }
 
+double qa_parse_quake_number(const char *text, qa_quake_number_policy policy) {
+    if (!text)
+        return 0;
+    int sign = 1;
+    if (*text == '-') {
+        sign = -1;
+        ++text;
+    }
+    double value = 0;
+    if (text[0] == '0' && (text[1] == 'x' || text[1] == 'X')) {
+        for (text += 2; *text; ++text) {
+            unsigned char c = (unsigned char)*text;
+            int digit = c >= '0' && c <= '9' ? c - '0' :
+                c >= 'a' && c <= 'f' ? c - 'a' + 10 :
+                c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1;
+            if (digit < 0)
+                break;
+            value = value * 16 + digit;
+        }
+    } else if (*text == '\'') {
+        int quoted = (unsigned char)text[1];
+        if ((policy & QA_QUAKE_NUMBER_SIGNED_QUOTE) && quoted >= 128)
+            quoted -= 256;
+        value = quoted;
+    } else {
+        size_t places = 0;
+        bool decimal = false;
+        for (; *text; ++text) {
+            if (*text == '.') {
+                decimal = true;
+                places = 0;
+                continue;
+            }
+            if (*text < '0' || *text > '9')
+                break;
+            if (policy & QA_QUAKE_NUMBER_DIGIT_FIRST)
+                value = value * 10 + (*text - '0');
+            else
+                value = value * 10 + *text - '0';
+            if (decimal)
+                ++places;
+        }
+        while (places) {
+            value /= 10;
+            --places;
+        }
+    }
+    return value * sign;
+}
+
 size_t qa_format_q3_integer(int32_t value, char out[12]) {
     unsigned char reversed[11];
     size_t count = 0;

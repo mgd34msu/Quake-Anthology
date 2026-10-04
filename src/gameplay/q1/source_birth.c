@@ -1,6 +1,7 @@
 #include "internal.h"
 #include "qa/game_q1_source_birth.h"
 #include "qa/game_q1_maps.h"
+#include "qa/text.h"
 
 static bool source_current(qa_q1_game_operation *operation, qa_actor_id actor,
     const q1_player *player, uint32_t expected_slot, qa_error *error)
@@ -102,40 +103,6 @@ static bool named_grant(qa_q1_game_operation *operation, qa_actor_id actor,
         grant(operation, actor, player, slot, item, count, 1, error);
 }
 
-/* PF_stof uses the engine Q_atof grammar, rather than entity parseFloat. */
-static float source_stof(const char *text)
-{
-    if (!text) return 0;
-    int sign = 1;
-    if (*text == '-') { sign = -1; ++text; }
-    double value = 0;
-    if (text[0] == '0' && (text[1] == 'x' || text[1] == 'X')) {
-        text += 2;
-        for (;;) {
-            unsigned char c = (unsigned char)*text++;
-            unsigned digit;
-            if (c >= '0' && c <= '9') digit = c - '0';
-            else if (c >= 'a' && c <= 'f') digit = c - 'a' + 10;
-            else if (c >= 'A' && c <= 'F') digit = c - 'A' + 10;
-            else break;
-            value = value * 16 + digit;
-        }
-    } else if (*text == '\'') {
-        value = (signed char)text[1];
-    } else {
-        size_t total = 0, decimal = SIZE_MAX;
-        for (; *text; ++text) {
-            if (*text == '.') { decimal = total; continue; }
-            if (*text < '0' || *text > '9') break;
-            value = value * 10 + *text - '0';
-            ++total;
-        }
-        if (decimal != SIZE_MAX)
-            while (total > decimal) { value /= 10; --total; }
-    }
-    return (float)(value * sign);
-}
-
 static bool deathmatch_birth(qa_q1_game *game, qa_actor_id actor, bool dm4, qa_error *error)
 {
     if (!game || !game->options.quakeworld || game->options.program != QA_Q1_ID1 ||
@@ -156,8 +123,8 @@ static bool deathmatch_birth(qa_q1_game *game, qa_actor_id actor, bool dm4, qa_e
         qa_string_id value;
         if (okay) okay = game->host.world_info(game->host.context, "axe", &value, error) &&
             source_current(&operation, actor, player, slot, error);
-        if (okay) arsenal = source_stof(qa_strings_cstr(
-            qa_session_strings(game->services.session), value)) == 0;
+        if (okay) arsenal = (float)qa_parse_quake_number(qa_strings_cstr(
+            qa_session_strings(game->services.session), value), QA_QUAKE_NUMBER_SIGNED_QUOTE) == 0;
     }
     static const qa_q1_ammo ammo[] = {QA_Q1_NAILS, QA_Q1_SHELLS, QA_Q1_ROCKETS, QA_Q1_CELLS};
     static const double count[] = {80, 30, 10, 30};
@@ -214,10 +181,12 @@ bool qa_q1_source_qw_birth(qa_q1_game *game, qa_actor_id actor, qa_error *error)
         game->host.world_info(game->host.context, "rj", &value, error) &&
         source_current(&operation, actor, player, slot, error);
     qa_strings *strings = qa_session_strings(game->services.session);
-    if (okay && source_stof(qa_strings_cstr(strings, value)) != 0) {
+    if (okay && (float)qa_parse_quake_number(qa_strings_cstr(strings, value),
+            QA_QUAKE_NUMBER_SIGNED_QUOTE) != 0) {
         okay = game->host.world_info(game->host.context, "rj", &value, error) &&
             source_current(&operation, actor, player, slot, error);
-        if (okay) game->qw_rj = source_stof(qa_strings_cstr(strings, value));
+        if (okay) game->qw_rj = (float)qa_parse_quake_number(qa_strings_cstr(strings, value),
+            QA_QUAKE_NUMBER_SIGNED_QUOTE);
     }
     if (okay && (game->options.deathmatch == 4 || game->options.deathmatch == 5))
         okay = deathmatch_birth(game, actor, game->options.deathmatch == 4, error) &&

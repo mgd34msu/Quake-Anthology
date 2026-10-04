@@ -10,28 +10,6 @@ static char *text(qa_bytes bytes, qa_error *error) {
     if (bytes.size) memcpy(copy, bytes.data, bytes.size);
     copy[bytes.size] = 0; return copy;
 }
-static float number(const char *s) {
-    bool negative = *s == '-'; if (negative) ++s;
-    double value = 0;
-    if (s[0] == '0' && (s[1] == 'x' || s[1] == 'X')) {
-        for (s += 2; *s; ++s) {
-            unsigned char c = (unsigned char)*s;
-            int digit = c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1;
-            if (digit < 0) break;
-            value = value * 16 + digit;
-        }
-    } else if (*s == '\'') value = (unsigned char)s[1];
-    else {
-        size_t places = 0; bool decimal = false;
-        for (; *s; ++s) {
-            if (*s == '.') { decimal = true; places = 0; continue; }
-            if (*s < '0' || *s > '9') break;
-            value = value * 10 + (*s - '0'); if (decimal) ++places;
-        }
-        while (places) { value /= 10; --places; }
-    }
-    return (float)(negative ? -value : value);
-}
 static bool pair(qa_qc_game *game, int32_t entity, const qa_qc_definition *def,
                  char *value, bool angle, qa_error *error) {
     switch (def->type) {
@@ -51,16 +29,18 @@ static bool pair(qa_qc_game *game, int32_t entity, const qa_qc_definition *def,
         return qa_qc_string_allocate(game->vm, value, &id, error) &&
                qa_qc_set_entity_int(game->vm, entity, def->offset, id, error);
     }
-    case QA_QC_FLOAT: return qa_qc_set_entity_float(game->vm, entity, def->offset, number(value), error);
+    case QA_QC_FLOAT:
+        return qa_qc_set_entity_float(game->vm, entity, def->offset,
+            (float)qa_parse_quake_number(value, QA_QUAKE_NUMBER_DIGIT_FIRST), error);
     case QA_QC_VECTOR: {
         float components[3] = {0};
-        if (angle) components[1] = number(value);
+        if (angle) components[1] = (float)qa_parse_quake_number(value, QA_QUAKE_NUMBER_DIGIT_FIRST);
         else {
             char *start = value;
             for (unsigned i = 0; i < 3; ++i) {
                 char *end = strchr(start, ' ');
                 if (end) *end = 0;
-                components[i] = number(start);
+                components[i] = (float)qa_parse_quake_number(start, QA_QUAKE_NUMBER_DIGIT_FIRST);
                 if (!end) break;
                 start = end + 1;
             }
@@ -69,7 +49,7 @@ static bool pair(qa_qc_game *game, int32_t entity, const qa_qc_definition *def,
             qa_v3(components[0], components[1], components[2]), error);
     }
     case QA_QC_ENTITY: {
-        float slot = number(value);
+        float slot = (float)qa_parse_quake_number(value, QA_QUAKE_NUMBER_DIGIT_FIRST);
         if (!isfinite(slot) || slot < 0 || (double)slot >= game->options.vm.entity_capacity)
             return qc_game_fail(error, QA_ERROR_FORMAT, "QC map entity reference exceeds slot capacity");
         qa_qc_entity_layout layout = game->options.vm.entity_layout;
