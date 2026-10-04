@@ -602,7 +602,7 @@ static void source_body_linked(void *opaque, const qa_linked_body *linked)
     bool qualified = false;
     for (size_t index = 0; index <= application->provider_count; ++index) {
         application_provider *provider = index ? application->providers[index - 1] : source;
-        bool q3 = index && provider != source && provider->kind == APPLICATION_PROVIDER_Q3 &&
+        bool q3 = (!index || provider != source) && provider->kind == APPLICATION_PROVIDER_Q3 &&
             provider->state.q3 && provider->constructed && provider->attached && !provider->close_pending;
         struct application_native_q2 *original = !index && provider->kind == APPLICATION_PROVIDER_NATIVE
             ? provider->state.native.q2_engine : NULL;
