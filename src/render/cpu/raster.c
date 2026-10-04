@@ -858,7 +858,7 @@ static void raster_prepared_draw(const cpu_raster_job *job) {
     }
   }
 }
-static bool raster_parallel(const cpu_raster_job *job) {
+static bool raster_parallel(cpu_raster_job *job) {
   qa_cpu_renderer *renderer = job->renderer;
   const qa_scene_draw *draw = job->draw;
   struct cpu_raster_pool *pool = renderer->raster_pool;
@@ -886,7 +886,13 @@ static bool raster_parallel(const cpu_raster_job *job) {
                         fmax(x0, (double)job->bounds.x0));
   double height = fmax(0, fmin(y1, (double)job->bounds.y1 + 1) -
                          fmax(y0, (double)job->bounds.y0));
-  return width * height >= 128 * 128;
+  if (width * height < 128 * 128) return false;
+  double first_y = fmax((double)job->bounds.y0, ceil(y0 - 0.5));
+  double last_y = fmin((double)job->bounds.y1, floor(y1 - 0.5));
+  if (first_y > last_y || last_y - first_y < pool->count) return false;
+  job->bounds.y0 = (int64_t)first_y;
+  job->bounds.y1 = (int64_t)last_y;
+  return true;
 }
 static void raster_draw(cpu_raster_job *job) {
   struct cpu_raster_pool *pool = job->renderer->raster_pool;
