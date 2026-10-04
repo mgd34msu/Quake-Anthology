@@ -1171,7 +1171,7 @@ static bool cpu_draw_impl(qa_cpu_renderer *renderer, const qa_scene_draw *input,
                          qa_error *error, bool queued) {
   bool batchable = queued && renderer->raster_pool &&
       !renderer->controls.source.issuing && !input->source_arrays &&
-      !input->source_retain_depth_range && !input->source_primitives &&
+      !input->source_retain_depth_range &&
       input->source_direct == QA_SOURCE_DIRECT_NONE &&
       input->mesh.primitive == QA_SCENE_TRIANGLES && !input->state.wireframe;
   if (!batchable) cpu_raster_flush(renderer);
