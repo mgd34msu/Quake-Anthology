@@ -926,7 +926,9 @@ bool qa_scene_world_source_prepare_view(qa_scene_world *world, qa_scene_world_in
     if (!view) return false;
     *view = (qa_scene_source_world_view){.world = world, .frame = frame, .sequence = frame->sequence,
         .origin = input->view.origin, .axis = {input->view.axis[0], input->view.axis[1], input->view.axis[2]},
-        .projection_x = input->view.projection.m[0], .projection_y = input->view.projection.m[5]};
+        .projection_x = input->view.projection.m[0], .projection_y = input->view.projection.m[5],
+        .no_cull = input->no_cull, .no_curves = input->no_curves,
+        .disable_face_plane_cull = input->disable_face_plane_cull};
     if (input->skip_world && input->source_visibility && input->source_visibility->world == world &&
         input->source_visibility->frame == frame && input->source_visibility->sequence == frame->sequence)
         view->bounds = input->source_visibility->bounds;
@@ -939,7 +941,10 @@ bool qa_scene_world_source_prepare_view(qa_scene_world *world, qa_scene_world_in
                 _Alignof(uint32_t), error);
             view->lights = qa_arena_alloc(&frame->storage, count * sizeof(*view->lights),
                 _Alignof(uint32_t), error);
-            if (!view->surfaces || !view->lights) return false;
+            if (world->bsp.family == QA_BSP_Q3)
+                view->culls = qa_arena_alloc(&frame->storage, count * sizeof(*view->culls),
+                    _Alignof(qa_scene_cull), error);
+            if (!view->surfaces || !view->lights || (world->bsp.family == QA_BSP_Q3 && !view->culls)) return false;
             qa_scene_plane planes[6];
             size_t plane_count = input->no_cull ? 0 : qa_scene_frustum(&input->view, planes);
             if (world->bsp.family == QA_BSP_Q3 && plane_count > 4) plane_count = 4;
@@ -958,6 +963,8 @@ bool qa_scene_world_source_prepare_view(qa_scene_world *world, qa_scene_world_in
                 }
                 if (world->bsp.family == QA_BSP_Q3 && incoming) world->source_dlight_masks[index] = mask;
                 view->surfaces[view->count] = index;
+                if (view->culls)
+                    view->culls[view->count] = surface->material ? surface->material->cull : QA_CULL_NONE;
                 view->lights[view->count++] = mask;
             }
         }
@@ -1397,11 +1404,16 @@ static bool world_submit(qa_scene_world *world, const qa_scene_world_input *inpu
     if (world->bsp.family == QA_BSP_Q3 && plane_count > 4) plane_count = 4;
     qa_material_context context = world_context(world, input);
     if (!fragment_context(world, input, frame, &context, error)) return false;
+    bool prepared_cull = prepared && world->bsp.family == QA_BSP_Q3 &&
+        prepared->no_cull == input->no_cull && prepared->no_curves == input->no_curves &&
+        prepared->disable_face_plane_cull == input->disable_face_plane_cull;
     for (size_t i = 0; i < count; ++i) {
         qaw_surface *surface = &world->surfaces[order[i].surface];
         bool admitted = true;
         if (input->source_order && !admit_surface(world, surface->source_index, &admitted, error)) return false;
-        if (!admitted || surface_culled(world, surface, input, &context, NULL, planes, plane_count)) continue;
+        bool cull_current = prepared_cull && prepared->culls[order[i].ordinal] ==
+            (surface->material ? surface->material->cull : QA_CULL_NONE);
+        if (!admitted || (!cull_current && surface_culled(world, surface, input, &context, NULL, planes, plane_count))) continue;
         uint32_t incoming = prepared ? prepared->lights[order[i].ordinal] : world->surface_lights[surface->source_index];
         uint32_t mask = prepared ? incoming : surface_light_mask(surface, incoming, context.lights, context.light_count);
         context.source_dlighted = incoming != 0 && mask != 0;

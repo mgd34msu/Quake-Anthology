@@ -96,7 +96,9 @@ struct qa_scene_source_world_view {
     qa_vec3 origin, axis[3];
     qa_bounds bounds;
     float projection_x, projection_y;
+    bool no_cull, no_curves, disable_face_plane_cull;
     uint32_t *surfaces, *lights;
+    qa_scene_cull *culls;
     size_t count;
 };
 
