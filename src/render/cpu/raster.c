@@ -36,6 +36,7 @@ typedef struct cpu_raster_command {
   qa_scene_draw draw;
   cpu_sampler samplers[2];
   cpu_scissor bounds;
+  int64_t first_y, last_y;
   size_t first, count;
   fenv_t environment;
 } cpu_raster_command;
@@ -68,6 +69,11 @@ struct cpu_raster_pool {
   cpu_raster_worker workers[];
 };
 static void raster_prepared_draw(const cpu_raster_job *job);
+static bool raster_command_overlaps(const cpu_raster_job *batch, size_t index) {
+  const cpu_raster_command *command = &batch->commands[index];
+  return command->first_y <= batch->bounds.y1 &&
+         command->last_y >= batch->bounds.y0;
+}
 static cpu_raster_job raster_command_job(const cpu_raster_job *batch,
                                          size_t index) {
   const cpu_raster_command *command = &batch->commands[index];
@@ -92,10 +98,12 @@ static int SDLCALL raster_worker(void *context) {
       worker->job.exceptions = 0;
       worker->job.completed_commands = 0;
       for (size_t i = 0; i < worker->job.command_count; ++i) {
-        if (fesetenv(&worker->job.commands[i].environment) != 0) break;
-        cpu_raster_job job = raster_command_job(&worker->job, i);
-        raster_prepared_draw(&job);
-        worker->job.exceptions |= fetestexcept(FE_ALL_EXCEPT);
+        if (raster_command_overlaps(&worker->job, i)) {
+          if (fesetenv(&worker->job.commands[i].environment) != 0) break;
+          cpu_raster_job job = raster_command_job(&worker->job, i);
+          raster_prepared_draw(&job);
+          worker->job.exceptions |= fetestexcept(FE_ALL_EXCEPT);
+        }
         ++worker->job.completed_commands;
       }
       worker->job.completed =
@@ -1122,6 +1130,7 @@ void cpu_raster_flush(qa_cpu_renderer *renderer) {
   cpu_raster_job main = batch;
   main.bounds.y0 = first + rows * workers / bands;
   for (size_t i = 0; i < main.command_count; ++i) {
+    if (!raster_command_overlaps(&main, i)) continue;
     cpu_raster_job job = raster_command_job(&main, i);
     raster_prepared_draw(&job);
   }
@@ -1130,6 +1139,7 @@ void cpu_raster_flush(qa_cpu_renderer *renderer) {
     SDL_SemWait(worker->done);
     for (size_t j = worker->job.completed_commands;
          j < worker->job.command_count; ++j) {
+      if (!raster_command_overlaps(&worker->job, j)) continue;
       cpu_raster_job job = raster_command_job(&worker->job, j);
       raster_prepared_draw(&job);
     }
@@ -1162,6 +1172,14 @@ static bool raster_queue(cpu_raster_job *job) {
     return false;
   }
   if (!command.count) return true;
+  command.first_y = pool->triangles[first].bounds.y0;
+  command.last_y = pool->triangles[first].bounds.y1;
+  for (size_t i = first + 1; i < pool->triangle_count; ++i) {
+    if (pool->triangles[i].bounds.y0 < command.first_y)
+      command.first_y = pool->triangles[i].bounds.y0;
+    if (pool->triangles[i].bounds.y1 > command.last_y)
+      command.last_y = pool->triangles[i].bounds.y1;
+  }
   for (size_t i = 0; i < command.draw.texture_count; ++i)
     command.samplers[i] = job->samplers[i];
   pool->commands[pool->command_count++] = command;
