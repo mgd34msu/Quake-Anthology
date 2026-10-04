@@ -9,19 +9,6 @@ typedef struct mount_binding {
     qa_fs_object_reference root_reference;
 } mount_binding;
 
-static uint64_t package_index(const qa_resource_pool *pool, const package *wanted)
-{
-    uint64_t index = 0;
-    for (const package *p = pool->packages; p; p = p->next, ++index)
-        if (p == wanted) return index;
-    return UINT64_MAX;
-}
-static package *package_at(qa_resource_pool *pool, uint64_t index)
-{
-    package *p = pool->packages;
-    while (p && index) { p = p->next; --index; }
-    return p;
-}
 static mount *find_mount(const qa_vfs *vfs, qa_mount_id id)
 {
     for (size_t i = 0; i < vfs->count; ++i)
@@ -116,7 +103,7 @@ static bool mounts(vfs_save_io *io, qa_vfs *vfs, mount_binding **bindings_out)
             if (!m) return vfs_save_fail(io, QA_ERROR_MEMORY, "allocating restored VFS mount");
             vfs->mounts[vfs->count++] = m;
         } else { saved = *vfs->mounts[i]; m = &saved; }
-        uint64_t origin = io->reading ? UINT64_MAX : package_index(vfs->pool, m->archive);
+        uint64_t origin = io->reading ? UINT64_MAX : vfs_package_index(vfs->pool, m->archive);
         uint64_t comparison = m->comparison;
         if ((!io->reading && m->archive && origin == UINT64_MAX) ||
             !vfs_save_u64(io, &m->id) || !m->id ||
@@ -136,7 +123,7 @@ static bool mounts(vfs_save_io *io, qa_vfs *vfs, mount_binding **bindings_out)
             if (vfs->mounts[j]->id == m->id)
                 return vfs_save_fail(io, QA_ERROR_FORMAT, "duplicate VFS mount identity");
         if (origin != UINT64_MAX) {
-            package *p = package_at(vfs->pool, origin);
+            package *p = vfs_package_at(vfs->pool, origin);
             if (!p || m->writable || m->user_overlay || m->root || m->root_prefix ||
                 m->root_references || m->root_reference_count)
                 return vfs_save_fail(io, QA_ERROR_FORMAT, "invalid VFS archive mount");
@@ -253,7 +240,7 @@ static bool priority_matches(const qa_vfs *vfs, const qa_mount_id *order)
     for (size_t i = 0; i < vfs->pure_count; ++i) {
         for (size_t j = first; j < vfs->count; ++j) {
             const mount *m = order ? find_mount(vfs, order[j]) : vfs->mounts[j];
-            if (!m->archive || !qa_sha256_equal(&m->archive->digest, &vfs->pure[i])) continue;
+            if (!m->archive || !qa_sha256_equal(&vfs_package_canonical(m->archive)->digest, &vfs->pure[i])) continue;
             if (j != first) return false;
             ++first;
             break;
@@ -276,7 +263,7 @@ static bool restrictions(vfs_save_io *io, qa_vfs *vfs)
         if (io->reading) vfs->pure[i] = digest;
         bool found = false;
         for (size_t j = 0; j < vfs->count; ++j)
-            if (vfs->mounts[j]->archive && qa_sha256_equal(&vfs->mounts[j]->archive->digest, &digest)) found = true;
+            if (vfs->mounts[j]->archive && qa_sha256_equal(&vfs_package_canonical(vfs->mounts[j]->archive)->digest, &digest)) found = true;
         if (!found) return vfs_save_fail(io, QA_ERROR_FORMAT, "VFS required archive is missing");
     }
     if (!vfs_save_bool(io, &vfs->q3_demo)) return false;
@@ -343,7 +330,7 @@ static bool reads(vfs_save_io *io, qa_vfs *vfs)
         if (!vfs_save_u64(io, &mount_id) || !vfs_save_u64(io, &resource_id) || !resource_id) return false;
         mount *source = find_mount(vfs, mount_id);
         const qa_resource *resource = qa_resource_pool_find(vfs->pool, resource_id);
-        if (!source || !resource || resource->archive != source->archive ||
+        if (!source || !resource || resource->archive != vfs_package_canonical(source->archive) ||
             (source->archive && !source->referenced))
             return vfs_save_fail(io, QA_ERROR_FORMAT, "VFS read provenance differs from its actual resource and mounted owner");
         char *path = io->reading ? NULL : (char *)vfs->reads[i].path;
@@ -405,7 +392,7 @@ static bool origins(vfs_save_io *io, qa_vfs *vfs)
         mount *live = find_mount(vfs, row->mount);
         if (ok && live) {
             ok = !strcmp(live->path, r->mount_path) && (live->archive != NULL) == r->archive;
-            if (ok && r->archive) ok = qa_sha256_equal(&live->archive->digest, &r->archive_digest);
+            if (ok && r->archive) ok = qa_sha256_equal(&vfs_package_canonical(live->archive)->digest, &r->archive_digest);
             if (ok && !r->archive) {
                 bool found = false;
                 for (size_t n = 0; n < live->root_reference_count; ++n)
@@ -490,8 +477,9 @@ static bool archive_ready(vfs_save_io *io, const mount *m)
     if (!unchanged) return vfs_save_fail(io, QA_ERROR_IO, "VFS mounted archive changed");
     qa_buffer bytes = {0};
     if (!qa_fs_file_read_snapshot(m->archive_file, &m->identity, &bytes, io->error)) return false;
-    bool matches = bytes.size == m->archive->storage.size &&
-        (!bytes.size || !memcmp(bytes.data, m->archive->storage.data, bytes.size));
+    package *payload = vfs_package_canonical(m->archive);
+    bool matches = bytes.size == payload->storage.size &&
+        (!bytes.size || !memcmp(bytes.data, payload->storage.data, bytes.size));
     qa_buffer_free(&bytes);
     return matches || vfs_save_fail(io, QA_ERROR_FORMAT, "VFS mounted archive bytes differ");
 }
@@ -537,6 +525,8 @@ bool qa_vfs_checkpoint(const qa_vfs *vfs, qa_buffer *out, qa_error *error)
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "VFS checkpoint requires a live view and empty output");
         return false;
     }
+    for (size_t i = 0; i < vfs->count; ++i)
+        if (vfs->mounts[i]->archive && !vfs_package_materialize(vfs->mounts[i]->archive, error)) return false;
     qa_vfs saved = *vfs;
     mount_binding *bindings = NULL;
     vfs_save_io io = {.error = error};

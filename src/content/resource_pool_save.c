@@ -7,7 +7,7 @@ static const uint8_t pool_magic[4] = {'Q','A','R','P'};
 static size_t package_count(const qa_resource_pool *pool)
 {
     size_t count = 0;
-    for (const package *p = pool->packages; p; p = p->next) ++count;
+    for (const package *p = pool->packages; p; p = p->next) if (!p->canonical) ++count;
     return count;
 }
 static size_t resource_count(const qa_resource_pool *pool)
@@ -15,19 +15,6 @@ static size_t resource_count(const qa_resource_pool *pool)
     size_t count = 0;
     for (const qa_resource *r = pool->resources; r; r = r->next) ++count;
     return count;
-}
-static uint64_t package_index(const qa_resource_pool *pool, const package *wanted)
-{
-    uint64_t index = 0;
-    for (const package *p = pool->packages; p; p = p->next, ++index)
-        if (p == wanted) return index;
-    return UINT64_MAX;
-}
-static package *package_at(qa_resource_pool *pool, uint64_t index)
-{
-    package *p = pool->packages;
-    while (p && index) { p = p->next; --index; }
-    return p;
 }
 static uint64_t resource_index(const qa_resource_pool *pool, const qa_resource *wanted)
 {
@@ -51,7 +38,7 @@ static const char *mounted_package_path(const package *p,
         if (!view) continue;
         for (size_t j = 0; j < view->count; ++j) {
             const mount *m = view->mounts[j];
-            if (m->archive == p && m->archive_file) return m->path;
+            if (vfs_package_canonical(m->archive) == p && m->archive_file) return m->path;
         }
     }
     return NULL;
@@ -84,16 +71,19 @@ static bool package_storage(vfs_save_io *io, package *p, const package *physical
 static bool packages(vfs_save_io *io, qa_resource_pool *pool,
     const qa_vfs *const *views, size_t view_count, const qa_vfs_checkpoint_refs *refs)
 {
+    if (!io->reading) for (package *p = pool->packages; p; p = p->next)
+        if (!vfs_package_materialize(p, io->error)) return false;
     size_t count = io->reading ? 0 : package_count(pool);
     if (!vfs_save_count(io, &count, 104, sizeof(package))) return false;
     package **tail = &pool->packages;
     for (size_t i = 0; i < count; ++i) {
+        while (!io->reading && *tail && (*tail)->canonical) tail = &(*tail)->next;
         package saved = {0};
         package *p;
         if (io->reading) {
             p = calloc(1, sizeof(*p));
             if (!p) return vfs_save_fail(io, QA_ERROR_MEMORY, "allocating restored VFS package");
-            p->references = 1;
+            p->references = 1; p->pool = pool;
             *tail = p;
         } else { saved = **tail; p = &saved; }
         uint64_t kind = io->reading ? 0 : qa_archive_get_kind(p->archive);
@@ -118,7 +108,7 @@ static bool packages(vfs_save_io *io, qa_resource_pool *pool,
         }
         /* The actual package cache coalesces equal bytes and format. */
         for (package *other = pool->packages; other != *tail; other = other->next)
-            if (qa_archive_get_kind(other->archive) == kind &&
+            if (!other->canonical && qa_archive_get_kind(other->archive) == kind &&
                 other->storage.size == storage.size &&
                 qa_sha256_equal(&other->digest, &p->digest) &&
                 (!storage.size || !memcmp(other->storage.data, storage.data, storage.size)))
@@ -131,7 +121,7 @@ static bool packages(vfs_save_io *io, qa_resource_pool *pool,
 static bool resource_record(vfs_save_io *io, qa_resource_pool *pool,
                             qa_resource *r, uint64_t previous_id)
 {
-    uint64_t origin = io->reading ? UINT64_MAX : package_index(pool, r->archive);
+    uint64_t origin = io->reading ? UINT64_MAX : vfs_package_index(pool, r->archive);
     if (!io->reading && r->archive && origin == UINT64_MAX)
         return vfs_save_fail(io, QA_ERROR_FORMAT, "resource has a foreign VFS package");
     if (!vfs_save_u64(io, &r->id) || !r->id || (previous_id && r->id >= previous_id) ||
@@ -145,7 +135,7 @@ static bool resource_record(vfs_save_io *io, qa_resource_pool *pool,
     bool path_matches = !strcmp(normalized, r->path);
     free(normalized);
     if (!path_matches) return vfs_save_fail(io, QA_ERROR_FORMAT, "unnormalized VFS resource path");
-    package *archive = origin == UINT64_MAX ? NULL : package_at(pool, origin);
+    package *archive = origin == UINT64_MAX ? NULL : vfs_package_at(pool, origin);
     if (origin != UINT64_MAX && !archive)
         return vfs_save_fail(io, QA_ERROR_FORMAT, "unknown retained VFS package");
     const qa_archive_entry *entry = archive ? qa_archive_entry_at(archive->archive, r->ordinal) : NULL;
@@ -352,6 +342,8 @@ bool qa_resource_pool_restore_ready(const qa_resource_pool *pool, qa_error *erro
         size_t references = 1;
         for (const qa_resource *r = pool->resources; r; r = r->next)
             if (r->archive == p) ++references;
+        for (const package *directory = pool->packages; directory; directory = directory->next)
+            if (directory->canonical == p) ++references;
         if (p->references != references) {
             qa_error_set(error, QA_ERROR_ARGUMENT, 0, "resource restore must precede archive mounts");
             return false;
@@ -481,6 +473,7 @@ bool qa_resource_pool_restore_linked(qa_resource_pool *pool,
     }
     qa_resource_pool displaced = *pool;
     *pool = *candidate; pool->references = displaced.references;
+    for (package *p = pool->packages; p; p = p->next) p->pool = pool;
     *candidate = displaced; candidate->references = 1;
     qa_resource_pool_destroy(candidate); return true;
 }

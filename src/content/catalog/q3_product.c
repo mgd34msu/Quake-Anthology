@@ -43,9 +43,10 @@ static bool clone_physical_ready(void *context, const qa_catalog_mount *mount,
     const qa_catalog_member_identity *members, size_t count, qa_error *error)
 {
     const catalog_physical *source = catalog_package(context, mount->id);
+    const qa_catalog_mount *actual = catalog_mount(context, mount->id);
     if (!source || strcmp(source->view.path, mount->path) || source->view.format != mount->format ||
         source->view.writable != mount->writable || source->member_count != count ||
-        (mount->digest && (!source->view.digest || !qa_sha256_equal(source->view.digest, mount->digest))))
+        (mount->digest && (!actual->digest || !qa_sha256_equal(actual->digest, mount->digest))))
         return fail(error, QA_ERROR_FORMAT, "Catalog clone changed physical package identity");
     for (size_t i = 0; i < count; ++i)
         if (source->members[i].ordinal != members[i].ordinal || strcmp(source->members[i].path, members[i].path))
@@ -59,11 +60,7 @@ bool qa_catalog_clone(const qa_catalog *source, qa_catalog **out, qa_error *erro
     qa_catalog_checkpoint_refs refs = {.context = (void *)source,
         .files_encode = clone_files_encode, .files_decode = clone_files_decode,
         .physical_ready = clone_physical_ready};
-    qa_buffer bytes = {0};
-    bool okay = qa_catalog_checkpoint(source, &refs, &bytes, error) &&
-        qa_catalog_restore(source->resources, &refs, (qa_bytes){bytes.data, bytes.size}, out, error);
-    qa_buffer_free(&bytes);
-    return okay;
+    return catalog_copy_metadata(source, &refs, out, error);
 }
 
 bool catalog_q3_restriction_valid(const qa_catalog *catalog, qa_error *error)

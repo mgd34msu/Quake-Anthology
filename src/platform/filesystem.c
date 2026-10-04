@@ -151,6 +151,20 @@ bool qa_fs_file_read_snapshot(qa_fs_file *file, const qa_fs_identity *expected,
     return true;
 }
 
+bool qa_fs_file_read_range(qa_fs_file *file, const qa_fs_identity *expected,
+    size_t offset, void *bytes, size_t size, qa_error *error)
+{
+    if (!file || !expected || (size && !bytes) || offset > PTRDIFF_MAX ||
+        size > (size_t)PTRDIFF_MAX - offset || (uint64_t)offset > expected->words[2] ||
+        (uint64_t)size > expected->words[2] - (uint64_t)offset) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, offset, "Range read needs an admitted file span");
+        return false;
+    }
+    return file_read_begin(file, expected, "range read", error) &&
+        file_read_exact(file, offset, bytes, size, error) &&
+        file_read_finish(file, expected, "range read", true, error);
+}
+
 bool qa_fs_file_snapshot_matches(qa_fs_file *file, const qa_fs_identity *expected,
     qa_bytes bytes, bool *matches, qa_error *error)
 {

@@ -41,10 +41,15 @@ static bool physical_mount(const recipe_view *view, qa_vfs_mount_info info,
 {
     const char *path = qa_vfs_mount_path(view->files, info.id);
     const qa_vfs *authority = qa_catalog_files(view->catalog);
+    if (info.is_archive && !qa_vfs_archive_digest_read(view->files, info.id, &info.digest, error)) return false;
     for (size_t i = 0; path && i < qa_catalog_mount_count(view->catalog); ++i) {
         const qa_catalog_mount *candidate = qa_catalog_mount_at(view->catalog, i);
         if (strcmp(path, candidate->path) || candidate->format != info.format ||
             info.is_archive != (candidate->format != QA_ARCHIVE_AUTO)) continue;
+        if (info.is_archive) {
+            const qa_sha256_digest *digest = NULL;
+            if (!qa_catalog_mount_digest_read(view->catalog, candidate->id, &digest, error)) return false;
+        }
         if (info.is_archive ? (!info.digest || !candidate->digest || !qa_sha256_equal(info.digest, candidate->digest)) :
             !qa_fs_root_same_object(qa_vfs_mount_root(view->files, info.id), qa_vfs_mount_root(authority, candidate->id))) continue;
         for (size_t j = 0; j < qa_catalog_count(view->catalog); ++j) {
@@ -87,7 +92,10 @@ bool recipe_view_write(qa_json_writer *w, const recipe_view *view, qa_error *err
         qa_json_writer_array(w); qa_json_writer_string(w, product->identity); qa_json_writer_number(w, (double)ordinal);
         qa_json_writer_bool(w, info.is_archive); qa_json_writer_number(w, info.format); qa_json_writer_number(w, info.comparison);
         qa_json_writer_bool(w, info.user_overlay); qa_json_writer_bool(w, info.q3_demo);
-        if (info.is_archive) recipe_digest_write(w, info.digest); else qa_json_writer_null(w);
+        if (info.is_archive) {
+            if (!qa_vfs_archive_digest_read(view->files, info.id, &info.digest, error)) return false;
+            recipe_digest_write(w, info.digest);
+        } else qa_json_writer_null(w);
         qa_json_writer_end(w); (void)actual;
     }
     qa_json_writer_end(w); qa_json_writer_key(w, "prefixes"); qa_json_writer_array(w);

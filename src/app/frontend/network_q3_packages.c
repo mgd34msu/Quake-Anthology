@@ -49,6 +49,8 @@ static const qa_product *mount_product(qa_catalog *catalog, const qa_vfs *conten
 {
     const char *path = qa_vfs_mount_path(content, view->id);
     const qa_product *selected = NULL;
+    const qa_sha256_digest *digest = NULL;
+    if (view->is_archive && !qa_vfs_archive_digest_read(content, view->id, &digest, error)) return NULL;
     for (size_t i = 0; i < qa_catalog_count(catalog); ++i) {
         const qa_product *product = qa_catalog_at(catalog, i);
         if (product->family != QA_GAME_Q3) continue;
@@ -56,8 +58,12 @@ static const qa_product *mount_product(qa_catalog *catalog, const qa_vfs *conten
         if (!qa_catalog_product_own_mounts(catalog, product->id, &ids, &count)) continue;
         for (size_t j = 0; j < count; ++j) for (size_t k = 0; k < qa_catalog_mount_count(catalog); ++k) {
             const qa_catalog_mount *mount = qa_catalog_mount_at(catalog, k);
-            if (mount->id != ids[j] || strcmp(path, mount->path) || mount->format != view->format ||
-                (view->is_archive && (!mount->digest || !view->digest || !qa_sha256_equal(mount->digest, view->digest)))) continue;
+            if (mount->id != ids[j] || strcmp(path, mount->path) || mount->format != view->format) continue;
+            if (view->is_archive) {
+                const qa_sha256_digest *physical = NULL;
+                if (!qa_catalog_mount_digest_read(catalog, mount->id, &physical, error)) return NULL;
+                if (!qa_sha256_equal(physical, digest)) continue;
+            }
             if (selected && selected != product) {
                 fail(error, QA_ERROR_FORMAT, "Q3 mount has ambiguous actual catalog product ownership"); return NULL;
             }
@@ -343,8 +349,8 @@ bool frontend_q3_packages_download(frontend_q3_packages *packages, const char *n
         bool matches = qa_archive_paths_equal(path, name, QA_ARCHIVE_ASCII_INSENSITIVE); free(path);
         if (!matches) continue;
         qa_vfs_mount_info info;
-        if (!qa_vfs_mount_at(packages->content, i, &info) || !info.digest ||
-            !qa_vfs_archive_bytes(packages->content, mount->mount, out, error)) return false;
+        if (!qa_vfs_archive_bytes(packages->content, mount->mount, out, error) ||
+            !qa_vfs_mount_at(packages->content, i, &info) || !info.digest) return false;
         *digest = info.digest; return true;
     }
     return fail(error, QA_ERROR_NOT_FOUND, "Requested Q3 package is absent from the actual mounted source catalog");

@@ -56,7 +56,8 @@ size_t qa_vfs_mount_count(const qa_vfs *vfs);
 /* Pure allocation-lineage proof, including genuinely retired mount IDs.
  * Clones and restored views preserve the real contiguous issuance counter. */
 bool qa_vfs_mount_id_was_issued(const qa_vfs *, qa_mount_id);
-/* Info follows default search order. Its digest is borrowed until unmount. */
+/* Info follows default search order. A pending archive has no digest yet;
+ * an acquired digest is borrowed until unmount. */
 bool qa_vfs_mount_at(const qa_vfs *vfs, size_t index, qa_vfs_mount_info *out);
 typedef struct qa_vfs_resource_origin {
     const char *mount_path;
@@ -198,7 +199,11 @@ bool qa_vfs_restrictions_read(const qa_vfs *, const qa_sha256_digest **archives,
  * Archives require the source PK3 checksum; loose media follows files.c's
  * configuration exceptions. Retained mounts and clones preserve the flag. */
 bool qa_vfs_set_mount_q3_demo(qa_vfs *, qa_mount_id, bool, qa_error *);
+/* Pure ready-only observation; NULL also denotes a metadata-only archive. */
 const qa_sha256_digest *qa_vfs_archive_digest(const qa_vfs *vfs, qa_mount_id mount);
+/* Acquires the canonical immutable payload before publishing its digest. */
+bool qa_vfs_archive_digest_read(const qa_vfs *, qa_mount_id,
+    const qa_sha256_digest **, qa_error *);
 /* Borrow the already decoded archive for complete source entry enumeration.
  * Null for loose or missing mounts; valid until that mount is removed. */
 const qa_archive *qa_vfs_archive(const qa_vfs *vfs, qa_mount_id mount);

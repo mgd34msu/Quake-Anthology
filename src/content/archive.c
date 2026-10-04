@@ -1,5 +1,6 @@
 #include "qa/archive.h"
 #include "qa/binary.h"
+#include "qa/filesystem.h"
 
 #include <limits.h>
 #include <stdlib.h>
@@ -10,6 +11,11 @@ struct qa_archive {
     qa_archive_kind kind;
     qa_bytes bytes;
     qa_buffer owned;
+    qa_buffer metadata;
+    qa_fs_file *file;
+    qa_fs_identity identity;
+    qa_archive_payload_fn payload_reader;
+    void *payload_context;
     qa_archive_entry *entries;
     const qa_archive_entry **name_index[3];
     size_t count;
@@ -27,6 +33,64 @@ static bool span(size_t limit, size_t offset, size_t size, qa_error *error)
     if (offset > limit || size > limit - offset)
         return fail(error, QA_ERROR_FORMAT, offset, "archive range exceeds its boundary");
     return true;
+}
+
+static bool archive_span(qa_archive *archive, size_t offset, size_t size,
+    qa_bytes *out, qa_error *error)
+{
+    if (!span(archive->bytes.size, offset, size, error)) return false;
+    if (archive->bytes.data) {
+        *out = (qa_bytes){archive->bytes.data + offset, size}; return true;
+    }
+    if (size > archive->metadata.size) {
+        uint8_t *data = realloc(archive->metadata.data, size);
+        if (!data) return fail(error, QA_ERROR_MEMORY, offset, "allocating archive metadata span");
+        archive->metadata.data = data; archive->metadata.size = size;
+    }
+    if (!qa_fs_file_read_range(archive->file, &archive->identity, offset,
+        archive->metadata.data, size, error)) return false;
+    *out = (qa_bytes){archive->metadata.data, size}; return true;
+}
+
+bool qa_archive_source_current(const qa_archive *archive, qa_error *error)
+{
+    if (!archive) return fail(error, QA_ERROR_ARGUMENT, 0, "archive source is NULL");
+    if (!archive->file) return true;
+    bool unchanged = false;
+    if (!qa_fs_file_path_unchanged(archive->file, &archive->identity, &unchanged, error)) return false;
+    return unchanged || fail(error, QA_ERROR_IO, 0, "archive source changed after admission");
+}
+
+static bool archive_snapshot(qa_archive *archive, qa_error *error)
+{
+    if (archive->bytes.data) return true;
+    if (!qa_fs_file_read_snapshot(archive->file, &archive->identity, &archive->owned, error)) return false;
+    archive->bytes = (qa_bytes){archive->owned.data, archive->owned.size}; return true;
+}
+
+static bool archive_payload(qa_archive *archive, qa_error *error)
+{
+    if (archive->payload_reader) {
+        qa_bytes bytes;
+        if (!archive->payload_reader(archive->payload_context, &bytes, error)) return false;
+        archive->bytes = bytes; return true;
+    }
+    return archive_snapshot(archive, error);
+}
+
+bool qa_archive_take_snapshot(qa_archive *archive, qa_buffer *out, qa_error *error)
+{
+    if (!archive || !out || out->data || out->size || !archive->file)
+        return fail(error, QA_ERROR_ARGUMENT, 0, "archive snapshot transfer needs its empty owner");
+    if (!archive_snapshot(archive, error)) return false;
+    if (!archive->owned.data)
+        return fail(error, QA_ERROR_ARGUMENT, 0, "archive snapshot already has its owner");
+    *out = archive->owned; archive->owned = (qa_buffer){0}; return true;
+}
+
+void qa_archive_payload_reader(qa_archive *archive, qa_archive_payload_fn reader, void *context)
+{
+    archive->payload_reader = reader; archive->payload_context = context;
 }
 
 static char *normalize_path(const uint8_t *path, size_t length, qa_error *error,
@@ -107,25 +171,26 @@ static bool allocate_entries(qa_archive *archive, size_t count, qa_error *error)
 
 static bool parse_pak(qa_archive *archive, qa_error *error)
 {
-    const qa_bytes source = archive->bytes;
-    if (!span(source.size, 0, 12, error)) return false;
+    qa_bytes source;
+    if (!archive_span(archive, 0, 12, &source, error)) return false;
     if (memcmp(source.data, "PACK", 4) != 0)
         return fail(error, QA_ERROR_FORMAT, 0, "invalid PACK signature");
     const int32_t directory = qa_load_i32le(source.data + 4);
     const int32_t length = qa_load_i32le(source.data + 8);
     if (directory < 12 || length < 0 || length % 64 != 0)
         return fail(error, QA_ERROR_FORMAT, 4, "invalid PACK directory range");
-    if (!span(source.size, (size_t)directory, (size_t)length, error) ||
-        !allocate_entries(archive, (size_t)length / 64, error)) return false;
+    if (!span(archive->bytes.size, (size_t)directory, (size_t)length, error) ||
+        !allocate_entries(archive, (size_t)length / 64, error) ||
+        !archive_span(archive, (size_t)directory, (size_t)length, &source, error)) return false;
     for (size_t i = 0; i < archive->count; ++i) {
         size_t offset = (size_t)directory + i * 64;
-        const uint8_t *record = source.data + offset;
+        const uint8_t *record = source.data + i * 64;
         qa_archive_entry *entry = &archive->entries[i];
         int32_t start = qa_load_i32le(record + 56);
         int32_t size = qa_load_i32le(record + 60);
         if (start < 0 || size < 0)
             return fail(error, QA_ERROR_FORMAT, offset + 56, "negative PACK member range");
-        if (!span(source.size, (size_t)start, (size_t)size, error)) return false;
+        if (!span(archive->bytes.size, (size_t)start, (size_t)size, error)) return false;
         size_t name_length = 0;
         while (name_length < 56 && record[name_length] != 0) ++name_length;
         if (!set_name(entry, record, name_length, offset, error)) return false;
@@ -149,7 +214,9 @@ static bool parse_local(qa_archive *archive, qa_archive_entry *entry,
                         qa_error *error)
 {
     if (!span(central, local, 30, error)) return false;
-    const uint8_t *header = archive->bytes.data + local;
+    qa_bytes header_bytes;
+    if (!archive_span(archive, local, 30, &header_bytes, error)) return false;
+    const uint8_t *header = header_bytes.data;
     if (qa_load_u32le(header) != UINT32_C(0x04034b50))
         return fail(error, QA_ERROR_FORMAT, local, "invalid ZIP local header signature");
     uint16_t flags = qa_load_u16le(header + 6);
@@ -168,15 +235,19 @@ static bool parse_local(qa_archive *archive, qa_archive_entry *entry,
     size_t extra_length = qa_load_u16le(header + 28);
     size_t variable = local + 30;
     if (!span(central, variable, local_name_length + extra_length, error)) return false;
+    qa_bytes name_bytes;
+    if (!archive_span(archive, variable, local_name_length + extra_length, &name_bytes, error)) return false;
     if (local_name_length != name_length ||
-        memcmp(header + 30, entry->raw_path, name_length) != 0)
+        memcmp(name_bytes.data, entry->raw_path, name_length) != 0)
         return fail(error, QA_ERROR_FORMAT, variable, "ZIP local and central names disagree");
     entry->data_offset = variable + local_name_length + extra_length;
     if (!span(central, entry->data_offset, entry->compressed_size, error)) return false;
     if (descriptor) {
         size_t offset = entry->data_offset + entry->compressed_size;
-        const uint8_t *record = archive->bytes.data + offset;
         size_t remaining = central - offset;
+        qa_bytes descriptor_bytes;
+        if (!archive_span(archive, offset, remaining < 16 ? remaining : 16, &descriptor_bytes, error)) return false;
+        const uint8_t *record = descriptor_bytes.data;
         if (remaining >= 16 && qa_load_u32le(record) == UINT32_C(0x08074b50) &&
             descriptor_matches(record + 4, entry)) return true;
         if (remaining >= 12 && descriptor_matches(record, entry)) return true;
@@ -187,20 +258,22 @@ static bool parse_local(qa_archive *archive, qa_archive_entry *entry,
 
 static bool parse_zip(qa_archive *archive, qa_error *error)
 {
-    const qa_bytes source = archive->bytes;
-    if (source.size < 22)
+    const size_t total = archive->bytes.size;
+    if (total < 22)
         return fail(error, QA_ERROR_FORMAT, 0, "ZIP end-of-central-directory record not found");
-    size_t end = source.size - 22;
+    size_t end = total - 22;
     size_t first = end > UINT16_MAX ? end - UINT16_MAX : 0;
+    qa_bytes source;
+    if (!archive_span(archive, first, total - first, &source, error)) return false;
     for (;;) {
-        const uint8_t *record = source.data + end;
+        const uint8_t *record = source.data + end - first;
         if (qa_load_u32le(record) == UINT32_C(0x06054b50) &&
-            qa_load_u16le(record + 20) == source.size - end - 22) break;
+            qa_load_u16le(record + 20) == total - end - 22) break;
         if (end == first)
             return fail(error, QA_ERROR_FORMAT, first, "ZIP end-of-central-directory record not found");
         --end;
     }
-    const uint8_t *tail = source.data + end;
+    const uint8_t *tail = source.data + end - first;
     uint16_t count = qa_load_u16le(tail + 10);
     uint32_t length = qa_load_u32le(tail + 12);
     uint32_t relative = qa_load_u32le(tail + 16);
@@ -218,7 +291,8 @@ static bool parse_zip(qa_archive *archive, qa_error *error)
     size_t offset = central;
     for (size_t i = 0; i < count; ++i) {
         if (!span(end, offset, 46, error)) return false;
-        const uint8_t *record = source.data + offset;
+        if (!archive_span(archive, offset, 46, &source, error)) return false;
+        const uint8_t *record = source.data;
         if (qa_load_u32le(record) != UINT32_C(0x02014b50))
             return fail(error, QA_ERROR_FORMAT, offset, "invalid ZIP central directory signature");
         qa_archive_entry *entry = &archive->entries[i];
@@ -245,7 +319,8 @@ static bool parse_zip(qa_archive *archive, qa_error *error)
         size_t variable = offset + 46;
         size_t variable_size = name_length + extra_length + comment_length;
         if (!span(end, variable, variable_size, error) ||
-            !set_name(entry, record + 46, name_length, variable, error)) return false;
+            !archive_span(archive, variable, variable_size, &source, error) ||
+            !set_name(entry, source.data, name_length, variable, error)) return false;
         if (local > central - prefix)
             return fail(error, QA_ERROR_FORMAT, offset + 42, "ZIP local header offset exceeds payload range");
         if (!parse_local(archive, entry, prefix + local, central, name_length, error)) return false;
@@ -340,22 +415,53 @@ bool qa_archive_open_memory(qa_bytes bytes, qa_archive_kind kind,
     return true;
 }
 
-bool qa_archive_open_file(const char *path, qa_archive_kind kind,
-                          qa_archive **out, qa_error *error)
+bool qa_archive_open_retained(qa_fs_file *file, const qa_fs_identity *identity,
+    qa_archive_kind kind, qa_archive **out, qa_error *error)
 {
-    if (out == NULL) return fail(error, QA_ERROR_ARGUMENT, 0, "archive output is NULL");
-    *out = NULL;
-    if (path == NULL) return fail(error, QA_ERROR_ARGUMENT, 0, "archive path is NULL");
-    qa_buffer bytes = {0};
-    if (!qa_file_read_all(path, &bytes, error)) return false;
-    if (kind == QA_ARCHIVE_AUTO && !(bytes.size >= 4 && memcmp(bytes.data, "PACK", 4) == 0))
-        kind = qa_archive_kind_for_path(path);
-    if (!qa_archive_open_memory((qa_bytes){bytes.data, bytes.size}, kind, out, error)) {
-        qa_buffer_free(&bytes);
-        return false;
+    if (out) *out = NULL;
+    if (!file || !identity || !out || kind < QA_ARCHIVE_AUTO || kind > QA_ARCHIVE_KPF)
+        return fail(error, QA_ERROR_ARGUMENT, 0, "invalid retained archive input or kind");
+    uint64_t size = qa_fs_identity_size(identity);
+    if (size > (uint64_t)PTRDIFF_MAX)
+        return fail(error, QA_ERROR_MEMORY, 0, "archive file is too large");
+    qa_archive *archive = calloc(1, sizeof(*archive));
+    if (!archive) return fail(error, QA_ERROR_MEMORY, 0, "allocating archive");
+    archive->file = file; qa_fs_file_retain(file); archive->identity = *identity;
+    archive->bytes.size = (size_t)size;
+    if (kind == QA_ARCHIVE_AUTO) {
+        qa_bytes magic;
+        if (!archive_span(archive, 0, size < 4 ? (size_t)size : 4, &magic, error)) goto failure;
+        kind = magic.size >= 4 && !memcmp(magic.data, "PACK", 4) ? QA_ARCHIVE_PAK : QA_ARCHIVE_ZIP;
     }
-    (*out)->owned = bytes;
-    return true;
+    archive->kind = kind;
+    if (!(kind == QA_ARCHIVE_PAK ? parse_pak(archive, error) : parse_zip(archive, error)) ||
+        !index_names(archive, error) || !qa_archive_source_current(archive, error)) goto failure;
+    qa_buffer_free(&archive->metadata);
+    *out = archive; return true;
+failure:
+    qa_archive_close(archive); return false;
+}
+
+bool qa_archive_open_file(const char *path, qa_archive_kind kind,
+    qa_archive **out, qa_error *error)
+{
+    if (out) *out = NULL;
+    if (!path || !out) return fail(error, QA_ERROR_ARGUMENT, 0, "archive path or output is NULL");
+    qa_fs_file *file = NULL; qa_fs_identity identity;
+    if (!qa_fs_file_open(path, &file, &identity, error)) return false;
+    if (kind == QA_ARCHIVE_AUTO) {
+        uint8_t magic[4]; size_t received;
+        if (!qa_fs_file_read_prefix(file, &identity, magic, sizeof(magic), &received, error)) {
+            qa_fs_file_close(file); return false;
+        }
+        kind = received >= 4 && !memcmp(magic, "PACK", 4) ? QA_ARCHIVE_PAK : qa_archive_kind_for_path(path);
+    }
+    bool ok = qa_archive_open_retained(file, &identity, kind, out, error);
+    qa_fs_file_close(file);
+    if (ok && !archive_payload(*out, error)) {
+        qa_archive_close(*out); *out = NULL; ok = false;
+    }
+    return ok;
 }
 
 void qa_archive_close(qa_archive *archive)
@@ -368,6 +474,8 @@ void qa_archive_close(qa_archive *archive)
     free(archive->entries);
     for (size_t policy = 0; policy < 3; ++policy) free(archive->name_index[policy]);
     qa_buffer_free(&archive->owned);
+    qa_buffer_free(&archive->metadata);
+    qa_fs_file_close(archive->file);
     free(archive);
 }
 
@@ -519,6 +627,7 @@ bool qa_archive_read(const qa_archive *archive, size_t ordinal,
     if (entry == NULL) return fail(error, QA_ERROR_ARGUMENT, ordinal, "invalid archive entry ordinal");
     if (entry->is_directory)
         return fail(error, QA_ERROR_ARGUMENT, ordinal, "cannot read an archive directory");
+    if (!archive_payload((qa_archive *)archive, error)) return false;
     qa_bytes bytes = {archive->bytes.data + entry->data_offset, entry->compressed_size};
     if (entry->compression_method == 8) {
         out->owned.size = entry->size;

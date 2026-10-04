@@ -3616,8 +3616,11 @@ static bool download_catalog_receipt(qa_frontend_network *n, const char *path,
     for (size_t i = 0; !mounted && i < qa_catalog_mount_count(catalog); ++i) {
         const qa_catalog_mount *mount = qa_catalog_mount_at(catalog, i);
         if (kind != QA_ARCHIVE_AUTO) {
-            mounted = mount->format == kind && !strcmp(mount->path, native) &&
-                mount->digest && qa_sha256_equal(mount->digest, digest);
+            if (mount->format == kind && !strcmp(mount->path, native)) {
+                const qa_sha256_digest *actual = NULL;
+                if (!qa_catalog_mount_digest_read(catalog, mount->id, &actual, error)) { free(native); return false; }
+                mounted = qa_sha256_equal(actual, digest);
+            }
             continue;
         }
         size_t length = strlen(mount->path);

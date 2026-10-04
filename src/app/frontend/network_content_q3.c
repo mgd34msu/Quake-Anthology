@@ -171,16 +171,20 @@ static bool current(const frontend_q3_content *content, qa_error *error)
     return source_current(content, error);
 }
 static bool owns_mount(const qa_catalog *catalog, qa_product_id product,
-    const qa_vfs *view, const qa_vfs_mount_info *info)
+    const qa_vfs *view, const qa_vfs_mount_info *info, qa_error *error)
 {
     const qa_mount_id *owned; size_t count;
     if (!qa_catalog_product_own_mounts(catalog, product, &owned, &count)) return false;
     const char *path = qa_vfs_mount_path(view, info->id);
     for (size_t i = 0; i < count; ++i) for (size_t j = 0; j < qa_catalog_mount_count(catalog); ++j) {
         const qa_catalog_mount *mount = qa_catalog_mount_at(catalog, j);
-        if (mount->id == owned[i] && path && !strcmp(path, mount->path) &&
-            mount->format == info->format && mount->writable == info->writable &&
-            (!info->is_archive || (mount->digest && info->digest && qa_sha256_equal(mount->digest, info->digest)))) return true;
+        if (mount->id != owned[i] || !path || strcmp(path, mount->path) ||
+            mount->format != info->format || mount->writable != info->writable) continue;
+        if (!info->is_archive) return true;
+        const qa_sha256_digest *actual = NULL, *physical = NULL;
+        if (!qa_vfs_archive_digest_read(view, info->id, &actual, error) ||
+            !qa_catalog_mount_digest_read(catalog, mount->id, &physical, error)) return false;
+        if (qa_sha256_equal(actual, physical)) return true;
     }
     return false;
 }
@@ -191,14 +195,18 @@ static bool identify_mount(frontend_q3_content *content, const qa_vfs_mount_info
     if (qa_catalog_q3_restricted(content->catalog)) {
         const qa_product *selected = qa_catalog_product(content->catalog, content->selected);
         if (!selected || selected->family != QA_GAME_Q3 ||
-            !owns_mount(content->catalog, selected->id, content->mounts, info) || !info->q3_demo)
-            return fail(error, QA_ERROR_FORMAT, "Restricted remote Q3 mount lost its actual selected demo media scope");
+            !owns_mount(content->catalog, selected->id, content->mounts, info, error) || !info->q3_demo)
+            return (error && error->code != QA_OK) ? false :
+                fail(error, QA_ERROR_FORMAT, "Restricted remote Q3 mount lost its actual selected demo media scope");
         *out = selected->id;
         return true;
     }
     for (size_t i = 0; i < qa_catalog_count(content->catalog); ++i) {
         const qa_product *product = qa_catalog_at(content->catalog, i);
-        if (!owns_mount(content->catalog, product->id, content->mounts, info)) continue;
+        if (!owns_mount(content->catalog, product->id, content->mounts, info, error)) {
+            if (error && error->code != QA_OK) return false;
+            continue;
+        }
         if (product->family != QA_GAME_Q3 || (*out && *out != product->id))
             return fail(error, QA_ERROR_FORMAT, "Private remote Q3 mount has foreign or ambiguous product ownership");
         *out = product->id;
@@ -235,6 +243,12 @@ static bool inventory(frontend_q3_content *content, const qa_mount_id *saved_ord
             if (candidate->id == catalog_order[i]) { original = candidate; break; }
         }
         const char *retained_path = qa_vfs_mount_path(content->mounts, info.id);
+        if (original && info.is_archive) {
+            const qa_sha256_digest *physical = NULL;
+            if (!qa_catalog_mount_digest_read(content->catalog, original->id, &physical, error) ||
+                !qa_vfs_archive_digest_read(content->mounts, info.id, &info.digest, error)) return false;
+            original = qa_catalog_mount_at(content->catalog, (size_t)original->id - 1);
+        }
         if (!original || !retained_path || strcmp(original->path, retained_path) ||
             original->format != info.format || original->writable != info.writable || info.user_overlay ||
             info.q3_demo != qa_catalog_q3_restricted(content->catalog) ||
@@ -416,8 +430,8 @@ bool frontend_q3_content_prepare(frontend_q3_content *content, qa_error *error)
     for (size_t i = 0; ok && count && i < content->mount_count; ++i) {
         if (paths[i].kind != QA_Q3_PURE_PACKAGE || !qa_q3_pak_is_pure(paths[i].checksum, sums, count)) continue;
         const content_mount *mount = paths[i].value;
-        const qa_sha256_digest *digest = qa_vfs_archive_digest(content->mounts, mount->id);
-        if (!digest) { ok = fail(error, QA_ERROR_FORMAT, "Server Q3 package lost its retained immutable archive"); break; }
+        const qa_sha256_digest *digest = NULL;
+        if (!qa_vfs_archive_digest_read(content->mounts, mount->id, &digest, error)) { ok = false; break; }
         digests[accepted++] = *digest;
     }
     if (ok && count && !accepted) ok = fail(error, QA_ERROR_NOT_FOUND, "No installed Q3 archives match the server pure list");
@@ -474,11 +488,14 @@ static content_mount *matching_mount(frontend_q3_content *content, const qa_vfs 
     for (size_t i = 0; i < qa_vfs_mount_count(view); ++i)
         if (qa_vfs_mount_at(view, i, &actual) && actual.id == id) { found = true; break; }
     const char *path = found ? qa_vfs_mount_path(view, id) : NULL;
+    if (found && actual.is_archive && !qa_vfs_archive_digest_read(view, id, &actual.digest, error)) return NULL;
     for (size_t i = 0; path && i < content->mount_count; ++i) {
         content_mount *mount = content->inventory + i; qa_vfs_mount_info expected = {0};
         for (size_t j = 0; j < content->mount_count; ++j)
             if (qa_vfs_mount_at(content->mounts, j, &expected) && expected.id == mount->id) break;
         const char *selected = qa_vfs_mount_path(content->mounts, mount->id);
+        if (selected && !strcmp(selected, path) && expected.is_archive &&
+            !qa_vfs_archive_digest_read(content->mounts, mount->id, &expected.digest, error)) return NULL;
         if (selected && !strcmp(selected, path) && actual.is_archive == expected.is_archive &&
             actual.format == expected.format && actual.writable == expected.writable &&
             actual.user_overlay == expected.user_overlay && actual.q3_demo == expected.q3_demo &&
@@ -542,8 +559,9 @@ static bool policy_current(const frontend_q3_content *content, const qa_vfs *vie
     for (size_t i = 0; ok && count && i < content->mount_count; ++i) {
         if (paths[i].kind != QA_Q3_PURE_PACKAGE || !qa_q3_pak_is_pure(paths[i].checksum, sums, count)) continue;
         const content_mount *mount = paths[i].value;
-        const qa_sha256_digest *digest = qa_vfs_archive_digest(content->mounts, mount->id);
-        if (!digest || accepted >= actual_count || !qa_sha256_equal(actual + accepted, digest)) ok = false;
+        const qa_sha256_digest *digest = NULL;
+        if (!qa_vfs_archive_digest_read(content->mounts, mount->id, &digest, error) ||
+            accepted >= actual_count || !qa_sha256_equal(actual + accepted, digest)) ok = false;
         ++accepted;
     }
     if (ok && accepted == actual_count) {

@@ -2,6 +2,7 @@
 #define QA_ARCHIVE_H
 
 #include "qa/common.h"
+#include "qa/filesystem.h"
 
 typedef enum qa_archive_kind {
     QA_ARCHIVE_AUTO,
@@ -40,11 +41,23 @@ typedef struct qa_archive_data {
 } qa_archive_data;
 
 /* Memory remains borrowed and must be immutable until the archive closes.
- * File opens own their backing bytes. On failure, *out is NULL. */
+ * File opens own an immutable snapshot, including after path removal.
+ * On failure, *out is NULL. */
 bool qa_archive_open_memory(qa_bytes bytes, qa_archive_kind kind,
                             qa_archive **out, qa_error *error);
 bool qa_archive_open_file(const char *path, qa_archive_kind kind,
                           qa_archive **out, qa_error *error);
+/* Metadata-only admission retains the handle; range reads and first payload admission check
+ * the same file identity and path. */
+bool qa_archive_open_retained(qa_fs_file *, const qa_fs_identity *, qa_archive_kind,
+    qa_archive **, qa_error *);
+bool qa_archive_source_current(const qa_archive *, qa_error *);
+/* A containing package supplies its sole immutable payload owner. The reader
+ * runs before any member bytes are published and must outlive the archive. */
+typedef bool (*qa_archive_payload_fn)(void *, qa_bytes *, qa_error *);
+void qa_archive_payload_reader(qa_archive *, qa_archive_payload_fn, void *);
+/* Moves the first file snapshot to its containing owner without copying it. */
+bool qa_archive_take_snapshot(qa_archive *, qa_buffer *, qa_error *);
 void qa_archive_close(qa_archive *archive);
 
 qa_archive_kind qa_archive_get_kind(const qa_archive *archive);

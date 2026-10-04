@@ -1,7 +1,7 @@
 # Native frame costs
 
-The latest measured Q3 CPU frame takes **25.669 ms**, including **16.638 ms**
-of raster execution; latest interval-1 GL takes **19.015 ms**. Removing a quadratic settings
+The latest measured Q3 CPU frame takes **24.680 ms**, including **16.624 ms**
+of raster execution; latest interval-1 GL takes **19.753 ms**. Removing a quadratic settings
 lookup cuts shared scene work. Replacing duplicate SDL texture layers reduces
 CPU presentation to about **0.3 ms**. Raster execution is now the largest CPU cost.
 
@@ -58,6 +58,7 @@ material totals include more observer overhead than the standard runs above.
 | `86d1f51c` | 25.855 | 16.790 | 153.053 |
 | `008d0701` | 25.993 | 16.706 | 153.770 |
 | `fc471593` | 25.669 | 16.638 | 151.515 |
+| `8773a8f3` | 24.680 | 16.624 | 150.164 |
 
 With the same subdivision, GL takes 31.411 ms on `e900075f` and 30.501 ms
 on `436272c5`. Material submission falls from 13.104 to 12.399 ms on CPU
@@ -112,6 +113,14 @@ The driver is unchanged; the uncapped case uses the existing
 through both runs and consumed about one CPU core. These are shared-machine
 measurements with project build/runtime jobs excluded, not uncontended timings.
 
+Indexing names within the canonical cvar owner on `8773a8f3` reduces CPU
+material submission from 4.328 to 3.734 ms and scene construction from 6.019
+to 5.184 ms. The complete CPU frame falls from 25.669 to 24.680 ms, while
+raster execution stays at 16.624 ms. GL material work falls from 4.268 to
+3.800 ms, but its complete frame rises from 19.015 to 19.753 ms: no whole-frame
+GL gain is established. All 30 states/counts and same-backend engine pixels
+match; CPU retained RGBA and native RGB also match.
+
 Ordered command batching reduces matched frame time by 38.1% and raster time
 by 62.2%. Aggregate CPU work rises: the gain comes from parallel scheduling,
 not less total CPU work. The batch preserves command order within disjoint
@@ -124,17 +133,17 @@ it does not establish each worker's individual contribution.
 
 ## Current costs and optimization targets
 
-These are inclusive medians on `fc471593` CPU and `86d1f51c` interval-1 GL.
+These are inclusive medians on `8773a8f3` CPU and interval-1 GL.
 Both include the subdivision scopes.
 Nested durations overlap, so the rows must not be added together.
 
 | Scope | CPU ms | GL ms |
 | --- | ---: | ---: |
-| Scene construction | 6.019 | 5.858 |
-| Material submission, 554 calls | 4.328 | 4.268 |
-| World submission, including its materials | 4.256 | 4.184 |
-| Renderer execution / GL submission | 16.638 | 1.852 |
-| CPU native presentation / GL swap | 0.313 | 8.560 |
+| Scene construction | 5.184 | 5.411 |
+| Material submission, 554 calls | 3.734 | 3.800 |
+| World submission, including its materials | 3.671 | 3.762 |
+| Renderer execution / GL submission | 16.624 | 2.023 |
+| CPU native presentation / GL swap | 0.282 | 8.749 |
 
 The first GL baseline separately measured 3.596 ms median GPU elapsed time
 around renderer execution. GPU intervals overlap CPU work and presentation;

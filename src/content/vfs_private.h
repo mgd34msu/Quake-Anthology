@@ -5,6 +5,10 @@
 typedef struct package {
     struct package *next;
     size_t references;
+    /* Directory owner stays stable for borrowed archive views. Equal payloads
+     * retain the one canonical package before publishing member bytes. */
+    struct package *canonical;
+    qa_resource_pool *pool;
     qa_fs_identity identity;
     qa_sha256_digest digest;
     qa_buffer storage;
@@ -97,6 +101,10 @@ struct qa_vfs_file {
     qa_vfs_write_mode mode;
     uint64_t position;
 };
+package *vfs_package_canonical(package *);
+uint64_t vfs_package_index(const qa_resource_pool *, const package *);
+package *vfs_package_at(qa_resource_pool *, uint64_t);
+bool vfs_package_materialize(package *, qa_error *);
 void vfs_package_release(package *);
 void vfs_mount_free(mount *);
 bool vfs_root_reference_add(mount *, const qa_fs_object_reference *, qa_error *);

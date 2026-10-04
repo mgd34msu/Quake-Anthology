@@ -184,7 +184,6 @@ static bool mount_file(qa_catalog *c, catalog_product *p, const char *path,
     catalog_physical *physical = &c->physical[c->physical_count++];
     *physical = (catalog_physical){.view = {identity, path, kind, writable, NULL}};
     if (kind != QA_ARCHIVE_AUTO) {
-        physical->digest = *qa_vfs_archive_digest(c->mounts, id);
         const qa_archive *archive = qa_vfs_archive(c->mounts, id);
         size_t count = qa_archive_count(archive);
         physical->members = calloc(count ? count : 1, sizeof(*physical->members));
@@ -198,7 +197,7 @@ static bool mount_file(qa_catalog *c, catalog_product *p, const char *path,
         }
     }
     for (size_t i = 0; i < c->physical_count; ++i)
-        c->physical[i].view.digest = c->physical[i].view.format == QA_ARCHIVE_AUTO ? NULL : &c->physical[i].digest;
+        c->physical[i].view.digest = qa_vfs_archive_digest(c->mounts, c->physical[i].view.id);
     return !p || append_mount(p, identity, error);
 }
 
@@ -645,7 +644,7 @@ bool catalog_scan(qa_catalog *c, bool mods, const char *remote_base,
                     c->physical_count + 1, sizeof(*c->physical), error)) return false;
             c->physical[c->physical_count++] = (catalog_physical){.view = {id, family, QA_ARCHIVE_AUTO, false, NULL}};
             for (size_t j = 0; j < c->physical_count; ++j)
-                c->physical[j].view.digest = c->physical[j].view.format == QA_ARCHIVE_AUTO ? NULL : &c->physical[j].digest;
+                c->physical[j].view.digest = qa_vfs_archive_digest(c->mounts, c->physical[j].view.id);
         }
         for (size_t j = 0; j < c->physical_count; ++j) {
             const qa_catalog_mount *mount = &c->physical[j].view;

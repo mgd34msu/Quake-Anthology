@@ -58,11 +58,16 @@ static bool view_read(qa_executable_recipe *r, const qa_json_document *json, qa_
             for (size_t k = 0; k < qa_catalog_mount_count(r->catalog); ++k) { const qa_catalog_mount *candidate = qa_catalog_mount_at(r->catalog, k); if (candidate->id == owned[j]) { actual = candidate; break; } }
             size_t loose_ordinal = loose;
             if (actual && actual->format == QA_ARCHIVE_AUTO) ++loose;
-            if (!actual || actual->format != format || archived != (actual->format != QA_ARCHIVE_AUTO) ||
-                (archived ? (ordinal || !actual->digest || !qa_sha256_equal(actual->digest, &digest)) : loose_ordinal != ordinal)) continue;
+            if (!actual || actual->format != format || archived != (actual->format != QA_ARCHIVE_AUTO)) continue;
+            if (archived) {
+                const qa_sha256_digest *payload = NULL;
+                if (!qa_catalog_mount_digest_read(r->catalog, actual->id, &payload, error)) { ok = false; break; }
+                if (ordinal || !qa_sha256_equal(payload, &digest)) continue;
+            } else if (loose_ordinal != ordinal) continue;
             bool used = false; for (size_t k = 0; k < i; ++k) used |= physical_used[k] == actual->id;
             if (!used) { selected = actual; break; }
         }
+        if (!ok) break;
         if (!selected) { ok = recipe_fail(error, "Offered mount is not present in the installed catalog"); break; }
         physical_used[i] = selected->id;
         ok = qa_vfs_mount_retained(files, qa_catalog_files(r->catalog), selected->id, comparison, false, &ids[i], error) &&
@@ -353,7 +358,14 @@ static bool sidecar_scope(qa_executable_recipe *r, size_t view, qa_product_id pr
             const qa_catalog_mount *candidate = qa_catalog_mount_at(r->catalog, j);
             if (candidate->id == expected[i]) { physical = candidate; break; }
         }
-        if (!physical || !qa_vfs_mount_at(files, i, &actual) || actual.comparison != QA_ARCHIVE_CASE_INSENSITIVE || actual.user_overlay ||
+        if (!physical || !qa_vfs_mount_at(files, i, &actual))
+            return recipe_fail(error, "Map sidecar mount lacks its actual geometry content");
+        if (actual.is_archive) {
+            const qa_sha256_digest *digest = NULL;
+            if (!qa_catalog_mount_digest_read(r->catalog, physical->id, &digest, error) ||
+                !qa_vfs_archive_digest_read(files, actual.id, &actual.digest, error)) return false;
+        }
+        if (actual.comparison != QA_ARCHIVE_CASE_INSENSITIVE || actual.user_overlay ||
             actual.format != physical->format || strcmp(qa_vfs_mount_path(files, actual.id), physical->path) ||
             (actual.is_archive ? !actual.digest || !physical->digest || !qa_sha256_equal(actual.digest, physical->digest) :
                 !qa_fs_root_same_object(qa_vfs_mount_root(files, actual.id), qa_vfs_mount_root(catalog, expected[i]))))

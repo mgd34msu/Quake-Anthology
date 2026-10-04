@@ -392,14 +392,30 @@ const qa_product *qa_catalog_find(const qa_catalog *c, const char *key)
 }
 size_t qa_catalog_mount_count(const qa_catalog *c) { return c ? c->physical_count : 0; }
 const qa_catalog_mount *qa_catalog_mount_at(const qa_catalog *c, size_t i)
-{ return c && i < c->physical_count ? &c->physical[i].view : NULL; }
+{
+    if (!c || i >= c->physical_count) return NULL;
+    catalog_physical *p = (catalog_physical *)&c->physical[i];
+    if (c->mounts) p->view.digest = qa_vfs_archive_digest(c->mounts, p->view.id);
+    return &p->view;
+}
 const qa_catalog_mount *catalog_mount(const qa_catalog *c, qa_mount_id id)
 {
     const catalog_physical *p = catalog_package(c, id);
-    return p ? &p->view : NULL;
+    return p ? qa_catalog_mount_at(c, (size_t)(p - c->physical)) : NULL;
 }
 const catalog_physical *catalog_package(const qa_catalog *c, qa_mount_id id)
 { return c && id && id <= c->physical_count ? &c->physical[id - 1] : NULL; }
+bool qa_catalog_mount_digest_read(const qa_catalog *c, qa_mount_id id,
+    const qa_sha256_digest **out, qa_error *error)
+{
+    const catalog_physical *p = catalog_package(c, id);
+    if (!p || !out || p->view.format == QA_ARCHIVE_AUTO) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Catalog digest requires its actual package"); return false;
+    }
+    if (!qa_vfs_archive_digest_read(c->mounts, id, out, error)) return false;
+    ((catalog_physical *)p)->view.digest = *out; return true;
+}
+
 bool qa_catalog_product_mounts(const qa_catalog *c, qa_product_id id,
                                const qa_mount_id **mounts, size_t *count)
 {

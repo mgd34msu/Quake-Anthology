@@ -120,7 +120,11 @@ static bool recognize(qa_catalog *catalog,const char *path,const qa_fs_listing *
         const qa_fs_entry *entry=pak?pak:pk3; const char *archive_path=NULL;
         if (!catalog_physical_path(catalog,path,entry->name,&archive_path,error)) return false;
         qa_archive *archive=NULL; qa_error issue={0};
-        if (archive_path && qa_archive_open_file(archive_path,pak?QA_ARCHIVE_PAK:QA_ARCHIVE_PK3,&archive,&issue)) {
+        qa_fs_file *file=NULL; qa_fs_identity identity;
+        bool opened=archive_path && qa_fs_file_open(archive_path,&file,&identity,&issue) &&
+            qa_archive_open_retained(file,&identity,pak?QA_ARCHIVE_PAK:QA_ARCHIVE_PK3,&archive,&issue);
+        qa_fs_file_close(file);
+        if (opened) {
             if (pak && archive_has(archive,"progs.dat") && archive_has(archive,"maps/e1m1.bsp")) family=QA_GAME_Q1;
             else if (pak && archive_has(archive,"maps/base1.bsp") && archive_has(archive,"pics/colormap.pcx")) family=QA_GAME_Q2;
             else if (pk3 && archive_has(archive,"maps/q3dm1.bsp")) family=QA_GAME_Q3;

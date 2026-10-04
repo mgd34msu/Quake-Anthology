@@ -944,6 +944,7 @@ static bool physical_ready(void *context, const qa_catalog_mount *mount,
         if (qa_vfs_mount_at(v, i, &actual) && actual.id == mount->id) { found = true; break; }
     if (!mount || !mount->id || !found)
         return fail(error, QA_ERROR_FORMAT, "Catalog physical mount is outside its qualified native view");
+    if (actual.is_archive && !qa_vfs_archive_digest_read(v, actual.id, &actual.digest, error)) return false;
     const char *path = qa_vfs_mount_path(v, actual.id);
     if (!path || strcmp(path, mount->path) || actual.format != mount->format || actual.writable != mount->writable ||
         actual.is_archive != (mount->format != QA_ARCHIVE_AUTO) ||

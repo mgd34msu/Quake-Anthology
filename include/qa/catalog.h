@@ -40,6 +40,7 @@ typedef struct qa_catalog_mount {
     const char *path;
     qa_archive_kind format;
     bool writable;
+    /* NULL until the actual archive payload has been acquired. */
     const qa_sha256_digest *digest;
 } qa_catalog_mount;
 typedef struct qa_catalog_map {
@@ -146,6 +147,9 @@ qa_fs_root *qa_catalog_corpus_root(const qa_catalog *);
 /* Accepts the product key or its persistent family:edition:package identity. */
 const qa_product *qa_catalog_find(const qa_catalog *, const char *);
 const qa_catalog_mount *qa_catalog_mount_at(const qa_catalog *, size_t);
+/* Acquires the actual package snapshot; discovery metadata alone has no digest. */
+bool qa_catalog_mount_digest_read(const qa_catalog *, qa_mount_id,
+    const qa_sha256_digest **, qa_error *);
 size_t qa_catalog_mount_count(const qa_catalog *);
 bool qa_catalog_product_mounts(const qa_catalog *, qa_product_id,
                                const qa_mount_id **, size_t *);

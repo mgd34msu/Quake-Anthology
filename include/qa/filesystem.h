@@ -120,6 +120,10 @@ bool qa_fs_file_snapshot_matches(qa_fs_file *, const qa_fs_identity *, qa_bytes,
  * the admitted handle identity before/after; never reopens the native path. */
 bool qa_fs_file_read_prefix(qa_fs_file *, const qa_fs_identity *, void *,
                             size_t capacity, size_t *received, qa_error *);
+/* Exact admitted range from the retained handle, with identity and path checks
+ * before publication. The caller owns the bounded destination. */
+bool qa_fs_file_read_range(qa_fs_file *, const qa_fs_identity *, size_t offset,
+                           void *, size_t size, qa_error *);
 
 bool qa_fs_root_replace(qa_fs_root *root, const char *relative,
                         qa_bytes bytes, uint64_t nonce, qa_error *error);
