@@ -172,6 +172,7 @@ void qa_resource_release(qa_resource *resource)
         qa_archive_data_free(&resource->data);
         vfs_package_release(resource->archive);
         free(resource->path);
+        free(resource->backing_path);
         free(resource);
     }
 }
@@ -1581,16 +1582,20 @@ static qa_resource *new_resource(qa_resource_pool *pool, const char *path, qa_er
     return resource;
 }
 
+bool vfs_loose_cache_add(qa_resource_pool *pool, qa_resource *resource, qa_error *error)
+{
+    if (!loose_reserve(pool, error)) return false;
+    size_t bucket = identity_bucket(&resource->identity, pool->loose_bucket_count);
+    resource->identity_next = pool->loose_buckets[bucket];
+    pool->loose_buckets[bucket] = resource;
+    pool->loose_count++;
+    return true;
+}
+
 static bool cache_resource(qa_resource_pool *pool, qa_resource *resource, qa_error *error)
 {
     if (resource->archive != NULL) resource->archive->members[resource->ordinal] = resource;
-    else {
-        if (!loose_reserve(pool, error)) return false;
-        size_t bucket = identity_bucket(&resource->identity, pool->loose_bucket_count);
-        resource->identity_next = pool->loose_buckets[bucket];
-        pool->loose_buckets[bucket] = resource;
-        pool->loose_count++;
-    }
+    else if (!vfs_loose_cache_add(pool, resource, error)) return false;
     resource->next = pool->resources;
     pool->resources = resource;
     qa_resource_retain(resource);
@@ -1672,9 +1677,11 @@ static bool acquire_loose(qa_resource_pool *pool, const mount *source,
         return true;
     }
     qa_resource *resource = new_resource(pool, source->root_prefix ? path : resolved, error);
+    bool located = resource && qa_fs_root_join(source->root, resolved, &resource->backing_path, error);
     free(resolved);
-    if (resource == NULL) {
+    if (!located) {
         qa_fs_file_close(file);
+        qa_resource_release(resource);
         return false;
     }
     if (!qa_fs_file_read_snapshot(file, &identity,

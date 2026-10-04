@@ -662,7 +662,7 @@ bool frontend_unified_q3_runtime_factory_checkpoint(frontend_unified_q3_runtime_
         (!o->services || frontend_unified_q3_runtime_services_checkpoint(o->services,&refs->clients,children,e)) &&
         (!o->runtime || frontend_unified_q3_runtime_checkpoint(o->runtime,children+1,e)) &&
         (!o->commands || frontend_unified_q3_commands_checkpoint(o->commands,children+2,e)) &&
-        (!o->music || qa_audio_music_checkpoint(o->music,children+3,e));
+        (!o->music || attached || qa_audio_music_checkpoint(o->music,&refs->audio,children+3,e));
     for(unsigned i=0;okay && i<4;++i){qa_bytes bytes={children[i].data,children[i].size};okay=codec_blob(&io,&bytes);}
     o->movie_refs=NULL;o->codec_busy=false;
     if(okay)okay=codec_ready(o,false,e) && qa_source_save_finish(&io,out);
@@ -673,6 +673,7 @@ static bool import_refs_equal(const frontend_unified_q3_runtime_factory_refs *a,
 {
     return a->clients.context==b->clients.context && a->clients.resource_decode==b->clients.resource_decode &&
         a->audio.context==b->audio.context && a->audio.decode==b->audio.decode &&
+        a->audio.resource_decode==b->audio.resource_decode &&
         a->movies.context==b->movies.context && a->movies.asset_decode==b->movies.asset_decode &&
         a->movies.playback.context==b->movies.playback.context &&
         a->movies.playback.material_decode==b->movies.playback.material_decode &&
@@ -710,16 +711,14 @@ bool frontend_unified_q3_runtime_factory_restore(frontend_unified_q3_runtime_fac
         if(!intro_copy || !loop_copy)okay=frontend_fail(e,QA_ERROR_MEMORY,"Importing compiled soundtrack names");}
     qa_audio_music_controls *controls=frontend_music_sources_controls(o->options.frontend->music_sources);
     if(okay && attached) {
-        qa_buffer actual={0};music=qa_audio_engine_bus_music(o->options.frontend->audio,o->options.audio_owner);
+        music=qa_audio_engine_bus_music(o->options.frontend->audio,o->options.audio_owner);
         q3n_compiled_source_view source;
-        okay=music && children[3].size && controls &&
+        okay=music && !children[3].size && controls &&
             q3n_compiled_source_checkpoint_read(frontend_unified_q3_client_source(o->options.client),&source,e) &&
             qa_audio_engine_music_ready(o->options.frontend->audio,o->options.audio_owner,source.basis.physical_seat,1) &&
-            (qa_audio_music_controls_is(music,controls) || qa_audio_music_controls_bind(music,controls,e)) &&
-            qa_audio_music_checkpoint(music,&actual,e) && actual.size==children[3].size &&
-            !memcmp(actual.data,children[3].data,actual.size);
-        qa_buffer_free(&actual);if(okay)okay=held=qa_audio_music_retain(music,e);
-    } else if(okay && children[3].size)okay=held=qa_audio_music_restore(children[3],&music,e);
+            (qa_audio_music_controls_is(music,controls) || qa_audio_music_controls_bind(music,controls,e));
+        if(okay)okay=held=qa_audio_music_retain(music,e);
+    } else if(okay && children[3].size)okay=held=qa_audio_music_restore(children[3],&refs->audio,&music,e);
     if(okay && music)okay=controls && qa_audio_music_profile_is(music,qa_audio_engine_rate(o->options.frontend->audio),QA_AUDIO_Q3,true) &&
         (qa_audio_music_controls_is(music,controls) || qa_audio_music_controls_bind(music,controls,e));
     if(okay)okay=(!attached || music) && (!intro || music);

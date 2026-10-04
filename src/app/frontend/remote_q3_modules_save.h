@@ -1,12 +1,14 @@
 #ifndef QA_FRONTEND_REMOTE_Q3_MODULES_SAVE_H
 #define QA_FRONTEND_REMOTE_Q3_MODULES_SAVE_H
 #include "remote_q3_modules.h"
+#include "qa/audio_save.h"
 #include "qa/q3_presentation_media_save.h"
 
 typedef struct frontend_remote_q3_modules_save_refs {
     void *context;
     bool (*movies)(void *, const frontend_remote_q3_module_topology *,
         qa_q3_movie_checkpoint_refs *, qa_error *);
+    qa_audio_checkpoint_refs audio;
 } frontend_remote_q3_modules_save_refs;
 
 bool frontend_remote_q3_modules_checkpoint(const frontend_remote_q3_modules *,

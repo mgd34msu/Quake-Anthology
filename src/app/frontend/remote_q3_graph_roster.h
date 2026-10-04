@@ -17,7 +17,7 @@ bool frontend_remote_q3_graph_prepare_modules(frontend_remote_q3_graph_roster *,
 /* World adoption precedes backend preparation; numeric Q3AS is still empty. */
 bool frontend_remote_q3_graph_prepare_runtime(frontend_remote_q3_graph_roster *,qa_error *);
 /* Actual registry capture and imported shared holders precede private children. */
-bool frontend_remote_q3_graph_restore_children(frontend_remote_q3_graph_roster *,qa_error *);
+bool frontend_remote_q3_graph_restore_children(frontend_remote_q3_graph_roster *,const qa_audio_checkpoint_refs *,qa_error *);
 bool frontend_remote_q3_graph_restore_modules(frontend_remote_q3_graph_roster *,
     const frontend_remote_q3_modules_save_refs *,qa_error *);
 /* Snapshot/PPS import precedes QRPD proof; finished frames bind only after

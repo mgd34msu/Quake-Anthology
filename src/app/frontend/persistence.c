@@ -351,23 +351,23 @@ static bool input_seat_decode(void *context, uint64_t key, qa_input_seat **out, 
         return frontend_fail(error,QA_ERROR_FORMAT,"Saved platform route has no genuine candidate input seat");
     *out=f->seats[key-1].input; return true;
 }
-static bool haptic_resource_encode(void *context, const qa_resource *resource, uint64_t *pool, uint64_t *version, qa_error *error)
+static bool content_resource_encode(void *context, const qa_resource *resource, uint64_t *pool, uint64_t *version, qa_error *error)
 {
     qa_frontend *f=context;
     return qa_application_content_resource_id(qa_application_content_graph_read(f->application),resource,pool,version) ||
-        frontend_fail(error,QA_ERROR_FORMAT,"Haptic pattern leaves its actual retained content pool");
+        frontend_fail(error,QA_ERROR_FORMAT,"Resource leaves its retained content pool");
 }
-static bool haptic_resource_decode(void *context, uint64_t pool, uint64_t version, const qa_resource **out, qa_error *error)
+static bool content_resource_decode(void *context, uint64_t pool, uint64_t version, const qa_resource **out, qa_error *error)
 {
     qa_frontend *f=context;
     const qa_resource *resource=qa_application_content_resource(qa_application_content_graph_read(f->application),pool,version);
-    if (!out || !resource) return frontend_fail(error,QA_ERROR_FORMAT,"Saved haptic pattern has no candidate resource version");
+    if (!out || !resource) return frontend_fail(error,QA_ERROR_FORMAT,"Saved resource has no candidate content owner");
     *out=resource; return true;
 }
 static qa_input_platform_checkpoint_refs input_refs(qa_frontend *f)
 {
     return (qa_input_platform_checkpoint_refs){.context=f,.seat_encode=input_seat_encode,.seat_decode=input_seat_decode,
-        .haptics={f,haptic_resource_encode,haptic_resource_decode}};
+        .haptics={f,content_resource_encode,content_resource_decode}};
 }
 static bool module_audio_scope(const frontend_remote_q3_modules *modules,uint64_t id,uint64_t *role)
 {
@@ -638,10 +638,23 @@ static bool asset_encode(void *context, const qa_audio_asset *asset, qa_buffer *
 { return frontend_audio_asset_encode(((frontend_persistence *)context)->audio,asset,out,error); }
 static bool asset_decode(void *context, qa_bytes bytes, qa_audio_asset **out, qa_error *error)
 { return frontend_audio_asset_decode(((frontend_persistence *)context)->audio,bytes,out,error); }
+static bool audio_resource_encode(void *context, const qa_resource *resource,
+    uint64_t *pool, uint64_t *version, qa_error *error)
+{
+    frontend_persistence *operation=context;
+    return content_resource_encode(operation->candidate?operation->candidate:operation->active,
+        resource,pool,version,error);
+}
+static bool audio_resource_decode(void *context, uint64_t pool, uint64_t version,
+    const qa_resource **out, qa_error *error)
+{
+    return content_resource_decode(((frontend_persistence *)context)->candidate,pool,version,out,error);
+}
 static qa_audio_checkpoint_refs audio_refs(frontend_persistence *operation)
 {
     return (qa_audio_checkpoint_refs){.context=operation,.encode=audio_encode,.decode=audio_decode,
-        .asset_encode=asset_encode,.asset_decode=asset_decode};
+        .asset_encode=asset_encode,.asset_decode=asset_decode,
+        .resource_encode=audio_resource_encode,.resource_decode=audio_resource_decode};
 }
 static frontend_unified_graph_refs unified_refs(frontend_persistence *operation,const qa_audio_checkpoint_refs *audio)
 {
@@ -883,7 +896,7 @@ static bool module_movies(void *context,const frontend_remote_q3_module_topology
     qa_q3_movie_checkpoint_refs *out,qa_error *error)
 { return frontend_q3_module_movie_refs(((frontend_persistence *)context)->q3,role,out,error); }
 static frontend_remote_q3_modules_save_refs module_save_refs(frontend_persistence *operation)
-{ return (frontend_remote_q3_modules_save_refs){operation,module_movies}; }
+{ return (frontend_remote_q3_modules_save_refs){.context=operation,.movies=module_movies,.audio=audio_refs(operation)}; }
 static bool capture_platform(frontend_persistence *operation, qa_buffer *out, qa_error *error)
 {
     qa_frontend *f=operation->candidate?operation->candidate:operation->active;
@@ -959,7 +972,7 @@ static bool capture_components(frontend_persistence *operation, qa_error *error)
     ok=ok && frontend_shared_resource_policy_live_checkpoint(f,set->owned+SECTION_RESOURCE_POLICY,error) &&
         frontend_q3_inventory_capture(f,&q3,&operation->q3,error) &&
         frontend_component_scenes_checkpoint(f,&(frontend_component_scene_save_refs){
-            .content=q3.content,.scene=operation->space,.frame=&frame,.q3=operation->q3},
+            .content=q3.content,.scene=operation->space,.frame=&frame,.audio=&audio,.q3=operation->q3},
             set->owned+SECTION_COMPONENT_SCENES,error) &&
         frontend_unified_graph_checkpoint(f,&unified,set->owned+SECTION_UNIFIED_GRAPH,error) &&
         frontend_classic_client_graph_checkpoint(f,&(frontend_remote_q1_restore_refs){
@@ -978,7 +991,7 @@ static bool capture_components(frontend_persistence *operation, qa_error *error)
         frontend_selected_effects_topology_checkpoint(f,set->owned+SECTION_EFFECTS_TOPOLOGY,error) &&
         frontend_equipment_gear_topology_checkpoint(f,set->owned+SECTION_GEAR_TOPOLOGY,error) &&
         frontend_native_q2_topology_checkpoint(f,set->owned+SECTION_NATIVE_TOPOLOGY,error) &&
-        frontend_native_q3_topology_checkpoint(f,set->owned+SECTION_NATIVE_Q3_TOPOLOGY,error) &&
+        frontend_native_q3_topology_checkpoint(f,&audio,set->owned+SECTION_NATIVE_Q3_TOPOLOGY,error) &&
         frontend_tools_checkpoint(f,&tools,&llm,set->owned+SECTION_TOOLS,error) &&
         frontend_images_checkpoint(f,set->owned+SECTION_IMAGES,error) &&
         frontend_scene_namespace_checkpoint(operation->space,set->owned+SECTION_NAMESPACE,error) &&
@@ -1022,7 +1035,7 @@ static bool capture_components(frontend_persistence *operation, qa_error *error)
             set->owned+SECTION_CLIENT_REGISTRIES,error) &&
         settings_storage_capture(f,set->owned+SECTION_GLOBAL_SETTINGS,error) &&
         frontend_input_profile_checkpoint(f,qa_application_content_graph_read(f->application),set->owned+SECTION_INPUT_PROFILE,error) &&
-        frontend_q3_checkpoint(f,&q3,set->owned+SECTION_Q3,error) && frontend_source_checkpoint(f,set->owned+SECTION_SOURCE,error) &&
+        frontend_q3_checkpoint(f,&q3,set->owned+SECTION_Q3,error) && frontend_source_checkpoint(f,&audio,set->owned+SECTION_SOURCE,error) &&
         qa_native_runtime_checkpoint(f->native_runtime,set->owned+SECTION_NATIVE_RUNTIME,error);
     qa_buffer_free(&sky);
     if (ok) section_publish(set);
@@ -1275,7 +1288,7 @@ static bool import_components(frontend_persistence *operation, qa_error *error)
         optional_decode("QFIP",f->input!=NULL,section(set,SECTION_PLATFORM),&platform,error) &&
         (!f->input || qa_input_platform_restore(f->input,operation->active->input,&(qa_input_platform_checkpoint_refs){
             .context=f,.seat_encode=input_seat_encode,.seat_decode=input_seat_decode,
-            .haptics={f,haptic_resource_encode,haptic_resource_decode}},platform,&operation->input_guard,error)) &&
+            .haptics={f,content_resource_encode,content_resource_decode}},platform,&operation->input_guard,error)) &&
         optional_decode("QFIT",f->terminal!=NULL,section(set,SECTION_TERMINAL),&terminal,error) &&
         (!f->terminal || qa_dedicated_console_restore(f->terminal,terminal,error));
     frontend_q3_refs q3={content,operation->space,operation->models,operation->roots,operation->audio};
@@ -1287,7 +1300,7 @@ static bool import_components(frontend_persistence *operation, qa_error *error)
         frontend_q3_restore(operation->q3,(double)f->time_ns/1000000.0,error) &&
         frontend_component_scenes_restore_continuation(operation->component_scenes,
             &(frontend_component_scene_save_refs){.content=content,.scene=operation->space,
-                .frame=&frame,.q3=operation->q3},error) &&
+                .frame=&frame,.audio=&audio,.q3=operation->q3},error) &&
         application_q3_components_scenes_restore_finish(f->application,error) &&
         frontend_component_scenes_finish_restore(f,error) &&
         frontend_unified_graph_finish(operation->unified_graph,&unified,error) &&
@@ -1298,7 +1311,7 @@ static bool import_components(frontend_persistence *operation, qa_error *error)
             .content=content,.scene=operation->space,.models=operation->models,.roots=operation->roots},error) &&
         frontend_seats_recipients_restore(f,error) &&
         frontend_seats_restore(f,operation->space,section(set,SECTION_SEATS_INPUT),section(set,SECTION_SEATS_PRESENTATION),error) &&
-        frontend_remote_q3_graph_restore_children(operation->remote_graph,error) &&
+        frontend_remote_q3_graph_restore_children(operation->remote_graph,&audio,error) &&
         frontend_remote_q3_graph_restore_modules(operation->remote_graph,&modules,error) &&
         frontend_remote_q3_graph_restore_frames(operation->remote_graph,error) &&
         frontend_world_inventory_finish_restore(operation->roots,error) &&
@@ -1436,6 +1449,7 @@ static bool native_baseline(void *context,qa_application *candidate,qa_actor_own
 static bool native_clients_restore(frontend_persistence *operation,qa_error *error)
 {
     qa_frontend *f=operation->candidate;
+    qa_audio_checkpoint_refs audio=audio_refs(operation);
     for (size_t i=0;i<frontend_native_q3_topology_count(operation->native_topology);++i) {
         frontend_native_q3 *row=NULL; frontend_native_q3_import *saved=NULL;
         q3n_client_refs resources;
@@ -1450,7 +1464,7 @@ static bool native_clients_restore(frontend_persistence *operation,qa_error *err
             return error && error->code!=QA_OK?false:
                 frontend_fail(error,QA_ERROR_FORMAT,"Native import lacks its actual restored CHARACTER owner");
         bool held=qa_q3_assets_capture_begin(saved->owners.assets,error);
-        bool ok=held && frontend_native_q3_restore(f,saved,&resources,&row,error);
+        bool ok=held && frontend_native_q3_restore(f,saved,&resources,&audio,&row,error);
         if (held) qa_q3_assets_capture_end(saved->owners.assets);
         if (saved->character.lifetime) {
             saved->character.release(saved->character.lifetime);
@@ -1471,11 +1485,12 @@ static bool validate(void *context,qa_application *application,const qa_save_ima
     qa_frontend *f=operation->candidate;
     if (f->application!=application || !operation->imported || operation->finished)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Frontend final validation requires its complete isolated candidate");
+    qa_audio_checkpoint_refs audio=audio_refs(operation);
     bool ok=native_clients_restore(operation,error) && frontend_network_restore_connections(f,
         (qa_bytes){operation->external[1].data,operation->external[1].size},error) &&
         frontend_network_restore_prediction(f,
         (qa_bytes){operation->external[2].data,operation->external[2].size},error) &&
-        frontend_source_restore(f,section(&operation->sections,SECTION_SOURCE),error) &&
+        frontend_source_restore(f,section(&operation->sections,SECTION_SOURCE),&audio,error) &&
         frontend_seats_restore_finish(f,error);
     ok=ok && (!f->music_sources || frontend_music_sources_restore_finish(f->music_sources,error));
     if (ok) {
@@ -1627,12 +1642,12 @@ static void publish(void *context,qa_application *active,qa_application *candida
     f->sdl_subsystems=operation->active->sdl_subsystems; operation->active->sdl_subsystems=0;
     *operation->slot=f;
 }
-static bool content_archive_open(void *context,const char *path,qa_fs_file **out,
+static bool content_file_open(void *context,const char *path,qa_fs_file **out,
     qa_fs_identity *identity,qa_error *error)
 {
     frontend_persistence *operation=context;
     const qa_vfs_checkpoint_refs *refs=operation->services?operation->services->content_files:NULL;
-    return refs && refs->archive_open?refs->archive_open(refs->context,path,out,identity,error):
+    return refs && refs->file_open?refs->file_open(refs->context,path,out,identity,error):
         qa_fs_file_open(path,out,identity,error);
 }
 static bool content_directory_open(void *context,const char *mount_path,const char *retained_path,
@@ -1693,7 +1708,7 @@ static bool operation_init(frontend_persistence *operation,qa_frontend *active,
         operation->producer_inventory[7+i]=*owner;
     }
     operation->ranking=(qa_application_ranking_checkpoint_refs){operation,ranking_capture,ranking_resolve};
-    operation->content_files=(qa_vfs_checkpoint_refs){operation,content_archive_open,content_directory_open};
+    operation->content_files=(qa_vfs_checkpoint_refs){operation,content_file_open,content_directory_open};
     operation->native_resource_refs=frontend_native_resource_refs(&operation->native_resources);
     operation->ops=(qa_application_persistence_ops){.context=operation,
         .owners=operation->producer_inventory,.owner_count=7+extra,.visit_content=content_visit,

@@ -137,9 +137,9 @@ bool frontend_received_music_fields(qa_frontend *f,frontend_received_music **slo
     if(ok)ok=qa_source_save_bool(io,&attached) && qa_source_save_bool(io,&selected);
     if(reading){o->saved_attached=attached;o->saved_selected=selected;}
     qa_buffer player={0};qa_bytes state={0};
-    if(ok && !reading && !attached){ok=qa_audio_music_checkpoint(o->player,&player,e);state=(qa_bytes){player.data,player.size};}
+    if(ok && !reading && !attached){ok=qa_audio_music_checkpoint(o->player,refs,&player,e);state=(qa_bytes){player.data,player.size};}
     if(ok)ok=bytes(io,&state) && (attached?!state.size:state.size!=0);
-    if(ok && reading && !attached)ok=qa_audio_music_restore(state,&o->player,e);
+    if(ok && reading && !attached)ok=qa_audio_music_restore(state,refs,&o->player,e);
     qa_buffer_free(&player);return ok;
 }
 bool frontend_received_music_restore_finish(frontend_received_music *o,const frontend_music_origin *declaration,qa_error *e)

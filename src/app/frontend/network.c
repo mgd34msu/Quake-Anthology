@@ -6779,10 +6779,16 @@ bool frontend_network_retire_connections(qa_frontend *f, bool *complete, qa_erro
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Server transport shutdown requires returned Source callbacks");
     *complete=true;
     if(n) {
-        if(n->detached_transport && frontend_network_q2_host_importing(n->q2_host)) {
-            if(!frontend_network_q2_host_import_retirement_idle(n->q2_host))
-                return frontend_fail(error,QA_ERROR_ARGUMENT,
-                    "Q2 import retirement requires its returned HOST and transport");
+        if(n->detached_transport) {
+            if(frontend_network_q2_host_importing(n->q2_host)) {
+                if(!frontend_network_q2_host_import_retirement_idle(n->q2_host))
+                    return frontend_fail(error,QA_ERROR_ARGUMENT,
+                        "Q2 import retirement requires its returned HOST and transport");
+            } else {
+                /* Publication transferred the wire transport. Release the
+                 * displaced HOST's Source claims before its roster retires. */
+                if(!frontend_network_q2_host_destroy(&n->q2_host,error)) return false;
+            }
         } else if(!frontend_network_q2_host_stop(n->q2_host,f->wall_time_ns,complete,error)) return false;
     }
     if (!*complete) return true;

@@ -16,13 +16,6 @@ static size_t resource_count(const qa_resource_pool *pool)
     for (const qa_resource *r = pool->resources; r; r = r->next) ++count;
     return count;
 }
-static uint64_t resource_index(const qa_resource_pool *pool, const qa_resource *wanted)
-{
-    uint64_t index = 0;
-    for (const qa_resource *r = pool->resources; r; r = r->next, ++index)
-        if (r == wanted) return index;
-    return UINT64_MAX;
-}
 static const char *mounted_package_path(const package *p,
     const qa_vfs *const *views, size_t count)
 {
@@ -46,8 +39,8 @@ static bool package_storage(qa_source_save_io *io, package *p, const package *ph
     if (ok && (io->direction == QA_SOURCE_SAVE_READ)) {
         qa_fs_file *file = NULL;
         qa_fs_identity identity;
-        ok = refs && refs->archive_open ?
-            refs->archive_open(refs->context, path, &file, &identity, io->error) :
+        ok = refs && refs->file_open ?
+            refs->file_open(refs->context, path, &file, &identity, io->error) :
             qa_fs_file_open(path, &file, &identity, io->error);
         if (ok && !file) ok = vfs_save_fail(io, QA_ERROR_ARGUMENT, "Linked archive resolver returned no file");
         if (ok && qa_fs_identity_size(&identity) != size)
@@ -97,7 +90,7 @@ static bool packages(qa_source_save_io *io, qa_resource_pool *pool,
 }
 
 static bool resource_record(qa_source_save_io *io, qa_resource_pool *pool,
-                            qa_resource *r, uint64_t previous_id)
+                            qa_resource *r, uint64_t previous_id, const qa_vfs_checkpoint_refs *refs)
 {
     uint64_t origin = (io->direction == QA_SOURCE_SAVE_READ) ? UINT64_MAX : vfs_package_index(pool, r->archive);
     if (io->direction != QA_SOURCE_SAVE_READ && r->archive && origin == UINT64_MAX)
@@ -105,7 +98,7 @@ static bool resource_record(qa_source_save_io *io, qa_resource_pool *pool,
     if (!qa_source_save_u64(io, &r->id) || !r->id || (previous_id && r->id >= previous_id) ||
         (pool->next_resource && r->id >= pool->next_resource) ||
         !vfs_save_text(io, &r->path) || !qa_source_save_u64(io, &origin) ||
-        !vfs_save_size(io, &r->ordinal) || !vfs_save_identity(io, &r->identity))
+        !vfs_save_size(io, &r->ordinal))
         return false;
     char *normalized = qa_vfs_normalize_path(r->path, io->error);
     if (!normalized) return false;
@@ -123,25 +116,26 @@ static bool resource_record(qa_source_save_io *io, qa_resource_pool *pool,
         r->archive = archive;
         ++archive->references;
     }
-    qa_fs_identity zero = {0};
-    if ((archive && !qa_fs_identity_equal(&r->identity, &zero)) || (!archive && r->ordinal))
-        return vfs_save_fail(io, QA_ERROR_FORMAT, "invalid retained VFS resource metadata");
+    if (!archive && r->ordinal) return vfs_save_fail(io, QA_ERROR_FORMAT, "invalid loose resource ordinal");
     if (archive) {
         if (io->direction == QA_SOURCE_SAVE_READ && !qa_archive_read(archive->archive, r->ordinal, &r->data, io->error)) return false;
     } else {
-        qa_buffer bytes = io->direction == QA_SOURCE_SAVE_READ ? (qa_buffer){0} :
-            (qa_buffer){(uint8_t *)r->data.bytes.data, r->data.bytes.size};
-        if (!vfs_save_buffer(io, &bytes)) {
-            if (io->direction == QA_SOURCE_SAVE_READ) qa_buffer_free(&bytes);
-            return false;
-        }
+        size_t size = io->direction == QA_SOURCE_SAVE_READ ? 0 : r->data.bytes.size;
+        if (!vfs_save_text(io, &r->backing_path) || !r->backing_path[0] || !vfs_save_size(io, &size)) return false;
         if (io->direction == QA_SOURCE_SAVE_READ) {
-            r->data.owned = bytes;
-            if (!bytes.data) {
-                r->data.owned.data = malloc(1);
-                if (!r->data.owned.data) return vfs_save_fail(io, QA_ERROR_MEMORY, "allocating empty restored resource");
+            qa_fs_file *file = NULL;
+            bool opened = refs && refs->file_open ?
+                refs->file_open(refs->context, r->backing_path, &file, &r->identity, io->error) :
+                qa_fs_file_open(r->backing_path, &file, &r->identity, io->error);
+            bool ok = opened && file && qa_fs_identity_size(&r->identity) == size &&
+                qa_fs_file_read_snapshot(file, &r->identity, &r->data.owned, io->error);
+            qa_fs_file_close(file);
+            if (!ok) {
+                if (!io->error || io->error->code == QA_OK)
+                    vfs_save_fail(io, QA_ERROR_FORMAT, "installed loose resource is missing or has changed size");
+                return false;
             }
-            r->data.bytes = (qa_bytes){r->data.owned.data, bytes.size};
+            r->data.bytes = (qa_bytes){r->data.owned.data, r->data.owned.size};
         }
     }
     if ((archive ? entry->size : qa_fs_identity_size(&r->identity)) != r->data.bytes.size)
@@ -160,12 +154,12 @@ static bool resource_record(qa_source_save_io *io, qa_resource_pool *pool,
 }
 
 static bool resources(qa_source_save_io *io, qa_resource_pool *pool,
-                       qa_resource ***index_out, size_t *count_out)
+                       qa_resource ***index_out, size_t *count_out, const qa_vfs_checkpoint_refs *refs)
 {
     size_t count = (io->direction == QA_SOURCE_SAVE_READ) ? 0 : resource_count(pool);
-    if (!vfs_save_count(io, &count, 89, sizeof(qa_resource *))) return false;
-    qa_resource **index = count ? calloc(count, sizeof(*index)) : NULL;
-    if (count && !index) return vfs_save_fail(io, QA_ERROR_MEMORY, "allocating VFS resource graph");
+    if (!vfs_save_count(io, &count, 32, sizeof(qa_resource *))) return false;
+    qa_resource **index = io->direction == QA_SOURCE_SAVE_READ && count ? calloc(count, sizeof(*index)) : NULL;
+    if (io->direction == QA_SOURCE_SAVE_READ && count && !index) return vfs_save_fail(io, QA_ERROR_MEMORY, "allocating VFS resource graph");
     *index_out = index;
     *count_out = count;
     qa_resource **tail = &pool->resources;
@@ -179,71 +173,12 @@ static bool resources(qa_source_save_io *io, qa_resource_pool *pool,
             r->references = 1;
             *tail = r;
         } else { saved = **tail; r = &saved; }
-        index[i] = *tail;
-        if (!r->references || !resource_record(io, pool, r, previous_id)) return false;
+        if (io->direction == QA_SOURCE_SAVE_READ) index[i] = *tail;
+        if (!r->references || !resource_record(io, pool, r, previous_id, refs)) return false;
         previous_id = r->id;
         tail = &(*tail)->next;
     }
     return true;
-}
-
-static bool loose_index(qa_source_save_io *io, qa_resource_pool *pool,
-                         qa_resource **resources, size_t resource_total)
-{
-    size_t capacity = pool->loose_bucket_count;
-    size_t count = pool->loose_count;
-    if (!vfs_save_count(io, &capacity, 8, sizeof(qa_resource *)) ||
-        !vfs_save_size(io, &count) || count > resource_total ||
-        (capacity && (capacity < 64 || (capacity & (capacity - 1)))) ||
-        (!capacity && count) || (capacity && count > capacity - capacity / 4))
-        return vfs_save_fail(io, QA_ERROR_FORMAT, "invalid VFS loose cache capacity");
-    bool *seen = resource_total ? calloc(resource_total, sizeof(*seen)) : NULL;
-    if (resource_total && !seen) return vfs_save_fail(io, QA_ERROR_MEMORY, "allocating VFS loose cache admission");
-    if (io->direction == QA_SOURCE_SAVE_READ) {
-        pool->loose_buckets = capacity ? calloc(capacity, sizeof(*pool->loose_buckets)) : NULL;
-        if (capacity && !pool->loose_buckets) {
-            free(seen);
-            return vfs_save_fail(io, QA_ERROR_MEMORY, "allocating restored VFS loose cache");
-        }
-        pool->loose_bucket_count = capacity;
-        pool->loose_count = count;
-    }
-    size_t admitted = 0;
-    bool success = false;
-    for (size_t bucket = 0; bucket < capacity; ++bucket) {
-        size_t chain_count = 0;
-        if (io->direction != QA_SOURCE_SAVE_READ)
-            for (qa_resource *r = pool->loose_buckets[bucket]; r; r = r->identity_next) {
-                if (++chain_count > count) goto invalid;
-            }
-        if (!vfs_save_count(io, &chain_count, 8, sizeof(qa_resource *)) ||
-            chain_count > count - admitted) goto done;
-        qa_resource **tail = &pool->loose_buckets[bucket];
-        for (size_t i = 0; i < chain_count; ++i) {
-            uint64_t ordinal = (io->direction == QA_SOURCE_SAVE_READ) ? UINT64_MAX : resource_index(pool, *tail);
-            if (!qa_source_save_u64(io, &ordinal)) goto done;
-            if (ordinal >= resource_total || seen[ordinal] || resources[ordinal]->archive ||
-                ((size_t)qa_fs_identity_hash(&resources[ordinal]->identity) & (capacity - 1)) != bucket)
-                goto invalid;
-            qa_resource *r = resources[ordinal];
-            for (qa_resource *other = pool->loose_buckets[bucket]; other != *tail; other = other->identity_next)
-                if (qa_fs_identity_equal(&other->identity, &r->identity)) goto invalid;
-            if (io->direction == QA_SOURCE_SAVE_READ) *tail = r;
-            tail = &r->identity_next;
-            seen[ordinal] = true;
-            ++admitted;
-        }
-    }
-    if (admitted != count) goto invalid;
-    for (size_t i = 0; i < resource_total; ++i)
-        if (seen[i] != (resources[i]->archive == NULL)) goto invalid;
-    success = true;
-    goto done;
-invalid:
-    vfs_save_fail(io, QA_ERROR_FORMAT, "VFS loose cache topology differs");
-done:
-    free(seen);
-    return success;
 }
 
 static bool pool_fields(qa_source_save_io *io, qa_resource_pool *pool,
@@ -253,7 +188,9 @@ static bool pool_fields(qa_source_save_io *io, qa_resource_pool *pool,
     size_t count = 0;
     bool success = vfs_save_magic(io, pool_magic) &&
         qa_source_save_u64(io, &pool->next_resource) && packages(io, pool, views, view_count, refs) &&
-        resources(io, pool, &index, &count) && loose_index(io, pool, index, count);
+        resources(io, pool, &index, &count, refs);
+    if (success && io->direction == QA_SOURCE_SAVE_READ) for (size_t i = count; i > 0; --i)
+        if (!index[i - 1]->archive && !vfs_loose_cache_add(pool, index[i - 1], io->error)) { success = false; break; }
     free(index);
     if (!success && io->error && io->error->code == QA_OK)
         vfs_save_fail(io, QA_ERROR_FORMAT, "invalid VFS resource pool continuation");

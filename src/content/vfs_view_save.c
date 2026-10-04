@@ -487,8 +487,8 @@ static bool native_bind(qa_source_save_io *io, qa_vfs *vfs, const mount_binding 
     for (size_t i = 0; i < vfs->count; ++i) {
         mount *m = vfs->mounts[i];
         if (m->archive) {
-            bool opened = refs && refs->archive_open ?
-                refs->archive_open(refs->context, m->path, &m->archive_file, &m->identity, io->error) :
+            bool opened = refs && refs->file_open ?
+                refs->file_open(refs->context, m->path, &m->archive_file, &m->identity, io->error) :
                 qa_fs_file_open(m->path, &m->archive_file, &m->identity, io->error);
             if (!opened) return false;
             if (!m->archive_file) return vfs_save_fail(io, QA_ERROR_ARGUMENT, "VFS archive admission returned no file");

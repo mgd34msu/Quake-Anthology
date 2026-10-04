@@ -18,6 +18,10 @@ typedef struct qa_audio_checkpoint_refs {
     bool (*decode)(void *, qa_audio_reference_kind, qa_bytes, uint64_t *, qa_error *);
     bool (*asset_encode)(void *, const qa_audio_asset *, qa_buffer *, qa_error *);
     bool (*asset_decode)(void *, qa_bytes, qa_audio_asset **, qa_error *);
+    /* Retained encoded stream sources belong to the content graph. Decode
+     * returns a borrowed candidate resource; the stream retains its own lease. */
+    bool (*resource_encode)(void *, const qa_resource *, uint64_t *, uint64_t *, qa_error *);
+    bool (*resource_decode)(void *, uint64_t, uint64_t, const qa_resource **, qa_error *);
     qa_audio_transmission_fn geometry;
     void *geometry_context;
     qa_audio_transmission_checked_fn geometry_checked;

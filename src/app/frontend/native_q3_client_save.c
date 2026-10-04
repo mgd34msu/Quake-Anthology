@@ -57,7 +57,8 @@ static bool adapter_fields(qa_source_save_io *io,frontend_native_q3 *row)
     if(row->view.music_attached && !qa_audio_engine_music_ready(row->frontend->audio,row->view.identity,row->view.seat,1))return false;
     return !row->music_looping || (row->music_intro && row->music_loop);
 }
-bool frontend_native_q3_checkpoint(frontend_native_q3 *row,const q3n_client_refs *refs,qa_buffer *out,qa_error *e)
+bool frontend_native_q3_checkpoint(frontend_native_q3 *row,const q3n_client_refs *refs,
+    const qa_audio_checkpoint_refs *audio,qa_buffer *out,qa_error *e)
 {
     if(!row || !out || out->data || out->size || !row->constructed || row->restoring || row->callbacks || row->frame_active ||
         !row->frontend->capture || !frontend_native_q3_current(row))return false;
@@ -73,7 +74,7 @@ bool frontend_native_q3_checkpoint(frontend_native_q3 *row,const q3n_client_refs
         (!row->view.mission || q3n_mission_hud_checkpoint(row->view.mission,children+2,e)) &&
         q3n_loading_checkpoint(row->view.loading,children+3,e) &&
         frontend_native_q3_commands_checkpoint(row->commands,children+4,e) &&
-        (!music || qa_audio_music_checkpoint(music,children+7,e)) &&
+        (!music || attached || qa_audio_music_checkpoint(music,audio,children+7,e)) &&
         (!row->composition.checkpoint || row->composition.checkpoint(row->composition.context,children+8,e)) &&
         qa_source_save_writer(&private,qa_application_session(row->frontend->application),e) &&
         adapter_fields(&private,&copy) && qa_source_save_finish(&private,children+5);
@@ -89,7 +90,7 @@ bool frontend_native_q3_checkpoint(frontend_native_q3 *row,const q3n_client_refs
     return ok;
 }
 bool frontend_native_q3_restore(qa_frontend *f,frontend_native_q3_import *state,const q3n_client_refs *refs,
-    frontend_native_q3 **out,qa_error *e)
+    const qa_audio_checkpoint_refs *audio,frontend_native_q3 **out,qa_error *e)
 {
     frontend_native_q3 *row=out?*out:NULL;
     if(!f || !state || !row || row->frontend!=f || !row->restoring || row->constructed ||
@@ -107,12 +108,10 @@ bool frontend_native_q3_restore(qa_frontend *f,frontend_native_q3_import *state,
     q3n_native_options options;
     qa_audio_music *music=NULL; bool music_owned=false;
     if(ok && candidate.view.music_attached) {
-        qa_buffer bus={0};
         music=qa_audio_engine_bus_music(f->audio,row->view.identity);
-        ok=state->music.size && music && qa_audio_music_checkpoint(music,&bus,e) &&
-            bus.size==state->music.size && !memcmp(bus.data,state->music.data,bus.size);
-        qa_buffer_free(&bus);
-    } else if(ok && state->music.size)ok=qa_audio_music_restore(state->music,&music,e);
+        ok=!state->music.size && music &&
+            qa_audio_engine_music_ready(f->audio,row->view.identity,row->view.seat,1);
+    } else if(ok && state->music.size)ok=qa_audio_music_restore(state->music,audio,&music,e);
     if (ok && candidate.view.music_attached) ok=qa_audio_music_retain(music,e);
     music_owned=ok && music!=NULL;
     if(ok)ok=qa_native_q3_wire_reader_restore(row->view.reader,state->reader,e) &&

@@ -64,7 +64,7 @@ bool frontend_remote_q3_graph_checkpoint(qa_frontend *f,const frontend_remote_q3
                 qa_application_native_q3_client_modules_recipe_read(f->application,&resources.domain.source,
                     resources.domain.gamestate,&recipe,error);
             modules=frontend_remote_q3_modules_read(row);
-            if(okay && !recipe.pure) okay=frontend_remote_q3_graph_children_checkpoint(row,&compiled,error);
+            if(okay && !recipe.pure) okay=frontend_remote_q3_graph_children_checkpoint(row,&refs->audio,&compiled,error);
             if(okay && !modules)
                 okay=frontend_fail(error,QA_ERROR_FORMAT,"Remote graph lacks its actual source UI module wrapper");
         } else {
@@ -209,7 +209,8 @@ bool frontend_remote_q3_graph_prepare_runtime(frontend_remote_q3_graph_roster *g
     }
     return true;
 }
-bool frontend_remote_q3_graph_restore_children(frontend_remote_q3_graph_roster *graph,qa_error *error)
+bool frontend_remote_q3_graph_restore_children(frontend_remote_q3_graph_roster *graph,
+    const qa_audio_checkpoint_refs *audio,qa_error *error)
 {
     if(!current(graph)) return false;
     for(size_t i=0;i<graph->count;++i) {
@@ -225,7 +226,7 @@ bool frontend_remote_q3_graph_restore_children(frontend_remote_q3_graph_roster *
             if(!frontend_remote_q3_resources_import_read(parent->decoded,&resources,error) ||
                 !qa_q3_assets_capture_begin(resources.assets,error)) return false;
             bool okay=frontend_remote_q3_services_finish_restore(parent->decoded,media,&refs,clients,error) &&
-                frontend_remote_q3_runtime_restore(frontend_remote_q3_runtime_read(parent->decoded),runtime,error);
+                frontend_remote_q3_runtime_restore(frontend_remote_q3_runtime_read(parent->decoded),runtime,audio,error);
             qa_q3_assets_capture_end(resources.assets);
             if(!okay) return false;
         }

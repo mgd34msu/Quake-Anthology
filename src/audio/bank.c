@@ -337,11 +337,6 @@ bool qa_audio_bank_sexed(qa_audio_bank *bank, const char *base, const char *mode
     return result;
 }
 
-static void bank_release_resource(void *owner) {
-    /* Stream close has the same serialized VFS lifetime as final asset release. */
-    qa_resource_release(owner);
-}
-
 bool qa_audio_bank_music(qa_audio_bank *bank, const char *path, qa_vfs_accept_mount accept,
                          void *context, qa_audio_stream **out, qa_error *error) {
     if (bank == NULL || path == NULL || out == NULL) {
@@ -362,8 +357,7 @@ bool qa_audio_bank_music(qa_audio_bank *bank, const char *path, qa_vfs_accept_mo
         return true;
     }
     qa_audio_stream *stream;
-    if (!qa_audio_stream_open_retained(qa_resource_bytes(resource), QA_WAV_FORMAT,
-                                       bank_release_resource, resource, &stream, error)) {
+    if (!qa_audio_stream_open_resource(resource, QA_WAV_FORMAT, &stream, error)) {
         qa_resource_release(resource);
         return false;
     }

@@ -110,19 +110,20 @@ static bool fields(qa_source_save_io *io,frontend_remote_q3_graph_children *plan
     return true;
 }
 static bool child_checkpoint(frontend_remote_q3 *row,const frontend_remote_q3_services_view *v,
-    const q3n_client_refs *refs,size_t child,qa_buffer *out,qa_error *error)
+    const q3n_client_refs *refs,const qa_audio_checkpoint_refs *audio,size_t child,qa_buffer *out,qa_error *error)
 {
     switch(child) {
     case FRONTEND_REMOTE_Q3_CHILD_CLIENT: return qa_native_q3_remote_client_checkpoint(v->client,out,error);
     case FRONTEND_REMOTE_Q3_CHILD_SOURCE: return q3n_remote_source_checkpoint(v->source,out,error);
     case FRONTEND_REMOTE_Q3_CHILD_MEDIA: return q3n_media_checkpoint(v->media,out,error);
     case FRONTEND_REMOTE_Q3_CHILD_CLIENTS: return q3n_clients_checkpoint(v->clients,refs,out,error);
-    case FRONTEND_REMOTE_Q3_CHILD_RUNTIME: return frontend_remote_q3_runtime_checkpoint(row->runtime,out,error);
+    case FRONTEND_REMOTE_Q3_CHILD_RUNTIME: return frontend_remote_q3_runtime_checkpoint(row->runtime,audio,out,error);
     case FRONTEND_REMOTE_Q3_CHILD_FRAME: return frontend_remote_q3_frame_checkpoint(row->frames,out,error);
     default: return false;
     }
 }
-bool frontend_remote_q3_graph_children_checkpoint(frontend_remote_q3 *row,qa_buffer *out,qa_error *error)
+bool frontend_remote_q3_graph_children_checkpoint(frontend_remote_q3 *row,const qa_audio_checkpoint_refs *audio,
+    qa_buffer *out,qa_error *error)
 {
     frontend_remote_q3_services_view services;
     if(!row || !out || out->data || out->size || !row->frontend->capture || row->frontend->source_restoring ||
@@ -147,7 +148,7 @@ bool frontend_remote_q3_graph_children_checkpoint(frontend_remote_q3 *row,qa_buf
     qa_buffer buffers[FRONTEND_REMOTE_Q3_CHILD_COUNT]={0}; qa_source_save_io io={0};
     bool okay=current(&plan,error);
     for(size_t i=0;okay && i<FRONTEND_REMOTE_Q3_CHILD_COUNT;++i) {
-        okay=child_checkpoint(row,&services,&refs,i,buffers+i,error);
+        okay=child_checkpoint(row,&services,&refs,audio,i,buffers+i,error);
         plan.children[i]=(qa_bytes){buffers[i].data,buffers[i].size};
     }
     if(okay) okay=current(&plan,error) && qa_source_save_writer(&io,qa_application_session(row->application),error) &&

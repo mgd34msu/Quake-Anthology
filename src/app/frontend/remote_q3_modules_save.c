@@ -147,7 +147,7 @@ bool frontend_remote_q3_modules_checkpoint(const frontend_remote_q3_modules *own
         if (ok && role->music_attached)
             ok = qa_audio_engine_bus_music(owner->frontend->audio, lease->service_owner) == lease->music &&
                 qa_audio_engine_music_ready(owner->frontend->audio, lease->service_owner, saved.physical, 1);
-        else if (ok && role->has_music) ok = qa_audio_music_checkpoint(lease->music, &role->music, error);
+        else if (ok && role->has_music) ok = qa_audio_music_checkpoint(lease->music, &refs->audio, &role->music, error);
     }
     qa_source_save_io io = {0};
     if (ok) ok = qa_source_save_writer(&io, qa_application_session(owner->application), error) &&
@@ -205,7 +205,7 @@ bool frontend_remote_q3_modules_restore_continuation(frontend_remote_q3_modules 
                     if (!player || !qa_audio_engine_music_ready(owner->frontend->audio,
                         lease->service_owner, physical, 1) || !qa_audio_music_retain(player, error)) return false;
                     lease->music = player;
-                } else if (!qa_audio_music_restore((qa_bytes){saved->music.data,saved->music.size}, &lease->music, error)) return false;
+                } else if (!qa_audio_music_restore((qa_bytes){saved->music.data,saved->music.size}, &refs->audio, &lease->music, error)) return false;
                 lease->music_attached = saved->music_attached;
             }
             lease->music_intro = saved->music_intro; saved->music_intro = NULL;

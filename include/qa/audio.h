@@ -53,6 +53,7 @@ bool qa_audio_resample_source(const qa_audio_sample *sample, uint32_t output_rat
                               qa_audio_family family, qa_audio_sample **out, qa_error *error);
 
 typedef struct qa_audio_stream qa_audio_stream;
+typedef struct qa_audio_checkpoint_refs qa_audio_checkpoint_refs;
 /* Open from bytes borrows the input until close; callers retain mount
  * resources. read writes caller-owned PCM; zero frames denotes EOF, errors
  * return false. */
@@ -64,6 +65,10 @@ bool qa_audio_stream_open(qa_bytes bytes, qa_audio_wav_policy policy, qa_audio_s
 bool qa_audio_stream_open_retained(qa_bytes bytes, qa_audio_wav_policy policy,
                                    void (*release)(void *owner), void *owner, qa_audio_stream **out,
                                    qa_error *error);
+/* Takes one retained content resource on success, leaving it with the caller
+ * on failure. Its source remains owned by the actual content pool. */
+bool qa_audio_stream_open_resource(qa_resource *, qa_audio_wav_policy,
+                                   qa_audio_stream **, qa_error *);
 bool qa_audio_stream_from_sample(qa_audio_sample *sample, qa_audio_stream **out, qa_error *error);
 uint32_t qa_audio_stream_rate(const qa_audio_stream *stream);
 unsigned qa_audio_stream_channels(const qa_audio_stream *stream);
@@ -73,10 +78,10 @@ bool qa_audio_stream_read(qa_audio_stream *stream, int16_t *out, size_t capacity
                           size_t *frames, qa_error *error);
 bool qa_audio_stream_seek(qa_audio_stream *stream, uint64_t frame, qa_error *error);
 void qa_audio_stream_close(qa_audio_stream *stream);
-/* Portable immutable source bytes and exact decoded frame cursor. Restored
- * streams own their source bytes; source checkpointing never seeks the stream. */
-bool qa_audio_stream_checkpoint(const qa_audio_stream *, qa_buffer *, qa_error *);
-bool qa_audio_stream_restore(qa_bytes, qa_audio_stream **, qa_error *);
+/* Exact decoded frame cursor and a retained content reference. Standalone
+ * streams carry their source bytes. Checkpointing never seeks the stream. */
+bool qa_audio_stream_checkpoint(const qa_audio_stream *, const qa_audio_checkpoint_refs *, qa_buffer *, qa_error *);
+bool qa_audio_stream_restore(qa_bytes, const qa_audio_checkpoint_refs *, qa_audio_stream **, qa_error *);
 
 typedef struct qa_audio_bank qa_audio_bank;
 typedef struct qa_audio_asset qa_audio_asset;
@@ -160,8 +165,8 @@ uint32_t qa_audio_music_rate(const qa_audio_music *music);
 /* Pure format qualification; the serialized caller retains the music holder. */
 bool qa_audio_music_profile_is(const qa_audio_music *, uint32_t rate,
                               qa_audio_family family, bool source_volume);
-bool qa_audio_music_checkpoint(const qa_audio_music *, qa_buffer *, qa_error *);
-bool qa_audio_music_restore(qa_bytes, qa_audio_music **, qa_error *);
+bool qa_audio_music_checkpoint(const qa_audio_music *, const qa_audio_checkpoint_refs *, qa_buffer *, qa_error *);
+bool qa_audio_music_restore(qa_bytes, const qa_audio_checkpoint_refs *, qa_audio_music **, qa_error *);
 uint64_t qa_audio_music_completions(const qa_audio_music *music);
 bool qa_audio_music_remap(qa_audio_music *music, const uint8_t *tracks, size_t count,
                           qa_error *error);

@@ -1033,13 +1033,13 @@ static bool fields(qa_source_save_io *io, qa_application_content_graph *graph, c
     qa_bytes private_player = {0};
     if (ok) ok = qa_source_save_bool(io, &attached);
     if (ok && !reading && !attached && !owner->external_player) {
-        ok = qa_audio_music_checkpoint(owner->music, &encoded, io->error);
+        ok = qa_audio_music_checkpoint(owner->music, refs, &encoded, io->error);
         private_player = (qa_bytes){encoded.data, encoded.size};
     }
     if (ok) ok = bytes_field(io, &private_player) && (!!private_player.size == (!attached && !owner->external_player));
     if (ok && reading) {
         owner->restore_attached = attached;
-        if (!attached && !owner->external_player) ok = qa_audio_music_restore(private_player, &owner->music, io->error);
+        if (!attached && !owner->external_player) ok = qa_audio_music_restore(private_player, refs, &owner->music, io->error);
     }
     qa_buffer_free(&encoded);
     if (ok) ok = qa_source_save_owned_text(io, &owner->authored_cue) && owner->authored_cue &&

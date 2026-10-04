@@ -77,14 +77,15 @@ static bool controls_mutation(qa_audio_music_controls *controls, qa_error *error
     return current;
 }
 
-bool qa_audio_music_checkpoint(const qa_audio_music *music, qa_buffer *out, qa_error *error) {
+bool qa_audio_music_checkpoint(const qa_audio_music *music, const qa_audio_checkpoint_refs *refs,
+                               qa_buffer *out, qa_error *error) {
     if (!music || !out || !qa_audio_music_idle(music)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Music checkpoint requires its live owner"); return false;
     }
     qa_buffer parts[3] = {0};
     bool same = music->stream && music->stream == music->loop;
-    bool ok = (!music->stream || qa_audio_stream_checkpoint(music->stream, &parts[0], error)) &&
-        (!music->loop || same || qa_audio_stream_checkpoint(music->loop, &parts[1], error)) &&
+    bool ok = (!music->stream || qa_audio_stream_checkpoint(music->stream, refs, &parts[0], error)) &&
+        (!music->loop || same || qa_audio_stream_checkpoint(music->loop, refs, &parts[1], error)) &&
         qa_audio_raw_checkpoint(music->pcm, &parts[2], error);
     size_t size = 76 + MUSIC_REMAP_TRACKS;
     for (size_t i = 0; ok && i < 3; ++i) {
@@ -123,7 +124,8 @@ bool qa_audio_music_checkpoint(const qa_audio_music *music, qa_buffer *out, qa_e
     return ok;
 }
 
-bool qa_audio_music_restore(qa_bytes bytes, qa_audio_music **out, qa_error *error) {
+bool qa_audio_music_restore(qa_bytes bytes, const qa_audio_checkpoint_refs *refs,
+                            qa_audio_music **out, qa_error *error) {
     const size_t header = 76 + MUSIC_REMAP_TRACKS;
     if (!out || !bytes.data || bytes.size < header || memcmp(bytes.data, "QAMU", 4) ||
         qa_load_u32le(bytes.data + 16) ||
@@ -158,8 +160,8 @@ bool qa_audio_music_restore(qa_bytes bytes, qa_audio_music **out, qa_error *erro
     qa_audio_music *music = NULL;
     if (!qa_audio_music_create(rate, (qa_audio_family)family, (flags & 1) != 0, &music, error)) return false;
     qa_audio_raw_stream *pcm = NULL;
-    bool ok = (!stream_present || qa_audio_stream_restore(parts[0], &music->stream, error)) &&
-        (!loop_present || same || qa_audio_stream_restore(parts[1], &music->loop, error)) &&
+    bool ok = (!stream_present || qa_audio_stream_restore(parts[0], refs, &music->stream, error)) &&
+        (!loop_present || same || qa_audio_stream_restore(parts[1], refs, &music->loop, error)) &&
         qa_audio_raw_restore(parts[2], rate, &pcm, error);
     if (same) music->loop = music->stream;
     if (!ok) { qa_audio_raw_destroy(pcm); qa_audio_music_destroy(music); return false; }

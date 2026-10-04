@@ -1393,7 +1393,8 @@ static bool codec_child_read(frontend_remote_q3_runtime *o,unsigned child,qa_byt
     default:return false;
     }
 }
-bool frontend_remote_q3_runtime_checkpoint(const frontend_remote_q3_runtime *borrowed,qa_buffer *out,qa_error *e)
+bool frontend_remote_q3_runtime_checkpoint(const frontend_remote_q3_runtime *borrowed,const qa_audio_checkpoint_refs *refs,
+    qa_buffer *out,qa_error *e)
 {
     if(!out || out->data || out->size || !codec_ready(borrowed,false,e))return false;
     frontend_remote_q3_runtime *o=(frontend_remote_q3_runtime *)borrowed,copy=*o;
@@ -1408,7 +1409,7 @@ bool frontend_remote_q3_runtime_checkpoint(const frontend_remote_q3_runtime *bor
         codec_fields(&io,&copy);
     for(unsigned i=0;okay && i<12;++i) {
         qa_buffer child={0};
-        okay=i==11?(!music || qa_audio_music_checkpoint(music,&child,e)):codec_child_write(o,i,&child,e);
+        okay=i==11?(!music || copy.music_attached || qa_audio_music_checkpoint(music,refs,&child,e)):codec_child_write(o,i,&child,e);
         qa_bytes bytes={child.data,child.size}; if(okay)okay=codec_blob(&io,&bytes); qa_buffer_free(&child);
     }
     if(okay)okay=qa_source_save_finish(&io,out);
@@ -1416,7 +1417,7 @@ bool frontend_remote_q3_runtime_checkpoint(const frontend_remote_q3_runtime *bor
     if(!okay && e && e->code==QA_OK)fail(e,QA_ERROR_FORMAT,"Remote runtime continuation lost a retained child or audio holder");
     return okay;
 }
-bool frontend_remote_q3_runtime_restore(frontend_remote_q3_runtime *o,qa_bytes bytes,qa_error *e)
+bool frontend_remote_q3_runtime_restore(frontend_remote_q3_runtime *o,qa_bytes bytes,const qa_audio_checkpoint_refs *refs,qa_error *e)
 {
     if(!codec_ready(o,true,e) || o->initialized || o->faulted || o->music || o->music_intro || o->music_loop)return false;
     frontend_remote_q3_runtime copy=*o; copy.music_intro=copy.music_loop=NULL;
@@ -1426,15 +1427,13 @@ bool frontend_remote_q3_runtime_restore(frontend_remote_q3_runtime *o,qa_bytes b
     for(unsigned i=0;okay && i<12;++i)okay=codec_blob(&io,children+i);
     if(okay)okay=qa_source_save_finish(&io,NULL);
     if(okay && copy.music_attached) {
-        qa_buffer actual={0}; music=qa_audio_engine_bus_music(o->frontend->audio,audio_bus(o));
+        music=qa_audio_engine_bus_music(o->frontend->audio,audio_bus(o));
         qa_audio_music_controls *controls=frontend_music_sources_controls(o->frontend->music_sources);
-        okay=children[11].size && music && controls &&
-            (qa_audio_music_controls_is(music,controls) || qa_audio_music_controls_bind(music,controls,e)) &&
-            qa_audio_music_checkpoint(music,&actual,e) &&
-            actual.size==children[11].size && !memcmp(actual.data,children[11].data,actual.size);
-        qa_buffer_free(&actual);
+        okay=!children[11].size && music && controls &&
+            qa_audio_engine_music_ready(o->frontend->audio,audio_bus(o),o->services.resources.physical_seat,1) &&
+            (qa_audio_music_controls_is(music,controls) || qa_audio_music_controls_bind(music,controls,e));
         if(okay)okay=retained=qa_audio_music_retain(music,e);
-    } else if(okay && children[11].size)okay=retained=qa_audio_music_restore(children[11],&music,e);
+    } else if(okay && children[11].size)okay=retained=qa_audio_music_restore(children[11],refs,&music,e);
     if(okay && music)okay=qa_audio_music_profile_is(music,qa_audio_engine_rate(o->frontend->audio),QA_AUDIO_Q3,true);
     if(okay && music) {
         qa_audio_music_controls *controls=frontend_music_sources_controls(o->frontend->music_sources);

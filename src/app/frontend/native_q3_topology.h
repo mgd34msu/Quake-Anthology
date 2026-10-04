@@ -5,7 +5,7 @@
 typedef struct frontend_native_q3_topology frontend_native_q3_topology;
 /* The actual frontend/content/assets capture leases precede the native child
  * records. Physical rows preserve their retained GAME descriptor recipe. */
-bool frontend_native_q3_topology_checkpoint(qa_frontend *,qa_buffer *,qa_error *);
+bool frontend_native_q3_topology_checkpoint(qa_frontend *,const qa_audio_checkpoint_refs *,qa_buffer *,qa_error *);
 /* Decode all metadata and resource ordinals before provider construction.
  * Borrowed child bytes and graph holders outlive the decoded topology. */
 bool frontend_native_q3_topology_decode(qa_frontend *,qa_bytes,

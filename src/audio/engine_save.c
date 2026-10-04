@@ -251,7 +251,7 @@ bool qa_audio_engine_checkpoint(const qa_audio_engine *engine, const qa_audio_ch
         qa_ac_u32(&w, bus->raw != NULL);
         qa_ac_u32(&w, bus->lifetime); qa_ac_u32(&w, bus->active);
         if (!w.failed) nested(&w, bus->raw ? qa_audio_raw_checkpoint(bus->raw, &bytes, error) :
-                             qa_audio_music_checkpoint(bus->music, &bytes, error), &bytes);
+                             qa_audio_music_checkpoint(bus->music, refs, &bytes, error), &bytes);
     }
     for (size_t i = 0; !w.failed && i < engine->round_mixer_count; ++i) {
         const audio_round_mixer *retained = &engine->round_mixers[i]; qa_buffer bytes = {0};
@@ -400,7 +400,7 @@ bool qa_audio_engine_restore(qa_bytes bytes, const qa_audio_engine_options *opti
         if (bus->gain < 0) qa_ac_bad(&r, "Invalid saved bus gain");
         if (qa_ac_getblob(&r, &data)) {
             bool restored = raw ? qa_audio_raw_restore(data, options->sample_rate, &bus->raw, error) :
-                qa_audio_music_restore(data, &bus->music, error);
+                qa_audio_music_restore(data, refs, &bus->music, error);
             if (!restored) r.failed = true;
         }
         if (!r.failed && ((bus->raw && qa_audio_raw_rate(bus->raw) != options->sample_rate) ||

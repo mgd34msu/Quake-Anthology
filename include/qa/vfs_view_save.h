@@ -7,22 +7,21 @@ typedef struct qa_vfs_checkpoint_refs {
     void *context;
     /* Optional read-only service admissions. Each returns an owned real native
      * handle, including on partial failure, for ordinary candidate cleanup.
-     * Archive content is independently checked against the restored pool.
+     * file_open maps installed archive and loose asset paths.
      * directory_open must qualify the saved retained root identity against
      * its actual destination mapping; it must not create a directory. */
-    bool (*archive_open)(void *, const char *mount_path, qa_fs_file **,
+    bool (*file_open)(void *, const char *path, qa_fs_file **,
                          qa_fs_identity *, qa_error *);
     bool (*directory_open)(void *, const char *mount_path, const char *retained_path,
                            const qa_fs_identity *, qa_fs_root **, qa_error *);
 } qa_vfs_checkpoint_refs;
 
 qa_resource_pool *qa_vfs_resources(const qa_vfs *);
-/* Actual retained archive files must still match their immutable cached bytes.
- * Captures real mount/order/rule/restriction/reference/allocator state. */
+/* Captures real mount/order/rule/restriction/reference/allocator state. */
 bool qa_vfs_checkpoint(const qa_vfs *, qa_buffer *empty, qa_error *);
 /* Decode the whole owner before read-only native handle admission. NULL refs
  * reopens the saved archive paths and retained directory objects locally.
- * Restore the actual pool first; package ordinals plus kind/digest qualify its
+ * Restore the actual pool first; package ordinals plus kind qualify its
  * namespace. No mounts, links, policy setters or acquisitions are replayed. */
 bool qa_vfs_create_restored(qa_resource_pool *, const qa_vfs_checkpoint_refs *,
                             qa_bytes, qa_vfs **empty, qa_error *);

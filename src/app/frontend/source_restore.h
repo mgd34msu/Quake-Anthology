@@ -54,6 +54,6 @@ void frontend_source_world_adopt(qa_frontend *,size_t,qa_scene_world *);
 /* Exact key profile alias/listener/music ownership and actual role-time mirror continuation.
  * The complete envelope qualifies before any private owner imports. AUDIO
  * engine buses and source guest state precede this late restore. */
-bool frontend_source_checkpoint(qa_frontend *, qa_buffer *, qa_error *);
-bool frontend_source_restore(qa_frontend *, qa_bytes, qa_error *);
+bool frontend_source_checkpoint(qa_frontend *, const qa_audio_checkpoint_refs *, qa_buffer *, qa_error *);
+bool frontend_source_restore(qa_frontend *, qa_bytes, const qa_audio_checkpoint_refs *, qa_error *);
 #endif

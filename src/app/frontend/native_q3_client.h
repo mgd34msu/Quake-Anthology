@@ -140,7 +140,8 @@ bool frontend_native_q3_import_bind(frontend_native_q3 *, const frontend_native_
  * provider routing exists, before the shared COMMANDS component is decoded.
  * No CG_Init command, registration callback or source code is executed. */
 bool frontend_native_q3_prepare_commands(frontend_native_q3 *,qa_bytes,qa_error *);
-bool frontend_native_q3_checkpoint(frontend_native_q3 *, const q3n_client_refs *, qa_buffer *, qa_error *);
+bool frontend_native_q3_checkpoint(frontend_native_q3 *, const q3n_client_refs *,
+    const qa_audio_checkpoint_refs *, qa_buffer *, qa_error *);
 typedef struct frontend_native_q3_import {
     frontend_native_q3_view owners;
     qa_native_q3_character_selection character;
@@ -152,7 +153,7 @@ bool frontend_native_q3_split(qa_bytes,frontend_native_q3_import *,qa_error *);
  * The registry capture lease remains held while the core is decoded. The
  * output already points at the genuine prepared/adopted candidate row. */
 bool frontend_native_q3_restore(qa_frontend *, frontend_native_q3_import *,
-    const q3n_client_refs *, frontend_native_q3 **, qa_error *);
+    const q3n_client_refs *, const qa_audio_checkpoint_refs *, frontend_native_q3 **, qa_error *);
 bool frontend_native_q3_rebind_ready(const qa_frontend *, const qa_frontend *, qa_error *);
 void frontend_native_q3_rebind(qa_frontend *, qa_frontend *);
 

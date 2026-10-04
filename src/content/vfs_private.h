@@ -19,6 +19,7 @@ struct qa_resource {
     size_t references;
     uint64_t id;
     char *path;
+    char *backing_path;
     package *archive;
     size_t ordinal;
     qa_fs_identity identity;
@@ -102,6 +103,7 @@ struct qa_vfs_file {
 uint64_t vfs_package_index(const qa_resource_pool *, const package *);
 package *vfs_package_at(qa_resource_pool *, uint64_t);
 bool vfs_package_materialize(package *, qa_error *);
+bool vfs_loose_cache_add(qa_resource_pool *, qa_resource *, qa_error *);
 void vfs_package_release(package *);
 void vfs_mount_free(mount *);
 bool vfs_root_reference_add(mount *, const qa_fs_object_reference *, qa_error *);

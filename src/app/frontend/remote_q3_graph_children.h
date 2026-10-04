@@ -17,7 +17,7 @@ typedef enum frontend_remote_q3_graph_child {
 /* The compiled owner uses its genuine frontend and asset capture leases.
  * Shared image/model/world/audio owners are encoded by their dictionaries;
  * these children retain private continuation and immutable animation refs. */
-bool frontend_remote_q3_graph_children_checkpoint(frontend_remote_q3 *,qa_buffer *,qa_error *);
+bool frontend_remote_q3_graph_children_checkpoint(frontend_remote_q3 *,const qa_audio_checkpoint_refs *,qa_buffer *,qa_error *);
 /* Complete envelope and resource decoding precedes service allocation. The
  * input bytes, actual isolated parent and content graph outlive this plan.
  * Lower child codecs validate their opaque continuations at their real stages. */

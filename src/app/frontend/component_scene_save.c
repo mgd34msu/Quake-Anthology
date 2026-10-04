@@ -153,7 +153,7 @@ static bool write_state(qa_source_save_io *io,component_saved *row,const fronten
         qa_scene_frame_checkpoint(view->frame,refs->frame,&frame,e) &&
         qa_q3_presentation_scene_checkpoint(view->presentation,&scene,e) &&
         qa_q3_presentation_media_checkpoint(view->presentation,&movie_refs,&movies,e) &&
-        (!view->music || view->music_attached || qa_audio_music_checkpoint(view->music,&player,e));
+        (!view->music || view->music_attached || qa_audio_music_checkpoint(view->music,refs->audio,&player,e));
     if(ok && row->packet_count) {
         row->packets=calloc(row->packet_count,sizeof(*row->packets)); packets=calloc(row->packet_count,sizeof(*packets));
         ok=row->packets && packets;
@@ -281,7 +281,7 @@ bool frontend_component_scenes_restore_continuation(frontend_component_scene_res
         if(row->music && row->attached) {
             player=qa_audio_engine_bus_music(f->audio,row->identity); ok=player && qa_audio_music_retain(player,e);
             if(!ok) player=NULL;
-        } else if(row->music) ok=qa_audio_music_restore(row->player,&player,e);
+        } else if(row->music) ok=qa_audio_music_restore(row->player,refs->audio,&player,e);
         if(ok) ok=frontend_component_scene_restore_music(f,row->identity,&player,row->attached,
             row->intro,row->loop,row->looping,row->pending,e);
         qa_audio_music_release(player); if(!ok) return false;

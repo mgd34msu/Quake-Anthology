@@ -7,6 +7,7 @@ typedef struct frontend_component_scene_save_refs {
     qa_application_content_graph *content;
     frontend_scene_namespace *scene;
     const qa_scene_frame_checkpoint_refs *frame;
+    const qa_audio_checkpoint_refs *audio;
     frontend_q3_inventory *q3;
 } frontend_component_scene_save_refs;
 bool frontend_component_scenes_capture_frames(qa_frontend *,frontend_scene_namespace *,qa_error *);

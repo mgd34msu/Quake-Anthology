@@ -210,7 +210,7 @@ void frontend_native_q3_topology_destroy(frontend_native_q3_topology *topology)
     }
     free(topology->rows); free(topology);
 }
-bool frontend_native_q3_topology_checkpoint(qa_frontend *f,qa_buffer *out,qa_error *error)
+bool frontend_native_q3_topology_checkpoint(qa_frontend *f,const qa_audio_checkpoint_refs *audio,qa_buffer *out,qa_error *error)
 {
     if(!f || !f->application || !f->capture || f->source_restoring || f->stepping || f->preparing || f->round ||
         !frontend_seat_callbacks_checkpoint_ready(f,error) || !out || out->data || out->size)
@@ -245,7 +245,7 @@ bool frontend_native_q3_topology_checkpoint(qa_frontend *f,qa_buffer *out,qa_err
         /* The linked producer owns the actual physical row; no private owner
          * is synthesized from its inventory view. */
         frontend_native_q3 *actual=frontend_native_q3_at(f,i);
-        ok=ok && actual && frontend_native_q3_checkpoint(actual,&resource_refs,&row->children,error);
+        ok=ok && actual && frontend_native_q3_checkpoint(actual,&resource_refs,audio,&row->children,error);
     }
     qa_source_save_io io={0};
     ok=ok && qa_source_save_writer(&io,qa_application_session(f->application),error) &&

@@ -3146,7 +3146,7 @@ static bool source_saved_fields(qa_source_save_io *io,qa_frontend *f,source_grou
             (!group->key_profile && !qa_source_save_bytes(io,group->keys,sizeof(group->keys))) ||
             !source_listener_fields(io,f,group) || !qa_source_save_bool(io,&group->has_music) ||
             !qa_source_save_bool(io,&group->music_attached) || (group->music_attached && !group->has_music) ||
-            (group->has_music && (!source_blob(io,&group->music) || !group->music.size)) ||
+            (group->has_music && !group->music_attached && (!source_blob(io,&group->music) || !group->music.size)) ||
             !qa_source_save_owned_text(io,&group->music_intro) || !qa_source_save_owned_text(io,&group->music_loop) ||
             !qa_source_save_bool(io,&group->music_looping) || !qa_source_save_bool(io,&group->music_pending) ||
             (group->music_pending && !group->has_music) ||
@@ -3174,7 +3174,7 @@ static bool source_header(qa_source_save_io *io,size_t *count)
     uint8_t magic[4]={'Q','F','S','O'}; return qa_source_save_bytes(io,magic,sizeof(magic)) && !memcmp(magic,"QFSO",4) &&
         qa_source_save_count(io,count,SIZE_MAX/sizeof(source_group_saved));
 }
-bool frontend_source_checkpoint(qa_frontend *f,qa_buffer *out,qa_error *error)
+bool frontend_source_checkpoint(qa_frontend *f,const qa_audio_checkpoint_refs *refs,qa_buffer *out,qa_error *error)
 {
     if (!f || !f->application || f->stepping || !f->capture || !frontend_sources_idle(f) ||
         !out || out->data || out->size)
@@ -3198,8 +3198,8 @@ bool frontend_source_checkpoint(qa_frontend *f,qa_buffer *out,qa_error *error)
         if (group->music_attached && !qa_audio_engine_music_ready(f->audio,source->identity,source->seat,1)) {
             ok=frontend_fail(error,QA_ERROR_FORMAT,"Source music no longer owns its actual seat route"); break;
         }
-        if (group->has_music) {
-            ok=qa_audio_music_checkpoint(actual,&group->owned_music,error);
+        if (group->has_music && !group->music_attached) {
+            ok=qa_audio_music_checkpoint(actual,refs,&group->owned_music,error);
             group->music=(qa_bytes){group->owned_music.data,group->owned_music.size};
         }
         group->role_count=source->leases; group->roles=calloc(group->role_count,sizeof(*group->roles));
@@ -3237,7 +3237,7 @@ bool frontend_source_checkpoint(qa_frontend *f,qa_buffer *out,qa_error *error)
     if (!ok && (!error || error->code==QA_OK)) frontend_fail(error,QA_ERROR_FORMAT,"Source continuation leaves genuine owner roster");
     return ok;
 }
-bool frontend_source_restore(qa_frontend *f,qa_bytes bytes,qa_error *error)
+bool frontend_source_restore(qa_frontend *f,qa_bytes bytes,const qa_audio_checkpoint_refs *refs,qa_error *error)
 {
     if (!f || !f->application || f->stepping || !f->source_restoring || !frontend_sources_idle(f) ||
         !frontend_source_complete_groups(f,error))
@@ -3276,11 +3276,10 @@ bool frontend_source_restore(qa_frontend *f,qa_bytes bytes,qa_error *error)
     for (size_t i=0;ok && i<count;++i) {
         source_group_saved *group=groups+i; source=group->source;
         qa_audio_music *music_owner=NULL;
-        if (group->has_music && !group->music_attached) ok=qa_audio_music_restore(group->music,&music_owner,error);
+        if (group->has_music && !group->music_attached) ok=qa_audio_music_restore(group->music,refs,&music_owner,error);
         else if (group->music_attached) {
-            qa_buffer bus={0}; music_owner=qa_audio_engine_bus_music(f->audio,source->identity);
-            ok=qa_audio_music_checkpoint(music_owner,&bus,error) && bus.size==group->music.size &&
-                !memcmp(bus.data,group->music.data,bus.size); qa_buffer_free(&bus);
+            music_owner=qa_audio_engine_bus_music(f->audio,source->identity);
+            ok=music_owner!=NULL;
         }
         if (ok && group->music_attached) ok=qa_audio_music_retain(music_owner,error);
         if (!ok) break;
