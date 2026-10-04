@@ -13,7 +13,7 @@ int32_t qa_world_actor_contents(const qa_actor_collision *collision,qa_collision
 }
 
 typedef struct actor_snapshot {
-    qa_spatial_actor local[8], *actors;
+    qa_actor_id local[8], *actors;
     size_t count, capacity;
     qa_error *error;
     bool failed;
@@ -29,7 +29,7 @@ static qa_spatial_visit snapshot_actor(void *opaque,const qa_spatial_actor *acto
             (void)fail(snapshot->error,QA_ERROR_MEMORY,"Spatial snapshot is too large");
             return QA_SPATIAL_STOP;
         }
-        qa_spatial_actor *actors=snapshot->actors==snapshot->local?
+        qa_actor_id *actors=snapshot->actors==snapshot->local?
             malloc(capacity*sizeof(*actors)):realloc(snapshot->actors,capacity*sizeof(*actors));
         if(actors==NULL) {
             snapshot->failed=true;
@@ -41,7 +41,7 @@ static qa_spatial_visit snapshot_actor(void *opaque,const qa_spatial_actor *acto
         snapshot->actors=actors;
         snapshot->capacity=capacity;
     }
-    snapshot->actors[snapshot->count++]=*actor;
+    snapshot->actors[snapshot->count++]=actor->body.actor;
     return QA_SPATIAL_CONTINUE;
 }
 
@@ -116,7 +116,7 @@ bool qa_world_trace_excluding(qa_world *world,const qa_trace_query *query,const 
     if(!snapshot(world,swept_bounds(&broad),&candidates,error)) return false;
     bool ok=true;
     for(size_t i=0;i<candidates.count;++i) {
-        const qa_spatial_actor *linked=&candidates.actors[i]; qa_actor_id id=linked->body.actor;
+        qa_actor_id id=candidates.actors[i];
         qa_actor_collision collision;
         if(!qa_world_get_collision(world,id,&collision,&local)) {
             if(local.code!=QA_OK) { if(error!=NULL) *error=local; ok=false; break; }
@@ -170,11 +170,12 @@ bool qa_world_point_contents(qa_world *world,const qa_point_query *query,qa_poin
     actor_snapshot candidates;
     if(!snapshot(world,(qa_bounds){query->point,query->point},&candidates,error)) return false;
     bool ok=true;
+    qa_spatial_actor linked={0};
     for(size_t i=0;i<candidates.count;++i) {
-        const qa_spatial_actor *linked=&candidates.actors[i];
-        if(query->pass_actor.registry!=0 && qa_actor_id_equal(query->pass_actor,linked->body.actor)) continue;
+        linked.body.actor=candidates.actors[i];
+        if(query->pass_actor.registry!=0 && qa_actor_id_equal(query->pass_actor,linked.body.actor)) continue;
         qa_spatial_actor actor; qa_error refresh_error={0};
-        if(!qa_world_refresh(world,linked,&actor,&refresh_error)) {
+        if(!qa_world_refresh(world,&linked,&actor,&refresh_error)) {
             if(refresh_error.code!=QA_OK) { if(error!=NULL) *error=refresh_error; ok=false; break; }
             continue;
         }
