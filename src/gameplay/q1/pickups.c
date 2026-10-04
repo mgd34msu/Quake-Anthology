@@ -1604,22 +1604,21 @@ static bool pickup_inspect(void *context, qa_actor_id pickup, qa_actor_id actor,
     else if (item.kind == Q1_ITEM_ARMOR || item.kind == Q1_ITEM_MG3_SHARD)
         offer->default_resource = (qa_pickup_resource){.kind = QA_PICKUP_PROTECTION,
                                                        .channel = QA_PROTECTION_REGULAR};
+    if (item.drop != Q1_DROP_NONE)
+        q1_drop_offer(g, e, actor, offer, cargo);
     bool ok = true, eligible = false;
     qa_q1_target target;
     qa_builtin_actor_traits traits = {0};
-    if (!item.hidden && e->physics.solid == QA_PHYSICS_TRIGGER &&
-        ((item.drop != Q1_DROP_NONE && item.drop != Q1_DROP_CTF_AMMO) ||
-         item.kind == Q1_ITEM_HORN || q1_health(g, actor) > 0) &&
+    if (item.drop != Q1_DROP_NONE) {
+        eligible = !item.hidden && e->physics.solid == QA_PHYSICS_TRIGGER &&
+                   q1_drop_eligible(g, e, actor);
+    } else if (!item.hidden && e->physics.solid == QA_PHYSICS_TRIGGER &&
+        (item.kind == Q1_ITEM_HORN || q1_health(g, actor) > 0) &&
         q1_target(g, actor, &target) && target.player) {
         eligible = true;
         if (g->services.actor_traits)
             g->services.actor_traits(g->services.context, actor, &traits);
-        if (item.drop != Q1_DROP_NONE && traits.spectator)
-            eligible = false;
-        if (item.drop == Q1_DROP_ROGUE_WEAPON && !q1_player_get(g, actor))
-            eligible = false;
-        if (item.drop != Q1_DROP_CTF_AMMO && qa_actor_id_equal(owner, actor) &&
-            (item.drop != Q1_DROP_NONE ? owner_wait > 119 : owner_wait > 120 - item.owner_delay))
+        if (qa_actor_id_equal(owner, actor) && owner_wait > 120 - item.owner_delay)
             eligible = false;
         if (eligible && item.kind == Q1_ITEM_WEAPON && item.drop == Q1_DROP_NONE && weapon_leave(g)) {
             bool owned;

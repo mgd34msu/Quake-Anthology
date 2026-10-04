@@ -821,6 +821,9 @@ bool q1_message_args(qa_q1_game *, qa_actor_id, const char *, const qa_builtin_m
                      size_t, qa_error *);
 bool q1_toss_backpack(qa_q1_game *, qa_actor_id, qa_vec3, qa_vec3, const float[QA_Q1_AMMO_COUNT],
                       q1_actor **, qa_error *);
+void q1_drop_offer(const qa_q1_game *, const q1_actor *, qa_actor_id,
+                     qa_pickup_offer *, qa_pickup_cargo cargo[4]);
+bool q1_drop_eligible(qa_q1_game *, q1_actor *, qa_actor_id);
 bool q1_drop_touch(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);
 bool q1_rogue_toss(qa_q1_game *, q1_player *, bool weapon, qa_error *);
 int q1_weapon_rank(const qa_q1_game *, qa_q1_weapon);

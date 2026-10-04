@@ -157,7 +157,10 @@ bool qa_q1_ctf_toss_ammo(qa_q1_game *g, qa_actor_id actor, const qa_q1_drop_inpu
     if (!q1_create(g, "ctf_backpack", Q1_PICKUP, actor, &pack, error))
         return false;
     pack->state.pickup.drop = Q1_DROP_CTF_AMMO;
-    if (!q1_model(g, pack, "progs/backpack.mdl", error))
+    pack->state.pickup.weapon = QA_Q1_WEAPON_COUNT;
+    if (!qa_builtin_resource(&g->services, "q1:item_backpack",
+                              &pack->state.pickup.item, error) ||
+        !q1_model(g, pack, "progs/backpack.mdl", error))
         goto fail;
     for (size_t i = 0; i < sizeof(drop_ammunition) / sizeof(*drop_ammunition); ++i) {
         const drop_ammo *rule = &drop_ammunition[i];
@@ -396,21 +399,77 @@ static bool pickup_feedback(qa_q1_game *g, q1_actor *item, qa_actor_id actor, bo
                               .time_ns = g->time_ns};
     return qa_builtin_emit(&g->services, &event, error);
 }
-bool q1_drop_touch(qa_q1_game *g, q1_actor *item, qa_actor_id actor, qa_error *error) {
+void q1_drop_offer(const qa_q1_game *g, const q1_actor *item, qa_actor_id actor,
+                     qa_pickup_offer *offer, qa_pickup_cargo cargo[4]) {
+    bool ammo = item->state.pickup.drop == Q1_DROP_CTF_AMMO;
+    *offer = (qa_pickup_offer){.recipient = actor, .pickup = item->id,
+                               .source = g->options.provider, .item = item->state.pickup.item,
+                               .dropped = true, .time_ns = g->time_ns};
+    if (ammo) {
+        for (unsigned i = 0; i < 4; ++i)
+            cargo[i] = (qa_pickup_cargo){g->ammo[i], item->state.pickup.ammo[i], false};
+        offer->cargo = cargo;
+        offer->cargo_count = 4;
+    } else {
+        offer->default_resource = (qa_pickup_resource){.kind = QA_PICKUP_INVENTORY,
+                                                       .item = item->state.pickup.item};
+        offer->override_count = true;
+        offer->count = 1;
+    }
+}
+bool q1_drop_eligible(qa_q1_game *g, q1_actor *item, qa_actor_id actor) {
     bool rogue = item->state.pickup.drop == Q1_DROP_ROGUE_WEAPON;
     bool ammo = item->state.pickup.drop == Q1_DROP_CTF_AMMO;
     q1_player *player = q1_player_get(g, actor);
     qa_q1_target target;
     if (rogue ? player == NULL : !q1_target(g, actor, &target) || !target.player)
-        return true;
+        return false;
     qa_builtin_actor_traits traits;
     if (!rogue && g->services.actor_traits &&
         g->services.actor_traits(g->services.context, actor, &traits) && traits.spectator)
-        return true;
+        return false;
     if (ammo && q1_health(g, actor) <= 0)
-        return true;
+        return false;
     if (!ammo && qa_actor_id_equal(item->owner, actor) && item->next_think - g->time > 119)
-        return true;
+        return false;
+    return touch_live(g, item, actor);
+}
+typedef struct drop_touch {
+    qa_q1_game *game;
+    q1_actor *item;
+    qa_actor_id actor;
+    const drop_weapon *definition;
+    bool original_ran;
+} drop_touch;
+static bool drop_eligible(void *context, const qa_pickup_offer *offer, bool *eligible,
+                           qa_error *error) {
+    (void)offer;
+    (void)error;
+    drop_touch *touch = context;
+    *eligible = q1_drop_eligible(touch->game, touch->item, touch->actor);
+    return true;
+}
+static bool drop_definition(drop_touch *touch, qa_error *error) {
+    for (size_t i = 0; i < sizeof(drop_weapons) / sizeof(*drop_weapons); ++i)
+        if (drop_weapons[i].weapon == touch->item->state.pickup.weapon) {
+            touch->definition = &drop_weapons[i];
+            return true;
+        }
+    qa_error_set(error, QA_ERROR_FORMAT, touch->item->id.slot,
+                 "Q1 dropped weapon has no source definition");
+    return false;
+}
+static bool drop_original(void *context, const qa_pickup_offer *offer, bool *taken,
+                          qa_error *error) {
+    (void)offer;
+    drop_touch *touch = context;
+    qa_q1_game *g = touch->game;
+    q1_actor *item = touch->item;
+    qa_actor_id actor = touch->actor;
+    bool rogue = item->state.pickup.drop == Q1_DROP_ROGUE_WEAPON;
+    bool ammo = item->state.pickup.drop == Q1_DROP_CTF_AMMO;
+    touch->original_ran = true;
+    *taken = true;
     if (ammo) {
         for (unsigned i = 0; i < 4; ++i) {
             double given;
@@ -422,17 +481,8 @@ bool q1_drop_touch(qa_q1_game *g, q1_actor *item, qa_actor_id actor, qa_error *e
                 return true;
         }
     } else {
-        const drop_weapon *definition = NULL;
-        for (size_t i = 0; i < sizeof(drop_weapons) / sizeof(*drop_weapons); ++i)
-            if (drop_weapons[i].weapon == item->state.pickup.weapon) {
-                definition = &drop_weapons[i];
-                break;
-            }
-        if (!definition) {
-            qa_error_set(error, QA_ERROR_FORMAT, item->id.slot,
-                         "Q1 dropped weapon has no source definition");
+        if (!drop_definition(touch, error))
             return false;
-        }
         if (!rogue) {
             qa_inventory_entry entry = {.item = item->state.pickup.item,
                                         .count = 1,
@@ -443,6 +493,25 @@ bool q1_drop_touch(qa_q1_game *g, q1_actor *item, qa_actor_id actor, qa_error *e
             if (!touch_live(g, item, actor))
                 return true;
         }
+    }
+    return true;
+}
+static bool drop_complete(void *context, const qa_pickup_offer *offer, bool taken,
+                          qa_error *error) {
+    (void)offer;
+    drop_touch *touch = context;
+    qa_q1_game *g = touch->game;
+    q1_actor *item = touch->item;
+    qa_actor_id actor = touch->actor;
+    if (!taken || !touch_live(g, item, actor))
+        return true;
+    bool rogue = item->state.pickup.drop == Q1_DROP_ROGUE_WEAPON;
+    bool ammo = item->state.pickup.drop == Q1_DROP_CTF_AMMO;
+    q1_player *player = q1_player_get(g, actor);
+    if (!ammo) {
+        if (!touch->definition && !drop_definition(touch, error))
+            return false;
+        const drop_weapon *definition = touch->definition;
         if (rogue && g->options.edition != QA_Q1_RERELEASE) {
             char message[128];
             snprintf(message, sizeof(message), "You got the %s\n",
@@ -468,7 +537,8 @@ bool q1_drop_touch(qa_q1_game *g, q1_actor *item, qa_actor_id actor, qa_error *e
     if (rogue) {
         qa_q1_weapon weapon = item->state.pickup.weapon;
         double given;
-        if (!qa_inventory_give(g->services.inventory, actor, item->state.pickup.item, 1, &given,
+        if (touch->original_ran &&
+            !qa_inventory_give(g->services.inventory, actor, item->state.pickup.item, 1, &given,
                                error))
             return false;
         if (!touch_live(g, item, actor))
@@ -477,6 +547,8 @@ bool q1_drop_touch(qa_q1_game *g, q1_actor *item, qa_actor_id actor, qa_error *e
             return false;
         if (!q1_alive(g, actor))
             return true;
+        if (!touch->original_ran)
+            return selected_changed(g, actor, 0, error);
         if ((!g->options.deathmatch ||
              q1_weapon_rank(g, weapon) < q1_weapon_rank(g, player->weapon)) &&
             !qa_q1_player_select(g, actor, weapon, error))
@@ -492,4 +564,14 @@ bool q1_drop_touch(qa_q1_game *g, q1_actor *item, qa_actor_id actor, qa_error *e
                                  item->killtarget, item->delay, error))
         return false;
     return !q1_alive(g, item->id) || q1_remove(g, item, error);
+}
+bool q1_drop_touch(qa_q1_game *g, q1_actor *item, qa_actor_id actor, qa_error *error) {
+    drop_touch touch = {.game = g, .item = item, .actor = actor};
+    qa_pickup_cargo cargo[4];
+    qa_pickup_offer offer;
+    q1_drop_offer(g, item, actor, &offer, cargo);
+    qa_pickup_continuation continuation = {.context = &touch, .eligible = drop_eligible,
+                                           .original = drop_original, .complete = drop_complete};
+    qa_pickup_outcome outcome;
+    return qa_pickups_touch(g->services.pickups, &offer, &continuation, &outcome, error);
 }
