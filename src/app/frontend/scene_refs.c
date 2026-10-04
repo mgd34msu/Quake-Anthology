@@ -7,20 +7,20 @@ static bool model_encode(void *context, const qa_model *model, uint64_t *out, qa
     frontend_scene_model_scope *scope=context;
     return frontend_model_encode(scope->models,model,out,error);
 }
-static bool model_decode(void *context, uint64_t key, qa_bytes bytes, const qa_model **out, qa_error *error)
+static bool model_decode(void *context, uint64_t key, const qa_model **out, qa_error *error)
 {
     frontend_scene_model_scope *scope=context;
-    return frontend_model_decode(scope->models,key,bytes,out,error);
+    return frontend_model_decode(scope->models,key,out,error);
 }
 static bool animation_encode(void *context, const qa_model_animation *animation, uint64_t *out, qa_error *error)
 {
     frontend_scene_model_scope *scope=context;
     return frontend_animation_encode(scope->models,animation,out,error);
 }
-static bool animation_decode(void *context, uint64_t key, qa_bytes bytes, const qa_model_animation **out, qa_error *error)
+static bool animation_decode(void *context, uint64_t key, const qa_model_animation **out, qa_error *error)
 {
     frontend_scene_model_scope *scope=context;
-    return frontend_animation_decode(scope->models,key,bytes,out,error);
+    return frontend_animation_decode(scope->models,key,out,error);
 }
 static void model_release(void *token) { frontend_model_release(token); }
 static void animation_release(void *token) { frontend_animation_release(token); }

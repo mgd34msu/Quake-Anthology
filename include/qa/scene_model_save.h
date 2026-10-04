@@ -26,12 +26,12 @@ typedef struct qa_scene_model_owner_refs {
     bool (*model_encode)(void *, const qa_model *, uint64_t *, qa_error *);
     /* Candidate decoded holders are owned by the enclosing content inventory.
      * Their original resource provenance and immutable parsed arrays must be
-     * qualified there. The byte span here is the exact original source. */
-    bool (*model_decode)(void *, uint64_t, qa_bytes, const qa_model **, qa_error *);
+     * qualified there. Consumers resolve their admitted holder IDs directly. */
+    bool (*model_decode)(void *, uint64_t, const qa_model **, qa_error *);
     bool (*animation_encode)(void *, const qa_model_animation *, uint64_t *, qa_error *);
     /* Qualification includes the actual installed scale/joint policy and
      * resulting immutable poses, not only the original animation bytes. */
-    bool (*animation_decode)(void *, uint64_t, qa_bytes, const qa_model_animation **, qa_error *);
+    bool (*animation_decode)(void *, uint64_t, const qa_model_animation **, qa_error *);
     /* Restore acquires stable per-consumer holds, independent of this temporary
      * resolver context. A successful callback fills both fields of an empty
      * lease. The model releases them after dependent children are destroyed. */

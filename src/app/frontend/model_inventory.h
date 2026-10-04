@@ -73,9 +73,9 @@ bool frontend_animation_source_at(const frontend_model_inventory *, size_t,
 /* Pure QMON callbacks. Their context is the inventory; the aggregate resolver
  * forwards to them when its shared scene dictionary owns the outer context. */
 bool frontend_model_encode(void *, const qa_model *, uint64_t *, qa_error *);
-bool frontend_model_decode(void *, uint64_t, qa_bytes, const qa_model **, qa_error *);
+bool frontend_model_decode(void *, uint64_t, const qa_model **, qa_error *);
 bool frontend_animation_encode(void *, const qa_model_animation *, uint64_t *, qa_error *);
-bool frontend_animation_decode(void *, uint64_t, qa_bytes,
+bool frontend_animation_decode(void *, uint64_t,
     const qa_model_animation **, qa_error *);
 bool frontend_model_source_qualify(void *, const qa_model *, qa_scene_resources *,
     qa_material_library *, const qa_scene_image_options *, qa_error *);

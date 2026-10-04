@@ -707,7 +707,7 @@ static bool rows_fields(qa_source_save_io *io,frontend_world_inventory *inventor
               row->view.owner.kind==FRONTEND_SCENE_OWNER_UNIFIED_MODEL) ? !row->path : row->path!=NULL) || !blob(io,&row->state)) return false;
         row->view.visual_path=row->path;
         if (io->direction==QA_SOURCE_SAVE_READ && !frontend_model_decode(inventory->models,row->model,
-            qa_resource_bytes(row->view.source.resource),&row->view.source.model,io->error)) return false;
+            &row->view.source.model,io->error)) return false;
         frontend_model_source actual={0}; bool found=false;
         for (size_t j=0;j<frontend_model_count(inventory->models);++j)
             if (frontend_model_source_at(inventory->models,j,&actual) && actual.model==row->view.source.model) { found=true; break; }

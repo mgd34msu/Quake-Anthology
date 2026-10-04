@@ -863,8 +863,14 @@ static bool provider_decode(void *context,uint64_t key,qa_q3_presentation_provid
 { return frontend_material_provider_decode(((q3_scope *)context)->inventory->frontend,key,provider,error); }
 static bool model_encode(void *context,const qa_model *model,uint64_t *key,qa_error *error)
 { return frontend_model_encode(((q3_scope *)context)->inventory->refs.models,model,key,error); }
-static bool model_decode(void *context,uint64_t key,qa_bytes bytes,const qa_model **model,qa_error *error)
-{ return frontend_model_decode(((q3_scope *)context)->inventory->refs.models,key,bytes,model,error); }
+static bool model_decode(void *context,uint64_t key,const qa_resource *resource,const qa_model **model,qa_error *error)
+{
+    frontend_model_inventory *inventory=((q3_scope *)context)->inventory->refs.models;
+    frontend_model_source source;
+    if (key>SIZE_MAX || !frontend_model_source_at(inventory,(size_t)key,&source) || source.resource!=resource)
+        return frontend_fail(error,QA_ERROR_FORMAT,"Q3 model refers to another canonical content resource");
+    return frontend_model_decode(inventory,key,model,error);
+}
 static bool model_retain(void *context,const qa_model *model,qa_q3_asset_model_lease *lease,qa_error *error)
 {
     q3_scope *scope=context; frontend_scene_model_scope model_scope={{scope->inventory->refs.scene,0},scope->inventory->refs.models};

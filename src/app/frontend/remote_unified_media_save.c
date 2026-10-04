@@ -145,8 +145,14 @@ static bool services_qualify(void *context, uint64_t key,
 }
 static bool model_encode(void *context, const qa_model *model, uint64_t *out, qa_error *error)
 { return frontend_model_encode(((asset_scope *)context)->refs->models, model, out, error); }
-static bool model_decode(void *context, uint64_t key, qa_bytes bytes, const qa_model **out, qa_error *error)
-{ return frontend_model_decode(((asset_scope *)context)->refs->models, key, bytes, out, error); }
+static bool model_decode(void *context, uint64_t key, const qa_resource *resource, const qa_model **out, qa_error *error)
+{
+    frontend_model_inventory *inventory=((asset_scope *)context)->refs->models;
+    frontend_model_source source;
+    if (key>SIZE_MAX || !frontend_model_source_at(inventory,(size_t)key,&source) || source.resource!=resource)
+        return frontend_fail(error,QA_ERROR_FORMAT,"Q3 model refers to another canonical content resource");
+    return frontend_model_decode(inventory,key,out,error);
+}
 static bool model_retain(void *context, const qa_model *model, qa_q3_asset_model_lease *out, qa_error *error)
 {
     asset_scope *scope = context;

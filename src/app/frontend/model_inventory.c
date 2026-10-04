@@ -31,8 +31,6 @@ struct frontend_model_lease { frontend_model_inventory *inventory; size_t index;
 struct frontend_animation_lease { frontend_model_inventory *inventory; size_t index; };
 static bool fail(qa_error *error, qa_status code, const char *message)
 { qa_error_set(error, code, 0, "%s", message); return false; }
-static bool same_bytes(qa_bytes a, qa_bytes b)
-{ return a.size == b.size && (!a.size || (a.data && b.data && !memcmp(a.data, b.data, a.size))); }
 static bool product(size_t a, size_t b, size_t *out)
 { if (a && b > SIZE_MAX / a) return false; *out = a * b; return true; }
 static bool floats(qa_source_save_io *io, float *values, size_t count)
@@ -70,7 +68,7 @@ static bool source_buffer(qa_source_save_io *io, qa_buffer *value, const qa_reso
         memcpy(value->data, actual.data, actual.size);
         return true;
     }
-    return value->data && same_bytes((qa_bytes){value->data, value->size}, actual);
+    return value->data && value->size == actual.size;
 }
 /* All borrowed strings, pixels and packed records retain their original offset
  * in the one owned source buffer. Zero-length present views remain present. */
@@ -563,7 +561,8 @@ bool frontend_models_capture(qa_application_content_graph *graph,
     if (!ok) fail(error, QA_ERROR_MEMORY, "Allocating parsed model source rows");
     for (size_t i = 0; ok && i < model_count; ++i) {
         const frontend_model_source *source = &models[i]; bool alias = false;
-        if (!source->model || !same_bytes((qa_bytes){source->model->source.data, source->model->source.size}, qa_resource_bytes(source->resource))) {
+        if (!source->model || !source->model->source.data ||
+            source->model->source.size != qa_resource_bytes(source->resource).size) {
             ok = fail(error, QA_ERROR_FORMAT, "Parsed model lacks its exact original resource version"); break;
         }
         for (size_t j = 0; j < inventory->model_count; ++j) if (inventory->models[j].source.model == source->model) {
@@ -587,7 +586,8 @@ bool frontend_models_capture(qa_application_content_graph *graph,
     }
     for (size_t i = 0; ok && i < animation_count; ++i) {
         const frontend_animation_source *source = &animations[i]; bool alias = false;
-        if (!source->animation || !same_bytes((qa_bytes){source->animation->source.data, source->animation->source.size}, qa_resource_bytes(source->resource))) {
+        if (!source->animation || !source->animation->source.data ||
+            source->animation->source.size != qa_resource_bytes(source->resource).size) {
             ok = fail(error, QA_ERROR_FORMAT, "Parsed animation lacks its exact original resource version"); break;
         }
         for (size_t j = 0; j < inventory->animation_count; ++j) if (inventory->animations[j].source.animation == source->animation) {
@@ -615,17 +615,10 @@ bool frontend_models_capture(qa_application_content_graph *graph,
 }
 static bool identity_fields(qa_source_save_io *io, uint64_t *pool, uint64_t *resource, uint64_t *view)
 { return qa_source_save_u64(io, pool) && *pool && qa_source_save_u64(io, resource) && *resource && qa_source_save_u64(io, view) && *view; }
-static bool digest_fields(qa_source_save_io *io, const qa_resource *resource)
-{
-    const qa_sha256_digest *actual = qa_resource_digest(resource);
-    if (!actual) return false;
-    qa_sha256_digest saved = *actual;
-    return qa_source_save_bytes(io, &saved, sizeof(saved)) && !memcmp(&saved, actual, sizeof(saved));
-}
 static bool inventory_fields(qa_source_save_io *io, frontend_model_inventory *inventory)
 {
-    bool reading = io->direction == QA_SOURCE_SAVE_READ; uint8_t magic[4] = {'Q','F','M','I'}; if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "QFMI", 4) || !qa_source_save_count(io, &inventory->model_count, reading ? io->input.size / 64 : SIZE_MAX / sizeof(model_holder)) ||
-        !qa_source_save_count(io, &inventory->animation_count, reading ? io->input.size / 64 : SIZE_MAX / sizeof(animation_holder)) ||
+    bool reading = io->direction == QA_SOURCE_SAVE_READ; uint8_t magic[4] = {'Q','F','M','I'}; if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "QFMI", 4) || !qa_source_save_count(io, &inventory->model_count, reading ? io->input.size / 32 : SIZE_MAX / sizeof(model_holder)) ||
+        !qa_source_save_count(io, &inventory->animation_count, reading ? io->input.size / 40 : SIZE_MAX / sizeof(animation_holder)) ||
         inventory->model_count > SIZE_MAX / sizeof(model_holder) || inventory->animation_count > SIZE_MAX / sizeof(animation_holder)) return false;
     if (reading) {
         inventory->models = inventory->model_count ? calloc(inventory->model_count, sizeof(*inventory->models)) : NULL;
@@ -644,7 +637,7 @@ static bool inventory_fields(qa_source_save_io *io, frontend_model_inventory *in
             holder->source = (frontend_model_source){.model=&holder->owned,.resource=resource,.files=files};
         }
         uint64_t parent_key=holder->parent;
-        if (!digest_fields(io, holder->source.resource) || !qa_source_save_u64(io,&parent_key) || parent_key>i) return false;
+        if (!qa_source_save_u64(io,&parent_key) || parent_key>i) return false;
         if (parent_key) {
             model_holder *parent=&inventory->models[parent_key-1];
             if (parent->pool!=holder->pool || parent->resource!=holder->resource || parent->view!=holder->view ||
@@ -674,9 +667,7 @@ static bool inventory_fields(qa_source_save_io *io, frontend_model_inventory *in
             holder->source = (frontend_animation_source){&holder->owned, resource, files, scale_resource};
         }
         qa_model_animation local = *holder->source.animation;
-        if (!digest_fields(io, holder->source.resource) ||
-            (holder->source.scale_resource && !digest_fields(io, holder->source.scale_resource)) ||
-            !animation_fields(io, reading ? &holder->owned : &local, holder->source.resource)) return false;
+        if (!animation_fields(io, reading ? &holder->owned : &local, holder->source.resource)) return false;
     }
     return true;
 }
@@ -724,12 +715,12 @@ bool frontend_model_encode(void *context, const qa_model *model, uint64_t *out, 
         if (inventory->models[i].source.model == model) { *out = i; return true; }
     return fail(error, QA_ERROR_FORMAT, "Scene model is absent from the actual parsed holder inventory");
 }
-bool frontend_model_decode(void *context, uint64_t id, qa_bytes bytes, const qa_model **out, qa_error *error)
+bool frontend_model_decode(void *context, uint64_t id, const qa_model **out, qa_error *error)
 {
     const frontend_model_inventory *inventory = context;
     if (inventory && !inventory->owner_retired && out && id < inventory->model_count) {
         const qa_model *model = inventory->models[id].source.model;
-        if (model && same_bytes(bytes, (qa_bytes){model->source.data, model->source.size})) { *out = model; return true; }
+        if (model) { *out = model; return true; }
     }
     return fail(error, QA_ERROR_FORMAT, "Scene model reference differs from the restored source-qualified holder");
 }
@@ -740,13 +731,13 @@ bool frontend_animation_encode(void *context, const qa_model_animation *animatio
         if (inventory->animations[i].source.animation == animation) { *out = i; return true; }
     return fail(error, QA_ERROR_FORMAT, "Replacement animation is absent from the actual installed holder inventory");
 }
-bool frontend_animation_decode(void *context, uint64_t id, qa_bytes bytes,
+bool frontend_animation_decode(void *context, uint64_t id,
     const qa_model_animation **out, qa_error *error)
 {
     const frontend_model_inventory *inventory = context;
     if (inventory && !inventory->owner_retired && out && id < inventory->animation_count) {
         const qa_model_animation *animation = inventory->animations[id].source.animation;
-        if (animation && same_bytes(bytes, (qa_bytes){animation->source.data, animation->source.size})) { *out = animation; return true; }
+        if (animation) { *out = animation; return true; }
     }
     return fail(error, QA_ERROR_FORMAT, "Replacement animation reference differs from the installed immutable holder");
 }

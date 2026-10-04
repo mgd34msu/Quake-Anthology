@@ -4,7 +4,6 @@
 #include "qa/scene_world_save.h"
 #include "qa/scene_resource_save.h"
 #include "qa/material_library_save.h"
-#include "qa/hash.h"
 #include "qa/binary.h"
 #include "qa/vfs_view_save.h"
 #include "qa/q3_assets_custody.h"
@@ -89,8 +88,6 @@ bool qa_q3_assets_prepare_restored_map(qa_q3_presentation_assets *a,
     if (!qa_q3_assets_map_hold(a, world, geometry, error)) return false;
     a->world = world; a->geometry = geometry; return true;
 }
-static bool same_bytes(qa_bytes a, qa_bytes b)
-{ return a.size == b.size && (!a.size || (a.data && b.data && !memcmp(a.data, b.data, a.size))); }
 static bool resource_owned(const qa_q3_presentation_provider *provider, const qa_resource *resource)
 {
     return !resource || qa_resource_pool_find(qa_vfs_resources(provider->mounts),
@@ -147,18 +144,12 @@ static bool resource_fields(qa_source_save_io *io, qa_resource **value,
     bool present = *value != NULL;
     if (!qa_source_save_bool(io, &present)) return false;
     if (!present) return *value == NULL;
-    uint64_t pool = 0, id = 0; qa_sha256_digest digest = {{0}};
-    if (!reading(io)) {
-        const qa_sha256_digest *actual = qa_resource_digest(*value);
-        if (!actual || !r->resource_encode(r->context, *value, &pool, &id, io->error)) return false;
-        digest = *actual;
-    }
-    if (!qa_source_save_u64(io, &pool) || !qa_source_save_u64(io, &id) ||
-        !qa_source_save_bytes(io, digest.bytes, sizeof(digest.bytes))) return false;
+    uint64_t pool = 0, id = 0;
+    if ((!reading(io) && !r->resource_encode(r->context, *value, &pool, &id, io->error)) ||
+        !qa_source_save_u64(io, &pool) || !qa_source_save_u64(io, &id)) return false;
     if (reading(io)) {
         const qa_resource *candidate = NULL;
-        if (*value || !r->resource_decode(r->context, pool, id, &candidate, io->error) || !candidate ||
-            !qa_resource_digest(candidate) || memcmp(digest.bytes, qa_resource_digest(candidate)->bytes, sizeof(digest.bytes))) return false;
+        if (*value || !r->resource_decode(r->context, pool, id, &candidate, io->error) || !candidate) return false;
         qa_resource_retain((qa_resource *)candidate); *value = (qa_resource *)candidate;
     }
     return true;
@@ -171,9 +162,10 @@ static bool source_fields(qa_source_save_io *io, const qa_model **value, const q
     if (!present) return *value == NULL;
     uint64_t id = 0;
     if ((!reading(io) && !r->model_encode(r->context, *value, &id, io->error)) || !qa_source_save_u64(io, &id) || !resource) return false;
-    qa_bytes bytes = qa_resource_bytes(resource);
-    if (reading(io) && !r->model_decode(r->context, id, bytes, value, io->error)) return false;
-    return *value && same_bytes(bytes, (qa_bytes){(*value)->source.data, (*value)->source.size});
+    const qa_model *resolved = NULL;
+    if (!r->model_decode(r->context, id, resource, &resolved, io->error) || !resolved) return false;
+    if (reading(io)) *value = resolved;
+    return *value == resolved;
 }
 static bool world_fields(qa_source_save_io *io, qa_scene_world **value, uint64_t *ordinal,
     const qa_q3_asset_owner_refs *r)

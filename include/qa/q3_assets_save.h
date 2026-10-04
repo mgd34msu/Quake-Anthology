@@ -65,7 +65,8 @@ typedef struct qa_q3_asset_owner_refs {
     bool (*resource_encode)(void *, const qa_resource *, uint64_t *pool, uint64_t *resource, qa_error *);
     bool (*resource_decode)(void *, uint64_t pool, uint64_t resource, const qa_resource **, qa_error *);
     bool (*model_encode)(void *, const qa_model *, uint64_t *, qa_error *);
-    bool (*model_decode)(void *, uint64_t, qa_bytes source, const qa_model **, qa_error *);
+    /* The resource witness is the same canonical object resolved in this graph. */
+    bool (*model_decode)(void *, uint64_t, const qa_resource *, const qa_model **, qa_error *);
     /* Returns an owning token for the actual parsed holder. The release token
      * survives destruction of the codec/dictionary callback context. It is
      * released only after the dependent adopted scene owners are destroyed. */

@@ -166,67 +166,11 @@ static bool model_ref(qa_source_save_io *io, const qa_scene_model_owner_refs *re
     qa_scene_model_content_lease *lease)
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ; uint64_t key = UINT64_MAX;
-    qa_bytes bytes = reading || !*source ? (qa_bytes){0} : (qa_bytes){(*source)->source.data, (*source)->source.size};
     if ((!reading && (!*source || !refs->model_encode(refs->context, *source, &key, io->error))) ||
-        !qa_source_save_u64(io, &key) || key == UINT64_MAX || !blob(io, &bytes)) return false;
-    if (reading && (!refs->model_decode(refs->context, key, bytes, source, io->error) || !*source ||
-        (*source)->source.size != bytes.size || (bytes.size && memcmp((*source)->source.data, bytes.data, bytes.size)))) return false;
+        !qa_source_save_u64(io, &key) || key == UINT64_MAX) return false;
+    if (reading && (!refs->model_decode(refs->context, key, source, io->error) || !*source)) return false;
     if (reading && lease && (!refs->model_retain ||
         !refs->model_retain(refs->context,*source,lease,io->error) || !lease->context || !lease->release)) return false;
-    uint32_t format = (*source)->format, meshes = (*source)->mesh_count, skins = (*source)->skin_count, sprites = (*source)->sprite_count;
-    return qa_source_save_u32(io, &format) && format == (uint32_t)(*source)->format &&
-        qa_source_save_u32(io, &meshes) && meshes == (*source)->mesh_count &&
-        qa_source_save_u32(io, &skins) && skins == (*source)->skin_count &&
-        qa_source_save_u32(io, &sprites) && sprites == (*source)->sprite_count;
-}
-static bool same_u32(qa_source_save_io *io, uint32_t actual)
-{ uint32_t saved = actual; return qa_source_save_u32(io, &saved) && saved == actual; }
-static bool same_i32(qa_source_save_io *io, int32_t actual)
-{ int32_t saved = actual; return qa_source_save_i32(io, &saved) && saved == actual; }
-static bool same_f32(qa_source_save_io *io, float actual)
-{ float saved = actual; return qa_source_save_f32(io, &saved) && !memcmp(&saved, &actual, sizeof(actual)); }
-static bool same_bool(qa_source_save_io *io, bool actual)
-{ bool saved = actual; return qa_source_save_bool(io, &saved) && saved == actual; }
-static bool same_bytes(qa_source_save_io *io, qa_bytes actual)
-{
-    qa_bytes saved = actual;
-    return (!actual.size || actual.data) && blob(io, &saved) && saved.size == actual.size &&
-        (!actual.size || !memcmp(saved.data, actual.data, actual.size));
-}
-static bool pose_qualify(qa_source_save_io *io, const qa_model_pose *pose)
-{
-    for (size_t i = 0; i < 3; ++i) if (!same_f32(io, pose->position[i])) return false;
-    for (size_t i = 0; i < 4; ++i) if (!same_f32(io, pose->orientation[i])) return false;
-    return same_f32(io, pose->scale);
-}
-static bool animation_qualify(qa_source_save_io *io, const qa_model_animation *animation)
-{
-    if (!same_u32(io, animation->frame_count) || !same_u32(io, animation->joint_count) ||
-        !same_u32(io, animation->component_count) || !same_u32(io, animation->frame_rate) ||
-        !same_bytes(io, animation->command_line) ||
-        (animation->joint_count && animation->frame_count > SIZE_MAX / animation->joint_count) ||
-        (animation->component_count && animation->frame_count > SIZE_MAX / animation->component_count)) return false;
-    size_t poses = (size_t)animation->frame_count * animation->joint_count;
-    size_t components = (size_t)animation->frame_count * animation->component_count;
-    if (!same_bool(io, animation->joints != NULL) || (animation->joint_count && !animation->joints)) return false;
-    for (size_t i = 0; i < animation->joint_count; ++i) {
-        const qa_model_animation_joint *joint = &animation->joints[i];
-        if (!same_bytes(io, qa_model_bone_name(&joint->bone)) || !same_i32(io, joint->bone.parent) ||
-            !same_u32(io, joint->flags) || !same_u32(io, joint->first_component) ||
-            !same_bool(io, joint->scale_positions)) return false;
-    }
-    const qa_model_pose *arrays[3] = {animation->base_pose, animation->local_poses, animation->poses};
-    const size_t counts[3] = {animation->joint_count, poses, poses};
-    for (size_t array = 0; array < 3; ++array) {
-        if (!same_bool(io, arrays[array] != NULL) || (counts[array] && !arrays[array])) return false;
-        for (size_t i = 0; i < counts[array]; ++i) if (!pose_qualify(io, &arrays[array][i])) return false;
-    }
-    if (!same_bool(io, animation->bounds != NULL) || (animation->frame_count && !animation->bounds)) return false;
-    for (size_t i = 0; i < animation->frame_count; ++i)
-        for (size_t axis = 0; axis < 3; ++axis)
-            if (!same_f32(io, animation->bounds[i].min[axis]) || !same_f32(io, animation->bounds[i].max[axis])) return false;
-    if (!same_bool(io, animation->components != NULL) || (components && !animation->components)) return false;
-    for (size_t i = 0; i < components; ++i) if (!same_f32(io, animation->components[i])) return false;
     return true;
 }
 static bool animation_ref(qa_source_save_io *io, const qa_scene_model_owner_refs *refs, const qa_model_animation **source,
@@ -235,13 +179,11 @@ static bool animation_ref(qa_source_save_io *io, const qa_scene_model_owner_refs
     bool reading = io->direction == QA_SOURCE_SAVE_READ; uint64_t key = UINT64_MAX;
     if (reading ? !refs->animation_decode : !refs->animation_encode)
         return fail(io->error, QA_ERROR_ARGUMENT, "Retained replacement animation namespace is absent");
-    qa_bytes bytes = reading || !*source ? (qa_bytes){0} : (qa_bytes){(*source)->source.data, (*source)->source.size};
     if ((!reading && (!*source || !refs->animation_encode(refs->context, *source, &key, io->error))) ||
-        !qa_source_save_u64(io, &key) || key == UINT64_MAX || !blob(io, &bytes)) return false;
-    if (reading && (!refs->animation_decode(refs->context, key, bytes, source, io->error) || !*source ||
-        (*source)->source.size != bytes.size || (bytes.size && memcmp((*source)->source.data, bytes.data, bytes.size)))) return false;
-    return animation_qualify(io, *source) && (!reading || (refs->animation_retain &&
-        refs->animation_retain(refs->context,*source,lease,io->error) && lease->context && lease->release));
+        !qa_source_save_u64(io, &key) || key == UINT64_MAX) return false;
+    if (reading && (!refs->animation_decode(refs->context, key, source, io->error) || !*source)) return false;
+    return !reading || (refs->animation_retain &&
+        refs->animation_retain(refs->context,*source,lease,io->error) && lease->context && lease->release);
 }
 static bool image_ref(qa_source_save_io *io, const qa_scene_model_owner_refs *refs, const qa_scene_image **image)
 {
@@ -440,9 +382,9 @@ static bool mesh(qa_source_save_io *io, qa_scene_model *model, size_t node, size
         if (source->frame_count && source->vertex_count > SIZE_MAX / source->frame_count) return false;
         normals = (size_t)source->vertex_count * source->frame_count;
         if (reading && !allocate(io, normals, 1, (void **)&value->normal_indices)) return false;
-        if (!value->normal_indices || !qa_source_save_bytes(io, value->normal_indices, normals)) return false;
-        for (size_t i = 0; i < normals; ++i)
-            if (value->normal_indices[i] != scene_model_normal_index(source->vertices[i].normal)) return false;
+        if (!value->normal_indices) return false;
+        if (reading) for (size_t i = 0; i < normals; ++i)
+            value->normal_indices[i] = scene_model_normal_index(source->vertices[i].normal);
     } else if (value->normal_indices) return false;
     for (size_t i = 0; i < (source->shader_count ? source->shader_count : 1); ++i)
         if (!image_slot(io, image_table, image_count, &value->shaders[i])) return false;
