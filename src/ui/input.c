@@ -6,7 +6,7 @@ bool ui_inside(qa_scene_rect_f rect, qa_input_pair point) {
 }
 bool ui_action(qa_ui *ui, const qa_ui_control *control, const qa_ui_action *action,
                 qa_error *error) {
-    if (!control->enabled || !control->visible || !control->action)
+    if (!control->enabled || !control->visible || control->kind == QA_UI_TEXT || !control->action)
         return true;
     bool ok = control->action(control->context, ui->options.seat, control->id, action, error);
     if (ok && ui->options.sound)
@@ -28,7 +28,7 @@ bool ui_move(qa_ui *ui, int direction, qa_error *error) {
         selected = direction > 0 ? (selected == menu.count - 1 || selected == menu.count ? 0 : selected + 1)
                                  : (!selected || selected == menu.count ? menu.count - 1 : selected - 1);
         const qa_ui_control *control = &menu.controls[selected];
-        if (!control->enabled || !control->visible)
+        if (!control->enabled || !control->visible || control->kind == QA_UI_TEXT)
             continue;
         cursor->control = control->id;
         if (menu.scrollable && control->scrolls) {
@@ -91,7 +91,7 @@ bool ui_activate(qa_ui *ui, const qa_ui_control *control, qa_error *error) {
         action.kind = QA_UI_ROW_ACTIVATE;
         action.value.row = control->value.list.selected;
         break;
-    case QA_UI_OWNER_DRAW:
+    case QA_UI_OWNER_DRAW: case QA_UI_TEXT:
         return true;
     default:
         break;
@@ -283,7 +283,7 @@ static bool key(qa_ui *ui, uint32_t code, bool down, double time, qa_error *erro
         ? ui_move(ui, code == QA_KEY_UP || (code == QA_KEY_TAB && ui->shift) ? -1 : 1, error) : true;
 }
 static bool row_click(qa_ui *ui, const qa_ui_menu *menu, const qa_ui_control *control,
-                       size_t row, qa_error *error) {
+                       size_t row, bool row_action, qa_error *error) {
     const char *key = control->value.list.rows[row].key;
     if (!key) return ui_fail(error, "clicked UI row needs an identity");
     size_t length = strlen(key);
@@ -304,7 +304,7 @@ static bool row_click(qa_ui *ui, const qa_ui_menu *menu, const qa_ui_control *co
                     if (next.value.list.rows[j].key && !strcmp(next.value.list.rows[j].key, identity)) { picked = j; break; }
             }
             if (picked < next.value.list.count && next.value.list.rows[picked].enabled)
-                ok = ui_action(ui, &next, &(qa_ui_action){.kind = QA_UI_ROW_ACTIVATE, .value.row = picked}, error);
+                ok = ui_action(ui, &next, &(qa_ui_action){.kind = row_action ? QA_UI_ROW_DELETE : QA_UI_ROW_ACTIVATE, .value.row = picked}, error);
             break;
         }
     }
@@ -409,7 +409,7 @@ static bool input(qa_ui *ui, const qa_input_event *event, qa_error *error) {
     }
     for (size_t remaining = menu.count; remaining; --remaining) {
         qa_ui_control control = ui_control(ui, &menu, remaining - 1);
-        if (!control.enabled || !control.visible)
+        if (!control.enabled || !control.visible || control.kind == QA_UI_TEXT)
             continue;
         if (event->kind == QA_INPUT_EVENT_TEXT && control.id == focused)
             return ui_text(ui, &control, event->text, error);
@@ -425,8 +425,9 @@ static bool input(qa_ui *ui, const qa_input_event *event, qa_error *error) {
             if (!control.value.owner.input(control.context, ui->options.seat, event, &handled, error)) return false;
             if (handled || !ui->depth || ui->stack[ui->depth - 1].menu != menu.id) return true;
         }
-        if (control.kind == QA_UI_LIST && (pressed || ui->dragging == control.id) &&
-            (ui->dragging == control.id || ui->cursor.x >= control.rect.x + control.rect.width - 14)) {
+        if (control.kind == QA_UI_LIST && control.value.list.count > ui_list_page(&control) &&
+            (pressed || ui->dragging == control.id) &&
+            (ui->dragging == control.id || ui->cursor.x >= control.rect.x + control.rect.width - 16)) {
             if (!event->down && event->kind == QA_INPUT_EVENT_BUTTON) { ui->dragging = 0; return true; }
             ui_field *state = ui_list_state(ui, &control, error);
             if (!state) return false;
@@ -451,7 +452,7 @@ static bool input(qa_ui *ui, const qa_input_event *event, qa_error *error) {
             double step = control.value.slider.step;
             if (!isfinite(step) || step <= 0 || !isfinite(minimum) || !isfinite(maximum) || minimum > maximum)
                 return ui_fail(error, "invalid UI pointer slider");
-            double fraction = fmax(0, fmin(1, (ui->cursor.x - control.rect.x - control.rect.width * .55f) /
+            double fraction = fmax(0, fmin(1, (ui->cursor.x - control.rect.x - control.rect.width * .6f) /
                 fmaxf(1, control.rect.width * .32f)));
             return ui_action(ui, &control, &(qa_ui_action){.kind = QA_UI_CHANGE_NUMBER,
                 .value.number = fmax(minimum, fmin(maximum,
@@ -462,8 +463,13 @@ static bool input(qa_ui *ui, const qa_input_event *event, qa_error *error) {
             if (!state) return false;
             size_t row = state->top + (size_t)fmaxf(0, floorf((ui->cursor.y - control.rect.y) /
                                                                 fmaxf(1, control.value.list.row_height)));
-            if (row < control.value.list.count && control.value.list.rows[row].enabled)
-                return row_click(ui, &menu, &control, row, error);
+            if (row < control.value.list.count && control.value.list.rows[row].enabled) {
+                float content_width = control.rect.width -
+                    (control.value.list.count > ui_list_page(&control) ? 16 : 0);
+                bool row_action = control.value.list.rows[row].action_label &&
+                    ui->cursor.x >= control.rect.x + content_width - 28;
+                return row_click(ui, &menu, &control, row, row_action, error);
+            }
             return true;
         }
         if (pressed && control.kind == QA_UI_FIELD) {

@@ -59,13 +59,23 @@ static bool menu_valid(const qa_ui_menu *menu, qa_ui_id id, qa_error *error) {
         return ui_fail(error, "menu factory returned invalid identity, controls or scrolling");
     for (size_t i = 0; i < menu->count; ++i) {
         const qa_ui_control *control = &menu->controls[i];
-        if (!control->id || control->kind < QA_UI_BUTTON || control->kind > QA_UI_OWNER_DRAW ||
+        if (!control->id || control->kind < QA_UI_BUTTON || control->kind > QA_UI_TEXT ||
             !rectangle(control->rect)) return ui_fail(error, "invalid UI control");
         for (size_t j = 0; j < i; ++j)
             if (menu->controls[j].id == control->id) return ui_fail(error, "duplicate UI control identity");
+        if (control->kind == QA_UI_TEXT && (!isfinite(control->value.text.scale) || control->value.text.scale < 0 ||
+            !isfinite(control->value.text.fit_width) || control->value.text.fit_width < 0))
+            return ui_fail(error, "invalid authored UI text metrics");
         if (control->kind == QA_UI_LIST && ((control->value.list.count && !control->value.list.rows) ||
             !isfinite(control->value.list.row_height) || control->value.list.row_height <= 0))
             return ui_fail(error, "invalid UI list rows");
+        if (control->kind == QA_UI_LIST) {
+            if (control->value.list.column_count && !control->value.list.column_widths)
+                return ui_fail(error, "UI list columns require widths");
+            for (size_t column = 0; column < control->value.list.column_count; ++column)
+                if (!isfinite(control->value.list.column_widths[column]) || control->value.list.column_widths[column] < 0)
+                    return ui_fail(error, "invalid UI list column width");
+        }
         if (control->kind == QA_UI_CHOICE && control->value.choice.count && !control->value.choice.labels)
             return ui_fail(error, "invalid UI choice labels");
         if (control->kind == QA_UI_SLIDER && (!isfinite(control->value.slider.value) ||
@@ -91,7 +101,7 @@ bool ui_active(qa_ui *ui, qa_ui_menu *menu, qa_error *error) {
     qa_ui_id first = 0;
     for (size_t i = 0; i < menu->count; ++i) {
         const qa_ui_control *control = &menu->controls[i];
-        if (!control->enabled || !control->visible)
+        if (!control->enabled || !control->visible || control->kind == QA_UI_TEXT)
             continue;
         if (!first)
             first = control->id;
@@ -170,7 +180,8 @@ bool qa_ui_input_binding_read(const qa_ui *ui, qa_ui_input_binding *out)
 }
 bool qa_ui_create(const qa_ui_options *options, qa_ui **out, qa_error *error) {
     if (!options || !out || !options->input || !options->white || !options->fonts.classic ||
-        options->fonts.seat != options->seat)
+        options->fonts.seat != options->seat ||
+        (options->title_fonts.classic && options->title_fonts.seat != options->seat))
         return ui_fail(error, "UI requires seat input, matching fonts and a white image");
     qa_ui *ui = calloc(1, sizeof(*ui));
     if (!ui) {

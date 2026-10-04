@@ -29,11 +29,19 @@ typedef struct qa_ui_row {
     const char *key, *label, *detail;
     const qa_scene_image *image;
     bool enabled;
+    const char *const *cells;
+    size_t cell_count;
+    const char *action_label;
 } qa_ui_row;
 typedef enum qa_ui_control_kind {
     QA_UI_BUTTON, QA_UI_TOGGLE, QA_UI_SLIDER, QA_UI_FIELD, QA_UI_CHOICE,
-    QA_UI_LIST, QA_UI_OWNER_DRAW
+    QA_UI_LIST, QA_UI_OWNER_DRAW, QA_UI_TEXT
 } qa_ui_control_kind;
+typedef struct qa_ui_text_style {
+    /* Zero scale selects the authored startup default 2.2; zero fit_width is unbounded. */
+    float scale, fit_width;
+    bool accent, heading, source, overlay;
+} qa_ui_text_style;
 typedef struct qa_ui_control {
     qa_ui_id id;
     qa_ui_control_kind kind;
@@ -44,10 +52,12 @@ typedef struct qa_ui_control {
     qa_ui_action_fn action;
     union {
         bool checked;
+        qa_ui_text_style text;
         struct { double value, minimum, maximum, step; const char *label; } slider;
         struct { const char *text; size_t maximum; bool masked; } field;
         struct { const char *const *labels; size_t count, selected; } choice;
-        struct { const qa_ui_row *rows; size_t count, selected; float row_height; uint64_t revision; } list;
+        struct { const qa_ui_row *rows; size_t count, selected; float row_height; uint64_t revision;
+            const float *column_widths; size_t column_count; } list;
         struct {
             bool (*draw)(void *, uint32_t, qa_scene_frame *, qa_scene_rect, qa_scene_rect_f,
                          qa_error *);
@@ -64,6 +74,8 @@ typedef struct qa_ui_menu {
     qa_scene_rect_f scroll_rect;
     float content_height;
     bool source_title;
+    /* Authored startup Home panel and heading; other menus use the wide panel. */
+    bool narrow;
 } qa_ui_menu;
 /* A factory returns borrowed spans valid until its next invocation. Factories
  * and open/close hooks do not mutate the controller. Actions may open/close
@@ -80,11 +92,16 @@ typedef enum qa_ui_sound { QA_UI_OPEN, QA_UI_CLOSE, QA_UI_MOVE, QA_UI_CHANGE, QA
 /* Borrowed resources and callback contexts outlive the controller. Callbacks
  * cannot destroy it; menu factories, lifecycle hooks and draw callbacks only
  * inspect it. List revisions change when row membership/order changes. */
+typedef struct qa_ui_art {
+    const qa_scene_image *background, *main_background, *panel, *focus;
+} qa_ui_art;
 typedef struct qa_ui_options {
     uint32_t seat;
     qa_input_seat *input;
     qa_font_selection fonts;
     const qa_scene_image *white;
+    qa_ui_art art;
+    qa_font_selection title_fonts;
     void *context;
     void (*sound)(void *, uint32_t, qa_ui_sound);
     const char *(*localize)(void *, const char *);
@@ -133,6 +150,11 @@ bool qa_ui_capture_binding(qa_ui *, bool, qa_error *);
  * canvas. Drawing uses shared font/scene resources and frame scratch memory. */
 bool qa_ui_draw(qa_ui *, qa_scene_frame *, qa_scene_rect viewport, float scale,
                  bool high_contrast, qa_error *);
+/* Authored 640x480 text, using the active menu transform, palette and typography.
+ * Only call from a live UI draw callback; text and style are borrowed for this call.
+ * Explicit startup text scales follow menuScale independently of body textScale. */
+bool qa_ui_menu_text(qa_ui *, qa_scene_frame *, qa_scene_rect target, qa_scene_vec2 origin,
+    const char *, const qa_ui_text_style *, qa_error *);
 const qa_error *qa_ui_error(const qa_ui *);
 
 /* Dedicated addition-mod controls stage a complete launch draft. Apply uses

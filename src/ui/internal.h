@@ -27,6 +27,7 @@ struct qa_ui {
     qa_ui_id dragging;
     float drag_offset;
     bool shift, control, capture, handling, drawing, menu_dragging, has_pointer;
+    bool high_contrast;
     int held_direction[QA_AXIS_COUNT];
     double repeat_at[QA_AXIS_COUNT];
     double time_ms;
