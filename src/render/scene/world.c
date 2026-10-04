@@ -64,10 +64,6 @@ bool qa_scene_world_source_resource_bind(qa_scene_world *world, const qa_resourc
     }
     return true;
 }
-const qa_resource *qa_scene_world_source_resource_read(const qa_scene_world *world)
-{
-    return qa_scene_world_observation_ready(world) ? world->source_resource : NULL;
-}
 bool qa_scene_world_source_light_mask_read(const qa_scene_world *world, uint32_t surface,
     uint32_t *out, qa_error *error)
 {
@@ -191,6 +187,13 @@ static bool world_policy_current(const qa_scene_world_image_policy *ticket)
         !ticket->owner->checkpoint_active && !ticket->owner->capture &&
         ticket->owner->resources == qa_scene_resource_policy_source(ticket->resources) &&
         ticket->owner->surface_count == ticket->count;
+}
+const qa_resource *qa_scene_world_source_resource_read(const qa_scene_world *world)
+{
+    return world && (qa_scene_world_observation_ready(world) ||
+        (world->image_policy && world->image_policy->owner == world &&
+         !world->image_policy->published && world_policy_current(world->image_policy))) ?
+        world->source_resource : NULL;
 }
 static void world_policy_dispose(qa_scene_world_image_policy *ticket)
 {
