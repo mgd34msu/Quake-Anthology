@@ -1,7 +1,7 @@
 # Native frame costs
 
-The measured Q3 CPU frame is still too slow: **89.707 ms**, including
-**59.141 ms** of raster execution. GL takes **29.074 ms**, with material
+The measured Q3 CPU frame is still too slow: **79.971 ms**, including
+**49.511 ms** of raster execution. The latest GL measurement takes **31.228 ms**, with material
 submission and presentation as its largest remaining measured costs.
 
 ## Workload
@@ -21,7 +21,7 @@ optimized production GCC and Clang targets with warnings treated as errors.
 
 ## Complete frame results
 
-Times are medians in milliseconds. The last two rows use identical timed
+Times are medians in milliseconds. Rows from `2b5e343c` use identical timed
 diagnostic code, including material scopes. Earlier rows use fewer scopes;
 their comparisons include the later diagnostic overhead.
 
@@ -34,6 +34,8 @@ their comparisons include the later diagnostic overhead.
 | `8521761b` | 114.061 | 85.384 | 144.310 | 29.512 |
 | `2b5e343c` | 108.890 | 78.267 | 154.229 | 30.074 |
 | `b91eb2eb` | 89.707 | 59.141 | 179.565 | 29.074 |
+| `1a132170` | 90.725 | 59.263 | 179.188 | 31.228 |
+| `69dd5649` | 79.971 | 49.511 | 152.860 | Not run |
 
 On `b91eb2eb`, the nearest-rank 95th percentile is 91.594 ms CPU and
 29.934 ms GL. The wider pool lowers elapsed time while increasing aggregate
@@ -42,25 +44,34 @@ it does not establish each worker's individual contribution.
 
 ## Current costs and optimization targets
 
-These are inclusive medians on `b91eb2eb`. Nested durations overlap, so the
+These are inclusive medians on `69dd5649` for CPU and `1a132170` for GL.
+The later change affects only CPU rasterization. Nested durations overlap, so the
 rows must not be added together.
 
 | Scope | CPU ms | GL ms |
 | --- | ---: | ---: |
-| Scene construction | 17.047 | 16.562 |
-| Material submission, 554 calls | 11.880 | 11.828 |
-| World submission, including its materials | 11.506 | 11.430 |
-| Final scene sorting | 0.095 | 0.067 |
-| Renderer execution / GL submission | 59.141 | 1.848 |
-| SDL presentation / swap | 10.640 | 8.172 |
+| Scene construction | 16.559 | 17.945 |
+| Material submission, 554 calls | 11.665 | 12.782 |
+| World submission, including its materials | 11.300 | 12.359 |
+| Final scene sorting | 0.078 | 0.079 |
+| Renderer execution / GL submission | 49.511 | 2.074 |
+| SDL presentation / swap | 10.477 | 8.385 |
 
 The first GL baseline separately measured 3.596 ms median GPU elapsed time
 around renderer execution. GPU intervals overlap CPU work and presentation;
 they are not additional complete-frame milliseconds.
 
-The current implementation targets redundant full Source vertex copies,
-per-texel component conversion, and repeated triangle preparation across
-raster workers. Measurements for these subsequent units are pending.
+Reducing Source vertex storage, adding canonical texel lookup tables and
+sharing triangle preparation produced no complete-frame improvement on
+`1a132170`. The final frame contains no Source vertex arrays, so full Source
+array copies were not a cause of this native workload's cost. The lookup
+tables and triangle preparation also have non-Source callers.
+
+The guarded opaque fragment path on `69dd5649` reduces both elapsed raster
+time and aggregate CPU work. Preparing material constants once per stage and
+skipping unused texture derivatives are committed on `f143350a`; their matched
+CPU and GL measurements are pending. The next scheduling investigation targets
+the barrier between individual raster draws while preserving pixel order.
 
 ## Fidelity and limits
 
