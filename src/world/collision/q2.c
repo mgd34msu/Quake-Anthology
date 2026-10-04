@@ -48,6 +48,8 @@ typedef struct q2_collision {
     int32_t *node_stack;
     q2_frame *trace_stack;
     uint32_t *brush_stamps;
+    float *expanded_distances;
+    uint32_t *expanded_stamps;
     uint32_t stamp;
     q2_interval *intervals, *solid_intervals;
 } q2_collision;
@@ -77,6 +79,8 @@ static void q2_destroy(void *opaque)
     free(collision->node_stack);
     free(collision->trace_stack);
     free(collision->brush_stamps);
+    free(collision->expanded_distances);
+    free(collision->expanded_stamps);
     free(collision->intervals);
     free(collision->solid_intervals);
     free(collision);
@@ -185,12 +189,26 @@ static float q2_expand(const qa_collision_plane *plane, const qa_trace_shape *sh
     return -qa_vec_dot(corner, normal);
 }
 
+static float q2_expanded_distance(q2_work *work, uint32_t index)
+{
+    q2_collision *collision = work->collision;
+    if (collision->expanded_stamps[index] != collision->stamp) {
+        const qa_collision_plane *plane = &collision->planes[index];
+        collision->expanded_distances[index] =
+            plane->distance + q2_expand(plane, &work->query->shape);
+        collision->expanded_stamps[index] = collision->stamp;
+    }
+    return collision->expanded_distances[index];
+}
+
 static void q2_next_stamp(q2_collision *collision)
 {
     ++collision->stamp;
     if (collision->stamp == 0) {
         if (collision->brush_count != 0)
             memset(collision->brush_stamps, 0, collision->brush_count * sizeof(*collision->brush_stamps));
+        if (collision->plane_count != 0)
+            memset(collision->expanded_stamps, 0, collision->plane_count * sizeof(*collision->expanded_stamps));
         collision->stamp = 1;
     }
 }
@@ -264,7 +282,7 @@ static void q2_trace_brush(q2_work *work, uint32_t index)
     for (size_t i = 0; i < (size_t)brush->sides.count; ++i) {
         const q2_side *side = &collision->sides[(size_t)brush->sides.first + i];
         const qa_collision_plane *plane = &collision->planes[side->plane];
-        float distance = plane->distance + q2_expand(plane, &work->query->shape);
+        float distance = q2_expanded_distance(work, side->plane);
         float first = qa_vec_dot(work->start, plane->normal) - distance;
         if (work->stationary) {
             if (first > 0) return;
@@ -446,7 +464,7 @@ static void q2_brush_medium(q2_work *work, uint32_t index, size_t *count)
     for (size_t i = 0; i < (size_t)brush->sides.count; ++i) {
         const q2_side *side = &collision->sides[(size_t)brush->sides.first + i];
         const qa_collision_plane *plane = &collision->planes[side->plane];
-        float distance = plane->distance + q2_expand(plane, &work->query->shape);
+        float distance = q2_expanded_distance(work, side->plane);
         float first = qa_vec_dot(work->start, plane->normal) - distance;
         float last = qa_vec_dot(work->end, plane->normal) - distance;
         if (first > 0 && last > 0) return;
@@ -649,6 +667,8 @@ bool qa_q2_collision_create(const qa_bsp_view *map, qa_collision_kernel *out, qa
     Q2_ALLOC(node_stack, collision->node_count + 1);
     Q2_ALLOC(trace_stack, collision->node_count + 1);
     Q2_ALLOC(brush_stamps, collision->brush_count);
+    Q2_ALLOC(expanded_distances, collision->plane_count);
+    Q2_ALLOC(expanded_stamps, collision->plane_count);
     Q2_ALLOC(intervals, collision->brush_count);
     Q2_ALLOC(solid_intervals, collision->brush_count);
 #undef Q2_ALLOC
