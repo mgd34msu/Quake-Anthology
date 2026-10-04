@@ -43,6 +43,7 @@ static inline bool qa_collision_bounds_valid(qa_bounds b) {
 }
 static inline float qa_vec_component(qa_vec3 v, unsigned axis) { return axis==0?v.x:axis==1?v.y:v.z; }
 static inline void qa_vec_set_component(qa_vec3 *v, unsigned axis, float value) { if(axis==0)v->x=value;else if(axis==1)v->y=value;else v->z=value; }
+static inline float qa_collision_clamp_fraction(float fraction) { return fmaxf(0, fminf(1, fraction)); }
 /* Quake angle basis: forward, negative-right, up. */
 static inline void qa_collision_basis(qa_vec3 angles, qa_vec3 basis[3]) {
     const float radians=0.017453292519943295769f;

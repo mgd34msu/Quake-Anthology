@@ -228,8 +228,8 @@ static void q3_trace_tree(q3_work *work) {
             far_fraction = (first - offset - 0.125f) / (first - last);
             near_fraction = (first + offset + 0.125f) / (first - last);
         }
-        near_fraction = fmaxf(0, fminf(1, near_fraction));
-        far_fraction = fmaxf(0, fminf(1, far_fraction));
+        near_fraction = qa_collision_clamp_fraction(near_fraction);
+        far_fraction = qa_collision_clamp_fraction(far_fraction);
         map->steps[count++] = (q3_step){node->children[side ^ 1u],
             step.first + (step.last - step.first) * far_fraction, step.last,
             qa_vec_lerp(step.start, step.end, far_fraction), step.end};

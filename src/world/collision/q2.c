@@ -413,11 +413,6 @@ static void q2_position_test(q2_work *work, int32_t headnode)
     }
 }
 
-static float q2_clamp_fraction(float fraction)
-{
-    return fmaxf(0, fminf(1, fraction));
-}
-
 static void q2_sweep(q2_work *work, int32_t headnode)
 {
     q2_collision *collision = work->collision;
@@ -454,8 +449,8 @@ static void q2_sweep(q2_work *work, int32_t headnode)
             far_fraction = (first - offset - Q2_DISTANCE_EPSILON) * inverse;
             near_fraction = (first + offset + Q2_DISTANCE_EPSILON) * inverse;
         }
-        near_fraction = q2_clamp_fraction(near_fraction);
-        far_fraction = q2_clamp_fraction(far_fraction);
+        near_fraction = qa_collision_clamp_fraction(near_fraction);
+        far_fraction = qa_collision_clamp_fraction(far_fraction);
         float span = frame.last - frame.first;
         collision->trace_stack[depth++] = (q2_frame){node->children[side ^ 1u],
             frame.first + span * far_fraction, frame.last,

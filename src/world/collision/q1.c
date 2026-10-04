@@ -104,7 +104,7 @@ static bool trace_hull(q1work *w,const q1hull *hull,qa_vec3 start,qa_vec3 end,co
             if((t1>=0 && t2>=0)||(t1<0 && t2<0)) {
                 frame->node=node->children[t1<0?1:0]; frame->depth++; continue;
             }
-            float fraction=fmaxf(0,fminf(1,(t1+(t1<0?Q1_EPSILON:-Q1_EPSILON))/(t1-t2)));
+            float fraction=qa_collision_clamp_fraction((t1+(t1<0?Q1_EPSILON:-Q1_EPSILON))/(t1-t2));
             frame->fraction=fraction; frame->t1=t1; frame->plane=node->plane;
             frame->midf=frame->p1f+(frame->p2f-frame->p1f)*fraction;
             frame->mid=qa_vec_lerp(frame->p1,frame->p2,fraction);
