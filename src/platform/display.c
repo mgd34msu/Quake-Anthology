@@ -712,6 +712,8 @@ bool qa_display_make_current(qa_display *display, qa_error *error)
         return false;
     }
     display_changed(display);
+    if (SDL_GL_GetCurrentWindow() == display->window &&
+        SDL_GL_GetCurrentContext() == display->native.gl.context) return true;
     if (SDL_GL_MakeCurrent(display->window, display->native.gl.context) < 0)
         return display_error(error, QA_ERROR_IO, "SDL_GL_MakeCurrent");
     return true;
