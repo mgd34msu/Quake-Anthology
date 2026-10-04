@@ -37,7 +37,7 @@ typedef struct cpu_raster_worker {
 } cpu_raster_worker;
 struct cpu_raster_pool {
   unsigned count;
-  cpu_raster_worker workers[3];
+  cpu_raster_worker workers[];
 };
 static void raster_prepared_draw(const cpu_raster_job *job);
 static int SDLCALL raster_worker(void *context) {
@@ -56,12 +56,12 @@ static int SDLCALL raster_worker(void *context) {
 void cpu_raster_pool_destroy(qa_cpu_renderer *renderer) {
   struct cpu_raster_pool *pool = renderer->raster_pool;
   if (!pool) return;
-  for (size_t i = 0; i < 3; ++i)
+  for (unsigned i = 0; i < pool->count; ++i)
     if (pool->workers[i].thread) {
       pool->workers[i].stop = true;
       SDL_SemPost(pool->workers[i].start);
     }
-  for (size_t i = 0; i < 3; ++i) {
+  for (unsigned i = 0; i < pool->count; ++i) {
     cpu_raster_worker *worker = &pool->workers[i];
     if (worker->thread) SDL_WaitThread(worker->thread, NULL);
     if (worker->start) SDL_DestroySemaphore(worker->start);
@@ -73,10 +73,14 @@ void cpu_raster_pool_destroy(qa_cpu_renderer *renderer) {
 void cpu_raster_pool_create(qa_cpu_renderer *renderer) {
   int cpus = SDL_GetCPUCount();
   if (cpus < 2) return;
-  struct cpu_raster_pool *pool = calloc(1, sizeof(*pool));
+  unsigned count = (unsigned)(cpus - 1);
+  if (sizeof(cpu_raster_worker) >
+      (SIZE_MAX - sizeof(struct cpu_raster_pool)) / count) return;
+  struct cpu_raster_pool *pool = calloc(1, sizeof(*pool) +
+      (size_t)count * sizeof(cpu_raster_worker));
   if (!pool) return;
   renderer->raster_pool = pool;
-  pool->count = cpus > 4 ? 3u : (unsigned)(cpus - 1);
+  pool->count = count;
   for (unsigned i = 0; i < pool->count; ++i) {
     cpu_raster_worker *worker = &pool->workers[i];
     worker->start = SDL_CreateSemaphore(0);
@@ -858,27 +862,38 @@ static void raster_prepared_draw(const cpu_raster_job *job) {
     }
   }
 }
-static bool raster_parallel(cpu_raster_job *job) {
+static unsigned raster_worker_count(const struct cpu_raster_pool *pool,
+    int64_t full_rows, int64_t draw_rows) {
+  int64_t bands = (int64_t)pool->count + 1;
+  int64_t rows_per_band = (full_rows + bands - 1) / bands;
+  int64_t active = (draw_rows + rows_per_band - 1) / rows_per_band;
+  if (active < 2) return 0;
+  return (unsigned)(active < bands ? active : bands) - 1;
+}
+static unsigned raster_parallel(cpu_raster_job *job) {
   qa_cpu_renderer *renderer = job->renderer;
   const qa_scene_draw *draw = job->draw;
   struct cpu_raster_pool *pool = renderer->raster_pool;
   if (!pool || draw->mesh.primitive != QA_SCENE_TRIANGLES ||
       draw->state.wireframe || !draw->mesh.index_count ||
       job->bounds.x0 > job->bounds.x1 ||
-      job->bounds.y1 - job->bounds.y0 < (int64_t)pool->count)
-    return false;
+      job->bounds.y1 <= job->bounds.y0)
+    return 0;
   for (size_t i = 0; i < draw->texture_count; ++i)
     if (draw->textures[i] && job->samplers[i].target == renderer->current)
-      return false;
+      return 0;
   if (draw->shadow_atlas &&
       cpu_target_find(renderer, draw->shadow_atlas) == renderer->current)
-    return false;
+    return 0;
+  int64_t full_rows = job->bounds.y1 - job->bounds.y0 + 1;
   double x0 = INFINITY, y0 = INFINITY, x1 = -INFINITY, y1 = -INFINITY;
   for (size_t i = 0; i < draw->mesh.index_count; ++i) {
     const cpu_vertex *vertex = &renderer->vertices[draw->mesh.indices[i]];
-    if (!(vertex->clip[3] > 0)) return true;
+    if (!(vertex->clip[3] > 0))
+      return raster_worker_count(pool, full_rows, full_rows);
     screen_vertex v = project(vertex, renderer, 1);
-    if (!isfinite(v.x) || !isfinite(v.y)) return true;
+    if (!isfinite(v.x) || !isfinite(v.y))
+      return raster_worker_count(pool, full_rows, full_rows);
     x0 = fmin(x0, v.x); y0 = fmin(y0, v.y);
     x1 = fmax(x1, v.x); y1 = fmax(y1, v.y);
   }
@@ -886,23 +901,25 @@ static bool raster_parallel(cpu_raster_job *job) {
                         fmax(x0, (double)job->bounds.x0));
   double height = fmax(0, fmin(y1, (double)job->bounds.y1 + 1) -
                          fmax(y0, (double)job->bounds.y0));
-  if (width * height < 128 * 128) return false;
+  if (width * height < 128 * 128) return 0;
   double first_y = fmax((double)job->bounds.y0, ceil(y0 - 0.5));
   double last_y = fmin((double)job->bounds.y1, floor(y1 - 0.5));
-  if (first_y > last_y || last_y - first_y < pool->count) return false;
+  if (first_y > last_y) return 0;
   job->bounds.y0 = (int64_t)first_y;
   job->bounds.y1 = (int64_t)last_y;
-  return true;
+  return raster_worker_count(pool, full_rows,
+      job->bounds.y1 - job->bounds.y0 + 1);
 }
 static void raster_draw(cpu_raster_job *job) {
   struct cpu_raster_pool *pool = job->renderer->raster_pool;
-  if (!raster_parallel(job) || fegetenv(&job->environment) != 0) {
+  unsigned workers = raster_parallel(job);
+  if (!workers || fegetenv(&job->environment) != 0) {
     raster_prepared_draw(job);
     return;
   }
   int64_t first = job->bounds.y0, rows = job->bounds.y1 - first + 1;
-  unsigned bands = pool->count + 1;
-  for (unsigned i = 0; i < pool->count; ++i) {
+  unsigned bands = workers + 1;
+  for (unsigned i = 0; i < workers; ++i) {
     cpu_raster_worker *worker = &pool->workers[i];
     worker->job = *job;
     worker->job.bounds.y0 = first + rows * i / bands;
@@ -910,9 +927,9 @@ static void raster_draw(cpu_raster_job *job) {
     SDL_SemPost(worker->start);
   }
   cpu_raster_job main = *job;
-  main.bounds.y0 = first + rows * pool->count / bands;
+  main.bounds.y0 = first + rows * workers / bands;
   raster_prepared_draw(&main);
-  for (unsigned i = 0; i < pool->count; ++i) {
+  for (unsigned i = 0; i < workers; ++i) {
     cpu_raster_worker *worker = &pool->workers[i];
     SDL_SemWait(worker->done);
     if (!worker->job.completed) raster_prepared_draw(&worker->job);
