@@ -39,9 +39,9 @@ static bool counter_message(qa_q1_game *g, q1_actor *e, qa_actor_id activator,
     if (!q1_snapshot_players(g, &players, error))
         return false;
     bool ok = true;
-    for (size_t i = 0; ok && i < players->count && q1_alive(g, id); ++i)
-        if (q1_alive(g, players->actors[i]))
-            ok = q1_message(g, players->actors[i], message, error);
+    for (size_t i = 0; ok && i < players->shared.count && q1_alive(g, id); ++i)
+        if (q1_alive(g, players->shared.ids[i]))
+            ok = q1_message(g, players->shared.ids[i], message, error);
     players->borrowed = false;
     return ok;
 }
@@ -136,8 +136,8 @@ static bool cleanup(qa_q1_game *g, q1_actor *e, qa_error *error) {
     if (!q1_snapshot_actors(g, &list, error))
         return false;
     bool ok = true;
-    for (size_t i = 0; ok && i < list->count && trigger(g, id); ++i) {
-        qa_actor_id actor = list->actors[i];
+    for (size_t i = 0; ok && i < list->shared.count && trigger(g, id); ++i) {
+        qa_actor_id actor = list->shared.ids[i];
         qa_builtin_actor_traits traits = {0};
         bool found = g->services.actor_traits(g->services.context, actor, &traits);
         if (!trigger(g, id))

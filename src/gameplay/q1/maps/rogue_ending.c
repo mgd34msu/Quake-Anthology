@@ -46,8 +46,8 @@ static bool remove_stuff(qa_q1_game *g, qa_error *error) {
     q1_actor_snapshot *snapshot;
     if (!q1_snapshot_actors(g, &snapshot, error))
         return false;
-    for (size_t i = 0; i < snapshot->count; ++i) {
-        q1_actor *entity = q1_entity(g, snapshot->actors[i]);
+    for (size_t i = 0; i < snapshot->shared.count; ++i) {
+        q1_actor *entity = q1_entity(g, snapshot->shared.ids[i]);
         if (entity && entity->native && entity->classname == trail &&
             !q1_remove(g, entity, error)) {
             snapshot->borrowed = false;
@@ -58,8 +58,8 @@ static bool remove_stuff(qa_q1_game *g, qa_error *error) {
     if (!q1_snapshot_actors(g, &snapshot, error))
         return false;
     qa_actor_id core = {0};
-    for (size_t i = 0; i < snapshot->count; ++i) {
-        q1_actor *entity = q1_entity(g, snapshot->actors[i]);
+    for (size_t i = 0; i < snapshot->shared.count; ++i) {
+        q1_actor *entity = q1_entity(g, snapshot->shared.ids[i]);
         if (entity && entity->native && entity->classname == core_name) {
             core = entity->id;
             break;

@@ -175,8 +175,8 @@ static bool plasma_explode(qa_q1_game *g, q1_actor *plasma, qa_actor_id other, q
     if (!q1_radius_snapshot(g, self.origin, 320, &snapshot, error))
         return false;
     bool result = true;
-    for (size_t i = snapshot->count; i > 0; --i) {
-        qa_actor_id target = snapshot->actors[i - 1];
+    for (size_t i = snapshot->shared.count; i > 0; --i) {
+        qa_actor_id target = snapshot->shared.ids[i - 1];
         if (qa_actor_id_equal(target, plasma->owner) ||
             (!is_player(g, target) && !is_monster(g, target)))
             continue;

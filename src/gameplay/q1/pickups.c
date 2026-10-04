@@ -1195,8 +1195,8 @@ bool q1_pickup_think(qa_q1_game *g, q1_actor *entity, qa_error *error) {
             q1_actor_snapshot *snapshot;
             if (!q1_snapshot_actors(g, &snapshot, error))
                 return false;
-            for (size_t i = 0; i < snapshot->count; ++i) {
-                q1_player *player = q1_player_get(g, snapshot->actors[i]);
+            for (size_t i = 0; i < snapshot->shared.count; ++i) {
+                q1_player *player = q1_player_get(g, snapshot->shared.ids[i]);
                 if (!player)
                     continue;
                 const uint32_t flags[] = {player->mg3_progress.health, player->mg3_progress.shells,

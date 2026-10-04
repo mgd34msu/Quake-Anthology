@@ -159,9 +159,9 @@ bool qa_q1_game_map_observer_nearby(qa_q1_game *g, qa_actor_id actor, qa_error *
     bool ok = qa_world_body_read(g->services.world, actor, &body, error);
     if (ok && !g->destroy_pending && q1_alive(g, actor))
         ok = q1_snapshot_actors(g, &snapshot, error);
-    for (size_t i = 0; ok && snapshot && i < snapshot->count &&
+    for (size_t i = 0; ok && snapshot && i < snapshot->shared.count &&
                        !g->destroy_pending && q1_alive(g, actor); ++i) {
-        qa_actor_id id = snapshot->actors[i];
+        qa_actor_id id = snapshot->shared.ids[i];
         if (!q1_alive(g, id))
             continue;
         q1_actor *entity = q1_entity(g, id);

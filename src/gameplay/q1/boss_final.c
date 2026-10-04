@@ -97,8 +97,8 @@ static bool radius(qa_q1_game *g, q1_actor *e, float amount, qa_error *error) {
     if (!q1_snapshot_actors(g, &snapshot, error))
         return false;
     bool ok = true;
-    for (size_t i = snapshot->count; i > 0; --i) {
-        qa_actor_id id = snapshot->actors[i - 1];
+    for (size_t i = snapshot->shared.count; i > 0; --i) {
+        qa_actor_id id = snapshot->shared.ids[i - 1];
         qa_body_state body;
         if (qa_actor_id_equal(id, e->id) || q1_classnamed(g, id, "monster_lava_man") ||
             !q1_damageable(g, id) || !qa_world_body_read(g->services.world, id, &body, NULL))
@@ -561,8 +561,8 @@ bool q1_final_teleport(qa_q1_game *g, bool variant, qa_error *error) {
         return false;
     qa_actor_id boss = {0}, destination = {0};
     const char *classname = variant ? "info_boss_teleport_second" : "info_boss_teleport_first";
-    for (size_t i = 0; i < snapshot->count; ++i) {
-        q1_actor *e = q1_entity(g, snapshot->actors[i]);
+    for (size_t i = 0; i < snapshot->shared.count; ++i) {
+        q1_actor *e = q1_entity(g, snapshot->shared.ids[i]);
         if (!e)
             continue;
         if (!boss.registry && q1_classnamed(g, e->id, "monster_boss"))
@@ -590,10 +590,10 @@ bool q1_final_teleport(qa_q1_game *g, bool variant, qa_error *error) {
     }
     q1_actor_snapshot *players = NULL;
     if (ok) ok = q1_snapshot_players(g, &players, error);
-    for (size_t p = 0; ok && p < players->count; ++p) {
+    for (size_t p = 0; ok && p < players->shared.count; ++p) {
         q1_actor *point = NULL;
-        for (size_t i = 0; i < snapshot->count; ++i) {
-            q1_actor *candidate = q1_entity(g, snapshot->actors[i]);
+        for (size_t i = 0; i < snapshot->shared.count; ++i) {
+            q1_actor *candidate = q1_entity(g, snapshot->shared.ids[i]);
             if (candidate && candidate->wait == 0 && q1_classnamed(g, candidate->id, classname)) {
                 point = candidate;
                 break;
@@ -617,7 +617,7 @@ bool q1_final_teleport(qa_q1_game *g, bool variant, qa_error *error) {
             ok = false;
             break;
         }
-        qa_actor_id player = players->actors[p];
+        qa_actor_id player = players->shared.ids[p];
         if (!qa_world_body_read(g->services.world, player, &body, NULL))
             continue;
         body.origin = target.origin;

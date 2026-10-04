@@ -16,7 +16,7 @@ qa_vec3 q1_boss_angles(qa_vec3 v) {
 bool q1_boss_first_player(qa_q1_game *g, qa_actor_id *out, qa_error *error) {
     q1_actor_snapshot *snapshot;
     if (!q1_snapshot_players(g, &snapshot, error)) return false;
-    *out = snapshot->count ? snapshot->actors[0] : (qa_actor_id){0};
+    *out = snapshot->shared.count ? snapshot->shared.ids[0] : (qa_actor_id){0};
     snapshot->borrowed = false;
     return true;
 }
@@ -690,8 +690,8 @@ bool q1_spawn_shub_zombie(qa_q1_game *g, qa_actor_id *out, qa_error *error) {
     if (!q1_snapshot_actors(g, &snapshot, error))
         return false;
     size_t alive = 0, eligible = 0;
-    for (size_t i = 0; i < snapshot->count; ++i) {
-        q1_actor *e = q1_entity(g, snapshot->actors[i]);
+    for (size_t i = 0; i < snapshot->shared.count; ++i) {
+        q1_actor *e = q1_entity(g, snapshot->shared.ids[i]);
         if (!e)
             continue;
         alive += q1_classnamed(g, e->id, "monster_szombie");
@@ -704,8 +704,8 @@ bool q1_spawn_shub_zombie(qa_q1_game *g, qa_actor_id *out, qa_error *error) {
     }
     size_t selected = (size_t)floorf(q1_random(g) * (float)(eligible - 1) + .5f);
     qa_actor_id point = {0};
-    for (size_t i = 0; i < snapshot->count; ++i) {
-        q1_actor *e = q1_entity(g, snapshot->actors[i]);
+    for (size_t i = 0; i < snapshot->shared.count; ++i) {
+        q1_actor *e = q1_entity(g, snapshot->shared.ids[i]);
         if (e && q1_classnamed(g, e->id, "info_szombie_spawn") && selected-- == 0) {
             point = e->id;
             e->wait = (float)(g->time + 8);

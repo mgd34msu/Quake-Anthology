@@ -401,14 +401,14 @@ bool qa_q1_game_maps_finish(qa_q1_game *g, qa_error *error) {
     if (!q1_snapshot_actors(g, &snapshot, error))
         return false;
     size_t count = 0;
-    for (size_t i = 0; i < snapshot->count; ++i) {
-        q1_actor *entity = q1_entity(g, snapshot->actors[i]);
+    for (size_t i = 0; i < snapshot->shared.count; ++i) {
+        q1_actor *entity = q1_entity(g, snapshot->shared.ids[i]);
         if (entity && entity->map && entity->map->kind == Q1_MAP_DOOR)
-            snapshot->actors[count++] = entity->id;
+            snapshot->shared.ids[count++] = entity->id;
     }
     bool ok = true;
     for (size_t i = 0; i < count && ok; ++i) {
-        q1_actor *master = q1_entity(g, snapshot->actors[i]);
+        q1_actor *master = q1_entity(g, snapshot->shared.ids[i]);
         if (!master || master->map->pending.mover.group)
             continue;
         q1_door_group *group = calloc(1, sizeof(*group));
@@ -425,7 +425,7 @@ bool qa_q1_game_maps_finish(qa_q1_game *g, qa_error *error) {
         qa_bounds bounds = body.bounds, previous = body.bounds;
         size_t capacity = 0;
         for (size_t j = i; j < count; ++j) {
-            q1_actor *candidate = q1_entity(g, snapshot->actors[j]);
+            q1_actor *candidate = q1_entity(g, snapshot->shared.ids[j]);
             if (!candidate)
                 continue;
             if (j != i) {

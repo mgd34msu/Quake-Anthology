@@ -19,9 +19,9 @@ static bool broadcast(qa_q1_game *g, qa_actor_id source, const char *text, qa_er
     if (!q1_snapshot_players(g, &players, error))
         return false;
     bool ok = true;
-    for (size_t i = 0; ok && i < players->count && control(g, source); ++i)
-        if (q1_alive(g, players->actors[i]))
-            ok = q1_message(g, players->actors[i], text, error);
+    for (size_t i = 0; ok && i < players->shared.count && control(g, source); ++i)
+        if (q1_alive(g, players->shared.ids[i]))
+            ok = q1_message(g, players->shared.ids[i], text, error);
     players->borrowed = false;
     return ok;
 }
@@ -45,8 +45,8 @@ static bool door_relay(qa_q1_game *g, q1_actor *e, qa_actor_id activator, qa_err
     if (!q1_snapshot_targets(g, g->maps->options.targets, e->target, &targets, error))
         return false;
     bool ok = true;
-    for (size_t i = 0; ok && i < targets->count && control(g, id); ++i) {
-        qa_actor_id actor = targets->actors[i];
+    for (size_t i = 0; ok && i < targets->shared.count && control(g, id); ++i) {
+        qa_actor_id actor = targets->shared.ids[i];
         bool top = source_top(g, actor);
         if (!control(g, id) || !q1_alive(g, actor) || (flags & (top ? 1u : 2u)))
             continue;
@@ -308,8 +308,8 @@ static bool silent_teleport(qa_q1_game *g, q1_actor *e, qa_actor_id other, qa_er
     qa_bounds box = {qa_vec_add(destination, qa_vec_sub(body.bounds.mins, qa_v3(1, 1, 1))),
                      qa_vec_add(destination, qa_vec_add(body.bounds.maxs, qa_v3(1, 1, 1)))};
     bool ok = true;
-    for (size_t i = 0; ok && i < victims->count && control(g, id) && q1_alive(g, death); ++i) {
-        qa_actor_id victim = victims->actors[i];
+    for (size_t i = 0; ok && i < victims->shared.count && control(g, id) && q1_alive(g, death); ++i) {
+        qa_actor_id victim = victims->shared.ids[i];
         if (!q1_alive(g, victim))
             continue;
         qa_body_state state;
@@ -357,9 +357,9 @@ static bool cutscene(qa_q1_game *g, q1_actor *e, qa_error *error) {
     if (!q1_snapshot_players(g, &players, error))
         return false;
     bool ok = true;
-    for (size_t i = 0; ok && i < players->count && control(g, id); ++i)
-        if (q1_alive(g, players->actors[i]))
-            ok = g->maps->options.control_player(g->maps->options.context, players->actors[i],
+    for (size_t i = 0; ok && i < players->shared.count && control(g, id); ++i)
+        if (q1_alive(g, players->shared.ids[i]))
+            ok = g->maps->options.control_player(g->maps->options.context, players->shared.ids[i],
                                                  body.origin, angles, qa_v3(0, 0, 0), error);
     players->borrowed = false;
     if (!ok || !control(g, id))

@@ -296,8 +296,8 @@ bool q1_map_addon_brush_think(qa_q1_game *g, q1_actor *e, q1_map_action action,
         if (!q1_snapshot_actors(g,&list,error))
             return false;
         bool ok = true;
-        for (size_t i = 0; i < list->count; ++i) {
-            q1_actor *other = q1_entity(g,list->actors[i]);
+        for (size_t i = 0; i < list->shared.count; ++i) {
+            q1_actor *other = q1_entity(g,list->shared.ids[i]);
             if (!other || !other->map || other->targetname != targetname)
                 continue;
             qa_bytes marker = qa_strings_text(qa_session_strings(g->services.session),other->map->netname);
@@ -311,7 +311,7 @@ bool q1_map_addon_brush_think(qa_q1_game *g, q1_actor *e, q1_map_action action,
             }
             if (!brush(g,id))
                 break;
-            if (!q1_alive(g,list->actors[i]))
+            if (!q1_alive(g,list->shared.ids[i]))
                 continue;
             qa_vec3 center = qa_vec_scale(qa_vec_add(body.bounds.mins,body.bounds.maxs),.5f);
             double distance = qa_vec_length(qa_vec_sub(position,center))/speed;

@@ -686,8 +686,8 @@ static bool source_world_impulse(qa_q1_game *g, qa_actor_id actor, uint8_t impul
             return false;
         qa_actor_id world = g->maps ? g->maps->world_actor : (qa_actor_id){0};
         bool ok = true;
-        for (size_t i = 0; ok && i < entities->count && q1_alive(g, actor); ++i) {
-            qa_actor_id target = entities->actors[i];
+        for (size_t i = 0; ok && i < entities->shared.count && q1_alive(g, actor); ++i) {
+            qa_actor_id target = entities->shared.ids[i];
             qa_builtin_actor_traits traits = {0};
             if (g->services.actor_traits)
                 g->services.actor_traits(g->services.context, target, &traits);
@@ -714,8 +714,8 @@ static bool source_world_impulse(qa_q1_game *g, qa_actor_id actor, uint8_t impul
         qa_actor_id world = g->maps ? g->maps->world_actor : (qa_actor_id){0};
         bool ok = true;
         size_t ordinal = 0;
-        for (size_t i = 0; ok && i < entities->count && !g->destroy_pending; ++i) {
-            qa_actor_id target = entities->actors[i];
+        for (size_t i = 0; ok && i < entities->shared.count && !g->destroy_pending; ++i) {
+            qa_actor_id target = entities->shared.ids[i];
             if (qa_actor_id_equal(target, world) || !q1_alive(g, target))
                 continue;
             ++ordinal;

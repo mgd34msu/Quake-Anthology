@@ -113,8 +113,8 @@ static bool split(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         if (!q1_radius_snapshot(g, position, 35, &snapshot, error))
             return false;
         bool proceed = true;
-        for (size_t i = snapshot->count; i > 0; --i) {
-            qa_actor_id actor = snapshot->actors[i - 1];
+        for (size_t i = snapshot->shared.count; i > 0; --i) {
+            qa_actor_id actor = snapshot->shared.ids[i - 1];
             qa_q1_target traits;
             q1_actor *other = q1_entity(g, actor);
             qa_builtin_actor_traits foreign = {0};

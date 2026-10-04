@@ -219,11 +219,11 @@ bool q1_map_addon_frame(qa_q1_game *g, qa_error *error) {
     q1_actor_snapshot *list;
     if (!q1_snapshot_actors(g, &list, error))
         return false;
-    list->count = g->maps->frame_tick_count;
-    memcpy(list->actors, g->maps->frame_ticks, list->count * sizeof(*list->actors));
+    list->shared.count = g->maps->frame_tick_count;
+    memcpy(list->shared.ids, g->maps->frame_ticks, list->shared.count * sizeof(*list->shared.ids));
     bool ok = true;
-    for (size_t i = 0; ok && i < list->count; ++i) {
-        q1_actor *e = visual(g, list->actors[i]);
+    for (size_t i = 0; ok && i < list->shared.count; ++i) {
+        q1_actor *e = visual(g, list->shared.ids[i]);
         if (!e)
             continue;
         if (e->map->kind == Q1_MAP_LIGHT_RAMP)

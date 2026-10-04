@@ -182,11 +182,11 @@ bool q1_map_path_use(qa_q1_game *g, q1_actor *trigger, qa_error *error) {
     if (!q1_snapshot_targets(g, g->maps->options.targets, trigger->target, &targets, error))
         return false;
     bool ok = true;
-    for (size_t i = 0; i < targets->count && q1_alive(g, trigger_id); ++i) {
+    for (size_t i = 0; i < targets->shared.count && q1_alive(g, trigger_id); ++i) {
         trigger = q1_entity(g, trigger_id);
         if (!trigger || !trigger->map)
             break;
-        qa_actor_id actor = targets->actors[i];
+        qa_actor_id actor = targets->shared.ids[i];
         if (!q1_alive(g, actor))
             continue;
         if (trigger->map->kind == Q1_MAP_CANCEL_PAUSE) {

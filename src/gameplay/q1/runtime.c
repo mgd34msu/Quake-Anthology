@@ -1258,8 +1258,8 @@ bool q1_radius_typed(qa_q1_game *g, qa_actor_id inflictor, qa_actor_id attacker,
     if (!q1_snapshot_actors(g, &snapshot, error))
         return false;
     radius.has_candidates = true;
-    radius.candidates = snapshot->actors;
-    radius.candidate_count = snapshot->count;
+    radius.candidates = snapshot->shared.ids;
+    radius.candidate_count = snapshot->shared.count;
     bool ok = qa_builtin_radius_damage(&g->services, &radius, NULL, error);
     snapshot->borrowed = false;
     return ok;

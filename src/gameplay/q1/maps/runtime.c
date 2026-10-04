@@ -118,7 +118,7 @@ bool qa_q1_game_begin_map(qa_q1_game *g, const qa_q1_map_options *options, qa_er
         g->spare_players = player;
     }
     for (q1_actor_snapshot *snapshot = g->snapshots; snapshot; snapshot = snapshot->next)
-        snapshot->count = snapshot->shared.count = 0;
+        snapshot->shared.count = 0;
     g->total_monsters = g->killed_monsters = g->hellknight_melee = 0;
     g->authored_gremlins = g->spawned_gremlins = 0;
     g->source_captures[0] = g->source_captures[1] = 0;

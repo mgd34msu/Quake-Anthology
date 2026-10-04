@@ -42,13 +42,13 @@ static bool target_snapshot(qa_q1_game *g, qa_string_id name,
         return false;
     size_t count = 0;
     if (q1_map_text(g, name))
-        for (size_t i = 0; i < list->count; ++i) {
+        for (size_t i = 0; i < list->shared.count; ++i) {
             qa_authored_target fields;
-            if (qa_targets_read(g->maps->options.targets, list->actors[i], &fields) &&
+            if (qa_targets_read(g->maps->options.targets, list->shared.ids[i], &fields) &&
                 fields.targetname == name)
-                list->actors[count++] = list->actors[i];
+                list->shared.ids[count++] = list->shared.ids[i];
         }
-    list->count = count;
+    list->shared.count = count;
     *out = list;
     return true;
 }
@@ -76,8 +76,8 @@ static bool link_targets(qa_q1_game *g, qa_actor_id id, qa_error *error) {
     if (!target_snapshot(g, name, &list, error))
         return false;
     bool ok = true;
-    for (size_t i = 0; ok && i < list->count && rotation(g, id); ++i) {
-        qa_actor_id actor = list->actors[i];
+    for (size_t i = 0; ok && i < list->shared.count && rotation(g, id); ++i) {
+        qa_actor_id actor = list->shared.ids[i];
         qa_body_state body;
         if (!qa_world_body_read(g->services.world, actor, &body, error)) {
             ok = false;
@@ -121,8 +121,8 @@ static bool transform_targets(qa_q1_game *g, qa_actor_id id, target_transform mo
     if (!target_snapshot(g, name, &list, error))
         return false;
     bool ok = true;
-    for (size_t i = 0; ok && i < list->count && rotation(g, id); ++i) {
-        qa_actor_id actor = list->actors[i];
+    for (size_t i = 0; ok && i < list->shared.count && rotation(g, id); ++i) {
+        qa_actor_id actor = list->shared.ids[i];
         qa_body_state body;
         if (!qa_world_body_read(g->services.world, actor, &body, error)) {
             ok = false;
@@ -207,16 +207,16 @@ static bool reverse_group(qa_q1_game *g, qa_actor_id id, qa_error *error) {
     if (!q1_snapshot_actors(g, &list, error))
         return false;
     size_t count = 0;
-    for (size_t i = 0; i < list->count; ++i) {
-        q1_actor *member = rotation(g, list->actors[i]);
+    for (size_t i = 0; i < list->shared.count; ++i) {
+        q1_actor *member = rotation(g, list->shared.ids[i]);
         if (member && member->map->kind == Q1_MAP_ROTATE_DOOR &&
             member->map->group == group)
-            list->actors[count++] = member->id;
+            list->shared.ids[count++] = member->id;
     }
-    list->count = count;
+    list->shared.count = count;
     bool ok = true;
-    for (size_t i = 0; ok && i < list->count; ++i)
-        ok = reverse_door(g, list->actors[i], error);
+    for (size_t i = 0; ok && i < list->shared.count; ++i)
+        ok = reverse_door(g, list->shared.ids[i], error);
     list->borrowed = false;
     return ok;
 }
@@ -549,8 +549,8 @@ static bool damage_targets(qa_q1_game *g, qa_actor_id id, float damage, qa_error
     if (!target_snapshot(g, e->target, &list, error))
         return false;
     bool ok = true;
-    for (size_t i = 0; ok && i < list->count && rotation(g, id); ++i) {
-        qa_actor_id actor = list->actors[i];
+    for (size_t i = 0; ok && i < list->shared.count && rotation(g, id); ++i) {
+        qa_actor_id actor = list->shared.ids[i];
         qa_string_id classname = text_field(g, actor, "classname");
         if (!same_text(g, classname, "trigger_hurt") &&
             !same_text(g, classname, "func_movewall"))

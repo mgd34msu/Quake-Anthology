@@ -34,7 +34,7 @@ bool q1_overlord_destination(qa_q1_game *g, qa_actor_id *out, qa_error *error) {
     q1_actor_snapshot *players;
     if (!q1_snapshot_players(g, &players, error))
         return false;
-    qa_actor_id observer = players->count        ? players->actors[0]
+    qa_actor_id observer = players->shared.count        ? players->shared.ids[0]
                            : g->services.physics ? g->services.physics->world_actor
                                                  : (qa_actor_id){0};
     (void)qa_world_body_read(g->services.world, observer, &player, NULL);

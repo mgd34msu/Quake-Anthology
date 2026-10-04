@@ -70,11 +70,11 @@ static bool activator(qa_q1_game *g, qa_actor_id actor, qa_q1_map_mover_view *vi
         list->borrowed = false;
         return false;
     }
-    queue->count = 0;
+    queue->shared.count = 0;
     bool ok = true;
     for (;;) {
-        for (size_t i = 0; i < list->count; ++i) {
-            q1_actor *candidate = mapped(g, list->actors[i]);
+        for (size_t i = 0; i < list->shared.count; ++i) {
+            q1_actor *candidate = mapped(g, list->shared.ids[i]);
             if (!candidate || candidate->target != name)
                 continue;
             q1_map_kind kind = candidate->map->kind;
@@ -90,15 +90,15 @@ static bool activator(qa_q1_game *g, qa_actor_id actor, qa_q1_map_mover_view *vi
                 }
             } else if ((kind == Q1_MAP_RELAY || kind == Q1_MAP_DELAY) &&
                        q1_map_text(g, candidate->targetname)) {
-                queue->actors[queue->count++] = candidate->id;
+                queue->shared.ids[queue->shared.count++] = candidate->id;
                 /* Removing queued relays bounds branching paths and cycles. */
-                list->actors[i] = list->actors[--list->count];
+                list->shared.ids[i] = list->shared.ids[--list->shared.count];
                 --i;
             }
         }
-        if (!queue->count)
+        if (!queue->shared.count)
             break;
-        e = mapped(g, queue->actors[--queue->count]);
+        e = mapped(g, queue->shared.ids[--queue->shared.count]);
         name = e ? e->targetname : QA_STRING_NONE;
     }
 done:

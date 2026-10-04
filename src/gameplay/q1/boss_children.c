@@ -129,8 +129,8 @@ bool q1_boss_cleanup(qa_q1_game *g, qa_error *error) {
     if (!q1_snapshot_actors(g, &snapshot, error))
         return false;
     bool ok = true;
-    for (size_t i = 0; i < snapshot->count; ++i) {
-        q1_actor *e = q1_entity(g, snapshot->actors[i]);
+    for (size_t i = 0; i < snapshot->shared.count; ++i) {
+        q1_actor *e = q1_entity(g, snapshot->shared.ids[i]);
         if (e && e->kind == Q1_BOSS_CHILD &&
             (q1_classnamed(g, e->id, "oldnew_child") || q1_classnamed(g, e->id, "oldnew_eye")) &&
             !q1_boss_child_schedule(g, e, Q1_CHILD_CLEANUP, .1, error)) {
@@ -351,9 +351,9 @@ bool q1_boss_child_think(qa_q1_game *g, q1_actor *e, qa_error *error) {
         if (!q1_snapshot_actors(g, &snapshot, error))
             return false;
         qa_actor_id zombie = {0};
-        for (size_t i = 0; i < snapshot->count; ++i)
-            if (q1_classnamed(g, snapshot->actors[i], "monster_szombie")) {
-                zombie = snapshot->actors[i];
+        for (size_t i = 0; i < snapshot->shared.count; ++i)
+            if (q1_classnamed(g, snapshot->shared.ids[i], "monster_szombie")) {
+                zombie = snapshot->shared.ids[i];
                 break;
             }
         snapshot->borrowed = false;

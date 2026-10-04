@@ -55,8 +55,8 @@ static bool eel_zap(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     if (!q1_radius_snapshot(g, self.origin, 85, &snapshot, error))
         return false;
     bool result = true;
-    for (size_t i = snapshot->count; i > 0; --i) {
-        qa_actor_id target = snapshot->actors[i - 1];
+    for (size_t i = snapshot->shared.count; i > 0; --i) {
+        qa_actor_id target = snapshot->shared.ids[i - 1];
         qa_q1_target traits;
         if (q1_classnamed(g, target, "monster_eel") || !q1_target(g, target, &traits) ||
             !traits.player || !q1_damageable(g, target))

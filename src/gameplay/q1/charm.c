@@ -113,8 +113,8 @@ bool q1_charmed_find_target(qa_q1_game *g, q1_actor *entity, bool *out, qa_error
     qa_actor_id selected = {0};
     float best = 1500;
     bool ok = true;
-    for (size_t i = snapshot->count; i > 0; --i) {
-        qa_actor_id actor = snapshot->actors[i - 1];
+    for (size_t i = snapshot->shared.count; i > 0; --i) {
+        qa_actor_id actor = snapshot->shared.ids[i - 1];
         q1_actor *candidate = q1_entity(g, actor);
         qa_builtin_actor_traits foreign = {0};
         bool monster = candidate

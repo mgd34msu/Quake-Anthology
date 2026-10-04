@@ -30,14 +30,14 @@ static bool scan(qa_q1_game *g, q1_actor *e, float radius, bool monsters, bool u
     q1_actor_snapshot *list;
     if (!q1_snapshot_actors(g, &list, error))
         return false;
-    for (size_t i = 0; i < list->count / 2; ++i) {
-        qa_actor_id actor = list->actors[i];
-        list->actors[i] = list->actors[list->count - i - 1];
-        list->actors[list->count - i - 1] = actor;
+    for (size_t i = 0; i < list->shared.count / 2; ++i) {
+        qa_actor_id actor = list->shared.ids[i];
+        list->shared.ids[i] = list->shared.ids[list->shared.count - i - 1];
+        list->shared.ids[list->shared.count - i - 1] = actor;
     }
     size_t count = 0;
-    for (size_t i = 0; i < list->count; ++i) {
-        qa_actor_id actor = list->actors[i];
+    for (size_t i = 0; i < list->shared.count; ++i) {
+        qa_actor_id actor = list->shared.ids[i];
         qa_q1_target target;
         qa_builtin_actor_traits traits = {0};
         const q1_actor *native = q1_entity_const(g, actor);
@@ -76,11 +76,11 @@ static bool scan(qa_q1_game *g, q1_actor *e, float radius, bool monsters, bool u
             break;
         if (!q1_alive(g, actor) || trace.fraction != 1 || (trace.in_open && trace.in_water))
             continue;
-        list->actors[count++] = actor;
+        list->shared.ids[count++] = actor;
         if (unclaimed && (double)count == e->count)
             break;
     }
-    list->count = count;
+    list->shared.count = count;
     *out = list;
     return true;
 }
@@ -258,13 +258,13 @@ static bool tesla_tick(qa_q1_game *g, q1_actor *e, qa_error *error) {
             return false;
         if (!list)
             return true;
-        bool found = list->count != 0, ok = true;
+        bool found = list->shared.count != 0, ok = true;
         if (attack == 1) {
             qa_body_state body;
             if (!qa_world_body_read(g->services.world, id, &body, error))
                 ok = false;
-            for (size_t i = 0; ok && i < list->count && q1_alive(g, id); ++i) {
-                qa_actor_id actor = list->actors[i];
+            for (size_t i = 0; ok && i < list->shared.count && q1_alive(g, id); ++i) {
+                qa_actor_id actor = list->shared.ids[i];
                 if (!q1_alive(g, actor))
                     continue;
                 ok = q1_sound(g, id, "hipweap/mjolhit.wav", 0, 1, error);
@@ -354,12 +354,12 @@ static bool mine_home(qa_q1_game *g, q1_actor *e, qa_error *error) {
             return true;
         float closest = 2000;
         qa_actor_id selected = {0};
-        for (size_t i = 0; i < list->count; ++i)
-            if (qa_world_body_read(g->services.world, list->actors[i], &target, NULL)) {
+        for (size_t i = 0; i < list->shared.count; ++i)
+            if (qa_world_body_read(g->services.world, list->shared.ids[i], &target, NULL)) {
                 float distance = qa_vec_length(qa_vec_sub(target.origin, body.origin));
                 if (distance < closest) {
                     closest = distance;
-                    selected = list->actors[i];
+                    selected = list->shared.ids[i];
                 }
             }
         list->borrowed = false;
@@ -402,8 +402,8 @@ static bool gravity_pull(qa_q1_game *g, q1_actor *e, qa_error *error) {
     if (!list)
         return true;
     bool ok = true;
-    for (size_t i = 0; ok && i < list->count && q1_alive(g, id); ++i) {
-        qa_actor_id actor = list->actors[i];
+    for (size_t i = 0; ok && i < list->shared.count && q1_alive(g, id); ++i) {
+        qa_actor_id actor = list->shared.ids[i];
         qa_body_state body;
         if (!qa_world_body_read(g->services.world, actor, &body, NULL))
             continue;

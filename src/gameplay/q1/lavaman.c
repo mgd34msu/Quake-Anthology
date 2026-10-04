@@ -41,8 +41,8 @@ static bool hunt(qa_q1_game *g, q1_actor *entity, qa_error *error) {
             snapshot->borrowed = false;
             return false;
         }
-        qa_actor_id *actors = mg3 ? snapshot->actors : snapshot->shared.ids;
-        size_t count = mg3 ? snapshot->count : snapshot->shared.count, first = 0;
+        qa_actor_id *actors = snapshot->shared.ids;
+        size_t count = snapshot->shared.count, first = 0;
         for (size_t i = 0; i < count; ++i)
             if (qa_actor_id_equal(actors[i], monster->enemy)) {
                 first = i + 1;

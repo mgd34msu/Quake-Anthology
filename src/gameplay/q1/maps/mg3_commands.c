@@ -27,8 +27,8 @@ static bool cleanup_markers(qa_q1_game *g, const char *name, qa_error *error) {
     if (!q1_snapshot_actors(g, &snapshot, error))
         return false;
     bool ok = true;
-    for (size_t i = 0; ok && !g->destroy_pending && i < snapshot->count; ++i) {
-        q1_actor *marker = q1_entity(g, snapshot->actors[i]);
+    for (size_t i = 0; ok && !g->destroy_pending && i < snapshot->shared.count; ++i) {
+        q1_actor *marker = q1_entity(g, snapshot->shared.ids[i]);
         if (marker && marker->native && classname(g, marker->classname, name))
             ok = q1_remove(g, marker, error);
     }
@@ -160,8 +160,8 @@ static bool marker_frame(qa_q1_game *g, qa_actor_id player, qa_vec3 eye,
                           q1_actor_snapshot *snapshot, bool secret, qa_error *error) {
     const char *target_name = secret ? "trigger_secret" : "trigger_changelevel";
     const char *marker_name = secret ? "secret_marker" : "exit_marker";
-    for (size_t i = 0; i < snapshot->count && q1_alive(g, player); ++i) {
-        qa_actor_id id = snapshot->actors[i];
+    for (size_t i = 0; i < snapshot->shared.count && q1_alive(g, player); ++i) {
+        qa_actor_id id = snapshot->shared.ids[i];
         q1_actor *marker = q1_entity(g, id);
         if (marker && marker->native && classname(g, marker->classname, marker_name) &&
             !target_class(g, marker->owner, target_name)) {
@@ -180,8 +180,8 @@ static bool monster_frame(qa_q1_game *g, qa_actor_id player, q1_actor_snapshot *
     qa_string_id resource;
     if (!qa_builtin_resource(&g->services, "debug-bounds", &resource, error))
         return false;
-    for (size_t i = 0; i < snapshot->count && q1_alive(g, player); ++i) {
-        qa_actor_id id = snapshot->actors[i];
+    for (size_t i = 0; i < snapshot->shared.count && q1_alive(g, player); ++i) {
+        qa_actor_id id = snapshot->shared.ids[i];
         q1_actor *native = q1_entity(g, id);
         bool active = native && native->native && (native->physics.flags & QA_PHYSICS_MONSTER);
         bool waiting = native && native->native && native->kind == Q1_MONSTER &&

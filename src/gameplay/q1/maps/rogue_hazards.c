@@ -298,8 +298,8 @@ bool q1_map_rogue_hazard_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id othe
     if (!q1_snapshot_actors(g, &snapshot, error))
         return false;
     qa_actor_id quake = {0};
-    for (size_t i = 0; i < snapshot->count; ++i) {
-        q1_actor *candidate = hazard(g, snapshot->actors[i]);
+    for (size_t i = 0; i < snapshot->shared.count; ++i) {
+        q1_actor *candidate = hazard(g, snapshot->shared.ids[i]);
         if (candidate && candidate->map->kind == Q1_MAP_ROGUE_QUAKE) {
             quake = candidate->id;
             break;

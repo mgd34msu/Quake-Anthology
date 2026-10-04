@@ -122,8 +122,8 @@ static bool shake_step(qa_q1_game *g, q1_actor *e, qa_error *error) {
         return wait == 0 ? q1_map_fail(error, "Q1 screenshake has zero ramp duration") : false;
     }
     bool ok = true;
-    for (size_t i = 0; ok && i < players->count && effect(g, id); ++i) {
-        qa_actor_id player = players->actors[i];
+    for (size_t i = 0; ok && i < players->shared.count && effect(g, id); ++i) {
+        qa_actor_id player = players->shared.ids[i];
         if (!q1_alive(g, player))
             continue;
         qa_vec3 angles = qa_v3(0, 0, 0);
@@ -188,10 +188,10 @@ static bool lightning(qa_q1_game *g, q1_actor *e, qa_actor_id activator, qa_erro
     q1_actor_snapshot *targets;
     if (!q1_snapshot_targets(g, g->maps->options.targets, e->target, &targets, error))
         return false;
-    size_t chosen = flags & 1 ? (size_t)floor((double)targets->count * q1_random(g)) : SIZE_MAX;
+    size_t chosen = flags & 1 ? (size_t)floor((double)targets->shared.count * q1_random(g)) : SIZE_MAX;
     bool ok = true;
-    for (size_t i = 0; ok && i < targets->count && effect(g, id); ++i) {
-        qa_actor_id target = targets->actors[i];
+    for (size_t i = 0; ok && i < targets->shared.count && effect(g, id); ++i) {
+        qa_actor_id target = targets->shared.ids[i];
         if ((chosen != SIZE_MAX && chosen != i) || !q1_alive(g, target))
             continue;
         qa_body_state own_body, target_body;
@@ -262,15 +262,15 @@ static bool fade_step(qa_q1_game *g, q1_actor *e, qa_error *error) {
     bool ok = true;
     size_t remaining = 0;
     if (!initialized) {
-        for (size_t i = 0; ok && i < targets->count && effect(g, id); ++i)
-            if (q1_alive(g, targets->actors[i]))
-                ok = alpha(g, targets->actors[i], 1, error);
+        for (size_t i = 0; ok && i < targets->shared.count && effect(g, id); ++i)
+            if (q1_alive(g, targets->shared.ids[i]))
+                ok = alpha(g, targets->shared.ids[i], 1, error);
         e = effect(g, id);
         if (e)
             e->map->effect_active = true;
     }
-    for (size_t i = 0; ok && i < targets->count && effect(g, id); ++i) {
-        qa_actor_id target = targets->actors[i];
+    for (size_t i = 0; ok && i < targets->shared.count && effect(g, id); ++i) {
+        qa_actor_id target = targets->shared.ids[i];
         float health = q1_health(g, target);
         if (!effect(g, id) || !q1_alive(g, target) || health > 0)
             continue;
@@ -420,8 +420,8 @@ bool q1_map_addon_effect_use(qa_q1_game *g, q1_actor *e, qa_actor_id activator, 
         if (!q1_snapshot_targets(g, g->maps->options.targets, e->target, &targets, error))
             return false;
         bool ok = true;
-        for (size_t i = 0; ok && i < targets->count && effect(g, source); ++i) {
-            qa_actor_id target = targets->actors[i];
+        for (size_t i = 0; ok && i < targets->shared.count && effect(g, source); ++i) {
+            qa_actor_id target = targets->shared.ids[i];
             if (!q1_alive(g, target))
                 continue;
             bool handled;

@@ -23,8 +23,8 @@ bool q1_gremlin_find_victim(qa_q1_game *g, q1_actor *entity, qa_actor_id *out, q
     qa_actor_id selected = {0};
     float best = 1000;
     bool ok = true;
-    for (size_t i = snapshot->count; i > 0; --i) {
-        qa_actor_id actor = snapshot->actors[i - 1];
+    for (size_t i = snapshot->shared.count; i > 0; --i) {
+        qa_actor_id actor = snapshot->shared.ids[i - 1];
         qa_q1_target traits;
         qa_body_state target;
         if (qa_actor_id_equal(actor, entity->id) || !creature(g, actor, &traits) ||
@@ -71,8 +71,8 @@ static bool find_target(qa_q1_game *g, q1_actor *entity, bool *out, qa_error *er
         qa_actor_id gorge = {0};
         float best = 2000;
         bool ok = true;
-        for (size_t i = 0; i < snapshot->count; ++i) {
-            qa_actor_id actor = snapshot->actors[i];
+        for (size_t i = 0; i < snapshot->shared.count; ++i) {
+            qa_actor_id actor = snapshot->shared.ids[i];
             qa_body_state target;
             qa_q1_target traits;
             if (q1_health(g, actor) >= 1 || !creature(g, actor, &traits) ||

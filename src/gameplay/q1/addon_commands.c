@@ -30,8 +30,8 @@ bool q1_addon_omnicide(qa_q1_game *g, qa_actor_id actor, qa_error *error) {
     if (!q1_snapshot_actors(g, &snapshot, error))
         return false;
     bool ok = true;
-    for (size_t i = 0; ok && !g->destroy_pending && i < snapshot->count; ++i) {
-        qa_actor_id id = snapshot->actors[i];
+    for (size_t i = 0; ok && !g->destroy_pending && i < snapshot->shared.count; ++i) {
+        qa_actor_id id = snapshot->shared.ids[i];
         q1_actor *native = q1_entity(g, id);
         bool monster = native && native->native && native->kind == Q1_MONSTER &&
                        ((native->physics.flags & QA_PHYSICS_MONSTER) ||

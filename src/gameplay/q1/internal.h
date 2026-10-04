@@ -440,8 +440,6 @@ typedef struct q1_player {
 typedef struct q1_actor_snapshot {
     struct q1_actor_snapshot *next;
     qa_builtin_actor_snapshot shared;
-    qa_actor_id *actors;
-    size_t count;
     bool borrowed;
 } q1_actor_snapshot;
 typedef struct q1_rogue_rune_player {

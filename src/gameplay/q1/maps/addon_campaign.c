@@ -58,9 +58,9 @@ bool q1_map_addon_sigil_touch(qa_q1_game *g, q1_actor *e, qa_actor_id other,
     if (!q1_snapshot_players(g, &players, error))
         return false;
     bool ok = true;
-    for (size_t i = 0; ok && i < players->count && q1_alive(g, id); ++i)
-        if (q1_alive(g, players->actors[i]))
-            ok = q1_message(g, players->actors[i], message ? message : "", error);
+    for (size_t i = 0; ok && i < players->shared.count && q1_alive(g, id); ++i)
+        if (q1_alive(g, players->shared.ids[i]))
+            ok = q1_message(g, players->shared.ids[i], message ? message : "", error);
     players->borrowed = false;
     if (!ok)
         return false;
@@ -102,9 +102,9 @@ bool q1_map_addon_sigil_touch(qa_q1_game *g, q1_actor *e, qa_actor_id other,
         if (horde != 0) {
             if (!q1_snapshot_players(g, &players, error))
                 return false;
-            for (size_t i = 0; ok && i < players->count && q1_alive(g, id); ++i)
-                if (q1_alive(g, players->actors[i]))
-                    ok = q1_map_addon_hunger(g, players->actors[i], (float)(g->time + 10), error);
+            for (size_t i = 0; ok && i < players->shared.count && q1_alive(g, id); ++i)
+                if (q1_alive(g, players->shared.ids[i]))
+                    ok = q1_map_addon_hunger(g, players->shared.ids[i], (float)(g->time + 10), error);
             players->borrowed = false;
             if (!ok)
                 return false;
@@ -174,8 +174,8 @@ bool q1_map_addon_campaign_use(qa_q1_game *g, q1_actor *e, qa_actor_id activator
         if (!q1_snapshot_targets(g, g->maps->options.targets, e->target, &targets, error))
             return false;
         bool ok = true;
-        for (size_t i = 0; ok && i < targets->count && campaign_actor(g, id); ++i) {
-            qa_actor_id actor = targets->actors[i];
+        for (size_t i = 0; ok && i < targets->shared.count && campaign_actor(g, id); ++i) {
+            qa_actor_id actor = targets->shared.ids[i];
             qa_authored_target fields;
             if (!qa_targets_read(g->maps->options.targets, actor, &fields))
                 continue;
