@@ -1,8 +1,9 @@
 # Native frame costs
 
-The measured Q3 CPU frame is still too slow: **79.971 ms**, including
-**49.511 ms** of raster execution. The latest GL measurement takes **31.228 ms**, with material
-submission and presentation as its largest remaining measured costs.
+The measured Q3 CPU frame now takes **49.500 ms**, including **18.392 ms**
+of raster execution. It remains too slow. The latest standard GL measurement
+takes **28.836 ms**. Material submission and presentation are the next large
+measured costs.
 
 ## Workload
 
@@ -36,6 +37,22 @@ their comparisons include the later diagnostic overhead.
 | `b91eb2eb` | 89.707 | 59.141 | 179.565 | 29.074 |
 | `1a132170` | 90.725 | 59.263 | 179.188 | 31.228 |
 | `69dd5649` | 79.971 | 49.511 | 152.860 | Not run |
+| `f143350a` | 78.613 | 48.876 | 150.490 | 28.836 |
+
+A later subdivision uses seven additional scopes. These runs share identical
+timed code; display and draw metadata are collected after measurement. Their
+material totals include more observer overhead than the standard runs above.
+
+| Commit | CPU frame | CPU raster | CPU process time |
+| --- | ---: | ---: | ---: |
+| `f143350a`, subdivision | 81.310 | 49.820 | 153.838 |
+| `84a881d9` | 79.914 | 48.660 | 150.202 |
+| `428ec046` | 49.500 | 18.392 | 183.634 |
+
+Ordered command batching reduces matched frame time by 38.1% and raster time
+by 62.2%. Aggregate CPU work rises: the gain comes from parallel scheduling,
+not less total CPU work. The batch preserves command order within disjoint
+row bands and uses the existing raster kernel.
 
 On `b91eb2eb`, the nearest-rank 95th percentile is 91.594 ms CPU and
 29.934 ms GL. The wider pool lowers elapsed time while increasing aggregate
@@ -44,18 +61,18 @@ it does not establish each worker's individual contribution.
 
 ## Current costs and optimization targets
 
-These are inclusive medians on `69dd5649` for CPU and `1a132170` for GL.
-The later change affects only CPU rasterization. Nested durations overlap, so the
-rows must not be added together.
+These are inclusive medians on the subdivided `428ec046` CPU run and the
+standard `f143350a` GL run. CPU includes the additional observer scopes.
+Nested durations overlap, so the rows must not be added together.
 
 | Scope | CPU ms | GL ms |
 | --- | ---: | ---: |
-| Scene construction | 16.559 | 17.945 |
-| Material submission, 554 calls | 11.665 | 12.782 |
-| World submission, including its materials | 11.300 | 12.359 |
-| Final scene sorting | 0.078 | 0.079 |
-| Renderer execution / GL submission | 49.511 | 2.074 |
-| SDL presentation / swap | 10.477 | 8.385 |
+| Scene construction | 18.557 | 16.433 |
+| Material submission, about 554 calls | 13.392 | 11.692 |
+| World submission, including its materials | 12.843 | Not separately recorded here |
+| Final scene sorting | 0.081 | Not separately recorded here |
+| Renderer execution / GL submission | 18.392 | 1.846 |
+| SDL presentation / swap | 10.175 | 8.116 |
 
 The first GL baseline separately measured 3.596 ms median GPU elapsed time
 around renderer execution. GPU intervals overlap CPU work and presentation;
@@ -69,9 +86,17 @@ tables and triangle preparation also have non-Source callers.
 
 The guarded opaque fragment path on `69dd5649` reduces both elapsed raster
 time and aggregate CPU work. Preparing material constants once per stage and
-skipping unused texture derivatives are committed on `f143350a`; their matched
-CPU and GL measurements are pending. The next scheduling investigation targets
-the barrier between individual raster draws while preserving pixel order.
+skipping unused texture derivatives on `f143350a` preserve output; their
+standard matched run does not establish a material-stage speedup.
+
+The subdivision attributes about 0.63 ms to mesh deformation and 0.81 ms to
+frame draw assembly. The generic image-variant helper is not reached, so an
+image cache would not address this workload. SDL RenderPresent itself takes
+9.985 ms; texture upload takes 0.083 ms. Selecting SDL's default accelerated
+blitter did not materially improve presentation and changed framebuffer
+readback alpha during genuine saved-image restoration. `e900075f` restores
+the original software blitter and includes a guarded unused vertex color
+conversion cut. Its matched CPU and GL measurements are pending.
 
 ## Fidelity and limits
 
