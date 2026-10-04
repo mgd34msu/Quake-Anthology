@@ -490,13 +490,6 @@ static void draw_state(qa_gl_renderer *renderer, const qa_scene_state *state,
                   state->color_write ? GL_TRUE : GL_FALSE,
                   state->color_write ? GL_TRUE : GL_FALSE,
                   state->color_write ? GL_TRUE : GL_FALSE);
-    if (state->blend_source == QA_BLEND_ONE &&
-        state->blend_destination == QA_BLEND_ZERO) gl->Disable(GL_BLEND);
-    else {
-        gl->Enable(GL_BLEND);
-        gl->BlendFunc(blend_factor(state->blend_source),
-                      blend_factor(state->blend_destination));
-    }
     if (state->cull == QA_CULL_NONE) gl->Disable(GL_CULL_FACE);
     else {
         gl->Enable(GL_CULL_FACE);
@@ -507,7 +500,6 @@ static void draw_state(qa_gl_renderer *renderer, const qa_scene_state *state,
         gl->Enable(GL_POLYGON_OFFSET_FILL);
         gl->PolygonOffset(state->offset_factor, state->offset_units);
     } else gl->Disable(GL_POLYGON_OFFSET_FILL);
-    gl->PolygonMode(GL_FRONT_AND_BACK, state->wireframe ? GL_LINE : GL_FILL);
     gl->LineWidth(primitive == QA_SCENE_LINES || state->wireframe
                       ? state->line_width : 1);
     if (renderer->overdraw) {
