@@ -26,8 +26,9 @@ typedef struct cpu_triangle {
   cpu_scissor bounds;
   double inverse_area, near_depth, far_depth, q_dx, q_dy, offset;
   double uv[2][2][3], uv_dx[2][2], uv_dy[2][2];
-  bool constant_depth;
+  bool constant_depth, unit_color;
 } cpu_triangle;
+static const double unit_color[4] = {1, 1, 1, 1};
 typedef struct cpu_triangle_output {
   struct cpu_raster_pool *pool;
   bool failed;
@@ -589,7 +590,7 @@ static bool triangle_prepare(cpu_triangle *out, const qa_scene_draw *draw,
       .bounds = {(int64_t)min_x, (int64_t)min_y, (int64_t)max_x, (int64_t)max_y},
       .inverse_area = inverse_area, .near_depth = near_depth,
       .far_depth = far_depth, .q_dx = q_dx, .q_dy = q_dy,
-      .offset = offset, .constant_depth = constant_depth};
+      .offset = offset, .constant_depth = constant_depth, .unit_color = true};
   memcpy(out->coverage, coverage, sizeof(coverage));
   memcpy(out->attributes, attributes, sizeof(attributes));
   memcpy(out->uv, uv, sizeof(uv));
@@ -597,6 +598,8 @@ static bool triangle_prepare(cpu_triangle *out, const qa_scene_draw *draw,
   memcpy(out->uv_dy, uv_dy, sizeof(uv_dy));
   for (size_t i = 0; i < 3; ++i) {
     out->values[i] = *vertices[i].vertex;
+    if (memcmp(out->values[i].color, unit_color, sizeof(unit_color)) != 0)
+      out->unit_color = false;
     out->vertices[i] = vertices[i];
     out->vertices[i].vertex = NULL;
   }
@@ -651,12 +654,18 @@ static void triangle_fill(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
               renderer->current->depth[(size_t)fragment.y *
                   renderer->current->width + fragment.x]))
         continue;
-      for (size_t channel = 0; channel < 4; ++channel) {
-        double color = 0;
-        for (size_t i = 0; i < 3; ++i)
-          color +=
-              vertices[i].vertex->color[channel] * vertices[i].q * weight[i];
-        fragment.color[channel] = cpu_clamp(color * reciprocal);
+      if (triangle->unit_color) {
+        double color = cpu_clamp(q * reciprocal);
+        for (size_t channel = 0; channel < 4; ++channel)
+          fragment.color[channel] = color;
+      } else {
+        for (size_t channel = 0; channel < 4; ++channel) {
+          double color = 0;
+          for (size_t i = 0; i < 3; ++i)
+            color +=
+                vertices[i].vertex->color[channel] * vertices[i].q * weight[i];
+          fragment.color[channel] = cpu_clamp(color * reciprocal);
+        }
       }
       for (size_t unit = 0; unit < draw->texture_count; ++unit) {
         if (!draw->textures[unit])
