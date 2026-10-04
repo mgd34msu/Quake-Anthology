@@ -80,12 +80,12 @@ static bool sidecars(qa_source_save_io *io, frontend_network_unified *owner)
     for (size_t i = 0; i < count; ++i) {
         const qa_map_sidecar *row = qa_map_sidecars_at(actual, i);
         if (!row || !row->path) return false;
-        const char *content = catalog_product->identity, *path = row->path;
+        const char *path = row->path;
         bool present = row->resource != NULL;
         if (writing && (owner->options.sidecars[i].product != product || !owner->options.sidecars[i].path ||
             strcmp(owner->options.sidecars[i].path, path) || owner->options.sidecars[i].resource != row->resource)) return false;
-        if (!qa_source_save_text(io, &content) || !content || strcmp(content, catalog_product->identity) ||
-            !qa_source_save_text(io, &path) || !path || strcmp(path, row->path) ||
+        if (!qa_source_save_text_assert(io, catalog_product->identity) ||
+            !qa_source_save_text_assert(io, row->path) ||
             !qa_source_save_bool(io, &present) || present != (row->resource != NULL)) return false;
         if (present) {
             const qa_sha256_digest *actual_digest = qa_resource_digest(row->resource);

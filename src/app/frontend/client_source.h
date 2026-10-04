@@ -106,8 +106,9 @@ typedef struct frontend_client_source_prefix {
     frontend_client_source_state state;
     uint64_t content_id;
 } frontend_client_source_prefix;
-/* The graph-backed recipe and descriptor borrow the actual candidate graph
- * and session. State arrays/queue are owned; no view claim or callbacks occur. */
+/* Catalog/content borrow the candidate graph. Decoded instance/implementation
+ * strings and state arrays/queue are owned; recipe.instance aliases the owned
+ * descriptor selection. No view claim or callbacks occur. */
 bool frontend_client_source_prefix_read(qa_frontend *, qa_application_content_graph *, qa_bytes,
     frontend_client_source_prefix *, qa_error *);
 void frontend_client_source_prefix_free(frontend_client_source_prefix *);

@@ -57,6 +57,19 @@ bool qa_source_save_text(qa_source_save_io *io, const char **value)
     }
     return true;
 }
+bool qa_source_save_text_assert(qa_source_save_io *io, const char *expected)
+{
+    if (!io) return io_fail(io, QA_ERROR_ARGUMENT, "missing source text assertion");
+    size_t length = expected ? strlen(expected) : 0;
+    bool present = io->direction == QA_SOURCE_SAVE_WRITE && expected != NULL;
+    qa_bytes bytes = present ? (qa_bytes){(const uint8_t *)expected, length} : (qa_bytes){0};
+    if (!string_value(io, &present, &bytes)) return false;
+    if (io->direction == QA_SOURCE_SAVE_WRITE) return true;
+    if (present != (expected != NULL) ||
+        (present && (bytes.size != length || (length && memcmp(bytes.data, expected, length)))))
+        return io_fail(io, QA_ERROR_FORMAT, "source text differs from its actual owner");
+    return true;
+}
 bool qa_source_save_owned_text(qa_source_save_io *io, char **value)
 {
     if (!io || !value) return io_fail(io, QA_ERROR_ARGUMENT, "missing owned source text");

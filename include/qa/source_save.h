@@ -37,6 +37,9 @@ bool qa_source_save_count(qa_source_save_io *, size_t *, size_t maximum);
  * the restored session table and rejects embedded NUL; IDs allow counted bytes. */
 bool qa_source_save_string(qa_source_save_io *, qa_string_id *);
 bool qa_source_save_text(qa_source_save_io *, const char **);
+/* Same counted text bytes, checked against the actual owner on READ without
+ * interning or retaining a decoded string. Null and empty remain distinct. */
+bool qa_source_save_text_assert(qa_source_save_io *, const char *expected);
 /* Same counted text representation; READ replaces a separately malloc-owned
  * value after successful decoding without changing the session string table. */
 bool qa_source_save_owned_text(qa_source_save_io *, char **);

@@ -759,6 +759,17 @@ static bool buffer_fields(qa_source_save_io *io, qa_buffer *buffer)
     }
     return qa_source_save_bytes(io, buffer->data, size);
 }
+static bool selection_text(qa_source_save_io *io, const char **text)
+{
+    char *owned = (char *)*text;
+    bool ok = qa_source_save_owned_text(io, &owned);
+    *text = owned; return ok;
+}
+static void decoded_selection_free(qa_launch_provider *selection)
+{
+    free((char *)selection->instance); free((char *)selection->implementation);
+    selection->instance = NULL; selection->implementation = NULL;
+}
 static bool prefix_fields(qa_source_save_io *io, client_source_prefix *p)
 {
     uint8_t magic[4] = {'Q','F','C','S'}; bool reading = io->direction == QA_SOURCE_SAVE_READ;
@@ -768,9 +779,9 @@ static bool prefix_fields(qa_source_save_io *io, client_source_prefix *p)
         !qa_source_save_u64(io, &p->content) || !p->content ||
         !qa_source_save_u32(io, &p->profile) || !p->profile ||
         !qa_source_save_u32(io, &p->selected) || !p->selected ||
-        !qa_source_save_text(io, &p->selection.instance) || !p->selection.instance || !*p->selection.instance ||
+        !selection_text(io, &p->selection.instance) || !p->selection.instance || !*p->selection.instance ||
         !qa_source_save_u32(io, &p->selection.product) || !p->selection.product ||
-        !qa_source_save_text(io, &p->selection.implementation) || !p->selection.implementation ||
+        !selection_text(io, &p->selection.implementation) || !p->selection.implementation ||
         !clock_fields(io, &p->selection.clock) || !qa_source_save_bytes(io, p->identity.bytes, sizeof(p->identity.bytes)) ||
         !qa_source_save_bytes(io, a->descriptor_identity.bytes, sizeof(a->descriptor_identity.bytes)) ||
         !qa_sha256_equal(&p->identity, &a->descriptor_identity) ||
@@ -853,6 +864,7 @@ bool frontend_client_source_restore_prefix(qa_frontend *f, const frontend_client
         if (!*out) qa_vfs_destroy(claimed);
     }
     frontend_client_source_state_free(&p.state);
+    decoded_selection_free(&p.selection);
     if (!ok && error && error->code == QA_OK)
         frontend_fail(error, QA_ERROR_FORMAT, "CLIENT prefix differs from its actual constructor recipe");
     return ok;
@@ -862,7 +874,8 @@ bool frontend_client_source_prefix_read(qa_frontend *f, qa_application_content_g
     frontend_client_source_prefix *out, qa_error *error)
 {
     if (!f || !f->application || !f->source_restoring || !graph || !out || out->state.application.actors ||
-        out->state.console.data || out->descriptor.content)
+        out->state.console.data || out->descriptor.content || out->descriptor.selection.instance ||
+        out->descriptor.selection.implementation || out->recipe.instance)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "CLIENT recipe decode requires its actual isolated graph");
     client_source_prefix p = {0}; qa_source_save_io io = {0};
     bool ok = qa_source_save_reader(&io, qa_application_session(f->application), bytes, error) &&
@@ -874,6 +887,7 @@ bool frontend_client_source_prefix_read(qa_frontend *f, qa_application_content_g
         qa_catalog_product(catalog, p.selected) && p.selection.product == p.selected;
     if (!ok) {
         frontend_client_source_state_free(&p.state);
+        decoded_selection_free(&p.selection);
         if (error && error->code == QA_OK) frontend_fail(error, QA_ERROR_FORMAT, "CLIENT recipe leaves its imported graph");
         return false;
     }
@@ -887,7 +901,8 @@ bool frontend_client_source_prefix_read(qa_frontend *f, qa_application_content_g
 void frontend_client_source_prefix_free(frontend_client_source_prefix *prefix)
 {
     if (!prefix) return;
-    frontend_client_source_state_free(&prefix->state); *prefix = (frontend_client_source_prefix){0};
+    frontend_client_source_state_free(&prefix->state);
+    decoded_selection_free(&prefix->descriptor.selection); *prefix = (frontend_client_source_prefix){0};
 }
 static frontend_client_source *commands_owner(const qa_frontend *f, const qa_application *app,
     const qa_application_console_scope *scope, const qa_console *console)

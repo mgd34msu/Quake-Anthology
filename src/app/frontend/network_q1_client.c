@@ -934,9 +934,10 @@ bool frontend_network_q1_client_restore_prepare(const frontend_network_q1_client
         prefix.state.application.connection_epoch==o->epoch &&
         (o->client.owner?prefix.state.application.network_seat.owner==o->binding.seat.owner &&
             prefix.state.application.network_seat.index==o->binding.seat.index:!prefix.state.application.network_seat.owner);
+    ok=ok && frontend_client_source_restore_prefix(options->frontend,&physical,refs->content,resolvers,
+        (qa_bytes){saved->physical.data,saved->physical.size},&o->physical,error);
     frontend_client_source_prefix_free(&prefix);
-    if(!ok || !frontend_client_source_restore_prefix(options->frontend,&physical,refs->content,resolvers,
-        (qa_bytes){saved->physical.data,saved->physical.size},&o->physical,error)) return false;
+    if(!ok) return false;
     if(!o->configured) return true;
     frontend_client_source_view actual;
     if(!frontend_client_source_metadata_read(o->physical,&actual,error) || !actual.ready ||
