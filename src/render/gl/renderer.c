@@ -569,22 +569,9 @@ void gl_source_pipeline_restore(qa_gl_renderer *renderer)
     gl->ClientActiveTexture(GL_TEXTURE0+attributes->texture_unit);
 }
 
-static bool mesh_resident(const qa_gl_renderer *renderer,
-                          const qa_scene_mesh *mesh)
-{
-    if (mesh->identity == 0) return false;
-    for (const gl_mesh_entry *entry = renderer->meshes; entry;
-         entry = entry->next)
-        if (entry->identity == mesh->identity &&
-            entry->revision == mesh->revision &&
-            entry->geometry == mesh->geometry &&
-            entry->vertex_count == mesh->vertex_count &&
-            entry->index_count == mesh->index_count) return true;
-    return false;
-}
-
 static bool draw_valid(const qa_gl_renderer *renderer,
-                       const qa_scene_draw *draw, qa_error *error)
+                       const qa_scene_draw *draw, const gl_mesh_entry **resident,
+                       qa_error *error)
 {
     const qa_scene_state *state = &draw->state;
     bool stencil_shadow = state->stencil_fail == QA_STENCIL_INCREMENT ||
@@ -648,7 +635,8 @@ static bool draw_valid(const qa_gl_renderer *renderer,
                      "OpenGL primitive index count is incomplete or too large");
         return false;
     }
-    if (!mesh_resident(renderer, &draw->mesh)) {
+    *resident = gl_mesh_resident(renderer, &draw->mesh);
+    if (!gl_mesh_storage_matches(*resident, &draw->mesh)) {
         size_t storage=draw->source_vertex_storage?draw->source_vertex_storage:draw->mesh.vertex_count;
         bool referenced[QA_SOURCE_TESS_VERTICES]={0};
         for (size_t i=0;i<draw->mesh.index_count;++i) {
@@ -749,8 +737,9 @@ static bool draw_scene(qa_gl_renderer *renderer, const qa_scene_draw *source,
                        qa_error *error)
 {
     qa_scene_draw draw = *source;
+    const gl_mesh_entry *resident = NULL;
     qa_render_source_direct_state(&draw.state,&renderer->pipeline,source);
-    if ((unsigned)draw.source_direct>QA_SOURCE_DIRECT_IMAGE_GRID || !draw_valid(renderer,&draw,error)) {
+    if ((unsigned)draw.source_direct>QA_SOURCE_DIRECT_IMAGE_GRID || !draw_valid(renderer,&draw,&resident,error)) {
         if (!error || error->code==QA_OK)
             qa_error_set(error,QA_ERROR_ARGUMENT,0,"Invalid Source direct draw provenance");
         return false;
@@ -831,7 +820,7 @@ static bool draw_scene(qa_gl_renderer *renderer, const qa_scene_draw *source,
     }
     qa_scene_mesh uploaded=draw.mesh;
     if (draw.source_vertex_storage) uploaded.vertex_count=draw.source_vertex_storage;
-    if (!gl_mesh_bind(renderer, &uploaded, error)) return false;
+    if (!gl_mesh_bind(renderer, &uploaded, resident, error)) return false;
     if (source_pipeline && draw.mesh.vertex_count) {
         qa_scene_vec4 color; qa_scene_vec2 uv[2];
         qa_render_source_attributes_vertex(&renderer->controls,&draw,mode,0,draw.mesh.vertices,&color,uv);

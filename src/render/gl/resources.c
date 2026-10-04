@@ -876,7 +876,18 @@ static bool grow_stream(qa_gl_renderer *renderer, GLenum target, GLuint buffer,
     return true;
 }
 
+const gl_mesh_entry *gl_mesh_resident(const qa_gl_renderer *renderer,
+                                    const qa_scene_mesh *mesh)
+{
+    if (mesh->identity == 0) return NULL;
+    for (const gl_mesh_entry *entry = renderer->meshes; entry; entry = entry->next)
+        if (entry->identity == mesh->identity && entry->revision == mesh->revision)
+            return entry;
+    return NULL;
+}
+
 static bool mesh_storage(qa_gl_renderer *renderer, const qa_scene_mesh *mesh,
+                         const gl_mesh_entry *resident,
                          GLuint *vertices, GLuint *indices, qa_error *error)
 {
     if (mesh->vertex_count > SIZE_MAX / sizeof(*mesh->vertices) ||
@@ -926,19 +937,16 @@ static bool mesh_storage(qa_gl_renderer *renderer, const qa_scene_mesh *mesh,
         *indices = renderer->stream.index_buffer;
         return gl_check(renderer, "OpenGL streaming geometry upload", error);
     }
-    for (gl_mesh_entry *entry = renderer->meshes; entry; entry = entry->next)
-        if (entry->identity == mesh->identity && entry->revision == mesh->revision) {
-            if (entry->geometry != mesh->geometry ||
-                entry->vertex_count != mesh->vertex_count ||
-                entry->index_count != mesh->index_count) {
-                qa_error_set(error, QA_ERROR_ARGUMENT, 0,
-                             "OpenGL retained mesh identity changed storage");
-                return false;
-            }
-            *vertices = entry->vertex_buffer;
-            *indices = entry->index_buffer;
-            return true;
+    if (resident) {
+        if (!gl_mesh_storage_matches(resident, mesh)) {
+            qa_error_set(error, QA_ERROR_ARGUMENT, 0,
+                         "OpenGL retained mesh identity changed storage");
+            return false;
         }
+        *vertices = resident->vertex_buffer;
+        *indices = resident->index_buffer;
+        return true;
+    }
     gl_mesh_entry *entry = calloc(1, sizeof(*entry));
     if (entry == NULL) {
         qa_error_set(error, QA_ERROR_MEMORY, 0,
@@ -997,10 +1005,10 @@ void gl_meshes_prune(qa_gl_renderer *renderer)
 }
 
 bool gl_mesh_bind(qa_gl_renderer *renderer, const qa_scene_mesh *mesh,
-                  qa_error *error)
+                  const gl_mesh_entry *resident, qa_error *error)
 {
     GLuint vertices, indices;
-    if (!mesh_storage(renderer, mesh, &vertices, &indices, error)) return false;
+    if (!mesh_storage(renderer, mesh, resident, &vertices, &indices, error)) return false;
     gl_api *gl = &renderer->gl;
     gl->BindBuffer(GL_ARRAY_BUFFER, vertices);
     gl->BindBuffer(GL_ELEMENT_ARRAY_BUFFER, indices);

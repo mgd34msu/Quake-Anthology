@@ -184,6 +184,12 @@ typedef struct gl_mesh_entry {
     GLuint vertex_buffer, index_buffer;
     struct gl_mesh_entry *next;
 } gl_mesh_entry;
+static inline bool gl_mesh_storage_matches(const gl_mesh_entry *entry,
+                                           const qa_scene_mesh *mesh)
+{
+    return entry && entry->geometry == mesh->geometry &&
+        entry->vertex_count == mesh->vertex_count && entry->index_count == mesh->index_count;
+}
 
 typedef struct gl_stream_buffers {
     GLuint vertex_buffer, index_buffer;
@@ -262,8 +268,9 @@ bool gl_image_update(qa_gl_renderer *renderer, const qa_scene_image *image,
 void gl_textures_prune(qa_gl_renderer *renderer);
 void gl_meshes_prune(qa_gl_renderer *renderer);
 void gl_resources_destroy(qa_gl_renderer *renderer);
+const gl_mesh_entry *gl_mesh_resident(const qa_gl_renderer *, const qa_scene_mesh *);
 bool gl_mesh_bind(qa_gl_renderer *renderer, const qa_scene_mesh *mesh,
-                  qa_error *error);
+                  const gl_mesh_entry *, qa_error *error);
 void gl_mesh_unbind(qa_gl_renderer *renderer);
 
 bool gl_bind_destination(qa_gl_renderer *renderer, qa_error *error);
