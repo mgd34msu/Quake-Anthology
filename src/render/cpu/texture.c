@@ -24,15 +24,19 @@ bool cpu_texture_components_init(qa_cpu_renderer *renderer, qa_error *error) {
   return true;
 }
 
+static int64_t texel_axis(qa_scene_wrap wrap, uint32_t extent,
+                           int64_t coordinate) {
+  if (wrap != QA_SCENE_REPEAT) return coordinate;
+  return coordinate < 0 ? coordinate + extent
+         : coordinate >= extent ? coordinate - extent : coordinate;
+}
 static void texel(const cpu_sampler *sampler,
                   const qa_scene_image_level *level,
                   const cpu_framebuffer *target, int64_t x, int64_t y,
                   double out[4]) {
   const qa_scene_image *image = sampler->image;
-  if (image->wrap == QA_SCENE_REPEAT) {
-    x = x < 0 ? x + level->width : x >= level->width ? x - level->width : x;
-    y = y < 0 ? y + level->height : y >= level->height ? y - level->height : y;
-  } else if (x < 0 || y < 0 || x >= level->width || y >= level->height) {
+  if (image->wrap != QA_SCENE_REPEAT &&
+      (x < 0 || y < 0 || x >= level->width || y >= level->height)) {
     out[0] = image->border.x;
     out[1] = image->border.y;
     out[2] = image->border.z;
@@ -83,17 +87,23 @@ static void sample_level(const cpu_sampler *sampler, size_t index, double u,
   if (!linear) {
     int64_t x = (int64_t)fmin(level->width - 1, floor(u * level->width));
     int64_t y = (int64_t)fmin(level->height - 1, floor(v * level->height));
-    texel(sampler, level, target, x, y, out);
+    texel(sampler, level, target,
+          texel_axis(image->wrap, level->width, x),
+          texel_axis(image->wrap, level->height, y), out);
     return;
   }
   double x = u * level->width - 0.5, y = v * level->height - 0.5;
   int64_t x0 = (int64_t)floor(x), y0 = (int64_t)floor(y);
   double fx = x - (double)x0, fy = y - (double)y0;
+  int64_t sx0 = texel_axis(image->wrap, level->width, x0),
+          sx1 = texel_axis(image->wrap, level->width, x0 + 1),
+          sy0 = texel_axis(image->wrap, level->height, y0),
+          sy1 = texel_axis(image->wrap, level->height, y0 + 1);
   double taps[4][4];
-  texel(sampler, level, target, x0, y0, taps[0]);
-  texel(sampler, level, target, x0 + 1, y0, taps[1]);
-  texel(sampler, level, target, x0, y0 + 1, taps[2]);
-  texel(sampler, level, target, x0 + 1, y0 + 1, taps[3]);
+  texel(sampler, level, target, sx0, sy0, taps[0]);
+  texel(sampler, level, target, sx1, sy0, taps[1]);
+  texel(sampler, level, target, sx0, sy1, taps[2]);
+  texel(sampler, level, target, sx1, sy1, taps[3]);
   for (size_t c = 0; c < 4; ++c)
     out[c] = taps[0][c] * (1 - fx) * (1 - fy) + taps[1][c] * fx * (1 - fy) +
              taps[2][c] * (1 - fx) * fy + taps[3][c] * fx * fy;

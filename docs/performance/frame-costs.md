@@ -1,7 +1,7 @@
 # Native frame costs
 
 The latest measured Q3 CPU frame takes **25.855 ms**, including **16.790 ms**
-of raster execution; latest GL takes **20.446 ms**. Removing a quadratic settings
+of raster execution; latest interval-1 GL takes **19.015 ms**. Removing a quadratic settings
 lookup cuts shared scene work. Replacing duplicate SDL texture layers reduces
 CPU presentation to about **0.3 ms**. Raster execution is now the largest CPU cost.
 
@@ -13,7 +13,7 @@ Simulation advances by exactly 50 ms per frame. Each run warms up for 30
 frames, then records 30 individual complete frames without attack input.
 The machine has a Ryzen 9 5900X, 24 logical CPUs, and an NVIDIA RTX 5060 Ti
 using driver 610.57.04. GL reports the NVIDIA hardware renderer; its actual
-SDL swap interval is 1.
+SDL swap interval is 1 in the controls. A separate run explicitly selects 0.
 
 Wall time surrounds the actual frontend step. Calling-thread and aggregate
 process CPU clocks cover the same interval. Frame reports, GPU query results
@@ -93,6 +93,16 @@ CPU work for lower elapsed time. All 30 recorded states/counts, final engine and
 retained display RGBA, and actual native RGB match both preceding controls.
 The timed diagnostic source is unchanged.
 
+On the same `86d1f51c` artifact, GL takes 19.015 ms with actual swap interval 1
+and 20.602 ms with actual interval 0. Swap itself takes 8.560 and 8.700 ms;
+disabling synchronization establishes no speed gain. GPU render elapsed is
+2.947 ms in both cases, separate from the complete CPU-clocked frame. All 30
+states/counts and final GL pixels match each other and the previous GL control.
+The driver is unchanged; the uncapped case uses the existing
+`+set r_swapInterval 0` startup setting. An unrelated user game stayed active
+through both runs and consumed about one CPU core. These are shared-machine
+measurements with project build/runtime jobs excluded, not uncontended timings.
+
 Ordered command batching reduces matched frame time by 38.1% and raster time
 by 62.2%. Aggregate CPU work rises: the gain comes from parallel scheduling,
 not less total CPU work. The batch preserves command order within disjoint
@@ -105,17 +115,17 @@ it does not establish each worker's individual contribution.
 
 ## Current costs and optimization targets
 
-These are inclusive medians on `86d1f51c` CPU and the latest `70dd4397` GL run.
+These are inclusive medians on `86d1f51c` CPU and interval-1 GL.
 Both include the subdivision scopes.
 Nested durations overlap, so the rows must not be added together.
 
 | Scope | CPU ms | GL ms |
 | --- | ---: | ---: |
-| Scene construction | 6.032 | 6.387 |
-| Material submission, 554 calls | 4.367 | 4.600 |
-| World submission, including its materials | 4.271 | 4.522 |
-| Renderer execution / GL submission | 16.790 | 2.128 |
-| CPU native presentation / GL swap | 0.294 | 8.521 |
+| Scene construction | 6.032 | 5.858 |
+| Material submission, 554 calls | 4.367 | 4.268 |
+| World submission, including its materials | 4.271 | 4.184 |
+| Renderer execution / GL submission | 16.790 | 1.852 |
+| CPU native presentation / GL swap | 0.294 | 8.560 |
 
 The first GL baseline separately measured 3.596 ms median GPU elapsed time
 around renderer execution. GPU intervals overlap CPU work and presentation;
