@@ -241,15 +241,8 @@ static bool inventory(qa_application *app, application_provider *p, qa_actor_id 
     for (size_t i = 0; ok && i < count; ++i) {
         const qa_inventory_entry *v = entries + i;
         if (!selected_item(app, p, v->item, original_q3, original_q3_count)) continue;
-        const char *name = qa_strings_cstr(qa_session_strings(app->session), v->item);
-        ok = (first || text(j, ",", e)) && text(j, "{\"item\":", e) && string(j, name, e) &&
-            scalar(j, "count", v->count, e) && scalar(j, "capacity", v->capacity, e);
-        if (ok && v->policy == QA_COUNT_STACK) ok = text(j, ",\"countPolicy\":{\"kind\":\"stack\"}", e);
-        else if (ok && (v->policy == QA_COUNT_SOURCE_FLOAT || v->policy == QA_COUNT_SOURCE_INT32 || v->policy == QA_COUNT_SOURCE_DOUBLE))
-            ok = text(j, ",\"countPolicy\":{\"kind\":\"source-counter\",\"arithmetic\":", e) &&
-                string(j, v->policy == QA_COUNT_SOURCE_FLOAT ? "binary32" : v->policy == QA_COUNT_SOURCE_INT32 ? "int32" : "binary64", e) && text(j, "}", e);
-        else if (ok) ok = application_fail(e, QA_ERROR_FORMAT, "Unified prediction inventory has an unknown actual count policy");
-        if (ok) ok = text(j, "}", e);
+        ok = (first || text(j, ",", e)) && application_unified_json_inventory_entry(j,
+            qa_session_strings(app->session), v, e);
         first = false;
     }
     free(entries);

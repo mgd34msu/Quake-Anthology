@@ -84,9 +84,8 @@ static bool bind_weights(qa_bot_goals *g,bot_goal_slot *s,qa_bot_weights *weight
     if(items->count>UINT32_MAX) return bot_goal_fail(e,"Item index count exceeds the source domain");
     qa_bot_memory_allocation indexes;
     if(!bot_goal_indexes_create(g,(uint32_t)items->count,&indexes,e)) return false;
+    if(items->count && !qa_bot_items_view_read(g->items,&items,e)) return false;
     for(uint32_t i=0;i<(uint32_t)items->count;++i) {
-        if(!qa_bot_items_view_read(g->items,&items,e)) return false;
-        if(i>=items->count) break;
         int32_t index;
         if(!qa_bot_weights_find_value(weights,items->items[i].classname,&index,e) ||
            !bot_goal_indexes_write(g,indexes,i,index,e)) return false;

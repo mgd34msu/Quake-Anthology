@@ -113,21 +113,6 @@ static bool body_rows(qa_application *app, const application_unified_source *sou
     return true;
 }
 
-static bool inventory_entry(qa_application *app, application_unified_json *j,
-    const qa_inventory_entry *entry, qa_error *error)
-{
-    const char *policy = entry->policy == QA_COUNT_STACK ? "{\"kind\":\"stack\"}" :
-        entry->policy == QA_COUNT_SOURCE_FLOAT ? "{\"kind\":\"source-counter\",\"arithmetic\":\"binary32\"}" :
-        entry->policy == QA_COUNT_SOURCE_DOUBLE ? "{\"kind\":\"source-counter\",\"arithmetic\":\"binary64\"}" :
-        entry->policy == QA_COUNT_SOURCE_INT32 ? "{\"kind\":\"source-counter\",\"arithmetic\":\"int32\"}" : NULL;
-    if (!policy) return application_fail(error, QA_ERROR_FORMAT, "Unified inventory has an unknown arithmetic owner");
-    return text(j, "{\"item\":", error) &&
-        string(j, qa_strings_cstr(qa_session_strings(app->session), entry->item), error) &&
-        text(j, ",\"count\":", error) && number(j, entry->count, error) &&
-        text(j, ",\"capacity\":", error) && number(j, entry->capacity, error) &&
-        text(j, ",\"countPolicy\":", error) && text(j, policy, error) && text(j, "}", error);
-}
-
 static bool inventory_rows(qa_application *app, const application_unified_source *source,
     uint64_t revision, qa_actor_id recipient, application_unified_json *j, qa_error *error)
 {
@@ -143,7 +128,8 @@ static bool inventory_rows(qa_application *app, const application_unified_source
     ok = ok && current(app, source, revision, error) && text(j, "{\"actor\":", error) &&
         actor(j, recipient, error) && text(j, ",\"entries\":[", error);
     for (size_t i = 0; ok && i < actual; ++i)
-        ok = (!i || text(j, ",", error)) && inventory_entry(app, j, entries + i, error);
+        ok = (!i || text(j, ",", error)) && application_unified_json_inventory_entry(j,
+            qa_session_strings(app->session), entries + i, error);
     if (ok) ok = text(j, "]}", error);
     free(entries);
     return ok;

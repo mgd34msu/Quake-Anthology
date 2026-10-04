@@ -268,6 +268,24 @@ static bool build_media(frontend_remote_q3 *row,qa_error *error)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Native remote constructor callbacks changed their actual CLIENT domain");
     return true;
 }
+static bool rebuild_media(frontend_remote_q3 *row,qa_error *error)
+{
+    frontend_remote_q3_resources *v=&row->resources;
+    if (!frontend_material_movies_destroy(&row->shader_movies,error)) return false;
+    if (v->assets && !qa_q3_assets_services_retire(v->assets,error)) return false;
+    qa_q3_presentation_assets_destroy(v->assets); v->assets=NULL;
+    qa_scene_world_destroy(v->world); v->world=NULL;
+    qa_media_library_destroy(v->movies); v->movies=NULL;
+    qa_font_library_destroy(v->fonts); v->fonts=NULL;
+    qa_audio_bank_destroy(v->sounds); v->sounds=NULL;
+    qa_material_library_destroy(v->materials); v->materials=NULL;
+    qa_scene_resources_destroy(v->images); v->images=NULL;
+    row->resources_ready=false; row->constructing=true;
+    bool okay=build_media(row,error);
+    row->constructing=false; row->resources_ready=okay;
+    if (okay) ++row->video_generation;
+    return okay;
+}
 bool frontend_remote_q3_resources_video_refresh(frontend_remote_q3 *row,
     frontend_remote_q3_modules *modules,uint64_t *generation,qa_error *error)
 {
@@ -286,20 +304,8 @@ bool frontend_remote_q3_resources_video_refresh(frontend_remote_q3 *row,
         (v->movies && !qa_media_library_idle(v->movies)) ||
         (v->world && !qa_scene_world_idle(v->world)))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Remote video media retains a real renderer borrower");
-    if (!frontend_material_movies_destroy(&row->shader_movies,error)) return false;
-    if (v->assets && !qa_q3_assets_services_retire(v->assets,error)) return false;
-    qa_q3_presentation_assets_destroy(v->assets); v->assets=NULL;
-    qa_scene_world_destroy(v->world); v->world=NULL;
-    qa_media_library_destroy(v->movies); v->movies=NULL;
-    qa_font_library_destroy(v->fonts); v->fonts=NULL;
-    qa_audio_bank_destroy(v->sounds); v->sounds=NULL;
-    qa_material_library_destroy(v->materials); v->materials=NULL;
-    qa_scene_resources_destroy(v->images); v->images=NULL;
-    row->resources_ready=false; row->constructing=true;
-    bool okay=build_media(row,error);
-    row->constructing=false; row->resources_ready=okay;
-    if (!okay) return false;
-    *generation=++row->video_generation;
+    if (!rebuild_media(row,error)) return false;
+    *generation=row->video_generation;
     return true;
 }
 bool frontend_remote_q3_resources_video_read(const frontend_remote_q3 *row,
@@ -364,20 +370,7 @@ bool frontend_remote_q3_resources_compiled_video_refresh(frontend_remote_q3 *row
         (v->materials && !qa_material_library_idle(v->materials)) || (v->fonts && !qa_font_library_idle(v->fonts)) ||
         (v->movies && !qa_media_library_idle(v->movies)) || (v->world && !qa_scene_world_idle(v->world)))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Compiled video media retains an actual renderer borrower");
-    if(!frontend_material_movies_destroy(&row->shader_movies,error))return false;
-    if (v->assets && !qa_q3_assets_services_retire(v->assets,error)) return false;
-    qa_q3_presentation_assets_destroy(v->assets); v->assets=NULL;
-    qa_scene_world_destroy(v->world); v->world=NULL;
-    qa_media_library_destroy(v->movies); v->movies=NULL;
-    qa_font_library_destroy(v->fonts); v->fonts=NULL;
-    qa_audio_bank_destroy(v->sounds); v->sounds=NULL;
-    qa_material_library_destroy(v->materials); v->materials=NULL;
-    qa_scene_resources_destroy(v->images); v->images=NULL;
-    row->resources_ready=false; row->constructing=true;
-    bool okay=build_media(row,error);
-    row->constructing=false; row->resources_ready=okay;
-    if(okay)++row->video_generation;
-    return okay;
+    return rebuild_media(row,error);
 }
 static bool resources_fields_current(const frontend_remote_q3_resources *v)
 {

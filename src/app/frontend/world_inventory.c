@@ -286,6 +286,17 @@ static bool model_claim(frontend_world_inventory *inventory,const qa_scene_model
     }
     return frontend_fail(error,QA_ERROR_FORMAT,"Scene destructor references a root outside its capture lease");
 }
+static bool registry_model_claim(frontend_world_inventory *inventory,
+    const qa_q3_asset_model_holder *model,frontend_scene_owner owner,qa_error *error)
+{
+    if(model->owns_world && (!model->world || !world_claim(inventory,model->world,owner,error))) return false;
+    for(unsigned j=0;j<3;++j) if(model->scenes[j]) {
+        bool alias=false;
+        for(unsigned k=0;k<j;++k) if(model->scenes[k]==model->scenes[j]) alias=true;
+        if(!alias && !model_claim(inventory,model->scenes[j],owner,NULL,error)) return false;
+    }
+    return !model->source_md4_scene || model_claim(inventory,model->source_md4_scene,owner,NULL,error);
+}
 static bool registry_roots_claim(frontend_world_inventory *inventory,qa_q3_presentation_assets *assets,
     frontend_scene_owner_kind kind,uint64_t ordinal,qa_error *error)
 {
@@ -296,13 +307,7 @@ static bool registry_roots_claim(frontend_world_inventory *inventory,qa_q3_prese
         if(!qa_q3_assets_model_holder(assets,i,&model,error)) return false;
         if(!model.present || model.shared_parent) continue;
         frontend_scene_owner owner={kind,ordinal,i+1};
-        if(model.owns_world && (!model.world || !world_claim(inventory,model.world,owner,error))) return false;
-        for(unsigned j=0;j<3;++j) if(model.scenes[j]) {
-            bool alias=false;
-            for(unsigned k=0;k<j;++k) if(model.scenes[k]==model.scenes[j]) alias=true;
-            if(!alias && !model_claim(inventory,model.scenes[j],owner,NULL,error)) return false;
-        }
-        if(model.source_md4_scene && !model_claim(inventory,model.source_md4_scene,owner,NULL,error)) return false;
+        if(!registry_model_claim(inventory,&model,owner,error)) return false;
     }
     return true;
 }
@@ -463,13 +468,7 @@ static bool owners_capture(frontend_world_inventory *inventory,qa_error *error)
                 if(!model.present || model.shared_parent) continue;
                 if(!frontend_unified_media_q3_row(j,k,&row)) return false;
                 frontend_scene_owner owner={FRONTEND_SCENE_OWNER_UNIFIED_Q3,i+1,row};
-                if(model.owns_world && !world_claim(inventory,model.world,owner,error)) return false;
-                for(unsigned lod=0;lod<3;++lod) if(model.scenes[lod]) {
-                    bool alias=false;
-                    for(unsigned prior=0;prior<lod;++prior) if(model.scenes[prior]==model.scenes[lod]) alias=true;
-                    if(!alias && !model_claim(inventory,model.scenes[lod],owner,NULL,error)) return false;
-                }
-                if(model.source_md4_scene && !model_claim(inventory,model.source_md4_scene,owner,NULL,error)) return false;
+                if(!registry_model_claim(inventory,&model,owner,error)) return false;
             }
         }
     }

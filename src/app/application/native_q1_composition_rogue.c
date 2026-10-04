@@ -128,13 +128,6 @@ static bool ctf(rogue_call *call, bool *out, qa_error *error)
     return true;
 }
 
-static uint32_t bits(double value)
-{
-    double integer = isfinite(value) ? fmod(trunc(value), 4294967296.0) : 0;
-    if (integer < 0) integer += 4294967296.0;
-    return (uint32_t)integer;
-}
-
 static bool tag_current(void *context, const qa_q1_game *game, qa_error *error)
 {
     application_provider *source = context;
@@ -339,8 +332,8 @@ static bool flag_carrier(void *context, qa_actor_id actor, qa_actor_id carrier,
                 qa_q1_source_rogue_flag_read(call.operation.game, actor, &flag, error) &&
                 number(&call, carrier, QA_Q1_ROGUE_FLAGS, &flags, error) &&
                 policy(&call, "teamplay", &mode, error);
-            if (okay) *out = combat.health > 0 && !(mode == 5 && !(bits(flags) & 1)) &&
-                !(flag.team == 5 && !(bits(flags) & 1)) && !(flag.team == 14 && !(bits(flags) & 2));
+            if (okay) *out = combat.health > 0 && !(mode == 5 && !((uint32_t)qa_number_to_i32(flags) & 1)) &&
+                !(flag.team == 5 && !((uint32_t)qa_number_to_i32(flags) & 1)) && !(flag.team == 14 && !((uint32_t)qa_number_to_i32(flags) & 2));
         }
     }
     qa_q1_game_operation_end(&call.operation);
@@ -454,7 +447,7 @@ static bool capture(rogue_call *call, qa_actor_id actor, bool alternate, qa_erro
         } else okay = write_number(call, rows[i], QA_Q1_ROGUE_LAST_HURT_CARRIER, -5, error) &&
             message(call, rows[i], "$qc_your_flag_captured", true, NULL, 0, error);
         if (okay && !alternate) okay = number(call, rows[i], QA_Q1_ROGUE_FLAGS, &other_flags, error) &&
-            write_number(call, rows[i], QA_Q1_ROGUE_FLAGS, bits(other_flags) & ~UINT32_C(3), error);
+            write_number(call, rows[i], QA_Q1_ROGUE_FLAGS, (uint32_t)qa_number_to_i32(other_flags) & ~UINT32_C(3), error);
     }
     free(rows);
     rows = NULL;
@@ -462,12 +455,12 @@ static bool capture(rogue_call *call, qa_actor_id actor, bool alternate, qa_erro
     for (size_t i = 0; okay && i < count; ++i) {
         qa_q1_source_rogue_flag_view flag;
         okay = qa_q1_source_rogue_flag_read(call->operation.game, rows[i], &flag, error);
-        if (okay && (alternate ? flag.team == ((bits(flags) & 1) ? 5 : 14) :
+        if (okay && (alternate ? flag.team == (((uint32_t)qa_number_to_i32(flags) & 1) ? 5 : 14) :
             mode == 5 ? flag.team == 0 : flag.team != 0))
             okay = qa_q1_source_rogue_flag_return(call->operation.game, rows[i], error) && current(call, error);
     }
     free(rows);
-    if (okay && alternate) okay = write_number(call, actor, QA_Q1_ROGUE_FLAGS, bits(flags) & ~UINT32_C(3), error);
+    if (okay && alternate) okay = write_number(call, actor, QA_Q1_ROGUE_FLAGS, (uint32_t)qa_number_to_i32(flags) & ~UINT32_C(3), error);
     return okay;
 }
 
@@ -489,9 +482,9 @@ static bool flag_touch(void *context, qa_actor_id actor, qa_actor_id other, bool
     if (!okay) goto finish;
     if (base) {
         if (mode == 5 && ((flag.team == 5 && own_team == 14) || (flag.team == 14 && own_team == 5)) &&
-            (bits(flags) & 1)) okay = capture(&call, other, false, error);
-        else if (mode == 6 && own_team == 1 && (((bits(flags) & 1) && flag.team == 14) ||
-            ((bits(flags) & 2) && flag.team == 5))) okay = capture(&call, other, true, error);
+            ((uint32_t)qa_number_to_i32(flags) & 1)) okay = capture(&call, other, false, error);
+        else if (mode == 6 && own_team == 1 && ((((uint32_t)qa_number_to_i32(flags) & 1) && flag.team == 14) ||
+            (((uint32_t)qa_number_to_i32(flags) & 2) && flag.team == 5))) okay = capture(&call, other, true, error);
         goto finish;
     }
     if (flag.count == 1) goto finish;
@@ -499,7 +492,7 @@ static bool flag_touch(void *context, qa_actor_id actor, qa_actor_id other, bool
         if (mode != 4 && mode != 6) goto finish;
         if (flag.team == own_team) {
             if (flag.count == 0) {
-                if ((flag.team == 5 && (bits(flags) & 2)) || (flag.team == 14 && (bits(flags) & 1)))
+                if ((flag.team == 5 && ((uint32_t)qa_number_to_i32(flags) & 2)) || (flag.team == 14 && ((uint32_t)qa_number_to_i32(flags) & 1)))
                     okay = capture(&call, other, false, error);
             } else {
                 double now;
@@ -510,12 +503,12 @@ static bool flag_touch(void *context, qa_actor_id actor, qa_actor_id other, bool
             }
             goto finish;
         }
-        if (bits(flags) & 3) goto finish;
+        if ((uint32_t)qa_number_to_i32(flags) & 3) goto finish;
     }
     double now;
     okay = named_broadcast(&call, other, "got", flag.team, mode == 5, error) &&
         source_sound(&call, other, "misc/flagtk.wav", false, error) &&
-        write_number(&call, other, QA_Q1_ROGUE_FLAGS, bits(flags) | (flag.team == 14 ? 2 : 1), error) &&
+        write_number(&call, other, QA_Q1_ROGUE_FLAGS, (uint32_t)qa_number_to_i32(flags) | (flag.team == 14 ? 2 : 1), error) &&
         seconds(&call, &now, error) && write_number(&call, other, QA_Q1_ROGUE_FLAG_SINCE, now, error) &&
         keys(&call, other, false, flag.team, error) &&
         qa_q1_source_rogue_flag_carry(call.operation.game, actor, other, error) && current(&call, error) &&
@@ -552,7 +545,7 @@ static bool assists(rogue_call *call, qa_actor_id victim, qa_actor_id attacker, 
     double victim_flags, victim_team, killer_team, now, stamp, killer_flags;
     if (!number(call, victim, QA_Q1_ROGUE_FLAGS, &victim_flags, error) ||
         !team(call, victim, &victim_team, error) || !team(call, attacker, &killer_team, error)) return false;
-    if ((bits(victim_flags) & 3) && victim_team != killer_team) {
+    if (((uint32_t)qa_number_to_i32(victim_flags) & 3) && victim_team != killer_team) {
         if (!seconds(call, &now, error) ||
             !write_number(call, attacker, QA_Q1_ROGUE_LAST_FRAGGED_CARRIER, now, error) ||
             !number(call, victim, QA_Q1_ROGUE_FLAG_SINCE, &stamp, error) ||
@@ -566,7 +559,7 @@ static bool assists(rogue_call *call, qa_actor_id victim, qa_actor_id attacker, 
     bool carrier_bonus = false, flag_bonus = false;
     if (!number(call, victim, QA_Q1_ROGUE_LAST_HURT_CARRIER, &stamp, error) ||
         !seconds(call, &now, error) || !number(call, attacker, QA_Q1_ROGUE_FLAGS, &killer_flags, error)) return false;
-    if (stamp + 4 > now && !(bits(killer_flags) & 3)) {
+    if (stamp + 4 > now && !((uint32_t)qa_number_to_i32(killer_flags) & 3)) {
         if (!score(call, attacker, 2, error)) return false;
         carrier_bonus = true;
     }
@@ -596,7 +589,7 @@ static bool assists(rogue_call *call, qa_actor_id victim, qa_actor_id attacker, 
             if (okay && found) {
                 double actor_team, actor_flags;
                 okay = team(call, actor, &actor_team, error) && number(call, actor, QA_Q1_ROGUE_FLAGS, &actor_flags, error);
-                if (okay && actor_team == killer_team && (bits(actor_flags) & 3) &&
+                if (okay && actor_team == killer_team && ((uint32_t)qa_number_to_i32(actor_flags) & 3) &&
                     !qa_actor_id_equal(actor, attacker) && !carrier_bonus) {
                     okay = score(call, attacker, 1, error);
                     carrier_bonus = true;
@@ -640,14 +633,14 @@ bool application_native_q1_rogue_player_died(application_provider *source,
     if (okay && attacker.registry) okay = player(&call, attacker, &found, error);
     if (okay && found && !qa_actor_id_equal(actor, attacker)) okay = assists(&call, actor, attacker, error);
     if (okay) okay = number(&call, actor, QA_Q1_ROGUE_FLAGS, &flags, error);
-    if (okay && (bits(flags) & 3)) {
+    if (okay && ((uint32_t)qa_number_to_i32(flags) & 3)) {
         qa_actor_id *rows;
         size_t count;
         okay = players_snapshot(&call, &rows, &count, error);
         for (size_t i = 0; okay && i < count; ++i) {
             double value;
             okay = team(&call, rows[i], &value, error);
-            if (okay && (mode == 5 || ((bits(flags) & 1) && value == 5) || ((bits(flags) & 2) && value == 14)))
+            if (okay && (mode == 5 || (((uint32_t)qa_number_to_i32(flags) & 1) && value == 5) || (((uint32_t)qa_number_to_i32(flags) & 2) && value == 14)))
                 okay = write_number(&call, rows[i], QA_Q1_ROGUE_LAST_HURT_CARRIER, -10, error);
         }
         free(rows);
@@ -658,9 +651,9 @@ bool application_native_q1_rogue_player_died(application_provider *source,
     for (size_t i = 0; okay && i < count; ++i) {
         qa_q1_source_rogue_flag_view flag;
         okay = qa_q1_source_rogue_flag_read(call.operation.game, rows[i], &flag, error);
-        if (okay && flag.team == (mode == 5 && (bits(flags) & 1) ? 0 :
-            (bits(flags) & 1) ? 5 : (bits(flags) & 2) ? 14 : -1)) {
-            okay = write_number(&call, actor, QA_Q1_ROGUE_FLAGS, bits(flags) & ~UINT32_C(3), error) &&
+        if (okay && flag.team == (mode == 5 && ((uint32_t)qa_number_to_i32(flags) & 1) ? 0 :
+            ((uint32_t)qa_number_to_i32(flags) & 1) ? 5 : ((uint32_t)qa_number_to_i32(flags) & 2) ? 14 : -1)) {
+            okay = write_number(&call, actor, QA_Q1_ROGUE_FLAGS, (uint32_t)qa_number_to_i32(flags) & ~UINT32_C(3), error) &&
                 flag_drop_call(&call, rows[i], error);
             break;
         }
@@ -779,7 +772,7 @@ bool application_native_q1_rogue_confirmed_damage(application_provider *source,
     if (!okay || !attacker_player) goto finish;
     double flags, target_team, attacker_team;
     okay = number(&call, target, QA_Q1_ROGUE_FLAGS, &flags, error);
-    if (!okay || !(bits(flags) & 3)) goto finish;
+    if (!okay || !((uint32_t)qa_number_to_i32(flags) & 3)) goto finish;
     okay = team(&call, target, &target_team, error) && team(&call, attacker, &attacker_team, error);
     if (!okay || target_team == attacker_team) goto finish;
     qa_q1_options options;
@@ -1029,8 +1022,8 @@ static bool team_frame(rogue_call *call, qa_actor_id actor, qa_error *error)
     if (deathmatch == 0 || mode < 4)
         return write_number(call, actor, QA_Q1_ROGUE_STEAM, actual_color, error);
     if (!number(call, actor, QA_Q1_ROGUE_FLAGS, &flags, error)) return false;
-    if (bits(flags) & 4) {
-        if (!write_number(call, actor, QA_Q1_ROGUE_FLAGS, bits(flags) & ~UINT32_C(4), error) ||
+    if ((uint32_t)qa_number_to_i32(flags) & 4) {
+        if (!write_number(call, actor, QA_Q1_ROGUE_FLAGS, (uint32_t)qa_number_to_i32(flags) & ~UINT32_C(4), error) ||
             !number(call, actor, QA_Q1_ROGUE_STEAM, &steam, error)) return false;
         return set_color(call, actor, steam, error);
     }
@@ -1041,7 +1034,7 @@ static bool team_frame(rogue_call *call, qa_actor_id actor, qa_error *error)
     if (actual_color == steam) return true;
     double gamecfg;
     if (!policy(call, "gamecfg", &gamecfg, error)) return false;
-    if (steam >= 0 && legal_team(mode, steam) && !(bits(gamecfg) & 16)) {
+    if (steam >= 0 && legal_team(mode, steam) && !((uint32_t)qa_number_to_i32(gamecfg) & 16)) {
         double suicides;
         if (!number(call, actor, QA_Q1_ROGUE_SUICIDE_COUNT, &suicides, error)) return false;
         if (suicides > 3) {
@@ -1136,7 +1129,7 @@ bool application_native_q1_rogue_damage_effect(application_provider *source,
     if (!okay || different) goto finish;
     double gamecfg;
     okay = policy(&call, "gamecfg", &gamecfg, error);
-    if (okay) allowed = (bits(gamecfg) & (stage == QA_DAMAGE_ARMOR_ALLOWED ? 2 : 4)) != 0;
+    if (okay) allowed = ((uint32_t)qa_number_to_i32(gamecfg) & (stage == QA_DAMAGE_ARMOR_ALLOWED ? 2 : 4)) != 0;
 finish:
     if (okay) effect->allowed = effect->allowed && allowed;
     qa_q1_game_operation_end(&call.operation);

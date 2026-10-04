@@ -126,6 +126,28 @@ bool application_unified_json_body(application_unified_json *out, const qa_body_
         application_unified_json_text(out, "}", error);
 }
 
+bool application_unified_json_inventory_entry(application_unified_json *out,
+    const qa_strings *strings, const qa_inventory_entry *entry, qa_error *error)
+{
+    const char *policy = entry->policy == QA_COUNT_STACK ? "{\"kind\":\"stack\"}" :
+        entry->policy == QA_COUNT_SOURCE_FLOAT ? "{\"kind\":\"source-counter\",\"arithmetic\":\"binary32\"}" :
+        entry->policy == QA_COUNT_SOURCE_DOUBLE ? "{\"kind\":\"source-counter\",\"arithmetic\":\"binary64\"}" :
+        entry->policy == QA_COUNT_SOURCE_INT32 ? "{\"kind\":\"source-counter\",\"arithmetic\":\"int32\"}" : NULL;
+    if (!policy) {
+        qa_error_set(error, QA_ERROR_FORMAT, 0, "Unified inventory has an unknown arithmetic owner");
+        return false;
+    }
+    return application_unified_json_text(out, "{\"item\":", error) &&
+        application_unified_json_string(out, qa_strings_cstr(strings, entry->item), error) &&
+        application_unified_json_text(out, ",\"count\":", error) &&
+        application_unified_json_number(out, entry->count, error) &&
+        application_unified_json_text(out, ",\"capacity\":", error) &&
+        application_unified_json_number(out, entry->capacity, error) &&
+        application_unified_json_text(out, ",\"countPolicy\":", error) &&
+        application_unified_json_text(out, policy, error) &&
+        application_unified_json_text(out, "}", error);
+}
+
 bool application_unified_json_document(application_unified_json *out,
     const qa_unified_document *document, qa_error *error)
 {

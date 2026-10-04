@@ -293,11 +293,7 @@ bool application_construct_q3_guest(qa_application *application, application_pro
     role->next = engine->roles; engine->roles = role;
     if (kind == QA_QVM_GAME) {
         engine->game = role;
-        if (provider->kind == APPLICATION_PROVIDER_QVM) {
-            provider->state.qvm.host = role->host; provider->state.qvm.machine = role->vm;
-        } else {
-            provider->state.native.q3_host = role->host; provider->state.native.host = role->native;
-        }
+        q3g_game_aliases(engine, role);
     } else {
         for (size_t i = 0; i < choices->seat_count; ++i) {
             if (choices->seats[i].id == seat || !q3g_selected_client_seat(provider, choices, kind, i)) continue;
@@ -547,16 +543,14 @@ bool application_q3_guest_deconstruct(application_provider *provider, qa_error *
         engine->roles = next;
         if (was_game) {
             engine->game = NULL;
-            if (provider->kind == APPLICATION_PROVIDER_QVM) {
-                provider->state.qvm.host = NULL; provider->state.qvm.machine = NULL;
-            } else { provider->state.native.q3_host = NULL; provider->state.native.host = NULL; }
+            q3g_game_aliases(engine, NULL);
         }
     }
     if (!application_guest_q3_client_console_destroy(engine, error) ||
         !application_guest_q3_console_destroy(engine, error)) return false;
-    if (provider->kind == APPLICATION_PROVIDER_QVM) {
-        provider->state.qvm.host = NULL; provider->state.qvm.machine = NULL; provider->state.qvm.engine = NULL;
-    } else { provider->state.native.q3_host = NULL; provider->state.native.host = NULL; provider->state.native.engine = NULL; }
+    q3g_game_aliases(engine, NULL);
+    if (provider->kind == APPLICATION_PROVIDER_QVM) provider->state.qvm.engine = NULL;
+    else provider->state.native.engine = NULL;
     q3g_clients_clear(engine); qa_command_tokens_free(&engine->arguments);
     while (engine->artifacts) {
         q3g_artifact *artifact = engine->artifacts; engine->artifacts = artifact->next;

@@ -160,73 +160,56 @@ static qa_game_family progress_family(const qa_launch_instance *instance)
     return QA_GAME_Q3;
 }
 
+static void *event_storage(void *storage, size_t count, size_t *capacity,
+                            size_t width, size_t initial, qa_error *error)
+{
+    if (count < *capacity)
+        return storage;
+    size_t next = *capacity ? *capacity : initial;
+    if (*capacity && next > SIZE_MAX / 2) {
+        application_fail(error, QA_ERROR_MEMORY, "application event capacity is exhausted");
+        return NULL;
+    }
+    if (*capacity) next *= 2;
+    if (next > SIZE_MAX / width) {
+        application_fail(error, QA_ERROR_MEMORY, "application event extent overflows");
+        return NULL;
+    }
+    void *grown = realloc(storage, next * width);
+    if (!grown) {
+        application_fail(error, QA_ERROR_MEMORY, "cannot retain application event");
+        return NULL;
+    }
+    *capacity = next;
+    return grown;
+}
+
 static bool reserve_event(qa_application *application, qa_error *error)
 {
-    if (application->event_count < application->event_capacity)
-        return true;
-    if (application->event_capacity > SIZE_MAX / 2 ||
-        application->event_capacity * 2 >
-            SIZE_MAX / sizeof(*application->events))
-        return application_fail(error, QA_ERROR_MEMORY,
-                                "gameplay event queue capacity is exhausted");
-    size_t capacity = application->event_capacity == 0
-                          ? 64
-                          : application->event_capacity * 2;
-    application_event_record *events =
-        realloc(application->events, capacity * sizeof(*events));
-    if (events == NULL)
-        return application_fail(error, QA_ERROR_MEMORY,
-                                "cannot retain gameplay event");
-    application->events = events;
-    application->event_capacity = capacity;
+    application_event_record *storage = event_storage(application->events,
+        application->event_count, &application->event_capacity, sizeof(*storage), 64, error);
+    if (!storage) return false;
+    application->events = storage;
     return true;
 }
 
-static bool reserve_q2_map_event(qa_application *application,
-                                 qa_error *error)
+static bool reserve_q2_map_event(qa_application *application, qa_error *error)
 {
-    if (application->q2_map_event_count <
-        application->q2_map_event_capacity)
-        return true;
-    if (application->q2_map_event_capacity > SIZE_MAX / 2 ||
-        application->q2_map_event_capacity * 2 >
-            SIZE_MAX / sizeof(*application->q2_map_events))
-        return application_fail(error, QA_ERROR_MEMORY,
-                                "Q2 map event queue capacity is exhausted");
-    size_t capacity = application->q2_map_event_capacity == 0
-                          ? 32
-                          : application->q2_map_event_capacity * 2;
-    application_q2_map_event_record *events =
-        realloc(application->q2_map_events, capacity * sizeof(*events));
-    if (events == NULL)
-        return application_fail(error, QA_ERROR_MEMORY,
-                                "cannot retain Q2 map event");
-    application->q2_map_events = events;
-    application->q2_map_event_capacity = capacity;
+    application_q2_map_event_record *storage = event_storage(application->q2_map_events,
+        application->q2_map_event_count, &application->q2_map_event_capacity,
+        sizeof(*storage), 32, error);
+    if (!storage) return false;
+    application->q2_map_events = storage;
     return true;
 }
 
-static bool reserve_q3_map_event(qa_application *application,
-                                 qa_error *error)
+static bool reserve_q3_map_event(qa_application *application, qa_error *error)
 {
-    if (application->q3_map_event_count <
-        application->q3_map_event_capacity)
-        return true;
-    if (application->q3_map_event_capacity > SIZE_MAX / 2 ||
-        application->q3_map_event_capacity * 2 >
-            SIZE_MAX / sizeof(*application->q3_map_events))
-        return application_fail(error, QA_ERROR_MEMORY,
-                                "Q3 map event queue capacity is exhausted");
-    size_t capacity = application->q3_map_event_capacity == 0
-                          ? 32
-                          : application->q3_map_event_capacity * 2;
-    qa_application_q3_map_event *events =
-        realloc(application->q3_map_events, capacity * sizeof(*events));
-    if (events == NULL)
-        return application_fail(error, QA_ERROR_MEMORY,
-                                "cannot retain Q3 map event");
-    application->q3_map_events = events;
-    application->q3_map_event_capacity = capacity;
+    qa_application_q3_map_event *storage = event_storage(application->q3_map_events,
+        application->q3_map_event_count, &application->q3_map_event_capacity,
+        sizeof(*storage), 32, error);
+    if (!storage) return false;
+    application->q3_map_events = storage;
     return true;
 }
 
@@ -530,30 +513,6 @@ bool application_emit_q2_particles(application_provider *provider,
     return ok;
 }
 
-static void *event_storage(void *storage, size_t count, size_t *capacity,
-                            size_t width, qa_error *error)
-{
-    if (count < *capacity)
-        return storage;
-    size_t next = *capacity ? *capacity : 32;
-    if (*capacity && next > SIZE_MAX / 2) {
-        application_fail(error, QA_ERROR_MEMORY, "application event capacity is exhausted");
-        return NULL;
-    }
-    if (*capacity) next *= 2;
-    if (next > SIZE_MAX / width) {
-        application_fail(error, QA_ERROR_MEMORY, "application event extent overflows");
-        return NULL;
-    }
-    void *grown = realloc(storage, next * width);
-    if (!grown) {
-        application_fail(error, QA_ERROR_MEMORY, "cannot retain application event");
-        return NULL;
-    }
-    *capacity = next;
-    return grown;
-}
-
 static bool event_text(qa_application *application, const char *source,
                         const char **out, qa_error *error)
 {
@@ -586,7 +545,7 @@ bool application_emit_q2_player(application_provider *provider,
         return application_fail(error, QA_ERROR_ARGUMENT, "invalid Q2 player event");
     qa_application_q2_player_event *storage = event_storage(application->q2_player_events,
         application->q2_player_event_count, &application->q2_player_event_capacity,
-        sizeof(*storage), error);
+        sizeof(*storage), 32, error);
     if (!storage) return false;
     application->q2_player_events = storage;
     if (!application_event_journal_reserve(application,error)) return false;
@@ -656,7 +615,7 @@ static bool emit_protocol(application_provider *provider,
     }
     application_protocol_record *storage = event_storage(application->protocol_events,
         application->protocol_event_count, &application->protocol_event_capacity,
-        sizeof(*storage), error);
+        sizeof(*storage), 32, error);
     if (!storage) return false;
     application->protocol_events = storage;
     if (!application_event_journal_reserve(application,error)) return false;

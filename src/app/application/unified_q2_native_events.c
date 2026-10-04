@@ -331,23 +331,29 @@ static bool sound_simulation(json *j, qa_application *app, const qa_builtin_even
         number(j, ",\"channel\":", v->channel, e) && number(j, ",\"volume\":", v->volume, e) &&
         number(j, ",\"attenuation\":", v->attenuation, e) && text(j, "}", e);
 }
+static bool model(json *j, qa_application *app, qa_actor_id id,
+    const qa_q2_visual *visual, qa_error *e)
+{
+    bool ok = begin(j, "q2", "model", e) && actor(j, ",\"actor\":", id, e) &&
+        alias(j, app, ",\"path\":", visual->models[0], e) && text(j, ",\"attachedModels\":[", e);
+    bool first = true;
+    for (size_t i = 1; ok && i < 4; ++i) {
+        if (!visual->models[i]) continue;
+        ok = (first || text(j, ",", e)) && alias(j, app, "", visual->models[i], e);
+        first = false;
+    }
+    ok = ok && text(j, "]", e) && number(j, ",\"frame\":", visual->frame, e) &&
+        number(j, ",\"oldFrame\":", visual->old_frame, e) && number(j, ",\"scale\":", visual->scale, e) &&
+        number(j, ",\"alpha\":", visual->alpha, e) && number(j, ",\"skin\":", visual->skin, e) &&
+        number(j, ",\"effects\":", (double)visual->effects, e) && number(j, ",\"renderFlags\":", visual->render_flags, e);
+    return ok;
+}
 bool application_unified_q2_native_visual(application_provider *p, qa_actor_id id,
     const qa_q2_visual *visual, qa_error *e) {
     qa_clock_state clock;
     if (!visual || !source(p, &clock, e)) return false;
     json j = {0};
-    bool ok = begin(&j, "q2", "model", e) && actor(&j, ",\"actor\":", id, e) &&
-        alias(&j, p->application, ",\"path\":", visual->models[0], e) && text(&j, ",\"attachedModels\":[", e);
-    bool first = true;
-    for (size_t i = 1; ok && i < 4; ++i) {
-        if (!visual->models[i]) continue;
-        ok = (first || text(&j, ",", e)) && alias(&j, p->application, "", visual->models[i], e);
-        first = false;
-    }
-    ok = ok && text(&j, "]", e) && number(&j, ",\"frame\":", visual->frame, e) &&
-        number(&j, ",\"oldFrame\":", visual->old_frame, e) && number(&j, ",\"scale\":", visual->scale, e) &&
-        number(&j, ",\"alpha\":", visual->alpha, e) && number(&j, ",\"skin\":", visual->skin, e) &&
-        number(&j, ",\"effects\":", (double)visual->effects, e) && number(&j, ",\"renderFlags\":", visual->render_flags, e);
+    bool ok = model(&j, p->application, id, visual, e);
     if (ok) ok = emit(p, &j, NULL, id, (qa_actor_id){0}, clock.frame.time_ns, NULL, e);
     application_unified_json_dispose(&j);
     if (!ok) return false;
@@ -404,18 +410,7 @@ bool application_unified_q2_native_builtin(qa_application *app, const qa_builtin
     case QA_BUILTIN_ANIMATION: {
         qa_q2_visual visual;
         if (p->kind != APPLICATION_PROVIDER_Q2 || !qa_q2_presentation_read(p->state.q2, v->actor, &visual)) break;
-        ok = begin(&j, "q2", "model", e) && actor(&j, ",\"actor\":", v->actor, e) &&
-            alias(&j, app, ",\"path\":", visual.models[0], e) && text(&j, ",\"attachedModels\":[", e);
-        bool first = true;
-        for (size_t i = 1; ok && i < 4; ++i) {
-            if (!visual.models[i]) continue;
-            ok = (first || text(&j, ",", e)) && alias(&j, app, "", visual.models[i], e);
-            first = false;
-        }
-        ok = ok && text(&j, "]", e) && number(&j, ",\"frame\":", visual.frame, e) &&
-            number(&j, ",\"oldFrame\":", visual.old_frame, e) && number(&j, ",\"scale\":", visual.scale, e) &&
-            number(&j, ",\"alpha\":", visual.alpha, e) && number(&j, ",\"skin\":", visual.skin, e) &&
-            number(&j, ",\"effects\":", (double)visual.effects, e) && number(&j, ",\"renderFlags\":", visual.render_flags, e);
+        ok = model(&j, app, v->actor, &visual, e);
         break;
     }
     case QA_BUILTIN_Q2_PLAYER_ANIMATION: {

@@ -622,25 +622,12 @@ typedef struct files_state {
     char *qw_name,*qw_home_prefix,*qw_write_child;
     bool qw_changed;
 } files_state;
-static bool saved_text(qa_source_save_io *io,char **value)
-{
-    bool present=*value!=NULL;
-    if (!qa_source_save_bool(io,&present)) return false;
-    if (!present) return true;
-    size_t size=io->direction==QA_SOURCE_SAVE_WRITE?strlen(*value):0;
-    if (!qa_source_save_count(io,&size,io->direction==QA_SOURCE_SAVE_READ?io->input.size-io->offset:SIZE_MAX-1)) return false;
-    if (io->direction==QA_SOURCE_SAVE_READ) {
-        *value=malloc(size+1);
-        if (!*value) return fail(io->error,QA_ERROR_MEMORY,"Restoring Source directory text");
-        (*value)[size]=0;
-    }
-    return qa_source_save_bytes(io,*value,size) && !memchr(*value,0,size);
-}
 static bool source_fields(qa_source_save_io *io,files_state *state)
 {
     return qa_source_save_u64(io,&state->qw_base) && qa_source_save_u64(io,&state->qw_family) &&
         qa_source_save_u32(io,&state->qw_base_product) && qa_source_save_bool(io,&state->qw_changed) &&
-        saved_text(io,&state->qw_name) && saved_text(io,&state->qw_home_prefix) && saved_text(io,&state->qw_write_child) &&
+        qa_source_save_owned_text(io,&state->qw_name) && qa_source_save_owned_text(io,&state->qw_home_prefix) &&
+        qa_source_save_owned_text(io,&state->qw_write_child) &&
         (state->qw_base?state->qw_family && state->qw_base_product && state->qw_name && state->qw_home_prefix:
             !state->qw_family && !state->qw_base_product && !state->qw_name && !state->qw_home_prefix &&
             !state->qw_write_child && !state->qw_changed);
