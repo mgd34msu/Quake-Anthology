@@ -55,8 +55,7 @@ static bool save_fields(qa_source_save_io *io, frontend_ui_seat_features *seat)
             if (!qa_source_save_u32(io,&purpose) || purpose>QA_SAVE_DEMO_KEYFRAME ||
                 !qa_source_save_u64(io,&entry->metadata.elapsed_ns) ||
                 !qa_source_save_u64(io,&entry->metadata.configuration_generation) ||
-                !qa_source_save_u64(io,&entry->metadata.world_generation) ||
-                !qa_source_save_bytes(io,entry->metadata.composition.bytes,sizeof(entry->metadata.composition.bytes))) return false;
+                !qa_source_save_u64(io,&entry->metadata.world_generation)) return false;
             if (reading) entry->metadata.purpose=(qa_save_purpose)purpose;
         } else {
             qa_q1_save_slot_metadata *source=&entry->source;
