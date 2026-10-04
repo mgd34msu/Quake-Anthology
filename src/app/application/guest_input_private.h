@@ -5,26 +5,22 @@
 #include "guest_q3_weapons.h"
 
 typedef struct application_guest_input_profile {
-    uint32_t entity_stride, client_stride, client_pointer;
-    uint32_t client_think, run_client, client_spawn, move, slice, duck;
-    uint32_t locomotion_entry, locomotion_join, movement_global;
-    uint32_t movement_mins, movement_maxs, movement_water;
-    uint32_t movement_trace_callback, movement_trace_mask;
+    const application_q3_weapon_profile *source;
+    uint32_t client_think, run_client, client_spawn;
     int32_t *intermission_modes;
     size_t intermission_count;
     int32_t normal_mode, noclip_mode, freeze_mode;
-    bool input_present, has_modes, has_locomotion, has_duck, has_body_trace;
+    bool input_present, has_modes;
 } application_guest_input_profile;
 
 bool application_guest_input_profile_read(q3g_role *, qa_bytes primary,
                                            application_guest_input_profile *, qa_error *);
 void application_guest_input_profile_free(application_guest_input_profile *);
 
+/* Borrows the role's genuine weapon declaration when it has that owner.
+ * Detach drops this borrow before the role destroys the weapon owner. */
 bool application_guest_input_attach(q3g_role *, qa_bytes primary, qa_error *);
 bool application_guest_input_detach(q3g_role *, qa_error *);
-/* Borrows the role's genuine weapon owner after both declarations qualify.
- * Detach drops this borrow before the role destroys that owner. */
-bool application_guest_input_bind_weapons(q3g_role *, application_q3_weapons *, qa_error *);
 bool application_guest_input_prepare_weapon(void *role, qa_actor_id,
     const qa_qvm_call *, application_q3_weapon_preparation *, qa_error *);
 bool application_guest_input_weapon_completed(void *role, qa_actor_id, bool reached, qa_error *);

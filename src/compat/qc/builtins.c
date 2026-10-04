@@ -1,5 +1,6 @@
 /* Quake pr_cmds.c builtins and compatibility profiles. */
 #include "internal.h"
+#include "qa/text.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -208,12 +209,7 @@ static uint32_t random_word(qa_qc_instance *instance)
 static int32_t builtin_float_int(float value)
 {
     if (!isfinite(value)) return INT32_MIN;
-    double wrapped = fmod(trunc((double)value), 4294967296.0);
-    if (wrapped < 0) wrapped += 4294967296.0;
-    uint32_t bits = (uint32_t)wrapped;
-    int32_t result;
-    memcpy(&result, &bits, sizeof(result));
-    return result;
+    return qa_number_to_i32(value);
 }
 
 static bool var_string(qa_qc_instance *instance, char **out, qa_error *error)

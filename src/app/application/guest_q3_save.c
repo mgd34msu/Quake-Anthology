@@ -710,13 +710,9 @@ static bool client_topology(const q3g_role *role, qa_error *error)
 
 static bool portable_executor(qa_bytes bytes, qa_error *error)
 {
-    if (!bytes.data || bytes.size < 156 || memcmp(bytes.data, "QAVM", 4))
-        return application_fail(error, QA_ERROR_FORMAT, "Q3 continuation has no complete original QVM executor");
-    uint64_t memory = qa_load_u64le(bytes.data + 20), host = qa_load_u64le(bytes.data + 28);
-    if (memory > bytes.size - 156 || host != bytes.size - 156 - (size_t)memory)
-        return application_fail(error, QA_ERROR_FORMAT, "Q3 executor memory/host extents differ");
-    return qa_q3_host_checkpoint_portable_state((qa_bytes){bytes.data + 156 + (size_t)memory, (size_t)host},
-        error);
+    qa_bytes host;
+    return qa_qvm_checkpoint_host(bytes, &host, error) &&
+        qa_q3_host_checkpoint_portable_state(host, error);
 }
 
 static bool collision_fields(qa_source_save_io *io, qa_q3_host_collision_profile *profile)

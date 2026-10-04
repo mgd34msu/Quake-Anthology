@@ -6,11 +6,9 @@ struct application_guest_q3_control {
     q3g_role *role;
     qa_qvm *vm;
     qa_qvm_image *image;
-    uint32_t entity_stride, client_stride, client_pointer;
-    uint32_t client_think, run_client, move, duck, movement_global, mins, maxs, callback, mask;
+    const application_guest_input_profile *profile;
     qa_qvm_binding binding;
     application_guest_q3_control_scope *scope;
-    bool body_trace;
 };
 
 static bool word(const application_guest_q3_control *owner, uint32_t address,
@@ -35,6 +33,7 @@ static bool current(const application_guest_q3_control *owner,
 {
     if (!owner || !scope || owner->role->retired || owner->role->vm != owner->vm ||
         owner->role->image != owner->image ||
+        owner->profile->source != application_q3_weapons_profile(owner->role->weapons) ||
         !qa_actors_get(qa_session_actors(owner->role->engine->provider->application->session), scope->actor))
         return false;
     qa_actor_id actor; qa_q3_host_game_data data;
@@ -49,8 +48,8 @@ static bool current(const application_guest_q3_control *owner,
     if (!live) return false;
     uint64_t entity = data.entities_address + (uint64_t)scope->slot * data.entity_stride;
     uint32_t player, movement_player;
-    return entity <= UINT32_MAX - owner->client_pointer &&
-        word(owner, (uint32_t)entity + owner->client_pointer, &player, NULL) && player == scope->player &&
+    return entity <= UINT32_MAX - owner->profile->source->client_pointer &&
+        word(owner, (uint32_t)entity + owner->profile->source->client_pointer, &player, NULL) && player == scope->player &&
         word(owner, scope->movement, &movement_player, NULL) && movement_player == scope->player;
 }
 
@@ -97,8 +96,8 @@ static bool write_bounds(application_guest_q3_control *owner,
     application_guest_q3_control_scope *scope, const qa_qvm_call *call,
     qa_bounds value, qa_error *error)
 {
-    return write_vector(owner, scope, call, scope->movement + owner->mins, value.mins, error) &&
-        write_vector(owner, scope, call, scope->movement + owner->maxs, value.maxs, error);
+    return write_vector(owner, scope, call, scope->movement + owner->profile->source->movement_mins, value.mins, error) &&
+        write_vector(owner, scope, call, scope->movement + owner->profile->source->movement_maxs, value.maxs, error);
 }
 
 typedef struct body_trace {
@@ -145,8 +144,8 @@ static bool perform_trace(void *context, const qa_qvm_call *call, uint32_t at,
         !write_vector(owner, scope, call, at + 80, trace->requested.maxs, error)) return false;
     if (scope->cancelled || !retain_current(owner, scope)) return true;
     uint32_t pointer, mask, client;
-    if (!word(owner, scope->movement + owner->callback, &pointer, error) ||
-        !word(owner, scope->movement + owner->mask, &mask, error) ||
+    if (!word(owner, scope->movement + owner->profile->source->movement_trace_callback, &pointer, error) ||
+        !word(owner, scope->movement + owner->profile->source->movement_trace_mask, &mask, error) ||
         !word(owner, scope->player + 140, &client, error)) return false;
     int32_t callback, mask_word, client_word;
     memcpy(&callback, &pointer, 4); memcpy(&mask_word, &mask, 4); memcpy(&client_word, &client, 4);
@@ -170,7 +169,7 @@ static bool duck(void *context, const qa_qvm_call *call, int32_t *result, qa_err
     if (scope->cancelled) { *result = 0; return true; }
     if (!retain_current(owner, scope)) { *result = 0; return qa_qvm_cancel(scope->client_call, error); }
     uint32_t movement;
-    if (!word(owner, owner->movement_global, &movement, error)) return false;
+    if (!word(owner, owner->profile->source->movement_global, &movement, error)) return false;
     if (movement != scope->movement) return qa_qvm_proceed(call, result, error);
     bool ok;
     if (scope->fixed_pose) {
@@ -184,10 +183,10 @@ static bool duck(void *context, const qa_qvm_call *call, int32_t *result, qa_err
             write_bounds(owner, scope, call, scope->pose.bounds, error);
         if (ok) *result = 0;
     } else {
-        if (scope->requested && !owner->body_trace)
+        if (scope->requested && !owner->profile->source->body_trace)
             return application_fail(error, QA_ERROR_UNSUPPORTED,
                 "Original requested body bounds require their declared source trace");
-        if (!owner->body_trace) return qa_qvm_proceed(call, result, error);
+        if (!owner->profile->source->body_trace) return qa_qvm_proceed(call, result, error);
         body_trace trace = {.owner = owner, .scope = scope, .call = call};
         uint32_t flags;
         if (!word(owner, scope->player + 12, &flags, error) ||
@@ -197,8 +196,8 @@ static bool duck(void *context, const qa_qvm_call *call, int32_t *result, qa_err
         if (ok) ok = observe_cancel(call, scope, error);
         if (ok && !scope->cancelled && retain_current(owner, scope)) {
             if (scope->requested) trace.requested = scope->requested_bounds;
-            else ok = vector(owner, scope->movement + owner->mins, &trace.requested.mins, error) &&
-                vector(owner, scope->movement + owner->maxs, &trace.requested.maxs, error);
+            else ok = vector(owner, scope->movement + owner->profile->source->movement_mins, &trace.requested.mins, error) &&
+                vector(owner, scope->movement + owner->profile->source->movement_maxs, &trace.requested.maxs, error);
             trace.previous = scope->accepted ? scope->accepted_bounds : scope->current_bounds;
             bool expands = trace.requested.mins.x < trace.previous.mins.x ||
                 trace.requested.mins.y < trace.previous.mins.y || trace.requested.mins.z < trace.previous.mins.z ||
@@ -221,25 +220,20 @@ bool application_guest_q3_control_attach(q3g_role *role, const application_guest
 {
     if (!role || !profile || !out || *out || role->kind != QA_QVM_GAME)
         return application_fail(error, QA_ERROR_ARGUMENT, "Original body control requires an unattached GAME owner");
-    if (!profile->has_duck) return true;
-    if (!profile->input_present || !profile->has_duck || !profile->has_locomotion ||
+    if (!profile->source || !profile->source->present) return true;
+    if (!profile->input_present || profile->source != application_q3_weapons_profile(role->weapons) ||
         !role->vm || !role->image || role->retired || qa_qvm_get_role(role->vm) != QA_QVM_GAME ||
         qa_qvm_get_abi(role->vm) != role->abi ||
         !qa_sha256_equal(qa_qvm_digest(role->vm), qa_qvm_image_digest(role->image)))
         return application_fail(error, QA_ERROR_FORMAT, "Original body control has no admitted QVM movement declaration");
     uint32_t scratch;
-    if (profile->has_body_trace &&
+    if (profile->source->body_trace &&
         !qa_qvm_source_scratch_qualify(role->image, 92, &scratch, error)) return false;
     application_guest_q3_control *owner = calloc(1, sizeof(*owner));
     if (!owner) return application_fail(error, QA_ERROR_MEMORY, "Allocating original body control owner");
-    *owner = (application_guest_q3_control){.role = role, .vm = role->vm, .image = role->image,
-        .entity_stride = profile->entity_stride, .client_stride = profile->client_stride,
-        .client_pointer = profile->client_pointer, .client_think = profile->client_think,
-        .run_client = profile->run_client, .move = profile->move, .duck = profile->duck,
-        .movement_global = profile->movement_global, .mins = profile->movement_mins,
-        .maxs = profile->movement_maxs, .callback = profile->movement_trace_callback,
-        .mask = profile->movement_trace_mask, .body_trace = profile->has_body_trace};
-    if (!qa_qvm_bind_function(owner->vm, owner->duck, true, duck, owner, &owner->binding, error)) {
+    *owner = (application_guest_q3_control){.role = role, .vm = role->vm,
+        .image = role->image, .profile = profile};
+    if (!qa_qvm_bind_function(owner->vm, owner->profile->source->movement_duck, true, duck, owner, &owner->binding, error)) {
         free(owner); return false;
     }
     *out = owner; return true;
@@ -257,13 +251,14 @@ bool application_guest_q3_control_detach(application_guest_q3_control **address,
 
 bool application_guest_q3_control_supports_body(const application_guest_q3_control *owner)
 {
-    return owner && owner->body_trace && application_guest_q3_control_supports_pose(owner);
+    return owner && owner->profile->source->body_trace && application_guest_q3_control_supports_pose(owner);
 }
 
 bool application_guest_q3_control_supports_pose(const application_guest_q3_control *owner)
 {
     return owner && owner->binding && !owner->role->retired &&
-        owner->role->vm == owner->vm && owner->role->image == owner->image;
+        owner->role->vm == owner->vm && owner->role->image == owner->image &&
+        owner->profile->source == application_q3_weapons_profile(owner->role->weapons);
 }
 
 qa_qvm_binding application_guest_q3_control_binding(const application_guest_q3_control *owner)
@@ -276,7 +271,7 @@ bool application_guest_q3_control_descriptor(const application_guest_q3_control 
 {
     if (!out || (owner && (owner->scope || !application_guest_q3_control_supports_pose(owner))))
         return application_fail(error, QA_ERROR_ARGUMENT, "Original body control descriptor requires its idle admitted owner");
-    *out = owner ? (qa_qvm_saved_function){owner->binding, owner->duck, true, duck, (void *)owner}
+    *out = owner ? (qa_qvm_saved_function){owner->binding, owner->profile->source->movement_duck, true, duck, (void *)owner}
                  : (qa_qvm_saved_function){0};
     return true;
 }
@@ -297,8 +292,8 @@ bool application_guest_q3_control_begin(application_guest_q3_control *owner, con
     if (!owner) return true;
     if (!application_guest_q3_control_supports_pose(owner) || !call || call->vm != owner->vm ||
         !client || client->vm != owner->vm ||
-        (client->instruction != owner->client_think && client->instruction != owner->run_client) ||
-        call->instruction != owner->move || !movement || (movement & 3u) || player > INT32_MAX)
+        (client->instruction != owner->profile->client_think && client->instruction != owner->profile->run_client) ||
+        call->instruction != owner->profile->source->movement_move || !movement || (movement & 3u) || player > INT32_MAX)
         return application_fail(error, QA_ERROR_ARGUMENT, "Original body scope has no genuine source move");
     int32_t argument;
     if (!qa_qvm_call_argument(call, 0, &argument, error)) return false;
@@ -306,21 +301,21 @@ bool application_guest_q3_control_begin(application_guest_q3_control *owner, con
     if (scope->cancelled) return true;
     if ((uint32_t)argument != movement || !qa_q3_host_game_data_read(owner->role->host, &scope->data) ||
         slot >= scope->data.client_count || slot >= scope->data.entity_count ||
-        scope->data.entity_stride != owner->entity_stride || scope->data.client_stride != owner->client_stride ||
-        scope->data.clients_address + (uint64_t)slot * owner->client_stride != player)
+        scope->data.entity_stride != owner->profile->source->entity_stride || scope->data.client_stride != owner->profile->source->client_stride ||
+        scope->data.clients_address + (uint64_t)slot * owner->profile->source->client_stride != player)
         return application_fail(error, QA_ERROR_FORMAT, "Original body scope differs from its located source client");
-    uint64_t entity = scope->data.entities_address + (uint64_t)slot * owner->entity_stride;
+    uint64_t entity = scope->data.entities_address + (uint64_t)slot * owner->profile->source->entity_stride;
     uint32_t pointer;
-    if (entity > UINT32_MAX - owner->client_pointer)
+    if (entity > UINT32_MAX - owner->profile->source->client_pointer)
         return application_fail(error, QA_ERROR_FORMAT, "Original body source entity leaves QVM memory");
-    if (!word(owner, (uint32_t)entity + owner->client_pointer, &pointer, error)) return false;
+    if (!word(owner, (uint32_t)entity + owner->profile->source->client_pointer, &pointer, error)) return false;
     if (pointer != player)
         return application_fail(error, QA_ERROR_FORMAT, "Original body scope does not own its source player pointer");
     if (!word(owner, movement, &pointer, error)) return false;
     if (pointer != player)
         return application_fail(error, QA_ERROR_FORMAT, "Original body scope does not own its source player pointer");
-    const uint32_t offsets[] = {owner->mins, owner->maxs, owner->callback, owner->mask};
-    size_t offset_count = owner->body_trace ? sizeof(offsets) / sizeof(offsets[0]) : 2;
+    const uint32_t offsets[] = {owner->profile->source->movement_mins, owner->profile->source->movement_maxs, owner->profile->source->movement_trace_callback, owner->profile->source->movement_trace_mask};
+    size_t offset_count = owner->profile->source->body_trace ? sizeof(offsets) / sizeof(offsets[0]) : 2;
     for (size_t i = 0; i < offset_count; ++i)
         if ((uint64_t)movement + offsets[i] + (i < 2 ? 12u : 4u) > qa_qvm_memory_size(owner->vm))
             return application_fail(error, QA_ERROR_FORMAT, "Original body scope leaves its source movement record");

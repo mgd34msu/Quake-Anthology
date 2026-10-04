@@ -610,7 +610,6 @@ static bool role_create(struct application_q3_guest *engine, qa_qvm_role kind,
         if (role->artifact->items_resource && !qa_resource_bytes(role->artifact->items_resource).size) {
             application_fail(error, QA_ERROR_FORMAT, "Restored Q3 item declaration is empty"); goto failed;
         }
-        if (!application_guest_input_attach(role, primary_bytes, error)) goto failed;
         if (!application_q3_catalog_create(role->image, role->vm, role->abi,
             qa_session_strings(provider->application->session), primary_bytes,
             qa_resource_bytes(role->artifact->items_resource), false, &role->catalog, error)) goto failed;
@@ -627,12 +626,12 @@ static bool role_create(struct application_q3_guest *engine, qa_qvm_role kind,
                 application_q3_weapon_profile_free(&weapons); goto failed;
             }
             application_q3_weapon_services services = application_q3_weapons_services_callbacks(role->weapon_services);
-            if (!application_q3_weapons_create(role, &weapons, &services, &role->weapons, error) ||
-                !application_guest_input_bind_weapons(role, role->weapons, error)) {
+            if (!application_q3_weapons_create(role, &weapons, &services, &role->weapons, error)) {
                 application_q3_weapon_profile_free(&weapons); goto failed;
             }
-            if (!engine->restore_pending && !q3g_role_catalog_refresh(role, error)) goto failed;
         } else application_q3_weapon_profile_free(&weapons);
+        if (!application_guest_input_attach(role, primary_bytes, error)) goto failed;
+        if (role->weapons && !engine->restore_pending && !q3g_role_catalog_refresh(role, error)) goto failed;
         if (role->artifact->combat_profile && !application_q3_combat_create(role,
             role->artifact->combat_profile, &role->combat, error)) goto failed;
         if (!application_q3_pickup_profile_read(role, primary_bytes, &role->pickup_profile, error)) goto failed;

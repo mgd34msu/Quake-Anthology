@@ -61,6 +61,11 @@ typedef struct qc_inline_boundary {
     bool active, used, completed, skip;
 } qc_inline_boundary;
 
+typedef struct qc_name_index {
+    qa_strings *names;
+    uint32_t *ordinals;
+} qc_name_index;
+
 struct qa_qc_program {
     char *source;
     qa_qc_program_info info;
@@ -69,6 +74,7 @@ struct qa_qc_program {
     qa_qc_function *functions;
     uint8_t *strings, *initial_globals;
     uint32_t string_bytes;
+    qc_name_index names[3];
 };
 
 struct qa_qc_instance {

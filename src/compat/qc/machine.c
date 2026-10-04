@@ -1,5 +1,6 @@
 /* Quake pr_exec.c bytecode execution. */
 #include "internal.h"
+#include "qa/text.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -79,13 +80,7 @@ static bool write_vector(qa_qc_instance *instance, uint32_t word,
 static int32_t float_int(float value)
 {
     if (!isfinite(value)) return INT32_MIN;
-    double integer = trunc((double)value);
-    double wrapped = fmod(integer, 4294967296.0);
-    if (wrapped < 0.0) wrapped += 4294967296.0;
-    uint32_t bits = (uint32_t)wrapped;
-    int32_t result;
-    memcpy(&result, &bits, sizeof(result));
-    return result;
+    return qa_number_to_i32(value);
 }
 
 static int byte_compare(const char *left, const char *right)

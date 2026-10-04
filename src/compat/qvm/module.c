@@ -6,6 +6,20 @@
 
 #define CHECKPOINT_HEADER 156u
 
+bool qa_qvm_checkpoint_host(qa_bytes state, qa_bytes *out, qa_error *error)
+{
+    if (!out)
+        return qa_qvm_error(error, QA_ERROR_ARGUMENT, 0, "missing QVM host checkpoint view");
+    if (!state.data || state.size < CHECKPOINT_HEADER || memcmp(state.data, "QAVM", 4))
+        return qa_qvm_error(error, QA_ERROR_FORMAT, 0, "QVM checkpoint envelope mismatch");
+    uint64_t memory = qa_load_u64le(state.data + 20);
+    size_t payload = state.size - CHECKPOINT_HEADER;
+    if (memory > payload || qa_load_u64le(state.data + 28) != payload - (size_t)memory)
+        return qa_qvm_error(error, QA_ERROR_FORMAT, 0, "QVM checkpoint extent mismatch");
+    *out = (qa_bytes){state.data + CHECKPOINT_HEADER + (size_t)memory, payload - (size_t)memory};
+    return true;
+}
+
 static bool safe_point(const qa_qvm *vm, qa_error *error)
 {
     if (!qa_qvm_live(vm,error) || vm->publication_depth) return false;
@@ -173,6 +187,7 @@ bool qa_qvm_checkpoint(qa_qvm *vm, qa_buffer *out, qa_error *error)
 typedef struct saved_execution {
     uint32_t api;
     uint64_t watch, counters[3];
+    qa_bytes host;
 } saved_execution;
 
 static bool restore_envelope(qa_qvm *vm, qa_bytes state, bool candidate,
@@ -180,13 +195,12 @@ static bool restore_envelope(qa_qvm *vm, qa_bytes state, bool candidate,
 {
     if (vm->options.restore == NULL)
         return qa_qvm_error(error,QA_ERROR_UNSUPPORTED,0,"QVM host has not bound restore services");
-    if (state.data == NULL || state.size < CHECKPOINT_HEADER || memcmp(state.data,"QAVM",4) != 0
-        || qa_load_u32le(state.data + 4) != (uint32_t)vm->options.role
+    qa_bytes host;
+    if (!qa_qvm_checkpoint_host(state, &host, error)) return false;
+    if (qa_load_u32le(state.data + 4) != (uint32_t)vm->options.role
         || qa_load_u32le(state.data + 8) != (uint32_t)vm->options.abi
         || qa_load_u32le(state.data + 12) != (uint32_t)vm->options.semantics
         || qa_load_u64le(state.data + 20) != vm->data_size
-        || vm->data_size > state.size - CHECKPOINT_HEADER
-        || qa_load_u64le(state.data + 28) != state.size - CHECKPOINT_HEADER - vm->data_size
         || memcmp(state.data + 44,vm->image->digest.bytes,32) != 0
         || qa_load_u64le(state.data + 108) != vm->options.instruction_limit
         || qa_load_u32le(state.data + 116) != (uint32_t)vm->options.debug
@@ -207,7 +221,7 @@ static bool restore_envelope(qa_qvm *vm, qa_bytes state, bool candidate,
         (candidate && (vm->write_sequence || saved_watch < vm->next_watch)))
         return qa_qvm_error(error,QA_ERROR_FORMAT,16,"QVM source API or candidate execution generation differs");
     if (!qa_qvm_execution_checkpoint_ready(vm,execution,candidate,error)) return false;
-    *out = (saved_execution){api, saved_watch, {execution[0], execution[1], execution[2]}};
+    *out = (saved_execution){api, saved_watch, {execution[0], execution[1], execution[2]}, host};
     return true;
 }
 
@@ -265,7 +279,7 @@ static bool restore(qa_qvm *vm, qa_bytes state, bool candidate, qa_error *error)
     if (candidate || source.watch > vm->next_watch) vm->next_watch = source.watch;
     vm->api_version = source.api;
     qa_qvm_execution_restore(vm,source.counters,candidate);
-    qa_bytes host = {state.data + CHECKPOINT_HEADER + vm->data_size,state.size - CHECKPOINT_HEADER - vm->data_size};
+    qa_bytes host = source.host;
     ++vm->lifecycle_depth;
     bool restored = vm->options.restore(vm->options.context,host,error);
     --vm->lifecycle_depth;

@@ -1,5 +1,6 @@
 /* External QuakeC instance and shared-authority host bindings. */
 #include "internal.h"
+#include "qa/text.h"
 
 #include <math.h>
 
@@ -1361,12 +1362,7 @@ static int reference_order(const void *left, const void *right)
 static int32_t source_float_int(float value)
 {
     if (!isfinite(value)) return INT32_MIN;
-    double wrapped = fmod(trunc((double)value), 4294967296.0);
-    if (wrapped < 0.0) wrapped += 4294967296.0;
-    uint32_t bits = (uint32_t)wrapped;
-    int32_t result;
-    memcpy(&result, &bits, sizeof(result));
-    return result;
+    return qa_number_to_i32(value);
 }
 
 static bool findradius(qa_qc_instance *instance, qa_error *error)

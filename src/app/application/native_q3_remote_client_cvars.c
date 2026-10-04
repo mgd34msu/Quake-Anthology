@@ -3,119 +3,73 @@
 #include <stdlib.h>
 #include <string.h>
 
-static bool enabled(const qa_native_q3_remote_client_service *service, size_t index)
-{ return !native_client_definitions[index].missionpack || service->services.basis.product == QA_Q3_TEAM_ARENA; }
 static bool enter(qa_native_q3_remote_client_service *service, qa_error *error)
 {
     if (!qa_native_q3_remote_client_current(service) || service->updating || service->cache_revision == UINT64_MAX)
         return native_client_fail(error, QA_ERROR_ARGUMENT, "Remote CGAME cache stage requires its idle actual service");
     service->updating = true; ++service->cache_revision; return true;
 }
+static bool current(void *context)
+{ return qa_native_q3_remote_client_current(context); }
+static bool configstring(void *context, uint32_t index, const char **text, qa_error *error)
+{
+    qa_native_q3_remote_client_service *service = context;
+    const qa_q3_gamestate *state = service->services.network.gamestate(service->services.network.context);
+    if (!state || !qa_native_q3_remote_client_current(service))
+        return native_client_fail(error, QA_ERROR_ARGUMENT, "Remote force-model reload lost its reached gamestate");
+    *text = qa_q3_configstring(state, index); return true;
+}
+static bool reload_client_info(void *context, uint32_t slot, const char *text, qa_error *error)
+{
+    qa_native_q3_remote_client_service *service = context;
+    return service->services.reload_client_info(service->services.context, slot, text, error);
+}
+static native_client_cache_access cache_access(qa_native_q3_remote_client_service *service)
+{
+    return (native_client_cache_access){.context = service, .current = current,
+        .configstring = configstring, .reload_client_info = reload_client_info,
+        .registry = service->services.basis.client.cvars, .owner = service->services.basis.client.service_owner,
+        .product = service->services.basis.product, .cache = service->cache, .count = native_client_definition_count,
+        .oversized_error = "Remote Cvar_Update exceeds MAX_CVAR_VALUE_STRING",
+        .reload_memory_error = "Retaining reached remote player configstring"};
+}
 bool qa_native_q3_remote_client_register(qa_native_q3_remote_client_service *service, qa_error *error)
 {
     if (!enter(service, error)) return false;
-    bool ok = true; qa_cvars *registry = service->services.basis.client.cvars;
-    uint64_t owner = service->services.basis.client.service_owner;
-    for (size_t i = 0; ok && i < native_client_definition_count; ++i) if (enabled(service, i)) {
-        const native_client_definition *definition = &native_client_definitions[i];
-        const char *reset = !strcmp(definition->symbol, "cg_deferPlayers") && service->services.basis.product == QA_Q3_TEAM_ARENA ? "0" : definition->value;
-        ok = qa_cvars_register(registry, definition->name, reset, definition->flags, owner, "Native remote Q3 CGAME", error) &&
-            qa_native_q3_remote_client_current(service);
-        const qa_cvar_view *value = ok ? qa_cvars_find(registry, definition->name) : NULL;
-        if (ok) ok = value && application_q3_client_cache_copy(&service->cache[i], value, true, "Remote Cvar_Update exceeds MAX_CVAR_VALUE_STRING", error);
-    }
-    const qa_cvar_view *running = ok ? qa_cvars_find(registry, "sv_running") : NULL;
-    if (ok) {
-        service->local_server = running ? running->integer : 0;
-        service->force_model_count = service->cache[native_remote_client_symbol(service, "cg_forceModel")].modification_count;
-        const char *team_model = service->services.basis.product == QA_Q3_TEAM_ARENA ? "james" : "sarge";
-        const char *team_head = service->services.basis.product == QA_Q3_TEAM_ARENA ? "*james" : "sarge";
-        ok = qa_cvars_register(registry, "model", "sarge", QA_CVAR_USERINFO | QA_CVAR_ARCHIVE, owner, "Q3 body model", error) &&
-            qa_cvars_register(registry, "headmodel", "sarge", QA_CVAR_USERINFO | QA_CVAR_ARCHIVE, owner, "Q3 head model", error) &&
-            qa_cvars_register(registry, "team_model", team_model, QA_CVAR_USERINFO | QA_CVAR_ARCHIVE, owner, "Q3 team model", error) &&
-            qa_cvars_register(registry, "team_headmodel", team_head, QA_CVAR_USERINFO | QA_CVAR_ARCHIVE, owner, "Q3 team head", error) &&
-            qa_native_q3_remote_client_current(service);
-    }
+    native_client_cache_access access = cache_access(service);
+    bool ok = native_client_cache_register(&access, "Native remote Q3 CGAME", &service->local_server,
+        &service->force_model_count, error);
     if (ok) service->registered = true;
     service->updating = false; return ok;
 }
-bool qa_native_q3_remote_client_userinfo_initialize(qa_native_q3_remote_client_service *service, const char *name, qa_error *error)
+bool qa_native_q3_remote_client_userinfo_initialize(qa_native_q3_remote_client_service *service,
+    const char *name, qa_error *error)
 {
     if (!name || !service || service->registered || service->updating || !qa_native_q3_remote_client_current(service))
         return native_client_fail(error, QA_ERROR_ARGUMENT, "Remote userinfo requires its real pre-registration CLIENT");
-    static const struct { const char *name, *value; uint32_t flags; } definitions[] = {
-        {"cl_timeNudge","0",QA_CVAR_TEMPORARY}, {"rate","25000",QA_CVAR_ARCHIVE | QA_CVAR_USERINFO},
-        {"cl_maxpackets","30",QA_CVAR_ARCHIVE}, {"cl_packetdup","1",QA_CVAR_ARCHIVE}, {"snaps","20",QA_CVAR_ARCHIVE | QA_CVAR_USERINFO},
-        {"color1","4",QA_CVAR_ARCHIVE | QA_CVAR_USERINFO}, {"color2","5",QA_CVAR_ARCHIVE | QA_CVAR_USERINFO},
-        {"sex","male",QA_CVAR_ARCHIVE | QA_CVAR_USERINFO}, {"cl_anonymous","0",QA_CVAR_ARCHIVE | QA_CVAR_USERINFO},
-        {"cg_predictItems","1",QA_CVAR_ARCHIVE | QA_CVAR_USERINFO}, {"teamtask","0",QA_CVAR_USERINFO}, {"password","",QA_CVAR_USERINFO},
-        {"handicap","100",QA_CVAR_ARCHIVE | QA_CVAR_USERINFO}, {"cl_maxPing","800",QA_CVAR_ARCHIVE},
-        {"cl_serverStatusResendTime","750",0}, {"sv_master1","master.quake3arena.com",0}
-    };
-    service->updating = true; bool ok = true;
-    qa_cvars *registry = service->services.basis.client.cvars; uint64_t owner = service->services.basis.client.service_owner;
-    for (size_t i = 0; ok && i < 5; ++i) ok = qa_cvars_register(registry, definitions[i].name, definitions[i].value,
-        definitions[i].flags, owner, "Native remote seat userinfo", error) && qa_native_q3_remote_client_current(service);
-    if (ok) ok = qa_cvars_register(registry, "name", name, QA_CVAR_ARCHIVE | QA_CVAR_USERINFO, owner, "Native remote seat identity", error) &&
-        qa_native_q3_remote_client_current(service);
-    const char *names[] = {"model", "headmodel", "team_model", "team_headmodel"};
-    for (size_t i = 0; ok && i < 4; ++i) {
-        const char *model = i % 2 && *service->character.head_model ? service->character.head_model : service->character.model;
-        const char *skin = i % 2 ? service->character.head_skin : service->character.skin;
-        size_t a = strlen(model), b = strlen(skin);
-        if (a > SIZE_MAX - b - 2) { ok = native_client_fail(error, QA_ERROR_MEMORY, "Remote CHARACTER declaration exceeds capacity"); break; }
-        char *value = malloc(a + b + 2);
-        if (!value) { ok = native_client_fail(error, QA_ERROR_MEMORY, "Formatting actual remote CHARACTER userinfo"); break; }
-        memcpy(value, model, a); value[a] = '/'; memcpy(value + a + 1, skin, b + 1);
-        ok = qa_cvars_register(registry, names[i], value, QA_CVAR_ARCHIVE | QA_CVAR_USERINFO, owner, "Selected remote CHARACTER", error) &&
-            qa_native_q3_remote_client_current(service); free(value);
-    }
-    for (size_t i = 5; ok && i < sizeof(definitions) / sizeof(*definitions); ++i)
-        ok = qa_cvars_register(registry, definitions[i].name, definitions[i].value, definitions[i].flags, owner,
-            "Native remote seat userinfo", error) && qa_native_q3_remote_client_current(service);
+    native_client_cache_access access = cache_access(service);
+    const native_client_userinfo_text description = {"Native remote seat userinfo", "Native remote seat identity",
+        "Selected remote CHARACTER", "Remote CHARACTER declaration exceeds capacity",
+        "Formatting actual remote CHARACTER userinfo"};
+    service->updating = true;
+    bool ok = native_client_cache_userinfo(&access, &service->character, name, &description, error);
     service->updating = false; return ok;
-}
-static bool reload(qa_native_q3_remote_client_service *service, qa_error *error)
-{
-    for (uint32_t slot = 0; slot < 64; ++slot) {
-        const qa_q3_gamestate *state = service->services.network.gamestate(service->services.network.context);
-        if (!state || !qa_native_q3_remote_client_current(service))
-            return native_client_fail(error, QA_ERROR_ARGUMENT, "Remote force-model reload lost its reached gamestate");
-        const char *text = qa_q3_configstring(state, 544 + slot); size_t length = strlen(text);
-        if (!length) continue;
-        char *retained = malloc(length + 1);
-        if (!retained) return native_client_fail(error, QA_ERROR_MEMORY, "Retaining reached remote player configstring");
-        memcpy(retained, text, length + 1);
-        bool ok = service->services.reload_client_info(service->services.context, slot, retained, error) &&
-            qa_native_q3_remote_client_current(service); free(retained); if (!ok) return false;
-    }
-    return true;
 }
 bool qa_native_q3_remote_client_force_model_change(qa_native_q3_remote_client_service *service, qa_error *error)
 {
     if (!service || !service->registered || service->updating || !qa_native_q3_remote_client_current(service))
         return native_client_fail(error, QA_ERROR_ARGUMENT, "Remote force-model refresh lost its registered CLIENT");
-    service->updating = true; bool ok = reload(service, error); service->updating = false; return ok;
+    native_client_cache_access access = cache_access(service);
+    service->updating = true;
+    bool ok = native_client_cache_reload(&access, error);
+    service->updating = false; return ok;
 }
 bool qa_native_q3_remote_client_update(qa_native_q3_remote_client_service *service, qa_error *error)
 {
     if (!service || !service->registered || !enter(service, error)) return false;
-    bool ok = true;
-    for (size_t i = 0; ok && i < native_client_definition_count; ++i) if (enabled(service, i)) {
-        const qa_cvar_view *value = qa_cvars_find(service->services.basis.client.cvars, native_client_definitions[i].name);
-        if (value) ok = application_q3_client_cache_copy(&service->cache[i], value, false, "Remote Cvar_Update exceeds MAX_CVAR_VALUE_STRING", error);
-    }
-    qa_native_q3_client_cvar *overlay = &service->cache[native_remote_client_symbol(service, "cg_drawTeamOverlay")];
-    if (ok && (service->overlay_initial || service->overlay_count != overlay->modification_count)) {
-        service->overlay_initial = false; service->overlay_count = overlay->modification_count;
-        ok = qa_cvars_set(service->services.basis.client.cvars, "teamoverlay", overlay->integer > 0 ? "1" : "0", true, error) &&
-            qa_native_q3_remote_client_current(service) &&
-            qa_cvars_set(service->services.basis.client.cvars, "teamoverlay", "1", true, error) && qa_native_q3_remote_client_current(service);
-    }
-    qa_native_q3_client_cvar *force = &service->cache[native_remote_client_symbol(service, "cg_forceModel")];
-    if (ok && service->force_model_count != force->modification_count) {
-        service->force_model_count = force->modification_count; ok = reload(service, error);
-    }
+    native_client_cache_access access = cache_access(service);
+    bool ok = native_client_cache_update(&access, &service->overlay_initial,
+        &service->overlay_count, &service->force_model_count, error);
     service->updating = false; return ok;
 }
 static bool same_name(const char *a, const char *b)

@@ -60,7 +60,7 @@ static bool record_current(application_guest_input *input, const guest_client_sc
         data.entity_stride == scope->data.entity_stride && data.client_stride == scope->data.client_stride &&
         scope->slot < data.entity_count && scope->slot < data.client_count)) return false;
     uint8_t bytes[4];
-    uint64_t address = data.entities_address + (uint64_t)scope->slot * data.entity_stride + input->profile.client_pointer;
+    uint64_t address = data.entities_address + (uint64_t)scope->slot * data.entity_stride + input->profile.source->client_pointer;
     if (address > UINT32_MAX || !qa_qvm_read(input->role->vm, (uint32_t)address, bytes, sizeof(bytes), NULL) ||
         qa_load_u32le(bytes) != scope->player) return false;
     return !scope->movement || (qa_qvm_read(input->role->vm, scope->movement, bytes, sizeof(bytes), NULL) &&
@@ -88,15 +88,15 @@ static bool slot_player(application_guest_input *input, uint32_t slot,
     qa_q3_host_game_data data;
     if (!qa_q3_host_game_data_read(input->role->host, &data) || slot >= data.client_count)
         return true;
-    if (data.entity_stride != input->profile.entity_stride ||
-        data.client_stride != input->profile.client_stride)
+    if (data.entity_stride != input->profile.source->entity_stride ||
+        data.client_stride != input->profile.source->client_stride)
         return application_fail(error, QA_ERROR_FORMAT, "Guest input records changed their qualified layout");
     uint64_t entity = data.entities_address + (uint64_t)slot * data.entity_stride;
     uint64_t player = data.clients_address + (uint64_t)slot * data.client_stride;
-    if (entity > UINT32_MAX - input->profile.client_pointer || player > INT32_MAX)
+    if (entity > UINT32_MAX - input->profile.source->client_pointer || player > INT32_MAX)
         return application_fail(error, QA_ERROR_FORMAT, "Guest input pointer leaves QVM memory");
     uint32_t pointer;
-    if (!source_word(input, (uint32_t)entity + input->profile.client_pointer, &pointer, error)) return false;
+    if (!source_word(input, (uint32_t)entity + input->profile.source->client_pointer, &pointer, error)) return false;
     if (pointer != player)
         return application_fail(error, QA_ERROR_FORMAT, "Guest client does not own its located player record");
     qa_actor_id actor;
@@ -176,7 +176,7 @@ static bool replace_locomotion(void *context, const qa_qvm_call *call, bool *ski
     if (!current(input, scope, call)) return cancel_client(call, scope->call, error);
     if (scope->equipment_active && scope->equipment.fixed_pose) {
         uint32_t movement;
-        if (!source_word(input, input->profile.movement_global, &movement, error)) return false;
+        if (!source_word(input, input->profile.source->movement_global, &movement, error)) return false;
         if (movement == scope->movement) {
             uint32_t axes = input->role->abi == QA_QVM_Q3_116N ? 20u : 21u;
             uint8_t zero[12] = {0};
@@ -312,14 +312,14 @@ static bool replace_locomotion(void *context, const qa_qvm_call *call, bool *ski
                             body.bounds.maxs.x, body.bounds.maxs.y, body.bounds.maxs.z};
     for (size_t i = 0; i < 6; ++i) {
         uint32_t bits; memcpy(&bits, &bounds[i], sizeof(bits)); uint8_t bytes[4]; qa_store_u32le(bytes, bits);
-        uint32_t offset = i < 3 ? input->profile.movement_mins + (uint32_t)i * 4
-                               : input->profile.movement_maxs + (uint32_t)(i - 3) * 4;
+        uint32_t offset = i < 3 ? input->profile.source->movement_mins + (uint32_t)i * 4
+                               : input->profile.source->movement_maxs + (uint32_t)(i - 3) * 4;
         if (!qa_qvm_write(input->role->vm, scope->movement + offset, (qa_bytes){bytes, 4}, error)) return false;
         if (!current(input, scope, call)) return cancel_client(call, scope->call, error);
     }
     uint8_t water[8]; qa_store_u32le(water, (uint32_t)control.water_level);
     qa_store_u32le(water + 4, (uint32_t)control.water_type);
-    if (!qa_qvm_write(input->role->vm, scope->movement + input->profile.movement_water,
+    if (!qa_qvm_write(input->role->vm, scope->movement + input->profile.source->water_movement,
                        (qa_bytes){water, sizeof(water)}, error)) return false;
     if (!current(input, scope, call)) return cancel_client(call, scope->call, error);
     *skip = true; return true;
@@ -440,7 +440,7 @@ bool application_guest_input_prepare_weapon(void *context, qa_actor_id actor,
         !qa_actor_id_equal(scope->actor, actor)) return true;
     if (!current(input, scope, call)) return cancel_client(call, scope->call, error);
     uint32_t movement;
-    if (!source_word(input, input->profile.movement_global, &movement, error)) return false;
+    if (!source_word(input, input->profile.source->movement_global, &movement, error)) return false;
     if (movement != scope->movement) return true;
     guest_weapon_preparation *prepared = calloc(1, sizeof(*prepared));
     if (!prepared) return application_fail(error, QA_ERROR_MEMORY, "Allocating original holdable input scope");
@@ -523,8 +523,8 @@ static bool source_move(void *context, const qa_qvm_call *call, int32_t *result,
     bool previous_weapon_slice = scope->weapon_slice, previous_weapon_reached = scope->weapon_reached;
     scope->movement = (uint32_t)movement;
     uint64_t end = (uint64_t)scope->movement + 28;
-    const uint32_t offsets[] = {input->profile.movement_mins, input->profile.movement_maxs,
-                               input->profile.movement_water};
+    const uint32_t offsets[] = {input->profile.source->movement_mins, input->profile.source->movement_maxs,
+                               input->profile.source->water_movement};
     for (size_t i = 0; i < sizeof(offsets) / sizeof(offsets[0]); ++i) {
         uint64_t limit = (uint64_t)scope->movement + offsets[i] + (i == 2 ? 8u : 12u);
         if (limit > end) end = limit;
@@ -533,7 +533,7 @@ static bool source_move(void *context, const qa_qvm_call *call, int32_t *result,
         scope->movement = previous;
         return application_fail(error, QA_ERROR_FORMAT, "Guest movement projection leaves source memory");
     }
-    bool slice = call->instruction == input->profile.slice;
+    bool slice = call->instruction == input->profile.source->movement_slice;
     qa_q3_usercmd command; qa_q3_player state;
     if (!qa_qvm_read_usercmd(input->role->vm, (int32_t)(scope->movement + 4), &command, error) ||
         !qa_qvm_read_player(input->role->vm, (int32_t)scope->player, true, &state, error)) {
@@ -582,9 +582,9 @@ static bool source_move(void *context, const qa_qvm_call *call, int32_t *result,
         scope->weapon_slice = previous_weapon_slice; scope->weapon_reached = previous_weapon_reached;
         return cancel_client(call, scope->call, error);
     }
-    if (ok && !cancelled && slice && input->profile.has_locomotion) {
-        qa_qvm_region_binding binding = {.entry = input->profile.locomotion_entry,
-            .join = input->profile.locomotion_join, .enter = replace_locomotion, .context = input};
+    if (ok && !cancelled && slice && (input->profile.source && input->profile.source->present)) {
+        qa_qvm_region_binding binding = {.entry = input->profile.source->locomotion.entry,
+            .join = input->profile.source->locomotion.join, .enter = replace_locomotion, .context = input};
         ok = qa_qvm_bind_regions(call, &binding, 1, error);
     }
     qa_application *app = input->role->engine->provider->application;
@@ -659,10 +659,25 @@ bool application_guest_input_attach(q3g_role *role, qa_bytes primary, qa_error *
     if (!input) return application_fail(error, QA_ERROR_MEMORY, "Allocating guest input owner");
     input->role = role;
     if (!application_guest_input_profile_read(role, primary, &input->profile, error)) { free(input); return false; }
+    if (role->weapons) {
+        const application_q3_weapon_profile *source = application_q3_weapons_profile(role->weapons);
+        qa_qvm_saved_function descriptors[6];
+        bool qualified = role->vm && !qa_qvm_active(role->vm) &&
+            application_q3_weapons_idle(role->weapons) && source &&
+            input->profile.source == source && (!source->present || input->profile.input_present);
+        if (!qualified)
+            application_fail(error, QA_ERROR_ARGUMENT, "Original input must borrow its actual idle weapon declaration");
+        if (!qualified ||
+            application_q3_weapons_descriptor_count(role->weapons) != (source->present ? 6u : 0u) ||
+            !application_q3_weapons_descriptors(role->weapons, descriptors, source->present ? 6u : 0u, error)) {
+            application_guest_input_profile_free(&input->profile); free(input); return false;
+        }
+        input->weapons = role->weapons;
+    }
     role->input = input;
     if (!input->profile.input_present) return true;
     const uint32_t entries[] = {input->profile.client_think, input->profile.run_client,
-        input->profile.client_spawn, input->profile.move, input->profile.slice};
+        input->profile.client_spawn, input->profile.source->movement_move, input->profile.source->movement_slice};
     size_t count = 5;
     for (size_t i = 0; i < count; ++i) {
         qa_qvm_function_hook hook = i < 3 ? envelope : source_move;
@@ -676,34 +691,6 @@ bool application_guest_input_attach(q3g_role *role, qa_bytes primary, qa_error *
         qa_error ignored = {0}; (void)application_guest_input_detach(role, &ignored); return false;
     }
     input->body_binding = application_guest_q3_control_binding(input->body_control);
-    return true;
-}
-
-bool application_guest_input_bind_weapons(q3g_role *role, application_q3_weapons *weapons, qa_error *error)
-{
-    application_guest_input *input = role ? role->input : NULL;
-    if (!role || role->kind != QA_QVM_GAME || !input || input->role != role ||
-        !role->vm || qa_qvm_active(role->vm) || input->scope || input->in_command ||
-        !weapons || role->weapons != weapons || !application_q3_weapons_idle(weapons))
-        return application_fail(error, QA_ERROR_ARGUMENT, "Original input must bind its actual idle weapon owner");
-    const application_q3_weapon_profile *p = application_q3_weapons_profile(weapons);
-    const application_guest_input_profile *i = &input->profile;
-    if (!p || (p->present && (!i->input_present ||
-        p->entity_stride != i->entity_stride || p->client_stride != i->client_stride ||
-        p->client_pointer != i->client_pointer || p->movement_move != i->move ||
-        p->movement_slice != i->slice || !i->has_duck || p->movement_duck != i->duck ||
-        !i->has_locomotion || p->movement_global != i->movement_global ||
-        p->movement_mins != i->movement_mins || p->movement_maxs != i->movement_maxs ||
-        p->locomotion.entry != i->locomotion_entry || p->locomotion.join != i->locomotion_join ||
-        p->body_trace != i->has_body_trace || (p->body_trace &&
-            (p->movement_trace_callback != i->movement_trace_callback ||
-             p->movement_trace_mask != i->movement_trace_mask)))))
-        return application_fail(error, QA_ERROR_FORMAT, "Original weapon and input movement declarations disagree");
-    qa_qvm_saved_function descriptors[6];
-    if (application_q3_weapons_descriptor_count(weapons) != (p->present ? 6u : 0u) ||
-        !application_q3_weapons_descriptors(weapons, descriptors, p->present ? 6u : 0u, error))
-        return false;
-    input->weapons = weapons;
     return true;
 }
 
@@ -737,16 +724,16 @@ bool application_guest_input_descriptors(q3g_role *role,
     size_t count = input && input->profile.input_present ? 5u : 0;
     if (input && input->binding_count != count)
         return application_fail(error, QA_ERROR_FORMAT, "Q3 input callback count differs from its source declaration");
-    if (input) {
+    if (count) {
         const uint32_t entries[] = {input->profile.client_think, input->profile.run_client,
-            input->profile.client_spawn, input->profile.move, input->profile.slice};
+            input->profile.client_spawn, input->profile.source->movement_move, input->profile.source->movement_slice};
         for (size_t i = 0; i < count; ++i)
             descriptors[i] = (qa_qvm_saved_function){input->bindings[i], entries[i], true,
                 i < 3 ? envelope : source_move, input};
-        for (size_t i = count; i < 5; ++i)
-            if (input->bindings[i])
-                return application_fail(error, QA_ERROR_FORMAT, "Q3 input retains an undeclared callback identity");
     }
+    if (input) for (size_t i = count; i < 5; ++i)
+        if (input->bindings[i])
+            return application_fail(error, QA_ERROR_FORMAT, "Q3 input retains an undeclared callback identity");
     if (input && input->body_binding) {
         if (input->body_binding != application_guest_q3_control_binding(input->body_control) ||
             !application_guest_q3_control_descriptor(input->body_control, &descriptors[count], error)) return false;
@@ -1131,7 +1118,7 @@ bool application_arsenal_guest_source_command(qa_application *app, qa_actor_id a
     application_provider *movement = application_provider_for(app, actor, QA_ROLE_MOVEMENT, "");
     application_provider *arsenal = application_provider_for(app, actor, QA_ROLE_ARSENAL, "");
     uint32_t slot;
-    if (!input || input->in_command || (movement != source && !input->profile.has_locomotion) ||
+    if (!input || input->in_command || (movement != source && !(input->profile.source && input->profile.source->present)) ||
         (arsenal != source && !weapons_capable(input)))
         return application_fail(error, QA_ERROR_UNSUPPORTED,
             "Original Q3 command requires qualified movement and weapon source regions");
@@ -1165,7 +1152,7 @@ static bool guest_move(qa_application *app, qa_actor_id actor,
     application_guest_input *input = engine && engine->game ? engine->game->input : NULL;
     if (!input || input->in_command)
         return application_fail(error, QA_ERROR_ARGUMENT, "Guest input owner is missing or already active");
-    if ((movement != guest && !input->profile.has_locomotion) ||
+    if ((movement != guest && !(input->profile.source && input->profile.source->present)) ||
         (arsenal != guest && !weapons_capable(input)))
         return application_fail(error, QA_ERROR_UNSUPPORTED, "Mixed Q3 guest roles require qualified source movement and weapon contracts");
     if (is_guest(movement) && movement != guest)
@@ -1237,7 +1224,7 @@ bool application_arsenal_guest_stage_ready(qa_application *app, qa_actor_id acto
     uint32_t slot;
     return guest->constructed && guest->attached && !guest->close_pending && input && !input->in_command &&
         !(is_guest(movement) && movement != guest) &&
-        (movement == guest || input->profile.has_locomotion) &&
+        (movement == guest || (input->profile.source && input->profile.source->present)) &&
         (arsenal == guest || weapons_capable(input)) &&
         qa_q3_host_actor_slot(engine->game->host, actor, &slot, NULL) && slot < 64 &&
         engine->clients[slot].connected && engine->clients[slot].begun &&

@@ -128,6 +128,23 @@ _Static_assert(sizeof(native_client_definitions)/sizeof(*native_client_definitio
 #undef U
 #undef S
 
+static const struct { const char *name, *value; uint32_t flags; } userinfo_definitions[] = {
+    {"cl_timeNudge", "0", QA_CVAR_TEMPORARY},
+    {"rate", "25000", QA_CVAR_ARCHIVE | QA_CVAR_USERINFO},
+    {"cl_maxpackets", "30", QA_CVAR_ARCHIVE},
+    {"cl_packetdup", "1", QA_CVAR_ARCHIVE},
+    {"snaps", "20", QA_CVAR_ARCHIVE | QA_CVAR_USERINFO},
+    {"color1", "4", QA_CVAR_ARCHIVE | QA_CVAR_USERINFO},
+    {"color2", "5", QA_CVAR_ARCHIVE | QA_CVAR_USERINFO},
+    {"sex", "male", QA_CVAR_ARCHIVE | QA_CVAR_USERINFO},
+    {"cl_anonymous", "0", QA_CVAR_ARCHIVE | QA_CVAR_USERINFO},
+    {"cg_predictItems", "1", QA_CVAR_ARCHIVE | QA_CVAR_USERINFO},
+    {"teamtask", "0", QA_CVAR_USERINFO}, {"password", "", QA_CVAR_USERINFO},
+    {"handicap", "100", QA_CVAR_ARCHIVE | QA_CVAR_USERINFO},
+    {"cl_maxPing", "800", QA_CVAR_ARCHIVE},
+    {"cl_serverStatusResendTime", "750", 0}, {"sv_master1", "master.quake3arena.com", 0}
+};
+
 size_t qa_native_q3_cvar_definition_count(qa_q3_product product)
 {
     if(product!=QA_Q3_ARENA && product!=QA_Q3_TEAM_ARENA)return 0;
@@ -173,27 +190,11 @@ bool qa_native_q3_client_defaults(const qa_launch_instance *descriptor, qa_cvars
     char *model = malloc(length + 9);
     if (!model) return native_client_fail(error, QA_ERROR_MEMORY, "Retaining actual Q3 CLIENT model declaration");
     memcpy(model, configured_model, length); memcpy(model + length, "/default", 9);
-    static const struct { const char *name, *value; uint32_t flags; } prefix[] = {
-        {"cl_timeNudge", "0", QA_CVAR_TEMPORARY},
-        {"rate", "25000", QA_CVAR_ARCHIVE | QA_CVAR_USERINFO},
-        {"cl_maxpackets", "30", QA_CVAR_ARCHIVE},
-        {"cl_packetdup", "1", QA_CVAR_ARCHIVE},
-        {"snaps", "20", QA_CVAR_ARCHIVE | QA_CVAR_USERINFO}
-    }, suffix[] = {
-        {"color1", "4", QA_CVAR_ARCHIVE | QA_CVAR_USERINFO},
-        {"color2", "5", QA_CVAR_ARCHIVE | QA_CVAR_USERINFO},
-        {"sex", "male", QA_CVAR_ARCHIVE | QA_CVAR_USERINFO},
-        {"cl_anonymous", "0", QA_CVAR_ARCHIVE | QA_CVAR_USERINFO},
-        {"cg_predictItems", "1", QA_CVAR_ARCHIVE | QA_CVAR_USERINFO},
-        {"teamtask", "0", QA_CVAR_USERINFO}, {"password", "", QA_CVAR_USERINFO},
-        {"handicap", "100", QA_CVAR_ARCHIVE | QA_CVAR_USERINFO},
-        {"cl_maxPing", "800", QA_CVAR_ARCHIVE},
-        {"cl_serverStatusResendTime", "750", 0}, {"sv_master1", "master.quake3arena.com", 0}
-    };
     const char *description = "Q3 CLIENT baseline";
     bool ok = true;
-    for (size_t i = 0; ok && i < sizeof(prefix) / sizeof(*prefix); ++i)
-        ok = qa_cvars_register(registry, prefix[i].name, prefix[i].value, prefix[i].flags,
+    for (size_t i = 0; ok && i < 5; ++i)
+        ok = qa_cvars_register(registry, userinfo_definitions[i].name,
+            userinfo_definitions[i].value, userinfo_definitions[i].flags,
             command->owner, description, error);
     char name[64];
     if (!command->seat) memcpy(name, "Player", 7);
@@ -203,17 +204,18 @@ bool qa_native_q3_client_defaults(const qa_launch_instance *descriptor, qa_cvars
     static const char *const names[] = {"model", "headmodel", "team_model", "team_headmodel"};
     for (size_t i = 0; ok && i < sizeof(names) / sizeof(*names); ++i)
         ok = qa_cvars_register(registry, names[i], model, identity, command->owner, description, error);
-    for (size_t i = 0; ok && i < sizeof(suffix) / sizeof(*suffix); ++i)
-        ok = qa_cvars_register(registry, suffix[i].name, suffix[i].value, suffix[i].flags,
+    for (size_t i = 5; ok && i < sizeof(userinfo_definitions) / sizeof(*userinfo_definitions); ++i)
+        ok = qa_cvars_register(registry, userinfo_definitions[i].name,
+            userinfo_definitions[i].value, userinfo_definitions[i].flags,
             command->owner, description, error);
     free(model); return ok;
 }
 
-static size_t symbol_index(const qa_native_q3_client_service *service,const char *symbol)
+size_t native_client_cvar_index(qa_q3_product product,size_t count,const char *symbol)
 {
     if (!symbol) return SIZE_MAX;
-    for (size_t i=0;i<service->count;++i)
-        if ((!native_client_definitions[i].missionpack || service->product==QA_Q3_TEAM_ARENA) &&
+    for (size_t i=0;i<count;++i)
+        if ((!native_client_definitions[i].missionpack || product==QA_Q3_TEAM_ARENA) &&
             !strcmp(symbol,native_client_definitions[i].symbol)) return i;
     return SIZE_MAX;
 }
@@ -222,7 +224,7 @@ bool qa_native_q3_client_cvar_read(const qa_native_q3_client_service *service,co
 {
     if (!service || !out || !qa_native_q3_client_service_current(service))
         return native_client_fail(error,QA_ERROR_ARGUMENT,"Native CGAME cvar cache lost its actual seat owner");
-    size_t index=symbol_index(service,symbol);
+    size_t index=native_client_cvar_index(service->product,service->count,symbol);
     if (index==SIZE_MAX) return native_client_fail(error,QA_ERROR_NOT_FOUND,"Native CGAME cvar symbol is absent for this product");
     *out=service->cache[index];
     if (!strcmp(symbol,"cg_drawStatus") && service->services.status_visible &&
@@ -236,150 +238,189 @@ bool qa_native_q3_client_cvar_number(qa_native_q3_client_service *service,const 
 {
     qa_native_q3_client_cvar value;
     if (!qa_native_q3_client_cvar_read(service,symbol,&value,error)) return false;
-    service->cache[symbol_index(service,symbol)].number=number; return true;
+    service->cache[native_client_cvar_index(service->product,service->count,symbol)].number=number; return true;
 }
 bool qa_native_q3_client_cvar_integer(qa_native_q3_client_service *service,const char *symbol,
     int32_t integer,qa_error *error)
 {
     qa_native_q3_client_cvar value;
     if (!qa_native_q3_client_cvar_read(service,symbol,&value,error)) return false;
-    service->cache[symbol_index(service,symbol)].integer=integer; return true;
+    service->cache[native_client_cvar_index(service->product,service->count,symbol)].integer=integer; return true;
 }
-static bool register_body(qa_native_q3_client_service *service,qa_error *error)
+bool native_client_cache_register(const native_client_cache_access *access,
+    const char *description, int32_t *local_server, uint64_t *force_count, qa_error *error)
 {
-    qa_cvars *registry=service->services.client.cvars;
-    for (size_t i=0;i<service->count;++i) {
-        const native_client_definition *definition=&native_client_definitions[i];
-        if (definition->missionpack && service->product!=QA_Q3_TEAM_ARENA) continue;
-        const char *reset=definition->value;
-        if (!strcmp(definition->symbol,"cg_deferPlayers") && service->product==QA_Q3_TEAM_ARENA) reset="0";
-        if (!qa_cvars_register(registry,definition->name,reset,definition->flags,
-            service->services.client.service_owner,"Native Q3 CGAME",error) ||
-            !qa_native_q3_client_service_current(service)) return false;
-        const qa_cvar_view *value=qa_cvars_find(registry,definition->name);
-        if (!value || !application_q3_client_cache_copy(&service->cache[i],value,true,"Cvar_Update source exceeds MAX_CVAR_VALUE_STRING",error)) return false;
+    for (size_t i = 0; i < access->count; ++i) {
+        const native_client_definition *definition = &native_client_definitions[i];
+        if (definition->missionpack && access->product != QA_Q3_TEAM_ARENA) continue;
+        const char *reset = definition->value;
+        if (!strcmp(definition->symbol, "cg_deferPlayers") && access->product == QA_Q3_TEAM_ARENA)
+            reset = "0";
+        if (!qa_cvars_register(access->registry, definition->name, reset, definition->flags,
+            access->owner, description, error) || !access->current(access->context)) return false;
+        const qa_cvar_view *value = qa_cvars_find(access->registry, definition->name);
+        if (!value || !application_q3_client_cache_copy(&access->cache[i], value, true,
+            access->oversized_error, error)) return false;
     }
-    const qa_cvar_view *running=qa_cvars_find(registry,"sv_running");
-    service->local_server=running?running->integer:0;
-    service->force_model_count=service->cache[symbol_index(service,"cg_forceModel")].modification_count;
-    /* SDK registration follows seat userinfo initialization. Existing actual
-     * selected CHARACTER values survive these reset/default declarations. */
-    const char *team_model=service->product==QA_Q3_TEAM_ARENA?"james":"sarge";
-    const char *team_head=service->product==QA_Q3_TEAM_ARENA?"*james":"sarge";
-    if (!qa_cvars_register(registry,"model","sarge",QA_CVAR_USERINFO|QA_CVAR_ARCHIVE,
-        service->services.client.service_owner,"Q3 body model",error) ||
-        !qa_cvars_register(registry,"headmodel","sarge",QA_CVAR_USERINFO|QA_CVAR_ARCHIVE,
-        service->services.client.service_owner,"Q3 head model",error) ||
-        !qa_cvars_register(registry,"team_model",team_model,QA_CVAR_USERINFO|QA_CVAR_ARCHIVE,
-        service->services.client.service_owner,"Q3 team model",error) ||
-        !qa_cvars_register(registry,"team_headmodel",team_head,QA_CVAR_USERINFO|QA_CVAR_ARCHIVE,
-        service->services.client.service_owner,"Q3 team head",error) ||
-        !qa_native_q3_client_service_current(service)) return false;
-    service->registered=true; return true;
+    const qa_cvar_view *running = qa_cvars_find(access->registry, "sv_running");
+    *local_server = running ? running->integer : 0;
+    *force_count = access->cache[native_client_cvar_index(access->product,
+        access->count, "cg_forceModel")].modification_count;
+    /* Actual selected CHARACTER values survive these SDK reset declarations. */
+    const char *team_model = access->product == QA_Q3_TEAM_ARENA ? "james" : "sarge";
+    const char *team_head = access->product == QA_Q3_TEAM_ARENA ? "*james" : "sarge";
+    return qa_cvars_register(access->registry, "model", "sarge", QA_CVAR_USERINFO | QA_CVAR_ARCHIVE,
+        access->owner, "Q3 body model", error) &&
+        qa_cvars_register(access->registry, "headmodel", "sarge", QA_CVAR_USERINFO | QA_CVAR_ARCHIVE,
+        access->owner, "Q3 head model", error) &&
+        qa_cvars_register(access->registry, "team_model", team_model, QA_CVAR_USERINFO | QA_CVAR_ARCHIVE,
+        access->owner, "Q3 team model", error) &&
+        qa_cvars_register(access->registry, "team_headmodel", team_head, QA_CVAR_USERINFO | QA_CVAR_ARCHIVE,
+        access->owner, "Q3 team head", error) && access->current(access->context);
 }
-bool qa_native_q3_client_register(qa_native_q3_client_service *service,qa_error *error)
+
+bool native_client_cache_userinfo(const native_client_cache_access *access,
+    const qa_native_q3_character_selection *character, const char *name,
+    const native_client_userinfo_text *description, qa_error *error)
+{
+    /* Preserve the actual initializeQ3ClientCvars interleaved declaration order. */
+    for (size_t i = 0; i < 5; ++i)
+        if (!qa_cvars_register(access->registry, userinfo_definitions[i].name,
+            userinfo_definitions[i].value, userinfo_definitions[i].flags, access->owner,
+            description->defaults, error) || !access->current(access->context)) return false;
+    if (!qa_cvars_register(access->registry, "name", name, QA_CVAR_ARCHIVE | QA_CVAR_USERINFO,
+        access->owner, description->identity, error) || !access->current(access->context)) return false;
+    const char *names[] = {"model", "headmodel", "team_model", "team_headmodel"};
+    for (size_t i = 0; i < 4; ++i) {
+        const char *model = i % 2 && *character->head_model ? character->head_model : character->model;
+        const char *skin = i % 2 ? character->head_skin : character->skin;
+        size_t a = strlen(model), b = strlen(skin);
+        if (a > SIZE_MAX - b - 2)
+            return native_client_fail(error, QA_ERROR_MEMORY, description->capacity_error);
+        char *value = malloc(a + b + 2);
+        if (!value) return native_client_fail(error, QA_ERROR_MEMORY, description->memory_error);
+        memcpy(value, model, a); value[a] = '/'; memcpy(value + a + 1, skin, b + 1);
+        bool ok = qa_cvars_register(access->registry, names[i], value,
+            QA_CVAR_ARCHIVE | QA_CVAR_USERINFO, access->owner, description->character, error);
+        free(value);
+        if (!ok || !access->current(access->context)) return false;
+    }
+    for (size_t i = 5; i < sizeof(userinfo_definitions) / sizeof(*userinfo_definitions); ++i)
+        if (!qa_cvars_register(access->registry, userinfo_definitions[i].name,
+            userinfo_definitions[i].value, userinfo_definitions[i].flags, access->owner,
+            description->defaults, error) || !access->current(access->context)) return false;
+    return true;
+}
+
+bool native_client_cache_reload(const native_client_cache_access *access, qa_error *error)
+{
+    for (uint32_t slot = 0; slot < 64; ++slot) {
+        const char *text;
+        if (!access->configstring(access->context, 544 + slot, &text, error)) return false;
+        size_t length = strlen(text);
+        if (!length) continue;
+        char *retained = malloc(length + 1);
+        if (!retained) return native_client_fail(error, QA_ERROR_MEMORY, access->reload_memory_error);
+        memcpy(retained, text, length + 1);
+        bool ok = access->reload_client_info(access->context, slot, retained, error) &&
+            access->current(access->context);
+        free(retained);
+        if (!ok) return false;
+    }
+    return true;
+}
+
+bool native_client_cache_update(const native_client_cache_access *access,
+    bool *overlay_initial, uint64_t *overlay_count, uint64_t *force_count, qa_error *error)
+{
+    for (size_t i = 0; i < access->count; ++i) {
+        const native_client_definition *definition = &native_client_definitions[i];
+        if (definition->missionpack && access->product != QA_Q3_TEAM_ARENA) continue;
+        const qa_cvar_view *value = qa_cvars_find(access->registry, definition->name);
+        if (value && !application_q3_client_cache_copy(&access->cache[i], value, false,
+            access->oversized_error, error)) return false;
+    }
+    qa_native_q3_client_cvar *overlay = &access->cache[native_client_cvar_index(
+        access->product, access->count, "cg_drawTeamOverlay")];
+    if (*overlay_initial || *overlay_count != overlay->modification_count) {
+        *overlay_initial = false; *overlay_count = overlay->modification_count;
+        if (!qa_cvars_set(access->registry, "teamoverlay", overlay->integer > 0 ? "1" : "0", true, error) ||
+            !access->current(access->context) ||
+            !qa_cvars_set(access->registry, "teamoverlay", "1", true, error) ||
+            !access->current(access->context)) return false;
+    }
+    qa_native_q3_client_cvar *force = &access->cache[native_client_cvar_index(
+        access->product, access->count, "cg_forceModel")];
+    if (*force_count != force->modification_count) {
+        *force_count = force->modification_count;
+        return native_client_cache_reload(access, error);
+    }
+    return true;
+}
+
+static bool current(void *context)
+{ return qa_native_q3_client_service_current(context); }
+static bool configstring(void *context, uint32_t index, const char **text, qa_error *error)
+{
+    qa_native_q3_client_service *service = context;
+    uint64_t revision;
+    return qa_native_q3_wire_reader_configstring(service->services.wire_reader, index, text, &revision, error);
+}
+static bool reload_client_info(void *context, uint32_t slot, const char *text, qa_error *error)
+{
+    qa_native_q3_client_service *service = context;
+    return service->services.reload_client_info(service->services.context, slot, text, error);
+}
+static native_client_cache_access cache_access(qa_native_q3_client_service *service)
+{
+    return (native_client_cache_access){.context = service, .current = current,
+        .configstring = configstring, .reload_client_info = reload_client_info,
+        .registry = service->services.client.cvars, .owner = service->services.client.service_owner,
+        .product = service->product, .cache = service->cache, .count = service->count,
+        .oversized_error = "Cvar_Update source exceeds MAX_CVAR_VALUE_STRING",
+        .reload_memory_error = "Retaining reached native client-info value"};
+}
+
+bool qa_native_q3_client_register(qa_native_q3_client_service *service, qa_error *error)
 {
     if (!service || service->updating || !qa_native_q3_client_service_current(service))
-        return native_client_fail(error,QA_ERROR_ARGUMENT,"Native CGAME registration requires its live constructor");
-    service->updating=true;
-    bool ok=register_body(service,error);
-    service->updating=false; return ok;
+        return native_client_fail(error, QA_ERROR_ARGUMENT, "Native CGAME registration requires its live constructor");
+    native_client_cache_access access = cache_access(service);
+    service->updating = true;
+    bool ok = native_client_cache_register(&access, "Native Q3 CGAME", &service->local_server,
+        &service->force_model_count, error);
+    if (ok) service->registered = true;
+    service->updating = false; return ok;
 }
-static bool userinfo_defaults(qa_native_q3_client_service *service,const char *name,qa_error *error)
-{
-    static const struct {const char *name,*value; uint32_t flags;} definitions[]={
-        {"cl_timeNudge","0",QA_CVAR_TEMPORARY},
-        {"rate","25000",QA_CVAR_ARCHIVE|QA_CVAR_USERINFO},
-        {"cl_maxpackets","30",QA_CVAR_ARCHIVE},
-        {"cl_packetdup","1",QA_CVAR_ARCHIVE},
-        {"snaps","20",QA_CVAR_ARCHIVE|QA_CVAR_USERINFO},
-        {"color1","4",QA_CVAR_ARCHIVE|QA_CVAR_USERINFO},
-        {"color2","5",QA_CVAR_ARCHIVE|QA_CVAR_USERINFO},
-        {"sex","male",QA_CVAR_ARCHIVE|QA_CVAR_USERINFO},
-        {"cl_anonymous","0",QA_CVAR_ARCHIVE|QA_CVAR_USERINFO},
-        {"cg_predictItems","1",QA_CVAR_ARCHIVE|QA_CVAR_USERINFO},
-        {"teamtask","0",QA_CVAR_USERINFO},{"password","",QA_CVAR_USERINFO},
-        {"handicap","100",QA_CVAR_ARCHIVE|QA_CVAR_USERINFO},
-        {"cl_maxPing","800",QA_CVAR_ARCHIVE},
-        {"cl_serverStatusResendTime","750",0},{"sv_master1","master.quake3arena.com",0}
-    };
-    qa_cvars *registry=service->services.client.cvars; uint64_t owner=service->services.client.service_owner;
-    /* Registration order is the actual initializeQ3ClientCvars prefix. */
-    for (size_t i=0;i<5;++i)
-        if (!qa_cvars_register(registry,definitions[i].name,definitions[i].value,definitions[i].flags,owner,
-            "Native Q3 seat userinfo",error) || !qa_native_q3_client_service_current(service)) return false;
-    if (!qa_cvars_register(registry,"name",name,QA_CVAR_ARCHIVE|QA_CVAR_USERINFO,owner,
-        "Native Q3 seat identity",error) || !qa_native_q3_client_service_current(service)) return false;
-    const char *names[]={"model","headmodel","team_model","team_headmodel"};
-    for (size_t i=0;i<4;++i) {
-        const char *model=i%2 && *service->character.head_model?service->character.head_model:service->character.model;
-        const char *skin=i%2?service->character.head_skin:service->character.skin;
-        size_t a=strlen(model),b=strlen(skin);
-        if (a>SIZE_MAX-b-2) return native_client_fail(error,QA_ERROR_MEMORY,"CHARACTER declaration exceeds userinfo capacity");
-        char *value=malloc(a+b+2);
-        if (!value) return native_client_fail(error,QA_ERROR_MEMORY,"Formatting actual CHARACTER userinfo declaration");
-        memcpy(value,model,a); value[a]='/'; memcpy(value+a+1,skin,b+1);
-        bool ok=qa_cvars_register(registry,names[i],value,QA_CVAR_ARCHIVE|QA_CVAR_USERINFO,owner,
-            "Selected CHARACTER declaration",error);
-        free(value);
-        if (!ok || !qa_native_q3_client_service_current(service)) return false;
-    }
-    for (size_t i=5;i<sizeof(definitions)/sizeof(*definitions);++i)
-        if (!qa_cvars_register(registry,definitions[i].name,definitions[i].value,definitions[i].flags,owner,
-            "Native Q3 seat userinfo",error) || !qa_native_q3_client_service_current(service)) return false;
-    return true;
-}
-bool qa_native_q3_client_userinfo_initialize(qa_native_q3_client_service *service,const char *name,qa_error *error)
+bool qa_native_q3_client_userinfo_initialize(qa_native_q3_client_service *service,
+    const char *name, qa_error *error)
 {
     if (!name || !service || service->updating || service->registered || !qa_native_q3_client_service_current(service))
-        return native_client_fail(error,QA_ERROR_ARGUMENT,"Native Q3 userinfo requires its actual pre-registration constructor");
-    service->updating=true; bool ok=userinfo_defaults(service,name,error); service->updating=false; return ok;
+        return native_client_fail(error, QA_ERROR_ARGUMENT, "Native Q3 userinfo requires its actual pre-registration constructor");
+    native_client_cache_access access = cache_access(service);
+    const native_client_userinfo_text description = {"Native Q3 seat userinfo", "Native Q3 seat identity",
+        "Selected CHARACTER declaration", "CHARACTER declaration exceeds userinfo capacity",
+        "Formatting actual CHARACTER userinfo declaration"};
+    service->updating = true;
+    bool ok = native_client_cache_userinfo(&access, &service->character, name, &description, error);
+    service->updating = false; return ok;
 }
-static bool reload(qa_native_q3_client_service *service,qa_error *error)
-{
-    for (uint32_t slot=0;slot<64;++slot) {
-        const char *text; uint64_t revision;
-        if (!qa_native_q3_wire_reader_configstring(service->services.wire_reader,544+slot,
-            &text,&revision,error)) return false;
-        size_t length=strlen(text);
-        if (!length) continue;
-        char *retained=malloc(length+1);
-        if (!retained) return native_client_fail(error,QA_ERROR_MEMORY,"Retaining reached native client-info value");
-        memcpy(retained,text,length+1);
-        bool ok=service->services.reload_client_info(service->services.context,slot,retained,error) &&
-            qa_native_q3_client_service_current(service);
-        free(retained); if (!ok) return false;
-    }
-    return true;
-}
-bool qa_native_q3_client_force_model_change(qa_native_q3_client_service *service,qa_error *error)
+bool qa_native_q3_client_force_model_change(qa_native_q3_client_service *service, qa_error *error)
 {
     if (!service || !service->registered || service->updating || !qa_native_q3_client_service_current(service))
-        return native_client_fail(error,QA_ERROR_ARGUMENT,"Native CGAME force-model update lacks its idle registered owner");
-    service->updating=true; bool ok=reload(service,error); service->updating=false; return ok;
+        return native_client_fail(error, QA_ERROR_ARGUMENT, "Native CGAME force-model update lacks its idle registered owner");
+    native_client_cache_access access = cache_access(service);
+    service->updating = true;
+    bool ok = native_client_cache_reload(&access, error);
+    service->updating = false; return ok;
 }
-bool qa_native_q3_client_update(qa_native_q3_client_service *service,qa_error *error)
+bool qa_native_q3_client_update(qa_native_q3_client_service *service, qa_error *error)
 {
     if (!service || !service->registered || service->updating || !qa_native_q3_client_service_current(service))
-        return native_client_fail(error,QA_ERROR_ARGUMENT,"Native CGAME update lacks its idle registered owner");
-    service->updating=true; bool ok=true;
-    for (size_t i=0;ok && i<service->count;++i) {
-        const native_client_definition *definition=&native_client_definitions[i];
-        if (definition->missionpack && service->product!=QA_Q3_TEAM_ARENA) continue;
-        const qa_cvar_view *value=qa_cvars_find(service->services.client.cvars,definition->name);
-        if (value) ok=application_q3_client_cache_copy(&service->cache[i],value,false,"Cvar_Update source exceeds MAX_CVAR_VALUE_STRING",error);
-    }
-    qa_native_q3_client_cvar *overlay=&service->cache[symbol_index(service,"cg_drawTeamOverlay")];
-    if (ok && (service->overlay_initial || service->overlay_count!=overlay->modification_count)) {
-        service->overlay_initial=false; service->overlay_count=overlay->modification_count;
-        ok=qa_cvars_set(service->services.client.cvars,"teamoverlay",overlay->integer>0?"1":"0",true,error) &&
-            qa_native_q3_client_service_current(service) &&
-            qa_cvars_set(service->services.client.cvars,"teamoverlay","1",true,error) &&
-            qa_native_q3_client_service_current(service);
-    }
-    qa_native_q3_client_cvar *force=&service->cache[symbol_index(service,"cg_forceModel")];
-    if (ok && service->force_model_count!=force->modification_count) {
-        service->force_model_count=force->modification_count; ok=reload(service,error);
-    }
-    service->updating=false; return ok;
+        return native_client_fail(error, QA_ERROR_ARGUMENT, "Native CGAME update lacks its idle registered owner");
+    native_client_cache_access access = cache_access(service);
+    service->updating = true;
+    bool ok = native_client_cache_update(&access, &service->overlay_initial,
+        &service->overlay_count, &service->force_model_count, error);
+    service->updating = false; return ok;
 }

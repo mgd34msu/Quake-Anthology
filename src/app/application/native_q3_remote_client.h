@@ -19,5 +19,4 @@ struct qa_native_q3_remote_client_service {
 bool native_remote_client_allocate(qa_native_q3_remote_client_services *,
     qa_native_q3_character_selection *, qa_native_q3_remote_client_service **, qa_error *);
 bool native_remote_client_commit(qa_native_q3_remote_client_service *, qa_error *);
-size_t native_remote_client_symbol(const qa_native_q3_remote_client_service *, const char *);
 #endif

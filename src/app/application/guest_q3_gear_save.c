@@ -172,13 +172,11 @@ bool application_q3_gear_restore(application_q3_gear *gear, qa_bytes bytes,
     if (okay) okay = qa_qvm_restore_candidate_bindings(gear->vm, (qa_bytes){parts[3].data, parts[3].size}, constructed, saved, functions, error);
     if (okay) {
         gear->same_team = saved[0]; gear->damage = saved[1]; gear->pull = saved[2]; if (functions == 4) gear->mover = saved[3];
-        /* The real QAVM producer places its host stream after the 156-byte
-         * envelope and RAM. Binding qualification above validated that exact
-         * envelope before this portable host admission can inspect files. */
-        size_t memory = qa_qvm_memory_size(gear->vm);
-        okay = parts[3].size >= 156 && memory <= parts[3].size - 156 &&
-            qa_q3_host_checkpoint_portable_state((qa_bytes){parts[3].data + 156 + memory,
-                parts[3].size - 156 - memory}, error);
+        /* Binding qualification above validated the executor before portable
+         * host admission can inspect files. */
+        qa_bytes host;
+        okay = qa_qvm_checkpoint_host((qa_bytes){parts[3].data,parts[3].size}, &host, error) &&
+            qa_q3_host_checkpoint_portable_state(host, error);
     }
     if (okay) {
         okay = qa_cvars_save_commit(cvars, error); if (okay) cvars = NULL;

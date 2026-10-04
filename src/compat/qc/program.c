@@ -288,6 +288,41 @@ static bool read_functions(qa_qc_program *program, qa_bytes input,
     return true;
 }
 
+static bool index_names(qa_qc_program *program, qa_error *error)
+{
+    const uint32_t counts[] = {program->info.global_count,
+        program->info.field_count, program->info.function_count};
+    for (size_t kind = 0; kind < 3; ++kind) {
+        qc_name_index *index = &program->names[kind];
+        void *ordinals;
+        if (!qa_strings_create(&index->names, error) ||
+            !allocate_records(&ordinals, counts[kind], sizeof(*index->ordinals), error))
+            return false;
+        index->ordinals = ordinals;
+        size_t unique = 0;
+        for (uint32_t ordinal = 0; ordinal < counts[kind]; ++ordinal) {
+            const char *name = kind == 0 ? program->globals[ordinal].name :
+                kind == 1 ? program->fields[ordinal].name : program->functions[ordinal].name;
+            qa_string_id id;
+            if (!qa_strings_intern_cstr(index->names, name, &id, error)) return false;
+            if (id > unique) {
+                index->ordinals[id - 1u] = ordinal;
+                ++unique;
+            }
+        }
+    }
+    return true;
+}
+
+static bool find_name(const qc_name_index *index, const char *name, uint32_t *ordinal)
+{
+    qa_string_id id = qa_strings_find(index->names,
+        (qa_bytes){(const uint8_t *)name, strlen(name)});
+    if (id == QA_STRING_NONE) return false;
+    *ordinal = index->ordinals[id - 1u];
+    return true;
+}
+
 void qa_qc_program_destroy(qa_qc_program *program)
 {
     if (program == NULL) return;
@@ -298,6 +333,10 @@ void qa_qc_program_destroy(qa_qc_program *program)
     free(program->functions);
     free(program->strings);
     free(program->initial_globals);
+    for (size_t kind = 0; kind < 3; ++kind) {
+        qa_strings_destroy(program->names[kind].names);
+        free(program->names[kind].ordinals);
+    }
     free(program);
 }
 
@@ -383,7 +422,8 @@ bool qa_qc_program_load(qa_bytes bytes, const char *source,
     if (!read_definitions(program, bytes, globals, false, error)
         || !read_definitions(program, bytes, fields, true, error)
         || !read_statements(program, bytes, statements, error)
-        || !read_functions(program, bytes, functions, error)) {
+        || !read_functions(program, bytes, functions, error)
+        || !index_names(program, error)) {
         qa_qc_program_destroy(program);
         return false;
     }
@@ -467,20 +507,16 @@ const qa_qc_definition *qa_qc_program_find_global(const qa_qc_program *program,
                                                    const char *name)
 {
     if (program == NULL || name == NULL) return NULL;
-    for (uint32_t index = 0; index < program->info.global_count; ++index)
-        if (strcmp(program->globals[index].name, name) == 0)
-            return &program->globals[index];
-    return NULL;
+    uint32_t ordinal;
+    return find_name(&program->names[0], name, &ordinal) ? &program->globals[ordinal] : NULL;
 }
 
 const qa_qc_definition *qa_qc_program_find_field(const qa_qc_program *program,
                                                   const char *name)
 {
     if (program == NULL || name == NULL) return NULL;
-    for (uint32_t index = 0; index < program->info.field_count; ++index)
-        if (strcmp(program->fields[index].name, name) == 0)
-            return &program->fields[index];
-    return NULL;
+    uint32_t ordinal;
+    return find_name(&program->names[1], name, &ordinal) ? &program->fields[ordinal] : NULL;
 }
 
 const qa_qc_function *qa_qc_program_find_function(const qa_qc_program *program,
@@ -488,15 +524,11 @@ const qa_qc_function *qa_qc_program_find_function(const qa_qc_program *program,
                                                    uint32_t *index_out)
 {
     if (program == NULL || name == NULL) return NULL;
-    for (uint32_t index = 0; index < program->info.function_count; ++index) {
-        if (strcmp(program->functions[index].name, name) != 0) continue;
-        /* Function zero is the null function even if a malformed compiler gave
-         * it a name. First-name wins, matching the source lookup table. */
-        if (index == 0u) return NULL;
-        if (index_out != NULL) *index_out = index;
-        return &program->functions[index];
-    }
-    return NULL;
+    uint32_t ordinal;
+    /* First-name wins, including a named null function blocking later rows. */
+    if (!find_name(&program->names[2], name, &ordinal) || ordinal == 0u) return NULL;
+    if (index_out != NULL) *index_out = ordinal;
+    return &program->functions[ordinal];
 }
 
 qa_qc_entity_layout qa_qc_default_entity_layout(const qa_qc_program *program,

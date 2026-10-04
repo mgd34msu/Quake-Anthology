@@ -32,6 +32,32 @@ struct qa_native_q3_client_service {
 };
 extern const native_client_definition native_client_definitions[];
 extern const size_t native_client_definition_count;
+/* Borrowed access for one cache operation; physical service custody stays
+ * with the local or received CLIENT owner. */
+typedef struct native_client_cache_access {
+    void *context;
+    bool (*current)(void *);
+    bool (*configstring)(void *, uint32_t, const char **, qa_error *);
+    bool (*reload_client_info)(void *, uint32_t, const char *, qa_error *);
+    qa_cvars *registry;
+    uint64_t owner;
+    qa_q3_product product;
+    qa_native_q3_client_cvar *cache;
+    size_t count;
+    const char *oversized_error, *reload_memory_error;
+} native_client_cache_access;
+typedef struct native_client_userinfo_text {
+    const char *defaults, *identity, *character, *capacity_error, *memory_error;
+} native_client_userinfo_text;
+size_t native_client_cvar_index(qa_q3_product, size_t, const char *);
+bool native_client_cache_register(const native_client_cache_access *, const char *,
+    int32_t *, uint64_t *, qa_error *);
+bool native_client_cache_userinfo(const native_client_cache_access *,
+    const qa_native_q3_character_selection *, const char *,
+    const native_client_userinfo_text *, qa_error *);
+bool native_client_cache_reload(const native_client_cache_access *, qa_error *);
+bool native_client_cache_update(const native_client_cache_access *, bool *,
+    uint64_t *, uint64_t *, qa_error *);
 bool native_client_allocate(qa_application *, const qa_application_native_q3_presentation *,
     const qa_native_q3_client_services *, const qa_native_q3_character_selection *,
     qa_native_q3_client_service **, qa_error *);

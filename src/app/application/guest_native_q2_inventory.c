@@ -487,6 +487,12 @@ static bool inventory_mutable(void *opaque, qa_item_id item)
     return false;
 }
 
+static qa_inventory_binding inventory_binding(application_native_q2_client *client)
+{
+    return (qa_inventory_binding){.context = client, .count = inventory_count,
+        .at = inventory_at, .write = inventory_write, .mutable_capacity = inventory_mutable};
+}
+
 bool application_native_q2_inventory_admit(struct application_native_q2 *engine, uint32_t slot, qa_error *error)
 {
     application_native_q2_client *client = &engine->clients[slot];
@@ -502,8 +508,7 @@ bool application_native_q2_inventory_admit(struct application_native_q2 *engine,
         client->inventory_prepared = false;
         return true;
     }
-    qa_inventory_binding binding = {.context = client, .count = inventory_count,
-        .at = inventory_at, .write = inventory_write, .mutable_capacity = inventory_mutable};
+    qa_inventory_binding binding = inventory_binding(client);
     if (!qa_inventory_adopt_primary(engine->provider->application->inventory, client->actor, &binding, &client->inventory_lease, error)) return false;
     client->inventory_bound = true; client->inventory_prepared = false; return true;
 }
@@ -549,8 +554,7 @@ bool application_native_q2_inventory_binding(application_provider *provider, qa_
     client->inventory_engine = engine; client->inventory_slot = slot;
     qa_native_address address;
     if (!client_address(client, &address, error)) return false;
-    *out = (qa_inventory_binding){.context = client, .count = inventory_count,
-        .at = inventory_at, .write = inventory_write, .mutable_capacity = inventory_mutable};
+    *out = inventory_binding(client);
     if (!client->inventory_bound) client->inventory_prepared = true;
     client->inventory_lease = (qa_inventory_lease){actor, saved_serial};
     client->inventory_bound = true;

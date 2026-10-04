@@ -343,23 +343,33 @@ bool qa_q3_host_borrows_bots(const qa_q3_host *host, const qa_bot_runtime *runti
     return host && runtime && host->options.bots == runtime;
 }
 
-bool qa_q3_host_destroy_ready(const qa_q3_host *host)
+static bool destroy_ready(const qa_q3_host *host, qa_error *error)
 {
     if (!host) return true;
-    if (host->calls || host->collision_holds || (host->options.world && !qa_world_idle(host->options.world))) return false;
+    if (host->calls || host->collision_holds || (host->options.world && !qa_world_idle(host->options.world)))
+        return q3_fail(error, QA_ERROR_ARGUMENT, 0, "cannot destroy a Q3 module host during active service callbacks");
     if (host->script_namespace) {
-        if (host->script_namespace->reporting) return false;
+        if (host->script_namespace->reporting)
+            return q3_fail(error,QA_ERROR_ARGUMENT,0,"Cannot destroy a Q3 host during shared PC shutdown reporting");
         for (size_t i=1;i<64;++i)
             if (host->script_namespace->pending[i] ||
-                (host->script_namespace->scripts[i] && host->script_namespace->scripts[i]->operations)) return false;
+                (host->script_namespace->scripts[i] && host->script_namespace->scripts[i]->operations))
+                return q3_fail(error,QA_ERROR_ARGUMENT,i,"Cannot destroy a Q3 host during shared PC source operations");
     }
     if (host->game) for (size_t i = 0; i < 1022; ++i) {
         const q3_entity_slot *slot = &host->game->slots[i];
-        if (slot->input_motion) return false;
+        if (slot->input_motion)
+            return q3_fail(error, QA_ERROR_ARGUMENT, i, "cannot destroy a Q3 host with an admitted input scope");
         if (!slot->borrowed && slot->actor.registry &&
-            qa_actors_get(qa_session_actors(host->options.session), slot->actor)) return false;
+            qa_actors_get(qa_session_actors(host->options.session), slot->actor))
+            return q3_fail(error, QA_ERROR_ARGUMENT, i, "retire owned Q3 actors before destroying their bound source host");
     }
     return true;
+}
+
+bool qa_q3_host_destroy_ready(const qa_q3_host *host)
+{
+    return destroy_ready(host, NULL);
 }
 
 bool qa_q3_host_close_map(qa_q3_host *host, qa_error *error)
@@ -471,24 +481,7 @@ void qa_q3_host_scene_world_rebind(qa_q3_host *host, qa_scene_world *destination
 bool qa_q3_host_destroy(qa_q3_host *host, qa_error *error)
 {
     if (!host) return true;
-    if (host->calls || host->collision_holds || (host->options.world && !qa_world_idle(host->options.world)))
-        return q3_fail(error, QA_ERROR_ARGUMENT, 0, "cannot destroy a Q3 module host during active service callbacks");
-    if (host->script_namespace) {
-        if (host->script_namespace->reporting)
-            return q3_fail(error,QA_ERROR_ARGUMENT,0,"Cannot destroy a Q3 host during shared PC shutdown reporting");
-        for (size_t i=1;i<64;++i)
-            if (host->script_namespace->pending[i] ||
-                (host->script_namespace->scripts[i] && host->script_namespace->scripts[i]->operations))
-                return q3_fail(error,QA_ERROR_ARGUMENT,i,"Cannot destroy a Q3 host during shared PC source operations");
-    }
-    if (host->game) for (size_t i = 0; i < 1022; ++i) {
-        const q3_entity_slot *slot = &host->game->slots[i];
-        if (slot->input_motion)
-            return q3_fail(error, QA_ERROR_ARGUMENT, i, "cannot destroy a Q3 host with an admitted input scope");
-        if (!slot->borrowed && slot->actor.registry &&
-            qa_actors_get(qa_session_actors(host->options.session), slot->actor))
-            return q3_fail(error, QA_ERROR_ARGUMENT, i, "retire owned Q3 actors before destroying their bound source host");
-    }
+    if (!destroy_ready(host, error)) return false;
     if (!q3_game_close_portals(host, error)) return false;
     if (host->options.console && !qa_console_remove_owner(host->options.console, host->options.service_owner, error)) return false;
     host->retired = true;
