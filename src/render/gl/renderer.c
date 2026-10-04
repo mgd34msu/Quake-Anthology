@@ -193,6 +193,41 @@ void qa_gl_options_default(qa_gl_options *options)
     if (options != NULL) *options = (qa_gl_options){0};
 }
 
+GLenum gl_native_buffer(bool stereo,size_t slot)
+{
+    static const GLenum buffers[4]={GL_FRONT_LEFT,GL_FRONT_RIGHT,GL_BACK_LEFT,GL_BACK_RIGHT};
+    return stereo?buffers[slot]:(slot==0?GL_FRONT:GL_BACK);
+}
+
+static bool gl_native_buffers(qa_gl_renderer *renderer,bool stereo,uint32_t *mask,qa_error *error)
+{
+    gl_api *gl=&renderer->gl; GLint framebuffer=0,read_buffer=0;
+    gl->GetIntegerv(GL_READ_FRAMEBUFFER_BINDING,&framebuffer);
+    if (!gl_check(renderer,"Reading native color buffer bindings",error)) return false;
+    gl->BindFramebuffer(GL_READ_FRAMEBUFFER,0);
+    gl->GetIntegerv(GL_READ_BUFFER,&read_buffer);
+    if (!gl_check(renderer,"Beginning native color buffer discovery",error)) return false;
+    bool ok=true; *mask=0;
+    for (size_t i=0;i<4;++i) {
+        if (!stereo && (i&1)) continue;
+        gl->ReadBuffer(gl_native_buffer(stereo,i));
+        GLenum status=gl->GetError();
+        if (status==GL_NO_ERROR) *mask|=1u<<i;
+        else if (status!=GL_INVALID_OPERATION) {
+            qa_error_set(error,QA_ERROR_IO,0,"Discovering native color buffer 0x%x failed with OpenGL error 0x%x",
+                (unsigned)gl_native_buffer(stereo,i),(unsigned)status); ok=false; break;
+        }
+    }
+    gl->ReadBuffer((GLenum)read_buffer);
+    gl->BindFramebuffer(GL_READ_FRAMEBUFFER,(GLuint)framebuffer);
+    if (!gl_check(renderer,"Restoring native color buffer discovery bindings",error)) return false;
+    uint32_t required=stereo?12u:4u;
+    if (ok && (*mask&required)!=required) {
+        qa_error_set(error,QA_ERROR_UNSUPPORTED,0,"Native drawable has no required back color buffer"); return false;
+    }
+    return ok;
+}
+
 static bool capabilities(qa_gl_renderer *renderer, qa_error *error)
 {
     gl_api *gl = &renderer->gl;
@@ -233,6 +268,7 @@ static bool capabilities(qa_gl_renderer *renderer, qa_error *error)
     caps->texture_units = (uint32_t)units;
     caps->vertex_attributes = (uint32_t)attributes;
     caps->stereo = stereo != 0;
+    if (!gl_native_buffers(renderer,caps->stereo,&caps->native_buffer_mask,error)) return false;
     caps->floating_depth = floating_depth;
     caps->compiled_vertex_arrays = gl->LockArraysEXT && gl->UnlockArraysEXT &&
         gl_extension((const char *)gl->GetString(GL_EXTENSIONS), "GL_EXT_compiled_vertex_array");
@@ -345,6 +381,9 @@ void qa_gl_destroy(qa_gl_renderer *renderer)
     if (!renderer->detached) gl_mesh_unbind(renderer);
     gl_opacity_destroy(renderer);
     gl_output_destroy(renderer);
+    if (renderer->presented_target.framebuffer)
+        renderer->gl.DeleteFramebuffers(1,&renderer->presented_target.framebuffer);
+    renderer->gl.DeleteTextures(2,renderer->presented_target.color);
     if (renderer->target_framebuffer != 0)
         renderer->gl.DeleteFramebuffers(1, &renderer->target_framebuffer);
     if (renderer->fog_depth != 0)
@@ -902,6 +941,50 @@ static bool source_draw_buffer_clear(qa_gl_renderer *renderer, qa_error *error)
     return gl_check(renderer,"Source draw-buffer clear",error);
 }
 static bool pack_state(qa_gl_renderer *,GLint,qa_error *);
+static bool gl_presented_retain(qa_gl_renderer *renderer,qa_error *error)
+{
+    gl_api *gl=&renderer->gl; gl_presented_target *target=&renderer->presented_target;
+    uint32_t front_mask=renderer->capabilities.stereo?3u:1u;
+    if ((renderer->capabilities.native_buffer_mask&front_mask)==front_mask) return true;
+    GLint read=0,draw=0,buffer=0,active=0,texture=0,unpack=0;
+    gl->GetIntegerv(GL_READ_FRAMEBUFFER_BINDING,&read); gl->GetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING,&draw);
+    gl->GetIntegerv(GL_ACTIVE_TEXTURE,&active); gl->ActiveTexture(GL_TEXTURE0);
+    gl->GetIntegerv(GL_TEXTURE_BINDING_2D,&texture);
+    gl->GetIntegerv(GL_PIXEL_UNPACK_BUFFER_BINDING,&unpack); gl->BindBuffer(GL_PIXEL_UNPACK_BUFFER,0);
+    gl->BindFramebuffer(GL_READ_FRAMEBUFFER,0); gl->GetIntegerv(GL_READ_BUFFER,&buffer);
+    if (!target->framebuffer) gl->GenFramebuffers(1,&target->framebuffer);
+    bool ok=target->framebuffer!=0;
+    bool resized=target->width!=renderer->presented_width || target->height!=renderer->presented_height;
+    gl->BindFramebuffer(GL_DRAW_FRAMEBUFFER,target->framebuffer); gl->DrawBuffer(GL_COLOR_ATTACHMENT0);
+    GLboolean scissor=gl->IsEnabled(GL_SCISSOR_TEST); gl->Disable(GL_SCISSOR_TEST);
+    for (size_t eye=0;ok && eye<(renderer->capabilities.stereo?2u:1u);++eye) {
+        if (!target->color[eye]) { gl->GenTextures(1,target->color+eye); resized=true; }
+        if (!target->color[eye]) { ok=false; break; }
+        gl->BindTexture(GL_TEXTURE_2D,target->color[eye]);
+        if (resized) {
+            gl->TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
+            gl->TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
+            gl->TexImage2D(GL_TEXTURE_2D,0,GL_RGBA8,(GLsizei)renderer->presented_width,
+                (GLsizei)renderer->presented_height,0,GL_RGBA,GL_UNSIGNED_BYTE,NULL);
+        }
+        gl->FramebufferTexture2D(GL_DRAW_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,target->color[eye],0);
+        ok=gl->CheckFramebufferStatus(GL_DRAW_FRAMEBUFFER)==GL_FRAMEBUFFER_COMPLETE;
+        if (ok) {
+            gl->ReadBuffer(gl_native_buffer(renderer->capabilities.stereo,2+eye));
+            gl->BlitFramebuffer(0,0,(GLint)renderer->presented_width,(GLint)renderer->presented_height,
+                0,0,(GLint)renderer->presented_width,(GLint)renderer->presented_height,GL_COLOR_BUFFER_BIT,GL_NEAREST);
+        }
+    }
+    if (scissor) gl->Enable(GL_SCISSOR_TEST);
+    gl->ReadBuffer((GLenum)buffer); gl->BindFramebuffer(GL_READ_FRAMEBUFFER,(GLuint)read);
+    gl->BindFramebuffer(GL_DRAW_FRAMEBUFFER,(GLuint)draw);
+    gl->BindTexture(GL_TEXTURE_2D,(GLuint)texture); gl->ActiveTexture((GLenum)active);
+    gl->BindBuffer(GL_PIXEL_UNPACK_BUFFER,(GLuint)unpack);
+    if (!gl_check(renderer,"Retaining presented color before native swap",error)) return false;
+    if (!ok) { qa_error_set(error,QA_ERROR_IO,0,"Allocating actual presented color target"); return false; }
+    target->width=renderer->presented_width; target->height=renderer->presented_height;
+    return true;
+}
 static bool gl_swap(qa_gl_renderer *renderer, bool source_front_buffer, qa_error *error)
 {
     if ((renderer->opacity.active && renderer->opacity.value != 1) || renderer->target) {
@@ -931,6 +1014,7 @@ static bool gl_swap(qa_gl_renderer *renderer, bool source_front_buffer, qa_error
     }
     if (!gl_output_resolve(renderer,error) ||
         !gl_dimensions(renderer,&renderer->presented_width,&renderer->presented_height,error) ||
+        !gl_presented_retain(renderer,error) ||
         (!source_front_buffer && !qa_display_swap(renderer->options.display,error))) return false;
     renderer->presented=true;
     renderer->source_frame=false;
@@ -1370,18 +1454,43 @@ static bool capture(qa_gl_renderer *renderer, bool presented, qa_buffer *out,
                      "Allocating OpenGL capture storage");
         return false;
     }
-    renderer->gl.BindFramebuffer(GL_FRAMEBUFFER, 0);
     GLenum read_buffer = gl_draw_buffer_name(renderer->draw_buffer);
-    if (presented) read_buffer = renderer->draw_buffer == QA_DRAW_BACK_LEFT ? GL_FRONT_LEFT : renderer->draw_buffer == QA_DRAW_BACK_RIGHT ? GL_FRONT_RIGHT : GL_FRONT;
+    GLuint read_framebuffer=0;
+    if (presented) {
+        size_t eye=renderer->draw_buffer==QA_DRAW_BACK_RIGHT?1u:0u;
+        if (renderer->capabilities.native_buffer_mask&(1u<<eye))
+            read_buffer=gl_native_buffer(renderer->capabilities.stereo,eye);
+        else {
+            gl_presented_target *target=&renderer->presented_target;
+            if (!target->color[eye] || target->width!=width || target->height!=height) {
+                free(pixels); free(row);
+                qa_error_set(error,QA_ERROR_ARGUMENT,0,"Presented color target is unavailable"); return false;
+            }
+            if (!target->framebuffer) renderer->gl.GenFramebuffers(1,&target->framebuffer);
+            read_framebuffer=target->framebuffer;
+            read_buffer=GL_COLOR_ATTACHMENT0;
+        }
+    }
+    GLint parent_read=0,native_read=0;
+    renderer->gl.GetIntegerv(GL_READ_FRAMEBUFFER_BINDING,&parent_read);
+    renderer->gl.BindFramebuffer(GL_READ_FRAMEBUFFER,0);
+    renderer->gl.GetIntegerv(GL_READ_BUFFER,&native_read);
+    renderer->gl.BindFramebuffer(GL_READ_FRAMEBUFFER,read_framebuffer);
+    if (read_framebuffer) {
+        size_t eye=renderer->draw_buffer==QA_DRAW_BACK_RIGHT?1u:0u;
+        renderer->gl.FramebufferTexture2D(GL_READ_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,
+            renderer->presented_target.color[eye],0);
+    }
     renderer->gl.ReadBuffer(read_buffer);
-    if (!pack_state(renderer, 1, error)) {
-        free(pixels); free(row); return false;
+    bool ok=pack_state(renderer,1,error);
+    if (ok) {
+        renderer->gl.ReadPixels(0,0,(GLsizei)width,(GLsizei)height,GL_RGBA,GL_UNSIGNED_BYTE,pixels);
+        ok=gl_check(renderer,"OpenGL color readback",error);
     }
-    renderer->gl.ReadPixels(0, 0, (GLsizei)width, (GLsizei)height, GL_RGBA,
-                            GL_UNSIGNED_BYTE, pixels);
-    if (!gl_check(renderer, "OpenGL color readback", error)) {
-        free(pixels); free(row); return false;
-    }
+    renderer->gl.BindFramebuffer(GL_READ_FRAMEBUFFER,0); renderer->gl.ReadBuffer((GLenum)native_read);
+    renderer->gl.BindFramebuffer(GL_READ_FRAMEBUFFER,(GLuint)parent_read);
+    if (!gl_check(renderer,"Restoring color capture bindings",error)) ok=false;
+    if (!ok) { free(pixels); free(row); return false; }
     for (size_t y = 0; y < height / 2; ++y) {
         uint8_t *top = pixels + y * row_bytes;
         uint8_t *bottom = pixels + ((size_t)height - y - 1) * row_bytes;
@@ -1654,6 +1763,12 @@ static bool gl_surface_prepare(qa_gl_surface_ticket *ticket,qa_display *display,
     bool floating_depth=false;
     if (!gl_native_depth(&ticket->targets,&floating_depth,error) || floating_depth!=renderer->capabilities.floating_depth) {
         if (error && error->code==QA_OK) qa_error_set(error,QA_ERROR_UNSUPPORTED,0,"Candidate native depth representation differs from the retained visual");
+        return false;
+    }
+    uint32_t native_buffer_mask=0;
+    if (!gl_native_buffers(&ticket->targets,renderer->capabilities.stereo,&native_buffer_mask,error) ||
+        native_buffer_mask!=renderer->capabilities.native_buffer_mask) {
+        if (error && error->code==QA_OK) qa_error_set(error,QA_ERROR_UNSUPPORTED,0,"Candidate native color buffers differ from the retained drawable");
         return false;
     }
     if (!gl_check(renderer,"Beginning compatible surface target preparation",error) ||

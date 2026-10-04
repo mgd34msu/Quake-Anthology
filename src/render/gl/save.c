@@ -42,9 +42,9 @@ struct gl_restore_storage {
     GLuint zero_prepared;
     gl_saved_mesh *meshes;
     gl_saved_surface native[4],output[4],opacity[2];
+    gl_saved_level presented[2];
     gl_saved_level gamma;
     uint32_t width,height;
-    size_t native_count;
     bool output_allocated,opacity_allocated,stream_vertices,stream_indices,target_allocated,fog_allocated;
 };
 struct qa_gl_restore_guard {
@@ -152,19 +152,22 @@ static bool gl_surface_capture(qa_gl_renderer *renderer,GLuint framebuffer,GLenu
         (depth && !gl_save_allocate(&saved->depth,size,error)) ||
         (depth && renderer->capabilities.stencil_bits && !gl_save_allocate(&saved->stencil,size,error))) return false;
     gl_api *gl=&renderer->gl; gl->BindFramebuffer(GL_READ_FRAMEBUFFER,framebuffer); gl->ReadBuffer(buffer);
+    if (!gl_check(renderer,"Selecting actual GPU capture buffer",error)) return false;
     gl_tight_pixels(renderer);
-    if (color) gl->ReadPixels(0,0,(GLsizei)width,(GLsizei)height,GL_RGBA,GL_UNSIGNED_BYTE,saved->color.data);
-    if (depth) gl->ReadPixels(0,0,(GLsizei)width,(GLsizei)height,GL_DEPTH_COMPONENT,
-        saved->floating_depth?GL_FLOAT:GL_UNSIGNED_INT,saved->depth.data);
-    if (depth && renderer->capabilities.stencil_bits)
+    if (color) {
+        gl->ReadPixels(0,0,(GLsizei)width,(GLsizei)height,GL_RGBA,GL_UNSIGNED_BYTE,saved->color.data);
+        if (!gl_check(renderer,"Capturing actual GPU color buffer",error)) return false;
+    }
+    if (depth) {
+        gl->ReadPixels(0,0,(GLsizei)width,(GLsizei)height,GL_DEPTH_COMPONENT,
+            saved->floating_depth?GL_FLOAT:GL_UNSIGNED_INT,saved->depth.data);
+        if (!gl_check(renderer,"Capturing actual GPU depth buffer",error)) return false;
+    }
+    if (depth && renderer->capabilities.stencil_bits) {
         gl->ReadPixels(0,0,(GLsizei)width,(GLsizei)height,GL_STENCIL_INDEX,GL_UNSIGNED_INT,saved->stencil.data);
-    return gl_check(renderer,"Capturing actual completed GPU color/depth/stencil owner",error);
-}
-static GLenum gl_native_buffer(bool stereo,size_t ordinal)
-{
-    static const GLenum mono[2]={GL_FRONT,GL_BACK};
-    static const GLenum eyes[4]={GL_FRONT_LEFT,GL_FRONT_RIGHT,GL_BACK_LEFT,GL_BACK_RIGHT};
-    return stereo?eyes[ordinal]:mono[ordinal];
+        if (!gl_check(renderer,"Capturing actual GPU stencil buffer",error)) return false;
+    }
+    return true;
 }
 static void gl_surface_free(qa_gl_renderer *renderer,gl_saved_surface *saved)
 {
@@ -194,6 +197,7 @@ static void gl_saved_dispose(gl_restore_storage *guard,qa_gl_renderer *renderer)
     }
     for (size_t i=0;i<4;++i) { gl_surface_free(renderer,guard->native+i); gl_surface_free(NULL,guard->output+i); }
     for (size_t i=0;i<2;++i) gl_surface_free(NULL,guard->opacity+i);
+    for (size_t i=0;i<2;++i) qa_buffer_free(&guard->presented[i].pixels);
     qa_buffer_free(&guard->gamma.pixels); free(guard);
 }
 void gl_restore_storage_destroy(qa_gl_renderer *renderer)
@@ -214,11 +218,13 @@ static bool gl_gpu_capture(qa_gl_renderer *renderer,gl_restore_storage *saved,bo
     renderer->gl.BindFramebuffer(GL_READ_FRAMEBUFFER,0); renderer->gl.GetIntegerv(GL_READ_BUFFER,&native_read_buffer);
     GLuint read_framebuffer=0;
     if (full && (renderer->output.framebuffer || renderer->opacity.allocated)) renderer->gl.GenFramebuffers(1,&read_framebuffer);
-    saved->native_count=renderer->capabilities.stereo?4:2;
     bool ok=!full || !(renderer->output.framebuffer || renderer->opacity.allocated) || read_framebuffer!=0;
     if (!ok) gl_save_error(error,QA_ERROR_MEMORY,"Allocating isolated GPU continuation read framebuffer");
-    for (size_t i=0;ok && i<saved->native_count;++i)
-        ok=gl_surface_capture(renderer,0,gl_native_buffer(renderer->capabilities.stereo,i),saved->width,saved->height,true,i==0,saved->native+i,error);
+    for (size_t i=0;ok && i<4;++i) if (renderer->capabilities.native_buffer_mask&(1u<<i))
+        ok=gl_surface_capture(renderer,0,gl_native_buffer(renderer->capabilities.stereo,i),saved->width,saved->height,true,i==2,saved->native+i,error);
+    for (size_t i=0;full && ok && renderer->presented && i<(renderer->capabilities.stereo?2u:1u);++i)
+        if (!(renderer->capabilities.native_buffer_mask&(1u<<i)))
+            ok=gl_level_capture(renderer,renderer->presented_target.color[i],0,false,saved->presented+i,error);
     saved->output_allocated=full && renderer->output.framebuffer!=0;
     for (size_t i=0;full && ok && i<4;++i) if (renderer->output.color_ready[i]) {
         renderer->gl.BindFramebuffer(GL_READ_FRAMEBUFFER,read_framebuffer);
@@ -339,7 +345,10 @@ static bool gl_saved_caps(qa_source_save_io *io,qa_gl_capabilities *caps)
         !qa_source_save_u32(io,&caps->maximum_texture_size) || !caps->maximum_texture_size ||
         !qa_source_save_u32(io,&caps->texture_units) || caps->texture_units<3 ||
         !qa_source_save_u32(io,&caps->vertex_attributes) || caps->vertex_attributes<5 ||
-        !qa_source_save_bool(io,&caps->stereo) || !qa_source_save_bool(io,&caps->floating_depth) ||
+        !qa_source_save_bool(io,&caps->stereo) || !qa_source_save_u32(io,&caps->native_buffer_mask) ||
+        (caps->native_buffer_mask&~(caps->stereo?15u:5u)) ||
+        (caps->native_buffer_mask&(caps->stereo?12u:4u))!=(caps->stereo?12u:4u) ||
+        !qa_source_save_bool(io,&caps->floating_depth) ||
         !qa_source_save_bool(io,&caps->compiled_vertex_arrays)) return false;
     if (!qa_source_save_bool(io,&caps->s3tc)) return false;
     caps->color_bits=color; caps->alpha_bits=alpha; caps->depth_bits=depth; caps->stencil_bits=stencil;
@@ -353,7 +362,7 @@ static bool gl_caps_equal(const qa_gl_capabilities *a,const qa_gl_capabilities *
     return a->color_bits==b->color_bits && a->alpha_bits==b->alpha_bits && a->depth_bits==b->depth_bits &&
         a->stencil_bits==b->stencil_bits && a->maximum_texture_size==b->maximum_texture_size &&
         a->texture_units==b->texture_units && a->vertex_attributes==b->vertex_attributes &&
-        a->stereo==b->stereo && a->floating_depth==b->floating_depth &&
+        a->stereo==b->stereo && a->native_buffer_mask==b->native_buffer_mask && a->floating_depth==b->floating_depth &&
         a->compiled_vertex_arrays==b->compiled_vertex_arrays && a->s3tc==b->s3tc &&
         !strcmp(a->vendor,b->vendor) && !strcmp(a->renderer,b->renderer) && !strcmp(a->version,b->version) &&
         !strcmp(a->shading_language,b->shading_language);
@@ -448,12 +457,21 @@ static bool gl_saved_private_fields(qa_source_save_io *io,qa_gl_renderer *render
             !gl_caps_equal(&renderer->capabilities,&active->capabilities)) return false;
         renderer->options.display=installed->display;
     }
-    saved->native_count=renderer->capabilities.stereo?4:2;
-    for (size_t i=0;i<saved->native_count;++i) {
-        unsigned expected=1u|(i==0?2u|(renderer->capabilities.stencil_bits?4u:0u)|
-            (renderer->capabilities.floating_depth?8u:0u):0u);
-        if (!gl_saved_surface_fields(io,saved->native+i,expected) || saved->native[i].width!=saved->width ||
-            saved->native[i].height!=saved->height) return false;
+    for (size_t i=0;i<4;++i) {
+        unsigned expected=(renderer->capabilities.native_buffer_mask&(1u<<i))?
+            1u|(i==2?2u|(renderer->capabilities.stencil_bits?4u:0u)|
+            (renderer->capabilities.floating_depth?8u:0u):0u):0u;
+        if (!gl_saved_surface_fields(io,saved->native+i,expected) || (expected &&
+            (saved->native[i].width!=saved->width || saved->native[i].height!=saved->height))) return false;
+    }
+    for (size_t i=0;i<2;++i) {
+        bool expected=renderer->presented && (renderer->capabilities.stereo || i==0) &&
+            !(renderer->capabilities.native_buffer_mask&(1u<<i));
+        bool present=saved->presented[i].width!=0;
+        if (!qa_source_save_bool(io,&present) || present!=expected || (present &&
+            (!gl_saved_level_fields(io,saved->presented+i) || saved->presented[i].width!=saved->width ||
+                saved->presented[i].height!=saved->height || saved->presented[i].depth ||
+                saved->presented[i].internal!=GL_RGBA8))) return false;
     }
     if (!qa_source_save_bool(io,&saved->output_allocated) || !qa_source_save_bool(io,&renderer->output.enabled) ||
         !qa_source_save_u32(io,&renderer->output.width) || !qa_source_save_u32(io,&renderer->output.height) ||
@@ -662,13 +680,12 @@ bool qa_gl_create_detached(const qa_gl_options *options,float gamma,qa_gl_render
     bool ok=gl_gpu_capture(active,saved,false,error) && saved->width==info.drawable_width && saved->height==info.drawable_height;
     if (ok && gamma!=1) {
         unsigned slot=gl_draw_buffer_index(QA_DRAW_BACK);
-        size_t native=active->capabilities.stereo?2:1;
         gl_saved_surface *surface=saved->output+slot;
         surface->width=saved->width; surface->height=saved->height;
-        surface->floating_depth=saved->native[0].floating_depth;
-        ok=gl_saved_copy_pixels(&surface->color,&saved->native[native].color,error) &&
-            gl_saved_copy_pixels(&surface->depth,&saved->native[0].depth,error) &&
-            gl_saved_copy_pixels(&surface->stencil,&saved->native[0].stencil,error) &&
+        surface->floating_depth=saved->native[2].floating_depth;
+        ok=gl_saved_copy_pixels(&surface->color,&saved->native[2].color,error) &&
+            gl_saved_copy_pixels(&surface->depth,&saved->native[2].depth,error) &&
+            gl_saved_copy_pixels(&surface->stencil,&saved->native[2].stencil,error) &&
             gl_save_allocate(&saved->gamma.pixels,256*4,error);
         if (ok) {
             uint8_t table[256]; gl_gamma_table(gamma,table);
@@ -916,7 +933,12 @@ bool qa_gl_handoff_prepare(qa_gl_restore_guard *guard,qa_error *error)
         renderer->stream.vertex_bytes,NULL,GL_STREAM_DRAW,error);
     if (ok && saved->stream_indices) ok=gl_saved_buffer_upload(renderer,GL_ELEMENT_ARRAY_BUFFER,&renderer->stream.index_buffer,
         renderer->stream.index_bytes,NULL,GL_STREAM_DRAW,error);
-    for (size_t i=0;ok && i<saved->native_count;++i) ok=gl_saved_surface_upload(renderer,saved->native+i,true,error);
+    for (size_t i=0;ok && i<4;++i) if (saved->native[i].width)
+        ok=gl_saved_surface_upload(renderer,saved->native+i,true,error);
+    for (size_t i=0;ok && i<2;++i) if (saved->presented[i].width) {
+        ok=gl_saved_level_upload(renderer,renderer->presented_target.color+i,saved->presented+i,1,error);
+        renderer->presented_target.width=saved->width; renderer->presented_target.height=saved->height;
+    }
     if (ok && saved->output_allocated) {
         renderer->gl.GenFramebuffers(1,&renderer->output.framebuffer);
         renderer->gl.GenRenderbuffers(1,&renderer->output.depth_stencil);
@@ -979,11 +1001,11 @@ void qa_gl_handoff(qa_gl_restore_guard *guard)
         gl->TexImage2D(GL_TEXTURE_2D,(GLint)i,GL_RGBA8,0,0,0,GL_RGBA,GL_UNSIGNED_BYTE,NULL);
     for (size_t i=0;i<6;++i) gl->TexParameteri(GL_TEXTURE_2D,gl_texture_parameters[i],saved->zero_texture.parameters[i]);
     gl->Disable(GL_SCISSOR_TEST);
-    for (size_t i=0;i<saved->native_count;++i) {
+    for (size_t i=0;i<4;++i) if (saved->native[i].width) {
         gl->BindFramebuffer(GL_READ_FRAMEBUFFER,saved->native[i].framebuffer); gl->ReadBuffer(GL_COLOR_ATTACHMENT0);
         gl->BindFramebuffer(GL_DRAW_FRAMEBUFFER,0); gl->DrawBuffer(gl_native_buffer(renderer->capabilities.stereo,i));
         gl->BlitFramebuffer(0,0,(GLint)saved->width,(GLint)saved->height,0,0,(GLint)saved->width,(GLint)saved->height,
-            GL_COLOR_BUFFER_BIT|(i==0?GL_DEPTH_BUFFER_BIT|(saved->native[i].stencil.size?GL_STENCIL_BUFFER_BIT:0):0),GL_NEAREST);
+            GL_COLOR_BUFFER_BIT|(i==2?GL_DEPTH_BUFFER_BIT|(saved->native[i].stencil.size?GL_STENCIL_BUFFER_BIT:0):0),GL_NEAREST);
     }
     gl->BindFramebuffer(GL_FRAMEBUFFER,0);
     gl->ReadBuffer(gl_draw_buffer_name(renderer->draw_buffer)); gl->DrawBuffer(gl_draw_buffer_name(renderer->draw_buffer));
@@ -1062,7 +1084,7 @@ bool gl_presentation_capture(qa_gl_renderer *renderer,gl_presentation_snapshot *
         return gl_save_error(error,QA_ERROR_UNSUPPORTED,"Native multisample presentation cannot be retained as exact single-sample surfaces");
     snapshot->captured=gl_gpu_capture(renderer,saved,false,error);
     bool ok=snapshot->captured;
-    for (size_t i=0;ok && i<saved->native_count;++i) {
+    for (size_t i=0;ok && i<4;++i) if (saved->native[i].width) {
         ok=gl_saved_surface_upload(renderer,saved->native+i,true,error);
         snapshot->uploaded[i]=ok;
     }
@@ -1117,7 +1139,7 @@ bool gl_presentation_copy(qa_gl_renderer *renderer,gl_presentation_snapshot *sna
     gl_restore_storage *saved=snapshot->saved;
     gl_api *gl=&renderer->gl;
     gl_tight_pixels(renderer); gl->Disable(GL_SCISSOR_TEST);
-    for (size_t i=0;i<saved->native_count;++i) {
+    for (size_t i=0;i<4;++i) if (saved->native[i].width) {
         gl_saved_surface *surface=saved->native+i;
         if (!snapshot->uploaded[i]) {
             /* A rejected upload can retain partial objects. Retire those with
@@ -1126,13 +1148,13 @@ bool gl_presentation_copy(qa_gl_renderer *renderer,gl_presentation_snapshot *sna
                 !gl_saved_surface_upload(renderer,surface,true,error)) return false;
             snapshot->uploaded[i]=true;
         }
-        if (!surface->color_texture || (i==0 && !surface->depth_texture))
+        if (!surface->color_texture || (i==2 && !surface->depth_texture))
             return gl_save_error(error,QA_ERROR_ARGUMENT,"Native presentation upload is incomplete");
         gl->BindFramebuffer(GL_READ_FRAMEBUFFER,surface->framebuffer); gl->ReadBuffer(GL_COLOR_ATTACHMENT0);
         gl->BindFramebuffer(GL_DRAW_FRAMEBUFFER,0); gl->DrawBuffer(gl_native_buffer(renderer->capabilities.stereo,i));
         gl->BlitFramebuffer(0,0,(GLint)saved->width,(GLint)saved->height,0,0,(GLint)width,(GLint)height,
             GL_COLOR_BUFFER_BIT,GL_NEAREST);
-        if (i==0) {
+        if (i==2) {
             uint32_t overlap_width=width<saved->width?width:saved->width;
             uint32_t overlap_height=height<saved->height?height:saved->height;
             gl->BlitFramebuffer(0,0,(GLint)overlap_width,(GLint)overlap_height,

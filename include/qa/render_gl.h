@@ -16,6 +16,8 @@ typedef struct qa_gl_options {
 typedef struct qa_gl_capabilities {
     unsigned color_bits, alpha_bits, depth_bits, stencil_bits;
     uint32_t maximum_texture_size, texture_units, vertex_attributes;
+    /* Actual default color buffers: front-left, front-right, back-left, back-right. */
+    uint32_t native_buffer_mask;
     bool stereo, floating_depth, compiled_vertex_arrays, s3tc;
     char vendor[128], renderer[128], version[128], shading_language[128];
 } qa_gl_capabilities;
@@ -49,8 +51,9 @@ bool qa_gl_gamma_prepare(qa_gl_renderer *, qa_display *, float, qa_gl_surface_ti
 /* Captures tightly packed RGBA8 rows from top to bottom after output gamma. */
 bool qa_gl_capture(qa_gl_renderer *renderer, qa_buffer *out,
                    uint32_t *width, uint32_t *height, qa_error *error);
-/* Captures the front buffer published by the last successful scene swap,
- * including output gamma. Valid until the next execution or drawable change. */
+/* Captures the image published by the last successful scene swap, including
+ * output gamma. Back-only drawables retain that image before swap discards it.
+ * Valid until the next execution or drawable change. */
 bool qa_gl_capture_presented(qa_gl_renderer *, qa_buffer *, uint32_t *, uint32_t *, qa_error *);
 /* Window coordinates use OpenGL's bottom-left origin. */
 bool qa_gl_read_depth(qa_gl_renderer *renderer, uint32_t x, uint32_t y,

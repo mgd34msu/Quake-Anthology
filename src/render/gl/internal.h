@@ -215,6 +215,10 @@ typedef struct gl_opacity_target {
     bool parent_scissor_enabled, allocated, active, skip;
 } gl_opacity_target;
 typedef struct gl_restore_storage gl_restore_storage;
+typedef struct gl_presented_target {
+    GLuint framebuffer,color[2];
+    uint32_t width,height;
+} gl_presented_target;
 
 struct qa_gl_renderer {
     qa_gl_options options;
@@ -229,6 +233,7 @@ struct qa_gl_renderer {
     gl_stream_buffers stream;
     gl_output_target output;
     gl_opacity_target opacity;
+    gl_presented_target presented_target;
     GLuint target_framebuffer, fog_depth, white_texture;
     const qa_scene_image *target;
     const qa_scene_image *bound[2];
@@ -292,6 +297,7 @@ bool gl_depth_fog(qa_gl_renderer *renderer, const qa_scene_fog *fog,
 bool gl_dimensions(qa_gl_renderer *renderer, uint32_t *width, uint32_t *height,
                    qa_error *error);
 GLenum gl_draw_buffer_name(qa_scene_draw_buffer buffer);
+GLenum gl_native_buffer(bool stereo, size_t slot);
 unsigned gl_draw_buffer_index(qa_scene_draw_buffer buffer);
 bool gl_check(qa_gl_renderer *renderer, const char *operation,
               qa_error *error);
