@@ -21,9 +21,6 @@ bool qa_application_network_nq_command(qa_application *,
  * seed is not a transport command acknowledgement or a second Think call. */
 bool qa_application_network_q3_enter(qa_application *, qa_net_client_id,
     qa_net_seat_id, const qa_q3_usercmd *, qa_error *);
-bool qa_application_network_resolve(qa_application *, const qa_net_client *,
-    uint32_t actor_slot, uint32_t actor_generation, qa_net_seat_id *,
-    qa_unified_controlled_actor *, qa_error *);
 bool qa_application_network_detach(qa_application *, const qa_net_client *, qa_error *);
 
 typedef struct qa_application_network_player {

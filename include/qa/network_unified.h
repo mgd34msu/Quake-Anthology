@@ -68,8 +68,7 @@ bool qa_unified_channel_receive(qa_unified_channel *, qa_bytes, uint64_t now_ns,
 bool qa_unified_channel_flush(qa_unified_channel *, uint64_t now_ns,
                                qa_unified_send_fn, void *, size_t *sent, qa_error *);
 
-/* QTCM v1 deliberately retains binary64 command values until the selected
- * provider rounds them. The wire dialect is independent of gameplay floats. */
+/* Retain binary64 command values until the selected provider rounds them. */
 typedef struct qa_unified_vec3 { double x, y, z; } qa_unified_vec3;
 typedef struct qa_unified_movement {
     qa_movement_kind kind;
@@ -92,41 +91,6 @@ typedef struct qa_unified_arsenal {
     bool has_impulse;
     uint8_t impulse;
 } qa_unified_arsenal;
-typedef enum qa_unified_source_kind {
-    QA_UNIFIED_SOURCE_LOCAL, QA_UNIFIED_SOURCE_REMOTE, QA_UNIFIED_SOURCE_BOT
-} qa_unified_source_kind;
-typedef struct qa_unified_source {
-    qa_unified_source_kind kind;
-    qa_net_client_id client;
-    qa_net_seat_id seat;
-} qa_unified_source;
-typedef struct qa_unified_command {
-    qa_actor_id actor;
-    qa_unified_source source;
-    uint64_t sequence;
-    qa_unified_movement movement;
-    bool has_arsenal;
-    qa_unified_arsenal arsenal;
-} qa_unified_command;
-typedef struct qa_unified_controlled_actor {
-    qa_actor_id actor;
-    qa_movement_kind movement;
-    qa_bytes arsenal;
-} qa_unified_controlled_actor;
-typedef struct qa_unified_command_receiver {
-    qa_unified_source source; /* Authenticated, never decoded from the packet. */
-    /* Current world registry, independent of the connection owner's namespace.
-     * Update after world restoration before accepting further commands. */
-    uint64_t actor_registry;
-    void *context;
-    bool (*controlled)(void *, uint32_t slot, uint32_t generation,
-                       qa_unified_controlled_actor *, qa_error *);
-} qa_unified_command_receiver;
-bool qa_unified_command_encode(const qa_unified_command *, qa_buffer *, qa_error *);
-/* Arsenal strings borrow bytes. Authority checks run after complete parsing. */
-bool qa_unified_command_decode(qa_bytes, const qa_unified_command_receiver *,
-                                qa_unified_command *, qa_error *);
-
 typedef struct qa_unified_composition {
     qa_buffer canonical;
     qa_sha256_digest digest;
@@ -134,8 +98,6 @@ typedef struct qa_unified_composition {
 /* Canonicalizes JSON using the donor's UTF-16 key order and number syntax. */
 bool qa_unified_composition_create(qa_bytes json, qa_unified_composition *, qa_error *);
 void qa_unified_composition_free(qa_unified_composition *);
-bool qa_unified_composition_offer(const qa_unified_composition *, qa_buffer *, qa_error *);
-bool qa_unified_composition_admit(const qa_unified_composition *, qa_bytes offer, qa_error *);
 bool qa_unified_value_canonical(qa_bytes json, qa_buffer *, qa_error *);
 
 /* Checkpoint envelopes retain every schema field, including tagged bytes,

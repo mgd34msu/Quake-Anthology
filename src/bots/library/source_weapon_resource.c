@@ -70,7 +70,9 @@ static bool source_read(void *context,const qa_script_include *request,qa_script
     bot_weapon_acquired_source *pending=calloc(1,sizeof(*pending));
     if(!pending) {qa_error_set(error,QA_ERROR_MEMORY,0,"Retaining weapon source acquisition");return false;}
     bool ok=resource->services.read(resource->services.context,request,out,found,error);
+    qa_error reached=error?*error:(qa_error){0};
     bool current=bot_weapon_resource_current(resource,error);
+    if(!ok && error) *error=reached;
     bool invalid=ok && current && *found && request->kind==QA_SCRIPT_ROOT &&
         out->path && !*out->path && (!out->bytes.size || out->bytes.data);
     if(invalid) {
@@ -225,7 +227,10 @@ bool bot_weapon_resource_load(bot_weapon_resource *resource,const char *path,uin
     resource->attempted=true;resource->active=true;
     qa_script_services services=bot_weapon_resource_services(resource);
     bool ok=qa_script_open(path,&services,&resource->options,&resource->reader,error);
-    if(!bot_weapon_resource_current(resource,error)) ok=false;
+    qa_error open_error=error?*error:(qa_error){0};
+    bool current=bot_weapon_resource_current(resource,error);
+    if(!ok && error) *error=open_error;
+    ok=ok && current;
     if(ok) {
         qa_script_location location=qa_script_position(resource->reader);
         if(!location.path || !*location.path) {

@@ -89,41 +89,8 @@ bool chat_asset_finish(qa_bot_chat_asset *a, qa_error *e) {
     }
     return true;
 }
-bool chat_asset_parse(qa_bot_library *library, qa_bot_chat_asset *a, qa_error *e) {
-    if(a->view.kind<=QA_BOT_CHAT_INITIAL) {
-        qa_error_set(e,QA_ERROR_ARGUMENT,0,"Initial chat parsing requires its retained two-pass source owner");
-        return false;
-    }
-    qa_script *s;
-    if (!qa_script_open(a->view.path, &library->options.scripts, &library->options.preprocessor, &s,
-                        e))
-        return false;
-    bool ok = false;
-    switch (a->view.kind) {
-    case QA_BOT_CHAT_SYNONYMS:
-        ok = chat_parse_synonyms(a, s, e);
-        break;
-    case QA_BOT_CHAT_RANDOMS:
-        ok = chat_parse_randoms(a, s, e);
-        break;
-    case QA_BOT_CHAT_MATCHES:
-        ok = chat_parse_matches(a, s, e);
-        break;
-    case QA_BOT_CHAT_REPLIES:
-        ok = chat_parse_replies(library, a, s, e);
-        break;
-    case QA_BOT_CHAT_INITIAL: break;
-    }
-    qa_script_close(s);
-    return ok && chat_asset_finish(a, e);
-}
 bool qa_bot_chat_asset_load(qa_bot_library *library, qa_bot_chat_asset_kind kind, const char *path,
                             const char *name, qa_bot_chat_asset **out, qa_error *e) {
-    bool cached;
-    return chat_asset_load(library, kind, path, name, out, &cached, e);
-}
-bool chat_asset_load(qa_bot_library *library, qa_bot_chat_asset_kind kind, const char *path,
-                     const char *name, qa_bot_chat_asset **out, bool *cached, qa_error *e) {
     if (library == NULL || path == NULL || out == NULL || kind < QA_BOT_CHAT_SYNONYMS ||
         kind > QA_BOT_CHAT_INITIAL || (kind == QA_BOT_CHAT_INITIAL && name == NULL)) {
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Invalid bot chat asset request");
@@ -131,43 +98,20 @@ bool chat_asset_load(qa_bot_library *library, qa_bot_chat_asset_kind kind, const
     }
     if (name == NULL)
         name = "";
-    *cached = false;
     if(kind<QA_BOT_CHAT_INITIAL) {
         bool source_failure;
         bool ok=chat_asset_setup_load(library,kind,path,NULL,0,out,&source_failure,e);
         if(!ok) {qa_bot_chat_asset_release(*out);*out=NULL;}
         return ok;
     }
-    if(kind==QA_BOT_CHAT_INITIAL) {
+    {
         bool source_failure;
         bool ok=chat_initial_asset_load(library,path,name,NULL,0,out,&source_failure,e);
         if(!ok) {qa_bot_chat_asset_release(*out);*out=NULL;}
         return ok;
     }
-    if (!bot_reload_characters(library))
-        for (qa_bot_chat_asset *a = library->chat_assets; a != NULL; a = a->next)
-            if (a->view.kind == kind && strcmp(a->view.path, path) == 0 &&
-                strcmp(a->view.name, name) == 0) {
-                qa_bot_chat_asset_retain(a);
-                *out = a;
-                *cached = true;
-                return true;
-            }
-    qa_bot_chat_asset *a;
-    if (!chat_asset_allocate(kind, path, name, &a, e))
-        return false;
-    if (!chat_asset_parse(library, a, e)) {
-        qa_bot_chat_asset_release(a);
-        return false;
-    }
-    if (!bot_reload_characters(library)) {
-        a->next = library->chat_assets;
-        library->chat_assets = a;
-        qa_bot_chat_asset_retain(a);
-    }
-    *out = a;
-    return true;
 }
+
 bool chat_asset_setup_load(qa_bot_library *library,qa_bot_chat_asset_kind kind,const char *path,
     qa_bot_chat_system *system,uint64_t revision,qa_bot_chat_asset **out,bool *source_failure,
     qa_error *error) {

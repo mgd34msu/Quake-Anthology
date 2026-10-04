@@ -1,4 +1,5 @@
 #include "handshake_internal.h"
+#include "qa/text.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -12,32 +13,6 @@ static bool copy_text(char*out,size_t size,const char*in,qa_error*e) {
         return false;
     }
     memcpy(out,in,n+1);
-    return true;
-}
-static bool utf8_valid(const unsigned char*s,size_t n) {
-    for(size_t i=0;i<n;) {
-        unsigned b=s[i++],count=0;
-        uint32_t v;
-        if(b<128)continue;
-        if(b>=194&&b<=223) {
-            count=1;
-            v=b&31;
-        } else if(b>=224&&b<=239) {
-            count=2;
-            v=b&15;
-        } else if(b>=240&&b<=244) {
-            count=3;
-            v=b&7;
-        } else return false;
-        if(count>n-i)return false;
-        unsigned total=count;
-        while(count--) {
-            b=s[i++];
-            if((b&192)!=128)return false;
-            v=(v<<6)|(b&63);
-        }
-        if((total==1&&v<128)||(total==2&&v<2048)||(total==3&&v<65536)||v>0x10ffff||(v>=0xd800&&v<=0xdfff))return false;
-    }
     return true;
 }
 bool qa_q2_oob_write(qa_net_writer*w,const char*text) {
@@ -56,7 +31,7 @@ bool qa_q2_oob_read(qa_bytes b,bool utf8,qa_q2_oob*out,bool*recognized,qa_error*
         qa_error_set(e,QA_ERROR_FORMAT,4,"Q2 OOB message too long");
         return false;
     }
-    if(utf8&&!utf8_valid(b.data+4,n)) {
+    if(utf8&&!qa_utf8_valid((qa_bytes){b.data+4,n})) {
         qa_error_set(e,QA_ERROR_FORMAT,4,"Invalid Q2 OOB UTF-8");
         return false;
     }
@@ -216,7 +191,7 @@ bool qa_q2_connect_write(qa_net_writer*w,const qa_q2_connect_request*q) {
         }
         size_t n=strlen(userinfo);
         if(n>8192)return qa_net_writer_fail(w,"KEX userinfo exceeds native capacity");
-        if(!utf8_valid((const unsigned char*)userinfo,n))return qa_net_writer_fail(w,"Invalid KEX userinfo UTF-8");
+        if(!qa_utf8_valid((qa_bytes){(const uint8_t*)userinfo,n}))return qa_net_writer_fail(w,"Invalid KEX userinfo UTF-8");
         size_t at=0;
         do {
             size_t length=n-at;

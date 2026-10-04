@@ -160,7 +160,10 @@ bool qa_bot_weight_workspace_create(qa_bot_weight_workspace **out, qa_error *e) 
     return true;
 }
 void qa_bot_weight_workspace_destroy(qa_bot_weight_workspace *w) {
-    if(w && !w->busy) free(w);
+    if(w && !w->busy) {
+        free(w->traversal.frames);
+        free(w);
+    }
 }
 bool qa_bot_weights_evaluate_view(const qa_bot_weights *w, uint32_t weight,
                                   const qa_bot_inventory_view *inventory,
@@ -177,7 +180,7 @@ bool qa_bot_weights_evaluate_view(const qa_bot_weights *w, uint32_t weight,
     qa_bot_weights_retain(retained);
     work->busy = true;
     bool ok = bot_fuzzy_owned_open(w->source,e) &&
-        bot_fuzzy_evaluate(&w->source->source,(int32_t)weight,inventory,random,out,e);
+        bot_fuzzy_evaluate(&w->source->source,(int32_t)weight,inventory,random,&work->traversal,out,e);
     work->busy = false;
     qa_bot_weights_release(retained);
     return ok;

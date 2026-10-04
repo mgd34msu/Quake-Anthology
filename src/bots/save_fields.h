@@ -28,31 +28,11 @@ static inline bool bot_save_signature(qa_source_save_io *io, const uint8_t expec
 /* These strings belong to bot assets and never enter the canonical table. */
 static inline bool bot_save_text(qa_source_save_io *io, const char **text)
 {
-    const char *source = io->direction == QA_SOURCE_SAVE_WRITE ? *text : NULL;
-    bool present = source != NULL;
-    if (!qa_source_save_bool(io, &present))
+    char *owned = io->direction == QA_SOURCE_SAVE_WRITE ? (char *)*text : NULL;
+    if (!qa_source_save_owned_text(io, &owned))
         return false;
-    if (!present) {
-        if (io->direction == QA_SOURCE_SAVE_READ)
-            *text = NULL;
-        return true;
-    }
-    size_t length = source ? strlen(source) : 0;
-    if (!qa_source_save_count(io, &length, SIZE_MAX - 1))
-        return false;
-    if (io->direction == QA_SOURCE_SAVE_WRITE)
-        return qa_source_save_bytes(io, (void *)source, length);
-    if (io->offset > io->input.size || length > io->input.size - io->offset)
-        return bot_save_fail(io, QA_ERROR_FORMAT, "Truncated private bot string");
-    char *owned = malloc(length + 1);
-    if (!owned)
-        return bot_save_fail(io, QA_ERROR_MEMORY, "Restoring private bot string");
-    if (!qa_source_save_bytes(io, owned, length) || memchr(owned, 0, length)) {
-        free(owned);
-        return bot_save_fail(io, QA_ERROR_FORMAT, "Embedded NUL in private bot string");
-    }
-    owned[length] = 0;
-    *text = owned;
+    if (io->direction == QA_SOURCE_SAVE_READ)
+        *text = owned;
     return true;
 }
 

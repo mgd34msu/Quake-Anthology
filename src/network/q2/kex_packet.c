@@ -1,4 +1,5 @@
 #include "qa/network_q2_kex.h"
+#include "qa/text.h"
 #include <string.h>
 static uint16_t be16(const uint8_t*p) {
     return (uint16_t)(((uint16_t)p[0]<<8)|p[1]);
@@ -6,34 +7,8 @@ static uint16_t be16(const uint8_t*p) {
 static bool word(qa_net_writer*w,uint16_t n) {
     return qa_net_write_u8(w,(uint8_t)(n>>8))&&qa_net_write_u8(w,(uint8_t)n);
 }
-static bool utf8(const unsigned char*s,size_t n) {
-    for(size_t i=0;i<n;) {
-        unsigned b=s[i++],count=0;
-        uint32_t v;
-        if(b<128)continue;
-        if(b>=194&&b<=223) {
-            count=1;
-            v=b&31;
-        } else if(b>=224&&b<=239) {
-            count=2;
-            v=b&15;
-        } else if(b>=240&&b<=244) {
-            count=3;
-            v=b&7;
-        } else return false;
-        if(count>n-i)return false;
-        unsigned total=count;
-        while(count--) {
-            b=s[i++];
-            if((b&192)!=128)return false;
-            v=(v<<6)|(b&63);
-        }
-        if((total==1&&v<128)||(total==2&&v<2048)||(total==3&&v<65536)||v>0x10ffff||(v>=0xd800&&v<=0xdfff))return false;
-    }
-    return true;
-}
 bool qa_kex_text_valid(qa_bytes b) {
-    return (!b.size||b.data)&&utf8(b.data,b.size);
+    return qa_utf8_valid(b);
 }
 bool qa_kex_packet_read(qa_bytes b,qa_kex_packet*out,qa_error*e) {
     if(!out||!b.data||b.size<3||b.size>QA_KEX_DATAGRAM_BYTES) {
@@ -98,7 +73,7 @@ bool qa_kex_read_string(qa_net_reader*r,char*out,size_t cap) {
     if(!out||!cap||n>qa_net_reader_remaining(r))return qa_net_reader_fail(r,"KEX string exceeds capacity");
     qa_bytes text;
     if(!qa_net_read_bytes(r,(size_t)n,&text))return false;
-    if(!utf8(text.data,text.size))return qa_net_reader_fail(r,"Invalid KEX string UTF-8");
+    if(!qa_utf8_valid(text))return qa_net_reader_fail(r,"Invalid KEX string UTF-8");
     if(text.size>=3&&!memcmp(text.data,"\xef\xbb\xbf",3)) {
         text.data+=3;
         text.size-=3;
@@ -111,6 +86,6 @@ bool qa_kex_read_string(qa_net_reader*r,char*out,size_t cap) {
 bool qa_kex_write_string(qa_net_writer*w,const char*s) {
     if(!s)return qa_net_writer_fail(w,"Missing KEX string");
     size_t n=strlen(s);
-    if(!utf8((const unsigned char*)s,n))return qa_net_writer_fail(w,"Invalid KEX string UTF-8");
+    if(!qa_utf8_valid((qa_bytes){(const uint8_t *)s,n}))return qa_net_writer_fail(w,"Invalid KEX string UTF-8");
     return qa_kex_write_varint(w,n)&&qa_net_write_data(w,s,n);
 }

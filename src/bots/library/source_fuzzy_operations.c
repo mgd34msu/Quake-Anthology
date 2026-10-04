@@ -2,13 +2,13 @@
 #include <stdlib.h>
 #include <string.h>
 
-typedef struct fuzzy_frame {
+typedef struct bot_fuzzy_frame {
     uint32_t pointer,right;
     unsigned stage;
     bool undecided;
     float left;
 } fuzzy_frame;
-typedef struct fuzzy_stack {fuzzy_frame *frames;size_t count,capacity;} fuzzy_stack;
+typedef bot_fuzzy_stack fuzzy_stack;
 static bool fail(qa_error *error,const char *message) {
     qa_error_set(error,QA_ERROR_ARGUMENT,0,"%s",message);return false;
 }
@@ -63,15 +63,16 @@ static bool leaf(bot_fuzzy_heap *heap,uint32_t pointer,bool undecided,
     float scaled=unit*range;*last=base+scaled;return true;
 }
 bool bot_fuzzy_evaluate(const bot_fuzzy_config *config,int32_t index,const qa_bot_inventory_view *inventory,
-    const qa_bot_random_source *random,float *out,qa_error *error) {
-    if(!config || !inventory || !out || (!inventory->read && inventory->count && !inventory->data) ||
+    const qa_bot_random_source *random,bot_fuzzy_stack *scratch,float *out,qa_error *error) {
+    if(!config || !inventory || !scratch || !out || (!inventory->read && inventory->count && !inventory->data) ||
        (random && !random->next)) return fail(error,"Fuzzy evaluation requires actual source inputs/output");
     int32_t count;uint32_t root;
     if(!bot_fuzzy_config_count(config,&count,error)) return false;
     if(index<0 || index>=count) return fail(error,"Fuzzy weight index exceeds its source count");
     if(!bot_fuzzy_config_pointer_read(config,index,true,&root,error)) return false;
     if(!root) return fail(error,"Fuzzy weight has no source separator");
-    fuzzy_stack stack={0};float last=0;bool ok=push(&stack,root,random!=NULL,error);
+    fuzzy_stack stack=*scratch;stack.count=0;
+    float last=0;bool ok=push(&stack,root,random!=NULL,error);
     while(ok && stack.count) {
         fuzzy_frame *frame=&stack.frames[stack.count-1];
         if(frame->stage==1) {--stack.count;continue;}
@@ -123,7 +124,9 @@ bool bot_fuzzy_evaluate(const bot_fuzzy_config *config,int32_t index,const qa_bo
             ok=leaf(config->heap,frame->pointer,frame->undecided,random,&stack,&last,error);
         } else frame->pointer=next;
     }
-    free(stack.frames);if(ok) *out=last;return ok;
+    stack.count=0;*scratch=stack;
+    if(ok) *out=last;
+    return ok;
 }
 bool bot_fuzzy_separator_tree_free(bot_fuzzy_heap *heap,uint32_t pointer,qa_error *error) {
     if(!pointer) return true;

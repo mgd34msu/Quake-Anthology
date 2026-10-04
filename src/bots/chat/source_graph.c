@@ -278,14 +278,14 @@ static bool project_pieces(qa_bot_chat_asset *asset,uint32_t first,qa_bot_chat_r
                 const char *text;
                 if(!project_text(graph,string,BOT_CHAT_GRAPH_MATCH_STRING,&text,error) ||
                    !mapped(&asset->graph_alternatives,asset->view.alternative_count,string,error) ||
-                   !chat_append((void **)&asset->alternatives,&asset->view.alternative_count,&asset->alternative_capacity,
+                   !chat_append((void **)&asset->alternatives,&asset->alternative_capacity,&asset->view.alternative_count,
                         sizeof(*asset->alternatives),&text,error)) return false;
                 ++piece.data.alternatives.count;
                 if(!bot_chat_graph_link(graph,string,BOT_CHAT_GRAPH_MATCH_STRING,4,BOT_CHAT_GRAPH_MATCH_STRING,&string,error)) return false;
             }
         }
         if(!mapped(&asset->graph_pieces,asset->view.piece_count,first,error) ||
-           !chat_append((void **)&asset->pieces,&asset->view.piece_count,&asset->piece_capacity,sizeof(piece),&piece,error)) return false;
+           !chat_append((void **)&asset->pieces,&asset->piece_capacity,&asset->view.piece_count,sizeof(piece),&piece,error)) return false;
         ++out->count;
         if(!bot_chat_graph_link(graph,first,BOT_CHAT_GRAPH_PIECE,12,BOT_CHAT_GRAPH_PIECE,&first,error)) return false;
     }
@@ -310,7 +310,7 @@ bool bot_chat_graph_project(qa_bot_chat_asset *asset,qa_error *error) {
             memcpy(&value.subtype,&bits,4);
             if(!project_pieces(asset,first,&value.pieces,error) ||
                !mapped(&asset->graph_templates,asset->view.template_count,root,error) ||
-               !chat_append((void **)&asset->templates,&asset->view.template_count,&asset->template_capacity,sizeof(value),&value,error)) return false;
+               !chat_append((void **)&asset->templates,&asset->template_capacity,&asset->view.template_count,sizeof(value),&value,error)) return false;
         } else {
             qa_bot_chat_reply value={0};uint32_t bits,key,message;
             if(!bot_chat_graph_word(graph,root,kind,4,&bits,error) ||
@@ -342,7 +342,7 @@ bool bot_chat_graph_project(qa_bot_chat_asset *asset,qa_error *error) {
                        !bot_chat_graph_text(graph,first,&item.data.text,error)) return false;
                 }
                 if(!mapped(&asset->graph_keys,asset->view.key_count,key,error) ||
-                   !chat_append((void **)&asset->keys,&asset->view.key_count,&asset->key_capacity,sizeof(item),&item,error)) return false;
+                   !chat_append((void **)&asset->keys,&asset->key_capacity,&asset->view.key_count,sizeof(item),&item,error)) return false;
                 ++value.keys.count;
                 if(!bot_chat_graph_link(graph,key,BOT_CHAT_GRAPH_KEY,12,BOT_CHAT_GRAPH_KEY,&key,error)) return false;
             }
@@ -353,12 +353,12 @@ bool bot_chat_graph_project(qa_bot_chat_asset *asset,qa_error *error) {
                 const char *text;
                 if(!project_text(graph,message,BOT_CHAT_GRAPH_MESSAGE,&text,error) ||
                    !mapped(&asset->graph_messages,asset->view.message_count,message,error) ||
-                   !chat_append((void **)&asset->messages,&asset->view.message_count,&asset->message_capacity,sizeof(text),&text,error)) return false;
+                   !chat_append((void **)&asset->messages,&asset->message_capacity,&asset->view.message_count,sizeof(text),&text,error)) return false;
                 ++value.messages.count;
                 if(!bot_chat_graph_link(graph,message,BOT_CHAT_GRAPH_MESSAGE,8,BOT_CHAT_GRAPH_MESSAGE,&message,error)) return false;
             }
             if(!mapped(&asset->graph_replies,asset->view.reply_count,root,error) ||
-               !chat_append((void **)&asset->replies,&asset->view.reply_count,&asset->reply_capacity,sizeof(value),&value,error)) return false;
+               !chat_append((void **)&asset->replies,&asset->reply_capacity,&asset->view.reply_count,sizeof(value),&value,error)) return false;
         }
         if(!bot_chat_graph_link(graph,root,kind,16,kind,&root,error)) return false;
     }

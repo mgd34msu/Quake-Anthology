@@ -69,6 +69,5 @@ bool qa_browser_q3_valid(const qa_server_browser *);
 bool qa_browser_q3_save(qa_net_writer *, const qa_server_browser *);
 bool qa_browser_q3_restore(qa_net_reader *, qa_server_browser *);
 void qa_browser_q3_expire(qa_server_browser *, uint64_t);
-bool qa_browser_q3_enqueue(qa_server_browser *, const qa_net_address *, qa_error *);
 bool qa_browser_status_enqueue(qa_server_browser *, const qa_net_address *, qa_net_protocol_id, qa_error *);
 #endif

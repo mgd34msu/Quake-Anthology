@@ -601,7 +601,6 @@ add_library(qa_bots STATIC
     src/bots/chat/integrity.c
     src/bots/chat/log.c
     src/bots/chat/parse.c
-    src/bots/chat/reply_parse.c
     src/bots/chat/state.c
     src/bots/chat/system_save.c
     src/bots/chat/strings.c
@@ -988,11 +987,9 @@ add_library(qa_network STATIC
     src/network/runtime/session.c
     src/network/runtime/save.c
     src/network/runtime/prediction_save.c
-    src/network/runtime/unified.c
     src/network/socks.c
     src/network/transport.c
     src/network/unified/channel.c
-    src/network/unified/commands.c
     src/network/unified/composition.c
     src/network/unified/document.c
     src/network/unified/packet.c

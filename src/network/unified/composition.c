@@ -264,31 +264,3 @@ void qa_unified_composition_free(qa_unified_composition *c) {
     if (!c) return;
     qa_buffer_free(&c->canonical); memset(&c->digest,0,sizeof(c->digest));
 }
-
-bool qa_unified_composition_offer(const qa_unified_composition *c, qa_buffer *out, qa_error *error) {
-    if (!c || !out || !c->canonical.data || c->canonical.size>UINT32_MAX || c->canonical.size>SIZE_MAX-10) {
-        qa_error_set(error,QA_ERROR_ARGUMENT,0,"invalid unified composition offer"); return false;
-    }
-    qa_sha256_digest digest; qa_sha256((qa_bytes){c->canonical.data,c->canonical.size},&digest);
-    if (!qa_sha256_equal(&digest,&c->digest)) {
-        qa_error_set(error,QA_ERROR_ARGUMENT,0,"unified composition changed after identity resolution"); return false;
-    }
-    uint8_t *data=malloc(10+c->canonical.size);
-    if (!data) { qa_error_set(error,QA_ERROR_MEMORY,0,"allocating unified composition offer"); return false; }
-    memcpy(data,"QTSU",4); qa_store_u16le(data+4,1); qa_store_u32le(data+6,(uint32_t)c->canonical.size);
-    memcpy(data+10,c->canonical.data,c->canonical.size);
-    *out=(qa_buffer){data,10+c->canonical.size}; return true;
-}
-
-bool qa_unified_composition_admit(const qa_unified_composition *c, qa_bytes offer, qa_error *error) {
-    if (!c || !offer.data || offer.size<10 || memcmp(offer.data,"QTSU",4) ||
-        qa_load_u16le(offer.data+4)!=1 || qa_load_u32le(offer.data+6)!=offer.size-10) {
-        qa_error_set(error,QA_ERROR_FORMAT,0,"invalid unified composition offer header"); return false;
-    }
-    qa_sha256_digest digest;
-    qa_sha256((qa_bytes){offer.data+10,offer.size-10},&digest);
-    if (!qa_sha256_equal(&digest,&c->digest)) {
-        qa_error_set(error,QA_ERROR_UNSUPPORTED,0,"content, executable, numeric, actor or snapshot composition differs"); return false;
-    }
-    return true;
-}

@@ -64,13 +64,10 @@ struct qa_bot_chat {
     char name_projection[33],message_projection[257];
     bool retired;
 };
-bool chat_asset_parse(qa_bot_library *, qa_bot_chat_asset *, qa_error *);
 bool chat_asset_allocate(qa_bot_chat_asset_kind, const char *, const char *, qa_bot_chat_asset **,
                          qa_error *);
 void chat_asset_view(qa_bot_chat_asset *);
 bool chat_asset_finish(qa_bot_chat_asset *, qa_error *);
-bool chat_asset_load(qa_bot_library *, qa_bot_chat_asset_kind, const char *, const char *,
-                     qa_bot_chat_asset **, bool *cached, qa_error *);
 bool chat_asset_setup_load(qa_bot_library *,qa_bot_chat_asset_kind,const char *,
     qa_bot_chat_system *,uint64_t,qa_bot_chat_asset **,bool *,qa_error *);
 bool chat_initial_asset_load(qa_bot_library *,const char *,const char *,qa_bot_chat *,uint64_t,
@@ -114,14 +111,5 @@ void chat_release(qa_bot_chat *);
 void chat_system_release(qa_bot_chat_system *);
 bool chat_random_string(qa_bot_chat_system *,const char *,const char **,qa_error *);
 bool chat_reserve_console(qa_bot_chat_system *, size_t, qa_error *);
-bool chat_parse_synonyms(qa_bot_chat_asset *, qa_script *, qa_error *);
-bool chat_parse_randoms(qa_bot_chat_asset *, qa_script *, qa_error *);
-bool chat_parse_matches(qa_bot_chat_asset *, qa_script *, qa_error *);
-bool chat_parse_replies(qa_bot_library *, qa_bot_chat_asset *, qa_script *, qa_error *);
-bool chat_string(qa_bot_chat_asset *, qa_script *, const char **, qa_error *);
-bool chat_message_parse(qa_bot_chat_asset *, qa_script *, const char **, qa_error *);
-bool chat_pieces_parse(qa_bot_chat_asset *, qa_script *, const char *, qa_bot_chat_range *,
-                       qa_error *);
-bool chat_messages_parse(qa_bot_chat_asset *, qa_script *, qa_bot_chat_range *, qa_error *);
 bool chat_append(void **, size_t *, size_t *, size_t, const void *, qa_error *);
 #endif

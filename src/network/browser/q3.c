@@ -166,10 +166,6 @@ bool qa_browser_status_enqueue(qa_server_browser *b, const qa_net_address *addre
     b->q3->status_queue = queue;
     queue[b->q3->status_count++] = (browser_status_query){*address,dialect}; return true;
 }
-bool qa_browser_q3_enqueue(qa_server_browser *b, const qa_net_address *address, qa_error *e)
-{
-    return qa_browser_status_enqueue(b,address,protocol,e);
-}
 static unsigned status_family(qa_net_protocol_id dialect)
 {
     return dialect.kind<=QA_NET_RMQ999?0:dialect.kind<=QA_NET_QW29?1:

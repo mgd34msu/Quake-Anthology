@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "qa/launch_save.h"
+#include "qa/launch_identity_fields.h"
 #include "qa/source_save.h"
 
 #define F(type, value, member) do { if (!qa_source_save_##type(io,&(value)->member)) return false; } while (0)
@@ -93,18 +94,21 @@ static bool clock(qa_source_save_io *io, qa_clock_config *value)
 }
 static bool rules(qa_source_save_io *io, qa_mode_rules *value)
 {
-    bool reading=io->direction==QA_SOURCE_SAVE_READ; E(value,source); E(value,kind);
-    for (size_t i=0;i<3;++i) if (!qa_source_save_u32(io,&value->teams[i])) return false;
-    F(u32,value,forced_team); F(i32,value,frag_limit); F(i32,value,capture_limit); F(i32,value,warmup_seconds);
-    F(i32,value,competition); F(i32,value,setup_seconds); F(i32,value,countdown_seconds); F(i32,value,match_seconds);
-    F(i32,value,max_game_players); F(i32,value,election_percent); F(i32,value,teamplay); F(i32,value,rune_mask);
-    F(i32,value,vote_limit); F(u32,value,flags); F(u32,value,referee_flags);
-    F(f32,value,time_limit_minutes); F(f32,value,obelisk_health); F(f32,value,obelisk_regen);
-    F(u64,value,obelisk_regen_ns); F(u64,value,obelisk_respawn_ns);
-    F(bool,value,enabled); F(bool,value,friendly_fire); F(bool,value,force_join); F(bool,value,match_lock);
-    F(bool,value,paused); F(bool,value,auto_lock); F(bool,value,relics); F(bool,value,single_player_active);
-    F(bool,value,tournament_restart); F(bool,value,q2_rerelease); F(bool,value,start_map); F(bool,value,force_balance);
-    F(bool,value,voting_disabled); F(bool,value,rogue_deathmatch); return true;
+    bool reading=io->direction==QA_SOURCE_SAVE_READ;
+#define MODE_FIELD(kind,member) MODE_##kind(member)
+#define MODE_U(member) E(value,member);
+#define MODE_I(member) F(i32,value,member);
+#define MODE_F(member) F(f32,value,member);
+#define MODE_B(member) F(bool,value,member);
+#define MODE_W(member) F(u64,value,member);
+    QA_LAUNCH_MODE_RULE_FIELDS(MODE_FIELD)
+#undef MODE_FIELD
+#undef MODE_U
+#undef MODE_I
+#undef MODE_F
+#undef MODE_B
+#undef MODE_W
+    return true;
 }
 static bool world(qa_source_save_io *io, qa_launch_draft *draft, qa_launch_world *value)
 {

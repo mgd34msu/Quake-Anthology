@@ -3,6 +3,7 @@
 #include "qa/arena.h"
 #include "qa/bot_library.h"
 #include "qa/bots_allocator.h"
+#include "source_fuzzy_operations.h"
 #include <limits.h>
 #include <math.h>
 #include <stdatomic.h>
@@ -29,6 +30,7 @@ struct qa_bot_weights {
 };
 struct qa_bot_weight_workspace {
     bool busy;
+    bot_fuzzy_stack traversal;
 };
 struct qa_bot_character {
     atomic_uint references;

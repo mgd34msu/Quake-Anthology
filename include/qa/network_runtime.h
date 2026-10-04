@@ -151,25 +151,4 @@ bool qa_network_restart(qa_network_runtime *, qa_net_client_id,
                          const qa_sha256_digest *, qa_error *);
 bool qa_network_reconnect(qa_network_runtime *, qa_net_client_id,
                            const qa_net_address *, qa_bytes proof, uint64_t now_ns, qa_error *);
-/* Direct unified reliability adapter. Content/identity negotiation remains the
- * application admission owner's job. Incoming QTCM packets identify an actor;
- * resolve must bind it to an authenticated seat and selected providers. Other
- * reliable/frame documents go to the complete-state producer/consumer. */
-typedef struct qa_network_unified_hooks {
-    void *context;
-    bool (*resolve)(void *, qa_net_client_id, uint32_t slot, uint32_t generation,
-                    qa_net_seat_id *, qa_unified_controlled_actor *, qa_error *);
-    bool (*delivery)(void *, qa_network_runtime *, qa_net_client_id,
-                     const qa_unified_delivery *, qa_error *);
-    bool (*restart)(void *, uint64_t epoch, const qa_sha256_digest *,
-                    qa_unified_channel *, qa_error *);
-} qa_network_unified_hooks;
-bool qa_network_attach_unified(qa_network_runtime *, const qa_net_connect *,
-                                qa_unified_token, const qa_unified_limits *,
-                                const qa_network_unified_hooks *, uint64_t now_ns,
-                                qa_net_client_id *, qa_error *);
-bool qa_network_unified_reliable(qa_network_runtime *, qa_net_client_id, qa_bytes,
-                                  uint32_t *sequence, qa_error *);
-bool qa_network_unified_frame(qa_network_runtime *, qa_net_client_id, qa_bytes,
-                               uint32_t required_reliable, qa_error *);
 #endif

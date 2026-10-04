@@ -1,6 +1,7 @@
 #include "qa/network_unified_session.h"
 #include "value_internal.h"
 
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -118,6 +119,11 @@ static bool append(qa_unified_builder *b, const char *text, qa_error *e)
 
 static bool value_number(qa_unified_builder *b, double value, qa_error *e)
 {
+    if (isfinite(value) && (value != 0 || !signbit(value))) {
+        char text[32];
+        return qa_unified_number_text(value, text, e) &&
+            qa_unified_append(b, text, strlen(text), e);
+    }
     qa_buffer encoded = {0};
     if (!qa_unified_checkpoint_number(value, &encoded, e)) return false;
     bool ok = qa_unified_append(b, encoded.data, encoded.size, e);

@@ -60,14 +60,6 @@ bool qa_unified_session_player_read(const qa_unified_session *s, qa_unified_sess
     return true;
 }
 
-static void repair_inputs(qa_unified_input_batch *b)
-{
-    for (size_t i = 0; i < b->count; ++i) {
-        b->commands[i].arsenal.provider = (qa_bytes){b->providers[i].data, b->providers[i].size};
-        b->commands[i].arsenal.weapon = (qa_bytes){b->weapons[i].data, b->weapons[i].size};
-    }
-}
-
 static void remove_input(qa_unified_input_batch *b, size_t at)
 {
     qa_buffer_free(&b->providers[at]); qa_buffer_free(&b->weapons[at]);
@@ -79,16 +71,31 @@ static void remove_input(qa_unified_input_batch *b, size_t at)
     }
     b->commands[b->count] = (qa_unified_input){0};
     b->providers[b->count] = (qa_buffer){0}; b->weapons[b->count] = (qa_buffer){0};
-    repair_inputs(b);
 }
 
 void qa_unified_session_ack(qa_unified_session *s, int64_t acknowledged)
 {
     s->acknowledged = acknowledged;
-    for (size_t i = 0; i < s->inputs.count; ) {
-        if (acknowledged >= 0 && s->inputs.commands[i].sequence <= (uint64_t)acknowledged) remove_input(&s->inputs, i);
-        else ++i;
+    if (acknowledged < 0) return;
+    qa_unified_input_batch *b = &s->inputs;
+    size_t retained = 0;
+    for (size_t i = 0; i < b->count; ++i) {
+        if (b->commands[i].sequence <= (uint64_t)acknowledged) {
+            qa_buffer_free(&b->providers[i]); qa_buffer_free(&b->weapons[i]);
+        } else {
+            if (retained != i) {
+                b->commands[retained] = b->commands[i];
+                b->providers[retained] = b->providers[i];
+                b->weapons[retained] = b->weapons[i];
+            }
+            ++retained;
+        }
     }
+    for (size_t i = retained; i < b->count; ++i) {
+        b->commands[i] = (qa_unified_input){0};
+        b->providers[i] = (qa_buffer){0}; b->weapons[i] = (qa_buffer){0};
+    }
+    b->count = retained;
 }
 
 static bool retain_input(qa_unified_session *s, const qa_unified_input *input, qa_error *e)
@@ -120,7 +127,6 @@ static bool retain_input(qa_unified_session *s, const qa_unified_input *input, q
     s->inputs.providers[at] = decoded.providers[0]; s->inputs.weapons[at] = decoded.weapons[0];
     decoded.providers[0] = (qa_buffer){0}; decoded.weapons[0] = (qa_buffer){0};
     qa_unified_inputs_free(&decoded);
-    repair_inputs(&s->inputs);
     return true;
 }
 

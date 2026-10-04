@@ -191,18 +191,4 @@ bool qa_q2_rate_drop(qa_q2_rate_window *, uint32_t server_frame, uint32_t bytes_
 void qa_q2_rate_sent(qa_q2_rate_window *, uint32_t server_frame, uint32_t bytes);
 uint32_t qa_q2_rate_take_suppressed(qa_q2_rate_window *);
 
-typedef bool (*qa_q2_download_read_fn)(void *, size_t offset, size_t length, qa_buffer *, qa_error *);
-typedef void (*qa_q2_download_close_fn)(void *);
-typedef struct qa_q2_download_sender {
-    void *user;
-    qa_q2_download_read_fn read;
-    qa_q2_download_close_fn close;
-    size_t size, offset, block_bytes;
-    bool ended;
-} qa_q2_download_sender;
-bool qa_q2_download_sender_init(qa_q2_download_sender *, size_t size, size_t offset, size_t block_bytes,
-                                qa_q2_download_read_fn, qa_q2_download_close_fn, void *, qa_error *);
-bool qa_q2_download_sender_next(qa_q2_download_sender *, qa_buffer *, uint8_t *percent, bool *present, qa_error *);
-void qa_q2_download_sender_close(qa_q2_download_sender *);
-
 #endif

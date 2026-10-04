@@ -1,5 +1,6 @@
 #include "messages_internal.h"
 #include "q2pro_internal.h"
+#include "qa/text.h"
 #include <stdlib.h>
 #include <zlib.h>
 
@@ -634,26 +635,6 @@ bool qa_q2_server_event_write(qa_q2_codec *c, qa_net_writer *w, const qa_q2_serv
     return qa_net_writer_fail(w, "Unknown Q2 server event");
 }
 
-static bool valid_utf8(const char *text) {
-    const uint8_t *p = (const uint8_t *)text;
-    while (*p) {
-        uint32_t code = *p++;
-        unsigned continuation;
-        uint32_t minimum;
-        if (code < 128) continue;
-        if (code >= 0xc2 && code <= 0xdf) { code &= 31; continuation = 1; minimum = 0x80; }
-        else if (code >= 0xe0 && code <= 0xef) { code &= 15; continuation = 2; minimum = 0x800; }
-        else if (code >= 0xf0 && code <= 0xf4) { code &= 7; continuation = 3; minimum = 0x10000; }
-        else return false;
-        for (unsigned i = 0; i < continuation; ++i) {
-            if ((*p & 0xc0u) != 0x80u) return false;
-            code = (code << 6) | (*p++ & 63u);
-        }
-        if (code < minimum || code > 0x10ffff || (code >= 0xd800 && code <= 0xdfff)) return false;
-    }
-    return true;
-}
-
 bool qa_q2_client_messages_read(qa_q2_codec *c, qa_bytes bytes, uint32_t sequence, size_t seats,
                                 qa_q2_client_emit_fn emit, void *user, qa_error *error) {
     if (!c || !seats || seats > QA_Q2_MAX_SEATS) {
@@ -677,7 +658,7 @@ bool qa_q2_client_messages_read(qa_q2_codec *c, qa_bytes bytes, uint32_t sequenc
                 record.seat = (uint8_t)(seat - 1);
             }
             e->data.text = read_text(&r);
-            if (!e->data.text || (kex && !valid_utf8(e->data.text))) return qa_net_reader_fail(&r, "Invalid Q2 client control string");
+            if (!e->data.text || (kex && !qa_utf8_valid((qa_bytes){(const uint8_t *)e->data.text, strlen(e->data.text)}))) return qa_net_reader_fail(&r, "Invalid Q2 client control string");
             break;
         case 5:
             if (c->protocol.kind != QA_NET_R1Q2_35 && c->protocol.kind != QA_NET_Q2PRO_36 && !is_rerelease(c))
@@ -769,7 +750,7 @@ bool qa_q2_client_event_write(qa_q2_codec *c, qa_net_writer *w, const qa_q2_clie
     switch (e->kind) {
     case QA_Q2_CLC_NOP: return qa_net_write_u8(w, 1);
     case QA_Q2_CLC_USERINFO: case QA_Q2_CLC_COMMAND:
-        if (!e->data.text || (kex && !valid_utf8(e->data.text))) return qa_net_writer_fail(w, "Invalid Q2 control string");
+        if (!e->data.text || (kex && !qa_utf8_valid((qa_bytes){(const uint8_t *)e->data.text, strlen(e->data.text)}))) return qa_net_writer_fail(w, "Invalid Q2 control string");
         if (e->kind == QA_Q2_CLC_COMMAND && ((kex && seat >= QA_Q2_MAX_SEATS) || (!kex && seat)))
             return qa_net_writer_fail(w, "Invalid Q2 command seat");
         qa_net_write_u8(w, e->kind == QA_Q2_CLC_USERINFO ? 3 : 4);
@@ -869,44 +850,4 @@ void qa_q2_rate_sent(qa_q2_rate_window *window, uint32_t frame, uint32_t bytes) 
 uint32_t qa_q2_rate_take_suppressed(qa_q2_rate_window *window) {
     if (!window) return 0;
     uint32_t value = window->suppressed; window->suppressed = 0; return value;
-}
-
-bool qa_q2_download_sender_init(qa_q2_download_sender *s, size_t size, size_t offset, size_t block_bytes,
-                                qa_q2_download_read_fn read, qa_q2_download_close_fn close, void *user, qa_error *error) {
-    if (!s || !read || !close || offset > size || !block_bytes || block_bytes > INT16_MAX) {
-        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid Q2 download source"); return false;
-    }
-    *s = (qa_q2_download_sender){user, read, close, size, offset, block_bytes, false};
-    return true;
-}
-void qa_q2_download_sender_close(qa_q2_download_sender *s) {
-    if (s && !s->ended) { s->ended = true; s->close(s->user); }
-}
-bool qa_q2_download_sender_next(qa_q2_download_sender *s, qa_buffer *out, uint8_t *percent, bool *present, qa_error *error) {
-    if (!s || !out || !percent || !present || !s->read || !s->close) {
-        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid Q2 download request"); return false;
-    }
-    *present = false;
-    if (s->ended) return true;
-    size_t length = s->size - s->offset;
-    if (length > s->block_bytes) length = s->block_bytes;
-    qa_buffer bytes = {0};
-    if (!s->read(s->user, s->offset, length, &bytes, error)) { qa_buffer_free(&bytes); return false; }
-    if (bytes.size != length || (length && !bytes.data)) {
-        qa_buffer_free(&bytes); qa_error_set(error, QA_ERROR_IO, s->offset, "Q2 download source changed or read was short"); return false;
-    }
-    s->offset += length;
-    /* Division before multiplication bounds both operations for SIZE_MAX files. */
-    size_t quotient = s->size / 100, remainder = s->size % 100;
-    uint8_t progress = 0;
-    if (s->size) {
-        for (unsigned p = 1; p <= 100; ++p) {
-            size_t threshold = quotient * p + (remainder * p + 99) / 100;
-            if (s->offset < threshold) break;
-            progress = (uint8_t)p;
-        }
-    }
-    if (s->offset == s->size) qa_q2_download_sender_close(s);
-    *out = bytes; *percent = progress; *present = true;
-    return true;
 }

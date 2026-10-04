@@ -676,26 +676,6 @@ bool qa_application_network_command(qa_application *application, const qa_networ
     return qa_application_control_move(application, command->actor, &command->movement, error);
 }
 
-bool qa_application_network_resolve(qa_application *application, const qa_net_client *client,
-    uint32_t slot, uint32_t generation, qa_net_seat_id *seat,
-    qa_unified_controlled_actor *out, qa_error *error)
-{
-    if (!application || !client || !seat || !out)
-        return application_fail(error, QA_ERROR_ARGUMENT, "Missing network actor resolution owner");
-    for (size_t i = 0; i < client->seat_count; ++i) {
-        qa_actor_id actor;
-        qa_application_control_view control;
-        if (!qa_application_remote_player_actor(application, client->id, client->seats[i].seat, &actor) ||
-            actor.slot != slot || actor.generation != generation ||
-            !qa_application_control_read(application, actor, &control)) continue;
-        *seat = client->seats[i].seat;
-        *out = (qa_unified_controlled_actor){.actor = actor, .movement = control.state.kind,
-            .arsenal = selected_arsenal(application, actor)};
-        return true;
-    }
-    return application_fail(error, QA_ERROR_ARGUMENT, "Packet actor is not owned by an admitted connection seat");
-}
-
 bool qa_application_network_detach(qa_application *application, const qa_net_client *client, qa_error *error)
 {
     if (!application || !client)

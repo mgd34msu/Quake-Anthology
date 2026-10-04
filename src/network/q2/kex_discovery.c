@@ -27,41 +27,6 @@ bool qa_kex_discovery_query(qa_net_writer*w) {
     };
     return !payload.failed&&qa_kex_packet_write(w,&p);
 }
-bool qa_kex_discovery_read(qa_bytes b,qa_kex_discovery*out,qa_error*e) {
-    if(!out) {
-        qa_error_set(e,QA_ERROR_ARGUMENT,0,"Missing KEX discovery output");
-        return false;
-    }
-    qa_net_reader r;
-    qa_net_reader_init(&r,b,e);
-    out->attribute_count=0;
-    if(!qa_kex_read_string(&r,out->name,sizeof(out->name)))return false;
-    uint64_t players=qa_kex_read_varint(&r),maximum=qa_kex_read_varint(&r);
-    if(r.failed)return false;
-    if(players>255||maximum>255||players>maximum)return qa_net_reader_fail(&r,"Invalid KEX lobby capacity");
-    out->players=(uint8_t)players;
-    out->max_players=(uint8_t)maximum;
-    while(qa_net_reader_remaining(&r)) {
-        if(out->attribute_count>=256)return qa_net_reader_fail(&r,"Too many KEX lobby attributes");
-        qa_kex_attribute*a=&out->attributes[out->attribute_count++];
-        if(!qa_kex_read_string(&r,a->key,sizeof(a->key))||!qa_kex_read_string(&r,a->value,sizeof(a->value)))return false;
-    }
-    return qa_net_reader_finish(&r);
-}
-bool qa_kex_discovery_write(qa_net_writer*w,const qa_kex_discovery*d) {
-    if(!d||d->attribute_count>256||d->players>d->max_players||!memchr(d->name,0,sizeof(d->name)))return qa_net_writer_fail(w,"Invalid KEX discovery state");
-    for(size_t i=0;i<d->attribute_count;i++) {
-        if(!memchr(d->attributes[i].key,0,sizeof(d->attributes[i].key))||!memchr(d->attributes[i].value,0,sizeof(d->attributes[i].value)))return qa_net_writer_fail(w,"Unterminated KEX discovery attribute");
-    }
-    qa_kex_write_string(w,d->name);
-    qa_kex_write_varint(w,d->players);
-    qa_kex_write_varint(w,d->max_players);
-    for(size_t i=0;i<d->attribute_count;i++) {
-        qa_kex_write_string(w,d->attributes[i].key);
-        qa_kex_write_string(w,d->attributes[i].value);
-    }
-    return !w->failed;
-}
 static bool domain(qa_net_writer*w,const char*s) {
     if(!s||!*s||strlen(s)>253)return qa_net_writer_fail(w,"Invalid mDNS domain");
     while(*s) {

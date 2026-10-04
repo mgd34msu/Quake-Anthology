@@ -33,15 +33,7 @@ bool qa_kex_channel_tick(qa_kex_channel *, uint64_t now_ns, qa_error *);
 bool qa_kex_channel_idle(const qa_kex_channel *);
 
 typedef struct qa_kex_attribute { char key[1024], value[4096]; } qa_kex_attribute;
-typedef struct qa_kex_discovery {
-    char name[1025];
-    uint8_t players, max_players;
-    qa_kex_attribute attributes[256];
-    size_t attribute_count;
-} qa_kex_discovery;
 bool qa_kex_discovery_query(qa_net_writer *);
-bool qa_kex_discovery_read(qa_bytes, qa_kex_discovery *, qa_error *);
-bool qa_kex_discovery_write(qa_net_writer *, const qa_kex_discovery *);
 /* DNS-SD codecs are independent of the multicast socket owned by discovery. */
 #define QA_KEX_DNS_NAME_BYTES (128u * 64u)
 #define QA_KEX_DNS_FOLDED_BYTES (QA_KEX_DNS_NAME_BYTES * 12u)
@@ -61,9 +53,6 @@ typedef struct qa_kex_lan qa_kex_lan;
 typedef struct qa_kex_lan_options { bool host; uint8_t max_players, local_players; const char *name; qa_net_address server; } qa_kex_lan_options;
 /* Takes ownership of transport only after successful construction. */
 bool qa_kex_lan_open(qa_net_transport *, const qa_kex_lan_options *, qa_kex_lan **, qa_error *);
-/* Wraps the admitted game stream in the shared transport API. The optional
- * control pointer is borrowed until the returned transport is closed. */
-bool qa_kex_lan_transport_open(qa_net_transport *, const qa_kex_lan_options *, qa_net_transport **, qa_kex_lan **control, qa_error *);
 void qa_kex_lan_close(qa_kex_lan *);
 bool qa_kex_lan_tick(qa_kex_lan *, uint64_t now_ns, qa_error *);
 bool qa_kex_lan_send(qa_kex_lan *, const qa_net_address *, qa_bytes, qa_error *);

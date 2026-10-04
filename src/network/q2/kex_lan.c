@@ -654,37 +654,3 @@ bool qa_kex_lan_idle(const qa_kex_lan *l)
     for(size_t i=0;i<l->peer_count;i++)if(!qa_kex_channel_idle(l->peers[i]->channel))return false;
     return true;
 }
-static bool transport_send(void*owner,const qa_net_address*to,qa_bytes b,qa_error*e) {
-    return qa_kex_lan_send(owner,to,b,e);
-}
-static bool transport_receive(void*owner,uint64_t now,qa_net_datagram*out,qa_error*e) {
-    return qa_kex_lan_tick(owner,now,e)&&qa_kex_lan_receive(owner,out,e);
-}
-static bool transport_ready(const void*owner) {
-    return qa_kex_lan_ready(owner);
-}
-static void transport_close(void*owner) {
-    qa_kex_lan_close(owner);
-}
-bool qa_kex_lan_transport_open(qa_net_transport*t,const qa_kex_lan_options*options,qa_net_transport**out,qa_kex_lan**control,qa_error*e) {
-    if(!t||!out) {
-        qa_error_set(e,QA_ERROR_ARGUMENT,0,"Invalid KEX transport arguments");
-        return false;
-    }
-    qa_net_address address=*qa_net_transport_address(t);
-    qa_kex_lan*l;
-    if(!qa_kex_lan_open(t,options,&l,e))return false;
-    static const qa_net_transport_ops operations= {
-        .send=transport_send,.receive=transport_receive,.close=transport_close,.ready=transport_ready
-    };
-    qa_net_limits limits= {
-        65535,256
-    };
-    if(!qa_net_transport_create(&address,limits,&operations,l,out,e)) {
-        l->transport=NULL;
-        qa_kex_lan_close(l);
-        return false;
-    }
-    if(control)*control=l;
-    return true;
-}
