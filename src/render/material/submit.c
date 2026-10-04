@@ -229,9 +229,11 @@ static bool source_colors(const qa_material_stage *stage, const qa_scene_mesh *g
     qa_material_stage rgb = *stage;
     rgb.alpha = stage->rgb == QA_COLOR_CONSTANT ? QA_COLOR_CONSTANT : QA_COLOR_SKIP;
     if (rgb.rgb == QA_COLOR_WAVE && !source_wave(rgb.rgb_wave, true, error)) return false;
+    material_color_state rgb_state;
+    if (geometry->vertex_count && !material_color_prepare(&rgb, context, time, &rgb_state, error)) return false;
     for (size_t i = 0; i < geometry->vertex_count; ++i) {
         qa_scene_vec4 color;
-        if (!qa_material_stage_color(&rgb, geometry->vertices + i, context, time, source->colors[i], &color, error)) return false;
+        if (!material_color_vertex(&rgb, geometry->vertices + i, context, &rgb_state, source->colors[i], &color, error)) return false;
         source->colors[i] = color;
     }
     if (!vertex_lit && stage->alpha != QA_COLOR_SKIP) {
@@ -241,9 +243,11 @@ static bool source_colors(const qa_material_stage *stage, const qa_scene_mesh *g
         if ((stage->alpha == QA_COLOR_IDENTITY || stage->alpha == QA_COLOR_IDENTITY_LIGHTING) &&
             (stage->rgb == QA_COLOR_IDENTITY || (stage->rgb == QA_COLOR_VERTEX && context->identity_light == 1)))
             alpha.alpha = QA_COLOR_SKIP;
+        material_color_state alpha_state;
+        if (geometry->vertex_count && !material_color_prepare(&alpha, context, time, &alpha_state, error)) return false;
         for (size_t i = 0; i < geometry->vertex_count; ++i) {
             qa_scene_vec4 color;
-            if (!qa_material_stage_color(&alpha, geometry->vertices + i, context, time, source->colors[i], &color, error)) return false;
+            if (!material_color_vertex(&alpha, geometry->vertices + i, context, &alpha_state, source->colors[i], &color, error)) return false;
             source->colors[i] = color;
         }
     }
@@ -260,7 +264,7 @@ static bool source_coordinates(const qa_material_stage *stage, const qa_scene_me
     qa_material_stage generator = *stage; generator.tcmod_count = 0;
     for (size_t i = 0; i < geometry->vertex_count; ++i) {
         qa_scene_vec2 uv;
-        if (!qa_material_stage_texcoord(&generator, geometry->vertices + i, context, time, &uv, error)) return false;
+        if (!material_texcoord_vertex(&generator, geometry->vertices + i, context, time, NULL, &uv, error)) return false;
         source->coordinates[bundle][i] = uv;
     }
     for (size_t mod = 0; mod < stage->tcmod_count; ++mod) {
@@ -269,14 +273,24 @@ static bool source_coordinates(const qa_material_stage *stage, const qa_scene_me
             !source_wave(stage->tcmods[mod].wave, false, error)) return false;
         qa_material_stage modifier = *stage;
         modifier.tcgen = QA_TC_TEXTURE; modifier.tcmods = stage->tcmods + mod; modifier.tcmod_count = 1;
+        material_tcmod_state state;
+        material_tcmod_prepare(modifier.tcmods, context, time, &state);
         for (size_t i = 0; i < geometry->vertex_count; ++i) {
             qa_scene_vertex vertex = geometry->vertices[i];
             vertex.texcoord = source->coordinates[bundle][i];
             qa_scene_vec2 uv;
-            if (!qa_material_stage_texcoord(&modifier, &vertex, context, time, &uv, error)) return false;
+            if (!material_texcoord_vertex(&modifier, &vertex, context, time, &state, &uv, error)) return false;
             source->coordinates[bundle][i] = uv;
         }
     }
+    return true;
+}
+static bool prepare_coordinates(const qa_material_stage *stage, const qa_material_context *context,
+    float time, qa_scene_frame *frame, material_tcmod_state **states, qa_error *error)
+{
+    *states = frame_array(frame, stage->tcmod_count, sizeof(**states), alignof(material_tcmod_state), error);
+    if (stage->tcmod_count && !*states) return false;
+    material_tcmods_prepare(stage, context, time, *states);
     return true;
 }
 static size_t source_draw_extent(const qa_scene_mesh *geometry)
@@ -399,6 +413,13 @@ static bool emit_stage(const qa_material *material, const qa_material *original,
     size_t storage = source ? source_storage : geometry->vertex_count;
     qa_scene_vertex *vertices = frame_array(frame, storage, sizeof(*vertices), alignof(qa_scene_vertex), error);
     if (storage && vertices == NULL) return false;
+    material_color_state color_state;
+    material_tcmod_state *first_coordinates = NULL, *second_coordinates = NULL;
+    if (!source && geometry->vertex_count) {
+        if (!material_color_prepare(stage, context, time, &color_state, error) ||
+            !prepare_coordinates(first_binding, context, time, frame, &first_coordinates, error)) return false;
+        if (second_binding && !prepare_coordinates(second_binding, context, time, frame, &second_coordinates, error)) return false;
+    }
     for (size_t i = 0; i < storage; ++i) {
         vertices[i] = i < geometry->vertex_count ? geometry->vertices[i] : source->vertices[i];
         if (source) {
@@ -410,10 +431,10 @@ static bool emit_stage(const qa_material *material, const qa_material *original,
                 source->coordinates[second_binding == stage ? 0 : 1][i];
             continue;
         }
-        if (!qa_material_stage_color(stage, &geometry->vertices[i], context, time, previous_colors[i], &vertices[i].color, error) ||
-            !qa_material_stage_texcoord(first_binding, &geometry->vertices[i], context, time, &vertices[i].texcoord, error)) return false;
+        if (!material_color_vertex(stage, &geometry->vertices[i], context, &color_state, previous_colors[i], &vertices[i].color, error) ||
+            !material_texcoord_vertex(first_binding, &geometry->vertices[i], context, time, first_coordinates, &vertices[i].texcoord, error)) return false;
         if (second_binding != NULL &&
-            !qa_material_stage_texcoord(second_binding, &geometry->vertices[i], context, time, &vertices[i].lightmap, error)) return false;
+            !material_texcoord_vertex(second_binding, &geometry->vertices[i], context, time, second_coordinates, &vertices[i].lightmap, error)) return false;
         if (context->fog_tc_scale > 0.0f)
             vertices[i].color = attenuate_fog(vertices[i].color, adjustment,
                                             qa_material_fog_coordinates(context, vertices[i].position));

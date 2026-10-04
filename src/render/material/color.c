@@ -46,13 +46,28 @@ static float specular(const qa_scene_vertex *vertex, const qa_material_context *
     amount *= amount;
     return fminf(255.0f, truncf(amount * 255.0f)) / 255.0f;
 }
-bool qa_material_stage_color(const qa_material_stage *stage, const qa_scene_vertex *vertex,
-                             const qa_material_context *context, float time,
-                             qa_scene_vec4 previous, qa_scene_vec4 *out, qa_error *error)
+bool material_color_prepare(const qa_material_stage *stage, const qa_material_context *context,
+                            float time, material_color_state *state, qa_error *error)
+{
+    *state = (material_color_state){0};
+    if (!source_color(context->entity_color, &state->entity, error)) return false;
+    if (stage->rgb == QA_COLOR_WAVE) {
+        if (stage->rgb_wave.kind == QA_WAVE_NOISE) {
+            float sample_time = (time + stage->rgb_wave.phase) * stage->rgb_wave.frequency;
+            state->rgb_wave = stage->rgb_wave.base + qa_material_noise(0, 0, 0, sample_time) * stage->rgb_wave.amplitude;
+        } else state->rgb_wave = qa_material_wave_evaluate(&stage->rgb_wave, time) * context->identity_light;
+    }
+    if (stage->alpha == QA_COLOR_WAVE)
+        state->alpha_wave = qa_material_wave_evaluate(&stage->alpha_wave, time);
+    return true;
+}
+bool material_color_vertex(const qa_material_stage *stage, const qa_scene_vertex *vertex,
+                           const qa_material_context *context, const material_color_state *state,
+                           qa_scene_vec4 previous, qa_scene_vec4 *out, qa_error *error)
 {
     qa_scene_vec4 result = {0, 0, 0, previous.w};
-    qa_scene_vec4 entity, color;
-    if (!source_color(context->entity_color, &entity, error) || !source_color(vertex->color, &color, error)) return false;
+    qa_scene_vec4 entity = state->entity, color;
+    if (!source_color(vertex->color, &color, error)) return false;
     switch (stage->rgb) {
     case QA_COLOR_IDENTITY: result = (qa_scene_vec4){1, 1, 1, 1}; break;
     case QA_COLOR_IDENTITY_LIGHTING:
@@ -83,11 +98,7 @@ bool qa_material_stage_color(const qa_material_stage *stage, const qa_scene_vert
         if (stage->alpha != QA_COLOR_CONSTANT) result.w = 0.0f;
         break;
     case QA_COLOR_WAVE: {
-        float value;
-        if (stage->rgb_wave.kind == QA_WAVE_NOISE) {
-            float sample_time = (time + stage->rgb_wave.phase) * stage->rgb_wave.frequency;
-            value = stage->rgb_wave.base + qa_material_noise(0, 0, 0, sample_time) * stage->rgb_wave.amplitude;
-        } else value = qa_material_wave_evaluate(&stage->rgb_wave, time) * context->identity_light;
+        float value = state->rgb_wave;
         if (!wave_byte(value, &value, error)) return false;
         result = (qa_scene_vec4){value, value, value, 1};
         break;
@@ -126,7 +137,7 @@ bool qa_material_stage_color(const qa_material_stage *stage, const qa_scene_vert
         if (!normalized_byte(stage->constant.w, &result.w, error)) return false;
         break;
     case QA_COLOR_WAVE:
-        if (!wave_byte(qa_material_wave_evaluate(&stage->alpha_wave, time), &result.w, error)) return false;
+        if (!wave_byte(state->alpha_wave, &result.w, error)) return false;
         break;
     case QA_COLOR_PORTAL: {
         /* Portal alpha deliberately compares local tess positions to the world
@@ -144,4 +155,12 @@ bool qa_material_stage_color(const qa_material_stage *stage, const qa_scene_vert
     }
     *out = result;
     return true;
+}
+bool qa_material_stage_color(const qa_material_stage *stage, const qa_scene_vertex *vertex,
+                             const qa_material_context *context, float time,
+                             qa_scene_vec4 previous, qa_scene_vec4 *out, qa_error *error)
+{
+    material_color_state state;
+    return material_color_prepare(stage, context, time, &state, error) &&
+        material_color_vertex(stage, vertex, context, &state, previous, out, error);
 }

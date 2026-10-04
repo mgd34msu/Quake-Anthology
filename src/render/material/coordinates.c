@@ -27,9 +27,49 @@ static bool table_index(double value, unsigned *out, qa_error *error)
     *out = (unsigned)(int32_t)value & 1023u;
     return true;
 }
-bool qa_material_stage_texcoord(const qa_material_stage *stage, const qa_scene_vertex *vertex,
-                                const qa_material_context *context, float time,
-                                qa_scene_vec2 *out, qa_error *error)
+void material_tcmod_prepare(const qa_material_tcmod *mod, const qa_material_context *context,
+                             float time, material_tcmod_state *state)
+{
+    *state = (material_tcmod_state){0};
+    switch (mod->kind) {
+    case QA_TCMOD_SCROLL:
+    case QA_TCMOD_ENTITY_TRANSLATE: {
+        float x = (mod->kind == QA_TCMOD_SCROLL ? mod->values[0] : context->entity_texcoord.x) * time;
+        float y = (mod->kind == QA_TCMOD_SCROLL ? mod->values[1] : context->entity_texcoord.y) * time;
+        state->scroll = (qa_scene_vec2){x - floorf(x), y - floorf(y)};
+        break;
+    }
+    case QA_TCMOD_ROTATE: {
+        unsigned index;
+        state->rotation = (-mod->values[0] * time) * (1024.0f / 360.0f);
+        state->rotation_valid = table_index(state->rotation, &index, NULL);
+        if (!state->rotation_valid) break;
+        state->sine = qa_material_sine(index); state->cosine = qa_material_sine(index + 256u);
+        state->translate = (qa_scene_vec2){(float)(0.5 - 0.5 * state->cosine + 0.5 * state->sine),
+            (float)(0.5 - 0.5 * state->sine - 0.5 * state->cosine)};
+        break;
+    }
+    case QA_TCMOD_STRETCH:
+        state->scale = 1.0f / qa_material_wave_evaluate(&mod->wave, time);
+        state->translate.x = 0.5f - 0.5f * state->scale;
+        break;
+    case QA_TCMOD_TURBULENCE:
+        state->now = mod->wave.phase + time * mod->wave.frequency;
+        break;
+    default: break;
+    }
+}
+void material_tcmods_prepare(const qa_material_stage *stage, const qa_material_context *context,
+                             float time, material_tcmod_state *states)
+{
+    for (size_t i = 0; i < stage->tcmod_count; ++i) {
+        if (stage->tcmods[i].kind == QA_TCMOD_NONE) break;
+        material_tcmod_prepare(stage->tcmods + i, context, time, states + i);
+    }
+}
+bool material_texcoord_vertex(const qa_material_stage *stage, const qa_scene_vertex *vertex,
+                               const qa_material_context *context, float time,
+                               const material_tcmod_state *states, qa_scene_vec2 *out, qa_error *error)
 {
     qa_scene_vec2 result;
     switch (stage->tcgen) {
@@ -61,17 +101,19 @@ bool qa_material_stage_texcoord(const qa_material_stage *stage, const qa_scene_v
     }
     for (size_t i = 0; i < stage->tcmod_count; ++i) {
         const qa_material_tcmod *mod = &stage->tcmods[i];
+        if (mod->kind == QA_TCMOD_NONE) break;
+        material_tcmod_state local;
+        const material_tcmod_state *state = states ? states + i : &local;
+        if (!states) material_tcmod_prepare(mod, context, time, &local);
         float s = result.x, t = result.y;
         switch (mod->kind) {
-        case QA_TCMOD_NONE: goto finished;
+        case QA_TCMOD_NONE: break;
         case QA_TCMOD_SCALE:
             result = (qa_scene_vec2){s * mod->values[0], t * mod->values[1]};
             break;
         case QA_TCMOD_SCROLL:
         case QA_TCMOD_ENTITY_TRANSLATE: {
-            float x = (mod->kind == QA_TCMOD_SCROLL ? mod->values[0] : context->entity_texcoord.x) * time;
-            float y = (mod->kind == QA_TCMOD_SCROLL ? mod->values[1] : context->entity_texcoord.y) * time;
-            result = (qa_scene_vec2){s + (x - floorf(x)), t + (y - floorf(y))};
+            result = (qa_scene_vec2){s + state->scroll.x, t + state->scroll.y};
             break;
         }
         case QA_TCMOD_TRANSFORM:
@@ -79,29 +121,26 @@ bool qa_material_stage_texcoord(const qa_material_stage *stage, const qa_scene_v
                                     s * mod->values[1] + t * mod->values[3] + mod->values[5]};
             break;
         case QA_TCMOD_ROTATE: {
-            unsigned index;
-            if (!table_index((-mod->values[0] * time) * (1024.0f / 360.0f), &index, error)) return false;
-            float sine = qa_material_sine(index), cosine = qa_material_sine(index + 256u);
-            float x_translate = (float)(0.5 - 0.5 * cosine + 0.5 * sine);
-            float y_translate = (float)(0.5 - 0.5 * sine - 0.5 * cosine);
-            result = (qa_scene_vec2){s * cosine + t * -sine + x_translate,
-                                    s * sine + t * cosine + y_translate};
+            if (!state->rotation_valid) {
+                unsigned index;
+                (void)table_index(state->rotation, &index, error);
+                return false;
+            }
+            result = (qa_scene_vec2){s * state->cosine + t * -state->sine + state->translate.x,
+                                    s * state->sine + t * state->cosine + state->translate.y};
             break;
         }
         case QA_TCMOD_STRETCH: {
-            float scale = 1.0f / qa_material_wave_evaluate(&mod->wave, time);
-            float translate = 0.5f - 0.5f * scale;
-            result = (qa_scene_vec2){s * scale + t * 0.0f + translate,
-                                    s * 0.0f + t * scale + translate};
+            result = (qa_scene_vec2){s * state->scale + t * 0.0f + state->translate.x,
+                                    s * 0.0f + t * state->scale + state->translate.x};
             break;
         }
         case QA_TCMOD_TURBULENCE: {
-            float now = mod->wave.phase + time * mod->wave.frequency;
             unsigned sx, sy;
             /* The source position sum is binary32 before the double constant division. */
             float position_sum = vertex->position.x + vertex->position.z;
-            if (!table_index(((double)position_sum / 1024.0 + now) * 1024.0, &sx, error) ||
-                !table_index(((double)vertex->position.y / 1024.0 + now) * 1024.0, &sy, error)) return false;
+            if (!table_index(((double)position_sum / 1024.0 + state->now) * 1024.0, &sx, error) ||
+                !table_index(((double)vertex->position.y / 1024.0 + state->now) * 1024.0, &sy, error)) return false;
             result = (qa_scene_vec2){s + qa_material_sine(sx) * mod->wave.amplitude,
                                     t + qa_material_sine(sy) * mod->wave.amplitude};
             break;
@@ -111,11 +150,16 @@ bool qa_material_stage_texcoord(const qa_material_stage *stage, const qa_scene_v
             return false;
         }
     }
-finished:
     if (!isfinite(result.x) || !isfinite(result.y)) {
         qa_error_set(error, QA_ERROR_FORMAT, 0, "Material generated nonfinite texture coordinates");
         return false;
     }
     *out = result;
     return true;
+}
+bool qa_material_stage_texcoord(const qa_material_stage *stage, const qa_scene_vertex *vertex,
+                                const qa_material_context *context, float time,
+                                qa_scene_vec2 *out, qa_error *error)
+{
+    return material_texcoord_vertex(stage, vertex, context, time, NULL, out, error);
 }
