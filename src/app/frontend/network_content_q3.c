@@ -176,15 +176,13 @@ static bool owns_mount(const qa_catalog *catalog, qa_product_id product,
     const qa_mount_id *owned; size_t count;
     if (!qa_catalog_product_own_mounts(catalog, product, &owned, &count)) return false;
     const char *path = qa_vfs_mount_path(view, info->id);
+    (void)error;
     for (size_t i = 0; i < count; ++i) for (size_t j = 0; j < qa_catalog_mount_count(catalog); ++j) {
         const qa_catalog_mount *mount = qa_catalog_mount_at(catalog, j);
         if (mount->id != owned[i] || !path || strcmp(path, mount->path) ||
             mount->format != info->format || mount->writable != info->writable) continue;
         if (!info->is_archive) return true;
-        const qa_sha256_digest *actual = NULL, *physical = NULL;
-        if (!qa_vfs_archive_digest_read(view, info->id, &actual, error) ||
-            !qa_catalog_mount_digest_read(catalog, mount->id, &physical, error)) return false;
-        if (qa_sha256_equal(actual, physical)) return true;
+        if (mount->identity && info->identity && qa_fs_identity_equal(mount->identity, info->identity)) return true;
     }
     return false;
 }
@@ -243,16 +241,10 @@ static bool inventory(frontend_q3_content *content, const qa_mount_id *saved_ord
             if (candidate->id == catalog_order[i]) { original = candidate; break; }
         }
         const char *retained_path = qa_vfs_mount_path(content->mounts, info.id);
-        if (original && info.is_archive) {
-            const qa_sha256_digest *physical = NULL;
-            if (!qa_catalog_mount_digest_read(content->catalog, original->id, &physical, error) ||
-                !qa_vfs_archive_digest_read(content->mounts, info.id, &info.digest, error)) return false;
-            original = qa_catalog_mount_at(content->catalog, (size_t)original->id - 1);
-        }
         if (!original || !retained_path || strcmp(original->path, retained_path) ||
             original->format != info.format || original->writable != info.writable || info.user_overlay ||
             info.q3_demo != qa_catalog_q3_restricted(content->catalog) ||
-            (info.is_archive && (!original->digest || !info.digest || !qa_sha256_equal(original->digest, info.digest))))
+            (info.is_archive && (!original->identity || !info.identity || !qa_fs_identity_equal(original->identity, info.identity))))
             return fail(error, QA_ERROR_FORMAT, "Remote Q3 original inventory slot lost its genuine catalog mount identity");
         for (size_t j = 0; j < i; ++j) if (content->inventory[j].id == info.id)
             return fail(error, QA_ERROR_FORMAT, "Remote Q3 inventory repeats a retained mount identity");
@@ -417,9 +409,9 @@ bool frontend_q3_content_prepare(frontend_q3_content *content, qa_error *error)
         return fail(error, QA_ERROR_ARGUMENT, "Remote Q3 filesystem preparation requires its fresh gamestate catalog");
     size_t count; const uint32_t *sums = qa_q3_server_pak_set_sums(content->loaded_server, &count);
     size_t capacity = content->mount_count ? content->mount_count : 1;
-    qa_sha256_digest *digests = calloc(capacity, sizeof(*digests));
+    qa_fs_identity *identities = calloc(capacity, sizeof(*identities));
     qa_q3_pure_path *paths = calloc(capacity, sizeof(*paths));
-    if (!digests || !paths) { free(digests); free(paths); return fail(error, QA_ERROR_MEMORY, "Retaining server Q3 pure mount order"); }
+    if (!identities || !paths) { free(identities); free(paths); return fail(error, QA_ERROR_MEMORY, "Retaining server Q3 pure mount order"); }
     for (size_t i = 0; i < content->mount_count; ++i) {
         content_mount *mount = content->inventory + i;
         paths[i] = (qa_q3_pure_path){.kind = mount->pack.archive_path ? QA_Q3_PURE_PACKAGE : QA_Q3_PURE_DIRECTORY,
@@ -430,13 +422,13 @@ bool frontend_q3_content_prepare(frontend_q3_content *content, qa_error *error)
     for (size_t i = 0; ok && count && i < content->mount_count; ++i) {
         if (paths[i].kind != QA_Q3_PURE_PACKAGE || !qa_q3_pak_is_pure(paths[i].checksum, sums, count)) continue;
         const content_mount *mount = paths[i].value;
-        const qa_sha256_digest *digest = NULL;
-        if (!qa_vfs_archive_digest_read(content->mounts, mount->id, &digest, error)) { ok = false; break; }
-        digests[accepted++] = *digest;
+        const qa_fs_identity *identity = qa_vfs_archive_identity(content->mounts, mount->id);
+        if (!identity) { ok = false; break; }
+        identities[accepted++] = *identity;
     }
     if (ok && count && !accepted) ok = fail(error, QA_ERROR_NOT_FOUND, "No installed Q3 archives match the server pure list");
-    if (ok) ok = qa_vfs_set_restrictions(content->mounts, digests, accepted, false, error);
-    free(digests); free(paths);
+    if (ok) ok = qa_vfs_set_restrictions(content->mounts, identities, accepted, false, error);
+    free(identities); free(paths);
     if (!ok) return false;
     const qa_q3_pak_entry *order[QA_Q3_SEARCH_PATHS]; size_t packs = 0;
     for (size_t i = 0; i < content->mount_count; ++i) {
@@ -488,18 +480,15 @@ static content_mount *matching_mount(frontend_q3_content *content, const qa_vfs 
     for (size_t i = 0; i < qa_vfs_mount_count(view); ++i)
         if (qa_vfs_mount_at(view, i, &actual) && actual.id == id) { found = true; break; }
     const char *path = found ? qa_vfs_mount_path(view, id) : NULL;
-    if (found && actual.is_archive && !qa_vfs_archive_digest_read(view, id, &actual.digest, error)) return NULL;
     for (size_t i = 0; path && i < content->mount_count; ++i) {
         content_mount *mount = content->inventory + i; qa_vfs_mount_info expected = {0};
         for (size_t j = 0; j < content->mount_count; ++j)
             if (qa_vfs_mount_at(content->mounts, j, &expected) && expected.id == mount->id) break;
         const char *selected = qa_vfs_mount_path(content->mounts, mount->id);
-        if (selected && !strcmp(selected, path) && expected.is_archive &&
-            !qa_vfs_archive_digest_read(content->mounts, mount->id, &expected.digest, error)) return NULL;
         if (selected && !strcmp(selected, path) && actual.is_archive == expected.is_archive &&
             actual.format == expected.format && actual.writable == expected.writable &&
             actual.user_overlay == expected.user_overlay && actual.q3_demo == expected.q3_demo &&
-            (!actual.is_archive || (actual.digest && expected.digest && qa_sha256_equal(actual.digest, expected.digest)))) return mount;
+            (!actual.is_archive || (actual.identity && expected.identity && qa_fs_identity_equal(actual.identity, expected.identity)))) return mount;
     }
     fail(error, QA_ERROR_FORMAT, "Remote Q3 media read lacks its actual selected private mount identity"); return NULL;
 }
@@ -515,13 +504,13 @@ static bool matching_view(frontend_q3_content *content, const qa_vfs *view, qa_e
         if (!mount || mount->id != expected.id)
             return fail(error, QA_ERROR_FORMAT, "Remote Q3 media view changed the server pure search order");
     }
-    const qa_sha256_digest *actual, *expected; size_t actual_count, expected_count; bool actual_demo, expected_demo;
+    const qa_fs_identity *actual, *expected; size_t actual_count, expected_count; bool actual_demo, expected_demo;
     if (!qa_vfs_restrictions_read(view, &actual, &actual_count, &actual_demo) ||
         !qa_vfs_restrictions_read(content->mounts, &expected, &expected_count, &expected_demo) ||
         actual_count != expected_count || actual_demo != expected_demo)
         return fail(error, QA_ERROR_FORMAT, "Remote Q3 media view changed its actual pure restriction policy");
     for (size_t i = 0; i < actual_count; ++i)
-        if (!qa_sha256_equal(actual + i, expected + i))
+        if (!qa_fs_identity_equal(actual + i, expected + i))
             return fail(error, QA_ERROR_FORMAT, "Remote Q3 media view changed its ordered pure package identities");
     if (qa_vfs_prefix_count(view) != qa_vfs_prefix_count(content->mounts)) return false;
     for (size_t i = 0; i < qa_vfs_prefix_count(view); ++i) {
@@ -537,7 +526,7 @@ static bool matching_view(frontend_q3_content *content, const qa_vfs *view, qa_e
 }
 static bool policy_current(const frontend_q3_content *content, const qa_vfs *view, qa_error *error)
 {
-    const qa_sha256_digest *actual; size_t actual_count; bool demo;
+    const qa_fs_identity *actual; size_t actual_count; bool demo;
     if (!qa_vfs_restrictions_read(view, &actual, &actual_count, &demo) || demo)
         return fail(error, QA_ERROR_FORMAT, "Private Q3 continuation changed its per-source restriction contract");
     size_t count; const uint32_t *sums = qa_q3_server_pak_set_sums(content->loaded_server, &count);
@@ -559,16 +548,15 @@ static bool policy_current(const frontend_q3_content *content, const qa_vfs *vie
     for (size_t i = 0; ok && count && i < content->mount_count; ++i) {
         if (paths[i].kind != QA_Q3_PURE_PACKAGE || !qa_q3_pak_is_pure(paths[i].checksum, sums, count)) continue;
         const content_mount *mount = paths[i].value;
-        const qa_sha256_digest *digest = NULL;
-        if (!qa_vfs_archive_digest_read(content->mounts, mount->id, &digest, error) ||
-            accepted >= actual_count || !qa_sha256_equal(actual + accepted, digest)) ok = false;
+        const qa_fs_identity *identity = qa_vfs_archive_identity(content->mounts, mount->id);
+        if (!identity || accepted >= actual_count || !qa_fs_identity_equal(actual + accepted, identity)) ok = false;
         ++accepted;
     }
     if (ok && accepted == actual_count) {
         size_t first = 0;
         for (size_t i = 0; i < actual_count; ++i) for (size_t j = first; j < content->mount_count; ++j) {
-            const qa_sha256_digest *digest = qa_vfs_archive_digest(view, order[j]);
-            if (!digest || !qa_sha256_equal(digest, actual + i)) continue;
+            const qa_fs_identity *identity = qa_vfs_archive_identity(view, order[j]);
+            if (!identity || !qa_fs_identity_equal(identity, actual + i)) continue;
             qa_mount_id selected = order[j];
             memmove(order + first + 1, order + first, (j - first) * sizeof(*order));
             order[first++] = selected; break;

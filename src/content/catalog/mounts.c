@@ -23,8 +23,8 @@ bool catalog_view(const qa_catalog *c, const qa_mount_id *ids, size_t count,
         if (!path || strcmp(path, source->path) || retained.format != source->format ||
             retained.is_archive != (source->format != QA_ARCHIVE_AUTO) ||
             retained.writable != source->writable ||
-            (retained.is_archive && source->digest && (!retained.digest ||
-                !qa_sha256_equal(retained.digest, source->digest)))) {
+            (retained.is_archive && source->identity && (!retained.identity ||
+                !qa_fs_identity_equal(retained.identity, source->identity)))) {
             qa_error_set(error, QA_ERROR_FORMAT, 0, "catalog mount disagrees with retained authority: %s", source->path);
             goto fail;
         }

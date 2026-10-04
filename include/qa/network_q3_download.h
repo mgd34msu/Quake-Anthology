@@ -1,6 +1,7 @@
 #ifndef QA_NETWORK_Q3_DOWNLOAD_H
 #define QA_NETWORK_Q3_DOWNLOAD_H
 #include "qa/network_q3.h"
+#include "qa/filesystem.h"
 
 typedef struct qa_q3_download_window qa_q3_download_window;
 /* Resolve an actual immutable mounted package, without recording a guest read.
@@ -8,7 +9,7 @@ typedef struct qa_q3_download_window qa_q3_download_window;
  * an empty span; errors describe an invalid mounted authority. */
 typedef struct qa_q3_download_source {
     void *context;
-    bool (*resolve)(void *, const char *, qa_bytes *, const qa_sha256_digest **, qa_error *);
+    bool (*resolve)(void *, const char *, qa_bytes *, const qa_fs_identity **, qa_error *);
 } qa_q3_download_source;
 typedef struct qa_q3_download_offer {
     const qa_q3_download_window *owner;

@@ -216,21 +216,18 @@ static bool content_field(qa_source_save_io *io, qa_scene_resources *owner,
     if (!reading) {
         found = qa_vfs_resource_origin_read(owner->vfs, historical, *resource, &origin);
         selected.id = historical; selected.is_archive = origin.archive;
-        selected.digest = origin.archive ? &origin.archive_digest : NULL;
+        selected.identity = origin.archive ? &origin.archive_identity : NULL;
     }
-    qa_sha256_digest digest = {{0}}, archive_digest = {{0}};
+    qa_fs_identity archive_identity = {{0}};
     size_t ordinal = 0; bool archive = false;
     if (!reading && found) {
-        const qa_sha256_digest *actual = qa_resource_digest(*resource);
-        if (!actual) return false;
-        digest = *actual; archive = qa_resource_archive_origin(*resource, &archive_digest, &ordinal);
-        if (selected.is_archive != archive || (archive && (!selected.digest || !qa_sha256_equal(selected.digest, &archive_digest)))) return false;
+        archive = qa_resource_archive_origin(*resource, &archive_identity, &ordinal);
+        if (selected.is_archive != archive || (archive && (!selected.identity || !qa_fs_identity_equal(selected.identity, &archive_identity)))) return false;
     }
     bool ok = found && text_field(io, &path, &owned) &&
         qa_source_save_u64(io, &historical) && historical != 0 &&
-        qa_source_save_bytes(io, digest.bytes, sizeof(digest.bytes)) && qa_source_save_bool(io, &archive);
-    if (ok && archive) ok = qa_source_save_bytes(io, archive_digest.bytes, sizeof(archive_digest.bytes)) &&
-        qa_source_save_count(io, &ordinal, SIZE_MAX);
+        qa_source_save_bool(io, &archive);
+    if (ok && archive) ok = qa_source_save_count(io, &ordinal, SIZE_MAX);
     if (ok && reading) {
         const qa_resource *decoded = NULL;
         ok = owner->vfs && refs->resource_decode(refs->context, pool, version, &decoded, io->error) && decoded &&
@@ -240,15 +237,13 @@ static bool content_field(qa_source_save_io *io, qa_scene_resources *owner,
         if (ok) {
             ok = qa_vfs_resource_origin_read(owner->vfs, historical, decoded, &origin);
             selected.id = historical; selected.is_archive = origin.archive;
-            selected.digest = origin.archive ? &origin.archive_digest : NULL;
-        } ok = ok && selected.is_archive == archive &&
-            (!archive || (selected.digest && qa_sha256_equal(selected.digest, &archive_digest)));
+            selected.identity = origin.archive ? &origin.archive_identity : NULL;
+        } ok = ok && selected.is_archive == archive;
         if (ok) {
-            const qa_sha256_digest *actual = qa_resource_digest(decoded);
-            qa_sha256_digest actual_archive; size_t actual_ordinal = 0;
+            qa_fs_identity actual_archive; size_t actual_ordinal = 0;
             bool actual_origin = qa_resource_archive_origin(decoded, &actual_archive, &actual_ordinal);
-            ok = actual && qa_sha256_equal(actual, &digest) && actual_origin == archive &&
-                (!archive || (qa_sha256_equal(&actual_archive, &archive_digest) && actual_ordinal == ordinal));
+            ok = actual_origin == archive && (!archive || (selected.identity &&
+                qa_fs_identity_equal(selected.identity, &actual_archive) && actual_ordinal == ordinal));
             if (ok) { qa_resource_retain((qa_resource *)decoded); *resource = (qa_resource *)decoded; *mount = selected.id; }
         }
     }

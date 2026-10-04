@@ -49,8 +49,6 @@ static const qa_product *mount_product(qa_catalog *catalog, const qa_vfs *conten
 {
     const char *path = qa_vfs_mount_path(content, view->id);
     const qa_product *selected = NULL;
-    const qa_sha256_digest *digest = NULL;
-    if (view->is_archive && !qa_vfs_archive_digest_read(content, view->id, &digest, error)) return NULL;
     for (size_t i = 0; i < qa_catalog_count(catalog); ++i) {
         const qa_product *product = qa_catalog_at(catalog, i);
         if (product->family != QA_GAME_Q3) continue;
@@ -59,11 +57,8 @@ static const qa_product *mount_product(qa_catalog *catalog, const qa_vfs *conten
         for (size_t j = 0; j < count; ++j) for (size_t k = 0; k < qa_catalog_mount_count(catalog); ++k) {
             const qa_catalog_mount *mount = qa_catalog_mount_at(catalog, k);
             if (mount->id != ids[j] || strcmp(path, mount->path) || mount->format != view->format) continue;
-            if (view->is_archive) {
-                const qa_sha256_digest *physical = NULL;
-                if (!qa_catalog_mount_digest_read(catalog, mount->id, &physical, error)) return NULL;
-                if (!qa_sha256_equal(physical, digest)) continue;
-            }
+            if (view->is_archive && (!mount->identity || !view->identity ||
+                !qa_fs_identity_equal(mount->identity, view->identity))) continue;
             if (selected && selected != product) {
                 fail(error, QA_ERROR_FORMAT, "Q3 mount has ambiguous actual catalog product ownership"); return NULL;
             }
@@ -336,9 +331,9 @@ bool frontend_q3_packages_pure(frontend_q3_packages *packages, int32_t server_id
         member_checksum(packages, "vm/ui.qvm", &out->ui_checksum, &out->has_ui, error);
 }
 bool frontend_q3_packages_download(frontend_q3_packages *packages, const char *name,
-    qa_bytes *out, const qa_sha256_digest **digest, qa_error *error)
+    qa_bytes *out, const qa_fs_identity **identity, qa_error *error)
 {
-    if (!out || !digest || !current(packages, error) || !qa_q3_download_name(name, error)) return false;
+    if (!out || !identity || !current(packages, error) || !qa_q3_download_name(name, error)) return false;
     for (size_t i = 0; i < packages->mount_count; ++i) {
         package_mount *mount = packages->mounts + i; if (!mount->entry.archive_path) continue;
         size_t game = strlen(mount->game), base = strlen(mount->basename), length = strlen(name);
@@ -350,8 +345,8 @@ bool frontend_q3_packages_download(frontend_q3_packages *packages, const char *n
         if (!matches) continue;
         qa_vfs_mount_info info;
         if (!qa_vfs_archive_bytes(packages->content, mount->mount, out, error) ||
-            !qa_vfs_mount_at(packages->content, i, &info) || !info.digest) return false;
-        *digest = info.digest; return true;
+            !qa_vfs_mount_at(packages->content, i, &info) || !info.identity) return false;
+        *identity = info.identity; return true;
     }
     return fail(error, QA_ERROR_NOT_FOUND, "Requested Q3 package is absent from the actual mounted source catalog");
 }

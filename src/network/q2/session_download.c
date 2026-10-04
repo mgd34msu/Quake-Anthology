@@ -110,8 +110,7 @@ bool q2_download_begin(q2_session *session, const char *name, const char *offset
     }
     qa_bytes bytes = wire_bytes.size ? (qa_bytes){wire_bytes.data, wire_bytes.size} :
         status == QA_Q2_DOWNLOAD_MEMORY ? (qa_bytes){source_bytes.data, source_bytes.size} : qa_resource_bytes(resource);
-    qa_sha256_digest archive; size_t ordinal;
-    bool archived_map = resource && qa_resource_archive_origin(resource, &archive, &ordinal) &&
+    bool archived_map = resource && qa_resource_archive_origin(resource, NULL, NULL) &&
         (prefix(name, "maps/") || prefix(opening.lookup_path, "maps/"));
     if (bytes.size > INT32_MAX || archived_map) {
         qa_resource_release(resource); qa_vfs_acquisition_dispose(&opening);

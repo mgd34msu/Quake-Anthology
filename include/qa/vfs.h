@@ -49,21 +49,20 @@ typedef struct qa_vfs_mount_info {
     bool writable;
     bool user_overlay;
     bool referenced;
-    const qa_sha256_digest *digest;
+    const qa_fs_identity *identity;
     bool q3_demo;
 } qa_vfs_mount_info;
 size_t qa_vfs_mount_count(const qa_vfs *vfs);
 /* Pure allocation-lineage proof, including genuinely retired mount IDs.
  * Clones and restored views preserve the real contiguous issuance counter. */
 bool qa_vfs_mount_id_was_issued(const qa_vfs *, qa_mount_id);
-/* Info follows default search order. A pending archive has no digest yet;
- * an acquired digest is borrowed until unmount. */
+/* Info follows default search order; native archive identity is borrowed until unmount. */
 bool qa_vfs_mount_at(const qa_vfs *vfs, size_t index, qa_vfs_mount_info *out);
 typedef struct qa_vfs_resource_origin {
     const char *mount_path;
     qa_fs_identity mount_identity;
     qa_fs_object_reference root_reference;
-    qa_sha256_digest archive_digest;
+    qa_fs_identity archive_identity;
     qa_archive_kind format;
     qa_archive_comparison comparison;
     bool archive;
@@ -184,26 +183,23 @@ bool qa_vfs_set_prefix_order(qa_vfs *vfs, const char *prefix,
 /* User overlays precede resource links and ordinary orders. */
 bool qa_vfs_set_user_overlay(qa_vfs *vfs, qa_mount_id mount, bool enabled,
                              qa_error *error);
-/* Required archive digests must be mounted. Listed archives gain priority;
- * other archives and nonconfiguration loose assets are excluded. Zero digests
+/* Required archive identities must be mounted. Listed archives gain priority;
+ * other archives and nonconfiguration loose assets are excluded. Zero identities
  * disables pure restrictions. Priority changes persist until an explicit new
  * order is selected. Demo mode validates source PK3 checksums and
  * restricts loose assets. User overlays remain available in both modes. */
-bool qa_vfs_set_restrictions(qa_vfs *vfs, const qa_sha256_digest *archives,
+bool qa_vfs_set_restrictions(qa_vfs *vfs, const qa_fs_identity *archives,
                               size_t count, bool q3_demo, qa_error *error);
 /* Borrows actual current policy without native I/O or journal mutation. The
- * digest array remains valid until policy replacement or view destruction. */
-bool qa_vfs_restrictions_read(const qa_vfs *, const qa_sha256_digest **archives,
+ * identity array remains valid until policy replacement or view destruction. */
+bool qa_vfs_restrictions_read(const qa_vfs *, const qa_fs_identity **archives,
     size_t *count, bool *q3_demo);
 /* Demo admission belongs to this genuine Q3 mount in a mixed-family view.
  * Archives require the source PK3 checksum; loose media follows files.c's
  * configuration exceptions. Retained mounts and clones preserve the flag. */
 bool qa_vfs_set_mount_q3_demo(qa_vfs *, qa_mount_id, bool, qa_error *);
 /* Pure ready-only observation; NULL also denotes a metadata-only archive. */
-const qa_sha256_digest *qa_vfs_archive_digest(const qa_vfs *vfs, qa_mount_id mount);
-/* Acquires the canonical immutable payload before publishing its digest. */
-bool qa_vfs_archive_digest_read(const qa_vfs *, qa_mount_id,
-    const qa_sha256_digest **, qa_error *);
+const qa_fs_identity *qa_vfs_archive_identity(const qa_vfs *vfs, qa_mount_id mount);
 /* Borrow the already decoded archive for complete source entry enumeration.
  * Null for loose or missing mounts; valid until that mount is removed. */
 const qa_archive *qa_vfs_archive(const qa_vfs *vfs, qa_mount_id mount);
@@ -288,7 +284,7 @@ const char *qa_resource_path(const qa_resource *resource);
 /* Persistent content identity, independent of process-local numeric handles. */
 const qa_sha256_digest *qa_resource_digest(const qa_resource *resource);
 bool qa_resource_archive_origin(const qa_resource *resource,
-                                  qa_sha256_digest *archive_digest,
+                                  qa_fs_identity *archive_identity,
                                   size_t *member_ordinal);
 
 /* Replace writes a complete sibling temporary file, then renames it atomically.

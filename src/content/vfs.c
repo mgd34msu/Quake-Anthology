@@ -124,17 +124,10 @@ char *qa_vfs_normalize_path(const char *path, qa_error *error)
     return qa_archive_normalize_path(path, error);
 }
 
-package *vfs_package_canonical(package *archive)
-{
-    return archive && archive->canonical ? archive->canonical : archive;
-}
-
 uint64_t vfs_package_index(const qa_resource_pool *pool, const package *wanted)
 {
-    wanted = vfs_package_canonical((package *)wanted);
     uint64_t index = 0;
     for (const package *p = pool->packages; p; p = p->next) {
-        if (p->canonical) continue;
         if (p == wanted) return index;
         ++index;
     }
@@ -144,7 +137,6 @@ uint64_t vfs_package_index(const qa_resource_pool *pool, const package *wanted)
 package *vfs_package_at(qa_resource_pool *pool, uint64_t index)
 {
     for (package *p = pool->packages; p; p = p->next) {
-        if (p->canonical) continue;
         if (!index) return p;
         --index;
     }
@@ -153,37 +145,16 @@ package *vfs_package_at(qa_resource_pool *pool, uint64_t index)
 
 bool vfs_package_materialize(package *archive, qa_error *error)
 {
-    if (archive->canonical || archive->storage.data) return true;
-    if (!qa_archive_take_snapshot(archive->archive, &archive->storage, error)) return false;
-    qa_sha256((qa_bytes){archive->storage.data, archive->storage.size}, &archive->digest);
-    for (package *previous = archive->pool->packages; previous; previous = previous->next) {
-        if (previous == archive || previous->canonical || !previous->storage.data ||
-            qa_archive_get_kind(previous->archive) != qa_archive_get_kind(archive->archive) ||
-            previous->storage.size != archive->storage.size ||
-            !qa_sha256_equal(&previous->digest, &archive->digest) ||
-            memcmp(previous->storage.data, archive->storage.data, archive->storage.size)) continue;
-        archive->canonical = previous; ++previous->references;
-        qa_buffer_free(&archive->storage);
-        break;
-    }
-    return true;
-}
-
-static bool package_payload(void *context, qa_bytes *out, qa_error *error)
-{
-    package *archive = context;
-    if (!vfs_package_materialize(archive, error)) return false;
-    archive = vfs_package_canonical(archive);
-    *out = (qa_bytes){archive->storage.data, archive->storage.size}; return true;
+    return archive->storage.data || qa_archive_take_snapshot(archive->archive, &archive->storage, error);
 }
 
 void vfs_package_release(package *archive)
 {
     if (archive != NULL && --archive->references == 0) {
-        vfs_package_release(archive->canonical);
         qa_archive_close(archive->archive);
         qa_buffer_free(&archive->storage);
         free(archive->members);
+        free(archive->path);
         free(archive);
     }
 }
@@ -222,14 +193,20 @@ const char *qa_resource_path(const qa_resource *resource)
 
 const qa_sha256_digest *qa_resource_digest(const qa_resource *resource)
 {
-    return resource == NULL ? NULL : &resource->digest;
+    if (!resource) return NULL;
+    if (!resource->digest_ready) {
+        qa_resource *owned = (qa_resource *)resource;
+        qa_sha256(resource->data.bytes, &owned->digest);
+        owned->digest_ready = true;
+    }
+    return &resource->digest;
 }
 
 bool qa_resource_archive_origin(const qa_resource *resource,
-                                  qa_sha256_digest *digest, size_t *ordinal)
+                                  qa_fs_identity *identity, size_t *ordinal)
 {
     if (resource == NULL || resource->archive == NULL) return false;
-    if (digest != NULL) *digest = resource->archive->digest;
+    if (identity != NULL) *identity = resource->archive->identity;
     if (ordinal != NULL) *ordinal = resource->ordinal;
     return true;
 }
@@ -337,7 +314,7 @@ bool qa_vfs_mount_at(const qa_vfs *vfs, size_t index, qa_vfs_mount_info *out)
         source->id, source->archive != NULL,
         source->archive == NULL ? QA_ARCHIVE_AUTO : qa_archive_get_kind(source->archive->archive),
         source->comparison, source->writable, source->user_overlay, source->referenced,
-        qa_vfs_archive_digest(vfs, source->id), source->q3_demo
+        qa_vfs_archive_identity(vfs, source->id), source->q3_demo
     };
     return true;
 }
@@ -368,7 +345,7 @@ bool vfs_origin_record(qa_vfs *vfs, const mount *source,
     row->receipt.comparison = source->comparison;
     row->receipt.archive = source->archive != NULL;
     if (source->archive) {
-        row->receipt.archive_digest = vfs_package_canonical(source->archive)->digest;
+        row->receipt.archive_identity = source->archive->identity;
         row->receipt.format = qa_archive_get_kind(source->archive->archive);
     } else if (!source->root || !qa_fs_root_reference_read(source->root, &row->receipt.root_reference)) {
         free(path); free(row);
@@ -707,7 +684,7 @@ memory_failure:
 
 static bool mount_authority_equal(const mount *left, const mount *right)
 {
-    if (vfs_package_canonical(left->archive) != vfs_package_canonical(right->archive) || !qa_fs_identity_equal(&left->identity, &right->identity))
+    if (left->archive != right->archive || !qa_fs_identity_equal(&left->identity, &right->identity))
         return false;
     if (left->archive)
         return left->archive_file && right->archive_file && !left->root && !right->root;
@@ -820,6 +797,8 @@ static package *package_open(qa_resource_pool *pool, const char *path, qa_fs_roo
         qa_fs_file_close(file);
         return NULL;
     }
+    archive->path = copy_string(path);
+    if (!archive->path) { qa_fs_file_close(file); free(archive); qa_error_set(error, QA_ERROR_MEMORY, 0, "retaining archive path"); return NULL; }
     archive->identity = identity;
     archive->references = 1;
     archive->pool = pool;
@@ -834,7 +813,6 @@ static package *package_open(qa_resource_pool *pool, const char *path, qa_fs_roo
     if (!qa_archive_open_retained(file, &identity, kind, &archive->archive, error)) {
         qa_fs_file_close(file); vfs_package_release(archive); return NULL;
     }
-    qa_archive_payload_reader(archive->archive, package_payload, archive);
     size_t member_count = qa_archive_count(archive->archive);
     if (member_count > SIZE_MAX / sizeof(*archive->members)) {
         qa_error_set(error, QA_ERROR_MEMORY, 0, "archive resource index overflow");
@@ -879,7 +857,6 @@ static bool add_mount(qa_vfs *vfs, mount *source, qa_mount_id *out, qa_error *er
         }
         prefix->order = order;
     }
-    if (vfs->pure_count && source->archive && !vfs_package_materialize(source->archive, error)) return false;
     source->id = vfs->next_mount++;
     for (prefix_order *prefix = vfs->prefixes; prefix != NULL; prefix = prefix->next) {
         prefix->order[vfs->count] = source->id;
@@ -909,14 +886,7 @@ bool qa_vfs_mount_retained(qa_vfs *vfs, const qa_vfs *retained, qa_mount_id id,
     }
     if (source->archive) {
         bool unchanged = false;
-        bool matches = false;
-        bool valid = qa_fs_file_path_unchanged(source->archive_file, &source->identity, &unchanged, error) &&
-            unchanged;
-        package *payload = vfs_package_canonical(source->archive);
-        if (valid && payload->storage.data)
-            valid = qa_fs_file_snapshot_matches(source->archive_file, &source->identity,
-                (qa_bytes){payload->storage.data, payload->storage.size}, &matches, error) && matches;
-        else if (valid) valid = qa_archive_source_current(source->archive->archive, error);
+        bool valid = qa_fs_file_path_unchanged(source->archive_file, &source->identity, &unchanged, error) && unchanged;
         if (!valid) {
             if (!error || error->code == QA_OK)
                 qa_error_set(error, QA_ERROR_IO, 0, "Retained archive changed: %s", source->path);
@@ -1105,22 +1075,11 @@ bool qa_vfs_retained_base_matches(const qa_vfs *view, const qa_vfs *base)
     return true;
 }
 
-const qa_sha256_digest *qa_vfs_archive_digest(const qa_vfs *vfs, qa_mount_id id)
+const qa_fs_identity *qa_vfs_archive_identity(const qa_vfs *vfs, qa_mount_id id)
 {
     const mount *source = find_mount(vfs, id);
-    package *archive = source ? vfs_package_canonical(source->archive) : NULL;
-    return archive && archive->storage.data ? &archive->digest : NULL;
-}
-
-bool qa_vfs_archive_digest_read(const qa_vfs *vfs, qa_mount_id id,
-    const qa_sha256_digest **out, qa_error *error)
-{
-    const mount *source = vfs ? find_mount(vfs, id) : NULL;
-    if (!source || !source->archive || !out) {
-        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Digest requires an actual archive mount"); return false;
-    }
-    if (!vfs_package_materialize(source->archive, error)) return false;
-    *out = &vfs_package_canonical(source->archive)->digest; return true;
+    package *archive = source ? source->archive : NULL;
+    return archive ? &archive->identity : NULL;
 }
 
 const qa_archive *qa_vfs_archive(const qa_vfs *vfs, qa_mount_id id)
@@ -1137,7 +1096,7 @@ bool qa_vfs_archive_bytes(const qa_vfs *vfs, qa_mount_id id, qa_bytes *out, qa_e
     if (!qa_fs_file_path_unchanged(source->archive_file, &source->identity, &unchanged, error)) return false;
     if (!unchanged) { qa_error_set(error, QA_ERROR_IO, 0, "Mounted package changed after admission"); return false; }
     if (!vfs_package_materialize(source->archive, error)) return false;
-    package *archive = vfs_package_canonical(source->archive);
+    package *archive = source->archive;
     *out = (qa_bytes){archive->storage.data, archive->storage.size}; return true;
 }
 
@@ -1202,7 +1161,7 @@ static void prioritize_mounts(const qa_vfs *vfs, mount **order)
     size_t first = 0;
     for (size_t i = 0; i < vfs->pure_count; i++) {
         for (size_t j = first; j < vfs->count; j++) {
-            if (order[j]->archive == NULL || !qa_sha256_equal(&vfs_package_canonical(order[j]->archive)->digest, &vfs->pure[i])) continue;
+            if (order[j]->archive == NULL || !qa_fs_identity_equal(&order[j]->archive->identity, &vfs->pure[i])) continue;
             mount *selected = order[j];
             memmove(order + first + 1, order + first, (j - first) * sizeof(*order));
             order[first++] = selected;
@@ -1217,7 +1176,7 @@ static void prioritize_ids(qa_vfs *vfs, qa_mount_id *order)
     for (size_t i = 0; i < vfs->pure_count; i++) {
         for (size_t j = first; j < vfs->count; j++) {
             mount *source = find_mount(vfs, order[j]);
-            if (source->archive == NULL || !qa_sha256_equal(&vfs_package_canonical(source->archive)->digest, &vfs->pure[i])) continue;
+            if (source->archive == NULL || !qa_fs_identity_equal(&source->archive->identity, &vfs->pure[i])) continue;
             qa_mount_id selected = order[j];
             memmove(order + first + 1, order + first, (j - first) * sizeof(*order));
             order[first++] = selected;
@@ -1226,20 +1185,18 @@ static void prioritize_ids(qa_vfs *vfs, qa_mount_id *order)
     }
 }
 
-bool qa_vfs_set_restrictions(qa_vfs *vfs, const qa_sha256_digest *archives,
+bool qa_vfs_set_restrictions(qa_vfs *vfs, const qa_fs_identity *archives,
                               size_t count, bool q3_demo, qa_error *error)
 {
     if (vfs == NULL || (count != 0 && archives == NULL) || count > SIZE_MAX / sizeof(*archives)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "invalid content restrictions");
         return false;
     }
-    if (count) for (size_t i = 0; i < vfs->count; ++i)
-        if (vfs->mounts[i]->archive && !vfs_package_materialize(vfs->mounts[i]->archive, error)) return false;
     for (size_t i = 0; i < count; i++) {
         bool found = false;
         for (size_t j = 0; j < vfs->count; j++) {
             package *archive = vfs->mounts[j]->archive;
-            if (archive != NULL && qa_sha256_equal(&vfs_package_canonical(archive)->digest, &archives[i])) {
+            if (archive != NULL && qa_fs_identity_equal(&archive->identity, &archives[i])) {
                 found = true;
                 break;
             }
@@ -1255,7 +1212,7 @@ bool qa_vfs_set_restrictions(qa_vfs *vfs, const qa_sha256_digest *archives,
             if (archive != NULL && !vfs_demo_package_allowed(archive, error)) return false;
         }
     }
-    qa_sha256_digest *copy = count == 0 ? NULL : malloc(count * sizeof(*copy));
+    qa_fs_identity *copy = count == 0 ? NULL : malloc(count * sizeof(*copy));
     if (count != 0 && copy == NULL) {
         qa_error_set(error, QA_ERROR_MEMORY, 0, "cannot allocate pure archive policy");
         return false;
@@ -1271,7 +1228,7 @@ bool qa_vfs_set_restrictions(qa_vfs *vfs, const qa_sha256_digest *archives,
     return true;
 }
 
-bool qa_vfs_restrictions_read(const qa_vfs *vfs, const qa_sha256_digest **archives,
+bool qa_vfs_restrictions_read(const qa_vfs *vfs, const qa_fs_identity **archives,
     size_t *count, bool *q3_demo)
 {
     if (!vfs || !archives || !count || !q3_demo) return false;
@@ -1297,7 +1254,7 @@ static bool source_allowed(const qa_vfs *vfs, const mount *source, const char *p
     if (source->archive != NULL) {
         if (vfs->pure_count == 0) return true;
         for (size_t i = 0; i < vfs->pure_count; i++)
-            if (qa_sha256_equal(&vfs_package_canonical(source->archive)->digest, &vfs->pure[i])) return true;
+            if (qa_fs_identity_equal(&source->archive->identity, &vfs->pure[i])) return true;
         return false;
     }
     if (vfs->pure_count == 0 && !vfs->q3_demo && !source->q3_demo) return true;
@@ -1320,11 +1277,11 @@ bool qa_vfs_unmount(qa_vfs *vfs, qa_mount_id id, qa_error *error)
         package *archive = vfs->mounts[i]->archive;
         if (archive != NULL) {
             for (size_t p = 0; p < vfs->pure_count; p++) {
-                if (!qa_sha256_equal(&vfs_package_canonical(archive)->digest, &vfs->pure[p])) continue;
+                if (!qa_fs_identity_equal(&archive->identity, &vfs->pure[p])) continue;
                 bool retained = false;
                 for (size_t j = 0; j < vfs->count; j++) {
                     package *other = vfs->mounts[j]->archive;
-                    if (j != i && other != NULL && qa_sha256_equal(&vfs_package_canonical(other)->digest, &vfs->pure[p])) retained = true;
+                    if (j != i && other != NULL && qa_fs_identity_equal(&other->identity, &vfs->pure[p])) retained = true;
                 }
                 if (!retained) {
                     qa_error_set(error, QA_ERROR_ARGUMENT, 0, "cannot unmount a required pure archive");
@@ -1671,9 +1628,6 @@ static bool acquire_archive(qa_resource_pool *pool, const mount *source,
         return false;
     }
     size_t ordinal = selected->ordinal;
-    if (!vfs_package_materialize(archive, error)) return false;
-    archive = vfs_package_canonical(archive);
-    selected = qa_archive_entry_at(archive->archive, ordinal);
     qa_resource *cached = archive->members[ordinal];
     if (cached != NULL) {
         qa_resource_retain(cached);
@@ -1689,7 +1643,6 @@ static bool acquire_archive(qa_resource_pool *pool, const mount *source,
     resource->archive = archive;
     archive->references++;
     resource->ordinal = selected->ordinal;
-    qa_sha256(resource->data.bytes, &resource->digest);
     if (!cache_resource(pool, resource, error)) {
         qa_resource_release(resource);
         return false;
@@ -1733,7 +1686,6 @@ static bool acquire_loose(qa_resource_pool *pool, const mount *source,
     qa_fs_file_close(file);
     resource->data.bytes = (qa_bytes){resource->data.owned.data, resource->data.owned.size};
     resource->identity = identity;
-    qa_sha256(resource->data.bytes, &resource->digest);
     if (!cache_resource(pool, resource, error)) {
         qa_resource_release(resource);
         return false;
@@ -2046,7 +1998,7 @@ static bool read_recipe_valid(const qa_vfs *vfs, const qa_vfs_read_reference *en
     mount *source = find_mount(vfs, entry->mount);
     const qa_resource *resource = entry->resource;
     if (!source || !resource || qa_resource_pool_find(vfs->pool, resource->id) != resource ||
-        resource->archive != vfs_package_canonical(source->archive) || !entry->path || !entry->lookup_path ||
+        resource->archive != source->archive || !entry->path || !entry->lookup_path ||
         !entry->link_source || !entry->link_target) goto invalid;
     if (source->archive && *entry->link_source) goto invalid;
     if (!*entry->link_source) {
@@ -2135,7 +2087,7 @@ bool qa_vfs_acquisition_retained(const qa_vfs *vfs, const qa_vfs_acquisition *re
                 receipt->link_source, receipt->link_target)) { retained = true; break; }
     if (!retained || origin.archive != (resource->archive != NULL) ||
         (origin.archive && (*receipt->link_source ||
-         memcmp(origin.archive_digest.bytes, resource->archive->digest.bytes, sizeof(origin.archive_digest.bytes))))) goto invalid;
+         !qa_fs_identity_equal(&origin.archive_identity, &resource->archive->identity)))) goto invalid;
     const qa_vfs_read_opening *opening = &receipt->opening;
     if (!receipt->opening_present) {
         if (opening->rank || opening->order || opening->order_count || opening->prefix || opening->user_overlay) goto invalid;

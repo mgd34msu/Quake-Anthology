@@ -52,10 +52,6 @@ bool qa_archive_open_file(const char *path, qa_archive_kind kind,
 bool qa_archive_open_retained(qa_fs_file *, const qa_fs_identity *, qa_archive_kind,
     qa_archive **, qa_error *);
 bool qa_archive_source_current(const qa_archive *, qa_error *);
-/* A containing package supplies its sole immutable payload owner. The reader
- * runs before any member bytes are published and must outlive the archive. */
-typedef bool (*qa_archive_payload_fn)(void *, qa_bytes *, qa_error *);
-void qa_archive_payload_reader(qa_archive *, qa_archive_payload_fn, void *);
 /* Moves the first file snapshot to its containing owner without copying it. */
 bool qa_archive_take_snapshot(qa_archive *, qa_buffer *, qa_error *);
 void qa_archive_close(qa_archive *archive);

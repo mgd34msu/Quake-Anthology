@@ -85,20 +85,12 @@ static bool mount_ids(qa_source_save_io *io, qa_catalog *catalog, qa_mount_id **
 }
 static bool physical(qa_source_save_io *io, qa_catalog *catalog, const qa_catalog *copy)
 {
-    ARRAY(catalog, physical, physical_count, copy ? 15 : 47);
+    ARRAY(catalog, physical, physical_count, 15);
     for (size_t i = 0; i < catalog->physical_count; ++i) {
         catalog_physical *package = &catalog->physical[i]; qa_catalog_mount *view = &package->view;
         FIELD(u64, view, id);
         if (view->id != i + 1 || !text(io, catalog, &view->path) || !view->path || !*view->path) return false;
         ENUM(view, format, QA_ARCHIVE_KPF); FIELD(bool, view, writable);
-        if (!copy) {
-            if (io->direction == QA_SOURCE_SAVE_WRITE && view->format != QA_ARCHIVE_AUTO) {
-                const qa_sha256_digest *actual;
-                if (!qa_catalog_mount_digest_read(catalog, view->id, &actual, io->error)) return false;
-                package->digest = *actual;
-            }
-            if (!qa_source_save_bytes(io, &package->digest, sizeof(package->digest))) return false;
-        }
         ARRAY(package, members, member_count, 9);
         for (size_t j = 0; j < package->member_count; ++j) {
             if (!text(io, catalog, &package->members[j].path) || !package->members[j].path || !*package->members[j].path ||
@@ -109,13 +101,8 @@ static bool physical(qa_source_save_io *io, qa_catalog *catalog, const qa_catalo
         if (copy && io->direction == QA_SOURCE_SAVE_READ) {
             const qa_catalog_mount *original = qa_catalog_mount_at(copy, i);
             if (!original || original->id != view->id) return false;
-            if (original->digest) package->digest = *original->digest;
-            view->digest = original->digest ? &package->digest : NULL;
-        } else if (io->direction == QA_SOURCE_SAVE_READ)
-            view->digest = view->format == QA_ARCHIVE_AUTO ? NULL : &package->digest;
-        else if ((view->format == QA_ARCHIVE_AUTO && view->digest) ||
-            (!copy && view->format != QA_ARCHIVE_AUTO && (!view->digest ||
-                !qa_sha256_equal(view->digest, &package->digest)))) return false;
+            view->identity = original->identity;
+        } else view->identity = catalog->mounts ? qa_vfs_archive_identity(catalog->mounts, view->id) : NULL;
     }
     return true;
 }

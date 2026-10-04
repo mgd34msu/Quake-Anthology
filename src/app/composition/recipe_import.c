@@ -47,8 +47,7 @@ static bool view_read(qa_executable_recipe *r, const qa_json_document *json, qa_
         qa_product_id product = recipe_product(&reader); uint32_t ordinal = recipe_unsigned(&reader);
         bool archived = recipe_boolean(&reader); qa_archive_kind format = recipe_unsigned(&reader);
         qa_archive_comparison comparison = recipe_unsigned(&reader); bool overlay = recipe_boolean(&reader), demo = recipe_boolean(&reader);
-        qa_sha256_digest digest; qa_json_id digest_id = qa_json_at(json, reader.array, reader.next);
-        if (archived) recipe_digest_read(&reader, &digest); else { recipe_take(&reader); if (qa_json_type(json, digest_id) != QA_JSON_NULL) reader.failed = true; }
+        uint64_t size = recipe_word(&reader);
         const qa_mount_id *owned; size_t own_count; const qa_catalog_mount *selected = NULL;
         if (reader.failed || !product || (unsigned)comparison > QA_ARCHIVE_CASE_INSENSITIVE ||
             !qa_catalog_product_own_mounts(r->catalog, product, &owned, &own_count)) { ok = recipe_fail(error, "Recipe mount lacks a valid actual product authority"); break; }
@@ -60,10 +59,8 @@ static bool view_read(qa_executable_recipe *r, const qa_json_document *json, qa_
             if (actual && actual->format == QA_ARCHIVE_AUTO) ++loose;
             if (!actual || actual->format != format || archived != (actual->format != QA_ARCHIVE_AUTO)) continue;
             if (archived) {
-                const qa_sha256_digest *payload = NULL;
-                if (!qa_catalog_mount_digest_read(r->catalog, actual->id, &payload, error)) { ok = false; break; }
-                if (ordinal || !qa_sha256_equal(payload, &digest)) continue;
-            } else if (loose_ordinal != ordinal) continue;
+                if (j != ordinal || !actual->identity || qa_fs_identity_size(actual->identity) != size) continue;
+            } else if (loose_ordinal != ordinal || size) continue;
             bool used = false; for (size_t k = 0; k < i; ++k) used |= physical_used[k] == actual->id;
             if (!used) { selected = actual; break; }
         }
@@ -75,15 +72,21 @@ static bool view_read(qa_executable_recipe *r, const qa_json_document *json, qa_
             (!overlay || qa_vfs_set_user_overlay(files, ids[i], true, error));
     }
     qa_json_id pure = qa_json_get(json, root, "pure"); size_t pure_count = 0; bool demo = false;
-    qa_sha256_digest *digests = NULL;
+    qa_fs_identity *identities = NULL;
     if (ok) ok = array(&reader, pure, &pure_count) && qa_json_bool(json, qa_json_get(json, root, "demo"), &demo, error);
     if (ok) {
-        digests = calloc(pure_count ? pure_count : 1, sizeof(*digests));
-        if (!digests) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Resolving recipe archive restrictions"); ok = false; }
+        identities = calloc(pure_count ? pure_count : 1, sizeof(*identities));
+        if (!identities) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Resolving recipe archive restrictions"); ok = false; }
     }
-    for (size_t i = 0; ok && i < pure_count; ++i) { reader.array = pure; reader.next = i; ok = recipe_digest_read(&reader, &digests[i]); }
-    if (ok) ok = qa_vfs_set_restrictions(files, digests, pure_count, demo, error) && qa_vfs_set_order(files, ids, count, error);
-    free(digests);
+    for (size_t i = 0; ok && i < pure_count; ++i) {
+        uint32_t index;
+        ok = unsigned_field(json, qa_json_at(json, pure, i), &index, error) && index < count;
+        const qa_fs_identity *identity = ok ? qa_vfs_archive_identity(files, ids[index]) : NULL;
+        if (!identity) ok = recipe_fail(error, "Recipe pure archive has no actual mounted authority");
+        else identities[i] = *identity;
+    }
+    if (ok) ok = qa_vfs_set_restrictions(files, identities, pure_count, demo, error) && qa_vfs_set_order(files, ids, count, error);
+    free(identities);
     qa_json_id prefixes = qa_json_get(json, root, "prefixes"); size_t prefix_count = 0;
     if (ok) ok = array(&reader, prefixes, &prefix_count);
     for (size_t i = 0; ok && i < prefix_count; ++i) {
@@ -116,12 +119,11 @@ static bool view_read(qa_executable_recipe *r, const qa_json_document *json, qa_
 static bool resource_read(qa_executable_recipe *r, const qa_json_document *json, qa_json_id id, qa_error *error)
 {
     recipe_reader reader = {.json = json, .recipe = r, .error = error};
-    if (!recipe_record(&reader, id, 16)) return false;
+    if (!recipe_record(&reader, id, 15)) return false;
     qa_product_id product = recipe_product(&reader); const char *path = recipe_text(&reader);
     uint32_t view = recipe_unsigned(&reader), mount_index = recipe_unsigned(&reader); const char *member = recipe_text(&reader);
     bool archived = recipe_boolean(&reader); uint64_t ordinal = recipe_word(&reader); const char *lookup = recipe_text(&reader);
-    const char *source = recipe_text(&reader), *target = recipe_text(&reader); qa_sha256_digest digest;
-    recipe_digest_read(&reader, &digest); uint64_t length = recipe_word(&reader); int32_t rank = recipe_signed(&reader);
+    const char *source = recipe_text(&reader), *target = recipe_text(&reader); uint64_t length = recipe_word(&reader); int32_t rank = recipe_signed(&reader);
     qa_json_id order = recipe_take(&reader); const char *prefix = recipe_optional_text(&reader); bool overlay = recipe_boolean(&reader);
     if (reader.failed || !product || view >= r->view_count || !recipe_path(path, error) || !recipe_path(member, error) || !recipe_path(lookup, error) ||
         (prefix && !recipe_path(prefix, error)) || (!archived && ordinal)) return recipe_fail(error, "Invalid complete recipe resource reference");
@@ -129,10 +131,10 @@ static bool resource_read(qa_executable_recipe *r, const qa_json_document *json,
     if (!qa_vfs_mount_at(files, mount_index, &mount) || mount.is_archive != archived) return recipe_fail(error, "Recipe resource mount is absent");
     qa_resource *resource = NULL; qa_vfs_acquisition receipt = {0};
     if (!qa_vfs_acquire_receipt(files, path, &resource, &receipt, error)) return false;
-    qa_sha256_digest archive_digest; size_t actual_ordinal = 0; bool actual_archive = qa_resource_archive_origin(resource, &archive_digest, &actual_ordinal);
+    size_t actual_ordinal = 0; bool actual_archive = qa_resource_archive_origin(resource, NULL, &actual_ordinal);
     bool ok = receipt.mount == mount.id && !strcmp(qa_resource_path(resource), member) && actual_archive == archived && actual_ordinal == ordinal &&
         !strcmp(receipt.lookup_path, lookup) && !strcmp(receipt.link_source, source) && !strcmp(receipt.link_target, target) &&
-        qa_resource_bytes(resource).size == length && qa_sha256_equal(qa_resource_digest(resource), &digest);
+        qa_resource_bytes(resource).size == length;
     qa_vfs_read_reference read = {0}; bool found = false;
     for (size_t i = 0; ok && i < qa_vfs_read_count(files); ++i) if (qa_vfs_read_at(files, i, &read) && read.mount == receipt.mount &&
         qa_resource_id(read.resource) == receipt.resource_id && !strcmp(read.path, path) && !strcmp(read.lookup_path, lookup) &&
@@ -347,7 +349,7 @@ static bool sidecar_scope(qa_executable_recipe *r, size_t view, qa_product_id pr
 {
     const qa_mount_id *expected = NULL; size_t count = 0;
     const qa_vfs *files = r->views[view].files, *catalog = qa_catalog_files(r->catalog);
-    const qa_sha256_digest *pure = NULL; size_t pure_count = 0; bool demo = false;
+    const qa_fs_identity *pure = NULL; size_t pure_count = 0; bool demo = false;
     if (!qa_catalog_product_mounts(r->catalog, product, &expected, &count) || count != qa_vfs_mount_count(files) ||
         qa_vfs_prefix_count(files) || qa_vfs_link_count(files) || !qa_vfs_restrictions_read(files, &pure, &pure_count, &demo) || pure_count || demo)
         return recipe_fail(error, "Map sidecar view differs from its genuine geometry product scope");
@@ -360,14 +362,9 @@ static bool sidecar_scope(qa_executable_recipe *r, size_t view, qa_product_id pr
         }
         if (!physical || !qa_vfs_mount_at(files, i, &actual))
             return recipe_fail(error, "Map sidecar mount lacks its actual geometry content");
-        if (actual.is_archive) {
-            const qa_sha256_digest *digest = NULL;
-            if (!qa_catalog_mount_digest_read(r->catalog, physical->id, &digest, error) ||
-                !qa_vfs_archive_digest_read(files, actual.id, &actual.digest, error)) return false;
-        }
         if (actual.comparison != QA_ARCHIVE_CASE_INSENSITIVE || actual.user_overlay ||
             actual.format != physical->format || strcmp(qa_vfs_mount_path(files, actual.id), physical->path) ||
-            (actual.is_archive ? !actual.digest || !physical->digest || !qa_sha256_equal(actual.digest, physical->digest) :
+            (actual.is_archive ? !actual.identity || !physical->identity || !qa_fs_identity_equal(actual.identity, physical->identity) :
                 !qa_fs_root_same_object(qa_vfs_mount_root(files, actual.id), qa_vfs_mount_root(catalog, expected[i]))))
             return recipe_fail(error, "Map sidecar mount order differs from its actual geometry content");
     }

@@ -16,5 +16,5 @@ bool frontend_q3_packages_check(frontend_q3_packages *, qa_error *);
 bool frontend_q3_packages_pure(frontend_q3_packages *, int32_t checksum_feed_server_id,
     qa_q3_pure_server *, qa_error *);
 bool frontend_q3_packages_download(frontend_q3_packages *, const char *name,
-    qa_bytes *, const qa_sha256_digest **, qa_error *);
+    qa_bytes *, const qa_fs_identity **, qa_error *);
 #endif

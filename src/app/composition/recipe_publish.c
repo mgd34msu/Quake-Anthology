@@ -41,16 +41,11 @@ static bool physical_mount(const recipe_view *view, qa_vfs_mount_info info,
 {
     const char *path = qa_vfs_mount_path(view->files, info.id);
     const qa_vfs *authority = qa_catalog_files(view->catalog);
-    if (info.is_archive && !qa_vfs_archive_digest_read(view->files, info.id, &info.digest, error)) return false;
     for (size_t i = 0; path && i < qa_catalog_mount_count(view->catalog); ++i) {
         const qa_catalog_mount *candidate = qa_catalog_mount_at(view->catalog, i);
         if (strcmp(path, candidate->path) || candidate->format != info.format ||
             info.is_archive != (candidate->format != QA_ARCHIVE_AUTO)) continue;
-        if (info.is_archive) {
-            const qa_sha256_digest *digest = NULL;
-            if (!qa_catalog_mount_digest_read(view->catalog, candidate->id, &digest, error)) return false;
-        }
-        if (info.is_archive ? (!info.digest || !candidate->digest || !qa_sha256_equal(info.digest, candidate->digest)) :
+        if (info.is_archive ? (!info.identity || !candidate->identity || !qa_fs_identity_equal(info.identity, candidate->identity)) :
             !qa_fs_root_same_object(qa_vfs_mount_root(view->files, info.id), qa_vfs_mount_root(authority, candidate->id))) continue;
         for (size_t j = 0; j < qa_catalog_count(view->catalog); ++j) {
             const qa_product *owner = qa_catalog_at(view->catalog, j); const qa_mount_id *ids = NULL; size_t count = 0;
@@ -61,7 +56,7 @@ static bool physical_mount(const recipe_view *view, qa_vfs_mount_info info,
                     const qa_catalog_mount *prior = qa_catalog_mount_at(view->catalog, m);
                     if (prior->id == ids[n] && prior->format == QA_ARCHIVE_AUTO) ++loose;
                 }
-                *physical = candidate; *product = owner; *ordinal = info.is_archive ? 0 : loose; return true;
+                *physical = candidate; *product = owner; *ordinal = info.is_archive ? k : loose; return true;
             }
         }
     }
@@ -92,10 +87,7 @@ bool recipe_view_write(qa_json_writer *w, const recipe_view *view, qa_error *err
         qa_json_writer_array(w); qa_json_writer_string(w, product->identity); qa_json_writer_number(w, (double)ordinal);
         qa_json_writer_bool(w, info.is_archive); qa_json_writer_number(w, info.format); qa_json_writer_number(w, info.comparison);
         qa_json_writer_bool(w, info.user_overlay); qa_json_writer_bool(w, info.q3_demo);
-        if (info.is_archive) {
-            if (!qa_vfs_archive_digest_read(view->files, info.id, &info.digest, error)) return false;
-            recipe_digest_write(w, info.digest);
-        } else qa_json_writer_null(w);
+        word_write(w, info.is_archive ? qa_fs_identity_size(actual->identity) : 0);
         qa_json_writer_end(w); (void)actual;
     }
     qa_json_writer_end(w); qa_json_writer_key(w, "prefixes"); qa_json_writer_array(w);
@@ -113,19 +105,30 @@ bool recipe_view_write(qa_json_writer *w, const recipe_view *view, qa_error *err
         qa_json_writer_array(w); qa_json_writer_string(w, source); qa_json_writer_number(w, (double)index);
         qa_json_writer_string(w, target); qa_json_writer_end(w);
     }
-    qa_json_writer_end(w); const qa_sha256_digest *pure; size_t count; bool demo;
+    qa_json_writer_end(w); const qa_fs_identity *pure; size_t count; bool demo;
     if (!qa_vfs_restrictions_read(view->files, &pure, &count, &demo)) return recipe_fail(error, "Recipe restriction owner is absent");
     qa_json_writer_key(w, "pure"); qa_json_writer_array(w);
-    for (size_t i = 0; i < count; ++i) recipe_digest_write(w, &pure[i]);
+    for (size_t i = 0; i < count; ++i) {
+        bool found = false;
+        for (size_t j = 0; j < qa_vfs_mount_count(view->files); ++j) {
+            qa_vfs_mount_info info;
+            if (qa_vfs_mount_at(view->files, j, &info) && info.identity && qa_fs_identity_equal(info.identity, &pure[i])) {
+                qa_json_writer_number(w, (double)j); found = true; break;
+            }
+        }
+        if (!found) return recipe_fail(error, "Recipe pure archive lost its actual mount");
+    }
     qa_json_writer_end(w); qa_json_writer_key(w, "demo"); qa_json_writer_bool(w, demo); qa_json_writer_end(w);
     return !w->failed;
 }
 static bool resource_same(const qa_resource *a, const qa_resource *b)
 {
-    if (!a || !b || qa_resource_bytes(a).size != qa_resource_bytes(b).size || !qa_sha256_equal(qa_resource_digest(a), qa_resource_digest(b))) return false;
-    qa_sha256_digest x, y; size_t i, j;
-    bool archive_a = qa_resource_archive_origin(a, &x, &i), archive_b = qa_resource_archive_origin(b, &y, &j);
-    return archive_a == archive_b && (!archive_a || (i == j && qa_sha256_equal(&x, &y)));
+    if (a == b) return a != NULL;
+    if (!a || !b || strcmp(qa_resource_path(a), qa_resource_path(b)) ||
+        qa_resource_bytes(a).size != qa_resource_bytes(b).size) return false;
+    qa_fs_identity x, y; size_t i, j;
+    return qa_resource_archive_origin(a, &x, &i) && qa_resource_archive_origin(b, &y, &j) &&
+        i == j && qa_fs_identity_equal(&x, &y);
 }
 bool recipe_resource_add_from(qa_executable_recipe *r, qa_product_id product, const char *path,
     const qa_resource *held, size_t preferred, size_t *out, qa_error *error)
@@ -229,13 +232,13 @@ bool recipe_resource_write(qa_json_writer *w, const qa_executable_recipe *r, siz
     const qa_vfs_acquisition *opening = &entry->acquisition;
     size_t mount;
     if (!opening->opening_present || !qa_vfs_acquisition_retained(files, opening, error) || !mount_index(files, opening->mount, &mount, error)) return false;
-    qa_sha256_digest archive; size_t ordinal = 0; bool archived = qa_resource_archive_origin(entry->value.resource, &archive, &ordinal);
+    size_t ordinal = 0; bool archived = qa_resource_archive_origin(entry->value.resource, NULL, &ordinal);
     qa_json_writer_array(w);
     if (!product_write(w, r->catalog, entry->value.product, error)) return false;
     qa_json_writer_string(w, entry->value.path); qa_json_writer_number(w, (double)entry->view); qa_json_writer_number(w, (double)mount);
     qa_json_writer_string(w, qa_resource_path(entry->value.resource)); qa_json_writer_bool(w, archived); word_write(w, ordinal);
     qa_json_writer_string(w, opening->lookup_path); qa_json_writer_string(w, opening->link_source); qa_json_writer_string(w, opening->link_target);
-    recipe_digest_write(w, qa_resource_digest(entry->value.resource)); word_write(w, qa_resource_bytes(entry->value.resource).size);
+    word_write(w, qa_resource_bytes(entry->value.resource).size);
     qa_json_writer_number(w, (double)opening->opening.rank);
     if (!order_write(w, files, opening->opening.order, opening->opening.order_count, error)) return false;
     if (opening->opening.prefix) qa_json_writer_string(w, opening->opening.prefix); else qa_json_writer_null(w);

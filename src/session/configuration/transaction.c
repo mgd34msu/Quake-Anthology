@@ -320,7 +320,6 @@ static bool instance_identity(instance_owner *owner, const qa_launch_choices *ch
         qa_vfs_mount_info mount;
         qa_vfs_mount_at(v->content, i, &mount);
         hash_u64(&h, mount.is_archive); hash_u64(&h, mount.format);
-        if (mount.digest) qa_sha256_update(&h, (qa_bytes){mount.digest->bytes, sizeof(mount.digest->bytes)});
     }
     qa_sha256_final(&h, &v->identity);
     return true;

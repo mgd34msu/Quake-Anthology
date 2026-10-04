@@ -3,6 +3,8 @@
 #endif
 #include "qa/vfs.h"
 #include "qa/binary.h"
+#include "qa/vfs_save.h"
+#include "qa/vfs_view_save.h"
 
 #include <fcntl.h>
 #include <stdio.h>
@@ -176,6 +178,27 @@ int main(void)
     CHECK(qa_vfs_acquire_from(other, other_zip, "maps/item.txt", &again, &error));
     CHECK(again == zip_resource && qa_resource_bytes(again).data == qa_resource_bytes(zip_resource).data);
     qa_resource_release(again);
+
+    qa_buffer pool_save = {0}, view_save = {0};
+    const qa_vfs *saved_views[] = {vfs, other};
+    CHECK(qa_resource_pool_checkpoint_linked(pool, saved_views, 2, &pool_save, &error));
+    CHECK(qa_vfs_checkpoint(vfs, &view_save, &error));
+    qa_resource_pool *restored_pool = qa_resource_pool_create(&error);
+    CHECK(restored_pool != NULL && qa_resource_pool_restore_linked(restored_pool, NULL,
+        (qa_bytes){pool_save.data, pool_save.size}, &error));
+    qa_vfs *restored = NULL;
+    CHECK(qa_vfs_create_restored(restored_pool, NULL, (qa_bytes){view_save.data, view_save.size}, &restored, &error));
+    CHECK(qa_vfs_acquire_from(restored, pak_id, "maps/item.txt", &again, &error));
+    expect_text(again, "first"); qa_resource_release(again); again = NULL;
+    CHECK(qa_vfs_acquire_from(restored, zip_id, "maps/item.txt", &again, &error));
+    expect_text(again, "zip-last"); qa_resource_release(again); again = NULL;
+    qa_vfs_destroy(restored);
+    uint64_t kept = qa_resource_id(qa_resource_pool_find(restored_pool, qa_resource_id(pak_resource)));
+    CHECK(kept != 0 && !qa_resource_pool_restore_linked(restored_pool, NULL,
+        (qa_bytes){pool_save.data, pool_save.size - 1}, &error));
+    CHECK(qa_resource_pool_find(restored_pool, kept) != NULL);
+    qa_resource_pool_destroy(restored_pool);
+    qa_buffer_free(&pool_save); qa_buffer_free(&view_save);
 
     qa_mount_id order[] = {loose_id, pak_id, zip_id};
     CHECK(qa_vfs_set_order(vfs, order, 3, &error));

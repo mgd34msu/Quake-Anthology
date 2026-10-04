@@ -14,7 +14,7 @@
 
 typedef struct content_pool { qa_resource_pool *value; bool owned; qa_buffer bytes; } content_pool;
 typedef struct content_catalog { qa_catalog *value; uint64_t pool; qa_buffer bytes; } content_catalog;
-typedef struct content_view { qa_vfs *value; uint64_t pool, catalog; bool owned, qualified; qa_buffer bytes, baseline; } content_view;
+typedef struct content_view { qa_vfs *value; uint64_t pool, catalog; bool owned; qa_buffer bytes; } content_view;
 typedef struct content_resource {
     qa_launch_resource value;
     uint64_t pool, resource, origin_view;
@@ -47,7 +47,6 @@ struct qa_application_content_graph {
     content_resource *resources; size_t resource_count;
     uint64_t application_pool, application_catalog, launch_catalog, launch_view;
 };
-static bool copy_bytes(const qa_buffer *, qa_buffer *, qa_error *);
 
 static bool fail(qa_error *error, qa_status status, const char *message)
 { return application_fail(error, status, message); }
@@ -320,29 +319,6 @@ bool application_save_content_collect(qa_application *app, qa_application_conten
         ok = visit(context, app, &visitor, error);
         app->capture_content_graph = previous;
     }
-    /* Preserve portable native admission only for the very same installed
-     * view. Every encoding still checks its complete current native snapshot
-     * against that admission baseline before emitting its original record. */
-    const qa_application_content_graph *prepared = app->content_graph;
-    if (ok && prepared && prepared->pending) {
-        ok = application_save_content_ready(prepared, error);
-        if (ok && (g->pool_count != prepared->pool_count || g->catalog_count != prepared->catalog_count || g->view_count != prepared->view_count))
-            ok = fail(error, QA_ERROR_FORMAT, "Actual candidate content inventory differs from its prepared graph");
-        for (size_t i = 0; ok && i < g->pool_count; ++i) if (g->pools[i].value != prepared->pools[i].value)
-            ok = fail(error, QA_ERROR_FORMAT, "Actual candidate pool identity/order differs from saved graph");
-        for (size_t i = 0; ok && i < g->catalog_count; ++i) if (g->catalogs[i].value != prepared->catalogs[i].value)
-            ok = fail(error, QA_ERROR_FORMAT, "Actual candidate catalog identity/order differs from saved graph");
-        for (size_t i = 0; ok && i < g->view_count; ++i) if (g->views[i].value != prepared->views[i].value)
-            ok = fail(error, QA_ERROR_FORMAT, "Actual candidate VFS alias/order differs from saved graph");
-    }
-    for (size_t i = 0; ok && prepared && prepared->pending && i < g->view_count; ++i) {
-        uint64_t id = qa_application_content_view_id(prepared, g->views[i].value);
-        if (!id) continue;
-        const content_view *saved = &prepared->views[id - 1];
-        ok = copy_bytes(&saved->bytes, &g->views[i].bytes, error) &&
-            copy_bytes(&saved->baseline, &g->views[i].baseline, error);
-        if (ok) g->views[i].qualified = true;
-    }
     if (!ok) {
         application_save_content_destroy(g);
         if (error && error->code == QA_OK) fail(error, QA_ERROR_FORMAT, "Actual content holders have unqualified graph edges");
@@ -384,7 +360,7 @@ void application_save_content_destroy(qa_application_content_graph *g)
     }
     for (size_t i = 0; g->views && i < g->view_count; ++i) {
         if (g->views[i].owned) qa_vfs_destroy(g->views[i].value);
-        qa_buffer_free(&g->views[i].bytes); qa_buffer_free(&g->views[i].baseline);
+        qa_buffer_free(&g->views[i].bytes);
     }
     for (size_t i = 0; g->pools && i < g->pool_count; ++i) {
         if (g->pools[i].owned) qa_resource_pool_destroy(g->pools[i].value);
@@ -440,7 +416,6 @@ void application_save_content_publish(qa_application_content_graph *g)
 {
     if (!g) return;
     g->pending = false;
-    for (size_t i = 0; i < g->view_count; ++i) g->views[i].qualified = false;
 }
 uint64_t application_save_content_application_pool(const qa_application_content_graph *g) { return g ? g->application_pool : 0; }
 uint64_t application_save_content_application_catalog(const qa_application_content_graph *g) { return g ? g->application_catalog : 0; }
@@ -869,8 +844,6 @@ static bool resolve(qa_application_content_graph *g, qa_error *error)
     return true;
 }
 
-static bool equal_bytes(const qa_buffer *a, const qa_buffer *b)
-{ return a->size == b->size && (!a->size || !memcmp(a->data, b->data, a->size)); }
 static bool copy_bytes(const qa_buffer *source, qa_buffer *out, qa_error *error)
 {
     out->data = source->size ? malloc(source->size) : NULL;
@@ -899,20 +872,7 @@ static bool refresh(qa_application_content_graph *g, qa_error *error)
     for (size_t i = 0; i < g->view_count; ++i) {
         content_view *v = &g->views[i]; qa_buffer bytes = {0};
         if (!qa_vfs_checkpoint(v->value, &bytes, error)) return false;
-        if (v->qualified) {
-            bool unchanged = equal_bytes(&bytes, &v->baseline);
-            if (!unchanged) {
-                size_t common = bytes.size < v->baseline.size ? bytes.size : v->baseline.size;
-                size_t offset = 0;
-                while (offset < common && bytes.data[offset] == v->baseline.data[offset]) ++offset;
-                qa_error_set(error, QA_ERROR_FORMAT, 0,
-                    "Qualified saved VFS changed after native content admission: view %zu, expected %zu bytes, current %zu bytes, first difference %zu",
-                    i + 1, v->baseline.size, bytes.size, offset);
-                qa_buffer_free(&bytes);
-                return false;
-            }
-            qa_buffer_free(&bytes);
-        } else { qa_buffer_free(&v->bytes); v->bytes = bytes; }
+        qa_buffer_free(&v->bytes); v->bytes = bytes;
     }
     qa_catalog_checkpoint_refs refs = {.context = g, .files_encode = files_encode};
     for (size_t i = 0; i < g->catalog_count; ++i) {
@@ -944,13 +904,11 @@ static bool physical_ready(void *context, const qa_catalog_mount *mount,
         if (qa_vfs_mount_at(v, i, &actual) && actual.id == mount->id) { found = true; break; }
     if (!mount || !mount->id || !found)
         return fail(error, QA_ERROR_FORMAT, "Catalog physical mount is outside its qualified native view");
-    if (actual.is_archive && !qa_vfs_archive_digest_read(v, actual.id, &actual.digest, error)) return false;
     const char *path = qa_vfs_mount_path(v, actual.id);
     if (!path || strcmp(path, mount->path) || actual.format != mount->format || actual.writable != mount->writable ||
-        actual.is_archive != (mount->format != QA_ARCHIVE_AUTO) ||
-        (actual.is_archive && (!mount->digest || !actual.digest || !qa_sha256_equal(mount->digest, actual.digest))))
+        actual.is_archive != (mount->format != QA_ARCHIVE_AUTO))
         return fail(error, QA_ERROR_FORMAT, "Catalog physical package identity disagrees with its qualified native view");
-    if (!actual.is_archive) return (!count && !mount->digest) ||
+    if (!actual.is_archive) return !count ||
         fail(error, QA_ERROR_FORMAT, "Catalog directory contains fabricated archive metadata");
     const qa_archive *archive = qa_vfs_archive(v, actual.id); size_t next = 0;
     if (!archive) return fail(error, QA_ERROR_FORMAT, "Catalog package has no actual immutable archive owner");
@@ -983,12 +941,6 @@ bool application_save_content_prepare(qa_bytes bytes, const qa_vfs_checkpoint_re
     bool ok = qa_source_save_reader(&io, NULL, bytes, error) && graph_fields(&io, g) &&
         qa_source_save_finish(&io, NULL) && structure(g, error);
     qa_source_save_dispose(&io);
-    /* All enclosing extents and ownership edges are validated before any
-     * real native file/root is admitted or any resource holder is created. */
-    for (size_t i = 0; ok && i < g->pool_count; ++i) {
-        const qa_buffer *pool_bytes = &g->pools[i].bytes;
-        ok = qa_resource_pool_checkpoint_validate((qa_bytes){pool_bytes->data, pool_bytes->size}, error);
-    }
     for (size_t i = 0; ok && i < g->pool_count; ++i) {
         content_pool *p = &g->pools[i]; p->value = qa_resource_pool_create(error); p->owned = p->value != NULL;
         ok = p->value && qa_resource_pool_restore_linked(p->value, files,
@@ -999,8 +951,6 @@ bool application_save_content_prepare(qa_bytes bytes, const qa_vfs_checkpoint_re
         ok = qa_vfs_create_restored(qa_application_content_pool(g, v->pool), files,
             (qa_bytes){v->bytes.data, v->bytes.size}, &v->value, error);
         v->owned = v->value != NULL;
-        if (ok) ok = qa_vfs_checkpoint(v->value, &v->baseline, error);
-        if (ok) v->qualified = true;
     }
     for (size_t i = 0; ok && i < g->catalog_count; ++i) {
         content_view *view = NULL;

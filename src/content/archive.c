@@ -14,8 +14,6 @@ struct qa_archive {
     qa_buffer metadata;
     qa_fs_file *file;
     qa_fs_identity identity;
-    qa_archive_payload_fn payload_reader;
-    void *payload_context;
     qa_archive_entry *entries;
     const qa_archive_entry **name_index[3];
     size_t count;
@@ -68,16 +66,6 @@ static bool archive_snapshot(qa_archive *archive, qa_error *error)
     archive->bytes = (qa_bytes){archive->owned.data, archive->owned.size}; return true;
 }
 
-static bool archive_payload(qa_archive *archive, qa_error *error)
-{
-    if (archive->payload_reader) {
-        qa_bytes bytes;
-        if (!archive->payload_reader(archive->payload_context, &bytes, error)) return false;
-        archive->bytes = bytes; return true;
-    }
-    return archive_snapshot(archive, error);
-}
-
 bool qa_archive_take_snapshot(qa_archive *archive, qa_buffer *out, qa_error *error)
 {
     if (!archive || !out || out->data || out->size || !archive->file)
@@ -88,10 +76,7 @@ bool qa_archive_take_snapshot(qa_archive *archive, qa_buffer *out, qa_error *err
     *out = archive->owned; archive->owned = (qa_buffer){0}; return true;
 }
 
-void qa_archive_payload_reader(qa_archive *archive, qa_archive_payload_fn reader, void *context)
-{
-    archive->payload_reader = reader; archive->payload_context = context;
-}
+
 
 static char *normalize_path(const uint8_t *path, size_t length, qa_error *error,
                             size_t offset)
@@ -458,7 +443,7 @@ bool qa_archive_open_file(const char *path, qa_archive_kind kind,
     }
     bool ok = qa_archive_open_retained(file, &identity, kind, out, error);
     qa_fs_file_close(file);
-    if (ok && !archive_payload(*out, error)) {
+    if (ok && !archive_snapshot(*out, error)) {
         qa_archive_close(*out); *out = NULL; ok = false;
     }
     return ok;
@@ -627,8 +612,15 @@ bool qa_archive_read(const qa_archive *archive, size_t ordinal,
     if (entry == NULL) return fail(error, QA_ERROR_ARGUMENT, ordinal, "invalid archive entry ordinal");
     if (entry->is_directory)
         return fail(error, QA_ERROR_ARGUMENT, ordinal, "cannot read an archive directory");
-    if (!archive_payload((qa_archive *)archive, error)) return false;
-    qa_bytes bytes = {archive->bytes.data + entry->data_offset, entry->compressed_size};
+    qa_bytes bytes = {0};
+    if (!archive->bytes.data && entry->compression_method == 0) {
+        out->owned.size = entry->size;
+        out->owned.data = malloc(entry->size ? entry->size : 1);
+        if (!out->owned.data) return fail(error, QA_ERROR_MEMORY, entry->data_offset, "allocating retained archive member");
+        if (!qa_fs_file_read_range(archive->file, &archive->identity, entry->data_offset,
+            out->owned.data, entry->size, error)) { qa_archive_data_free(out); return false; }
+        bytes = (qa_bytes){out->owned.data, out->owned.size};
+    } else if (!archive_span((qa_archive *)archive, entry->data_offset, entry->compressed_size, &bytes, error)) return false;
     if (entry->compression_method == 8) {
         out->owned.size = entry->size;
         out->owned.data = malloc(entry->size == 0 ? 1 : entry->size);

@@ -1348,11 +1348,11 @@ static qa_q3_server_world q3_world(void *context)
     world.downloading = qa_q3_download_window_active(peer->download); return world;
 }
 static bool q3_download_resolve(void *context, const char *name, qa_bytes *bytes,
-    const qa_sha256_digest **digest, qa_error *error)
+    const qa_fs_identity **identity, qa_error *error)
 {
     qa_frontend_network *n = context; qa_error local = {0};
-    *bytes = (qa_bytes){0}; *digest = NULL;
-    if (frontend_q3_packages_download(n->q3_packages, name, bytes, digest, &local)) return true;
+    *bytes = (qa_bytes){0}; *identity = NULL;
+    if (frontend_q3_packages_download(n->q3_packages, name, bytes, identity, &local)) return true;
     if (local.code == QA_ERROR_NOT_FOUND) return true;
     if (error) *error = local;
     return false;
@@ -3605,8 +3605,7 @@ static bool download_inspect(void *context, const char *path, qa_fs_stage *stage
     qa_fs_stage_unmap(mapping);
     return ok || (error && error->code ? false : frontend_fail(error, QA_ERROR_FORMAT, "staged inspection size changed"));
 }
-static bool download_catalog_receipt(qa_frontend_network *n, const char *path,
-    const qa_sha256_digest *digest, qa_error *error)
+static bool download_catalog_receipt(qa_frontend_network *n, const char *path, qa_error *error)
 {
     char *native = NULL;
     if (!qa_fs_root_join(n->content, path, &native, error)) return false;
@@ -3617,9 +3616,7 @@ static bool download_catalog_receipt(qa_frontend_network *n, const char *path,
         const qa_catalog_mount *mount = qa_catalog_mount_at(catalog, i);
         if (kind != QA_ARCHIVE_AUTO) {
             if (mount->format == kind && !strcmp(mount->path, native)) {
-                const qa_sha256_digest *actual = NULL;
-                if (!qa_catalog_mount_digest_read(catalog, mount->id, &actual, error)) { free(native); return false; }
-                mounted = qa_sha256_equal(actual, digest);
+                mounted = mount->identity != NULL;
             }
             continue;
         }
@@ -3637,27 +3634,15 @@ static bool download_catalog_receipt(qa_frontend_network *n, const char *path,
     free(native);
     if (!mounted) return frontend_fail(error, QA_ERROR_NOT_FOUND,
         "published download was not admitted by the user content catalog");
-    if (kind != QA_ARCHIVE_AUTO) return true;
-    qa_fs_file *file = NULL; qa_fs_identity identity; qa_buffer bytes = {0};
-    bool ok = qa_fs_root_file_open(n->content, path, &file, &identity, error) &&
-        qa_fs_file_read_snapshot(file, &identity, &bytes, error);
-    qa_sha256_digest actual;
-    if (ok) {
-        qa_sha256((qa_bytes){bytes.data, bytes.size}, &actual);
-        ok = qa_sha256_equal(&actual, digest);
-    }
-    bool unchanged = false;
-    if (ok) ok = qa_fs_file_path_unchanged(file, &identity, &unchanged, error) && unchanged;
-    qa_buffer_free(&bytes); qa_fs_file_close(file);
-    return ok || (error && error->code ? false : frontend_fail(error, QA_ERROR_FORMAT,
-        "published download differs from its verified content identity"));
+    return true;
 }
 static bool download_remount(void *context, const char *path, const qa_sha256_digest *digest, qa_error *error)
 {
     qa_frontend_network *n = context;
+    (void)digest;
     qa_application *application = n->frontend->application;
     if (!qa_application_rediscover(application, n->frontend->options.application.discover_mods, error)) return false;
-    if (!download_catalog_receipt(n, path, digest, error)) return false;
+    if (!download_catalog_receipt(n, path, error)) return false;
     const qa_launch_snapshot *snapshot = qa_application_launch(application);
     if (!snapshot) return true;
     qa_launch_draft *current = NULL, *rebased = NULL;

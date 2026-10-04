@@ -2010,7 +2010,7 @@ static bool same_mounts(const qa_vfs *left,const qa_vfs *right)
         if (!qa_vfs_prefix_at(left,i,&a,&ao,&ac) || !qa_vfs_prefix_at(right,i,&b,&bo,&bc) ||
             !same_text(a,b) || ac!=bc || (ac && memcmp(ao,bo,ac*sizeof(*ao)))) return false;
     }
-    const qa_sha256_digest *a,*b; size_t ac,bc; bool ad,bd;
+    const qa_fs_identity *a,*b; size_t ac,bc; bool ad,bd;
     return qa_vfs_restrictions_read(left,&a,&ac,&ad) && qa_vfs_restrictions_read(right,&b,&bc,&bd) &&
         ad==bd && ac==bc && (!ac || !memcmp(a,b,ac*sizeof(*a)));
 }

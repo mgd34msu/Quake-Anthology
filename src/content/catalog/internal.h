@@ -33,7 +33,6 @@ typedef qa_catalog_member_identity catalog_member;
 typedef struct catalog_location { const char *logical, *path; } catalog_location;
 typedef struct catalog_physical {
     qa_catalog_mount view;
-    qa_sha256_digest digest;
     catalog_member *members;
     size_t member_count;
 } catalog_physical;
