@@ -3326,7 +3326,7 @@ bool frontend_config_store_restore_abort_unbound(frontend_config_store *manager,
     qa_application *application,qa_error *error)
 {
     if (!manager) return true;
-    bool pending=false;
+    bool pending=manager->restoring && !frontend_neutral_configs_empty(manager->neutral);
     for (frontend_config_source *source=manager->sources;source;source=source->next)
         if (source->imported && !source->console && !source->cvars && !source->metadata) pending=true;
     if (!pending) return true;
@@ -3348,7 +3348,7 @@ bool frontend_config_store_restore_abort_unbound(frontend_config_store *manager,
         if (!source_destroy(source,error)) return false;
         *at=next;
     }
-    return true;
+    return frontend_neutral_configs_restore_abort_unbound(manager->neutral,error);
 }
 bool frontend_config_store_destroy(frontend_config_store *manager,qa_error *error)
 {

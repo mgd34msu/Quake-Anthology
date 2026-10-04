@@ -771,6 +771,24 @@ frontend_neutral_configs *frontend_neutral_configs_create(qa_frontend *f,fronten
 }
 bool frontend_neutral_configs_empty(const frontend_neutral_configs *owner)
 { return !owner || !owner->rows; }
+bool frontend_neutral_configs_restore_abort_unbound(frontend_neutral_configs *owner,qa_error *e)
+{
+    if (!owner || !owner->restoring) return true;
+    frontend_neutral_config **at=&owner->rows;
+    while (*at) {
+        frontend_neutral_config *row=*at;
+        if (!row->imported || row->issued) { at=&row->next; continue; }
+        if (row->owner!=owner || row->attached || row->metadata || row->source.descriptor ||
+            row->source.runtime || row->source.context.lifetime || row->source.context.console ||
+            row->source.context.cvars || row->client || row->input || row->retirement_input ||
+            row->write_registered || row->dump_registered)
+            return fail(e,QA_ERROR_ARGUMENT,"Unbound neutral import retains a genuine CLIENT owner");
+        frontend_neutral_config *next=row->next;
+        if (!dispose(row,e)) return false;
+        *at=next;
+    }
+    return true;
+}
 bool frontend_neutral_configs_destroy(frontend_neutral_configs *owner,qa_error *e)
 {
     if (!owner) return true;

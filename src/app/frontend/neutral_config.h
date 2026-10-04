@@ -24,6 +24,7 @@ typedef struct frontend_neutral_config_view {
 frontend_neutral_configs *frontend_neutral_configs_create(qa_frontend *, frontend_config_store *, qa_error *);
 bool frontend_neutral_configs_destroy(frontend_neutral_configs *, qa_error *);
 bool frontend_neutral_configs_empty(const frontend_neutral_configs *);
+bool frontend_neutral_configs_restore_abort_unbound(frontend_neutral_configs *,qa_error *);
 bool frontend_neutral_config_options(frontend_neutral_configs *, uint32_t physical_seat,
     qa_movement_kind actual_movement, frontend_client_source_options *, qa_error *);
 bool frontend_neutral_config_pending_options(frontend_neutral_configs *,uint32_t physical_seat,
