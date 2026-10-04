@@ -716,9 +716,10 @@ static void triangle_fill(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
       if (q == 0 || !isfinite(q))
         continue;
       double reciprocal = 1 / q;
-      cpu_fragment fragment = {.x = (uint32_t)x,
-                               .y = (uint32_t)y,
-                               .eye_depth = vertices[0].scale * reciprocal};
+      cpu_fragment fragment;
+      fragment.x = (uint32_t)x;
+      fragment.y = (uint32_t)y;
+      fragment.eye_depth = vertices[0].scale * reciprocal;
       fragment.depth = cpu_clamp(
           cpu_clamp((constant_depth ? vertices[0].z : z) * 0.5 + 0.5) *
               (far_depth - near_depth) +
@@ -937,7 +938,8 @@ static void line(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
       double q = (1 - t) * inverse_a + t * inverse_b, reciprocal = 1 / q;
       double wa = (1 - t) * inverse_a * reciprocal,
              wb = t * inverse_b * reciprocal;
-      cpu_fragment fragment = {.eye_depth = fabs(reciprocal)};
+      cpu_fragment fragment;
+      fragment.eye_depth = fabs(reciprocal);
       fragment.depth = cpu_clamp(((1 - t) * a.clip[2] * inverse_a +
                                   t * b.clip[2] * inverse_b) *
                                      0.5 +
