@@ -5688,6 +5688,12 @@ bool frontend_network_rebind_ready(const qa_frontend *candidate, const qa_fronte
     if (!candidate->network) return true;
     qa_frontend_network *next = candidate->network, *active = published->network;
     bool offline_local = network_offline_local(candidate) && network_offline_local(published);
+    bool cold_client = network_offline_local(published) && !active->q2_host &&
+        frontend_network_client_only(candidate) && client_target_selected(next) &&
+        !next->q3_client_requested && !next->q3_admission && !next->nq_host && !next->qw_host &&
+        !next->q2_host && !next->unified && !next->kex_transport && !next->kex_browser &&
+        ((next->q1_client_owner != NULL) + (next->q2_client_owner != NULL) +
+            (next->unified_client_service != NULL) == 1);
     if (!next->detached_transport || active->detached_transport || next->frontend != candidate || active->frontend != published ||
         next->busy || active->busy || !qa_network_callbacks_idle(next->runtime) || !qa_network_callbacks_idle(active->runtime) ||
         !qa_http_callbacks_idle(frontend_tools_http((qa_frontend *)candidate)) || !qa_http_callbacks_idle(frontend_tools_http((qa_frontend *)published)) ||
@@ -5699,9 +5705,9 @@ bool frontend_network_rebind_ready(const qa_frontend *candidate, const qa_fronte
         (next->unified != NULL) != (active->unified != NULL) ||
         (next->kex_transport != NULL) != (active->kex_transport != NULL) ||
         (next->kex_browser != NULL) != (active->kex_browser != NULL) ||
-        (next->q1_client_owner != NULL) != (active->q1_client_owner != NULL) ||
-        (next->q2_client_owner != NULL) != (active->q2_client_owner != NULL) ||
-        (next->unified_client_service != NULL) != (active->unified_client_service != NULL) ||
+        (!cold_client && ((next->q1_client_owner != NULL) != (active->q1_client_owner != NULL) ||
+            (next->q2_client_owner != NULL) != (active->q2_client_owner != NULL) ||
+            (next->unified_client_service != NULL) != (active->unified_client_service != NULL))) ||
         next->q3_client_requested != active->q3_client_requested ||
         (next->q3_client_requested && !qa_net_address_equal(&next->q3_client_admission.address, &active->q3_client_admission.address, true)) ||
         !network_runtime_valid(next, true, error) || !network_runtime_valid(active, true, error) ||
@@ -5740,6 +5746,9 @@ bool frontend_network_rebind_ready(const qa_frontend *candidate, const qa_fronte
     /* LOCAL Source players belong to the application state being published;
      * an offline load may replace their roster without a wire continuation. */
     if (offline_local) return true;
+    /* A returned neutral receiver has no original remote wire cut. The
+     * imported standalone CLIENT has qualified its own Source above. */
+    if (cold_client) return true;
     /* A live original peer has no checkpoint barrier. Refuse to rewind its
      * wire state after the captured cut; remote coordination is external. */
     uint32_t cursor = 0; const qa_net_client *client = NULL;
