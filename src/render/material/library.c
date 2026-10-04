@@ -94,7 +94,6 @@ static bool catalog_add(qa_material_library *library, qa_bytes bytes, qa_resourc
         if (bytes.size) memcpy(source->owned_bytes, bytes.data, bytes.size);
         source->bytes = (qa_bytes){source->owned_bytes, bytes.size};
     }
-    qa_sha256(source->bytes, &source->digest);
     if (library->catalog_tail) library->catalog_tail->next = source;
     else library->catalog_sources = source;
     library->catalog_tail = source;

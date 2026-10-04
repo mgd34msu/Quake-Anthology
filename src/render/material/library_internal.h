@@ -10,7 +10,6 @@ typedef struct qa_material_catalog_source {
     qa_resource *resource;
     qa_bytes bytes;
     uint8_t *owned_bytes;
-    qa_sha256_digest digest;
     qa_scene_family dependency_family;
     uint8_t dependency_palette[768];
     bool dependency_scope, dependency_has_palette;

@@ -1,7 +1,6 @@
 #include "internal.h"
 #include "qa/q3_presentation_save.h"
 #include "scene_fields_save.h"
-#include "qa/hash.h"
 #include "../../render/save_fields.h"
 
 #define FIELD(type, object, name) do { if (!qa_source_save_##type(io, &(object)->name)) return false; } while (0)
@@ -79,8 +78,6 @@ static bool cursor(qa_source_save_io *io, qa_q3_presentation *p)
         return q3p_fail(io->error,QA_ERROR_UNSUPPORTED,"Q3 parser retains an unqualified entity source");
     if (!qa_source_save_bool(io,&entities)) return false;
     qa_bytes source=entities?p->entity_text:(qa_bytes){0};
-    qa_sha256_digest actual, saved; qa_sha256(source,&actual); saved=actual;
-    if (!qa_source_save_bytes(io,saved.bytes,sizeof(saved.bytes)) || memcmp(saved.bytes,actual.bytes,sizeof(saved.bytes))) return false;
     uint32_t end=p->cursor.end;
     if (!qa_source_save_u32(io,&end) || end!=QA_COMMON_TERMINATED) return false;
     size_t terminator=p->cursor.terminator, offset=p->cursor.offset; bool ended=p->cursor.ended;

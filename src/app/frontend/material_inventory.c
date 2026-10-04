@@ -496,7 +496,7 @@ bool frontend_materials_restore(qa_frontend *f,frontend_scene_namespace *space,q
     }
     for (size_t i=0;ok && i<count;++i) {
         material_scope scope={space,graph,owners+i}; qa_material_library_checkpoint_refs refs=references(&scope);
-        ok=qa_material_library_restore_into_empty(owners[i].library,catalogs[i],saved[i].records,&refs,error) &&
+        ok=qa_material_library_restore_into_empty(owners[i].library,catalogs+i,saved[i].records,&refs,error) &&
             frontend_scene_namespace_bind_library(space,i+1,owners[i].library,error);
     }
     while (ok && held<count) {

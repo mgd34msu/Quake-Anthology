@@ -44,17 +44,17 @@ typedef struct qa_material_script_view {
 /* Borrow the actual admitted definition; no registration, parsing or lookup
  * of new content. The enclosing library retains its catalog source. */
 bool qa_material_library_script_read(const qa_material_library *, const char *, qa_material_script_view *);
-/* qualified_content is the imported actual catalog. The decoded records keep
- * its content owners and verify exact catalog order and bytes. Video services
- * bind only after restoration and never dispatch during import. */
+/* Registered records refer to the imported catalog and its actual content
+ * owners. Video services bind afterward and never dispatch during import. */
 bool qa_material_library_checkpoint(const qa_material_library *, const qa_material_library_checkpoint_refs *, qa_buffer *, qa_error *);
-bool qa_material_library_restore(const qa_material_library *qualified_content, qa_bytes,
-    const qa_material_library_checkpoint_refs *, qa_material_library **, qa_error *);
 /* The actual source services can already borrow the target's stable address.
- * Target owns no catalog, images, records, order or callbacks. Only a complete
- * qualified decode is adopted; failure leaves that empty owner unchanged. */
+ * Target owns no catalog, images, records, order or callbacks. Once arguments
+ * are accepted, the unique detached catalog is consumed and *catalog is NULL
+ * on both success and failure. Successful decoding adopts that owner's actual
+ * catalog and records. Failure destroys the partial import and leaves target
+ * unchanged. Rejected arguments leave both owners unchanged. */
 bool qa_material_library_restore_into_empty(qa_material_library *target,
-    const qa_material_library *qualified_content, qa_bytes,
+    qa_material_library **catalog, qa_bytes,
     const qa_material_library_checkpoint_refs *, qa_error *);
 bool qa_material_library_bind_order(qa_material_library *, qa_material_order *, qa_error *);
 bool qa_material_library_bind_video_start(qa_material_library *, qa_material_video_start_fn, void *, qa_error *);

@@ -2,7 +2,6 @@
 #include "qa/scene_world_save.h"
 #include "qa/scene_save.h"
 #include "qa/source_save.h"
-#include "qa/hash.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -28,90 +27,6 @@ typedef struct lighting_state {
 static bool failure(qa_error *error, qa_status status, const char *message)
 {
     qa_error_set(error,status,0,"%s",message); return false;
-}
-static bool span_digest(qa_source_save_io *io, qa_bytes bytes)
-{
-    size_t count=bytes.size; qa_sha256_digest digest;
-    qa_sha256(bytes,&digest);
-    return qa_source_save_count(io,&count,SIZE_MAX) && qa_source_save_bytes(io,digest.bytes,sizeof(digest.bytes));
-}
-static bool text(qa_source_save_io *io, const char *name)
-{
-    bool present=name!=NULL; size_t count=name?strlen(name):0;
-    return qa_source_save_bool(io,&present) && qa_source_save_count(io,&count,SIZE_MAX) &&
-        qa_source_save_bytes(io,(void *)name,count);
-}
-/* The digest describes actual installed static owners, including selected
- * palette/light source bytes and texture extents that affect projection. */
-static bool descriptor(qa_source_save_io *io, const qa_scene_world *world)
-{
-    uint32_t family=world->bsp.family, format=world->bsp.format;
-    qa_scene_world_options options=world->options;
-    qa_scene_image_options image=options.images;
-    uint32_t image_family=image.family, wrap=image.wrap, filter=image.filter, usage=image.usage;
-    int32_t transparent_index=image.transparent_index;
-    uint32_t encoding=options.q1_lightmap_encoding;
-    if (!qa_source_save_u32(io,&family) || !qa_source_save_u32(io,&format) ||
-        !span_digest(io,(qa_bytes){world->bytes.data,world->bytes.size}) ||
-        !span_digest(io,options.external_lit) || !span_digest(io,image.palette_rgb) || !span_digest(io,image.translation) ||
-        !qa_source_save_bool(io,&options.has_external_entities) || !span_digest(io,options.external_entities) ||
-        !text(io,options.q2_sky) || !qa_source_save_u32(io,&image_family) ||
-        !qa_source_save_u32(io,&wrap) || !qa_source_save_u32(io,&filter) || !qa_source_save_u32(io,&usage) ||
-        !qa_source_save_i32(io,&transparent_index)) return false;
-    FIELD(bool,&image,mipmap); FIELD(bool,&image,transparent); FIELD(bool,&image,fullbright_only);
-    FIELD(f32,&options,subdivisions); FIELD(f32,&options,q1_water_alpha); FIELD(f32,&options,q2_light_modulate);
-    FIELD(u32,&options,q3_overbright);
-    if (!qa_source_save_u32(io,&encoding)) return false;
-    const qawl_world *data=world->legacy_data;
-    size_t textures=data->texture_count, surfaces=world->surface_count;
-    if (!qa_source_save_count(io,&textures,SIZE_MAX) || !qa_source_save_count(io,&surfaces,SIZE_MAX)) return false;
-    for (size_t i=0;i<textures;++i) {
-        qawl_texture texture=data->textures[i];
-        if (!text(io,texture.name)) return false;
-        FIELD(u32,&texture,width); FIELD(u32,&texture,height); FIELD(u32,&texture,quake64_shift); FIELD(i32,&texture,next);
-        for (size_t j=0;j<2;++j) {
-            if (!qa_source_save_count(io,&texture.animation_count[j],10)) return false;
-            for (size_t k=0;k<texture.animation_count[j];++k)
-                if (!qa_source_save_count(io,&texture.animation[j][k],SIZE_MAX)) return false;
-        }
-    }
-    for (size_t i=0;i<surfaces;++i) {
-        const qaw_legacy *original=world->surfaces[i].legacy;
-        bool present=original!=NULL;
-        if (!qa_source_save_bool(io,&present)) return false;
-        if (!present) continue;
-        qaw_legacy light=*original;
-        uint32_t source=world->surfaces[i].source_index;
-        if (!qa_source_save_u32(io,&source) || !qa_source_save_count(io,&light.texture,SIZE_MAX) ||
-            !qa_source_save_count(io,&light.frame_count,SIZE_MAX)) return false;
-        for (size_t j=0;j<light.frame_count;++j) {
-            size_t frame=light.frames[j]; if (!qa_source_save_count(io,&frame,SIZE_MAX)) return false;
-        }
-        FIELD(bool,&light,warp); FIELD(bool,&light,flowing); FIELD(bool,&light,fence);
-        FIELD(bool,&light,lightmapped); FIELD(bool,&light,decoupled); FIELD(f32,&light,alpha);
-        FIELD(u32,&light,width); FIELD(u32,&light,height);
-        for (size_t j=0;j<2;++j) {
-            for (size_t k=0;k<4;++k) if (!qa_source_save_f32(io,&light.projection[j][k])) return false;
-            if (!qa_source_save_f32(io,&light.light_step[j])) return false;
-        }
-        if (!qa_source_save_count(io,&light.sample_offset,SIZE_MAX) || !qa_source_save_count(io,&light.style_count,SIZE_MAX)) return false;
-        for (size_t j=0;j<light.style_count;++j) {
-            uint16_t style=light.styles[j]; if (!qa_source_save_u16(io,&style)) return false;
-        }
-    }
-    return true;
-}
-static bool qualify(qa_source_save_io *io, const qa_scene_world *world)
-{
-    qa_source_save_io description; qa_buffer bytes={0};
-    if (!qa_source_save_writer(&description,NULL,io->error)) return false;
-    bool ok=descriptor(&description,world) && qa_source_save_finish(&description,&bytes);
-    qa_source_save_dispose(&description);
-    qa_sha256_digest actual={0}, saved;
-    if (ok) qa_sha256((qa_bytes){bytes.data,bytes.size},&actual);
-    qa_buffer_free(&bytes); saved=actual;
-    if (ok) ok=qa_source_save_bytes(io,saved.bytes,sizeof(saved.bytes)) && !memcmp(actual.bytes,saved.bytes,sizeof(saved.bytes));
-    return ok;
 }
 static bool image(qa_source_save_io *io, const qa_scene_world *world,
     const qa_scene_world_image_refs *refs, qa_scene_image **value)
@@ -145,7 +60,7 @@ static bool fields(qa_source_save_io *io, const qa_scene_world *world,
 {
     uint8_t magic[4]={'Q','W','L','S'}; bool reading=io->direction==QA_SOURCE_SAVE_READ, q1=world->bsp.family==QA_BSP_Q1;
     const qawl_world *data=world->legacy_data;
-    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QWLS",4) || !qualify(io,world)) return false;
+    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QWLS",4)) return false;
     if (!reading) saved->style_count=data->style_count;
     if (!qa_source_save_count(io,&saved->style_count,reading?io->input.size/(q1?4:12):SIZE_MAX)) return false;
     if (reading) {
@@ -211,10 +126,6 @@ static bool fields(qa_source_save_io *io, const qa_scene_world *world,
         for (size_t j=0;j<styles;++j) if (!qa_source_save_f32(io,&state->styles[j]) || !isfinite(state->styles[j])) return false;
         if (!qa_source_save_bytes(io,state->pixels,pixels*4) ||
             (light->encoded_pixels && !qa_source_save_bytes(io,state->encoded_pixels,pixels*4))) return false;
-        /* A failed update may leave partly written buffers with the previous
-         * images. Only a valid cache guarantees their published byte match. */
-        if (state->valid && (memcmp(state->pixels,state->direct->levels[0].pixels,pixels*4) ||
-            memcmp(state->encoded_pixels?state->encoded_pixels:state->pixels,state->encoded->levels[0].pixels,pixels*4))) return false;
     }
     return true;
 }

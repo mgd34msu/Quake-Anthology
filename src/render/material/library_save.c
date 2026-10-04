@@ -89,7 +89,7 @@ static bool catalog_sources(qa_source_save_io *io, qa_material_library *library,
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
     size_t count = 0;
     if (!reading) for (const qa_material_catalog_source *source = library->catalog_sources; source; source = source->next) ++count;
-    if (!qa_source_save_count(io, &count, reading ? io->input.size / 41 : SIZE_MAX)) return false;
+    if (!qa_source_save_count(io, &count, reading ? io->input.size / 15 : SIZE_MAX)) return false;
     qa_material_catalog_source *source = reading ? NULL : library->catalog_sources;
     for (size_t i = 0; i < count; ++i) {
         qa_material_catalog_source copy = source ? *source : (qa_material_catalog_source){0};
@@ -127,48 +127,17 @@ static bool catalog_sources(qa_source_save_io *io, qa_material_library *library,
                 entry->bytes = qa_resource_bytes(entry->resource);
             }
         }
-        if (!qa_source_save_bytes(io, entry->digest.bytes, sizeof(entry->digest.bytes)) ||
-            !qa_source_save_count(io, &size, reading ? io->input.size - io->offset : SIZE_MAX)) return false;
-        if (reading && !external) {
-            entry->owned_bytes = size ? malloc(size) : NULL;
-            if (size && !entry->owned_bytes) return fail(io->error, QA_ERROR_MEMORY, "allocating saved inline shader source");
-            entry->bytes = (qa_bytes){entry->owned_bytes, size};
-        }
-        if (entry->bytes.size != size || (size && !entry->bytes.data)) return false;
-        if (reading && external) {
-            if (size > io->input.size - io->offset ||
-                (size && memcmp(entry->bytes.data, io->input.data + io->offset, size))) return false;
-            io->offset += size;
-        } else if (!qa_source_save_bytes(io, (void *)entry->bytes.data, size)) return false;
-        qa_sha256_digest digest;
-        qa_sha256(entry->bytes, &digest);
-        if (!qa_sha256_equal(&digest, &entry->digest) ||
-            (external && !qa_sha256_equal(&digest, qa_resource_digest(entry->resource)))) return false;
-        if (!reading) source = source->next;
-    }
-    return true;
-}
-static bool catalog_copy_sources(qa_material_library *library, const qa_material_library *qualified, qa_error *error)
-{
-    for (const qa_material_catalog_source *source = qualified->catalog_sources; source; source = source->next) {
-        qa_material_catalog_source *entry = calloc(1, sizeof(*entry));
-        if (!entry) return fail(error, QA_ERROR_MEMORY, "retaining qualified shader catalog source");
-        *entry = *source;
-        entry->next = NULL;
-        entry->owned_bytes = NULL;
-        if (entry->resource) qa_resource_retain(entry->resource);
-        else {
-            entry->owned_bytes = source->bytes.size ? malloc(source->bytes.size) : NULL;
-            if (source->bytes.size && !entry->owned_bytes) {
-                free(entry);
-                return fail(error, QA_ERROR_MEMORY, "retaining qualified inline shader bytes");
+        if (!external) {
+            if (!qa_source_save_count(io, &size, reading ? io->input.size - io->offset : SIZE_MAX)) return false;
+            if (reading) {
+                entry->owned_bytes = size ? malloc(size) : NULL;
+                if (size && !entry->owned_bytes) return fail(io->error, QA_ERROR_MEMORY, "allocating saved inline shader source");
+                entry->bytes = (qa_bytes){entry->owned_bytes, size};
             }
-            if (source->bytes.size) memcpy(entry->owned_bytes, source->bytes.data, source->bytes.size);
-            entry->bytes.data = entry->owned_bytes;
+            if (entry->bytes.size != size || (size && !entry->bytes.data) ||
+                !qa_source_save_bytes(io, (void *)entry->bytes.data, size)) return false;
         }
-        if (library->catalog_tail) library->catalog_tail->next = entry;
-        else library->catalog_sources = entry;
-        library->catalog_tail = entry;
+        if (!reading) source = source->next;
     }
     return true;
 }
@@ -266,17 +235,17 @@ static bool library_valid(const qa_material_library *library, qa_error *error)
     }
     return ok;
 }
-static bool script_catalog(qa_source_save_io *io, qa_material_library *state, const qa_material_library *qualified)
+static bool script_catalog(qa_source_save_io *io, qa_material_library *state)
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
     for (unsigned bucket = 0; bucket < QA_MATERIAL_BUCKETS; ++bucket) {
         size_t count = 0;
         if (!reading) for (const qa_material_script *s = state->scripts[bucket]; s; s = s->next) ++count;
         if (!qa_source_save_count(io, &count, reading ? io->input.size / 10 : SIZE_MAX)) return false;
-        const qa_material_script *expected = reading ? (qualified ? qualified->scripts[bucket] : NULL) : state->scripts[bucket];
+        const qa_material_script *expected = reading ? NULL : state->scripts[bucket];
         qa_material_script **tail = &state->scripts[bucket];
         for (size_t i = 0; i < count; ++i) {
-            if ((!reading || qualified) && !expected) return false;
+            if (!reading && !expected) return false;
             qa_material_script *s = reading ? calloc(1, sizeof(*s)) : (qa_material_script *)expected;
             if (!s) return fail(io->error, QA_ERROR_MEMORY, "allocating retained shader definition");
             if (reading) { *tail = s; tail = &s->next; }
@@ -293,7 +262,7 @@ static bool script_catalog(qa_source_save_io *io, qa_material_library *state, co
                 !qa_source_save_count(io, &source_offset, SIZE_MAX) ||
                 !qa_source_save_count(io, &name_offset, SIZE_MAX) ||
                 !qa_source_save_count(io, &name_size, 1025) || !name_size ||
-                !qa_source_save_count(io, &size, reading ? io->input.size - io->offset : SIZE_MAX)) return false;
+                !qa_source_save_count(io, &size, SIZE_MAX)) return false;
             qa_material_catalog_source *content = catalog_source_at(state, (size_t)source_index);
             if (!content || source_offset > content->bytes.size || size > content->bytes.size - source_offset ||
                 name_offset > source_offset || name_size > source_offset - name_offset) return false;
@@ -316,15 +285,7 @@ static bool script_catalog(qa_source_save_io *io, qa_material_library *state, co
                 s->name_offset = name_offset; s->name_size = name_size;
                 if (size && !s->text) return fail(io->error, QA_ERROR_MEMORY, "allocating retained shader source bytes");
             }
-            if (!qa_source_save_bytes(io, s->text, size)) return false;
-            if (size && memcmp(s->text, content->bytes.data + source_offset, size)) return false;
-            if (reading && qualified) {
-                uint64_t expected_source = 0;
-                if (!catalog_source_index(qualified, expected->source, &expected_source) || source_index != expected_source ||
-                    source_offset != expected->source_offset || name_offset != expected->name_offset || name_size != expected->name_size ||
-                    strcmp(name, expected->name) || size != expected->size ||
-                    (size && memcmp(s->text, expected->text, size))) return false;
-            }
+            if (reading && size) memcpy(s->text, content->bytes.data + source_offset, size);
             if (reading) for (const qa_material_script *prior = state->scripts[bucket]; prior != s; prior = prior->next)
                 if (!strcmp(prior->name, s->name)) return false;
             if (expected) expected = expected->next;
@@ -351,7 +312,7 @@ static bool builtin_image(const qa_scene_image *image, const qa_scene_image *sou
     return ok;
 }
 static bool builtin_fields(qa_source_save_io *io, qa_material_library *library,
-    const qa_material_library *qualified, const qa_material_library_checkpoint_refs *refs)
+    const qa_material_library_checkpoint_refs *refs)
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
     const qa_scene_resources *owners[] = {library->resources};
@@ -364,8 +325,7 @@ static bool builtin_fields(qa_source_save_io *io, qa_material_library *library,
     ok = qa_material_saved_image(io, refs, &dlight);
     if (reading) library->dlight_image = (qa_scene_image *)dlight;
     return ok && builtin_image(dlight, qa_scene_source_q3_dlight(library->resources), "*dlight", 16, 16, io) &&
-        qa_scene_image_owner_index(owners, 1, dlight, &owner_index) &&
-        (!reading || !qualified || (fog == qualified->fog_image && dlight == qualified->dlight_image));
+        qa_scene_image_owner_index(owners, 1, dlight, &owner_index);
 }
 bool qa_material_library_catalog_checkpoint(const qa_material_library *source,
     const qa_material_library_checkpoint_refs *refs, qa_buffer *out, qa_error *error)
@@ -379,8 +339,8 @@ bool qa_material_library_catalog_checkpoint(const qa_material_library *source,
     bool video = source->video_required;
     bool ok = qa_source_save_writer(&io, NULL, error) && qa_source_save_bytes(&io, magic, sizeof(magic)) &&
         qa_source_save_bool(&io, &video) &&
-        builtin_fields(&io, &state, NULL, refs) && catalog_sources(&io, &state, refs) &&
-        script_catalog(&io, &state, NULL) && qa_source_save_finish(&io, out);
+        builtin_fields(&io, &state, refs) && catalog_sources(&io, &state, refs) &&
+        script_catalog(&io, &state) && qa_source_save_finish(&io, out);
     qa_source_save_dispose(&io);
     qa_material_library_capture_end(source);
     if (!ok && (!error || error->code == QA_OK)) fail(error, QA_ERROR_FORMAT, "invalid retained material source catalog");
@@ -395,8 +355,8 @@ bool qa_material_library_catalog_restore(qa_scene_resources *resources, qa_bytes
     if (!library) return false;
     qa_source_save_io io = {0};
     uint8_t magic[4] = {0}; bool ok = qa_source_save_reader(&io, NULL, bytes, error) && qa_source_save_bytes(&io, magic, sizeof(magic)) &&
-        !memcmp(magic, "QAMC", sizeof(magic)) && qa_source_save_bool(&io, &library->video_required) && builtin_fields(&io, library, NULL, refs) &&
-        catalog_sources(&io, library, refs) && script_catalog(&io, library, NULL) && qa_source_save_finish(&io, NULL);
+        !memcmp(magic, "QAMC", sizeof(magic)) && qa_source_save_bool(&io, &library->video_required) && builtin_fields(&io, library, refs) &&
+        catalog_sources(&io, library, refs) && script_catalog(&io, library) && qa_source_save_finish(&io, NULL);
     qa_source_save_dispose(&io);
     if (ok) { library->catalog_ready = true; *out = library; }
     else {
@@ -405,13 +365,12 @@ bool qa_material_library_catalog_restore(qa_scene_resources *resources, qa_bytes
     }
     return ok;
 }
-static bool library_header(qa_source_save_io *io, qa_material_library *library, const qa_material_library *qualified,
-    const qa_material_library_checkpoint_refs *refs)
+static bool library_header(qa_source_save_io *io, qa_material_library *library)
 {
     uint8_t magic[4] = {'Q', 'A', 'M', 'L'}; bool reading = io->direction == QA_SOURCE_SAVE_READ, video = library->video_required;
     if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "QAML", 4) ||
         !qa_source_save_bool(io, &video) ||
-        (reading && video != qualified->video_required)) return false;
+        (reading && video != library->video_required)) return false;
     if (reading) library->video_required = video;
     if (!qa_source_save_bool(io, &library->source_profile)) return false;
     qa_material_profile *p = &library->profile;
@@ -423,7 +382,7 @@ static bool library_header(qa_source_save_io *io, qa_material_library *library, 
         !qa_source_save_vec3(io, &library->sun_direction) || !qa_vec_finite(library->sun_direction) ||
         !qa_source_save_f32(io, &library->sky_height) || !isfinite(library->sky_height) ||
         !qa_source_save_bool(io, &library->has_sun)) return false;
-    return builtin_fields(io, library, qualified, refs) && script_catalog(io, library, qualified);
+    return true;
 }
 static bool videos(qa_source_save_io *io, const qa_material_library *library, qa_material_record *record,
     const qa_material_library_checkpoint_refs *refs)
@@ -573,7 +532,7 @@ bool qa_material_library_checkpoint(const qa_material_library *source, const qa_
     size_t count = source->count, capacity = source->capacity;
     const char *stage = "header and extent";
     const qa_material_record *record = NULL; size_t ordinal = 0;
-    bool ok = qa_source_save_writer(&io, NULL, error) && library_header(&io, &library, source, refs) &&
+    bool ok = qa_source_save_writer(&io, NULL, error) && library_header(&io, &library) &&
         qa_source_save_count(&io, &count, QA_MATERIAL_MAX_REGISTERED) &&
         qa_source_save_count(&io, &capacity, QA_MATERIAL_MAX_REGISTERED);
     for (size_t i = 0; ok && i < count; ++i) {
@@ -611,16 +570,11 @@ bool qa_material_library_checkpoint(const qa_material_library *source, const qa_
     }
     return ok;
 }
-bool qa_material_library_restore(const qa_material_library *qualified, qa_bytes bytes,
-    const qa_material_library_checkpoint_refs *refs, qa_material_library **out, qa_error *error)
+static bool restore_records(qa_material_library *library, qa_bytes bytes,
+    const qa_material_library_checkpoint_refs *refs, qa_error *error)
 {
-    if (!qualified || !qualified->catalog_ready || !qualified->resources || !refs || !out || *out)
-        return fail(error, QA_ERROR_ARGUMENT, "material library restore requires qualified detached content");
-    if (!qa_material_library_capture_begin(qualified, error)) return false;
-    qa_material_library *library = qa_material_library_create_detached(qualified->resources, error);
-    if (!library) { qa_material_library_capture_end(qualified); return false; }
-    qa_source_save_io io = {0}; size_t count = 0, capacity = 0; bool ok = catalog_copy_sources(library, qualified, error) &&
-        qa_source_save_reader(&io, NULL, bytes, error) && library_header(&io, library, qualified, refs) &&
+    qa_source_save_io io = {0}; size_t count = 0, capacity = 0;
+    bool ok = qa_source_save_reader(&io, NULL, bytes, error) && library_header(&io, library) &&
         qa_source_save_count(&io, &count, QA_MATERIAL_MAX_REGISTERED) &&
         qa_source_save_count(&io, &capacity, QA_MATERIAL_MAX_REGISTERED) &&
         registration_capacity(count, capacity) && count <= bytes.size / 100;
@@ -663,12 +617,8 @@ bool qa_material_library_restore(const qa_material_library *qualified, qa_bytes 
             qa_source_save_finish(&io, NULL) && library_valid(library, error);
     }
     free(remapped); free(parents); qa_source_save_dispose(&io);
-    qa_material_library_capture_end(qualified);
-    if (ok) { library->catalog_ready = true; *out = library; }
-    else {
-        qa_material_library_destroy(library);
-        if (!error || error->code == QA_OK) fail(error, QA_ERROR_FORMAT, "saved material library differs from qualified content");
-    }
+    if (!ok && (!error || error->code == QA_OK))
+        fail(error, QA_ERROR_FORMAT, "invalid saved material records");
     return ok;
 }
 bool qa_material_library_bind_order(qa_material_library *library, qa_material_order *order, qa_error *error)
@@ -682,17 +632,21 @@ bool qa_material_library_bind_order(qa_material_library *library, qa_material_or
     library->order = order; return true;
 }
 bool qa_material_library_restore_into_empty(qa_material_library *target,
-    const qa_material_library *qualified, qa_bytes bytes,
+    qa_material_library **catalog, qa_bytes bytes,
     const qa_material_library_checkpoint_refs *refs, qa_error *error)
 {
-    if (!qa_material_library_empty_detached(target) || !qualified || target == qualified ||
-        target->resources != qualified->resources)
-        return fail(error, QA_ERROR_ARGUMENT, "material adoption requires the genuine empty stable owner and its qualified catalog");
+    qa_material_library *decoded = catalog ? *catalog : NULL;
+    if (!qa_material_library_empty_detached(target) || !qa_material_library_idle(decoded) ||
+        !decoded->catalog_ready || decoded->references != 1 || decoded->count || decoded->order ||
+        target == decoded || target->resources != decoded->resources || !refs)
+        return fail(error, QA_ERROR_ARGUMENT, "material adoption requires its unique detached catalog and empty stable owner");
+    *catalog = NULL;
     target->mutating = true;
-    qa_material_library *decoded = NULL;
-    bool ok = qa_material_library_restore(qualified, bytes, refs, &decoded, error);
+    decoded->mutating = true;
+    bool ok = restore_records(decoded, bytes, refs, error);
+    decoded->mutating = false;
     target->mutating = false;
-    if (!ok) return false;
+    if (!ok) { qa_material_library_destroy(decoded); return false; }
     size_t references = target->references;
     qa_scene_resources_destroy(target->resources);
     *target = *decoded;
