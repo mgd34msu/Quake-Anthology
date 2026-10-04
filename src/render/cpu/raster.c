@@ -32,6 +32,13 @@ typedef struct cpu_triangle_output {
   struct cpu_raster_pool *pool;
   bool failed;
 } cpu_triangle_output;
+typedef struct cpu_raster_command {
+  qa_scene_draw draw;
+  cpu_sampler samplers[2];
+  cpu_scissor bounds;
+  size_t first, count;
+  fenv_t environment;
+} cpu_raster_command;
 typedef struct cpu_raster_job {
   qa_cpu_renderer *renderer;
   const qa_scene_draw *draw;
@@ -40,6 +47,8 @@ typedef struct cpu_raster_job {
   cpu_scissor bounds;
   const cpu_triangle *triangles;
   size_t triangle_count;
+  const cpu_raster_command *commands;
+  size_t command_count, completed_commands;
   fenv_t environment;
   int exceptions;
   bool completed;
@@ -53,19 +62,50 @@ typedef struct cpu_raster_worker {
 struct cpu_raster_pool {
   cpu_triangle *triangles;
   size_t triangle_count, triangle_capacity;
+  cpu_raster_command *commands;
+  size_t command_count, command_capacity;
   unsigned count;
   cpu_raster_worker workers[];
 };
 static void raster_prepared_draw(const cpu_raster_job *job);
+static cpu_raster_job raster_command_job(const cpu_raster_job *batch,
+                                         size_t index) {
+  const cpu_raster_command *command = &batch->commands[index];
+  cpu_raster_job job = *batch;
+  job.draw = &command->draw;
+  job.samplers = command->samplers;
+  job.triangles = batch->triangles + command->first;
+  job.triangle_count = command->count;
+  job.bounds = command->bounds;
+  if (job.bounds.y0 < batch->bounds.y0) job.bounds.y0 = batch->bounds.y0;
+  if (job.bounds.y1 > batch->bounds.y1) job.bounds.y1 = batch->bounds.y1;
+  job.commands = NULL;
+  job.command_count = 0;
+  return job;
+}
 static int SDLCALL raster_worker(void *context) {
   cpu_raster_worker *worker = context;
   for (;;) {
     SDL_SemWait(worker->start);
     if (worker->stop) return 0;
-    worker->job.completed = fesetenv(&worker->job.environment) == 0;
-    if (worker->job.completed) {
-      raster_prepared_draw(&worker->job);
-      worker->job.exceptions = fetestexcept(FE_ALL_EXCEPT);
+    if (worker->job.command_count) {
+      worker->job.exceptions = 0;
+      worker->job.completed_commands = 0;
+      for (size_t i = 0; i < worker->job.command_count; ++i) {
+        if (fesetenv(&worker->job.commands[i].environment) != 0) break;
+        cpu_raster_job job = raster_command_job(&worker->job, i);
+        raster_prepared_draw(&job);
+        worker->job.exceptions |= fetestexcept(FE_ALL_EXCEPT);
+        ++worker->job.completed_commands;
+      }
+      worker->job.completed =
+          worker->job.completed_commands == worker->job.command_count;
+    } else {
+      worker->job.completed = fesetenv(&worker->job.environment) == 0;
+      if (worker->job.completed) {
+        raster_prepared_draw(&worker->job);
+        worker->job.exceptions = fetestexcept(FE_ALL_EXCEPT);
+      }
     }
     SDL_SemPost(worker->done);
   }
@@ -73,6 +113,7 @@ static int SDLCALL raster_worker(void *context) {
 void cpu_raster_pool_destroy(qa_cpu_renderer *renderer) {
   struct cpu_raster_pool *pool = renderer->raster_pool;
   if (!pool) return;
+  cpu_raster_flush(renderer);
   for (unsigned i = 0; i < pool->count; ++i)
     if (pool->workers[i].thread) {
       pool->workers[i].stop = true;
@@ -85,6 +126,7 @@ void cpu_raster_pool_destroy(qa_cpu_renderer *renderer) {
     if (worker->done) SDL_DestroySemaphore(worker->done);
   }
   free(pool->triangles);
+  free(pool->commands);
   free(pool);
   renderer->raster_pool = NULL;
 }
@@ -1048,8 +1090,91 @@ static void raster_draw(cpu_raster_job *job) {
     memset(&worker->job, 0, sizeof(worker->job));
   }
 }
-bool cpu_draw(qa_cpu_renderer *renderer, const qa_scene_draw *input,
-              qa_error *error) {
+void cpu_raster_flush(qa_cpu_renderer *renderer) {
+  struct cpu_raster_pool *pool = renderer->raster_pool;
+  if (!pool || !pool->command_count) return;
+  cpu_raster_job batch = {.renderer = renderer, .commands = pool->commands,
+      .command_count = pool->command_count, .triangles = pool->triangles,
+      .bounds = pool->commands[0].bounds};
+  int64_t first = pool->triangles[0].bounds.y0;
+  int64_t last = pool->triangles[0].bounds.y1;
+  double area = 0;
+  for (size_t i = 0; i < pool->triangle_count; ++i) {
+    const cpu_scissor *bounds = &pool->triangles[i].bounds;
+    if (bounds->y0 < first) first = bounds->y0;
+    if (bounds->y1 > last) last = bounds->y1;
+    area += (double)(bounds->x1 - bounds->x0 + 1) *
+            (double)(bounds->y1 - bounds->y0 + 1);
+  }
+  unsigned workers = area < 128 * 128 ? 0 : raster_worker_count(pool,
+      batch.bounds.y1 - batch.bounds.y0 + 1, last - first + 1);
+  batch.bounds.y0 = first;
+  batch.bounds.y1 = last;
+  int64_t rows = last - first + 1;
+  unsigned bands = workers + 1;
+  for (unsigned i = 0; i < workers; ++i) {
+    cpu_raster_worker *worker = &pool->workers[i];
+    worker->job = batch;
+    worker->job.bounds.y0 = first + rows * i / bands;
+    worker->job.bounds.y1 = first + rows * (i + 1) / bands - 1;
+    SDL_SemPost(worker->start);
+  }
+  cpu_raster_job main = batch;
+  main.bounds.y0 = first + rows * workers / bands;
+  for (size_t i = 0; i < main.command_count; ++i) {
+    cpu_raster_job job = raster_command_job(&main, i);
+    raster_prepared_draw(&job);
+  }
+  for (unsigned i = 0; i < workers; ++i) {
+    cpu_raster_worker *worker = &pool->workers[i];
+    SDL_SemWait(worker->done);
+    for (size_t j = worker->job.completed_commands;
+         j < worker->job.command_count; ++j) {
+      cpu_raster_job job = raster_command_job(&worker->job, j);
+      raster_prepared_draw(&job);
+    }
+    feraiseexcept(worker->job.exceptions);
+    memset(&worker->job, 0, sizeof(worker->job));
+  }
+  pool->command_count = pool->triangle_count = 0;
+}
+static bool raster_queue(cpu_raster_job *job) {
+  struct cpu_raster_pool *pool = job->renderer->raster_pool;
+  if (!pool->command_count) pool->triangle_count = 0;
+  if (pool->command_count == pool->command_capacity) {
+    size_t maximum = SIZE_MAX / sizeof(*pool->commands);
+    if (pool->command_capacity == maximum) return false;
+    size_t capacity = pool->command_capacity ? pool->command_capacity : 16;
+    capacity = capacity > maximum / 2 ? maximum : capacity * 2;
+    cpu_raster_command *commands = realloc(pool->commands,
+                                          capacity * sizeof(*commands));
+    if (!commands) return false;
+    pool->commands = commands;
+    pool->command_capacity = capacity;
+  }
+  size_t first = pool->triangle_count;
+  cpu_triangle_output output = {.pool = pool};
+  raster_geometry(job, &output);
+  cpu_raster_command command = {.draw = *job->draw, .bounds = job->bounds,
+      .first = first, .count = pool->triangle_count - first};
+  if (output.failed || fegetenv(&command.environment) != 0) {
+    pool->triangle_count = first;
+    return false;
+  }
+  if (!command.count) return true;
+  for (size_t i = 0; i < command.draw.texture_count; ++i)
+    command.samplers[i] = job->samplers[i];
+  pool->commands[pool->command_count++] = command;
+  return true;
+}
+static bool cpu_draw_impl(qa_cpu_renderer *renderer, const qa_scene_draw *input,
+                         qa_error *error, bool queued) {
+  bool batchable = queued && renderer->raster_pool &&
+      !renderer->controls.source.issuing && !input->source_arrays &&
+      !input->source_retain_depth_range && !input->source_primitives &&
+      input->source_direct == QA_SOURCE_DIRECT_NONE &&
+      input->mesh.primitive == QA_SCENE_TRIANGLES && !input->state.wireframe;
+  if (!batchable) cpu_raster_flush(renderer);
   qa_scene_draw resolved = *input;
   if ((unsigned)input->source_direct>QA_SOURCE_DIRECT_IMAGE_GRID) {
     qa_error_set(error,QA_ERROR_ARGUMENT,0,"Invalid Source direct draw provenance");
@@ -1103,7 +1228,19 @@ bool cpu_draw(qa_cpu_renderer *renderer, const qa_scene_draw *input,
   if (draw->mesh.index_count && !transform(renderer, draw, mode, error)) return false;
   cpu_raster_job job = {.renderer = renderer, .draw = draw,
       .samplers = samplers, .mode = mode, .bounds = scissor(renderer)};
-  raster_draw(&job);
+  for (size_t i = 0; batchable && i < draw->texture_count; ++i)
+    if (draw->textures[i] && samplers[i].target == renderer->current)
+      batchable = false;
+  if (draw->shadow_atlas &&
+      cpu_target_find(renderer, draw->shadow_atlas) == renderer->current)
+    batchable = false;
+  if (!batchable) {
+    cpu_raster_flush(renderer);
+    raster_draw(&job);
+  } else if (!raster_queue(&job)) {
+    cpu_raster_flush(renderer);
+    raster_prepared_draw(&job);
+  }
   if (mode == QA_RENDER_PRIMITIVES_ARRAY_STRIPS || mode == QA_RENDER_PRIMITIVES_DISCRETE_STRIPS) {
     qa_render_source_attributes_finish(&renderer->controls,draw,mode);
     return true;
@@ -1113,4 +1250,14 @@ bool cpu_draw(qa_cpu_renderer *renderer, const qa_scene_draw *input,
   if (draw->source_direct==QA_SOURCE_DIRECT_SHADOW_VOLUME_END) renderer->pipeline.color_write=true;
   qa_render_source_attributes_finish(&renderer->controls,draw,mode);
   return true;
+}
+bool cpu_draw(qa_cpu_renderer *renderer, const qa_scene_draw *input,
+              qa_error *error) {
+  return cpu_draw_impl(renderer, input, error, false);
+}
+bool cpu_draw_queued(qa_cpu_renderer *renderer, const qa_scene_draw *input,
+                     qa_error *error) {
+  bool ok = cpu_draw_impl(renderer, input, error, true);
+  if (!ok) cpu_raster_flush(renderer);
+  return ok;
 }

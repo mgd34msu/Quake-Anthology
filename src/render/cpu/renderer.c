@@ -635,6 +635,7 @@ static bool cpu_execute_range(qa_cpu_renderer *renderer, const qa_scene_frame *f
   }
   for (size_t i = first; i < frame->command_count; ++i) {
     const qa_scene_command *command = &frame->commands[i];
+    if (command->kind != QA_SCENE_COMMAND_DRAW) cpu_raster_flush(renderer);
     bool ok = true;
     switch (command->kind) {
     case QA_SCENE_COMMAND_VIEW:
@@ -676,7 +677,7 @@ static bool cpu_execute_range(qa_cpu_renderer *renderer, const qa_scene_frame *f
         qa_error_set(error,QA_ERROR_ARGUMENT,i,"Generic overlay gamma requires an unlit primitive");
         ok=false;
       } else if (!renderer->opacity_skip)
-        ok = cpu_draw(renderer, &command->data.draw, error);
+        ok = cpu_draw_queued(renderer, &command->data.draw, error);
       break;
     case QA_SCENE_COMMAND_TARGET:
       ok = select_target(renderer, command->data.target.image, error);
@@ -743,6 +744,7 @@ static bool cpu_execute_range(qa_cpu_renderer *renderer, const qa_scene_frame *f
       break;
     }
     if (!ok) {
+      cpu_raster_flush(renderer);
       if (renderer->opacity_active) {
         if (renderer->opacity_value != 1)
           renderer->current = renderer->opacity_parent;
@@ -752,6 +754,7 @@ static bool cpu_execute_range(qa_cpu_renderer *renderer, const qa_scene_frame *f
       return false;
     }
   }
+  cpu_raster_flush(renderer);
   if (finish && renderer->opacity_active) {
     if (renderer->opacity_value != 1)
       renderer->current = renderer->opacity_parent;
