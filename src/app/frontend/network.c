@@ -384,6 +384,16 @@ static bool q1_client_protocol(qa_net_protocol_id protocol)
     return protocol.kind==QA_NET_NQ15 || protocol.kind==QA_NET_FITZ666 || protocol.kind==QA_NET_RMQ999 ||
         protocol.kind==QA_NET_QW28 || protocol.kind==QA_NET_QW29;
 }
+static bool remote_client_protocol(qa_net_protocol_id protocol)
+{
+    return q1_client_protocol(protocol) || q2_host_protocol(protocol) || protocol.kind==QA_NET_UNIFIED_1;
+}
+static bool client_target_selected(const qa_frontend_network *n)
+{
+    const qa_frontend *f=n?n->frontend:NULL;
+    return f && f->options.network_connect && !f->options.dedicated && f->options.seats==1 &&
+        (n->q3_client_requested || remote_client_protocol(f->options.network_protocol));
+}
 static bool q1_client_current(void *context,const frontend_network_q1_client *client)
 {
     qa_frontend_network *n=context;
@@ -652,18 +662,37 @@ bool frontend_network_unified_service_checkpoint(qa_frontend *f,const qa_applica
     *present=f->network && f->network->unified_client_service;
     return !*present || frontend_network_unified_client_checkpoint(f->network->unified_client_service,graph,out,error);
 }
+static bool client_recipe_adopt(qa_frontend_network *n,const qa_net_address *remote,
+    qa_net_protocol_id protocol,qa_error *error)
+{
+    qa_frontend *f=n?n->frontend:NULL;
+    if(!f || f->network!=n || !f->application || !f->source_restoring || f->stepping ||
+        !n->detached_transport || n->busy || !qa_network_callbacks_idle(n->runtime) ||
+        f->options.network_host || f->options.dedicated || f->options.seats!=1 ||
+        n->q3_client_requested || n->q1_client_owner || n->q2_client_owner || n->unified_client_service ||
+        n->q3_admission || n->nq_host || n->qw_host || n->q2_host || n->unified ||
+        n->q1_import_pending || n->q2_import_pending || n->unified_service_pending ||
+        !remote || !remote->port || (remote->kind!=QA_NET_IPV4 && remote->kind!=QA_NET_IPV6) ||
+        !remote_client_protocol(protocol))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"CLIENT recipe adoption requires its genuine isolated remote owner");
+    if(!qa_net_protocol_valid(protocol,error) ||
+        !qa_net_address_format(remote,n->client_server,sizeof(n->client_server),error)) return false;
+    f->options.network_protocol=protocol;
+    f->options.network_connect=n->client_server;
+    return true;
+}
 bool frontend_network_unified_service_stage(qa_frontend *f,qa_application_content_graph *graph,
     const qa_console_save_resolvers *console,qa_bytes bytes,qa_error *error)
 {
     qa_frontend_network *n=f?f->network:NULL;
     if(!n || !graph || !console || !bytes.data || !bytes.size || !f->source_restoring ||
-        !n->detached_transport || n->unified_client_service || n->unified_service_pending ||
-        !f->options.network_connect || f->options.network_protocol.kind!=QA_NET_UNIFIED_1)
+        !n->detached_transport || n->unified_client_service || n->unified_service_pending)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Unified service stage requires its actual detached CLIENT recipe");
     frontend_client_source_prefix prefix={0}; qa_net_address remote; qa_net_seat_id seat;
     bool retired=false;
     bool ok=frontend_network_unified_client_saved_read(f,graph,bytes,&prefix,&remote,&seat,&retired,error);
     if(ok) ok=prefix.state.application.physical_seat<f->options.seats && seat.owner==QA_NETWORK_COMMAND_OWNER;
+    if(ok) ok=client_recipe_adopt(n,&remote,(qa_net_protocol_id){.kind=QA_NET_UNIFIED_1},error);
     if(ok) {
         n->unified_service_client=prefix.state.application.client;
         n->unified_service_epoch=prefix.state.application.connection_epoch;
@@ -745,8 +774,7 @@ bool frontend_network_q1_stage_recipe(qa_frontend *f,const frontend_network_q1_c
     qa_frontend_network *n=f?f->network:NULL;
     if(!n || !recipe || !refs || !refs->content || !console || !saved || !saved->physical.size ||
         !saved->controller.size || !f->source_restoring || !n->detached_transport || n->q1_client_owner ||
-        n->q1_import_pending || !f->options.network_connect || !q1_client_protocol(recipe->protocol) ||
-        recipe->protocol.kind!=f->options.network_protocol.kind || recipe->physical_seat>=f->options.seats)
+        n->q1_import_pending || !q1_client_protocol(recipe->protocol) || recipe->physical_seat>=f->options.seats)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Q1 stage requires its genuine Graph recipe and detached candidate");
     frontend_client_source_prefix prefix={0};
     bool ok=frontend_client_source_prefix_read(f,refs->content,
@@ -760,6 +788,7 @@ bool frontend_network_q1_stage_recipe(qa_frontend *f,const frontend_network_q1_c
         (!recipe->client.owner || qa_sha256_equal(&prefix.descriptor.identity,&recipe->composition));
     frontend_client_source_prefix_free(&prefix);
     if(!ok) return frontend_fail(error,QA_ERROR_FORMAT,"Q1 stage differs from its imported physical CLIENT prefix");
+    if(!client_recipe_adopt(n,&recipe->remote,recipe->protocol,error)) return false;
     n->q1_import_recipe=*recipe; n->q1_import=*saved; n->q1_import_refs=*refs;
     n->q1_import_console=console; n->q1_import_pending=true; return true;
 }
@@ -796,11 +825,14 @@ bool frontend_network_q2_stage_recipe(qa_frontend *f,const frontend_network_q2_c
 {
     qa_frontend_network *n=f?f->network:NULL;
     if(!n || !recipe || !saved || !saved->application || !f->source_restoring || !n->detached_transport ||
-        n->q2_client_owner || n->q2_import_pending || !f->options.network_connect ||
-        !q2_host_protocol(recipe->protocol) || recipe->protocol.kind!=f->options.network_protocol.kind ||
+        n->q2_client_owner || n->q2_import_pending || !q2_host_protocol(recipe->protocol) ||
         recipe->physical_seat>=f->options.seats || saved->source.domain.application!=f->application ||
-        saved->source.domain.physical_seat!=recipe->physical_seat)
+        saved->source.domain.physical_seat!=recipe->physical_seat ||
+        saved->source.domain.protocol.kind!=recipe->protocol.kind ||
+        saved->source.domain.protocol.revision!=recipe->protocol.revision ||
+        saved->source.domain.protocol.flags!=recipe->protocol.flags)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 recipe staging requires its actual candidate Graph claims");
+    if(!client_recipe_adopt(n,&recipe->remote,recipe->protocol,error)) return false;
     n->q2_import_recipe=*recipe; n->q2_import=*saved; n->q2_import_pending=true; return true;
 }
 bool frontend_network_q2_import_read(const qa_frontend *f,frontend_remote_q2_source_view *view,qa_error *error)
@@ -4084,7 +4116,7 @@ bool frontend_network_create(qa_frontend *f, qa_error *error)
     n->frontend = f; n->nonce = SDL_GetPerformanceCounter();
     n->rotation_random = (uint32_t)n->nonce ^ (uint32_t)(n->nonce >> 32); f->network = n;
     n->q3_client_requested = frontend_network_remote(f); n->q3_sensitivity = 1;
-    if (n->q3_client_requested || (f->options.network_connect && q1_client_protocol(f->options.network_protocol))) {
+    if (client_target_selected(n)) {
         if (strlen(f->options.network_connect)>=sizeof(n->client_server)) {
             frontend_fail(error,QA_ERROR_ARGUMENT,"Remote server name exceeds its actual constructor storage"); goto failed;
         }
@@ -4708,9 +4740,7 @@ static bool network_metadata_check(qa_frontend_network *n, bool hosting, bool fi
             if (request->disconnect ? *request->server!=0 : *request->server==0)
                 return frontend_fail(error,QA_ERROR_FORMAT,"Saved Q1 connection changed its canonical queued request");
     }
-    bool q1_target=n->frontend->options.network_connect && q1_client_protocol(n->frontend->options.network_protocol) &&
-        !n->frontend->options.dedicated && n->frontend->options.seats==1;
-    if (n->q3_client_requested ? !*n->client_server : *n->client_server && !q1_target)
+    if (n->q3_client_requested ? !*n->client_server : *n->client_server && !client_target_selected(n))
         return frontend_fail(error,QA_ERROR_FORMAT,"Remote target differs from its selected native CLIENT constructor");
     if (n->q3_client_requested) {
         qa_actor_id actor; qa_actor_owner owner; qa_q3_product product; uint32_t seat;
@@ -5431,14 +5461,11 @@ bool frontend_network_restore_connections(qa_frontend *f, qa_bytes bytes, qa_err
         qa_q3_server_authorization_bindings bindings = q3_authorization_bindings(state);
         if (ok) ok = qa_q3_server_authorization_restore(authorization, &bindings, &state->q3_authorization, error);
     }
-    if (ok && !*state->client_server && !state->q3_client_requested && n->q1_import_pending) {
-        const frontend_network_q1_client_recipe *recipe=&n->q1_import_recipe;
-        ok=recipe->protocol.kind==f->options.network_protocol.kind &&
-            recipe->protocol.revision==f->options.network_protocol.revision &&
-            recipe->protocol.flags==f->options.network_protocol.flags &&
-            q1_client_protocol(recipe->protocol) && recipe->physical_seat==0 &&
-            qa_net_address_format(&recipe->remote,state->client_server,sizeof(state->client_server),error);
-        if (!ok) frontend_fail(error,QA_ERROR_FORMAT,"Q1 reconnect target lost its saved CLIENT constructor endpoint");
+    if (ok && !*state->client_server && !state->q3_client_requested &&
+        (n->q1_import_pending || n->q2_import_pending || n->unified_service_pending)) {
+        ok=client_target_selected(n) && *n->client_server;
+        if(ok) memcpy(state->client_server,n->client_server,sizeof(state->client_server));
+        else frontend_fail(error,QA_ERROR_FORMAT,"Remote target lost its genuine staged CLIENT constructor");
     }
     if (ok) ok = network_metadata_valid(state, hosting, error);
     if (ok) {
