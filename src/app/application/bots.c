@@ -20,6 +20,7 @@
 #include "qa/game_q3_configstrings.h"
 #include "qa/game_q3_source.h"
 #include "qa/game_q3_wire.h"
+#include "qa/text.h"
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -33,7 +34,7 @@ static uint32_t random_word(void *opaque) {
 static int32_t source_milliseconds(const qa_source_frame *frame) {
     uint32_t word;
     if(frame->kind==QA_CLOCK_NETQUAKE || frame->kind==QA_CLOCK_QUAKEWORLD)
-        word=(uint32_t)fmod(trunc(((double)frame->time_ns/1e9)*1000.0),4294967296.0);
+        return qa_number_to_i32(((double)frame->time_ns/1e9)*1000.0);
     else word=(uint32_t)(frame->time_ns/1000000);
     int32_t value;memcpy(&value,&word,sizeof(value));return value;
 }

@@ -20,6 +20,7 @@
 #include "qa/game_q3_source.h"
 #include "qa/game_q3_wire.h"
 #include "qa/native_host_q2_wire.h"
+#include "qa/text.h"
 
 #include <math.h>
 #include <limits.h>
@@ -867,12 +868,11 @@ static const char *original_q3_warning(player_observation *o)
         double value = w->ammo ? count(o, w->ammo) : -1;
         /* Math.imul lowers the authentic counter to its unsigned word before
          * multiplication; the aggregate wraps after each weapon. */
-        double word = isfinite(value) ? fmod(trunc(value), 4294967296.0) : 0;
-        if (word < 0) word += 4294967296.0;
+        uint32_t word = (uint32_t)qa_number_to_i32(value);
         bool slow = w->weapon == QA_Q3_W_ROCKET || w->weapon == QA_Q3_W_GRENADE ||
             w->weapon == QA_Q3_W_RAIL || w->weapon == QA_Q3_W_SHOTGUN ||
             (o->q3_product == QA_Q3_TEAM_ARENA && w->weapon == QA_Q3_W_PROX);
-        total += (uint32_t)word * (slow ? 1000u : 200u);
+        total += word * (slow ? 1000u : 200u);
         if (total <= INT32_MAX && total >= 5000) return "none";
     }
     return total == 0 ? "empty" : "low";
@@ -889,11 +889,10 @@ static const char *arsenal_warning(player_observation *o)
             if (count(o, weapon) <= 0) continue;
             qa_item_id ammo = qa_q3_weapon_item(o->arsenal->state.q3, w, true);
             double value = ammo ? count(o, ammo) : -1;
-            double word = isfinite(value) ? fmod(trunc(value), 4294967296.0) : 0;
-            if (word < 0) word += 4294967296.0;
+            uint32_t word = (uint32_t)qa_number_to_i32(value);
             bool slow = w == QA_Q3_W_ROCKET || w == QA_Q3_W_GRENADE || w == QA_Q3_W_RAIL ||
                 w == QA_Q3_W_SHOTGUN || (o->q3_product == QA_Q3_TEAM_ARENA && w == QA_Q3_W_PROX);
-            total += (uint32_t)word * (slow ? 1000u : 200u);
+            total += word * (slow ? 1000u : 200u);
             if (total <= INT32_MAX && total >= 5000) return "none";
         }
         return total == 0 ? "empty" : "low";

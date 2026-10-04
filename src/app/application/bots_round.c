@@ -47,6 +47,36 @@ struct application_bots_original {
     bool initialized,loaded,rebound;
 };
 
+static bool navigation_prepare(application_bots *bots,bot_round_graph *graphs,size_t count,
+    qa_bot_navigation **map_navigation,qa_error *error) {
+    qa_navigation_services services=application_bot_navigation_services(bots);
+    qa_navigation *map=qa_bot_navigation_runtime(bots->map_navigation);
+    application_bot_graph *graph=bots->graphs;
+    for(size_t i=0;i<count;++i,graph=graph->next) {
+        bot_round_graph *entry=graphs+i;entry->owner=graph;entry->previous=graph->navigation;
+        if(!qa_navigation_create(graph->graph,&services,&entry->fresh,error)) return false;
+        if(graph->navigation==map &&
+           !application_bot_navigation_restore_binding(bots,entry->fresh,(qa_actor_id){0},map_navigation,error)) return false;
+    }
+    return true;
+}
+static void navigation_publish(application_bots *bots,bot_round_graph *graphs,size_t count,
+    qa_bot_navigation **map_navigation) {
+    for(uint32_t i=0;i<bots->capacity;++i) {
+        qa_bot_navigation_destroy(bots->seats[i].navigation);bots->seats[i].navigation=NULL;
+        bots->seats[i].actor=(qa_actor_id){0};bots->seats[i].retired=true;
+    }
+    while(bots->targets) {application_bot_target *target=bots->targets;bots->targets=target->next;
+        qa_bot_navigation_destroy(target->navigation);free(target);}
+    qa_bot_navigation_destroy(bots->map_navigation);bots->map_navigation=*map_navigation;*map_navigation=NULL;
+    for(size_t i=0;i<count;++i) {
+        bot_round_graph *entry=graphs+i;
+        qa_navigation_destroy(entry->previous);entry->previous=NULL;
+        entry->owner->navigation=entry->fresh;entry->fresh=NULL;
+    }
+    qa_builtin_snapshot_free(&bots->pickup_snapshot);
+}
+
 static bool original_text(const char *a,const char *b) {
     return a && b?!strcmp(a,b):a==b;
 }
@@ -169,14 +199,7 @@ bool application_bots_original_prepare(qa_application *app,application_publicati
     if(cut->graph_count>SIZE_MAX/sizeof(*cut->graphs)) goto invalid;
     cut->graphs=cut->graph_count?calloc(cut->graph_count,sizeof(*cut->graphs)):NULL;
     if(cut->graph_count && !cut->graphs) goto memory;
-    qa_navigation_services services=application_bot_navigation_services(bots);
-    qa_navigation *map=qa_bot_navigation_runtime(bots->map_navigation);size_t i=0;
-    for(application_bot_graph *graph=bots->graphs;graph;graph=graph->next) {
-        bot_round_graph *entry=cut->graphs+i++;entry->owner=graph;entry->previous=graph->navigation;
-        if(!qa_navigation_create(graph->graph,&services,&entry->fresh,error)) goto failed;
-        if(graph->navigation==map &&
-           !application_bot_navigation_restore_binding(bots,entry->fresh,(qa_actor_id){0},&cut->map_navigation,error)) goto failed;
-    }
+    if(!navigation_prepare(bots,cut->graphs,cut->graph_count,&cut->map_navigation,error)) goto failed;
     if(!cut->map_navigation) goto invalid;
     bots->original=cut;*out=cut;return true;
 memory:
@@ -219,20 +242,10 @@ bool application_bots_original_rebind(application_bots_original *cut,qa_error *e
     for(application_bot_guest *guest=bots->guests;guest;guest=guest->next)
         guest->provider=original_next(cut,guest->provider);
     bots->source=cut->next_source;
-    for(uint32_t i=0;i<bots->capacity;++i) {
-        qa_bot_navigation_destroy(bots->seats[i].navigation);bots->seats[i].navigation=NULL;
-        bots->seats[i].actor=(qa_actor_id){0};bots->seats[i].retired=true;
-    }
-    while(bots->targets) {application_bot_target *target=bots->targets;bots->targets=target->next;
-        qa_bot_navigation_destroy(target->navigation);free(target);}
-    qa_bot_navigation_destroy(bots->map_navigation);bots->map_navigation=cut->map_navigation;cut->map_navigation=NULL;
-    for(size_t i=0;i<cut->graph_count;++i) {
-        bot_round_graph *entry=cut->graphs+i;
-        if(entry->owner->movement) entry->owner->movement=original_next(cut,entry->owner->movement);
-        qa_navigation_destroy(entry->previous);entry->previous=NULL;
-        entry->owner->navigation=entry->fresh;entry->fresh=NULL;
-    }
-    qa_builtin_snapshot_free(&bots->pickup_snapshot);
+    for(size_t i=0;i<cut->graph_count;++i)
+        if(cut->graphs[i].owner->movement)
+            cut->graphs[i].owner->movement=original_next(cut,cut->graphs[i].owner->movement);
+    navigation_publish(bots,cut->graphs,cut->graph_count,&cut->map_navigation);
     if(bots->map_resource!=publication->map_resource) {
         qa_resource *previous=bots->map_resource;
         qa_resource_retain(publication->map_resource);bots->map_resource=publication->map_resource;
@@ -367,15 +380,7 @@ bool application_bots_round_prepare(qa_application *app,application_provider *pr
     for(application_bot_graph *graph=bots->graphs;graph;graph=graph->next) ++cut->graph_count;
     cut->graphs=cut->graph_count?calloc(cut->graph_count,sizeof(*cut->graphs)):NULL;
     if(cut->graph_count && !cut->graphs) goto memory;
-    size_t ordinal=0;qa_navigation_services services=application_bot_navigation_services(bots);
-    qa_navigation *map_runtime=qa_bot_navigation_runtime(bots->map_navigation);
-    for(application_bot_graph *graph=bots->graphs;graph;graph=graph->next) {
-        bot_round_graph *entry=cut->graphs+ordinal++;
-        entry->owner=graph;entry->previous=graph->navigation;
-        if(!qa_navigation_create(graph->graph,&services,&entry->fresh,error)) goto failed;
-        if(graph->navigation==map_runtime &&
-           !application_bot_navigation_restore_binding(bots,entry->fresh,(qa_actor_id){0},&cut->map_navigation,error)) goto failed;
-    }
+    if(!navigation_prepare(bots,cut->graphs,cut->graph_count,&cut->map_navigation,error)) goto failed;
     if(!cut->map_navigation) goto invalid;
     bots->round=cut;*out=cut;return true;
 memory:
@@ -432,19 +437,7 @@ bool application_bots_round_bind(application_bots_round *cut,qa_error *error) {
     if(!qa_bot_runtime_rebind_round(bots->runtime,&map,error)) goto failed;
     for(application_bot_guest *guest=bots->guests;guest;guest=guest->next)
         if(!qa_bot_runtime_rebind_round(guest->runtime,&map,error)) goto failed;
-    for(uint32_t i=0;i<bots->capacity;++i) {
-        qa_bot_navigation_destroy(bots->seats[i].navigation);bots->seats[i].navigation=NULL;
-        bots->seats[i].actor=(qa_actor_id){0};bots->seats[i].retired=true;
-    }
-    while(bots->targets) {application_bot_target *target=bots->targets;bots->targets=target->next;
-        qa_bot_navigation_destroy(target->navigation);free(target);}
-    qa_bot_navigation_destroy(bots->map_navigation);
-    bots->map_navigation=cut->map_navigation;cut->map_navigation=NULL;
-    for(size_t i=0;i<cut->graph_count;++i) {
-        bot_round_graph *entry=cut->graphs+i;qa_navigation_destroy(entry->previous);
-        entry->previous=NULL;entry->owner->navigation=entry->fresh;entry->fresh=NULL;
-    }
-    qa_builtin_snapshot_free(&bots->pickup_snapshot);
+    navigation_publish(bots,cut->graphs,cut->graph_count,&cut->map_navigation);
     qa_bot_services services=application_bots_services(bots);
     if(cut->had_population && !qa_bots_create_round(bots->runtime,&services,&bots->population,error)) goto failed;
     if(cut->had_population && !application_bots_catalog_initialize(bots,true,error)) goto failed;

@@ -9,6 +9,7 @@
 #include "qa/application_network_qw.h"
 #include "qa/application_network.h"
 #include "qa/application_qc_presentation.h"
+#include "qa/text.h"
 
 bool qa_application_network_qw_log_read(qa_application *app,
     qa_q1_qw_fraglog_view *out, bool *present, qa_error *error)
@@ -181,16 +182,6 @@ static bool qw_entity(struct application_qc_state *engine, uint32_t slot,
         !qw_vector(engine, reference, "angles", value.angles, error)) return false;
     *out = value;
     return true;
-}
-
-static int32_t qw_integer(float value)
-{
-    double integer = fmod(trunc((double)value), 4294967296.0);
-    if (integer < 0) integer += 4294967296.0;
-    uint32_t word = (uint32_t)integer;
-    int32_t result;
-    memcpy(&result, &word, sizeof(result));
-    return result;
 }
 
 static bool qw_global(struct application_qc_state *engine, const char *name,
@@ -377,7 +368,7 @@ bool qa_application_network_qw_client_read(qa_application *app, qa_actor_id acto
     float items, flags;
     if (!qw_scalar(engine, reference, "items", &items, error) ||
         !qw_global(engine, "serverflags", &flags, error)) return false;
-    uint32_t item_bits = (uint32_t)qw_integer(items) | ((uint32_t)qw_integer(flags) << 28);
+    uint32_t item_bits = (uint32_t)qa_number_to_i32(items) | ((uint32_t)qa_number_to_i32(flags) << 28);
     int32_t signed_items;
     memcpy(&signed_items, &item_bits, sizeof(item_bits));
     value.stats[15] = signed_items;

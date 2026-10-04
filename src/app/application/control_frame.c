@@ -1576,6 +1576,40 @@ static float qw_axis(float value)
     return (float)trunc(scaled < -127 ? -127 : scaled > 127 ? 127 : scaled);
 }
 
+static qa_movement_command selected_command(const application_control_record *record,
+    const qa_movement_command *raw, uint64_t source_time_ns,
+    const int32_t words[3], qa_vec3 axes)
+{
+    qa_movement_command out = {.kind = record->state.kind, .sequence = raw->sequence,
+        .milliseconds = raw->milliseconds, .buttons = raw->buttons & 1u,
+        .angles = {(float)(words[0] * 360.0 / 65536.0), (float)(words[1] * 360.0 / 65536.0),
+            (float)(words[2] * 360.0 / 65536.0)}};
+    uint32_t time = out.kind == QA_MOVEMENT_Q3 ?
+        (uint32_t)record->state.data.q3.command_time_ms : (uint32_t)(source_time_ns / UINT64_C(1000000));
+    time += raw->milliseconds; memcpy(&out.server_time_ms, &time, sizeof(time));
+    out.acknowledged_server_seconds = (double)out.server_time_ms / 1000.0;
+    double speed = out.kind == QA_MOVEMENT_NETQUAKE || out.kind == QA_MOVEMENT_QUAKEWORLD
+        ? 320.0 : out.kind == QA_MOVEMENT_Q3 ? 127.0 : 200.0;
+    out.forward_move = (float)((double)axes.x * speed / 127.0);
+    out.side_move = (float)((double)axes.y * speed / 127.0);
+    out.up_move = (float)((double)axes.z * speed / 127.0);
+    if (out.kind == QA_MOVEMENT_NETQUAKE) {
+        if (axes.z > 0) out.buttons |= 2u;
+    } else if (out.kind == QA_MOVEMENT_Q2_RERELEASE) {
+        if (axes.z > 0) out.buttons |= 8u;
+        if (axes.z < 0) out.buttons |= 16u;
+        out.up_move = 0; out.angles = qa_vec_sub(out.angles, record->state.data.q2r.delta_angles);
+    } else if (out.kind == QA_MOVEMENT_Q2_CLASSIC || out.kind == QA_MOVEMENT_Q3) {
+        for (size_t i = 0; i < 3; ++i) {
+            int32_t delta = out.kind == QA_MOVEMENT_Q3 ? record->state.data.q3.delta_angle_words[i] :
+                record->state.data.q2.delta_angle_shorts[i];
+            uint32_t bits = (uint32_t)words[i] - (uint32_t)delta;
+            memcpy(&out.angle_words[i], &bits, sizeof(bits));
+        }
+    }
+    return out;
+}
+
 static bool q1_selected_command(qa_application *app, qa_actor_id actor,
     const qa_movement_command *raw, uint64_t source_start_ns,
     qa_movement_command *out, qa_error *error)
@@ -1584,32 +1618,7 @@ static bool q1_selected_command(qa_application *app, qa_actor_id actor,
     float forward = qw_axis(raw->forward_move), side = qw_axis(raw->side_move);
     float up = qw_axis(raw->buttons & 2u ? 320.0f : raw->up_move);
     int32_t words[] = {qw_angle_word(raw->angles.x), qw_angle_word(raw->angles.y), qw_angle_word(raw->angles.z)};
-    *out = (qa_movement_command){.kind = record->state.kind, .sequence = raw->sequence,
-        .milliseconds = raw->milliseconds, .buttons = raw->buttons & 1u,
-        .angles = {(float)(words[0] * 360.0 / 65536.0), (float)(words[1] * 360.0 / 65536.0),
-            (float)(words[2] * 360.0 / 65536.0)}};
-    uint32_t time = record->state.kind == QA_MOVEMENT_Q3 ?
-        (uint32_t)record->state.data.q3.command_time_ms : (uint32_t)(source_start_ns / UINT64_C(1000000));
-    time += raw->milliseconds; memcpy(&out->server_time_ms, &time, sizeof(time));
-    out->acknowledged_server_seconds = (double)out->server_time_ms / 1000.0;
-    double speed = out->kind == QA_MOVEMENT_NETQUAKE || out->kind == QA_MOVEMENT_QUAKEWORLD
-        ? 320.0 : out->kind == QA_MOVEMENT_Q3 ? 127.0 : 200.0;
-    out->forward_move = (float)((double)forward * speed / 127.0);
-    out->side_move = (float)((double)side * speed / 127.0);
-    out->up_move = (float)((double)up * speed / 127.0);
-    if (out->kind == QA_MOVEMENT_NETQUAKE) {
-        if (up > 0) out->buttons |= 2u;
-    } else if (out->kind == QA_MOVEMENT_Q2_RERELEASE) {
-        if (up > 0) out->buttons |= 8u;
-        if (up < 0) out->buttons |= 16u;
-        out->up_move = 0; out->angles = qa_vec_sub(out->angles, record->state.data.q2r.delta_angles);
-    } else if (out->kind == QA_MOVEMENT_Q2_CLASSIC || out->kind == QA_MOVEMENT_Q3)
-    for (size_t i = 0; i < 3; ++i) {
-        int32_t delta = out->kind == QA_MOVEMENT_Q3 ? record->state.data.q3.delta_angle_words[i] :
-            record->state.data.q2.delta_angle_shorts[i];
-        uint32_t bits = (uint32_t)words[i] - (uint32_t)delta;
-        memcpy(&out->angle_words[i], &bits, sizeof(bits));
-    }
+    *out = selected_command(record, raw, source_start_ns, words, qa_v3(forward, side, up));
     application_provider *arsenal = application_provider_for(app, actor, QA_ROLE_ARSENAL, "");
     if (arsenal && arsenal->kind == APPLICATION_PROVIDER_Q3) {
         qa_q3_player_state player;
@@ -1668,34 +1677,8 @@ static bool q2_selected_command(qa_application *app, qa_actor_id actor,
         ? raw->buttons & 8u ? 127 : raw->buttons & 16u ? -127 : 0
         : (float)trunc(fmax(-127, fmin(127, (double)raw->up_move * 127 / 200)));
     int32_t words[] = {qw_angle_word(aim.x), qw_angle_word(aim.y), qw_angle_word(aim.z)};
-    *out = (qa_movement_command){.kind = record->state.kind, .sequence = raw->sequence,
-        .milliseconds = raw->milliseconds, .buttons = raw->buttons & 1u,
-        .impulse = raw->impulse, .light_level = raw->light_level,
-        .angles = {(float)((double)words[0] * 360 / 65536),
-            (float)((double)words[1] * 360 / 65536), (float)((double)words[2] * 360 / 65536)}};
-    uint32_t time = out->kind == QA_MOVEMENT_Q3 ? (uint32_t)record->state.data.q3.command_time_ms
-        : (uint32_t)(admission->time_ns / UINT64_C(1000000));
-    time += raw->milliseconds; memcpy(&out->server_time_ms, &time, sizeof(time));
-    out->acknowledged_server_seconds = (double)out->server_time_ms / 1000;
-    double speed = out->kind == QA_MOVEMENT_NETQUAKE || out->kind == QA_MOVEMENT_QUAKEWORLD ? 320
-        : out->kind == QA_MOVEMENT_Q3 ? 127 : 200;
-    out->forward_move = (float)((double)forward * speed / 127);
-    out->side_move = (float)((double)side * speed / 127);
-    out->up_move = (float)((double)up * speed / 127);
-    if (out->kind == QA_MOVEMENT_NETQUAKE) {
-        if (up > 0) out->buttons |= 2u;
-    } else if (out->kind == QA_MOVEMENT_Q2_RERELEASE) {
-        if (up > 0) out->buttons |= 8u;
-        if (up < 0) out->buttons |= 16u;
-        out->up_move = 0; out->angles = qa_vec_sub(out->angles, record->state.data.q2r.delta_angles);
-    } else if (out->kind == QA_MOVEMENT_Q2_CLASSIC || out->kind == QA_MOVEMENT_Q3) {
-        for (unsigned i = 0; i < 3; ++i) {
-            int32_t delta = out->kind == QA_MOVEMENT_Q3 ? record->state.data.q3.delta_angle_words[i]
-                : record->state.data.q2.delta_angle_shorts[i];
-            uint32_t bits = (uint32_t)words[i] - (uint32_t)delta;
-            memcpy(&out->angle_words[i], &bits, sizeof(bits));
-        }
-    }
+    *out = selected_command(record, raw, admission->time_ns, words, qa_v3(forward, side, up));
+    out->impulse = raw->impulse; out->light_level = raw->light_level;
     application_provider *arsenal = application_provider_for(app, actor, QA_ROLE_ARSENAL, "");
     if (arsenal && arsenal->kind == APPLICATION_PROVIDER_Q3) {
         qa_q3_player_state player;

@@ -9,6 +9,7 @@
 #include "map_players_private.h"
 #include "qa/application_supplies_save.h"
 #include "qa/source_save.h"
+#include "qa/text.h"
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -1814,13 +1815,6 @@ static int32_t add_i32(int32_t a, int32_t b) {
     uint32_t bits = (uint32_t)a + (uint32_t)b;
     int32_t value; memcpy(&value, &bits, sizeof(value)); return value;
 }
-static int32_t number_i32(double number) {
-    if (!isfinite(number) || number == 0) return 0;
-    double bits = fmod(trunc(number), 4294967296.0);
-    if (bits < 0) bits += 4294967296.0;
-    uint32_t raw = (uint32_t)bits;
-    int32_t value; memcpy(&value, &raw, sizeof(value)); return value;
-}
 bool application_supplies_q3_ammo_regeneration(void *opaque, qa_actor_id actor,
     int32_t elapsed, bool *handled, qa_error *error) {
     application_provider *source = opaque;
@@ -1853,7 +1847,7 @@ bool application_supplies_q3_ammo_regeneration(void *opaque, qa_actor_id actor,
         if (resource.count >= timer_maximum[timer.weapon]) total = 0;
         if (total >= period) {
             total %= period;
-            int32_t next = number_i32(resource.count + timer_increment[timer.weapon]);
+            int32_t next = qa_number_to_i32(resource.count + timer_increment[timer.weapon]);
             resource.count = next > timer_maximum[timer.weapon] ? timer_maximum[timer.weapon] : next;
             ok = qa_inventory_configure(owner->inventory, actor, &resource, NULL, NULL, error) &&
                 supply_current(pair, actor, error) && actor_find(owner, pair, actor) == entry;

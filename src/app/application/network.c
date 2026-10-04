@@ -20,6 +20,7 @@
 #include "qa/game_q3_wire.h"
 #include "qa/game_q3_configstrings.h"
 #include "qa/physics.h"
+#include "qa/text.h"
 #include <limits.h>
 #include <stdlib.h>
 #include <string.h>
@@ -257,9 +258,7 @@ static bool q1_wire_bits(float value, uint32_t *out, qa_error *error)
         application_fail(error, QA_ERROR_FORMAT, "Nonfinite Q1 source bit mask");
         return false;
     }
-    double word = fmod(trunc((double)value), 4294967296.0);
-    if (word < 0) word += 4294967296.0;
-    *out = (uint32_t)word; return true;
+    *out = (uint32_t)qa_number_to_i32(value); return true;
 }
 static bool q1_standard_quake(qa_application *app, struct application_qc_state *engine, bool *out, qa_error *error)
 {

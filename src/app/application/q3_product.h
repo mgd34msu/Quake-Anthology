@@ -38,7 +38,7 @@ void application_startup_program_queue_publish(qa_application *,const struct qa_
 bool qa_application_startup_command_queue(qa_application *, size_t, qa_console *, const qa_command_context *, qa_error *);
 bool qa_application_startup_command_queued_console(qa_application *, size_t, qa_console **, qa_error *);
 bool qa_application_startup_console_queued(const qa_application *, const qa_console *);
-/* Primitive fields in the application's existing versioned owner checkpoint. */
+/* Primitive fields in the application's existing owner checkpoint. */
 bool application_q3_product_fields(qa_source_save_io *, qa_q3_product_policy *);
 typedef struct application_q3_product_preparation {
     qa_catalog *catalog;

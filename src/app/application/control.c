@@ -19,6 +19,7 @@
 #include "qa/game_q1_bots.h"
 #include "qa/game_q3_wire.h"
 #include "qa/source_number.h"
+#include "qa/text.h"
 
 #include <limits.h>
 #include <float.h>
@@ -784,8 +785,7 @@ static bool component_input_set(application_control_mod_input *scope, applicatio
                 return application_fail(error, QA_ERROR_ARGUMENT, "Component aim exceeds its command fields");
         } else {
             for (unsigned i = 0; i < 3; ++i) {
-                double word = trunc(difference[i] * 65536.0 / 360.0);
-                uint32_t wrapped = (uint32_t)fmod(fmod(word, 4294967296.0) + 4294967296.0, 4294967296.0);
+                uint32_t wrapped = (uint32_t)qa_number_to_i32(difference[i] * 65536.0 / 360.0);
                 wrapped += (uint32_t)next.angle_words[i];
                 memcpy(&next.angle_words[i], &wrapped, sizeof(wrapped));
             }
@@ -1100,19 +1100,7 @@ static bool qc_input_body(application_move_call *move, qa_movement_state *state,
     if (before) { scope->actor = move->control->actor; scope->slice = slice; }
     move->qc_input_active = true;
     qa_movement_command semantic = *command;
-    if (absolute_aim) semantic.angles = *absolute_aim;
-    else if (command->kind == state->kind &&
-        (state->kind == QA_MOVEMENT_Q3 || state->kind == QA_MOVEMENT_Q2_CLASSIC)) {
-        float aim[3];
-        for (size_t i = 0; i < 3; ++i) {
-            int32_t delta = state->kind == QA_MOVEMENT_Q3 ? state->data.q3.delta_angle_words[i]
-                                                       : state->data.q2.delta_angle_shorts[i];
-            aim[i] = (float)(uint16_t)((uint32_t)command->angle_words[i] + (uint32_t)delta) *
-                     (360.0f / 65536.0f);
-        }
-        semantic.angles = qa_v3(aim[0], aim[1], aim[2]);
-    } else if (command->kind == state->kind && state->kind == QA_MOVEMENT_Q2_RERELEASE)
-        semantic.angles = qa_vec_add(command->angles, state->data.q2r.delta_angles);
+    semantic.angles = absolute_aim ? *absolute_aim : component_aim(state, command);
     qa_vec3 original_aim = semantic.angles;
     for (size_t i = 0; i < owner_count; ++i) {
         application_provider *owner = scope->owners[i];
