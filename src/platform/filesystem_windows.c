@@ -801,120 +801,18 @@ bool qa_fs_file_path_unchanged(qa_fs_file *file,
     return true;
 }
 
-bool qa_fs_file_read_prefix(qa_fs_file *file, const qa_fs_identity *expected,
-    void *bytes, size_t capacity, size_t *received, qa_error *error)
+bool qa_fs_file_read_at_native(qa_fs_file *file, uint64_t offset, void *bytes,
+    size_t size, size_t *received, qa_error *error)
 {
-    if (received) *received = 0;
-    if (!file || !expected || !received || (capacity && !bytes) || capacity > PTRDIFF_MAX) {
-        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Prefix read needs a retained file, identity and bounded output");
-        return false;
-    }
-    qa_fs_identity before;
-    if (!qa_fs_file_identity(file, &before, error)) return false;
-    if (!qa_fs_identity_equal(expected, &before)) {
-        qa_error_set(error, QA_ERROR_IO, 0, "File changed before prefix read"); return false;
-    }
-    LARGE_INTEGER zero = {.QuadPart = 0};
-    if (!SetFilePointerEx(file->handle, zero, NULL, FILE_BEGIN))
-        return fail_windows(error, "cannot seek file prefix", file->path, GetLastError());
-    size_t limit = before.words[2] < (uint64_t)capacity ? (size_t)before.words[2] : capacity;
-    size_t offset = 0;
-    while (offset < limit) {
-        size_t remaining = limit - offset;
-        DWORD request = remaining > UINT32_C(0x7ffff000) ? UINT32_C(0x7ffff000) : (DWORD)remaining;
-        DWORD count = 0;
-        if (!ReadFile(file->handle, (uint8_t *)bytes + offset, request, &count, NULL))
-            return fail_windows(error, "cannot read file prefix", file->path, GetLastError());
-        if (!count) return fail_windows(error, "cannot read file prefix", file->path, ERROR_HANDLE_EOF);
-        offset += count;
-    }
-    qa_fs_identity after;
-    if (!qa_fs_file_identity(file, &after, error)) return false;
-    if (!qa_fs_identity_equal(expected, &after)) {
-        qa_error_set(error, QA_ERROR_IO, 0, "File changed during prefix read"); return false;
-    }
-    *received = offset; return true;
-}
-
-bool qa_fs_file_read_snapshot(qa_fs_file *file,
-                              const qa_fs_identity *expected,
-                              qa_buffer *out, qa_error *error)
-{
-    if (out != NULL)
-        *out = (qa_buffer){0};
-    if (file == NULL || expected == NULL || out == NULL) {
-        qa_error_set(error, QA_ERROR_ARGUMENT, 0,
-                     "snapshot read needs file, identity, and output");
-        return false;
-    }
-    qa_fs_identity before;
-    if (!qa_fs_file_identity(file, &before, error))
-        return false;
-    if (!qa_fs_identity_equal(expected, &before)) {
-        qa_error_set(error, QA_ERROR_IO, 0,
-                     "resource changed before snapshot read");
-        return false;
-    }
-    if (before.words[2] > (uint64_t)PTRDIFF_MAX
-        || before.words[2] > (uint64_t)SIZE_MAX) {
-        qa_error_set(error, QA_ERROR_MEMORY, 0,
-                     "file is too large for a memory snapshot");
-        return false;
-    }
-    qa_buffer result = {.size = (size_t)before.words[2]};
-    if (result.size != 0) {
-        result.data = malloc(result.size);
-        if (result.data == NULL) {
-            qa_error_set(error, QA_ERROR_MEMORY, 0,
-                         "cannot allocate file snapshot");
-            return false;
-        }
-    }
-    LARGE_INTEGER zero = {.QuadPart = 0};
-    if (!SetFilePointerEx(file->handle, zero, NULL, FILE_BEGIN)) {
-        DWORD code = GetLastError();
-        qa_buffer_free(&result);
-        return fail_windows(error, "cannot seek file", file->path, code);
-    }
-    size_t offset = 0;
-    while (offset < result.size) {
-        size_t remaining = result.size - offset;
-        DWORD request = remaining > UINT32_C(0x7ffff000)
-            ? UINT32_C(0x7ffff000) : (DWORD)remaining;
-        DWORD received = 0;
-        if (!ReadFile(file->handle, result.data + offset, request,
-                      &received, NULL) || received == 0) {
-            DWORD code = GetLastError();
-            if (code == ERROR_SUCCESS)
-                code = ERROR_HANDLE_EOF;
-            qa_buffer_free(&result);
-            return fail_windows(error, "cannot read file", file->path, code);
-        }
-        offset += received;
-    }
-    qa_fs_identity after;
-    if (!qa_fs_file_identity(file, &after, error)) {
-        qa_buffer_free(&result);
-        return false;
-    }
-    if (!qa_fs_identity_equal(expected, &after)) {
-        qa_buffer_free(&result);
-        qa_error_set(error, QA_ERROR_IO, 0,
-                     "resource changed during snapshot read");
-        return false;
-    }
-    bool unchanged;
-    if (!qa_fs_file_path_unchanged(file, expected, &unchanged, error)) {
-        qa_buffer_free(&result);
-        return false;
-    }
-    if (!unchanged) {
-        qa_buffer_free(&result);
-        qa_error_set(error, QA_ERROR_IO, 0,
-                     "resource path changed during snapshot read");
-        return false;
-    }
-    *out = result;
+    LARGE_INTEGER position = {.QuadPart = (LONGLONG)offset};
+    if (!SetFilePointerEx(file->handle, position, NULL, FILE_BEGIN))
+        return fail_windows(error, "cannot seek file", file->path, GetLastError());
+    DWORD request = size > UINT32_C(0x7ffff000) ? UINT32_C(0x7ffff000) : (DWORD)size;
+    DWORD count = 0;
+    if (!ReadFile(file->handle, bytes, request, &count, NULL))
+        return fail_windows(error, "cannot read file", file->path, GetLastError());
+    if (!count) return fail_windows(error, "cannot read file", file->path, ERROR_HANDLE_EOF);
+    *received = (size_t)count;
     return true;
 }
 

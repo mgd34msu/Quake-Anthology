@@ -54,6 +54,128 @@ uint64_t qa_fs_identity_hash(const qa_fs_identity *identity)
     return hash ^ (hash >> 33);
 }
 
+static bool file_read_begin(qa_fs_file *file, const qa_fs_identity *expected,
+    const char *operation, qa_error *error)
+{
+    qa_fs_identity before;
+    if (!qa_fs_file_identity(file, &before, error)) return false;
+    if (!qa_fs_identity_equal(expected, &before)) {
+        qa_error_set(error, QA_ERROR_IO, 0, "resource changed before %s", operation);
+        return false;
+    }
+    return true;
+}
+
+static bool file_read_finish(qa_fs_file *file, const qa_fs_identity *expected,
+    const char *operation, bool check_path, qa_error *error)
+{
+    qa_fs_identity after;
+    if (!qa_fs_file_identity(file, &after, error)) return false;
+    if (!qa_fs_identity_equal(expected, &after)) {
+        qa_error_set(error, QA_ERROR_IO, 0, "resource changed during %s", operation);
+        return false;
+    }
+    if (check_path) {
+        bool unchanged = false;
+        if (!qa_fs_file_path_unchanged(file, expected, &unchanged, error)) return false;
+        if (!unchanged) {
+            qa_error_set(error, QA_ERROR_IO, 0, "resource path changed during %s", operation);
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool file_read_exact(qa_fs_file *file, size_t offset, void *bytes,
+    size_t size, qa_error *error)
+{
+    size_t done = 0;
+    while (done < size) {
+        size_t received = 0;
+        if (!qa_fs_file_read_at_native(file, (uint64_t)(offset + done),
+            (uint8_t *)bytes + done, size - done, &received, error)) return false;
+        done += received;
+    }
+    return true;
+}
+
+static bool file_snapshot_size(const qa_fs_identity *identity, qa_error *error)
+{
+    if (identity->words[2] > (uint64_t)PTRDIFF_MAX || identity->words[2] > (uint64_t)SIZE_MAX) {
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "file is too large for a memory snapshot");
+        return false;
+    }
+    return true;
+}
+
+bool qa_fs_file_read_prefix(qa_fs_file *file, const qa_fs_identity *expected,
+    void *bytes, size_t capacity, size_t *received, qa_error *error)
+{
+    if (received) *received = 0;
+    if (!file || !expected || !received || (capacity && !bytes) || capacity > PTRDIFF_MAX) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Prefix read needs a retained file, identity and bounded output");
+        return false;
+    }
+    if (!file_read_begin(file, expected, "prefix read", error)) return false;
+    size_t limit = expected->words[2] < (uint64_t)capacity ? (size_t)expected->words[2] : capacity;
+    if (!file_read_exact(file, 0, bytes, limit, error) ||
+        !file_read_finish(file, expected, "prefix read", false, error)) return false;
+    *received = limit;
+    return true;
+}
+
+bool qa_fs_file_read_snapshot(qa_fs_file *file, const qa_fs_identity *expected,
+    qa_buffer *out, qa_error *error)
+{
+    if (out) *out = (qa_buffer){0};
+    if (!file || !expected || !out) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "snapshot read needs file, identity, and output");
+        return false;
+    }
+    if (!file_read_begin(file, expected, "snapshot read", error) ||
+        !file_snapshot_size(expected, error)) return false;
+    qa_buffer result = {.size = (size_t)expected->words[2]};
+    if (result.size) {
+        result.data = malloc(result.size);
+        if (!result.data) {
+            qa_error_set(error, QA_ERROR_MEMORY, 0, "cannot allocate file snapshot");
+            return false;
+        }
+    }
+    if (!file_read_exact(file, 0, result.data, result.size, error) ||
+        !file_read_finish(file, expected, "snapshot read", true, error)) {
+        qa_buffer_free(&result);
+        return false;
+    }
+    *out = result;
+    return true;
+}
+
+bool qa_fs_file_snapshot_matches(qa_fs_file *file, const qa_fs_identity *expected,
+    qa_bytes bytes, bool *matches, qa_error *error)
+{
+    if (matches) *matches = false;
+    if (!file || !expected || !matches || (bytes.size && !bytes.data) || bytes.size > PTRDIFF_MAX) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Snapshot comparison needs a retained file, identity, bytes and output");
+        return false;
+    }
+    if (!file_read_begin(file, expected, "snapshot comparison", error) ||
+        !file_snapshot_size(expected, error)) return false;
+    size_t size = (size_t)expected->words[2];
+    bool equal = size == bytes.size;
+    uint8_t scratch[64u * 1024u];
+    for (size_t offset = 0; offset < size;) {
+        size_t amount = size - offset;
+        if (amount > sizeof(scratch)) amount = sizeof(scratch);
+        if (!file_read_exact(file, offset, scratch, amount, error)) return false;
+        if (size == bytes.size && memcmp(scratch, bytes.data + offset, amount)) equal = false;
+        offset += amount;
+    }
+    if (!file_read_finish(file, expected, "snapshot comparison", true, error)) return false;
+    *matches = equal;
+    return true;
+}
+
 bool qa_fs_relative_valid(const char *path, bool allow_root, qa_error *error)
 {
     if (path == NULL || path[0] == '\0' || strcmp(path, ".") == 0) {

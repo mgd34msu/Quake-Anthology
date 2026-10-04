@@ -112,6 +112,10 @@ bool qa_fs_file_path_unchanged(qa_fs_file *file,
 bool qa_fs_file_read_snapshot(qa_fs_file *file,
                               const qa_fs_identity *expected,
                               qa_buffer *out, qa_error *error);
+/* Compares every retained file byte and the exact length without another full
+ * snapshot. Uses at most 64 KiB scratch; identity and native path stay checked. */
+bool qa_fs_file_snapshot_matches(qa_fs_file *, const qa_fs_identity *, qa_bytes,
+                                  bool *matches, qa_error *);
 /* Reads at most capacity bytes from offset zero of the retained file. Checks
  * the admitted handle identity before/after; never reopens the native path. */
 bool qa_fs_file_read_prefix(qa_fs_file *, const qa_fs_identity *, void *,

@@ -869,12 +869,10 @@ bool qa_vfs_mount_retained(qa_vfs *vfs, const qa_vfs *retained, qa_mount_id id,
     }
     if (source->archive) {
         bool unchanged = false;
-        qa_buffer bytes = {0};
+        bool matches = false;
         bool valid = qa_fs_file_path_unchanged(source->archive_file, &source->identity, &unchanged, error) &&
-            unchanged && qa_fs_file_read_snapshot(source->archive_file, &source->identity, &bytes, error);
-        if (valid) valid = bytes.size == source->archive->storage.size &&
-            !memcmp(bytes.data, source->archive->storage.data, bytes.size);
-        qa_buffer_free(&bytes);
+            unchanged && qa_fs_file_snapshot_matches(source->archive_file, &source->identity,
+                (qa_bytes){source->archive->storage.data, source->archive->storage.size}, &matches, error) && matches;
         if (!valid) {
             if (!error || error->code == QA_OK)
                 qa_error_set(error, QA_ERROR_IO, 0, "Retained archive changed: %s", source->path);
