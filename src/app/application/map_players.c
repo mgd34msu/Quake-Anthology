@@ -3480,7 +3480,7 @@ static void record_free(application_player_record *record)
     free(record->name); free(record->team); free(record->skin);
     free(record->userinfo); free(record->guests);
     free(record->bot_definition);
-    *record = (application_player_record){0};
+    *record = (application_player_record){.retiring = true};
 }
 
 bool application_player_bot(const qa_application *app, qa_actor_id actor)
@@ -3519,7 +3519,7 @@ bool application_players_component_retire(qa_application *app,application_provid
     for(size_t i=0;i<app->players->count;++i) {
         application_player_record *record=app->players->records+i;
         if(!qa_actor_id_equal(record->actor,actor)) continue;
-        record_free(record);record->dynamic=true;record->retiring=true;
+        record_free(record);record->dynamic=true;
     }
     return true;
 }
@@ -3562,7 +3562,6 @@ bool application_players_native_q3_retire(qa_application *app,
         if (!qa_actor_id_equal(record->actor, actor)) continue;
         record_free(record);
         record->dynamic = true;
-        record->retiring = true;
         return true;
     }
     return true;
