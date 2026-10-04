@@ -158,6 +158,7 @@ bool qa_material_order_prepare(qa_material_order *order, qa_error *error)
     if (count > UINT32_MAX) return fail(error, QA_ERROR_MEMORY, "renderer material ranks exceed capacity");
     if (count > 1) qsort(order->sorted, count, sizeof(*order->sorted), compare);
     for (size_t i = 0; i < count; ++i) order->sorted[i]->rank = (uint32_t)i;
+    for (size_t i = count; i < order->count; ++i) order->sorted[i] = NULL;
     order->dirty = false; return true;
 }
 
@@ -172,12 +173,9 @@ bool qa_material_order_rank(const qa_material_order *order, const qa_material *m
 }
 const qa_material *qa_material_order_sorted_at(const qa_material_order *order, uint32_t rank)
 {
-    if (!order || order->dirty) return NULL;
-    for (size_t i = 0; i < order->count; ++i) {
-        const qa_material_order_entry *entry = order->entries[i];
-        if (entry->published && entry->rank == rank) return entry->material;
-    }
-    return NULL;
+    if (!order || order->dirty || rank >= order->count) return NULL;
+    const qa_material_order_entry *entry = order->sorted[rank];
+    return entry && entry->published && entry->rank == rank ? entry->material : NULL;
 }
 
 static int registration_compare(const void *left, const void *right)
@@ -436,6 +434,7 @@ bool qa_material_order_restore(qa_bytes bytes, const qa_material_checkpoint_refs
         if (published > UINT32_MAX) ok = false;
         if (ok && published > 1) qsort(order->sorted, published, sizeof(*order->sorted), compare);
         for (size_t i = 0; ok && i < published; ++i) if (order->sorted[i]->rank != i) ok = false;
+        for (size_t i = published; i < count; ++i) order->sorted[i] = NULL;
     }
     if (ok) {
         for (size_t i = 0; i < count; ++i) ((qa_material *)order->entries[i]->material)->order_entry = order->entries[i];
