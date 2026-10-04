@@ -455,9 +455,8 @@ bool q3_map_pick(qa_q3_game *game, qa_string_id target, qa_actor_id *out, qa_err
     return true;
 }
 
-static bool allocate_actor(qa_q3_game *game, qa_q3_map_actor_state *source,
-                           const qa_actor_collision *collision, bool link,
-                           qa_error *error) {
+bool q3_map_allocate(qa_q3_game *game, qa_q3_map_actor_state *source,
+                     const qa_actor_collision *collision, bool link, qa_error *error) {
     qa_builtin_spawn spawn = {
         .owner = game->options.owner,
         .definition = source->classname,
@@ -490,17 +489,6 @@ static bool allocate_actor(qa_q3_game *game, qa_q3_map_actor_state *source,
         return q3_rollback_spawn(game, actor, error);
     *source = *state;
     return true;
-}
-
-bool q3_map_allocate(qa_q3_game *game, qa_q3_map_actor_state *source,
-                     const qa_actor_collision *collision, bool link, qa_error *error) {
-    return allocate_actor(game, source, collision, link, error);
-}
-
-bool q3_map_allocate_generated(qa_q3_game *game, qa_q3_map_actor_state *source,
-                               const qa_actor_collision *collision, bool link,
-                               qa_error *error) {
-    return allocate_actor(game, source, collision, link, error);
 }
 
 static bool map_use(qa_q3_game *game, qa_actor_id actor, qa_actor_id other,

@@ -118,9 +118,11 @@ bool q1_mg3_upgrade(qa_q1_game *g, q1_player *player, unsigned type, uint32_t fl
     return !player->arsenal || qa_q1_player_select(g, player->id, player->weapon, error);
 }
 static bool capacities_current(qa_q1_game_operation *operation, qa_actor_id actor,
-    q1_player *player, qa_error *error) {
-    if (qa_q1_game_operation_live(operation) && q1_player_get(operation->game, actor) == player)
-        return true;
+    q1_player *player, bool source_client, uint32_t source_slot, qa_error *error) {
+    uint32_t slot;
+    if (qa_q1_game_operation_live(operation) && q1_player_get(operation->game, actor) == player &&
+        (!source_client || (qa_q1_native_client_slot(operation->game, actor, &slot, error) &&
+            slot == source_slot))) return true;
     qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot,
         "MG3 capacity initialization retired its source player");
     return false;
@@ -130,17 +132,19 @@ bool q1_mg3_capacities(qa_q1_game *g, q1_player *player, qa_error *error) {
     if (!qa_q1_game_operation_begin(g, &operation, error))
         return false;
     qa_actor_id actor = player->id;
-    bool ok = capacities_current(&operation, actor, player, error);
+    bool source_client = player->source_client;
+    uint32_t source_slot = player->client_slot;
+    bool ok = capacities_current(&operation, actor, player, source_client, source_slot, error);
     if (!ok)
         goto finish;
     const qa_q1_mg3_progress *state = &player->mg3_progress;
     player->max_health = g->options.deathmatch ? 100 : capacity(50, state->health);
     qa_combat_state combat;
     ok = qa_combat_read(g->services.combat, actor, &combat, error) &&
-        capacities_current(&operation, actor, player, error);
+        capacities_current(&operation, actor, player, source_client, source_slot, error);
     if (ok && combat.health > player->max_health)
         ok = qa_combat_set_health(g->services.combat, actor, player->max_health, error) &&
-            capacities_current(&operation, actor, player, error);
+            capacities_current(&operation, actor, player, source_client, source_slot, error);
     if (!ok)
         goto finish;
     static const float base[] = {50, 100, 20, 100}, deathmatch[] = {100, 200, 100, 200};
@@ -149,7 +153,7 @@ bool q1_mg3_capacities(qa_q1_game *g, q1_player *player, qa_error *error) {
             capacity(base[i], *upgrade_bits(player, i + 1));
         double count;
         ok = qa_inventory_count_read(g->services.inventory, actor, g->ammo[i], &count, error) &&
-            capacities_current(&operation, actor, player, error);
+            capacities_current(&operation, actor, player, source_client, source_slot, error);
         if (!ok)
             break;
         qa_inventory_entry entry = {.item = g->ammo[i],
@@ -157,7 +161,7 @@ bool q1_mg3_capacities(qa_q1_game *g, q1_player *player, qa_error *error) {
                                     .count = fmin(count, maximum),
                                     .policy = QA_COUNT_SOURCE_FLOAT};
         ok = qa_inventory_configure(g->services.inventory, actor, &entry, NULL, NULL, error) &&
-            capacities_current(&operation, actor, player, error);
+            capacities_current(&operation, actor, player, source_client, source_slot, error);
     }
 finish:
     qa_q1_game_operation_end(&operation);

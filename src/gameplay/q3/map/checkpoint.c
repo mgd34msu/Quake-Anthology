@@ -308,19 +308,7 @@ static bool checkpoint_restore(qa_q3_game *game,
         }
         free(game->map->actors);
         game->map->actors = candidate;
-        game->map->registered_items = saved->registered_items;
-        game->map->options.motd = saved->motd;
-        game->map->loaded_game_type = saved->loaded_game_type;
-        game->map->options.random_seed = saved->random_seed;
-        game->map->options.start_time_ms = saved->start_time_ms;
-        game->map->options.restarted = saved->restarted;
-        game->map->options.warmup = saved->warmup;
-        game->physics.gravity = saved->gravity;
-        game->map->world_spawned = saved->world_spawned;
-        game->map->post_spawned = saved->post_spawned;
-        game->map->locations_linked = saved->locations_linked;
-        game->map->location_head = location_head;
-        return true;
+        goto restored;
     }
     qa_q3_map_actor_state *prior = game->map->actors;
     uint32_t cleared = 0;
@@ -384,6 +372,7 @@ static bool checkpoint_restore(qa_q3_game *game,
         return false;
     }
     free(prior);
+restored:
     game->map->registered_items = saved->registered_items;
     game->map->options.motd = saved->motd;
     game->map->loaded_game_type = saved->loaded_game_type;

@@ -211,13 +211,12 @@ static bool frame(qa_q1_game *g, qa_actor_id actor, qa_error *error) {
         if (!qa_strings_intern_cstr(qa_session_strings(g->services.session), "gamecfg", &name, error) ||
             !g->services.cvar(q1_cvar_context(g), name, &cfg, error) || !current(g, error) ||
             world(g, error) != owner) return false;
-        double integer = isfinite(cfg) ? fmod(trunc(cfg), 4294967296.0) : 0;
-        if (integer < 0) integer += 4294967296.0;
+        uint32_t integer = (uint32_t)qa_number_to_i32(cfg);
         double started = 0;
-        if (((uint32_t)integer & 1) &&
+        if ((integer & 1) &&
             (!q1_source_number_read(qa_strings_text(qa_session_strings(g->services.session), owner->rogue_runes_spawned),
                 &started, error))) return false;
-        if (((uint32_t)integer & 1) && started == 0) {
+        if ((integer & 1) && started == 0) {
             if (!qa_strings_intern_cstr(qa_session_strings(g->services.session), "1", &owner->rogue_runes_spawned, error) ||
                 !current(g, error) || world(g, error) != owner) return false;
             q1_actor *timer;

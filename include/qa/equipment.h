@@ -94,6 +94,8 @@ typedef struct qa_equipment_options {
     bool (*source_destroy)(void *, qa_error *);
     bool (*source_capture)(void *, qa_buffer *, qa_error *);
     bool (*source_restore)(void *, qa_bytes, qa_error *);
+    /* Required primary binding. Weapon-slot handoff is owned by qa_weapon_slot;
+     * provide either primary_holstered_read or primary_holstered. */
     bool (*primary_holster)(void *, qa_actor_id, qa_error *);
     bool (*primary_owner)(void *, qa_actor_id, qa_actor_owner *, qa_error *);
     bool (*primary_holstered)(void *, qa_actor_id);

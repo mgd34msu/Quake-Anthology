@@ -325,7 +325,7 @@ static bool spawn_trigger(qa_q3_game *game, qa_q3_map_kind kind, qa_actor_id par
                                     .shape = QA_SHAPE_BOX,
                                     .contents = Q3_CONTENTS_TRIGGER,
                                     .role = QA_COLLISION_TRIGGER};
-    if (!q3_map_allocate_generated(game, &trigger, &collision, true, error))
+    if (!q3_map_allocate(game, &trigger, &collision, true, error))
         return false;
     return q3_wire_entity_ready(game, trigger.actor, error);
 }

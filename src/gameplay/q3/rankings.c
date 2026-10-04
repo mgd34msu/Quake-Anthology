@@ -158,18 +158,8 @@ bool qa_q3_ranking_damage(qa_q3_game *game, const qa_damage_outcome *outcome,
         return q3_fail(error, "invalid Q3 ranking damage outcome");
     if (!enabled(game) || outcome->stale || !q3_is_player(game, outcome->request.target))
         return true;
-    bool armor_written = false;
-    float armor = 0;
-    for (size_t i = 0; i < outcome->mutation_count; ++i) {
-        const qa_damage_mutation *mutation = &outcome->mutations[i];
-        if (mutation->kind != QA_MUTATION_ARMOR)
-            continue;
-        armor_written = true;
-        if (mutation->value.armor.before.regular.kind != QA_ARMOR_NONE &&
-            mutation->value.armor.after.regular.kind != QA_ARMOR_NONE)
-            armor += (float)mutation->value.armor.before.regular.points -
-                     (float)mutation->value.armor.after.regular.points;
-    }
+    bool armor_written;
+    float armor = q3_damage_regular_delta(outcome, &armor_written);
     if (outcome->result.applied_damage == 0 && !armor_written)
         return true;
     float amount = outcome->result.applied_damage + armor;

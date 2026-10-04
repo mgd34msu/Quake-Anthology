@@ -220,7 +220,7 @@ static bool blaster(qa_q1_game *g, q1_actor *e, qa_error *error) {
         return false;
     qa_vec3 direction = qa_vec_normalize(qa_vec_sub(q1_boss_target(g, e), body.origin));
     direction = qa_vec_normalize(
-        qa_vec_add(direction, qa_vec_scale(q1_boss_cross(direction, qa_v3(0, 0, 1)),
+        qa_vec_add(direction, qa_vec_scale(qa_vec_cross(direction, qa_v3(0, 0, 1)),
                                            cosf(e->count * 15) * .5f * e->state.boss_child.sign)));
     body.angles = q1_boss_angles(direction);
     if (!qa_world_body_write(g->services.world, e->id, &body, error))

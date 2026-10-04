@@ -76,7 +76,7 @@ bool q1_boss_sphere_manager(qa_q1_game *g, q1_actor *source, int32_t maximum, bo
         direction.z = 0;
         direction = qa_vec_normalize(direction);
         qa_builtin_angle_vectors(owner.angles, &g->forward, &g->right, &g->up);
-        state->sign = q1_boss_flat_dot(g->right, q1_boss_cross(direction, qa_v3(0, 0, 1))) > 1;
+        state->sign = q1_boss_flat_dot(g->right, qa_vec_cross(direction, qa_v3(0, 0, 1))) > 1;
         body.angles = q1_boss_angles(direction);
         manager->count = (float)maximum;
     }
@@ -97,7 +97,7 @@ bool q1_boss_autogun(qa_q1_game *g, q1_actor *source, qa_vec3 origin, float offs
     (void)qa_world_body_read(g->services.world, player, &target, NULL);
     qa_vec3 direction = qa_vec_normalize(qa_vec_sub(target.origin, origin));
     if (offset != 0)
-        direction = qa_vec_add(qa_vec_scale(q1_boss_cross(direction, qa_v3(0, 0, 1)), offset),
+        direction = qa_vec_add(qa_vec_scale(qa_vec_cross(direction, qa_v3(0, 0, 1)), offset),
                                qa_vec_scale(direction, 1 - fabsf(offset)));
     q1_actor *shot;
     if (!q1_boss_shot(g, source->id, origin, direction,

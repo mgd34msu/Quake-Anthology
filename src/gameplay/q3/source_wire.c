@@ -1422,16 +1422,8 @@ bool q3_wire_damage(qa_q3_game *game, const qa_damage_outcome *outcome, qa_error
     if (!game || !game->wire || !outcome)
         return q3_fail(error, "Q3 damage source wire owner is absent");
     if (outcome->stale) return true;
-    bool armor_mutation = false;
-    float armor_saved = 0;
-    for (size_t i = 0; i < outcome->mutation_count; ++i)
-        if (outcome->mutations[i].kind == QA_MUTATION_ARMOR) {
-            armor_mutation = true;
-            const qa_armor *before = &outcome->mutations[i].value.armor.before;
-            const qa_armor *after = &outcome->mutations[i].value.armor.after;
-            if (before->regular.kind != QA_ARMOR_NONE && after->regular.kind != QA_ARMOR_NONE)
-                armor_saved += (float)before->regular.points - (float)after->regular.points;
-        }
+    bool armor_mutation;
+    float armor_saved = q3_damage_regular_delta(outcome, &armor_mutation);
     if (outcome->result.applied_damage == 0 && !armor_mutation) return true;
     uint32_t target_slot, attacker_slot;
     qa_error ignored = {0};

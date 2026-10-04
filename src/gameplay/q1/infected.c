@@ -93,12 +93,8 @@ static bool retarget(qa_q1_game *g, q1_actor *entity, qa_error *error) {
                        m->species->species == QA_Q1_ZOMBIE ? "monster_zombie" : "monster_demon1"))
         return true;
     qa_builtin_snapshot_frame *snapshot;
-    if (!q1_snapshot_actors(g, &snapshot, error))
+    if (!q1_snapshot_players(g, &snapshot, error))
         return false;
-    if (!qa_builtin_players(&g->services, &snapshot->snapshot, error)) {
-        qa_builtin_snapshot_release(snapshot);
-        return false;
-    }
     qa_actor_id player = {0};
     for (size_t i = 0; i < snapshot->snapshot.count; ++i)
         if (q1_health(g, snapshot->snapshot.ids[i]) > 0) {

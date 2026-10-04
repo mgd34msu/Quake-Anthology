@@ -212,6 +212,7 @@ bool q3_player_event(qa_q3_game *, qa_actor_id, int32_t event, int32_t parameter
 bool q3_add_event(qa_q3_game *, qa_actor_id, int32_t event, int32_t parameter, qa_error *);
 bool q3_source_initial_death(qa_q3_game *, const qa_damage_outcome *, bool *admitted, qa_error *);
 bool q3_source_death_effects(qa_q3_game *, const qa_damage_outcome *, qa_error *);
+float q3_damage_regular_delta(const qa_damage_outcome *, bool *written);
 bool q3_trace(qa_q3_game *, qa_vec3, qa_vec3, qa_actor_id, uint32_t, qa_trace_result *, qa_error *);
 bool q3_damage(qa_q3_game *, qa_actor_id target, qa_actor_id attacker, qa_actor_id inflictor,
                qa_q3_weapon, int32_t method, uint32_t flags, float amount, qa_vec3 direction,

@@ -21,36 +21,6 @@ static bool configure(qa_q1_game_operation *operation, qa_actor_id actor,
     return qa_inventory_configure(inventory, actor, &entry, NULL, NULL, error) &&
         source_current(operation, actor, player, error);
 }
-static double upgraded_capacity(double base, uint32_t flags) {
-    for (; flags; flags &= flags - 1) base += 10;
-    return base;
-}
-static bool mg3_capacities(qa_q1_game_operation *operation, qa_actor_id actor,
-    q1_player *player, qa_error *error) {
-    qa_q1_game *game = operation->game;
-    const qa_q1_mg3_progress *progress = &player->mg3_progress;
-    player->max_health = game->options.deathmatch ? 100 :
-        (float)upgraded_capacity(50, progress->health);
-    qa_combat_state combat;
-    if (!qa_combat_read(game->services.combat, actor, &combat, error) ||
-        !source_current(operation, actor, player, error)) return false;
-    if (combat.health > player->max_health &&
-        (!qa_combat_set_health(game->services.combat, actor, player->max_health, error) ||
-         !source_current(operation, actor, player, error))) return false;
-    const double base[] = {50, 100, 20, 100}, deathmatch[] = {100, 200, 100, 200};
-    for (size_t i = 0; i < sizeof(base) / sizeof(*base); ++i) {
-        uint32_t flags = i == 0 ? player->mg3_progress.shells :
-            i == 1 ? player->mg3_progress.nails :
-            i == 2 ? player->mg3_progress.rockets : player->mg3_progress.cells;
-        double count, capacity = game->options.deathmatch ? deathmatch[i] :
-            upgraded_capacity(base[i], flags);
-        if (!qa_inventory_count_read(game->services.inventory, actor, game->ammo[i], &count, error) ||
-            !source_current(operation, actor, player, error) ||
-            !configure(operation, actor, player, game->ammo[i], fmin(count, capacity),
-                capacity, false, error)) return false;
-    }
-    return true;
-}
 bool qa_q1_source_inventory_initialize(qa_q1_game *game, qa_actor_id actor, qa_error *error) {
     qa_q1_game_operation operation = {0};
     if (!qa_q1_game_operation_begin(game, &operation, error)) return false;
@@ -88,7 +58,9 @@ bool qa_q1_source_inventory_initialize(qa_q1_game *game, qa_actor_id actor, qa_e
             game->options.deathmatch && game->options.teamplay >= 4 ? 1 : 0, 1, false, error);
     }
     if (ok && game->options.program == QA_Q1_MG3)
-        ok = mg3_capacities(&operation, actor, player, error);
+        ok = source_current(&operation, actor, player, error) &&
+            q1_mg3_capacities(game, player, error) &&
+            source_current(&operation, actor, player, error);
     qa_q1_game_operation_end(&operation);
     return ok;
 }

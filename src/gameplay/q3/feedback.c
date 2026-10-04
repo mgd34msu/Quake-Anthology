@@ -1,16 +1,21 @@
 #include "internal.h"
 #include "qa/game_q3_clients.h"
+#include "qa/text.h"
 
-static int32_t feedback_word(double value) {
-    if (!isfinite(value) || value == 0)
-        return 0;
-    double remainder = fmod(trunc(value), 4294967296.0);
-    if (remainder < 0)
-        remainder += 4294967296.0;
-    uint32_t bits = (uint32_t)remainder;
-    int32_t word;
-    memcpy(&word, &bits, sizeof(word));
-    return word;
+float q3_damage_regular_delta(const qa_damage_outcome *outcome, bool *written) {
+    *written = false;
+    float delta = 0;
+    for (size_t i = 0; i < outcome->mutation_count; ++i) {
+        const qa_damage_mutation *mutation = &outcome->mutations[i];
+        if (mutation->kind != QA_MUTATION_ARMOR)
+            continue;
+        *written = true;
+        if (mutation->value.armor.before.regular.kind != QA_ARMOR_NONE &&
+            mutation->value.armor.after.regular.kind != QA_ARMOR_NONE)
+            delta += (float)mutation->value.armor.before.regular.points -
+                     (float)mutation->value.armor.after.regular.points;
+    }
+    return delta;
 }
 static bool feedback_event(qa_q3_game *game, qa_actor_id actor, int32_t event,
                             int32_t parameter, qa_error *error) {
@@ -150,7 +155,7 @@ static bool player_end_frame(qa_q3_game *game, qa_actor_id actor, int32_t water_
             return true;
         player = &entry->state.player;
     }
-    float count = fminf(255, (float)feedback_word(
+    float count = fminf(255, (float)qa_number_to_i32(
         (double)player->damage_blood + (double)player->damage_armor));
     if (!dead && count != 0) {
         if (player->damage_from_world) {
@@ -185,7 +190,7 @@ static bool player_end_frame(qa_q3_game *game, qa_actor_id actor, int32_t water_
         player = &entry->state.player;
         if (game->now_ms > player->pain_after && !combat.invulnerable) {
             player->pain_after = q3_add_time(game->now_ms, 700);
-            if (!feedback_event(game, actor, 56, feedback_word(combat.health), error))
+            if (!feedback_event(game, actor, 56, qa_number_to_i32(combat.health), error))
                 return false;
             entry = q3_actor_get(game, actor);
             if (!entry)

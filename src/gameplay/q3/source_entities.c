@@ -21,7 +21,6 @@ void q3_source_state_reset(qa_q3_game *game) {
     memset(game->death_continuations, 0, sizeof(game->death_continuations));
     memset(game->current_origins, 0, sizeof(game->current_origins));
     memset(game->clients, 0, sizeof(game->clients));
-    for (size_t i = 0; i < 3; ++i) game->podium_players[i] = QA_Q3_SOURCE_NONE;
     memset(game->client_actors, 0, sizeof(game->client_actors));
     for (uint32_t i = 0; i < QA_Q3_NATIVE_CLIENTS; ++i) {
         game->client_actors[i] = (q3_actor){.kind = Q3_ACTOR_PLAYER, .alpha = 1};
@@ -210,6 +209,15 @@ int32_t q3_source_team(qa_q3_game *game, qa_actor_id actor) {
     return game->options.hooks.source_team
         ? game->options.hooks.source_team(game->options.hooks.context, actor) : 0;
 }
+static bool source_components_create(qa_q3_game *game, qa_actor_id actor,
+                                      qa_error *error) {
+    const qa_builtin_services *services = &game->options.services;
+    qa_combat_state combat = {.mass = 200, .armor.regular =
+        {.kind = QA_ARMOR_Q3, .protection.q3_protection = 0.66f}};
+    return qa_world_body_create(services->world, actor, &(qa_body_state){0}, error) &&
+        qa_combat_create_actor(services->combat, actor, &combat, error) &&
+        qa_inventory_create_actor(services->inventory, actor, NULL, 0, error);
+}
 bool q3_source_client_body_ensure(qa_q3_game *game, uint32_t slot,
                                  qa_actor_id *out, qa_error *error) {
     if (!game || !out || slot >= game->options.max_clients || game->source_restored)
@@ -222,11 +230,7 @@ bool q3_source_client_body_ensure(qa_q3_game *game, uint32_t slot,
             !qa_session_allocate(game->options.services.session, game->options.owner,
                 definition, true, slot, &actor, error)) return false;
         if (!bind(game, slot, actor, error)) return q3_rollback_spawn(game, actor, error);
-        qa_combat_state combat = {.mass = 200, .armor.regular =
-            {.kind = QA_ARMOR_Q3, .protection.q3_protection = 0.66f}};
-        if (!qa_world_body_create(game->options.services.world, actor, &(qa_body_state){0}, error) ||
-            !qa_combat_create_actor(game->options.services.combat, actor, &combat, error) ||
-            !qa_inventory_create_actor(game->options.services.inventory, actor, NULL, 0, error))
+        if (!source_components_create(game, actor, error))
             return q3_rollback_spawn(game, actor, error);
         game->client_actors[slot].actor = actor;
     } else if (!qa_actors_get(qa_session_actors(game->options.services.session), actor))
@@ -264,11 +268,7 @@ bool q3_source_row_body_ensure(qa_q3_game *game, uint32_t slot,
     game->source_entities[slot] = saved;
     game->source_entities[slot].actor = actor;
     game->source_entities[slot].body_attached = true;
-    qa_combat_state combat = {.mass = 200, .armor.regular =
-        {.kind = QA_ARMOR_Q3, .protection.q3_protection = 0.66f}};
-    if (!qa_world_body_create(game->options.services.world, actor, &(qa_body_state){0}, error) ||
-        !qa_combat_create_actor(game->options.services.combat, actor, &combat, error) ||
-        !qa_inventory_create_actor(game->options.services.inventory, actor, NULL, 0, error) ||
+    if (!source_components_create(game, actor, error) ||
         !q3_wire_entity_ready(game, actor, error))
         return q3_rollback_spawn(game, actor, error);
     *out = actor;
@@ -431,11 +431,7 @@ bool q3_spawn_raw_actor(qa_q3_game *game, qa_string_id definition,
         if (!qa_session_allocate(game->options.services.session, game->options.owner,
                 definition, true, slot, &actor, error)) return false;
         if (!bind(game, slot, actor, error)) return q3_rollback_spawn(game, actor, error);
-        qa_combat_state combat = {.mass = 200, .armor.regular =
-            {.kind = QA_ARMOR_Q3, .protection.q3_protection = 0.66f}};
-        if (!qa_world_body_create(game->options.services.world, actor, &(qa_body_state){0}, error) ||
-            !qa_combat_create_actor(game->options.services.combat, actor, &combat, error) ||
-            !qa_inventory_create_actor(game->options.services.inventory, actor, NULL, 0, error))
+        if (!source_components_create(game, actor, error))
             return q3_rollback_spawn(game, actor, error);
     } else if (!qa_actors_get(qa_session_actors(game->options.services.session), actor) ||
                game->source_numbers[actor.slot] != slot)

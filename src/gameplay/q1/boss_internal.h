@@ -46,9 +46,6 @@ bool q1_final_pain(qa_q1_game *, q1_actor *, qa_error *);
 bool q1_final_map_spawn(qa_q1_game *, q1_actor *, bool *, qa_error *);
 bool q1_final_teleport(qa_q1_game *, bool, qa_error *);
 
-static inline qa_vec3 q1_boss_cross(qa_vec3 a, qa_vec3 b) {
-    return qa_v3(a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x);
-}
 static inline float q1_boss_flat_dot(qa_vec3 a, qa_vec3 b) {
     a.z = b.z = 0;
     return qa_vec_dot(qa_vec_normalize(a), qa_vec_normalize(b));

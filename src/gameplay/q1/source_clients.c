@@ -1,7 +1,7 @@
 #include "maps/internal.h"
 #include "qa/game_q1_bots.h"
 #include <stdio.h>
-#include <ctype.h>
+#include "qa/text.h"
 
 void q1_source_client_clear(q1_player *player) {
     free(player->source_info);player->source_info=NULL;player->source_info_count=0;
@@ -17,52 +17,12 @@ static const char *info(const qa_q1_game *game,const q1_player *player,const cha
             return qa_strings_cstr(strings,player->source_info[i].value);
     return NULL;
 }
-static size_t number_space(const unsigned char *text,size_t length) {
-    if(!length) return 0;
-    if(text[0]==' ' || (text[0]>=9 && text[0]<=13)) return 1;
-    if(length>=2 && text[0]==0xc2 && text[1]==0xa0) return 2;
-    if(length<3) return 0;
-    if(text[0]==0xe1 && text[1]==0x9a && text[2]==0x80) return 3;
-    if(text[0]==0xe2 && text[1]==0x80 &&
-       ((text[2]>=0x80 && text[2]<=0x8a) || text[2]==0xa8 || text[2]==0xa9 || text[2]==0xaf)) return 3;
-    if(text[0]==0xe2 && text[1]==0x81 && text[2]==0x9f) return 3;
-    if(text[0]==0xe3 && text[1]==0x80 && text[2]==0x80) return 3;
-    if(text[0]==0xef && text[1]==0xbb && text[2]==0xbf) return 3;
-    return 0;
-}
 static uint8_t color(const char *text) {
-    if(!text || !*text) return 0;
-    size_t length=strlen(text);
-    size_t width;
-    while((width=number_space((const unsigned char *)text,length))!=0) {text+=width;length-=width;}
-    size_t end=0;
-    for(size_t offset=0;offset<length;) {
-        width=number_space((const unsigned char *)text+offset,length-offset);
-        if(width) offset+=width;
-        else {++offset;end=offset;}
-    }
-    length=end;
-    if(!length) return 0;
-    double value=0;
-    if(length>2 && text[0]=='0' && (text[1]=='x' || text[1]=='X' || text[1]=='b' || text[1]=='B' || text[1]=='o' || text[1]=='O')) {
-        unsigned base=text[1]=='b' || text[1]=='B'?2:text[1]=='o' || text[1]=='O'?8:16;
-        for(size_t i=2;i<length;++i) {
-            unsigned char byte=(unsigned char)text[i];unsigned digit;
-            if(byte>='0' && byte<='9') digit=byte-'0';
-            else if(byte>='a' && byte<='f') digit=byte-'a'+10;
-            else if(byte>='A' && byte<='F') digit=byte-'A'+10;
-            else return 0;
-            if(digit>=base) return 0;
-            value=value*base+digit;
-        }
-    } else {
-        for(size_t i=0;i<length;++i)
-            if(!isdigit((unsigned char)text[i]) && text[i]!='.' && text[i]!='e' && text[i]!='E' && text[i]!='+' && text[i]!='-') return 0;
-        char *parsed_end;value=strtod(text,&parsed_end);
-        if(parsed_end==text || (size_t)(parsed_end-text)!=length) return 0;
-    }
-    if(!isfinite(value)) return 0;
-    return value<=0?0:value>=13?13:(uint8_t)trunc(value);
+    if (!text) return 0;
+    double value;
+    if (!qa_parse_ecmascript_number((qa_bytes){(const uint8_t *)text, strlen(text)},
+            &value, NULL) || !isfinite(value)) return 0;
+    return value <= 0 ? 0 : value >= 13 ? 13 : (uint8_t)trunc(value);
 }
 bool qa_q1_source_client_info(const qa_q1_game *game,qa_actor_id actor,const char *key,const char **out) {
     const q1_player *player=client_const(game,actor);

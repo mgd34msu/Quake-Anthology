@@ -516,6 +516,29 @@ bool qa_q3_spawn_item(qa_q3_game *game, const qa_q3_item_spawn *input, qa_actor_
     --game->observation_depth;
     return okay;
 }
+static qa_pickup_offer item_offer(const qa_q3_game *game, const q3_actor *entry,
+                                  qa_actor_id recipient) {
+    uint32_t index = entry->state.item.spawn.item_index;
+    const qa_q3_item *item = &items[index];
+    qa_pickup_resource resource = {0};
+    if (item->kind == QA_Q3_ITEM_WEAPON || item->kind == QA_Q3_ITEM_AMMO)
+        resource = (qa_pickup_resource){.kind = QA_PICKUP_INVENTORY, .item = game->item_ids[index]};
+    else if (item->kind == QA_Q3_ITEM_ARMOR)
+        resource = (qa_pickup_resource){.kind = QA_PICKUP_PROTECTION,
+                                        .channel = QA_PROTECTION_REGULAR};
+    return (qa_pickup_offer){.pickup = entry->actor,
+                             .recipient = recipient,
+                             .source = game->options.owner,
+                             .item = game->item_ids[index],
+                             .default_resource = resource,
+                             .dropped = entry->state.item.spawn.dropped,
+                             .override_count = entry->state.item.spawn.count != 0,
+                             .count = entry->state.item.spawn.count,
+                             .time_ns = (uint64_t)(uint32_t)game->now_ms * UINT64_C(1000000),
+                             .grant = item->kind == QA_Q3_ITEM_TEAM ? QA_PICKUP_MAP_COUPLED
+                                      : resource.kind               ? QA_PICKUP_RESOURCE_GRANT
+                                                                    : QA_PICKUP_SOURCE_EFFECT};
+}
 static bool item_observation(void *opaque,qa_actor_id pickup,qa_actor_id recipient,
                               qa_pickup_offer *offer,float *utility,bool *available,qa_error *error) {
     qa_q3_game *game=opaque;*utility=0;*available=false;
@@ -525,15 +548,7 @@ static bool item_observation(void *opaque,qa_actor_id pickup,qa_actor_id recipie
     if(!entry || entry->kind!=Q3_ACTOR_ITEM || entry->state.item.hidden) goto done;
     qa_q3_item_spawn spawn=entry->state.item.spawn;
     const qa_q3_item *item=&items[spawn.item_index];
-    qa_pickup_resource resource={0};
-    if(item->kind==QA_Q3_ITEM_WEAPON || item->kind==QA_Q3_ITEM_AMMO)
-        resource=(qa_pickup_resource){.kind=QA_PICKUP_INVENTORY,.item=game->item_ids[spawn.item_index]};
-    else if(item->kind==QA_Q3_ITEM_ARMOR)
-        resource=(qa_pickup_resource){.kind=QA_PICKUP_PROTECTION,.channel=QA_PROTECTION_REGULAR};
-    *offer=(qa_pickup_offer){.pickup=pickup,.recipient=recipient,.source=game->options.owner,
-        .item=game->item_ids[spawn.item_index],.default_resource=resource,.dropped=spawn.dropped,
-        .override_count=spawn.count!=0,.count=spawn.count,.time_ns=(uint64_t)(uint32_t)game->now_ms*1000000,
-        .grant=item->kind==QA_Q3_ITEM_TEAM?QA_PICKUP_MAP_COUPLED:resource.kind?QA_PICKUP_RESOURCE_GRANT:QA_PICKUP_SOURCE_EFFECT};
+    *offer = item_offer(game, entry, recipient);
     qa_combat_state combat;
     if(!qa_combat_read(game->options.services.combat,recipient,&combat,error)) {ok=false;goto done;}
     if(combat.health<=0) goto done;
@@ -1056,26 +1071,8 @@ bool q3_item_touch(qa_q3_game *game, qa_actor_id item_actor, qa_actor_id recipie
     if (!entry || entry->kind != Q3_ACTOR_ITEM ||
         (!allow_hidden && entry->state.item.hidden))
         return true;
-    uint32_t index = entry->state.item.spawn.item_index;
-    const qa_q3_item *item = &items[index];
-    qa_pickup_resource resource = {0};
-    if (item->kind == QA_Q3_ITEM_WEAPON || item->kind == QA_Q3_ITEM_AMMO)
-        resource = (qa_pickup_resource){.kind = QA_PICKUP_INVENTORY, .item = game->item_ids[index]};
-    else if (item->kind == QA_Q3_ITEM_ARMOR)
-        resource =
-            (qa_pickup_resource){.kind = QA_PICKUP_PROTECTION, .channel = QA_PROTECTION_REGULAR};
-    qa_pickup_offer offer = {.recipient = recipient,
-                             .pickup = item_actor,
-                             .source = game->options.owner,
-                             .item = game->item_ids[index],
-                             .default_resource = resource,
-                             .dropped = entry->state.item.spawn.dropped,
-                             .override_count = entry->state.item.spawn.count != 0,
-                             .count = entry->state.item.spawn.count,
-                             .time_ns = (uint64_t)(uint32_t)game->now_ms * UINT64_C(1000000),
-                             .grant = item->kind == QA_Q3_ITEM_TEAM ? QA_PICKUP_MAP_COUPLED
-                                      : resource.kind               ? QA_PICKUP_RESOURCE_GRANT
-                                                                    : QA_PICKUP_SOURCE_EFFECT};
+    const qa_q3_item *item = &items[entry->state.item.spawn.item_index];
+    qa_pickup_offer offer = item_offer(game, entry, recipient);
     pickup_context context = {game, item_actor, respawn_seconds(game, item), false,
                               allow_hidden, false};
     qa_pickup_continuation continuation = {.context = &context,

@@ -148,12 +148,12 @@ static bool finale_begin(qa_q1_game *g, q1_actor *oldone, qa_error *error) {
     if (!qa_q1_level_cutscene(g->maps->options.level, start, oldone->state.monster.enemy,
                               g->maps->finale.exit_after, error))
         return false;
-    qa_builtin_actor_snapshot players = {0};
-    if (!qa_builtin_players(&g->services, &players, error))
+    qa_builtin_snapshot_frame *players;
+    if (!q1_snapshot_players(g, &players, error))
         return false;
     bool ok = true;
-    for (size_t i = 0; i < players.count && ok; ++i) {
-        qa_actor_id actor = players.ids[i];
+    for (size_t i = 0; i < players->snapshot.count && ok; ++i) {
+        qa_actor_id actor = players->snapshot.ids[i];
         if (!q1_alive(g, actor))
             continue;
         qa_body_state body;
@@ -179,7 +179,7 @@ static bool finale_begin(qa_q1_game *g, q1_actor *oldone, qa_error *error) {
         traits.can_take_damage = false;
         ok = qa_combat_set_traits(g->services.combat, actor, &traits, error);
     }
-    qa_builtin_snapshot_free(&players);
+    qa_builtin_snapshot_release(players);
     if (!ok || !q1_map_finale_emit(g, 1, "", error))
         return false;
     const char *map =
