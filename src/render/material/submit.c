@@ -1093,14 +1093,23 @@ static bool source_collect(const qa_material *original, const qa_scene_mesh *mes
         row->context.source_surface = source->sky.source_surface;
         row->context.source_surface_context = source->sky.source_surface_context;
     }
-    /* Shadow and effect producers may replace their frame slices after submit. */
-    qa_scene_vertex *vertices = context->source_model_pose ? NULL :
-        frame_array(frame, mesh->vertex_count, sizeof(*vertices), alignof(qa_scene_vertex), error);
-    uint32_t *indices = frame_array(frame, mesh->index_count, sizeof(*indices), alignof(uint32_t), error);
-    if ((!context->source_model_pose && mesh->vertex_count && !vertices) || (mesh->index_count && !indices)) return false;
-    if (!context->source_model_pose && mesh->vertex_count) memcpy(vertices, mesh->vertices, mesh->vertex_count * sizeof(*vertices));
-    if (mesh->index_count) memcpy(indices, mesh->indices, mesh->index_count * sizeof(*indices));
-    row->mesh.vertices = vertices; row->mesh.indices = indices;
+    qa_scene_geometry_view retained = {0};
+    bool immutable = !context->source_model_pose && mesh->identity && mesh->revision &&
+        qa_scene_geometry_read(mesh->geometry, &retained) &&
+        retained.vertices == mesh->vertices && retained.indices == mesh->indices &&
+        mesh->vertex_count <= retained.vertex_count && mesh->index_count <= retained.index_count;
+    if (immutable) {
+        if (!qa_scene_frame_geometry(frame, mesh->geometry, error)) return false;
+    } else {
+        /* Shadow and effect producers may replace their frame slices after submit. */
+        qa_scene_vertex *vertices = context->source_model_pose ? NULL :
+            frame_array(frame, mesh->vertex_count, sizeof(*vertices), alignof(qa_scene_vertex), error);
+        uint32_t *indices = frame_array(frame, mesh->index_count, sizeof(*indices), alignof(uint32_t), error);
+        if ((!context->source_model_pose && mesh->vertex_count && !vertices) || (mesh->index_count && !indices)) return false;
+        if (!context->source_model_pose && mesh->vertex_count) memcpy(vertices, mesh->vertices, mesh->vertex_count * sizeof(*vertices));
+        if (mesh->index_count) memcpy(indices, mesh->indices, mesh->index_count * sizeof(*indices));
+        row->mesh.vertices = vertices; row->mesh.indices = indices;
+    }
     if (context->light_count) {
         qa_scene_light *lights = frame_array(frame, context->light_count, sizeof(*lights), alignof(qa_scene_light), error);
         if (!lights) return false;
