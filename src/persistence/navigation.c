@@ -20,13 +20,11 @@ static bool fields(qa_source_save_io *io, qa_nav_checkpoint *state,
     uint32_t format = (uint32_t)state->map.format;
     if (!qa_source_save_string(io, &state->map.name) ||
         !qa_source_save_u32(io, &format) ||
-        !qa_source_save_bytes(io, state->map.digest, sizeof(state->map.digest)) ||
         !qa_source_save_u64(io, &state->generation) ||
         !qa_source_save_u64(io, &state->world_revision))
         return false;
     state->map.format = (qa_bsp_format)format;
-    if (state->map.name != graph->map.name || state->map.format != graph->map.format ||
-        memcmp(state->map.digest, graph->map.digest, sizeof(state->map.digest)))
+    if (state->map.name != graph->map.name || state->map.format != graph->map.format)
         return persistence_fail(io->error, QA_ERROR_FORMAT, "Navigation continuation map identity differs");
     size_t areas = graph->node_count, edges = graph->edge_count;
     if (areas > SIZE_MAX / sizeof(*state->enabled))

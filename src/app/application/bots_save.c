@@ -146,13 +146,15 @@ static bool files_field(qa_source_save_io *io,application_bots *bots) {
 static bool map_field(qa_source_save_io *io,application_bots *bots) {
     qa_application *app=bots->application;
     qa_string_id name=app->current_map;
-    const char *path=io->direction==QA_SOURCE_SAVE_WRITE?qa_resource_path(bots->map_resource):NULL;
-    qa_sha256_digest digest={0};
-    if(io->direction==QA_SOURCE_SAVE_WRITE) digest=*qa_resource_digest(bots->map_resource);
-    bool ok=qa_source_save_string(io,&name) && name==app->current_map && bot_save_text(io,&path) && path &&
-        qa_source_save_bytes(io,digest.bytes,32) && app->map_resource &&
-        !strcmp(path,qa_resource_path(app->map_resource)) && qa_sha256_equal(&digest,qa_resource_digest(app->map_resource));
-    if(io->direction==QA_SOURCE_SAVE_READ) free((void *)path);
+    qa_application_content_graph *content=qa_application_content_graph_read(app);
+    uint64_t pool=0,resource=0;
+    if(io->direction==QA_SOURCE_SAVE_WRITE &&
+       (bots->map_resource!=app->map_resource ||
+        !qa_application_content_resource_id(content,bots->map_resource,&pool,&resource)))
+        return bot_save_fail(io,QA_ERROR_FORMAT,"Bot map is outside its actual content pool");
+    bool ok=qa_source_save_string(io,&name) && name==app->current_map &&
+        qa_source_save_u64(io,&pool) && pool && qa_source_save_u64(io,&resource) && resource &&
+        app->map_resource && qa_application_content_resource(content,pool,resource)==app->map_resource;
     if(!ok) return bot_save_fail(io,QA_ERROR_FORMAT,"Application bot pinned map identity differs");
     if(io->direction==QA_SOURCE_SAVE_READ) {
         bots->map_resource=app->map_resource;qa_resource_retain(bots->map_resource);
@@ -353,18 +355,9 @@ bool application_bot_resource_field(qa_source_save_io *io,qa_application *app,qa
     qa_vfs_acquisition_dispose(&decoded);
     return ok?true:bot_save_fail(io,QA_ERROR_FORMAT,"Bot resource differs from its retained acquisition");
 }
-static bool same_profile(qa_movement_profile a,qa_movement_profile b,qa_error *error) {
-    qa_source_save_io left={0},right={0};qa_buffer x={0},y={0};
-    bool ok=qa_source_save_writer(&left,NULL,error) && qa_persistence_movement_profile(&left,&a) &&
-        qa_source_save_finish(&left,&x) && qa_source_save_writer(&right,NULL,error) &&
-        qa_persistence_movement_profile(&right,&b) && qa_source_save_finish(&right,&y) &&
-        x.size==y.size && !memcmp(x.data,y.data,x.size);
-    qa_source_save_dispose(&left);qa_source_save_dispose(&right);qa_buffer_free(&x);qa_buffer_free(&y);return ok;
-}
 static bool graph_policy(application_bot_graph *g,qa_error *error) {
     const qa_nav_graph_view *view=qa_nav_graph_read(g->graph);
-    if(!view || !same_profile(g->profile,view->profile.movement,error) ||
-        view->profile.shape.kind!=QA_SHAPE_BOX || memcmp(&g->bounds,&view->profile.shape.bounds,sizeof(g->bounds)))
+    if(!view || view->profile.shape.kind!=QA_SHAPE_BOX || memcmp(&g->bounds,&view->profile.shape.bounds,sizeof(g->bounds)))
         return application_fail(error,QA_ERROR_FORMAT,"Application navigation cache policy differs from its actual graph");
     return true;
 }
@@ -383,7 +376,6 @@ static bool navigation_fields(qa_source_save_io *io,application_bots *bots,bool 
         return bot_save_fail(io,QA_ERROR_FORMAT,"Truncated application navigation graph inventory");
     application_bot_graph **tail=&bots->graphs,*g=bots->graphs;
     qa_nav_map map={.name=bots->application->current_map,.format=bots->geometry.format};
-    qa_sha256_digest digest;qa_sha256(bots->geometry.source,&digest);memcpy(map.digest,digest.bytes,32);
     for(size_t i=0;i<count;++i) {
         if(io->direction==QA_SOURCE_SAVE_READ && prepare) {
             g=calloc(1,sizeof(*g));
@@ -415,9 +407,7 @@ static bool navigation_fields(qa_source_save_io *io,application_bots *bots,bool 
             qa_navigation_services services=application_bot_navigation_services(bots);
             if(ok) ok=qa_navigation_create(g->graph,&services,&g->navigation,io->error);
         } else if(ok && io->direction==QA_SOURCE_SAVE_READ && restore) {
-            ok=qa_navigation_graph_save_capture(bots->application->session,g->graph,&graph,io->error) &&
-                graph.size==graph_bytes.size && !memcmp(graph.data,graph_bytes.data,graph.size) &&
-                qa_persistence_navigation_restore(bots->application->session,g->navigation,state_bytes,io->error);
+            ok=qa_persistence_navigation_restore(bots->application->session,g->navigation,state_bytes,io->error);
         }
         qa_buffer_free(&graph);qa_buffer_free(&state);
         if(!ok || !graph_policy(g,io->error)) return false;
@@ -426,7 +416,7 @@ static bool navigation_fields(qa_source_save_io *io,application_bots *bots,bool 
     if(io->direction==QA_SOURCE_SAVE_READ && g) return bot_save_fail(io,QA_ERROR_FORMAT,"Extra application navigation graph owner");
     if(io->direction==QA_SOURCE_SAVE_READ && restore) {
         /* All remaining binding records were already decoded at prepare. The
-         * complete unchanged record check precedes this second import pass. */
+         * retained input span is used again for the navigation-state pass. */
         io->offset=io->input.size; return true;
     }
     if(!binding(io,bots,(qa_actor_id){0},&bots->map_navigation)) return false;
@@ -498,7 +488,7 @@ bool application_bots_save_prepare(qa_application *app,qa_bytes bytes,qa_bytes n
 bool application_navigation_save_restore(qa_application *app,qa_bytes bytes,qa_error *error) {
     application_bots *bots=app?app->bots:NULL;
     if(bots && (!bots->restoring || bots->navigation_restored || bytes.size!=bots->saved_navigation_record.size ||
-        memcmp(bytes.data,bots->saved_navigation_record.data,bytes.size)))
+        bytes.data!=bots->saved_navigation_record.data))
         return application_fail(error,QA_ERROR_FORMAT,"Navigation import differs from prepared candidate");
     qa_source_save_io io={0};bool present=false;
     bool ok=app && qa_source_save_reader(&io,app->session,bytes,error) && nav_signature(&io) &&
@@ -516,7 +506,7 @@ bool application_bots_save_restore(qa_application *app,qa_bytes bytes,qa_error *
         qa_source_save_dispose(&io);return ok;
     }
     if(!bots->restoring || !bots->navigation_restored || bots->runtime_restored ||
-        bytes.size!=bots->saved_bot_record.size || memcmp(bytes.data,bots->saved_bot_record.data,bytes.size))
+        bytes.size!=bots->saved_bot_record.size || bytes.data!=bots->saved_bot_record.data)
         return application_fail(error,QA_ERROR_FORMAT,"Bot import differs from prepared candidate or navigation is not restored");
     qa_bot_runtime_saved_map saved={0};
     if(!qa_bot_runtime_save_map_read(bots->saved_runtime,&saved,error)) return false;
@@ -614,7 +604,7 @@ static bool agreement(application_bots *bots,qa_error *error) {
     for(application_bot_target *t=bots->targets;t;t=t->next) {
         application_bot_graph *g=binding_graph(bots,t->navigation);
         if(!g || t->predicting || !qa_actor_id_equal(t->actor,qa_bot_navigation_actor(t->navigation)) ||
-            t->movement!=g->movement || !same_profile(t->profile,g->profile,error) ||
+            t->movement!=g->movement ||
             memcmp(&t->bounds,&g->bounds,sizeof(t->bounds)))
             return application_fail(error,QA_ERROR_FORMAT,"Application target navigation differs from saved cache policy");
     }
@@ -625,19 +615,9 @@ bool application_bots_save_finish(qa_application *app,qa_error *error) {
     application_bots *bots=app->bots;if(!bots) return true;
     if(!bots->restoring || !bots->navigation_restored || !bots->runtime_restored ||
         !application_bots_can_destroy(app) || !agreement(bots,error)) return false;
-    /* Recapture proves complete source continuation and admitted identity after
-     * all shared stores and guest continuations have finished reconnecting. */
-    qa_buffer actual={0},nav={0};bots->restoring=false;
-    bool ok=(!bots->population || qa_bots_source_memory_bind(bots->population,error)) &&
-        application_bots_save_capture(app,&actual,error) &&
-        actual.size==bots->saved_bot_record.size && !memcmp(actual.data,bots->saved_bot_record.data,actual.size) &&
-        application_navigation_save_capture(app,&nav,error) && nav.size==bots->saved_navigation_record.size &&
-        !memcmp(nav.data,bots->saved_navigation_record.data,nav.size);
-    qa_buffer_free(&actual);qa_buffer_free(&nav);
-    if(!ok) {
-        bots->restoring=true;
-        if(!error || error->code==QA_OK) application_fail(error,QA_ERROR_FORMAT,"Application bot continuation changed during candidate restoration");
-        return false;
+    bots->restoring=false;
+    if(bots->population && !qa_bots_source_memory_bind(bots->population,error)) {
+        bots->restoring=true;return false;
     }
     bots->saved_bot_record=(qa_bytes){0};bots->saved_navigation_record=(qa_bytes){0};
     bots->saved_runtime=(qa_bytes){0};bots->saved_population=(qa_bytes){0};

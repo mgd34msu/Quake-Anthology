@@ -34,7 +34,6 @@ static bool route_fields(qa_source_save_io *io,bot_move_record *record) {
     if(!record->route.found) return true;
     uint32_t format=(uint32_t)record->route_map.format;
     if(!qa_source_save_u32(io,&format) ||
-       !qa_source_save_bytes(io,record->route_map.digest,sizeof(record->route_map.digest)) ||
        !qa_source_save_u32(io,&record->route_goal) ||
        !qa_source_save_u32(io,&record->route_flags) ||
        !qa_source_save_u32(io,&record->route_move_flags) ||

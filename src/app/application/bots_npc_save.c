@@ -169,10 +169,14 @@ static bool fields(qa_source_save_io *io,application_provider *source,applicatio
     if(io->direction==QA_SOURCE_SAVE_READ && !application_npc_owner_create(source,true,value,io->error)) return false;
     application_bots_npc *owner=*value;
     if(!owner || owner->busy || !application_npc_current(owner,io->error)) return false;
-    uint8_t digest[32];memcpy(digest,owner->map.digest,32);
-    if(!qa_source_save_bytes(io,digest,32) || memcmp(digest,owner->map.digest,32))
-        return fail(io,"Saved monster navigation map differs");
     qa_application_content_graph *content=qa_application_content_graph_read(source->application);
+    uint64_t pool=0,resource=0;
+    if(io->direction==QA_SOURCE_SAVE_WRITE &&
+       !qa_application_content_resource_id(content,owner->map_resource,&pool,&resource))
+        return fail(io,"Monster map is outside its actual content pool");
+    if(!qa_source_save_u64(io,&pool) || !pool || !qa_source_save_u64(io,&resource) || !resource ||
+       qa_application_content_resource(content,pool,resource)!=owner->map_resource)
+        return fail(io,"Saved monster map resource differs");
     uint64_t view=io->direction==QA_SOURCE_SAVE_WRITE?qa_application_content_view_id(content,owner->files):0;
     if(!qa_source_save_u64(io,&view) ||
        (io->direction==QA_SOURCE_SAVE_WRITE && owner->files && !view))

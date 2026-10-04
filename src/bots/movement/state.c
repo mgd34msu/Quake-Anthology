@@ -32,7 +32,6 @@ bool bot_move_route_bind(bot_move_record *record,qa_bot_navigation *navigation,q
     qa_navigation *runtime=qa_bot_navigation_runtime(navigation);
     const qa_nav_graph_view *graph=qa_navigation_graph(runtime);
     if(!graph || graph->map.format!=record->route_map.format ||
-       memcmp(graph->map.digest,record->route_map.digest,sizeof(graph->map.digest)) ||
        !record->route.node_count || !record->route.edge_count ||
        record->route.node_count!=record->route.edge_count+1 ||
        record->route_cursor>record->route.edge_count ||

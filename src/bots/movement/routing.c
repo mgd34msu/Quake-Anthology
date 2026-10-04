@@ -193,7 +193,6 @@ static bool retained_route(bot_travel *travel,route_filter *filter,bool *valid,q
        state->route_flags!=filter->travel_flags || state->route_move_flags!=filter->move_flags ||
        !qa_actor_id_equal(state->route_actor,travel->actor) ||
        state->route_map.format!=travel->graph->map.format ||
-       memcmp(state->route_map.digest,travel->graph->map.digest,sizeof(state->route_map.digest)) ||
        (state->route.graph && qa_nav_graph_read(state->route.graph)!=travel->graph)) return true;
     size_t cursor=state->route_cursor;
     for(size_t i=cursor+1;i<state->route.node_count;++i)

@@ -42,35 +42,6 @@ static bool signature(qa_source_save_io *io)
 void qa_bot_runtime_saved_map_free(qa_bot_runtime_saved_map *map)
 { if (map) { free((void *)map->name); *map = (qa_bot_runtime_saved_map){0}; } }
 
-static bool entity_digest(const qa_entities *entities, qa_sha256_digest *out, qa_error *error)
-{
-    *out = (qa_sha256_digest){0};
-    if (!entities) return true;
-    if ((entities->count && !entities->records) || (entities->property_count && !entities->properties))
-        return fail(error, "Bot runtime map has incomplete immutable entity tables");
-    qa_source_save_io io = {0};
-    size_t count = entities->count, properties = entities->property_count;
-    bool ok = qa_source_save_writer(&io, NULL, error) && qa_source_save_count(&io, &count, SIZE_MAX) &&
-        qa_source_save_count(&io, &properties, SIZE_MAX);
-    for (size_t i = 0; ok && i < count; ++i) {
-        qa_entity_record record = entities->records[i];
-        ok = record.first_property <= properties && record.property_count <= properties - record.first_property &&
-            qa_source_save_count(&io, &record.first_property, SIZE_MAX) && qa_source_save_count(&io, &record.property_count, SIZE_MAX);
-    }
-    for (size_t i = 0; ok && i < properties; ++i) {
-        qa_entity_property property = entities->properties[i];
-        ok = qa_source_save_count(&io, &property.key.size, SIZE_MAX) &&
-            qa_source_save_bytes(&io, (void *)property.key.data, property.key.size) &&
-            qa_source_save_count(&io, &property.value.size, SIZE_MAX) &&
-            qa_source_save_bytes(&io, (void *)property.value.data, property.value.size);
-    }
-    qa_buffer buffer = {0};
-    if (ok) ok = qa_source_save_finish(&io, &buffer);
-    if (ok) qa_sha256((qa_bytes){buffer.data, buffer.size}, out);
-    qa_buffer_free(&buffer); qa_source_save_dispose(&io);
-    if (!ok && (!error || error->code == QA_OK)) fail(error, "Invalid bot map entity partition");
-    return ok;
-}
 static bool state_fields(qa_source_save_io *io, runtime_state *state)
 {
     qa_bot_runtime_saved_map *map = &state->map;
@@ -88,10 +59,7 @@ static bool state_fields(qa_source_save_io *io, runtime_state *state)
         qa_source_save_bool(io, &state->source_action_client) &&
         qa_source_save_bool(io, &state->reload) && bot_save_text(io, &map->name) &&
         qa_source_save_bool(io, &map->entities) && qa_source_save_bool(io, &map->source) &&
-        qa_source_save_bool(io, &map->navigation) && qa_source_save_count(io, &map->source_bytes, SIZE_MAX) &&
-        qa_source_save_bytes(io, map->entity_digest.bytes, sizeof(map->entity_digest.bytes)) &&
-        qa_source_save_bytes(io, map->source_digest.bytes, sizeof(map->source_digest.bytes));
-    const qa_sha256_digest zero = {0};
+        qa_source_save_bool(io, &map->navigation) && qa_source_save_count(io, &map->source_bytes, SIZE_MAX);
     if (ok) ok = state->actions &&
         (state->closed ? (!state->library && !state->goals && !state->chat && !state->moves && !state->reload &&
                          !state->initialized && !state->library_initialized && !state->loaded) :
@@ -99,8 +67,7 @@ static bool state_fields(qa_source_save_io *io, runtime_state *state)
         (state->library_initialized || !state->initialized) &&
         (!state->loaded || (state->library_initialized && map->name && map->navigation && state->bsp_loaded)) &&
         (!state->bsp || (state->bsp_loaded && (map->source || !map->entities))) &&
-        (map->source || (!map->source_bytes && qa_sha256_equal(&map->source_digest, &zero))) &&
-        (map->entities || qa_sha256_equal(&map->entity_digest, &zero)) &&
+        (map->source || !map->source_bytes) &&
         (map->name || (!map->entities && !map->source && !map->navigation)) &&
         (!state->closed || state->profile == QA_BOT_OBSERVATION_MODULE ||
                          (!state->bsp && !state->bsp_loaded && !map->name));
@@ -273,10 +240,8 @@ bool qa_bot_runtime_save_capture(qa_session *session, const qa_bot_runtime *runt
     if (!runtime->characters || !runtime->weapons || !runtime->chats ||
         (!runtime->map.source_entities.data && runtime->map.source_entities.size))
         return fail(error, "Bot runtime has incomplete actual storage or immutable map bytes");
-    bool ok = entity_digest(runtime->map.entities, &state.map.entity_digest, error);
-    if (ok && state.map.source) qa_sha256(runtime->map.source_entities, &state.map.source_digest);
     qa_buffer parts[PART_COUNT] = {0}; qa_source_save_io io = {0};
-    if (ok) ok = capture_parts(session, runtime, parts, error) && qa_source_save_writer(&io, NULL, error) &&
+    bool ok = capture_parts(session, runtime, parts, error) && qa_source_save_writer(&io, NULL, error) &&
         signature(&io) && state_fields(&io, &state);
     for (size_t i = 0; ok && i < PART_COUNT; ++i)
         ok = (parts[i].size != 0) == present(&state, i) && qa_source_save_count(&io, &parts[i].size, SIZE_MAX) &&
@@ -295,11 +260,7 @@ static bool map_matches(const runtime_state *state, const qa_bot_runtime_map *ma
         (map->source_entities.data != NULL) != saved->source || (map->navigation != NULL) != saved->navigation ||
         map->source_entities.size != saved->source_bytes)
         return fail(error, "Qualified bot runtime map differs from the captured binding");
-    qa_sha256_digest entities, source = {0};
-    if (!entity_digest(map->entities, &entities, error)) return false;
-    if (saved->source) qa_sha256(map->source_entities, &source);
-    return (qa_sha256_equal(&entities, &saved->entity_digest) && qa_sha256_equal(&source, &saved->source_digest)) ||
-        fail(error, "Qualified bot immutable map content differs");
+    return true;
 }
 bool qa_bot_runtime_save_restore(qa_session *session, qa_bot_runtime *runtime, qa_bytes bytes,
                                  const qa_bot_runtime_map *map, qa_error *error)

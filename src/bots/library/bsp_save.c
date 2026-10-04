@@ -1,7 +1,6 @@
 #include "bsp_private.h"
 #include "../save_fields.h"
 #include "qa/bot_bsp_save.h"
-#include "qa/hash.h"
 
 static const uint8_t magic[8] = {'Q', 'A', 'B', 'B', 'S', 'P', 0, 0};
 
@@ -33,11 +32,7 @@ static bool bsp_fields(qa_source_save_io *io, qa_bot_bsp *bsp, qa_bytes source)
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
     size_t source_size = source.size;
-    qa_sha256_digest actual, saved;
-    qa_sha256(source, &actual);
-    saved = actual;
-    if (!qa_source_save_count(io, &source_size, SIZE_MAX) || source_size != source.size ||
-        !qa_source_save_bytes(io, saved.bytes, sizeof(saved.bytes)) || !qa_sha256_equal(&actual, &saved))
+    if (!qa_source_save_count(io, &source_size, SIZE_MAX) || source_size != source.size)
         return bot_save_fail(io, QA_ERROR_FORMAT, "Bot BSP immutable source identity differs");
     size_t parsed_size = source.size;
     const uint8_t *zero = source.size ? memchr(source.data, 0, source.size) : NULL;

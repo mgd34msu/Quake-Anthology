@@ -1,6 +1,5 @@
 #include "bots_npc_private.h"
 #include "qa/game_q1_bots.h"
-#include "qa/hash.h"
 #include "qa/binary.h"
 #include "qa/persistence_navigation.h"
 #include <math.h>
@@ -214,8 +213,6 @@ bool application_npc_owner_create(application_provider *source,bool prepared,app
     if(okay) {
         owner->movement=qa_movement_profile_default(options.quakeworld?QA_MOVEMENT_QUAKEWORLD:QA_MOVEMENT_NETQUAKE);
         owner->map=(qa_nav_map){.name=app->current_map,.format=owner->geometry.format};
-        qa_sha256_digest digest;qa_sha256(owner->geometry.source,&digest);
-        memcpy(owner->map.digest,digest.bytes,32);
     }
     if(!okay) {application_npc_owner_free(owner);return false;}
     *out=owner;return true;

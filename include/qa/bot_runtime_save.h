@@ -2,14 +2,12 @@
 #define QA_BOT_RUNTIME_SAVE_H
 
 #include "qa/bot_runtime.h"
-#include "qa/hash.h"
 #include "qa/session.h"
 
 typedef struct qa_bot_runtime_saved_map {
     const char *name;
     bool entities, source, navigation;
     size_t source_bytes;
-    qa_sha256_digest entity_digest, source_digest;
 } qa_bot_runtime_saved_map;
 
 /* Inspection owns name and validates the complete enclosing record extent.

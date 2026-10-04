@@ -42,7 +42,6 @@ typedef struct qa_nav_origin {
 typedef struct qa_nav_map {
     qa_string_id name;
     qa_bsp_format format;
-    uint8_t digest[32];
 } qa_nav_map;
 typedef struct qa_nav_profile {
     qa_movement_profile movement;

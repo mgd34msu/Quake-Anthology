@@ -603,7 +603,6 @@ static bool navigation_graph(application_bots *bots,application_provider *moveme
             movement_profile->kind==QA_MOVEMENT_NETQUAKE || movement_profile->kind==QA_MOVEMENT_QUAKEWORLD?QA_COLLISION_Q1:QA_COLLISION_Q2,
             .contents_mask=0x2010001,.q1_hull=-1,.curves=true,.player_curve_clip=true};
         qa_nav_map map={.name=application->current_map,.format=bots->geometry.format};
-        qa_sha256_digest digest;qa_sha256(bots->geometry.source,&digest);memcpy(map.digest,digest.bytes,sizeof(map.digest));
         qa_navigation_services services={.context=bots,.world=application->world,.revision=revision,
             .entity=entity,.movement_input=application_bot_movement_input};
         bool found;

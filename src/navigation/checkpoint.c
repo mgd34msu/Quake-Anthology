@@ -45,7 +45,6 @@ bool qa_navigation_restore(qa_navigation *n, const qa_nav_checkpoint *state, qa_
     if (n == NULL || state == NULL ||
         state->map.name != n->graph->view.map.name ||
         state->map.format != n->graph->view.map.format ||
-        memcmp(state->map.digest, n->graph->view.map.digest, sizeof(state->map.digest)) != 0 ||
         (state->enabled_count != 0 && state->enabled == NULL) ||
         (state->blocked_count != 0 && state->blocked == NULL) ||
         (state->admission_count != 0 && state->admissions == NULL)) {

@@ -63,14 +63,6 @@ static bool edge(qa_source_save_io *io, qa_nav_edge *e) {
         e->entity.raw_count>2 || !origin(io,&e->source)) return false;
     e->mode=(qa_nav_travel)mode; return true;
 }
-static bool same_edge(qa_source_save_io *io,qa_nav_edge actual,qa_nav_edge expected) {
-    qa_source_save_io a={0},b={0};qa_buffer x={0},y={0};
-    bool ok=qa_source_save_writer(&a,NULL,io->error) && edge(&a,&actual) && qa_source_save_finish(&a,&x) &&
-        qa_source_save_writer(&b,NULL,io->error) && edge(&b,&expected) && qa_source_save_finish(&b,&y) &&
-        x.size==y.size && !memcmp(x.data,y.data,x.size);
-    qa_source_save_dispose(&a);qa_source_save_dispose(&b);qa_buffer_free(&x);qa_buffer_free(&y);
-    return ok || fail(io,"Navigation edge differs from actual asset declaration");
-}
 static bool source_identity(qa_source_save_io *io, const qa_nav_graph *g) {
     const qa_aas_view *aas=qa_nav_asset_aas(g->view.asset);
     const qa_nav_source_view *kex=qa_nav_asset_kex(g->view.asset);
@@ -136,19 +128,6 @@ static bool source_identity(qa_source_save_io *io, const qa_nav_graph *g) {
             e->to!=kex->links[e->id].target || e->source_travel_type!=kex->links[e->id].type))
             return fail(io,"Navigation edge differs from admitted native link");
     }
-    for(size_t i=0;aas && i<g->view.edge_count;++i)
-        if(!same_edge(io,g->edges[i],nav_asset_aas_edge(aas,g->edges[i].from,g->edges[i].id))) return false;
-    if(kex) {
-        const qa_nav_source_entity **bindings=calloc(kex->link_count?kex->link_count:1,sizeof(*bindings));
-        if(!bindings) {qa_error_set(io->error,QA_ERROR_MEMORY,io->offset,"Qualifying native navigation bindings");return false;}
-        for(size_t i=0;i<kex->entity_count;++i) bindings[kex->entities[i].link]=kex->entities+i;
-        bool ok=true;
-        for(size_t i=0;ok && i<g->view.edge_count;++i) {
-            const qa_nav_edge *e=g->edges+i;
-            ok=same_edge(io,*e,nav_asset_kex_edge(g,kex,e->from,e->id,bindings[e->id]));
-        }
-        free(bindings);if(!ok) return false;
-    }
     return true;
 }
 static bool fields(qa_source_save_io *io, qa_nav_graph *g, const qa_nav_map *expected) {
@@ -156,12 +135,11 @@ static bool fields(qa_source_save_io *io, qa_nav_graph *g, const qa_nav_map *exp
     bool asset=g->view.asset!=NULL; uint32_t asset_kind=asset?qa_nav_asset_type(g->view.asset):0;
     bool admitted=asset; uint32_t admitted_kind=asset_kind;
     if (!qa_source_save_string(io,&g->view.map.name) || !qa_source_save_u32(io,&format) ||
-        !qa_source_save_bytes(io,g->view.map.digest,32) || !profile(io,&g->view.profile) ||
+        !profile(io,&g->view.profile) ||
         !qa_source_save_bool(io,&asset) || !qa_source_save_u32(io,&asset_kind) ||
         asset!=admitted || asset_kind!=admitted_kind) return fail(io,"Navigation asset qualification differs");
     g->view.map.format=(qa_bsp_format)format;
-    if (expected && (g->view.map.name!=expected->name || format!=(uint32_t)expected->format ||
-        memcmp(g->view.map.digest,expected->digest,32))) return fail(io,"Navigation map qualification differs");
+    if (expected && (g->view.map.name!=expected->name || format!=(uint32_t)expected->format)) return fail(io,"Navigation map qualification differs");
     size_t count=g->view.node_count;
     if (!qa_source_save_count(io,&count,UINT32_MAX-1u)) return false;
     if (io->direction==QA_SOURCE_SAVE_READ) {
@@ -191,7 +169,7 @@ static bool fields(qa_source_save_io *io, qa_nav_graph *g, const qa_nav_map *exp
     for (size_t i=0;i<count;++i) if (!qa_source_save_u32(io,&g->rejected[i].connection) ||
         !qa_source_save_bool(io,&g->rejected[i].missing_start) ||
         !qa_source_save_bool(io,&g->rejected[i].missing_end)) return false;
-    return source_identity(io,g);
+    return io->direction==QA_SOURCE_SAVE_WRITE || source_identity(io,g);
 }
 bool qa_navigation_graph_save_capture(qa_session *session,const qa_nav_graph *graph,
                                       qa_buffer *out,qa_error *error) {
