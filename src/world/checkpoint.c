@@ -120,6 +120,11 @@ static bool collision_equal(qa_actor_collision a,qa_actor_collision b)
         a.q3_entity_number==b.q3_entity_number && a.q3_owner_number==b.q3_owner_number;
 }
 
+typedef struct checkpoint_slot {
+    const qa_world_body_checkpoint *record;
+    bool seen;
+} checkpoint_slot;
+
 bool qa_world_checkpoint_restore(qa_world *world, const qa_world_checkpoint *value, qa_error *error)
 {
     if (!qa_world_idle(world) || world->geometry_admission || !value ||
@@ -127,21 +132,21 @@ bool qa_world_checkpoint_restore(qa_world *world, const qa_world_checkpoint *val
         value->body_count > world->capacity || value->spatial_count > value->body_count)
         return checkpoint_fail(error, QA_ERROR_ARGUMENT, "Invalid candidate world checkpoint");
     qa_spatial_member **members = value->spatial_count ? calloc(value->spatial_count, sizeof(*members)) : NULL;
-    uint8_t *seen = calloc(world->capacity, 1);
-    if (!seen || (value->spatial_count && !members)) {
-        free(seen); free(members);
+    checkpoint_slot *slots = calloc(world->capacity, sizeof(*slots));
+    if (!slots || (value->spatial_count && !members)) {
+        free(slots); free(members);
         return checkpoint_fail(error, QA_ERROR_MEMORY, "Allocating candidate spatial checkpoint");
     }
     bool ok = true;
     for (size_t i = 0; ok && i < value->body_count; ++i) {
         const qa_world_body_checkpoint *record = value->bodies + i;
         const qa_actor_record *actor = qa_actors_resolve_saved(world->actors, record->actor);
-        if (!actor || seen[actor->id.slot] || record->storage_serial > value->body_serial ||
+        if (!actor || slots[actor->id.slot].seen || record->storage_serial > value->body_serial ||
             !record->storage_serial || record->attachment_order > value->attachment_order ||
             (record->attached && (!record->has_anchor || !record->attachment_order))) {
             ok = checkpoint_fail(error, QA_ERROR_FORMAT, "Invalid saved world actor/storage/attachment identity"); break;
         }
-        seen[actor->id.slot] = 1;
+        slots[actor->id.slot] = (checkpoint_slot){record, true};
         qa_world_body *body = qa_world_find_body(world, actor->id);
         if (!body && record->external_body) {
             ok = checkpoint_fail(error, QA_ERROR_FORMAT, "Saved external body binding was not rebuilt"); break;
@@ -213,9 +218,9 @@ bool qa_world_checkpoint_restore(qa_world *world, const qa_world_checkpoint *val
     }
     for (uint32_t slot = 0; ok && slot < world->capacity; ++slot) {
         qa_world_body *body = qa_world_raw_body(world, slot);
-        if (body && body->present && !seen[slot])
+        if (body && body->present && !slots[slot].seen)
             ok = checkpoint_fail(error, QA_ERROR_FORMAT, "Candidate has a body omitted by the saved world");
-        seen[slot] = 0;
+        slots[slot].seen = false;
     }
     for (size_t i = 0; ok && i < value->body_count; ++i) {
         const qa_actor_record *actor = qa_actors_resolve_saved(world->actors, value->bodies[i].actor);
@@ -252,17 +257,15 @@ bool qa_world_checkpoint_restore(qa_world *world, const qa_world_checkpoint *val
     for (size_t i = 0; ok && i < value->spatial_count; ++i) {
         const qa_world_spatial_checkpoint *saved = value->spatial + i;
         const qa_actor_record *actor = qa_actors_resolve_saved(world->actors, saved->actor);
-        if (!actor || saved->sector >= QA_SPATIAL_SECTORS || seen[actor->id.slot] ||
+        if (!actor || saved->sector >= QA_SPATIAL_SECTORS || slots[actor->id.slot].seen ||
             (i && saved->sector < value->spatial[i - 1].sector)) {
             ok = checkpoint_fail(error, QA_ERROR_FORMAT, "Invalid spatial checkpoint order"); break;
         }
-        seen[actor->id.slot] = 1;
+        slots[actor->id.slot].seen = true;
         qa_world_body *body = qa_world_find_body(world, actor->id);
-        const qa_world_body_checkpoint *record = NULL;
-        for (size_t j = 0; j < value->body_count; ++j)
-            if (value->bodies[j].actor.slot == saved->actor.slot &&
-                value->bodies[j].actor.generation == saved->actor.generation) { record = value->bodies + j; break; }
-        if (!body || !body->linked || !record) {
+        const qa_world_body_checkpoint *record = slots[actor->id.slot].record;
+        if (!body || !body->linked || !record || record->actor.slot != saved->actor.slot ||
+            record->actor.generation != saved->actor.generation) {
             ok = checkpoint_fail(error, QA_ERROR_FORMAT, "Saved spatial membership has no linked body"); break;
         }
         qa_actor_collision retained = record->retained_collision;
@@ -305,6 +308,6 @@ bool qa_world_checkpoint_restore(qa_world *world, const qa_world_checkpoint *val
         world->body_serial = value->body_serial;
     }
     for (size_t i = 0; i < value->spatial_count; ++i) free(members ? members[i] : NULL);
-    free(members); free(seen);
+    free(members); free(slots);
     return ok;
 }

@@ -237,7 +237,7 @@ static bool codec(qa_source_save_io *io, q3n_remote_source *s, const q3n_remote_
 {
     uint8_t magic[4] = {'Q','R','F','S'};
     if (!qa_source_save_bytes(io, magic, sizeof(magic)) || memcmp(magic, "QRFS", sizeof(magic)) ||
-        !same_u32(io, 2) || !identity_fields(io, view) ||
+        !identity_fields(io, view) ||
         !qa_source_save_i32(io, &s->reached_command) || !reached_valid(s->reached_command, &view->publication))
         return false;
     for (uint32_t i = 0; i < QA_Q3_CONFIGSTRINGS; ++i)

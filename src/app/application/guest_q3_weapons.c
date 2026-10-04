@@ -377,6 +377,14 @@ bool application_q3_weapons_destroy(application_q3_weapons **owner, qa_error *er
     }
     application_q3_weapon_profile_free(&w->profile); free(w); *owner = NULL; return true;
 }
+static void descriptors(const application_q3_weapons *w, qa_qvm_saved_function out[6])
+{
+    const uint32_t entries[] = {w->profile.dispatcher, w->profile.request, w->profile.give.entry,
+        w->profile.drop.entry, w->profile.damage.entry, w->profile.teleport_entry};
+    const qa_qvm_function_hook hooks[] = {dispatch, request, give, drop, effect_hook, effect_hook};
+    for (size_t i = 0; i < 6; ++i)
+        out[i] = (qa_qvm_saved_function){w->bindings[i], entries[i], true, hooks[i], (void *)w};
+}
 bool application_q3_weapons_create(q3g_role *role, application_q3_weapon_profile *profile,
     const application_q3_weapon_services *services, application_q3_weapons **out, qa_error *error)
 {
@@ -389,11 +397,11 @@ bool application_q3_weapons_create(q3g_role *role, application_q3_weapon_profile
     application_q3_weapons *w = calloc(1, sizeof(*w));
     if (!w) return application_fail(error, QA_ERROR_MEMORY, "Retaining original primary weapon owner");
     w->role = role; w->profile = *profile; *profile = (application_q3_weapon_profile){0}; w->services = *services; *out = w;
-    const uint32_t entries[] = {w->profile.dispatcher, w->profile.request, w->profile.give.entry,
-        w->profile.drop.entry, w->profile.damage.entry, w->profile.teleport_entry};
-    const qa_qvm_function_hook hooks[] = {dispatch, request, give, drop, effect_hook, effect_hook};
+    qa_qvm_saved_function functions[6];
+    descriptors(w, functions);
     for (size_t i = 0; i < 6; ++i) {
-        if (!qa_qvm_bind_function(role->vm, entries[i], true, hooks[i], w, &w->bindings[i], error)) {
+        if (!qa_qvm_bind_function(role->vm, functions[i].instruction, functions[i].host_invocations,
+            functions[i].hook, functions[i].context, &w->bindings[i], error)) {
             qa_error cleanup = {0}; (void)application_q3_weapons_destroy(out, &cleanup); return false;
         }
         ++w->binding_count;
@@ -419,13 +427,10 @@ bool application_q3_weapons_descriptors(const application_q3_weapons *w,
         !application_q3_weapons_idle(w) || (w && w->binding_count != count))
         return application_fail(error, QA_ERROR_FORMAT, "Original weapon descriptors differ from their actual idle constructor");
     if (!w) return true;
-    const uint32_t entries[] = {w->profile.dispatcher, w->profile.request, w->profile.give.entry,
-        w->profile.drop.entry, w->profile.damage.entry, w->profile.teleport_entry};
-    const qa_qvm_function_hook hooks[] = {dispatch, request, give, drop, effect_hook, effect_hook};
     for (size_t i = 0; i < count; ++i) {
         if (!w->bindings[i]) return application_fail(error, QA_ERROR_FORMAT, "Original weapon callback identity is missing");
-        out[i] = (qa_qvm_saved_function){w->bindings[i], entries[i], true, hooks[i], (void *)w};
     }
+    descriptors(w, out);
     return true;
 }
 void application_q3_weapons_adopt(application_q3_weapons *w, const qa_qvm_binding bindings[6])

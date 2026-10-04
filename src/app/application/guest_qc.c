@@ -1015,12 +1015,10 @@ static bool actor_frame(void *opaque, qa_session *session, qa_actor_id actor,
             !qa_physics_touch_triggers(engine->services.physics, actor, error))) return false;
         if (qa_actors_get(qa_session_actors(session), actor) == NULL) return true;
     }
-    bool player = false;
-    for (uint32_t slot = 1; slot <= engine->max_clients; ++slot)
-        if (engine->clients[slot].connected && qa_actor_id_equal(engine->clients[slot].actor, actor)) { player = true; break; }
-    bool spectator = false;
+    bool player = false, spectator = false;
     for (uint32_t slot = 1; slot <= engine->max_clients; ++slot)
         if (engine->clients[slot].connected && qa_actor_id_equal(engine->clients[slot].actor, actor)) {
+            player = true;
             spectator = engine->clients[slot].spectator; break;
         }
     const struct application_qc_profile *profile = engine->provider->state.qc.qualified;

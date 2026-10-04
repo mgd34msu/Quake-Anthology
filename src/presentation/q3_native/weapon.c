@@ -214,23 +214,29 @@ static bool lightning(const q3n_frame *f,q3n_entity *cent,const qa_q3_entity *st
     }
     return true;
 }
-static bool spin(const q3n_frame *f,q3n_entity *cent,const qa_q3_entity *state,float *out,qa_error *e)
+static float barrel_spin(int32_t time,int32_t *previous_time,float *previous_angle,
+    bool *spinning,bool firing)
 {
-    int32_t delta=difference(f->time,cent->barrel_time); float angle;
-    if (cent->barrel_spinning) angle=add(cent->barrel_angle,mul((float)delta,.9f));
+    int32_t delta=difference(time,*previous_time); float angle;
+    if (*spinning) angle=add(*previous_angle,mul((float)delta,.9f));
     else {
         if (delta>1000) delta=1000;
         float speed=mul(.5f,add(.9f,divide((float)difference(1000,delta),1000)));
-        angle=add(cent->barrel_angle,mul((float)delta,speed));
+        angle=add(*previous_angle,mul((float)delta,speed));
     }
-    bool firing=(state->eFlags&256)!=0;
-    if (cent->barrel_spinning!=firing) {
-        cent->barrel_time=f->time;
-        cent->barrel_angle=mul((float)((uint32_t)integer(mul(angle,65536.0f/360.0f))&65535u),360.0f/65536.0f);
-        cent->barrel_spinning=firing;
-        if (q3n_frame_product(f)==QA_Q3_TEAM_ARENA && state->weapon==13 && !firing &&
-            !start_sound(f,q3n_media_read(f->media)->sounds[Q3N_S_CHAINGUN_WIND],NULL,state->number,2,e)) return false;
+    if (*spinning!=firing) {
+        *previous_time=time;
+        *previous_angle=mul((float)((uint32_t)integer(mul(angle,65536.0f/360.0f))&65535u),360.0f/65536.0f);
+        *spinning=firing;
     }
+    return angle;
+}
+static bool spin(const q3n_frame *f,q3n_entity *cent,const qa_q3_entity *state,float *out,qa_error *e)
+{
+    bool firing=(state->eFlags&256)!=0,changed=cent->barrel_spinning!=firing;
+    float angle=barrel_spin(f->time,&cent->barrel_time,&cent->barrel_angle,&cent->barrel_spinning,firing);
+    if (changed && q3n_frame_product(f)==QA_Q3_TEAM_ARENA && state->weapon==13 && !firing &&
+        !start_sound(f,q3n_media_read(f->media)->sounds[Q3N_S_CHAINGUN_WIND],NULL,state->number,2,e)) return false;
     *out=angle; return true;
 }
 static bool powered(const q3n_frame *f,qa_q3_ref_entity *ref,int32_t powerups,qa_error *e)
@@ -453,22 +459,6 @@ static qa_vec3 perpendicular(qa_vec3 direction)
     float inverse=divide(1,dot(direction,direction)),distance=mul(dot(direction,axis),inverse);
     return normalized(minus(axis,scale(scale(direction,inverse),distance)));
 }
-static float selected_spin(q3n_selected_weapon_barrel *barrel,int32_t time,bool firing)
-{
-    int32_t delta=difference(time,barrel->time); float angle;
-    if (barrel->spinning) angle=add(barrel->angle,mul((float)delta,.9f));
-    else {
-        if (delta>1000) delta=1000;
-        float speed=mul(.5f,add(.9f,divide((float)difference(1000,delta),1000)));
-        angle=add(barrel->angle,mul((float)delta,speed));
-    }
-    if (barrel->spinning!=firing) {
-        barrel->time=time;
-        barrel->angle=mul((float)((uint32_t)integer(mul(angle,65536.0f/360.0f))&65535u),360.0f/65536.0f);
-        barrel->spinning=firing;
-    }
-    return angle;
-}
 static float selected_random(q3n_selected_weapon_state *state)
 {
     state->random_seed=69069u*state->random_seed+1u;
@@ -549,7 +539,7 @@ bool q3n_weapons_selected_held(q3n_weapons *owner,const q3n_selected_weapon_medi
     int32_t flags=128|(held->personal_model?2:0); bool gun_found,have_barrel=false,have_flash=false;
     qa_q3_ref_entity gun=selected_part(media->gun,flags,held->lighting_origin);
     if (!selected_attach(held->parent_assets,&gun,held->torso,"tag_weapon",false,&gun_found,e)) return selected_end(owner,false);
-    float spin_angle=selected_spin(&state->world_barrel,draw->time,draw->firing);
+    float spin_angle=barrel_spin(draw->time,&state->world_barrel.time,&state->world_barrel.angle,&state->world_barrel.spinning,draw->firing);
     qa_q3_ref_entity barrel=selected_part(media->barrel,flags,held->lighting_origin);
     q3n_angles_axis(qa_v3(0,0,spin_angle),barrel.axis);
     if (media->barrel && !selected_attach(media->assets,&barrel,&gun,"tag_barrel",false,&have_barrel,e)) return selected_end(owner,false);
@@ -601,7 +591,7 @@ bool q3n_weapons_selected_view(q3n_weapons *owner,const q3n_selected_weapon_medi
     hands.back_lerp=state->torso.back_lerp;
     qa_q3_ref_entity gun=selected_part(media->gun,1|4|8,view->origin); bool found;
     if (!selected_attach(media->assets,&gun,&hands,"tag_weapon",true,&found,e)) return selected_end(owner,false);
-    float spin_angle=selected_spin(&state->view_barrel,draw->time,draw->firing);
+    float spin_angle=barrel_spin(draw->time,&state->view_barrel.time,&state->view_barrel.angle,&state->view_barrel.spinning,draw->firing);
     qa_q3_ref_entity barrel=selected_part(media->barrel,1|4|8,view->origin); bool have_barrel=false;
     q3n_angles_axis(qa_v3(0,0,spin_angle),barrel.axis);
     if (media->barrel && !selected_attach(media->assets,&barrel,&gun,"tag_barrel",false,&have_barrel,e)) return selected_end(owner,false);
@@ -645,7 +635,7 @@ bool q3n_weapons_selected_authored_view(q3n_weapons *owner,const q3n_selected_we
     hands.frame=view->frame; hands.old_frame=view->old_frame; hands.back_lerp=view->back_lerp;
     qa_q3_ref_entity gun=selected_part(media->gun,1|4|8,view->camera.origin); bool found;
     if (!selected_attach(media->assets,&gun,&hands,view->anchor_tag,true,&found,e)) return selected_end(owner,false);
-    (void)selected_spin(&state->view_barrel,draw->time,draw->firing);
+    (void)barrel_spin(draw->time,&state->view_barrel.time,&state->view_barrel.angle,&state->view_barrel.spinning,draw->firing);
     bool okay=selected_emit(media,draw,&gun,submitted,e);
     for (size_t i=0;okay && i<view->attachment_count;++i) {
         const q3n_selected_weapon_attachment *attachment=view->attachments+i;
