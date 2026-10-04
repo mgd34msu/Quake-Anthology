@@ -1810,7 +1810,7 @@ bool frontend_unified_q2_frame_prepare(frontend_unified_q2 *o,const qa_unified_d
     double seconds; uint64_t n;
     if (!qa_json_u64(j,get(j,f,"frame"),&n,e) || !number(d,get(j,time,"value"),&seconds,e)) return false;
     if (qa_json_string_equal(j,get(j,time,"kind"),"milliseconds")) seconds/=1000;
-    if (!frontend_unified_clone(d,&o->prepared_frame,e)) return false;
+    if (!qa_unified_document_retain(d,&o->prepared_frame,e)) return false;
     if (!frontend_unified_q2_rr_frame_prepare(o->rr_hud,d,e)) {
         frontend_unified_q2_frame_abort(o); return false;
     }
@@ -2769,8 +2769,6 @@ bool frontend_unified_q2_frame_restore_bind(frontend_unified_q2 *o,const qa_unif
     if(!o || !o->frontend->source_restoring || !frontend_unified_q2_checkpoint_ready(o) || !current(o,e))return false;
     if(!o->prepared_frame)return d==o->replica->prepared_frame && frontend_unified_q2_rr_idle(o->rr_hud);
     if(!d || qa_unified_document_type(d)!=QA_UNIFIED_FRAME_DOCUMENT)return false;
-    qa_buffer a={0},b={0};bool ok=qa_unified_document_encode(o->prepared_frame,&a,e) && qa_unified_document_encode(d,&b,e) &&
-        a.size==b.size && (!a.size || !memcmp(a.data,b.data,a.size));
-    qa_buffer_free(&a);qa_buffer_free(&b);
-    return (ok && frontend_unified_q2_rr_frame_ready(o->rr_hud,d,e)) || frontend_unified_fail(e,QA_ERROR_FORMAT,"Q2 restored prepared frame differs from its actual parent");
+    return frontend_unified_document_restore_bind(&o->prepared_frame,d,true,e) &&
+        frontend_unified_q2_rr_frame_restore_bind(o->rr_hud,d,e);
 }

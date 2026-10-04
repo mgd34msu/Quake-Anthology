@@ -9,6 +9,7 @@
 #define FRAME_LIMIT (4u*1024u*1024u)
 
 struct qa_unified_document {
+    size_t references;
     qa_unified_document_kind kind;
     qa_buffer source;
     qa_json_document *json;
@@ -110,7 +111,7 @@ static bool create_document(qa_unified_document_kind kind, qa_buffer source,
                               qa_unified_document **out, qa_error *error) {
     qa_unified_document *d=calloc(1,sizeof(*d));
     if (!d) { qa_buffer_free(&source); qa_error_set(error,QA_ERROR_MEMORY,0,"allocating unified document"); return false; }
-    d->kind=kind; d->source=source;
+    d->references=1; d->kind=kind; d->source=source;
     if (!qa_json_parse((qa_bytes){d->source.data,d->source.size},&d->json,error) ||
         !qa_unified_tag_check(d->json,qa_json_root(d->json),0,error) ||
         !qa_unified_schema_check(kind,d->json,error)) {
@@ -173,8 +174,18 @@ bool qa_unified_document_encode(const qa_unified_document *d, qa_buffer *out, qa
     *out=(qa_buffer){data,size}; return true;
 }
 
+bool qa_unified_document_retain(const qa_unified_document *source,
+                                  qa_unified_document **out, qa_error *error) {
+    if (!source || !out) return bad(error,"invalid unified document retention");
+    qa_unified_document *d=(qa_unified_document *)source;
+    if (d->references==SIZE_MAX) {
+        qa_error_set(error,QA_ERROR_MEMORY,0,"unified document reference capacity exhausted"); return false;
+    }
+    ++d->references; *out=d; return true;
+}
+
 void qa_unified_document_destroy(qa_unified_document *d) {
-    if (!d) return;
+    if (!d || --d->references) return;
     qa_json_destroy(d->json); qa_buffer_free(&d->source); free(d);
 }
 const qa_json_document *qa_unified_document_json(const qa_unified_document *d) { return d?d->json:NULL; }

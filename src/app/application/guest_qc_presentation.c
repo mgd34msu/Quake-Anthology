@@ -445,6 +445,11 @@ bool qa_application_qc_message_player_ui_binding(qa_application *app,const qa_ap
     uint32_t via=0;
     return application_qc_weapon_binding_at(p->state.qc.engine,ordinal,out,&via,error);
 }
+static const struct { qa_q1_weapon weapon; uint32_t bit; int32_t impulse; } original_weapons[]={
+    {QA_Q1_AXE,4096,1},{QA_Q1_SHOTGUN,1,2},{QA_Q1_SUPER_SHOTGUN,2,3},
+    {QA_Q1_NAILGUN,4,4},{QA_Q1_SUPER_NAILGUN,8,5},{QA_Q1_GRENADE,16,6},
+    {QA_Q1_ROCKET,32,7},{QA_Q1_LIGHTNING,64,8},{QA_Q1_LASER,8388608,225},
+    {QA_Q1_MJOLNIR,128,226},{QA_Q1_PROXIMITY,65536,6}};
 bool application_qc_weapon_binding_at(struct application_qc_state *engine,size_t ordinal,
     qa_application_qc_weapon_ui_binding *out,uint32_t *via,qa_error *error)
 {
@@ -458,19 +463,14 @@ bool application_qc_weapon_binding_at(struct application_qc_state *engine,size_t
         *via=value->via;
         return true;
     }
-    static const struct { qa_q1_weapon weapon; uint32_t bit; int32_t impulse; } original[]={
-        {QA_Q1_AXE,4096,1},{QA_Q1_SHOTGUN,1,2},{QA_Q1_SUPER_SHOTGUN,2,3},
-        {QA_Q1_NAILGUN,4,4},{QA_Q1_SUPER_NAILGUN,8,5},{QA_Q1_GRENADE,16,6},
-        {QA_Q1_ROCKET,32,7},{QA_Q1_LIGHTNING,64,8},{QA_Q1_LASER,8388608,225},
-        {QA_Q1_MJOLNIR,128,226},{QA_Q1_PROXIMITY,65536,6}};
     if(ordinal>=(hipnotic_ui(p->state.qc.program)?11u:8u)) return false;
     qa_q1_weapon_profile profile;
-    if(!qa_q1_weapon_profile_identity(ordinal<8?QA_Q1_ID1:QA_Q1_HIPNOTIC,original[ordinal].weapon,&profile))
+    if(!qa_q1_weapon_profile_identity(ordinal<8?QA_Q1_ID1:QA_Q1_HIPNOTIC,original_weapons[ordinal].weapon,&profile))
         return application_fail(error,QA_ERROR_FORMAT,"QC UI binding has no original SDK identity");
     qa_item_id item=qa_strings_find(qa_session_strings(p->application->session),
         (qa_bytes){(const uint8_t *)profile.item,strlen(profile.item)});
     if(!item) return application_fail(error,QA_ERROR_NOT_FOUND,"QC UI weapon was not admitted in the actual inventory namespace");
-    *out=(qa_application_qc_weapon_ui_binding){item,profile.label,original[ordinal].bit,original[ordinal].impulse};
+    *out=(qa_application_qc_weapon_ui_binding){item,profile.label,original_weapons[ordinal].bit,original_weapons[ordinal].impulse};
     *via=ordinal==10?16u:0u;
     return true;
 }
@@ -493,11 +493,8 @@ bool qa_application_qc_message_player_ui_definition(qa_application *app,const qa
                 return application_fail(error,QA_ERROR_FORMAT,"QC declared weapon does not own a weapon catalog definition");
         }
     } else {
-        static const qa_q1_weapon weapons[]={QA_Q1_AXE,QA_Q1_SHOTGUN,QA_Q1_SUPER_SHOTGUN,
-            QA_Q1_NAILGUN,QA_Q1_SUPER_NAILGUN,QA_Q1_GRENADE,QA_Q1_ROCKET,QA_Q1_LIGHTNING,
-            QA_Q1_LASER,QA_Q1_MJOLNIR,QA_Q1_PROXIMITY};
         qa_q1_weapon_profile profile;
-        if(!qa_q1_weapon_profile_identity(ordinal<8?QA_Q1_ID1:QA_Q1_HIPNOTIC,weapons[ordinal],&profile))
+        if(!qa_q1_weapon_profile_identity(ordinal<8?QA_Q1_ID1:QA_Q1_HIPNOTIC,original_weapons[ordinal].weapon,&profile))
             return application_fail(error,QA_ERROR_FORMAT,"QC catalog has no actual SDK weapon profile");
         qa_item_id ammo=profile.ammo?qa_strings_find(qa_session_strings(app->session),
             (qa_bytes){(const uint8_t *)profile.ammo,strlen(profile.ammo)}):0;

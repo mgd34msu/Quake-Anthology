@@ -125,6 +125,9 @@ bool qa_unified_document_validate(const qa_unified_document *,
                                    qa_unified_document_validator, void *, qa_error *);
 qa_unified_document_kind qa_unified_document_type(const qa_unified_document *);
 bool qa_unified_document_encode(const qa_unified_document *, qa_buffer *, qa_error *);
+/* Retain shares the immutable source and JSON index. Each custody is released
+ * by destroy; retain/destroy stay on the owning session/frontend thread. */
+bool qa_unified_document_retain(const qa_unified_document *, qa_unified_document **, qa_error *);
 void qa_unified_document_destroy(qa_unified_document *);
 const qa_json_document *qa_unified_document_json(const qa_unified_document *);
 qa_json_id qa_unified_document_root(const qa_unified_document *);

@@ -269,7 +269,7 @@ bool frontend_unified_render_create(qa_frontend *f,frontend_remote_unified *repl
     frontend_unified_render *r=calloc(1,sizeof(*r));
     if (!r) return frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining unified received render frame");
     r->frontend=f; r->replica=replica; r->media=media;
-    bool okay=frontend_unified_clone(frame,&r->frame,e);
+    bool okay=qa_unified_document_retain(frame,&r->frame,e);
     const qa_json_document *j=qa_unified_document_json(frame); qa_json_id root=qa_unified_document_root(frame);
     qa_json_id output=field(j,root,"output"),snapshot=field(j,output,"snapshot"),clock=field(j,field(j,snapshot,"frame"),"time");
     double clock_value=0;
@@ -705,10 +705,7 @@ static bool render_fields(frontend_unified_render *r,const frontend_unified_rend
 }
 static bool render_document_current(const frontend_unified_render *r,const qa_unified_document *published)
 {
-    if (!r || !published || !r->frame) return false;
-    qa_bytes actual=qa_json_source(qa_unified_document_json(published),qa_unified_document_root(published));
-    qa_bytes saved=qa_json_source(qa_unified_document_json(r->frame),qa_unified_document_root(r->frame));
-    return actual.size==saved.size && (!actual.size || !memcmp(actual.data,saved.data,actual.size));
+    return r && r->frame && r->frame==published;
 }
 static bool render_frame_current(const frontend_unified_render *r)
 { return r && render_document_current(r,frontend_remote_unified_frame(r->replica)); }
@@ -786,7 +783,8 @@ static bool render_restore(qa_frontend *f,frontend_remote_unified *replica,
     qa_source_save_io io={0}; qa_buffer hud={0};
     bool okay=qa_source_save_reader(&io,NULL,bytes,error) && render_fields(r,refs,&io,&hud) &&
         qa_source_save_finish(&io,NULL) &&
-        render_document_current(r,pending?frontend_remote_unified_frame_prepared(replica):frontend_remote_unified_frame(replica));
+        frontend_unified_document_restore_bind(&r->frame,
+            pending?frontend_remote_unified_frame_prepared(replica):frontend_remote_unified_frame(replica),false,error);
     const frontend_remote_unified_domain *d=frontend_remote_unified_domain_read(replica);
     if (okay) okay=d && d->physical_seat<f->options.seats &&
         qa_hud_restore((qa_bytes){hud.data,hud.size},&(qa_hud_options){.ui=f->seats[d->physical_seat].ui,

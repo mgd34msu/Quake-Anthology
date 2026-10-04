@@ -433,7 +433,7 @@ bool frontend_unified_q3_owner_retire(frontend_unified_q3 *o,const qa_unified_do
 bool frontend_unified_q3_frame_prepare(frontend_unified_q3 *o, const qa_unified_document *d, qa_error *e)
 {
     if (!o || o->busy || o->prepared || !current(o,e)) return false;
-    if (!frame_read(o,d,&o->candidate_time,e) || !frontend_unified_clone(d,&o->candidate,e)) return false;
+    if (!frame_read(o,d,&o->candidate_time,e) || !qa_unified_document_retain(d,&o->candidate,e)) return false;
     o->candidate_input=d; o->prepared=true; return true;
 }
 bool frontend_unified_q3_frame_ready(frontend_unified_q3 *o, const qa_unified_document *d, qa_error *e)
@@ -1613,9 +1613,9 @@ bool frontend_unified_q3_frame_restore_bind(frontend_unified_q3 *o,const qa_unif
     if(!o || !o->frontend->source_restoring || !frontend_unified_q3_checkpoint_ready(o) || !retained_current(o,e))return false;
     if(!o->prepared)return d==o->replica->prepared_frame;
     if(!d || !o->candidate || qa_unified_document_type(d)!=QA_UNIFIED_FRAME_DOCUMENT)return false;
-    qa_buffer a={0},b={0};int32_t time;
-    bool ok=qa_unified_document_encode(o->candidate,&a,e) && qa_unified_document_encode(d,&b,e) &&
-        a.size==b.size && (!a.size || !memcmp(a.data,b.data,a.size)) && frame_read(o,d,&time,e) && time==o->candidate_time;
-    qa_buffer_free(&a);qa_buffer_free(&b);if(!ok)return frontend_unified_fail(e,QA_ERROR_FORMAT,"Q3 restored prepared frame differs from its actual parent");
+    int32_t time;
+    if(!frontend_unified_document_restore_bind(&o->candidate,d,true,e)) return false;
+    if(!frame_read(o,d,&time,e) || time!=o->candidate_time)
+        return frontend_unified_fail(e,QA_ERROR_FORMAT,"Q3 restored prepared frame differs from its actual parent");
     o->candidate_input=d;return true;
 }

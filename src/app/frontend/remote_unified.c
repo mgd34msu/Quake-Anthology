@@ -11,11 +11,6 @@
 bool frontend_unified_fail(qa_error *error, qa_status status, const char *message)
 { qa_error_set(error, status, 0, "%s", message); return false; }
 
-bool frontend_unified_clone(const qa_unified_document *source, qa_unified_document **out, qa_error *error)
-{
-    return qa_unified_document_create(qa_unified_document_type(source),
-        qa_json_source(qa_unified_document_json(source), qa_unified_document_root(source)), out, error);
-}
 bool frontend_remote_unified_actor_retained(const frontend_remote_unified *owner,uint32_t slot,
     uint64_t generation,qa_actor_id *out,qa_error *error)
 {
@@ -213,12 +208,35 @@ bool frontend_remote_unified_player(const frontend_remote_unified *owner, qa_act
 
 static qa_json_id value(const qa_unified_document *document)
 { return qa_json_get(qa_unified_document_json(document), qa_unified_document_root(document), "value"); }
-static bool same_document(const qa_unified_document *a, const qa_unified_document *b)
+bool frontend_unified_document_equal(const qa_unified_document *a, const qa_unified_document *b)
 {
     if (!a || !b || qa_unified_document_type(a) != qa_unified_document_type(b)) return false;
+    if (a==b) return true;
     qa_bytes x = qa_json_source(qa_unified_document_json(a), qa_unified_document_root(a));
     qa_bytes y = qa_json_source(qa_unified_document_json(b), qa_unified_document_root(b));
     return x.size == y.size && (!x.size || !memcmp(x.data, y.data, x.size));
+}
+bool frontend_unified_document_restore_bind(qa_unified_document **retained,
+    const qa_unified_document *canonical, bool encoded, qa_error *error)
+{
+    if (!retained || !*retained || !canonical ||
+        qa_unified_document_type(*retained)!=qa_unified_document_type(canonical))
+        return frontend_unified_fail(error,QA_ERROR_FORMAT,"Restored document differs from its actual parent");
+    if (*retained==canonical) return true;
+    if (encoded) {
+        qa_buffer actual={0},saved={0};
+        bool okay=qa_unified_document_encode(*retained,&saved,error) &&
+            qa_unified_document_encode(canonical,&actual,error);
+        bool equal=okay && actual.size==saved.size &&
+            (!actual.size || !memcmp(actual.data,saved.data,actual.size));
+        qa_buffer_free(&actual); qa_buffer_free(&saved);
+        if (!okay) return false;
+        if (!equal) return frontend_unified_fail(error,QA_ERROR_FORMAT,"Restored document differs from its actual parent");
+    } else if (!frontend_unified_document_equal(*retained,canonical))
+        return frontend_unified_fail(error,QA_ERROR_FORMAT,"Restored document differs from its actual parent");
+    qa_unified_document *bound=NULL;
+    if (!qa_unified_document_retain(canonical,&bound,error)) return false;
+    qa_unified_document_destroy(*retained); *retained=bound; return true;
 }
 static bool wire_actor(const qa_json_document *json, qa_json_id id, qa_saved_actor_id *out, qa_error *error)
 {
@@ -291,9 +309,9 @@ static void metadata_rollback(frontend_remote_unified *owner)
 static bool prepare_offer(frontend_remote_unified *owner, const qa_unified_document *document,
     bool *ready, qa_error *error)
 {
-    if (owner->offer && !same_document(owner->offer, document))
+    if (owner->offer && !frontend_unified_document_equal(owner->offer, document))
         return frontend_unified_fail(error, QA_ERROR_ARGUMENT, "Unified preparation changed its retained offer");
-    if (!owner->offer && !frontend_unified_clone(document, &owner->offer, error)) return false;
+    if (!owner->offer && !qa_unified_document_retain(document, &owner->offer, error)) return false;
     if (!owner->preparing_recipe && !qa_executable_recipe_prepare(document, owner->options.domain.catalog,
         owner->options.domain.resources, &owner->preparing_recipe, error)) return false;
     owner->preparing = true; owner->consumers_live = true;
@@ -316,13 +334,13 @@ static bool prepare_frame(frontend_remote_unified *owner, const qa_unified_docum
     if (!wire_actor(json, qa_json_get(json, player, "actor"), &actor, error) ||
         actor.slot != owner->wire_player.slot || actor.generation != owner->wire_player.generation)
         return frontend_unified_fail(error, QA_ERROR_FORMAT, "Unified frame changes its admitted full player");
-    if (owner->prepared_frame && !same_document(owner->prepared_frame, document))
+    if (owner->prepared_frame && !frontend_unified_document_equal(owner->prepared_frame, document))
         return frontend_unified_fail(error, QA_ERROR_ARGUMENT, "Unified frame preparation changed its retained source bytes");
     if (!owner->prepared_frame) {
         qa_buffer bytes = {0}; qa_unified_document *prediction = NULL, *copy = NULL;
         bool okay = qa_unified_document_bytes(document, qa_json_get(json, root, "prediction"), &bytes, error) &&
             qa_unified_document_decode(QA_UNIFIED_PREDICTION_DOCUMENT, (qa_bytes){bytes.data, bytes.size}, &prediction, error) &&
-            frontend_unified_clone(document, &copy, error);
+            qa_unified_document_retain(document, &copy, error);
         qa_buffer_free(&bytes);
         if (!okay) { qa_unified_document_destroy(prediction); qa_unified_document_destroy(copy); return false; }
         const qa_json_document *p = qa_unified_document_json(prediction);
@@ -354,10 +372,10 @@ static bool transport_continue(frontend_remote_unified *owner,const qa_unified_d
     if (!owner || !owner->transport_restarted || !owner->offer) return true;
     const qa_json_document *json=qa_unified_document_json(document);
     uint64_t wire_epoch;
-    if (!same_document(owner->offer,document)) return true;
+    if (!frontend_unified_document_equal(owner->offer,document)) return true;
     if (!qa_json_u64(json,qa_json_get(json,value(document),"epoch"),&wire_epoch,error)) return false;
     if (wire_epoch!=owner->epoch) return true;
-    if (!owner->recipe || !same_document(owner->offer,document) ||
+    if (!owner->recipe || !frontend_unified_document_equal(owner->offer,document) ||
         !qa_json_string_equal(json,qa_json_get(json,value(document),"kind"),"offer") ||
         owner->epoch!=qa_executable_recipe_epoch(owner->recipe) || !linked(owner) || owner->retired ||
         !owner->options.transport_restart)
@@ -444,7 +462,7 @@ static bool control(void *context, qa_network_runtime *runtime, qa_net_client_id
     owner->busy = true; bool okay = true;
     if (qa_json_string_equal(json, kind, "offer")) {
         if (owner->epoch != epoch) {
-            okay = owner->prepared && owner->preparing_recipe && same_document(owner->offer, document) &&
+            okay = owner->prepared && owner->preparing_recipe && frontend_unified_document_equal(owner->offer, document) &&
                 epoch == qa_executable_recipe_epoch(owner->preparing_recipe) &&
                 owner->options.consumers.offer_publish(owner->options.consumers.context, owner, owner->preparing_recipe, error);
             if (okay) {
@@ -500,7 +518,7 @@ static bool frame(void *context, qa_network_runtime *runtime, qa_net_client_id c
     frontend_remote_unified *owner = context;
     if (!owner || owner->busy || runtime != owner->options.domain.runtime || !commit ||
         !qa_net_client_id_equal(client, owner->options.domain.client) || !frontend_remote_unified_current(owner, error) ||
-        !same_document(owner->prepared_frame, document)) return false;
+        !frontend_unified_document_equal(owner->prepared_frame, document)) return false;
     const qa_json_document *json = qa_unified_document_json(document);
     qa_json_id root = qa_unified_document_root(document), snapshot = qa_json_get(json, qa_json_get(json, root, "output"), "snapshot");
     uint64_t number; int64_t acknowledged;

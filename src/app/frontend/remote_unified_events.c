@@ -139,8 +139,7 @@ static bool component_read(frontend_unified_events *o,const qa_unified_document 
     if (okay && !c) okay=frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining reliable component presentation identity");
     if (okay) {
         c->content=malloc(strlen(content)+1);
-        okay=c->content && qa_unified_document_create(QA_UNIFIED_CHECKPOINT,
-            qa_json_source(qa_unified_document_json(d),qa_unified_document_root(d)),&c->identity,e);
+        okay=c->content && qa_unified_document_retain(d,&c->identity,e);
         if (!c->content) frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining component content identity");
     }
     if (okay) { strcpy(c->content,content); c->provider=(char *)provider.data; provider=(qa_buffer){0};
@@ -411,7 +410,7 @@ bool frontend_unified_events_frame_prepare(frontend_unified_events *o,const qa_u
     else if (!qa_json_string_equal(j,field(j,time,"kind"),"seconds"))
         return frontend_unified_fail(e,QA_ERROR_FORMAT,"Unified frame clock has no source domain");
     if (o->has_frame && n<=o->frame) return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Unified event publication must advance its actual frame");
-    if(!frontend_unified_clone(doc,&o->prepared_document,e))return false;
+    if(!qa_unified_document_retain(doc,&o->prepared_document,e))return false;
     o->prepared_frame=n; o->prepared_seconds=seconds; o->prepared=true; return true;
 }
 void frontend_unified_events_frame_commit(frontend_unified_events *o)
@@ -999,8 +998,6 @@ bool frontend_unified_events_frame_restore_bind(frontend_unified_events *o,const
     if(!o || !o->frontend->source_restoring || !frontend_unified_events_checkpoint_ready(o) || !current(o,e))return false;
     if(!o->prepared)return d==o->replica->prepared_frame;
     if(!d || !o->prepared_document || qa_unified_document_type(d)!=QA_UNIFIED_FRAME_DOCUMENT)return false;
-    qa_buffer a={0},b={0};bool ok=qa_unified_document_encode(o->prepared_document,&a,e) && qa_unified_document_encode(d,&b,e) &&
-        a.size==b.size && (!a.size || !memcmp(a.data,b.data,a.size));
-    qa_buffer_free(&a);qa_buffer_free(&b);
-    return (ok && frontend_unified_events_frame_ready(o,d,e)) || frontend_unified_fail(e,QA_ERROR_FORMAT,"Restored prepared events differ from their actual parent frame");
+    return frontend_unified_document_restore_bind(&o->prepared_document,d,true,e) &&
+        frontend_unified_events_frame_ready(o,d,e);
 }

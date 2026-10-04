@@ -37,5 +37,6 @@ struct frontend_remote_unified {
     bool retirement_pending;
 };
 bool frontend_unified_fail(qa_error *, qa_status, const char *);
-bool frontend_unified_clone(const qa_unified_document *, qa_unified_document **, qa_error *);
+bool frontend_unified_document_equal(const qa_unified_document *, const qa_unified_document *);
+bool frontend_unified_document_restore_bind(qa_unified_document **, const qa_unified_document *, bool, qa_error *);
 #endif

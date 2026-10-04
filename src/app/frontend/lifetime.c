@@ -516,7 +516,6 @@ static bool outputs_create(qa_frontend *frontend,frontend_shared_settings *prepa
     if (!options->dedicated) for (unsigned i = 0; i < options->seats; ++i)
         if (!qa_ui_llm_create(frontend->seats[i].ui, frontend_tools_llm(frontend),
             FRONTEND_ASSISTANCE, &frontend->seats[i].assistance, error)) return false;
-    frontend->archive_enabled=true;
     return true;
 }
 bool frontend_constructor_pending(const qa_frontend *f)

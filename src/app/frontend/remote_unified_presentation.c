@@ -978,7 +978,7 @@ static bool frame(void *context, frontend_remote_unified *replica, const qa_unif
     if (!q3_clients_prepare(p,error)) { frame_abort(p); return false; }
     if (!p->prediction && !frontend_remote_unified_prediction_create(replica,&p->prediction,error)) return false;
     if (!p->candidate_render && !frontend_unified_render_create(p->frontend,replica,p->media,doc,&p->candidate_render,error)) return false;
-    if (!p->candidate_prediction && !frontend_unified_clone(prediction,&p->candidate_prediction,error)) return false;
+    if (!p->candidate_prediction && !qa_unified_document_retain(prediction,&p->candidate_prediction,error)) return false;
     bool okay = frontend_unified_events_frame_prepare(p->events,doc,error) &&
         frontend_unified_q1_frame_prepare(p->q1,doc,error) && frontend_unified_q2_frame_prepare(p->q2,doc,error) &&
         frontend_unified_q3_frame_prepare(p->q3,doc,error);
@@ -1677,9 +1677,9 @@ static bool presentation_fields(unified_presentation *p,unified_presentation_imp
         !p->replica->prepared_frame) return false;
     if (p->candidate_prediction) {
         if (!p->replica->prediction) return false;
-        qa_bytes actual=qa_json_source(qa_unified_document_json(p->replica->prediction),qa_unified_document_root(p->replica->prediction));
-        qa_bytes retained=qa_json_source(qa_unified_document_json(p->candidate_prediction),qa_unified_document_root(p->candidate_prediction));
-        if (actual.size!=retained.size || (actual.size && memcmp(actual.data,retained.data,actual.size))) return false;
+        if (reading) {
+            if (!frontend_unified_document_restore_bind(&p->candidate_prediction,p->replica->prediction,false,io->error)) return false;
+        } else if (p->candidate_prediction!=p->replica->prediction) return false;
     }
     size_t child_count=UNIFIED_CHILD_COUNT;
     for (size_t i=0;i<child_count;++i) {

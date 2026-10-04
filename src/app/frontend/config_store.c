@@ -3019,6 +3019,7 @@ static void finish(void *context,qa_application *application,const qa_launch_sna
         if (manager->key_publication.owner) frontend_keys_publication_publish(&manager->key_publication);
         if (manager->storage && manager->shared_seeded) {
             manager->storage_seeded=true;
+            manager->frontend->archive_enabled=true;
             manager->image_fov_touched|=manager->images_fov_touched;
             manager->sticky_seed_pending=false;
         }

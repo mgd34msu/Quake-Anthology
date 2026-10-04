@@ -408,17 +408,10 @@ static bool damage_apply(frontend_unified_q2_rr_hud *o, rr_record *r, double lif
     entry->health=health; entry->armor=armor; entry->shield=shield; entry->expires_ms=now+lifetime;
     record_replace(&entry->row,r); if (index==o->damage_count) ++o->damage_count; return true;
 }
-static bool document_same(const qa_unified_document *a, const qa_unified_document *b)
-{
-    if (!a || !b || qa_unified_document_type(a)!=qa_unified_document_type(b)) return false;
-    qa_bytes x=qa_json_source(qa_unified_document_json(a),qa_unified_document_root(a)),
-        y=qa_json_source(qa_unified_document_json(b),qa_unified_document_root(b));
-    return x.size==y.size && (!x.size || !memcmp(x.data,y.data,x.size));
-}
 static bool objective_apply(frontend_unified_q2_rr_hud *o, rr_record *r, qa_error *e)
 {
     if (o->pending_objective.document) {
-        if (!document_same(o->pending_objective.document,r->document))
+        if (!frontend_unified_document_equal(o->pending_objective.document,r->document))
             return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"RR objective retry differs from its retained delivery prefix");
     } else {
         if (!localized(o,r,r->value.objective.text,(const char *const *)r->value.objective.args,
@@ -661,13 +654,20 @@ static bool frame_clock(const qa_unified_document *d, double *seconds, qa_error 
 bool frontend_unified_q2_rr_frame_prepare(frontend_unified_q2_rr_hud *o, const qa_unified_document *d, qa_error *e)
 {
     if (!o || o->busy || o->prepared || !current(o,e) || !frame_clock(d,&o->prepared_seconds,e)) return false;
-    return frontend_unified_clone(d,&o->prepared,e);
+    return qa_unified_document_retain(d,&o->prepared,e);
 }
 bool frontend_unified_q2_rr_frame_ready(frontend_unified_q2_rr_hud *o, const qa_unified_document *d, qa_error *e)
 {
     double seconds;
     return o && !o->busy && o->prepared && qa_hud_idle(o->prints) && current(o,e) &&
-        frame_clock(d,&seconds,e) && seconds==o->prepared_seconds && document_same(o->prepared,d);
+        frame_clock(d,&seconds,e) && seconds==o->prepared_seconds && o->prepared==d;
+}
+bool frontend_unified_q2_rr_frame_restore_bind(frontend_unified_q2_rr_hud *o,
+    const qa_unified_document *d, qa_error *e)
+{
+    return o && o->frontend->source_restoring && frontend_unified_q2_rr_checkpoint_ready(o) &&
+        current(o,e) && frontend_unified_document_restore_bind(&o->prepared,d,false,e) &&
+        frontend_unified_q2_rr_frame_ready(o,d,e);
 }
 void frontend_unified_q2_rr_frame_commit(frontend_unified_q2_rr_hud *o)
 {

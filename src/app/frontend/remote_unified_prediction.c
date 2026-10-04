@@ -395,7 +395,7 @@ bool frontend_remote_unified_prediction_receive(frontend_remote_unified_predicti
         i32(&r,get(&r,contact,"waterLevel"),&s.water_level,e) && i32(&r,get(&r,contact,"waterType"),&s.water_type,e);
     if(ok && s.input.state.kind==QA_MOVEMENT_Q2_RERELEASE) ok=vector(&r,get(&r,root,"rereleaseOrigin"),&s.pml,e);
     if(ok) ok=qa_world_create(p->registry,p->geometry,NULL,&scene,e) && scene_read(&r,get(&r,root,"collisions"),scene,e) &&
-        qa_unified_document_create(QA_UNIFIED_PREDICTION_DOCUMENT,qa_json_source(r.json,root),&copy,e) && current(p,e);
+        qa_unified_document_retain(document,&copy,e) && current(p,e);
     if(ok && p->received && (s.sequence<p->snapshot.sequence || s.input.state.kind!=p->snapshot.input.state.kind))
         ok=fail(e,QA_ERROR_FORMAT,"Prediction snapshot rewinds its acknowledgement or changes movement family");
     if(ok && p->scene) ok=qa_world_destroy(p->scene,e);

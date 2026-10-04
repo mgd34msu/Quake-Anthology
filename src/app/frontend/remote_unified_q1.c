@@ -1276,8 +1276,6 @@ bool frontend_unified_q1_frame_restore_bind(frontend_unified_q1 *o,const qa_unif
     if(!o->prepared)return d==o->replica->prepared_frame;
     if(!d || d!=o->replica->prepared_frame || qa_unified_document_type(d)!=QA_UNIFIED_FRAME_DOCUMENT)return false;
     if(!o->restored_preparing)return o->preparing_document==d;
-    qa_buffer a={0},b={0};bool ok=qa_unified_document_encode(o->restored_preparing,&a,e) && qa_unified_document_encode(d,&b,e) &&
-        a.size==b.size && (!a.size || !memcmp(a.data,b.data,a.size));
-    qa_buffer_free(&a);qa_buffer_free(&b);if(!ok)return fail(e,"Q1 restored prepared frame differs from its actual parent");
+    if(!frontend_unified_document_restore_bind(&o->restored_preparing,d,true,e)) return false;
     o->preparing_document=d;qa_unified_document_destroy(o->restored_preparing);o->restored_preparing=NULL;return true;
 }

@@ -19,6 +19,7 @@ bool frontend_unified_q2_rr_owner_retire(frontend_unified_q2_rr_hud *,
     const qa_unified_document *, qa_json_id, qa_error *);
 bool frontend_unified_q2_rr_frame_prepare(frontend_unified_q2_rr_hud *, const qa_unified_document *, qa_error *);
 bool frontend_unified_q2_rr_frame_ready(frontend_unified_q2_rr_hud *, const qa_unified_document *, qa_error *);
+bool frontend_unified_q2_rr_frame_restore_bind(frontend_unified_q2_rr_hud *, const qa_unified_document *, qa_error *);
 void frontend_unified_q2_rr_frame_commit(frontend_unified_q2_rr_hud *);
 void frontend_unified_q2_rr_frame_abort(frontend_unified_q2_rr_hud *);
 bool frontend_unified_q2_rr_world(frontend_unified_q2_rr_hud *, const qa_scene_view *,
