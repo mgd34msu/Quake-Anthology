@@ -525,15 +525,11 @@ bool qa_q2_monster_restore(qa_q2_game *game, qa_actor_id id,
   monster->next_move = saved->next_move[0] == '\0'
                            ? NULL
                            : q2m_move_named(monster, saved->next_move);
-  const q2m_move *frame_move =
-      monster->next_move != NULL ? monster->next_move : monster->move;
+  /* AI can switch moves after this frame ran. The next animation tick
+   * rebases that retained frame against the selected move. */
   if (monster->move == NULL ||
       (saved->next_move[0] != '\0' && monster->next_move == NULL) ||
-      saved->frame < monster->move->first_frame ||
-      saved->frame > monster->move->last_frame ||
-      (saved->next_frame != 0 &&
-       (saved->next_frame < frame_move->first_frame ||
-        saved->next_frame > frame_move->last_frame))) {
+      saved->frame < 0 || saved->next_frame < 0) {
     q2m_free_monster(monster);
     qa_error_set(error, QA_ERROR_FORMAT, 0,
                  "Q2 monster checkpoint move is invalid");
