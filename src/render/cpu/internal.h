@@ -86,7 +86,10 @@ static inline bool cpu_stencil_active(const qa_cpu_renderer *renderer,
   return (state->stencil_enabled || renderer->overdraw) &&
          renderer->current->stencil;
 }
-static inline double cpu_clamp(double value) { return fmin(1, fmax(0, value)); }
+static inline double cpu_clamp(double value) {
+  return isnan(value) ? fmin(1, fmax(0, value))
+                     : value <= 0 ? 0 : value < 1 ? value : 1;
+}
 static inline uint8_t cpu_byte(double value) {
   return (uint8_t)floor(cpu_clamp(value) * 255 + 0.5);
 }
