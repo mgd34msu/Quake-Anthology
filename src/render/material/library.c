@@ -2036,23 +2036,27 @@ bool qa_material_library_retain(qa_material_library *library, qa_error *error)
     ++library->references;
     return true;
 }
+const qa_material_record *qa_material_record_resolve(const qa_material_library *library,
+                                                     const qa_material *material)
+{
+    if (!library || !material || material->library != library) return NULL;
+    size_t index = material->sorted_index;
+    return index < library->count && &library->ordered[index]->material == material
+        ? library->ordered[index] : NULL;
+}
 bool qa_material_registration_read(const qa_material *material, qa_material_registration_kind *out)
 {
     const qa_material_library *library = material ? material->library : NULL;
-    if (!library || !out) return false;
-    for (size_t i = 0; i < library->count; ++i)
-        if (&library->ordered[i]->material == material) {
-            *out = library->ordered[i]->kind; return true;
-        }
-    return false;
+    if (!out) return false;
+    const qa_material_record *record = qa_material_record_resolve(library, material);
+    if (!record) return false;
+    *out = record->kind;
+    return true;
 }
 bool qa_material_retain(const qa_material *material, qa_error *error)
 {
     qa_material_library *library = material ? material->library : NULL;
-    bool found = false;
-    if (library) for (size_t i = 0; i < library->count; ++i)
-        if (&library->ordered[i]->material == material) { found = true; break; }
-    if (!found) {
+    if (!qa_material_record_resolve(library, material)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Material retention requires its actual registered library row");
         return false;
     }

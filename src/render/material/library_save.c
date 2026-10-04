@@ -175,9 +175,9 @@ static bool catalog_copy_sources(qa_material_library *library, const qa_material
 static bool material_index(const qa_material_library *library, const qa_material *material, uint64_t *index)
 {
     if (!material) { *index = UINT64_MAX; return true; }
-    size_t i = material->sorted_index;
-    if (i < library->count && &library->ordered[i]->material == material) { *index = i; return true; }
-    return false;
+    if (!qa_material_record_resolve(library, material)) return false;
+    *index = material->sorted_index;
+    return true;
 }
 static void record_free(qa_material_record *record)
 {

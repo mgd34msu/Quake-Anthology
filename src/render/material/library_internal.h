@@ -118,4 +118,6 @@ bool qa_material_sample_image(qa_material_library *, const qa_scene_image *, boo
                                qa_scene_wrap, qa_scene_image **, qa_error *);
 bool qa_material_stage_image(qa_material_stage *, size_t, const char *,
                              qa_scene_image *, qa_error *);
+const qa_material_record *qa_material_record_resolve(const qa_material_library *,
+                                                     const qa_material *);
 #endif
