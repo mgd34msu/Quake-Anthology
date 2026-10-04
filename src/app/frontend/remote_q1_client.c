@@ -65,25 +65,17 @@ bool remote_q1_actor_read(frontend_remote_q1 *row, uint32_t number, qa_actor_id 
 {
     for (size_t i = 0; i < row->actor_count; ++i) if (row->actors[i].number == number) {
         const qa_actor_record *record = qa_actors_get(row->options.domain.actors, row->actors[i].id);
-        if (!record || record->owner != row->options.domain.actor_owner || !record->has_source || record->source_slot != number)
+        if (!record || record->owner != row->options.domain.actor_owner ||
+            record->definition != row->options.domain.actor_definition || !record->has_source || record->source_slot != number)
             return remote_q1_fail(error, QA_ERROR_ARGUMENT, "Q1 presentation actor generation retired");
         *out = record->id; return true;
     }
-    if (row->actor_count >= 65536) return remote_q1_fail(error, QA_ERROR_FORMAT, "Remote Q1 actor registry is full");
+    if (row->actor_count >= 65536) return remote_q1_fail(error, QA_ERROR_FORMAT, "Remote Q1 actor cache is full");
     if (!grow((void **)&row->actors, &row->actor_capacity, row->actor_count + 1, sizeof(*row->actors), error)) return false;
-    qa_actor_id id;
-    if (!qa_actors_allocate_source(row->options.domain.actors, row->options.domain.actor_owner, number,
-        row->options.domain.actor_definition, &id, error)) return false;
+    qa_application_client_source source; qa_actor_id id;
+    if (!frontend_remote_q1_application_read(row, &source, error) ||
+        !qa_application_client_entity_read(row->options.domain.application, &source, number, &id, error)) return false;
     row->actors[row->actor_count++] = (remote_q1_actor){number, id}; *out = id; return true;
-}
-static bool actors_release(frontend_remote_q1 *row, qa_error *error)
-{
-    while (row->actor_count) {
-        qa_actor_id id = row->actors[row->actor_count - 1].id;
-        if (qa_actors_get(row->options.domain.actors, id) && !qa_actors_release(row->options.domain.actors, id, error)) return false;
-        --row->actor_count;
-    }
-    return true;
 }
 static void names_free(char ***names, size_t *count)
 { for (size_t i = 0; i < *count; ++i) free((*names)[i]); free(*names); *names = NULL; *count = 0; }
@@ -100,6 +92,7 @@ static bool names_copy(char ***out, size_t *count, const char *const *names, siz
 }
 void remote_q1_clear(frontend_remote_q1 *row)
 {
+    row->actor_count = 0;
     remote_q1_camera_reset(row);
     remote_q1_prediction_clear(row);
     remote_q1_media_clear(row);
@@ -172,7 +165,7 @@ static bool serverinfo(frontend_remote_q1 *row, const qa_nq_serverinfo *info, qa
     qa_vfs *held = qa_vfs_clone(content.mounts, error);
     if (!held) return false;
     qa_catalog_retain(content.catalog);
-    if (!remote_q1_effects_clear(row, error) || !actors_release(row, error)) {
+    if (!remote_q1_effects_clear(row, error)) {
         qa_vfs_destroy(held); qa_catalog_release(content.catalog); return false;
     }
     if (row->skins && !frontend_remote_q1_skins_reset(row->skins,error)) { qa_vfs_destroy(held); qa_catalog_release(content.catalog); return false; }
@@ -323,7 +316,7 @@ bool frontend_remote_q1_destroy(frontend_remote_q1 **owned, qa_error *error)
     frontend_remote_q1 **link = &row->frontend->remote_q1;
     while (*link && *link != row) link = &(*link)->next;
     if (*link != row) return remote_q1_fail(error, QA_ERROR_ARGUMENT, "Q1 owner is outside its real frontend parent list");
-    ++row->busy; bool ok = remote_q1_effects_clear(row, error) && actors_release(row, error); --row->busy;
+    ++row->busy; bool ok = remote_q1_effects_clear(row, error); --row->busy;
     if (!ok) return false;
     remote_q1_clear(row); free(row->current.rows); free(row->previous.rows); free(row->statics.rows);
     free(row->qw_entities.rows); free(row->qw_nails.rows); free(row->qw_batch_players.rows); free(row->qw_pending); free(row->actors);
