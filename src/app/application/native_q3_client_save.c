@@ -3,7 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-static bool value_fields(qa_source_save_io *io,qa_native_q3_client_cvar *value)
+bool native_client_cvar_fields(qa_source_save_io *io,qa_native_q3_client_cvar *value)
 {
     size_t length=io->direction==QA_SOURCE_SAVE_WRITE?strlen(value->value):0;
     if (!qa_source_save_count(io,&length,sizeof(value->value)-1)) return false;
@@ -29,7 +29,7 @@ static bool configuration_fields(qa_source_save_io *io,qa_native_q3_client_servi
         (service->services.client.initialized && !service->registered) ||
         (service->time_bound && !service->services.client.initialized)) return false;
     for (size_t i=0;i<count;++i) {
-        if (!value_fields(io,&service->cache[i])) return false;
+        if (!native_client_cvar_fields(io,&service->cache[i])) return false;
         if (native_client_definitions[i].missionpack && service->product!=QA_Q3_TEAM_ARENA) {
             const qa_native_q3_client_cvar *value=&service->cache[i];
             if (*value->value || value->number!=0 || value->integer || value->modification_count) return false;

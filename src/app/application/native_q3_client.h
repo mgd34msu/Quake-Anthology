@@ -39,6 +39,7 @@ bool native_client_allocate_bound(qa_application *, const qa_native_q3_client_ba
     const qa_native_q3_client_services *, const qa_native_q3_character_selection *,
     qa_native_q3_client_service **, qa_error *);
 bool native_client_fail(qa_error *, qa_status, const char *);
+bool native_client_cvar_fields(qa_source_save_io *, qa_native_q3_client_cvar *);
 bool native_client_time_bind(qa_native_q3_client_service *, bool restoring, qa_error *);
 void native_client_time_close(qa_native_q3_client_service *);
 bool native_client_time_fields(qa_source_save_io *, qa_native_q3_client_service *);

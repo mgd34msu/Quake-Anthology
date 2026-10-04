@@ -1,4 +1,5 @@
 #include "unified_q3_client.h"
+#include "../application/native_q3_client_settings.h"
 #include "remote_unified_save.h"
 #include "video_guests.h"
 #include "qa/network_q3_fields_save.h"
@@ -641,12 +642,8 @@ static bool cache_cvar(frontend_unified_q3_client *c, size_t index, bool force, 
         return fail(e,QA_ERROR_ARGUMENT,"Compiled CG cvar definition has retired");
     const qa_cvar_view *actual = qa_cvars_find(c->domain->cvars,definition.name);
     if (!actual) return fail(e,QA_ERROR_NOT_FOUND,"Compiled CG registered cvar is absent from its real registry");
-    qa_native_q3_client_cvar *out = c->cvar_cache+index;
-    if (!force && out->modification_count == actual->modification_count) return true;
-    size_t bytes = strlen(actual->value);
-    if (bytes >= sizeof(out->value)) return fail(e,QA_ERROR_FORMAT,"Compiled Cvar_Update exceeds MAX_CVAR_VALUE_STRING");
-    out->modification_count = actual->modification_count;
-    memcpy(out->value,actual->value,bytes+1); out->number = actual->number; out->integer = actual->integer; return true;
+    return application_q3_client_cache_copy(c->cvar_cache+index,actual,force,
+        "Compiled Cvar_Update exceeds MAX_CVAR_VALUE_STRING",e);
 }
 bool frontend_unified_q3_client_register(frontend_unified_q3_client *c, qa_error *e)
 {

@@ -1,18 +1,10 @@
 #include "native_q3_remote_client.h"
+#include "native_q3_client_settings.h"
 #include <stdlib.h>
 #include <string.h>
 
 static bool enabled(const qa_native_q3_remote_client_service *service, size_t index)
 { return !native_client_definitions[index].missionpack || service->services.basis.product == QA_Q3_TEAM_ARENA; }
-static bool copy(qa_native_q3_remote_client_service *service, size_t index, const qa_cvar_view *engine, bool force, qa_error *error)
-{
-    qa_native_q3_client_cvar *value = &service->cache[index];
-    if (!force && value->modification_count == engine->modification_count) return true;
-    value->modification_count = engine->modification_count;
-    size_t length = strlen(engine->value);
-    if (length >= sizeof(value->value)) return native_client_fail(error, QA_ERROR_FORMAT, "Remote Cvar_Update exceeds MAX_CVAR_VALUE_STRING");
-    memcpy(value->value, engine->value, length + 1); value->number = engine->number; value->integer = engine->integer; return true;
-}
 static bool enter(qa_native_q3_remote_client_service *service, qa_error *error)
 {
     if (!qa_native_q3_remote_client_current(service) || service->updating || service->cache_revision == UINT64_MAX)
@@ -30,7 +22,7 @@ bool qa_native_q3_remote_client_register(qa_native_q3_remote_client_service *ser
         ok = qa_cvars_register(registry, definition->name, reset, definition->flags, owner, "Native remote Q3 CGAME", error) &&
             qa_native_q3_remote_client_current(service);
         const qa_cvar_view *value = ok ? qa_cvars_find(registry, definition->name) : NULL;
-        if (ok) ok = value && copy(service, i, value, true, error);
+        if (ok) ok = value && application_q3_client_cache_copy(&service->cache[i], value, true, "Remote Cvar_Update exceeds MAX_CVAR_VALUE_STRING", error);
     }
     const qa_cvar_view *running = ok ? qa_cvars_find(registry, "sv_running") : NULL;
     if (ok) {
@@ -111,7 +103,7 @@ bool qa_native_q3_remote_client_update(qa_native_q3_remote_client_service *servi
     bool ok = true;
     for (size_t i = 0; ok && i < native_client_definition_count; ++i) if (enabled(service, i)) {
         const qa_cvar_view *value = qa_cvars_find(service->services.basis.client.cvars, native_client_definitions[i].name);
-        if (value) ok = copy(service, i, value, false, error);
+        if (value) ok = application_q3_client_cache_copy(&service->cache[i], value, false, "Remote Cvar_Update exceeds MAX_CVAR_VALUE_STRING", error);
     }
     qa_native_q3_client_cvar *overlay = &service->cache[native_remote_client_symbol(service, "cg_drawTeamOverlay")];
     if (ok && (service->overlay_initial || service->overlay_count != overlay->modification_count)) {

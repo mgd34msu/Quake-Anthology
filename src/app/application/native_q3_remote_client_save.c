@@ -3,16 +3,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-static bool value_fields(qa_source_save_io *io, qa_native_q3_client_cvar *value)
-{
-    size_t length = io->direction == QA_SOURCE_SAVE_WRITE ? strlen(value->value) : 0;
-    if (!qa_source_save_count(io, &length, sizeof(value->value) - 1)) return false;
-    if (io->direction == QA_SOURCE_SAVE_READ) memset(value->value, 0, sizeof(value->value));
-    if (!qa_source_save_bytes(io, value->value, length) || memchr(value->value, 0, length)) return false;
-    value->value[length] = 0;
-    return qa_source_save_f32(io, &value->number) && qa_source_save_i32(io, &value->integer) &&
-        qa_source_save_u64(io, &value->modification_count);
-}
 static bool fields(qa_source_save_io *io, qa_native_q3_remote_client_service *service)
 {
     uint8_t magic[4] = {'Q','N','R','C'}; uint32_t product = service->services.basis.product;
@@ -31,7 +21,7 @@ static bool fields(qa_source_save_io *io, qa_native_q3_remote_client_service *se
         !qa_source_save_u64(io, &service->overlay_count) || !qa_source_save_bool(io, &service->overlay_initial) ||
         !qa_source_save_i32(io, &service->local_server)) return false;
     for (size_t i = 0; i < count; ++i) {
-        if (!value_fields(io, &service->cache[i])) return false;
+        if (!native_client_cvar_fields(io, &service->cache[i])) return false;
         if (native_client_definitions[i].missionpack && service->services.basis.product != QA_Q3_TEAM_ARENA) {
             const qa_native_q3_client_cvar *value = &service->cache[i];
             if (*value->value || value->number != 0 || value->integer || value->modification_count) return false;

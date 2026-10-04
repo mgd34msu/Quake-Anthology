@@ -1,5 +1,5 @@
 #include "native_q3_remote_client_settings.h"
-#include <string.h>
+#include "native_q3_client_settings.h"
 
 static bool fail(qa_error *error,const char *message)
 { qa_error_set(error,QA_ERROR_ARGUMENT,0,"%s",message); return false; }
@@ -9,34 +9,19 @@ static bool completed(const qa_native_q3_remote_client_service *service,
     return qa_native_q3_remote_client_cache_current(service,cache) ||
         fail(error,"Remote CGAME settings changed during their cache projection");
 }
+static bool remote_settings_cvar(const void *context,const char *symbol,
+    qa_native_q3_client_cvar *out,qa_error *error)
+{ return qa_native_q3_remote_client_cvar_read(context,symbol,out,error); }
+
 bool application_native_q3_remote_client_view_settings(const qa_native_q3_remote_client_service *service,
     int32_t dm_flags,bool ragepro,q3n_view_settings *out,qa_error *error)
 {
     qa_native_q3_remote_client_cache witness;
     if(!out || !qa_native_q3_remote_client_cache_read(service,&witness,error))return false;
-    q3n_view_settings value={.dm_flags=dm_flags,.ragepro=ragepro}; qa_native_q3_client_cvar cache;
-#define READ(field,symbol,member) do { if(!qa_native_q3_remote_client_cvar_read(service,#symbol,&cache,error))return false; value.field=cache.member; } while(0)
-    READ(view_size,cg_viewsize,integer);
-    READ(camera_orbit_integer,cg_cameraOrbit,integer);
-    READ(camera_orbit_delay,cg_cameraOrbitDelay,integer);
-    READ(camera_orbit_value,cg_cameraOrbit,number);
-    READ(third_person_range,cg_thirdPersonRange,number);
-    READ(third_person_angle,cg_thirdPersonAngle,number);
-    READ(error_decay,cg_errorDecay,number);
-    READ(run_pitch,cg_runpitch,number);
-    READ(run_roll,cg_runroll,number);
-    READ(bob_pitch,cg_bobpitch,number);
-    READ(bob_roll,cg_bobroll,number);
-    READ(bob_up,cg_bobup,number);
-    READ(fov,cg_fov,number);
-    READ(zoom_fov,cg_zoomFov,number);
-    READ(gun_x,cg_gun_x,number);
-    READ(gun_y,cg_gun_y,number);
-    READ(gun_z,cg_gun_z,number);
-    READ(third_person,cg_thirdPerson,integer);
-    READ(camera_mode,cg_cameraMode,integer);
-#undef READ
-    if(!completed(service,&witness,error))return false;
+    application_q3_client_settings_source source={.context=service,.read=remote_settings_cvar};
+    q3n_view_settings value;
+    if(!application_q3_client_view_settings(&source,dm_flags,ragepro,&value,error) ||
+       !completed(service,&witness,error))return false;
     *out=value; return true;
 }
 bool application_native_q3_remote_client_hud_settings(const qa_native_q3_remote_client_service *service,
@@ -44,34 +29,10 @@ bool application_native_q3_remote_client_hud_settings(const qa_native_q3_remote_
 {
     qa_native_q3_remote_client_cache witness;
     if(!out || !qa_native_q3_remote_client_cache_read(service,&witness,error))return false;
-    q3n_hud_settings value={0}; qa_native_q3_client_cvar cache;
-#define READ(field,symbol,member) do { if(!qa_native_q3_remote_client_cvar_read(service,#symbol,&cache,error))return false; value.field=cache.member; } while(0)
-    READ(draw_2d,cg_draw2D,integer);
-    READ(draw_status,cg_drawStatus,integer);
-    READ(draw_icons,cg_drawIcons,integer);
-    READ(draw_3d_icons,cg_draw3dIcons,integer);
-    READ(draw_rewards,cg_drawRewards,integer);
-    READ(crosshair_health,cg_crosshairHealth,integer);
-    READ(draw_crosshair_names,cg_drawCrosshairNames,integer);
-    READ(draw_ammo_warning,cg_drawAmmoWarning,integer);
-    READ(paused,cg_paused,integer);
-    READ(draw_snapshot,cg_drawSnapshot,integer);
-    READ(draw_fps,cg_drawFPS,integer);
-    READ(draw_timer,cg_drawTimer,integer);
-    READ(draw_attacker,cg_drawAttacker,integer);
-    READ(lagometer,cg_lagometer,integer);
-    READ(no_predict,cg_nopredict,integer);
-    READ(synchronous_clients,cg_synchronousClients,integer);
-    READ(crosshair,cg_drawCrosshair,integer);
-    READ(crosshair_x,cg_crosshairX,integer);
-    READ(crosshair_y,cg_crosshairY,integer);
-    READ(team_overlay,cg_drawTeamOverlay,integer);
-    READ(team_chat_height,cg_teamChatHeight,integer);
-    READ(team_chat_time,cg_teamChatTime,integer);
-    READ(crosshair_size,cg_crosshairSize,number);
-    READ(center_time,cg_centertime,number);
-#undef READ
-    if(!qa_native_q3_remote_client_local_server_read(service,&value.local_server,error) ||
+    application_q3_client_settings_source source={.context=service,.read=remote_settings_cvar};
+    q3n_hud_settings value;
+    if(!application_q3_client_hud_settings(&source,&value,error) ||
+       !qa_native_q3_remote_client_local_server_read(service,&value.local_server,error) ||
        !completed(service,&witness,error))return false;
     *out=value; return true;
 }
@@ -79,36 +40,18 @@ bool application_native_q3_remote_client_set_view_size(void *context,int32_t siz
 { return qa_native_q3_remote_client_set_view_size(context,size,error); }
 bool application_native_q3_remote_client_set_orbit_angle(void *context,float angle,qa_error *error)
 { return qa_native_q3_remote_client_cvar_number(context,"cg_thirdPersonAngle",angle,error); }
-static void source_text(char *out,size_t capacity,const char *text)
-{
-    size_t length=strlen(text); if(length>=capacity)length=capacity-1;
-    memcpy(out,text,length); out[length]=0;
-}
+
 bool application_native_q3_remote_client_info_settings(const qa_native_q3_remote_client_service *service,
     size_t memory_remaining,bool loading,q3n_client_settings *out,qa_error *error)
 {
     qa_native_q3_remote_client_cache witness; qa_native_q3_remote_client_basis basis;
     if(!out || !qa_native_q3_remote_client_cache_read(service,&witness,error) ||
        !qa_native_q3_remote_client_basis_read(service,&basis,error))return false;
-    q3n_client_settings value={.memory_remaining=memory_remaining,.loading=loading};
-    qa_native_q3_client_cvar cache;
-    if(!qa_native_q3_remote_client_cvar_read(service,"cg_forceModel",&cache,error))return false;
-    value.force_model=cache.integer;
-    if(!qa_native_q3_remote_client_cvar_read(service,"cg_deferPlayers",&cache,error))return false;
-    value.defer_players=cache.integer;
-    if(!qa_native_q3_remote_client_cvar_read(service,"cg_buildScript",&cache,error))return false;
-    value.build_script=cache.integer;
-    const qa_cvar_view *engine=qa_cvars_find(basis.client.cvars,"model");
-    source_text(value.model,sizeof(value.model),engine?engine->value:"");
-    engine=qa_cvars_find(basis.client.cvars,"headmodel");
-    source_text(value.head_model,sizeof(value.head_model),engine?engine->value:"");
-    if(basis.product==QA_Q3_TEAM_ARENA) {
-        if(!qa_native_q3_remote_client_cvar_read(service,"cg_redTeamName",&cache,error))return false;
-        source_text(value.red_team_name,sizeof(value.red_team_name),cache.value);
-        if(!qa_native_q3_remote_client_cvar_read(service,"cg_blueTeamName",&cache,error))return false;
-        source_text(value.blue_team_name,sizeof(value.blue_team_name),cache.value);
-    }
-    if(!completed(service,&witness,error))return false;
+    application_q3_client_settings_source source={.context=service,.read=remote_settings_cvar,
+        .cvars=basis.client.cvars,.product=basis.product};
+    q3n_client_settings value;
+    if(!application_q3_client_info_settings(&source,memory_remaining,loading,&value,error) ||
+       !completed(service,&witness,error))return false;
     *out=value; return true;
 }
 bool application_native_q3_remote_client_frame_settings(const qa_native_q3_remote_client_service *service,
@@ -118,56 +61,11 @@ bool application_native_q3_remote_client_frame_settings(const qa_native_q3_remot
     qa_native_q3_remote_client_cache witness; qa_native_q3_remote_client_basis basis;
     if(!out || stereo>2 || !qa_native_q3_remote_client_cache_read(service,&witness,error) ||
        !qa_native_q3_remote_client_basis_read(service,&basis,error))return false;
-    q3n_native_frame_options value={.weapons={.ragepro=ragepro},
-        .events={.ragepro=ragepro,.demo_playback=demo},.stereo=stereo};
-    if(!application_native_q3_remote_client_view_settings(service,dm_flags,ragepro,&value.view,error) ||
-       !application_native_q3_remote_client_hud_settings(service,&value.hud,error) ||
-       !application_native_q3_remote_client_info_settings(service,memory_remaining,loading,&value.clients,error))return false;
-    qa_native_q3_client_cvar cache;
-#define READ(field,symbol,member) do { if(!qa_native_q3_remote_client_cvar_read(service,#symbol,&cache,error))return false; value.field=cache.member; } while(0)
-    if(basis.product==QA_Q3_TEAM_ARENA) {
-        READ(events.single_player_active,cg_singlePlayerActive,integer);
-        READ(packet.obelisk_respawn_delay,cg_obeliskRespawnDelay,integer);
-        READ(player_fx.enable_breath,cg_enableBreath,integer);
-        READ(player_fx.enable_dust,cg_enableDust,integer);
-    }
-    READ(weapons.brass_time,cg_brassTime,integer);
-    READ(weapons.fov,cg_fov,integer);
-    READ(weapons.rail_trail_time,cg_railTrailTime,number);
-    READ(weapons.true_lightning,cg_trueLightning,number);
-    READ(weapons.gun_x,cg_gun_x,number);
-    READ(weapons.gun_y,cg_gun_y,number);
-    READ(weapons.gun_z,cg_gun_z,number);
-    READ(weapons.tracer_length,cg_tracerLength,number);
-    READ(weapons.tracer_width,cg_tracerWidth,number);
-    READ(weapons.tracer_chance,cg_tracerChance,number);
-    READ(weapons.old_rail,cg_oldRail,integer);
-    READ(weapons.no_projectile_trail,cg_noProjectileTrail,integer);
-    READ(weapons.old_plasma,cg_oldPlasma,integer);
-    READ(weapons.old_rocket,cg_oldRocket,integer);
-    READ(weapons.draw_gun,cg_drawGun,integer);
-    READ(events.footsteps,cg_footsteps,integer);
-    READ(events.autoswitch,cg_autoswitch,integer);
-    READ(events.no_predict,cg_nopredict,integer);
-    READ(events.synchronous_clients,cg_synchronousClients,integer);
-    READ(events.camera_orbit,cg_cameraOrbit,integer);
-    READ(events.debug_events,cg_debugEvents,integer);
-    READ(events.blood,cg_blood,integer);
-    READ(events.gibs,cg_gibs,integer);
-    READ(events.score_plum,cg_scorePlum,integer);
-    READ(events.no_projectile_trail,cg_noProjectileTrail,integer);
-    READ(events.add_marks,cg_addMarks,integer);
-    READ(packet.smooth_clients,cg_smoothClients,integer);
-    READ(packet.simple_items,cg_simpleItems,integer);
-    READ(player_fx.shadow_mode,cg_shadows,integer);
-    READ(player_fx.draw_friend,cg_drawFriend,integer);
-    READ(swing_speed,cg_swingSpeed,number);
-    READ(no_player_animations,cg_noPlayerAnims,integer);
-    READ(stereo_separation,cg_stereoSeparation,number);
-#undef READ
-    if(!qa_native_q3_remote_client_cvar_read(service,"cg_animSpeed",&cache,error))return false;
-    value.animations_disabled=cache.number==0;
-    value.player_fx.animations_disabled=value.animations_disabled;
-    if(!completed(service,&witness,error))return false;
+    application_q3_client_settings_source source={.context=service,.read=remote_settings_cvar,
+        .cvars=basis.client.cvars,.product=basis.product};
+    q3n_native_frame_options value;
+    if(!application_q3_client_frame_settings(&source,dm_flags,ragepro,memory_remaining,loading,demo,stereo,&value,error) ||
+       !qa_native_q3_remote_client_local_server_read(service,&value.hud.local_server,error) ||
+       !completed(service,&witness,error))return false;
     *out=value; return true;
 }

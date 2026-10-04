@@ -1,4 +1,5 @@
 #include "native_q3_client.h"
+#include "native_q3_client_settings.h"
 #include "qa/game_q3_configstrings.h"
 #include "qa/application_native_q3_cvars.h"
 #include <stdlib.h>
@@ -216,20 +217,6 @@ static size_t symbol_index(const qa_native_q3_client_service *service,const char
             !strcmp(symbol,native_client_definitions[i].symbol)) return i;
     return SIZE_MAX;
 }
-static bool copy_cvar(qa_native_q3_client_service *service,size_t index,const qa_cvar_view *engine,
-    bool forced,qa_error *error)
-{
-    qa_native_q3_client_cvar *value=&service->cache[index];
-    if (!forced && value->modification_count==engine->modification_count) return true;
-    /* The source updates modificationCount before its oversized string error.
-     * Preserve that failure prefix; do not silently truncate the VM cache. */
-    value->modification_count=engine->modification_count;
-    size_t length=strlen(engine->value);
-    if (length>=sizeof(value->value))
-        return native_client_fail(error,QA_ERROR_FORMAT,"Cvar_Update source exceeds MAX_CVAR_VALUE_STRING");
-    memcpy(value->value,engine->value,length+1);
-    value->number=engine->number; value->integer=engine->integer; return true;
-}
 bool qa_native_q3_client_cvar_read(const qa_native_q3_client_service *service,const char *symbol,
     qa_native_q3_client_cvar *out,qa_error *error)
 {
@@ -270,7 +257,7 @@ static bool register_body(qa_native_q3_client_service *service,qa_error *error)
             service->services.client.service_owner,"Native Q3 CGAME",error) ||
             !qa_native_q3_client_service_current(service)) return false;
         const qa_cvar_view *value=qa_cvars_find(registry,definition->name);
-        if (!value || !copy_cvar(service,i,value,true,error)) return false;
+        if (!value || !application_q3_client_cache_copy(&service->cache[i],value,true,"Cvar_Update source exceeds MAX_CVAR_VALUE_STRING",error)) return false;
     }
     const qa_cvar_view *running=qa_cvars_find(registry,"sv_running");
     service->local_server=running?running->integer:0;
@@ -380,7 +367,7 @@ bool qa_native_q3_client_update(qa_native_q3_client_service *service,qa_error *e
         const native_client_definition *definition=&native_client_definitions[i];
         if (definition->missionpack && service->product!=QA_Q3_TEAM_ARENA) continue;
         const qa_cvar_view *value=qa_cvars_find(service->services.client.cvars,definition->name);
-        if (value) ok=copy_cvar(service,i,value,false,error);
+        if (value) ok=application_q3_client_cache_copy(&service->cache[i],value,false,"Cvar_Update source exceeds MAX_CVAR_VALUE_STRING",error);
     }
     qa_native_q3_client_cvar *overlay=&service->cache[symbol_index(service,"cg_drawTeamOverlay")];
     if (ok && (service->overlay_initial || service->overlay_count!=overlay->modification_count)) {

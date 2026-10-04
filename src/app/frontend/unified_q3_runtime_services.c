@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "unified_q3_runtime_services.h"
+#include "../application/native_q3_client_settings.h"
 #include "remote_unified_presentation.h"
 #include "remote_unified_save.h"
 #include "q3_render_policy.h"
@@ -391,71 +392,23 @@ static bool ragepro(frontend_unified_q3_runtime_services *o)
 { const qa_gl_capabilities *caps=qa_gl_capabilities_get(o->options.frontend->gl);
     return caps && !renderer_name(caps->renderer,"banshee") && !renderer_name(caps->renderer,"voodoo_graphics") &&
         (renderer_name(caps->renderer,"rage pro") || renderer_name(caps->renderer,"ragepro")); }
-static bool info_settings(frontend_unified_q3_runtime_services *o,bool loading,q3n_client_settings *out,qa_error *e)
-{
-    qa_native_q3_client_cvar value;q3n_client_settings result={.loading=loading,.memory_remaining=(size_t)memory_remaining(o)};
-    if(!cvar(o,"cg_forceModel",&value,e))return false;
-    result.force_model=value.integer!=0;
-    if(!cvar(o,"cg_deferPlayers",&value,e))return false;
-    result.defer_players=value.integer!=0;
-    if(!cvar(o,"cg_buildScript",&value,e))return false;
-    result.build_script=value.integer!=0;
-    const qa_cvar_view *model=qa_cvars_find(frontend_unified_q3_client_cvars(o->options.client),"model");
-    const qa_cvar_view *head=qa_cvars_find(frontend_unified_q3_client_cvars(o->options.client),"headmodel");
-    snprintf(result.model,sizeof(result.model),"%.63s",model?model->value:"");
-    snprintf(result.head_model,sizeof(result.head_model),"%.63s",head?head->value:"");
-    if(o->product==QA_Q3_TEAM_ARENA){
-        if(!cvar(o,"cg_redTeamName",&value,e))return false;
-        snprintf(result.red_team_name,sizeof(result.red_team_name),"%.63s",value.value);
-        if(!cvar(o,"cg_blueTeamName",&value,e))return false;
-        snprintf(result.blue_team_name,sizeof(result.blue_team_name),"%.63s",value.value);}
-    *out=result;return frontend_unified_q3_runtime_services_current(o);
-}
+static bool settings_cvar(const void *context,const char *name,qa_native_q3_client_cvar *out,qa_error *e)
+{ return cvar((void *)context,name,out,e); }
 static bool frame_settings(void *context,const q3n_compiled_frame *f,bool loading,uint32_t stereo,
     q3n_native_frame_options *out,qa_error *e)
 {
     frontend_unified_q3_runtime_services *o=context;
     if(!out || stereo>2 || !f || f->source.owner!=o->source || !q3n_compiled_frame_current(f) ||
         !frontend_unified_q3_runtime_services_current(o))return fail(e,"CG settings lost their current compiled source");
-    q3n_native_frame_options v={.stereo=stereo};qa_native_q3_client_cvar cache;
-    v.view.ragepro=v.weapons.ragepro=v.events.ragepro=ragepro(o);
     const char *server;uint64_t revision;char flags[8192];
     if(!q3n_compiled_source_configstring(o->source,0,&server,&revision,e) ||
         !qa_q3_info_value(server,"dmflags",flags,sizeof(flags),e))return false;
-    v.view.dm_flags=q3nc_integer(flags);
-#define INT(field,name) do {if(!cvar(o,#name,&cache,e))return false;v.field=cache.integer;}while(0)
-#define BOOL(field,name) do {if(!cvar(o,#name,&cache,e))return false;v.field=cache.integer!=0;}while(0)
-#define REAL(field,name) do {if(!cvar(o,#name,&cache,e))return false;v.field=cache.number;}while(0)
-    INT(view.view_size,cg_viewsize);INT(view.camera_orbit_integer,cg_cameraOrbit);INT(view.camera_orbit_delay,cg_cameraOrbitDelay);
-    REAL(view.camera_orbit_value,cg_cameraOrbit);REAL(view.third_person_range,cg_thirdPersonRange);REAL(view.third_person_angle,cg_thirdPersonAngle);
-    REAL(view.error_decay,cg_errorDecay);REAL(view.run_pitch,cg_runpitch);REAL(view.run_roll,cg_runroll);
-    REAL(view.bob_pitch,cg_bobpitch);REAL(view.bob_roll,cg_bobroll);REAL(view.bob_up,cg_bobup);REAL(view.fov,cg_fov);REAL(view.zoom_fov,cg_zoomFov);
-    REAL(view.gun_x,cg_gun_x);REAL(view.gun_y,cg_gun_y);REAL(view.gun_z,cg_gun_z);BOOL(view.third_person,cg_thirdPerson);BOOL(view.camera_mode,cg_cameraMode);
-    BOOL(hud.draw_2d,cg_draw2D);BOOL(hud.draw_status,cg_drawStatus);BOOL(hud.draw_icons,cg_drawIcons);BOOL(hud.draw_3d_icons,cg_draw3dIcons);
-    BOOL(hud.draw_rewards,cg_drawRewards);BOOL(hud.crosshair_health,cg_crosshairHealth);BOOL(hud.draw_crosshair_names,cg_drawCrosshairNames);
-    BOOL(hud.draw_ammo_warning,cg_drawAmmoWarning);BOOL(hud.paused,cg_paused);BOOL(hud.draw_snapshot,cg_drawSnapshot);BOOL(hud.draw_fps,cg_drawFPS);
-    BOOL(hud.draw_timer,cg_drawTimer);BOOL(hud.draw_attacker,cg_drawAttacker);BOOL(hud.lagometer,cg_lagometer);BOOL(hud.no_predict,cg_nopredict);
-    BOOL(hud.synchronous_clients,cg_synchronousClients);INT(hud.crosshair,cg_drawCrosshair);INT(hud.crosshair_x,cg_crosshairX);INT(hud.crosshair_y,cg_crosshairY);
-    INT(hud.team_overlay,cg_drawTeamOverlay);INT(hud.team_chat_height,cg_teamChatHeight);INT(hud.team_chat_time,cg_teamChatTime);
-    REAL(hud.crosshair_size,cg_crosshairSize);REAL(hud.center_time,cg_centertime);
-    INT(weapons.brass_time,cg_brassTime);INT(weapons.fov,cg_fov);REAL(weapons.rail_trail_time,cg_railTrailTime);REAL(weapons.true_lightning,cg_trueLightning);
-    REAL(weapons.gun_x,cg_gun_x);REAL(weapons.gun_y,cg_gun_y);REAL(weapons.gun_z,cg_gun_z);
-    REAL(weapons.tracer_length,cg_tracerLength);REAL(weapons.tracer_width,cg_tracerWidth);REAL(weapons.tracer_chance,cg_tracerChance);
-    BOOL(weapons.old_rail,cg_oldRail);BOOL(weapons.no_projectile_trail,cg_noProjectileTrail);BOOL(weapons.old_plasma,cg_oldPlasma);
-    BOOL(weapons.old_rocket,cg_oldRocket);BOOL(weapons.draw_gun,cg_drawGun);
-    BOOL(events.footsteps,cg_footsteps);BOOL(events.autoswitch,cg_autoswitch);BOOL(events.no_predict,cg_nopredict);
-    BOOL(events.synchronous_clients,cg_synchronousClients);BOOL(events.camera_orbit,cg_cameraOrbit);BOOL(events.debug_events,cg_debugEvents);
-    BOOL(events.blood,cg_blood);BOOL(events.gibs,cg_gibs);BOOL(events.score_plum,cg_scorePlum);BOOL(events.no_projectile_trail,cg_noProjectileTrail);BOOL(events.add_marks,cg_addMarks);
-    BOOL(packet.smooth_clients,cg_smoothClients);BOOL(packet.simple_items,cg_simpleItems);INT(player_fx.shadow_mode,cg_shadows);BOOL(player_fx.draw_friend,cg_drawFriend);
-    REAL(swing_speed,cg_swingSpeed);BOOL(no_player_animations,cg_noPlayerAnims);REAL(stereo_separation,cg_stereoSeparation);
-    if(o->product==QA_Q3_TEAM_ARENA){BOOL(events.single_player_active,cg_singlePlayerActive);
-        INT(packet.obelisk_respawn_delay,cg_obeliskRespawnDelay);BOOL(player_fx.enable_breath,cg_enableBreath);BOOL(player_fx.enable_dust,cg_enableDust);}
-#undef INT
-#undef BOOL
-#undef REAL
-    if(!cvar(o,"cg_animSpeed",&cache,e) || !info_settings(o,loading,&v.clients,e) ||
+    application_q3_client_settings_source source={.context=o,.read=settings_cvar,
+        .cvars=frontend_unified_q3_client_cvars(o->options.client),.product=o->product};
+    q3n_native_frame_options v;
+    if(!application_q3_client_frame_settings(&source,q3nc_integer(flags),ragepro(o),
+        (size_t)memory_remaining(o),loading,false,stereo,&v,e) ||
         !frontend_unified_q3_client_local_server_read(o->options.client,&v.hud.local_server,e))return false;
-    v.animations_disabled=cache.number==0;v.player_fx.animations_disabled=v.animations_disabled;
     if(o->options.operations.frame_settings &&
         !o->options.operations.frame_settings(o->options.operations.context,f,loading,stereo,&v,e))return false;
     if(!q3n_compiled_frame_current(f) || !frontend_unified_q3_runtime_services_current(o))return false;
