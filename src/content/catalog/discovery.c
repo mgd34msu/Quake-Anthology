@@ -746,8 +746,16 @@ bool catalog_has_path(qa_catalog *c, const catalog_product *p, const char *path,
             if (!regular_file(file, &regular, error)) return false;
             if (regular) { *found = true; return true; }
         } else {
-            for (size_t j = 0; j < physical->member_count; ++j)
-                if (catalog_ascii_equal(physical->members[j].path, path)) { *found = true; return true; }
+            const qa_archive *archive = qa_vfs_archive(c->mounts, physical->view.id);
+            size_t start = 0;
+            for (;;) {
+                const qa_archive_entry *entry = NULL;
+                if (!qa_archive_find_normalized(archive, path, QA_ARCHIVE_ASCII_INSENSITIVE,
+                    start, &entry, error)) return false;
+                if (!entry) break;
+                if (!entry->is_directory) { *found = true; return true; }
+                start = entry->ordinal + 1;
+            }
         }
     }
     return true;
