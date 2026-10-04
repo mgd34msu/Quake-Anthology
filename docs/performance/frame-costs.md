@@ -1,7 +1,7 @@
 # Native frame costs
 
-The latest measured Q3 CPU frame takes **24.680 ms**, including **16.624 ms**
-of raster execution; latest interval-1 GL takes **19.753 ms**. Removing a quadratic settings
+The latest measured Q3 CPU frame takes **25.210 ms**, including **16.844 ms**
+of raster execution; latest interval-1 GL takes **18.101 ms**. Removing a quadratic settings
 lookup cuts shared scene work. Replacing duplicate SDL texture layers reduces
 CPU presentation to about **0.3 ms**. Raster execution is now the largest CPU cost.
 
@@ -59,6 +59,7 @@ material totals include more observer overhead than the standard runs above.
 | `008d0701` | 25.993 | 16.706 | 153.770 |
 | `fc471593` | 25.669 | 16.638 | 151.515 |
 | `8773a8f3` | 24.680 | 16.624 | 150.164 |
+| `7a078e87` | 25.210 | 16.844 | 152.449 |
 
 With the same subdivision, GL takes 31.411 ms on `e900075f` and 30.501 ms
 on `436272c5`. Material submission falls from 13.104 to 12.399 ms on CPU
@@ -131,19 +132,39 @@ On `b91eb2eb`, the nearest-rank 95th percentile is 91.594 ms CPU and
 CPU work. A process snapshot confirms 23 CPU raster workers plus the caller;
 it does not establish each worker's individual contribution.
 
+## Loading and peak memory
+
+Lazy archive payload acquisition on `7a078e87` preserves the existing parser,
+retained directory identity, member sharing and saved layout. The same workload
+reaches its readiness marker at 19.52 seconds instead of 35.53 seconds on both
+backends. These are launch-to-marker observations with 250 ms polling, not
+individual internal startup-stage clocks or a cold-cache benchmark.
+
+| Backend | Previous peak RSS, GiB | Current peak RSS, GiB | Previous run, s | Current run, s |
+| --- | ---: | ---: | ---: | ---: |
+| CPU | 5.913 | 2.639 | 38.536 | 23.027 |
+| GL | 5.981 | 2.706 | 37.539 | 21.521 |
+
+Peak RSS covers the entire child process, including startup. It is not a
+steady-state memory measurement. All 30 gameplay/count records and final
+engine pixels match the preceding same-backend control; CPU retained RGBA
+and native RGB also match. Complete-frame medians are 25.210 ms CPU and
+18.101 ms GL. This establishes lower loading cost and peak memory, while
+the CPU frame shows no latency improvement.
+
 ## Current costs and optimization targets
 
-These are inclusive medians on `8773a8f3` CPU and interval-1 GL.
+These are inclusive medians on `7a078e87` CPU and interval-1 GL.
 Both include the subdivision scopes.
 Nested durations overlap, so the rows must not be added together.
 
 | Scope | CPU ms | GL ms |
 | --- | ---: | ---: |
-| Scene construction | 5.184 | 5.411 |
-| Material submission, 554 calls | 3.734 | 3.800 |
-| World submission, including its materials | 3.671 | 3.762 |
-| Renderer execution / GL submission | 16.624 | 2.023 |
-| CPU native presentation / GL swap | 0.282 | 8.749 |
+| Scene construction | 5.245 | 5.113 |
+| Material submission, 554 calls | 3.799 | 3.705 |
+| World submission, including its materials | 3.741 | 3.646 |
+| Renderer execution / GL submission | 16.844 | 1.873 |
+| CPU native presentation / GL swap | 0.309 | 8.404 |
 
 The first GL baseline separately measured 3.596 ms median GPU elapsed time
 around renderer execution. GPU intervals overlap CPU work and presentation;
