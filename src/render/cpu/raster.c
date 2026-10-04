@@ -106,16 +106,23 @@ static cpu_raster_job raster_command_job(const cpu_raster_job *batch,
   return job;
 }
 static bool raster_commands(cpu_raster_job *batch, bool restore_environment) {
+  const fenv_t *environment = NULL;
   for (; batch->completed_commands < batch->command_count;
        ++batch->completed_commands) {
     size_t i = batch->completed_commands;
     if (!raster_command_overlaps(batch, i)) continue;
-    if (restore_environment &&
-        fesetenv(&batch->commands[i].environment) != 0) return false;
+    if (restore_environment) {
+      const fenv_t *next = &batch->commands[i].environment;
+      if (!environment || memcmp(environment, next, sizeof(*next)) != 0) {
+        if (environment) batch->exceptions |= fetestexcept(FE_ALL_EXCEPT);
+        if (fesetenv(next) != 0) return false;
+        environment = next;
+      }
+    }
     cpu_raster_job job = raster_command_job(batch, i);
     raster_prepared_draw(&job);
-    if (restore_environment) batch->exceptions |= fetestexcept(FE_ALL_EXCEPT);
   }
+  if (environment) batch->exceptions |= fetestexcept(FE_ALL_EXCEPT);
   return true;
 }
 static cpu_raster_job raster_slice_job(const struct cpu_raster_pool *pool,
