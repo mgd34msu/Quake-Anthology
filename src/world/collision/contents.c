@@ -55,6 +55,7 @@ bool qa_collision_contents_block(int32_t contents,qa_collision_family family,con
 
 uint32_t qa_collision_geometry_mask(const qa_trace_policy *policy,qa_collision_family family)
 {
+    if(family==policy->family) return family==QA_COLLISION_Q1?0:policy->contents_mask;
     uint32_t mask=0;
     for(unsigned bit=0;bit<32;++bit) {
         uint32_t flag=UINT32_C(1)<<bit;
