@@ -795,7 +795,9 @@ static bool renderer_restore(frontend_persistence *operation,qa_error *error)
         qa_source_save_reader(&io,NULL,section(&operation->sections,SECTION_RENDERER),error) &&
         renderer_fields(&io,kind,&display,&renderer) && qa_source_save_finish(&io,NULL);
     qa_source_save_dispose(&io);
-    if (ok && kind) ok=qa_display_restore(display,operation->active->display,&f->display,&operation->display_guard,error) &&
+    if (ok && kind) ok=frontend_q3_source_color_restore_native(f,operation->active->display,
+        section(&operation->sections,SECTION_SOURCE_COLOR),error) &&
+        qa_display_restore(display,operation->active->display,&f->display,&operation->display_guard,error) &&
         qa_display_handoff_prepare(operation->display_guard,error);
     qa_render_checkpoint_refs refs=renderer_refs(operation);
     if (ok && kind==1) {
@@ -1631,6 +1633,7 @@ static bool discard_services(void *context,qa_application *candidate,qa_error *e
         qa_application_retire_sources(candidate,error) &&
         frontend_config_store_restore_abort_unbound(f->config_store,candidate,error) &&
         frontend_root_resources_destroy(f,error) &&
+        frontend_q3_source_color_retire(f,error) &&
         frontend_network_destroy(f,error) && frontend_tools_destroy(f,error);
 }
 static bool publish_ready(void *context,qa_application *active,qa_application *candidate,qa_error *error)

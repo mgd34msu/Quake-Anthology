@@ -17,6 +17,7 @@ struct frontend_q3_color {
     qa_gl_renderer *gl;
     qa_cpu_renderer *cpu;
     qa_display_gamma *gamma;
+    qa_display *acquired_gamma_display;
     qa_q3_image_upload_options upload;
     qa_q3_color_lighting lighting;
     frontend_q3_color_ticket *ticket;
@@ -53,6 +54,19 @@ static bool record(qa_frontend *f, const qa_cvars_edit *edit, const char *name,
     *out = edit ? qa_cvars_edit_canonical_record(edit, name) : frontend_render_control_record(registry, name);
     return (*out && (*out)->value) ||
         frontend_fail(error, QA_ERROR_ARGUMENT, "Source color lacks a physical canonical setting");
+}
+
+static bool gamma_acquire(frontend_q3_color *owner, const qa_cvars_edit *edit,
+    qa_display *display, qa_error *error)
+{
+    if (owner->gamma) return true;
+    const qa_cvar_view *ignore;
+    if (!record(owner->frontend, edit, "r_ignorehwgamma", &ignore, error)) return false;
+    owner->gamma = qa_display_gamma_borrow(display);
+    if (owner->gamma) return true;
+    if (!qa_display_gamma_begin(display, ignore->integer != 0, &owner->gamma, error)) return false;
+    owner->acquired_gamma_display = display;
+    return true;
 }
 
 static bool device_read(frontend_q3_color *owner, qa_display *display,
@@ -137,13 +151,8 @@ bool frontend_q3_source_color_ensure(qa_frontend *f, qa_error *error)
     if (!frontend_source_color_register(f,edit,error) || !frontend_shared_q3_renderer_initialize(f,error)) {
         owner->initializing = false; return false;
     }
-    if (!owner->gamma) {
-        const qa_cvar_view *ignore;
-        if (!record(f, edit, "r_ignorehwgamma", &ignore, error)) { owner->initializing = false; return false; }
-        owner->gamma = qa_display_gamma_borrow(owner->display);
-        if (!owner->gamma && !qa_display_gamma_begin(owner->display, ignore->integer != 0, &owner->gamma, error)) {
-            owner->initializing = false; return false;
-        }
+    if (!gamma_acquire(owner, edit, owner->display, error)) {
+        owner->initializing = false; return false;
     }
     const qa_cvar_view *requested;
     qa_q3_color_device device; uint32_t maximum;
@@ -336,7 +345,8 @@ bool frontend_q3_source_color_retire(qa_frontend *f, qa_error *error)
     if (!frontend_q3_source_color_publication_finish(f,error)) return false;
     if (owner->initializing || owner->ticket)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Source color retirement is entered");
-    if (owner->gamma && qa_display_gamma_parent_is(owner->gamma, owner->display) &&
+    if (owner->gamma && (qa_display_gamma_parent_is(owner->gamma, owner->display) ||
+        (owner->acquired_gamma_display && qa_display_gamma_parent_is(owner->gamma, owner->acquired_gamma_display))) &&
         !qa_display_gamma_release(&owner->gamma, error)) return false;
     free(owner); f->source_color = NULL;
     return true;
@@ -439,6 +449,7 @@ void frontend_q3_source_color_publish(frontend_q3_color_ticket *ticket)
     if (f->display != ticket->target || qa_display_gamma_borrow(f->display) != ticket->owner->gamma) return;
     if (ticket->native) qa_display_gamma_publish(ticket->native);
     ticket->owner->display = f->display;
+    ticket->owner->acquired_gamma_display = NULL;
     ticket->owner->upload = ticket->upload; ticket->owner->lighting = ticket->lighting;
     ticket->ready = false; ticket->published = true;
 }
@@ -497,6 +508,13 @@ static bool saved_fields(qa_source_save_io *io, bool *present, qa_q3_image_uploa
         qa_source_save_bool(io,present) &&
         (!*present || qa_q3_image_upload_options_precision_codec(io,upload)) && (!*present || !upload->lightmap);
 }
+static bool saved_read(qa_bytes bytes,bool *present,qa_q3_image_upload_options *upload,qa_error *error)
+{
+    qa_source_save_io io={0};
+    bool ok=qa_source_save_reader(&io,NULL,bytes,error) && saved_fields(&io,present,upload) &&
+        qa_source_save_finish(&io,NULL);
+    qa_source_save_dispose(&io); return ok;
+}
 bool frontend_q3_source_color_checkpoint(const qa_frontend *f,qa_buffer *out,qa_error *error)
 {
     if (!f || !out || out->data || out->size)
@@ -509,22 +527,44 @@ bool frontend_q3_source_color_checkpoint(const qa_frontend *f,qa_buffer *out,qa_
     bool ok=qa_source_save_writer(&io,NULL,error) && saved_fields(&io,&present,&upload) && qa_source_save_finish(&io,out);
     qa_source_save_dispose(&io); return ok;
 }
-bool frontend_q3_source_color_restore(qa_frontend *f,const qa_display_restore_guard *display_guard,
+bool frontend_q3_source_color_restore_native(qa_frontend *f,qa_display *active,
     qa_bytes bytes,qa_error *error)
 {
     if (!f || !f->application || f->source_color)
-        return frontend_fail(error,QA_ERROR_ARGUMENT,"Source color restore requires its empty actual candidate owner");
-    bool present=false; qa_q3_image_upload_options upload={0}; qa_source_save_io io={0};
-    bool ok=qa_source_save_reader(&io,NULL,bytes,error) && saved_fields(&io,&present,&upload) &&
-        qa_source_save_finish(&io,NULL);
-    qa_source_save_dispose(&io);
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Source color native restore requires its empty candidate owner");
+    bool present=false; qa_q3_image_upload_options upload={0};
+    bool ok=saved_read(bytes,&present,&upload,error);
     if (!ok || !present) return ok;
+    frontend_q3_color *owner=calloc(1,sizeof(*owner));
+    if (!owner) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining restored Source color native parent");
+    owner->frontend=f; owner->application=f->application; owner->upload=upload;
+    f->source_color=owner;
+    return gamma_acquire(owner,NULL,active,error);
+}
+bool frontend_q3_source_color_restore(qa_frontend *f,const qa_display_restore_guard *display_guard,
+    qa_bytes bytes,qa_error *error)
+{
+    if (!f || !f->application)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Source color restore requires its actual candidate owner");
+    bool present=false; qa_q3_image_upload_options upload={0};
+    bool ok=saved_read(bytes,&present,&upload,error);
+    if (!ok) return false;
+    if (!present) return !f->source_color ||
+        frontend_fail(error,QA_ERROR_ARGUMENT,"Absent Source color import retains a candidate color owner");
+    frontend_q3_color *owner=f->source_color;
+    if (!owner || owner->frontend!=f || owner->application!=f->application ||
+        owner->initialized || owner->initializing || owner->ticket ||
+        !qa_q3_image_upload_options_equal(&owner->upload,&upload))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Source color import lacks its actual native preparation");
     qa_display_info info;
     qa_display_gamma *gamma=qa_display_gamma_borrow(f->display);
     qa_display_gamma_capability cap;
-    if (!f->display || (!!f->gl==!!f->cpu) || !qa_display_restore_info(display_guard,f->display,&info) ||
-        !gamma || !qa_display_gamma_capability_read(gamma,&cap))
-        return frontend_fail(error,QA_ERROR_ARGUMENT,"Source color import requires the actual retained native display recipe");
+    if (!f->display || (!!f->gl==!!f->cpu))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Source color import lacks its actual display and single renderer");
+    if (!qa_display_restore_info(display_guard,f->display,&info))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Source color import lost its retained native display recipe");
+    if (!gamma || gamma!=owner->gamma || !qa_display_gamma_capability_read(gamma,&cap))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Source color import lost its actual prepared gamma capability");
     uint32_t color,maximum;
     if (f->gl) {
         const qa_gl_capabilities *actual=qa_gl_capabilities_get(f->gl);
@@ -541,13 +581,9 @@ bool frontend_q3_source_color_restore(qa_frontend *f,const qa_display_restore_gu
         upload.color.device.fullscreen!=(info.fullscreen!=QA_DISPLAY_WINDOWED) ||
         info.backend!=(f->gl?QA_DISPLAY_OPENGL:QA_DISPLAY_CPU))
         return frontend_fail(error,QA_ERROR_FORMAT,"Imported Source color differs from its real physical renderer capability");
-    frontend_q3_color *owner=calloc(1,sizeof(*owner));
-    if (!owner) return frontend_fail(error,QA_ERROR_MEMORY,"Restoring Source color owner");
-    owner->frontend=f; owner->application=f->application; owner->display=f->display;
+    owner->display=f->display;
     owner->gl=f->gl; owner->cpu=f->cpu; owner->gamma=gamma; owner->upload=upload;
-    if (!qa_q3_color_lighting_read(&upload.color.device,upload.color.requested_overbright_bits,&owner->lighting,error)) {
-        free(owner); return false;
-    }
+    if (!qa_q3_color_lighting_read(&upload.color.device,upload.color.requested_overbright_bits,&owner->lighting,error)) return false;
     owner->lighting_ready=owner->initialized=true;
     f->source_color=owner;
     return true;

@@ -40,7 +40,8 @@ void frontend_q3_source_color_defer_finish(frontend_q3_color_ticket **);
 void frontend_q3_source_color_defer_abort(frontend_q3_color_ticket **);
 bool frontend_q3_source_color_publication_finish(qa_frontend *, qa_error *);
 bool frontend_q3_source_color_checkpoint(const qa_frontend *, qa_buffer *, qa_error *);
-/* Pure install after actual detached display/renderer import, before restored
- * Source material callbacks bind. No initialization, clamps or native writes. */
+/* Acquire the saved Source capability on the exclusive active native display
+ * before detachment; complete the same owner after display/renderer import. */
+bool frontend_q3_source_color_restore_native(qa_frontend *, qa_display *, qa_bytes, qa_error *);
 bool frontend_q3_source_color_restore(qa_frontend *, const qa_display_restore_guard *, qa_bytes, qa_error *);
 #endif
