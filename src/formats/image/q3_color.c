@@ -51,6 +51,7 @@ static bool color_mappings_evaluate(const qa_q3_color_inputs *inputs,
     if (!qa_q3_color_lighting_read(&inputs->device, inputs->requested_overbright_bits,
         &next.lighting, error)) return false;
     bool tables = out != NULL || (fetestexcept(FE_INEXACT) & FE_INEXACT) == 0;
+    if (!tables && inputs->intensity <= 0x1p23f) return true;
     for (unsigned i = 0; i < 256; ++i) {
         if (tables) {
             float sample = (float)i / 255.0f, exponent = 1.0f / inputs->gamma;
