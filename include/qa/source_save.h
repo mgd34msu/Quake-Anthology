@@ -18,6 +18,8 @@ typedef struct qa_source_save_io {
  * candidate's table. Native owners define every field and validate
  * semantics. Exact floating bits include valid source infinity sentinels. */
 bool qa_source_save_writer(qa_source_save_io *, qa_session *, qa_error *);
+/* WRITE reserves total capacity without advancing or publishing bytes. */
+bool qa_source_save_writer_reserve(qa_source_save_io *, size_t total_capacity);
 bool qa_source_save_reader(qa_source_save_io *, qa_session *, qa_bytes, qa_error *);
 bool qa_source_save_finish(qa_source_save_io *, qa_buffer *owned_output);
 void qa_source_save_dispose(qa_source_save_io *);

@@ -196,18 +196,15 @@ bool application_q3_mod_items_admit(application_q3_mod_items *o,qa_actor_id acto
     item_actor *a=calloc(1,sizeof(*a));
     if(!a)return q3mod_fail(e,QA_ERROR_MEMORY,"Owning admitted original item lease");
     a->owner=o;a->actor=actor;a->next=o->actors;o->actors=a;
-    size_t range_count=0;qa_qvm_write_range *ranges=NULL;bool ok=true;
+    bool ok=true;
     for(size_t i=0;ok&&i<o->profile->storage_count;++i){const item_storage *s=o->profile->storage+i;size_t fields=(!s->bits&&s->capacity.kind==ITEM_CAPACITY_FIELD)?2:1;
         for(size_t j=0;ok&&j<fields;++j){item_field f=j?s->capacity.field:s->field;uint32_t address;
-            ok=address_add(a,f.record,e)&&q3items_address(a,f,&address,e);if(!ok)break;
-            qa_qvm_write_range *next=realloc(ranges,(range_count+1)*sizeof(*next));if(!next){ok=false;break;}ranges=next;ranges[range_count++]=(qa_qvm_write_range){address,4};
+            ok=address_add(a,f.record,e)&&q3items_address(a,f,&address,e);
         }
-        for(size_t j=0;ok&&!s->bits&&s->capacity.kind==ITEM_CAPACITY_SOURCE&&j<s->capacity.count;++j){qa_qvm_write_range *next=realloc(ranges,(range_count+1)*sizeof(*next));if(!next){ok=false;break;}ranges=next;ranges[range_count++]=(qa_qvm_write_range){s->capacity.overrides[j].address,4};}
     }
     qa_inventory_items binding={0};if(ok)ok=q3items_binding(a,&binding,e);
     if(ok){a->admitting=true;ok=qa_inventory_bind_items(o->inventory,actor,&binding,&a->lease,e);a->admitting=false;}
-    if(ok)ok=qa_qvm_observe_writes_owned(o->mod->vm,ranges,range_count,publish,after,dispose,a,&a->watch,e);
-    free(ranges);
+    if(ok)ok=q3items_watch_create(a,e);
     if(ok&&o->profile->stage){ok=o->services.weapon_bind(o->services.context,actor,o,e);if(ok)a->weapon_bound=true;
         if(ok)ok=o->services.weapon_current(o->services.context,actor,o);}
     if(!ok){qa_error cleanup={0};application_q3_mod_items_release(o,actor,&cleanup);}

@@ -647,6 +647,7 @@ bool q1_weapon_parameters(qa_q1_game *, qa_actor_id, qa_q1_weapon, qa_q1_weapon_
                           qa_error *);
 bool q1_weapon_attack_delay(qa_q1_game *, q1_player *, float *, qa_error *);
 bool q1_aim(qa_q1_game *, qa_actor_id, qa_vec3, qa_vec3 *, qa_error *);
+qa_string_id q1_weapon_model(const qa_q1_game *, const q1_player *);
 bool q1_weapon_event(qa_q1_game *, q1_player *, float, int32_t, qa_error *);
 bool q1_expansion_fire(qa_q1_game *, q1_player *, qa_error *);
 bool q1_expansion_touch(qa_q1_game *, q1_actor *, qa_actor_id, const qa_touch_contact *,

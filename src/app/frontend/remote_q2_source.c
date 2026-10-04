@@ -695,17 +695,16 @@ bool frontend_remote_q2_source_bind(frontend_remote_q2_source *source, const fro
     return true;
 }
 bool frontend_remote_q2_source_pending_capabilities(frontend_remote_q2_source *source,
-    const qa_q2_connect_request *request, qa_error *error)
+    const qa_q2_connect_request *request, bool *out, qa_error *error)
 {
+    if (!frontend_remote_q2_source_material_scripts(request, out, error)) return false;
     if (!source || !request || !source->ready || source->calls || source->closing || source->retiring || source->template_retired ||
         source->frontend->capture || source->frontend->resource_inventory || !source->receiver ||
         source->receiver->bound || source->receiver->busy || source->receiver->importing ||
         request->protocol.kind != source->domain.protocol.kind || request->protocol.revision != source->domain.protocol.revision ||
         request->protocol.flags != source->domain.protocol.flags || !current(source, &source->domain, error)) return false;
-    bool enabled = false;
-    if (!frontend_remote_q2_source_material_scripts(request, &enabled, error)) return false;
-    source->options.client.material_scripts = enabled;
-    source->receiver->options.material_scripts = enabled;
+    source->options.client.material_scripts = *out;
+    source->receiver->options.material_scripts = *out;
     return true;
 }
 bool frontend_remote_q2_source_material_scripts(const qa_q2_connect_request *request,

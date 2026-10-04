@@ -2,6 +2,7 @@
 #include "qa/q3_presentation_save.h"
 #include "scene_fields_save.h"
 #include "qa/hash.h"
+#include "../../render/save_fields.h"
 
 #define FIELD(type, object, name) do { if (!qa_source_save_##type(io, &(object)->name)) return false; } while (0)
 static bool vec4(qa_source_save_io *io, qa_scene_vec4 *v)
@@ -50,11 +51,6 @@ static bool entity(qa_source_save_io *io, qa_q3_ref_entity *e)
     FIELD(vec3,e,origin); FIELD(vec3,e,old_origin); FIELD(f32,e,shadow_plane); FIELD(f32,e,back_lerp);
     FIELD(f32,e,shader_time); FIELD(f32,e,radius); FIELD(f32,e,rotation);
     return vec2(io,&e->shader_texcoord) && qa_source_save_bytes(io,e->color,4) && qa_source_save_bool(io,&e->non_normalized_axes);
-}
-static bool vertex(qa_source_save_io *io, qa_scene_vertex *v)
-{
-    FIELD(vec3,v,position); FIELD(vec3,v,normal);
-    return vec2(io,&v->texcoord) && vec2(io,&v->lightmap) && vec4(io,&v->color);
 }
 static bool light(qa_source_save_io *io, qa_scene_light *v)
 {
@@ -133,7 +129,7 @@ static bool arrays(qa_source_save_io *io, qa_q3_presentation *p)
     if (next!=p->vertex_count) return false;
     for (size_t i=0;i<p->vertex_count;++i) {
         qa_scene_vertex v=io->direction==QA_SOURCE_SAVE_WRITE?p->vertices[i]:(qa_scene_vertex){0};
-        if (!vertex(io,&v)) return false;
+        if (!render_save_vertex(io,&v)) return false;
         if (io->direction==QA_SOURCE_SAVE_READ) p->vertices[i]=v;
     }
     for (size_t i=0;i<p->light_count;++i) {
@@ -158,7 +154,7 @@ static bool fields(qa_source_save_io *io, qa_q3_presentation *p)
 }
 #undef FIELD
 bool q3p_packet_entity_fields(qa_source_save_io *io,qa_q3_ref_entity *value) { return entity(io,value); }
-bool q3p_packet_vertex_fields(qa_source_save_io *io,qa_scene_vertex *value) { return vertex(io,value); }
+bool q3p_packet_vertex_fields(qa_source_save_io *io,qa_scene_vertex *value) { return render_save_vertex(io,value); }
 bool q3p_packet_view_fields(qa_source_save_io *io,qa_scene_view *value) { return view(io,value); }
 bool q3p_packet_fog_fields(qa_source_save_io *io,qa_scene_fog_volume *value) { return fog(io,value); }
 bool qa_q3_presentation_scene_checkpoint(const qa_q3_presentation *p, qa_buffer *out, qa_error *error)

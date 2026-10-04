@@ -75,7 +75,7 @@ bool frontend_remote_q2_source_retirement_custody_read(const frontend_remote_q2_
 bool frontend_remote_q2_source_retirement_metadata_current(const frontend_remote_q2 *, qa_error *);
 bool frontend_remote_q2_source_bind(frontend_remote_q2_source *, const frontend_remote_q2_domain *, qa_error *);
 bool frontend_remote_q2_source_pending_protocol(frontend_remote_q2_source *, qa_net_protocol_id, qa_error *);
-bool frontend_remote_q2_source_pending_capabilities(frontend_remote_q2_source *, const qa_q2_connect_request *, qa_error *);
+bool frontend_remote_q2_source_pending_capabilities(frontend_remote_q2_source *, const qa_q2_connect_request *, bool *, qa_error *);
 bool frontend_remote_q2_source_material_scripts(const qa_q2_connect_request *, bool *, qa_error *);
 bool frontend_remote_q2_source_drain(frontend_remote_q2_source *, size_t budget, size_t *, qa_error *);
 bool frontend_remote_q2_source_destroy(frontend_remote_q2_source **, qa_error *);

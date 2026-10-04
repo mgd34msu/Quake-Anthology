@@ -10,6 +10,17 @@ bool qa_source_save_writer(qa_source_save_io *io, qa_session *session, qa_error 
     *io = (qa_source_save_io){.session = session, .direction = QA_SOURCE_SAVE_WRITE, .error = error};
     return true;
 }
+bool qa_source_save_writer_reserve(qa_source_save_io *io, size_t total_capacity)
+{
+    if (!io || io->failed) return false;
+    if (io->direction != QA_SOURCE_SAVE_WRITE)
+        return persistence_io_fail(io, QA_ERROR_ARGUMENT, "source save reserve requires owned output");
+    if (total_capacity <= io->capacity) return true;
+    uint8_t *bytes = realloc(io->output.data, total_capacity);
+    if (!bytes) return persistence_io_fail(io, QA_ERROR_MEMORY, "allocating explicit source continuation bytes");
+    io->output.data = bytes; io->capacity = total_capacity;
+    return true;
+}
 bool qa_source_save_reader(qa_source_save_io *io, qa_session *session, qa_bytes bytes, qa_error *error)
 {
     if (!io) {
@@ -69,9 +80,7 @@ bool qa_source_save_bytes(qa_source_save_io *io, void *data, size_t size)
                 if (capacity > SIZE_MAX / 2) { capacity = wanted; break; }
                 capacity *= 2;
             }
-            uint8_t *bytes = realloc(io->output.data, capacity);
-            if (!bytes) return persistence_io_fail(io, QA_ERROR_MEMORY, "allocating explicit source continuation bytes");
-            io->output.data = bytes; io->capacity = capacity;
+            if (!qa_source_save_writer_reserve(io, capacity)) return false;
         }
         if (size) memcpy(io->output.data + io->offset, data, size);
         io->output.size = wanted;

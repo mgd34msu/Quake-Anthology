@@ -365,8 +365,7 @@ static bool prepare(void *context,const qa_net_address *remote,const qa_q2_conne
     bool admitted=frontend_remote_q2_source_pending_protocol(owner->source,request->protocol,error);
     owner->negotiating=false; if(!admitted) return false;
     owner->domain.protocol=request->protocol;
-    if(!frontend_remote_q2_source_material_scripts(request,&owner->material_scripts,error) ||
-        !frontend_remote_q2_source_pending_capabilities(owner->source,request,error)) return false;
+    if(!frontend_remote_q2_source_pending_capabilities(owner->source,request,&owner->material_scripts,error)) return false;
     frontend_remote_q2_source_view view;
     if(!frontend_remote_q2_source_read(owner->source,&view,error) ||
         !frontend_remote_q2_hooks(view.receiver,&owner->admission.hooks,error)) return false;

@@ -63,52 +63,56 @@ static bool program(const qa_json_document *d, qa_json_id id, const char *actual
     free(raw); free(hex); free(actual);
     return ok || fail(e, QA_ERROR_FORMAT, "Component scene differs from its held executable identity");
 }
+static bool call_row(const qa_json_document *d, qa_json_id row, application_q3_scene_profile *p,
+    q3scene_call *c, qa_error *e)
+{
+    qa_json_id args = qa_json_get(d, row, "arguments"), when = qa_json_get(d, row, "when");
+    if (!field(d, row, "entry", &c->entry, e) || !entry(p->image, c->entry, e) ||
+        !allocate(d, args, sizeof(*c->arguments), (void **)&c->arguments, &c->count, false, e)) return false;
+    if (c->count > 62 || (when != QA_JSON_NONE && !qa_json_string_equal(d, when, "weapon-presented")))
+        return fail(e, QA_ERROR_FORMAT, "Component scene caller arguments or condition are invalid");
+    c->weapon_presented = when != QA_JSON_NONE;
+    for (size_t j = 0; j < c->count; ++j) {
+        q3scene_argument *a = c->arguments + j; qa_json_id arg = qa_json_at(d, args, j);
+        qa_json_id kind = qa_json_get(d, arg, "kind"), value = qa_json_get(d, arg, "value");
+        if (qa_json_string_equal(d, kind, "source")) {
+            if (qa_json_string_equal(d, value, "client-number")) a->kind = Q3SCENE_CLIENT;
+            else if (qa_json_string_equal(d, value, "time")) a->kind = Q3SCENE_TIME;
+            else if (qa_json_string_equal(d, value, "snapshot-number")) a->kind = Q3SCENE_SNAPSHOT;
+            else if (qa_json_string_equal(d, value, "server-command-sequence")) a->kind = Q3SCENE_COMMAND_SEQUENCE;
+            else if(p->player_events&&qa_json_string_equal(d,value,"player-state")) a->kind=Q3SCENE_PLAYER_STATE;
+            else if(p->player_events&&qa_json_string_equal(d,value,"snapshot")) a->kind=Q3SCENE_SNAPSHOT_ADDRESS;
+            else if(p->player_events&&qa_json_string_equal(d,value,"entity-state")) a->kind=Q3SCENE_ENTITY_STATE;
+            else if(p->player_events&&qa_json_string_equal(d,value,"centity")) a->kind=Q3SCENE_CENTITY;
+            else if(p->player_events&&qa_json_string_equal(d,value,"origin")) a->kind=Q3SCENE_ORIGIN;
+            else if(p->player_events&&qa_json_string_equal(d,value,"event")) a->kind=Q3SCENE_EVENT;
+            else if(p->player_events&&qa_json_string_equal(d,value,"parameter")) a->kind=Q3SCENE_PARAMETER;
+            else return fail(e, QA_ERROR_FORMAT, "Component call requires a declared source argument");
+        } else if (qa_json_string_equal(d, kind, "address")) {
+            uint32_t n;
+            if (!word(d, value, &n, e) || !qa_qvm_qualify_source_span(p->image, n, 1, e)) return false;
+            memcpy(&a->word, &n, 4);
+        } else if (qa_json_string_equal(d, kind, "int32")) {
+            int64_t n;
+            if (!qa_json_i64(d, value, &n, e) || n < INT32_MIN || n > INT32_MAX)
+                return fail(e, QA_ERROR_FORMAT, "Component scene literal exceeds int32");
+            a->word = (int32_t)n;
+        } else if (qa_json_string_equal(d, kind, "float32")) {
+            double n;
+            if (!qa_json_number(d, value, &n, e)) return false;
+            float f = (float)n;
+            if (!isfinite(f)) return fail(e, QA_ERROR_FORMAT, "Component scene literal exceeds float32");
+            memcpy(&a->word, &f, 4);
+        } else return fail(e, QA_ERROR_FORMAT, "Unknown component scene argument kind");
+    }
+    return true;
+}
 static bool calls(const qa_json_document *d, qa_json_id id, application_q3_scene_profile *p,
     q3scene_calls *out, qa_error *e)
 {
     if (!allocate(d, id, sizeof(*out->rows), (void **)&out->rows, &out->count, false, e)) return false;
-    for (size_t i = 0; i < out->count; ++i) {
-        q3scene_call *c = out->rows + i; qa_json_id row = qa_json_at(d, id, i);
-        qa_json_id args = qa_json_get(d, row, "arguments"), when = qa_json_get(d, row, "when");
-        if (!field(d, row, "entry", &c->entry, e) || !entry(p->image, c->entry, e) ||
-            !allocate(d, args, sizeof(*c->arguments), (void **)&c->arguments, &c->count, false, e)) return false;
-        if (c->count > 62 || (when != QA_JSON_NONE && !qa_json_string_equal(d, when, "weapon-presented")))
-            return fail(e, QA_ERROR_FORMAT, "Component scene caller arguments or condition are invalid");
-        c->weapon_presented = when != QA_JSON_NONE;
-        for (size_t j = 0; j < c->count; ++j) {
-            q3scene_argument *a = c->arguments + j; qa_json_id arg = qa_json_at(d, args, j);
-            qa_json_id kind = qa_json_get(d, arg, "kind"), value = qa_json_get(d, arg, "value");
-            if (qa_json_string_equal(d, kind, "source")) {
-                if (qa_json_string_equal(d, value, "client-number")) a->kind = Q3SCENE_CLIENT;
-                else if (qa_json_string_equal(d, value, "time")) a->kind = Q3SCENE_TIME;
-                else if (qa_json_string_equal(d, value, "snapshot-number")) a->kind = Q3SCENE_SNAPSHOT;
-                else if (qa_json_string_equal(d, value, "server-command-sequence")) a->kind = Q3SCENE_COMMAND_SEQUENCE;
-                else if(p->player_events&&qa_json_string_equal(d,value,"player-state")) a->kind=Q3SCENE_PLAYER_STATE;
-                else if(p->player_events&&qa_json_string_equal(d,value,"snapshot")) a->kind=Q3SCENE_SNAPSHOT_ADDRESS;
-                else if(p->player_events&&qa_json_string_equal(d,value,"entity-state")) a->kind=Q3SCENE_ENTITY_STATE;
-                else if(p->player_events&&qa_json_string_equal(d,value,"centity")) a->kind=Q3SCENE_CENTITY;
-                else if(p->player_events&&qa_json_string_equal(d,value,"origin")) a->kind=Q3SCENE_ORIGIN;
-                else if(p->player_events&&qa_json_string_equal(d,value,"event")) a->kind=Q3SCENE_EVENT;
-                else if(p->player_events&&qa_json_string_equal(d,value,"parameter")) a->kind=Q3SCENE_PARAMETER;
-                else return fail(e, QA_ERROR_FORMAT, "Component call requires a declared source argument");
-            } else if (qa_json_string_equal(d, kind, "address")) {
-                uint32_t n;
-                if (!word(d, value, &n, e) || !qa_qvm_qualify_source_span(p->image, n, 1, e)) return false;
-                memcpy(&a->word, &n, 4);
-            } else if (qa_json_string_equal(d, kind, "int32")) {
-                int64_t n;
-                if (!qa_json_i64(d, value, &n, e) || n < INT32_MIN || n > INT32_MAX)
-                    return fail(e, QA_ERROR_FORMAT, "Component scene literal exceeds int32");
-                a->word = (int32_t)n;
-            } else if (qa_json_string_equal(d, kind, "float32")) {
-                double n;
-                if (!qa_json_number(d, value, &n, e)) return false;
-                float f = (float)n;
-                if (!isfinite(f)) return fail(e, QA_ERROR_FORMAT, "Component scene literal exceeds float32");
-                memcpy(&a->word, &f, 4);
-            } else return fail(e, QA_ERROR_FORMAT, "Unknown component scene argument kind");
-        }
-    }
+    for (size_t i = 0; i < out->count; ++i)
+        if (!call_row(d, qa_json_at(d, id, i), p, out->rows + i, e)) return false;
     return true;
 }
 static void calls_free(q3scene_calls *rows)
@@ -210,17 +214,7 @@ bool application_q3_scene_profile_create(qa_qvm_image *image, qa_qvm_abi abi,
         if(ok) {
             p->event.rows=calloc(1,sizeof(*p->event.rows)); p->event.count=p->event.rows?1:0;
             if(!p->event.rows) ok=fail(e,QA_ERROR_MEMORY,"Retaining original player event caller");
-            else {
-                /* Parse a single authored event with the same call admission. */
-                qa_json_id event_id=qa_json_get(d,root,"event");
-                qa_bytes raw=qa_json_source(d,event_id); qa_buffer wrapper={.data=malloc(raw.size+2),.size=raw.size+2};
-                if(!wrapper.data) ok=fail(e,QA_ERROR_MEMORY,"Retaining player event declaration");
-                else { wrapper.data[0]='['; memcpy(wrapper.data+1,raw.data,raw.size); wrapper.data[raw.size+1]=']';
-                    qa_json_document *one=NULL; free(p->event.rows); p->event=(q3scene_calls){0};
-                    ok=qa_json_parse((qa_bytes){wrapper.data,wrapper.size},&one,e)&&calls(one,qa_json_root(one),p,&p->event,e);
-                    qa_json_destroy(one); qa_buffer_free(&wrapper);
-                }
-            }
+            else ok=call_row(d,qa_json_get(d,root,"event"),p,p->event.rows,e);
         }
         if(ok) {
             uint64_t snapshot_end=(uint64_t)p->snapshot_address+qa_qvm_snapshot_bytes(abi),player_end=(uint64_t)p->player_state+qa_qvm_player_bytes(abi);

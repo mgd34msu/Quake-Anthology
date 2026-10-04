@@ -78,6 +78,13 @@ bool q3_inventory_holdable_changed(qa_q3_game *game, qa_actor_id actor,
 static bool equipment_item(const qa_q3_item *item) {
     return item->kind == QA_Q3_ITEM_HOLDABLE || item->kind == QA_Q3_ITEM_PERSISTENT;
 }
+static qa_item_definition item_definition(const qa_q3_game *game, const qa_q3_item *item,
+                                           size_t index) {
+    bool weapon = item->kind == QA_Q3_ITEM_WEAPON;
+    return (qa_item_definition){.item = game->item_ids[index], .owner = game->options.owner,
+        .ammo = weapon ? game->ammo_items[item->tag] : 0, .label = item->name, .weapon = weapon,
+        .actions = weapon || item->kind == QA_Q3_ITEM_HOLDABLE ? QA_ITEM_USE : 0};
+}
 static size_t equipment_count(void *opaque) {
     q3_inventory_owner *owner = opaque;
     size_t count, result = 0;
@@ -120,10 +127,11 @@ static bool equipment_write(void *opaque, const qa_inventory_entry *entry, qa_er
     if (!actor || actor->kind != Q3_ACTOR_PLAYER || entry->count < 0 || entry->count > 1 ||
         entry->count != trunc(entry->count))
         return q3_fail(error, "invalid Q3 holdable inventory mutation");
-    for (size_t ordinal = 0; ordinal < equipment_count(owner); ++ordinal) {
-        uint32_t index;
-        const qa_q3_item *item = equipment_at(owner, ordinal, &index);
-        if (item && owner->game->item_ids[index] == entry->item) {
+    size_t count;
+    const qa_q3_item *items = qa_q3_items(owner->game->options.product, &count);
+    for (size_t index = 1; index < count; ++index) {
+        const qa_q3_item *item = items + index;
+        if (equipment_item(item) && owner->game->item_ids[index] == entry->item) {
             qa_q3_player_state *player = &actor->state.player;
             if (item->kind == QA_Q3_ITEM_PERSISTENT)
                 return entry->count == ((int32_t)player->persistent == item->tag ? 1 : 0) ||
@@ -166,9 +174,7 @@ static bool inventory_admit(qa_q3_game *game, qa_actor_id actor, qa_error *error
         size_t used = 0;
         for (size_t i = 1; i < count; ++i)
             if (items[i].kind == QA_Q3_ITEM_WEAPON)
-                definitions[used++] = (qa_item_definition){.item = game->item_ids[i],
-                    .ammo = game->ammo_items[items[i].tag], .owner = game->options.owner,
-                    .label = items[i].name, .weapon = true, .actions = QA_ITEM_USE};
+                definitions[used++] = item_definition(game, items + i, i);
         qa_inventory_lease lease = {0};
         if (!qa_inventory_bind_definitions(inventory, actor, game->options.owner,
                                             definitions, used, invoke, owner, &lease, error))
@@ -198,10 +204,8 @@ static bool inventory_admit(qa_q3_game *game, qa_actor_id actor, qa_error *error
                 owner = &game->inventory_owners[actor.slot];
                 if (!qa_actor_id_equal(owner->actor, actor))
                     return q3_fail(error, "Q3 holdable admission owner changed during observation");
-                definitions[used++] = (qa_item_admission){.replace_primary = found, .definition = {
-                    .item = game->item_ids[i], .owner = game->options.owner,
-                    .label = items[i].name,
-                    .actions = items[i].kind == QA_Q3_ITEM_HOLDABLE ? QA_ITEM_USE : 0}};
+                definitions[used++] = (qa_item_admission){.replace_primary = found,
+                    .definition = item_definition(game, items + i, i)};
             }
         qa_inventory_items group = {.owner = game->options.owner, .items = definitions,
             .count = used, .state = {.context = owner, .count = equipment_count,
@@ -316,11 +320,7 @@ bool qa_q3_game_inventory_group(qa_q3_game *game, qa_actor_id actor, uint64_t se
             continue;
         if (used == QA_Q3_WEAPON_COUNT || used >= saved->count)
             return q3_fail(error, "Q3 saved inventory definition count differs");
-        qa_item_admission definition = {.definition = {
-            .item = game->item_ids[i], .owner = game->options.owner,
-            .ammo = weapon ? game->ammo_items[items[i].tag] : 0,
-            .label = items[i].name, .weapon = weapon,
-            .actions = weapon || items[i].kind == QA_Q3_ITEM_HOLDABLE ? QA_ITEM_USE : 0},
+        qa_item_admission definition = {.definition = item_definition(game, items + i, i),
             .replace_primary = saved->items[used].replace_primary};
         if ((saved->definitions_only && definition.replace_primary) ||
             !saved_definition(&definition.definition, &saved->items[used].definition))

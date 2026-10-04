@@ -294,7 +294,7 @@ bool q1_weapon_ui_available_read(qa_q1_game *g, qa_actor_id actor, qa_q1_weapon 
     *out = ammo < 0 || available >= best_ammunition_needed(weapon);
     return true;
 }
-static qa_string_id weapon_model(const qa_q1_game *g, const q1_player *player) {
+qa_string_id q1_weapon_model(const qa_q1_game *g, const q1_player *player) {
     if (player->weapon == QA_Q1_MG3_MJOLNIR && player->mg3_hammer_glow &&
         player->mg3_hammer_until > g->time)
         return g->hammer_glow_model;
@@ -313,7 +313,7 @@ static bool weapon_event(qa_q1_game *g, q1_player *player, float punch, int32_t 
                               .provider = g->options.provider,
                               .actor = player->id,
                               .time_ns = g->time_ns,
-                              .resource = weapon_model(g, player),
+                              .resource = q1_weapon_model(g, player),
                               .frame = player->weapon_frame,
                               .value = punch,
                               .code = attack,
@@ -578,7 +578,7 @@ bool qa_q1_player_read(const qa_q1_game *g, qa_actor_id actor, qa_q1_player_view
     if (!player || !player->active || !player->arsenal || !qa_actor_id_equal(player->id, actor))
         return false;
     *out = (qa_q1_player_view){.weapon = player->weapon,
-                               .weapon_model = weapon_model(g, player),
+                               .weapon_model = q1_weapon_model(g, player),
                                .weapon_frame = player->weapon_frame,
                                .punch_angles = player->punch,
                                .max_health = player->max_health,

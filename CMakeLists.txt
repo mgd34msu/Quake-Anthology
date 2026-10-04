@@ -1910,24 +1910,26 @@ target_compile_definitions(quake-anthology PRIVATE QA_VERSION="${PROJECT_VERSION
 
 include(CTest)
 if(BUILD_TESTING)
-    add_executable(core_test tests/core_test.c)
-    target_link_libraries(core_test PRIVATE qa_core)
-    add_test(NAME core COMMAND core_test)
+    if(UNIX)
+        add_executable(core_test tests/core_test.c)
+        target_link_libraries(core_test PRIVATE qa_core)
+        add_test(NAME core COMMAND core_test)
 
-    add_executable(archive_test tests/archive_test.c)
-    target_link_libraries(archive_test PRIVATE qa_content ZLIB::ZLIB)
-    add_test(NAME archive COMMAND archive_test)
+        add_executable(archive_test tests/archive_test.c)
+        target_link_libraries(archive_test PRIVATE qa_content ZLIB::ZLIB)
+        add_test(NAME archive COMMAND archive_test)
 
-    add_executable(vfs_test tests/vfs_test.c)
-    target_link_libraries(vfs_test PRIVATE qa_content ZLIB::ZLIB)
-    add_test(NAME vfs COMMAND vfs_test)
+        add_executable(vfs_test tests/vfs_test.c)
+        target_link_libraries(vfs_test PRIVATE qa_content ZLIB::ZLIB)
+        add_test(NAME vfs COMMAND vfs_test)
+    endif()
 
     add_executable(bsp_test tests/bsp_test.c)
     target_link_libraries(bsp_test PRIVATE qa_content)
     add_test(NAME bsp COMMAND bsp_test)
 
     add_executable(image_test tests/image_test.c)
-    target_link_libraries(image_test PRIVATE qa_content)
+    target_link_libraries(image_test PRIVATE qa_content PNG::PNG JPEG::JPEG)
     add_test(NAME image COMMAND image_test)
 
     add_executable(model_test tests/model_test.c)
