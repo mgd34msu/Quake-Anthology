@@ -261,25 +261,23 @@ static bool source_coordinates(const qa_material_stage *stage, const qa_scene_me
     const qa_material_context *context, float time, unsigned bundle, qa_error *error)
 {
     qa_material_source_scratch *source = context->source_scratch;
-    qa_material_stage generator = *stage; generator.tcmod_count = 0;
     for (size_t i = 0; i < geometry->vertex_count; ++i) {
         qa_scene_vec2 uv;
-        if (!material_texcoord_vertex(&generator, geometry->vertices + i, context, time, NULL, &uv, error)) return false;
+        if (!material_texcoord_generate(stage, geometry->vertices + i, context, &uv, error) ||
+            !material_texcoord_finite(uv, error)) return false;
         source->coordinates[bundle][i] = uv;
     }
     for (size_t mod = 0; mod < stage->tcmod_count; ++mod) {
         if (stage->tcmods[mod].kind == QA_TCMOD_NONE) break;
         if (stage->tcmods[mod].kind == QA_TCMOD_STRETCH &&
             !source_wave(stage->tcmods[mod].wave, false, error)) return false;
-        qa_material_stage modifier = *stage;
-        modifier.tcgen = QA_TC_TEXTURE; modifier.tcmods = stage->tcmods + mod; modifier.tcmod_count = 1;
         material_tcmod_state state;
-        material_tcmod_prepare(modifier.tcmods, context, time, &state);
+        material_tcmod_prepare(stage->tcmods + mod, context, time, &state);
         for (size_t i = 0; i < geometry->vertex_count; ++i) {
-            qa_scene_vertex vertex = geometry->vertices[i];
-            vertex.texcoord = source->coordinates[bundle][i];
             qa_scene_vec2 uv;
-            if (!material_texcoord_vertex(&modifier, &vertex, context, time, &state, &uv, error)) return false;
+            if (!material_texcoord_modify(stage->tcmods + mod, 0, geometry->vertices[i].position,
+                &state, source->coordinates[bundle] + i, &uv, error) ||
+                !material_texcoord_finite(uv, error)) return false;
             source->coordinates[bundle][i] = uv;
         }
     }

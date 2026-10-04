@@ -1,6 +1,7 @@
 #ifndef QA_MATERIAL_INTERNAL_H
 #define QA_MATERIAL_INTERNAL_H
 #include "qa/material.h"
+#include <math.h>
 
 float qa_material_noise(float x, float y, float z, float time);
 float qa_material_sine(unsigned index);
@@ -26,6 +27,18 @@ typedef struct material_tcmod_state {
 } material_tcmod_state;
 void material_tcmod_prepare(const qa_material_tcmod *, const qa_material_context *, float, material_tcmod_state *);
 void material_tcmods_prepare(const qa_material_stage *, const qa_material_context *, float, material_tcmod_state *);
+bool material_texcoord_generate(const qa_material_stage *, const qa_scene_vertex *,
+                               const qa_material_context *, qa_scene_vec2 *, qa_error *);
+bool material_texcoord_modify(const qa_material_tcmod *, size_t, qa_vec3,
+                             const material_tcmod_state *, const qa_scene_vec2 *, qa_scene_vec2 *, qa_error *);
+static inline bool material_texcoord_finite(qa_scene_vec2 result, qa_error *error)
+{
+    if (!isfinite(result.x) || !isfinite(result.y)) {
+        qa_error_set(error, QA_ERROR_FORMAT, 0, "Material generated nonfinite texture coordinates");
+        return false;
+    }
+    return true;
+}
 bool material_texcoord_vertex(const qa_material_stage *, const qa_scene_vertex *,
                               const qa_material_context *, float, const material_tcmod_state *,
                               qa_scene_vec2 *, qa_error *);

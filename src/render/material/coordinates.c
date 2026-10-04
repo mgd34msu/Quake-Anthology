@@ -67,9 +67,8 @@ void material_tcmods_prepare(const qa_material_stage *stage, const qa_material_c
         material_tcmod_prepare(stage->tcmods + i, context, time, states + i);
     }
 }
-bool material_texcoord_vertex(const qa_material_stage *stage, const qa_scene_vertex *vertex,
-                               const qa_material_context *context, float time,
-                               const material_tcmod_state *states, qa_scene_vec2 *out, qa_error *error)
+bool material_texcoord_generate(const qa_material_stage *stage, const qa_scene_vertex *vertex,
+                               const qa_material_context *context, qa_scene_vec2 *out, qa_error *error)
 {
     qa_scene_vec2 result;
     switch (stage->tcgen) {
@@ -99,61 +98,76 @@ bool material_texcoord_vertex(const qa_material_stage *stage, const qa_scene_ver
         qa_error_set(error, QA_ERROR_FORMAT, 0, "Unknown material texture coordinate generator");
         return false;
     }
+    *out = result;
+    return true;
+}
+bool material_texcoord_modify(const qa_material_tcmod *mod, size_t mod_index, qa_vec3 position,
+                             const material_tcmod_state *state, const qa_scene_vec2 *input,
+                             qa_scene_vec2 *out, qa_error *error)
+{
+    qa_scene_vec2 result = *input;
+    float s = result.x, t = result.y;
+    switch (mod->kind) {
+    case QA_TCMOD_NONE: break;
+    case QA_TCMOD_SCALE:
+        result = (qa_scene_vec2){s * mod->values[0], t * mod->values[1]};
+        break;
+    case QA_TCMOD_SCROLL:
+    case QA_TCMOD_ENTITY_TRANSLATE: {
+        result = (qa_scene_vec2){s + state->scroll.x, t + state->scroll.y};
+        break;
+    }
+    case QA_TCMOD_TRANSFORM:
+        result = (qa_scene_vec2){s * mod->values[0] + t * mod->values[2] + mod->values[4],
+                                s * mod->values[1] + t * mod->values[3] + mod->values[5]};
+        break;
+    case QA_TCMOD_ROTATE: {
+        if (!state->rotation_valid) {
+            unsigned index;
+            (void)table_index(state->rotation, &index, error);
+            return false;
+        }
+        result.x = s * state->cosine - t * state->sine + state->translate.x;
+        result.y = s * state->sine + t * state->cosine + state->translate.y;
+        break;
+    }
+    case QA_TCMOD_STRETCH: {
+        result = (qa_scene_vec2){s * state->scale + t * 0.0f + state->translate.x,
+                                s * 0.0f + t * state->scale + state->translate.x};
+        break;
+    }
+    case QA_TCMOD_TURBULENCE: {
+        unsigned sx, sy;
+        /* The source position sum is binary32 before the double constant division. */
+        float position_sum = position.x + position.z;
+        if (!table_index(((double)position_sum / 1024.0 + state->now) * 1024.0, &sx, error) ||
+            !table_index(((double)position.y / 1024.0 + state->now) * 1024.0, &sy, error)) return false;
+        result = (qa_scene_vec2){s + qa_material_sine(sx) * mod->wave.amplitude,
+                                t + qa_material_sine(sy) * mod->wave.amplitude};
+        break;
+    }
+    default:
+        qa_error_set(error, QA_ERROR_FORMAT, mod_index, "Unknown material texture modifier");
+        return false;
+    }
+    *out = result;
+    return true;
+}
+bool material_texcoord_vertex(const qa_material_stage *stage, const qa_scene_vertex *vertex,
+                               const qa_material_context *context, float time,
+                               const material_tcmod_state *states, qa_scene_vec2 *out, qa_error *error)
+{
+    qa_scene_vec2 result;
+    if (!material_texcoord_generate(stage, vertex, context, &result, error)) return false;
     for (size_t i = 0; i < stage->tcmod_count; ++i) {
         const qa_material_tcmod *mod = &stage->tcmods[i];
         if (mod->kind == QA_TCMOD_NONE) break;
         material_tcmod_state local;
         const material_tcmod_state *state = states ? states + i : &local;
         if (!states) material_tcmod_prepare(mod, context, time, &local);
-        float s = result.x, t = result.y;
-        switch (mod->kind) {
-        case QA_TCMOD_NONE: break;
-        case QA_TCMOD_SCALE:
-            result = (qa_scene_vec2){s * mod->values[0], t * mod->values[1]};
-            break;
-        case QA_TCMOD_SCROLL:
-        case QA_TCMOD_ENTITY_TRANSLATE: {
-            result = (qa_scene_vec2){s + state->scroll.x, t + state->scroll.y};
-            break;
-        }
-        case QA_TCMOD_TRANSFORM:
-            result = (qa_scene_vec2){s * mod->values[0] + t * mod->values[2] + mod->values[4],
-                                    s * mod->values[1] + t * mod->values[3] + mod->values[5]};
-            break;
-        case QA_TCMOD_ROTATE: {
-            if (!state->rotation_valid) {
-                unsigned index;
-                (void)table_index(state->rotation, &index, error);
-                return false;
-            }
-            result = (qa_scene_vec2){s * state->cosine + t * -state->sine + state->translate.x,
-                                    s * state->sine + t * state->cosine + state->translate.y};
-            break;
-        }
-        case QA_TCMOD_STRETCH: {
-            result = (qa_scene_vec2){s * state->scale + t * 0.0f + state->translate.x,
-                                    s * 0.0f + t * state->scale + state->translate.x};
-            break;
-        }
-        case QA_TCMOD_TURBULENCE: {
-            unsigned sx, sy;
-            /* The source position sum is binary32 before the double constant division. */
-            float position_sum = vertex->position.x + vertex->position.z;
-            if (!table_index(((double)position_sum / 1024.0 + state->now) * 1024.0, &sx, error) ||
-                !table_index(((double)vertex->position.y / 1024.0 + state->now) * 1024.0, &sy, error)) return false;
-            result = (qa_scene_vec2){s + qa_material_sine(sx) * mod->wave.amplitude,
-                                    t + qa_material_sine(sy) * mod->wave.amplitude};
-            break;
-        }
-        default:
-            qa_error_set(error, QA_ERROR_FORMAT, i, "Unknown material texture modifier");
-            return false;
-        }
+        if (!material_texcoord_modify(mod, i, vertex->position, state, &result, &result, error)) return false;
     }
-    if (!isfinite(result.x) || !isfinite(result.y)) {
-        qa_error_set(error, QA_ERROR_FORMAT, 0, "Material generated nonfinite texture coordinates");
-        return false;
-    }
+    if (!material_texcoord_finite(result, error)) return false;
     *out = result;
     return true;
 }
