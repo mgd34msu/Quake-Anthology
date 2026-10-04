@@ -19,12 +19,27 @@ typedef struct edge_equation {
 typedef struct cpu_scissor {
   int64_t x0, y0, x1, y1;
 } cpu_scissor;
+typedef struct cpu_triangle {
+  cpu_vertex values[3];
+  screen_vertex vertices[3];
+  edge_equation coverage[3], attributes[3];
+  cpu_scissor bounds;
+  double inverse_area, near_depth, far_depth, q_dx, q_dy, offset;
+  double uv[2][2][3], uv_dx[2][2], uv_dy[2][2];
+  bool constant_depth;
+} cpu_triangle;
+typedef struct cpu_triangle_output {
+  struct cpu_raster_pool *pool;
+  bool failed;
+} cpu_triangle_output;
 typedef struct cpu_raster_job {
   qa_cpu_renderer *renderer;
   const qa_scene_draw *draw;
   const cpu_sampler *samplers;
   qa_render_primitive_mode mode;
   cpu_scissor bounds;
+  const cpu_triangle *triangles;
+  size_t triangle_count;
   fenv_t environment;
   int exceptions;
   bool completed;
@@ -36,6 +51,8 @@ typedef struct cpu_raster_worker {
   bool stop;
 } cpu_raster_worker;
 struct cpu_raster_pool {
+  cpu_triangle *triangles;
+  size_t triangle_count, triangle_capacity;
   unsigned count;
   cpu_raster_worker workers[];
 };
@@ -67,6 +84,7 @@ void cpu_raster_pool_destroy(qa_cpu_renderer *renderer) {
     if (worker->start) SDL_DestroySemaphore(worker->start);
     if (worker->done) SDL_DestroySemaphore(worker->done);
   }
+  free(pool->triangles);
   free(pool);
   renderer->raster_pool = NULL;
 }
@@ -449,15 +467,14 @@ static void trim(int64_t *left, int64_t *right, edge_equation edge, double y) {
     *right = x;
   }
 }
-static void triangle(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
-                     const cpu_sampler samplers[2],
+static bool triangle_prepare(cpu_triangle *out, const qa_scene_draw *draw,
                      screen_vertex a, screen_vertex b, screen_vertex c,
                      const screen_vertex *interpolation, cpu_scissor bounds) {
   double area = evaluate(edge(a, b), c.x, c.y);
   if (!isfinite(area) || area == 0 ||
       (draw->state.cull == QA_CULL_BACK && area > 0) ||
       (draw->state.cull == QA_CULL_FRONT && area < 0))
-    return;
+    return false;
   if (area < 0) {
     screen_vertex swap = b;
     b = c;
@@ -469,7 +486,7 @@ static void triangle(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
   double min_y = fmax((double)bounds.y0, ceil(fmin(a.y, fmin(b.y, c.y)) - 0.5));
   double max_y = fmin((double)bounds.y1, floor(fmax(a.y, fmax(b.y, c.y)) - 0.5));
   if (min_x > max_x || min_y > max_y)
-    return;
+    return false;
   edge_equation coverage[3] = {edge(b, c), edge(c, a), edge(a, b)};
   screen_vertex vertices[3] = {a, b, c};
   if (interpolation)
@@ -482,7 +499,7 @@ static void triangle(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
   double near_depth = cpu_clamp(draw->state.depth_near),
          far_depth = cpu_clamp(draw->state.depth_far);
   double slope_x = 0, slope_y = 0, q_dx = 0, q_dy = 0;
-  double uv[2][2][3], uv_dx[2][2] = {{0}}, uv_dy[2][2] = {{0}};
+  double uv[2][2][3] = {{{0}}}, uv_dx[2][2] = {{0}}, uv_dy[2][2] = {{0}};
   for (size_t i = 0; i < 3; ++i) {
     slope_x += vertices[i].z * attributes[i].x;
     slope_y += vertices[i].z * attributes[i].y;
@@ -518,6 +535,42 @@ static void triangle(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
   }
   bool constant_depth =
       vertices[0].z == vertices[1].z && vertices[1].z == vertices[2].z;
+  *out = (cpu_triangle){
+      .bounds = {(int64_t)min_x, (int64_t)min_y, (int64_t)max_x, (int64_t)max_y},
+      .inverse_area = inverse_area, .near_depth = near_depth,
+      .far_depth = far_depth, .q_dx = q_dx, .q_dy = q_dy,
+      .offset = offset, .constant_depth = constant_depth};
+  memcpy(out->coverage, coverage, sizeof(coverage));
+  memcpy(out->attributes, attributes, sizeof(attributes));
+  memcpy(out->uv, uv, sizeof(uv));
+  memcpy(out->uv_dx, uv_dx, sizeof(uv_dx));
+  memcpy(out->uv_dy, uv_dy, sizeof(uv_dy));
+  for (size_t i = 0; i < 3; ++i) {
+    out->values[i] = *vertices[i].vertex;
+    out->vertices[i] = vertices[i];
+    out->vertices[i].vertex = NULL;
+  }
+  return true;
+}
+static void triangle_fill(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
+                          const cpu_sampler samplers[2],
+                          const cpu_triangle *triangle, cpu_scissor bounds) {
+  int64_t min_y = triangle->bounds.y0 > bounds.y0 ? triangle->bounds.y0 : bounds.y0;
+  int64_t max_y = triangle->bounds.y1 < bounds.y1 ? triangle->bounds.y1 : bounds.y1;
+  if (min_y > max_y) return;
+  int64_t min_x = triangle->bounds.x0, max_x = triangle->bounds.x1;
+  const edge_equation *coverage = triangle->coverage, *attributes = triangle->attributes;
+  screen_vertex vertices[3];
+  for (size_t i = 0; i < 3; ++i) {
+    vertices[i] = triangle->vertices[i];
+    vertices[i].vertex = &triangle->values[i];
+  }
+  double inverse_area = triangle->inverse_area, near_depth = triangle->near_depth,
+      far_depth = triangle->far_depth, q_dx = triangle->q_dx, q_dy = triangle->q_dy,
+      offset = triangle->offset;
+  const double (*uv)[2][3] = triangle->uv;
+  const double (*uv_dx)[2] = triangle->uv_dx, (*uv_dy)[2] = triangle->uv_dy;
+  bool constant_depth = triangle->constant_depth;
   for (int64_t y = (int64_t)min_y; y <= (int64_t)max_y; ++y) {
     int64_t left = (int64_t)min_x, right = (int64_t)max_x;
     for (size_t i = 0; i < 3; ++i)
@@ -587,6 +640,30 @@ static void triangle(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
       cpu_write_fragment(renderer, draw, samplers, &fragment);
     }
   }
+}
+static void triangle(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
+                     const cpu_sampler samplers[2], screen_vertex a,
+                     screen_vertex b, screen_vertex c,
+                     const screen_vertex *interpolation, cpu_scissor bounds,
+                     cpu_triangle_output *output) {
+  cpu_triangle prepared;
+  if (!triangle_prepare(&prepared, draw, a, b, c, interpolation, bounds)) return;
+  if (!output) {
+    triangle_fill(renderer, draw, samplers, &prepared, bounds);
+    return;
+  }
+  struct cpu_raster_pool *pool = output->pool;
+  if (pool->triangle_count == pool->triangle_capacity) {
+    size_t maximum = SIZE_MAX / sizeof(cpu_triangle);
+    if (pool->triangle_capacity == maximum) { output->failed = true; return; }
+    size_t capacity = pool->triangle_capacity ? pool->triangle_capacity : 16;
+    capacity = capacity > maximum / 2 ? maximum : capacity * 2;
+    cpu_triangle *triangles = realloc(pool->triangles, capacity * sizeof(*triangles));
+    if (!triangles) { output->failed = true; return; }
+    pool->triangles = triangles;
+    pool->triangle_capacity = capacity;
+  }
+  pool->triangles[pool->triangle_count++] = prepared;
 }
 static cpu_vertex interpolate_line(const cpu_vertex *a, const cpu_vertex *b,
                                    double t) {
@@ -763,7 +840,8 @@ static void line(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
 }
 static void draw_triangle(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
                           const cpu_sampler samplers[2],
-                          const cpu_vertex original[3], cpu_scissor bounds) {
+                          const cpu_vertex original[3], cpu_scissor bounds,
+                          cpu_triangle_output *output) {
   cpu_vertex polygon[32];
   size_t count = clip_polygon(original, &renderer->view, polygon);
   if (count < 3)
@@ -808,7 +886,8 @@ static void draw_triangle(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
                         fmin(polygon[i].clip[3], polygon[i + 1].clip[3]));
     triangle(renderer, draw, samplers, project(&polygon[0], renderer, scale),
              project(&polygon[i], renderer, scale),
-             project(&polygon[i + 1], renderer, scale), attributes, bounds);
+             project(&polygon[i + 1], renderer, scale), attributes, bounds, output);
+    if (output && output->failed) return;
   }
 }
 static cpu_vertex source_vertex(const qa_cpu_renderer *renderer, uint32_t index,
@@ -825,7 +904,8 @@ static cpu_vertex source_vertex(const qa_cpu_renderer *renderer, uint32_t index,
 }
 static void draw_source_strips(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
                                 const cpu_sampler samplers[2],
-                                bool discrete, cpu_scissor bounds) {
+                                bool discrete, cpu_scissor bounds,
+                                cpu_triangle_output *output) {
   size_t cursor = 0;
   qa_render_strip strip;
   while (qa_render_strip_next(draw->mesh.indices, draw->mesh.index_count, &cursor, &strip)) {
@@ -834,18 +914,19 @@ static void draw_source_strips(qa_cpu_renderer *renderer, const qa_scene_draw *d
     for (size_t ordinal = 2; ordinal < strip.triangles + 2; ++ordinal) {
       cpu_vertex c = source_vertex(renderer, qa_render_strip_vertex(&strip, ordinal), discrete);
       cpu_vertex vertices[3] = {ordinal & 1 ? b : a, ordinal & 1 ? a : b, c};
-      draw_triangle(renderer, draw, samplers, vertices, bounds);
+      draw_triangle(renderer, draw, samplers, vertices, bounds, output);
+      if (output && output->failed) return;
       a = b; b = c;
     }
   }
 }
-static void raster_prepared_draw(const cpu_raster_job *job) {
+static void raster_geometry(const cpu_raster_job *job, cpu_triangle_output *output) {
   qa_cpu_renderer *renderer = job->renderer;
   const qa_scene_draw *draw = job->draw;
   if (job->mode == QA_RENDER_PRIMITIVES_ARRAY_STRIPS ||
       job->mode == QA_RENDER_PRIMITIVES_DISCRETE_STRIPS) {
     draw_source_strips(renderer, draw, job->samplers,
-        job->mode == QA_RENDER_PRIMITIVES_DISCRETE_STRIPS, job->bounds);
+        job->mode == QA_RENDER_PRIMITIVES_DISCRETE_STRIPS, job->bounds, output);
   } else if (draw->mesh.primitive == QA_SCENE_LINES) {
     for (size_t i = 0; i < draw->mesh.index_count; i += 2)
       line(renderer, draw, job->samplers, renderer->vertices[draw->mesh.indices[i]],
@@ -855,9 +936,19 @@ static void raster_prepared_draw(const cpu_raster_job *job) {
       cpu_vertex vertices[3] = {renderer->vertices[draw->mesh.indices[i]],
                               renderer->vertices[draw->mesh.indices[i + 1]],
                               renderer->vertices[draw->mesh.indices[i + 2]]};
-      draw_triangle(renderer, draw, job->samplers, vertices, job->bounds);
+      draw_triangle(renderer, draw, job->samplers, vertices, job->bounds, output);
+      if (output && output->failed) return;
     }
   }
+}
+static void raster_prepared_draw(const cpu_raster_job *job) {
+  if (!job->triangles) {
+    raster_geometry(job, NULL);
+    return;
+  }
+  for (size_t i = 0; i < job->triangle_count; ++i)
+    triangle_fill(job->renderer, job->draw, job->samplers,
+                  &job->triangles[i], job->bounds);
 }
 static unsigned raster_worker_count(const struct cpu_raster_pool *pool,
     int64_t full_rows, int64_t draw_rows) {
@@ -910,7 +1001,22 @@ static unsigned raster_parallel(cpu_raster_job *job) {
 static void raster_draw(cpu_raster_job *job) {
   struct cpu_raster_pool *pool = job->renderer->raster_pool;
   unsigned workers = raster_parallel(job);
-  if (!workers || fegetenv(&job->environment) != 0) {
+  if (!workers) {
+    raster_prepared_draw(job);
+    return;
+  }
+  pool->triangle_count = 0;
+  cpu_triangle_output output = {.pool = pool};
+  raster_geometry(job, &output);
+  if (output.failed) {
+    pool->triangle_count = 0;
+    raster_prepared_draw(job);
+    return;
+  }
+  if (!pool->triangle_count) return;
+  job->triangles = pool->triangles;
+  job->triangle_count = pool->triangle_count;
+  if (fegetenv(&job->environment) != 0) {
     raster_prepared_draw(job);
     return;
   }
