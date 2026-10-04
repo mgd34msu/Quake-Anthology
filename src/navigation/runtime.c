@@ -236,6 +236,10 @@ bool nav_workspace_prepare(qa_nav_workspace *w, const qa_nav_graph *g, qa_error 
             free(waiting);
             goto memory;
         }
+        for (size_t i = 0; i < n; ++i)
+            positions[i] = SIZE_MAX;
+        for (size_t i = 0; i < w->queue_count; ++i)
+            positions[w->queue[i].node] = i;
         free(w->costs);
         free(w->parents);
         free(w->path);
@@ -272,7 +276,8 @@ memory:
     return false;
 }
 void nav_queue_clear(qa_nav_workspace *w) {
-    for(size_t i=0;i<w->node_capacity;++i) w->queue_positions[i]=SIZE_MAX;
+    for(size_t i=0;i<w->queue_count;++i)
+        w->queue_positions[w->queue[i].node]=SIZE_MAX;
     w->queue_count=0;
 }
 static void queue_assign(qa_nav_workspace *w,size_t index,nav_queue_entry entry) {
