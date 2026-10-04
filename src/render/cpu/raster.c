@@ -66,6 +66,8 @@ struct cpu_raster_pool {
   size_t triangle_count, triangle_capacity;
   cpu_raster_command *commands;
   size_t command_count, command_capacity;
+  uint64_t *row_work;
+  size_t row_capacity;
   unsigned count;
   cpu_raster_worker workers[];
 };
@@ -136,6 +138,7 @@ void cpu_raster_pool_destroy(qa_cpu_renderer *renderer) {
   }
   free(pool->triangles);
   free(pool->commands);
+  free(pool->row_work);
   free(pool);
   renderer->raster_pool = NULL;
 }
@@ -1107,6 +1110,37 @@ static void raster_draw(cpu_raster_job *job) {
     memset(&worker->job, 0, sizeof(worker->job));
   }
 }
+static bool raster_row_work(struct cpu_raster_pool *pool, int64_t first,
+                            int64_t rows, uint64_t *total) {
+  if ((uint64_t)rows >= SIZE_MAX / sizeof(*pool->row_work)) return false;
+  size_t count = (size_t)rows + 1;
+  if (pool->row_capacity < count) {
+    uint64_t *work = realloc(pool->row_work, count * sizeof(*work));
+    if (!work) return false;
+    pool->row_work = work;
+    pool->row_capacity = count;
+  }
+  memset(pool->row_work, 0, count * sizeof(*pool->row_work));
+  *total = 0;
+  for (size_t i = 0; i < pool->triangle_count; ++i) {
+    const cpu_scissor *bounds = &pool->triangles[i].bounds;
+    uint64_t width = (uint64_t)(bounds->x1 - bounds->x0 + 1);
+    uint64_t height = (uint64_t)(bounds->y1 - bounds->y0 + 1);
+    if (width > (UINT64_MAX - *total) / height) return false;
+    *total += width * height;
+    pool->row_work[(size_t)(bounds->y0 - first)] += width;
+    pool->row_work[(size_t)(bounds->y1 - first + 1)] -= width;
+  }
+  /* Unsigned difference events wrap at their end points; checked total work
+   * bounds the actual row widths and cumulative sums reconstructed here. */
+  uint64_t width = 0, sum = 0;
+  for (size_t i = 0; i < (size_t)rows; ++i) {
+    width += pool->row_work[i];
+    sum += width;
+    pool->row_work[i] = sum;
+  }
+  return *total != 0;
+}
 void cpu_raster_flush(qa_cpu_renderer *renderer) {
   struct cpu_raster_pool *pool = renderer->raster_pool;
   if (!pool || !pool->command_count) return;
@@ -1129,15 +1163,28 @@ void cpu_raster_flush(qa_cpu_renderer *renderer) {
   batch.bounds.y1 = last;
   int64_t rows = last - first + 1;
   unsigned bands = workers + 1;
+  uint64_t total = 0;
+  bool balanced = workers && raster_row_work(pool, first, rows, &total);
+  int64_t begin = first;
   for (unsigned i = 0; i < workers; ++i) {
     cpu_raster_worker *worker = &pool->workers[i];
     worker->job = batch;
-    worker->job.bounds.y0 = first + rows * i / bands;
-    worker->job.bounds.y1 = first + rows * (i + 1) / bands - 1;
+    int64_t end = first + rows * (i + 1) / bands;
+    if (balanced) {
+      uint64_t target = (total / bands) * (i + 1) +
+          (total % bands) * (i + UINT64_C(1)) / bands;
+      end = begin + 1;
+      int64_t maximum = last - (int64_t)(workers - i) + 1;
+      while (end < maximum &&
+             pool->row_work[(size_t)(end - first - 1)] < target) ++end;
+    }
+    worker->job.bounds.y0 = begin;
+    worker->job.bounds.y1 = end - 1;
+    begin = end;
     SDL_SemPost(worker->start);
   }
   cpu_raster_job main = batch;
-  main.bounds.y0 = first + rows * workers / bands;
+  main.bounds.y0 = begin;
   for (size_t i = 0; i < main.command_count; ++i) {
     if (!raster_command_overlaps(&main, i)) continue;
     cpu_raster_job job = raster_command_job(&main, i);
