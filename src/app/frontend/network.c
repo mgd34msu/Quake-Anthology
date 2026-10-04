@@ -119,6 +119,7 @@ typedef struct frontend_network_server_lease {
 struct qa_frontend_network {
     qa_frontend *frontend;
     qa_network_runtime *runtime;
+    qa_network_runtime *cold_transport;
     qa_server_browser *browser;
     qa_net_interfaces *interfaces;
     qa_kex_transport *kex_transport;
@@ -5649,16 +5650,65 @@ static bool network_offline_local(const qa_frontend *f)
     return n && !f->stepping && !f->options.network_host && !f->options.network_connect &&
         n->frontend == f && !n->round && !n->busy && !n->q3_client_requested && !n->q3_admission &&
         !n->nq_host && !n->qw_host && !n->unified && !n->q1_client_owner && !n->q2_client_owner &&
-        !n->unified_client_service && !n->kex_transport && !n->kex_browser &&
+        !n->unified_client_service && !n->kex_transport && !n->kex_browser && !n->cold_transport &&
         (!n->q2_host || frontend_network_q2_host_local_only(n->q2_host)) && qa_network_local_only(n->runtime);
+}
+static bool network_cold_client(const qa_frontend *candidate,const qa_frontend *published)
+{
+    const qa_frontend_network *next=candidate?candidate->network:NULL,*active=published?published->network:NULL;
+    return next && network_offline_local(published) && !active->q2_host &&
+        frontend_network_client_only(candidate) && client_target_selected(next) &&
+        !next->q3_client_requested && !next->q3_admission && !next->nq_host && !next->qw_host &&
+        !next->q2_host && !next->unified && !next->kex_transport && !next->kex_browser &&
+        ((next->q1_client_owner != NULL) + (next->q2_client_owner != NULL) +
+            (next->unified_client_service != NULL) == 1);
+}
+static bool network_cold_socket_ready(const qa_frontend_network *n,qa_error *error)
+{
+    qa_net_udp_policy policy; bool present=false; uint32_t cursor=0; const qa_net_client *client=NULL;
+    return (n->cold_transport && n->cold_transport!=n->runtime && qa_network_local_only(n->cold_transport) &&
+        !qa_net_connections_next(qa_network_connections(n->cold_transport),&cursor,&client) &&
+        qa_network_udp_policy_read(n->cold_transport,&policy,&present,error) && present &&
+        qa_net_address_equal(&policy.bound,qa_network_local_address(n->runtime),true)) ||
+        frontend_fail(error,QA_ERROR_FORMAT,"Cold CLIENT publication lost its empty returned runtime and actual saved UDP socket");
+}
+static void network_cold_socket_dispose(qa_frontend_network *n)
+{
+    qa_network_destroy(n->cold_transport); n->cold_transport=NULL;
 }
 bool frontend_network_rebind_prepare(qa_frontend *candidate, const qa_frontend *published, qa_error *error)
 {
     if (!candidate || !published || candidate == published)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Network handoff requires its distinct frontend owners");
     qa_frontend_network *next = candidate->network, *active = published->network;
-    if (!next || !active || qa_net_address_equal(qa_network_local_address(next->runtime),
-        qa_network_local_address(active->runtime), true)) return true;
+    if (!next || !active) return true;
+    bool cold_client=network_cold_client(candidate,published);
+    if(next->cold_transport)
+        return (cold_client && network_cold_socket_ready(next,error)) ||
+            frontend_fail(error,QA_ERROR_FORMAT,"Reserved CLIENT socket lost its genuine cold receiver");
+    if(qa_net_address_equal(qa_network_local_address(next->runtime),
+        qa_network_local_address(active->runtime),true)) return true;
+    if(cold_client) {
+        if(candidate->stepping || !next->detached_transport || active->detached_transport || next->round || next->busy ||
+            !qa_network_callbacks_idle(next->runtime) || !qa_network_callbacks_idle(active->runtime) ||
+            !qa_http_callbacks_idle(frontend_tools_http(candidate)) ||
+            !qa_http_callbacks_idle(frontend_tools_http((qa_frontend *)published)))
+            return frontend_fail(error,QA_ERROR_ARGUMENT,"Cold CLIENT socket acquisition requires its returned detached candidate and neutral receiver");
+        if(!network_runtime_valid(next,true,error) || !network_runtime_valid(active,true,error) ||
+            !qa_network_source_publication_ready(next->runtime,error) ||
+            !frontend_network_q2_client_publication_ready(next->q2_client_owner,error) ||
+            !frontend_network_q1_client_publication_ready(next->q1_client_owner,error) ||
+            !frontend_network_unified_client_publication_ready(next->unified_client_service,error)) return false;
+        qa_net_udp_options udp={.bind=*qa_network_local_address(next->runtime),.limits={65507,256},
+            .broadcast=qa_network_local_address(next->runtime)->kind==QA_NET_IPV4,.ipv6_only=false};
+        qa_net_transport *transport=NULL;
+        qa_network_options options=saved_network_options(next);
+        if(!qa_net_udp_open(&udp,&transport,error)) return false;
+        if(!qa_network_create(transport,&options,&next->cold_transport,error)) {
+            qa_net_transport_close(transport); return false;
+        }
+        return network_cold_socket_ready(next,error);
+    }
     if (!network_offline_local(candidate) || !network_offline_local(published)) return true;
     if (!next->detached_transport || active->detached_transport ||
         !network_runtime_valid(next, true, error) || !network_runtime_valid(active, true, error)) return false;
@@ -5688,16 +5738,13 @@ bool frontend_network_rebind_ready(const qa_frontend *candidate, const qa_fronte
     if (!candidate->network) return true;
     qa_frontend_network *next = candidate->network, *active = published->network;
     bool offline_local = network_offline_local(candidate) && network_offline_local(published);
-    bool cold_client = network_offline_local(published) && !active->q2_host &&
-        frontend_network_client_only(candidate) && client_target_selected(next) &&
-        !next->q3_client_requested && !next->q3_admission && !next->nq_host && !next->qw_host &&
-        !next->q2_host && !next->unified && !next->kex_transport && !next->kex_browser &&
-        ((next->q1_client_owner != NULL) + (next->q2_client_owner != NULL) +
-            (next->unified_client_service != NULL) == 1);
+    bool cold_client = network_cold_client(candidate,published);
+    bool endpoint_ready=next->cold_transport ? cold_client && network_cold_socket_ready(next,error) :
+        qa_net_address_equal(qa_network_local_address(next->runtime),qa_network_local_address(active->runtime),true);
     if (!next->detached_transport || active->detached_transport || next->frontend != candidate || active->frontend != published ||
-        next->busy || active->busy || !qa_network_callbacks_idle(next->runtime) || !qa_network_callbacks_idle(active->runtime) ||
+        next->busy || active->busy || active->cold_transport || !qa_network_callbacks_idle(next->runtime) || !qa_network_callbacks_idle(active->runtime) ||
         !qa_http_callbacks_idle(frontend_tools_http((qa_frontend *)candidate)) || !qa_http_callbacks_idle(frontend_tools_http((qa_frontend *)published)) ||
-        !qa_net_address_equal(qa_network_local_address(next->runtime), qa_network_local_address(active->runtime), true) ||
+        !endpoint_ready ||
         (next->q3_admission != NULL) != (active->q3_admission != NULL) ||
         (next->nq_host != NULL) != (active->nq_host != NULL) ||
         (next->qw_host != NULL) != (active->qw_host != NULL) ||
@@ -5793,7 +5840,12 @@ void frontend_network_transport_exchange(qa_frontend *active, qa_frontend *candi
         active->network->q3_client_downloads, candidate->network->q3_client_downloads);
     if(active->network->kex_browser)
         (void)frontend_kex_browser_handoff(active->network->kex_browser,candidate->network->kex_browser,NULL);
-    if(active->network->kex_transport) {
+    if(candidate->network->cold_transport) {
+        qa_network_runtime *reserved=candidate->network->cold_transport;
+        qa_network_transport_publish_retained(active->network->runtime,reserved);
+        qa_network_transport_exchange(reserved,candidate->network->runtime);
+        network_cold_socket_dispose(candidate->network);
+    } else if(active->network->kex_transport) {
         (void)qa_kex_transport_handoff(active->network->kex_transport,candidate->network->kex_transport,NULL);
         qa_network_transport_publish_retained(active->network->runtime,candidate->network->runtime);
     } else qa_network_transport_exchange(active->network->runtime, candidate->network->runtime);
@@ -6805,6 +6857,7 @@ bool frontend_network_destroy(qa_frontend *f, qa_error *error)
     qa_buffer_free(&n->q3_download_pending);
     qa_buffer_free(&n->q3_connections_prefix);
     qa_buffer_free(&n->menu_connections_prefix);
+    network_cold_socket_dispose(n);
     qa_network_destroy(n->runtime); qa_q3_server_admission_destroy(n->q3_admission);
     qa_q3_server_authorization_destroy(n->q3_authorization);
     qa_q3_client_authorization_destroy(n->q3_client_authorization);
