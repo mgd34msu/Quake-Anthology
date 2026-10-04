@@ -865,10 +865,14 @@ bool application_players_prepare(qa_application *application,
         travel->roster->records[i].character = character;
         travel->roster->records[i].spectator = seat->spectator;
         application_player_record *fresh = &travel->roster->records[i];
-        if (!fresh->name && !fresh->team && !fresh->skin && !fresh->userinfo) {
-            if (!seat->name || !record_text(fresh, seat->name, seat->team, NULL, NULL, error)) {
-                if (!seat->name) application_fail(error, QA_ERROR_ARGUMENT,
+        if (!fresh->name && !fresh->team && !fresh->skin) {
+            if (!seat->name) {
+                application_fail(error, QA_ERROR_ARGUMENT,
                     "Local player admission lost its actual declared seat name");
+                application_players_dispose(travel);
+                return false;
+            }
+            if (!record_text(fresh, seat->name, seat->team, NULL, fresh->userinfo, error)) {
                 application_players_dispose(travel);
                 return false;
             }
@@ -3574,7 +3578,8 @@ static bool record_text(application_player_record *record, const char *name,
     record->name = player_text(name);
     record->team = player_text(team);
     record->skin = player_text(skin);
-    record->userinfo = userinfo != NULL ? player_text(userinfo) : NULL;
+    if (userinfo != record->userinfo)
+        record->userinfo = userinfo != NULL ? player_text(userinfo) : NULL;
     if (record->name == NULL || record->team == NULL || record->skin == NULL ||
         (userinfo != NULL && record->userinfo == NULL)) {
         record_free(record);
