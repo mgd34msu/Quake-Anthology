@@ -1,5 +1,6 @@
 #include "client_source.h"
 #include "client_registry.h"
+#include "tools_restore.h"
 #include "qa/console_cvar_observer.h"
 #include "qa/source_save.h"
 #include <limits.h>
@@ -287,7 +288,8 @@ static bool install_restored(void *context, const qa_command_context *command, q
 {
     frontend_client_source *s = context;
     (void)command;
-    return s->options.install(s->options.context, &s->application, true, error);
+    return s->options.install(s->options.context, &s->application, true, error) &&
+        (!s->frontend->tools || frontend_tools_attach_restored(s->frontend, error));
 }
 static bool construct(qa_frontend *f, const frontend_client_source_options *options,
     const qa_launch_restored_instance *metadata, const frontend_client_source_state *state,
