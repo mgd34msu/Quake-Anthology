@@ -292,6 +292,27 @@ bool application_native_client_source_associated(const qa_application *app,const
 }
 bool qa_application_client_associated(const qa_application *app,const qa_application_client_source *source)
 { return application_native_client_source_associated(app,source); }
+bool application_native_client_observer_actor(void *context, const qa_session *session,
+    const qa_actor_record *actor)
+{
+    const qa_application *app = context;
+    if (!app || app->session != session || !actor || !actor->has_source ||
+        qa_actors_get(qa_session_actors(session), actor->id) != actor) return false;
+    for (application_provider *p = app->live_providers; p; p = p->next_live) {
+        if (!application_native_client_only(p)) continue;
+        for (const struct application_native_client_role *r = p->native_client_roles; r; r = r->next) {
+            const qa_application_client_context *source = &r->source.context;
+            if (r->provider != p || r->retiring || r->entity_mutating || !r->entity_generation ||
+                source->session != session || source->lifetime != r || source->receiver != p->owner ||
+                source->entity_owner != actor->owner || source->entity_definition != actor->definition ||
+                r->source.descriptor != qa_launch_instance_lease_view(r->metadata)) continue;
+            for (size_t i = 0; i < r->actor_count; ++i)
+                if (qa_actor_id_equal(r->actors[i], actor->id))
+                    return application_native_client_source_associated(app, &r->source);
+        }
+    }
+    return false;
+}
 bool qa_application_client_bind(qa_application *app, const qa_application_client_source *pending,
     qa_net_client_id client, qa_net_seat_id seat, uint64_t epoch, qa_application_client_source *out, qa_error *error)
 {

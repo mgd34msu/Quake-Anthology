@@ -143,6 +143,11 @@ static void accounted_mutation(qa_session *session)
     uint64_t revision = qa_actors_revision(session->actors);
     if (revision - session->turn_revision == 1u) session->turn_revision = revision;
 }
+static bool observer_actor(const qa_session *session, const qa_actor_record *actor)
+{
+    return session->options.observer_actor &&
+        session->options.observer_actor(session->options.release_context, session, actor);
+}
 
 /* Mutable engine-service borrows may allocate directly. Release always reaches
  * our hook. Reconcile unaccounted allocations without rebuilding or sorting. */
@@ -161,7 +166,12 @@ static bool reconcile_turns(qa_session *session, qa_error *error)
         uint32_t position = session->turn_positions[actor->id.slot];
         if (position != NO_TURN && qa_actor_id_equal(session->turns[position].actor, actor->id)) continue;
         component_state *owner = component(session, actor->owner);
-        if (owner == NULL) return fail(error, QA_ERROR_NOT_FOUND, "Borrowed registry actor has no registered component");
+        if (owner == NULL) {
+            if (!observer_actor(session, actor))
+                return fail(error, QA_ERROR_NOT_FOUND, "Borrowed registry actor has no registered component");
+            session->executions[actor->id.slot] = (actor_execution){actor->id, 0};
+            continue;
+        }
         insert_turn(session, actor, owner->order);
     }
     session->turn_revision = qa_actors_revision(session->actors);
@@ -433,7 +443,9 @@ bool qa_session_checkpoint_restore(qa_session *session, const qa_session_checkpo
     for (size_t i = 0; ok && i < value->execution_count; ++i) {
         const qa_session_execution_checkpoint *saved = value->executions + i;
         const qa_actor_record *actor = qa_actors_resolve_saved(session->actors, saved->actor);
-        if (!actor || seen[actor->id.slot] || !component(session, saved->provider)) {
+        bool observer = actor && !component(session, actor->owner) && observer_actor(session, actor);
+        if (!actor || seen[actor->id.slot] || (saved->provider ? observer ||
+            !component(session, saved->provider) : !observer)) {
             ok = fail(error, QA_ERROR_FORMAT, "Invalid or duplicate saved actor execution"); break;
         }
         seen[actor->id.slot] = 1;
@@ -758,6 +770,9 @@ bool qa_session_bind_execution(qa_session *session, qa_actor_id actor,
     if (session == NULL || session->transitioning || session->faulted
         || qa_actors_get(session->actors, actor) == NULL)
         return fail(error, QA_ERROR_ARGUMENT, "Cannot bind stale actor execution");
+    const qa_actor_record *record = qa_actors_get(session->actors, actor);
+    if (!component(session, record->owner) && observer_actor(session, record))
+        return fail(error, QA_ERROR_ARGUMENT, "Decoded CLIENT observer has no simulation execution");
     component_state *entry = component(session, provider_owner);
     if (entry == NULL || entry->retiring) return fail(error, QA_ERROR_NOT_FOUND, "Execution provider unavailable");
     const qa_think *pending = qa_scheduler_pending(session->scheduler, actor);
@@ -773,7 +788,15 @@ bool qa_session_execution(const qa_session *session, qa_actor_id actor, qa_actor
     const qa_actor_record *record = qa_actors_get(session->actors, actor);
     if (record == NULL) return false;
     actor_execution execution = session->executions[actor.slot];
-    *out = qa_actor_id_equal(execution.actor, actor) ? execution.provider : record->owner;
+    if (qa_actor_id_equal(execution.actor, actor)) {
+        if (!execution.provider && (component(session, record->owner) || !observer_actor(session, record)))
+            return false;
+        *out = execution.provider;
+    } else if (component(session, record->owner)) *out = record->owner;
+    else {
+        if (!observer_actor(session, record)) return false;
+        *out = 0;
+    }
     return true;
 }
 

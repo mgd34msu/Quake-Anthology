@@ -10,6 +10,7 @@
 #include "native_q3_clients.h"
 #include "native_q3_wire.h"
 #include "native_q1_wire.h"
+#include "native_client_roles.h"
 #include "q3_product.h"
 #include "startup_flow.h"
 #include "map_travel_private.h"
@@ -287,6 +288,7 @@ static bool create_application(const qa_application_options *options,
         .component_capacity = options->component_capacity,
         .mixed_order = options->mixed_source_order,
         .actor_released = application_actor_released,
+        .observer_actor = application_native_client_observer_actor,
         .think_dispatch = dispatch_think,
         .source_actor = application_arsenal_source_actor,
         .prepare_commands = application_control_frames_prepare,

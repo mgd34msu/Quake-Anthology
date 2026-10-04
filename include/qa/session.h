@@ -74,6 +74,7 @@ typedef bool (*qa_session_frames_fn)(void *context, qa_session *session,
 typedef bool (*qa_session_control_fn)(void *context, qa_session *session,
                                       qa_actor_id actor, const qa_source_frame *frame,
                                       bool *handled, qa_error *error);
+typedef bool (*qa_session_observer_fn)(void *, const qa_session *, const qa_actor_record *);
 
 typedef struct qa_session_options {
     uint32_t actor_capacity;
@@ -81,6 +82,8 @@ typedef struct qa_session_options {
     bool mixed_order;
     /* Shared body/link/collision cleanup runs before component notification. */
     qa_session_release_fn actor_released;
+    /* Pure custody of decoded CLIENT identities, without simulation execution. */
+    qa_session_observer_fn observer_actor;
     /* Runs once per due source and live actor, in source registration order,
      * before the actor's selected physics. Receives that source's own clock. */
     qa_component_actor_fn source_actor;
@@ -189,8 +192,9 @@ bool qa_session_checkpoint_restore(qa_session *, const qa_session_checkpoint *,
 void qa_session_checkpoint_free(qa_session_checkpoint *);
 const qa_actor_registry *qa_session_actors(const qa_session *session);
 /* Mutable borrow for the shared world service. Gameplay uses session allocation
- * and release. Direct allocations must use registered owners and cannot run
- * during component retirement. Unaccounted allocations are reconciled into the
+ * and release. Direct simulation allocations must use registered owners; decoded
+ * CLIENT identities require the observer predicate and receive no actor turn.
+ * Allocations cannot run during component retirement. They are reconciled into the
  * retained traversal index before the next actor turn; releases are immediate. */
 qa_actor_registry *qa_session_actor_registry(qa_session *session);
 qa_scheduler *qa_session_scheduler(qa_session *session);

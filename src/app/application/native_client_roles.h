@@ -4,6 +4,7 @@
 #include "qa/application_client.h"
 bool application_native_client_only(const application_provider *);
 bool application_native_client_source_associated(const qa_application *,const qa_application_client_source *);
+bool application_native_client_observer_actor(void *, const qa_session *, const qa_actor_record *);
 bool application_native_client_role_source_at(application_provider *, size_t,
     qa_application_startup_source *, bool *, qa_error *);
 bool application_native_client_role_configuration(application_provider *, uint32_t,
