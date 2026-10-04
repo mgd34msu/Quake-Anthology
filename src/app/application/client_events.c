@@ -32,12 +32,8 @@ static bool gear_current(qa_application *app, const client_listener *row,
     if (app->equipment_runtime != row->engine ||
         !application_equipment_runtime_source_at(app->equipment_runtime,
             row->component_index, &current, error) ||
-        current.gear != row->gear.gear || current.selected_owner != row->gear.selected_owner ||
-        current.gear_owner != row->gear.gear_owner || current.service_owner != row->gear.service_owner ||
-        current.descriptor != row->gear.descriptor || current.artifact != row->gear.artifact ||
-        current.acquisition != row->gear.acquisition || current.content != row->gear.content ||
-        current.definition != row->gear.definition ||
-        !application_equipment_runtime_owner_current(app->equipment_runtime, current.selected_owner) ||
+        current.selected_owner != row->gear.selected_owner ||
+        !application_equipment_runtime_source_current(app->equipment_runtime, &row->gear) ||
         !application_q3_gear_idle(current.gear) ||
         !application_q3_gear_userinfo_bound(current.gear, actor, &bound, error) || !bound)
         return error && error->code != QA_OK ? false : application_fail(error,

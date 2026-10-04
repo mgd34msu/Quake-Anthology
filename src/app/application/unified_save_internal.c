@@ -78,8 +78,7 @@ bool application_unified_save_client(qa_source_save_io *io, qa_net_client_id act
 }
 static bool exact_text(qa_source_save_io *io, const char *actual)
 {
-    const char *saved = actual;
-    return actual && qa_source_save_text(io, &saved) && saved && !strcmp(saved, actual);
+    return actual && qa_source_save_text_assert(io, actual);
 }
 static bool frame_fields(qa_source_save_io *io, qa_source_frame *frame)
 {

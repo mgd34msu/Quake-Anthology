@@ -54,15 +54,11 @@ bool frontend_equipment_media_namespace_current(const qa_frontend *frontend,
         content.selected_owner != row->provider || content.service_owner != row->gear_service_owner ||
         !qa_vfs_lookup_equal(content.files, row->owner.mounts)) return false;
     application_equipment_runtime *runtime = frontend->application->equipment_runtime;
-    for (size_t i = 0; i < application_equipment_runtime_source_count(runtime); ++i) {
-        application_equipment_runtime_source source;
-        if (!application_equipment_runtime_source_at(runtime, i, &source, NULL)) return false;
-        if (source.gear_owner == row->gear_namespace)
-            return source.weapon_item == row->item && source.definition &&
-                source.definition->presentation.view_model &&
-                !strcmp(source.definition->presentation.view_model, row->view_path);
-    }
-    return false;
+    application_equipment_runtime_source source;
+    return application_equipment_runtime_source_read(runtime, content.selected_owner, &source, NULL) &&
+        source.gear_owner == row->gear_namespace && source.weapon_item == row->item && source.definition &&
+        source.definition->presentation.view_model &&
+        !strcmp(source.definition->presentation.view_model, row->view_path);
 }
 
 static bool movie_current(void *context,const frontend_material_movie_source *source)

@@ -4,6 +4,7 @@
 #include "guest_qc_combat.h"
 #include "guest_qc_protection.h"
 #include "guest_native_q2_private.h"
+#include "guest_q3_combat_state.h"
 
 static bool current(guest_projection_actor *context, qa_q3_host_game_data *data,
                     qa_error *error)
@@ -392,60 +393,26 @@ bool application_guest_projection_prepare(q3g_role *role, qa_bytes primary, qa_e
 static bool player_state(q3g_role *role, qa_actor_id actor, qa_combat_state *out, qa_error *error)
 {
     application_guest_projection *p = role->projection;
-    if (!p || !p->has_state)
+    if (!p || !p->state || !role->artifact || p->state != role->artifact->combat_profile)
         return application_fail(error, QA_ERROR_UNSUPPORTED, "Guest player state requires a qualified original combat interface");
-    uint32_t slot;
-    if (!qa_q3_host_actor_slot(role->host, actor, &slot, error)) return false;
-    guest_projection_actor context = {.projection = p, .actor = actor, .slot = slot};
-    const guest_state_profile *s = &p->state;
-    uint32_t at, inuse, health, damageable, flags;
-    if (!address(&context, (guest_field){GUEST_ENTITY_RECORD, s->inuse}, &at, error) ||
-        !read_word(role, at, &inuse, error) ||
-        !address(&context, (guest_field){GUEST_ENTITY_RECORD, s->health}, &at, error) ||
-        !read_word(role, at, &health, error) ||
-        !address(&context, (guest_field){GUEST_ENTITY_RECORD, s->takedamage}, &at, error) ||
-        !read_word(role, at, &damageable, error) ||
-        !address(&context, (guest_field){GUEST_ENTITY_RECORD, s->flags}, &at, error) ||
-        !read_word(role, at, &flags, error)) return false;
-    if (!inuse) return application_fail(error, QA_ERROR_ARGUMENT, "Guest player source entity has not been admitted");
-    qa_combat_state state = {.health = (float)(int32_t)health,
-        .can_take_damage = damageable != 0, .invulnerable = (flags & s->invulnerable) != 0,
-        .no_knockback = (flags & s->no_knockback) != 0,
-        .armor = {.regular = {.kind = QA_ARMOR_NONE}, .powered = {.kind = QA_POWER_NONE}}};
-    if (s->mass_kind == GUEST_MASS_CONSTANT) state.mass = s->mass.constant;
-    else {
-        uint32_t word;
-        if (!address(&context, (guest_field){GUEST_ENTITY_RECORD, s->mass.offset}, &at, error) ||
-            !read_word(role, at, &word, error)) return false;
-        if (s->mass_kind == GUEST_MASS_INT32) state.mass = (float)(int32_t)word;
-        else memcpy(&state.mass, &word, sizeof(word));
-    }
-    if (!isfinite(state.mass) || state.mass < 0)
-        return application_fail(error, QA_ERROR_FORMAT, "Guest source mass is not finite and nonnegative");
-    qa_q3_player player;
-    if (!qa_q3_host_source_player(role->host, slot, &player, error)) return false;
-    for (size_t i = 0; i < s->team_count; ++i)
-        if (s->teams[i].value == player.persistant[s->team_stat]) { state.team = s->teams[i].team; break; }
-    int32_t points = player.stats[s->armor_stat];
-    if (points < 0) return application_fail(error, QA_ERROR_FORMAT, "Guest source armor points are negative");
-    float protection = s->armor_protection;
-    bool tiers = false;
-    for (size_t i = 0; i < s->tier_condition_count; ++i) {
-        const guest_condition *condition = &s->tier_conditions[i];
-        uint32_t word;
-        if (!read_word(role, condition->address, &word, error)) return false;
-        if (((int32_t)word == condition->value) == condition->equal) { tiers = true; break; }
-    }
-    if (tiers) {
-        protection = s->tier_fallback;
-        for (size_t i = 0; i < s->tier_count; ++i)
-            if (s->tiers[i].value == player.stats[s->tier_stat]) { protection = s->tiers[i].protection; break; }
-    }
-    state.armor.regular = (qa_regular_armor){.kind = QA_ARMOR_Q3, .points = points,
-        .protection.q3_protection = protection};
+    application_q3_combat_actor source;
+    if (!application_q3_combat_actor_read(role, p->state, actor, &source, error)) return false;
+    guest_projection_actor context = {.projection = p, .actor = actor, .slot = source.slot};
+    uint32_t entity;
+    if (!address(&context, (guest_field){GUEST_ENTITY_RECORD, 0}, &entity, error)) return false;
+    if (entity != source.entity)
+        return application_fail(error, QA_ERROR_FORMAT, "Guest player state changed its physical source entity");
+    bool live;
+    if (!application_q3_combat_actor_live(&source, &live, error)) return false;
+    if (!live) return application_fail(error, QA_ERROR_ARGUMENT, "Guest player source entity has not been admitted");
+    qa_combat_state state;
+    if (!application_q3_combat_state_read(&source, &state, error)) return false;
+    if (state.armor.regular.points < 0)
+        return application_fail(error, QA_ERROR_FORMAT, "Guest source armor points are negative");
     qa_q3_host_game_data data;
     if (!current(&context, &data, error)) return false;
-    *out = state; return true;
+    *out = state;
+    return true;
 }
 
 bool application_guest_player_state(application_provider *provider, qa_actor_id actor,

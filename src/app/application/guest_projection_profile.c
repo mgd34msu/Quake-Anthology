@@ -114,126 +114,16 @@ static bool same_field(guest_field a, guest_field b)
     return a.record == b.record && a.offset == b.offset;
 }
 
-static bool fraction(const qa_json_document *doc, qa_json_id id, float *out, qa_error *error)
+static bool state_profile(application_guest_projection *p, qa_error *error)
 {
-    double value;
-    if (!qa_json_number(doc, id, &value, error)) return false;
-    float native = (float)value;
-    if (!isfinite(value) || value < 0 || value > 1 || (double)native != value)
-        return application_fail(error, QA_ERROR_FORMAT, "Guest armor protection requires its original binary32 fraction");
-    *out = native; return true;
-}
-
-static bool private_field(application_guest_projection *p, const qa_json_document *doc,
-                          qa_json_id id, uint32_t *out, qa_error *error)
-{
-    if (!word(doc, id, out, error)) return false;
-    return (*out % 4 == 0 && *out >= qa_qvm_shared_entity_bytes(p->role->abi) &&
-        *out <= p->entity_stride - 4) ||
-        application_fail(error, QA_ERROR_FORMAT, "Guest combat field leaves its qualified private entity record");
-}
-
-static bool stat(const qa_json_document *doc, qa_json_id id, uint32_t *out, qa_error *error)
-{
-    return word(doc, id, out, error) && (*out < 16 ||
-        application_fail(error, QA_ERROR_FORMAT, "Guest combat stat leaves its public player ABI"));
-}
-
-static bool flag(const qa_json_document *doc, qa_json_id id, uint32_t *out, qa_error *error)
-{
-    return word(doc, id, out, error) && ((*out && !(*out & (*out - 1))) ||
-        application_fail(error, QA_ERROR_FORMAT, "Guest combat flag is not a single original bit"));
-}
-
-static bool state_profile(application_guest_projection *p, const qa_json_document *doc,
-                           qa_json_id combat, qa_error *error)
-{
-    guest_state_profile *s = &p->state;
-    uint32_t entity_stride, client_stride, client_pointer;
-    qa_json_id fields = qa_json_get(doc, combat, "fields"), reactions = qa_json_get(doc, combat, "reactions");
-    qa_json_id state = qa_json_get(doc, combat, "state"), team = qa_json_get(doc, state, "team");
-    qa_json_id flags = qa_json_get(doc, state, "flags"), mass = qa_json_get(doc, state, "mass");
-    qa_json_id armor = qa_json_get(doc, combat, "armor"), tiers = qa_json_get(doc, armor, "tiers");
-    if (!word(doc, qa_json_get(doc, combat, "entityStride"), &entity_stride, error) ||
-        !word(doc, qa_json_get(doc, combat, "clientStride"), &client_stride, error) ||
-        !private_field(p, doc, qa_json_get(doc, fields, "client"), &client_pointer, error) ||
-        !private_field(p, doc, qa_json_get(doc, fields, "inuse"), &s->inuse, error) ||
-        !private_field(p, doc, qa_json_get(doc, fields, "health"), &s->health, error) ||
-        !private_field(p, doc, qa_json_get(doc, fields, "takedamage"), &s->takedamage, error) ||
-        !private_field(p, doc, qa_json_get(doc, reactions, "flags"), &s->flags, error) ||
-        !stat(doc, qa_json_get(doc, state, "healthStat"), &s->health_stat, error) ||
-        !stat(doc, qa_json_get(doc, team, "persistentStat"), &s->team_stat, error) ||
-        !stat(doc, qa_json_get(doc, armor, "pointsStat"), &s->armor_stat, error) ||
-        !flag(doc, qa_json_get(doc, flags, "invulnerable"), &s->invulnerable, error) ||
-        !flag(doc, qa_json_get(doc, flags, "noKnockback"), &s->no_knockback, error) ||
-        !flag(doc, qa_json_get(doc, flags, "notarget"), &s->notarget, error) ||
-        !fraction(doc, qa_json_get(doc, armor, "protection"), &s->armor_protection, error)) return false;
-    if (entity_stride != p->entity_stride || client_stride != p->client_stride || client_pointer != p->client_pointer ||
-        s->invulnerable == s->no_knockback || s->invulnerable == s->notarget || s->no_knockback == s->notarget)
-        return application_fail(error, QA_ERROR_FORMAT, "Guest combat state disagrees with qualified primary records or flags");
-    qa_json_id values = qa_json_get(doc, team, "values");
-    if (!array(doc, values, error)) return false;
-    s->team_count = qa_json_size(doc, values);
-    if (s->team_count) {
-        s->teams = calloc(s->team_count, sizeof(*s->teams));
-        if (!s->teams) return application_fail(error, QA_ERROR_MEMORY, "Retaining guest source team identities");
-    }
-    for (size_t i = 0; i < s->team_count; ++i) {
-        qa_json_id at = qa_json_at(doc, values, i);
-        if (!integer(doc, qa_json_get(doc, at, "value"), &s->teams[i].value, error) ||
-            !item(p->role, doc, qa_json_get(doc, at, "team"), &s->teams[i].team, error)) return false;
-        for (size_t j = 0; j < i; ++j) if (s->teams[j].value == s->teams[i].value)
-            return application_fail(error, QA_ERROR_FORMAT, "Guest team has duplicate source values");
-    }
-    if (qa_json_string_equal(doc, qa_json_get(doc, mass, "kind"), "constant")) {
-        double value;
-        if (!qa_json_number(doc, qa_json_get(doc, mass, "value"), &value, error)) return false;
-        s->mass_kind = GUEST_MASS_CONSTANT; s->mass.constant = (float)value;
-        if (!isfinite(value) || value < 0 || !isfinite(s->mass.constant))
-            return application_fail(error, QA_ERROR_FORMAT, "Guest mass is not finite and nonnegative");
-    } else {
-        if (!qa_json_string_equal(doc, qa_json_get(doc, mass, "kind"), "entity") ||
-            !private_field(p, doc, qa_json_get(doc, mass, "offset"), &s->mass.offset, error))
-            return application_fail(error, QA_ERROR_FORMAT, "Guest mass has no qualified source field");
-        qa_json_id storage = qa_json_get(doc, mass, "storage");
-        if (qa_json_string_equal(doc, storage, "int32")) s->mass_kind = GUEST_MASS_INT32;
-        else if (qa_json_string_equal(doc, storage, "float32")) s->mass_kind = GUEST_MASS_FLOAT32;
-        else return application_fail(error, QA_ERROR_FORMAT, "Guest mass has no original numeric representation");
-    }
-    if (qa_json_type(doc, tiers) != QA_JSON_NULL) {
-        if (!stat(doc, qa_json_get(doc, tiers, "stat"), &s->tier_stat, error) || s->tier_stat == s->armor_stat ||
-            !fraction(doc, qa_json_get(doc, tiers, "fallback"), &s->tier_fallback, error))
-            return application_fail(error, QA_ERROR_FORMAT, "Guest armor tier aliases its points or lacks fallback");
-        qa_json_id conditions = qa_json_get(doc, tiers, "whenAny");
-        values = qa_json_get(doc, tiers, "values");
-        if (!array(doc, conditions, error) || !array(doc, values, error)) return false;
-        s->tier_condition_count = qa_json_size(doc, conditions); s->tier_count = qa_json_size(doc, values);
-        if (!s->tier_count || !s->tier_condition_count)
-            return application_fail(error, QA_ERROR_FORMAT, "Guest armor tier has an empty selection");
-        s->tier_conditions = calloc(s->tier_condition_count, sizeof(*s->tier_conditions));
-        s->tiers = calloc(s->tier_count, sizeof(*s->tiers));
-        if (!s->tiers || !s->tier_conditions) return application_fail(error, QA_ERROR_MEMORY, "Retaining guest source armor tiers");
-        size_t memory = qa_qvm_image_memory_size(p->role->image);
-        for (size_t i = 0; i < s->tier_condition_count; ++i) {
-            qa_json_id at = qa_json_at(doc, conditions, i);
-            guest_condition *condition = &s->tier_conditions[i];
-            if (!word(doc, qa_json_get(doc, at, "offset"), &condition->address, error) ||
-                !integer(doc, qa_json_get(doc, at, "value"), &condition->value, error)) return false;
-            qa_json_id comparison = qa_json_get(doc, at, "comparison");
-            condition->equal = qa_json_string_equal(doc, comparison, "equal");
-            if ((!condition->equal && !qa_json_string_equal(doc, comparison, "not-equal")) ||
-                condition->address % 4 || condition->address > memory - 4)
-                return application_fail(error, QA_ERROR_FORMAT, "Guest armor selector leaves original data");
-        }
-        for (size_t i = 0; i < s->tier_count; ++i) {
-            qa_json_id at = qa_json_at(doc, values, i);
-            if (!integer(doc, qa_json_get(doc, at, "tier"), &s->tiers[i].value, error) ||
-                !fraction(doc, qa_json_get(doc, at, "protection"), &s->tiers[i].protection, error)) return false;
-            for (size_t j = 0; j < i; ++j) if (s->tiers[j].value == s->tiers[i].value)
-                return application_fail(error, QA_ERROR_FORMAT, "Guest armor tier value is ambiguous");
-        }
-    }
-    p->has_state = true; return true;
+    const application_q3_combat_profile *profile = p->role->artifact ?
+        p->role->artifact->combat_profile : NULL;
+    const application_q3_combat_definition *d = application_q3_combat_profile_definition(profile);
+    if (!d || d->entity_stride != p->entity_stride || d->client_stride != p->client_stride ||
+        d->fields.client != p->client_pointer)
+        return application_fail(error, QA_ERROR_FORMAT, "Guest combat state disagrees with qualified primary records");
+    p->state = profile;
+    return true;
 }
 
 static bool append(application_guest_projection *p, guest_inventory_field value,
@@ -304,7 +194,6 @@ void application_guest_projection_profile_free(application_guest_projection *p)
     }
     free(p->inventory);
     application_guest_public_inventory_profile_free(&p->public_inventory);
-    free(p->state.teams); free(p->state.tiers); free(p->state.tier_conditions);
     p->inventory = NULL; p->inventory_count = 0;
 }
 
@@ -340,6 +229,6 @@ bool application_guest_projection_profile_read(q3g_role *role, qa_bytes primary,
             doc, inventory, &p->public_inventory, error);
         p->has_inventory = p->inventory_public = ok;
     }
-    if (ok) ok = state_profile(p, doc, qa_json_get(doc, root, "combat"), error);
+    if (ok) ok = state_profile(p, error);
     qa_json_destroy(doc); return ok;
 }

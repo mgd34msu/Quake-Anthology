@@ -8,17 +8,13 @@ bool frontend_equipment_gear_source(qa_frontend *frontend, qa_actor_owner namesp
     if (!frontend || !frontend->application || !out || !definition ||
         !qa_application_equipment_content_read(frontend->application, namespace, out, error)) return false;
     application_equipment_runtime *runtime = frontend->application->equipment_runtime;
-    for (size_t i = 0; i < application_equipment_runtime_source_count(runtime); ++i) {
-        application_equipment_runtime_source source;
-        if (!application_equipment_runtime_source_at(runtime, i, &source, error)) return false;
-        if (source.gear_owner != namespace) continue;
-        if (!source.gear || !source.definition || source.selected_owner != out->selected_owner ||
-            source.service_owner != out->service_owner || source.content != out->files ||
-            source.artifact != out->artifact || source.acquisition != out->acquisition)
-            return frontend_fail(error, QA_ERROR_FORMAT, "Gear media lost its actual private source tuple");
-        *definition = source.definition; return true;
-    }
-    return frontend_fail(error, QA_ERROR_NOT_FOUND, "Gear media has no retained private source");
+    application_equipment_runtime_source source;
+    if (!application_equipment_runtime_source_read(runtime, out->selected_owner, &source, error)) return false;
+    if (source.gear_owner != namespace || !source.gear || !source.definition ||
+        source.service_owner != out->service_owner || source.content != out->files ||
+        source.artifact != out->artifact || source.acquisition != out->acquisition)
+        return frontend_fail(error, QA_ERROR_FORMAT, "Gear media lost its actual private source tuple");
+    *definition = source.definition; return true;
 }
 
 bool frontend_equipment_gear_quiet(const equipment_gear_content *owner)

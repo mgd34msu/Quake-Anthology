@@ -543,26 +543,44 @@ bool application_map_server_command(application_provider *provider,
     return ok;
 }
 
-static bool map_checkpoint_fields(qa_source_save_io *io, struct application_map_state *state,
-                                   qa_product_id *geometry, qa_catalog *catalog)
+static bool map_geometry_field(qa_source_save_io *io, qa_product_id *geometry, qa_catalog *catalog)
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
-    const char *product = NULL;
+    char *product = NULL;
     if (!reading && *geometry != 0) {
         const qa_product *selected = qa_catalog_product(catalog, *geometry);
         if (!selected || !selected->identity) {
             qa_error_set(io->error, QA_ERROR_FORMAT, 0, "map continuation product has no stable identity");
             io->failed = true; return false;
         }
-        product = selected->identity;
+        product = (char *)selected->identity;
     }
+    bool ok = qa_source_save_owned_text(io, &product);
+    if (reading) {
+        *geometry = 0;
+        if (ok && product != NULL) {
+            const qa_product *selected = qa_catalog_find(catalog, product);
+            if (!selected || strcmp(selected->identity, product)) {
+                qa_error_set(io->error, QA_ERROR_FORMAT, io->offset, "map continuation product is absent from candidate catalog");
+                io->failed = true; ok = false;
+            } else *geometry = selected->id;
+        }
+        free(product);
+    }
+    return ok;
+}
+
+static bool map_checkpoint_fields(qa_source_save_io *io, struct application_map_state *state,
+                                   qa_product_id *geometry, qa_catalog *catalog)
+{
+    bool reading = io->direction == QA_SOURCE_SAVE_READ;
     size_t maximum = reading ? io->input.size / 4 : SIZE_MAX / sizeof(*state->route.targets);
     if (maximum > SIZE_MAX / sizeof(*state->route.targets)) maximum = SIZE_MAX / sizeof(*state->route.targets);
     if (!qa_source_save_count(io, &state->route.count, maximum) ||
         !qa_source_save_count(io, &state->cursor, state->route.count) ||
         !qa_source_save_u64(io, &state->revision) ||
         !qa_source_save_string(io, &state->provider) || !qa_source_save_actor(io, &state->cause) ||
-        !qa_source_save_text(io, &product) || !qa_source_save_string(io, &state->nextserver) ||
+        !map_geometry_field(io, geometry, catalog) || !qa_source_save_string(io, &state->nextserver) ||
         !qa_source_save_bool(io, &state->pending) || !qa_source_save_bool(io, &state->has_landmark) ||
         !qa_source_save_bool(io, &state->publication_complete) || !qa_source_save_bool(io, &state->match_finished) ||
         !qa_source_save_bool(io, &state->carry_players) || !qa_source_save_bool(io, &state->complete_campaign) ||
@@ -572,15 +590,6 @@ static bool map_checkpoint_fields(qa_source_save_io *io, struct application_map_
         !qa_source_save_vec3(io, &state->landmark.relative_velocity) ||
         !qa_source_save_vec3(io, &state->landmark.relative_view_angles)) return false;
     if (reading) {
-        *geometry = 0;
-        if (product != NULL) {
-            const qa_product *selected = qa_catalog_find(catalog, product);
-            if (!selected || strcmp(selected->identity, product)) {
-                qa_error_set(io->error, QA_ERROR_FORMAT, io->offset, "map continuation product is absent from candidate catalog");
-                io->failed = true; return false;
-            }
-            *geometry = selected->id;
-        }
         state->route.targets = state->route.count ? calloc(state->route.count, sizeof(*state->route.targets)) : NULL;
         if (state->route.count && !state->route.targets) {
             qa_error_set(io->error, QA_ERROR_MEMORY, io->offset, "allocating authored map continuation targets");
@@ -590,8 +599,12 @@ static bool map_checkpoint_fields(qa_source_save_io *io, struct application_map_
     for (size_t i = 0; i < state->route.count; ++i) {
         qa_travel_target *target = &state->route.targets[i];
         uint32_t kind = reading ? 0 : (uint32_t)target->kind;
-        if (!qa_source_save_u32(io, &kind) || !qa_source_save_bool(io, &target->new_unit) ||
-            !qa_source_save_text(io, &target->name) || !qa_source_save_text(io, &target->spawn_point)) return false;
+        char *name = reading ? NULL : (char *)target->name;
+        char *spawn = reading ? NULL : (char *)target->spawn_point;
+        bool decoded = qa_source_save_u32(io, &kind) && qa_source_save_bool(io, &target->new_unit) &&
+            qa_source_save_owned_text(io, &name) && qa_source_save_owned_text(io, &spawn);
+        if (reading) { target->name = name; target->spawn_point = spawn; }
+        if (!decoded) return false;
         if (kind > QA_TRAVEL_DEMO || !target->name || !*target->name || !target->spawn_point) {
             qa_error_set(io->error, QA_ERROR_FORMAT, io->offset, "invalid authored map continuation target");
             io->failed = true; return false;
@@ -656,8 +669,10 @@ static bool own_map_route(qa_travel_route *route, qa_error *error)
     for (size_t i = 0; i < route->count; ++i) {
         size_t name = strlen(route->targets[i].name) + 1, spawn = strlen(route->targets[i].spawn_point) + 1;
         memcpy(storage + position, route->targets[i].name, name);
+        free((void *)route->targets[i].name);
         route->targets[i].name = storage + position; position += name;
         memcpy(storage + position, route->targets[i].spawn_point, spawn);
+        free((void *)route->targets[i].spawn_point);
         route->targets[i].spawn_point = storage + position; position += spawn;
     }
     route->storage = storage;
@@ -685,7 +700,13 @@ bool application_map_checkpoint_restore(qa_application *candidate, qa_bytes byte
     if (ok && state) ok = own_map_route(&state->route, error);
     qa_source_save_dispose(&io);
     if (!ok) {
-        if (state) { qa_travel_route_free(&state->route); free(state); }
+        if (state) {
+            for (size_t i = 0; state->route.targets && i < state->route.count; ++i) {
+                free((void *)state->route.targets[i].name);
+                free((void *)state->route.targets[i].spawn_point);
+            }
+            qa_travel_route_free(&state->route); free(state);
+        }
         if (error && error->code == QA_OK) application_fail(error, QA_ERROR_FORMAT, "invalid map continuation schema or extent");
         return false;
     }

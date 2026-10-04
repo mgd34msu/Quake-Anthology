@@ -35,19 +35,6 @@ static bool storage(const application_native_q2_publication *p)
         qa_sha256_equal(qa_resource_digest(held->declaration), &p->metadata->declaration_digest);
 }
 
-static bool encoded(application_unified_json *j, const char *s, qa_error *e)
-{
-    static const char hex[] = "0123456789ABCDEF";
-    for (const unsigned char *p = (const unsigned char *)s; *p; ++p) {
-        bool plain = (*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') ||
-            (*p >= '0' && *p <= '9') || strchr("-_.!~*'()", *p);
-        char escape[3] = {'%', hex[*p >> 4], hex[*p & 15]};
-        if (!application_unified_json_append(j, plain ? (qa_bytes){p, 1} :
-                (qa_bytes){(const uint8_t *)escape, 3}, e)) return false;
-    }
-    return true;
-}
-
 static bool identity(application_native_q2_publication *p, qa_error *e)
 {
     const qa_catalog_mod *m = p->metadata;
@@ -58,8 +45,8 @@ static bool identity(application_native_q2_publication *p, qa_error *e)
     application_unified_json module = {0}, j = {0};
     char declaration[72] = "sha256:", program[72] = "sha256:";
     qa_sha256_hex(&m->declaration_digest, declaration + 7); qa_sha256_hex(&m->program_digest, program + 7);
-    bool ok = application_unified_json_text(&module, "mod:", e) && encoded(&module, product->key, e) &&
-        application_unified_json_text(&module, "%2F", e) && encoded(&module, m->id, e) &&
+    bool ok = application_unified_json_text(&module, "mod:", e) && application_unified_json_percent_encoded(&module, product->key, e) &&
+        application_unified_json_text(&module, "%2F", e) && application_unified_json_percent_encoded(&module, m->id, e) &&
         application_unified_json_append(&module, (qa_bytes){(const uint8_t *)"", 1}, e);
 #define TEXT(s) application_unified_json_text(&j, (s), e)
 #define STRING(s) application_unified_json_string(&j, (s), e)
@@ -83,8 +70,8 @@ static bool namespace_text(const application_native_q2_publication *p, uint64_t 
     const qa_launch_instance *d = qa_launch_instance_lease_view(p->lease);
     char digest[65], suffix[40]; qa_sha256_hex(&p->metadata->declaration_digest, digest);
     snprintf(suffix, sizeof(suffix), ":%llu", (unsigned long long)generation);
-    return application_unified_json_text(j, "native-component:", e) && encoded(j, d->selection.instance, e) &&
-        application_unified_json_text(j, ":", e) && encoded(j, p->metadata->key, e) &&
+    return application_unified_json_text(j, "native-component:", e) && application_unified_json_percent_encoded(j, d->selection.instance, e) &&
+        application_unified_json_text(j, ":", e) && application_unified_json_percent_encoded(j, p->metadata->key, e) &&
         application_unified_json_text(j, ":", e) && application_unified_json_text(j, digest, e) &&
         application_unified_json_text(j, suffix, e);
 }

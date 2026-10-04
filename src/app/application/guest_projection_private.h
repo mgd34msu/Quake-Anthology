@@ -8,21 +8,6 @@
 typedef enum guest_record_kind { GUEST_ENTITY_RECORD, GUEST_CLIENT_RECORD } guest_record_kind;
 typedef struct guest_field { guest_record_kind record; uint32_t offset; } guest_field;
 typedef struct guest_condition { uint32_t address; int32_t value; bool equal; } guest_condition;
-typedef struct guest_team_value { int32_t value; qa_team_id team; } guest_team_value;
-typedef struct guest_armor_tier { int32_t value; float protection; } guest_armor_tier;
-typedef struct guest_state_profile {
-    uint32_t inuse, health, takedamage, flags, health_stat, team_stat, armor_stat, tier_stat;
-    uint32_t invulnerable, no_knockback, notarget;
-    enum { GUEST_MASS_CONSTANT, GUEST_MASS_INT32, GUEST_MASS_FLOAT32 } mass_kind;
-    union { float constant; uint32_t offset; } mass;
-    guest_team_value *teams;
-    size_t team_count;
-    float armor_protection, tier_fallback;
-    guest_armor_tier *tiers;
-    size_t tier_count;
-    guest_condition *tier_conditions;
-    size_t tier_condition_count;
-} guest_state_profile;
 typedef enum guest_capacity_kind {
     GUEST_CAPACITY_CONSTANT, GUEST_CAPACITY_FIELD, GUEST_CAPACITY_SOURCE
 } guest_capacity_kind;
@@ -64,8 +49,8 @@ typedef struct application_guest_projection {
     guest_public_inventory_profile public_inventory;
     guest_inventory_catalog_services inventory_catalog;
     guest_projection_actor *actors;
-    guest_state_profile state;
-    bool has_inventory, has_state, inventory_public, located_inventory;
+    const application_q3_combat_profile *state;
+    bool has_inventory, inventory_public, located_inventory;
 } application_guest_projection;
 
 bool application_guest_projection_prepare(q3g_role *, qa_bytes, qa_error *);

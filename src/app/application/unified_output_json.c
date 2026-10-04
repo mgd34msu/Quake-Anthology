@@ -45,6 +45,24 @@ bool application_unified_json_string(application_unified_json *out, const char *
     return ok;
 }
 
+bool application_unified_json_percent_encoded(application_unified_json *out,
+    const char *text, qa_error *error)
+{
+    if (!text) {
+        qa_error_set(error, QA_ERROR_FORMAT, 0, "Unified Source identity has no text owner");
+        return false;
+    }
+    static const char hex[] = "0123456789ABCDEF";
+    for (const unsigned char *p = (const unsigned char *)text; *p; ++p) {
+        bool plain = (*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') ||
+            (*p >= '0' && *p <= '9') || strchr("-_.!~*'()", *p) != NULL;
+        char escaped[3] = {'%', hex[*p >> 4], hex[*p & 15]};
+        if (!application_unified_json_append(out, plain ? (qa_bytes){p, 1} :
+            (qa_bytes){(const uint8_t *)escaped, 3}, error)) return false;
+    }
+    return true;
+}
+
 bool application_unified_json_number(application_unified_json *out, double value, qa_error *error)
 {
     qa_buffer number = {0};
