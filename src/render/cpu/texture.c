@@ -5,8 +5,8 @@ static void texel(const qa_scene_image *image,
                   const cpu_framebuffer *target, int64_t x, int64_t y,
                   double out[4]) {
   if (image->wrap == QA_SCENE_REPEAT) {
-    x = (x + (int64_t)level->width) % level->width;
-    y = (y + (int64_t)level->height) % level->height;
+    x = x < 0 ? x + level->width : x >= level->width ? x - level->width : x;
+    y = y < 0 ? y + level->height : y >= level->height ? y - level->height : y;
   } else if (x < 0 || y < 0 || x >= level->width || y >= level->height) {
     out[0] = image->border.x;
     out[1] = image->border.y;
