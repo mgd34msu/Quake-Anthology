@@ -234,18 +234,24 @@ bool qa_navigation_route(qa_navigation *n, qa_nav_workspace *w, const qa_nav_rou
     }
     w->costs[first] = 0;
     if (!nav_queue_push(w, (nav_queue_entry){first, 0}, e)) return false;
+    qa_movement_result scratch = {0};
+    bool ok = true;
     for (;;) {
         size_t count;
-        if (!candidate(n, w, q, first, last, &count, &found, e))
-            return false;
-        if (!found)
-            return true;
+        ok = candidate(n, w, q, first, last, &count, &found, e);
+        if (!ok || !found)
+            break;
         route->point_count = 0;
         route->travel_seconds = 0;
-        if (!nav_route_point(route, q->start, e))
-            return false;
-        nav_prediction prediction = {.navigation = n};
-        bool ok = true, failed = false;
+        ok = nav_route_point(route, q->start, e);
+        if (!ok)
+            break;
+        nav_prediction prediction = {
+            .navigation = n,
+            .result = {.contacts = scratch.contacts, .contact_capacity = scratch.contact_capacity}};
+        scratch.contacts = NULL;
+        scratch.contact_capacity = 0;
+        bool failed = false, goal_admitted = true;
         for (size_t i = 0; ok && i < count; ++i) {
             bool admitted;
             ok = traverse(n, &prediction, q->actor, w->path[i], route, &admitted, e);
@@ -259,24 +265,24 @@ bool qa_navigation_route(qa_navigation *n, qa_nav_workspace *w, const qa_nav_rou
             }
         }
         if (ok && !failed && nav_distance(cursor(route), q->goal) > 1) {
-            bool admitted;
             ok = nav_predict(&prediction, q->actor, cursor(route), q->goal, QA_NAV_WALK, route,
-                             &admitted, e);
-            if (ok && !admitted) {
-                nav_prediction_close(&prediction);
-                return true;
-            }
+                             &goal_admitted, e);
         }
+        scratch.contacts = prediction.result.contacts;
+        scratch.contact_capacity = prediction.result.contact_capacity;
+        prediction.result.contacts = NULL;
+        prediction.result.contact_capacity = 0;
         nav_prediction_close(&prediction);
-        if (!ok)
-            return false;
+        if (!ok || !goal_admitted)
+            break;
         if (failed)
             continue;
-        if (!nav_reserve((void **)&route->nodes, &route->node_capacity, count + 1,
-                         sizeof(*route->nodes), e) ||
-            !nav_reserve((void **)&route->edges, &route->edge_capacity, count,
-                         sizeof(*route->edges), e))
-            return false;
+        ok = nav_reserve((void **)&route->nodes, &route->node_capacity, count + 1,
+                         sizeof(*route->nodes), e) &&
+             nav_reserve((void **)&route->edges, &route->edge_capacity, count,
+                         sizeof(*route->edges), e);
+        if (!ok)
+            break;
         route->nodes[0] = start;
         for (size_t i = 0; i < count; ++i) {
             const qa_nav_edge *edge = n->graph->edges + w->path[i];
@@ -289,8 +295,10 @@ bool qa_navigation_route(qa_navigation *n, qa_nav_workspace *w, const qa_nav_rou
         route->graph = n->graph;
         qa_nav_graph_retain(route->graph);
         route->found = true;
-        return true;
+        break;
     }
+    qa_movement_result_free(&scratch);
+    return ok;
 }
 bool qa_navigation_admit_edge(qa_navigation *n, qa_actor_id actor, uint32_t id, qa_vec3 origin,
                               qa_nav_route *route, qa_error *e) {
