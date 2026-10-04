@@ -1257,7 +1257,6 @@ static bool import_components(frontend_persistence *operation, qa_error *error)
     unified=unified_refs(operation,&audio);
     ok=ok && frontend_event_restore(f,operation->audio,&events,section(set,SECTION_EVENTS),error) &&
         frontend_tools_checkpoint_resolvers(f,&tools,&llm,error) && frontend_tools_restore(f,&tools,&llm,section(set,SECTION_TOOLS),error) &&
-        frontend_save_commands_restore(f,section(set,SECTION_SAVE_COMMANDS),error) &&
         (f->options.dedicated || frontend_seats_create_restored(f,frontend_topology_mods(operation->topology),
             section(set,SECTION_SEATS_PRESENTATION),error)) &&
         frontend_material_movie_inventory_restore_unified(f,operation->space,&frame,&audio,operation->q3,section(set,SECTION_MATERIAL_MOVIES),error) &&
@@ -1335,7 +1334,8 @@ static bool restore_owner(void *context, qa_application *candidate, qa_bytes byt
     if(binding->kind==QA_SAVE_CONNECTIONS) {
         qa_audio_checkpoint_refs audio=audio_refs(operation);
         frontend_unified_graph_refs unified=unified_refs(operation,&audio);
-        if(!application_save_console_context_from_image(candidate,operation->restore_image,
+        if(!frontend_save_commands_restore(operation->candidate,section(&operation->sections,SECTION_SAVE_COMMANDS),error) ||
+            !application_save_console_context_from_image(candidate,operation->restore_image,
                 &operation->client_console_context,error) ||
             !application_save_console_resolvers(&operation->client_console_context,&operation->client_console,error) ||
             !frontend_unified_graph_stage(operation->unified_graph,unified.content,&operation->client_console,error) ||
