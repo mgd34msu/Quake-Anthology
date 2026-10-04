@@ -1,6 +1,7 @@
 #include "shared_render_controls.h"
 #include "capture.h"
 #include "q3_render_policy.h"
+#include "qa/cvars_alias.h"
 
 struct frontend_shared_render_controls {
     qa_frontend *frontend;
@@ -115,21 +116,8 @@ bool frontend_shared_render_controls_abort(frontend_shared_render_controls **out
 const qa_cvar_view *frontend_render_control_record(const qa_cvars *registry, const char *name)
 {
     if (!registry || !name) return NULL;
-    bool folded = qa_cvars_dialect(registry) == QA_CONSOLE_Q3;
-    for (size_t i = 0; i < qa_cvars_count(registry); ++i) {
-        const qa_cvar_view *row = qa_cvars_at(registry, i);
-        const unsigned char *a = (const unsigned char *)row->name;
-        const unsigned char *b = (const unsigned char *)name;
-        while (*a && *b) {
-            unsigned char c = *a, d = *b;
-            if (folded && c >= 'A' && c <= 'Z') c += 'a' - 'A';
-            if (folded && d >= 'A' && d <= 'Z') d += 'a' - 'A';
-            if (c != d) break;
-            ++a; ++b;
-        }
-        if (!*a && !*b) return row;
-    }
-    return NULL;
+    if (qa_cvars_canonical_name(registry, name) != name) return NULL;
+    return qa_cvars_find(registry, name);
 }
 bool frontend_render_controls_live(qa_frontend *f, qa_error *error)
 {
