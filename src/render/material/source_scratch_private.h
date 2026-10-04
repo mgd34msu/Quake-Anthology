@@ -50,6 +50,12 @@ typedef struct material_source_entity {
 
 #define QA_SOURCE_TESS_VERTICES 1000
 #define QA_SOURCE_TESS_INDEXES 6000
+static inline bool material_source_vertex_storage_valid(const qa_scene_draw *draw)
+{
+    return !draw->source_vertex_storage ||
+        (draw->source_arrays && draw->source_vertex_storage <= QA_SOURCE_TESS_VERTICES &&
+         draw->mesh.vertex_count <= draw->source_vertex_storage && draw->mesh.vertices);
+}
 struct qa_material_source_scratch {
     qa_render_controls *owner;
     qa_scene_vertex vertices[QA_SOURCE_TESS_VERTICES];

@@ -1,5 +1,6 @@
 #include "qa/scene.h"
 #include "qa/material_source_scratch.h"
+#include "../material/source_scratch_private.h"
 
 #include <limits.h>
 #include <math.h>
@@ -145,8 +146,7 @@ bool qa_scene_frame_emit(qa_scene_frame *frame, const qa_scene_command *command,
     if (copied.kind == QA_SCENE_COMMAND_DRAW) {
         qa_scene_draw *draw = &copied.data.draw;
         if (draw->texture_count > 2 || (draw->mesh.identity != 0 && draw->mesh.geometry == NULL) ||
-            (draw->source_vertex_storage && (draw->source_vertex_storage != 1000 || !draw->source_arrays ||
-                draw->mesh.vertex_count > draw->source_vertex_storage || !draw->mesh.vertices)) ||
+            !material_source_vertex_storage_valid(draw) ||
             (draw->mesh.vertex_count != 0 && draw->mesh.vertices == NULL) ||
             (draw->mesh.index_count != 0 && draw->mesh.indices == NULL) ||
             (draw->light_count != 0 && draw->lights == NULL)) {

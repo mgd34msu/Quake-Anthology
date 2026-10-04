@@ -1,6 +1,7 @@
 #include "qa/scene_frame_save.h"
 #include "qa/source_save.h"
 #include "qa/material.h"
+#include "../material/source_scratch_private.h"
 
 #include <math.h>
 #include <stdint.h>
@@ -200,7 +201,7 @@ static bool draw(qa_source_save_io *io, qa_scene_frame *frame, const qa_scene_fr
 {
     {
         FIELD(u32,value,source_vertex_storage);
-        if (value->source_vertex_storage && value->source_vertex_storage!=1000) return false;
+        if (value->source_vertex_storage>QA_SOURCE_TESS_VERTICES) return false;
     }
     if (!mesh(io,frame,refs,value->source_vertex_storage,&value->mesh) || !matrix(io,&value->model) || !matrix(io,&value->mvp)) return false;
     FIELD(u8,value,texture_count); if (value->texture_count>2) return false;
@@ -235,7 +236,7 @@ static bool draw(qa_source_save_io *io, qa_scene_frame *frame, const qa_scene_fr
         FIELD(bool,value,source_stage_state);
     }
     { FIELD(bool,value,source_arrays); }
-    if (value->source_vertex_storage && !value->source_arrays) return false;
+    if (!material_source_vertex_storage_valid(value)) return false;
     FIELD(u64,value,sort_key); FIELD(u32,value,entity); FIELD(u32,value,fog_index); FIELD(u32,value,light_mask); return true;
 }
 static bool command(qa_source_save_io *io, qa_scene_frame *frame, const qa_scene_frame_checkpoint_refs *refs,qa_scene_command *value)

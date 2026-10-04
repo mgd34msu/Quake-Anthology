@@ -279,11 +279,22 @@ static bool source_coordinates(const qa_material_stage *stage, const qa_scene_me
     }
     return true;
 }
+static size_t source_draw_extent(const qa_scene_mesh *geometry)
+{
+    size_t extent = geometry->vertex_count;
+    if (extent >= QA_SOURCE_TESS_VERTICES) return QA_SOURCE_TESS_VERTICES;
+    for (size_t i = 0; i < geometry->index_count; ++i) {
+        uint32_t index = geometry->indices[i];
+        if (index >= QA_SOURCE_TESS_VERTICES) return QA_SOURCE_TESS_VERTICES;
+        if (index >= extent) extent = (size_t)index + 1;
+    }
+    return extent;
+}
 static bool emit_stage(const qa_material *material, const qa_material *original,
                         const qa_material_stage *stage, const qa_material_stage *second,
                         qa_scene_texture_environment environment, qa_scene_state state,
                         const qa_scene_mesh *geometry, const qa_material_context *context,
-                        float time, qa_scene_vec4 *previous_colors, qa_material_iterator iterator,
+                        float time, qa_scene_vec4 *previous_colors, qa_material_iterator iterator, size_t source_storage,
                         qa_scene_frame *frame, qa_error *error)
 {
     qa_material_source_scratch *source = context->source_scratch;
@@ -385,7 +396,7 @@ static bool emit_stage(const qa_material *material, const qa_material *original,
         draw.fog = context->fog;
         draw.fog.effect = adjustment;
     }
-    size_t storage = source ? QA_SOURCE_TESS_VERTICES : geometry->vertex_count;
+    size_t storage = source ? source_storage : geometry->vertex_count;
     qa_scene_vertex *vertices = frame_array(frame, storage, sizeof(*vertices), alignof(qa_scene_vertex), error);
     if (storage && vertices == NULL) return false;
     for (size_t i = 0; i < storage; ++i) {
@@ -410,7 +421,7 @@ static bool emit_stage(const qa_material *material, const qa_material *original,
     }
     draw.mesh.vertices = vertices;
     draw.source_arrays = source != NULL;
-    draw.source_vertex_storage = source ? QA_SOURCE_TESS_VERTICES : 0;
+    draw.source_vertex_storage = source ? (uint32_t)source_storage : 0;
     if (!qa_scene_frame_draw(frame, &draw, error)) return false;
     return !source || !source->issuing || !second_binding ||
         (material_source_texture_enable(source, false, error) && material_source_texture_select(source, 0, error));
@@ -503,7 +514,7 @@ static bool emit_dlights(const qa_material *material, const qa_material *origina
 }
 static bool emit_fog_pass(const qa_material *material, const qa_material *original,
                       const qa_scene_mesh *geometry, const qa_material_context *context,
-                      bool volume, qa_scene_frame *frame, qa_error *error)
+                      bool volume, size_t source_storage, qa_scene_frame *frame, qa_error *error)
 {
     bool equal = material->sort <= 3.0f;
     qa_scene_draw draw = initial_draw(material, original, *geometry, context);
@@ -516,7 +527,7 @@ static bool emit_fog_pass(const qa_material *material, const qa_material *origin
         (!material_source_client_arrays(context->source_scratch, true, true, error) ||
         !material_source_client_coordinate_pointer(context->source_scratch, MATERIAL_SOURCE_COORDINATES_STAGE, 0, error))) return false;
     size_t storage = volume && context->source_scratch && context->source_scratch->issuing ?
-        QA_SOURCE_TESS_VERTICES : geometry->vertex_count;
+        source_storage : geometry->vertex_count;
     qa_scene_vertex *vertices = frame_array(frame, storage, sizeof(*vertices), alignof(qa_scene_vertex), error);
     if (storage && vertices == NULL) return false;
     if (volume) {
@@ -557,17 +568,17 @@ static bool emit_fog_pass(const qa_material *material, const qa_material *origin
         if (!material_source_texture_bind(context->source_scratch, draw.textures[0], error) ||
             !material_source_stage_state(context->source_scratch, &draw.state, error)) return false;
         draw.source_arrays = true;
-        draw.source_vertex_storage = QA_SOURCE_TESS_VERTICES;
+        draw.source_vertex_storage = (uint32_t)source_storage;
     }
     return qa_scene_frame_draw(frame, &draw, error);
 }
 static bool emit_fog(const qa_material *material, const qa_material *original,
                       const qa_scene_mesh *geometry, const qa_material_context *context,
-                      qa_scene_frame *frame, qa_error *error)
+                      size_t source_storage, qa_scene_frame *frame, qa_error *error)
 {
     if (material->sort > 3.0f && (material->content_flags & 64u) == 0) return true;
-    if (context->fog_tc_scale > 0.0f && !emit_fog_pass(material, original, geometry, context, true, frame, error)) return false;
-    if (context->fog.kind != QA_FOG_NONE && !emit_fog_pass(material, original, geometry, context, false, frame, error)) return false;
+    if (context->fog_tc_scale > 0.0f && !emit_fog_pass(material, original, geometry, context, true, source_storage, frame, error)) return false;
+    if (context->fog.kind != QA_FOG_NONE && !emit_fog_pass(material, original, geometry, context, false, source_storage, frame, error)) return false;
     return true;
 }
 static bool material_plan(const qa_material *material, bool fragment_lighting,
@@ -614,6 +625,7 @@ static bool execute_material(const qa_material *material, const qa_material *ori
     bool collapsed = material_plan(material, context->fragment_lighting, &collapsed_environment, &collapsed_state, &passes, &iterator);
     bool fast_iterator = iterator == QA_MATERIAL_VERTEX_LIT || iterator == QA_MATERIAL_LIGHTMAPPED;
     qa_material_source_scratch *source = context->source_scratch;
+    size_t source_storage = source ? source_draw_extent(geometry) : 0;
     if (source && source->issuing) {
         if (iterator == QA_MATERIAL_VERTEX_LIT && material->stage_count &&
             !source_colors(material->stages, geometry, context, time, true, error)) return false;
@@ -636,13 +648,13 @@ static bool execute_material(const qa_material *material, const qa_material *ori
         if (!emit_stage(material, original, stage, second,
                          second == NULL ? QA_TEXTURE_MODULATE : collapsed_environment,
                          second == NULL ? stage->state : collapsed_state,
-                         geometry, context, time, previous, iterator, frame, error)) return false;
+                         geometry, context, time, previous, iterator, source_storage, frame, error)) return false;
         if (source && context->source_diagnostics.lightmap &&
             (stage->is_lightmap || (second && second->is_lightmap) || stage->vertex_lightmap)) break;
         if (second != NULL) ++i;
     }
     return emit_dlights(material, original, geometry, context, fast_iterator, frame, error) &&
-           emit_fog(material, original, geometry, context, frame, error);
+           emit_fog(material, original, geometry, context, source_storage, frame, error);
 }
 static double shader_seconds(const qa_material *original, const qa_material *material,
                               const qa_material_context *context)

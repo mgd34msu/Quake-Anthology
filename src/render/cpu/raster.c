@@ -165,11 +165,8 @@ static bool draw_valid(const qa_scene_draw *draw, qa_error *error) {
       !finite3(draw->fog.color) || !isfinite(draw->fog.density) ||
       !isfinite(draw->fog.amount) || !isfinite(draw->shade_scale) ||
       !isfinite(draw->shadow_near) ||
-      (draw->source_vertex_storage && (!draw->source_arrays ||
-       draw->source_vertex_storage != QA_SOURCE_TESS_VERTICES ||
-       draw->mesh.vertex_count > draw->source_vertex_storage)) ||
+      !material_source_vertex_storage_valid(draw) ||
       (draw->mesh.vertex_count && !draw->mesh.vertices) ||
-      (draw->source_vertex_storage && !draw->mesh.vertices) ||
       (draw->mesh.index_count && !draw->mesh.indices) ||
       (draw->light_count && !draw->lights)) {
     qa_error_set(error, QA_ERROR_ARGUMENT, 0,
