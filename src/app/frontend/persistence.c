@@ -143,11 +143,9 @@ struct frontend_persistence {
     qa_application_native_resource_refs native_resource_refs;
     frontend_section_set sections;
     frontend_capture *capture;
-    frontend_capture *candidate_capture;
     frontend_scene_inventory *scenes;
     frontend_model_inventory *models;
     frontend_scene_namespace *space;
-    const frontend_scene_namespace *canonical;
     frontend_world_inventory *roots;
     frontend_q3_inventory *q3;
     frontend_q3_inventory *renderer_q3;
@@ -880,7 +878,6 @@ static void cut_destroy(frontend_persistence *operation)
     sections_destroy(&operation->sections);
     for (size_t i=0;i<7;++i) qa_buffer_free(operation->external+i);
     frontend_capture_end(operation->capture); operation->capture=NULL;
-    frontend_capture_end(operation->candidate_capture); operation->candidate_capture=NULL;
 }
 static bool module_movies(void *context,const frontend_remote_q3_module_topology *role,
     qa_q3_movie_checkpoint_refs *out,qa_error *error)
@@ -950,7 +947,6 @@ static bool capture_components(frontend_persistence *operation, qa_error *error)
         frontend_unified_graph_capture_numbers(f,operation->space,error) &&
         frontend_classic_client_graph_capture_numbers(f,operation->space,error) &&
         frontend_scene_namespace_seal(operation->space,error) &&
-        (!operation->canonical || frontend_scene_namespace_rebase_capture(operation->space,operation->canonical,error)) &&
         frontend_world_inventory_capture(f,operation->scenes,operation->space,&operation->roots,error) &&
         frontend_audio_banks_checkpoint(f,&banks,&operation->audio,set->owned+SECTION_BANKS,error) &&
         frontend_tools_checkpoint_resolvers(f,&tools,&llm,error);
@@ -1074,7 +1070,7 @@ static bool read_saved_sections(frontend_persistence *operation, const qa_save_i
         const qa_save_record *record=qa_save_image_find(image,operation->bindings[i].kind,"");
         const qa_save_owner *identity=&operation->owners[i].identity;
         if (!record || strcmp(record->owner.schema,identity->schema) ||
-            strcmp(record->owner.backend,identity->backend) || !qa_sha256_equal(&record->owner.content,&identity->content))
+            strcmp(record->owner.backend,identity->backend))
             return frontend_fail(error,QA_ERROR_FORMAT,"Saved external owner schema differs from its concrete frontend producer");
         if (!copy_bytes(record->payload,operation->external+i,error)) return false;
         qa_bytes bytes={operation->external[i].data,operation->external[i].size};
@@ -1437,59 +1433,6 @@ static bool native_baseline(void *context,qa_application *candidate,qa_actor_own
         return operation->services->prepare_native_baseline(operation->services->context,candidate,owner,services,error);
     return frontend_native_q2_baseline_prepare(operation->candidate,candidate,owner,services,error);
 }
-static bool owners_match(frontend_persistence *operation,const qa_save_image *image,qa_error *error)
-{
-    qa_frontend *f=operation->candidate?operation->candidate:operation->active;
-    for (size_t i=0;i<7;++i) {
-        const qa_save_record *record=qa_save_image_find(image,operation->bindings[i].kind,"");
-        qa_buffer actual={0};
-        bool ok=record && capture_owner(operation->bindings+i,f->application,&actual,error);
-        if (ok && (actual.size!=record->payload.size || memcmp(actual.data,record->payload.data,actual.size))) {
-            size_t extent=actual.size<record->payload.size?actual.size:record->payload.size,offset=0;
-            while(offset<extent && actual.data[offset]==record->payload.data[offset]) ++offset;
-            uint32_t section_id=UINT32_MAX; size_t section_offset=0;
-            qa_save_owner_kind kind=operation->bindings[i].kind;
-            if(kind==QA_SAVE_PRESENTATION || kind==QA_SAVE_AUDIO || kind==QA_SAVE_INPUT || kind==QA_SAVE_MEDIA) {
-                frontend_section_set saved={0},restored={0}; qa_source_save_io io={0}; qa_error probe={0};
-                bool decoded=qa_source_save_reader(&io,NULL,record->payload,&probe) &&
-                    owner_envelope(&io,kind,&saved) && qa_source_save_finish(&io,NULL);
-                qa_source_save_dispose(&io);
-                if(decoded) decoded=qa_source_save_reader(&io,NULL,(qa_bytes){actual.data,actual.size},&probe) &&
-                    owner_envelope(&io,kind,&restored) && qa_source_save_finish(&io,NULL);
-                qa_source_save_dispose(&io);
-                bool route_semantics=decoded && kind==QA_SAVE_INPUT && operation->restored_from;
-                for(size_t j=0;decoded && j<SECTION_COUNT;++j) {
-                    qa_bytes old=saved.bytes[j],current=restored.bytes[j];
-                    size_t count=old.size<current.size?old.size:current.size,k=0;
-                    while(k<count && old.data[k]==current.data[k]) ++k;
-                    if(k<count || old.size!=current.size) {
-                        if(route_semantics && j==SECTION_PLATFORM) {
-                            qa_bytes saved_platform={0},current_platform={0};
-                            bool present=f->input!=NULL;
-                            bool qualified=optional_decode("QFIP",present,old,&saved_platform,error) &&
-                                optional_decode("QFIP",present,current,&current_platform,error) &&
-                                (!present || qa_input_platform_restore_checkpoint_matches(
-                                    operation->restored_from->input_guard,saved_platform,current_platform,error));
-                            if(!qualified) { qa_buffer_free(&actual); return false; }
-                            continue;
-                        }
-                        section_id=(uint32_t)j; section_offset=k; break;
-                    }
-                }
-                if(route_semantics && section_id==UINT32_MAX) { qa_buffer_free(&actual); continue; }
-            }
-            qa_error_set(error,QA_ERROR_FORMAT,offset,
-                "Restored frontend owner %u differs: sizes %zu/%zu, byte %zu, section %u byte %zu, saved/actual %u/%u",
-                (unsigned)kind,record->payload.size,actual.size,offset,section_id,section_offset,
-                offset<record->payload.size?(unsigned)record->payload.data[offset]:UINT32_MAX,
-                offset<actual.size?(unsigned)actual.data[offset]:UINT32_MAX);
-            ok=false;
-        }
-        qa_buffer_free(&actual);
-        if (!ok) return false;
-    }
-    return true;
-}
 static bool native_clients_restore(frontend_persistence *operation,qa_error *error)
 {
     qa_frontend *f=operation->candidate;
@@ -1522,7 +1465,7 @@ static bool validate(void *context,qa_application *application,const qa_save_ima
     frontend_persistence *operation=context;
     if (!operation->candidate) {
         return application==operation->active->application && operation->capture && operation->captured &&
-            owners_match(operation,image,error) && (!operation->services || !operation->services->validate ||
+            (!operation->services || !operation->services->validate ||
             operation->services->validate(operation->services->context,application,image,error));
     }
     qa_frontend *f=operation->candidate;
@@ -1553,25 +1496,10 @@ static bool validate(void *context,qa_application *application,const qa_save_ima
         frontend_selected_effects_topology_ready(f,error);
     if (ok && operation->services && operation->services->validate)
         ok=operation->services->validate(operation->services->context,application,image,error);
-    /* The dictionary imported into real owner fields retains its saved IDs.
-     * A fresh typed capture matches those exact domain/owner/node ordinals;
-     * no installed identity or opaque record byte is rewritten. */
-    frontend_persistence check={.active=operation->active,.candidate=f,
-        .canonical=operation->space,.restored_from=operation};
-    for (size_t i=0;i<7;++i)
-        check.bindings[i]=(frontend_owner_binding){&check,operation->bindings[i].kind,i};
-    if (ok) ok=frontend_capture_begin(f,&check.capture,error) && owners_match(&check,image,error);
-    if (ok) {
-        /* The application's subsequent content comparison still visits the
-         * genuine frontend inventory under this same child-owner lease. */
-        operation->candidate_capture=check.capture; check.capture=NULL;
-    }
-    cut_destroy(&check);
     return ok;
 }
 static void close_captures(frontend_persistence *operation)
 {
-    frontend_capture_end(operation->candidate_capture); operation->candidate_capture=NULL;
     frontend_capture_end(operation->capture); operation->capture=NULL;
 }
 static bool discard_services(void *context,qa_application *candidate,qa_error *error)

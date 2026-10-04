@@ -3,7 +3,6 @@
 
 #include "qa/actors.h"
 #include "qa/filesystem.h"
-#include "qa/hash.h"
 #include "qa/world.h"
 #include "qa/session.h"
 
@@ -34,13 +33,11 @@ typedef struct qa_save_owner {
     const char *instance;       /* Empty for shared owners. */
     const char *schema;         /* Explicit field codec, never a struct dump. */
     const char *backend;        /* ABI/execution identity, empty when portable. */
-    qa_sha256_digest content;  /* Exact external program/content identity. */
 } qa_save_owner;
 
 typedef struct qa_save_metadata {
     qa_save_purpose purpose;
     uint64_t elapsed_ns, configuration_generation, world_generation;
-    qa_sha256_digest composition;
 } qa_save_metadata;
 
 typedef struct qa_save_record {
@@ -51,8 +48,8 @@ typedef struct qa_save_image qa_save_image;
 typedef struct qa_native_resource_inventory qa_native_resource_inventory;
 typedef bool (*qa_save_native_release_fn)(qa_native_resource_inventory **, qa_error *);
 
-/* The image owns every descriptor string and payload. Decoding verifies the
- * complete envelope digest before allocating, then validates the owner set.
+/* The image owns every descriptor string and payload. Decoding validates the
+ * declared extents and owner set.
  * Outputs remain unchanged on failure. Existing outputs must be freed first. */
 bool qa_save_image_create(const qa_save_metadata *, const qa_save_record *, size_t,
                            qa_save_image **, qa_error *);

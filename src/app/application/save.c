@@ -50,8 +50,6 @@
 #include <string.h>
 #include <stdlib.h>
 
-static bool persistence_shared_match(qa_application *, const qa_save_image *, qa_error *);
-
 typedef struct application_saved_console {
     qa_application_console_scope scope;
     qa_console *console;
@@ -803,8 +801,7 @@ static bool same_owner(const qa_save_owner *a, const qa_save_owner *b)
     return a->kind == b->kind &&
         a->instance && b->instance && !strcmp(a->instance, b->instance) &&
         a->schema && b->schema && !strcmp(a->schema, b->schema) &&
-        a->backend && b->backend && !strcmp(a->backend, b->backend) &&
-        qa_sha256_equal(&a->content, &b->content);
+        a->backend && b->backend && !strcmp(a->backend, b->backend);
 }
 
 static const qa_application_persistence_owner *external_owner(
@@ -1081,7 +1078,7 @@ static bool native_q3_saved_record(application_provider *provider,
         provider->launch->selection.instance);
     qa_bytes bytes=saved ? saved->payload : (qa_bytes){0};
     if (!saved || strcmp(saved->owner.schema,"qa.q3.native") ||
-        saved->owner.backend[0] || !qa_sha256_equal(&saved->owner.content,&provider->launch->identity) ||
+        saved->owner.backend[0] ||
         !bytes.data || bytes.size<28 || memcmp(bytes.data,"QAPV",4) ||
         qa_load_u32le(bytes.data+4)!=APPLICATION_PROVIDER_Q3 ||
         qa_load_u64le(bytes.data+20)!=bytes.size-28)
@@ -1099,7 +1096,7 @@ bool application_native_q3_checkpoint_prepare(application_provider *provider,
         saved->owner.kind!=QA_SAVE_PROVIDER || !saved->owner.instance ||
         strcmp(saved->owner.instance,provider->launch->selection.instance) ||
         strcmp(saved->owner.schema,"qa.q3.native") ||
-        saved->owner.backend[0] || !qa_sha256_equal(&saved->owner.content,&provider->launch->identity) ||
+        saved->owner.backend[0] ||
         !bytes.data || bytes.size<28 || memcmp(bytes.data,"QAPV",4) ||
         qa_load_u32le(bytes.data+4)!=APPLICATION_PROVIDER_Q3 ||
         qa_load_u32le(bytes.data+8)>1 || qa_load_u64le(bytes.data+20)!=bytes.size-28)
@@ -1358,7 +1355,7 @@ static bool persistence_inventory(application_persistence *operation, qa_applica
                 ok = application_fail(error, QA_ERROR_FORMAT, "selected provider is not an attached restored owner"); break;
             }
             owner->kind = QA_SAVE_PROVIDER; owner->instance = instance->selection.instance;
-            owner->content = instance->identity; schema = provider_schema(provider);
+            schema = provider_schema(provider);
             owner->backend = provider->kind == APPLICATION_PROVIDER_QC ? "quakec" :
                 provider->kind == APPLICATION_PROVIDER_QVM ? "qvm" :
                 (provider->kind == APPLICATION_PROVIDER_NATIVE && provider->state.native.engine)
@@ -1378,8 +1375,7 @@ static bool persistence_inventory(application_persistence *operation, qa_applica
                 }
             }
             if (!ok) break;
-            if (!binding || !binding->capture || !binding->restore ||
-                (owner->kind == QA_SAVE_PROVIDER && !qa_sha256_equal(&owner->content, &binding->identity.content))) {
+            if (!binding || !binding->capture || !binding->restore) {
                 ok = application_fail(error, QA_ERROR_UNSUPPORTED, "required application persistence producer is unavailable"); break;
             }
             *owner = binding->identity; ++used_external;
@@ -1420,7 +1416,6 @@ static bool persistence_begin(void *opaque, qa_save_purpose purpose, qa_save_met
     if (!ok) { persistence_end(operation); return false; }
     *metadata = (qa_save_metadata){.purpose = purpose, .elapsed_ns = qa_session_elapsed(app->session),
         .configuration_generation = checkpoint.generation, .world_generation = app->map_revision};
-    qa_sha256(identity, &metadata->composition);
     *owners = operation->owners; *count = operation->owner_count;
     return true;
 }
@@ -1477,49 +1472,12 @@ static bool persistence_capture_owner(void *opaque, const qa_save_owner *owner,
     return buffer_copy((qa_bytes){buffer->data, buffer->size}, out, error);
 }
 
-static bool content_matches(application_persistence *operation, qa_application *app,
-    const qa_save_image *image, qa_error *error)
-{
-    qa_application_content_graph *graph = NULL;
-    qa_buffer bytes = {0};
-    const qa_save_record *record = foundation_record(image, QA_SAVE_RESOURCES, "qa.content-graph", error);
-    bool ok = record && application_save_content_collect(app, operation->ops->visit_content,
-        operation->ops->context, &graph, error) && application_save_content_encode(graph, &bytes, error);
-    if (ok && (bytes.size != record->payload.size || memcmp(bytes.data, record->payload.data, bytes.size)))
-        ok = application_fail(error, QA_ERROR_FORMAT, "retained content graph differs from the captured continuation");
-    application_save_content_destroy(graph);
-    qa_buffer_free(&bytes);
-    return ok;
-}
-
 static bool persistence_capture_validate(void *opaque, const qa_save_image *image, qa_error *error)
 {
     application_persistence *operation = opaque;
-    bool ok = persistence_unchanged(operation, error) &&
+    return persistence_unchanged(operation, error) &&
         operation->ops->validate(operation->ops->context, operation->active, image, error) &&
-        persistence_unchanged(operation, error) && persistence_shared_match(operation->active, image, error) &&
-        content_matches(operation, operation->active, image, error);
-    qa_buffer strings = {0}, commands = {0};
-    if (ok) ok = application_commands_capture(operation->active, operation->ops, &commands, error);
-    if (ok) {
-        const qa_save_record *saved = qa_save_image_find(image, QA_SAVE_COMMANDS, "");
-        if (!saved || commands.size != saved->payload.size || memcmp(commands.data, saved->payload.data, commands.size))
-            ok = application_fail(error, QA_ERROR_ARGUMENT, "producer changed queued console continuation during capture");
-    }
-    if (ok) ok = qa_save_strings_encode(qa_session_strings(operation->active->session), &strings, error);
-    if (ok) {
-        const qa_save_record *saved = qa_save_image_find(image, QA_SAVE_STRINGS, "");
-        if (strings.size != saved->payload.size || memcmp(strings.data, saved->payload.data, strings.size))
-            ok = application_fail(error, QA_ERROR_ARGUMENT, "producer changed the ordered string table during capture");
-    }
-    qa_buffer_free(&strings); qa_buffer_free(&commands);
-    if (ok) {
-        const qa_save_record *progression = foundation_record(image,
-            QA_SAVE_PROGRESSION, "qa.progression.application", error);
-        ok = progression && application_save_progression_matches(operation->active,
-            operation->ops, progression->payload, error) && persistence_unchanged(operation, error);
-    }
-    return ok;
+        persistence_unchanged(operation, error);
 }
 
 static bool persistence_capture_attach(void *opaque, qa_save_image *image, qa_error *error)
@@ -1581,10 +1539,8 @@ static bool persistence_create(void *opaque, const qa_save_image *image, void **
     const qa_save_record *configuration = foundation_record(image, QA_SAVE_CONFIGURATION, "qa.configuration", error);
     qa_configuration_checkpoint checkpoint; qa_bytes identity;
     if (!configuration || !configuration_fields(configuration->payload, &checkpoint, &identity, error)) return false;
-    qa_sha256_digest composition; qa_sha256(identity, &composition);
     const qa_save_metadata *metadata = qa_save_image_metadata(image);
-    if (checkpoint.generation != metadata->configuration_generation ||
-        !qa_sha256_equal(&composition, &metadata->composition))
+    if (checkpoint.generation != metadata->configuration_generation)
         return application_fail(error, QA_ERROR_FORMAT, "configuration continuation disagrees with save envelope");
     const qa_save_record *progression = foundation_record(image,
         QA_SAVE_PROGRESSION, "qa.progression.application", error);
@@ -1770,95 +1726,6 @@ static bool persistence_restore_owner(void *opaque, void *value,
     }
 }
 
-static bool persistence_shared_match(qa_application *app, const qa_save_image *image, qa_error *error)
-{
-    static const qa_save_owner_kind owners[] = {QA_SAVE_COMBAT, QA_SAVE_INVENTORY, QA_SAVE_PICKUPS,
-        QA_SAVE_TARGETS, QA_SAVE_CONTROLS, QA_SAVE_MODES, QA_SAVE_EQUIPMENT,
-        QA_SAVE_NAVIGATION, QA_SAVE_BOTS, QA_SAVE_EVENTS, QA_SAVE_APPLICATION};
-    for (size_t i = 0; i < sizeof(owners) / sizeof(*owners); ++i) {
-        qa_buffer encoded = {0}; bool ok;
-        switch (owners[i]) {
-        case QA_SAVE_COMBAT: ok = qa_persistence_combat_capture(app->session, app->combat, app->inventory, &encoded, error); break;
-        case QA_SAVE_INVENTORY: ok = qa_persistence_inventory_capture(app->session, app->inventory, &encoded, error); break;
-        case QA_SAVE_PICKUPS: ok = qa_persistence_pickups_capture(app->session, app->pickups, &encoded, error); break;
-        case QA_SAVE_TARGETS: ok = qa_persistence_targets_capture(app->targets, &encoded, error); break;
-        case QA_SAVE_CONTROLS: ok = application_controls_capture(app, &encoded, error); break;
-        case QA_SAVE_MODES: ok = qa_modes_capture(app->modes, &encoded, error); break;
-        case QA_SAVE_EQUIPMENT: ok = qa_equipment_capture(app->equipment, &encoded, error); break;
-        case QA_SAVE_NAVIGATION: ok = application_navigation_save_capture(app, &encoded, error); break;
-        case QA_SAVE_BOTS: ok = application_bots_save_capture(app, &encoded, error); break;
-        case QA_SAVE_EVENTS: ok = app->operation==APPLICATION_PERSISTING
-            ? application_events_save_capture(app, &encoded, error)
-            : qa_application_events_checkpoint(app, &encoded, error); break;
-        case QA_SAVE_APPLICATION: ok = application_capture(app, &encoded, error); break;
-        default: ok = false; break;
-        }
-        const qa_save_record *saved = qa_save_image_find(image, owners[i], "");
-        if (ok && (!saved || encoded.size != saved->payload.size || memcmp(encoded.data, saved->payload.data, encoded.size)))
-            ok = application_fail(error, QA_ERROR_FORMAT, "source reconnection changed a saved shared continuation");
-        qa_buffer_free(&encoded);
-        if (!ok) return false;
-    }
-    return true;
-}
-
-static bool persistence_providers_match(qa_application *app,
-                                          const qa_save_image *image,
-                                          const qa_application_native_resource_refs *resources,
-                                          qa_error *error)
-{
-    for (size_t i = 0; i < app->provider_count; ++i) {
-        application_provider *provider = app->providers[i];
-        if (!provider_schema(provider))
-            continue;
-        const qa_save_record *record = qa_save_image_find(image, QA_SAVE_PROVIDER,
-            provider->launch->selection.instance);
-        if (provider->kind == APPLICATION_PROVIDER_NATIVE && provider->state.native.q2_engine) {
-            qa_bytes bytes = record ? record->payload : (qa_bytes){0};
-            if (!bytes.data || bytes.size < 28 || memcmp(bytes.data, "QAPV", 4) ||
-                qa_load_u32le(bytes.data + 4) != (uint32_t)provider->kind ||
-                qa_load_u32le(bytes.data + 8) != (provider->map_bound ? 1u : 0u) ||
-                qa_load_u32le(bytes.data + 12) != provider->q1_server_flags ||
-                qa_load_u32le(bytes.data + 16) != provider->q2_server_flags ||
-                qa_load_u64le(bytes.data + 20) != bytes.size - 28)
-                return application_fail(error, QA_ERROR_FORMAT, "Native Q2 provider wrapper changed after restoration");
-            if (!application_native_q2_save_matches(provider,
-                (qa_bytes){bytes.data + 28, bytes.size - 28}, error))
-                return false;
-            continue;
-        }
-        if (provider->kind == APPLICATION_PROVIDER_QVM ||
-            (provider->kind == APPLICATION_PROVIDER_NATIVE && provider->state.native.engine)) {
-            qa_bytes bytes = record ? record->payload : (qa_bytes){0};
-            if (!bytes.data || bytes.size < 28 || memcmp(bytes.data, "QAPV", 4) ||
-                qa_load_u32le(bytes.data + 4) != (uint32_t)provider->kind ||
-                qa_load_u32le(bytes.data + 8) != (provider->map_bound ? 1u : 0u) ||
-                qa_load_u32le(bytes.data + 12) != provider->q1_server_flags ||
-                qa_load_u32le(bytes.data + 16) != provider->q2_server_flags ||
-                qa_load_u64le(bytes.data + 20) != bytes.size - 28)
-                return application_fail(error, QA_ERROR_FORMAT,
-                                        "Q3 guest provider wrapper changed after restoration");
-            if (!application_guest_q3_save_matches(provider,
-                (qa_bytes){bytes.data + 28, bytes.size - 28}, resources, error))
-                return false;
-            continue;
-        }
-        qa_buffer encoded = {0};
-        application_operation previous_operation = app->operation;
-        app->operation = APPLICATION_PERSISTING;
-        bool ok = provider_capture(provider, qa_save_image_metadata(image)->purpose, resources, &encoded, error);
-        app->operation = previous_operation;
-        if (ok && (!record || encoded.size != record->payload.size ||
-            memcmp(encoded.data, record->payload.data, encoded.size)))
-            ok = application_fail(error, QA_ERROR_FORMAT,
-                                  "Final validation changed a saved provider continuation");
-        qa_buffer_free(&encoded);
-        if (!ok)
-            return false;
-    }
-    return true;
-}
-
 static bool persistence_finish(void *opaque, void *value, const qa_save_image *image, qa_error *error)
 {
     application_persistence *operation = opaque;
@@ -1936,7 +1803,6 @@ static bool persistence_finish(void *opaque, void *value, const qa_save_image *i
                        source->kind != APPLICATION_PROVIDER_QC))
             ok = application_fail(error, QA_ERROR_FORMAT, "Saved Quake pause has no active Quake source server");
     }
-    if (ok) ok = persistence_shared_match(candidate, image, error);
     const qa_save_record *configuration = qa_save_image_find(image, QA_SAVE_CONFIGURATION, "");
     qa_configuration_checkpoint checkpoint; qa_bytes identity;
     if (ok) ok = configuration_fields(configuration->payload, &checkpoint, &identity, error) &&
@@ -1945,32 +1811,7 @@ static bool persistence_finish(void *opaque, void *value, const qa_save_image *i
     if (ok && (candidate->map_revision != qa_save_image_metadata(image)->world_generation ||
         !persistence_safe(candidate)))
         ok = application_fail(error, QA_ERROR_FORMAT, "candidate application is not a complete idle saved world");
-    qa_buffer commands_before = {0}, commands_after = {0};
-    if (ok) ok = application_commands_capture(candidate, operation->ops, &commands_before, error) &&
-        operation->ops->validate(operation->ops->context, candidate, image, error) &&
-        persistence_shared_match(candidate, image, error) &&
-        application_commands_capture(candidate, operation->ops, &commands_after, error);
-    if (ok && (commands_before.size != commands_after.size ||
-        memcmp(commands_before.data, commands_after.data, commands_before.size)))
-        ok = application_fail(error, QA_ERROR_FORMAT, "final validation changed restored console continuation");
-    qa_buffer_free(&commands_before); qa_buffer_free(&commands_after);
-    if (ok) ok = persistence_providers_match(candidate, image, operation->ops->native_resources, error) &&
-        content_matches(operation, candidate, image, error);
-    /* Producer restoration may reconnect bindings, but cannot allocate new
-     * actor identities or replace the saved ordered string table. */
-    qa_buffer actors = {0}, strings = {0}; qa_actor_checkpoint actor_state = {0};
-    if (ok) ok = qa_actors_checkpoint(qa_session_actors(candidate->session), &actor_state, error) &&
-        qa_save_actors_encode(&actor_state, &actors, error) &&
-        qa_save_strings_encode(qa_session_strings(candidate->session), &strings, error);
-    if (ok) {
-        const qa_save_record *saved_actors = qa_save_image_find(image, QA_SAVE_ACTORS, "");
-        const qa_save_record *saved_strings = qa_save_image_find(image, QA_SAVE_STRINGS, "");
-        if (actors.size != saved_actors->payload.size || strings.size != saved_strings->payload.size ||
-            memcmp(actors.data, saved_actors->payload.data, actors.size) ||
-            memcmp(strings.data, saved_strings->payload.data, strings.size))
-            ok = application_fail(error, QA_ERROR_FORMAT, "restored owners changed saved actor or string identities");
-    }
-    qa_actor_checkpoint_free(&actor_state); qa_buffer_free(&actors); qa_buffer_free(&strings);
+    if (ok) ok = operation->ops->validate(operation->ops->context, candidate, image, error);
     if (ok && !persistence_safe(candidate))
         ok = application_fail(error, QA_ERROR_FORMAT, "restored candidate changed during final validation");
     if (ok) ok = persistence_unchanged(operation, error);

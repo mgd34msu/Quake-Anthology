@@ -1,13 +1,11 @@
 #include "internal.h"
 #include "qa/demo.h"
 
-#define DEMO_HEADER_BYTES 64u
+#define DEMO_HEADER_BYTES 32u
 #define DEMO_RECORD_HEADER 52u
-#define DEMO_RECORD_BYTES 84u
 
 struct qa_demo_recorder {
     qa_fs_stream *stream;
-    qa_sha256_digest composition;
     uint64_t time_ns, sequence, position;
     bool faulted, ended;
 };
@@ -56,7 +54,7 @@ bool qa_demo_record_append(qa_demo_recorder *recorder, qa_demo_record_kind kind,
 {
     if (!recorder || recorder->faulted || recorder->ended || kind < QA_DEMO_KEYFRAME || kind > QA_DEMO_END ||
         (!payload.data && payload.size) || recorder->sequence == UINT64_MAX ||
-        payload.size > UINT64_MAX - DEMO_RECORD_BYTES || (kind != QA_DEMO_ADVANCE && elapsed_ns) ||
+        payload.size > UINT64_MAX - DEMO_RECORD_HEADER || (kind != QA_DEMO_ADVANCE && elapsed_ns) ||
         recorder->time_ns > UINT64_MAX - elapsed_ns || (kind == QA_DEMO_ADVANCE && payload.size) ||
         (kind == QA_DEMO_END && payload.size) || (!recorder->sequence && kind != QA_DEMO_KEYFRAME))
         return persistence_fail(error, QA_ERROR_ARGUMENT, "Invalid or faulted demo append");
@@ -65,24 +63,19 @@ bool qa_demo_record_append(qa_demo_recorder *recorder, qa_demo_record_kind kind,
         qa_save_image *image = NULL;
         if (!qa_save_image_decode(payload, &image, error)) return false;
         const qa_save_metadata *metadata = qa_save_image_metadata(image);
-        bool matches = metadata->elapsed_ns == recorder->time_ns &&
-                       qa_sha256_equal(&metadata->composition, &recorder->composition);
+        bool matches = metadata->elapsed_ns == recorder->time_ns;
         if (!qa_save_image_destroy_checked(&image, error)) return false;
-        if (!matches) return persistence_fail(error, QA_ERROR_FORMAT, "Demo keyframe time/composition differs from recording");
+        if (!matches) return persistence_fail(error, QA_ERROR_FORMAT, "Demo keyframe time differs from recording");
     }
     uint8_t header[DEMO_RECORD_HEADER];
     qa_net_writer w;
     qa_net_writer_init(&w, header, sizeof(header), error);
-    qa_net_write_u64(&w, DEMO_RECORD_BYTES + payload.size); qa_net_write_u32(&w, kind); qa_net_write_u32(&w, 0);
+    qa_net_write_u64(&w, DEMO_RECORD_HEADER + payload.size); qa_net_write_u32(&w, kind); qa_net_write_u32(&w, 0);
     qa_net_write_u64(&w, recorder->sequence + 1); qa_net_write_u64(&w, recorder->time_ns + elapsed_ns);
     qa_net_write_u64(&w, elapsed_ns); qa_net_write_u32(&w, protocol.kind);
     qa_net_write_u32(&w, protocol.revision); qa_net_write_u32(&w, protocol.flags);
-    qa_sha256_context hash;
-    qa_sha256_digest digest;
-    qa_sha256_init(&hash); qa_sha256_update(&hash, (qa_bytes){header, sizeof(header)});
-    qa_sha256_update(&hash, payload); qa_sha256_final(&hash, &digest);
     if (w.failed || !write_part(recorder, (qa_bytes){header, sizeof(header)}, error) ||
-        !write_part(recorder, payload, error) || !write_part(recorder, (qa_bytes){digest.bytes, 32}, error)) return false;
+        !write_part(recorder, payload, error)) return false;
     if (!qa_fs_stream_sync(recorder->stream, error)) { recorder->faulted = true; return false; }
     ++recorder->sequence;
     recorder->time_ns += elapsed_ns;
@@ -111,12 +104,12 @@ bool qa_demo_record_begin(qa_fs_root *root, const char *name, const qa_save_imag
     if (!qa_fs_root_stream_open(root, name, QA_FS_STREAM_WRITE, false, &recorder->stream, &previous_size, error)) {
         free(recorder); return false;
     }
-    recorder->composition = metadata->composition; recorder->time_ns = metadata->elapsed_ns;
+    recorder->time_ns = metadata->elapsed_ns;
     uint8_t header[DEMO_HEADER_BYTES];
     qa_net_writer w;
     qa_net_writer_init(&w, header, sizeof(header), error);
     qa_net_write_data(&w, "QADM\r\n\032\n", 8); qa_net_write_u32(&w, 0); qa_net_write_u32(&w, DEMO_HEADER_BYTES);
-    qa_net_write_u64(&w, metadata->elapsed_ns); qa_net_write_data(&w, metadata->composition.bytes, 32);
+    qa_net_write_u64(&w, metadata->elapsed_ns);
     qa_net_write_u32(&w, 0); qa_net_write_u32(&w, 0);
     if (w.failed || !write_part(recorder, (qa_bytes){header, sizeof(header)}, error) ||
         !qa_demo_record_keyframe(recorder, initial, error)) {
@@ -164,13 +157,11 @@ bool qa_demo_take(qa_buffer *buffer, bool recover_tail, qa_demo **out, qa_error 
 {
     if (!buffer || !out || !buffer->data || buffer->size < DEMO_HEADER_BYTES ||
         memcmp(buffer->data, "QADM\r\n\032\n", 8) ||
-        qa_load_u32le(buffer->data + 12) != DEMO_HEADER_BYTES || qa_load_u64le(buffer->data + 56))
+        qa_load_u32le(buffer->data + 12) != DEMO_HEADER_BYTES || qa_load_u64le(buffer->data + 24))
         return persistence_fail(error, QA_ERROR_FORMAT, "Invalid shared demo header");
     qa_demo *demo = calloc(1, sizeof(*demo));
     if (!demo) return persistence_fail(error, QA_ERROR_MEMORY, "Allocating shared demo");
     demo->start_ns = demo->end_ns = qa_load_u64le(buffer->data + 16);
-    qa_sha256_digest composition;
-    memcpy(composition.bytes, buffer->data + 24, 32);
     size_t position = DEMO_HEADER_BYTES;
     bool ok = true;
     while (position < buffer->size) {
@@ -178,30 +169,24 @@ bool qa_demo_take(qa_buffer *buffer, bool recover_tail, qa_demo **out, qa_error 
         if (demo->complete) {
             ok = persistence_fail(error, QA_ERROR_FORMAT, "Trailing data after shared demo end marker"); break;
         }
-        if (remaining < DEMO_RECORD_BYTES) {
+        if (remaining < DEMO_RECORD_HEADER) {
             if (!recover_tail) ok = persistence_fail(error, QA_ERROR_FORMAT, "Truncated shared demo tail");
             break;
         }
         const uint8_t *header = buffer->data + position;
         uint64_t length = qa_load_u64le(header);
-        if (length < DEMO_RECORD_BYTES) {
+        if (length < DEMO_RECORD_HEADER) {
             ok = persistence_fail(error, QA_ERROR_FORMAT, "Invalid shared demo block extent or trailing data"); break;
         }
         if (length > remaining) {
             if (!recover_tail) ok = persistence_fail(error, QA_ERROR_FORMAT, "Truncated shared demo block");
             break;
         }
-        qa_sha256_digest actual, saved;
-        qa_sha256((qa_bytes){header, (size_t)length - 32}, &actual);
-        memcpy(saved.bytes, header + (size_t)length - 32, 32);
-        if (!qa_sha256_equal(&actual, &saved)) {
-            ok = persistence_fail(error, QA_ERROR_FORMAT, "Shared demo block digest mismatch"); break;
-        }
         qa_demo_record record = {.kind = (qa_demo_record_kind)qa_load_u32le(header + 8),
             .sequence = qa_load_u64le(header + 16), .time_ns = qa_load_u64le(header + 24),
             .elapsed_ns = qa_load_u64le(header + 32),
             .protocol = {(qa_net_protocol)qa_load_u32le(header + 40), qa_load_u32le(header + 44), qa_load_u32le(header + 48)},
-            .payload = {header + DEMO_RECORD_HEADER, (size_t)length - DEMO_RECORD_BYTES}};
+            .payload = {header + DEMO_RECORD_HEADER, (size_t)length - DEMO_RECORD_HEADER}};
         if (qa_load_u32le(header + 12) || record.kind < QA_DEMO_KEYFRAME || record.kind > QA_DEMO_END ||
             record.sequence != demo->count + 1 || demo->end_ns > UINT64_MAX - record.elapsed_ns ||
             record.time_ns != demo->end_ns + record.elapsed_ns ||
@@ -215,9 +200,9 @@ bool qa_demo_take(qa_buffer *buffer, bool recover_tail, qa_demo **out, qa_error 
             ok = qa_save_image_decode(record.payload, &image, error);
             if (!ok) break;
             const qa_save_metadata *metadata = qa_save_image_metadata(image);
-            bool matches = metadata->elapsed_ns == record.time_ns && qa_sha256_equal(&metadata->composition, &composition);
+            bool matches = metadata->elapsed_ns == record.time_ns;
             if (!qa_save_image_destroy_checked(&image, error)) { ok = false; break; }
-            if (!matches) { ok = persistence_fail(error, QA_ERROR_FORMAT, "Shared demo keyframe composition/time mismatch"); break; }
+            if (!matches) { ok = persistence_fail(error, QA_ERROR_FORMAT, "Shared demo keyframe time mismatch"); break; }
         }
         if (!retain_record(demo, record, error)) { ok = false; break; }
         position += (size_t)length;

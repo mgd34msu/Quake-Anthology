@@ -54,11 +54,6 @@ bool frontend_scene_namespace_qualify_renderer_mesh(frontend_scene_namespace *,
     uint64_t owner, size_t ordinal, uint64_t identity, qa_error *);
 bool frontend_scene_namespace_seal(frontend_scene_namespace *, qa_error *);
 bool frontend_scene_namespace_checkpoint(const frontend_scene_namespace *, qa_buffer *, qa_error *);
-/* A final fresh capture follows the same real physical owner rows. Qualify
- * every installed pointer/domain/ordinal against the imported dictionary,
- * then use its original identities only in this new capture's encoded fields. */
-bool frontend_scene_namespace_rebase_capture(frontend_scene_namespace *fresh,
-    const frontend_scene_namespace *installed, qa_error *);
 bool frontend_scene_world_saved(void *, qa_scene_world_identity_kind, size_t ordinal,
     uint64_t installed, uint64_t *saved, qa_error *);
 bool frontend_scene_model_saved(void *, qa_scene_model_identity_kind, size_t node,

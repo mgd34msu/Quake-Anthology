@@ -1,9 +1,8 @@
 #include "internal.h"
 #include "qa/source_save.h"
 
-#define SAVE_HEADER 88u
-#define SAVE_RECORD_HEADER 52u
-#define SAVE_DIGEST 32u
+#define SAVE_HEADER 56u
+#define SAVE_RECORD_HEADER 20u
 
 static bool text_valid(const char *text, bool empty)
 {
@@ -231,8 +230,7 @@ static bool record_fields(qa_source_save_io *io, qa_save_record *record)
         !qa_source_save_u16(io, &schema_size) ||
         !qa_source_save_u16(io, &backend_size) ||
         !qa_source_save_u16(io, &flags) ||
-        !qa_source_save_u64(io, &payload_size) ||
-        !qa_source_save_bytes(io, record->owner.content.bytes, 32)) return false;
+        !qa_source_save_u64(io, &payload_size)) return false;
     if (flags || !payload_size || payload_size > SIZE_MAX)
         return codec_fail(io, QA_ERROR_FORMAT, "Invalid saved owner payload extent");
     record->owner.kind = (qa_save_owner_kind)kind;
@@ -265,8 +263,7 @@ static bool image_fields(qa_source_save_io *io, qa_save_image *image, uint64_t e
         !qa_source_save_u32(io, &count) ||
         !qa_source_save_u64(io, &image->metadata.elapsed_ns) ||
         !qa_source_save_u64(io, &image->metadata.configuration_generation) ||
-        !qa_source_save_u64(io, &image->metadata.world_generation) ||
-        !qa_source_save_bytes(io, image->metadata.composition.bytes, 32)) return false;
+        !qa_source_save_u64(io, &image->metadata.world_generation)) return false;
     if (memcmp(magic, "QASV\r\n\032\n", sizeof(magic)))
         return codec_fail(io, QA_ERROR_FORMAT, "Invalid shared save signature");
     if (header_size != SAVE_HEADER || saved_extent != extent)
@@ -293,7 +290,7 @@ bool qa_save_image_encode(const qa_save_image *image, qa_buffer *out, qa_error *
 {
     if (!image || image->retiring || !out)
         return persistence_fail(error, QA_ERROR_ARGUMENT, "Invalid or retiring save encode owner");
-    size_t size = SAVE_HEADER + SAVE_DIGEST;
+    size_t size = SAVE_HEADER;
     for (size_t i = 0; i < image->count; ++i) {
         const qa_save_record *record = image->records + i;
         if (!size_add(&size, SAVE_RECORD_HEADER, error) ||
@@ -309,31 +306,21 @@ bool qa_save_image_encode(const qa_save_image *image, qa_buffer *out, qa_error *
     qa_save_image view = *image;
     qa_buffer buffer = {0};
     bool ok = image_fields(&io, &view, size);
-    if (ok && io.offset != size - SAVE_DIGEST)
+    if (ok && io.offset != size)
         ok = codec_fail(&io, QA_ERROR_FORMAT, "Save image size disagrees with codec");
     if (ok) ok = qa_source_save_finish(&io, &buffer);
     qa_source_save_dispose(&io);
     if (!ok) return false;
-    qa_sha256_digest digest;
-    qa_sha256((qa_bytes){buffer.data, buffer.size}, &digest);
-    memcpy(buffer.data + buffer.size, digest.bytes, SAVE_DIGEST);
-    buffer.size = size;
     *out = buffer;
     return true;
 }
 
 bool qa_save_image_decode(qa_bytes bytes, qa_save_image **out, qa_error *error)
 {
-    if (!out || !bytes.data || bytes.size < SAVE_HEADER + SAVE_DIGEST)
+    if (!out || !bytes.data || bytes.size < SAVE_HEADER)
         return persistence_fail(error, QA_ERROR_FORMAT, "Truncated save image");
-    qa_sha256_digest actual, saved;
-    qa_sha256((qa_bytes){bytes.data, bytes.size - SAVE_DIGEST}, &actual);
-    memcpy(saved.bytes, bytes.data + bytes.size - SAVE_DIGEST, SAVE_DIGEST);
-    if (!qa_sha256_equal(&actual, &saved))
-        return persistence_fail(error, QA_ERROR_FORMAT, "Save image digest mismatch");
     qa_source_save_io io = {0};
-    if (!qa_source_save_reader(&io, NULL,
-        (qa_bytes){bytes.data, bytes.size - SAVE_DIGEST}, error)) return false;
+    if (!qa_source_save_reader(&io, NULL, bytes, error)) return false;
     qa_save_image *image = calloc(1, sizeof(*image));
     if (!image) return persistence_fail(error, QA_ERROR_MEMORY, "Allocating decoded save image");
     bool ok = image_fields(&io, image, bytes.size) && qa_source_save_finish(&io, NULL) &&

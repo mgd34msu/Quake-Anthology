@@ -780,20 +780,6 @@ bool frontend_scene_namespace_checkpoint(const frontend_scene_namespace *space, 
     if (!ok && error && error->code == QA_OK) fail(error, QA_ERROR_FORMAT, "Scene namespace prefix is incomplete");
     return ok;
 }
-bool frontend_scene_namespace_rebase_capture(frontend_scene_namespace *fresh,const frontend_scene_namespace *installed,qa_error *error)
-{
-    if (!fresh || !installed || fresh==installed || fresh->restoring || !fresh->sealed ||
-        !installed->restoring || !installed->sealed || fresh->count!=installed->count || fresh->image_count!=installed->image_count)
-        return fail(error,QA_ERROR_ARGUMENT,"Canonical recapture needs complete fresh and installed scene dictionaries");
-    for (size_t i=0;i<fresh->count;++i) {
-        const scene_row *a=fresh->rows+i,*b=installed->rows+i;
-        if (!a->qualified || !b->qualified || a->kind!=b->kind || a->origin!=b->origin ||
-            a->owner!=b->owner || a->node!=b->node || a->ordinal!=b->ordinal || a->pointer!=b->pointer || a->installed!=b->installed)
-            return fail(error,QA_ERROR_FORMAT,"Fresh scene producer inventory differs from the fully imported physical graph");
-    }
-    for (size_t i=0;i<fresh->count;++i) fresh->rows[i].saved=installed->rows[i].saved;
-    return true;
-}
 bool frontend_scene_namespace_restore(qa_bytes bytes, const qa_scene_image_set *images,
     frontend_scene_namespace **out, qa_error *error)
 {

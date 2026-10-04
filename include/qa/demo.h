@@ -31,8 +31,8 @@ bool qa_demo_record_end(qa_demo_recorder *, qa_error *);
 void qa_demo_recorder_destroy(qa_demo_recorder *);
 
 /* take transfers owned bytes on success and clears them. recover_tail admits
- * an unfinished recording only through its last complete digest-checked block;
- * corruption in a complete block always fails. No malformed source/shared
+ * an unfinished recording only through its last complete bounded block;
+ * malformed complete record fields always fail. No malformed source/shared
  * signature fallback. The returned records borrow immutable demo storage. */
 bool qa_demo_take(qa_buffer *, bool recover_tail, qa_demo **, qa_error *);
 bool qa_demo_read(qa_fs_root *, const char *, bool recover_tail, qa_demo **, qa_error *);

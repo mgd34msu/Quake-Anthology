@@ -100,13 +100,10 @@ bool application_unified_save_source(qa_source_save_io *io, qa_application *app,
     const application_unified_source *actual, application_unified_source *saved, bool historical)
 {
     application_provider *primary = application_world_provider(app, QA_ROLE_ENTITIES, "");
-    qa_sha256_digest map, retained;
     if (!primary || !primary->launch || !app->map_resource) return false;
-    qa_sha256(qa_resource_bytes(app->map_resource), &map); retained = map;
     const char *map_name = qa_strings_cstr(qa_session_strings(actual->session), app->current_map);
     uint32_t family = (uint32_t)saved->family;
-    if (!qa_source_save_bytes(io, retained.bytes, sizeof(retained.bytes)) || !qa_sha256_equal(&map, &retained) ||
-        !exact_text(io, map_name) || !exact_text(io, primary->launch->selection.instance) ||
+    if (!exact_text(io, map_name) || !exact_text(io, primary->launch->selection.instance) ||
         !qa_source_save_string(io, &saved->owner) || !qa_source_save_u32(io, &family) ||
         !qa_source_save_u64(io, &saved->publication) || !qa_source_save_u64(io, &saved->map_revision) ||
         !qa_source_save_u64(io, &saved->frame_revision) || !qa_source_save_u32(io, &saved->max_clients) ||
