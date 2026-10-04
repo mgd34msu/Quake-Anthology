@@ -8,7 +8,7 @@
 typedef struct gl_saved_level {
     uint32_t width,height;
     int32_t internal;
-    bool depth;
+    bool depth, borrowed;
     qa_buffer pixels;
 } gl_saved_level;
 typedef struct gl_saved_texture {
@@ -126,7 +126,8 @@ static bool gl_save_allocate(qa_buffer *out,size_t size,qa_error *error)
     out->data=malloc(size); out->size=size;
     return out->data!=NULL || gl_save_error(error,QA_ERROR_MEMORY,"Allocating actual GPU continuation pixels/buffer bytes");
 }
-static bool gl_level_capture(qa_gl_renderer *renderer,GLuint texture,size_t level,bool depth,gl_saved_level *saved,qa_error *error)
+static bool gl_level_capture(qa_gl_renderer *renderer,GLuint texture,size_t level,bool depth,
+    const qa_scene_image_level *canonical,gl_saved_level *saved,qa_error *error)
 {
     if (level>INT_MAX) return gl_save_error(error,QA_ERROR_FORMAT,"GPU texture continuation has too many levels");
     gl_api *gl=&renderer->gl; GLint width=0,height=0,internal=0;
@@ -137,7 +138,15 @@ static bool gl_level_capture(qa_gl_renderer *renderer,GLuint texture,size_t leve
     if (width<1 || height<1 || internal<1) return gl_save_error(error,QA_ERROR_FORMAT,"Retained GPU texture has no actual allocated level");
     saved->width=(uint32_t)width; saved->height=(uint32_t)height; saved->internal=internal; saved->depth=depth;
     size_t size=0;
-    if (!gl_save_extent(saved->width,saved->height,&size,error) || !gl_save_allocate(&saved->pixels,size,error)) return false;
+    if (!gl_save_extent(saved->width,saved->height,&size,error)) return false;
+    if (canonical && !depth) {
+        if (canonical->width!=saved->width || canonical->height!=saved->height ||
+            canonical->bytes!=size || !canonical->pixels)
+            return gl_save_error(error,QA_ERROR_FORMAT,"GPU image cache has no matching admitted source level");
+        saved->pixels=(qa_buffer){(uint8_t *)canonical->pixels,size}; saved->borrowed=true;
+        return gl_check(renderer,"Reading retained GPU texture allocation",error);
+    }
+    if (!gl_save_allocate(&saved->pixels,size,error)) return false;
     gl_tight_pixels(renderer);
     gl->GetTexImage(GL_TEXTURE_2D,(GLint)level,depth?GL_DEPTH_COMPONENT:GL_RGBA,depth?GL_FLOAT:GL_UNSIGNED_BYTE,saved->pixels.data);
     return gl_check(renderer,"Capturing genuine retained GPU texture level",error);
@@ -182,13 +191,15 @@ static void gl_surface_free(qa_gl_renderer *renderer,gl_saved_surface *saved)
 static void gl_saved_dispose(gl_restore_storage *guard,qa_gl_renderer *renderer)
 {
     if (!guard) return;
-    for (size_t i=0;i<guard->zero_texture.count;++i) qa_buffer_free(&guard->zero_texture.levels[i].pixels);
+    for (size_t i=0;guard->zero_texture.levels && i<guard->zero_texture.count;++i)
+        if (!guard->zero_texture.levels[i].borrowed) qa_buffer_free(&guard->zero_texture.levels[i].pixels);
     free(guard->zero_texture.levels);
     if (renderer && renderer->gl.DeleteTextures && guard->zero_prepared)
         renderer->gl.DeleteTextures(1,&guard->zero_prepared);
     while (guard->textures) {
         gl_saved_texture *row=guard->textures; guard->textures=row->next;
-        if (row->levels) for (size_t i=0;i<row->count;++i) qa_buffer_free(&row->levels[i].pixels);
+        if (row->levels) for (size_t i=0;i<row->count;++i)
+            if (!row->levels[i].borrowed) qa_buffer_free(&row->levels[i].pixels);
         free(row->levels); free(row);
     }
     while (guard->meshes) {
@@ -224,7 +235,7 @@ static bool gl_gpu_capture(qa_gl_renderer *renderer,gl_restore_storage *saved,bo
         ok=gl_surface_capture(renderer,0,gl_native_buffer(renderer->capabilities.stereo,i),saved->width,saved->height,true,i==2,saved->native+i,error);
     for (size_t i=0;full && ok && renderer->presented && i<(renderer->capabilities.stereo?2u:1u);++i)
         if (!(renderer->capabilities.native_buffer_mask&(1u<<i)))
-            ok=gl_level_capture(renderer,renderer->presented_target.color[i],0,false,saved->presented+i,error);
+            ok=gl_level_capture(renderer,renderer->presented_target.color[i],0,false,NULL,saved->presented+i,error);
     saved->output_allocated=full && renderer->output.framebuffer!=0;
     for (size_t i=0;full && ok && i<4;++i) if (renderer->output.color_ready[i]) {
         renderer->gl.BindFramebuffer(GL_READ_FRAMEBUFFER,read_framebuffer);
@@ -234,7 +245,7 @@ static bool gl_gpu_capture(qa_gl_renderer *renderer,gl_restore_storage *saved,bo
             renderer->capabilities.stencil_bits?renderer->output.depth_stencil:0);
         ok=gl_surface_capture(renderer,read_framebuffer,GL_COLOR_ATTACHMENT0,renderer->output.width,renderer->output.height,true,true,saved->output+i,error);
     }
-    if (full && ok && renderer->output.table) ok=gl_level_capture(renderer,renderer->output.table,0,false,&saved->gamma,error);
+    if (full && ok && renderer->output.table) ok=gl_level_capture(renderer,renderer->output.table,0,false,NULL,&saved->gamma,error);
     saved->opacity_allocated=full && renderer->opacity.allocated;
     for (size_t i=0;full && ok && i<2 && renderer->opacity.allocated;++i) {
         renderer->gl.BindFramebuffer(GL_READ_FRAMEBUFFER,read_framebuffer);
@@ -252,7 +263,7 @@ static bool gl_gpu_capture(qa_gl_renderer *renderer,gl_restore_storage *saved,bo
         if (row->count && !row->levels) ok=gl_save_error(error,QA_ERROR_MEMORY,"Retaining actual default texture mip levels");
         for (size_t i=0;ok && i<row->count;++i)
             ok=gl_level_capture(renderer,0,i,renderer->controls.zero_texture.kinds[i]==QA_SCENE_DEPTH32F,
-                row->levels+i,error);
+                renderer->controls.zero_texture.levels+i,row->levels+i,error);
         renderer->gl.ActiveTexture(GL_TEXTURE0); renderer->gl.BindTexture(GL_TEXTURE_2D,0);
         for (size_t i=0;ok && i<6;++i)
             renderer->gl.GetTexParameteriv(GL_TEXTURE_2D,gl_texture_parameters[i],row->parameters+i);
@@ -267,7 +278,8 @@ static bool gl_gpu_capture(qa_gl_renderer *renderer,gl_restore_storage *saved,bo
         }
         for (size_t i=0;ok && i<row->count;++i)
             ok=gl_level_capture(renderer,entry->name,i,(entry->source_admitted?entry->source_texture.kinds[i]:
-                entry->image->kind)==QA_SCENE_DEPTH32F,row->levels+i,error);
+                entry->image->kind)==QA_SCENE_DEPTH32F,
+                entry->source_admitted?entry->source_texture.levels+i:entry->image->levels+i,row->levels+i,error);
         renderer->gl.ActiveTexture(GL_TEXTURE0); renderer->gl.BindTexture(GL_TEXTURE_2D,entry->name);
         for (size_t i=0;ok && i<6;++i)
             renderer->gl.GetTexParameteriv(GL_TEXTURE_2D,gl_texture_parameters[i],row->parameters+i);
@@ -314,12 +326,22 @@ static bool gl_saved_pixels(qa_source_save_io *io,qa_buffer *pixels,size_t size,
     }
     return true;
 }
-static bool gl_saved_level_fields(qa_source_save_io *io,gl_saved_level *level)
+static bool gl_saved_level_fields(qa_source_save_io *io,gl_saved_level *level,
+    const qa_scene_image_level *canonical)
 {
     size_t size=0;
-    return qa_source_save_u32(io,&level->width) && qa_source_save_u32(io,&level->height) &&
-        qa_source_save_i32(io,&level->internal) && level->internal>0 && qa_source_save_bool(io,&level->depth) &&
-        gl_save_extent(level->width,level->height,&size,io->error) && gl_saved_pixels(io,&level->pixels,size,level->depth?1:0);
+    if (!qa_source_save_u32(io,&level->width) || !qa_source_save_u32(io,&level->height) ||
+        !qa_source_save_i32(io,&level->internal) || level->internal<=0 || !qa_source_save_bool(io,&level->depth) ||
+        !gl_save_extent(level->width,level->height,&size,io->error)) return false;
+    if (canonical && !level->depth) {
+        if (canonical->width!=level->width || canonical->height!=level->height || canonical->bytes!=size ||
+            !canonical->pixels) return false;
+        if (io->direction==QA_SOURCE_SAVE_READ) {
+            level->pixels=(qa_buffer){(uint8_t *)canonical->pixels,size}; level->borrowed=true;
+        }
+        return true;
+    }
+    return gl_saved_pixels(io,&level->pixels,size,level->depth?1:0);
 }
 static bool gl_saved_surface_fields(qa_source_save_io *io,gl_saved_surface *surface,unsigned expected)
 {
@@ -469,7 +491,7 @@ static bool gl_saved_private_fields(qa_source_save_io *io,qa_gl_renderer *render
             !(renderer->capabilities.native_buffer_mask&(1u<<i));
         bool present=saved->presented[i].width!=0;
         if (!qa_source_save_bool(io,&present) || present!=expected || (present &&
-            (!gl_saved_level_fields(io,saved->presented+i) || saved->presented[i].width!=saved->width ||
+            (!gl_saved_level_fields(io,saved->presented+i,NULL) || saved->presented[i].width!=saved->width ||
                 saved->presented[i].height!=saved->height || saved->presented[i].depth ||
                 saved->presented[i].internal!=GL_RGBA8))) return false;
     }
@@ -487,7 +509,7 @@ static bool gl_saved_private_fields(qa_source_save_io *io,qa_gl_renderer *render
     }
     bool gamma=reading?false:saved->gamma.width!=0;
     if (!qa_source_save_bool(io,&gamma) || (renderer->output.enabled && !gamma) ||
-        (gamma && (!saved->output_allocated || !gl_saved_level_fields(io,&saved->gamma) ||
+        (gamma && (!saved->output_allocated || !gl_saved_level_fields(io,&saved->gamma,NULL) ||
             saved->gamma.width!=256 || saved->gamma.height!=1 || saved->gamma.depth))) return false;
     if (!qa_source_save_bool(io,&saved->opacity_allocated) || !qa_source_save_u32(io,&renderer->opacity.width) ||
         !qa_source_save_u32(io,&renderer->opacity.height) || !qa_source_save_f32(io,&renderer->opacity.value) ||
@@ -556,7 +578,7 @@ static bool gl_saved_private_fields(qa_source_save_io *io,qa_gl_renderer *render
                 texture->entry->source_texture.images[j]:texture->entry->image;
             const qa_scene_image_level *image=texture->entry->source_admitted?
                 texture->entry->source_texture.levels+j:descriptor->levels+j;
-            if (!gl_saved_level_fields(io,texture->levels+j) || texture->levels[j].width!=image->width ||
+            if (!gl_saved_level_fields(io,texture->levels+j,image) || texture->levels[j].width!=image->width ||
                 texture->levels[j].height!=image->height || texture->levels[j].depth!=
                     ((texture->entry->source_admitted?texture->entry->source_texture.kinds[j]:
                         descriptor->kind)==QA_SCENE_DEPTH32F)) return false;
@@ -585,7 +607,7 @@ static bool gl_saved_private_fields(qa_source_save_io *io,qa_gl_renderer *render
         }
         for (size_t i=0;i<zero->count;++i) {
             const qa_scene_image_level *actual=renderer->controls.zero_texture.levels+i;
-            if (!gl_saved_level_fields(io,zero->levels+i) || zero->levels[i].width!=actual->width ||
+            if (!gl_saved_level_fields(io,zero->levels+i,actual) || zero->levels[i].width!=actual->width ||
                 zero->levels[i].height!=actual->height || zero->levels[i].depth!=
                     (renderer->controls.zero_texture.kinds[i]==QA_SCENE_DEPTH32F)) return false;
         }
@@ -787,7 +809,8 @@ static bool gl_saved_surface_upload(qa_gl_renderer *renderer,gl_saved_surface *s
     if (!surface->framebuffer) return gl_save_error(error,QA_ERROR_MEMORY,"Preparing separate completed GPU framebuffer");
     gl->BindFramebuffer(GL_FRAMEBUFFER,surface->framebuffer);
     if (surface->color.size) {
-        gl_saved_level color={surface->width,surface->height,native?GL_RGBA8:gl_saved_color_internal(renderer),false,surface->color};
+        gl_saved_level color={.width=surface->width,.height=surface->height,
+            .internal=native?GL_RGBA8:gl_saved_color_internal(renderer),.pixels=surface->color};
         if (!gl_saved_level_upload(renderer,&surface->color_texture,&color,1,error)) return false;
         gl->FramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,surface->color_texture,0);
         gl->ReadBuffer(GL_COLOR_ATTACHMENT0); gl->DrawBuffer(GL_COLOR_ATTACHMENT0);
@@ -840,7 +863,8 @@ static bool gl_saved_target_upload(qa_gl_renderer *renderer,gl_saved_surface *sa
     if (!*framebuffer) return gl_save_error(error,QA_ERROR_MEMORY,"Preparing actual retained private GPU target");
     gl->BindFramebuffer(GL_FRAMEBUFFER,*framebuffer);
     if (saved->color.size) {
-        gl_saved_level level={saved->width,saved->height,gl_saved_color_internal(renderer),false,saved->color};
+        gl_saved_level level={.width=saved->width,.height=saved->height,
+            .internal=gl_saved_color_internal(renderer),.pixels=saved->color};
         if (!gl_saved_level_upload(renderer,color,&level,1,error)) return false;
         gl->FramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,*color,0);
         gl->DrawBuffer(GL_COLOR_ATTACHMENT0); gl->ReadBuffer(GL_COLOR_ATTACHMENT0);
