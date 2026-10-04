@@ -155,14 +155,10 @@ bool application_network_q2_dependency_image(qa_application_network_q2 *,
     const qa_scene_image_options *, qa_bytes palette_rgb, const char *palette_path,
     const qa_resource *palette_resource, const qa_vfs_acquisition *palette_opening,
     qa_bytes derived_png, size_t *, qa_error *);
-bool application_network_q2_materials_image_validate(const qa_application_network_q2 *,
-    const application_q2_held_resource *, qa_error *);
 bool application_network_q2_dependency_alias(qa_application_network_q2 *,
     const application_q2_held_resource *, const application_q2_image_receipt *, size_t *, qa_error *);
 bool application_network_q2_dependency_image_receipt(qa_application_network_q2 *,
     const application_q2_held_resource *, size_t alias_index, size_t *, qa_error *);
-bool application_network_q2_materials_alias_validate(const qa_application_network_q2 *,
-    const application_q2_held_resource *, qa_error *);
 bool application_network_q2_dependency_of(const application_q2_held_resource *,
     const application_q2_held_resource *);
 bool application_network_q2_material_resource(qa_application_network_q2 *,
@@ -173,8 +169,6 @@ bool application_network_q2_sky_dependencies(qa_application_network_q2 *,
     const application_q2_held_resource *, const char *, const char *const [6],
     const qa_resource *const [6], const qa_vfs_acquisition *const [6],
     size_t [6], char [64], qa_error *);
-bool application_network_q2_sky_group_valid(const application_q2_held_resource *,
-    const application_q2_held_resource *const [6]);
 bool application_network_q2_sky_aliases(qa_application_network_q2 *,
     const application_q2_held_resource *, const char *, const application_q2_image_receipt [6],
     size_t [6], char [64], qa_error *);

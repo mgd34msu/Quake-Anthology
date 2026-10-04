@@ -3,7 +3,6 @@
 #include "qa/material_library_save.h"
 #include "qa/binary.h"
 #include "qa/model.h"
-#include "qa/image.h"
 #include "qa/scene_resource_save.h"
 #include "qa/source_save.h"
 #include <stdio.h>
@@ -461,7 +460,6 @@ typedef struct closure_writer {
     size_t position;
     size_t *dependencies,count;
 } closure_writer;
-static bool image_path_matches(const char *,const char *,qa_error *);
 
 static bool alias_from_held(const qa_application_network_q2 *owner,
     const application_q2_held_resource *held,material_alias *row,qa_error *error)
@@ -622,16 +620,6 @@ static bool rewrite_dependency(void *context,const qa_q2_material_dependency *de
     return ok;
 }
 
-static bool image_png(const qa_scene_image *image,qa_buffer *out,qa_error *error)
-{
-    if (!image || image->kind==QA_SCENE_DEPTH32F || !image->level_count || image->animation_count>1 ||
-        !image->levels || !image->levels[0].pixels)
-        return application_fail(error,QA_ERROR_ARGUMENT,"Image closure requires its actual static color pixels");
-    const qa_scene_image_level *level=image->levels;
-    qa_image pixels={.width=level->width,.height=level->height,
-        .rgba={(uint8_t*)level->pixels,level->bytes}};
-    return qa_image_encode_png(&pixels,out,error);
-}
 static bool implicit_image(closure_writer *w,const char *name,size_t *out,qa_error *error)
 {
     size_t alias;
@@ -711,305 +699,6 @@ bool application_network_q2_materials_derive(qa_application_network_q2 *owner,
         held->dependency_count=w.count; w.dependencies=NULL; }
     qa_buffer_free(&derived); free(w.dependencies); qa_material_library_destroy(library);
     qa_scene_resources_destroy(images); qa_model_free(&model); return ok;
-}
-
-typedef struct closure_replay {
-    const qa_application_network_q2 *owner;
-    const application_q2_held_resource *held;
-    qa_bytes source;
-    qa_buffer bytes;
-    size_t position,used;
-} closure_replay;
-
-static const application_q2_held_resource *replay_next(closure_replay *r,qa_error *error)
-{
-    if (r->used==r->held->dependency_count) {
-        application_fail(error,QA_ERROR_FORMAT,"Material program lost an actual media dependency"); return NULL;
-    }
-    size_t index=r->held->dependencies[r->used++];
-    const application_q2_held_resource *d=index<r->owner->held_resource_count?&r->owner->held_resources[index]:NULL;
-    if (!d || (d->kind!=APPLICATION_Q2_HELD_DEPENDENCY && d->kind!=APPLICATION_Q2_HELD_ALIAS) || d->provider!=r->held->provider ||
-        !qa_sha256_equal(&d->identity,&r->held->identity) || !qa_sha256_equal(&d->authority,&r->held->authority) ||
-        !qa_vfs_lookup_equal(d->view,r->held->view)) {
-        application_fail(error,QA_ERROR_FORMAT,"Material program lost its actual BODY media scope"); return NULL;
-    }
-    if (d->kind==APPLICATION_Q2_HELD_ALIAS && !application_network_q2_materials_alias_validate(r->owner,d,error)) return NULL;
-    return d;
-}
-static bool image_path_matches(const char *requested,const char *actual,qa_error *error)
-{
-    char *path=qa_scene_model_image_path(requested,error);
-    if (!path) return false;
-    const char *slash=strrchr(path,'/'),*dot=strrchr(path,'.');
-    size_t base=dot && (!slash || dot>slash)?(size_t)(dot-path):strlen(path);
-    bool ok=!strncmp(path,actual,base) && actual[base]=='.';
-    if (ok) {
-        static const char *const extensions[]={".lmp",".wal",".pcx",".png",".jpg",".tga",".jpeg",".bmp",".gif"};
-        ok=dot && !strcmp(actual+base,dot);
-        for (size_t i=0;!ok && i<sizeof(extensions)/sizeof(*extensions);++i) ok=!strcmp(actual+base,extensions[i]);
-    }
-    free(path); return ok;
-}
-static bool replay_dependency(void *context,const qa_q2_material_dependency *dependency,qa_error *error)
-{
-    closure_replay *r=context; const char *alias=NULL; char sky[64]; bool ok=true;
-    if ((dependency->kind==QA_Q2_MATERIAL_SKY && !strcmp(dependency->path,"-")) ||
-        qa_q2_material_dependency_builtin(dependency)) return true;
-    if (dependency->kind==QA_Q2_MATERIAL_SKY) {
-        static const char *const faces[]={"rt","bk","lf","ft","up","dn"};
-        const application_q2_held_resource *first=NULL,*rows[6]={0};
-        char *base=qa_scene_model_image_path(dependency->path,error);
-        if (!base) return false;
-        for (size_t i=0;ok && i<6;++i) {
-            const application_q2_held_resource *d=replay_next(r,error); qa_buffer requested={0};
-            rows[i]=d;
-            ok=d && d->sky_base && !strcmp(d->sky_base,base) && d->sky_face==i+1 &&
-                (!first || qa_sha256_equal(&first->sky_group,&d->sky_group)) &&
-                text_append(&requested,dependency->path,error) && text_append(&requested,"_",error) &&
-                text_append(&requested,faces[i],error) && text_append(&requested,".tga",error) &&
-                append(&requested,(qa_bytes){(const uint8_t*)"",1},error) &&
-                image_path_matches((const char*)requested.data,d->path,error);
-            qa_buffer_free(&requested);
-            if (ok && !first) {
-                first=d; const char *suffix=strrchr(d->wire_path,'_');
-                size_t size=suffix?(size_t)(suffix-d->wire_path):0;
-                if (!size || size>=sizeof(sky)) ok=false;
-                else { memcpy(sky,d->wire_path,size); sky[size]=0; }
-            }
-        }
-        if (ok) ok=application_network_q2_sky_group_valid(r->held,rows);
-        free(base);
-        alias=sky;
-    } else {
-        const application_q2_held_resource *d=replay_next(r,error);
-        if (!d || d->sky_face) return application_fail(error,QA_ERROR_FORMAT,"Material token references an unrelated sky face");
-        if (dependency->kind==QA_Q2_MATERIAL_IMAGE) ok=image_path_matches(dependency->path,d->path,error);
-        else {
-            qa_buffer path={0};
-            if (!strchr(dependency->path,'/') && !strchr(dependency->path,'\\')) ok=text_append(&path,"video/",error);
-            ok=ok && text_append(&path,dependency->path,error) && append(&path,(qa_bytes){(const uint8_t*)"",1},error);
-            char *normalized=ok?qa_scene_model_image_path((const char*)path.data,error):NULL;
-            ok=normalized && !strcmp(normalized,d->path); free(normalized); qa_buffer_free(&path);
-        }
-        alias=d->wire_path;
-    }
-    if (!ok) return application_fail(error,QA_ERROR_FORMAT,"Material dependency changes its actual Source request");
-    if (dependency->begin<r->position || dependency->end>r->source.size)
-        return application_fail(error,QA_ERROR_FORMAT,"Restored material token spans overlap");
-    ok=append(&r->bytes,(qa_bytes){r->source.data+r->position,dependency->begin-r->position},error) && text_append(&r->bytes,alias,error);
-    if (ok) r->position=dependency->end;
-    return ok;
-}
-static bool palette_valid(const qa_application_network_q2 *owner,
-    const application_q2_held_resource *held,qa_error *error)
-{
-    if (!held->image_palette.size) return held->image_palette_dependency==SIZE_MAX;
-    size_t index=held->image_palette_dependency;
-    const application_q2_held_resource *row=index<owner->held_resource_count?owner->held_resources+index:NULL;
-    const char *path=held->image_options.family==QA_SCENE_Q1?"gfx/palette.lmp":"pics/colormap.pcx";
-    if (held->image_palette.size!=768 || !held->image_palette.data || !row ||
-        row->kind!=APPLICATION_Q2_HELD_DEPENDENCY || row->missing || !row->resource || !row->path ||
-        strcmp(row->path,path) || row->provider!=held->provider ||
-        !qa_sha256_equal(&row->identity,&held->identity) || !qa_sha256_equal(&row->authority,&held->authority) ||
-        !qa_vfs_lookup_equal(row->view,held->view) || !qa_vfs_acquisition_retained(row->view,&row->opening,error))
-        return application_fail(error,QA_ERROR_FORMAT,"Image palette differs from its actual Source admission");
-    qa_bytes bytes=qa_resource_bytes(row->resource); bool ok;
-    if (held->image_options.family==QA_SCENE_Q1)
-        ok=bytes.size==768 && !memcmp(bytes.data,held->image_palette.data,768);
-    else {
-        qa_image image={0};
-        ok=qa_image_decode_pcx(bytes,QA_IMAGE_FORMAT,&image,error) && image.palette.size>=1024;
-        for (size_t n=0;ok && n<256;++n) ok=!memcmp(image.palette.data+n*4,held->image_palette.data+n*3,3);
-        qa_image_free(&image);
-    }
-    return ok || application_fail(error,QA_ERROR_FORMAT,"Image palette pixels differ from their retained Source file");
-}
-static bool same_dependency_scope(const application_q2_held_resource *a,const application_q2_held_resource *b)
-{
-    return a && b && a->provider==b->provider && qa_sha256_equal(&a->identity,&b->identity) &&
-        qa_sha256_equal(&a->authority,&b->authority) && qa_vfs_lookup_equal(a->view,b->view);
-}
-bool application_network_q2_materials_alias_validate(const qa_application_network_q2 *owner,
-    const application_q2_held_resource *held,qa_error *error)
-{
-    if (!owner || !held || held->kind!=APPLICATION_Q2_HELD_ALIAS || !held->view || !held->path ||
-        !held->image_request || !*held->image_request || held->image_options.source_q3 ||
-        (held->resource && !qa_vfs_acquisition_retained(held->view,&held->opening,error)))
-        return application_fail(error,QA_ERROR_FORMAT,"Image alias lost its original Source admission");
-    const application_q2_held_resource *logical=held->image_logical_dependency<owner->held_resource_count?
-        owner->held_resources+held->image_logical_dependency:NULL;
-    const application_q2_held_resource *palette=held->image_palette_dependency<owner->held_resource_count?
-        owner->held_resources+held->image_palette_dependency:NULL;
-    if ((logical && (!same_dependency_scope(held,logical) || !logical->resource ||
-        !qa_vfs_acquisition_retained(logical->view,&logical->opening,error))) ||
-        (palette && (!same_dependency_scope(held,palette) || !palette->resource ||
-        !qa_vfs_acquisition_retained(palette->view,&palette->opening,error))))
-        return application_fail(error,QA_ERROR_FORMAT,"Image alias has unrelated logical or palette custody");
-    if (palette) {
-        qa_bytes bytes=qa_resource_bytes(palette->resource); uint8_t rgb[768]; qa_error issue={0};
-        bool decoded;
-        if (held->image_options.family==QA_SCENE_Q1) {
-            decoded=bytes.size==768;
-            if (decoded) memcpy(rgb,bytes.data,768);
-            else qa_error_set(&issue,QA_ERROR_FORMAT,0,"Q1 palette requires exactly 256 RGB colors");
-        } else {
-            qa_image image={0}; decoded=qa_image_decode_pcx(bytes,QA_IMAGE_FORMAT,&image,&issue);
-            if (decoded && image.palette.size<1024) { decoded=false; qa_error_set(&issue,QA_ERROR_FORMAT,0,"Q2 colormap has no complete palette"); }
-            for (size_t i=0;decoded && i<256;++i) memcpy(rgb+i*3,image.palette.data+i*4,3);
-            qa_image_free(&image);
-        }
-        if (!decoded && issue.code==QA_ERROR_MEMORY) { if (error) *error=issue; return false; }
-        if ((decoded?QA_OK:issue.code)!=held->image_palette_error ||
-            (decoded && (held->image_palette.size!=768 || !held->image_palette.data ||
-                memcmp(rgb,held->image_palette.data,768))))
-            return application_fail(error,QA_ERROR_FORMAT,"Image alias changes its genuine Source palette outcome");
-    }
-    qa_scene_image_alias_source source={.source=held->resource,.source_opening=held->resource?&held->opening:NULL,
-        .request=held->image_request,.source_path=held->path,.logical_source=logical?logical->resource:NULL,
-        .logical_opening=logical?&logical->opening:NULL,.logical_path=logical?held->image_logical_path:NULL,
-        .palette_source=palette?palette->resource:NULL,.palette_opening=palette?&palette->opening:NULL,
-        .decode_options=held->image_options,.palette_attempted=held->image_palette_attempted,
-        .palette_error=held->image_palette_error,.source_error=held->image_rejection};
-    source.decode_options.palette_rgb=(qa_bytes){held->image_palette.data,held->image_palette.size};
-    source.decode_options.translation=(qa_bytes){held->image_translation.data,held->image_translation.size};
-    qa_scene_resources *bank=qa_scene_resources_create_detached(held->view,error);
-    qa_scene_image *image=NULL; qa_error issue={0};
-    bool ok=bank && qa_scene_image_alias_bind(bank,"__qa_retained_image",&source,error);
-    bool loaded=ok && qa_scene_image_load(bank,"__qa_retained_image",&source.decode_options,&image,&issue);
-    if (ok) ok=(loaded?QA_OK:issue.code)==held->image_rejection;
-    if (!ok && (!error || error->code==QA_OK))
-        application_fail(error,QA_ERROR_FORMAT,"Image alias changes its original Source decode outcome");
-    qa_scene_image_release(image); qa_scene_resources_destroy(bank); return ok;
-}
-bool application_network_q2_materials_image_validate(const qa_application_network_q2 *owner,
-    const application_q2_held_resource *held,qa_error *error)
-{
-    if (!owner || !held || held->kind!=APPLICATION_Q2_HELD_IMAGE || !held->resource || !held->path ||
-        !held->view || !held->wire_bytes.size || !held->wire_bytes.data ||
-        !qa_vfs_acquisition_retained(held->view,&held->opening,error) || !palette_valid(owner,held,error))
-        return application_fail(error,QA_ERROR_FORMAT,"Image artifact lost its actual Source bytes or palette");
-    const application_provider *provider=NULL;
-    for (size_t i=0;i<owner->app->provider_count;++i) if (owner->app->providers[i]->owner==held->provider) {
-        if (provider) return application_fail(error,QA_ERROR_FORMAT,"Image artifact has ambiguous BODY ownership");
-        provider=owner->app->providers[i];
-    }
-    if (!provider || !provider->product || held->image_options.family!=
-        (provider->product->family==QA_GAME_Q1?QA_SCENE_Q1:provider->product->family==QA_GAME_Q2?QA_SCENE_Q2:QA_SCENE_Q3))
-        return application_fail(error,QA_ERROR_FORMAT,"Image artifact changed its actual BODY family");
-    qa_scene_resources *bank=qa_scene_resources_create_detached(NULL,error);
-    qa_scene_image *image=NULL; qa_buffer png={0};
-    qa_scene_image_options options=held->image_options;
-    options.palette_rgb=(qa_bytes){held->image_palette.data,held->image_palette.size};
-    options.translation=(qa_bytes){held->image_translation.data,held->image_translation.size};
-    bool ok=bank && qa_scene_image_decode_retained(bank,held->path,held->path,
-        qa_resource_bytes(held->resource),&options,&image,error) && image_png(image,&png,error) &&
-        png.size==held->wire_bytes.size && !memcmp(png.data,held->wire_bytes.data,png.size);
-    if (!ok && (!error || error->code==QA_OK))
-        application_fail(error,QA_ERROR_FORMAT,"Image artifact differs from its retained Source pixels");
-    qa_buffer_free(&png); qa_scene_image_release(image); qa_scene_resources_destroy(bank);
-    return ok;
-}
-static bool material_valid(const qa_application_network_q2 *owner,
-    const application_q2_held_resource *held,qa_error *error)
-{
-    qa_bytes catalog=held->resource?qa_resource_bytes(held->resource):(qa_bytes){held->catalog_bytes.data,held->catalog_bytes.size};
-    qa_scene_resources *images=qa_scene_resources_create_detached(NULL,error);
-    qa_material_library *library=images?qa_material_library_create_detached(images,error):NULL;
-    qa_scene_image_options options={.family=QA_SCENE_Q3}; qa_material_script_view script={0}; qa_buffer original={0};
-    qa_q2_material_scope scope={0};
-    bool ok=library && held->script_name && qa_material_library_parse(library,catalog,&options,error) &&
-        qa_material_library_script_read(library,held->script_name,&script) &&
-        script.source_offset==held->source_offset && script.body.size==held->script_size &&
-        script.name_offset==held->name_offset && script.name_size==held->name_size && !strcmp(script.name,held->script_name) &&
-        qa_q2_material_script_scope((qa_bytes){held->wire_bytes.data,held->wire_bytes.size},&scope,error);
-    const application_provider *provider=NULL;
-    for (size_t i=0;i<owner->app->provider_count;++i) if (owner->app->providers[i]->owner==held->provider) {
-        if (provider) { ok=false; break; } provider=owner->app->providers[i];
-    }
-    if (ok) ok=provider && provider->product && scope.family==
-        (provider->product->family==QA_GAME_Q1?QA_SCENE_Q1:provider->product->family==QA_GAME_Q2?QA_SCENE_Q2:QA_SCENE_Q3);
-    if (ok) ok=held->image_options.family==scope.family &&
-        held->image_palette.size==(scope.palette_present?768:0) &&
-        (!scope.palette_present || (held->image_palette.data && !memcmp(held->image_palette.data,scope.palette,768))) &&
-        palette_valid(owner,held,error);
-    if (ok) ok=text_append(&original,script.name,error) && text_append(&original,"\n",error) && append(&original,script.body,error);
-    closure_replay replay={.owner=owner,.held=held,.source={original.data,original.size}};
-    if (ok) ok=qa_q2_material_script_dependencies(replay.source,replay_dependency,&replay,error) &&
-        replay.used==held->dependency_count &&
-        append(&replay.bytes,(qa_bytes){replay.source.data+replay.position,replay.source.size-replay.position},error);
-    qa_buffer artifact={0};
-    if (ok) ok=scope_write(&artifact,scope.family,scope.palette_present?(qa_bytes){scope.palette,768}:(qa_bytes){0},error) &&
-        aliases_write(&artifact,owner,held->dependencies,held->dependency_count,error) &&
-        append(&artifact,(qa_bytes){replay.bytes.data,replay.bytes.size},error) &&
-        artifact.size==held->wire_bytes.size && !memcmp(artifact.data,held->wire_bytes.data,artifact.size);
-    if (!ok && (!error || error->code==QA_OK)) application_fail(error,QA_ERROR_FORMAT,"Material artifact differs from its retained Source program");
-    qa_buffer_free(&original); qa_buffer_free(&replay.bytes); qa_buffer_free(&artifact); qa_material_library_destroy(library); qa_scene_resources_destroy(images);
-    return ok;
-}
-
-bool application_network_q2_materials_validate(const qa_application_network_q2 *owner,
-    const application_q2_held_resource *held,qa_error *error)
-{
-    if (!owner || !held) return application_fail(error,QA_ERROR_ARGUMENT,"Material validation needs its real retained holder");
-    if (held->kind==APPLICATION_Q2_HELD_MATERIAL) return material_valid(owner,held,error);
-    if (held->kind==APPLICATION_Q2_HELD_IMAGE_RECEIPT) {
-        const application_q2_held_resource *alias=held->dependency_count==1 && held->dependencies &&
-            held->dependencies[0]<owner->held_resource_count?owner->held_resources+held->dependencies[0]:NULL;
-        qa_buffer artifact={0};
-        bool ok=alias && held->wire_path && same_dependency_scope(held,alias) &&
-            application_network_q2_materials_alias_validate(owner,alias,error) &&
-            application_network_q2_materials_image_receipt_encode(owner,alias,held->wire_path,&artifact,error) &&
-            artifact.size==held->wire_bytes.size && (!artifact.size ||
-                (held->wire_bytes.data && !memcmp(artifact.data,held->wire_bytes.data,artifact.size)));
-        qa_buffer_free(&artifact);
-        if (!ok && (!error || error->code==QA_OK))
-            application_fail(error,QA_ERROR_FORMAT,"Image receipt wrapper changes its genuine Source child");
-        return ok;
-    }
-    qa_bytes original=held->resource?qa_resource_bytes(held->resource):(qa_bytes){0}; qa_model model={0};
-    if (!qa_model_load(original,&model,error)) return false;
-    if (model.format!=QA_MODEL_MD3) { qa_model_free(&model); return application_fail(error,QA_ERROR_ARGUMENT,"Material validation needs its real retained MD3"); }
-    bool ok=held->wire_bytes.size==original.size;
-    size_t used=0,position=0,base=qa_load_u32le(original.data+100);
-    for (uint32_t i=0;ok && i<model.mesh_count;++i) {
-        size_t first=base+qa_load_u32le(original.data+base+92);
-        for (uint32_t j=0;ok && j<model.meshes[i].shader_count;++j) {
-            size_t offset=first+j*68; const char *name=model.meshes[i].shaders[j].name;
-            ok=used<held->dependency_count && !memcmp(original.data+position,held->wire_bytes.data+position,offset-position);
-            if (!ok) break;
-            size_t index=held->dependencies[used++]; uint8_t replacement[64]={0};
-            qa_q2_material_dependency image={.kind=QA_Q2_MATERIAL_IMAGE,.path=name};
-            if (!*name || (index==SIZE_MAX && qa_q2_material_dependency_builtin(&image)))
-                ok=index==SIZE_MAX && !memcmp(original.data+offset,held->wire_bytes.data+offset,64);
-            else {
-                const application_q2_held_resource *d=index<owner->held_resource_count?&owner->held_resources[index]:NULL;
-                ok=d && application_network_q2_dependency_of(held,d) && d->wire_path && strlen(d->wire_path)<sizeof(replacement);
-                if (ok && d->kind==APPLICATION_Q2_HELD_MATERIAL) {
-                    size_t length=strcspn(name,"."); char canonical[65];
-                    ok=length<sizeof(canonical);
-                    if (ok) {
-                        for (size_t k=0;k<length;++k) canonical[k]=name[k]>='A' && name[k]<='Z'?(char)(name[k]+'a'-'A'):name[k];
-                        canonical[length]=0; ok=d->script_name && !strcmp(canonical,d->script_name) && material_valid(owner,d,error);
-                    }
-                } else if (ok && d->kind==APPLICATION_Q2_HELD_IMAGE_RECEIPT) {
-                    const application_q2_held_resource *source=d->dependency_count==1 && d->dependencies &&
-                        d->dependencies[0]<owner->held_resource_count?owner->held_resources+d->dependencies[0]:NULL;
-                    char *request=qa_scene_model_image_path(name,error);
-                    ok=source && source->image_request && request && !strcmp(request,source->image_request) &&
-                        !source->sky_face && application_network_q2_materials_validate(owner,d,error);
-                    free(request);
-                } else if (ok) ok=(d->kind==APPLICATION_Q2_HELD_DEPENDENCY || d->kind==APPLICATION_Q2_HELD_IMAGE) &&
-                    !d->sky_face && image_path_matches(name,d->path,error) &&
-                    (d->kind!=APPLICATION_Q2_HELD_IMAGE || application_network_q2_materials_image_validate(owner,d,error));
-                if (ok) { memcpy(replacement,d->wire_path,strlen(d->wire_path)); ok=!memcmp(replacement,held->wire_bytes.data+offset,64); }
-            }
-            position=offset+64;
-        }
-        base+=qa_load_u32le(original.data+base+104);
-    }
-    if (ok) ok=used==held->dependency_count && !memcmp(original.data+position,held->wire_bytes.data+position,original.size-position);
-    if (!ok && (!error || error->code==QA_OK)) application_fail(error,QA_ERROR_FORMAT,"Derived MD3 changes geometry or loses its actual shader closure");
-    qa_model_free(&model); return ok;
 }
 
 static bool model_scope_alias(const char *path,qa_error *error)
@@ -1177,8 +866,7 @@ bool application_network_q2_materials_model_scope_encode(const qa_application_ne
     if (held->image_translation.size) memcpy(row.translation,held->image_translation.data,256);
     row.options.translation.size=held->image_translation.size; model_scope_spans(&row);
     qa_scene_image_options admitted;
-    if (!qa_q2_material_model_scope_apply(&row,qa_resource_bytes(palette->resource),&admitted,error) ||
-        !model_scope_model(&row,qa_resource_bytes(held->resource),error)) return false;
+    if (!qa_q2_material_model_scope_apply(&row,qa_resource_bytes(palette->resource),&admitted,error)) return false;
     qa_source_save_io io={0}; qa_buffer bytes={0};
     bool ok=qa_source_save_writer(&io,NULL,error) && model_scope_fields(&io,&row) && qa_source_save_finish(&io,&bytes);
     qa_source_save_dispose(&io);
@@ -1188,17 +876,4 @@ bool application_network_q2_materials_model_scope_encode(const qa_application_ne
         return false;
     }
     *out=bytes; return true;
-}
-
-bool application_network_q2_materials_model_scope_validate(const qa_application_network_q2 *owner,
-    const application_q2_held_resource *held,qa_error *error)
-{
-    qa_buffer artifact={0};
-    bool ok=application_network_q2_materials_model_scope_encode(owner,held,&artifact,error);
-    if (ok) ok=held->model_scope_bytes.size==artifact.size && held->model_scope_bytes.data &&
-        !memcmp(artifact.data,held->model_scope_bytes.data,artifact.size);
-    qa_buffer_free(&artifact);
-    if (!ok && (!error || error->code==QA_OK))
-        application_fail(error,QA_ERROR_FORMAT,"Indexed model companion differs from its retained Source constructor");
-    return ok;
 }
