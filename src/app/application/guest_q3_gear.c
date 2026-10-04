@@ -25,7 +25,7 @@ bool application_q3_gear_create(const application_q3_gear_options *options, bool
         options->host.command_context.owner != options->host.owner ||
         options->host.command_context.dialect != QA_CONSOLE_Q3 ||
         options->host.frontend_lifetime || options->host.bots || options->host.script_globals ||
-        !options->current || !options->target_count || !options->target || !options->damage || !options->velocity ||
+        !options->current || !options->target || !options->damage || !options->velocity ||
         !options->configstring ||
         options->services.session != options->host.session || options->services.world != options->host.world)
         return q3gear_fail(error, QA_ERROR_ARGUMENT, "Separate QVM gear lacks its real profile/world/target services");

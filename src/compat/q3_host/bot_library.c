@@ -52,11 +52,7 @@ static q3_service_result clients(q3_call *call, int32_t *result, qa_error *error
         const char *message;
         if (!server->bot_console_message(server->context, client, &message, error)) return Q3_FAILED;
         if (!message) return Q3_COMPLETED;
-        size_t size = strlen(message) + 1;
-        char *copy = qa_arena_alloc(&call->host->scratch, size, 1, error);
-        if (!copy) return Q3_FAILED;
-        memcpy(copy, message, size);
-        if (!q3_write_string(call, call->arguments[1], copy, q3_integer(call, 2), error)) return Q3_FAILED;
+        if (!q3_write_string(call, call->arguments[1], message, q3_integer(call, 2), error)) return Q3_FAILED;
         *result = 1; return Q3_COMPLETED;
     }
     case 211: {
@@ -106,11 +102,7 @@ static bool character(q3_call *call, qa_bot_runtime *runtime, int32_t *result, q
         const char *text; bool written;
         if (!qa_bot_runtime_character_string(runtime, handle, index, &text, &written, error)) return false;
         if (!written) text = "";
-        size_t size = strlen(text) + 1;
-        char *copy = qa_arena_alloc(&call->host->scratch, size, 1, error);
-        if (!copy) return false;
-        memcpy(copy, text, size);
-        return q3_write_string(call, call->arguments[2], copy, q3_integer(call, 3), error);
+        return q3_write_string(call, call->arguments[2], text, q3_integer(call, 3), error);
     }
     default: return q3_fail(error, QA_ERROR_ARGUMENT, 0, "Invalid Q3 character service");
     }
@@ -188,13 +180,7 @@ q3_service_result q3_bot_library(q3_call *call, int32_t *result, qa_error *error
     else if (ok) {
         const qa_bot_variable *variable = qa_bot_library_variable(library, (const char *)name.data);
         const char *text = variable ? variable->string : "";
-        size_t length = strlen(text);
-        char *copy = qa_arena_alloc(&call->host->scratch, length + 1, 1, error);
-        if (!copy) ok = false;
-        else {
-            memcpy(copy, text, length + 1);
-            ok = q3_write_string(call, call->arguments[1], copy, q3_integer(call, 2), error);
-        }
+        ok = q3_write_string(call, call->arguments[1], text, q3_integer(call, 2), error);
     }
     qa_buffer_free(&value); qa_buffer_free(&name);
     return ok ? Q3_COMPLETED : Q3_FAILED;

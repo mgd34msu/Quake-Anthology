@@ -1,6 +1,7 @@
 #include "guest_qc_visual.h"
 #include "guest_qc_internal.h"
 #include "qa/qc_visual.h"
+#include "qa/qc_observation.h"
 #include <limits.h>
 
 static bool source_integer(float value, int32_t *out, qa_error *error)
@@ -42,17 +43,9 @@ bool application_qc_visual(application_provider *provider, qa_actor_id actor,
     if (!engine || !out || !provider->state.qc.instance || !application_qc_input_idle(provider))
         return application_fail(error, QA_ERROR_ARGUMENT, "QC appearance requires its actual idle source owner");
     qa_qc_visual source = {0};
-    bool found = false;
-    for (uint32_t slot = 1; slot < qa_qc_entity_count(provider->state.qc.instance); ++slot) {
-        qa_qc_slot_binding binding;
-        if (!qa_qc_slot(provider->state.qc.instance, slot, &binding))
-            return application_fail(error, QA_ERROR_FORMAT, "QC appearance physical source row is missing");
-        if (binding.kind == QA_QC_SLOT_FREE || !qa_actor_id_equal(binding.actor, actor)) continue;
-        if (!qa_qc_visual_read(provider->state.qc.instance, slot, actor, &source, error)) return false;
-        found = true;
-        break;
-    }
-    if (!found) return application_fail(error, QA_ERROR_NOT_FOUND, "QC actor has no actual source appearance row");
+    uint32_t slot;
+    if (!qa_qc_actor_observation_slot(provider->state.qc.instance, actor, &slot, error) ||
+        !qa_qc_visual_read(provider->state.qc.instance, slot, actor, &source, error)) return false;
     int32_t model_index, effects;
     if (!source_integer(source.model_index, &model_index, error) || model_index < 0 ||
         !source_integer(source.frame, &out->frame, error) ||

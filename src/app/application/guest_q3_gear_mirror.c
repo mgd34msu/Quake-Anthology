@@ -210,21 +210,26 @@ bool q3gear_sync(application_q3_gear *gear, qa_error *error)
 {
     if (gear->synchronizing) return true;
     gear->synchronizing = true; bool okay = true;
-    size_t count = gear->options.target_count(gear->options.context);
+    const qa_actor_registry *actors = qa_session_actors(gear->options.host.session);
     for (uint32_t i = 0; i < gear->capacity && okay; ++i) {
         qa_actor_id actor = gear->bindings[i].actor;
         if (!actor.registry) continue;
-        bool present = false;
-        for (size_t j = 0; j < count; ++j) {
-            application_q3_gear_target target;
-            if (!gear->options.target(gear->options.context, j, &target, error)) { okay = false; break; }
-            if (qa_actor_id_equal(actor, target.actor)) { present = true; break; }
-        }
+        bool present = false; application_q3_gear_target target;
+        okay = gear->options.target(gear->options.context, actor, &target, &present, error);
+        if (okay && present && !qa_actor_id_equal(target.actor, actor))
+            okay = q3gear_fail(error, QA_ERROR_ARGUMENT, "Separate QVM gear target changed its full shared actor");
         if (okay && !present) okay = q3gear_forget(gear, actor, error);
     }
-    for (size_t i = 0; i < count && okay; ++i) {
-        application_q3_gear_target target;
-        okay = gear->options.target(gear->options.context, i, &target, error) && q3gear_mirror(gear, &target, error);
+    uint32_t cursor = 0; const qa_actor_record *record;
+    while (okay && qa_actors_next(actors, &cursor, &record)) {
+        qa_actor_id actor = record->id;
+        application_q3_gear_target target; bool present = false;
+        okay = gear->options.target(gear->options.context, actor, &target, &present, error);
+        if (okay && present) {
+            if (!qa_actor_id_equal(target.actor, actor))
+                okay = q3gear_fail(error, QA_ERROR_ARGUMENT, "Separate QVM gear target changed its full shared actor");
+            else okay = q3gear_mirror(gear, &target, error);
+        }
     }
     gear->synchronizing = false; return okay;
 }

@@ -17,8 +17,6 @@ q3_service_result q3_entity_tokens(q3_call *call, int32_t *result, qa_error *err
     qa_q3_host *host = call->host;
     if (!qa_common_parse(&host->entity_parser, &host->entity_cursor, true, error)) return Q3_FAILED;
     bool found = !host->entity_cursor.ended || host->entity_parser.token_length != 0;
-    char token[QA_COMMON_TOKEN_CAPACITY + 1];
-    memcpy(token, host->entity_parser.token, host->entity_parser.token_length + 1);
-    if (!q3_write_string(call, call->arguments[0], token, q3_integer(call, 1), error)) return Q3_FAILED;
+    if (!q3_write_string(call, call->arguments[0], host->entity_parser.token, q3_integer(call, 1), error)) return Q3_FAILED;
     *result = found; return Q3_COMPLETED;
 }

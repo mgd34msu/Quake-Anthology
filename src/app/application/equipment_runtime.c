@@ -68,28 +68,18 @@ static bool target_record(equipment_source *source, const qa_actor_record *recor
         qa_world_body_storage_serial(services->world, record->id) != 0;
 }
 
-static size_t target_count(void *context)
-{
-    equipment_source *source = context;
-    const qa_actor_registry *actors = qa_session_actors(source->runtime->options.services.session);
-    size_t count = 0; uint32_t cursor = 0; const qa_actor_record *record;
-    while (qa_actors_next(actors, &cursor, &record)) count += target_record(source, record);
-    return count;
-}
-
-static bool target(void *context, size_t index, application_q3_gear_target *out, qa_error *error)
+static bool target(void *context, qa_actor_id actor, application_q3_gear_target *out,
+    bool *found, qa_error *error)
 {
     equipment_source *source = context;
     application_equipment_runtime *runtime = source->runtime;
     qa_application *app = runtime->options.application;
     const qa_builtin_services *services = &runtime->options.services;
-    uint32_t cursor = 0; const qa_actor_record *record; qa_actor_id actor = {0};
-    while (qa_actors_next(qa_session_actors(services->session), &cursor, &record)) {
-        if (!target_record(source, record)) continue;
-        if (!index--) { actor = record->id; break; }
-    }
-    if (!actor.registry || !source_current(source))
+    *found = false;
+    if (!source_current(source))
         return application_fail(error, QA_ERROR_NOT_FOUND, "Gear target lost its actual shared actor");
+    const qa_actor_record *record = qa_actors_get(qa_session_actors(services->session), actor);
+    if (!target_record(source, record)) return true;
     application_q3_gear_target result = {.actor = actor,
         .userinfo = "\\name\\Player\\ip\\localhost\\model\\sarge/default\\handicap\\100"};
     if (!qa_world_body_read(services->world, actor, &result.body, error)) return false;
@@ -130,7 +120,7 @@ static bool target(void *context, size_t index, application_q3_gear_target *out,
     }
     if (!qa_actors_get(qa_session_actors(services->session), actor) || !source_current(source))
         return application_fail(error, QA_ERROR_NOT_FOUND, "Gear target changed during its source reads");
-    *out = result; return true;
+    *out = result; *found = true; return true;
 }
 
 static bool damage(void *context, const application_q3_gear_damage *hit, qa_error *error)
@@ -611,7 +601,7 @@ static bool create_gear(equipment_source *source, const saved_source *saved, qa_
                 .server = {.context = source, .send_command = server_command},
                 .entity_text = saved ? saved->entities : runtime->options.entity_text},
             .services = runtime->options.services, .context = source, .current = source_current,
-            .target_count = target_count, .target = target, .damage = damage, .velocity = velocity,
+            .target = target, .damage = damage, .velocity = velocity,
             .configstring = configstring};
         if (okay) okay = application_q3_gear_create(&options, saved != NULL, &source->view.gear, error);
         if (okay) source->source = (qa_equipment_source){.owner = source->view.selected_owner,

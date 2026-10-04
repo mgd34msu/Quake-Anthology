@@ -12,25 +12,16 @@ static qa_physical_input physical(int32_t key)
 
 static const char *binding_command(const qa_input_binding *binding)
 {
-    static const char *const actions[QA_INPUT_ACTION_COUNT] = {
-        [QA_INPUT_FORWARD]="+forward", [QA_INPUT_BACK]="+back",
-        [QA_INPUT_MOVE_LEFT]="+moveleft", [QA_INPUT_MOVE_RIGHT]="+moveright",
-        [QA_INPUT_MOVE_UP]="+moveup", [QA_INPUT_MOVE_DOWN]="+movedown",
-        [QA_INPUT_TURN_LEFT]="+left", [QA_INPUT_TURN_RIGHT]="+right",
-        [QA_INPUT_LOOK_UP]="+lookup", [QA_INPUT_LOOK_DOWN]="+lookdown",
-        [QA_INPUT_JUMP]="+moveup", [QA_INPUT_CROUCH]="+movedown",
-        [QA_INPUT_ATTACK]="+attack", [QA_INPUT_USE]="+use", [QA_INPUT_HOLSTER]="+holster",
-        [QA_INPUT_WALK]="+speed", [QA_INPUT_STRAFE]="+strafe", [QA_INPUT_KLOOK]="+klook",
-        [QA_INPUT_MLOOK]="+mlook", [QA_INPUT_BUTTON0]="+button0", [QA_INPUT_BUTTON1]="+button1",
-        [QA_INPUT_BUTTON2]="+button2", [QA_INPUT_BUTTON3]="+button3", [QA_INPUT_BUTTON4]="+button4",
-        [QA_INPUT_BUTTON5]="+button5", [QA_INPUT_BUTTON6]="+button6", [QA_INPUT_BUTTON7]="+button7",
-        [QA_INPUT_BUTTON8]="+button8", [QA_INPUT_BUTTON9]="+button9", [QA_INPUT_BUTTON10]="+button10",
-        [QA_INPUT_BUTTON11]="+button11", [QA_INPUT_BUTTON12]="+button12",
-        [QA_INPUT_BUTTON13]="+button13", [QA_INPUT_BUTTON14]="+button14",
-        [QA_INPUT_SCORES]="+scores", [QA_INPUT_NEXT_WEAPON]="weapnext",
-        [QA_INPUT_PREVIOUS_WEAPON]="weapprev", [QA_INPUT_MENU]="togglemenu"
-    };
-    return !binding ? "" : binding->kind == QA_BIND_COMMAND ? binding->command : actions[binding->action];
+    if (!binding) return "";
+    if (binding->kind == QA_BIND_COMMAND) return binding->command;
+    switch (binding->action) {
+    case QA_INPUT_JUMP: return "+moveup";
+    case QA_INPUT_CROUCH: return "+movedown";
+    case QA_INPUT_NEXT_WEAPON: return "weapnext";
+    case QA_INPUT_PREVIOUS_WEAPON: return "weapprev";
+    case QA_INPUT_MENU: return "togglemenu";
+    default: return qa_input_action_command(binding->action);
+    }
 }
 
 static bool equal_fold(const char *a, const char *b)
@@ -99,11 +90,7 @@ q3_service_result q3_client_input(q3_call *call, int32_t *result, qa_error *erro
         if (!dictionary(host,&bindings,error)) return Q3_FAILED;
     if (ui && code == 34) {
         const char *command = binding_command(qa_input_seat_binding(bindings, physical(q3_integer(call, 0))));
-        size_t length = strlen(command);
-        char *copy = qa_arena_alloc(&host->scratch, length + 1, 1, error);
-        if (!copy) return Q3_FAILED;
-        memcpy(copy, command, length + 1);
-        return q3_write_string(call, call->arguments[1], copy, q3_integer(call, 2), error) ? Q3_COMPLETED : Q3_FAILED;
+        return q3_write_string(call, call->arguments[1], command, q3_integer(call, 2), error) ? Q3_COMPLETED : Q3_FAILED;
     }
     qa_buffer text = {0}; bool ok;
     if (ui && code == 35) {

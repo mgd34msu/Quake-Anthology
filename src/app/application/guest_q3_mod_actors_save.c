@@ -1,20 +1,5 @@
 #include "guest_q3_mod_actors_private.h"
 
-static bool prefix(application_q3_mod_actors *o,qa_source_save_io *io)
-{
-    uint8_t magic[4]={'Q','G','M','A'},expected[4]; memcpy(expected,magic,4);
-    uint32_t abi=(uint32_t)o->options.profile->abi;
-    uint8_t digest[32],original[32]; memcpy(digest,qa_qvm_image_digest(o->options.profile->image),32); memcpy(original,digest,32);
-    size_t length=o->options.profile->declaration.size;
-    if(!qa_source_save_bytes(io,magic,4)||memcmp(magic,expected,4)||
-        !qa_source_save_u32(io,&abi)||abi!=(uint32_t)o->options.profile->abi||!qa_source_save_bytes(io,digest,32)||memcmp(digest,original,32)||
-        !qa_source_save_count(io,&length,length)||length!=o->options.profile->declaration.size)
-        return q3mod_fail(io->error,QA_ERROR_FORMAT,"Actor continuation differs from its genuine executable declaration");
-    if(io->direction==QA_SOURCE_SAVE_WRITE) return qa_source_save_bytes(io,o->options.profile->declaration.data,length);
-    if(io->offset>io->input.size||length>io->input.size-io->offset||memcmp(io->input.data+io->offset,o->options.profile->declaration.data,length))
-        return q3mod_fail(io->error,QA_ERROR_FORMAT,"Actor continuation declaration differs from its retained component");
-    io->offset+=length; return true;
-}
 static bool row_valid(application_q3_mod_actors *o,mod_actor_row *row,bool installed,qa_error *e)
 {
     uint32_t pointer;
@@ -35,7 +20,7 @@ bool application_q3_mod_actors_checkpoint(application_q3_mod_actors *o,qa_buffer
     for(mod_actor_row *r=o->actors;r;r=r->next) { if(!row_valid(o,r,true,e)) return false; ++count; }
     qa_source_save_io io; if(!qa_source_save_writer(&io,o->options.session,e)) return false;
     uint64_t sequence=o->sequence;
-    bool ok=prefix(o,&io)&&qa_source_save_u64(&io,&sequence)&&qa_source_save_count(&io,&count,UINT32_MAX);
+    bool ok=q3mod_saved_declaration(o->options.profile,&io,"QGMA")&&qa_source_save_u64(&io,&sequence)&&qa_source_save_count(&io,&count,UINT32_MAX);
     for(mod_actor_row *r=o->actors;ok&&r;r=r->next) {
         qa_actor_id actor=r->actor; uint32_t pointer=r->pointer; uint64_t serial=r->serial; bool bound=r->bound;
         ok=qa_source_save_actor(&io,&actor)&&qa_source_save_u32(&io,&pointer)&&qa_source_save_u64(&io,&serial)&&qa_source_save_bool(&io,&bound);
@@ -50,7 +35,7 @@ bool application_q3_mod_actors_restore(application_q3_mod_actors *o,qa_bytes byt
     qa_source_save_io io; if(!qa_source_save_reader(&io,o->options.session,bytes,e)) return false;
     size_t count=0; uint64_t sequence=0;
     size_t limit=o->present?o->options.profile->records[o->entity_record].capacity:0;
-    bool ok=prefix(o,&io)&&qa_source_save_u64(&io,&sequence)&&qa_source_save_count(&io,&count,limit);
+    bool ok=q3mod_saved_declaration(o->options.profile,&io,"QGMA")&&qa_source_save_u64(&io,&sequence)&&qa_source_save_count(&io,&count,limit);
     mod_actor_row *head=NULL,**tail=&head;
     for(size_t i=0;ok&&i<count;++i) {
         mod_actor_row *row=calloc(1,sizeof(*row)); if(!row) { ok=q3mod_fail(e,QA_ERROR_MEMORY,"Retaining detached actor semantic rows"); break; }

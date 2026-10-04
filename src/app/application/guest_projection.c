@@ -320,6 +320,14 @@ static bool mutable_capacity(void *opaque, qa_item_id item)
     return false;
 }
 
+static qa_inventory_binding inventory_binding(guest_projection_actor *context)
+{
+    return (qa_inventory_binding){.context = context, .count = inventory_count,
+        .at = inventory_at, .write = inventory_write, .mutable_capacity = mutable_capacity,
+        .checked_count = inventory_checked_count,
+        .acquire = context->projection->public_inventory.acquisition_entry ? inventory_acquire : NULL};
+}
+
 bool application_guest_inventory_project(q3g_role *role, qa_actor_id actor,
     qa_item_id item, int32_t count, guest_inventory_projection_word out[2], size_t *out_count,
     qa_error *error)
@@ -475,10 +483,7 @@ bool application_guest_projection_admit(q3g_role *role, qa_actor_id actor, qa_er
         p->actors = context;
     }
     if (!context->inventory_bound) {
-        qa_inventory_binding binding = {.context = context, .count = inventory_count,
-            .at = inventory_at, .write = inventory_write, .mutable_capacity = mutable_capacity,
-            .checked_count = inventory_checked_count,
-            .acquire = p->public_inventory.acquisition_entry ? inventory_acquire : NULL};
+        qa_inventory_binding binding = inventory_binding(context);
         if (!qa_inventory_adopt_primary(app->inventory, actor, &binding, &context->inventory_lease, error)) return false;
         context->inventory_bound = true;
         context->inventory_prepared = false;
@@ -538,10 +543,7 @@ bool application_guest_projection_inventory_binding(q3g_role *role,
     if (!context->inventory_bound)
         context->inventory_prepared = true;
     context->inventory_bound = true;
-    *out = (qa_inventory_binding){.context = context, .count = inventory_count,
-        .at = inventory_at, .write = inventory_write, .mutable_capacity = mutable_capacity,
-        .checked_count = inventory_checked_count,
-        .acquire = projection->public_inventory.acquisition_entry ? inventory_acquire : NULL};
+    *out = inventory_binding(context);
     return true;
 }
 

@@ -6,20 +6,17 @@ bool q3gear_target(application_q3_gear *gear, qa_actor_id actor,
     if (!q3gear_current(gear, error) ||
         !qa_actors_get(qa_session_actors(gear->options.host.session), actor))
         return q3gear_fail(error, QA_ERROR_NOT_FOUND, "Separate QVM gear refers to a retired shared actor");
-    size_t count = gear->options.target_count(gear->options.context);
-    for (size_t i = 0; i < count; ++i) {
-        application_q3_gear_target target;
-        if (!gear->options.target(gear->options.context, i, &target, error)) return false;
-        if (qa_actor_id_equal(target.actor, actor)) {
-            if (!isfinite(target.health) || target.health < (float)INT32_MIN ||
-                (double)target.health > INT32_MAX || !isfinite(target.view_height) ||
-                target.view_height < (float)INT32_MIN || (double)target.view_height > INT32_MAX ||
-                (target.player && (!target.userinfo || target.team < 0 || target.team > 3)))
-                return q3gear_fail(error, QA_ERROR_FORMAT, "Separate QVM gear target lost its source health/team contract");
-            *out = target; return q3gear_current(gear, error);
-        }
-    }
-    return q3gear_fail(error, QA_ERROR_NOT_FOUND, "Separate QVM gear has no admitted shared target");
+    application_q3_gear_target target; bool found = false;
+    if (!gear->options.target(gear->options.context, actor, &target, &found, error)) return false;
+    if (!found)
+        return q3gear_fail(error, QA_ERROR_NOT_FOUND, "Separate QVM gear has no admitted shared target");
+    if (!qa_actor_id_equal(target.actor, actor) ||
+        !isfinite(target.health) || target.health < (float)INT32_MIN ||
+        (double)target.health > INT32_MAX || !isfinite(target.view_height) ||
+        target.view_height < (float)INT32_MIN || (double)target.view_height > INT32_MAX ||
+        (target.player && (!target.userinfo || target.team < 0 || target.team > 3)))
+        return q3gear_fail(error, QA_ERROR_FORMAT, "Separate QVM gear target lost its source health/team contract");
+    *out = target; return q3gear_current(gear, error);
 }
 
 static bool same_team(void *context, const qa_qvm_call *call, int32_t *result, qa_error *error)

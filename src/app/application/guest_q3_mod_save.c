@@ -1,19 +1,20 @@
 #include "guest_q3_mod_private.h"
 
-static bool prefix(application_q3_mod *o, qa_source_save_io *io)
+bool q3mod_saved_declaration(const application_q3_mod_profile *profile,
+    qa_source_save_io *io, const char identity[4])
 {
-    uint8_t magic[4]={'Q','G','M','D'}; uint32_t abi=(uint32_t)o->profile->abi;
-    uint8_t expected[4]; memcpy(expected,magic,4);
-    uint8_t digest[32]; memcpy(digest,qa_qvm_image_digest(o->profile->image),sizeof(digest));
+    uint8_t magic[4]; memcpy(magic,identity,sizeof(magic));
+    uint32_t abi=(uint32_t)profile->abi;
+    uint8_t digest[32]; memcpy(digest,qa_qvm_image_digest(profile->image),sizeof(digest));
     uint8_t original_digest[32]; memcpy(original_digest,digest,sizeof(digest));
-    size_t bytes=o->profile->declaration.size;
-    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,expected,4) ||
-        !qa_source_save_u32(io,&abi) || abi!=(uint32_t)o->profile->abi ||
+    size_t bytes=profile->declaration.size;
+    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,identity,4) ||
+        !qa_source_save_u32(io,&abi) || abi!=(uint32_t)profile->abi ||
         !qa_source_save_bytes(io,digest,sizeof(digest)) || memcmp(digest,original_digest,sizeof(digest)) ||
-        !qa_source_save_count(io,&bytes,o->profile->declaration.size) || bytes!=o->profile->declaration.size)
+        !qa_source_save_count(io,&bytes,profile->declaration.size) || bytes!=profile->declaration.size)
         return q3mod_fail(io->error,QA_ERROR_FORMAT,"Generic source continuation header differs from its actual declaration");
-    if (io->direction==QA_SOURCE_SAVE_WRITE) return qa_source_save_bytes(io,o->profile->declaration.data,bytes);
-    if (io->offset>io->input.size || bytes>io->input.size-io->offset || memcmp(io->input.data+io->offset,o->profile->declaration.data,bytes))
+    if (io->direction==QA_SOURCE_SAVE_WRITE) return qa_source_save_bytes(io,profile->declaration.data,bytes);
+    if (io->offset>io->input.size || bytes>io->input.size-io->offset || memcmp(io->input.data+io->offset,profile->declaration.data,bytes))
         return q3mod_fail(io->error,QA_ERROR_FORMAT,"Generic saved child differs from its actual retained declaration");
     io->offset+=bytes; return true;
 }
@@ -25,7 +26,7 @@ bool application_q3_mod_checkpoint(application_q3_mod *o, qa_buffer *out, qa_err
     if (!qa_source_save_writer(&io,o->session,e)) return false;
     size_t count=0; for (mod_actor_channel *c=o->channels;c;c=c->next) ++count;
     bool active=o->active, callbacks=o->callbacks_active;
-    bool ok=prefix(o,&io) && qa_source_save_bool(&io,&active) && qa_source_save_bool(&io,&callbacks) && qa_source_save_count(&io,&count,UINT32_MAX);
+    bool ok=q3mod_saved_declaration(o->profile,&io,"QGMD") && qa_source_save_bool(&io,&active) && qa_source_save_bool(&io,&callbacks) && qa_source_save_count(&io,&count,UINT32_MAX);
     for (mod_actor_channel *c=o->channels;ok && c;c=c->next) {
         size_t definition=c->definition; qa_actor_id actor=c->actor; int32_t client=c->client;
         uint64_t serial=c->lease.serial; bool bound=c->bound;
@@ -43,7 +44,7 @@ bool application_q3_mod_restore(application_q3_mod *o, qa_bytes bytes, qa_error 
         return q3mod_fail(e,QA_ERROR_ARGUMENT,"Generic child restore requires its fresh detached source owner");
     qa_source_save_io io; if (!qa_source_save_reader(&io,o->session,bytes,e)) return false;
     bool active=false, callbacks=false; size_t count=0;
-    bool ok=prefix(o,&io) && qa_source_save_bool(&io,&active) && qa_source_save_bool(&io,&callbacks) && qa_source_save_count(&io,&count,UINT32_MAX);
+    bool ok=q3mod_saved_declaration(o->profile,&io,"QGMD") && qa_source_save_bool(&io,&active) && qa_source_save_bool(&io,&callbacks) && qa_source_save_count(&io,&count,UINT32_MAX);
     mod_actor_channel *head=NULL, **tail=&head;
     for (size_t i=0;ok && i<count;++i) {
         mod_actor_channel *c=calloc(1,sizeof(*c));

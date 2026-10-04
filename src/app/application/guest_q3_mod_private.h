@@ -168,6 +168,8 @@ struct application_q3_mod {
     bool restoring, restored_owner, active, callbacks_active, restored_callbacks, closing, failed_scope;
 };
 bool q3mod_fail(qa_error *, qa_status, const char *);
+bool q3mod_saved_declaration(const application_q3_mod_profile *, qa_source_save_io *,
+    const char identity[4]);
 bool q3mod_current(application_q3_mod *, qa_error *);
 bool q3mod_storage_current(application_q3_mod *, qa_error *);
 bool q3mod_address(application_q3_mod *, qa_actor_id, const char *, uint32_t,

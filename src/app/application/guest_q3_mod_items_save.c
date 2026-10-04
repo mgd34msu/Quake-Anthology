@@ -1,22 +1,5 @@
 #include "guest_q3_mod_items_private.h"
 
-static bool prefix(application_q3_mod_items *o,qa_source_save_io *io)
-{
-    uint8_t magic[4]={'Q','G','I','T'},expected[4];memcpy(expected,magic,4);
-    uint32_t abi=(uint32_t)o->profile->source->abi;
-    uint8_t digest[32],original[32];
-    memcpy(digest,qa_qvm_image_digest(o->profile->source->image),32);memcpy(original,digest,32);
-    size_t bytes=o->profile->source->declaration.size;
-    if(!qa_source_save_bytes(io,magic,4)||memcmp(magic,expected,4)||
-        !qa_source_save_u32(io,&abi)||abi!=(uint32_t)o->profile->source->abi||
-        !qa_source_save_bytes(io,digest,32)||memcmp(digest,original,32)||
-        !qa_source_save_count(io,&bytes,o->profile->source->declaration.size)||bytes!=o->profile->source->declaration.size)
-        return q3mod_fail(io->error,QA_ERROR_FORMAT,"Saved items differ from their genuine source profile");
-    if(io->direction==QA_SOURCE_SAVE_WRITE)return qa_source_save_bytes(io,o->profile->source->declaration.data,bytes);
-    if(io->offset>io->input.size||bytes>io->input.size-io->offset||
-        memcmp(io->input.data+io->offset,o->profile->source->declaration.data,bytes))return false;
-    io->offset+=bytes;return true;
-}
 static bool record_used(application_q3_mod_items_profile *p,size_t record)
 {
     for(size_t i=0;i<p->storage_count;++i){const item_storage *s=p->storage+i;
@@ -70,7 +53,7 @@ bool application_q3_mod_items_checkpoint(application_q3_mod_items *o,qa_buffer *
     if(!o||!out||out->data||out->size||!application_q3_mod_items_idle(o)||!q3mod_storage_current(o->mod,e))return false;
     qa_source_save_io io;if(!qa_source_save_writer(&io,o->mod->session,e))return false;
     size_t count=0;for(item_actor *a=o->actors;a;a=a->next)++count;
-    bool ok=prefix(o,&io)&&qa_source_save_u64(&io,&o->next_request)&&qa_source_save_count(&io,&count,UINT32_MAX);
+    bool ok=q3mod_saved_declaration(o->profile->source,&io,"QGIT")&&qa_source_save_u64(&io,&o->next_request)&&qa_source_save_count(&io,&count,UINT32_MAX);
     for(item_actor *a=o->actors;ok&&a;a=a->next){qa_qvm_saved_write_watch watch;
         ok=q3items_current(a,e)&&(!o->profile->stage||a->weapon_bound)&&
             (!a->weapon_bound||o->services.weapon_current(o->services.context,a->actor,o))&&
@@ -83,7 +66,7 @@ bool application_q3_mod_items_restore(application_q3_mod_items *o,qa_bytes bytes
 {
     if(!o||!o->mod->restoring||o->actors||o->next_request||!application_q3_mod_items_idle(o)||!q3mod_storage_current(o->mod,e))return false;
     qa_source_save_io io;if(!qa_source_save_reader(&io,o->mod->session,bytes,e))return false;
-    size_t count=0;bool ok=prefix(o,&io)&&qa_source_save_u64(&io,&o->next_request)&&qa_source_save_count(&io,&count,UINT32_MAX);
+    size_t count=0;bool ok=q3mod_saved_declaration(o->profile->source,&io,"QGIT")&&qa_source_save_u64(&io,&o->next_request)&&qa_source_save_count(&io,&count,UINT32_MAX);
     item_actor **tail=&o->actors;
     for(size_t i=0;ok&&i<count;++i){item_actor *a=calloc(1,sizeof(*a));
         if(!a){ok=q3mod_fail(e,QA_ERROR_MEMORY,"Owning restored item continuation");break;}

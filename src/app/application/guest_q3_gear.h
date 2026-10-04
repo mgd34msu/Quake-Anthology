@@ -26,8 +26,7 @@ typedef struct application_q3_gear_options {
     qa_builtin_services services;
     void *context;
     bool (*current)(void *);
-    size_t (*target_count)(void *);
-    bool (*target)(void *, size_t, application_q3_gear_target *, qa_error *);
+    bool (*target)(void *, qa_actor_id, application_q3_gear_target *, bool *found, qa_error *);
     bool (*damage)(void *, const application_q3_gear_damage *, qa_error *);
     bool (*velocity)(void *, qa_actor_id, qa_vec3, qa_error *);
     /* Publish the real gear source event after its private text is committed;
