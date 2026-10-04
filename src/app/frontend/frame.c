@@ -73,6 +73,41 @@ static bool source_elapsed(qa_frontend *frontend,uint64_t supplied,const qa_cvar
     }
     *owner=cvars; *out=cvars?(uint64_t)duration:supplied; return true;
 }
+static bool control_binding(qa_frontend *frontend,frontend_seat *seat,qa_actor_id actor,
+    const qa_application_control_view *state,bool remote,qa_error *error)
+{
+    qa_movement_kind kind = state->profile.kind;
+    qa_console_dialect profile = dialect(kind);
+    bool changed = !qa_actor_id_equal(seat->actor, actor) || seat->builder.kind != kind;
+    if (changed) {
+        double now=(double)frontend->wall_time_ns/1000000.0;
+        if (!qa_ui_rankings_reset_binding(seat->rankings, error)) return false;
+        if (!qa_input_seat_release(seat->input, now, error) || !qa_input_seat_profile(seat->input, profile, error)) return false;
+        qa_input_command_clear(&seat->builder); seat->builder.kind = kind; seat->actor = actor;
+        if (remote && !qa_input_command_angles(&seat->builder,state->view_angles,error)) return false;
+    }
+    return true;
+}
+static bool control_bindings(qa_frontend *frontend,qa_error *error)
+{
+    if (frontend->options.dedicated || frontend_network_remote(frontend) ||
+        qa_application_startup_pending(frontend->application) ||
+        qa_application_should_stop(frontend->application)) return true;
+    for (uint32_t ordinal=0;ordinal<frontend->options.seats;++ordinal) {
+        frontend_seat *seat=frontend->seats+ordinal;
+        if (qa_input_seat_context(seat->input).owner ||
+            frontend_network_q1_input_owned(frontend,ordinal) ||
+            frontend_network_q2_input_owned(frontend,ordinal)) continue;
+        qa_actor_id actor; uint32_t launch_seat;
+        if (!frontend_seat_launch_id_read(frontend,ordinal,&launch_seat) ||
+            !qa_application_player_actor(frontend->application,launch_seat,&actor)) continue;
+        qa_application_control_view state;
+        if (!qa_application_control_read(frontend->application,actor,&state))
+            return frontend_fail(error,QA_ERROR_ARGUMENT,"local player lacks its application control continuation");
+        if (!control_binding(frontend,seat,actor,&state,false,error)) return false;
+    }
+    return true;
+}
 static bool selected_bindings(qa_frontend *frontend,qa_error *error)
 {
     qa_inventory *inventory=qa_application_inventory(frontend->application);
@@ -191,14 +226,7 @@ static bool controls(qa_frontend *frontend,uint64_t elapsed_ns,uint64_t wall_ela
         if (!qa_application_control_read(frontend->application, actor, &state))
             return frontend_fail(error, QA_ERROR_ARGUMENT, "local player lacks its application control continuation");
         qa_movement_kind kind = state.profile.kind;
-        qa_console_dialect profile = dialect(kind);
-        bool changed = !qa_actor_id_equal(seat->actor, actor) || seat->builder.kind != kind;
-        if (changed) {
-            if (!qa_ui_rankings_reset_binding(seat->rankings, error)) return false;
-            if (!qa_input_seat_release(seat->input, now, error) || !qa_input_seat_profile(seat->input, profile, error)) return false;
-            qa_input_command_clear(&seat->builder); seat->builder.kind = kind; seat->actor = actor;
-            if (remote && !qa_input_command_angles(&seat->builder,state.view_angles,error)) return false;
-        }
+        if (!control_binding(frontend,seat,actor,&state,remote,error)) return false;
         /* Local forced angles come from the current player. Remote selected
          * angles continue independently of the raw Q3 transport builder. */
         if (!remote &&
@@ -401,7 +429,7 @@ bool frontend_startup_advance(qa_frontend *frontend,bool *complete,qa_error *err
     uint64_t travel_revision;
     return (qa_application_travel_publication_read(frontend->application,&travel_revision) ||
         qa_application_rankings_start(frontend->application,error)) &&
-        frontend_network_create(frontend,error);
+        frontend_network_create(frontend,error) && control_bindings(frontend,error);
 }
 static bool stop_server(qa_frontend *f, bool *complete, qa_error *error)
 {
@@ -670,5 +698,10 @@ bool qa_frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *erro
         ok = qa_application_complete_frame(frontend->application, error);
     if (ok) ok = frontend_source_drain(frontend, error) && frontend_campaign_ui_drain(frontend,error);
     if (ok) ++frontend->frame_number;
-    return ok && frontend_travel(frontend, error);
+    if (!ok) return false;
+    qa_application_map_view previous, current;
+    bool mapped=qa_application_map_read(frontend->application,&previous);
+    if (!frontend_travel(frontend,error)) return false;
+    return !qa_application_map_read(frontend->application,&current) ||
+        (mapped && previous.revision==current.revision) || control_bindings(frontend,error);
 }
