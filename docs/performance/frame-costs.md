@@ -1,7 +1,7 @@
 # Native frame costs
 
-The latest measured Q3 CPU frame takes **25.210 ms**, including **16.844 ms**
-of raster execution; latest interval-1 GL takes **18.101 ms**. Removing a quadratic settings
+The latest measured Q3 CPU frame takes **24.309 ms**, including **16.645 ms**
+of raster execution; latest interval-1 GL takes **17.123 ms**. Removing a quadratic settings
 lookup cuts shared scene work. Replacing duplicate SDL texture layers reduces
 CPU presentation to about **0.3 ms**. Raster execution is now the largest CPU cost.
 
@@ -60,6 +60,7 @@ material totals include more observer overhead than the standard runs above.
 | `fc471593` | 25.669 | 16.638 | 151.515 |
 | `8773a8f3` | 24.680 | 16.624 | 150.164 |
 | `7a078e87` | 25.210 | 16.844 | 152.449 |
+| `086dea5a` | 24.309 | 16.645 | 151.845 |
 
 With the same subdivision, GL takes 31.411 ms on `e900075f` and 30.501 ms
 on `436272c5`. Material submission falls from 13.104 to 12.399 ms on CPU
@@ -122,6 +123,30 @@ raster execution stays at 16.624 ms. GL material work falls from 4.268 to
 GL gain is established. All 30 states/counts and same-backend engine pixels
 match; CPU retained RGBA and native RGB also match.
 
+`086dea5a` combines unchanged-plane clipping-copy removal, direct lookup in
+the existing sorted material table, reuse of the archive name index, and
+duplicate GL state-call removal. The matched CPU frame measures 24.309 ms
+and GL 17.123 ms; all 30 state/count rows and final same-backend images match.
+The unrelated user game active during `7a078e87` is absent in this pair, so
+the frame difference is not isolated from changed background load. Startup
+and peak RSS stay near the preceding lazy-archive result.
+
+A separate coarse outer-flush scope on `7a078e87` measures 17.336 ms CPU
+execution: 8.612 ms in external flushes and 8.637 ms median per-frame
+execution minus flush. Flush includes scheduling, pixel workers, joins and
+exception reconciliation; the remainder includes preparation, clears,
+bookkeeping and unwrapped immediate paths. Its added clocks make it an
+attribution run rather than a matched control. The identical observer on
+`086dea5a` produces anomalous 50.767 ms complete frames and 35.849 ms CPU
+execution. It establishes no preparation-cost gain; its cause is unverified.
+
+The subsequent Source material self-copy/planning removal (`3e274a1e`) and
+prepared-geometry projection reuse (`5bd5ff30`) pass all default optimized GCC
+and Clang build targets. Their bounded old/new fixtures preserve outputs,
+errors and floating-point flags. Matched whole-frame benefit is still pending.
+Both proposed Q2 axial endpoint shortcuts made complete geometry queries
+slower on GCC and Clang and were withdrawn.
+
 Ordered command batching reduces matched frame time by 38.1% and raster time
 by 62.2%. Aggregate CPU work rises: the gain comes from parallel scheduling,
 not less total CPU work. The batch preserves command order within disjoint
@@ -154,17 +179,17 @@ the CPU frame shows no latency improvement.
 
 ## Current costs and optimization targets
 
-These are inclusive medians on `7a078e87` CPU and interval-1 GL.
+These are inclusive medians on `086dea5a` CPU and interval-1 GL.
 Both include the subdivision scopes.
 Nested durations overlap, so the rows must not be added together.
 
 | Scope | CPU ms | GL ms |
 | --- | ---: | ---: |
-| Scene construction | 5.245 | 5.113 |
-| Material submission, 554 calls | 3.799 | 3.705 |
-| World submission, including its materials | 3.741 | 3.646 |
-| Renderer execution / GL submission | 16.844 | 1.873 |
-| CPU native presentation / GL swap | 0.309 | 8.404 |
+| Scene construction | 5.122 | 4.863 |
+| Material submission, 554 calls | 3.723 | 3.596 |
+| World submission, including its materials | 3.664 | 3.515 |
+| Renderer execution / GL submission | 16.645 | 1.787 |
+| CPU native presentation / GL swap | 0.237 | 8.217 |
 
 The first GL baseline separately measured 3.596 ms median GPU elapsed time
 around renderer execution. GPU intervals overlap CPU work and presentation;
