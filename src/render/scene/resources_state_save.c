@@ -192,18 +192,8 @@ static bool source_extended_builtins_fields(qa_source_save_io *io, qa_scene_reso
     }
     if (!image_field(io, refs, owner, &state->source_dlight) || !image_field(io, refs, owner, &state->source_fog)) return false;
     uint8_t light[16 * 16 * 4], fog[256 * 32 * 4];
-    for (uint32_t y = 0; y < 16; ++y) for (uint32_t x = 0; x < 16; ++x) {
-        float dx = 7.5f - (float)x, dy = 7.5f - (float)y;
-        float brightness = fminf(255, truncf(4000 / (dx * dx + dy * dy)));
-        uint8_t value = brightness < 75 ? 0 : (uint8_t)brightness;
-        size_t at = ((size_t)y * 16 + x) * 4;
-        light[at] = light[at + 1] = light[at + 2] = value; light[at + 3] = 255;
-    }
-    for (uint32_t y = 0; y < 32; ++y) for (uint32_t x = 0; x < 256; ++x) {
-        size_t at = ((size_t)y * 256 + x) * 4;
-        fog[at] = fog[at + 1] = fog[at + 2] = 255;
-        fog[at + 3] = (uint8_t)(255 * qa_material_fog_factor(((float)x + .5f) / 256, ((float)y + .5f) / 32));
-    }
+    scene_image_dlight_pixels(light);
+    scene_image_fog_pixels(fog);
     return source_generated_image(state->source_dlight, &state->source_builtins_upload, "*dlight", 16, 16, light, false, io->error) &&
         source_generated_image(state->source_fog, &state->source_builtins_upload, "*fog", 256, 32, fog, true, io->error) &&
         (!reading || owner->detached || (state->source_dlight == owner->source_dlight && state->source_fog == owner->source_fog));

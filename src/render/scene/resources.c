@@ -1536,6 +1536,24 @@ static bool source_builtin(qa_scene_resources *resources, const char *name,
     options.source_upload.mipmap = missing; options.source_upload.allow_picmip = scratch;
     return image_from_rgba(resources, name, &image, &options, out, error);
 }
+void scene_image_dlight_pixels(uint8_t pixels[16 * 16 * 4])
+{
+    for (uint32_t y = 0; y < 16; ++y) for (uint32_t x = 0; x < 16; ++x) {
+        float dx = 7.5f - (float)x, dy = 7.5f - (float)y;
+        float brightness = fminf(255, truncf(4000 / (dx * dx + dy * dy)));
+        uint8_t value = brightness < 75 ? 0 : (uint8_t)brightness;
+        size_t at = ((size_t)y * 16 + x) * 4;
+        pixels[at] = pixels[at + 1] = pixels[at + 2] = value; pixels[at + 3] = 255;
+    }
+}
+void scene_image_fog_pixels(uint8_t pixels[256 * 32 * 4])
+{
+    for (uint32_t y = 0; y < 32; ++y) for (uint32_t x = 0; x < 256; ++x) {
+        size_t at = ((size_t)y * 256 + x) * 4;
+        pixels[at] = pixels[at + 1] = pixels[at + 2] = 255;
+        pixels[at + 3] = (uint8_t)(255 * qa_material_fog_factor(((float)x + .5f) / 256, ((float)y + .5f) / 32));
+    }
+}
 bool qa_scene_resources_source_q3_initialize(qa_scene_resources *resources,
     const qa_q3_image_upload_options *profile, qa_error *error)
 {
@@ -1553,13 +1571,7 @@ bool qa_scene_resources_source_q3_initialize(qa_scene_resources *resources,
     for (unsigned i = 0; ok && i < 32; ++i)
         ok = source_builtin(resources, "*scratch", profile, 16, lighting.identity_light_byte, false, true, &scratch[i], error);
     uint8_t light_pixels[16 * 16 * 4], fog_pixels[256 * 32 * 4];
-    for (uint32_t y = 0; y < 16; ++y) for (uint32_t x = 0; x < 16; ++x) {
-        float dx = 7.5f - (float)x, dy = 7.5f - (float)y;
-        float brightness = fminf(255, truncf(4000 / (dx * dx + dy * dy)));
-        uint8_t value = brightness < 75 ? 0 : (uint8_t)brightness;
-        size_t at = ((size_t)y * 16 + x) * 4;
-        light_pixels[at] = light_pixels[at + 1] = light_pixels[at + 2] = value; light_pixels[at + 3] = 255;
-    }
+    scene_image_dlight_pixels(light_pixels);
     qa_scene_image_options options = {.family = QA_SCENE_Q3, .wrap = QA_SCENE_CLAMP,
         .filter = QA_SCENE_LINEAR, .source_q3 = true, .source_upload = *profile};
     options.source_upload.allow_picmip = false; options.source_upload.mipmap = false;
@@ -1567,11 +1579,7 @@ bool qa_scene_resources_source_q3_initialize(qa_scene_resources *resources,
     if (ok) ok = image_from_rgba_complete(resources, "*dlight", &light_input, &options, false,
         (qa_scene_vec4){0}, true, &dlight, error);
     if (ok) resources->source_dlight = dlight;
-    for (uint32_t y = 0; y < 32; ++y) for (uint32_t x = 0; x < 256; ++x) {
-        size_t at = ((size_t)y * 256 + x) * 4;
-        fog_pixels[at] = fog_pixels[at + 1] = fog_pixels[at + 2] = 255;
-        fog_pixels[at + 3] = (uint8_t)(255 * qa_material_fog_factor(((float)x + .5f) / 256, ((float)y + .5f) / 32));
-    }
+    scene_image_fog_pixels(fog_pixels);
     qa_image fog_input = {.width = 256, .height = 32, .rgba = {fog_pixels,sizeof(fog_pixels)}};
     if (ok) ok = image_from_rgba_complete(resources, "*fog", &fog_input, &options, true,
         (qa_scene_vec4){1,1,1,1}, false, &fog, error);

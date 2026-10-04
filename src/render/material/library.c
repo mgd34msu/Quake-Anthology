@@ -1,4 +1,5 @@
 #include "library_internal.h"
+#include "../scene/resources_internal.h"
 #include "qa/material_library_save.h"
 #include "qa/material_save.h"
 #include <math.h>
@@ -1999,20 +2000,8 @@ qa_material_library *qa_material_library_create(qa_scene_resources *resources,
     library->profile = (qa_material_profile){.detail_textures = true,
         .multitexture = true, .texture_env_add = true};
     uint8_t fog[256 * 32 * 4], dlight[16 * 16 * 4];
-    for (size_t y = 0; y < 32; ++y) for (size_t x = 0; x < 256; ++x) {
-        size_t at = (y * 256 + x) * 4;
-        fog[at] = fog[at + 1] = fog[at + 2] = 255;
-        fog[at + 3] = (uint8_t)(255 * qa_material_fog_factor(((float)x + 0.5f) / 256,
-                                                          ((float)y + 0.5f) / 32));
-    }
-    for (size_t y = 0; y < 16; ++y) for (size_t x = 0; x < 16; ++x) {
-        float dx = 7.5f - (float)x, dy = 7.5f - (float)y;
-        float brightness = fminf(255, truncf(4000 / (dx * dx + dy * dy)));
-        uint8_t value = brightness < 75 ? 0 : (uint8_t)brightness;
-        size_t at = (y * 16 + x) * 4;
-        dlight[at] = dlight[at + 1] = dlight[at + 2] = value;
-        dlight[at + 3] = 255;
-    }
+    scene_image_fog_pixels(fog);
+    scene_image_dlight_pixels(dlight);
     qa_scene_image_level fog_level = {256, 32, fog, sizeof(fog)};
     qa_scene_image_level light_level = {16, 16, dlight, sizeof(dlight)};
     bool ok = qa_scene_image_create(resources, "*fog", QA_SCENE_RGBA8, &fog_level, 1,

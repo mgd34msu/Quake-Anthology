@@ -88,5 +88,7 @@ bool scene_resource_variant_parent_retain(qa_scene_resources *, const qa_scene_i
 void scene_resource_alias_free(image_alias *);
 qa_scene_image_alias_source scene_resource_alias_source(const image_alias *);
 qa_scene_image_kind scene_resource_q3_image_kind(qa_q3_texture_format);
+void scene_image_dlight_pixels(uint8_t [16 * 16 * 4]);
+void scene_image_fog_pixels(uint8_t [256 * 32 * 4]);
 void scene_image_skin_flood(uint8_t *, uint32_t, uint32_t, uint8_t, uint8_t, size_t *);
 #endif
