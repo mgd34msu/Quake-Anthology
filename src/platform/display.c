@@ -41,6 +41,7 @@ struct qa_display {
     display_native_lease *lease;
     qa_display_surface_ticket *surface_ticket;
     qa_display_restore_guard *pending_restore;
+    const qa_display_restore_guard *restore_guard;
     const qa_display_surface_ticket *ready_surface;
     qa_display_endpoint ready_endpoint;
     uint64_t revision;
@@ -560,7 +561,9 @@ void qa_display_destroy(qa_display *display)
 {
     if (display == NULL) return;
     display_changed(display);
-    if (display->surface_ticket || display->pending_restore || display->gamma) { display->destroy_pending = true; return; }
+    if (display->surface_ticket || display->pending_restore || display->restore_guard || display->gamma) {
+        display->destroy_pending = true; return;
+    }
     if (display->lease) {
         if (display->backend==QA_DISPLAY_CPU && display->native.cpu.texture)
             SDL_DestroyTexture(display->native.cpu.texture);
@@ -1343,6 +1346,7 @@ bool qa_display_restore(qa_bytes bytes,const qa_display *active,qa_display **out
         if (active->backend==QA_DISPLAY_CPU) candidate->native.cpu.renderer=active->native.cpu.renderer;
         else candidate->native.gl=active->native.gl;
         guard->active=(qa_display *)active; guard->candidate=candidate; guard->window=active->window;
+        candidate->restore_guard=guard;
         if (active->backend==QA_DISPLAY_CPU) guard->renderer=active->native.cpu.renderer;
         else guard->context=active->native.gl.context;
         *out=candidate; *guard_out=guard; candidate=NULL; guard=NULL;
@@ -1382,6 +1386,9 @@ bool qa_display_handoff_prepare(qa_display_restore_guard *guard,qa_error *error)
     if (guard->prepared) return true;
     if (guard->attempted)
         return display_save_error(error,QA_ERROR_ARGUMENT,"Failed display preparation requires checked native rollback");
+    if (guard->candidate->restore_guard && guard->candidate->restore_guard!=guard)
+        return display_save_error(error,QA_ERROR_ARGUMENT,"Display candidate belongs to another native restore guard");
+    guard->candidate->restore_guard=guard;
     guard->attempted=true;
     display_changed(guard->active);
     qa_display_settings settings={.width=guard->saved.info.logical_width,.height=guard->saved.info.logical_height,
@@ -1406,7 +1413,11 @@ bool qa_display_handoff_prepare(qa_display_restore_guard *guard,qa_error *error)
 }
 bool qa_display_handoff_abort(qa_display_restore_guard *guard,qa_error *error)
 {
-    if (!guard || guard->transferred || !guard->attempted) return true;
+    if (!guard || guard->transferred) return true;
+    if (!guard->attempted) {
+        if (guard->candidate && guard->candidate->restore_guard==guard) guard->candidate->restore_guard=NULL;
+        return true;
+    }
     if (!display_guard_owned(guard,true,error)) return false;
     qa_display_settings settings={.width=guard->baseline.info.logical_width,.height=guard->baseline.info.logical_height,
         .fullscreen=guard->baseline.info.fullscreen,.swap_interval=guard->baseline.swap_interval};
@@ -1434,6 +1445,7 @@ bool qa_display_handoff_abort(qa_display_restore_guard *guard,qa_error *error)
     memcpy(guard->active->fullscreen_failure,guard->baseline.fullscreen_failure,sizeof(guard->baseline.fullscreen_failure));
     display_saved_free(&guard->staged); guard->staged=(display_saved){0};
     guard->attempted=guard->prepared=false;
+    if (guard->candidate->restore_guard==guard) guard->candidate->restore_guard=NULL;
     return true;
 }
 bool qa_display_handoff_ready(const qa_display_restore_guard *guard,qa_error *error)
@@ -1464,6 +1476,7 @@ void qa_display_handoff(qa_display_restore_guard *guard)
         guard->active->gamma = NULL;
     }
     guard->candidate->native_borrowed=false; guard->active->native_borrowed=true;
+    guard->candidate->restore_guard=NULL;
     if (guard->candidate->backend==QA_DISPLAY_CPU && guard->saved.frame) SDL_RenderPresent(guard->renderer);
     guard->transferred=true;
 }
@@ -1476,6 +1489,7 @@ void qa_display_restore_guard_destroy(qa_display_restore_guard *guard)
     }
     if (guard->active && guard->active->pending_restore==guard) guard->active->pending_restore=NULL;
     if (guard->candidate && guard->candidate->pending_restore==guard) guard->candidate->pending_restore=NULL;
+    if (guard->candidate && guard->candidate->restore_guard==guard) guard->candidate->restore_guard=NULL;
     display_saved_free(&guard->saved); display_saved_free(&guard->baseline); display_saved_free(&guard->staged); free(guard);
 }
 bool qa_display_restore_cleanup(qa_display *display,qa_error *error)
@@ -1508,16 +1522,23 @@ static bool surface_owner(const qa_display_surface_ticket *ticket, qa_error *err
 static bool display_endpoint_owned(const qa_display *display)
 {
     if (!display || display->destroy_pending || display->capturing || !display->revision ||
-        !display->lease || display->lease->references != 1 || !display->window ||
+        !display->lease || !display->window ||
         display->lease->window != display->window || display->lease->backend != display->backend)
         return false;
+    const qa_display_restore_guard *guard=display->restore_guard;
+    bool restored=guard && guard->candidate==display && guard->prepared && !guard->transferred &&
+        !display->pending_restore && guard->active && !guard->active->pending_restore &&
+        display->lease->references>=2 && display_guard_owned(guard,false,NULL);
+    if ((guard && !restored) || (!restored && display->lease->references!=1)) return false;
     if (display->surface_ticket && !surface_owned(display->surface_ticket)) return false;
     if (display->backend == QA_DISPLAY_CPU)
-        return !display->native_borrowed && display->native.cpu.renderer && display->native.cpu.texture &&
+        return (!display->native_borrowed || restored) && display->native.cpu.renderer && display->native.cpu.texture &&
             display->native.cpu.renderer == display->lease->renderer &&
-            display->native.cpu.width && display->native.cpu.height;
+            display->native.cpu.width && display->native.cpu.height &&
+            (!restored || (display->native.cpu.width==guard->staged.info.drawable_width &&
+                display->native.cpu.height==guard->staged.info.drawable_height));
     if (display->backend != QA_DISPLAY_OPENGL || !display->native.gl.context) return false;
-    if (!display->native_borrowed)
+    if (!display->native_borrowed || restored)
         return display->native.gl.context == display->lease->context &&
             display->native.gl.library_loaded == display->lease->library_loaded;
     const qa_display_surface_ticket *ticket = display->surface_ticket;
