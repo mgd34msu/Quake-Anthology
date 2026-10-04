@@ -50,6 +50,9 @@ typedef struct q2_collision {
     uint32_t *brush_stamps;
     float *expanded_distances;
     uint32_t *expanded_stamps;
+    uint32_t expanded_generation;
+    qa_shape_kind expanded_kind;
+    qa_bounds expanded_bounds;
     uint32_t stamp;
     q2_interval *intervals, *solid_intervals;
 } q2_collision;
@@ -192,11 +195,11 @@ static float q2_expand(const qa_collision_plane *plane, const qa_trace_shape *sh
 static float q2_expanded_distance(q2_work *work, uint32_t index)
 {
     q2_collision *collision = work->collision;
-    if (collision->expanded_stamps[index] != collision->stamp) {
+    if (collision->expanded_stamps[index] != collision->expanded_generation) {
         const qa_collision_plane *plane = &collision->planes[index];
         collision->expanded_distances[index] =
             plane->distance + q2_expand(plane, &work->query->shape);
-        collision->expanded_stamps[index] = collision->stamp;
+        collision->expanded_stamps[index] = collision->expanded_generation;
     }
     return collision->expanded_distances[index];
 }
@@ -207,8 +210,6 @@ static void q2_next_stamp(q2_collision *collision)
     if (collision->stamp == 0) {
         if (collision->brush_count != 0)
             memset(collision->brush_stamps, 0, collision->brush_count * sizeof(*collision->brush_stamps));
-        if (collision->plane_count != 0)
-            memset(collision->expanded_stamps, 0, collision->plane_count * sizeof(*collision->expanded_stamps));
         collision->stamp = 1;
     }
 }
@@ -575,6 +576,21 @@ static bool q2_trace(void *opaque, const qa_trace_query *query,
     work.start = q2_local(query->start, &query->target, basis);
     work.end = q2_local(query->end, &query->target, basis);
     work.bounds = q2_shape_bounds(&query->shape);
+    if (collision->expanded_generation == 0 || collision->expanded_kind != query->shape.kind ||
+        memcmp(&collision->expanded_bounds.mins.x, &work.bounds.mins.x, sizeof(float)) != 0 ||
+        memcmp(&collision->expanded_bounds.mins.y, &work.bounds.mins.y, sizeof(float)) != 0 ||
+        memcmp(&collision->expanded_bounds.mins.z, &work.bounds.mins.z, sizeof(float)) != 0 ||
+        memcmp(&collision->expanded_bounds.maxs.x, &work.bounds.maxs.x, sizeof(float)) != 0 ||
+        memcmp(&collision->expanded_bounds.maxs.y, &work.bounds.maxs.y, sizeof(float)) != 0 ||
+        memcmp(&collision->expanded_bounds.maxs.z, &work.bounds.maxs.z, sizeof(float)) != 0) {
+        if (++collision->expanded_generation == 0) {
+            memset(collision->expanded_stamps, 0,
+                   collision->plane_count * sizeof(*collision->expanded_stamps));
+            collision->expanded_generation = 1;
+        }
+        collision->expanded_kind = query->shape.kind;
+        collision->expanded_bounds = work.bounds;
+    }
     work.stationary = work.start.x == work.end.x && work.start.y == work.end.y && work.start.z == work.end.z;
     work.merged = query->policy.family != QA_COLLISION_Q2 || query->policy.q2_merged_contents;
     work.mask = qa_collision_geometry_mask(&query->policy, QA_COLLISION_Q2);
