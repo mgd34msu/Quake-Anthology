@@ -1,17 +1,8 @@
 /* Portable external QuakeC continuation checkpoints. */
 #include "internal.h"
+#include "qa/source_save.h"
 
 #define QC_CHECKPOINT_MAGIC UINT32_C(0x43514151) /* "QAQC" little-endian. */
-
-typedef struct qc_writer {
-    uint8_t *data;
-    size_t size, capacity;
-} qc_writer;
-
-typedef struct qc_reader {
-    qa_bytes bytes;
-    size_t offset;
-} qc_reader;
 
 static bool checkpoint_idle(const qa_qc_instance *instance, qa_error *error)
 {
@@ -38,7 +29,7 @@ void qa_qc_checkpoint_destroy(qa_qc_checkpoint *checkpoint)
     if (checkpoint == NULL) return;
     free(checkpoint->globals); free(checkpoint->entities); free(checkpoint->slots);
     free(checkpoint->profiles); free(checkpoint->strings);
-    for (uint32_t i = 0; i < checkpoint->engine_count; ++i)
+    for (uint32_t i = 0; checkpoint->engine_strings && i < checkpoint->engine_count; ++i)
         free(checkpoint->engine_strings[i].name);
     free(checkpoint->engine_strings);
     qa_buffer_free(&checkpoint->host);
@@ -480,45 +471,19 @@ bool qa_qc_checkpoint_restore(qa_qc_instance *instance,
     return true;
 }
 
-static bool writer_reserve(qc_writer *writer, size_t amount, qa_error *error)
+static bool write_bytes(qa_source_save_io *writer, const void *data, size_t size)
 {
-    if (amount > SIZE_MAX - writer->size)
-        return qc_fail(error, QA_ERROR_MEMORY, writer->size,
-                       "QuakeC checkpoint size overflow");
-    size_t required = writer->size + amount;
-    if (required <= writer->capacity) return true;
-    size_t capacity = writer->capacity == 0 ? 4096u : writer->capacity;
-    while (capacity < required) {
-        if (capacity > SIZE_MAX / 2u) { capacity = required; break; }
-        capacity *= 2u;
-    }
-    uint8_t *grown = realloc(writer->data, capacity);
-    if (grown == NULL)
-        return qc_fail(error, QA_ERROR_MEMORY, writer->size,
-                       "Cannot encode QuakeC checkpoint");
-    writer->data = grown; writer->capacity = capacity;
-    return true;
+    return qa_source_save_bytes(writer, (void *)data, size);
 }
 
-static bool write_bytes(qc_writer *writer, const void *data, size_t size,
-                        qa_error *error)
+static bool write_u32(qa_source_save_io *writer, uint32_t value)
 {
-    if (!writer_reserve(writer, size, error)) return false;
-    if (size != 0) memcpy(writer->data + writer->size, data, size);
-    writer->size += size;
-    return true;
+    return qa_source_save_u32(writer, &value);
 }
 
-static bool write_u32(qc_writer *writer, uint32_t value, qa_error *error)
+static bool write_u64(qa_source_save_io *writer, uint64_t value)
 {
-    uint8_t bytes[4]; qa_store_u32le(bytes, value);
-    return write_bytes(writer, bytes, sizeof(bytes), error);
-}
-
-static bool write_u64(qc_writer *writer, uint64_t value, qa_error *error)
-{
-    uint8_t bytes[8]; qa_store_u64le(bytes, value);
-    return write_bytes(writer, bytes, sizeof(bytes), error);
+    return qa_source_save_u64(writer, &value);
 }
 
 bool qa_qc_checkpoint_encode(const qa_qc_checkpoint *checkpoint,
@@ -526,11 +491,12 @@ bool qa_qc_checkpoint_encode(const qa_qc_checkpoint *checkpoint,
 {
     if (checkpoint == NULL || out == NULL)
         return qc_fail(error, QA_ERROR_ARGUMENT, 0, "Invalid QuakeC checkpoint output");
-    qc_writer writer = {0};
-#define W32(value_) do { if (!write_u32(&writer, (uint32_t)(value_), error)) goto failed; } while (0)
+    qa_source_save_io writer = {0};
+    if (!qa_source_save_writer(&writer, NULL, error)) return false;
+#define W32(value_) do { if (!write_u32(&writer, (uint32_t)(value_))) goto failed; } while (0)
     W32(QC_CHECKPOINT_MAGIC);
     if (!write_bytes(&writer, checkpoint->program.bytes,
-                     sizeof(checkpoint->program.bytes), error)) goto failed;
+                     sizeof(checkpoint->program.bytes))) goto failed;
     W32(checkpoint->profile); W32(checkpoint->layout.stride_bytes);
     W32(checkpoint->layout.variables_offset_bytes); W32(checkpoint->layout.field_words);
     W32(checkpoint->entity_capacity); W32(checkpoint->entity_count);
@@ -543,62 +509,37 @@ bool qa_qc_checkpoint_encode(const qa_qc_checkpoint *checkpoint,
         const qc_saved_slot *slot = &checkpoint->slots[i];
         W32(slot->kind); W32(slot->owner); W32(slot->source_slot);
         W32(slot->has_actor ? 1u : 0u);
-        if (!write_u64(&writer, slot->actor.generation, error)) goto failed;
+        if (!write_u64(&writer, slot->actor.generation)) goto failed;
         W32(slot->actor.slot);
     }
     for (uint32_t i = 0; i < checkpoint->function_count; ++i)
-        if (!write_u64(&writer, checkpoint->profiles[i], error)) goto failed;
-    if (!write_bytes(&writer, checkpoint->globals, checkpoint->global_bytes, error)
-        || !write_bytes(&writer, checkpoint->entities, checkpoint->entity_bytes, error)
-        || !write_bytes(&writer, checkpoint->strings, checkpoint->string_used, error)) goto failed;
+        if (!write_u64(&writer, checkpoint->profiles[i])) goto failed;
+    if (!write_bytes(&writer, checkpoint->globals, checkpoint->global_bytes)
+        || !write_bytes(&writer, checkpoint->entities, checkpoint->entity_bytes)
+        || !write_bytes(&writer, checkpoint->strings, checkpoint->string_used)) goto failed;
     for (uint32_t i = 0; i < checkpoint->engine_count; ++i) {
         const qc_engine_string *entry = &checkpoint->engine_strings[i];
         size_t length = strlen(entry->name);
-        if (length > UINT32_MAX) { qc_fail(error, QA_ERROR_MEMORY, writer.size, "Engine string name is too long"); goto failed; }
+        if (length > UINT32_MAX) { qc_fail(error, QA_ERROR_MEMORY, writer.output.size, "Engine string name is too long"); goto failed; }
         W32(entry->offset); W32(entry->capacity); W32(length);
-        if (!write_bytes(&writer, entry->name, length, error)) goto failed;
+        if (!write_bytes(&writer, entry->name, length)) goto failed;
     }
-    if (!write_bytes(&writer, checkpoint->host.data, checkpoint->host.size, error)) goto failed;
-    *out = (qa_buffer){writer.data, writer.size};
+    if (!write_bytes(&writer, checkpoint->host.data, checkpoint->host.size)) goto failed;
+    if (!qa_source_save_finish(&writer, out)) goto failed;
+    qa_source_save_dispose(&writer);
 #undef W32
     return true;
 failed:
 #undef W32
-    free(writer.data);
+    qa_source_save_dispose(&writer);
     return false;
 }
 
-static bool read_bytes(qc_reader *reader, size_t size, const uint8_t **out,
-                       qa_error *error)
+static bool read_bytes(qa_source_save_io *reader, size_t size, const uint8_t **out)
 {
-    if (size > reader->bytes.size - reader->offset)
-        return qc_fail(error, QA_ERROR_FORMAT, reader->offset,
-                       "Truncated QuakeC checkpoint");
-    *out = reader->bytes.data + reader->offset;
-    reader->offset += size;
-    return true;
-}
-
-static bool read_u32(qc_reader *reader, uint32_t *out, qa_error *error)
-{
-    const uint8_t *bytes;
-    if (!read_bytes(reader, 4, &bytes, error)) return false;
-    *out = qa_load_u32le(bytes); return true;
-}
-
-static bool read_u64(qc_reader *reader, uint64_t *out, qa_error *error)
-{
-    const uint8_t *bytes;
-    if (!read_bytes(reader, 8, &bytes, error)) return false;
-    *out = qa_load_u64le(bytes); return true;
-}
-
-static bool copy_reader(qc_reader *reader, void *destination, size_t size,
-                        qa_error *error)
-{
-    const uint8_t *source;
-    if (!read_bytes(reader, size, &source, error)) return false;
-    if (size != 0) memcpy(destination, source, size);
+    qa_bytes bytes;
+    if (!qa_source_save_span(reader, size, &bytes)) return false;
+    *out = bytes.data;
     return true;
 }
 
@@ -607,18 +548,19 @@ bool qa_qc_checkpoint_decode(qa_bytes bytes, qa_qc_checkpoint **out,
 {
     if (out == NULL || (bytes.size != 0 && bytes.data == NULL))
         return qc_fail(error, QA_ERROR_ARGUMENT, 0, "Invalid QuakeC checkpoint input");
-    qc_reader reader = {bytes, 0};
+    qa_source_save_io reader = {0};
+    if (!qa_source_save_reader(&reader, NULL, bytes, error)) return false;
     uint32_t magic, profile, trace, host_size;
     qa_qc_checkpoint *checkpoint = calloc(1, sizeof(*checkpoint));
     if (checkpoint == NULL)
         return qc_fail(error, QA_ERROR_MEMORY, 0, "Cannot allocate QuakeC checkpoint");
-#define R32(target_) do { if (!read_u32(&reader, &(target_), error)) goto failed; } while (0)
+#define R32(target_) do { if (!qa_source_save_u32(&reader, &(target_))) goto failed; } while (0)
     R32(magic);
     if (magic != QC_CHECKPOINT_MAGIC) {
         qc_fail(error, QA_ERROR_FORMAT, 0, "Unsupported QuakeC checkpoint header"); goto failed;
     }
-    if (!copy_reader(&reader, checkpoint->program.bytes,
-                     sizeof(checkpoint->program.bytes), error)) goto failed;
+    if (!qa_source_save_bytes(&reader, checkpoint->program.bytes,
+                     sizeof(checkpoint->program.bytes))) goto failed;
     R32(profile); R32(checkpoint->layout.stride_bytes);
     R32(checkpoint->layout.variables_offset_bytes); R32(checkpoint->layout.field_words);
     R32(checkpoint->entity_capacity); R32(checkpoint->entity_count);
@@ -670,7 +612,7 @@ bool qa_qc_checkpoint_decode(qa_bytes bytes, qa_qc_checkpoint **out,
         qc_saved_slot *slot = &checkpoint->slots[i];
         uint32_t kind, has_actor;
         R32(kind); R32(slot->owner); R32(slot->source_slot); R32(has_actor);
-        if (!read_u64(&reader, &slot->actor.generation, error)) goto failed;
+        if (!qa_source_save_u64(&reader, &slot->actor.generation)) goto failed;
         R32(slot->actor.slot);
         if (kind > QA_QC_SLOT_BORROWED || has_actor > 1u) {
             qc_fail(error, QA_ERROR_FORMAT, reader.offset, "Invalid checkpoint actor slot"); goto failed;
@@ -678,10 +620,10 @@ bool qa_qc_checkpoint_decode(qa_bytes bytes, qa_qc_checkpoint **out,
         slot->kind = (qa_qc_slot_kind)kind; slot->has_actor = has_actor != 0;
     }
     for (uint32_t i = 0; i < checkpoint->function_count; ++i)
-        if (!read_u64(&reader, &checkpoint->profiles[i], error)) goto failed;
-    if (!copy_reader(&reader, checkpoint->globals, checkpoint->global_bytes, error)
-        || !copy_reader(&reader, checkpoint->entities, checkpoint->entity_bytes, error)
-        || !copy_reader(&reader, checkpoint->strings, checkpoint->string_used, error)) goto failed;
+        if (!qa_source_save_u64(&reader, &checkpoint->profiles[i])) goto failed;
+    if (!qa_source_save_bytes(&reader, checkpoint->globals, checkpoint->global_bytes)
+        || !qa_source_save_bytes(&reader, checkpoint->entities, checkpoint->entity_bytes)
+        || !qa_source_save_bytes(&reader, checkpoint->strings, checkpoint->string_used)) goto failed;
     for (uint32_t i = 0; i < checkpoint->engine_count; ++i) {
         qc_engine_string *entry = &checkpoint->engine_strings[i];
         uint32_t length;
@@ -692,7 +634,7 @@ bool qa_qc_checkpoint_decode(qa_bytes bytes, qa_qc_checkpoint **out,
             qc_fail(error, QA_ERROR_FORMAT, reader.offset,
                     "Invalid checkpoint engine name length"); goto failed;
         }
-        if (!read_bytes(&reader, length, &name, error)) goto failed;
+        if (!read_bytes(&reader, length, &name)) goto failed;
         if (memchr(name, 0, length) != NULL) {
             qc_fail(error, QA_ERROR_FORMAT, reader.offset - length,
                     "Checkpoint engine name contains NUL"); goto failed;
@@ -709,11 +651,9 @@ bool qa_qc_checkpoint_decode(qa_bytes bytes, qa_qc_checkpoint **out,
             qc_fail(error, QA_ERROR_MEMORY, reader.offset, "Cannot decode host checkpoint"); goto failed;
         }
         checkpoint->host.size = host_size;
-        if (!copy_reader(&reader, checkpoint->host.data, host_size, error)) goto failed;
+        if (!qa_source_save_bytes(&reader, checkpoint->host.data, host_size)) goto failed;
     }
-    if (reader.offset != bytes.size) {
-        qc_fail(error, QA_ERROR_FORMAT, reader.offset, "Trailing QuakeC checkpoint bytes"); goto failed;
-    }
+    if (!qa_source_save_finish(&reader, NULL)) goto failed;
     *out = checkpoint;
 #undef R32
     return true;

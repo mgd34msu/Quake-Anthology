@@ -121,8 +121,8 @@ bool qa_save_image_native_attach(qa_save_image *image, qa_native_resource_invent
 const qa_native_resource_inventory *qa_save_image_native_read(const qa_save_image *image)
 { return image && !image->retiring ? image->native_resources : NULL; }
 
-bool qa_save_image_create(const qa_save_metadata *metadata, const qa_save_record *records,
-                          size_t count, qa_save_image **out, qa_error *error)
+static bool image_create(const qa_save_metadata *metadata, const qa_save_record *records,
+                         size_t count, bool adopt, qa_save_image **out, qa_error *error)
 {
     if (!metadata || !out || (unsigned)metadata->purpose > QA_SAVE_DEMO_KEYFRAME)
         return persistence_fail(error, QA_ERROR_ARGUMENT, "Invalid save image metadata/output");
@@ -142,15 +142,28 @@ bool qa_save_image_create(const qa_save_metadata *metadata, const qa_save_record
         copy->owner.instance = text_copy(records[i].owner.instance);
         copy->owner.schema = text_copy(records[i].owner.schema);
         copy->owner.backend = text_copy(records[i].owner.backend);
-        uint8_t *payload = malloc(records[i].payload.size);
+        uint8_t *payload = adopt ? NULL : malloc(records[i].payload.size);
         copy->payload = (qa_bytes){payload, records[i].payload.size};
-        if (!copy->owner.instance || !copy->owner.schema || !copy->owner.backend || !payload) {
+        if (!copy->owner.instance || !copy->owner.schema || !copy->owner.backend || (!adopt && !payload)) {
             image_free(image);
             return persistence_fail(error, QA_ERROR_MEMORY, "Copying save owner record");
         }
-        memcpy(payload, records[i].payload.data, records[i].payload.size);
+        if (!adopt) memcpy(payload, records[i].payload.data, records[i].payload.size);
     }
+    if (adopt) for (size_t i = 0; i < count; ++i) image->records[i].payload = records[i].payload;
     *out = image;
+    return true;
+}
+
+bool qa_save_image_create(const qa_save_metadata *metadata, const qa_save_record *records,
+                          size_t count, qa_save_image **out, qa_error *error)
+{ return image_create(metadata, records, count, false, out, error); }
+
+bool persistence_image_create_owned(const qa_save_metadata *metadata, qa_save_record *records,
+                                    size_t count, qa_save_image **out, qa_error *error)
+{
+    if (!image_create(metadata, records, count, true, out, error)) return false;
+    for (size_t i = 0; i < count; ++i) records[i].payload = (qa_bytes){0};
     return true;
 }
 

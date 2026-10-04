@@ -86,12 +86,12 @@ static void *allocate(q1_save_io *io, size_t count, size_t size) {
     }
     void *data = calloc(count, size);
     if (!data)
-        qa_error_set(io->error, QA_ERROR_MEMORY, io->offset, "Allocating Q1 checkpoint state");
+        qa_error_set(io->values.error, QA_ERROR_MEMORY, io->values.offset, "Allocating Q1 checkpoint state");
     return data;
 }
 static bool groups(q1_save_io *io, qa_q1_game *g, q1_door_group ***out, size_t *out_count) {
     uint32_t count = 0;
-    if (!io->reading && g->maps)
+    if (io->values.direction == QA_SOURCE_SAVE_WRITE && g->maps)
         for (q1_door_group *group = g->maps->door_groups; group; group = group->next) {
             if (count == UINT32_MAX) {
                 q1_save_fail(io, "Too many Q1 door groups");
@@ -106,7 +106,7 @@ static bool groups(q1_save_io *io, qa_q1_game *g, q1_door_group ***out, size_t *
         *out_count = 0;
         return true;
     }
-    if (!g->maps || (io->reading && count > (io->input.size - io->offset) / 4)) {
+    if (!g->maps || ((io->values.direction == QA_SOURCE_SAVE_READ) && count > (io->values.input.size - io->values.offset) / 4)) {
         q1_save_fail(io, "Invalid Q1 checkpoint door group count");
         return false;
     }
@@ -115,22 +115,22 @@ static bool groups(q1_save_io *io, qa_q1_game *g, q1_door_group ***out, size_t *
         return false;
     q1_door_group *group = g->maps->door_groups, **tail = &g->maps->door_groups;
     for (uint32_t i = 0; i < count; ++i) {
-        if (io->reading) {
+        if (io->values.direction == QA_SOURCE_SAVE_READ) {
             group = allocate(io, 1, sizeof(*group));
             if (!group)
                 goto fail;
             *tail = group;
         }
         index[i] = group;
-        uint32_t members = io->reading ? 0 : (uint32_t)group->count;
-        if ((!io->reading && group->count > UINT32_MAX) || !q1_save_u32(io, &members))
+        uint32_t members = (io->values.direction == QA_SOURCE_SAVE_READ) ? 0 : (uint32_t)group->count;
+        if ((io->values.direction == QA_SOURCE_SAVE_WRITE && group->count > UINT32_MAX) || !q1_save_u32(io, &members))
             goto fail;
         if (!members || members > g->capacity ||
-            (io->reading && members > (io->input.size - io->offset) / 13)) {
+            ((io->values.direction == QA_SOURCE_SAVE_READ) && members > (io->values.input.size - io->values.offset) / 13)) {
             q1_save_fail(io, "Invalid Q1 checkpoint door group members");
             goto fail;
         }
-        if (io->reading) {
+        if (io->values.direction == QA_SOURCE_SAVE_READ) {
             group->count = members;
             group->members = allocate(io, members, sizeof(*group->members));
             if (!group->members)
@@ -154,16 +154,16 @@ fail:
 }
 static bool actors(q1_save_io *io, qa_q1_game *g, q1_door_group **index, size_t group_count) {
     uint32_t count = 0;
-    if (!io->reading)
+    if (io->values.direction == QA_SOURCE_SAVE_WRITE)
         for (uint32_t i = 0; i < g->capacity; ++i)
             count += g->actors[i] != NULL;
     Q1_SAVE(io, u32, count);
-    if (count > g->capacity || (io->reading && count > (io->input.size - io->offset) / 13))
+    if (count > g->capacity || ((io->values.direction == QA_SOURCE_SAVE_READ) && count > (io->values.input.size - io->values.offset) / 13))
         return q1_save_fail(io, "Invalid Q1 checkpoint actor count");
     uint32_t cursor = 0;
     for (uint32_t i = 0; i < count; ++i) {
         q1_actor *actor;
-        if (io->reading) {
+        if (io->values.direction == QA_SOURCE_SAVE_READ) {
             actor = allocate(io, 1, sizeof(*actor));
             if (!actor)
                 return false;
@@ -183,11 +183,11 @@ static bool actors(q1_save_io *io, qa_q1_game *g, q1_door_group **index, size_t 
         if (!shared || (actor->native && shared->owner != g->options.provider))
             return q1_save_fail(io, "Q1 continuation disagrees with shared actor ownership");
         bool target = false;
-        if (!io->reading && g->maps) {
+        if (io->values.direction == QA_SOURCE_SAVE_WRITE && g->maps) {
             qa_target_binding actual, expected;
             if (qa_persistence_targets_binding(g->maps->options.targets, actor->id, &actual) &&
                 actual.context == g) {
-                if (!qa_q1_game_target_binding(g, actor->id, &expected, io->error) ||
+                if (!qa_q1_game_target_binding(g, actor->id, &expected, io->values.error) ||
                     !same_target(&actual, &expected))
                     return q1_save_fail(io, "Q1 target has no matching source declaration");
                 target = true;
@@ -196,9 +196,9 @@ static bool actors(q1_save_io *io, qa_q1_game *g, q1_door_group **index, size_t 
         Q1_SAVE(io, bool, target);
         if (target && (!g->maps || !actor->native))
             return q1_save_fail(io, "Q1 target has no matching native continuation");
-        if (io->reading)
+        if (io->values.direction == QA_SOURCE_SAVE_READ)
             actor->restored_target = target;
-        if (io->reading) {
+        if (io->values.direction == QA_SOURCE_SAVE_READ) {
             if (actor->id.slot >= g->capacity || g->actors[actor->id.slot])
                 return q1_save_fail(io, "Duplicate Q1 actor continuation");
             g->actors[actor->id.slot] = actor;
@@ -208,7 +208,7 @@ static bool actors(q1_save_io *io, qa_q1_game *g, q1_door_group **index, size_t 
         if (map) {
             if (!g->maps)
                 return q1_save_fail(io, "Q1 map actor has no map services");
-            if (io->reading) {
+            if (io->values.direction == QA_SOURCE_SAVE_READ) {
                 actor->map = allocate(io, 1, sizeof(*actor->map));
                 if (!actor->map)
                     return false;
@@ -229,16 +229,16 @@ static bool actors(q1_save_io *io, qa_q1_game *g, q1_door_group **index, size_t 
 }
 static bool players(q1_save_io *io, qa_q1_game *g) {
     uint32_t count = 0;
-    if (!io->reading)
+    if (io->values.direction == QA_SOURCE_SAVE_WRITE)
         for (uint32_t i = 0; i < g->capacity; ++i)
             count += g->players[i] != NULL;
     Q1_SAVE(io, u32, count);
-    if (count > g->capacity || (io->reading && count > (io->input.size - io->offset) / 13))
+    if (count > g->capacity || ((io->values.direction == QA_SOURCE_SAVE_READ) && count > (io->values.input.size - io->values.offset) / 13))
         return q1_save_fail(io, "Invalid Q1 checkpoint player count");
     uint32_t cursor = 0;
     for (uint32_t i = 0; i < count; ++i) {
         q1_player *player;
-        if (io->reading) {
+        if (io->values.direction == QA_SOURCE_SAVE_READ) {
             player = allocate(io, 1, sizeof(*player));
             if (!player)
                 return false;
@@ -260,7 +260,7 @@ static bool players(q1_save_io *io, qa_q1_game *g) {
                     other->client_slot == player->client_slot)
                     return q1_save_fail(io, "Duplicate Q1 source client slot continuation");
             }
-        if (io->reading) {
+        if (io->values.direction == QA_SOURCE_SAVE_READ) {
             if (player->id.slot >= g->capacity || g->players[player->id.slot])
                 return q1_save_fail(io, "Duplicate Q1 player continuation");
             g->players[player->id.slot] = player;
@@ -272,20 +272,20 @@ static bool rune_number(q1_save_io *io, double *value) {
     uint64_t bits;
     memcpy(&bits, value, sizeof(bits));
     if (!q1_save_u64(io, &bits)) return false;
-    if (io->reading) memcpy(value, &bits, sizeof(bits));
+    if (io->values.direction == QA_SOURCE_SAVE_READ) memcpy(value, &bits, sizeof(bits));
     return true;
 }
 static bool rogue_runes(q1_save_io *io, qa_q1_game *g) {
     uint32_t count = 0;
-    if (!io->reading)
+    if (io->values.direction == QA_SOURCE_SAVE_WRITE)
         for (const q1_rogue_rune_player *row = g->rogue_rune_players; row; row = row->next) ++count;
     Q1_SAVE(io, u32, count);
     if (count > g->capacity || (count && g->options.program != QA_Q1_ROGUE) ||
-        (io->reading && count > (io->input.size - io->offset) / 56))
+        ((io->values.direction == QA_SOURCE_SAVE_READ) && count > (io->values.input.size - io->values.offset) / 56))
         return q1_save_fail(io, "Invalid Rogue rune carrier count");
     q1_rogue_rune_player **link = &g->rogue_rune_players;
     for (uint32_t i = 0; i < count; ++i) {
-        if (io->reading) {
+        if (io->values.direction == QA_SOURCE_SAVE_READ) {
             *link = allocate(io, 1, sizeof(**link));
             if (!*link) return false;
         }
@@ -355,9 +355,11 @@ bool qa_q1_game_capture(qa_q1_game *g, qa_buffer *out, qa_error *error) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q1 restored bindings are not connected");
         return false;
     }
-    q1_save_io body = {.game = g, .error = error};
-    q1_save_io file = {.game = g, .error = error};
-    bool ok = qa_strings_create(&body.dictionary, error) && payload(&body, g);
+    q1_save_io body = {.game = g};
+    q1_save_io file = {.game = g};
+    bool ok = qa_source_save_writer(&body.values, g->services.session, error) &&
+        qa_source_save_writer(&file.values, g->services.session, error) &&
+        qa_strings_create(&body.dictionary, error) && payload(&body, g);
     if (ok) {
         uint8_t magic[sizeof(signature)];
         memcpy(magic, signature, sizeof(magic));
@@ -372,16 +374,17 @@ bool qa_q1_game_capture(qa_q1_game *g, qa_buffer *out, qa_error *error) {
                  q1_save_bytes(&file, (void *)word.data, word.size);
         }
         if (ok)
-            ok = q1_save_bytes(&file, body.output.data, body.output.size);
+            ok = q1_save_bytes(&file, body.values.output.data, body.values.output.size);
     }
     qa_strings_destroy(body.dictionary);
-    qa_buffer_free(&body.output);
+    qa_source_save_dispose(&body.values);
     if (!ok) {
-        qa_buffer_free(&file.output);
+        qa_source_save_dispose(&file.values);
         return false;
     }
-    *out = file.output;
-    return true;
+    bool finished = qa_source_save_finish(&file.values, out);
+    qa_source_save_dispose(&file.values);
+    return finished;
 }
 bool qa_q1_game_restore_prepare(qa_q1_game *g, qa_bytes bytes, qa_q1_restore **out,
                                 qa_error *error) {
@@ -412,7 +415,11 @@ bool qa_q1_game_restore_prepare(qa_q1_game *g, qa_bytes bytes, qa_q1_restore **o
     candidate->maps = NULL;
     candidate->wire = NULL;
     candidate->rogue_rune_players = NULL;
-    q1_save_io io = {.game = candidate, .input = bytes, .error = error, .reading = true};
+    q1_save_io io = {.game = candidate};
+    if (!qa_source_save_reader(&io.values, candidate->services.session, bytes, error)) {
+        qa_q1_game_restore_abort(ticket);
+        return false;
+    }
     qa_string_id *strings = NULL;
     candidate->actors = allocate(&io, g->capacity, sizeof(*g->actors));
     candidate->players = allocate(&io, g->capacity, sizeof(*g->players));
@@ -428,7 +435,7 @@ bool qa_q1_game_restore_prepare(qa_q1_game *g, qa_bytes bytes, qa_q1_restore **o
     uint32_t count = 0;
     if (!q1_save_bytes(&io, magic, sizeof(magic)) || memcmp(magic, signature, sizeof(magic)) ||
         !q1_save_u32(&io, &count) ||
-        count == UINT32_MAX || count > (bytes.size - io.offset) / 4) {
+        count == UINT32_MAX || count > (bytes.size - io.values.offset) / 4) {
         q1_save_fail(&io, "Invalid Q1 checkpoint header or dictionary");
         goto fail;
     }
@@ -439,15 +446,15 @@ bool qa_q1_game_restore_prepare(qa_q1_game *g, qa_bytes bytes, qa_q1_restore **o
     io.string_count = (size_t)count + 1;
     for (uint32_t i = 0; i < count; ++i) {
         uint32_t length = 0;
-        if (!q1_save_u32(&io, &length) || length > bytes.size - io.offset) {
+        if (!q1_save_u32(&io, &length) || length > bytes.size - io.values.offset) {
             q1_save_fail(&io, "Truncated Q1 checkpoint string");
             goto fail;
         }
-        qa_bytes text = {bytes.data + io.offset, length};
+        qa_bytes text;
+        if (!qa_source_save_span(&io.values, length, &text)) goto fail;
         if (!qa_strings_intern(qa_session_strings(g->services.session), text, &strings[i + 1],
                                error))
             goto fail;
-        io.offset += length;
     }
     if (!payload(&io, candidate))
         goto fail;
@@ -462,7 +469,7 @@ bool qa_q1_game_restore_prepare(qa_q1_game *g, qa_bytes bytes, qa_q1_restore **o
                 goto fail;
             }
         }
-    if (io.offset != bytes.size) {
+    if (!qa_source_save_finish(&io.values, NULL)) {
         q1_save_fail(&io, "Trailing bytes in Q1 checkpoint");
         goto fail;
     }

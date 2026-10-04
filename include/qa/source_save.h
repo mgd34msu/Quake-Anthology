@@ -22,6 +22,8 @@ bool qa_source_save_reader(qa_source_save_io *, qa_session *, qa_bytes, qa_error
 bool qa_source_save_finish(qa_source_save_io *, qa_buffer *owned_output);
 void qa_source_save_dispose(qa_source_save_io *);
 bool qa_source_save_bytes(qa_source_save_io *, void *, size_t);
+/* READ advances over a borrowed input span without allocating or copying. */
+bool qa_source_save_span(qa_source_save_io *, size_t, qa_bytes *);
 bool qa_source_save_bool(qa_source_save_io *, bool *);
 bool qa_source_save_u8(qa_source_save_io *, uint8_t *);
 bool qa_source_save_u16(qa_source_save_io *, uint16_t *);

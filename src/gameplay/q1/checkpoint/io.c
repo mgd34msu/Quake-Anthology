@@ -1,128 +1,69 @@
 #include "internal.h"
 
 bool q1_save_fail(q1_save_io *io, const char *message) {
-    qa_error_set(io->error, QA_ERROR_FORMAT, io->offset, "%s", message);
+    io->values.failed = true;
+    qa_error_set(io->values.error, QA_ERROR_FORMAT, io->values.offset, "%s", message);
+    return false;
+}
+static bool transferred(q1_save_io *io, bool okay, size_t size) {
+    if (okay) return true;
+    qa_error *error = io->values.error;
+    if (error && error->code == QA_ERROR_MEMORY)
+        qa_error_set(error, QA_ERROR_MEMORY, io->values.offset + size, "Allocating Q1 checkpoint");
+    else if (error && error->code == QA_ERROR_FORMAT)
+        return q1_save_fail(io, io->values.direction == QA_SOURCE_SAVE_READ
+            ? "Truncated Q1 checkpoint" : "Q1 checkpoint size overflow");
     return false;
 }
 bool q1_save_bytes(q1_save_io *io, void *value, size_t count) {
-    if (io->reading) {
-        if (io->offset > io->input.size || count > io->input.size - io->offset)
-            return q1_save_fail(io, "Truncated Q1 checkpoint");
-        if (count)
-            memcpy(value, io->input.data + io->offset, count);
-    } else {
-        if (count > SIZE_MAX - io->offset)
-            return q1_save_fail(io, "Q1 checkpoint size overflow");
-        size_t needed = io->offset + count;
-        if (needed > io->capacity) {
-            size_t capacity = io->capacity ? io->capacity : 4096;
-            while (capacity < needed) {
-                if (capacity > SIZE_MAX / 2) {
-                    capacity = needed;
-                    break;
-                }
-                capacity *= 2;
-            }
-            void *memory = realloc(io->output.data, capacity);
-            if (!memory) {
-                qa_error_set(io->error, QA_ERROR_MEMORY, needed, "Allocating Q1 checkpoint");
-                return false;
-            }
-            io->output.data = memory;
-            io->capacity = capacity;
-        }
-        if (count)
-            memcpy(io->output.data + io->offset, value, count);
-        io->output.size = needed;
+    return transferred(io, qa_source_save_bytes(&io->values, value, count), count);
+}
+#define UNSIGNED_IO(bits, size) \
+    bool q1_save_u##bits(q1_save_io *io, uint##bits##_t *value) { \
+        return transferred(io, qa_source_save_u##bits(&io->values, value), size); \
     }
-    io->offset += count;
-    return true;
-}
-bool q1_save_u8(q1_save_io *io, uint8_t *value) { return q1_save_bytes(io, value, 1); }
-bool q1_save_u16(q1_save_io *io, uint16_t *value) {
-    uint8_t bytes[2];
-    if (!io->reading)
-        qa_store_u16le(bytes, *value);
-    if (!q1_save_bytes(io, bytes, sizeof(bytes)))
-        return false;
-    if (io->reading)
-        *value = qa_load_u16le(bytes);
-    return true;
-}
-bool q1_save_u32(q1_save_io *io, uint32_t *value) {
-    uint8_t bytes[4];
-    if (!io->reading)
-        qa_store_u32le(bytes, *value);
-    if (!q1_save_bytes(io, bytes, sizeof(bytes)))
-        return false;
-    if (io->reading)
-        *value = qa_load_u32le(bytes);
-    return true;
-}
-bool q1_save_u64(q1_save_io *io, uint64_t *value) {
-    uint8_t bytes[8];
-    if (!io->reading)
-        qa_store_u64le(bytes, *value);
-    if (!q1_save_bytes(io, bytes, sizeof(bytes)))
-        return false;
-    if (io->reading)
-        *value = qa_load_u64le(bytes);
-    return true;
-}
-#define SIGNED_IO(bits)                                                                            \
-    bool q1_save_i##bits(q1_save_io *io, int##bits##_t *value) {                                   \
-        uint##bits##_t encoded;                                                                    \
-        memcpy(&encoded, value, sizeof(encoded));                                                  \
-        if (!q1_save_u##bits(io, &encoded))                                                        \
-            return false;                                                                          \
-        if (io->reading)                                                                           \
-            memcpy(value, &encoded, sizeof(encoded));                                              \
-        return true;                                                                               \
-    }
-SIGNED_IO(16)
-SIGNED_IO(32)
-SIGNED_IO(64)
-#undef SIGNED_IO
-
-bool q1_save_float(q1_save_io *io, float *value) {
-    uint32_t encoded;
-    _Static_assert(sizeof(float) == sizeof(encoded), "Q1 saves require binary32 floats");
+UNSIGNED_IO(8, 1)
+UNSIGNED_IO(16, 2)
+UNSIGNED_IO(32, 4)
+UNSIGNED_IO(64, 8)
+#undef UNSIGNED_IO
+bool q1_save_i16(q1_save_io *io, int16_t *value) {
+    uint16_t encoded;
     memcpy(&encoded, value, sizeof(encoded));
-    if (!q1_save_u32(io, &encoded))
-        return false;
-    float number;
-    memcpy(&number, &encoded, sizeof(number));
-    if (!isfinite(number))
-        return q1_save_fail(io, "Nonfinite Q1 checkpoint float");
-    if (io->reading)
-        *value = number;
+    if (!q1_save_u16(io, &encoded)) return false;
+    if (io->values.direction == QA_SOURCE_SAVE_READ)
+        memcpy(value, &encoded, sizeof(encoded));
+    return true;
+}
+bool q1_save_i32(q1_save_io *io, int32_t *value) {
+    return transferred(io, qa_source_save_i32(&io->values, value), 4);
+}
+bool q1_save_i64(q1_save_io *io, int64_t *value) {
+    return transferred(io, qa_source_save_i64(&io->values, value), 8);
+}
+bool q1_save_float(q1_save_io *io, float *value) {
+    float number = io->values.direction == QA_SOURCE_SAVE_WRITE ? *value : 0;
+    if (!transferred(io, qa_source_save_f32(&io->values, &number), 4)) return false;
+    if (!isfinite(number)) return q1_save_fail(io, "Nonfinite Q1 checkpoint float");
+    if (io->values.direction == QA_SOURCE_SAVE_READ) *value = number;
     return true;
 }
 static bool number64(q1_save_io *io, double *value, bool allow_never) {
-    uint64_t encoded;
-    _Static_assert(sizeof(double) == sizeof(encoded), "Q1 saves require binary64 clocks");
-    memcpy(&encoded, value, sizeof(encoded));
-    if (!q1_save_u64(io, &encoded))
-        return false;
-    double number;
-    memcpy(&number, &encoded, sizeof(number));
+    double number = io->values.direction == QA_SOURCE_SAVE_WRITE ? *value : 0;
+    if (!transferred(io, qa_source_save_f64(&io->values, &number), 8)) return false;
     if (!isfinite(number) && !(allow_never && number == INFINITY))
         return q1_save_fail(io, "Nonfinite Q1 checkpoint clock");
-    if (io->reading)
-        *value = number;
+    if (io->values.direction == QA_SOURCE_SAVE_READ) *value = number;
     return true;
 }
 bool q1_save_double(q1_save_io *io, double *value) { return number64(io, value, false); }
 bool q1_save_deadline(q1_save_io *io, double *value) { return number64(io, value, true); }
 bool q1_save_bool(q1_save_io *io, bool *value) {
-    uint8_t encoded = *value ? 1 : 0;
-    if (!q1_save_u8(io, &encoded))
-        return false;
-    if (encoded > 1)
+    size_t before = io->values.offset;
+    if (qa_source_save_bool(&io->values, value)) return true;
+    if (io->values.direction == QA_SOURCE_SAVE_READ && io->values.offset != before)
         return q1_save_fail(io, "Invalid Q1 checkpoint boolean");
-    if (io->reading)
-        *value = encoded != 0;
-    return true;
+    return transferred(io, false, 1);
 }
 bool q1_save_vector(q1_save_io *io, qa_vec3 *value) {
     return q1_save_float(io, &value->x) && q1_save_float(io, &value->y) &&
@@ -136,16 +77,16 @@ bool q1_save_bounds(q1_save_io *io, qa_bounds *value) {
 }
 bool q1_save_string(q1_save_io *io, qa_string_id *value) {
     uint32_t index = 0;
-    if (!io->reading && *value) {
+    if (io->values.direction == QA_SOURCE_SAVE_WRITE && *value) {
         qa_strings *strings = qa_session_strings(io->game->services.session);
         if (!qa_strings_text(strings, *value).data)
             return q1_save_fail(io, "Unknown Q1 checkpoint string");
-        if (!qa_strings_intern(io->dictionary, qa_strings_text(strings, *value), &index, io->error))
+        if (!qa_strings_intern(io->dictionary, qa_strings_text(strings, *value), &index, io->values.error))
             return false;
     }
     if (!q1_save_u32(io, &index))
         return false;
-    if (io->reading) {
+    if (io->values.direction == QA_SOURCE_SAVE_READ) {
         if (index >= io->string_count)
             return q1_save_fail(io, "Q1 checkpoint string index is out of range");
         *value = io->strings[index];
@@ -156,22 +97,22 @@ bool q1_save_actor(q1_save_io *io, qa_actor_id *value) {
     bool present = value->registry != 0;
     qa_saved_actor_id saved = {0};
     const qa_actor_registry *actors = qa_session_actors(io->game->services.session);
-    if (!io->reading && present && !qa_actors_save_reference(actors, *value, &saved, io->error))
+    if (io->values.direction == QA_SOURCE_SAVE_WRITE && present && !qa_actors_save_reference(actors, *value, &saved, io->values.error))
         return false;
     if (!q1_save_bool(io, &present))
         return false;
     if (!present) {
-        if (io->reading)
+        if (io->values.direction == QA_SOURCE_SAVE_READ)
             *value = (qa_actor_id){0};
         return true;
     }
     if (!q1_save_u64(io, &saved.generation) || !q1_save_u32(io, &saved.slot))
         return false;
-    if (io->reading) {
+    if (io->values.direction == QA_SOURCE_SAVE_READ) {
         const qa_actor_record *record = qa_actors_resolve_saved(actors, saved);
         if (record)
             *value = record->id;
-        else if (!qa_actors_reference_saved(actors, saved, true, value, io->error))
+        else if (!qa_actors_reference_saved(actors, saved, true, value, io->values.error))
             return false;
     }
     return true;
@@ -179,12 +120,12 @@ bool q1_save_actor(q1_save_io *io, qa_actor_id *value) {
 
 bool q1_save_literal(q1_save_io *io, const char **value) {
     uint32_t index = 0;
-    if (!io->reading &&
-        (!*value || !qa_strings_intern_cstr(io->dictionary, *value, &index, io->error)))
+    if (io->values.direction == QA_SOURCE_SAVE_WRITE &&
+        (!*value || !qa_strings_intern_cstr(io->dictionary, *value, &index, io->values.error)))
         return false;
     if (!q1_save_u32(io, &index))
         return false;
-    if (io->reading) {
+    if (io->values.direction == QA_SOURCE_SAVE_READ) {
         if (!index || index >= io->string_count)
             return q1_save_fail(io, "Invalid Q1 checkpoint immutable identity");
         *value =

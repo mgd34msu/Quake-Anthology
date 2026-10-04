@@ -24,7 +24,7 @@ static bool movement(q1_save_io *io, q1_map_movement *m, q1_door_group **groups,
     Q1_SAVE(io, vector, m->dest2);
     Q1_SAVE(io, vector, m->destination);
     uint32_t group = 0;
-    if (!io->reading && m->group) {
+    if (io->values.direction == QA_SOURCE_SAVE_WRITE && m->group) {
         for (size_t i = 0; i < count; ++i)
             if (groups[i] == m->group) {
                 group = (uint32_t)i + 1;
@@ -36,7 +36,7 @@ static bool movement(q1_save_io *io, q1_map_movement *m, q1_door_group **groups,
     Q1_SAVE(io, u32, group);
     if (group > count)
         return q1_save_fail(io, "Invalid Q1 door group identity");
-    if (io->reading)
+    if (io->values.direction == QA_SOURCE_SAVE_READ)
         m->group = group ? groups[group - 1] : NULL;
     Q1_SAVE_ENUM(io, m->done, Q1_MAP_CTF_NEXTLEVEL);
     Q1_SAVE_ENUM(io, m->position, Q1_MAP_DOWN);
@@ -263,7 +263,7 @@ bool q1_save_map(q1_save_io *io, q1_map_state *m, q1_door_group **groups, size_t
             Q1_SAVE(io, u32, plane);
             if (plane > 2)
                 return q1_save_fail(io, "Invalid Q1 particle field plane");
-            if (io->reading)
+            if (io->values.direction == QA_SOURCE_SAVE_READ)
                 m->pending.particles.plane = plane;
         }
         break;
@@ -310,10 +310,10 @@ bool q1_save_map_runtime(q1_save_io *io, q1_map_runtime *m) {
     Q1_SAVE(io, u32, m->frame_tick_count);
     if (m->frame_tick_count > io->game->capacity)
         return q1_save_fail(io, "Too many Q1 authored frame callbacks");
-    if (io->reading && m->frame_tick_count) {
+    if ((io->values.direction == QA_SOURCE_SAVE_READ) && m->frame_tick_count) {
         m->frame_ticks = calloc(io->game->capacity, sizeof(*m->frame_ticks));
         if (!m->frame_ticks) {
-            qa_error_set(io->error, QA_ERROR_MEMORY, io->offset, "allocating saved Q1 frame callbacks");
+            qa_error_set(io->values.error, QA_ERROR_MEMORY, io->values.offset, "allocating saved Q1 frame callbacks");
             return false;
         }
     }
@@ -326,16 +326,16 @@ bool q1_save_map_runtime(q1_save_io *io, q1_map_runtime *m) {
                 return q1_save_fail(io, "Duplicate Q1 authored frame callback");
     }
     uint32_t count = 0;
-    if (!io->reading && m->rotated_targets)
+    if (io->values.direction == QA_SOURCE_SAVE_WRITE && m->rotated_targets)
         for (uint32_t slot = 0; slot < io->game->capacity; ++slot)
             count += m->rotated_targets[slot].actor.registry != 0;
     Q1_SAVE(io, u32, count);
     if (count > io->game->capacity)
         return q1_save_fail(io, "Too many Q1 rotation targets");
-    if (io->reading && count) {
+    if ((io->values.direction == QA_SOURCE_SAVE_READ) && count) {
         m->rotated_targets = calloc(io->game->capacity, sizeof(*m->rotated_targets));
         if (!m->rotated_targets) {
-            qa_error_set(io->error, QA_ERROR_MEMORY, io->offset, "allocating saved Q1 rotation targets");
+            qa_error_set(io->values.error, QA_ERROR_MEMORY, io->values.offset, "allocating saved Q1 rotation targets");
             return false;
         }
     }
@@ -343,7 +343,7 @@ bool q1_save_map_runtime(q1_save_io *io, q1_map_runtime *m) {
     for (uint32_t i = 0; i < count; ++i) {
         q1_rotate_target saved = {0};
         q1_rotate_target *row = &saved;
-        if (!io->reading) {
+        if (io->values.direction == QA_SOURCE_SAVE_WRITE) {
             while (next < io->game->capacity && !m->rotated_targets[next].actor.registry)
                 ++next;
             row = &m->rotated_targets[next++];
@@ -355,23 +355,23 @@ bool q1_save_map_runtime(q1_save_io *io, q1_map_runtime *m) {
         Q1_SAVE(io, u8, row->type);
         if (!row->actor.registry || row->actor.slot >= io->game->capacity || row->type > 2)
             return q1_save_fail(io, "Invalid Q1 rotation target");
-        if (io->reading) {
+        if (io->values.direction == QA_SOURCE_SAVE_READ) {
             if (m->rotated_targets[row->actor.slot].actor.registry)
                 return q1_save_fail(io, "Duplicate Q1 rotation target");
             m->rotated_targets[row->actor.slot] = *row;
         }
     }
     count = 0;
-    if (!io->reading && m->addon_contacts)
+    if (io->values.direction == QA_SOURCE_SAVE_WRITE && m->addon_contacts)
         for (uint32_t slot = 0; slot < io->game->capacity; ++slot)
             count += m->addon_contacts[slot].actor.registry != 0;
     Q1_SAVE(io, u32, count);
     if (count > io->game->capacity)
         return q1_save_fail(io, "Too many Q1 addon contact continuations");
-    if (io->reading && count) {
+    if ((io->values.direction == QA_SOURCE_SAVE_READ) && count) {
         m->addon_contacts = calloc(io->game->capacity, sizeof(*m->addon_contacts));
         if (!m->addon_contacts) {
-            qa_error_set(io->error, QA_ERROR_MEMORY, io->offset, "allocating saved Q1 addon contacts");
+            qa_error_set(io->values.error, QA_ERROR_MEMORY, io->values.offset, "allocating saved Q1 addon contacts");
             return false;
         }
     }
@@ -379,7 +379,7 @@ bool q1_save_map_runtime(q1_save_io *io, q1_map_runtime *m) {
     for (uint32_t i = 0; i < count; ++i) {
         q1_addon_contact saved = {0};
         q1_addon_contact *row = &saved;
-        if (!io->reading) {
+        if (io->values.direction == QA_SOURCE_SAVE_WRITE) {
             while (next < io->game->capacity && !m->addon_contacts[next].actor.registry)
                 ++next;
             row = &m->addon_contacts[next++];
@@ -406,7 +406,7 @@ bool q1_save_map_runtime(q1_save_io *io, q1_map_runtime *m) {
             return q1_save_fail(io, "Invalid MG3 authored player effect");
         if (!row->actor.registry || row->actor.slot >= io->game->capacity)
             return q1_save_fail(io, "Invalid Q1 addon contact actor");
-        if (io->reading) {
+        if (io->values.direction == QA_SOURCE_SAVE_READ) {
             if (m->addon_contacts[row->actor.slot].actor.registry)
                 return q1_save_fail(io, "Duplicate Q1 addon contact actor");
             m->addon_contacts[row->actor.slot] = *row;

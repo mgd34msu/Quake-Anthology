@@ -14,7 +14,7 @@ static bool options(q1_save_io *io, qa_q1_options *o) {
     Q1_SAVE_ENUM(io, o->program, QA_Q1_CTF);
     Q1_SAVE_ENUM(io, o->edition, QA_Q1_QUAKE64);
     Q1_SAVE(io, bool, o->quakeworld);
-    if (io->reading &&
+    if ((io->values.direction == QA_SOURCE_SAVE_READ) &&
         (o->provider != provider || o->combat_provider != combat ||
          o->movement_provider != movement || o->inventory_provider != inventory ||
          o->program != program || o->edition != edition || o->quakeworld != quakeworld))
@@ -27,7 +27,7 @@ static bool options(q1_save_io *io, qa_q1_options *o) {
     Q1_SAVE(io, float, o->gravity);
     Q1_SAVE(io, float, o->aim_threshold);
     Q1_SAVE(io, u32, o->max_clients);
-    if (io->reading && o->max_clients != max_clients)
+    if ((io->values.direction == QA_SOURCE_SAVE_READ) && o->max_clients != max_clients)
         return q1_save_fail(io, "Q1 checkpoint changes prepared source client capacity");
     Q1_SAVE(io, u32, o->random_seed);
     Q1_SAVE(io, u32, o->gamecfg);
@@ -89,7 +89,7 @@ bool q1_save_runtime(q1_save_io *io, qa_q1_game *g) {
         uint32_t rj;
         memcpy(&rj, &g->qw_rj, sizeof(rj));
         Q1_SAVE(io, u32, rj);
-        if (io->reading) memcpy(&g->qw_rj, &rj, sizeof(rj));
+        if (io->values.direction == QA_SOURCE_SAVE_READ) memcpy(&g->qw_rj, &rj, sizeof(rj));
         if (isnan(g->qw_rj)) return q1_save_fail(io, "Invalid QW rj Source global");
         Q1_SAVE(io, actor, g->qw_multi_entity);
         Q1_SAVE(io, float, g->qw_multi_damage);

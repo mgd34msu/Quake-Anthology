@@ -4,9 +4,7 @@
 #include "qa/q3_host_save.h"
 #include "qa/source_save.h"
 
-typedef struct checkpoint_writer { qa_buffer bytes; size_t capacity; } checkpoint_writer;
-typedef struct checkpoint_reader { qa_bytes bytes; size_t offset; } checkpoint_reader;
-static bool decode_file(checkpoint_reader *, q3_file [64],
+static bool decode_file(qa_source_save_io *, q3_file [64],
     q3_write_file_state [64], uint64_t, qa_error *);
 
 bool qa_q3_host_checkpoint_portable_ready(const qa_q3_host *host, qa_error *error)
@@ -182,31 +180,9 @@ static qa_vec3 load_vector(const uint8_t *in)
     return qa_v3(qa_load_f32le(in), qa_load_f32le(in + 4), qa_load_f32le(in + 8));
 }
 
-static bool append(checkpoint_writer *writer, const void *data, size_t size, qa_error *error)
+static bool append(qa_source_save_io *writer, const void *data, size_t size)
 {
-    if (size > SIZE_MAX - writer->bytes.size)
-        return q3_fail(error, QA_ERROR_FORMAT, 0, "Q3 host checkpoint length overflow");
-    size_t needed = writer->bytes.size + size;
-    if (needed > writer->capacity) {
-        size_t capacity = writer->capacity ? writer->capacity : 1024;
-        while (capacity < needed) {
-            if (capacity > SIZE_MAX / 2) { capacity = needed; break; }
-            capacity *= 2;
-        }
-        void *grown = realloc(writer->bytes.data, capacity);
-        if (!grown) return q3_fail(error, QA_ERROR_MEMORY, 0, "growing Q3 host checkpoint");
-        writer->bytes.data = grown; writer->capacity = capacity;
-    }
-    if (size) memcpy(writer->bytes.data + writer->bytes.size, data, size);
-    writer->bytes.size = needed; return true;
-}
-
-static bool take(checkpoint_reader *reader, size_t size, qa_bytes *out, qa_error *error)
-{
-    if (size > reader->bytes.size - reader->offset)
-        return q3_fail(error, QA_ERROR_FORMAT, reader->offset, "truncated Q3 host checkpoint");
-    *out = (qa_bytes){reader->bytes.data + reader->offset, size};
-    reader->offset += size; return true;
+    return qa_source_save_bytes(writer, (void *)data, size);
 }
 
 bool qa_q3_host_checkpoint_portable_state(qa_bytes input, qa_error *error)
@@ -215,18 +191,21 @@ bool qa_q3_host_checkpoint_portable_state(qa_bytes input, qa_error *error)
         qa_load_u32le(input.data + 12) >= 64 ||
         qa_load_u32le(input.data + 16) >= 64)
         return q3_fail(error, QA_ERROR_FORMAT, 0, "Invalid portable Q3 host stream");
-    checkpoint_reader reader = {input, 60};
+    qa_source_save_io reader = {0};
+    qa_bytes header;
+    if (!qa_source_save_reader(&reader, NULL, input, error) ||
+        !qa_source_save_span(&reader, 60, &header)) return false;
     qa_bytes bytes, entity;
-    if (!take(&reader, 48, &bytes, error) || !take(&reader, 32, &entity, error)) return false;
+    if (!qa_source_save_span(&reader, 48, &bytes) || !qa_source_save_span(&reader, 32, &entity)) return false;
     uint64_t source = qa_load_u64le(entity.data), game = qa_load_u64le(input.data + 20);
     if (source > SIZE_MAX || game > SIZE_MAX)
         return q3_fail(error, QA_ERROR_FORMAT, reader.offset, "Portable Q3 source extent exceeds native address space");
     uint64_t bindings_size=qa_load_u64le(input.data+52);
-    if (bindings_size>SIZE_MAX || !take(&reader, (size_t)source, &bytes, error) ||
-        !take(&reader, qa_load_u32le(entity.data + 16), &bytes, error) ||
-        !take(&reader, qa_load_u32le(entity.data + 20), &bytes, error) ||
-        !take(&reader, (size_t)game, &bytes, error) ||
-        !take(&reader,(size_t)bindings_size,&bytes,error)) return false;
+    if (bindings_size>SIZE_MAX || !qa_source_save_span(&reader, (size_t)source, &bytes) ||
+        !qa_source_save_span(&reader, qa_load_u32le(entity.data + 16), &bytes) ||
+        !qa_source_save_span(&reader, qa_load_u32le(entity.data + 20), &bytes) ||
+        !qa_source_save_span(&reader, (size_t)game, &bytes) ||
+        !qa_source_save_span(&reader,(size_t)bindings_size,&bytes)) return false;
     q3_cvar_binding *bindings=NULL; size_t binding_count=0;
     q3_cvar_cache *caches=NULL; size_t cache_count=0;
     q3_cvar_status status={0};
@@ -246,20 +225,19 @@ bool qa_q3_host_checkpoint_portable_state(qa_bytes input, qa_error *error)
     bool scripts[64] = {0};
     for (uint32_t i = 0; ok && i < qa_load_u32le(input.data + 16); ++i) {
         qa_bytes row;
-        if (!take(&reader, 16, &row, error)) { ok = false; break; }
+        if (!qa_source_save_span(&reader, 16, &row)) { ok = false; break; }
         uint32_t slot = qa_load_u32le(row.data);
         uint64_t length = qa_load_u64le(row.data + 8);
         if (!slot || slot >= 64 || scripts[slot] || qa_load_u32le(row.data + 4) || length > SIZE_MAX) {
             ok = q3_fail(error, QA_ERROR_FORMAT, reader.offset, "Invalid portable Q3 script record"); break;
         }
         scripts[slot] = true;
-        if (!take(&reader, (size_t)length, &bytes, error)) { ok = false; break; }
+        if (!qa_source_save_span(&reader, (size_t)length, &bytes)) { ok = false; break; }
         qa_script_checkpoint state = {0};
         ok = qa_script_checkpoint_decode(bytes, &state, error);
         qa_script_checkpoint_free(&state);
     }
-    if (ok && reader.offset != input.size)
-        ok = q3_fail(error, QA_ERROR_FORMAT, reader.offset, "Trailing portable Q3 host stream bytes");
+    if (ok) ok = qa_source_save_finish(&reader, NULL);
     for (size_t i = 1; i < 64; ++i) q3_file_close(&files[i]);
     return ok;
 }
@@ -275,7 +253,7 @@ static bool idle(qa_q3_host *host, qa_error *error)
     return true;
 }
 
-static bool save_file(checkpoint_writer *writer, size_t slot, const q3_file *file, qa_error *error)
+static bool save_file(qa_source_save_io *writer, size_t slot, const q3_file *file, qa_error *error)
 {
     qa_bytes bytes = {0};
     const char *path;
@@ -313,8 +291,8 @@ static bool save_file(checkpoint_writer *writer, size_t slot, const q3_file *fil
             qa_store_u64le(row+120+i*8,state.reference.object.words[i]);
         }
     }
-    return append(writer, row, sizeof(row), error) && append(writer, path, length, error) &&
-           append(writer, bytes.data, bytes.size, error);
+    return append(writer, row, sizeof(row)) && append(writer, path, length) &&
+           append(writer, bytes.data, bytes.size);
 }
 
 bool qa_q3_host_checkpoint(qa_q3_host *host, qa_buffer *out, qa_error *error)
@@ -334,7 +312,7 @@ bool qa_q3_host_checkpoint(qa_q3_host *host, qa_buffer *out, qa_error *error)
     for (size_t i = 1; i < 64; ++i) {
         files += host->files[i].kind != Q3_FILE_CLOSED; scripts += q3_script_member(host, i);
     }
-    checkpoint_writer writer = {0};
+    qa_source_save_io writer = {0};
     uint8_t header[60] = {'Q','3','H','C'};
     qa_store_u32le(header + 4, host->options.role);
     qa_store_u32le(header + 8, host->options.abi); qa_store_u32le(header + 12, files);
@@ -360,22 +338,23 @@ bool qa_q3_host_checkpoint(qa_q3_host *host, qa_buffer *out, qa_error *error)
                 }
         }
     ++host->calls;
-    bool ok = append(&writer, header, sizeof(header), error);
+    bool ok = qa_source_save_writer(&writer, NULL, error) &&
+        append(&writer, header, sizeof(header));
     uint8_t clipping[48];
     store_vector(clipping, host->clip_bounds.mins); store_vector(clipping + 12, host->clip_bounds.maxs);
     store_vector(clipping + 24, host->clip_brush.mins); store_vector(clipping + 36, host->clip_brush.maxs);
-    if (ok) ok = append(&writer, clipping, sizeof(clipping), error);
+    if (ok) ok = append(&writer, clipping, sizeof(clipping));
     qa_common_parser_state parser = qa_common_parser_capture(&host->entity_parser);
     qa_common_cursor_state cursor = qa_common_cursor_capture(&host->entity_cursor);
     uint8_t entity[32];
     qa_store_u64le(entity, host->entity_cursor.source.size); qa_store_u64le(entity + 8, cursor.offset);
     qa_store_u32le(entity + 16, (uint32_t)parser.token.size); qa_store_u32le(entity + 20, (uint32_t)parser.name.size);
     qa_store_u32le(entity + 24, (uint32_t)parser.line); qa_store_u32le(entity + 28, cursor.ended);
-    if (ok) ok = append(&writer, entity, sizeof(entity), error) &&
-        append(&writer, host->entity_cursor.source.data, host->entity_cursor.source.size, error) &&
-        append(&writer, parser.token.data, parser.token.size, error) && append(&writer, parser.name.data, parser.name.size, error) &&
-        append(&writer, game.data, game.size, error) &&
-        append(&writer,bindings.data,bindings.size,error);
+    if (ok) ok = append(&writer, entity, sizeof(entity)) &&
+        append(&writer, host->entity_cursor.source.data, host->entity_cursor.source.size) &&
+        append(&writer, parser.token.data, parser.token.size) && append(&writer, parser.name.data, parser.name.size) &&
+        append(&writer, game.data, game.size) &&
+        append(&writer,bindings.data,bindings.size);
     qa_buffer_free(&game); qa_buffer_free(&bindings);
     for (size_t i = 1; ok && i < 64; ++i)
         if (host->files[i].kind != Q3_FILE_CLOSED) ok = save_file(&writer, i, &host->files[i], error);
@@ -387,21 +366,22 @@ bool qa_q3_host_checkpoint(qa_q3_host *host, qa_buffer *out, qa_error *error)
         if (ok) {
             uint8_t row[16] = {0};
             qa_store_u32le(row, (uint32_t)i); qa_store_u64le(row + 8, encoded.size);
-            ok = append(&writer, row, sizeof(row), error) &&
-                 append(&writer, encoded.data, encoded.size, error);
+            ok = append(&writer, row, sizeof(row)) &&
+                 append(&writer, encoded.data, encoded.size);
         }
         qa_script_checkpoint_free(&state); qa_buffer_free(&encoded);
     }
     --host->calls;
-    if (!ok) { qa_buffer_free(&writer.bytes); return false; }
-    *out = writer.bytes; return true;
+    if (ok) ok = qa_source_save_finish(&writer, out);
+    qa_source_save_dispose(&writer);
+    return ok;
 }
 
-static bool decode_file(checkpoint_reader *reader, q3_file staged[64],
+static bool decode_file(qa_source_save_io *reader, q3_file staged[64],
                            q3_write_file_state writable[64], uint64_t file_serial, qa_error *error)
 {
     qa_bytes row, path, bytes;
-    if (!take(reader, 144, &row, error)) return false;
+    if (!qa_source_save_span(reader, 144, &row)) return false;
     uint32_t slot = qa_load_u32le(row.data), kind = qa_load_u32le(row.data + 4);
     uint32_t zip = qa_load_u32le(row.data + 8), mode = qa_load_u32le(row.data + 12);
     uint64_t position = qa_load_u64le(row.data + 16), length = qa_load_u64le(row.data + 24);
@@ -416,7 +396,7 @@ static bool decode_file(checkpoint_reader *reader, q3_file staged[64],
     for (size_t i = 1; i < 64; ++i)
         if (staged[i].kind != Q3_FILE_CLOSED && staged[i].serial == serial)
             return q3_fail(error, QA_ERROR_FORMAT, reader->offset, "Duplicate Q3 file lifetime identity");
-    if (!take(reader, path_length, &path, error) || !take(reader, (size_t)length, &bytes, error)) return false;
+    if (!qa_source_save_span(reader, path_length, &path) || !qa_source_save_span(reader, (size_t)length, &bytes)) return false;
     if (path.data[path.size - 1] || memchr(path.data, 0, path.size - 1))
         return q3_fail(error, QA_ERROR_FORMAT, reader->offset, "invalid Q3 checkpoint file name");
     q3_file *file = &staged[slot];
@@ -492,23 +472,26 @@ bool qa_q3_host_restore(qa_q3_host *host, qa_bytes input, qa_error *error)
     uint32_t bots_shutdown = qa_load_u32le(input.data + 44);
     if (file_count >= 64 || script_count >= 64 || bots_shutdown > 1 || qa_load_u32le(input.data + 48))
         return q3_fail(error, QA_ERROR_FORMAT, 0, "Q3 checkpoint handle count exceeds source capacity");
-    checkpoint_reader reader = {input, 60};
+    qa_source_save_io reader = {0};
+    qa_bytes header;
+    if (!qa_source_save_reader(&reader, NULL, input, error) ||
+        !qa_source_save_span(&reader, 60, &header)) return false;
     qa_bytes clipping;
-    if (!take(&reader, 48, &clipping, error)) return false;
+    if (!qa_source_save_span(&reader, 48, &clipping)) return false;
     qa_bounds clip_bounds = {load_vector(clipping.data), load_vector(clipping.data + 12)};
     qa_bounds clip_brush = {load_vector(clipping.data + 24), load_vector(clipping.data + 36)};
     if (!qa_vec_finite(clip_bounds.mins) || !qa_vec_finite(clip_bounds.maxs) ||
         !qa_vec_finite(clip_brush.mins) || !qa_vec_finite(clip_brush.maxs))
         return q3_fail(error, QA_ERROR_FORMAT, reader.offset, "nonfinite Q3 temporary clip state");
     qa_bytes entity, source, token, name, game_bytes,bindings_bytes;
-    if (!take(&reader, 32, &entity, error)) return false;
+    if (!qa_source_save_span(&reader, 32, &entity)) return false;
     uint64_t source_size = qa_load_u64le(entity.data), offset = qa_load_u64le(entity.data + 8);
     uint32_t token_size = qa_load_u32le(entity.data + 16), name_size = qa_load_u32le(entity.data + 20);
     uint32_t ended = qa_load_u32le(entity.data + 28);
     if (source_size > SIZE_MAX || offset > SIZE_MAX || game_size > SIZE_MAX || bindings_size>SIZE_MAX || ended > 1 ||
-        !take(&reader, (size_t)source_size, &source, error) || !take(&reader, token_size, &token, error) ||
-        !take(&reader, name_size, &name, error) || !take(&reader, (size_t)game_size, &game_bytes, error) ||
-        !take(&reader,(size_t)bindings_size,&bindings_bytes,error))
+        !qa_source_save_span(&reader, (size_t)source_size, &source) || !qa_source_save_span(&reader, token_size, &token) ||
+        !qa_source_save_span(&reader, name_size, &name) || !qa_source_save_span(&reader, (size_t)game_size, &game_bytes) ||
+        !qa_source_save_span(&reader,(size_t)bindings_size,&bindings_bytes))
         return q3_fail(error, QA_ERROR_FORMAT, reader.offset, "invalid Q3 entity parser checkpoint");
     qa_common_cursor restored_cursor = host->entity_cursor;
     if (source.size != restored_cursor.source.size ||
@@ -554,7 +537,7 @@ bool qa_q3_host_restore(qa_q3_host *host, qa_bytes input, qa_error *error)
         ok = decode_file(&reader, files, writable, file_serial, error);
     for (uint32_t i = 0; ok && i < script_count; ++i) {
         qa_bytes row, bytes;
-        if (!take(&reader, 16, &row, error)) { ok = false; break; }
+        if (!qa_source_save_span(&reader, 16, &row)) { ok = false; break; }
         uint32_t slot = qa_load_u32le(row.data);
         uint64_t size = qa_load_u64le(row.data + 8);
         if (!slot || slot >= 64 || script_present[slot] || qa_load_u32le(row.data + 4) || size > SIZE_MAX) {
@@ -563,12 +546,11 @@ bool qa_q3_host_restore(qa_q3_host *host, qa_bytes input, qa_error *error)
         if (host->script_namespace->scripts[slot]) {
             ok=q3_fail(error,QA_ERROR_FORMAT,slot,"Restored PC handle overlaps its shared source namespace"); break;
         }
-        if (!take(&reader, (size_t)size, &bytes, error)) { ok = false; break; }
+        if (!qa_source_save_span(&reader, (size_t)size, &bytes)) { ok = false; break; }
         script_present[slot]=true;
         ok = qa_script_checkpoint_decode(bytes, &script_states[slot], error);
     }
-    if (ok && reader.offset != input.size)
-        ok = q3_fail(error, QA_ERROR_FORMAT, reader.offset, "trailing Q3 host checkpoint bytes");
+    if (ok) ok = qa_source_save_finish(&reader, NULL);
     /* Decode the complete continuation before any resolver or writable reopen
      * can affect its external owner. */
     for (size_t i=1;ok && i<64;++i) if (files[i].kind==Q3_FILE_WRITE)

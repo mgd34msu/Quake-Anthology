@@ -3,6 +3,7 @@
 
 #include "../maps/internal.h"
 #include "qa/binary.h"
+#include "qa/source_save.h"
 #include "qa/game_q1_checkpoint.h"
 #include "qa/persistence_gameplay.h"
 
@@ -11,11 +12,7 @@ typedef struct q1_save_io {
     qa_strings *dictionary;
     const qa_string_id *strings;
     size_t string_count;
-    qa_bytes input;
-    qa_buffer output;
-    size_t offset, capacity;
-    qa_error *error;
-    bool reading;
+    qa_source_save_io values;
 } q1_save_io;
 
 bool q1_save_fail(q1_save_io *, const char *);
@@ -59,7 +56,7 @@ bool q1_save_map_runtime(q1_save_io *, q1_map_runtime *);
         Q1_SAVE((io), u32, q1_saved_enum);                                                         \
         if (q1_saved_enum > (uint32_t)(last))                                                      \
             return q1_save_fail((io), "Invalid Q1 checkpoint enum");                               \
-        if ((io)->reading)                                                                         \
+        if ((io)->values.direction == QA_SOURCE_SAVE_READ)                                                                         \
             (member) = q1_saved_enum;                                                              \
     } while (0)
 

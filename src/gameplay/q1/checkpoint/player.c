@@ -142,7 +142,7 @@ bool q1_save_player(q1_save_io *io, q1_player *player) {
     if (player->weapon_definitions.serial) {
         if (!player->arsenal)
             return q1_save_fail(io, "Q1 weapon definitions have no admitted arsenal");
-        if (io->reading) {
+        if (io->values.direction == QA_SOURCE_SAVE_READ) {
             player->weapon_definitions.actor = player->id;
             player->inventory_game = io->game;
         } else if (player->inventory_game != io->game ||
@@ -181,10 +181,10 @@ bool q1_save_player(q1_save_io *io, q1_player *player) {
     if (!player->finale_held_present && player->finale_held)
         return q1_save_fail(io, "Q1 finale button history has no retained actor");
     Q1_SAVE(io, double, player->source_respawn_requested_at);
-    uint32_t info_count=io->reading?0:(uint32_t)player->source_info_count;
-    if((!io->reading && player->source_info_count>UINT32_MAX) || !q1_save_u32(io,&info_count)) return false;
-    if(io->reading) {
-        if(io->offset>io->input.size || info_count>(io->input.size-io->offset)/8 ||
+    uint32_t info_count=(io->values.direction == QA_SOURCE_SAVE_READ)?0:(uint32_t)player->source_info_count;
+    if((io->values.direction == QA_SOURCE_SAVE_WRITE && player->source_info_count>UINT32_MAX) || !q1_save_u32(io,&info_count)) return false;
+    if(io->values.direction == QA_SOURCE_SAVE_READ) {
+        if(io->values.offset>io->values.input.size || info_count>(io->values.input.size-io->values.offset)/8 ||
            (info_count && sizeof(*player->source_info)>SIZE_MAX/info_count))
             return q1_save_fail(io,"Q1 source userinfo map exceeds its saved extent");
         q1_source_client_clear(player);
@@ -213,7 +213,7 @@ bool q1_save_player(q1_save_io *io, q1_player *player) {
         return q1_save_fail(io, "Q1 character continuation has no semantic birth");
     if (player->wetsuit_scaled_level > 3)
         return q1_save_fail(io, "Invalid saved Q1 wetsuit water level");
-    if (io->reading)
+    if (io->values.direction == QA_SOURCE_SAVE_READ)
         player->active = true;
     return true;
 }

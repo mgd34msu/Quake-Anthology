@@ -22,7 +22,7 @@ bool qa_save_capture(void *context, const qa_save_capture_ops *ops, qa_save_purp
         ok = persistence_owner_valid(owners + i, error) && ops->capture(context, owners + i, &payload, error);
         records[i].payload = (qa_bytes){payload.data, payload.size};
     }
-    if (ok) ok = qa_save_image_create(&metadata, records, count, &image, error);
+    if (ok) ok = persistence_image_create_owned(&metadata, records, count, &image, error);
     if (ok && ops->attach) ok = ops->attach(context, image, error);
     if (ok) ok = ops->validate(context, image, error);
     if (records) for (size_t i = 0; i < count; ++i) free((void *)records[i].payload.data);

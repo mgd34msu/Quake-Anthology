@@ -60,7 +60,7 @@ bool q1_save_physics(q1_save_io *io, qa_physics_properties *physics) {
     Q1_SAVE(io, actor, physics->enemy);
     Q1_SAVE(io, actor, physics->goal);
     Q1_SAVE(io, double, physics->q1_pusher.local_seconds);
-    if (io->reading)
+    if (io->values.direction == QA_SOURCE_SAVE_READ)
         physics->q1_pusher.next_think_seconds = 0;
     return true;
 }

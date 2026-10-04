@@ -1,11 +1,11 @@
 #include "internal.h"
 
 static bool species(q1_save_io *io, q1_monster *m) {
-    const char *name = io->reading ? NULL : m->species ? m->species->classname : NULL;
-    if (!name && !io->reading)
+    const char *name = (io->values.direction == QA_SOURCE_SAVE_READ) ? NULL : m->species ? m->species->classname : NULL;
+    if (!name && io->values.direction == QA_SOURCE_SAVE_WRITE)
         return q1_save_fail(io, "Q1 monster has no immutable species");
     uint8_t corpse = 0;
-    if (!io->reading)
+    if (io->values.direction == QA_SOURCE_SAVE_WRITE)
         for (uint8_t i = 1; i <= 2; ++i)
             if (m->species == q1_infected_form(QA_Q1_HELLKNIGHT, i))
                 corpse = i;
@@ -13,7 +13,7 @@ static bool species(q1_save_io *io, q1_monster *m) {
         return false;
     if (corpse > 2 || (corpse && strcmp(name, "monster_hell_knight")))
         return q1_save_fail(io, "Invalid saved Q1 corpse species");
-    if (io->reading) {
+    if (io->values.direction == QA_SOURCE_SAVE_READ) {
         m->species = corpse ? q1_infected_form(QA_Q1_HELLKNIGHT, corpse) : q1_species_find(name);
         if (!m->species)
             return q1_save_fail(io, "Unknown saved Q1 monster species");

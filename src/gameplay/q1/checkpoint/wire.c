@@ -4,18 +4,18 @@
 #include <math.h>
 
 static bool table(q1_save_io *io, q1_wire_table *rows) {
-    if (!io->reading && rows->count > UINT32_MAX)
+    if (io->values.direction == QA_SOURCE_SAVE_WRITE && rows->count > UINT32_MAX)
         return q1_save_fail(io, "Q1 ordered precache extent exceeds its codec");
-    uint32_t count = io->reading ? 0 : (uint32_t)rows->count;
+    uint32_t count = (io->values.direction == QA_SOURCE_SAVE_READ) ? 0 : (uint32_t)rows->count;
     Q1_SAVE(io, u32, count);
-    if (!count || (io->reading && count > (io->input.size - io->offset) / 4))
+    if (!count || ((io->values.direction == QA_SOURCE_SAVE_READ) && count > (io->values.input.size - io->values.offset) / 4))
         return q1_save_fail(io, "Invalid Q1 ordered precache extent");
-    if (io->reading) {
+    if (io->values.direction == QA_SOURCE_SAVE_READ) {
         if (sizeof(*rows->rows) > SIZE_MAX / count)
             return q1_save_fail(io, "Q1 ordered precache allocation overflow");
         rows->rows = calloc(count, sizeof(*rows->rows));
         if (!rows->rows) {
-            qa_error_set(io->error, QA_ERROR_MEMORY, io->offset, "restoring ordered Q1 precaches");
+            qa_error_set(io->values.error, QA_ERROR_MEMORY, io->values.offset, "restoring ordered Q1 precaches");
             return false;
         }
         rows->count = rows->capacity = count;
@@ -60,10 +60,10 @@ bool q1_save_wire(q1_save_io *io, qa_q1_game *g) {
     bool present = g->wire != NULL;
     Q1_SAVE(io, bool, present);
     if (!present) return true;
-    if (io->reading) {
+    if (io->values.direction == QA_SOURCE_SAVE_READ) {
         g->wire = calloc(1, sizeof(*g->wire));
         if (!g->wire) {
-            qa_error_set(io->error, QA_ERROR_MEMORY, io->offset, "restoring Q1 source wire state");
+            qa_error_set(io->values.error, QA_ERROR_MEMORY, io->values.offset, "restoring Q1 source wire state");
             return false;
         }
     }
@@ -124,17 +124,17 @@ bool q1_save_wire(q1_save_io *io, qa_q1_game *g) {
         if (!actual || strcmp(path, actual))
             return q1_save_fail(io, "Q1 ordered inline model prefix differs");
     }
-    if (!io->reading && wire->damage_count > UINT32_MAX)
+    if (io->values.direction == QA_SOURCE_SAVE_WRITE && wire->damage_count > UINT32_MAX)
         return q1_save_fail(io, "Q1 feedback extent exceeds its codec");
-    uint32_t count = io->reading ? 0 : (uint32_t)wire->damage_count;
+    uint32_t count = (io->values.direction == QA_SOURCE_SAVE_READ) ? 0 : (uint32_t)wire->damage_count;
     Q1_SAVE(io, u32, count);
     if (count > g->options.max_clients ||
-        (io->reading && count > (io->input.size - io->offset) / 35))
+        ((io->values.direction == QA_SOURCE_SAVE_READ) && count > (io->values.input.size - io->values.offset) / 35))
         return q1_save_fail(io, "Invalid Q1 source feedback extent");
-    if (io->reading && count) {
+    if ((io->values.direction == QA_SOURCE_SAVE_READ) && count) {
         wire->damage = calloc(count, sizeof(*wire->damage));
         if (!wire->damage) {
-            qa_error_set(io->error, QA_ERROR_MEMORY, io->offset, "restoring Q1 source feedback");
+            qa_error_set(io->values.error, QA_ERROR_MEMORY, io->values.offset, "restoring Q1 source feedback");
             return false;
         }
         wire->damage_count = wire->damage_capacity = count;
@@ -153,12 +153,12 @@ bool q1_save_wire(q1_save_io *io, qa_q1_game *g) {
             if (qa_actor_id_equal(wire->damage[j].recipient, row->recipient))
                 return q1_save_fail(io, "Duplicate Q1 source feedback recipient");
     }
-    if (io->reading && g->options.max_clients) {
+    if ((io->values.direction == QA_SOURCE_SAVE_READ) && g->options.max_clients) {
         if (sizeof(*wire->board) > SIZE_MAX / g->options.max_clients)
             return q1_save_fail(io, "Q1 source client observation allocation overflow");
         wire->board = calloc(g->options.max_clients, sizeof(*wire->board));
         if (!wire->board) {
-            qa_error_set(io->error, QA_ERROR_MEMORY, io->offset, "restoring Q1 source client observations");
+            qa_error_set(io->values.error, QA_ERROR_MEMORY, io->values.offset, "restoring Q1 source client observations");
             return false;
         }
     }
