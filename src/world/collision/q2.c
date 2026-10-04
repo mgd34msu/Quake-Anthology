@@ -34,6 +34,9 @@ typedef struct q2_interval {
 
 typedef struct q2_plane_support {
     float distance, extent;
+    float first, last;
+    uint32_t endpoint_stamp;
+    bool has_last;
 } q2_plane_support;
 
 typedef struct q2_collision {
@@ -196,7 +199,7 @@ static float q2_expand(const qa_collision_plane *plane, const qa_trace_shape *sh
     return -qa_vec_dot(corner, normal);
 }
 
-static const q2_plane_support *q2_expanded_plane(q2_work *work, uint32_t index)
+static q2_plane_support *q2_expanded_plane(q2_work *work, uint32_t index)
 {
     q2_collision *collision = work->collision;
     q2_plane_support *expanded = &collision->expanded_planes[index];
@@ -214,12 +217,32 @@ static const q2_plane_support *q2_expanded_plane(q2_work *work, uint32_t index)
     return expanded;
 }
 
+static const q2_plane_support *q2_endpoint_distances(q2_work *work, uint32_t index,
+                                                   bool need_last)
+{
+    q2_collision *collision = work->collision;
+    q2_plane_support *expanded = q2_expanded_plane(work, index);
+    const qa_collision_plane *plane = &collision->planes[index];
+    if (expanded->endpoint_stamp != collision->stamp) {
+        expanded->first = qa_vec_dot(work->start, plane->normal) - expanded->distance;
+        expanded->has_last = false;
+        expanded->endpoint_stamp = collision->stamp;
+    }
+    if (need_last && !expanded->has_last) {
+        expanded->last = qa_vec_dot(work->end, plane->normal) - expanded->distance;
+        expanded->has_last = true;
+    }
+    return expanded;
+}
+
 static void q2_next_stamp(q2_collision *collision)
 {
     ++collision->stamp;
     if (collision->stamp == 0) {
         if (collision->brush_count != 0)
             memset(collision->brush_stamps, 0, collision->brush_count * sizeof(*collision->brush_stamps));
+        for (size_t i = 0; i < collision->plane_count; ++i)
+            collision->expanded_planes[i].endpoint_stamp = 0;
         collision->stamp = 1;
     }
 }
@@ -293,13 +316,14 @@ static void q2_trace_brush(q2_work *work, uint32_t index)
     for (size_t i = 0; i < (size_t)brush->sides.count; ++i) {
         const q2_side *side = &collision->sides[(size_t)brush->sides.first + i];
         const qa_collision_plane *plane = &collision->planes[side->plane];
-        float distance = q2_expanded_plane(work, side->plane)->distance;
-        float first = qa_vec_dot(work->start, plane->normal) - distance;
+        const q2_plane_support *distances =
+            q2_endpoint_distances(work, side->plane, !work->stationary);
+        float first = distances->first;
         if (work->stationary) {
             if (first > 0) return;
             continue;
         }
-        float last = qa_vec_dot(work->end, plane->normal) - distance;
+        float last = distances->last;
         if (first > 0) start_out = true;
         if (last > 0) get_out = true;
         if (first > 0 && (last >= Q2_DISTANCE_EPSILON || last >= first)) return;
@@ -470,10 +494,9 @@ static void q2_brush_medium(q2_work *work, uint32_t index, size_t *count)
     float begin = 0, end = work->result.fraction;
     for (size_t i = 0; i < (size_t)brush->sides.count; ++i) {
         const q2_side *side = &collision->sides[(size_t)brush->sides.first + i];
-        const qa_collision_plane *plane = &collision->planes[side->plane];
-        float distance = q2_expanded_plane(work, side->plane)->distance;
-        float first = qa_vec_dot(work->start, plane->normal) - distance;
-        float last = qa_vec_dot(work->end, plane->normal) - distance;
+        const q2_plane_support *distances = q2_endpoint_distances(work, side->plane, true);
+        float first = distances->first;
+        float last = distances->last;
         if (first > 0 && last > 0) return;
         if (first <= 0 && last <= 0) continue;
         float crossing = first / (first - last);
