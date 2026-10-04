@@ -73,9 +73,9 @@ static bool device_read(frontend_q3_color *owner, qa_display *display,
     qa_q3_color_device *out, uint32_t *maximum, qa_error *error)
 {
     qa_display_gamma_capability gamma;
-    qa_display_info info;
+    qa_display_state state;
     if (!current(owner, error) || !qa_display_gamma_read(owner->gamma, &gamma, error) ||
-        !qa_display_info_get(display, &info, error)) return false;
+        !qa_display_state_get(display, &state, error)) return false;
     uint32_t color;
     if (owner->gl) {
         const qa_gl_capabilities *caps = qa_gl_capabilities_get(owner->gl);
@@ -87,10 +87,10 @@ static bool device_read(frontend_q3_color *owner, qa_display *display,
         if (!qa_cpu_capabilities_read(owner->cpu, &caps, error)) return false;
         color = caps.color_bits; *maximum = 0;
     }
-    if (color > INT32_MAX || info.backend != (owner->gl ? QA_DISPLAY_OPENGL : QA_DISPLAY_CPU))
+    if (color > INT32_MAX || state.backend != (owner->gl ? QA_DISPLAY_OPENGL : QA_DISPLAY_CPU))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Source color framebuffer differs from its selected physical renderer");
     *out = (qa_q3_color_device){.hardware_gamma = gamma.kind == QA_DISPLAY_GAMMA_ACCEPTED,
-        .fullscreen = info.fullscreen != QA_DISPLAY_WINDOWED, .color_bits = (int32_t)color};
+        .fullscreen = state.fullscreen != QA_DISPLAY_WINDOWED, .color_bits = (int32_t)color};
     return true;
 }
 
@@ -286,11 +286,6 @@ static bool recipient_image(void *context, const qa_scene_image *source,
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Source recipient image lost its real retained bank");
     if (source->kind == QA_SCENE_DEPTH32F) { *out = source; return true; }
     if (!qa_scene_resources_set_source_image_admit(bank,frontend_q3_source_image_admit,f,error)) return false;
-    qa_scene_image_request request;
-    if (qa_scene_image_request_read(bank, source, &request)) {
-        upload.mipmap = upload.mipmap && request.options.mipmap;
-        if (!upload.mipmap) upload.allow_picmip = false;
-    }
     qa_scene_image *mapped = NULL;
     if (!qa_scene_image_source_q3_recipient_variant(bank, source, &upload,
         frontend_q3_source_image_admit, f, &mapped, error)) return false;

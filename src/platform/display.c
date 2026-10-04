@@ -592,6 +592,26 @@ void qa_display_destroy(qa_display *display)
     free(display);
 }
 
+static qa_display_fullscreen fullscreen_from_flags(Uint32 flags)
+{
+    if ((flags & SDL_WINDOW_FULLSCREEN_DESKTOP) == SDL_WINDOW_FULLSCREEN_DESKTOP)
+        return QA_DISPLAY_DESKTOP;
+    if ((flags & SDL_WINDOW_FULLSCREEN) != 0) return QA_DISPLAY_EXCLUSIVE;
+    return QA_DISPLAY_WINDOWED;
+}
+
+bool qa_display_state_get(const qa_display *display, qa_display_state *out,
+                          qa_error *error)
+{
+    if (display == NULL || display->window == NULL || out == NULL) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid SDL display state query");
+        return false;
+    }
+    *out = (qa_display_state){.backend = display->backend,
+        .fullscreen = fullscreen_from_flags(SDL_GetWindowFlags(display->window))};
+    return true;
+}
+
 bool qa_display_info_get(const qa_display *display, qa_display_info *out,
                          qa_error *error)
 {
@@ -614,11 +634,6 @@ bool qa_display_info_get(const qa_display *display, qa_display_info *out,
         SDL_GetCurrentDisplayMode(index, &mode) < 0)
         return display_error(error, QA_ERROR_IO, "SDL display information");
     Uint32 flags = SDL_GetWindowFlags(display->window);
-    qa_display_fullscreen fullscreen = QA_DISPLAY_WINDOWED;
-    if ((flags & SDL_WINDOW_FULLSCREEN_DESKTOP) == SDL_WINDOW_FULLSCREEN_DESKTOP)
-        fullscreen = QA_DISPLAY_DESKTOP;
-    else if ((flags & SDL_WINDOW_FULLSCREEN) != 0)
-        fullscreen = QA_DISPLAY_EXCLUSIVE;
     *out = (qa_display_info){
         .window_id = SDL_GetWindowID(display->window),
         .logical_width = (uint32_t)logical_width,
@@ -628,7 +643,7 @@ bool qa_display_info_get(const qa_display *display, qa_display_info *out,
         .display_index = index,
         .refresh_rate = mode.refresh_rate,
         .backend = display->backend,
-        .fullscreen = fullscreen,
+        .fullscreen = fullscreen_from_flags(flags),
         .visible = (flags & SDL_WINDOW_SHOWN) != 0 &&
                    (flags & SDL_WINDOW_HIDDEN) == 0,
         .focused = (flags & SDL_WINDOW_INPUT_FOCUS) != 0,

@@ -43,6 +43,11 @@ typedef struct qa_display_options {
     const char *gl_library;
 } qa_display_options;
 
+typedef struct qa_display_state {
+    qa_display_backend backend;
+    qa_display_fullscreen fullscreen;
+} qa_display_state;
+
 typedef struct qa_display_info {
     uint32_t window_id;
     uint32_t logical_width, logical_height;
@@ -58,6 +63,8 @@ void qa_display_options_default(qa_display_options *options);
  * SDL window, CPU presentation objects, and optional OpenGL context. */
 qa_display *qa_display_create(const qa_display_options *options, qa_error *error);
 void qa_display_destroy(qa_display *display);
+bool qa_display_state_get(const qa_display *display, qa_display_state *out,
+                          qa_error *error);
 bool qa_display_info_get(const qa_display *display, qa_display_info *out,
                          qa_error *error);
 bool qa_display_set_visible(qa_display *display, bool visible, qa_error *error);
