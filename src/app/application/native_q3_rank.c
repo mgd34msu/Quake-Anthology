@@ -1,6 +1,7 @@
 /* CalculateRanks and SortRanks from id Software's code/game/g_main.c.
  * Copyright (C) 1999-2005 Id Software, Inc.
  * SPDX-License-Identifier: GPL-2.0-or-later */
+#include "qa/text.h"
 #include "native_q3_rank.h"
 #include "native_q3_clients.h"
 #include "native_q3_console.h"
@@ -248,23 +249,6 @@ static void sort(uint32_t values[QA_Q3_NATIVE_CLIENTS], const rank_client *clien
     }
 }
 
-static void integer_text(int32_t value, char text[12])
-{
-    unsigned char reversed[11];
-    size_t count = 0;
-    uint32_t bits = value < 0 ? 0u - (uint32_t)value : (uint32_t)value;
-    int32_t remaining;
-    memcpy(&remaining, &bits, sizeof(remaining));
-    do {
-        reversed[count++] = (unsigned char)(48 + remaining % 10);
-        remaining /= 10;
-    } while (remaining);
-    if (value < 0) reversed[count++] = '-';
-    for (size_t index = 0; index < count; ++index)
-        text[index] = (char)reversed[count - index - 1];
-    text[count] = 0;
-}
-
 static bool score_configstring(rank_scope *scope, uint32_t index, qa_error *error)
 {
     qa_q3_source_team_state team;
@@ -285,7 +269,7 @@ static bool score_configstring(rank_scope *scope, uint32_t index, qa_error *erro
         }
     }
     char text[12];
-    integer_text(score, text);
+    qa_format_q3_integer(score, text);
     return qa_q3_configstring_write(scope->game, 6u + index, text, error) && live(scope, error);
 }
 

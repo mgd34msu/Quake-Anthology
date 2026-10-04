@@ -3,6 +3,7 @@
  * TypeScript GameCommandRuntime and MatchRuntime translations.
  * Copyright (C) 1999-2005 Id Software, Inc. GPL-2.0-or-later.
  */
+#include "qa/text.h"
 #include "native_q3_votes.h"
 #include "native_q3_clients.h"
 #include "native_q3_console.h"
@@ -70,21 +71,6 @@ static int32_t signed_bits(uint32_t bits)
     int32_t result;
     memcpy(&result, &bits, sizeof(result));
     return result;
-}
-
-/* bg_lib AddInt negates through int32, including its INT32_MIN byte output. */
-static void decimal(int32_t value, char text[32])
-{
-    unsigned char reversed[16];
-    size_t count = 0;
-    int32_t remaining = value < 0 ? signed_bits(0u - (uint32_t)value) : value;
-    do {
-        reversed[count++] = (unsigned char)(48 + remaining % 10);
-        remaining /= 10;
-    } while (remaining);
-    if (value < 0) reversed[count++] = '-';
-    for (size_t index = 0; index < count; ++index) text[index] = (char)reversed[count - index - 1];
-    text[count] = 0;
 }
 
 static void store_text(char text[VOTE_BYTES], const char *source)
@@ -202,7 +188,7 @@ static bool config(const vote_scope *scope, uint32_t index, const char *text, qa
 static bool config_integer(const vote_scope *scope, uint32_t index, int32_t value, qa_error *error)
 {
     char text[32];
-    decimal(value, text);
+    qa_format_q3_integer(value, text);
     return config(scope, index, text, error);
 }
 
@@ -365,7 +351,7 @@ static bool call_team_vote(vote_scope *scope, const qa_command_invocation *comma
         if (digits >= 3 || !parameter[digits]) {
             target = integer(parameter);
             char message[128], number[32];
-            decimal(target, number);
+            qa_format_q3_integer(target, number);
             if (target < 0 || (uint32_t)target >= scope->maximum) {
                 snprintf(message, sizeof(message), "Bad client slot: %s\n", number);
                 return print_client(scope, message, error);
@@ -396,7 +382,7 @@ static bool call_team_vote(vote_scope *scope, const qa_command_invocation *comma
         }
     }
     char formatted[VOTE_BYTES + 64], number[32];
-    decimal(target, number);
+    qa_format_q3_integer(target, number);
     snprintf(formatted, sizeof(formatted), "%s %s", key, number);
     store_text(vote->text, formatted);
     char announcement[128];

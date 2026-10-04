@@ -1,6 +1,7 @@
 #include "internal.h"
 #include "qa/console.h"
 #include "qa/game_q3_clients.h"
+#include "qa/text.h"
 #include <ctype.h>
 
 static bool named(const char *left, const char *right) {
@@ -25,20 +26,6 @@ bool qa_q3_player_noclip(qa_q3_game *game, qa_actor_id actor, bool *enabled, qa_
     }
     --game->observation_depth;
     return okay;
-}
-static void integer_text(int32_t value, char text[12]) {
-    unsigned char reversed[11];
-    size_t count = 0;
-    uint32_t bits = value < 0 ? 0u - (uint32_t)value : (uint32_t)value;
-    int32_t remaining;
-    memcpy(&remaining, &bits, sizeof(remaining));
-    do {
-        reversed[count++] = (unsigned char)(48 + remaining % 10);
-        remaining /= 10;
-    } while (remaining);
-    if (value < 0) reversed[count++] = '-';
-    for (size_t i = 0; i < count; ++i) text[i] = (char)reversed[count - i - 1];
-    text[count] = 0;
 }
 static bool print(qa_q3_game *game, qa_actor_id actor, const char *text, qa_error *error) {
     uint32_t slot;
@@ -260,9 +247,9 @@ static bool dispatch(qa_q3_game *game, qa_actor_id actor, const qa_command_invoc
         }
         char text[64];
         char fields[3][12];
-        integer_text(q3_source_float_to_int(body.origin.x), fields[0]);
-        integer_text(q3_source_float_to_int(body.origin.y), fields[1]);
-        integer_text(q3_source_float_to_int(body.origin.z), fields[2]);
+        (void)qa_format_q3_integer(q3_source_float_to_int(body.origin.x), fields[0]);
+        (void)qa_format_q3_integer(q3_source_float_to_int(body.origin.y), fields[1]);
+        (void)qa_format_q3_integer(q3_source_float_to_int(body.origin.z), fields[2]);
         int length = snprintf(text, sizeof(text), "(%s %s %s)", fields[0], fields[1], fields[2]);
         if (length >= 32) {
             char warning[80];

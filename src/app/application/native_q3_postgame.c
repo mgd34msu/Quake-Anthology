@@ -1,6 +1,7 @@
 /* Tournament results from id Software's code/game/g_arenas.c and its TypeScript port.
  * Copyright (C) 1999-2005 Id Software, Inc.
  * SPDX-License-Identifier: GPL-2.0-or-later */
+#include "qa/text.h"
 #include "native_q3_postgame.h"
 #include "native_q3_console.h"
 #include "native_q3_rank.h"
@@ -86,21 +87,6 @@ static int32_t signed_bits(uint32_t bits)
     return value;
 }
 
-/* bg_lib AddInt preserves the source's wrapped INT32_MIN byte sequence. */
-static void decimal(int32_t value, char text[32])
-{
-    unsigned char reversed[16];
-    size_t count = 0;
-    int32_t remaining = value < 0 ? signed_bits(0u - (uint32_t)value) : value;
-    do {
-        reversed[count++] = (unsigned char)(48 + remaining % 10);
-        remaining /= 10;
-    } while (remaining);
-    if (value < 0) reversed[count++] = '-';
-    for (size_t index = 0; index < count; ++index) text[index] = (char)reversed[count - index - 1];
-    text[count] = 0;
-}
-
 static void integer_fields(char *out, size_t capacity, const char *prefix,
     const int32_t *values, size_t count)
 {
@@ -110,7 +96,7 @@ static void integer_fields(char *out, size_t capacity, const char *prefix,
     for (size_t index = 0; index < count && length < capacity - 1; ++index) {
         out[length++] = ' ';
         char text[32];
-        decimal(values[index], text);
+        qa_format_q3_integer(values[index], text);
         size_t bytes = strlen(text);
         if (bytes > capacity - 1 - length) bytes = capacity - 1 - length;
         memcpy(out + length, text, bytes);

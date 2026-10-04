@@ -1,4 +1,5 @@
 #include "native_q3_session.h"
+#include "qa/text.h"
 #include "native_q3_console.h"
 #include "native_q3_clients.h"
 #include "native_q3_settings.h"
@@ -105,25 +106,6 @@ static int32_t integer(const char *text)
     return result;
 }
 
-/* bg_lib AddInt negates in int32. INT32_MIN therefore retains its negative
- * remainders and emits the source's nondecimal bytes. */
-static void integer_text(int32_t value, char text[12])
-{
-    unsigned char reversed[11];
-    size_t count = 0;
-    uint32_t bits = value < 0 ? 0u - (uint32_t)value : (uint32_t)value;
-    int32_t remaining;
-    memcpy(&remaining, &bits, sizeof(remaining));
-    do {
-        reversed[count++] = (unsigned char)(48 + remaining % 10);
-        remaining /= 10;
-    } while (remaining);
-    if (value < 0) reversed[count++] = '-';
-    for (size_t index = 0; index < count; ++index)
-        text[index] = (char)reversed[count - index - 1];
-    text[count] = 0;
-}
-
 /* bg_lib _atoi consumes a delimiter, including the terminating NUL. Empty
  * input and trailing whitespace leave the cursor at NUL instead. */
 static bool scan_integer(const char *buffer, size_t length, size_t *cursor,
@@ -160,13 +142,13 @@ static bool session_write(const session_source *source, uint32_t slot, qa_error 
     if (!qa_q3_client_session_slot_read(source->game, slot, &row, error) ||
         !qa_q3_source_binding_read(source->game, slot, &before, error)) return false;
     char name[32], value[SESSION_BUFFER_SIZE], fields[7][12];
-    integer_text(row.team, fields[0]);
-    integer_text(row.spectator_time_ms, fields[1]);
-    integer_text(row.spectator_state, fields[2]);
-    integer_text(row.spectator_client, fields[3]);
-    integer_text(row.wins, fields[4]);
-    integer_text(row.losses, fields[5]);
-    integer_text(row.team_leader, fields[6]);
+    qa_format_q3_integer(row.team, fields[0]);
+    qa_format_q3_integer(row.spectator_time_ms, fields[1]);
+    qa_format_q3_integer(row.spectator_state, fields[2]);
+    qa_format_q3_integer(row.spectator_client, fields[3]);
+    qa_format_q3_integer(row.wins, fields[4]);
+    qa_format_q3_integer(row.losses, fields[5]);
+    qa_format_q3_integer(row.team_leader, fields[6]);
     snprintf(name, sizeof(name), "session%u", slot);
     snprintf(value, sizeof(value), "%s %s %s %s %s %s %s",
         fields[0], fields[1], fields[2], fields[3], fields[4], fields[5], fields[6]);
@@ -322,7 +304,7 @@ static bool world_write(const session_source *source, qa_error *error)
     bool ok = application_native_q3_settings_integer(source->provider, "g_gametype", &game_type, error);
     char value[SESSION_BUFFER_SIZE];
     if (ok) {
-        integer_text(game_type, value);
+        qa_format_q3_integer(game_type, value);
         ok = cvar_write(source, "session", value, error) &&
             qa_q3_source_max_clients(source->game, &maximum, error);
     }

@@ -1,6 +1,7 @@
 /* Source behavior from id Software's code/game/g_team.c and the TypeScript
  * TeamRuntime translation. Copyright (C) 1999-2005 Id Software, Inc.
  * SPDX-License-Identifier: GPL-2.0-or-later */
+#include "qa/text.h"
 #include "native_q3_team_status.h"
 #include "native_q3_console.h"
 #include "native_q3_wire_state.h"
@@ -173,29 +174,12 @@ static int32_t signed_bits(uint32_t bits)
     return value;
 }
 
-/* bg_lib's AddInt keeps wrapped INT32_MIN negative during digit extraction. */
-static size_t decimal(int32_t value, char out[32])
-{
-    unsigned char reversed[16];
-    size_t count = 0;
-    int32_t remaining = value < 0 ? signed_bits(0u - (uint32_t)value) : value;
-    do {
-        reversed[count++] = (unsigned char)(48 + remaining % 10);
-        remaining /= 10;
-    } while (remaining);
-    if (value < 0) reversed[count++] = '-';
-    for (size_t index = 0; index < count; ++index)
-        out[index] = (char)reversed[count - index - 1];
-    out[count] = 0;
-    return count;
-}
-
 static size_t entry_format(char out[TEAM_ENTRY_BYTES], const int32_t fields[6])
 {
     size_t used = 0;
     for (size_t index = 0; index < 6; ++index) {
         char word[32];
-        size_t length = decimal(fields[index], word);
+        size_t length = qa_format_q3_integer(fields[index], word);
         out[used++] = ' ';
         memcpy(out + used, word, length);
         used += length;
@@ -276,7 +260,7 @@ static bool overlay(const team_scope *scope, uint32_t recipient,
     }
     message[used] = 0;
     char command[TEAM_MESSAGE_BYTES + 32], number[32];
-    size_t digits = decimal(count, number);
+    size_t digits = qa_format_q3_integer(count, number);
     memcpy(command, "tinfo ", 6);
     memcpy(command + 6, number, digits);
     command[6 + digits] = ' ';

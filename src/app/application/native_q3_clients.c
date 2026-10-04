@@ -1,4 +1,5 @@
 #include "native_q3_clients.h"
+#include "qa/text.h"
 #include "native_q3_console.h"
 #include "native_q3_chat.h"
 #include "native_q3_wire_state.h"
@@ -60,34 +61,6 @@ static int32_t integer(const char *text)
     int32_t result;
     memcpy(&result, &bits, sizeof(result));
     return result;
-}
-
-static int32_t number_integer(float number)
-{
-    if (!isfinite(number)) return 0;
-    double reduced = fmod(trunc((double)number), 4294967296.0);
-    if (reduced < 0) reduced += 4294967296.0;
-    uint32_t bits = (uint32_t)reduced;
-    int32_t result;
-    memcpy(&result, &bits, sizeof(result));
-    return result;
-}
-
-static void integer_text(int32_t value, char text[12])
-{
-    unsigned char reversed[11];
-    size_t count = 0;
-    uint32_t bits = value < 0 ? 0u - (uint32_t)value : (uint32_t)value;
-    int32_t remaining;
-    memcpy(&remaining, &bits, sizeof(remaining));
-    do {
-        reversed[count++] = (unsigned char)(48 + remaining % 10);
-        remaining /= 10;
-    } while (remaining);
-    if (value < 0) reversed[count++] = '-';
-    for (size_t index = 0; index < count; ++index)
-        text[index] = (char)reversed[count - index - 1];
-    text[count] = 0;
 }
 
 static bool source(application_provider *provider, qa_actor_id actor,
@@ -481,12 +454,12 @@ static bool userinfo_changed(application_provider *provider,
         }
     }
     char fields[6][12];
-    integer_text(team, fields[0]);
-    integer_text(client.max_health, fields[1]);
-    integer_text(sess.wins, fields[2]);
-    integer_text(sess.losses, fields[3]);
-    integer_text(team_task, fields[4]);
-    integer_text(sess.team_leader, fields[5]);
+    qa_format_q3_integer(team, fields[0]);
+    qa_format_q3_integer(client.max_health, fields[1]);
+    qa_format_q3_integer(sess.wins, fields[2]);
+    qa_format_q3_integer(sess.losses, fields[3]);
+    qa_format_q3_integer(team_task, fields[4]);
+    qa_format_q3_integer(sess.team_leader, fields[5]);
     if (flags & 8u)
         snprintf(config, sizeof(config), "n\\%s\\t\\%s\\model\\%s\\hmodel\\%s\\c1\\%s\\c2\\%s\\hc\\%s\\w\\%s\\l\\%s\\skill\\%s\\tt\\%s\\tl\\%s",
             client.netname, fields[0], model, head, color1, color2, fields[1],
@@ -950,7 +923,7 @@ bool application_native_q3_client_scoreboard(application_provider *provider,
             published.persistant[13], published.persistant[11], published.persistant[12],
             published.persistant[2] == 0 && published.persistant[8] == 0, published.persistant[14]};
         char fields[14][12];
-        for (size_t field = 0; field < 14; ++field) integer_text(values[field], fields[field]);
+        for (size_t field = 0; field < 14; ++field) qa_format_q3_integer(values[field], fields[field]);
         int length = snprintf(row, sizeof(row), " %s %s %s %s %s %s %s %s %s %s %s %s %s %s",
             fields[0], fields[1], fields[2], fields[3], fields[4], fields[5], fields[6],
             fields[7], fields[8], fields[9], fields[10], fields[11], fields[12], fields[13]);
@@ -962,8 +935,8 @@ bool application_native_q3_client_scoreboard(application_provider *provider,
         ++included;
     }
     char red_score[12], blue_score[12];
-    integer_text(team_state.team_scores[1], red_score);
-    integer_text(team_state.team_scores[2], blue_score);
+    qa_format_q3_integer(team_state.team_scores[1], red_score);
+    qa_format_q3_integer(team_state.team_scores[2], blue_score);
     snprintf(output, sizeof(output), "scores %zu %s %s%s",
         included, red_score, blue_score, entries);
     return application_native_q3_send_command(provider, (int32_t)recipient, output, error) &&
@@ -1227,7 +1200,7 @@ static bool follow_command(application_provider *provider, qa_actor_id actor,
             target = integer(text);
             if (target < 0 || (uint32_t)target >= maximum) {
                 char value[12];
-                integer_text(target, value);
+                qa_format_q3_integer(target, value);
                 snprintf(output, sizeof(output), "Bad client slot: %s\n", value);
                 return print_client(provider, slot, output, error);
             }
@@ -1235,7 +1208,7 @@ static bool follow_command(application_provider *provider, qa_actor_id actor,
             if (!qa_q3_client_slot_read(provider->state.q3, (uint32_t)target, &other, error)) return false;
             if (other.connected != QA_Q3_CLIENT_CONNECTED) {
                 char value[12];
-                integer_text(target, value);
+                qa_format_q3_integer(target, value);
                 snprintf(output, sizeof(output), "Client %s is not active\n", value);
                 return print_client(provider, slot, output, error);
             }
@@ -1335,7 +1308,7 @@ static bool team_task(application_provider *provider, qa_actor_id actor,
     size_t length = strlen(current);
     if (length >= sizeof(info)) length = sizeof(info) - 1;
     memcpy(info, current, length); info[length] = 0;
-    integer_text(integer(command->argv[1]), value);
+    qa_format_q3_integer(integer(command->argv[1]), value);
     if (!qa_q3_info_set(info, sizeof(info), "teamtask", value, error) ||
         !application_native_q3_wire_userinfo(provider, slot, info, error)) return false;
     return application_native_q3_client_userinfo_changed(provider, actor, error);
@@ -1521,8 +1494,8 @@ bool application_native_q3_client_movement_parameters(application_provider *prov
         if (!application_native_q3_settings_number(provider, "g_gravity", &gravity_value, error) ||
             !application_native_q3_settings_number(provider, "g_speed", &speed_value, error)) return false;
         *pm_type = player.noclip ? 1 : combat.health <= 0 ? 3 : 0;
-        *gravity = number_integer(gravity_value);
-        *speed = number_integer(speed_value);
+        *gravity = qa_number_to_i32(gravity_value);
+        *speed = qa_number_to_i32(speed_value);
         application_provider *equipment = application_provider_for(app, actor, QA_ROLE_EQUIPMENT, "");
         application_provider *speed_owner = provider;
         qa_q3_player_state speed_player = player;
@@ -1544,7 +1517,7 @@ bool application_native_q3_client_movement_parameters(application_provider *prov
             speed_player.persistent == QA_Q3_P_SCOUT ? 1.5f : speed_player.powerups[QA_Q3_P_HASTE] ? 1.3f : 1.0f;
         if (multiplier != 1.0f) {
             volatile float scaled = (float)*speed * multiplier;
-            *speed = number_integer(scaled);
+            *speed = qa_number_to_i32(scaled);
         }
     }
     if (!foreign) return true;

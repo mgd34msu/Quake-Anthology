@@ -1,6 +1,7 @@
 /* Match control from id Software's code/game/g_main.c and its TypeScript port.
  * Copyright (C) 1999-2005 Id Software, Inc.
  * SPDX-License-Identifier: GPL-2.0-or-later */
+#include "qa/text.h"
 #include "native_q3_match.h"
 #include "native_q3_clients.h"
 #include "native_q3_console.h"
@@ -204,25 +205,10 @@ static bool config(const match_scope *scope, uint32_t index, const char *text, q
         application_fail(error, QA_ERROR_ARGUMENT, "Q3 match configstring was superseded");
 }
 
-/* bg_lib AddInt retains its signed INT32_MIN remainders. */
-static void integer_text(int32_t value, char text[12])
-{
-    unsigned char reversed[11];
-    size_t count = 0;
-    int32_t remaining = value < 0 ? signed_bits(0u - (uint32_t)value) : value;
-    do {
-        reversed[count++] = (unsigned char)(48 + remaining % 10);
-        remaining /= 10;
-    } while (remaining);
-    if (value < 0) reversed[count++] = '-';
-    for (size_t i = 0; i < count; ++i) text[i] = (char)reversed[count - i - 1];
-    text[count] = 0;
-}
-
 static bool config_integer(const match_scope *scope, uint32_t index, int32_t value, qa_error *error)
 {
     char text[12];
-    integer_text(value, text);
+    qa_format_q3_integer(value, text);
     return config(scope, index, text, error);
 }
 
@@ -304,8 +290,8 @@ static bool log_exit(match_scope *scope, const char *reason, qa_error *error)
         !config(scope, 22, "1", error)) return false;
     if (mode.rules.kind >= QA_MODE_TEAM_DEATHMATCH) {
         char red[12], blue[12];
-        integer_text(mode.team_scores[0], red);
-        integer_text(mode.team_scores[1], blue);
+        qa_format_q3_integer(mode.team_scores[0], red);
+        qa_format_q3_integer(mode.team_scores[1], blue);
         snprintf(text, sizeof(text), "red:%s  blue:%s\n", red, blue);
         if (!log_text(scope, text, error)) return false;
     }
@@ -320,9 +306,9 @@ static bool log_exit(match_scope *scope, const char *reason, qa_error *error)
         int32_t points;
         if (!score(scope, slot, &points, error)) return false;
         char score_text[12], ping[12], number[12];
-        integer_text(points, score_text);
-        integer_text(value.ping < 999 ? value.ping : 999, ping);
-        integer_text((int32_t)slot, number);
+        qa_format_q3_integer(points, score_text);
+        qa_format_q3_integer(value.ping < 999 ? value.ping : 999, ping);
+        qa_format_q3_integer((int32_t)slot, number);
         snprintf(text, sizeof(text), "score: %s  ping: %s  client: %s %s\n",
                  score_text, ping, number, value.netname);
         if (!log_text(scope, text, error) || !client_live(scope, slot, binding.actor, error)) return false;
