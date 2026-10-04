@@ -68,7 +68,7 @@ static bool capacity_valid(uint64_t capacity)
     return capacity == 0 || (capacity <= maximum &&
         (capacity == maximum || (capacity >= 16 && !(capacity & (capacity - 1)))));
 }
-bool qa_bank_write_extent(qa_ac_writer *w, size_t capacity, size_t count)
+bool qa_bank_write_extent(qa_source_save_io *w, size_t capacity, size_t count)
 {
     for (size_t i = 0; i < capacity; ++i) {
         uint8_t occupied = i < count;
@@ -76,9 +76,9 @@ bool qa_bank_write_extent(qa_ac_writer *w, size_t capacity, size_t count)
     }
     return true;
 }
-bool qa_bank_read_extent(qa_ac_reader *r, uint64_t capacity, uint64_t count)
+bool qa_bank_read_extent(qa_source_save_io *r, uint64_t capacity, uint64_t count)
 {
-    if (!capacity_valid(capacity) || count > capacity || capacity > r->bytes.size - r->offset)
+    if (!capacity_valid(capacity) || count > capacity || capacity > r->input.size - r->offset)
         return qa_ac_bad(r, "Saved audio cache allocation has no physical extent");
     qa_bytes slots;
     if (!qa_ac_read(r, (size_t)capacity, &slots)) return false;
@@ -102,7 +102,7 @@ bool qa_bank_cache_valid(const qa_audio_bank *bank, qa_error *error)
     }
     return true;
 }
-bool qa_bank_write_asset(qa_ac_writer *w, const struct asset_row *row,
+bool qa_bank_write_asset(qa_source_save_io *w, const struct asset_row *row,
     const struct sample_row *samples, size_t sample_count, const qa_audio_bank_checkpoint_refs *refs)
 {
     const qa_audio_asset *a = row->asset; uint64_t view = 0, pool = 0, resource = 0;
@@ -132,7 +132,8 @@ bool qa_audio_bank_checkpoint(const qa_audio_bank *bank, qa_audio_asset *const *
         ok = ok && qa_bank_asset_valid(assets[i].asset, error) && qa_bank_add_sample(&samples, &sample_count, assets[i].asset->sample, error);
     }
     ok = ok && refs->view_encode(refs->context, bank->view, &view, error);
-    qa_ac_writer w = {.error = error};
+    qa_source_save_io w;
+    if (!qa_source_save_writer(&w, NULL, error)) return false;
     ok = ok && qa_ac_write(&w, "QABK", 4) && qa_ac_u64(&w, view) &&
         qa_ac_u64(&w, bank->registration) && qa_ac_u64(&w, bank->capacity) && qa_ac_u64(&w, bank->count) &&
         qa_ac_u64(&w, count) && qa_ac_u64(&w, sample_count) && qa_ac_u64(&w, asset_count) &&
@@ -144,12 +145,12 @@ bool qa_audio_bank_checkpoint(const qa_audio_bank *bank, qa_audio_asset *const *
     for (size_t i = 0; ok && i < asset_count; ++i) ok = qa_bank_write_asset(&w, &assets[i], samples, sample_count, refs);
     for (size_t i = 0; ok && i < bank->count; ++i) ok = qa_ac_u64(&w, qa_bank_asset_index(assets, asset_count, bank->entries[i].asset)) && qa_ac_u64(&w, bank->entries[i].touched);
     for (size_t i = 0; ok && i < count; ++i) ok = qa_ac_u64(&w, external[i] ? qa_bank_asset_index(assets, asset_count, external[i]) : UINT64_MAX);
-    if (ok) ok = qa_ac_finish(&w, out); else qa_buffer_free(&w.buffer);
+    if (ok) ok = qa_ac_finish(&w, out); else qa_source_save_dispose(&w);
     free(assets); free(samples);
     if (!ok && error && error->code == QA_OK) fail(error, QA_ERROR_FORMAT, "Audio bank capture is not completely qualified");
     return ok;
 }
-bool qa_bank_read_asset(qa_ac_reader *r, struct asset_row *row, struct sample_row *samples,
+bool qa_bank_read_asset(qa_source_save_io *r, struct asset_row *row, struct sample_row *samples,
     size_t sample_count, const qa_audio_bank_checkpoint_refs *refs)
 {
     uint64_t view = qa_ac_get64(r), pool = qa_ac_get64(r), resource = qa_ac_get64(r); qa_bytes digest, name;
@@ -178,7 +179,7 @@ bool qa_bank_read_asset(qa_ac_reader *r, struct asset_row *row, struct sample_ro
     if (!a->sample || !qa_bank_asset_valid(a, r->error)) { r->failed = true; return false; }
     ++samples[sample].holders; return true;
 }
-static bool take_holder(qa_ac_reader *r, struct asset_row *rows, size_t count, bool nullable, qa_audio_asset **out)
+static bool take_holder(qa_source_save_io *r, struct asset_row *rows, size_t count, bool nullable, qa_audio_asset **out)
 {
     uint64_t index = qa_ac_get64(r);
     if (nullable && index == UINT64_MAX) return !r->failed;
@@ -194,7 +195,9 @@ bool qa_audio_bank_restore(qa_audio_bank *bank, qa_audio_asset **external, size_
         !refs->resource_decode || (bytes.size && !bytes.data))
         return fail(error, QA_ERROR_ARGUMENT, "Audio bank restore requires an empty candidate and content resolvers");
     for (size_t i = 0; i < count; ++i) if (external[i]) return fail(error, QA_ERROR_ARGUMENT, "Audio external holder destination is occupied");
-    qa_ac_reader r = {.bytes = bytes, .error = error}; qa_bytes magic;
+    qa_source_save_io r;
+    if (!qa_source_save_reader(&r, NULL, bytes, error)) return false;
+    qa_bytes magic;
     bool ok = qa_ac_read(&r, 4, &magic) && !memcmp(magic.data, "QABK", 4);
     uint64_t view = qa_ac_get64(&r), registration = qa_ac_get64(&r), capacity = qa_ac_get64(&r), entries = qa_ac_get64(&r);
     uint64_t slots = qa_ac_get64(&r), sample_count = qa_ac_get64(&r), asset_count = qa_ac_get64(&r);

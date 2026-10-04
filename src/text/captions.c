@@ -593,8 +593,8 @@ static bool cue_fields(qa_source_save_io *io, cue_record *record)
     char *id = (char *)cue.id, *text = (char *)cue.text, *speaker = (char *)cue.speaker;
     size_t count = cue.argument_count; uint32_t kind = cue.kind;
     char **arguments = NULL;
-    bool ok = qa_text_save_owned(io, &id) && id && *id && qa_text_save_owned(io, &text) && text &&
-        qa_text_save_owned(io, &speaker) && qa_source_save_f64(io, &cue.start_ms) &&
+    bool ok = qa_source_save_owned_text(io, &id) && id && *id && qa_source_save_owned_text(io, &text) && text &&
+        qa_source_save_owned_text(io, &speaker) && qa_source_save_f64(io, &cue.start_ms) &&
         qa_source_save_f64(io, &cue.duration_ms) && qa_source_save_u32(io, &kind) && kind <= QA_CAPTION_SOUND &&
         qa_source_save_count(io, &count, reading ? (io->input.size - io->offset) / 9 : SIZE_MAX / sizeof(char *));
     if (ok && reading && count) {
@@ -603,7 +603,7 @@ static bool cue_fields(qa_source_save_io *io, cue_record *record)
     }
     for (size_t i = 0; ok && i < count; ++i) {
         char *argument = reading ? NULL : (char *)cue.arguments[i];
-        ok = qa_text_save_owned(io, &argument) && argument;
+        ok = qa_source_save_owned_text(io, &argument) && argument;
         if (reading) arguments[i] = argument;
     }
     cue.id = id; cue.text = text; cue.speaker = speaker; cue.kind = (qa_caption_kind)kind;
@@ -648,7 +648,7 @@ static bool library_fields(qa_source_save_io *io, qa_caption_library *library)
         uint32_t kind = asset->kind;
         if (!qa_source_save_bytes(io, asset->digest.bytes, sizeof(asset->digest.bytes)) ||
             !qa_source_save_u32(io, &kind) || kind > QA_CAPTION_SOUND ||
-            !qa_text_save_owned(io, &asset->path) || !asset->path || !*asset->path) return false;
+            !qa_source_save_owned_text(io, &asset->path) || !asset->path || !*asset->path) return false;
         if (reading) asset->kind = (qa_caption_kind)kind;
         if (reading) {
             asset->track = calloc(1, sizeof(*asset->track));

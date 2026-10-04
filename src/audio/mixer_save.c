@@ -1,31 +1,20 @@
 #include "mixer_internal.h"
 #include "checkpoint_internal.h"
 
-static bool put_listener(qa_ac_writer *w, const qa_audio_checkpoint_refs *refs, const qa_audio_listener *v) {
-    bool ok = qa_ac_u32(w, v->seat) && qa_ac_ref(w, refs, QA_AUDIO_REFERENCE_ACTOR, v->actor) && qa_ac_vec(w, v->origin);
-    for (size_t i = 0; ok && i < 3; ++i) ok = qa_ac_vec(w, v->axis[i]);
-    return ok && qa_ac_float(w, v->gain) && qa_ac_u32(w, v->underwater);
-}
-static void get_listener(qa_ac_reader *r, const qa_audio_checkpoint_refs *refs, qa_audio_listener *v) {
-    v->seat = qa_ac_get32(r); v->actor = qa_ac_getref(r, refs, QA_AUDIO_REFERENCE_ACTOR); v->origin = qa_ac_getvec(r);
-    for (size_t i = 0; i < 3; ++i) v->axis[i] = qa_ac_getvec(r);
-    v->gain = qa_ac_getfloat(r); v->underwater = qa_ac_bool(r);
-    if (v->seat == QA_AUDIO_WORLD || v->gain < 0) qa_ac_bad(r, "Invalid saved audio listener");
-}
-static bool put_gain(qa_ac_writer *w, qa_mixer_gain v) {
+static bool put_gain(qa_source_save_io *w, qa_mixer_gain v) {
     return qa_ac_double(w, v.left) && qa_ac_double(w, v.right);
 }
-static qa_mixer_gain get_gain(qa_ac_reader *r) {
+static qa_mixer_gain get_gain(qa_source_save_io *r) {
     qa_mixer_gain v; v.left = qa_ac_getdouble(r); v.right = qa_ac_getdouble(r); return v;
 }
-static bool put_index(qa_ac_writer *w, size_t index) { return qa_ac_u64(w, index == SIZE_MAX ? UINT64_MAX : index); }
-static size_t get_index(qa_ac_reader *r, size_t count) {
+static bool put_index(qa_source_save_io *w, size_t index) { return qa_ac_u64(w, index == SIZE_MAX ? UINT64_MAX : index); }
+static size_t get_index(qa_source_save_io *r, size_t count) {
     uint64_t value = qa_ac_get64(r);
     if (value == UINT64_MAX) return SIZE_MAX;
     if (value >= count) { qa_ac_bad(r, "Saved audio index leaves its owner table"); return SIZE_MAX; }
     return (size_t)value;
 }
-static bool put_prepared(qa_ac_writer *w, const qa_audio_checkpoint_refs *refs, const qa_mixer_prepared *p) {
+static bool put_prepared(qa_source_save_io *w, const qa_audio_checkpoint_refs *refs, const qa_mixer_prepared *p) {
     if (!qa_ac_u32(w, p != NULL) || !p) return !w->failed;
     qa_buffer sample = {0};
     if (!qa_audio_sample_checkpoint(p->sample, &sample, w->error)) { w->failed = true; return false; }
@@ -52,7 +41,7 @@ static bool put_prepared(qa_ac_writer *w, const qa_audio_checkpoint_refs *refs, 
     }
     return ok;
 }
-static bool make_doppler(qa_mixer_prepared *p, qa_ac_reader *r) {
+static bool make_doppler(qa_mixer_prepared *p, qa_source_save_io *r) {
     if (p->layout.frames > SIZE_MAX - QA_MIXER_CHUNK_FRAMES) return qa_ac_bad(r, "Saved Doppler period overflows storage");
     size_t period = ((size_t)p->layout.frames + QA_MIXER_CHUNK_FRAMES - 1) / QA_MIXER_CHUNK_FRAMES * QA_MIXER_CHUNK_FRAMES;
     if (period >= SIZE_MAX / sizeof(double)) return qa_ac_bad(r, "Saved Doppler sums overflow storage");
@@ -67,7 +56,7 @@ static bool make_doppler(qa_mixer_prepared *p, qa_ac_reader *r) {
     }
     return true;
 }
-static void get_prepared(qa_ac_reader *r, const qa_audio_checkpoint_refs *refs, qa_audio_mixer *m, size_t slot) {
+static void get_prepared(qa_source_save_io *r, const qa_audio_checkpoint_refs *refs, qa_audio_mixer *m, size_t slot) {
     if (!qa_ac_bool(r) || r->failed) return;
     qa_bytes bytes;
     if (!qa_ac_getblob(r, &bytes)) return;
@@ -117,7 +106,7 @@ static void get_prepared(qa_ac_reader *r, const qa_audio_checkpoint_refs *refs, 
     }
     if (doppler) (void)make_doppler(p, r);
 }
-static qa_mixer_prepared *get_prepared_ref(qa_ac_reader *r, qa_audio_mixer *m) {
+static qa_mixer_prepared *get_prepared_ref(qa_source_save_io *r, qa_audio_mixer *m) {
     size_t slot = get_index(r, m->prepared_count);
     if (slot == SIZE_MAX || !m->prepared[slot]) { qa_ac_bad(r, "Saved audio holder has no prepared resource"); return NULL; }
     qa_mixer_prepared *p = m->prepared[slot]; ++p->references; return p;
@@ -133,11 +122,12 @@ bool qa_audio_mixer_checkpoint(const qa_audio_mixer *m, const qa_audio_checkpoin
         m->event_head != SIZE_MAX || m->event_tail != SIZE_MAX) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Mixer checkpoint requires drained callbacks and notifications"); return false;
     }
-    qa_ac_writer w = {.error = error};
+    qa_source_save_io w;
+    if (!qa_source_save_writer(&w, NULL, error)) return false;
     qa_ac_write(&w, "QAMX", 4); qa_ac_u32(&w, m->options.sample_rate);
     qa_ac_u32(&w, m->options.output_channels); qa_ac_u32(&w, m->options.observer != NULL);
     qa_ac_u32(&w, m->transmission_checked ? 2 : m->transmission ? 1 : 0);
-    put_listener(&w, refs, &m->listener);
+    qa_ac_put_listener(&w, refs, &m->listener);
     qa_ac_u64(&w, m->next_voice); qa_ac_u64(&w, m->schedule_order);
     qa_ac_u64(&w, (uint64_t)m->paint_time); qa_ac_u64(&w, (uint64_t)m->sound_time); qa_ac_u64(&w, (uint64_t)m->raw_end);
     qa_ac_double(&w, m->source_begin_offset); qa_ac_float(&w, m->effects_gain);
@@ -188,16 +178,16 @@ static void discard_mixer(qa_audio_mixer *m) {
     free(m->prepared); free(m->voices); free(m->loops); free(m->loop_mixes); free(m->positions);
     free(m->transmissions); free(m->events); free(m->diagnostic_message); free(m);
 }
-static bool allocate_table(qa_ac_reader *r, uint64_t count, size_t size, size_t minimum, void **out) {
+static bool allocate_table(qa_source_save_io *r, uint64_t count, size_t size, size_t minimum, void **out) {
     if (r->failed) return false;
-    if (count > SIZE_MAX / size || count > (r->bytes.size - r->offset) / minimum)
+    if (count > SIZE_MAX / size || count > (r->input.size - r->offset) / minimum)
         return qa_ac_bad(r, "Saved audio table exceeds its record extent");
     if (!count) return true;
     *out = calloc((size_t)count, size);
     if (!*out) { qa_error_set(r->error, QA_ERROR_MEMORY, r->offset, "Restoring audio state table"); r->failed = true; return false; }
     return true;
 }
-static bool validate_free_lists(qa_audio_mixer *m, qa_ac_reader *r) {
+static bool validate_free_lists(qa_audio_mixer *m, qa_source_save_io *r) {
     uint8_t *voices = calloc(m->voice_count ? m->voice_count : 1, 1);
     uint8_t *events = calloc(m->event_count ? m->event_count : 1, 1);
     if (!voices || !events) {
@@ -254,14 +244,16 @@ bool qa_audio_mixer_restore(qa_bytes bytes, const qa_audio_mixer_options *option
     if (!options || !out || !bytes.data || bytes.size < 20 || memcmp(bytes.data, "QAMX", 4)) {
         qa_error_set(error, QA_ERROR_FORMAT, 0, "Invalid mixer checkpoint arguments or header"); return false;
     }
-    qa_ac_reader r = {.bytes = bytes, .offset = 4, .error = error};
+    qa_source_save_io r;
+    if (!qa_source_save_reader(&r, NULL, bytes, error)) return false;
+    r.offset = 4;
     if (qa_ac_get32(&r) != options->sample_rate ||
         qa_ac_get32(&r) != options->output_channels || qa_ac_bool(&r) != (options->observer != NULL) ||
         qa_ac_get32(&r) != (refs && refs->geometry_checked ? 2u : refs && refs->geometry ? 1u : 0u))
         return qa_ac_bad(&r, "Saved mixer format or observer admission differs");
     qa_audio_mixer *m = NULL; qa_audio_mixer_options isolated = *options; isolated.initial_voices = 0;
     if (!qa_audio_mixer_create(&isolated, &m, error)) return false;
-    get_listener(&r, refs, &m->listener); m->next_voice = qa_ac_get64(&r); m->schedule_order = qa_ac_get64(&r);
+    qa_ac_get_listener(&r, refs, &m->listener, "Invalid saved audio listener"); m->next_voice = qa_ac_get64(&r); m->schedule_order = qa_ac_get64(&r);
     m->paint_time = qa_ac_geti64(&r); m->sound_time = qa_ac_geti64(&r); m->raw_end = qa_ac_geti64(&r);
     m->source_begin_offset = qa_ac_getdouble(&r); m->effects_gain = qa_ac_getfloat(&r);
     m->doppler_enabled = qa_ac_bool(&r); m->enabled = qa_ac_bool(&r); m->random_state = qa_ac_get32(&r);

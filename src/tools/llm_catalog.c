@@ -16,15 +16,6 @@ static bool contains(const char *text, qa_bytes word) {
     }
     return false;
 }
-static bool indirect(const char *name) {
-    static const char *const denied[] = {"llm_ask", "llm_exec", "llm_cancel", "exec", "vstr", "alias", "bind", "stuffcmds", "cmd", "wait"};
-    for (size_t i = 0; i < sizeof denied / sizeof denied[0]; ++i) {
-        size_t j = 0;
-        while (name[j] && denied[i][j] && fold((unsigned char)name[j]) == (unsigned char)denied[i][j]) ++j;
-        if (!name[j] && !denied[i][j]) return true;
-    }
-    return false;
-}
 typedef struct ranked { const qa_console_discovery_entry *entry; size_t score, ordinal; } ranked;
 static int compare(const void *a, const void *b) {
     const ranked *x = a, *y = b;
@@ -62,17 +53,20 @@ bool llm_console_instructions(qa_console *console, const qa_command_context *con
     if (!qa_console_discover(console, context, &snapshot, error)) return false;
     ranked *entries = NULL; size_t count = 0; bool ok = false;
     llm_text names = {0}, documentation = {0}, result = {0};
+    size_t name_units = 0;
     if (snapshot.count > SIZE_MAX / sizeof *entries) { llm_fail(error, "console catalog exceeds native range"); goto done; }
     if (snapshot.count && !(entries = malloc(snapshot.count * sizeof *entries))) { qa_error_set(error, QA_ERROR_MEMORY, 0, "allocating console catalog ranks"); goto done; }
     qa_bytes question = {(const uint8_t *)prompt, strlen(prompt)};
     for (size_t i = 0; i < snapshot.count; ++i) {
         const qa_console_discovery_entry *entry = &snapshot.entries[i];
-        if (execute && indirect(entry->name)) continue;
+        if (execute && llm_command_indirect(entry->name)) continue;
         const char *kind = entry->kind == QA_CONSOLE_COMMAND ? "command:" : entry->kind == QA_CONSOLE_ALIAS ? "alias:" : "cvar:";
+        size_t previous_size = names.buffer.size;
         if ((count && !llm_text_string(&names, ", ", error)) || !llm_text_string(&names, kind, error) || !llm_text_string(&names, entry->name, error)) goto done;
-        size_t name_units;
-        if (!units((qa_bytes){names.buffer.data, names.buffer.size}, &name_units, error)) goto done;
-        if (name_units > 48000) { llm_fail(error, "command catalog is too large for an LLM request"); goto done; }
+        size_t added_units;
+        if (!units((qa_bytes){names.buffer.data + previous_size, names.buffer.size - previous_size}, &added_units, error)) goto done;
+        if (added_units > 48000 - name_units) { llm_fail(error, "command catalog is too large for an LLM request"); goto done; }
+        name_units += added_units;
         size_t score = 0;
         for (size_t start = 0; start < question.size;) {
             while (start < question.size && !word_byte(question.data[start])) ++start;

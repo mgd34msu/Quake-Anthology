@@ -7,19 +7,6 @@
 #include <string.h>
 #include <strings.h>
 
-static float read_f32(const uint8_t *source) {
-    uint32_t bits = qa_font_u32le(source);
-    float value;
-    memcpy(&value, &bits, sizeof(value));
-    return value;
-}
-
-static void write_f32(uint8_t *destination, float value) {
-    uint32_t bits;
-    memcpy(&bits, &value, sizeof(bits));
-    qa_font_put_u32le(destination, bits);
-}
-
 static bool terminated(const char *text, size_t capacity) {
     return memchr(text, 0, capacity) != NULL;
 }
@@ -46,21 +33,21 @@ bool qa_q3_font_record_decode(qa_bytes input, qa_q3_font_record *out, qa_error *
     for (size_t i = 0; i < QA_Q3_FONT_GLYPHS; ++i) {
         size_t at = i * 80;
         qa_q3_glyph_record *glyph = &record.glyphs[i];
-        glyph->height = (int32_t)qa_font_u32le(input.data + at + 0);
-        glyph->top = (int32_t)qa_font_u32le(input.data + at + 4);
-        glyph->bottom = (int32_t)qa_font_u32le(input.data + at + 8);
-        glyph->pitch = (int32_t)qa_font_u32le(input.data + at + 12);
-        glyph->x_skip = (int32_t)qa_font_u32le(input.data + at + 16);
-        glyph->image_width = (int32_t)qa_font_u32le(input.data + at + 20);
-        glyph->image_height = (int32_t)qa_font_u32le(input.data + at + 24);
-        glyph->s = read_f32(input.data + at + 28);
-        glyph->t = read_f32(input.data + at + 32);
-        glyph->s2 = read_f32(input.data + at + 36);
-        glyph->t2 = read_f32(input.data + at + 40);
-        glyph->handle = (int32_t)qa_font_u32le(input.data + at + 44);
+        glyph->height = (int32_t)qa_load_u32le(input.data + at + 0);
+        glyph->top = (int32_t)qa_load_u32le(input.data + at + 4);
+        glyph->bottom = (int32_t)qa_load_u32le(input.data + at + 8);
+        glyph->pitch = (int32_t)qa_load_u32le(input.data + at + 12);
+        glyph->x_skip = (int32_t)qa_load_u32le(input.data + at + 16);
+        glyph->image_width = (int32_t)qa_load_u32le(input.data + at + 20);
+        glyph->image_height = (int32_t)qa_load_u32le(input.data + at + 24);
+        glyph->s = qa_load_f32le(input.data + at + 28);
+        glyph->t = qa_load_f32le(input.data + at + 32);
+        glyph->s2 = qa_load_f32le(input.data + at + 36);
+        glyph->t2 = qa_load_f32le(input.data + at + 40);
+        glyph->handle = (int32_t)qa_load_u32le(input.data + at + 44);
         memcpy(glyph->shader_name, input.data + at + 48, 32);
     }
-    record.glyph_scale = read_f32(input.data + 20480);
+    record.glyph_scale = qa_load_f32le(input.data + 20480);
     memcpy(record.name, input.data + 20484, 64);
     if (!validate_record(&record, error))
         return false;
@@ -76,21 +63,21 @@ bool qa_q3_font_record_encode(const qa_q3_font_record *record, uint8_t out[QA_Q3
     for (size_t i = 0; i < QA_Q3_FONT_GLYPHS; ++i) {
         size_t at = i * 80;
         const qa_q3_glyph_record *glyph = &record->glyphs[i];
-        qa_font_put_u32le(out + at + 0, (uint32_t)glyph->height);
-        qa_font_put_u32le(out + at + 4, (uint32_t)glyph->top);
-        qa_font_put_u32le(out + at + 8, (uint32_t)glyph->bottom);
-        qa_font_put_u32le(out + at + 12, (uint32_t)glyph->pitch);
-        qa_font_put_u32le(out + at + 16, (uint32_t)glyph->x_skip);
-        qa_font_put_u32le(out + at + 20, (uint32_t)glyph->image_width);
-        qa_font_put_u32le(out + at + 24, (uint32_t)glyph->image_height);
-        write_f32(out + at + 28, glyph->s);
-        write_f32(out + at + 32, glyph->t);
-        write_f32(out + at + 36, glyph->s2);
-        write_f32(out + at + 40, glyph->t2);
-        qa_font_put_u32le(out + at + 44, (uint32_t)glyph->handle);
+        qa_store_u32le(out + at + 0, (uint32_t)glyph->height);
+        qa_store_u32le(out + at + 4, (uint32_t)glyph->top);
+        qa_store_u32le(out + at + 8, (uint32_t)glyph->bottom);
+        qa_store_u32le(out + at + 12, (uint32_t)glyph->pitch);
+        qa_store_u32le(out + at + 16, (uint32_t)glyph->x_skip);
+        qa_store_u32le(out + at + 20, (uint32_t)glyph->image_width);
+        qa_store_u32le(out + at + 24, (uint32_t)glyph->image_height);
+        qa_store_f32le(out + at + 28, glyph->s);
+        qa_store_f32le(out + at + 32, glyph->t);
+        qa_store_f32le(out + at + 36, glyph->s2);
+        qa_store_f32le(out + at + 40, glyph->t2);
+        qa_store_u32le(out + at + 44, (uint32_t)glyph->handle);
         memcpy(out + at + 48, glyph->shader_name, 32);
     }
-    write_f32(out + 20480, record->glyph_scale);
+    qa_store_f32le(out + 20480, record->glyph_scale);
     memcpy(out + 20484, record->name, 64);
     return true;
 }

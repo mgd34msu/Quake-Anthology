@@ -84,8 +84,8 @@ bool qa_player_progress_checkpoint(const qa_player_progress *source, qa_buffer *
     if (copy.saved_root) identity = copy.saved_root_identity;
     qa_source_save_io io = {0};
     if (ok) ok = qa_source_save_writer(&io, NULL, error) && ps_magic(&io, progress_magic) &&
-                 ps_text(&io, &root) && identity_fields(&io, &identity) &&
-                 ps_text(&io, &copy.relative) && qa_source_save_u64(&io, &copy.nonce) &&
+                 qa_source_save_owned_text(&io, &root) && identity_fields(&io, &identity) &&
+                 qa_source_save_owned_text(&io, &copy.relative) && qa_source_save_u64(&io, &copy.nonce) &&
                  qa_source_save_bool(&io, &copy.reload_required) && data_fields(&io, &copy.data) &&
                  qa_source_save_finish(&io, out);
     qa_source_save_dispose(&io);
@@ -104,8 +104,8 @@ bool qa_player_progress_restore(qa_player_progress *store,
     qa_player_progress scratch = {0};
     qa_source_save_io io = {0};
     bool ok = qa_source_save_reader(&io, NULL, bytes, error) && ps_magic(&io, progress_magic) &&
-              ps_text(&io, &scratch.saved_root) && scratch.saved_root && *scratch.saved_root &&
-              identity_fields(&io, &scratch.saved_root_identity) && ps_text(&io, &scratch.relative) &&
+              qa_source_save_owned_text(&io, &scratch.saved_root) && scratch.saved_root && *scratch.saved_root &&
+              identity_fields(&io, &scratch.saved_root_identity) && qa_source_save_owned_text(&io, &scratch.relative) &&
               scratch.relative && !strcmp(scratch.relative, store->relative) &&
               qa_source_save_u64(&io, &scratch.nonce) &&
               qa_source_save_bool(&io, &scratch.reload_required) && data_fields(&io, &scratch.data) &&

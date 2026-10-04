@@ -7,17 +7,6 @@ static uint32_t callback_mask(const qa_audio_engine_options *o) {
     return (o->random ? 1u : 0u) | (o->milliseconds ? 2u : 0u) | (o->observer ? 4u : 0u) |
         (o->setting ? 8u : 0u) | (o->log ? 16u : 0u);
 }
-static bool put_listener(qa_ac_writer *w, const qa_audio_checkpoint_refs *refs, const qa_audio_listener *v) {
-    bool ok = qa_ac_u32(w, v->seat) && qa_ac_ref(w, refs, QA_AUDIO_REFERENCE_ACTOR, v->actor) && qa_ac_vec(w, v->origin);
-    for (size_t i = 0; ok && i < 3; ++i) ok = qa_ac_vec(w, v->axis[i]);
-    return ok && qa_ac_float(w, v->gain) && qa_ac_u32(w, v->underwater);
-}
-static void get_listener(qa_ac_reader *r, const qa_audio_checkpoint_refs *refs, qa_audio_listener *v) {
-    v->seat = qa_ac_get32(r); v->actor = qa_ac_getref(r, refs, QA_AUDIO_REFERENCE_ACTOR); v->origin = qa_ac_getvec(r);
-    for (size_t i = 0; i < 3; ++i) v->axis[i] = qa_ac_getvec(r);
-    v->gain = qa_ac_getfloat(r); v->underwater = qa_ac_bool(r);
-    if (v->seat == QA_AUDIO_WORLD || v->gain < 0) qa_ac_bad(r, "Invalid engine listener");
-}
 static bool same_vector(qa_vec3 a, qa_vec3 b) { return a.x == b.x && a.y == b.y && a.z == b.z; }
 static bool same_listener(const qa_audio_listener *a, const qa_audio_listener *b) {
     if (a->seat != b->seat || a->actor != b->actor || a->gain != b->gain || a->underwater != b->underwater ||
@@ -25,12 +14,12 @@ static bool same_listener(const qa_audio_listener *a, const qa_audio_listener *b
     for (size_t i = 0; i < 3; ++i) if (!same_vector(a->axis[i], b->axis[i])) return false;
     return true;
 }
-static void nested(qa_ac_writer *w, bool success, qa_buffer *bytes) {
+static void nested(qa_source_save_io *w, bool success, qa_buffer *bytes) {
     if (!success) w->failed = true;
     else qa_ac_blob(w, (qa_bytes){bytes->data, bytes->size});
     qa_buffer_free(bytes);
 }
-static bool put_q3_operation(qa_ac_writer *w, const qa_audio_checkpoint_refs *refs,
+static bool put_q3_operation(qa_source_save_io *w, const qa_audio_checkpoint_refs *refs,
     const qa_audio_q3_operation *operation)
 {
     if (!qa_audio_q3_operation_valid(operation)) {
@@ -62,7 +51,7 @@ static bool put_q3_operation(qa_ac_writer *w, const qa_audio_checkpoint_refs *re
     return qa_ac_ref(w, refs, QA_AUDIO_REFERENCE_ACTOR, operation->sound.actor) &&
         (operation->kind != QA_AUDIO_Q3_POSITION || qa_ac_vec(w, operation->sound.origin));
 }
-static void get_q3_operation(qa_ac_reader *r, const qa_audio_checkpoint_refs *refs,
+static void get_q3_operation(qa_source_save_io *r, const qa_audio_checkpoint_refs *refs,
     qa_audio_q3_operation *operation)
 {
     operation->kind = (qa_audio_q3_operation_kind)qa_ac_get32(r);
@@ -199,11 +188,16 @@ bool qa_audio_engine_checkpoint(const qa_audio_engine *engine, const qa_audio_ch
         free(definitions); free(selection);
         qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining sound environment definitions"); return false;
     }
-    qa_ac_writer w = {.error = error}; size_t definition_count = 0;
+    qa_source_save_io w;
+    if (!qa_source_save_writer(&w, NULL, error)) return false;
+    size_t definition_count = 0;
     for (size_t i = 0; !w.failed && i < engine->seat_count; ++i) {
         selection[i] = SIZE_MAX;
         const qa_audio_environment *environment = engine->seats[i]->environment;
         if (!environment) continue;
+        size_t prior = 0;
+        while (prior < i && !qa_audio_environment_definition_shared(environment, engine->seats[prior]->environment)) ++prior;
+        if (prior < i) { selection[i] = selection[prior]; continue; }
         qa_buffer bytes = {0};
         if (!qa_audio_environment_definition_checkpoint(environment, &bytes, error)) { w.failed = true; break; }
         size_t j = 0;
@@ -240,7 +234,7 @@ bool qa_audio_engine_checkpoint(const qa_audio_engine *engine, const qa_audio_ch
         qa_ac_blob(&w, (qa_bytes){definitions[i].data, definitions[i].size});
     for (size_t i = 0; !w.failed && i < engine->seat_count; ++i) {
         const audio_seat *seat = engine->seats[i]; qa_buffer bytes = {0};
-        put_listener(&w, refs, &seat->listener);
+        qa_ac_put_listener(&w, refs, &seat->listener);
         nested(&w, qa_audio_mixer_checkpoint(seat->mixer, refs, &bytes, error), &bytes);
         if (!w.failed) nested(&w, qa_audio_reverb_checkpoint(seat->reverb, &bytes, error), &bytes);
         for (size_t j = 0; j < 2; ++j) { qa_ac_float(&w, seat->underwater.z1[j]); qa_ac_float(&w, seat->underwater.z2[j]); }
@@ -270,14 +264,14 @@ bool qa_audio_engine_checkpoint(const qa_audio_engine *engine, const qa_audio_ch
     for (size_t i = 0; i < definition_count; ++i) qa_buffer_free(&definitions[i]);
     free(definitions); free(selection); return qa_ac_finish(&w, out);
 }
-static size_t get_count(qa_ac_reader *r, size_t size) {
+static size_t get_count(qa_source_save_io *r, size_t size) {
     uint64_t count = qa_ac_get64(r);
-    if (count > SIZE_MAX / size || count > r->bytes.size / 8) {
+    if (count > SIZE_MAX / size || count > r->input.size / 8) {
         qa_ac_bad(r, "Saved engine owner table exceeds its record"); return 0;
     }
     return (size_t)count;
 }
-static void *get_array(qa_ac_reader *r, size_t count, size_t size) {
+static void *get_array(qa_source_save_io *r, size_t count, size_t size) {
     if (r->failed) return NULL;
     void *memory = count ? calloc(count, size) : NULL;
     if (count && !memory) {
@@ -290,7 +284,9 @@ bool qa_audio_engine_restore(qa_bytes bytes, const qa_audio_engine_options *opti
     if (!options || !out || (!bytes.data && bytes.size)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid isolated audio engine destination"); return false;
     }
-    qa_ac_reader r = {.bytes = bytes, .error = error}; qa_bytes magic;
+    qa_source_save_io r;
+    if (!qa_source_save_reader(&r, NULL, bytes, error)) return false;
+    qa_bytes magic;
     if (!qa_ac_read(&r, 4, &magic) || memcmp(magic.data, "QAEN", 4) ||
         qa_ac_get32(&r) != options->sample_rate || qa_ac_get32(&r) != options->output_channels ||
         qa_ac_get64(&r) != (options->mix_frames ? options->mix_frames : 4096) ||
@@ -349,7 +345,7 @@ bool qa_audio_engine_restore(qa_bytes bytes, const qa_audio_engine_options *opti
     for (size_t i = 0; !r.failed && i < seats; ++i) {
         audio_seat *seat = get_array(&r, 1, sizeof(*seat));
         if (!seat) break;
-        engine->seats[engine->seat_count++] = seat; get_listener(&r, refs, &seat->listener);
+        engine->seats[engine->seat_count++] = seat; qa_ac_get_listener(&r, refs, &seat->listener, "Invalid engine listener");
         for (size_t j = 0; j < i; ++j)
             if (engine->seats[j]->listener.seat == seat->listener.seat) qa_ac_bad(&r, "Duplicate restored listener seat");
         qa_bytes data;

@@ -298,7 +298,7 @@ bool qa_base_arena_catalog_checkpoint(const qa_base_arena_catalog *source,
     for (size_t i = 0; okay && i < count; ++i) {
         char *path = catalog->resources[i].path; uint64_t reference = 0;
         okay = refs->resource_encode(refs->context, catalog->resources[i].resource, path, &reference, error) &&
-            ps_text(&io, &path) && qa_source_save_u64(&io, &reference);
+            qa_source_save_owned_text(&io, &path) && qa_source_save_u64(&io, &reference);
     }
     if (okay) okay = qa_source_save_finish(&io, out);
     qa_source_save_dispose(&io); catalog->busy = false; return okay;
@@ -315,7 +315,7 @@ bool qa_base_arena_catalog_restore(qa_bytes bytes, const qa_base_arena_catalog_r
         ps_count(&io, &count, 17, sizeof(arena_resource));
     for (size_t i = 0; okay && i < count; ++i) {
         char *path = NULL; uint64_t reference = 0; qa_resource *resource = NULL;
-        okay = ps_text(&io, &path);
+        okay = qa_source_save_owned_text(&io, &path);
         if (okay && !authored_path(path))
             okay = fail(error, QA_ERROR_FORMAT, "Base catalog reference is not an authored arena path");
         if (okay) okay = qa_source_save_u64(&io, &reference) &&

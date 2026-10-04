@@ -542,7 +542,7 @@ static bool compiled_fields(qa_source_save_io *io, qa_localization *catalog)
         char *key = reading ? NULL : (char *)qa_strings_cstr(catalog->keys, (qa_string_id)i + 1);
         char *format = reading ? NULL : (char *)catalog->entries[i].value.format;
         loc_entry entry = reading ? (loc_entry){0} : catalog->entries[i];
-        bool ok = qa_text_save_owned(io, &key) && key && *key && qa_text_save_owned(io, &format) && format &&
+        bool ok = qa_source_save_owned_text(io, &key) && key && *key && qa_source_save_owned_text(io, &format) && format &&
             qa_source_save_count(io, &entry.layer, SIZE_MAX) && qa_source_save_u8(io, &entry.value.argument_count) && entry.value.argument_count <= 8;
         size_t end = 0, length = format ? strlen(format) : 0;
         for (unsigned j = 0; ok && j < 8; ++j) {

@@ -139,7 +139,8 @@ bool qa_audio_bank_graph_checkpoint(const qa_audio_asset_inventory *inventory,
     for (size_t i = 0; ok && i < inventory->asset_count; ++i)
         ok = qa_bank_asset_valid(inventory->assets[i].asset, error) &&
             qa_bank_add_sample(&samples, &sample_count, inventory->assets[i].asset->sample, error);
-    qa_ac_writer w = {.error = error};
+    qa_source_save_io w;
+    if (!qa_source_save_writer(&w, NULL, error)) return false;
     ok = ok && qa_ac_write(&w, "QABG", 4) && qa_ac_u64(&w, inventory->bank_count) &&
         qa_ac_u64(&w, sample_count) && qa_ac_u64(&w, inventory->asset_count);
     for (size_t i = 0; ok && i < sample_count; ++i) {
@@ -158,7 +159,7 @@ bool qa_audio_bank_graph_checkpoint(const qa_audio_asset_inventory *inventory,
             ok = qa_ac_u64(&w, qa_bank_asset_index(inventory->assets, inventory->asset_count, cut->entries[j].asset)) &&
                 qa_ac_u64(&w, cut->entries[j].touched);
     }
-    if (ok) ok = qa_ac_finish(&w, out); else qa_buffer_free(&w.buffer);
+    if (ok) ok = qa_ac_finish(&w, out); else qa_source_save_dispose(&w);
     free(samples);
     if (!ok && error && error->code == QA_OK) fail(error, QA_ERROR_FORMAT, "Audio graph is not completely qualified");
     return ok;
@@ -172,7 +173,9 @@ bool qa_audio_bank_graph_restore(qa_audio_bank *const *banks, size_t count,
     if (!inventory) return false;
     inventory->owns_assets = true;
     qa_audio_bank *decoded = NULL; struct sample_row *samples = NULL;
-    qa_ac_reader r = {.bytes = bytes, .error = error}; qa_bytes magic;
+    qa_source_save_io r;
+    if (!qa_source_save_reader(&r, NULL, bytes, error)) return false;
+    qa_bytes magic;
     bool ok = qa_ac_read(&r, 4, &magic) && !memcmp(magic.data, "QABG", 4);
     uint64_t bank_count = qa_ac_get64(&r), sample_count = qa_ac_get64(&r), asset_count = qa_ac_get64(&r);
     ok = ok && !r.failed && bank_count == count && count <= bytes.size / 32 &&

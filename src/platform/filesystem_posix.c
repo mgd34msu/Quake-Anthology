@@ -1125,54 +1125,6 @@ bool qa_fs_stream_reference_read(const qa_fs_stream *stream, qa_fs_stream_refere
     return true;
 }
 
-bool qa_fs_stream_reference_valid(const qa_fs_stream_reference *reference, qa_error *error)
-{
-    if (!reference || reference->root.platform < 1 || reference->root.platform > 2 ||
-        reference->object.platform != reference->root.platform ||
-        (reference->root.platform == 1 && (reference->root.words[2] || reference->object.words[2])) ||
-        reference->mode < QA_FS_STREAM_WRITE || reference->mode > QA_FS_STREAM_APPEND_SYNC) {
-        qa_error_set(error, QA_ERROR_FORMAT, 0, "Invalid writable stream reference");
-        return false;
-    }
-    return qa_fs_relative_valid(reference->path, false, error);
-}
-
-bool qa_fs_stream_resume(qa_fs_root *root, const qa_fs_stream_reference *reference,
-    qa_fs_stream **out, uint64_t *size, qa_error *error)
-{
-    if (out) *out = NULL;
-    if (size) *size = 0;
-    if (!qa_fs_stream_reference_valid(reference, error)) return false;
-    qa_fs_object_reference actual;
-    if (!qa_fs_root_reference_read(root, &actual) || actual.platform != reference->root.platform ||
-        memcmp(actual.words, reference->root.words, sizeof(actual.words))) {
-        qa_error_set(error, QA_ERROR_FORMAT, 0, "Writable continuation has a different retained root");
-        return false;
-    }
-    return qa_fs_root_stream_open(root, reference->path, reference->mode, true, out, size, error);
-}
-
-bool qa_fs_stream_resume_mapped(qa_fs_root *destination, const qa_fs_stream_reference *reference,
-    const qa_fs_stream_resolver *resolver, qa_fs_stream **out, uint64_t *size, qa_error *error)
-{
-    if (out) *out = NULL;
-    if (size) *size = 0;
-    if (!destination || !out || !size || !resolver || !resolver->context || !resolver->root) {
-        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Writable continuation needs its actual root resolver");
-        return false;
-    }
-    if (!qa_fs_stream_reference_valid(reference, error)) return false;
-    qa_fs_root *mapped = NULL;
-    bool ok = resolver->root(resolver->context, reference, &mapped, error);
-    if (ok && !qa_fs_root_same_object(destination, mapped)) {
-        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Writable root resolver differs from the actual destination owner");
-        ok = false;
-    }
-    if (ok) ok = qa_fs_root_stream_open(mapped, reference->path, reference->mode, true, out, size, error);
-    qa_fs_root_close(mapped);
-    return ok;
-}
-
 bool qa_fs_stream_write_some(qa_fs_stream *stream, qa_bytes bytes, uint64_t position,
     size_t *written, qa_error *error)
 {

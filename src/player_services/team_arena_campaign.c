@@ -454,7 +454,7 @@ bool qa_team_arena_campaign_checkpoint(const qa_team_arena_campaign *source,
     for (size_t i=0;ok && i<count;++i) {
         uint64_t reference=0; char *path=campaign->resources[i].path;
         ok=refs->resource_encode(refs->context,campaign->resources[i].resource,path,&reference,error) &&
-            ps_text(&io,&path) && qa_source_save_u64(&io,&reference);
+            qa_source_save_owned_text(&io,&path) && qa_source_save_u64(&io,&reference);
     }
     if (ok) ok=qa_source_save_finish(&io,out);
     qa_source_save_dispose(&io); campaign->busy=false; return ok;
@@ -474,7 +474,7 @@ bool qa_team_arena_campaign_restore(qa_bytes bytes,const qa_base_arena_catalog_r
     campaign->policy=(qa_team_arena_catalog_policy)policy;
     for (size_t i=0;ok && i<count;++i) {
         char *path=NULL; uint64_t reference=0; qa_resource *resource=NULL;
-        ok=ps_text(&io,&path) && path &&
+        ok=qa_source_save_owned_text(&io,&path) && path &&
             (i==0?!strcmp(path,game_path(campaign->policy)):i==1?!strcmp(path,team_path(campaign->policy)):authored_path(path)) &&
             qa_source_save_u64(&io,&reference) && refs->resource_decode(refs->context,reference,path,&resource,error) && resource;
         if (ok) ok=add_resource(campaign,resource,path,error);

@@ -46,25 +46,6 @@ static bool sensor_fields(qa_source_save_io *io, input_sensor_output *v, const i
     return io->direction != QA_SOURCE_SAVE_READ || (native &&
         v->requested == native->requested && v->applied == native->applied && v->enabled == native->enabled);
 }
-static bool text(qa_source_save_io *io, char **value)
-{
-    bool reading = io->direction == QA_SOURCE_SAVE_READ, present = *value != NULL;
-    size_t length = !reading && present ? strlen(*value) : 0;
-    if (!qa_source_save_bool(io, &present) ||
-        (present && !qa_source_save_count(io, &length, SIZE_MAX - 1))) return false;
-    if (!reading) return !present || qa_source_save_bytes(io, *value, length);
-    char *copy = NULL;
-    if (present) {
-        if (io->offset > io->input.size || length > io->input.size - io->offset)
-            return fail(io->error, QA_ERROR_FORMAT, "truncated platform text");
-        copy = malloc(length + 1);
-        if (!copy) return fail(io->error, QA_ERROR_MEMORY, "retaining platform text");
-        if (!qa_source_save_bytes(io, copy, length)) { free(copy); return false; }
-        if (memchr(copy, 0, length)) { free(copy); return fail(io->error, QA_ERROR_FORMAT, "platform text contains NUL"); }
-        copy[length] = 0;
-    }
-    free(*value); *value = copy; return true;
-}
 static bool blob(qa_source_save_io *io, qa_buffer *value)
 {
     size_t count = value->size;
@@ -83,7 +64,7 @@ static bool info_fields(qa_source_save_io *io, qa_controller_info *info,
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
     char *name = reading ? NULL : (char *)info->name;
     char *serial = reading ? NULL : (char *)info->serial;
-    bool success = text(io, &name) && text(io, &serial) &&
+    bool success = qa_source_save_owned_text(io, &name) && qa_source_save_owned_text(io, &serial) &&
         qa_source_save_i32(io, &info->instance) && qa_source_save_bytes(io, info->guid, sizeof(info->guid)) &&
         qa_source_save_u32(io, &info->ordinal) && qa_source_save_bool(io, &info->virtual_device) &&
         qa_source_save_bool(io, &info->rumble) && qa_source_save_bool(io, &info->trigger_rumble) &&
@@ -145,7 +126,7 @@ static bool native_capture(const qa_input_platform *p, qa_buffer *out, size_t *m
         SDL_JoystickGetGUIDString(SDL_JoystickGetGUID(p->joystick), guid, sizeof(guid));
         char *name = (char *)SDL_JoystickName(p->joystick);
         success = SDL_JoystickGetAttached(p->joystick) == SDL_TRUE &&
-            SDL_JoystickInstanceID(p->joystick) == instance && text(&io, &name) &&
+            SDL_JoystickInstanceID(p->joystick) == instance && qa_source_save_owned_text(&io, &name) &&
             qa_source_save_bytes(&io, guid, sizeof(guid));
     }
     input_motor_output source_output = p->joystick_rumble;
@@ -242,7 +223,7 @@ static bool selection_fields(qa_source_save_io *io, qa_controller_selection *s)
     char *serial = (char *)s->serial;
     bool success = qa_source_save_u32(io, &kind) && kind <= QA_CONTROLLER_SERIAL &&
         qa_source_save_bytes(io, s->guid, sizeof(s->guid)) && qa_source_save_u32(io, &s->ordinal) &&
-        text(io, &serial);
+        qa_source_save_owned_text(io, &serial);
     if (io->direction == QA_SOURCE_SAVE_READ) { s->kind = (qa_controller_selection_kind)kind; s->serial = serial; }
     if (!success) return false;
     if (kind == QA_CONTROLLER_AUTO || kind == QA_CONTROLLER_NONE) return true;

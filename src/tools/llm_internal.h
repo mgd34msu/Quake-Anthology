@@ -86,6 +86,7 @@ void llm_jobs_cancel_provider(qa_llm *, qa_llm_provider);
 void llm_jobs_destroy(qa_llm *);
 bool llm_console_tick(qa_llm *, qa_error *);
 bool llm_console_detach_all(qa_llm *, qa_error *);
+bool llm_command_indirect(const char *);
 bool llm_console_instructions(qa_console *, const qa_command_context *, const char *, bool execute,
                               qa_buffer *, qa_error *);
 bool llm_auth_credential(qa_llm *, const char *rejected_access, uint64_t *ticket,

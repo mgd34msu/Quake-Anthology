@@ -86,7 +86,8 @@ bool qa_audio_reverb_checkpoint(const qa_audio_reverb *reverb, qa_buffer *out, q
     if (!reverb || !out) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Reverb checkpoint requires its live owner"); return false;
     }
-    qa_ac_writer w = {.error = error};
+    qa_source_save_io w;
+    if (!qa_source_save_writer(&w, NULL, error)) return false;
     qa_ac_write(&w, "QARV", 4); qa_ac_u32(&w, reverb->rate);
     qa_ac_u64(&w, reverb->storage_length); qa_ac_u64(&w, reverb->position);
     for (size_t channel = 0; channel < 2; ++channel) {
@@ -105,7 +106,9 @@ bool qa_audio_reverb_restore(qa_bytes bytes, qa_audio_reverb **out, qa_error *er
     if (!out || !bytes.data || bytes.size < 24 || memcmp(bytes.data, "QARV", 4)) {
         qa_error_set(error, QA_ERROR_FORMAT, 0, "Invalid reverb checkpoint header"); return false;
     }
-    qa_ac_reader r = {.bytes = bytes, .offset = 4, .error = error};
+    qa_source_save_io r;
+    if (!qa_source_save_reader(&r, NULL, bytes, error)) return false;
+    r.offset = 4;
     uint32_t rate = qa_ac_get32(&r);
     uint64_t length = qa_ac_get64(&r), position = qa_ac_get64(&r);
     if (r.failed || rate < 8000 || rate > 192000 || length > (bytes.size - r.offset) / 4)

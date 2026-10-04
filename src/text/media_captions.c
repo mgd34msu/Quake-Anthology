@@ -383,7 +383,7 @@ static bool caption_asset(qa_source_save_io *io, const qa_sound_caption_save_ref
 static bool media_fields(qa_source_save_io *io, qa_media_captions *media, qa_vfs *view)
 {
     if (media->visiting || (media->view && media->view != view)) return false;
-    if (!qa_text_save_owned(io, &media->source) || !qa_text_save_owned(io, &media->language) ||
+    if (!qa_source_save_owned_text(io, &media->source) || !qa_source_save_owned_text(io, &media->language) ||
         ((media->source != NULL) != (media->language != NULL))) return false;
     if (io->direction == QA_SOURCE_SAVE_READ) media->view = media->source ? view : NULL;
     qa_buffer blob = {0}; qa_bytes input = {0};
@@ -405,7 +405,7 @@ static bool media_capsule_fields(qa_source_save_io *io,qa_media_captions *owner,
         owner->options.override_catalog,&override)) return false;
     char *platform=io->direction==QA_SOURCE_SAVE_WRITE?owner->platform:NULL;
     bool ok=qa_source_save_u32(io,&seat) && qa_source_save_u32(io,&kind) &&
-        qa_source_save_u32(io,&profile) && qa_source_save_u64(io,&override) && qa_text_save_owned(io,&platform);
+        qa_source_save_u32(io,&profile) && qa_source_save_u64(io,&override) && qa_source_save_owned_text(io,&platform);
     ok=ok && seat==owner->options.seat && kind==(uint32_t)owner->options.kind &&
         profile==(uint32_t)owner->options.localization.profile &&
         ((platform==NULL && owner->platform==NULL) || (platform && owner->platform && !strcmp(platform,owner->platform))) &&
@@ -457,7 +457,7 @@ static bool sound_fields(qa_source_save_io *io, qa_sound_captions *owner, const 
         owner->options.captions.override_catalog, &override)) return false;
     char *platform = io->direction == QA_SOURCE_SAVE_WRITE ? owner->platform : NULL;
     bool ok = qa_source_save_u32(io, &seat) && qa_source_save_u32(io, &kind) && qa_source_save_u32(io, &profile) &&
-        qa_source_save_u64(io, &override) && qa_text_save_owned(io, &platform);
+        qa_source_save_u64(io, &override) && qa_source_save_owned_text(io, &platform);
     if (ok) ok = seat == owner->options.captions.seat && kind == QA_CAPTION_SOUND &&
         profile == (uint32_t)owner->options.captions.localization.profile &&
         ((platform == NULL && owner->platform == NULL) || (platform && owner->platform && !strcmp(platform, owner->platform))) &&

@@ -469,7 +469,7 @@ bool qa_rankings_checkpoint(const qa_rankings *source, const qa_rankings_checkpo
     if (ok) ok = continuation_ready(&copy, refs, error);
     qa_source_save_io io = {0};
     if (ok) ok = qa_source_save_writer(&io, NULL, error) && ps_magic(&io, rankings_magic) &&
-                 qa_source_save_bool(&io, &copy.configured) && ps_text(&io, &endpoint) &&
+                 qa_source_save_bool(&io, &copy.configured) && qa_source_save_owned_text(&io, &endpoint) &&
                  qa_source_save_bool(&io, &context) && ps_blob(&io, &provider_key) &&
                  qa_source_save_bool(&io, &observers) && qa_source_save_bool(&io, &observer_context) &&
                  qa_source_save_bool(&io, &player_hook) && qa_source_save_bool(&io, &service_hook) &&
@@ -497,7 +497,7 @@ bool qa_rankings_restore(qa_rankings *owner, const qa_rankings_checkpoint_refs *
     bool player_hook = false, service_hook = false;
     qa_source_save_io io = {0};
     bool ok = qa_source_save_reader(&io, NULL, bytes, error) && ps_magic(&io, rankings_magic) &&
-              qa_source_save_bool(&io, &scratch.configured) && ps_text(&io, &endpoint) &&
+              qa_source_save_bool(&io, &scratch.configured) && qa_source_save_owned_text(&io, &endpoint) &&
               qa_source_save_bool(&io, &context) && ps_blob(&io, &provider_key) &&
               qa_source_save_bool(&io, &observers) && qa_source_save_bool(&io, &observer_context) &&
               qa_source_save_bool(&io, &player_hook) && qa_source_save_bool(&io, &service_hook) &&

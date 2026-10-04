@@ -22,22 +22,6 @@ static inline bool ps_count(qa_source_save_io *io, size_t *count, size_t minimum
     *count = (size_t)n;
     return true;
 }
-static inline bool ps_text(qa_source_save_io *io, char **text) {
-    bool present = *text != NULL;
-    if (!qa_source_save_bool(io, &present)) return false;
-    if (!present) { if (io->direction == QA_SOURCE_SAVE_READ) *text = NULL; return true; }
-    size_t length = io->direction == QA_SOURCE_SAVE_WRITE ? strlen(*text) : 0;
-    if (!ps_count(io, &length, 1, 1) || length == SIZE_MAX)
-        return ps_fail(io, QA_ERROR_FORMAT, "Player service text exceeds its record");
-    if (io->direction == QA_SOURCE_SAVE_READ) {
-        if (length && memchr(io->input.data + io->offset, 0, length))
-            return ps_fail(io, QA_ERROR_FORMAT, "Player service text contains NUL");
-        *text = malloc(length + 1);
-        if (!*text) return ps_fail(io, QA_ERROR_MEMORY, "Allocating player service text");
-        (*text)[length] = 0;
-    }
-    return qa_source_save_bytes(io, *text, length);
-}
 static inline bool ps_blob(qa_source_save_io *io, qa_buffer *buffer) {
     size_t length = buffer->size;
     if (!ps_count(io, &length, 1, 1)) return false;

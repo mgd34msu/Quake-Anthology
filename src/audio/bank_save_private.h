@@ -11,10 +11,10 @@ bool qa_bank_add_asset(struct asset_row **, size_t *, qa_audio_asset *, qa_error
 bool qa_bank_add_sample(struct sample_row **, size_t *, qa_audio_sample *, qa_error *);
 bool qa_bank_asset_valid(const qa_audio_asset *, qa_error *);
 bool qa_bank_cache_valid(const qa_audio_bank *, qa_error *);
-bool qa_bank_write_extent(qa_ac_writer *, size_t, size_t);
-bool qa_bank_read_extent(qa_ac_reader *, uint64_t, uint64_t);
-bool qa_bank_write_asset(qa_ac_writer *, const struct asset_row *, const struct sample_row *, size_t,
+bool qa_bank_write_extent(qa_source_save_io *, size_t, size_t);
+bool qa_bank_read_extent(qa_source_save_io *, uint64_t, uint64_t);
+bool qa_bank_write_asset(qa_source_save_io *, const struct asset_row *, const struct sample_row *, size_t,
     const qa_audio_bank_checkpoint_refs *);
-bool qa_bank_read_asset(qa_ac_reader *, struct asset_row *, struct sample_row *, size_t,
+bool qa_bank_read_asset(qa_source_save_io *, struct asset_row *, struct sample_row *, size_t,
     const qa_audio_bank_checkpoint_refs *);
 #endif

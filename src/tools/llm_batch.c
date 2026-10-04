@@ -11,7 +11,7 @@ static bool equal(const char *a, const char *b) {
     }
     return *a == *b;
 }
-static bool indirect(const char *name) {
+bool llm_command_indirect(const char *name) {
     static const char *const names[] = {"llm_ask", "llm_exec", "llm_cancel", "exec", "vstr", "alias", "bind", "stuffcmds", "cmd", "wait"};
     for (size_t i = 0; i < sizeof names / sizeof names[0]; ++i) if (equal(name, names[i])) return true;
     return false;
@@ -28,8 +28,7 @@ static bool known_variable(batch *b, const char *name) {
     for (size_t i = 0;; ++i) {
         qa_cvars *registry = qa_console_visible_cvars(b->console, b->context, i);
         if (!registry) break;
-        for (size_t j = 0; j < qa_cvars_count(registry); ++j) {
-            const qa_cvar_view *var = qa_cvars_at(registry, j);
+        for (const qa_cvar_view *var = qa_cvars_next(registry, NULL); var; var = qa_cvars_next(registry, var)) {
             if (equal(var->name, name) && qa_console_cvar_owner(b->console, b->context, var->name) == registry) return true;
         }
     }
@@ -52,7 +51,7 @@ static bool admit_line(batch *b, qa_bytes line, const char *const *ancestry, siz
     if (!qa_command_tokenize(text, b->context->dialect, false, &tokens, error)) goto done;
     if (!tokens.count || (b->context->dialect != QA_CONSOLE_Q3 && tokens.count >= 80)) { llm_fail(error, "a command has no name or too many arguments"); goto done; }
     const char *name = tokens.values[0];
-    if (indirect(name)) { llm_fail(error, "llm_exec requires literal commands without scripts, bindings, waits or LLM calls"); goto done; }
+    if (llm_command_indirect(name)) { llm_fail(error, "llm_exec requires literal commands without scripts, bindings, waits or LLM calls"); goto done; }
     const qa_console_entry *command = qa_console_find(b->console, b->context, name);
     if (!command && b->context->dialect != QA_CONSOLE_Q3) {
         const qa_console_entry *alias = NULL;

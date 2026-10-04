@@ -2,6 +2,7 @@
 #define QA_FONT_INTERNAL_H
 
 #include "qa/font.h"
+#include "qa/binary.h"
 
 #include <ft2build.h>
 #include FT_FREETYPE_H
@@ -54,16 +55,5 @@ bool qa_font_internal_freetype(qa_font_library *, FT_Library *, qa_error *);
 bool qa_font_internal_admission_ready(const qa_font_library *, qa_error *);
 bool qa_font_internal_picture(qa_font *, const char *, qa_scene_family, qa_scene_filter,
                               const qa_scene_image **, qa_error *);
-
-static inline uint32_t qa_font_u32le(const uint8_t *p) {
-    return (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24;
-}
-
-static inline void qa_font_put_u32le(uint8_t *p, uint32_t value) {
-    p[0] = (uint8_t)value;
-    p[1] = (uint8_t)(value >> 8);
-    p[2] = (uint8_t)(value >> 16);
-    p[3] = (uint8_t)(value >> 24);
-}
 
 #endif

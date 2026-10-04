@@ -164,7 +164,7 @@ bool qa_team_arena_progress_checkpoint(const qa_team_arena_progress *owner, qa_b
     if (owner->saved_root) identity = owner->saved_identity;
     uint64_t nonce = owner->nonce; qa_source_save_io io = {0};
     if (okay) okay = qa_source_save_writer(&io, NULL, error) && ps_magic(&io, magic) &&
-        ps_text(&io, &path) && identity_fields(&io, &identity) && qa_source_save_u64(&io, &nonce) && qa_source_save_finish(&io, out);
+        qa_source_save_owned_text(&io, &path) && identity_fields(&io, &identity) && qa_source_save_u64(&io, &nonce) && qa_source_save_finish(&io, out);
     qa_source_save_dispose(&io); free(current); return okay;
 }
 bool qa_team_arena_progress_restore(qa_bytes bytes, qa_fs_root *root,
@@ -175,7 +175,7 @@ bool qa_team_arena_progress_restore(qa_bytes bytes, qa_fs_root *root,
     if (!qa_team_arena_progress_create(root, &owner, error)) return false;
     qa_source_save_io io = {0};
     bool okay = qa_source_save_reader(&io, NULL, bytes, error) && ps_magic(&io, magic) &&
-        ps_text(&io, &owner->saved_root);
+        qa_source_save_owned_text(&io, &owner->saved_root);
     if (okay && (!owner->saved_root || !owner->saved_root[0]))
         okay = fail(error, QA_ERROR_FORMAT, "Team Arena score record has no actual saved source root");
     if (okay) okay = identity_fields(&io, &owner->saved_identity) && qa_source_save_u64(&io, &owner->nonce) &&

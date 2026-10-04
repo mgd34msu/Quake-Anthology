@@ -493,13 +493,19 @@ void qa_audio_environment_update(qa_audio_environment *environment, qa_vec3 orig
     }
 }
 
+bool qa_audio_environment_definition_shared(const qa_audio_environment *a,
+                                            const qa_audio_environment *b) {
+    return a && b && a->table == b->table;
+}
+
 bool qa_audio_environment_definition_checkpoint(const qa_audio_environment *environment,
                                                  qa_buffer *out, qa_error *error) {
     if (!environment || !out) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Sound environment definition requires its owner");
         return false;
     }
-    qa_ac_writer w = {.error = error};
+    qa_source_save_io w;
+    if (!qa_source_save_writer(&w, NULL, error)) return false;
     qa_ac_write(&w, "QAED", 4);
     qa_ac_u64(&w, environment->table->count);
     for (size_t i = 0; !w.failed && i < environment->table->count; ++i) {
@@ -514,14 +520,14 @@ bool qa_audio_environment_definition_checkpoint(const qa_audio_environment *envi
     }
     return qa_ac_finish(&w, out);
 }
-static size_t environment_count(qa_ac_reader *r, size_t item_size, size_t encoded_minimum) {
+static size_t environment_count(qa_source_save_io *r, size_t item_size, size_t encoded_minimum) {
     uint64_t n = qa_ac_get64(r);
-    if (n > SIZE_MAX / item_size || n > (r->bytes.size - r->offset) / encoded_minimum) {
+    if (n > SIZE_MAX / item_size || n > (r->input.size - r->offset) / encoded_minimum) {
         qa_ac_bad(r, "Sound environment table extent exceeds its record"); return 0;
     }
     return (size_t)n;
 }
-static void *environment_array(qa_ac_reader *r, size_t count, size_t size) {
+static void *environment_array(qa_source_save_io *r, size_t count, size_t size) {
     if (r->failed) return NULL;
     void *p = count ? calloc(count, size) : NULL;
     if (count && !p) {
@@ -530,7 +536,7 @@ static void *environment_array(qa_ac_reader *r, size_t count, size_t size) {
     }
     return p;
 }
-static bool environment_buffer(qa_ac_reader *r, qa_buffer *buffer) {
+static bool environment_buffer(qa_source_save_io *r, qa_buffer *buffer) {
     qa_bytes bytes;
     if (!qa_ac_getblob(r, &bytes)) return false;
     if (bytes.size == SIZE_MAX) return qa_ac_bad(r, "Sound material extent overflows storage");
@@ -546,7 +552,9 @@ bool qa_audio_environments_restore(qa_bytes bytes, qa_audio_environments **out, 
     if (!out || (!bytes.data && bytes.size)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid sound environment definition destination"); return false;
     }
-    qa_ac_reader r = {.bytes = bytes, .error = error}; qa_bytes magic;
+    qa_source_save_io r;
+    if (!qa_source_save_reader(&r, NULL, bytes, error)) return false;
+    qa_bytes magic;
     if (!qa_ac_read(&r, 4, &magic) || memcmp(magic.data, "QAED", 4))
         return qa_ac_bad(&r, "Invalid sound environment definition header");
     qa_audio_environments *definitions = calloc(1, sizeof(*definitions));
@@ -586,13 +594,13 @@ bool qa_audio_environments_restore(qa_bytes bytes, qa_audio_environments **out, 
     F(reflections_gain) F(reflections_delay) F(late_gain) F(late_delay) \
     F(echo_time) F(echo_depth) F(modulation_time) F(modulation_depth) \
     F(air_absorption_gain_hf) F(hf_reference) F(lf_reference) F(room_rolloff)
-static void put_environment_params(qa_ac_writer *w, const qa_audio_reverb_params *v) {
+static void put_environment_params(qa_source_save_io *w, const qa_audio_reverb_params *v) {
 #define QA_ENV_PUT(field) qa_ac_float(w, v->field);
     QA_ENV_PARAM_FIELDS(QA_ENV_PUT)
 #undef QA_ENV_PUT
     qa_ac_u32(w, v->decay_hf_limit);
 }
-static void get_environment_params(qa_ac_reader *r, qa_audio_reverb_params *v) {
+static void get_environment_params(qa_source_save_io *r, qa_audio_reverb_params *v) {
 #define QA_ENV_GET(field) v->field = qa_ac_getfloat(r);
     QA_ENV_PARAM_FIELDS(QA_ENV_GET)
 #undef QA_ENV_GET
@@ -603,7 +611,8 @@ bool qa_audio_environment_checkpoint(const qa_audio_environment *v, qa_buffer *o
     if (!v || !out) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Sound environment checkpoint requires its owner"); return false;
     }
-    qa_ac_writer w = {.error = error};
+    qa_source_save_io w;
+    if (!qa_source_save_writer(&w, NULL, error)) return false;
     qa_ac_write(&w, "QAES", 4); qa_ac_u32(&w, v->trace != NULL);
     qa_ac_u64(&w, v->group); qa_ac_u64(&w, v->preset); qa_ac_u32(&w, v->probe);
     for (size_t i = 0; i < PROBE_COUNT; ++i) qa_ac_vec(&w, v->results[i]);
@@ -620,7 +629,9 @@ bool qa_audio_environment_restore(qa_bytes bytes, const qa_audio_environments *d
     if (!definitions || !out || (!bytes.data && bytes.size)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid candidate sound environment"); return false;
     }
-    qa_ac_reader r = {.bytes = bytes, .error = error}; qa_bytes magic;
+    qa_source_save_io r;
+    if (!qa_source_save_reader(&r, NULL, bytes, error)) return false;
+    qa_bytes magic;
     if (!qa_ac_read(&r, 4, &magic) || memcmp(magic.data, "QAES", 4) ||
         qa_ac_bool(&r) != (trace != NULL)) return qa_ac_bad(&r, "Sound environment trace admission differs");
     qa_audio_environment *v = NULL;
