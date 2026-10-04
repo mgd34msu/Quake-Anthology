@@ -664,10 +664,13 @@ static bool restore(qa_frontend *f,frontend_scene_namespace *space,
     }
     for(size_t i=0;okay && i<count;++i)
         if(!unified_prefix || rows[i].kind==MOVIE_UNIFIED)
-            okay=frontend_material_movies_publish_ready(rows[i].owner,error);
+            okay=!unified_prefix && rows[i].kind==MOVIE_UNIFIED ?
+                frontend_material_movies_completed_ready(rows[i].owner,error) :
+                frontend_material_movies_publish_ready(rows[i].owner,error);
     if(okay && !unified_prefix) okay=roster_matches(f,rows,count,error);
     if(okay) for(size_t i=0;i<count;++i)
-        if(!unified_prefix || rows[i].kind==MOVIE_UNIFIED) frontend_material_movies_publish(rows[i].owner);
+        if(unified_prefix ? rows[i].kind==MOVIE_UNIFIED : rows[i].kind!=MOVIE_UNIFIED)
+            frontend_material_movies_publish(rows[i].owner);
     rows_free(rows,count); return okay;
 }
 bool frontend_material_movie_inventory_restore(qa_frontend *f,frontend_scene_namespace *space,
