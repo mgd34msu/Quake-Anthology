@@ -48,13 +48,6 @@ static void sample_level(const qa_cpu_renderer *renderer,
   const qa_scene_image_level *level = &image->levels[index];
   const cpu_framebuffer *target =
       index == 0 ? cpu_target_find(renderer, image) : NULL;
-  if (image->wrap == QA_SCENE_REPEAT) {
-    u -= floor(u);
-    v -= floor(v);
-  } else {
-    u = cpu_clamp(u);
-    v = cpu_clamp(v);
-  }
   if (!linear) {
     int64_t x = (int64_t)fmin(level->width - 1, floor(u * level->width));
     int64_t y = (int64_t)fmin(level->height - 1, floor(v * level->height));
@@ -101,6 +94,13 @@ void cpu_sample_texture(const qa_cpu_renderer *renderer,
           image->levels[count].height != height)
         return;
     }
+  }
+  if (image->wrap == QA_SCENE_REPEAT) {
+    u -= floor(u);
+    v -= floor(v);
+  } else {
+    u = cpu_clamp(u);
+    v = cpu_clamp(v);
   }
   if (!(rho > magnification_limit) || !mipmap || count == 1) {
     bool magnification=!(rho>magnification_limit);
