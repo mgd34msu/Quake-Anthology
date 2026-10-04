@@ -238,13 +238,12 @@ static void sample_fragment_texture(const cpu_sampler *sampler,
   cpu_sample_texture(sampler, uv[0], uv[1], rho, out);
 }
 void cpu_write_fragment(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
-                        const cpu_sampler samplers[2], const cpu_fragment *fragment) {
+                        const cpu_sampler samplers[2], const cpu_fragment *fragment,
+                        cpu_fragment_admission admission) {
   cpu_framebuffer *buffer = renderer->current;
   const qa_scene_state *state = &draw->state;
-  size_t index = (size_t)fragment->y * buffer->width + fragment->x;
-  double old_depth = buffer->depth[index];
-  bool passed = cpu_depth_passes(state->depth_test, fragment->depth, old_depth);
-  bool stencil = cpu_stencil_active(renderer, state);
+  size_t index = admission.index;
+  bool passed = admission.depth_passed, stencil = admission.stencil;
   if (!passed && !stencil)
     return;
   double texel[4] = {1, 1, 1, 1};

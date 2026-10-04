@@ -627,6 +627,7 @@ static void triangle_fill(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
   const double (*uv)[2][3] = triangle->uv;
   const double (*uv_dx)[2] = triangle->uv_dx, (*uv_dy)[2] = triangle->uv_dy;
   bool constant_depth = triangle->constant_depth;
+  bool stencil = cpu_stencil_active(renderer, &draw->state);
   bool derivatives[2] = {false, false};
   for (size_t unit = 0; unit < draw->texture_count; ++unit)
     if (draw->textures[unit])
@@ -652,11 +653,11 @@ static void triangle_fill(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
           cpu_clamp((constant_depth ? vertices[0].z : z) * 0.5 + 0.5) *
               (far_depth - near_depth) +
           near_depth + offset);
-      if (!cpu_stencil_active(renderer, &draw->state) &&
-          !cpu_depth_passes(draw->state.depth_test, fragment.depth,
-              renderer->current->depth[(size_t)fragment.y *
-                  renderer->current->width + fragment.x]))
-        continue;
+      cpu_fragment_admission admission = {0};
+      if (!stencil) {
+        admission = cpu_fragment_admit(renderer, &draw->state, &fragment, false);
+        if (!admission.depth_passed) continue;
+      }
       if (triangle->unit_color) {
         double color = cpu_clamp(q * reciprocal);
         for (size_t channel = 0; channel < 4; ++channel)
@@ -707,7 +708,9 @@ static void triangle_fill(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
         fragment.world_normal =
             (qa_vec3){(float)normal[0], (float)normal[1], (float)normal[2]};
       }
-      cpu_write_fragment(renderer, draw, samplers, &fragment);
+      if (stencil)
+        admission = cpu_fragment_admit(renderer, &draw->state, &fragment, true);
+      cpu_write_fragment(renderer, draw, samplers, &fragment, admission);
     }
   }
 }
@@ -843,6 +846,7 @@ static void line(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
   int64_t last_major = (int64_t)fmin((double)major_max, floor(fmax(major_a, major_b)));
   double near_depth = cpu_clamp(draw->state.depth_near),
          far_depth = cpu_clamp(draw->state.depth_far);
+  bool stencil = cpu_stencil_active(renderer, &draw->state);
   for (int64_t major = first_major; major <= last_major; ++major) {
     double fraction = ((double)major + 0.5 - major_a) / (major_b - major_a);
     int64_t center = (int64_t)floor(minor_a + (minor_b - minor_a) * fraction);
@@ -903,7 +907,9 @@ static void line(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
             (int64_t)view.height - 1 - (x_major ? actual : major) + view.y;
         fragment.x = (uint32_t)actual_x;
         fragment.y = (uint32_t)actual_y;
-        cpu_write_fragment(renderer, draw, samplers, &fragment);
+        cpu_fragment_admission admission =
+            cpu_fragment_admit(renderer, &draw->state, &fragment, stencil);
+        cpu_write_fragment(renderer, draw, samplers, &fragment, admission);
       }
     }
   }

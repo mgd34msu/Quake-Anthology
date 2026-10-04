@@ -93,6 +93,20 @@ static inline bool cpu_stencil_active(const qa_cpu_renderer *renderer,
   return (state->stencil_enabled || renderer->overdraw) &&
          renderer->current->stencil;
 }
+typedef struct cpu_fragment_admission {
+  size_t index;
+  bool depth_passed, stencil;
+} cpu_fragment_admission;
+static inline cpu_fragment_admission cpu_fragment_admit(
+    const qa_cpu_renderer *renderer, const qa_scene_state *state,
+    const cpu_fragment *fragment, bool stencil) {
+  size_t index = (size_t)fragment->y * renderer->current->width + fragment->x;
+  return (cpu_fragment_admission){
+      .index = index,
+      .depth_passed = cpu_depth_passes(state->depth_test, fragment->depth,
+                                     renderer->current->depth[index]),
+      .stencil = stencil};
+}
 static inline double cpu_clamp(double value) {
   return isnan(value) ? fmin(1, fmax(0, value))
                      : value <= 0 ? 0 : value < 1 ? value : 1;
@@ -113,7 +127,8 @@ void cpu_raster_flush(qa_cpu_renderer *renderer);
 void cpu_raster_pool_create(qa_cpu_renderer *renderer);
 void cpu_raster_pool_destroy(qa_cpu_renderer *renderer);
 void cpu_write_fragment(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
-                        const cpu_sampler samplers[2], const cpu_fragment *fragment);
+                        const cpu_sampler samplers[2], const cpu_fragment *fragment,
+                        cpu_fragment_admission admission);
 bool cpu_sampler_prepare(const qa_cpu_renderer *renderer,
                           const qa_scene_image *image, cpu_sampler *sampler);
 bool cpu_texture_components_init(qa_cpu_renderer *renderer, qa_error *error);
