@@ -32,6 +32,10 @@ typedef struct q2_interval {
     bool solid;
 } q2_interval;
 
+typedef struct q2_plane_support {
+    float distance, extent;
+} q2_plane_support;
+
 typedef struct q2_collision {
     qa_collision_plane *planes;
     q2_node *nodes;
@@ -48,7 +52,7 @@ typedef struct q2_collision {
     int32_t *node_stack;
     q2_frame *trace_stack;
     uint32_t *brush_stamps;
-    float *expanded_distances;
+    q2_plane_support *expanded_planes;
     uint32_t *expanded_stamps;
     uint32_t expanded_generation;
     qa_shape_kind expanded_kind;
@@ -82,7 +86,7 @@ static void q2_destroy(void *opaque)
     free(collision->node_stack);
     free(collision->trace_stack);
     free(collision->brush_stamps);
-    free(collision->expanded_distances);
+    free(collision->expanded_planes);
     free(collision->expanded_stamps);
     free(collision->intervals);
     free(collision->solid_intervals);
@@ -192,16 +196,22 @@ static float q2_expand(const qa_collision_plane *plane, const qa_trace_shape *sh
     return -qa_vec_dot(corner, normal);
 }
 
-static float q2_expanded_distance(q2_work *work, uint32_t index)
+static const q2_plane_support *q2_expanded_plane(q2_work *work, uint32_t index)
 {
     q2_collision *collision = work->collision;
+    q2_plane_support *expanded = &collision->expanded_planes[index];
     if (collision->expanded_stamps[index] != collision->expanded_generation) {
         const qa_collision_plane *plane = &collision->planes[index];
-        collision->expanded_distances[index] =
+        expanded->distance =
             plane->distance + q2_expand(plane, &work->query->shape);
+        expanded->extent = plane->type >= 0 && plane->type < 3
+            ? qa_vec_component(work->extents, (unsigned)plane->type)
+            : fabsf(work->extents.x * plane->normal.x)
+                + fabsf(work->extents.y * plane->normal.y)
+                + fabsf(work->extents.z * plane->normal.z);
         collision->expanded_stamps[index] = collision->expanded_generation;
     }
-    return collision->expanded_distances[index];
+    return expanded;
 }
 
 static void q2_next_stamp(q2_collision *collision)
@@ -283,7 +293,7 @@ static void q2_trace_brush(q2_work *work, uint32_t index)
     for (size_t i = 0; i < (size_t)brush->sides.count; ++i) {
         const q2_side *side = &collision->sides[(size_t)brush->sides.first + i];
         const qa_collision_plane *plane = &collision->planes[side->plane];
-        float distance = q2_expanded_distance(work, side->plane);
+        float distance = q2_expanded_plane(work, side->plane)->distance;
         float first = qa_vec_dot(work->start, plane->normal) - distance;
         if (work->stationary) {
             if (first > 0) return;
@@ -415,11 +425,7 @@ static void q2_sweep(q2_work *work, int32_t headnode)
         const qa_collision_plane *plane = &collision->planes[node->plane];
         float first = q2_plane_distance(frame.start, plane);
         float last = q2_plane_distance(frame.end, plane);
-        float offset = plane->type >= 0 && plane->type < 3
-            ? qa_vec_component(work->extents, (unsigned)plane->type)
-            : fabsf(work->extents.x * plane->normal.x)
-                + fabsf(work->extents.y * plane->normal.y)
-                + fabsf(work->extents.z * plane->normal.z);
+        float offset = q2_expanded_plane(work, node->plane)->extent;
         if (first >= offset && last >= offset) {
             frame.child = node->children[0];
             collision->trace_stack[depth++] = frame;
@@ -465,7 +471,7 @@ static void q2_brush_medium(q2_work *work, uint32_t index, size_t *count)
     for (size_t i = 0; i < (size_t)brush->sides.count; ++i) {
         const q2_side *side = &collision->sides[(size_t)brush->sides.first + i];
         const qa_collision_plane *plane = &collision->planes[side->plane];
-        float distance = q2_expanded_distance(work, side->plane);
+        float distance = q2_expanded_plane(work, side->plane)->distance;
         float first = qa_vec_dot(work->start, plane->normal) - distance;
         float last = qa_vec_dot(work->end, plane->normal) - distance;
         if (first > 0 && last > 0) return;
@@ -683,7 +689,7 @@ bool qa_q2_collision_create(const qa_bsp_view *map, qa_collision_kernel *out, qa
     Q2_ALLOC(node_stack, collision->node_count + 1);
     Q2_ALLOC(trace_stack, collision->node_count + 1);
     Q2_ALLOC(brush_stamps, collision->brush_count);
-    Q2_ALLOC(expanded_distances, collision->plane_count);
+    Q2_ALLOC(expanded_planes, collision->plane_count);
     Q2_ALLOC(expanded_stamps, collision->plane_count);
     Q2_ALLOC(intervals, collision->brush_count);
     Q2_ALLOC(solid_intervals, collision->brush_count);
