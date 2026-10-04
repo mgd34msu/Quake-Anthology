@@ -143,12 +143,14 @@ qa_cpu_renderer *qa_cpu_create(const qa_cpu_options *options, qa_error *error) {
     qa_cpu_destroy(renderer);
     return NULL;
   }
+  cpu_raster_pool_create(renderer);
   return renderer;
 }
 void qa_cpu_destroy(qa_cpu_renderer *renderer) {
   if (!renderer)
     return;
   if (renderer->surface_ticket || renderer->controls.ticket || renderer->controls.image_ticket || renderer->controls.source.entered) { renderer->destroy_pending=true; return; }
+  cpu_raster_pool_destroy(renderer);
   material_source_release(&renderer->controls.source);
   qa_render_source_texture_release(&renderer->controls.zero_texture);
   for (size_t i = 0; i < 2; ++i)

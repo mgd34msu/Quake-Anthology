@@ -51,6 +51,7 @@ struct qa_cpu_renderer {
   uint8_t gamma[256], *output;
   struct cpu_vertex *vertices;
   size_t vertex_capacity;
+  struct cpu_raster_pool *raster_pool;
   const qa_scene_image *bound[2];
   cpu_source_image source_images[CPU_SOURCE_IMAGES_QA];
   uint32_t source_image_count;
@@ -96,6 +97,8 @@ const cpu_framebuffer *cpu_target_find(const qa_cpu_renderer *renderer,
 bool cpu_image_valid(const qa_scene_image *image, qa_error *error);
 bool cpu_draw(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
               qa_error *error);
+void cpu_raster_pool_create(qa_cpu_renderer *renderer);
+void cpu_raster_pool_destroy(qa_cpu_renderer *renderer);
 void cpu_write_fragment(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
                         const cpu_sampler samplers[2], const cpu_fragment *fragment);
 bool cpu_sampler_prepare(const qa_cpu_renderer *renderer,
