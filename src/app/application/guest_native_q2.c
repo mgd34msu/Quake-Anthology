@@ -459,7 +459,7 @@ static bool load_host(struct application_native_q2 *engine, qa_error *error)
         qa_bytes recipe = {0};
         if (!refs || !refs->resolve)
             return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 cold construction requires its retained external graph resolver");
-        if (!saved || !qa_sha256_equal(&saved->owner.content, &provider->launch->identity) ||
+        if (!saved ||
             !application_native_q2_save_resource_recipe(saved, &recipe, error) ||
             !refs->resolve(refs->context, provider->launch->selection.instance,
                 qa_resource_id(provider->launch->artifact), recipe, &capture, &lower_recipe, error)) return false;

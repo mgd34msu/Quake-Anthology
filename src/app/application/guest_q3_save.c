@@ -1699,7 +1699,6 @@ bool application_guest_q3_save_prepare(application_provider *provider, qa_world 
         provider->application->operation != APPLICATION_PERSISTING ||
         record->owner.kind != QA_SAVE_PROVIDER || !record->owner.instance ||
         strcmp(record->owner.instance, provider->launch->selection.instance) ||
-        !qa_sha256_equal(&record->owner.content, &provider->launch->identity) ||
         !record->owner.schema || strcmp(record->owner.schema,
             provider->kind == APPLICATION_PROVIDER_QVM ? "qa.q3.qvm" : "qa.q3.external-native") ||
         !record->owner.backend || strcmp(record->owner.backend,

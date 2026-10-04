@@ -70,7 +70,6 @@ bool application_native_q2_checkpoint_prepare(application_provider *provider,
     if (!provider || !provider->launch || provider->attached || !saved ||
         saved->owner.kind != QA_SAVE_PROVIDER || !saved->owner.instance ||
         strcmp(saved->owner.instance, provider->launch->selection.instance) ||
-        !qa_sha256_equal(&saved->owner.content, &provider->launch->identity) ||
         !bytes.data || bytes.size < 28 || memcmp(bytes.data, "QAPV", 4) ||
         qa_load_u32le(bytes.data + 4) != APPLICATION_PROVIDER_Q2 ||
         qa_load_u32le(bytes.data + 8) > 1 ||
