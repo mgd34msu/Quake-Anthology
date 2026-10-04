@@ -335,13 +335,6 @@ bool frontend_events(qa_frontend *frontend, qa_error *error)
         (frontend->round ? frontend_round_clear_events(frontend,error) :
          qa_application_clear_events(frontend->application, error));
 }
-static bool phase_end(qa_profiler *profiler, bool ok, qa_error *error)
-{
-    qa_error cleanup = {0};
-    bool retired = qa_profiler_pop(profiler, &cleanup);
-    if (ok && !retired && error) *error = cleanup;
-    return ok && retired;
-}
 static bool audio_output(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *error)
 {
     if (frontend->device) {
@@ -646,7 +639,7 @@ bool qa_frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *erro
     if (ok && !qa_application_should_stop(frontend->application)) {
         if (!retiring_map && !qa_application_startup_pending(frontend->application) && !frontend->options.dedicated) {
             ok = qa_profiler_push(profiler, "controls", error);
-            if (ok) ok = phase_end(profiler, controls(frontend,elapsed_ns,raw_elapsed,error), error);
+            if (ok) ok = frontend_profiler_end(profiler, controls(frontend,elapsed_ns,raw_elapsed,error), error);
         }
         if (ok && !retiring_map && !qa_application_startup_pending(frontend->application) &&
             (client_only || qa_application_get_state(frontend->application) == QA_APPLICATION_RUNNING)) {
@@ -654,19 +647,26 @@ bool qa_frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *erro
             ok = frontend_network_tick(frontend, elapsed_ns, retiring_map, &source_ready, error);
             if (ok && source_ready && !client_only) {
                 ok=qa_profiler_push(profiler, "application", error);
-                if (ok) ok=phase_end(profiler, qa_application_advance(frontend->application, elapsed_ns, error), error);
+                if (ok) ok=frontend_profiler_end(profiler, qa_application_advance(frontend->application, elapsed_ns, error), error);
             }
         }
-        if (ok) ok = frontend_remote_unified_sample(frontend,frontend->wall_time_ns,error) &&
-            frontend_remote_q1_sample_all(frontend,frontend->wall_time_ns,error) &&
-            frontend_remote_q2_sample(frontend,frontend->wall_time_ns,error) && frontend_network_publish(frontend, error) && frontend_source_times_sync(frontend, false, error) &&
-            frontend_input_profile_bind(frontend,error) && frontend_campaign_drain(frontend,error);
-        if (ok && !frontend->options.dedicated) ok = frontend_scene_sync(frontend, error) &&
-            frontend_particle_source_complete(frontend, error) &&
-            frontend_map_events(frontend, error) && frontend_particle_events(frontend, error) && frontend_player_events(frontend, error);
+        if (ok) {
+            ok = qa_profiler_push(profiler, "publication", error);
+            if (ok) ok = frontend_profiler_end(profiler,
+                frontend_remote_unified_sample(frontend,frontend->wall_time_ns,error) &&
+                frontend_remote_q1_sample_all(frontend,frontend->wall_time_ns,error) &&
+                frontend_remote_q2_sample(frontend,frontend->wall_time_ns,error) && frontend_network_publish(frontend, error) && frontend_source_times_sync(frontend, false, error) &&
+                frontend_input_profile_bind(frontend,error) && frontend_campaign_drain(frontend,error), error);
+        }
+        if (ok && !frontend->options.dedicated) {
+            ok = qa_profiler_push(profiler, "scene_updates", error);
+            if (ok) ok = frontend_profiler_end(profiler, frontend_scene_sync(frontend, error) &&
+                frontend_particle_source_complete(frontend, error) &&
+                frontend_map_events(frontend, error) && frontend_particle_events(frontend, error) && frontend_player_events(frontend, error), error);
+        }
         if (ok && !frontend->options.dedicated) {
             ok = qa_profiler_push(profiler, "presentation", error);
-            if (ok) ok = phase_end(profiler, frontend_present(frontend, error), error);
+            if (ok) ok = frontend_profiler_end(profiler, frontend_present(frontend, error), error);
             if (ok) ok=frontend_network_client_pose_publish(frontend,error);
         }
         if (ok && !frontend->options.dedicated) {
@@ -676,8 +676,11 @@ bool qa_frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *erro
                 frontend_print(frontend, "\n");
             }
         }
-        if (ok) ok = frontend_particle_advance(frontend, error);
-        if (ok) ok = frontend_events(frontend, error);
+        if (ok) {
+            ok = qa_profiler_push(profiler, "events", error);
+            if (ok) ok = frontend_profiler_end(profiler,
+                frontend_particle_advance(frontend, error) && frontend_events(frontend, error), error);
+        }
         if (ok && frontend->audio) {
             ok = qa_profiler_push(profiler, "audio", error);
             if (ok) {
@@ -689,7 +692,7 @@ bool qa_frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *erro
                 if (ok) ok = audio_positions(frontend, error) && frontend_event_audio(frontend, error) &&
                      qa_audio_engine_q3_publish(frontend->audio, error) && qa_audio_engine_end_loop_frame(frontend->audio, error) &&
                      audio_output(frontend, elapsed_ns, error);
-                ok = phase_end(profiler, ok, error);
+                ok = frontend_profiler_end(profiler, ok, error);
             }
         }
     }

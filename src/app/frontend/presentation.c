@@ -128,8 +128,9 @@ static bool remote_q1_present(qa_frontend *f,unsigned seat,const qa_scene_view *
         .scale=preferences->hud_scale,.show_scores=physical->scores,.visible=visible},&f->frame,error)) return false;
     *hud_drawn=true; return true;
 }
-bool frontend_present(qa_frontend *frontend, qa_error *error)
+static bool scene_build(qa_frontend *frontend, bool *render, qa_error *error)
 {
+    *render = false;
     qa_display_info display;
     if (!qa_display_info_get(frontend->display, &display, error)) return false;
     if (display.minimized || !display.drawable_width || !display.drawable_height) return true;
@@ -320,6 +321,19 @@ bool frontend_present(qa_frontend *frontend, qa_error *error)
             !qa_material_source_frame_end(frontend->frame.source_pending,&frontend->frame,false,error)) return false;
         return true;
     }
+    *render = true;
+    return true;
+}
+
+bool frontend_present(qa_frontend *frontend, qa_error *error)
+{
+    qa_profiler *profiler = qa_tools_profiler(frontend_tools_owner(frontend));
+    bool profiling = qa_profiler_enabled(profiler);
+    bool render = false;
+    if (profiling && !qa_profiler_push(profiler, "scene_build", error)) return false;
+    bool ok = scene_build(frontend, &render, error);
+    if (profiling) ok = frontend_profiler_end(profiler, ok, error);
+    if (!ok || !render) return ok;
     const qa_cvar_view *gamma = qa_cvars_find(qa_application_cvars(frontend->application), "r_gamma");
     float brightness = gamma ? fmaxf(.5f, fminf(3, gamma->number)) : frontend->options.gamma;
     if (frontend->cpu) return qa_cpu_set_gamma(frontend->cpu, brightness, error) &&

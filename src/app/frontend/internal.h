@@ -25,6 +25,14 @@
 #include <stdlib.h>
 #include <string.h>
 
+static inline bool frontend_profiler_end(qa_profiler *profiler, bool ok, qa_error *error)
+{
+    qa_error cleanup = {0};
+    bool retired = qa_profiler_pop(profiler, &cleanup);
+    if (ok && !retired && error) *error = cleanup;
+    return ok && retired;
+}
+
 enum { FRONTEND_HOME = 1, FRONTEND_LIBRARY, FRONTEND_MODS, FRONTEND_SETTINGS, FRONTEND_RANKINGS, FRONTEND_ASSISTANCE, FRONTEND_BINDINGS, FRONTEND_PLAYER_SOURCES };
 typedef struct qa_frontend_tools qa_frontend_tools;
 typedef struct qa_frontend_network qa_frontend_network;
