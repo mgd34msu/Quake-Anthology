@@ -29,6 +29,11 @@ static bool identity(qa_source_save_io *io, const qa_console_save_resolvers *res
 static bool context_fields(qa_source_save_io *io, qa_command_context *context,
                             const qa_console_save_resolvers *resolve, uint64_t captured_registry)
 {
+    qa_command_context captured = *context;
+    if (io->direction == QA_SOURCE_SAVE_WRITE) {
+        context = &captured;
+        context->registry = qa_console_save_context_registry(io->session, context->registry, captured_registry);
+    }
     uint32_t dialect = context->dialect, origin = context->origin;
     if (!qa_source_save_u64(io, &context->session) ||
         !qa_source_save_u64(io, &context->owner) || !qa_source_save_u64(io, &context->client) ||
@@ -284,12 +289,11 @@ static bool state_valid(const qa_console *state, qa_error *error)
 }
 
 static bool fields(qa_source_save_io *io, qa_console *state, qa_console *candidate,
-                     const qa_console_save_resolvers *resolve)
+                     const qa_console_save_resolvers *resolve, uint64_t captured_registry)
 {
     char magic[8] = {'Q','A','C','O','N','S','L',0};
     uint32_t callbacks = capabilities(&state->options);
     uint32_t expected = capabilities(&candidate->options);
-    uint64_t captured_registry = qa_actors_identity(qa_session_actors(io->session));
     if (!qa_source_save_bytes(io, magic, sizeof(magic)) || memcmp(magic, "QACONSL", 8) ||
         !qa_source_save_u64(io, &captured_registry) || !captured_registry ||
         !qa_source_save_u32(io, &callbacks) || callbacks != expected ||
@@ -311,17 +315,14 @@ static bool fields(qa_source_save_io *io, qa_console *state, qa_console *candida
     return state_valid(state, io->error);
 }
 
+uint64_t qa_console_save_context_registry(qa_session *session, uint64_t registry, uint64_t captured_registry)
+{
+    return registry && registry == qa_actors_identity(qa_session_actors(session)) ? captured_registry : registry;
+}
 bool qa_console_save_capture(const qa_console *console, qa_session *session, qa_buffer *out, qa_error *error)
 {
-    if (!console || !session || !out || !qa_console_idle(console) || console->program_leases || console->release_leases ||
-        console->program_unpublished)
-        return qac_fail(error, QA_ERROR_ARGUMENT, "Console capture requires its idle owner and session");
-    qa_source_save_io io;
-    if (!qa_source_save_writer(&io, session, error)) return false;
-    qa_console copy = *console;
-    bool ok = fields(&io, &copy, (qa_console *)console, NULL) && qa_source_save_finish(&io, out);
-    if (!ok && (!error || error->code == QA_OK)) invalid(error, "Invalid console continuation");
-    qa_source_save_dispose(&io); return ok;
+    return qa_console_save_capture_in_registry(console, session,
+        qa_actors_identity(qa_session_actors(session)), false, out, error);
 }
 
 bool qa_console_save_restore(qa_console *console, qa_session *session,
@@ -338,7 +339,7 @@ bool qa_console_save_restore(qa_console *console, qa_session *session,
     scratch->options.context = (qa_command_context){0};
     scratch->options.startup_commands = NULL;
     qa_source_save_io io = {0};
-    bool ok = qa_source_save_reader(&io, session, bytes, error) && fields(&io, scratch, console, resolve) &&
+    bool ok = qa_source_save_reader(&io, session, bytes, error) && fields(&io, scratch, console, resolve, 0) &&
         qa_source_save_finish(&io, NULL) && qa_console_idle(console) &&
         qa_console_save_capture(console, session, &after, error);
     /* qac_save_text's allocation is owned even if a later header field fails. */
@@ -376,11 +377,10 @@ static bool release_context_equal(const qa_command_context *a,const qa_command_c
             (a->script && b->script && !strcmp(a->script,b->script)));
 }
 static bool releases_fields(qa_source_save_io *io,qa_console *state,
-    const qa_console_save_resolvers *resolve)
+    const qa_console_save_resolvers *resolve,uint64_t registry)
 {
     bool reading=io->direction==QA_SOURCE_SAVE_READ;
     size_t count=state->release_leases,active=0;
-    uint64_t registry=qa_actors_identity(qa_session_actors(io->session));
     if (!qa_source_save_u64(io,&registry) || !registry ||
         !qa_source_save_count(io,&count,reading?io->input.size/16:SIZE_MAX) || !count) return false;
     qa_console_release **link=&state->release_first;
@@ -451,20 +451,30 @@ static void imported_storage_free(qa_console *console)
     }
     console->release_leases=0; console->release_owner=NULL;
 }
-bool qa_console_release_save_capture(const qa_console *console,qa_session *session,qa_buffer *out,qa_error *error)
+bool qa_console_save_capture_in_registry(const qa_console *console,qa_session *session,
+    uint64_t captured_registry,bool releases,qa_buffer *out,qa_error *error)
 {
-    if (!console || !session || !out || !qa_console_idle(console) || !console->release_leases ||
-        console->release_advancing || console->program_leases || console->program_unpublished || console->pending_program)
+    bool returned=console && session && captured_registry && out && qa_console_idle(console) &&
+        !console->program_leases && !console->program_unpublished;
+    if (!releases && (!returned || console->release_leases))
+        return qac_fail(error,QA_ERROR_ARGUMENT,"Console capture requires its idle owner and session");
+    if (releases && (!returned || !console->release_leases || console->release_advancing || console->pending_program))
         return qac_fail(error,QA_ERROR_ARGUMENT,"Release capture requires the returned actual programme roster");
     qa_source_save_io io={0}; qa_console copy=*console;
     char magic[4]={'Q','A','C','R'};
-    bool ok=qa_source_save_writer(&io,session,error) && qa_source_save_bytes(&io,magic,4) &&
-        fields(&io,&copy,(qa_console *)console,NULL) &&
-        qa_source_save_bool(&io,&copy.drain_yielded) &&
-        releases_fields(&io,&copy,NULL) && qa_source_save_finish(&io,out);
+    bool ok=qa_source_save_writer(&io,session,error) && (!releases || qa_source_save_bytes(&io,magic,4)) &&
+        fields(&io,&copy,(qa_console *)console,NULL,captured_registry) &&
+        (!releases || (qa_source_save_bool(&io,&copy.drain_yielded) &&
+            releases_fields(&io,&copy,NULL,captured_registry))) && qa_source_save_finish(&io,out);
     qa_source_save_dispose(&io);
-    if (!ok && (!error || error->code==QA_OK)) invalid(error,"Invalid retained console release roster");
+    if (!ok && (!error || error->code==QA_OK))
+        invalid(error,releases?"Invalid retained console release roster":"Invalid console continuation");
     return ok;
+}
+bool qa_console_release_save_capture(const qa_console *console,qa_session *session,qa_buffer *out,qa_error *error)
+{
+    return qa_console_save_capture_in_registry(console,session,
+        qa_actors_identity(qa_session_actors(session)),true,out,error);
 }
 bool qa_console_release_save_present(const qa_console *console)
 { return console && console->release_first && console->release_leases; }
@@ -483,8 +493,8 @@ bool qa_console_release_save_restore(qa_console *console,qa_session *session,
     qa_source_save_io io={0}; char magic[4];
     bool ok=qa_source_save_reader(&io,session,bytes,error) && qa_source_save_bytes(&io,magic,4) &&
         !memcmp(magic,"QACR",4) &&
-        fields(&io,scratch,console,resolve) && qa_source_save_bool(&io,&scratch->drain_yielded) &&
-        releases_fields(&io,scratch,resolve) &&
+        fields(&io,scratch,console,resolve,0) && qa_source_save_bool(&io,&scratch->drain_yielded) &&
+        releases_fields(&io,scratch,resolve,0) &&
         qa_source_save_finish(&io,NULL) && qa_console_save_capture(console,session,&after,error);
     scratch->startup=(char *)scratch->options.startup_commands;
     if (ok && (before.size!=after.size || memcmp(before.data,after.data,before.size)))

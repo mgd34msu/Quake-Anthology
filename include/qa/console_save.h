@@ -26,6 +26,11 @@ typedef struct qa_console_save_resolvers {
 } qa_console_save_resolvers;
 
 bool qa_console_save_capture(const qa_console *, qa_session *, qa_buffer *, qa_error *);
+/* The enclosing owner supplies its retained save namespace. Foreign and empty
+ * command namespaces remain unchanged. */
+uint64_t qa_console_save_context_registry(qa_session *, uint64_t registry, uint64_t captured_registry);
+bool qa_console_save_capture_in_registry(const qa_console *, qa_session *, uint64_t captured_registry,
+                                         bool releases, qa_buffer *, qa_error *);
 /* Rebinds actual command handlers from the candidate's existing registration
  * table. All decoded allocations are scratch-owned until the final exchange;
  * source dispatch, output and script callbacks never run. */

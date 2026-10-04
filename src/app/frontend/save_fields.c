@@ -1,13 +1,13 @@
 #include "save_private.h"
 #include "qa/application_equipment_content.h"
+#include "qa/console_save.h"
 bool frontend_save_command_context(qa_source_save_io *io, qa_command_context *context, char **script,
     uint64_t captured_registry)
 {
     qa_command_context saved_context = *context;
     if (io->direction == QA_SOURCE_SAVE_WRITE) {
         context = &saved_context;
-        if (context->registry == qa_actors_identity(qa_session_actors(io->session)))
-            context->registry = captured_registry;
+        context->registry = qa_console_save_context_registry(io->session, context->registry, captured_registry);
     }
     uint32_t dialect = context->dialect, origin = context->origin;
     bool ok = qa_source_save_u64(io, &context->session) && qa_source_save_u64(io, &context->owner)

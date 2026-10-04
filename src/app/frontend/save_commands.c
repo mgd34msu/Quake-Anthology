@@ -71,6 +71,8 @@ bool frontend_save_commands_create(qa_frontend *f, qa_error *error)
 }
 bool frontend_save_commands_idle(const qa_frontend *f)
 { return f && (!f->save_commands || !f->save_commands->draining); }
+uint64_t frontend_save_commands_registry(const qa_frontend *f)
+{ return f && f->save_commands ? f->save_commands->command_registry : 0; }
 qa_fs_root *frontend_save_commands_root(const qa_frontend *f)
 { return f && f->save_commands ? f->save_commands->root : NULL; }
 bool frontend_save_commands_pending(const qa_frontend *f)

@@ -1,6 +1,7 @@
 #include "client_source.h"
 #include "client_registry.h"
 #include "tools_restore.h"
+#include "save_commands.h"
 #include "qa/console_cvar_observer.h"
 #include "qa/source_save.h"
 #include <limits.h>
@@ -392,8 +393,8 @@ static bool construct(qa_frontend *f, const frontend_client_source_options *opti
             qa_console_save_restore(s->console,qa_application_session(f->application),resolvers,bytes,error);
         if(!ok) goto done;
         s->imported_queue=true;
-        ok=s->release_programmes?qa_console_release_save_capture(s->console,qa_application_session(f->application),&s->imported_current,error):
-            qa_console_save_capture(s->console,qa_application_session(f->application),&s->imported_current,error);
+        ok=qa_console_save_capture_in_registry(s->console,qa_application_session(f->application),
+            state->command.registry,s->release_programmes,&s->imported_current,error);
         if(!ok) goto done;
         success = true;
     } else {
@@ -691,6 +692,9 @@ bool frontend_client_source_capture(frontend_client_source *s, frontend_client_s
         return frontend_fail(error, QA_ERROR_ARGUMENT, "CLIENT prefix capture requires its returned actual owner");
     frontend_client_source_state state = {.command = s->command, .capabilities = capabilities(&s->options),
         .ready = s->ready,.retiring=s->retiring,.programme_retired=s->programme_retired};
+    uint64_t captured_registry=frontend_save_commands_registry(s->frontend);
+    state.command.registry=qa_console_save_context_registry(qa_application_session(s->frontend->application),
+        state.command.registry,captured_registry);
     bool retired=qa_application_client_retirement_current(s->frontend->application,&s->application);
     state.release_programmes=qa_console_release_save_present(s->console);
     if(state.release_programmes&&(!s->retiring||!retired))
@@ -699,9 +703,8 @@ bool frontend_client_source_capture(frontend_client_source *s, frontend_client_s
         return frontend_fail(error,QA_ERROR_ARGUMENT,"CLIENT retirement capture lost its retained disconnect receipt");
     bool captured=retired?qa_application_client_capture_retired(s->frontend->application,&s->application,&state.application,error):
         qa_application_client_capture(s->frontend->application,&s->application,&state.application,error);
-    bool queued=captured&&(state.release_programmes?
-        qa_console_release_save_capture(s->console,qa_application_session(s->frontend->application),&state.console,error):
-        qa_console_save_capture(s->console,qa_application_session(s->frontend->application),&state.console,error));
+    bool queued=captured&&qa_console_save_capture_in_registry(s->console,
+        qa_application_session(s->frontend->application),captured_registry,state.release_programmes,&state.console,error);
     if (!queued) {
         frontend_client_source_state_free(&state); return false;
     }
@@ -904,8 +907,8 @@ static bool commands_capture(frontend_client_source *s,bool releases,qa_buffer *
     if(releases&&(!s->retiring||!qa_application_client_retirement_current(s->frontend->application,&s->application)))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"CLIENT release queue lost its actual retirement custody");
     qa_session *session=qa_application_session(s->frontend->application);
-    return releases?qa_console_release_save_capture(s->console,session,out,error):
-        qa_console_save_capture(s->console,session,out,error);
+    return qa_console_save_capture_in_registry(s->console,session,
+        frontend_save_commands_registry(s->frontend),releases,out,error);
 }
 bool frontend_client_source_commands_capture(qa_frontend *f, qa_application *app,
     const qa_application_console_scope *scope, const qa_console *console, qa_buffer *out, qa_error *error)

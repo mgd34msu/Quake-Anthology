@@ -7,6 +7,7 @@ bool frontend_save_commands_create(qa_frontend *, qa_error *);
 bool frontend_save_commands_destroy(qa_frontend *, qa_error *);
 bool frontend_save_commands_idle(const qa_frontend *);
 bool frontend_save_commands_capture_ready(const qa_frontend *);
+uint64_t frontend_save_commands_registry(const qa_frontend *);
 /* Borrowed actual queue directory authority; no path is reopened. */
 qa_fs_root *frontend_save_commands_root(const qa_frontend *);
 bool frontend_save_commands_pending(const qa_frontend *);
