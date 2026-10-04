@@ -25,6 +25,7 @@
 #include "world_bounds.h"
 #include "qa/game_q1_source_entities.h"
 #include "qa/game_q2_wire.h"
+#include "qa/game_q3_wire.h"
 #include "native_q2_wire_engine.h"
 #include "qa/map_sidecars.h"
 #include "unified_events.h"
@@ -596,20 +597,38 @@ static void source_body_linked(void *opaque, const qa_linked_body *linked)
     if (application->operation == APPLICATION_PERSISTING) return;
     application_provider *source = application_world_provider(application, QA_ROLE_ENTITIES, "");
     if (!source) return;
-    struct application_native_q2 *original = source->kind == APPLICATION_PROVIDER_NATIVE ? source->state.native.q2_engine : NULL;
-    bool compiled = source->kind == APPLICATION_PROVIDER_Q2 && source->state.q2;
-    if (!compiled && (!original || !original->wire_engine || original->profile == QA_NATIVE_Q2_CGAME_API2023)) return;
     qa_world *world = application->physics ? application->physics->world : NULL;
     qa_error error = {0};
-    qa_linked_body current;
-    if (!world || (application->world && application->world != world) ||
-        qa_world_actors(world) != qa_session_actors(application->session) ||
-        !qa_world_linked(world, linked->actor, &current) || current.link_count != linked->link_count ||
-        !(compiled ? qa_q2_wire_linked(source->state.q2, linked, &error) :
-            application_native_q2_wire_linked(original, linked, &error))) {
-        if (error.code == QA_OK)
-            application_fail(&error, QA_ERROR_ARGUMENT, "Q2 Source link lost its canonical World");
-        application_fault(application, &error);
+    bool qualified = false;
+    for (size_t index = 0; index <= application->provider_count; ++index) {
+        application_provider *provider = index ? application->providers[index - 1] : source;
+        bool q3 = index && provider != source && provider->kind == APPLICATION_PROVIDER_Q3 &&
+            provider->state.q3 && provider->constructed && provider->attached && !provider->close_pending;
+        struct application_native_q2 *original = !index && provider->kind == APPLICATION_PROVIDER_NATIVE
+            ? provider->state.native.q2_engine : NULL;
+        bool compiled = !index && provider->kind == APPLICATION_PROVIDER_Q2 && provider->state.q2;
+        if (!q3 && !compiled && (!original || !original->wire_engine ||
+            original->profile == QA_NATIVE_Q2_CGAME_API2023)) continue;
+        if (!qualified) {
+            qa_linked_body current;
+            qualified = world && (!application->world || application->world == world) &&
+                qa_world_actors(world) == qa_session_actors(application->session) &&
+                qa_world_linked(world, linked->actor, &current) && current.link_count == linked->link_count;
+            if (!qualified) {
+                application_fail(&error, QA_ERROR_ARGUMENT, "Source link lost its canonical World");
+                application_fault(application, &error);
+                return;
+            }
+        }
+        bool observed = q3 ? qa_q3_wire_linked(provider->state.q3, linked, &error) :
+            compiled ? qa_q2_wire_linked(provider->state.q2, linked, &error) :
+            application_native_q2_wire_linked(original, linked, &error);
+        if (!observed) {
+            if (error.code == QA_OK)
+                application_fail(&error, QA_ERROR_ARGUMENT, "Source link lost its canonical World");
+            application_fault(application, &error);
+            return;
+        }
     }
 }
 

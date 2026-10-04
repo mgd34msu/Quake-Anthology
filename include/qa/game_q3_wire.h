@@ -125,6 +125,9 @@ bool qa_q3_wire_entity_event_time(const qa_q3_game *, uint32_t physical_slot,
 /* Genuine GAME link: authored solid/visibility, exact source bounds, and the
  * optional ClientThink snapped origin without changing the shared body. */
 bool qa_q3_wire_link(qa_q3_game *, qa_actor_id, const qa_vec3 *origin_override, qa_error *);
+/* Observe the genuine shared World publication for an already bound Source row.
+ * Unbound actors have no Q3 projection; this never relinks the physical body. */
+bool qa_q3_wire_linked(qa_q3_game *, const qa_linked_body *, qa_error *);
 
 /* These fields belong to native GAME's PM policy when another movement family
  * is selected. Native Q3 movement keeps its existing control owner. */

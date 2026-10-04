@@ -753,6 +753,32 @@ static uint32_t solid_byte(float value) {
     return integer < 1 ? 1u : integer > 255 ? 255u : (uint32_t)integer;
 }
 
+static void link_write(qa_q3_game *game, uint32_t slot, const qa_body_state *body,
+                        const qa_actor_collision *collision,
+                        const qa_q3_wire_visibility *membership, uint64_t link_count) {
+    q3_wire_row *record = &game->wire->rows[slot];
+    uint32_t solid = collision->inline_model ? UINT32_C(0xffffff)
+        : !(collision->contents & INT32_C(0x02000001)) ? 0u
+        : (solid_byte(q3_source_float_add(body->bounds.maxs.z, 32)) << 16) |
+          (solid_byte(-body->bounds.mins.z) << 8) | solid_byte(body->bounds.maxs.x);
+    qa_q3_entity *temporary = q3_wire_temporary(game, record->actor);
+    if (temporary) temporary->solid = word(solid);
+    else {
+        q3_actor *entry = q3_actor_get(game, record->actor);
+        if (entry && (entry->kind == Q3_ACTOR_PODIUM || entry->kind == Q3_ACTOR_VICTORY_MODEL))
+            entry->state.postgame.entity.solid = word(solid);
+        else record->source.solid = word(solid);
+    }
+    if (slot < QA_Q3_SOURCE_CLIENTS)
+        game->clients[slot].source_model_shape = collision->shape == QA_SHAPE_CAPSULE
+            ? QA_SHAPE_CAPSULE : QA_SHAPE_BOX;
+    record->link = (q3_wire_link_state){.written = true,
+        .area = membership->area, .area2 = membership->area2,
+        .last_cluster = membership->last_cluster,
+        .cluster_count = (uint32_t)membership->cluster_count, .link_count = link_count};
+    memcpy(record->link.clusters, membership->clusters, sizeof(record->link.clusters));
+}
+
 static bool linked_geometry_matches(const qa_body_state *published,
                                       const qa_body_state *source, qa_vec3 origin) {
     for (unsigned axis = 0; axis < 3; ++axis)
@@ -787,21 +813,6 @@ bool qa_q3_wire_link(qa_q3_game *game, qa_actor_id actor,
     }
     if (ok) {
         q3_wire_row *record = &game->wire->rows[slot];
-        uint32_t solid = collision.inline_model ? UINT32_C(0xffffff)
-            : !(collision.contents & INT32_C(0x02000001)) ? 0u
-            : (solid_byte(q3_source_float_add(body.bounds.maxs.z, 32)) << 16) |
-              (solid_byte(-body.bounds.mins.z) << 8) | solid_byte(body.bounds.maxs.x);
-        qa_q3_entity *temporary = q3_wire_temporary(game, actor);
-        if (temporary) temporary->solid = word(solid);
-        else {
-            q3_actor *entry = q3_actor_get(game, actor);
-            if (entry && (entry->kind == Q3_ACTOR_PODIUM || entry->kind == Q3_ACTOR_VICTORY_MODEL))
-                entry->state.postgame.entity.solid = word(solid);
-            else record->source.solid = word(solid);
-        }
-        if (slot < QA_Q3_SOURCE_CLIENTS)
-            game->clients[slot].source_model_shape = collision.shape == QA_SHAPE_CAPSULE
-                ? QA_SHAPE_CAPSULE : QA_SHAPE_BOX;
         qa_bounds local = body.bounds;
         if (collision.inline_model && (body.angles.x != 0 || body.angles.y != 0 || body.angles.z != 0)) {
             qa_vec3 extent = qa_v3(fmaxf(fabsf(local.mins.x), fabsf(local.maxs.x)),
@@ -822,12 +833,8 @@ bool qa_q3_wire_link(qa_q3_game *game, qa_actor_id actor,
             if (has_leaves && previous.link_count == UINT64_MAX)
                 ok = q3_fail(error, "Q3 source link count exhausted");
             else {
-                record->link = (q3_wire_link_state){.written = true,
-                    .area = membership.area, .area2 = membership.area2,
-                    .last_cluster = membership.last_cluster,
-                    .cluster_count = (uint32_t)membership.cluster_count,
-                    .link_count = previous.link_count + (has_leaves ? 1u : 0u)};
-                memcpy(record->link.clusters, membership.clusters, sizeof(record->link.clusters));
+                link_write(game, slot, &body, &collision, &membership,
+                    previous.link_count + (has_leaves ? 1u : 0u));
                 if (has_leaves) ok = qa_world_link_bounds_at(world, actor, &bounds, &origin, error);
                 qa_body_link_state published;
                 if (ok && (!current(game, slot, actor) || !qa_world_link_state(world, actor, &published) ||
@@ -839,6 +846,39 @@ bool qa_q3_wire_link(qa_q3_game *game, qa_actor_id actor,
         }
     }
     if (!ok && (!error || !error->code)) q3_fail(error, "Q3 source body retired during link production");
+    --game->observation_depth;
+    return ok;
+}
+
+bool qa_q3_wire_linked(qa_q3_game *game, const qa_linked_body *linked, qa_error *error) {
+    if (!game || !game->wire || !linked || game->source_restored ||
+        game->observation_depth == SIZE_MAX)
+        return q3_fail(error, "Q3 linked observation lacks its actual source owner");
+    q3_wire_row *record = row(game, linked->actor);
+    if (!record) return true;
+    uint32_t slot = (uint32_t)(record - game->wire->rows);
+    if (record->link.written && record->link.link_count == linked->link_count) return true;
+    ++game->observation_depth;
+    qa_world *world = game->options.services.world;
+    uint64_t body_storage = qa_world_body_storage_serial(world, linked->actor);
+    qa_actor_collision collision = {0};
+    qa_error observed = {0};
+    bool colliding = qa_world_get_collision(world, linked->actor, &collision, &observed);
+    bool ok = colliding || observed.code == QA_OK;
+    if (!ok && error) *error = observed;
+    qa_q3_wire_visibility membership = {0};
+    bool has_leaves = false;
+    qa_body_link_state published;
+    if (ok) ok = body_storage && current(game, slot, linked->actor) &&
+        body_storage == qa_world_body_storage_serial(world, linked->actor) &&
+        link_membership(game, &linked->absolute_bounds, &membership, &has_leaves, error) &&
+        current(game, slot, linked->actor) &&
+        body_storage == qa_world_body_storage_serial(world, linked->actor) &&
+        qa_world_link_state(world, linked->actor, &published) && published.linked &&
+        published.link_count == linked->link_count;
+    if (ok) link_write(game, slot, &linked->state, &collision, &membership, linked->link_count);
+    if (!ok && (!error || !error->code))
+        q3_fail(error, "Q3 source body retired during linked observation");
     --game->observation_depth;
     return ok;
 }
