@@ -1,9 +1,9 @@
 # Native frame costs
 
-The latest measured Q3 CPU frame takes **33.838 ms**, including **16.922 ms**
-of raster execution; GL takes **20.446 ms**. Removing a quadratic settings
-lookup and repeated unit-color interpolation reduces both frame time and CPU
-work. Raster execution and presentation are now the largest measured CPU costs.
+The latest measured Q3 CPU frame takes **27.269 ms**, including **18.167 ms**
+of raster execution; latest GL takes **20.446 ms**. Removing a quadratic settings
+lookup cuts shared scene work. Replacing duplicate SDL texture layers reduces
+CPU presentation to **0.281 ms**. Raster execution is now the largest CPU cost.
 
 ## Workload
 
@@ -52,6 +52,8 @@ material totals include more observer overhead than the standard runs above.
 | `d164f40c` | 46.575 | 17.489 | 176.752 |
 | `436272c5` | 51.426 | 19.668 | 183.142 |
 | `70dd4397` | 33.838 | 16.922 | 154.816 |
+| `60336d6b` | 34.343 | 17.446 | 150.564 |
+| `e22f4a54` | 27.269 | 18.167 | 147.397 |
 
 With the same subdivision, GL takes 31.411 ms on `e900075f` and 30.501 ms
 on `436272c5`. Material submission falls from 13.104 to 12.399 ms on CPU
@@ -65,6 +67,18 @@ the unit-color raster cut. CPU frame time falls 34.2% from `436272c5`; GL falls
 Aggregate CPU work falls to 154.816 ms. Raster and presentation also vary between
 runs, so the full frame reduction cannot be attributed to the lookup alone.
 
+Balancing fixed bands by bounding-box work on `60336d6b` establishes no latency
+gain: frame and raster medians rise slightly, and frame P95 rises from 36.428
+to 39.349 ms. A dynamic row-job experiment uses the existing worker pool next.
+
+`e22f4a54` replaces the outer SDL software renderer and streaming texture with
+one retained RGBA surface and native window-surface presentation. On the actual
+X11 run, presentation falls from 8.515 to 0.281 ms, complete frame time falls
+20.6%, and frame P95 falls to 28.931 ms. Raster time varies upward; the large
+reduction is in the presentation path. Only after-loop diagnostic metadata
+changes to report the actual native surface; removing that branch reproduces
+the previous diagnostic source exactly.
+
 Ordered command batching reduces matched frame time by 38.1% and raster time
 by 62.2%. Aggregate CPU work rises: the gain comes from parallel scheduling,
 not less total CPU work. The batch preserves command order within disjoint
@@ -77,17 +91,17 @@ it does not establish each worker's individual contribution.
 
 ## Current costs and optimization targets
 
-These are inclusive medians on the matched `70dd4397` CPU and GL runs.
+These are inclusive medians on `e22f4a54` CPU and the latest `70dd4397` GL run.
 Both include the subdivision scopes.
 Nested durations overlap, so the rows must not be added together.
 
 | Scope | CPU ms | GL ms |
 | --- | ---: | ---: |
-| Scene construction | 5.858 | 6.387 |
-| Material submission, 554 calls | 4.234 | 4.600 |
-| World submission, including its materials | 4.140 | 4.522 |
-| Renderer execution / GL submission | 16.922 | 2.128 |
-| SDL RenderPresent / swap | 8.180 | 8.521 |
+| Scene construction | 6.076 | 6.387 |
+| Material submission, 554 calls | 4.434 | 4.600 |
+| World submission, including its materials | 4.357 | 4.522 |
+| Renderer execution / GL submission | 18.167 | 2.128 |
+| CPU native presentation / GL swap | 0.281 | 8.521 |
 
 The first GL baseline separately measured 3.596 ms median GPU elapsed time
 around renderer execution. GPU intervals overlap CPU work and presentation;
@@ -127,6 +141,9 @@ Selecting SDL's default accelerated blitter did not materially improve
 presentation and changed readback alpha during genuine saved-image
 restoration. `e900075f` restores the original software blitter. Every later
 completed CPU pair retains exact display RGBA as well as engine RGBA.
+The native-surface path preserves the same authored RGBA in its single retained
+frame. Its actual RGB888 native target has no alpha channel; all native RGB
+components match, while retained capture also preserves the authored alpha.
 
 ## Fidelity and limits
 
