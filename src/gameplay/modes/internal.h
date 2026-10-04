@@ -99,6 +99,7 @@ struct qa_modes {
     size_t restored_objective_count;
     bool source_restored;
     qa_builtin_actor_snapshot players_order, observations;
+    qa_builtin_snapshot_frame *snapshot_frames;
 };
 
 bool mode_fail(qa_error *, const char *);

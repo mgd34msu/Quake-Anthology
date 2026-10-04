@@ -245,7 +245,7 @@ static bool say(qa_q2_game *g, q2_actor *a, const char *text, bool team, qa_erro
     message[length] = 0;
     team_name(a->client->info.skin, (g->options.deathmatch_flags & 64) != 0, own_team,
               sizeof(own_team));
-    q2_trace_frame *players = q2_player_roster(g, e);
+    qa_builtin_snapshot_frame *players = q2_player_roster(g, e);
     if (!players)
         return false;
     bool okay = true;
@@ -264,7 +264,7 @@ static bool say(qa_q2_game *g, q2_actor *a, const char *text, bool team, qa_erro
             break;
         }
     }
-    players->active = false;
+    qa_builtin_snapshot_release(players);
     return okay;
 }
 static bool write_count(qa_q2_game *g, qa_actor_id actor, qa_item_id item, double capacity,

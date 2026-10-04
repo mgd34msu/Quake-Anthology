@@ -35,14 +35,14 @@ static bool counter_message(qa_q1_game *g, q1_actor *e, qa_actor_id activator,
                   : count == 1 ? "$qc_one_more"
                   : count == 2 ? "$qc_two_more"
                   : count == 3 ? "$qc_three_more" : "$qc_more_go";
-    q1_actor_snapshot *players;
+    qa_builtin_snapshot_frame *players;
     if (!q1_snapshot_players(g, &players, error))
         return false;
     bool ok = true;
-    for (size_t i = 0; ok && i < players->shared.count && q1_alive(g, id); ++i)
-        if (q1_alive(g, players->shared.ids[i]))
-            ok = q1_message(g, players->shared.ids[i], message, error);
-    players->borrowed = false;
+    for (size_t i = 0; ok && i < players->snapshot.count && q1_alive(g, id); ++i)
+        if (q1_alive(g, players->snapshot.ids[i]))
+            ok = q1_message(g, players->snapshot.ids[i], message, error);
+    qa_builtin_snapshot_release(players);
     return ok;
 }
 static bool counter_use(qa_q1_game *g, q1_actor *e, qa_actor_id activator,
@@ -132,12 +132,12 @@ static bool change_targets(qa_q1_game *g, q1_actor *e, qa_error *error) {
 }
 static bool cleanup(qa_q1_game *g, q1_actor *e, qa_error *error) {
     qa_actor_id id = e->id;
-    q1_actor_snapshot *list;
+    qa_builtin_snapshot_frame *list;
     if (!q1_snapshot_actors(g, &list, error))
         return false;
     bool ok = true;
-    for (size_t i = 0; ok && i < list->shared.count && trigger(g, id); ++i) {
-        qa_actor_id actor = list->shared.ids[i];
+    for (size_t i = 0; ok && i < list->snapshot.count && trigger(g, id); ++i) {
+        qa_actor_id actor = list->snapshot.ids[i];
         qa_builtin_actor_traits traits = {0};
         bool found = g->services.actor_traits(g->services.context, actor, &traits);
         if (!trigger(g, id))
@@ -146,7 +146,7 @@ static bool cleanup(qa_q1_game *g, q1_actor *e, qa_error *error) {
             q1_alive(g, actor))
             ok = qa_session_release(g->services.session, actor, error);
     }
-    list->borrowed = false;
+    qa_builtin_snapshot_release(list);
     e = trigger(g, id);
     return !ok ? false : !e || q1_remove(g, e, error);
 }

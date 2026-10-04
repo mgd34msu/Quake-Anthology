@@ -77,7 +77,7 @@ static bool level_state_idle(qa_q3_game *game, bool require_empty, qa_error *err
         (require_empty &&
          qa_actors_count(qa_session_actors(game->options.services.session)) != 0))
         return q3_map_fail(error, "Q3 map transition requires a retired safe world");
-    for (q3_snapshot_frame *frame = game->snapshot_frames; frame; frame = frame->next)
+    for (qa_builtin_snapshot_frame *frame = game->snapshot_frames; frame; frame = frame->next)
         if (frame->active)
             return q3_map_fail(error, "Q3 map transition has an active spatial snapshot");
     return true;
@@ -110,7 +110,7 @@ static void level_state_reset(qa_q3_game *game, const qa_q3_map_options *options
     game->previous_ms = options->start_time_ms;
     game->now_ms = options->start_time_ms;
     game->physics.gravity = 800;
-    for (q3_snapshot_frame *frame = game->snapshot_frames; frame; frame = frame->next)
+    for (qa_builtin_snapshot_frame *frame = game->snapshot_frames; frame; frame = frame->next)
         frame->snapshot.count = 0;
 }
 

@@ -2776,13 +2776,13 @@ static bool rerelease_flying_explosion(q2m_context *context,
 }
 
 static bool kill_widow2_stalkers(q2m_context *context, qa_error *error) {
-  q2_trace_frame *scratch = q2_scratch_acquire(context->game, error);
+  qa_builtin_snapshot_frame *scratch = q2_scratch_acquire(context->game, error);
   if (scratch == NULL)
     return false;
   if (scratch->snapshot.capacity < context->game->capacity &&
       !qa_builtin_snapshot_reserve(&scratch->snapshot, context->game->capacity,
                                    error)) {
-    scratch->active = false;
+    qa_builtin_snapshot_release(scratch);
     return false;
   }
   scratch->snapshot.count = 0;
@@ -2799,7 +2799,7 @@ static bool kill_widow2_stalkers(q2m_context *context, qa_error *error) {
     point = enemy_body.origin;
 
   if (!q2m_alive(context)) {
-    scratch->active = false;
+    qa_builtin_snapshot_release(scratch);
     return true;
   }
 
@@ -2839,7 +2839,7 @@ static bool kill_widow2_stalkers(q2m_context *context, qa_error *error) {
     if (!q2m_alive(context))
       break;
   }
-  scratch->active = false;
+  qa_builtin_snapshot_release(scratch);
   return result;
 }
 
@@ -3307,7 +3307,7 @@ static bool touch_damage(q2m_context *context, qa_actor_id target,
 
 static bool berserk_slam_damage(q2m_context *context, qa_vec3 point,
                                 qa_error *error) {
-  q2_trace_frame *nearby =
+  qa_builtin_snapshot_frame *nearby =
       q2_nearby(context->game, context->body.origin, 330.0f, error);
   if (nearby == NULL)
     return false;
@@ -3380,7 +3380,7 @@ static bool berserk_slam_damage(q2m_context *context, qa_vec3 point,
       }
     }
   }
-  nearby->active = false;
+  qa_builtin_snapshot_release(nearby);
   return result;
 }
 

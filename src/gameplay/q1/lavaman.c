@@ -34,15 +34,15 @@ static bool hunt(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         bool mg3 = g->options.program == QA_Q1_MG3;
         qa_actor_id world = g->services.physics->world_actor;
         qa_actor_id candidate = mg3 ? world : (qa_actor_id){0};
-        q1_actor_snapshot *snapshot;
+        qa_builtin_snapshot_frame *snapshot;
         if (!q1_snapshot_actors(g, &snapshot, error))
             return false;
-        if (!mg3 && !qa_builtin_players(&g->services, &snapshot->shared, error)) {
-            snapshot->borrowed = false;
+        if (!mg3 && !qa_builtin_players(&g->services, &snapshot->snapshot, error)) {
+            qa_builtin_snapshot_release(snapshot);
             return false;
         }
-        qa_actor_id *actors = snapshot->shared.ids;
-        size_t count = snapshot->shared.count, first = 0;
+        qa_actor_id *actors = snapshot->snapshot.ids;
+        size_t count = snapshot->snapshot.count, first = 0;
         for (size_t i = 0; i < count; ++i)
             if (qa_actor_id_equal(actors[i], monster->enemy)) {
                 first = i + 1;
@@ -55,7 +55,7 @@ static bool hunt(qa_q1_game *g, q1_actor *entity, qa_error *error) {
                 break;
             }
         }
-        snapshot->borrowed = false;
+        qa_builtin_snapshot_release(snapshot);
         qa_body_state other = {0}, self;
         bool has_body = qa_world_body_read(g->services.world, candidate, &other, NULL);
         if (mg3 || has_body) {

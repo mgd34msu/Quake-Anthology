@@ -197,7 +197,7 @@ bool q2_player_copy_corpse(qa_q2_game *g, q2_actor *a, qa_error *e) {
 }
 static bool coop_death(qa_q2_game *g, q2_actor *a, qa_error *e) {
     q2_players *runtime = g->player_runtime;
-    q2_trace_frame *players = q2_player_roster(g, e);
+    qa_builtin_snapshot_frame *players = q2_player_roster(g, e);
     if (!players)
         return false;
     bool all_dead = true, okay = true;
@@ -224,7 +224,7 @@ static bool coop_death(qa_q2_game *g, q2_actor *a, qa_error *e) {
             break;
         }
     }
-    players->active = false;
+    qa_builtin_snapshot_release(players);
     if (!okay || !q2_actor_live(g, a->id))
         return okay;
     if (!all_dead) {
@@ -252,7 +252,7 @@ static bool coop_death(qa_q2_game *g, q2_actor *a, qa_error *e) {
             break;
         }
     }
-    players->active = false;
+    qa_builtin_snapshot_release(players);
     return okay;
 }
 bool q2_player_death(qa_q2_game *g, q2_actor *a, const qa_damage_outcome *outcome, qa_error *e) {

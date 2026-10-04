@@ -288,7 +288,7 @@ static bool coop_target(q2m_context *context, qa_actor_id *out, qa_error *error)
     qa_q2_game *game = context->game;
     if (!game->options.cooperative || !q2m_alive(context))
         return true;
-    q2_trace_frame *roster = q2_player_roster(game, error);
+    qa_builtin_snapshot_frame *roster = q2_player_roster(game, error);
     if (!roster)
         return false;
     bool ok = true;
@@ -313,7 +313,7 @@ static bool coop_target(q2m_context *context, qa_actor_id *out, qa_error *error)
         size_t choice = (size_t)(q2m_random(game) * (float)count);
         *out = roster->snapshot.ids[choice < count ? choice : count - 1];
     }
-    roster->active = false;
+    qa_builtin_snapshot_release(roster);
     return ok;
 }
 
@@ -369,7 +369,7 @@ bool q2m_widow_slots(q2m_context *context, qa_error *error) {
     qa_q2_game *game = context->game;
     int slots = game->options.skill < 2 ? 3 : game->options.skill == 2 ? 4 : 6;
     if (game->options.cooperative) {
-        q2_trace_frame *roster = q2_player_roster(game, error);
+        qa_builtin_snapshot_frame *roster = q2_player_roster(game, error);
         if (!roster)
             return false;
         int64_t players = 0;
@@ -382,7 +382,7 @@ bool q2m_widow_slots(q2m_context *context, qa_error *error) {
             if (q2m_alive(context) && player && q2_actor_live(game, id))
                 ++players;
         }
-        roster->active = false;
+        qa_builtin_snapshot_release(roster);
         int64_t total = slots + game->options.skill * (players - 1);
         slots = (int)(total > 6 ? 6 : total);
     }

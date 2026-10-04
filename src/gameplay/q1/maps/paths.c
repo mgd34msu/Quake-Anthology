@@ -178,15 +178,15 @@ bool q1_map_path_touch(qa_q1_game *g, q1_actor *corner, qa_actor_id actor, qa_er
 
 bool q1_map_path_use(qa_q1_game *g, q1_actor *trigger, qa_error *error) {
     qa_actor_id trigger_id = trigger->id;
-    q1_actor_snapshot *targets;
+    qa_builtin_snapshot_frame *targets;
     if (!q1_snapshot_targets(g, g->maps->options.targets, trigger->target, &targets, error))
         return false;
     bool ok = true;
-    for (size_t i = 0; i < targets->shared.count && q1_alive(g, trigger_id); ++i) {
+    for (size_t i = 0; i < targets->snapshot.count && q1_alive(g, trigger_id); ++i) {
         trigger = q1_entity(g, trigger_id);
         if (!trigger || !trigger->map)
             break;
-        qa_actor_id actor = targets->shared.ids[i];
+        qa_actor_id actor = targets->snapshot.ids[i];
         if (!q1_alive(g, actor))
             continue;
         if (trigger->map->kind == Q1_MAP_CANCEL_PAUSE) {
@@ -220,7 +220,7 @@ bool q1_map_path_use(qa_q1_game *g, q1_actor *trigger, qa_error *error) {
         if (!ok)
             break;
     }
-    targets->borrowed = false;
+    qa_builtin_snapshot_release(targets);
     return ok;
 }
 

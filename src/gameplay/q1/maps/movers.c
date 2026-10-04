@@ -397,18 +397,18 @@ bool q1_map_mover_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error) {
 bool qa_q1_game_maps_finish(qa_q1_game *g, qa_error *error) {
     if (!g || !g->maps)
         return q1_map_fail(error, "Q1 map services are not bound");
-    q1_actor_snapshot *snapshot;
+    qa_builtin_snapshot_frame *snapshot;
     if (!q1_snapshot_actors(g, &snapshot, error))
         return false;
     size_t count = 0;
-    for (size_t i = 0; i < snapshot->shared.count; ++i) {
-        q1_actor *entity = q1_entity(g, snapshot->shared.ids[i]);
+    for (size_t i = 0; i < snapshot->snapshot.count; ++i) {
+        q1_actor *entity = q1_entity(g, snapshot->snapshot.ids[i]);
         if (entity && entity->map && entity->map->kind == Q1_MAP_DOOR)
-            snapshot->shared.ids[count++] = entity->id;
+            snapshot->snapshot.ids[count++] = entity->id;
     }
     bool ok = true;
     for (size_t i = 0; i < count && ok; ++i) {
-        q1_actor *master = q1_entity(g, snapshot->shared.ids[i]);
+        q1_actor *master = q1_entity(g, snapshot->snapshot.ids[i]);
         if (!master || master->map->pending.mover.group)
             continue;
         q1_door_group *group = calloc(1, sizeof(*group));
@@ -425,7 +425,7 @@ bool qa_q1_game_maps_finish(qa_q1_game *g, qa_error *error) {
         qa_bounds bounds = body.bounds, previous = body.bounds;
         size_t capacity = 0;
         for (size_t j = i; j < count; ++j) {
-            q1_actor *candidate = q1_entity(g, snapshot->shared.ids[j]);
+            q1_actor *candidate = q1_entity(g, snapshot->snapshot.ids[j]);
             if (!candidate)
                 continue;
             if (j != i) {
@@ -483,7 +483,7 @@ bool qa_q1_game_maps_finish(qa_q1_game *g, qa_error *error) {
         bounds.maxs = qa_vec_add(bounds.maxs, qa_v3(60, 60, 8));
         ok = helper_trigger(g, master, Q1_MAP_DOOR_TRIGGER, bounds, error);
     }
-    snapshot->borrowed = false;
+    qa_builtin_snapshot_release(snapshot);
     return ok && qa_q1_wire_freeze(g, error);
 }
 bool q1_map_mover_use(qa_q1_game *g, q1_actor *entity, qa_actor_id activator, qa_error *error) {

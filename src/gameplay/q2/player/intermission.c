@@ -73,7 +73,7 @@ bool qa_q2_players_camera(qa_q2_game *g, qa_vec3 origin, qa_vec3 angles, bool en
     p->camera_origin = origin;
     p->camera_angles = angles;
     p->camera_set = true;
-    q2_trace_frame *players = q2_player_roster(g, e);
+    qa_builtin_snapshot_frame *players = q2_player_roster(g, e);
     if (!players)
         return false;
     bool okay = true;
@@ -92,11 +92,11 @@ bool qa_q2_players_camera(qa_q2_game *g, qa_vec3 origin, qa_vec3 angles, bool en
             break;
         }
     }
-    players->active = false;
+    qa_builtin_snapshot_release(players);
     return okay;
 }
 static bool prepare_intermission(qa_q2_game *g, bool end_unit, qa_error *e) {
-    q2_trace_frame *players = q2_player_roster(g, e);
+    qa_builtin_snapshot_frame *players = q2_player_roster(g, e);
     if (!players)
         return false;
     q2_players *p = g->player_runtime;
@@ -119,7 +119,7 @@ static bool prepare_intermission(qa_q2_game *g, bool end_unit, qa_error *e) {
                 goto done;
         }
     }
-    players->active = false;
+    qa_builtin_snapshot_release(players);
     if (!end_unit || !g->options.cooperative)
         return true;
     players = q2_player_roster(g, e);
@@ -151,7 +151,7 @@ static bool prepare_intermission(qa_q2_game *g, bool end_unit, qa_error *e) {
     }
     okay = true;
 done:
-    players->active = false;
+    qa_builtin_snapshot_release(players);
     return okay;
 }
 bool qa_q2_players_intermission(qa_q2_game *g, const char *map, const qa_q2_landmark *landmark,

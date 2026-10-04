@@ -92,25 +92,34 @@ static size_t q2_choose(qa_modes *m, mode_instance *v, qa_team_id team, bool far
     return SIZE_MAX;
 }
 static bool telefrag(qa_modes *m, qa_vec3 origin, bool *blocked, qa_error *e) {
-    qa_actor_id actors[1024];
+    qa_builtin_snapshot_frame *frame =
+        qa_builtin_snapshot_acquire(&m->snapshot_frames, m->actor_capacity, e);
+    if (!frame) return false;
     size_t count;
     bool overflow;
     if (!qa_world_query(m->options.services.world,
                         qa_bounds_translate((qa_bounds){{-15, -15, -24}, {15, 15, 32}}, origin),
-                        QA_COLLISION_SOLID, actors, 1024, &count, &overflow, e))
+                        QA_COLLISION_SOLID, frame->snapshot.ids, frame->snapshot.capacity,
+                        &count, &overflow, e)) {
+        qa_builtin_snapshot_release(frame);
         return false;
-    if (overflow)
+    }
+    if (overflow) {
+        qa_builtin_snapshot_release(frame);
         return mode_fail(e, "spawn overlap exceeds source actor capacity");
+    }
     *blocked = false;
     for (size_t i = 0; i < count; ++i) {
         qa_builtin_actor_traits traits = {0};
         if (m->options.services.actor_traits &&
-            m->options.services.actor_traits(m->options.services.context, actors[i], &traits) &&
+            m->options.services.actor_traits(m->options.services.context,
+                frame->snapshot.ids[i], &traits) &&
             traits.player) {
             *blocked = true;
             break;
         }
     }
+    qa_builtin_snapshot_release(frame);
     return true;
 }
 static bool q3_choose(qa_modes *m, mode_instance *v, qa_actor_id actor, qa_team_id team,

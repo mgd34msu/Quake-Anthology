@@ -1,36 +1,6 @@
 #include "internal.h"
 #include "reinforcements.h"
 
-static bool save_reference(qa_q2_game *game, qa_actor_id id,
-                           qa_q2_saved_reference *out, qa_error *error) {
-  *out = (qa_q2_saved_reference){0};
-  if (id.registry == 0)
-    return true;
-  if (!qa_actors_save_reference(qa_session_actors(game->services.session), id,
-                                &out->actor, error))
-    return false;
-  out->present = true;
-  return true;
-}
-
-static bool callback_boundary(qa_q2_game *game, qa_error *error) {
-  return q2_checkpoint_idle(game, error);
-}
-
-static bool resolve_reference(qa_q2_game *game, qa_q2_saved_reference saved,
-                              qa_actor_id *out, qa_error *error) {
-  *out = (qa_actor_id){0};
-  if (!saved.present)
-    return true;
-  const qa_actor_record *record = qa_actors_resolve_saved(
-      qa_session_actors(game->services.session), saved.actor);
-  if (record == NULL)
-    return qa_actors_reference_saved(qa_session_actors(game->services.session),
-                                     saved.actor, true, out, error);
-  *out = record->id;
-  return true;
-}
-
 static bool copy_name(char *out, size_t capacity, const char *value,
                       qa_error *error) {
   size_t length = strlen(value);
@@ -151,7 +121,7 @@ bool qa_q2_monster_capture(qa_q2_game *game, qa_actor_id id,
                  "Q2 monster capture requires game and output");
     return false;
   }
-  if (!callback_boundary(game, error))
+  if (!q2_checkpoint_idle(game, error))
     return false;
   q2_actor *actor = q2_actor_get(game, id, false, error);
   if (actor == NULL || actor->monster == NULL ||
@@ -296,9 +266,9 @@ bool qa_q2_monster_capture(qa_q2_game *game, qa_actor_id id,
       .controller_fired = monster->controller_fired,
   };
   if (monster->controller_kind != Q2M_CONTROLLER_NONE) {
-    if (!save_reference(game, monster->controller_owner,
+    if (!q2_save_reference(game, monster->controller_owner,
                         &saved.controller_owner, error) ||
-        !save_reference(game, monster->controller_target,
+        !q2_save_reference(game, monster->controller_target,
                         &saved.controller_target, error))
       return false;
     *out = saved;
@@ -324,30 +294,30 @@ bool qa_q2_monster_capture(qa_q2_game *game, qa_actor_id id,
         return false;
     }
   }
-  if (!save_reference(game, monster->enemy, &saved.enemy, error) ||
-      !save_reference(game, monster->old_enemy, &saved.old_enemy, error) ||
-      !save_reference(game, monster->last_player_enemy,
+  if (!q2_save_reference(game, monster->enemy, &saved.enemy, error) ||
+      !q2_save_reference(game, monster->old_enemy, &saved.old_enemy, error) ||
+      !q2_save_reference(game, monster->last_player_enemy,
                       &saved.last_player_enemy, error) ||
-      !save_reference(game, monster->goal, &saved.goal, error) ||
-      !save_reference(game, monster->move_target, &saved.move_target, error) ||
-      !save_reference(game, monster->commander, &saved.commander, error) ||
-      !save_reference(game, monster->activator, &saved.activator, error) ||
-      !save_reference(game, monster->resurrect_target, &saved.resurrect_target,
+      !q2_save_reference(game, monster->goal, &saved.goal, error) ||
+      !q2_save_reference(game, monster->move_target, &saved.move_target, error) ||
+      !q2_save_reference(game, monster->commander, &saved.commander, error) ||
+      !q2_save_reference(game, monster->activator, &saved.activator, error) ||
+      !q2_save_reference(game, monster->resurrect_target, &saved.resurrect_target,
                       error) ||
-      !save_reference(game, monster->hazard, &saved.hazard, error) ||
-      !save_reference(game, monster->proboscis, &saved.proboscis, error) ||
-      !save_reference(game, monster->healer, &saved.healer, error) ||
-      !save_reference(game, monster->bad_medic[0], &saved.bad_medic[0], error) ||
-      !save_reference(game, monster->bad_medic[1], &saved.bad_medic[1], error) ||
-      !save_reference(game, monster->sound_target.actor,
+      !q2_save_reference(game, monster->hazard, &saved.hazard, error) ||
+      !q2_save_reference(game, monster->proboscis, &saved.proboscis, error) ||
+      !q2_save_reference(game, monster->healer, &saved.healer, error) ||
+      !q2_save_reference(game, monster->bad_medic[0], &saved.bad_medic[0], error) ||
+      !q2_save_reference(game, monster->bad_medic[1], &saved.bad_medic[1], error) ||
+      !q2_save_reference(game, monster->sound_target.actor,
                       &saved.sound_target.actor, error) ||
-      !save_reference(game, monster->sound_target.owner,
+      !q2_save_reference(game, monster->sound_target.owner,
                       &saved.sound_target.owner, error) ||
-      !save_reference(game, monster->last_attack.attacker,
+      !q2_save_reference(game, monster->last_attack.attacker,
                       &saved.attack_attacker, error) ||
-      !save_reference(game, monster->last_attack.inflictor,
+      !q2_save_reference(game, monster->last_attack.inflictor,
                       &saved.attack_inflictor, error) ||
-      !save_reference(game, monster->last_attack.projectile,
+      !q2_save_reference(game, monster->last_attack.projectile,
                       &saved.attack_projectile, error))
     return false;
   saved.last_attack.attacker = (qa_actor_id){0};
@@ -385,38 +355,38 @@ void qa_q2_monster_checkpoint_free(qa_q2_monster_checkpoint *state) {
 
 static bool resolve_all(qa_q2_game *game, const qa_q2_monster_checkpoint *saved,
                         struct qa_q2_monster *monster, qa_error *error) {
-  return resolve_reference(game, saved->enemy, &monster->enemy, error) &&
-         resolve_reference(game, saved->old_enemy, &monster->old_enemy,
+  return q2_resolve_reference(game, saved->enemy, &monster->enemy, error) &&
+         q2_resolve_reference(game, saved->old_enemy, &monster->old_enemy,
                            error) &&
-         resolve_reference(game, saved->last_player_enemy,
+         q2_resolve_reference(game, saved->last_player_enemy,
                            &monster->last_player_enemy, error) &&
-         resolve_reference(game, saved->goal, &monster->goal, error) &&
-         resolve_reference(game, saved->move_target, &monster->move_target,
+         q2_resolve_reference(game, saved->goal, &monster->goal, error) &&
+         q2_resolve_reference(game, saved->move_target, &monster->move_target,
                            error) &&
-         resolve_reference(game, saved->commander, &monster->commander,
+         q2_resolve_reference(game, saved->commander, &monster->commander,
                            error) &&
-         resolve_reference(game, saved->activator, &monster->activator,
+         q2_resolve_reference(game, saved->activator, &monster->activator,
                            error) &&
-         resolve_reference(game, saved->resurrect_target,
+         q2_resolve_reference(game, saved->resurrect_target,
                            &monster->resurrect_target, error) &&
-         resolve_reference(game, saved->hazard, &monster->hazard, error) &&
-         resolve_reference(game, saved->proboscis, &monster->proboscis, error) &&
-         resolve_reference(game, saved->healer, &monster->healer, error) &&
-         resolve_reference(game, saved->bad_medic[0], &monster->bad_medic[0], error) &&
-         resolve_reference(game, saved->bad_medic[1], &monster->bad_medic[1], error) &&
-         resolve_reference(game, saved->controller_owner,
+         q2_resolve_reference(game, saved->hazard, &monster->hazard, error) &&
+         q2_resolve_reference(game, saved->proboscis, &monster->proboscis, error) &&
+         q2_resolve_reference(game, saved->healer, &monster->healer, error) &&
+         q2_resolve_reference(game, saved->bad_medic[0], &monster->bad_medic[0], error) &&
+         q2_resolve_reference(game, saved->bad_medic[1], &monster->bad_medic[1], error) &&
+         q2_resolve_reference(game, saved->controller_owner,
                            &monster->controller_owner, error) &&
-         resolve_reference(game, saved->controller_target,
+         q2_resolve_reference(game, saved->controller_target,
                            &monster->controller_target, error) &&
-         resolve_reference(game, saved->sound_target.actor,
+         q2_resolve_reference(game, saved->sound_target.actor,
                            &monster->sound_target.actor, error) &&
-         resolve_reference(game, saved->sound_target.owner,
+         q2_resolve_reference(game, saved->sound_target.owner,
                            &monster->sound_target.owner, error) &&
-         resolve_reference(game, saved->attack_attacker,
+         q2_resolve_reference(game, saved->attack_attacker,
                            &monster->last_attack.attacker, error) &&
-         resolve_reference(game, saved->attack_inflictor,
+         q2_resolve_reference(game, saved->attack_inflictor,
                            &monster->last_attack.inflictor, error) &&
-         resolve_reference(game, saved->attack_projectile,
+         q2_resolve_reference(game, saved->attack_projectile,
                            &monster->last_attack.projectile, error);
 }
 
@@ -428,7 +398,7 @@ bool qa_q2_monster_restore(qa_q2_game *game, qa_actor_id id,
                  "Q2 monster restore requires game and checkpoint");
     return false;
   }
-  if (!callback_boundary(game, error))
+  if (!q2_checkpoint_idle(game, error))
     return false;
   bool controller = saved->controller_kind != Q2M_CONTROLLER_NONE;
   if (saved->start_phase > Q2M_START_MANUAL ||
@@ -496,9 +466,9 @@ bool qa_q2_monster_restore(qa_q2_game *game, qa_actor_id id,
     monster->controller_medic = saved->controller_medic;
     monster->controller_fired = saved->controller_fired;
     monster->initialized = true;
-    if (!resolve_reference(game, saved->controller_owner,
+    if (!q2_resolve_reference(game, saved->controller_owner,
                            &monster->controller_owner, error) ||
-        !resolve_reference(game, saved->controller_target,
+        !q2_resolve_reference(game, saved->controller_target,
                            &monster->controller_target, error)) {
       q2m_free_monster(monster);
       return false;

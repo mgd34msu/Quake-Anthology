@@ -31,14 +31,14 @@ bool q1_spawnpoint_empty(qa_q1_game *g, qa_actor_id marker, qa_vec3 origin) {
 }
 bool q1_overlord_destination(qa_q1_game *g, qa_actor_id *out, qa_error *error) {
     qa_body_state player = {0};
-    q1_actor_snapshot *players;
+    qa_builtin_snapshot_frame *players;
     if (!q1_snapshot_players(g, &players, error))
         return false;
-    qa_actor_id observer = players->shared.count        ? players->shared.ids[0]
+    qa_actor_id observer = players->snapshot.count        ? players->snapshot.ids[0]
                            : g->services.physics ? g->services.physics->world_actor
                                                  : (qa_actor_id){0};
     (void)qa_world_body_read(g->services.world, observer, &player, NULL);
-    players->borrowed = false;
+    qa_builtin_snapshot_release(players);
     qa_builtin_angle_vectors(player.angles, &g->forward, &g->right, &g->up);
     qa_vec3 forward = g->forward;
     qa_actor_id best = {0}, farthest = {0};

@@ -17,7 +17,7 @@ bool q1_hipnotic_lightning_claimed(const qa_q1_game *g, qa_actor_id actor) {
 }
 
 static bool scan(qa_q1_game *g, q1_actor *e, float radius, bool monsters, bool unclaimed,
-                  q1_actor_snapshot **out, qa_error *error) {
+                  qa_builtin_snapshot_frame **out, qa_error *error) {
     qa_actor_id id = e->id;
     *out = NULL;
     qa_vec3 view_offset = e->map->view_offset;
@@ -27,17 +27,17 @@ static bool scan(qa_q1_game *g, q1_actor *e, float radius, bool monsters, bool u
     if (!q1_alive(g, id))
         return true;
     qa_vec3 eye = qa_vec_add(self.origin, view_offset);
-    q1_actor_snapshot *list;
+    qa_builtin_snapshot_frame *list;
     if (!q1_snapshot_actors(g, &list, error))
         return false;
-    for (size_t i = 0; i < list->shared.count / 2; ++i) {
-        qa_actor_id actor = list->shared.ids[i];
-        list->shared.ids[i] = list->shared.ids[list->shared.count - i - 1];
-        list->shared.ids[list->shared.count - i - 1] = actor;
+    for (size_t i = 0; i < list->snapshot.count / 2; ++i) {
+        qa_actor_id actor = list->snapshot.ids[i];
+        list->snapshot.ids[i] = list->snapshot.ids[list->snapshot.count - i - 1];
+        list->snapshot.ids[list->snapshot.count - i - 1] = actor;
     }
     size_t count = 0;
-    for (size_t i = 0; i < list->shared.count; ++i) {
-        qa_actor_id actor = list->shared.ids[i];
+    for (size_t i = 0; i < list->snapshot.count; ++i) {
+        qa_actor_id actor = list->snapshot.ids[i];
         qa_q1_target target;
         qa_builtin_actor_traits traits = {0};
         const q1_actor *native = q1_entity_const(g, actor);
@@ -69,18 +69,18 @@ static bool scan(qa_q1_game *g, q1_actor *e, float radius, bool monsters, bool u
                                                         ? native->map->view_offset.z :
                                                           native ? target.view_height : 0));
         if (!q1_trace(g, eye, end, id, false, &trace, error)) {
-            list->borrowed = false;
+            qa_builtin_snapshot_release(list);
             return false;
         }
         if (!q1_alive(g, id))
             break;
         if (!q1_alive(g, actor) || trace.fraction != 1 || (trace.in_open && trace.in_water))
             continue;
-        list->shared.ids[count++] = actor;
+        list->snapshot.ids[count++] = actor;
         if (unclaimed && (double)count == e->count)
             break;
     }
-    list->shared.count = count;
+    list->snapshot.count = count;
     *out = list;
     return true;
 }
@@ -253,18 +253,18 @@ static bool tesla_tick(qa_q1_game *g, q1_actor *e, qa_error *error) {
         return q1_map_schedule(g, e, .25, Q1_MAP_TESLA_TICK, error);
     uint8_t attack = s->pending.hazard.attack;
     if (attack <= 1) {
-        q1_actor_snapshot *list;
+        qa_builtin_snapshot_frame *list;
         if (!scan(g, e, s->distance, e->spawnflags & 1, true, &list, error))
             return false;
         if (!list)
             return true;
-        bool found = list->shared.count != 0, ok = true;
+        bool found = list->snapshot.count != 0, ok = true;
         if (attack == 1) {
             qa_body_state body;
             if (!qa_world_body_read(g->services.world, id, &body, error))
                 ok = false;
-            for (size_t i = 0; ok && i < list->shared.count && q1_alive(g, id); ++i) {
-                qa_actor_id actor = list->shared.ids[i];
+            for (size_t i = 0; ok && i < list->snapshot.count && q1_alive(g, id); ++i) {
+                qa_actor_id actor = list->snapshot.ids[i];
                 if (!q1_alive(g, actor))
                     continue;
                 ok = q1_sound(g, id, "hipweap/mjolhit.wav", 0, 1, error);
@@ -272,7 +272,7 @@ static bool tesla_tick(qa_q1_game *g, q1_actor *e, qa_error *error) {
                     ok = make_bolt(g, e, true, body.origin, qa_v3(0, 0, 0), actor, error);
             }
         }
-        list->borrowed = false;
+        qa_builtin_snapshot_release(list);
         if (!ok || !q1_alive(g, id))
             return ok;
         if (attack == 1) {
@@ -347,22 +347,22 @@ static bool mine_home(qa_q1_game *g, q1_actor *e, qa_error *error) {
     if (!q1_alive(g, id))
         return true;
     if (s->pending.hazard.search_until < g->time) {
-        q1_actor_snapshot *list;
+        qa_builtin_snapshot_frame *list;
         if (!scan(g, e, 2000, false, false, &list, error))
             return false;
         if (!list)
             return true;
         float closest = 2000;
         qa_actor_id selected = {0};
-        for (size_t i = 0; i < list->shared.count; ++i)
-            if (qa_world_body_read(g->services.world, list->shared.ids[i], &target, NULL)) {
+        for (size_t i = 0; i < list->snapshot.count; ++i)
+            if (qa_world_body_read(g->services.world, list->snapshot.ids[i], &target, NULL)) {
                 float distance = qa_vec_length(qa_vec_sub(target.origin, body.origin));
                 if (distance < closest) {
                     closest = distance;
-                    selected = list->shared.ids[i];
+                    selected = list->snapshot.ids[i];
                 }
             }
-        list->borrowed = false;
+        qa_builtin_snapshot_release(list);
         if (!q1_alive(g, id))
             return true;
         if (selected.registry && !q1_sound(g, id, "hipitems/spikmine.wav", 2, 1, error))
@@ -396,14 +396,14 @@ static bool gravity_pull(qa_q1_game *g, q1_actor *e, qa_error *error) {
         return false;
     if (!q1_alive(g, id))
         return true;
-    q1_actor_snapshot *list;
+    qa_builtin_snapshot_frame *list;
     if (!scan(g, e, e->map->distance, e->spawnflags & 1, true, &list, error))
         return false;
     if (!list)
         return true;
     bool ok = true;
-    for (size_t i = 0; ok && i < list->shared.count && q1_alive(g, id); ++i) {
-        qa_actor_id actor = list->shared.ids[i];
+    for (size_t i = 0; ok && i < list->snapshot.count && q1_alive(g, id); ++i) {
+        qa_actor_id actor = list->snapshot.ids[i];
         qa_body_state body;
         if (!qa_world_body_read(g->services.world, actor, &body, NULL))
             continue;
@@ -422,7 +422,7 @@ static bool gravity_pull(qa_q1_game *g, q1_actor *e, qa_error *error) {
             ok = g->services.motion_changed(g->services.context, actor, &change, error);
         }
     }
-    list->borrowed = false;
+    qa_builtin_snapshot_release(list);
     return ok && (!q1_alive(g, id) || q1_map_schedule(g, e, .1, Q1_MAP_GRAVITY_PULL, error));
 }
 

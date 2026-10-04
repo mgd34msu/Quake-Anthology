@@ -53,7 +53,7 @@ static bool eye(qa_q2_game *g, q2_actor *a, qa_error *e) {
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, a->id, &body, e))
         return false;
-    q2_trace_frame *players = q2_player_roster(g, e);
+    qa_builtin_snapshot_frame *players = q2_player_roster(g, e);
     if (!players)
         return false;
     qa_actor_id closest = {0};
@@ -113,7 +113,7 @@ static bool eye(qa_q2_game *g, q2_actor *a, qa_error *e) {
              (!q2_actor_live(g, a->id) ||
               q2_entity_schedule(g, a, Q2ET_EYE, (float)g->frame_ns / Q2_NS))));
 out:
-    players->active = false;
+    qa_builtin_snapshot_release(players);
     return okay;
 }
 static bool look_at(qa_q2_game *g, q2_actor *a, qa_vec3 origin, qa_vec3 *angles, qa_error *e) {
@@ -153,7 +153,7 @@ static bool camera(qa_q2_game *g, q2_actor *a, qa_error *e) {
     q2_q64 *v = s->q64;
     bool skip = false;
     if ((v->hackflags & 64) && g->now_ns > 2 * Q2_NS) {
-        q2_trace_frame *players = q2_player_roster(g, e);
+        qa_builtin_snapshot_frame *players = q2_player_roster(g, e);
         if (!players)
             return false;
         bool okay = true;
@@ -185,7 +185,7 @@ static bool camera(qa_q2_game *g, q2_actor *a, qa_error *e) {
                 }
             }
         }
-        players->active = false;
+        qa_builtin_snapshot_release(players);
         if (!okay)
             return false;
     }

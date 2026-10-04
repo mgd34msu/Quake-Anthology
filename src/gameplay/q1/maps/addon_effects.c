@@ -111,19 +111,19 @@ static bool shake_step(qa_q1_game *g, q1_actor *e, qa_error *error) {
     if (finished && !(e->spawnflags & 1) &&
         !q1_sound_resource(g, id, e->map->noise[1], 0, 1, 1, error))
         return false;
-    q1_actor_snapshot *players;
+    qa_builtin_snapshot_frame *players;
     if (!q1_snapshot_players(g, &players, error))
         return false;
     float intensity = damage;
     if (!finished && g->time < ramp_end &&
         (wait == 0 || !effect_float((double)damage * ((g->time - start) / ((double)wait / 3)),
                                     &intensity, error))) {
-        players->borrowed = false;
+        qa_builtin_snapshot_release(players);
         return wait == 0 ? q1_map_fail(error, "Q1 screenshake has zero ramp duration") : false;
     }
     bool ok = true;
-    for (size_t i = 0; ok && i < players->shared.count && effect(g, id); ++i) {
-        qa_actor_id player = players->shared.ids[i];
+    for (size_t i = 0; ok && i < players->snapshot.count && effect(g, id); ++i) {
+        qa_actor_id player = players->snapshot.ids[i];
         if (!q1_alive(g, player))
             continue;
         qa_vec3 angles = qa_v3(0, 0, 0);
@@ -135,7 +135,7 @@ static bool shake_step(qa_q1_game *g, q1_actor *e, qa_error *error) {
                                   .direction = angles, .value = 0};
         ok = emit(g, &event, finished ? "view-roll" : "punch-angle", error);
     }
-    players->borrowed = false;
+    qa_builtin_snapshot_release(players);
     e = effect(g, id);
     return ok && (finished || !e || q1_map_schedule(g, e, .05, Q1_MAP_ADDON_SHAKE_TICK, error));
 }
@@ -185,13 +185,13 @@ static bool lightning(qa_q1_game *g, q1_actor *e, qa_actor_id activator, qa_erro
     float damage = e->damage, volume = e->map->volume;
     int32_t style = e->map->style;
     qa_string_id noise = e->map->noise[0];
-    q1_actor_snapshot *targets;
+    qa_builtin_snapshot_frame *targets;
     if (!q1_snapshot_targets(g, g->maps->options.targets, e->target, &targets, error))
         return false;
-    size_t chosen = flags & 1 ? (size_t)floor((double)targets->shared.count * q1_random(g)) : SIZE_MAX;
+    size_t chosen = flags & 1 ? (size_t)floor((double)targets->snapshot.count * q1_random(g)) : SIZE_MAX;
     bool ok = true;
-    for (size_t i = 0; ok && i < targets->shared.count && effect(g, id); ++i) {
-        qa_actor_id target = targets->shared.ids[i];
+    for (size_t i = 0; ok && i < targets->snapshot.count && effect(g, id); ++i) {
+        qa_actor_id target = targets->snapshot.ids[i];
         if ((chosen != SIZE_MAX && chosen != i) || !q1_alive(g, target))
             continue;
         qa_body_state own_body, target_body;
@@ -240,7 +240,7 @@ static bool lightning(qa_q1_game *g, q1_actor *e, qa_actor_id activator, qa_erro
             }
         }
     }
-    targets->borrowed = false;
+    qa_builtin_snapshot_release(targets);
     return ok;
 }
 static bool alpha(qa_q1_game *g, qa_actor_id id, float value, qa_error *error) {
@@ -256,21 +256,21 @@ static bool fade_step(qa_q1_game *g, q1_actor *e, qa_error *error) {
     qa_actor_id id = e->id;
     bool initialized = e->map->effect_active;
     float delay = e->delay;
-    q1_actor_snapshot *targets;
+    qa_builtin_snapshot_frame *targets;
     if (!q1_snapshot_targets(g, g->maps->options.targets, e->target, &targets, error))
         return false;
     bool ok = true;
     size_t remaining = 0;
     if (!initialized) {
-        for (size_t i = 0; ok && i < targets->shared.count && effect(g, id); ++i)
-            if (q1_alive(g, targets->shared.ids[i]))
-                ok = alpha(g, targets->shared.ids[i], 1, error);
+        for (size_t i = 0; ok && i < targets->snapshot.count && effect(g, id); ++i)
+            if (q1_alive(g, targets->snapshot.ids[i]))
+                ok = alpha(g, targets->snapshot.ids[i], 1, error);
         e = effect(g, id);
         if (e)
             e->map->effect_active = true;
     }
-    for (size_t i = 0; ok && i < targets->shared.count && effect(g, id); ++i) {
-        qa_actor_id target = targets->shared.ids[i];
+    for (size_t i = 0; ok && i < targets->snapshot.count && effect(g, id); ++i) {
+        qa_actor_id target = targets->snapshot.ids[i];
         float health = q1_health(g, target);
         if (!effect(g, id) || !q1_alive(g, target) || health > 0)
             continue;
@@ -309,7 +309,7 @@ static bool fade_step(qa_q1_game *g, q1_actor *e, qa_error *error) {
                         : q1_map_fail(error, "Q1 fade requires selected actor retirement");
         }
     }
-    targets->borrowed = false;
+    qa_builtin_snapshot_release(targets);
     e = effect(g, id);
     return ok && (!e || (remaining ? q1_map_schedule(g, e, 0, Q1_MAP_ADDON_FADE_TICK, error)
                                    : q1_remove(g, e, error)));
@@ -416,12 +416,12 @@ bool q1_map_addon_effect_use(qa_q1_game *g, q1_actor *e, qa_actor_id activator, 
     }
     case Q1_MAP_ADDON_FREEZE: {
         qa_actor_id source = e->id;
-        q1_actor_snapshot *targets;
+        qa_builtin_snapshot_frame *targets;
         if (!q1_snapshot_targets(g, g->maps->options.targets, e->target, &targets, error))
             return false;
         bool ok = true;
-        for (size_t i = 0; ok && i < targets->shared.count && effect(g, source); ++i) {
-            qa_actor_id target = targets->shared.ids[i];
+        for (size_t i = 0; ok && i < targets->snapshot.count && effect(g, source); ++i) {
+            qa_actor_id target = targets->snapshot.ids[i];
             if (!q1_alive(g, target))
                 continue;
             bool handled;
@@ -432,7 +432,7 @@ bool q1_map_addon_effect_use(qa_q1_game *g, q1_actor *e, qa_actor_id activator, 
                 ? g->maps->options.freeze_actor(g->maps->options.context, target, error)
                 : q1_map_fail(error, "Q1 freeze requires selected foreign continuation owner");
         }
-        targets->borrowed = false;
+        qa_builtin_snapshot_release(targets);
         return ok;
     }
     default:

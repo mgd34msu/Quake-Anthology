@@ -200,7 +200,7 @@ static bool squad_spot(qa_q2_game *g, q2_actor *a, const qa_q2_player_movement *
 }
 static bool squad_target(qa_q2_game *g, q2_actor *a, qa_q2_respawn_status *status,
                          bool *allowed, qa_error *e) {
-    q2_trace_frame *players = q2_player_roster(g, e);
+    qa_builtin_snapshot_frame *players = q2_player_roster(g, e);
     if (!players)
         return false;
     bool living = false, found = false, okay = false;
@@ -284,7 +284,7 @@ static bool squad_target(qa_q2_game *g, q2_actor *a, qa_q2_respawn_status *statu
     *allowed = !living || found;
     okay = true;
 done:
-    players->active = false;
+    qa_builtin_snapshot_release(players);
     return okay;
 }
 bool q2_player_coop_respawn(qa_q2_game *g, q2_actor *a, qa_error *e) {

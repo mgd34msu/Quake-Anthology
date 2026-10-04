@@ -130,6 +130,47 @@ void qa_builtin_snapshot_free(qa_builtin_actor_snapshot *snapshot) {
     free(snapshot->ids);
     *snapshot = (qa_builtin_actor_snapshot){0};
 }
+qa_builtin_snapshot_frame *qa_builtin_snapshot_acquire(qa_builtin_snapshot_frame **pool,
+                                                       size_t capacity, qa_error *error) {
+    if (!pool) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "missing native actor snapshot pool");
+        return NULL;
+    }
+    qa_builtin_snapshot_frame *frame = *pool;
+    while (frame && frame->active)
+        frame = frame->next;
+    bool created = !frame;
+    if (created) {
+        frame = calloc(1, sizeof(*frame));
+        if (!frame) {
+            qa_error_set(error, QA_ERROR_MEMORY, 0, "allocating nested native actor snapshot");
+            return NULL;
+        }
+    }
+    if (!qa_builtin_snapshot_reserve(&frame->snapshot, capacity, error)) {
+        if (created) free(frame);
+        return NULL;
+    }
+    if (created) {
+        frame->next = *pool;
+        *pool = frame;
+    }
+    frame->snapshot.count = 0;
+    frame->active = true;
+    return frame;
+}
+void qa_builtin_snapshot_release(qa_builtin_snapshot_frame *frame) {
+    if (frame) frame->active = false;
+}
+void qa_builtin_snapshot_pool_free(qa_builtin_snapshot_frame **pool) {
+    if (!pool) return;
+    while (*pool) {
+        qa_builtin_snapshot_frame *frame = *pool;
+        *pool = frame->next;
+        qa_builtin_snapshot_free(&frame->snapshot);
+        free(frame);
+    }
+}
 int qa_builtin_source_order(const qa_builtin_services *s, qa_actor_id a, qa_actor_id b) {
     if (s->physics && s->physics->services.source_order)
         return s->physics->services.source_order(s->physics->services.context, a, b);

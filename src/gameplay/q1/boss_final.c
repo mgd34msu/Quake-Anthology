@@ -19,19 +19,19 @@ static bool rock(qa_q1_game *g, qa_actor_id owner, qa_vec3 origin, qa_vec3 direc
 static bool face(qa_q1_game *g, q1_actor *e, qa_error *error) {
     q1_monster *m = &e->state.monster;
     if (q1_health(g, m->enemy) <= 0 || q1_random(g) < .02f) {
-        q1_actor_snapshot *snapshot;
+        qa_builtin_snapshot_frame *snapshot;
         if (!q1_snapshot_players(g, &snapshot, error))
             return false;
         qa_actor_id first = {0}, next = {0};
-        for (size_t i = 0; i < snapshot->shared.count; ++i) {
-            qa_actor_id id = snapshot->shared.ids[i];
+        for (size_t i = 0; i < snapshot->snapshot.count; ++i) {
+            qa_actor_id id = snapshot->snapshot.ids[i];
             if (!first.registry || id.slot < first.slot)
                 first = id;
             if (id.slot > (m->enemy.registry ? m->enemy.slot : 0) &&
                 (!next.registry || id.slot < next.slot))
                 next = id;
         }
-        snapshot->borrowed = false;
+        qa_builtin_snapshot_release(snapshot);
         m->enemy = next.registry ? next : first;
     }
     return q1_health(g, m->enemy) <= 0 || q1_monster_face(g, e, error);
@@ -93,12 +93,12 @@ static bool radius(qa_q1_game *g, q1_actor *e, float amount, qa_error *error) {
     qa_body_state source;
     if (!read(g, e, &source, error))
         return false;
-    q1_actor_snapshot *snapshot;
+    qa_builtin_snapshot_frame *snapshot;
     if (!q1_snapshot_actors(g, &snapshot, error))
         return false;
     bool ok = true;
-    for (size_t i = snapshot->shared.count; i > 0; --i) {
-        qa_actor_id id = snapshot->shared.ids[i - 1];
+    for (size_t i = snapshot->snapshot.count; i > 0; --i) {
+        qa_actor_id id = snapshot->snapshot.ids[i - 1];
         qa_body_state body;
         if (qa_actor_id_equal(id, e->id) || q1_classnamed(g, id, "monster_lava_man") ||
             !q1_damageable(g, id) || !qa_world_body_read(g->services.world, id, &body, NULL))
@@ -120,7 +120,7 @@ static bool radius(qa_q1_game *g, q1_actor *e, float amount, qa_error *error) {
                 break;
         }
     }
-    snapshot->borrowed = false;
+    qa_builtin_snapshot_release(snapshot);
     return ok;
 }
 static bool blast(qa_q1_game *g, q1_actor *e, qa_vec3 offset, float spread, bool effect,
@@ -441,15 +441,15 @@ bool q1_final_end(qa_q1_game *g, qa_error *error) {
         return true;
     if (!g->options.coop && q1_health(g, first) <= 0)
         return true;
-    q1_actor_snapshot *snapshot;
+    qa_builtin_snapshot_frame *snapshot;
     if (!q1_snapshot_players(g, &snapshot, error))
         return false;
     uint32_t flags = qa_q1_game_campaign_flags(g);
     bool reset =
         (flags & QA_Q1_BLOODY_NIGHTMARE_ACTIVE) && !(flags & QA_Q1_BLOODY_NIGHTMARE_NEWGAME);
     bool ok = true;
-    for (size_t i = 0; !g->destroy_pending && i < snapshot->shared.count; ++i) {
-        qa_actor_id actor = snapshot->shared.ids[i];
+    for (size_t i = 0; !g->destroy_pending && i < snapshot->snapshot.count; ++i) {
+        qa_actor_id actor = snapshot->snapshot.ids[i];
         q1_player *player = q1_player_get(g, actor);
         if (!player)
             continue;
@@ -489,7 +489,7 @@ bool q1_final_end(qa_q1_game *g, qa_error *error) {
             player->mg3_progress = (qa_q1_mg3_progress){.bloody = bloody};
         }
     }
-    snapshot->borrowed = false;
+    qa_builtin_snapshot_release(snapshot);
     return ok && (g->destroy_pending || qa_q1_game_map_finish_addon(g, QA_Q1_MAP_END_MG3, error));
 }
 bool q1_final_child_think(qa_q1_game *g, q1_actor *e, qa_error *error) {
@@ -556,13 +556,13 @@ bool q1_final_map_spawn(qa_q1_game *g, q1_actor *e, bool *handled, qa_error *err
     return qa_world_body_write(g->services.world, e->id, &body, error) && q1_link(g, e, error);
 }
 bool q1_final_teleport(qa_q1_game *g, bool variant, qa_error *error) {
-    q1_actor_snapshot *snapshot;
+    qa_builtin_snapshot_frame *snapshot;
     if (!q1_snapshot_actors(g, &snapshot, error))
         return false;
     qa_actor_id boss = {0}, destination = {0};
     const char *classname = variant ? "info_boss_teleport_second" : "info_boss_teleport_first";
-    for (size_t i = 0; i < snapshot->shared.count; ++i) {
-        q1_actor *e = q1_entity(g, snapshot->shared.ids[i]);
+    for (size_t i = 0; i < snapshot->snapshot.count; ++i) {
+        q1_actor *e = q1_entity(g, snapshot->snapshot.ids[i]);
         if (!e)
             continue;
         if (!boss.registry && q1_classnamed(g, e->id, "monster_boss"))
@@ -588,12 +588,12 @@ bool q1_final_teleport(qa_q1_game *g, bool variant, qa_error *error) {
                  q1_schedule(g, e, .1, Q1_THINK_MONSTER_FRAME, error);
         }
     }
-    q1_actor_snapshot *players = NULL;
+    qa_builtin_snapshot_frame *players = NULL;
     if (ok) ok = q1_snapshot_players(g, &players, error);
-    for (size_t p = 0; ok && p < players->shared.count; ++p) {
+    for (size_t p = 0; ok && p < players->snapshot.count; ++p) {
         q1_actor *point = NULL;
-        for (size_t i = 0; i < snapshot->shared.count; ++i) {
-            q1_actor *candidate = q1_entity(g, snapshot->shared.ids[i]);
+        for (size_t i = 0; i < snapshot->snapshot.count; ++i) {
+            q1_actor *candidate = q1_entity(g, snapshot->snapshot.ids[i]);
             if (candidate && candidate->wait == 0 && q1_classnamed(g, candidate->id, classname)) {
                 point = candidate;
                 break;
@@ -617,7 +617,7 @@ bool q1_final_teleport(qa_q1_game *g, bool variant, qa_error *error) {
             ok = false;
             break;
         }
-        qa_actor_id player = players->shared.ids[p];
+        qa_actor_id player = players->snapshot.ids[p];
         if (!qa_world_body_read(g->services.world, player, &body, NULL))
             continue;
         body.origin = target.origin;
@@ -653,7 +653,7 @@ bool q1_final_teleport(qa_q1_game *g, bool variant, qa_error *error) {
         ok = qa_q1_spawn_teleport_fog(g, qa_vec_add(body.origin, qa_vec_scale(g->forward, 32)),
                                       NULL, error);
     }
-    if (players) players->borrowed = false;
-    snapshot->borrowed = false;
+    if (players) qa_builtin_snapshot_release(players);
+    qa_builtin_snapshot_release(snapshot);
     return ok;
 }

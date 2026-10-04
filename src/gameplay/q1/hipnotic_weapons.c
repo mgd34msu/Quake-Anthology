@@ -242,12 +242,12 @@ static bool proximity_watch(qa_q1_game *g, q1_actor *mine, qa_error *error) {
     if (!qa_combat_set_traits(g->services.combat, mine->id, &combat, error) ||
         !q1_link(g, mine, error))
         return false;
-    q1_actor_snapshot *snapshot;
+    qa_builtin_snapshot_frame *snapshot;
     if (!q1_radius_snapshot(g, body.origin, 140, &snapshot, error))
         return false;
     bool found = false, result = true;
-    for (size_t i = snapshot->shared.count; i > 0; --i) {
-        qa_actor_id actor = snapshot->shared.ids[i - 1];
+    for (size_t i = snapshot->snapshot.count; i > 0; --i) {
+        qa_actor_id actor = snapshot->snapshot.ids[i - 1];
         qa_body_state target;
         if (!qa_world_body_read(g->services.world, actor, &target, NULL))
             continue;
@@ -273,7 +273,7 @@ static bool proximity_watch(qa_q1_game *g, q1_actor *mine, qa_error *error) {
         found = true;
         break;
     }
-    snapshot->borrowed = false;
+    qa_builtin_snapshot_release(snapshot);
     if (!result)
         return false;
     if (found)
@@ -390,12 +390,12 @@ static bool hammer_bolt(qa_q1_game *g, q1_actor *bolt, qa_error *error) {
     if (!p->count) {
         p->enemy = (qa_actor_id){0};
         float best = 350;
-        q1_actor_snapshot *snapshot;
+        qa_builtin_snapshot_frame *snapshot;
         if (!q1_radius_snapshot(g, origin, 350, &snapshot, error))
             return false;
         bool result = true;
-        for (size_t i = snapshot->shared.count; i > 0; --i) {
-            qa_actor_id actor = snapshot->shared.ids[i - 1];
+        for (size_t i = snapshot->snapshot.count; i > 0; --i) {
+            qa_actor_id actor = snapshot->snapshot.ids[i - 1];
             if (qa_actor_id_equal(actor, p->activator) || q1_health(g, actor) <= 0 ||
                 !creature(g, actor))
                 continue;
@@ -418,7 +418,7 @@ static bool hammer_bolt(qa_q1_game *g, q1_actor *bolt, qa_error *error) {
             best = distance;
             p->enemy = actor;
         }
-        snapshot->borrowed = false;
+        qa_builtin_snapshot_release(snapshot);
         if (!result)
             return false;
         if (!p->enemy.registry) {

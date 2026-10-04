@@ -92,7 +92,7 @@ static bool rerelease_inventory(qa_q2_game *g, q2_actor *a, qa_error *e) {
     }
     if (!q2_actor_live(g, a->id) || !g->options.cooperative)
         return true;
-    q2_trace_frame *players = q2_player_roster(g, e);
+    qa_builtin_snapshot_frame *players = q2_player_roster(g, e);
     if (!players)
         return false;
     bool okay = true;
@@ -134,7 +134,7 @@ static bool rerelease_inventory(qa_q2_game *g, q2_actor *a, qa_error *e) {
             a->powers->power_cubes = cubes;
         break;
     }
-    players->active = false;
+    qa_builtin_snapshot_release(players);
     return okay;
 }
 bool qa_q2_player_connect(qa_q2_game *g, const char *info, bool bot, qa_q2_connection_result *out,

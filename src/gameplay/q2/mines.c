@@ -617,11 +617,11 @@ static bool mine_scan(qa_q2_game *g, q2_actor *a,
                       bool (*run)(qa_q2_game *, q2_actor *, qa_builtin_actor_snapshot *,
                                   qa_error *),
                       qa_error *e) {
-    q2_trace_frame *scratch = q2_scratch_acquire(g, e);
+    qa_builtin_snapshot_frame *scratch = q2_scratch_acquire(g, e);
     if (scratch == NULL)
         return false;
     bool ok = run(g, a, &scratch->snapshot, e);
-    scratch->active = false;
+    qa_builtin_snapshot_release(scratch);
     return ok;
 }
 bool q2_mine_think(qa_q2_game *g, q2_actor *a, qa_error *e) {

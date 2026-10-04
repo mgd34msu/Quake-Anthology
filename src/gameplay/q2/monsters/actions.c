@@ -1636,7 +1636,7 @@ static bool carrier_coop_check(q2m_context *context, qa_error *error) {
   if (!context->game->options.cooperative ||
       context->game->now_ns < monster->coop_check_ns)
     return true;
-  q2_trace_frame *players = q2_player_roster(context->game, error);
+  qa_builtin_snapshot_frame *players = q2_player_roster(context->game, error);
   if (players == NULL)
     return false;
   bool result = true;
@@ -1691,7 +1691,7 @@ static bool carrier_coop_check(q2m_context *context, qa_error *error) {
     if (q2m_alive(context))
       monster->enemy = previous;
   }
-  players->active = false;
+  qa_builtin_snapshot_release(players);
   return result;
 }
 

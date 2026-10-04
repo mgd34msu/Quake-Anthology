@@ -17,14 +17,14 @@ bool q1_gremlin_find_victim(qa_q1_game *g, q1_actor *entity, qa_actor_id *out, q
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, entity->id, &body, error))
         return false;
-    q1_actor_snapshot *snapshot;
+    qa_builtin_snapshot_frame *snapshot;
     if (!q1_radius_snapshot(g, body.origin, 1000, &snapshot, error))
         return false;
     qa_actor_id selected = {0};
     float best = 1000;
     bool ok = true;
-    for (size_t i = snapshot->shared.count; i > 0; --i) {
-        qa_actor_id actor = snapshot->shared.ids[i - 1];
+    for (size_t i = snapshot->snapshot.count; i > 0; --i) {
+        qa_actor_id actor = snapshot->snapshot.ids[i - 1];
         qa_q1_target traits;
         qa_body_state target;
         if (qa_actor_id_equal(actor, entity->id) || !creature(g, actor, &traits) ||
@@ -50,7 +50,7 @@ bool q1_gremlin_find_victim(qa_q1_game *g, q1_actor *entity, qa_actor_id *out, q
             selected = actor;
         }
     }
-    snapshot->borrowed = false;
+    qa_builtin_snapshot_release(snapshot);
     if (!ok)
         return false;
     entity->state.monster.source.gremlin.last_victim = selected;
@@ -65,14 +65,14 @@ static bool find_target(qa_q1_game *g, q1_actor *entity, bool *out, qa_error *er
         qa_body_state body;
         if (!qa_world_body_read(g->services.world, entity->id, &body, error))
             return false;
-        q1_actor_snapshot *snapshot;
+        qa_builtin_snapshot_frame *snapshot;
         if (!q1_snapshot_actors(g, &snapshot, error))
             return false;
         qa_actor_id gorge = {0};
         float best = 2000;
         bool ok = true;
-        for (size_t i = 0; i < snapshot->shared.count; ++i) {
-            qa_actor_id actor = snapshot->shared.ids[i];
+        for (size_t i = 0; i < snapshot->snapshot.count; ++i) {
+            qa_actor_id actor = snapshot->snapshot.ids[i];
             qa_body_state target;
             qa_q1_target traits;
             if (q1_health(g, actor) >= 1 || !creature(g, actor, &traits) ||
@@ -96,7 +96,7 @@ static bool find_target(qa_q1_game *g, q1_actor *entity, bool *out, qa_error *er
                 gorge = actor;
             }
         }
-        snapshot->borrowed = false;
+        qa_builtin_snapshot_release(snapshot);
         if (!ok)
             return false;
         if (gorge.registry && best < 700 * q1_random(g)) {

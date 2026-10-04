@@ -98,7 +98,7 @@ bool q2_prepare_radius_damage(void *context, qa_damage_request *request, bool *a
 }
 bool q2_radius_damage(qa_q2_game *g, const qa_builtin_radius *radius, size_t *damaged,
                       qa_error *e) {
-    q2_trace_frame *scratch = q2_nearby(g, radius->origin, radius->radius, e);
+    qa_builtin_snapshot_frame *scratch = q2_nearby(g, radius->origin, radius->radius, e);
     if (scratch == NULL)
         return false;
     qa_builtin_radius request = *radius;
@@ -107,7 +107,7 @@ bool q2_radius_damage(qa_q2_game *g, const qa_builtin_radius *radius, size_t *da
     request.candidates = scratch->snapshot.ids;
     request.candidate_count = scratch->snapshot.count;
     bool ok = qa_builtin_radius_damage(&g->services, &request, damaged, e);
-    scratch->active = false;
+    qa_builtin_snapshot_release(scratch);
     return ok;
 }
 static qa_vec3 spread(q2_weapon_call *c, qa_vec3 origin, qa_vec3 direction, float hs, float vs) {
@@ -339,51 +339,33 @@ static bool rail_run(q2_weapon_call *c, qa_vec3 start, qa_vec3 direction, float 
                 "q2:rail-water", 12, start, trace.end, e)) &&
            q2_noise_for_actor(c->game, c->actor->id, trace.end, true, e);
 }
-q2_trace_frame *q2_scratch_acquire(qa_q2_game *g, qa_error *e) {
-    q2_trace_frame *scratch = g->trace_frames;
-    while (scratch != NULL && scratch->active)
-        scratch = scratch->next;
-    if (scratch == NULL) {
-        scratch = calloc(1, sizeof(*scratch));
-        if (scratch == NULL) {
-            qa_error_set(e, QA_ERROR_MEMORY, 0, "Allocating nested Q2 scratch");
-            return NULL;
-        }
-        if (!qa_builtin_snapshot_reserve(&scratch->snapshot, g->capacity < 16 ? 16 : g->capacity,
-                                         e)) {
-            free(scratch);
-            return NULL;
-        }
-        scratch->next = g->trace_frames;
-        g->trace_frames = scratch;
-    }
-    scratch->active = true;
-    return scratch;
+qa_builtin_snapshot_frame *q2_scratch_acquire(qa_q2_game *g, qa_error *e) {
+    return qa_builtin_snapshot_acquire(&g->trace_frames, g->capacity < 16 ? 16 : g->capacity, e);
 }
-q2_trace_frame *q2_nearby(qa_q2_game *g, qa_vec3 origin, float radius, qa_error *e) {
-    q2_trace_frame *scratch = q2_scratch_acquire(g, e);
+qa_builtin_snapshot_frame *q2_nearby(qa_q2_game *g, qa_vec3 origin, float radius, qa_error *e) {
+    qa_builtin_snapshot_frame *scratch = q2_scratch_acquire(g, e);
     if (scratch != NULL &&
         !qa_builtin_nearby(&g->services, origin, radius, &scratch->snapshot, e)) {
-        scratch->active = false;
+        qa_builtin_snapshot_release(scratch);
         return NULL;
     }
     return scratch;
 }
-q2_trace_frame *q2_player_roster(qa_q2_game *g, qa_error *e) {
-    q2_trace_frame *scratch = q2_scratch_acquire(g, e);
+qa_builtin_snapshot_frame *q2_player_roster(qa_q2_game *g, qa_error *e) {
+    qa_builtin_snapshot_frame *scratch = q2_scratch_acquire(g, e);
     if (scratch != NULL && !qa_builtin_players(&g->services, &scratch->snapshot, e)) {
-        scratch->active = false;
+        qa_builtin_snapshot_release(scratch);
         return NULL;
     }
     return scratch;
 }
 bool q2_rail(q2_weapon_call *c, qa_vec3 start, qa_vec3 direction, float damage, float kick, int mod,
              uint32_t flags, qa_error *e) {
-    q2_trace_frame *scratch = q2_scratch_acquire(c->game, e);
+    qa_builtin_snapshot_frame *scratch = q2_scratch_acquire(c->game, e);
     if (scratch == NULL)
         return false;
     bool result = rail_run(c, start, direction, damage, kick, mod, flags, scratch->snapshot.ids, e);
-    scratch->active = false;
+    qa_builtin_snapshot_release(scratch);
     return result;
 }
 
@@ -594,10 +576,10 @@ static bool chainfist_run(q2_weapon_call *c, qa_builtin_actor_snapshot *snapshot
 bool q2_fire_chainfist(q2_weapon_call *c, qa_error *e) {
     if (!c->rerelease)
         return chainfist_run(c, NULL, e);
-    q2_trace_frame *scratch = q2_scratch_acquire(c->game, e);
+    qa_builtin_snapshot_frame *scratch = q2_scratch_acquire(c->game, e);
     if (scratch == NULL)
         return false;
     bool ok = chainfist_run(c, &scratch->snapshot, e);
-    scratch->active = false;
+    qa_builtin_snapshot_release(scratch);
     return ok;
 }

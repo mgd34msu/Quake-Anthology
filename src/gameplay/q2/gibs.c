@@ -395,11 +395,11 @@ static bool trap_capture_run(qa_q2_game *g, q2_actor *trap,
     return true;
 }
 bool q2_trap_capture_gibs(qa_q2_game *g, q2_actor *trap, qa_error *e) {
-    q2_trace_frame *scratch = q2_scratch_acquire(g, e);
+    qa_builtin_snapshot_frame *scratch = q2_scratch_acquire(g, e);
     if (scratch == NULL)
         return false;
     if (!qa_builtin_snapshot_reserve(&scratch->snapshot, g->capacity, e)) {
-        scratch->active = false;
+        qa_builtin_snapshot_release(scratch);
         return false;
     }
     scratch->snapshot.count = 0;
@@ -407,6 +407,6 @@ bool q2_trap_capture_gibs(qa_q2_game *g, q2_actor *trap, qa_error *e) {
         if (a->physics_bound)
             scratch->snapshot.ids[scratch->snapshot.count++] = a->id;
     bool ok = trap_capture_run(g, trap, &scratch->snapshot, e);
-    scratch->active = false;
+    qa_builtin_snapshot_release(scratch);
     return ok;
 }

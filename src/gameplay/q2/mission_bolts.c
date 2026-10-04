@@ -249,10 +249,10 @@ static bool heat_rocket_run(qa_q2_game *g, q2_actor *a, qa_builtin_actor_snapsho
 bool q2_heat_rocket_think(qa_q2_game *g, q2_actor *a, qa_error *e) {
     if (g->now_ns < a->projectile.next_ns)
         return true;
-    q2_trace_frame *scratch = q2_scratch_acquire(g, e);
+    qa_builtin_snapshot_frame *scratch = q2_scratch_acquire(g, e);
     if (scratch == NULL)
         return false;
     bool ok = heat_rocket_run(g, a, &scratch->snapshot, e);
-    scratch->active = false;
+    qa_builtin_snapshot_release(scratch);
     return ok;
 }

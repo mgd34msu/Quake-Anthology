@@ -109,12 +109,12 @@ static bool split(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     for (unsigned attempt = 0; attempt < 10; ++attempt) {
         qa_builtin_angle_vectors(angles, &g->forward, &g->right, &g->up);
         position = qa_vec_add(body.origin, qa_vec_scale(g->forward, 80));
-        q1_actor_snapshot *snapshot;
+        qa_builtin_snapshot_frame *snapshot;
         if (!q1_radius_snapshot(g, position, 35, &snapshot, error))
             return false;
         bool proceed = true;
-        for (size_t i = snapshot->shared.count; i > 0; --i) {
-            qa_actor_id actor = snapshot->shared.ids[i - 1];
+        for (size_t i = snapshot->snapshot.count; i > 0; --i) {
+            qa_actor_id actor = snapshot->snapshot.ids[i - 1];
             qa_q1_target traits;
             q1_actor *other = q1_entity(g, actor);
             qa_builtin_actor_traits foreign = {0};
@@ -127,7 +127,7 @@ static bool split(qa_q1_game *g, q1_actor *entity, qa_error *error) {
                 (monster || (q1_target(g, actor, &traits) && traits.player)))
                 proceed = false;
         }
-        snapshot->borrowed = false;
+        qa_builtin_snapshot_release(snapshot);
         const qa_vec3 offsets[] = {{0, 0, 0}, {-40, -40, 0}, {40, 40, 0}, {0, 0, 64}, {0, 0, -64}};
         bool clear = true;
         for (unsigned i = 0; i < 5; ++i) {

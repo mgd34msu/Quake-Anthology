@@ -209,7 +209,7 @@ static bool relay(qa_q2_game *g, q2_actor *a, qa_actor_id activator, bool period
     if (!qa_world_body_read(g->services.world, a->id, &body, e))
         return false;
     qa_bounds bounds = absolute_bounds(body);
-    q2_trace_frame *frame = q2_player_roster(g, e);
+    qa_builtin_snapshot_frame *frame = q2_player_roster(g, e);
     if (!frame)
         return false;
     bool okay = false;
@@ -274,7 +274,7 @@ static bool relay(qa_q2_game *g, q2_actor *a, qa_actor_id activator, bool period
         s->timestamp_ns = q2_deadline(g->now_ns, 5 * Q2_NS);
     okay = !periodic || q2_entity_schedule(g, a, Q2ET_COOP_RELAY, s->wait);
 out:
-    frame->active = false;
+    qa_builtin_snapshot_release(frame);
     return okay;
 }
 bool q2_rerelease_poi(qa_q2_game *g, q2_actor *source, qa_actor_id activator, qa_error *e) {
@@ -828,7 +828,7 @@ bool qa_q2_entities_player_frame(qa_q2_game *g, qa_actor_id id, qa_error *e) {
                                  .slot = (int)slot};
         if (remove) {
             *bar = (q2_healthbar){0};
-            q2_trace_frame *players = q2_player_roster(g, e);
+            qa_builtin_snapshot_frame *players = q2_player_roster(g, e);
             if (!players)
                 return false;
             bool okay = true;
@@ -839,7 +839,7 @@ bool qa_q2_entities_player_frame(qa_q2_game *g, qa_actor_id id, qa_error *e) {
                     break;
                 }
             }
-            players->active = false;
+            qa_builtin_snapshot_release(players);
             if (!okay)
                 return false;
             if (!q2_actor_live(g, id))

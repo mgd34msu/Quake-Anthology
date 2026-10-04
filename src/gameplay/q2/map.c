@@ -15,7 +15,7 @@ bool qa_q2_begin_map(qa_q2_game *game, qa_string_id map_name, qa_string_id spawn
             *error = game->release_error;
         return false;
     }
-    for (q2_trace_frame *frame = game->trace_frames; frame; frame = frame->next)
+    for (qa_builtin_snapshot_frame *frame = game->trace_frames; frame; frame = frame->next)
         if (frame->active) {
             qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q2 map entry overlaps a source query");
             return false;
@@ -87,7 +87,7 @@ bool qa_q2_begin_map(qa_q2_game *game, qa_string_id map_name, qa_string_id spawn
                               .visited_capacity = entities->visited_capacity};
     memcpy(entities->levels, previous_entities.levels, sizeof(entities->levels));
     q2_monsters_begin_map(game);
-    for (q2_trace_frame *frame = game->trace_frames; frame; frame = frame->next)
+    for (qa_builtin_snapshot_frame *frame = game->trace_frames; frame; frame = frame->next)
         frame->snapshot.count = 0;
     return true;
 }

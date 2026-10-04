@@ -214,7 +214,7 @@ bool q2m_medic_acquire(q2m_context *c, bool preserve_enemy, bool *acquired,
     if (!q2m_alive(c))
         return true;
     float radius = source_rogue && c->monster->stand_ground ? 400 : 1024;
-    q2_trace_frame *nearby = q2_nearby(c->game, c->body.origin, radius, error);
+    qa_builtin_snapshot_frame *nearby = q2_nearby(c->game, c->body.origin, radius, error);
     if (!nearby)
         return false;
     qa_actor_id best = {0};
@@ -300,7 +300,7 @@ bool q2m_medic_acquire(q2m_context *c, bool preserve_enemy, bool *acquired,
             best_health = candidate.monster->max_health;
         }
     }
-    nearby->active = false;
+    qa_builtin_snapshot_release(nearby);
     if (!result || !q2m_alive(c))
         return result;
     q2_actor *target = native_actor(c->game, best);

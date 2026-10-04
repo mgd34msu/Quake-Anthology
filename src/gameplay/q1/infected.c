@@ -92,20 +92,20 @@ static bool retarget(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         !q1_classnamed(g, m->enemy,
                        m->species->species == QA_Q1_ZOMBIE ? "monster_zombie" : "monster_demon1"))
         return true;
-    q1_actor_snapshot *snapshot;
+    qa_builtin_snapshot_frame *snapshot;
     if (!q1_snapshot_actors(g, &snapshot, error))
         return false;
-    if (!qa_builtin_players(&g->services, &snapshot->shared, error)) {
-        snapshot->borrowed = false;
+    if (!qa_builtin_players(&g->services, &snapshot->snapshot, error)) {
+        qa_builtin_snapshot_release(snapshot);
         return false;
     }
     qa_actor_id player = {0};
-    for (size_t i = 0; i < snapshot->shared.count; ++i)
-        if (q1_health(g, snapshot->shared.ids[i]) > 0) {
-            player = snapshot->shared.ids[i];
+    for (size_t i = 0; i < snapshot->snapshot.count; ++i)
+        if (q1_health(g, snapshot->snapshot.ids[i]) > 0) {
+            player = snapshot->snapshot.ids[i];
             break;
         }
-    snapshot->borrowed = false;
+    qa_builtin_snapshot_release(snapshot);
     if (!player.registry)
         return true;
     q1_actor *rival = q1_entity(g, m->enemy);

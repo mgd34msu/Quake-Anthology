@@ -136,7 +136,7 @@ bool q2m_widow_powerups(q2m_context *context, qa_error *error) {
     if (!context->game->options.cooperative)
         return !context->monster->enemy.registry ||
                respond(context, context->monster->enemy, error);
-    q2_trace_frame *roster = q2_player_roster(context->game, error);
+    qa_builtin_snapshot_frame *roster = q2_player_roster(context->game, error);
     if (!roster)
         return false;
     size_t count = 0;
@@ -170,6 +170,6 @@ bool q2m_widow_powerups(q2m_context *context, qa_error *error) {
         if (!ok)
             break;
     }
-    roster->active = false;
+    qa_builtin_snapshot_release(roster);
     return ok;
 }

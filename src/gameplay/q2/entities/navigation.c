@@ -54,10 +54,10 @@ static bool activation(qa_q2_game *g, qa_actor_id controller,
     qa_string_id name = a->entity->targetname;
     if (!activation_traits(g, controller, view, error)) return false;
     if (!name || !q2_ent(g, controller)) return true;
-    q2_trace_frame *list = q2_scratch_acquire(g, error);
+    qa_builtin_snapshot_frame *list = q2_scratch_acquire(g, error);
     if (!list) return false;
-    q2_trace_frame *queue = q2_scratch_acquire(g, error);
-    if (!queue) { list->active = false; return false; }
+    qa_builtin_snapshot_frame *queue = q2_scratch_acquire(g, error);
+    if (!queue) { qa_builtin_snapshot_release(list); return false; }
     bool ok = qa_builtin_observations(&g->services, &list->snapshot, error) &&
         qa_builtin_snapshot_reserve(&queue->snapshot, list->snapshot.count + 1, error);
     queue->snapshot.count = ok ? 1 : 0;
@@ -99,7 +99,8 @@ static bool activation(qa_q2_game *g, qa_actor_id controller,
             }
         }
     }
-    queue->active = list->active = false;
+    qa_builtin_snapshot_release(queue);
+    qa_builtin_snapshot_release(list);
     return ok;
 }
 

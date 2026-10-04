@@ -224,7 +224,7 @@ static bool select_deathmatch(qa_q2_game *g, q2_actor *a, qa_bounds bounds, qa_a
     }
     size_t n = 0;
     bool ok = false;
-    q2_trace_frame *players = q2_player_roster(g, e);
+    qa_builtin_snapshot_frame *players = q2_player_roster(g, e);
     if (!players)
         goto done;
     for (size_t name = first; name < last; name++) {
@@ -329,7 +329,7 @@ static bool select_deathmatch(qa_q2_game *g, q2_actor *a, qa_bounds bounds, qa_a
     ok = true;
 done:
     if (players)
-        players->active = false;
+        qa_builtin_snapshot_release(players);
     free(spots);
     return ok;
 }
@@ -379,7 +379,7 @@ static bool lava_spawn(qa_q2_game *g, qa_actor_id *out, qa_error *e) {
     }
     if (top == -99999)
         return true;
-    q2_trace_frame *players = q2_player_roster(g, e);
+    qa_builtin_snapshot_frame *players = q2_player_roster(g, e);
     if (!players)
         return false;
     bool okay = false;
@@ -401,7 +401,7 @@ static bool lava_spawn(qa_q2_game *g, qa_actor_id *out, qa_error *e) {
     }
     okay = true;
 done:
-    players->active = false;
+    qa_builtin_snapshot_release(players);
     return okay;
 }
 static bool select_coop(qa_q2_game *g, q2_actor *a, qa_bounds bounds, qa_string_id target,
@@ -413,7 +413,7 @@ static bool select_coop(qa_q2_game *g, q2_actor *a, qa_bounds bounds, qa_string_
         !matching_start(g, "info_player_coop", target, 0, &match, e))
         return false;
     qa_string_id coop_target = match.registry ? target : 0;
-    q2_trace_frame *players = q2_player_roster(g, e);
+    qa_builtin_snapshot_frame *players = q2_player_roster(g, e);
     if (!players)
         return false;
     bool okay = false;
@@ -461,7 +461,7 @@ static bool select_coop(qa_q2_game *g, q2_actor *a, qa_bounds bounds, qa_string_
         *out = first;
     okay = true;
 done:
-    players->active = false;
+    qa_builtin_snapshot_release(players);
     return okay;
 }
 bool q2_player_spawn_select(qa_q2_game *g, q2_actor *a, const qa_q2_player_movement *m,

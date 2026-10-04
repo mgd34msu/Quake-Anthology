@@ -470,7 +470,7 @@ bool q2m_perception_begin(qa_q2_game *game, qa_error *error) {
   runtime->began_frame = true;
   runtime->last_frame_ns = game->now_ns;
 
-  q2_trace_frame *players = q2_player_roster(game, error);
+  qa_builtin_snapshot_frame *players = q2_player_roster(game, error);
   if (players == NULL)
     return false;
   size_t count = players->snapshot.count;
@@ -542,7 +542,7 @@ bool q2m_perception_begin(qa_q2_game *game, qa_error *error) {
     trail->previous_origin = body.origin;
     trail->has_previous = true;
   }
-  players->active = false;
+  qa_builtin_snapshot_release(players);
   return result;
 }
 
@@ -1372,7 +1372,7 @@ bool q2m_find_target(q2m_context *context, bool *found, qa_error *error) {
                             : context->game->frame_ns;
 
   if (context->game->options.edition == QA_Q2_RERELEASE) {
-    q2_trace_frame *players = q2_player_roster(context->game, error);
+    qa_builtin_snapshot_frame *players = q2_player_roster(context->game, error);
     if (players == NULL)
       return false;
     size_t eligible = 0;
@@ -1390,11 +1390,11 @@ bool q2m_find_target(q2m_context *context, bool *found, qa_error *error) {
         if (!in_front(context, id))
           continue;
         if (!q2m_visible(context, id, &visible, error)) {
-          players->active = false;
+          qa_builtin_snapshot_release(players);
           return false;
         }
         if (!q2m_alive(context)) {
-          players->active = false;
+          qa_builtin_snapshot_release(players);
           return true;
         }
       } else {
@@ -1409,7 +1409,7 @@ bool q2m_find_target(q2m_context *context, bool *found, qa_error *error) {
         selected = eligible - 1;
       candidate = players->snapshot.ids[selected];
     }
-    players->active = false;
+    qa_builtin_snapshot_release(players);
     if (candidate.registry != 0 &&
         qa_actor_id_equal(candidate, monster->enemy) &&
         !monster->sound_target.present)

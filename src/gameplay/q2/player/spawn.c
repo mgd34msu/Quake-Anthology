@@ -187,7 +187,11 @@ static bool player_spawn(qa_q2_game *g, qa_actor_id id, bool restore,
         return false;
     if (restore) {
         if (g->options.cooperative && s->has_coop) {
-            int score = s->info.score;
+            int32_t score;
+            if (!q2_player_score_read(g, id, &score, e))
+                return false;
+            if (!q2_actor_live(g, id))
+                return true;
             s->coop.score = score > s->coop.score ? score : s->coop.score;
             if (!qa_q2_player_carry_restore(g, id, &s->coop, e))
                 return false;

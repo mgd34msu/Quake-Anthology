@@ -108,18 +108,18 @@ static bool vote_touch(qa_q1_game *g, qa_actor_id id, qa_actor_id actor, qa_erro
     ++entity->count;
     qa_actor_id leader = {0};
     float most = 0;
-    q1_actor_snapshot *list;
+    qa_builtin_snapshot_frame *list;
     if (!q1_snapshot_actors(g, &list, error))
         return false;
-    for (size_t i = 0; !g->destroy_pending && i < list->shared.count; ++i) {
-        q1_actor *candidate = exit_actor(g, list->shared.ids[i]);
+    for (size_t i = 0; !g->destroy_pending && i < list->snapshot.count; ++i) {
+        q1_actor *candidate = exit_actor(g, list->snapshot.ids[i]);
         if (candidate && candidate->map->kind == Q1_MAP_CTF_VOTE_EXIT &&
             !qa_actor_id_equal(candidate->id, id) && candidate->count > most) {
             most = candidate->count;
             leader = candidate->id;
         }
     }
-    list->borrowed = false;
+    qa_builtin_snapshot_release(list);
     entity = exit_actor(g, id);
     if (!entity || !q1_alive(g, actor))
         return true;

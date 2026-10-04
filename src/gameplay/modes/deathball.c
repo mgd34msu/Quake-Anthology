@@ -130,24 +130,31 @@ bool mode_ball_frame(qa_modes *m, mode_instance *v, mode_object *o, qa_error *e)
     if (!qa_world_body_write(m->options.services.world, o->actor, &body, e) ||
         !qa_combat_set_health(m->options.services.combat, o->actor, 50000, e))
         return false;
-    /* Query is retained on this stack while damage callbacks mutate the world. */
-    qa_actor_id candidates[1024];
-    size_t n;
-    bool overflow;
+    qa_builtin_snapshot_frame *frame = qa_builtin_snapshot_acquire(
+        &m->snapshot_frames, m->actor_capacity, e);
+    if (!frame) return false;
+    qa_builtin_actor_snapshot *candidates = &frame->snapshot;
+    bool overflow = false;
     if (!qa_world_query(m->options.services.world, qa_bounds_translate(body.bounds, body.origin),
-                        QA_COLLISION_SOLID, candidates, 1024, &n, &overflow, e))
+                        QA_COLLISION_SOLID, candidates->ids, candidates->capacity,
+                        &candidates->count, &overflow, e)) {
+        qa_builtin_snapshot_release(frame);
         return false;
-    if (overflow)
-        return mode_fail(e, "DeathBall KillBox candidate capacity exceeded");
-    for (size_t i = 0; i < n; ++i) {
-        if (qa_actor_id_equal(candidates[i], o->actor) || !mode_live(m, candidates[i]))
+    }
+    if (overflow) {
+        qa_builtin_snapshot_release(frame);
+        return mode_fail(e, "DeathBall KillBox exceeded the actor registry capacity");
+    }
+    for (size_t i = 0; i < candidates->count; ++i) {
+        qa_actor_id actor = candidates->ids[i];
+        if (qa_actor_id_equal(actor, o->actor) || !mode_live(m, actor))
             continue;
         qa_combat_state target;
-        if (!qa_combat_read(m->options.services.combat, candidates[i], &target, NULL) ||
+        if (!qa_combat_read(m->options.services.combat, actor, &target, NULL) ||
             !target.can_take_damage)
             continue;
         qa_damage_request request = {
-            .target = candidates[i],
+            .target = actor,
             .amount = 100000,
             .point = body.origin,
             .attack = {.attacker = o->actor,
@@ -156,9 +163,12 @@ bool mode_ball_frame(qa_modes *m, mode_instance *v, mode_object *o, qa_error *e)
                                  .source.q2 = {.means_of_death = 21,
                                                .flags = 32,
                                                .native = QA_Q2_CAUSE_CLASSIC}}}};
-        if (!mode_damage(m, v, QA_GAME_Q2, &request, e))
+        if (!mode_damage(m, v, QA_GAME_Q2, &request, e)) {
+            qa_builtin_snapshot_release(frame);
             return false;
+        }
     }
+    qa_builtin_snapshot_release(frame);
     return mode_object_sync(m, o, e) && mode_event(m, v, QA_MODE_BALL_GOAL, (qa_actor_id){0},
                                                    (qa_actor_id){0}, o->actor, 0, 0, 6, e);
 }

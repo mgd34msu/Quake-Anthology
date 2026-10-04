@@ -125,12 +125,12 @@ fail:
     return false;
 }
 bool q1_boss_cleanup(qa_q1_game *g, qa_error *error) {
-    q1_actor_snapshot *snapshot;
+    qa_builtin_snapshot_frame *snapshot;
     if (!q1_snapshot_actors(g, &snapshot, error))
         return false;
     bool ok = true;
-    for (size_t i = 0; i < snapshot->shared.count; ++i) {
-        q1_actor *e = q1_entity(g, snapshot->shared.ids[i]);
+    for (size_t i = 0; i < snapshot->snapshot.count; ++i) {
+        q1_actor *e = q1_entity(g, snapshot->snapshot.ids[i]);
         if (e && e->kind == Q1_BOSS_CHILD &&
             (q1_classnamed(g, e->id, "oldnew_child") || q1_classnamed(g, e->id, "oldnew_eye")) &&
             !q1_boss_child_schedule(g, e, Q1_CHILD_CLEANUP, .1, error)) {
@@ -138,7 +138,7 @@ bool q1_boss_cleanup(qa_q1_game *g, qa_error *error) {
             break;
         }
     }
-    snapshot->borrowed = false;
+    qa_builtin_snapshot_release(snapshot);
     if (!ok)
         return false;
     q1_actor *timer;
@@ -347,16 +347,16 @@ bool q1_boss_child_think(qa_q1_game *g, q1_actor *e, qa_error *error) {
     case Q1_CHILD_CLEANUP:
         return q1_damage(g, e->id, e->id, e->id, 5000, QA_Q1_WEAPON_COUNT, error);
     case Q1_CHILD_ZOMBIE_CLEANUP: {
-        q1_actor_snapshot *snapshot;
+        qa_builtin_snapshot_frame *snapshot;
         if (!q1_snapshot_actors(g, &snapshot, error))
             return false;
         qa_actor_id zombie = {0};
-        for (size_t i = 0; i < snapshot->shared.count; ++i)
-            if (q1_classnamed(g, snapshot->shared.ids[i], "monster_szombie")) {
-                zombie = snapshot->shared.ids[i];
+        for (size_t i = 0; i < snapshot->snapshot.count; ++i)
+            if (q1_classnamed(g, snapshot->snapshot.ids[i], "monster_szombie")) {
+                zombie = snapshot->snapshot.ids[i];
                 break;
             }
-        snapshot->borrowed = false;
+        qa_builtin_snapshot_release(snapshot);
         if (zombie.registry &&
             !q1_damage(g, zombie, g->services.physics->world_actor,
                        g->services.physics->world_actor, 500, QA_Q1_WEAPON_COUNT, error))

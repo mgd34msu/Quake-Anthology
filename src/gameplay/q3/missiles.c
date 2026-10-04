@@ -27,7 +27,7 @@ bool q3_radius(qa_q3_game *game, qa_actor_id inflictor, qa_actor_id attacker, qa
                bool *accuracy, qa_error *error) {
     radius = fmaxf(radius, 1);
     qa_vec3 extent = qa_v3(radius, radius, radius);
-    q3_snapshot_frame *frame = q3_bounds_snapshot(
+    qa_builtin_snapshot_frame *frame = q3_bounds_snapshot(
         game, (qa_bounds){qa_vec_sub(origin, extent), qa_vec_add(origin, extent)},
         QA_COLLISION_BOTH, error);
     if (!frame)
@@ -66,12 +66,12 @@ bool q3_radius(qa_q3_game *game, qa_actor_id inflictor, qa_actor_id attacker, qa
         !game->options.hooks.attack_providers(game->options.hooks.context, attacker,
             attack.attack.weapon, &attack.attack.inventory_provider,
             &attack.attack.movement_provider, error)) {
-        frame->active = false;
+        qa_builtin_snapshot_release(frame);
         return false;
     }
     attack.trace.contents_mask = 1;
     bool ok = qa_builtin_radius_damage(&game->options.services, &attack, NULL, error);
-    frame->active = false;
+    qa_builtin_snapshot_release(frame);
     if (accuracy)
         *accuracy = context.accuracy;
     return ok;

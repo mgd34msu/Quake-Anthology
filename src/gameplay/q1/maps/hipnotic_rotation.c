@@ -36,19 +36,19 @@ static bool publish(qa_q1_game *g, qa_actor_id actor, const qa_body_state *body,
     return !q1_alive(g, actor) || qa_world_link(g->services.world, actor, NULL, error);
 }
 static bool target_snapshot(qa_q1_game *g, qa_string_id name,
-                             q1_actor_snapshot **out, qa_error *error) {
-    q1_actor_snapshot *list;
+                             qa_builtin_snapshot_frame **out, qa_error *error) {
+    qa_builtin_snapshot_frame *list;
     if (!q1_snapshot_actors(g, &list, error))
         return false;
     size_t count = 0;
     if (q1_map_text(g, name))
-        for (size_t i = 0; i < list->shared.count; ++i) {
+        for (size_t i = 0; i < list->snapshot.count; ++i) {
             qa_authored_target fields;
-            if (qa_targets_read(g->maps->options.targets, list->shared.ids[i], &fields) &&
+            if (qa_targets_read(g->maps->options.targets, list->snapshot.ids[i], &fields) &&
                 fields.targetname == name)
-                list->shared.ids[count++] = list->shared.ids[i];
+                list->snapshot.ids[count++] = list->snapshot.ids[i];
         }
-    list->shared.count = count;
+    list->snapshot.count = count;
     *out = list;
     return true;
 }
@@ -72,12 +72,12 @@ static bool link_targets(qa_q1_game *g, qa_actor_id id, qa_error *error) {
     }
     e->map->pending.rotation.origin = self.origin;
     e->map->pending.rotation.linked = true;
-    q1_actor_snapshot *list;
+    qa_builtin_snapshot_frame *list;
     if (!target_snapshot(g, name, &list, error))
         return false;
     bool ok = true;
-    for (size_t i = 0; ok && i < list->shared.count && rotation(g, id); ++i) {
-        qa_actor_id actor = list->shared.ids[i];
+    for (size_t i = 0; ok && i < list->snapshot.count && rotation(g, id); ++i) {
+        qa_actor_id actor = list->snapshot.ids[i];
         qa_body_state body;
         if (!qa_world_body_read(g->services.world, actor, &body, error)) {
             ok = false;
@@ -99,7 +99,7 @@ static bool link_targets(qa_q1_game *g, qa_actor_id id, qa_error *error) {
         if ((wall || object) && native)
             native->owner = id;
     }
-    list->borrowed = false;
+    qa_builtin_snapshot_release(list);
     return ok;
 }
 typedef enum target_transform { TARGET_ROTATE, TARGET_FINAL, TARGET_PLACE } target_transform;
@@ -117,12 +117,12 @@ static bool transform_targets(qa_q1_game *g, qa_actor_id id, target_transform mo
         return true;
     qa_vec3 forward, right, up;
     qa_builtin_angle_vectors(self.angles, &forward, &right, &up);
-    q1_actor_snapshot *list;
+    qa_builtin_snapshot_frame *list;
     if (!target_snapshot(g, name, &list, error))
         return false;
     bool ok = true;
-    for (size_t i = 0; ok && i < list->shared.count && rotation(g, id); ++i) {
-        qa_actor_id actor = list->shared.ids[i];
+    for (size_t i = 0; ok && i < list->snapshot.count && rotation(g, id); ++i) {
+        qa_actor_id actor = list->snapshot.ids[i];
         qa_body_state body;
         if (!qa_world_body_read(g->services.world, actor, &body, error)) {
             ok = false;
@@ -163,7 +163,7 @@ static bool transform_targets(qa_q1_game *g, qa_actor_id id, target_transform mo
         }
         ok = publish(g, actor, &body, mode == TARGET_PLACE, error);
     }
-    list->borrowed = false;
+    qa_builtin_snapshot_release(list);
     return ok;
 }
 void q1_map_rotation_released(qa_q1_game *g, qa_actor_id id) {
@@ -203,21 +203,21 @@ static bool reverse_group(qa_q1_game *g, qa_actor_id id, qa_error *error) {
     qa_string_id group = e->map->group;
     if (!q1_map_text(g, group))
         return reverse_door(g, id, error);
-    q1_actor_snapshot *list;
+    qa_builtin_snapshot_frame *list;
     if (!q1_snapshot_actors(g, &list, error))
         return false;
     size_t count = 0;
-    for (size_t i = 0; i < list->shared.count; ++i) {
-        q1_actor *member = rotation(g, list->shared.ids[i]);
+    for (size_t i = 0; i < list->snapshot.count; ++i) {
+        q1_actor *member = rotation(g, list->snapshot.ids[i]);
         if (member && member->map->kind == Q1_MAP_ROTATE_DOOR &&
             member->map->group == group)
-            list->shared.ids[count++] = member->id;
+            list->snapshot.ids[count++] = member->id;
     }
-    list->shared.count = count;
+    list->snapshot.count = count;
     bool ok = true;
-    for (size_t i = 0; ok && i < list->shared.count; ++i)
-        ok = reverse_door(g, list->shared.ids[i], error);
-    list->borrowed = false;
+    for (size_t i = 0; ok && i < list->snapshot.count; ++i)
+        ok = reverse_door(g, list->snapshot.ids[i], error);
+    qa_builtin_snapshot_release(list);
     return ok;
 }
 static bool continuous(qa_q1_game *g, qa_actor_id id, qa_error *error) {
@@ -545,12 +545,12 @@ static bool damage_targets(qa_q1_game *g, qa_actor_id id, float damage, qa_error
     q1_actor *e = rotation(g, id);
     if (!e)
         return true;
-    q1_actor_snapshot *list;
+    qa_builtin_snapshot_frame *list;
     if (!target_snapshot(g, e->target, &list, error))
         return false;
     bool ok = true;
-    for (size_t i = 0; ok && i < list->shared.count && rotation(g, id); ++i) {
-        qa_actor_id actor = list->shared.ids[i];
+    for (size_t i = 0; ok && i < list->snapshot.count && rotation(g, id); ++i) {
+        qa_actor_id actor = list->snapshot.ids[i];
         qa_string_id classname = text_field(g, actor, "classname");
         if (!same_text(g, classname, "trigger_hurt") &&
             !same_text(g, classname, "func_movewall"))
@@ -562,7 +562,7 @@ static bool damage_targets(qa_q1_game *g, qa_actor_id id, float damage, qa_error
                 ? g->maps->options.target_damage(g->maps->options.context, actor, damage, error)
                 : q1_map_fail(error, "Hipnotic train requires target damage owner");
     }
-    list->borrowed = false;
+    qa_builtin_snapshot_release(list);
     return ok;
 }
 typedef struct rotate_path {

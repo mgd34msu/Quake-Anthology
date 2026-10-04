@@ -462,7 +462,7 @@ q2_player_list *q2_player_list_acquire(qa_q2_game *g, bool scores, qa_error *e) 
     }
     list->active = true;
     list->count = 0;
-    q2_trace_frame *roster = q2_player_roster(g, e);
+    qa_builtin_snapshot_frame *roster = q2_player_roster(g, e);
     if (!roster)
         goto fail;
     if (list->capacity < roster->snapshot.count) {
@@ -487,10 +487,10 @@ q2_player_list *q2_player_list_acquire(qa_q2_game *g, bool scores, qa_error *e) 
             goto release;
         list->rows[list->count++] = row;
     }
-    roster->active = false;
+    qa_builtin_snapshot_release(roster);
     return list;
 release:
-    roster->active = false;
+    qa_builtin_snapshot_release(roster);
 fail:
     list->active = false;
     return NULL;

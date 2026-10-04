@@ -92,38 +92,23 @@ bool q3_rollback_spawn(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
     }
     return false;
 }
-q3_snapshot_frame *q3_bounds_snapshot(qa_q3_game *game, qa_bounds bounds,
+qa_builtin_snapshot_frame *q3_bounds_snapshot(qa_q3_game *game, qa_bounds bounds,
                                        qa_collision_role role, qa_error *error) {
     if (!game) {
         q3_fail(error, "missing Q3 spatial query provider");
         return NULL;
     }
-    q3_snapshot_frame *frame = game->snapshot_frames;
-    while (frame && frame->active)
-        frame = frame->next;
-    if (!frame) {
-        frame = calloc(1, sizeof(*frame));
-        if (!frame) {
-            qa_error_set(error, QA_ERROR_MEMORY, 0, "allocating nested Q3 spatial snapshot");
-            return NULL;
-        }
-        if (!qa_builtin_snapshot_reserve(&frame->snapshot, game->capacity, error)) {
-            free(frame);
-            return NULL;
-        }
-        frame->next = game->snapshot_frames;
-        game->snapshot_frames = frame;
-    }
-    frame->active = true;
-    frame->snapshot.count = 0;
+    qa_builtin_snapshot_frame *frame = qa_builtin_snapshot_acquire(
+        &game->snapshot_frames, game->capacity, error);
+    if (!frame) return NULL;
     bool overflow = false;
     if (!qa_world_query(game->options.services.world, bounds, role, frame->snapshot.ids,
                         frame->snapshot.capacity, &frame->snapshot.count, &overflow, error)) {
-        frame->active = false;
+        qa_builtin_snapshot_release(frame);
         return NULL;
     }
     if (overflow) {
-        frame->active = false;
+        qa_builtin_snapshot_release(frame);
         qa_error_set(error, QA_ERROR_ARGUMENT, 0,
                      "Q3 spatial query exceeded the actor registry capacity");
         return NULL;
@@ -351,12 +336,7 @@ bool qa_q3_destroy(qa_q3_game *game, qa_error *error) {
     for(uint32_t i=0;i<game->capacity;++i)
         if(game->item_observations[i].serial)
             qa_pickups_observation_close(game->options.services.pickups,game->item_observations[i],NULL);
-    while (game->snapshot_frames) {
-        q3_snapshot_frame *next = game->snapshot_frames->next;
-        qa_builtin_snapshot_free(&game->snapshot_frames->snapshot);
-        free(game->snapshot_frames);
-        game->snapshot_frames = next;
-    }
+    qa_builtin_snapshot_pool_free(&game->snapshot_frames);
     free(game->kamikaze_cooldowns);
     free(game->player_binding_tokens);
     free(game->item_observations);

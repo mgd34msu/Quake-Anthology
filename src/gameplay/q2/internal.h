@@ -123,11 +123,6 @@ typedef struct q2_actor {
     bool restore_definitions, restore_power_inventory, restore_targets;
     qa_inventory_entry restore_hand_ammo;
 } q2_actor;
-typedef struct q2_trace_frame {
-    struct q2_trace_frame *next;
-    qa_builtin_actor_snapshot snapshot;
-    bool active;
-} q2_trace_frame;
 typedef struct q2_mt_random {
     uint32_t words[624], index;
     uint64_t draws;
@@ -163,7 +158,7 @@ struct qa_q2_game {
     q2_actor **actors, *all_actors, *retired_actors, *spare_actors;
     q2_actor *first_actor, *last_actor;
     size_t capacity;
-    q2_trace_frame *trace_frames;
+    qa_builtin_snapshot_frame *trace_frames;
     struct q2_items *item_runtime;
     struct q2_players *player_runtime;
     struct q2_entities *entity_runtime;
@@ -380,9 +375,9 @@ bool q2_fire_nuke(qa_q2_game *, qa_actor_id owner, qa_vec3 origin, qa_vec3 direc
 bool q2_noise_for_actor(qa_q2_game *, qa_actor_id, qa_vec3, bool secondary, qa_error *);
 bool q2_nuke_think(qa_q2_game *, q2_actor *, qa_error *);
 bool q2_nuke_reaction(qa_q2_game *, q2_actor *, const qa_damage_outcome *, qa_error *);
-q2_trace_frame *q2_scratch_acquire(qa_q2_game *, qa_error *);
-q2_trace_frame *q2_nearby(qa_q2_game *, qa_vec3 origin, float radius, qa_error *);
-q2_trace_frame *q2_player_roster(qa_q2_game *, qa_error *);
+qa_builtin_snapshot_frame *q2_scratch_acquire(qa_q2_game *, qa_error *);
+qa_builtin_snapshot_frame *q2_nearby(qa_q2_game *, qa_vec3 origin, float radius, qa_error *);
+qa_builtin_snapshot_frame *q2_player_roster(qa_q2_game *, qa_error *);
 enum {
     Q2_GIB_HEAD = 1u, Q2_GIB_METALLIC = 2u, Q2_GIB_SKINNED = 4u, Q2_GIB_UPRIGHT = 8u,
     Q2_GIB_WIDOW = 16u, Q2_GIB_WIDOW_SIZED = 32u, Q2_GIB_WIDOW_HIT_SOUND = 64u,

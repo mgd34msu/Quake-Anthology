@@ -279,6 +279,7 @@ void qa_modes_destroy(qa_modes *m) {
         }
     qa_builtin_snapshot_free(&m->players_order);
     qa_builtin_snapshot_free(&m->observations);
+    qa_builtin_snapshot_pool_free(&m->snapshot_frames);
     free(m->players);
     free(m->objects);
     free(m->instances);

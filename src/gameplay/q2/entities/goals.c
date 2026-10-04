@@ -59,7 +59,7 @@ bool q2_rerelease_goal_use(qa_q2_game *g, q2_actor *a, qa_actor_id activator, qa
         if (r->has_goals) {
             r->goal_number++;
             r->primary_changes++;
-            q2_trace_frame *players = q2_player_roster(g, e);
+            qa_builtin_snapshot_frame *players = q2_player_roster(g, e);
             if (!players)
                 return false;
             bool okay = true;
@@ -72,7 +72,7 @@ bool q2_rerelease_goal_use(qa_q2_game *g, q2_actor *a, qa_actor_id activator, qa
                 if (!q2_actor_live(g, a->id))
                     break;
             }
-            players->active = false;
+            qa_builtin_snapshot_release(players);
             if (!okay)
                 return false;
             if (!q2_actor_live(g, a->id))

@@ -490,16 +490,16 @@ bool q1_monster_use(qa_q1_game *g, q1_actor *entity, qa_actor_id activator, qa_e
         }
         qa_q1_target traits;
         if (!q1_target(g, activator, &traits) || !traits.player) {
-            q1_actor_snapshot *snapshot;
+            qa_builtin_snapshot_frame *snapshot;
             if (!q1_snapshot_players(g, &snapshot, error))
                 return false;
             activator = (qa_actor_id){0};
-            for (size_t i = 0; i < snapshot->shared.count; ++i)
-                if (q1_health(g, snapshot->shared.ids[i]) > 0) {
-                    activator = snapshot->shared.ids[i];
+            for (size_t i = 0; i < snapshot->snapshot.count; ++i)
+                if (q1_health(g, snapshot->snapshot.ids[i]) > 0) {
+                    activator = snapshot->snapshot.ids[i];
                     break;
                 }
-            snapshot->borrowed = false;
+            qa_builtin_snapshot_release(snapshot);
         }
     }
     if (!m->addon.normal_use && m->species->species == QA_Q1_BOSS &&

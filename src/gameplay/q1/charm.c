@@ -107,14 +107,14 @@ bool q1_charmed_find_target(qa_q1_game *g, q1_actor *entity, bool *out, qa_error
         if (distance < 120)
             return q1_charmed_hunt(g, entity, true, error);
     }
-    q1_actor_snapshot *snapshot;
+    qa_builtin_snapshot_frame *snapshot;
     if (!q1_radius_snapshot(g, body.origin, 1500, &snapshot, error))
         return false;
     qa_actor_id selected = {0};
     float best = 1500;
     bool ok = true;
-    for (size_t i = snapshot->shared.count; i > 0; --i) {
-        qa_actor_id actor = snapshot->shared.ids[i - 1];
+    for (size_t i = snapshot->snapshot.count; i > 0; --i) {
+        qa_actor_id actor = snapshot->snapshot.ids[i - 1];
         q1_actor *candidate = q1_entity(g, actor);
         qa_builtin_actor_traits foreign = {0};
         bool monster = candidate
@@ -147,7 +147,7 @@ bool q1_charmed_find_target(qa_q1_game *g, q1_actor *entity, bool *out, qa_error
             selected = actor;
         }
     }
-    snapshot->borrowed = false;
+    qa_builtin_snapshot_release(snapshot);
     if (!ok)
         return false;
     qa_q1_target traits;

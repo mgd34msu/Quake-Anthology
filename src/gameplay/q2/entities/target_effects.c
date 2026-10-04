@@ -44,7 +44,7 @@ bool q2_laser_think(qa_q2_game *g, q2_actor *a, qa_error *e) {
         .policy = {.family = QA_COLLISION_Q2,
                    .contents_mask = 0x6000001,
                    .q2_merged_contents = g->options.edition == QA_Q2_RERELEASE}};
-    q2_trace_frame *frame = q2_scratch_acquire(g, e);
+    qa_builtin_snapshot_frame *frame = q2_scratch_acquire(g, e);
     if (!frame)
         return false;
     frame->snapshot.count = 0;
@@ -116,7 +116,7 @@ bool q2_laser_think(qa_q2_game *g, q2_actor *a, qa_error *e) {
     okay = !q2_actor_live(g, a->id) ||
            q2_entity_schedule(g, a, Q2ET_LASER, (float)g->frame_ns / Q2_NS);
 out:
-    frame->active = false;
+    qa_builtin_snapshot_release(frame);
     return okay;
 }
 static bool laser_switch(qa_q2_game *g, q2_actor *a, bool on, qa_error *e) {
@@ -203,7 +203,7 @@ static bool quake(qa_q2_game *g, q2_actor *a, qa_error *e) {
             return true;
         s->sound_ns = q2_deadline(g->now_ns, 500 * Q2_MS);
     }
-    q2_trace_frame *players = q2_player_roster(g, e);
+    qa_builtin_snapshot_frame *players = q2_player_roster(g, e);
     if (!players)
         return false;
     bool okay = false;
@@ -233,7 +233,7 @@ static bool quake(qa_q2_game *g, q2_actor *a, qa_error *e) {
     okay = g->now_ns >= s->expires_ns ||
            q2_entity_schedule(g, a, Q2ET_QUAKE, (float)g->frame_ns / Q2_NS);
 out:
-    players->active = false;
+    qa_builtin_snapshot_release(players);
     return okay;
 }
 static bool steam_start(qa_q2_game *g, q2_actor *a, qa_error *e) {
@@ -369,12 +369,12 @@ bool q2_target_extra_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *
     }
 }
 static bool kill_players(qa_q2_game *g, q2_actor *a, qa_error *e) {
-    q2_trace_frame *players = q2_player_roster(g, e);
+    qa_builtin_snapshot_frame *players = q2_player_roster(g, e);
     if (!players)
         return false;
-    q2_trace_frame *targets = q2_scratch_acquire(g, e);
+    qa_builtin_snapshot_frame *targets = q2_scratch_acquire(g, e);
     if (!targets) {
-        players->active = false;
+        qa_builtin_snapshot_release(players);
         return false;
     }
     bool okay = false;
@@ -387,14 +387,8 @@ static bool kill_players(qa_q2_game *g, q2_actor *a, qa_error *e) {
             goto out;
         }
     }
-    const qa_actor_registry *registry = qa_session_actors(g->services.session);
-    if (!qa_builtin_snapshot_reserve(&targets->snapshot, qa_actors_count(registry), e))
+    if (!qa_builtin_observations(&g->services, &targets->snapshot, e))
         goto out;
-    uint32_t cursor = 0;
-    const qa_actor_record *record;
-    targets->snapshot.count = 0;
-    while (qa_actors_next(registry, &cursor, &record))
-        targets->snapshot.ids[targets->snapshot.count++] = record->id;
     for (size_t j = 0; j < targets->snapshot.count; j++) {
         qa_actor_id id = targets->snapshot.ids[j];
         if (!q2_actor_live(g, id) || !q2_target_damageable(g, id))
@@ -433,8 +427,8 @@ static bool kill_players(qa_q2_game *g, q2_actor *a, qa_error *e) {
     }
     okay = true;
 out:
-    players->active = false;
-    targets->active = false;
+    qa_builtin_snapshot_release(players);
+    qa_builtin_snapshot_release(targets);
     return okay;
 }
 bool q2_target_extra_use(qa_q2_game *g, q2_actor *a, qa_actor_id other, qa_actor_id activator,

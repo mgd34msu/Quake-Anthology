@@ -30,7 +30,7 @@ bool q2_checkpoint_idle(qa_q2_game *g, qa_error *e) {
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Q2 checkpoint requires a completed hand action");
         return false;
     }
-    for (q2_trace_frame *frame = g->trace_frames; frame != NULL; frame = frame->next)
+    for (qa_builtin_snapshot_frame *frame = g->trace_frames; frame != NULL; frame = frame->next)
         if (frame->active) {
             qa_error_set(e, QA_ERROR_ARGUMENT, 0,
                          "Q2 checkpoint requires a gameplay callback boundary");

@@ -149,17 +149,17 @@ static bool nuke_blast(qa_q2_game *g, q2_actor *a, qa_builtin_actor_snapshot *sn
 static bool nuke_explode(qa_q2_game *g, q2_actor *a, qa_error *e) {
     if (a->projectile.phase != 0)
         return true;
-    q2_trace_frame *scratch = q2_scratch_acquire(g, e);
+    qa_builtin_snapshot_frame *scratch = q2_scratch_acquire(g, e);
     if (scratch == NULL)
         return false;
-    q2_trace_frame *players = q2_scratch_acquire(g, e);
+    qa_builtin_snapshot_frame *players = q2_scratch_acquire(g, e);
     if (players == NULL) {
-        scratch->active = false;
+        qa_builtin_snapshot_release(scratch);
         return false;
     }
     bool result = nuke_blast(g, a, &scratch->snapshot, &players->snapshot, e);
-    players->active = false;
-    scratch->active = false;
+    qa_builtin_snapshot_release(players);
+    qa_builtin_snapshot_release(scratch);
     return result;
 }
 static bool nuke_quake_run(qa_q2_game *g, q2_actor *a, qa_builtin_actor_snapshot *players,
@@ -202,11 +202,11 @@ static bool nuke_quake_run(qa_q2_game *g, q2_actor *a, qa_builtin_actor_snapshot
     return true;
 }
 static bool nuke_quake(qa_q2_game *g, q2_actor *a, qa_error *e) {
-    q2_trace_frame *scratch = q2_scratch_acquire(g, e);
+    qa_builtin_snapshot_frame *scratch = q2_scratch_acquire(g, e);
     if (scratch == NULL)
         return false;
     bool ok = nuke_quake_run(g, a, &scratch->snapshot, e);
-    scratch->active = false;
+    qa_builtin_snapshot_release(scratch);
     return ok;
 }
 bool q2_nuke_think(qa_q2_game *g, q2_actor *a, qa_error *e) {

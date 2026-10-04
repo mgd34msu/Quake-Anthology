@@ -323,11 +323,11 @@ static bool bfg_effect_run(qa_q2_game *g, qa_actor_id id, const q2_projectile *p
 }
 static bool bfg_effect(qa_q2_game *g, qa_actor_id id, const q2_projectile *p, qa_vec3 origin,
                        qa_error *e) {
-    q2_trace_frame *scratch = q2_nearby(g, origin, p->radius, e);
+    qa_builtin_snapshot_frame *scratch = q2_nearby(g, origin, p->radius, e);
     if (scratch == NULL)
         return false;
     bool ok = bfg_effect_run(g, id, p, origin, &scratch->snapshot, e);
-    scratch->active = false;
+    qa_builtin_snapshot_release(scratch);
     return ok;
 }
 static bool bfg_fly_run(qa_q2_game *g, qa_actor_id id, const q2_projectile *p, qa_vec3 origin,
@@ -430,11 +430,11 @@ static bool bfg_fly_run(qa_q2_game *g, qa_actor_id id, const q2_projectile *p, q
 }
 static bool bfg_fly(qa_q2_game *g, qa_actor_id id, const q2_projectile *p, qa_vec3 origin,
                     qa_error *e) {
-    q2_trace_frame *scratch = q2_nearby(g, origin, 256, e);
+    qa_builtin_snapshot_frame *scratch = q2_nearby(g, origin, 256, e);
     if (scratch == NULL)
         return false;
     bool result = bfg_fly_run(g, id, p, origin, &scratch->snapshot, scratch->snapshot.sort, e);
-    scratch->active = false;
+    qa_builtin_snapshot_release(scratch);
     return result;
 }
 static bool bfg_ambient(qa_q2_game *g, qa_actor_id id, qa_vec3 origin, qa_error *e) {

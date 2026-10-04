@@ -437,11 +437,6 @@ typedef struct q1_player {
     double source_respawn_requested_at;
     q1_character character_state;
 } q1_player;
-typedef struct q1_actor_snapshot {
-    struct q1_actor_snapshot *next;
-    qa_builtin_actor_snapshot shared;
-    bool borrowed;
-} q1_actor_snapshot;
 typedef struct q1_rogue_rune_player {
     struct q1_rogue_rune_player *next;
     qa_actor_id actor;
@@ -488,7 +483,7 @@ struct qa_q1_game {
     qa_string_id player_model, eyes_model, player_head_model;
     qa_item_id vengeance_item;
     qa_supply *source_supply;
-    q1_actor_snapshot *snapshots;
+    qa_builtin_snapshot_frame *snapshots;
     size_t observation_depth;
     size_t retention_depth;
     bool destroy_pending;
@@ -746,10 +741,10 @@ bool q1_armagon_action(qa_q1_game *, q1_actor *, q1_frame_action, qa_error *);
 bool q1_armagon_attack(qa_q1_game *, q1_actor *, bool *, qa_error *);
 bool q1_armagon_think(qa_q1_game *, q1_actor *, q1_think_kind, qa_error *);
 bool q1_multi_explosion_think(qa_q1_game *, q1_actor *, qa_error *);
-bool q1_radius_snapshot(qa_q1_game *, qa_vec3, float, q1_actor_snapshot **, qa_error *);
-bool q1_snapshot_actors(qa_q1_game *, q1_actor_snapshot **, qa_error *);
-bool q1_snapshot_players(qa_q1_game *, q1_actor_snapshot **, qa_error *);
-bool q1_snapshot_targets(qa_q1_game *, qa_targets *, qa_string_id, q1_actor_snapshot **,
+bool q1_radius_snapshot(qa_q1_game *, qa_vec3, float, qa_builtin_snapshot_frame **, qa_error *);
+bool q1_snapshot_actors(qa_q1_game *, qa_builtin_snapshot_frame **, qa_error *);
+bool q1_snapshot_players(qa_q1_game *, qa_builtin_snapshot_frame **, qa_error *);
+bool q1_snapshot_targets(qa_q1_game *, qa_targets *, qa_string_id, qa_builtin_snapshot_frame **,
                          qa_error *);
 bool q1_gremlin_spawn(qa_q1_game *, q1_actor *, qa_error *);
 bool q1_gremlin_action(qa_q1_game *, q1_actor *, q1_frame_action, qa_error *);

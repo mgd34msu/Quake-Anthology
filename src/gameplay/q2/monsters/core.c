@@ -2037,7 +2037,7 @@ bool qa_q2_monsters_end_frame(qa_q2_game *game, qa_error *error) {
   }
   if (game->options.edition != QA_Q2_RERELEASE)
     return true;
-  q2_trace_frame *snapshot = q2_scratch_acquire(game, error);
+  qa_builtin_snapshot_frame *snapshot = q2_scratch_acquire(game, error);
   if (!snapshot)
     return false;
   bool ok = qa_builtin_observations(&game->services, &snapshot->snapshot, error);
@@ -2061,7 +2061,7 @@ bool qa_q2_monsters_end_frame(qa_q2_game *game, qa_error *error) {
       }
     }
   }
-  snapshot->active = false;
+  qa_builtin_snapshot_release(snapshot);
   return ok;
 }
 

@@ -26,12 +26,12 @@ static bool oldnew_credits(qa_q1_game *g, qa_error *error) {
 bool q1_addon_omnicide(qa_q1_game *g, qa_actor_id actor, qa_error *error) {
     if (!g->maps || !g->maps->options.targets)
         return q1_map_fail(error, "Q1 omnicide requires authored target ownership");
-    q1_actor_snapshot *snapshot;
+    qa_builtin_snapshot_frame *snapshot;
     if (!q1_snapshot_actors(g, &snapshot, error))
         return false;
     bool ok = true;
-    for (size_t i = 0; ok && !g->destroy_pending && i < snapshot->shared.count; ++i) {
-        qa_actor_id id = snapshot->shared.ids[i];
+    for (size_t i = 0; ok && !g->destroy_pending && i < snapshot->snapshot.count; ++i) {
+        qa_actor_id id = snapshot->snapshot.ids[i];
         q1_actor *native = q1_entity(g, id);
         bool monster = native && native->native && native->kind == Q1_MONSTER &&
                        ((native->physics.flags & QA_PHYSICS_MONSTER) ||
@@ -74,7 +74,7 @@ bool q1_addon_omnicide(qa_q1_game *g, qa_actor_id actor, qa_error *error) {
         else
             ok = q1_map_fail(error, "Q1 omnicide requires selected monster retirement owner");
     }
-    snapshot->borrowed = false;
+    qa_builtin_snapshot_release(snapshot);
     if (!ok || g->destroy_pending)
         return ok;
     g->killed_monsters = g->total_monsters;

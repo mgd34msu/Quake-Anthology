@@ -62,19 +62,19 @@ static bool activator(qa_q1_game *g, qa_actor_id actor, qa_q1_map_mover_view *vi
         return false;
     if (!q1_map_text(g, name))
         return true;
-    q1_actor_snapshot *list;
+    qa_builtin_snapshot_frame *list;
     if (!q1_snapshot_actors(g, &list, error))
         return false;
-    q1_actor_snapshot *queue;
+    qa_builtin_snapshot_frame *queue;
     if (!q1_snapshot_actors(g, &queue, error)) {
-        list->borrowed = false;
+        qa_builtin_snapshot_release(list);
         return false;
     }
-    queue->shared.count = 0;
+    queue->snapshot.count = 0;
     bool ok = true;
     for (;;) {
-        for (size_t i = 0; i < list->shared.count; ++i) {
-            q1_actor *candidate = mapped(g, list->shared.ids[i]);
+        for (size_t i = 0; i < list->snapshot.count; ++i) {
+            q1_actor *candidate = mapped(g, list->snapshot.ids[i]);
             if (!candidate || candidate->target != name)
                 continue;
             q1_map_kind kind = candidate->map->kind;
@@ -90,20 +90,20 @@ static bool activator(qa_q1_game *g, qa_actor_id actor, qa_q1_map_mover_view *vi
                 }
             } else if ((kind == Q1_MAP_RELAY || kind == Q1_MAP_DELAY) &&
                        q1_map_text(g, candidate->targetname)) {
-                queue->shared.ids[queue->shared.count++] = candidate->id;
+                queue->snapshot.ids[queue->snapshot.count++] = candidate->id;
                 /* Removing queued relays bounds branching paths and cycles. */
-                list->shared.ids[i] = list->shared.ids[--list->shared.count];
+                list->snapshot.ids[i] = list->snapshot.ids[--list->snapshot.count];
                 --i;
             }
         }
-        if (!queue->shared.count)
+        if (!queue->snapshot.count)
             break;
-        e = mapped(g, queue->shared.ids[--queue->shared.count]);
+        e = mapped(g, queue->snapshot.ids[--queue->snapshot.count]);
         name = e ? e->targetname : QA_STRING_NONE;
     }
 done:
-    queue->borrowed = false;
-    list->borrowed = false;
+    qa_builtin_snapshot_release(queue);
+    qa_builtin_snapshot_release(list);
     return ok;
 }
 static bool train_stops(qa_q1_game *g, qa_actor_id actor, q1_map_kind kind,

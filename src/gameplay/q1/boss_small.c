@@ -14,10 +14,10 @@ qa_vec3 q1_boss_angles(qa_vec3 v) {
                  qa_builtin_angle_mod(atan2f(v.y, v.x) * 57.29577951308232f), 0);
 }
 bool q1_boss_first_player(qa_q1_game *g, qa_actor_id *out, qa_error *error) {
-    q1_actor_snapshot *snapshot;
+    qa_builtin_snapshot_frame *snapshot;
     if (!q1_snapshot_players(g, &snapshot, error)) return false;
-    *out = snapshot->shared.count ? snapshot->shared.ids[0] : (qa_actor_id){0};
-    snapshot->borrowed = false;
+    *out = snapshot->snapshot.count ? snapshot->snapshot.ids[0] : (qa_actor_id){0};
+    qa_builtin_snapshot_release(snapshot);
     return true;
 }
 
@@ -686,12 +686,12 @@ bool q1_shub_grenade_touch(qa_q1_game *g, q1_actor *e, qa_actor_id other, qa_err
 }
 bool q1_spawn_shub_zombie(qa_q1_game *g, qa_actor_id *out, qa_error *error) {
     *out = (qa_actor_id){0};
-    q1_actor_snapshot *snapshot;
+    qa_builtin_snapshot_frame *snapshot;
     if (!q1_snapshot_actors(g, &snapshot, error))
         return false;
     size_t alive = 0, eligible = 0;
-    for (size_t i = 0; i < snapshot->shared.count; ++i) {
-        q1_actor *e = q1_entity(g, snapshot->shared.ids[i]);
+    for (size_t i = 0; i < snapshot->snapshot.count; ++i) {
+        q1_actor *e = q1_entity(g, snapshot->snapshot.ids[i]);
         if (!e)
             continue;
         alive += q1_classnamed(g, e->id, "monster_szombie");
@@ -699,20 +699,20 @@ bool q1_spawn_shub_zombie(qa_q1_game *g, qa_actor_id *out, qa_error *error) {
             ++eligible;
     }
     if (alive > 32 || !eligible) {
-        snapshot->borrowed = false;
+        qa_builtin_snapshot_release(snapshot);
         return true;
     }
     size_t selected = (size_t)floorf(q1_random(g) * (float)(eligible - 1) + .5f);
     qa_actor_id point = {0};
-    for (size_t i = 0; i < snapshot->shared.count; ++i) {
-        q1_actor *e = q1_entity(g, snapshot->shared.ids[i]);
+    for (size_t i = 0; i < snapshot->snapshot.count; ++i) {
+        q1_actor *e = q1_entity(g, snapshot->snapshot.ids[i]);
         if (e && q1_classnamed(g, e->id, "info_szombie_spawn") && selected-- == 0) {
             point = e->id;
             e->wait = (float)(g->time + 8);
             break;
         }
     }
-    snapshot->borrowed = false;
+    qa_builtin_snapshot_release(snapshot);
     q1_actor *zombie;
     if (!q1_create(g, "monster_szombie", Q1_MONSTER, point, &zombie, error))
         return false;

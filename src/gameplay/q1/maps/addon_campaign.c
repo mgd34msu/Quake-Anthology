@@ -54,14 +54,14 @@ bool q1_map_addon_sigil_touch(qa_q1_game *g, q1_actor *e, qa_actor_id other,
     if (!e)
         return true;
     const char *message = qa_strings_cstr(qa_session_strings(g->services.session), e->map->netname);
-    q1_actor_snapshot *players;
+    qa_builtin_snapshot_frame *players;
     if (!q1_snapshot_players(g, &players, error))
         return false;
     bool ok = true;
-    for (size_t i = 0; ok && i < players->shared.count && q1_alive(g, id); ++i)
-        if (q1_alive(g, players->shared.ids[i]))
-            ok = q1_message(g, players->shared.ids[i], message ? message : "", error);
-    players->borrowed = false;
+    for (size_t i = 0; ok && i < players->snapshot.count && q1_alive(g, id); ++i)
+        if (q1_alive(g, players->snapshot.ids[i]))
+            ok = q1_message(g, players->snapshot.ids[i], message ? message : "", error);
+    qa_builtin_snapshot_release(players);
     if (!ok)
         return false;
     e = campaign_actor(g, id);
@@ -102,10 +102,10 @@ bool q1_map_addon_sigil_touch(qa_q1_game *g, q1_actor *e, qa_actor_id other,
         if (horde != 0) {
             if (!q1_snapshot_players(g, &players, error))
                 return false;
-            for (size_t i = 0; ok && i < players->shared.count && q1_alive(g, id); ++i)
-                if (q1_alive(g, players->shared.ids[i]))
-                    ok = q1_map_addon_hunger(g, players->shared.ids[i], (float)(g->time + 10), error);
-            players->borrowed = false;
+            for (size_t i = 0; ok && i < players->snapshot.count && q1_alive(g, id); ++i)
+                if (q1_alive(g, players->snapshot.ids[i]))
+                    ok = q1_map_addon_hunger(g, players->snapshot.ids[i], (float)(g->time + 10), error);
+            qa_builtin_snapshot_release(players);
             if (!ok)
                 return false;
         }
@@ -170,12 +170,12 @@ bool q1_map_addon_campaign_use(qa_q1_game *g, q1_actor *e, qa_actor_id activator
                                qa_error *error) {
     if (e->map->kind == Q1_MAP_EGG_OPENER) {
         qa_actor_id id = e->id;
-        q1_actor_snapshot *targets;
+        qa_builtin_snapshot_frame *targets;
         if (!q1_snapshot_targets(g, g->maps->options.targets, e->target, &targets, error))
             return false;
         bool ok = true;
-        for (size_t i = 0; ok && i < targets->shared.count && campaign_actor(g, id); ++i) {
-            qa_actor_id actor = targets->shared.ids[i];
+        for (size_t i = 0; ok && i < targets->snapshot.count && campaign_actor(g, id); ++i) {
+            qa_actor_id actor = targets->snapshot.ids[i];
             qa_authored_target fields;
             if (!qa_targets_read(g->maps->options.targets, actor, &fields))
                 continue;
@@ -192,7 +192,7 @@ bool q1_map_addon_campaign_use(qa_q1_game *g, q1_actor *e, qa_actor_id activator
             else
                 ok = q1_map_fail(error, "Q1 egg opener requires the selected mover owner");
         }
-        targets->borrowed = false;
+        qa_builtin_snapshot_release(targets);
         return ok;
     }
     if (e->map->kind == Q1_MAP_RUNE_INDICATOR) {

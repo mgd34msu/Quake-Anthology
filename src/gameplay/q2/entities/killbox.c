@@ -64,18 +64,12 @@ bool q2_killbox(qa_q2_game *g, qa_actor_id id, qa_actor_id credited, bool spawni
         return false;
     qa_bounds box = {qa_vec_add(body.origin, body.bounds.mins),
                      qa_vec_add(body.origin, body.bounds.maxs)};
-    q2_trace_frame *frame = q2_scratch_acquire(g, e);
+    qa_builtin_snapshot_frame *frame = q2_scratch_acquire(g, e);
     if (!frame)
         return false;
     bool okay = false;
-    const qa_actor_registry *actors = qa_session_actors(g->services.session);
-    if (!qa_builtin_snapshot_reserve(&frame->snapshot, qa_actors_count(actors), e))
+    if (!qa_builtin_observations(&g->services, &frame->snapshot, e))
         goto out;
-    frame->snapshot.count = 0;
-    uint32_t cursor = 0;
-    const qa_actor_record *record;
-    while (qa_actors_next(actors, &cursor, &record))
-        frame->snapshot.ids[frame->snapshot.count++] = record->id;
     qa_builtin_actor_traits source_traits = {0};
     if (g->services.actor_traits)
         g->services.actor_traits(g->services.context, id, &source_traits);
@@ -124,7 +118,7 @@ bool q2_killbox(qa_q2_game *g, qa_actor_id id, qa_actor_id credited, bool spawni
     }
     okay = true;
 out:
-    frame->active = false;
+    qa_builtin_snapshot_release(frame);
     return okay;
 }
 bool qa_q2_entities_killbox(qa_q2_game *g, qa_actor_id id, qa_actor_id credited, bool *clear,

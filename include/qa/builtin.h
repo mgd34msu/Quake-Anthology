@@ -281,6 +281,17 @@ typedef struct qa_builtin_actor_snapshot {
 } qa_builtin_actor_snapshot;
 bool qa_builtin_snapshot_reserve(qa_builtin_actor_snapshot *, size_t, qa_error *);
 void qa_builtin_snapshot_free(qa_builtin_actor_snapshot *);
+/* Zero-initialize a provider's pool. Nested queries borrow distinct retained
+ * frames until release; free the pool only after all queries have returned. */
+typedef struct qa_builtin_snapshot_frame {
+    struct qa_builtin_snapshot_frame *next;
+    qa_builtin_actor_snapshot snapshot;
+    bool active;
+} qa_builtin_snapshot_frame;
+qa_builtin_snapshot_frame *qa_builtin_snapshot_acquire(qa_builtin_snapshot_frame **,
+                                                       size_t, qa_error *);
+void qa_builtin_snapshot_release(qa_builtin_snapshot_frame *);
+void qa_builtin_snapshot_pool_free(qa_builtin_snapshot_frame **);
 /* Nearby includes bodies without collision membership and measures origins,
  * then sorts using physics.source_order. Players preserves client order. */
 bool qa_builtin_nearby(const qa_builtin_services *, qa_vec3 origin, float radius,
