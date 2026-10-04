@@ -707,25 +707,10 @@ static qa_command_result command(void *opaque, const qa_command_invocation *invo
 {
     struct application_native_q1_console *owner = opaque;
     ++owner->calls;
-    application_provider *p = owner->provider;
-    qa_command_result result = application_command_fallback(p->application, invocation, error);
-    const qa_application_startup_hooks *hooks = p->application->startup_hooks;
-    if (result == QA_COMMAND_UNHANDLED && hooks && hooks->source_common_command) {
-        const qa_launch_instance *descriptor = source_descriptor(p);
-        if (!descriptor) {
-            --owner->calls;
-            application_fail(error, QA_ERROR_ARGUMENT, "Native Source command lost its actual published descriptor");
-            return QA_COMMAND_FAILED;
-        }
-        qa_application_startup_source source = {.descriptor = descriptor,
-            .scope = {.provider = p->owner, .kind = QA_APPLICATION_CONSOLE_Q1_GAME},
-            .console = owner->console, .cvars = owner->cvars, .command = invocation->context,
-            .declaration_owner = p->owner};
-        bool handled = false;
-        bool okay = hooks->source_common_command(hooks->context, p->application,
-            &source, invocation, &handled, error);
-        result = !okay ? QA_COMMAND_FAILED : handled ? QA_COMMAND_HANDLED : QA_COMMAND_UNHANDLED;
-    }
+    qa_command_result result = application_startup_common_command(owner->provider,
+        owner->console, owner->cvars, invocation, error);
+    if (result == QA_COMMAND_UNHANDLED)
+        result = application_command_fallback(owner->provider->application, invocation, error);
     --owner->calls;
     return result;
 }
