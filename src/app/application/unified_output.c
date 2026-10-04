@@ -373,8 +373,7 @@ bool application_unified_output_build(qa_application *app, const application_uni
         qa_json_id value = qa_json_get(json, qa_unified_document_root(control), "value");
         if (!qa_json_u64(json, qa_json_get(json, value, "epoch"), &control_epoch, error)) { ok = false; break; }
         if (control_epoch != epoch) { ok = application_fail(error, QA_ERROR_ARGUMENT, "Unified prerequisite belongs to another epoch"); break; }
-        qa_bytes bytes = qa_json_source(json, qa_unified_document_root(control));
-        ok = qa_unified_document_create(QA_UNIFIED_CONTROL_DOCUMENT, bytes,
+        ok = qa_unified_document_retain(control,
             candidate.controls + candidate.control_count, error);
         if (ok) ++candidate.control_count;
     }
