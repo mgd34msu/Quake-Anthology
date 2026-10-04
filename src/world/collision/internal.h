@@ -12,10 +12,17 @@ typedef struct qa_collision_ops {
     bool (*point_contents)(void *, const qa_point_query *, qa_point_contents *, qa_error *);
 } qa_collision_ops;
 typedef struct qa_collision_kernel { void *state; const qa_collision_ops *ops; } qa_collision_kernel;
-bool qa_q1_collision_create(const qa_bsp_view *, qa_collision_kernel *, qa_error *);
-bool qa_q2_collision_create(const qa_bsp_view *, qa_collision_kernel *, qa_error *);
+typedef struct qa_collision_node { uint32_t plane; int32_t children[2]; } qa_collision_node;
+/* Geometry owns these immutable tables for the lifetime of its kernel. */
+typedef struct qa_collision_topology {
+    const qa_collision_plane *planes;
+    const qa_collision_node *nodes;
+    size_t plane_count, node_count;
+} qa_collision_topology;
+bool qa_q1_collision_create(const qa_bsp_view *, const qa_collision_topology *, qa_collision_kernel *, qa_error *);
+bool qa_q2_collision_create(const qa_bsp_view *, const qa_collision_topology *, qa_collision_kernel *, qa_error *);
 bool qa_q2_collision_set_material(void *, uint32_t texinfo, qa_bytes, qa_error *);
-bool qa_q3_collision_create(const qa_bsp_view *, qa_collision_kernel *, qa_error *);
+bool qa_q3_collision_create(const qa_bsp_view *, const qa_collision_topology *, qa_collision_kernel *, qa_error *);
 /* Temporary actor geometry. Q1 preserves recursive box-hull behavior; Q3
  * implements boxes and capsules, including capsule-vs-capsule sweeps. */
 bool qa_q1_trace_box(const qa_trace_query *, qa_bounds target, qa_vec3 origin, qa_trace_result *, qa_error *);

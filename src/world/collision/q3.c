@@ -14,7 +14,6 @@ typedef struct q3_patch_record {
     int32_t contents, flags;
     uint32_t visited;
 } q3_patch_record;
-typedef struct q3_node { uint32_t plane; int32_t children[2]; } q3_node;
 typedef struct q3_leaf { qa_bsp_range brushes, surfaces; } q3_leaf;
 typedef struct q3_model {
     uint32_t *brushes, *surfaces;
@@ -23,11 +22,11 @@ typedef struct q3_model {
 typedef struct q3_step { int32_t node; float first, last; qa_vec3 start, end; } q3_step;
 typedef struct q3_interval { float first, last; } q3_interval;
 typedef struct q3_map {
-    qa_collision_plane *planes;
+    const qa_collision_plane *planes;
     q3_side *sides;
     q3_brush *brushes;
     q3_patch_record *patches;
-    q3_node *nodes;
+    const qa_collision_node *nodes;
     q3_leaf *leaves;
     uint32_t *leaf_brushes, *leaf_surfaces;
     q3_model *models;
@@ -68,8 +67,8 @@ static void q3_destroy(void *state) {
     }
     if (map->patches != NULL) for (size_t i = 0; i < map->patch_count; ++i)
         qa_q3_patch_destroy(map->patches[i].collide);
-    free(map->planes); free(map->sides); free(map->brushes); free(map->patches);
-    free(map->nodes); free(map->leaves); free(map->leaf_brushes); free(map->leaf_surfaces);
+    free(map->sides); free(map->brushes); free(map->patches);
+    free(map->leaves); free(map->leaf_brushes); free(map->leaf_surfaces);
     free(map->models); free(map->steps); free(map->pending); free(map->intervals); free(map);
 }
 
@@ -113,7 +112,7 @@ static void q3_visit_box(q3_map *map, qa_bounds bounds, q3_leaf_visit visit, voi
             if (!visit(context, (uint32_t)(-1 - index))) return;
             continue;
         }
-        const q3_node *node = &map->nodes[index];
+        const qa_collision_node *node = &map->nodes[index];
         unsigned side = q3_box_side(bounds, map->planes[node->plane]);
         if (side != 1) map->pending[count++] = node->children[1];
         if (side != 2) map->pending[count++] = node->children[0];
@@ -206,7 +205,7 @@ static void q3_trace_tree(q3_work *work) {
         q3_step step = map->steps[--count];
         if (work->result.fraction <= step.first) continue;
         if (step.node < 0) { (void)q3_trace_leaf(work, (uint32_t)(-1 - step.node)); continue; }
-        const q3_node *node = &map->nodes[step.node];
+        const qa_collision_node *node = &map->nodes[step.node];
         qa_collision_plane plane = map->planes[node->plane];
         float first = q3_plane_distance(plane, step.start), last = q3_plane_distance(plane, step.end);
         float offset = 0;
@@ -444,7 +443,7 @@ static bool q3_point_contents(void *state, const qa_point_query *query, qa_point
     } else {
         int32_t index = map->node_count != 0 ? 0 : -1;
         while (index >= 0) {
-            const q3_node *node = &map->nodes[index];
+            const qa_collision_node *node = &map->nodes[index];
             index = node->children[q3_plane_distance(map->planes[node->plane], point) < 0 ? 1 : 0];
         }
         const q3_leaf *leaf = &map->leaves[-1 - index];
@@ -510,24 +509,26 @@ static bool q3_load_model(q3_map *map, const qa_bsp_model *source, q3_model *mod
     return true;
 }
 
-bool qa_q3_collision_create(const qa_bsp_view *bsp, qa_collision_kernel *out, qa_error *error) {
+bool qa_q3_collision_create(const qa_bsp_view *bsp, const qa_collision_topology *topology, qa_collision_kernel *out, qa_error *error) {
     static const qa_collision_ops ops = {q3_destroy, q3_trace, q3_point_contents};
     q3_map *map = q3_alloc(1, sizeof(*map), error);
     if (map == NULL) return false;
-    map->plane_count = qa_bsp_record_count(bsp, QA_BSP_PLANES);
+    map->planes = topology->planes;
+    map->nodes = topology->nodes;
+    map->plane_count = topology->plane_count;
     map->side_count = qa_bsp_record_count(bsp, QA_BSP_BRUSH_SIDES);
     map->brush_count = qa_bsp_record_count(bsp, QA_BSP_BRUSHES);
     map->patch_count = qa_bsp_record_count(bsp, QA_BSP_SURFACES);
-    map->node_count = qa_bsp_record_count(bsp, QA_BSP_NODES);
+    map->node_count = topology->node_count;
     map->leaf_count = qa_bsp_record_count(bsp, QA_BSP_LEAVES);
     map->model_count = qa_bsp_record_count(bsp, QA_BSP_MODELS);
     if (map->leaf_count == 0 || map->model_count == 0) {
         qa_error_set(error, QA_ERROR_FORMAT, 0, "Q3 collision map has no leaves or models"); goto fail;
     }
 #define Q3_ALLOC(member, count) do { map->member = q3_alloc((count), sizeof(*map->member), error); if ((count) != 0 && map->member == NULL) goto fail; } while (0)
-    Q3_ALLOC(planes, map->plane_count); Q3_ALLOC(sides, map->side_count);
+    Q3_ALLOC(sides, map->side_count);
     Q3_ALLOC(brushes, map->brush_count); Q3_ALLOC(patches, map->patch_count);
-    Q3_ALLOC(nodes, map->node_count); Q3_ALLOC(leaves, map->leaf_count);
+    Q3_ALLOC(leaves, map->leaf_count);
     Q3_ALLOC(models, map->model_count); Q3_ALLOC(steps, map->node_count + 1);
     Q3_ALLOC(pending, map->node_count + 1);
     if (map->brush_count > SIZE_MAX / 2) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Q3 media interval count overflow"); goto fail; }
@@ -535,12 +536,6 @@ bool qa_q3_collision_create(const qa_bsp_view *bsp, qa_collision_kernel *out, qa
 #undef Q3_ALLOC
     if (!q3_load_indices(bsp, QA_BSP_LEAF_BRUSHES, &map->leaf_brushes, error)
         || !q3_load_indices(bsp, QA_BSP_LEAF_FACES, &map->leaf_surfaces, error)) goto fail;
-    for (size_t i = 0; i < map->plane_count; ++i) {
-        qa_bsp_plane plane;
-        if (!qa_bsp_read_plane(bsp, i, &plane, error)) goto fail;
-        int32_t type = plane.normal.x == 1 ? 0 : plane.normal.y == 1 ? 1 : plane.normal.z == 1 ? 2 : 3;
-        map->planes[i] = qa_collision_make_plane(qa_bsp_to_vec(plane.normal), plane.distance, type);
-    }
     for (size_t i = 0; i < map->side_count; ++i) {
         qa_bsp_brush_side side;
         if (!qa_bsp_read_brush_side(bsp, i, &side, error)) goto fail;
@@ -570,11 +565,6 @@ bool qa_q3_collision_create(const qa_bsp_view *bsp, qa_collision_kernel *out, qa
             qa_vec_set_component(&brush->bounds.mins, axis, -map->planes[map->sides[first].plane].distance);
             qa_vec_set_component(&brush->bounds.maxs, axis, map->planes[map->sides[first + 1].plane].distance);
         }
-    }
-    for (size_t i = 0; i < map->node_count; ++i) {
-        qa_bsp_node node;
-        if (!qa_bsp_read_node(bsp, i, &node, error)) goto fail;
-        map->nodes[i] = (q3_node){node.plane, {node.children[0], node.children[1]}};
     }
     for (size_t i = 0; i < map->leaf_count; ++i) {
         qa_bsp_leaf leaf;

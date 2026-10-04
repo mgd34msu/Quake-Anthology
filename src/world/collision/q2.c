@@ -6,11 +6,6 @@
 #define Q2_DISTANCE_EPSILON 0.03125f
 #define Q2_POSITION_LEAF_LIMIT 1024u
 
-typedef struct q2_node {
-    uint32_t plane;
-    int32_t children[2];
-} q2_node;
-
 typedef struct q2_leaf {
     int32_t stored, merged;
     qa_bsp_range brushes;
@@ -40,8 +35,8 @@ typedef struct q2_plane_support {
 } q2_plane_support;
 
 typedef struct q2_collision {
-    qa_collision_plane *planes;
-    q2_node *nodes;
+    const qa_collision_plane *planes;
+    const qa_collision_node *nodes;
     q2_leaf *leaves;
     qa_bsp_brush *brushes;
     q2_side *sides;
@@ -78,8 +73,6 @@ static void q2_destroy(void *opaque)
 {
     q2_collision *collision = opaque;
     if (collision == NULL) return;
-    free(collision->planes);
-    free(collision->nodes);
     free(collision->leaves);
     free(collision->brushes);
     free(collision->sides);
@@ -144,7 +137,7 @@ static bool q2_validate_trees(q2_collision *collision, qa_error *error)
         while (depth != 0) {
             size_t index = (size_t)collision->node_stack[depth - 1];
             colors[index] = 1;
-            const q2_node *node = &collision->nodes[index];
+            const qa_collision_node *node = &collision->nodes[index];
             bool descended = false;
             for (unsigned side = 0; side < 2; ++side) {
                 int32_t child = node->children[side];
@@ -277,7 +270,7 @@ static bool q2_point_contents(void *opaque, const qa_point_query *query,
     qa_vec3 point = q2_local(query->point, &query->target, basis);
     int32_t child = collision->headnodes[model];
     while (child >= 0) {
-        const q2_node *node = &collision->nodes[(size_t)child];
+        const qa_collision_node *node = &collision->nodes[(size_t)child];
         float distance = q2_plane_distance(point, &collision->planes[node->plane]);
         child = node->children[distance < 0 ? 1 : 0];
     }
@@ -367,7 +360,7 @@ static void q2_trace_leaf(q2_work *work, size_t index)
 }
 
 /* Push back first so the front child is visited first, including exact ties. */
-static void q2_box_children(q2_collision *collision, const q2_node *node,
+static void q2_box_children(q2_collision *collision, const qa_collision_node *node,
                             qa_bounds bounds, size_t *depth)
 {
     const qa_collision_plane *plane = &collision->planes[node->plane];
@@ -424,7 +417,7 @@ static void q2_sweep(q2_work *work, int32_t headnode)
             q2_trace_leaf(work, q2_leaf_index(frame.child));
             goto next_frame;
         }
-        const q2_node *node = &collision->nodes[(size_t)frame.child];
+        const qa_collision_node *node = &collision->nodes[(size_t)frame.child];
         const qa_collision_plane *plane = &collision->planes[node->plane];
         float first = q2_plane_distance(frame.start, plane);
         float last = q2_plane_distance(frame.end, plane);
@@ -647,7 +640,7 @@ bool qa_q2_collision_set_material(void *opaque, uint32_t texinfo, qa_bytes bytes
     return true;
 }
 
-bool qa_q2_collision_create(const qa_bsp_view *map, qa_collision_kernel *out, qa_error *error)
+bool qa_q2_collision_create(const qa_bsp_view *map, const qa_collision_topology *topology, qa_collision_kernel *out, qa_error *error)
 {
     if (map == NULL || out == NULL || map->family != QA_BSP_Q2) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q2 collision requires a Q2 BSP view");
@@ -658,8 +651,10 @@ bool qa_q2_collision_create(const qa_bsp_view *map, qa_collision_kernel *out, qa
         qa_error_set(error, QA_ERROR_MEMORY, 0, "Unable to allocate Q2 collision state");
         return false;
     }
-    collision->plane_count = qa_bsp_record_count(map, QA_BSP_PLANES);
-    collision->node_count = qa_bsp_record_count(map, QA_BSP_NODES);
+    collision->planes = topology->planes;
+    collision->nodes = topology->nodes;
+    collision->plane_count = topology->plane_count;
+    collision->node_count = topology->node_count;
     collision->leaf_count = qa_bsp_record_count(map, QA_BSP_LEAVES);
     collision->brush_count = qa_bsp_record_count(map, QA_BSP_BRUSHES);
     collision->side_count = qa_bsp_record_count(map, QA_BSP_BRUSH_SIDES);
@@ -676,8 +671,6 @@ bool qa_q2_collision_create(const qa_bsp_view *map, qa_collision_kernel *out, qa
     collision->member = q2_array((count), sizeof(*collision->member), error); \
     if ((count) != 0 && collision->member == NULL) goto fail; \
 } while (0)
-    Q2_ALLOC(planes, collision->plane_count);
-    Q2_ALLOC(nodes, collision->node_count);
     Q2_ALLOC(leaves, collision->leaf_count);
     Q2_ALLOC(brushes, collision->brush_count);
     Q2_ALLOC(sides, collision->side_count);
@@ -692,20 +685,13 @@ bool qa_q2_collision_create(const qa_bsp_view *map, qa_collision_kernel *out, qa
     Q2_ALLOC(intervals, collision->brush_count);
     Q2_ALLOC(solid_intervals, collision->brush_count);
 #undef Q2_ALLOC
-    for (size_t i = 0; i < collision->plane_count; ++i) {
-        qa_bsp_plane plane;
-        if (!qa_bsp_read_plane(map, i, &plane, error)) goto fail;
-        collision->planes[i] = qa_collision_bsp_plane(plane);
-    }
     for (size_t i = 0; i < collision->node_count; ++i) {
-        qa_bsp_node node;
-        if (!qa_bsp_read_node(map, i, &node, error)) goto fail;
-        if ((size_t)node.plane >= collision->plane_count
-            || !q2_child_valid(collision, node.children[0]) || !q2_child_valid(collision, node.children[1])) {
+        const qa_collision_node *node = &collision->nodes[i];
+        if ((size_t)node->plane >= collision->plane_count
+            || !q2_child_valid(collision, node->children[0]) || !q2_child_valid(collision, node->children[1])) {
             q2_bad_reference(error, "node", i);
             goto fail;
         }
-        collision->nodes[i] = (q2_node){node.plane, {node.children[0], node.children[1]}};
     }
     for (size_t i = 0; i < collision->surface_count; ++i) {
         qa_bsp_texinfo texture;

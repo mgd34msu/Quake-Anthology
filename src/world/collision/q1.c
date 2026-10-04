@@ -33,7 +33,7 @@ typedef struct q1clip_cache {
 typedef struct q1state {
     qa_bsp_view bsp;
     qa_arena retained,scratch;
-    qa_collision_plane *planes; size_t plane_count;
+    const qa_collision_plane *planes; size_t plane_count;
     q1node *drawing,*clip; size_t drawing_count,clip_count;
     int32_t *leaf_contents; size_t leaf_count;
     q1model *models; size_t model_count;
@@ -563,30 +563,24 @@ static bool load_brushes(q1work *work,q1state *state) {
     }
     return true;
 }
-bool qa_q1_collision_create(const qa_bsp_view *bsp,qa_collision_kernel *out,qa_error *error) {
+bool qa_q1_collision_create(const qa_bsp_view *bsp,const qa_collision_topology *topology,qa_collision_kernel *out,qa_error *error) {
     if(bsp==NULL || out==NULL || bsp->family!=QA_BSP_Q1) { qa_error_set(error,QA_ERROR_ARGUMENT,0,"Quake collision requires a Q1 BSP"); return false; }
     q1state *state=calloc(1,sizeof(*state));
     if(state==NULL) { qa_error_set(error,QA_ERROR_MEMORY,0,"Cannot allocate Quake collision geometry"); return false; }
     state->bsp=*bsp; qa_arena_init(&state->retained,65536); qa_arena_init(&state->scratch,65536);
     q1work work={&state->retained,error,false};
-    state->plane_count=qa_bsp_record_count(bsp,QA_BSP_PLANES);
+    state->planes=topology->planes; state->plane_count=topology->plane_count;
     state->drawing_count=qa_bsp_record_count(bsp,QA_BSP_NODES);
     state->clip_count=qa_bsp_record_count(bsp,QA_BSP_CLIPNODES);
     state->leaf_count=qa_bsp_record_count(bsp,QA_BSP_LEAVES);
     state->model_count=qa_bsp_record_count(bsp,QA_BSP_MODELS);
     if(state->model_count==0) { qa_error_set(error,QA_ERROR_FORMAT,0,"Quake BSP has no world model"); goto fail; }
-    state->planes=q1_alloc(&work,state->plane_count,sizeof(*state->planes),alignof(qa_collision_plane));
     state->drawing=q1_alloc(&work,state->drawing_count,sizeof(*state->drawing),alignof(q1node));
     state->clip=q1_alloc(&work,state->clip_count,sizeof(*state->clip),alignof(q1node));
     state->leaf_contents=q1_alloc(&work,state->leaf_count,sizeof(*state->leaf_contents),alignof(int32_t));
     state->models=q1_alloc(&work,state->model_count,sizeof(*state->models),alignof(q1model));
     if(work.failed) goto fail;
     memset(state->models,0,state->model_count*sizeof(*state->models));
-    for(size_t i=0;i<state->plane_count;i++) {
-        qa_bsp_plane plane;
-        if(!qa_bsp_read_plane(bsp,i,&plane,error)) goto fail;
-        state->planes[i]=qa_collision_bsp_plane(plane);
-    }
     for(size_t i=0;i<state->leaf_count;i++) {
         qa_bsp_leaf leaf;
         if(!qa_bsp_read_leaf(bsp,i,&leaf,error)) goto fail;

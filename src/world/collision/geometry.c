@@ -5,7 +5,6 @@
 #include <limits.h>
 #include <stdlib.h>
 
-typedef struct geometry_node { uint32_t plane; int32_t children[2]; } geometry_node;
 typedef struct geometry_portal { uint32_t contributions; bool known, primary; } geometry_portal;
 typedef struct geometry_scratch {
     int32_t *nodes;
@@ -20,7 +19,7 @@ struct qa_collision_geometry {
     qa_collision_family family;
     qa_collision_kernel kernel;
     qa_collision_plane *planes;
-    geometry_node *nodes;
+    qa_collision_node *nodes;
     qa_collision_leaf *leaves;
     qa_bounds *model_bounds;
     size_t plane_count, node_count, leaf_count, model_count;
@@ -199,7 +198,7 @@ static bool load_topology(qa_collision_geometry *geometry, qa_error *error)
     for (size_t i = 0; i < geometry->node_count; ++i) {
         qa_bsp_node node;
         if (!qa_bsp_read_node(bsp, i, &node, error)) return false;
-        geometry->nodes[i] = (geometry_node){node.plane, {node.children[0], node.children[1]}};
+        geometry->nodes[i] = (qa_collision_node){node.plane, {node.children[0], node.children[1]}};
     }
     qa_bytes vis = bsp->lumps[QA_BSP_VISIBILITY].bytes;
     for (size_t i = 0; i < geometry->leaf_count; ++i) {
@@ -306,9 +305,11 @@ bool qa_collision_create(const qa_bsp_view *bsp, qa_collision_geometry **out, qa
         geometry->map_identity *= UINT64_C(1099511628211);
     }
     if (!load_topology(geometry, error) || !load_areas(geometry, error)) goto fail;
-    bool created = geometry->family == QA_COLLISION_Q1 ? qa_q1_collision_create(bsp, &geometry->kernel, error)
-        : geometry->family == QA_COLLISION_Q2 ? qa_q2_collision_create(bsp, &geometry->kernel, error)
-        : qa_q3_collision_create(bsp, &geometry->kernel, error);
+    const qa_collision_topology topology = {geometry->planes, geometry->nodes,
+        geometry->plane_count, geometry->node_count};
+    bool created = geometry->family == QA_COLLISION_Q1 ? qa_q1_collision_create(bsp, &topology, &geometry->kernel, error)
+        : geometry->family == QA_COLLISION_Q2 ? qa_q2_collision_create(bsp, &topology, &geometry->kernel, error)
+        : qa_q3_collision_create(bsp, &topology, &geometry->kernel, error);
     if (!created) goto fail;
     *out = geometry;
     return true;
@@ -452,7 +453,7 @@ bool qa_collision_point_leaf(const qa_collision_geometry *geometry, qa_vec3 poin
         return geometry_fail(error, QA_ERROR_ARGUMENT, "Invalid point-leaf query");
     int32_t child = geometry->root;
     while (child >= 0) {
-        const geometry_node *node = &geometry->nodes[(size_t)child];
+        const qa_collision_node *node = &geometry->nodes[(size_t)child];
         const qa_collision_plane *plane = &geometry->planes[node->plane];
         float projection = geometry->family == QA_COLLISION_Q3 && plane->type < 3
             ? qa_vec_component(point, (unsigned)plane->type) : qa_vec_dot(point, plane->normal);
@@ -514,7 +515,7 @@ bool qa_collision_box_leaves(const qa_collision_geometry *geometry, qa_bounds bo
             else result.overflow = true;
             continue;
         }
-        const geometry_node *node = &geometry->nodes[(size_t)child];
+        const qa_collision_node *node = &geometry->nodes[(size_t)child];
         unsigned side = box_side(geometry, bounds, &geometry->planes[node->plane]);
         if ((side == 3 || (geometry->family == QA_COLLISION_Q3 && side == 0)) && result.topnode == -1) result.topnode = child;
         if (geometry->family == QA_COLLISION_Q3) {
@@ -586,7 +587,7 @@ bool qa_collision_q1_fat_pvs(const qa_collision_geometry *geometry, qa_vec3 eye,
             for (size_t i = 0; i < geometry->visibility_bytes; ++i) bytes[i] |= row.data[i];
             continue;
         }
-        const geometry_node *node = &geometry->nodes[(size_t)child];
+        const qa_collision_node *node = &geometry->nodes[(size_t)child];
         const qa_collision_plane *plane = &geometry->planes[node->plane];
         float distance = qa_vec_dot(eye, plane->normal) - plane->distance;
         if (distance > 8) geometry->scratch->nodes[count++] = node->children[0];
@@ -617,7 +618,7 @@ bool qa_collision_q1_bounds_visible(const qa_collision_geometry *geometry, qa_by
             }
             continue;
         }
-        const geometry_node *node = &geometry->nodes[(size_t)child];
+        const qa_collision_node *node = &geometry->nodes[(size_t)child];
         const qa_collision_plane *plane = &geometry->planes[node->plane];
         unsigned side;
         if (plane->type < 3) {
