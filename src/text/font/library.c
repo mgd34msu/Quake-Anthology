@@ -586,10 +586,23 @@ static qa_font *policy_clone(qa_font_library *destination,const qa_font *source,
 bool qa_font_resource_policy_prepare(qa_font_library *source,qa_scene_resource_policy *images,
     qa_font_resource_policy **out,qa_error *error)
 {
-    if (!out || *out || !qa_font_library_idle(source) ||
-        qa_scene_resource_policy_source(images)!=source->resources ||
-        !qa_scene_resource_policy_destination(images))
-        return qa_font_fail(error,QA_ERROR_ARGUMENT,0,"Font policy requires its actual idle library and prepared resource bank");
+    if (!out || *out)
+        return qa_font_fail(error,QA_ERROR_ARGUMENT,0,"Font policy requires an empty actual handoff destination");
+    if (!qa_font_library_idle(source)) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,
+            "Font policy requires its returned library: present=%u capture=%u policy=%u codec=%u callbacks=%u",
+            source!=NULL,source && source->capture!=NULL,source && source->policy!=NULL,
+            source && source->codec_active,source?source->callbacks:0);
+        return false;
+    }
+    qa_scene_resources *bank=qa_scene_resource_policy_source(images);
+    qa_scene_resources *destination=qa_scene_resource_policy_destination(images);
+    if (bank!=source->resources || !destination) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,
+            "Font policy requires its prepared resource bank: font=%p supplied=%p destination=%p",
+            (void *)source->resources,(void *)bank,(void *)destination);
+        return false;
+    }
     qa_font_resource_policy *owner=calloc(1,sizeof(*owner));
     if (!owner) return qa_font_fail(error,QA_ERROR_MEMORY,0,"Retaining font resource handoff");
     owner->source=source; owner->images=images; owner->original_count=source->font_count;
