@@ -570,26 +570,44 @@ bool qa_material_library_checkpoint(const qa_material_library *source, const qa_
     }
     qa_source_save_io io = {0}; qa_material_library library = *source;
     size_t count = source->count, capacity = source->capacity;
+    const char *stage = "header and extent";
+    const qa_material_record *record = NULL; size_t ordinal = 0;
     bool ok = qa_source_save_writer(&io, NULL, error) && library_header(&io, &library, source, refs) &&
         qa_source_save_count(&io, &count, QA_MATERIAL_MAX_REGISTERED) &&
         qa_source_save_count(&io, &capacity, QA_MATERIAL_MAX_REGISTERED);
     for (size_t i = 0; ok && i < count; ++i) {
-        qa_material_record copy = *source->ordered[i]; uint64_t remapped = UINT64_MAX, parent = UINT64_MAX;
+        record = source->ordered[i]; ordinal = i; stage = "record ownership";
+        qa_material_record copy = *record; uint64_t remapped = UINT64_MAX, parent = UINT64_MAX;
         ok = copy.material.sorted_index == i && copy.material.registration < count &&
             copy.material.fog_image == source->fog_image && copy.material.dlight_image == source->dlight_image &&
-            qa_material_order_has_record(source->order, &source->ordered[i]->material) &&
-            qa_material_saved_record(&io, refs, &copy) && videos(&io, source, &copy, refs) &&
-            material_index(source, copy.material.remapped, &remapped) &&
-            qa_source_save_u64(&io, &remapped);
-        if (ok) ok = material_index(source, copy.source_variant_parent ? &copy.source_variant_parent->material : NULL, &parent) &&
-            qa_source_save_u64(&io, &parent) &&
-            (parent == UINT64_MAX || (qa_source_save_u64(&io, &copy.source_variant_revision) &&
-                qa_q3_image_upload_options_precision_codec(&io, &copy.source_variant_upload)));
+            qa_material_order_has_record(source->order, &record->material);
+        if (ok) { stage = "record fields"; ok = qa_material_saved_record(&io, refs, &copy); }
+        if (ok) { stage = "video receipts"; ok = videos(&io, source, &copy, refs); }
+        if (ok) { stage = "remapped record"; ok = material_index(source, copy.material.remapped, &remapped) &&
+            qa_source_save_u64(&io, &remapped); }
+        if (ok) { stage = "source variant";
+            ok = material_index(source, copy.source_variant_parent ? &copy.source_variant_parent->material : NULL, &parent) &&
+                qa_source_save_u64(&io, &parent) &&
+                (parent == UINT64_MAX || (qa_source_save_u64(&io, &copy.source_variant_revision) &&
+                    qa_q3_image_upload_options_precision_codec(&io, &copy.source_variant_upload))); }
     }
-    if (ok) ok = record_order(&io, &library) && remaps(&io, &library) && generated(&io, &library, refs) && qa_source_save_finish(&io, out);
+    if (ok) { record = NULL; stage = "bucket order"; ok = record_order(&io, &library); }
+    if (ok) { stage = "remap records"; ok = remaps(&io, &library); }
+    if (ok) { stage = "generated records"; ok = generated(&io, &library, refs); }
+    if (ok) { stage = "finish"; ok = qa_source_save_finish(&io, out); }
     qa_source_save_dispose(&io);
     qa_material_library_capture_end(source);
-    if (!ok && (!error || error->code == QA_OK)) fail(error, QA_ERROR_FORMAT, "invalid retained material library");
+    if (!ok && (!error || error->code == QA_OK)) {
+        if (record) qa_error_set(error, QA_ERROR_FORMAT, 0,
+            "invalid retained material library at %s: record %zu '%s', sorted %u registration %u count %zu, fog %u dlight %u order %u",
+            stage, ordinal, record->material.name ? record->material.name : "<absent>",
+            record->material.sorted_index, record->material.registration, count,
+            (unsigned)(record->material.fog_image == source->fog_image),
+            (unsigned)(record->material.dlight_image == source->dlight_image),
+            (unsigned)qa_material_order_has_record(source->order, &record->material));
+        else qa_error_set(error, QA_ERROR_FORMAT, 0,
+            "invalid retained material library at %s: count %zu capacity %zu", stage, count, capacity);
+    }
     return ok;
 }
 bool qa_material_library_restore(const qa_material_library *qualified, qa_bytes bytes,
