@@ -16,11 +16,6 @@ static qa_json_id control_value(const qa_unified_document *document)
     return qa_json_get(qa_unified_document_json(document), qa_unified_document_root(document), "value");
 }
 
-static bool document_clone(const qa_unified_document *document, qa_unified_document **out, qa_error *error)
-{
-    return qa_unified_document_create(qa_unified_document_type(document),
-        qa_json_source(qa_unified_document_json(document), qa_unified_document_root(document)), out, error);
-}
 static void player_receipt_clear(application_unified_server *owner)
 {
     qa_buffer_free(&owner->admitted_arsenal);
@@ -89,7 +84,7 @@ bool application_unified_server_offer(application_unified_server *owner, uint32_
     qa_unified_composition canonical = {0};
     bool okay = qa_unified_composition_create(qa_json_source(json,
         qa_json_get(json, composition, "composition")), &canonical, error) &&
-        application_unified_source_current(owner->application, &source) && document_clone(offer, &copy, error);
+        application_unified_source_current(owner->application, &source) && qa_unified_document_retain(offer, &copy, error);
     if (okay) okay = application_unified_components_destroy(&owner->components, error);
     if (okay && owner->inputs) {
         okay = application_unified_inputs_destroy(owner->inputs, error);
@@ -396,7 +391,7 @@ static bool restart(void *context, qa_network_runtime *runtime, qa_net_client_id
     return peer_is(owner, runtime, client) && epoch == owner->epoch && composition &&
         qa_sha256_equal(composition, &owner->composition) &&
         offered_current(owner) &&
-        document_clone(owner->offer, offer, error);
+        qa_unified_document_retain(owner->offer, offer, error);
 }
 
 static void closed(void *context, qa_net_client_id client)
@@ -584,13 +579,13 @@ bool application_unified_server_publish(application_unified_server *owner,
             &actual, owner->epoch, acknowledged, owner->events_after, owner->components, external, &capture, error)) return false;
         const application_unified_output *observed = application_unified_output_capture_value(capture);
         application_unified_output candidate = {0};
-        bool copied = document_clone(observed->frame, &candidate.frame, error);
+        bool copied = qa_unified_document_retain(observed->frame, &candidate.frame, error);
         if (copied && observed->control_count) {
             candidate.controls = calloc(observed->control_count, sizeof(*candidate.controls));
             if (!candidate.controls) copied = application_fail(error, QA_ERROR_MEMORY, "Retaining actual unified prerequisite controls");
         }
         for (size_t i = 0; copied && i < observed->control_count; ++i) {
-            copied = document_clone(observed->controls[i], candidate.controls + i, error);
+            copied = qa_unified_document_retain(observed->controls[i], candidate.controls + i, error);
             if (copied) ++candidate.control_count;
         }
         if (copied && !application_unified_output_capture_current(capture))
