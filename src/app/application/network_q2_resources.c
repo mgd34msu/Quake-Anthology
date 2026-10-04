@@ -1338,6 +1338,7 @@ static bool holder_fields(qa_application_network_q2 *owner, qa_source_save_io *i
         if (!qa_source_save_u64(io, &index) || index > UINT32_MAX) return false;
         if (io->direction == QA_SOURCE_SAVE_READ) held->dependencies[i] = index ? (size_t)(index - 1) : SIZE_MAX;
     }
+    if (io->direction == QA_SOURCE_SAVE_WRITE) return true;
     char actual[64];
     return qualified_name(held, actual, io->error) && (!strcmp(actual, held->wire_path) ||
         application_fail(io->error, QA_ERROR_FORMAT, "Q2 qualified model name differs from its actual Source acquisition"));
@@ -1368,24 +1369,20 @@ static bool retained_derivation(const qa_application_network_q2 *owner,
     return true;
 }
 
-static bool resources_capture(qa_application_network_q2 *owner, bool retained, qa_buffer *out, qa_error *error)
+bool application_network_q2_resources_capture(qa_application_network_q2 *owner, qa_buffer *out, qa_error *error)
 {
     qa_source_save_io io;
     if (!qa_source_save_writer(&io, owner->app->session, error)) return false;
     size_t count = owner->held_resource_count;
     bool ok = qa_source_save_count(&io, &count, UINT32_MAX);
-    for (size_t i = 0; ok && i < count; ++i) ok = (retained ? retained_derivation(owner, &owner->held_resources[i], error) :
-        derivation_current(owner, &owner->held_resources[i], error)) &&
-        holder_fields(owner, &io, &owner->held_resources[i]);
+    for (size_t i = 0; ok && i < count; ++i)
+        ok = holder_fields(owner, &io, &owner->held_resources[i]);
     if (ok) ok = qa_source_save_finish(&io, out);
     qa_source_save_dispose(&io); return ok;
 }
 
-bool application_network_q2_resources_capture(qa_application_network_q2 *owner, qa_buffer *out, qa_error *error)
-{ return resources_capture(owner, false, out, error); }
-
 bool application_network_q2_resources_capture_retained(qa_application_network_q2 *owner, qa_buffer *out, qa_error *error)
-{ return resources_capture(owner, true, out, error); }
+{ return application_network_q2_resources_capture(owner, out, error); }
 
 bool application_network_q2_resources_restore(qa_application_network_q2 *owner, qa_bytes bytes, qa_error *error)
 {
