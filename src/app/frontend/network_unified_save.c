@@ -253,11 +253,16 @@ static bool server_children(const frontend_network_unified *owner, qa_network_ru
     }
     return true;
 }
+static bool checkpoint_returned(const frontend_network_unified *owner)
+{
+    return owner && (owner->options.frontend->capture || owner->options.frontend->source_restoring) ?
+        frontend_network_unified_checkpoint_returned(owner) : frontend_network_unified_idle(owner);
+}
 bool frontend_network_unified_checkpoint(const frontend_network_unified *owner, qa_buffer *out, qa_error *e)
 {
     application_unified_source source = {0};
     if (!owner || owner->restore_pending || owner->closing ||
-        !out || out->data || out->size || !frontend_network_unified_idle(owner) ||
+        !out || out->data || out->size || !checkpoint_returned(owner) ||
         (owner->options.server && !application_unified_save_source_read(owner->options.frontend->application, &source, e)))
         return frontend_fail(e, QA_ERROR_ARGUMENT, "Unified checkpoint requires returned actual Source owners and children");
     uint64_t connection_owner = owner->options.seat_owner;
@@ -477,8 +482,7 @@ bool frontend_network_unified_qualified(const frontend_network_unified *owner,
                 frontend_network_unified_client_retirement_options_read(owner->options.client_service, &client, e) :
                 frontend_network_unified_client_options_read(owner->options.client_service, &client, e)) ||
             client.domain.runtime != runtime || client.domain.application != owner->options.frontend->application ||
-            !(owner->options.frontend->capture || owner->options.frontend->source_restoring ?
-                frontend_network_unified_checkpoint_returned(owner) : frontend_network_unified_idle(owner)) ||
+            !checkpoint_returned(owner) ||
             !inventory(owner, runtime, true, e) ||
             !qa_unified_bootstrap_domain(owner->bootstrap, &server, &maximum, &remote, e) ||
             server || maximum != 1 || !qa_net_address_equal(&remote, &owner->options.remote, true))
@@ -519,7 +523,7 @@ bool frontend_network_unified_qualified(const frontend_network_unified *owner,
         }
         return true;
     }
-    if (owner->options.runtime != runtime || !frontend_network_unified_idle(owner) ||
+    if (owner->options.runtime != runtime || !checkpoint_returned(owner) ||
         !inventory(owner, runtime, true, e)) return false;
     bool server; uint32_t maximum; qa_net_address remote;
     if (!qa_unified_bootstrap_domain(owner->bootstrap, &server, &maximum, &remote, e) ||
