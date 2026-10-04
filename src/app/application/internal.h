@@ -621,6 +621,8 @@ bool application_control_numeric_current(qa_application *, qa_actor_id,
 bool application_control_prediction_numeric_current(qa_application *, qa_actor_id,
     const qa_application_movement_numeric *, qa_error *);
 bool application_controlled(const qa_application *, qa_actor_id);
+bool application_control_intermission(const qa_movement_state *);
+bool application_source_intermission_read(application_provider *, bool *, qa_error *);
 bool application_control_player_mode(qa_application *, qa_actor_id,
                                       qa_movement_mode, bool spectator, qa_error *);
 bool application_control_toggle_motion(qa_application *, qa_actor_id,

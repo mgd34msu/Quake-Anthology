@@ -41,12 +41,7 @@ static bool control_intermission(const qa_application *app,qa_actor_id actor)
 {
     qa_application_control_view view;
     if(!qa_application_control_read(app,actor,&view)) return false;
-    switch(view.state.kind) {
-    case QA_MOVEMENT_Q2_CLASSIC:return view.state.data.q2.type==4;
-    case QA_MOVEMENT_Q2_RERELEASE:return view.state.data.q2r.type==6;
-    case QA_MOVEMENT_Q3:return view.state.data.q3.movement_type==5 || view.state.data.q3.movement_type==6;
-    default:return false;
-    }
+    return application_control_intermission(&view.state);
 }
 bool qa_application_save_policy(qa_application *app,qa_save_authority authority,bool dedicated,
     bool loading,qa_save_purpose purpose,qa_error *error)
@@ -77,25 +72,10 @@ bool qa_application_save_policy(qa_application *app,qa_save_authority authority,
     if(!app->modes || !app->primary_mode_ready || !qa_modes_read(app->modes,app->primary_mode,&mode,error))
         return application_fail(error,QA_ERROR_NOT_FOUND,"Save policy has no actual chosen primary match owner");
     eligibility.deathmatch=mode.rules.kind!=QA_MODE_SINGLE_PLAYER && mode.rules.kind!=QA_MODE_COOPERATIVE;
-    if(source->kind==APPLICATION_PROVIDER_Q1) {
-        double now,exit_after;
-        if(!qa_q1_bot_clock_read(source->state.q1,&now,&eligibility.intermission,&exit_after,error)) return false;
-    } else if(source->kind==APPLICATION_PROVIDER_Q2)
-        eligibility.intermission=qa_q2_players_in_intermission(source->state.q2);
-    else if(source->kind==APPLICATION_PROVIDER_QC && source->product->family==QA_GAME_Q1) {
-        const qa_qc_definition *definition=qa_qc_program_find_global(source->state.qc.program,"intermission_running");
-        if(definition) {
-            float intermission;
-            if(definition->type!=QA_QC_FLOAT ||
-               !qa_qc_global_float(source->state.qc.instance,definition->offset,&intermission,error))
-                return application_fail(error,QA_ERROR_FORMAT,"Original Quake intermission global lost its actual float declaration");
-            eligibility.intermission=intermission!=0;
-        }
-    }
-    else if(source->kind==APPLICATION_PROVIDER_Q3) {
-        qa_q3_source_match_state match;
-        if(!qa_q3_source_match_state_read(source->state.q3,&match,error)) return false;
-        eligibility.intermission=match.intermission_time_ms!=0;
+    if(source->kind==APPLICATION_PROVIDER_Q1 || source->kind==APPLICATION_PROVIDER_Q2 ||
+       source->kind==APPLICATION_PROVIDER_Q3 ||
+       (source->kind==APPLICATION_PROVIDER_QC && source->product->family==QA_GAME_Q1)) {
+        if(!application_source_intermission_read(source,&eligibility.intermission,error)) return false;
     } else if(source->product->family==QA_GAME_Q3 &&
               (source->kind==APPLICATION_PROVIDER_QVM || source->kind==APPLICATION_PROVIDER_NATIVE)) {
         struct application_q3_guest *engine=q3g_engine(source);

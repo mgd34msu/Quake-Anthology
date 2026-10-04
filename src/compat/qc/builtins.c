@@ -116,7 +116,7 @@ const qa_qc_builtin_requirement *qc_builtin_name(qa_qc_profile profile,
     return NULL;
 }
 
-static const qa_qc_builtin_binding *binding(const qa_qc_instance *instance,
+const qa_qc_builtin_binding *qc_builtin_binding(const qa_qc_instance *instance,
                                              qa_qc_builtin builtin,
                                              const char *name)
 {
@@ -154,7 +154,7 @@ bool qc_builtin_available(const qa_qc_instance *instance,
                           const qa_qc_builtin_requirement *requirement)
 {
     return requirement != NULL
-        && (binding(instance, requirement->builtin, requirement->name) != NULL
+        && (qc_builtin_binding(instance, requirement->builtin, requirement->name) != NULL
             || shared_builtin(instance, requirement->builtin));
 }
 
@@ -398,7 +398,7 @@ bool qc_builtin_call(qa_qc_instance *instance, int32_t number,
         : qc_builtin_name(instance->options.profile, name);
     if (requirement != NULL) return qc_host_builtin(instance, requirement, error);
     if (name != NULL) {
-        const qa_qc_builtin_binding *custom = binding(instance, QA_QC_BUILTIN_NAMED, name);
+        const qa_qc_builtin_binding *custom = qc_builtin_binding(instance, QA_QC_BUILTIN_NAMED, name);
         if (custom != NULL) {
             qa_error failure = {0};
             ++instance->callback_depth;

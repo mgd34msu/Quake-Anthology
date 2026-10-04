@@ -50,26 +50,6 @@ static void set_free_metadata(qa_qc_instance *instance, uint32_t slot,
         instance->layout.variables_offset_bytes / 4u - 1u, freed_at);
 }
 
-static const qa_qc_builtin_binding *host_binding(const qa_qc_instance *instance,
-                                                  qa_qc_builtin builtin,
-                                                  const char *name)
-{
-    bool named_request = builtin == QA_QC_BUILTIN_NAMED
-        || (builtin >= QA_QC_BUILTIN_EX_BPRINT
-            && builtin <= QA_QC_BUILTIN_EX_CLEARPROMPT);
-    for (size_t i = 0; i < instance->options.host.builtin_count; ++i) {
-        const qa_qc_builtin_binding *candidate = &instance->bindings[i];
-        if (candidate->call == NULL) continue;
-        if (candidate->builtin == builtin && builtin != QA_QC_BUILTIN_NAMED)
-            return candidate;
-        if (named_request && candidate->builtin == QA_QC_BUILTIN_NAMED
-            && name != NULL
-            && candidate->name != NULL && strcmp(candidate->name, name) == 0)
-            return candidate;
-    }
-    return NULL;
-}
-
 static const char *named_binding_identity(const qa_qc_instance *instance,
                                           const qa_qc_builtin_binding *binding)
 {
@@ -1564,7 +1544,7 @@ bool qc_host_builtin(qa_qc_instance *instance,
                      const qa_qc_builtin_requirement *requirement,
                      qa_error *error)
 {
-    const qa_qc_builtin_binding *custom = host_binding(instance,
+    const qa_qc_builtin_binding *custom = qc_builtin_binding(instance,
         requirement->builtin, requirement->name);
     if (custom != NULL) {
         qa_error failure = {0};

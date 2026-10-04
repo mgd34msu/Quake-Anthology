@@ -290,25 +290,7 @@ static bool primary_visibility(qa_application *app, qa_actor_id actor,
     if (!qa_application_control_read(app, actor, &control))
         return application_fail(error, QA_ERROR_NOT_FOUND, "Gear visibility has no actual primary player traits");
     bool intermission = false;
-    if (source->kind == APPLICATION_PROVIDER_Q1) {
-        double time, exit_after;
-        if (!qa_q1_bot_clock_read(source->state.q1, &time, &intermission, &exit_after, error)) return false;
-    } else if (source->kind == APPLICATION_PROVIDER_Q2)
-        intermission = qa_q2_players_in_intermission(source->state.q2);
-    else if (source->kind == APPLICATION_PROVIDER_Q3) {
-        qa_q3_source_match_state match;
-        if (!qa_q3_source_match_state_read(source->state.q3, &match, error)) return false;
-        intermission = match.intermission_time_ms != 0;
-    } else if (source->kind == APPLICATION_PROVIDER_QC) {
-        const qa_qc_definition *definition = qa_qc_program_find_global(source->state.qc.program, "intermission_running");
-        if (definition) {
-            float value;
-            if (definition->type != QA_QC_FLOAT)
-                return application_fail(error, QA_ERROR_FORMAT, "Gear visibility lost its typed Quake intermission global");
-            if (!qa_qc_global_float(source->state.qc.instance, definition->offset, &value, error)) return false;
-            intermission = value != 0;
-        }
-    }
+    if (!application_source_intermission_read(source, &intermission, error)) return false;
     *visible = combat.health > 0 && !control.cutscene && !intermission;
     return true;
 }

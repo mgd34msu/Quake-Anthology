@@ -205,6 +205,9 @@ const qa_qc_builtin_requirement *qc_builtin_number(qa_qc_profile profile,
                                                     int32_t number);
 const qa_qc_builtin_requirement *qc_builtin_name(qa_qc_profile profile,
                                                   const char *name);
+const qa_qc_builtin_binding *qc_builtin_binding(const qa_qc_instance *instance,
+                                                qa_qc_builtin builtin,
+                                                const char *name);
 bool qc_builtin_available(const qa_qc_instance *instance,
                           const qa_qc_builtin_requirement *requirement);
 bool qc_builtin_call(qa_qc_instance *instance, int32_t number,

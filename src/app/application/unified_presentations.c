@@ -241,25 +241,7 @@ static bool equipment(qa_application *app, const application_unified_source *sou
     application_provider *primary = application_world_provider(app, QA_ROLE_ENTITIES, "");
     if (!primary) return application_fail(error, QA_ERROR_NOT_FOUND, "Unified view weapon lost its actual Source");
     bool intermission = false;
-    if (primary->kind == APPLICATION_PROVIDER_Q1) {
-        double time, exit_after;
-        if (!qa_q1_bot_clock_read(primary->state.q1, &time, &intermission, &exit_after, error)) return false;
-    } else if (primary->kind == APPLICATION_PROVIDER_Q2)
-        intermission = qa_q2_players_in_intermission(primary->state.q2);
-    else if (primary->kind == APPLICATION_PROVIDER_Q3) {
-        qa_q3_source_match_state match;
-        if (!qa_q3_source_match_state_read(primary->state.q3, &match, error)) return false;
-        intermission = match.intermission_time_ms != 0;
-    } else if (primary->kind == APPLICATION_PROVIDER_QC) {
-        const qa_qc_definition *definition = qa_qc_program_find_global(primary->state.qc.program, "intermission_running");
-        if (definition) {
-            float value;
-            if (definition->type != QA_QC_FLOAT)
-                return application_fail(error, QA_ERROR_FORMAT, "Unified weapon intermission lost its Source float global");
-            if (!qa_qc_global_float(primary->state.qc.instance, definition->offset, &value, error)) return false;
-            intermission = value != 0;
-        }
-    }
+    if (!application_source_intermission_read(primary, &intermission, error)) return false;
     if (camera.cutscene || intermission) return true;
     bool local = qa_actor_id_equal(actor, recipient);
     qa_application_visual_view v = {.actor = actor, .family = e.family,

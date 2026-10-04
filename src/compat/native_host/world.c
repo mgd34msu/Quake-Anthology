@@ -130,7 +130,7 @@ bool qa_native_host_source_body_read(qa_native_host *host,uint32_t slot,uint32_t
         !native_host_read_vec3(host,address+host->edict->maxs,&body.bounds.maxs,error)||
         !native_host_read_vec3(host,address+velocity,&body.velocity,error)||
         !native_host_read(host,address+ground,pointer,host->pointer_bytes,error)) return false;
-    if(!qa_vec_finite(body.origin)||!qa_vec_finite(body.angles)||!qa_vec_finite(body.velocity)||!qa_collision_bounds_valid(body.bounds))
+    if(!qa_vec_finite(body.origin)||!qa_vec_finite(body.angles)||!qa_vec_finite(body.velocity)||!qa_bounds_valid(body.bounds))
         return native_host_fail(error,QA_ERROR_FORMAT,slot,"Native source body has invalid authored vectors or bounds");
     qa_native_address at=host->pointer_bytes==4?qa_load_u32le(pointer):qa_load_u64le(pointer);
     if(at) {
@@ -149,7 +149,7 @@ bool qa_native_host_source_body_write(qa_native_host *host,uint32_t slot,uint32_
 {
     qa_native_address address,target=0;qa_native_slot_binding binding;
     if(!body||!qa_vec_finite(body->origin)||!qa_vec_finite(body->angles)||!qa_vec_finite(body->velocity)||
-        !qa_collision_bounds_valid(body->bounds)) return native_host_fail(error,QA_ERROR_ARGUMENT,slot,"Native body write has invalid canonical vectors or bounds");
+        !qa_bounds_valid(body->bounds)) return native_host_fail(error,QA_ERROR_ARGUMENT,slot,"Native body write has invalid canonical vectors or bounds");
     if(!source_body_address(host,slot,velocity,ground,&address,&binding,error)) return false;
     if(body->ground.registry&&!native_host_address_for_actor(host,body->ground,&target,error)) return false;
     qa_native_address current_address;qa_native_slot_binding current_binding;
@@ -642,7 +642,7 @@ bool native_host_link(qa_native_host *host, qa_native_address address, qa_error 
         !native_host_read_vec3(host, address + layout->maxs, &maximum, error))
         return false;
     if (!qa_vec_finite(origin) || !qa_vec_finite(angles) ||
-        !qa_collision_bounds_valid((qa_bounds){minimum, maximum}))
+        !qa_bounds_valid((qa_bounds){minimum, maximum}))
         return native_host_fail(error, QA_ERROR_FORMAT, slot, "Native Q2 link has invalid Source origin or bounds");
     uint32_t flags, clipmask;
     int32_t link_count;

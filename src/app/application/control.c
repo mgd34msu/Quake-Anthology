@@ -217,14 +217,14 @@ bool application_control_outputs(const qa_application *app, qa_actor_id actor,
     if (source->kind == APPLICATION_PROVIDER_NATIVE && source->state.native.q2_engine &&
         !source->state.native.q2_engine->callbacks)
         return application_q2_control_outputs(source->state.native.q2_engine, actor, out, error);
-    if (source->kind == APPLICATION_PROVIDER_Q2) {
-        qa_q2_player_info player;
-        if (qa_q2_players_in_intermission(source->state.q2) ||
-            (qa_q2_player_read(source->state.q2, actor, &player) && player.chase_target.registry)) return true;
-    } else if (source->kind == APPLICATION_PROVIDER_Q3) {
-        qa_q3_source_match_state match;
-        if (!qa_q3_source_match_state_read(source->state.q3, &match, error)) return false;
-        if (match.intermission_time_ms) return true;
+    if (source->kind == APPLICATION_PROVIDER_Q2 || source->kind == APPLICATION_PROVIDER_Q3) {
+        bool intermission;
+        if (!application_source_intermission_read(source, &intermission, error)) return false;
+        if (intermission) return true;
+        if (source->kind == APPLICATION_PROVIDER_Q2) {
+            qa_q2_player_info player;
+            if (qa_q2_player_read(source->state.q2, actor, &player) && player.chase_target.registry) return true;
+        }
     }
     return application_qc_control_outputs(app, actor, out, error);
 }

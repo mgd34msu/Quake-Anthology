@@ -862,6 +862,26 @@ static bool source_debug(const qa_material *material, const qa_material *origina
     }
     return true;
 }
+static qa_scene_vertex source_vertex_merge(qa_material_source_writer writer,
+    qa_scene_vertex previous, qa_scene_vertex vertex, bool preserve_bsp_normal)
+{
+    switch (writer) {
+    case QA_SOURCE_WRITE_MODEL: /* fall through */
+    case QA_SOURCE_WRITE_MODEL_MD4: vertex.color = previous.color; vertex.lightmap = previous.lightmap; break;
+    case QA_SOURCE_WRITE_PICTURE: /* fall through */
+    case QA_SOURCE_WRITE_POLY: vertex.normal = previous.normal; vertex.lightmap = previous.lightmap; break;
+    case QA_SOURCE_WRITE_RAIL:
+        vertex.normal = previous.normal; vertex.lightmap = previous.lightmap; vertex.color.w = previous.color.w; break;
+    case QA_SOURCE_WRITE_BSP: vertex.normal = previous.normal; break;
+    case QA_SOURCE_WRITE_BSP_NORMAL:
+        if (preserve_bsp_normal) vertex.normal = previous.normal;
+        break;
+    case QA_SOURCE_WRITE_CLOUD:
+        vertex.normal = previous.normal; vertex.lightmap = previous.lightmap; vertex.color = previous.color; break;
+    case QA_SOURCE_WRITE_FULL: break;
+    }
+    return vertex;
+}
 static bool submit_source(const qa_material *original, const qa_material *material,
     const qa_scene_mesh *mesh, const qa_material_context *context, float time,
     qa_scene_frame *frame, qa_error *error)
@@ -904,23 +924,8 @@ static bool submit_source(const qa_material *original, const qa_material *materi
         } else if (context->source_writer != QA_SOURCE_WRITE_FULL ||
                    mesh->vertices != source->vertices) for (size_t i = 0; i < mesh->vertex_count; ++i) {
             qa_scene_vertex previous = source->vertices[i], vertex = mesh->vertices[i];
-            switch (context->source_writer) {
-            case QA_SOURCE_WRITE_MODEL: /* fall through */
-            case QA_SOURCE_WRITE_MODEL_MD4: vertex.color = previous.color; vertex.lightmap = previous.lightmap; break;
-            case QA_SOURCE_WRITE_PICTURE: /* fall through */
-            case QA_SOURCE_WRITE_POLY: vertex.normal = previous.normal; vertex.lightmap = previous.lightmap; break;
-            case QA_SOURCE_WRITE_RAIL:
-                vertex.normal = previous.normal; vertex.lightmap = previous.lightmap; vertex.color.w = previous.color.w; break;
-            case QA_SOURCE_WRITE_BSP: vertex.normal = previous.normal; break;
-            case QA_SOURCE_WRITE_BSP_NORMAL:
-                if (material == context->source_default_material || stencil)
-                    vertex.normal = previous.normal;
-                break;
-            case QA_SOURCE_WRITE_CLOUD:
-                vertex.normal = previous.normal; vertex.lightmap = previous.lightmap; vertex.color = previous.color; break;
-            case QA_SOURCE_WRITE_FULL: break;
-            }
-            source->vertices[i] = vertex;
+            source->vertices[i] = source_vertex_merge(context->source_writer, previous, vertex,
+                material == context->source_default_material || stencil);
         }
         if (!cloud && source->indices != mesh->indices)
             memcpy(source->indices, mesh->indices, mesh->index_count * sizeof(*mesh->indices));
@@ -1212,23 +1217,8 @@ static bool source_append(qa_material_source_scratch *source, const material_sou
     bool stencil = stencil_material(material);
     for (size_t i = 0; i < mesh.vertex_count; ++i) {
         qa_scene_vertex previous = source->vertices[base + i], vertex = mesh.vertices[i];
-        switch (row->context.source_writer) {
-        case QA_SOURCE_WRITE_MODEL: /* fall through */
-        case QA_SOURCE_WRITE_MODEL_MD4: vertex.color = previous.color; vertex.lightmap = previous.lightmap; break;
-        case QA_SOURCE_WRITE_PICTURE: /* fall through */
-        case QA_SOURCE_WRITE_POLY: vertex.normal = previous.normal; vertex.lightmap = previous.lightmap; break;
-        case QA_SOURCE_WRITE_RAIL:
-            vertex.normal = previous.normal; vertex.lightmap = previous.lightmap; vertex.color.w = previous.color.w; break;
-        case QA_SOURCE_WRITE_BSP: vertex.normal = previous.normal; break;
-        case QA_SOURCE_WRITE_BSP_NORMAL:
-            if (material == row->context.source_default_material || stencil)
-                vertex.normal = previous.normal;
-            break;
-        case QA_SOURCE_WRITE_CLOUD:
-            vertex.normal = previous.normal; vertex.lightmap = previous.lightmap; vertex.color = previous.color; break;
-        case QA_SOURCE_WRITE_FULL: break;
-        }
-        source->vertices[base + i] = vertex;
+        source->vertices[base + i] = source_vertex_merge(row->context.source_writer, previous, vertex,
+            material == row->context.source_default_material || stencil);
     }
     if (!md4) {
         for (size_t i = 0; i < mesh.index_count; ++i)

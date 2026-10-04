@@ -5,9 +5,48 @@
 #include "qa/game_q3_source.h"
 #include "qa/game_q3_clients.h"
 #include "qa/game_q3_configstrings.h"
+#include "qa/game_q1_bots.h"
 #include "guest_q3_restart.h"
 #include "qa/application_q3_client.h"
 #include "qa/text.h"
+
+bool application_control_intermission(const qa_movement_state *state)
+{
+    switch (state->kind) {
+    case QA_MOVEMENT_Q2_CLASSIC: return state->data.q2.type == 4;
+    case QA_MOVEMENT_Q2_RERELEASE: return state->data.q2r.type == 6;
+    case QA_MOVEMENT_Q3:
+        return state->data.q3.movement_type == 5 || state->data.q3.movement_type == 6;
+    default: return false;
+    }
+}
+
+bool application_source_intermission_read(application_provider *source,
+    bool *out, qa_error *error)
+{
+    bool intermission = false;
+    if (source->kind == APPLICATION_PROVIDER_Q1) {
+        double time, exit_after;
+        if (!qa_q1_bot_clock_read(source->state.q1, &time, &intermission, &exit_after, error)) return false;
+    } else if (source->kind == APPLICATION_PROVIDER_Q2)
+        intermission = qa_q2_players_in_intermission(source->state.q2);
+    else if (source->kind == APPLICATION_PROVIDER_Q3) {
+        qa_q3_source_match_state match;
+        if (!qa_q3_source_match_state_read(source->state.q3, &match, error)) return false;
+        intermission = match.intermission_time_ms != 0;
+    } else if (source->kind == APPLICATION_PROVIDER_QC) {
+        const qa_qc_definition *definition = qa_qc_program_find_global(source->state.qc.program, "intermission_running");
+        if (definition) {
+            float value;
+            if (definition->type != QA_QC_FLOAT)
+                return application_fail(error, QA_ERROR_FORMAT, "Quake intermission lost its typed source declaration");
+            if (!qa_qc_global_float(source->state.qc.instance, definition->offset, &value, error)) return false;
+            intermission = value != 0;
+        }
+    }
+    *out = intermission;
+    return true;
+}
 
 static application_provider *selected(qa_application *app, uint32_t seat, qa_launch_role role)
 {

@@ -23,17 +23,6 @@ static bool provider_ready(const application_provider *provider)
         provider->product;
 }
 
-static bool control_intermission(const qa_application_control_view *control)
-{
-    switch (control->state.kind) {
-    case QA_MOVEMENT_Q2_CLASSIC: return control->state.data.q2.type == 4;
-    case QA_MOVEMENT_Q2_RERELEASE: return control->state.data.q2r.type == 6;
-    case QA_MOVEMENT_Q3:
-        return control->state.data.q3.movement_type == 5 || control->state.data.q3.movement_type == 6;
-    default: return false;
-    }
-}
-
 static bool original_visual(application_provider *source, qa_actor_id actor,
     float *scale, float *opacity, bool *intermission, qa_error *error)
 {
@@ -41,32 +30,24 @@ static bool original_visual(application_provider *source, qa_actor_id actor,
         return application_fail(error, QA_ERROR_NOT_FOUND, "Selected Q3 character lost its actual world source");
     if (source->kind == APPLICATION_PROVIDER_Q1) {
         qa_q1_presentation visual;
-        double time, exit_after;
         bool source_intermission;
-        if (!qa_q1_bot_clock_read(source->state.q1, &time, &source_intermission, &exit_after, error)) return false;
+        if (!application_source_intermission_read(source, &source_intermission, error)) return false;
         *intermission |= source_intermission;
         if (qa_q1_game_presentation(source->state.q1, actor, &visual)) {
             *scale = visual.scale == 0 ? 1 : visual.scale;
             *opacity = visual.alpha == 0 ? 1 : fmaxf(0, fminf(1, visual.alpha));
         }
-    } else if (source->kind == APPLICATION_PROVIDER_Q2) {
-        *intermission |= qa_q2_players_in_intermission(source->state.q2);
-    } else if (source->kind == APPLICATION_PROVIDER_Q3) {
-        qa_q3_source_match_state match;
-        if (!qa_q3_source_match_state_read(source->state.q3, &match, error)) return false;
-        *intermission |= match.intermission_time_ms != 0;
+    } else if (source->kind == APPLICATION_PROVIDER_Q2 || source->kind == APPLICATION_PROVIDER_Q3) {
+        bool source_intermission;
+        if (!application_source_intermission_read(source, &source_intermission, error)) return false;
+        *intermission |= source_intermission;
     } else if (source->kind == APPLICATION_PROVIDER_QC && source->product->family == QA_GAME_Q1) {
         const qa_qc_instance *instance = source->state.qc.instance;
         if (!instance || !qa_qc_idle(instance))
             return application_fail(error, QA_ERROR_ARGUMENT, "Selected Q3 character needs its actual idle Quake source");
-        const qa_qc_definition *definition = qa_qc_program_find_global(source->state.qc.program, "intermission_running");
-        if (definition) {
-            float value;
-            if (definition->type != QA_QC_FLOAT ||
-                !qa_qc_global_float(instance, definition->offset, &value, error))
-                return application_fail(error, QA_ERROR_FORMAT, "Quake intermission lost its typed source declaration");
-            *intermission |= value != 0;
-        }
+        bool source_intermission;
+        if (!application_source_intermission_read(source, &source_intermission, error)) return false;
+        *intermission |= source_intermission;
         for (uint32_t slot = 1; slot < qa_qc_entity_count(instance); ++slot) {
             qa_qc_slot_binding binding;
             if (!qa_qc_slot(instance, slot, &binding))
@@ -111,7 +92,7 @@ bool qa_application_selected_q3_character_read(qa_application *app, qa_actor_id 
         !qa_world_body_read(app->world, actor, &view.body, error))
         return application_fail(error, QA_ERROR_NOT_FOUND, "Selected Q3 character lost its actual clock or body");
     view.source_frame = clock.frame;
-    bool intermission = control_intermission(&control);
+    bool intermission = application_control_intermission(&control.state);
     if (!original_visual(application_world_provider(app, QA_ROLE_ENTITIES, ""), actor,
         &view.scale, &view.opacity, &intermission, error)) return false;
     view.present = !control.cutscene && !player.cutscene.active && !intermission &&
