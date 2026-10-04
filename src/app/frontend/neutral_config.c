@@ -681,12 +681,25 @@ static bool retire(void *context,const qa_application_client_source *source,qa_e
             return fail(e,QA_ERROR_ARGUMENT,"CLIENT retirement cannot clear another physical recipient");
         if (console!=actual.context.console || registry!=actual.context.cvars ||
             !same_context(&command,&actual.context.command)) {
-            if (row->retirement_release || !qa_input_seat_recipient_retired_is(input,actual.context.console,
-                actual.context.cvars,&actual.context.command) ||
-                !qa_input_seat_recipient_retired_consume(input,actual.context.console,actual.context.cvars,
-                    &actual.context.command,e))
-                return fail(e,QA_ERROR_ARGUMENT,"CLIENT retirement lost its completed recipient handoff");
-            row->retirement_started=true; row->recipient_returned=true;
+            if (f->source_restoring && row->owner->restoring && !row->retirement_started &&
+                !row->retirement_release && console==qa_application_console(f->application) &&
+                registry==qa_application_cvars(f->application) && !command.owner &&
+                !qa_input_seat_has_held(input) && qa_input_release_idle(input) &&
+                !qa_input_seat_recipient_retired_is(input,actual.context.console,
+                    actual.context.cvars,&actual.context.command)) {
+                if (!frontend_seat_context_ready(f->seats+row->physical_seat,row->physical_seat,&command,e) ||
+                    !frontend_network_client_retirement_current(f,&actual,actual.context.console,
+                        &actual.context.command,e) ||
+                    !frontend_seat_engine_recipient_ready(f,row->physical_seat,&command,e)) return false;
+                frontend_seat_engine_recipient_publish(f,row->physical_seat,&command);
+            } else {
+                if (row->retirement_release || !qa_input_seat_recipient_retired_is(input,actual.context.console,
+                    actual.context.cvars,&actual.context.command) ||
+                    !qa_input_seat_recipient_retired_consume(input,actual.context.console,actual.context.cvars,
+                        &actual.context.command,e))
+                    return fail(e,QA_ERROR_ARGUMENT,"CLIENT retirement lost its completed recipient handoff");
+                row->retirement_started=true; row->recipient_returned=true;
+            }
         } else if (!row->retirement_release && !qa_input_seat_has_held(input) && qa_input_release_idle(input)) {
             if (!frontend_seat_engine_recipient_ready(f,row->physical_seat,&command,e)) return false;
             frontend_seat_engine_recipient_publish(f,row->physical_seat,&command);
