@@ -1432,14 +1432,6 @@ bool application_events_save_restore(qa_application *app, qa_bytes bytes, qa_err
     return ok;
 }
 
-bool application_events_save_validate(qa_application *app, qa_error *error)
-{
-    qa_buffer encoded = {0};
-    bool ok = application_events_save_capture(app, &encoded, error);
-    qa_buffer_free(&encoded);
-    return ok;
-}
-
 static bool public_lease(qa_application *app, qa_error *error)
 {
     if (!app || app->operation != APPLICATION_IDLE || app->client_preparation || !app->session || !app->world ||

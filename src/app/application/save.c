@@ -1794,7 +1794,6 @@ static bool persistence_finish(void *opaque, void *value, const qa_save_image *i
     }
     if (ok) ok = application_q3_components_finish_restore(candidate->components, error);
     if (ok) ok = qa_equipment_weapons_reconnect(candidate->equipment, error);
-    if (ok) ok = application_events_save_validate(candidate, error);
     if (ok && candidate->command_generation != operation->restored_command_generation)
         ok = application_fail(error, QA_ERROR_FORMAT, "Console publication generation differs from saved application metadata");
     if (ok && candidate->q1_paused) {

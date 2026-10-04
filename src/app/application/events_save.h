@@ -8,6 +8,5 @@
  * the complete capture/import graph. These calls retain that outer lease. */
 bool application_events_save_capture(qa_application *, qa_buffer *, qa_error *);
 bool application_events_save_restore(qa_application *, qa_bytes, qa_error *);
-bool application_events_save_validate(qa_application *, qa_error *);
 
 #endif

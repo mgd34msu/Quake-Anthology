@@ -186,12 +186,17 @@ static bool request(frontend_remote_q2 *row, const char *path, bool *waiting, qa
     if (!remote_q2_download_destination(row, normalized)) {
         free(normalized); return remote_q2_fail(error, QA_ERROR_FORMAT, "Q2 material download lacks its actual negotiated capability and write root");
     }
-    qa_resource *present = NULL; qa_error issue = {0};
-    if (qa_vfs_acquire(row->content.mounts, normalized, &present, NULL, &issue)) {
-        qa_resource_release(present); free(normalized); return true;
+    bool tried = attempted(row, normalized);
+    bool companion = (prefix(normalized, "models/qa/") || prefix(normalized, "players/qa/")) &&
+        suffix(normalized, ".qpm");
+    if (!companion || tried) {
+        qa_resource *present = NULL; qa_error issue = {0};
+        if (qa_vfs_acquire(row->content.mounts, normalized, &present, NULL, &issue)) {
+            qa_resource_release(present); free(normalized); return true;
+        }
+        if (issue.code != QA_ERROR_NOT_FOUND) { free(normalized); if (error) *error = issue; return false; }
     }
-    if (issue.code != QA_ERROR_NOT_FOUND) { free(normalized); if (error) *error = issue; return false; }
-    if (attempted(row, normalized)) { free(normalized); return true; }
+    if (tried) { free(normalized); return true; }
     bool allowed = false;
     if (!row->options.download_allowed(row->options.context, normalized, &allowed, error) || !remote_q2_live(row, error)) {
         free(normalized); return false;
