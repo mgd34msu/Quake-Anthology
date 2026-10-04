@@ -32,8 +32,7 @@ static bool model_scope_options(const frontend_remote_q2 *row, const remote_q2_m
 {
     if (!row->options.material_scripts || !m->scope || !m->palette)
         return remote_q2_fail(error, QA_ERROR_FORMAT, "Q2 indexed model lost its retained Source palette companion");
-    if (!qa_q2_material_model_scope_read(qa_resource_bytes(m->scope), m->path,
-        qa_resource_bytes(m->resource), scope, error)) return false;
+    if (!qa_q2_material_model_scope_read(qa_resource_bytes(m->scope), m->path, scope, error)) return false;
     if (!m->scope_opening.path || strcmp(m->scope_opening.path, scope->companion_path) ||
         !m->palette_opening.path || strcmp(m->palette_opening.path, scope->palette_alias))
         return remote_q2_fail(error, QA_ERROR_FORMAT, "Q2 indexed model companion addresses another retained opening");
@@ -77,8 +76,7 @@ static bool model_scope_acquire(frontend_remote_q2 *row, remote_q2_model *m,
         return remote_q2_fail(error, QA_ERROR_FORMAT, "Q2 indexed model companion was not explicitly negotiated");
     if (!qa_q2_material_model_scope_path(m->path, companion, error) ||
         !qa_vfs_acquire_receipt(row->content.mounts, companion, &m->scope, &m->scope_opening, error) ||
-        !qa_q2_material_model_scope_read(qa_resource_bytes(m->scope), m->path,
-            qa_resource_bytes(m->resource), scope, error) ||
+        !qa_q2_material_model_scope_read(qa_resource_bytes(m->scope), m->path, scope, error) ||
         !qa_vfs_acquire_receipt(row->content.mounts, scope->palette_alias, &m->palette, &m->palette_opening, error)) return false;
     return model_scope_options(row, m, scope, options, error);
 }

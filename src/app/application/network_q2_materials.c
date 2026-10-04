@@ -750,7 +750,6 @@ static bool model_scope_fields(qa_source_save_io *io,qa_q2_material_model_scope 
     if (!qa_source_save_bytes(io,magic,sizeof(magic)) || memcmp(magic,"QAQPM\1",sizeof(magic)) ||
         !model_scope_text(io,row->model_alias) || !model_scope_text(io,row->companion_path) ||
         !model_scope_text(io,row->palette_alias) || !model_scope_text(io,row->palette_path) ||
-        !qa_source_save_bytes(io,row->model_digest.bytes,sizeof(row->model_digest.bytes)) ||
         !qa_source_save_u32(io,&family) || family>QA_SCENE_Q3 ||
         !qa_source_save_u32(io,&wrap) || wrap>QA_SCENE_CLAMP ||
         !qa_source_save_u32(io,&filter) || filter>QA_SCENE_LINEAR_MIPMAP_LINEAR ||
@@ -789,40 +788,16 @@ static bool model_scope_decode(qa_bytes bytes,qa_q2_material_model_scope *out,qa
     *out=row; model_scope_spans(out); return true;
 }
 
-static bool model_scope_model(const qa_q2_material_model_scope *row,qa_bytes bytes,qa_error *error)
-{
-    qa_sha256_digest digest; qa_sha256(bytes,&digest);
-    if (!qa_sha256_equal(&digest,&row->model_digest))
-        return application_fail(error,QA_ERROR_FORMAT,"Indexed model scope changes its actual model bytes");
-    qa_model model={0};
-    if (!qa_model_load(bytes,&model,error)) return false;
-    const char *extension=strrchr(row->model_alias,'.');
-    bool ok=extension && ((model.format==QA_MODEL_MDL && !strcmp(extension,".mdl") && row->options.usage==QA_IMAGE_USAGE_SKIN) ||
-        (model.format==QA_MODEL_SPR && !strcmp(extension,".spr") && row->options.usage==QA_IMAGE_USAGE_SPRITE));
-    qa_model_free(&model);
-    return ok || application_fail(error,QA_ERROR_FORMAT,"Indexed model scope belongs to a different model format");
-}
-
-bool qa_q2_material_model_scope_read(qa_bytes artifact,const char *model_alias,qa_bytes model,
+bool qa_q2_material_model_scope_read(qa_bytes artifact,const char *model_alias,
     qa_q2_material_model_scope *out,qa_error *error)
 {
-    if (!out || !model_alias || (model.size && !model.data))
-        return application_fail(error,QA_ERROR_ARGUMENT,"Indexed model scope needs its retained model bytes");
+    if (!out || !model_alias)
+        return application_fail(error,QA_ERROR_ARGUMENT,"Indexed model scope requires its output and actual model alias");
     qa_q2_material_model_scope row={0};
     if (!model_scope_decode(artifact,&row,error)) return false;
     if (strcmp(row.model_alias,model_alias))
         return application_fail(error,QA_ERROR_FORMAT,"Indexed model companion addresses another model");
-    if (!model_scope_model(&row,model,error)) return false;
     *out=row; model_scope_spans(out); return true;
-}
-
-bool qa_q2_material_model_scope_dependencies(qa_bytes artifact,qa_q2_material_dependency_fn fn,void *context,qa_error *error)
-{
-    if (!fn) return application_fail(error,QA_ERROR_ARGUMENT,"Indexed model scope needs its actual dependency consumer");
-    qa_q2_material_model_scope row={0};
-    if (!model_scope_decode(artifact,&row,error)) return false;
-    qa_q2_material_dependency dependency={.kind=QA_Q2_MATERIAL_IMAGE,.path=row.palette_alias};
-    return fn(context,&dependency,error);
 }
 
 bool qa_q2_material_model_scope_apply(const qa_q2_material_model_scope *row,qa_bytes palette,
@@ -861,7 +836,6 @@ bool application_network_q2_materials_model_scope_encode(const qa_application_ne
         if (strlen(texts[i])>=1024) return application_fail(error,QA_ERROR_FORMAT,"Indexed model scope text exceeds its actual namespace");
         strcpy(targets[i],texts[i]);
     }
-    row.model_digest=*qa_resource_digest(held->resource);
     memcpy(row.palette,held->image_palette.data,768);
     if (held->image_translation.size) memcpy(row.translation,held->image_translation.data,256);
     row.options.translation.size=held->image_translation.size; model_scope_spans(&row);

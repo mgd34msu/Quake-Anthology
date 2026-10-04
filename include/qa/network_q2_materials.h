@@ -1,7 +1,6 @@
 #ifndef QA_NETWORK_Q2_MATERIALS_H
 #define QA_NETWORK_Q2_MATERIALS_H
 #include "qa/material.h"
-#include "qa/hash.h"
 
 typedef enum qa_q2_material_dependency_kind {
     QA_Q2_MATERIAL_IMAGE, QA_Q2_MATERIAL_MOVIE, QA_Q2_MATERIAL_SKY
@@ -38,14 +37,12 @@ bool qa_q2_material_image_import(qa_scene_resources *, qa_vfs *, const char *, q
  * Palette and translation spans borrow this record until scene creation copies them. */
 typedef struct qa_q2_material_model_scope {
     char model_alias[1024], companion_path[1024], palette_alias[1024], palette_path[1024];
-    qa_sha256_digest model_digest;
     qa_scene_image_options options;
     uint8_t palette[768], translation[256];
 } qa_q2_material_model_scope;
 bool qa_q2_material_model_scope_path(const char *model_alias, char out[1024], qa_error *);
-bool qa_q2_material_model_scope_read(qa_bytes artifact, const char *model_alias, qa_bytes model,
+bool qa_q2_material_model_scope_read(qa_bytes artifact, const char *model_alias,
     qa_q2_material_model_scope *, qa_error *);
-bool qa_q2_material_model_scope_dependencies(qa_bytes, qa_q2_material_dependency_fn, void *, qa_error *);
 bool qa_q2_material_model_scope_apply(const qa_q2_material_model_scope *, qa_bytes palette,
     qa_scene_image_options *, qa_error *);
 #endif

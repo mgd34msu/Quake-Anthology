@@ -317,8 +317,11 @@ static bool model_palette(frontend_remote_q2 *row, const char *path, qa_bytes mo
     qa_q2_material_model_scope scope; qa_scene_image_options options;
     material_download state = {.row = row};
     bool ok = qa_vfs_acquire(row->content.mounts, companion, &artifact, NULL, error) &&
-        qa_q2_material_model_scope_read(qa_resource_bytes(artifact), path, model, &scope, error) &&
-        qa_q2_material_model_scope_dependencies(qa_resource_bytes(artifact), material_dependency, &state, error);
+        qa_q2_material_model_scope_read(qa_resource_bytes(artifact), path, &scope, error);
+    if (ok) {
+        qa_q2_material_dependency dependency = {.kind = QA_Q2_MATERIAL_IMAGE, .path = scope.palette_alias};
+        ok = material_dependency(&state, &dependency, error);
+    }
     *waiting = state.waiting;
     if (ok && !*waiting) ok = qa_vfs_acquire(row->content.mounts, scope.palette_alias, &palette, NULL, error) &&
         qa_q2_material_model_scope_apply(&scope, qa_resource_bytes(palette), &options, error);
