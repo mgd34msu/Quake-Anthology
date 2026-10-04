@@ -436,14 +436,13 @@ static float q2_clamp_fraction(float fraction)
 static void q2_sweep(q2_work *work, int32_t headnode)
 {
     q2_collision *collision = work->collision;
-    size_t depth = 1;
-    collision->trace_stack[0] = (q2_frame){headnode, 0, 1, work->start, work->end};
-    while (depth != 0) {
-        q2_frame frame = collision->trace_stack[--depth];
-        if (work->result.fraction <= frame.first) continue;
+    size_t depth = 0;
+    q2_frame frame = {headnode, 0, 1, work->start, work->end};
+    for (;;) {
+        if (work->result.fraction <= frame.first) goto next_frame;
         if (frame.child < 0) {
             q2_trace_leaf(work, q2_leaf_index(frame.child));
-            continue;
+            goto next_frame;
         }
         const q2_node *node = &collision->nodes[(size_t)frame.child];
         const qa_collision_plane *plane = &collision->planes[node->plane];
@@ -452,12 +451,10 @@ static void q2_sweep(q2_work *work, int32_t headnode)
         float offset = q2_expanded_plane(work, node->plane)->extent;
         if (first >= offset && last >= offset) {
             frame.child = node->children[0];
-            collision->trace_stack[depth++] = frame;
             continue;
         }
         if (first < -offset && last < -offset) {
             frame.child = node->children[1];
-            collision->trace_stack[depth++] = frame;
             continue;
         }
         unsigned side = 0;
@@ -478,9 +475,13 @@ static void q2_sweep(q2_work *work, int32_t headnode)
         collision->trace_stack[depth++] = (q2_frame){node->children[side ^ 1u],
             frame.first + span * far_fraction, frame.last,
             qa_vec_lerp(frame.start, frame.end, far_fraction), frame.end};
-        collision->trace_stack[depth++] = (q2_frame){node->children[side],
+        frame = (q2_frame){node->children[side],
             frame.first, frame.first + span * near_fraction,
             frame.start, qa_vec_lerp(frame.start, frame.end, near_fraction)};
+        continue;
+next_frame:
+        if (depth == 0) break;
+        frame = collision->trace_stack[--depth];
     }
 }
 
