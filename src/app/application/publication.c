@@ -18,6 +18,7 @@
 #include "native_q2_checkpoint.h"
 #include "native_q1_console.h"
 #include "qa/application_startup_prepare.h"
+#include "qa/launch_identity_fields.h"
 #include "native_q3_checkpoint.h"
 #include "supplies.h"
 #include "equipment_runtime.h"
@@ -137,43 +138,15 @@ static bool same_mode(const qa_launch_mode *left,
 {
     const qa_mode_rules *a = &left->rules;
     const qa_mode_rules *b = &right->rules;
-    if (!same_text(left->instance, right->instance) ||
-        a->source != b->source || a->kind != b->kind ||
-        a->forced_team != b->forced_team ||
-        a->frag_limit != b->frag_limit ||
-        a->capture_limit != b->capture_limit ||
-        a->warmup_seconds != b->warmup_seconds ||
-        a->competition != b->competition ||
-        a->setup_seconds != b->setup_seconds ||
-        a->countdown_seconds != b->countdown_seconds ||
-        a->match_seconds != b->match_seconds ||
-        a->max_game_players != b->max_game_players ||
-        a->election_percent != b->election_percent ||
-        a->teamplay != b->teamplay || a->rune_mask != b->rune_mask ||
-        a->vote_limit != b->vote_limit || a->flags != b->flags ||
-        a->referee_flags != b->referee_flags ||
-        a->time_limit_minutes != b->time_limit_minutes ||
-        a->obelisk_health != b->obelisk_health ||
-        a->obelisk_regen != b->obelisk_regen ||
-        a->obelisk_regen_ns != b->obelisk_regen_ns ||
-        a->obelisk_respawn_ns != b->obelisk_respawn_ns ||
-        a->enabled != b->enabled ||
-        a->friendly_fire != b->friendly_fire ||
-        a->force_join != b->force_join ||
-        a->match_lock != b->match_lock || a->paused != b->paused ||
-        a->auto_lock != b->auto_lock || a->relics != b->relics ||
-        a->single_player_active != b->single_player_active ||
-        a->tournament_restart != b->tournament_restart ||
-        a->q2_rerelease != b->q2_rerelease ||
-        a->start_map != b->start_map ||
-        a->force_balance != b->force_balance ||
-        a->voting_disabled != b->voting_disabled ||
+#define MODE_RULE_DIFFERENT(kind, member) || a->member != b->member
+    if (!same_text(left->instance, right->instance)
+        QA_LAUNCH_MODE_RULE_FIELDS(MODE_RULE_DIFFERENT) ||
         left->primary_score != right->primary_score ||
         !same_text(left->forced_team, right->forced_team))
         return false;
+#undef MODE_RULE_DIFFERENT
     for (size_t index = 0; index < 3; ++index)
-        if (a->teams[index] != b->teams[index] ||
-            !same_text(left->teams[index], right->teams[index]))
+        if (!same_text(left->teams[index], right->teams[index]))
             return false;
     return true;
 }
