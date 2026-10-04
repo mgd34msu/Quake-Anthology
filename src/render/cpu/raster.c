@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "../normal_matrix.h"
 #include <limits.h>
 #include <fenv.h>
 #include <stdatomic.h>
@@ -378,21 +379,8 @@ static bool transform(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
   const float *model = draw->model.m;
   /* Inverse transpose keeps fragment normals correct for scaled model
    * instances. */
-  double normal[9] = {
-      (double)model[5] * model[10] - (double)model[9] * model[6],
-      (double)model[9] * model[2] - (double)model[1] * model[10],
-      (double)model[1] * model[6] - (double)model[5] * model[2],
-      (double)model[8] * model[6] - (double)model[4] * model[10],
-      (double)model[0] * model[10] - (double)model[8] * model[2],
-      (double)model[4] * model[2] - (double)model[0] * model[6],
-      (double)model[4] * model[9] - (double)model[8] * model[5],
-      (double)model[8] * model[1] - (double)model[0] * model[9],
-      (double)model[0] * model[5] - (double)model[4] * model[1]};
-  double determinant =
-      model[0] * normal[0] + model[4] * normal[1] + model[8] * normal[2];
-  if (determinant != 0)
-    for (size_t c = 0; c < 9; ++c)
-      normal[c] /= determinant;
+  double normal[9];
+  qa_render_normal_matrix(&draw->model, normal);
   for (size_t i = 0; i < count; ++i) {
     if (draw->source_vertex_storage && i>=draw->mesh.vertex_count && !referenced[i]) continue;
     const qa_scene_vertex *v = &draw->mesh.vertices[i];

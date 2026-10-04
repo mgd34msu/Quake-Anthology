@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "../normal_matrix.h"
 
 #include <limits.h>
 #include <stdio.h>
@@ -460,21 +461,8 @@ void gl_programs_destroy(qa_gl_renderer *renderer)
 
 static void normal_matrix(const qa_scene_matrix *model, GLfloat result[9])
 {
-    const float *m = model->m;
-    double row[9] = {
-        (double)m[5] * m[10] - (double)m[9] * m[6],
-        (double)m[9] * m[2] - (double)m[1] * m[10],
-        (double)m[1] * m[6] - (double)m[5] * m[2],
-        (double)m[8] * m[6] - (double)m[4] * m[10],
-        (double)m[0] * m[10] - (double)m[8] * m[2],
-        (double)m[4] * m[2] - (double)m[0] * m[6],
-        (double)m[4] * m[9] - (double)m[8] * m[5],
-        (double)m[8] * m[1] - (double)m[0] * m[9],
-        (double)m[0] * m[5] - (double)m[4] * m[1]
-    };
-    double determinant = m[0] * row[0] + m[4] * row[1] + m[8] * row[2];
-    if (determinant != 0)
-        for (size_t i = 0; i < 9; ++i) row[i] /= determinant;
+    double row[9];
+    qa_render_normal_matrix(model, row);
     for (size_t column = 0; column < 3; ++column)
         for (size_t r = 0; r < 3; ++r)
             result[column * 3 + r] = (GLfloat)row[r * 3 + column];
